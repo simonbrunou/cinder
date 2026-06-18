@@ -1,0 +1,123 @@
+defmodule Cinder.Download.Client.QBittorrent do
+  @moduledoc """
+  Real `Cinder.Download.Client` impl, backed by `Req`, against qBittorrent's
+  Web API v2.
+
+  Reads `base_url`, `username`, `password` and optional `req_options` from
+  `config :cinder, #{inspect(__MODULE__)}` at runtime. The auth flow is stateful:
+  each call logs in (`POST /api/v2/auth/login`), threads the returned `SID`
+  cookie into the action request, then performs it.
+
+  Validated against a live qBittorrent only in Phase 5; the unit test is a shape
+  sanity-check against `Req.Test`.
+  """
+  @behaviour Cinder.Download.Client
+
+  @default_base_url "http://localhost:8080"
+
+  # qBit upload-phase / post-download states all mean "download finished".
+  @completed ~w(uploading stalledUP pausedUP forcedUP queuedUP checkingUP moving)
+  @errored ~w(error missingFiles)
+
+  @impl true
+  def add(%{download_url: "magnet:" <> _ = magnet}) do
+    with {:ok, hash} <- btih(magnet),
+         {:ok, %{status: 200, body: body}} <-
+           action(fn req ->
+             Req.post(req, url: "/api/v2/torrents/add", form_multipart: [urls: magnet])
+           end) do
+      # ponytail: magnet-only hash extraction; base32 btih and .torrent-URL→hash
+      # (info-by-name lookup) are Phase-5 live concerns.
+      if String.trim(body) == "Fails.", do: {:error, :add_rejected}, else: {:ok, hash}
+    else
+      :error -> {:error, :unsupported_download_url}
+      other -> error(other)
+    end
+  end
+
+  def add(%{download_url: _}), do: {:error, :unsupported_download_url}
+
+  @impl true
+  def status(hash) do
+    case action(fn req -> Req.get(req, url: "/api/v2/torrents/info", params: [hashes: hash]) end) do
+      {:ok, %{status: 200, body: [torrent | _]}} -> {:ok, normalize(torrent)}
+      {:ok, %{status: 200, body: []}} -> {:error, :not_found}
+      {:ok, %{status: 200}} -> {:error, :unexpected_response}
+      other -> error(other)
+    end
+  end
+
+  # Logs in, then runs `fun` with a Req carrying the SID cookie + base_url.
+  defp action(fun) do
+    config = config()
+
+    with {:ok, sid} <- login(config) do
+      config
+      |> base()
+      |> Keyword.put(:headers, [{"cookie", "SID=#{sid}"}])
+      |> Req.new()
+      |> fun.()
+    end
+  end
+
+  defp login(config) do
+    resp =
+      config
+      |> base()
+      |> Keyword.put(:headers, [{"referer", Keyword.get(config, :base_url, @default_base_url)}])
+      |> Req.new()
+      |> Req.post(
+        url: "/api/v2/auth/login",
+        form: [username: Keyword.get(config, :username), password: Keyword.get(config, :password)]
+      )
+
+    case resp do
+      {:ok, %{status: 200} = response} ->
+        case sid_from(response) do
+          nil -> {:error, :login_failed}
+          sid -> {:ok, sid}
+        end
+
+      other ->
+        error(other)
+    end
+  end
+
+  defp sid_from(response) do
+    response
+    |> Req.Response.get_header("set-cookie")
+    |> Enum.find_value(fn cookie ->
+      case Regex.run(~r/SID=([^;]+)/, cookie) do
+        [_, sid] -> sid
+        _ -> nil
+      end
+    end)
+  end
+
+  defp btih("magnet:" <> _ = magnet) do
+    case Regex.run(~r/xt=urn:btih:([a-fA-F0-9]{40})/, magnet) do
+      [_, hash] -> {:ok, String.downcase(hash)}
+      _ -> :error
+    end
+  end
+
+  defp normalize(torrent) do
+    progress = torrent["progress"] || 0.0
+    %{state: classify(torrent["state"], progress), progress: progress}
+  end
+
+  defp classify(state, _progress) when state in @errored, do: :error
+  defp classify(state, progress) when state in @completed or progress >= 1.0, do: :completed
+  # Catch-all so unlisted/future qBit states (forcedMetaDL, unknownState, …) are safe.
+  defp classify(_state, _progress), do: :downloading
+
+  defp base(config) do
+    [base_url: Keyword.get(config, :base_url, @default_base_url)]
+    |> Keyword.merge(Keyword.get(config, :req_options, []))
+  end
+
+  defp config, do: Application.get_env(:cinder, __MODULE__, [])
+
+  defp error({:ok, %{status: status}}), do: {:error, {:qbittorrent_status, status}}
+  defp error({:error, reason}), do: {:error, reason}
+end
