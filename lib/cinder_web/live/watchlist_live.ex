@@ -32,7 +32,7 @@ defmodule CinderWeb.WatchlistLive do
   end
 
   def handle_event("add", %{"tmdb_id" => tmdb_id}, socket) when is_binary(tmdb_id) do
-    # phx-value is client-controlled; tolerate anything non-numeric.
+    # phx-value is client-controlled; tolerate non-numeric input.
     with {id, ""} <- Integer.parse(tmdb_id),
          movie when not is_nil(movie) <- Enum.find(socket.assigns.results, &(&1.tmdb_id == id)) do
       {:noreply, add(socket, movie)}
@@ -40,6 +40,10 @@ defmodule CinderWeb.WatchlistLive do
       _ -> {:noreply, socket}
     end
   end
+
+  # The event payload is client-controlled; ignore any malformed/forged frame
+  # rather than crashing the LiveView on an unmatched clause.
+  def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   defp add(socket, movie) do
     case Catalog.add_to_watchlist(movie) do

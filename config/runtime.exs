@@ -20,7 +20,8 @@ if System.get_env("PHX_SERVER") do
   config :cinder, CinderWeb.Endpoint, server: true
 end
 
-# Real TMDB client credentials (dev + prod). Tests use a Mox mock, so this is unset there.
+# Real TMDB client bearer token, read in every environment. Normally unset in
+# test/CI; the suite stubs Req regardless, so it has no effect there.
 if token = System.get_env("TMDB_API_TOKEN") do
   config :cinder, Cinder.Catalog.TMDB.HTTP, token: token
 end

@@ -73,4 +73,11 @@ defmodule CinderWeb.WatchlistLiveTest do
     assert render_hook(lv, "add", %{"tmdb_id" => "not-a-number"}) =~ "search-form"
     assert Catalog.list_watchlist() == []
   end
+
+  test "a malformed (non-binary) add payload is ignored, not a crash", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/")
+
+    assert render_hook(lv, "add", %{"tmdb_id" => ["x"]}) =~ "search-form"
+    assert Catalog.list_watchlist() == []
+  end
 end

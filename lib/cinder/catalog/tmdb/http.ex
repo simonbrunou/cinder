@@ -27,7 +27,8 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   @impl true
   def get_movie(tmdb_id) do
     case request(url: "/3/movie/#{tmdb_id}") do
-      {:ok, %{status: 200, body: body}} -> {:ok, normalize(body)}
+      {:ok, %{status: 200, body: %{"id" => _} = body}} -> {:ok, normalize(body)}
+      {:ok, %{status: 200}} -> {:error, :unexpected_response}
       other -> error(other)
     end
   end
