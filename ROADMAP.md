@@ -26,7 +26,7 @@ multi-user are deliberately out of scope until the slice is solid (see *Parked*,
   real service.
 - HTTP via `Req`. DB via Ecto + `ecto_sqlite3` (single-household scale; swap to Postgres
   later if multi-process write contention ever becomes real).
-- License: PolyForm Noncommercial 1.0.0, consistent with your other personal apps.
+- License: GPL-3.0 (see `LICENSE`).
 
 ---
 
@@ -41,7 +41,7 @@ later phase runs, so finish Phase 0 before touching Phase 1.
 - Add dev deps: `credo`, `mox`. Add a `test` alias in `mix.exs` that runs
   `compile --warnings-as-errors`, `format --check-formatted`, `credo --strict`, `test`.
   This alias is the source of truth every "Done when" block checks against.
-- `LICENSE.md` (PolyForm Noncommercial 1.0.0).
+- `LICENSE` (GPL-3.0).
 
 **2. Install the `claude` hex library (one-shot tooling base).**
 ```
