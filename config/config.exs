@@ -11,6 +11,10 @@ config :cinder,
   ecto_repos: [Cinder.Repo],
   generators: [timestamp_type: :utc_datetime]
 
+# External services resolve through behaviours; the concrete impl is config-selected.
+# Tests override these with Mox mocks (see config/test.exs).
+config :cinder, tmdb: Cinder.Catalog.TMDB.HTTP
+
 # Configure the endpoint
 config :cinder, CinderWeb.Endpoint,
   url: [host: "localhost"],
