@@ -13,8 +13,11 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   @impl true
   def search(query) do
     case request(url: "/3/search/movie", params: [query: query]) do
-      {:ok, %{status: 200, body: %{"results" => results}}} ->
+      {:ok, %{status: 200, body: %{"results" => results}}} when is_list(results) ->
         {:ok, Enum.map(results, &normalize/1)}
+
+      {:ok, %{status: 200}} ->
+        {:error, :unexpected_response}
 
       other ->
         error(other)

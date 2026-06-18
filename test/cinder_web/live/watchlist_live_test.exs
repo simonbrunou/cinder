@@ -55,14 +55,22 @@ defmodule CinderWeb.WatchlistLiveTest do
     assert length(Catalog.list_watchlist()) == 1
   end
 
-  test "a TMDB error flashes without crashing the LiveView", %{conn: conn} do
+  test "a TMDB error flashes without crashing, and doesn't claim 'No matches'", %{conn: conn} do
     stub(Cinder.Catalog.TMDBMock, :search, fn _ -> {:error, :timeout} end)
     {:ok, lv, _html} = live(conn, ~p"/")
 
     html = lv |> form("#search-form", %{"query" => "boom"}) |> render_change()
 
     assert html =~ "TMDB search failed"
+    refute html =~ "No matches"
     # Still alive and responsive.
     assert render(lv) =~ "search-form"
+  end
+
+  test "an add event with a non-numeric tmdb_id is ignored, not a crash", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/")
+
+    assert render_hook(lv, "add", %{"tmdb_id" => "not-a-number"}) =~ "search-form"
+    assert Catalog.list_watchlist() == []
   end
 end

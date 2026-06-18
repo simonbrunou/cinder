@@ -37,6 +37,14 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
     assert {:error, _} = HTTP.search("inception")
   end
 
+  test "search/1 returns an error (not a raise) on a 200 lacking a results list" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      Req.Test.json(conn, %{"success" => false, "status_message" => "bad"})
+    end)
+
+    assert {:error, :unexpected_response} = HTTP.search("inception")
+  end
+
   test "get_movie/1 normalizes a single (unwrapped) movie body" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       assert conn.request_path == "/3/movie/27205"

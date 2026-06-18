@@ -12,7 +12,7 @@ defmodule CinderWeb.WatchlistLive do
   def mount(_params, _session, socket) do
     {:ok,
      socket
-     |> assign(query: "", results: [])
+     |> assign(query: "", results: [], search_error: false)
      |> assign(watchlist: Catalog.list_watchlist())}
   end
 
@@ -20,22 +20,24 @@ defmodule CinderWeb.WatchlistLive do
   def handle_event("search", %{"query" => query}, socket) do
     case Catalog.search_movies(query) do
       {:ok, results} ->
-        {:noreply, assign(socket, query: query, results: results)}
+        {:noreply, assign(socket, query: query, results: results, search_error: false)}
 
       {:error, _reason} ->
+        # Keep prior results; flag the error so we don't also claim "No matches".
         {:noreply,
          socket
-         |> assign(query: query)
+         |> assign(query: query, search_error: true)
          |> put_flash(:error, "TMDB search failed. Try again.")}
     end
   end
 
-  def handle_event("add", %{"tmdb_id" => tmdb_id}, socket) do
-    id = String.to_integer(tmdb_id)
-
-    case Enum.find(socket.assigns.results, &(&1.tmdb_id == id)) do
-      nil -> {:noreply, socket}
-      movie -> {:noreply, add(socket, movie)}
+  def handle_event("add", %{"tmdb_id" => tmdb_id}, socket) when is_binary(tmdb_id) do
+    # phx-value is client-controlled; tolerate anything non-numeric.
+    with {id, ""} <- Integer.parse(tmdb_id),
+         movie when not is_nil(movie) <- Enum.find(socket.assigns.results, &(&1.tmdb_id == id)) do
+      {:noreply, add(socket, movie)}
+    else
+      _ -> {:noreply, socket}
     end
   end
 
@@ -88,7 +90,12 @@ defmodule CinderWeb.WatchlistLive do
         </div>
       </section>
 
-      <p :if={@query != "" and @results == []} class="mb-10 text-base-content/60">No matches.</p>
+      <p
+        :if={@query != "" and @results == [] and not @search_error}
+        class="mb-10 text-base-content/60"
+      >
+        No matches.
+      </p>
 
       <h2 class="pb-4 text-lg font-semibold leading-8">Watchlist</h2>
       <p :if={@watchlist == []} class="text-base-content/60">Your watchlist is empty.</p>
