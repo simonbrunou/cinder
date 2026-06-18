@@ -16,9 +16,10 @@ defmodule CinderWeb.WatchlistLiveTest do
     stub(Cinder.Catalog.TMDBMock, :search, fn _query -> {:ok, results} end)
   end
 
-  test "first load shows an empty-watchlist state", %{conn: conn} do
-    {:ok, _lv, html} = live(conn, ~p"/")
+  test "first load shows an empty-watchlist state with an accessible search field", %{conn: conn} do
+    {:ok, lv, html} = live(conn, ~p"/")
     assert html =~ "watchlist is empty"
+    assert has_element?(lv, "input#query[aria-label='Search movies']")
   end
 
   test "typing a query renders TMDB results", %{conn: conn} do

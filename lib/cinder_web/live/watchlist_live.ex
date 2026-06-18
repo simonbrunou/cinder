@@ -61,31 +61,36 @@ defmodule CinderWeb.WatchlistLive do
       <form id="search-form" phx-change="search" phx-submit="search" class="mb-8">
         <input
           type="text"
+          id="query"
           name="query"
           value={@query}
           phx-debounce="300"
           autocomplete="off"
+          aria-label="Search movies"
           placeholder="Search movies…"
           class="input w-full"
         />
       </form>
 
-      <div :if={@results != []} id="results" class="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-10">
-        <.movie_card :for={m <- @results} movie={m}>
-          <button
-            id={"add-#{m.tmdb_id}"}
-            phx-click="add"
-            phx-value-tmdb_id={m.tmdb_id}
-            class="btn btn-primary btn-sm w-full"
-          >
-            Add
-          </button>
-        </.movie_card>
-      </div>
+      <section :if={@results != []} class="mb-10">
+        <h2 class="sr-only">Search results</h2>
+        <div id="results" class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+          <.movie_card :for={m <- @results} movie={m}>
+            <button
+              id={"add-#{m.tmdb_id}"}
+              phx-click="add"
+              phx-value-tmdb_id={m.tmdb_id}
+              class="btn btn-primary btn-sm w-full"
+            >
+              Add
+            </button>
+          </.movie_card>
+        </div>
+      </section>
 
       <p :if={@query != "" and @results == []} class="mb-10 text-base-content/60">No matches.</p>
 
-      <.header>Watchlist</.header>
+      <h2 class="pb-4 text-lg font-semibold leading-8">Watchlist</h2>
       <p :if={@watchlist == []} class="text-base-content/60">Your watchlist is empty.</p>
       <div id="watchlist" class="grid grid-cols-2 sm:grid-cols-3 gap-4">
         <.movie_card :for={m <- @watchlist} movie={m}>

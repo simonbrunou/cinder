@@ -36,4 +36,20 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
 
     assert {:error, _} = HTTP.search("inception")
   end
+
+  test "get_movie/1 normalizes a single (unwrapped) movie body" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      assert conn.request_path == "/3/movie/27205"
+
+      Req.Test.json(conn, %{
+        "id" => 27_205,
+        "title" => "Inception",
+        "release_date" => "2010-07-16",
+        "poster_path" => "/p.jpg"
+      })
+    end)
+
+    assert {:ok, %{tmdb_id: 27_205, title: "Inception", year: 2010, poster_path: "/p.jpg"}} =
+             HTTP.get_movie(27_205)
+  end
 end
