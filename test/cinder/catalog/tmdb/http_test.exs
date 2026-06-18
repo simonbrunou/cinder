@@ -24,8 +24,14 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
     assert {:ok, results} = HTTP.search("inception")
 
     assert results == [
-             %{tmdb_id: 27_205, title: "Inception", year: 2010, poster_path: "/p.jpg"},
-             %{tmdb_id: 1, title: "Obscure", year: nil, poster_path: nil}
+             %{
+               tmdb_id: 27_205,
+               title: "Inception",
+               year: 2010,
+               poster_path: "/p.jpg",
+               imdb_id: nil
+             },
+             %{tmdb_id: 1, title: "Obscure", year: nil, poster_path: nil, imdb_id: nil}
            ]
   end
 
@@ -61,11 +67,18 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
         "id" => 27_205,
         "title" => "Inception",
         "release_date" => "2010-07-16",
-        "poster_path" => "/p.jpg"
+        "poster_path" => "/p.jpg",
+        "imdb_id" => "tt1375666"
       })
     end)
 
-    assert {:ok, %{tmdb_id: 27_205, title: "Inception", year: 2010, poster_path: "/p.jpg"}} =
-             HTTP.get_movie(27_205)
+    assert {:ok,
+            %{
+              tmdb_id: 27_205,
+              title: "Inception",
+              year: 2010,
+              poster_path: "/p.jpg",
+              imdb_id: "tt1375666"
+            }} = HTTP.get_movie(27_205)
   end
 end
