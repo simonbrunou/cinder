@@ -10,6 +10,10 @@ defmodule CinderWeb.WatchlistLive do
 
   @impl true
   def mount(_params, _session, socket) do
+    # ponytail: subscribe-before-read closes the read/subscribe gap; full
+    # reconciliation is Phase 5's dashboard concern.
+    if connected?(socket), do: Catalog.subscribe()
+
     {:ok,
      socket
      |> assign(query: "", results: [], search_error: false)
@@ -44,6 +48,16 @@ defmodule CinderWeb.WatchlistLive do
   # The event payload is client-controlled; ignore any malformed/forged frame
   # rather than crashing the LiveView on an unmatched clause.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  @impl true
+  def handle_info({:movie_updated, movie}, socket) do
+    watchlist =
+      Enum.map(socket.assigns.watchlist, fn m ->
+        if m.id == movie.id, do: movie, else: m
+      end)
+
+    {:noreply, assign(socket, watchlist: watchlist)}
+  end
 
   defp add(socket, movie) do
     case Catalog.add_to_watchlist(movie) do
