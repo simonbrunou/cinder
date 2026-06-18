@@ -46,3 +46,7 @@ config :cinder,
 
 # The real TMDB client's own test routes Req through a Req.Test stub (no network).
 config :cinder, Cinder.Catalog.TMDB.HTTP, req_options: [plug: {Req.Test, Cinder.TMDBStub}]
+
+config :cinder, Cinder.Acquisition.Indexer.Prowlarr,
+  req_options: [plug: {Req.Test, Cinder.ProwlarrStub}, retry: false],
+  api_key: "test-key"

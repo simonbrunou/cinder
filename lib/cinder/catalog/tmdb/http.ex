@@ -4,7 +4,8 @@ defmodule Cinder.Catalog.TMDB.HTTP do
 
   Reads `base_url`, `token` (v4 bearer) and optional `req_options` from
   `config :cinder, #{inspect(__MODULE__)}` at runtime. Returns normalized movie maps
-  (`%{tmdb_id, title, year, poster_path}`); `imdb_id` enrichment arrives in Phase 2.
+  (`%{tmdb_id, title, year, poster_path, imdb_id}`); search results carry `imdb_id: nil`
+  (only the details endpoint returns it).
   """
   @behaviour Cinder.Catalog.TMDB
 
@@ -55,7 +56,8 @@ defmodule Cinder.Catalog.TMDB.HTTP do
       tmdb_id: movie["id"],
       title: movie["title"],
       year: year_from(movie["release_date"]),
-      poster_path: movie["poster_path"]
+      poster_path: movie["poster_path"],
+      imdb_id: movie["imdb_id"]
     }
   end
 
