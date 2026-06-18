@@ -30,7 +30,8 @@ defmodule Cinder.Acquisition.Parser do
 
   @doc """
   Parses `name` into `%{resolution, codec, group, language}`. Each value is `nil`
-  when no known token matches.
+  when no known token matches. A non-binary `name` (e.g. an indexer result with a
+  missing title) yields all-`nil` rather than raising, keeping the parser total.
   """
   def parse(name) when is_binary(name) do
     %{
@@ -40,6 +41,8 @@ defmodule Cinder.Acquisition.Parser do
       language: first_match(name, @languages)
     }
   end
+
+  def parse(_name), do: %{resolution: nil, codec: nil, group: nil, language: nil}
 
   defp resolution(name) do
     down = String.downcase(name)

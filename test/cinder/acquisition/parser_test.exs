@@ -37,4 +37,10 @@ defmodule Cinder.Acquisition.ParserTest do
     assert %{codec: "x265", resolution: "1080p", group: "grp"} =
              Parser.parse("movie.2020.1080P.bluray.X265-grp")
   end
+
+  test "a non-string title yields all-nil attrs instead of raising" do
+    # An indexer result with a missing/null title must not crash best_release/2;
+    # the parser stays total so the {:ok | :no_match | {:error, _}} contract holds.
+    assert Parser.parse(nil) == %{resolution: nil, codec: nil, group: nil, language: nil}
+  end
 end
