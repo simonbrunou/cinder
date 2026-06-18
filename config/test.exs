@@ -50,3 +50,7 @@ config :cinder, Cinder.Catalog.TMDB.HTTP, req_options: [plug: {Req.Test, Cinder.
 config :cinder, Cinder.Acquisition.Indexer.Prowlarr,
   req_options: [plug: {Req.Test, Cinder.ProwlarrStub}, retry: false],
   api_key: "test-key"
+
+# The app-level poller must not run during the suite (it would race Mox/Sandbox).
+# Poller tests start their own supervised instance.
+config :cinder, start_poller: false
