@@ -17,7 +17,7 @@ defmodule CinderWeb.Router do
   scope "/", CinderWeb do
     pipe_through :browser
 
-    get "/", PageController, :home
+    live "/", WatchlistLive
   end
 
   # Other scopes may use custom stacks.
