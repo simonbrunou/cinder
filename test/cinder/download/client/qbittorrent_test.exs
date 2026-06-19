@@ -35,9 +35,47 @@ defmodule Cinder.Download.Client.QBittorrentTest do
              QBittorrent.add(%{download_url: magnet})
   end
 
-  test "add/1 rejects a non-magnet download_url without calling qBittorrent" do
+  defp stub_torrent_flow(torrent_bytes) do
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      case {conn.host, conn.request_path} do
+        {"tracker.test", _} ->
+          Req.Test.text(conn, torrent_bytes)
+
+        {_, "/api/v2/auth/login"} ->
+          conn
+          |> Plug.Conn.put_resp_header("set-cookie", "SID=testsid; path=/")
+          |> Req.Test.text("Ok.")
+
+        {_, "/api/v2/torrents/add"} ->
+          Req.Test.text(conn, "Ok.")
+      end
+    end)
+  end
+
+  test "add/1 rejects an unsupported download_url scheme without calling qBittorrent" do
     assert {:error, :unsupported_download_url} =
-             QBittorrent.add(%{download_url: "http://prowlarr/file/1.torrent"})
+             QBittorrent.add(%{download_url: "udp://tracker.test/announce"})
+
+    assert {:error, :unsupported_download_url} =
+             QBittorrent.add(%{download_url: nil})
+  end
+
+  test "add/1 fetches a .torrent URL, computes its infohash, and uploads it" do
+    infoval = "d6:lengthi5e4:name5:M.mkv12:piece lengthi16384ee"
+    torrent_bytes = "d8:announce11:http://x/an4:info" <> infoval <> "e"
+    expected = :crypto.hash(:sha, infoval) |> Base.encode16(case: :lower)
+
+    stub_torrent_flow(torrent_bytes)
+
+    assert {:ok, ^expected} =
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/123.torrent"})
+  end
+
+  test "add/1 returns :bad_torrent when the URL returns a non-torrent body" do
+    stub_torrent_flow("<html>nope</html>")
+
+    assert {:error, :bad_torrent} =
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/x"})
   end
 
   test "status/1 normalizes a completed torrent" do
