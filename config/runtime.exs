@@ -57,6 +57,8 @@ end
 # suite stubs Req regardless, so it has no effect there. Plex has no refresh-all
 # endpoint, so PLEX_SECTION is the numeric id of the movie library.
 if url = System.get_env("PLEX_URL") do
+  config :cinder, media_server: Cinder.Library.MediaServer.Plex
+
   config :cinder, Cinder.Library.MediaServer.Plex,
     url: url,
     token: System.get_env("PLEX_TOKEN"),
