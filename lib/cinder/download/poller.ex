@@ -73,7 +73,7 @@ defmodule Cinder.Download.Poller do
         # :downloading (not :completed), so this is anomalous — bound it so it
         # can't sit at :downloading and re-poll forever (normally the path
         # appears within a tick or two and the clause above fires).
-        retry_or_fail(movie, :no_content_path)
+        retry_or_fail(movie, :no_content_path, :import_attempts, :import_failed)
 
       # Still downloading, stalled, in transit, or a client error: leave it and
       # retry next tick (a slow download must not count toward the bound).
@@ -100,25 +100,29 @@ defmodule Cinder.Download.Poller do
         Catalog.transition(movie, %{status: :import_failed})
 
       {:error, reason} ->
-        retry_or_fail(movie, reason)
+        retry_or_fail(movie, reason, :import_attempts, :import_failed)
     end
   end
 
   # Bounded retry: keep the movie where it is and try again next tick, but after
-  # @max_attempts park it at :import_failed so a persistent failure surfaces a
+  # @max_attempts park it at `terminal_status` so a persistent failure surfaces a
   # terminal state instead of looping (and re-logging) forever.
-  defp retry_or_fail(movie, reason) do
-    attempts = (movie.import_attempts || 0) + 1
+  defp retry_or_fail(movie, reason, attempts_field, terminal_status) do
+    attempts = (Map.get(movie, attempts_field) || 0) + 1
 
     if attempts >= @max_attempts do
-      Logger.warning("movie #{movie.id} failed after #{attempts} attempts: #{inspect(reason)}")
-      Catalog.transition(movie, %{status: :import_failed})
-    else
-      Logger.info(
-        "movie #{movie.id} attempt #{attempts}/#{@max_attempts} failed (#{inspect(reason)}); will retry"
+      Logger.warning(
+        "movie #{movie.id} #{attempts_field} exhausted after #{attempts}: #{inspect(reason)}"
       )
 
-      Catalog.transition(movie, %{status: movie.status, import_attempts: attempts})
+      Catalog.transition(movie, %{status: terminal_status})
+    else
+      Logger.info(
+        "movie #{movie.id} #{attempts_field} #{attempts}/#{@max_attempts} failed (#{inspect(reason)}); will retry"
+      )
+
+      # Dynamic key MUST come before keyword pairs in a map literal.
+      Catalog.transition(movie, %{attempts_field => attempts, status: movie.status})
     end
   end
 
