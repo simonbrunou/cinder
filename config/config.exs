@@ -15,6 +15,8 @@ config :cinder,
 # Tests override these with Mox mocks (see config/test.exs).
 config :cinder, tmdb: Cinder.Catalog.TMDB.HTTP
 config :cinder, indexer: Cinder.Acquisition.Indexer.Prowlarr
+config :cinder, download_client: Cinder.Download.Client.QBittorrent
+config :cinder, Cinder.Download.Poller, interval: 5_000
 
 # Configure the endpoint
 config :cinder, CinderWeb.Endpoint,

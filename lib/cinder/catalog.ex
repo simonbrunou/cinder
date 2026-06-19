@@ -10,6 +10,8 @@ defmodule Cinder.Catalog do
   alias Cinder.Catalog.Movie
   alias Cinder.Repo
 
+  @topic "movies"
+
   @doc """
   Searches TMDB for `query`. A blank/whitespace query short-circuits to `{:ok, []}`
   with no API call.
@@ -40,5 +42,29 @@ defmodule Cinder.Catalog do
   @doc "Lists watchlisted movies, newest first."
   def list_watchlist do
     Repo.all(from m in Movie, order_by: [desc: m.id])
+  end
+
+  @doc "Subscribes the caller to movie state-change broadcasts (`{:movie_updated, movie}`)."
+  def subscribe, do: Phoenix.PubSub.subscribe(Cinder.PubSub, @topic)
+
+  @doc "Fetches full movie details from TMDB (the details endpoint carries `imdb_id`)."
+  def get_movie(tmdb_id), do: tmdb().get_movie(tmdb_id)
+
+  @doc "Lists movies in a given pipeline `status`."
+  def list_by_status(status) do
+    Repo.all(from m in Movie, where: m.status == ^status)
+  end
+
+  @doc """
+  Applies a pipeline state transition and, on success, broadcasts
+  `{:movie_updated, movie}` on the `"movies"` topic. This is the single
+  choke-point for state changes — every transition broadcasts exactly once.
+  `attrs` must set `:status`; it may also set `:download_id` and `:imdb_id`.
+  """
+  def transition(%Movie{} = movie, attrs) do
+    with {:ok, updated} <- movie |> Movie.transition_changeset(attrs) |> Repo.update() do
+      Phoenix.PubSub.broadcast(Cinder.PubSub, @topic, {:movie_updated, updated})
+      {:ok, updated}
+    end
   end
 end

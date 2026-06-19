@@ -80,4 +80,15 @@ defmodule CinderWeb.WatchlistLiveTest do
     assert render_hook(lv, "add", %{"tmdb_id" => ["x"]}) =~ "search-form"
     assert Catalog.list_watchlist() == []
   end
+
+  test "a movie's status change updates its badge live", %{conn: conn} do
+    {:ok, movie} = Catalog.add_to_watchlist(@inception)
+    {:ok, lv, _html} = live(conn, ~p"/")
+    assert has_element?(lv, "#watchlist", "requested")
+
+    {:ok, _} = Catalog.transition(movie, %{status: :downloading, download_id: "h"})
+
+    assert render(lv) =~ "downloading"
+    refute has_element?(lv, "#watchlist .badge", "requested")
+  end
 end

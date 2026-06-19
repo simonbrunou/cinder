@@ -50,3 +50,13 @@ config :cinder, Cinder.Catalog.TMDB.HTTP, req_options: [plug: {Req.Test, Cinder.
 config :cinder, Cinder.Acquisition.Indexer.Prowlarr,
   req_options: [plug: {Req.Test, Cinder.ProwlarrStub}, retry: false],
   api_key: "test-key"
+
+config :cinder, Cinder.Download.Client.QBittorrent,
+  base_url: "http://localhost:8080",
+  username: "test",
+  password: "test",
+  req_options: [plug: {Req.Test, Cinder.QBittorrentStub}, retry: false]
+
+# The app-level poller must not run during the suite (it would race Mox/Sandbox).
+# Poller tests start their own supervised instance.
+config :cinder, start_poller: false

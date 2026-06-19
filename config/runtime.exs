@@ -26,6 +26,15 @@ if token = System.get_env("TMDB_API_TOKEN") do
   config :cinder, Cinder.Catalog.TMDB.HTTP, token: token
 end
 
+# Real qBittorrent connection, read in every environment. Unset in test/CI, where
+# the suite stubs Req regardless, so it has no effect there.
+if base_url = System.get_env("QBITTORRENT_URL") do
+  config :cinder, Cinder.Download.Client.QBittorrent,
+    base_url: base_url,
+    username: System.get_env("QBITTORRENT_USERNAME"),
+    password: System.get_env("QBITTORRENT_PASSWORD")
+end
+
 config :cinder, CinderWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
