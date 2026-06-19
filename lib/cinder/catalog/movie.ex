@@ -3,14 +3,23 @@ defmodule Cinder.Catalog.Movie do
   A watchlisted movie.
 
   Created `:requested`; the download pipeline advances `status`
-  (`:searching → :downloading → :downloaded → :available`), or parks it at
-  `:no_match` when no release survives the scorer.
+  (`:searching → :downloading → :downloaded → :available`), parks it at
+  `:no_match` when no release survives the scorer, or `:import_failed` when a
+  completed download has no usable file to import.
   """
   use Ecto.Schema
 
   import Ecto.Changeset
 
-  @statuses [:requested, :searching, :downloading, :downloaded, :available, :no_match]
+  @statuses [
+    :requested,
+    :searching,
+    :downloading,
+    :downloaded,
+    :available,
+    :no_match,
+    :import_failed
+  ]
 
   schema "movies" do
     field :tmdb_id, :integer
@@ -20,6 +29,8 @@ defmodule Cinder.Catalog.Movie do
     field :poster_path, :string
     field :status, Ecto.Enum, values: @statuses, default: :requested
     field :download_id, :string
+    field :file_path, :string
+    field :import_attempts, :integer, default: 0
 
     timestamps(type: :utc_datetime)
   end
@@ -35,7 +46,7 @@ defmodule Cinder.Catalog.Movie do
   @doc "Changeset for pipeline state transitions (status + optional download_id/imdb_id)."
   def transition_changeset(movie, attrs) do
     movie
-    |> cast(attrs, [:status, :download_id, :imdb_id])
+    |> cast(attrs, [:status, :download_id, :imdb_id, :file_path, :import_attempts])
     |> validate_required([:status])
   end
 end

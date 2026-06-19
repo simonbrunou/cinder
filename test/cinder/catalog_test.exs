@@ -58,6 +58,18 @@ defmodule Cinder.CatalogTest do
       assert %{status: ["is invalid"]} = errors_on(changeset)
     end
 
+    test "transition/2 persists file_path" do
+      {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 9001, title: "Heat"})
+
+      assert {:ok, %Movie{file_path: "/downloads/Heat.1995.mkv"}} =
+               Catalog.transition(movie, %{
+                 status: :downloaded,
+                 file_path: "/downloads/Heat.1995.mkv"
+               })
+
+      assert %Movie{file_path: "/downloads/Heat.1995.mkv"} = Repo.get!(Movie, movie.id)
+    end
+
     test "list_by_status/1 returns only movies in that status" do
       {:ok, _a} = Catalog.add_to_watchlist(%{tmdb_id: 4, title: "A"})
       {:ok, b} = Catalog.add_to_watchlist(%{tmdb_id: 5, title: "B"})

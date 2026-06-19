@@ -16,6 +16,8 @@ config :cinder,
 config :cinder, tmdb: Cinder.Catalog.TMDB.HTTP
 config :cinder, indexer: Cinder.Acquisition.Indexer.Prowlarr
 config :cinder, download_client: Cinder.Download.Client.QBittorrent
+config :cinder, filesystem: Cinder.Library.Filesystem.Disk
+config :cinder, media_server: Cinder.Library.MediaServer.Jellyfin
 config :cinder, Cinder.Download.Poller, interval: 5_000
 
 # Configure the endpoint

@@ -70,4 +70,27 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     magnet = "magnet:?xt=urn:btih:#{@hash}"
     assert {:error, :login_failed} = QBittorrent.add(%{download_url: magnet})
   end
+
+  test "status/1 carries the content_path from the torrent info" do
+    stub_qbit(fn conn ->
+      Req.Test.json(conn, [
+        %{
+          "state" => "uploading",
+          "progress" => 1.0,
+          "content_path" => "/downloads/Movie/Movie.mkv"
+        }
+      ])
+    end)
+
+    assert {:ok, %{state: :completed, content_path: "/downloads/Movie/Movie.mkv"}} =
+             QBittorrent.status("abc123")
+  end
+
+  test "status/1 classifies a relocating (moving) torrent as still downloading" do
+    stub_qbit(fn conn ->
+      Req.Test.json(conn, [%{"state" => "moving", "progress" => 1.0}])
+    end)
+
+    assert {:ok, %{state: :downloading}} = QBittorrent.status("abc123")
+  end
 end

@@ -15,8 +15,10 @@ defmodule Cinder.Download.Client.QBittorrent do
 
   @default_base_url "http://localhost:8080"
 
-  # qBit upload-phase / post-download states all mean "download finished".
-  @completed ~w(uploading stalledUP pausedUP forcedUP queuedUP checkingUP moving)
+  # qBit upload-phase / post-download states all mean "download finished, at rest".
+  @completed ~w(uploading stalledUP pausedUP forcedUP queuedUP checkingUP)
+  # Finished downloading but relocating the file — not at rest, path not yet final.
+  @in_transit ~w(moving)
   @errored ~w(error missingFiles)
 
   @impl true
@@ -103,10 +105,16 @@ defmodule Cinder.Download.Client.QBittorrent do
 
   defp normalize(torrent) do
     progress = torrent["progress"] || 0.0
-    %{state: classify(torrent["state"], progress), progress: progress}
+
+    %{
+      state: classify(torrent["state"], progress),
+      progress: progress,
+      content_path: torrent["content_path"]
+    }
   end
 
   defp classify(state, _progress) when state in @errored, do: :error
+  defp classify(state, _progress) when state in @in_transit, do: :downloading
   defp classify(state, progress) when state in @completed or progress >= 1.0, do: :completed
   # Catch-all so unlisted/future qBit states (forcedMetaDL, unknownState, …) are safe.
   defp classify(_state, _progress), do: :downloading
