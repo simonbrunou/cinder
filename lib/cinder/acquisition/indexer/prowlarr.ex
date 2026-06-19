@@ -32,7 +32,7 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   defp request(opts) do
     config = Application.get_env(:cinder, __MODULE__, [])
 
-    [base_url: Keyword.get(config, :base_url, @default_base_url)]
+    [base_url: Keyword.get(config, :base_url, @default_base_url), receive_timeout: 15_000]
     |> auth(Keyword.get(config, :api_key))
     |> Keyword.merge(opts)
     |> Keyword.merge(Keyword.get(config, :req_options, []))

@@ -96,9 +96,18 @@ defmodule Cinder.Download.Client.QBittorrent do
     end)
   end
 
+  # Match the magnet verbatim (don't upcase the whole string — that breaks the
+  # lowercase `xt=urn:btih:` literal); upcase only the captured base32 hash.
+  @hex_btih ~r/xt=urn:btih:([a-fA-F0-9]{40})(?:&|$)/
+  @b32_btih ~r/xt=urn:btih:([a-zA-Z2-7]{32})(?:&|$)/
+
   defp btih("magnet:" <> _ = magnet) do
-    case Regex.run(~r/xt=urn:btih:([a-fA-F0-9]{40})/, magnet) do
-      [_, hash] -> {:ok, String.downcase(hash)}
+    with nil <- Regex.run(@hex_btih, magnet),
+         [_, b32] <- Regex.run(@b32_btih, magnet),
+         {:ok, raw} <- Base.decode32(String.upcase(b32), padding: false) do
+      {:ok, Base.encode16(raw, case: :lower)}
+    else
+      [_, hex] -> {:ok, String.downcase(hex)}
       _ -> :error
     end
   end
@@ -120,7 +129,7 @@ defmodule Cinder.Download.Client.QBittorrent do
   defp classify(_state, _progress), do: :downloading
 
   defp base(config) do
-    [base_url: Keyword.get(config, :base_url, @default_base_url)]
+    [base_url: Keyword.get(config, :base_url, @default_base_url), receive_timeout: 15_000]
     |> Keyword.merge(Keyword.get(config, :req_options, []))
   end
 

@@ -93,4 +93,18 @@ defmodule Cinder.Download.Client.QBittorrentTest do
 
     assert {:ok, %{state: :downloading}} = QBittorrent.status("abc123")
   end
+
+  test "add/1 accepts a base32 magnet and returns its lowercase-hex infohash" do
+    raw = :crypto.hash(:sha, "phase5")
+    b32 = Base.encode32(raw, padding: false)
+    expected = Base.encode16(raw, case: :lower)
+
+    stub_qbit(fn conn ->
+      assert conn.request_path == "/api/v2/torrents/add"
+      Req.Test.text(conn, "Ok.")
+    end)
+
+    assert {:ok, ^expected} =
+             QBittorrent.add(%{download_url: "magnet:?xt=urn:btih:#{b32}&dn=x"})
+  end
 end
