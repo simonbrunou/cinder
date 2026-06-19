@@ -26,4 +26,19 @@ defmodule Cinder.Download.TorrentTest do
     # truncated
     assert {:error, :bad_torrent} = Torrent.infohash("d4:infod6:length")
   end
+
+  test "rejects a torrent whose info value is an integer" do
+    # "d4:infoi5ee" — info value is bencode integer i5e, not a dict
+    assert {:error, :bad_torrent} = Torrent.infohash("d4:infoi5ee")
+  end
+
+  test "rejects a torrent whose info value is a string" do
+    # "d4:info3:abce" — info value is bencode string "abc", not a dict
+    assert {:error, :bad_torrent} = Torrent.infohash("d4:info3:abce")
+  end
+
+  test "rejects a torrent whose info value is a list" do
+    # "d4:infol1:aee" — info value is bencode list, not a dict
+    assert {:error, :bad_torrent} = Torrent.infohash("d4:infol1:aee")
+  end
 end

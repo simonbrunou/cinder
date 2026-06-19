@@ -53,13 +53,17 @@ defmodule Cinder.Download.Client.QBittorrent do
          {:ok, %{status: 200, body: body}} <- upload_torrent(bytes) do
       if String.trim(to_string(body)) == "Fails.", do: {:error, :add_rejected}, else: {:ok, hash}
     else
-      {:error, :bad_torrent} = e -> e
       other -> error(other)
     end
   end
 
   defp fetch_torrent(url) do
-    case Req.get(url, receive_timeout: 15_000, decode_body: false, plug: fetch_plug()) do
+    case Req.get(url,
+           receive_timeout: 15_000,
+           decode_body: false,
+           retry: false,
+           plug: fetch_plug()
+         ) do
       {:ok, %{status: 200, body: bytes}} when is_binary(bytes) -> {:ok, bytes}
       {:ok, %{status: status}} -> {:error, {:torrent_fetch_status, status}}
       other -> error(other)

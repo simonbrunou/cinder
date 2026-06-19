@@ -132,6 +132,12 @@ defmodule Cinder.Download.Poller do
         # appears within a tick or two and the clause above fires).
         retry_or_fail(movie, :no_content_path, :import_attempts, :import_failed)
 
+      {:ok, %{state: :error}} ->
+        retry_or_fail(movie, :download_error, :import_attempts, :import_failed)
+
+      {:error, :not_found} ->
+        retry_or_fail(movie, :torrent_not_found, :import_attempts, :import_failed)
+
       # Still downloading, stalled, in transit, or a client error: leave it and
       # retry next tick (a slow download must not count toward the bound).
       _ ->

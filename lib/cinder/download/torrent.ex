@@ -34,16 +34,27 @@ defmodule Cinder.Download.Torrent do
 
   defp walk(bin, off) do
     case :binary.at(bin, off) do
-      ?e ->
-        :error
-
-      _ ->
-        {klen, kstart} = str_len(bin, off, 0)
-        key = binary_part(bin, kstart, klen)
-        vstart = kstart + klen
-        vend = skip(bin, vstart)
-        if key == "info", do: {:ok, {vstart, vend - vstart}}, else: walk(bin, vend)
+      ?e -> :error
+      _ -> walk_pair(bin, off)
     end
+  end
+
+  defp walk_pair(bin, off) do
+    {klen, kstart} = str_len(bin, off, 0)
+    key = binary_part(bin, kstart, klen)
+    vstart = kstart + klen
+    vend = skip(bin, vstart)
+
+    if key == "info",
+      do: info_value_span(bin, vstart, vend),
+      else: walk(bin, vend)
+  end
+
+  # The info value must be a bencoded dict; any other type is malformed.
+  defp info_value_span(bin, vstart, vend) do
+    if :binary.at(bin, vstart) == ?d,
+      do: {:ok, {vstart, vend - vstart}},
+      else: :error
   end
 
   # Offset just past the bencoded value starting at `off`.

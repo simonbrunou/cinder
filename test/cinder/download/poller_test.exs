@@ -341,4 +341,34 @@ defmodule Cinder.Download.PollerTest do
     assert :ok = Poller.poll()
     assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
   end
+
+  test "a qBittorrent :error state parks :import_failed after max attempts (not before)" do
+    movie = downloading_movie(18, "hash-18")
+    start_supervised!({Poller, interval: 60_000})
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-18" ->
+      {:ok, %{state: :error}}
+    end)
+
+    Enum.each(1..9, fn _ -> Poller.poll() end)
+    assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
+
+    assert :ok = Poller.poll()
+    assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
+  end
+
+  test "a torrent not found in qBittorrent parks :import_failed after max attempts (not before)" do
+    movie = downloading_movie(19, "hash-19")
+    start_supervised!({Poller, interval: 60_000})
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-19" ->
+      {:error, :not_found}
+    end)
+
+    Enum.each(1..9, fn _ -> Poller.poll() end)
+    assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
+
+    assert :ok = Poller.poll()
+    assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
+  end
 end
