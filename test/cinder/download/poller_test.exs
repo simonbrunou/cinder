@@ -95,4 +95,40 @@ defmodule Cinder.Download.PollerTest do
     assert :ok = Poller.poll(new_pid)
     assert %Movie{status: :downloaded} = Repo.get!(Movie, movie.id)
   end
+
+  defp downloaded_movie(tmdb_id, file_path) do
+    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: tmdb_id, title: "Inception", year: 2010})
+    {:ok, movie} = Catalog.transition(movie, %{status: :downloaded, file_path: file_path})
+    movie
+  end
+
+  # Doubles as the import-pass crash-recovery proof: a movie already stranded at
+  # :downloaded (crash after download, before import) is imported on a later poll.
+  test "imports a :downloaded movie into the library and marks it :available" do
+    movie = downloaded_movie(10, "/downloads/Inception.2010.1080p.mkv")
+    Catalog.subscribe()
+    start_supervised!({Poller, interval: 60_000})
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
+    stub(Cinder.Library.MediaServerMock, :scan, fn -> :ok end)
+
+    assert :ok = Poller.poll()
+    assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
+    assert_receive {:movie_updated, %Movie{status: :available}}
+  end
+
+  test "a failed import leaves the movie :downloaded for retry" do
+    movie = downloaded_movie(11, "/downloads/Inception.2010.1080p.mkv")
+    start_supervised!({Poller, interval: 60_000})
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
+    stub(Cinder.Library.MediaServerMock, :scan, fn -> {:error, :jellyfin_down} end)
+
+    assert :ok = Poller.poll()
+    assert %Movie{status: :downloaded} = Repo.get!(Movie, movie.id)
+  end
 end

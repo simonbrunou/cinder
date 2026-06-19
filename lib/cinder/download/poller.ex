@@ -8,7 +8,10 @@ defmodule Cinder.Download.Poller do
   """
   use GenServer
 
+  require Logger
+
   alias Cinder.Catalog
+  alias Cinder.Library
 
   @default_interval 5_000
 
@@ -45,15 +48,49 @@ defmodule Cinder.Download.Poller do
   end
 
   defp do_poll do
-    for movie <- Catalog.list_by_status(:downloading) do
-      case client().status(movie.download_id) do
-        {:ok, %{state: :completed}} -> Catalog.transition(movie, %{status: :downloaded})
-        # Anything else (still downloading, stalled, error): leave it, retry next tick.
-        _ -> :ok
-      end
-    end
-
+    advance_downloading()
+    import_downloaded()
     :ok
+  end
+
+  defp advance_downloading do
+    for movie <- Catalog.list_by_status(:downloading), do: isolate(movie, &advance/1)
+  end
+
+  defp import_downloaded do
+    for movie <- Catalog.list_by_status(:downloaded), do: isolate(movie, &import_one/1)
+  end
+
+  defp advance(movie) do
+    case client().status(movie.download_id) do
+      {:ok, %{state: :completed} = status} ->
+        Catalog.transition(movie, %{
+          status: :downloaded,
+          file_path: Map.get(status, :content_path)
+        })
+
+      # Still downloading / stalled / in transit / error: leave it, retry next tick.
+      _ ->
+        :ok
+    end
+  end
+
+  defp import_one(movie) do
+    case Library.import_movie(movie) do
+      {:ok, _dest} ->
+        Catalog.transition(movie, %{status: :available})
+
+      {:error, reason} ->
+        Logger.warning("import failed for movie #{movie.id}: #{inspect(reason)}")
+    end
+  end
+
+  # Per-movie isolation: an unexpected raise skips that one movie (leaving it at
+  # its current status for retry) instead of crashing the tick for the rest.
+  defp isolate(movie, fun) do
+    fun.(movie)
+  rescue
+    e -> Logger.error("poller skipped movie #{movie.id}: #{Exception.message(e)}")
   end
 
   defp schedule(interval), do: Process.send_after(self(), :poll, interval)
