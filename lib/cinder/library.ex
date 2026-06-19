@@ -53,15 +53,18 @@ defmodule Cinder.Library do
     end
   end
 
-  defp build_dest(%Movie{title: title, year: year}, source) do
-    name = library_name(sanitize(title), year)
+  defp build_dest(%Movie{title: title, year: year, tmdb_id: tmdb_id}, source) do
+    name = library_name(sanitize(title), year, tmdb_id)
     Path.join([library_path(), name, name <> Path.extname(source)])
   end
 
   # Jellyfin's scheme is `Title (Year)`; with no year (a TMDB entry lacking a
-  # release date) fall back to a bare `Title` rather than a malformed `Title ()`.
-  defp library_name(title, nil), do: title
-  defp library_name(title, year), do: "#{title} (#{year})"
+  # release date) fall back to a bare `Title`, and if the title sanitizes to
+  # nothing (all-illegal characters) fall back to a tmdb id so the file lands in
+  # its own folder rather than the library root.
+  defp library_name("", _year, tmdb_id), do: "tmdb-#{tmdb_id}"
+  defp library_name(title, nil, _tmdb_id), do: title
+  defp library_name(title, year, _tmdb_id), do: "#{title} (#{year})"
 
   defp sanitize(title), do: String.replace(title, @illegal, "")
 

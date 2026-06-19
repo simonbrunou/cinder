@@ -65,13 +65,11 @@ defmodule Cinder.Download.Poller do
 
   defp advance(movie) do
     case client().status(movie.download_id) do
-      {:ok, %{state: :completed} = status} ->
-        Catalog.transition(movie, %{
-          status: :downloaded,
-          file_path: Map.get(status, :content_path)
-        })
+      {:ok, %{state: :completed, content_path: path}} when path not in [nil, ""] ->
+        Catalog.transition(movie, %{status: :downloaded, file_path: path})
 
-      # Still downloading / stalled / in transit / error: leave it, retry next tick.
+      # Completed but no final path yet (still settling), still downloading,
+      # stalled, in transit, or error: leave it :downloading and retry next tick.
       _ ->
         :ok
     end

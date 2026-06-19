@@ -110,4 +110,17 @@ defmodule Cinder.LibraryTest do
 
     assert {:ok, "#{@lib}/Untitled/Untitled.mkv"} = Library.import_movie(movie)
   end
+
+  test "a title that sanitizes to empty falls back to a tmdb-based folder" do
+    movie = %Movie{title: "???", year: 2010, tmdb_id: 555, file_path: "/dl/x.mkv"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+    expect(Cinder.Library.FilesystemMock, :mkdir_p, fn "#{@lib}/tmdb-555" -> :ok end)
+
+    expect(Cinder.Library.FilesystemMock, :ln, fn _src, "#{@lib}/tmdb-555/tmdb-555.mkv" -> :ok end)
+
+    expect(Cinder.Library.MediaServerMock, :scan, fn -> :ok end)
+
+    assert {:ok, "#{@lib}/tmdb-555/tmdb-555.mkv"} = Library.import_movie(movie)
+  end
 end

@@ -182,4 +182,17 @@ defmodule Cinder.Download.PollerTest do
     assert :ok = Poller.poll()
     assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
   end
+
+  test "a completed torrent with no content_path yet stays :downloading (not parked)" do
+    movie = downloading_movie(14, "hash-14")
+    start_supervised!({Poller, interval: 60_000})
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-14" ->
+      {:ok, %{state: :completed, content_path: nil}}
+    end)
+
+    assert :ok = Poller.poll()
+    # No final path yet — don't snapshot a nil and prematurely fail; wait a tick.
+    assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
+  end
 end
