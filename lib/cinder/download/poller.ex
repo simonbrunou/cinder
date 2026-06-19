@@ -1,9 +1,18 @@
 defmodule Cinder.Download.Poller do
   @moduledoc """
-  Polls active downloads and advances them through the pipeline: `:downloading`
-  → `:downloaded` (capturing the on-disk path), then imports `:downloaded`
-  movies into the library → `:available` (or `:import_failed` for a release with
-  no usable file). Each change broadcasts through `Catalog.transition/2`.
+  Polls the pipeline on each tick:
+
+  1. **advance_downloading** — checks in-flight downloads; `:downloading` →
+     `:downloaded` (or `:import_failed` if the torrent completes with no path).
+  2. **import_downloaded** — imports `:downloaded` movies into the library →
+     `:available` (or `:import_failed` for a release with no usable file).
+  3. **search_requested** — sweeps `:requested` and `:searching` movies through
+     `Download.start/1` (indexer search + client add), advancing them toward
+     `:downloading`. Backoff: a just-failed movie is skipped until
+     `search_retry_after` seconds have elapsed. Bounded retry: after
+     `@max_attempts` transient failures the movie parks at `:search_failed`.
+     Permanent errors (`:unsupported_download_url`, `:bad_torrent`) park
+     immediately.
 
   Holds no in-flight state: every tick re-derives its work from the DB, so it
   recovers cleanly after a crash/restart. That is the OTP payoff Phase 3 proves.
@@ -13,9 +22,11 @@ defmodule Cinder.Download.Poller do
   require Logger
 
   alias Cinder.Catalog
+  alias Cinder.Download
   alias Cinder.Library
 
   @default_interval 5_000
+  @search_retry_after 60
 
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
@@ -27,7 +38,8 @@ defmodule Cinder.Download.Poller do
   @impl true
   def init(opts) do
     interval = Keyword.get(opts, :interval, config_interval())
-    {:ok, %{interval: interval}, {:continue, :schedule}}
+    retry_after = Keyword.get(opts, :search_retry_after, @search_retry_after)
+    {:ok, %{interval: interval, search_retry_after: retry_after}, {:continue, :schedule}}
   end
 
   @impl true
@@ -38,20 +50,21 @@ defmodule Cinder.Download.Poller do
 
   @impl true
   def handle_info(:poll, state) do
-    do_poll()
+    do_poll(state)
     schedule(state.interval)
     {:noreply, state}
   end
 
   @impl true
   def handle_call(:poll, _from, state) do
-    do_poll()
+    do_poll(state)
     {:reply, :ok, state}
   end
 
-  defp do_poll do
+  defp do_poll(state) do
     advance_downloading()
     import_downloaded()
+    search_requested(state.search_retry_after)
     :ok
   end
 
@@ -63,6 +76,50 @@ defmodule Cinder.Download.Poller do
     for movie <- Catalog.list_by_status(:downloaded), do: isolate(movie, &import_one/1)
   end
 
+  defp search_requested(retry_after) do
+    movies = Catalog.list_by_status(:requested) ++ Catalog.list_by_status(:searching)
+
+    for movie <- movies, search_due?(movie, retry_after) do
+      isolate(movie, &search_one/1)
+    end
+  end
+
+  # Permanent search failures — retrying can't help, so park immediately (mirrors
+  # @permanent_import_errors). :unsupported_download_url = unknown URL scheme;
+  # :bad_torrent = the fetched .torrent was malformed/not bencode.
+  @permanent_search_errors [:unsupported_download_url, :bad_torrent]
+
+  defp search_one(movie) do
+    case Download.start(movie) do
+      {:ok, _movie} ->
+        :ok
+
+      {:error, :no_imdb_id} ->
+        Catalog.transition(movie, %{status: :no_match})
+
+      {:error, reason} when reason in @permanent_search_errors ->
+        Logger.warning("movie #{movie.id} search failed permanently: #{inspect(reason)}")
+        Catalog.transition(movie, %{status: :search_failed})
+
+      {:error, reason} ->
+        # Re-read so the counter write preserves start/1's current status
+        # (e.g. :searching after an indexer/client failure) instead of the stale
+        # struct's, which would revert :searching -> :requested.
+        movie |> reread() |> retry_or_fail(reason, :search_attempts, :search_failed)
+    end
+  end
+
+  defp reread(movie), do: Catalog.get_movie_by_id(movie.id) || movie
+
+  # Fresh movies (search_attempts == 0) attempt immediately; failed ones back off
+  # to once per `retry_after` seconds (external services — don't hammer). retry_after
+  # 0 (test) makes everything due.
+  defp search_due?(_movie, 0), do: true
+  defp search_due?(%{search_attempts: 0}, _retry_after), do: true
+
+  defp search_due?(movie, retry_after),
+    do: DateTime.diff(DateTime.utc_now(), movie.updated_at) >= retry_after
+
   defp advance(movie) do
     case client().status(movie.download_id) do
       {:ok, %{state: :completed, content_path: path}} when path not in [nil, ""] ->
@@ -73,7 +130,13 @@ defmodule Cinder.Download.Poller do
         # :downloading (not :completed), so this is anomalous — bound it so it
         # can't sit at :downloading and re-poll forever (normally the path
         # appears within a tick or two and the clause above fires).
-        retry_or_fail(movie, :no_content_path)
+        retry_or_fail(movie, :no_content_path, :import_attempts, :import_failed)
+
+      {:ok, %{state: :error}} ->
+        retry_or_fail(movie, :download_error, :import_attempts, :import_failed)
+
+      {:error, :not_found} ->
+        retry_or_fail(movie, :torrent_not_found, :import_attempts, :import_failed)
 
       # Still downloading, stalled, in transit, or a client error: leave it and
       # retry next tick (a slow download must not count toward the bound).
@@ -100,25 +163,29 @@ defmodule Cinder.Download.Poller do
         Catalog.transition(movie, %{status: :import_failed})
 
       {:error, reason} ->
-        retry_or_fail(movie, reason)
+        retry_or_fail(movie, reason, :import_attempts, :import_failed)
     end
   end
 
   # Bounded retry: keep the movie where it is and try again next tick, but after
-  # @max_attempts park it at :import_failed so a persistent failure surfaces a
+  # @max_attempts park it at `terminal_status` so a persistent failure surfaces a
   # terminal state instead of looping (and re-logging) forever.
-  defp retry_or_fail(movie, reason) do
-    attempts = (movie.import_attempts || 0) + 1
+  defp retry_or_fail(movie, reason, attempts_field, terminal_status) do
+    attempts = (Map.get(movie, attempts_field) || 0) + 1
 
     if attempts >= @max_attempts do
-      Logger.warning("movie #{movie.id} failed after #{attempts} attempts: #{inspect(reason)}")
-      Catalog.transition(movie, %{status: :import_failed})
-    else
-      Logger.info(
-        "movie #{movie.id} attempt #{attempts}/#{@max_attempts} failed (#{inspect(reason)}); will retry"
+      Logger.warning(
+        "movie #{movie.id} #{attempts_field} exhausted after #{attempts}: #{inspect(reason)}"
       )
 
-      Catalog.transition(movie, %{status: movie.status, import_attempts: attempts})
+      Catalog.transition(movie, %{status: terminal_status})
+    else
+      Logger.info(
+        "movie #{movie.id} #{attempts_field} #{attempts}/#{@max_attempts} failed (#{inspect(reason)}); will retry"
+      )
+
+      # Dynamic key MUST come before keyword pairs in a map literal.
+      Catalog.transition(movie, %{attempts_field => attempts, status: movie.status})
     end
   end
 

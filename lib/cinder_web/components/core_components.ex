@@ -503,4 +503,22 @@ defmodule CinderWeb.CoreComponents do
   def translate_errors(errors, field) when is_list(errors) do
     for {^field, {msg, opts}} <- errors, do: translate_error({msg, opts})
   end
+
+  @doc "A daisyUI badge for a movie's pipeline status, coloured by state."
+  attr :status, :atom, required: true
+
+  def movie_status_badge(assigns) do
+    ~H"""
+    <span class={["badge badge-sm", status_badge_class(@status)]}>{@status}</span>
+    """
+  end
+
+  defp status_badge_class(:requested), do: "badge-neutral"
+  defp status_badge_class(:searching), do: "badge-info"
+  defp status_badge_class(:downloading), do: "badge-primary"
+  defp status_badge_class(:downloaded), do: "badge-accent"
+  defp status_badge_class(:available), do: "badge-success"
+  defp status_badge_class(:no_match), do: "badge-warning"
+  defp status_badge_class(:search_failed), do: "badge-error"
+  defp status_badge_class(:import_failed), do: "badge-error"
 end

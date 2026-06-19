@@ -13,6 +13,8 @@ defmodule Cinder.Download.Client.QBittorrent do
   """
   @behaviour Cinder.Download.Client
 
+  alias Cinder.Download.Torrent
+
   @default_base_url "http://localhost:8080"
 
   # qBit upload-phase / post-download states all mean "download finished, at rest".
@@ -37,7 +39,50 @@ defmodule Cinder.Download.Client.QBittorrent do
     end
   end
 
+  def add(%{download_url: "http://" <> _ = url}), do: add_torrent_url(url)
+  def add(%{download_url: "https://" <> _ = url}), do: add_torrent_url(url)
+
   def add(%{download_url: _}), do: {:error, :unsupported_download_url}
+
+  # Fetch the .torrent, compute its infohash (so status/1 can poll it), then
+  # upload the bytes to qBittorrent. decode_body: false keeps the bytes raw so
+  # the infohash is over the exact on-the-wire content.
+  defp add_torrent_url(url) do
+    with {:ok, bytes} <- fetch_torrent(url),
+         {:ok, hash} <- Torrent.infohash(bytes),
+         {:ok, %{status: 200, body: body}} <- upload_torrent(bytes) do
+      if String.trim(to_string(body)) == "Fails.", do: {:error, :add_rejected}, else: {:ok, hash}
+    else
+      other -> error(other)
+    end
+  end
+
+  defp fetch_torrent(url) do
+    case Req.get(url,
+           receive_timeout: 15_000,
+           decode_body: false,
+           retry: false,
+           plug: fetch_plug()
+         ) do
+      {:ok, %{status: 200, body: bytes}} when is_binary(bytes) -> {:ok, bytes}
+      {:ok, %{status: status}} -> {:error, {:torrent_fetch_status, status}}
+      other -> error(other)
+    end
+  end
+
+  defp upload_torrent(bytes) do
+    action(fn req ->
+      Req.post(req,
+        url: "/api/v2/torrents/add",
+        form_multipart: [
+          torrents: {bytes, filename: "t.torrent", content_type: "application/x-bittorrent"}
+        ]
+      )
+    end)
+  end
+
+  # In prod, no plug (real HTTP). In test, config can inject a Req.Test plug.
+  defp fetch_plug, do: Keyword.get(config(), :fetch_plug)
 
   @impl true
   def status(hash) do
@@ -96,9 +141,18 @@ defmodule Cinder.Download.Client.QBittorrent do
     end)
   end
 
+  # Match the magnet verbatim (don't upcase the whole string — that breaks the
+  # lowercase `xt=urn:btih:` literal); upcase only the captured base32 hash.
+  @hex_btih ~r/xt=urn:btih:([a-fA-F0-9]{40})(?:&|$)/
+  @b32_btih ~r/xt=urn:btih:([a-zA-Z2-7]{32})(?:&|$)/
+
   defp btih("magnet:" <> _ = magnet) do
-    case Regex.run(~r/xt=urn:btih:([a-fA-F0-9]{40})/, magnet) do
-      [_, hash] -> {:ok, String.downcase(hash)}
+    with nil <- Regex.run(@hex_btih, magnet),
+         [_, b32] <- Regex.run(@b32_btih, magnet),
+         {:ok, raw} <- Base.decode32(String.upcase(b32), padding: false) do
+      {:ok, Base.encode16(raw, case: :lower)}
+    else
+      [_, hex] -> {:ok, String.downcase(hex)}
       _ -> :error
     end
   end
@@ -120,7 +174,7 @@ defmodule Cinder.Download.Client.QBittorrent do
   defp classify(_state, _progress), do: :downloading
 
   defp base(config) do
-    [base_url: Keyword.get(config, :base_url, @default_base_url)]
+    [base_url: Keyword.get(config, :base_url, @default_base_url), receive_timeout: 15_000]
     |> Keyword.merge(Keyword.get(config, :req_options, []))
   end
 

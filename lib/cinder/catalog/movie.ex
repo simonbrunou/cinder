@@ -18,6 +18,7 @@ defmodule Cinder.Catalog.Movie do
     :downloaded,
     :available,
     :no_match,
+    :search_failed,
     :import_failed
   ]
 
@@ -31,6 +32,7 @@ defmodule Cinder.Catalog.Movie do
     field :download_id, :string
     field :file_path, :string
     field :import_attempts, :integer, default: 0
+    field :search_attempts, :integer, default: 0
 
     timestamps(type: :utc_datetime)
   end
@@ -43,10 +45,17 @@ defmodule Cinder.Catalog.Movie do
     |> unique_constraint(:tmdb_id)
   end
 
-  @doc "Changeset for pipeline state transitions (status + optional download_id/imdb_id)."
+  @doc "Changeset for pipeline state transitions (status + optional download_id/imdb_id/file_path/attempt counters)."
   def transition_changeset(movie, attrs) do
     movie
-    |> cast(attrs, [:status, :download_id, :imdb_id, :file_path, :import_attempts])
+    |> cast(attrs, [
+      :status,
+      :download_id,
+      :imdb_id,
+      :file_path,
+      :import_attempts,
+      :search_attempts
+    ])
     |> validate_required([:status])
   end
 end

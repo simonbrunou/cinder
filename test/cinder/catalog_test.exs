@@ -80,6 +80,25 @@ defmodule Cinder.CatalogTest do
     end
   end
 
+  describe "get_movie_by_id/1" do
+    test "returns the movie by primary key, or nil" do
+      {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 7001, title: "M"})
+      assert %Cinder.Catalog.Movie{id: id} = Catalog.get_movie_by_id(movie.id)
+      assert id == movie.id
+      assert Catalog.get_movie_by_id(-1) == nil
+    end
+  end
+
+  describe "search_failed terminal + search_attempts" do
+    test "transition can set :search_failed and persist search_attempts" do
+      {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 7002, title: "M"})
+      {:ok, m} = Catalog.transition(movie, %{status: :searching, search_attempts: 3})
+      assert m.search_attempts == 3
+      {:ok, m} = Catalog.transition(m, %{status: :search_failed})
+      assert m.status == :search_failed
+    end
+  end
+
   describe "add_to_watchlist/1 and list_watchlist/0" do
     @attrs %{tmdb_id: 27_205, title: "Inception", year: 2010, poster_path: "/p.jpg"}
 

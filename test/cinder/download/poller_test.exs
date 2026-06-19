@@ -208,6 +208,108 @@ defmodule Cinder.Download.PollerTest do
     assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
   end
 
+  test "auto-wires a :requested movie through to :available with no manual Download.start call" do
+    {:ok, movie} =
+      Catalog.add_to_watchlist(%{tmdb_id: 900, title: "Inception", imdb_id: "tt1375666"})
+
+    assert movie.status == :requested
+
+    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt1375666" ->
+      {:ok,
+       [
+         %{
+           title: "Inception.2010.1080p.BluRay.x264-GRP",
+           size: 8_000_000_000,
+           download_url: "magnet:?x",
+           seeders: 10
+         }
+       ]}
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release -> {:ok, "hash-900"} end)
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-900" ->
+      {:ok, %{state: :completed, content_path: "/downloads/Inception.mkv"}}
+    end)
+
+    stub_successful_import()
+
+    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+
+    # search runs last in a tick: poll 1 → :downloading, poll 2 → :downloaded → :available
+    assert :ok = Poller.poll()
+    assert :ok = Poller.poll()
+    assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
+  end
+
+  test "a persistently transient search error parks :search_failed after max attempts" do
+    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 901, title: "M", imdb_id: "tt1"})
+    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt1" -> {:error, :prowlarr_down} end)
+
+    # search_retry_after: 0 → every poll is due
+    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+
+    Enum.each(1..9, fn _ -> Poller.poll() end)
+    refute Repo.get!(Movie, movie.id).status == :search_failed
+
+    assert :ok = Poller.poll()
+    assert %Movie{status: :search_failed} = Repo.get!(Movie, movie.id)
+  end
+
+  test "backoff: a just-failed movie is not re-attempted until retry_after elapses" do
+    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 902, title: "M", imdb_id: "tt2"})
+    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt2" -> {:error, :prowlarr_down} end)
+
+    start_supervised!({Poller, interval: 60_000, search_retry_after: 60})
+
+    # First poll: fresh (attempts 0) → attempted → search_attempts becomes 1.
+    assert :ok = Poller.poll()
+    assert Repo.get!(Movie, movie.id).search_attempts == 1
+
+    # Second poll immediately: not due (updated_at is ~now) → not attempted.
+    assert :ok = Poller.poll()
+    assert Repo.get!(Movie, movie.id).search_attempts == 1
+
+    # Back-date updated_at past the window → due again → attempted.
+    past = DateTime.utc_now() |> DateTime.add(-61, :second) |> DateTime.truncate(:second)
+    Repo.update_all(Movie, set: [updated_at: past])
+    assert :ok = Poller.poll()
+    assert Repo.get!(Movie, movie.id).search_attempts == 2
+  end
+
+  test "unsupported download URL parks :search_failed immediately (no retry)" do
+    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 903, title: "M", imdb_id: "tt3"})
+
+    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt3" ->
+      {:ok, [%{title: "M.1080p", size: 8_000_000_000, download_url: "magnet:?x", seeders: 5}]}
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _ -> {:error, :unsupported_download_url} end)
+
+    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+
+    assert :ok = Poller.poll()
+    movie = Repo.get!(Movie, movie.id)
+    assert movie.status == :search_failed
+    assert movie.search_attempts == 0
+  end
+
+  test "genuinely-missing imdb parks :no_match; transient TMDB error retries" do
+    {:ok, miss} = Catalog.add_to_watchlist(%{tmdb_id: 904, title: "M"})
+    {:ok, flaky} = Catalog.add_to_watchlist(%{tmdb_id: 905, title: "N"})
+
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn
+      904 -> {:ok, %{imdb_id: nil}}
+      905 -> {:error, {:tmdb_status, 503}}
+    end)
+
+    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+
+    assert :ok = Poller.poll()
+    assert %Movie{status: :no_match} = Repo.get!(Movie, miss.id)
+    assert %Movie{status: :requested, search_attempts: 1} = Repo.get!(Movie, flaky.id)
+  end
+
   test "a persistently failing import is parked at :import_failed after max attempts" do
     movie = downloaded_movie(16, "/downloads/Inception.2010.1080p.mkv")
     start_supervised!({Poller, interval: 60_000})
@@ -231,6 +333,36 @@ defmodule Cinder.Download.PollerTest do
 
     stub(Cinder.Download.ClientMock, :status, fn "hash-17" ->
       {:ok, %{state: :completed, content_path: nil}}
+    end)
+
+    Enum.each(1..9, fn _ -> Poller.poll() end)
+    assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
+
+    assert :ok = Poller.poll()
+    assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
+  end
+
+  test "a qBittorrent :error state parks :import_failed after max attempts (not before)" do
+    movie = downloading_movie(18, "hash-18")
+    start_supervised!({Poller, interval: 60_000})
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-18" ->
+      {:ok, %{state: :error}}
+    end)
+
+    Enum.each(1..9, fn _ -> Poller.poll() end)
+    assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
+
+    assert :ok = Poller.poll()
+    assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
+  end
+
+  test "a torrent not found in qBittorrent parks :import_failed after max attempts (not before)" do
+    movie = downloading_movie(19, "hash-19")
+    start_supervised!({Poller, interval: 60_000})
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-19" ->
+      {:error, :not_found}
     end)
 
     Enum.each(1..9, fn _ -> Poller.poll() end)

@@ -78,6 +78,8 @@ defmodule CinderWeb.WatchlistLive do
         <:subtitle>Search movies and build your watchlist.</:subtitle>
       </.header>
 
+      <.link navigate={~p"/status"} class="link mb-6 inline-block">Status dashboard →</.link>
+
       <form id="search-form" phx-change="search" phx-submit="search" class="mb-8">
         <input
           type="text"
@@ -119,7 +121,7 @@ defmodule CinderWeb.WatchlistLive do
       <p :if={@watchlist == []} class="text-base-content/60">Your watchlist is empty.</p>
       <div id="watchlist" class="grid grid-cols-2 sm:grid-cols-3 gap-4">
         <.movie_card :for={m <- @watchlist} movie={m}>
-          <span class="badge badge-soft badge-sm">{m.status}</span>
+          <.movie_status_badge status={m.status} />
         </.movie_card>
       </div>
     </Layouts.app>

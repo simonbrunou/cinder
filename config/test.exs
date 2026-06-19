@@ -56,6 +56,7 @@ config :cinder, Cinder.Download.Client.QBittorrent,
   base_url: "http://localhost:8080",
   username: "test",
   password: "test",
+  fetch_plug: {Req.Test, Cinder.QBittorrentStub},
   req_options: [plug: {Req.Test, Cinder.QBittorrentStub}, retry: false]
 
 config :cinder, Cinder.Library.MediaServer.Jellyfin,

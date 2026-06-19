@@ -67,11 +67,20 @@ defmodule Cinder.DownloadTest do
     assert {:ok, %Movie{status: :no_match}} = Download.start(movie)
   end
 
-  test "parks the movie at :no_match when the imdb_id can't be resolved" do
+  test "returns {:error, :no_imdb_id} and leaves the movie :requested when imdb is genuinely missing" do
     movie = requested(%{imdb_id: nil})
     expect(Cinder.Catalog.TMDBMock, :get_movie, fn _ -> {:ok, %{imdb_id: nil}} end)
 
-    assert {:ok, %Movie{status: :no_match}} = Download.start(movie)
+    assert {:error, :no_imdb_id} = Download.start(movie)
+    assert %Movie{status: :requested} = Repo.get!(Movie, movie.id)
+  end
+
+  test "returns {:error, :tmdb_unavailable} on a transient TMDB error, movie stays :requested" do
+    movie = requested(%{imdb_id: nil})
+    expect(Cinder.Catalog.TMDBMock, :get_movie, fn _ -> {:error, {:tmdb_status, 503}} end)
+
+    assert {:error, :tmdb_unavailable} = Download.start(movie)
+    assert %Movie{status: :requested} = Repo.get!(Movie, movie.id)
   end
 
   test "returns the client error and leaves the movie :searching on add failure" do
