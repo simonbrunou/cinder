@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "packages": {
+    "erlang": "29.0.2",
+    "elixir": "1.20.1-otp-29"
+  },
+  "deploy": {
+    "startCommand": "/app/_build/prod/rel/cinder/bin/migrate && /app/_build/prod/rel/cinder/bin/server"
+  }
+}
