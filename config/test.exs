@@ -58,6 +58,11 @@ config :cinder, Cinder.Download.Client.QBittorrent,
   password: "test",
   req_options: [plug: {Req.Test, Cinder.QBittorrentStub}, retry: false]
 
+config :cinder, Cinder.Library.MediaServer.Jellyfin,
+  url: "http://localhost:8096",
+  api_key: "test-key",
+  req_options: [plug: {Req.Test, Cinder.JellyfinStub}, retry: false]
+
 # The app-level poller must not run during the suite (it would race Mox/Sandbox).
 # Poller tests start their own supervised instance.
 config :cinder, start_poller: false

@@ -35,6 +35,14 @@ if base_url = System.get_env("QBITTORRENT_URL") do
     password: System.get_env("QBITTORRENT_PASSWORD")
 end
 
+# Real Jellyfin connection, read in every environment. Unset in test/CI, where
+# the suite either mocks media_server or stubs Req, so it has no effect there.
+if url = System.get_env("JELLYFIN_URL") do
+  config :cinder, Cinder.Library.MediaServer.Jellyfin,
+    url: url,
+    api_key: System.get_env("JELLYFIN_API_KEY")
+end
+
 config :cinder, CinderWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
