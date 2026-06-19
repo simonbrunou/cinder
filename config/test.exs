@@ -76,6 +76,12 @@ config :cinder, Cinder.Library.MediaServer.Jellyfin,
   api_key: "test-key",
   req_options: [plug: {Req.Test, Cinder.JellyfinStub}, retry: false]
 
+config :cinder, Cinder.Library.MediaServer.Plex,
+  url: "http://localhost:32400",
+  token: "test-key",
+  section: "1",
+  req_options: [plug: {Req.Test, Cinder.PlexStub}, retry: false]
+
 # The app-level poller must not run during the suite (it would race Mox/Sandbox).
 # Poller tests start their own supervised instance.
 config :cinder, start_poller: false

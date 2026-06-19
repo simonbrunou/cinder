@@ -53,6 +53,16 @@ if url = System.get_env("JELLYFIN_URL") do
     api_key: System.get_env("JELLYFIN_API_KEY")
 end
 
+# Real Plex connection, read in every environment. Unset in test/CI, where the
+# suite stubs Req regardless, so it has no effect there. Plex has no refresh-all
+# endpoint, so PLEX_SECTION is the numeric id of the movie library.
+if url = System.get_env("PLEX_URL") do
+  config :cinder, Cinder.Library.MediaServer.Plex,
+    url: url,
+    token: System.get_env("PLEX_TOKEN"),
+    section: System.get_env("PLEX_SECTION")
+end
+
 # Where Cinder hardlinks imported movies (Jellyfin's library root).
 if path = System.get_env("LIBRARY_PATH") do
   config :cinder, :library_path, path

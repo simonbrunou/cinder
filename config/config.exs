@@ -23,6 +23,7 @@ config :cinder,
   }
 
 config :cinder, filesystem: Cinder.Library.Filesystem.Disk
+# Swap to Cinder.Library.MediaServer.Plex to use Plex instead.
 config :cinder, media_server: Cinder.Library.MediaServer.Jellyfin
 config :cinder, Cinder.Download.Poller, interval: 5_000
 
