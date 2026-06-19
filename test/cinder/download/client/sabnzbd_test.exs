@@ -51,6 +51,14 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     assert {:error, :unsupported_download_url} = Sabnzbd.add(%{download_url: nil})
   end
 
+  test "add/1 succeeds on a non-empty nzo_ids regardless of the status field's type" do
+    # Robust to SABnzbd version variance: a returned job id means success even if
+    # `status` is reported as 1/absent rather than the boolean true.
+    stub(fn conn -> Req.Test.json(conn, %{"status" => 1, "nzo_ids" => ["SABnzbd_nzo_z"]}) end)
+
+    assert {:ok, "SABnzbd_nzo_z"} = Sabnzbd.add(%{download_url: "http://x/nzb"})
+  end
+
   test "status/1 reports a queued download as :downloading with coerced progress" do
     stub(fn conn ->
       assert conn.params["mode"] == "queue"
@@ -102,5 +110,25 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     stub_queue_then_history(%{"history" => %{"slots" => []}})
 
     assert {:error, :not_found} = Sabnzbd.status("nzo-1")
+  end
+
+  test "status/1 falls through to history when the queue response omits slots" do
+    # A queue payload without a "slots" key must not short-circuit to an error
+    # that strands the poll — fall through to history (where a finished job lives).
+    stub(fn conn ->
+      case conn.params["mode"] do
+        "queue" ->
+          Req.Test.json(conn, %{"queue" => %{"paused" => false}})
+
+        "history" ->
+          Req.Test.json(conn, %{
+            "history" => %{
+              "slots" => [%{"nzo_id" => "nzo-1", "status" => "Completed", "storage" => "/d/M"}]
+            }
+          })
+      end
+    end)
+
+    assert {:ok, %{state: :completed, content_path: "/d/M"}} = Sabnzbd.status("nzo-1")
   end
 end

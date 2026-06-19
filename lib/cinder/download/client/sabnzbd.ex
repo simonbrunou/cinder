@@ -27,7 +27,9 @@ defmodule Cinder.Download.Client.Sabnzbd do
   @impl true
   def add(%{download_url: url}) when is_binary(url) do
     case get(mode: "addurl", name: url) do
-      {:ok, %{status: 200, body: %{"status" => true, "nzo_ids" => [id | _]}}} -> {:ok, id}
+      # A returned job id is success; key on it rather than the `status` field,
+      # whose type varies across SABnzbd versions (boolean true vs 1).
+      {:ok, %{status: 200, body: %{"nzo_ids" => [id | _]}}} -> {:ok, id}
       {:ok, %{status: 200, body: %{"nzo_ids" => []}}} -> {:error, :add_rejected}
       {:ok, %{status: 200, body: %{"status" => false}}} -> {:error, :add_rejected}
       {:ok, %{status: 200}} -> {:error, :unexpected_response}
@@ -48,37 +50,37 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   defp queue_slot(nzo_id) do
     case get(mode: "queue", nzo_ids: nzo_id) do
-      {:ok, %{status: 200, body: %{"queue" => %{"slots" => slots}}}} ->
-        {:ok, find_slot(slots, nzo_id)}
-
-      {:ok, %{status: 200}} ->
-        {:error, :unexpected_response}
-
-      other ->
-        error(other)
+      {:ok, %{status: 200, body: body}} -> {:ok, find_slot(body, "queue", nzo_id)}
+      other -> error(other)
     end
   end
 
   defp history_status(nzo_id) do
     case get(mode: "history", nzo_ids: nzo_id) do
-      {:ok, %{status: 200, body: %{"history" => %{"slots" => slots}}}} ->
-        case find_slot(slots, nzo_id) do
+      {:ok, %{status: 200, body: body}} ->
+        case find_slot(body, "history", nzo_id) do
           nil -> {:error, :not_found}
           slot -> {:ok, classify_history(slot)}
         end
-
-      {:ok, %{status: 200}} ->
-        {:error, :unexpected_response}
 
       other ->
         error(other)
     end
   end
 
-  defp find_slot(slots, nzo_id) when is_list(slots),
-    do: Enum.find(slots, &(&1["nzo_id"] == nzo_id))
+  # A 200 whose `slots` are missing/empty/malformed means "not in this list" — so
+  # queue falls through to history rather than erroring and stranding the poll.
+  defp find_slot(%{} = body, key, nzo_id) do
+    case body do
+      %{^key => %{"slots" => slots}} when is_list(slots) ->
+        Enum.find(slots, &(&1["nzo_id"] == nzo_id))
 
-  defp find_slot(_slots, _nzo_id), do: nil
+      _ ->
+        nil
+    end
+  end
+
+  defp find_slot(_body, _key, _nzo_id), do: nil
 
   defp downloading(percentage),
     do: %{state: :downloading, progress: pct(percentage), content_path: nil}
