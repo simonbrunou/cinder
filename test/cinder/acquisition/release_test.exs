@@ -22,4 +22,14 @@ defmodule Cinder.Acquisition.ReleaseTest do
              language: nil
            } = Release.new(indexer_map)
   end
+
+  test "new/1 carries the indexer protocol" do
+    assert %Release{protocol: :usenet} =
+             Release.new(%{title: "Inception.2010.1080p.WEB-DL-GRP", protocol: :usenet})
+  end
+
+  test "new/1 defaults protocol to :torrent when the indexer map omits it" do
+    assert %Release{protocol: :torrent} =
+             Release.new(%{title: "Inception.2010.1080p.WEB-DL-GRP"})
+  end
 end

@@ -61,6 +61,56 @@ defmodule Cinder.Download.PollerTest do
     assert_receive {:movie_updated, %Movie{status: :available}}
   end
 
+  test "routes status polling to the client matching the movie's download_protocol" do
+    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 20, title: "M"})
+
+    {:ok, movie} =
+      Catalog.transition(movie, %{
+        status: :downloading,
+        download_id: "nzo-20",
+        download_protocol: :usenet
+      })
+
+    start_supervised!({Poller, interval: 60_000})
+
+    # The usenet client is polled; ClientMock (torrent) has no stub, so a misroute
+    # to it would raise.
+    stub(Cinder.Download.SabnzbdClientMock, :status, fn "nzo-20" ->
+      {:ok, %{state: :completed, content_path: "/downloads/M.mkv"}}
+    end)
+
+    stub_successful_import()
+
+    assert :ok = Poller.poll()
+    assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
+  end
+
+  test "a download_protocol with no configured client is parked at :import_failed (no hang)" do
+    # Drop usenet from the client map so a usenet movie's status poll can't resolve
+    # a client. async: false + restore keeps the global key sane for other tests.
+    original = Application.fetch_env!(:cinder, :download_clients)
+    Application.put_env(:cinder, :download_clients, %{torrent: Cinder.Download.ClientMock})
+    on_exit(fn -> Application.put_env(:cinder, :download_clients, original) end)
+
+    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 21, title: "M"})
+
+    {:ok, movie} =
+      Catalog.transition(movie, %{
+        status: :downloading,
+        download_id: "nzo-21",
+        download_protocol: :usenet
+      })
+
+    start_supervised!({Poller, interval: 60_000})
+
+    # Bounded: re-attempts each tick, then parks (does not hang forever).
+    Enum.each(1..9, fn _ -> Poller.poll() end)
+    assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
+
+    assert :ok = Poller.poll()
+    assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
+  end
+
   test "a non-completed status leaves the movie :downloading" do
     movie = downloading_movie(2, "hash-2")
     start_supervised!({Poller, interval: 60_000})

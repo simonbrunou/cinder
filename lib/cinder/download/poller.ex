@@ -121,7 +121,20 @@ defmodule Cinder.Download.Poller do
     do: DateTime.diff(DateTime.utc_now(), movie.updated_at) >= retry_after
 
   defp advance(movie) do
-    case client().status(movie.download_id) do
+    case Download.client_for(movie.download_protocol) do
+      {:ok, client} ->
+        advance_with(movie, client)
+
+      # No client configured for this movie's protocol (e.g. a protocol removed
+      # from config mid-download). Bound it through retry_or_fail so it parks at
+      # a terminal state instead of re-raising every tick forever.
+      :error ->
+        retry_or_fail(movie, :no_client, :import_attempts, :import_failed)
+    end
+  end
+
+  defp advance_with(movie, client) do
+    case client.status(movie.download_id) do
       {:ok, %{state: :completed, content_path: path}} when path not in [nil, ""] ->
         Catalog.transition(movie, %{status: :downloaded, file_path: path, import_attempts: 0})
 
@@ -204,6 +217,4 @@ defmodule Cinder.Download.Poller do
     |> Application.get_env(__MODULE__, [])
     |> Keyword.get(:interval, @default_interval)
   end
-
-  defp client, do: Application.fetch_env!(:cinder, :download_client)
 end

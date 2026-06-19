@@ -41,9 +41,16 @@ config :phoenix,
 config :cinder,
   tmdb: Cinder.Catalog.TMDBMock,
   indexer: Cinder.Acquisition.IndexerMock,
-  download_client: Cinder.Download.ClientMock,
   media_server: Cinder.Library.MediaServerMock,
   filesystem: Cinder.Library.FilesystemMock
+
+# Two client mocks so routing is testable by protocol: a torrent release must
+# reach ClientMock and a usenet release must reach SabnzbdClientMock.
+config :cinder,
+  download_clients: %{
+    torrent: Cinder.Download.ClientMock,
+    usenet: Cinder.Download.SabnzbdClientMock
+  }
 
 # The real TMDB client's own test routes Req through a Req.Test stub (no network).
 config :cinder, Cinder.Catalog.TMDB.HTTP, req_options: [plug: {Req.Test, Cinder.TMDBStub}]
@@ -58,6 +65,11 @@ config :cinder, Cinder.Download.Client.QBittorrent,
   password: "test",
   fetch_plug: {Req.Test, Cinder.QBittorrentStub},
   req_options: [plug: {Req.Test, Cinder.QBittorrentStub}, retry: false]
+
+config :cinder, Cinder.Download.Client.Sabnzbd,
+  base_url: "http://localhost:8080",
+  api_key: "test-key",
+  req_options: [plug: {Req.Test, Cinder.SabnzbdStub}, retry: false]
 
 config :cinder, Cinder.Library.MediaServer.Jellyfin,
   url: "http://localhost:8096",
