@@ -18,6 +18,7 @@ defmodule CinderWeb.Router do
     pipe_through :browser
 
     live "/", WatchlistLive
+    live "/status", StatusLive
   end
 
   # Other scopes may use custom stacks.
