@@ -1,7 +1,8 @@
 defmodule Cinder.Library do
   @moduledoc """
   Import: hardlink a completed download into the Jellyfin library, renamed to
-  `Title (Year)/Title (Year).ext`, then trigger a library scan.
+  `Title (Year)/Title (Year).ext` (or bare `Title` when the year is unknown, or
+  `tmdb-<id>` when the title has no usable characters), then trigger a scan.
 
   Filesystem ops and the media server are reached only through behaviours
   (`Cinder.Library.Filesystem`, `Cinder.Library.MediaServer`), resolved from
@@ -66,7 +67,14 @@ defmodule Cinder.Library do
   defp library_name(title, nil, _tmdb_id), do: title
   defp library_name(title, year, _tmdb_id), do: "#{title} (#{year})"
 
-  defp sanitize(title), do: String.replace(title, @illegal, "")
+  # Strip filesystem-illegal characters, then trim surrounding whitespace so a
+  # title that is blank after sanitizing collapses to "" and hits the tmdb-id
+  # fallback rather than producing a whitespace-named folder.
+  defp sanitize(title) do
+    title
+    |> String.replace(@illegal, "")
+    |> String.trim()
+  end
 
   # ponytail: hardlink only; library must share the downloads' filesystem (see spec).
   defp link(source, dest) do

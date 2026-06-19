@@ -123,4 +123,17 @@ defmodule Cinder.LibraryTest do
 
     assert {:ok, "#{@lib}/tmdb-555/tmdb-555.mkv"} = Library.import_movie(movie)
   end
+
+  test "a whitespace-only title also falls back to a tmdb-based folder" do
+    movie = %Movie{title: "   ", year: 2010, tmdb_id: 777, file_path: "/dl/x.mkv"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+    expect(Cinder.Library.FilesystemMock, :mkdir_p, fn "#{@lib}/tmdb-777" -> :ok end)
+
+    expect(Cinder.Library.FilesystemMock, :ln, fn _src, "#{@lib}/tmdb-777/tmdb-777.mkv" -> :ok end)
+
+    expect(Cinder.Library.MediaServerMock, :scan, fn -> :ok end)
+
+    assert {:ok, "#{@lib}/tmdb-777/tmdb-777.mkv"} = Library.import_movie(movie)
+  end
 end
