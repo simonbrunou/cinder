@@ -119,7 +119,7 @@ defmodule CinderWeb.WatchlistLive do
       <p :if={@watchlist == []} class="text-base-content/60">Your watchlist is empty.</p>
       <div id="watchlist" class="grid grid-cols-2 sm:grid-cols-3 gap-4">
         <.movie_card :for={m <- @watchlist} movie={m}>
-          <span class="badge badge-soft badge-sm">{m.status}</span>
+          <.movie_status_badge status={m.status} />
         </.movie_card>
       </div>
     </Layouts.app>

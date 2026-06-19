@@ -81,6 +81,12 @@ defmodule CinderWeb.WatchlistLiveTest do
     assert Catalog.list_watchlist() == []
   end
 
+  test "watchlist renders a colour-coded status badge", %{conn: conn} do
+    {:ok, _movie} = Cinder.Catalog.add_to_watchlist(%{tmdb_id: 8100, title: "M"})
+    {:ok, _lv, html} = live(conn, ~p"/")
+    assert html =~ "badge-neutral"
+  end
+
   test "a movie's status change updates its badge live", %{conn: conn} do
     {:ok, movie} = Catalog.add_to_watchlist(@inception)
     {:ok, lv, _html} = live(conn, ~p"/")
