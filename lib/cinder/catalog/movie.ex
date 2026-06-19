@@ -30,6 +30,7 @@ defmodule Cinder.Catalog.Movie do
     field :status, Ecto.Enum, values: @statuses, default: :requested
     field :download_id, :string
     field :file_path, :string
+    field :import_attempts, :integer, default: 0
 
     timestamps(type: :utc_datetime)
   end
@@ -45,7 +46,7 @@ defmodule Cinder.Catalog.Movie do
   @doc "Changeset for pipeline state transitions (status + optional download_id/imdb_id)."
   def transition_changeset(movie, attrs) do
     movie
-    |> cast(attrs, [:status, :download_id, :imdb_id, :file_path])
+    |> cast(attrs, [:status, :download_id, :imdb_id, :file_path, :import_attempts])
     |> validate_required([:status])
   end
 end

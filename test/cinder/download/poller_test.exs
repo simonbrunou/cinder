@@ -207,4 +207,36 @@ defmodule Cinder.Download.PollerTest do
     assert :ok = Poller.poll()
     assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
   end
+
+  test "a persistently failing import is parked at :import_failed after max attempts" do
+    movie = downloaded_movie(16, "/downloads/Inception.2010.1080p.mkv")
+    start_supervised!({Poller, interval: 60_000})
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
+    stub(Cinder.Library.MediaServerMock, :scan, fn -> {:error, :jellyfin_down} end)
+
+    # A transient error is retried (stays :downloaded) until the bound is hit.
+    Enum.each(1..9, fn _ -> Poller.poll() end)
+    assert %Movie{status: :downloaded} = Repo.get!(Movie, movie.id)
+
+    assert :ok = Poller.poll()
+    assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
+  end
+
+  test "a completed download that never yields a content_path is parked after max attempts" do
+    movie = downloading_movie(17, "hash-17")
+    start_supervised!({Poller, interval: 60_000})
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-17" ->
+      {:ok, %{state: :completed, content_path: nil}}
+    end)
+
+    Enum.each(1..9, fn _ -> Poller.poll() end)
+    assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
+
+    assert :ok = Poller.poll()
+    assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
+  end
 end

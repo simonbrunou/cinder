@@ -66,19 +66,29 @@ defmodule Cinder.Download.Poller do
   defp advance(movie) do
     case client().status(movie.download_id) do
       {:ok, %{state: :completed, content_path: path}} when path not in [nil, ""] ->
-        Catalog.transition(movie, %{status: :downloaded, file_path: path})
+        Catalog.transition(movie, %{status: :downloaded, file_path: path, import_attempts: 0})
 
-      # Completed but no final path yet (still settling), still downloading,
-      # stalled, in transit, or error: leave it :downloading and retry next tick.
+      {:ok, %{state: :completed}} ->
+        # Completed but no usable content_path. A genuinely-slow download is
+        # :downloading (not :completed), so this is anomalous — bound it so it
+        # can't sit at :downloading and re-poll forever (normally the path
+        # appears within a tick or two and the clause above fires).
+        retry_or_fail(movie, :no_content_path)
+
+      # Still downloading, stalled, in transit, or a client error: leave it and
+      # retry next tick (a slow download must not count toward the bound).
       _ ->
         :ok
     end
   end
 
   # Deterministic failures — the release itself is unusable, so retrying can't
-  # help. Park them at :import_failed instead of re-failing (and re-logging)
-  # every tick. Transient failures (media server down, etc.) stay :downloaded.
+  # help. Park them at :import_failed immediately. Other (transient) failures
+  # are retried up to @max_attempts before being parked, so a permanent-but-not-
+  # pre-classified condition (a read-only mount, a completed torrent that never
+  # yields a path) can't loop and re-log forever.
   @permanent_import_errors [:no_file_path, :no_video_file]
+  @max_attempts 10
 
   defp import_one(movie) do
     case Library.import_movie(movie) do
@@ -90,7 +100,25 @@ defmodule Cinder.Download.Poller do
         Catalog.transition(movie, %{status: :import_failed})
 
       {:error, reason} ->
-        Logger.warning("import failed for movie #{movie.id}, will retry: #{inspect(reason)}")
+        retry_or_fail(movie, reason)
+    end
+  end
+
+  # Bounded retry: keep the movie where it is and try again next tick, but after
+  # @max_attempts park it at :import_failed so a persistent failure surfaces a
+  # terminal state instead of looping (and re-logging) forever.
+  defp retry_or_fail(movie, reason) do
+    attempts = (movie.import_attempts || 0) + 1
+
+    if attempts >= @max_attempts do
+      Logger.warning("movie #{movie.id} failed after #{attempts} attempts: #{inspect(reason)}")
+      Catalog.transition(movie, %{status: :import_failed})
+    else
+      Logger.info(
+        "movie #{movie.id} attempt #{attempts}/#{@max_attempts} failed (#{inspect(reason)}); will retry"
+      )
+
+      Catalog.transition(movie, %{status: movie.status, import_attempts: attempts})
     end
   end
 
