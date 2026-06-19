@@ -98,6 +98,8 @@ USER nobody
 # above and adding an entrypoint. See https://github.com/krallin/tini for details
 # ENTRYPOINT ["/tini", "--"]
 
-# Run pending migrations on boot, then start the server. SQLite lives on a
-# mounted volume (DATABASE_PATH), so migrations must run at runtime, not build.
-CMD ["/bin/sh", "-c", "/app/bin/migrate && /app/bin/server"]
+# Migrations run automatically on boot via the supervision tree's Ecto.Migrator
+# (see Cinder.Application — skip_migrations? is false in a release), so the start
+# command is just the server. Execing the release directly keeps the BEAM as
+# PID 1 so it receives SIGTERM and shuts down gracefully.
+CMD ["/app/bin/server"]
