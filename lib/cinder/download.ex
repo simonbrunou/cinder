@@ -7,15 +7,22 @@ defmodule Cinder.Download do
 
   The client is reached only through the `Cinder.Download.Client` behaviour,
   resolved from config (`config :cinder, :download_client`) so tests use a Mox
-  mock and never hit the network. Not auto-triggered yet — Phase 5 wires it.
+  mock and never hit the network. Auto-triggered by `Cinder.Download.Poller`'s
+  search sweep.
   """
   alias Cinder.{Acquisition, Catalog}
   alias Cinder.Catalog.Movie
 
   @doc """
   Hands `movie` off to the download client. Returns `{:ok, movie}` with the
-  movie's new status (`:downloading` or `:no_match`), or `{:error, reason}` when
-  the indexer or the client errors (the movie is left in `:searching`).
+  movie's new status (`:downloading` or `:no_match`), or `{:error, reason}`.
+
+  Return values:
+  - `{:ok, %Movie{status: :downloading}}` — release found and handed to client.
+  - `{:ok, %Movie{status: :no_match}}` — indexer returned results but none survived scoring.
+  - `{:error, :no_imdb_id}` — TMDB has no IMDb id for this movie; movie stays `:requested`.
+  - `{:error, :tmdb_unavailable}` — transient TMDB error; movie stays `:requested`.
+  - `{:error, reason}` — indexer or client error; movie left in `:searching`.
   """
   def start(%Movie{} = movie) do
     with {:ok, imdb_id} <- ensure_imdb_id(movie),
@@ -26,7 +33,7 @@ defmodule Cinder.Download do
         {:error, _} = err -> err
       end
     else
-      :no_imdb_id -> Catalog.transition(movie, %{status: :no_match})
+      :no_imdb_id -> {:error, :no_imdb_id}
       {:error, _} = err -> err
     end
   end
@@ -38,7 +45,8 @@ defmodule Cinder.Download do
   defp ensure_imdb_id(%Movie{tmdb_id: tmdb_id}) do
     case Catalog.get_movie(tmdb_id) do
       {:ok, %{imdb_id: imdb_id}} when is_binary(imdb_id) and imdb_id != "" -> {:ok, imdb_id}
-      _ -> :no_imdb_id
+      {:ok, _} -> :no_imdb_id
+      {:error, _} -> {:error, :tmdb_unavailable}
     end
   end
 
