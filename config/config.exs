@@ -23,6 +23,7 @@ config :cinder,
   }
 
 config :cinder, filesystem: Cinder.Library.Filesystem.Disk
+# Default; setting PLEX_URL (see runtime.exs) switches this to Plex.
 config :cinder, media_server: Cinder.Library.MediaServer.Jellyfin
 config :cinder, Cinder.Download.Poller, interval: 5_000
 
