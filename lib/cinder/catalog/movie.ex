@@ -3,14 +3,23 @@ defmodule Cinder.Catalog.Movie do
   A watchlisted movie.
 
   Created `:requested`; the download pipeline advances `status`
-  (`:searching → :downloading → :downloaded → :available`), or parks it at
-  `:no_match` when no release survives the scorer.
+  (`:searching → :downloading → :downloaded → :available`), parks it at
+  `:no_match` when no release survives the scorer, or `:import_failed` when a
+  completed download has no usable file to import.
   """
   use Ecto.Schema
 
   import Ecto.Changeset
 
-  @statuses [:requested, :searching, :downloading, :downloaded, :available, :no_match]
+  @statuses [
+    :requested,
+    :searching,
+    :downloading,
+    :downloaded,
+    :available,
+    :no_match,
+    :import_failed
+  ]
 
   schema "movies" do
     field :tmdb_id, :integer

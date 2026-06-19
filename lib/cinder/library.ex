@@ -54,9 +54,14 @@ defmodule Cinder.Library do
   end
 
   defp build_dest(%Movie{title: title, year: year}, source) do
-    name = "#{sanitize(title)} (#{year})"
+    name = library_name(sanitize(title), year)
     Path.join([library_path(), name, name <> Path.extname(source)])
   end
+
+  # Jellyfin's scheme is `Title (Year)`; with no year (a TMDB entry lacking a
+  # release date) fall back to a bare `Title` rather than a malformed `Title ()`.
+  defp library_name(title, nil), do: title
+  defp library_name(title, year), do: "#{title} (#{year})"
 
   defp sanitize(title), do: String.replace(title, @illegal, "")
 

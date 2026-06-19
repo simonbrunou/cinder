@@ -34,17 +34,31 @@ defmodule Cinder.Download.PollerTest do
     end
   end
 
-  test "a poll advances a :downloading movie to :downloaded and broadcasts" do
+  # Stub a successful single-file import (FS + media server) for the import pass.
+  defp stub_successful_import do
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
+    stub(Cinder.Library.MediaServerMock, :scan, fn -> :ok end)
+  end
+
+  test "a poll drives a completed download through :downloaded to :available" do
     movie = downloading_movie(1, "hash-1")
     Catalog.subscribe()
     start_supervised!({Poller, interval: 60_000})
 
-    stub(Cinder.Download.ClientMock, :status, fn "hash-1" -> {:ok, %{state: :completed}} end)
+    stub(Cinder.Download.ClientMock, :status, fn "hash-1" ->
+      {:ok, %{state: :completed, content_path: "/downloads/M.mkv"}}
+    end)
+
+    stub_successful_import()
 
     assert :ok = Poller.poll()
 
-    assert %Movie{status: :downloaded} = Repo.get!(Movie, movie.id)
+    assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
+    # Passes through :downloaded (pass 1) then :available (pass 2) in one tick.
     assert_receive {:movie_updated, %Movie{status: :downloaded}}
+    assert_receive {:movie_updated, %Movie{status: :available}}
   end
 
   test "a non-completed status leaves the movie :downloading" do
@@ -77,27 +91,36 @@ defmodule Cinder.Download.PollerTest do
     end)
 
     stub(Cinder.Download.ClientMock, :add, fn _release -> {:ok, hash} end)
-    stub(Cinder.Download.ClientMock, :status, fn ^hash -> {:ok, %{state: :completed}} end)
+
+    stub(Cinder.Download.ClientMock, :status, fn ^hash ->
+      {:ok, %{state: :completed, content_path: "/downloads/Inception.mkv"}}
+    end)
+
+    stub_successful_import()
 
     start_supervised!({Poller, interval: 60_000})
 
     assert {:ok, %Movie{status: :downloading, download_id: ^hash}} = Download.start(movie)
     assert :ok = Poller.poll()
-    assert %Movie{status: :downloaded} = Repo.get!(Movie, movie.id)
+    assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
   end
 
   test "the poller recovers from a crash and still advances work (OTP payoff)" do
     movie = downloading_movie(4, "hash-4")
     pid = start_supervised!({Poller, interval: 60_000})
 
-    stub(Cinder.Download.ClientMock, :status, fn "hash-4" -> {:ok, %{state: :completed}} end)
+    stub(Cinder.Download.ClientMock, :status, fn "hash-4" ->
+      {:ok, %{state: :completed, content_path: "/downloads/M.mkv"}}
+    end)
+
+    stub_successful_import()
 
     Process.exit(pid, :kill)
     new_pid = await_restart(Poller, pid)
     assert new_pid != pid
 
     assert :ok = Poller.poll(new_pid)
-    assert %Movie{status: :downloaded} = Repo.get!(Movie, movie.id)
+    assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
   end
 
   defp downloaded_movie(tmdb_id, file_path) do
@@ -133,6 +156,30 @@ defmodule Cinder.Download.PollerTest do
     stub(Cinder.Library.MediaServerMock, :scan, fn -> {:error, :jellyfin_down} end)
 
     assert :ok = Poller.poll()
+    # :jellyfin_down is transient — stays :downloaded so a later tick can retry.
     assert %Movie{status: :downloaded} = Repo.get!(Movie, movie.id)
+  end
+
+  test "a release with no usable video file is parked at :import_failed (no retry loop)" do
+    movie = downloaded_movie(12, "/downloads/release-folder")
+    start_supervised!({Poller, interval: 60_000})
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok, [{"/downloads/release-folder/readme.nfo", 12}]}
+    end)
+
+    assert :ok = Poller.poll()
+    assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
+  end
+
+  test "a :downloaded movie with no file_path is parked at :import_failed" do
+    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 13, title: "M"})
+    {:ok, movie} = Catalog.transition(movie, %{status: :downloaded})
+    start_supervised!({Poller, interval: 60_000})
+
+    assert :ok = Poller.poll()
+    assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
   end
 end

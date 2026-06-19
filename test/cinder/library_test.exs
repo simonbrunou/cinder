@@ -97,4 +97,17 @@ defmodule Cinder.LibraryTest do
 
     assert {:ok, _dest} = Library.import_movie(movie)
   end
+
+  test "year: nil falls back to a bare Title (no empty parens)" do
+    movie = %Movie{title: "Untitled", year: nil, file_path: "/dl/x.mkv"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+    expect(Cinder.Library.FilesystemMock, :mkdir_p, fn "#{@lib}/Untitled" -> :ok end)
+
+    expect(Cinder.Library.FilesystemMock, :ln, fn _src, "#{@lib}/Untitled/Untitled.mkv" -> :ok end)
+
+    expect(Cinder.Library.MediaServerMock, :scan, fn -> :ok end)
+
+    assert {:ok, "#{@lib}/Untitled/Untitled.mkv"} = Library.import_movie(movie)
+  end
 end

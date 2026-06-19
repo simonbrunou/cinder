@@ -1,7 +1,9 @@
 defmodule Cinder.Download.Poller do
   @moduledoc """
-  Polls active (`:downloading`) movies via the download client and advances them
-  to `:downloaded`, broadcasting each change (through `Catalog.transition/2`).
+  Polls active downloads and advances them through the pipeline: `:downloading`
+  → `:downloaded` (capturing the on-disk path), then imports `:downloaded`
+  movies into the library → `:available` (or `:import_failed` for a release with
+  no usable file). Each change broadcasts through `Catalog.transition/2`.
 
   Holds no in-flight state: every tick re-derives its work from the DB, so it
   recovers cleanly after a crash/restart. That is the OTP payoff Phase 3 proves.
@@ -75,13 +77,22 @@ defmodule Cinder.Download.Poller do
     end
   end
 
+  # Deterministic failures — the release itself is unusable, so retrying can't
+  # help. Park them at :import_failed instead of re-failing (and re-logging)
+  # every tick. Transient failures (media server down, etc.) stay :downloaded.
+  @permanent_import_errors [:no_file_path, :no_video_file]
+
   defp import_one(movie) do
     case Library.import_movie(movie) do
       {:ok, _dest} ->
         Catalog.transition(movie, %{status: :available})
 
+      {:error, reason} when reason in @permanent_import_errors ->
+        Logger.warning("import permanently failed for movie #{movie.id}: #{inspect(reason)}")
+        Catalog.transition(movie, %{status: :import_failed})
+
       {:error, reason} ->
-        Logger.warning("import failed for movie #{movie.id}: #{inspect(reason)}")
+        Logger.warning("import failed for movie #{movie.id}, will retry: #{inspect(reason)}")
     end
   end
 
