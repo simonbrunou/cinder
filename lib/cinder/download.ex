@@ -6,9 +6,9 @@ defmodule Cinder.Download do
   `:downloaded`.
 
   The client is reached only through the `Cinder.Download.Client` behaviour,
-  resolved from config (`config :cinder, :download_client`) so tests use a Mox
-  mock and never hit the network. Auto-triggered by `Cinder.Download.Poller`'s
-  search sweep.
+  resolved per-release-protocol from config (`config :cinder, :download_clients`,
+  a `%{protocol => module}` map) so tests use Mox mocks and never hit the network.
+  Auto-triggered by `Cinder.Download.Poller`'s search sweep.
   """
   alias Cinder.{Acquisition, Catalog}
   alias Cinder.Catalog.Movie
@@ -27,7 +27,7 @@ defmodule Cinder.Download do
   def start(%Movie{} = movie) do
     with {:ok, imdb_id} <- ensure_imdb_id(movie),
          {:ok, movie} <- Catalog.transition(movie, %{status: :searching, imdb_id: imdb_id}) do
-      case Acquisition.best_release(imdb_id) do
+      case Acquisition.best_release(imdb_id, protocols: available_protocols()) do
         {:ok, release} -> add_to_client(movie, release)
         :no_match -> Catalog.transition(movie, %{status: :no_match})
         {:error, _} = err -> err
@@ -36,6 +36,23 @@ defmodule Cinder.Download do
       :no_imdb_id -> {:error, :no_imdb_id}
       {:error, _} = err -> err
     end
+  end
+
+  @doc """
+  Resolves the download-client module for `protocol` (`:torrent | :usenet`).
+  Returns `{:ok, module}` or `:error` when no client is configured for it. A
+  `nil` protocol (a row from before download_protocol existed) resolves to
+  `:torrent`.
+  """
+  def client_for(protocol) do
+    :cinder
+    |> Application.fetch_env!(:download_clients)
+    |> Map.fetch(protocol || :torrent)
+  end
+
+  @doc "The protocols with a configured download client."
+  def available_protocols do
+    :cinder |> Application.fetch_env!(:download_clients) |> Map.keys()
   end
 
   defp ensure_imdb_id(%Movie{imdb_id: imdb_id}) when is_binary(imdb_id) and imdb_id != "" do
@@ -51,14 +68,20 @@ defmodule Cinder.Download do
   end
 
   defp add_to_client(movie, release) do
-    case client().add(release) do
-      {:ok, download_id} ->
-        Catalog.transition(movie, %{status: :downloading, download_id: download_id})
-
-      {:error, _} = err ->
-        err
+    with {:ok, client} <- client_for(release.protocol),
+         {:ok, download_id} <- client.add(release) do
+      # download_id and download_protocol MUST be written in the same transition:
+      # a torn write (id set, protocol nil) would route this download to :torrent.
+      Catalog.transition(movie, %{
+        status: :downloading,
+        download_id: download_id,
+        download_protocol: release.protocol
+      })
+    else
+      # Unreachable post-filter (best_release only returns a configured protocol);
+      # a fail-loud guard rather than a silent misroute.
+      :error -> {:error, :no_client}
+      {:error, _} = err -> err
     end
   end
-
-  defp client, do: Application.fetch_env!(:cinder, :download_client)
 end

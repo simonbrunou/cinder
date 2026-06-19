@@ -30,6 +30,7 @@ defmodule Cinder.Catalog.Movie do
     field :poster_path, :string
     field :status, Ecto.Enum, values: @statuses, default: :requested
     field :download_id, :string
+    field :download_protocol, Ecto.Enum, values: [:torrent, :usenet]
     field :file_path, :string
     field :import_attempts, :integer, default: 0
     field :search_attempts, :integer, default: 0
@@ -45,12 +46,13 @@ defmodule Cinder.Catalog.Movie do
     |> unique_constraint(:tmdb_id)
   end
 
-  @doc "Changeset for pipeline state transitions (status + optional download_id/imdb_id/file_path/attempt counters)."
+  @doc "Changeset for pipeline state transitions (status + optional download_id/download_protocol/imdb_id/file_path/attempt counters)."
   def transition_changeset(movie, attrs) do
     movie
     |> cast(attrs, [
       :status,
       :download_id,
+      :download_protocol,
       :imdb_id,
       :file_path,
       :import_attempts,

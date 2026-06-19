@@ -35,6 +35,16 @@ if base_url = System.get_env("QBITTORRENT_URL") do
     password: System.get_env("QBITTORRENT_PASSWORD")
 end
 
+# Real SABnzbd connection, read in every environment. Unset in test/CI, where
+# the suite stubs Req regardless, so it has no effect there. NOTE: SABnzbd must
+# have "Pause on Duplicates" disabled — that mode re-keys the nzo_id after an
+# addurl, so the stored download_id would never reappear in the queue/history.
+if url = System.get_env("SABNZBD_URL") do
+  config :cinder, Cinder.Download.Client.Sabnzbd,
+    base_url: url,
+    api_key: System.get_env("SABNZBD_API_KEY")
+end
+
 # Real Jellyfin connection, read in every environment. Unset in test/CI, where
 # the suite either mocks media_server or stubs Req, so it has no effect there.
 if url = System.get_env("JELLYFIN_URL") do

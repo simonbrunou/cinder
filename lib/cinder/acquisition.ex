@@ -13,6 +13,11 @@ defmodule Cinder.Acquisition do
   Searches the configured indexer for `imdb_id`, parses each result, and returns
   the best release per `Scorer` rules. `opts` are forwarded to `Scorer.select/2`.
 
+  When `opts[:protocols]` is given (a list of `:torrent`/`:usenet`), releases on
+  any other protocol are dropped before scoring — this is the graceful-degradation
+  guard, so a release with no configured download client is never chosen.
+  Omitting the option keeps every protocol.
+
   Returns `{:ok, %Release{}}`, `:no_match` (no results, or none survive the rules),
   or `{:error, term}` (indexer failure, passed through).
   """
@@ -21,12 +26,18 @@ defmodule Cinder.Acquisition do
       {:ok, raw_results} ->
         raw_results
         |> Enum.map(&Release.new/1)
+        |> filter_protocols(Keyword.get(opts, :protocols))
         |> Scorer.select(opts)
 
       {:error, _reason} = error ->
         error
     end
   end
+
+  defp filter_protocols(releases, nil), do: releases
+
+  defp filter_protocols(releases, allowed),
+    do: Enum.filter(releases, &(&1.protocol in allowed))
 
   # Resolve the impl at runtime (not compile_env!) so the test Mox module — defined
   # at runtime — doesn't warn under --warnings-as-errors. fetch_env! fails fast if unset.

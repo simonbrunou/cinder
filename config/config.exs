@@ -15,7 +15,13 @@ config :cinder,
 # Tests override these with Mox mocks (see config/test.exs).
 config :cinder, tmdb: Cinder.Catalog.TMDB.HTTP
 config :cinder, indexer: Cinder.Acquisition.Indexer.Prowlarr
-config :cinder, download_client: Cinder.Download.Client.QBittorrent
+
+config :cinder,
+  download_clients: %{
+    torrent: Cinder.Download.Client.QBittorrent,
+    usenet: Cinder.Download.Client.Sabnzbd
+  }
+
 config :cinder, filesystem: Cinder.Library.Filesystem.Disk
 config :cinder, media_server: Cinder.Library.MediaServer.Jellyfin
 config :cinder, Cinder.Download.Poller, interval: 5_000

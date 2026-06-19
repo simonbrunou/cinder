@@ -50,4 +50,28 @@ defmodule Cinder.AcquisitionTest do
 
     assert {:error, :timeout} = Acquisition.best_release("tt1375666")
   end
+
+  test "best_release/2 excludes releases whose protocol has no configured client" do
+    expect(Cinder.Acquisition.IndexerMock, :search, fn _ ->
+      {:ok,
+       [
+         raw(title: "Movie.2020.1080p.WEB-DL-USE", protocol: :usenet, size: 9 * @gb),
+         raw(title: "Movie.2020.720p.BluRay.x264-TOR", protocol: :torrent, size: 4 * @gb)
+       ]}
+    end)
+
+    # Only torrent clients available: the 1080p Usenet release is filtered out
+    # before scoring, so the 720p torrent wins despite the lower resolution.
+    assert {:ok, %Release{resolution: "720p", protocol: :torrent}} =
+             Acquisition.best_release("tt1", protocols: [:torrent], max_size: 20 * @gb)
+  end
+
+  test "best_release/2 with no :protocols opt keeps every protocol" do
+    expect(Cinder.Acquisition.IndexerMock, :search, fn _ ->
+      {:ok, [raw(title: "Movie.2020.1080p.WEB-DL-USE", protocol: :usenet, size: 9 * @gb)]}
+    end)
+
+    assert {:ok, %Release{protocol: :usenet}} =
+             Acquisition.best_release("tt1", max_size: 20 * @gb)
+  end
 end
