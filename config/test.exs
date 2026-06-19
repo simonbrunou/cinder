@@ -42,7 +42,8 @@ config :cinder,
   tmdb: Cinder.Catalog.TMDBMock,
   indexer: Cinder.Acquisition.IndexerMock,
   download_client: Cinder.Download.ClientMock,
-  media_server: Cinder.Library.MediaServerMock
+  media_server: Cinder.Library.MediaServerMock,
+  filesystem: Cinder.Library.FilesystemMock
 
 # The real TMDB client's own test routes Req through a Req.Test stub (no network).
 config :cinder, Cinder.Catalog.TMDB.HTTP, req_options: [plug: {Req.Test, Cinder.TMDBStub}]
