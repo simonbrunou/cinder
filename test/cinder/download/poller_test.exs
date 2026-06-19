@@ -3,6 +3,10 @@ defmodule Cinder.Download.PollerTest do
 
   import Mox
 
+  # The poller logs warnings/errors on the import failure paths exercised below;
+  # capture them so test output stays pristine (they print on failure).
+  @moduletag :capture_log
+
   alias Cinder.{Catalog, Download}
   alias Cinder.Catalog.Movie
   alias Cinder.Download.Poller

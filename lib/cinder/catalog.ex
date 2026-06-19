@@ -59,7 +59,7 @@ defmodule Cinder.Catalog do
   Applies a pipeline state transition and, on success, broadcasts
   `{:movie_updated, movie}` on the `"movies"` topic. This is the single
   choke-point for state changes — every transition broadcasts exactly once.
-  `attrs` must set `:status`; it may also set `:download_id` and `:imdb_id`.
+  `attrs` must set `:status`; it may also set `:download_id`, `:imdb_id`, and `:file_path`.
   """
   def transition(%Movie{} = movie, attrs) do
     with {:ok, updated} <- movie |> Movie.transition_changeset(attrs) |> Repo.update() do
