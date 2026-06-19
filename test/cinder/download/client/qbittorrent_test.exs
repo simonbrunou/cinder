@@ -48,6 +48,9 @@ defmodule Cinder.Download.Client.QBittorrentTest do
 
         {_, "/api/v2/torrents/add"} ->
           Req.Test.text(conn, "Ok.")
+
+        _ ->
+          flunk("unexpected request: #{conn.request_path}")
       end
     end)
   end
