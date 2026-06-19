@@ -66,3 +66,5 @@ config :cinder, Cinder.Library.MediaServer.Jellyfin,
 # The app-level poller must not run during the suite (it would race Mox/Sandbox).
 # Poller tests start their own supervised instance.
 config :cinder, start_poller: false
+
+config :cinder, :library_path, "/tmp/cinder-test-library"

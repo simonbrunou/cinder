@@ -43,6 +43,11 @@ if url = System.get_env("JELLYFIN_URL") do
     api_key: System.get_env("JELLYFIN_API_KEY")
 end
 
+# Where Cinder hardlinks imported movies (Jellyfin's library root).
+if path = System.get_env("LIBRARY_PATH") do
+  config :cinder, :library_path, path
+end
+
 config :cinder, CinderWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
