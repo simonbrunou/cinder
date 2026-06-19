@@ -50,6 +50,9 @@ defmodule Cinder.Catalog do
   @doc "Fetches full movie details from TMDB (the details endpoint carries `imdb_id`)."
   def get_movie(tmdb_id), do: tmdb().get_movie(tmdb_id)
 
+  @doc "Fetches a watchlisted movie by primary key, or `nil`."
+  def get_movie_by_id(id), do: Repo.get(Movie, id)
+
   @doc "Lists movies in a given pipeline `status`."
   def list_by_status(status) do
     Repo.all(from m in Movie, where: m.status == ^status)
@@ -59,7 +62,8 @@ defmodule Cinder.Catalog do
   Applies a pipeline state transition and, on success, broadcasts
   `{:movie_updated, movie}` on the `"movies"` topic. This is the single
   choke-point for state changes — every transition broadcasts exactly once.
-  `attrs` must set `:status`; it may also set `:download_id`, `:imdb_id`, and `:file_path`.
+  `attrs` must set `:status`; it may also set `:download_id`, `:imdb_id`, `:file_path`,
+  `:import_attempts`, and `:search_attempts`.
   """
   def transition(%Movie{} = movie, attrs) do
     with {:ok, updated} <- movie |> Movie.transition_changeset(attrs) |> Repo.update() do
