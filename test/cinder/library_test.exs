@@ -64,6 +64,17 @@ defmodule Cinder.LibraryTest do
     assert {:ok, _dest} = Library.import_movie(movie)
   end
 
+  test "scan failure is best-effort: import still succeeds once the file is linked" do
+    movie = %Movie{title: "Heat", year: 1995, file_path: "/dl/Heat.mkv"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+    expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    expect(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
+    expect(Cinder.Library.MediaServerMock, :scan, fn -> {:error, :econnrefused} end)
+
+    assert {:ok, "#{@lib}/Heat (1995)/Heat (1995).mkv"} = Library.import_movie(movie)
+  end
+
   test "folder with no video file → {:error, :no_video_file}, no scan" do
     movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
 
