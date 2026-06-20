@@ -10,7 +10,12 @@ defmodule Cinder.Library.MediaServer.Jellyfin do
   @behaviour Cinder.Library.MediaServer
 
   @impl true
-  def scan do
+  def scan, do: req() |> Req.post(url: "/Library/Refresh") |> result()
+
+  @impl true
+  def health, do: req() |> Req.get(url: "/System/Info", receive_timeout: 3_000) |> result()
+
+  defp req do
     config = Application.get_env(:cinder, __MODULE__, [])
 
     [
@@ -19,11 +24,9 @@ defmodule Cinder.Library.MediaServer.Jellyfin do
     ]
     |> Keyword.merge(Keyword.get(config, :req_options, []))
     |> Req.new()
-    |> Req.post(url: "/Library/Refresh")
-    |> case do
-      {:ok, %{status: status}} when status in 200..299 -> :ok
-      {:ok, %{status: status}} -> {:error, {:jellyfin_status, status}}
-      {:error, reason} -> {:error, reason}
-    end
   end
+
+  defp result({:ok, %{status: status}}) when status in 200..299, do: :ok
+  defp result({:ok, %{status: status}}), do: {:error, {:jellyfin_status, status}}
+  defp result({:error, reason}), do: {:error, reason}
 end

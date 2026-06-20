@@ -94,6 +94,16 @@ defmodule Cinder.Download.Client.QBittorrent do
     end
   end
 
+  @impl true
+  def health do
+    case action(fn req ->
+           Req.get(req, url: "/api/v2/app/webapiVersion", receive_timeout: 3_000)
+         end) do
+      {:ok, %{status: status}} when status in 200..299 -> :ok
+      other -> error(other)
+    end
+  end
+
   # Logs in, then runs `fun` with a Req carrying the SID cookie + base_url.
   defp action(fun) do
     config = config()

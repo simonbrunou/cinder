@@ -24,4 +24,23 @@ defmodule Cinder.Library.MediaServer.PlexTest do
 
     assert {:error, {:plex_status, 401}} = Plex.scan()
   end
+
+  test "health/0 GETs a token-checked endpoint with the token and returns :ok on 200" do
+    Req.Test.stub(Cinder.PlexStub, fn conn ->
+      assert conn.method == "GET"
+      assert conn.request_path == "/library/sections"
+      assert Plug.Conn.get_req_header(conn, "x-plex-token") == ["test-key"]
+      Req.Test.text(conn, "<MediaContainer/>")
+    end)
+
+    assert :ok = Plex.health()
+  end
+
+  test "health/0 surfaces a bad token (401) as an error" do
+    Req.Test.stub(Cinder.PlexStub, fn conn ->
+      conn |> Plug.Conn.put_status(401) |> Req.Test.text("Unauthorized")
+    end)
+
+    assert {:error, {:plex_status, 401}} = Plex.health()
+  end
 end

@@ -15,4 +15,7 @@ defmodule Cinder.Download.Client do
   `:downloaded` until `:content_path` is present.
   """
   @callback status(id :: String.t()) :: {:ok, map()} | {:error, term()}
+
+  @doc "Lightweight reachability check — `:ok` if the client answers, else `{:error, reason}`."
+  @callback health() :: :ok | {:error, term()}
 end

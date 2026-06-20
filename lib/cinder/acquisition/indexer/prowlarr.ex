@@ -30,6 +30,14 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
     end
   end
 
+  @impl true
+  def health do
+    case request(url: "/api/v1/health", receive_timeout: 3_000) do
+      {:ok, %{status: status}} when status in 200..299 -> :ok
+      other -> error(other)
+    end
+  end
+
   defp request(opts) do
     config = Application.get_env(:cinder, __MODULE__, [])
 

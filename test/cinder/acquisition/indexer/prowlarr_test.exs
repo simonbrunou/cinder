@@ -76,4 +76,22 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
 
     assert {:error, :unexpected_response} = Prowlarr.search("tt1375666")
   end
+
+  test "health/0 pings /api/v1/health with the api key and returns :ok on 200" do
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      assert conn.request_path == "/api/v1/health"
+      assert Plug.Conn.get_req_header(conn, "x-api-key") == ["test-key"]
+      Req.Test.json(conn, [])
+    end)
+
+    assert :ok = Prowlarr.health()
+  end
+
+  test "health/0 returns an error tuple on a non-2xx status" do
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      conn |> Plug.Conn.put_status(503) |> Req.Test.text("down")
+    end)
+
+    assert {:error, {:prowlarr_status, 503}} = Prowlarr.health()
+  end
 end

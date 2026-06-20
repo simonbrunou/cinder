@@ -135,6 +135,22 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     assert {:ok, %{state: :downloading}} = QBittorrent.status("abc123")
   end
 
+  test "health/0 logs in and pings webapiVersion, returning :ok on 200" do
+    stub_qbit(fn conn ->
+      assert conn.request_path == "/api/v2/app/webapiVersion"
+      assert Plug.Conn.get_req_header(conn, "cookie") == ["SID=testsid"]
+      Req.Test.text(conn, "2.8.5")
+    end)
+
+    assert :ok = QBittorrent.health()
+  end
+
+  test "health/0 returns an error when login fails" do
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn -> Req.Test.text(conn, "Fails.") end)
+
+    assert {:error, :login_failed} = QBittorrent.health()
+  end
+
   test "add/1 accepts a base32 magnet and returns its lowercase-hex infohash" do
     raw = :crypto.hash(:sha, "phase5")
     b32 = Base.encode32(raw, padding: false)

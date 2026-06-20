@@ -106,6 +106,18 @@ defmodule Cinder.Download.Client.Sabnzbd do
   defp pct(p) when is_number(p), do: p / 100
   defp pct(_), do: 0.0
 
+  @impl true
+  # mode=queue requires the API key (unlike mode=version, which SABnzbd serves
+  # unauthenticated), so a wrong key surfaces as unhealthy. SABnzbd reports a bad
+  # key as HTTP 200 with `{"status": false}`, so that body must be caught too.
+  def health do
+    case get(mode: "queue") do
+      {:ok, %{status: 200, body: %{"status" => false}}} -> {:error, :bad_api_key}
+      {:ok, %{status: status}} when status in 200..299 -> :ok
+      other -> error(other)
+    end
+  end
+
   defp get(params) do
     config = config()
 

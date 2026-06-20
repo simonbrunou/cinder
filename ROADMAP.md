@@ -195,12 +195,18 @@ config and ops gotchas. Still open:
 - **[done] Media-server scan is best-effort** — a failed scan no longer strands a correctly
   hardlinked movie at `:import_failed`; the import reaches `:available` and the server picks the
   file up on its next periodic scan. (`Cinder.Library.import_movie/1`.)
-- **`/status` retry action** — a per-movie "retry" that clears a parked
-  `:search_failed`/`:no_match`/`:import_failed` back to `:requested` with attempt counters reset
-  (replaces the documented IEx reset). LiveView event + UI.
-- **`/status` config-health** — a reachability ping per external service (indexer / download
-  client / media server) so an unwired/unreachable dependency is visible on the dashboard instead
-  of only in the logs.
+- **[done] `/status` retry action** — a parked `:search_failed`/`:no_match`/`:import_failed`
+  movie shows a "Retry" button that resets it to `:requested` with attempt counters zeroed; the
+  poller re-queues it next tick. The transition is guarded server-side
+  (`Cinder.Catalog.retry_movie/1`) so an in-flight movie can't be yanked back. Replaces the
+  documented IEx reset.
+- **[done] `/status` config-health** — a "Service health" panel on `/status` pings each
+  configured external service (indexer, every download protocol's client, media server) via a new
+  `health/0` behaviour callback and shows it reachable/unreachable. Checks run async on load (a
+  down service can't block the page) with a manual "Recheck" button. `Cinder.Health.check_all/0`
+  resolves the impls; reachability-first — Prowlarr/qBittorrent/Jellyfin endpoints are
+  authenticated (so they also catch bad creds), SABnzbd/Plex are reachability-only. The
+  live/visual confirmation is the separate "visual check" item below.
 - **Torrent path — live sign-off (needs homelab):** the live run went via Usenet/SABnzbd. Exercise
   a qBittorrent grab end-to-end — base32 magnet, `.torrent` URL fetch, `Cinder.Download.Torrent.infohash/1`
   status polling — and confirm a malformed/HTML "torrent" parks gracefully rather than looping.

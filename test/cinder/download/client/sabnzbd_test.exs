@@ -112,6 +112,31 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     assert {:error, :not_found} = Sabnzbd.status("nzo-1")
   end
 
+  test "health/0 pings an auth-checked mode with the api key and returns :ok on success" do
+    stub(fn conn ->
+      assert conn.request_path == "/api"
+      assert conn.params["mode"] == "queue"
+      assert conn.params["apikey"] == "test-key"
+      Req.Test.json(conn, %{"queue" => %{"slots" => []}})
+    end)
+
+    assert :ok = Sabnzbd.health()
+  end
+
+  test "health/0 returns an error when SABnzbd rejects the api key (200 + status false)" do
+    stub(fn conn ->
+      Req.Test.json(conn, %{"status" => false, "error" => "API Key Incorrect"})
+    end)
+
+    assert {:error, :bad_api_key} = Sabnzbd.health()
+  end
+
+  test "health/0 returns an error tuple on a non-2xx status" do
+    stub(fn conn -> conn |> Plug.Conn.put_status(500) |> Req.Test.text("boom") end)
+
+    assert {:error, {:sabnzbd_status, 500}} = Sabnzbd.health()
+  end
+
   test "status/1 falls through to history when the queue response omits slots" do
     # A queue payload without a "slots" key must not short-circuit to an error
     # that strands the poll — fall through to history (where a finished job lives).
