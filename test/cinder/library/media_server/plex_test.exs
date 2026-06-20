@@ -24,4 +24,22 @@ defmodule Cinder.Library.MediaServer.PlexTest do
 
     assert {:error, {:plex_status, 401}} = Plex.scan()
   end
+
+  test "health/0 GETs /identity and returns :ok on 200" do
+    Req.Test.stub(Cinder.PlexStub, fn conn ->
+      assert conn.method == "GET"
+      assert conn.request_path == "/identity"
+      Req.Test.text(conn, "<MediaContainer/>")
+    end)
+
+    assert :ok = Plex.health()
+  end
+
+  test "health/0 surfaces a non-2xx status as an error" do
+    Req.Test.stub(Cinder.PlexStub, fn conn ->
+      conn |> Plug.Conn.put_status(500) |> Req.Test.text("err")
+    end)
+
+    assert {:error, {:plex_status, 500}} = Plex.health()
+  end
 end

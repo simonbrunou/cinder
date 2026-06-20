@@ -16,17 +16,27 @@ defmodule Cinder.Library.MediaServer.Plex do
   def scan do
     config = Application.get_env(:cinder, __MODULE__, [])
 
+    req(config)
+    |> Req.get(url: "/library/sections/#{Keyword.get(config, :section)}/refresh")
+    |> result()
+  end
+
+  @impl true
+  def health do
+    config = Application.get_env(:cinder, __MODULE__, [])
+    req(config) |> Req.get(url: "/identity", receive_timeout: 3_000) |> result()
+  end
+
+  defp req(config) do
     [
       base_url: Keyword.get(config, :url),
       headers: [{"x-plex-token", Keyword.get(config, :token)}]
     ]
     |> Keyword.merge(Keyword.get(config, :req_options, []))
     |> Req.new()
-    |> Req.get(url: "/library/sections/#{Keyword.get(config, :section)}/refresh")
-    |> case do
-      {:ok, %{status: status}} when status in 200..299 -> :ok
-      {:ok, %{status: status}} -> {:error, {:plex_status, status}}
-      {:error, reason} -> {:error, reason}
-    end
   end
+
+  defp result({:ok, %{status: status}}) when status in 200..299, do: :ok
+  defp result({:ok, %{status: status}}), do: {:error, {:plex_status, status}}
+  defp result({:error, reason}), do: {:error, reason}
 end

@@ -6,4 +6,7 @@ defmodule Cinder.Library.MediaServer do
   """
 
   @callback scan() :: :ok | {:error, term()}
+
+  @doc "Lightweight reachability check — `:ok` if the media server answers, else `{:error, reason}`."
+  @callback health() :: :ok | {:error, term()}
 end

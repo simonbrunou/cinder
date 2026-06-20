@@ -6,4 +6,7 @@ defmodule Cinder.Acquisition.Indexer do
   """
 
   @callback search(imdb_id :: String.t()) :: {:ok, [map()]} | {:error, term()}
+
+  @doc "Lightweight reachability check — `:ok` if the indexer answers, else `{:error, reason}`."
+  @callback health() :: :ok | {:error, term()}
 end

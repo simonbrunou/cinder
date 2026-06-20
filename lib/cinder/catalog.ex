@@ -71,4 +71,20 @@ defmodule Cinder.Catalog do
       {:ok, updated}
     end
   end
+
+  # Parked terminal states a user can re-queue. An in-flight movie must never be
+  # yanked back to :requested, so retry guards on status server-side (the /status
+  # button is a client-sent event — don't trust it to only fire for parked rows).
+  @retryable [:no_match, :search_failed, :import_failed]
+
+  @doc """
+  Re-queues a parked movie: resets it to `:requested` and zeroes the attempt
+  counters so the poller picks it up fresh. Returns `{:error, :not_retryable}`
+  for any non-parked movie. Replaces the old IEx reset.
+  """
+  def retry_movie(%Movie{status: status} = movie) when status in @retryable do
+    transition(movie, %{status: :requested, search_attempts: 0, import_attempts: 0})
+  end
+
+  def retry_movie(%Movie{}), do: {:error, :not_retryable}
 end

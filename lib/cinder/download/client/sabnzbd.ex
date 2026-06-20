@@ -106,6 +106,14 @@ defmodule Cinder.Download.Client.Sabnzbd do
   defp pct(p) when is_number(p), do: p / 100
   defp pct(_), do: 0.0
 
+  @impl true
+  def health do
+    case get(mode: "version") do
+      {:ok, %{status: status}} when status in 200..299 -> :ok
+      other -> error(other)
+    end
+  end
+
   defp get(params) do
     config = config()
 

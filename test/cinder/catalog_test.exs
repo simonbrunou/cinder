@@ -80,6 +80,37 @@ defmodule Cinder.CatalogTest do
     end
   end
 
+  describe "retry_movie/1" do
+    test "resets a parked movie to :requested, zeroes attempt counters, and broadcasts" do
+      Catalog.subscribe()
+
+      for {tmdb_id, parked} <- [{8001, :no_match}, {8002, :search_failed}, {8003, :import_failed}] do
+        {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: tmdb_id, title: "M"})
+
+        {:ok, movie} =
+          Catalog.transition(movie, %{
+            status: parked,
+            search_attempts: 7,
+            import_attempts: 4
+          })
+
+        assert {:ok, %Movie{status: :requested, search_attempts: 0, import_attempts: 0} = retried} =
+                 Catalog.retry_movie(movie)
+
+        expected_id = retried.id
+        assert_receive {:movie_updated, %Movie{id: ^expected_id, status: :requested}}
+      end
+    end
+
+    test "refuses to retry a movie that is not in a parked state" do
+      {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 8100, title: "M"})
+      {:ok, downloading} = Catalog.transition(movie, %{status: :downloading, download_id: "h"})
+
+      assert {:error, :not_retryable} = Catalog.retry_movie(downloading)
+      assert Catalog.get_movie_by_id(movie.id).status == :downloading
+    end
+  end
+
   describe "get_movie_by_id/1" do
     test "returns the movie by primary key, or nil" do
       {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 7001, title: "M"})
