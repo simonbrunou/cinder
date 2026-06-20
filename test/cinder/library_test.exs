@@ -3,6 +3,7 @@ defmodule Cinder.LibraryTest do
   use ExUnit.Case, async: true
 
   import Mox
+  import ExUnit.CaptureLog
 
   alias Cinder.Catalog.Movie
   alias Cinder.Library
@@ -72,7 +73,12 @@ defmodule Cinder.LibraryTest do
     expect(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
     expect(Cinder.Library.MediaServerMock, :scan, fn -> {:error, :econnrefused} end)
 
-    assert {:ok, "#{@lib}/Heat (1995)/Heat (1995).mkv"} = Library.import_movie(movie)
+    log =
+      capture_log(fn ->
+        assert {:ok, "#{@lib}/Heat (1995)/Heat (1995).mkv"} = Library.import_movie(movie)
+      end)
+
+    assert log =~ "media-server scan failed"
   end
 
   test "folder with no video file → {:error, :no_video_file}, no scan" do

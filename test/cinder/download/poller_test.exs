@@ -196,6 +196,21 @@ defmodule Cinder.Download.PollerTest do
     assert_receive {:movie_updated, %Movie{status: :available}}
   end
 
+  test "a best-effort scan failure still advances the movie to :available" do
+    movie = downloaded_movie(17, "/downloads/Inception.2010.1080p.mkv")
+    start_supervised!({Poller, interval: 60_000})
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
+    # File is hardlinked; only the media-server scan fails. Best-effort: the movie
+    # still reaches :available rather than re-stranding at :downloaded.
+    stub(Cinder.Library.MediaServerMock, :scan, fn -> {:error, :econnrefused} end)
+
+    assert :ok = Poller.poll()
+    assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
+  end
+
   test "a failed import leaves the movie :downloaded for retry" do
     movie = downloaded_movie(11, "/downloads/Inception.2010.1080p.mkv")
     start_supervised!({Poller, interval: 60_000})
