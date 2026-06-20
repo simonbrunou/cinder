@@ -10,6 +10,8 @@ defmodule Cinder.Library do
   Owns filesystem + Jellyfin only — `Catalog` remains the status choke-point.
   """
 
+  require Logger
+
   alias Cinder.Catalog.Movie
 
   @video_exts ~w(.mkv .mp4 .avi .m4v .mov .wmv .ts)
@@ -18,7 +20,9 @@ defmodule Cinder.Library do
   @doc """
   Hardlinks `movie`'s downloaded file into the library and triggers a scan.
   Returns `{:ok, dest_path}` or `{:error, reason}`. Idempotent: a dest that
-  already exists (`:eexist`) is treated as success.
+  already exists (`:eexist`) is treated as success. The scan is best-effort —
+  once the file is hardlinked the import has succeeded, so a failing scan is
+  logged but does not turn into `{:error, _}`.
   """
   @spec import_movie(Movie.t()) :: {:ok, String.t()} | {:error, term()}
   def import_movie(%Movie{file_path: path}) when path in [nil, ""], do: {:error, :no_file_path}
@@ -27,9 +31,18 @@ defmodule Cinder.Library do
     with {:ok, source} <- resolve_source(movie.file_path),
          dest = build_dest(movie, source),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
-         :ok <- link(source, dest),
-         :ok <- media_server().scan() do
+         :ok <- link(source, dest) do
+      scan(dest)
       {:ok, dest}
+    end
+  end
+
+  # Best-effort: the file is already hardlinked into the library, so a failed scan
+  # must not strand a correctly-imported movie at :import_failed — the media server
+  # picks it up on its next periodic scan. Log and report the import as done.
+  defp scan(dest) do
+    with {:error, reason} <- media_server().scan() do
+      Logger.warning("media-server scan failed after importing #{dest}: #{inspect(reason)}")
     end
   end
 

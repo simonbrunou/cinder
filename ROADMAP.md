@@ -186,6 +186,30 @@ hardlink + rename + scan call against mocked FS and Jellyfin, and the movie ends
 movie and watch it land in Jellyfin. (Mocked tests prove wiring and logic; only a live run
 proves your actual indexer returns what you expect.)
 
+### Phase 5 — remaining to sign off
+
+The core loop is validated live (2026-06-20): a real movie went `:requested → :available`,
+imported as a true hardlink, scanned into Plex. See the live-validation report for the running
+config and ops gotchas. Still open:
+
+- **[done] Media-server scan is best-effort** — a failed scan no longer strands a correctly
+  hardlinked movie at `:import_failed`; the import reaches `:available` and the server picks the
+  file up on its next periodic scan. (`Cinder.Library.import_movie/1`.)
+- **`/status` retry action** — a per-movie "retry" that clears a parked
+  `:search_failed`/`:no_match`/`:import_failed` back to `:requested` with attempt counters reset
+  (replaces the documented IEx reset). LiveView event + UI.
+- **`/status` config-health** — a reachability ping per external service (indexer / download
+  client / media server) so an unwired/unreachable dependency is visible on the dashboard instead
+  of only in the logs.
+- **Torrent path — live sign-off (needs homelab):** the live run went via Usenet/SABnzbd. Exercise
+  a qBittorrent grab end-to-end — base32 magnet, `.torrent` URL fetch, `Cinder.Download.Torrent.infohash/1`
+  status polling — and confirm a malformed/HTML "torrent" parks gracefully rather than looping.
+- **`/status` visual check (needs homelab):** open the dashboard against the running instance and
+  confirm badges advance live.
+- **Deploy: no auto-migration (ops):** the release start command doesn't migrate and there's no
+  Coolify pre-deploy hook — run `bin/cinder eval "Cinder.Release.migrate()"` after migration-bearing
+  deploys, or wire a hook.
+
 ---
 
 ## Parked (explicitly out of scope for the slice)

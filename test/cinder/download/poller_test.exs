@@ -196,17 +196,31 @@ defmodule Cinder.Download.PollerTest do
     assert_receive {:movie_updated, %Movie{status: :available}}
   end
 
+  test "a best-effort scan failure still advances the movie to :available" do
+    movie = downloaded_movie(17, "/downloads/Inception.2010.1080p.mkv")
+    start_supervised!({Poller, interval: 60_000})
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
+    # File is hardlinked; only the media-server scan fails. Best-effort: the movie
+    # still reaches :available rather than re-stranding at :downloaded.
+    stub(Cinder.Library.MediaServerMock, :scan, fn -> {:error, :econnrefused} end)
+
+    assert :ok = Poller.poll()
+    assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
+  end
+
   test "a failed import leaves the movie :downloaded for retry" do
     movie = downloaded_movie(11, "/downloads/Inception.2010.1080p.mkv")
     start_supervised!({Poller, interval: 60_000})
 
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
-    stub(Cinder.Library.MediaServerMock, :scan, fn -> {:error, :jellyfin_down} end)
+    stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eacces} end)
 
     assert :ok = Poller.poll()
-    # :jellyfin_down is transient — stays :downloaded so a later tick can retry.
+    # :eacces (e.g. a read-only mount) is transient — stays :downloaded for retry.
     assert %Movie{status: :downloaded} = Repo.get!(Movie, movie.id)
   end
 
@@ -366,8 +380,7 @@ defmodule Cinder.Download.PollerTest do
 
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
-    stub(Cinder.Library.MediaServerMock, :scan, fn -> {:error, :jellyfin_down} end)
+    stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eacces} end)
 
     # A transient error is retried (stays :downloaded) until the bound is hit.
     Enum.each(1..9, fn _ -> Poller.poll() end)
