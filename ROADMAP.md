@@ -212,9 +212,10 @@ config and ops gotchas. Still open:
   status polling — and confirm a malformed/HTML "torrent" parks gracefully rather than looping.
 - **`/status` visual check (needs homelab):** open the dashboard against the running instance and
   confirm badges advance live.
-- **Deploy: no auto-migration (ops):** the release start command doesn't migrate and there's no
-  Coolify pre-deploy hook — run `bin/cinder eval "Cinder.Release.migrate()"` after migration-bearing
-  deploys, or wire a hook.
+- **[done] Deploy auto-migration:** releases migrate at boot — `Cinder.Application` supervises
+  `{Ecto.Migrator, skip: skip_migrations?()}`, and `skip_migrations?` is false whenever
+  `RELEASE_NAME` is set, so every release start migrates before serving. `bin/cinder eval
+  "Cinder.Release.migrate()"` remains only a manual fallback (e.g. migrating without a restart).
 
 ---
 

@@ -14,8 +14,32 @@ defmodule CinderWeb.Router do
     plug :accepts, ["json"]
   end
 
+  # Optional HTTP Basic auth in front of the app — defense-in-depth behind the
+  # Caddy + VPN edge, so a write action (the /status retry) doesn't depend solely
+  # on the network. Credentials are read from env at runtime; with either unset the
+  # plug is a no-op, so dev/test/local are unaffected until both are set.
+  pipeline :admin_auth do
+    plug :basic_auth
+  end
+
+  defp basic_auth(conn, _opts) do
+    case {System.get_env("CINDER_BASIC_AUTH_USER"), System.get_env("CINDER_BASIC_AUTH_PASSWORD")} do
+      {user, pass} when is_binary(user) and is_binary(pass) ->
+        Plug.BasicAuth.basic_auth(conn, username: user, password: pass)
+
+      {nil, nil} ->
+        conn
+
+      # Exactly one var set (or a typo) — fail loud and closed rather than silently
+      # serving open, which would hide the misconfig from an operator who believes
+      # they enabled auth.
+      _ ->
+        raise "set both CINDER_BASIC_AUTH_USER and CINDER_BASIC_AUTH_PASSWORD, or neither"
+    end
+  end
+
   scope "/", CinderWeb do
-    pipe_through :browser
+    pipe_through [:browser, :admin_auth]
 
     live "/", WatchlistLive
     live "/status", StatusLive

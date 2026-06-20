@@ -37,13 +37,24 @@ defmodule Cinder.Library do
     end
   end
 
-  # Best-effort: the file is already hardlinked into the library, so a failed scan
-  # must not strand a correctly-imported movie at :import_failed — the media server
-  # picks it up on its next periodic scan. Log and report the import as done.
+  # Best-effort: the file is already hardlinked into the library, so a failed scan —
+  # an {:error, _} return OR a raise/exit from a misconfigured impl (e.g. a bad URL
+  # deep in the HTTP stack) — must not strand a correctly-imported movie at
+  # :import_failed. The media server picks it up on its next periodic scan. Log and
+  # report the import as done.
   defp scan(dest) do
-    with {:error, reason} <- media_server().scan() do
-      Logger.warning("media-server scan failed after importing #{dest}: #{inspect(reason)}")
+    case media_server().scan() do
+      {:error, reason} -> log_scan_failure(dest, reason)
+      _ -> :ok
     end
+  rescue
+    e -> log_scan_failure(dest, e)
+  catch
+    kind, value -> log_scan_failure(dest, {kind, value})
+  end
+
+  defp log_scan_failure(dest, reason) do
+    Logger.warning("media-server scan failed after importing #{dest}: #{inspect(reason)}")
   end
 
   # content_path is a file for single-file torrents, a folder for multi-file ones.

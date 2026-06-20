@@ -75,6 +75,34 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     assert_in_delta progress, 0.42, 0.0001
   end
 
+  test "status/1 reports a paused queue slot as :error so the poller can bound it" do
+    # A queued-but-stalled slot (Paused — e.g. SABnzbd's Pause on Duplicates) would
+    # otherwise read as :downloading forever and never advance or fail.
+    stub(fn conn ->
+      assert conn.params["mode"] == "queue"
+
+      Req.Test.json(conn, %{
+        "queue" => %{
+          "slots" => [%{"nzo_id" => "nzo-1", "status" => "Paused", "percentage" => "0"}]
+        }
+      })
+    end)
+
+    assert {:ok, %{state: :error}} = Sabnzbd.status("nzo-1")
+  end
+
+  test "status/1 reports a failed queue slot as :error" do
+    stub(fn conn ->
+      Req.Test.json(conn, %{
+        "queue" => %{
+          "slots" => [%{"nzo_id" => "nzo-1", "status" => "Failed", "percentage" => "0"}]
+        }
+      })
+    end)
+
+    assert {:ok, %{state: :error}} = Sabnzbd.status("nzo-1")
+  end
+
   test "status/1 reports a completed download as :completed with the storage path" do
     stub_queue_then_history(%{
       "history" => %{

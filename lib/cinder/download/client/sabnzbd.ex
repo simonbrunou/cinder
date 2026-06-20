@@ -43,10 +43,19 @@ defmodule Cinder.Download.Client.Sabnzbd do
   def status(nzo_id) do
     case queue_slot(nzo_id) do
       {:ok, nil} -> history_status(nzo_id)
-      {:ok, slot} -> {:ok, downloading(slot["percentage"])}
+      {:ok, slot} -> {:ok, classify_queue(slot)}
       other -> other
     end
   end
+
+  # A queued slot is normally in flight, but a Paused or Failed slot won't progress
+  # on its own — report it as :error so the poller bounds it to :import_failed rather
+  # than polling a stalled job forever (e.g. SABnzbd's "Pause on Duplicates" mode,
+  # which parks the job paused in the queue).
+  defp classify_queue(%{"status" => status} = slot) when status in ["Paused", "Failed"],
+    do: %{state: :error, progress: pct(slot["percentage"]), content_path: nil}
+
+  defp classify_queue(slot), do: downloading(slot["percentage"])
 
   defp queue_slot(nzo_id) do
     case get(mode: "queue", nzo_ids: nzo_id) do

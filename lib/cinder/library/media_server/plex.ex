@@ -16,18 +16,36 @@ defmodule Cinder.Library.MediaServer.Plex do
   def scan do
     config = Application.get_env(:cinder, __MODULE__, [])
 
-    req(config)
-    |> Req.get(url: "/library/sections/#{Keyword.get(config, :section)}/refresh")
-    |> result()
+    with {:ok, section} <- section(config) do
+      req(config)
+      |> Req.get(url: "/library/sections/#{section}/refresh")
+      |> result()
+    end
   end
 
   @impl true
-  # /library/sections is token-checked (401s on a bad/expired token), so a
-  # misconfigured token surfaces as unhealthy — unlike the unauthenticated
+  # GET /library/sections/<section> is both token-checked (401s on a bad/expired
+  # token) AND section-checked (404s on a missing section id), so a misconfigured
+  # token *or* section surfaces as unhealthy on /status — unlike the unauthenticated
   # /identity, which 200s regardless and would hide the most common misconfig.
   def health do
     config = Application.get_env(:cinder, __MODULE__, [])
-    req(config) |> Req.get(url: "/library/sections", receive_timeout: 3_000) |> result()
+
+    with {:ok, section} <- section(config) do
+      req(config)
+      |> Req.get(url: "/library/sections/#{section}", receive_timeout: 3_000)
+      |> result()
+    end
+  end
+
+  # A nil/blank section builds `/library/sections//…`, which Plex 404s — and because
+  # scan is best-effort that failure would be silent. Fail loudly so the misconfig is
+  # visible (red on /status) instead of a no-op scan that never refreshes.
+  defp section(config) do
+    case Keyword.get(config, :section) do
+      s when s in [nil, ""] -> {:error, :plex_section_unset}
+      s -> {:ok, s}
+    end
   end
 
   defp req(config) do
