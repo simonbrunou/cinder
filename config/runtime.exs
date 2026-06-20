@@ -45,6 +45,14 @@ if url = System.get_env("SABNZBD_URL") do
     api_key: System.get_env("SABNZBD_API_KEY")
 end
 
+# Real Prowlarr indexer connection, read in every environment. Unset in
+# test/CI, where the suite stubs Req regardless, so it has no effect there.
+if base_url = System.get_env("PROWLARR_URL") do
+  config :cinder, Cinder.Acquisition.Indexer.Prowlarr,
+    base_url: base_url,
+    api_key: System.get_env("PROWLARR_API_KEY")
+end
+
 # Real Jellyfin connection, read in every environment. Unset in test/CI, where
 # the suite either mocks media_server or stubs Req, so it has no effect there.
 if url = System.get_env("JELLYFIN_URL") do
