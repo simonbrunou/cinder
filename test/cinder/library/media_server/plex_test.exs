@@ -59,6 +59,16 @@ defmodule Cinder.Library.MediaServer.PlexTest do
     assert {:error, :plex_section_unset} = Plex.health()
   end
 
+  test "scan/0 treats a whitespace-only section as unset (no malformed URL)" do
+    put_config(section: "   ")
+
+    Req.Test.stub(Cinder.PlexStub, fn _conn ->
+      raise "should not call Plex with a blank section"
+    end)
+
+    assert {:error, :plex_section_unset} = Plex.scan()
+  end
+
   test "scan/0 with no token omits the header and surfaces a clean error (no raise)" do
     put_config(token: nil)
 

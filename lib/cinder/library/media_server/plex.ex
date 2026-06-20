@@ -43,8 +43,14 @@ defmodule Cinder.Library.MediaServer.Plex do
   # visible (red on /status) instead of a no-op scan that never refreshes.
   defp section(config) do
     case Keyword.get(config, :section) do
-      s when s in [nil, ""] -> {:error, :plex_section_unset}
-      s -> {:ok, s}
+      nil ->
+        {:error, :plex_section_unset}
+
+      s when is_binary(s) ->
+        if String.trim(s) == "", do: {:error, :plex_section_unset}, else: {:ok, s}
+
+      s ->
+        {:ok, s}
     end
   end
 

@@ -23,20 +23,30 @@ defmodule CinderWeb.Router do
   end
 
   defp basic_auth(conn, _opts) do
-    case {System.get_env("CINDER_BASIC_AUTH_USER"), System.get_env("CINDER_BASIC_AUTH_PASSWORD")} do
+    user = present(System.get_env("CINDER_BASIC_AUTH_USER"))
+    pass = present(System.get_env("CINDER_BASIC_AUTH_PASSWORD"))
+
+    case {user, pass} do
       {user, pass} when is_binary(user) and is_binary(pass) ->
         Plug.BasicAuth.basic_auth(conn, username: user, password: pass)
 
       {nil, nil} ->
         conn
 
-      # Exactly one var set (or a typo) — fail loud and closed rather than silently
-      # serving open, which would hide the misconfig from an operator who believes
-      # they enabled auth.
+      # Exactly one credential present (or a typo) — fail loud and closed rather than
+      # silently serving open, which would hide the misconfig from an operator who
+      # believes they enabled auth.
       _ ->
         raise "set both CINDER_BASIC_AUTH_USER and CINDER_BASIC_AUTH_PASSWORD, or neither"
     end
   end
+
+  # A blank/whitespace env var counts as unset, so empty credentials can never
+  # *enable* auth (is_binary("") is true — a naive guard would accept empty creds).
+  defp present(nil), do: nil
+
+  defp present(value) when is_binary(value),
+    do: if(String.trim(value) == "", do: nil, else: value)
 
   scope "/", CinderWeb do
     pipe_through [:browser, :admin_auth]
