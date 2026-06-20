@@ -30,4 +30,16 @@ defmodule Cinder.HealthTest do
 
     assert {:error, %RuntimeError{message: "boom"}} = indexer.status
   end
+
+  test "check_all/0 turns an exiting impl into an error row instead of crashing the task" do
+    stub(Cinder.Acquisition.IndexerMock, :health, fn -> exit(:boom) end)
+    stub(Cinder.Download.ClientMock, :health, fn -> :ok end)
+    stub(Cinder.Download.SabnzbdClientMock, :health, fn -> :ok end)
+    stub(Cinder.Library.MediaServerMock, :health, fn -> :ok end)
+
+    rows = Cinder.Health.check_all()
+    indexer = Enum.find(rows, &(&1.label =~ "Indexer"))
+
+    assert {:error, {:exit, :boom}} = indexer.status
+  end
 end

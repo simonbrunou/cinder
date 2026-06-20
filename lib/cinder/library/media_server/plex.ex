@@ -22,9 +22,12 @@ defmodule Cinder.Library.MediaServer.Plex do
   end
 
   @impl true
+  # /library/sections is token-checked (401s on a bad/expired token), so a
+  # misconfigured token surfaces as unhealthy — unlike the unauthenticated
+  # /identity, which 200s regardless and would hide the most common misconfig.
   def health do
     config = Application.get_env(:cinder, __MODULE__, [])
-    req(config) |> Req.get(url: "/identity", receive_timeout: 3_000) |> result()
+    req(config) |> Req.get(url: "/library/sections", receive_timeout: 3_000) |> result()
   end
 
   defp req(config) do

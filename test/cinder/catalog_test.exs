@@ -91,11 +91,21 @@ defmodule Cinder.CatalogTest do
           Catalog.transition(movie, %{
             status: parked,
             search_attempts: 7,
-            import_attempts: 4
+            import_attempts: 4,
+            download_id: "abc",
+            download_protocol: :usenet,
+            file_path: "/downloads/x.mkv"
           })
 
-        assert {:ok, %Movie{status: :requested, search_attempts: 0, import_attempts: 0} = retried} =
-                 Catalog.retry_movie(movie)
+        assert {:ok,
+                %Movie{
+                  status: :requested,
+                  search_attempts: 0,
+                  import_attempts: 0,
+                  download_id: nil,
+                  download_protocol: nil,
+                  file_path: nil
+                } = retried} = Catalog.retry_movie(movie)
 
         expected_id = retried.id
         assert_receive {:movie_updated, %Movie{id: ^expected_id, status: :requested}}

@@ -37,8 +37,9 @@ defmodule Cinder.Health do
 
   defp check(label, mod), do: %{label: label, status: run(mod)}
 
-  # Runs inside a LiveView async task, so a raising/odd-returning impl must
-  # degrade to a red row rather than take the whole panel down.
+  # Runs inside a LiveView async task, so a misbehaving impl must degrade to a red
+  # row rather than take the whole panel down. `catch` covers exits/throws (e.g. a
+  # pool-checkout timeout deep in the HTTP stack) that `rescue` would miss.
   defp run(mod) do
     case mod.health() do
       :ok -> :ok
@@ -46,6 +47,8 @@ defmodule Cinder.Health do
     end
   rescue
     e -> {:error, e}
+  catch
+    kind, value -> {:error, {kind, value}}
   end
 
   defp short(mod), do: mod |> Module.split() |> List.last()

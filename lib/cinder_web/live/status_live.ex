@@ -47,7 +47,9 @@ defmodule CinderWeb.StatusLive do
 
   @impl true
   def handle_event("recheck_health", _params, socket) do
-    {:noreply, socket |> assign(health: :loading) |> check_health()}
+    # Cancel an in-flight check first so a rapid re-click doesn't orphan the prior
+    # (link-monitored) task until its own timeout. No-op if none is running.
+    {:noreply, socket |> cancel_async(:health) |> assign(health: :loading) |> check_health()}
   end
 
   @impl true

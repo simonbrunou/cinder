@@ -112,15 +112,23 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     assert {:error, :not_found} = Sabnzbd.status("nzo-1")
   end
 
-  test "health/0 pings mode=version with the api key and returns :ok on 200" do
+  test "health/0 pings an auth-checked mode with the api key and returns :ok on success" do
     stub(fn conn ->
       assert conn.request_path == "/api"
-      assert conn.params["mode"] == "version"
+      assert conn.params["mode"] == "queue"
       assert conn.params["apikey"] == "test-key"
-      Req.Test.json(conn, %{"version" => "4.2.1"})
+      Req.Test.json(conn, %{"queue" => %{"slots" => []}})
     end)
 
     assert :ok = Sabnzbd.health()
+  end
+
+  test "health/0 returns an error when SABnzbd rejects the api key (200 + status false)" do
+    stub(fn conn ->
+      Req.Test.json(conn, %{"status" => false, "error" => "API Key Incorrect"})
+    end)
+
+    assert {:error, :bad_api_key} = Sabnzbd.health()
   end
 
   test "health/0 returns an error tuple on a non-2xx status" do

@@ -83,7 +83,17 @@ defmodule Cinder.Catalog do
   for any non-parked movie. Replaces the old IEx reset.
   """
   def retry_movie(%Movie{status: status} = movie) when status in @retryable do
-    transition(movie, %{status: :requested, search_attempts: 0, import_attempts: 0})
+    # Clear the stale download fields too: a re-queued movie has no download yet,
+    # so leaving an old download_id/protocol/file_path on a :requested row is
+    # misleading and a latent misroute if anything reads them before re-download.
+    transition(movie, %{
+      status: :requested,
+      search_attempts: 0,
+      import_attempts: 0,
+      download_id: nil,
+      download_protocol: nil,
+      file_path: nil
+    })
   end
 
   def retry_movie(%Movie{}), do: {:error, :not_retryable}
