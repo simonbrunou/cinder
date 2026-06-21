@@ -67,7 +67,7 @@ defmodule Cinder.Catalog do
   """
   def transition(%Movie{} = movie, attrs) do
     with {:ok, updated} <- movie |> Movie.transition_changeset(attrs) |> Repo.update() do
-      Phoenix.PubSub.broadcast(Cinder.PubSub, @topic, {:movie_updated, updated})
+      broadcast({:movie_updated, updated})
       {:ok, updated}
     end
   end
@@ -97,4 +97,39 @@ defmodule Cinder.Catalog do
   end
 
   def retry_movie(%Movie{}), do: {:error, :not_retryable}
+
+  @doc "Fetches a watchlisted movie by TMDB id, or `nil`."
+  def get_movie_by_tmdb_id(tmdb_id), do: Repo.get_by(Movie, tmdb_id: tmdb_id)
+
+  @doc """
+  Returns `{:ok, movie}` for the existing row (at its current status) if one already
+  exists for `attrs.tmdb_id`, or inserts a new movie at `:requested` and broadcasts
+  `{:movie_created, movie}` before returning `{:ok, movie}`.
+
+  A lost insert race (unique_constraint on `:tmdb_id`) is handled by re-fetching
+  the winner and returning it, so callers always get `{:ok, movie}`.
+  """
+  def find_or_create_at_requested(attrs) do
+    case get_movie_by_tmdb_id(attrs.tmdb_id) do
+      %Movie{} = movie -> {:ok, movie}
+      nil -> do_insert_at_requested(attrs)
+    end
+  end
+
+  defp do_insert_at_requested(attrs) do
+    case %Movie{} |> Movie.changeset(attrs) |> Repo.insert() do
+      {:ok, movie} ->
+        broadcast({:movie_created, movie})
+        {:ok, movie}
+
+      {:error, changeset} ->
+        # Lost the insert race (unique_constraint :tmdb_id) — the row now exists.
+        case get_movie_by_tmdb_id(attrs.tmdb_id) do
+          %Movie{} = movie -> {:ok, movie}
+          nil -> {:error, changeset}
+        end
+    end
+  end
+
+  defp broadcast(message), do: Phoenix.PubSub.broadcast(Cinder.PubSub, @topic, message)
 end

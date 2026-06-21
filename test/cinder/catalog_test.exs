@@ -140,6 +140,30 @@ defmodule Cinder.CatalogTest do
     end
   end
 
+  describe "find_or_create_at_requested/1" do
+    @attrs %{tmdb_id: 603, title: "The Matrix", year: 1999, poster_path: "/p.jpg"}
+
+    test "creates a movie at :requested when absent" do
+      assert {:ok, movie} = Catalog.find_or_create_at_requested(@attrs)
+      assert movie.status == :requested
+      assert movie.tmdb_id == 603
+    end
+
+    test "reuses an existing movie without resetting its status" do
+      {:ok, movie} = Catalog.add_to_watchlist(@attrs)
+      {:ok, movie} = Catalog.transition(movie, %{status: :available})
+      assert {:ok, found} = Catalog.find_or_create_at_requested(@attrs)
+      assert found.id == movie.id
+      assert found.status == :available
+    end
+
+    test "broadcasts {:movie_created, movie} on insert" do
+      Catalog.subscribe()
+      {:ok, movie} = Catalog.find_or_create_at_requested(@attrs)
+      assert_receive {:movie_created, ^movie}
+    end
+  end
+
   describe "add_to_watchlist/1 and list_watchlist/0" do
     @attrs %{tmdb_id: 27_205, title: "Inception", year: 2010, poster_path: "/p.jpg"}
 
