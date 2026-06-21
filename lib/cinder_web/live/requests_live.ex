@@ -10,20 +10,24 @@ defmodule CinderWeb.RequestsLive do
 
   @impl true
   def handle_event("approve", %{"id" => id}, socket) do
-    req = Enum.find(socket.assigns.pending, &(&1.id == String.to_integer(id)))
+    req = Enum.find(socket.assigns.pending, &(to_string(&1.id) == id))
     if req, do: Requests.approve_request(req, socket.assigns.current_scope.user)
     {:noreply, socket}
   end
 
   def handle_event("deny", %{"_id" => id, "reason" => reason}, socket) do
-    req = Enum.find(socket.assigns.pending, &(&1.id == String.to_integer(id)))
+    req = Enum.find(socket.assigns.pending, &(to_string(&1.id) == id))
     if req, do: Requests.deny_request(req, socket.assigns.current_scope.user, reason)
     {:noreply, assign(socket, denying: nil)}
   end
 
   def handle_event("start_deny", %{"id" => id}, socket) do
-    {:noreply, assign(socket, denying: String.to_integer(id))}
+    {:noreply, assign(socket, denying: id)}
   end
+
+  # The event payload is client-controlled; ignore any malformed/forged frame
+  # rather than crashing the LiveView on an unmatched clause.
+  def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   @impl true
   def handle_info({event, _req}, socket)
@@ -55,7 +59,7 @@ defmodule CinderWeb.RequestsLive do
           >
             Approve
           </button>
-          <form :if={@denying == r.id} phx-submit="deny" class="flex gap-2">
+          <form :if={@denying == to_string(r.id)} phx-submit="deny" class="flex gap-2">
             <input type="hidden" name="_id" value={r.id} />
             <input
               type="text"
@@ -66,7 +70,7 @@ defmodule CinderWeb.RequestsLive do
             <button class="btn btn-error btn-sm" type="submit">Confirm deny</button>
           </form>
           <button
-            :if={@denying != r.id}
+            :if={@denying != to_string(r.id)}
             class="btn btn-ghost btn-sm"
             phx-click="start_deny"
             phx-value-id={r.id}
