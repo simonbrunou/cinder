@@ -15,6 +15,10 @@ defmodule Cinder.Application do
          repos: Application.fetch_env!(:cinder, :ecto_repos), skip: skip_migrations?()},
         {DNSCluster, query: Application.get_env(:cinder, :dns_cluster_query) || :ignore},
         {Phoenix.PubSub, name: Cinder.PubSub},
+        # Vault before the loader (it decrypts secret settings); the loader applies the
+        # DB settings overlay synchronously, before the Endpoint/poller consume config.
+        Cinder.Vault,
+        Cinder.Settings,
         CinderWeb.Endpoint
       ] ++ poller_child()
 

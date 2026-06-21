@@ -8,4 +8,7 @@ defmodule Cinder.Catalog.TMDB do
 
   @callback search(query :: String.t()) :: {:ok, [map()]} | {:error, term()}
   @callback get_movie(tmdb_id :: integer()) :: {:ok, map()} | {:error, term()}
+
+  @doc "Lightweight reachability/token check — `:ok` if TMDB answers, else `{:error, reason}`."
+  @callback health() :: :ok | {:error, term()}
 end
