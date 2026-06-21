@@ -1,19 +1,28 @@
 defmodule CinderWeb.Endpoint do
   use Phoenix.Endpoint, otp_app: :cinder
 
-  # The session will be stored in the cookie and signed,
-  # this means its contents can be read but not tampered with.
-  # Set :encryption_salt if you would also like to encrypt it.
-  @session_options [
+  # The session is stored in the cookie and signed: readable but not tamperable.
+  # signing_salt is derived from secret_key_base at runtime (see config/runtime.exs)
+  # so it isn't committed; both the socket (MFA below) and the session plug read it
+  # through session_options/0.
+  @base_session_options [
     store: :cookie,
     key: "_cinder_key",
-    signing_salt: "8rL9m3ii",
     same_site: "Lax"
   ]
 
+  @doc false
+  def session_options do
+    Keyword.put(
+      @base_session_options,
+      :signing_salt,
+      Application.fetch_env!(:cinder, :session_signing_salt)
+    )
+  end
+
   socket "/live", Phoenix.LiveView.Socket,
-    websocket: [connect_info: [session: @session_options]],
-    longpoll: [connect_info: [session: @session_options]]
+    websocket: [connect_info: [session: {__MODULE__, :session_options, []}]],
+    longpoll: [connect_info: [session: {__MODULE__, :session_options, []}]]
 
   # Serve at "/" the static files from "priv/static" directory.
   #
@@ -54,6 +63,13 @@ defmodule CinderWeb.Endpoint do
 
   plug Plug.MethodOverride
   plug Plug.Head
-  plug Plug.Session, @session_options
+  # ponytail: re-inits Plug.Session per request so the runtime-derived salt is used
+  # (prod inits plugs at compile time). Trivial at household scale; memoize via
+  # :persistent_term if it ever shows up in a profile.
+  plug :session
   plug CinderWeb.Router
+
+  defp session(conn, _opts) do
+    Plug.Session.call(conn, Plug.Session.init(session_options()))
+  end
 end

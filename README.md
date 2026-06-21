@@ -2,19 +2,20 @@
 
 [![CI](https://github.com/simonbrunou/cinder/actions/workflows/ci.yml/badge.svg)](https://github.com/simonbrunou/cinder/actions/workflows/ci.yml)
 
-To start your Phoenix server:
+A single-household, self-hosted replacement for the Sonarr / Radarr / Seerr loop:
+request a movie → find the best release → download it → import it into Jellyfin/Plex.
+Built on Phoenix/LiveView with SQLite; everything external (TMDB, Prowlarr,
+qBittorrent/SABnzbd, Jellyfin/Plex) sits behind a behaviour so it can be mocked.
 
-* Run `mix setup` to install and setup dependencies
-* Start Phoenix endpoint with `mix phx.server` or inside IEx with `iex -S mix phx.server`
+The movies vertical slice is built and validated live. Current work is **Part II —
+from slice to v1.0** (movies + TV + multi-user, public self-host). See `ROADMAP.md`.
 
-Now you can visit [`localhost:4000`](http://localhost:4000) from your browser.
+## Development
 
-Ready to run in production? Please [check our deployment guides](https://hexdocs.pm/phoenix/deployment.html).
+```sh
+mix setup        # install deps, create + migrate the DB, build assets
+mix phx.server   # then visit http://localhost:4000
+mix test         # compile (warnings-as-errors) + format check + credo --strict + suite
+```
 
-## Learn more
-
-* Official website: https://www.phoenixframework.org/
-* Guides: https://hexdocs.pm/phoenix/overview.html
-* Docs: https://hexdocs.pm/phoenix
-* Forum: https://elixirforum.com/c/phoenix-forum
-* Source: https://github.com/phoenixframework/phoenix
+License: GPL-3.0 (see `LICENSE`).

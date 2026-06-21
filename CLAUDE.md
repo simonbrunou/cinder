@@ -36,12 +36,30 @@ the current phase only.
 - **External services are reached only through behaviours**: `Cinder.Catalog.TMDB`,
   `Cinder.Acquisition.Indexer`, `Cinder.Download.Client`, `Cinder.Library.MediaServer`. Never
   call TMDB / Prowlarr / qBittorrent / Jellyfin directly from a context.
-- The concrete impl is resolved from config (`Application.compile_env!/2`); `config/test.exs`
-  points each at its Mox mock. **Tests never hit the network or a real service.**
+- The concrete impl is resolved from config at runtime (`Application.fetch_env!/2`, not
+  `compile_env!` — the Mox mock is defined at runtime, so compile-time resolution breaks
+  `--warnings-as-errors`); `config/test.exs` points each at its Mox mock. **Tests never hit the
+  network or a real service.**
 - Prefer searching indexers by IMDb id over free-text title — `Catalog.get_movie/1` carries
   `imdb_id` through for exactly this.
 - Background work (download polling, import) runs under the supervision tree, not in the request
   path. Crash-recovery is a feature: prove it with a test.
+- **Every writer goes through `Catalog.transition`.** It's the single state-change choke-point
+  (one broadcast per transition). SQLite is pinned to WAL + `busy_timeout: 5000` (config across
+  dev/test/runtime), so a web write racing the poller waits rather than erroring with "database
+  busy" — but that only holds if writes don't sidestep the choke-point.
+
+## Configuration: env vs in-app settings
+
+Two tiers. **Boot-only keys stay environment variables** (needed before the DB/settings store is
+up, or fixed per deployment): `SECRET_KEY_BASE`, `DATABASE_PATH`, `PHX_HOST` / `PHX_SERVER` /
+`PORT`, `POOL_SIZE`, `RELEASE_NAME`, `DNS_CLUSTER_QUERY`. Everything else — external-service URLs,
+API keys, the media-server choice — **moves to the M1 settings store** (DB-backed, editable
+in-app, overlaid on env as bootstrap). Don't add new service env vars; add settings instead.
+
+Signing salts (session + LiveView) are **derived from `secret_key_base` at runtime** in
+`config/runtime.exs` — nothing crypto-related is committed. `signing_salt` is a salt, not a
+secret; the secret is `secret_key_base`.
 
 ## Workflow
 

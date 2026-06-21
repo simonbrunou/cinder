@@ -8,6 +8,8 @@ import Config
 config :cinder, Cinder.Repo,
   database: Path.expand("../cinder_test.db", __DIR__),
   pool_size: 5,
+  journal_mode: :wal,
+  busy_timeout: 5_000,
   pool: Ecto.Adapters.SQL.Sandbox
 
 # We don't run a server during test. If one is required,

@@ -35,8 +35,7 @@ config :cinder, CinderWeb.Endpoint,
     formats: [html: CinderWeb.ErrorHTML, json: CinderWeb.ErrorJSON],
     layout: false
   ],
-  pubsub_server: Cinder.PubSub,
-  live_view: [signing_salt: "w5SpjsQ6"]
+  pubsub_server: Cinder.PubSub
 
 # Configure the mailer
 #

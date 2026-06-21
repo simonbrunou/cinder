@@ -4,6 +4,11 @@ import Config
 config :cinder, Cinder.Repo,
   database: Path.expand("../cinder_dev.db", __DIR__),
   pool_size: 5,
+  # Pin WAL + busy_timeout so a web write racing the poller waits rather than
+  # erroring with "database busy". ecto_sqlite3 currently defaults to these, but
+  # pinning them keeps a dep bump from silently changing the contract.
+  journal_mode: :wal,
+  busy_timeout: 5_000,
   stacktrace: true,
   show_sensitive_data_on_connection_error: true
 
