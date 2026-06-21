@@ -25,7 +25,36 @@ defmodule Cinder.Application do
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: Cinder.Supervisor]
-    Supervisor.start_link(children, opts)
+    result = Supervisor.start_link(children, opts)
+
+    # ponytail: best-effort log, wrapped so a DB hiccup at boot can't crash start/2.
+    try do
+      warn_if_unprotected()
+    rescue
+      _ -> :ok
+    end
+
+    result
+  end
+
+  def unprotected_fresh_instance? do
+    no_basic_auth? =
+      is_nil(System.get_env("CINDER_BASIC_AUTH_USER")) and
+        is_nil(System.get_env("CINDER_BASIC_AUTH_PASSWORD"))
+
+    no_basic_auth? and Cinder.Repo.aggregate(Cinder.Accounts.User, :count) == 0
+  end
+
+  defp warn_if_unprotected do
+    if unprotected_fresh_instance?() do
+      require Logger
+
+      Logger.warning(
+        "Cinder has no accounts and no CINDER_BASIC_AUTH_* gate set: registration is open to " <>
+          "anyone who reaches this instance, and the first registrant becomes admin. Put it behind " <>
+          "a reverse-proxy/VPN or set CINDER_BASIC_AUTH_USER/PASSWORD until you create your admin."
+      )
+    end
   end
 
   # Tell Phoenix to update the endpoint configuration
