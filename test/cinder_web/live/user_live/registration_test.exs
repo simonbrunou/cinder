@@ -1,5 +1,5 @@
 defmodule CinderWeb.UserLive.RegistrationTest do
-  use CinderWeb.ConnCase
+  use CinderWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
   import Cinder.AccountsFixtures
@@ -40,13 +40,17 @@ defmodule CinderWeb.UserLive.RegistrationTest do
       {:ok, lv, _html} = live(conn, ~p"/users/register")
 
       email = unique_user_email()
-      form = form(lv, "#registration_form", user: valid_user_attributes(email: email))
+      password = valid_user_password()
 
-      {:ok, _lv, html} =
-        render_submit(form)
-        |> follow_redirect(conn, ~p"/")
+      form =
+        form(lv, "#registration_form",
+          user: %{email: email, password: password, password_confirmation: password}
+        )
 
-      assert html =~ "Account created for #{email}"
+      render_submit(form)
+      conn = follow_trigger_action(form, conn)
+      assert redirected_to(conn) == ~p"/"
+      assert get_session(conn, :user_token)
     end
 
     test "renders errors for duplicated email", %{conn: conn} do

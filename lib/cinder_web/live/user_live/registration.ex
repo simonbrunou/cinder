@@ -22,7 +22,14 @@ defmodule CinderWeb.UserLive.Registration do
           </.header>
         </div>
 
-        <.form for={@form} id="registration_form" phx-submit="save" phx-change="validate">
+        <.form
+          for={@form}
+          id="registration_form"
+          action={~p"/users/log-in"}
+          phx-submit="save"
+          phx-change="validate"
+          phx-trigger-action={@trigger_submit}
+        >
           <.input
             field={@form[:email]}
             type="email"
@@ -36,6 +43,13 @@ defmodule CinderWeb.UserLive.Registration do
             field={@form[:password]}
             type="password"
             label="Password"
+            autocomplete="new-password"
+            required
+          />
+          <.input
+            field={@form[:password_confirmation]}
+            type="password"
+            label="Confirm password"
             autocomplete="new-password"
             required
           />
@@ -58,17 +72,19 @@ defmodule CinderWeb.UserLive.Registration do
   def mount(_params, _session, socket) do
     changeset = User.registration_changeset(%User{}, %{}, validate_unique: false)
 
-    {:ok, assign_form(socket, changeset), temporary_assigns: [form: nil]}
+    {:ok, socket |> assign(trigger_submit: false) |> assign_form(changeset),
+     temporary_assigns: [form: nil]}
   end
 
   @impl true
   def handle_event("save", %{"user" => user_params}, socket) do
     case Accounts.register_user(user_params) do
-      {:ok, user} ->
+      {:ok, _user} ->
         {:noreply,
          socket
-         |> put_flash(:info, "Account created for #{user.email}. You are now logged in.")
-         |> push_navigate(to: ~p"/")}
+         |> put_flash(:info, "Account created.")
+         |> assign(trigger_submit: true)
+         |> assign(form: to_form(user_params, as: "user"))}
 
       {:error, %Ecto.Changeset{} = changeset} ->
         {:noreply, assign_form(socket, changeset)}
