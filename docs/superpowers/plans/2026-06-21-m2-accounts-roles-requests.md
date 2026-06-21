@@ -216,7 +216,7 @@ def register_user(attrs) do
 
     %User{}
     |> User.registration_changeset(attrs)
-    |> Ecto.Changeset.put_change(:confirmed_at, NaiveDateTime.utc_now(:second))
+    |> Ecto.Changeset.put_change(:confirmed_at, DateTime.utc_now(:second))
     |> Ecto.Changeset.put_change(:role, role)
     |> Repo.insert()
     |> case do
@@ -226,35 +226,48 @@ def register_user(attrs) do
   end)
 end
 ```
-**Timestamp type:** the generated `User` schema uses `:naive_datetime` (the generator's
-default — `confirm_changeset` writes `NaiveDateTime.utc_now(:second)`). Use
-`NaiveDateTime`, **not** `DateTime` — a `%DateTime{}` into a `:naive_datetime` field raises on
-insert. Confirm against the generated `confirm_changeset` and match its exact expression.
+**Timestamp type (RECONCILED against the actual generated code in Task 1.1):** `confirmed_at`
+is **`:utc_datetime`** here — the project sets `generators: [timestamp_type: :utc_datetime]`
+(`config/config.exs:25`), and the generated `confirm_changeset` writes
+`DateTime.utc_now(:second)`. Use `DateTime.utc_now(:second)` to match — `NaiveDateTime` would be
+wrong for this `:utc_datetime` field.
 
-- [ ] **Step 7: Feed a password into the fixture chain, and make role deterministic**
+- [ ] **Step 7: Fix the fixture chain for auto-confirm + deterministic role**
 
-Two edits to `test/support/fixtures/accounts_fixtures.ex` — **both required**, because the
-generated `user_fixture/1` chain (used by Tasks 1.4, 2.2, 2.3, 2.4, 3.1) calls
-`valid_user_attributes`, which is email-only; once `register_user/1` requires a password
-(Step 6), the whole chain raises `password can't be blank` unless fixed here.
+Three edits to `test/support/fixtures/accounts_fixtures.ex` (`Cinder.AccountsFixtures`). **All
+required** — the generated chain is `user_fixture → unconfirmed_user_fixture → register_user`,
+and Step 6 changes `register_user` to require a password AND auto-confirm. Without these fixes,
+`unconfirmed_user_fixture` would return a **confirmed** user (breaking the dormant
+confirmation/magic-link generated tests) and the chain would raise `password can't be blank`.
 
-(a) Add a password to `valid_user_attributes/1` (find its `Enum.into(%{...})` and add the key):
+(a) Add a password to `valid_user_attributes/1` (so any `register_user(valid_user_attributes())`
+call is valid):
 ```elixir
 def valid_user_attributes(attrs \\ %{}) do
-  Enum.into(attrs, %{
-    email: unique_user_email(),
-    password: valid_user_password()
-  })
+  Enum.into(attrs, %{email: unique_user_email(), password: valid_user_password()})
 end
 ```
 
-(b) Force `:role` after the fixture builds the user (don't invent a helper — keep the **actual**
-generated `user_fixture/1` body, which returns a confirmed user, then append the role update),
-and add a sibling `admin_fixture/1`:
+(b) **Decouple `unconfirmed_user_fixture/1` from `register_user`** so it still yields a genuinely
+*unconfirmed* user (register_user now auto-confirms). Replicate the OLD register_user behavior —
+build via `email_changeset` and insert, no `confirmed_at`:
 ```elixir
-# at the end of the existing generated user_fixture/1, change its final return to:
-#   user |> set_role(:user)
-# and add:
+def unconfirmed_user_fixture(attrs \\ %{}) do
+  {:ok, user} =
+    %Cinder.Accounts.User{}
+    |> Cinder.Accounts.User.email_changeset(valid_user_attributes(attrs))
+    |> Cinder.Repo.insert()
+  user
+end
+```
+(This keeps every generated dormant test that relies on an unconfirmed user green. `email_changeset`
+ignores `:password`, so these fixtures stay password-less — fine, `log_in_user` uses a session
+token, not a password.)
+
+(c) Force `:role` deterministically and add `admin_fixture/1`. Keep the **actual** generated
+`user_fixture/1` body (it calls `unconfirmed_user_fixture` then confirms via the magic-link token
+flow) and append `set_role(user, :user)` to its return:
+```elixir
 defp set_role(user, role) do
   {:ok, user} = user |> Ecto.Changeset.change(role: role) |> Cinder.Repo.update()
   user
@@ -262,9 +275,9 @@ end
 
 def admin_fixture(attrs \\ %{}), do: user_fixture(attrs) |> set_role(:admin)
 ```
-(Import `Ecto.Changeset` / alias `Cinder.Repo` as the file already does. Wrap the generated
-body — do not call any function that doesn't exist. Forcing role won't break generated auth
-tests; none assert on `role`.)
+(`Ecto.Changeset`/`Cinder.Repo` are already in scope in this file. Forcing role won't break
+generated tests — none assert on `:role`. Run the full generated suite after this step;
+confirmation/login/accounts magic-link tests must stay green.)
 
 - [ ] **Step 8: Run tests**
 
