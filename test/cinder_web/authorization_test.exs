@@ -3,8 +3,7 @@ defmodule CinderWeb.AuthorizationTest do
   import Phoenix.LiveViewTest
   import Cinder.AccountsFixtures
 
-  # /requests will be enabled in Task 2.4; comment out those rows until then.
-  for path <- ["/status", "/settings"] do
+  for path <- ["/status", "/settings", "/requests"] do
     test "anonymous is redirected from #{path}", %{conn: conn} do
       assert {:error, {:redirect, %{to: to}}} = live(conn, unquote(path))
       assert to =~ "/users/log-in"

@@ -62,7 +62,7 @@ defmodule CinderWeb.Router do
       ] do
       live "/status", StatusLive
       live "/settings", SettingsLive
-      # live "/requests", RequestsLive   # enabled in Task 2.4
+      live "/requests", RequestsLive
     end
   end
 
