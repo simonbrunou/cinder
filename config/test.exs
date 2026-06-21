@@ -47,7 +47,8 @@ config :cinder,
   tmdb: Cinder.Catalog.TMDBMock,
   indexer: Cinder.Acquisition.IndexerMock,
   media_server: Cinder.Library.MediaServerMock,
-  filesystem: Cinder.Library.FilesystemMock
+  filesystem: Cinder.Library.FilesystemMock,
+  notifier: Cinder.TestNotifier
 
 # Two client mocks so routing is testable by protocol: a torrent release must
 # reach ClientMock and a usenet release must reach SabnzbdClientMock.
