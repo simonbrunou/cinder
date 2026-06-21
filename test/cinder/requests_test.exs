@@ -73,6 +73,16 @@ defmodule Cinder.RequestsTest do
     assert {:error, _} = Requests.create_request(user, @attrs)
   end
 
+  test "a user can re-request the same target after it was denied" do
+    user = user_fixture()
+    admin = admin_fixture()
+    {:ok, req} = Requests.create_request(user, @attrs)
+    {:ok, _} = Requests.deny_request(req, admin, "not this time")
+    # The partial unique index only blocks duplicates WHERE status='pending',
+    # so a denied row must not prevent a fresh pending request.
+    assert {:ok, %{status: :pending}} = Requests.create_request(user, @attrs)
+  end
+
   test "auto_approve_all on → a non-admin add creates the movie" do
     Cinder.Settings.put("auto_approve_all", "true")
     user = user_fixture()

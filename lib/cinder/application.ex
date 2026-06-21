@@ -39,10 +39,17 @@ defmodule Cinder.Application do
 
   def unprotected_fresh_instance? do
     no_basic_auth? =
-      is_nil(System.get_env("CINDER_BASIC_AUTH_USER")) and
-        is_nil(System.get_env("CINDER_BASIC_AUTH_PASSWORD"))
+      blank_env?("CINDER_BASIC_AUTH_USER") and blank_env?("CINDER_BASIC_AUTH_PASSWORD")
 
     no_basic_auth? and Cinder.Repo.aggregate(Cinder.Accounts.User, :count) == 0
+  end
+
+  # Matches the router's `present/1`: a nil or blank/whitespace value counts as unset.
+  defp blank_env?(key) do
+    case System.get_env(key) do
+      nil -> true
+      val -> String.trim(val) == ""
+    end
   end
 
   defp warn_if_unprotected do

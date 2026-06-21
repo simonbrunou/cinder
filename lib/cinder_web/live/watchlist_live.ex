@@ -59,10 +59,12 @@ defmodule CinderWeb.WatchlistLive do
     {:noreply, assign(socket, watchlist: watchlist)}
   end
 
+  @impl true
   def handle_info({:movie_created, movie}, socket) do
     {:noreply, update(socket, :watchlist, &[movie | &1])}
   end
 
+  @impl true
   def handle_info(_message, socket), do: {:noreply, socket}
 
   defp add(socket, movie) do
