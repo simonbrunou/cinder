@@ -8,6 +8,7 @@ defmodule CinderWeb.WatchlistLiveTest do
   alias Cinder.Catalog.Movie
 
   # The LiveView runs in its own process, so the mock must be global (requires async: false).
+  setup :register_and_log_in_admin
   setup :set_mox_global
 
   @inception %{tmdb_id: 27_205, title: "Inception", year: 2010, poster_path: "/p.jpg"}

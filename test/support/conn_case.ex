@@ -39,6 +39,19 @@ defmodule CinderWeb.ConnCase do
   end
 
   @doc """
+  Setup helper that registers and logs in an admin user.
+
+      setup :register_and_log_in_admin
+
+  It stores an updated connection and a registered admin in the
+  test context.
+  """
+  def register_and_log_in_admin(%{conn: conn}) do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    %{conn: log_in_user(conn, admin), user: admin}
+  end
+
+  @doc """
   Setup helper that registers and logs in users.
 
       setup :register_and_log_in_user

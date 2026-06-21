@@ -9,6 +9,7 @@ defmodule CinderWeb.StatusLiveTest do
   # The health panel runs its checks in a start_async task (a separate process),
   # so the mocks must be global. Default every service healthy; tests that care
   # override specific services.
+  setup :register_and_log_in_admin
   setup :set_mox_global
 
   setup do

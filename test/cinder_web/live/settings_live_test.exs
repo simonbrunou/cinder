@@ -18,6 +18,8 @@ defmodule CinderWeb.SettingsLiveTest do
     :download_clients
   ]
 
+  setup :register_and_log_in_admin
+
   setup do
     saved = Map.new(@env_keys, fn k -> {k, Application.get_env(:cinder, k)} end)
 
