@@ -47,10 +47,22 @@ defmodule Cinder.RepoConcurrencyTest do
       :ok = Sqlite3.execute(a, "BEGIN IMMEDIATE")
       :ok = Sqlite3.execute(a, "INSERT INTO t (v) VALUES (1)")
 
-      writer = Task.async(fn -> Sqlite3.execute(b, "INSERT INTO t (v) VALUES (2)") end)
+      parent = self()
 
-      # The task is now blocking in the busy handler; release the lock.
-      Process.sleep(100)
+      writer =
+        Task.async(fn ->
+          send(parent, :writing)
+          Sqlite3.execute(b, "INSERT INTO t (v) VALUES (2)")
+        end)
+
+      # Confirm the writer is in flight, give it a beat to enter the busy handler,
+      # then assert it's genuinely blocked before releasing the lock — otherwise the
+      # INSERT would race an already-free lock and pass without exercising the wait
+      # (the same check fails fast if busy_timeout were 0, turning the wait into an error).
+      assert_receive :writing, 1_000
+      Process.sleep(50)
+      refute Task.yield(writer, 0), "writer should still be blocked on the held lock"
+
       :ok = Sqlite3.execute(a, "COMMIT")
 
       assert :ok = Task.await(writer, 6_000)

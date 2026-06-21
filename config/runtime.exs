@@ -87,9 +87,13 @@ config :cinder, CinderWeb.Endpoint,
 # so they differ) — so nothing crypto-related is committed and each install gets
 # unique, restart-stable salts with no extra env var. signing_salt is a salt, not a
 # secret: the secret is secret_key_base.
+# Prod MUST get it from the env (never a committed value): the compile-config
+# fallback is gated to non-prod so a stray secret_key_base in prod.exs can't
+# silently disable the raise and make every install's cookies forgeable.
 secret_key_base =
   System.get_env("SECRET_KEY_BASE") ||
-    Application.get_env(:cinder, CinderWeb.Endpoint)[:secret_key_base] ||
+    (config_env() != :prod &&
+       Application.get_env(:cinder, CinderWeb.Endpoint)[:secret_key_base]) ||
     raise """
     environment variable SECRET_KEY_BASE is missing.
     You can generate one by calling: mix phx.gen.secret
@@ -136,8 +140,8 @@ if config_env() == :prod do
       ip: {0, 0, 0, 0, 0, 0, 0, 0}
     ]
 
-  # TLS terminates at the reverse proxy in front of Cinder (the self-host model);
-  # HSTS + the http->https redirect are enforced via `force_ssl` in config/prod.exs
-  # (it must be set at compile time). The mailer stays on Swoosh's local adapter
-  # until a notifier transport is added (Part II / M3).
+  # TLS terminates at the reverse proxy in front of Cinder (the self-host model).
+  # `force_ssl` in config/prod.exs adds HSTS + the http->https redirect — it relies
+  # on the proxy sending X-Forwarded-Proto and skips localhost/127.0.0.1. The mailer
+  # stays on Swoosh's local adapter until a notifier transport lands (Part II / M3).
 end
