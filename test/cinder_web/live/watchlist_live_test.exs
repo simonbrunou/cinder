@@ -6,8 +6,10 @@ defmodule CinderWeb.WatchlistLiveTest do
 
   alias Cinder.Catalog
   alias Cinder.Catalog.Movie
+  alias Cinder.Requests
 
   # The LiveView runs in its own process, so the mock must be global (requires async: false).
+  setup :register_and_log_in_admin
   setup :set_mox_global
 
   @inception %{tmdb_id: 27_205, title: "Inception", year: 2010, poster_path: "/p.jpg"}
@@ -32,7 +34,8 @@ defmodule CinderWeb.WatchlistLiveTest do
     assert html =~ "2010"
   end
 
-  test "adding a result persists a :requested movie and shows it in the watchlist", %{conn: conn} do
+  # Admin path: add creates a :requested movie (via auto-approved request)
+  test "admin add creates a :requested movie and shows it in the watchlist", %{conn: conn} do
     stub_search([@inception])
     {:ok, lv, _html} = live(conn, ~p"/")
 
@@ -43,16 +46,45 @@ defmodule CinderWeb.WatchlistLiveTest do
     assert [%Movie{tmdb_id: 27_205, status: :requested}] = Catalog.list_watchlist()
   end
 
-  test "adding a movie already on the watchlist flashes and does not duplicate", %{conn: conn} do
-    {:ok, _} = Catalog.add_to_watchlist(@inception)
+  # Non-admin path: add creates a pending request, no movie created
+  test "non-admin add creates a pending request, no movie", %{conn: conn} do
+    stub_search([@inception])
+    user = Cinder.AccountsFixtures.user_fixture()
+    conn = log_in_user(conn, user)
+    {:ok, lv, _html} = live(conn, ~p"/")
+
+    lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
+    html = lv |> element("#add-27205") |> render_click()
+
+    assert html =~ "awaiting approval"
+    assert Catalog.list_by_status(:requested) == []
+    assert [%Requests.Request{status: :pending}] = Requests.list_for_user(user)
+  end
+
+  # Dup detection is at the request layer: partial-unique on pending per user
+  test "non-admin adding a movie they already requested flashes and does not duplicate", %{
+    conn: _conn
+  } do
+    user = Cinder.AccountsFixtures.user_fixture()
+    conn = log_in_user(Phoenix.ConnTest.build_conn(), user)
+
+    {:ok, _} =
+      Requests.create_request(user, %{
+        target_type: "movie",
+        target_id: 27_205,
+        title: "Inception",
+        year: 2010,
+        poster_path: "/p.jpg"
+      })
+
     stub_search([@inception])
     {:ok, lv, _html} = live(conn, ~p"/")
 
     lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
     html = lv |> element("#add-27205") |> render_click()
 
-    assert html =~ "already on your watchlist"
-    assert length(Catalog.list_watchlist()) == 1
+    assert html =~ "already requested"
+    assert Requests.list_for_user(user) |> length() == 1
   end
 
   test "a TMDB error flashes without crashing, and doesn't claim 'No matches'", %{conn: conn} do

@@ -1,5 +1,8 @@
 import Config
 
+# Only in tests, remove the complexity from the password hashing algorithm
+config :bcrypt_elixir, :log_rounds, 1
+
 # Configure your database
 #
 # The MIX_TEST_PARTITION environment variable can be used
@@ -87,5 +90,8 @@ config :cinder, Cinder.Library.MediaServer.Plex,
 # The app-level poller must not run during the suite (it would race Mox/Sandbox).
 # Poller tests start their own supervised instance.
 config :cinder, start_poller: false
+
+# Enable /dev routes in tests so the authorization matrix can gate them.
+config :cinder, dev_routes: true
 
 config :cinder, :library_path, "/tmp/cinder-test-library"

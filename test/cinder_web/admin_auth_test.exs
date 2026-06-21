@@ -14,14 +14,18 @@ defmodule CinderWeb.AdminAuthTest do
     end)
   end
 
-  test "with no credentials configured, /status is reachable (auth is opt-in)", %{conn: conn} do
-    assert get(conn, ~p"/status") |> html_response(200) =~ "Status"
+  # /status now requires authentication (admin live_session), so the Basic-auth
+  # tests use the always-public login page to exercise the plug pipeline.
+  test "with no credentials configured, the login page is reachable (auth is opt-in)", %{
+    conn: conn
+  } do
+    assert get(conn, ~p"/users/log-in") |> html_response(200) =~ "Log in"
   end
 
   test "with credentials configured, an unauthenticated request is challenged 401", %{conn: conn} do
     configure_auth("admin", "secret")
 
-    conn = get(conn, ~p"/status")
+    conn = get(conn, ~p"/users/log-in")
     assert conn.status == 401
     assert get_resp_header(conn, "www-authenticate") != []
   end
@@ -32,9 +36,9 @@ defmodule CinderWeb.AdminAuthTest do
     conn =
       conn
       |> put_req_header("authorization", Plug.BasicAuth.encode_basic_auth("admin", "secret"))
-      |> get(~p"/status")
+      |> get(~p"/users/log-in")
 
-    assert html_response(conn, 200) =~ "Status"
+    assert html_response(conn, 200) =~ "Log in"
   end
 
   test "with only one credential env var set, the app fails loud (not silently open)", %{
@@ -45,7 +49,7 @@ defmodule CinderWeb.AdminAuthTest do
     System.put_env("CINDER_BASIC_AUTH_USER", "admin")
     on_exit(fn -> System.delete_env("CINDER_BASIC_AUTH_USER") end)
 
-    assert_raise RuntimeError, ~r/both/, fn -> get(conn, ~p"/status") end
+    assert_raise RuntimeError, ~r/both/, fn -> get(conn, ~p"/users/log-in") end
   end
 
   test "blank (empty-string) credentials are treated as unset, not empty-cred auth", %{conn: conn} do
@@ -59,6 +63,6 @@ defmodule CinderWeb.AdminAuthTest do
       System.delete_env("CINDER_BASIC_AUTH_PASSWORD")
     end)
 
-    assert get(conn, ~p"/status") |> html_response(200) =~ "Status"
+    assert get(conn, ~p"/users/log-in") |> html_response(200) =~ "Log in"
   end
 end

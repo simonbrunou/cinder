@@ -187,6 +187,9 @@ defmodule Cinder.Settings do
   @doc "All raw settings rows."
   def all, do: Repo.all(Setting)
 
+  @doc "Returns true if the auto-approve-all setting is explicitly enabled."
+  def auto_approve_all?, do: get("auto_approve_all") == "true"
+
   @doc "Decoded value for `key` (decrypting secrets), or `nil` if unset/undecryptable."
   def get(key) do
     case Repo.get_by(Setting, key: key) do

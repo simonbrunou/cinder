@@ -40,6 +40,7 @@ defmodule Cinder.MixProject do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
+      {:bcrypt_elixir, "~> 3.0"},
       {:tidewave, "~> 0.6", only: [:dev]},
       {:usage_rules, "~> 0.1", only: [:dev]},
       {:claude, "~> 0.5", only: [:dev], runtime: false},

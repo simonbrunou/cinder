@@ -18,6 +18,8 @@ defmodule CinderWeb.SettingsLiveTest do
     :download_clients
   ]
 
+  setup :register_and_log_in_admin
+
   setup do
     saved = Map.new(@env_keys, fn k -> {k, Application.get_env(:cinder, k)} end)
 
@@ -82,5 +84,15 @@ defmodule CinderWeb.SettingsLiveTest do
     |> render_submit()
 
     assert Settings.get("tmdb_token") == nil
+  end
+
+  test "toggling auto-approve persists", %{conn: conn} do
+    {:ok, lv, _} = live(conn, ~p"/settings")
+
+    lv
+    |> element("form[phx-change=toggle_auto_approve]")
+    |> render_change(%{"auto_approve_all" => "on"})
+
+    assert Settings.auto_approve_all?() == true
   end
 end

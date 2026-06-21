@@ -48,6 +48,13 @@ the current phase only.
   (one broadcast per transition). SQLite is pinned to WAL + `busy_timeout: 5000` (config across
   dev/test/runtime), so a web write racing the poller waits rather than erroring with "database
   busy" — but that only holds if writes don't sidestep the choke-point.
+  - Movie **creation** is a separate insert: `Catalog.add_to_watchlist/1` and
+    `Catalog.find_or_create_at_requested/1` (the only path reachable from a user action, gated
+    by `Cinder.Requests`); the latter broadcasts `{:movie_created, movie}` so open `/` views
+    update. The **approval gate lives in the data model**: `Cinder.Requests.create_request/2` is
+    the only caller allowed to create a movie from a user action — a non-admin request never
+    writes a `:requested` row until an admin approves. `auto_approve_all` is a live-read DB
+    setting (`nil → false`), admin-written via `/settings`.
 
 ## Configuration: env vs in-app settings
 

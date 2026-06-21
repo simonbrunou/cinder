@@ -59,13 +59,34 @@ defmodule CinderWeb.WatchlistLive do
     {:noreply, assign(socket, watchlist: watchlist)}
   end
 
-  defp add(socket, movie) do
-    case Catalog.add_to_watchlist(movie) do
-      {:ok, saved} ->
-        update(socket, :watchlist, &[saved | &1])
+  @impl true
+  def handle_info({:movie_created, movie}, socket) do
+    {:noreply, update(socket, :watchlist, &[movie | &1])}
+  end
 
-      {:error, _changeset} ->
-        put_flash(socket, :error, "#{movie.title} is already on your watchlist.")
+  @impl true
+  def handle_info(_message, socket), do: {:noreply, socket}
+
+  defp add(socket, movie) do
+    user = socket.assigns.current_scope.user
+
+    attrs = %{
+      target_type: "movie",
+      target_id: movie.tmdb_id,
+      title: movie.title,
+      year: movie.year,
+      poster_path: movie.poster_path
+    }
+
+    case Cinder.Requests.create_request(user, attrs) do
+      {:ok, %{status: :approved}} ->
+        put_flash(socket, :info, "#{movie.title} added.")
+
+      {:ok, %{status: :pending}} ->
+        put_flash(socket, :info, "#{movie.title} requested — awaiting approval.")
+
+      {:error, _} ->
+        put_flash(socket, :error, "#{movie.title} is already requested.")
     end
   end
 
