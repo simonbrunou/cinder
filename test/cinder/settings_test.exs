@@ -199,6 +199,15 @@ defmodule Cinder.SettingsTest do
       assert Settings.get("jellyfin_url") == "http://j"
     end
 
+    test "tolerates a present-but-nil non-secret value (clears, does not crash)" do
+      Settings.put("prowlarr_url", "http://x")
+
+      assert Settings.save_form(%{"prowlarr_url" => nil, "media_server_type" => "jellyfin"}) ==
+               :ok
+
+      assert Settings.get("prowlarr_url") == nil
+    end
+
     test "form_state never exposes secret values, only whether they are set" do
       Settings.put("tmdb_token", "hidden")
 

@@ -459,10 +459,15 @@ defmodule Cinder.Settings do
   # A field absent from params is left unchanged; only a present-but-blank value clears it
   # (so a partial/programmatic save can't silently wipe unrelated non-secret settings).
   defp plan_config(%{secret: false, key: key}, params, {puts, deletes}) do
-    cond do
-      not Map.has_key?(params, key) -> {puts, deletes}
-      String.trim(params[key]) == "" -> {puts, [key | deletes]}
-      true -> {Map.put(puts, key, String.trim(params[key])), deletes}
+    if Map.has_key?(params, key) do
+      # `|| ""` keeps a present-but-nil value (a programmatic caller) safe — String.trim/1
+      # would raise on nil; this matches the secret clause's handling.
+      case String.trim(params[key] || "") do
+        "" -> {puts, [key | deletes]}
+        value -> {Map.put(puts, key, value), deletes}
+      end
+    else
+      {puts, deletes}
     end
   end
 
