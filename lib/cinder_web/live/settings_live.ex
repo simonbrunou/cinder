@@ -2,7 +2,8 @@ defmodule CinderWeb.SettingsLive do
   @moduledoc """
   In-app configuration for external services, mounted at `/settings`. Values persist
   to the DB (secrets encrypted) and overlay the app env on save. Admin-gated by the
-  `:admin_auth` pipeline (real roles arrive in M2).
+  `:admin` live_session (`CinderWeb.UserAuth.require_admin`); also hosts the
+  `auto_approve_all` toggle.
 
   Secret inputs are never pre-filled — they render empty so a value can't be echoed
   back to the client, even on a re-render. Leave a secret blank to keep it; tick its

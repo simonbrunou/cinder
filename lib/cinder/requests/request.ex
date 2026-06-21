@@ -30,6 +30,10 @@ defmodule Cinder.Requests.Request do
       :approved_by_id
     ])
     |> validate_required([:user_id, :target_type, :target_id, :status])
+    # The constraint name is intentionally column-derived, NOT the migration's
+    # :requests_pending_unique partial-index name. exqlite reports the column-derived
+    # name when a duplicate is caught; using :requests_pending_unique here would turn
+    # the duplicate-pending catch into a raise instead of a changeset error.
     |> unique_constraint([:user_id, :target_type, :target_id],
       name: :requests_user_id_target_type_target_id_index
     )
