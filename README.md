@@ -1,5 +1,7 @@
 # Cinder
 
+[![CI](https://github.com/simonbrunou/cinder/actions/workflows/ci.yml/badge.svg)](https://github.com/simonbrunou/cinder/actions/workflows/ci.yml)
+
 To start your Phoenix server:
 
 * Run `mix setup` to install and setup dependencies
