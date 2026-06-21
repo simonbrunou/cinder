@@ -247,6 +247,19 @@ defmodule CinderWeb.UserAuth do
     end
   end
 
+  def on_mount(:require_admin, _params, _session, socket) do
+    if admin?(socket.assigns[:current_scope]) do
+      {:cont, socket}
+    else
+      socket =
+        socket
+        |> Phoenix.LiveView.put_flash(:error, "You don't have access to that page.")
+        |> Phoenix.LiveView.redirect(to: ~p"/")
+
+      {:halt, socket}
+    end
+  end
+
   defp mount_current_scope(socket, session) do
     Phoenix.Component.assign_new(socket, :current_scope, fn ->
       {user, _} =
@@ -281,4 +294,21 @@ defmodule CinderWeb.UserAuth do
   end
 
   defp maybe_store_return_to(conn), do: conn
+
+  @doc """
+  Plug for routes that require the user to be an admin.
+  """
+  def require_admin(conn, _opts) do
+    if admin?(conn.assigns[:current_scope]) do
+      conn
+    else
+      conn
+      |> put_flash(:error, "You don't have access to that page.")
+      |> redirect(to: ~p"/")
+      |> halt()
+    end
+  end
+
+  defp admin?(%Cinder.Accounts.Scope{user: %{role: :admin}}), do: true
+  defp admin?(_), do: false
 end

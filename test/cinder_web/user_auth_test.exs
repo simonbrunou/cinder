@@ -366,6 +366,32 @@ defmodule CinderWeb.UserAuthTest do
     end
   end
 
+  describe "require_admin/2 plug" do
+    test "allows an admin", %{conn: conn} do
+      admin = admin_fixture()
+
+      conn =
+        conn
+        |> assign(:current_scope, Scope.for_user(admin))
+        |> UserAuth.require_admin([])
+
+      refute conn.halted
+    end
+
+    test "rejects a non-admin", %{conn: conn} do
+      user = user_fixture()
+
+      conn =
+        conn
+        |> assign(:current_scope, Scope.for_user(user))
+        |> fetch_flash()
+        |> UserAuth.require_admin([])
+
+      assert conn.halted
+      assert redirected_to(conn) == ~p"/"
+    end
+  end
+
   describe "disconnect_sessions/1" do
     test "broadcasts disconnect messages for each token" do
       tokens = [%{token: "token1"}, %{token: "token2"}]
