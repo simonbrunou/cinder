@@ -7,22 +7,21 @@ defmodule Cinder.AccountsFixtures do
   import Ecto.Query
 
   alias Cinder.Accounts
-  alias Cinder.Accounts.Scope
+  alias Cinder.Accounts.{Scope, User}
+  alias Cinder.Repo
 
   def unique_user_email, do: "user#{System.unique_integer()}@example.com"
   def valid_user_password, do: "hello world!"
 
   def valid_user_attributes(attrs \\ %{}) do
-    Enum.into(attrs, %{
-      email: unique_user_email()
-    })
+    Enum.into(attrs, %{email: unique_user_email(), password: valid_user_password()})
   end
 
   def unconfirmed_user_fixture(attrs \\ %{}) do
     {:ok, user} =
-      attrs
-      |> valid_user_attributes()
-      |> Accounts.register_user()
+      %User{}
+      |> User.email_changeset(valid_user_attributes(attrs))
+      |> Repo.insert()
 
     user
   end
@@ -38,8 +37,15 @@ defmodule Cinder.AccountsFixtures do
     {:ok, {user, _expired_tokens}} =
       Accounts.login_user_by_magic_link(token)
 
+    set_role(user, :user)
+  end
+
+  defp set_role(user, role) do
+    {:ok, user} = user |> Ecto.Changeset.change(role: role) |> Repo.update()
     user
   end
+
+  def admin_fixture(attrs \\ %{}), do: user_fixture(attrs) |> set_role(:admin)
 
   def user_scope_fixture do
     user = user_fixture()
@@ -64,7 +70,7 @@ defmodule Cinder.AccountsFixtures do
   end
 
   def override_token_authenticated_at(token, authenticated_at) when is_binary(token) do
-    Cinder.Repo.update_all(
+    Repo.update_all(
       from(t in Accounts.UserToken,
         where: t.token == ^token
       ),
@@ -74,14 +80,14 @@ defmodule Cinder.AccountsFixtures do
 
   def generate_user_magic_link_token(user) do
     {encoded_token, user_token} = Accounts.UserToken.build_email_token(user, "login")
-    Cinder.Repo.insert!(user_token)
+    Repo.insert!(user_token)
     {encoded_token, user_token.token}
   end
 
   def offset_user_token(token, amount_to_add, unit) do
     dt = DateTime.add(DateTime.utc_now(:second), amount_to_add, unit)
 
-    Cinder.Repo.update_all(
+    Repo.update_all(
       from(ut in Accounts.UserToken, where: ut.token == ^token),
       set: [inserted_at: dt, authenticated_at: dt]
     )

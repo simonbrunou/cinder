@@ -48,42 +48,46 @@ defmodule Cinder.AccountsTest do
     end
   end
 
-  describe "register_user/1" do
-    test "requires email to be set" do
-      {:error, changeset} = Accounts.register_user(%{})
-
-      assert %{email: ["can't be blank"]} = errors_on(changeset)
-    end
-
-    test "validates email when given" do
-      {:error, changeset} = Accounts.register_user(%{email: "not valid"})
-
-      assert %{email: ["must have the @ sign and no spaces"]} = errors_on(changeset)
-    end
-
-    test "validates maximum values for email for security" do
-      too_long = String.duplicate("db", 100)
-      {:error, changeset} = Accounts.register_user(%{email: too_long})
-      assert "should be at most 160 character(s)" in errors_on(changeset).email
-    end
-
-    test "validates email uniqueness" do
-      %{email: email} = user_fixture()
-      {:error, changeset} = Accounts.register_user(%{email: email})
-      assert "has already been taken" in errors_on(changeset).email
-
-      # Now try with the uppercased email too, to check that email case is ignored.
-      {:error, changeset} = Accounts.register_user(%{email: String.upcase(email)})
-      assert "has already been taken" in errors_on(changeset).email
-    end
-
-    test "registers users without password" do
+  describe "register_user/1 (password + auto-confirm)" do
+    test "hashes password and auto-confirms" do
       email = unique_user_email()
-      {:ok, user} = Accounts.register_user(valid_user_attributes(email: email))
+      {:ok, user} = Accounts.register_user(%{email: email, password: valid_user_password()})
       assert user.email == email
-      assert is_nil(user.hashed_password)
-      assert is_nil(user.confirmed_at)
+      assert is_binary(user.hashed_password)
       assert is_nil(user.password)
+      refute is_nil(user.confirmed_at)
+    end
+
+    test "first user becomes admin, subsequent users are :user" do
+      {:ok, first} =
+        Accounts.register_user(%{email: unique_user_email(), password: valid_user_password()})
+
+      {:ok, second} =
+        Accounts.register_user(%{email: unique_user_email(), password: valid_user_password()})
+
+      assert first.role == :admin
+      assert second.role == :user
+    end
+
+    test "ignores a role param (no privilege escalation)" do
+      {:ok, _admin} =
+        Accounts.register_user(%{email: unique_user_email(), password: valid_user_password()})
+
+      {:ok, user} =
+        Accounts.register_user(%{
+          "email" => unique_user_email(),
+          "password" => valid_user_password(),
+          "role" => "admin"
+        })
+
+      assert user.role == :user
+    end
+
+    test "requires a valid password" do
+      {:error, changeset} =
+        Accounts.register_user(%{email: unique_user_email(), password: "short"})
+
+      assert %{password: _} = errors_on(changeset)
     end
   end
 

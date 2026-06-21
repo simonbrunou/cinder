@@ -8,6 +8,7 @@ defmodule Cinder.Accounts.User do
     field :hashed_password, :string, redact: true
     field :confirmed_at, :utc_datetime
     field :authenticated_at, :utc_datetime, virtual: true
+    field :role, Ecto.Enum, values: [:admin, :user], default: :user
 
     timestamps(type: :utc_datetime)
   end
@@ -27,6 +28,19 @@ defmodule Cinder.Accounts.User do
     user
     |> cast(attrs, [:email])
     |> validate_email(opts)
+  end
+
+  @doc """
+  Changeset for password-based, auto-confirmed registration (no email round-trip).
+  Casts email + password and validates+hashes both. `:role`/`:confirmed_at` are
+  applied by `Accounts.register_user/1` via put_change — never castable here.
+  """
+  def registration_changeset(user, attrs, opts \\ []) do
+    user
+    |> cast(attrs, [:email, :password])
+    |> validate_email(opts)
+    |> validate_password(opts)
+    |> validate_confirmation(:password, message: "does not match password")
   end
 
   defp validate_email(changeset, opts) do

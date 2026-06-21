@@ -75,9 +75,19 @@ defmodule Cinder.Accounts do
 
   """
   def register_user(attrs) do
-    %User{}
-    |> User.email_changeset(attrs)
-    |> Repo.insert()
+    Repo.transaction(fn ->
+      role = if Repo.aggregate(User, :count) == 0, do: :admin, else: :user
+
+      %User{}
+      |> User.registration_changeset(attrs)
+      |> Ecto.Changeset.put_change(:confirmed_at, DateTime.utc_now(:second))
+      |> Ecto.Changeset.put_change(:role, role)
+      |> Repo.insert()
+      |> case do
+        {:ok, user} -> user
+        {:error, changeset} -> Repo.rollback(changeset)
+      end
+    end)
   end
 
   ## Settings
