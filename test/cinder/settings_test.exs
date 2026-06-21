@@ -69,6 +69,23 @@ defmodule Cinder.SettingsTest do
       assert Settings.get("tmdb_token") == nil
       assert Settings.load_into_env() == :ok
     end
+
+    test "a secret that fails GCM authentication (wrong key) is skipped, not poured into env" do
+      # Encrypt under the real vault, then corrupt the ciphertext so the GCM tag fails to
+      # authenticate — exactly what a SECRET_KEY_BASE change produces. Cloak returns
+      # {:ok, :error} here, so without the is_binary guard :error would land in env.
+      Settings.put("tmdb_token", "real-token")
+      row = Repo.get_by(Setting, key: "tmdb_token")
+      raw = Base.decode64!(row.value)
+      n = byte_size(raw) - 1
+      <<head::binary-size(^n), last>> = raw
+      corrupted = Base.encode64(head <> <<rem(last + 1, 256)>>)
+      row |> Ecto.Changeset.change(value: corrupted) |> Repo.update!()
+
+      assert Settings.get("tmdb_token") == nil
+      assert Settings.load_into_env() == :ok
+      assert Application.get_env(:cinder, Cinder.Catalog.TMDB.HTTP)[:token] != :error
+    end
   end
 
   describe "load_into_env/0 overlay" do
@@ -128,6 +145,19 @@ defmodule Cinder.SettingsTest do
                torrent: Cinder.Download.ClientMock
              }
     end
+
+    test "media_server reverts to the bootstrap base after an explicit set is cleared" do
+      # Erase the snapshot to simulate base not yet captured when the first explicit
+      # resolution happens (the boot-with-persisted-row case the lazy capture got wrong).
+      :persistent_term.erase({Cinder.Settings, :base, :media_server})
+      on_exit(fn -> :persistent_term.erase({Cinder.Settings, :base, :media_server}) end)
+
+      Settings.put("media_server_type", "plex")
+      assert Application.fetch_env!(:cinder, :media_server) == Cinder.Library.MediaServer.Plex
+
+      Settings.delete("media_server_type")
+      assert Application.fetch_env!(:cinder, :media_server) == Cinder.Library.MediaServerMock
+    end
   end
 
   describe "save_form/1" do
@@ -157,6 +187,16 @@ defmodule Cinder.SettingsTest do
       })
 
       assert Settings.get("tmdb_token") == nil
+    end
+
+    test "leaves non-secret keys absent from params unchanged (no collateral wipe)" do
+      Settings.put("prowlarr_url", "http://keep")
+
+      # A partial submit omitting prowlarr_url must not delete it.
+      Settings.save_form(%{"jellyfin_url" => "http://j", "media_server_type" => "jellyfin"})
+
+      assert Settings.get("prowlarr_url") == "http://keep"
+      assert Settings.get("jellyfin_url") == "http://j"
     end
 
     test "form_state never exposes secret values, only whether they are set" do

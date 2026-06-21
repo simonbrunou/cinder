@@ -55,6 +55,7 @@ defmodule CinderWeb.SettingsLive do
   defp services_for(:indexer), do: [{"indexer", "Prowlarr"}]
   defp services_for(:download), do: [{"torrent", "qBittorrent"}, {"usenet", "SABnzbd"}]
   defp services_for(:media_server), do: [{"media_server", "Media server"}]
+  defp services_for(_group), do: []
 
   defp secret_placeholder(field, secrets_set) do
     if MapSet.member?(secrets_set, field.key),
@@ -170,9 +171,18 @@ defmodule CinderWeb.SettingsLive do
 
   defp test_badge(assigns) do
     ~H"""
-    <span class={["badge badge-sm", if(@result == :ok, do: "badge-success", else: "badge-error")]}>
+    <span
+      class={["badge badge-sm", if(@result == :ok, do: "badge-success", else: "badge-error")]}
+      title={test_title(@result)}
+    >
       {if @result == :ok, do: "ok", else: "unreachable"}
     </span>
     """
   end
+
+  # Surface the (sanitized) failure reason so a bad credential shows e.g. {:tmdb_status, 401}
+  # rather than a bare "unreachable", mirroring StatusLive.
+  defp test_title(:ok), do: nil
+  defp test_title({:error, reason}), do: inspect(reason)
+  defp test_title(_other), do: nil
 end

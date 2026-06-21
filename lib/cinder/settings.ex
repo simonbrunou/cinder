@@ -12,8 +12,6 @@ defmodule Cinder.Settings do
   can't be decrypted (e.g. after a `SECRET_KEY_BASE` change) is skipped with a warning
   rather than crashing boot.
   """
-  import Ecto.Query, warn: false
-
   require Logger
 
   alias Cinder.Repo
@@ -193,7 +191,7 @@ defmodule Cinder.Settings do
   def get(key) do
     case Repo.get_by(Setting, key: key) do
       nil -> nil
-      setting -> decoded(setting) |> unwrap()
+      setting -> setting |> decoded() |> unwrap() |> blank_to_nil()
     end
   end
 
@@ -276,6 +274,15 @@ defmodule Cinder.Settings do
     e ->
       Logger.error("Cinder.Settings.load_into_env failed; using env bootstrap: #{inspect(e)}")
       :ok
+  catch
+    # An exit/throw (e.g. a DB pool-checkout timeout deep in Repo.all) would otherwise
+    # escape start_link and abort boot — the "never bricks boot" contract covers these too.
+    kind, value ->
+      Logger.error(
+        "Cinder.Settings.load_into_env #{kind}; using env bootstrap: #{inspect(value)}"
+      )
+
+      :ok
   end
 
   defp apply_config_fields(rows) do
@@ -295,21 +302,21 @@ defmodule Cinder.Settings do
   end
 
   # The setting picks the impl; with no setting fall back to the PLEX_URL bootstrap, then
-  # to the captured base (config.exs default in prod, the Mox mock in tests). Always
-  # written, so a cleared setting reverts rather than stranding the last impl.
+  # to the captured base (config.exs default in prod, the Mox mock in tests). `fallback`
+  # is computed every load (so base/1 is captured before any overlay, like the other
+  # apply_* paths) — otherwise an explicit-then-cleared setting would revert to the last
+  # impl instead of the bootstrap default.
   defp apply_media_server(rows) do
+    fallback =
+      if System.get_env("PLEX_URL"),
+        do: Cinder.Library.MediaServer.Plex,
+        else: base(:media_server)
+
     impl =
       case decoded_for(rows, @media_server_key) do
-        "plex" ->
-          Cinder.Library.MediaServer.Plex
-
-        "jellyfin" ->
-          Cinder.Library.MediaServer.Jellyfin
-
-        _ ->
-          if System.get_env("PLEX_URL"),
-            do: Cinder.Library.MediaServer.Plex,
-            else: base(:media_server)
+        "plex" -> Cinder.Library.MediaServer.Plex
+        "jellyfin" -> Cinder.Library.MediaServer.Jellyfin
+        _ -> fallback
       end
 
     Application.put_env(:cinder, :media_server, impl)
@@ -378,8 +385,12 @@ defmodule Cinder.Settings do
   defp decoded(%Setting{is_secret: true, value: nil}), do: {:ok, nil}
 
   defp decoded(%Setting{is_secret: true, value: value, key: key}) do
+    # The is_binary guard matters: Cloak's AES-GCM decrypt returns {:ok, :error} (not an
+    # error tuple, not a raise) when the GCM tag fails to authenticate — i.e. the value was
+    # encrypted under a different SECRET_KEY_BASE. Without the guard, :error would be poured
+    # into Application env as a credential. Here it falls to the skip-and-warn branch instead.
     with {:ok, ciphertext} <- Base.decode64(value),
-         {:ok, plaintext} <- Cinder.Vault.decrypt(ciphertext) do
+         {:ok, plaintext} when is_binary(plaintext) <- Cinder.Vault.decrypt(ciphertext) do
       {:ok, plaintext}
     else
       _ ->
@@ -428,7 +439,7 @@ defmodule Cinder.Settings do
 
     puts =
       puts
-      |> Map.put(@media_server_key, params[@media_server_key] || default_media_server_type())
+      |> Map.put(@media_server_key, media_server_choice(params))
       |> then(fn p ->
         Enum.reduce(@toggles, p, fn t, acc -> Map.put(acc, t.key, params[t.key] || "false") end)
       end)
@@ -436,10 +447,22 @@ defmodule Cinder.Settings do
     {puts, deletes}
   end
 
+  # Validate against the whitelist so a crafted/buggy submit can't persist a junk impl
+  # string (which apply_media_server would silently ignore, leaving the dropdown unselected).
+  defp media_server_choice(params) do
+    case params[@media_server_key] do
+      choice when choice in @media_server_options -> choice
+      _ -> default_media_server_type()
+    end
+  end
+
+  # A field absent from params is left unchanged; only a present-but-blank value clears it
+  # (so a partial/programmatic save can't silently wipe unrelated non-secret settings).
   defp plan_config(%{secret: false, key: key}, params, {puts, deletes}) do
-    case String.trim(params[key] || "") do
-      "" -> {puts, [key | deletes]}
-      value -> {Map.put(puts, key, value), deletes}
+    cond do
+      not Map.has_key?(params, key) -> {puts, deletes}
+      String.trim(params[key]) == "" -> {puts, [key | deletes]}
+      true -> {Map.put(puts, key, String.trim(params[key])), deletes}
     end
   end
 
