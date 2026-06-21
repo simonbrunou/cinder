@@ -72,4 +72,11 @@ defmodule Cinder.RequestsTest do
     {:ok, _} = Requests.create_request(user, @attrs)
     assert {:error, _} = Requests.create_request(user, @attrs)
   end
+
+  test "auto_approve_all on → a non-admin add creates the movie" do
+    Cinder.Settings.put("auto_approve_all", "true")
+    user = user_fixture()
+    assert {:ok, %{status: :approved}} = Requests.create_request(user, @attrs)
+    assert [%Movie{status: :requested}] = Catalog.list_by_status(:requested)
+  end
 end

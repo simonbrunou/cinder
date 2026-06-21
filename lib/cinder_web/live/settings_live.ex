@@ -14,7 +14,12 @@ defmodule CinderWeb.SettingsLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    {:ok, assign(socket, form: Settings.form_state(), health: %{})}
+    {:ok,
+     assign(socket,
+       form: Settings.form_state(),
+       health: %{},
+       auto_approve_all: Settings.auto_approve_all?()
+     )}
   end
 
   @impl true
@@ -41,6 +46,12 @@ defmodule CinderWeb.SettingsLive do
            health: Map.put(socket.assigns.health, svc, Health.check_service(service))
          )}
     end
+  end
+
+  def handle_event("toggle_auto_approve", params, socket) do
+    on = Map.get(params, "auto_approve_all") == "on"
+    Settings.put("auto_approve_all", to_string(on))
+    {:noreply, assign(socket, auto_approve_all: on)}
   end
 
   # phx-value is client-controlled; only known services resolve.
@@ -123,6 +134,21 @@ defmodule CinderWeb.SettingsLive do
 
         <button type="submit" class="btn btn-primary">Save settings</button>
       </form>
+
+      <div class="rounded-box bg-base-200 p-4 mt-8">
+        <p class="text-lg font-semibold mb-3">Requests</p>
+        <form phx-change="toggle_auto_approve">
+          <label class="label cursor-pointer justify-start gap-2">
+            <input
+              type="checkbox"
+              name="auto_approve_all"
+              class="toggle"
+              checked={@auto_approve_all}
+            />
+            <span class="label-text">Auto-approve all requests (skip the approval queue)</span>
+          </label>
+        </form>
+      </div>
     </Layouts.app>
     """
   end

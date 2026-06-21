@@ -218,6 +218,16 @@ defmodule Cinder.SettingsTest do
     end
   end
 
+  describe "auto_approve_all?/0" do
+    test "defaults to false and round-trips" do
+      assert Cinder.Settings.auto_approve_all?() == false
+      Cinder.Settings.put("auto_approve_all", "true")
+      assert Cinder.Settings.auto_approve_all?() == true
+      Cinder.Settings.put("auto_approve_all", "false")
+      assert Cinder.Settings.auto_approve_all?() == false
+    end
+  end
+
   describe "Health.check_service/1" do
     test "probes the configured impl for each service" do
       stub(Cinder.Catalog.TMDBMock, :health, fn -> :ok end)

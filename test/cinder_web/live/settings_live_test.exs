@@ -85,4 +85,14 @@ defmodule CinderWeb.SettingsLiveTest do
 
     assert Settings.get("tmdb_token") == nil
   end
+
+  test "toggling auto-approve persists", %{conn: conn} do
+    {:ok, lv, _} = live(conn, ~p"/settings")
+
+    lv
+    |> element("form[phx-change=toggle_auto_approve]")
+    |> render_change(%{"auto_approve_all" => "on"})
+
+    assert Settings.auto_approve_all?() == true
+  end
 end
