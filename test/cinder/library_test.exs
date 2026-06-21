@@ -81,6 +81,25 @@ defmodule Cinder.LibraryTest do
     assert log =~ "media-server scan failed"
   end
 
+  test "a scan that RAISES is best-effort: import still succeeds once the file is linked" do
+    movie = %Movie{title: "Heat", year: 1995, file_path: "/dl/Heat.mkv"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+    expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    expect(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
+    # A misconfigured media-server impl can raise (e.g. a malformed base URL or a
+    # network error deep in the HTTP stack) — that must not crash an already-
+    # hardlinked import.
+    expect(Cinder.Library.MediaServerMock, :scan, fn -> raise "boom" end)
+
+    log =
+      capture_log(fn ->
+        assert {:ok, "#{@lib}/Heat (1995)/Heat (1995).mkv"} = Library.import_movie(movie)
+      end)
+
+    assert log =~ "media-server scan failed"
+  end
+
   test "folder with no video file → {:error, :no_video_file}, no scan" do
     movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
 

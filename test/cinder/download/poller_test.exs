@@ -111,6 +111,37 @@ defmodule Cinder.Download.PollerTest do
     assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
   end
 
+  test "import_attempts is reset to 0 on the :downloading -> :downloaded transition" do
+    # Download-phase blips (e.g. a transient :error state) increment import_attempts
+    # while the movie is still :downloading. The reset on completion stops those
+    # from bleeding into — and prematurely exhausting — the import phase's bound.
+    movie = downloading_movie(30, "hash-30")
+    {:ok, counter} = Agent.start_link(fn -> 0 end)
+    start_supervised!({Poller, interval: 60_000})
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-30" ->
+      n = Agent.get_and_update(counter, &{&1, &1 + 1})
+
+      if n < 3,
+        do: {:ok, %{state: :error}},
+        else: {:ok, %{state: :completed, content_path: "/downloads/M.mkv"}}
+    end)
+
+    stub_successful_import()
+
+    # Three download blips bump import_attempts while the movie stays :downloading.
+    Enum.each(1..3, fn _ -> Poller.poll() end)
+    downloading = Repo.get!(Movie, movie.id)
+    assert downloading.status == :downloading
+    assert downloading.import_attempts > 0
+
+    # Completion resets the counter, then the import pass advances it the same tick.
+    assert :ok = Poller.poll()
+    reset = Repo.get!(Movie, movie.id)
+    assert reset.status == :available
+    assert reset.import_attempts == 0
+  end
+
   test "a non-completed status leaves the movie :downloading" do
     movie = downloading_movie(2, "hash-2")
     start_supervised!({Poller, interval: 60_000})
