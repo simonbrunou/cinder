@@ -91,4 +91,7 @@ config :cinder, Cinder.Library.MediaServer.Plex,
 # Poller tests start their own supervised instance.
 config :cinder, start_poller: false
 
+# Enable /dev routes in tests so the authorization matrix can gate them.
+config :cinder, dev_routes: true
+
 config :cinder, :library_path, "/tmp/cinder-test-library"
