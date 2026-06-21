@@ -47,7 +47,11 @@ defmodule CinderWeb.AuthorizationTest do
 
     test "an admin reaches #{path}", %{conn: conn} do
       conn = log_in_user(conn, admin_fixture())
-      assert get(conn, unquote(path)).status in [200, 301, 302]
+      conn = get(conn, unquote(path))
+      location = conn |> Plug.Conn.get_resp_header("location") |> List.first()
+
+      assert conn.status == 200 or (location && String.starts_with?(location, "/dev")),
+             "admin should reach #{unquote(path)} (got #{conn.status} -> #{inspect(location)})"
     end
   end
 end
