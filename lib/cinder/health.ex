@@ -17,6 +17,22 @@ defmodule Cinder.Health do
     [indexer_check()] ++ download_checks() ++ [media_server_check()]
   end
 
+  @doc """
+  Checks a single service against its currently-applied config, returning
+  `:ok | {:error, term()}`. Used by the settings "Test connection" buttons.
+  `service` is `:tmdb | :indexer | :media_server | {:download, protocol}`.
+  """
+  def check_service(:tmdb), do: run(Application.fetch_env!(:cinder, :tmdb))
+  def check_service(:indexer), do: run(Application.fetch_env!(:cinder, :indexer))
+  def check_service(:media_server), do: run(Application.fetch_env!(:cinder, :media_server))
+
+  def check_service({:download, protocol}) do
+    case Download.client_for(protocol) do
+      {:ok, mod} -> run(mod)
+      :error -> {:error, :not_configured}
+    end
+  end
+
   defp indexer_check do
     mod = Application.fetch_env!(:cinder, :indexer)
     check("Indexer (#{short(mod)})", mod)

@@ -54,8 +54,15 @@ the current phase only.
 Two tiers. **Boot-only keys stay environment variables** (needed before the DB/settings store is
 up, or fixed per deployment): `SECRET_KEY_BASE`, `DATABASE_PATH`, `PHX_HOST` / `PHX_SERVER` /
 `PORT`, `POOL_SIZE`, `RELEASE_NAME`, `DNS_CLUSTER_QUERY`. Everything else — external-service URLs,
-API keys, the media-server choice — **moves to the M1 settings store** (DB-backed, editable
-in-app, overlaid on env as bootstrap). Don't add new service env vars; add settings instead.
+API keys, the media-server choice — lives in the **`Cinder.Settings` store** (M1: DB-backed,
+editable in `/settings`, overlaid on env-as-bootstrap). Don't add new service env vars; add a
+registry entry in `Cinder.Settings` instead. A registry-driven loader `Application.put_env`s the
+stored values onto a one-time bootstrap snapshot at boot (a one-shot supervised child, after
+PubSub/before the poller) and on every save, so DB overrides env, a cleared setting reverts, and
+the contexts read the same keys unchanged. Secrets are Cloak-encrypted at rest (secret rows only;
+key derived from `SECRET_KEY_BASE`) and never echoed back to the form. `/settings` is admin-gated
+by `:admin_auth` (Basic-auth, no-op until set) until M2 lands real accounts — run M1 instances
+behind that gate or a reverse-proxy/VPN.
 
 Signing salts (session + LiveView) are **derived from `secret_key_base` at runtime** in
 `config/runtime.exs` — nothing crypto-related is committed. `signing_salt` is a salt, not a

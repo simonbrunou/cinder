@@ -298,6 +298,21 @@ in-app, overlaid on env-as-bootstrap, with **zero context-code changes** (levera
 with **no service env vars set**, and a test proves DB settings override env and are applied on
 boot and on save.
 
+**[done 2026-06-21]** Shipped: `Cinder.Settings` (registry-driven) overlays the existing
+`Application.get_env` seam at boot (a one-shot supervised loader, `start_link → :ignore`, after
+PubSub/before the poller) and on save — zero context changes. The overlay merges DB onto a
+one-time `:persistent_term` bootstrap snapshot, so DB overrides env and a cleared setting reverts.
+Secrets encrypted at rest via **Cloak**, **secret rows only** (non-secrets stay
+plaintext/inspectable), key derived from `SECRET_KEY_BASE`; an undecryptable secret is skipped
+(logged), never bricks boot. Settings LiveView at `/settings` (admin-gated by `:admin_auth` until
+M2) with secret redaction (never echoed, blank-keeps, explicit Clear) and per-service Test
+connection via `Health.check_service/1` on **saved** config (+ a new TMDB `health/0`). The
+`PLEX_URL` impl-flip is gone; media-server impl is a setting (Plex-if-`PLEX_URL` bootstrap
+default). Decisions: encrypt secrets-only; the `/settings` auth-gap to M2 is accepted + documented
+(run behind the Basic-auth/reverse-proxy edge); Test-connection probes saved config, not entered
+values (clean impl; mitigated by encryption + Clear). The live "no-env-vars" loop run is the
+manual dogfood step (M3).
+
 ### M2 — Accounts, roles, request/approval model (L)
 
 **Goal:** replace the shared Basic password with real local accounts + an `admin`/`user` split +

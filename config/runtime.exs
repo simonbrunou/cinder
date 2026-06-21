@@ -63,10 +63,10 @@ end
 
 # Real Plex connection, read in every environment. Unset in test/CI, where the
 # suite stubs Req regardless, so it has no effect there. Plex has no refresh-all
-# endpoint, so PLEX_SECTION is the numeric id of the movie library.
+# endpoint, so PLEX_SECTION is the numeric id of the movie library. The media-server
+# impl is no longer flipped here (M1): Cinder.Settings picks Jellyfin/Plex, defaulting
+# to Plex when PLEX_URL is set as bootstrap. These creds remain the env bootstrap.
 if url = System.get_env("PLEX_URL") do
-  config :cinder, media_server: Cinder.Library.MediaServer.Plex
-
   config :cinder, Cinder.Library.MediaServer.Plex,
     url: url,
     token: System.get_env("PLEX_TOKEN"),
@@ -110,6 +110,17 @@ config :cinder, CinderWeb.Endpoint,
   live_view: [signing_salt: derive_salt.("live_view")]
 
 config :cinder, :session_signing_salt, derive_salt.("session")
+
+# Cloak vault for at-rest encryption of secret settings (Cinder.Settings). Keyed off
+# secret_key_base (raw 32-byte SHA-256, domain-separated from the signing salts) so no
+# key is committed and each install is unique. Configured for every environment — the
+# vault GenServer starts in the supervision tree and the suite encrypts/decrypts too.
+config :cinder, Cinder.Vault,
+  ciphers: [
+    default:
+      {Cloak.Ciphers.AES.GCM,
+       tag: "AES.GCM.V1", key: :crypto.hash(:sha256, secret_key_base <> "cinder.vault")}
+  ]
 
 if config_env() == :prod do
   database_path =

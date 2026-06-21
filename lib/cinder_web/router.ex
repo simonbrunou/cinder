@@ -53,6 +53,7 @@ defmodule CinderWeb.Router do
 
     live "/", WatchlistLive
     live "/status", StatusLive
+    live "/settings", SettingsLive
   end
 
   # Other scopes may use custom stacks.
