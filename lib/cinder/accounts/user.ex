@@ -9,6 +9,7 @@ defmodule Cinder.Accounts.User do
     field :confirmed_at, :utc_datetime
     field :authenticated_at, :utc_datetime, virtual: true
     field :role, Ecto.Enum, values: [:admin, :user], default: :user
+    field :request_quota, :integer
 
     timestamps(type: :utc_datetime)
   end
@@ -126,6 +127,13 @@ defmodule Cinder.Accounts.User do
   def confirm_changeset(user) do
     now = DateTime.utc_now(:second)
     change(user, confirmed_at: now)
+  end
+
+  @doc "Sets the per-user concurrent-pending request quota (nil = unlimited)."
+  def quota_changeset(user, attrs) do
+    user
+    |> cast(attrs, [:request_quota])
+    |> validate_number(:request_quota, greater_than_or_equal_to: 0)
   end
 
   @doc """

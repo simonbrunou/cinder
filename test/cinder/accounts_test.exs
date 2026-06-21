@@ -398,4 +398,33 @@ defmodule Cinder.AccountsTest do
       refute inspect(%User{password: "123456"}) =~ "password: \"123456\""
     end
   end
+
+  describe "M3 quota + admin helpers" do
+    test "request_quota defaults to nil and can be set/cleared" do
+      user = user_fixture()
+      assert user.request_quota == nil
+      assert {:ok, user} = Accounts.update_user_quota(user, 3)
+      assert user.request_quota == 3
+      assert {:ok, user} = Accounts.update_user_quota(user, nil)
+      assert user.request_quota == nil
+    end
+
+    test "update_user_quota rejects negatives" do
+      user = user_fixture()
+      assert {:error, changeset} = Accounts.update_user_quota(user, -1)
+      assert "must be greater than or equal to 0" in errors_on(changeset).request_quota
+    end
+
+    test "admin_exists? reflects whether any user is present" do
+      refute Accounts.admin_exists?()
+      _user = user_fixture()
+      assert Accounts.admin_exists?()
+    end
+
+    test "list_users returns all users ordered by id" do
+      a = user_fixture()
+      b = user_fixture()
+      assert Enum.map(Accounts.list_users(), & &1.id) == [a.id, b.id]
+    end
+  end
 end

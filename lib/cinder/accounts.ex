@@ -90,6 +90,17 @@ defmodule Cinder.Accounts do
     end)
   end
 
+  @doc "True if at least one user (hence an admin) exists."
+  def admin_exists?, do: Repo.aggregate(User, :count) > 0
+
+  @doc "All users, ordered by id."
+  def list_users, do: Repo.all(from u in User, order_by: [asc: u.id])
+
+  @doc "Updates a user's concurrent-pending request quota (nil = unlimited)."
+  def update_user_quota(%User{} = user, quota) do
+    user |> User.quota_changeset(%{request_quota: quota}) |> Repo.update()
+  end
+
   ## Settings
 
   @doc """
