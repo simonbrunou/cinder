@@ -48,6 +48,7 @@ defmodule CinderWeb.SettingsLive do
     end
   end
 
+  @impl true
   def handle_event("toggle_auto_approve", params, socket) do
     on = Map.get(params, "auto_approve_all") == "on"
     Settings.put("auto_approve_all", to_string(on))
@@ -137,7 +138,7 @@ defmodule CinderWeb.SettingsLive do
 
       <div class="rounded-box bg-base-200 p-4 mt-8">
         <p class="text-lg font-semibold mb-3">Requests</p>
-        <form phx-change="toggle_auto_approve">
+        <form id="auto-approve-form" phx-change="toggle_auto_approve">
           <label class="label cursor-pointer justify-start gap-2">
             <input
               type="checkbox"
