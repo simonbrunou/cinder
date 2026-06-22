@@ -56,6 +56,7 @@ defmodule CinderWeb.Router do
         {CinderWeb.UserAuth, :require_setup}
       ] do
       live "/", WatchlistLive
+      live "/my-requests", MyRequestsLive
     end
 
     live_session :admin,

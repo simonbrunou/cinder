@@ -513,6 +513,19 @@ defmodule CinderWeb.CoreComponents do
     """
   end
 
+  @doc "A daisyUI badge for a request's status (pending/approved/denied)."
+  attr :status, :atom, required: true
+
+  def request_status_badge(assigns) do
+    ~H"""
+    <span class={["badge badge-sm", request_badge_class(@status)]}>{@status}</span>
+    """
+  end
+
+  defp request_badge_class(:pending), do: "badge-warning"
+  defp request_badge_class(:approved), do: "badge-info"
+  defp request_badge_class(:denied), do: "badge-error"
+
   defp status_badge_class(:requested), do: "badge-neutral"
   defp status_badge_class(:searching), do: "badge-info"
   defp status_badge_class(:downloading), do: "badge-primary"
