@@ -193,6 +193,12 @@ defmodule Cinder.Settings do
   @doc "Returns true if the auto-approve-all setting is explicitly enabled."
   def auto_approve_all?, do: get("auto_approve_all") == "true"
 
+  @doc "True once the first-run wizard has been completed."
+  def setup_complete?, do: get("setup_complete") == "true"
+
+  @doc "Marks the first-run wizard complete."
+  def mark_setup_complete, do: put("setup_complete", "true")
+
   @doc "Decoded value for `key` (decrypting secrets), or `nil` if unset/undecryptable."
   def get(key) do
     case Repo.get_by(Setting, key: key) do

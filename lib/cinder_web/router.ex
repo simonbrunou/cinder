@@ -64,6 +64,14 @@ defmodule CinderWeb.Router do
       live "/settings", SettingsLive
       live "/requests", RequestsLive
     end
+
+    live_session :setup,
+      on_mount: [
+        {CinderWeb.UserAuth, :require_authenticated},
+        {CinderWeb.UserAuth, :require_admin}
+      ] do
+      live "/setup", SetupLive
+    end
   end
 
   # Other scopes may use custom stacks.
