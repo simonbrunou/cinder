@@ -185,4 +185,67 @@ defmodule Cinder.CatalogSeriesTest do
       assert Catalog.get_series_by_tmdb_id(50) == nil
     end
   end
+
+  describe "search_tv/1" do
+    test "a blank/whitespace query short-circuits without calling TMDB" do
+      # No expect/3 — verify_on_exit! proves search_tv is never reached.
+      assert Catalog.search_tv("   ") == {:ok, []}
+    end
+
+    test "delegates a real query to the TMDB behaviour" do
+      expect(Cinder.Catalog.TMDBMock, :search_tv, fn "the wire" -> {:ok, [%{tmdb_id: 1}]} end)
+      assert {:ok, [%{tmdb_id: 1}]} = Catalog.search_tv("the wire")
+    end
+  end
+
+  describe "get_series_with_tree/1" do
+    test "loads the series with seasons and episodes in order" do
+      stub_tmdb(60)
+      {:ok, series} = Catalog.add_series_to_watchlist(60)
+
+      tree = Catalog.get_series_with_tree(series.id)
+      assert Enum.map(tree.seasons, & &1.season_number) == [0, 1]
+
+      s1 = Enum.find(tree.seasons, &(&1.season_number == 1))
+      assert Enum.map(s1.episodes, & &1.episode_number) == [1, 2, 3]
+    end
+
+    test "returns nil for a missing id" do
+      assert Catalog.get_series_with_tree(-1) == nil
+    end
+  end
+
+  describe "monitor toggles" do
+    test "set_episode_monitored/2 flips the flag, persists, and broadcasts" do
+      stub_tmdb(61)
+      {:ok, series} = Catalog.add_series_to_watchlist(61, monitor_strategy: :none)
+      series_id = series.id
+      Catalog.subscribe_series()
+
+      ep = hd(episodes(series.id))
+      refute ep.monitored
+
+      assert {:ok, ep} = Catalog.set_episode_monitored(ep, true)
+      assert ep.monitored
+      assert_receive {:series_updated, ^series_id}
+      assert Enum.find(episodes(series.id), &(&1.id == ep.id)).monitored
+    end
+
+    test "set_season_monitored/2 cascades to every episode in the season and broadcasts" do
+      stub_tmdb(62)
+      {:ok, series} = Catalog.add_series_to_watchlist(62, monitor_strategy: :none)
+      series_id = series.id
+      Catalog.subscribe_series()
+
+      season = Enum.find(loaded(series.id).seasons, &(&1.season_number == 1))
+      refute season.monitored
+
+      assert {:ok, season} = Catalog.set_season_monitored(season, true)
+      assert season.monitored
+      assert_receive {:series_updated, ^series_id}
+
+      eps = Enum.find(loaded(series.id).seasons, &(&1.id == season.id)).episodes
+      assert Enum.all?(eps, & &1.monitored)
+    end
+  end
 end

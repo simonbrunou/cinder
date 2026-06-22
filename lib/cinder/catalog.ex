@@ -7,7 +7,7 @@ defmodule Cinder.Catalog do
   """
   import Ecto.Query
 
-  alias Cinder.Catalog.{Movie, Series}
+  alias Cinder.Catalog.{Episode, Movie, Season, Series}
   alias Cinder.Repo
 
   @topic "movies"
@@ -21,6 +21,15 @@ defmodule Cinder.Catalog do
       {:ok, []}
     else
       tmdb().search(query)
+    end
+  end
+
+  @doc "TV-search variant of `search_movies/1`: blank query short-circuits to `{:ok, []}`."
+  def search_tv(query) do
+    if String.trim(query) == "" do
+      {:ok, []}
+    else
+      tmdb().search_tv(query)
     end
   end
 
@@ -247,4 +256,70 @@ defmodule Cinder.Catalog do
   defp monitored?(:none, _air_date, _today), do: false
   defp monitored?(:future, nil, _today), do: true
   defp monitored?(:future, air_date, today), do: Date.compare(air_date, today) != :lt
+
+  ## TV monitoring toggles + the "series" topic (M4b).
+  #
+  # Monitor flags are NOT pipeline state, so they don't go through `transition/2` (that's the
+  # movie-status choke-point): each setter is its own single-writer with its own broadcast. The
+  # "series" topic carries only `{:series_updated, series_id}` — the series-detail LiveView
+  # subscribes so a second open tab reflects a toggle. No TV poller writes out-of-band yet (M5),
+  # so nothing else needs it.
+
+  @series_topic "series"
+
+  @doc "Subscribes the caller to series-change broadcasts (`{:series_updated, series_id}`)."
+  def subscribe_series, do: Phoenix.PubSub.subscribe(Cinder.PubSub, @series_topic)
+
+  @doc """
+  Loads a series with its seasons (ordered by `season_number`) and each season's episodes
+  (ordered by `episode_number`), or `nil` for a missing id.
+  """
+  def get_series_with_tree(id) do
+    case Repo.get(Series, id) do
+      nil ->
+        nil
+
+      series ->
+        seasons_q = from(s in Season, order_by: s.season_number)
+        eps_q = from(e in Episode, order_by: e.episode_number)
+        Repo.preload(series, seasons: {seasons_q, [episodes: eps_q]})
+    end
+  end
+
+  @doc "Sets one episode's `monitored` flag and broadcasts `{:series_updated, series_id}`."
+  def set_episode_monitored(%Episode{} = episode, monitored?) do
+    with {:ok, episode} <-
+           episode |> Ecto.Changeset.change(monitored: monitored?) |> Repo.update() do
+      broadcast_series(series_id_for_season(episode.season_id))
+      {:ok, episode}
+    end
+  end
+
+  @doc """
+  Sets a season's `monitored` flag and cascades it to every episode in one transaction, then
+  broadcasts `{:series_updated, series_id}`.
+  """
+  def set_season_monitored(%Season{} = season, monitored?) do
+    now = DateTime.truncate(DateTime.utc_now(), :second)
+
+    {:ok, season} =
+      Repo.transaction(fn ->
+        {:ok, season} = season |> Ecto.Changeset.change(monitored: monitored?) |> Repo.update()
+
+        Repo.update_all(from(e in Episode, where: e.season_id == ^season.id),
+          set: [monitored: monitored?, updated_at: now]
+        )
+
+        season
+      end)
+
+    broadcast_series(season.series_id)
+    {:ok, season}
+  end
+
+  defp series_id_for_season(season_id),
+    do: Repo.one(from s in Season, where: s.id == ^season_id, select: s.series_id)
+
+  defp broadcast_series(series_id),
+    do: Phoenix.PubSub.broadcast(Cinder.PubSub, @series_topic, {:series_updated, series_id})
 end

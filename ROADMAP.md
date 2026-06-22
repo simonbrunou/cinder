@@ -431,6 +431,24 @@ auto-grab; requester flow is M5). Also fixed a latent suite-wide SQLite test fla
 toggles + nav. **Deferred to M5:** episode pipeline fields/transition, the grab/download join
 table, the TV poller, and the requester request/approval flow.
 
+**[M4b done 2026-06-22 — discovery UI]** Shipped: admin-only `/series` (TMDB TV search +
+add) and `/series/:id` (season/episode tree). TV discovery is a **separate admin-gated page**
+(not a tab on `/`) — admin-only direct add until M5's requester flow, so gating is free via the
+`:admin` live_session and the movie page's *functionality* is untouched (one role-gated "TV
+series →" nav link added). Catalog grew `search_tv/1`, `get_series_with_tree/1` (ordered preload),
+`set_episode_monitored/2`, `set_season_monitored/2` (season-cascade in one transaction). The add
+runs off-process via **`start_async`** (1 + N TMDB calls per the M4a guardrail). Monitor flags are
+**not pipeline state**, so the setters write directly (not via `Catalog.transition` — that's the
+movie-status choke-point) and broadcast on the new minimal **`"series"` topic**
+(`{:series_updated, id}` only, subscribed only by the detail view for the two-tabs case). Decisions
+(user + council): separate `/series` page; episode toggles **+ season bulk control** rendered as
+"N/M monitored" + a "Monitor all/none" button (not a tri-state checkbox — `season.monitored` is a
+standalone bool and HTML `indeterminate` is JS-only); the `"series"` topic kept **minimal** (dropped
+`{:series_added}` + list subscription + any edit to M4a's shipped `insert_series` — no genuine
+out-of-band consumer until M5's poller). Council-flagged house-style fixes folded in: catch-all
+`handle_event` + non-numeric `phx-value` tolerance; `/series/:id` parses the param (no `Repo.get`
+CastError); per-toggle `aria-label`s; async-add de-dupe by id. `mix test` green (407).
+
 ### M5 — TV acquisition + multi-file import (XL)
 
 **Goal:** make monitored episodes actually download and import — the genuinely new logic. Reuse

@@ -69,6 +69,8 @@ defmodule CinderWeb.Router do
       live "/settings", SettingsLive
       live "/requests", RequestsLive
       live "/users", UsersLive
+      live "/series", SeriesLive
+      live "/series/:id", SeriesDetailLive
     end
 
     live_session :setup,
