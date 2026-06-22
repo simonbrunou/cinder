@@ -62,6 +62,9 @@ defmodule Cinder.Library do
 
       case link_all(to_import) do
         {:ok, []} ->
+          # Nothing mapped — still surface the offending file names (don't silently drop them)
+          # so a parser gap on a real release is diagnosable; the poller parks the grab.
+          log_unmatched(unmatched)
           {:ok, [], unmatched}
 
         {:ok, imported} ->

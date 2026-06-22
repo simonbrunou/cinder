@@ -15,10 +15,11 @@ defmodule Cinder.Download.TvPoller do
   client are shared with the movie pipeline (`Cinder.Download.client_for/1`); episode/grab writes
   go through `Cinder.Catalog` choke-points, so the WAL + `busy_timeout` correctness holds.
 
-  Bounded retry uses the grab's single `download_attempts` counter for the whole grab lifetime
-  (advance + import); `mark_grab_downloaded` resets it at the boundary so download blips don't
-  starve the import budget. The search phase backs off per `episode.search_attempts`/`updated_at`
-  exactly like the movie poller, and an episode parks (derived "couldn't find") at `@max_attempts`.
+  Bounded retry uses the grab's `download_attempts` counter; `mark_grab_downloaded` resets it at
+  the download→import boundary, so the advance and import phases each get a fresh `@max_attempts`
+  budget (a download's blips don't starve its import). The search phase backs off per
+  `episode.search_attempts`/`updated_at` exactly like the movie poller, and an episode parks
+  (derived "couldn't find") at `@max_attempts`.
   """
   use GenServer
 
