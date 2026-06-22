@@ -5,6 +5,7 @@ defmodule Cinder.AcquisitionTest do
 
   alias Cinder.Acquisition
   alias Cinder.Acquisition.Release
+  alias Cinder.Catalog.Series
 
   setup :verify_on_exit!
 
@@ -17,6 +18,11 @@ defmodule Cinder.AcquisitionTest do
       Map.new(attrs)
     )
   end
+
+  defp series(attrs \\ []), do: struct(%Series{tvdb_id: 123, title: "The Office"}, attrs)
+
+  defp raw_tv(title, attrs \\ []),
+    do: Map.merge(%{title: title, size: 2 * @gb, download_url: "u", seeders: 10}, Map.new(attrs))
 
   test "best_release/2 composes indexer search, parse, and scoring" do
     expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1375666" ->
@@ -73,5 +79,59 @@ defmodule Cinder.AcquisitionTest do
 
     assert {:ok, %Release{protocol: :usenet}} =
              Acquisition.best_release("tt1", max_size: 20 * @gb)
+  end
+
+  describe "best_releases/4 (TV)" do
+    test "composes search_tv, parse, title-match, and set-cover scoring (release ⇒ coverage)" do
+      # Patterns confirm the series' tvdb_id, title, and season number are passed through.
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn 123, "The Office", 1 ->
+        {:ok,
+         [
+           raw_tv("The.Office.US.S01E01.1080p.WEB-DL-GRP"),
+           raw_tv("The.Office.US.S01E02.1080p.WEB-DL-GRP")
+         ]}
+      end)
+
+      assert {:ok, chosen} = Acquisition.best_releases(series(), 1, [1, 2])
+      assert chosen |> Enum.map(fn {_r, cov} -> cov end) |> Enum.sort() == [[1], [2]]
+    end
+
+    test "rejects a same-season release of a different series (wrong-series guard)" do
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
+        {:ok, [raw_tv("Parks.and.Recreation.S01E01.1080p.WEB-DL-GRP")]}
+      end)
+
+      assert :no_match = Acquisition.best_releases(series(), 1, [1])
+    end
+
+    test "title-match folds diacritics so an ASCII-ized release still matches" do
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
+        {:ok, [raw_tv("Pokemon.S01E01.1080p.WEB-DL-GRP")]}
+      end)
+
+      assert {:ok, [{%Release{episodes: [1]}, [1]}]} =
+               Acquisition.best_releases(series(title: "Pokémon"), 1, [1])
+    end
+
+    test "drops releases whose protocol has no configured client before scoring" do
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
+        {:ok,
+         [
+           raw_tv("The.Office.US.S01E01.1080p.WEB-DL-USE", protocol: :usenet),
+           raw_tv("The.Office.US.S01E02.720p.WEB-DL-TOR", protocol: :torrent)
+         ]}
+      end)
+
+      assert {:ok, [{%Release{protocol: :torrent, episodes: [2]}, [2]}]} =
+               Acquisition.best_releases(series(), 1, [1, 2], protocols: [:torrent])
+    end
+
+    test ":no_match when nothing survives; indexer error passes through" do
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _, _, _ -> {:ok, []} end)
+      assert :no_match = Acquisition.best_releases(series(), 1, [1])
+
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _, _, _ -> {:error, :timeout} end)
+      assert {:error, :timeout} = Acquisition.best_releases(series(), 1, [1])
+    end
   end
 end

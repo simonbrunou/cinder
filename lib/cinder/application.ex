@@ -79,7 +79,7 @@ defmodule Cinder.Application do
 
   defp poller_child do
     if Application.get_env(:cinder, :start_poller, true) do
-      [Cinder.Download.Poller]
+      [Cinder.Download.Poller, Cinder.Download.TvPoller]
     else
       []
     end

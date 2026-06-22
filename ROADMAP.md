@@ -514,6 +514,40 @@ sort, and the multi-season silent-drop trap. **Deferred to M5c:** `Cinder.Downlo
 red-team's silent-failure catch), the pack fan-out transaction, and the `Acquisition` TV
 composition fn. `mix test` green (441).
 
+**[M5c done 2026-06-22 — poller + multi-file import; carries the M5 Done-when]** Shipped the TV
+loop end to end; the movie pipeline is logic-untouched (`Poller`, `Download.start/1`,
+`import_movie/1`, `best_release/2`, `Scorer.select/2` unchanged + still green). **`Cinder.Download.TvPoller`**
+mirrors the movie poller skeleton (separate GenServer, gated by the same `:start_poller` flag, added
+to `application.ex`; `@max_attempts 10`, `search_due?` backoff, per-unit `isolate` with a `catch`
+clause too — checkout-timeout exits under two-poller contention aren't rescue-able) with three
+DB-derived passes: **advance** (`list_grabs_downloading` → client status → `mark_grab_downloaded`,
+bounded-retry/park on anomaly), **import** (`list_grabs_downloaded` → `Library.import_episodes` →
+`finish_grab`, park on deterministic empty match), **search** (`wanted_episodes` minus
+search-parked/backed-off → group by `{series, season}` → `Acquisition.best_releases` → `client.add`
++ `create_grab`, bump `search_attempts` on the not-grabbed). **`Library.import_episodes/2`** (one
+unified fn, not the doc's two) maps files → episodes by parsing `SxxEyy` per file against the grab's
+episodes (double-episode → both), with a largest-wins fallback for a lone-episode grab whose files
+name no episode; layout `Show (Year)/Season NN/Show (Year) - SxxEyy.ext`; unmatched files logged +
+skipped (graceful park); reuses the movie `link`/`scan`/naming primitives. **`Acquisition.best_releases/4`**
+composes `search_tv` → parse → protocol filter → **series-title-match guard** (normalized,
+NFD-folded substring — rejects a same-season release of another show on the title-fallback path;
+imperfect for same-named variants, those need tvdb_id = M6) → `Scorer.select_for`. **`Scorer.select_for`**
+now returns `{:ok, [{release, covered_numbers}]}` (single source of truth for episode→grab
+assignment; no caller re-derives coverage). **Catalog** gained `finish_grab/2` (one txn: per-episode
+`file_path`+`grab_id: nil`, bump `search_attempts` on non-imported *before* the FK-nilifying delete,
+delete grab), `park_grab/1` (= `finish_grab(grab, [])`), `increment_grab_attempts/1`,
+`increment_search_attempts/1`; and hardened the M5a fns it leans on: `create_grab` guards
+`is_nil(grab_id)` and rolls back rather than leave an orphan grab, `mark_grab_downloaded` resets
+`download_attempts` at the boundary (single grab-lifetime retry budget; `episode.import_attempts`
+left unused — noted, not deleted), `wanted_episodes` excludes season 0 (specials unaddressable in
+M5). Decisions (2 plan reviewers + a 3-seat council + `/code-review` high): single source of truth
+for coverage over a re-derivation footgun; one unified import fn; title-match guard (user-approved)
+over deferring; folded review fixes — total `normalize_title` NFD (a garbled indexer title can't
+stall a season), orphan-grab rollback, retry-stable fallback tiebreak, `create_grab` extracted to
+clear credo nesting. **Deferred to M6:** specials/S00, the calendar/sweep, TMDB renumbering
+reconciliation; **deferred past M5:** the TV requester→approval flow (TV is admin-direct). `mix test`
+green (479).
+
 ### M6 — TV monitoring sweep + RSS/calendar (M)
 
 **Goal:** close the Sonarr loop — a wanted-episodes query drives the search sweep efficiently,

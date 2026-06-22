@@ -29,7 +29,11 @@ defmodule Cinder.Acquisition.Scorer do
 
   @doc """
   Selects one or more releases that together cover `wanted_episodes` (a list of
-  episode numbers) for a single `season`. Returns `{:ok, [release]}` or `:no_match`.
+  episode numbers) for a single `season`. Returns `{:ok, [{release, covered_numbers}]}`
+  (each release paired with the sorted episode numbers it is responsible for — the
+  disjoint set the greedy assigned it) or `:no_match`. The pairing is the single source
+  of truth for which episodes each release serves; callers map numbers → episode rows
+  from it rather than re-deriving coverage.
 
   Releases for other seasons (and movies, `season: nil`) are dropped; blocklisted
   groups and out-of-band releases are rejected. The size band is **per-episode**: a
@@ -82,7 +86,8 @@ defmodule Cinder.Acquisition.Scorer do
 
   defp take_best(scored, candidates, needed, chosen, band) do
     {pick, cov} = Enum.max_by(scored, fn {release, cov} -> greedy_key(release, cov, band) end)
-    cover(candidates -- [pick], MapSet.difference(needed, cov), [pick | chosen], band)
+    covered = cov |> MapSet.to_list() |> Enum.sort()
+    cover(candidates -- [pick], MapSet.difference(needed, cov), [{pick, covered} | chosen], band)
   end
 
   # A whole-season pack (no episode list) covers every still-needed episode; an

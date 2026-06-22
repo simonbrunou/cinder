@@ -5,12 +5,24 @@ defmodule Cinder.LibraryTest do
   import Mox
   import ExUnit.CaptureLog
 
-  alias Cinder.Catalog.Movie
+  alias Cinder.Catalog.{Episode, Movie, Season, Series}
   alias Cinder.Library
 
   setup :verify_on_exit!
 
   @lib "/tmp/cinder-test-library"
+  @gb 1_000_000_000
+
+  # An in-memory episode with its season/series preloaded (what wanted_episodes/the poller pass).
+  defp ep(id, ep_num, season_num \\ 1, series_attrs \\ []) do
+    series = struct(%Series{title: "Show", year: 2008, tmdb_id: 1}, series_attrs)
+
+    %Episode{
+      id: id,
+      episode_number: ep_num,
+      season: %Season{season_number: season_num, series: series}
+    }
+  end
 
   test "single-file source: hardlinks to Title (Year)/Title (Year).ext and scans" do
     movie = %Movie{title: "Inception", year: 2010, file_path: "/dl/Inception.2010.1080p.mkv"}
@@ -171,5 +183,119 @@ defmodule Cinder.LibraryTest do
     expect(Cinder.Library.MediaServerMock, :scan, fn -> :ok end)
 
     assert {:ok, "#{@lib}/tmdb-777/tmdb-777.mkv"} = Library.import_movie(movie)
+  end
+
+  describe "import_episodes/2" do
+    # FS/media mocks stubbed (multiple, order-independent calls); assertions read the return value.
+    defp stub_dir(files) do
+      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+      stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:ok, files} end)
+    end
+
+    defp stub_link_ok do
+      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
+      stub(Cinder.Library.MediaServerMock, :scan, fn -> :ok end)
+    end
+
+    test "single episode matched by SxxEyy → Show (Year)/Season NN/Show (Year) - SxxEyy.ext" do
+      stub_dir([{"/dl/Show.S01E03.1080p.mkv", 9 * @gb}, {"/dl/sample.mkv", 50_000_000}])
+      stub_link_ok()
+
+      assert {:ok, [{7, dest}], ["/dl/sample.mkv"]} = Library.import_episodes("/dl", [ep(7, 3)])
+      assert dest == "#{@lib}/Show (2008)/Season 01/Show (2008) - S01E03.mkv"
+    end
+
+    test "season pack: each file maps to its own episode and dest" do
+      stub_dir([{"/dl/Show.S01E01.mkv", 3 * @gb}, {"/dl/Show.S01E02.mkv", 3 * @gb}])
+      stub_link_ok()
+
+      assert {:ok, imported, []} = Library.import_episodes("/dl", [ep(1, 1), ep(2, 2)])
+
+      assert Enum.sort(imported) == [
+               {1, "#{@lib}/Show (2008)/Season 01/Show (2008) - S01E01.mkv"},
+               {2, "#{@lib}/Show (2008)/Season 01/Show (2008) - S01E02.mkv"}
+             ]
+    end
+
+    test "a double-episode file hardlinks to both episodes" do
+      stub_dir([{"/dl/Show.S01E01E02.1080p.mkv", 4 * @gb}])
+      stub_link_ok()
+
+      assert {:ok, imported, []} = Library.import_episodes("/dl", [ep(1, 1), ep(2, 2)])
+
+      assert Enum.sort(imported) == [
+               {1, "#{@lib}/Show (2008)/Season 01/Show (2008) - S01E01.mkv"},
+               {2, "#{@lib}/Show (2008)/Season 01/Show (2008) - S01E02.mkv"}
+             ]
+    end
+
+    test "an unmatchable file is logged and skipped; the rest still import" do
+      stub_dir([{"/dl/Show.S01E01.mkv", 3 * @gb}, {"/dl/Show.S01E05.mkv", 3 * @gb}])
+      stub_link_ok()
+
+      log =
+        capture_log(fn ->
+          assert {:ok, [{1, dest}], ["/dl/Show.S01E05.mkv"]} =
+                   Library.import_episodes("/dl", [ep(1, 1)])
+
+          assert dest == "#{@lib}/Show (2008)/Season 01/Show (2008) - S01E01.mkv"
+        end)
+
+      assert log =~ "unmatched"
+    end
+
+    test "single-file content_path with no SxxEyy → largest-wins for a lone-episode grab" do
+      # Not a directory: the lone file is the source; the grab names the episode.
+      stub(Cinder.Library.FilesystemMock, :dir?, fn "/dl/random.mkv" -> false end)
+      stub_link_ok()
+
+      assert {:ok, [{1, dest}], []} = Library.import_episodes("/dl/random.mkv", [ep(1, 4)])
+      assert dest == "#{@lib}/Show (2008)/Season 01/Show (2008) - S01E04.mkv"
+    end
+
+    test "video+sample with no SxxEyy: largest-wins assigns the episode, skips the sample" do
+      stub_dir([{"/dl/show.finale.mkv", 9 * @gb}, {"/dl/sample.mkv", 50_000_000}])
+      stub_link_ok()
+
+      assert {:ok, [{1, dest}], ["/dl/sample.mkv"]} =
+               Library.import_episodes("/dl", [ep(1, 3)])
+
+      assert dest == "#{@lib}/Show (2008)/Season 01/Show (2008) - S01E03.mkv"
+    end
+
+    test "lone-episode grab does NOT fall back when a file names a different specific episode" do
+      # Show.S01E04 clearly names E04; the grab wants E03 — never mislabel E04 as E03.
+      stub_dir([{"/dl/Show.S01E04.mkv", 3 * @gb}])
+
+      assert {:ok, [], ["/dl/Show.S01E04.mkv"]} = Library.import_episodes("/dl", [ep(1, 3)])
+    end
+
+    test "no video file → {:ok, [], []} and no scan" do
+      stub_dir([{"/dl/readme.nfo", 10}])
+
+      assert {:ok, [], []} = Library.import_episodes("/dl", [ep(1, 1)])
+    end
+
+    test "ln :eexist is treated as success (idempotent re-import)" do
+      stub_dir([{"/dl/Show.S01E01.mkv", 3 * @gb}])
+      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eexist} end)
+      stub(Cinder.Library.MediaServerMock, :scan, fn -> :ok end)
+
+      assert {:ok, [{1, _dest}], []} = Library.import_episodes("/dl", [ep(1, 1)])
+    end
+
+    test "a transient hardlink error returns {:error, reason} so the grab retries" do
+      stub_dir([{"/dl/Show.S01E01.mkv", 3 * @gb}])
+      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eacces} end)
+
+      assert {:error, :eacces} = Library.import_episodes("/dl", [ep(1, 1)])
+    end
+
+    test "nil content_path → {:error, :no_content_path}" do
+      assert {:error, :no_content_path} = Library.import_episodes(nil, [ep(1, 1)])
+    end
   end
 end
