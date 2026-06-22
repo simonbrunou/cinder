@@ -69,10 +69,13 @@ defmodule Cinder.CatalogTvPipelineTest do
       assert Repo.get(Episode, e2.id).grab_id == grab.id
     end
 
-    test "mark_grab_downloaded/2 sets content_path and moves the grab between the lists" do
-      {_series, season} = series_with_season()
+    test "mark_grab_downloaded/2 sets content_path, moves the grab between the lists, broadcasts" do
+      {series, season} = series_with_season()
       e1 = episode(season, %{})
       {:ok, grab} = Catalog.create_grab("HASH2", :usenet, [e1.id])
+      series_id = series.id
+      # Subscribe after create_grab so we assert mark's broadcast, not create's.
+      Catalog.subscribe_series()
 
       assert [%Grab{id: id}] = Catalog.list_grabs_downloading()
       assert id == grab.id
@@ -80,6 +83,7 @@ defmodule Cinder.CatalogTvPipelineTest do
 
       assert {:ok, grab} = Catalog.mark_grab_downloaded(grab, "/downloads/pack")
       assert grab.content_path == "/downloads/pack"
+      assert_receive {:series_updated, ^series_id}
       assert Catalog.list_grabs_downloading() == []
       assert [%Grab{id: ^id}] = Catalog.list_grabs_downloaded()
     end
@@ -99,14 +103,19 @@ defmodule Cinder.CatalogTvPipelineTest do
   end
 
   describe "wanted_episodes/0" do
-    test "returns monitored, aired, file-less, grab-less episodes only" do
+    test "returns monitored, aired (incl. today), file-less, grab-less episodes only" do
       {_series, season} = series_with_season()
-      wanted = episode(season, %{air_date: @past, monitored: true})
-      _unaired = episode(season, %{air_date: @future, monitored: true})
-      _tba = episode(season, %{air_date: nil, monitored: true})
-      _unmonitored = episode(season, %{air_date: @past, monitored: false})
+      past = episode(season, %{air_date: @past, monitored: true})
+      today = episode(season, %{air_date: Date.utc_today(), monitored: true})
+      unaired = episode(season, %{air_date: @future, monitored: true})
+      tba = episode(season, %{air_date: nil, monitored: true})
+      unmonitored = episode(season, %{air_date: @past, monitored: false})
 
-      assert Enum.map(Catalog.wanted_episodes(), & &1.id) == [wanted.id]
+      ids = Enum.map(Catalog.wanted_episodes(), & &1.id)
+      assert Enum.sort(ids) == Enum.sort([past.id, today.id])
+      refute unaired.id in ids
+      refute tba.id in ids
+      refute unmonitored.id in ids
     end
 
     test "excludes episodes with a file or an active grab" do

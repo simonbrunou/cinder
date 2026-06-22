@@ -341,23 +341,28 @@ defmodule Cinder.Catalog do
   defp now, do: DateTime.truncate(DateTime.utc_now(), :second)
 
   @doc """
-  Creates a grab for `episode_ids` (a single episode or a season pack) and links them in one
-  transaction, then broadcasts `{:series_updated, series_id}`.
+  Creates a grab for `episode_ids` (a non-empty list of episodes in one series — a single
+  episode or a season pack) and links them in one transaction, then broadcasts
+  `{:series_updated, series_id}`. A changeset failure (e.g. a missing `download_id`) rolls the
+  whole thing back as `{:error, changeset}` rather than raising, mirroring `set_season_monitored/2`.
   """
   def create_grab(download_id, protocol, episode_ids) do
     result =
       Repo.transaction(fn ->
-        grab =
-          %Grab{}
-          |> Grab.changeset(%{download_id: download_id, download_protocol: protocol})
-          |> Repo.insert!()
+        case %Grab{}
+             |> Grab.changeset(%{download_id: download_id, download_protocol: protocol})
+             |> Repo.insert() do
+          {:ok, grab} ->
+            Repo.update_all(
+              from(e in Episode, where: e.id in ^episode_ids),
+              set: [grab_id: grab.id, updated_at: now()]
+            )
 
-        Repo.update_all(
-          from(e in Episode, where: e.id in ^episode_ids),
-          set: [grab_id: grab.id, updated_at: now()]
-        )
+            grab
 
-        grab
+          {:error, changeset} ->
+            Repo.rollback(changeset)
+        end
       end)
 
     with {:ok, grab} <- result do
@@ -382,7 +387,7 @@ defmodule Cinder.Catalog do
     series_id = series_id_for_grab(grab.id)
 
     with {:ok, grab} <- Repo.delete(grab) do
-      if series_id, do: broadcast_series(series_id)
+      broadcast_series(series_id)
       {:ok, grab}
     end
   end
@@ -425,6 +430,10 @@ defmodule Cinder.Catalog do
 
   defp series_id_for_season(season_id),
     do: Repo.one(from s in Season, where: s.id == ^season_id, select: s.series_id)
+
+  # A nil series_id (e.g. a grab whose episodes were all unlinked) is a no-op, so callers
+  # don't each need to guard it.
+  defp broadcast_series(nil), do: :ok
 
   defp broadcast_series(series_id),
     do: Phoenix.PubSub.broadcast(Cinder.PubSub, @series_topic, {:series_updated, series_id})
