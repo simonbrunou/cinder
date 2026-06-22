@@ -537,8 +537,8 @@ defmodule Cinder.Catalog do
       from e in Episode,
         join: s in assoc(e, :season),
         where:
-          s.season_number > 0 and e.monitored and is_nil(e.file_path) and is_nil(e.grab_id) and
-            not is_nil(e.air_date) and e.air_date <= ^today,
+          s.season_number > 0 and e.monitored and e.episode_number > 0 and is_nil(e.file_path) and
+            is_nil(e.grab_id) and not is_nil(e.air_date) and e.air_date <= ^today,
         preload: [season: :series]
     )
   end
@@ -653,12 +653,16 @@ defmodule Cinder.Catalog do
     # always fires.
     parked =
       Enum.map(matched, fn {existing, fe, season_id} ->
-        {park_episode(existing), fe, season_id}
+        {park_episode(existing), existing, fe, season_id}
       end)
 
-    # PASS 2 — finalize each matched row to its final (season_id, episode_number). All real slots
-    # are now free. The UPDATE keys by id; the parked struct guarantees the episode_number diff.
-    Enum.each(parked, fn {existing, fe, season_id} -> update_episode(existing, season_id, fe) end)
+    # PASS 2 — finalize each matched row to its final (season_id, episode_number). All matched slots
+    # are now free, so matched-vs-matched never collides. The only residual is a target slot still
+    # held by a *vanished* row (left untouched); finalize_or_restore then puts the row back at its
+    # original positive slot rather than stranding it at the -id park sentinel.
+    Enum.each(parked, fn {parked_ep, original, fe, season_id} ->
+      finalize_or_restore(parked_ep, original, season_id, fe)
+    end)
 
     # PASS 3 — insert new rows, after finalize so slots reflect final state.
     Enum.each(new, fn {fe, season_id} -> insert_episode(series, season_id, fe, today) end)
@@ -669,7 +673,12 @@ defmodule Cinder.Catalog do
   # = -id) for PASS 2 to diff against; on the should-never-happen failure, log and return the
   # original struct so the finalize pass still runs.
   defp park_episode(existing) do
-    case existing |> Ecto.Changeset.change(episode_number: -existing.id) |> Repo.update() do
+    # Route through refresh_changeset (not raw change/2) so the (season_id, episode_number) unique
+    # constraint is registered: a park can't realistically collide (-id is negative + unique), but
+    # if it ever did it degrades to {:error} rather than raising and aborting the whole series.
+    case existing
+         |> Episode.refresh_changeset(%{episode_number: -existing.id})
+         |> Repo.update() do
       {:ok, parked} ->
         parked
 
@@ -712,17 +721,38 @@ defmodule Cinder.Catalog do
     end
   end
 
-  # monitored/file_path/grab_id/counters omitted from attrs → preserved.
-  defp update_episode(existing, season_id, fe) do
-    existing
-    |> Episode.refresh_changeset(%{
-      season_id: season_id,
-      episode_number: fe.episode_number,
-      title: fe.title,
-      air_date: fe.air_date
-    })
-    |> Repo.update()
-    |> log_reconcile_error("update episode #{existing.id}")
+  # Finalize a parked row to its target slot (monitored/file_path/grab_id/counters omitted from the
+  # cast → preserved). If the target slot is held by a row that vanished from TMDB — the one residual
+  # the two-pass can't resolve without touching vanished rows — restore the row to its original
+  # positive slot rather than leaving it at the -id park sentinel, which would otherwise leak a
+  # negative episode_number into wanted_episodes → the TV poller's search/import.
+  defp finalize_or_restore(parked_ep, original, season_id, fe) do
+    changeset =
+      Episode.refresh_changeset(parked_ep, %{
+        season_id: season_id,
+        episode_number: fe.episode_number,
+        title: fe.title,
+        air_date: fe.air_date
+      })
+
+    case Repo.update(changeset) do
+      {:ok, _} ->
+        :ok
+
+      {:error, _} ->
+        Logger.warning(
+          "refresh: episode #{original.id} target slot occupied by a vanished row; " <>
+            "restoring to its original number #{original.episode_number} instead"
+        )
+
+        parked_ep
+        |> Episode.refresh_changeset(%{
+          season_id: original.season_id,
+          episode_number: original.episode_number
+        })
+        |> Repo.update()
+        |> log_reconcile_error("restore episode #{original.id}")
+    end
   end
 
   defp insert_episode(series, season_id, fe, today) do
@@ -742,9 +772,9 @@ defmodule Cinder.Catalog do
   defp log_reconcile_error({:ok, _} = ok, _context), do: ok
 
   defp log_reconcile_error({:error, changeset}, context) do
-    # The two-pass renumber handles reorders/swaps/shifts. The remaining {:error, changeset} case
-    # is a target reusing a slot still held by a row that *vanished* from TMDB (left untouched by
-    # design) — rare; log and continue so the rest of the tree still reconciles.
+    # Residual reconcile conflict (e.g. a new/restored row whose target slot is still held by a row
+    # that vanished from TMDB and is left untouched by design) — rare; log and continue so the rest
+    # of the tree still reconciles rather than aborting the whole series.
     Logger.warning("refresh skipped #{context}: #{inspect(changeset.errors)}")
     :ok
   end

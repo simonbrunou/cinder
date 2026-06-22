@@ -300,4 +300,27 @@ defmodule Cinder.CatalogRefreshTest do
     assert r.file_path == "/lib/m.mkv"
     assert Repo.aggregate(from(e in Episode, where: e.season_id == ^s2.id), :count) == 1
   end
+
+  test "a finalize collision with a vanished row's slot restores the original number (never -id)" do
+    s = series(:all)
+    sn = season(s, 1)
+    # A is renumbered into B's slot (2); B vanished from TMDB so its row still holds (sn, 2).
+    a = episode(sn, %{tmdb_episode_id: 1, episode_number: 1, monitored: true, air_date: @past})
+    b = episode(sn, %{tmdb_episode_id: 2, episode_number: 2})
+
+    stub_tmdb(s, [
+      {1, [%{tmdb_episode_id: 1, episode_number: 2, title: "A", air_date: @past}]}
+    ])
+
+    assert {:ok, _} = Catalog.refresh_series(s)
+
+    ra = Repo.get!(Episode, a.id)
+    rb = Repo.get!(Episode, b.id)
+    # A can't take slot 2 (held by vanished B), so it is restored to its original 1 — NOT the
+    # negative park sentinel. B is left untouched.
+    assert ra.episode_number == 1
+    assert rb.episode_number == 2
+    # A stays a valid, grab-able wanted episode (positive number leaks nothing into the poller).
+    assert a.id in Enum.map(Catalog.wanted_episodes(), & &1.id)
+  end
 end

@@ -225,8 +225,8 @@ defmodule Cinder.CatalogTvPipelineTest do
         from e in Episode,
           join: s in assoc(e, :season),
           where:
-            s.season_number > 0 and e.monitored and is_nil(e.file_path) and is_nil(e.grab_id) and
-              not is_nil(e.air_date) and e.air_date <= ^Date.utc_today(),
+            s.season_number > 0 and e.monitored and e.episode_number > 0 and is_nil(e.file_path) and
+              is_nil(e.grab_id) and not is_nil(e.air_date) and e.air_date <= ^Date.utc_today(),
           select: e.id
 
       {sql, params} = EctoSQL.to_sql(:all, Repo, q)
@@ -251,6 +251,16 @@ defmodule Cinder.CatalogTvPipelineTest do
       refute unaired.id in ids
       refute tba.id in ids
       refute unmonitored.id in ids
+    end
+
+    test "excludes a non-positive episode_number (a real episode is always >= 1)" do
+      {_series, season} = series_with_season()
+      ok = episode(season, %{episode_number: 1, air_date: @past, monitored: true})
+      stranded = episode(season, %{episode_number: -7, air_date: @past, monitored: true})
+
+      ids = Enum.map(Catalog.wanted_episodes(), & &1.id)
+      assert ok.id in ids
+      refute stranded.id in ids
     end
 
     test "excludes episodes with a file or an active grab" do
