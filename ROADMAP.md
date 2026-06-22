@@ -360,6 +360,32 @@ reaches `:available` attributed to the requester, with a notifier event emitted,
 enforcement is tested. — ***Dogfood checkpoint:*** run it privately as your household movie
 instance.
 
+**[done 2026-06-22]** Shipped (design: `docs/specs/2026-06-22-m3-design.md`, plan:
+`docs/plans/2026-06-22-m3-onboarding-requester-ux.md`). **Wizard:** `SetupLive` at `/setup`
+(admin-gated) reuses the settings field markup (extracted to `CinderWeb.SettingsComponents`,
+shared with `/settings`), validates every service via `Health`, and only enables Finish once the
+loop is green — TMDB + indexer + media server + writable library + ≥1 download client — then sets
+the `setup_complete` KV flag. Admin creation reuses the existing registration flow. First-run
+routing is a `:require_setup` on_mount (gated by `config :cinder, :enforce_setup`, on in prod, off
+in test) wired into the `:authenticated`/`:admin` sessions: incomplete setup sends admins to
+`/setup`, parks non-admins at log-in. **Quota:** per-user `request_quota` (nullable int on `users`,
+`nil` = unlimited), concurrent-pending count enforced as the first guard in
+`Requests.create_request` (admins + `auto_approve_all` bypass); settable via a minimal admin
+`/users` page. **Requester UX:** `MyRequestsLive` at `/my-requests` (request status + live pipeline
+state); the discovery grid shows a per-user composite badge (Pending/Approved/Available/Denied,
+available outranks a stale denied) instead of a bare Add; approval queue renders the requester
+poster; root nav exposes the pages. **Notifier:** `Cinder.Notifier` behaviour + `Cinder.Notifier.Log`
+default (a rescuing dispatcher so a transport can't break the pipeline); events
+`{:request_approved, _}` (in `Requests`), `{:movie_available, _}` and `{:movie_failed, _, reason}`
+(in the poller, the latter via a single `park/3` choke-point). **`library_path`** moved into the
+Settings store (overlays `:cinder, :library_path`, reverts to env bootstrap when cleared) +
+`Health.check_service(:library)` (writable-dir probe). Decisions: concurrent-pending quota,
+all-green wizard, library_path in settings, minimal `/users` page, Log-only default (in-app
+reactivity already rides the existing topics); the test notifier re-broadcasts on a
+`"notifications"` PubSub topic (`Cinder.TestNotifier`) so assertions use `assert_receive` rather
+than fighting the `:warning` log level. `mix test` green (373). The live "no-env-vars" wizard run
+is the M3 dogfood step.
+
 ### M4 — TV data model + discovery (L)
 
 **Goal:** land the **Series → Season → Episode** schema and TMDB TV discovery behind monitoring
