@@ -1,0 +1,9 @@
+# Keep only the shareable graph artifacts (graph.json, GRAPH_REPORT.md, graph.html).
+# Everything below is local build state: machine-specific absolute paths, caches,
+# and per-machine token stats. The post-commit hook regenerates them locally.
+cache/
+manifest.json
+cost.json
+.graphify_python
+.graphify_root
+.graphify_labels.json
