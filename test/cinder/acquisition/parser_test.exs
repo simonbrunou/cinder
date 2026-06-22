@@ -121,6 +121,12 @@ defmodule Cinder.Acquisition.ParserTest do
       assert %{season: nil, episodes: nil} = Parser.parse("Show.S01E01.S02E02.GROUP")
     end
 
+    test "a release group beginning S<digit> is not counted as a second season" do
+      # "S1CK"/"S5RT" are group fragments, not seasons — the pack stays season 1.
+      assert %{season: 1, episodes: nil} = Parser.parse("Show.S01.1080p.x265-S1CK")
+      assert %{season: 1, episodes: nil} = Parser.parse("Show.S01.1080p-S5RT")
+    end
+
     test "S00 specials park (specials are M6 scope)" do
       assert %{season: nil, episodes: nil} = Parser.parse("Show.S00E01.1080p")
     end

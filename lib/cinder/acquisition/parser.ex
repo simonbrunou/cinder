@@ -42,8 +42,10 @@ defmodule Cinder.Acquisition.Parser do
   # below in multi_season?/1; either firing rejects the name to nil/nil rather than
   # mis-reading it as season 1. (M5c would otherwise grab it and strand other seasons.)
   @multi_season ~r/s\d{1,2}\s*-\s*s\d{1,2}|s\d{1,2}s\d{1,2}/i
-  # A single season token at a word boundary — scanned to count distinct seasons.
-  @season_token ~r/(?:^|[^a-z0-9])s(\d{1,2})(?![0-9])/i
+  # A real season token at a word boundary: S + 1-2 digits followed by a separator,
+  # an episode marker, or end — so a group/title fragment like "-S1CK" or "S5RT" (digit
+  # glued to a letter) is not counted as a season. Scanned to count distinct seasons.
+  @season_token ~r/(?:^|[^a-z0-9])s(\d{1,2})(?=[\s._-]|e\d|$)/i
   # Season + an episode tail (an optional ./space/_ separator allowed): SxxEyy, Sxx.Eyy,
   # SxxEyyEzz, SxxEyy-Ezz, SxxEyy-zz (tail parsed below).
   @season_episode ~r/(?:^|[^a-z0-9])s(\d{1,2})[._ ]?((?:e\d{1,3})(?:-?e?\d{1,3})*)/i
@@ -124,7 +126,7 @@ defmodule Cinder.Acquisition.Parser do
   defp distinct_seasons(name) do
     @season_token
     |> Regex.scan(name)
-    |> Enum.map(fn [_, season] -> season end)
+    |> Enum.map(fn [_, season] -> String.to_integer(season) end)
     |> Enum.uniq()
     |> length()
   end
