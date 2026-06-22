@@ -161,7 +161,12 @@ defmodule CinderWeb.WatchlistLive do
         <:subtitle>Search movies and build your watchlist.</:subtitle>
       </.header>
 
-      <.link navigate={~p"/status"} class="link mb-6 inline-block">Status dashboard →</.link>
+      <nav class="mb-6 flex gap-4">
+        <.link navigate={~p"/status"} class="link">Status dashboard →</.link>
+        <.link :if={@current_scope.user.role == :admin} navigate={~p"/series"} class="link">
+          TV series →
+        </.link>
+      </nav>
 
       <form id="search-form" phx-change="search" phx-submit="search" class="mb-8">
         <input
