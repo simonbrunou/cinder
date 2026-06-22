@@ -249,4 +249,78 @@ defmodule Cinder.Download.TvPollerTest do
     assert :ok = TvPoller.poll()
     assert Repo.get!(Episode, e1.id).search_attempts == 10
   end
+
+  test "a late-dated monitored episode becomes wanted after a refresh and grabs (M6 Done-when)" do
+    series =
+      Repo.insert!(%Series{
+        tmdb_id: System.unique_integer([:positive]),
+        tvdb_id: 99,
+        title: "Show",
+        year: 2008,
+        monitored: true,
+        monitor_strategy: :future
+      })
+
+    season = Repo.insert!(%Season{series_id: series.id, season_number: 1, monitored: true})
+
+    # Announced but undated → monitored under :future, yet NOT wanted (air_date is nil).
+    ep =
+      Repo.insert!(%Episode{
+        season_id: season.id,
+        tmdb_episode_id: 700,
+        episode_number: 1,
+        monitored: true,
+        air_date: nil
+      })
+
+    assert Catalog.wanted_episodes() == []
+
+    # TMDB now carries a (past) air_date for the same episode.
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn _ ->
+      {:ok,
+       %{
+         tmdb_id: series.tmdb_id,
+         tvdb_id: 99,
+         title: "Show",
+         year: 2008,
+         poster_path: nil,
+         seasons: [%{season_number: 1}]
+       }}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_season, fn _, 1 ->
+      {:ok,
+       %{
+         season_number: 1,
+         episodes: [%{tmdb_episode_id: 700, episode_number: 1, title: "Aired", air_date: @past}]
+       }}
+    end)
+
+    assert {:ok, _} = Catalog.refresh_series(series)
+    assert [%Episode{id: id}] = Catalog.wanted_episodes()
+    assert id == ep.id
+
+    # The poller now finds and grabs it.
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok,
+       [
+         %{
+           title: "Show.S01E01.1080p.WEB-DL-GRP",
+           size: 2_000_000_000,
+           download_url: "u",
+           seeders: 5
+         }
+       ]}
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release -> {:ok, "hash-m6"} end)
+
+    assert :ok = TvPoller.poll()
+
+    linked = Repo.get!(Episode, ep.id)
+    assert linked.grab_id
+    assert Repo.get!(Grab, linked.grab_id).download_id == "hash-m6"
+  end
 end
