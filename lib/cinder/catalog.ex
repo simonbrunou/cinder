@@ -325,6 +325,19 @@ defmodule Cinder.Catalog do
     end
   end
 
+  @doc """
+  Single choke-point for episode **pipeline** writes (`file_path`, `grab_id`, attempt
+  counters — no status enum; episode state is derived). On success broadcasts
+  `{:series_updated, series_id}` on the `"series"` topic. `monitored` is NOT written here —
+  it is not pipeline state and keeps `set_episode_monitored/2`.
+  """
+  def transition_episode(%Episode{} = episode, attrs) do
+    with {:ok, updated} <- episode |> Episode.transition_changeset(attrs) |> Repo.update() do
+      broadcast_series(series_id_for_season(updated.season_id))
+      {:ok, updated}
+    end
+  end
+
   defp series_id_for_season(season_id),
     do: Repo.one(from s in Season, where: s.id == ^season_id, select: s.series_id)
 
