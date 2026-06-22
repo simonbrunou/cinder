@@ -17,6 +17,14 @@ config :cinder, Cinder.Repo,
   # intermittently; one connection makes the suite deterministic with no speed cost
   # (the suite is I/O-light and still finishes ~1s).
   pool_size: 1,
+  # With one connection, async tests queue for it. The default queue_target (50ms)
+  # drops a checkout that waits longer than that under load — surfacing as an
+  # intermittent "connection not available and request was dropped from queue"
+  # on whatever test happened to contend (often unrelated, e.g. ErrorHTMLTest).
+  # No test holds the connection for seconds, so a generous target waits-not-drops
+  # with no happy-path cost.
+  queue_target: 5_000,
+  queue_interval: 5_000,
   journal_mode: :wal,
   busy_timeout: 5_000,
   pool: Ecto.Adapters.SQL.Sandbox
