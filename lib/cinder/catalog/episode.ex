@@ -46,4 +46,20 @@ defmodule Cinder.Catalog.Episode do
   def transition_changeset(episode, attrs) do
     cast(episode, attrs, [:file_path, :grab_id, :search_attempts, :import_attempts])
   end
+
+  @doc """
+  Changeset for the M6 TMDB refresh (`Catalog.refresh_series/1`): identity + placement only.
+  `monitored` is castable (set on a brand-new episode) but the refresh caller omits it when
+  *updating* an existing row, so a user's monitor toggle is preserved. The `(season_id,
+  episode_number)` unique + season FK constraints are registered so a renumber collision returns
+  `{:error, changeset}` (and Ecto wraps the write in a savepoint) instead of raising inside the
+  reconcile transaction.
+  """
+  def refresh_changeset(episode, attrs) do
+    episode
+    |> cast(attrs, [:season_id, :tmdb_episode_id, :episode_number, :title, :air_date, :monitored])
+    |> validate_required([:season_id, :episode_number])
+    |> unique_constraint([:season_id, :episode_number])
+    |> foreign_key_constraint(:season_id)
+  end
 end

@@ -6,6 +6,7 @@ defmodule Cinder.Catalog do
   config (`config :cinder, :tmdb`) so tests use a Mox mock and never hit the network.
   """
   import Ecto.Query
+  require Logger
 
   alias Cinder.Catalog.{Episode, Grab, Movie, Season, Series}
   alias Cinder.Repo
@@ -152,8 +153,8 @@ defmodule Cinder.Catalog do
   Adds a TV series and its season/episode tree, fetched from TMDB, flagging episodes
   `monitored` per `monitor_strategy` (`:all` / `:future` / `:none`; default `:future`).
 
-  Find-or-create by `tmdb_id`: an already-added series is returned as-is — no re-sync
-  (that's M6). Returns `{:ok, series}` (associations unloaded — preload
+  Find-or-create by `tmdb_id`: an already-added series is returned as-is; re-sync is
+  `refresh_series/1` (the periodic Refresher). Returns `{:ok, series}` (associations unloaded — preload
   `[seasons: :episodes]` to read the tree), `{:error, :invalid_monitor_strategy}` for an
   unknown strategy, or `{:error, reason}` if a TMDB fetch fails.
   """
@@ -540,6 +541,119 @@ defmodule Cinder.Catalog do
             not is_nil(e.air_date) and e.air_date <= ^today,
         preload: [season: :series]
     )
+  end
+
+  @doc """
+  Re-fetches `series` from TMDB and reconciles its season/episode tree in one transaction, then
+  broadcasts `{:series_updated, series.id}` once. Existing episodes are matched by
+  `tmdb_episode_id` (series-wide, so a renumber that moves an episode across seasons is handled)
+  and updated in place — preserving `monitored`, `file_path`, `grab_id`, and the attempt counters.
+  Genuinely new episodes are inserted with `monitored` per the series' `monitor_strategy`; new
+  seasons are inserted; rows that vanished from TMDB are left untouched.
+
+  Returns `{:ok, series}`, or `{:error, reason}` if a TMDB fetch fails (short-circuits before any
+  write, mirroring `create_series/2`).
+  """
+  def refresh_series(%Series{} = series) do
+    with {:ok, info} <- tmdb().get_series(series.tmdb_id),
+         {:ok, seasons} <- fetch_seasons(series.tmdb_id, info.seasons) do
+      {:ok, _} = Repo.transaction(fn -> reconcile_tree(series, seasons) end)
+      broadcast_series(series.id)
+      {:ok, series}
+    end
+  end
+
+  defp reconcile_tree(series, fetched_seasons) do
+    today = Date.utc_today()
+    existing_seasons = Map.new(seasons_for(series.id), &{&1.season_number, &1})
+    by_tmdb = Map.new(episodes_for(series.id), &{&1.tmdb_episode_id, &1})
+
+    Enum.each(fetched_seasons, fn fs ->
+      case ensure_season(series, existing_seasons, fs.season_number) do
+        %Season{} = season ->
+          Enum.each(fs.episodes, &reconcile_episode(series, season, &1, by_tmdb, today))
+
+        nil ->
+          :ok
+      end
+    end)
+  end
+
+  defp seasons_for(series_id), do: Repo.all(from s in Season, where: s.series_id == ^series_id)
+
+  defp episodes_for(series_id) do
+    Repo.all(
+      from e in Episode,
+        join: s in assoc(e, :season),
+        where: s.series_id == ^series_id and not is_nil(e.tmdb_episode_id)
+    )
+  end
+
+  defp ensure_season(_series, existing, number) when is_map_key(existing, number),
+    do: Map.fetch!(existing, number)
+
+  defp ensure_season(series, _existing, number) do
+    attrs = %{
+      series_id: series.id,
+      season_number: number,
+      monitored: series.monitor_strategy != :none
+    }
+
+    case %Season{} |> Season.refresh_changeset(attrs) |> Repo.insert() do
+      {:ok, season} ->
+        season
+
+      {:error, changeset} ->
+        Logger.warning(
+          "refresh skipped new season #{number} of series #{series.id}: #{inspect(changeset.errors)}"
+        )
+
+        nil
+    end
+  end
+
+  defp reconcile_episode(series, season, fe, by_tmdb, today) do
+    case Map.get(by_tmdb, fe.tmdb_episode_id) do
+      %Episode{} = existing -> update_episode(existing, season, fe)
+      nil -> insert_episode(series, season, fe, today)
+    end
+  end
+
+  # monitored/file_path/grab_id/counters omitted from attrs → preserved.
+  defp update_episode(existing, season, fe) do
+    existing
+    |> Episode.refresh_changeset(%{
+      season_id: season.id,
+      episode_number: fe.episode_number,
+      title: fe.title,
+      air_date: fe.air_date
+    })
+    |> Repo.update()
+    |> log_reconcile_error("update episode #{existing.id}")
+  end
+
+  defp insert_episode(series, season, fe, today) do
+    %Episode{}
+    |> Episode.refresh_changeset(%{
+      season_id: season.id,
+      tmdb_episode_id: fe.tmdb_episode_id,
+      episode_number: fe.episode_number,
+      title: fe.title,
+      air_date: fe.air_date,
+      monitored: monitored?(series.monitor_strategy, fe.air_date, today)
+    })
+    |> Repo.insert()
+    |> log_reconcile_error("insert episode tmdb_ep #{fe.tmdb_episode_id}")
+  end
+
+  defp log_reconcile_error({:ok, _} = ok, _context), do: ok
+
+  defp log_reconcile_error({:error, changeset}, context) do
+    # A renumber collision on (season_id, episode_number) lands here: log and continue so the rest
+    # of the tree still reconciles. ponytail: such a collision self-heals over refresh cycles as
+    # the colliding row also moves; two-pass renumber is the upgrade path if it ever matters.
+    Logger.warning("refresh skipped #{context}: #{inspect(changeset.errors)}")
+    :ok
   end
 
   defp series_id_for_grab(grab_id) do
