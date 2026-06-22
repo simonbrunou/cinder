@@ -15,6 +15,7 @@ defmodule Cinder.Catalog.TMDB do
   @doc """
   Series details + the list of season numbers. Returns
   `%{tmdb_id, tvdb_id, title, year, poster_path, seasons: [%{season_number}]}`.
+  `tvdb_id` is `nil` when TMDB has no `external_ids` block.
   """
   @callback get_series(tmdb_id :: integer()) :: {:ok, map()} | {:error, term()}
 

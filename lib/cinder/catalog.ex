@@ -145,14 +145,22 @@ defmodule Cinder.Catalog do
 
   Find-or-create by `tmdb_id`: an already-added series is returned as-is — no re-sync
   (that's M6). Returns `{:ok, series}` (associations unloaded — preload
-  `[seasons: :episodes]` to read the tree), or `{:error, reason}` if a TMDB fetch fails.
+  `[seasons: :episodes]` to read the tree), `{:error, :invalid_monitor_strategy}` for an
+  unknown strategy, or `{:error, reason}` if a TMDB fetch fails.
   """
   def add_series_to_watchlist(tmdb_id, opts \\ []) do
     strategy = Keyword.get(opts, :monitor_strategy, :future)
 
-    case get_series_by_tmdb_id(tmdb_id) do
-      %Series{} = series -> {:ok, series}
-      nil -> create_series(tmdb_id, strategy)
+    # Validate at the boundary: the strategy drives monitored?/3 (a function-clause match)
+    # *before* the Ecto.Enum changeset would catch it, so an unknown atom would otherwise
+    # crash rather than return a clean error.
+    if strategy in Series.monitor_strategies() do
+      case get_series_by_tmdb_id(tmdb_id) do
+        %Series{} = series -> {:ok, series}
+        nil -> create_series(tmdb_id, strategy)
+      end
+    else
+      {:error, :invalid_monitor_strategy}
     end
   end
 
@@ -174,11 +182,13 @@ defmodule Cinder.Catalog do
 
   defp insert_series(tmdb_id, attrs) do
     case attrs |> Series.create_changeset() |> Repo.insert() do
-      {:ok, _series} ->
+      {:ok, series} ->
         # Return the re-read row (not the cast_assoc result) so every add path —
         # found-existing, freshly-inserted, race-loss — returns a series with its
         # associations unloaded. Callers preload [seasons: :episodes] to read the tree.
-        {:ok, get_series_by_tmdb_id(tmdb_id)}
+        # Fall back to the inserted struct if the re-read somehow misses, so the
+        # contract stays {:ok, %Series{}} and never {:ok, nil}.
+        {:ok, get_series_by_tmdb_id(tmdb_id) || series}
 
       {:error, %Ecto.Changeset{} = changeset} ->
         # A unique_constraint(:tmdb_id) race rolls the whole tree back (no partial

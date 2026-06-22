@@ -143,5 +143,46 @@ defmodule Cinder.CatalogSeriesTest do
       assert {:error, :timeout} = Catalog.add_series_to_watchlist(48)
       assert Catalog.get_series_by_tmdb_id(48) == nil
     end
+
+    test "a get_season failure mid-tree persists nothing (no partial tree)" do
+      # get_series succeeds with two seasons; the second get_season fails. The whole
+      # add must short-circuit with the error and leave no series/season/episode rows.
+      expect(Cinder.Catalog.TMDBMock, :get_series, fn 49 ->
+        {:ok,
+         %{
+           tmdb_id: 49,
+           tvdb_id: nil,
+           title: "Half-fetched",
+           year: 2010,
+           poster_path: nil,
+           seasons: [%{season_number: 1}, %{season_number: 2}]
+         }}
+      end)
+
+      expect(Cinder.Catalog.TMDBMock, :get_season, 2, fn 49, n ->
+        case n do
+          1 ->
+            {:ok,
+             %{
+               season_number: 1,
+               episodes: [%{tmdb_episode_id: 1, episode_number: 1, title: "E", air_date: @past}]
+             }}
+
+          2 ->
+            {:error, :timeout}
+        end
+      end)
+
+      assert {:error, :timeout} = Catalog.add_series_to_watchlist(49)
+      assert Catalog.get_series_by_tmdb_id(49) == nil
+    end
+
+    test "rejects an unknown monitor_strategy without calling TMDB" do
+      # No expect/3 — verify_on_exit! proves TMDB is never reached.
+      assert {:error, :invalid_monitor_strategy} =
+               Catalog.add_series_to_watchlist(50, monitor_strategy: :bogus)
+
+      assert Catalog.get_series_by_tmdb_id(50) == nil
+    end
   end
 end
