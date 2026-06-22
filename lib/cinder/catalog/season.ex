@@ -25,4 +25,17 @@ defmodule Cinder.Catalog.Season do
     |> validate_required([:season_number])
     |> cast_assoc(:episodes, with: &Episode.nested_changeset/2)
   end
+
+  @doc """
+  Changeset for inserting a season discovered by the M6 TMDB refresh (`Catalog.refresh_series/1`),
+  outside the `cast_assoc` create path. Registers the `(series_id, season_number)` unique + series
+  FK constraints so an unexpected duplicate returns `{:error, changeset}` rather than raising.
+  """
+  def refresh_changeset(season, attrs) do
+    season
+    |> cast(attrs, [:series_id, :season_number, :monitored])
+    |> validate_required([:series_id, :season_number])
+    |> unique_constraint([:series_id, :season_number])
+    |> foreign_key_constraint(:series_id)
+  end
 end

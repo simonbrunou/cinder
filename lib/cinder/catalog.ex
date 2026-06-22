@@ -6,6 +6,7 @@ defmodule Cinder.Catalog do
   config (`config :cinder, :tmdb`) so tests use a Mox mock and never hit the network.
   """
   import Ecto.Query
+  require Logger
 
   alias Cinder.Catalog.{Episode, Grab, Movie, Season, Series}
   alias Cinder.Repo
@@ -152,8 +153,8 @@ defmodule Cinder.Catalog do
   Adds a TV series and its season/episode tree, fetched from TMDB, flagging episodes
   `monitored` per `monitor_strategy` (`:all` / `:future` / `:none`; default `:future`).
 
-  Find-or-create by `tmdb_id`: an already-added series is returned as-is — no re-sync
-  (that's M6). Returns `{:ok, series}` (associations unloaded — preload
+  Find-or-create by `tmdb_id`: an already-added series is returned as-is; re-sync is
+  `refresh_series/1` (the periodic Refresher). Returns `{:ok, series}` (associations unloaded — preload
   `[seasons: :episodes]` to read the tree), `{:error, :invalid_monitor_strategy}` for an
   unknown strategy, or `{:error, reason}` if a TMDB fetch fails.
   """
@@ -536,10 +537,246 @@ defmodule Cinder.Catalog do
       from e in Episode,
         join: s in assoc(e, :season),
         where:
-          s.season_number > 0 and e.monitored and is_nil(e.file_path) and is_nil(e.grab_id) and
-            not is_nil(e.air_date) and e.air_date <= ^today,
+          s.season_number > 0 and e.monitored and e.episode_number > 0 and is_nil(e.file_path) and
+            is_nil(e.grab_id) and not is_nil(e.air_date) and e.air_date <= ^today,
         preload: [season: :series]
     )
+  end
+
+  @doc """
+  Monitored, dated episodes in a calendar window (`today - 7 .. today + 90`), ordered by air date,
+  with `season: :series` preloaded for the calendar view. Excludes season 0 (specials, never
+  searched in M5) so the view's derived "wanted" badge stays honest.
+  """
+  def upcoming_episodes do
+    today = Date.utc_today()
+    from_date = Date.add(today, -7)
+    to_date = Date.add(today, 90)
+
+    Repo.all(
+      from e in Episode,
+        join: s in assoc(e, :season),
+        where:
+          s.season_number > 0 and e.monitored and not is_nil(e.air_date) and
+            e.air_date >= ^from_date and e.air_date <= ^to_date,
+        order_by: [asc: e.air_date],
+        preload: [season: :series]
+    )
+  end
+
+  @doc """
+  Re-fetches `series` from TMDB and reconciles its season/episode tree in one transaction, then
+  broadcasts `{:series_updated, series.id}` once. Existing episodes are matched by
+  `tmdb_episode_id` (series-wide, so a renumber that moves an episode across seasons is handled)
+  and updated in place — preserving `monitored`, `file_path`, `grab_id`, and the attempt counters.
+  Genuinely new episodes are inserted with `monitored` per the series' `monitor_strategy`; new
+  seasons are inserted; rows that vanished from TMDB are left untouched.
+
+  Returns `{:ok, series}`, or `{:error, reason}` if a TMDB fetch fails (short-circuits before any
+  write, mirroring `create_series/2`).
+  """
+  def refresh_series(%Series{} = series) do
+    with {:ok, info} <- tmdb().get_series(series.tmdb_id),
+         {:ok, seasons} <- fetch_seasons(series.tmdb_id, info.seasons) do
+      {:ok, updated} =
+        Repo.transaction(fn ->
+          s = update_series_row(series, info)
+          reconcile_tree(s, seasons)
+          s
+        end)
+
+      broadcast_series(series.id)
+      {:ok, updated}
+    end
+  end
+
+  # Backfill the series row's TMDB-sourced fields (tvdb_id especially — the acquisition
+  # disambiguation key, often nil at add time). Identity + user-controlled fields (tmdb_id,
+  # monitored, monitor_strategy) are not cast, so they're preserved. On failure, log and keep the
+  # existing row: a descriptive backfill failing must not abort the whole tree reconcile.
+  defp update_series_row(series, info) do
+    changeset =
+      Series.refresh_changeset(series, %{
+        tvdb_id: info.tvdb_id,
+        title: info.title,
+        year: info.year,
+        poster_path: info.poster_path
+      })
+
+    case Repo.update(changeset) do
+      {:ok, updated} ->
+        updated
+
+      {:error, cs} ->
+        Logger.warning("refresh: series #{series.id} row update failed: #{inspect(cs.errors)}")
+        series
+    end
+  end
+
+  # Two-pass renumber. Building season targets first lets `ensure_season` insert any new seasons;
+  # then we partition into matched (an existing row by tmdb_episode_id) vs new. PASS 1 parks every
+  # matched row in a guaranteed-free slot, PASS 2 moves each to its final slot (now collision-free),
+  # PASS 3 inserts the new rows. This handles within-season swaps and mid-season insertion shifts,
+  # which the old one-at-a-time update couldn't (every move collided on the unique index).
+  defp reconcile_tree(series, fetched_seasons) do
+    today = Date.utc_today()
+    existing_seasons = Map.new(seasons_for(series.id), &{&1.season_number, &1})
+    by_tmdb = Map.new(episodes_for(series.id), &{&1.tmdb_episode_id, &1})
+
+    # Step 1 — collect {fetched_episode, target_season_id} for each fetched season whose target
+    # season exists (or was just inserted); skip a season ensure_season couldn't create.
+    targets =
+      Enum.flat_map(fetched_seasons, fn fs ->
+        case ensure_season(series, existing_seasons, fs.season_number) do
+          %Season{id: season_id} -> Enum.map(fs.episodes, &{&1, season_id})
+          nil -> []
+        end
+      end)
+
+    # Step 2 — partition into matched (existing row found by tmdb_episode_id) vs new. Guard a nil
+    # tmdb_episode_id (TMDB always sets it, but a nil never matches and must be treated as new).
+    {matched, new} =
+      Enum.split_with(targets, fn {fe, _season_id} ->
+        not is_nil(fe.tmdb_episode_id) and Map.has_key?(by_tmdb, fe.tmdb_episode_id)
+      end)
+
+    matched =
+      Enum.map(matched, fn {fe, season_id} ->
+        {Map.fetch!(by_tmdb, fe.tmdb_episode_id), fe, season_id}
+      end)
+
+    # PASS 1 — park each matched row's real slot with a unique non-colliding sentinel (-id) in its
+    # current season (no season_id change here), so PASS 2 never collides matched-vs-matched. Carry
+    # the parked struct forward: PASS 2's `cast` diffs against the struct's number, and a row whose
+    # final number equals its *original* would otherwise be seen as unchanged and the SET would omit
+    # episode_number, leaving it stuck at the sentinel. Diffing against the (negative) parked number
+    # always fires.
+    parked =
+      Enum.map(matched, fn {existing, fe, season_id} ->
+        {park_episode(existing), existing, fe, season_id}
+      end)
+
+    # PASS 2 — finalize each matched row to its final (season_id, episode_number). All matched slots
+    # are now free, so matched-vs-matched never collides. The only residual is a target slot still
+    # held by a *vanished* row (left untouched); finalize_or_restore then puts the row back at its
+    # original positive slot rather than stranding it at the -id park sentinel.
+    Enum.each(parked, fn {parked_ep, original, fe, season_id} ->
+      finalize_or_restore(parked_ep, original, season_id, fe)
+    end)
+
+    # PASS 3 — insert new rows, after finalize so slots reflect final state.
+    Enum.each(new, fn {fe, season_id} -> insert_episode(series, season_id, fe, today) end)
+  end
+
+  # Vacate a matched row's real slot before the finalize pass: -id never collides with a positive
+  # TMDB number and is unique across the table (ids are unique). Returns the updated struct (number
+  # = -id) for PASS 2 to diff against; on the should-never-happen failure, log and return the
+  # original struct so the finalize pass still runs.
+  defp park_episode(existing) do
+    # Route through refresh_changeset (not raw change/2) so the (season_id, episode_number) unique
+    # constraint is registered: a park can't realistically collide (-id is negative + unique), but
+    # if it ever did it degrades to {:error} rather than raising and aborting the whole series.
+    case existing
+         |> Episode.refresh_changeset(%{episode_number: -existing.id})
+         |> Repo.update() do
+      {:ok, parked} ->
+        parked
+
+      {:error, changeset} ->
+        log_reconcile_error({:error, changeset}, "park episode #{existing.id}")
+        existing
+    end
+  end
+
+  defp seasons_for(series_id), do: Repo.all(from s in Season, where: s.series_id == ^series_id)
+
+  defp episodes_for(series_id) do
+    Repo.all(
+      from e in Episode,
+        join: s in assoc(e, :season),
+        where: s.series_id == ^series_id and not is_nil(e.tmdb_episode_id)
+    )
+  end
+
+  defp ensure_season(_series, existing, number) when is_map_key(existing, number),
+    do: Map.fetch!(existing, number)
+
+  defp ensure_season(series, _existing, number) do
+    attrs = %{
+      series_id: series.id,
+      season_number: number,
+      monitored: series.monitor_strategy != :none
+    }
+
+    case %Season{} |> Season.refresh_changeset(attrs) |> Repo.insert() do
+      {:ok, season} ->
+        season
+
+      {:error, changeset} ->
+        Logger.warning(
+          "refresh skipped new season #{number} of series #{series.id}: #{inspect(changeset.errors)}"
+        )
+
+        nil
+    end
+  end
+
+  # Finalize a parked row to its target slot (monitored/file_path/grab_id/counters omitted from the
+  # cast → preserved). If the target slot is held by a row that vanished from TMDB — the one residual
+  # the two-pass can't resolve without touching vanished rows — restore the row to its original
+  # positive slot rather than leaving it at the -id park sentinel, which would otherwise leak a
+  # negative episode_number into wanted_episodes → the TV poller's search/import.
+  defp finalize_or_restore(parked_ep, original, season_id, fe) do
+    changeset =
+      Episode.refresh_changeset(parked_ep, %{
+        season_id: season_id,
+        episode_number: fe.episode_number,
+        title: fe.title,
+        air_date: fe.air_date
+      })
+
+    case Repo.update(changeset) do
+      {:ok, _} ->
+        :ok
+
+      {:error, _} ->
+        Logger.warning(
+          "refresh: episode #{original.id} target slot occupied by a vanished row; " <>
+            "restoring to its original number #{original.episode_number} instead"
+        )
+
+        parked_ep
+        |> Episode.refresh_changeset(%{
+          season_id: original.season_id,
+          episode_number: original.episode_number
+        })
+        |> Repo.update()
+        |> log_reconcile_error("restore episode #{original.id}")
+    end
+  end
+
+  defp insert_episode(series, season_id, fe, today) do
+    %Episode{}
+    |> Episode.refresh_changeset(%{
+      season_id: season_id,
+      tmdb_episode_id: fe.tmdb_episode_id,
+      episode_number: fe.episode_number,
+      title: fe.title,
+      air_date: fe.air_date,
+      monitored: monitored?(series.monitor_strategy, fe.air_date, today)
+    })
+    |> Repo.insert()
+    |> log_reconcile_error("insert episode tmdb_ep #{fe.tmdb_episode_id}")
+  end
+
+  defp log_reconcile_error({:ok, _} = ok, _context), do: ok
+
+  defp log_reconcile_error({:error, changeset}, context) do
+    # Residual reconcile conflict (e.g. a new/restored row whose target slot is still held by a row
+    # that vanished from TMDB and is left untouched by design) — rare; log and continue so the rest
+    # of the tree still reconciles rather than aborting the whole series.
+    Logger.warning("refresh skipped #{context}: #{inspect(changeset.errors)}")
+    :ok
   end
 
   defp series_id_for_grab(grab_id) do

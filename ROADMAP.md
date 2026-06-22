@@ -569,6 +569,38 @@ automatically. Leanest cut: **poll TMDB**, not per-tracker RSS.
 search-eligible and grabs automatically, and the wanted-episodes query is used (not a full
 scan). — ***Dogfood checkpoint:*** run movies+TV privately for ~2 weeks before packaging.
 
+**[done 2026-06-22]** (design: `docs/specs/2026-06-22-m6-design.md`, plan:
+`docs/plans/2026-06-22-m6-tv-monitoring-sweep-calendar.md`). A read of the TV subsystem showed
+three of the five build-items were **already landed**: air-date eligibility (`wanted_episodes/0`
+already filters `air_date <= today` — with the derived-state episode model, "just-aired ⇒
+search-eligible" happens automatically as time passes, no flag to flip), monitor-strategy
+enforcement (at the per-episode `monitored` leaf via `monitored?/3`; the sweep reads it), and the
+wanted-driven sweep (`TvPoller.search_wanted/1`, no full scan). So M6's real work was narrower:
+**keep TMDB data fresh so the existing eligibility fires on time**, plus the index and calendar.
+Shipped: (1) a partial index `episodes_wanted_index` on `episodes(air_date)` (`WHERE file_path IS
+NULL AND grab_id IS NULL AND monitored`) backing `wanted_episodes/0`; (2) `Catalog.refresh_series/1`
+— re-fetch a series from TMDB and reconcile in one transaction, **matching existing episodes by
+`tmdb_episode_id`** (series-wide, so a renumber across seasons is handled) and updating
+`air_date`/`episode_number`/`title`/`season_id` in place while **preserving**
+`monitored`/`file_path`/`grab_id`/counters, inserting newly-announced episodes (strategy applied)
+and new seasons, leaving vanished rows untouched (the **late-air-date fill** is the headline
+Done-when case — an episode added `air_date: nil` under `:future` is invisible to the sweep until a
+refresh fills the date, then grabs on the next tick); (3) `Cinder.Catalog.Refresher`, a 12h
+self-scheduling GenServer mirroring the poller skeleton, `:start_poller`-gated, interval as module
+config (not `/settings` — no int-coercion seam there); (4) `Catalog.upcoming_episodes/0` +
+admin-gated `/calendar` LiveView (windowed `today-7..+90`, derived per-episode state badge, live via
+the `"series"` topic). Decisions (user-approved): all three pieces in one session; **fresh + grow**
+refresh depth. A post-merge `/code-review` (PR #30) surfaced that the initially-deferred renumber
+ceiling ("self-heals") was inaccurate — a mid-season reorder/shift collides across the board and
+stays stale — so on user decision M6 also shipped: **two-pass renumber** (park each matched row to a
+unique `-(id)` sentinel → finalize to target → insert new; reorders/swaps/shifts now apply cleanly;
+the only residual collision is a target reusing a *vanished* row's retained slot, logged + skipped)
+and **series-row reconciliation** (backfill `tvdb_id`/`title`/`year`/`poster_path` from TMDB,
+preserving `tmdb_id`/`monitored`/`monitor_strategy`), plus a Refresher log on `refresh_series`
+`{:error}`. `mix test` green (501). **Deferred:** specials grabbing (parser limit); per-episode TV size-band as
+a `/settings` field (M8); the **movies/TV library-path split** (now an M8 build-item — today a single
+`:cinder, :library_path` roots both importers); vanished-row deletion. `mix test` green (496).
+
 ### M7 — Public release packaging (M)
 
 **Goal:** turn the working multi-user movies+TV product into something strangers find, install,
@@ -599,6 +631,14 @@ live torrent and TV paths are validated on real hardware, artifacts cut.
 **Build:**
 - README/docs updated for TV (series monitoring, season packs, calendar); new TV settings (e.g.
   per-episode size band) land in the **settings store**, not new env vars.
+- **Split the library path into movie + TV roots (S).** Today a single `:cinder, :library_path`
+  setting roots both importers (`Library.build_dest` for movies, `build_episode_dest` for
+  episodes). Add a `tv_library_path` setting alongside it (movies keep `library_path`), point
+  episode imports at the TV root, and validate **both** roots writable in
+  `Health.check_service(:library)` + the onboarding wizard + a second `/settings` field — mirroring
+  the existing `apply_library_path`/`plan_library_path` pattern in `Cinder.Settings` (a settings +
+  import-path change, no new machinery). Jellyfin/Plex want separate Movies/Shows roots, so this is
+  how strangers will deploy.
 - **Live sign-off of the two open homelab items carried from Phase 5:** a qBittorrent torrent
   grab end-to-end (base32 magnet, `.torrent` URL fetch, malformed-torrent graceful park) and the
   `/status` visual badge-advance check.

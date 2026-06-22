@@ -5,6 +5,7 @@ defmodule Cinder.CatalogTvPipelineTest do
 
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Grab, Season, Series}
+  alias Ecto.Adapters.SQL, as: EctoSQL
 
   @past ~D[2001-01-01]
   @future ~D[2099-01-01]
@@ -213,6 +214,29 @@ defmodule Cinder.CatalogTvPipelineTest do
     end
   end
 
+  describe "wanted_episodes/0 index" do
+    test "is backed by the partial wanted index (no full episodes scan)" do
+      %{rows: idx_rows} =
+        Repo.query!("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='episodes'")
+
+      assert "episodes_wanted_index" in List.flatten(idx_rows)
+
+      q =
+        from e in Episode,
+          join: s in assoc(e, :season),
+          where:
+            s.season_number > 0 and e.monitored and e.episode_number > 0 and is_nil(e.file_path) and
+              is_nil(e.grab_id) and not is_nil(e.air_date) and e.air_date <= ^Date.utc_today(),
+          select: e.id
+
+      {sql, params} = EctoSQL.to_sql(:all, Repo, q)
+      %{rows: plan_rows} = Repo.query!("EXPLAIN QUERY PLAN " <> sql, params)
+      plan = Enum.map_join(plan_rows, "\n", &Enum.join(&1, " "))
+
+      refute plan =~ ~r/SCAN episodes\b/, "wanted query should not full-scan episodes:\n#{plan}"
+    end
+  end
+
   describe "wanted_episodes/0" do
     test "returns monitored, aired (incl. today), file-less, grab-less episodes only" do
       {_series, season} = series_with_season()
@@ -227,6 +251,16 @@ defmodule Cinder.CatalogTvPipelineTest do
       refute unaired.id in ids
       refute tba.id in ids
       refute unmonitored.id in ids
+    end
+
+    test "excludes a non-positive episode_number (a real episode is always >= 1)" do
+      {_series, season} = series_with_season()
+      ok = episode(season, %{episode_number: 1, air_date: @past, monitored: true})
+      stranded = episode(season, %{episode_number: -7, air_date: @past, monitored: true})
+
+      ids = Enum.map(Catalog.wanted_episodes(), & &1.id)
+      assert ok.id in ids
+      refute stranded.id in ids
     end
 
     test "excludes episodes with a file or an active grab" do
@@ -259,6 +293,33 @@ defmodule Cinder.CatalogTvPipelineTest do
       ids = Enum.map(Catalog.wanted_episodes(), & &1.id)
       assert regular.id in ids
       refute special.id in ids
+    end
+  end
+
+  describe "upcoming_episodes/0" do
+    test "returns monitored, dated, in-window, non-special episodes ordered by air_date" do
+      {series, season} = series_with_season()
+      today = Date.utc_today()
+      recent = episode(season, %{air_date: Date.add(today, -3), monitored: true})
+      soon = episode(season, %{air_date: Date.add(today, 10), monitored: true})
+
+      # Excluded: before the window, after the window, undated, unmonitored, specials.
+      episode(season, %{air_date: Date.add(today, -30), monitored: true})
+      episode(season, %{air_date: Date.add(today, 200), monitored: true})
+      episode(season, %{air_date: nil, monitored: true})
+      episode(season, %{air_date: Date.add(today, 5), monitored: false})
+      specials = Repo.insert!(%Season{series_id: series.id, season_number: 0, monitored: true})
+      episode(specials, %{air_date: Date.add(today, 2), monitored: true})
+
+      assert Enum.map(Catalog.upcoming_episodes(), & &1.id) == [recent.id, soon.id]
+    end
+
+    test "preloads season and series" do
+      {series, season} = series_with_season()
+      episode(season, %{air_date: Date.utc_today()})
+
+      assert [ep] = Catalog.upcoming_episodes()
+      assert ep.season.series.id == series.id
     end
   end
 end
