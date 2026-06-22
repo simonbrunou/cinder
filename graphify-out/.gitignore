@@ -1,9 +1,9 @@
-# Keep only the shareable graph artifacts (graph.json, GRAPH_REPORT.md, graph.html).
-# Everything below is local build state: machine-specific absolute paths, caches,
-# and per-machine token stats. The post-commit hook regenerates them locally.
-cache/
-manifest.json
-cost.json
-.graphify_python
-.graphify_root
-.graphify_labels.json
+# graphify-out/ is regenerated locally by the post-commit hook, so it stays local.
+# Track only the human-readable report snapshot; graph.json/graph.html are 1MB+
+# regenerable artifacts (per-commit churn + machine-absolute-path noise).
+#
+# Whitelist style: ignore everything, then re-include just the two files we keep.
+# Robust against new generated dirs (dated dirs, wiki/, obsidian/, cache/).
+*
+!/.gitignore
+!/GRAPH_REPORT.md
