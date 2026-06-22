@@ -35,7 +35,27 @@
           {@current_scope.user.email}
         </li>
         <li>
-          <.link href={~p"/users/settings"}>Settings</.link>
+          <.link navigate={~p"/"}>Search</.link>
+        </li>
+        <li>
+          <.link navigate={~p"/my-requests"}>My requests</.link>
+        </li>
+        <%= if @current_scope.user.role == :admin do %>
+          <li>
+            <.link navigate={~p"/requests"}>Requests</.link>
+          </li>
+          <li>
+            <.link navigate={~p"/status"}>Status</.link>
+          </li>
+          <li>
+            <.link navigate={~p"/users"}>Users</.link>
+          </li>
+          <li>
+            <.link navigate={~p"/settings"}>Settings</.link>
+          </li>
+        <% end %>
+        <li>
+          <.link href={~p"/users/settings"}>Account</.link>
         </li>
         <li>
           <.link href={~p"/users/log-out"} method="delete">Log out</.link>

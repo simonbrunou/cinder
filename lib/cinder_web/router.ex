@@ -68,6 +68,7 @@ defmodule CinderWeb.Router do
       live "/status", StatusLive
       live "/settings", SettingsLive
       live "/requests", RequestsLive
+      live "/users", UsersLive
     end
 
     live_session :setup,

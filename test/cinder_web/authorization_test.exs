@@ -3,7 +3,7 @@ defmodule CinderWeb.AuthorizationTest do
   import Phoenix.LiveViewTest
   import Cinder.AccountsFixtures
 
-  for path <- ["/status", "/settings", "/requests"] do
+  for path <- ["/status", "/settings", "/requests", "/users"] do
     test "anonymous is redirected from #{path}", %{conn: conn} do
       assert {:error, {:redirect, %{to: to}}} = live(conn, unquote(path))
       assert to =~ "/users/log-in"
@@ -28,6 +28,16 @@ defmodule CinderWeb.AuthorizationTest do
   test "a non-admin reaches /", %{conn: conn} do
     conn = log_in_user(conn, user_fixture())
     assert {:ok, _lv, _html} = live(conn, ~p"/")
+  end
+
+  test "/my-requests requires authentication", %{conn: conn} do
+    assert {:error, {:redirect, %{to: to}}} = live(conn, ~p"/my-requests")
+    assert to =~ "/users/log-in"
+  end
+
+  test "a non-admin reaches /my-requests", %{conn: conn} do
+    conn = log_in_user(conn, user_fixture())
+    assert {:ok, _lv, _html} = live(conn, ~p"/my-requests")
   end
 
   test "an admin reaches /", %{conn: conn} do
