@@ -10,7 +10,13 @@ config :bcrypt_elixir, :log_rounds, 1
 # Run `mix help test` for more information.
 config :cinder, Cinder.Repo,
   database: Path.expand("../cinder_test.db", __DIR__),
-  pool_size: 5,
+  # pool_size: 1 serializes Sandbox checkouts onto one connection — SQLite is a
+  # single writer, and busy_timeout can't rescue the deferred read-then-write
+  # snapshot conflicts the Sandbox wraps each test in (see repo_concurrency_test.exs).
+  # With >1 connection, concurrent async DB-writing tests race into "Database busy"
+  # intermittently; one connection makes the suite deterministic with no speed cost
+  # (the suite is I/O-light and still finishes ~1s).
+  pool_size: 1,
   journal_mode: :wal,
   busy_timeout: 5_000,
   pool: Ecto.Adapters.SQL.Sandbox

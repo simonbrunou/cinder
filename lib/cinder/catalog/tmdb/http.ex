@@ -3,9 +3,9 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   Real `Cinder.Catalog.TMDB` impl, backed by `Req`.
 
   Reads `base_url`, `token` (v4 bearer) and optional `req_options` from
-  `config :cinder, #{inspect(__MODULE__)}` at runtime. Returns normalized movie maps
-  (`%{tmdb_id, title, year, poster_path, imdb_id}`); search results carry `imdb_id: nil`
-  (only the details endpoint returns it).
+  `config :cinder, #{inspect(__MODULE__)}` at runtime. Returns normalized maps for both
+  movies (`%{tmdb_id, title, year, poster_path, imdb_id}`; search results carry
+  `imdb_id: nil`) and TV (see the `Cinder.Catalog.TMDB` callback docs).
   """
   @behaviour Cinder.Catalog.TMDB
 
@@ -31,6 +31,44 @@ defmodule Cinder.Catalog.TMDB.HTTP do
       {:ok, %{status: 200, body: %{"id" => _} = body}} -> {:ok, normalize(body)}
       {:ok, %{status: 200}} -> {:error, :unexpected_response}
       other -> error(other)
+    end
+  end
+
+  @impl true
+  def search_tv(query) do
+    case request(url: "/3/search/tv", params: [query: query]) do
+      {:ok, %{status: 200, body: %{"results" => results}}} when is_list(results) ->
+        {:ok, Enum.map(results, &normalize_tv/1)}
+
+      {:ok, %{status: 200}} ->
+        {:error, :unexpected_response}
+
+      other ->
+        error(other)
+    end
+  end
+
+  @impl true
+  def get_series(tmdb_id) do
+    # append_to_response folds external_ids (tvdb_id) into the one details call.
+    case request(url: "/3/tv/#{tmdb_id}", params: [append_to_response: "external_ids"]) do
+      {:ok, %{status: 200, body: %{"id" => _} = body}} -> {:ok, normalize_series(body)}
+      {:ok, %{status: 200}} -> {:error, :unexpected_response}
+      other -> error(other)
+    end
+  end
+
+  @impl true
+  def get_season(series_id, season_number) do
+    case request(url: "/3/tv/#{series_id}/season/#{season_number}") do
+      {:ok, %{status: 200, body: %{"episodes" => episodes} = body}} when is_list(episodes) ->
+        {:ok, normalize_season(body)}
+
+      {:ok, %{status: 200}} ->
+        {:error, :unexpected_response}
+
+      other ->
+        error(other)
     end
   end
 
@@ -72,6 +110,45 @@ defmodule Cinder.Catalog.TMDB.HTTP do
     }
   end
 
+  defp normalize_tv(series) do
+    %{
+      tmdb_id: series["id"],
+      title: series["name"],
+      year: year_from(series["first_air_date"]),
+      poster_path: series["poster_path"]
+    }
+  end
+
+  defp normalize_series(body) do
+    # external_ids only present with append_to_response; for TV the ids (tvdb_id)
+    # live under it, unlike movies where imdb_id is top-level.
+    external = body["external_ids"] || %{}
+
+    %{
+      tmdb_id: body["id"],
+      tvdb_id: external["tvdb_id"],
+      title: body["name"],
+      year: year_from(body["first_air_date"]),
+      poster_path: body["poster_path"],
+      seasons: for(s <- body["seasons"] || [], do: %{season_number: s["season_number"]})
+    }
+  end
+
+  defp normalize_season(body) do
+    %{
+      season_number: body["season_number"],
+      episodes:
+        for e <- body["episodes"] || [] do
+          %{
+            tmdb_episode_id: e["id"],
+            episode_number: e["episode_number"],
+            title: e["name"],
+            air_date: date_from(e["air_date"])
+          }
+        end
+    }
+  end
+
   defp year_from(date) when is_binary(date) and date != "" do
     case Integer.parse(date) do
       {year, _rest} -> year
@@ -80,4 +157,15 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   end
 
   defp year_from(_), do: nil
+
+  # TMDB returns "" (or omits the key) for un-aired/TBA dates; map both to nil so the
+  # :date cast and the monitor-strategy `>= today` comparison never see a bad string.
+  defp date_from(date) when is_binary(date) and date != "" do
+    case Date.from_iso8601(date) do
+      {:ok, parsed} -> parsed
+      {:error, _} -> nil
+    end
+  end
+
+  defp date_from(_), do: nil
 end
