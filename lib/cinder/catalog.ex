@@ -7,7 +7,7 @@ defmodule Cinder.Catalog do
   """
   import Ecto.Query
 
-  alias Cinder.Catalog.Movie
+  alias Cinder.Catalog.{Movie, Series}
   alias Cinder.Repo
 
   @topic "movies"
@@ -132,4 +132,119 @@ defmodule Cinder.Catalog do
   end
 
   defp broadcast(message), do: Phoenix.PubSub.broadcast(Cinder.PubSub, @topic, message)
+
+  ## TV series (M4a) — admin-only direct add; movie loop untouched.
+  #
+  # No PubSub topic yet: nothing subscribes until the M4b series-detail LiveView.
+  # The whole tree inserts in one Repo.insert (= one transaction = one writer, so
+  # WAL + busy_timeout stays correct).
+
+  @doc """
+  Adds a TV series and its season/episode tree, fetched from TMDB, flagging episodes
+  `monitored` per `monitor_strategy` (`:all` / `:future` / `:none`; default `:future`).
+
+  Find-or-create by `tmdb_id`: an already-added series is returned as-is — no re-sync
+  (that's M6). Returns `{:ok, series}` (associations unloaded — preload
+  `[seasons: :episodes]` to read the tree), `{:error, :invalid_monitor_strategy}` for an
+  unknown strategy, or `{:error, reason}` if a TMDB fetch fails.
+  """
+  def add_series_to_watchlist(tmdb_id, opts \\ []) do
+    strategy = Keyword.get(opts, :monitor_strategy, :future)
+
+    # Validate at the boundary: the strategy drives monitored?/3 (a function-clause match)
+    # *before* the Ecto.Enum changeset would catch it, so an unknown atom would otherwise
+    # crash rather than return a clean error.
+    if strategy in Series.monitor_strategies() do
+      case get_series_by_tmdb_id(tmdb_id) do
+        %Series{} = series -> {:ok, series}
+        nil -> create_series(tmdb_id, strategy)
+      end
+    else
+      {:error, :invalid_monitor_strategy}
+    end
+  end
+
+  @doc "Fetches a watchlisted series by TMDB id, or `nil`."
+  def get_series_by_tmdb_id(tmdb_id), do: Repo.get_by(Series, tmdb_id: tmdb_id)
+
+  @doc "Fetches a watchlisted series by primary key, or `nil`."
+  def get_series_by_id(id), do: Repo.get(Series, id)
+
+  @doc "Lists watchlisted series, newest first."
+  def list_series, do: Repo.all(from s in Series, order_by: [desc: s.id])
+
+  defp create_series(tmdb_id, strategy) do
+    with {:ok, info} <- tmdb().get_series(tmdb_id),
+         {:ok, seasons} <- fetch_seasons(tmdb_id, info.seasons) do
+      insert_series(tmdb_id, series_attrs(info, seasons, strategy))
+    end
+  end
+
+  defp insert_series(tmdb_id, attrs) do
+    case attrs |> Series.create_changeset() |> Repo.insert() do
+      {:ok, series} ->
+        # Return the re-read row (not the cast_assoc result) so every add path —
+        # found-existing, freshly-inserted, race-loss — returns a series with its
+        # associations unloaded. Callers preload [seasons: :episodes] to read the tree.
+        # Fall back to the inserted struct if the re-read somehow misses, so the
+        # contract stays {:ok, %Series{}} and never {:ok, nil}.
+        {:ok, get_series_by_tmdb_id(tmdb_id) || series}
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        # A unique_constraint(:tmdb_id) race rolls the whole tree back (no partial
+        # rows), so the winner now exists — return it. Any other changeset error
+        # finds no winner and propagates unchanged.
+        case get_series_by_tmdb_id(tmdb_id) do
+          %Series{} = series -> {:ok, series}
+          nil -> {:error, changeset}
+        end
+    end
+  end
+
+  # Fetch each season's episodes, short-circuiting on the first TMDB error so a
+  # partial tree is never persisted.
+  defp fetch_seasons(tmdb_id, season_stubs) do
+    result =
+      Enum.reduce_while(season_stubs, {:ok, []}, fn %{season_number: n}, {:ok, acc} ->
+        case tmdb().get_season(tmdb_id, n) do
+          {:ok, season} -> {:cont, {:ok, [season | acc]}}
+          {:error, _} = err -> {:halt, err}
+        end
+      end)
+
+    with {:ok, seasons} <- result, do: {:ok, Enum.reverse(seasons)}
+  end
+
+  defp series_attrs(info, seasons, strategy) do
+    today = Date.utc_today()
+
+    %{
+      tmdb_id: info.tmdb_id,
+      tvdb_id: info.tvdb_id,
+      title: info.title,
+      year: info.year,
+      poster_path: info.poster_path,
+      monitored: strategy != :none,
+      monitor_strategy: strategy,
+      seasons:
+        for season <- seasons do
+          %{
+            season_number: season.season_number,
+            monitored: strategy != :none,
+            episodes:
+              for ep <- season.episodes do
+                Map.put(ep, :monitored, monitored?(strategy, ep.air_date, today))
+              end
+          }
+        end
+    }
+  end
+
+  # Strategy is applied uniformly across seasons (specials included) — Sonarr-style
+  # specials handling is an M6 monitoring concern. `:future` treats undated/TBA
+  # episodes as monitored and counts "today" as eligible.
+  defp monitored?(:all, _air_date, _today), do: true
+  defp monitored?(:none, _air_date, _today), do: false
+  defp monitored?(:future, nil, _today), do: true
+  defp monitored?(:future, air_date, today), do: Date.compare(air_date, today) != :lt
 end

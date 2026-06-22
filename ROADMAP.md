@@ -412,6 +412,25 @@ flags, **without touching the validated movie pipeline**. This is the deepest br
 persists the season/episode tree with monitor flags, and the **movie loop is untouched** (its
 tests still green).
 
+**[M4a done 2026-06-22 — data layer]** (design: `docs/specs/2026-06-22-m4-design.md`). Split M4
+into **M4a (data, shipped)** + **M4b (discovery UI, next session)**. Shipped: the
+`series`/`seasons`/`episodes` schema (one additive migration; movie loop untouched, poller stays
+movies-only) and `Catalog.add_series_to_watchlist/2` persisting the tree via one `cast_assoc`
+insert, flagging episodes per `monitor_strategy` (`:all`/`:future`/`:none`, default `:future`,
+applied uniformly — specials handling is M6). TMDB grew `search_tv`/`get_series`/`get_season`
+(impl + Mox auto-cover, atomic; `date_from/1` tolerates `""`/missing `air_date`). Council-driven
+scope cuts: **Episode = identity + monitoring only** (`tmdb_episode_id` kept as the M6
+renumbering-reconciliation key; the download/import pipeline fields + `status` deferred to M5,
+avoiding the approve-by-default trap and the redundancy with M5's locked grab/download join
+table); `imdb_id` on series dropped (re-derivable in M5); the `"series"` PubSub topic deferred to
+M4b (no subscriber yet); **TV add is admin-only direct** (no request gate — no TV poller exists to
+auto-grab; requester flow is M5). Also fixed a latent suite-wide SQLite test flake:
+`config/test.exs` `pool_size: 5 → 1` (the Sandbox's deferred read-then-write txns hit
+`SQLITE_BUSY` that `busy_timeout` can't rescue; one connection serializes writers, no speed cost).
+**Deferred to M4b:** TV search in the grid + a series-detail LiveView with per-episode monitor
+toggles + nav. **Deferred to M5:** episode pipeline fields/transition, the grab/download join
+table, the TV poller, and the requester request/approval flow.
+
 ### M5 — TV acquisition + multi-file import (XL)
 
 **Goal:** make monitored episodes actually download and import — the genuinely new logic. Reuse
