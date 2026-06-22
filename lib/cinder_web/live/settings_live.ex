@@ -62,12 +62,14 @@ defmodule CinderWeb.SettingsLive do
   defp decode_service("media_server"), do: :media_server
   defp decode_service("torrent"), do: {:download, :torrent}
   defp decode_service("usenet"), do: {:download, :usenet}
+  defp decode_service("library"), do: :library
   defp decode_service(_other), do: nil
 
   defp services_for(:tmdb), do: [{"tmdb", "TMDB"}]
   defp services_for(:indexer), do: [{"indexer", "Prowlarr"}]
   defp services_for(:download), do: [{"torrent", "qBittorrent"}, {"usenet", "SABnzbd"}]
   defp services_for(:media_server), do: [{"media_server", "Media server"}]
+  defp services_for(:library), do: [{"library", "Library path"}]
   defp services_for(_group), do: []
 
   defp secret_placeholder(field, secrets_set) do
@@ -120,6 +122,21 @@ defmodule CinderWeb.SettingsLive do
               />
               <span class="label-text">{t.label}</span>
             </label>
+          </div>
+
+          <div :if={group == :library} class="form-control mb-2">
+            <label class="label" for="library_path">
+              <span class="label-text">Library path (where movies are hardlinked)</span>
+            </label>
+            <input
+              type="text"
+              id="library_path"
+              name="library_path"
+              value={@form.values[Settings.library_path_key()]}
+              placeholder="/media/movies"
+              autocomplete="off"
+              class="input w-full"
+            />
           </div>
 
           <.setting_field :for={field <- Settings.config_fields(group)} field={field} form={@form} />

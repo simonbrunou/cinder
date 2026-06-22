@@ -146,11 +146,13 @@ defmodule Cinder.Settings do
 
   @media_server_key "media_server_type"
   @media_server_options ["jellyfin", "plex"]
+  @library_path_key "library_path"
   @groups [
     tmdb: "TMDB",
     indexer: "Indexer",
     download: "Download clients",
-    media_server: "Media server"
+    media_server: "Media server",
+    library: "Library"
   ]
 
   @secret_keys for(f <- @config_fields, f.secret, into: MapSet.new(), do: f.key)
@@ -181,6 +183,7 @@ defmodule Cinder.Settings do
 
   def media_server_key, do: @media_server_key
   def media_server_options, do: @media_server_options
+  def library_path_key, do: @library_path_key
 
   # --- reads ---
 
@@ -217,6 +220,7 @@ defmodule Cinder.Settings do
         @media_server_key,
         decoded_for(rows, @media_server_key) || default_media_server_type()
       )
+      |> Map.put(@library_path_key, decoded_for(rows, @library_path_key) || "")
       |> Map.merge(toggle_values(rows))
 
     secrets_set =
@@ -272,6 +276,7 @@ defmodule Cinder.Settings do
     apply_config_fields(rows)
     apply_media_server(rows)
     apply_download_clients(rows)
+    apply_library_path(rows)
     :ok
   rescue
     e ->
@@ -323,6 +328,15 @@ defmodule Cinder.Settings do
       end
 
     Application.put_env(:cinder, :media_server, impl)
+  end
+
+  # A DB value overlays the env bootstrap; a cleared setting reverts to it. Mirrors
+  # apply_media_server/1 (a flat :cinder key rather than a {module, field} target).
+  defp apply_library_path(rows) do
+    case decoded_for(rows, @library_path_key) do
+      nil -> Application.put_env(:cinder, :library_path, base(:library_path))
+      value -> Application.put_env(:cinder, :library_path, value)
+    end
   end
 
   # Toggles build the client map from the captured base map (so a protocol with no toggle
@@ -438,7 +452,7 @@ defmodule Cinder.Settings do
 
   defp plan(params) do
     config_plan = Enum.reduce(@config_fields, {%{}, []}, &plan_config(&1, params, &2))
-    {puts, deletes} = config_plan
+    {puts, deletes} = plan_library_path(params, config_plan)
 
     puts =
       puts
@@ -456,6 +470,19 @@ defmodule Cinder.Settings do
     case params[@media_server_key] do
       choice when choice in @media_server_options -> choice
       _ -> default_media_server_type()
+    end
+  end
+
+  # library_path is a flat key (not a @config_fields entry), so plan it like a non-secret
+  # field: present-but-blank clears (reverts to env bootstrap), absent leaves it untouched.
+  defp plan_library_path(params, {puts, deletes}) do
+    if Map.has_key?(params, @library_path_key) do
+      case String.trim(params[@library_path_key] || "") do
+        "" -> {puts, [@library_path_key | deletes]}
+        value -> {Map.put(puts, @library_path_key, value), deletes}
+      end
+    else
+      {puts, deletes}
     end
   end
 

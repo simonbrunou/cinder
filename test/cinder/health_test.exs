@@ -42,4 +42,14 @@ defmodule Cinder.HealthTest do
 
     assert {:error, {:exit, :boom}} = indexer.status
   end
+
+  test "check_service(:library) is :ok when the library dir is writable" do
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    assert Cinder.Health.check_service(:library) == :ok
+  end
+
+  test "check_service(:library) surfaces a filesystem error" do
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> {:error, :eacces} end)
+    assert Cinder.Health.check_service(:library) == {:error, :eacces}
+  end
 end

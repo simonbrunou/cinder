@@ -20,7 +20,8 @@ defmodule Cinder.SettingsTest do
     Cinder.Library.MediaServer.Jellyfin,
     Cinder.Library.MediaServer.Plex,
     :media_server,
-    :download_clients
+    :download_clients,
+    :library_path
   ]
 
   setup do
@@ -157,6 +158,16 @@ defmodule Cinder.SettingsTest do
 
       Settings.delete("media_server_type")
       assert Application.fetch_env!(:cinder, :media_server) == Cinder.Library.MediaServerMock
+    end
+
+    test "a saved library_path overlays :cinder, :library_path; clearing reverts to bootstrap" do
+      original = Application.fetch_env!(:cinder, :library_path)
+
+      Settings.put("library_path", "/srv/media/movies")
+      assert Application.fetch_env!(:cinder, :library_path) == "/srv/media/movies"
+
+      Settings.delete("library_path")
+      assert Application.fetch_env!(:cinder, :library_path) == original
     end
   end
 
