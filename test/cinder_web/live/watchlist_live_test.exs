@@ -61,10 +61,9 @@ defmodule CinderWeb.WatchlistLiveTest do
     assert [%Requests.Request{status: :pending}] = Requests.list_for_user(user)
   end
 
-  # Dup detection is at the request layer: partial-unique on pending per user
-  test "non-admin adding a movie they already requested flashes and does not duplicate", %{
-    conn: _conn
-  } do
+  # A title the user already has pending shows a Pending badge, not an Add button —
+  # the badge is the dup guard at the UI layer (the request layer enforces it too).
+  test "a pending request shows a Pending badge instead of Add", %{conn: _conn} do
     user = Cinder.AccountsFixtures.user_fixture()
     conn = log_in_user(Phoenix.ConnTest.build_conn(), user)
 
@@ -81,10 +80,24 @@ defmodule CinderWeb.WatchlistLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/")
 
     lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
+
+    assert has_element?(lv, "#results", "pending")
+    refute has_element?(lv, "#add-27205")
+  end
+
+  test "a quota-exceeded add shows the quota flash", %{conn: _conn} do
+    user = Cinder.AccountsFixtures.user_fixture()
+    {:ok, _} = Cinder.Accounts.update_user_quota(user, 0)
+    conn = log_in_user(Phoenix.ConnTest.build_conn(), user)
+
+    stub_search([@inception])
+    {:ok, lv, _html} = live(conn, ~p"/")
+
+    lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
     html = lv |> element("#add-27205") |> render_click()
 
-    assert html =~ "already requested"
-    assert Requests.list_for_user(user) |> length() == 1
+    assert html =~ "request limit"
+    assert Requests.list_for_user(user) == []
   end
 
   test "a TMDB error flashes without crashing, and doesn't claim 'No matches'", %{conn: conn} do
