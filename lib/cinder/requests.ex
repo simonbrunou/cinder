@@ -24,29 +24,42 @@ defmodule Cinder.Requests do
   end
 
   def create_request(%User{} = user, attrs) do
-    cond do
-      user.role == :admin or Settings.auto_approve_all?() ->
-        approver_id = if user.role == :admin, do: user.id, else: nil
-        create_approved(user, attrs, approver_id)
-
-      over_quota?(user) ->
-        {:error, :quota_exceeded}
-
-      true ->
-        %Request{}
-        |> Request.create_changeset(Map.merge(attrs, %{user_id: user.id, status: :pending}))
-        |> Repo.insert()
-        |> tap_ok(&broadcast({:request_created, &1}))
+    if user.role == :admin or Settings.auto_approve_all?() do
+      approver_id = if user.role == :admin, do: user.id, else: nil
+      create_approved(user, attrs, approver_id)
+    else
+      create_pending(user, attrs)
     end
+  end
+
+  # Insert, then re-count inside one transaction. SQLite serializes write transactions,
+  # so the post-insert count sees any concurrently-committed pending row — closing the
+  # check-then-insert race a pre-insert count would leave open. (A truly concurrent test
+  # isn't possible under the single-connection Sandbox; the sequential cases cover the logic.)
+  defp create_pending(user, attrs) do
+    Repo.transaction(fn ->
+      with {:ok, request} <-
+             %Request{}
+             |> Request.create_changeset(Map.merge(attrs, %{user_id: user.id, status: :pending}))
+             |> Repo.insert(),
+           false <- over_quota?(user) do
+        request
+      else
+        true -> Repo.rollback(:quota_exceeded)
+        {:error, changeset} -> Repo.rollback(changeset)
+      end
+    end)
+    |> tap_ok(&broadcast({:request_created, &1}))
   end
 
   defp over_quota?(%User{request_quota: nil}), do: false
 
+  # Counts AFTER the insert, so the just-inserted row is included — hence `>` not `>=`.
   defp over_quota?(%User{request_quota: quota, id: id}) do
     pending =
       Repo.aggregate(from(r in Request, where: r.user_id == ^id and r.status == :pending), :count)
 
-    pending >= quota
+    pending > quota
   end
 
   def approve_request(%Request{status: :pending} = request, %User{} = admin) do

@@ -121,8 +121,12 @@ defmodule CinderWeb.WatchlistLive do
     assign_movie_status(assign(socket, request_status: request_status))
   end
 
+  # Read movie status from the DB (authoritative) rather than the locally-cached
+  # watchlist: a just-approved/created movie is reflected even before its
+  # `:movie_created` broadcast (a different PubSub topic, no cross-topic ordering)
+  # has patched @watchlist on this client.
   defp assign_movie_status(socket) do
-    assign(socket, movie_status: Map.new(socket.assigns.watchlist, &{&1.tmdb_id, &1.status}))
+    assign(socket, movie_status: Map.new(Catalog.list_watchlist(), &{&1.tmdb_id, &1.status}))
   end
 
   defp latest_request_status(requests) do

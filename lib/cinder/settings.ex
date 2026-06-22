@@ -338,10 +338,21 @@ defmodule Cinder.Settings do
 
   # A DB value overlays the env bootstrap; a cleared setting reverts to it. Mirrors
   # apply_media_server/1 (a flat :cinder key rather than a {module, field} target).
+  # Capture the bootstrap eagerly (every call, before the overlay) so base/1 snapshots the
+  # pre-overlay env — otherwise a cleared setting would re-capture the already-overlaid value.
+  # Mirrors apply_media_server/1.
   defp apply_library_path(rows) do
-    case decoded_for(rows, @library_path_key) do
-      nil -> Application.put_env(:cinder, :library_path, base(:library_path))
-      value -> Application.put_env(:cinder, :library_path, value)
+    fallback = base_library_path()
+    Application.put_env(:cinder, :library_path, decoded_for(rows, @library_path_key) || fallback)
+  end
+
+  # base/1 defaults to [] for the keyword-list config keys; library_path is a flat
+  # string, so coerce an unset bootstrap (LIBRARY_PATH absent → []) to nil. Health
+  # then reports :not_configured rather than crashing on a list-typed path.
+  defp base_library_path do
+    case base(:library_path) do
+      path when is_binary(path) -> path
+      _ -> nil
     end
   end
 
