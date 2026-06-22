@@ -5,6 +5,7 @@ defmodule Cinder.CatalogTvPipelineTest do
 
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Grab, Season, Series}
+  alias Ecto.Adapters.SQL, as: EctoSQL
 
   @past ~D[2001-01-01]
   @future ~D[2099-01-01]
@@ -210,6 +211,29 @@ defmodule Cinder.CatalogTvPipelineTest do
       assert Repo.get(Episode, e2.id).search_attempts == 4
 
       assert :ok = Catalog.increment_search_attempts([])
+    end
+  end
+
+  describe "wanted_episodes/0 index" do
+    test "is backed by the partial wanted index (no full episodes scan)" do
+      %{rows: idx_rows} =
+        Repo.query!("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='episodes'")
+
+      assert "episodes_wanted_index" in List.flatten(idx_rows)
+
+      q =
+        from e in Episode,
+          join: s in assoc(e, :season),
+          where:
+            s.season_number > 0 and e.monitored and is_nil(e.file_path) and is_nil(e.grab_id) and
+              not is_nil(e.air_date) and e.air_date <= ^Date.utc_today(),
+          select: e.id
+
+      {sql, params} = EctoSQL.to_sql(:all, Repo, q)
+      %{rows: plan_rows} = Repo.query!("EXPLAIN QUERY PLAN " <> sql, params)
+      plan = Enum.map_join(plan_rows, "\n", &Enum.join(&1, " "))
+
+      refute plan =~ ~r/SCAN episodes\b/, "wanted query should not full-scan episodes:\n#{plan}"
     end
   end
 
