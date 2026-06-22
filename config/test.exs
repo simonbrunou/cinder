@@ -95,4 +95,7 @@ config :cinder, start_poller: false
 # Enable /dev routes in tests so the authorization matrix can gate them.
 config :cinder, dev_routes: true
 
+# First-run redirect off by default in test; the routing test flips it on locally.
+config :cinder, :enforce_setup, false
+
 config :cinder, :library_path, "/tmp/cinder-test-library"
