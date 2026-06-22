@@ -7,7 +7,7 @@ defmodule Cinder.Catalog do
   """
   import Ecto.Query
 
-  alias Cinder.Catalog.{Episode, Movie, Season, Series}
+  alias Cinder.Catalog.{Episode, Grab, Movie, Season, Series}
   alias Cinder.Repo
 
   @topic "movies"
@@ -325,8 +325,115 @@ defmodule Cinder.Catalog do
     end
   end
 
+  @doc """
+  Single choke-point for episode **pipeline** writes (`file_path`, `grab_id`, attempt
+  counters — no status enum; episode state is derived). On success broadcasts
+  `{:series_updated, series_id}` on the `"series"` topic. `monitored` is NOT written here —
+  it is not pipeline state and keeps `set_episode_monitored/2`.
+  """
+  def transition_episode(%Episode{} = episode, attrs) do
+    with {:ok, updated} <- episode |> Episode.transition_changeset(attrs) |> Repo.update() do
+      broadcast_series(series_id_for_season(updated.season_id))
+      {:ok, updated}
+    end
+  end
+
+  defp now, do: DateTime.truncate(DateTime.utc_now(), :second)
+
+  @doc """
+  Creates a grab for `episode_ids` (a non-empty list of episodes in one series — a single
+  episode or a season pack) and links them in one transaction, then broadcasts
+  `{:series_updated, series_id}`. A changeset failure (e.g. a missing `download_id`) rolls the
+  whole thing back as `{:error, changeset}` rather than raising, mirroring `set_season_monitored/2`.
+  """
+  def create_grab(download_id, protocol, episode_ids) do
+    result =
+      Repo.transaction(fn ->
+        case %Grab{}
+             |> Grab.changeset(%{download_id: download_id, download_protocol: protocol})
+             |> Repo.insert() do
+          {:ok, grab} ->
+            Repo.update_all(
+              from(e in Episode, where: e.id in ^episode_ids),
+              set: [grab_id: grab.id, updated_at: now()]
+            )
+
+            grab
+
+          {:error, changeset} ->
+            Repo.rollback(changeset)
+        end
+      end)
+
+    with {:ok, grab} <- result do
+      broadcast_series(series_id_for_grab(grab.id))
+      {:ok, grab}
+    end
+  end
+
+  @doc "Marks a grab downloaded (records `content_path`, the at-rest path to import) and broadcasts."
+  def mark_grab_downloaded(%Grab{} = grab, content_path) do
+    with {:ok, grab} <- grab |> Grab.changeset(%{content_path: content_path}) |> Repo.update() do
+      broadcast_series(series_id_for_grab(grab.id))
+      {:ok, grab}
+    end
+  end
+
+  @doc """
+  Deletes a grab; the `grab_id` FK (`on_delete: :nilify_all`) unlinks its episodes. Broadcasts
+  `{:series_updated, series_id}` (captured before the delete, while the links still exist).
+  """
+  def delete_grab(%Grab{} = grab) do
+    series_id = series_id_for_grab(grab.id)
+
+    with {:ok, grab} <- Repo.delete(grab) do
+      broadcast_series(series_id)
+      {:ok, grab}
+    end
+  end
+
+  @doc "Grabs still downloading (no `content_path` yet)."
+  def list_grabs_downloading, do: Repo.all(from g in Grab, where: is_nil(g.content_path))
+
+  @doc "Grabs downloaded and awaiting import (`content_path` set)."
+  def list_grabs_downloaded, do: Repo.all(from g in Grab, where: not is_nil(g.content_path))
+
+  @doc """
+  The SQL-expressible wanted set: monitored episodes with no file and no active grab whose
+  `air_date` has passed (set and `<= today`). Preloads `season: :series` for the poller's
+  search + season-grouping. Backoff/bound filtering (search_attempts, retry window) is applied
+  by the TV poller, matching the movie poller's split. Gated on the leaf `episode.monitored`
+  flag (the cascade/add keep it the single source of truth).
+  """
+  def wanted_episodes do
+    today = Date.utc_today()
+
+    Repo.all(
+      from e in Episode,
+        where:
+          e.monitored and is_nil(e.file_path) and is_nil(e.grab_id) and
+            not is_nil(e.air_date) and e.air_date <= ^today,
+        preload: [season: :series]
+    )
+  end
+
+  defp series_id_for_grab(grab_id) do
+    Repo.one(
+      from e in Episode,
+        join: s in Season,
+        on: s.id == e.season_id,
+        where: e.grab_id == ^grab_id,
+        select: s.series_id,
+        limit: 1
+    )
+  end
+
   defp series_id_for_season(season_id),
     do: Repo.one(from s in Season, where: s.id == ^season_id, select: s.series_id)
+
+  # A nil series_id (e.g. a grab whose episodes were all unlinked) is a no-op, so callers
+  # don't each need to guard it.
+  defp broadcast_series(nil), do: :ok
 
   defp broadcast_series(series_id),
     do: Phoenix.PubSub.broadcast(Cinder.PubSub, @series_topic, {:series_updated, series_id})

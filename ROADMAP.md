@@ -473,6 +473,26 @@ the OTP skeleton (stateless, bounded-retry, isolated); rewrite only the work it 
 the correct hardlink layout against mocked FS + media server, mapping each pack file to its
 `Episode` row, and an unmatchable file parks gracefully.
 
+**[M5a done 2026-06-22 — data layer]** (design: `docs/specs/2026-06-22-m5-design.md`, plan:
+`docs/plans/2026-06-22-m5a-tv-pipeline-data-model.md`; PR #24). Split M5 (XL) into **M5a (data,
+shipped)** + **M5b (acquisition logic)** + **M5c (poller + multi-file import; carries the Done
+when)**. M5a ships the **grab-centric** schema: episodes stay status-less (state is derived —
+`file_path` ⇒ available, `grab_id` ⇒ downloading, else monitored+aired+missing ⇒ wanted, per the
+`episode.ex` "never a bare status sweep" rule), and a transient `grabs` table owns the download
+(one download → N episodes; `content_path` nil ⇒ downloading, set ⇒ ready to import). Additive
+migration; movie loop untouched. Catalog gained `transition_episode/2` (episode pipeline
+choke-point, broadcasts on the existing `"series"` topic), the grab lifecycle (`create_grab/3` in
+one transaction, `mark_grab_downloaded/2`, `delete_grab/1` via FK `:nilify_all`,
+`list_grabs_downloading/0`, `list_grabs_downloaded/0`), and `wanted_episodes/0` (SQL-expressible
+set; backoff/bound filtering stays in the M5c poller). Decisions (council + user): grab-centric
+over mirror-Movie (no episode status enum; the locked "grab/download join table" realized as a
+one-to-many `grab_id` FK, not a join table); grabs transient (deleted after import/park); TV stays
+**admin-direct** — the requester→approval flow is deferred out of M5. `/code-review` (xhigh recall)
+findings addressed: `create_grab` uses `Repo.insert` + `Repo.rollback` (not `insert!`, matching
+`set_season_monitored`); `broadcast_series/1` nil-safe. `mix test` green (417). **Deferred to M5b:**
+parser S0xE0y/packs/ranges, Indexer TV callback, Scorer pack-vs-episode. **Deferred to M5c:** the
+`Cinder.Download.TvPoller`, `Library.import_episode/import_pack`, the pack fan-out transaction.
+
 ### M6 — TV monitoring sweep + RSS/calendar (M)
 
 **Goal:** close the Sonarr loop — a wanted-episodes query drives the search sweep efficiently,
