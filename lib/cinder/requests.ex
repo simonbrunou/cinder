@@ -3,6 +3,7 @@ defmodule Cinder.Requests do
   import Ecto.Query
   alias Cinder.Accounts.User
   alias Cinder.Catalog
+  alias Cinder.Notifier
   alias Cinder.Repo
   alias Cinder.Requests.Request
   alias Cinder.Settings
@@ -23,15 +24,29 @@ defmodule Cinder.Requests do
   end
 
   def create_request(%User{} = user, attrs) do
-    if user.role == :admin or Settings.auto_approve_all?() do
-      approver_id = if user.role == :admin, do: user.id, else: nil
-      create_approved(user, attrs, approver_id)
-    else
-      %Request{}
-      |> Request.create_changeset(Map.merge(attrs, %{user_id: user.id, status: :pending}))
-      |> Repo.insert()
-      |> tap_ok(&broadcast({:request_created, &1}))
+    cond do
+      user.role == :admin or Settings.auto_approve_all?() ->
+        approver_id = if user.role == :admin, do: user.id, else: nil
+        create_approved(user, attrs, approver_id)
+
+      over_quota?(user) ->
+        {:error, :quota_exceeded}
+
+      true ->
+        %Request{}
+        |> Request.create_changeset(Map.merge(attrs, %{user_id: user.id, status: :pending}))
+        |> Repo.insert()
+        |> tap_ok(&broadcast({:request_created, &1}))
     end
+  end
+
+  defp over_quota?(%User{request_quota: nil}), do: false
+
+  defp over_quota?(%User{request_quota: quota, id: id}) do
+    pending =
+      Repo.aggregate(from(r in Request, where: r.user_id == ^id and r.status == :pending), :count)
+
+    pending >= quota
   end
 
   def approve_request(%Request{status: :pending} = request, %User{} = admin) do
@@ -46,7 +61,7 @@ defmodule Cinder.Requests do
         {:error, cs} -> Repo.rollback(cs)
       end
     end)
-    |> tap_ok(&broadcast({:request_approved, &1}))
+    |> tap_ok(&announce_approved/1)
   end
 
   def approve_request(%Request{}, _admin), do: {:error, :not_pending}
@@ -78,7 +93,12 @@ defmodule Cinder.Requests do
         {:error, cs} -> Repo.rollback(cs)
       end
     end)
-    |> tap_ok(&broadcast({:request_approved, &1}))
+    |> tap_ok(&announce_approved/1)
+  end
+
+  defp announce_approved(request) do
+    broadcast({:request_approved, request})
+    Notifier.notify({:request_approved, request})
   end
 
   defp movie_attrs(%Request{} = r) do

@@ -89,4 +89,43 @@ defmodule Cinder.RequestsTest do
     assert {:ok, %{status: :approved}} = Requests.create_request(user, @attrs)
     assert [%Movie{status: :requested}] = Catalog.list_by_status(:requested)
   end
+
+  test "concurrent-pending quota blocks the over-limit request (different targets)" do
+    user = user_fixture()
+    {:ok, user} = Cinder.Accounts.update_user_quota(user, 1)
+
+    assert {:ok, %{status: :pending}} = Requests.create_request(user, @attrs)
+    other = Map.put(@attrs, :target_id, 604)
+    assert {:error, :quota_exceeded} = Requests.create_request(user, other)
+  end
+
+  test "quota does not apply to admins or the auto_approve_all path" do
+    admin = admin_fixture()
+    {:ok, admin} = Cinder.Accounts.update_user_quota(admin, 0)
+    assert {:ok, %{status: :approved}} = Requests.create_request(admin, @attrs)
+
+    Cinder.Settings.put("auto_approve_all", "true")
+    user = user_fixture()
+    {:ok, user} = Cinder.Accounts.update_user_quota(user, 0)
+
+    assert {:ok, %{status: :approved}} =
+             Requests.create_request(user, Map.put(@attrs, :target_id, 605))
+  end
+
+  test "nil quota is unlimited" do
+    user = user_fixture()
+    assert {:ok, %{status: :pending}} = Requests.create_request(user, @attrs)
+
+    assert {:ok, %{status: :pending}} =
+             Requests.create_request(user, Map.put(@attrs, :target_id, 606))
+  end
+
+  test "approval emits a notifier event" do
+    Cinder.TestNotifier.subscribe()
+    user = user_fixture()
+    admin = admin_fixture()
+    {:ok, req} = Requests.create_request(user, @attrs)
+    {:ok, _} = Requests.approve_request(req, admin)
+    assert_receive {:notify, {:request_approved, %{title: "The Matrix"}}}
+  end
 end
