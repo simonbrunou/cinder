@@ -46,8 +46,10 @@ defmodule CinderWeb.SeriesDetailLive do
     with {id, ""} <- Integer.parse(id),
          %Season{} = season <- find_season(socket.assigns.series, id) do
       # Bulk action: if every episode is already monitored, turn the season off; else on.
-      {:ok, _} = Catalog.set_season_monitored(season, not all_monitored?(season))
-      {:noreply, reload(socket)}
+      case Catalog.set_season_monitored(season, not all_monitored?(season)) do
+        {:ok, _} -> {:noreply, reload(socket)}
+        {:error, _} -> {:noreply, put_flash(socket, :error, "Couldn't update the season.")}
+      end
     else
       _ -> {:noreply, socket}
     end
@@ -62,8 +64,14 @@ defmodule CinderWeb.SeriesDetailLive do
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
-  defp reload(socket),
-    do: assign(socket, series: Catalog.get_series_with_tree(socket.assigns.series.id))
+  # Guard the series vanishing out from under an open page (no delete path today, but a
+  # reload that assigned nil would nil-deref the next render): bounce back to the list.
+  defp reload(socket) do
+    case Catalog.get_series_with_tree(socket.assigns.series.id) do
+      nil -> socket |> put_flash(:error, "Series not found.") |> push_navigate(to: ~p"/series")
+      series -> assign(socket, series: series)
+    end
+  end
 
   defp find_episode(series, id) do
     series.seasons |> Enum.flat_map(& &1.episodes) |> Enum.find(&(&1.id == id))

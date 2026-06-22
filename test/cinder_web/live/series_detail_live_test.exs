@@ -98,6 +98,17 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert render(lv) =~ "Test Show"
   end
 
+  test "a series that vanishes out-of-band redirects on the next reload", %{conn: conn} do
+    series = create_series(705)
+    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+
+    # Delete the tree (cascades), then a series broadcast forces a reload that finds nothing.
+    Repo.delete!(series)
+    Phoenix.PubSub.broadcast(Cinder.PubSub, "series", {:series_updated, series.id})
+
+    assert_redirect(lv, "/series")
+  end
+
   test "a non-admin cannot reach the detail page", %{conn: conn} do
     series = create_series(704)
     user = user_fixture()

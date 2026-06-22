@@ -302,19 +302,27 @@ defmodule Cinder.Catalog do
   def set_season_monitored(%Season{} = season, monitored?) do
     now = DateTime.truncate(DateTime.utc_now(), :second)
 
-    {:ok, season} =
+    result =
       Repo.transaction(fn ->
-        {:ok, season} = season |> Ecto.Changeset.change(monitored: monitored?) |> Repo.update()
+        case season |> Ecto.Changeset.change(monitored: monitored?) |> Repo.update() do
+          {:ok, season} ->
+            Repo.update_all(from(e in Episode, where: e.season_id == ^season.id),
+              set: [monitored: monitored?, updated_at: now]
+            )
 
-        Repo.update_all(from(e in Episode, where: e.season_id == ^season.id),
-          set: [monitored: monitored?, updated_at: now]
-        )
+            season
 
-        season
+          # Surface a write failure as {:error, changeset} (mirroring set_episode_monitored)
+          # rather than raising — the cascade is one transaction, so roll the whole thing back.
+          {:error, changeset} ->
+            Repo.rollback(changeset)
+        end
       end)
 
-    broadcast_series(season.series_id)
-    {:ok, season}
+    with {:ok, season} <- result do
+      broadcast_series(season.series_id)
+      {:ok, season}
+    end
   end
 
   defp series_id_for_season(season_id),
