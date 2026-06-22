@@ -590,9 +590,14 @@ self-scheduling GenServer mirroring the poller skeleton, `:start_poller`-gated, 
 config (not `/settings` — no int-coercion seam there); (4) `Catalog.upcoming_episodes/0` +
 admin-gated `/calendar` LiveView (windowed `today-7..+90`, derived per-episode state badge, live via
 the `"series"` topic). Decisions (user-approved): all three pieces in one session; **fresh + grow**
-refresh depth; the renumber-collision ceiling (a true mid-season reorder is logged + skipped, not
-crashed/rolled-back — self-heals over cycles; two-pass renumber is the upgrade path; the Done-when
-case is collision-free). **Deferred:** specials grabbing (parser limit); per-episode TV size-band as
+refresh depth. A post-merge `/code-review` (PR #30) surfaced that the initially-deferred renumber
+ceiling ("self-heals") was inaccurate — a mid-season reorder/shift collides across the board and
+stays stale — so on user decision M6 also shipped: **two-pass renumber** (park each matched row to a
+unique `-(id)` sentinel → finalize to target → insert new; reorders/swaps/shifts now apply cleanly;
+the only residual collision is a target reusing a *vanished* row's retained slot, logged + skipped)
+and **series-row reconciliation** (backfill `tvdb_id`/`title`/`year`/`poster_path` from TMDB,
+preserving `tmdb_id`/`monitored`/`monitor_strategy`), plus a Refresher log on `refresh_series`
+`{:error}`. `mix test` green (501). **Deferred:** specials grabbing (parser limit); per-episode TV size-band as
 a `/settings` field (M8); the **movies/TV library-path split** (now an M8 build-item — today a single
 `:cinder, :library_path` roots both importers); vanished-row deletion. `mix test` green (496).
 

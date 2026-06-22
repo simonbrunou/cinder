@@ -271,4 +271,33 @@ defmodule Cinder.CatalogRefreshTest do
     assert {:ok, _} = Catalog.refresh_series(s)
     assert_receive {:series_updated, ^id}
   end
+
+  test "moves a matched episode to a new season in place (cross-season renumber)" do
+    s = series(:all)
+    s1 = season(s, 1)
+
+    # The episode currently lives in season 1; TMDB now lists it (same tmdb_episode_id) in season 2.
+    ep =
+      episode(s1, %{
+        tmdb_episode_id: 1,
+        episode_number: 1,
+        title: "Moved",
+        file_path: "/lib/m.mkv"
+      })
+
+    stub_tmdb(s, [
+      {1, []},
+      {2, [%{tmdb_episode_id: 1, episode_number: 1, title: "Moved", air_date: @past}]}
+    ])
+
+    assert {:ok, _} = Catalog.refresh_series(s)
+
+    s2 = Repo.get_by!(Season, series_id: s.id, season_number: 2)
+    r = Repo.get!(Episode, ep.id)
+    # Same row, moved across seasons (no duplicate, file_path preserved through park→finalize).
+    assert r.season_id == s2.id
+    assert r.episode_number == 1
+    assert r.file_path == "/lib/m.mkv"
+    assert Repo.aggregate(from(e in Episode, where: e.season_id == ^s2.id), :count) == 1
+  end
 end
