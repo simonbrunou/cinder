@@ -64,12 +64,12 @@ defmodule CinderWeb.WatchlistLive do
         if m.id == movie.id, do: movie, else: m
       end)
 
-    {:noreply, assign_movie_status(assign(socket, watchlist: watchlist))}
+    {:noreply, socket |> assign(watchlist: watchlist) |> patch_movie_status(movie)}
   end
 
   @impl true
   def handle_info({:movie_created, movie}, socket) do
-    {:noreply, assign_movie_status(update(socket, :watchlist, &[movie | &1]))}
+    {:noreply, socket |> update(:watchlist, &[movie | &1]) |> patch_movie_status(movie)}
   end
 
   @impl true
@@ -121,12 +121,20 @@ defmodule CinderWeb.WatchlistLive do
     assign_movie_status(assign(socket, request_status: request_status))
   end
 
-  # Read movie status from the DB (authoritative) rather than the locally-cached
-  # watchlist: a just-approved/created movie is reflected even before its
-  # `:movie_created` broadcast (a different PubSub topic, no cross-topic ordering)
-  # has patched @watchlist on this client.
+  # Read the full movie-status map from the DB (authoritative). Used on the infrequent
+  # paths — mount, add, request events — where a just-approved/created movie may not be
+  # in the locally-cached watchlist yet (its `:movie_created` broadcast rides a different
+  # topic with no cross-topic ordering guarantee).
   defp assign_movie_status(socket) do
     assign(socket, movie_status: Map.new(Catalog.list_watchlist(), &{&1.tmdb_id, &1.status}))
+  end
+
+  # The high-frequency movie events carry the changed movie, so patch the one entry
+  # rather than re-scanning the whole watchlist table on every pipeline transition.
+  defp patch_movie_status(socket, movie) do
+    assign(socket,
+      movie_status: Map.put(socket.assigns.movie_status, movie.tmdb_id, movie.status)
+    )
   end
 
   defp latest_request_status(requests) do

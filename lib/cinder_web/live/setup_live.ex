@@ -42,6 +42,19 @@ defmodule CinderWeb.SetupLive do
     end
   end
 
+  # Per-service Test buttons (rendered by the shared SettingsComponents) probe one
+  # saved service and refresh the green/red badge + the Finish gate.
+  def handle_event("test", %{"service" => svc}, socket) do
+    case decode_service(svc) do
+      nil ->
+        {:noreply, socket}
+
+      service ->
+        health = Map.put(socket.assigns.health, svc, Health.check_service(service))
+        {:noreply, assign(socket, health: health, can_finish: all_green?(health))}
+    end
+  end
+
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   defp check(svc), do: Health.check_service(decode_service(svc))

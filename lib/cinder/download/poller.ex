@@ -170,8 +170,10 @@ defmodule Cinder.Download.Poller do
   defp import_one(movie) do
     case Library.import_movie(movie) do
       {:ok, _dest} ->
-        {:ok, available} = Catalog.transition(movie, %{status: :available})
-        Notifier.notify({:movie_available, available})
+        # On the (rare) transition error, leave the movie :downloaded for next-tick
+        # retry rather than raising — matching the poller's ignore-and-retry convention.
+        with {:ok, available} <- Catalog.transition(movie, %{status: :available}),
+             do: Notifier.notify({:movie_available, available})
 
       {:error, reason} when reason in @permanent_import_errors ->
         Logger.warning("import permanently failed for movie #{movie.id}: #{inspect(reason)}")
@@ -207,9 +209,8 @@ defmodule Cinder.Download.Poller do
   # A terminal failure park: transition once (the choke-point) then notify. Keeps
   # every "movie gave up" path emitting the same event with no per-site duplication.
   defp park(movie, status, reason) do
-    {:ok, parked} = Catalog.transition(movie, %{status: status})
-    Notifier.notify({:movie_failed, parked, reason})
-    {:ok, parked}
+    with {:ok, parked} <- Catalog.transition(movie, %{status: status}),
+         do: Notifier.notify({:movie_failed, parked, reason})
   end
 
   # Per-movie isolation: an unexpected raise skips that one movie (leaving it at

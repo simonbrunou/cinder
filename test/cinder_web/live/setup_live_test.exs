@@ -38,6 +38,7 @@ defmodule CinderWeb.SetupLiveTest do
     stub(Cinder.Catalog.TMDBMock, :health, fn -> :ok end)
     stub(Cinder.Acquisition.IndexerMock, :health, fn -> :ok end)
     stub(Cinder.Download.ClientMock, :health, fn -> :ok end)
+    stub(Cinder.Download.SabnzbdClientMock, :health, fn -> :ok end)
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
 
     Req.Test.set_req_test_to_shared()
@@ -73,6 +74,17 @@ defmodule CinderWeb.SetupLiveTest do
 
     assert has_element?(lv, "#finish-setup[disabled]")
     refute Cinder.Settings.setup_complete?()
+  end
+
+  test "a per-service Test button updates that service's badge", %{conn: conn} do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    conn = log_in_user(conn, admin)
+    stub(Cinder.Catalog.TMDBMock, :health, fn -> :ok end)
+
+    {:ok, lv, _html} = live(conn, ~p"/setup")
+    html = lv |> element("button", "Test TMDB") |> render_click()
+
+    assert html =~ "ok"
   end
 
   test "non-admins cannot reach /setup", %{conn: conn} do
