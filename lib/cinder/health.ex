@@ -33,6 +33,13 @@ defmodule Cinder.Health do
     end
   end
 
+  def check_service(:library) do
+    case Application.get_env(:cinder, :library_path) do
+      blank when blank in [nil, ""] -> {:error, :not_configured}
+      path -> library_writable(path)
+    end
+  end
+
   defp indexer_check do
     mod = Application.fetch_env!(:cinder, :indexer)
     check("Indexer (#{short(mod)})", mod)
@@ -58,6 +65,20 @@ defmodule Cinder.Health do
   # pool-checkout timeout deep in the HTTP stack) that `rescue` would miss.
   defp run(mod) do
     case mod.health() do
+      :ok -> :ok
+      {:error, _} = err -> err
+    end
+  rescue
+    e -> {:error, e}
+  catch
+    kind, value -> {:error, {kind, value}}
+  end
+
+  # The library import target isn't a behaviour with health/0; "reachable" means the
+  # configured path is writable. mkdir_p on an existing dir is a no-op, so this is a
+  # cheap probe through the same Filesystem behaviour the import uses (mockable in tests).
+  defp library_writable(path) do
+    case Application.fetch_env!(:cinder, :filesystem).mkdir_p(path) do
       :ok -> :ok
       {:error, _} = err -> err
     end

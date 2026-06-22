@@ -24,6 +24,7 @@ defmodule Cinder.Download.Poller do
   alias Cinder.Catalog
   alias Cinder.Download
   alias Cinder.Library
+  alias Cinder.Notifier
 
   @default_interval 5_000
   @search_retry_after 60
@@ -95,11 +96,11 @@ defmodule Cinder.Download.Poller do
         :ok
 
       {:error, :no_imdb_id} ->
-        Catalog.transition(movie, %{status: :no_match})
+        park(movie, :no_match, :no_imdb_id)
 
       {:error, reason} when reason in @permanent_search_errors ->
         Logger.warning("movie #{movie.id} search failed permanently: #{inspect(reason)}")
-        Catalog.transition(movie, %{status: :search_failed})
+        park(movie, :search_failed, reason)
 
       {:error, reason} ->
         # Re-read so the counter write preserves start/1's current status
@@ -169,11 +170,14 @@ defmodule Cinder.Download.Poller do
   defp import_one(movie) do
     case Library.import_movie(movie) do
       {:ok, _dest} ->
-        Catalog.transition(movie, %{status: :available})
+        # On the (rare) transition error, leave the movie :downloaded for next-tick
+        # retry rather than raising — matching the poller's ignore-and-retry convention.
+        with {:ok, available} <- Catalog.transition(movie, %{status: :available}),
+             do: Notifier.notify({:movie_available, available})
 
       {:error, reason} when reason in @permanent_import_errors ->
         Logger.warning("import permanently failed for movie #{movie.id}: #{inspect(reason)}")
-        Catalog.transition(movie, %{status: :import_failed})
+        park(movie, :import_failed, reason)
 
       {:error, reason} ->
         retry_or_fail(movie, reason, :import_attempts, :import_failed)
@@ -191,7 +195,7 @@ defmodule Cinder.Download.Poller do
         "movie #{movie.id} #{attempts_field} exhausted after #{attempts}: #{inspect(reason)}"
       )
 
-      Catalog.transition(movie, %{status: terminal_status})
+      park(movie, terminal_status, reason)
     else
       Logger.info(
         "movie #{movie.id} #{attempts_field} #{attempts}/#{@max_attempts} failed (#{inspect(reason)}); will retry"
@@ -200,6 +204,13 @@ defmodule Cinder.Download.Poller do
       # Dynamic key MUST come before keyword pairs in a map literal.
       Catalog.transition(movie, %{attempts_field => attempts, status: movie.status})
     end
+  end
+
+  # A terminal failure park: transition once (the choke-point) then notify. Keeps
+  # every "movie gave up" path emitting the same event with no per-site duplication.
+  defp park(movie, status, reason) do
+    with {:ok, parked} <- Catalog.transition(movie, %{status: status}),
+         do: Notifier.notify({:movie_failed, parked, reason})
   end
 
   # Per-movie isolation: an unexpected raise skips that one movie (leaving it at

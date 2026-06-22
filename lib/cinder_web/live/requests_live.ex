@@ -47,6 +47,12 @@ defmodule CinderWeb.RequestsLive do
           :for={r <- @pending}
           class="card bg-base-200 p-4 flex flex-row items-center gap-4"
         >
+          <img
+            :if={r.poster_path}
+            src={"https://image.tmdb.org/t/p/w92" <> r.poster_path}
+            alt={r.title}
+            class="w-12 rounded"
+          />
           <div class="flex-1">
             <span class="font-semibold">{r.title}</span>
             <span :if={r.year} class="opacity-60">({r.year})</span>

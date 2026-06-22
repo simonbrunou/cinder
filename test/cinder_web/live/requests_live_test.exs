@@ -56,4 +56,20 @@ defmodule CinderWeb.RequestsLiveTest do
     render_hook(lv, "bogus", %{})
     assert render(lv) =~ "Pending requests"
   end
+
+  test "the pending queue shows the poster", %{conn: conn} do
+    user = user_fixture()
+
+    {:ok, _} =
+      Cinder.Requests.create_request(user, %{
+        target_type: "movie",
+        target_id: 9,
+        title: "P",
+        year: 2009,
+        poster_path: "/poster.jpg"
+      })
+
+    {:ok, _lv, html} = live(conn, ~p"/requests")
+    assert html =~ "/poster.jpg"
+  end
 end

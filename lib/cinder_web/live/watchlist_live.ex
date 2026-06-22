@@ -1,6 +1,10 @@
 defmodule CinderWeb.WatchlistLive do
   @moduledoc """
   Search TMDB and build a watchlist. Mounted at `/`.
+
+  Search results show the current user's relationship to each title (Pending /
+  Approved / Available / Denied) instead of a bare Add button, cross-referencing the
+  user's requests and the global movie rows. Live via the `movies` + `requests` topics.
   """
   use CinderWeb, :live_view
 
@@ -12,12 +16,16 @@ defmodule CinderWeb.WatchlistLive do
   def mount(_params, _session, socket) do
     # ponytail: subscribe-before-read closes the read/subscribe gap; full
     # reconciliation is Phase 5's dashboard concern.
-    if connected?(socket), do: Catalog.subscribe()
+    if connected?(socket) do
+      Catalog.subscribe()
+      Cinder.Requests.subscribe()
+    end
 
     {:ok,
      socket
      |> assign(query: "", results: [], search_error: false)
-     |> assign(watchlist: Catalog.list_watchlist())}
+     |> assign(watchlist: Catalog.list_watchlist())
+     |> assign_request_state()}
   end
 
   @impl true
@@ -56,12 +64,18 @@ defmodule CinderWeb.WatchlistLive do
         if m.id == movie.id, do: movie, else: m
       end)
 
-    {:noreply, assign(socket, watchlist: watchlist)}
+    {:noreply, socket |> assign(watchlist: watchlist) |> patch_movie_status(movie)}
   end
 
   @impl true
   def handle_info({:movie_created, movie}, socket) do
-    {:noreply, update(socket, :watchlist, &[movie | &1])}
+    {:noreply, socket |> update(:watchlist, &[movie | &1]) |> patch_movie_status(movie)}
+  end
+
+  @impl true
+  def handle_info({event, _request}, socket)
+      when event in [:request_created, :request_approved, :request_denied] do
+    {:noreply, assign_request_state(socket)}
   end
 
   @impl true
@@ -80,13 +94,61 @@ defmodule CinderWeb.WatchlistLive do
 
     case Cinder.Requests.create_request(user, attrs) do
       {:ok, %{status: :approved}} ->
-        put_flash(socket, :info, "#{movie.title} added.")
+        socket |> put_flash(:info, "#{movie.title} added.") |> assign_request_state()
 
       {:ok, %{status: :pending}} ->
-        put_flash(socket, :info, "#{movie.title} requested — awaiting approval.")
+        socket
+        |> put_flash(:info, "#{movie.title} requested — awaiting approval.")
+        |> assign_request_state()
+
+      {:error, :quota_exceeded} ->
+        put_flash(
+          socket,
+          :error,
+          "You've reached your request limit. Wait for approvals to clear."
+        )
 
       {:error, _} ->
         put_flash(socket, :error, "#{movie.title} is already requested.")
+    end
+  end
+
+  # The user's request status per target (latest wins — list_for_user is desc id) plus
+  # the global movie pipeline status per tmdb_id; together they drive the per-title badge.
+  defp assign_request_state(socket) do
+    user = socket.assigns.current_scope.user
+    request_status = latest_request_status(Cinder.Requests.list_for_user(user))
+    assign_movie_status(assign(socket, request_status: request_status))
+  end
+
+  # Read the full movie-status map from the DB (authoritative). Used on the infrequent
+  # paths — mount, add, request events — where a just-approved/created movie may not be
+  # in the locally-cached watchlist yet (its `:movie_created` broadcast rides a different
+  # topic with no cross-topic ordering guarantee).
+  defp assign_movie_status(socket) do
+    assign(socket, movie_status: Map.new(Catalog.list_watchlist(), &{&1.tmdb_id, &1.status}))
+  end
+
+  # The high-frequency movie events carry the changed movie, so patch the one entry
+  # rather than re-scanning the whole watchlist table on every pipeline transition.
+  defp patch_movie_status(socket, movie) do
+    assign(socket,
+      movie_status: Map.put(socket.assigns.movie_status, movie.tmdb_id, movie.status)
+    )
+  end
+
+  defp latest_request_status(requests) do
+    Enum.reduce(requests, %{}, fn r, acc -> Map.put_new(acc, r.target_id, r.status) end)
+  end
+
+  # Precedence: an available movie outranks a stale denied/approved request.
+  defp title_state(tmdb_id, request_status, movie_status) do
+    cond do
+      movie_status[tmdb_id] == :available -> :available
+      request_status[tmdb_id] == :pending -> :pending
+      request_status[tmdb_id] == :approved -> :approved
+      request_status[tmdb_id] == :denied -> :denied
+      true -> :none
     end
   end
 
@@ -119,14 +181,10 @@ defmodule CinderWeb.WatchlistLive do
         <h2 class="sr-only">Search results</h2>
         <div id="results" class="grid grid-cols-2 sm:grid-cols-3 gap-4">
           <.movie_card :for={m <- @results} movie={m}>
-            <button
-              id={"add-#{m.tmdb_id}"}
-              phx-click="add"
-              phx-value-tmdb_id={m.tmdb_id}
-              class="btn btn-primary btn-sm w-full"
-            >
-              Add
-            </button>
+            <.result_action
+              state={title_state(m.tmdb_id, @request_status, @movie_status)}
+              tmdb_id={m.tmdb_id}
+            />
           </.movie_card>
         </div>
       </section>
@@ -148,6 +206,29 @@ defmodule CinderWeb.WatchlistLive do
     </Layouts.app>
     """
   end
+
+  attr :state, :atom, required: true
+  attr :tmdb_id, :integer, required: true
+
+  defp result_action(assigns) do
+    ~H"""
+    <span :if={@state != :none} class={["badge badge-sm", composite_class(@state)]}>{@state}</span>
+    <button
+      :if={@state in [:none, :denied]}
+      id={"add-#{@tmdb_id}"}
+      phx-click="add"
+      phx-value-tmdb_id={@tmdb_id}
+      class="btn btn-primary btn-sm w-full"
+    >
+      Add
+    </button>
+    """
+  end
+
+  defp composite_class(:pending), do: "badge-warning"
+  defp composite_class(:approved), do: "badge-info"
+  defp composite_class(:available), do: "badge-success"
+  defp composite_class(:denied), do: "badge-error"
 
   attr :movie, :map, required: true
   slot :inner_block

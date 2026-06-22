@@ -260,6 +260,26 @@ defmodule CinderWeb.UserAuth do
     end
   end
 
+  def on_mount(:require_setup, _params, _session, socket) do
+    cond do
+      not enforce_setup?() or Cinder.Settings.setup_complete?() ->
+        {:cont, socket}
+
+      admin?(socket.assigns[:current_scope]) ->
+        {:halt, Phoenix.LiveView.redirect(socket, to: ~p"/setup")}
+
+      true ->
+        socket =
+          socket
+          |> Phoenix.LiveView.put_flash(:error, "Setup in progress — try again shortly.")
+          |> Phoenix.LiveView.redirect(to: ~p"/users/log-in")
+
+        {:halt, socket}
+    end
+  end
+
+  defp enforce_setup?, do: Application.get_env(:cinder, :enforce_setup, true)
+
   defp mount_current_scope(socket, session) do
     Phoenix.Component.assign_new(socket, :current_scope, fn ->
       {user, _} =

@@ -47,7 +47,8 @@ config :cinder,
   tmdb: Cinder.Catalog.TMDBMock,
   indexer: Cinder.Acquisition.IndexerMock,
   media_server: Cinder.Library.MediaServerMock,
-  filesystem: Cinder.Library.FilesystemMock
+  filesystem: Cinder.Library.FilesystemMock,
+  notifier: Cinder.TestNotifier
 
 # Two client mocks so routing is testable by protocol: a torrent release must
 # reach ClientMock and a usenet release must reach SabnzbdClientMock.
@@ -93,5 +94,8 @@ config :cinder, start_poller: false
 
 # Enable /dev routes in tests so the authorization matrix can gate them.
 config :cinder, dev_routes: true
+
+# First-run redirect off by default in test; the routing test flips it on locally.
+config :cinder, :enforce_setup, false
 
 config :cinder, :library_path, "/tmp/cinder-test-library"

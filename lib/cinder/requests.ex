@@ -3,6 +3,7 @@ defmodule Cinder.Requests do
   import Ecto.Query
   alias Cinder.Accounts.User
   alias Cinder.Catalog
+  alias Cinder.Notifier
   alias Cinder.Repo
   alias Cinder.Requests.Request
   alias Cinder.Settings
@@ -27,11 +28,38 @@ defmodule Cinder.Requests do
       approver_id = if user.role == :admin, do: user.id, else: nil
       create_approved(user, attrs, approver_id)
     else
-      %Request{}
-      |> Request.create_changeset(Map.merge(attrs, %{user_id: user.id, status: :pending}))
-      |> Repo.insert()
-      |> tap_ok(&broadcast({:request_created, &1}))
+      create_pending(user, attrs)
     end
+  end
+
+  # Insert, then re-count inside one transaction. SQLite serializes write transactions,
+  # so the post-insert count sees any concurrently-committed pending row — closing the
+  # check-then-insert race a pre-insert count would leave open. (A truly concurrent test
+  # isn't possible under the single-connection Sandbox; the sequential cases cover the logic.)
+  defp create_pending(user, attrs) do
+    Repo.transaction(fn ->
+      with {:ok, request} <-
+             %Request{}
+             |> Request.create_changeset(Map.merge(attrs, %{user_id: user.id, status: :pending}))
+             |> Repo.insert(),
+           false <- over_quota?(user) do
+        request
+      else
+        true -> Repo.rollback(:quota_exceeded)
+        {:error, changeset} -> Repo.rollback(changeset)
+      end
+    end)
+    |> tap_ok(&broadcast({:request_created, &1}))
+  end
+
+  defp over_quota?(%User{request_quota: nil}), do: false
+
+  # Counts AFTER the insert, so the just-inserted row is included — hence `>` not `>=`.
+  defp over_quota?(%User{request_quota: quota, id: id}) do
+    pending =
+      Repo.aggregate(from(r in Request, where: r.user_id == ^id and r.status == :pending), :count)
+
+    pending > quota
   end
 
   def approve_request(%Request{status: :pending} = request, %User{} = admin) do
@@ -46,7 +74,7 @@ defmodule Cinder.Requests do
         {:error, cs} -> Repo.rollback(cs)
       end
     end)
-    |> tap_ok(&broadcast({:request_approved, &1}))
+    |> tap_ok(&announce_approved/1)
   end
 
   def approve_request(%Request{}, _admin), do: {:error, :not_pending}
@@ -78,7 +106,12 @@ defmodule Cinder.Requests do
         {:error, cs} -> Repo.rollback(cs)
       end
     end)
-    |> tap_ok(&broadcast({:request_approved, &1}))
+    |> tap_ok(&announce_approved/1)
+  end
+
+  defp announce_approved(request) do
+    broadcast({:request_approved, request})
+    Notifier.notify({:request_approved, request})
   end
 
   defp movie_attrs(%Request{} = r) do

@@ -51,18 +51,32 @@ defmodule CinderWeb.Router do
     pipe_through :browser
 
     live_session :authenticated,
-      on_mount: [{CinderWeb.UserAuth, :require_authenticated}] do
+      on_mount: [
+        {CinderWeb.UserAuth, :require_authenticated},
+        {CinderWeb.UserAuth, :require_setup}
+      ] do
       live "/", WatchlistLive
+      live "/my-requests", MyRequestsLive
     end
 
     live_session :admin,
       on_mount: [
         {CinderWeb.UserAuth, :require_authenticated},
-        {CinderWeb.UserAuth, :require_admin}
+        {CinderWeb.UserAuth, :require_admin},
+        {CinderWeb.UserAuth, :require_setup}
       ] do
       live "/status", StatusLive
       live "/settings", SettingsLive
       live "/requests", RequestsLive
+      live "/users", UsersLive
+    end
+
+    live_session :setup,
+      on_mount: [
+        {CinderWeb.UserAuth, :require_authenticated},
+        {CinderWeb.UserAuth, :require_admin}
+      ] do
+      live "/setup", SetupLive
     end
   end
 

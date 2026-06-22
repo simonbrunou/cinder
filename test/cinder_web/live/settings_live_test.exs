@@ -15,7 +15,8 @@ defmodule CinderWeb.SettingsLiveTest do
     Cinder.Library.MediaServer.Jellyfin,
     Cinder.Library.MediaServer.Plex,
     :media_server,
-    :download_clients
+    :download_clients,
+    :library_path
   ]
 
   setup :register_and_log_in_admin
@@ -40,7 +41,20 @@ defmodule CinderWeb.SettingsLiveTest do
     assert html =~ "TMDB"
     assert html =~ "Download clients"
     assert html =~ "Media server"
+    assert html =~ "Library"
+    assert html =~ ~s(name="library_path")
     assert html =~ "Save settings"
+  end
+
+  test "saving the library path overlays :cinder, :library_path", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    lv
+    |> form("#settings-form", %{"library_path" => "/srv/media", "media_server_type" => "jellyfin"})
+    |> render_submit()
+
+    assert Settings.get("library_path") == "/srv/media"
+    assert Application.fetch_env!(:cinder, :library_path) == "/srv/media"
   end
 
   test "never echoes a stored secret back to the client", %{conn: conn} do

@@ -465,4 +465,26 @@ defmodule Cinder.Download.PollerTest do
     assert :ok = Poller.poll()
     assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
   end
+
+  test "a movie reaching :available emits the available notifier event" do
+    Cinder.TestNotifier.subscribe()
+    movie = downloaded_movie(40, "/downloads/Inception.2010.1080p.mkv")
+    start_supervised!({Poller, interval: 60_000})
+    stub_successful_import()
+
+    assert :ok = Poller.poll()
+    assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
+    assert_receive {:notify, {:movie_available, %Movie{status: :available}}}
+  end
+
+  test "a parked movie emits the failed notifier event" do
+    Cinder.TestNotifier.subscribe()
+    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 41, title: "M"})
+    {:ok, _} = Catalog.transition(movie, %{status: :downloaded})
+    start_supervised!({Poller, interval: 60_000})
+
+    assert :ok = Poller.poll()
+    assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
+    assert_receive {:notify, {:movie_failed, %Movie{status: :import_failed}, :no_file_path}}
+  end
 end
