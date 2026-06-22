@@ -393,6 +393,25 @@ defmodule Cinder.Catalog do
   @doc "Grabs downloaded and awaiting import (`content_path` set)."
   def list_grabs_downloaded, do: Repo.all(from g in Grab, where: not is_nil(g.content_path))
 
+  @doc """
+  The SQL-expressible wanted set: monitored episodes with no file and no active grab whose
+  `air_date` has passed (set and `<= today`). Preloads `season: :series` for the poller's
+  search + season-grouping. Backoff/bound filtering (search_attempts, retry window) is applied
+  by the TV poller, matching the movie poller's split. Gated on the leaf `episode.monitored`
+  flag (the cascade/add keep it the single source of truth).
+  """
+  def wanted_episodes do
+    today = Date.utc_today()
+
+    Repo.all(
+      from e in Episode,
+        where:
+          e.monitored and is_nil(e.file_path) and is_nil(e.grab_id) and
+            not is_nil(e.air_date) and e.air_date <= ^today,
+        preload: [season: :series]
+    )
+  end
+
   defp series_id_for_grab(grab_id) do
     Repo.one(
       from e in Episode,

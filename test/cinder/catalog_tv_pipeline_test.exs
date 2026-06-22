@@ -7,6 +7,7 @@ defmodule Cinder.CatalogTvPipelineTest do
   alias Cinder.Catalog.{Episode, Grab, Season, Series}
 
   @past ~D[2001-01-01]
+  @future ~D[2099-01-01]
 
   defp series_with_season do
     series =
@@ -94,6 +95,39 @@ defmodule Cinder.CatalogTvPipelineTest do
       assert_receive {:series_updated, ^series_id}
       assert Repo.get(Grab, grab.id) == nil
       assert Repo.get(Episode, e1.id).grab_id == nil
+    end
+  end
+
+  describe "wanted_episodes/0" do
+    test "returns monitored, aired, file-less, grab-less episodes only" do
+      {_series, season} = series_with_season()
+      wanted = episode(season, %{air_date: @past, monitored: true})
+      _unaired = episode(season, %{air_date: @future, monitored: true})
+      _tba = episode(season, %{air_date: nil, monitored: true})
+      _unmonitored = episode(season, %{air_date: @past, monitored: false})
+
+      assert Enum.map(Catalog.wanted_episodes(), & &1.id) == [wanted.id]
+    end
+
+    test "excludes episodes with a file or an active grab" do
+      {_series, season} = series_with_season()
+      imported = episode(season, %{})
+      grabbed = episode(season, %{})
+      free = episode(season, %{})
+
+      {:ok, _} = Catalog.transition_episode(imported, %{file_path: "/x.mkv"})
+      {:ok, _} = Catalog.create_grab("H", :torrent, [grabbed.id])
+
+      assert Enum.map(Catalog.wanted_episodes(), & &1.id) == [free.id]
+    end
+
+    test "preloads season and series for the poller" do
+      {series, season} = series_with_season()
+      episode(season, %{})
+
+      assert [ep] = Catalog.wanted_episodes()
+      assert ep.season.id == season.id
+      assert ep.season.series.id == series.id
     end
   end
 end
