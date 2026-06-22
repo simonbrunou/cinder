@@ -61,6 +61,53 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
            ]
   end
 
+  test "search_tv/3 queries tvsearch by TVDB id + season and normalizes results" do
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      assert conn.request_path == "/api/v1/search"
+      assert conn.params["query"] == "{TvdbId:1396}{Season:1}"
+      assert conn.params["type"] == "tvsearch"
+      assert Plug.Conn.get_req_header(conn, "x-api-key") == ["test-key"]
+
+      Req.Test.json(conn, [
+        %{
+          "title" => "Breaking.Bad.S01E01.1080p.BluRay.x264-GRP",
+          "size" => 2_000_000_000,
+          "downloadUrl" => "http://prowlarr/file/1",
+          "seeders" => 30,
+          "protocol" => "torrent"
+        }
+      ])
+    end)
+
+    assert {:ok, [result]} = Prowlarr.search_tv(1396, "Breaking Bad", 1)
+
+    assert result == %{
+             title: "Breaking.Bad.S01E01.1080p.BluRay.x264-GRP",
+             size: 2_000_000_000,
+             download_url: "http://prowlarr/file/1",
+             seeders: 30,
+             protocol: :torrent
+           }
+  end
+
+  test "search_tv/3 falls back to a free-text title query when tvdb_id is nil" do
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      assert conn.params["query"] == "Breaking Bad {Season:2}"
+      assert conn.params["type"] == "tvsearch"
+      Req.Test.json(conn, [])
+    end)
+
+    assert {:ok, []} = Prowlarr.search_tv(nil, "Breaking Bad", 2)
+  end
+
+  test "search_tv/3 returns an error tuple on a non-200 status" do
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      conn |> Plug.Conn.put_status(500) |> Req.Test.json(%{"error" => "boom"})
+    end)
+
+    assert {:error, {:prowlarr_status, 500}} = Prowlarr.search_tv(1396, "Breaking Bad", 1)
+  end
+
   test "search/1 returns an error tuple on a non-200 status" do
     Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
       conn |> Plug.Conn.put_status(500) |> Req.Test.json(%{"error" => "boom"})

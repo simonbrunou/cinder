@@ -5,12 +5,26 @@ defmodule Cinder.Acquisition.ParserTest do
 
   test "parses a standard p2p release name" do
     assert Parser.parse("Inception.2010.1080p.BluRay.x264-RARBG") ==
-             %{resolution: "1080p", codec: "x264", group: "RARBG", language: nil}
+             %{
+               resolution: "1080p",
+               codec: "x264",
+               group: "RARBG",
+               language: nil,
+               season: nil,
+               episodes: nil
+             }
   end
 
   test "parses 2160p x265 with a language tag" do
     assert Parser.parse("Dune.2021.MULTI.2160p.UHD.BluRay.x265-TERMiNAL") ==
-             %{resolution: "2160p", codec: "x265", group: "TERMiNAL", language: "MULTI"}
+             %{
+               resolution: "2160p",
+               codec: "x265",
+               group: "TERMiNAL",
+               language: "MULTI",
+               season: nil,
+               episodes: nil
+             }
   end
 
   test "a hyphen in the title is not mistaken for a group" do
@@ -30,7 +44,14 @@ defmodule Cinder.Acquisition.ParserTest do
 
   test "unknown fields are nil" do
     assert Parser.parse("Just A Title") ==
-             %{resolution: nil, codec: nil, group: nil, language: nil}
+             %{
+               resolution: nil,
+               codec: nil,
+               group: nil,
+               language: nil,
+               season: nil,
+               episodes: nil
+             }
   end
 
   test "matching is case-insensitive" do
@@ -41,6 +62,97 @@ defmodule Cinder.Acquisition.ParserTest do
   test "a non-string title yields all-nil attrs instead of raising" do
     # An indexer result with a missing/null title must not crash best_release/2;
     # the parser stays total so the {:ok | :no_match | {:error, _}} contract holds.
-    assert Parser.parse(nil) == %{resolution: nil, codec: nil, group: nil, language: nil}
+    assert Parser.parse(nil) ==
+             %{
+               resolution: nil,
+               codec: nil,
+               group: nil,
+               language: nil,
+               season: nil,
+               episodes: nil
+             }
+  end
+
+  describe "TV season/episode parsing" do
+    test "a single episode (SxxEyy) sets season and a one-element episode list" do
+      assert %{season: 1, episodes: [2], resolution: "1080p", codec: "x265", group: "GRP"} =
+               Parser.parse("Show.S01E02.1080p.WEB-DL.x265-GRP")
+    end
+
+    test "the 1x02 form is read as a single episode" do
+      assert %{season: 1, episodes: [2], resolution: "720p", codec: "x264", group: "GRP"} =
+               Parser.parse("Show.Name.1x02.720p.HDTV.x264-GRP")
+    end
+
+    test "a range (SxxEyy-Ezz) expands to the inclusive episode list" do
+      assert %{season: 1, episodes: [1, 2, 3], group: "GRP"} =
+               Parser.parse("Show.S01E01-E03.1080p-GRP")
+    end
+
+    test "a double episode without a dash lists both" do
+      assert %{season: 1, episodes: [1, 2]} = Parser.parse("Show.S01E01E02.1080p")
+    end
+
+    test "a numbered season pack sets season with no episode list" do
+      assert %{season: 1, episodes: nil, group: "GRP"} =
+               Parser.parse("Show.S01.1080p.BluRay.x264-GRP")
+    end
+
+    test "the 'Season NN' word form is a season pack" do
+      assert %{season: 5, episodes: nil} = Parser.parse("Show.Season.05.720p")
+    end
+
+    test "a movie name has nil season and episodes" do
+      assert %{season: nil, episodes: nil} =
+               Parser.parse("Inception.2010.1080p.BluRay.x264-RARBG")
+    end
+  end
+
+  describe "TV parsing guards (deferred or junk → nil/nil)" do
+    test "a multi-season pack is rejected rather than read as season 1" do
+      # Any separator between two season tokens strands the others if mis-read as season 1.
+      assert %{season: nil, episodes: nil} = Parser.parse("Show.S01S02.COMPLETE.720p")
+      assert %{season: nil, episodes: nil} = Parser.parse("Show.Complete.S01-S03.1080p")
+      assert %{season: nil, episodes: nil} = Parser.parse("Show.S01.S02.COMPLETE.1080p")
+      assert %{season: nil, episodes: nil} = Parser.parse("Show.S01 S02.1080p")
+    end
+
+    test "two SxxEyy tokens (a multi-season release) are rejected, not read as the first" do
+      assert %{season: nil, episodes: nil} = Parser.parse("Show.S01E01.S02E02.GROUP")
+    end
+
+    test "a release group beginning S<digit> is not counted as a second season" do
+      # "S1CK"/"S5RT" are group fragments, not seasons — the pack stays season 1.
+      assert %{season: 1, episodes: nil} = Parser.parse("Show.S01.1080p.x265-S1CK")
+      assert %{season: 1, episodes: nil} = Parser.parse("Show.S01.1080p-S5RT")
+    end
+
+    test "S00 specials park (specials are M6 scope)" do
+      assert %{season: nil, episodes: nil} = Parser.parse("Show.S00E01.1080p")
+    end
+
+    test "the 1x00 form parks rather than yielding episode 0" do
+      assert %{season: nil, episodes: nil} = Parser.parse("Show.1x00.1080p")
+    end
+
+    test "year-as-season is not mistaken for a season" do
+      assert %{season: nil, episodes: nil} = Parser.parse("Show.S2009E12.720p")
+    end
+  end
+
+  describe "TV tail edge cases (keep the leading episode, drop trailing junk)" do
+    test "a hyphen-glued resolution keeps the episode instead of dropping the release" do
+      assert %{season: 1, episodes: [2], resolution: "720p"} =
+               Parser.parse("Show.S01E02-720p.WEB")
+    end
+
+    test "a descending range keeps the valid leading episode" do
+      assert %{season: 1, episodes: [3]} = Parser.parse("Show.S01E03-E01.1080p")
+    end
+
+    test "a dot- or space-separated single episode is not mistaken for a season pack" do
+      assert %{season: 1, episodes: [2]} = Parser.parse("Show.S01.E02.1080p.x265-GRP")
+      assert %{season: 1, episodes: [2]} = Parser.parse("Show S01 E02 1080p")
+    end
   end
 end

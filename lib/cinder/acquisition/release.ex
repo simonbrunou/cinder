@@ -19,7 +19,9 @@ defmodule Cinder.Acquisition.Release do
     :resolution,
     :codec,
     :group,
-    :language
+    :language,
+    :season,
+    :episodes
   ]
 
   @doc """

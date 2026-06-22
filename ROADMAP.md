@@ -493,6 +493,27 @@ findings addressed: `create_grab` uses `Repo.insert` + `Repo.rollback` (not `ins
 parser S0xE0y/packs/ranges, Indexer TV callback, Scorer pack-vs-episode. **Deferred to M5c:** the
 `Cinder.Download.TvPoller`, `Library.import_episode/import_pack`, the pack fan-out transaction.
 
+**[M5b done 2026-06-22 — acquisition logic]** Shipped the three pure/fixture-testable pieces; the
+movie acquisition path is logic-untouched (`Acquisition.best_release/2`, `Scorer.select/2`,
+`search/1`, and the parser's movie fields keep their exact behaviour). **Parser** gained
+`season`/`episodes` via a unified episode-tail scan (`SxxEyy`, `SxxEyyEzz`, `SxxEyy-Ezz`,
+`SxxEyy-zz`, `1x02`; numbered packs `S01`/`Season NN`/`S01.COMPLETE` ⇒ `episodes: nil`); seasons
+bounded 1..99 and episodes 1..99, with multi-season names (`S01S02`, `S01-S03`), `S00` specials,
+year-as-season, daily/absolute numbering, and descending ranges all parking as `nil/nil`. The
+`Release` struct carries the two new fields. **Indexer** gained `search_tv/3` (behaviour + Prowlarr
++ Mox auto-cover, atomic): `type=tvsearch` with a `{TvdbId:N}{Season:N}` token, free-text
+title-+season fallback when `tvdb_id` is nil (it usually is — only set from TMDB `external_ids`);
+contract verified against the Servarr "Prowlarr Search" wiki. **Scorer** gained `select_for/4`:
+greedy set-cover over a wanted-episode set (coverage-primary, ties by resolution then size) with a
+**per-episode** size band (`k*min ≤ size ≤ k*max`, `k` = still-wanted episodes covered), config
+merged like `select/2`; returns one-or-more releases or `:no_match`, partial coverage allowed.
+Council pass (3 reviewers) caught + fixed pre-impl: the bare-season-eats-`S01E02` precedence trap,
+descending-range empty-list bug, resolution-eating range (`S01E01-1080p`), coverage-primary greedy
+sort, and the multi-season silent-drop trap. **Deferred to M5c:** `Cinder.Download.TvPoller`,
+`Library.import_episode/import_pack` (must **log** unmatched files, not silently drop — the
+red-team's silent-failure catch), the pack fan-out transaction, and the `Acquisition` TV
+composition fn. `mix test` green (441).
+
 ### M6 — TV monitoring sweep + RSS/calendar (M)
 
 **Goal:** close the Sonarr loop — a wanted-episodes query drives the search sweep efficiently,
