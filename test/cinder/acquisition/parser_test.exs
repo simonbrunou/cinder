@@ -110,21 +110,43 @@ defmodule Cinder.Acquisition.ParserTest do
 
   describe "TV parsing guards (deferred or junk → nil/nil)" do
     test "a multi-season pack is rejected rather than read as season 1" do
-      # S01S02 / S01-S03: grabbing it as season 1 would strand the other seasons in M5c.
+      # Any separator between two season tokens strands the others if mis-read as season 1.
       assert %{season: nil, episodes: nil} = Parser.parse("Show.S01S02.COMPLETE.720p")
       assert %{season: nil, episodes: nil} = Parser.parse("Show.Complete.S01-S03.1080p")
+      assert %{season: nil, episodes: nil} = Parser.parse("Show.S01.S02.COMPLETE.1080p")
+      assert %{season: nil, episodes: nil} = Parser.parse("Show.S01 S02.1080p")
+    end
+
+    test "two SxxEyy tokens (a multi-season release) are rejected, not read as the first" do
+      assert %{season: nil, episodes: nil} = Parser.parse("Show.S01E01.S02E02.GROUP")
     end
 
     test "S00 specials park (specials are M6 scope)" do
       assert %{season: nil, episodes: nil} = Parser.parse("Show.S00E01.1080p")
     end
 
-    test "a descending range is junk and parks" do
-      assert %{season: nil, episodes: nil} = Parser.parse("Show.S01E03-E01.1080p")
+    test "the 1x00 form parks rather than yielding episode 0" do
+      assert %{season: nil, episodes: nil} = Parser.parse("Show.1x00.1080p")
     end
 
     test "year-as-season is not mistaken for a season" do
       assert %{season: nil, episodes: nil} = Parser.parse("Show.S2009E12.720p")
+    end
+  end
+
+  describe "TV tail edge cases (keep the leading episode, drop trailing junk)" do
+    test "a hyphen-glued resolution keeps the episode instead of dropping the release" do
+      assert %{season: 1, episodes: [2], resolution: "720p"} =
+               Parser.parse("Show.S01E02-720p.WEB")
+    end
+
+    test "a descending range keeps the valid leading episode" do
+      assert %{season: 1, episodes: [3]} = Parser.parse("Show.S01E03-E01.1080p")
+    end
+
+    test "a dot- or space-separated single episode is not mistaken for a season pack" do
+      assert %{season: 1, episodes: [2]} = Parser.parse("Show.S01.E02.1080p.x265-GRP")
+      assert %{season: 1, episodes: [2]} = Parser.parse("Show S01 E02 1080p")
     end
   end
 end

@@ -37,11 +37,16 @@ defmodule Cinder.Acquisition.Parser do
     {~r/\bitalian\b/i, "ITALIAN"}
   ]
 
-  # Two distinct season tokens (S01S02 / S01-S03) ⇒ multi-season pack — rejected, not
-  # mis-read as season 1. (M5c would otherwise grab it and fail to import other seasons.)
+  # Adjacent (S01S02) or dash-joined (S01-S03) season tokens — the forms a boundary
+  # scan can't see (no separator before the second S). Combined with distinct_seasons/1
+  # below in multi_season?/1; either firing rejects the name to nil/nil rather than
+  # mis-reading it as season 1. (M5c would otherwise grab it and strand other seasons.)
   @multi_season ~r/s\d{1,2}\s*-\s*s\d{1,2}|s\d{1,2}s\d{1,2}/i
-  # Season + an episode tail: SxxEyy, SxxEyyEzz, SxxEyy-Ezz, SxxEyy-zz (tail parsed below).
-  @season_episode ~r/(?:^|[^a-z0-9])s(\d{1,2})((?:e\d{1,3})(?:-?e?\d{1,3})*)/i
+  # A single season token at a word boundary — scanned to count distinct seasons.
+  @season_token ~r/(?:^|[^a-z0-9])s(\d{1,2})(?![0-9])/i
+  # Season + an episode tail (an optional ./space/_ separator allowed): SxxEyy, Sxx.Eyy,
+  # SxxEyyEzz, SxxEyy-Ezz, SxxEyy-zz (tail parsed below).
+  @season_episode ~r/(?:^|[^a-z0-9])s(\d{1,2})[._ ]?((?:e\d{1,3})(?:-?e?\d{1,3})*)/i
   # The 1x02 form (single episode only).
   @alt_episode ~r/(?:^|[^a-z0-9])(\d{1,2})x(\d{1,2})(?!\d)/i
   # A bare season pack: S01 / S01.COMPLETE (no episode token following).
@@ -100,7 +105,7 @@ defmodule Cinder.Acquisition.Parser do
   # single (SxxEyy) from being read as a bare-season pack.
   defp season_episodes(name) do
     cond do
-      Regex.match?(@multi_season, name) -> {nil, nil}
+      multi_season?(name) -> {nil, nil}
       match = Regex.run(@season_episode, name) -> from_tail(match)
       match = Regex.run(@alt_episode, name) -> single(match)
       match = Regex.run(@bare_season, name) -> bare(match)
@@ -109,18 +114,37 @@ defmodule Cinder.Acquisition.Parser do
     end
   end
 
+  # A name carries more than one season ⇒ a multi-season/whole-series pack. Reject it
+  # (nil/nil) so it's never mis-read as one season. Catches adjacent/dash forms via
+  # @multi_season and any separator (S01.S02, S01 S02, S01E01.S02E02) via the count.
+  defp multi_season?(name) do
+    Regex.match?(@multi_season, name) or distinct_seasons(name) > 1
+  end
+
+  defp distinct_seasons(name) do
+    @season_token
+    |> Regex.scan(name)
+    |> Enum.map(fn [_, season] -> season end)
+    |> Enum.uniq()
+    |> length()
+  end
+
   defp from_tail([_, season, tail]),
     do: validate(String.to_integer(season), parse_tail(tail))
 
-  defp single([_, season, episode]),
-    do: validate(String.to_integer(season), [String.to_integer(episode)])
+  defp single([_, season, episode]) do
+    ep = String.to_integer(episode)
+    if ep?(ep), do: validate(String.to_integer(season), [ep]), else: {nil, nil}
+  end
 
   defp bare([_, season]), do: validate(String.to_integer(season), nil)
 
-  # Walk the episode tail left-to-right: a plain "E03"/"E03" token is a discrete
-  # episode; a "-E03" token expands the range from the previous episode. A descending
-  # or otherwise malformed range poisons the whole tail (→ [] → nil/nil), so a junk
-  # name never yields a partial/empty episode set the scorer would treat as coverage.
+  # Walk the episode tail left-to-right: a plain "E03" token is a discrete episode; a
+  # "-E03" token expands the range from the previous episode. At the first token that
+  # isn't a valid in-band ascending continuation — a descending range, or a hyphen-glued
+  # resolution like "S01E02-720p" (→ "-720") — stop and keep the episodes parsed so far,
+  # so the leading valid episode survives instead of the whole release being dropped. An
+  # empty result (first token already junk, e.g. "S01E720") parks the name via validate/2.
   defp parse_tail(tail) do
     @tail_token
     |> Regex.scan(tail)
@@ -130,16 +154,13 @@ defmodule Cinder.Acquisition.Parser do
 
         if is_integer(last) and n > last and ep?(n),
           do: {:cont, {acc ++ Enum.to_list((last + 1)..n//1), n}},
-          else: {:halt, :error}
+          else: {:halt, {acc, last}}
 
       [_, _, num], {acc, last} ->
         n = String.to_integer(num)
-        if ep?(n), do: {:cont, {acc ++ [n], max(n, last || n)}}, else: {:halt, :error}
+        if ep?(n), do: {:cont, {acc ++ [n], max(n, last || n)}}, else: {:halt, {acc, last}}
     end)
-    |> case do
-      :error -> []
-      {episodes, _last} -> Enum.uniq(episodes)
-    end
+    |> then(fn {episodes, _last} -> Enum.uniq(episodes) end)
   end
 
   # A sane SxxEyy episode number: 1..99. Bounds the tail so an attached resolution
