@@ -578,26 +578,105 @@ defmodule Cinder.Catalog do
   def refresh_series(%Series{} = series) do
     with {:ok, info} <- tmdb().get_series(series.tmdb_id),
          {:ok, seasons} <- fetch_seasons(series.tmdb_id, info.seasons) do
-      {:ok, _} = Repo.transaction(fn -> reconcile_tree(series, seasons) end)
+      {:ok, updated} =
+        Repo.transaction(fn ->
+          s = update_series_row(series, info)
+          reconcile_tree(s, seasons)
+          s
+        end)
+
       broadcast_series(series.id)
-      {:ok, series}
+      {:ok, updated}
     end
   end
 
+  # Backfill the series row's TMDB-sourced fields (tvdb_id especially — the acquisition
+  # disambiguation key, often nil at add time). Identity + user-controlled fields (tmdb_id,
+  # monitored, monitor_strategy) are not cast, so they're preserved. On failure, log and keep the
+  # existing row: a descriptive backfill failing must not abort the whole tree reconcile.
+  defp update_series_row(series, info) do
+    changeset =
+      Series.refresh_changeset(series, %{
+        tvdb_id: info.tvdb_id,
+        title: info.title,
+        year: info.year,
+        poster_path: info.poster_path
+      })
+
+    case Repo.update(changeset) do
+      {:ok, updated} ->
+        updated
+
+      {:error, cs} ->
+        Logger.warning("refresh: series #{series.id} row update failed: #{inspect(cs.errors)}")
+        series
+    end
+  end
+
+  # Two-pass renumber. Building season targets first lets `ensure_season` insert any new seasons;
+  # then we partition into matched (an existing row by tmdb_episode_id) vs new. PASS 1 parks every
+  # matched row in a guaranteed-free slot, PASS 2 moves each to its final slot (now collision-free),
+  # PASS 3 inserts the new rows. This handles within-season swaps and mid-season insertion shifts,
+  # which the old one-at-a-time update couldn't (every move collided on the unique index).
   defp reconcile_tree(series, fetched_seasons) do
     today = Date.utc_today()
     existing_seasons = Map.new(seasons_for(series.id), &{&1.season_number, &1})
     by_tmdb = Map.new(episodes_for(series.id), &{&1.tmdb_episode_id, &1})
 
-    Enum.each(fetched_seasons, fn fs ->
-      case ensure_season(series, existing_seasons, fs.season_number) do
-        %Season{} = season ->
-          Enum.each(fs.episodes, &reconcile_episode(series, season, &1, by_tmdb, today))
+    # Step 1 — collect {fetched_episode, target_season_id} for each fetched season whose target
+    # season exists (or was just inserted); skip a season ensure_season couldn't create.
+    targets =
+      Enum.flat_map(fetched_seasons, fn fs ->
+        case ensure_season(series, existing_seasons, fs.season_number) do
+          %Season{id: season_id} -> Enum.map(fs.episodes, &{&1, season_id})
+          nil -> []
+        end
+      end)
 
-        nil ->
-          :ok
-      end
-    end)
+    # Step 2 — partition into matched (existing row found by tmdb_episode_id) vs new. Guard a nil
+    # tmdb_episode_id (TMDB always sets it, but a nil never matches and must be treated as new).
+    {matched, new} =
+      Enum.split_with(targets, fn {fe, _season_id} ->
+        not is_nil(fe.tmdb_episode_id) and Map.has_key?(by_tmdb, fe.tmdb_episode_id)
+      end)
+
+    matched =
+      Enum.map(matched, fn {fe, season_id} ->
+        {Map.fetch!(by_tmdb, fe.tmdb_episode_id), fe, season_id}
+      end)
+
+    # PASS 1 — park each matched row's real slot with a unique non-colliding sentinel (-id) in its
+    # current season (no season_id change here), so PASS 2 never collides matched-vs-matched. Carry
+    # the parked struct forward: PASS 2's `cast` diffs against the struct's number, and a row whose
+    # final number equals its *original* would otherwise be seen as unchanged and the SET would omit
+    # episode_number, leaving it stuck at the sentinel. Diffing against the (negative) parked number
+    # always fires.
+    parked =
+      Enum.map(matched, fn {existing, fe, season_id} ->
+        {park_episode(existing), fe, season_id}
+      end)
+
+    # PASS 2 — finalize each matched row to its final (season_id, episode_number). All real slots
+    # are now free. The UPDATE keys by id; the parked struct guarantees the episode_number diff.
+    Enum.each(parked, fn {existing, fe, season_id} -> update_episode(existing, season_id, fe) end)
+
+    # PASS 3 — insert new rows, after finalize so slots reflect final state.
+    Enum.each(new, fn {fe, season_id} -> insert_episode(series, season_id, fe, today) end)
+  end
+
+  # Vacate a matched row's real slot before the finalize pass: -id never collides with a positive
+  # TMDB number and is unique across the table (ids are unique). Returns the updated struct (number
+  # = -id) for PASS 2 to diff against; on the should-never-happen failure, log and return the
+  # original struct so the finalize pass still runs.
+  defp park_episode(existing) do
+    case existing |> Ecto.Changeset.change(episode_number: -existing.id) |> Repo.update() do
+      {:ok, parked} ->
+        parked
+
+      {:error, changeset} ->
+        log_reconcile_error({:error, changeset}, "park episode #{existing.id}")
+        existing
+    end
   end
 
   defp seasons_for(series_id), do: Repo.all(from s in Season, where: s.series_id == ^series_id)
@@ -633,18 +712,11 @@ defmodule Cinder.Catalog do
     end
   end
 
-  defp reconcile_episode(series, season, fe, by_tmdb, today) do
-    case Map.get(by_tmdb, fe.tmdb_episode_id) do
-      %Episode{} = existing -> update_episode(existing, season, fe)
-      nil -> insert_episode(series, season, fe, today)
-    end
-  end
-
   # monitored/file_path/grab_id/counters omitted from attrs → preserved.
-  defp update_episode(existing, season, fe) do
+  defp update_episode(existing, season_id, fe) do
     existing
     |> Episode.refresh_changeset(%{
-      season_id: season.id,
+      season_id: season_id,
       episode_number: fe.episode_number,
       title: fe.title,
       air_date: fe.air_date
@@ -653,10 +725,10 @@ defmodule Cinder.Catalog do
     |> log_reconcile_error("update episode #{existing.id}")
   end
 
-  defp insert_episode(series, season, fe, today) do
+  defp insert_episode(series, season_id, fe, today) do
     %Episode{}
     |> Episode.refresh_changeset(%{
-      season_id: season.id,
+      season_id: season_id,
       tmdb_episode_id: fe.tmdb_episode_id,
       episode_number: fe.episode_number,
       title: fe.title,
@@ -670,9 +742,9 @@ defmodule Cinder.Catalog do
   defp log_reconcile_error({:ok, _} = ok, _context), do: ok
 
   defp log_reconcile_error({:error, changeset}, context) do
-    # A renumber collision on (season_id, episode_number) lands here: log and continue so the rest
-    # of the tree still reconciles. ponytail: such a collision self-heals over refresh cycles as
-    # the colliding row also moves; two-pass renumber is the upgrade path if it ever matters.
+    # The two-pass renumber handles reorders/swaps/shifts. The remaining {:error, changeset} case
+    # is a target reusing a slot still held by a row that *vanished* from TMDB (left untouched by
+    # design) — rare; log and continue so the rest of the tree still reconciles.
     Logger.warning("refresh skipped #{context}: #{inspect(changeset.errors)}")
     :ok
   end

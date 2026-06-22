@@ -52,4 +52,14 @@ defmodule Cinder.Catalog.Series do
     |> cast_assoc(:seasons, with: &Season.nested_changeset/2)
     |> unique_constraint(:tmdb_id)
   end
+
+  @doc """
+  Changeset for the M6 TMDB refresh (`Catalog.refresh_series/1`): backfills the
+  TMDB-sourced descriptive fields (`tvdb_id` is the acquisition disambiguation key, often
+  nil at add time). `tmdb_id` (identity), `monitored`, and `monitor_strategy`
+  (user-controlled) are deliberately NOT castable so a refresh preserves them.
+  """
+  def refresh_changeset(series, attrs) do
+    cast(series, attrs, [:tvdb_id, :title, :year, :poster_path])
+  end
 end

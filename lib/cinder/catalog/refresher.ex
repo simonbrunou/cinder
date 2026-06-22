@@ -56,10 +56,22 @@ defmodule Cinder.Catalog.Refresher do
 
   defp do_poll do
     for series <- Catalog.list_series(), series.monitored do
-      isolate("series #{series.id}", fn -> Catalog.refresh_series(series) end)
+      isolate("series #{series.id}", fn -> refresh_one(series) end)
     end
 
     :ok
+  end
+
+  defp refresh_one(series) do
+    case Catalog.refresh_series(series) do
+      {:ok, _} ->
+        :ok
+
+      # A {:error, reason} (TMDB 404/timeout/expired token) short-circuits before any write and
+      # does NOT raise, so isolate/2 wouldn't surface it. Log it so a wedged refresh is visible.
+      {:error, reason} ->
+        Logger.warning("refresher: series #{series.id} refresh failed: #{inspect(reason)}")
+    end
   end
 
   # Per-series isolation: a raise OR exit (e.g. a TMDB-layer crash, or a DBConnection checkout

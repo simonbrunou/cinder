@@ -44,21 +44,25 @@ defmodule Cinder.CatalogRefreshTest do
   end
 
   # Stub TMDB to return the given seasons. `specs` is [{season_number, [episode_map]}].
-  defp stub_tmdb(series, specs) do
+  # `info_overrides` lets a test override the get_series fields (e.g. tvdb_id/title/year).
+  defp stub_tmdb(series, specs, info_overrides \\ %{}) do
     tmdb_id = series.tmdb_id
     season_numbers = for {n, _} <- specs, do: %{season_number: n}
 
-    stub(Cinder.Catalog.TMDBMock, :get_series, fn ^tmdb_id ->
-      {:ok,
-       %{
-         tmdb_id: tmdb_id,
-         tvdb_id: nil,
-         title: "Show",
-         year: 2008,
-         poster_path: nil,
-         seasons: season_numbers
-       }}
-    end)
+    info =
+      Map.merge(
+        %{
+          tmdb_id: tmdb_id,
+          tvdb_id: nil,
+          title: "Show",
+          year: 2008,
+          poster_path: nil,
+          seasons: season_numbers
+        },
+        info_overrides
+      )
+
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn ^tmdb_id -> {:ok, info} end)
 
     by_number = Map.new(specs)
 
@@ -184,6 +188,77 @@ defmodule Cinder.CatalogRefreshTest do
 
     assert {:error, :timeout} = Catalog.refresh_series(s)
     assert Repo.get!(Episode, ep.id).title == "Original"
+  end
+
+  test "applies a within-season swap cleanly (E1<->E2, both exist)" do
+    s = series(:all)
+    sn = season(s, 1)
+    a = episode(sn, %{tmdb_episode_id: 1, episode_number: 1})
+    b = episode(sn, %{tmdb_episode_id: 2, episode_number: 2})
+
+    # tmdb 1 → number 2, tmdb 2 → number 1 (a within-season swap).
+    stub_tmdb(s, [
+      {1,
+       [
+         %{tmdb_episode_id: 1, episode_number: 2, title: "A", air_date: @past},
+         %{tmdb_episode_id: 2, episode_number: 1, title: "B", air_date: @past}
+       ]}
+    ])
+
+    assert {:ok, _} = Catalog.refresh_series(s)
+
+    assert Repo.get!(Episode, a.id).episode_number == 2
+    assert Repo.get!(Episode, b.id).episode_number == 1
+    assert Repo.aggregate(from(e in Episode, where: e.season_id == ^sn.id), :count) == 2
+  end
+
+  test "applies a mid-season insertion shift" do
+    s = series(:all)
+    sn = season(s, 1)
+    e10 = episode(sn, %{tmdb_episode_id: 10, episode_number: 1})
+    e11 = episode(sn, %{tmdb_episode_id: 11, episode_number: 2})
+    e12 = episode(sn, %{tmdb_episode_id: 12, episode_number: 3})
+
+    # Insert a new E2 (tmdb 99); 11 and 12 shift up to 3 and 4.
+    stub_tmdb(s, [
+      {1,
+       [
+         %{tmdb_episode_id: 10, episode_number: 1, title: "E1", air_date: @past},
+         %{tmdb_episode_id: 99, episode_number: 2, title: "New", air_date: @past},
+         %{tmdb_episode_id: 11, episode_number: 3, title: "E3", air_date: @past},
+         %{tmdb_episode_id: 12, episode_number: 4, title: "E4", air_date: @past}
+       ]}
+    ])
+
+    assert {:ok, _} = Catalog.refresh_series(s)
+
+    assert Repo.get!(Episode, e10.id).episode_number == 1
+    assert Repo.get!(Episode, e11.id).episode_number == 3
+    assert Repo.get!(Episode, e12.id).episode_number == 4
+    new = Repo.get_by!(Episode, tmdb_episode_id: 99)
+    assert new.episode_number == 2
+
+    numbers =
+      Repo.all(from e in Episode, where: e.season_id == ^sn.id, select: e.episode_number)
+
+    assert Enum.sort(numbers) == [1, 2, 3, 4]
+  end
+
+  test "backfills the series row (tvdb_id/title/year/poster) from TMDB, preserving monitor fields" do
+    s = series(:future, %{tvdb_id: nil, title: "Old", monitored: true, monitor_strategy: :future})
+    season(s, 1)
+
+    stub_tmdb(s, [{1, []}], %{tvdb_id: 555, title: "New", year: 2021, poster_path: "/n.jpg"})
+
+    assert {:ok, _} = Catalog.refresh_series(s)
+
+    r = Repo.get!(Series, s.id)
+    assert r.tvdb_id == 555
+    assert r.title == "New"
+    assert r.year == 2021
+    assert r.poster_path == "/n.jpg"
+    assert r.monitor_strategy == :future
+    assert r.monitored
   end
 
   test "broadcasts {:series_updated, id} on success" do

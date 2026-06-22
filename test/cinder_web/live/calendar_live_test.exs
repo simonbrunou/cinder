@@ -55,7 +55,7 @@ defmodule CinderWeb.CalendarLiveTest do
 
   test "shows an empty state when nothing is scheduled", %{conn: conn} do
     {:ok, _lv, html} = live(conn, ~p"/calendar")
-    assert html =~ "No monitored episodes scheduled"
+    assert html =~ "No monitored episodes in the calendar window."
   end
 
   test "a non-admin cannot reach the calendar", %{conn: conn} do

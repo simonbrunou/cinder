@@ -2,6 +2,7 @@ defmodule Cinder.Catalog.RefresherTest do
   use Cinder.DataCase, async: false
 
   import Mox
+  import ExUnit.CaptureLog
 
   @moduletag :capture_log
 
@@ -69,5 +70,19 @@ defmodule Cinder.Catalog.RefresherTest do
     start_supervised!({Refresher, interval: 60_000})
     # The raise on series A is isolated; the tick completes.
     assert :ok = Refresher.poll()
+  end
+
+  test "logs a warning when a series' refresh fails" do
+    s = Repo.insert!(%Series{tmdb_id: 8201, title: "T", monitored: true, monitor_strategy: :all})
+
+    # A {:error, reason} short-circuits before any write — it does not raise, so isolate/2
+    # wouldn't catch it. do_poll must log it explicitly.
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn 8201 -> {:error, :timeout} end)
+
+    start_supervised!({Refresher, interval: 60_000})
+
+    log = capture_log(fn -> assert :ok = Refresher.poll() end)
+    assert log =~ "refresh failed"
+    assert log =~ "series #{s.id}"
   end
 end

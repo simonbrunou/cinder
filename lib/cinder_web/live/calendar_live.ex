@@ -51,7 +51,7 @@ defmodule CinderWeb.CalendarLive do
       <h1 class="mb-6 text-2xl font-semibold">Upcoming</h1>
 
       <p :if={@rows == []} class="text-base-content/60">
-        No monitored episodes scheduled in the next 90 days.
+        No monitored episodes in the calendar window.
       </p>
 
       <table :if={@rows != []} class="table">
