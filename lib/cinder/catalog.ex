@@ -347,23 +347,7 @@ defmodule Cinder.Catalog do
   whole thing back as `{:error, changeset}` rather than raising, mirroring `set_season_monitored/2`.
   """
   def create_grab(download_id, protocol, episode_ids) do
-    result =
-      Repo.transaction(fn ->
-        case %Grab{}
-             |> Grab.changeset(%{download_id: download_id, download_protocol: protocol})
-             |> Repo.insert() do
-          {:ok, grab} ->
-            Repo.update_all(
-              from(e in Episode, where: e.id in ^episode_ids),
-              set: [grab_id: grab.id, updated_at: now()]
-            )
-
-            grab
-
-          {:error, changeset} ->
-            Repo.rollback(changeset)
-        end
-      end)
+    result = Repo.transaction(fn -> insert_and_link_grab(download_id, protocol, episode_ids) end)
 
     with {:ok, grab} <- result do
       broadcast_series(series_id_for_grab(grab.id))
@@ -371,12 +355,57 @@ defmodule Cinder.Catalog do
     end
   end
 
-  @doc "Marks a grab downloaded (records `content_path`, the at-rest path to import) and broadcasts."
+  defp insert_and_link_grab(download_id, protocol, episode_ids) do
+    case %Grab{}
+         |> Grab.changeset(%{download_id: download_id, download_protocol: protocol})
+         |> Repo.insert() do
+      {:ok, grab} -> link_grab_episodes(grab, episode_ids)
+      {:error, changeset} -> Repo.rollback(changeset)
+    end
+  end
+
+  defp link_grab_episodes(grab, episode_ids) do
+    # Guard `is_nil(grab_id)`: never re-link an episode another grab already owns (defends against
+    # a same-tick double-link silently overwriting an earlier grab).
+    {linked, _} =
+      Repo.update_all(
+        from(e in Episode, where: e.id in ^episode_ids and is_nil(e.grab_id)),
+        set: [grab_id: grab.id, updated_at: now()]
+      )
+
+    # Every requested episode was already grabbed: roll back so we don't leave an orphan grab
+    # (and so the caller doesn't start a download serving nothing).
+    if linked == 0, do: Repo.rollback(:no_episodes_linked), else: grab
+  end
+
+  @doc """
+  Marks a grab downloaded (records `content_path`, the at-rest path to import) and broadcasts.
+  Also resets `download_attempts` at the download→import boundary (mirrors the movie poller's
+  `import_attempts: 0` reset, `poller.ex:140`) so download-phase blips don't starve the shared
+  grab-lifetime retry budget the import pass then draws from.
+  """
   def mark_grab_downloaded(%Grab{} = grab, content_path) do
-    with {:ok, grab} <- grab |> Grab.changeset(%{content_path: content_path}) |> Repo.update() do
+    changeset = Grab.changeset(grab, %{content_path: content_path, download_attempts: 0})
+
+    with {:ok, grab} <- Repo.update(changeset) do
       broadcast_series(series_id_for_grab(grab.id))
       {:ok, grab}
     end
+  end
+
+  @doc """
+  Bumps a grab's `download_attempts` — the single grab-lifetime retry counter the TV poller
+  uses for both the advance and import passes — and broadcasts. The caller compares the
+  pre-bump count against its bound to decide retry-vs-park.
+  """
+  def increment_grab_attempts(%Grab{} = grab) do
+    Repo.update_all(from(g in Grab, where: g.id == ^grab.id),
+      inc: [download_attempts: 1],
+      set: [updated_at: now()]
+    )
+
+    broadcast_series(series_id_for_grab(grab.id))
+    :ok
   end
 
   @doc """
@@ -392,11 +421,102 @@ defmodule Cinder.Catalog do
     end
   end
 
+  @doc """
+  Finalizes a grab after import, in **one transaction**: sets `file_path` (and clears `grab_id`)
+  on each imported episode, bumps `search_attempts` on the grab's still-missing episodes, then
+  deletes the grab. `imported` is `[{episode_id, dest_path}]`. Broadcasts `{:series_updated, _}`.
+
+  The search_attempts bump on the non-imported episodes makes a pack that never yields a wanted
+  episode re-search with backoff and eventually search-park, rather than re-grabbing forever. It
+  **must** run before the delete: the `grab_id` FK nilifies on delete, after which the predicate
+  would match nothing. Each imported episode is written individually (a single `update_all set:`
+  could not give each its own dest); `n` is one season pack, so the per-row writes are cheap. The
+  `file_path` XOR `grab_id` invariant (derived state) is maintained here, the single write site.
+  """
+  def finish_grab(%Grab{} = grab, imported \\ []) do
+    imported_ids = imported |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
+    series_id = series_id_for_grab(grab.id)
+
+    result =
+      Repo.transaction(fn ->
+        ts = now()
+
+        for {episode_id, dest} <- imported do
+          Repo.update_all(from(e in Episode, where: e.id == ^episode_id),
+            set: [file_path: dest, grab_id: nil, updated_at: ts]
+          )
+        end
+
+        Repo.update_all(missing_episodes_query(grab.id, imported_ids),
+          inc: [search_attempts: 1],
+          set: [updated_at: ts]
+        )
+
+        Repo.delete!(grab)
+      end)
+
+    with {:ok, _} <- result do
+      broadcast_series(series_id)
+      {:ok, grab}
+    end
+  end
+
+  # The grab's episodes that did not import. Branch on the empty case so we never interpolate
+  # an empty list into `not in` (and so a park — empty `imported` — bumps every linked episode).
+  defp missing_episodes_query(grab_id, []), do: from(e in Episode, where: e.grab_id == ^grab_id)
+
+  defp missing_episodes_query(grab_id, imported_ids),
+    do: from(e in Episode, where: e.grab_id == ^grab_id and e.id not in ^imported_ids)
+
+  @doc """
+  Parks a grab: deletes it and bumps every linked episode's `search_attempts` (so they re-search,
+  bounded, then search-park). The terminal-failure case of `finish_grab/2` (nothing imported).
+  """
+  def park_grab(%Grab{} = grab), do: finish_grab(grab, [])
+
+  @doc """
+  Bumps `search_attempts` (and `updated_at`, for the poller's search backoff) on the given
+  episodes in one write, then broadcasts each affected series. Used by the search pass on
+  no-match / client-add failure / indexer error (no grab exists yet on that path).
+  """
+  def increment_search_attempts([]), do: :ok
+
+  def increment_search_attempts(episode_ids) when is_list(episode_ids) do
+    Repo.update_all(from(e in Episode, where: e.id in ^episode_ids),
+      inc: [search_attempts: 1],
+      set: [updated_at: now()]
+    )
+
+    for series_id <- series_ids_for_episodes(episode_ids), do: broadcast_series(series_id)
+    :ok
+  end
+
+  defp series_ids_for_episodes(episode_ids) do
+    Repo.all(
+      from e in Episode,
+        join: s in Season,
+        on: s.id == e.season_id,
+        where: e.id in ^episode_ids,
+        select: s.series_id,
+        distinct: true
+    )
+  end
+
   @doc "Grabs still downloading (no `content_path` yet)."
   def list_grabs_downloading, do: Repo.all(from g in Grab, where: is_nil(g.content_path))
 
-  @doc "Grabs downloaded and awaiting import (`content_path` set)."
-  def list_grabs_downloaded, do: Repo.all(from g in Grab, where: not is_nil(g.content_path))
+  @doc """
+  Grabs downloaded and awaiting import (`content_path` set), with `episodes: [season: :series]`
+  preloaded so the TV poller's import pass can map files → episodes and build library paths
+  without reaching past the Catalog boundary.
+  """
+  def list_grabs_downloaded do
+    Repo.all(
+      from g in Grab,
+        where: not is_nil(g.content_path),
+        preload: [episodes: [season: :series]]
+    )
+  end
 
   @doc """
   The SQL-expressible wanted set: monitored episodes with no file and no active grab whose
@@ -404,14 +524,19 @@ defmodule Cinder.Catalog do
   search + season-grouping. Backoff/bound filtering (search_attempts, retry window) is applied
   by the TV poller, matching the movie poller's split. Gated on the leaf `episode.monitored`
   flag (the cascade/add keep it the single source of truth).
+
+  Season 0 (specials) is excluded: the parser/scorer can't address it in M5 (a `{Season:0}`
+  search yields nothing matchable), so including specials would only churn search attempts.
+  Specials are M6 scope.
   """
   def wanted_episodes do
     today = Date.utc_today()
 
     Repo.all(
       from e in Episode,
+        join: s in assoc(e, :season),
         where:
-          e.monitored and is_nil(e.file_path) and is_nil(e.grab_id) and
+          s.season_number > 0 and e.monitored and is_nil(e.file_path) and is_nil(e.grab_id) and
             not is_nil(e.air_date) and e.air_date <= ^today,
         preload: [season: :series]
     )

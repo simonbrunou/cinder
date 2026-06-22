@@ -12,7 +12,8 @@ defmodule Cinder.Library do
 
   require Logger
 
-  alias Cinder.Catalog.Movie
+  alias Cinder.Acquisition.Parser
+  alias Cinder.Catalog.{Episode, Movie}
 
   @video_exts ~w(.mkv .mp4 .avi .m4v .mov .wmv .ts)
   @illegal ~r/[\/\\:*?"<>|]/
@@ -35,6 +36,130 @@ defmodule Cinder.Library do
       scan(dest)
       {:ok, dest}
     end
+  end
+
+  @doc """
+  Imports the video files at `content_path` for `episodes` (a grab's episodes, each preloaded
+  `season: :series`). Returns `{:ok, imported, unmatched}` — `imported` is
+  `[{episode_id, dest_path}]`, `unmatched` the video files that mapped to no episode (logged,
+  not an error: graceful park) — or `{:error, reason}` on a transient filesystem error (the grab
+  retries). One best-effort scan fires when anything imported.
+
+  Layout: `Show (Year)/Season NN/Show (Year) - SxxEyy.ext`. Files are matched by parsing `SxxEyy`
+  from each name and intersecting with the grab's episodes (a double-episode file maps to both).
+  For a single-episode grab whose files name no specific episode, the largest video is assigned
+  to it — mirroring `import_movie`'s sample-skipping largest-wins, since the grab already names
+  the one episode. Reuses `import_movie`'s `link`/`scan`/naming primitives.
+  """
+  @spec import_episodes(String.t() | nil, [Episode.t()]) ::
+          {:ok, [{integer(), String.t()}], [String.t()]} | {:error, term()}
+  def import_episodes(content_path, _episodes) when content_path in [nil, ""],
+    do: {:error, :no_content_path}
+
+  def import_episodes(content_path, episodes) do
+    with {:ok, videos} <- video_files(content_path) do
+      {to_import, unmatched} = videos |> match_episodes(episodes) |> resolve(videos, episodes)
+
+      case link_all(to_import) do
+        {:ok, []} ->
+          {:ok, [], unmatched}
+
+        {:ok, imported} ->
+          log_unmatched(unmatched)
+          scan(content_path)
+          {:ok, imported, unmatched}
+
+        {:error, _reason} = err ->
+          err
+      end
+    end
+  end
+
+  # All video files under content_path: the folder's video files for a pack/multi-file download,
+  # or the lone file itself for a single-file one (size 0 — it's the only candidate).
+  defp video_files(path) do
+    if fs().dir?(path) do
+      with {:ok, files} <- fs().find_files(path), do: {:ok, only_videos(files)}
+    else
+      {:ok, only_videos([{path, 0}])}
+    end
+  end
+
+  defp only_videos(files),
+    do: Enum.filter(files, fn {p, _size} -> String.downcase(Path.extname(p)) in @video_exts end)
+
+  # {episode, source_path} pairs for files that name a specific episode in the grab (a
+  # double-episode file yields two pairs — the same source hardlinked under both names).
+  defp match_episodes(videos, episodes) do
+    for {path, _size} <- videos,
+        parsed = Parser.parse(Path.basename(path)),
+        not is_nil(parsed.episodes),
+        ep <- episodes,
+        ep.season.season_number == parsed.season,
+        ep.episode_number in parsed.episodes,
+        do: {ep, path}
+  end
+
+  # Decide the import set + the leftover (unmatched) video files for logging.
+  defp resolve([], videos, episodes) do
+    if single_ep_fallback?(episodes, videos) do
+      # Largest wins (skips samples/extras); path breaks ties so the dest is stable across retries.
+      {path, _size} = Enum.max_by(videos, fn {p, size} -> {size, p} end)
+      {[{hd(episodes), path}], paths(videos) -- [path]}
+    else
+      {[], paths(videos)}
+    end
+  end
+
+  defp resolve(matched, videos, _episodes) do
+    matched_paths = matched |> Enum.map(fn {_ep, p} -> p end) |> MapSet.new()
+    {matched, Enum.reject(paths(videos), &MapSet.member?(matched_paths, &1))}
+  end
+
+  # Fall back to largest-wins only for a lone-episode grab whose files name NO specific episode
+  # (so we never mistake a clearly-numbered other episode for ours).
+  defp single_ep_fallback?([_one], [_ | _] = videos),
+    do: Enum.all?(videos, fn {p, _size} -> is_nil(Parser.parse(Path.basename(p)).episodes) end)
+
+  defp single_ep_fallback?(_episodes, _videos), do: false
+
+  defp paths(videos), do: Enum.map(videos, fn {p, _size} -> p end)
+
+  # Hardlink each match; a transient error halts and returns {:error, _} so the grab retries
+  # the whole import next tick (already-linked files are :eexist ⇒ :ok, so it's idempotent).
+  defp link_all(to_import) do
+    Enum.reduce_while(to_import, {:ok, []}, fn {ep, source}, {:ok, acc} ->
+      dest = build_episode_dest(ep, source)
+
+      with :ok <- fs().mkdir_p(Path.dirname(dest)),
+           :ok <- link(source, dest) do
+        {:cont, {:ok, [{ep.id, dest} | acc]}}
+      else
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
+  end
+
+  defp build_episode_dest(%Episode{season: season} = ep, source) do
+    show = library_name(sanitize(season.series.title), season.series.year, season.series.tmdb_id)
+    code = "S#{pad(season.season_number)}E#{pad(ep.episode_number)}"
+
+    Path.join([
+      library_path(),
+      show,
+      "Season #{pad(season.season_number)}",
+      "#{show} - #{code}#{Path.extname(source)}"
+    ])
+  end
+
+  # Two-digit minimum, never truncated (episode/season can exceed 99 on long-running shows).
+  defp pad(n), do: n |> Integer.to_string() |> String.pad_leading(2, "0")
+
+  defp log_unmatched([]), do: :ok
+
+  defp log_unmatched(paths) do
+    Logger.warning("import skipped #{length(paths)} unmatched file(s): #{inspect(paths)}")
+    :ok
   end
 
   # Best-effort: the file is already hardlinked into the library, so a failed scan —

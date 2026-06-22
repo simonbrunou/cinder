@@ -68,10 +68,11 @@ defmodule Cinder.Acquisition.ScorerTest do
   end
 
   describe "select_for/4 (TV)" do
-    test "a season pack covering the whole wanted set is chosen" do
+    test "a season pack covering the whole wanted set is chosen, paired with its coverage" do
       releases = [release(season: 1, episodes: nil, resolution: "1080p", size: 6 * @gb)]
 
-      assert {:ok, [%Release{episodes: nil, resolution: "1080p"}]} =
+      # The pairing reports the exact episodes the pack is responsible for (the whole want).
+      assert {:ok, [{%Release{episodes: nil, resolution: "1080p"}, [1, 2, 3]}]} =
                Scorer.select_for(releases, 1, [1, 2, 3])
     end
 
@@ -84,17 +85,20 @@ defmodule Cinder.Acquisition.ScorerTest do
 
       # per-episode max 5GB: the pack covers 2 eps (budget 10GB) but is 100GB -> rejected.
       assert {:ok, chosen} = Scorer.select_for(releases, 1, [1, 2], max_size: 5 * @gb)
-      assert chosen |> Enum.map(& &1.episodes) |> Enum.sort() == [[1], [2]]
+      assert chosen |> Enum.map(fn {r, _cov} -> r.episodes end) |> Enum.sort() == [[1], [2]]
+      assert chosen |> Enum.map(fn {_r, cov} -> cov end) |> Enum.sort() == [[1], [2]]
     end
 
-    test "a range and a single greedily cover a multi-episode want" do
+    test "a range and a single greedily cover a multi-episode want with disjoint coverage" do
       releases = [
         release(season: 1, episodes: [1, 2, 3], resolution: "1080p", size: 6 * @gb),
         release(season: 1, episodes: [4], resolution: "1080p", size: 2 * @gb)
       ]
 
       assert {:ok, chosen} = Scorer.select_for(releases, 1, [1, 2, 3, 4])
-      assert Enum.map(chosen, & &1.episodes) == [[1, 2, 3], [4]]
+      assert Enum.map(chosen, fn {r, _cov} -> r.episodes end) == [[1, 2, 3], [4]]
+      # Coverage is disjoint and exactly the wanted set, partitioned across the picks.
+      assert Enum.map(chosen, fn {_r, cov} -> cov end) == [[1, 2, 3], [4]]
     end
 
     test "a blocklisted group is dropped even if it would cover more" do
@@ -103,7 +107,7 @@ defmodule Cinder.Acquisition.ScorerTest do
         release(season: 1, episodes: [1], group: "GOOD", resolution: "1080p", size: 2 * @gb)
       ]
 
-      assert {:ok, [%Release{group: "GOOD", episodes: [1]}]} =
+      assert {:ok, [{%Release{group: "GOOD", episodes: [1]}, [1]}]} =
                Scorer.select_for(releases, 1, [1], blocklist: ["evil"])
     end
 
@@ -112,7 +116,7 @@ defmodule Cinder.Acquisition.ScorerTest do
       single = release(season: 1, episodes: [1], resolution: "1080p", size: 9 * @gb)
 
       # per-episode max 5GB: pack covers 3 (budget 15GB) -> ok; single covers 1 (budget 5GB) -> too big.
-      assert {:ok, [%Release{episodes: nil}]} =
+      assert {:ok, [{%Release{episodes: nil}, [1, 2, 3]}]} =
                Scorer.select_for([pack], 1, [1, 2, 3], max_size: 5 * @gb)
 
       assert :no_match = Scorer.select_for([single], 1, [1], max_size: 5 * @gb)
@@ -130,7 +134,7 @@ defmodule Cinder.Acquisition.ScorerTest do
     test "partial coverage returns what was found; the rest stay wanted" do
       releases = [release(season: 1, episodes: [1], resolution: "1080p", size: 2 * @gb)]
 
-      assert {:ok, [%Release{episodes: [1]}]} = Scorer.select_for(releases, 1, [1, 2, 3])
+      assert {:ok, [{%Release{episodes: [1]}, [1]}]} = Scorer.select_for(releases, 1, [1, 2, 3])
     end
 
     test "no releases -> :no_match" do
@@ -140,7 +144,7 @@ defmodule Cinder.Acquisition.ScorerTest do
     test "with no size band, any release is acceptable (the band is poller-supplied)" do
       releases = [release(season: 1, episodes: [1], resolution: "1080p", size: 200 * @gb)]
 
-      assert {:ok, [%Release{episodes: [1]}]} = Scorer.select_for(releases, 1, [1])
+      assert {:ok, [{%Release{episodes: [1]}, [1]}]} = Scorer.select_for(releases, 1, [1])
     end
   end
 end
