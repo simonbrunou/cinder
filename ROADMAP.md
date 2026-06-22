@@ -599,6 +599,14 @@ live torrent and TV paths are validated on real hardware, artifacts cut.
 **Build:**
 - README/docs updated for TV (series monitoring, season packs, calendar); new TV settings (e.g.
   per-episode size band) land in the **settings store**, not new env vars.
+- **Split the library path into movie + TV roots (S).** Today a single `:cinder, :library_path`
+  setting roots both importers (`Library.build_dest` for movies, `build_episode_dest` for
+  episodes). Add a `tv_library_path` setting alongside it (movies keep `library_path`), point
+  episode imports at the TV root, and validate **both** roots writable in
+  `Health.check_service(:library)` + the onboarding wizard + a second `/settings` field — mirroring
+  the existing `apply_library_path`/`plan_library_path` pattern in `Cinder.Settings` (a settings +
+  import-path change, no new machinery). Jellyfin/Plex want separate Movies/Shows roots, so this is
+  how strangers will deploy.
 - **Live sign-off of the two open homelab items carried from Phase 5:** a qBittorrent torrent
   grab end-to-end (base32 magnet, `.torrent` URL fetch, malformed-torrent graceful park) and the
   `/status` visual badge-advance check.
