@@ -9,6 +9,10 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   release maps (`%{title, size, download_url, seeders, protocol}`). `download_url`
   falls back to a magnet link when no torrent-file URL is present; `protocol` is
   `:usenet` for Usenet results, `:torrent` otherwise.
+
+  `search_tv/3` is the TV sibling: `type=tvsearch` with a `{TvdbId:...}{Season:...}`
+  token (or a free-text title + `{Season:...}` when no TVDB id), reusing the same
+  normalization.
   """
   @behaviour Cinder.Acquisition.Indexer
 
@@ -29,6 +33,28 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
         error(other)
     end
   end
+
+  @impl true
+  def search_tv(tvdb_id, title, season) do
+    params = [query: tv_query(tvdb_id, title, season), type: "tvsearch"]
+
+    case request(url: "/api/v1/search", params: params) do
+      {:ok, %{status: 200, body: results}} when is_list(results) ->
+        {:ok, Enum.map(results, &normalize/1)}
+
+      {:ok, %{status: 200}} ->
+        {:error, :unexpected_response}
+
+      other ->
+        error(other)
+    end
+  end
+
+  # Prowlarr parses brace tokens out of the query (same syntax as the movie
+  # `{ImdbId:...}` path). Prefer the TVDB id; fall back to a free-text title scoped
+  # by season. (See the Servarr "Prowlarr Search" wiki.)
+  defp tv_query(nil, title, season), do: "#{title} {Season:#{season}}"
+  defp tv_query(tvdb_id, _title, season), do: "{TvdbId:#{tvdb_id}}{Season:#{season}}"
 
   @impl true
   def health do

@@ -1,7 +1,16 @@
 defmodule Cinder.Acquisition.Parser do
   @moduledoc """
-  Extracts release attributes (`resolution`, `codec`, `group`, `language`) from a
-  release name. Pure and best-effort: an unrecognized field is `nil`.
+  Extracts release attributes (`resolution`, `codec`, `group`, `language`, and the
+  TV `season`/`episodes`) from a release name. Pure and best-effort: an unrecognized
+  field is `nil`.
+
+  TV fields (M5b): `season` is a `pos_integer | nil`; `episodes` is a `[pos_integer]`
+  for a single ep / range / multi-ep, `nil` for a whole-season pack, and `nil` when
+  the name has no episode token. A movie name parses to `season: nil, episodes: nil`.
+  Seasons are bounded to 1..99 — `S00` (specials), year-as-season (`S2009E12`), daily
+  dates (`2024.01.15`) and absolute/anime numbering park as `nil/nil` (M6 scope). A
+  name naming more than one season (`S01S02`, `S01-S03`) is rejected to `nil/nil`
+  rather than mis-read as a single season — that keeps M5c's pack import honest.
 
   `size` is intentionally not parsed here — it comes from the indexer's reported
   byte count (see `Cinder.Acquisition`).
@@ -28,21 +37,42 @@ defmodule Cinder.Acquisition.Parser do
     {~r/\bitalian\b/i, "ITALIAN"}
   ]
 
+  # Two distinct season tokens (S01S02 / S01-S03) ⇒ multi-season pack — rejected, not
+  # mis-read as season 1. (M5c would otherwise grab it and fail to import other seasons.)
+  @multi_season ~r/s\d{1,2}\s*-\s*s\d{1,2}|s\d{1,2}s\d{1,2}/i
+  # Season + an episode tail: SxxEyy, SxxEyyEzz, SxxEyy-Ezz, SxxEyy-zz (tail parsed below).
+  @season_episode ~r/(?:^|[^a-z0-9])s(\d{1,2})((?:e\d{1,3})(?:-?e?\d{1,3})*)/i
+  # The 1x02 form (single episode only).
+  @alt_episode ~r/(?:^|[^a-z0-9])(\d{1,2})x(\d{1,2})(?!\d)/i
+  # A bare season pack: S01 / S01.COMPLETE (no episode token following).
+  @bare_season ~r/(?:^|[^a-z0-9])s(\d{1,2})(?![0-9e])/i
+  # The "Season N" / "Season.05" word form (pack).
+  @season_word ~r/season[ ._]?(\d{1,2})(?!\d)/i
+  # One episode-tail token: an optional leading "-" (range from the previous), an
+  # optional "E", then the number.
+  @tail_token ~r/(-)?e?(\d{1,3})/i
+
   @doc """
-  Parses `name` into `%{resolution, codec, group, language}`. Each value is `nil`
-  when no known token matches. A non-binary `name` (e.g. an indexer result with a
-  missing title) yields all-`nil` rather than raising, keeping the parser total.
+  Parses `name` into `%{resolution, codec, group, language, season, episodes}`. Each
+  value is `nil` when no known token matches. A non-binary `name` (e.g. an indexer
+  result with a missing title) yields all-`nil` rather than raising, keeping the
+  parser total.
   """
   def parse(name) when is_binary(name) do
+    {season, episodes} = season_episodes(name)
+
     %{
       resolution: resolution(name),
       codec: first_match(name, @codecs),
       group: group(name),
-      language: first_match(name, @languages)
+      language: first_match(name, @languages),
+      season: season,
+      episodes: episodes
     }
   end
 
-  def parse(_name), do: %{resolution: nil, codec: nil, group: nil, language: nil}
+  def parse(_name),
+    do: %{resolution: nil, codec: nil, group: nil, language: nil, season: nil, episodes: nil}
 
   defp resolution(name) do
     down = String.downcase(name)
@@ -65,4 +95,58 @@ defmodule Cinder.Acquisition.Parser do
       nil -> nil
     end
   end
+
+  # Resolves {season, episodes}, most-specific first. Early-return ordering keeps a
+  # single (SxxEyy) from being read as a bare-season pack.
+  defp season_episodes(name) do
+    cond do
+      Regex.match?(@multi_season, name) -> {nil, nil}
+      match = Regex.run(@season_episode, name) -> from_tail(match)
+      match = Regex.run(@alt_episode, name) -> single(match)
+      match = Regex.run(@bare_season, name) -> bare(match)
+      match = Regex.run(@season_word, name) -> bare(match)
+      true -> {nil, nil}
+    end
+  end
+
+  defp from_tail([_, season, tail]),
+    do: validate(String.to_integer(season), parse_tail(tail))
+
+  defp single([_, season, episode]),
+    do: validate(String.to_integer(season), [String.to_integer(episode)])
+
+  defp bare([_, season]), do: validate(String.to_integer(season), nil)
+
+  # Walk the episode tail left-to-right: a plain "E03"/"E03" token is a discrete
+  # episode; a "-E03" token expands the range from the previous episode. A descending
+  # or otherwise malformed range poisons the whole tail (→ [] → nil/nil), so a junk
+  # name never yields a partial/empty episode set the scorer would treat as coverage.
+  defp parse_tail(tail) do
+    @tail_token
+    |> Regex.scan(tail)
+    |> Enum.reduce_while({[], nil}, fn
+      [_, "-", num], {acc, last} ->
+        n = String.to_integer(num)
+
+        if is_integer(last) and n > last and ep?(n),
+          do: {:cont, {acc ++ Enum.to_list((last + 1)..n//1), n}},
+          else: {:halt, :error}
+
+      [_, _, num], {acc, last} ->
+        n = String.to_integer(num)
+        if ep?(n), do: {:cont, {acc ++ [n], max(n, last || n)}}, else: {:halt, :error}
+    end)
+    |> case do
+      :error -> []
+      {episodes, _last} -> Enum.uniq(episodes)
+    end
+  end
+
+  # A sane SxxEyy episode number: 1..99. Bounds the tail so an attached resolution
+  # ("S01E01-1080p" → "108") can't be expanded into a giant episode range.
+  defp ep?(n), do: n in 1..99
+
+  defp validate(season, _episodes) when season < 1 or season > 99, do: {nil, nil}
+  defp validate(_season, []), do: {nil, nil}
+  defp validate(season, episodes), do: {season, episodes}
 end

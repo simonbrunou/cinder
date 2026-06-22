@@ -32,4 +32,9 @@ defmodule Cinder.Acquisition.ReleaseTest do
     assert %Release{protocol: :torrent} =
              Release.new(%{title: "Inception.2010.1080p.WEB-DL-GRP"})
   end
+
+  test "new/1 carries parsed TV season/episodes" do
+    assert %Release{season: 1, episodes: [2], resolution: "1080p"} =
+             Release.new(%{title: "Show.S01E02.1080p.WEB-DL-GRP"})
+  end
 end
