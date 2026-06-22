@@ -544,6 +544,27 @@ defmodule Cinder.Catalog do
   end
 
   @doc """
+  Monitored, dated episodes in a calendar window (`today - 7 .. today + 90`), ordered by air date,
+  with `season: :series` preloaded for the calendar view. Excludes season 0 (specials, never
+  searched in M5) so the view's derived "wanted" badge stays honest.
+  """
+  def upcoming_episodes do
+    today = Date.utc_today()
+    from_date = Date.add(today, -7)
+    to_date = Date.add(today, 90)
+
+    Repo.all(
+      from e in Episode,
+        join: s in assoc(e, :season),
+        where:
+          s.season_number > 0 and e.monitored and not is_nil(e.air_date) and
+            e.air_date >= ^from_date and e.air_date <= ^to_date,
+        order_by: [asc: e.air_date],
+        preload: [season: :series]
+    )
+  end
+
+  @doc """
   Re-fetches `series` from TMDB and reconciles its season/episode tree in one transaction, then
   broadcasts `{:series_updated, series.id}` once. Existing episodes are matched by
   `tmdb_episode_id` (series-wide, so a renumber that moves an episode across seasons is handled)

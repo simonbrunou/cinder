@@ -285,4 +285,31 @@ defmodule Cinder.CatalogTvPipelineTest do
       refute special.id in ids
     end
   end
+
+  describe "upcoming_episodes/0" do
+    test "returns monitored, dated, in-window, non-special episodes ordered by air_date" do
+      {series, season} = series_with_season()
+      today = Date.utc_today()
+      recent = episode(season, %{air_date: Date.add(today, -3), monitored: true})
+      soon = episode(season, %{air_date: Date.add(today, 10), monitored: true})
+
+      # Excluded: before the window, after the window, undated, unmonitored, specials.
+      episode(season, %{air_date: Date.add(today, -30), monitored: true})
+      episode(season, %{air_date: Date.add(today, 200), monitored: true})
+      episode(season, %{air_date: nil, monitored: true})
+      episode(season, %{air_date: Date.add(today, 5), monitored: false})
+      specials = Repo.insert!(%Season{series_id: series.id, season_number: 0, monitored: true})
+      episode(specials, %{air_date: Date.add(today, 2), monitored: true})
+
+      assert Enum.map(Catalog.upcoming_episodes(), & &1.id) == [recent.id, soon.id]
+    end
+
+    test "preloads season and series" do
+      {series, season} = series_with_season()
+      episode(season, %{air_date: Date.utc_today()})
+
+      assert [ep] = Catalog.upcoming_episodes()
+      assert ep.season.series.id == series.id
+    end
+  end
 end
