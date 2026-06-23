@@ -18,6 +18,17 @@ defmodule Cinder.Library do
   @video_exts ~w(.mkv .mp4 .avi .m4v .mov .wmv .ts)
   @illegal ~r/[\/\\:*?"<>|]/
 
+  # The library kinds Cinder manages. The single source of truth — config keys
+  # (`:"#{kind}_library_path"`, the per-kind Plex section, the size band), the
+  # settings UI, health checks, and the media-server scan all derive from it, so a
+  # new media type (e.g. `:books`) is one entry here, not a fork. Pure literal:
+  # read at boot and at config-eval time, so it must not touch Application env or Repo.
+  @kinds [:movies, :tv]
+
+  @doc "The library kinds Cinder manages (e.g. `:movies`, `:tv`)."
+  @spec kinds() :: [atom()]
+  def kinds, do: @kinds
+
   @doc """
   Hardlinks `movie`'s downloaded file into the library and triggers a scan.
   Returns `{:ok, dest_path}` or `{:error, reason}`. Idempotent: a dest that
@@ -33,7 +44,7 @@ defmodule Cinder.Library do
          dest = build_dest(movie, source),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
          :ok <- link(source, dest) do
-      scan(dest)
+      scan(:movies, dest)
       {:ok, dest}
     end
   end
@@ -80,7 +91,7 @@ defmodule Cinder.Library do
 
         {:ok, imported} ->
           log_unmatched(unmatched)
-          scan(content_path)
+          scan(:tv, content_path)
           {:ok, imported, unmatched}
 
         {:error, _reason} = err ->
@@ -181,15 +192,15 @@ defmodule Cinder.Library do
   # deep in the HTTP stack) — must not strand a correctly-imported movie at
   # :import_failed. The media server picks it up on its next periodic scan. Log and
   # report the import as done.
-  defp scan(dest) do
-    case media_server().scan() do
+  defp scan(kind, dest) do
+    case media_server().scan(kind) do
       {:error, reason} -> log_scan_failure(dest, reason)
       _ -> :ok
     end
   rescue
     e -> log_scan_failure(dest, e)
   catch
-    kind, value -> log_scan_failure(dest, {kind, value})
+    caught, value -> log_scan_failure(dest, {caught, value})
   end
 
   defp log_scan_failure(dest, reason) do

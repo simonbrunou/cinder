@@ -1,7 +1,9 @@
 defmodule Cinder.Library.MediaServer.Jellyfin do
   @moduledoc """
   Real `Cinder.Library.MediaServer` impl, backed by `Req`, against Jellyfin's
-  HTTP API. `scan/0` triggers a full library refresh (`POST /Library/Refresh`).
+  HTTP API. `scan/1` triggers a full library refresh (`POST /Library/Refresh`),
+  which covers every library — so the `kind` argument is ignored (Jellyfin has no
+  per-library refresh endpoint and needs none).
 
   Reads `url`, `api_key`, and optional `req_options` from
   `config :cinder, #{inspect(__MODULE__)}` at runtime. Validated against a live
@@ -10,7 +12,7 @@ defmodule Cinder.Library.MediaServer.Jellyfin do
   @behaviour Cinder.Library.MediaServer
 
   @impl true
-  def scan, do: req() |> Req.post(url: "/Library/Refresh") |> result()
+  def scan(_kind), do: req() |> Req.post(url: "/Library/Refresh") |> result()
 
   @impl true
   def health, do: req() |> Req.get(url: "/System/Info", receive_timeout: 3_000) |> result()

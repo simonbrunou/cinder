@@ -99,7 +99,8 @@ config :cinder, Cinder.Library.MediaServer.Jellyfin,
 config :cinder, Cinder.Library.MediaServer.Plex,
   url: "http://localhost:32400",
   token: "test-key",
-  section: "1",
+  movies_section: "1",
+  tv_section: "2",
   req_options: [plug: {Req.Test, Cinder.PlexStub}, retry: false]
 
 # The app-level poller must not run during the suite (it would race Mox/Sandbox).

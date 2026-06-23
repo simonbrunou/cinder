@@ -39,7 +39,7 @@ defmodule Cinder.Download.PollerTest do
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
     stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
-    stub(Cinder.Library.MediaServerMock, :scan, fn -> :ok end)
+    stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
   end
 
   test "a poll drives a completed download through :downloaded to :available" do
@@ -220,7 +220,7 @@ defmodule Cinder.Download.PollerTest do
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
     stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
-    stub(Cinder.Library.MediaServerMock, :scan, fn -> :ok end)
+    stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
     assert :ok = Poller.poll()
     assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
@@ -236,7 +236,7 @@ defmodule Cinder.Download.PollerTest do
     stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
     # File is hardlinked; only the media-server scan fails. Best-effort: the movie
     # still reaches :available rather than re-stranding at :downloaded.
-    stub(Cinder.Library.MediaServerMock, :scan, fn -> {:error, :econnrefused} end)
+    stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> {:error, :econnrefused} end)
 
     assert :ok = Poller.poll()
     assert %Movie{status: :available} = Repo.get!(Movie, movie.id)

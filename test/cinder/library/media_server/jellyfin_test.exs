@@ -12,7 +12,7 @@ defmodule Cinder.Library.MediaServer.JellyfinTest do
     Application.put_env(:cinder, Jellyfin, Keyword.merge(original, overrides))
   end
 
-  test "scan/0 posts to /Library/Refresh with the api token and returns :ok on 204" do
+  test "scan/1 posts to /Library/Refresh with the api token and returns :ok on 204" do
     Req.Test.stub(Cinder.JellyfinStub, fn conn ->
       assert conn.method == "POST"
       assert conn.request_path == "/Library/Refresh"
@@ -23,15 +23,15 @@ defmodule Cinder.Library.MediaServer.JellyfinTest do
       |> Req.Test.text("")
     end)
 
-    assert :ok = Jellyfin.scan()
+    assert :ok = Jellyfin.scan(:movies)
   end
 
-  test "scan/0 surfaces a non-2xx status as an error" do
+  test "scan/1 surfaces a non-2xx status as an error" do
     Req.Test.stub(Cinder.JellyfinStub, fn conn ->
       conn |> Plug.Conn.put_status(401) |> Req.Test.text("Unauthorized")
     end)
 
-    assert {:error, {:jellyfin_status, 401}} = Jellyfin.scan()
+    assert {:error, {:jellyfin_status, 401}} = Jellyfin.scan(:movies)
   end
 
   test "health/0 GETs /System/Info with the token and returns :ok on 200" do
@@ -53,7 +53,7 @@ defmodule Cinder.Library.MediaServer.JellyfinTest do
     assert {:error, {:jellyfin_status, 401}} = Jellyfin.health()
   end
 
-  test "scan/0 with no api key omits the header and surfaces a clean error (no raise)" do
+  test "scan/1 with no api key omits the header and surfaces a clean error (no raise)" do
     put_config(api_key: nil)
 
     Req.Test.stub(Cinder.JellyfinStub, fn conn ->
@@ -61,6 +61,6 @@ defmodule Cinder.Library.MediaServer.JellyfinTest do
       conn |> Plug.Conn.put_status(401) |> Req.Test.text("Unauthorized")
     end)
 
-    assert {:error, {:jellyfin_status, 401}} = Jellyfin.scan()
+    assert {:error, {:jellyfin_status, 401}} = Jellyfin.scan(:movies)
   end
 end
