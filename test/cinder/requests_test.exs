@@ -189,4 +189,30 @@ defmodule Cinder.RequestsTest do
       assert Cinder.Catalog.get_series_by_tmdb_id(1399)
     end
   end
+
+  describe "list_requests/0" do
+    test "returns requests of every status, newest first, with :user preloaded" do
+      user = user_fixture()
+      admin = admin_fixture()
+
+      # pending (non-admin, no auto-approve)
+      {:ok, pending} = Requests.create_request(user, @attrs)
+      # denied
+      {:ok, to_deny} = Requests.create_request(user, Map.put(@attrs, :target_id, 604))
+      {:ok, denied} = Requests.deny_request(to_deny, admin, "nope")
+      # approved (admin auto-approves its own)
+      {:ok, approved} = Requests.create_request(admin, Map.put(@attrs, :target_id, 605))
+
+      results = Requests.list_requests()
+
+      assert Enum.map(results, & &1.id) == [approved.id, denied.id, pending.id]
+      assert Enum.map(results, & &1.status) == [:approved, :denied, :pending]
+      # :user is preloaded (not a NotLoaded struct)
+      assert Enum.all?(results, &match?(%Cinder.Accounts.User{}, &1.user))
+    end
+
+    test "returns [] when there are no requests" do
+      assert Requests.list_requests() == []
+    end
+  end
 end

@@ -19,6 +19,10 @@ defmodule Cinder.Requests do
     )
   end
 
+  def list_requests do
+    Repo.all(from r in Request, order_by: [desc: r.id], preload: [:user])
+  end
+
   def list_for_user(%User{id: id}) do
     Repo.all(from r in Request, where: r.user_id == ^id, order_by: [desc: r.id])
   end
