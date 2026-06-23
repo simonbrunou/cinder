@@ -96,4 +96,42 @@ defmodule CinderWeb.UsersLiveTest do
     assert created != nil
     assert created.role == :admin
   end
+
+  test "admin edits a user's email", %{conn: conn} do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    user = Cinder.AccountsFixtures.user_fixture()
+    conn = log_in_user(conn, admin)
+    new_email = Cinder.AccountsFixtures.unique_user_email()
+
+    {:ok, lv, _html} = live(conn, ~p"/users")
+    lv |> element("#edit-email-btn-#{user.id}") |> render_click()
+
+    lv
+    |> form("#edit-email-form-#{user.id}", %{"user" => %{"email" => new_email}})
+    |> render_submit()
+
+    assert Cinder.Accounts.get_user!(user.id).email == new_email
+  end
+
+  test "admin toggles a user's role", %{conn: conn} do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    user = Cinder.AccountsFixtures.user_fixture()
+    conn = log_in_user(conn, admin)
+
+    {:ok, lv, _html} = live(conn, ~p"/users")
+    lv |> element("#role-btn-#{user.id}") |> render_click()
+
+    assert Cinder.Accounts.get_user!(user.id).role == :admin
+  end
+
+  test "demoting the last admin flashes an error and does not change the role", %{conn: conn} do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    conn = log_in_user(conn, admin)
+
+    {:ok, lv, _html} = live(conn, ~p"/users")
+    html = lv |> element("#role-btn-#{admin.id}") |> render_click()
+
+    assert html =~ "last admin"
+    assert Cinder.Accounts.get_user!(admin.id).role == :admin
+  end
 end

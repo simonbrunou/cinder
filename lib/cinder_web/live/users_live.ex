@@ -12,7 +12,7 @@ defmodule CinderWeb.UsersLive do
   def mount(_params, _session, socket) do
     {:ok,
      socket
-     |> assign(users: Accounts.list_users(), creating: false)
+     |> assign(users: Accounts.list_users(), creating: false, editing_email: nil)
      |> assign_create_form()}
   end
 
@@ -64,6 +64,47 @@ defmodule CinderWeb.UsersLive do
 
       {:error, _} ->
         {:noreply, put_flash(socket, :error, "Quota must be a non-negative number.")}
+    end
+  end
+
+  def handle_event("start_edit_email", %{"id" => id}, socket) do
+    {:noreply, assign(socket, editing_email: String.to_integer(id))}
+  end
+
+  def handle_event("cancel_edit_email", _params, socket) do
+    {:noreply, assign(socket, editing_email: nil)}
+  end
+
+  def handle_event("save_email", %{"_id" => id, "user" => %{"email" => email}}, socket) do
+    user = Accounts.get_user!(String.to_integer(id))
+    actor = socket.assigns.current_scope.user
+
+    case Accounts.admin_update_email(actor, user, %{email: email}) do
+      {:ok, _} ->
+        {:noreply,
+         socket
+         |> assign(users: Accounts.list_users(), editing_email: nil)
+         |> put_flash(:info, "Email updated.")}
+
+      {:error, _changeset} ->
+        {:noreply, put_flash(socket, :error, "Couldn't update email — check the address.")}
+    end
+  end
+
+  def handle_event("toggle_role", %{"id" => id}, socket) do
+    user = Accounts.get_user!(String.to_integer(id))
+    actor = socket.assigns.current_scope.user
+    new_role = if user.role == :admin, do: :user, else: :admin
+
+    case Accounts.update_user_role(actor, user, new_role) do
+      {:ok, _} ->
+        {:noreply, assign(socket, users: Accounts.list_users())}
+
+      {:error, :last_admin} ->
+        {:noreply, put_flash(socket, :error, "Can't demote the last admin.")}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, "Couldn't change role.")}
     end
   end
 
@@ -126,9 +167,25 @@ defmodule CinderWeb.UsersLive do
 
       <ul class="space-y-3">
         <li :for={u <- @users} class="card bg-base-200 p-4">
-          <div class="flex items-center gap-3">
+          <div class="flex items-center gap-3 flex-wrap">
             <span class="font-semibold">{u.email}</span>
-            <span class="badge badge-sm">{u.role}</span>
+            <button
+              id={"role-btn-#{u.id}"}
+              class="badge badge-sm"
+              phx-click="toggle_role"
+              phx-value-id={u.id}
+              title="Toggle admin/user"
+            >
+              {u.role}
+            </button>
+            <button
+              id={"edit-email-btn-#{u.id}"}
+              class="btn btn-ghost btn-xs"
+              phx-click="start_edit_email"
+              phx-value-id={u.id}
+            >
+              Edit email
+            </button>
             <form
               id={"quota-#{u.id}"}
               phx-submit="set_quota"
@@ -148,6 +205,25 @@ defmodule CinderWeb.UsersLive do
               <button class="btn btn-sm">Save</button>
             </form>
           </div>
+          <.form
+            :if={@editing_email == u.id}
+            id={"edit-email-form-#{u.id}"}
+            for={to_form(%{"email" => u.email}, as: :user)}
+            phx-submit="save_email"
+            class="mt-2 flex items-center gap-2"
+          >
+            <input type="hidden" name="_id" value={u.id} />
+            <input
+              type="email"
+              name="user[email]"
+              value={u.email}
+              class="input input-sm input-bordered"
+            />
+            <button class="btn btn-primary btn-sm" type="submit">Save email</button>
+            <button class="btn btn-ghost btn-sm" type="button" phx-click="cancel_edit_email">
+              Cancel
+            </button>
+          </.form>
         </li>
       </ul>
     </Layouts.app>
