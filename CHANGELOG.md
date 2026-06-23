@@ -7,18 +7,26 @@ All notable changes to Cinder are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- **Separate TV library root** — TV episodes now import under their own `tv_library_path`
-  (env bootstrap `TV_LIBRARY_PATH`, editable in `/settings`), so Jellyfin/Plex can point
-  distinct Movies and Shows libraries at each. Movies keep `library_path`.
-- **TV release size band in `/settings`** — per-episode min/max size (decimal GB) and a
-  preferred-resolution list for TV grabs, applied per episode (a season pack of N episodes is
-  allowed up to N× the max). Blank means no limit. The movie scorer is unchanged.
+- **Per-kind library config (Movies, TV)** — every library kind has its own import root, Plex
+  scan section, and editable release size band, all derived from one `Cinder.Library.kinds/0`
+  list, so movies and TV behave identically and a new media type (books, audio) is a one-line
+  addition. Movies now get an editable size band in `/settings`, like TV (per-episode for TV).
+  Both library roots remain required and separate (the TV root does not fall back to the movie root).
+- **Per-library Plex scan** — `MediaServer.scan(kind)` refreshes the right Plex section, so a TV
+  import refreshes the Shows library. Previously a single movie-only section was refreshed and TV
+  imports never refreshed Plex (Jellyfin's full refresh was unaffected). `/status` now shows a
+  per-kind library health row, and a missing root holds the import (visible red) instead of failing.
 
 ### Changed
-- **BREAKING (config):** the TV library root is now required and separate from the movie root —
-  it does **not** fall back to `library_path`. Set `TV_LIBRARY_PATH` (or the TV library path in
-  `/settings`) before TV imports run. An unset TV root parks TV grabs (logged) rather than
-  importing episodes into the movie library. The first-run wizard now requires both roots.
+- **BREAKING (config):** library config keys are regularized per kind — the movie env vars gain the
+  `MOVIES_` prefix the TV ones already had:
+  - `LIBRARY_PATH` → `MOVIES_LIBRARY_PATH`
+  - `PLEX_SECTION` → `MOVIES_PLEX_SECTION` (plus a new `TV_PLEX_SECTION` for the Shows library)
+
+  Stored `/settings` rows are renamed automatically by a migration on upgrade — **but environment
+  variables are not.** If you bootstrap via `docker-compose.yml` / `.env`, rename these there
+  before redeploying, or the movie library path/section reverts to unset (movie imports then hold,
+  shown red on `/status`, until you set it).
 
 ## [0.7.0] - 2026-06-23
 

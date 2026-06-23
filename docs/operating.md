@@ -26,7 +26,8 @@ expected to terminate at a reverse proxy):
 
 Boot-only keys (`SECRET_KEY_BASE`, `DATABASE_PATH`, `PHX_*`, `PORT`, `POOL_SIZE`,
 `DNS_CLUSTER_QUERY`) stay in the environment. Everything else — TMDB, indexer, download clients,
-media server, `library_path`, `tv_library_path`, the TV size band — is edited at `/settings` and
+media server, the per-kind library roots (`movies_library_path`, `tv_library_path`), the per-kind
+size bands — is edited at `/settings` and
 stored in the database. **DB values override the env bootstrap; clearing a setting reverts to the
 env value/default.** Secret fields are encrypted at rest with a key derived from `SECRET_KEY_BASE`.
 
@@ -81,24 +82,29 @@ A periodic TMDB refresh reconciles season/episode data, so a newly-announced or 
 becomes search-eligible on its own once its air date passes — no manual re-add. The **`/calendar`**
 view (admin) lists upcoming monitored episodes.
 
-**Tuning TV grabs.** The `TV releases` group in `/settings` sets a per-episode size band (decimal
-GB) and a preferred-resolution list. The band is **per episode**: a season pack of N episodes is
-allowed up to N× the max, so don't set the max to a whole-pack figure. Both bounds are optional —
+**Tuning grabs.** The `Release size bands` group in `/settings` sets a min/max size (decimal GB)
+and a preferred-resolution list **per library kind** (Movies and TV). For TV the band is **per
+episode**: a season pack of N episodes is allowed up to N× the max, so don't set the max to a
+whole-pack figure (the movie band is per movie). Both bounds are optional —
 blank means no limit. A too-low max (or any min above what your indexer carries) silently rejects
 every release, so the episode stays wanted and nothing grabs; start with the band blank and tighten
 only if you're pulling oversized packs.
 
 ## Library roots: movies vs TV
 
-Movies import under `library_path` and TV under a **separate** `tv_library_path` — point your media
-server's Movies and Shows libraries at the two roots. **The TV root is required and has no fallback:**
-with it unset, TV grabs park (logged) rather than importing episodes into the movie library, and the
-first-run wizard won't finish until both roots validate writable.
+Each library kind has its **own** import root — movies under `movies_library_path`, TV under
+`tv_library_path` — and (for Plex) its own scan section. Point your media server's Movies and Shows
+libraries at the two roots. **Each root is required and has no fallback:** with one unset, that
+kind's grabs *hold* (downloaded, logged, shown red on `/status`) rather than importing into the
+wrong library, and the first-run wizard won't finish until both roots validate writable.
 
-> **Upgrading from a single-root instance (≤ 0.7.0):** set `TV_LIBRARY_PATH` (or the TV library path
-> in `/settings`) before your next TV import — an already-set-up instance is **not** sent back through
-> the wizard, so an unset TV root will park TV grabs until you configure it. Both roots must still be
-> on the same filesystem as the download client's completed dir (hardlinks).
+> **Upgrading across the key regularization:** the movie config keys gained the `MOVIES_` prefix the
+> TV keys already had — `LIBRARY_PATH` → `MOVIES_LIBRARY_PATH`, `PLEX_SECTION` → `MOVIES_PLEX_SECTION`
+> (and a new `TV_PLEX_SECTION` for the Shows library). Stored `/settings` rows migrate automatically,
+> **but environment variables do not** — if you bootstrap movie config via `docker-compose.yml` /
+> `.env`, rename those vars before redeploying, or the movie root/section reverts to unset (movie
+> imports hold, red on `/status`, until set). Both roots must still be on the same filesystem as the
+> download client's completed dir (hardlinks).
 
 ## Known limitations
 

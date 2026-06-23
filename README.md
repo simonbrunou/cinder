@@ -65,13 +65,14 @@ rest with a key derived from `SECRET_KEY_BASE`.
 | TMDB | API read token (v4 bearer) |
 | Indexer | Prowlarr URL + API key |
 | Download | qBittorrent URL / username / password, SABnzbd URL + API key, per-client enable toggles |
-| Media server | Jellyfin URL + API key **or** Plex URL + token + section; media-server type |
-| Library | `library_path` (movies) **and** `tv_library_path` (TV) — separate Movies/Shows roots, both required |
-| TV releases | Per-episode min/max size (decimal GB) + preferred-resolution list for TV grabs |
+| Media server | Jellyfin URL + API key **or** Plex URL + token + a per-library section (Movies, TV); media-server type |
+| Library paths | `movies_library_path` **and** `tv_library_path` — a separate import root per kind, both required |
+| Release size bands | Per-kind min/max size (decimal GB) + preferred-resolution list; for TV the band is per episode (a season pack of N is allowed N× the max) |
 
 Each can be **bootstrapped** from an environment variable (`TMDB_API_TOKEN`, `PROWLARR_URL`,
-`LIBRARY_PATH`, `TV_LIBRARY_PATH`, …) for an unattended first boot, but the in-app value wins once
-set. The TV size band has no env bootstrap — set it in `/settings`.
+`MOVIES_LIBRARY_PATH`, `TV_LIBRARY_PATH`, `MOVIES_PLEX_SECTION`, `TV_PLEX_SECTION`, …) for an
+unattended first boot, but the in-app value wins once set. The size bands have no env bootstrap —
+set them in `/settings`.
 
 ## How it works
 
@@ -88,8 +89,8 @@ best release per still-wanted episode — preferring a season pack when one cove
 back to per-episode grabs — then maps each file in a pack to its episode on import. A periodic
 TMDB refresh keeps season/episode data current (so a newly-aired or late-dated episode becomes
 search-eligible on its own), and an `/calendar` view lists upcoming monitored episodes. Episodes
-land under the separate `tv_library_path` in the `Show (Year)/Season NN/Show (Year) - SxxEyy.ext`
-layout Jellyfin/Plex expect.
+land under the separate TV root (`tv_library_path`) in the `Show (Year)/Season NN/Show (Year) -
+SxxEyy.ext` layout Jellyfin/Plex expect.
 
 ## Screenshots
 
