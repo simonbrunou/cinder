@@ -111,6 +111,15 @@ defmodule Cinder.Catalog do
 
   def retry_movie(%Movie{}), do: {:error, :not_retryable}
 
+  # The active set a movie can be cancelled out of (mirrors @retryable's shape).
+  # transition/2 does NOT validate transitions, so cancel/delete must guard on this
+  # explicitly. delete_movie/2 (Phase 2) shares it: an active row with a download_id
+  # must be cancelled (which removes the client download), never bare-deleted.
+  @cancellable_movie_statuses [:requested, :searching, :downloading, :downloaded]
+
+  @doc "True if `movie` is in an active status that can be cancelled (`#{inspect(@cancellable_movie_statuses)}`)."
+  def cancellable?(%Movie{status: status}), do: status in @cancellable_movie_statuses
+
   @doc "Fetches a watchlisted movie by TMDB id, or `nil`."
   def get_movie_by_tmdb_id(tmdb_id), do: Repo.get_by(Movie, tmdb_id: tmdb_id)
 
