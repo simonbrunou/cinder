@@ -9,7 +9,7 @@ defmodule CinderWeb.SeriesDetailLive do
   use CinderWeb, :live_view
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Season}
+  alias Cinder.Catalog.{Episode, Season, Series}
 
   @poster_base "https://image.tmdb.org/t/p/w342"
 
@@ -19,7 +19,7 @@ defmodule CinderWeb.SeriesDetailLive do
     with {id, ""} <- Integer.parse(id),
          %{} = series <- Catalog.get_series_with_tree(id) do
       if connected?(socket), do: Catalog.subscribe_series()
-      {:ok, assign(socket, series: series)}
+      {:ok, assign(socket, series: series, editing?: false, confirming: nil, form: nil)}
     else
       _ ->
         {:ok,
@@ -52,6 +52,65 @@ defmodule CinderWeb.SeriesDetailLive do
       end
     else
       _ -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("edit_series", _params, socket) do
+    form = to_form(Series.admin_changeset(socket.assigns.series, %{}))
+    {:noreply, assign(socket, editing?: true, confirming: nil, form: form)}
+  end
+
+  def handle_event("cancel_edit_series", _params, socket) do
+    {:noreply, assign(socket, editing?: false, form: nil)}
+  end
+
+  def handle_event("save_series", %{"series" => attrs}, socket) do
+    case Catalog.update_series(socket.assigns.series, attrs) do
+      {:ok, _} ->
+        {:noreply,
+         socket
+         |> assign(editing?: false, form: nil)
+         |> put_flash(:info, "Series updated.")
+         |> reload()}
+
+      {:error, changeset} ->
+        {:noreply, assign(socket, form: to_form(changeset))}
+    end
+  end
+
+  def handle_event("ask_cancel_series", _params, socket) do
+    {:noreply, assign(socket, confirming: :cancel, editing?: false)}
+  end
+
+  def handle_event("ask_delete_series", _params, socket) do
+    {:noreply, assign(socket, confirming: :delete, editing?: false)}
+  end
+
+  def handle_event("dismiss_confirm", _params, socket) do
+    {:noreply, assign(socket, confirming: nil)}
+  end
+
+  def handle_event("confirm_cancel_series", _params, socket) do
+    actor = socket.assigns.current_scope.user
+    {:ok, _} = Catalog.cancel_series(socket.assigns.series, actor)
+
+    {:noreply,
+     socket |> assign(confirming: nil) |> put_flash(:info, "Series cancelled.") |> reload()}
+  end
+
+  def handle_event("confirm_delete_series", _params, socket) do
+    actor = socket.assigns.current_scope.user
+
+    case Catalog.delete_series(socket.assigns.series, actor) do
+      {:ok, _} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, "Series deleted.")
+         |> push_navigate(to: ~p"/series")}
+
+      _ ->
+        {:noreply,
+         socket |> assign(confirming: nil) |> put_flash(:error, "Couldn't delete the series.")}
     end
   end
 
@@ -100,6 +159,43 @@ defmodule CinderWeb.SeriesDetailLive do
     ~H"""
     <Layouts.app flash={@flash}>
       <.link navigate={~p"/series"} class="link mb-6 inline-block">← TV series</.link>
+
+      <div class="mb-4 flex flex-wrap items-center gap-2">
+        <button type="button" class="btn btn-sm" phx-click="edit_series">Edit</button>
+        <button type="button" class="btn btn-sm btn-warning" phx-click="ask_cancel_series">
+          Cancel series
+        </button>
+        <button type="button" class="btn btn-sm btn-error" phx-click="ask_delete_series">
+          Delete series
+        </button>
+      </div>
+
+      <.form
+        :if={@editing?}
+        for={@form}
+        id="series-form"
+        phx-submit="save_series"
+        class="mb-6 flex flex-wrap items-end gap-2"
+      >
+        <.input field={@form[:title]} type="text" label="Title" />
+        <.input field={@form[:year]} type="number" label="Year" />
+        <button class="btn btn-sm btn-primary" type="submit">Save</button>
+        <button class="btn btn-sm btn-ghost" type="button" phx-click="cancel_edit_series">Cancel</button>
+      </.form>
+
+      <div :if={@confirming == :cancel} class="mb-6 flex items-center gap-2">
+        <span class="text-sm">Cancel this series? Removes its downloads and unmonitors everything.</span>
+        <button class="btn btn-sm btn-warning" phx-click="confirm_cancel_series">Confirm cancel</button>
+        <button class="btn btn-sm btn-ghost" phx-click="dismiss_confirm">Keep</button>
+      </div>
+
+      <div :if={@confirming == :delete} class="mb-6 flex items-center gap-2">
+        <span class="text-sm">
+          Delete this series and its seasons/episodes? (Library files are left on disk.)
+        </span>
+        <button class="btn btn-sm btn-error" phx-click="confirm_delete_series">Confirm delete</button>
+        <button class="btn btn-sm btn-ghost" phx-click="dismiss_confirm">Keep</button>
+      </div>
 
       <div class="mb-8 flex gap-4">
         <img
