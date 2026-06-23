@@ -184,4 +184,53 @@ defmodule Cinder.Download.Client.SabnzbdTest do
 
     assert {:ok, %{state: :completed, content_path: "/d/M"}} = Sabnzbd.status("nzo-1")
   end
+
+  test "remove/2 deletes from the queue with del_files=1 by default" do
+    stub(fn conn ->
+      assert conn.request_path == "/api"
+      assert conn.params["mode"] == "queue"
+      assert conn.params["name"] == "delete"
+      assert conn.params["value"] == "nzo-1"
+      assert conn.params["del_files"] == "1"
+      assert conn.params["apikey"] == "test-key"
+      Req.Test.json(conn, %{"status" => true})
+    end)
+
+    assert :ok = Sabnzbd.remove("nzo-1", [])
+  end
+
+  test "remove/2 falls through to history when the queue delete reports no match" do
+    stub(fn conn ->
+      case conn.params["mode"] do
+        "queue" ->
+          Req.Test.json(conn, %{"status" => false})
+
+        "history" ->
+          assert conn.params["name"] == "delete"
+          assert conn.params["value"] == "nzo-1"
+          Req.Test.json(conn, %{"status" => true})
+      end
+    end)
+
+    assert :ok = Sabnzbd.remove("nzo-1", [])
+  end
+
+  test "remove/2 honours delete_files: false (del_files=0)" do
+    stub(fn conn ->
+      assert conn.params["del_files"] == "0"
+      Req.Test.json(conn, %{"status" => true})
+    end)
+
+    assert :ok = Sabnzbd.remove("nzo-1", delete_files: false)
+  end
+
+  test "remove/2 is idempotent: an unknown id (false in both lists) still returns :ok" do
+    stub(fn conn -> Req.Test.json(conn, %{"status" => false}) end)
+    assert :ok = Sabnzbd.remove("ghost", [])
+  end
+
+  test "remove/2 returns an error tuple on a non-2xx status" do
+    stub(fn conn -> conn |> Plug.Conn.put_status(500) |> Req.Test.text("boom") end)
+    assert {:error, {:sabnzbd_status, 500}} = Sabnzbd.remove("nzo-1", [])
+  end
 end
