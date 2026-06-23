@@ -34,6 +34,9 @@ defmodule Cinder.Catalog do
     end
   end
 
+  @doc "Fetches series details (including seasons list) from TMDB by tmdb_id."
+  def tmdb_series(tmdb_id), do: tmdb().get_series(tmdb_id)
+
   # Resolve the impl at runtime. compile_env! would inline the mock module, which —
   # being defined at runtime by Mox in test_helper.exs — doesn't exist at compile time
   # and warns under --warnings-as-errors. fetch_env! still fails fast if unconfigured.
