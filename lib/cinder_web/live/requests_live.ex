@@ -1,16 +1,27 @@
 defmodule CinderWeb.RequestsLive do
+  @moduledoc """
+  Admin requests screen at `/requests`. Lists every request with a status badge,
+  supports approve/deny on pending rows, and a confirm-then-delete on any row.
+
+  Delete warning (intentional, surfaced in the confirm panel): there is no FK
+  from a request to the catalog row it spawned, so deleting a request does NOT
+  remove an approved movie/series; and deleting a non-pending request re-opens
+  the `requests_pending_unique` index, making the title requestable again.
+  """
   use CinderWeb, :live_view
   alias Cinder.Requests
 
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket), do: Requests.subscribe()
-    {:ok, assign(socket, pending: Requests.list_pending(), denying: nil)}
+
+    {:ok,
+     assign(socket, requests: Requests.list_requests(), denying: nil, confirming_delete: nil)}
   end
 
   @impl true
   def handle_event("approve", %{"id" => id}, socket) do
-    req = Enum.find(socket.assigns.pending, &(to_string(&1.id) == id))
+    req = find_request(socket, id)
 
     case req && Requests.approve_request(req, socket.assigns.current_scope.user) do
       {:error, _reason} ->
@@ -22,13 +33,28 @@ defmodule CinderWeb.RequestsLive do
   end
 
   def handle_event("deny", %{"_id" => id, "reason" => reason}, socket) do
-    req = Enum.find(socket.assigns.pending, &(to_string(&1.id) == id))
+    req = find_request(socket, id)
     if req, do: Requests.deny_request(req, socket.assigns.current_scope.user, reason)
     {:noreply, assign(socket, denying: nil)}
   end
 
   def handle_event("start_deny", %{"id" => id}, socket) do
     {:noreply, assign(socket, denying: id)}
+  end
+
+  def handle_event("start_delete", %{"id" => id}, socket) do
+    {:noreply, assign(socket, confirming_delete: id)}
+  end
+
+  def handle_event("cancel_delete", _params, socket) do
+    {:noreply, assign(socket, confirming_delete: nil)}
+  end
+
+  def handle_event("delete", %{"id" => id}, socket) do
+    req = find_request(socket, id)
+    if req, do: Requests.delete_request(req, socket.assigns.current_scope.user)
+
+    {:noreply, socket |> assign(confirming_delete: nil, requests: Requests.list_requests())}
   end
 
   # The event payload is client-controlled; ignore any malformed/forged frame
@@ -38,64 +64,107 @@ defmodule CinderWeb.RequestsLive do
   @impl true
   def handle_info({event, _req}, socket)
       when event in [:request_created, :request_approved, :request_denied] do
-    {:noreply, assign(socket, pending: Requests.list_pending())}
+    {:noreply, assign(socket, requests: Requests.list_requests())}
   end
 
   def handle_info(_msg, socket), do: {:noreply, socket}
+
+  # Match a row by its (client-supplied, string) id without raising on garbage input.
+  defp find_request(socket, id), do: Enum.find(socket.assigns.requests, &(to_string(&1.id) == id))
 
   @impl true
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash}>
-      <h1 class="text-2xl font-bold mb-4">Pending requests</h1>
-      <ul :if={@pending != []} class="space-y-3">
+      <.header>
+        Requests<:subtitle>Approve, deny, or delete catalog requests.</:subtitle>
+      </.header>
+
+      <ul :if={@requests != []} class="space-y-3">
         <li
-          :for={r <- @pending}
-          class="card bg-base-200 p-4 flex flex-row items-center gap-4"
+          :for={r <- @requests}
+          class="card bg-base-200 p-4 flex flex-col gap-3"
         >
-          <img
-            :if={r.poster_path}
-            src={"https://image.tmdb.org/t/p/w92" <> r.poster_path}
-            alt={r.title}
-            class="w-12 rounded"
-          />
-          <div class="flex-1">
-            <span class="font-semibold">
-              {if r.target_type == "season",
-                do: "#{r.title} — Season #{r.season_number}",
-                else: r.title}
-            </span>
-            <span :if={r.year} class="opacity-60">({r.year})</span>
-            <span class="text-sm opacity-60">— {r.user.email}</span>
-          </div>
-          <button
-            class="btn btn-primary btn-sm"
-            phx-click="approve"
-            phx-value-id={r.id}
-          >
-            Approve
-          </button>
-          <form :if={@denying == to_string(r.id)} phx-submit="deny" class="flex gap-2">
-            <input type="hidden" name="_id" value={r.id} />
-            <input
-              type="text"
-              name="reason"
-              placeholder="Reason"
-              class="input input-sm input-bordered"
+          <div class="flex flex-row items-center gap-4">
+            <img
+              :if={r.poster_path}
+              src={"https://image.tmdb.org/t/p/w92" <> r.poster_path}
+              alt={r.title}
+              class="w-12 rounded"
             />
-            <button class="btn btn-error btn-sm" type="submit">Confirm deny</button>
-          </form>
-          <button
-            :if={@denying != to_string(r.id)}
-            class="btn btn-ghost btn-sm"
-            phx-click="start_deny"
-            phx-value-id={r.id}
+            <div class="flex-1">
+              <span class="font-semibold">
+                {if r.target_type == "season",
+                  do: "#{r.title} — Season #{r.season_number}",
+                  else: r.title}
+              </span>
+              <span :if={r.year} class="opacity-60">({r.year})</span>
+              <span class="text-sm opacity-60">— {r.user.email}</span>
+            </div>
+            <.request_status_badge status={r.status} />
+            <button
+              :if={r.status == :pending}
+              class="btn btn-primary btn-sm"
+              phx-click="approve"
+              phx-value-id={r.id}
+            >
+              Approve
+            </button>
+            <form
+              :if={r.status == :pending and @denying == to_string(r.id)}
+              phx-submit="deny"
+              class="flex gap-2"
+            >
+              <input type="hidden" name="_id" value={r.id} />
+              <input
+                type="text"
+                name="reason"
+                placeholder="Reason"
+                class="input input-sm input-bordered"
+              />
+              <button class="btn btn-error btn-sm" type="submit">Confirm deny</button>
+            </form>
+            <button
+              :if={r.status == :pending and @denying != to_string(r.id)}
+              class="btn btn-ghost btn-sm"
+              phx-click="start_deny"
+              phx-value-id={r.id}
+            >
+              Deny
+            </button>
+            <button
+              :if={@confirming_delete != to_string(r.id)}
+              class="btn btn-ghost btn-sm text-error"
+              phx-click="start_delete"
+              phx-value-id={r.id}
+            >
+              Delete
+            </button>
+          </div>
+
+          <div
+            :if={@confirming_delete == to_string(r.id)}
+            class="alert alert-warning flex flex-col items-start gap-2"
           >
-            Deny
-          </button>
+            <p class="text-sm">
+              Deleting a request does not remove any movie or series it already created —
+              that catalog row stays. If this request was denied or approved, the same title
+              can be requested again afterwards.
+            </p>
+            <div class="flex gap-2">
+              <button
+                class="btn btn-error btn-sm"
+                phx-click="delete"
+                phx-value-id={r.id}
+              >
+                Delete request
+              </button>
+              <button class="btn btn-ghost btn-sm" phx-click="cancel_delete">Cancel</button>
+            </div>
+          </div>
         </li>
       </ul>
-      <p :if={@pending == []} class="opacity-60">No pending requests.</p>
+      <p :if={@requests == []} class="opacity-60">No requests.</p>
     </Layouts.app>
     """
   end

@@ -38,25 +38,25 @@ defmodule CinderWeb.RequestsLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/requests")
     render_hook(lv, "approve", %{"id" => "not-an-int"})
     # LiveView process must still be alive
-    assert render(lv) =~ "Pending requests"
+    assert render(lv) =~ "Requests"
   end
 
   test "start_deny with non-integer id does not crash the LiveView", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/requests")
     render_hook(lv, "start_deny", %{"id" => "not-an-int"})
-    assert render(lv) =~ "Pending requests"
+    assert render(lv) =~ "Requests"
   end
 
   test "deny with non-integer _id does not crash the LiveView", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/requests")
     render_hook(lv, "deny", %{"_id" => "not-an-int", "reason" => "bad input"})
-    assert render(lv) =~ "Pending requests"
+    assert render(lv) =~ "Requests"
   end
 
   test "unknown event name does not crash the LiveView", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/requests")
     render_hook(lv, "bogus", %{})
-    assert render(lv) =~ "Pending requests"
+    assert render(lv) =~ "Requests"
   end
 
   test "a pending season request appears in the queue with its season label", %{conn: conn} do
@@ -118,5 +118,79 @@ defmodule CinderWeb.RequestsLiveTest do
     # Request must still be :pending — no state change
     reloaded = Cinder.Repo.reload(req)
     assert reloaded.status == :pending
+  end
+
+  test "lists requests of every status with a badge", %{conn: conn} do
+    user = user_fixture()
+    admin = admin_fixture()
+
+    {:ok, _pending} =
+      Cinder.Requests.create_request(user, %{target_type: "movie", target_id: 1, title: "Pend"})
+
+    {:ok, to_deny} =
+      Cinder.Requests.create_request(user, %{target_type: "movie", target_id: 2, title: "Den"})
+
+    {:ok, _denied} = Cinder.Requests.deny_request(to_deny, admin, "no")
+
+    {:ok, _lv, html} = live(conn, ~p"/requests")
+    assert html =~ "Pend"
+    assert html =~ "Den"
+    # status badges render (request_status_badge prints the status atom)
+    assert html =~ "pending"
+    assert html =~ "denied"
+  end
+
+  test "deleting a request shows the orphan/re-request warning then removes it", %{conn: conn} do
+    user = user_fixture()
+
+    {:ok, req} =
+      Cinder.Requests.create_request(user, %{
+        target_type: "movie",
+        target_id: 3,
+        title: "ToDelete"
+      })
+
+    {:ok, lv, _html} = live(conn, ~p"/requests")
+
+    # open the confirm panel for this request
+    confirm_html =
+      lv
+      |> element("button[phx-click='start_delete'][phx-value-id='#{req.id}']")
+      |> render_click()
+
+    assert confirm_html =~ "Deleting a request does not remove"
+    assert confirm_html =~ "can be requested again"
+
+    # confirm the delete
+    lv |> element("button[phx-click='delete'][phx-value-id='#{req.id}']") |> render_click()
+
+    assert Cinder.Repo.get(Cinder.Requests.Request, req.id) == nil
+    refute render(lv) =~ "ToDelete"
+  end
+
+  test "cancel_delete closes the confirm panel without deleting", %{conn: conn} do
+    user = user_fixture()
+
+    {:ok, req} =
+      Cinder.Requests.create_request(user, %{target_type: "movie", target_id: 4, title: "Keep"})
+
+    {:ok, lv, _html} = live(conn, ~p"/requests")
+    lv |> element("button[phx-click='start_delete'][phx-value-id='#{req.id}']") |> render_click()
+    lv |> element("button[phx-click='cancel_delete']") |> render_click()
+
+    assert Cinder.Repo.get(Cinder.Requests.Request, req.id)
+    assert render(lv) =~ "Keep"
+  end
+
+  test "delete with a forged non-integer id does not crash the LiveView", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/requests")
+    render_hook(lv, "delete", %{"id" => "not-an-int"})
+    assert render(lv) =~ "Requests"
+  end
+
+  test "delete with an unknown id does not crash the LiveView", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/requests")
+    render_hook(lv, "delete", %{"id" => "999999"})
+    assert render(lv) =~ "Requests"
   end
 end
