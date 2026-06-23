@@ -54,4 +54,61 @@ defmodule CinderWeb.SeriesLiveTest do
     {:ok, _lv, _html} = live(conn, ~p"/series")
     assert {:error, {:redirect, _}} = live(conn, ~p"/series/1")
   end
+
+  defp stub_tmdb_series(tmdb_id) do
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn ^tmdb_id ->
+      {:ok,
+       %{
+         tmdb_id: tmdb_id,
+         tvdb_id: 1,
+         title: "Game of Thrones",
+         year: 2011,
+         poster_path: "/got.jpg",
+         seasons: [%{season_number: 1}]
+       }}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_season, fn ^tmdb_id, 1 ->
+      {:ok,
+       %{
+         season_number: 1,
+         episodes: [
+           %{
+             tmdb_episode_id: 1,
+             episode_number: 1,
+             title: "Winter Is Coming",
+             air_date: ~D[2011-04-17]
+           }
+         ]
+       }}
+    end)
+  end
+
+  test "non-admin does NOT see the admin 'Added series' management section", %{conn: conn} do
+    stub_search([])
+    stub_tmdb_series(1399)
+
+    # Add a series so the admin section would render if ungated
+    {:ok, _} = Cinder.Catalog.add_series_to_watchlist(1399, monitor_strategy: :all)
+
+    user = user_fixture()
+    conn = log_in_user(conn, user)
+    {:ok, _lv, html} = live(conn, ~p"/series")
+
+    refute html =~ "Configure monitoring"
+    refute html =~ ~s(href="/series/)
+  end
+
+  test "admin sees the 'Added series' management section with configure-monitoring links",
+       %{conn: conn} do
+    stub_search([])
+    stub_tmdb_series(1399)
+
+    {:ok, series} = Cinder.Catalog.add_series_to_watchlist(1399, monitor_strategy: :all)
+
+    {:ok, _lv, html} = live(conn, ~p"/series")
+
+    assert html =~ "Configure monitoring"
+    assert html =~ ~s(href="/series/#{series.id}")
+  end
 end

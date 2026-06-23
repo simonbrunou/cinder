@@ -78,15 +78,17 @@ defmodule CinderWeb.SeriesLive do
         No matches.
       </p>
 
-      <h2 class="pb-4 text-lg font-semibold leading-8">Added series</h2>
-      <p :if={@series == []} class="text-base-content/60">No series added yet.</p>
-      <div id="series-list" class="grid grid-cols-2 sm:grid-cols-3 gap-4">
-        <.link :for={s <- @series} navigate={~p"/series/#{s.id}"} class="block">
-          <.series_card series={s}>
-            <span class="link link-primary text-sm">Configure monitoring →</span>
-          </.series_card>
-        </.link>
-      </div>
+      <section :if={@current_scope.user.role == :admin}>
+        <h2 class="pb-4 text-lg font-semibold leading-8">Added series</h2>
+        <p :if={@series == []} class="text-base-content/60">No series added yet.</p>
+        <div id="series-list" class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+          <.link :for={s <- @series} navigate={~p"/series/#{s.id}"} class="block">
+            <.series_card series={s}>
+              <span class="link link-primary text-sm">Configure monitoring →</span>
+            </.series_card>
+          </.link>
+        </div>
+      </section>
     </Layouts.app>
     """
   end
