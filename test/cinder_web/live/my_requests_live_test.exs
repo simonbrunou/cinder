@@ -109,4 +109,15 @@ defmodule CinderWeb.MyRequestsLiveTest do
     {:ok, _} = Requests.approve_request(req, admin)
     assert render(lv) =~ "approved"
   end
+
+  test "survives a {:movie_deleted, id} broadcast (reloads, no crash)", %{conn: conn} do
+    user = Cinder.AccountsFixtures.user_fixture()
+    conn = log_in_user(conn, user)
+    {:ok, movie} = Cinder.Catalog.add_to_watchlist(%{tmdb_id: 9600, title: "Vanish"})
+
+    {:ok, lv, _html} = live(conn, ~p"/my-requests")
+    Cinder.Catalog.broadcast_movie_deleted(movie.id)
+    # still alive after reload
+    assert render(lv)
+  end
 end

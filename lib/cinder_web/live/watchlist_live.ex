@@ -79,6 +79,11 @@ defmodule CinderWeb.WatchlistLive do
   end
 
   @impl true
+  def handle_info({:movie_deleted, id}, socket) do
+    {:noreply, update(socket, :watchlist, fn wl -> Enum.reject(wl, &(&1.id == id)) end)}
+  end
+
+  @impl true
   def handle_info(_message, socket), do: {:noreply, socket}
 
   defp add(socket, movie) do

@@ -142,4 +142,14 @@ defmodule CinderWeb.WatchlistLiveTest do
     assert render(lv) =~ "downloading"
     refute has_element?(lv, "#watchlist .badge", "requested")
   end
+
+  test "drops a deleted movie from the watchlist on {:movie_deleted, id}", %{conn: conn} do
+    {:ok, movie} = Cinder.Catalog.add_to_watchlist(%{tmdb_id: 9500, title: "Gone Soon"})
+
+    {:ok, lv, html} = live(conn, ~p"/")
+    assert html =~ "Gone Soon"
+
+    Cinder.Catalog.broadcast_movie_deleted(movie.id)
+    refute render(lv) =~ "Gone Soon"
+  end
 end
