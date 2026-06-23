@@ -19,7 +19,8 @@ defmodule Cinder.Catalog.Movie do
     :available,
     :no_match,
     :search_failed,
-    :import_failed
+    :import_failed,
+    :cancelled
   ]
 
   schema "movies" do

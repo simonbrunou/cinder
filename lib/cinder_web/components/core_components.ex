@@ -534,4 +534,5 @@ defmodule CinderWeb.CoreComponents do
   defp status_badge_class(:no_match), do: "badge-warning"
   defp status_badge_class(:search_failed), do: "badge-error"
   defp status_badge_class(:import_failed), do: "badge-error"
+  defp status_badge_class(:cancelled), do: "badge-error"
 end

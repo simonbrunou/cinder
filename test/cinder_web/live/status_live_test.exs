@@ -92,4 +92,13 @@ defmodule CinderWeb.StatusLiveTest do
     assert html =~ "Arrival"
     assert html =~ "badge-info"
   end
+
+  test "renders a :cancelled movie's status badge without crashing", %{conn: conn} do
+    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 9300, title: "Cancelled Pic"})
+    {:ok, _} = Catalog.transition(movie, %{status: :cancelled})
+
+    {:ok, _lv, html} = live(conn, ~p"/status")
+    assert html =~ "Cancelled Pic"
+    assert html =~ "badge-error"
+  end
 end

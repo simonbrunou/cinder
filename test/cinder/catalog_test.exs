@@ -58,6 +58,13 @@ defmodule Cinder.CatalogTest do
       assert %{status: ["is invalid"]} = errors_on(changeset)
     end
 
+    test "transition/2 accepts :cancelled as a valid status" do
+      {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 4242, title: "M"})
+
+      assert {:ok, %Movie{status: :cancelled}} =
+               Catalog.transition(movie, %{status: :cancelled})
+    end
+
     test "transition/2 persists file_path" do
       {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 9001, title: "Heat"})
 
