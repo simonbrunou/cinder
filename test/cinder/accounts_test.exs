@@ -538,4 +538,41 @@ defmodule Cinder.AccountsTest do
       assert %{email: ["has already been taken"]} = errors_on(changeset)
     end
   end
+
+  describe "admin_update_email/2" do
+    test "changes the email directly and audits it" do
+      actor = admin_fixture()
+      target = user_fixture()
+      new_email = unique_user_email()
+
+      assert {:ok, %User{} = updated} =
+               Accounts.admin_update_email(actor, target, %{email: new_email})
+
+      assert updated.email == new_email
+
+      audit = Repo.one!(from a in Cinder.Audit.AdminAudit, where: a.entity_id == ^target.id)
+      assert audit.action == "admin_update_email"
+      assert audit.detail["email"] == new_email
+    end
+
+    test "rejects an invalid email" do
+      actor = admin_fixture()
+      target = user_fixture()
+
+      assert {:error, changeset} =
+               Accounts.admin_update_email(actor, target, %{email: "not an email"})
+
+      assert %{email: _} = errors_on(changeset)
+    end
+
+    test "rejects an unchanged email" do
+      actor = admin_fixture()
+      target = user_fixture()
+
+      assert {:error, changeset} =
+               Accounts.admin_update_email(actor, target, %{email: target.email})
+
+      assert %{email: ["did not change"]} = errors_on(changeset)
+    end
+  end
 end

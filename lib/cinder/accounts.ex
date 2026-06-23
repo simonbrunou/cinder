@@ -136,6 +136,27 @@ defmodule Cinder.Accounts do
     end)
   end
 
+  @doc """
+  Admin-edits a user's email directly (no confirmation token round-trip), reusing
+  `User.email_changeset/2` for validation. Audited in-transaction.
+  """
+  def admin_update_email(%User{} = actor, %User{} = target, attrs) do
+    changeset = User.email_changeset(target, attrs)
+
+    Repo.transaction(fn ->
+      case Repo.update(changeset) do
+        {:ok, updated} ->
+          {:ok, _audit} =
+            Audit.log(actor, "admin_update_email", updated, %{email: updated.email})
+
+          updated
+
+        {:error, changeset} ->
+          Repo.rollback(changeset)
+      end
+    end)
+  end
+
   @doc "All users, ordered by id."
   def list_users, do: Repo.all(from u in User, order_by: [asc: u.id])
 
