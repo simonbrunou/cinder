@@ -194,4 +194,14 @@ defmodule CinderWeb.UsersLiveTest do
     assert html =~ "last admin"
     assert Cinder.Accounts.get_user!(admin.id)
   end
+
+  test "a non-admin cannot reach /users", %{conn: conn} do
+    user = Cinder.AccountsFixtures.user_fixture()
+    conn = log_in_user(conn, user)
+    assert {:error, {:redirect, %{to: "/"}}} = live(conn, ~p"/users")
+  end
+
+  test "a logged-out visitor is redirected to log in", %{conn: conn} do
+    assert {:error, {:redirect, %{to: "/users/log-in"}}} = live(conn, ~p"/users")
+  end
 end
