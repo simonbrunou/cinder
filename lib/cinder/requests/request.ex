@@ -37,12 +37,12 @@ defmodule Cinder.Requests.Request do
     ])
     |> validate_required([:user_id, :target_type, :target_id, :status])
     |> validate_inclusion(:target_type, @target_types)
-    # The constraint name is intentionally column-derived, NOT the migration's
-    # :requests_pending_unique partial-index name. exqlite reports the column-derived
-    # name when a duplicate is caught; using :requests_pending_unique here would turn
-    # the duplicate-pending catch into a raise instead of a changeset error.
+    # The constraint name must match the SQLite index name exactly as reported by exqlite
+    # on a UNIQUE violation. The partial index is named :requests_pending_unique in the
+    # migration; exqlite reports that name directly so we use it here. Using a wrong name
+    # would cause a duplicate-pending violation to raise instead of returning {:error, changeset}.
     |> unique_constraint([:user_id, :target_type, :target_id],
-      name: :requests_user_target_season_index
+      name: :requests_pending_unique
     )
   end
 

@@ -11,13 +11,15 @@ defmodule Cinder.Repo.Migrations.AddSeasonToRequests do
     create unique_index(
              :requests,
              [:user_id, :target_type, :target_id, "COALESCE(season_number, -1)"],
-             name: :requests_user_target_season_index,
-             where: "status != 'denied'"
+             name: :requests_pending_unique,
+             where: "status = 'pending'"
            )
   end
 
   def down do
-    drop index(:requests, name: :requests_user_target_season_index)
+    # Drop whichever name the up/0 created (handles both old and new name variants)
+    execute "DROP INDEX IF EXISTS requests_pending_unique"
+    execute "DROP INDEX IF EXISTS requests_user_target_season_index"
 
     execute """
     CREATE UNIQUE INDEX requests_pending_unique
