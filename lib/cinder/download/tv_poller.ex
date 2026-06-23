@@ -125,8 +125,11 @@ defmodule Cinder.Download.TvPoller do
         park(grab, :no_files_matched)
 
       {:ok, imported, _unmatched} ->
-        Catalog.finish_grab(grab, imported)
-        notify_available(grab, imported)
+        # Notify only when the finalize transaction commits — otherwise a rolled-back finish_grab
+        # would leave the grab undeleted (re-imported next tick) while emitting a false, repeating
+        # available event. Mirrors the movie poller's `with {:ok, _} <- transition` guard.
+        with {:ok, _grab} <- Catalog.finish_grab(grab, imported),
+             do: notify_available(grab, imported)
 
       # A missing TV root is a config error, not a transient one: leave the grab downloaded
       # (no bump, no park) so the already-downloaded content imports as soon as tv_library_path
