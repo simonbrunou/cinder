@@ -12,7 +12,13 @@ defmodule CinderWeb.UsersLive do
   def mount(_params, _session, socket) do
     {:ok,
      socket
-     |> assign(users: Accounts.list_users(), creating: false, editing_email: nil)
+     |> assign(
+       users: Accounts.list_users(),
+       creating: false,
+       editing_email: nil,
+       resetting_pw: nil,
+       confirming_delete: nil
+     )
      |> assign_create_form()}
   end
 
@@ -105,6 +111,68 @@ defmodule CinderWeb.UsersLive do
 
       {:error, _} ->
         {:noreply, put_flash(socket, :error, "Couldn't change role.")}
+    end
+  end
+
+  def handle_event("start_reset_pw", %{"id" => id}, socket) do
+    {:noreply, assign(socket, resetting_pw: String.to_integer(id))}
+  end
+
+  def handle_event("cancel_reset_pw", _params, socket) do
+    {:noreply, assign(socket, resetting_pw: nil)}
+  end
+
+  def handle_event("reset_pw", %{"_id" => id, "user" => params}, socket) do
+    user = Accounts.get_user!(String.to_integer(id))
+    actor = socket.assigns.current_scope.user
+
+    attrs = %{
+      password: params["password"],
+      password_confirmation: params["password_confirmation"]
+    }
+
+    case Accounts.admin_reset_password(actor, user, attrs) do
+      {:ok, _} ->
+        {:noreply,
+         socket
+         |> assign(resetting_pw: nil)
+         |> put_flash(:info, "Password reset — the user's sessions were ended.")}
+
+      {:error, _changeset} ->
+        {:noreply, put_flash(socket, :error, "Password must be at least 12 characters.")}
+    end
+  end
+
+  def handle_event("start_delete", %{"id" => id}, socket) do
+    {:noreply, assign(socket, confirming_delete: String.to_integer(id))}
+  end
+
+  def handle_event("cancel_delete", _params, socket) do
+    {:noreply, assign(socket, confirming_delete: nil)}
+  end
+
+  def handle_event("delete", %{"id" => id}, socket) do
+    user = Accounts.get_user!(String.to_integer(id))
+    actor = socket.assigns.current_scope.user
+
+    case Accounts.delete_user(actor, user) do
+      {:ok, _} ->
+        {:noreply,
+         socket
+         |> assign(users: Accounts.list_users(), confirming_delete: nil)
+         |> put_flash(:info, "User deleted.")}
+
+      {:error, :self_delete} ->
+        {:noreply,
+         socket
+         |> assign(confirming_delete: nil)
+         |> put_flash(:error, "You can't delete your own account.")}
+
+      {:error, :last_admin} ->
+        {:noreply,
+         socket
+         |> assign(confirming_delete: nil)
+         |> put_flash(:error, "Can't delete the last admin.")}
     end
   end
 
@@ -221,6 +289,62 @@ defmodule CinderWeb.UsersLive do
             />
             <button class="btn btn-primary btn-sm" type="submit">Save email</button>
             <button class="btn btn-ghost btn-sm" type="button" phx-click="cancel_edit_email">
+              Cancel
+            </button>
+          </.form>
+          <div class="mt-2 flex items-center gap-2 flex-wrap">
+            <button
+              id={"reset-pw-btn-#{u.id}"}
+              class="btn btn-ghost btn-xs"
+              phx-click="start_reset_pw"
+              phx-value-id={u.id}
+            >
+              Reset password
+            </button>
+            <button
+              :if={@confirming_delete != u.id}
+              id={"delete-btn-#{u.id}"}
+              class="btn btn-ghost btn-xs text-error"
+              phx-click="start_delete"
+              phx-value-id={u.id}
+            >
+              Delete
+            </button>
+            <span :if={@confirming_delete == u.id} class="flex items-center gap-2">
+              <span class="text-sm">Delete {u.email}? Requests cascade.</span>
+              <button
+                id={"confirm-delete-#{u.id}"}
+                class="btn btn-error btn-xs"
+                phx-click="delete"
+                phx-value-id={u.id}
+              >
+                Confirm delete
+              </button>
+              <button class="btn btn-ghost btn-xs" phx-click="cancel_delete">Cancel</button>
+            </span>
+          </div>
+          <.form
+            :if={@resetting_pw == u.id}
+            id={"reset-pw-form-#{u.id}"}
+            for={to_form(%{}, as: :user)}
+            phx-submit="reset_pw"
+            class="mt-2 flex items-center gap-2"
+          >
+            <input type="hidden" name="_id" value={u.id} />
+            <input
+              type="password"
+              name="user[password]"
+              placeholder="New password"
+              class="input input-sm input-bordered"
+            />
+            <input
+              type="password"
+              name="user[password_confirmation]"
+              placeholder="Confirm"
+              class="input input-sm input-bordered"
+            />
+            <button class="btn btn-primary btn-sm" type="submit">Set password</button>
+            <button class="btn btn-ghost btn-sm" type="button" phx-click="cancel_reset_pw">
               Cancel
             </button>
           </.form>

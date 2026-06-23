@@ -184,11 +184,17 @@ defmodule Cinder.Accounts do
   `approved_by_id` links. Audited in the same transaction, before the delete, so
   the audit `detail` can record the deleted email.
   """
-  def delete_user(%User{id: same_id} = _actor, %User{id: same_id} = _target),
-    do: {:error, :self_delete}
-
   def delete_user(%User{} = actor, %User{} = target) do
-    Repo.transaction(fn -> do_delete_user(actor, target) end)
+    cond do
+      target.role == :admin and count_admins() == 1 ->
+        {:error, :last_admin}
+
+      actor.id == target.id ->
+        {:error, :self_delete}
+
+      true ->
+        Repo.transaction(fn -> do_delete_user(actor, target) end)
+    end
   end
 
   defp do_delete_user(%User{} = actor, %User{} = target) do
@@ -199,11 +205,6 @@ defmodule Cinder.Accounts do
       })
 
     {:ok, deleted} = Repo.delete(target)
-
-    if count_admins() == 0 do
-      Repo.rollback(:last_admin)
-    end
-
     deleted
   end
 
