@@ -36,6 +36,13 @@ All notable changes to Cinder are documented here. The format follows
   before redeploying, or the movie library path/section reverts to unset (movie imports then hold,
   shown red on `/status`, until you set it).
 
+### Fixed
+- **qBittorrent v5.x compatibility** — qBittorrent ≥ 5.x answers `POST /api/v2/auth/login` with
+  `204 No Content` (not `200`) and names the session cookie `QBT_SID_<port>` (not `SID`). The client
+  accepted only `200` and resent a literal `SID=` cookie, so every qBittorrent call (add / status /
+  health) failed login with `{:qbittorrent_status, 204}` on modern servers. It now accepts any `2xx`
+  login and threads the real session cookie back verbatim.
+
 ## [0.7.0] - 2026-06-23
 
 First packaged, publicly installable release — the movies + TV + multi-user product behind a
