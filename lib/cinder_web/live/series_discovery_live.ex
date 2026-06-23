@@ -166,7 +166,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
       {badge_label(@status)}
     </span>
     <button
-      :if={@status == nil}
+      :if={@status in [nil, :denied]}
       type="button"
       phx-click="request_season"
       phx-value-season={@season_number}

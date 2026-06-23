@@ -42,4 +42,36 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
 
     assert html =~ "Pending"
   end
+
+  test "a denied season still shows a Request button so the user can re-request", %{conn: conn} do
+    user = Cinder.AccountsFixtures.user_fixture()
+    admin = Cinder.AccountsFixtures.admin_fixture()
+
+    # Create a request and deny it to set up the denied state.
+    attrs = %{
+      target_type: "season",
+      target_id: 1399,
+      season_number: 1,
+      title: "GoT",
+      year: 2011,
+      poster_path: nil
+    }
+
+    {:ok, request} = Cinder.Requests.create_request(user, attrs)
+    {:ok, _} = Cinder.Requests.deny_request(request, admin, "Not available")
+
+    conn = log_in_user(conn, user)
+    {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
+
+    # The denied badge is shown alongside the Request button (parity with WatchlistLive).
+    assert has_element?(lv, ~s(.badge), "Denied")
+    assert has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
+
+    # Clicking Request creates a fresh pending request.
+    lv |> element(~s(button[phx-value-season="1"]), "Request") |> render_click()
+
+    requests = Cinder.Requests.list_for_user(user)
+
+    assert Enum.any?(requests, &(&1.season_number == 1 and &1.status == :pending))
+  end
 end
