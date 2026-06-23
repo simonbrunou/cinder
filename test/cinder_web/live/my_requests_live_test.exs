@@ -53,6 +53,43 @@ defmodule CinderWeb.MyRequestsLiveTest do
     assert html =~ "Season 3"
   end
 
+  test "season request row does not show movie pipeline badge even when a movie shares the same tmdb_id",
+       %{conn: conn} do
+    user = Cinder.AccountsFixtures.user_fixture()
+
+    # season request with target_id 777
+    {:ok, _} =
+      Requests.create_request(user, %{
+        target_type: "season",
+        target_id: 777,
+        season_number: 2,
+        title: "Collision Show",
+        year: 2020
+      })
+
+    # movie whose tmdb_id numerically matches the series tmdb_id
+    {:ok, movie} =
+      Cinder.Catalog.add_to_watchlist(%{
+        tmdb_id: 777,
+        title: "Collision Movie",
+        year: 2019,
+        poster_path: "/col.jpg"
+      })
+
+    {:ok, _} = Cinder.Catalog.transition(movie, %{status: :downloading})
+
+    conn = log_in_user(conn, user)
+    {:ok, _lv, html} = live(conn, ~p"/my-requests")
+
+    # season row renders correctly
+    assert html =~ "Collision Show"
+    assert html =~ "Season 2"
+    assert html =~ "pending"
+
+    # movie pipeline badge must NOT appear on the season row
+    refute html =~ "downloading"
+  end
+
   test "live-updates when the user's request is approved", %{conn: conn} do
     user = Cinder.AccountsFixtures.user_fixture()
     admin = Cinder.AccountsFixtures.admin_fixture()

@@ -48,7 +48,10 @@ defmodule CinderWeb.MyRequestsLive do
             </span>
             <span :if={r.year} class="text-base-content/60">({r.year})</span>
             <.request_status_badge status={r.status} />
-            <.movie_status_badge :if={@movie_status[r.target_id]} status={@movie_status[r.target_id]} />
+            <.movie_status_badge
+              :if={r.target_type == "movie" and @movie_status[r.target_id]}
+              status={@movie_status[r.target_id]}
+            />
           </div>
           <p :if={r.status == :denied and r.denial_reason} class="mt-1 text-sm text-error">
             {r.denial_reason}
