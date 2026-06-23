@@ -1,21 +1,106 @@
 # Cinder
 
 [![CI](https://github.com/simonbrunou/cinder/actions/workflows/ci.yml/badge.svg)](https://github.com/simonbrunou/cinder/actions/workflows/ci.yml)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-A single-household, self-hosted replacement for the Sonarr / Radarr / Seerr loop:
-request a movie → find the best release → download it → import it into Jellyfin/Plex.
-Built on Phoenix/LiveView with SQLite; everything external (TMDB, Prowlarr,
-qBittorrent/SABnzbd, Jellyfin/Plex) sits behind a behaviour so it can be mocked.
+Cinder is a single-household, self-hosted replacement for the **Sonarr + Radarr + Seerr** loop:
+request a movie or TV show → find the best release → download it → import it into **Jellyfin or
+Plex**. It's one Phoenix/LiveView app on SQLite — a single container, no external database. Every
+external service (TMDB, Prowlarr, qBittorrent/SABnzbd, Jellyfin/Plex) sits behind a behaviour and
+is configured in-app.
 
-The movies vertical slice is built and validated live. Current work is **Part II —
-from slice to v1.0** (movies + TV + multi-user, public self-host). See `ROADMAP.md`.
+> **Status:** movies + TV + multi-user (request → admin approval) are built and working; currently
+> pre-1.0 (**v0.7.0**), dogfooded privately ahead of the v1.0 public launch. Build plan in
+> [`ROADMAP.md`](ROADMAP.md).
+
+## Quickstart (Docker)
+
+Requires Docker with the Compose plugin.
+
+```sh
+git clone https://github.com/simonbrunou/cinder.git
+cd cinder
+cp .env.example .env
+echo "SECRET_KEY_BASE=$(openssl rand -base64 48)" >> .env   # or edit .env by hand
+docker compose up --build      # builds the image locally on first run
+```
+
+Open <http://localhost:4000>. The **first-run wizard** creates your admin account and collects
+your TMDB / indexer / download-client / media-server details, validating each before it lets you
+finish. The first account you create is the admin.
+
+> ⚠️ **Secure it before exposing it.** The first registered user becomes the admin, and
+> registration stays open afterward (that's how household members sign up to request). Create your
+> admin **immediately**, and don't expose port 4000 to an untrusted network — run Cinder behind a
+> reverse proxy (with TLS) or a VPN. See [`docs/operating.md`](docs/operating.md).
+
+> 🔗 **Hardlinks.** Cinder hardlinks finished downloads into your library, so the library and your
+> download client's completed-downloads directory must be on the **same filesystem**. The compose
+> file keeps both under one `/media` mount — details in the operating guide.
+
+## Configuration
+
+Two tiers. A handful of **boot-only** keys stay environment variables; **everything else** is
+edited in-app at `/settings` (or the wizard) and stored in the database. DB values **override** the
+env bootstrap, and clearing a setting reverts it to the env value/default. Secrets are encrypted at
+rest with a key derived from `SECRET_KEY_BASE`.
+
+### Boot-only environment variables
+
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `SECRET_KEY_BASE` | **yes** | — | Signs sessions/cookies; also derives the at-rest encryption key and signing salts. Generate with `openssl rand -base64 48`. |
+| `DATABASE_PATH` | **yes** | — | Path to the SQLite database file (compose: `/data/cinder.db`). |
+| `PHX_SERVER` | set `true` | — | Start the web server in the release. |
+| `PHX_HOST` | no | `localhost` | Public hostname; used in generated URLs + HSTS. |
+| `PORT` | no | `4000` | HTTP listen port. |
+| `POOL_SIZE` | no | `5` | SQLite connection-pool size. |
+| `RELEASE_NAME` | auto | — | Set by the release; its presence triggers DB migrations on boot. |
+| `DNS_CLUSTER_QUERY` | no | — | DNS-based clustering (unused on a single node). |
+
+### In-app service configuration (set in the wizard / `/settings`)
+
+| Group | Settings |
+|---|---|
+| TMDB | API read token (v4 bearer) |
+| Indexer | Prowlarr URL + API key |
+| Download | qBittorrent URL / username / password, SABnzbd URL + API key, per-client enable toggles |
+| Media server | Jellyfin URL + API key **or** Plex URL + token + section; media-server type |
+| Library | `library_path` (movies **and** TV import here today) |
+
+Each can be **bootstrapped** from an environment variable (`TMDB_API_TOKEN`, `PROWLARR_URL`,
+`LIBRARY_PATH`, …) for an unattended first boot, but the in-app value wins once set.
+
+## How it works
+
+Four contexts mirror the pipeline: **Catalog** (TMDB discovery + watchlist/series), **Acquisition**
+(Prowlarr search + release parsing/scoring), **Download** (qBittorrent/SABnzbd client + a polling
+GenServer), **Library** (hardlink + rename into the Jellyfin/Plex layout, then scan). Background
+pollers advance each request through its state machine and broadcast over PubSub so the LiveView
+dashboard updates live. Every state change goes through a single context choke-point, which — on
+SQLite WAL — keeps a web write racing the poller correct rather than flaky.
+
+## Screenshots
+
+_TODO — captures of the discovery grid, the request/approval queue, and the `/status` dashboard
+will land here (`docs/images/`)._
 
 ## Development
 
 ```sh
 mix setup        # install deps, create + migrate the DB, build assets
-mix phx.server   # then visit http://localhost:4000
-mix test         # compile (warnings-as-errors) + format check + credo --strict + suite
+mix phx.server   # http://localhost:4000
+mix test         # the gate: compile (warnings-as-errors) + format + credo --strict + suite
 ```
 
-License: GPL-3.0 (see `LICENSE`).
+Tidewave MCP is wired in dev. See [`CONTRIBUTING.md`](CONTRIBUTING.md) for conventions.
+
+## Documentation
+
+- [`ROADMAP.md`](ROADMAP.md) — build plan and what's shipped.
+- [`docs/operating.md`](docs/operating.md) — deploy, security, backups, hardlinks, troubleshooting, limits.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — dev setup, conventions, release process.
+
+## License
+
+[GPL-3.0-or-later](LICENSE) — `SPDX-License-Identifier: GPL-3.0-or-later`.
