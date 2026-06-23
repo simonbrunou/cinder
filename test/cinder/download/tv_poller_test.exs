@@ -81,7 +81,7 @@ defmodule Cinder.Download.TvPollerTest do
     imported = Repo.get!(Episode, e1.id)
 
     assert imported.file_path ==
-             "/tmp/cinder-test-library/Show (2008)/Season 01/Show (2008) - S01E03.mkv"
+             "/tmp/cinder-test-tv-library/Show (2008)/Season 01/Show (2008) - S01E03.mkv"
 
     assert is_nil(imported.grab_id)
   end
@@ -322,5 +322,51 @@ defmodule Cinder.Download.TvPollerTest do
     linked = Repo.get!(Episode, ep.id)
     assert linked.grab_id
     assert Repo.get!(Grab, linked.grab_id).download_id == "hash-m6"
+  end
+
+  test "a downloaded grab parks (not a raise-loop) when the TV library path is unconfigured" do
+    {_series, season} = series_tree()
+    e1 = episode(season, 1)
+    {:ok, grab} = Catalog.create_grab("hash-x", :torrent, [e1.id])
+    {:ok, _} = Catalog.mark_grab_downloaded(grab, "/dl/pack")
+
+    # Strict separate TV root (M8): with :tv_library_path unset, import returns an error tuple,
+    # so the grab bounded-retries and parks — never the silent every-tick re-raise hot loop.
+    saved = Application.get_env(:cinder, :tv_library_path)
+    Application.delete_env(:cinder, :tv_library_path)
+    on_exit(fn -> Application.put_env(:cinder, :tv_library_path, saved) end)
+
+    start_supervised!({TvPoller, interval: 60_000})
+
+    Enum.each(1..10, fn _ -> TvPoller.poll() end)
+
+    assert Repo.get(Grab, grab.id) == nil
+    parked = Repo.get!(Episode, e1.id)
+    assert is_nil(parked.file_path)
+    assert parked.search_attempts >= 1
+  end
+
+  test "respects the TV size band: a too-large pack is not grabbed when tv_max_size is set" do
+    {_series, season} = series_tree()
+    e1 = episode(season, 1)
+
+    # 1 GB/episode cap (k=1); the only release is 5 GB → rejected → nothing grabbed. Without
+    # the cap the existing search tests grab a 2 GB release, so this proves the band is plumbed
+    # through and that blank ⇒ unbounded (no M5 regression).
+    Application.put_env(:cinder, :tv_max_size, 1_000_000_000)
+    on_exit(fn -> Application.delete_env(:cinder, :tv_max_size) end)
+
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok, [%{title: "Show.S01E01.1080p.WEB-DL-GRP", size: 5_000_000_000, download_url: "u"}]}
+    end)
+
+    # No client.add stub: if scoring let the oversized release through, the grab would raise here.
+    assert :ok = TvPoller.poll()
+
+    e1 = Repo.get!(Episode, e1.id)
+    assert is_nil(e1.grab_id)
+    assert e1.search_attempts == 1
   end
 end

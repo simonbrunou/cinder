@@ -52,4 +52,14 @@ defmodule Cinder.HealthTest do
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> {:error, :eacces} end)
     assert Cinder.Health.check_service(:library) == {:error, :eacces}
   end
+
+  test "check_service(:tv_library) is :ok when the TV library dir is writable" do
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    assert Cinder.Health.check_service(:tv_library) == :ok
+  end
+
+  test "check_service(:tv_library) surfaces a filesystem error" do
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> {:error, :eacces} end)
+    assert Cinder.Health.check_service(:tv_library) == {:error, :eacces}
+  end
 end

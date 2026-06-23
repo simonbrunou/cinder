@@ -73,9 +73,16 @@ if url = System.get_env("PLEX_URL") do
     section: System.get_env("PLEX_SECTION")
 end
 
-# Where Cinder hardlinks imported movies (Jellyfin's library root).
+# Where Cinder hardlinks imported movies (the media server's Movies root).
 if path = System.get_env("LIBRARY_PATH") do
   config :cinder, :library_path, path
+end
+
+# Where Cinder hardlinks imported TV episodes (the media server's Shows root). Movies and
+# TV use separate roots so Jellyfin/Plex can point distinct libraries at each. Like
+# LIBRARY_PATH this is only the bootstrap default — the in-app /settings value overrides it.
+if path = System.get_env("TV_LIBRARY_PATH") do
+  config :cinder, :tv_library_path, path
 end
 
 config :cinder, CinderWeb.Endpoint,

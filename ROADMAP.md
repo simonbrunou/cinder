@@ -671,6 +671,29 @@ live torrent and TV paths are validated on real hardware, artifacts cut.
 **Done when:** conventions pass + the live sign-offs above succeed on real hardware and `v1.0.0`
 is tagged with its image published. **This is the single public launch.**
 
+**[code/docs done 2026-06-23 — live sign-offs + v1.0 tag remain]** Shipped the buildable portion;
+the live sign-offs and the `v1.0.0` tag are the maintainer/homelab steps that close M8. A
+perspective-diverse **council** (architecture / implementation / red-team) reviewed the plan first
+and caught three blockers folded into the build. **Library split (strict):** episodes import under
+a separate, **required** `tv_library_path` (env bootstrap `TV_LIBRARY_PATH`, in-app at `/settings`),
+mirroring the flat-key `library_path` overlay in `Cinder.Settings` (`apply_/base_tv_library_path`,
+`plan_flat` generalized over `@flat_keys`); `Health.check_service(:tv_library)` + a second wizard
+gate validate it writable. No fallback to the movie root — but `Library.import_episodes` returns
+`{:error, :tv_library_not_configured}` when unset so the `TvPoller` bounded-retries and **parks**
+(the council's catch: a raise there would hot-loop every tick, since `isolate` only logs). **TV size
+band in `/settings`:** `tv_min_size`/`tv_max_size` (decimal GB → bytes) + `tv_preferred_resolutions`
+(csv → downcased list) overlay **dedicated** `:cinder` keys; `TvPoller` reads them and passes
+non-nil opts to `Acquisition.best_releases` → `Scorer.select_for` (per-call `Keyword.merge` override
+— the **movie** `Scorer.select/2`/`best_release/2`/poller are byte-for-byte untouched). Coercion
+degrades `≤0`/blank to nil (unbounded) so a bad band can't silently reject every release; UI help
+text flags the decimal-GB unit + the per-episode `k×max` semantics. **Docs:** README + `operating.md`
+cover TV (monitoring, season packs, calendar, the two roots, band tuning) with an upgrade/migration
+note; `docker-compose.yml` + `.env.example` add `TV_LIBRARY_PATH` and drop the stale "separate TV
+root is v1.0" comment; `CHANGELOG [Unreleased]` marks the config change **BREAKING**. `mix.exs`
+version intentionally **not** bumped — the `v1.0.0` tag is the final live-sign-off step. `mix test`
+green (510). **Deferred (carry the Done-when):** live qBittorrent torrent sign-off, `/status` badge
+check, live TV season-pack smoke test, and cutting `v1.0.0`.
+
 ## Release & dogfood checkpoints
 
 - **internal-alpha** (after M2) — real accounts + the approval gate over the movie pipeline; you

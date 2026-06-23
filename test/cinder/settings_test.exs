@@ -21,7 +21,11 @@ defmodule Cinder.SettingsTest do
     Cinder.Library.MediaServer.Plex,
     :media_server,
     :download_clients,
-    :library_path
+    :library_path,
+    :tv_library_path,
+    :tv_min_size,
+    :tv_max_size,
+    :tv_preferred_resolutions
   ]
 
   setup do
@@ -168,6 +172,42 @@ defmodule Cinder.SettingsTest do
 
       Settings.delete("library_path")
       assert Application.fetch_env!(:cinder, :library_path) == original
+    end
+
+    test "a saved tv_library_path overlays :cinder, :tv_library_path; clearing reverts to bootstrap" do
+      original = Application.fetch_env!(:cinder, :tv_library_path)
+
+      Settings.put("tv_library_path", "/srv/media/tv")
+      assert Application.fetch_env!(:cinder, :tv_library_path) == "/srv/media/tv"
+
+      Settings.delete("tv_library_path")
+      assert Application.fetch_env!(:cinder, :tv_library_path) == original
+    end
+
+    test "tv size band: GB strings coerce to bytes; blank/zero/negative clear to unbounded (nil)" do
+      Settings.put("tv_max_size", "5")
+      assert Application.get_env(:cinder, :tv_max_size) == 5_000_000_000
+
+      Settings.put("tv_min_size", "1.5")
+      assert Application.get_env(:cinder, :tv_min_size) == 1_500_000_000
+
+      # A cleared, zero, or negative value degrades to "no limit" rather than rejecting everything.
+      Settings.delete("tv_max_size")
+      assert Application.get_env(:cinder, :tv_max_size) == nil
+
+      Settings.put("tv_min_size", "0")
+      assert Application.get_env(:cinder, :tv_min_size) == nil
+
+      Settings.put("tv_min_size", "-3")
+      assert Application.get_env(:cinder, :tv_min_size) == nil
+    end
+
+    test "tv_preferred_resolutions: comma list coerces to a downcased list; blank → nil" do
+      Settings.put("tv_preferred_resolutions", "1080p, 720P ,")
+      assert Application.get_env(:cinder, :tv_preferred_resolutions) == ["1080p", "720p"]
+
+      Settings.delete("tv_preferred_resolutions")
+      assert Application.get_env(:cinder, :tv_preferred_resolutions) == nil
     end
 
     test "with no library_path bootstrap (LIBRARY_PATH unset), the overlay yields nil not []" do

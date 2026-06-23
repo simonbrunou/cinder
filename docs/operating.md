@@ -26,9 +26,9 @@ expected to terminate at a reverse proxy):
 
 Boot-only keys (`SECRET_KEY_BASE`, `DATABASE_PATH`, `PHX_*`, `PORT`, `POOL_SIZE`,
 `DNS_CLUSTER_QUERY`) stay in the environment. Everything else — TMDB, indexer, download clients,
-media server, `library_path` — is edited at `/settings` and stored in the database. **DB values
-override the env bootstrap; clearing a setting reverts to the env value/default.** Secret fields are
-encrypted at rest with a key derived from `SECRET_KEY_BASE`.
+media server, `library_path`, `tv_library_path`, the TV size band — is edited at `/settings` and
+stored in the database. **DB values override the env bootstrap; clearing a setting reverts to the
+env value/default.** Secret fields are encrypted at rest with a key derived from `SECRET_KEY_BASE`.
 
 ## The hardlink requirement
 
@@ -68,11 +68,40 @@ your server picks the file up on its next periodic scan.
 | `:search_failed` | A release was found but couldn't be handed off, or transient errors exhausted ~10 min of retries. | Check the server log. Often a malformed/HTML "torrent", a BitTorrent **v2-only** torrent (see limits), or a Prowlarr/qBittorrent outage. **Retry** once fixed. |
 | `:import_failed` | The completed download had no usable video file, or import failed repeatedly — commonly a **cross-filesystem** library/download path or a permission mismatch. | Verify the hardlink requirement above; the log shows the cross-device/permission error. **Retry** after fixing. |
 
+## TV: monitoring, season packs, and the calendar
+
+Add a series from the TV search, then choose what to monitor — whole seasons or individual
+episodes, with a per-series strategy (`all` past + future, `future` only, or `none`). The TV
+poller searches each still-wanted monitored episode (monitored, aired, no file yet), preferring a
+season pack when one covers them and falling back to per-episode grabs; on import it maps each
+file in a pack to its episode by parsing `SxxEyy`. A file it can't match to a wanted episode is
+**logged and skipped** (the grab parks and its episodes re-search) rather than mis-filed.
+
+A periodic TMDB refresh reconciles season/episode data, so a newly-announced or late-dated episode
+becomes search-eligible on its own once its air date passes — no manual re-add. The **`/calendar`**
+view (admin) lists upcoming monitored episodes.
+
+**Tuning TV grabs.** The `TV releases` group in `/settings` sets a per-episode size band (decimal
+GB) and a preferred-resolution list. The band is **per episode**: a season pack of N episodes is
+allowed up to N× the max, so don't set the max to a whole-pack figure. Both bounds are optional —
+blank means no limit. A too-low max (or any min above what your indexer carries) silently rejects
+every release, so the episode stays wanted and nothing grabs; start with the band blank and tighten
+only if you're pulling oversized packs.
+
+## Library roots: movies vs TV
+
+Movies import under `library_path` and TV under a **separate** `tv_library_path` — point your media
+server's Movies and Shows libraries at the two roots. **The TV root is required and has no fallback:**
+with it unset, TV grabs park (logged) rather than importing episodes into the movie library, and the
+first-run wizard won't finish until both roots validate writable.
+
+> **Upgrading from a single-root instance (≤ 0.7.0):** set `TV_LIBRARY_PATH` (or the TV library path
+> in `/settings`) before your next TV import — an already-set-up instance is **not** sent back through
+> the wizard, so an unset TV root will park TV grabs until you configure it. Both roots must still be
+> on the same filesystem as the download client's completed dir (hardlinks).
+
 ## Known limitations
 
-- **Movies and TV share one library root.** Both import under `library_path` today
-  (`Title (Year)/…` and `Show (Year)/Season NN/…` side by side). Point a single mixed Jellyfin/Plex
-  library at it, or wait for the separate TV root (v1.0 / M8).
 - **BitTorrent v1 only.** Releases with a v2-only (SHA-256) infohash aren't handled; most public
   trackers are still v1.
 - **SABnzbd "Pause on Duplicates" must be OFF.** That mode re-keys the download id after an add, so

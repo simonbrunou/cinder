@@ -40,6 +40,13 @@ defmodule Cinder.Health do
     end
   end
 
+  def check_service(:tv_library) do
+    case Application.get_env(:cinder, :tv_library_path) do
+      blank when blank in [nil, ""] -> {:error, :not_configured}
+      path -> library_writable(path)
+    end
+  end
+
   defp indexer_check do
     mod = Application.fetch_env!(:cinder, :indexer)
     check("Indexer (#{short(mod)})", mod)

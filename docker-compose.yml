@@ -23,8 +23,10 @@ services:
       PHX_SERVER: "true"
       PORT: "4000"
       PHX_HOST: ${PHX_HOST:-localhost}
-      # Library root. Editable later in /settings (a DB value overrides this bootstrap).
+      # Library roots — separate Movies/Shows roots (a media server wants them split). Both are
+      # required; editable later in /settings (a DB value overrides this bootstrap).
       LIBRARY_PATH: /media/movies
+      TV_LIBRARY_PATH: /media/tv
     volumes:
       - cinder_data:/data              # SQLite DB + WAL (named volume; survives recreate)
       - ${MEDIA_ROOT:-./media}:/media  # library + downloads — see the hardlink note below
@@ -36,8 +38,8 @@ services:
 # HARDLINK REQUIREMENT: Cinder hardlinks finished downloads into the library, and a hardlink
 # cannot cross filesystems. Keep the library and the download client's completed dir under one
 # mount:
-#   /media/movies      <- LIBRARY_PATH (movies AND TV import here today; a separate TV root is v1.0)
-#   /media/tv
+#   /media/movies      <- LIBRARY_PATH    (movies import here)
+#   /media/tv          <- TV_LIBRARY_PATH (episodes import here)
 #   /media/downloads   <- point your download client's completed dir here
 #
 # Example wiring (uncomment + adjust, and uncomment the matching named volumes below).

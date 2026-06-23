@@ -2,8 +2,8 @@ defmodule CinderWeb.SetupLive do
   @moduledoc """
   First-run wizard, mounted at `/setup`. The admin is already created (via the normal
   registration flow); this step collects external-service config, validates each via
-  `Cinder.Health`, and only lets the admin finish once the movie loop is fully green —
-  TMDB, indexer, a media server, a writable library path, and at least one download
+  `Cinder.Health`, and only lets the admin finish once the loop is fully green — TMDB,
+  indexer, a media server, writable movie + TV library paths, and at least one download
   client. Finishing marks `setup_complete`, releasing the `:require_setup` gate.
   """
   use CinderWeb, :live_view
@@ -12,7 +12,7 @@ defmodule CinderWeb.SetupLive do
 
   alias Cinder.{Health, Settings}
 
-  @required_services ["tmdb", "indexer", "media_server", "library"]
+  @required_services ["tmdb", "indexer", "media_server", "library", "tv_library"]
   @download_services ["torrent", "usenet"]
 
   @impl true

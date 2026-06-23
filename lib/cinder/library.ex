@@ -57,6 +57,17 @@ defmodule Cinder.Library do
     do: {:error, :no_content_path}
 
   def import_episodes(content_path, episodes) do
+    # Strict separate TV root (M8): with no :tv_library_path configured, return an error tuple so
+    # the poller bounded-retries and parks the grab. Raising here (build_episode_dest's fetch_env!)
+    # would sit above the poller's {:error,_} → retry_or_park clause and re-raise every tick.
+    if tv_library_configured?() do
+      do_import_episodes(content_path, episodes)
+    else
+      {:error, :tv_library_not_configured}
+    end
+  end
+
+  defp do_import_episodes(content_path, episodes) do
     with {:ok, videos} <- video_files(content_path) do
       {to_import, unmatched} = videos |> match_episodes(episodes) |> resolve(videos, episodes)
 
@@ -148,7 +159,7 @@ defmodule Cinder.Library do
     code = "S#{pad(season.season_number)}E#{pad(ep.episode_number)}"
 
     Path.join([
-      library_path(),
+      tv_library_path(),
       show,
       "Season #{pad(season.season_number)}",
       "#{show} - #{code}#{Path.extname(source)}"
@@ -240,4 +251,12 @@ defmodule Cinder.Library do
   defp fs, do: Application.fetch_env!(:cinder, :filesystem)
   defp media_server, do: Application.fetch_env!(:cinder, :media_server)
   defp library_path, do: Application.fetch_env!(:cinder, :library_path)
+  defp tv_library_path, do: Application.fetch_env!(:cinder, :tv_library_path)
+
+  defp tv_library_configured? do
+    case Application.get_env(:cinder, :tv_library_path) do
+      path when is_binary(path) and path != "" -> true
+      _ -> false
+    end
+  end
 end
