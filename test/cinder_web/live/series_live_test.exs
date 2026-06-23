@@ -85,9 +85,10 @@ defmodule CinderWeb.SeriesLiveTest do
     assert render(lv) =~ "TV series"
   end
 
-  test "a non-admin cannot reach /series", %{conn: conn} do
+  test "a non-admin can load /series but NOT the admin local detail /series/:id", %{conn: conn} do
     user = user_fixture()
     conn = log_in_user(conn, user)
-    assert {:error, {:redirect, %{to: "/"}}} = live(conn, ~p"/series")
+    {:ok, _lv, _html} = live(conn, ~p"/series")
+    assert {:error, {:redirect, _}} = live(conn, ~p"/series/1")
   end
 end
