@@ -62,6 +62,17 @@ defmodule CinderWeb.SeriesDetailLive do
     if id == socket.assigns.series.id, do: {:noreply, reload(socket)}, else: {:noreply, socket}
   end
 
+  def handle_info({:series_deleted, id}, socket) do
+    if socket.assigns.series.id == id do
+      {:noreply,
+       socket
+       |> put_flash(:info, "Series deleted.")
+       |> push_navigate(to: ~p"/series")}
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_info(_message, socket), do: {:noreply, socket}
 
   # Guard the series vanishing out from under an open page (no delete path today, but a

@@ -115,4 +115,21 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     conn = log_in_user(conn, user)
     assert {:error, {:redirect, %{to: "/"}}} = live(conn, ~p"/series/#{series.id}")
   end
+
+  test "redirects to /series when the open series is deleted", %{conn: conn} do
+    series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 7001, title: "Detail Show"})
+
+    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+
+    Cinder.Catalog.broadcast_series_deleted(series.id)
+    assert_redirect(lv, ~p"/series")
+  end
+
+  test "ignores a {:series_deleted, id} for a different series", %{conn: conn} do
+    series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 7002, title: "Stay Show"})
+
+    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    Cinder.Catalog.broadcast_series_deleted(series.id + 999)
+    assert render(lv) =~ "Stay Show"
+  end
 end
