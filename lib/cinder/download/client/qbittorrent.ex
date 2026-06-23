@@ -96,7 +96,21 @@ defmodule Cinder.Download.Client.QBittorrent do
   end
 
   @impl true
-  def remove(_hash, _opts), do: {:error, :not_implemented}
+  def remove(hash, opts \\ []) do
+    delete_files = Keyword.get(opts, :delete_files, true)
+
+    case action(fn req ->
+           Req.post(req,
+             url: "/api/v2/torrents/delete",
+             form: [hashes: hash, deleteFiles: to_string(delete_files)]
+           )
+         end) do
+      # qBittorrent answers /torrents/delete with 200 and an empty body whether or
+      # not the hash was known — so it is idempotent for free (unknown hash → :ok).
+      {:ok, %{status: status}} when status in 200..299 -> :ok
+      other -> error(other)
+    end
+  end
 
   @impl true
   def health do

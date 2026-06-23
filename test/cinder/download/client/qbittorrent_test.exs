@@ -187,4 +187,34 @@ defmodule Cinder.Download.Client.QBittorrentTest do
 
     assert :ok = QBittorrent.health()
   end
+
+  test "remove/2 logs in and posts the hash with deleteFiles=true by default" do
+    stub_qbit(fn conn ->
+      assert conn.request_path == "/api/v2/torrents/delete"
+      assert Plug.Conn.get_req_header(conn, "cookie") == ["SID=testsid"]
+      conn = Plug.Conn.fetch_query_params(conn)
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+      params = URI.decode_query(body)
+      assert params["hashes"] == "abc123"
+      assert params["deleteFiles"] == "true"
+      Req.Test.text(conn, "")
+    end)
+
+    assert :ok = QBittorrent.remove("abc123", [])
+  end
+
+  test "remove/2 honours delete_files: false" do
+    stub_qbit(fn conn ->
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+      assert URI.decode_query(body)["deleteFiles"] == "false"
+      Req.Test.text(conn, "")
+    end)
+
+    assert :ok = QBittorrent.remove("abc123", delete_files: false)
+  end
+
+  test "remove/2 surfaces a login failure" do
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn -> Req.Test.text(conn, "Fails.") end)
+    assert {:error, :login_failed} = QBittorrent.remove("abc123", [])
+  end
 end
