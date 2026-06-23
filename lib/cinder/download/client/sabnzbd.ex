@@ -116,6 +116,9 @@ defmodule Cinder.Download.Client.Sabnzbd do
   defp pct(_), do: 0.0
 
   @impl true
+  def remove(_nzo_id, _opts), do: {:error, :not_implemented}
+
+  @impl true
   # mode=queue requires the API key (unlike mode=version, which SABnzbd serves
   # unauthenticated), so a wrong key surfaces as unhealthy. SABnzbd reports a bad
   # key as HTTP 200 with `{"status": false}`, so that body must be caught too.

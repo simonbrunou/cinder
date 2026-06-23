@@ -96,6 +96,9 @@ defmodule Cinder.Download.Client.QBittorrent do
   end
 
   @impl true
+  def remove(_hash, _opts), do: {:error, :not_implemented}
+
+  @impl true
   def health do
     case action(fn req ->
            Req.get(req, url: "/api/v2/app/webapiVersion", receive_timeout: 3_000)
