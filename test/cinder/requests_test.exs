@@ -1,5 +1,6 @@
 defmodule Cinder.RequestsTest do
   use Cinder.DataCase, async: false
+  import Mox
   alias Cinder.Catalog
   alias Cinder.Catalog.Movie
   alias Cinder.Requests
@@ -127,5 +128,65 @@ defmodule Cinder.RequestsTest do
     {:ok, req} = Requests.create_request(user, @attrs)
     {:ok, _} = Requests.approve_request(req, admin)
     assert_receive {:notify, {:request_approved, %{title: "The Matrix"}}}
+  end
+
+  describe "season requests" do
+    setup do
+      stub(Cinder.Catalog.TMDBMock, :get_series, fn 1399 ->
+        {:ok,
+         %{
+           tmdb_id: 1399,
+           tvdb_id: 1,
+           title: "GoT",
+           year: 2011,
+           poster_path: nil,
+           seasons: [%{season_number: 1}, %{season_number: 2}]
+         }}
+      end)
+
+      stub(Cinder.Catalog.TMDBMock, :get_season, fn 1399, n ->
+        {:ok,
+         %{
+           season_number: n,
+           episodes: [
+             %{tmdb_episode_id: n, episode_number: 1, title: "e", air_date: ~D[2011-01-01]}
+           ]
+         }}
+      end)
+
+      :ok
+    end
+
+    defp season_attrs do
+      %{target_type: "season", target_id: 1399, season_number: 2, title: "GoT", year: 2011}
+    end
+
+    test "a non-admin season request is :pending and creates NO series (security gate)" do
+      user = user_fixture()
+      assert {:ok, req} = Requests.create_request(user, season_attrs())
+      assert req.status == :pending
+      assert Cinder.Catalog.get_series_by_tmdb_id(1399) == nil
+    end
+
+    test "approving a season request creates the series and monitors only that season" do
+      user = user_fixture()
+      admin = admin_fixture()
+      {:ok, req} = Requests.create_request(user, season_attrs())
+
+      assert {:ok, approved} = Requests.approve_request(req, admin)
+      assert approved.status == :approved
+
+      series = Cinder.Catalog.get_series_by_tmdb_id(1399)
+      tree = Cinder.Catalog.get_series_with_tree(series.id)
+      assert Enum.find(tree.seasons, &(&1.season_number == 2)).monitored
+      refute Enum.find(tree.seasons, &(&1.season_number == 1)).monitored
+    end
+
+    test "an admin's own season request auto-approves and creates the series immediately" do
+      admin = admin_fixture()
+      assert {:ok, req} = Requests.create_request(admin, season_attrs())
+      assert req.status == :approved
+      assert Cinder.Catalog.get_series_by_tmdb_id(1399)
+    end
   end
 end

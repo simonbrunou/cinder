@@ -62,7 +62,7 @@ defmodule Cinder.Requests do
     pending > quota
   end
 
-  def approve_request(%Request{status: :pending} = request, %User{} = admin) do
+  def approve_request(%Request{status: :pending, target_type: "movie"} = request, %User{} = admin) do
     Repo.transaction(fn ->
       {:ok, _movie} = Catalog.find_or_create_at_requested(movie_attrs(request))
 
@@ -75,6 +75,22 @@ defmodule Cinder.Requests do
       end
     end)
     |> tap_ok(&announce_approved/1)
+  end
+
+  # NOT transaction-wrapped: find_or_create_series_at_requested does TMDB I/O.
+  def approve_request(
+        %Request{status: :pending, target_type: "season"} = request,
+        %User{} = admin
+      ) do
+    with {:ok, _series} <-
+           Catalog.find_or_create_series_at_requested(request.target_id, request.season_number),
+         {:ok, approved} <-
+           request
+           |> Request.status_changeset(%{status: :approved, approved_by_id: admin.id})
+           |> Repo.update() do
+      announce_approved(approved)
+      {:ok, approved}
+    end
   end
 
   def approve_request(%Request{}, _admin), do: {:error, :not_pending}
@@ -91,6 +107,21 @@ defmodule Cinder.Requests do
   end
 
   def deny_request(%Request{}, _admin, _reason), do: {:error, :not_pending}
+
+  # NOT transaction-wrapped: find_or_create_series_at_requested does TMDB I/O.
+  defp create_approved(user, %{target_type: "season"} = attrs, approver_id) do
+    with {:ok, _series} <-
+           Catalog.find_or_create_series_at_requested(attrs.target_id, attrs[:season_number]),
+         {:ok, request} <-
+           %Request{}
+           |> Request.create_changeset(
+             Map.merge(attrs, %{user_id: user.id, status: :approved, approved_by_id: approver_id})
+           )
+           |> Repo.insert() do
+      announce_approved(request)
+      {:ok, request}
+    end
+  end
 
   defp create_approved(user, attrs, approver_id) do
     Repo.transaction(fn ->
