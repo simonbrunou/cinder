@@ -62,4 +62,17 @@ defmodule Cinder.Catalog.Series do
   def refresh_changeset(series, attrs) do
     cast(series, attrs, [:tvdb_id, :title, :year, :poster_path])
   end
+
+  @doc """
+  Changeset for the admin metadata edit (`Catalog.update_series/2`). Casts only the
+  descriptive fields — `monitor_strategy` and `monitored` are deliberately NOT castable so
+  an admin title/year edit never cascades a strategy change onto existing seasons/episodes
+  (the request flow sets `monitor_strategy: :none` while flipping per-season `monitored: true`;
+  casting strategy here would clobber that — `refresh_changeset/2` excludes it for the same reason).
+  """
+  def admin_changeset(series, attrs) do
+    series
+    |> cast(attrs, [:tvdb_id, :title, :year, :poster_path])
+    |> validate_required([:title])
+  end
 end

@@ -52,6 +52,17 @@ defmodule Cinder.Catalog do
     |> Repo.insert()
   end
 
+  @doc """
+  Admin metadata edit for a movie (title/year/poster/ids). Reuses `Movie.changeset/2`, which
+  does NOT cast `:status` — status changes go through `transition/2` (the choke-point). Returns
+  `{:ok, movie}` or `{:error, changeset}`.
+  """
+  def update_movie(%Movie{} = movie, attrs) do
+    movie
+    |> Movie.changeset(attrs)
+    |> Repo.update()
+  end
+
   @doc "Lists watchlisted movies, newest first."
   def list_watchlist do
     Repo.all(from m in Movie, order_by: [desc: m.id])
@@ -229,6 +240,18 @@ defmodule Cinder.Catalog do
 
   @doc "Lists watchlisted series, newest first."
   def list_series, do: Repo.all(from s in Series, order_by: [desc: s.id])
+
+  @doc """
+  Admin metadata edit for a series. Uses `Series.admin_changeset/2`, which excludes
+  `monitor_strategy`/`monitored` so the edit never cascades a strategy change to existing
+  seasons/episodes. Per-season/episode monitoring stays on `set_season_monitored/2` /
+  `set_episode_monitored/2`. Returns `{:ok, series}` or `{:error, changeset}`.
+  """
+  def update_series(%Series{} = series, attrs) do
+    series
+    |> Series.admin_changeset(attrs)
+    |> Repo.update()
+  end
 
   defp create_series(tmdb_id, strategy) do
     with {:ok, info} <- tmdb().get_series(tmdb_id),
