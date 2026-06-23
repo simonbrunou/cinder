@@ -211,4 +211,18 @@ defmodule Cinder.CatalogTest do
       end
     end
   end
+
+  describe "delete broadcasts" do
+    test "broadcast_movie_deleted/1 emits {:movie_deleted, id} on the movies topic" do
+      Catalog.subscribe()
+      assert :ok = Catalog.broadcast_movie_deleted(42)
+      assert_receive {:movie_deleted, 42}
+    end
+
+    test "broadcast_series_deleted/1 emits {:series_deleted, id} on the series topic" do
+      Catalog.subscribe_series()
+      assert :ok = Catalog.broadcast_series_deleted(7)
+      assert_receive {:series_deleted, 7}
+    end
+  end
 end

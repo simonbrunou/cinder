@@ -155,6 +155,9 @@ defmodule Cinder.Catalog do
 
   defp broadcast(message), do: Phoenix.PubSub.broadcast(Cinder.PubSub, @topic, message)
 
+  @doc "Broadcasts `{:movie_deleted, id}` on the `\"movies\"` topic so open views drop the row."
+  def broadcast_movie_deleted(id), do: broadcast({:movie_deleted, id})
+
   ## TV series (M4a) — admin-only direct add; movie loop untouched.
   #
   # No PubSub topic yet: nothing subscribes until the M4b series-detail LiveView.
@@ -853,4 +856,8 @@ defmodule Cinder.Catalog do
 
   defp broadcast_series(series_id),
     do: Phoenix.PubSub.broadcast(Cinder.PubSub, @series_topic, {:series_updated, series_id})
+
+  @doc "Broadcasts `{:series_deleted, id}` on the `\"series\"` topic so open views drop the row."
+  def broadcast_series_deleted(id),
+    do: Phoenix.PubSub.broadcast(Cinder.PubSub, @series_topic, {:series_deleted, id})
 end
