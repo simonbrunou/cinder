@@ -623,6 +623,27 @@ and pin. **Packaging, not rewriting.**
 wizard on a freshly built image, a tag push publishes a versioned image, and
 README/compose/CHANGELOG are present.
 
+**[done 2026-06-23]** Shipped the packaging layer; no app code changed beyond `mix.exs` metadata.
+**Locked:** registry `ghcr.io/simonbrunou/cinder` (GHCR personal — matches the remote + CI badge),
+**amd64-only** image, first version **0.7.0**. Added: `docker-compose.yml` + `.env.example` (the
+`cinder` service builds locally pre-publish via `build: .` and pulls the published image after; one
+`/media` mount documents the hardlink same-filesystem rule + the `nobody`/PUID-65534 permission
+gotcha), `.github/workflows/release.yml` (tag `v*.*.*` → buildx → GHCR with `latest` +
+`{{version}}` + `{{major}}.{{minor}}`, OCI source label), `CHANGELOG.md`, a real `README.md`
+(quickstart + the env-bootstrap-vs-in-app config tables + precedence), `docs/operating.md`
+(replaces the deleted `phase-5-smoke-test.md`; ports the BitTorrent-v1-only + SABnzbd
+"Pause on Duplicates" + parked-state caveats), and `CONTRIBUTING.md` (dev flow + the release /
+GHCR-make-public step + SPDX `GPL-3.0-or-later`). A pre-impl perspective-diverse **council** pass
+drove the refinements: explicit `latest` tagging, the **first-publish GHCR package is private** →
+documented one-time make-public step, `--build` in the quickstart, the OCI source label, the
+PUID/PGID note, and a loud **admin-bootstrap** warning (don't expose `:4000` before creating the
+admin — registration must stay open for the multi-user model, so the mitigation is proxy/VPN +
+create-admin-first, **not** closing registration). One council "migrations are skipped in a release"
+claim was **verified false** (`skip_migrations?` returns true only when `RELEASE_NAME` is unset,
+i.e. not a release; a release migrates on boot). **Deferred to M8:** the movies/TV library-path
+split (both import under `library_path` today), arm64, real screenshots, and the live
+torrent/TV/badge sign-offs.
+
 ### M8 — v1.0 launch hardening (M)
 
 **Goal:** sign off the combined movies+TV multi-user product as **v1.0** — docs cover TV, the

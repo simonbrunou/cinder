@@ -1,17 +1,32 @@
 defmodule Cinder.MixProject do
   use Mix.Project
 
+  @version "0.7.0"
+  @source_url "https://github.com/simonbrunou/cinder"
+  @description "Self-hosted Sonarr/Radarr/Seerr replacement for movies and TV, on Phoenix/LiveView."
+
   def project do
     [
       app: :cinder,
-      version: "0.1.0",
+      version: @version,
       elixir: "~> 1.15",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       aliases: aliases(),
       deps: deps(),
       compilers: [:phoenix_live_view] ++ Mix.compilers(),
-      listeners: [Phoenix.CodeReloader]
+      listeners: [Phoenix.CodeReloader],
+      description: @description,
+      source_url: @source_url,
+      package: package()
+    ]
+  end
+
+  # Package metadata. Not published to Hex; present for discoverability + SPDX licensing.
+  defp package do
+    [
+      licenses: ["GPL-3.0-or-later"],
+      links: %{"GitHub" => @source_url}
     ]
   end
 
