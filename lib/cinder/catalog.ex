@@ -174,6 +174,38 @@ defmodule Cinder.Catalog do
     end
   end
 
+  @doc """
+  Request-approval entry for TV: find-or-create the series tree (from TMDB, nothing monitored
+  on first create) and monitor **only** `season_number` (cascading to its episodes), leaving other
+  seasons untouched. Sets `series.monitored: true`. Idempotent and additive across seasons.
+
+  Does TMDB I/O on first create, so it must NOT be called inside a `Repo.transaction`.
+  Returns `{:ok, %Series{}}`, or `{:error, reason}` if the TMDB fetch fails or the season is absent.
+  """
+  def find_or_create_series_at_requested(tmdb_id, season_number) do
+    with {:ok, series} <- ensure_series(tmdb_id),
+         %Season{} = season <- season_in(series, season_number),
+         {:ok, _} <- set_season_monitored(season, true),
+         {:ok, updated} <- mark_series_monitored(series) do
+      {:ok, updated}
+    else
+      nil -> {:error, :season_not_found}
+      {:error, _} = err -> err
+    end
+  end
+
+  # Create with monitor_strategy: :none so NOTHING is monitored by default; the requested season
+  # is then flipped on explicitly. An existing series is returned as-is.
+  defp ensure_series(tmdb_id), do: add_series_to_watchlist(tmdb_id, monitor_strategy: :none)
+
+  defp season_in(series, season_number) do
+    Repo.get_by(Season, series_id: series.id, season_number: season_number)
+  end
+
+  defp mark_series_monitored(series) do
+    series |> Ecto.Changeset.change(monitored: true) |> Repo.update()
+  end
+
   @doc "Fetches a watchlisted series by TMDB id, or `nil`."
   def get_series_by_tmdb_id(tmdb_id), do: Repo.get_by(Series, tmdb_id: tmdb_id)
 
