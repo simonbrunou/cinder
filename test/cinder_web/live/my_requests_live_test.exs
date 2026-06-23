@@ -35,6 +35,24 @@ defmodule CinderWeb.MyRequestsLiveTest do
     assert render(lv) =~ "pending"
   end
 
+  test "a season request shows the show title and season number", %{conn: conn} do
+    user = Cinder.AccountsFixtures.user_fixture()
+
+    {:ok, _} =
+      Requests.create_request(user, %{
+        target_type: "season",
+        target_id: 1399,
+        season_number: 3,
+        title: "GoT",
+        year: 2011
+      })
+
+    conn = log_in_user(conn, user)
+    {:ok, _lv, html} = live(conn, ~p"/my-requests")
+    assert html =~ "GoT"
+    assert html =~ "Season 3"
+  end
+
   test "live-updates when the user's request is approved", %{conn: conn} do
     user = Cinder.AccountsFixtures.user_fixture()
     admin = Cinder.AccountsFixtures.admin_fixture()

@@ -54,7 +54,11 @@ defmodule CinderWeb.RequestsLive do
             class="w-12 rounded"
           />
           <div class="flex-1">
-            <span class="font-semibold">{r.title}</span>
+            <span class="font-semibold">
+              {if r.target_type == "season",
+                do: "#{r.title} — Season #{r.season_number}",
+                else: r.title}
+            </span>
             <span :if={r.year} class="opacity-60">({r.year})</span>
             <span class="text-sm opacity-60">— {r.user.email}</span>
           </div>

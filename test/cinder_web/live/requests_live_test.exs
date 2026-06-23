@@ -57,6 +57,23 @@ defmodule CinderWeb.RequestsLiveTest do
     assert render(lv) =~ "Pending requests"
   end
 
+  test "a pending season request appears in the queue with its season label", %{conn: conn} do
+    user = user_fixture()
+
+    {:ok, _} =
+      Cinder.Requests.create_request(user, %{
+        target_type: "season",
+        target_id: 1399,
+        season_number: 2,
+        title: "Breaking Bad",
+        year: 2008
+      })
+
+    {:ok, _lv, html} = live(conn, ~p"/requests")
+    assert html =~ "Breaking Bad"
+    assert html =~ "Season 2"
+  end
+
   test "the pending queue shows the poster", %{conn: conn} do
     user = user_fixture()
 
