@@ -261,6 +261,78 @@ defmodule Cinder.CatalogRefreshTest do
     assert r.monitored
   end
 
+  # --- Per-season request: monitor_strategy :none + one monitored season ---
+
+  test "new episode in a monitored season is monitored:true even when series strategy is :none" do
+    # Mirror what find_or_create_series_at_requested does: series added with :none strategy,
+    # then only the requested season flipped to monitored: true.
+    s = series(:none)
+    sn = Repo.insert!(%Season{series_id: s.id, season_number: 1, monitored: true})
+    # One existing episode so the season already exists in DB; TMDB adds a second (new) episode.
+    episode(sn, %{tmdb_episode_id: 700, episode_number: 1, monitored: true, air_date: @past})
+
+    stub_tmdb(s, [
+      {1,
+       [
+         %{tmdb_episode_id: 700, episode_number: 1, title: "E1", air_date: @past},
+         %{tmdb_episode_id: 701, episode_number: 2, title: "E2", air_date: @past}
+       ]}
+    ])
+
+    assert {:ok, _} = Catalog.refresh_series(s)
+
+    new_ep = Repo.get_by!(Episode, tmdb_episode_id: 701)
+    assert new_ep.monitored, "new episode in a monitored season must be monitored: true"
+    wanted_ids = Catalog.wanted_episodes() |> Enum.map(& &1.id)
+    assert new_ep.id in wanted_ids, "monitored past-aired episode must appear in wanted_episodes"
+  end
+
+  test "new episode in an unmonitored season stays monitored:false (strategy :none, season not flipped)" do
+    s = series(:none)
+    # Season 1 monitored, season 2 not monitored (never requested).
+    _sn1 = Repo.insert!(%Season{series_id: s.id, season_number: 1, monitored: true})
+    sn2 = Repo.insert!(%Season{series_id: s.id, season_number: 2, monitored: false})
+    episode(sn2, %{tmdb_episode_id: 710, episode_number: 1, monitored: false, air_date: @past})
+
+    stub_tmdb(s, [
+      {1, []},
+      {2,
+       [
+         %{tmdb_episode_id: 710, episode_number: 1, title: "S2E1", air_date: @past},
+         %{tmdb_episode_id: 711, episode_number: 2, title: "S2E2", air_date: @past}
+       ]}
+    ])
+
+    assert {:ok, _} = Catalog.refresh_series(s)
+
+    new_ep = Repo.get_by!(Episode, tmdb_episode_id: 711)
+    refute new_ep.monitored, "new episode in an unmonitored season must stay monitored: false"
+    wanted_ids = Catalog.wanted_episodes() |> Enum.map(& &1.id)
+    refute new_ep.id in wanted_ids, "unmonitored episode must not appear in wanted_episodes"
+  end
+
+  test "new episode in a monitored season under :all/:future strategy is still monitored (regression)" do
+    # Confirms the fix doesn't break the pre-existing :all/:future behavior.
+    s = series(:all)
+    sn = season(s, 1)
+    episode(sn, %{tmdb_episode_id: 720, episode_number: 1, monitored: true, air_date: @past})
+
+    stub_tmdb(s, [
+      {1,
+       [
+         %{tmdb_episode_id: 720, episode_number: 1, title: "E1", air_date: @past},
+         %{tmdb_episode_id: 721, episode_number: 2, title: "E2", air_date: @past}
+       ]}
+    ])
+
+    assert {:ok, _} = Catalog.refresh_series(s)
+
+    new_ep = Repo.get_by!(Episode, tmdb_episode_id: 721)
+    assert new_ep.monitored
+    wanted_ids = Catalog.wanted_episodes() |> Enum.map(& &1.id)
+    assert new_ep.id in wanted_ids
+  end
+
   test "broadcasts {:series_updated, id} on success" do
     s = series(:all)
     season(s, 1)

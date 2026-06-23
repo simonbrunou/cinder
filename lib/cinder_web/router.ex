@@ -57,6 +57,8 @@ defmodule CinderWeb.Router do
       ] do
       live "/", WatchlistLive
       live "/my-requests", MyRequestsLive
+      live "/series", SeriesLive
+      live "/series/tmdb/:tmdb_id", SeriesDiscoveryLive
     end
 
     live_session :admin,
@@ -69,7 +71,6 @@ defmodule CinderWeb.Router do
       live "/settings", SettingsLive
       live "/requests", RequestsLive
       live "/users", UsersLive
-      live "/series", SeriesLive
       live "/series/:id", SeriesDetailLive
       live "/calendar", CalendarLive
     end

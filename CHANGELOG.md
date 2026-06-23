@@ -7,6 +7,14 @@ All notable changes to Cinder are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Multi-user TV requests (parity with movies)** — any authenticated user can search for a TV
+  show on `/series` and request a season from the show's discovery page (`/series/tmdb/:tmdb_id`).
+  A non-admin's request is `:pending` until an admin approves/denies it; an admin's own request
+  auto-approves. Quota enforcement, the **My requests** view, and per-season state badges
+  (Pending / Approved / Denied) all apply. On approval, the series is created and only the
+  requested season is monitored; the admin can adjust episode-level monitoring from
+  `/series/:id` (admin-only). The `/series` discovery page and show discovery are now
+  **authenticated** (no longer admin-only); monitor management stays admin-only.
 - **Per-kind library config (Movies, TV)** — every library kind has its own import root, Plex
   scan section, and editable release size band, all derived from one `Cinder.Library.kinds/0`
   list, so movies and TV behave identically and a new media type (books, audio) is a one-line

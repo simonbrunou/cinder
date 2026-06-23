@@ -1,9 +1,11 @@
 defmodule CinderWeb.RequestsLiveTest do
   use CinderWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
+  import Mox
   import Cinder.AccountsFixtures
 
   setup :register_and_log_in_admin
+  setup :set_mox_global
 
   test "lists pending and approves", %{conn: conn} do
     user = user_fixture()
@@ -57,6 +59,23 @@ defmodule CinderWeb.RequestsLiveTest do
     assert render(lv) =~ "Pending requests"
   end
 
+  test "a pending season request appears in the queue with its season label", %{conn: conn} do
+    user = user_fixture()
+
+    {:ok, _} =
+      Cinder.Requests.create_request(user, %{
+        target_type: "season",
+        target_id: 1399,
+        season_number: 2,
+        title: "Breaking Bad",
+        year: 2008
+      })
+
+    {:ok, _lv, html} = live(conn, ~p"/requests")
+    assert html =~ "Breaking Bad"
+    assert html =~ "Season 2"
+  end
+
   test "the pending queue shows the poster", %{conn: conn} do
     user = user_fixture()
 
@@ -71,5 +90,33 @@ defmodule CinderWeb.RequestsLiveTest do
 
     {:ok, _lv, html} = live(conn, ~p"/requests")
     assert html =~ "/poster.jpg"
+  end
+
+  test "approving a season request that fails TMDB lookup shows an error flash and leaves request pending",
+       %{conn: conn} do
+    user = user_fixture()
+
+    {:ok, req} =
+      Cinder.Requests.create_request(user, %{
+        target_type: "season",
+        target_id: 1399,
+        season_number: 2,
+        title: "Breaking Bad",
+        year: 2008
+      })
+
+    # Stub TMDB to fail so find_or_create_series_at_requested → approve_request returns {:error, _}
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn _id ->
+      {:error, {:tmdb_status, 503}}
+    end)
+
+    {:ok, lv, _html} = live(conn, ~p"/requests")
+    html = lv |> element("button", "Approve") |> render_click()
+
+    assert html =~ "Couldn&#39;t approve"
+
+    # Request must still be :pending — no state change
+    reloaded = Cinder.Repo.reload(req)
+    assert reloaded.status == :pending
   end
 end

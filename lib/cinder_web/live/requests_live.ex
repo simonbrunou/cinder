@@ -11,8 +11,14 @@ defmodule CinderWeb.RequestsLive do
   @impl true
   def handle_event("approve", %{"id" => id}, socket) do
     req = Enum.find(socket.assigns.pending, &(to_string(&1.id) == id))
-    if req, do: Requests.approve_request(req, socket.assigns.current_scope.user)
-    {:noreply, socket}
+
+    case req && Requests.approve_request(req, socket.assigns.current_scope.user) do
+      {:error, _reason} ->
+        {:noreply, put_flash(socket, :error, "Couldn't approve that request — please try again.")}
+
+      _ ->
+        {:noreply, socket}
+    end
   end
 
   def handle_event("deny", %{"_id" => id, "reason" => reason}, socket) do
@@ -54,7 +60,11 @@ defmodule CinderWeb.RequestsLive do
             class="w-12 rounded"
           />
           <div class="flex-1">
-            <span class="font-semibold">{r.title}</span>
+            <span class="font-semibold">
+              {if r.target_type == "season",
+                do: "#{r.title} — Season #{r.season_number}",
+                else: r.title}
+            </span>
             <span :if={r.year} class="opacity-60">({r.year})</span>
             <span class="text-sm opacity-60">— {r.user.email}</span>
           </div>

@@ -248,4 +248,59 @@ defmodule Cinder.CatalogSeriesTest do
       assert Enum.all?(eps, & &1.monitored)
     end
   end
+
+  describe "find_or_create_series_at_requested/2" do
+    setup do
+      stub(Cinder.Catalog.TMDBMock, :get_series, fn 1399 ->
+        {:ok,
+         %{
+           tmdb_id: 1399,
+           tvdb_id: 121_361,
+           title: "GoT",
+           year: 2011,
+           poster_path: nil,
+           seasons: [%{season_number: 1}, %{season_number: 2}]
+         }}
+      end)
+
+      stub(Cinder.Catalog.TMDBMock, :get_season, fn 1399, n ->
+        {:ok,
+         %{
+           season_number: n,
+           episodes: [
+             %{
+               tmdb_episode_id: n * 10 + 1,
+               episode_number: 1,
+               title: "e1",
+               air_date: ~D[2011-01-01]
+             }
+           ]
+         }}
+      end)
+
+      :ok
+    end
+
+    test "creates the series and monitors only the requested season" do
+      assert {:ok, series} = Catalog.find_or_create_series_at_requested(1399, 2)
+
+      tree = Catalog.get_series_with_tree(series.id)
+      assert tree.monitored
+      s1 = Enum.find(tree.seasons, &(&1.season_number == 1))
+      s2 = Enum.find(tree.seasons, &(&1.season_number == 2))
+      refute s1.monitored
+      assert s2.monitored
+      assert Enum.all?(s2.episodes, & &1.monitored)
+      refute Enum.any?(s1.episodes, & &1.monitored)
+    end
+
+    test "is idempotent and additive across seasons (S1 then S2 leaves both monitored)" do
+      {:ok, series} = Catalog.find_or_create_series_at_requested(1399, 1)
+      {:ok, ^series} = Catalog.find_or_create_series_at_requested(1399, 2)
+
+      tree = Catalog.get_series_with_tree(series.id)
+      assert Enum.find(tree.seasons, &(&1.season_number == 1)).monitored
+      assert Enum.find(tree.seasons, &(&1.season_number == 2)).monitored
+    end
+  end
 end

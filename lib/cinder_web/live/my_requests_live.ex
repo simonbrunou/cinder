@@ -41,10 +41,17 @@ defmodule CinderWeb.MyRequestsLive do
       <ul id="my-requests" class="space-y-3">
         <li :for={r <- @requests} class="card bg-base-200 p-4">
           <div class="flex items-center gap-3">
-            <span class="font-semibold">{r.title}</span>
+            <span class="font-semibold">
+              {if r.target_type == "season",
+                do: "#{r.title} — Season #{r.season_number}",
+                else: r.title}
+            </span>
             <span :if={r.year} class="text-base-content/60">({r.year})</span>
             <.request_status_badge status={r.status} />
-            <.movie_status_badge :if={@movie_status[r.target_id]} status={@movie_status[r.target_id]} />
+            <.movie_status_badge
+              :if={r.target_type == "movie" and @movie_status[r.target_id]}
+              status={@movie_status[r.target_id]}
+            />
           </div>
           <p :if={r.status == :denied and r.denial_reason} class="mt-1 text-sm text-error">
             {r.denial_reason}

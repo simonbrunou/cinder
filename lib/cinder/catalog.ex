@@ -34,6 +34,9 @@ defmodule Cinder.Catalog do
     end
   end
 
+  @doc "Fetches series details (including seasons list) from TMDB by tmdb_id."
+  def tmdb_series(tmdb_id), do: tmdb().get_series(tmdb_id)
+
   # Resolve the impl at runtime. compile_env! would inline the mock module, which —
   # being defined at runtime by Mox in test_helper.exs — doesn't exist at compile time
   # and warns under --warnings-as-errors. fetch_env! still fails fast if unconfigured.
@@ -172,6 +175,38 @@ defmodule Cinder.Catalog do
     else
       {:error, :invalid_monitor_strategy}
     end
+  end
+
+  @doc """
+  Request-approval entry for TV: find-or-create the series tree (from TMDB, nothing monitored
+  on first create) and monitor **only** `season_number` (cascading to its episodes), leaving other
+  seasons untouched. Sets `series.monitored: true`. Idempotent and additive across seasons.
+
+  Does TMDB I/O on first create, so it must NOT be called inside a `Repo.transaction`.
+  Returns `{:ok, %Series{}}`, or `{:error, reason}` if the TMDB fetch fails or the season is absent.
+  """
+  def find_or_create_series_at_requested(tmdb_id, season_number) do
+    with {:ok, series} <- ensure_series(tmdb_id),
+         %Season{} = season <- season_in(series, season_number),
+         {:ok, _} <- set_season_monitored(season, true),
+         {:ok, updated} <- mark_series_monitored(series) do
+      {:ok, updated}
+    else
+      nil -> {:error, :season_not_found}
+      {:error, _} = err -> err
+    end
+  end
+
+  # Create with monitor_strategy: :none so NOTHING is monitored by default; the requested season
+  # is then flipped on explicitly. An existing series is returned as-is.
+  defp ensure_series(tmdb_id), do: add_series_to_watchlist(tmdb_id, monitor_strategy: :none)
+
+  defp season_in(series, season_number) do
+    Repo.get_by(Season, series_id: series.id, season_number: season_number)
+  end
+
+  defp mark_series_monitored(series) do
+    series |> Ecto.Changeset.change(monitored: true) |> Repo.update()
   end
 
   @doc "Fetches a watchlisted series by TMDB id, or `nil`."
@@ -619,16 +654,18 @@ defmodule Cinder.Catalog do
   # PASS 3 inserts the new rows. This handles within-season swaps and mid-season insertion shifts,
   # which the old one-at-a-time update couldn't (every move collided on the unique index).
   defp reconcile_tree(series, fetched_seasons) do
-    today = Date.utc_today()
     existing_seasons = Map.new(seasons_for(series.id), &{&1.season_number, &1})
     by_tmdb = Map.new(episodes_for(series.id), &{&1.tmdb_episode_id, &1})
 
-    # Step 1 — collect {fetched_episode, target_season_id} for each fetched season whose target
-    # season exists (or was just inserted); skip a season ensure_season couldn't create.
+    # Step 1 — collect {fetched_episode, season} for each fetched season whose target season
+    # exists (or was just inserted); skip a season ensure_season couldn't create. The full season
+    # struct is carried so PASS 3 can use season.monitored as the source of truth for new
+    # episodes (rather than the series-wide monitor_strategy, which is :none for per-season
+    # requests even when a specific season is monitored).
     targets =
       Enum.flat_map(fetched_seasons, fn fs ->
         case ensure_season(series, existing_seasons, fs.season_number) do
-          %Season{id: season_id} -> Enum.map(fs.episodes, &{&1, season_id})
+          %Season{} = season -> Enum.map(fs.episodes, &{&1, season})
           nil -> []
         end
       end)
@@ -636,13 +673,13 @@ defmodule Cinder.Catalog do
     # Step 2 — partition into matched (existing row found by tmdb_episode_id) vs new. Guard a nil
     # tmdb_episode_id (TMDB always sets it, but a nil never matches and must be treated as new).
     {matched, new} =
-      Enum.split_with(targets, fn {fe, _season_id} ->
+      Enum.split_with(targets, fn {fe, _season} ->
         not is_nil(fe.tmdb_episode_id) and Map.has_key?(by_tmdb, fe.tmdb_episode_id)
       end)
 
     matched =
-      Enum.map(matched, fn {fe, season_id} ->
-        {Map.fetch!(by_tmdb, fe.tmdb_episode_id), fe, season_id}
+      Enum.map(matched, fn {fe, season} ->
+        {Map.fetch!(by_tmdb, fe.tmdb_episode_id), fe, season.id}
       end)
 
     # PASS 1 — park each matched row's real slot with a unique non-colliding sentinel (-id) in its
@@ -664,8 +701,11 @@ defmodule Cinder.Catalog do
       finalize_or_restore(parked_ep, original, season_id, fe)
     end)
 
-    # PASS 3 — insert new rows, after finalize so slots reflect final state.
-    Enum.each(new, fn {fe, season_id} -> insert_episode(series, season_id, fe, today) end)
+    # PASS 3 — insert new rows, after finalize so slots reflect final state. Use the season's
+    # `monitored` flag as the source of truth: a per-season request sets monitor_strategy: :none
+    # on the series but flips the requested season's monitored flag to true, so season.monitored
+    # correctly reflects "do we want this season" while series.monitor_strategy does not.
+    Enum.each(new, fn {fe, season} -> insert_episode(season.id, season.monitored, fe) end)
   end
 
   # Vacate a matched row's real slot before the finalize pass: -id never collides with a positive
@@ -755,7 +795,7 @@ defmodule Cinder.Catalog do
     end
   end
 
-  defp insert_episode(series, season_id, fe, today) do
+  defp insert_episode(season_id, season_monitored, fe) do
     %Episode{}
     |> Episode.refresh_changeset(%{
       season_id: season_id,
@@ -763,7 +803,7 @@ defmodule Cinder.Catalog do
       episode_number: fe.episode_number,
       title: fe.title,
       air_date: fe.air_date,
-      monitored: monitored?(series.monitor_strategy, fe.air_date, today)
+      monitored: season_monitored
     })
     |> Repo.insert()
     |> log_reconcile_error("insert episode tmdb_ep #{fe.tmdb_episode_id}")
