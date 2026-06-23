@@ -36,7 +36,7 @@ defmodule Cinder.LibraryTest do
       :ok
     end)
 
-    expect(Cinder.Library.MediaServerMock, :scan, fn -> :ok end)
+    expect(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
     assert {:ok, "#{@lib}/Inception (2010)/Inception (2010).mkv"} = Library.import_movie(movie)
   end
@@ -62,7 +62,7 @@ defmodule Cinder.LibraryTest do
       :ok
     end)
 
-    expect(Cinder.Library.MediaServerMock, :scan, fn -> :ok end)
+    expect(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
     assert {:ok, _dest} = Library.import_movie(movie)
   end
@@ -73,7 +73,7 @@ defmodule Cinder.LibraryTest do
     expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
     expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
     expect(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eexist} end)
-    expect(Cinder.Library.MediaServerMock, :scan, fn -> :ok end)
+    expect(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
     assert {:ok, _dest} = Library.import_movie(movie)
   end
@@ -84,7 +84,7 @@ defmodule Cinder.LibraryTest do
     expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
     expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
     expect(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
-    expect(Cinder.Library.MediaServerMock, :scan, fn -> {:error, :econnrefused} end)
+    expect(Cinder.Library.MediaServerMock, :scan, fn _kind -> {:error, :econnrefused} end)
 
     log =
       capture_log(fn ->
@@ -103,7 +103,7 @@ defmodule Cinder.LibraryTest do
     # A misconfigured media-server impl can raise (e.g. a malformed base URL or a
     # network error deep in the HTTP stack) — that must not crash an already-
     # hardlinked import.
-    expect(Cinder.Library.MediaServerMock, :scan, fn -> raise "boom" end)
+    expect(Cinder.Library.MediaServerMock, :scan, fn _kind -> raise "boom" end)
 
     log =
       capture_log(fn ->
@@ -142,7 +142,7 @@ defmodule Cinder.LibraryTest do
       :ok
     end)
 
-    expect(Cinder.Library.MediaServerMock, :scan, fn -> :ok end)
+    expect(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
     assert {:ok, _dest} = Library.import_movie(movie)
   end
@@ -155,7 +155,7 @@ defmodule Cinder.LibraryTest do
 
     expect(Cinder.Library.FilesystemMock, :ln, fn _src, "#{@lib}/Untitled/Untitled.mkv" -> :ok end)
 
-    expect(Cinder.Library.MediaServerMock, :scan, fn -> :ok end)
+    expect(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
     assert {:ok, "#{@lib}/Untitled/Untitled.mkv"} = Library.import_movie(movie)
   end
@@ -168,7 +168,7 @@ defmodule Cinder.LibraryTest do
 
     expect(Cinder.Library.FilesystemMock, :ln, fn _src, "#{@lib}/tmdb-555/tmdb-555.mkv" -> :ok end)
 
-    expect(Cinder.Library.MediaServerMock, :scan, fn -> :ok end)
+    expect(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
     assert {:ok, "#{@lib}/tmdb-555/tmdb-555.mkv"} = Library.import_movie(movie)
   end
@@ -181,7 +181,7 @@ defmodule Cinder.LibraryTest do
 
     expect(Cinder.Library.FilesystemMock, :ln, fn _src, "#{@lib}/tmdb-777/tmdb-777.mkv" -> :ok end)
 
-    expect(Cinder.Library.MediaServerMock, :scan, fn -> :ok end)
+    expect(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
     assert {:ok, "#{@lib}/tmdb-777/tmdb-777.mkv"} = Library.import_movie(movie)
   end
@@ -196,7 +196,7 @@ defmodule Cinder.LibraryTest do
     defp stub_link_ok do
       stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
       stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
-      stub(Cinder.Library.MediaServerMock, :scan, fn -> :ok end)
+      stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
     end
 
     test "single episode matched by SxxEyy → Show (Year)/Season NN/Show (Year) - SxxEyy.ext" do
@@ -282,7 +282,7 @@ defmodule Cinder.LibraryTest do
       stub_dir([{"/dl/Show.S01E01.mkv", 3 * @gb}])
       stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
       stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eexist} end)
-      stub(Cinder.Library.MediaServerMock, :scan, fn -> :ok end)
+      stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
       assert {:ok, [{1, _dest}], []} = Library.import_episodes("/dl", [ep(1, 1)])
     end

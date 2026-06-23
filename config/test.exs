@@ -99,7 +99,8 @@ config :cinder, Cinder.Library.MediaServer.Jellyfin,
 config :cinder, Cinder.Library.MediaServer.Plex,
   url: "http://localhost:32400",
   token: "test-key",
-  section: "1",
+  movies_section: "1",
+  tv_section: "2",
   req_options: [plug: {Req.Test, Cinder.PlexStub}, retry: false]
 
 # The app-level poller must not run during the suite (it would race Mox/Sandbox).
@@ -112,5 +113,5 @@ config :cinder, dev_routes: true
 # First-run redirect off by default in test; the routing test flips it on locally.
 config :cinder, :enforce_setup, false
 
-config :cinder, :library_path, "/tmp/cinder-test-library"
+config :cinder, :movies_library_path, "/tmp/cinder-test-library"
 config :cinder, :tv_library_path, "/tmp/cinder-test-tv-library"

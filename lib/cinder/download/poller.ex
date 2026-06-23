@@ -70,18 +70,20 @@ defmodule Cinder.Download.Poller do
   end
 
   defp advance_downloading do
-    for movie <- Catalog.list_by_status(:downloading), do: isolate(movie, &advance/1)
+    for movie <- Catalog.list_by_status(:downloading),
+        do: isolate("movie #{movie.id}", fn -> advance(movie) end)
   end
 
   defp import_downloaded do
-    for movie <- Catalog.list_by_status(:downloaded), do: isolate(movie, &import_one/1)
+    for movie <- Catalog.list_by_status(:downloaded),
+        do: isolate("movie #{movie.id}", fn -> import_one(movie) end)
   end
 
   defp search_requested(retry_after) do
     movies = Catalog.list_by_status(:requested) ++ Catalog.list_by_status(:searching)
 
     for movie <- movies, search_due?(movie, retry_after) do
-      isolate(movie, &search_one/1)
+      isolate("movie #{movie.id}", fn -> search_one(movie) end)
     end
   end
 
@@ -175,6 +177,14 @@ defmodule Cinder.Download.Poller do
         with {:ok, available} <- Catalog.transition(movie, %{status: :available}),
              do: Notifier.notify({:movie_available, available})
 
+      {:error, :library_not_configured} ->
+        # Hold (no attempt bump, no park) until the movie library root is configured: the file is
+        # downloaded and waiting, so don't burn the retry budget on a fixable misconfig. The cause
+        # is visible — /status shows the library red (Health.check_service({:library, :movies})).
+        Logger.warning(
+          "holding import for movie #{movie.id}: movies_library_path not set; configure it in /settings"
+        )
+
       {:error, reason} when reason in @permanent_import_errors ->
         Logger.warning("import permanently failed for movie #{movie.id}: #{inspect(reason)}")
         park(movie, :import_failed, reason)
@@ -213,12 +223,16 @@ defmodule Cinder.Download.Poller do
          do: Notifier.notify({:movie_failed, parked, reason})
   end
 
-  # Per-movie isolation: an unexpected raise skips that one movie (leaving it at
-  # its current status for retry) instead of crashing the tick for the rest.
-  defp isolate(movie, fun) do
-    fun.(movie)
+  # Per-unit isolation: an unexpected raise OR exit (e.g. a DBConnection checkout
+  # timeout under two-poller write contention — not rescue-able) skips that one unit
+  # (leaving it at its current status for retry) instead of crashing the tick for the
+  # rest. Mirrors `Cinder.Download.TvPoller.isolate/2`.
+  defp isolate(label, fun) do
+    fun.()
   rescue
-    e -> Logger.error("poller skipped movie #{movie.id}: #{Exception.message(e)}")
+    e -> Logger.error("poller skipped #{label}: #{Exception.message(e)}")
+  catch
+    kind, value -> Logger.error("poller skipped #{label}: #{inspect({kind, value})}")
   end
 
   defp schedule(interval), do: Process.send_after(self(), :poll, interval)

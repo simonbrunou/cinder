@@ -12,8 +12,15 @@ defmodule CinderWeb.SetupLive do
 
   alias Cinder.{Health, Settings}
 
-  @required_services ["tmdb", "indexer", "media_server", "library", "tv_library"]
+  @base_required_services ["tmdb", "indexer", "media_server"]
   @download_services ["torrent", "usenet"]
+
+  # The required set is the base services plus one writable-root check per library kind
+  # (`movies_library`, `tv_library`, …), derived from Settings.library_kinds/0.
+  defp required_services do
+    @base_required_services ++
+      for(%{kind: kind} <- Settings.library_kinds(), do: "#{kind}_library")
+  end
 
   @impl true
   def mount(_params, _session, socket) do
@@ -27,7 +34,7 @@ defmodule CinderWeb.SetupLive do
   @impl true
   def handle_event("validate", params, socket) do
     Settings.save_form(params)
-    health = Map.new(@required_services ++ @download_services, &{&1, check(&1)})
+    health = Map.new(required_services() ++ @download_services, &{&1, check(&1)})
 
     {:noreply,
      assign(socket, form: Settings.form_state(), health: health, can_finish: all_green?(health))}
@@ -60,7 +67,7 @@ defmodule CinderWeb.SetupLive do
   defp check(svc), do: Health.check_service(decode_service(svc))
 
   defp all_green?(health) do
-    Enum.all?(@required_services, &(health[&1] == :ok)) and
+    Enum.all?(required_services(), &(health[&1] == :ok)) and
       Enum.any?(@download_services, &(health[&1] == :ok))
   end
 

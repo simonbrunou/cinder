@@ -3,6 +3,10 @@ defmodule Cinder.Requests.Request do
   import Ecto.Changeset
 
   @statuses [:pending, :approved, :denied]
+  # The polymorphic request target. Movies are the only writer today; series/episode are
+  # reserved for the TV requester flow (M5+). An allowlist keeps a typo'd discriminator out of
+  # the DB before a second writer (or its dispatch) exists to trip over it.
+  @target_types ["movie", "series", "episode"]
 
   schema "requests" do
     field :target_type, :string
@@ -30,6 +34,7 @@ defmodule Cinder.Requests.Request do
       :approved_by_id
     ])
     |> validate_required([:user_id, :target_type, :target_id, :status])
+    |> validate_inclusion(:target_type, @target_types)
     # The constraint name is intentionally column-derived, NOT the migration's
     # :requests_pending_unique partial-index name. exqlite reports the column-derived
     # name when a duplicate is caught; using :requests_pending_unique here would turn

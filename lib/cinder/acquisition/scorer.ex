@@ -15,11 +15,7 @@ defmodule Cinder.Acquisition.Scorer do
   size-band and blocklist filters.
   """
   def select(releases, opts \\ []) do
-    rules = Keyword.merge(config(), opts)
-    min_size = Keyword.get(rules, :min_size)
-    max_size = Keyword.get(rules, :max_size)
-    blocklist = rules |> Keyword.get(:blocklist, []) |> Enum.map(&String.downcase/1)
-    preferred = Keyword.get(rules, :preferred_resolutions, @default_preferred)
+    {min_size, max_size, preferred, blocklist} = rules(opts)
 
     releases
     |> Enum.filter(&within_band?(&1, min_size, max_size))
@@ -51,14 +47,8 @@ defmodule Cinder.Acquisition.Scorer do
   household release-list sizes; upgrade only if release sets get pathological.
   """
   def select_for(releases, season, wanted_episodes, opts \\ []) do
-    rules = Keyword.merge(config(), opts)
-    blocklist = rules |> Keyword.get(:blocklist, []) |> Enum.map(&String.downcase/1)
-
-    band = {
-      Keyword.get(rules, :min_size),
-      Keyword.get(rules, :max_size),
-      Keyword.get(rules, :preferred_resolutions, @default_preferred)
-    }
+    {min_size, max_size, preferred, blocklist} = rules(opts)
+    band = {min_size, max_size, preferred}
 
     releases
     |> Enum.filter(&(&1.season == season))
@@ -66,7 +56,23 @@ defmodule Cinder.Acquisition.Scorer do
     |> cover(MapSet.new(wanted_episodes), [], band)
   end
 
+  # The normalized rule set, shared by both entry points: the size band, the
+  # resolution preference (defaulted), and the downcased blocklist. Config block
+  # overlaid by per-call opts.
+  defp rules(opts) do
+    rules = Keyword.merge(config(), opts)
+
+    {
+      Keyword.get(rules, :min_size),
+      Keyword.get(rules, :max_size),
+      Keyword.get(rules, :preferred_resolutions, @default_preferred),
+      rules |> Keyword.get(:blocklist, []) |> Enum.map(&String.downcase/1)
+    }
+  end
+
   defp cover(candidates, needed, chosen, band) do
+    {min_size, max_size, _preferred} = band
+
     scored =
       if MapSet.size(needed) == 0 do
         []
@@ -74,7 +80,10 @@ defmodule Cinder.Acquisition.Scorer do
         candidates
         |> Enum.map(fn release -> {release, coverage(release, needed)} end)
         |> Enum.reject(fn {release, cov} ->
-          MapSet.size(cov) == 0 or not tv_within_band?(release, MapSet.size(cov), band)
+          # Per-episode band: a release covering k still-wanted episodes is judged
+          # against k×the band (a pack is allowed proportionally more size).
+          k = MapSet.size(cov)
+          k == 0 or not within_band?(release, scale(min_size, k), scale(max_size, k))
         end)
       end
 
@@ -95,23 +104,27 @@ defmodule Cinder.Acquisition.Scorer do
   defp coverage(%Release{episodes: nil}, needed), do: needed
   defp coverage(%Release{episodes: eps}, needed), do: MapSet.intersection(MapSet.new(eps), needed)
 
-  defp tv_within_band?(%Release{} = release, k, {min_size, max_size, _preferred}) do
-    size = release.size || 0
-    (is_nil(min_size) or size >= k * min_size) and (is_nil(max_size) or size <= k * max_size)
-  end
-
   # max_by: more coverage wins; ties go to the more-preferred resolution, then larger size.
   defp greedy_key(%Release{} = release, cov, {_min, _max, preferred}) do
-    rank = Enum.find_index(preferred, &(&1 == release.resolution)) || length(preferred)
-    {MapSet.size(cov), -rank, release.size || 0}
+    {MapSet.size(cov), -resolution_rank(release, preferred), release.size || 0}
   end
 
   defp config, do: Application.get_env(:cinder, __MODULE__, [])
 
+  # One inclusive size-band check for both paths. The TV path pre-multiplies the
+  # bounds by k (the episodes a release covers) at the call site; movies pass them as-is.
   defp within_band?(%Release{} = release, min_size, max_size) do
     size = release.size || 0
     (is_nil(min_size) or size >= min_size) and (is_nil(max_size) or size <= max_size)
   end
+
+  defp scale(nil, _k), do: nil
+  defp scale(size, k), do: k * size
+
+  # Index of the release's resolution in the preference list (lower = better);
+  # an unlisted resolution sorts last.
+  defp resolution_rank(%Release{} = release, preferred),
+    do: Enum.find_index(preferred, &(&1 == release.resolution)) || length(preferred)
 
   defp blocked?(%Release{group: nil}, _blocklist), do: false
   defp blocked?(%Release{group: group}, blocklist), do: String.downcase(group) in blocklist
@@ -120,7 +133,6 @@ defmodule Cinder.Acquisition.Scorer do
   defp pick_best(releases, preferred), do: {:ok, Enum.min_by(releases, &sort_key(&1, preferred))}
 
   defp sort_key(%Release{} = release, preferred) do
-    rank = Enum.find_index(preferred, &(&1 == release.resolution)) || length(preferred)
-    {rank, -(release.size || 0)}
+    {resolution_rank(release, preferred), -(release.size || 0)}
   end
 end

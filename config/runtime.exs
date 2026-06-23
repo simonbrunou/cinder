@@ -61,28 +61,32 @@ if url = System.get_env("JELLYFIN_URL") do
     api_key: System.get_env("JELLYFIN_API_KEY")
 end
 
-# Real Plex connection, read in every environment. Unset in test/CI, where the
-# suite stubs Req regardless, so it has no effect there. Plex has no refresh-all
-# endpoint, so PLEX_SECTION is the numeric id of the movie library. The media-server
-# impl is no longer flipped here (M1): Cinder.Settings picks Jellyfin/Plex, defaulting
-# to Plex when PLEX_URL is set as bootstrap. These creds remain the env bootstrap.
+# Real Plex connection, read in every environment. Unset in test/CI, where the suite stubs Req
+# regardless. Plex has no refresh-all endpoint, so each library kind carries its OWN numeric
+# section id: MOVIES_PLEX_SECTION, TV_PLEX_SECTION, … → Plex `:movies_section`/`:tv_section`, so
+# a TV import refreshes the Shows library, not the Movies one. The media-server impl is no longer
+# flipped here (M1): Cinder.Settings picks Jellyfin/Plex, defaulting to Plex when PLEX_URL is set.
+# These creds remain the env bootstrap. Per-kind keys derive from Cinder.Library.kinds/0.
 if url = System.get_env("PLEX_URL") do
-  config :cinder, Cinder.Library.MediaServer.Plex,
-    url: url,
-    token: System.get_env("PLEX_TOKEN"),
-    section: System.get_env("PLEX_SECTION")
+  sections =
+    for kind <- Cinder.Library.kinds(),
+        section = System.get_env("#{String.upcase(to_string(kind))}_PLEX_SECTION"),
+        is_binary(section),
+        do: {:"#{kind}_section", section}
+
+  config :cinder,
+         Cinder.Library.MediaServer.Plex,
+         [url: url, token: System.get_env("PLEX_TOKEN")] ++ sections
 end
 
-# Where Cinder hardlinks imported movies (the media server's Movies root).
-if path = System.get_env("LIBRARY_PATH") do
-  config :cinder, :library_path, path
-end
-
-# Where Cinder hardlinks imported TV episodes (the media server's Shows root). Movies and
-# TV use separate roots so Jellyfin/Plex can point distinct libraries at each. Like
-# LIBRARY_PATH this is only the bootstrap default — the in-app /settings value overrides it.
-if path = System.get_env("TV_LIBRARY_PATH") do
-  config :cinder, :tv_library_path, path
+# Where Cinder hardlinks each library kind (the media server's Movies / Shows / … roots), one per
+# Cinder.Library.kinds/0: MOVIES_LIBRARY_PATH, TV_LIBRARY_PATH, … → `:movies_library_path` etc.
+# Separate roots so Jellyfin/Plex can point distinct libraries at each. Bootstrap default only —
+# the in-app /settings value overrides it.
+for kind <- Cinder.Library.kinds() do
+  if path = System.get_env("#{String.upcase(to_string(kind))}_LIBRARY_PATH") do
+    config :cinder, :"#{kind}_library_path", path
+  end
 end
 
 config :cinder, CinderWeb.Endpoint,

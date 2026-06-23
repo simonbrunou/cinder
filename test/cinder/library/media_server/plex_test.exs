@@ -12,7 +12,7 @@ defmodule Cinder.Library.MediaServer.PlexTest do
     Application.put_env(:cinder, Plex, Keyword.merge(original, overrides))
   end
 
-  test "scan/0 refreshes the configured section with the token and returns :ok on 200" do
+  test "scan/1 refreshes the kind's section with the token and returns :ok on 200" do
     Req.Test.stub(Cinder.PlexStub, fn conn ->
       assert conn.method == "GET"
       assert conn.request_path == "/library/sections/1/refresh"
@@ -23,21 +23,22 @@ defmodule Cinder.Library.MediaServer.PlexTest do
       |> Req.Test.text("")
     end)
 
-    assert :ok = Plex.scan()
+    assert :ok = Plex.scan(:movies)
   end
 
-  test "scan/0 surfaces a non-2xx status as an error" do
+  test "scan/1 surfaces a non-2xx status as an error" do
     Req.Test.stub(Cinder.PlexStub, fn conn ->
       conn |> Plug.Conn.put_status(401) |> Req.Test.text("Unauthorized")
     end)
 
-    assert {:error, {:plex_status, 401}} = Plex.scan()
+    assert {:error, {:plex_status, 401}} = Plex.scan(:movies)
   end
 
-  test "health/0 validates the configured section (token-checked) and returns :ok on 200" do
+  test "health/0 validates every kind's section (token-checked) and returns :ok on 200" do
     Req.Test.stub(Cinder.PlexStub, fn conn ->
       assert conn.method == "GET"
-      assert conn.request_path == "/library/sections/1"
+      # health probes one section per kind (movies=1, tv=2); accept either.
+      assert conn.request_path in ["/library/sections/1", "/library/sections/2"]
       assert Plug.Conn.get_req_header(conn, "x-plex-token") == ["test-key"]
       Req.Test.text(conn, "<MediaContainer/>")
     end)
@@ -45,31 +46,31 @@ defmodule Cinder.Library.MediaServer.PlexTest do
     assert :ok = Plex.health()
   end
 
-  test "scan/0 returns :plex_section_unset without hitting Plex when section is blank" do
-    put_config(section: nil)
+  test "scan/1 returns {:plex_section_unset, kind} without hitting Plex when section is blank" do
+    put_config(movies_section: nil)
     Req.Test.stub(Cinder.PlexStub, fn _conn -> raise "should not call Plex with no section" end)
 
-    assert {:error, :plex_section_unset} = Plex.scan()
+    assert {:error, {:plex_section_unset, :movies}} = Plex.scan(:movies)
   end
 
-  test "health/0 returns :plex_section_unset when section is unset (so /status shows red)" do
-    put_config(section: "")
+  test "health/0 returns {:plex_section_unset, kind} when a kind's section is unset (red on /status)" do
+    put_config(movies_section: "")
     Req.Test.stub(Cinder.PlexStub, fn _conn -> raise "should not call Plex with no section" end)
 
-    assert {:error, :plex_section_unset} = Plex.health()
+    assert {:error, {:plex_section_unset, :movies}} = Plex.health()
   end
 
-  test "scan/0 treats a whitespace-only section as unset (no malformed URL)" do
-    put_config(section: "   ")
+  test "scan/1 treats a whitespace-only section as unset (no malformed URL)" do
+    put_config(movies_section: "   ")
 
     Req.Test.stub(Cinder.PlexStub, fn _conn ->
       raise "should not call Plex with a blank section"
     end)
 
-    assert {:error, :plex_section_unset} = Plex.scan()
+    assert {:error, {:plex_section_unset, :movies}} = Plex.scan(:movies)
   end
 
-  test "scan/0 with no token omits the header and surfaces a clean error (no raise)" do
+  test "scan/1 with no token omits the header and surfaces a clean error (no raise)" do
     put_config(token: nil)
 
     Req.Test.stub(Cinder.PlexStub, fn conn ->
@@ -77,7 +78,7 @@ defmodule Cinder.Library.MediaServer.PlexTest do
       conn |> Plug.Conn.put_status(401) |> Req.Test.text("Unauthorized")
     end)
 
-    assert {:error, {:plex_status, 401}} = Plex.scan()
+    assert {:error, {:plex_status, 401}} = Plex.scan(:movies)
   end
 
   test "health/0 surfaces a bad token (401) as an error" do

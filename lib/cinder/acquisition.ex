@@ -10,6 +10,22 @@ defmodule Cinder.Acquisition do
   alias Cinder.Acquisition.Scorer
 
   @doc """
+  Size-band scorer opts for a library `kind` (`:movies`/`:tv`), read from the settings-overlaid
+  `:cinder` env (`:movies_min_size`, `:tv_max_size`, …). Only non-nil keys are returned: a nil
+  `:preferred_resolutions` would override the scorer's default and crash its `Enum.find_index`,
+  and an unset band ⇒ omitted ⇒ `Scorer` keeps its defaults (unbounded / default resolutions).
+  Both pollers pass these through to `Scorer`, so the movie and TV bands are configured the same way.
+  """
+  def band_opts(kind) do
+    [
+      min_size: Application.get_env(:cinder, :"#{kind}_min_size"),
+      max_size: Application.get_env(:cinder, :"#{kind}_max_size"),
+      preferred_resolutions: Application.get_env(:cinder, :"#{kind}_preferred_resolutions")
+    ]
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+  end
+
+  @doc """
   Searches the configured indexer for `imdb_id`, parses each result, and returns
   the best release per `Scorer` rules. `opts` are forwarded to `Scorer.select/2`.
 

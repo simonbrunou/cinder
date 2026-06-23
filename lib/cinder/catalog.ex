@@ -793,6 +793,11 @@ defmodule Cinder.Catalog do
   defp series_id_for_season(season_id),
     do: Repo.one(from s in Season, where: s.id == ^season_id, select: s.series_id)
 
+  # Convention: a movie event carries the full struct (a flat row a LiveView patches in place —
+  # see broadcast/1's {:movie_updated, movie}); a series event carries only the id, because a
+  # series is a tree the detail view re-derives on receipt. A new media type picks the shape that
+  # matches it (flat row → struct, tree → id).
+  #
   # A nil series_id (e.g. a grab whose episodes were all unlinked) is a no-op, so callers
   # don't each need to guard it.
   defp broadcast_series(nil), do: :ok

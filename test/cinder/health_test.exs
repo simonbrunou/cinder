@@ -5,17 +5,20 @@ defmodule Cinder.HealthTest do
 
   setup :verify_on_exit!
 
-  test "check_all/0 returns labeled rows for indexer, both download clients, and media server" do
+  test "check_all/0 returns labeled rows for indexer, download clients, media server, libraries" do
     stub(Cinder.Acquisition.IndexerMock, :health, fn -> :ok end)
     stub(Cinder.Download.ClientMock, :health, fn -> {:error, :econnrefused} end)
     stub(Cinder.Download.SabnzbdClientMock, :health, fn -> :ok end)
     stub(Cinder.Library.MediaServerMock, :health, fn -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
 
     assert [
              %{label: "Indexer (IndexerMock)", status: :ok},
              %{label: "Download (torrent · ClientMock)", status: {:error, :econnrefused}},
              %{label: "Download (usenet · SabnzbdClientMock)", status: :ok},
-             %{label: "Media server (MediaServerMock)", status: :ok}
+             %{label: "Media server (MediaServerMock)", status: :ok},
+             %{label: "Library (movies)", status: :ok},
+             %{label: "Library (tv)", status: :ok}
            ] = Cinder.Health.check_all()
   end
 
@@ -43,23 +46,23 @@ defmodule Cinder.HealthTest do
     assert {:error, {:exit, :boom}} = indexer.status
   end
 
-  test "check_service(:library) is :ok when the library dir is writable" do
+  test "check_service({:library, :movies}) is :ok when the library dir is writable" do
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    assert Cinder.Health.check_service(:library) == :ok
+    assert Cinder.Health.check_service({:library, :movies}) == :ok
   end
 
-  test "check_service(:library) surfaces a filesystem error" do
+  test "check_service({:library, :movies}) surfaces a filesystem error" do
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> {:error, :eacces} end)
-    assert Cinder.Health.check_service(:library) == {:error, :eacces}
+    assert Cinder.Health.check_service({:library, :movies}) == {:error, :eacces}
   end
 
-  test "check_service(:tv_library) is :ok when the TV library dir is writable" do
+  test "check_service({:library, :tv}) is :ok when the TV library dir is writable" do
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    assert Cinder.Health.check_service(:tv_library) == :ok
+    assert Cinder.Health.check_service({:library, :tv}) == :ok
   end
 
-  test "check_service(:tv_library) surfaces a filesystem error" do
+  test "check_service({:library, :tv}) surfaces a filesystem error" do
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> {:error, :eacces} end)
-    assert Cinder.Health.check_service(:tv_library) == {:error, :eacces}
+    assert Cinder.Health.check_service({:library, :tv}) == {:error, :eacces}
   end
 end

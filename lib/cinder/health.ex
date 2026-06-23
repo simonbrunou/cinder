@@ -14,7 +14,7 @@ defmodule Cinder.Health do
   indexer → download client(s) → media server.
   """
   def check_all do
-    [indexer_check()] ++ download_checks() ++ [media_server_check()]
+    [indexer_check()] ++ download_checks() ++ [media_server_check()] ++ library_checks()
   end
 
   @doc """
@@ -33,15 +33,8 @@ defmodule Cinder.Health do
     end
   end
 
-  def check_service(:library) do
-    case Application.get_env(:cinder, :library_path) do
-      blank when blank in [nil, ""] -> {:error, :not_configured}
-      path -> library_writable(path)
-    end
-  end
-
-  def check_service(:tv_library) do
-    case Application.get_env(:cinder, :tv_library_path) do
+  def check_service({:library, kind}) do
+    case Application.get_env(:cinder, :"#{kind}_library_path") do
       blank when blank in [nil, ""] -> {:error, :not_configured}
       path -> library_writable(path)
     end
@@ -62,6 +55,14 @@ defmodule Cinder.Health do
     for protocol <- Enum.sort(Download.available_protocols()) do
       {:ok, mod} = Download.client_for(protocol)
       check("Download (#{protocol} · #{short(mod)})", mod)
+    end
+  end
+
+  # One row per library kind (Movies, TV, …); reuses the writable-path probe so a missing or
+  # unwritable root shows red on /status — the visible signal that an import is holding.
+  defp library_checks do
+    for kind <- Cinder.Library.kinds() do
+      %{label: "Library (#{kind})", status: check_service({:library, kind})}
     end
   end
 

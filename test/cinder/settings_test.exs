@@ -21,7 +21,10 @@ defmodule Cinder.SettingsTest do
     Cinder.Library.MediaServer.Plex,
     :media_server,
     :download_clients,
-    :library_path,
+    :movies_library_path,
+    :movies_min_size,
+    :movies_max_size,
+    :movies_preferred_resolutions,
     :tv_library_path,
     :tv_min_size,
     :tv_max_size,
@@ -164,14 +167,14 @@ defmodule Cinder.SettingsTest do
       assert Application.fetch_env!(:cinder, :media_server) == Cinder.Library.MediaServerMock
     end
 
-    test "a saved library_path overlays :cinder, :library_path; clearing reverts to bootstrap" do
-      original = Application.fetch_env!(:cinder, :library_path)
+    test "a saved movies_library_path overlays :cinder, :movies_library_path; clearing reverts" do
+      original = Application.fetch_env!(:cinder, :movies_library_path)
 
-      Settings.put("library_path", "/srv/media/movies")
-      assert Application.fetch_env!(:cinder, :library_path) == "/srv/media/movies"
+      Settings.put("movies_library_path", "/srv/media/movies")
+      assert Application.fetch_env!(:cinder, :movies_library_path) == "/srv/media/movies"
 
-      Settings.delete("library_path")
-      assert Application.fetch_env!(:cinder, :library_path) == original
+      Settings.delete("movies_library_path")
+      assert Application.fetch_env!(:cinder, :movies_library_path) == original
     end
 
     test "a saved tv_library_path overlays :cinder, :tv_library_path; clearing reverts to bootstrap" do
@@ -182,6 +185,21 @@ defmodule Cinder.SettingsTest do
 
       Settings.delete("tv_library_path")
       assert Application.fetch_env!(:cinder, :tv_library_path) == original
+    end
+
+    test "library-root base snapshot is captured eagerly (clearing reverts even with no prior capture)" do
+      # Regression: apply_kind_config must capture base/1 BEFORE the `decoded || fallback` so the
+      # `||` can't short-circuit past it. Force the no-prior-snapshot path by erasing the
+      # persistent_term, then put-then-delete: a lazy capture would snapshot the overlaid value
+      # (during the delete) and revert there; eager capture snapshots the true bootstrap.
+      bootstrap = Application.fetch_env!(:cinder, :tv_library_path)
+      :persistent_term.erase({Cinder.Settings, :base, :tv_library_path})
+      on_exit(fn -> :persistent_term.erase({Cinder.Settings, :base, :tv_library_path}) end)
+
+      Settings.put("tv_library_path", "/srv/media/tv")
+      Settings.delete("tv_library_path")
+
+      assert Application.fetch_env!(:cinder, :tv_library_path) == bootstrap
     end
 
     test "tv size band: GB strings coerce to bytes; blank/zero/negative clear to unbounded (nil)" do
@@ -210,20 +228,37 @@ defmodule Cinder.SettingsTest do
       assert Application.get_env(:cinder, :tv_preferred_resolutions) == nil
     end
 
-    test "with no library_path bootstrap (LIBRARY_PATH unset), the overlay yields nil not []" do
-      # Simulate LIBRARY_PATH absent: erase the captured base snapshot + the env, so base/1
+    test "movie size band is editable too (same coercion as TV) and reaches band_opts/1" do
+      Settings.put("movies_max_size", "20")
+      Settings.put("movies_preferred_resolutions", "2160p, 1080P")
+
+      assert Application.get_env(:cinder, :movies_max_size) == 20_000_000_000
+      assert Application.get_env(:cinder, :movies_preferred_resolutions) == ["2160p", "1080p"]
+
+      # The band reaches the scorer the same way TV's does; nil (min_size unset) is dropped.
+      opts = Cinder.Acquisition.band_opts(:movies)
+      assert opts[:max_size] == 20_000_000_000
+      assert opts[:preferred_resolutions] == ["2160p", "1080p"]
+      refute Keyword.has_key?(opts, :min_size)
+
+      Settings.delete("movies_max_size")
+      assert Application.get_env(:cinder, :movies_max_size) == nil
+    end
+
+    test "with no movies_library_path bootstrap (MOVIES_LIBRARY_PATH unset), overlay yields nil not []" do
+      # Simulate MOVIES_LIBRARY_PATH absent: erase the captured base snapshot + the env, so base/1
       # falls back to its [] keyword-list default. The string key must coerce to nil.
-      original = Application.get_env(:cinder, :library_path)
-      :persistent_term.erase({Cinder.Settings, :base, :library_path})
-      Application.delete_env(:cinder, :library_path)
+      original = Application.get_env(:cinder, :movies_library_path)
+      :persistent_term.erase({Cinder.Settings, :base, :movies_library_path})
+      Application.delete_env(:cinder, :movies_library_path)
 
       on_exit(fn ->
-        :persistent_term.erase({Cinder.Settings, :base, :library_path})
-        if original, do: Application.put_env(:cinder, :library_path, original)
+        :persistent_term.erase({Cinder.Settings, :base, :movies_library_path})
+        if original, do: Application.put_env(:cinder, :movies_library_path, original)
       end)
 
       Settings.load_into_env()
-      assert Application.get_env(:cinder, :library_path) == nil
+      assert Application.get_env(:cinder, :movies_library_path) == nil
     end
 
     test "with no tv_library_path bootstrap (TV_LIBRARY_PATH unset), the overlay yields nil not []" do

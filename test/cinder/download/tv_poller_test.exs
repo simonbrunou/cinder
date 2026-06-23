@@ -59,7 +59,7 @@ defmodule Cinder.Download.TvPollerTest do
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
     stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
-    stub(Cinder.Library.MediaServerMock, :scan, fn -> :ok end)
+    stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
   end
 
   test "advances a completed single-file grab through download to import in one tick" do
@@ -106,7 +106,7 @@ defmodule Cinder.Download.TvPollerTest do
 
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
     stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
-    stub(Cinder.Library.MediaServerMock, :scan, fn -> :ok end)
+    stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
     assert :ok = TvPoller.poll()
 
@@ -383,5 +383,42 @@ defmodule Cinder.Download.TvPollerTest do
     e1 = Repo.get!(Episode, e1.id)
     assert is_nil(e1.grab_id)
     assert e1.search_attempts == 1
+  end
+
+  test "a successful import emits the episodes-available notifier event" do
+    Cinder.TestNotifier.subscribe()
+    {_series, season} = series_tree()
+    e1 = episode(season, 3)
+    {:ok, _grab} = Catalog.create_grab("hash-n", :torrent, [e1.id])
+    start_supervised!({TvPoller, interval: 60_000})
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-n" ->
+      {:ok, %{state: :completed, content_path: "/dl/Show.S01E03.1080p.mkv"}}
+    end)
+
+    stub_single_file_import()
+
+    assert :ok = TvPoller.poll()
+    assert_receive {:notify, {:episodes_available, [%Episode{id: id}]}}
+    assert id == e1.id
+  end
+
+  test "a parked grab emits the grab-failed notifier event (symmetric with :movie_failed)" do
+    Cinder.TestNotifier.subscribe()
+    {_series, season} = series_tree()
+    e1 = episode(season, 1)
+    {:ok, grab} = Catalog.create_grab("hash-f", :torrent, [e1.id])
+    {:ok, _} = Catalog.mark_grab_downloaded(grab, "/dl/pack")
+    start_supervised!({TvPoller, interval: 60_000})
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok, [{"/dl/pack/Show.S01E09.1080p.mkv", 3_000_000_000}]}
+    end)
+
+    assert :ok = TvPoller.poll()
+    assert_receive {:notify, {:grab_failed, %Grab{id: gid}, :no_files_matched}}
+    assert gid == grab.id
   end
 end

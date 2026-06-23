@@ -25,7 +25,7 @@ defmodule Cinder.Download.TvPoller do
 
   require Logger
 
-  alias Cinder.{Acquisition, Catalog, Download, Library}
+  alias Cinder.{Acquisition, Catalog, Download, Library, Notifier}
   alias Cinder.Catalog.Grab
 
   @default_interval 5_000
@@ -122,19 +122,26 @@ defmodule Cinder.Download.TvPoller do
         # Deterministic: nothing in content_path mapped to a grab episode. Re-importing can't
         # help, so park — the episodes re-search (bounded), rather than re-importing forever.
         Logger.warning("tv grab #{grab.id} imported nothing from #{grab.content_path}; parking")
-        Catalog.park_grab(grab)
+        park(grab, :no_files_matched)
 
       {:ok, imported, _unmatched} ->
-        Catalog.finish_grab(grab, imported)
+        # Notify only when the finalize transaction commits — otherwise a rolled-back finish_grab
+        # would leave the grab undeleted (re-imported next tick) while emitting a false, repeating
+        # available event. Mirrors the movie poller's `with {:ok, _} <- transition` guard.
+        with {:ok, _grab} <- Catalog.finish_grab(grab, imported),
+             do: notify_available(grab, imported)
 
       # A missing TV root is a config error, not a transient one: leave the grab downloaded
       # (no bump, no park) so the already-downloaded content imports as soon as tv_library_path
       # is set — parking would delete the download and re-search the episode for nothing.
-      {:error, :tv_library_not_configured} ->
+      {:error, :library_not_configured} ->
         Logger.warning(
           "tv grab #{grab.id}: tv_library_path not set; holding the download until it is configured"
         )
 
+      # Every remaining error is transient (a filesystem hiccup): the one deterministic
+      # "unusable content" case surfaces as {:ok, [], _} above and is parked immediately, so
+      # unlike the movie poller there is no @permanent_*_errors set to classify here.
       {:error, reason} ->
         retry_or_park(grab, reason)
     end
@@ -157,7 +164,7 @@ defmodule Cinder.Download.TvPoller do
     season_number = hd(episodes).season.season_number
     numbers = Enum.map(episodes, & &1.episode_number)
 
-    opts = [protocols: Download.available_protocols()] ++ tv_band_opts()
+    opts = [protocols: Download.available_protocols()] ++ Acquisition.band_opts(:tv)
 
     case Acquisition.best_releases(series, season_number, numbers, opts) do
       {:ok, assignments} ->
@@ -193,18 +200,6 @@ defmodule Cinder.Download.TvPoller do
     end
   end
 
-  # The per-episode TV size band + resolution preference (M8 settings). Only non-nil keys are
-  # passed: a nil :preferred_resolutions would override the scorer's default and crash its
-  # Enum.find_index. Unset keys ⇒ omitted ⇒ Scorer.select_for keeps its defaults (M5 behaviour).
-  defp tv_band_opts do
-    [
-      min_size: Application.get_env(:cinder, :tv_min_size),
-      max_size: Application.get_env(:cinder, :tv_max_size),
-      preferred_resolutions: Application.get_env(:cinder, :tv_preferred_resolutions)
-    ]
-    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
-  end
-
   defp bump_not_grabbed(episodes, grabbed) do
     episodes
     |> Enum.map(& &1.id)
@@ -230,7 +225,7 @@ defmodule Cinder.Download.TvPoller do
 
     if attempts >= @max_attempts do
       Logger.warning("tv grab #{grab.id} exhausted after #{attempts}: #{inspect(reason)}")
-      Catalog.park_grab(grab)
+      park(grab, reason)
     else
       Logger.info(
         "tv grab #{grab.id} attempt #{attempts}/#{@max_attempts} failed (#{inspect(reason)}); will retry"
@@ -238,6 +233,24 @@ defmodule Cinder.Download.TvPoller do
 
       Catalog.increment_grab_attempts(grab)
     end
+  end
+
+  # Single terminal-park choke-point: drop the grab and notify, mirroring the movie poller's
+  # park/3. Both TV terminal-park sites (empty import, retry exhaustion) route through here so a
+  # failed grab is never silent — symmetric with {:movie_failed, _, _}.
+  defp park(grab, reason) do
+    Catalog.park_grab(grab)
+    Notifier.notify({:grab_failed, grab, reason})
+  end
+
+  # On a successful import, announce the episodes that landed — the TV analogue of
+  # {:movie_available, movie}. The grab fans out to N episodes, so the event carries the list;
+  # filter the grab's preloaded episodes to the imported ids (the grab is deleted by finish_grab,
+  # but its in-memory episodes — with season: :series preloaded — remain for the event payload).
+  defp notify_available(grab, imported) do
+    imported_ids = MapSet.new(imported, fn {id, _dest} -> id end)
+    episodes = Enum.filter(grab.episodes, &MapSet.member?(imported_ids, &1.id))
+    Notifier.notify({:episodes_available, episodes})
   end
 
   # Per-unit isolation: an unexpected raise OR exit (e.g. a DBConnection checkout timeout under

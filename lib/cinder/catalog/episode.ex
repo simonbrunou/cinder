@@ -21,7 +21,6 @@ defmodule Cinder.Catalog.Episode do
     field :monitored, :boolean, default: true
     field :file_path, :string
     field :search_attempts, :integer, default: 0
-    field :import_attempts, :integer, default: 0
     belongs_to :season, Season
     belongs_to :grab, Grab
 
@@ -41,10 +40,11 @@ defmodule Cinder.Catalog.Episode do
   @doc """
   Changeset for pipeline state writes (no status enum — episode state is derived from
   `file_path`/`grab_id`). Routed through `Cinder.Catalog.transition_episode/2`. `monitored`
-  is deliberately excluded: it is not pipeline state and keeps its own writer.
+  is deliberately excluded: it is not pipeline state and keeps its own writer. The post-download
+  retry budget lives on the grab (`grab.download_attempts`), not the episode.
   """
   def transition_changeset(episode, attrs) do
-    cast(episode, attrs, [:file_path, :grab_id, :search_attempts, :import_attempts])
+    cast(episode, attrs, [:file_path, :grab_id, :search_attempts])
   end
 
   @doc """
