@@ -1,7 +1,7 @@
 # Graph Report - cinder  (2026-06-23)
 
 ## Corpus Check
-- 250 files · ~191,753 words
+- 250 files · ~191,902 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
@@ -10,7 +10,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `02e67f4d`
+- Built from commit: `fe2b68c7`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -250,13 +250,13 @@
 
 ## Surprising Connections (you probably didn't know these)
 - `change()` --calls--> `table()`  [INFERRED]
+  priv/repo/migrations/20260618194259_add_download_fields_to_movies.exs → lib/cinder_web/components/core_components.ex
+- `change()` --calls--> `table()`  [INFERRED]
   priv/repo/migrations/20260619061256_add_file_path_to_movies.exs → lib/cinder_web/components/core_components.ex
 - `change()` --calls--> `table()`  [INFERRED]
   priv/repo/migrations/20260619094117_add_import_attempts_to_movies.exs → lib/cinder_web/components/core_components.ex
 - `change()` --calls--> `table()`  [INFERRED]
   priv/repo/migrations/20260619120227_add_search_attempts_to_movies.exs → lib/cinder_web/components/core_components.ex
-- `change()` --calls--> `table()`  [INFERRED]
-  priv/repo/migrations/20260619140000_add_download_protocol_to_movies.exs → lib/cinder_web/components/core_components.ex
 - `change()` --calls--> `table()`  [INFERRED]
   priv/repo/migrations/20260622120000_add_request_quota_to_users.exs → lib/cinder_web/components/core_components.ex
 
@@ -773,7 +773,7 @@ Nodes (8): M5 TV acquisition design, Grab-centric derived episode state, grabs t
 
 ### Community 189 - "Community 189"
 Cohesion: 0.20
-Nodes (7): table(), Cinder.Repo.Migrations.AddDownloadFieldsToMovies, change(), Cinder.Repo.Migrations.AddRoleToUsers, change(), Cinder.Repo.Migrations.CreateTvSchema, change()
+Nodes (7): table(), Cinder.Repo.Migrations.AddDownloadProtocolToMovies, change(), Cinder.Repo.Migrations.AddRoleToUsers, change(), Cinder.Repo.Migrations.CreateTvSchema, change()
 
 ### Community 190 - "Community 190"
 Cohesion: 0.18
@@ -840,7 +840,7 @@ Cohesion: 0.60
 Nodes (4): CinderWeb.UserLive.Registration, assign_form(), handle_event(), mount()
 
 ## Knowledge Gaps
-- **601 isolated node(s):** `tidewave`, `csrfToken`, `liveSocket`, `plugin`, `fs` (+596 more)
+- **601 isolated node(s):** `Cinder.SettingsTest`, `tidewave`, `csrfToken`, `liveSocket`, `plugin` (+596 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **79 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
@@ -848,10 +848,10 @@ Nodes (4): CinderWeb.UserLive.Registration, assign_form(), handle_event(), mount
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `Cinder.Catalog` connect `Catalog Context` to `Community 39`?**
-  _High betweenness centrality (0.032) - this node is a cross-community bridge._
-- **Why does `create()` connect `DB Migrations + Sessions` to `Community 209`, `Community 188`, `Community 189`, `Community 231`?**
   _High betweenness centrality (0.026) - this node is a cross-community bridge._
-- **What connects `tidewave`, `csrfToken`, `liveSocket` to the rest of the system?**
+- **Why does `create()` connect `DB Migrations + Sessions` to `Community 209`, `Community 188`, `Community 189`, `Community 231`?**
+  _High betweenness centrality (0.025) - this node is a cross-community bridge._
+- **What connects `Cinder.SettingsTest`, `tidewave`, `csrfToken` to the rest of the system?**
   _620 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Settings Store (env overlay)` be split into smaller, more focused modules?**
   _Cohesion score 0.0784313725490196 - nodes in this community are weakly interconnected._

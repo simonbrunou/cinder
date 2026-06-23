@@ -187,6 +187,21 @@ defmodule Cinder.SettingsTest do
       assert Application.fetch_env!(:cinder, :tv_library_path) == original
     end
 
+    test "library-root base snapshot is captured eagerly (clearing reverts even with no prior capture)" do
+      # Regression: apply_kind_config must capture base/1 BEFORE the `decoded || fallback` so the
+      # `||` can't short-circuit past it. Force the no-prior-snapshot path by erasing the
+      # persistent_term, then put-then-delete: a lazy capture would snapshot the overlaid value
+      # (during the delete) and revert there; eager capture snapshots the true bootstrap.
+      bootstrap = Application.fetch_env!(:cinder, :tv_library_path)
+      :persistent_term.erase({Cinder.Settings, :base, :tv_library_path})
+      on_exit(fn -> :persistent_term.erase({Cinder.Settings, :base, :tv_library_path}) end)
+
+      Settings.put("tv_library_path", "/srv/media/tv")
+      Settings.delete("tv_library_path")
+
+      assert Application.fetch_env!(:cinder, :tv_library_path) == bootstrap
+    end
+
     test "tv size band: GB strings coerce to bytes; blank/zero/negative clear to unbounded (nil)" do
       Settings.put("tv_max_size", "5")
       assert Application.get_env(:cinder, :tv_max_size) == 5_000_000_000

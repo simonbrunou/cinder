@@ -395,7 +395,13 @@ defmodule Cinder.Settings do
 
   defp apply_kind_config(rows, kind) do
     root_env = :"#{kind}_library_path"
-    root = decoded_for(rows, "#{kind}_library_path") || base_path(root_env)
+
+    # Capture the bootstrap snapshot EAGERLY, before the `||` — otherwise the `||` short-circuits
+    # past base_path/1 whenever a value is set, so base/1 first records the env lazily during a
+    # *delete*, snapshotting the already-overlaid value instead of the true pre-overlay bootstrap
+    # (a cleared setting would then revert to the overlaid value, not the env default).
+    fallback = base_path(root_env)
+    root = decoded_for(rows, "#{kind}_library_path") || fallback
     min_size = parse_gb(decoded_for(rows, "#{kind}_min_size"))
     max_size = parse_gb(decoded_for(rows, "#{kind}_max_size"))
     preferred = parse_resolutions(decoded_for(rows, "#{kind}_preferred_resolutions"))
