@@ -178,34 +178,36 @@ defmodule Cinder.Accounts do
   end
 
   @doc """
-  Deletes a user. Refuses self-delete and refuses to delete the last admin (the
-  admin count is re-checked AFTER the delete inside one transaction). The DB
-  cascades the user's requests (`user_id :delete_all`) and nilifies any
-  `approved_by_id` links. Audited in the same transaction, before the delete, so
-  the audit `detail` can record the deleted email.
+  Deletes a user. Refuses self-delete and refuses to delete the last admin.
+  Both guards are enforced inside one transaction: the user is deleted first,
+  then the admin count is re-checked AFTER the delete (post-delete in-transaction
+  re-count). A zero admin count rolls back as `{:error, :last_admin}`; a
+  self-delete rolls back as `{:error, :self_delete}`. The DB cascades the user's
+  requests (`user_id :delete_all`) and nilifies any `approved_by_id` links.
+  Audited in the same transaction; the email is captured before the delete so
+  the audit `detail` can record it.
   """
   def delete_user(%User{} = actor, %User{} = target) do
-    cond do
-      target.role == :admin and count_admins() == 1 ->
-        {:error, :last_admin}
-
-      actor.id == target.id ->
-        {:error, :self_delete}
-
-      true ->
-        Repo.transaction(fn -> do_delete_user(actor, target) end)
-    end
+    Repo.transaction(fn -> do_delete_user(actor, target) end)
   end
 
   defp do_delete_user(%User{} = actor, %User{} = target) do
-    {:ok, _audit} =
-      Audit.log(actor, "delete_user", target, %{
-        email: target.email,
-        cascaded_requests: true
-      })
+    email = target.email
+    {:ok, _} = Repo.delete(target)
 
-    {:ok, deleted} = Repo.delete(target)
-    deleted
+    cond do
+      count_admins() == 0 ->
+        Repo.rollback(:last_admin)
+
+      actor.id == target.id ->
+        Repo.rollback(:self_delete)
+
+      true ->
+        {:ok, _} =
+          Audit.log(actor, "delete_user", target, %{email: email, cascaded_requests: true})
+
+        target
+    end
   end
 
   @doc "All users, ordered by id."
