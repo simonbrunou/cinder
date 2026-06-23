@@ -1,16 +1,16 @@
 # Graph Report - cinder  (2026-06-23)
 
 ## Corpus Check
-- 248 files · ~189,774 words
+- 250 files · ~191,753 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1817 nodes · 2139 edges · 238 communities (154 shown, 84 thin omitted)
-- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 49 edges (avg confidence: 0.81)
+- 1833 nodes · 2173 edges · 235 communities (156 shown, 79 thin omitted)
+- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 50 edges (avg confidence: 0.81)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `f1900018`
+- Built from commit: `02e67f4d`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -230,20 +230,17 @@
 - [[_COMMUNITY_Community 225|Community 225]]
 - [[_COMMUNITY_Community 226|Community 226]]
 - [[_COMMUNITY_Community 227|Community 227]]
-- [[_COMMUNITY_Community 228|Community 228]]
-- [[_COMMUNITY_Community 230|Community 230]]
 - [[_COMMUNITY_Community 231|Community 231]]
 - [[_COMMUNITY_Community 232|Community 232]]
 - [[_COMMUNITY_Community 233|Community 233]]
-- [[_COMMUNITY_Community 234|Community 234]]
 - [[_COMMUNITY_Community 235|Community 235]]
-- [[_COMMUNITY_Community 237|Community 237]]
+- [[_COMMUNITY_Community 236|Community 236]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `Cinder.Catalog` - 59 edges
-2. `Cinder.Settings` - 51 edges
-3. `Cinder.Library` - 27 edges
-4. `Cinder.Download.TvPoller` - 23 edges
+2. `Cinder.Settings` - 52 edges
+3. `Cinder.Library` - 26 edges
+4. `Cinder.Download.TvPoller` - 24 edges
 5. `Cinder.Download.Poller` - 22 edges
 6. `CinderWeb.UserAuth` - 21 edges
 7. `Cinder.Accounts` - 17 edges
@@ -253,15 +250,15 @@
 
 ## Surprising Connections (you probably didn't know these)
 - `change()` --calls--> `table()`  [INFERRED]
-  priv/repo/migrations/20260618194259_add_download_fields_to_movies.exs → lib/cinder_web/components/core_components.ex
-- `change()` --calls--> `table()`  [INFERRED]
   priv/repo/migrations/20260619061256_add_file_path_to_movies.exs → lib/cinder_web/components/core_components.ex
 - `change()` --calls--> `table()`  [INFERRED]
   priv/repo/migrations/20260619094117_add_import_attempts_to_movies.exs → lib/cinder_web/components/core_components.ex
 - `change()` --calls--> `table()`  [INFERRED]
   priv/repo/migrations/20260619120227_add_search_attempts_to_movies.exs → lib/cinder_web/components/core_components.ex
 - `change()` --calls--> `table()`  [INFERRED]
-  priv/repo/migrations/20260621200000_add_role_to_users.exs → lib/cinder_web/components/core_components.ex
+  priv/repo/migrations/20260619140000_add_download_protocol_to_movies.exs → lib/cinder_web/components/core_components.ex
+- `change()` --calls--> `table()`  [INFERRED]
+  priv/repo/migrations/20260622120000_add_request_quota_to_users.exs → lib/cinder_web/components/core_components.ex
 
 ## Import Cycles
 - None detected.
@@ -276,23 +273,23 @@
 - **Request to approval to grab flow** — m2_requests_context, m2_find_or_create_at_requested, phase_3_download_poller, phase_1_catalog_movie_status_enum [EXTRACTED 0.90]
 - **Grab-centric TV data model** — m5_grabs_table, m4_series_seasons_episodes, m5_wanted_episodes, m5_transition_episode [EXTRACTED 0.90]
 
-## Communities (238 total, 84 thin omitted)
+## Communities (235 total, 79 thin omitted)
 
 ### Community 0 - "DB Migrations + Sessions"
-Cohesion: 0.20
-Nodes (7): CinderWeb.UserSessionController, create(), update_password(), Cinder.Repo.Migrations.CreateSettings, change(), Cinder.Repo.Migrations.CreateTvSchema, change()
+Cohesion: 0.15
+Nodes (9): CinderWeb.UserSessionController, create(), update_password(), Cinder.Repo.Migrations.CreateSettings, change(), Cinder.Repo.Migrations.AddTvPipelineFields, change(), Cinder.Repo.Migrations.AddWantedEpisodesIndex (+1 more)
 
 ### Community 1 - "Settings Store (env overlay)"
 Cohesion: 0.08
-Nodes (34): Cinder.Settings, apply_config_fields(), apply_download_clients(), apply_library_path(), apply_media_server(), apply_tv_band(), apply_tv_library_path(), base() (+26 more)
+Nodes (36): Cinder.Settings, apply_config_fields(), apply_download_clients(), apply_kind_config(), apply_library_config(), apply_media_server(), base(), base_path() (+28 more)
 
 ### Community 2 - "Catalog Context"
 Cohesion: 0.06
 Nodes (41): Cinder.Catalog, add_series_to_watchlist(), broadcast(), broadcast_series(), create_grab(), create_series(), delete_grab(), do_insert_at_requested() (+33 more)
 
 ### Community 3 - "Health Service Checks"
-Cohesion: 0.29
-Nodes (5): Cinder.Notifier, impl(), notify(), Cinder.NotifierTest, Raising
+Cohesion: 0.60
+Nodes (6): Cinder.Download, add_to_client(), available_protocols(), client_for(), ensure_imdb_id(), start()
 
 ### Community 4 - "Accounts/Requests Design (M2/M3)"
 Cohesion: 0.21
@@ -303,11 +300,11 @@ Cohesion: 0.18
 Nodes (20): CinderWeb.UserAuth, admin?(), create_or_extend_session(), disconnect_sessions(), enforce_setup?(), ensure_user_token(), fetch_current_scope_for_user(), log_in_user() (+12 more)
 
 ### Community 6 - "Download/Poller Tests"
-Cohesion: 0.11
-Nodes (13): Cinder.LibraryTest, stub_dir(), stub_link_ok(), Cinder.Download.Client.SabnzbdTest, stub(), stub_queue_then_history(), Cinder.Download.PollerTest, stub_successful_import() (+5 more)
+Cohesion: 0.12
+Nodes (13): Cinder.LibraryTest, stub_dir(), stub_link_ok(), Cinder.Download.Client.SabnzbdTest, stub(), stub_queue_then_history(), CinderWeb.SeriesDetailLiveTest, create_series() (+5 more)
 
 ### Community 7 - "Movie Download Poller"
-Cohesion: 0.18
+Cohesion: 0.19
 Nodes (20): Cinder.Download.Poller, advance(), advance_downloading(), advance_with(), config_interval(), do_poll(), handle_call(), handle_continue() (+12 more)
 
 ### Community 8 - "qBittorrent Client"
@@ -323,8 +320,8 @@ Cohesion: 0.26
 Nodes (16): Cinder.Catalog.TMDB.HTTP, auth(), date_from(), error(), get_movie(), get_season(), get_series(), health() (+8 more)
 
 ### Community 11 - "Accounts/Auth Tests"
-Cohesion: 0.11
-Nodes (8): Cinder.AccountsTest, Cinder.M3PipelineTest, Cinder.Repo, CinderWeb.UserAuthTest, CinderWeb.UserSessionControllerTest, CinderWeb.CalendarLiveTest, CinderWeb.UserLive.ConfirmationTest, CinderWeb.UserLive.SettingsTest
+Cohesion: 0.15
+Nodes (5): Cinder.AccountsTest, CinderWeb.UserAuthTest, CinderWeb.UserSessionControllerTest, CinderWeb.UserLive.ConfirmationTest, CinderWeb.UserLive.SettingsTest
 
 ### Community 12 - "SABnzbd Client"
 Cohesion: 0.24
@@ -347,12 +344,12 @@ Cohesion: 0.25
 Nodes (12): Cinder.Requests, announce_approved(), approve_request(), broadcast(), create_approved(), create_pending(), create_request(), deny_request() (+4 more)
 
 ### Community 17 - "Watchlist LiveView"
-Cohesion: 0.18
+Cohesion: 0.17
 Nodes (8): CinderWeb.WatchlistLive, add(), assign_movie_status(), assign_request_state(), handle_info(), latest_request_status(), mount(), patch_movie_status()
 
 ### Community 18 - "Release Scorer"
-Cohesion: 0.26
-Nodes (12): Cinder.Acquisition.Scorer, blocked?(), config(), cover(), coverage(), greedy_key(), pick_best(), select() (+4 more)
+Cohesion: 0.27
+Nodes (15): Cinder.Acquisition.Scorer, blocked?(), config(), cover(), coverage(), greedy_key(), pick_best(), resolution_rank() (+7 more)
 
 ### Community 19 - "Status Dashboard LiveView"
 Cohesion: 0.18
@@ -360,7 +357,7 @@ Nodes (6): CinderWeb.StatusLive, check_health(), handle_event(), handle_info(), 
 
 ### Community 20 - "Library Import"
 Cohesion: 0.19
-Nodes (27): Cinder.Library, build_dest(), build_episode_dest(), do_import_episodes(), fs(), import_episodes(), import_movie(), library_name() (+19 more)
+Nodes (25): Cinder.Library, build_dest(), build_episode_dest(), do_import_episodes(), fs(), import_episodes(), import_movie(), library_name() (+17 more)
 
 ### Community 21 - "Accounts Test Fixtures"
 Cohesion: 0.26
@@ -376,7 +373,7 @@ Nodes (9): Cinder.Accounts.UserNotifier, deliver(), deliver_confirmation_instruc
 
 ### Community 24 - "Acquisition Context + Overview"
 Cohesion: 0.16
-Nodes (21): Cinder.Download.TvPoller, advance(), advance_grabs(), advance_with(), bump_not_grabbed(), config_interval(), do_poll(), grab_assignment() (+13 more)
+Nodes (22): Cinder.Download.TvPoller, advance(), advance_grabs(), advance_with(), bump_not_grabbed(), config_interval(), do_poll(), grab_assignment() (+14 more)
 
 ### Community 25 - "Catalog Design + Tests"
 Cohesion: 0.22
@@ -387,7 +384,7 @@ Cohesion: 0.24
 Nodes (7): CinderWeb.SeriesDetailLive, all_monitored?(), find_episode(), find_season(), handle_event(), handle_info(), reload()
 
 ### Community 27 - "Pipeline Wiring (Phase 5)"
-Cohesion: 0.21
+Cohesion: 0.19
 Nodes (9): Cinder.Acquisition, best_release(), best_releases(), filter_protocols(), indexer(), nfd(), normalize_title(), title_matches?() (+1 more)
 
 ### Community 28 - "Roles + Registration (M2)"
@@ -431,8 +428,8 @@ Cohesion: 0.36
 Nodes (7): Cinder.Application, blank_env?(), poller_child(), skip_migrations?(), start(), unprotected_fresh_instance?(), warn_if_unprotected()
 
 ### Community 39 - "Community 39"
-Cohesion: 0.14
-Nodes (6): Cinder.CatalogTest, Cinder.RequestsTest, CinderWeb.MyRequestsLiveTest, CinderWeb.StatusLiveTest, CinderWeb.WatchlistLiveTest, stub_search()
+Cohesion: 0.12
+Nodes (10): Cinder.CatalogTest, Cinder.CatalogTvPipelineTest, CinderWeb.StatusLiveTest, Phase 1 Catalog design, Movie Ecto schema, Movie status enum (state machine), Cinder.Catalog.TMDB.HTTP impl, WatchlistLive LiveView (+2 more)
 
 ### Community 40 - "Notifier Behaviour"
 Cohesion: 0.27
@@ -459,8 +456,8 @@ Cohesion: 0.48
 Nodes (6): ClaudeHookWrapper, check_and_install_deps(), ensure_dependencies_installed(), load_claude_config(), main(), run_hook()
 
 ### Community 46 - "Plex MediaServer"
-Cohesion: 0.57
-Nodes (6): Cinder.Library.MediaServer.Plex, health(), req(), result(), scan(), section()
+Cohesion: 0.61
+Nodes (7): Cinder.Library.MediaServer.Plex, check_section(), health(), req(), result(), scan(), section()
 
 ### Community 47 - "Community 47"
 Cohesion: 0.20
@@ -473,6 +470,10 @@ Nodes (6): deploy, startCommand, packages, elixir, erlang, $schema
 ### Community 49 - "CI + Elixir Tooling"
 Cohesion: 0.40
 Nodes (6): Cache deps not _build (no stale-beam false-greens), mix test project alias, CI workflow (GitHub Actions), /elixir/compatibility command, /elixir/upgrade command, /elixir/version-check command
+
+### Community 50 - "Community 50"
+Cohesion: 0.14
+Nodes (5): Cinder.RequestsTest, CinderWeb.MyRequestsLiveTest, CinderWeb.RequestsLive, CinderWeb.WatchlistLiveTest, stub_search()
 
 ### Community 51 - "Community 51"
 Cohesion: 0.18
@@ -546,6 +547,10 @@ Nodes (3): CinderWeb.Router, basic_auth(), present()
 Cohesion: 0.67
 Nodes (4): Cinder Logo (SVG Brand Mark), Cinder Project (Brand Identity), Ember-Orange Accent (#FD4F00), Flame / Ember Motif
 
+### Community 78 - "Log Notifier Impl"
+Cohesion: 0.40
+Nodes (3): Cinder.Notifier.Log, episodes_summary(), pad()
+
 ### Community 80 - "Admin Approval Queue (M2)"
 Cohesion: 0.22
 Nodes (9): M2: Accounts, roles, request/approval model, User :role Ecto.Enum [:admin, :user], Task 1.4: require_admin (plug + on_mount), UserAuth.require_admin/2 plug + on_mount(:require_admin), Task 1.4 Report: require_admin plug + on_mount, live_session :admin / :authenticated route gating, Task 2.4: Admin approval queue at /requests, CinderWeb.RequestsLive (approve + deny-reason, live) (+1 more)
@@ -565,6 +570,10 @@ Nodes (3): fs, path, plugin
 ### Community 122 - "Claude Config (.claude.exs)"
 Cohesion: 0.14
 Nodes (13): Global Constraints, Phase 5 — Wire the Loop + Status Dashboard Implementation Plan, Plan self-review, Task 10: Live smoke-test documentation, Task 1: Data layer — `search_attempts`, `:search_failed`, `Catalog.get_movie_by_id/1`, Task 2: `Download.start/1` contract shift (transient vs permanent imdb resolution), Task 3: `Cinder.Download.Torrent.infohash/1` (bencode v1 infohash), Task 4: qBittorrent base32 magnets + client receive timeouts (+5 more)
+
+### Community 123 - "Community 123"
+Cohesion: 0.09
+Nodes (7): Cinder.DownloadTest, Cinder.M3PipelineTest, Cinder.Repo, Cinder.Download.PollerTest, stub_successful_import(), CinderWeb.CalendarLiveTest, Cinder.DataCase
 
 ### Community 136 - "Community 136"
 Cohesion: 0.14
@@ -618,10 +627,6 @@ Nodes (10): Files changed, Full suite, Item 1: Gating matrix (authorization_test
 Cohesion: 0.18
 Nodes (10): A. First-run wizard, B. Per-user quota (concurrent-pending), C. Requester UX, Conventions, D. `Cinder.Notifier`, Data-model changes, E. Approval-queue polish, Locked decisions (+2 more)
 
-### Community 149 - "Community 149"
-Cohesion: 0.20
-Nodes (7): table(), Cinder.Repo.Migrations.AddDownloadProtocolToMovies, change(), Cinder.Repo.Migrations.AddRequestQuotaToUsers, change(), Cinder.Repo.Migrations.AddTvPipelineFields, change()
-
 ### Community 150 - "Community 150"
 Cohesion: 0.20
 Nodes (9): Imports Check, Memory File Sizes, Memory Files Check, Memory Hierarchy, Nested Memory Files, Project Root Memory, Summary, Usage Rules Distribution (+1 more)
@@ -672,7 +677,7 @@ Nodes (7): Boundary shape, Decisions (locked), Modules & files, Out of scope (de
 
 ### Community 162 - "Community 162"
 Cohesion: 0.07
-Nodes (20): Cinder.Health, check(), check_all(), check_service(), download_checks(), indexer_check(), library_writable(), media_server_check() (+12 more)
+Nodes (22): Cinder.Health, check(), check_all(), check_service(), download_checks(), indexer_check(), library_checks(), library_writable() (+14 more)
 
 ### Community 163 - "Community 163"
 Cohesion: 0.29
@@ -759,12 +764,16 @@ Cohesion: 0.50
 Nodes (3): Log, M6 — Subagent-Driven Progress Ledger, Tasks
 
 ### Community 184 - "Community 184"
+Cohesion: 0.29
+Nodes (5): Cinder.Notifier, impl(), notify(), Cinder.NotifierTest, Raising
+
+### Community 187 - "Community 187"
 Cohesion: 0.32
 Nodes (8): M5 TV acquisition design, Grab-centric derived episode state, grabs table (grab-centric model), Library.import_episode/import_pack, Catalog.transition_episode/2 choke-point, Cinder.Download.TvPoller, Catalog.wanted_episodes/0, M5a TV pipeline data-model plan
 
-### Community 187 - "Community 187"
-Cohesion: 0.38
-Nodes (7): Phase 2 Acquisition design, Acquisition.Parser (release-name parser), Phase 2 Acquisition plan, Indexer.Prowlarr impl, Acquisition.Release struct, Acquisition.Scorer, Size from indexer not parser decision
+### Community 189 - "Community 189"
+Cohesion: 0.20
+Nodes (7): table(), Cinder.Repo.Migrations.AddDownloadFieldsToMovies, change(), Cinder.Repo.Migrations.AddRoleToUsers, change(), Cinder.Repo.Migrations.CreateTvSchema, change()
 
 ### Community 190 - "Community 190"
 Cohesion: 0.18
@@ -778,11 +787,11 @@ Nodes (9): Commit, Compile check, Concerns, File changed, Format check, Self-rev
 Cohesion: 0.22
 Nodes (8): Concerns, Files changed, GREEN (after migration), RED (before migration), Self-review, Task 1 Report: Wanted-episodes partial index, TDD RED/GREEN evidence, What was done
 
-### Community 204 - "Community 204"
-Cohesion: 0.29
-Nodes (7): Phase 1 Catalog design, Movie Ecto schema, Movie status enum (state machine), Cinder.Catalog.TMDB.HTTP impl, WatchlistLive LiveView, imdb_id carry-through enabler, :no_match terminal status decision
-
 ### Community 205 - "Community 205"
+Cohesion: 0.38
+Nodes (7): Phase 2 Acquisition design, Acquisition.Parser (release-name parser), Phase 2 Acquisition plan, Indexer.Prowlarr impl, Acquisition.Release struct, Acquisition.Scorer, Size from indexer not parser decision
+
+### Community 206 - "Community 206"
 Cohesion: 0.33
 Nodes (7): Phase 3 Download design, Phase 3 Download plan, Cinder.Download.Poller (supervised GenServer), Download.Client.QBittorrent impl, Stateless poller crash recovery, Download.Client.Sabnzbd impl, SABnzbd support design
 
@@ -801,10 +810,6 @@ Nodes (7): Concerns, Credo fix applied, Files changed, Self-review, Task 4 Repor
 ### Community 211 - "Community 211"
 Cohesion: 0.25
 Nodes (7): Commit, Concerns, Files changed, Self-review, Task 5 Report: `Catalog.upcoming_episodes/0`, TDD evidence, What I did
-
-### Community 212 - "Community 212"
-Cohesion: 0.60
-Nodes (6): Cinder.Download, add_to_client(), available_protocols(), client_for(), ensure_imdb_id(), start()
 
 ### Community 213 - "Community 213"
 Cohesion: 0.53
@@ -831,28 +836,28 @@ Cohesion: 0.40
 Nodes (5): Branches & PRs, Contributing to Cinder, Conventions, Development setup, Releasing (maintainers)
 
 ### Community 226 - "Community 226"
-Cohesion: 0.47
+Cohesion: 0.60
 Nodes (4): CinderWeb.UserLive.Registration, assign_form(), handle_event(), mount()
 
 ## Knowledge Gaps
 - **601 isolated node(s):** `tidewave`, `csrfToken`, `liveSocket`, `plugin`, `fs` (+596 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **84 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **79 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `Cinder.Catalog` connect `Catalog Context` to `Community 39`?**
-  _High betweenness centrality (0.028) - this node is a cross-community bridge._
-- **Why does `Cinder.Settings` connect `Settings Store (env overlay)` to `Community 162`?**
-  _High betweenness centrality (0.024) - this node is a cross-community bridge._
+  _High betweenness centrality (0.032) - this node is a cross-community bridge._
+- **Why does `create()` connect `DB Migrations + Sessions` to `Community 209`, `Community 188`, `Community 189`, `Community 231`?**
+  _High betweenness centrality (0.026) - this node is a cross-community bridge._
 - **What connects `tidewave`, `csrfToken`, `liveSocket` to the rest of the system?**
   _620 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Settings Store (env overlay)` be split into smaller, more focused modules?**
-  _Cohesion score 0.08 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.0784313725490196 - nodes in this community are weakly interconnected._
 - **Should `Catalog Context` be split into smaller, more focused modules?**
   _Cohesion score 0.06487434248977206 - nodes in this community are weakly interconnected._
 - **Should `Download/Poller Tests` be split into smaller, more focused modules?**
-  _Cohesion score 0.10952380952380952 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.11578947368421053 - nodes in this community are weakly interconnected._
 - **Should `Accounts Context` be split into smaller, more focused modules?**
   _Cohesion score 0.1323529411764706 - nodes in this community are weakly interconnected._
