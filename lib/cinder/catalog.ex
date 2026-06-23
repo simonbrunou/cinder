@@ -576,6 +576,108 @@ defmodule Cinder.Catalog do
   end
 
   @doc """
+  Cancels an entire series WITHOUT deleting it: reaps every grab serving the series (any state,
+  including `:downloaded` awaiting import — a surviving downloaded grab would re-import next tick),
+  removing each tracked client download, then unmonitors every season and episode so the TV
+  poller's `wanted_episodes` does not re-grab. Broadcasts `{:series_updated, id}`. Audited.
+  Client I/O runs outside the DB transaction.
+  """
+  def cancel_series(%Series{} = series, actor) do
+    reap_series_grabs(series.id)
+    unmonitor_series_tree(series.id)
+
+    {:ok, _} =
+      Repo.transaction(fn ->
+        Audit.log(actor, :cancel_series, series, %{title: series.title})
+      end)
+
+    broadcast_series(series.id)
+    {:ok, series}
+  end
+
+  @doc """
+  Deletes a series and its tree. Grabs are reaped FIRST (the `episode.grab_id` FK nilifies on the
+  episode cascade, so after `Repo.delete(series)` the grabs would be unreachable for client removal
+  and orphan their downloads). Each grab's tracked client download is removed (outside the txn),
+  then `delete_grab/1`; then `Repo.delete(series)` cascades seasons/episodes at the DB. Broadcasts
+  `{:series_deleted, id}`. Audited. On-disk library files are intentionally left for the deferred
+  unlink feature.
+  """
+  def delete_series(%Series{} = series, actor) do
+    reap_series_grabs(series.id)
+
+    result =
+      Repo.transaction(fn ->
+        case Repo.delete(series) do
+          {:ok, deleted} ->
+            {:ok, _} = Audit.log(actor, :delete_series, deleted, %{title: deleted.title})
+            deleted
+
+          {:error, changeset} ->
+            Repo.rollback(changeset)
+        end
+      end)
+
+    with {:ok, deleted} <- result do
+      broadcast_series_deleted(deleted.id)
+      {:ok, deleted}
+    end
+  end
+
+  # Remove every grab serving the series: client-remove the tracked download (if any), then
+  # delete_grab/1. Used by BOTH cancel_series and delete_series (same all-states collection).
+  defp reap_series_grabs(series_id) do
+    for grab <- grabs_for_series(series_id) do
+      remove_grab_download(grab)
+      delete_grab(grab)
+    end
+
+    :ok
+  end
+
+  defp remove_grab_download(%Grab{download_id: nil}), do: :ok
+
+  defp remove_grab_download(%Grab{download_id: id, download_protocol: protocol}) do
+    case Download.client_for(protocol) do
+      {:ok, client} -> client.remove(id, delete_files: true)
+      :error -> :ok
+    end
+  end
+
+  # Grabs whose episodes belong to this series (via the episode→season join), ALL states.
+  defp grabs_for_series(series_id) do
+    Repo.all(
+      from g in Grab,
+        join: e in Episode,
+        on: e.grab_id == g.id,
+        join: s in Season,
+        on: s.id == e.season_id,
+        where: s.series_id == ^series_id,
+        distinct: true
+    )
+  end
+
+  # Unmonitor every season + episode of the series in one write each so wanted_episodes is empty.
+  defp unmonitor_series_tree(series_id) do
+    ts = now()
+
+    Repo.update_all(from(s in Season, where: s.series_id == ^series_id),
+      set: [monitored: false, updated_at: ts]
+    )
+
+    Repo.update_all(
+      from(e in Episode,
+        join: s in Season,
+        on: s.id == e.season_id,
+        where: s.series_id == ^series_id
+      ),
+      set: [monitored: false, updated_at: ts]
+    )
+
+    :ok
+  end
+
+  @doc """
   Finalizes a grab after import, in **one transaction**: sets `file_path` (and clears `grab_id`)
   on each imported episode, bumps `search_attempts` on the grab's still-missing episodes, then
   deletes the grab. `imported` is `[{episode_id, dest_path}]`. Broadcasts `{:series_updated, _}`.
@@ -670,6 +772,11 @@ defmodule Cinder.Catalog do
         where: not is_nil(g.content_path),
         preload: [episodes: [season: :series]]
     )
+  end
+
+  @doc "All grabs newest-first, with `episodes: [season: :series]` preloaded for the admin /grabs view."
+  def list_grabs do
+    Repo.all(from g in Grab, order_by: [desc: g.id], preload: [episodes: [season: :series]])
   end
 
   @doc """

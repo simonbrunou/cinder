@@ -191,4 +191,144 @@ defmodule Cinder.CatalogAdminTest do
       assert Repo.one!(Cinder.Audit.AdminAudit).action == "delete_movie"
     end
   end
+
+  describe "cancel_series/2 and delete_series/2" do
+    setup :verify_on_exit!
+    import Mox
+
+    alias Cinder.Catalog.{Episode, Grab, Season, Series}
+
+    defp series_tree do
+      series =
+        Repo.insert!(%Series{
+          tmdb_id: System.unique_integer([:positive]),
+          title: "Show",
+          year: 2008,
+          monitored: true,
+          monitor_strategy: :all
+        })
+
+      season = Repo.insert!(%Season{series_id: series.id, season_number: 1, monitored: true})
+
+      ep =
+        Repo.insert!(%Episode{
+          season_id: season.id,
+          episode_number: 1,
+          monitored: true,
+          air_date: ~D[2001-01-01]
+        })
+
+      {series, season, ep}
+    end
+
+    test "cancel_series reaps all grabs (incl :downloaded), removes downloads, unmonitors" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      {series, season, ep} = series_tree()
+
+      # A downloading grab and a downloaded (content_path set) grab — both must be reaped.
+      {:ok, _dl} = Catalog.create_grab("HASH-A", :torrent, [ep.id])
+
+      ep2 =
+        Repo.insert!(%Episode{
+          season_id: season.id,
+          episode_number: 2,
+          monitored: true,
+          air_date: ~D[2001-01-08]
+        })
+
+      {:ok, done} = Catalog.create_grab("HASH-B", :usenet, [ep2.id])
+      {:ok, _} = Catalog.mark_grab_downloaded(done, "/downloads/pack")
+
+      expect(Cinder.Download.ClientMock, :remove, fn "HASH-A", _opts -> :ok end)
+      expect(Cinder.Download.SabnzbdClientMock, :remove, fn "HASH-B", _opts -> :ok end)
+
+      sid = series.id
+      Catalog.subscribe_series()
+
+      assert {:ok, %Series{}} = Catalog.cancel_series(series, actor)
+      assert_receive {:series_updated, ^sid}
+
+      # Both grabs gone.
+      assert Repo.all(Grab) == []
+      # Season + episodes unmonitored so wanted_episodes won't re-grab.
+      assert Repo.get!(Season, season.id).monitored == false
+      assert Repo.get!(Episode, ep.id).monitored == false
+      assert Repo.get!(Episode, ep2.id).monitored == false
+      # The series itself survives a cancel.
+      assert Repo.get(Series, sid)
+    end
+
+    test "cancel_series stops re-grab: wanted_episodes returns nothing afterward" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      {series, _season, _ep} = series_tree()
+      # Before: the aired, monitored, file-less, grab-less episode is wanted.
+      assert series.id in Enum.map(Catalog.wanted_episodes(), & &1.season.series_id)
+
+      assert {:ok, _} = Catalog.cancel_series(series, actor)
+      refute series.id in Enum.map(Catalog.wanted_episodes(), & &1.season.series_id)
+    end
+
+    test "cancel_series writes an admin_audit row" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      {series, _season, _ep} = series_tree()
+      assert {:ok, _} = Catalog.cancel_series(series, actor)
+      audit = Repo.one!(Cinder.Audit.AdminAudit)
+      assert audit.action == "cancel_series"
+      assert audit.entity_type == "Series"
+      assert audit.entity_id == series.id
+    end
+
+    test "delete_series reaps grabs first, then cascades seasons/episodes, broadcasts deleted" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      {series, season, ep} = series_tree()
+      {:ok, _grab} = Catalog.create_grab("HASH-C", :torrent, [ep.id])
+
+      expect(Cinder.Download.ClientMock, :remove, fn "HASH-C", _opts -> :ok end)
+
+      sid = series.id
+      Catalog.subscribe_series()
+
+      assert {:ok, %Series{}} = Catalog.delete_series(series, actor)
+      assert_receive {:series_deleted, ^sid}
+
+      assert Repo.get(Series, sid) == nil
+      assert Repo.get(Season, season.id) == nil
+      assert Repo.get(Episode, ep.id) == nil
+      assert Repo.all(Grab) == []
+    end
+
+    test "delete_series writes an admin_audit row" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      {series, _season, _ep} = series_tree()
+      assert {:ok, _} = Catalog.delete_series(series, actor)
+      assert Repo.one!(Cinder.Audit.AdminAudit).action == "delete_series"
+    end
+  end
+
+  describe "list_grabs/0" do
+    test "lists all grabs newest-first with episode→season→series preloaded" do
+      series =
+        Repo.insert!(%Cinder.Catalog.Series{
+          tmdb_id: System.unique_integer([:positive]),
+          title: "S",
+          monitored: true,
+          monitor_strategy: :all
+        })
+
+      season = Repo.insert!(%Cinder.Catalog.Season{series_id: series.id, season_number: 1})
+
+      ep =
+        Repo.insert!(%Cinder.Catalog.Episode{
+          season_id: season.id,
+          episode_number: 1,
+          air_date: ~D[2001-01-01]
+        })
+
+      {:ok, _} = Catalog.create_grab("H1", :torrent, [ep.id])
+
+      assert [grab] = Catalog.list_grabs()
+      assert [loaded_ep] = grab.episodes
+      assert loaded_ep.season.series.id == series.id
+    end
+  end
 end
