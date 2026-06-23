@@ -7,6 +7,7 @@ defmodule Cinder.Accounts do
   alias Cinder.Repo
 
   alias Cinder.Accounts.{User, UserNotifier, UserToken}
+  alias Cinder.Audit
 
   ## Database getters
 
@@ -111,6 +112,28 @@ defmodule Cinder.Accounts do
     |> Ecto.Changeset.put_change(:confirmed_at, DateTime.utc_now(:second))
     |> Ecto.Changeset.put_change(:role, role)
     |> Repo.insert()
+  end
+
+  @doc """
+  Sets a user's role. Refuses to demote the last admin: the admin count is
+  re-checked AFTER the write inside one transaction (a write that would drop the
+  count to zero rolls back as `{:error, :last_admin}`). Writes an audit row in
+  the same transaction.
+  """
+  def update_user_role(%User{} = actor, %User{} = target, role) when role in [:admin, :user] do
+    Repo.transaction(fn ->
+      {:ok, updated} =
+        target |> Ecto.Changeset.change(role: role) |> Repo.update()
+
+      if count_admins() == 0 do
+        Repo.rollback(:last_admin)
+      end
+
+      {:ok, _audit} =
+        Audit.log(actor, "update_user_role", updated, %{role: to_string(role)})
+
+      updated
+    end)
   end
 
   @doc "All users, ordered by id."

@@ -457,6 +457,36 @@ defmodule Cinder.AccountsTest do
     end
   end
 
+  describe "update_user_role/2" do
+    test "promotes a user to admin and audits it" do
+      actor = admin_fixture()
+      target = user_fixture()
+
+      assert {:ok, %User{role: :admin, id: tid}} =
+               Accounts.update_user_role(actor, target, :admin)
+
+      audit = Repo.one!(from a in Cinder.Audit.AdminAudit, where: a.entity_id == ^tid)
+      assert audit.action == "update_user_role"
+      assert audit.entity_type == "User"
+      assert audit.actor_id == actor.id
+      assert audit.detail["role"] == "admin"
+    end
+
+    test "demotes a second admin to user" do
+      actor = admin_fixture()
+      target = admin_fixture()
+      assert {:ok, %User{role: :user}} = Accounts.update_user_role(actor, target, :user)
+    end
+
+    test "refuses to demote the last admin and writes no audit row" do
+      actor = admin_fixture()
+
+      assert {:error, :last_admin} = Accounts.update_user_role(actor, actor, :user)
+      assert Repo.reload!(actor).role == :admin
+      assert Repo.aggregate(Cinder.Audit.AdminAudit, :count) == 0
+    end
+  end
+
   describe "create_user/1" do
     test "creates a confirmed user with the default :user role" do
       email = unique_user_email()
