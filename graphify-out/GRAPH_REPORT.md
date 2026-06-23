@@ -1,7 +1,7 @@
 # Graph Report - cinder  (2026-06-23)
 
 ## Corpus Check
-- 248 files · ~189,509 words
+- 248 files · ~189,774 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
@@ -10,7 +10,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `89fe080a`
+- Built from commit: `f1900018`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -253,13 +253,13 @@
 
 ## Surprising Connections (you probably didn't know these)
 - `change()` --calls--> `table()`  [INFERRED]
+  priv/repo/migrations/20260618194259_add_download_fields_to_movies.exs → lib/cinder_web/components/core_components.ex
+- `change()` --calls--> `table()`  [INFERRED]
   priv/repo/migrations/20260619061256_add_file_path_to_movies.exs → lib/cinder_web/components/core_components.ex
 - `change()` --calls--> `table()`  [INFERRED]
   priv/repo/migrations/20260619094117_add_import_attempts_to_movies.exs → lib/cinder_web/components/core_components.ex
 - `change()` --calls--> `table()`  [INFERRED]
   priv/repo/migrations/20260619120227_add_search_attempts_to_movies.exs → lib/cinder_web/components/core_components.ex
-- `change()` --calls--> `table()`  [INFERRED]
-  priv/repo/migrations/20260619140000_add_download_protocol_to_movies.exs → lib/cinder_web/components/core_components.ex
 - `change()` --calls--> `table()`  [INFERRED]
   priv/repo/migrations/20260621200000_add_role_to_users.exs → lib/cinder_web/components/core_components.ex
 
@@ -620,7 +620,7 @@ Nodes (10): A. First-run wizard, B. Per-user quota (concurrent-pending), C. Requ
 
 ### Community 149 - "Community 149"
 Cohesion: 0.20
-Nodes (7): table(), Cinder.Repo.Migrations.AddDownloadFieldsToMovies, change(), Cinder.Repo.Migrations.AddRequestQuotaToUsers, change(), Cinder.Repo.Migrations.AddTvPipelineFields, change()
+Nodes (7): table(), Cinder.Repo.Migrations.AddDownloadProtocolToMovies, change(), Cinder.Repo.Migrations.AddRequestQuotaToUsers, change(), Cinder.Repo.Migrations.AddTvPipelineFields, change()
 
 ### Community 150 - "Community 150"
 Cohesion: 0.20

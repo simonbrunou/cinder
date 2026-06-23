@@ -225,6 +225,22 @@ defmodule Cinder.SettingsTest do
       Settings.load_into_env()
       assert Application.get_env(:cinder, :library_path) == nil
     end
+
+    test "with no tv_library_path bootstrap (TV_LIBRARY_PATH unset), the overlay yields nil not []" do
+      # The strict TV root must coerce base/1's [] keyword default to nil, or build_episode_dest
+      # would Path.join a list. Mirrors the library_path case.
+      original = Application.get_env(:cinder, :tv_library_path)
+      :persistent_term.erase({Cinder.Settings, :base, :tv_library_path})
+      Application.delete_env(:cinder, :tv_library_path)
+
+      on_exit(fn ->
+        :persistent_term.erase({Cinder.Settings, :base, :tv_library_path})
+        if original, do: Application.put_env(:cinder, :tv_library_path, original)
+      end)
+
+      Settings.load_into_env()
+      assert Application.get_env(:cinder, :tv_library_path) == nil
+    end
   end
 
   describe "save_form/1" do

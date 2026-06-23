@@ -324,26 +324,41 @@ defmodule Cinder.Download.TvPollerTest do
     assert Repo.get!(Grab, linked.grab_id).download_id == "hash-m6"
   end
 
-  test "a downloaded grab parks (not a raise-loop) when the TV library path is unconfigured" do
+  test "a downloaded grab is held (not parked, not a raise-loop) when the TV root is unset, then imports once set" do
     {_series, season} = series_tree()
-    e1 = episode(season, 1)
+    e1 = episode(season, 3)
     {:ok, grab} = Catalog.create_grab("hash-x", :torrent, [e1.id])
-    {:ok, _} = Catalog.mark_grab_downloaded(grab, "/dl/pack")
+    {:ok, _} = Catalog.mark_grab_downloaded(grab, "/dl/Show.S01E03.1080p.mkv")
 
-    # Strict separate TV root (M8): with :tv_library_path unset, import returns an error tuple,
-    # so the grab bounded-retries and parks — never the silent every-tick re-raise hot loop.
+    # Strict separate TV root (M8): with :tv_library_path unset, import returns an error tuple
+    # (never a re-raise hot loop). A missing root is a config error, not transient — the grab is
+    # held downloaded (no park, no re-download), preserving the content until the operator sets it.
     saved = Application.get_env(:cinder, :tv_library_path)
     Application.delete_env(:cinder, :tv_library_path)
     on_exit(fn -> Application.put_env(:cinder, :tv_library_path, saved) end)
 
     start_supervised!({TvPoller, interval: 60_000})
 
-    Enum.each(1..10, fn _ -> TvPoller.poll() end)
+    Enum.each(1..12, fn _ -> TvPoller.poll() end)
+
+    # Not parked, not re-searched: the grab is intact and still linked to its episode.
+    assert Repo.get(Grab, grab.id)
+    held = Repo.get!(Episode, e1.id)
+    assert is_nil(held.file_path)
+    assert held.grab_id == grab.id
+    assert held.search_attempts == 0
+
+    # Configure the root + a successful single-file import: the held grab now imports and finalizes.
+    Application.put_env(:cinder, :tv_library_path, saved)
+    stub_single_file_import()
+
+    assert :ok = TvPoller.poll()
 
     assert Repo.get(Grab, grab.id) == nil
-    parked = Repo.get!(Episode, e1.id)
-    assert is_nil(parked.file_path)
-    assert parked.search_attempts >= 1
+    imported = Repo.get!(Episode, e1.id)
+
+    assert imported.file_path ==
+             "/tmp/cinder-test-tv-library/Show (2008)/Season 01/Show (2008) - S01E03.mkv"
   end
 
   test "respects the TV size band: a too-large pack is not grabbed when tv_max_size is set" do
