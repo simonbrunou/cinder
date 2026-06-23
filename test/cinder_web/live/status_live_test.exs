@@ -17,6 +17,8 @@ defmodule CinderWeb.StatusLiveTest do
     stub(Cinder.Download.ClientMock, :health, fn -> :ok end)
     stub(Cinder.Download.SabnzbdClientMock, :health, fn -> :ok end)
     stub(Cinder.Library.MediaServerMock, :health, fn -> :ok end)
+    # The per-kind library health rows probe a writable root via the filesystem mock.
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
     :ok
   end
 

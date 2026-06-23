@@ -177,6 +177,14 @@ defmodule Cinder.Download.Poller do
         with {:ok, available} <- Catalog.transition(movie, %{status: :available}),
              do: Notifier.notify({:movie_available, available})
 
+      {:error, :library_not_configured} ->
+        # Hold (no attempt bump, no park) until the movie library root is configured: the file is
+        # downloaded and waiting, so don't burn the retry budget on a fixable misconfig. The cause
+        # is visible — /status shows the library red (Health.check_service({:library, :movies})).
+        Logger.warning(
+          "holding import for movie #{movie.id}: movies_library_path not set; configure it in /settings"
+        )
+
       {:error, reason} when reason in @permanent_import_errors ->
         Logger.warning("import permanently failed for movie #{movie.id}: #{inspect(reason)}")
         park(movie, :import_failed, reason)

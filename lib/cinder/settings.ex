@@ -17,8 +17,10 @@ defmodule Cinder.Settings do
   alias Cinder.Repo
   alias Cinder.Settings.Setting
 
-  # Per-module config fields: {settings key, env target module + field, secret?, group}.
-  @config_fields [
+  # Static per-module config fields (service creds): {settings key, env target module + field,
+  # secret?, group}. The complete set is `config_fields/0` = these ++ the per-kind Plex section
+  # fields generated from `Cinder.Library.kinds/0`.
+  @base_config_fields [
     %{
       key: "tmdb_token",
       module: Cinder.Catalog.TMDB.HTTP,
@@ -126,15 +128,6 @@ defmodule Cinder.Settings do
       group: :media_server,
       label: "Plex token",
       placeholder: ""
-    },
-    %{
-      key: "plex_section",
-      module: Cinder.Library.MediaServer.Plex,
-      field: :section,
-      secret: false,
-      group: :media_server,
-      label: "Plex library section (numeric id)",
-      placeholder: "1"
     }
   ]
 
@@ -146,21 +139,14 @@ defmodule Cinder.Settings do
 
   @media_server_key "media_server_type"
   @media_server_options ["jellyfin", "plex"]
-  @library_path_key "library_path"
-  @tv_library_path_key "tv_library_path"
-  @tv_min_size_key "tv_min_size"
-  @tv_max_size_key "tv_max_size"
-  @tv_preferred_resolutions_key "tv_preferred_resolutions"
 
-  # Flat string keys (not @config_fields {module, field} entries): each overlays a single
-  # :cinder env key, planned/form-stated uniformly via @flat_keys.
-  @flat_keys [
-    @library_path_key,
-    @tv_library_path_key,
-    @tv_min_size_key,
-    @tv_max_size_key,
-    @tv_preferred_resolutions_key
-  ]
+  # Display labels for the library kinds. `Cinder.Library.kinds/0` stays a pure context list;
+  # the UI labels live here alongside the other settings-group labels.
+  @kind_labels %{movies: "Movies", tv: "TV"}
+
+  # The DB-only band suffixes each kind owns (no env bootstrap — unset ⇒ unbounded/default).
+  # The root path (`#{kind}_library_path`) is the fourth flat key and DOES have an env bootstrap.
+  @band_suffixes ["min_size", "max_size", "preferred_resolutions"]
 
   @bytes_per_gb 1_000_000_000
 
@@ -169,11 +155,13 @@ defmodule Cinder.Settings do
     indexer: "Indexer",
     download: "Download clients",
     media_server: "Media server",
-    library: "Library",
-    tv: "TV releases"
+    library: "Library paths",
+    releases: "Release size bands"
   ]
 
-  @secret_keys for(f <- @config_fields, f.secret, into: MapSet.new(), do: f.key)
+  # Only static fields can be secret (the generated Plex-section fields are not), so this stays
+  # a compile-time set over @base_config_fields — no need to call config_fields/0 at module load.
+  @secret_keys for(f <- @base_config_fields, f.secret, into: MapSet.new(), do: f.key)
 
   # --- boot loader: one-shot supervised child, runs synchronously before the poller ---
 
@@ -193,19 +181,53 @@ defmodule Cinder.Settings do
   @doc "Display groups in render order, as `{group_atom, label}`."
   def groups, do: @groups
 
+  @doc "All config fields: the static service creds plus the per-kind Plex section fields."
+  def config_fields, do: @base_config_fields ++ plex_section_fields()
+
   @doc "Config fields in a given group."
-  def config_fields(group), do: Enum.filter(@config_fields, &(&1.group == group))
+  def config_fields(group), do: Enum.filter(config_fields(), &(&1.group == group))
+
+  # One Plex section field per library kind (`movies_plex_section` → Plex `:movies_section`, …),
+  # so a server with separate Movies/Shows libraries refreshes the right one. Generated from
+  # `Cinder.Library.kinds/0` so a new kind needs no entry here.
+  defp plex_section_fields do
+    for kind <- Cinder.Library.kinds() do
+      %{
+        key: "#{kind}_plex_section",
+        module: Cinder.Library.MediaServer.Plex,
+        field: :"#{kind}_section",
+        secret: false,
+        group: :media_server,
+        label: "Plex #{kind_label(kind)} library section (numeric id)",
+        placeholder: ""
+      }
+    end
+  end
+
+  defp kind_label(kind),
+    do: Map.get(@kind_labels, kind, kind |> to_string() |> String.capitalize())
 
   @doc "The download-client enable toggles."
   def toggles, do: @toggles
 
   def media_server_key, do: @media_server_key
   def media_server_options, do: @media_server_options
-  def library_path_key, do: @library_path_key
-  def tv_library_path_key, do: @tv_library_path_key
-  def tv_min_size_key, do: @tv_min_size_key
-  def tv_max_size_key, do: @tv_max_size_key
-  def tv_preferred_resolutions_key, do: @tv_preferred_resolutions_key
+
+  @doc "The library kinds with display labels, for the settings/setup UI (`[%{kind:, label:}]`)."
+  def library_kinds, do: Enum.map(Cinder.Library.kinds(), &%{kind: &1, label: kind_label(&1)})
+
+  @doc "Every flat `:cinder` env key overlaid per kind: the root path + the three band keys."
+  def flat_keys do
+    for kind <- Cinder.Library.kinds(), suffix <- ["library_path" | @band_suffixes] do
+      "#{kind}_#{suffix}"
+    end
+  end
+
+  # Per-kind settings-key derivations for the UI (the form field `name`s).
+  def library_path_key(kind), do: "#{kind}_library_path"
+  def min_size_key(kind), do: "#{kind}_min_size"
+  def max_size_key(kind), do: "#{kind}_max_size"
+  def preferred_resolutions_key(kind), do: "#{kind}_preferred_resolutions"
 
   # --- reads ---
 
@@ -238,7 +260,7 @@ defmodule Cinder.Settings do
     rows = rows_by_key()
 
     values =
-      for f <- @config_fields, not f.secret, into: %{} do
+      for f <- config_fields(), not f.secret, into: %{} do
         {f.key, decoded_for(rows, f.key) || ""}
       end
 
@@ -249,14 +271,14 @@ defmodule Cinder.Settings do
         decoded_for(rows, @media_server_key) || default_media_server_type()
       )
       |> then(fn v ->
-        Enum.reduce(@flat_keys, v, fn key, acc ->
+        Enum.reduce(flat_keys(), v, fn key, acc ->
           Map.put(acc, key, decoded_for(rows, key) || "")
         end)
       end)
       |> Map.merge(toggle_values(rows))
 
     secrets_set =
-      for f <- @config_fields,
+      for f <- config_fields(),
           f.secret,
           not is_nil(decoded_for(rows, f.key)),
           into: MapSet.new() do
@@ -308,9 +330,7 @@ defmodule Cinder.Settings do
     apply_config_fields(rows)
     apply_media_server(rows)
     apply_download_clients(rows)
-    apply_library_path(rows)
-    apply_tv_library_path(rows)
-    apply_tv_band(rows)
+    apply_library_config(rows)
     :ok
   rescue
     e ->
@@ -328,7 +348,7 @@ defmodule Cinder.Settings do
   end
 
   defp apply_config_fields(rows) do
-    @config_fields
+    config_fields()
     |> Enum.group_by(& &1.module)
     |> Enum.each(fn {module, fields} ->
       db_values =
@@ -364,57 +384,36 @@ defmodule Cinder.Settings do
     Application.put_env(:cinder, :media_server, impl)
   end
 
-  # A DB value overlays the env bootstrap; a cleared setting reverts to it. Mirrors
-  # apply_media_server/1 (a flat :cinder key rather than a {module, field} target).
-  # Capture the bootstrap eagerly (every call, before the overlay) so base/1 snapshots the
-  # pre-overlay env — otherwise a cleared setting would re-capture the already-overlaid value.
-  # Mirrors apply_media_server/1.
-  defp apply_library_path(rows) do
-    fallback = base_library_path()
-    Application.put_env(:cinder, :library_path, decoded_for(rows, @library_path_key) || fallback)
+  # Per-kind library config, applied uniformly for every Cinder.Library kind: the import root
+  # (a flat :cinder env key WITH an env bootstrap) plus the DB-only size band. A DB value overlays
+  # the bootstrap; a cleared setting reverts to it (base/1 snapshots the pre-overlay env once).
+  # One loop — a new kind needs no new apply_* function.
+  defp apply_library_config(rows) do
+    for kind <- Cinder.Library.kinds(), do: apply_kind_config(rows, kind)
+    :ok
   end
 
-  # base/1 defaults to [] for the keyword-list config keys; library_path is a flat
-  # string, so coerce an unset bootstrap (LIBRARY_PATH absent → []) to nil. Health
-  # then reports :not_configured rather than crashing on a list-typed path.
-  defp base_library_path do
-    case base(:library_path) do
+  defp apply_kind_config(rows, kind) do
+    root_env = :"#{kind}_library_path"
+    root = decoded_for(rows, "#{kind}_library_path") || base_path(root_env)
+    min_size = parse_gb(decoded_for(rows, "#{kind}_min_size"))
+    max_size = parse_gb(decoded_for(rows, "#{kind}_max_size"))
+    preferred = parse_resolutions(decoded_for(rows, "#{kind}_preferred_resolutions"))
+
+    Application.put_env(:cinder, root_env, root)
+    Application.put_env(:cinder, :"#{kind}_min_size", min_size)
+    Application.put_env(:cinder, :"#{kind}_max_size", max_size)
+    Application.put_env(:cinder, :"#{kind}_preferred_resolutions", preferred)
+  end
+
+  # base/1 defaults to [] for unset keys; a library path is a flat string, so coerce an unset
+  # bootstrap (e.g. MOVIES_LIBRARY_PATH absent → []) to nil. Health then reports :not_configured
+  # rather than crashing on a list-typed path.
+  defp base_path(env_key) do
+    case base(env_key) do
       path when is_binary(path) -> path
       _ -> nil
     end
-  end
-
-  # The separate TV root, mirroring apply_library_path/1. M8: episodes import here, not
-  # under :library_path, so Jellyfin/Plex can point distinct Movies/Shows libraries at each.
-  defp apply_tv_library_path(rows) do
-    fallback = base_tv_library_path()
-
-    Application.put_env(
-      :cinder,
-      :tv_library_path,
-      decoded_for(rows, @tv_library_path_key) || fallback
-    )
-  end
-
-  defp base_tv_library_path do
-    case base(:tv_library_path) do
-      path when is_binary(path) -> path
-      _ -> nil
-    end
-  end
-
-  # The per-episode TV size band + resolution preference (M8). DB-only (no env bootstrap),
-  # so apply writes the coerced value or nil — TvPoller reads these and passes the non-nil
-  # ones to Scorer.select_for. Unset ⇒ nil ⇒ unbounded / scorer default (the M5 behaviour).
-  defp apply_tv_band(rows) do
-    Application.put_env(:cinder, :tv_min_size, parse_gb(decoded_for(rows, @tv_min_size_key)))
-    Application.put_env(:cinder, :tv_max_size, parse_gb(decoded_for(rows, @tv_max_size_key)))
-
-    Application.put_env(
-      :cinder,
-      :tv_preferred_resolutions,
-      parse_resolutions(decoded_for(rows, @tv_preferred_resolutions_key))
-    )
   end
 
   # A GB string → bytes. Blank/non-numeric/≤0 ⇒ nil (unbounded): a 0 or negative band would
@@ -554,8 +553,8 @@ defmodule Cinder.Settings do
   end
 
   defp plan(params) do
-    config_plan = Enum.reduce(@config_fields, {%{}, []}, &plan_config(&1, params, &2))
-    {puts, deletes} = Enum.reduce(@flat_keys, config_plan, &plan_flat(&1, params, &2))
+    config_plan = Enum.reduce(config_fields(), {%{}, []}, &plan_config(&1, params, &2))
+    {puts, deletes} = Enum.reduce(flat_keys(), config_plan, &plan_flat(&1, params, &2))
 
     puts =
       puts

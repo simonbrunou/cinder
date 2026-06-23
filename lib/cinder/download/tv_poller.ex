@@ -130,7 +130,7 @@ defmodule Cinder.Download.TvPoller do
       # A missing TV root is a config error, not a transient one: leave the grab downloaded
       # (no bump, no park) so the already-downloaded content imports as soon as tv_library_path
       # is set — parking would delete the download and re-search the episode for nothing.
-      {:error, :tv_library_not_configured} ->
+      {:error, :library_not_configured} ->
         Logger.warning(
           "tv grab #{grab.id}: tv_library_path not set; holding the download until it is configured"
         )

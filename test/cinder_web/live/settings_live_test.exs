@@ -42,19 +42,22 @@ defmodule CinderWeb.SettingsLiveTest do
     assert html =~ "Download clients"
     assert html =~ "Media server"
     assert html =~ "Library"
-    assert html =~ ~s(name="library_path")
+    assert html =~ ~s(name="movies_library_path")
     assert html =~ "Save settings"
   end
 
-  test "saving the library path overlays :cinder, :library_path", %{conn: conn} do
+  test "saving the movie library path overlays :cinder, :movies_library_path", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/settings")
 
     lv
-    |> form("#settings-form", %{"library_path" => "/srv/media", "media_server_type" => "jellyfin"})
+    |> form("#settings-form", %{
+      "movies_library_path" => "/srv/media",
+      "media_server_type" => "jellyfin"
+    })
     |> render_submit()
 
-    assert Settings.get("library_path") == "/srv/media"
-    assert Application.fetch_env!(:cinder, :library_path) == "/srv/media"
+    assert Settings.get("movies_library_path") == "/srv/media"
+    assert Application.fetch_env!(:cinder, :movies_library_path) == "/srv/media"
   end
 
   test "never echoes a stored secret back to the client", %{conn: conn} do

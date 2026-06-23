@@ -40,8 +40,9 @@ defmodule Cinder.Library do
   def import_movie(%Movie{file_path: path}) when path in [nil, ""], do: {:error, :no_file_path}
 
   def import_movie(%Movie{} = movie) do
-    with {:ok, source} <- resolve_source(movie.file_path),
-         dest = build_dest(movie, source),
+    with {:ok, root} <- root(:movies),
+         {:ok, source} <- resolve_source(movie.file_path),
+         dest = build_dest(movie, source, root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
          :ok <- link(source, dest) do
       scan(:movies, dest)
@@ -68,21 +69,20 @@ defmodule Cinder.Library do
     do: {:error, :no_content_path}
 
   def import_episodes(content_path, episodes) do
-    # Strict separate TV root (M8): with no :tv_library_path configured, return an error tuple so
-    # the poller bounded-retries and parks the grab. Raising here (build_episode_dest's fetch_env!)
-    # would sit above the poller's {:error,_} → retry_or_park clause and re-raise every tick.
-    if tv_library_configured?() do
-      do_import_episodes(content_path, episodes)
-    else
-      {:error, :tv_library_not_configured}
+    # Strict separate TV root: with no :tv_library_path configured, return an error tuple so the
+    # poller holds the grab (no bump, no park) until it's set, rather than raising every tick
+    # (a raise would sit above the poller's {:error,_} clause and re-raise — see TvPoller). The
+    # same guard (`root/1`) protects the movie path symmetrically.
+    with {:ok, root} <- root(:tv) do
+      do_import_episodes(content_path, episodes, root)
     end
   end
 
-  defp do_import_episodes(content_path, episodes) do
+  defp do_import_episodes(content_path, episodes, root) do
     with {:ok, videos} <- video_files(content_path) do
       {to_import, unmatched} = videos |> match_episodes(episodes) |> resolve(videos, episodes)
 
-      case link_all(to_import) do
+      case link_all(to_import, root) do
         {:ok, []} ->
           # Nothing mapped — still surface the offending file names (don't silently drop them)
           # so a parser gap on a real release is diagnosable; the poller parks the grab.
@@ -152,9 +152,9 @@ defmodule Cinder.Library do
 
   # Hardlink each match; a transient error halts and returns {:error, _} so the grab retries
   # the whole import next tick (already-linked files are :eexist ⇒ :ok, so it's idempotent).
-  defp link_all(to_import) do
+  defp link_all(to_import, root) do
     Enum.reduce_while(to_import, {:ok, []}, fn {ep, source}, {:ok, acc} ->
-      dest = build_episode_dest(ep, source)
+      dest = build_episode_dest(ep, source, root)
 
       with :ok <- fs().mkdir_p(Path.dirname(dest)),
            :ok <- link(source, dest) do
@@ -165,12 +165,12 @@ defmodule Cinder.Library do
     end)
   end
 
-  defp build_episode_dest(%Episode{season: season} = ep, source) do
+  defp build_episode_dest(%Episode{season: season} = ep, source, root) do
     show = library_name(sanitize(season.series.title), season.series.year, season.series.tmdb_id)
     code = "S#{pad(season.season_number)}E#{pad(ep.episode_number)}"
 
     Path.join([
-      tv_library_path(),
+      root,
       show,
       "Season #{pad(season.season_number)}",
       "#{show} - #{code}#{Path.extname(source)}"
@@ -228,9 +228,9 @@ defmodule Cinder.Library do
     end
   end
 
-  defp build_dest(%Movie{title: title, year: year, tmdb_id: tmdb_id}, source) do
+  defp build_dest(%Movie{title: title, year: year, tmdb_id: tmdb_id}, source, root) do
     name = library_name(sanitize(title), year, tmdb_id)
-    Path.join([library_path(), name, name <> Path.extname(source)])
+    Path.join([root, name, name <> Path.extname(source)])
   end
 
   # Jellyfin's scheme is `Title (Year)`; with no year (a TMDB entry lacking a
@@ -261,13 +261,14 @@ defmodule Cinder.Library do
 
   defp fs, do: Application.fetch_env!(:cinder, :filesystem)
   defp media_server, do: Application.fetch_env!(:cinder, :media_server)
-  defp library_path, do: Application.fetch_env!(:cinder, :library_path)
-  defp tv_library_path, do: Application.fetch_env!(:cinder, :tv_library_path)
 
-  defp tv_library_configured? do
-    case Application.get_env(:cinder, :tv_library_path) do
-      path when is_binary(path) and path != "" -> true
-      _ -> false
+  # The configured import root for a kind, or {:error, :library_not_configured} when unset/blank —
+  # used by both importers so an unconfigured root holds (poller retries) instead of raising. The
+  # same shape for every kind: movies and TV are no longer special-cased.
+  defp root(kind) do
+    case Application.get_env(:cinder, :"#{kind}_library_path") do
+      path when is_binary(path) and path != "" -> {:ok, path}
+      _ -> {:error, :library_not_configured}
     end
   end
 end
