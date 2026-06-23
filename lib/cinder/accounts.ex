@@ -157,6 +157,26 @@ defmodule Cinder.Accounts do
     end)
   end
 
+  @doc """
+  Admin-resets a user's password directly and expires ALL their tokens (logging
+  them out everywhere) via `update_user_and_delete_all_tokens/1`. Audited in the
+  same transaction.
+  """
+  def admin_reset_password(%User{} = actor, %User{} = target, attrs) do
+    changeset = User.password_changeset(target, attrs)
+
+    Repo.transaction(fn ->
+      case update_user_and_delete_all_tokens(changeset) do
+        {:ok, {user, _expired}} ->
+          {:ok, _audit} = Audit.log(actor, "admin_reset_password", user, %{})
+          user
+
+        {:error, changeset} ->
+          Repo.rollback(changeset)
+      end
+    end)
+  end
+
   @doc "All users, ordered by id."
   def list_users, do: Repo.all(from u in User, order_by: [asc: u.id])
 

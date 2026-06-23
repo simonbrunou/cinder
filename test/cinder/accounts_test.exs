@@ -575,4 +575,37 @@ defmodule Cinder.AccountsTest do
       assert %{email: ["did not change"]} = errors_on(changeset)
     end
   end
+
+  describe "admin_reset_password/2" do
+    test "sets a new password, expires the target's sessions, and audits it" do
+      actor = admin_fixture()
+      target = user_fixture() |> set_password()
+      old_token = Accounts.generate_user_session_token(target)
+
+      assert {:ok, %User{} = updated} =
+               Accounts.admin_reset_password(actor, target, %{
+                 password: "brand new password!",
+                 password_confirmation: "brand new password!"
+               })
+
+      assert Accounts.get_user_by_email_and_password(updated.email, "brand new password!")
+      refute Accounts.get_user_by_session_token(old_token)
+
+      audit = Repo.one!(from a in Cinder.Audit.AdminAudit, where: a.entity_id == ^target.id)
+      assert audit.action == "admin_reset_password"
+    end
+
+    test "rejects a too-short password" do
+      actor = admin_fixture()
+      target = user_fixture()
+
+      assert {:error, changeset} =
+               Accounts.admin_reset_password(actor, target, %{
+                 password: "short",
+                 password_confirmation: "short"
+               })
+
+      assert %{password: ["should be at least 12 character(s)"]} = errors_on(changeset)
+    end
+  end
 end
