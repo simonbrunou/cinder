@@ -92,19 +92,24 @@ monitor flip is a cheap synchronous write.
 Monitoring exactly the requested season (not `:all`) is both correct-to-intent and avoids the
 whole-series flood the `monitor_strategy: :future` default was created to prevent.
 
-### 4. Discovery — TV pages become user-facing
+### 4. Discovery — a dedicated user-facing discovery page (two single-purpose surfaces)
 
-- `/series` (TMDB TV search) and `/series/:id` (season/episode tree) move from the `:admin`
-  live_session to `:authenticated`.
-- **`/series` (search grid):** results navigate to the detail page (the request action is
-  per-season, so it lives on the detail page). No admin-direct add.
-- **`/series/:id` (detail):** for every user, each season row shows a **Request** button + a
-  per-season **state badge** (Pending / Approved / Denied), scoped to the current user. Clicking
-  Request calls `Requests.create_request(scope, season_attrs)` — a non-admin's becomes `:pending`,
-  an **admin's own request auto-approves** (creating + monitoring the season immediately), exactly
-  like movies on `/`. The existing **per-episode / per-season monitor toggles remain admin-only**
-  (gated inside the page on `scope.user.role`), so a non-admin can request a season but not manage
-  monitoring.
+A user requesting a season of a show *not yet in the library* has no local series to view — its
+season list lives only in TMDB. So discovery and admin-management are **separate pages**, avoiding
+in-page role-gating:
+
+- `/series` (TMDB TV search) moves `:admin → :authenticated`; results link to the discovery page.
+  No admin-direct add.
+- **New `SeriesDiscoveryLive` at `/series/tmdb/:tmdb_id`** (`:authenticated`, all users): keyed by
+  tmdb_id (works for not-yet-added shows), fetches the season list from TMDB
+  (`Catalog.tmdb_series/1` → `get_series/1`, one call — season stubs, no episodes), and renders per
+  season a **Request** button or the current user's **state badge** (Pending / Approved / Denied).
+  Request builds `%{target_type: "season", target_id: tmdb_id, season_number: n, title:, year:,
+  poster_path:}` → `Requests.create_request(user, attrs)` (non-admin → `:pending`; an admin's own →
+  auto-approved + monitored immediately, like movies on `/`). No monitor toggles here.
+- **`/series/:id` (local series, admin-only) is unchanged** — it keeps the per-episode/season
+  monitor management. Admins reach it via existing entry points (`/calendar`, direct), and the
+  discovery page may show admins a "Manage monitoring →" link when the series exists locally.
 
 ### 5. Requester views — per-season, mostly generic
 
@@ -126,11 +131,14 @@ whole-series flood the `monitor_strategy: :future` default was created to preven
 - `lib/cinder/requests.ex` — `create_approved`/`approve_request` dispatch on `target_type`;
   a `season_attrs`/dispatch helper alongside `movie_attrs_from/1`.
 - `lib/cinder/catalog.ex` — `find_or_create_series_at_requested/2` (find-or-create + monitor one
-  season); reuse `add_series_to_watchlist` persistence + `set_season_monitored/2`.
-- `lib/cinder_web/router.ex` — move `/series`, `/series/:id` to `:authenticated`.
-- `lib/cinder_web/live/series_live.ex` — search grid navigates to detail; drop admin-direct add.
-- `lib/cinder_web/live/series_detail_live.ex` — per-season Request button + per-user badge (all
-  users); monitor toggles gated admin-only.
+  season); a thin `tmdb_series/1` passthrough for the discovery page; reuse
+  `add_series_to_watchlist` persistence + `set_season_monitored/2`.
+- `lib/cinder_web/router.ex` — move `/series` to `:authenticated`, add
+  `/series/tmdb/:tmdb_id`; **`/series/:id` stays in `:admin`**.
+- `lib/cinder_web/live/series_live.ex` — search grid links to the discovery page; drop admin-direct add.
+- `lib/cinder_web/live/series_discovery_live.ex` (new) — TMDB-sourced seasons + per-season Request +
+  per-user badge (all users); no monitor toggles.
+- `lib/cinder_web/live/series_detail_live.ex` — **unchanged** (admin monitor management).
 - `lib/cinder_web/live/my_requests_live.ex` — render season requests + badge.
 - `lib/cinder_web/live/requests_live.ex` — season label in the queue row.
 
