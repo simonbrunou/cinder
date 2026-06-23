@@ -72,6 +72,7 @@ defmodule CinderWeb.Router do
       live "/requests", RequestsLive
       live "/users", UsersLive
       live "/movies", MoviesLive
+      live "/grabs", GrabsLive
       live "/series/:id", SeriesDetailLive
       live "/calendar", CalendarLive
     end
