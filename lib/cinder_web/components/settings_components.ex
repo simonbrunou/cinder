@@ -46,19 +46,88 @@ defmodule CinderWeb.SettingsComponents do
         </label>
       </div>
 
-      <div :if={group == :library} class="form-control mb-2">
-        <label class="label" for="library_path">
-          <span class="label-text">Library path (where movies are hardlinked)</span>
-        </label>
-        <input
-          type="text"
-          id="library_path"
-          name="library_path"
-          value={@form.values[Settings.library_path_key()]}
-          placeholder="/media/movies"
-          autocomplete="off"
-          class="input w-full"
-        />
+      <div :if={group == :library} class="space-y-2">
+        <div class="form-control">
+          <label class="label" for="library_path">
+            <span class="label-text">Movie library path (where movies are hardlinked)</span>
+          </label>
+          <input
+            type="text"
+            id="library_path"
+            name="library_path"
+            value={@form.values[Settings.library_path_key()]}
+            placeholder="/media/movies"
+            autocomplete="off"
+            class="input w-full"
+          />
+        </div>
+        <div class="form-control">
+          <label class="label" for="tv_library_path">
+            <span class="label-text">TV library path (where episodes are hardlinked)</span>
+          </label>
+          <input
+            type="text"
+            id="tv_library_path"
+            name="tv_library_path"
+            value={@form.values[Settings.tv_library_path_key()]}
+            placeholder="/media/tv"
+            autocomplete="off"
+            class="input w-full"
+          />
+          <p class="mt-1 text-xs opacity-70">
+            Separate Movies/Shows roots, so Jellyfin/Plex can point distinct libraries at each.
+            Required even if TV and movies share a folder — enter the same path.
+          </p>
+        </div>
+      </div>
+
+      <div :if={group == :tv} class="space-y-2">
+        <div class="form-control">
+          <label class="label" for="tv_min_size">
+            <span class="label-text">Min size per episode (GB)</span>
+          </label>
+          <input
+            type="text"
+            id="tv_min_size"
+            name="tv_min_size"
+            value={@form.values[Settings.tv_min_size_key()]}
+            inputmode="decimal"
+            autocomplete="off"
+            class="input w-full"
+          />
+        </div>
+        <div class="form-control">
+          <label class="label" for="tv_max_size">
+            <span class="label-text">Max size per episode (GB)</span>
+          </label>
+          <input
+            type="text"
+            id="tv_max_size"
+            name="tv_max_size"
+            value={@form.values[Settings.tv_max_size_key()]}
+            inputmode="decimal"
+            autocomplete="off"
+            class="input w-full"
+          />
+        </div>
+        <div class="form-control">
+          <label class="label" for="tv_preferred_resolutions">
+            <span class="label-text">Preferred resolutions (comma-separated)</span>
+          </label>
+          <input
+            type="text"
+            id="tv_preferred_resolutions"
+            name="tv_preferred_resolutions"
+            value={@form.values[Settings.tv_preferred_resolutions_key()]}
+            placeholder="1080p, 720p"
+            autocomplete="off"
+            class="input w-full"
+          />
+        </div>
+        <p class="mt-1 text-xs opacity-70">
+          Sizes are decimal GB (1 GB = 1,000,000,000 bytes) and applied <strong>per episode</strong>:
+          a season pack of N episodes is allowed up to N× the max. Leave blank for no limit.
+        </p>
       </div>
 
       <.setting_field :for={field <- Settings.config_fields(group)} field={field} form={@form} />
@@ -79,7 +148,7 @@ defmodule CinderWeb.SettingsComponents do
   def services_for(:indexer), do: [{"indexer", "Prowlarr"}]
   def services_for(:download), do: [{"torrent", "qBittorrent"}, {"usenet", "SABnzbd"}]
   def services_for(:media_server), do: [{"media_server", "Media server"}]
-  def services_for(:library), do: [{"library", "Library path"}]
+  def services_for(:library), do: [{"library", "Movie library"}, {"tv_library", "TV library"}]
   def services_for(_group), do: []
 
   # phx-value is client-controlled; only known services resolve to a check target.
@@ -89,6 +158,7 @@ defmodule CinderWeb.SettingsComponents do
   def decode_service("torrent"), do: {:download, :torrent}
   def decode_service("usenet"), do: {:download, :usenet}
   def decode_service("library"), do: :library
+  def decode_service("tv_library"), do: :tv_library
   def decode_service(_other), do: nil
 
   attr :field, :map, required: true

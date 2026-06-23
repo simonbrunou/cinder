@@ -6,6 +6,20 @@ All notable changes to Cinder are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Separate TV library root** — TV episodes now import under their own `tv_library_path`
+  (env bootstrap `TV_LIBRARY_PATH`, editable in `/settings`), so Jellyfin/Plex can point
+  distinct Movies and Shows libraries at each. Movies keep `library_path`.
+- **TV release size band in `/settings`** — per-episode min/max size (decimal GB) and a
+  preferred-resolution list for TV grabs, applied per episode (a season pack of N episodes is
+  allowed up to N× the max). Blank means no limit. The movie scorer is unchanged.
+
+### Changed
+- **BREAKING (config):** the TV library root is now required and separate from the movie root —
+  it does **not** fall back to `library_path`. Set `TV_LIBRARY_PATH` (or the TV library path in
+  `/settings`) before TV imports run. An unset TV root parks TV grabs (logged) rather than
+  importing episodes into the movie library. The first-run wizard now requires both roots.
+
 ## [0.7.0] - 2026-06-23
 
 First packaged, publicly installable release — the movies + TV + multi-user product behind a

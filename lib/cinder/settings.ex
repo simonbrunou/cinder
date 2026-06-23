@@ -147,12 +147,30 @@ defmodule Cinder.Settings do
   @media_server_key "media_server_type"
   @media_server_options ["jellyfin", "plex"]
   @library_path_key "library_path"
+  @tv_library_path_key "tv_library_path"
+  @tv_min_size_key "tv_min_size"
+  @tv_max_size_key "tv_max_size"
+  @tv_preferred_resolutions_key "tv_preferred_resolutions"
+
+  # Flat string keys (not @config_fields {module, field} entries): each overlays a single
+  # :cinder env key, planned/form-stated uniformly via @flat_keys.
+  @flat_keys [
+    @library_path_key,
+    @tv_library_path_key,
+    @tv_min_size_key,
+    @tv_max_size_key,
+    @tv_preferred_resolutions_key
+  ]
+
+  @bytes_per_gb 1_000_000_000
+
   @groups [
     tmdb: "TMDB",
     indexer: "Indexer",
     download: "Download clients",
     media_server: "Media server",
-    library: "Library"
+    library: "Library",
+    tv: "TV releases"
   ]
 
   @secret_keys for(f <- @config_fields, f.secret, into: MapSet.new(), do: f.key)
@@ -184,6 +202,10 @@ defmodule Cinder.Settings do
   def media_server_key, do: @media_server_key
   def media_server_options, do: @media_server_options
   def library_path_key, do: @library_path_key
+  def tv_library_path_key, do: @tv_library_path_key
+  def tv_min_size_key, do: @tv_min_size_key
+  def tv_max_size_key, do: @tv_max_size_key
+  def tv_preferred_resolutions_key, do: @tv_preferred_resolutions_key
 
   # --- reads ---
 
@@ -226,7 +248,11 @@ defmodule Cinder.Settings do
         @media_server_key,
         decoded_for(rows, @media_server_key) || default_media_server_type()
       )
-      |> Map.put(@library_path_key, decoded_for(rows, @library_path_key) || "")
+      |> then(fn v ->
+        Enum.reduce(@flat_keys, v, fn key, acc ->
+          Map.put(acc, key, decoded_for(rows, key) || "")
+        end)
+      end)
       |> Map.merge(toggle_values(rows))
 
     secrets_set =
@@ -283,6 +309,8 @@ defmodule Cinder.Settings do
     apply_media_server(rows)
     apply_download_clients(rows)
     apply_library_path(rows)
+    apply_tv_library_path(rows)
+    apply_tv_band(rows)
     :ok
   rescue
     e ->
@@ -353,6 +381,64 @@ defmodule Cinder.Settings do
     case base(:library_path) do
       path when is_binary(path) -> path
       _ -> nil
+    end
+  end
+
+  # The separate TV root, mirroring apply_library_path/1. M8: episodes import here, not
+  # under :library_path, so Jellyfin/Plex can point distinct Movies/Shows libraries at each.
+  defp apply_tv_library_path(rows) do
+    fallback = base_tv_library_path()
+
+    Application.put_env(
+      :cinder,
+      :tv_library_path,
+      decoded_for(rows, @tv_library_path_key) || fallback
+    )
+  end
+
+  defp base_tv_library_path do
+    case base(:tv_library_path) do
+      path when is_binary(path) -> path
+      _ -> nil
+    end
+  end
+
+  # The per-episode TV size band + resolution preference (M8). DB-only (no env bootstrap),
+  # so apply writes the coerced value or nil — TvPoller reads these and passes the non-nil
+  # ones to Scorer.select_for. Unset ⇒ nil ⇒ unbounded / scorer default (the M5 behaviour).
+  defp apply_tv_band(rows) do
+    Application.put_env(:cinder, :tv_min_size, parse_gb(decoded_for(rows, @tv_min_size_key)))
+    Application.put_env(:cinder, :tv_max_size, parse_gb(decoded_for(rows, @tv_max_size_key)))
+
+    Application.put_env(
+      :cinder,
+      :tv_preferred_resolutions,
+      parse_resolutions(decoded_for(rows, @tv_preferred_resolutions_key))
+    )
+  end
+
+  # A GB string → bytes. Blank/non-numeric/≤0 ⇒ nil (unbounded): a 0 or negative band would
+  # silently reject every release, so it degrades to "no limit" rather than "grab nothing".
+  defp parse_gb(nil), do: nil
+
+  defp parse_gb(value) do
+    case Float.parse(String.trim(value)) do
+      {gb, _rest} when gb > 0 -> round(gb * @bytes_per_gb)
+      _ -> nil
+    end
+  end
+
+  # "1080p, 720P" → ["1080p", "720p"]. Downcased to match the parser's lower-case resolutions;
+  # blank/empty ⇒ nil so the scorer's @default_preferred applies.
+  defp parse_resolutions(nil), do: nil
+
+  defp parse_resolutions(value) do
+    case value
+         |> String.split(",")
+         |> Enum.map(&(&1 |> String.trim() |> String.downcase()))
+         |> Enum.reject(&(&1 == "")) do
+      [] -> nil
+      list -> list
     end
   end
 
@@ -469,7 +555,7 @@ defmodule Cinder.Settings do
 
   defp plan(params) do
     config_plan = Enum.reduce(@config_fields, {%{}, []}, &plan_config(&1, params, &2))
-    {puts, deletes} = plan_library_path(params, config_plan)
+    {puts, deletes} = Enum.reduce(@flat_keys, config_plan, &plan_flat(&1, params, &2))
 
     puts =
       puts
@@ -490,13 +576,13 @@ defmodule Cinder.Settings do
     end
   end
 
-  # library_path is a flat key (not a @config_fields entry), so plan it like a non-secret
-  # field: present-but-blank clears (reverts to env bootstrap), absent leaves it untouched.
-  defp plan_library_path(params, {puts, deletes}) do
-    if Map.has_key?(params, @library_path_key) do
-      case String.trim(params[@library_path_key] || "") do
-        "" -> {puts, [@library_path_key | deletes]}
-        value -> {Map.put(puts, @library_path_key, value), deletes}
+  # A flat key (not a @config_fields entry) is planned like a non-secret field: present-but-blank
+  # clears (reverts to env bootstrap / unbounded), absent leaves it untouched.
+  defp plan_flat(key, params, {puts, deletes}) do
+    if Map.has_key?(params, key) do
+      case String.trim(params[key] || "") do
+        "" -> {puts, [key | deletes]}
+        value -> {Map.put(puts, key, value), deletes}
       end
     else
       {puts, deletes}

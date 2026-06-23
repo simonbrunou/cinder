@@ -16,7 +16,11 @@ defmodule CinderWeb.SetupLiveTest do
     Cinder.Library.MediaServer.Plex,
     :media_server,
     :download_clients,
-    :library_path
+    :library_path,
+    :tv_library_path,
+    :tv_min_size,
+    :tv_max_size,
+    :tv_preferred_resolutions
   ]
 
   setup do

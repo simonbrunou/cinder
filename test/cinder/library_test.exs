@@ -11,6 +11,7 @@ defmodule Cinder.LibraryTest do
   setup :verify_on_exit!
 
   @lib "/tmp/cinder-test-library"
+  @tv_lib "/tmp/cinder-test-tv-library"
   @gb 1_000_000_000
 
   # An in-memory episode with its season/series preloaded (what wanted_episodes/the poller pass).
@@ -203,7 +204,7 @@ defmodule Cinder.LibraryTest do
       stub_link_ok()
 
       assert {:ok, [{7, dest}], ["/dl/sample.mkv"]} = Library.import_episodes("/dl", [ep(7, 3)])
-      assert dest == "#{@lib}/Show (2008)/Season 01/Show (2008) - S01E03.mkv"
+      assert dest == "#{@tv_lib}/Show (2008)/Season 01/Show (2008) - S01E03.mkv"
     end
 
     test "season pack: each file maps to its own episode and dest" do
@@ -213,8 +214,8 @@ defmodule Cinder.LibraryTest do
       assert {:ok, imported, []} = Library.import_episodes("/dl", [ep(1, 1), ep(2, 2)])
 
       assert Enum.sort(imported) == [
-               {1, "#{@lib}/Show (2008)/Season 01/Show (2008) - S01E01.mkv"},
-               {2, "#{@lib}/Show (2008)/Season 01/Show (2008) - S01E02.mkv"}
+               {1, "#{@tv_lib}/Show (2008)/Season 01/Show (2008) - S01E01.mkv"},
+               {2, "#{@tv_lib}/Show (2008)/Season 01/Show (2008) - S01E02.mkv"}
              ]
     end
 
@@ -225,8 +226,8 @@ defmodule Cinder.LibraryTest do
       assert {:ok, imported, []} = Library.import_episodes("/dl", [ep(1, 1), ep(2, 2)])
 
       assert Enum.sort(imported) == [
-               {1, "#{@lib}/Show (2008)/Season 01/Show (2008) - S01E01.mkv"},
-               {2, "#{@lib}/Show (2008)/Season 01/Show (2008) - S01E02.mkv"}
+               {1, "#{@tv_lib}/Show (2008)/Season 01/Show (2008) - S01E01.mkv"},
+               {2, "#{@tv_lib}/Show (2008)/Season 01/Show (2008) - S01E02.mkv"}
              ]
     end
 
@@ -239,7 +240,7 @@ defmodule Cinder.LibraryTest do
           assert {:ok, [{1, dest}], ["/dl/Show.S01E05.mkv"]} =
                    Library.import_episodes("/dl", [ep(1, 1)])
 
-          assert dest == "#{@lib}/Show (2008)/Season 01/Show (2008) - S01E01.mkv"
+          assert dest == "#{@tv_lib}/Show (2008)/Season 01/Show (2008) - S01E01.mkv"
         end)
 
       assert log =~ "unmatched"
@@ -251,7 +252,7 @@ defmodule Cinder.LibraryTest do
       stub_link_ok()
 
       assert {:ok, [{1, dest}], []} = Library.import_episodes("/dl/random.mkv", [ep(1, 4)])
-      assert dest == "#{@lib}/Show (2008)/Season 01/Show (2008) - S01E04.mkv"
+      assert dest == "#{@tv_lib}/Show (2008)/Season 01/Show (2008) - S01E04.mkv"
     end
 
     test "video+sample with no SxxEyy: largest-wins assigns the episode, skips the sample" do
@@ -261,7 +262,7 @@ defmodule Cinder.LibraryTest do
       assert {:ok, [{1, dest}], ["/dl/sample.mkv"]} =
                Library.import_episodes("/dl", [ep(1, 3)])
 
-      assert dest == "#{@lib}/Show (2008)/Season 01/Show (2008) - S01E03.mkv"
+      assert dest == "#{@tv_lib}/Show (2008)/Season 01/Show (2008) - S01E03.mkv"
     end
 
     test "lone-episode grab does NOT fall back when a file names a different specific episode" do

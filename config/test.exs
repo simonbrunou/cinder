@@ -113,3 +113,4 @@ config :cinder, dev_routes: true
 config :cinder, :enforce_setup, false
 
 config :cinder, :library_path, "/tmp/cinder-test-library"
+config :cinder, :tv_library_path, "/tmp/cinder-test-tv-library"

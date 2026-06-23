@@ -66,10 +66,12 @@ rest with a key derived from `SECRET_KEY_BASE`.
 | Indexer | Prowlarr URL + API key |
 | Download | qBittorrent URL / username / password, SABnzbd URL + API key, per-client enable toggles |
 | Media server | Jellyfin URL + API key **or** Plex URL + token + section; media-server type |
-| Library | `library_path` (movies **and** TV import here today) |
+| Library | `library_path` (movies) **and** `tv_library_path` (TV) — separate Movies/Shows roots, both required |
+| TV releases | Per-episode min/max size (decimal GB) + preferred-resolution list for TV grabs |
 
 Each can be **bootstrapped** from an environment variable (`TMDB_API_TOKEN`, `PROWLARR_URL`,
-`LIBRARY_PATH`, …) for an unattended first boot, but the in-app value wins once set.
+`LIBRARY_PATH`, `TV_LIBRARY_PATH`, …) for an unattended first boot, but the in-app value wins once
+set. The TV size band has no env bootstrap — set it in `/settings`.
 
 ## How it works
 
@@ -79,6 +81,15 @@ GenServer), **Library** (hardlink + rename into the Jellyfin/Plex layout, then s
 pollers advance each request through its state machine and broadcast over PubSub so the LiveView
 dashboard updates live. Every state change goes through a single context choke-point, which — on
 SQLite WAL — keeps a web write racing the poller correct rather than flaky.
+
+**TV** runs the same loop with a separate poller: add a series, monitor whole seasons or
+individual episodes (with an `all` / `future` / `none` strategy), and Cinder searches for the
+best release per still-wanted episode — preferring a season pack when one covers them, falling
+back to per-episode grabs — then maps each file in a pack to its episode on import. A periodic
+TMDB refresh keeps season/episode data current (so a newly-aired or late-dated episode becomes
+search-eligible on its own), and an `/calendar` view lists upcoming monitored episodes. Episodes
+land under the separate `tv_library_path` in the `Show (Year)/Season NN/Show (Year) - SxxEyy.ext`
+layout Jellyfin/Plex expect.
 
 ## Screenshots
 
