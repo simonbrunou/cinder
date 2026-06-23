@@ -8,7 +8,9 @@ defmodule Cinder.Catalog do
   import Ecto.Query
   require Logger
 
+  alias Cinder.Audit
   alias Cinder.Catalog.{Episode, Grab, Movie, Season, Series}
+  alias Cinder.Download
   alias Cinder.Repo
 
   @topic "movies"
@@ -130,6 +132,87 @@ defmodule Cinder.Catalog do
 
   @doc "True if `movie` is in an active status that can be cancelled (`#{inspect(@cancellable_movie_statuses)}`)."
   def cancellable?(%Movie{status: status}), do: status in @cancellable_movie_statuses
+
+  @doc """
+  Cancels an in-flight movie: removes the orphaned client download (if any) and transitions
+  it to `:cancelled`. Guards `cancellable?/1` server-side (`transition/2` does not validate the
+  transition). Returns `{:error, :not_cancellable}` for a terminal/available/parked movie.
+
+  Client I/O runs OUTSIDE the DB transaction (external-I/O rule). The `:cancelled` transition +
+  the audit row are written in one transaction so a rolled-back cancel leaves no orphan audit row;
+  the `{:movie_updated, _}` broadcast (via the transition) fires after commit.
+  """
+  def cancel_movie(%Movie{} = movie, actor) do
+    if cancellable?(movie) do
+      with :ok <- remove_movie_download(movie),
+           {:ok, updated} <- do_cancel_txn(movie, actor) do
+        broadcast({:movie_updated, updated})
+        {:ok, updated}
+      end
+    else
+      {:error, :not_cancellable}
+    end
+  end
+
+  defp do_cancel_txn(movie, actor) do
+    Repo.transaction(fn ->
+      case movie |> Movie.transition_changeset(%{status: :cancelled}) |> Repo.update() do
+        {:ok, updated} ->
+          {:ok, _} = Audit.log(actor, :cancel_movie, updated, %{from: movie.status})
+          updated
+
+        {:error, changeset} ->
+          Repo.rollback(changeset)
+      end
+    end)
+  end
+
+  @doc """
+  Deletes a movie's DB row. An active row with a tracked download is cancelled first (which
+  removes the client download) so delete never orphans a live download. Broadcasts
+  `{:movie_deleted, id}` on the `"movies"` topic. On-disk library files are intentionally left
+  for the deferred unlink feature. The delete + audit row are written in one transaction.
+  """
+  def delete_movie(%Movie{} = movie, actor) do
+    with :ok <- maybe_cancel_download_for_delete(movie),
+         {:ok, deleted} <- do_delete_txn(movie, actor) do
+      broadcast_movie_deleted(deleted.id)
+      {:ok, deleted}
+    end
+  end
+
+  defp do_delete_txn(movie, actor) do
+    Repo.transaction(fn ->
+      case Repo.delete(movie) do
+        {:ok, deleted} ->
+          {:ok, _} = Audit.log(actor, :delete_movie, deleted, %{title: deleted.title})
+          deleted
+
+        {:error, changeset} ->
+          Repo.rollback(changeset)
+      end
+    end)
+  end
+
+  # Remove the tracked client download if present; skip entirely when download_id is nil.
+  # client_for/1 maps a nil protocol to :torrent; an unconfigured protocol (:error) is treated
+  # as "nothing to remove" so a cancel/delete is never blocked by client resolution.
+  defp remove_movie_download(%Movie{download_id: nil}), do: :ok
+
+  defp remove_movie_download(%Movie{download_id: id, download_protocol: protocol}) do
+    case Download.client_for(protocol) do
+      {:ok, client} -> client.remove(id, delete_files: true)
+      :error -> :ok
+    end
+  end
+
+  # For delete: only an active (cancellable) row with a tracked download needs the client removed.
+  # A terminal/available row keeps its (already-imported or absent) download untouched.
+  defp maybe_cancel_download_for_delete(%Movie{download_id: nil}), do: :ok
+
+  defp maybe_cancel_download_for_delete(%Movie{} = movie) do
+    if cancellable?(movie), do: remove_movie_download(movie), else: :ok
+  end
 
   @doc "Fetches a watchlisted movie by TMDB id, or `nil`."
   def get_movie_by_tmdb_id(tmdb_id), do: Repo.get_by(Movie, tmdb_id: tmdb_id)

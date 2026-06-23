@@ -3,6 +3,8 @@ defmodule Cinder.CatalogAdminTest do
   # the single-connection SQLite Sandbox needs shared mode for nested transactions.
   use Cinder.DataCase, async: false
 
+  import Mox
+
   alias Cinder.Catalog
   alias Cinder.Catalog.{Movie, Series}
 
@@ -84,6 +86,109 @@ defmodule Cinder.CatalogAdminTest do
 
     test "returns {:error, changeset} on a blank title", %{series: series} do
       assert {:error, %Ecto.Changeset{}} = Catalog.update_series(series, %{title: ""})
+    end
+  end
+
+  describe "cancel_movie/2" do
+    setup :verify_on_exit!
+
+    test "an active movie with a download is cancelled and the client download removed" do
+      import Mox
+      actor = Cinder.AccountsFixtures.admin_fixture()
+
+      movie =
+        movie!()
+        |> then(
+          &elem(
+            Catalog.transition(&1, %{
+              status: :downloading,
+              download_id: "HASH-1",
+              download_protocol: :torrent
+            }),
+            1
+          )
+        )
+
+      expect(Cinder.Download.ClientMock, :remove, fn "HASH-1", opts ->
+        assert Keyword.fetch!(opts, :delete_files) == true
+        :ok
+      end)
+
+      assert {:ok, %Movie{status: :cancelled}} = Catalog.cancel_movie(movie, actor)
+      assert Repo.get!(Movie, movie.id).status == :cancelled
+    end
+
+    test "a requested movie with no download is cancelled without touching the client" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      movie = movie!()
+      # No expect/0 on the client → if cancel_movie called it, verify_on_exit! would fail.
+      assert {:ok, %Movie{status: :cancelled}} = Catalog.cancel_movie(movie, actor)
+    end
+
+    test "a non-cancellable (terminal/available) movie returns {:error, :not_cancellable}" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      movie = movie!() |> then(&elem(Catalog.transition(&1, %{status: :available}), 1))
+      assert {:error, :not_cancellable} = Catalog.cancel_movie(movie, actor)
+      assert Repo.get!(Movie, movie.id).status == :available
+    end
+
+    test "writes an admin_audit row for the cancel (in-txn)" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      movie = movie!()
+      assert {:ok, _} = Catalog.cancel_movie(movie, actor)
+
+      audit = Repo.one!(Cinder.Audit.AdminAudit)
+      assert audit.action == "cancel_movie"
+      assert audit.entity_type == "Movie"
+      assert audit.entity_id == movie.id
+      assert audit.actor_id == actor.id
+    end
+  end
+
+  describe "delete_movie/2" do
+    setup :verify_on_exit!
+
+    test "deletes an idle movie and broadcasts {:movie_deleted, id}" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      movie = movie!() |> then(&elem(Catalog.transition(&1, %{status: :available}), 1))
+      id = movie.id
+      Catalog.subscribe()
+
+      assert {:ok, %Movie{}} = Catalog.delete_movie(movie, actor)
+      assert_receive {:movie_deleted, ^id}
+      assert Repo.get(Movie, id) == nil
+    end
+
+    test "an active movie with a download is cancelled (client-removed) before delete" do
+      import Mox
+      actor = Cinder.AccountsFixtures.admin_fixture()
+
+      movie =
+        movie!()
+        |> then(
+          &elem(
+            Catalog.transition(&1, %{
+              status: :downloading,
+              download_id: "HASH-2",
+              download_protocol: :usenet
+            }),
+            1
+          )
+        )
+
+      # usenet → SabnzbdClientMock.
+      expect(Cinder.Download.SabnzbdClientMock, :remove, fn "HASH-2", _opts -> :ok end)
+
+      id = movie.id
+      assert {:ok, %Movie{}} = Catalog.delete_movie(movie, actor)
+      assert Repo.get(Movie, id) == nil
+    end
+
+    test "writes an admin_audit row for the delete" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      movie = movie!()
+      assert {:ok, _} = Catalog.delete_movie(movie, actor)
+      assert Repo.one!(Cinder.Audit.AdminAudit).action == "delete_movie"
     end
   end
 end
