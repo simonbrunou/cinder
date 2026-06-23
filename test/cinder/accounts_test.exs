@@ -444,4 +444,68 @@ defmodule Cinder.AccountsTest do
       assert Enum.map(Accounts.list_users(), & &1.id) == [a.id, b.id]
     end
   end
+
+  describe "count_admins/0" do
+    test "counts only admins" do
+      _user = user_fixture()
+      _admin = admin_fixture()
+      assert Accounts.count_admins() == 1
+    end
+
+    test "is zero when there are no users" do
+      assert Accounts.count_admins() == 0
+    end
+  end
+
+  describe "create_user/1" do
+    test "creates a confirmed user with the default :user role" do
+      email = unique_user_email()
+
+      assert {:ok, %User{} = user} =
+               Accounts.create_user(%{
+                 email: email,
+                 password: valid_user_password(),
+                 password_confirmation: valid_user_password()
+               })
+
+      assert user.email == email
+      assert user.role == :user
+      assert user.confirmed_at
+      assert is_binary(user.hashed_password)
+    end
+
+    test "creates an admin when role: :admin is given" do
+      assert {:ok, %User{role: :admin}} =
+               Accounts.create_user(%{
+                 email: unique_user_email(),
+                 password: valid_user_password(),
+                 password_confirmation: valid_user_password(),
+                 role: :admin
+               })
+    end
+
+    test "rejects a password confirmation mismatch" do
+      assert {:error, changeset} =
+               Accounts.create_user(%{
+                 email: unique_user_email(),
+                 password: valid_user_password(),
+                 password_confirmation: "nope nope nope"
+               })
+
+      assert %{password_confirmation: ["does not match password"]} = errors_on(changeset)
+    end
+
+    test "rejects a duplicate email" do
+      existing = user_fixture()
+
+      assert {:error, changeset} =
+               Accounts.create_user(%{
+                 email: existing.email,
+                 password: valid_user_password(),
+                 password_confirmation: valid_user_password()
+               })
+
+      assert %{email: ["has already been taken"]} = errors_on(changeset)
+    end
+  end
 end

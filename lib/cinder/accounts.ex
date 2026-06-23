@@ -93,6 +93,26 @@ defmodule Cinder.Accounts do
   @doc "True if at least one user (hence an admin) exists."
   def admin_exists?, do: Repo.aggregate(User, :count) > 0
 
+  @doc "Counts users with the `:admin` role."
+  def count_admins do
+    Repo.aggregate(from(u in User, where: u.role == :admin), :count)
+  end
+
+  @doc """
+  Admin-creates a fully-confirmed user. `:role` (default `:user`) and
+  `:confirmed_at` are applied via `put_change` — never castable — while email and
+  password are validated by `registration_changeset/2`.
+  """
+  def create_user(attrs) do
+    role = Map.get(attrs, :role, :user)
+
+    %User{}
+    |> User.registration_changeset(attrs)
+    |> Ecto.Changeset.put_change(:confirmed_at, DateTime.utc_now(:second))
+    |> Ecto.Changeset.put_change(:role, role)
+    |> Repo.insert()
+  end
+
   @doc "All users, ordered by id."
   def list_users, do: Repo.all(from u in User, order_by: [asc: u.id])
 
