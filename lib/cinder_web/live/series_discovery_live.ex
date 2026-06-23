@@ -38,50 +38,55 @@ defmodule CinderWeb.SeriesDiscoveryLive do
 
   @impl true
   def handle_event("request_season", %{"season" => raw}, socket) do
-    case Integer.parse(raw) do
-      {season_number, ""} ->
-        info = socket.assigns.info
-        user = socket.assigns.current_user
+    with {season_number, ""} <- Integer.parse(raw),
+         # Bug C: reject a season not in the show (prevents orphan-series rows)
+         true <- Enum.any?(socket.assigns.info.seasons, &(&1.season_number == season_number)) do
+      info = socket.assigns.info
+      user = socket.assigns.current_user
 
-        attrs = %{
-          target_type: "season",
-          target_id: socket.assigns.tmdb_id,
-          season_number: season_number,
-          title: info.title,
-          year: info.year,
-          poster_path: info.poster_path
-        }
+      attrs = %{
+        target_type: "season",
+        target_id: socket.assigns.tmdb_id,
+        season_number: season_number,
+        title: info.title,
+        year: info.year,
+        poster_path: info.poster_path
+      }
 
-        case Requests.create_request(user, attrs) do
-          {:ok, %{status: :approved}} ->
-            socket
-            |> put_flash(:info, "Season #{season_number} of #{info.title} added.")
-            |> refresh_requests()
-            |> then(&{:noreply, &1})
+      case Requests.create_request(user, attrs) do
+        {:ok, %{status: :approved}} ->
+          socket
+          |> put_flash(:info, "Season #{season_number} of #{info.title} added.")
+          |> refresh_requests()
+          |> then(&{:noreply, &1})
 
-          {:ok, %{status: :pending}} ->
-            socket
-            |> put_flash(
-              :info,
-              "Season #{season_number} of #{info.title} requested — awaiting approval."
-            )
-            |> refresh_requests()
-            |> then(&{:noreply, &1})
+        {:ok, %{status: :pending}} ->
+          socket
+          |> put_flash(
+            :info,
+            "Season #{season_number} of #{info.title} requested — awaiting approval."
+          )
+          |> refresh_requests()
+          |> then(&{:noreply, &1})
 
-          {:error, :quota_exceeded} ->
-            {:noreply,
-             put_flash(
-               socket,
-               :error,
-               "You've reached your request limit. Wait for approvals to clear."
-             )}
+        {:error, :quota_exceeded} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             "You've reached your request limit. Wait for approvals to clear."
+           )}
 
-          {:error, _} ->
-            {:noreply, put_flash(socket, :info, "Season #{season_number} is already requested.")}
-        end
+        # Bug D: only a unique-index violation (duplicate changeset) means "already requested"
+        {:error, %Ecto.Changeset{}} ->
+          {:noreply, put_flash(socket, :info, "Season #{season_number} is already requested.")}
 
-      _ ->
-        {:noreply, socket}
+        {:error, _} ->
+          {:noreply,
+           put_flash(socket, :error, "Couldn't complete that request — please try again.")}
+      end
+    else
+      _ -> {:noreply, socket}
     end
   end
 
@@ -102,11 +107,13 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   end
 
   defp assign_requests_by_season(socket, user, tmdb_id) do
+    # Bug A: list_for_user returns desc id (newest first); Map.put_new keeps the first
+    # seen value per key, so the newest request status wins over any older ones.
     requests_by_season =
       user
       |> Requests.list_for_user()
       |> Enum.filter(&(&1.target_type == "season" and &1.target_id == tmdb_id))
-      |> Map.new(&{&1.season_number, &1.status})
+      |> Enum.reduce(%{}, fn r, acc -> Map.put_new(acc, r.season_number, r.status) end)
 
     assign(socket, requests_by_season: requests_by_season)
   end
@@ -145,7 +152,10 @@ defmodule CinderWeb.SeriesDiscoveryLive do
       </p>
 
       <ul class="divide-y divide-base-200">
-        <li :for={season <- @info.seasons} class="flex items-center justify-between gap-4 py-3">
+        <li
+          :for={season <- Enum.filter(@info.seasons, &(&1.season_number != 0))}
+          class="flex items-center justify-between gap-4 py-3"
+        >
           <span class="font-medium">{season_label(season.season_number)}</span>
           <.season_action
             season_number={season.season_number}

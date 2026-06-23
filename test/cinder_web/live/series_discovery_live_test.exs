@@ -14,7 +14,8 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
          title: "GoT",
          year: 2011,
          poster_path: nil,
-         seasons: [%{season_number: 1}, %{season_number: 2}]
+         # Season 0 (Specials) + two real seasons — used by Bug B test
+         seasons: [%{season_number: 0}, %{season_number: 1}, %{season_number: 2}]
        }}
     end)
 
@@ -27,6 +28,14 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
     assert html =~ "GoT"
     assert has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
     assert has_element?(lv, ~s(button[phx-value-season="2"]), "Request")
+  end
+
+  # Bug B: season 0 (Specials) must not be rendered at all — the TV poller excludes it.
+  test "season 0 (Specials) is not rendered", %{conn: conn} do
+    conn = log_in_user(conn, Cinder.AccountsFixtures.user_fixture())
+    {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
+    refute has_element?(lv, ~s(button[phx-value-season="0"]))
+    refute render(lv) =~ "Specials"
   end
 
   test "requesting a season creates a pending request and swaps the button for a badge", %{
@@ -68,10 +77,27 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
     assert has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
 
     # Clicking Request creates a fresh pending request.
-    lv |> element(~s(button[phx-value-season="1"]), "Request") |> render_click()
+    html = lv |> element(~s(button[phx-value-season="1"]), "Request") |> render_click()
 
     requests = Cinder.Requests.list_for_user(user)
 
     assert Enum.any?(requests, &(&1.season_number == 1 and &1.status == :pending))
+
+    # Bug A: the badge must now show "Pending" — not "Denied" — and the Request button
+    # must be gone for season 1 (newest request wins over the older denied one).
+    assert html =~ "Pending"
+    refute has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
+  end
+
+  # Bug C: a forged/absent season_number that is not in the show must be rejected.
+  test "requesting a season not in the show is silently rejected", %{conn: conn} do
+    user = Cinder.AccountsFixtures.user_fixture()
+    conn = log_in_user(conn, user)
+    {:ok, lv, _} = live(conn, ~p"/series/tmdb/1399")
+
+    # Season 99 is not in the stub (only 0, 1, 2 are).
+    render_click(lv, "request_season", %{"season" => "99"})
+
+    assert Cinder.Requests.list_for_user(user) == []
   end
 end
