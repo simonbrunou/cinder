@@ -8,8 +8,7 @@ defmodule Cinder.Catalog.EpisodeTest do
       Episode.transition_changeset(%Episode{}, %{
         file_path: "/library/x.mkv",
         grab_id: 7,
-        search_attempts: 2,
-        import_attempts: 1
+        search_attempts: 2
       })
 
     assert cs.valid?
@@ -17,8 +16,7 @@ defmodule Cinder.Catalog.EpisodeTest do
     assert cs.changes == %{
              file_path: "/library/x.mkv",
              grab_id: 7,
-             search_attempts: 2,
-             import_attempts: 1
+             search_attempts: 2
            }
   end
 
