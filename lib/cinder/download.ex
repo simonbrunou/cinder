@@ -27,7 +27,9 @@ defmodule Cinder.Download do
   def start(%Movie{} = movie) do
     with {:ok, imdb_id} <- ensure_imdb_id(movie),
          {:ok, movie} <- Catalog.transition(movie, %{status: :searching, imdb_id: imdb_id}) do
-      case Acquisition.best_release(imdb_id, protocols: available_protocols()) do
+      opts = [protocols: available_protocols()] ++ Acquisition.band_opts(:movies)
+
+      case Acquisition.best_release(imdb_id, opts) do
         {:ok, release} -> add_to_client(movie, release)
         :no_match -> Catalog.transition(movie, %{status: :no_match})
         {:error, _} = err -> err

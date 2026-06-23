@@ -213,6 +213,23 @@ defmodule Cinder.SettingsTest do
       assert Application.get_env(:cinder, :tv_preferred_resolutions) == nil
     end
 
+    test "movie size band is editable too (same coercion as TV) and reaches band_opts/1" do
+      Settings.put("movies_max_size", "20")
+      Settings.put("movies_preferred_resolutions", "2160p, 1080P")
+
+      assert Application.get_env(:cinder, :movies_max_size) == 20_000_000_000
+      assert Application.get_env(:cinder, :movies_preferred_resolutions) == ["2160p", "1080p"]
+
+      # The band reaches the scorer the same way TV's does; nil (min_size unset) is dropped.
+      opts = Cinder.Acquisition.band_opts(:movies)
+      assert opts[:max_size] == 20_000_000_000
+      assert opts[:preferred_resolutions] == ["2160p", "1080p"]
+      refute Keyword.has_key?(opts, :min_size)
+
+      Settings.delete("movies_max_size")
+      assert Application.get_env(:cinder, :movies_max_size) == nil
+    end
+
     test "with no movies_library_path bootstrap (MOVIES_LIBRARY_PATH unset), overlay yields nil not []" do
       # Simulate MOVIES_LIBRARY_PATH absent: erase the captured base snapshot + the env, so base/1
       # falls back to its [] keyword-list default. The string key must coerce to nil.

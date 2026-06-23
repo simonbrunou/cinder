@@ -157,7 +157,7 @@ defmodule Cinder.Download.TvPoller do
     season_number = hd(episodes).season.season_number
     numbers = Enum.map(episodes, & &1.episode_number)
 
-    opts = [protocols: Download.available_protocols()] ++ tv_band_opts()
+    opts = [protocols: Download.available_protocols()] ++ Acquisition.band_opts(:tv)
 
     case Acquisition.best_releases(series, season_number, numbers, opts) do
       {:ok, assignments} ->
@@ -191,18 +191,6 @@ defmodule Cinder.Download.TvPoller do
         Logger.warning("tv grab failed (#{release.title}): #{inspect(other)}")
         []
     end
-  end
-
-  # The per-episode TV size band + resolution preference (M8 settings). Only non-nil keys are
-  # passed: a nil :preferred_resolutions would override the scorer's default and crash its
-  # Enum.find_index. Unset keys ⇒ omitted ⇒ Scorer.select_for keeps its defaults (M5 behaviour).
-  defp tv_band_opts do
-    [
-      min_size: Application.get_env(:cinder, :tv_min_size),
-      max_size: Application.get_env(:cinder, :tv_max_size),
-      preferred_resolutions: Application.get_env(:cinder, :tv_preferred_resolutions)
-    ]
-    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
   end
 
   defp bump_not_grabbed(episodes, grabbed) do
