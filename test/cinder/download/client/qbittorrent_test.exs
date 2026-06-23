@@ -164,4 +164,27 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     assert {:ok, ^expected} =
              QBittorrent.add(%{download_url: "magnet:?xt=urn:btih:#{b32}&dn=x"})
   end
+
+  test "health/0 handles qBittorrent v5.x auth: a 204 login and a QBT_SID_<port> cookie" do
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      case conn.request_path do
+        "/api/v2/auth/login" ->
+          # qBittorrent >= 5.x answers /auth/login with 204 No Content and names the
+          # session cookie QBT_SID_<port>, not the legacy 200 + "SID=".
+          conn
+          |> Plug.Conn.put_resp_header(
+            "set-cookie",
+            "QBT_SID_8080=v5sid; HttpOnly; SameSite=Lax; path=/"
+          )
+          |> Plug.Conn.send_resp(204, "")
+
+        "/api/v2/app/webapiVersion" ->
+          # the session cookie must be threaded back under its real name
+          assert Plug.Conn.get_req_header(conn, "cookie") == ["QBT_SID_8080=v5sid"]
+          Req.Test.text(conn, "2.15.1")
+      end
+    end)
+
+    assert :ok = QBittorrent.health()
+  end
 end

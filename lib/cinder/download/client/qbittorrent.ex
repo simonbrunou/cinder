@@ -5,8 +5,9 @@ defmodule Cinder.Download.Client.QBittorrent do
 
   Reads `base_url`, `username`, `password` and optional `req_options` from
   `config :cinder, #{inspect(__MODULE__)}` at runtime. The auth flow is stateful:
-  each call logs in (`POST /api/v2/auth/login`), threads the returned `SID`
-  cookie into the action request, then performs it.
+  each call logs in (`POST /api/v2/auth/login`), threads the returned session
+  cookie (`SID` on <= 4.x, `QBT_SID_<port>` on >= 5.x) into the action request,
+  then performs it.
 
   Validated against a live qBittorrent only in Phase 5; the unit test is a shape
   sanity-check against `Req.Test`.
@@ -108,10 +109,10 @@ defmodule Cinder.Download.Client.QBittorrent do
   defp action(fun) do
     config = config()
 
-    with {:ok, sid} <- login(config) do
+    with {:ok, cookie} <- login(config) do
       config
       |> base()
-      |> Keyword.put(:headers, [{"cookie", "SID=#{sid}"}])
+      |> Keyword.put(:headers, [{"cookie", cookie}])
       |> Req.new()
       |> fun.()
     end
@@ -129,10 +130,13 @@ defmodule Cinder.Download.Client.QBittorrent do
       )
 
     case resp do
-      {:ok, %{status: 200} = response} ->
-        case sid_from(response) do
+      # qBittorrent answers a successful login with 200 ("Ok." on <= 4.x) or 204 No Content
+      # (>= 5.x), in both cases setting the session cookie. A bad-credentials login is 200 with
+      # body "Fails." and no cookie, so the missing cookie — not the status — signals failure.
+      {:ok, %{status: status} = response} when status in 200..299 ->
+        case session_cookie(response) do
           nil -> {:error, :login_failed}
-          sid -> {:ok, sid}
+          cookie -> {:ok, cookie}
         end
 
       other ->
@@ -140,12 +144,16 @@ defmodule Cinder.Download.Client.QBittorrent do
     end
   end
 
-  defp sid_from(response) do
+  # qBittorrent names its session cookie `SID` (<= 4.x) or `QBT_SID_<port>` (>= 5.x). Capture
+  # whichever it set as the raw `name=value` pair so it can be threaded back verbatim — sending
+  # it under the wrong name drops the session on a 5.x server. nil => no session cookie (e.g. a
+  # "Fails." bad-credentials response), which the caller treats as a login failure.
+  defp session_cookie(response) do
     response
     |> Req.Response.get_header("set-cookie")
     |> Enum.find_value(fn cookie ->
-      case Regex.run(~r/SID=([^;]+)/, cookie) do
-        [_, sid] -> sid
+      case Regex.run(~r/^(?:QBT_)?SID(?:_\d+)?=[^;]+/, cookie) do
+        [pair] -> pair
         _ -> nil
       end
     end)
