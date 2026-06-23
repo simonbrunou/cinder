@@ -70,18 +70,22 @@ defmodule CinderWeb.SeriesLive do
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   defp run_series_op(socket, id, op, ok_msg, err_msg) do
-    actor = socket.assigns.current_scope.user
-    series = Enum.find(socket.assigns.series, &(to_string(&1.id) == id))
+    if socket.assigns.current_scope.user.role != :admin do
+      {:noreply, socket}
+    else
+      actor = socket.assigns.current_scope.user
+      series = Enum.find(socket.assigns.series, &(to_string(&1.id) == id))
 
-    case series && op.(series, actor) do
-      {:ok, _} ->
-        {:noreply,
-         socket
-         |> assign(confirming: nil, series: Catalog.list_series())
-         |> put_flash(:info, ok_msg)}
+      case series && op.(series, actor) do
+        {:ok, _} ->
+          {:noreply,
+           socket
+           |> assign(confirming: nil, series: Catalog.list_series())
+           |> put_flash(:info, ok_msg)}
 
-      _ ->
-        {:noreply, socket |> assign(confirming: nil) |> put_flash(:error, err_msg)}
+        _ ->
+          {:noreply, socket |> assign(confirming: nil) |> put_flash(:error, err_msg)}
+      end
     end
   end
 

@@ -149,4 +149,26 @@ defmodule CinderWeb.SeriesLiveTest do
     refute html =~ "ask_delete_series"
     refute html =~ "Added series"
   end
+
+  test "forged confirm_delete_series from a non-admin does NOT delete the series", %{conn: _conn} do
+    series =
+      Cinder.Repo.insert!(%Cinder.Catalog.Series{
+        tmdb_id: System.unique_integer([:positive]),
+        title: "Forge Target",
+        monitored: true,
+        monitor_strategy: :all
+      })
+
+    user = Cinder.AccountsFixtures.user_fixture()
+    conn = log_in_user(build_conn(), user)
+    {:ok, lv, _html} = live(conn, ~p"/series")
+
+    # Non-admin has no button in the DOM — push the destructive event directly
+    render_hook(lv, "confirm_delete_series", %{"id" => to_string(series.id)})
+
+    # The series must still exist in the DB
+    assert Cinder.Repo.get(Cinder.Catalog.Series, series.id) != nil
+    # The LiveView must still be alive
+    assert render(lv) =~ "TV series"
+  end
 end
