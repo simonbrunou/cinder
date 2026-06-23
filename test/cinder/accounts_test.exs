@@ -608,4 +608,68 @@ defmodule Cinder.AccountsTest do
       assert %{password: ["should be at least 12 character(s)"]} = errors_on(changeset)
     end
   end
+
+  describe "delete_user/1" do
+    test "deletes a user, cascades their requests, and audits it" do
+      actor = admin_fixture()
+      target = user_fixture()
+
+      req =
+        Repo.insert!(%Cinder.Requests.Request{
+          user_id: target.id,
+          target_id: 603,
+          target_type: "movie",
+          title: "The Matrix",
+          status: :pending
+        })
+
+      assert {:ok, %User{id: tid}} = Accounts.delete_user(actor, target)
+      refute Repo.get(User, tid)
+      refute Repo.get(Cinder.Requests.Request, req.id)
+
+      audit = Repo.one!(from a in Cinder.Audit.AdminAudit, where: a.entity_id == ^tid)
+      assert audit.action == "delete_user"
+      assert audit.entity_type == "User"
+      assert audit.detail["email"] == target.email
+      assert audit.detail["cascaded_requests"] == true
+    end
+
+    test "nilifies approved_by_id on requests the deleted user approved" do
+      actor = admin_fixture()
+      approver = admin_fixture()
+      requester = user_fixture()
+
+      req =
+        Repo.insert!(%Cinder.Requests.Request{
+          user_id: requester.id,
+          approved_by_id: approver.id,
+          target_id: 27_205,
+          target_type: "movie",
+          title: "Inception",
+          status: :approved
+        })
+
+      assert {:ok, _} = Accounts.delete_user(actor, approver)
+      assert Repo.get(Cinder.Requests.Request, req.id).approved_by_id == nil
+    end
+
+    test "refuses to delete the last admin and writes no audit row" do
+      actor = admin_fixture()
+      other = admin_fixture()
+      # demote `other` so `actor` is the only admin
+      {:ok, _} = Accounts.update_user_role(actor, other, :user)
+      Repo.delete_all(Cinder.Audit.AdminAudit)
+
+      assert {:error, :last_admin} = Accounts.delete_user(other, actor)
+      assert Repo.reload!(actor)
+      assert Repo.aggregate(Cinder.Audit.AdminAudit, :count) == 0
+    end
+
+    test "refuses to delete your own account" do
+      actor = admin_fixture()
+      _second = admin_fixture()
+      assert {:error, :self_delete} = Accounts.delete_user(actor, actor)
+      assert Repo.reload!(actor)
+    end
+  end
 end

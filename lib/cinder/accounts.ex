@@ -177,6 +177,36 @@ defmodule Cinder.Accounts do
     end)
   end
 
+  @doc """
+  Deletes a user. Refuses self-delete and refuses to delete the last admin (the
+  admin count is re-checked AFTER the delete inside one transaction). The DB
+  cascades the user's requests (`user_id :delete_all`) and nilifies any
+  `approved_by_id` links. Audited in the same transaction, before the delete, so
+  the audit `detail` can record the deleted email.
+  """
+  def delete_user(%User{id: same_id} = _actor, %User{id: same_id} = _target),
+    do: {:error, :self_delete}
+
+  def delete_user(%User{} = actor, %User{} = target) do
+    Repo.transaction(fn -> do_delete_user(actor, target) end)
+  end
+
+  defp do_delete_user(%User{} = actor, %User{} = target) do
+    {:ok, _audit} =
+      Audit.log(actor, "delete_user", target, %{
+        email: target.email,
+        cascaded_requests: true
+      })
+
+    {:ok, deleted} = Repo.delete(target)
+
+    if count_admins() == 0 do
+      Repo.rollback(:last_admin)
+    end
+
+    deleted
+  end
+
   @doc "All users, ordered by id."
   def list_users, do: Repo.all(from u in User, order_by: [asc: u.id])
 
