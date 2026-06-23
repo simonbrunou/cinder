@@ -83,14 +83,18 @@ pollers advance each request through its state machine and broadcast over PubSub
 dashboard updates live. Every state change goes through a single context choke-point, which — on
 SQLite WAL — keeps a web write racing the poller correct rather than flaky.
 
-**TV** runs the same loop with a separate poller: add a series, monitor whole seasons or
-individual episodes (with an `all` / `future` / `none` strategy), and Cinder searches for the
-best release per still-wanted episode — preferring a season pack when one covers them, falling
-back to per-episode grabs — then maps each file in a pack to its episode on import. A periodic
-TMDB refresh keeps season/episode data current (so a newly-aired or late-dated episode becomes
-search-eligible on its own), and an `/calendar` view lists upcoming monitored episodes. Episodes
-land under the separate TV root (`tv_library_path`) in the `Show (Year)/Season NN/Show (Year) -
-SxxEyy.ext` layout Jellyfin/Plex expect.
+**TV** works the same way as movies for users: any authenticated user searches for a TV show and
+**requests a season**; a non-admin's request is pending until an admin approves (or denies), and
+an admin's own request auto-approves. The request→approval gate, per-user quotas, My-requests
+view, and per-season state badges (Pending / Approved / Denied) all apply, in parity with movies.
+Once approved, monitoring is set for that season only and the TV poller takes over: it searches
+for the best release per still-wanted episode — preferring a season pack when one covers them,
+falling back to per-episode grabs — then maps each file in a pack to its episode on import.
+Admins can also manage monitoring directly from the series detail page. A periodic TMDB refresh
+keeps season/episode data current (so a newly-aired or late-dated episode becomes search-eligible
+on its own), and a `/calendar` view lists upcoming monitored episodes. Episodes land under the
+separate TV root (`tv_library_path`) in the `Show (Year)/Season NN/Show (Year) - SxxEyy.ext`
+layout Jellyfin/Plex expect.
 
 ## Screenshots
 

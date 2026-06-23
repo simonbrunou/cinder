@@ -71,12 +71,20 @@ your server picks the file up on its next periodic scan.
 
 ## TV: monitoring, season packs, and the calendar
 
-Add a series from the TV search, then choose what to monitor — whole seasons or individual
-episodes, with a per-series strategy (`all` past + future, `future` only, or `none`). The TV
-poller searches each still-wanted monitored episode (monitored, aired, no file yet), preferring a
-season pack when one covers them and falling back to per-episode grabs; on import it maps each
-file in a pack to its episode by parsing `SxxEyy`. A file it can't match to a wanted episode is
-**logged and skipped** (the grab parks and its episodes re-search) rather than mis-filed.
+**TV requests work like movie requests.** Any authenticated user can search for a TV show on
+`/series` and request a season from the show's discovery page. A non-admin's request is
+`:pending` until an admin approves or denies it from the approval queue; an admin's own request
+auto-approves. Per-user quotas, the **My requests** view, and per-season state badges
+(Pending / Approved / Denied) all apply, in parity with movies. A denied season can be
+re-requested. On approval, the series is created (if not already present) and **only that season**
+is monitored — the admin can adjust episode-level monitoring from the series detail page (`/series/:id`,
+admin-only).
+
+The TV poller then takes over: it searches each still-wanted monitored episode (monitored, aired,
+no file yet), preferring a season pack when one covers them and falling back to per-episode grabs;
+on import it maps each file in a pack to its episode by parsing `SxxEyy`. A file it can't match
+to a wanted episode is **logged and skipped** (the grab parks and its episodes re-search) rather
+than mis-filed.
 
 A periodic TMDB refresh reconciles season/episode data, so a newly-announced or late-dated episode
 becomes search-eligible on its own once its air date passes — no manual re-add. The **`/calendar`**
