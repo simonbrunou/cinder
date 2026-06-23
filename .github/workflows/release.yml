@@ -34,7 +34,9 @@ jobs:
         with:
           images: ghcr.io/simonbrunou/cinder
           # v0.7.0 -> tags 0.7.0, 0.7, latest. `latest` is set explicitly so it
-          # doesn't depend on the default-branch heuristic.
+          # doesn't depend on the default-branch heuristic. Caveat: it follows the
+          # most recently *pushed* tag — don't tag an older patch after a newer
+          # release (or re-point latest by hand); metadata-action can't compare versions.
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}

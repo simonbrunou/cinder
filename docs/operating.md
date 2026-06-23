@@ -56,6 +56,10 @@ each configured service (with a **Recheck** button). A parked item (`:search_fai
 `:import_failed`) shows a **Retry** button that resets it to `:requested` with attempt counters
 zeroed; the poller re-queues it on the next tick.
 
+The media-server library scan after an import is **best-effort**: if the scan call fails (e.g. an
+endpoint/header mismatch on your Jellyfin/Plex version) the item still reaches `:available`, and
+your server picks the file up on its next periodic scan.
+
 ## Troubleshooting parked states
 
 | State | Meaning | What to do |
