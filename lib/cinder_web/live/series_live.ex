@@ -1,12 +1,9 @@
 defmodule CinderWeb.SeriesLive do
   @moduledoc """
-  Admin-only TV discovery, mounted at `/series`. Search TMDB for series and add them
-  (with their season/episode tree) to the watchlist; added series link to the detail
-  view where monitoring is configured.
-
-  TV is admin-only direct-add in M4 (no requester/approval flow until M5), so this page
-  lives in the `:admin` live_session. The add runs off-process via `start_async` because
-  `Catalog.add_series_to_watchlist/2` is 1 + N synchronous TMDB calls (one per season).
+  TV series search page, mounted at `/series`. Searches TMDB and links each result to
+  the discovery detail page (`/series/tmdb/:tmdb_id`) where users can request seasons.
+  Added series (already on the watchlist) are listed below with a link to their admin
+  monitoring detail page.
   """
   use CinderWeb, :live_view
 
@@ -18,7 +15,7 @@ defmodule CinderWeb.SeriesLive do
   def mount(_params, _session, socket) do
     {:ok,
      socket
-     |> assign(query: "", results: [], search_error: false, adding: MapSet.new())
+     |> assign(query: "", results: [], search_error: false)
      |> assign(series: Catalog.list_series())}
   end
 
@@ -36,60 +33,15 @@ defmodule CinderWeb.SeriesLive do
     end
   end
 
-  # phx-value is client-controlled: tolerate non-numeric input and ignore a re-add of a
-  # series already in flight (the `adding` set also drives the per-card loading state).
-  def handle_event("add", %{"tmdb_id" => tmdb_id}, socket) when is_binary(tmdb_id) do
-    with {id, ""} <- Integer.parse(tmdb_id),
-         false <- MapSet.member?(socket.assigns.adding, id) do
-      {:noreply,
-       socket
-       |> update(:adding, &MapSet.put(&1, id))
-       |> start_async({:add, id}, fn -> Catalog.add_series_to_watchlist(id) end)}
-    else
-      _ -> {:noreply, socket}
-    end
-  end
-
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   @impl true
-  def handle_async({:add, id}, {:ok, {:ok, series}}, socket) do
-    {:noreply,
-     socket
-     |> update(:adding, &MapSet.delete(&1, id))
-     |> update(:series, &prepend_unique(&1, series))
-     |> put_flash(:info, "#{series.title} added.")}
-  end
-
-  def handle_async({:add, id}, {:ok, {:error, _reason}}, socket) do
-    {:noreply,
-     socket
-     |> update(:adding, &MapSet.delete(&1, id))
-     |> put_flash(:error, "Couldn't add that series. Try again.")}
-  end
-
-  def handle_async({:add, id}, {:exit, _reason}, socket) do
-    {:noreply,
-     socket
-     |> update(:adding, &MapSet.delete(&1, id))
-     |> put_flash(:error, "Adding the series crashed. Try again.")}
-  end
-
-  defp prepend_unique(series, new) do
-    if Enum.any?(series, &(&1.id == new.id)), do: series, else: [new | series]
-  end
-
-  @impl true
   def render(assigns) do
-    # tmdb_id => persisted series id, so a search hit already on the watchlist links to
-    # its detail view instead of offering a redundant Add.
-    assigns = assign(assigns, :added, Map.new(assigns.series, &{&1.tmdb_id, &1.id}))
-
     ~H"""
     <Layouts.app flash={@flash}>
       <.header>
         TV series
-        <:subtitle>Search and add shows, then set monitoring.</:subtitle>
+        <:subtitle>Search shows and request seasons.</:subtitle>
       </.header>
 
       <.link navigate={~p"/"} class="link mb-6 inline-block">← Movies</.link>
@@ -111,9 +63,11 @@ defmodule CinderWeb.SeriesLive do
       <section :if={@results != []} class="mb-10">
         <h2 class="sr-only">Search results</h2>
         <div id="tv-results" class="grid grid-cols-2 sm:grid-cols-3 gap-4">
-          <.series_card :for={s <- @results} series={s}>
-            <.result_action result={s} adding={@adding} added={@added} />
-          </.series_card>
+          <.link :for={s <- @results} navigate={~p"/series/tmdb/#{s.tmdb_id}"} class="block">
+            <.series_card series={s}>
+              <span class="link link-primary text-sm">View →</span>
+            </.series_card>
+          </.link>
         </div>
       </section>
 
@@ -134,38 +88,6 @@ defmodule CinderWeb.SeriesLive do
         </.link>
       </div>
     </Layouts.app>
-    """
-  end
-
-  attr :result, :map, required: true
-  attr :adding, :any, required: true
-  attr :added, :map, required: true
-
-  defp result_action(assigns) do
-    ~H"""
-    <.link
-      :if={@added[@result.tmdb_id]}
-      navigate={~p"/series/#{@added[@result.tmdb_id]}"}
-      class="btn btn-ghost btn-sm w-full"
-    >
-      Open →
-    </.link>
-    <button
-      :if={!@added[@result.tmdb_id] and MapSet.member?(@adding, @result.tmdb_id)}
-      class="btn btn-sm w-full"
-      disabled
-    >
-      <span class="loading loading-spinner loading-xs"></span> Adding…
-    </button>
-    <button
-      :if={!@added[@result.tmdb_id] and not MapSet.member?(@adding, @result.tmdb_id)}
-      id={"add-#{@result.tmdb_id}"}
-      phx-click="add"
-      phx-value-tmdb_id={@result.tmdb_id}
-      class="btn btn-primary btn-sm w-full"
-    >
-      Add
-    </button>
     """
   end
 
