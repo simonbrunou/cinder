@@ -588,7 +588,8 @@ defmodule Cinder.Catalog do
 
     {:ok, _} =
       Repo.transaction(fn ->
-        Audit.log(actor, :cancel_series, series, %{title: series.title})
+        {:ok, entry} = Audit.log(actor, :cancel_series, series, %{title: series.title})
+        entry
       end)
 
     broadcast_series(series.id)

@@ -93,7 +93,6 @@ defmodule Cinder.CatalogAdminTest do
     setup :verify_on_exit!
 
     test "an active movie with a download is cancelled and the client download removed" do
-      import Mox
       actor = Cinder.AccountsFixtures.admin_fixture()
 
       movie =
@@ -160,7 +159,6 @@ defmodule Cinder.CatalogAdminTest do
     end
 
     test "an active movie with a download is cancelled (client-removed) before delete" do
-      import Mox
       actor = Cinder.AccountsFixtures.admin_fixture()
 
       movie =
@@ -194,7 +192,6 @@ defmodule Cinder.CatalogAdminTest do
 
   describe "cancel_series/2 and delete_series/2" do
     setup :verify_on_exit!
-    import Mox
 
     alias Cinder.Catalog.{Episode, Grab, Season, Series}
 

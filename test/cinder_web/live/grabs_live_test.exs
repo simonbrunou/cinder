@@ -54,7 +54,7 @@ defmodule CinderWeb.GrabsLiveTest do
     refute render(lv) =~ "grab-#{grab.id}"
   end
 
-  test "a non-admin is redirected away from /grabs", %{conn: conn} do
+  test "a non-admin is redirected away from /grabs", %{conn: _conn} do
     user = user_fixture()
     conn = log_in_user(build_conn(), user)
     assert {:error, {:redirect, %{to: "/"}}} = live(conn, ~p"/grabs")

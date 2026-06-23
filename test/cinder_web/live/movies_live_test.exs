@@ -87,7 +87,7 @@ defmodule CinderWeb.MoviesLiveTest do
     assert html =~ "cancelled"
   end
 
-  test "a non-admin is redirected away from /movies", %{conn: conn} do
+  test "a non-admin is redirected away from /movies", %{conn: _conn} do
     user = user_fixture()
     conn = log_in_user(build_conn(), user)
     assert {:error, {:redirect, %{to: "/"}}} = live(conn, ~p"/movies")
