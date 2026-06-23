@@ -249,6 +249,24 @@ defmodule Cinder.CatalogSeriesTest do
     end
   end
 
+  describe "FK cascade (foreign_keys: :on)" do
+    test "deleting a series cascade-deletes its seasons and episodes" do
+      series = Repo.insert!(%Series{tmdb_id: 8001, title: "Cascade Show"})
+      season = Repo.insert!(%Cinder.Catalog.Season{series_id: series.id, season_number: 1})
+
+      episode =
+        Repo.insert!(%Cinder.Catalog.Episode{
+          season_id: season.id,
+          episode_number: 1,
+          monitored: true
+        })
+
+      assert {:ok, _} = Repo.delete(series)
+      refute Repo.get(Cinder.Catalog.Season, season.id)
+      refute Repo.get(Cinder.Catalog.Episode, episode.id)
+    end
+  end
+
   describe "find_or_create_series_at_requested/2" do
     setup do
       stub(Cinder.Catalog.TMDBMock, :get_series, fn 1399 ->

@@ -399,6 +399,23 @@ defmodule Cinder.AccountsTest do
     end
   end
 
+  describe "FK cascade (foreign_keys: :on)" do
+    test "deleting a user cascade-deletes their requests" do
+      user = user_fixture()
+
+      request =
+        Repo.insert!(%Cinder.Requests.Request{
+          user_id: user.id,
+          target_type: "movie",
+          target_id: 555,
+          status: :pending
+        })
+
+      assert {:ok, _} = Repo.delete(user)
+      refute Repo.get(Cinder.Requests.Request, request.id)
+    end
+  end
+
   describe "M3 quota + admin helpers" do
     test "request_quota defaults to nil and can be set/cleared" do
       user = user_fixture()
