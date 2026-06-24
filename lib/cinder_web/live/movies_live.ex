@@ -189,21 +189,28 @@ defmodule CinderWeb.MoviesLive do
             <button class="btn btn-sm btn-ghost" type="button" phx-click="cancel_edit">Cancel</button>
           </.form>
 
-          <div :if={@confirming == {:cancel, to_string(m.id)}} class="mt-3 flex items-center gap-2">
-            <span class="text-sm">Cancel this movie and remove its download?</span>
-            <button class="btn btn-sm btn-warning" phx-click="confirm_cancel" phx-value-id={m.id}>
-              Confirm cancel
-            </button>
-            <button class="btn btn-sm btn-ghost" phx-click="dismiss_confirm">Keep</button>
-          </div>
+          <.confirm_action
+            :if={@confirming == {:cancel, to_string(m.id)}}
+            id={"confirm-cancel-movie-#{m.id}"}
+            on_confirm="confirm_cancel"
+            on_cancel="dismiss_confirm"
+            value={m.id}
+            confirm_label="Cancel movie"
+            variant="warning"
+          >
+            <:caveat>Cancel this movie and remove its download?</:caveat>
+          </.confirm_action>
 
-          <div :if={@confirming == {:delete, to_string(m.id)}} class="mt-3 flex items-center gap-2">
-            <span class="text-sm">Delete this movie's record? (Library files are left on disk.)</span>
-            <button class="btn btn-sm btn-error" phx-click="confirm_delete" phx-value-id={m.id}>
-              Confirm delete
-            </button>
-            <button class="btn btn-sm btn-ghost" phx-click="dismiss_confirm">Keep</button>
-          </div>
+          <.confirm_action
+            :if={@confirming == {:delete, to_string(m.id)}}
+            id={"confirm-delete-movie-#{m.id}"}
+            on_confirm="confirm_delete"
+            on_cancel="dismiss_confirm"
+            value={m.id}
+            confirm_label="Delete"
+          >
+            <:caveat>Delete this movie's record? (Library files are left on disk.)</:caveat>
+          </.confirm_action>
         </li>
       </ul>
     </Layouts.app>

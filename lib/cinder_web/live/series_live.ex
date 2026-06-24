@@ -173,29 +173,28 @@ defmodule CinderWeb.SeriesLive do
               </button>
             </div>
 
-            <div :if={@confirming == {:cancel, to_string(s.id)}} class="flex items-center gap-2">
-              <span class="text-xs">Cancel & unmonitor?</span>
-              <button
-                class="btn btn-xs btn-warning"
-                phx-click="confirm_cancel_series"
-                phx-value-id={s.id}
-              >
-                Confirm
-              </button>
-              <button class="btn btn-xs btn-ghost" phx-click="dismiss_confirm">Keep</button>
-            </div>
+            <.confirm_action
+              :if={@confirming == {:cancel, to_string(s.id)}}
+              id={"confirm-cancel-series-#{s.id}"}
+              on_confirm="confirm_cancel_series"
+              on_cancel="dismiss_confirm"
+              value={s.id}
+              confirm_label="Cancel & unmonitor"
+              variant="warning"
+            >
+              <:caveat>Cancel & unmonitor this series?</:caveat>
+            </.confirm_action>
 
-            <div :if={@confirming == {:delete, to_string(s.id)}} class="flex items-center gap-2">
-              <span class="text-xs">Delete record? (files kept)</span>
-              <button
-                class="btn btn-xs btn-error"
-                phx-click="confirm_delete_series"
-                phx-value-id={s.id}
-              >
-                Confirm
-              </button>
-              <button class="btn btn-xs btn-ghost" phx-click="dismiss_confirm">Keep</button>
-            </div>
+            <.confirm_action
+              :if={@confirming == {:delete, to_string(s.id)}}
+              id={"confirm-delete-series-#{s.id}"}
+              on_confirm="confirm_delete_series"
+              on_cancel="dismiss_confirm"
+              value={s.id}
+              confirm_label="Delete"
+            >
+              <:caveat>Delete this series record? (Library files are left on disk.)</:caveat>
+            </.confirm_action>
           </div>
         </div>
       </section>

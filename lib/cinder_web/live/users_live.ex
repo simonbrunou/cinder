@@ -340,19 +340,17 @@ defmodule CinderWeb.UsersLive do
             >
               Delete
             </button>
-            <span :if={@confirming_delete == to_string(u.id)} class="flex items-center gap-2">
-              <span class="text-sm">Delete {u.email}? Requests cascade.</span>
-              <button
-                id={"confirm-delete-#{u.id}"}
-                class="btn btn-error btn-xs"
-                phx-click="delete"
-                phx-value-id={u.id}
-              >
-                Confirm delete
-              </button>
-              <button class="btn btn-ghost btn-xs" phx-click="cancel_delete">Cancel</button>
-            </span>
           </div>
+          <.confirm_action
+            :if={@confirming_delete == to_string(u.id)}
+            id={"confirm-delete-#{u.id}"}
+            on_confirm="delete"
+            on_cancel="cancel_delete"
+            value={u.id}
+            confirm_label="Delete"
+          >
+            <:caveat>Delete {u.email}? Requests cascade.</:caveat>
+          </.confirm_action>
           <.form
             :if={@resetting_pw == to_string(u.id)}
             id={"reset-pw-form-#{u.id}"}

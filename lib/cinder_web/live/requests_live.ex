@@ -148,26 +148,20 @@ defmodule CinderWeb.RequestsLive do
             </button>
           </div>
 
-          <div
+          <.confirm_action
             :if={@confirming_delete == to_string(r.id)}
-            class="alert alert-warning flex flex-col items-start gap-2"
+            id={"confirm-delete-request-#{r.id}"}
+            on_confirm="delete"
+            on_cancel="cancel_delete"
+            value={r.id}
+            confirm_label="Delete request"
           >
-            <p class="text-sm">
+            <:caveat>
               Deleting a request does not remove any movie or series it already created —
               that catalog row stays. If this request was denied or approved, the same title
               can be requested again afterwards.
-            </p>
-            <div class="flex gap-2">
-              <button
-                class="btn btn-error btn-sm"
-                phx-click="delete"
-                phx-value-id={r.id}
-              >
-                Delete request
-              </button>
-              <button class="btn btn-ghost btn-sm" phx-click="cancel_delete">Cancel</button>
-            </div>
-          </div>
+            </:caveat>
+          </.confirm_action>
         </li>
       </ul>
       <p :if={@requests == []} class="opacity-60">No requests.</p>

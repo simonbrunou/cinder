@@ -125,6 +125,62 @@ defmodule CinderWeb.CoreComponents do
   end
 
   @doc """
+  Inline two-step confirmation for a destructive action: a `role="alert"` box with a
+  caveat, a confirm button (emits `on_confirm`), and a cancel button (emits `on_cancel`).
+  Markup only — the caller drives visibility with `:if` and keeps its own "confirming"
+  assign and event names, so adoption preserves each page's existing wiring.
+
+  ## Examples
+
+      # in a template, caller controls visibility with :if and its own @confirming assign:
+      # <.confirm_action
+      #   :if={@confirming == {:delete, m.id}}
+      #   id={"confirm-delete-\#{m.id}"}
+      #   on_confirm="confirm_delete"
+      #   on_cancel="dismiss_confirm"
+      #   value={m.id}
+      #   confirm_label="Delete"
+      # >
+      #   <:caveat>Delete this movie's record? (Library files are left on disk.)</:caveat>
+      # </.confirm_action>
+  """
+  attr :id, :string, required: true
+  attr :on_confirm, :string, required: true
+  attr :on_cancel, :string, required: true
+  attr :value, :any, default: nil, doc: "phx-value-id sent with the confirm event (nil = omitted)"
+  attr :confirm_label, :string, default: "Confirm"
+  attr :cancel_label, :string, default: "Cancel"
+  attr :variant, :string, default: "error", values: ~w(error warning)
+  slot :caveat, required: true
+
+  def confirm_action(assigns) do
+    ~H"""
+    <div
+      id={@id}
+      role="alert"
+      aria-live="assertive"
+      class="alert alert-warning flex flex-col items-start gap-2"
+    >
+      <p class="text-sm">{render_slot(@caveat)}</p>
+      <div class="flex flex-wrap gap-2">
+        <button
+          type="button"
+          class={["btn", @variant == "warning" && "btn-warning", @variant == "error" && "btn-error"]}
+          phx-click={@on_confirm}
+          phx-value-id={@value}
+          phx-disable-with="Working…"
+        >
+          {@confirm_label}
+        </button>
+        <button type="button" class="btn btn-ghost" phx-click={@on_cancel}>
+          {@cancel_label}
+        </button>
+      </div>
+    </div>
+    """
+  end
+
+  @doc """
   Renders an input with label and error messages.
 
   A `Phoenix.HTML.FormField` may be passed as argument,

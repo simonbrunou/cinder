@@ -189,19 +189,28 @@ defmodule CinderWeb.SeriesDetailLive do
         <button class="btn btn-sm btn-ghost" type="button" phx-click="cancel_edit_series">Cancel</button>
       </.form>
 
-      <div :if={@confirming == :cancel} class="mb-6 flex items-center gap-2">
-        <span class="text-sm">Cancel this series? Removes its downloads and unmonitors everything.</span>
-        <button class="btn btn-sm btn-warning" phx-click="confirm_cancel_series">Confirm cancel</button>
-        <button class="btn btn-sm btn-ghost" phx-click="dismiss_confirm">Keep</button>
-      </div>
+      <.confirm_action
+        :if={@confirming == :cancel}
+        id="confirm-cancel-series"
+        on_confirm="confirm_cancel_series"
+        on_cancel="dismiss_confirm"
+        confirm_label="Cancel series"
+        variant="warning"
+      >
+        <:caveat>Cancel this series? Removes its downloads and unmonitors everything.</:caveat>
+      </.confirm_action>
 
-      <div :if={@confirming == :delete} class="mb-6 flex items-center gap-2">
-        <span class="text-sm">
+      <.confirm_action
+        :if={@confirming == :delete}
+        id="confirm-delete-series"
+        on_confirm="confirm_delete_series"
+        on_cancel="dismiss_confirm"
+        confirm_label="Delete"
+      >
+        <:caveat>
           Delete this series and its seasons/episodes? (Library files are left on disk.)
-        </span>
-        <button class="btn btn-sm btn-error" phx-click="confirm_delete_series">Confirm delete</button>
-        <button class="btn btn-sm btn-ghost" phx-click="dismiss_confirm">Keep</button>
-      </div>
+        </:caveat>
+      </.confirm_action>
 
       <div class="mb-8 flex gap-4">
         <img

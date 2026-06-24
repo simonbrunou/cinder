@@ -78,13 +78,16 @@ defmodule CinderWeb.GrabsLive do
             </button>
           </div>
 
-          <div :if={@confirming == to_string(g.id)} class="mt-3 flex items-center gap-2">
-            <span class="text-sm">Delete this grab? Its episodes are unlinked.</span>
-            <button class="btn btn-sm btn-error" phx-click="confirm_delete" phx-value-id={g.id}>
-              Confirm delete
-            </button>
-            <button class="btn btn-sm btn-ghost" phx-click="dismiss_confirm">Keep</button>
-          </div>
+          <.confirm_action
+            :if={@confirming == to_string(g.id)}
+            id={"confirm-delete-grab-#{g.id}"}
+            on_confirm="confirm_delete"
+            on_cancel="dismiss_confirm"
+            value={g.id}
+            confirm_label="Delete"
+          >
+            <:caveat>Delete this grab? Its episodes are unlinked.</:caveat>
+          </.confirm_action>
         </li>
       </ul>
     </Layouts.app>
