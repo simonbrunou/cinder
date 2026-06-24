@@ -61,12 +61,13 @@ defmodule CinderWeb.UsersLive do
 
   @impl true
   def handle_event("set_quota", %{"_id" => id, "quota" => quota}, socket) do
-    user = Accounts.get_user!(String.to_integer(id))
-
-    case Accounts.update_user_quota(user, parse_quota(quota)) do
-      {:ok, _} ->
-        {:noreply,
-         socket |> assign(users: Accounts.list_users()) |> put_flash(:info, "Quota updated.")}
+    with user when not is_nil(user) <- find_user(id),
+         {:ok, _} <- Accounts.update_user_quota(user, parse_quota(quota)) do
+      {:noreply,
+       socket |> assign(users: Accounts.list_users()) |> put_flash(:info, "Quota updated.")}
+    else
+      nil ->
+        {:noreply, socket}
 
       {:error, _} ->
         {:noreply, put_flash(socket, :error, "Quota must be a non-negative number.")}
@@ -74,7 +75,7 @@ defmodule CinderWeb.UsersLive do
   end
 
   def handle_event("start_edit_email", %{"id" => id}, socket) do
-    {:noreply, assign(socket, editing_email: String.to_integer(id))}
+    {:noreply, assign(socket, editing_email: id)}
   end
 
   def handle_event("cancel_edit_email", _params, socket) do
@@ -82,15 +83,17 @@ defmodule CinderWeb.UsersLive do
   end
 
   def handle_event("save_email", %{"_id" => id, "user" => %{"email" => email}}, socket) do
-    user = Accounts.get_user!(String.to_integer(id))
     actor = socket.assigns.current_scope.user
 
-    case Accounts.admin_update_email(actor, user, %{email: email}) do
-      {:ok, _} ->
-        {:noreply,
-         socket
-         |> assign(users: Accounts.list_users(), editing_email: nil)
-         |> put_flash(:info, "Email updated.")}
+    with user when not is_nil(user) <- find_user(id),
+         {:ok, _} <- Accounts.admin_update_email(actor, user, %{email: email}) do
+      {:noreply,
+       socket
+       |> assign(users: Accounts.list_users(), editing_email: nil)
+       |> put_flash(:info, "Email updated.")}
+    else
+      nil ->
+        {:noreply, socket}
 
       {:error, _changeset} ->
         {:noreply, put_flash(socket, :error, "Couldn't update email — check the address.")}
@@ -98,24 +101,30 @@ defmodule CinderWeb.UsersLive do
   end
 
   def handle_event("toggle_role", %{"id" => id}, socket) do
-    user = Accounts.get_user!(String.to_integer(id))
     actor = socket.assigns.current_scope.user
-    new_role = if user.role == :admin, do: :user, else: :admin
 
-    case Accounts.update_user_role(actor, user, new_role) do
-      {:ok, _} ->
-        {:noreply, assign(socket, users: Accounts.list_users())}
+    case find_user(id) do
+      nil ->
+        {:noreply, socket}
 
-      {:error, :last_admin} ->
-        {:noreply, put_flash(socket, :error, "Can't demote the last admin.")}
+      user ->
+        new_role = if user.role == :admin, do: :user, else: :admin
 
-      {:error, _} ->
-        {:noreply, put_flash(socket, :error, "Couldn't change role.")}
+        case Accounts.update_user_role(actor, user, new_role) do
+          {:ok, _} ->
+            {:noreply, assign(socket, users: Accounts.list_users())}
+
+          {:error, :last_admin} ->
+            {:noreply, put_flash(socket, :error, "Can't demote the last admin.")}
+
+          {:error, _} ->
+            {:noreply, put_flash(socket, :error, "Couldn't change role.")}
+        end
     end
   end
 
   def handle_event("start_reset_pw", %{"id" => id}, socket) do
-    {:noreply, assign(socket, resetting_pw: String.to_integer(id))}
+    {:noreply, assign(socket, resetting_pw: id)}
   end
 
   def handle_event("cancel_reset_pw", _params, socket) do
@@ -123,7 +132,6 @@ defmodule CinderWeb.UsersLive do
   end
 
   def handle_event("reset_pw", %{"_id" => id, "user" => params}, socket) do
-    user = Accounts.get_user!(String.to_integer(id))
     actor = socket.assigns.current_scope.user
 
     attrs = %{
@@ -131,12 +139,15 @@ defmodule CinderWeb.UsersLive do
       password_confirmation: params["password_confirmation"]
     }
 
-    case Accounts.admin_reset_password(actor, user, attrs) do
-      {:ok, _} ->
-        {:noreply,
-         socket
-         |> assign(resetting_pw: nil)
-         |> put_flash(:info, "Password reset — the user's sessions were ended.")}
+    with user when not is_nil(user) <- find_user(id),
+         {:ok, _} <- Accounts.admin_reset_password(actor, user, attrs) do
+      {:noreply,
+       socket
+       |> assign(resetting_pw: nil)
+       |> put_flash(:info, "Password reset — the user's sessions were ended.")}
+    else
+      nil ->
+        {:noreply, socket}
 
       {:error, _changeset} ->
         {:noreply, put_flash(socket, :error, "Password must be at least 12 characters.")}
@@ -144,7 +155,7 @@ defmodule CinderWeb.UsersLive do
   end
 
   def handle_event("start_delete", %{"id" => id}, socket) do
-    {:noreply, assign(socket, confirming_delete: String.to_integer(id))}
+    {:noreply, assign(socket, confirming_delete: id)}
   end
 
   def handle_event("cancel_delete", _params, socket) do
@@ -152,10 +163,13 @@ defmodule CinderWeb.UsersLive do
   end
 
   def handle_event("delete", %{"id" => id}, socket) do
-    user = Accounts.get_user!(String.to_integer(id))
     actor = socket.assigns.current_scope.user
+    user = find_user(id)
 
-    case Accounts.delete_user(actor, user) do
+    case user && Accounts.delete_user(actor, user) do
+      nil ->
+        {:noreply, socket}
+
       {:ok, _} ->
         {:noreply,
          socket
@@ -176,7 +190,17 @@ defmodule CinderWeb.UsersLive do
     end
   end
 
+  # Client-controlled payloads — ignore anything unmatched rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  # Look the user up by string-comparing ids (mirroring the sibling admin views),
+  # so a forged (non-numeric) phx-value id never hits String.to_integer/get_user!.
+  # Sourced from a fresh list rather than the possibly-stale socket snapshot, so a
+  # since-deleted row (e.g. a stale second tab) resolves to nil and no-ops instead
+  # of raising Ecto.StaleEntryError inside the subsequent mutation.
+  defp find_user(id) do
+    Enum.find(Accounts.list_users(), &(to_string(&1.id) == id))
+  end
 
   defp role_atom("admin"), do: :admin
   defp role_atom(_), do: :user
@@ -274,7 +298,7 @@ defmodule CinderWeb.UsersLive do
             </form>
           </div>
           <.form
-            :if={@editing_email == u.id}
+            :if={@editing_email == to_string(u.id)}
             id={"edit-email-form-#{u.id}"}
             for={to_form(%{"email" => u.email}, as: :user)}
             phx-submit="save_email"
@@ -302,7 +326,7 @@ defmodule CinderWeb.UsersLive do
               Reset password
             </button>
             <button
-              :if={@confirming_delete != u.id}
+              :if={@confirming_delete != to_string(u.id)}
               id={"delete-btn-#{u.id}"}
               class="btn btn-ghost btn-xs text-error"
               phx-click="start_delete"
@@ -310,7 +334,7 @@ defmodule CinderWeb.UsersLive do
             >
               Delete
             </button>
-            <span :if={@confirming_delete == u.id} class="flex items-center gap-2">
+            <span :if={@confirming_delete == to_string(u.id)} class="flex items-center gap-2">
               <span class="text-sm">Delete {u.email}? Requests cascade.</span>
               <button
                 id={"confirm-delete-#{u.id}"}
@@ -324,7 +348,7 @@ defmodule CinderWeb.UsersLive do
             </span>
           </div>
           <.form
-            :if={@resetting_pw == u.id}
+            :if={@resetting_pw == to_string(u.id)}
             id={"reset-pw-form-#{u.id}"}
             for={to_form(%{}, as: :user)}
             phx-submit="reset_pw"

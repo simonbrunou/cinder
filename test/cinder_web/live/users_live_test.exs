@@ -195,6 +195,83 @@ defmodule CinderWeb.UsersLiveTest do
     assert Cinder.Accounts.get_user!(admin.id)
   end
 
+  test "a forged non-numeric phx-value id does not crash the LiveView and mutates nothing",
+       %{conn: conn} do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    user = Cinder.AccountsFixtures.user_fixture()
+    conn = log_in_user(conn, admin)
+
+    {:ok, lv, _html} = live(conn, ~p"/users")
+
+    forged = "abc"
+    role_before = Cinder.Accounts.get_user!(user.id).role
+    email_before = Cinder.Accounts.get_user!(user.id).email
+    quota_before = Cinder.Accounts.get_user!(user.id).request_quota
+
+    # Every destructive / mutating handler, plus the start_* handlers that read the
+    # raw id into an assign. A forged "abc" must never raise (String.to_integer would).
+    render_hook(lv, "toggle_role", %{"id" => forged})
+    render_hook(lv, "delete", %{"id" => forged})
+    render_hook(lv, "start_edit_email", %{"id" => forged})
+    render_hook(lv, "start_reset_pw", %{"id" => forged})
+    render_hook(lv, "start_delete", %{"id" => forged})
+    render_hook(lv, "set_quota", %{"_id" => forged, "quota" => "7"})
+
+    render_hook(lv, "save_email", %{"_id" => forged, "user" => %{"email" => "forged@example.com"}})
+
+    render_hook(lv, "reset_pw", %{
+      "_id" => forged,
+      "user" => %{
+        "password" => "a fresh password!",
+        "password_confirmation" => "a fresh password!"
+      }
+    })
+
+    # Process still alive after every forged event.
+    assert Process.alive?(lv.pid)
+
+    # No mutation happened to the real user.
+    reloaded = Cinder.Accounts.get_user!(user.id)
+    assert reloaded.role == role_before
+    assert reloaded.email == email_before
+    assert reloaded.request_quota == quota_before
+  end
+
+  test "acting on a since-deleted user id no-ops without raising", %{conn: conn} do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    user = Cinder.AccountsFixtures.user_fixture()
+    conn = log_in_user(conn, admin)
+
+    {:ok, lv, _html} = live(conn, ~p"/users")
+
+    # The user is deleted out from under this LiveView (e.g. a stale second tab).
+    stale_id = to_string(user.id)
+    {:ok, _} = Cinder.Accounts.delete_user(admin, user)
+    refute Cinder.Accounts.get_user_by_email(user.email)
+
+    render_hook(lv, "toggle_role", %{"id" => stale_id})
+    render_hook(lv, "delete", %{"id" => stale_id})
+    render_hook(lv, "start_edit_email", %{"id" => stale_id})
+    render_hook(lv, "start_reset_pw", %{"id" => stale_id})
+    render_hook(lv, "start_delete", %{"id" => stale_id})
+    render_hook(lv, "set_quota", %{"_id" => stale_id, "quota" => "7"})
+
+    render_hook(lv, "save_email", %{
+      "_id" => stale_id,
+      "user" => %{"email" => "stale@example.com"}
+    })
+
+    render_hook(lv, "reset_pw", %{
+      "_id" => stale_id,
+      "user" => %{
+        "password" => "a fresh password!",
+        "password_confirmation" => "a fresh password!"
+      }
+    })
+
+    assert Process.alive?(lv.pid)
+  end
+
   test "a non-admin cannot reach /users", %{conn: conn} do
     user = Cinder.AccountsFixtures.user_fixture()
     conn = log_in_user(conn, user)
