@@ -1,16 +1,16 @@
 # Graph Report - cinder  (2026-06-24)
 
 ## Corpus Check
-- 232 files · ~222,477 words
+- 246 files · ~237,575 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1680 nodes · 1966 edges · 221 communities (123 shown, 98 thin omitted)
+- 1773 nodes · 2048 edges · 235 communities (130 shown, 105 thin omitted)
 - Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 39 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `60269b46`
+- Built from commit: `188278b1`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -223,6 +223,20 @@
 - [[_COMMUNITY_Community 205|Community 205]]
 - [[_COMMUNITY_Community 206|Community 206]]
 - [[_COMMUNITY_Community 207|Community 207]]
+- [[_COMMUNITY_Community 221|Community 221]]
+- [[_COMMUNITY_Community 222|Community 222]]
+- [[_COMMUNITY_Community 223|Community 223]]
+- [[_COMMUNITY_Community 224|Community 224]]
+- [[_COMMUNITY_Community 225|Community 225]]
+- [[_COMMUNITY_Community 226|Community 226]]
+- [[_COMMUNITY_Community 227|Community 227]]
+- [[_COMMUNITY_Community 228|Community 228]]
+- [[_COMMUNITY_Community 229|Community 229]]
+- [[_COMMUNITY_Community 230|Community 230]]
+- [[_COMMUNITY_Community 231|Community 231]]
+- [[_COMMUNITY_Community 232|Community 232]]
+- [[_COMMUNITY_Community 233|Community 233]]
+- [[_COMMUNITY_Community 234|Community 234]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `Cinder.Catalog` - 84 edges
@@ -230,11 +244,11 @@
 3. `Cinder.Library` - 26 edges
 4. `Cinder.Accounts` - 24 edges
 5. `Cinder.Download.TvPoller` - 24 edges
-6. `Cinder.Download.Poller` - 22 edges
-7. `CinderWeb.UserAuth` - 21 edges
-8. `table()` - 18 edges
-9. `Cinder.Download.Client.Sabnzbd` - 18 edges
-10. `Cinder.Download.Client.QBittorrent` - 18 edges
+6. `CinderWeb.CoreComponents` - 23 edges
+7. `Cinder.Download.Poller` - 22 edges
+8. `CinderWeb.UserAuth` - 21 edges
+9. `table()` - 18 edges
+10. `Cinder.Download.Client.Sabnzbd` - 18 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `change()` --calls--> `table()`  [INFERRED]
@@ -248,7 +262,7 @@
 - `change()` --calls--> `table()`  [INFERRED]
   priv/repo/migrations/20260619094117_add_import_attempts_to_movies.exs → lib/cinder_web/components/core_components.ex
 
-## Communities (221 total, 98 thin omitted)
+## Communities (235 total, 105 thin omitted)
 
 ### Community 0 - "Community 0"
 Cohesion: 0.08
@@ -339,8 +353,8 @@ Cohesion: 0.25
 Nodes (15): Cinder.Acquisition.Scorer, blocked?(), config(), cover(), coverage(), greedy_key(), pick_best(), resolution_rank() (+7 more)
 
 ### Community 22 - "Community 22"
-Cohesion: 0.13
-Nodes (3): CinderWeb.CoreComponents, input(), translate_error()
+Cohesion: 0.10
+Nodes (6): CinderWeb.CoreComponents, badge_spec(), badge_title(), input(), status_badge(), translate_error()
 
 ### Community 23 - "Community 23"
 Cohesion: 0.12
@@ -515,8 +529,8 @@ Cohesion: 0.33
 Nodes (6): Cinder.MixProject, aliases(), deps(), elixirc_paths(), package(), project()
 
 ### Community 66 - "Community 66"
-Cohesion: 0.28
-Nodes (4): CinderWeb.CalendarLive, assign_rows(), badge(), mount()
+Cohesion: 0.27
+Nodes (5): CinderWeb.CalendarLive, assign_rows(), badge(), episode_state(), mount()
 
 ### Community 67 - "Community 67"
 Cohesion: 0.36
@@ -690,10 +704,38 @@ Nodes (3): CinderWeb.Endpoint, session(), session_options()
 Cohesion: 0.67
 Nodes (3): CinderWeb.Router, basic_auth(), present()
 
+### Community 221 - "Community 221"
+Cohesion: 0.17
+Nodes (11): Decision: `<.page>` is dropped (council 3–0), File structure, Global Constraints, Self-review, Task 1: `<.status_badge>` component (build + unit test), Task 2: Adopt `<.status_badge>`; delete the 6 helpers, Task 3: `<.confirm_action>` component + adopt across the yes/no confirms, Task 4: `<.empty_state>` component + adopt; add `search-error` variant (+3 more)
+
+### Community 222 - "Community 222"
+Cohesion: 0.20
+Nodes (9): 8 adoption sites, Component built, Concerns, deny-with-reason confirmed untouched, Full-gate result, Self-review, Task 3 Report — `<.confirm_action>` component + adoption, TDD evidence (+1 more)
+
+### Community 223 - "Community 223"
+Cohesion: 0.22
+Nodes (8): Files changed, Full gate result, GREEN, RED, Self-review, Task 1 Report: `<.status_badge>` component, TDD Evidence, What was implemented
+
+### Community 224 - "Community 224"
+Cohesion: 0.29
+Nodes (6): Files changed, Full gate result, Helper groups confirmed deleted (zero remaining callers), Self-review, Task 2 Report: Adopt `<.status_badge>`; delete 6 badge helpers, Test assertions updated (file:line, old→new)
+
+### Community 230 - "Community 230"
+Cohesion: 0.18
+Nodes (10): 3 Conversions, 3 Header assertions added, Back-links preserved, Commit, Concerns, Deferred live check, Full-gate result, Monitored badge placement (series_detail_live.ex) (+2 more)
+
+### Community 231 - "Community 231"
+Cohesion: 0.20
+Nodes (9): Adoption sites, Component built, Concerns, Full gate result, search-error split, Self-review, Task 4 Report — `<.empty_state>` component + adoption + search-error variant, TDD evidence (+1 more)
+
+### Community 232 - "Community 232"
+Cohesion: 0.22
+Nodes (8): Concerns, Full-gate result, Health-check adoption, phx-disable-with buttons (file:line after edit), Self-review, Spinner built, Task 5 Report: `<.spinner>` + loading feedback + phx-disable-with, Test assertions updated
+
 ## Knowledge Gaps
-- **523 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+518 more)
+- **581 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+576 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **98 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **105 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
@@ -703,7 +745,7 @@ _Questions this graph is uniquely positioned to answer:_
 - **Why does `Cinder.Catalog` connect `Community 3` to `Community 37`, `Community 70`, `Community 71`, `Community 59`, `Community 91`, `Community 28`?**
   _High betweenness centrality (0.001) - this node is a cross-community bridge._
 - **What connects `tidewave`, `$schema`, `erlang` to the rest of the system?**
-  _523 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _581 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**
   _Cohesion score 0.07619738751814223 - nodes in this community are weakly interconnected._
 - **Should `Community 1` be split into smaller, more focused modules?**
