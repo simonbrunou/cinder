@@ -70,7 +70,7 @@ defmodule CinderWeb.SettingsLive do
         </:subtitle>
       </.header>
 
-      <.link navigate={~p"/status"} class="link mb-6 inline-block">← Status</.link>
+      <.link navigate={~p"/dashboard"} class="link mb-6 inline-block">← Dashboard</.link>
 
       <form id="settings-form" phx-submit="save" class="space-y-8">
         <.service_fields form={@form} health={@health} />
