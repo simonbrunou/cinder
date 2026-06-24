@@ -53,7 +53,8 @@ defmodule CinderWeb.Router do
     live_session :authenticated,
       on_mount: [
         {CinderWeb.UserAuth, :require_authenticated},
-        {CinderWeb.UserAuth, :require_setup}
+        {CinderWeb.UserAuth, :require_setup},
+        {CinderWeb.UserAuth, :current_path}
       ] do
       live "/", WatchlistLive
       live "/my-requests", MyRequestsLive
@@ -65,7 +66,8 @@ defmodule CinderWeb.Router do
       on_mount: [
         {CinderWeb.UserAuth, :require_authenticated},
         {CinderWeb.UserAuth, :require_admin},
-        {CinderWeb.UserAuth, :require_setup}
+        {CinderWeb.UserAuth, :require_setup},
+        {CinderWeb.UserAuth, :current_path}
       ] do
       live "/status", StatusLive
       live "/settings", SettingsLive
@@ -80,7 +82,8 @@ defmodule CinderWeb.Router do
     live_session :setup,
       on_mount: [
         {CinderWeb.UserAuth, :require_authenticated},
-        {CinderWeb.UserAuth, :require_admin}
+        {CinderWeb.UserAuth, :require_admin},
+        {CinderWeb.UserAuth, :current_path}
       ] do
       live "/setup", SetupLive
     end
@@ -110,7 +113,10 @@ defmodule CinderWeb.Router do
     pipe_through [:browser, :require_authenticated_user]
 
     live_session :require_authenticated_user,
-      on_mount: [{CinderWeb.UserAuth, :require_authenticated}] do
+      on_mount: [
+        {CinderWeb.UserAuth, :require_authenticated},
+        {CinderWeb.UserAuth, :current_path}
+      ] do
       live "/users/settings", UserLive.Settings, :edit
       live "/users/settings/confirm-email/:token", UserLive.Settings, :confirm_email
     end
@@ -122,7 +128,10 @@ defmodule CinderWeb.Router do
     pipe_through [:browser]
 
     live_session :current_user,
-      on_mount: [{CinderWeb.UserAuth, :mount_current_scope}] do
+      on_mount: [
+        {CinderWeb.UserAuth, :mount_current_scope},
+        {CinderWeb.UserAuth, :current_path}
+      ] do
       live "/users/register", UserLive.Registration, :new
       live "/users/log-in", UserLive.Login, :new
       live "/users/log-in/:token", UserLive.Confirmation, :new
