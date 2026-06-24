@@ -504,6 +504,97 @@ defmodule CinderWeb.CoreComponents do
     for {^field, {msg, opts}} <- errors, do: translate_error({msg, opts})
   end
 
+  @doc """
+  A status badge with an icon **and** a text label — never colour alone (a11y). One
+  source of truth for every pipeline / request / episode / grab / health state.
+
+  `kind` selects the vocabulary; `status` is the state within it. Derived-state callers
+  (episode, grab) resolve the atom themselves and pass it; `health` passes `:ok` or
+  `{:error, reason}` (the reason becomes the hover title).
+
+  ## Examples
+
+      <.status_badge kind={:movie} status={:downloading} />
+      <.status_badge kind={:request} status={:pending} />
+      <.status_badge kind={:episode} status={:wanted} />
+      <.status_badge kind={:grab} status={:downloaded} />
+      <.status_badge kind={:health} status={{:error, :timeout}} />
+  """
+  attr :kind, :atom, required: true, values: [:movie, :request, :episode, :grab, :health]
+  attr :status, :any, required: true
+  attr :class, :any, default: nil
+
+  def status_badge(assigns) do
+    {label, color, icon} = badge_spec(assigns.kind, assigns.status)
+
+    assigns =
+      assign(assigns,
+        label: label,
+        color: color,
+        icon: icon,
+        title: badge_title(assigns.kind, assigns.status)
+      )
+
+    ~H"""
+    <span class={["badge badge-sm gap-1", @color, @class]} title={@title}>
+      <.icon name={@icon} class="size-3.5" />{@label}
+    </span>
+    """
+  end
+
+  # movie pipeline status
+  defp badge_spec(:movie, :requested), do: {"Requested", "badge-neutral", "hero-clock"}
+  defp badge_spec(:movie, :searching), do: {"Searching", "badge-info", "hero-magnifying-glass"}
+  defp badge_spec(:movie, :downloading), do: {"Downloading", "badge-info", "hero-arrow-down-tray"}
+  defp badge_spec(:movie, :downloaded), do: {"Downloaded", "badge-accent", "hero-check"}
+  defp badge_spec(:movie, :available), do: {"Available", "badge-success", "hero-check-circle"}
+  defp badge_spec(:movie, :no_match), do: {"No match", "badge-warning", "hero-magnifying-glass"}
+
+  defp badge_spec(:movie, :search_failed),
+    do: {"Search failed", "badge-error", "hero-exclamation-triangle"}
+
+  defp badge_spec(:movie, :import_failed),
+    do: {"Import failed", "badge-error", "hero-exclamation-triangle"}
+
+  defp badge_spec(:movie, :cancelled), do: {"Cancelled", "badge-error", "hero-x-circle"}
+
+  # request / composite discovery state
+  defp badge_spec(:request, :pending), do: {"Pending", "badge-warning", "hero-clock"}
+  defp badge_spec(:request, :approved), do: {"Approved", "badge-info", "hero-check"}
+  defp badge_spec(:request, :denied), do: {"Denied", "badge-error", "hero-x-circle"}
+  defp badge_spec(:request, :available), do: {"Available", "badge-success", "hero-check-circle"}
+
+  # episode derived-state
+  defp badge_spec(:episode, :available), do: {"Available", "badge-success", "hero-check-circle"}
+
+  defp badge_spec(:episode, :downloading),
+    do: {"Downloading", "badge-info", "hero-arrow-down-tray"}
+
+  defp badge_spec(:episode, :wanted), do: {"Wanted", "badge-warning", "hero-eye"}
+  defp badge_spec(:episode, :upcoming), do: {"Upcoming", "badge-ghost", "hero-calendar"}
+
+  # grab state
+  defp badge_spec(:grab, :downloading), do: {"Downloading", "badge-info", "hero-arrow-down-tray"}
+  defp badge_spec(:grab, :downloaded), do: {"Downloaded", "badge-success", "hero-check"}
+
+  # service health
+  defp badge_spec(:health, :ok), do: {"OK", "badge-success", "hero-check-circle"}
+
+  defp badge_spec(:health, {:error, _reason}),
+    do: {"Unreachable", "badge-error", "hero-exclamation-triangle"}
+
+  # safe fallback — a view must never crash over an unmapped state
+  defp badge_spec(_kind, status),
+    do: {humanize_status(status), "badge-neutral", "hero-question-mark-circle"}
+
+  defp badge_title(:health, {:error, reason}), do: inspect(reason)
+  defp badge_title(_kind, _status), do: nil
+
+  defp humanize_status(status) when is_atom(status),
+    do: status |> Atom.to_string() |> String.replace("_", " ") |> String.capitalize()
+
+  defp humanize_status(status), do: inspect(status)
+
   @doc "A daisyUI badge for a movie's pipeline status, coloured by state."
   attr :status, :atom, required: true
 
