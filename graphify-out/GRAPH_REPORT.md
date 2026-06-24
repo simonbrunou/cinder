@@ -1,16 +1,16 @@
 # Graph Report - cinder  (2026-06-24)
 
 ## Corpus Check
-- 246 files · ~237,575 words
+- 247 files · ~242,281 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1773 nodes · 2048 edges · 235 communities (130 shown, 105 thin omitted)
-- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 39 edges (avg confidence: 0.8)
+- 1784 nodes · 2060 edges · 239 communities (131 shown, 108 thin omitted)
+- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 36 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `188278b1`
+- Built from commit: `9a245ef7`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -237,14 +237,18 @@
 - [[_COMMUNITY_Community 232|Community 232]]
 - [[_COMMUNITY_Community 233|Community 233]]
 - [[_COMMUNITY_Community 234|Community 234]]
+- [[_COMMUNITY_Community 235|Community 235]]
+- [[_COMMUNITY_Community 236|Community 236]]
+- [[_COMMUNITY_Community 237|Community 237]]
+- [[_COMMUNITY_Community 238|Community 238]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `Cinder.Catalog` - 84 edges
+1. `Cinder.Catalog` - 88 edges
 2. `Cinder.Settings` - 52 edges
-3. `Cinder.Library` - 26 edges
-4. `Cinder.Accounts` - 24 edges
-5. `Cinder.Download.TvPoller` - 24 edges
-6. `CinderWeb.CoreComponents` - 23 edges
+3. `CinderWeb.CoreComponents` - 27 edges
+4. `Cinder.Library` - 26 edges
+5. `Cinder.Accounts` - 24 edges
+6. `Cinder.Download.TvPoller` - 24 edges
 7. `Cinder.Download.Poller` - 22 edges
 8. `CinderWeb.UserAuth` - 21 edges
 9. `table()` - 18 edges
@@ -262,15 +266,15 @@
 - `change()` --calls--> `table()`  [INFERRED]
   priv/repo/migrations/20260619094117_add_import_attempts_to_movies.exs → lib/cinder_web/components/core_components.ex
 
-## Communities (235 total, 105 thin omitted)
+## Communities (239 total, 108 thin omitted)
 
 ### Community 0 - "Community 0"
 Cohesion: 0.08
 Nodes (36): Cinder.Settings, apply_config_fields(), apply_download_clients(), apply_kind_config(), apply_library_config(), apply_media_server(), base(), base_path() (+28 more)
 
 ### Community 1 - "Community 1"
-Cohesion: 0.05
-Nodes (21): Cinder.CatalogRefreshTest, stub_tmdb(), Cinder.LibraryTest, stub_dir(), stub_link_ok(), Cinder.Download.Client.SabnzbdTest, stub(), stub_queue_then_history() (+13 more)
+Cohesion: 0.06
+Nodes (16): Cinder.CatalogRefreshTest, stub_tmdb(), Cinder.LibraryTest, stub_dir(), stub_link_ok(), Cinder.Download.Client.SabnzbdTest, stub(), stub_queue_then_history() (+8 more)
 
 ### Community 2 - "Community 2"
 Cohesion: 0.05
@@ -353,7 +357,7 @@ Cohesion: 0.25
 Nodes (15): Cinder.Acquisition.Scorer, blocked?(), config(), cover(), coverage(), greedy_key(), pick_best(), resolution_rank() (+7 more)
 
 ### Community 22 - "Community 22"
-Cohesion: 0.10
+Cohesion: 0.08
 Nodes (6): CinderWeb.CoreComponents, badge_spec(), badge_title(), input(), status_badge(), translate_error()
 
 ### Community 23 - "Community 23"
@@ -361,8 +365,8 @@ Cohesion: 0.12
 Nodes (15): Admin CRUD on entities — design, Approach (A — extend in place, add the two missing pages), Architecture & routing, Authorization & safety guards, Context API additions, Deferred (own future spec), Delete / cancel UX, Goal & decisions (+7 more)
 
 ### Community 24 - "Community 24"
-Cohesion: 0.17
-Nodes (8): CinderWeb.WatchlistLive, add(), assign_movie_status(), assign_request_state(), handle_info(), latest_request_status(), mount(), patch_movie_status()
+Cohesion: 0.19
+Nodes (10): CinderWeb.DiscoverLive, add(), assign_movie_status(), assign_request_state(), handle_event(), handle_info(), latest_request_status(), mount() (+2 more)
 
 ### Community 25 - "Community 25"
 Cohesion: 0.12
@@ -413,8 +417,8 @@ Cohesion: 0.26
 Nodes (8): Cinder.Accounts.User, email_changeset(), maybe_hash_password(), password_changeset(), registration_changeset(), validate_email(), validate_email_changed(), validate_password()
 
 ### Community 37 - "Community 37"
-Cohesion: 0.21
-Nodes (12): add_series_to_watchlist(), create_series(), fetch_seasons(), get_series_by_tmdb_id(), insert_series(), monitored?(), refresh_series(), search_movies() (+4 more)
+Cohesion: 0.24
+Nodes (10): fetch_seasons(), interleave(), merge_discover(), refresh_series(), search_discover(), search_movies(), search_tv(), tag() (+2 more)
 
 ### Community 38 - "Community 38"
 Cohesion: 0.36
@@ -569,8 +573,8 @@ Cohesion: 0.32
 Nodes (5): CinderWeb.MoviesLive, find(), handle_event(), handle_info(), upsert()
 
 ### Community 77 - "Community 77"
-Cohesion: 0.29
-Nodes (3): CinderWeb.SeriesLive, handle_event(), run_series_op()
+Cohesion: 0.20
+Nodes (9): File Structure, Global Constraints, Self-Review (against the UX-3 spec "Done when"), Task 1: `Catalog.search_discover/1` — concurrent-shape combined search, Task 2: `<.media_card>` shared component, Task 3: `DiscoverLive` — merged requester surface (movie + TV search, watchlist), route `/`, Task 4: Relocate the admin "Added series" block; delete `SeriesLive`; redirect `/series`, Task 5: Sidebar nav label, graph refresh, full-suite green (+1 more)
 
 ### Community 78 - "Community 78"
 Cohesion: 0.50
@@ -732,25 +736,29 @@ Nodes (9): Adoption sites, Component built, Concerns, Full gate result, search-e
 Cohesion: 0.22
 Nodes (8): Concerns, Full-gate result, Health-check adoption, phx-disable-with buttons (file:line after edit), Self-review, Spinner built, Task 5 Report: `<.spinner>` + loading feedback + phx-disable-with, Test assertions updated
 
+### Community 235 - "Community 235"
+Cohesion: 0.40
+Nodes (6): add_series_to_watchlist(), create_series(), get_series_by_tmdb_id(), insert_series(), monitored?(), series_attrs()
+
 ## Knowledge Gaps
-- **581 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+576 more)
+- **589 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+584 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **105 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **108 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `table()` connect `Community 74` to `Community 153`, `Community 142`, `Community 143`, `Community 144`, `Community 49`, `Community 145`, `Community 147`, `Community 148`, `Community 149`, `Community 22`, `Community 150`, `Community 151`, `Community 146`, `Community 154`, `Community 152`?**
   _High betweenness centrality (0.002) - this node is a cross-community bridge._
-- **Why does `Cinder.Catalog` connect `Community 3` to `Community 37`, `Community 70`, `Community 71`, `Community 59`, `Community 91`, `Community 28`?**
+- **Why does `CinderWeb.CoreComponents` connect `Community 22` to `Community 74`?**
+  _High betweenness centrality (0.002) - this node is a cross-community bridge._
+- **Why does `Cinder.Catalog` connect `Community 3` to `Community 37`, `Community 70`, `Community 71`, `Community 91`, `Community 235`, `Community 59`, `Community 28`?**
   _High betweenness centrality (0.001) - this node is a cross-community bridge._
 - **What connects `tidewave`, `$schema`, `erlang` to the rest of the system?**
-  _581 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _589 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**
   _Cohesion score 0.07619738751814223 - nodes in this community are weakly interconnected._
 - **Should `Community 1` be split into smaller, more focused modules?**
-  _Cohesion score 0.05110336817653891 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.06050420168067227 - nodes in this community are weakly interconnected._
 - **Should `Community 2` be split into smaller, more focused modules?**
   _Cohesion score 0.05 - nodes in this community are weakly interconnected._
-- **Should `Community 3` be split into smaller, more focused modules?**
-  _Cohesion score 0.08547008547008547 - nodes in this community are weakly interconnected._

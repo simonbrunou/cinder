@@ -73,7 +73,7 @@ defmodule CinderWeb.Layouts do
             <li class="menu-title">Everyone</li>
             <.nav_item
               navigate={~p"/"}
-              label="Search"
+              label="Discover"
               icon="hero-magnifying-glass"
               current_path={@current_path}
             />

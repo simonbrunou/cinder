@@ -4,7 +4,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
 
   Loads season data directly from TMDB (no local series row required) and lets
   any authenticated user request a season. State badges (Pending / Approved /
-  Denied) mirror the movie request-button pattern in `WatchlistLive`. No monitor
+  Denied) mirror the movie request-button pattern in `DiscoverLive`. No monitor
   toggles — those stay on the admin `/series/:id` page.
   """
   use CinderWeb, :live_view

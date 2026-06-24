@@ -79,7 +79,7 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
     conn = log_in_user(conn, user)
     {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
 
-    # The denied badge is shown alongside the Request button (parity with WatchlistLive).
+    # The denied badge is shown alongside the Request button (parity with DiscoverLive).
     assert has_element?(lv, ~s(.badge), "Denied")
     assert has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
 

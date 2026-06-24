@@ -10,7 +10,7 @@ defmodule CinderWeb.AppShellTest do
       {:ok, _lv, html} = live(conn, ~p"/")
 
       for label <- [
-            "Search",
+            "Discover",
             "My requests",
             "Requests",
             "Status",
@@ -46,7 +46,7 @@ defmodule CinderWeb.AppShellTest do
 
     test "shows only the everyone links, never the admin group", %{conn: conn} do
       {:ok, _lv, html} = live(conn, ~p"/")
-      assert html =~ "Search"
+      assert html =~ "Discover"
       assert html =~ "My requests"
       refute html =~ "Requests"
       refute html =~ "Status"
