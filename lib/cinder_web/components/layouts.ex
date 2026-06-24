@@ -63,7 +63,10 @@ defmodule CinderWeb.Layouts do
       <div class="drawer-side z-20">
         <label for="nav-drawer" aria-label="Close menu" class="drawer-overlay"></label>
         <aside class="flex min-h-screen w-64 flex-col gap-2 border-r border-base-300/60 bg-base-200 p-4">
-          <a href={~p"/"} class="mb-2 flex items-center gap-2 px-2">
+          <a
+            href={if @admin?, do: ~p"/dashboard", else: ~p"/"}
+            class="mb-2 flex items-center gap-2 px-2"
+          >
             <span class="font-display text-xl font-bold tracking-wide">
               CIN<span class="text-primary">DER</span>
             </span>
@@ -87,9 +90,21 @@ defmodule CinderWeb.Layouts do
             <%= if @admin? do %>
               <li class="menu-title mt-2">Admin</li>
               <.nav_item
+                navigate={~p"/dashboard"}
+                label="Dashboard"
+                icon="hero-squares-2x2"
+                current_path={@current_path}
+              />
+              <.nav_item
                 navigate={~p"/requests"}
                 label="Requests"
                 icon="hero-inbox-arrow-down"
+                current_path={@current_path}
+              />
+              <.nav_item
+                navigate={~p"/library"}
+                label="Library"
+                icon="hero-rectangle-stack"
                 current_path={@current_path}
               />
               <.nav_item
@@ -105,15 +120,15 @@ defmodule CinderWeb.Layouts do
                 current_path={@current_path}
               />
               <.nav_item
-                navigate={~p"/users"}
-                label="Users"
-                icon="hero-users"
-                current_path={@current_path}
-              />
-              <.nav_item
                 navigate={~p"/settings"}
                 label="Settings"
                 icon="hero-cog-6-tooth"
+                current_path={@current_path}
+              />
+              <.nav_item
+                navigate={~p"/users"}
+                label="Users"
+                icon="hero-users"
                 current_path={@current_path}
               />
             <% end %>

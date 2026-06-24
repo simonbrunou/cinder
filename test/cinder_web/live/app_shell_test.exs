@@ -7,23 +7,17 @@ defmodule CinderWeb.AppShellTest do
     setup :register_and_log_in_admin
 
     test "renders the role-grouped sidebar with all admin links", %{conn: conn} do
-      {:ok, _lv, html} = live(conn, ~p"/")
+      {:ok, _lv, html} = live(conn, ~p"/calendar")
 
-      for label <- [
-            "Discover",
-            "My requests",
-            "Requests",
-            "Activity",
-            "Calendar",
-            "Users",
-            "Settings"
-          ] do
+      for label <- ~w(Discover Dashboard Requests Library Activity Calendar Settings Users) do
         assert html =~ label
       end
+
+      refute html =~ ">Status<"
     end
 
     test "marks the current route active", %{conn: conn} do
-      {:ok, _lv, html} = live(conn, ~p"/activity")
+      {:ok, _lv, html} = live(conn, ~p"/calendar")
       assert html =~ ~s(aria-current="page")
     end
 
@@ -44,13 +38,14 @@ defmodule CinderWeb.AppShellTest do
   describe "as a non-admin user" do
     setup :register_and_log_in_user
 
-    test "shows only the everyone links, never the admin group", %{conn: conn} do
+    test "non-admins see only the Everyone group", %{conn: conn} do
       {:ok, _lv, html} = live(conn, ~p"/")
+
       assert html =~ "Discover"
       assert html =~ "My requests"
-      refute html =~ "Requests"
+      refute html =~ "Dashboard"
+      refute html =~ "Library"
       refute html =~ "Activity"
-      refute html =~ "Users"
       refute html =~ "Settings"
     end
   end
