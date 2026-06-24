@@ -56,7 +56,7 @@ defmodule CinderWeb.Router do
         {CinderWeb.UserAuth, :require_setup},
         {CinderWeb.UserAuth, :current_path}
       ] do
-      live "/", WatchlistLive
+      live "/", DiscoverLive
       live "/my-requests", MyRequestsLive
       live "/series", SeriesLive
       live "/series/tmdb/:tmdb_id", SeriesDiscoveryLive

@@ -1,4 +1,4 @@
-defmodule CinderWeb.WatchlistLiveTest do
+defmodule CinderWeb.DiscoverLiveTest do
   use CinderWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
@@ -8,35 +8,70 @@ defmodule CinderWeb.WatchlistLiveTest do
   alias Cinder.Catalog.Movie
   alias Cinder.Requests
 
-  # The LiveView runs in its own process, so the mock must be global (requires async: false).
+  # The LiveView runs in its own process, so the mock must be global (async: false).
   setup :register_and_log_in_admin
   setup :set_mox_global
 
-  @inception %{tmdb_id: 27_205, title: "Inception", year: 2010, poster_path: "/p.jpg"}
-
-  defp stub_search(results) do
-    stub(Cinder.Catalog.TMDBMock, :search, fn _query -> {:ok, results} end)
+  setup do
+    # search_discover always hits both endpoints; default both to empty.
+    stub(Cinder.Catalog.TMDBMock, :search, fn _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :search_tv, fn _ -> {:ok, []} end)
+    :ok
   end
 
-  test "first load shows an empty-watchlist state with an accessible search field", %{conn: conn} do
+  @inception %{tmdb_id: 27_205, title: "Inception", year: 2010, poster_path: "/p.jpg"}
+  @got %{tmdb_id: 1399, title: "Game of Thrones", year: 2011, poster_path: "/got.jpg"}
+
+  defp stub_movies(results),
+    do: stub(Cinder.Catalog.TMDBMock, :search, fn _ -> {:ok, results} end)
+
+  defp stub_tv(results),
+    do: stub(Cinder.Catalog.TMDBMock, :search_tv, fn _ -> {:ok, results} end)
+
+  test "first load shows an empty-watchlist state and an accessible search field", %{conn: conn} do
     {:ok, lv, html} = live(conn, ~p"/")
     assert html =~ "watchlist is empty"
-    assert has_element?(lv, "input#query[aria-label='Search movies']")
+    assert has_element?(lv, "input#query[aria-label='Search movies and TV']")
   end
 
-  test "typing a query renders TMDB results", %{conn: conn} do
-    stub_search([@inception])
+  test "typing a query renders movie results", %{conn: conn} do
+    stub_movies([@inception])
     {:ok, lv, _html} = live(conn, ~p"/")
 
     html = lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
 
     assert html =~ "Inception"
     assert html =~ "2010"
+    assert html =~ "Film"
   end
 
-  # Admin path: add creates a :requested movie (via auto-approved request)
+  test "typing a query renders TV results that link to the season picker", %{conn: conn} do
+    stub_tv([@got])
+    {:ok, lv, _html} = live(conn, ~p"/")
+
+    html = lv |> form("#search-form", %{"query" => "thrones"}) |> render_change()
+
+    assert html =~ "Game of Thrones"
+    assert html =~ "TV"
+    assert has_element?(lv, ~s(#results a[href="/series/tmdb/1399"]))
+  end
+
+  test "a single query returns movies AND TV together in one grid", %{conn: conn} do
+    stub_movies([@inception])
+    stub_tv([@got])
+    {:ok, lv, _html} = live(conn, ~p"/")
+
+    html = lv |> form("#search-form", %{"query" => "x"}) |> render_change()
+
+    assert html =~ "Inception"
+    assert html =~ "Game of Thrones"
+    # movie → inline Add; TV → season-picker link
+    assert has_element?(lv, "#add-27205")
+    assert has_element?(lv, ~s(#results a[href="/series/tmdb/1399"]))
+  end
+
   test "admin add creates a :requested movie and shows it in the watchlist", %{conn: conn} do
-    stub_search([@inception])
+    stub_movies([@inception])
     {:ok, lv, _html} = live(conn, ~p"/")
 
     lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
@@ -46,9 +81,9 @@ defmodule CinderWeb.WatchlistLiveTest do
     assert [%Movie{tmdb_id: 27_205, status: :requested}] = Catalog.list_watchlist()
   end
 
-  # Non-admin path: add creates a pending request, no movie created
-  test "non-admin add creates a pending request, no movie", %{conn: conn} do
-    stub_search([@inception])
+  # Regression (UX-3 Done-when): a non-admin add creates a pending request, NO :requested movie.
+  test "non-admin add creates a pending request, no :requested movie row", %{conn: conn} do
+    stub_movies([@inception])
     user = Cinder.AccountsFixtures.user_fixture()
     conn = log_in_user(conn, user)
     {:ok, lv, _html} = live(conn, ~p"/")
@@ -61,8 +96,6 @@ defmodule CinderWeb.WatchlistLiveTest do
     assert [%Requests.Request{status: :pending}] = Requests.list_for_user(user)
   end
 
-  # A title the user already has pending shows a Pending badge, not an Add button —
-  # the badge is the dup guard at the UI layer (the request layer enforces it too).
   test "a pending request shows a Pending badge instead of Add", %{conn: _conn} do
     user = Cinder.AccountsFixtures.user_fixture()
     conn = log_in_user(Phoenix.ConnTest.build_conn(), user)
@@ -76,7 +109,7 @@ defmodule CinderWeb.WatchlistLiveTest do
         poster_path: "/p.jpg"
       })
 
-    stub_search([@inception])
+    stub_movies([@inception])
     {:ok, lv, _html} = live(conn, ~p"/")
 
     lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
@@ -90,7 +123,7 @@ defmodule CinderWeb.WatchlistLiveTest do
     {:ok, _} = Cinder.Accounts.update_user_quota(user, 0)
     conn = log_in_user(Phoenix.ConnTest.build_conn(), user)
 
-    stub_search([@inception])
+    stub_movies([@inception])
     {:ok, lv, _html} = live(conn, ~p"/")
 
     lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
@@ -100,35 +133,32 @@ defmodule CinderWeb.WatchlistLiveTest do
     assert Requests.list_for_user(user) == []
   end
 
-  test "a TMDB error flashes without crashing, and doesn't claim 'No matches'", %{conn: conn} do
+  test "a total TMDB failure flashes and shows 'Search failed', not 'No matches'", %{conn: conn} do
     stub(Cinder.Catalog.TMDBMock, :search, fn _ -> {:error, :timeout} end)
+    stub(Cinder.Catalog.TMDBMock, :search_tv, fn _ -> {:error, :nxdomain} end)
     {:ok, lv, _html} = live(conn, ~p"/")
 
     html = lv |> form("#search-form", %{"query" => "boom"}) |> render_change()
 
-    assert html =~ "TMDB search failed"
-    refute html =~ "No matches"
     assert html =~ "Search failed"
-    # Still alive and responsive.
+    refute html =~ "No matches"
     assert render(lv) =~ "search-form"
   end
 
-  test "an add event with a non-numeric tmdb_id is ignored, not a crash", %{conn: conn} do
+  test "an add with a non-numeric tmdb_id is ignored, not a crash", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/")
-
     assert render_hook(lv, "add", %{"tmdb_id" => "not-a-number"}) =~ "search-form"
     assert Catalog.list_watchlist() == []
   end
 
   test "a malformed (non-binary) add payload is ignored, not a crash", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/")
-
     assert render_hook(lv, "add", %{"tmdb_id" => ["x"]}) =~ "search-form"
     assert Catalog.list_watchlist() == []
   end
 
   test "watchlist renders a colour-coded status badge", %{conn: conn} do
-    {:ok, _movie} = Cinder.Catalog.add_to_watchlist(%{tmdb_id: 8100, title: "M"})
+    {:ok, _movie} = Catalog.add_to_watchlist(%{tmdb_id: 8100, title: "M"})
     {:ok, _lv, html} = live(conn, ~p"/")
     assert html =~ "badge-neutral"
   end
@@ -145,12 +175,11 @@ defmodule CinderWeb.WatchlistLiveTest do
   end
 
   test "drops a deleted movie from the watchlist on {:movie_deleted, id}", %{conn: conn} do
-    {:ok, movie} = Cinder.Catalog.add_to_watchlist(%{tmdb_id: 9500, title: "Gone Soon"})
-
+    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 9500, title: "Gone Soon"})
     {:ok, lv, html} = live(conn, ~p"/")
     assert html =~ "Gone Soon"
 
-    Cinder.Catalog.broadcast_movie_deleted(movie.id)
+    Catalog.broadcast_movie_deleted(movie.id)
     refute render(lv) =~ "Gone Soon"
   end
 end
