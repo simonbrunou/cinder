@@ -305,7 +305,10 @@ defmodule CinderWeb.UserAuth do
     end)
   end
 
-  @doc "Returns the path to redirect to after log in."
+  @doc "Returns the path to redirect to after log in (admins land on the dashboard)."
+  def signed_in_path(%{assigns: %{current_scope: scope}}),
+    do: if(admin?(scope), do: ~p"/dashboard", else: ~p"/")
+
   def signed_in_path(_), do: ~p"/"
 
   @doc """

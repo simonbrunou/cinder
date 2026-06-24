@@ -68,6 +68,7 @@ defmodule CinderWeb.Router do
         {CinderWeb.UserAuth, :require_setup},
         {CinderWeb.UserAuth, :current_path}
       ] do
+      live "/dashboard", DashboardLive
       live "/activity", ActivityLive
       live "/settings", SettingsLive
       live "/requests", RequestsLive
