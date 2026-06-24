@@ -48,6 +48,13 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     Catalog.get_series_with_tree(series_id).seasons |> hd()
   end
 
+  test "renders the page under the shared header", %{conn: conn} do
+    series = create_series(799)
+    {:ok, _lv, html} = live(conn, ~p"/series/#{series.id}")
+    assert html =~ "Test Show"
+    refute html =~ ~s(<h1 class="text-2xl font-semibold">)
+  end
+
   test "renders the season/episode tree", %{conn: conn} do
     series = create_series(700)
     {:ok, _lv, html} = live(conn, ~p"/series/#{series.id}")

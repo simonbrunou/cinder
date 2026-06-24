@@ -64,6 +64,12 @@ defmodule CinderWeb.CalendarLiveTest do
     assert {:error, {:redirect, %{to: "/"}}} = live(conn, ~p"/calendar")
   end
 
+  test "renders the page under the shared header", %{conn: conn} do
+    {:ok, _lv, html} = live(conn, ~p"/calendar")
+    assert html =~ "Upcoming"
+    refute html =~ ~s(<h1 class="mb-6 text-2xl font-semibold">)
+  end
+
   test "survives a {:series_deleted, id} broadcast (re-derives, no crash)", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/calendar")
     Cinder.Catalog.broadcast_series_deleted(123)

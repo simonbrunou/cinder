@@ -220,15 +220,15 @@ defmodule CinderWeb.SeriesDetailLive do
           class="aspect-[2/3] w-24 rounded object-cover"
         />
         <div>
-          <h1 class="text-2xl font-semibold">
+          <.header>
             {@series.title}
-            <span :if={@series.year} class="font-normal text-base-content/60">
-              ({@series.year})
-            </span>
-          </h1>
-          <span class={["badge badge-sm mt-2", @series.monitored && "badge-success"]}>
-            {if @series.monitored, do: "monitored", else: "not monitored"}
-          </span>
+            <span :if={@series.year} class="font-normal text-base-content/60">({@series.year})</span>
+            <:actions>
+              <span class={["badge badge-sm", @series.monitored && "badge-success"]}>
+                {if @series.monitored, do: "Monitored", else: "Unmonitored"}
+              </span>
+            </:actions>
+          </.header>
         </div>
       </div>
 

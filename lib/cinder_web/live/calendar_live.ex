@@ -48,7 +48,10 @@ defmodule CinderWeb.CalendarLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
-      <h1 class="mb-6 text-2xl font-semibold">Upcoming</h1>
+      <.header>
+        Upcoming
+        <:subtitle>Monitored episodes airing in the next 90 days.</:subtitle>
+      </.header>
 
       <.empty_state
         :if={@rows == []}

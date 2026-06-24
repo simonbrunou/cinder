@@ -138,12 +138,10 @@ defmodule CinderWeb.SeriesDiscoveryLive do
           class="hidden"
         />
         <div>
-          <h1 class="text-2xl font-semibold">
+          <.header>
             {@info.title}
-            <span :if={@info.year} class="font-normal text-base-content/60">
-              ({@info.year})
-            </span>
-          </h1>
+            <span :if={@info.year} class="font-normal text-base-content/60">({@info.year})</span>
+          </.header>
         </div>
       </div>
 
