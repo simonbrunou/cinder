@@ -43,7 +43,7 @@ defmodule CinderWeb.CalendarLiveTest do
       air_date: Date.add(today, -1)
     })
 
-    {:ok, _lv, html} = live(conn, ~p"/calendar")
+    {:ok, lv, html} = live(conn, ~p"/calendar")
 
     assert html =~ "Calendar Show"
     assert html =~ "S01E01"
@@ -51,6 +51,25 @@ defmodule CinderWeb.CalendarLiveTest do
     assert html =~ "Upcoming"
     assert html =~ "S01E02"
     assert html =~ "Wanted"
+    assert has_element?(lv, "#calendar-list")
+    refute html =~ "<table"
+  end
+
+  test "renders upcoming episodes as cards (no overflow-prone table)", %{conn: conn} do
+    {_series, season} = tree()
+    today = Date.utc_today()
+
+    Repo.insert!(%Episode{
+      season_id: season.id,
+      episode_number: 3,
+      title: "Card Test Ep",
+      monitored: true,
+      air_date: Date.add(today, 10)
+    })
+
+    {:ok, lv, html} = live(conn, ~p"/calendar")
+    assert has_element?(lv, "#calendar-list")
+    refute html =~ "<table"
   end
 
   test "shows an empty state when nothing is scheduled", %{conn: conn} do

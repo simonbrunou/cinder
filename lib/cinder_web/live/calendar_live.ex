@@ -60,26 +60,20 @@ defmodule CinderWeb.CalendarLive do
         message="Monitored episodes in the next 90 days will appear here."
       />
 
-      <table :if={@rows != []} class="table">
-        <thead>
-          <tr>
-            <th>Air date</th>
-            <th>Series</th>
-            <th>Episode</th>
-            <th>Title</th>
-            <th>State</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr :for={row <- @rows}>
-            <td class="tabular-nums">{row.ep.air_date}</td>
-            <td>{row.ep.season.series.title}</td>
-            <td class="tabular-nums">{code(row.ep.season.season_number, row.ep.episode_number)}</td>
-            <td>{row.ep.title}</td>
-            <td><.status_badge kind={:episode} status={row.state} /></td>
-          </tr>
-        </tbody>
-      </table>
+      <ul :if={@rows != []} id="calendar-list" class="space-y-2">
+        <li
+          :for={row <- @rows}
+          class="card bg-base-200 p-3 flex flex-row flex-wrap items-center gap-x-3 gap-y-1"
+        >
+          <span class="w-24 tabular-nums text-sm text-base-content/60">{row.ep.air_date}</span>
+          <.status_badge kind={:episode} status={row.state} />
+          <span class="font-medium">{row.ep.season.series.title}</span>
+          <span class="tabular-nums text-sm text-base-content/60">
+            {code(row.ep.season.season_number, row.ep.episode_number)}
+          </span>
+          <span class="truncate text-base-content/70">{row.ep.title}</span>
+        </li>
+      </ul>
     </Layouts.app>
     """
   end
