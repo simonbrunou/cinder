@@ -565,14 +565,16 @@ defmodule Cinder.AccountsTest do
       assert %{email: _} = errors_on(changeset)
     end
 
-    test "rejects an unchanged email" do
+    test "treats an unchanged email as a successful no-op without auditing" do
       actor = admin_fixture()
       target = user_fixture()
+      Repo.delete_all(Cinder.Audit.AdminAudit)
 
-      assert {:error, changeset} =
+      assert {:ok, %User{} = updated} =
                Accounts.admin_update_email(actor, target, %{email: target.email})
 
-      assert %{email: ["did not change"]} = errors_on(changeset)
+      assert updated.email == target.email
+      assert Repo.aggregate(Cinder.Audit.AdminAudit, :count) == 0
     end
   end
 

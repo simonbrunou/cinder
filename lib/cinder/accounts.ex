@@ -139,22 +139,35 @@ defmodule Cinder.Accounts do
   @doc """
   Admin-edits a user's email directly (no confirmation token round-trip), reusing
   `User.email_changeset/2` for validation. Audited in-transaction.
+
+  The edit form pre-fills the current address, so submitting it unchanged is a
+  no-op: when the cast email equals the target's current email, return
+  `{:ok, target}` without writing or auditing. A genuinely different email is
+  still validated (invalid/format/uniqueness errors return `{:error, changeset}`)
+  and a real change still updates + audits in one transaction.
   """
   def admin_update_email(%User{} = actor, %User{} = target, attrs) do
     changeset = User.email_changeset(target, attrs)
+    no_change? = Ecto.Changeset.get_change(changeset, :email) == nil
 
-    Repo.transaction(fn ->
-      case Repo.update(changeset) do
-        {:ok, updated} ->
-          {:ok, _audit} =
-            Audit.log(actor, "admin_update_email", updated, %{email: updated.email})
+    if no_change? and Ecto.Changeset.get_field(changeset, :email) != nil do
+      {:ok, target}
+    else
+      Repo.transaction(fn -> do_admin_update_email(actor, changeset) end)
+    end
+  end
 
-          updated
+  defp do_admin_update_email(%User{} = actor, changeset) do
+    case Repo.update(changeset) do
+      {:ok, updated} ->
+        {:ok, _audit} =
+          Audit.log(actor, "admin_update_email", updated, %{email: updated.email})
 
-        {:error, changeset} ->
-          Repo.rollback(changeset)
-      end
-    end)
+        updated
+
+      {:error, changeset} ->
+        Repo.rollback(changeset)
+    end
   end
 
   @doc """
