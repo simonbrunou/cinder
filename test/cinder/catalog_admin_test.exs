@@ -41,6 +41,15 @@ defmodule Cinder.CatalogAdminTest do
       movie = movie!()
       assert {:error, %Ecto.Changeset{}} = Catalog.update_movie(movie, %{title: ""})
     end
+
+    test "broadcasts {:movie_updated, movie} so other sessions refresh" do
+      movie = movie!(%{title: "Old"})
+      Catalog.subscribe()
+
+      assert {:ok, updated} = Catalog.update_movie(movie, %{title: "New"})
+      assert_receive {:movie_updated, %Movie{id: id, title: "New"}}
+      assert id == updated.id
+    end
   end
 
   describe "update_series/2" do
@@ -86,6 +95,14 @@ defmodule Cinder.CatalogAdminTest do
 
     test "returns {:error, changeset} on a blank title", %{series: series} do
       assert {:error, %Ecto.Changeset{}} = Catalog.update_series(series, %{title: ""})
+    end
+
+    test "broadcasts {:series_updated, id} so other sessions refresh", %{series: series} do
+      Catalog.subscribe_series()
+      sid = series.id
+
+      assert {:ok, _updated} = Catalog.update_series(series, %{title: "Broadcast"})
+      assert_receive {:series_updated, ^sid}
     end
   end
 
@@ -142,6 +159,29 @@ defmodule Cinder.CatalogAdminTest do
       assert audit.entity_id == movie.id
       assert audit.actor_id == actor.id
     end
+
+    test "client remove failure does NOT block the cancel (best-effort)" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+
+      movie =
+        movie!()
+        |> then(
+          &elem(
+            Catalog.transition(&1, %{
+              status: :downloading,
+              download_id: "HASH-DOWN",
+              download_protocol: :torrent
+            }),
+            1
+          )
+        )
+
+      # Client is down — cancel must still succeed and clear the movie.
+      expect(Cinder.Download.ClientMock, :remove, fn "HASH-DOWN", _opts -> {:error, :down} end)
+
+      assert {:ok, %Movie{status: :cancelled}} = Catalog.cancel_movie(movie, actor)
+      assert Repo.get!(Movie, movie.id).status == :cancelled
+    end
   end
 
   describe "delete_movie/2" do
@@ -187,6 +227,38 @@ defmodule Cinder.CatalogAdminTest do
       movie = movie!()
       assert {:ok, _} = Catalog.delete_movie(movie, actor)
       assert Repo.one!(Cinder.Audit.AdminAudit).action == "delete_movie"
+    end
+
+    test "client remove failure does NOT block the delete (best-effort)" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+
+      movie =
+        movie!()
+        |> then(
+          &elem(
+            Catalog.transition(&1, %{
+              status: :downloading,
+              download_id: "HASH-DEL",
+              download_protocol: :torrent
+            }),
+            1
+          )
+        )
+
+      expect(Cinder.Download.ClientMock, :remove, fn "HASH-DEL", _opts -> {:error, :down} end)
+
+      id = movie.id
+      assert {:ok, %Movie{}} = Catalog.delete_movie(movie, actor)
+      assert Repo.get(Movie, id) == nil
+    end
+
+    test "deleting an already-deleted movie returns {:error, :stale_entry} (no raise)" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      movie = movie!() |> then(&elem(Catalog.transition(&1, %{status: :available}), 1))
+      # Another session already deleted the row.
+      Repo.delete!(movie)
+
+      assert {:error, :stale_entry} = Catalog.delete_movie(movie, actor)
     end
   end
 
@@ -275,6 +347,38 @@ defmodule Cinder.CatalogAdminTest do
       assert audit.entity_id == series.id
     end
 
+    test "cancel_series leaves an atomic post-state: episodes unmonitored, grab_id nil, no grabs" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      {series, season, ep} = series_tree()
+      {:ok, _} = Catalog.create_grab("HASH-ATOM", :torrent, [ep.id])
+      # Sanity: the grab linked the episode.
+      assert Repo.get!(Episode, ep.id).grab_id
+
+      expect(Cinder.Download.ClientMock, :remove, fn "HASH-ATOM", _opts -> :ok end)
+
+      assert {:ok, _} = Catalog.cancel_series(series, actor)
+
+      reaped_ep = Repo.get!(Episode, ep.id)
+      assert reaped_ep.monitored == false
+      assert reaped_ep.grab_id == nil
+      assert Repo.get!(Season, season.id).monitored == false
+      assert Repo.all(Grab) == []
+    end
+
+    test "cancel_series: client remove failure does NOT block the cancel (best-effort)" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      {series, season, ep} = series_tree()
+      {:ok, _} = Catalog.create_grab("HASH-CDOWN", :torrent, [ep.id])
+
+      expect(Cinder.Download.ClientMock, :remove, fn "HASH-CDOWN", _opts -> {:error, :down} end)
+
+      assert {:ok, %Series{}} = Catalog.cancel_series(series, actor)
+      # Reaped + unmonitored despite the client being down.
+      assert Repo.all(Grab) == []
+      assert Repo.get!(Season, season.id).monitored == false
+      assert Repo.get!(Episode, ep.id).monitored == false
+    end
+
     test "delete_series reaps grabs first, then cascades seasons/episodes, broadcasts deleted" do
       actor = Cinder.AccountsFixtures.admin_fixture()
       {series, season, ep} = series_tree()
@@ -299,6 +403,28 @@ defmodule Cinder.CatalogAdminTest do
       {series, _season, _ep} = series_tree()
       assert {:ok, _} = Catalog.delete_series(series, actor)
       assert Repo.one!(Cinder.Audit.AdminAudit).action == "delete_series"
+    end
+
+    test "delete_series: client remove failure does NOT block the delete (best-effort)" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      {series, _season, ep} = series_tree()
+      {:ok, _} = Catalog.create_grab("HASH-DDOWN", :torrent, [ep.id])
+
+      expect(Cinder.Download.ClientMock, :remove, fn "HASH-DDOWN", _opts -> {:error, :down} end)
+
+      sid = series.id
+      assert {:ok, %Series{}} = Catalog.delete_series(series, actor)
+      assert Repo.get(Series, sid) == nil
+      assert Repo.all(Grab) == []
+    end
+
+    test "deleting an already-deleted series returns {:error, :stale_entry} (no raise)" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      {series, _season, _ep} = series_tree()
+      # Another session already deleted the row (cascades the tree).
+      Repo.delete!(series)
+
+      assert {:error, :stale_entry} = Catalog.delete_series(series, actor)
     end
   end
 
