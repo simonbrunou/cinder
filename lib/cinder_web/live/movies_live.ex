@@ -141,7 +141,12 @@ defmodule CinderWeb.MoviesLive do
         Movies<:subtitle>Edit, cancel, or delete watchlisted movies.</:subtitle>
       </.header>
 
-      <p :if={@movies == []} class="text-base-content/60">No movies yet.</p>
+      <.empty_state
+        :if={@movies == []}
+        icon="hero-film"
+        title="No movies yet"
+        message="Requested movies appear here."
+      />
 
       <ul class="space-y-3">
         <li :for={m <- @movies} id={"movie-#{m.id}"} class="card bg-base-200 p-4">

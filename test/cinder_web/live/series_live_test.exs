@@ -18,7 +18,7 @@ defmodule CinderWeb.SeriesLiveTest do
 
   test "first load shows the empty state and an accessible search field", %{conn: conn} do
     {:ok, lv, html} = live(conn, ~p"/series")
-    assert html =~ "No series added yet."
+    assert html =~ "No series added yet"
     assert has_element?(lv, "input#tv-query[aria-label='Search TV series']")
   end
 

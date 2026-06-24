@@ -46,4 +46,33 @@ defmodule CinderWeb.SharedComponentsTest do
       assert html =~ "Cancel"
     end
   end
+
+  describe "empty_state/1" do
+    test "default no-results state shows title, message and a neutral icon" do
+      html =
+        render_component(&CoreComponents.empty_state/1, %{
+          title: "Your watchlist is empty",
+          message: "Search above to add a movie.",
+          icon: "hero-bookmark"
+        })
+
+      assert html =~ "Your watchlist is empty"
+      assert html =~ "Search above to add a movie"
+      assert html =~ "hero-bookmark"
+      refute html =~ "text-error"
+    end
+
+    test "search-error variant is visually distinct (error icon + colour)" do
+      html =
+        render_component(&CoreComponents.empty_state/1, %{
+          title: "Search failed",
+          message: "TMDB didn't respond. Try again.",
+          variant: "search-error"
+        })
+
+      assert html =~ "Search failed"
+      assert html =~ "text-error"
+      assert html =~ "hero-exclamation-triangle"
+    end
+  end
 end

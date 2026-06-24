@@ -147,9 +147,12 @@ defmodule CinderWeb.SeriesDiscoveryLive do
         </div>
       </div>
 
-      <p :if={@info.seasons == []} class="text-base-content/60">
-        No seasons found for this series.
-      </p>
+      <.empty_state
+        :if={@info.seasons == []}
+        icon="hero-tv"
+        title="No seasons found"
+        message="TMDB returned no season data for this series."
+      />
 
       <ul class="divide-y divide-base-200">
         <li

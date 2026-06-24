@@ -136,16 +136,27 @@ defmodule CinderWeb.SeriesLive do
         </div>
       </section>
 
-      <p
+      <.empty_state
         :if={@query != "" and @results == [] and not @search_error}
-        class="mb-10 text-base-content/60"
-      >
-        No matches.
-      </p>
+        icon="hero-magnifying-glass"
+        title="No matches"
+        message="No shows matched that search."
+      />
+      <.empty_state
+        :if={@search_error}
+        variant="search-error"
+        title="Search failed"
+        message="TMDB didn't respond. Try again."
+      />
 
       <section :if={@current_scope.user.role == :admin}>
         <h2 class="pb-4 text-lg font-semibold leading-8">Added series</h2>
-        <p :if={@series == []} class="text-base-content/60">No series added yet.</p>
+        <.empty_state
+          :if={@series == []}
+          icon="hero-tv"
+          title="No series added yet"
+          message="Search above to add a show."
+        />
         <div id="series-list" class="grid grid-cols-2 sm:grid-cols-3 gap-4">
           <div :for={s <- @series} id={"series-row-#{s.id}"} class="space-y-2">
             <.link navigate={~p"/series/#{s.id}"} class="block">

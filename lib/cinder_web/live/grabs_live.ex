@@ -58,7 +58,12 @@ defmodule CinderWeb.GrabsLive do
         Grabs<:subtitle>In-flight downloads, newest first.</:subtitle>
       </.header>
 
-      <p :if={@grabs == []} class="text-base-content/60">No grabs.</p>
+      <.empty_state
+        :if={@grabs == []}
+        icon="hero-arrow-down-tray"
+        title="No active downloads"
+        message="In-flight grabs will appear here."
+      />
 
       <ul class="space-y-3">
         <li :for={g <- @grabs} id={"grab-#{g.id}"} class="card bg-base-200 p-4">

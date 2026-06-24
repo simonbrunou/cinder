@@ -123,7 +123,12 @@ defmodule CinderWeb.StatusLive do
         </ul>
       </section>
 
-      <p :if={@movies == []} class="text-base-content/60">No movies yet.</p>
+      <.empty_state
+        :if={@movies == []}
+        icon="hero-film"
+        title="No movies yet"
+        message="Requested movies and their pipeline state appear here."
+      />
 
       <table :if={@movies != []} id="status-table" class="table">
         <thead>

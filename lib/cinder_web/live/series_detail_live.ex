@@ -232,9 +232,12 @@ defmodule CinderWeb.SeriesDetailLive do
         </div>
       </div>
 
-      <p :if={@series.seasons == []} class="text-base-content/60">
-        No seasons found for this series.
-      </p>
+      <.empty_state
+        :if={@series.seasons == []}
+        icon="hero-tv"
+        title="No seasons found"
+        message="TMDB returned no season data for this series."
+      />
 
       <section :for={season <- @series.seasons} class="mb-6">
         <div class="mb-2 flex items-center justify-between border-b border-base-300 pb-2">

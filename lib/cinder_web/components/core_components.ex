@@ -125,6 +125,38 @@ defmodule CinderWeb.CoreComponents do
   end
 
   @doc """
+  A centered empty / zero state: icon, title, optional message, optional `:cta` slot.
+  `variant="search-error"` renders the failed-search treatment (error icon + colour),
+  distinct from an ordinary no-results state.
+
+  ## Examples
+
+      <.empty_state title="No grabs" message="In-flight downloads will show here." icon="hero-arrow-down-tray" />
+      <.empty_state variant="search-error" title="Search failed" message="TMDB didn't respond. Try again." />
+  """
+  attr :title, :string, required: true
+  attr :message, :string, default: nil
+  attr :icon, :string, default: "hero-inbox"
+  attr :variant, :string, default: "default", values: ~w(default search-error)
+  slot :cta
+
+  def empty_state(assigns) do
+    ~H"""
+    <div class="flex flex-col items-center justify-center gap-3 py-12 text-center">
+      <.icon
+        name={if @variant == "search-error", do: "hero-exclamation-triangle", else: @icon}
+        class={["size-10", (@variant == "search-error" && "text-error") || "text-base-content/40"]}
+      />
+      <div>
+        <p class="font-medium">{@title}</p>
+        <p :if={@message} class="mt-1 text-sm text-base-content/60">{@message}</p>
+      </div>
+      <div :if={@cta != []}>{render_slot(@cta)}</div>
+    </div>
+    """
+  end
+
+  @doc """
   Inline two-step confirmation for a destructive action: a `role="alert"` box with a
   caveat, a confirm button (emits `on_confirm`), and a cancel button (emits `on_cancel`).
   Markup only — the caller drives visibility with `:if` and keeps its own "confirming"

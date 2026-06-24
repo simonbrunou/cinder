@@ -164,7 +164,12 @@ defmodule CinderWeb.RequestsLive do
           </.confirm_action>
         </li>
       </ul>
-      <p :if={@requests == []} class="opacity-60">No requests.</p>
+      <.empty_state
+        :if={@requests == []}
+        icon="hero-inbox-arrow-down"
+        title="No requests"
+        message="Pending requests will appear here for approval."
+      />
     </Layouts.app>
     """
   end

@@ -198,15 +198,26 @@ defmodule CinderWeb.WatchlistLive do
         </div>
       </section>
 
-      <p
+      <.empty_state
         :if={@query != "" and @results == [] and not @search_error}
-        class="mb-10 text-base-content/60"
-      >
-        No matches.
-      </p>
+        icon="hero-magnifying-glass"
+        title="No matches"
+        message="No movies matched that search."
+      />
+      <.empty_state
+        :if={@search_error}
+        variant="search-error"
+        title="Search failed"
+        message="TMDB didn't respond. Try again."
+      />
 
       <h2 class="pb-4 text-lg font-semibold leading-8">Watchlist</h2>
-      <p :if={@watchlist == []} class="text-base-content/60">Your watchlist is empty.</p>
+      <.empty_state
+        :if={@watchlist == []}
+        icon="hero-bookmark"
+        title="Your watchlist is empty"
+        message="Search above to add a movie."
+      />
       <div id="watchlist" class="grid grid-cols-2 sm:grid-cols-3 gap-4">
         <.movie_card :for={m <- @watchlist} movie={m}>
           <.status_badge kind={:movie} status={m.status} />

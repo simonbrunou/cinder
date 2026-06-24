@@ -108,6 +108,7 @@ defmodule CinderWeb.WatchlistLiveTest do
 
     assert html =~ "TMDB search failed"
     refute html =~ "No matches"
+    assert html =~ "Search failed"
     # Still alive and responsive.
     assert render(lv) =~ "search-form"
   end
