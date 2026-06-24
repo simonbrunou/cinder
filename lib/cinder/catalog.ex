@@ -36,6 +36,49 @@ defmodule Cinder.Catalog do
     end
   end
 
+  @doc """
+  Combined Discover search: movies + TV for one query. Returns `{:ok, results}`
+  where each result is a normalized search map plus a `:type` key (`:movie | :tv`),
+  interleaved so both kinds surface near the top of the grid. A blank/whitespace
+  query short-circuits to `{:ok, []}` with no API call. If *both* endpoints error,
+  returns `{:error, :search_failed}`; if only one errors it is logged and its side
+  is omitted — partial results beat none for discovery.
+
+  ponytail: runs the two searches sequentially (matches the existing synchronous
+  search style; household scale + 300ms debounce). Upgrade path if search latency
+  bites: wrap each in Task.async/await_many to run them concurrently.
+  """
+  def search_discover(query) do
+    if String.trim(query) == "" do
+      {:ok, []}
+    else
+      merge_discover(search_movies(query), search_tv(query))
+    end
+  end
+
+  defp merge_discover({:error, _} = movies, {:error, _} = tv) do
+    Logger.warning("Discover search failed entirely: movies=#{inspect(movies)} tv=#{inspect(tv)}")
+    {:error, :search_failed}
+  end
+
+  defp merge_discover(movies_res, tv_res) do
+    {:ok, interleave(tag(movies_res, :movie), tag(tv_res, :tv))}
+  end
+
+  defp tag({:ok, list}, type), do: Enum.map(list, &Map.put(&1, :type, type))
+
+  defp tag({:error, reason}, type) do
+    Logger.warning("Discover #{type} search failed: #{inspect(reason)}")
+    []
+  end
+
+  # Round-robin so a 2-col mobile grid shows both kinds near the top, then any tail.
+  defp interleave(a, b) do
+    0..max(length(a), length(b))
+    |> Enum.flat_map(fn i -> [Enum.at(a, i), Enum.at(b, i)] end)
+    |> Enum.reject(&is_nil/1)
+  end
+
   @doc "Fetches series details (including seasons list) from TMDB by tmdb_id."
   def tmdb_series(tmdb_id), do: tmdb().get_series(tmdb_id)
 
