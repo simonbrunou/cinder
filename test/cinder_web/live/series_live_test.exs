@@ -111,4 +111,64 @@ defmodule CinderWeb.SeriesLiveTest do
     assert html =~ "Configure monitoring"
     assert html =~ ~s(href="/series/#{series.id}")
   end
+
+  test "admin deletes an added series from the list", %{conn: conn} do
+    series =
+      Cinder.Repo.insert!(%Cinder.Catalog.Series{
+        tmdb_id: System.unique_integer([:positive]),
+        title: "Deletable",
+        monitored: true,
+        monitor_strategy: :all
+      })
+
+    {:ok, lv, _html} = live(conn, ~p"/series")
+
+    lv
+    |> element(~s|button[phx-click="ask_delete_series"][phx-value-id="#{series.id}"]|)
+    |> render_click()
+
+    lv
+    |> element(~s|button[phx-click="confirm_delete_series"][phx-value-id="#{series.id}"]|)
+    |> render_click()
+
+    assert Cinder.Repo.get(Cinder.Catalog.Series, series.id) == nil
+    refute render(lv) =~ "series-row-#{series.id}"
+  end
+
+  test "a non-admin does not see the admin series controls", %{conn: _conn} do
+    Cinder.Repo.insert!(%Cinder.Catalog.Series{
+      tmdb_id: System.unique_integer([:positive]),
+      title: "Hidden",
+      monitored: true,
+      monitor_strategy: :all
+    })
+
+    user = Cinder.AccountsFixtures.user_fixture()
+    conn = log_in_user(build_conn(), user)
+    {:ok, _lv, html} = live(conn, ~p"/series")
+    refute html =~ "ask_delete_series"
+    refute html =~ "Added series"
+  end
+
+  test "forged confirm_delete_series from a non-admin does NOT delete the series", %{conn: _conn} do
+    series =
+      Cinder.Repo.insert!(%Cinder.Catalog.Series{
+        tmdb_id: System.unique_integer([:positive]),
+        title: "Forge Target",
+        monitored: true,
+        monitor_strategy: :all
+      })
+
+    user = Cinder.AccountsFixtures.user_fixture()
+    conn = log_in_user(build_conn(), user)
+    {:ok, lv, _html} = live(conn, ~p"/series")
+
+    # Non-admin has no button in the DOM — push the destructive event directly
+    render_hook(lv, "confirm_delete_series", %{"id" => to_string(series.id)})
+
+    # The series must still exist in the DB
+    assert Cinder.Repo.get(Cinder.Catalog.Series, series.id) != nil
+    # The LiveView must still be alive
+    assert render(lv) =~ "TV series"
+  end
 end

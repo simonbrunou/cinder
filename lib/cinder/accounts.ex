@@ -7,6 +7,7 @@ defmodule Cinder.Accounts do
   alias Cinder.Repo
 
   alias Cinder.Accounts.{User, UserNotifier, UserToken}
+  alias Cinder.Audit
 
   ## Database getters
 
@@ -92,6 +93,135 @@ defmodule Cinder.Accounts do
 
   @doc "True if at least one user (hence an admin) exists."
   def admin_exists?, do: Repo.aggregate(User, :count) > 0
+
+  @doc "Counts users with the `:admin` role."
+  def count_admins do
+    Repo.aggregate(from(u in User, where: u.role == :admin), :count)
+  end
+
+  @doc """
+  Admin-creates a fully-confirmed user. `:role` (default `:user`) and
+  `:confirmed_at` are applied via `put_change` — never castable — while email and
+  password are validated by `registration_changeset/2`.
+  """
+  def create_user(attrs) do
+    role = Map.get(attrs, :role, :user)
+
+    %User{}
+    |> User.registration_changeset(attrs)
+    |> Ecto.Changeset.put_change(:confirmed_at, DateTime.utc_now(:second))
+    |> Ecto.Changeset.put_change(:role, role)
+    |> Repo.insert()
+  end
+
+  @doc """
+  Sets a user's role. Refuses to demote the last admin: the admin count is
+  re-checked AFTER the write inside one transaction (a write that would drop the
+  count to zero rolls back as `{:error, :last_admin}`). Writes an audit row in
+  the same transaction.
+  """
+  def update_user_role(%User{} = actor, %User{} = target, role) when role in [:admin, :user] do
+    Repo.transaction(fn ->
+      {:ok, updated} =
+        target |> Ecto.Changeset.change(role: role) |> Repo.update()
+
+      if count_admins() == 0 do
+        Repo.rollback(:last_admin)
+      end
+
+      Audit.log_or_rollback(actor, "update_user_role", updated, %{role: to_string(role)})
+
+      updated
+    end)
+  end
+
+  @doc """
+  Admin-edits a user's email directly (no confirmation token round-trip), reusing
+  `User.email_changeset/2` for validation. Audited in-transaction.
+
+  The edit form pre-fills the current address, so submitting it unchanged is a
+  no-op: when the cast email equals the target's current email, return
+  `{:ok, target}` without writing or auditing. A genuinely different email is
+  still validated (invalid/format/uniqueness errors return `{:error, changeset}`)
+  and a real change still updates + audits in one transaction.
+  """
+  def admin_update_email(%User{} = actor, %User{} = target, attrs) do
+    changeset = User.email_changeset(target, attrs)
+    no_change? = Ecto.Changeset.get_change(changeset, :email) == nil
+
+    if no_change? and Ecto.Changeset.get_field(changeset, :email) != nil do
+      {:ok, target}
+    else
+      Repo.transaction(fn -> do_admin_update_email(actor, changeset) end)
+    end
+  end
+
+  defp do_admin_update_email(%User{} = actor, changeset) do
+    case Repo.update(changeset) do
+      {:ok, updated} ->
+        Audit.log_or_rollback(actor, "admin_update_email", updated, %{email: updated.email})
+
+        updated
+
+      {:error, changeset} ->
+        Repo.rollback(changeset)
+    end
+  end
+
+  @doc """
+  Admin-resets a user's password directly and expires ALL their tokens (logging
+  them out everywhere) via `update_user_and_delete_all_tokens/1`. Audited in the
+  same transaction.
+  """
+  def admin_reset_password(%User{} = actor, %User{} = target, attrs) do
+    changeset = User.password_changeset(target, attrs)
+
+    Repo.transaction(fn ->
+      case update_user_and_delete_all_tokens(changeset) do
+        {:ok, {user, _expired}} ->
+          Audit.log_or_rollback(actor, "admin_reset_password", user, %{})
+          user
+
+        {:error, changeset} ->
+          Repo.rollback(changeset)
+      end
+    end)
+  end
+
+  @doc """
+  Deletes a user. Refuses self-delete and refuses to delete the last admin.
+  Both guards are enforced inside one transaction: the user is deleted first,
+  then the admin count is re-checked AFTER the delete (post-delete in-transaction
+  re-count). A zero admin count rolls back as `{:error, :last_admin}`; a
+  self-delete rolls back as `{:error, :self_delete}`. The DB cascades the user's
+  requests (`user_id :delete_all`) and nilifies any `approved_by_id` links.
+  Audited in the same transaction; the email is captured before the delete so
+  the audit `detail` can record it.
+  """
+  def delete_user(%User{} = actor, %User{} = target) do
+    Repo.transaction(fn -> do_delete_user(actor, target) end)
+  end
+
+  defp do_delete_user(%User{} = actor, %User{} = target) do
+    email = target.email
+    {:ok, _} = Repo.delete(target)
+
+    cond do
+      count_admins() == 0 ->
+        Repo.rollback(:last_admin)
+
+      actor.id == target.id ->
+        Repo.rollback(:self_delete)
+
+      true ->
+        Audit.log_or_rollback(actor, "delete_user", target, %{
+          email: email,
+          cascaded_requests: true
+        })
+
+        target
+    end
+  end
 
   @doc "All users, ordered by id."
   def list_users, do: Repo.all(from u in User, order_by: [asc: u.id])

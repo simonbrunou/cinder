@@ -8,7 +8,9 @@ defmodule Cinder.Catalog do
   import Ecto.Query
   require Logger
 
+  alias Cinder.Audit
   alias Cinder.Catalog.{Episode, Grab, Movie, Season, Series}
+  alias Cinder.Download
   alias Cinder.Repo
 
   @topic "movies"
@@ -50,6 +52,19 @@ defmodule Cinder.Catalog do
     %Movie{}
     |> Movie.changeset(attrs)
     |> Repo.insert()
+  end
+
+  @doc """
+  Admin metadata edit for a movie (title/year/poster/ids). Reuses `Movie.changeset/2`, which
+  does NOT cast `:status` — status changes go through `transition/2` (the choke-point). On success
+  broadcasts `{:movie_updated, movie}` (same helper `transition/2` uses) so other subscribed
+  sessions refresh. Returns `{:ok, movie}` or `{:error, changeset}`.
+  """
+  def update_movie(%Movie{} = movie, attrs) do
+    with {:ok, updated} <- movie |> Movie.changeset(attrs) |> Repo.update() do
+      broadcast({:movie_updated, updated})
+      {:ok, updated}
+    end
   end
 
   @doc "Lists watchlisted movies, newest first."
@@ -111,6 +126,120 @@ defmodule Cinder.Catalog do
 
   def retry_movie(%Movie{}), do: {:error, :not_retryable}
 
+  # The active set a movie can be cancelled out of (mirrors @retryable's shape).
+  # transition/2 does NOT validate transitions, so cancel/delete must guard on this
+  # explicitly. delete_movie/2 (Phase 2) shares it: an active row with a download_id
+  # must be cancelled (which removes the client download), never bare-deleted.
+  @cancellable_movie_statuses [:requested, :searching, :downloading, :downloaded]
+
+  @doc "True if `movie` is in an active status that can be cancelled (`#{inspect(@cancellable_movie_statuses)}`)."
+  def cancellable?(%Movie{status: status}), do: status in @cancellable_movie_statuses
+
+  @doc """
+  Cancels an in-flight movie: removes the orphaned client download (if any) and transitions
+  it to `:cancelled`. Guards `cancellable?/1` server-side (`transition/2` does not validate the
+  transition). Returns `{:error, :not_cancellable}` for a terminal/available/parked movie.
+
+  Client I/O runs OUTSIDE the DB transaction (external-I/O rule). The `:cancelled` transition +
+  the audit row are written in one transaction so a rolled-back cancel leaves no orphan audit row;
+  the `{:movie_updated, _}` broadcast (via the transition) fires after commit.
+  """
+  def cancel_movie(%Movie{} = movie, actor) do
+    if cancellable?(movie) do
+      # Client removal is best-effort: a stuck movie must always be clearable even if
+      # qBit/SAB is down. A failed remove is logged, not propagated (see remove_movie_download/1).
+      remove_movie_download(movie)
+
+      with {:ok, updated} <- do_cancel_txn(movie, actor) do
+        broadcast({:movie_updated, updated})
+        {:ok, updated}
+      end
+    else
+      {:error, :not_cancellable}
+    end
+  end
+
+  defp do_cancel_txn(movie, actor) do
+    Repo.transaction(fn ->
+      case movie |> Movie.transition_changeset(%{status: :cancelled}) |> Repo.update() do
+        {:ok, updated} ->
+          Audit.log_or_rollback(actor, :cancel_movie, updated, %{from: movie.status})
+          updated
+
+        {:error, changeset} ->
+          Repo.rollback(changeset)
+      end
+    end)
+  end
+
+  @doc """
+  Deletes a movie's DB row. An active row with a tracked download is cancelled first (which
+  removes the client download) so delete never orphans a live download. Broadcasts
+  `{:movie_deleted, id}` on the `"movies"` topic. On-disk library files are intentionally left
+  for the deferred unlink feature. The delete + audit row are written in one transaction.
+  """
+  def delete_movie(%Movie{} = movie, actor) do
+    # Client removal is best-effort (see maybe_cancel_download_for_delete/1).
+    maybe_cancel_download_for_delete(movie)
+
+    with {:ok, deleted} <- do_delete_txn(movie, actor) do
+      broadcast_movie_deleted(deleted.id)
+      {:ok, deleted}
+    end
+  end
+
+  defp do_delete_txn(movie, actor) do
+    Repo.transaction(fn ->
+      case Repo.delete(movie) do
+        {:ok, deleted} ->
+          Audit.log_or_rollback(actor, :delete_movie, deleted, %{title: deleted.title})
+          deleted
+
+        {:error, changeset} ->
+          Repo.rollback(changeset)
+      end
+    end)
+  rescue
+    # A concurrent session already deleted the row: Repo.delete/1 raises rather than
+    # returning {:error, _}. Convert to a clean tagged error the LiveView callers handle.
+    Ecto.StaleEntryError -> {:error, :stale_entry}
+  end
+
+  # Remove the tracked client download if present; skip entirely when download_id is nil.
+  # client_for/1 maps a nil protocol to :torrent; an unconfigured protocol (:error) is treated
+  # as "nothing to remove" so a cancel/delete is never blocked by client resolution. Best-effort:
+  # a client error is logged, not propagated, so a stuck movie can always be cleared even with the
+  # client down. Always returns :ok.
+  defp remove_movie_download(%Movie{download_id: nil}), do: :ok
+
+  defp remove_movie_download(%Movie{download_id: id, download_protocol: protocol}) do
+    case Download.client_for(protocol) do
+      {:ok, client} -> best_effort_remove(client, id)
+      :error -> :ok
+    end
+  end
+
+  # For delete: only an active (cancellable) row with a tracked download needs the client removed.
+  # A terminal/available row keeps its (already-imported or absent) download untouched.
+  defp maybe_cancel_download_for_delete(%Movie{download_id: nil}), do: :ok
+
+  defp maybe_cancel_download_for_delete(%Movie{} = movie) do
+    if cancellable?(movie), do: remove_movie_download(movie), else: :ok
+  end
+
+  # Best-effort client download removal shared by the movie and series reap paths: never blocks a
+  # cancel/delete. Logs a warning on {:error, _} (or a thrown client failure) and always returns :ok.
+  defp best_effort_remove(client, id) do
+    case client.remove(id, delete_files: true) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("client remove failed for download #{inspect(id)}: #{inspect(reason)}")
+        :ok
+    end
+  end
+
   @doc "Fetches a watchlisted movie by TMDB id, or `nil`."
   def get_movie_by_tmdb_id(tmdb_id), do: Repo.get_by(Movie, tmdb_id: tmdb_id)
 
@@ -145,6 +274,9 @@ defmodule Cinder.Catalog do
   end
 
   defp broadcast(message), do: Phoenix.PubSub.broadcast(Cinder.PubSub, @topic, message)
+
+  @doc "Broadcasts `{:movie_deleted, id}` on the `\"movies\"` topic so open views drop the row."
+  def broadcast_movie_deleted(id), do: broadcast({:movie_deleted, id})
 
   ## TV series (M4a) — admin-only direct add; movie loop untouched.
   #
@@ -217,6 +349,20 @@ defmodule Cinder.Catalog do
 
   @doc "Lists watchlisted series, newest first."
   def list_series, do: Repo.all(from s in Series, order_by: [desc: s.id])
+
+  @doc """
+  Admin metadata edit for a series. Uses `Series.admin_changeset/2`, which excludes
+  `monitor_strategy`/`monitored` so the edit never cascades a strategy change to existing
+  seasons/episodes. Per-season/episode monitoring stays on `set_season_monitored/2` /
+  `set_episode_monitored/2`. On success broadcasts `{:series_updated, series.id}` so other
+  subscribed sessions refresh. Returns `{:ok, series}` or `{:error, changeset}`.
+  """
+  def update_series(%Series{} = series, attrs) do
+    with {:ok, updated} <- series |> Series.admin_changeset(attrs) |> Repo.update() do
+      broadcast_series(updated.id)
+      {:ok, updated}
+    end
+  end
 
   defp create_series(tmdb_id, strategy) do
     with {:ok, info} <- tmdb().get_series(tmdb_id),
@@ -458,6 +604,127 @@ defmodule Cinder.Catalog do
   end
 
   @doc """
+  Cancels an entire series WITHOUT deleting it: reaps every grab serving the series (any state,
+  including `:downloaded` awaiting import — a surviving downloaded grab would re-import next tick),
+  removing each tracked client download, then unmonitors every season and episode so the TV
+  poller's `wanted_episodes` does not re-grab. Broadcasts `{:series_updated, id}`. Audited.
+
+  Client I/O (best-effort — see `best_effort_remove/2`) runs BEFORE the DB transaction. The grab-row
+  deletes, the season+episode unmonitor, and the audit row are then written in ONE transaction so
+  there is no poller-visible window where an episode is grab-less but still monitored (which would
+  re-grab and defeat the cancel), and a failed audit rolls the whole cancel back rather than leaving
+  the series reaped-but-unaudited. The `{:series_updated, _}` broadcast fires after commit.
+  """
+  def cancel_series(%Series{} = series, actor) do
+    grabs = grabs_for_series(series.id)
+
+    # External I/O outside the txn: best-effort, never blocks the cancel.
+    for grab <- grabs, do: remove_grab_download(grab)
+
+    result =
+      Repo.transaction(fn ->
+        for grab <- grabs, do: Repo.delete!(grab)
+        unmonitor_series_tree(series.id)
+        Audit.log_or_rollback(actor, :cancel_series, series, %{title: series.title})
+        series
+      end)
+
+    with {:ok, _} <- result do
+      broadcast_series(series.id)
+      {:ok, series}
+    end
+  end
+
+  @doc """
+  Deletes a series and its tree. Grabs are reaped FIRST (the `episode.grab_id` FK nilifies on the
+  episode cascade, so after `Repo.delete(series)` the grabs would be unreachable for client removal
+  and orphan their downloads). Each grab's tracked client download is removed (outside the txn),
+  then `delete_grab/1`; then `Repo.delete(series)` cascades seasons/episodes at the DB. Broadcasts
+  `{:series_deleted, id}`. Audited. On-disk library files are intentionally left for the deferred
+  unlink feature.
+  """
+  def delete_series(%Series{} = series, actor) do
+    reap_series_grabs(series.id)
+
+    with {:ok, deleted} <- do_delete_series_txn(series, actor) do
+      broadcast_series_deleted(deleted.id)
+      {:ok, deleted}
+    end
+  end
+
+  defp do_delete_series_txn(series, actor) do
+    Repo.transaction(fn ->
+      case Repo.delete(series) do
+        {:ok, deleted} ->
+          Audit.log_or_rollback(actor, :delete_series, deleted, %{title: deleted.title})
+          deleted
+
+        {:error, changeset} ->
+          Repo.rollback(changeset)
+      end
+    end)
+  rescue
+    # A concurrent session already deleted the row: Repo.delete/1 raises rather than
+    # returning {:error, _}. Convert to a clean tagged error the LiveView callers handle.
+    Ecto.StaleEntryError -> {:error, :stale_entry}
+  end
+
+  # Remove every grab serving the series: client-remove the tracked download (best-effort, if any),
+  # then delete_grab/1. Used by delete_series (the grabs must be reaped before Repo.delete(series)
+  # cascades the tree, after which their downloads would be orphaned). cancel_series does its own
+  # atomic reap+unmonitor+audit in one transaction; see cancel_series/2.
+  defp reap_series_grabs(series_id) do
+    for grab <- grabs_for_series(series_id) do
+      remove_grab_download(grab)
+      delete_grab(grab)
+    end
+
+    :ok
+  end
+
+  defp remove_grab_download(%Grab{download_id: nil}), do: :ok
+
+  defp remove_grab_download(%Grab{download_id: id, download_protocol: protocol}) do
+    case Download.client_for(protocol) do
+      {:ok, client} -> best_effort_remove(client, id)
+      :error -> :ok
+    end
+  end
+
+  # Grabs whose episodes belong to this series (via the episode→season join), ALL states.
+  defp grabs_for_series(series_id) do
+    Repo.all(
+      from g in Grab,
+        join: e in Episode,
+        on: e.grab_id == g.id,
+        join: s in Season,
+        on: s.id == e.season_id,
+        where: s.series_id == ^series_id,
+        distinct: true
+    )
+  end
+
+  # Unmonitor every season + episode of the series in one write each so wanted_episodes is empty.
+  defp unmonitor_series_tree(series_id) do
+    ts = now()
+
+    Repo.update_all(from(s in Season, where: s.series_id == ^series_id),
+      set: [monitored: false, updated_at: ts]
+    )
+
+    Repo.update_all(
+      from(e in Episode,
+        join: s in Season,
+        on: s.id == e.season_id,
+        where: s.series_id == ^series_id
+      ),
+      set: [monitored: false, updated_at: ts]
+    )
+
+    :ok
+  end
+
+  @doc """
   Finalizes a grab after import, in **one transaction**: sets `file_path` (and clears `grab_id`)
   on each imported episode, bumps `search_attempts` on the grab's still-missing episodes, then
   deletes the grab. `imported` is `[{episode_id, dest_path}]`. Broadcasts `{:series_updated, _}`.
@@ -552,6 +819,11 @@ defmodule Cinder.Catalog do
         where: not is_nil(g.content_path),
         preload: [episodes: [season: :series]]
     )
+  end
+
+  @doc "All grabs newest-first, with `episodes: [season: :series]` preloaded for the admin /grabs view."
+  def list_grabs do
+    Repo.all(from g in Grab, order_by: [desc: g.id], preload: [episodes: [season: :series]])
   end
 
   @doc """
@@ -844,4 +1116,8 @@ defmodule Cinder.Catalog do
 
   defp broadcast_series(series_id),
     do: Phoenix.PubSub.broadcast(Cinder.PubSub, @series_topic, {:series_updated, series_id})
+
+  @doc "Broadcasts `{:series_deleted, id}` on the `\"series\"` topic so open views drop the row."
+  def broadcast_series_deleted(id),
+    do: Phoenix.PubSub.broadcast(Cinder.PubSub, @series_topic, {:series_deleted, id})
 end

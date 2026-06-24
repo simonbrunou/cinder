@@ -399,6 +399,23 @@ defmodule Cinder.AccountsTest do
     end
   end
 
+  describe "FK cascade (foreign_keys: :on)" do
+    test "deleting a user cascade-deletes their requests" do
+      user = user_fixture()
+
+      request =
+        Repo.insert!(%Cinder.Requests.Request{
+          user_id: user.id,
+          target_type: "movie",
+          target_id: 555,
+          status: :pending
+        })
+
+      assert {:ok, _} = Repo.delete(user)
+      refute Repo.get(Cinder.Requests.Request, request.id)
+    end
+  end
+
   describe "M3 quota + admin helpers" do
     test "request_quota defaults to nil and can be set/cleared" do
       user = user_fixture()
@@ -425,6 +442,236 @@ defmodule Cinder.AccountsTest do
       a = user_fixture()
       b = user_fixture()
       assert Enum.map(Accounts.list_users(), & &1.id) == [a.id, b.id]
+    end
+  end
+
+  describe "count_admins/0" do
+    test "counts only admins" do
+      _user = user_fixture()
+      _admin = admin_fixture()
+      assert Accounts.count_admins() == 1
+    end
+
+    test "is zero when there are no users" do
+      assert Accounts.count_admins() == 0
+    end
+  end
+
+  describe "update_user_role/2" do
+    test "promotes a user to admin and audits it" do
+      actor = admin_fixture()
+      target = user_fixture()
+
+      assert {:ok, %User{role: :admin, id: tid}} =
+               Accounts.update_user_role(actor, target, :admin)
+
+      audit = Repo.one!(from a in Cinder.Audit.AdminAudit, where: a.entity_id == ^tid)
+      assert audit.action == "update_user_role"
+      assert audit.entity_type == "User"
+      assert audit.actor_id == actor.id
+      assert audit.detail["role"] == "admin"
+    end
+
+    test "demotes a second admin to user" do
+      actor = admin_fixture()
+      target = admin_fixture()
+      assert {:ok, %User{role: :user}} = Accounts.update_user_role(actor, target, :user)
+    end
+
+    test "refuses to demote the last admin and writes no audit row" do
+      actor = admin_fixture()
+
+      assert {:error, :last_admin} = Accounts.update_user_role(actor, actor, :user)
+      assert Repo.reload!(actor).role == :admin
+      assert Repo.aggregate(Cinder.Audit.AdminAudit, :count) == 0
+    end
+  end
+
+  describe "create_user/1" do
+    test "creates a confirmed user with the default :user role" do
+      email = unique_user_email()
+
+      assert {:ok, %User{} = user} =
+               Accounts.create_user(%{
+                 email: email,
+                 password: valid_user_password(),
+                 password_confirmation: valid_user_password()
+               })
+
+      assert user.email == email
+      assert user.role == :user
+      assert user.confirmed_at
+      assert is_binary(user.hashed_password)
+    end
+
+    test "creates an admin when role: :admin is given" do
+      assert {:ok, %User{role: :admin}} =
+               Accounts.create_user(%{
+                 email: unique_user_email(),
+                 password: valid_user_password(),
+                 password_confirmation: valid_user_password(),
+                 role: :admin
+               })
+    end
+
+    test "rejects a password confirmation mismatch" do
+      assert {:error, changeset} =
+               Accounts.create_user(%{
+                 email: unique_user_email(),
+                 password: valid_user_password(),
+                 password_confirmation: "nope nope nope"
+               })
+
+      assert %{password_confirmation: ["does not match password"]} = errors_on(changeset)
+    end
+
+    test "rejects a duplicate email" do
+      existing = user_fixture()
+
+      assert {:error, changeset} =
+               Accounts.create_user(%{
+                 email: existing.email,
+                 password: valid_user_password(),
+                 password_confirmation: valid_user_password()
+               })
+
+      assert %{email: ["has already been taken"]} = errors_on(changeset)
+    end
+  end
+
+  describe "admin_update_email/2" do
+    test "changes the email directly and audits it" do
+      actor = admin_fixture()
+      target = user_fixture()
+      new_email = unique_user_email()
+
+      assert {:ok, %User{} = updated} =
+               Accounts.admin_update_email(actor, target, %{email: new_email})
+
+      assert updated.email == new_email
+
+      audit = Repo.one!(from a in Cinder.Audit.AdminAudit, where: a.entity_id == ^target.id)
+      assert audit.action == "admin_update_email"
+      assert audit.detail["email"] == new_email
+    end
+
+    test "rejects an invalid email" do
+      actor = admin_fixture()
+      target = user_fixture()
+
+      assert {:error, changeset} =
+               Accounts.admin_update_email(actor, target, %{email: "not an email"})
+
+      assert %{email: _} = errors_on(changeset)
+    end
+
+    test "treats an unchanged email as a successful no-op without auditing" do
+      actor = admin_fixture()
+      target = user_fixture()
+      Repo.delete_all(Cinder.Audit.AdminAudit)
+
+      assert {:ok, %User{} = updated} =
+               Accounts.admin_update_email(actor, target, %{email: target.email})
+
+      assert updated.email == target.email
+      assert Repo.aggregate(Cinder.Audit.AdminAudit, :count) == 0
+    end
+  end
+
+  describe "admin_reset_password/2" do
+    test "sets a new password, expires the target's sessions, and audits it" do
+      actor = admin_fixture()
+      target = user_fixture() |> set_password()
+      old_token = Accounts.generate_user_session_token(target)
+
+      assert {:ok, %User{} = updated} =
+               Accounts.admin_reset_password(actor, target, %{
+                 password: "brand new password!",
+                 password_confirmation: "brand new password!"
+               })
+
+      assert Accounts.get_user_by_email_and_password(updated.email, "brand new password!")
+      refute Accounts.get_user_by_session_token(old_token)
+
+      audit = Repo.one!(from a in Cinder.Audit.AdminAudit, where: a.entity_id == ^target.id)
+      assert audit.action == "admin_reset_password"
+    end
+
+    test "rejects a too-short password" do
+      actor = admin_fixture()
+      target = user_fixture()
+
+      assert {:error, changeset} =
+               Accounts.admin_reset_password(actor, target, %{
+                 password: "short",
+                 password_confirmation: "short"
+               })
+
+      assert %{password: ["should be at least 12 character(s)"]} = errors_on(changeset)
+    end
+  end
+
+  describe "delete_user/1" do
+    test "deletes a user, cascades their requests, and audits it" do
+      actor = admin_fixture()
+      target = user_fixture()
+
+      req =
+        Repo.insert!(%Cinder.Requests.Request{
+          user_id: target.id,
+          target_id: 603,
+          target_type: "movie",
+          title: "The Matrix",
+          status: :pending
+        })
+
+      assert {:ok, %User{id: tid}} = Accounts.delete_user(actor, target)
+      refute Repo.get(User, tid)
+      refute Repo.get(Cinder.Requests.Request, req.id)
+
+      audit = Repo.one!(from a in Cinder.Audit.AdminAudit, where: a.entity_id == ^tid)
+      assert audit.action == "delete_user"
+      assert audit.entity_type == "User"
+      assert audit.detail["email"] == target.email
+      assert audit.detail["cascaded_requests"] == true
+    end
+
+    test "nilifies approved_by_id on requests the deleted user approved" do
+      actor = admin_fixture()
+      approver = admin_fixture()
+      requester = user_fixture()
+
+      req =
+        Repo.insert!(%Cinder.Requests.Request{
+          user_id: requester.id,
+          approved_by_id: approver.id,
+          target_id: 27_205,
+          target_type: "movie",
+          title: "Inception",
+          status: :approved
+        })
+
+      assert {:ok, _} = Accounts.delete_user(actor, approver)
+      assert Repo.get(Cinder.Requests.Request, req.id).approved_by_id == nil
+    end
+
+    test "refuses to delete the last admin and writes no audit row" do
+      actor = admin_fixture()
+      other = admin_fixture()
+      # demote `other` so `actor` is the only admin
+      {:ok, _} = Accounts.update_user_role(actor, other, :user)
+      Repo.delete_all(Cinder.Audit.AdminAudit)
+
+      assert {:error, :last_admin} = Accounts.delete_user(other, actor)
+      assert Repo.reload!(actor)
+      assert Repo.aggregate(Cinder.Audit.AdminAudit, :count) == 0
+    end
+
+    test "refuses to delete your own account" do
+      actor = admin_fixture()
+      _second = admin_fixture()
+      assert {:error, :self_delete} = Accounts.delete_user(actor, actor)
+      assert Repo.reload!(actor)
     end
   end
 end

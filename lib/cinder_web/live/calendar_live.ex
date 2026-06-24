@@ -16,6 +16,7 @@ defmodule CinderWeb.CalendarLive do
 
   @impl true
   def handle_info({:series_updated, _id}, socket), do: {:noreply, assign_rows(socket)}
+  def handle_info({:series_deleted, _id}, socket), do: {:noreply, assign_rows(socket)}
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   defp assign_rows(socket) do

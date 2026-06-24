@@ -116,6 +116,38 @@ defmodule Cinder.Download.Client.Sabnzbd do
   defp pct(_), do: 0.0
 
   @impl true
+  def remove(nzo_id, opts \\ []) do
+    del = if Keyword.get(opts, :delete_files, true), do: "1", else: "0"
+
+    # A queued job is deleted via mode=queue; a finished/post-processing job lives
+    # in history and needs mode=history. SABnzbd reports a no-match delete as
+    # status=false (not an error), so a false from the queue delete falls through
+    # to a history delete; a false from *both* means the id is gone already —
+    # which is success for an idempotent remove (unknown id -> :ok).
+    case delete_in("queue", nzo_id, del) do
+      :ok -> :ok
+      :not_deleted -> delete_in_history(nzo_id, del)
+      {:error, _} = err -> err
+    end
+  end
+
+  defp delete_in_history(nzo_id, del) do
+    case delete_in("history", nzo_id, del) do
+      :ok -> :ok
+      :not_deleted -> :ok
+      {:error, _} = err -> err
+    end
+  end
+
+  defp delete_in(mode, nzo_id, del) do
+    case get(mode: mode, name: "delete", value: nzo_id, del_files: del) do
+      {:ok, %{status: 200, body: %{"status" => false}}} -> :not_deleted
+      {:ok, %{status: status}} when status in 200..299 -> :ok
+      other -> error(other)
+    end
+  end
+
+  @impl true
   # mode=queue requires the API key (unlike mode=version, which SABnzbd serves
   # unauthenticated), so a wrong key surfaces as unhealthy. SABnzbd reports a bad
   # key as HTTP 200 with `{"status": false}`, so that body must be caught too.

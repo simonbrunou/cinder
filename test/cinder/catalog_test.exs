@@ -58,6 +58,13 @@ defmodule Cinder.CatalogTest do
       assert %{status: ["is invalid"]} = errors_on(changeset)
     end
 
+    test "transition/2 accepts :cancelled as a valid status" do
+      {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 4242, title: "M"})
+
+      assert {:ok, %Movie{status: :cancelled}} =
+               Catalog.transition(movie, %{status: :cancelled})
+    end
+
     test "transition/2 persists file_path" do
       {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 9001, title: "Heat"})
 
@@ -190,6 +197,32 @@ defmodule Cinder.CatalogTest do
     test "requires tmdb_id and title" do
       assert {:error, changeset} = Catalog.add_to_watchlist(%{})
       assert %{tmdb_id: ["can't be blank"], title: ["can't be blank"]} = errors_on(changeset)
+    end
+  end
+
+  describe "cancellable?/1" do
+    test "is true for active statuses and false for terminal/parked ones" do
+      for s <- [:requested, :searching, :downloading, :downloaded] do
+        assert Catalog.cancellable?(%Movie{status: s}), "expected #{s} cancellable"
+      end
+
+      for s <- [:available, :no_match, :search_failed, :import_failed, :cancelled] do
+        refute Catalog.cancellable?(%Movie{status: s}), "expected #{s} NOT cancellable"
+      end
+    end
+  end
+
+  describe "delete broadcasts" do
+    test "broadcast_movie_deleted/1 emits {:movie_deleted, id} on the movies topic" do
+      Catalog.subscribe()
+      assert :ok = Catalog.broadcast_movie_deleted(42)
+      assert_receive {:movie_deleted, 42}
+    end
+
+    test "broadcast_series_deleted/1 emits {:series_deleted, id} on the series topic" do
+      Catalog.subscribe_series()
+      assert :ok = Catalog.broadcast_series_deleted(7)
+      assert_receive {:series_deleted, 7}
     end
   end
 end

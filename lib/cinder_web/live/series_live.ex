@@ -13,9 +13,11 @@ defmodule CinderWeb.SeriesLive do
 
   @impl true
   def mount(_params, _session, socket) do
+    if connected?(socket), do: Catalog.subscribe_series()
+
     {:ok,
      socket
-     |> assign(query: "", results: [], search_error: false)
+     |> assign(query: "", results: [], search_error: false, confirming: nil)
      |> assign(series: Catalog.list_series())}
   end
 
@@ -33,7 +35,70 @@ defmodule CinderWeb.SeriesLive do
     end
   end
 
+  def handle_event("ask_cancel_series", %{"id" => id}, socket) do
+    {:noreply, assign(socket, confirming: {:cancel, id})}
+  end
+
+  def handle_event("ask_delete_series", %{"id" => id}, socket) do
+    {:noreply, assign(socket, confirming: {:delete, id})}
+  end
+
+  def handle_event("dismiss_confirm", _params, socket) do
+    {:noreply, assign(socket, confirming: nil)}
+  end
+
+  def handle_event("confirm_cancel_series", %{"id" => id}, socket) do
+    run_series_op(
+      socket,
+      id,
+      &Catalog.cancel_series/2,
+      "Series cancelled.",
+      "Couldn't cancel the series."
+    )
+  end
+
+  def handle_event("confirm_delete_series", %{"id" => id}, socket) do
+    run_series_op(
+      socket,
+      id,
+      &Catalog.delete_series/2,
+      "Series deleted.",
+      "Couldn't delete the series."
+    )
+  end
+
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  defp run_series_op(socket, id, op, ok_msg, err_msg) do
+    if socket.assigns.current_scope.user.role != :admin do
+      {:noreply, socket}
+    else
+      actor = socket.assigns.current_scope.user
+      series = Enum.find(socket.assigns.series, &(to_string(&1.id) == id))
+
+      case series && op.(series, actor) do
+        {:ok, _} ->
+          {:noreply,
+           socket
+           |> assign(confirming: nil, series: Catalog.list_series())
+           |> put_flash(:info, ok_msg)}
+
+        _ ->
+          {:noreply, socket |> assign(confirming: nil) |> put_flash(:error, err_msg)}
+      end
+    end
+  end
+
+  @impl true
+  def handle_info({:series_updated, _id}, socket) do
+    {:noreply, assign(socket, series: Catalog.list_series())}
+  end
+
+  def handle_info({:series_deleted, _id}, socket) do
+    {:noreply, assign(socket, series: Catalog.list_series())}
+  end
+
+  def handle_info(_message, socket), do: {:noreply, socket}
 
   @impl true
   def render(assigns) do
@@ -82,11 +147,56 @@ defmodule CinderWeb.SeriesLive do
         <h2 class="pb-4 text-lg font-semibold leading-8">Added series</h2>
         <p :if={@series == []} class="text-base-content/60">No series added yet.</p>
         <div id="series-list" class="grid grid-cols-2 sm:grid-cols-3 gap-4">
-          <.link :for={s <- @series} navigate={~p"/series/#{s.id}"} class="block">
-            <.series_card series={s}>
-              <span class="link link-primary text-sm">Configure monitoring →</span>
-            </.series_card>
-          </.link>
+          <div :for={s <- @series} id={"series-row-#{s.id}"} class="space-y-2">
+            <.link navigate={~p"/series/#{s.id}"} class="block">
+              <.series_card series={s}>
+                <span class="link link-primary text-sm">Configure monitoring →</span>
+              </.series_card>
+            </.link>
+
+            <div class="flex gap-2">
+              <button
+                type="button"
+                class="btn btn-xs btn-warning"
+                phx-click="ask_cancel_series"
+                phx-value-id={s.id}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                class="btn btn-xs btn-error"
+                phx-click="ask_delete_series"
+                phx-value-id={s.id}
+              >
+                Delete
+              </button>
+            </div>
+
+            <div :if={@confirming == {:cancel, to_string(s.id)}} class="flex items-center gap-2">
+              <span class="text-xs">Cancel & unmonitor?</span>
+              <button
+                class="btn btn-xs btn-warning"
+                phx-click="confirm_cancel_series"
+                phx-value-id={s.id}
+              >
+                Confirm
+              </button>
+              <button class="btn btn-xs btn-ghost" phx-click="dismiss_confirm">Keep</button>
+            </div>
+
+            <div :if={@confirming == {:delete, to_string(s.id)}} class="flex items-center gap-2">
+              <span class="text-xs">Delete record? (files kept)</span>
+              <button
+                class="btn btn-xs btn-error"
+                phx-click="confirm_delete_series"
+                phx-value-id={s.id}
+              >
+                Confirm
+              </button>
+              <button class="btn btn-xs btn-ghost" phx-click="dismiss_confirm">Keep</button>
+            </div>
+          </div>
         </div>
       </section>
     </Layouts.app>

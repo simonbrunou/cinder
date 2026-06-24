@@ -115,4 +115,62 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     conn = log_in_user(conn, user)
     assert {:error, {:redirect, %{to: "/"}}} = live(conn, ~p"/series/#{series.id}")
   end
+
+  test "redirects to /series when the open series is deleted", %{conn: conn} do
+    series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 7001, title: "Detail Show"})
+
+    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+
+    Cinder.Catalog.broadcast_series_deleted(series.id)
+    assert_redirect(lv, ~p"/series")
+  end
+
+  test "ignores a {:series_deleted, id} for a different series", %{conn: conn} do
+    series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 7002, title: "Stay Show"})
+
+    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    Cinder.Catalog.broadcast_series_deleted(series.id + 999)
+    assert render(lv) =~ "Stay Show"
+  end
+
+  test "admin edits the series title", %{conn: conn} do
+    series = create_series(710)
+    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+
+    lv |> element(~s|button[phx-click="edit_series"]|) |> render_click()
+
+    lv
+    |> form("#series-form", %{"series" => %{"title" => "Renamed", "year" => "2021"}})
+    |> render_submit()
+
+    assert Repo.get!(Cinder.Catalog.Series, series.id).title == "Renamed"
+  end
+
+  test "admin cancels the series: grabs reaped, episodes unmonitored", %{conn: conn} do
+    series = create_series(711)
+    ep = first_episode(series.id)
+    # Monitor it + give it an active grab.
+    {:ok, _} = Catalog.set_episode_monitored(ep, true)
+    {:ok, _grab} = Catalog.create_grab("H-711", :torrent, [ep.id])
+
+    expect(Cinder.Download.ClientMock, :remove, fn "H-711", _opts -> :ok end)
+
+    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    lv |> element(~s|button[phx-click="ask_cancel_series"]|) |> render_click()
+    lv |> element(~s|button[phx-click="confirm_cancel_series"]|) |> render_click()
+
+    assert Repo.all(Cinder.Catalog.Grab) == []
+    assert Repo.reload(ep).monitored == false
+  end
+
+  test "admin deletes the series and is redirected to /series", %{conn: conn} do
+    series = create_series(712)
+    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+
+    lv |> element(~s|button[phx-click="ask_delete_series"]|) |> render_click()
+    lv |> element(~s|button[phx-click="confirm_delete_series"]|) |> render_click()
+
+    assert Repo.get(Cinder.Catalog.Series, series.id) == nil
+    assert_redirect(lv, "/series")
+  end
 end

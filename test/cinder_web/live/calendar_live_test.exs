@@ -63,4 +63,11 @@ defmodule CinderWeb.CalendarLiveTest do
     conn = log_in_user(conn, user)
     assert {:error, {:redirect, %{to: "/"}}} = live(conn, ~p"/calendar")
   end
+
+  test "survives a {:series_deleted, id} broadcast (re-derives, no crash)", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/calendar")
+    Cinder.Catalog.broadcast_series_deleted(123)
+    # still alive
+    assert render(lv)
+  end
 end

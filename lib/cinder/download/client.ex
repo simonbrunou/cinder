@@ -18,4 +18,13 @@ defmodule Cinder.Download.Client do
 
   @doc "Lightweight reachability check — `:ok` if the client answers, else `{:error, reason}`."
   @callback health() :: :ok | {:error, term()}
+
+  @doc """
+  Removes a tracked download by `id` (qBittorrent infohash / SABnzbd nzo_id, as
+  passed to `status/1`). **Idempotent: an unknown/missing id returns `:ok`** (the
+  download may have auto-removed on completion). `opts` carries `delete_files:`
+  (default `true` — a cancelled pre-`:available` item's partial download is junk).
+  Callers skip this entirely when the tracked download id is nil.
+  """
+  @callback remove(id :: String.t(), opts :: keyword()) :: :ok | {:error, term()}
 end

@@ -189,4 +189,81 @@ defmodule Cinder.RequestsTest do
       assert Cinder.Catalog.get_series_by_tmdb_id(1399)
     end
   end
+
+  describe "delete_request/2" do
+    test "deletes the request and returns the deleted struct" do
+      user = user_fixture()
+      admin = admin_fixture()
+      {:ok, req} = Requests.create_request(user, @attrs)
+
+      assert {:ok, deleted} = Requests.delete_request(req, admin)
+      assert deleted.id == req.id
+      assert Repo.get(Cinder.Requests.Request, req.id) == nil
+    end
+
+    test "writes an admin_audit row (in-transaction) recording the actor and request" do
+      user = user_fixture()
+      admin = admin_fixture()
+      {:ok, req} = Requests.create_request(user, @attrs)
+
+      {:ok, _deleted} = Requests.delete_request(req, admin)
+
+      audit = Repo.one(Cinder.Audit.AdminAudit)
+      assert audit.actor_id == admin.id
+      assert audit.action == "delete_request"
+      assert audit.entity_type == "Request"
+      assert audit.entity_id == req.id
+    end
+
+    test "deleting a non-pending request leaves any spawned catalog row in place (orphan)" do
+      # An admin's own request auto-approves AND creates the movie row.
+      admin = admin_fixture()
+      {:ok, req} = Requests.create_request(admin, @attrs)
+      assert req.status == :approved
+      assert [%Movie{tmdb_id: 603}] = Catalog.list_by_status(:requested)
+
+      {:ok, _deleted} = Requests.delete_request(req, admin)
+
+      # No FK request -> movie: the catalog row survives the request deletion.
+      assert [%Movie{tmdb_id: 603}] = Catalog.list_by_status(:requested)
+    end
+
+    test "deleting a denied request re-opens requests_pending_unique (title requestable again)" do
+      user = user_fixture()
+      admin = admin_fixture()
+      {:ok, req} = Requests.create_request(user, @attrs)
+      {:ok, denied} = Requests.deny_request(req, admin, "no")
+
+      {:ok, _deleted} = Requests.delete_request(denied, admin)
+
+      # With the denied row gone, the same target can be requested fresh.
+      assert {:ok, %{status: :pending}} = Requests.create_request(user, @attrs)
+    end
+  end
+
+  describe "list_requests/0" do
+    test "returns requests of every status, newest first, with :user preloaded" do
+      user = user_fixture()
+      admin = admin_fixture()
+
+      # pending (non-admin, no auto-approve)
+      {:ok, pending} = Requests.create_request(user, @attrs)
+      # denied
+      {:ok, to_deny} = Requests.create_request(user, Map.put(@attrs, :target_id, 604))
+      {:ok, denied} = Requests.deny_request(to_deny, admin, "nope")
+      # approved (admin auto-approves its own)
+      {:ok, approved} = Requests.create_request(admin, Map.put(@attrs, :target_id, 605))
+
+      results = Requests.list_requests()
+
+      assert Enum.map(results, & &1.id) == [approved.id, denied.id, pending.id]
+      assert Enum.map(results, & &1.status) == [:approved, :denied, :pending]
+      # :user is preloaded (not a NotLoaded struct)
+      assert Enum.all?(results, &match?(%Cinder.Accounts.User{}, &1.user))
+    end
+
+    test "returns [] when there are no requests" do
+      assert Requests.list_requests() == []
+    end
+  end
 end

@@ -10,6 +10,11 @@ config :cinder, Cinder.Repo,
   # dep-default change from silently altering the contract.
   journal_mode: :wal,
   busy_timeout: 5_000,
+  # Pinned for the same defend-against-dep-default-drift reason as journal_mode/
+  # busy_timeout: the admin delete cascades (requests on user delete; seasons/
+  # episodes on series delete) depend on SQLite enforcing FKs. On by ecto_sqlite3
+  # default today, pinned so a dep change can't silently disable it.
+  foreign_keys: :on,
   stacktrace: true,
   show_sensitive_data_on_connection_error: true
 

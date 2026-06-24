@@ -35,6 +35,15 @@ defmodule CinderWeb.StatusLive do
   end
 
   @impl true
+  def handle_info({:movie_deleted, id}, socket) do
+    movies = Enum.reject(socket.assigns.movies, &(&1.id == id))
+    {:noreply, assign(socket, movies: movies)}
+  end
+
+  # Catch-all: an unmatched topic message (StatusLive had none) must not crash the view.
+  def handle_info(_message, socket), do: {:noreply, socket}
+
+  @impl true
   def handle_async(:health, {:ok, results}, socket) do
     {:noreply, assign(socket, health: results)}
   end

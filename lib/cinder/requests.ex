@@ -2,6 +2,7 @@ defmodule Cinder.Requests do
   @moduledoc "Request/approval gate: the single caller allowed to create a movie row from a user action."
   import Ecto.Query
   alias Cinder.Accounts.User
+  alias Cinder.Audit
   alias Cinder.Catalog
   alias Cinder.Notifier
   alias Cinder.Repo
@@ -17,6 +18,10 @@ defmodule Cinder.Requests do
     Repo.all(
       from r in Request, where: r.status == :pending, order_by: [asc: r.id], preload: [:user]
     )
+  end
+
+  def list_requests do
+    Repo.all(from r in Request, order_by: [desc: r.id], preload: [:user])
   end
 
   def list_for_user(%User{id: id}) do
@@ -107,6 +112,35 @@ defmodule Cinder.Requests do
   end
 
   def deny_request(%Request{}, _admin, _reason), do: {:error, :not_pending}
+
+  @doc """
+  Deletes a request as an admin and records an `admin_audit` row in the same
+  transaction.
+
+  No FK links a request to the catalog row it may have spawned, so deleting a
+  request does NOT remove an approved movie/series. Deleting a non-pending
+  (denied/approved) request also re-opens the partial `requests_pending_unique`
+  index, so the same title becomes requestable again. The UI surfaces both as a
+  warning (see `CinderWeb.RequestsLive`); this function does not undo either.
+  """
+  def delete_request(%Request{} = request, %User{} = admin) do
+    Repo.transaction(fn ->
+      case Repo.delete(request) do
+        {:ok, deleted} ->
+          Audit.log_or_rollback(admin, "delete_request", deleted, %{
+            status: deleted.status,
+            target_type: deleted.target_type,
+            target_id: deleted.target_id,
+            title: deleted.title
+          })
+
+          deleted
+
+        {:error, changeset} ->
+          Repo.rollback(changeset)
+      end
+    end)
+  end
 
   # NOT transaction-wrapped: find_or_create_series_at_requested does TMDB I/O.
   defp create_approved(user, %{target_type: "season"} = attrs, approver_id) do

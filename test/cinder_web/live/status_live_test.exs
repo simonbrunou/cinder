@@ -92,4 +92,30 @@ defmodule CinderWeb.StatusLiveTest do
     assert html =~ "Arrival"
     assert html =~ "badge-info"
   end
+
+  test "renders a :cancelled movie's status badge without crashing", %{conn: conn} do
+    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 9300, title: "Cancelled Pic"})
+    {:ok, _} = Catalog.transition(movie, %{status: :cancelled})
+
+    {:ok, _lv, html} = live(conn, ~p"/status")
+    assert html =~ "Cancelled Pic"
+    assert html =~ "badge-error"
+  end
+
+  test "drops a movie row on a {:movie_deleted, id} broadcast", %{conn: conn} do
+    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 9400, title: "Doomed Pic"})
+
+    {:ok, lv, html} = live(conn, ~p"/status")
+    assert html =~ "Doomed Pic"
+
+    Catalog.broadcast_movie_deleted(movie.id)
+    refute render(lv) =~ "Doomed Pic"
+  end
+
+  test "ignores an unrelated broadcast without crashing (catch-all handle_info)", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/status")
+    send(lv.pid, {:some_unhandled_topic, :payload})
+    # still alive
+    assert render(lv)
+  end
 end
