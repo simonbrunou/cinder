@@ -32,6 +32,8 @@ defmodule CinderWeb.CoreComponents do
   alias Phoenix.HTML.Form
   alias Phoenix.LiveView.JS
 
+  @poster_base "https://image.tmdb.org/t/p/w342"
+
   @doc """
   Renders flash notices.
 
@@ -699,4 +701,66 @@ defmodule CinderWeb.CoreComponents do
     do: status |> Atom.to_string() |> String.replace("_", " ") |> String.capitalize()
 
   defp humanize_status(status), do: inspect(status)
+
+  @doc """
+  A poster card for a movie or TV result/record. Renders the TMDB poster (or a
+  "No poster" placeholder), the title + optional year, an optional film/TV corner
+  chip, and an action affordance via the inner block (Add button, status badge,
+  season-picker link, admin controls). Single source of truth for the discover/
+  library poster card — replaces the duplicated `movie_card`/`series_card`.
+
+  `poster_path` is the TMDB path fragment (`/abc.jpg`); the full URL is built here.
+
+  ## Examples
+
+      <.media_card poster_path={m.poster_path} title={m.title} year={m.year} type={:movie}>
+        <.status_badge kind={:movie} status={m.status} />
+      </.media_card>
+  """
+  attr :poster_path, :string, default: nil
+  attr :title, :string, required: true
+  attr :year, :integer, default: nil
+  attr :type, :atom, default: nil, values: [nil, :movie, :tv]
+  slot :inner_block
+
+  def media_card(assigns) do
+    ~H"""
+    <div class="card bg-base-200 shadow-sm">
+      <figure class="relative">
+        <img
+          :if={@poster_path}
+          src={poster_url(@poster_path)}
+          alt={@title}
+          class="aspect-[2/3] w-full object-cover"
+        />
+        <div
+          :if={!@poster_path}
+          class="grid aspect-[2/3] w-full place-items-center bg-base-300 text-sm text-base-content/40"
+        >
+          No poster
+        </div>
+        <span
+          :if={@type}
+          class="badge badge-sm absolute left-2 top-2 gap-1 border-0 bg-base-100/80 backdrop-blur"
+        >
+          <.icon name={type_icon(@type)} class="size-3" />{type_label(@type)}
+        </span>
+      </figure>
+      <div class="card-body gap-2 p-3">
+        <h3 class="text-sm font-semibold leading-tight">
+          {@title}
+          <span :if={@year} class="font-normal text-base-content/60">({@year})</span>
+        </h3>
+        {render_slot(@inner_block)}
+      </div>
+    </div>
+    """
+  end
+
+  defp type_icon(:movie), do: "hero-film"
+  defp type_icon(:tv), do: "hero-tv"
+  defp type_label(:movie), do: "Film"
+  defp type_label(:tv), do: "TV"
+
+  defp poster_url(path), do: @poster_base <> path
 end
