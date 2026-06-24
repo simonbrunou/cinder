@@ -105,7 +105,7 @@ defmodule CinderWeb.StatusLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash}>
+    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.header>
         Status
         <:subtitle>Every requested movie and its live pipeline state.</:subtitle>

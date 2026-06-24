@@ -160,15 +160,14 @@ defmodule CinderWeb.WatchlistLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash}>
+    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.header>
         Cinder
         <:subtitle>Search movies and build your watchlist.</:subtitle>
       </.header>
 
-      <nav class="mb-6 flex gap-4">
-        <.link navigate={~p"/status"} class="link">Status dashboard →</.link>
-        <.link :if={@current_scope.user.role == :admin} navigate={~p"/series"} class="link">
+      <nav :if={@current_scope.user.role == :admin} class="mb-6 flex gap-4">
+        <.link navigate={~p"/series"} class="link">
           TV series →
         </.link>
       </nav>

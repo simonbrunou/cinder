@@ -4,7 +4,7 @@ defmodule CinderWeb.UserLive.Login do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope}>
+    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <div class="mx-auto max-w-sm space-y-4">
         <div class="text-center">
           <.header>

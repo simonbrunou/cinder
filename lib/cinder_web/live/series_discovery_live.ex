@@ -123,7 +123,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
     assigns = assign(assigns, :poster_base, @poster_base)
 
     ~H"""
-    <Layouts.app flash={@flash}>
+    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.link navigate={~p"/series"} class="link mb-6 inline-block">← TV series</.link>
 
       <div class="mb-8 flex gap-4">
