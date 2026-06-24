@@ -305,8 +305,71 @@ defmodule CinderWeb.DiscoverLive do
     """
   end
 
-  # Filled in Task 4.
   attr :series, :list, required: true
   attr :confirming, :any, required: true
-  defp series_admin_section(assigns), do: ~H""
+
+  defp series_admin_section(assigns) do
+    ~H"""
+    <section class="mt-10">
+      <h2 class="pb-4 text-lg font-semibold leading-8">Added series</h2>
+      <.empty_state
+        :if={@series == []}
+        icon="hero-tv"
+        title="No series added yet"
+        message="Search above to add a show."
+      />
+      <div id="series-list" class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+        <div :for={s <- @series} id={"series-row-#{s.id}"} class="space-y-2">
+          <.link navigate={~p"/series/#{s.id}"} class="block">
+            <.media_card poster_path={s.poster_path} title={s.title} year={s.year}>
+              <span class="link link-primary text-sm">Configure monitoring →</span>
+            </.media_card>
+          </.link>
+
+          <div class="flex gap-2">
+            <button
+              type="button"
+              class="btn btn-sm btn-warning"
+              phx-click="ask_cancel_series"
+              phx-value-id={s.id}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="btn btn-sm btn-error"
+              phx-click="ask_delete_series"
+              phx-value-id={s.id}
+            >
+              Delete
+            </button>
+          </div>
+
+          <.confirm_action
+            :if={@confirming == {:cancel, to_string(s.id)}}
+            id={"confirm-cancel-series-#{s.id}"}
+            on_confirm="confirm_cancel_series"
+            on_cancel="dismiss_confirm"
+            value={s.id}
+            confirm_label="Cancel & unmonitor"
+            variant="warning"
+          >
+            <:caveat>Cancel & unmonitor this series?</:caveat>
+          </.confirm_action>
+
+          <.confirm_action
+            :if={@confirming == {:delete, to_string(s.id)}}
+            id={"confirm-delete-series-#{s.id}"}
+            on_confirm="confirm_delete_series"
+            on_cancel="dismiss_confirm"
+            value={s.id}
+            confirm_label="Delete"
+          >
+            <:caveat>Delete this series record? (Library files are left on disk.)</:caveat>
+          </.confirm_action>
+        </div>
+      </div>
+    </section>
+    """
+  end
 end

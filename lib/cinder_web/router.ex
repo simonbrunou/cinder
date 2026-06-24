@@ -58,7 +58,6 @@ defmodule CinderWeb.Router do
       ] do
       live "/", DiscoverLive
       live "/my-requests", MyRequestsLive
-      live "/series", SeriesLive
       live "/series/tmdb/:tmdb_id", SeriesDiscoveryLive
     end
 
@@ -87,6 +86,9 @@ defmodule CinderWeb.Router do
       ] do
       live "/setup", SetupLive
     end
+
+    # /series folded into Discover (UX-3); redirect old bookmarks.
+    get "/series", RedirectController, :to_root
   end
 
   # Other scopes may use custom stacks.
