@@ -29,6 +29,19 @@ defmodule Cinder.Audit do
     |> Repo.insert()
   end
 
+  @doc """
+  Like `log/4`, but for use INSIDE a `Repo.transaction`: returns the audit entry on
+  success, and on a write failure rolls the enclosing transaction back with the
+  changeset (so a destructive op never commits an un-audited mutation, and the
+  caller gets a clean {:error, changeset} instead of a raised MatchError).
+  """
+  def log_or_rollback(actor, action, entity, detail \\ %{}) do
+    case log(actor, action, entity, detail) do
+      {:ok, entry} -> entry
+      {:error, changeset} -> Repo.rollback(changeset)
+    end
+  end
+
   defp actor_id(%User{id: id}), do: id
   defp actor_id(nil), do: nil
 

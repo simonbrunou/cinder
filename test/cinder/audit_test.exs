@@ -48,4 +48,35 @@ defmodule Cinder.AuditTest do
       assert Repo.aggregate(AdminAudit, :count) == 0
     end
   end
+
+  describe "log_or_rollback/4" do
+    test "returns the audit entry on success" do
+      admin = admin_fixture()
+      {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 2, title: "N"})
+
+      assert {:ok, %AdminAudit{} = row} =
+               Repo.transaction(fn ->
+                 Audit.log_or_rollback(admin, :delete_movie, movie, %{title: "N"})
+               end)
+
+      assert row.action == "delete_movie"
+      assert row.entity_type == "Movie"
+      assert row.entity_id == movie.id
+      assert Repo.aggregate(AdminAudit, :count) == 1
+    end
+
+    test "rolls back the enclosing transaction when the audit write fails" do
+      admin = admin_fixture()
+
+      # A blank action fails validate_required([:action]) → log/4 returns {:error, _},
+      # so log_or_rollback/4 rolls the enclosing transaction back with the changeset.
+      result =
+        Repo.transaction(fn ->
+          Audit.log_or_rollback(admin, "", admin, %{})
+        end)
+
+      assert {:error, %Ecto.Changeset{}} = result
+      assert Repo.aggregate(AdminAudit, :count) == 0
+    end
+  end
 end

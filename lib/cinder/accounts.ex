@@ -129,8 +129,7 @@ defmodule Cinder.Accounts do
         Repo.rollback(:last_admin)
       end
 
-      {:ok, _audit} =
-        Audit.log(actor, "update_user_role", updated, %{role: to_string(role)})
+      Audit.log_or_rollback(actor, "update_user_role", updated, %{role: to_string(role)})
 
       updated
     end)
@@ -160,8 +159,7 @@ defmodule Cinder.Accounts do
   defp do_admin_update_email(%User{} = actor, changeset) do
     case Repo.update(changeset) do
       {:ok, updated} ->
-        {:ok, _audit} =
-          Audit.log(actor, "admin_update_email", updated, %{email: updated.email})
+        Audit.log_or_rollback(actor, "admin_update_email", updated, %{email: updated.email})
 
         updated
 
@@ -181,7 +179,7 @@ defmodule Cinder.Accounts do
     Repo.transaction(fn ->
       case update_user_and_delete_all_tokens(changeset) do
         {:ok, {user, _expired}} ->
-          {:ok, _audit} = Audit.log(actor, "admin_reset_password", user, %{})
+          Audit.log_or_rollback(actor, "admin_reset_password", user, %{})
           user
 
         {:error, changeset} ->
@@ -216,8 +214,10 @@ defmodule Cinder.Accounts do
         Repo.rollback(:self_delete)
 
       true ->
-        {:ok, _} =
-          Audit.log(actor, "delete_user", target, %{email: email, cascaded_requests: true})
+        Audit.log_or_rollback(actor, "delete_user", target, %{
+          email: email,
+          cascaded_requests: true
+        })
 
         target
     end

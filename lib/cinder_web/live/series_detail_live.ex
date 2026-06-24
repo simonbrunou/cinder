@@ -92,10 +92,16 @@ defmodule CinderWeb.SeriesDetailLive do
 
   def handle_event("confirm_cancel_series", _params, socket) do
     actor = socket.assigns.current_scope.user
-    {:ok, _} = Catalog.cancel_series(socket.assigns.series, actor)
 
-    {:noreply,
-     socket |> assign(confirming: nil) |> put_flash(:info, "Series cancelled.") |> reload()}
+    case Catalog.cancel_series(socket.assigns.series, actor) do
+      {:ok, _} ->
+        {:noreply,
+         socket |> assign(confirming: nil) |> put_flash(:info, "Series cancelled.") |> reload()}
+
+      _ ->
+        {:noreply,
+         socket |> assign(confirming: nil) |> put_flash(:error, "Couldn't cancel the series.")}
+    end
   end
 
   def handle_event("confirm_delete_series", _params, socket) do

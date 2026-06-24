@@ -187,6 +187,12 @@ defmodule CinderWeb.UsersLive do
          socket
          |> assign(confirming_delete: nil)
          |> put_flash(:error, "Can't delete the last admin.")}
+
+      {:error, _} ->
+        {:noreply,
+         socket
+         |> assign(confirming_delete: nil)
+         |> put_flash(:error, "Couldn't complete that action.")}
     end
   end
 

@@ -125,17 +125,19 @@ defmodule Cinder.Requests do
   """
   def delete_request(%Request{} = request, %User{} = admin) do
     Repo.transaction(fn ->
-      with {:ok, deleted} <- Repo.delete(request),
-           {:ok, _audit} <-
-             Audit.log(admin, "delete_request", deleted, %{
-               status: deleted.status,
-               target_type: deleted.target_type,
-               target_id: deleted.target_id,
-               title: deleted.title
-             }) do
-        deleted
-      else
-        {:error, changeset} -> Repo.rollback(changeset)
+      case Repo.delete(request) do
+        {:ok, deleted} ->
+          Audit.log_or_rollback(admin, "delete_request", deleted, %{
+            status: deleted.status,
+            target_type: deleted.target_type,
+            target_id: deleted.target_id,
+            title: deleted.title
+          })
+
+          deleted
+
+        {:error, changeset} ->
+          Repo.rollback(changeset)
       end
     end)
   end

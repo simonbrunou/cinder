@@ -163,7 +163,7 @@ defmodule Cinder.Catalog do
     Repo.transaction(fn ->
       case movie |> Movie.transition_changeset(%{status: :cancelled}) |> Repo.update() do
         {:ok, updated} ->
-          {:ok, _} = Audit.log(actor, :cancel_movie, updated, %{from: movie.status})
+          Audit.log_or_rollback(actor, :cancel_movie, updated, %{from: movie.status})
           updated
 
         {:error, changeset} ->
@@ -192,7 +192,7 @@ defmodule Cinder.Catalog do
     Repo.transaction(fn ->
       case Repo.delete(movie) do
         {:ok, deleted} ->
-          {:ok, _} = Audit.log(actor, :delete_movie, deleted, %{title: deleted.title})
+          Audit.log_or_rollback(actor, :delete_movie, deleted, %{title: deleted.title})
           deleted
 
         {:error, changeset} ->
@@ -621,16 +621,17 @@ defmodule Cinder.Catalog do
     # External I/O outside the txn: best-effort, never blocks the cancel.
     for grab <- grabs, do: remove_grab_download(grab)
 
-    {:ok, _} =
+    result =
       Repo.transaction(fn ->
         for grab <- grabs, do: Repo.delete!(grab)
         unmonitor_series_tree(series.id)
-        {:ok, entry} = Audit.log(actor, :cancel_series, series, %{title: series.title})
-        entry
+        Audit.log_or_rollback(actor, :cancel_series, series, %{title: series.title})
       end)
 
-    broadcast_series(series.id)
-    {:ok, series}
+    with {:ok, _} <- result do
+      broadcast_series(series.id)
+      {:ok, series}
+    end
   end
 
   @doc """
@@ -654,7 +655,7 @@ defmodule Cinder.Catalog do
     Repo.transaction(fn ->
       case Repo.delete(series) do
         {:ok, deleted} ->
-          {:ok, _} = Audit.log(actor, :delete_series, deleted, %{title: deleted.title})
+          Audit.log_or_rollback(actor, :delete_series, deleted, %{title: deleted.title})
           deleted
 
         {:error, changeset} ->
