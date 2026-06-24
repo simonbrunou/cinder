@@ -3,11 +3,7 @@ defmodule CinderWeb.DiscoverLive do
   Unified Discover surface, mounted at `/`. One search returns movies AND TV in a
   single mixed poster grid: movie cards request inline (Add → `Cinder.Requests`),
   TV cards link to the season picker (`/series/tmdb/:tmdb_id`). Below the grid: the
-  movie watchlist, and (admin only) an "Added series" management block.
-
-  The approval gate is untouched — every add/request goes through
-  `Cinder.Requests.create_request/2`. Live via the `movies` + `requests` (+ `series`,
-  admin) topics.
+  movie watchlist. Live via the `movies` + `requests` topics.
   """
   use CinderWeb, :live_view
 
@@ -15,20 +11,16 @@ defmodule CinderWeb.DiscoverLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    admin? = socket.assigns.current_scope.user.role == :admin
-
     # ponytail: subscribe-before-read closes the read/subscribe gap.
     if connected?(socket) do
       Catalog.subscribe()
       Cinder.Requests.subscribe()
-      if admin?, do: Catalog.subscribe_series()
     end
 
     {:ok,
      socket
-     |> assign(query: "", results: [], search_error: false, confirming: nil, admin?: admin?)
+     |> assign(query: "", results: [], search_error: false)
      |> assign(watchlist: Catalog.list_watchlist())
-     |> assign(series: if(admin?, do: Catalog.list_series(), else: []))
      |> assign_request_state()}
   end
 
@@ -57,35 +49,6 @@ defmodule CinderWeb.DiscoverLive do
     end
   end
 
-  def handle_event("ask_cancel_series", %{"id" => id}, socket),
-    do: {:noreply, assign(socket, confirming: {:cancel, id})}
-
-  def handle_event("ask_delete_series", %{"id" => id}, socket),
-    do: {:noreply, assign(socket, confirming: {:delete, id})}
-
-  def handle_event("dismiss_confirm", _params, socket),
-    do: {:noreply, assign(socket, confirming: nil)}
-
-  def handle_event("confirm_cancel_series", %{"id" => id}, socket) do
-    run_series_op(
-      socket,
-      id,
-      &Catalog.cancel_series/2,
-      "Series cancelled.",
-      "Couldn't cancel the series."
-    )
-  end
-
-  def handle_event("confirm_delete_series", %{"id" => id}, socket) do
-    run_series_op(
-      socket,
-      id,
-      &Catalog.delete_series/2,
-      "Series deleted.",
-      "Couldn't delete the series."
-    )
-  end
-
   # The event payload is client-controlled; ignore any malformed/forged frame.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
@@ -107,12 +70,6 @@ defmodule CinderWeb.DiscoverLive do
       when event in [:request_created, :request_approved, :request_denied] do
     {:noreply, assign_request_state(socket)}
   end
-
-  def handle_info({:series_updated, _id}, socket),
-    do: {:noreply, assign(socket, series: Catalog.list_series())}
-
-  def handle_info({:series_deleted, _id}, socket),
-    do: {:noreply, assign(socket, series: Catalog.list_series())}
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
@@ -145,26 +102,6 @@ defmodule CinderWeb.DiscoverLive do
 
       {:error, _} ->
         put_flash(socket, :error, "#{movie.title} is already requested.")
-    end
-  end
-
-  defp run_series_op(socket, id, op, ok_msg, err_msg) do
-    if socket.assigns.current_scope.user.role != :admin do
-      {:noreply, socket}
-    else
-      actor = socket.assigns.current_scope.user
-      series = Enum.find(socket.assigns.series, &(to_string(&1.id) == id))
-
-      case series && op.(series, actor) do
-        {:ok, _} ->
-          {:noreply,
-           socket
-           |> assign(confirming: nil, series: Catalog.list_series())
-           |> put_flash(:info, ok_msg)}
-
-        _ ->
-          {:noreply, socket |> assign(confirming: nil) |> put_flash(:error, err_msg)}
-      end
     end
   end
 
@@ -285,8 +222,6 @@ defmodule CinderWeb.DiscoverLive do
           <.status_badge kind={:movie} status={m.status} />
         </.media_card>
       </div>
-
-      <.series_admin_section :if={@admin?} series={@series} confirming={@confirming} />
     </Layouts.app>
     """
   end
@@ -307,74 +242,6 @@ defmodule CinderWeb.DiscoverLive do
     >
       Add
     </button>
-    """
-  end
-
-  attr :series, :list, required: true
-  attr :confirming, :any, required: true
-
-  defp series_admin_section(assigns) do
-    ~H"""
-    <section class="mt-10">
-      <h2 class="pb-4 text-lg font-semibold leading-8">Added series</h2>
-      <.empty_state
-        :if={@series == []}
-        icon="hero-tv"
-        title="No series added yet"
-        message="Search above to add a show."
-      />
-      <div id="series-list" class="grid grid-cols-2 sm:grid-cols-3 gap-4">
-        <div :for={s <- @series} id={"series-row-#{s.id}"} class="space-y-2">
-          <.link navigate={~p"/series/#{s.id}"} class="block">
-            <.media_card poster_path={s.poster_path} title={s.title} year={s.year}>
-              <span class="link link-primary text-sm">Configure monitoring →</span>
-            </.media_card>
-          </.link>
-
-          <div class="flex gap-2">
-            <button
-              type="button"
-              class="btn btn-sm btn-warning"
-              phx-click="ask_cancel_series"
-              phx-value-id={s.id}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              class="btn btn-sm btn-error"
-              phx-click="ask_delete_series"
-              phx-value-id={s.id}
-            >
-              Delete
-            </button>
-          </div>
-
-          <.confirm_action
-            :if={@confirming == {:cancel, to_string(s.id)}}
-            id={"confirm-cancel-series-#{s.id}"}
-            on_confirm="confirm_cancel_series"
-            on_cancel="dismiss_confirm"
-            value={s.id}
-            confirm_label="Cancel & unmonitor"
-            variant="warning"
-          >
-            <:caveat>Cancel & unmonitor this series?</:caveat>
-          </.confirm_action>
-
-          <.confirm_action
-            :if={@confirming == {:delete, to_string(s.id)}}
-            id={"confirm-delete-series-#{s.id}"}
-            on_confirm="confirm_delete_series"
-            on_cancel="dismiss_confirm"
-            value={s.id}
-            confirm_label="Delete"
-          >
-            <:caveat>Delete this series record? (Library files are left on disk.)</:caveat>
-          </.confirm_action>
-        </div>
-      </div>
-    </section>
     """
   end
 end
