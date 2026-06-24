@@ -238,6 +238,7 @@ defmodule CinderWeb.WatchlistLive do
       id={"add-#{@tmdb_id}"}
       phx-click="add"
       phx-value-tmdb_id={@tmdb_id}
+      phx-disable-with="Adding…"
       class="btn btn-primary btn-sm w-full"
     >
       Add

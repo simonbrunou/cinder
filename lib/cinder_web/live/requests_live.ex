@@ -113,6 +113,7 @@ defmodule CinderWeb.RequestsLive do
               class="btn btn-primary btn-sm"
               phx-click="approve"
               phx-value-id={r.id}
+              phx-disable-with="Approving…"
             >
               Approve
             </button>
@@ -128,7 +129,7 @@ defmodule CinderWeb.RequestsLive do
                 placeholder="Reason"
                 class="input input-sm input-bordered"
               />
-              <button class="btn btn-error btn-sm" type="submit">Confirm deny</button>
+              <button class="btn btn-error btn-sm" type="submit" phx-disable-with="Denying…">Confirm deny</button>
             </form>
             <button
               :if={r.status == :pending and @denying != to_string(r.id)}

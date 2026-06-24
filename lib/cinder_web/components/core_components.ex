@@ -515,6 +515,23 @@ defmodule CinderWeb.CoreComponents do
   end
 
   @doc """
+  A small inline loading spinner (respects `prefers-reduced-motion`).
+
+      <.spinner label="Checking services…" />
+  """
+  attr :class, :any, default: "size-5"
+  attr :label, :string, default: "Loading…"
+
+  def spinner(assigns) do
+    ~H"""
+    <span class="inline-flex items-center gap-2 text-base-content/60">
+      <.icon name="hero-arrow-path" class={["motion-safe:animate-spin", @class]} />
+      <span :if={@label} class="text-sm">{@label}</span>
+    </span>
+    """
+  end
+
+  @doc """
   Renders a [Heroicon](https://heroicons.com).
 
   Heroicons come in three styles – outline, solid, and mini.

@@ -255,7 +255,7 @@ defmodule CinderWeb.UsersLive do
             options={[{"User", "user"}, {"Admin", "admin"}]}
           />
           <div class="flex gap-2">
-            <button class="btn btn-primary btn-sm" type="submit">Create</button>
+            <button class="btn btn-primary btn-sm" type="submit" phx-disable-with="Creating…">Create</button>
             <button class="btn btn-ghost btn-sm" type="button" phx-click="cancel_create">
               Cancel
             </button>
@@ -272,6 +272,7 @@ defmodule CinderWeb.UsersLive do
               class="badge badge-sm"
               phx-click="toggle_role"
               phx-value-id={u.id}
+              phx-disable-with="…"
               title="Toggle admin/user"
             >
               {u.role}
@@ -300,7 +301,7 @@ defmodule CinderWeb.UsersLive do
                 class="input input-sm w-24"
                 placeholder="∞"
               />
-              <button class="btn btn-sm">Save</button>
+              <button class="btn btn-sm" phx-disable-with="Saving…">Save</button>
             </form>
           </div>
           <.form
@@ -317,7 +318,7 @@ defmodule CinderWeb.UsersLive do
               value={u.email}
               class="input input-sm input-bordered"
             />
-            <button class="btn btn-primary btn-sm" type="submit">Save email</button>
+            <button class="btn btn-primary btn-sm" type="submit" phx-disable-with="Saving…">Save email</button>
             <button class="btn btn-ghost btn-sm" type="button" phx-click="cancel_edit_email">
               Cancel
             </button>
@@ -371,7 +372,7 @@ defmodule CinderWeb.UsersLive do
               placeholder="Confirm"
               class="input input-sm input-bordered"
             />
-            <button class="btn btn-primary btn-sm" type="submit">Set password</button>
+            <button class="btn btn-primary btn-sm" type="submit" phx-disable-with="Resetting…">Set password</button>
             <button class="btn btn-ghost btn-sm" type="button" phx-click="cancel_reset_pw">
               Cancel
             </button>

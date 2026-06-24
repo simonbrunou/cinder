@@ -102,12 +102,13 @@ defmodule CinderWeb.StatusLive do
             type="button"
             class="btn btn-xs"
             phx-click="recheck_health"
+            phx-disable-with="Checking…"
           >
             Recheck
           </button>
         </div>
 
-        <p :if={@health == :loading} class="text-base-content/60">Checking…</p>
+        <div :if={@health == :loading}><.spinner label="Checking services…" /></div>
 
         <ul
           :if={@health != :loading}
@@ -150,6 +151,7 @@ defmodule CinderWeb.StatusLive do
                 class="btn btn-xs btn-ghost ml-2"
                 phx-click="retry"
                 phx-value-id={m.id}
+                phx-disable-with="Retrying…"
               >
                 Retry
               </button>

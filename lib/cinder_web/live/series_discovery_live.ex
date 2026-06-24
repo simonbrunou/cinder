@@ -181,6 +181,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
       type="button"
       phx-click="request_season"
       phx-value-season={@season_number}
+      phx-disable-with="Requesting…"
       class="btn btn-primary btn-sm"
     >
       Request

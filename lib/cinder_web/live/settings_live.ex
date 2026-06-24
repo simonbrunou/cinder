@@ -74,7 +74,7 @@ defmodule CinderWeb.SettingsLive do
 
       <form id="settings-form" phx-submit="save" class="space-y-8">
         <.service_fields form={@form} health={@health} />
-        <button type="submit" class="btn btn-primary">Save settings</button>
+        <button type="submit" class="btn btn-primary" phx-disable-with="Saving…">Save settings</button>
       </form>
 
       <div class="rounded-box bg-base-200 p-4 mt-8">

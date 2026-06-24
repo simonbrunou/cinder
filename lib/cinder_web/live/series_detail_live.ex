@@ -185,7 +185,7 @@ defmodule CinderWeb.SeriesDetailLive do
       >
         <.input field={@form[:title]} type="text" label="Title" />
         <.input field={@form[:year]} type="number" label="Year" />
-        <button class="btn btn-sm btn-primary" type="submit">Save</button>
+        <button class="btn btn-sm btn-primary" type="submit" phx-disable-with="Saving…">Save</button>
         <button class="btn btn-sm btn-ghost" type="button" phx-click="cancel_edit_series">Cancel</button>
       </.form>
 
