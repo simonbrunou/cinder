@@ -52,9 +52,15 @@ defmodule CinderWeb.RequestsLive do
 
   def handle_event("delete", %{"id" => id}, socket) do
     req = find_request(socket, id)
-    if req, do: Requests.delete_request(req, socket.assigns.current_scope.user)
 
-    {:noreply, socket |> assign(confirming_delete: nil, requests: Requests.list_requests())}
+    socket =
+      case req && Requests.delete_request(req, socket.assigns.current_scope.user) do
+        {:ok, _} -> put_flash(socket, :info, "Request deleted.")
+        nil -> socket
+        _ -> put_flash(socket, :error, "Couldn't delete that request.")
+      end
+
+    {:noreply, assign(socket, confirming_delete: nil, requests: Requests.list_requests())}
   end
 
   # The event payload is client-controlled; ignore any malformed/forged frame

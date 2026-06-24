@@ -626,6 +626,7 @@ defmodule Cinder.Catalog do
         for grab <- grabs, do: Repo.delete!(grab)
         unmonitor_series_tree(series.id)
         Audit.log_or_rollback(actor, :cancel_series, series, %{title: series.title})
+        series
       end)
 
     with {:ok, _} <- result do

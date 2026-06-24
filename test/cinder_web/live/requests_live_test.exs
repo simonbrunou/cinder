@@ -162,8 +162,10 @@ defmodule CinderWeb.RequestsLiveTest do
     assert confirm_html =~ "can be requested again"
 
     # confirm the delete
-    lv |> element("button[phx-click='delete'][phx-value-id='#{req.id}']") |> render_click()
+    deleted_html =
+      lv |> element("button[phx-click='delete'][phx-value-id='#{req.id}']") |> render_click()
 
+    assert deleted_html =~ "Request deleted."
     assert Cinder.Repo.get(Cinder.Requests.Request, req.id) == nil
     refute render(lv) =~ "ToDelete"
   end
