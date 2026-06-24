@@ -7,6 +7,8 @@ defmodule CinderWeb.SettingsComponents do
   """
   use Phoenix.Component
 
+  import CinderWeb.CoreComponents, only: [status_badge: 1]
+
   alias Cinder.Settings
 
   attr :form, :map, required: true
@@ -203,12 +205,7 @@ defmodule CinderWeb.SettingsComponents do
 
   defp test_badge(assigns) do
     ~H"""
-    <span
-      class={["badge badge-sm", if(@result == :ok, do: "badge-success", else: "badge-error")]}
-      title={test_title(@result)}
-    >
-      {if @result == :ok, do: "ok", else: "unreachable"}
-    </span>
+    <.status_badge kind={:health} status={@result} />
     """
   end
 
@@ -217,9 +214,4 @@ defmodule CinderWeb.SettingsComponents do
       do: "•••• saved (leave blank to keep)",
       else: ""
   end
-
-  # Surface the (sanitized) failure reason so a bad credential shows e.g. {:tmdb_status, 401}.
-  defp test_title(:ok), do: nil
-  defp test_title({:error, reason}), do: inspect(reason)
-  defp test_title(_other), do: nil
 end

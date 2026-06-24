@@ -30,7 +30,7 @@ defmodule CinderWeb.StatusLiveTest do
     assert html =~ "badge-neutral"
 
     {:ok, _} = Catalog.transition(movie, %{status: :downloading})
-    assert render(lv) =~ "badge-primary"
+    assert render(lv) =~ "badge-info"
   end
 
   test "a parked movie shows a Retry button that re-queues it to :requested", %{conn: conn} do

@@ -73,25 +73,6 @@ defmodule CinderWeb.StatusLive do
     {:noreply, socket}
   end
 
-  attr :status, :any, required: true
-
-  defp health_badge(assigns) do
-    ~H"""
-    <span class={["badge badge-sm", health_class(@status)]} title={health_title(@status)}>
-      {health_text(@status)}
-    </span>
-    """
-  end
-
-  defp health_class(:ok), do: "badge-success"
-  defp health_class({:error, _}), do: "badge-error"
-
-  defp health_text(:ok), do: "ok"
-  defp health_text({:error, _}), do: "unreachable"
-
-  defp health_title(:ok), do: nil
-  defp health_title({:error, reason}), do: inspect(reason)
-
   defp parked?(status), do: status in @parked
 
   defp upsert_movie(movies, movie) do
@@ -136,7 +117,7 @@ defmodule CinderWeb.StatusLive do
           <li :for={h <- @health}>
             <div class="flex items-center justify-between">
               <span>{h.label}</span>
-              <.health_badge status={h.status} />
+              <.status_badge kind={:health} status={h.status} />
             </div>
           </li>
         </ul>
@@ -157,7 +138,7 @@ defmodule CinderWeb.StatusLive do
               <span :if={m.year} class="text-base-content/60">({m.year})</span>
             </td>
             <td>
-              <.movie_status_badge status={m.status} />
+              <.status_badge kind={:movie} status={m.status} />
               <button
                 :if={parked?(m.status)}
                 type="button"

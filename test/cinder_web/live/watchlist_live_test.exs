@@ -81,7 +81,7 @@ defmodule CinderWeb.WatchlistLiveTest do
 
     lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
 
-    assert has_element?(lv, "#results", "pending")
+    assert has_element?(lv, "#results", "Pending")
     refute has_element?(lv, "#add-27205")
   end
 
@@ -135,12 +135,12 @@ defmodule CinderWeb.WatchlistLiveTest do
   test "a movie's status change updates its badge live", %{conn: conn} do
     {:ok, movie} = Catalog.add_to_watchlist(@inception)
     {:ok, lv, _html} = live(conn, ~p"/")
-    assert has_element?(lv, "#watchlist", "requested")
+    assert has_element?(lv, "#watchlist", "Requested")
 
     {:ok, _} = Catalog.transition(movie, %{status: :downloading, download_id: "h"})
 
-    assert render(lv) =~ "downloading"
-    refute has_element?(lv, "#watchlist .badge", "requested")
+    assert render(lv) =~ "Downloading"
+    refute has_element?(lv, "#watchlist .badge", "Requested")
   end
 
   test "drops a deleted movie from the watchlist on {:movie_deleted, id}", %{conn: conn} do

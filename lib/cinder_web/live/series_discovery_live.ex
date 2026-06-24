@@ -172,9 +172,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
 
   defp season_action(assigns) do
     ~H"""
-    <span :if={@status != nil} class={["badge badge-sm", badge_class(@status)]}>
-      {badge_label(@status)}
-    </span>
+    <.status_badge :if={@status != nil} kind={:request} status={@status} />
     <button
       :if={@status in [nil, :denied]}
       type="button"
@@ -186,14 +184,6 @@ defmodule CinderWeb.SeriesDiscoveryLive do
     </button>
     """
   end
-
-  defp badge_class(:pending), do: "badge-warning"
-  defp badge_class(:approved), do: "badge-info"
-  defp badge_class(:denied), do: "badge-error"
-
-  defp badge_label(:pending), do: "Pending"
-  defp badge_label(:approved), do: "Approved"
-  defp badge_label(:denied), do: "Denied"
 
   defp season_label(0), do: "Specials"
   defp season_label(n), do: "Season #{n}"

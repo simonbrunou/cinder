@@ -594,36 +594,4 @@ defmodule CinderWeb.CoreComponents do
     do: status |> Atom.to_string() |> String.replace("_", " ") |> String.capitalize()
 
   defp humanize_status(status), do: inspect(status)
-
-  @doc "A daisyUI badge for a movie's pipeline status, coloured by state."
-  attr :status, :atom, required: true
-
-  def movie_status_badge(assigns) do
-    ~H"""
-    <span class={["badge badge-sm", status_badge_class(@status)]}>{@status}</span>
-    """
-  end
-
-  @doc "A daisyUI badge for a request's status (pending/approved/denied)."
-  attr :status, :atom, required: true
-
-  def request_status_badge(assigns) do
-    ~H"""
-    <span class={["badge badge-sm", request_badge_class(@status)]}>{@status}</span>
-    """
-  end
-
-  defp request_badge_class(:pending), do: "badge-warning"
-  defp request_badge_class(:approved), do: "badge-info"
-  defp request_badge_class(:denied), do: "badge-error"
-
-  defp status_badge_class(:requested), do: "badge-neutral"
-  defp status_badge_class(:searching), do: "badge-info"
-  defp status_badge_class(:downloading), do: "badge-primary"
-  defp status_badge_class(:downloaded), do: "badge-accent"
-  defp status_badge_class(:available), do: "badge-success"
-  defp status_badge_class(:no_match), do: "badge-warning"
-  defp status_badge_class(:search_failed), do: "badge-error"
-  defp status_badge_class(:import_failed), do: "badge-error"
-  defp status_badge_class(:cancelled), do: "badge-error"
 end

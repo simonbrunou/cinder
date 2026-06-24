@@ -24,7 +24,7 @@ defmodule CinderWeb.MoviesLiveTest do
     movie!(%{title: "Arrival", year: 2016})
     {:ok, _lv, html} = live(conn, ~p"/movies")
     assert html =~ "Arrival"
-    assert html =~ "requested"
+    assert html =~ "Requested"
   end
 
   test "editing a movie's metadata persists", %{conn: conn} do
@@ -84,7 +84,7 @@ defmodule CinderWeb.MoviesLiveTest do
     {:ok, _} = Catalog.transition(movie!(%{title: "Doomed"}), %{status: :cancelled})
     {:ok, _lv, html} = live(conn, ~p"/movies")
     assert html =~ "Doomed"
-    assert html =~ "cancelled"
+    assert html =~ "Cancelled"
   end
 
   test "a non-admin is redirected away from /movies", %{conn: _conn} do

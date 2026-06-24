@@ -107,7 +107,7 @@ defmodule CinderWeb.RequestsLive do
               <span :if={r.year} class="opacity-60">({r.year})</span>
               <span class="text-sm opacity-60">— {r.user.email}</span>
             </div>
-            <.request_status_badge status={r.status} />
+            <.status_badge kind={:request} status={r.status} />
             <button
               :if={r.status == :pending}
               class="btn btn-primary btn-sm"

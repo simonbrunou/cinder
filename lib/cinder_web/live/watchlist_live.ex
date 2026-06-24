@@ -209,7 +209,7 @@ defmodule CinderWeb.WatchlistLive do
       <p :if={@watchlist == []} class="text-base-content/60">Your watchlist is empty.</p>
       <div id="watchlist" class="grid grid-cols-2 sm:grid-cols-3 gap-4">
         <.movie_card :for={m <- @watchlist} movie={m}>
-          <.movie_status_badge status={m.status} />
+          <.status_badge kind={:movie} status={m.status} />
         </.movie_card>
       </div>
     </Layouts.app>
@@ -221,7 +221,7 @@ defmodule CinderWeb.WatchlistLive do
 
   defp result_action(assigns) do
     ~H"""
-    <span :if={@state != :none} class={["badge badge-sm", composite_class(@state)]}>{@state}</span>
+    <.status_badge :if={@state != :none} kind={:request} status={@state} />
     <button
       :if={@state in [:none, :denied]}
       id={"add-#{@tmdb_id}"}
@@ -233,11 +233,6 @@ defmodule CinderWeb.WatchlistLive do
     </button>
     """
   end
-
-  defp composite_class(:pending), do: "badge-warning"
-  defp composite_class(:approved), do: "badge-info"
-  defp composite_class(:available), do: "badge-success"
-  defp composite_class(:denied), do: "badge-error"
 
   attr :movie, :map, required: true
   slot :inner_block

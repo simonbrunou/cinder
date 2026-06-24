@@ -47,8 +47,8 @@ defmodule CinderWeb.GrabsLive do
   defp series_title(%{episodes: [ep | _]}), do: ep.season.series.title
   defp series_title(_grab), do: "—"
 
-  defp grab_state(%{content_path: nil}), do: "downloading"
-  defp grab_state(_grab), do: "downloaded"
+  defp grab_state(%{content_path: nil}), do: :downloading
+  defp grab_state(_grab), do: :downloaded
 
   @impl true
   def render(assigns) do
@@ -64,7 +64,7 @@ defmodule CinderWeb.GrabsLive do
         <li :for={g <- @grabs} id={"grab-#{g.id}"} class="card bg-base-200 p-4">
           <div class="flex items-center gap-3">
             <span class="font-semibold">{series_title(g)}</span>
-            <span class="badge badge-sm">{grab_state(g)}</span>
+            <.status_badge kind={:grab} status={grab_state(g)} />
             <span class="text-sm text-base-content/60">{g.download_protocol}</span>
             <span class="text-xs text-base-content/50">{g.download_id}</span>
 

@@ -24,8 +24,7 @@ defmodule CinderWeb.CalendarLive do
 
     rows =
       for ep <- Catalog.upcoming_episodes() do
-        {label, class} = badge(ep, today)
-        %{ep: ep, label: label, class: class}
+        %{ep: ep, state: episode_state(ep, today)}
       end
 
     assign(socket, rows: rows)
@@ -33,12 +32,12 @@ defmodule CinderWeb.CalendarLive do
 
   # Derived episode state (no status enum): a file ⇒ available, an active grab ⇒ downloading,
   # an aired-but-missing monitored episode ⇒ wanted, else still upcoming.
-  defp badge(ep, today) do
+  defp episode_state(ep, today) do
     cond do
-      ep.file_path -> {"Available", "badge-success"}
-      ep.grab_id -> {"Downloading", "badge-info"}
-      Date.compare(ep.air_date, today) != :gt -> {"Wanted", "badge-warning"}
-      true -> {"Upcoming", "badge-ghost"}
+      ep.file_path -> :available
+      ep.grab_id -> :downloading
+      Date.compare(ep.air_date, today) != :gt -> :wanted
+      true -> :upcoming
     end
   end
 
@@ -71,7 +70,7 @@ defmodule CinderWeb.CalendarLive do
             <td>{row.ep.season.series.title}</td>
             <td class="tabular-nums">{code(row.ep.season.season_number, row.ep.episode_number)}</td>
             <td>{row.ep.title}</td>
-            <td><span class={["badge badge-sm", row.class]}>{row.label}</span></td>
+            <td><.status_badge kind={:episode} status={row.state} /></td>
           </tr>
         </tbody>
       </table>

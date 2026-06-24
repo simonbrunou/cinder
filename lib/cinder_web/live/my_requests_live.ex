@@ -47,9 +47,10 @@ defmodule CinderWeb.MyRequestsLive do
                 else: r.title}
             </span>
             <span :if={r.year} class="text-base-content/60">({r.year})</span>
-            <.request_status_badge status={r.status} />
-            <.movie_status_badge
+            <.status_badge kind={:request} status={r.status} />
+            <.status_badge
               :if={r.target_type == "movie" and @movie_status[r.target_id]}
+              kind={:movie}
               status={@movie_status[r.target_id]}
             />
           </div>

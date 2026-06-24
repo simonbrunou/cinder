@@ -148,7 +148,7 @@ defmodule CinderWeb.MoviesLive do
           <div class="flex items-center gap-3">
             <span class="font-semibold">{m.title}</span>
             <span :if={m.year} class="text-base-content/60">({m.year})</span>
-            <.movie_status_badge status={m.status} />
+            <.status_badge kind={:movie} status={m.status} />
 
             <div class="ml-auto flex gap-2">
               <button type="button" class="btn btn-xs" phx-click="edit" phx-value-id={m.id}>
