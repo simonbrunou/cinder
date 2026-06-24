@@ -25,7 +25,7 @@ defmodule CinderWeb.SeriesDetailLive do
         {:ok,
          socket
          |> put_flash(:error, "Series not found.")
-         |> push_navigate(to: ~p"/series")}
+         |> push_navigate(to: ~p"/")}
     end
   end
 
@@ -112,7 +112,7 @@ defmodule CinderWeb.SeriesDetailLive do
         {:noreply,
          socket
          |> put_flash(:info, "Series deleted.")
-         |> push_navigate(to: ~p"/series")}
+         |> push_navigate(to: ~p"/")}
 
       _ ->
         {:noreply,
@@ -132,7 +132,7 @@ defmodule CinderWeb.SeriesDetailLive do
       {:noreply,
        socket
        |> put_flash(:info, "Series deleted.")
-       |> push_navigate(to: ~p"/series")}
+       |> push_navigate(to: ~p"/")}
     else
       {:noreply, socket}
     end
@@ -144,7 +144,7 @@ defmodule CinderWeb.SeriesDetailLive do
   # reload that assigned nil would nil-deref the next render): bounce back to the list.
   defp reload(socket) do
     case Catalog.get_series_with_tree(socket.assigns.series.id) do
-      nil -> socket |> put_flash(:error, "Series not found.") |> push_navigate(to: ~p"/series")
+      nil -> socket |> put_flash(:error, "Series not found.") |> push_navigate(to: ~p"/")
       series -> assign(socket, series: series)
     end
   end
@@ -164,7 +164,7 @@ defmodule CinderWeb.SeriesDetailLive do
 
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
-      <.link navigate={~p"/series"} class="link mb-6 inline-block">← TV series</.link>
+      <.link navigate={~p"/"} class="link mb-6 inline-block">← Discover</.link>
 
       <div class="mb-4 flex flex-wrap items-center gap-2">
         <button type="button" class="btn btn-sm" phx-click="edit_series">Edit</button>

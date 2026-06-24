@@ -88,13 +88,13 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert Enum.all?(eps, & &1.monitored)
   end
 
-  test "a missing series redirects back to /series", %{conn: conn} do
-    assert {:error, {kind, %{to: "/series"}}} = live(conn, ~p"/series/999999")
+  test "a missing series redirects to Discover (/)", %{conn: conn} do
+    assert {:error, {kind, %{to: "/"}}} = live(conn, ~p"/series/999999")
     assert kind in [:redirect, :live_redirect]
   end
 
-  test "a non-integer id redirects back to /series", %{conn: conn} do
-    assert {:error, {kind, %{to: "/series"}}} = live(conn, ~p"/series/not-a-number")
+  test "a non-integer id redirects to Discover (/)", %{conn: conn} do
+    assert {:error, {kind, %{to: "/"}}} = live(conn, ~p"/series/not-a-number")
     assert kind in [:redirect, :live_redirect]
   end
 
@@ -113,7 +113,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     Repo.delete!(series)
     Phoenix.PubSub.broadcast(Cinder.PubSub, "series", {:series_updated, series.id})
 
-    assert_redirect(lv, "/series")
+    assert_redirect(lv, "/")
   end
 
   test "a non-admin cannot reach the detail page", %{conn: conn} do
@@ -123,13 +123,13 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert {:error, {:redirect, %{to: "/"}}} = live(conn, ~p"/series/#{series.id}")
   end
 
-  test "redirects to /series when the open series is deleted", %{conn: conn} do
+  test "redirects to Discover (/) when the open series is deleted", %{conn: conn} do
     series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 7001, title: "Detail Show"})
 
     {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
 
     Cinder.Catalog.broadcast_series_deleted(series.id)
-    assert_redirect(lv, ~p"/series")
+    assert_redirect(lv, ~p"/")
   end
 
   test "ignores a {:series_deleted, id} for a different series", %{conn: conn} do
@@ -170,7 +170,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert Repo.reload(ep).monitored == false
   end
 
-  test "admin deletes the series and is redirected to /series", %{conn: conn} do
+  test "admin deletes the series and is redirected to Discover (/)", %{conn: conn} do
     series = create_series(712)
     {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
 
@@ -178,6 +178,6 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     lv |> element(~s|button[phx-click="confirm_delete_series"]|) |> render_click()
 
     assert Repo.get(Cinder.Catalog.Series, series.id) == nil
-    assert_redirect(lv, "/series")
+    assert_redirect(lv, "/")
   end
 end

@@ -176,6 +176,11 @@ defmodule CinderWeb.DiscoverLive do
     assign_movie_status(assign(socket, request_status: request_status))
   end
 
+  # Read the full movie-status map from the DB (authoritative) rather than deriving it
+  # from the cached `watchlist` assign. On the infrequent paths that call this — mount,
+  # add, request events — a just-approved/created movie may not be in the cached watchlist
+  # yet (its `:movie_created` broadcast rides the movies topic with no cross-topic ordering
+  # guarantee vs the `:request_*` event), so the assign can be stale; the DB read isn't.
   defp assign_movie_status(socket) do
     assign(socket, movie_status: Map.new(Catalog.list_watchlist(), &{&1.tmdb_id, &1.status}))
   end

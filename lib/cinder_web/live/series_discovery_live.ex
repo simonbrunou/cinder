@@ -32,7 +32,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
         {:ok,
          socket
          |> put_flash(:error, "Series not found.")
-         |> push_navigate(to: ~p"/series")}
+         |> push_navigate(to: ~p"/")}
     end
   end
 
@@ -124,7 +124,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
 
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
-      <.link navigate={~p"/series"} class="link mb-6 inline-block">← TV series</.link>
+      <.link navigate={~p"/"} class="link mb-6 inline-block">← Discover</.link>
 
       <div class="mb-8 flex gap-4">
         <img

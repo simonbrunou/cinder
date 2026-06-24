@@ -1,16 +1,16 @@
 # Graph Report - cinder  (2026-06-24)
 
 ## Corpus Check
-- 247 files · ~242,281 words
+- 247 files · ~242,354 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1784 nodes · 2060 edges · 239 communities (131 shown, 108 thin omitted)
+- 1784 nodes · 2060 edges · 238 communities (130 shown, 108 thin omitted)
 - Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 36 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `9a245ef7`
+- Built from commit: `793228d4`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -85,7 +85,6 @@
 - [[_COMMUNITY_Community 67|Community 67]]
 - [[_COMMUNITY_Community 68|Community 68]]
 - [[_COMMUNITY_Community 69|Community 69]]
-- [[_COMMUNITY_Community 70|Community 70]]
 - [[_COMMUNITY_Community 71|Community 71]]
 - [[_COMMUNITY_Community 72|Community 72]]
 - [[_COMMUNITY_Community 73|Community 73]]
@@ -266,7 +265,7 @@
 - `change()` --calls--> `table()`  [INFERRED]
   priv/repo/migrations/20260619094117_add_import_attempts_to_movies.exs → lib/cinder_web/components/core_components.ex
 
-## Communities (239 total, 108 thin omitted)
+## Communities (238 total, 108 thin omitted)
 
 ### Community 0 - "Community 0"
 Cohesion: 0.08
@@ -281,8 +280,8 @@ Cohesion: 0.05
 Nodes (39): Admin CRUD on Entities — Implementation Plan, Global Constraints, Interface contract (Phase 0 -> consumed by Phases 1-3), Phase 0 — Shared infrastructure (cinder admin-CRUD), Phase 1 — Users CRUD, Phase 2 — Catalog R/U/D + cancel, Phase 3 — Requests R/D, Task 10: `{:series_deleted, id}` handlers in `SeriesDetailLive` + `CalendarLive` (+31 more)
 
 ### Community 3 - "Community 3"
-Cohesion: 0.09
-Nodes (6): Cinder.Catalog, ensure_series(), find_or_create_series_at_requested(), mark_series_monitored(), season_in(), set_season_monitored()
+Cohesion: 0.08
+Nodes (9): Cinder.Catalog, broadcast_series_deleted(), delete_series(), do_delete_series_txn(), ensure_series(), find_or_create_series_at_requested(), mark_series_monitored(), season_in() (+1 more)
 
 ### Community 4 - "Community 4"
 Cohesion: 0.16
@@ -381,8 +380,8 @@ Cohesion: 0.13
 Nodes (14): Global Constraints, M3 — Onboarding wizard + requester UX — Implementation Plan, Self-Review, Task 10: Admin `/users` quota page + approval-queue poster + nav links, Task 11: M3 done-when integration test (the acceptance gate), Task 1: `Cinder.Notifier` behaviour + Log default, Task 2: `request_quota` field + Accounts helpers, Task 3: Quota enforcement + notify-on-approved in `Cinder.Requests` (+6 more)
 
 ### Community 28 - "Community 28"
-Cohesion: 0.21
-Nodes (14): broadcast_series(), create_grab(), finish_grab(), increment_grab_attempts(), insert_and_link_grab(), link_grab_episodes(), mark_grab_downloaded(), missing_episodes_query() (+6 more)
+Cohesion: 0.16
+Nodes (19): broadcast_series(), cancel_series(), create_grab(), delete_grab(), finish_grab(), grabs_for_series(), increment_grab_attempts(), insert_and_link_grab() (+11 more)
 
 ### Community 29 - "Community 29"
 Cohesion: 0.23
@@ -547,10 +546,6 @@ Nodes (8): Boundary shapes, Decisions deliberately NOT changed (council pushback
 ### Community 69 - "Community 69"
 Cohesion: 0.22
 Nodes (8): Guardrails for M5/M6 (the reason this doc exists), Locked decisions, M4 — TV data model + discovery (design), Schema (`priv/repo/migrations/20260622130000_create_tv_schema.exs`), Session split, Test-infra fix (carried by M4a, applies suite-wide), Testing, TMDB (atomic: behaviour + HTTP impl)
-
-### Community 70 - "Community 70"
-Cohesion: 0.25
-Nodes (8): broadcast_series_deleted(), cancel_series(), delete_grab(), delete_series(), do_delete_series_txn(), grabs_for_series(), reap_series_grabs(), unmonitor_series_tree()
 
 ### Community 71 - "Community 71"
 Cohesion: 0.32
@@ -752,7 +747,7 @@ _Questions this graph is uniquely positioned to answer:_
   _High betweenness centrality (0.002) - this node is a cross-community bridge._
 - **Why does `CinderWeb.CoreComponents` connect `Community 22` to `Community 74`?**
   _High betweenness centrality (0.002) - this node is a cross-community bridge._
-- **Why does `Cinder.Catalog` connect `Community 3` to `Community 37`, `Community 70`, `Community 71`, `Community 91`, `Community 235`, `Community 59`, `Community 28`?**
+- **Why does `Cinder.Catalog` connect `Community 3` to `Community 37`, `Community 71`, `Community 91`, `Community 235`, `Community 59`, `Community 28`?**
   _High betweenness centrality (0.001) - this node is a cross-community bridge._
 - **What connects `tidewave`, `$schema`, `erlang` to the rest of the system?**
   _589 weakly-connected nodes found - possible documentation gaps or missing edges._
