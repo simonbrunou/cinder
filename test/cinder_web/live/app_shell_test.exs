@@ -13,7 +13,7 @@ defmodule CinderWeb.AppShellTest do
             "Discover",
             "My requests",
             "Requests",
-            "Status",
+            "Activity",
             "Calendar",
             "Users",
             "Settings"
@@ -23,7 +23,7 @@ defmodule CinderWeb.AppShellTest do
     end
 
     test "marks the current route active", %{conn: conn} do
-      {:ok, _lv, html} = live(conn, ~p"/status")
+      {:ok, _lv, html} = live(conn, ~p"/activity")
       assert html =~ ~s(aria-current="page")
     end
 
@@ -49,7 +49,7 @@ defmodule CinderWeb.AppShellTest do
       assert html =~ "Discover"
       assert html =~ "My requests"
       refute html =~ "Requests"
-      refute html =~ "Status"
+      refute html =~ "Activity"
       refute html =~ "Users"
       refute html =~ "Settings"
     end

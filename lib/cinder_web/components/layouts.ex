@@ -93,8 +93,8 @@ defmodule CinderWeb.Layouts do
                 current_path={@current_path}
               />
               <.nav_item
-                navigate={~p"/status"}
-                label="Status"
+                navigate={~p"/activity"}
+                label="Activity"
                 icon="hero-bolt"
                 current_path={@current_path}
               />

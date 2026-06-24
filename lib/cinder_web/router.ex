@@ -68,12 +68,11 @@ defmodule CinderWeb.Router do
         {CinderWeb.UserAuth, :require_setup},
         {CinderWeb.UserAuth, :current_path}
       ] do
-      live "/status", StatusLive
+      live "/activity", ActivityLive
       live "/settings", SettingsLive
       live "/requests", RequestsLive
       live "/users", UsersLive
       live "/movies", MoviesLive
-      live "/grabs", GrabsLive
       live "/series/:id", SeriesDetailLive
       live "/calendar", CalendarLive
     end
@@ -89,6 +88,9 @@ defmodule CinderWeb.Router do
 
     # /series folded into Discover (UX-3); redirect old bookmarks.
     get "/series", RedirectController, :to_root
+    # /status, /grabs folded into Activity (UX-4); redirect old bookmarks.
+    get "/status", RedirectController, :to_activity
+    get "/grabs", RedirectController, :to_activity
   end
 
   # Other scopes may use custom stacks.

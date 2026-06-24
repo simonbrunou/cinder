@@ -3,7 +3,7 @@ defmodule CinderWeb.AuthorizationTest do
   import Phoenix.LiveViewTest
   import Cinder.AccountsFixtures
 
-  for path <- ["/status", "/settings", "/requests", "/users"] do
+  for path <- ["/activity", "/settings", "/requests", "/users"] do
     test "anonymous is redirected from #{path}", %{conn: conn} do
       assert {:error, {:redirect, %{to: to}}} = live(conn, unquote(path))
       assert to =~ "/users/log-in"
