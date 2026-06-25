@@ -253,6 +253,10 @@ defmodule CinderWeb.SeriesDetailLive do
             phx-click="toggle_season"
             phx-value-id={season.id}
             class="btn btn-xs"
+            aria-label={
+              "#{if all_monitored?(season), do: "Unmonitor", else: "Monitor"} all episodes in " <>
+                season_label(season.season_number)
+            }
           >
             {if all_monitored?(season), do: "Unmonitor all", else: "Monitor all"}
           </button>

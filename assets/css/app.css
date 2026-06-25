@@ -19,8 +19,8 @@
 
 /* daisyUI theme plugin. You can update this file by fetching the latest version with:
   curl -sLO https://github.com/saadeghi/daisyui/releases/latest/download/daisyui-theme.js
-  We ship with two themes, a light one inspired on Phoenix colors and a dark one inspired
-  on Elixir colors. Build your own at: https://daisyui.com/theme-generator/ */
+  We ship two "ember on charcoal" themes — a dark default and a first-class light, both on a
+  single ember accent. Build your own at: https://daisyui.com/theme-generator/ */
 /* Cinder "ember on charcoal" — dark is the default/hero theme. One ember accent
    across both themes (replaces the stock Phoenix-orange / Elixir-purple split). */
 @plugin "../vendor/daisyui-theme" {
@@ -127,5 +127,18 @@
   h1, h2, h3, .font-display {
     font-family: "Inter Tight", "Inter", system-ui, sans-serif;
     letter-spacing: -0.01em;
+  }
+}
+
+/* Honour prefers-reduced-motion globally: one reset neutralises every transition/animation
+   (theme-toggle slide, JS show/hide, hover effects, future motion) so we don't have to gate
+   each one with motion-safe:. motion-safe:* utilities still work — they simply don't apply
+   under reduce, and this !important reset wins over any utility duration. */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

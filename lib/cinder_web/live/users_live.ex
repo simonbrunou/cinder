@@ -274,6 +274,7 @@ defmodule CinderWeb.UsersLive do
               phx-value-id={u.id}
               phx-disable-with="…"
               title="Toggle admin/user"
+              aria-label={"Toggle role for #{u.email} (currently #{u.role})"}
             >
               {u.role}
             </button>

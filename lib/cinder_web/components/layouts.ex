@@ -43,7 +43,12 @@ defmodule CinderWeb.Layouts do
     </a>
 
     <div :if={@signed_in?} class="drawer lg:drawer-open">
-      <input id="nav-drawer" type="checkbox" class="drawer-toggle" />
+      <input
+        id="nav-drawer"
+        type="checkbox"
+        class="drawer-toggle"
+        aria-label="Toggle navigation menu"
+      />
 
       <div class="drawer-content flex min-h-screen flex-col">
         <header class="navbar border-b border-base-300/60 bg-base-100/80 backdrop-blur lg:hidden">
@@ -250,10 +255,12 @@ defmodule CinderWeb.Layouts do
   def theme_toggle(assigns) do
     ~H"""
     <div class="card relative flex flex-row items-center border-2 border-base-300 bg-base-300 rounded-full">
-      <div class="absolute w-1/3 h-full rounded-full border-1 border-base-200 bg-base-100 brightness-200 left-0 [[data-theme=light]_&]:left-1/3 [[data-theme=dark]_&]:left-2/3 transition-[left]" />
+      <div class="absolute w-1/3 h-full rounded-full border-1 border-base-200 bg-base-100 [[data-theme=dark]_&]:brightness-200 left-0 [[data-theme=light]_&]:left-1/3 [[data-theme=dark]_&]:left-2/3 transition-[left]" />
 
       <button
-        class="flex p-2 cursor-pointer w-1/3"
+        type="button"
+        aria-label="Use system theme"
+        class="flex items-center justify-center min-h-11 w-1/3 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-primary"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="system"
       >
@@ -261,7 +268,9 @@ defmodule CinderWeb.Layouts do
       </button>
 
       <button
-        class="flex p-2 cursor-pointer w-1/3"
+        type="button"
+        aria-label="Use light theme"
+        class="flex items-center justify-center min-h-11 w-1/3 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-primary"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="light"
       >
@@ -269,7 +278,9 @@ defmodule CinderWeb.Layouts do
       </button>
 
       <button
-        class="flex p-2 cursor-pointer w-1/3"
+        type="button"
+        aria-label="Use dark theme"
+        class="flex items-center justify-center min-h-11 w-1/3 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-primary"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="dark"
       >

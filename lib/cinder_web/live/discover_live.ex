@@ -162,7 +162,7 @@ defmodule CinderWeb.DiscoverLive do
           autocomplete="off"
           aria-label="Search movies and TV"
           placeholder="Search movies and TV…"
-          class="input w-full"
+          class="input input-lg w-full min-h-11"
         />
       </form>
 

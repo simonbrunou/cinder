@@ -81,8 +81,15 @@ defmodule CinderWeb.CoreComponents do
           <p>{msg}</p>
         </div>
         <div class="flex-1" />
-        <button type="button" class="group self-start cursor-pointer" aria-label={gettext("close")}>
-          <.icon name="hero-x-mark" class="size-5 opacity-40 group-hover:opacity-70" />
+        <button
+          type="button"
+          class="group self-start cursor-pointer rounded focus-visible:outline-2 focus-visible:outline-current"
+          aria-label={gettext("close")}
+        >
+          <.icon
+            name="hero-x-mark"
+            class="size-5 opacity-40 group-hover:opacity-70 group-focus-visible:opacity-70"
+          />
         </button>
       </div>
     </div>
@@ -461,8 +468,8 @@ defmodule CinderWeb.CoreComponents do
     <table class="table table-zebra">
       <thead>
         <tr>
-          <th :for={col <- @col}>{col[:label]}</th>
-          <th :if={@action != []}>
+          <th :for={col <- @col} scope="col">{col[:label]}</th>
+          <th :if={@action != []} scope="col">
             <span class="sr-only">{gettext("Actions")}</span>
           </th>
         </tr>
@@ -472,7 +479,7 @@ defmodule CinderWeb.CoreComponents do
           <td
             :for={col <- @col}
             phx-click={@row_click && @row_click.(row)}
-            class={@row_click && "hover:cursor-pointer"}
+            class={@row_click && "cursor-pointer hover:bg-base-300"}
           >
             {render_slot(col, @row_item.(row))}
           </td>

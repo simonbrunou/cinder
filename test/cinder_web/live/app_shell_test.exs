@@ -49,4 +49,33 @@ defmodule CinderWeb.AppShellTest do
       refute html =~ "Settings"
     end
   end
+
+  describe "UX-5 a11y hardening" do
+    setup :register_and_log_in_admin
+
+    test "the icon-only theme toggle exposes an accessible name per option", %{conn: conn} do
+      {:ok, _lv, html} = live(conn, ~p"/")
+
+      assert html =~ ~s(aria-label="Use system theme")
+      assert html =~ ~s(aria-label="Use light theme")
+      assert html =~ ~s(aria-label="Use dark theme")
+    end
+
+    test "the mobile nav drawer toggle is labelled", %{conn: conn} do
+      {:ok, _lv, html} = live(conn, ~p"/")
+      assert html =~ ~s(aria-label="Toggle navigation menu")
+    end
+  end
+
+  describe "auth pages (unauthenticated)" do
+    test "use the ember accent token, not the undefined text-brand class", %{conn: conn} do
+      {:ok, _lv, login} = live(conn, ~p"/users/log-in")
+      refute login =~ "text-brand"
+      assert login =~ "text-primary"
+
+      {:ok, _lv, register} = live(conn, ~p"/users/register")
+      refute register =~ "text-brand"
+      assert register =~ "text-primary"
+    end
+  end
 end
