@@ -1,0 +1,41 @@
+defmodule Cinder.CatalogDiscoverTest do
+  use Cinder.DataCase, async: true
+
+  import Mox
+
+  alias Cinder.Catalog
+
+  setup :verify_on_exit!
+
+  @movie %{tmdb_id: 1, title: "A Movie", year: 2000, poster_path: "/m.jpg"}
+  @show %{tmdb_id: 2, title: "A Show", year: 2001, poster_path: "/s.jpg"}
+
+  test "a blank query short-circuits to {:ok, []} with no TMDB call" do
+    assert {:ok, []} = Catalog.search_discover("   ")
+  end
+
+  test "tags each result :movie/:tv and interleaves them" do
+    stub(Cinder.Catalog.TMDBMock, :search, fn _ -> {:ok, [@movie]} end)
+    stub(Cinder.Catalog.TMDBMock, :search_tv, fn _ -> {:ok, [@show]} end)
+
+    assert {:ok, results} = Catalog.search_discover("x")
+    assert Enum.map(results, & &1.type) == [:movie, :tv]
+    assert Enum.map(results, & &1.tmdb_id) == [1, 2]
+  end
+
+  @tag :capture_log
+  test "one endpoint erroring still yields the other's results" do
+    stub(Cinder.Catalog.TMDBMock, :search, fn _ -> {:ok, [@movie]} end)
+    stub(Cinder.Catalog.TMDBMock, :search_tv, fn _ -> {:error, :timeout} end)
+
+    assert {:ok, [%{type: :movie, tmdb_id: 1}]} = Catalog.search_discover("x")
+  end
+
+  @tag :capture_log
+  test "both endpoints erroring yields {:error, :search_failed}" do
+    stub(Cinder.Catalog.TMDBMock, :search, fn _ -> {:error, :timeout} end)
+    stub(Cinder.Catalog.TMDBMock, :search_tv, fn _ -> {:error, :nxdomain} end)
+
+    assert {:error, :search_failed} = Catalog.search_discover("x")
+  end
+end

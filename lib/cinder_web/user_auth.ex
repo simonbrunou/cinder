@@ -278,6 +278,20 @@ defmodule CinderWeb.UserAuth do
     end
   end
 
+  # Assigns `@current_path` on initial mount and every live navigation so layouts can
+  # highlight the active nav item. Read-only: attaches a `:handle_params` hook and never
+  # halts, so it does not affect authorization.
+  def on_mount(:current_path, _params, _session, socket) do
+    socket =
+      Phoenix.LiveView.attach_hook(socket, :current_path, :handle_params, fn _params,
+                                                                             uri,
+                                                                             socket ->
+        {:cont, Phoenix.Component.assign(socket, :current_path, URI.parse(uri).path)}
+      end)
+
+    {:cont, socket}
+  end
+
   defp enforce_setup?, do: Application.get_env(:cinder, :enforce_setup, true)
 
   defp mount_current_scope(socket, session) do
@@ -291,7 +305,10 @@ defmodule CinderWeb.UserAuth do
     end)
   end
 
-  @doc "Returns the path to redirect to after log in."
+  @doc "Returns the path to redirect to after log in (admins land on the dashboard)."
+  def signed_in_path(%{assigns: %{current_scope: scope}}),
+    do: if(admin?(scope), do: ~p"/dashboard", else: ~p"/")
+
   def signed_in_path(_), do: ~p"/"
 
   @doc """

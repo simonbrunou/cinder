@@ -81,7 +81,7 @@ defmodule CinderWeb.RequestsLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash}>
+    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.header>
         Requests<:subtitle>Approve, deny, or delete catalog requests.</:subtitle>
       </.header>
@@ -107,12 +107,13 @@ defmodule CinderWeb.RequestsLive do
               <span :if={r.year} class="opacity-60">({r.year})</span>
               <span class="text-sm opacity-60">— {r.user.email}</span>
             </div>
-            <.request_status_badge status={r.status} />
+            <.status_badge kind={:request} status={r.status} />
             <button
               :if={r.status == :pending}
               class="btn btn-primary btn-sm"
               phx-click="approve"
               phx-value-id={r.id}
+              phx-disable-with="Approving…"
             >
               Approve
             </button>
@@ -128,7 +129,7 @@ defmodule CinderWeb.RequestsLive do
                 placeholder="Reason"
                 class="input input-sm input-bordered"
               />
-              <button class="btn btn-error btn-sm" type="submit">Confirm deny</button>
+              <button class="btn btn-error btn-sm" type="submit" phx-disable-with="Denying…">Confirm deny</button>
             </form>
             <button
               :if={r.status == :pending and @denying != to_string(r.id)}
@@ -148,29 +149,28 @@ defmodule CinderWeb.RequestsLive do
             </button>
           </div>
 
-          <div
+          <.confirm_action
             :if={@confirming_delete == to_string(r.id)}
-            class="alert alert-warning flex flex-col items-start gap-2"
+            id={"confirm-delete-request-#{r.id}"}
+            on_confirm="delete"
+            on_cancel="cancel_delete"
+            value={r.id}
+            confirm_label="Delete request"
           >
-            <p class="text-sm">
+            <:caveat>
               Deleting a request does not remove any movie or series it already created —
               that catalog row stays. If this request was denied or approved, the same title
               can be requested again afterwards.
-            </p>
-            <div class="flex gap-2">
-              <button
-                class="btn btn-error btn-sm"
-                phx-click="delete"
-                phx-value-id={r.id}
-              >
-                Delete request
-              </button>
-              <button class="btn btn-ghost btn-sm" phx-click="cancel_delete">Cancel</button>
-            </div>
-          </div>
+            </:caveat>
+          </.confirm_action>
         </li>
       </ul>
-      <p :if={@requests == []} class="opacity-60">No requests.</p>
+      <.empty_state
+        :if={@requests == []}
+        icon="hero-inbox-arrow-down"
+        title="No requests"
+        message="Pending requests will appear here for approval."
+      />
     </Layouts.app>
     """
   end

@@ -91,7 +91,7 @@ defmodule CinderWeb.SetupLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/setup")
     html = lv |> element("button", "Test TMDB") |> render_click()
 
-    assert html =~ "ok"
+    assert html =~ "OK"
   end
 
   test "non-admins cannot reach /setup", %{conn: conn} do

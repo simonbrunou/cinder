@@ -5,13 +5,9 @@ defmodule CinderWeb.StatusBadgeTest do
 
   alias CinderWeb.CoreComponents
 
-  test "renders a :cancelled movie status badge without raising (badge-error)" do
-    html = render_component(&CoreComponents.movie_status_badge/1, %{status: :cancelled})
-    assert html =~ "badge-error"
-    assert html =~ "cancelled"
-  end
+  defp badge(assigns), do: render_component(&CoreComponents.status_badge/1, assigns)
 
-  test "renders every movie status without raising FunctionClauseError" do
+  test "renders every movie pipeline status with an icon and text label" do
     for status <- [
           :requested,
           :searching,
@@ -23,7 +19,42 @@ defmodule CinderWeb.StatusBadgeTest do
           :import_failed,
           :cancelled
         ] do
-      assert render_component(&CoreComponents.movie_status_badge/1, %{status: status}) =~ "badge"
+      html = badge(%{kind: :movie, status: status})
+      assert html =~ "badge"
+      # icon+text, never colour alone: a heroicon span is present
+      assert html =~ "hero-"
     end
+  end
+
+  test "covers request, episode, grab and health kinds with icon+text" do
+    cases = [
+      {%{kind: :request, status: :pending}, "Pending"},
+      {%{kind: :request, status: :available}, "Available"},
+      {%{kind: :episode, status: :wanted}, "Wanted"},
+      {%{kind: :episode, status: :upcoming}, "Upcoming"},
+      {%{kind: :grab, status: :downloading}, "Downloading"},
+      {%{kind: :grab, status: :downloaded}, "Downloaded"},
+      {%{kind: :health, status: :ok}, "OK"}
+    ]
+
+    for {assigns, label} <- cases do
+      html = badge(assigns)
+      assert html =~ label
+      assert html =~ "hero-"
+    end
+  end
+
+  test "a health error renders Unreachable, error colour, and the reason as a title" do
+    html = badge(%{kind: :health, status: {:error, :timeout}})
+    assert html =~ "Unreachable"
+    assert html =~ "badge-error"
+    assert html =~ ~s(title=)
+    assert html =~ "timeout"
+  end
+
+  test "an unmapped status falls back to a neutral badge instead of raising" do
+    html = badge(%{kind: :movie, status: :some_new_state})
+    assert html =~ "badge-neutral"
+    assert html =~ "Some new state"
   end
 end

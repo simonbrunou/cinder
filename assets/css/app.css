@@ -19,74 +19,76 @@
 
 /* daisyUI theme plugin. You can update this file by fetching the latest version with:
   curl -sLO https://github.com/saadeghi/daisyui/releases/latest/download/daisyui-theme.js
-  We ship with two themes, a light one inspired on Phoenix colors and a dark one inspired
-  on Elixir colors. Build your own at: https://daisyui.com/theme-generator/ */
+  We ship two "ember on charcoal" themes — a dark default and a first-class light, both on a
+  single ember accent. Build your own at: https://daisyui.com/theme-generator/ */
+/* Cinder "ember on charcoal" — dark is the default/hero theme. One ember accent
+   across both themes (replaces the stock Phoenix-orange / Elixir-purple split). */
 @plugin "../vendor/daisyui-theme" {
   name: "dark";
-  default: false;
+  default: true;
   prefersdark: true;
   color-scheme: "dark";
-  --color-base-100: oklch(30.33% 0.016 252.42);
-  --color-base-200: oklch(25.26% 0.014 253.1);
-  --color-base-300: oklch(20.15% 0.012 254.09);
-  --color-base-content: oklch(97.807% 0.029 256.847);
-  --color-primary: oklch(58% 0.233 277.117);
-  --color-primary-content: oklch(96% 0.018 272.314);
-  --color-secondary: oklch(58% 0.233 277.117);
-  --color-secondary-content: oklch(96% 0.018 272.314);
-  --color-accent: oklch(60% 0.25 292.717);
-  --color-accent-content: oklch(96% 0.016 293.756);
-  --color-neutral: oklch(37% 0.044 257.287);
-  --color-neutral-content: oklch(98% 0.003 247.858);
-  --color-info: oklch(58% 0.158 241.966);
-  --color-info-content: oklch(97% 0.013 236.62);
-  --color-success: oklch(60% 0.118 184.704);
-  --color-success-content: oklch(98% 0.014 180.72);
-  --color-warning: oklch(66% 0.179 58.318);
-  --color-warning-content: oklch(98% 0.022 95.277);
-  --color-error: oklch(58% 0.253 17.585);
-  --color-error-content: oklch(96% 0.015 12.422);
-  --radius-selector: 0.25rem;
-  --radius-field: 0.25rem;
-  --radius-box: 0.5rem;
+  --color-base-100: oklch(15.5% 0.008 265);
+  --color-base-200: oklch(19.5% 0.009 265);
+  --color-base-300: oklch(23% 0.01 262);
+  --color-base-content: oklch(93% 0.003 265);
+  --color-primary: oklch(72% 0.16 47);
+  --color-primary-content: oklch(20% 0.04 50);
+  --color-secondary: oklch(55% 0.02 265);
+  --color-secondary-content: oklch(96% 0.003 265);
+  --color-accent: oklch(72% 0.16 47);
+  --color-accent-content: oklch(20% 0.04 50);
+  --color-neutral: oklch(27% 0.012 265);
+  --color-neutral-content: oklch(92% 0.003 265);
+  --color-info: oklch(72% 0.13 250);
+  --color-info-content: oklch(20% 0.03 250);
+  --color-success: oklch(74% 0.14 165);
+  --color-success-content: oklch(20% 0.04 165);
+  --color-warning: oklch(80% 0.13 75);
+  --color-warning-content: oklch(25% 0.05 75);
+  --color-error: oklch(68% 0.2 22);
+  --color-error-content: oklch(98% 0.01 20);
+  --radius-selector: 0.5rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.875rem;
   --size-selector: 0.21875rem;
   --size-field: 0.21875rem;
-  --border: 1.5px;
+  --border: 1px;
   --depth: 1;
   --noise: 0;
 }
 
 @plugin "../vendor/daisyui-theme" {
   name: "light";
-  default: true;
+  default: false;
   prefersdark: false;
   color-scheme: "light";
-  --color-base-100: oklch(98% 0 0);
-  --color-base-200: oklch(96% 0.001 286.375);
-  --color-base-300: oklch(92% 0.004 286.32);
-  --color-base-content: oklch(21% 0.006 285.885);
-  --color-primary: oklch(70% 0.213 47.604);
-  --color-primary-content: oklch(98% 0.016 73.684);
-  --color-secondary: oklch(55% 0.027 264.364);
-  --color-secondary-content: oklch(98% 0.002 247.839);
-  --color-accent: oklch(0% 0 0);
-  --color-accent-content: oklch(100% 0 0);
-  --color-neutral: oklch(44% 0.017 285.786);
+  --color-base-100: oklch(98.5% 0.002 90);
+  --color-base-200: oklch(96.5% 0.003 90);
+  --color-base-300: oklch(92% 0.004 90);
+  --color-base-content: oklch(22% 0.01 265);
+  --color-primary: oklch(64% 0.17 45);
+  --color-primary-content: oklch(98% 0.015 75);
+  --color-secondary: oklch(50% 0.02 265);
+  --color-secondary-content: oklch(98% 0.002 247);
+  --color-accent: oklch(64% 0.17 45);
+  --color-accent-content: oklch(98% 0.015 75);
+  --color-neutral: oklch(44% 0.017 265);
   --color-neutral-content: oklch(98% 0 0);
-  --color-info: oklch(62% 0.214 259.815);
-  --color-info-content: oklch(97% 0.014 254.604);
-  --color-success: oklch(70% 0.14 182.503);
-  --color-success-content: oklch(98% 0.014 180.72);
-  --color-warning: oklch(66% 0.179 58.318);
-  --color-warning-content: oklch(98% 0.022 95.277);
-  --color-error: oklch(58% 0.253 17.585);
-  --color-error-content: oklch(96% 0.015 12.422);
-  --radius-selector: 0.25rem;
-  --radius-field: 0.25rem;
-  --radius-box: 0.5rem;
+  --color-info: oklch(58% 0.16 250);
+  --color-info-content: oklch(98% 0.013 236);
+  --color-success: oklch(62% 0.15 165);
+  --color-success-content: oklch(98% 0.014 180);
+  --color-warning: oklch(70% 0.16 70);
+  --color-warning-content: oklch(26% 0.06 70);
+  --color-error: oklch(58% 0.22 25);
+  --color-error-content: oklch(98% 0.01 20);
+  --radius-selector: 0.5rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.875rem;
   --size-selector: 0.21875rem;
   --size-field: 0.21875rem;
-  --border: 1.5px;
+  --border: 1px;
   --depth: 1;
   --noise: 0;
 }
@@ -103,3 +105,40 @@
 [data-phx-session], [data-phx-teleported-src] { display: contents }
 
 /* This file is for your main application CSS */
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/Inter-variable.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter Tight";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/InterTight-variable.woff2") format("woff2");
+}
+@layer base {
+  html {
+    font-family: "Inter", system-ui, -apple-system, sans-serif;
+  }
+  h1, h2, h3, .font-display {
+    font-family: "Inter Tight", "Inter", system-ui, sans-serif;
+    letter-spacing: -0.01em;
+  }
+}
+
+/* Honour prefers-reduced-motion globally: one reset neutralises every transition/animation
+   (theme-toggle slide, JS show/hide, hover effects, future motion) so we don't have to gate
+   each one with motion-safe:. motion-safe:* utilities still work — they simply don't apply
+   under reduce, and this !important reset wins over any utility duration. */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

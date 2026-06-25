@@ -25,7 +25,7 @@ defmodule CinderWeb.SeriesDetailLive do
         {:ok,
          socket
          |> put_flash(:error, "Series not found.")
-         |> push_navigate(to: ~p"/series")}
+         |> push_navigate(to: ~p"/library")}
     end
   end
 
@@ -112,7 +112,7 @@ defmodule CinderWeb.SeriesDetailLive do
         {:noreply,
          socket
          |> put_flash(:info, "Series deleted.")
-         |> push_navigate(to: ~p"/series")}
+         |> push_navigate(to: ~p"/library")}
 
       _ ->
         {:noreply,
@@ -132,7 +132,7 @@ defmodule CinderWeb.SeriesDetailLive do
       {:noreply,
        socket
        |> put_flash(:info, "Series deleted.")
-       |> push_navigate(to: ~p"/series")}
+       |> push_navigate(to: ~p"/library")}
     else
       {:noreply, socket}
     end
@@ -144,7 +144,7 @@ defmodule CinderWeb.SeriesDetailLive do
   # reload that assigned nil would nil-deref the next render): bounce back to the list.
   defp reload(socket) do
     case Catalog.get_series_with_tree(socket.assigns.series.id) do
-      nil -> socket |> put_flash(:error, "Series not found.") |> push_navigate(to: ~p"/series")
+      nil -> socket |> put_flash(:error, "Series not found.") |> push_navigate(to: ~p"/library")
       series -> assign(socket, series: series)
     end
   end
@@ -163,8 +163,8 @@ defmodule CinderWeb.SeriesDetailLive do
     assigns = assign(assigns, :poster_base, @poster_base)
 
     ~H"""
-    <Layouts.app flash={@flash}>
-      <.link navigate={~p"/series"} class="link mb-6 inline-block">← TV series</.link>
+    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
+      <.link navigate={~p"/library"} class="link mb-6 inline-block">← Library</.link>
 
       <div class="mb-4 flex flex-wrap items-center gap-2">
         <button type="button" class="btn btn-sm" phx-click="edit_series">Edit</button>
@@ -185,23 +185,32 @@ defmodule CinderWeb.SeriesDetailLive do
       >
         <.input field={@form[:title]} type="text" label="Title" />
         <.input field={@form[:year]} type="number" label="Year" />
-        <button class="btn btn-sm btn-primary" type="submit">Save</button>
+        <button class="btn btn-sm btn-primary" type="submit" phx-disable-with="Saving…">Save</button>
         <button class="btn btn-sm btn-ghost" type="button" phx-click="cancel_edit_series">Cancel</button>
       </.form>
 
-      <div :if={@confirming == :cancel} class="mb-6 flex items-center gap-2">
-        <span class="text-sm">Cancel this series? Removes its downloads and unmonitors everything.</span>
-        <button class="btn btn-sm btn-warning" phx-click="confirm_cancel_series">Confirm cancel</button>
-        <button class="btn btn-sm btn-ghost" phx-click="dismiss_confirm">Keep</button>
-      </div>
+      <.confirm_action
+        :if={@confirming == :cancel}
+        id="confirm-cancel-series"
+        on_confirm="confirm_cancel_series"
+        on_cancel="dismiss_confirm"
+        confirm_label="Cancel series"
+        variant="warning"
+      >
+        <:caveat>Cancel this series? Removes its downloads and unmonitors everything.</:caveat>
+      </.confirm_action>
 
-      <div :if={@confirming == :delete} class="mb-6 flex items-center gap-2">
-        <span class="text-sm">
+      <.confirm_action
+        :if={@confirming == :delete}
+        id="confirm-delete-series"
+        on_confirm="confirm_delete_series"
+        on_cancel="dismiss_confirm"
+        confirm_label="Delete"
+      >
+        <:caveat>
           Delete this series and its seasons/episodes? (Library files are left on disk.)
-        </span>
-        <button class="btn btn-sm btn-error" phx-click="confirm_delete_series">Confirm delete</button>
-        <button class="btn btn-sm btn-ghost" phx-click="dismiss_confirm">Keep</button>
-      </div>
+        </:caveat>
+      </.confirm_action>
 
       <div class="mb-8 flex gap-4">
         <img
@@ -211,21 +220,24 @@ defmodule CinderWeb.SeriesDetailLive do
           class="aspect-[2/3] w-24 rounded object-cover"
         />
         <div>
-          <h1 class="text-2xl font-semibold">
+          <.header>
             {@series.title}
-            <span :if={@series.year} class="font-normal text-base-content/60">
-              ({@series.year})
-            </span>
-          </h1>
-          <span class={["badge badge-sm mt-2", @series.monitored && "badge-success"]}>
-            {if @series.monitored, do: "monitored", else: "not monitored"}
-          </span>
+            <span :if={@series.year} class="font-normal text-base-content/60">({@series.year})</span>
+            <:actions>
+              <span class={["badge badge-sm", @series.monitored && "badge-success"]}>
+                {if @series.monitored, do: "Monitored", else: "Unmonitored"}
+              </span>
+            </:actions>
+          </.header>
         </div>
       </div>
 
-      <p :if={@series.seasons == []} class="text-base-content/60">
-        No seasons found for this series.
-      </p>
+      <.empty_state
+        :if={@series.seasons == []}
+        icon="hero-tv"
+        title="No seasons found"
+        message="TMDB returned no season data for this series."
+      />
 
       <section :for={season <- @series.seasons} class="mb-6">
         <div class="mb-2 flex items-center justify-between border-b border-base-300 pb-2">
@@ -241,6 +253,10 @@ defmodule CinderWeb.SeriesDetailLive do
             phx-click="toggle_season"
             phx-value-id={season.id}
             class="btn btn-xs"
+            aria-label={
+              "#{if all_monitored?(season), do: "Unmonitor", else: "Monitor"} all episodes in " <>
+                season_label(season.season_number)
+            }
           >
             {if all_monitored?(season), do: "Unmonitor all", else: "Monitor all"}
           </button>

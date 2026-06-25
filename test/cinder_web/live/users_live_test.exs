@@ -162,7 +162,7 @@ defmodule CinderWeb.UsersLiveTest do
 
     {:ok, lv, _html} = live(conn, ~p"/users")
     lv |> element("#delete-btn-#{user.id}") |> render_click()
-    lv |> element("#confirm-delete-#{user.id}") |> render_click()
+    lv |> element("#confirm-delete-#{user.id} button[phx-click=\"delete\"]") |> render_click()
 
     refute Cinder.Accounts.get_user_by_email(user.email)
     refute render(lv) =~ user.email
@@ -175,7 +175,9 @@ defmodule CinderWeb.UsersLiveTest do
 
     {:ok, lv, _html} = live(conn, ~p"/users")
     lv |> element("#delete-btn-#{admin.id}") |> render_click()
-    html = lv |> element("#confirm-delete-#{admin.id}") |> render_click()
+
+    html =
+      lv |> element("#confirm-delete-#{admin.id} button[phx-click=\"delete\"]") |> render_click()
 
     assert html =~ "your own account"
     assert Cinder.Accounts.get_user!(admin.id)
@@ -189,7 +191,9 @@ defmodule CinderWeb.UsersLiveTest do
 
     {:ok, lv, _html} = live(conn, ~p"/users")
     lv |> element("#delete-btn-#{admin.id}") |> render_click()
-    html = lv |> element("#confirm-delete-#{admin.id}") |> render_click()
+
+    html =
+      lv |> element("#confirm-delete-#{admin.id} button[phx-click=\"delete\"]") |> render_click()
 
     assert html =~ "last admin"
     assert Cinder.Accounts.get_user!(admin.id)

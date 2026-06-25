@@ -4,7 +4,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
 
   Loads season data directly from TMDB (no local series row required) and lets
   any authenticated user request a season. State badges (Pending / Approved /
-  Denied) mirror the movie request-button pattern in `WatchlistLive`. No monitor
+  Denied) mirror the movie request-button pattern in `DiscoverLive`. No monitor
   toggles — those stay on the admin `/series/:id` page.
   """
   use CinderWeb, :live_view
@@ -32,7 +32,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
         {:ok,
          socket
          |> put_flash(:error, "Series not found.")
-         |> push_navigate(to: ~p"/series")}
+         |> push_navigate(to: ~p"/")}
     end
   end
 
@@ -123,8 +123,8 @@ defmodule CinderWeb.SeriesDiscoveryLive do
     assigns = assign(assigns, :poster_base, @poster_base)
 
     ~H"""
-    <Layouts.app flash={@flash}>
-      <.link navigate={~p"/series"} class="link mb-6 inline-block">← TV series</.link>
+    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
+      <.link navigate={~p"/"} class="link mb-6 inline-block">← Discover</.link>
 
       <div class="mb-8 flex gap-4">
         <img
@@ -138,18 +138,19 @@ defmodule CinderWeb.SeriesDiscoveryLive do
           class="hidden"
         />
         <div>
-          <h1 class="text-2xl font-semibold">
+          <.header>
             {@info.title}
-            <span :if={@info.year} class="font-normal text-base-content/60">
-              ({@info.year})
-            </span>
-          </h1>
+            <span :if={@info.year} class="font-normal text-base-content/60">({@info.year})</span>
+          </.header>
         </div>
       </div>
 
-      <p :if={@info.seasons == []} class="text-base-content/60">
-        No seasons found for this series.
-      </p>
+      <.empty_state
+        :if={@info.seasons == []}
+        icon="hero-tv"
+        title="No seasons found"
+        message="TMDB returned no season data for this series."
+      />
 
       <ul class="divide-y divide-base-200">
         <li
@@ -172,28 +173,19 @@ defmodule CinderWeb.SeriesDiscoveryLive do
 
   defp season_action(assigns) do
     ~H"""
-    <span :if={@status != nil} class={["badge badge-sm", badge_class(@status)]}>
-      {badge_label(@status)}
-    </span>
+    <.status_badge :if={@status != nil} kind={:request} status={@status} />
     <button
       :if={@status in [nil, :denied]}
       type="button"
       phx-click="request_season"
       phx-value-season={@season_number}
+      phx-disable-with="Requesting…"
       class="btn btn-primary btn-sm"
     >
       Request
     </button>
     """
   end
-
-  defp badge_class(:pending), do: "badge-warning"
-  defp badge_class(:approved), do: "badge-info"
-  defp badge_class(:denied), do: "badge-error"
-
-  defp badge_label(:pending), do: "Pending"
-  defp badge_label(:approved), do: "Approved"
-  defp badge_label(:denied), do: "Denied"
 
   defp season_label(0), do: "Specials"
   defp season_label(n), do: "Season #{n}"

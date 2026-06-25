@@ -32,7 +32,7 @@ defmodule CinderWeb.MyRequestsLiveTest do
 
     assert has_element?(lv, "#my-requests", "Mine")
     refute has_element?(lv, "#my-requests", "Theirs")
-    assert render(lv) =~ "pending"
+    assert render(lv) =~ "Pending"
   end
 
   test "a season request shows the show title and season number", %{conn: conn} do
@@ -84,10 +84,10 @@ defmodule CinderWeb.MyRequestsLiveTest do
     # season row renders correctly
     assert html =~ "Collision Show"
     assert html =~ "Season 2"
-    assert html =~ "pending"
+    assert html =~ "Pending"
 
     # movie pipeline badge must NOT appear on the season row
-    refute html =~ "downloading"
+    refute html =~ "Downloading"
   end
 
   test "live-updates when the user's request is approved", %{conn: conn} do
@@ -107,7 +107,7 @@ defmodule CinderWeb.MyRequestsLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/my-requests")
 
     {:ok, _} = Requests.approve_request(req, admin)
-    assert render(lv) =~ "approved"
+    assert render(lv) =~ "Approved"
   end
 
   test "survives a {:movie_deleted, id} broadcast (reloads, no crash)", %{conn: conn} do

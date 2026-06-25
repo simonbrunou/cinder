@@ -135,9 +135,9 @@ defmodule CinderWeb.RequestsLiveTest do
     {:ok, _lv, html} = live(conn, ~p"/requests")
     assert html =~ "Pend"
     assert html =~ "Den"
-    # status badges render (request_status_badge prints the status atom)
-    assert html =~ "pending"
-    assert html =~ "denied"
+    # status badges render (status_badge prints the Title-cased label)
+    assert html =~ "Pending"
+    assert html =~ "Denied"
   end
 
   test "deleting a request shows the orphan/re-request warning then removes it", %{conn: conn} do

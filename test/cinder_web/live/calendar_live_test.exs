@@ -43,7 +43,7 @@ defmodule CinderWeb.CalendarLiveTest do
       air_date: Date.add(today, -1)
     })
 
-    {:ok, _lv, html} = live(conn, ~p"/calendar")
+    {:ok, lv, html} = live(conn, ~p"/calendar")
 
     assert html =~ "Calendar Show"
     assert html =~ "S01E01"
@@ -51,17 +51,42 @@ defmodule CinderWeb.CalendarLiveTest do
     assert html =~ "Upcoming"
     assert html =~ "S01E02"
     assert html =~ "Wanted"
+    assert has_element?(lv, "#calendar-list")
+    refute html =~ "<table"
+  end
+
+  test "renders upcoming episodes as cards (no overflow-prone table)", %{conn: conn} do
+    {_series, season} = tree()
+    today = Date.utc_today()
+
+    Repo.insert!(%Episode{
+      season_id: season.id,
+      episode_number: 3,
+      title: "Card Test Ep",
+      monitored: true,
+      air_date: Date.add(today, 10)
+    })
+
+    {:ok, lv, html} = live(conn, ~p"/calendar")
+    assert has_element?(lv, "#calendar-list")
+    refute html =~ "<table"
   end
 
   test "shows an empty state when nothing is scheduled", %{conn: conn} do
     {:ok, _lv, html} = live(conn, ~p"/calendar")
-    assert html =~ "No monitored episodes in the calendar window."
+    assert html =~ "Nothing upcoming"
   end
 
   test "a non-admin cannot reach the calendar", %{conn: conn} do
     user = user_fixture()
     conn = log_in_user(conn, user)
     assert {:error, {:redirect, %{to: "/"}}} = live(conn, ~p"/calendar")
+  end
+
+  test "renders the page under the shared header", %{conn: conn} do
+    {:ok, _lv, html} = live(conn, ~p"/calendar")
+    assert html =~ "Upcoming"
+    refute html =~ ~s(<h1 class="mb-6 text-2xl font-semibold">)
   end
 
   test "survives a {:series_deleted, id} broadcast (re-derives, no crash)", %{conn: conn} do

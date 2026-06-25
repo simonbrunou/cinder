@@ -62,7 +62,7 @@ defmodule CinderWeb.SettingsLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash}>
+    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.header>
         Settings
         <:subtitle>
@@ -70,11 +70,11 @@ defmodule CinderWeb.SettingsLive do
         </:subtitle>
       </.header>
 
-      <.link navigate={~p"/status"} class="link mb-6 inline-block">← Status</.link>
+      <.link navigate={~p"/dashboard"} class="link mb-6 inline-block">← Dashboard</.link>
 
       <form id="settings-form" phx-submit="save" class="space-y-8">
         <.service_fields form={@form} health={@health} />
-        <button type="submit" class="btn btn-primary">Save settings</button>
+        <button type="submit" class="btn btn-primary" phx-disable-with="Saving…">Save settings</button>
       </form>
 
       <div class="rounded-box bg-base-200 p-4 mt-8">

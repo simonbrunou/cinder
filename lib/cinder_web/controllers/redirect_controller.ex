@@ -1,0 +1,12 @@
+defmodule CinderWeb.RedirectController do
+  use CinderWeb, :controller
+
+  # /series (the old TV-search page) folded into Discover in UX-3; keep the bookmark working.
+  def to_root(conn, _params), do: redirect(conn, to: ~p"/")
+
+  # /status + /grabs folded into Activity (UX-4); keep bookmarks working.
+  def to_activity(conn, _params), do: redirect(conn, to: ~p"/activity")
+
+  # /movies folded into Library (UX-4); keep bookmarks working.
+  def to_library(conn, _params), do: redirect(conn, to: ~p"/library")
+end

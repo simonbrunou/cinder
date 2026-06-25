@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cinder — Dashboard</title>
+<link rel="stylesheet" href="_shared.css">
+<style>
+  .hero-wash { position: relative; }
+  .hero-wash::before {
+    content:''; position:absolute; inset:-26px -28px auto -28px; height:230px; pointer-events:none;
+    background: radial-gradient(680px 230px at 22% -40%, rgba(255,122,60,.16), transparent 70%);
+  }
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:24px; position:relative; }
+  .stat {
+    background: var(--surface-1); border:1px solid var(--border-soft); border-radius: var(--radius-card);
+    padding:16px 18px; box-shadow: var(--shadow);
+  }
+  .stat .row { display:flex; align-items:center; gap:10px; }
+  .stat .ic { width:34px; height:34px; border-radius:10px; display:grid; place-items:center; }
+  .stat .ic svg { width:18px; height:18px; }
+  .stat .num { font-family:'Inter Tight'; font-weight:700; font-size:30px; line-height:1; margin-top:14px; }
+  .stat .lbl { color: var(--text-dim); font-size:12.5px; margin-top:5px; }
+  .ic.ember { background:var(--ember-soft); color:var(--ember); }
+  .ic.info  { background:rgba(90,169,255,.14); color:var(--info); }
+  .ic.ok    { background:rgba(63,199,138,.14); color:var(--success); }
+  .ic.err   { background:rgba(255,95,95,.14); color:var(--error); }
+  .stat .delta { margin-left:auto; font-size:11.5px; font-weight:600; color:var(--text-faint); }
+
+  .cols { display:grid; grid-template-columns: 1.35fr 1fr; gap:18px; }
+  .panel { background:var(--surface-1); border:1px solid var(--border-soft); border-radius:var(--radius-card); box-shadow:var(--shadow); }
+  .panel .head { display:flex; align-items:center; gap:10px; padding:15px 18px; border-bottom:1px solid var(--border-soft); }
+  .panel .head h2 { font-size:15px; font-weight:600; }
+  .panel .head .more { margin-left:auto; font-size:12.5px; color:var(--ember); font-weight:500; }
+  .panel .head .pill { font-size:11px; font-weight:700; background:var(--ember); color:#1a0d06; border-radius:var(--radius-pill); padding:2px 8px; }
+
+  .appr { display:flex; align-items:center; gap:13px; padding:13px 18px; border-bottom:1px solid var(--border-soft); }
+  .appr:last-child { border-bottom:0; }
+  .appr .thumb { width:42px; height:63px; border-radius:7px; flex:none; object-fit:cover; border:1px solid var(--border); }
+  .appr .who { min-width:0; flex:1; }
+  .appr .who .t { font-weight:600; font-size:13.5px; }
+  .appr .who .s { font-size:12px; color:var(--text-dim); margin-top:2px; display:flex; gap:7px; align-items:center; }
+  .appr .who .s .tag { font-size:10px; font-weight:700; letter-spacing:.05em; padding:1px 6px; border-radius:5px; background:var(--surface-3); color:var(--text-dim); }
+  .appr .acts { display:flex; gap:8px; }
+  .b { border:0; cursor:pointer; font-family:inherit; font-weight:600; font-size:12.5px; padding:7px 14px; border-radius:var(--radius-field); display:inline-flex; align-items:center; gap:6px; }
+  .b svg { width:14px; height:14px; }
+  .b-approve { background:linear-gradient(135deg,var(--ember),var(--ember-2)); color:#1a0d06; }
+  .b-deny { background:var(--surface-3); color:var(--text-dim); border:1px solid var(--border); }
+
+  .health { padding:7px 8px; }
+  .hrow { display:flex; align-items:center; gap:11px; padding:9px 10px; border-radius:9px; }
+  .hrow:hover { background:var(--surface-2); }
+  .dot { width:8px; height:8px; border-radius:50%; flex:none; }
+  .dot.up { background:var(--success); box-shadow:0 0 9px rgba(63,199,138,.6); }
+  .dot.down { background:var(--error); box-shadow:0 0 9px rgba(255,95,95,.6); }
+  .hrow .nm { font-weight:500; font-size:13px; }
+  .hrow .kind { font-size:11.5px; color:var(--text-faint); }
+  .hrow .st { margin-left:auto; font-size:11.5px; font-weight:600; }
+  .hrow .st.up { color:var(--success); } .hrow .st.down { color:var(--error); }
+
+  .feed { padding:6px 8px; }
+  .ev { display:flex; gap:12px; padding:10px; position:relative; }
+  .ev .tl { width:24px; flex:none; display:flex; flex-direction:column; align-items:center; }
+  .ev .tl .d2 { width:9px; height:9px; border-radius:50%; margin-top:4px; z-index:1; }
+  .ev .tl .ln { width:2px; flex:1; background:var(--border); margin-top:2px; }
+  .ev:last-child .tl .ln { display:none; }
+  .ev .bd .x { font-size:13px; } .ev .bd .x b { font-weight:600; }
+  .ev .bd .tm { font-size:11.5px; color:var(--text-faint); margin-top:2px; }
+  .d2.ok{background:var(--success);} .d2.info{background:var(--info);} .d2.ember{background:var(--ember);} .d2.warn{background:var(--warning);}
+  .section-head { display:flex; align-items:center; gap:10px; margin:26px 0 13px; }
+  .section-head h2 { font-size:16px; font-weight:600; } .section-head .more{ margin-left:auto; font-size:12.5px; color:var(--ember); }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- SIDEBAR (Dashboard active) -->
+  <aside class="sidebar">
+    <div class="brand"><div class="spark"></div><div class="word">CIN<b>DER</b></div></div>
+    <div class="nav-group">
+      <div class="nav-label">Everyone</div>
+      <a class="nav-item"><svg fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path stroke-linecap="round" d="m20 20-3-3"/></svg>Discover</a>
+      <a class="nav-item"><svg fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 7.5A2.5 2.5 0 0 1 7.5 5h9A2.5 2.5 0 0 1 19 7.5V20l-7-4-7 4z"/></svg>My Requests</a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-label">Admin</div>
+      <a class="nav-item active"><svg fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5h6v6H4zM14 5h6v6h-6zM4 15h6v4H4zM14 13h6v6h-6z"/></svg>Dashboard</a>
+      <a class="nav-item"><svg fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 13h4l2 3h4l2-3h4M4 13l2-7h12l2 7M4 13v5h16v-5"/></svg>Requests <span class="count hot">3</span></a>
+      <a class="nav-item"><svg fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 7h16M5 7l1 12h12l1-12M9 11v5M15 11v5"/></svg>Library</a>
+      <a class="nav-item"><svg fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m13 3-8 10h6l-2 8 8-10h-6z"/></svg>Activity <span class="count">4</span></a>
+      <a class="nav-item"><svg fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="16" rx="2"/><path stroke-linecap="round" d="M4 9h16M8 3v4M16 3v4"/></svg>Calendar</a>
+      <a class="nav-item"><svg fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2 2M16.4 16.4l2 2M18.4 5.6l-2 2M7.6 16.4l-2 2"/></svg>Settings</a>
+      <a class="nav-item"><svg fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path stroke-linecap="round" stroke-linejoin="round" d="M3 20a6 6 0 0 1 12 0M16 6a3 3 0 0 1 0 6M21 20a6 6 0 0 0-4-5.6"/></svg>Users</a>
+    </div>
+    <div class="spacer"></div>
+    <div class="side-foot">
+      <div class="theme-toggle">
+        <button><svg fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 20h8"/></svg></button>
+        <button><svg fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path stroke-linecap="round" d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/></svg></button>
+        <button class="on"><svg fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4 6.5 6.5 0 0 0 20 14.5z"/></svg></button>
+      </div>
+      <div class="user-chip">
+        <div class="avatar">SB</div>
+        <div class="meta"><div class="n">simon</div><div class="r">Admin</div></div>
+        <svg class="chev" fill="none" stroke="currentColor" stroke-width="1.7" viewBox="0 0 24 24" width="16" height="16"><path stroke-linecap="round" stroke-linejoin="round" d="m8 10 4 4 4-4"/></svg>
+      </div>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <div class="main">
+    <div class="topbar">
+      <div class="search">
+        <svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path stroke-linecap="round" d="m20 20-3-3"/></svg>
+        <input placeholder="Search movies & TV…">
+        <span class="kbd">/</span>
+      </div>
+    </div>
+
+    <div class="content hero-wash">
+      <div class="page-head">
+        <div class="eyebrow">Dashboard</div>
+        <h1>Good evening, Simon</h1>
+        <p>Everything the household has going through the pipeline, at a glance.</p>
+      </div>
+
+      <!-- STATS -->
+      <div class="stats">
+        <div class="stat">
+          <div class="row"><div class="ic ember"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 13h4l2 3h4l2-3h4M5 7h14l1 6H4z"/></svg></div><span class="delta">needs you</span></div>
+          <div class="num">3</div><div class="lbl">Pending approvals</div>
+        </div>
+        <div class="stat">
+          <div class="row"><div class="ic info"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0 4-4m-4 4-4-4M5 19h14"/></svg></div><span class="delta">2 movies · 2 eps</span></div>
+          <div class="num">4</div><div class="lbl">Downloading</div>
+        </div>
+        <div class="stat">
+          <div class="row"><div class="ic ok"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m5 13 4 4 10-11"/></svg></div><span class="delta">+6 this week</span></div>
+          <div class="num">128</div><div class="lbl">In library</div>
+        </div>
+        <div class="stat">
+          <div class="row"><div class="ic err"><svg fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v5M12 16.5v.5M10.3 4l-7 12.5A2 2 0 0 0 5 20h14a2 2 0 0 0 1.7-3.5l-7-12.5a2 2 0 0 0-3.4 0z"/></svg></div><span class="delta">retry available</span></div>
+          <div class="num">2</div><div class="lbl">Need attention</div>
+        </div>
+      </div>
+
+      <!-- COLUMNS -->
+      <div class="cols">
+        <!-- approvals -->
+        <div class="panel">
+          <div class="head"><h2>Pending approvals</h2><span class="pill">3</span><a class="more">View all →</a></div>
+          <div class="appr">
+            <img class="thumb" src="https://picsum.photos/seed/oppen/84/126" onerror="this.style.background='linear-gradient(150deg,#3a3450,#150f22)';this.removeAttribute('src')">
+            <div class="who"><div class="t">Oppenheimer <span style="color:var(--text-faint);font-weight:500">2023</span></div>
+              <div class="s"><span class="tag">FILM</span> requested by <b style="color:var(--text-dim)">emma</b> · 2h ago</div></div>
+            <div class="acts">
+              <button class="b b-approve"><svg fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m5 13 4 4 10-11"/></svg>Approve</button>
+              <button class="b b-deny">Deny</button>
+            </div>
+          </div>
+          <div class="appr">
+            <img class="thumb" src="https://picsum.photos/seed/andor/84/126" onerror="this.style.background='linear-gradient(150deg,#34485a,#101820)';this.removeAttribute('src')">
+            <div class="who"><div class="t">Andor <span style="color:var(--text-faint);font-weight:500">· Season 2</span></div>
+              <div class="s"><span class="tag">TV</span> requested by <b style="color:var(--text-dim)">noah</b> · 5h ago</div></div>
+            <div class="acts">
+              <button class="b b-approve"><svg fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m5 13 4 4 10-11"/></svg>Approve</button>
+              <button class="b b-deny">Deny</button>
+            </div>
+          </div>
+          <div class="appr">
+            <img class="thumb" src="https://picsum.photos/seed/prisoners/84/126" onerror="this.style.background='linear-gradient(150deg,#56432b,#221a0e)';this.removeAttribute('src')">
+            <div class="who"><div class="t">Prisoners <span style="color:var(--text-faint);font-weight:500">2013</span></div>
+              <div class="s"><span class="tag">FILM</span> requested by <b style="color:var(--text-dim)">emma</b> · yesterday</div></div>
+            <div class="acts">
+              <button class="b b-approve"><svg fill="none" stroke="currentColor" stroke-width="2.4" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m5 13 4 4 10-11"/></svg>Approve</button>
+              <button class="b b-deny">Deny</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- health -->
+        <div class="panel">
+          <div class="head"><h2>Service health</h2><a class="more">Recheck</a></div>
+          <div class="health">
+            <div class="hrow"><span class="dot up"></span><span class="nm">Prowlarr</span><span class="kind">· indexer</span><span class="st up">Reachable</span></div>
+            <div class="hrow"><span class="dot up"></span><span class="nm">qBittorrent</span><span class="kind">· torrent</span><span class="st up">Reachable</span></div>
+            <div class="hrow"><span class="dot up"></span><span class="nm">SABnzbd</span><span class="kind">· usenet</span><span class="st up">Reachable</span></div>
+            <div class="hrow"><span class="dot up"></span><span class="nm">Jellyfin</span><span class="kind">· media server</span><span class="st up">Reachable</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- recent activity -->
+      <div class="section-head"><h2>Recent activity</h2><a class="more">Open Activity →</a></div>
+      <div class="panel">
+        <div class="feed">
+          <div class="ev"><div class="tl"><span class="d2 ok"></span><span class="ln"></span></div>
+            <div class="bd"><div class="x"><b>Dune: Part Two</b> imported to library</div><div class="tm">12 minutes ago</div></div></div>
+          <div class="ev"><div class="tl"><span class="d2 info"></span><span class="ln"></span></div>
+            <div class="bd"><div class="x"><b>The Bear</b> S03E04 — downloading (62%)</div><div class="tm">28 minutes ago</div></div></div>
+          <div class="ev"><div class="tl"><span class="d2 ember"></span><span class="ln"></span></div>
+            <div class="bd"><div class="x"><b>Oppenheimer</b> approved · searching for a release</div><div class="tm">2 hours ago</div></div></div>
+          <div class="ev"><div class="tl"><span class="d2 warn"></span><span class="ln"></span></div>
+            <div class="bd"><div class="x"><b>Civil War</b> — no release matched the size band <span style="color:var(--ember)">· Retry</span></div><div class="tm">5 hours ago</div></div></div>
+          <div class="ev"><div class="tl"><span class="d2 ok"></span></div>
+            <div class="bd"><div class="x"><b>Foundation</b> S02 season pack imported (10 episodes)</div><div class="tm">yesterday</div></div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

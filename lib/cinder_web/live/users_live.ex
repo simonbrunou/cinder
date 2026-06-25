@@ -224,7 +224,7 @@ defmodule CinderWeb.UsersLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash}>
+    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.header>
         Users<:subtitle>Roles and request quotas.</:subtitle>
       </.header>
@@ -255,7 +255,7 @@ defmodule CinderWeb.UsersLive do
             options={[{"User", "user"}, {"Admin", "admin"}]}
           />
           <div class="flex gap-2">
-            <button class="btn btn-primary btn-sm" type="submit">Create</button>
+            <button class="btn btn-primary btn-sm" type="submit" phx-disable-with="Creating…">Create</button>
             <button class="btn btn-ghost btn-sm" type="button" phx-click="cancel_create">
               Cancel
             </button>
@@ -272,7 +272,9 @@ defmodule CinderWeb.UsersLive do
               class="badge badge-sm"
               phx-click="toggle_role"
               phx-value-id={u.id}
+              phx-disable-with="…"
               title="Toggle admin/user"
+              aria-label={"Toggle role for #{u.email} (currently #{u.role})"}
             >
               {u.role}
             </button>
@@ -300,7 +302,7 @@ defmodule CinderWeb.UsersLive do
                 class="input input-sm w-24"
                 placeholder="∞"
               />
-              <button class="btn btn-sm">Save</button>
+              <button class="btn btn-sm" phx-disable-with="Saving…">Save</button>
             </form>
           </div>
           <.form
@@ -317,7 +319,7 @@ defmodule CinderWeb.UsersLive do
               value={u.email}
               class="input input-sm input-bordered"
             />
-            <button class="btn btn-primary btn-sm" type="submit">Save email</button>
+            <button class="btn btn-primary btn-sm" type="submit" phx-disable-with="Saving…">Save email</button>
             <button class="btn btn-ghost btn-sm" type="button" phx-click="cancel_edit_email">
               Cancel
             </button>
@@ -340,19 +342,17 @@ defmodule CinderWeb.UsersLive do
             >
               Delete
             </button>
-            <span :if={@confirming_delete == to_string(u.id)} class="flex items-center gap-2">
-              <span class="text-sm">Delete {u.email}? Requests cascade.</span>
-              <button
-                id={"confirm-delete-#{u.id}"}
-                class="btn btn-error btn-xs"
-                phx-click="delete"
-                phx-value-id={u.id}
-              >
-                Confirm delete
-              </button>
-              <button class="btn btn-ghost btn-xs" phx-click="cancel_delete">Cancel</button>
-            </span>
           </div>
+          <.confirm_action
+            :if={@confirming_delete == to_string(u.id)}
+            id={"confirm-delete-#{u.id}"}
+            on_confirm="delete"
+            on_cancel="cancel_delete"
+            value={u.id}
+            confirm_label="Delete"
+          >
+            <:caveat>Delete {u.email}? Requests cascade.</:caveat>
+          </.confirm_action>
           <.form
             :if={@resetting_pw == to_string(u.id)}
             id={"reset-pw-form-#{u.id}"}
@@ -373,7 +373,7 @@ defmodule CinderWeb.UsersLive do
               placeholder="Confirm"
               class="input input-sm input-bordered"
             />
-            <button class="btn btn-primary btn-sm" type="submit">Set password</button>
+            <button class="btn btn-primary btn-sm" type="submit" phx-disable-with="Resetting…">Set password</button>
             <button class="btn btn-ghost btn-sm" type="button" phx-click="cancel_reset_pw">
               Cancel
             </button>

@@ -31,12 +31,17 @@ defmodule CinderWeb.MyRequestsLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash}>
+    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.header>
         My requests<:subtitle>Track what you've asked for.</:subtitle>
       </.header>
 
-      <p :if={@requests == []} class="text-base-content/60">You haven't requested anything yet.</p>
+      <.empty_state
+        :if={@requests == []}
+        icon="hero-bookmark"
+        title="No requests yet"
+        message="Search the catalog to request a title."
+      />
 
       <ul id="my-requests" class="space-y-3">
         <li :for={r <- @requests} class="card bg-base-200 p-4">
@@ -47,9 +52,10 @@ defmodule CinderWeb.MyRequestsLive do
                 else: r.title}
             </span>
             <span :if={r.year} class="text-base-content/60">({r.year})</span>
-            <.request_status_badge status={r.status} />
-            <.movie_status_badge
+            <.status_badge kind={:request} status={r.status} />
+            <.status_badge
               :if={r.target_type == "movie" and @movie_status[r.target_id]}
+              kind={:movie}
               status={@movie_status[r.target_id]}
             />
           </div>

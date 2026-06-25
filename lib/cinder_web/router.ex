@@ -53,11 +53,11 @@ defmodule CinderWeb.Router do
     live_session :authenticated,
       on_mount: [
         {CinderWeb.UserAuth, :require_authenticated},
-        {CinderWeb.UserAuth, :require_setup}
+        {CinderWeb.UserAuth, :require_setup},
+        {CinderWeb.UserAuth, :current_path}
       ] do
-      live "/", WatchlistLive
+      live "/", DiscoverLive
       live "/my-requests", MyRequestsLive
-      live "/series", SeriesLive
       live "/series/tmdb/:tmdb_id", SeriesDiscoveryLive
     end
 
@@ -65,14 +65,15 @@ defmodule CinderWeb.Router do
       on_mount: [
         {CinderWeb.UserAuth, :require_authenticated},
         {CinderWeb.UserAuth, :require_admin},
-        {CinderWeb.UserAuth, :require_setup}
+        {CinderWeb.UserAuth, :require_setup},
+        {CinderWeb.UserAuth, :current_path}
       ] do
-      live "/status", StatusLive
+      live "/dashboard", DashboardLive
+      live "/activity", ActivityLive
       live "/settings", SettingsLive
       live "/requests", RequestsLive
       live "/users", UsersLive
-      live "/movies", MoviesLive
-      live "/grabs", GrabsLive
+      live "/library", LibraryLive
       live "/series/:id", SeriesDetailLive
       live "/calendar", CalendarLive
     end
@@ -80,10 +81,19 @@ defmodule CinderWeb.Router do
     live_session :setup,
       on_mount: [
         {CinderWeb.UserAuth, :require_authenticated},
-        {CinderWeb.UserAuth, :require_admin}
+        {CinderWeb.UserAuth, :require_admin},
+        {CinderWeb.UserAuth, :current_path}
       ] do
       live "/setup", SetupLive
     end
+
+    # /series folded into Discover (UX-3); redirect old bookmarks.
+    get "/series", RedirectController, :to_root
+    # /status, /grabs folded into Activity (UX-4); redirect old bookmarks.
+    get "/status", RedirectController, :to_activity
+    get "/grabs", RedirectController, :to_activity
+    # /movies folded into Library (UX-4); redirect old bookmarks.
+    get "/movies", RedirectController, :to_library
   end
 
   # Other scopes may use custom stacks.
@@ -110,7 +120,10 @@ defmodule CinderWeb.Router do
     pipe_through [:browser, :require_authenticated_user]
 
     live_session :require_authenticated_user,
-      on_mount: [{CinderWeb.UserAuth, :require_authenticated}] do
+      on_mount: [
+        {CinderWeb.UserAuth, :require_authenticated},
+        {CinderWeb.UserAuth, :current_path}
+      ] do
       live "/users/settings", UserLive.Settings, :edit
       live "/users/settings/confirm-email/:token", UserLive.Settings, :confirm_email
     end
@@ -122,7 +135,10 @@ defmodule CinderWeb.Router do
     pipe_through [:browser]
 
     live_session :current_user,
-      on_mount: [{CinderWeb.UserAuth, :mount_current_scope}] do
+      on_mount: [
+        {CinderWeb.UserAuth, :mount_current_scope},
+        {CinderWeb.UserAuth, :current_path}
+      ] do
       live "/users/register", UserLive.Registration, :new
       live "/users/log-in", UserLive.Login, :new
       live "/users/log-in/:token", UserLive.Confirmation, :new

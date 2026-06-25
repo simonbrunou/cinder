@@ -22,6 +22,13 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
     :ok
   end
 
+  test "renders the page under the shared header", %{conn: conn} do
+    conn = log_in_user(conn, Cinder.AccountsFixtures.user_fixture())
+    {:ok, _lv, html} = live(conn, ~p"/series/tmdb/1399")
+    assert html =~ "GoT"
+    refute html =~ ~s(<h1 class="text-2xl font-semibold">)
+  end
+
   test "lists seasons from TMDB with Request buttons for a not-yet-added show", %{conn: conn} do
     conn = log_in_user(conn, Cinder.AccountsFixtures.user_fixture())
     {:ok, lv, html} = live(conn, ~p"/series/tmdb/1399")
@@ -72,7 +79,7 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
     conn = log_in_user(conn, user)
     {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
 
-    # The denied badge is shown alongside the Request button (parity with WatchlistLive).
+    # The denied badge is shown alongside the Request button (parity with DiscoverLive).
     assert has_element?(lv, ~s(.badge), "Denied")
     assert has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
 

@@ -24,8 +24,7 @@ defmodule CinderWeb.CalendarLive do
 
     rows =
       for ep <- Catalog.upcoming_episodes() do
-        {label, class} = badge(ep, today)
-        %{ep: ep, label: label, class: class}
+        %{ep: ep, state: episode_state(ep, today)}
       end
 
     assign(socket, rows: rows)
@@ -33,12 +32,12 @@ defmodule CinderWeb.CalendarLive do
 
   # Derived episode state (no status enum): a file ⇒ available, an active grab ⇒ downloading,
   # an aired-but-missing monitored episode ⇒ wanted, else still upcoming.
-  defp badge(ep, today) do
+  defp episode_state(ep, today) do
     cond do
-      ep.file_path -> {"Available", "badge-success"}
-      ep.grab_id -> {"Downloading", "badge-info"}
-      Date.compare(ep.air_date, today) != :gt -> {"Wanted", "badge-warning"}
-      true -> {"Upcoming", "badge-ghost"}
+      ep.file_path -> :available
+      ep.grab_id -> :downloading
+      Date.compare(ep.air_date, today) != :gt -> :wanted
+      true -> :upcoming
     end
   end
 
@@ -48,33 +47,33 @@ defmodule CinderWeb.CalendarLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash}>
-      <h1 class="mb-6 text-2xl font-semibold">Upcoming</h1>
+    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
+      <.header>
+        Upcoming
+        <:subtitle>Monitored episodes airing in the next 90 days.</:subtitle>
+      </.header>
 
-      <p :if={@rows == []} class="text-base-content/60">
-        No monitored episodes in the calendar window.
-      </p>
+      <.empty_state
+        :if={@rows == []}
+        icon="hero-calendar"
+        title="Nothing upcoming"
+        message="Monitored episodes in the next 90 days will appear here."
+      />
 
-      <table :if={@rows != []} class="table">
-        <thead>
-          <tr>
-            <th>Air date</th>
-            <th>Series</th>
-            <th>Episode</th>
-            <th>Title</th>
-            <th>State</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr :for={row <- @rows}>
-            <td class="tabular-nums">{row.ep.air_date}</td>
-            <td>{row.ep.season.series.title}</td>
-            <td class="tabular-nums">{code(row.ep.season.season_number, row.ep.episode_number)}</td>
-            <td>{row.ep.title}</td>
-            <td><span class={["badge badge-sm", row.class]}>{row.label}</span></td>
-          </tr>
-        </tbody>
-      </table>
+      <ul :if={@rows != []} id="calendar-list" class="space-y-2">
+        <li
+          :for={row <- @rows}
+          class="card bg-base-200 p-3 flex flex-row flex-wrap items-center gap-x-3 gap-y-1"
+        >
+          <span class="w-24 tabular-nums text-sm text-base-content/60">{row.ep.air_date}</span>
+          <.status_badge kind={:episode} status={row.state} />
+          <span class="font-medium">{row.ep.season.series.title}</span>
+          <span class="tabular-nums text-sm text-base-content/60">
+            {code(row.ep.season.season_number, row.ep.episode_number)}
+          </span>
+          <span class="truncate text-base-content/70">{row.ep.title}</span>
+        </li>
+      </ul>
     </Layouts.app>
     """
   end

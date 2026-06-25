@@ -4,7 +4,7 @@ defmodule CinderWeb.UserLive.Login do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope}>
+    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <div class="mx-auto max-w-sm space-y-4">
         <div class="text-center">
           <.header>
@@ -15,7 +15,7 @@ defmodule CinderWeb.UserLive.Login do
               <% else %>
                 Don't have an account? <.link
                   navigate={~p"/users/register"}
-                  class="font-semibold text-brand hover:underline"
+                  class="font-semibold text-primary hover:underline focus-visible:underline"
                   phx-no-format
                 >Sign up</.link> for an account now.
               <% end %>

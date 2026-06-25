@@ -32,6 +32,8 @@ defmodule CinderWeb.CoreComponents do
   alias Phoenix.HTML.Form
   alias Phoenix.LiveView.JS
 
+  @poster_base "https://image.tmdb.org/t/p/w342"
+
   @doc """
   Renders flash notices.
 
@@ -79,8 +81,15 @@ defmodule CinderWeb.CoreComponents do
           <p>{msg}</p>
         </div>
         <div class="flex-1" />
-        <button type="button" class="group self-start cursor-pointer" aria-label={gettext("close")}>
-          <.icon name="hero-x-mark" class="size-5 opacity-40 group-hover:opacity-70" />
+        <button
+          type="button"
+          class="group self-start cursor-pointer rounded focus-visible:outline-2 focus-visible:outline-current"
+          aria-label={gettext("close")}
+        >
+          <.icon
+            name="hero-x-mark"
+            class="size-5 opacity-40 group-hover:opacity-70 group-focus-visible:opacity-70"
+          />
         </button>
       </div>
     </div>
@@ -122,6 +131,94 @@ defmodule CinderWeb.CoreComponents do
       </button>
       """
     end
+  end
+
+  @doc """
+  A centered empty / zero state: icon, title, optional message, optional `:cta` slot.
+  `variant="search-error"` renders the failed-search treatment (error icon + colour),
+  distinct from an ordinary no-results state.
+
+  ## Examples
+
+      <.empty_state title="No grabs" message="In-flight downloads will show here." icon="hero-arrow-down-tray" />
+      <.empty_state variant="search-error" title="Search failed" message="TMDB didn't respond. Try again." />
+  """
+  attr :title, :string, required: true
+  attr :message, :string, default: nil
+  attr :icon, :string, default: "hero-inbox"
+  attr :variant, :string, default: "default", values: ~w(default search-error)
+  slot :cta
+
+  def empty_state(assigns) do
+    ~H"""
+    <div class="flex flex-col items-center justify-center gap-3 py-12 text-center">
+      <.icon
+        name={if @variant == "search-error", do: "hero-exclamation-triangle", else: @icon}
+        class={["size-10", (@variant == "search-error" && "text-error") || "text-base-content/40"]}
+      />
+      <div>
+        <p class="font-medium">{@title}</p>
+        <p :if={@message} class="mt-1 text-sm text-base-content/60">{@message}</p>
+      </div>
+      <div :if={@cta != []}>{render_slot(@cta)}</div>
+    </div>
+    """
+  end
+
+  @doc """
+  Inline two-step confirmation for a destructive action: a `role="alert"` box with a
+  caveat, a confirm button (emits `on_confirm`), and a cancel button (emits `on_cancel`).
+  Markup only — the caller drives visibility with `:if` and keeps its own "confirming"
+  assign and event names, so adoption preserves each page's existing wiring.
+
+  ## Examples
+
+      # in a template, caller controls visibility with :if and its own @confirming assign:
+      # <.confirm_action
+      #   :if={@confirming == {:delete, m.id}}
+      #   id={"confirm-delete-\#{m.id}"}
+      #   on_confirm="confirm_delete"
+      #   on_cancel="dismiss_confirm"
+      #   value={m.id}
+      #   confirm_label="Delete"
+      # >
+      #   <:caveat>Delete this movie's record? (Library files are left on disk.)</:caveat>
+      # </.confirm_action>
+  """
+  attr :id, :string, required: true
+  attr :on_confirm, :string, required: true
+  attr :on_cancel, :string, required: true
+  attr :value, :any, default: nil, doc: "phx-value-id sent with the confirm event (nil = omitted)"
+  attr :confirm_label, :string, default: "Confirm"
+  attr :cancel_label, :string, default: "Cancel"
+  attr :variant, :string, default: "error", values: ~w(error warning)
+  slot :caveat, required: true
+
+  def confirm_action(assigns) do
+    ~H"""
+    <div
+      id={@id}
+      role="alert"
+      aria-live="assertive"
+      class="alert alert-warning flex flex-col items-start gap-2"
+    >
+      <p class="text-sm">{render_slot(@caveat)}</p>
+      <div class="flex flex-wrap gap-2">
+        <button
+          type="button"
+          class={["btn", @variant == "warning" && "btn-warning", @variant == "error" && "btn-error"]}
+          phx-click={@on_confirm}
+          phx-value-id={@value}
+          phx-disable-with="Working…"
+        >
+          {@confirm_label}
+        </button>
+        <button type="button" class="btn btn-ghost" phx-click={@on_cancel}>
+          {@cancel_label}
+        </button>
+      </div>
+    </div>
+    """
   end
 
   @doc """
@@ -371,8 +468,8 @@ defmodule CinderWeb.CoreComponents do
     <table class="table table-zebra">
       <thead>
         <tr>
-          <th :for={col <- @col}>{col[:label]}</th>
-          <th :if={@action != []}>
+          <th :for={col <- @col} scope="col">{col[:label]}</th>
+          <th :if={@action != []} scope="col">
             <span class="sr-only">{gettext("Actions")}</span>
           </th>
         </tr>
@@ -382,7 +479,7 @@ defmodule CinderWeb.CoreComponents do
           <td
             :for={col <- @col}
             phx-click={@row_click && @row_click.(row)}
-            class={@row_click && "hover:cursor-pointer"}
+            class={@row_click && "cursor-pointer hover:bg-base-300"}
           >
             {render_slot(col, @row_item.(row))}
           </td>
@@ -423,6 +520,23 @@ defmodule CinderWeb.CoreComponents do
         </div>
       </li>
     </ul>
+    """
+  end
+
+  @doc """
+  A small inline loading spinner (respects `prefers-reduced-motion`).
+
+      <.spinner label="Checking services…" />
+  """
+  attr :class, :any, default: "size-5"
+  attr :label, :string, default: "Loading…"
+
+  def spinner(assigns) do
+    ~H"""
+    <span class="inline-flex items-center gap-2 text-base-content/60">
+      <.icon name="hero-arrow-path" class={["motion-safe:animate-spin", @class]} />
+      <span :if={@label} class="text-sm">{@label}</span>
+    </span>
     """
   end
 
@@ -504,35 +618,156 @@ defmodule CinderWeb.CoreComponents do
     for {^field, {msg, opts}} <- errors, do: translate_error({msg, opts})
   end
 
-  @doc "A daisyUI badge for a movie's pipeline status, coloured by state."
-  attr :status, :atom, required: true
+  @doc """
+  A status badge with an icon **and** a text label — never colour alone (a11y). One
+  source of truth for every pipeline / request / episode / grab / health state.
 
-  def movie_status_badge(assigns) do
+  `kind` selects the vocabulary; `status` is the state within it. Derived-state callers
+  (episode, grab) resolve the atom themselves and pass it; `health` passes `:ok` or
+  `{:error, reason}` (the reason becomes the hover title).
+
+  ## Examples
+
+      <.status_badge kind={:movie} status={:downloading} />
+      <.status_badge kind={:request} status={:pending} />
+      <.status_badge kind={:episode} status={:wanted} />
+      <.status_badge kind={:grab} status={:downloaded} />
+      <.status_badge kind={:health} status={{:error, :timeout}} />
+  """
+  attr :kind, :atom, required: true, values: [:movie, :request, :episode, :grab, :health]
+  attr :status, :any, required: true
+  attr :class, :any, default: nil
+
+  def status_badge(assigns) do
+    {label, color, icon} = badge_spec(assigns.kind, assigns.status)
+
+    assigns =
+      assign(assigns,
+        label: label,
+        color: color,
+        icon: icon,
+        title: badge_title(assigns.kind, assigns.status)
+      )
+
     ~H"""
-    <span class={["badge badge-sm", status_badge_class(@status)]}>{@status}</span>
+    <span class={["badge badge-sm gap-1", @color, @class]} title={@title}>
+      <.icon name={@icon} class="size-3.5" />{@label}
+    </span>
     """
   end
 
-  @doc "A daisyUI badge for a request's status (pending/approved/denied)."
-  attr :status, :atom, required: true
+  # movie pipeline status
+  defp badge_spec(:movie, :requested), do: {"Requested", "badge-neutral", "hero-clock"}
+  defp badge_spec(:movie, :searching), do: {"Searching", "badge-info", "hero-magnifying-glass"}
+  defp badge_spec(:movie, :downloading), do: {"Downloading", "badge-info", "hero-arrow-down-tray"}
+  defp badge_spec(:movie, :downloaded), do: {"Downloaded", "badge-accent", "hero-check"}
+  defp badge_spec(:movie, :available), do: {"Available", "badge-success", "hero-check-circle"}
+  defp badge_spec(:movie, :no_match), do: {"No match", "badge-warning", "hero-magnifying-glass"}
 
-  def request_status_badge(assigns) do
+  defp badge_spec(:movie, :search_failed),
+    do: {"Search failed", "badge-error", "hero-exclamation-triangle"}
+
+  defp badge_spec(:movie, :import_failed),
+    do: {"Import failed", "badge-error", "hero-exclamation-triangle"}
+
+  defp badge_spec(:movie, :cancelled), do: {"Cancelled", "badge-error", "hero-x-circle"}
+
+  # request / composite discovery state
+  defp badge_spec(:request, :pending), do: {"Pending", "badge-warning", "hero-clock"}
+  defp badge_spec(:request, :approved), do: {"Approved", "badge-info", "hero-check"}
+  defp badge_spec(:request, :denied), do: {"Denied", "badge-error", "hero-x-circle"}
+  defp badge_spec(:request, :available), do: {"Available", "badge-success", "hero-check-circle"}
+
+  # episode derived-state
+  defp badge_spec(:episode, :available), do: {"Available", "badge-success", "hero-check-circle"}
+
+  defp badge_spec(:episode, :downloading),
+    do: {"Downloading", "badge-info", "hero-arrow-down-tray"}
+
+  defp badge_spec(:episode, :wanted), do: {"Wanted", "badge-warning", "hero-eye"}
+  defp badge_spec(:episode, :upcoming), do: {"Upcoming", "badge-ghost", "hero-calendar"}
+
+  # grab state
+  defp badge_spec(:grab, :downloading), do: {"Downloading", "badge-info", "hero-arrow-down-tray"}
+  defp badge_spec(:grab, :downloaded), do: {"Downloaded", "badge-success", "hero-check"}
+
+  # service health
+  defp badge_spec(:health, :ok), do: {"OK", "badge-success", "hero-check-circle"}
+
+  defp badge_spec(:health, {:error, _reason}),
+    do: {"Unreachable", "badge-error", "hero-exclamation-triangle"}
+
+  # safe fallback — a view must never crash over an unmapped state
+  defp badge_spec(_kind, status),
+    do: {humanize_status(status), "badge-neutral", "hero-question-mark-circle"}
+
+  defp badge_title(:health, {:error, reason}), do: inspect(reason)
+  defp badge_title(_kind, _status), do: nil
+
+  defp humanize_status(status) when is_atom(status),
+    do: status |> Atom.to_string() |> String.replace("_", " ") |> String.capitalize()
+
+  defp humanize_status(status), do: inspect(status)
+
+  @doc """
+  A poster card for a movie or TV result/record. Renders the TMDB poster (or a
+  "No poster" placeholder), the title + optional year, an optional film/TV corner
+  chip, and an action affordance via the inner block (Add button, status badge,
+  season-picker link, admin controls). Single source of truth for the discover/
+  library poster card — replaces the duplicated `movie_card`/`series_card`.
+
+  `poster_path` is the TMDB path fragment (`/abc.jpg`); the full URL is built here.
+
+  ## Examples
+
+      <.media_card poster_path={m.poster_path} title={m.title} year={m.year} type={:movie}>
+        <.status_badge kind={:movie} status={m.status} />
+      </.media_card>
+  """
+  attr :poster_path, :string, default: nil
+  attr :title, :string, required: true
+  attr :year, :integer, default: nil
+  attr :type, :atom, default: nil, values: [nil, :movie, :tv]
+  slot :inner_block
+
+  def media_card(assigns) do
     ~H"""
-    <span class={["badge badge-sm", request_badge_class(@status)]}>{@status}</span>
+    <div class="card bg-base-200 shadow-sm">
+      <figure class="relative">
+        <img
+          :if={@poster_path}
+          src={poster_url(@poster_path)}
+          alt={@title}
+          class="aspect-[2/3] w-full object-cover"
+        />
+        <div
+          :if={!@poster_path}
+          class="grid aspect-[2/3] w-full place-items-center bg-base-300 text-sm text-base-content/40"
+        >
+          No poster
+        </div>
+        <span
+          :if={@type}
+          class="badge badge-sm absolute left-2 top-2 gap-1 border-0 bg-base-100/80 backdrop-blur"
+        >
+          <.icon name={type_icon(@type)} class="size-3" />{type_label(@type)}
+        </span>
+      </figure>
+      <div class="card-body gap-2 p-3">
+        <h3 class="text-sm font-semibold leading-tight">
+          {@title}
+          <span :if={@year} class="font-normal text-base-content/60">({@year})</span>
+        </h3>
+        {render_slot(@inner_block)}
+      </div>
+    </div>
     """
   end
 
-  defp request_badge_class(:pending), do: "badge-warning"
-  defp request_badge_class(:approved), do: "badge-info"
-  defp request_badge_class(:denied), do: "badge-error"
+  defp type_icon(:movie), do: "hero-film"
+  defp type_icon(:tv), do: "hero-tv"
+  defp type_label(:movie), do: "Film"
+  defp type_label(:tv), do: "TV"
 
-  defp status_badge_class(:requested), do: "badge-neutral"
-  defp status_badge_class(:searching), do: "badge-info"
-  defp status_badge_class(:downloading), do: "badge-primary"
-  defp status_badge_class(:downloaded), do: "badge-accent"
-  defp status_badge_class(:available), do: "badge-success"
-  defp status_badge_class(:no_match), do: "badge-warning"
-  defp status_badge_class(:search_failed), do: "badge-error"
-  defp status_badge_class(:import_failed), do: "badge-error"
-  defp status_badge_class(:cancelled), do: "badge-error"
+  defp poster_url(path), do: @poster_base <> path
 end
