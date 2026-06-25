@@ -4,6 +4,12 @@
 **Goal:** mirror Sonarr/Radarr — when deleting a movie, a TV show, a season, or an episode,
 offer to also delete the media file(s) from disk.
 
+**Council review:** sound — a 3-seat council (architecture / implementation / red-team) found no
+design or data-safety flaws. `Library.delete_file/1`'s prune guard fails *closed* (a path it can't
+place strictly inside a library root unlinks the file but prunes nothing — no traversal/over-delete;
+a symlinked root may leave empty folders, which is acceptable). Refinements landed in the plan, not
+the design.
+
 ## Context — what already exists
 
 The entity-delete plumbing is already in place and was built anticipating this feature:
