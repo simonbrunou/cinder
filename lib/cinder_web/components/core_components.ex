@@ -189,8 +189,8 @@ defmodule CinderWeb.CoreComponents do
   attr :on_confirm, :string, required: true
   attr :on_cancel, :string, required: true
   attr :value, :any, default: nil, doc: "phx-value-id sent with the confirm event (nil = omitted)"
-  attr :confirm_label, :string, default: "Confirm"
-  attr :cancel_label, :string, default: "Cancel"
+  attr :confirm_label, :string, default: nil
+  attr :cancel_label, :string, default: nil
   attr :variant, :string, default: "error", values: ~w(error warning)
   slot :caveat, required: true
 
@@ -211,10 +211,10 @@ defmodule CinderWeb.CoreComponents do
           phx-value-id={@value}
           phx-disable-with={gettext("Working…")}
         >
-          {@confirm_label}
+          {@confirm_label || gettext("Confirm")}
         </button>
         <button type="button" class="btn btn-ghost" phx-click={@on_cancel}>
-          {@cancel_label}
+          {@cancel_label || gettext("Cancel")}
         </button>
       </div>
     </div>

@@ -216,6 +216,7 @@ msgstr "Impossible de supprimer le dernier administrateur."
 msgid "Can't demote the last admin."
 msgstr "Impossible de rétrograder le dernier administrateur."
 
+#: lib/cinder_web/components/core_components.ex:217
 #: lib/cinder_web/live/dashboard_live.ex:242
 #: lib/cinder_web/live/library_live.ex:240
 #: lib/cinder_web/live/library_live.ex:338
@@ -303,6 +304,7 @@ msgstr "Fermer le menu"
 msgid "Configure monitoring →"
 msgstr "Configurer le suivi →"
 
+#: lib/cinder_web/components/core_components.ex:214
 #: lib/cinder_web/live/users_live.ex:392
 #, elixir-autogen, elixir-format
 msgid "Confirm"

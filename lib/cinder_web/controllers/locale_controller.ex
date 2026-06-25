@@ -19,11 +19,15 @@ defmodule CinderWeb.LocaleController do
   defp maybe_put_locale(conn, locale), do: put_session(conn, :locale, locale)
 
   # Only the path component of the referer is used, so a cross-origin referer can't
-  # become an open redirect; unparseable/absent → root.
+  # become an open redirect. A protocol-relative ("//host") path or a backslash would
+  # make redirect/2 raise rather than redirect, so those fall back to root too;
+  # unparseable/absent → root.
   defp back_path(conn) do
     with [referer | _] <- get_req_header(conn, "referer"),
-         %URI{path: "/" <> _ = path} = uri <- URI.parse(referer) do
-      path <> if(uri.query, do: "?" <> uri.query, else: "")
+         %URI{path: "/" <> _ = path} = uri <- URI.parse(referer),
+         to = path <> if(uri.query, do: "?" <> uri.query, else: ""),
+         false <- String.starts_with?(to, "//") or String.contains?(to, "\\") do
+      to
     else
       _ -> ~p"/"
     end

@@ -60,6 +60,17 @@ defmodule CinderWeb.LocaleTest do
       assert get_session(conn, :locale) == "fr"
     end
 
+    test "falls back to root for a protocol-relative referer (no open redirect / no 500)", %{
+      conn: conn
+    } do
+      conn =
+        conn
+        |> Plug.Conn.put_req_header("referer", "http://localhost//evil.com/phish")
+        |> get(~p"/locale/fr")
+
+      assert redirected_to(conn) == "/"
+    end
+
     test "ignores an unsupported locale but still redirects to root", %{conn: conn} do
       conn = get(conn, ~p"/locale/zz")
 

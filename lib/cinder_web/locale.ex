@@ -22,9 +22,6 @@ defmodule CinderWeb.Locale do
   @doc "The supported locales, in display order."
   def locales, do: @locales
 
-  @doc "The default locale (also the gettext source language)."
-  def default, do: @default
-
   @doc "Returns the locale string if supported, else nil. Used to validate any external input."
   def supported(locale) when locale in @locales, do: locale
   def supported(_), do: nil
@@ -34,13 +31,20 @@ defmodule CinderWeb.Locale do
   def init(opts), do: opts
 
   def call(conn, _opts) do
-    locale = supported(get_session(conn, :locale)) || header_locale(conn) || @default
+    stored = supported(get_session(conn, :locale))
+    locale = stored || header_locale(conn) || @default
     Gettext.put_locale(CinderWeb.Gettext, locale)
 
     conn
-    |> put_session(:locale, locale)
+    |> maybe_persist(stored, locale)
     |> assign(:locale, locale)
   end
+
+  # Persist only on a real change (first visit / switch) — avoids re-emitting a Set-Cookie
+  # on every request. The first-visit write still lets the LiveView on_mount recover the
+  # negotiated locale (it can't read request headers).
+  defp maybe_persist(conn, same, same), do: conn
+  defp maybe_persist(conn, _stored, locale), do: put_session(conn, :locale, locale)
 
   ## on_mount (LiveView)
 

@@ -1,16 +1,16 @@
 # Graph Report - cinder  (2026-06-25)
 
 ## Corpus Check
-- 262 files · ~268,648 words
+- 262 files · ~268,760 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 2025 nodes · 2352 edges · 252 communities (149 shown, 103 thin omitted)
+- 2026 nodes · 2354 edges · 252 communities (149 shown, 103 thin omitted)
 - Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 40 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `b0b9bc03`
+- Built from commit: `42dc963d`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -294,8 +294,8 @@ Cohesion: 0.05
 Nodes (39): Admin CRUD on Entities — Implementation Plan, Global Constraints, Interface contract (Phase 0 -> consumed by Phases 1-3), Phase 0 — Shared infrastructure (cinder admin-CRUD), Phase 1 — Users CRUD, Phase 2 — Catalog R/U/D + cancel, Phase 3 — Requests R/D, Task 10: `{:series_deleted, id}` handlers in `SeriesDetailLive` + `CalendarLive` (+31 more)
 
 ### Community 3 - "Community 3"
-Cohesion: 0.09
-Nodes (6): Cinder.Catalog, ensure_series(), find_or_create_series_at_requested(), mark_series_monitored(), season_in(), set_season_monitored()
+Cohesion: 0.08
+Nodes (9): Cinder.Catalog, ensure_series(), find_or_create_series_at_requested(), interleave(), mark_series_monitored(), merge_discover(), season_in(), set_season_monitored() (+1 more)
 
 ### Community 4 - "Community 4"
 Cohesion: 0.13
@@ -394,8 +394,8 @@ Cohesion: 0.13
 Nodes (14): Global Constraints, M3 — Onboarding wizard + requester UX — Implementation Plan, Self-Review, Task 10: Admin `/users` quota page + approval-queue poster + nav links, Task 11: M3 done-when integration test (the acceptance gate), Task 1: `Cinder.Notifier` behaviour + Log default, Task 2: `request_quota` field + Accounts helpers, Task 3: Quota enforcement + notify-on-approved in `Cinder.Requests` (+6 more)
 
 ### Community 28 - "Community 28"
-Cohesion: 0.19
-Nodes (16): broadcast_series(), cancel_series(), create_grab(), delete_grab(), delete_season_files(), do_delete_season_files_txn(), finish_grab(), increment_grab_attempts() (+8 more)
+Cohesion: 0.22
+Nodes (14): broadcast_series(), create_grab(), delete_grab(), delete_season_files(), do_delete_season_files_txn(), finish_grab(), increment_grab_attempts(), insert_and_link_grab() (+6 more)
 
 ### Community 29 - "Community 29"
 Cohesion: 0.23
@@ -430,8 +430,8 @@ Cohesion: 0.26
 Nodes (8): Cinder.Accounts.User, email_changeset(), maybe_hash_password(), password_changeset(), registration_changeset(), validate_email(), validate_email_changed(), validate_password()
 
 ### Community 37 - "Community 37"
-Cohesion: 0.16
-Nodes (16): add_series_to_watchlist(), create_series(), fetch_seasons(), get_series_by_tmdb_id(), insert_series(), interleave(), merge_discover(), monitored?() (+8 more)
+Cohesion: 0.21
+Nodes (13): add_series_to_watchlist(), create_series(), fetch_seasons(), get_series_by_tmdb_id(), insert_series(), monitored?(), refresh_series(), search_discover() (+5 more)
 
 ### Community 38 - "Community 38"
 Cohesion: 0.36
@@ -579,7 +579,7 @@ Nodes (7): Claude Uninstallation, Clean Up Empty Directories, Current Installati
 
 ### Community 74 - "Community 74"
 Cohesion: 0.29
-Nodes (6): table(), Cinder.Repo.Migrations.AddSearchAttemptsToMovies, change(), Cinder.Repo.Migrations.AddSeasonToRequests, down(), up()
+Nodes (6): table(), Cinder.Repo.Migrations.AddDownloadFieldsToMovies, change(), Cinder.Repo.Migrations.AddSeasonToRequests, down(), up()
 
 ### Community 76 - "Community 76"
 Cohesion: 0.28
@@ -730,8 +730,8 @@ Cohesion: 0.10
 Nodes (19): 1. Release blocker — fix before tagging v1.0, 2. Should-fix before tag (cheap, real, stranger-facing), 3. Optional code hardening (real, low, safe to defer), 4. Docs (do at tag time — cheap), 5. Confirmed sound — no action (highlights), 6. Refuted (checked and dismissed), 7. The real remaining gate — pending live homelab sign-offs (from ROADMAP M8), B1 · Fresh `docker compose up` crash-loops: `nobody` can't write the SQLite DB (+11 more)
 
 ### Community 147 - "Community 147"
-Cohesion: 0.33
-Nodes (6): broadcast_series_deleted(), delete_series(), do_delete_series_txn(), episode_file_paths_for_series(), grabs_for_series(), reap_series_grabs()
+Cohesion: 0.25
+Nodes (8): broadcast_series_deleted(), cancel_series(), delete_series(), do_delete_series_txn(), episode_file_paths_for_series(), grabs_for_series(), reap_series_grabs(), unmonitor_series_tree()
 
 ### Community 159 - "Community 159"
 Cohesion: 0.50
@@ -814,8 +814,8 @@ Cohesion: 0.33
 Nodes (6): delete_episode_file(), do_delete_episode_file_txn(), maybe_unmonitor(), series_id_for_season(), set_episode_monitored(), transition_episode()
 
 ### Community 244 - "Community 244"
-Cohesion: 0.31
-Nodes (6): CinderWeb.Locale, call(), header_locale(), on_mount(), parse_accept_language(), supported()
+Cohesion: 0.29
+Nodes (7): CinderWeb.Locale, call(), header_locale(), maybe_persist(), on_mount(), parse_accept_language(), supported()
 
 ### Community 247 - "Community 247"
 Cohesion: 0.29
