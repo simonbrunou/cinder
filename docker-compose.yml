@@ -3,8 +3,13 @@
 # Quickstart:
 #   cp .env.example .env
 #   echo "SECRET_KEY_BASE=$(openssl rand -base64 48)" >> .env
+#   mkdir -p media/{movies,tv,downloads} && sudo chown -R 65534:65534 media
 #   docker compose up --build      # builds the image locally on first run
 # Then open http://localhost:4000 and create your admin in the first-run wizard.
+#
+# The chown step matters: Cinder runs as `nobody` (uid 65534) and the ./media bind mount keeps host
+# ownership, so without it the onboarding wizard can't create/write the library roots and won't
+# finish (and later imports would fail with EACCES). The /data DB volume is handled by the image.
 
 services:
   cinder:

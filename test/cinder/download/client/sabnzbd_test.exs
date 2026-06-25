@@ -51,6 +51,31 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     assert {:error, :unsupported_download_url} = Sabnzbd.add(%{download_url: nil})
   end
 
+  test "add/1 does not retry a transient failure (no duplicate downloads)" do
+    # Re-enable Req's default retry for this test; the add path must override it to false. Without
+    # the fix a 503 on the side-effecting `addurl` GET would be retried up to 3×, re-queuing it.
+    prev = Application.get_env(:cinder, Sabnzbd)
+    on_exit(fn -> Application.put_env(:cinder, Sabnzbd, prev) end)
+
+    Application.put_env(:cinder, Sabnzbd,
+      base_url: "http://localhost:8080",
+      api_key: "test-key",
+      req_options: [plug: {Req.Test, Cinder.SabnzbdStub}]
+    )
+
+    test_pid = self()
+
+    stub(fn conn ->
+      send(test_pid, :add_called)
+      conn |> Plug.Conn.put_status(503) |> Req.Test.text("busy")
+    end)
+
+    assert {:error, {:sabnzbd_status, 503}} = Sabnzbd.add(%{download_url: "http://x/nzb"})
+
+    assert_received :add_called
+    refute_received :add_called
+  end
+
   test "add/1 succeeds on a non-empty nzo_ids regardless of the status field's type" do
     # Robust to SABnzbd version variance: a returned job id means success even if
     # `status` is reported as 1/absent rather than the boolean true.

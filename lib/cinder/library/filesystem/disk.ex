@@ -31,4 +31,7 @@ defmodule Cinder.Library.Filesystem.Disk do
 
   @impl true
   def ln(source, dest), do: File.ln(source, dest)
+
+  @impl true
+  def lstat(path), do: File.lstat(path)
 end

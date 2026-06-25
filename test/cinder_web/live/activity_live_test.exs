@@ -59,6 +59,18 @@ defmodule CinderWeb.ActivityLiveTest do
     assert Catalog.get_movie_by_id(movie.id).status == :requested
   end
 
+  test "retry with a forged non-numeric id is a no-op (no crash)", %{conn: conn} do
+    movie = movie!(%{title: "Tenet"})
+    {:ok, _} = Catalog.transition(movie, %{status: :no_match})
+
+    {:ok, lv, _html} = live(conn, ~p"/activity")
+    # A forged phx-value reaching the old get_movie_by_id/Repo.get would CastError-crash the LV.
+    render_click(lv, "retry", %{"id" => "not-a-number"})
+
+    assert render(lv) =~ "Movie pipeline"
+    assert Catalog.get_movie_by_id(movie.id).status == :no_match
+  end
+
   test "an in-flight movie shows no Retry button", %{conn: conn} do
     movie = movie!(%{title: "Sicario"})
     {:ok, _} = Catalog.transition(movie, %{status: :downloading, download_id: "h"})

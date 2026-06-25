@@ -24,6 +24,23 @@ config :cinder,
   ecto_repos: [Cinder.Repo],
   generators: [timestamp_type: :utc_datetime]
 
+# SQLite correctness, pinned in ONE place so every environment gets it — including a non-prod
+# release that never reaches runtime.exs's prod-only branch. Env files add only `database`/
+# `pool_size` (+ the test Sandbox pool), merging over this base.
+#   - journal_mode: :wal + a raised busy_timeout → a web write racing the poller waits rather
+#     than erroring "database busy".
+#   - default_transaction_mode: :immediate → every Repo.transaction takes the write lock at BEGIN,
+#     so busy_timeout governs it. A deferred BEGIN (the exqlite default) can still raise
+#     SQLITE_BUSY_SNAPSHOT on a read-then-write txn, which busy_timeout cannot retry.
+#   - foreign_keys: :on → the admin-delete cascades stay enforced.
+# Pinned (not left to ecto_sqlite3 defaults) so a dep-default change can't silently alter the
+# contract the locked "SQLite stays" decision rests on.
+config :cinder, Cinder.Repo,
+  journal_mode: :wal,
+  busy_timeout: 5_000,
+  foreign_keys: :on,
+  default_transaction_mode: :immediate
+
 # External services resolve through behaviours; the concrete impl is config-selected.
 # Tests override these with Mox mocks (see config/test.exs).
 config :cinder, tmdb: Cinder.Catalog.TMDB.HTTP

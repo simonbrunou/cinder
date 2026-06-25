@@ -111,10 +111,16 @@ defmodule Cinder.Acquisition.Scorer do
 
   defp config, do: Application.get_env(:cinder, __MODULE__, [])
 
+  # A release whose indexer omits the size is unsizeable: accept it only when there's no band to
+  # enforce. This closes the "0 ≤ max" hole — `size = release.size || 0` used to let an unknown
+  # size sail past a configured max_size. With a min_size set it already failed (0 < min), so
+  # behaviour there is unchanged; the live bug was max set, min unset.
+  defp within_band?(%Release{size: nil}, min_size, max_size),
+    do: is_nil(min_size) and is_nil(max_size)
+
   # One inclusive size-band check for both paths. The TV path pre-multiplies the
   # bounds by k (the episodes a release covers) at the call site; movies pass them as-is.
-  defp within_band?(%Release{} = release, min_size, max_size) do
-    size = release.size || 0
+  defp within_band?(%Release{size: size}, min_size, max_size) do
     (is_nil(min_size) or size >= min_size) and (is_nil(max_size) or size <= max_size)
   end
 

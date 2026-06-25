@@ -418,18 +418,31 @@ defmodule Cinder.AccountsTest do
 
   describe "M3 quota + admin helpers" do
     test "request_quota defaults to nil and can be set/cleared" do
+      admin = admin_fixture()
       user = user_fixture()
       assert user.request_quota == nil
-      assert {:ok, user} = Accounts.update_user_quota(user, 3)
+      assert {:ok, user} = Accounts.update_user_quota(admin, user, 3)
       assert user.request_quota == 3
-      assert {:ok, user} = Accounts.update_user_quota(user, nil)
+      assert {:ok, user} = Accounts.update_user_quota(admin, user, nil)
       assert user.request_quota == nil
     end
 
     test "update_user_quota rejects negatives" do
+      admin = admin_fixture()
       user = user_fixture()
-      assert {:error, changeset} = Accounts.update_user_quota(user, -1)
+      assert {:error, changeset} = Accounts.update_user_quota(admin, user, -1)
       assert "must be greater than or equal to 0" in errors_on(changeset).request_quota
+    end
+
+    test "update_user_quota writes an admin_audit row" do
+      admin = admin_fixture()
+      user = user_fixture()
+      assert {:ok, _} = Accounts.update_user_quota(admin, user, 4)
+
+      row = Repo.get_by(Cinder.Audit.AdminAudit, action: "update_user_quota")
+      assert row.actor_id == admin.id
+      assert row.entity_type == "User"
+      assert row.entity_id == user.id
     end
 
     test "admin_exists? reflects whether any user is present" do

@@ -17,7 +17,7 @@ defmodule CinderWeb.UsersLiveTest do
   test "clearing the quota field sets unlimited (nil)", %{conn: conn} do
     admin = Cinder.AccountsFixtures.admin_fixture()
     user = Cinder.AccountsFixtures.user_fixture()
-    {:ok, _} = Cinder.Accounts.update_user_quota(user, 5)
+    {:ok, _} = Cinder.Accounts.update_user_quota(admin, user, 5)
     conn = log_in_user(conn, admin)
 
     {:ok, lv, _html} = live(conn, ~p"/users")

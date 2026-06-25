@@ -67,15 +67,31 @@ defmodule Cinder.LibraryTest do
     assert {:ok, _dest} = Library.import_movie(movie)
   end
 
-  test "treats :eexist from ln as success (idempotent re-run)" do
+  test "treats :eexist from ln as success when dest is the same file (idempotent re-run)" do
     movie = %Movie{title: "Heat", year: 1995, file_path: "/dl/Heat.mkv"}
 
     expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
     expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
     expect(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eexist} end)
+    # Same inode → dest is already our hardlink → idempotent success.
+    expect(Cinder.Library.FilesystemMock, :lstat, 2, fn _ -> {:ok, %{inode: 42}} end)
     expect(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
     assert {:ok, _dest} = Library.import_movie(movie)
+  end
+
+  test ":eexist with a DIFFERENT file (two titles collide on the name) fails, no scan" do
+    movie = %Movie{title: "Heat", year: 1995, file_path: "/dl/Heat.mkv"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+    expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    expect(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eexist} end)
+    # Different inodes → dest belongs to another movie that collided on `Title (Year)` → don't
+    # silently claim its file. No scan expected (verify_on_exit! fails if scan is called).
+    expect(Cinder.Library.FilesystemMock, :lstat, fn "/dl/Heat.mkv" -> {:ok, %{inode: 1}} end)
+    expect(Cinder.Library.FilesystemMock, :lstat, fn _dest -> {:ok, %{inode: 2}} end)
+
+    assert {:error, :dest_exists} = Library.import_movie(movie)
   end
 
   test "scan failure is best-effort: import still succeeds once the file is linked" do
@@ -186,6 +202,20 @@ defmodule Cinder.LibraryTest do
     assert {:ok, "#{@lib}/tmdb-777/tmdb-777.mkv"} = Library.import_movie(movie)
   end
 
+  test "a dots-only title (path-traversal attempt) falls back to a tmdb-based folder" do
+    # ".." would otherwise Path.join to escape the library root; route it to the tmdb fallback.
+    movie = %Movie{title: "..", year: 2010, tmdb_id: 888, file_path: "/dl/x.mkv"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+    expect(Cinder.Library.FilesystemMock, :mkdir_p, fn "#{@lib}/tmdb-888" -> :ok end)
+
+    expect(Cinder.Library.FilesystemMock, :ln, fn _src, "#{@lib}/tmdb-888/tmdb-888.mkv" -> :ok end)
+
+    expect(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
+
+    assert {:ok, "#{@lib}/tmdb-888/tmdb-888.mkv"} = Library.import_movie(movie)
+  end
+
   describe "import_episodes/2" do
     # FS/media mocks stubbed (multiple, order-independent calls); assertions read the return value.
     defp stub_dir(files) do
@@ -229,6 +259,23 @@ defmodule Cinder.LibraryTest do
                {1, "#{@tv_lib}/Show (2008)/Season 01/Show (2008) - S01E01.mkv"},
                {2, "#{@tv_lib}/Show (2008)/Season 01/Show (2008) - S01E02.mkv"}
              ]
+    end
+
+    test "two files parsing the same episode: largest imports, the rest log as unmatched" do
+      # Both parse S01E01; only one source can own the episode's dest — keep the largest, route
+      # the loser to unmatched (logged) rather than colliding two sources onto one dest.
+      stub_dir([{"/dl/Show.S01E01.mkv", 3 * @gb}, {"/dl/Show.S01E01.REPACK.mkv", 5 * @gb}])
+      stub_link_ok()
+
+      log =
+        capture_log(fn ->
+          assert {:ok, [{1, dest}], ["/dl/Show.S01E01.mkv"]} =
+                   Library.import_episodes("/dl", [ep(1, 1)])
+
+          assert dest == "#{@tv_lib}/Show (2008)/Season 01/Show (2008) - S01E01.mkv"
+        end)
+
+      assert log =~ "unmatched"
     end
 
     test "an unmatchable file is logged and skipped; the rest still import" do
@@ -278,10 +325,12 @@ defmodule Cinder.LibraryTest do
       assert {:ok, [], []} = Library.import_episodes("/dl", [ep(1, 1)])
     end
 
-    test "ln :eexist is treated as success (idempotent re-import)" do
+    test "ln :eexist is treated as success when dest is the same file (idempotent re-import)" do
       stub_dir([{"/dl/Show.S01E01.mkv", 3 * @gb}])
       stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
       stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eexist} end)
+      # Same inode for source + dest → already our hardlink → idempotent.
+      stub(Cinder.Library.FilesystemMock, :lstat, fn _ -> {:ok, %{inode: 7}} end)
       stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
       assert {:ok, [{1, _dest}], []} = Library.import_episodes("/dl", [ep(1, 1)])

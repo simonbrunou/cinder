@@ -42,6 +42,31 @@ All notable changes to Cinder are documented here. The format follows
   accepted only `200` and resent a literal `SID=` cookie, so every qBittorrent call (add / status /
   health) failed login with `{:qbittorrent_status, 204}` on modern servers. It now accepts any `2xx`
   login and threads the real session cookie back verbatim.
+- **Pre-v1.0 release-audit fixes:**
+  - **Docker:** the image now creates and owns `/data`, so a fresh `docker compose up` can write its
+    SQLite database instead of crash-looping (the `nobody` user couldn't write the root-owned
+    fresh-volume mountpoint).
+  - **Scorer:** a release whose indexer omits the size no longer slips past a configured max-size
+    band (it's accepted only when no band is set) — affected both movies and TV packs.
+  - **Library import:** a title that sanitizes to only dots (e.g. `..`) now falls back to a tmdb-id
+    folder instead of escaping the library root; an existing destination is treated as an idempotent
+    success only when it's already a hardlink of the source (a *different* file colliding on the same
+    `Title (Year)` name now fails loudly rather than mis-linking); and a TV pack with two files
+    naming the same episode keeps the largest and logs the rest instead of colliding.
+  - **`/activity`:** the Retry button no longer crashes the LiveView on a forged (non-numeric) id.
+  - **SABnzbd:** the side-effecting `addurl` is no longer auto-retried by `Req`, preventing duplicate
+    downloads on a transient failure.
+  - **Admin audit:** changing a user's request quota now writes an `admin_audit` row, like every
+    other destructive admin action.
+  - **TV refresh:** the periodic TMDB reconcile no longer renumbers an episode with an in-flight
+    grab (which could mislabel that grab's imported files).
+
+### Internal
+- SQLite correctness settings (`journal_mode: :wal`, `busy_timeout`, `foreign_keys: :on`, and now
+  `default_transaction_mode: :immediate`) are pinned once in `config/config.exs` so every
+  environment — including a non-prod release — applies them. `:immediate` makes `busy_timeout`
+  govern the app's read-then-write transactions (a deferred `BEGIN` could still raise
+  `SQLITE_BUSY_SNAPSHOT`, which `busy_timeout` can't retry).
 
 ## [0.7.0] - 2026-06-23
 

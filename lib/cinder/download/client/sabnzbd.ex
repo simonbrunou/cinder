@@ -26,7 +26,10 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   @impl true
   def add(%{download_url: url}) when is_binary(url) do
-    case get(mode: "addurl", name: url) do
+    # retry: false — `addurl` is side-effecting (SABnzbd queues the NZB), but it's a GET, which
+    # Req's default :safe_transient policy would retry up to 3× on a transient failure, re-queuing
+    # the same download. Disable retry on the add path only (status/health stay idempotent-retryable).
+    case get([mode: "addurl", name: url], retry: false) do
       # A returned job id is success; key on it rather than the `status` field,
       # whose type varies across SABnzbd versions (boolean true vs 1).
       {:ok, %{status: 200, body: %{"nzo_ids" => [id | _]}}} -> {:ok, id}
@@ -159,11 +162,12 @@ defmodule Cinder.Download.Client.Sabnzbd do
     end
   end
 
-  defp get(params) do
+  defp get(params, extra \\ []) do
     config = config()
 
     [base_url: Keyword.get(config, :base_url, @default_base_url), receive_timeout: 15_000]
     |> Keyword.merge(Keyword.get(config, :req_options, []))
+    |> Keyword.merge(extra)
     |> Req.new()
     |> Req.get(url: "/api", params: query(config, params))
   end

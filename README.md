@@ -22,8 +22,13 @@ git clone https://github.com/simonbrunou/cinder.git
 cd cinder
 cp .env.example .env
 echo "SECRET_KEY_BASE=$(openssl rand -base64 48)" >> .env   # or edit .env by hand
+mkdir -p media/{movies,tv,downloads} && sudo chown -R 65534:65534 media
 docker compose up --build      # builds the image locally on first run
 ```
+
+Cinder runs as `nobody` (uid 65534), so the bind-mounted `media/` directory must be owned by it —
+otherwise the first-run wizard can't create the library roots and won't let you finish. (The
+database volume is set up by the image itself.)
 
 Open <http://localhost:4000>. The **first-run wizard** creates your admin account and collects
 your TMDB / indexer / download-client / media-server details, validating each before it lets you

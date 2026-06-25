@@ -9,6 +9,13 @@ The [`docker-compose.yml`](../docker-compose.yml) at the repo root is the suppor
 Copy `.env.example` to `.env`, set `SECRET_KEY_BASE` (`openssl rand -base64 48`), then
 `docker compose up -d`. The container migrates the database on boot and serves on port 4000.
 
+> **Upgrading from an early image:** the container owns its `/data` volume so a *fresh* `docker
+> compose up` can write the database. Docker only sets a named volume's ownership when it's first
+> created, so a `cinder_data` volume left root-owned by a pre-fix image keeps crash-looping after an
+> upgrade. If the container can't write the DB after pulling a newer image, recreate the empty
+> volume (`docker compose down && docker volume rm <project>_cinder_data`) or
+> `chown -R 65534 /var/lib/docker/volumes/<project>_cinder_data/_data`.
+
 ## First run & security
 
 The first account created becomes the **admin**; the first-run wizard (`/setup`) then collects your
@@ -18,13 +25,18 @@ members sign up to request media.
 Because the first registrant is the admin and Cinder serves plain HTTP on `0.0.0.0:4000` (TLS is
 expected to terminate at a reverse proxy):
 
-- **Create your admin immediately** after first boot.
+- **Create your admin immediately** after first boot. The first account to register *wins admin* —
+  an exposed, not-yet-claimed instance lets a stranger take it.
 - **Do not expose port 4000 to an untrusted network.** Run Cinder behind a reverse proxy (with TLS)
-  or a VPN. An exposed, not-yet-claimed instance lets a stranger register as admin first.
+  or a VPN — this is the real access control. Registration stays **open** after the admin exists
+  (that's how household members sign up), and **self-registered accounts are auto-confirmed**: they
+  can log in and submit requests immediately (no email confirmation step). There is **no
+  rate-limiting** on register/login — an accepted single-household ceiling, but another reason the
+  instance must not face an untrusted network.
 
 ## Configuration: environment vs in-app
 
-Boot-only keys (`SECRET_KEY_BASE`, `DATABASE_PATH`, `PHX_*`, `PORT`, `POOL_SIZE`,
+Boot-only keys (`SECRET_KEY_BASE`, `DATABASE_PATH`, `PHX_*`, `PORT`, `POOL_SIZE`, `RELEASE_NAME`,
 `DNS_CLUSTER_QUERY`) stay in the environment. Everything else — TMDB, indexer, download clients,
 media server, the per-kind library roots (`movies_library_path`, `tv_library_path`), the per-kind
 size bands — is edited at `/settings` and
@@ -46,9 +58,20 @@ disk). A hardlink can't cross filesystems, so:
 ## Backups
 
 Back up the SQLite database — the `/data` volume (`cinder.db` plus its `-wal`/`-shm` sidecars).
-That's the entire app state. **Keep `SECRET_KEY_BASE` with the backup:** it's the encryption key for
-stored secrets, so losing it means re-entering every service credential in `/settings` after a
-restore.
+That's the entire app state.
+
+**Don't `cp` a live WAL database.** Cinder runs SQLite in WAL mode, so at any moment recent writes
+live in the `-wal` sidecar, not yet in `cinder.db`. A plain `cp` of the files while the container is
+running can capture a torn, inconsistent snapshot. Either:
+
+- **stop the container first** (`docker compose stop cinder`), then copy `/data`; or
+- take a consistent online copy with SQLite's own tooling, e.g.
+  `sqlite3 /data/cinder.db ".backup /data/backup.db"` or `VACUUM INTO`.
+
+**Keep `SECRET_KEY_BASE` with the backup.** It's the master key: the at-rest encryption key for
+stored secrets is *derived from it*, so **a leaked `SECRET_KEY_BASE` compromises every stored
+service credential**, and losing it (or rotating it) means re-entering every credential in
+`/settings` after a restore.
 
 ## Health & retry
 
@@ -121,3 +144,7 @@ wrong library, and the first-run wizard won't finish until both roots validate w
 - **SABnzbd "Pause on Duplicates" must be OFF.** That mode re-keys the download id after an add, so
   Cinder loses track of the job and it parks.
 - **Specials (season 0) aren't grabbed** by the TV sweep yet.
+- **Air-date eligibility is by UTC calendar day.** An episode becomes search-eligible when its TMDB
+  air date is "today or earlier" in **UTC**, so far from UTC it can flip to wanted up to ~a day
+  early or late. Harmless for a household (it just grabs a few hours off) — there's no per-timezone
+  scheduling.

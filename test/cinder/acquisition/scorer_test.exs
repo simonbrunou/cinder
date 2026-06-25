@@ -65,6 +65,18 @@ defmodule Cinder.Acquisition.ScorerTest do
     test "empty input -> :no_match" do
       assert :no_match = Scorer.select([])
     end
+
+    test "a release with unknown (nil) size fails a configured max band" do
+      # Some indexers omit size; with a max set we can't verify the upper bound, so reject it
+      # rather than let `size || 0` sail it past the band (the S2 bug).
+      releases = [release(resolution: "1080p", group: "A", size: nil)]
+      assert :no_match = Scorer.select(releases, max_size: 20 * @gb)
+    end
+
+    test "a release with unknown (nil) size is acceptable when no band is configured" do
+      releases = [release(resolution: "1080p", group: "A", size: nil)]
+      assert {:ok, %Release{group: "A"}} = Scorer.select(releases)
+    end
   end
 
   describe "select_for/4 (TV)" do
@@ -145,6 +157,11 @@ defmodule Cinder.Acquisition.ScorerTest do
       releases = [release(season: 1, episodes: [1], resolution: "1080p", size: 200 * @gb)]
 
       assert {:ok, [{%Release{episodes: [1]}, [1]}]} = Scorer.select_for(releases, 1, [1])
+    end
+
+    test "a pack with unknown (nil) size is rejected under a configured band (S2)" do
+      releases = [release(season: 1, episodes: nil, resolution: "1080p", size: nil)]
+      assert :no_match = Scorer.select_for(releases, 1, [1, 2], max_size: 5 * @gb)
     end
   end
 end

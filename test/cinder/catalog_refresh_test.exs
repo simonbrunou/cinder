@@ -179,6 +179,26 @@ defmodule Cinder.CatalogRefreshTest do
     assert Repo.get!(Episode, keep.id).title == "Kept"
   end
 
+  test "does NOT renumber an episode with an in-flight grab (would mislabel its files)" do
+    s = series(:all)
+    sn = season(s, 1)
+    ep = episode(sn, %{tmdb_episode_id: 800, episode_number: 2})
+    {:ok, _grab} = Catalog.create_grab("dl-1", :torrent, [ep.id])
+
+    # TMDB renumbers tmdb 800 from E2 to E5, but it's mid-download — leave it put this pass.
+    stub_tmdb(s, [
+      {1, [%{tmdb_episode_id: 800, episode_number: 5, title: "Moved", air_date: @past}]}
+    ])
+
+    assert {:ok, _} = Catalog.refresh_series(s)
+
+    r = Repo.get!(Episode, ep.id)
+    assert r.episode_number == 2, "a grab-owning episode is not renumbered mid-flight"
+    refute is_nil(r.grab_id)
+    # The skipped episode is not re-inserted as a "new" row.
+    assert Repo.aggregate(from(e in Episode, where: e.season_id == ^sn.id), :count) == 1
+  end
+
   test "a TMDB failure returns the error and writes nothing" do
     s = series(:all)
     sn = season(s, 1)

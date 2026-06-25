@@ -997,6 +997,12 @@ defmodule Cinder.Catalog do
         {Map.fetch!(by_tmdb, fe.tmdb_episode_id), fe, season.id}
       end)
 
+    # Never renumber an episode with an in-flight grab: its release's files are matched + named by
+    # the episode's CURRENT SxxEyy at import, so moving it mid-download would mislabel them (or
+    # leave them unmatched). Leave it untouched (like a vanished row); the next refresh after the
+    # grab finishes reconciles it.
+    matched = Enum.filter(matched, fn {existing, _fe, _season_id} -> is_nil(existing.grab_id) end)
+
     # PASS 1 — park each matched row's real slot with a unique non-colliding sentinel (-id) in its
     # current season (no season_id change here), so PASS 2 never collides matched-vs-matched. Carry
     # the parked struct forward: PASS 2's `cast` diffs against the struct's number, and a row whose
