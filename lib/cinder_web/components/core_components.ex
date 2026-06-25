@@ -209,7 +209,7 @@ defmodule CinderWeb.CoreComponents do
           class={["btn", @variant == "warning" && "btn-warning", @variant == "error" && "btn-error"]}
           phx-click={@on_confirm}
           phx-value-id={@value}
-          phx-disable-with="Working…"
+          phx-disable-with={gettext("Working…")}
         >
           {@confirm_label}
         </button>
@@ -657,45 +657,59 @@ defmodule CinderWeb.CoreComponents do
   end
 
   # movie pipeline status
-  defp badge_spec(:movie, :requested), do: {"Requested", "badge-neutral", "hero-clock"}
-  defp badge_spec(:movie, :searching), do: {"Searching", "badge-info", "hero-magnifying-glass"}
-  defp badge_spec(:movie, :downloading), do: {"Downloading", "badge-info", "hero-arrow-down-tray"}
-  defp badge_spec(:movie, :downloaded), do: {"Downloaded", "badge-accent", "hero-check"}
-  defp badge_spec(:movie, :available), do: {"Available", "badge-success", "hero-check-circle"}
-  defp badge_spec(:movie, :no_match), do: {"No match", "badge-warning", "hero-magnifying-glass"}
+  defp badge_spec(:movie, :requested), do: {gettext("Requested"), "badge-neutral", "hero-clock"}
+
+  defp badge_spec(:movie, :searching),
+    do: {gettext("Searching"), "badge-info", "hero-magnifying-glass"}
+
+  defp badge_spec(:movie, :downloading),
+    do: {gettext("Downloading"), "badge-info", "hero-arrow-down-tray"}
+
+  defp badge_spec(:movie, :downloaded), do: {gettext("Downloaded"), "badge-accent", "hero-check"}
+
+  defp badge_spec(:movie, :available),
+    do: {gettext("Available"), "badge-success", "hero-check-circle"}
+
+  defp badge_spec(:movie, :no_match),
+    do: {gettext("No match"), "badge-warning", "hero-magnifying-glass"}
 
   defp badge_spec(:movie, :search_failed),
-    do: {"Search failed", "badge-error", "hero-exclamation-triangle"}
+    do: {gettext("Search failed"), "badge-error", "hero-exclamation-triangle"}
 
   defp badge_spec(:movie, :import_failed),
-    do: {"Import failed", "badge-error", "hero-exclamation-triangle"}
+    do: {gettext("Import failed"), "badge-error", "hero-exclamation-triangle"}
 
-  defp badge_spec(:movie, :cancelled), do: {"Cancelled", "badge-error", "hero-x-circle"}
+  defp badge_spec(:movie, :cancelled), do: {gettext("Cancelled"), "badge-error", "hero-x-circle"}
 
   # request / composite discovery state
-  defp badge_spec(:request, :pending), do: {"Pending", "badge-warning", "hero-clock"}
-  defp badge_spec(:request, :approved), do: {"Approved", "badge-info", "hero-check"}
-  defp badge_spec(:request, :denied), do: {"Denied", "badge-error", "hero-x-circle"}
-  defp badge_spec(:request, :available), do: {"Available", "badge-success", "hero-check-circle"}
+  defp badge_spec(:request, :pending), do: {gettext("Pending"), "badge-warning", "hero-clock"}
+  defp badge_spec(:request, :approved), do: {gettext("Approved"), "badge-info", "hero-check"}
+  defp badge_spec(:request, :denied), do: {gettext("Denied"), "badge-error", "hero-x-circle"}
+
+  defp badge_spec(:request, :available),
+    do: {gettext("Available"), "badge-success", "hero-check-circle"}
 
   # episode derived-state
-  defp badge_spec(:episode, :available), do: {"Available", "badge-success", "hero-check-circle"}
+  defp badge_spec(:episode, :available),
+    do: {gettext("Available"), "badge-success", "hero-check-circle"}
 
   defp badge_spec(:episode, :downloading),
-    do: {"Downloading", "badge-info", "hero-arrow-down-tray"}
+    do: {gettext("Downloading"), "badge-info", "hero-arrow-down-tray"}
 
-  defp badge_spec(:episode, :wanted), do: {"Wanted", "badge-warning", "hero-eye"}
-  defp badge_spec(:episode, :upcoming), do: {"Upcoming", "badge-ghost", "hero-calendar"}
+  defp badge_spec(:episode, :wanted), do: {gettext("Wanted"), "badge-warning", "hero-eye"}
+  defp badge_spec(:episode, :upcoming), do: {gettext("Upcoming"), "badge-ghost", "hero-calendar"}
 
   # grab state
-  defp badge_spec(:grab, :downloading), do: {"Downloading", "badge-info", "hero-arrow-down-tray"}
-  defp badge_spec(:grab, :downloaded), do: {"Downloaded", "badge-success", "hero-check"}
+  defp badge_spec(:grab, :downloading),
+    do: {gettext("Downloading"), "badge-info", "hero-arrow-down-tray"}
+
+  defp badge_spec(:grab, :downloaded), do: {gettext("Downloaded"), "badge-success", "hero-check"}
 
   # service health
-  defp badge_spec(:health, :ok), do: {"OK", "badge-success", "hero-check-circle"}
+  defp badge_spec(:health, :ok), do: {gettext("OK"), "badge-success", "hero-check-circle"}
 
   defp badge_spec(:health, {:error, _reason}),
-    do: {"Unreachable", "badge-error", "hero-exclamation-triangle"}
+    do: {gettext("Unreachable"), "badge-error", "hero-exclamation-triangle"}
 
   # safe fallback — a view must never crash over an unmapped state
   defp badge_spec(_kind, status),
@@ -744,7 +758,7 @@ defmodule CinderWeb.CoreComponents do
           :if={!@poster_path}
           class="grid aspect-[2/3] w-full place-items-center bg-base-300 text-sm text-base-content/40"
         >
-          No poster
+          {gettext("No poster")}
         </div>
         <span
           :if={@type}
@@ -766,8 +780,8 @@ defmodule CinderWeb.CoreComponents do
 
   defp type_icon(:movie), do: "hero-film"
   defp type_icon(:tv), do: "hero-tv"
-  defp type_label(:movie), do: "Film"
-  defp type_label(:tv), do: "TV"
+  defp type_label(:movie), do: gettext("Film")
+  defp type_label(:tv), do: gettext("TV")
 
   defp poster_url(path), do: @poster_base <> path
 end

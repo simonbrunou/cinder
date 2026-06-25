@@ -52,7 +52,7 @@ defmodule CinderWeb.UsersLive do
          socket
          |> assign(users: Accounts.list_users(), creating: false)
          |> assign_create_form()
-         |> put_flash(:info, "User created.")}
+         |> put_flash(:info, gettext("User created."))}
 
       {:error, changeset} ->
         {:noreply, assign(socket, :create_form, to_form(changeset, as: :user))}
@@ -66,13 +66,15 @@ defmodule CinderWeb.UsersLive do
     with user when not is_nil(user) <- find_user(id),
          {:ok, _} <- Accounts.update_user_quota(actor, user, parse_quota(quota)) do
       {:noreply,
-       socket |> assign(users: Accounts.list_users()) |> put_flash(:info, "Quota updated.")}
+       socket
+       |> assign(users: Accounts.list_users())
+       |> put_flash(:info, gettext("Quota updated."))}
     else
       nil ->
         {:noreply, socket}
 
       {:error, _} ->
-        {:noreply, put_flash(socket, :error, "Quota must be a non-negative number.")}
+        {:noreply, put_flash(socket, :error, gettext("Quota must be a non-negative number."))}
     end
   end
 
@@ -92,13 +94,14 @@ defmodule CinderWeb.UsersLive do
       {:noreply,
        socket
        |> assign(users: Accounts.list_users(), editing_email: nil)
-       |> put_flash(:info, "Email updated.")}
+       |> put_flash(:info, gettext("Email updated."))}
     else
       nil ->
         {:noreply, socket}
 
       {:error, _changeset} ->
-        {:noreply, put_flash(socket, :error, "Couldn't update email — check the address.")}
+        {:noreply,
+         put_flash(socket, :error, gettext("Couldn't update email — check the address."))}
     end
   end
 
@@ -117,10 +120,10 @@ defmodule CinderWeb.UsersLive do
             {:noreply, assign(socket, users: Accounts.list_users())}
 
           {:error, :last_admin} ->
-            {:noreply, put_flash(socket, :error, "Can't demote the last admin.")}
+            {:noreply, put_flash(socket, :error, gettext("Can't demote the last admin."))}
 
           {:error, _} ->
-            {:noreply, put_flash(socket, :error, "Couldn't change role.")}
+            {:noreply, put_flash(socket, :error, gettext("Couldn't change role."))}
         end
     end
   end
@@ -146,13 +149,13 @@ defmodule CinderWeb.UsersLive do
       {:noreply,
        socket
        |> assign(resetting_pw: nil)
-       |> put_flash(:info, "Password reset — the user's sessions were ended.")}
+       |> put_flash(:info, gettext("Password reset — the user's sessions were ended."))}
     else
       nil ->
         {:noreply, socket}
 
       {:error, _changeset} ->
-        {:noreply, put_flash(socket, :error, "Password must be at least 12 characters.")}
+        {:noreply, put_flash(socket, :error, gettext("Password must be at least 12 characters."))}
     end
   end
 
@@ -176,25 +179,25 @@ defmodule CinderWeb.UsersLive do
         {:noreply,
          socket
          |> assign(users: Accounts.list_users(), confirming_delete: nil)
-         |> put_flash(:info, "User deleted.")}
+         |> put_flash(:info, gettext("User deleted."))}
 
       {:error, :self_delete} ->
         {:noreply,
          socket
          |> assign(confirming_delete: nil)
-         |> put_flash(:error, "You can't delete your own account.")}
+         |> put_flash(:error, gettext("You can't delete your own account."))}
 
       {:error, :last_admin} ->
         {:noreply,
          socket
          |> assign(confirming_delete: nil)
-         |> put_flash(:error, "Can't delete the last admin.")}
+         |> put_flash(:error, gettext("Can't delete the last admin."))}
 
       {:error, _} ->
         {:noreply,
          socket
          |> assign(confirming_delete: nil)
-         |> put_flash(:error, "Couldn't complete that action.")}
+         |> put_flash(:error, gettext("Couldn't complete that action."))}
     end
   end
 
@@ -228,12 +231,13 @@ defmodule CinderWeb.UsersLive do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.header>
-        Users<:subtitle>Roles and request quotas.</:subtitle>
+        {gettext("Users")}
+        <:subtitle>{gettext("Roles and request quotas.")}</:subtitle>
       </.header>
 
       <div class="mb-6">
         <button :if={!@creating} class="btn btn-primary btn-sm" phx-click="start_create">
-          New user
+          {gettext("New user")}
         </button>
         <.form
           :if={@creating}
@@ -243,23 +247,29 @@ defmodule CinderWeb.UsersLive do
           phx-submit="create"
           class="card bg-base-200 p-4 space-y-2"
         >
-          <.input field={@create_form[:email]} type="email" label="Email" />
-          <.input field={@create_form[:password]} type="password" label="Password" />
+          <.input field={@create_form[:email]} type="email" label={gettext("Email")} />
+          <.input field={@create_form[:password]} type="password" label={gettext("Password")} />
           <.input
             field={@create_form[:password_confirmation]}
             type="password"
-            label="Confirm password"
+            label={gettext("Confirm password")}
           />
           <.input
             field={@create_form[:role]}
             type="select"
-            label="Role"
-            options={[{"User", "user"}, {"Admin", "admin"}]}
+            label={gettext("Role")}
+            options={[{gettext("User"), "user"}, {gettext("Admin"), "admin"}]}
           />
           <div class="flex gap-2">
-            <button class="btn btn-primary btn-sm" type="submit" phx-disable-with="Creating…">Create</button>
+            <button
+              class="btn btn-primary btn-sm"
+              type="submit"
+              phx-disable-with={gettext("Creating…")}
+            >
+              {gettext("Create")}
+            </button>
             <button class="btn btn-ghost btn-sm" type="button" phx-click="cancel_create">
-              Cancel
+              {gettext("Cancel")}
             </button>
           </div>
         </.form>
@@ -275,8 +285,13 @@ defmodule CinderWeb.UsersLive do
               phx-click="toggle_role"
               phx-value-id={u.id}
               phx-disable-with="…"
-              title="Toggle admin/user"
-              aria-label={"Toggle role for #{u.email} (currently #{u.role})"}
+              title={gettext("Toggle admin/user")}
+              aria-label={
+                gettext("Toggle role for %{email} (currently %{role})",
+                  email: u.email,
+                  role: u.role
+                )
+              }
             >
               {u.role}
             </button>
@@ -286,7 +301,7 @@ defmodule CinderWeb.UsersLive do
               phx-click="start_edit_email"
               phx-value-id={u.id}
             >
-              Edit email
+              {gettext("Edit email")}
             </button>
             <form
               id={"quota-#{u.id}"}
@@ -294,7 +309,7 @@ defmodule CinderWeb.UsersLive do
               class="ml-auto flex items-center gap-2"
             >
               <input type="hidden" name="_id" value={u.id} />
-              <label class="text-sm" for={"quota-input-#{u.id}"}>Quota</label>
+              <label class="text-sm" for={"quota-input-#{u.id}"}>{gettext("Quota")}</label>
               <input
                 id={"quota-input-#{u.id}"}
                 type="number"
@@ -304,7 +319,7 @@ defmodule CinderWeb.UsersLive do
                 class="input input-sm w-24"
                 placeholder="∞"
               />
-              <button class="btn btn-sm" phx-disable-with="Saving…">Save</button>
+              <button class="btn btn-sm" phx-disable-with={gettext("Saving…")}>{gettext("Save")}</button>
             </form>
           </div>
           <.form
@@ -321,9 +336,11 @@ defmodule CinderWeb.UsersLive do
               value={u.email}
               class="input input-sm input-bordered"
             />
-            <button class="btn btn-primary btn-sm" type="submit" phx-disable-with="Saving…">Save email</button>
+            <button class="btn btn-primary btn-sm" type="submit" phx-disable-with={gettext("Saving…")}>
+              {gettext("Save email")}
+            </button>
             <button class="btn btn-ghost btn-sm" type="button" phx-click="cancel_edit_email">
-              Cancel
+              {gettext("Cancel")}
             </button>
           </.form>
           <div class="mt-2 flex items-center gap-2 flex-wrap">
@@ -333,7 +350,7 @@ defmodule CinderWeb.UsersLive do
               phx-click="start_reset_pw"
               phx-value-id={u.id}
             >
-              Reset password
+              {gettext("Reset password")}
             </button>
             <button
               :if={@confirming_delete != to_string(u.id)}
@@ -342,7 +359,7 @@ defmodule CinderWeb.UsersLive do
               phx-click="start_delete"
               phx-value-id={u.id}
             >
-              Delete
+              {gettext("Delete")}
             </button>
           </div>
           <.confirm_action
@@ -351,9 +368,9 @@ defmodule CinderWeb.UsersLive do
             on_confirm="delete"
             on_cancel="cancel_delete"
             value={u.id}
-            confirm_label="Delete"
+            confirm_label={gettext("Delete")}
           >
-            <:caveat>Delete {u.email}? Requests cascade.</:caveat>
+            <:caveat>{gettext("Delete %{email}? Requests cascade.", email: u.email)}</:caveat>
           </.confirm_action>
           <.form
             :if={@resetting_pw == to_string(u.id)}
@@ -366,18 +383,24 @@ defmodule CinderWeb.UsersLive do
             <input
               type="password"
               name="user[password]"
-              placeholder="New password"
+              placeholder={gettext("New password")}
               class="input input-sm input-bordered"
             />
             <input
               type="password"
               name="user[password_confirmation]"
-              placeholder="Confirm"
+              placeholder={gettext("Confirm")}
               class="input input-sm input-bordered"
             />
-            <button class="btn btn-primary btn-sm" type="submit" phx-disable-with="Resetting…">Set password</button>
+            <button
+              class="btn btn-primary btn-sm"
+              type="submit"
+              phx-disable-with={gettext("Resetting…")}
+            >
+              {gettext("Set password")}
+            </button>
             <button class="btn btn-ghost btn-sm" type="button" phx-click="cancel_reset_pw">
-              Cancel
+              {gettext("Cancel")}
             </button>
           </.form>
         </li>

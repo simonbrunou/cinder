@@ -33,7 +33,7 @@ defmodule CinderWeb.SettingsLive do
     {:noreply,
      socket
      |> assign(form: Settings.form_state(), health: %{})
-     |> put_flash(:info, "Settings saved.")}
+     |> put_flash(:info, gettext("Settings saved."))}
   end
 
   # Probes the saved config synchronously (each impl health/0 has a ~3s timeout).
@@ -64,21 +64,25 @@ defmodule CinderWeb.SettingsLive do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.header>
-        Settings
+        {gettext("Settings")}
         <:subtitle>
-          External services. Stored in the database; secrets encrypted at rest. Save before testing.
+          {gettext(
+            "External services. Stored in the database; secrets encrypted at rest. Save before testing."
+          )}
         </:subtitle>
       </.header>
 
-      <.link navigate={~p"/dashboard"} class="link mb-6 inline-block">← Dashboard</.link>
+      <.link navigate={~p"/dashboard"} class="link mb-6 inline-block">{gettext("← Dashboard")}</.link>
 
       <form id="settings-form" phx-submit="save" class="space-y-8">
         <.service_fields form={@form} health={@health} />
-        <button type="submit" class="btn btn-primary" phx-disable-with="Saving…">Save settings</button>
+        <button type="submit" class="btn btn-primary" phx-disable-with={gettext("Saving…")}>
+          {gettext("Save settings")}
+        </button>
       </form>
 
       <div class="rounded-box bg-base-200 p-4 mt-8">
-        <p class="text-lg font-semibold mb-3">Requests</p>
+        <p class="text-lg font-semibold mb-3">{gettext("Requests")}</p>
         <form id="auto-approve-form" phx-change="toggle_auto_approve">
           <label class="label cursor-pointer justify-start gap-2">
             <input
@@ -87,7 +91,9 @@ defmodule CinderWeb.SettingsLive do
               class="toggle"
               checked={@auto_approve_all}
             />
-            <span class="label-text">Auto-approve all requests (skip the approval queue)</span>
+            <span class="label-text">
+              {gettext("Auto-approve all requests (skip the approval queue)")}
+            </span>
           </label>
         </form>
       </div>

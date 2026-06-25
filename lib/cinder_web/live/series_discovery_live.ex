@@ -31,7 +31,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
       _ ->
         {:ok,
          socket
-         |> put_flash(:error, "Series not found.")
+         |> put_flash(:error, gettext("Series not found."))
          |> push_navigate(to: ~p"/")}
     end
   end
@@ -56,7 +56,13 @@ defmodule CinderWeb.SeriesDiscoveryLive do
       case Requests.create_request(user, attrs) do
         {:ok, %{status: :approved}} ->
           socket
-          |> put_flash(:info, "Season #{season_number} of #{info.title} added.")
+          |> put_flash(
+            :info,
+            gettext("Season %{number} of %{title} added.",
+              number: season_number,
+              title: info.title
+            )
+          )
           |> refresh_requests()
           |> then(&{:noreply, &1})
 
@@ -64,7 +70,10 @@ defmodule CinderWeb.SeriesDiscoveryLive do
           socket
           |> put_flash(
             :info,
-            "Season #{season_number} of #{info.title} requested — awaiting approval."
+            gettext("Season %{number} of %{title} requested — awaiting approval.",
+              number: season_number,
+              title: info.title
+            )
           )
           |> refresh_requests()
           |> then(&{:noreply, &1})
@@ -74,16 +83,25 @@ defmodule CinderWeb.SeriesDiscoveryLive do
            put_flash(
              socket,
              :error,
-             "You've reached your request limit. Wait for approvals to clear."
+             gettext("You've reached your request limit. Wait for approvals to clear.")
            )}
 
         # Bug D: only a unique-index violation (duplicate changeset) means "already requested"
         {:error, %Ecto.Changeset{}} ->
-          {:noreply, put_flash(socket, :info, "Season #{season_number} is already requested.")}
+          {:noreply,
+           put_flash(
+             socket,
+             :info,
+             gettext("Season %{number} is already requested.", number: season_number)
+           )}
 
         {:error, _} ->
           {:noreply,
-           put_flash(socket, :error, "Couldn't complete that request — please try again.")}
+           put_flash(
+             socket,
+             :error,
+             gettext("Couldn't complete that request — please try again.")
+           )}
       end
     else
       _ -> {:noreply, socket}
@@ -124,7 +142,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
 
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
-      <.link navigate={~p"/"} class="link mb-6 inline-block">← Discover</.link>
+      <.link navigate={~p"/"} class="link mb-6 inline-block">{gettext("← Discover")}</.link>
 
       <div class="mb-8 flex gap-4">
         <img
@@ -148,8 +166,8 @@ defmodule CinderWeb.SeriesDiscoveryLive do
       <.empty_state
         :if={@info.seasons == []}
         icon="hero-tv"
-        title="No seasons found"
-        message="TMDB returned no season data for this series."
+        title={gettext("No seasons found")}
+        message={gettext("TMDB returned no season data for this series.")}
       />
 
       <ul class="divide-y divide-base-200">
@@ -179,14 +197,14 @@ defmodule CinderWeb.SeriesDiscoveryLive do
       type="button"
       phx-click="request_season"
       phx-value-season={@season_number}
-      phx-disable-with="Requesting…"
+      phx-disable-with={gettext("Requesting…")}
       class="btn btn-primary btn-sm"
     >
-      Request
+      {gettext("Request")}
     </button>
     """
   end
 
-  defp season_label(0), do: "Specials"
-  defp season_label(n), do: "Season #{n}"
+  defp season_label(0), do: gettext("Specials")
+  defp season_label(n), do: gettext("Season %{number}", number: n)
 end

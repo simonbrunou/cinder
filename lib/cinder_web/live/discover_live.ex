@@ -34,7 +34,7 @@ defmodule CinderWeb.DiscoverLive do
         {:noreply,
          socket
          |> assign(query: query, search_error: true)
-         |> put_flash(:error, "TMDB search failed. Try again.")}
+         |> put_flash(:error, gettext("TMDB search failed. Try again."))}
     end
   end
 
@@ -86,22 +86,31 @@ defmodule CinderWeb.DiscoverLive do
 
     case Cinder.Requests.create_request(user, attrs) do
       {:ok, %{status: :approved}} ->
-        socket |> put_flash(:info, "#{movie.title} added.") |> assign_request_state()
+        socket
+        |> put_flash(:info, gettext("%{title} added.", title: movie.title))
+        |> assign_request_state()
 
       {:ok, %{status: :pending}} ->
         socket
-        |> put_flash(:info, "#{movie.title} requested — awaiting approval.")
+        |> put_flash(
+          :info,
+          gettext("%{title} requested — awaiting approval.", title: movie.title)
+        )
         |> assign_request_state()
 
       {:error, :quota_exceeded} ->
         put_flash(
           socket,
           :error,
-          "You've reached your request limit. Wait for approvals to clear."
+          gettext("You've reached your request limit. Wait for approvals to clear.")
         )
 
       {:error, _} ->
-        put_flash(socket, :error, "#{movie.title} is already requested.")
+        put_flash(
+          socket,
+          :error,
+          gettext("%{title} is already requested.", title: movie.title)
+        )
     end
   end
 
@@ -148,8 +157,8 @@ defmodule CinderWeb.DiscoverLive do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.header>
-        Discover
-        <:subtitle>Search movies and TV — request what you want to watch.</:subtitle>
+        {gettext("Discover")}
+        <:subtitle>{gettext("Search movies and TV — request what you want to watch.")}</:subtitle>
       </.header>
 
       <form id="search-form" phx-change="search" phx-submit="search" class="mb-8">
@@ -160,14 +169,14 @@ defmodule CinderWeb.DiscoverLive do
           value={@query}
           phx-debounce="300"
           autocomplete="off"
-          aria-label="Search movies and TV"
-          placeholder="Search movies and TV…"
+          aria-label={gettext("Search movies and TV")}
+          placeholder={gettext("Search movies and TV…")}
           class="input input-lg w-full min-h-11"
         />
       </form>
 
       <section :if={@results != []} class="mb-10">
-        <h2 class="sr-only">Search results</h2>
+        <h2 class="sr-only">{gettext("Search results")}</h2>
         <div id="results" class="grid grid-cols-2 sm:grid-cols-3 gap-4">
           <.media_card
             :for={r <- @results}
@@ -186,7 +195,7 @@ defmodule CinderWeb.DiscoverLive do
               navigate={~p"/series/tmdb/#{r.tmdb_id}"}
               class="btn btn-primary btn-sm w-full"
             >
-              View seasons →
+              {gettext("View seasons →")}
             </.link>
           </.media_card>
         </div>
@@ -195,22 +204,22 @@ defmodule CinderWeb.DiscoverLive do
       <.empty_state
         :if={@query != "" and @results == [] and not @search_error}
         icon="hero-magnifying-glass"
-        title="No matches"
-        message="No movies or shows matched that search."
+        title={gettext("No matches")}
+        message={gettext("No movies or shows matched that search.")}
       />
       <.empty_state
         :if={@search_error}
         variant="search-error"
-        title="Search failed"
-        message="TMDB didn't respond. Try again."
+        title={gettext("Search failed")}
+        message={gettext("TMDB didn't respond. Try again.")}
       />
 
-      <h2 class="pb-4 text-lg font-semibold leading-8">Watchlist</h2>
+      <h2 class="pb-4 text-lg font-semibold leading-8">{gettext("Watchlist")}</h2>
       <.empty_state
         :if={@watchlist == []}
         icon="hero-bookmark"
-        title="Your watchlist is empty"
-        message="Search above to add a movie."
+        title={gettext("Your watchlist is empty")}
+        message={gettext("Search above to add a movie.")}
       />
       <div id="watchlist" class="grid grid-cols-2 sm:grid-cols-3 gap-4">
         <.media_card
@@ -237,10 +246,10 @@ defmodule CinderWeb.DiscoverLive do
       id={"add-#{@tmdb_id}"}
       phx-click="add"
       phx-value-tmdb_id={@tmdb_id}
-      phx-disable-with="Adding…"
+      phx-disable-with={gettext("Adding…")}
       class="btn btn-primary btn-sm w-full"
     >
-      Add
+      {gettext("Add")}
     </button>
     """
   end

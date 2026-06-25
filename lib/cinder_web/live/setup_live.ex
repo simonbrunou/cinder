@@ -76,9 +76,9 @@ defmodule CinderWeb.SetupLive do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.header>
-        Set up Cinder
+        {gettext("Set up Cinder")}
         <:subtitle>
-          Enter and validate your services. Finish unlocks once the movie loop is green.
+          {gettext("Enter and validate your services. Finish unlocks once the movie loop is green.")}
         </:subtitle>
       </.header>
 
@@ -86,17 +86,19 @@ defmodule CinderWeb.SetupLive do
         <div class="space-y-8">
           <.service_fields form={@form} health={@health} show_move_on_import={false} />
         </div>
-        <button type="submit" class="btn btn-primary mt-4" phx-disable-with="Validating…">Save &amp; validate</button>
+        <button type="submit" class="btn btn-primary mt-4" phx-disable-with={gettext("Validating…")}>
+          {gettext("Save & validate")}
+        </button>
       </form>
 
       <button
         id="finish-setup"
         phx-click="finish"
         disabled={not @can_finish}
-        phx-disable-with="Finishing…"
+        phx-disable-with={gettext("Finishing…")}
         class="btn btn-success mt-6"
       >
-        Finish setup
+        {gettext("Finish setup")}
       </button>
     </Layouts.app>
     """

@@ -32,7 +32,7 @@ defmodule CinderWeb.SeriesDetailLive do
       _ ->
         {:ok,
          socket
-         |> put_flash(:error, "Series not found.")
+         |> put_flash(:error, gettext("Series not found."))
          |> push_navigate(to: ~p"/library")}
     end
   end
@@ -42,8 +42,11 @@ defmodule CinderWeb.SeriesDetailLive do
     with {id, ""} <- Integer.parse(id),
          %Episode{} = ep <- find_episode(socket.assigns.series, id) do
       case Catalog.set_episode_monitored(ep, !ep.monitored) do
-        {:ok, _} -> {:noreply, reload(socket)}
-        {:error, _} -> {:noreply, put_flash(socket, :error, "Couldn't update the episode.")}
+        {:ok, _} ->
+          {:noreply, reload(socket)}
+
+        {:error, _} ->
+          {:noreply, put_flash(socket, :error, gettext("Couldn't update the episode."))}
       end
     else
       _ -> {:noreply, socket}
@@ -55,8 +58,11 @@ defmodule CinderWeb.SeriesDetailLive do
          %Season{} = season <- find_season(socket.assigns.series, id) do
       # Bulk action: if every episode is already monitored, turn the season off; else on.
       case Catalog.set_season_monitored(season, not all_monitored?(season)) do
-        {:ok, _} -> {:noreply, reload(socket)}
-        {:error, _} -> {:noreply, put_flash(socket, :error, "Couldn't update the season.")}
+        {:ok, _} ->
+          {:noreply, reload(socket)}
+
+        {:error, _} ->
+          {:noreply, put_flash(socket, :error, gettext("Couldn't update the season."))}
       end
     else
       _ -> {:noreply, socket}
@@ -78,7 +84,7 @@ defmodule CinderWeb.SeriesDetailLive do
         {:noreply,
          socket
          |> assign(editing?: false, form: nil)
-         |> put_flash(:info, "Series updated.")
+         |> put_flash(:info, gettext("Series updated."))
          |> reload()}
 
       {:error, changeset} ->
@@ -110,11 +116,16 @@ defmodule CinderWeb.SeriesDetailLive do
     case Catalog.cancel_series(socket.assigns.series, actor) do
       {:ok, _} ->
         {:noreply,
-         socket |> assign(confirming: nil) |> put_flash(:info, "Series cancelled.") |> reload()}
+         socket
+         |> assign(confirming: nil)
+         |> put_flash(:info, gettext("Series cancelled."))
+         |> reload()}
 
       _ ->
         {:noreply,
-         socket |> assign(confirming: nil) |> put_flash(:error, "Couldn't cancel the series.")}
+         socket
+         |> assign(confirming: nil)
+         |> put_flash(:error, gettext("Couldn't cancel the series."))}
     end
   end
 
@@ -126,11 +137,13 @@ defmodule CinderWeb.SeriesDetailLive do
          ) do
       {:ok, _} ->
         {:noreply,
-         socket |> put_flash(:info, "Series deleted.") |> push_navigate(to: ~p"/library")}
+         socket |> put_flash(:info, gettext("Series deleted.")) |> push_navigate(to: ~p"/library")}
 
       _ ->
         {:noreply,
-         socket |> assign(confirming: nil) |> put_flash(:error, "Couldn't delete the series.")}
+         socket
+         |> assign(confirming: nil)
+         |> put_flash(:error, gettext("Couldn't delete the series."))}
     end
   end
 
@@ -141,17 +154,22 @@ defmodule CinderWeb.SeriesDetailLive do
          %Episode{} = ep <- find_episode(socket.assigns.series, id),
          {:ok, _} <- Catalog.delete_episode_file(ep, actor, unmonitor: socket.assigns.confirm_opt) do
       {:noreply,
-       socket |> assign(confirming: nil) |> put_flash(:info, "Episode file deleted.") |> reload()}
+       socket
+       |> assign(confirming: nil)
+       |> put_flash(:info, gettext("Episode file deleted."))
+       |> reload()}
     else
       {:error, :no_file} ->
         {:noreply,
-         socket |> assign(confirming: nil) |> put_flash(:error, "That episode has no file.")}
+         socket
+         |> assign(confirming: nil)
+         |> put_flash(:error, gettext("That episode has no file."))}
 
       _ ->
         {:noreply,
          socket
          |> assign(confirming: nil)
-         |> put_flash(:error, "Couldn't delete the episode file.")}
+         |> put_flash(:error, gettext("Couldn't delete the episode file."))}
     end
   end
 
@@ -166,20 +184,28 @@ defmodule CinderWeb.SeriesDetailLive do
       socket =
         case result do
           {:ok, cleared, 0} ->
-            put_flash(socket, :info, "Deleted #{cleared} file(s).")
+            put_flash(socket, :info, gettext("Deleted %{count} file(s).", count: cleared))
 
           {:ok, cleared, failed} when cleared > 0 ->
             put_flash(
               socket,
               :warning,
-              "Deleted #{cleared} file(s); #{failed} could not be deleted (see server logs)."
+              gettext(
+                "Deleted %{cleared} file(s); %{failed} could not be deleted (see server logs).",
+                cleared: cleared,
+                failed: failed
+              )
             )
 
           {:ok, _cleared, _failed} ->
-            put_flash(socket, :error, "Couldn't delete the season's files (see server logs).")
+            put_flash(
+              socket,
+              :error,
+              gettext("Couldn't delete the season's files (see server logs).")
+            )
 
           _ ->
-            put_flash(socket, :error, "Couldn't delete the season files.")
+            put_flash(socket, :error, gettext("Couldn't delete the season files."))
         end
 
       {:noreply, reload(socket)}
@@ -188,7 +214,7 @@ defmodule CinderWeb.SeriesDetailLive do
         {:noreply,
          socket
          |> assign(confirming: nil)
-         |> put_flash(:error, "Couldn't delete the season files.")}
+         |> put_flash(:error, gettext("Couldn't delete the season files."))}
     end
   end
 
@@ -203,7 +229,7 @@ defmodule CinderWeb.SeriesDetailLive do
     if socket.assigns.series.id == id do
       {:noreply,
        socket
-       |> put_flash(:info, "Series deleted.")
+       |> put_flash(:info, gettext("Series deleted."))
        |> push_navigate(to: ~p"/library")}
     else
       {:noreply, socket}
@@ -216,8 +242,13 @@ defmodule CinderWeb.SeriesDetailLive do
   # reload that assigned nil would nil-deref the next render): bounce back to the list.
   defp reload(socket) do
     case Catalog.get_series_with_tree(socket.assigns.series.id) do
-      nil -> socket |> put_flash(:error, "Series not found.") |> push_navigate(to: ~p"/library")
-      series -> assign(socket, series: series)
+      nil ->
+        socket
+        |> put_flash(:error, gettext("Series not found."))
+        |> push_navigate(to: ~p"/library")
+
+      series ->
+        assign(socket, series: series)
     end
   end
 
@@ -236,15 +267,15 @@ defmodule CinderWeb.SeriesDetailLive do
 
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
-      <.link navigate={~p"/library"} class="link mb-6 inline-block">← Library</.link>
+      <.link navigate={~p"/library"} class="link mb-6 inline-block">{gettext("← Library")}</.link>
 
       <div class="mb-4 flex flex-wrap items-center gap-2">
-        <button type="button" class="btn btn-sm" phx-click="edit_series">Edit</button>
+        <button type="button" class="btn btn-sm" phx-click="edit_series">{gettext("Edit")}</button>
         <button type="button" class="btn btn-sm btn-warning" phx-click="ask_cancel_series">
-          Cancel series
+          {gettext("Cancel series")}
         </button>
         <button type="button" class="btn btn-sm btn-error" phx-click="ask_delete_series">
-          Delete series
+          {gettext("Delete series")}
         </button>
       </div>
 
@@ -255,10 +286,14 @@ defmodule CinderWeb.SeriesDetailLive do
         phx-submit="save_series"
         class="mb-6 flex flex-wrap items-end gap-2"
       >
-        <.input field={@form[:title]} type="text" label="Title" />
-        <.input field={@form[:year]} type="number" label="Year" />
-        <button class="btn btn-sm btn-primary" type="submit" phx-disable-with="Saving…">Save</button>
-        <button class="btn btn-sm btn-ghost" type="button" phx-click="cancel_edit_series">Cancel</button>
+        <.input field={@form[:title]} type="text" label={gettext("Title")} />
+        <.input field={@form[:year]} type="number" label={gettext("Year")} />
+        <button class="btn btn-sm btn-primary" type="submit" phx-disable-with={gettext("Saving…")}>
+          {gettext("Save")}
+        </button>
+        <button class="btn btn-sm btn-ghost" type="button" phx-click="cancel_edit_series">
+          {gettext("Cancel")}
+        </button>
       </.form>
 
       <.confirm_action
@@ -266,10 +301,12 @@ defmodule CinderWeb.SeriesDetailLive do
         id="confirm-cancel-series"
         on_confirm="confirm_cancel_series"
         on_cancel="dismiss_confirm"
-        confirm_label="Cancel series"
+        confirm_label={gettext("Cancel series")}
         variant="warning"
       >
-        <:caveat>Cancel this series? Removes its downloads and unmonitors everything.</:caveat>
+        <:caveat>
+          {gettext("Cancel this series? Removes its downloads and unmonitors everything.")}
+        </:caveat>
       </.confirm_action>
 
       <div :if={@confirming == :delete} class="mb-6 space-y-2">
@@ -280,15 +317,15 @@ defmodule CinderWeb.SeriesDetailLive do
             phx-click="toggle_confirm_opt"
             checked={@confirm_opt}
           />
-          <span>Also delete files from disk</span>
+          <span>{gettext("Also delete files from disk")}</span>
         </label>
         <.confirm_action
           id="confirm-delete-series"
           on_confirm="confirm_delete_series"
           on_cancel="dismiss_confirm"
-          confirm_label="Delete"
+          confirm_label={gettext("Delete")}
         >
-          <:caveat>Delete this series and its seasons/episodes?</:caveat>
+          <:caveat>{gettext("Delete this series and its seasons/episodes?")}</:caveat>
         </.confirm_action>
       </div>
 
@@ -305,7 +342,7 @@ defmodule CinderWeb.SeriesDetailLive do
             <span :if={@series.year} class="font-normal text-base-content/60">({@series.year})</span>
             <:actions>
               <span class={["badge badge-sm", @series.monitored && "badge-success"]}>
-                {if @series.monitored, do: "Monitored", else: "Unmonitored"}
+                {if @series.monitored, do: gettext("Monitored"), else: gettext("Unmonitored")}
               </span>
             </:actions>
           </.header>
@@ -315,8 +352,8 @@ defmodule CinderWeb.SeriesDetailLive do
       <.empty_state
         :if={@series.seasons == []}
         icon="hero-tv"
-        title="No seasons found"
-        message="TMDB returned no season data for this series."
+        title={gettext("No seasons found")}
+        message={gettext("TMDB returned no season data for this series.")}
       />
 
       <section :for={season <- @series.seasons} class="mb-6">
@@ -324,7 +361,10 @@ defmodule CinderWeb.SeriesDetailLive do
           <h2 class="text-lg font-semibold">
             {season_label(season.season_number)}
             <span class="ml-2 text-sm font-normal text-base-content/60">
-              {monitored_count(season)}/{length(season.episodes)} monitored
+              {gettext("%{n}/%{m} monitored",
+                n: monitored_count(season),
+                m: length(season.episodes)
+              )}
             </span>
           </h2>
           <div class="flex items-center gap-2">
@@ -335,11 +375,18 @@ defmodule CinderWeb.SeriesDetailLive do
               phx-value-id={season.id}
               class="btn btn-xs"
               aria-label={
-                "#{if all_monitored?(season), do: "Unmonitor", else: "Monitor"} all episodes in " <>
-                  season_label(season.season_number)
+                if all_monitored?(season),
+                  do:
+                    gettext("Unmonitor all episodes in %{season}",
+                      season: season_label(season.season_number)
+                    ),
+                  else:
+                    gettext("Monitor all episodes in %{season}",
+                      season: season_label(season.season_number)
+                    )
               }
             >
-              {if all_monitored?(season), do: "Unmonitor all", else: "Monitor all"}
+              {if all_monitored?(season), do: gettext("Unmonitor all"), else: gettext("Monitor all")}
             </button>
             <button
               :if={Enum.any?(season.episodes, & &1.file_path)}
@@ -347,9 +394,11 @@ defmodule CinderWeb.SeriesDetailLive do
               class="btn btn-xs btn-error"
               phx-click="ask_delete_season_files"
               phx-value-id={season.id}
-              aria-label={"Delete all files in #{season_label(season.season_number)}"}
+              aria-label={
+                gettext("Delete all files in %{season}", season: season_label(season.season_number))
+              }
             >
-              Delete files
+              {gettext("Delete files")}
             </button>
           </div>
         </div>
@@ -362,23 +411,27 @@ defmodule CinderWeb.SeriesDetailLive do
               phx-click="toggle_confirm_opt"
               checked={@confirm_opt}
             />
-            <span>Also stop monitoring these episodes</span>
+            <span>{gettext("Also stop monitoring these episodes")}</span>
           </label>
           <.confirm_action
             id={"confirm-delete-season-files-#{season.id}"}
             on_confirm="confirm_delete_season_files"
             on_cancel="dismiss_confirm"
             value={season.id}
-            confirm_label="Delete files"
+            confirm_label={gettext("Delete files")}
           >
             <:caveat>
-              Delete every downloaded file in {season_label(season.season_number)}? Monitored
-              episodes will be re-downloaded next sweep unless you also stop monitoring.
+              {gettext(
+                "Delete every downloaded file in %{season}? Monitored episodes will be re-downloaded next sweep unless you also stop monitoring.",
+                season: season_label(season.season_number)
+              )}
             </:caveat>
           </.confirm_action>
         </div>
 
-        <p :if={season.episodes == []} class="text-sm text-base-content/50">No episodes yet.</p>
+        <p :if={season.episodes == []} class="text-sm text-base-content/50">
+          {gettext("No episodes yet.")}
+        </p>
         <ul class="divide-y divide-base-200">
           <li :for={ep <- season.episodes} class="flex flex-col gap-2 py-2">
             <div class="flex items-center gap-3">
@@ -388,7 +441,12 @@ defmodule CinderWeb.SeriesDetailLive do
                 checked={ep.monitored}
                 phx-click="toggle_episode"
                 phx-value-id={ep.id}
-                aria-label={"Monitor #{season_label(season.season_number)} episode #{ep.episode_number}"}
+                aria-label={
+                  gettext("Monitor %{season} episode %{number}",
+                    season: season_label(season.season_number),
+                    number: ep.episode_number
+                  )
+                }
               />
               <span class="w-8 text-sm tabular-nums text-base-content/60">{ep.episode_number}</span>
               <span class="flex-1 text-sm">{ep.title}</span>
@@ -399,9 +457,14 @@ defmodule CinderWeb.SeriesDetailLive do
                 class="btn btn-xs btn-error"
                 phx-click="ask_delete_episode_file"
                 phx-value-id={ep.id}
-                aria-label={"Delete file for #{season_label(season.season_number)} episode #{ep.episode_number}"}
+                aria-label={
+                  gettext("Delete file for %{season} episode %{number}",
+                    season: season_label(season.season_number),
+                    number: ep.episode_number
+                  )
+                }
               >
-                Delete file
+                {gettext("Delete file")}
               </button>
             </div>
             <div :if={@confirming == {:episode_file, to_string(ep.id)}} class="space-y-2">
@@ -412,18 +475,19 @@ defmodule CinderWeb.SeriesDetailLive do
                   phx-click="toggle_confirm_opt"
                   checked={@confirm_opt}
                 />
-                <span>Also stop monitoring this episode</span>
+                <span>{gettext("Also stop monitoring this episode")}</span>
               </label>
               <.confirm_action
                 id={"confirm-delete-episode-file-#{ep.id}"}
                 on_confirm="confirm_delete_episode_file"
                 on_cancel="dismiss_confirm"
                 value={ep.id}
-                confirm_label="Delete file"
+                confirm_label={gettext("Delete file")}
               >
                 <:caveat>
-                  Delete the downloaded file for this episode? If it stays monitored the poller
-                  re-downloads it next tick — tick "stop monitoring" to keep it gone.
+                  {gettext(
+                    "Delete the downloaded file for this episode? If it stays monitored the poller re-downloads it next tick — tick \"stop monitoring\" to keep it gone."
+                  )}
                 </:caveat>
               </.confirm_action>
             </div>
@@ -434,8 +498,8 @@ defmodule CinderWeb.SeriesDetailLive do
     """
   end
 
-  defp season_label(0), do: "Specials"
-  defp season_label(n), do: "Season #{n}"
+  defp season_label(0), do: gettext("Specials")
+  defp season_label(n), do: gettext("Season %{number}", number: n)
 
   defp monitored_count(season), do: Enum.count(season.episodes, & &1.monitored)
 end
