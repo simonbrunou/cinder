@@ -1,16 +1,16 @@
-# Graph Report - cinder  (2026-06-24)
+# Graph Report - cinder  (2026-06-25)
 
 ## Corpus Check
-- 248 files · ~250,348 words
+- 248 files · ~250,670 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 1839 nodes · 2124 edges · 240 communities (133 shown, 107 thin omitted)
+- 1841 nodes · 2126 edges · 240 communities (133 shown, 107 thin omitted)
 - Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 36 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `4a7d5eac`
+- Built from commit: `67f08865`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -261,9 +261,9 @@
 - `change()` --calls--> `table()`  [INFERRED]
   priv/repo/migrations/20260619140000_add_download_protocol_to_movies.exs → lib/cinder_web/components/core_components.ex
 - `change()` --calls--> `table()`  [INFERRED]
-  priv/repo/migrations/20260621200000_add_role_to_users.exs → lib/cinder_web/components/core_components.ex
+  priv/repo/migrations/20260619061256_add_file_path_to_movies.exs → lib/cinder_web/components/core_components.ex
 - `change()` --calls--> `table()`  [INFERRED]
-  priv/repo/migrations/20260619094117_add_import_attempts_to_movies.exs → lib/cinder_web/components/core_components.ex
+  priv/repo/migrations/20260621200000_add_role_to_users.exs → lib/cinder_web/components/core_components.ex
 - `change()` --calls--> `table()`  [INFERRED]
   priv/repo/migrations/20260623082233_drop_episode_import_attempts.exs → lib/cinder_web/components/core_components.ex
 
@@ -567,7 +567,7 @@ Nodes (7): Claude Uninstallation, Clean Up Empty Directories, Current Installati
 
 ### Community 74 - "Community 74"
 Cohesion: 0.29
-Nodes (6): table(), Cinder.Repo.Migrations.AddFilePathToMovies, change(), Cinder.Repo.Migrations.AddSeasonToRequests, down(), up()
+Nodes (6): table(), Cinder.Repo.Migrations.AddImportAttemptsToMovies, change(), Cinder.Repo.Migrations.AddSeasonToRequests, down(), up()
 
 ### Community 76 - "Community 76"
 Cohesion: 0.25
@@ -714,8 +714,8 @@ Cohesion: 0.25
 Nodes (8): broadcast_series_deleted(), cancel_series(), delete_grab(), delete_series(), do_delete_series_txn(), grabs_for_series(), reap_series_grabs(), unmonitor_series_tree()
 
 ### Community 188 - "Community 188"
-Cohesion: 0.50
-Nodes (3): Admin CRUD — SDD progress ledger, Log, UX-4 — Admin home: progress ledger
+Cohesion: 0.33
+Nodes (5): Admin CRUD — SDD progress ledger, Final whole-phase review (85ab466..3137a65, opus), Log, STATUS: UX-4 COMPLETE — all 6 tasks green + reviewed; final blocker fixed. Next phase: UX-5 (hardening) per ROADMAP., UX-4 — Admin home: progress ledger
 
 ### Community 221 - "Community 221"
 Cohesion: 0.17
@@ -750,7 +750,7 @@ Cohesion: 0.40
 Nodes (6): add_series_to_watchlist(), create_series(), get_series_by_tmdb_id(), insert_series(), monitored?(), series_attrs()
 
 ## Knowledge Gaps
-- **620 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+615 more)
+- **622 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+617 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **107 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
@@ -762,7 +762,7 @@ _Questions this graph is uniquely positioned to answer:_
 - **Why does `Cinder.Catalog` connect `Community 3` to `Community 37`, `Community 71`, `Community 91`, `Community 235`, `Community 147`, `Community 59`, `Community 28`?**
   _High betweenness centrality (0.001) - this node is a cross-community bridge._
 - **What connects `tidewave`, `$schema`, `erlang` to the rest of the system?**
-  _620 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _622 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**
   _Cohesion score 0.07619738751814223 - nodes in this community are weakly interconnected._
 - **Should `Community 1` be split into smaller, more focused modules?**
