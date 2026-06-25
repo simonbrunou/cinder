@@ -55,6 +55,13 @@ defmodule CinderWeb.ActivityLive do
     {:noreply, socket}
   end
 
+  def handle_event("set_movie_language", %{"_id" => id, "preferred_language" => lang}, socket)
+      when lang in ["original", "french", "any"] do
+    movie = Enum.find(socket.assigns.movies, &(to_string(&1.id) == id))
+    if movie, do: Catalog.set_movie_language(movie, lang)
+    {:noreply, socket}
+  end
+
   def handle_event("ask_delete", %{"id" => id}, socket),
     do: {:noreply, assign(socket, confirming: id)}
 
@@ -123,6 +130,24 @@ defmodule CinderWeb.ActivityLive do
             >
               {gettext("Retry")}
             </button>
+            <form phx-change="set_movie_language" class="ml-auto">
+              <input type="hidden" name="_id" value={m.id} />
+              <select
+                name="preferred_language"
+                class="select select-xs"
+                aria-label={gettext("Preferred language")}
+              >
+                <option value="original" selected={m.preferred_language == "original"}>
+                  {gettext("Original")}
+                </option>
+                <option value="french" selected={m.preferred_language == "french"}>
+                  {gettext("French")}
+                </option>
+                <option value="any" selected={m.preferred_language == "any"}>
+                  {gettext("Any")}
+                </option>
+              </select>
+            </form>
           </li>
         </ul>
       </section>

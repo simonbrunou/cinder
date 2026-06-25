@@ -170,6 +170,50 @@ defmodule Cinder.Catalog do
 
   def retry_movie(%Movie{}), do: {:error, :not_retryable}
 
+  # Parked statuses where a language change should trigger a fresh search.
+  # :import_failed means a release was found but couldn't be written — not a language issue.
+  @language_retry_statuses [:no_match, :search_failed]
+
+  @doc """
+  Sets a movie's preferred language. If the movie is parked because no release in
+  the desired language was found, re-queues it so the poller re-searches. Otherwise
+  just updates the field — the download/import pipeline is not disturbed for
+  in-flight or available movies (no quality-upgrade re-grab in this slice).
+  """
+  def set_movie_language(%Movie{} = movie, language) do
+    {:ok, updated} =
+      movie |> Movie.language_changeset(%{preferred_language: language}) |> Repo.update()
+
+    if updated.status in @language_retry_statuses do
+      retry_movie(updated)
+    else
+      broadcast({:movie_updated, updated})
+      {:ok, updated}
+    end
+  end
+
+  @doc """
+  Sets a series' preferred language and zeroes `search_attempts` on its still-wanted
+  episodes (no file, no grab) so a previously language-stranded season re-enters the
+  search sweep. Available / in-flight episodes are untouched.
+  """
+  def set_series_language(%Series{} = series, language) do
+    {:ok, updated} =
+      series |> Series.language_changeset(%{preferred_language: language}) |> Repo.update()
+
+    from(e in Episode,
+      join: s in Season,
+      on: e.season_id == s.id,
+      where:
+        s.series_id == ^series.id and is_nil(e.file_path) and is_nil(e.grab_id) and
+          e.search_attempts > 0
+    )
+    |> Repo.update_all(set: [search_attempts: 0])
+
+    broadcast_series(series.id)
+    {:ok, updated}
+  end
+
   # The active set a movie can be cancelled out of (mirrors @retryable's shape).
   # transition/2 does NOT validate transitions, so cancel/delete must guard on this
   # explicitly. delete_movie/2 (Phase 2) shares it: an active row with a download_id
