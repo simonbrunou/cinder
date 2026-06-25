@@ -36,7 +36,8 @@ defmodule Cinder.Acquisition do
   Omitting the option keeps every protocol.
 
   Returns `{:ok, %Release{}}`, `:no_match` (no results, or none survive the rules),
-  or `{:error, term}` (indexer failure, passed through).
+  `:no_language_match` (a non-empty candidate set was fully removed by an active per-item
+  language preference), or `{:error, term}` (indexer failure, passed through).
   """
   def best_release(imdb_id, opts \\ []) do
     case indexer().search(imdb_id) do

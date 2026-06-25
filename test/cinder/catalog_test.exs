@@ -4,7 +4,7 @@ defmodule Cinder.CatalogTest do
   import Mox
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Movie, Season, Series}
+  alias Cinder.Catalog.{Episode, Grab, Movie, Season, Series}
 
   setup :verify_on_exit!
 
@@ -238,6 +238,17 @@ defmodule Cinder.CatalogTest do
       assert updated.search_attempts == 0
     end
 
+    test "re-queues a search_failed movie" do
+      {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 9, title: "Z"})
+      {:ok, movie} = Catalog.transition(movie, %{status: :search_failed})
+
+      {:ok, updated} = Catalog.set_movie_language(movie, "spanish")
+
+      assert updated.preferred_language == "spanish"
+      assert updated.status == :requested
+      assert updated.search_attempts == 0
+    end
+
     test "on an available movie only updates the field" do
       {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 8, title: "Y"})
       {:ok, movie} = Catalog.transition(movie, %{status: :available})
@@ -271,11 +282,23 @@ defmodule Cinder.CatalogTest do
           file_path: "/x.mkv"
         })
 
+      grab = Repo.insert!(%Grab{download_id: "dl1", download_protocol: :torrent})
+
+      in_flight =
+        Repo.insert!(%Episode{
+          season_id: season.id,
+          episode_number: 3,
+          monitored: true,
+          search_attempts: 9,
+          grab_id: grab.id
+        })
+
       {:ok, updated} = Catalog.set_series_language(series, "french")
 
       assert updated.preferred_language == "french"
       assert Repo.get!(Episode, wanted.id).search_attempts == 0
       assert Repo.get!(Episode, filed.id).search_attempts == 9
+      assert Repo.get!(Episode, in_flight.id).search_attempts == 9
     end
   end
 end

@@ -6,7 +6,7 @@ defmodule Cinder.Catalog.TMDB do
   callbacks are kept distinct (no overloaded `search/1`).
   """
 
-  @doc "Movie search. Returns `%{tmdb_id, title, year, poster_path, imdb_id, original_language}` per result (`imdb_id` and `original_language` are `nil` on search results)."
+  @doc "Movie search. Returns `%{tmdb_id, title, year, poster_path, imdb_id, original_language}` per result (`imdb_id` is `nil` on search results; `original_language` is populated by TMDB's `/search/movie` response)."
   @callback search(query :: String.t()) :: {:ok, [map()]} | {:error, term()}
 
   @doc "Single movie details. Returns `%{tmdb_id, title, year, poster_path, imdb_id, original_language}`."
