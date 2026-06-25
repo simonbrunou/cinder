@@ -84,7 +84,7 @@ defmodule CinderWeb.SetupLive do
 
       <form id="setup-form" phx-submit="validate">
         <div class="space-y-8">
-          <.service_fields form={@form} health={@health} />
+          <.service_fields form={@form} health={@health} show_move_on_import={false} />
         </div>
         <button type="submit" class="btn btn-primary mt-4" phx-disable-with="Validating…">Save &amp; validate</button>
       </form>

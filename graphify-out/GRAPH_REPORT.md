@@ -1,7 +1,7 @@
 # Graph Report - cinder  (2026-06-25)
 
 ## Corpus Check
-- 259 files · ~267,369 words
+- 259 files · ~267,567 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
@@ -10,7 +10,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `31229e66`
+- Built from commit: `ab2e663f`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 

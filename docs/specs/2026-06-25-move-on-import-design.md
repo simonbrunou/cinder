@@ -185,4 +185,11 @@ in-hand grab). Settings: `move_on_import` is a standalone global bool with its o
 `form_state`, and one checkbox in the `/settings` Library section — no `Settings` read accessor
 needed since `remove_after_import/2` reads the env directly. Tests: 11 (gate matrix incl.
 raise/error swallow, both pollers, partial-pack still-removes) + 2 settings overlay round-trips.
-`mix test` green (724).
+
+The checkbox lives in the shared `service_fields/1` `:library` group, which the first-run wizard
+(`SetupLive`) also renders — so it initially leaked into the wizard, against the settings-only
+decision above. A council (perspective-diverse) confirmed honoring the spec: the toggle is
+destructive-by-name and a first-run operator hasn't yet validated their hardlink topology, so it's
+gated out via `attr :show_move_on_import, :boolean, default: true` (the wizard passes `false`; a
+non-rendered checkbox simply persists `false`, the desired default). `/settings` is unchanged.
+`mix test` green (725).

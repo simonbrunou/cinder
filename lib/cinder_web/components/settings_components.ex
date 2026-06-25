@@ -13,6 +13,9 @@ defmodule CinderWeb.SettingsComponents do
 
   attr :form, :map, required: true
   attr :health, :map, required: true
+  # move_on_import is a /settings-only advanced toggle; the first-run wizard passes false
+  # so it isn't offered before the operator has validated a real import (spec: settings-only).
+  attr :show_move_on_import, :boolean, default: true
 
   def service_fields(assigns) do
     ~H"""
@@ -68,21 +71,23 @@ defmodule CinderWeb.SettingsComponents do
           Required even if they share a folder — enter the same path.
         </p>
 
-        <label class="label cursor-pointer justify-start gap-2 pt-2">
-          <input type="hidden" name="move_on_import" value="false" />
-          <input
-            type="checkbox"
-            name="move_on_import"
-            value="true"
-            checked={@form.values["move_on_import"]}
-            class="checkbox"
-          />
-          <span class="label-text">Remove download after a Usenet import</span>
-        </label>
-        <p class="mt-1 text-xs opacity-70">
-          After a Usenet import, delete the original from the download client. Ensure your library
-          is a separate folder from your downloads. Torrents are never auto-removed (seeding survives).
-        </p>
+        <div :if={@show_move_on_import}>
+          <label class="label cursor-pointer justify-start gap-2 pt-2">
+            <input type="hidden" name="move_on_import" value="false" />
+            <input
+              type="checkbox"
+              name="move_on_import"
+              value="true"
+              checked={@form.values["move_on_import"]}
+              class="checkbox"
+            />
+            <span class="label-text">Remove download after a Usenet import</span>
+          </label>
+          <p class="mt-1 text-xs opacity-70">
+            After a Usenet import, delete the original from the download client. Ensure your library
+            is a separate folder from your downloads. Torrents are never auto-removed (seeding survives).
+          </p>
+        </div>
       </div>
 
       <div :if={group == :releases} class="space-y-3">
