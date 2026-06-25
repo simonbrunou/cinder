@@ -50,6 +50,8 @@ defmodule CinderWeb.SettingsLiveTest do
     assert html =~ "Media server"
     assert html =~ "Library"
     assert html =~ ~s(name="movies_library_path")
+    # The remove-after-import toggle lives on /settings (Library section).
+    assert html =~ ~s(name="move_on_import")
     assert html =~ "Save settings"
   end
 

@@ -276,6 +276,7 @@ defmodule Cinder.Settings do
         end)
       end)
       |> Map.merge(toggle_values(rows))
+      |> Map.put("move_on_import", decoded_for(rows, "move_on_import") == "true")
 
     secrets_set =
       for f <- config_fields(),
@@ -331,6 +332,7 @@ defmodule Cinder.Settings do
     apply_media_server(rows)
     apply_download_clients(rows)
     apply_library_config(rows)
+    apply_move_on_import(rows)
     :ok
   rescue
     e ->
@@ -410,6 +412,13 @@ defmodule Cinder.Settings do
     Application.put_env(:cinder, :"#{kind}_min_size", min_size)
     Application.put_env(:cinder, :"#{kind}_max_size", max_size)
     Application.put_env(:cinder, :"#{kind}_preferred_resolutions", preferred)
+  end
+
+  # Standalone global boolean — not a config field, toggle, or flat key, so it gets its own
+  # tiny overlay. No base/1 snapshot: an unset/cleared row reverts via the inline `false` default
+  # everywhere it's read (Application.get_env(:cinder, :move_on_import, false)).
+  defp apply_move_on_import(rows) do
+    Application.put_env(:cinder, :move_on_import, decoded_for(rows, "move_on_import") == "true")
   end
 
   # base/1 defaults to [] for unset keys; a library path is a flat string, so coerce an unset
@@ -565,6 +574,7 @@ defmodule Cinder.Settings do
     puts =
       puts
       |> Map.put(@media_server_key, media_server_choice(params))
+      |> Map.put("move_on_import", params["move_on_import"] || "false")
       |> then(fn p ->
         Enum.reduce(@toggles, p, fn t, acc -> Map.put(acc, t.key, params[t.key] || "false") end)
       end)

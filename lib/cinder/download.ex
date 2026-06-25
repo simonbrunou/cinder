@@ -10,6 +10,7 @@ defmodule Cinder.Download do
   a `%{protocol => module}` map) so tests use Mox mocks and never hit the network.
   Auto-triggered by `Cinder.Download.Poller`'s search sweep.
   """
+  require Logger
   alias Cinder.{Acquisition, Catalog}
   alias Cinder.Catalog.Movie
 
@@ -55,6 +56,49 @@ defmodule Cinder.Download do
   @doc "The protocols with a configured download client."
   def available_protocols do
     :cinder |> Application.fetch_env!(:download_clients) |> Map.keys()
+  end
+
+  @doc """
+  After a successful import, removes the source download when the `move_on_import`
+  setting is on. Usenet-only (an allowlist, so a nil/unknown protocol no-ops) and
+  only when a download id is tracked — torrents are never auto-removed so seeding
+  survives. Best-effort: a remove failure is logged, never propagated. Always `:ok`.
+  """
+  def remove_after_import(protocol, download_id) do
+    move_on_import? = Application.get_env(:cinder, :move_on_import, false)
+
+    if move_on_import? and protocol == :usenet and download_id not in [nil, ""] do
+      case client_for(protocol) do
+        {:ok, client} -> best_effort_remove(client, download_id)
+        :error -> :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  @doc """
+  Removes a tracked client download best-effort: logs (and swallows) an `{:error,_}`
+  return OR a raised/thrown client failure, always returning `:ok` so a misconfigured
+  client can never block a delete/reap or unwind a poller. Shared by the delete/reap
+  paths (`Cinder.Catalog`) and the post-import remove.
+  """
+  def best_effort_remove(client, id) do
+    case client.remove(id, delete_files: true) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("client remove failed for download #{inspect(id)}: #{inspect(reason)}")
+        :ok
+    end
+  catch
+    kind, value ->
+      Logger.warning(
+        "client remove raised for download #{inspect(id)}: #{inspect({kind, value})}"
+      )
+
+      :ok
   end
 
   defp ensure_imdb_id(%Movie{imdb_id: imdb_id}) when is_binary(imdb_id) and imdb_id != "" do

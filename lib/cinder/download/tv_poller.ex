@@ -128,8 +128,13 @@ defmodule Cinder.Download.TvPoller do
         # Notify only when the finalize transaction commits — otherwise a rolled-back finish_grab
         # would leave the grab undeleted (re-imported next tick) while emitting a false, repeating
         # available event. Mirrors the movie poller's `with {:ok, _} <- transition` guard.
-        with {:ok, _grab} <- Catalog.finish_grab(grab, imported),
-             do: notify_available(grab, imported)
+        with {:ok, _grab} <- Catalog.finish_grab(grab, imported) do
+          notify_available(grab, imported)
+          # After the finalize commit: best-effort, gated remove of the source download.
+          # Read id/protocol off the in-hand grab — finish_grab deleted the row but returns
+          # the in-memory struct. A partial-match pack still removes (don't strand clutter).
+          Download.remove_after_import(grab.download_protocol, grab.download_id)
+        end
 
       # A missing TV root is a config error, not a transient one: leave the grab downloaded
       # (no bump, no park) so the already-downloaded content imports as soon as tv_library_path
