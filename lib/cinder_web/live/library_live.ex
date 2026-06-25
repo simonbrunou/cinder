@@ -60,7 +60,7 @@ defmodule CinderWeb.LibraryLive do
             {:noreply,
              socket
              |> assign(editing: nil, form: nil, movies: Catalog.list_watchlist())
-             |> put_flash(:info, "Movie updated.")}
+             |> put_flash(:info, gettext("Movie updated."))}
 
           {:error, changeset} ->
             {:noreply, assign(socket, form: to_form(changeset))}
@@ -84,15 +84,19 @@ defmodule CinderWeb.LibraryLive do
       {:noreply,
        socket
        |> assign(confirming: nil, movies: Catalog.list_watchlist())
-       |> put_flash(:info, "Movie cancelled.")}
+       |> put_flash(:info, gettext("Movie cancelled."))}
     else
       {:error, :not_cancellable} ->
         {:noreply,
-         socket |> assign(confirming: nil) |> put_flash(:error, "That movie can't be cancelled.")}
+         socket
+         |> assign(confirming: nil)
+         |> put_flash(:error, gettext("That movie can't be cancelled."))}
 
       _ ->
         {:noreply,
-         socket |> assign(confirming: nil) |> put_flash(:error, "Couldn't cancel that movie.")}
+         socket
+         |> assign(confirming: nil)
+         |> put_flash(:error, gettext("Couldn't cancel that movie."))}
     end
   end
 
@@ -105,11 +109,13 @@ defmodule CinderWeb.LibraryLive do
       {:noreply,
        socket
        |> assign(confirming: nil, delete_files: false)
-       |> put_flash(:info, "Movie deleted.")}
+       |> put_flash(:info, gettext("Movie deleted."))}
     else
       _ ->
         {:noreply,
-         socket |> assign(confirming: nil) |> put_flash(:error, "Couldn't delete that movie.")}
+         socket
+         |> assign(confirming: nil)
+         |> put_flash(:error, gettext("Couldn't delete that movie."))}
     end
   end
 
@@ -126,8 +132,8 @@ defmodule CinderWeb.LibraryLive do
         socket,
         id,
         &Catalog.cancel_series/2,
-        "Series cancelled.",
-        "Couldn't cancel the series."
+        gettext("Series cancelled."),
+        gettext("Couldn't cancel the series.")
       )
 
   def handle_event("confirm_delete_series", %{"id" => id}, socket) do
@@ -137,8 +143,8 @@ defmodule CinderWeb.LibraryLive do
       socket,
       id,
       fn series, actor -> Catalog.delete_series(series, actor, delete_files: flag) end,
-      "Series deleted.",
-      "Couldn't delete the series."
+      gettext("Series deleted."),
+      gettext("Couldn't delete the series.")
     )
   end
 
@@ -202,16 +208,17 @@ defmodule CinderWeb.LibraryLive do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.header>
-        Library<:subtitle>Manage watchlisted movies and added series.</:subtitle>
+        {gettext("Library")}
+        <:subtitle>{gettext("Manage watchlisted movies and added series.")}</:subtitle>
       </.header>
 
       <section>
-        <h2 class="pb-3 text-lg font-semibold">Movies</h2>
+        <h2 class="pb-3 text-lg font-semibold">{gettext("Movies")}</h2>
         <.empty_state
           :if={@movies == []}
           icon="hero-film"
-          title="No movies yet"
-          message="Requested movies appear here."
+          title={gettext("No movies yet")}
+          message={gettext("Requested movies appear here.")}
         />
         <ul :if={@movies != []} class="space-y-3">
           <li :for={m <- @movies} id={"movie-#{m.id}"} class="card bg-base-200 p-4">
@@ -220,7 +227,9 @@ defmodule CinderWeb.LibraryLive do
               <span :if={m.year} class="text-base-content/60">({m.year})</span>
               <.status_badge kind={:movie} status={m.status} />
               <div class="ml-auto flex gap-2">
-                <button type="button" class="btn btn-xs" phx-click="edit" phx-value-id={m.id}>Edit</button>
+                <button type="button" class="btn btn-xs" phx-click="edit" phx-value-id={m.id}>
+                  {gettext("Edit")}
+                </button>
                 <button
                   :if={Catalog.cancellable?(m)}
                   type="button"
@@ -228,7 +237,7 @@ defmodule CinderWeb.LibraryLive do
                   phx-click="ask_cancel_movie"
                   phx-value-id={m.id}
                 >
-                  Cancel
+                  {gettext("Cancel")}
                 </button>
                 <button
                   :if={not Catalog.cancellable?(m)}
@@ -237,7 +246,7 @@ defmodule CinderWeb.LibraryLive do
                   phx-click="ask_delete_movie"
                   phx-value-id={m.id}
                 >
-                  Delete
+                  {gettext("Delete")}
                 </button>
               </div>
             </div>
@@ -250,10 +259,18 @@ defmodule CinderWeb.LibraryLive do
               phx-value-id={m.id}
               class="mt-3 flex flex-wrap items-end gap-2"
             >
-              <.input field={@form[:title]} type="text" label="Title" />
-              <.input field={@form[:year]} type="number" label="Year" />
-              <button class="btn btn-sm btn-primary" type="submit" phx-disable-with="Saving…">Save</button>
-              <button class="btn btn-sm btn-ghost" type="button" phx-click="cancel_edit">Cancel edit</button>
+              <.input field={@form[:title]} type="text" label={gettext("Title")} />
+              <.input field={@form[:year]} type="number" label={gettext("Year")} />
+              <button
+                class="btn btn-sm btn-primary"
+                type="submit"
+                phx-disable-with={gettext("Saving…")}
+              >
+                {gettext("Save")}
+              </button>
+              <button class="btn btn-sm btn-ghost" type="button" phx-click="cancel_edit">
+                {gettext("Cancel edit")}
+              </button>
             </.form>
 
             <.confirm_action
@@ -262,10 +279,10 @@ defmodule CinderWeb.LibraryLive do
               on_confirm="confirm_cancel_movie"
               on_cancel="dismiss_confirm"
               value={m.id}
-              confirm_label="Cancel movie"
+              confirm_label={gettext("Cancel movie")}
               variant="warning"
             >
-              <:caveat>Cancel this movie and remove its download?</:caveat>
+              <:caveat>{gettext("Cancel this movie and remove its download?")}</:caveat>
             </.confirm_action>
 
             <div :if={@confirming == {:movie, :delete, to_string(m.id)}} class="mt-2 space-y-2">
@@ -276,16 +293,16 @@ defmodule CinderWeb.LibraryLive do
                   phx-click="toggle_delete_files"
                   checked={@delete_files}
                 />
-                <span>Also delete the file from disk</span>
+                <span>{gettext("Also delete the file from disk")}</span>
               </label>
               <.confirm_action
                 id={"confirm-delete-movie-#{m.id}"}
                 on_confirm="confirm_delete_movie"
                 on_cancel="dismiss_confirm"
                 value={m.id}
-                confirm_label="Delete"
+                confirm_label={gettext("Delete")}
               >
-                <:caveat>Delete this movie's record?</:caveat>
+                <:caveat>{gettext("Delete this movie's record?")}</:caveat>
               </.confirm_action>
             </div>
           </li>
@@ -293,12 +310,12 @@ defmodule CinderWeb.LibraryLive do
       </section>
 
       <section class="mt-10">
-        <h2 class="pb-3 text-lg font-semibold">Series</h2>
+        <h2 class="pb-3 text-lg font-semibold">{gettext("Series")}</h2>
         <.empty_state
           :if={@series == []}
           icon="hero-tv"
-          title="No series added yet"
-          message="Add a show from Discover."
+          title={gettext("No series added yet")}
+          message={gettext("Add a show from Discover.")}
         />
         <div
           :if={@series != []}
@@ -308,7 +325,7 @@ defmodule CinderWeb.LibraryLive do
           <div :for={s <- @series} id={"series-row-#{s.id}"} class="space-y-2">
             <.link navigate={~p"/series/#{s.id}"} class="block">
               <.media_card poster_path={s.poster_path} title={s.title} year={s.year} type={:tv}>
-                <span class="link link-primary text-sm">Configure monitoring →</span>
+                <span class="link link-primary text-sm">{gettext("Configure monitoring →")}</span>
               </.media_card>
             </.link>
 
@@ -318,13 +335,13 @@ defmodule CinderWeb.LibraryLive do
                 class="btn btn-sm btn-warning"
                 phx-click="ask_cancel_series"
                 phx-value-id={s.id}
-              >Cancel</button>
+              >{gettext("Cancel")}</button>
               <button
                 type="button"
                 class="btn btn-sm btn-error"
                 phx-click="ask_delete_series"
                 phx-value-id={s.id}
-              >Delete</button>
+              >{gettext("Delete")}</button>
             </div>
 
             <.confirm_action
@@ -333,10 +350,10 @@ defmodule CinderWeb.LibraryLive do
               on_confirm="confirm_cancel_series"
               on_cancel="dismiss_confirm"
               value={s.id}
-              confirm_label="Cancel & unmonitor"
+              confirm_label={gettext("Cancel & unmonitor")}
               variant="warning"
             >
-              <:caveat>Cancel & unmonitor this series?</:caveat>
+              <:caveat>{gettext("Cancel & unmonitor this series?")}</:caveat>
             </.confirm_action>
 
             <div :if={@confirming == {:series, :delete, to_string(s.id)}} class="space-y-2">
@@ -347,16 +364,16 @@ defmodule CinderWeb.LibraryLive do
                   phx-click="toggle_delete_files"
                   checked={@delete_files}
                 />
-                <span>Also delete files from disk</span>
+                <span>{gettext("Also delete files from disk")}</span>
               </label>
               <.confirm_action
                 id={"confirm-delete-series-#{s.id}"}
                 on_confirm="confirm_delete_series"
                 on_cancel="dismiss_confirm"
                 value={s.id}
-                confirm_label="Delete"
+                confirm_label={gettext("Delete")}
               >
-                <:caveat>Delete this series and its seasons/episodes?</:caveat>
+                <:caveat>{gettext("Delete this series and its seasons/episodes?")}</:caveat>
               </.confirm_action>
             </div>
           </div>

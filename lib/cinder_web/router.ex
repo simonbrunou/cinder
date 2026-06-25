@@ -6,6 +6,7 @@ defmodule CinderWeb.Router do
   pipeline :browser do
     plug :accepts, ["html"]
     plug :fetch_session
+    plug CinderWeb.Locale
     plug :fetch_live_flash
     plug :put_root_layout, html: {CinderWeb.Layouts, :root}
     plug :protect_from_forgery
@@ -50,8 +51,11 @@ defmodule CinderWeb.Router do
   scope "/", CinderWeb do
     pipe_through :browser
 
+    get "/locale/:locale", LocaleController, :update
+
     live_session :authenticated,
       on_mount: [
+        {CinderWeb.Locale, :default},
         {CinderWeb.UserAuth, :require_authenticated},
         {CinderWeb.UserAuth, :require_setup},
         {CinderWeb.UserAuth, :current_path}
@@ -63,6 +67,7 @@ defmodule CinderWeb.Router do
 
     live_session :admin,
       on_mount: [
+        {CinderWeb.Locale, :default},
         {CinderWeb.UserAuth, :require_authenticated},
         {CinderWeb.UserAuth, :require_admin},
         {CinderWeb.UserAuth, :require_setup},
@@ -80,6 +85,7 @@ defmodule CinderWeb.Router do
 
     live_session :setup,
       on_mount: [
+        {CinderWeb.Locale, :default},
         {CinderWeb.UserAuth, :require_authenticated},
         {CinderWeb.UserAuth, :require_admin},
         {CinderWeb.UserAuth, :current_path}
@@ -121,6 +127,7 @@ defmodule CinderWeb.Router do
 
     live_session :require_authenticated_user,
       on_mount: [
+        {CinderWeb.Locale, :default},
         {CinderWeb.UserAuth, :require_authenticated},
         {CinderWeb.UserAuth, :current_path}
       ] do
@@ -136,6 +143,7 @@ defmodule CinderWeb.Router do
 
     live_session :current_user,
       on_mount: [
+        {CinderWeb.Locale, :default},
         {CinderWeb.UserAuth, :mount_current_scope},
         {CinderWeb.UserAuth, :current_path}
       ] do

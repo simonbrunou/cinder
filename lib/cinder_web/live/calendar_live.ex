@@ -49,15 +49,15 @@ defmodule CinderWeb.CalendarLive do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.header>
-        Upcoming
-        <:subtitle>Monitored episodes airing in the next 90 days.</:subtitle>
+        {gettext("Upcoming")}
+        <:subtitle>{gettext("Monitored episodes airing in the next 90 days.")}</:subtitle>
       </.header>
 
       <.empty_state
         :if={@rows == []}
         icon="hero-calendar"
-        title="Nothing upcoming"
-        message="Monitored episodes in the next 90 days will appear here."
+        title={gettext("Nothing upcoming")}
+        message={gettext("Monitored episodes in the next 90 days will appear here.")}
       />
 
       <ul :if={@rows != []} id="calendar-list" class="space-y-2">

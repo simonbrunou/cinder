@@ -41,7 +41,9 @@ defmodule CinderWeb.DashboardLive do
     do: {:noreply, assign(socket, health: results)}
 
   def handle_async(:health, {:exit, reason}, socket),
-    do: {:noreply, assign(socket, health: [%{label: "Health check", status: {:error, reason}}])}
+    do:
+      {:noreply,
+       assign(socket, health: [%{label: gettext("Health check"), status: {:error, reason}}])}
 
   @impl true
   def handle_event("recheck_health", _params, socket),
@@ -50,7 +52,7 @@ defmodule CinderWeb.DashboardLive do
   def handle_event("approve", %{"id" => id}, socket) do
     with %{} = req <- find_pending(socket, id),
          {:error, _} <- Requests.approve_request(req, socket.assigns.current_scope.user) do
-      {:noreply, put_flash(socket, :error, "Couldn't approve that request.")}
+      {:noreply, put_flash(socket, :error, gettext("Couldn't approve that request."))}
     else
       _ -> {:noreply, socket}
     end
@@ -66,7 +68,7 @@ defmodule CinderWeb.DashboardLive do
     with %{} = req <- find_pending(socket, id),
          {:error, _} <- Requests.deny_request(req, socket.assigns.current_scope.user, reason) do
       {:noreply,
-       socket |> assign(denying: nil) |> put_flash(:error, "Couldn't deny that request.")}
+       socket |> assign(denying: nil) |> put_flash(:error, gettext("Couldn't deny that request."))}
     else
       _ -> {:noreply, assign(socket, denying: nil)}
     end
@@ -129,32 +131,35 @@ defmodule CinderWeb.DashboardLive do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.header>
-        Dashboard<:subtitle>Pipeline at a glance.</:subtitle>
+        {gettext("Dashboard")}
+        <:subtitle>{gettext("Pipeline at a glance.")}</:subtitle>
       </.header>
 
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <.stat_card
-          label="Movies available"
+          label={gettext("Movies available")}
           value={@stats.movies_available}
-          suffix={"of #{@stats.movies_total} total"}
+          suffix={gettext("of %{count} total", count: @stats.movies_total)}
           icon="hero-film"
         />
         <.stat_card
-          label="In pipeline"
+          label={gettext("In pipeline")}
           value={@stats.in_pipeline}
-          suffix={@stats.parked > 0 && "#{@stats.parked} parked"}
+          suffix={@stats.parked > 0 && gettext("%{count} parked", count: @stats.parked)}
           icon="hero-arrow-path"
         />
         <.stat_card
-          label="TV wanted"
+          label={gettext("TV wanted")}
           value={@stats.tv_wanted}
-          suffix={"#{@stats.series_total} series"}
+          suffix={gettext("%{count} series", count: @stats.series_total)}
           icon="hero-tv"
         />
         <.stat_card
-          label="Pending requests"
+          label={gettext("Pending requests")}
           value={length(@pending)}
-          suffix={@stats.downloading > 0 && "#{@stats.downloading} downloading"}
+          suffix={
+            @stats.downloading > 0 && gettext("%{count} downloading", count: @stats.downloading)
+          }
           icon="hero-inbox-arrow-down"
         />
       </div>
@@ -162,14 +167,16 @@ defmodule CinderWeb.DashboardLive do
       <div class="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
         <section>
           <div class="mb-3 flex items-center justify-between">
-            <h2 class="text-lg font-semibold">Pending approvals</h2>
-            <.link navigate={~p"/requests"} class="link link-hover text-sm">All requests →</.link>
+            <h2 class="text-lg font-semibold">{gettext("Pending approvals")}</h2>
+            <.link navigate={~p"/requests"} class="link link-hover text-sm">
+              {gettext("All requests →")}
+            </.link>
           </div>
           <.empty_state
             :if={@pending == []}
             icon="hero-check-circle"
-            title="Nothing to approve"
-            message="New requests appear here."
+            title={gettext("Nothing to approve")}
+            message={gettext("New requests appear here.")}
           />
           <ul :if={@pending != []} class="space-y-3">
             <li :for={r <- @pending} id={"pending-#{r.id}"} class="card bg-base-200 p-4">
@@ -183,7 +190,11 @@ defmodule CinderWeb.DashboardLive do
                 <div class="min-w-0 flex-1">
                   <p class="truncate font-medium">
                     {if r.target_type == "season",
-                      do: "#{r.title} — Season #{r.season_number}",
+                      do:
+                        gettext("%{title} — Season %{number}",
+                          title: r.title,
+                          number: r.season_number
+                        ),
                       else: r.title}
                     <span :if={r.year} class="text-base-content/50">({r.year})</span>
                   </p>
@@ -196,9 +207,9 @@ defmodule CinderWeb.DashboardLive do
                   class="btn btn-primary btn-sm"
                   phx-click="approve"
                   phx-value-id={r.id}
-                  phx-disable-with="Approving…"
+                  phx-disable-with={gettext("Approving…")}
                 >
-                  Approve
+                  {gettext("Approve")}
                 </button>
                 <button
                   :if={@denying != to_string(r.id)}
@@ -206,7 +217,7 @@ defmodule CinderWeb.DashboardLive do
                   phx-click="start_deny"
                   phx-value-id={r.id}
                 >
-                  Deny
+                  {gettext("Deny")}
                 </button>
                 <form
                   :if={@denying == to_string(r.id)}
@@ -217,14 +228,18 @@ defmodule CinderWeb.DashboardLive do
                   <input
                     type="text"
                     name="reason"
-                    placeholder="Reason (optional)"
+                    placeholder={gettext("Reason (optional)")}
                     class="input input-sm input-bordered flex-1"
                   />
-                  <button type="submit" class="btn btn-error btn-sm" phx-disable-with="Denying…">
-                    Confirm deny
+                  <button
+                    type="submit"
+                    class="btn btn-error btn-sm"
+                    phx-disable-with={gettext("Denying…")}
+                  >
+                    {gettext("Confirm deny")}
                   </button>
                   <button type="button" class="btn btn-ghost btn-sm" phx-click="dismiss_deny">
-                    Cancel
+                    {gettext("Cancel")}
                   </button>
                 </form>
               </div>
@@ -235,17 +250,17 @@ defmodule CinderWeb.DashboardLive do
         <div class="space-y-6">
           <section>
             <div class="mb-3 flex items-center justify-between">
-              <h2 class="text-lg font-semibold">Service health</h2>
+              <h2 class="text-lg font-semibold">{gettext("Service health")}</h2>
               <button
                 class="btn btn-xs btn-ghost"
                 phx-click="recheck_health"
-                phx-disable-with="Checking…"
-                aria-label="Recheck service health"
+                phx-disable-with={gettext("Checking…")}
+                aria-label={gettext("Recheck service health")}
               >
-                Recheck
+                {gettext("Recheck")}
               </button>
             </div>
-            <.spinner :if={@health == :loading} label="Checking services…" />
+            <.spinner :if={@health == :loading} label={gettext("Checking services…")} />
             <ul
               :if={@health != :loading}
               id="dashboard-health"
@@ -262,14 +277,16 @@ defmodule CinderWeb.DashboardLive do
 
           <section>
             <div class="mb-3 flex items-center justify-between">
-              <h2 class="text-lg font-semibold">Recent activity</h2>
-              <.link navigate={~p"/activity"} class="link link-hover text-sm">View all →</.link>
+              <h2 class="text-lg font-semibold">{gettext("Recent activity")}</h2>
+              <.link navigate={~p"/activity"} class="link link-hover text-sm">
+                {gettext("View all →")}
+              </.link>
             </div>
             <.empty_state
               :if={@recent == []}
               icon="hero-film"
-              title="No activity yet"
-              message="Request a movie to get started."
+              title={gettext("No activity yet")}
+              message={gettext("Request a movie to get started.")}
             />
             <ul :if={@recent != []} class="space-y-2">
               <li :for={m <- @recent} class="flex items-center gap-3">

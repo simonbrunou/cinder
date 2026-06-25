@@ -109,6 +109,12 @@ config :logger, :default_formatter,
 # Use Jason for JSON parsing in Phoenix
 config :phoenix, :json_library, Jason
 
+# i18n: English + French. The active locale is resolved per request/socket by
+# CinderWeb.Locale (session → Accept-Language → default). `en` is the source
+# language (msgids), so the default-locale test suite keeps asserting English
+# with no translation needed; French lives in priv/gettext/fr.
+config :gettext, :default_locale, "en"
+
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.
 import_config "#{config_env()}.exs"

@@ -39,7 +39,7 @@ defmodule CinderWeb.Layouts do
       href="#main"
       class="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:m-2 focus:btn focus:btn-primary"
     >
-      Skip to content
+      {gettext("Skip to content")}
     </a>
 
     <div :if={@signed_in?} class="drawer lg:drawer-open">
@@ -47,12 +47,12 @@ defmodule CinderWeb.Layouts do
         id="nav-drawer"
         type="checkbox"
         class="drawer-toggle"
-        aria-label="Toggle navigation menu"
+        aria-label={gettext("Toggle navigation menu")}
       />
 
       <div class="drawer-content flex min-h-screen flex-col">
         <header class="navbar border-b border-base-300/60 bg-base-100/80 backdrop-blur lg:hidden">
-          <label for="nav-drawer" class="btn btn-ghost btn-square" aria-label="Open menu">
+          <label for="nav-drawer" class="btn btn-ghost btn-square" aria-label={gettext("Open menu")}>
             <.icon name="hero-bars-3" class="size-6" />
           </label>
           <span class="font-display text-lg font-bold tracking-wide">
@@ -66,7 +66,7 @@ defmodule CinderWeb.Layouts do
       </div>
 
       <div class="drawer-side z-20">
-        <label for="nav-drawer" aria-label="Close menu" class="drawer-overlay"></label>
+        <label for="nav-drawer" aria-label={gettext("Close menu")} class="drawer-overlay"></label>
         <aside class="flex min-h-screen w-64 flex-col gap-2 border-r border-base-300/60 bg-base-200 p-4">
           <a
             href={if @admin?, do: ~p"/dashboard", else: ~p"/"}
@@ -78,61 +78,61 @@ defmodule CinderWeb.Layouts do
           </a>
 
           <ul class="menu w-full gap-1 px-0">
-            <li class="menu-title">Everyone</li>
+            <li class="menu-title">{gettext("Everyone")}</li>
             <.nav_item
               navigate={~p"/"}
-              label="Discover"
+              label={gettext("Discover")}
               icon="hero-magnifying-glass"
               current_path={@current_path}
             />
             <.nav_item
               navigate={~p"/my-requests"}
-              label="My requests"
+              label={gettext("My requests")}
               icon="hero-bookmark"
               current_path={@current_path}
             />
 
             <%= if @admin? do %>
-              <li class="menu-title mt-2">Admin</li>
+              <li class="menu-title mt-2">{gettext("Admin")}</li>
               <.nav_item
                 navigate={~p"/dashboard"}
-                label="Dashboard"
+                label={gettext("Dashboard")}
                 icon="hero-squares-2x2"
                 current_path={@current_path}
               />
               <.nav_item
                 navigate={~p"/requests"}
-                label="Requests"
+                label={gettext("Requests")}
                 icon="hero-inbox-arrow-down"
                 current_path={@current_path}
               />
               <.nav_item
                 navigate={~p"/library"}
-                label="Library"
+                label={gettext("Library")}
                 icon="hero-rectangle-stack"
                 current_path={@current_path}
               />
               <.nav_item
                 navigate={~p"/activity"}
-                label="Activity"
+                label={gettext("Activity")}
                 icon="hero-bolt"
                 current_path={@current_path}
               />
               <.nav_item
                 navigate={~p"/calendar"}
-                label="Calendar"
+                label={gettext("Calendar")}
                 icon="hero-calendar"
                 current_path={@current_path}
               />
               <.nav_item
                 navigate={~p"/settings"}
-                label="Settings"
+                label={gettext("Settings")}
                 icon="hero-cog-6-tooth"
                 current_path={@current_path}
               />
               <.nav_item
                 navigate={~p"/users"}
-                label="Users"
+                label={gettext("Users")}
                 icon="hero-users"
                 current_path={@current_path}
               />
@@ -140,20 +140,25 @@ defmodule CinderWeb.Layouts do
           </ul>
 
           <div class="mt-auto flex flex-col gap-3 border-t border-base-300/60 pt-3">
-            <.theme_toggle />
+            <div class="flex items-center justify-between gap-2">
+              <.theme_toggle />
+              <.locale_switcher />
+            </div>
             <div class="px-2 text-xs text-base-content/60 truncate">
               {@current_scope.user.email}
             </div>
             <ul class="menu w-full gap-1 px-0">
               <.nav_item
                 navigate={~p"/users/settings"}
-                label="Account"
+                label={gettext("Account")}
                 icon="hero-user-circle"
                 current_path={@current_path}
               />
               <li>
                 <.link href={~p"/users/log-out"} method="delete" class="flex items-center gap-3">
-                  <.icon name="hero-arrow-right-start-on-rectangle" class="size-5" /> Log out
+                  <.icon name="hero-arrow-right-start-on-rectangle" class="size-5" /> {gettext(
+                    "Log out"
+                  )}
                 </.link>
               </li>
             </ul>
@@ -171,6 +176,9 @@ defmodule CinderWeb.Layouts do
         CIN<span class="text-primary">DER</span>
       </div>
       {render_slot(@inner_block)}
+      <div class="mt-6 flex justify-center">
+        <.locale_switcher />
+      </div>
     </main>
 
     <.flash_group flash={@flash} />
@@ -248,6 +256,28 @@ defmodule CinderWeb.Layouts do
   end
 
   @doc """
+  Language switcher. Plain links (no JS) so it also works on logged-out pages; the
+  active locale is read from Gettext in the rendering process (set by the Locale
+  plug/on_mount), so no assign needs threading through every page.
+  """
+  def locale_switcher(assigns) do
+    assigns = assign(assigns, :current, Gettext.get_locale(CinderWeb.Gettext))
+
+    ~H"""
+    <div class="join" role="group" aria-label={gettext("Language")}>
+      <.link
+        :for={loc <- CinderWeb.Locale.locales()}
+        href={~p"/locale/#{loc}"}
+        aria-current={loc == @current && "true"}
+        class={["btn btn-xs join-item uppercase", loc == @current && "btn-active btn-primary"]}
+      >
+        {loc}
+      </.link>
+    </div>
+    """
+  end
+
+  @doc """
   Provides dark vs light theme toggle based on themes defined in app.css.
 
   See <head> in root.html.heex which applies the theme before page load.
@@ -259,7 +289,7 @@ defmodule CinderWeb.Layouts do
 
       <button
         type="button"
-        aria-label="Use system theme"
+        aria-label={gettext("Use system theme")}
         class="flex items-center justify-center min-h-11 w-1/3 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-primary"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="system"
@@ -269,7 +299,7 @@ defmodule CinderWeb.Layouts do
 
       <button
         type="button"
-        aria-label="Use light theme"
+        aria-label={gettext("Use light theme")}
         class="flex items-center justify-center min-h-11 w-1/3 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-primary"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="light"
@@ -279,7 +309,7 @@ defmodule CinderWeb.Layouts do
 
       <button
         type="button"
-        aria-label="Use dark theme"
+        aria-label={gettext("Use dark theme")}
         class="flex items-center justify-center min-h-11 w-1/3 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-primary"
         phx-click={JS.dispatch("phx:set-theme")}
         data-phx-theme="dark"

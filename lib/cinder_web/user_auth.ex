@@ -2,6 +2,7 @@ defmodule CinderWeb.UserAuth do
   @moduledoc false
 
   use CinderWeb, :verified_routes
+  use Gettext, backend: CinderWeb.Gettext
 
   import Plug.Conn
   import Phoenix.Controller
@@ -225,7 +226,7 @@ defmodule CinderWeb.UserAuth do
     else
       socket =
         socket
-        |> Phoenix.LiveView.put_flash(:error, "You must log in to access this page.")
+        |> Phoenix.LiveView.put_flash(:error, gettext("You must log in to access this page."))
         |> Phoenix.LiveView.redirect(to: ~p"/users/log-in")
 
       {:halt, socket}
@@ -240,7 +241,10 @@ defmodule CinderWeb.UserAuth do
     else
       socket =
         socket
-        |> Phoenix.LiveView.put_flash(:error, "You must re-authenticate to access this page.")
+        |> Phoenix.LiveView.put_flash(
+          :error,
+          gettext("You must re-authenticate to access this page.")
+        )
         |> Phoenix.LiveView.redirect(to: ~p"/users/log-in")
 
       {:halt, socket}
@@ -253,7 +257,7 @@ defmodule CinderWeb.UserAuth do
     else
       socket =
         socket
-        |> Phoenix.LiveView.put_flash(:error, "You don't have access to that page.")
+        |> Phoenix.LiveView.put_flash(:error, gettext("You don't have access to that page."))
         |> Phoenix.LiveView.redirect(to: ~p"/")
 
       {:halt, socket}
@@ -271,7 +275,7 @@ defmodule CinderWeb.UserAuth do
       true ->
         socket =
           socket
-          |> Phoenix.LiveView.put_flash(:error, "Setup in progress — try again shortly.")
+          |> Phoenix.LiveView.put_flash(:error, gettext("Setup in progress — try again shortly."))
           |> Phoenix.LiveView.redirect(to: ~p"/users/log-in")
 
         {:halt, socket}

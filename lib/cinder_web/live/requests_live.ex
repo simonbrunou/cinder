@@ -25,7 +25,12 @@ defmodule CinderWeb.RequestsLive do
 
     case req && Requests.approve_request(req, socket.assigns.current_scope.user) do
       {:error, _reason} ->
-        {:noreply, put_flash(socket, :error, "Couldn't approve that request — please try again.")}
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Couldn't approve that request — please try again.")
+         )}
 
       _ ->
         {:noreply, socket}
@@ -55,9 +60,9 @@ defmodule CinderWeb.RequestsLive do
 
     socket =
       case req && Requests.delete_request(req, socket.assigns.current_scope.user) do
-        {:ok, _} -> put_flash(socket, :info, "Request deleted.")
+        {:ok, _} -> put_flash(socket, :info, gettext("Request deleted."))
         nil -> socket
-        _ -> put_flash(socket, :error, "Couldn't delete that request.")
+        _ -> put_flash(socket, :error, gettext("Couldn't delete that request."))
       end
 
     {:noreply, assign(socket, confirming_delete: nil, requests: Requests.list_requests())}
@@ -83,7 +88,8 @@ defmodule CinderWeb.RequestsLive do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.header>
-        Requests<:subtitle>Approve, deny, or delete catalog requests.</:subtitle>
+        {gettext("Requests")}
+        <:subtitle>{gettext("Approve, deny, or delete catalog requests.")}</:subtitle>
       </.header>
 
       <ul :if={@requests != []} class="space-y-3">
@@ -101,7 +107,11 @@ defmodule CinderWeb.RequestsLive do
             <div class="flex-1">
               <span class="font-semibold">
                 {if r.target_type == "season",
-                  do: "#{r.title} — Season #{r.season_number}",
+                  do:
+                    gettext("%{title} — Season %{number}",
+                      title: r.title,
+                      number: r.season_number
+                    ),
                   else: r.title}
               </span>
               <span :if={r.year} class="opacity-60">({r.year})</span>
@@ -113,9 +123,9 @@ defmodule CinderWeb.RequestsLive do
               class="btn btn-primary btn-sm"
               phx-click="approve"
               phx-value-id={r.id}
-              phx-disable-with="Approving…"
+              phx-disable-with={gettext("Approving…")}
             >
-              Approve
+              {gettext("Approve")}
             </button>
             <form
               :if={r.status == :pending and @denying == to_string(r.id)}
@@ -126,10 +136,16 @@ defmodule CinderWeb.RequestsLive do
               <input
                 type="text"
                 name="reason"
-                placeholder="Reason"
+                placeholder={gettext("Reason")}
                 class="input input-sm input-bordered"
               />
-              <button class="btn btn-error btn-sm" type="submit" phx-disable-with="Denying…">Confirm deny</button>
+              <button
+                class="btn btn-error btn-sm"
+                type="submit"
+                phx-disable-with={gettext("Denying…")}
+              >
+                {gettext("Confirm deny")}
+              </button>
             </form>
             <button
               :if={r.status == :pending and @denying != to_string(r.id)}
@@ -137,7 +153,7 @@ defmodule CinderWeb.RequestsLive do
               phx-click="start_deny"
               phx-value-id={r.id}
             >
-              Deny
+              {gettext("Deny")}
             </button>
             <button
               :if={@confirming_delete != to_string(r.id)}
@@ -145,7 +161,7 @@ defmodule CinderWeb.RequestsLive do
               phx-click="start_delete"
               phx-value-id={r.id}
             >
-              Delete
+              {gettext("Delete")}
             </button>
           </div>
 
@@ -155,12 +171,12 @@ defmodule CinderWeb.RequestsLive do
             on_confirm="delete"
             on_cancel="cancel_delete"
             value={r.id}
-            confirm_label="Delete request"
+            confirm_label={gettext("Delete request")}
           >
             <:caveat>
-              Deleting a request does not remove any movie or series it already created —
-              that catalog row stays. If this request was denied or approved, the same title
-              can be requested again afterwards.
+              {gettext(
+                "Deleting a request does not remove any movie or series it already created — that catalog row stays. If this request was denied or approved, the same title can be requested again afterwards."
+              )}
             </:caveat>
           </.confirm_action>
         </li>
@@ -168,8 +184,8 @@ defmodule CinderWeb.RequestsLive do
       <.empty_state
         :if={@requests == []}
         icon="hero-inbox-arrow-down"
-        title="No requests"
-        message="Pending requests will appear here for approval."
+        title={gettext("No requests")}
+        message={gettext("Pending requests will appear here for approval.")}
       />
     </Layouts.app>
     """

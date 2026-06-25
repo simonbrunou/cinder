@@ -33,14 +33,15 @@ defmodule CinderWeb.MyRequestsLive do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.header>
-        My requests<:subtitle>Track what you've asked for.</:subtitle>
+        {gettext("My requests")}
+        <:subtitle>{gettext("Track what you've asked for.")}</:subtitle>
       </.header>
 
       <.empty_state
         :if={@requests == []}
         icon="hero-bookmark"
-        title="No requests yet"
-        message="Search the catalog to request a title."
+        title={gettext("No requests yet")}
+        message={gettext("Search the catalog to request a title.")}
       />
 
       <ul id="my-requests" class="space-y-3">
@@ -48,7 +49,11 @@ defmodule CinderWeb.MyRequestsLive do
           <div class="flex items-center gap-3">
             <span class="font-semibold">
               {if r.target_type == "season",
-                do: "#{r.title} — Season #{r.season_number}",
+                do:
+                  gettext("%{title} — Season %{number}",
+                    title: r.title,
+                    number: r.season_number
+                  ),
                 else: r.title}
             </span>
             <span :if={r.year} class="text-base-content/60">({r.year})</span>

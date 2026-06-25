@@ -1,16 +1,16 @@
 # Graph Report - cinder  (2026-06-25)
 
 ## Corpus Check
-- 259 files · ~267,567 words
+- 262 files · ~268,760 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 2007 nodes · 2329 edges · 250 communities (148 shown, 102 thin omitted)
-- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 39 edges (avg confidence: 0.8)
+- 2026 nodes · 2354 edges · 252 communities (149 shown, 103 thin omitted)
+- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 40 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `ab2e663f`
+- Built from commit: `42dc963d`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -252,6 +252,8 @@
 - [[_COMMUNITY_Community 247|Community 247]]
 - [[_COMMUNITY_Community 248|Community 248]]
 - [[_COMMUNITY_Community 249|Community 249]]
+- [[_COMMUNITY_Community 250|Community 250]]
+- [[_COMMUNITY_Community 251|Community 251]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `Cinder.Catalog` - 95 edges
@@ -277,7 +279,7 @@
 - `change()` --calls--> `table()`  [INFERRED]
   priv/repo/migrations/20260619094117_add_import_attempts_to_movies.exs → lib/cinder_web/components/core_components.ex
 
-## Communities (250 total, 102 thin omitted)
+## Communities (252 total, 103 thin omitted)
 
 ### Community 0 - "Community 0"
 Cohesion: 0.08
@@ -376,8 +378,8 @@ Cohesion: 0.12
 Nodes (15): Admin CRUD on entities — design, Approach (A — extend in place, add the two missing pages), Architecture & routing, Authorization & safety guards, Context API additions, Deferred (own future spec), Delete / cancel UX, Goal & decisions (+7 more)
 
 ### Community 24 - "Community 24"
-Cohesion: 0.19
-Nodes (10): CinderWeb.DiscoverLive, add(), assign_movie_status(), assign_request_state(), handle_event(), handle_info(), latest_request_status(), mount() (+2 more)
+Cohesion: 0.14
+Nodes (14): CinderWeb.LocaleController, back_path(), maybe_put_locale(), update(), CinderWeb.DiscoverLive, add(), assign_movie_status(), assign_request_state() (+6 more)
 
 ### Community 25 - "Community 25"
 Cohesion: 0.12
@@ -811,6 +813,10 @@ Nodes (8): Commit, Concerns, LiveView changes (`lib/cinder_web/live/series_detai
 Cohesion: 0.33
 Nodes (6): delete_episode_file(), do_delete_episode_file_txn(), maybe_unmonitor(), series_id_for_season(), set_episode_monitored(), transition_episode()
 
+### Community 244 - "Community 244"
+Cohesion: 0.29
+Nodes (7): CinderWeb.Locale, call(), header_locale(), maybe_persist(), on_mount(), parse_accept_language(), supported()
+
 ### Community 247 - "Community 247"
 Cohesion: 0.29
 Nodes (6): CHANGELOG.md, Commit, docs/operating.md, graphify update, mix test, Task 8 Report — Docs + graph refresh
@@ -820,24 +826,24 @@ Cohesion: 0.40
 Nodes (4): Changes, Full suite, RED → GREEN evidence, Review Fix Report — PR #39 delete-files-on-disk
 
 ## Knowledge Gaps
-- **706 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+701 more)
+- **707 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+702 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **102 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **103 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `Cinder.Catalog` connect `Community 3` to `Community 37`, `Community 71`, `Community 59`, `Community 147`, `Community 243`, `Community 91`, `Community 28`?**
-  _High betweenness centrality (0.003) - this node is a cross-community bridge._
-- **Why does `table()` connect `Community 74` to `Community 153`, `Community 154`, `Community 142`, `Community 241`, `Community 49`, `Community 145`, `Community 244`, `Community 148`, `Community 22`, `Community 149`, `Community 150`, `Community 249`, `Community 146`, `Community 152`, `Community 151`?**
+  _High betweenness centrality (0.004) - this node is a cross-community bridge._
+- **Why does `table()` connect `Community 74` to `Community 153`, `Community 154`, `Community 142`, `Community 241`, `Community 49`, `Community 145`, `Community 148`, `Community 149`, `Community 22`, `Community 150`, `Community 151`, `Community 249`, `Community 250`, `Community 146`, `Community 152`?**
+  _High betweenness centrality (0.002) - this node is a cross-community bridge._
+- **Why does `CinderWeb.CoreComponents` connect `Community 22` to `Community 74`?**
   _High betweenness centrality (0.001) - this node is a cross-community bridge._
 - **What connects `tidewave`, `$schema`, `erlang` to the rest of the system?**
-  _706 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _707 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**
   _Cohesion score 0.07547169811320754 - nodes in this community are weakly interconnected._
 - **Should `Community 1` be split into smaller, more focused modules?**
   _Cohesion score 0.04830917874396135 - nodes in this community are weakly interconnected._
 - **Should `Community 2` be split into smaller, more focused modules?**
   _Cohesion score 0.05 - nodes in this community are weakly interconnected._
-- **Should `Community 3` be split into smaller, more focused modules?**
-  _Cohesion score 0.08045977011494253 - nodes in this community are weakly interconnected._

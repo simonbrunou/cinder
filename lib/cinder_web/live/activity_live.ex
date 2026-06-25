@@ -68,7 +68,7 @@ defmodule CinderWeb.ActivityLive do
     {:noreply,
      socket
      |> assign(confirming: nil, grabs: Catalog.list_grabs())
-     |> put_flash(:info, "Grab deleted.")}
+     |> put_flash(:info, gettext("Grab deleted."))}
   end
 
   # Client-controlled payloads — ignore anything unmatched rather than crash.
@@ -91,16 +91,17 @@ defmodule CinderWeb.ActivityLive do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.header>
-        Activity<:subtitle>Live pipeline and in-flight downloads.</:subtitle>
+        {gettext("Activity")}
+        <:subtitle>{gettext("Live pipeline and in-flight downloads.")}</:subtitle>
       </.header>
 
       <section class="mt-2">
-        <h2 class="pb-3 text-lg font-semibold">Movie pipeline</h2>
+        <h2 class="pb-3 text-lg font-semibold">{gettext("Movie pipeline")}</h2>
         <.empty_state
           :if={@movies == []}
           icon="hero-film"
-          title="No movies yet"
-          message="Requested movies move through here."
+          title={gettext("No movies yet")}
+          message={gettext("Requested movies move through here.")}
         />
         <ul :if={@movies != []} id="activity-movies" class="space-y-2">
           <li
@@ -118,21 +119,21 @@ defmodule CinderWeb.ActivityLive do
               class="btn btn-xs btn-ghost"
               phx-click="retry"
               phx-value-id={m.id}
-              phx-disable-with="Retrying…"
+              phx-disable-with={gettext("Retrying…")}
             >
-              Retry
+              {gettext("Retry")}
             </button>
           </li>
         </ul>
       </section>
 
       <section class="mt-10">
-        <h2 class="pb-3 text-lg font-semibold">Downloads</h2>
+        <h2 class="pb-3 text-lg font-semibold">{gettext("Downloads")}</h2>
         <.empty_state
           :if={@grabs == []}
           icon="hero-arrow-down-tray"
-          title="No active downloads"
-          message="In-flight TV downloads show here."
+          title={gettext("No active downloads")}
+          message={gettext("In-flight TV downloads show here.")}
         />
         <ul :if={@grabs != []} id="activity-grabs" class="space-y-3">
           <li :for={g <- @grabs} id={"grab-#{g.id}"} class="card bg-base-200 p-4">
@@ -146,9 +147,9 @@ defmodule CinderWeb.ActivityLive do
                 class="btn btn-xs btn-error ml-auto"
                 phx-click="ask_delete"
                 phx-value-id={g.id}
-                phx-disable-with="Deleting…"
+                phx-disable-with={gettext("Deleting…")}
               >
-                Delete
+                {gettext("Delete")}
               </button>
             </div>
             <.confirm_action
@@ -157,9 +158,9 @@ defmodule CinderWeb.ActivityLive do
               on_confirm="confirm_delete"
               on_cancel="dismiss_confirm"
               value={g.id}
-              confirm_label="Delete"
+              confirm_label={gettext("Delete")}
             >
-              <:caveat>Delete this grab? Its episodes are unlinked.</:caveat>
+              <:caveat>{gettext("Delete this grab? Its episodes are unlinked.")}</:caveat>
             </.confirm_action>
           </li>
         </ul>

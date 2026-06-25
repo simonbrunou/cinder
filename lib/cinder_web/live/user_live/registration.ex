@@ -11,16 +11,16 @@ defmodule CinderWeb.UserLive.Registration do
       <div class="mx-auto max-w-sm">
         <div class="text-center">
           <.header>
-            Register for an account
+            {gettext("Register for an account")}
             <:subtitle>
-              Already registered?
+              {gettext("Already registered?")}
               <.link
                 navigate={~p"/users/log-in"}
                 class="font-semibold text-primary hover:underline focus-visible:underline"
               >
-                Log in
+                {gettext("Log in")}
               </.link>
-              to your account now.
+              {gettext("to your account now.")}
             </:subtitle>
           </.header>
         </div>
@@ -36,7 +36,7 @@ defmodule CinderWeb.UserLive.Registration do
           <.input
             field={@form[:email]}
             type="email"
-            label="Email"
+            label={gettext("Email")}
             autocomplete="username"
             spellcheck="false"
             required
@@ -45,20 +45,20 @@ defmodule CinderWeb.UserLive.Registration do
           <.input
             field={@form[:password]}
             type="password"
-            label="Password"
+            label={gettext("Password")}
             autocomplete="new-password"
             required
           />
           <.input
             field={@form[:password_confirmation]}
             type="password"
-            label="Confirm password"
+            label={gettext("Confirm password")}
             autocomplete="new-password"
             required
           />
 
-          <.button phx-disable-with="Creating account..." class="btn btn-primary w-full">
-            Create an account
+          <.button phx-disable-with={gettext("Creating account...")} class="btn btn-primary w-full">
+            {gettext("Create an account")}
           </.button>
         </.form>
       </div>
@@ -85,7 +85,7 @@ defmodule CinderWeb.UserLive.Registration do
       {:ok, _user} ->
         {:noreply,
          socket
-         |> put_flash(:info, "Account created.")
+         |> put_flash(:info, gettext("Account created."))
          |> assign(trigger_submit: true)
          |> assign(form: to_form(user_params, as: "user"))}
 

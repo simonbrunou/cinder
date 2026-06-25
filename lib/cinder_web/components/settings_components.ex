@@ -6,6 +6,7 @@ defmodule CinderWeb.SettingsComponents do
   (a `%{service_key => :ok | {:error, term()}}` map).
   """
   use Phoenix.Component
+  use Gettext, backend: CinderWeb.Gettext
 
   import CinderWeb.CoreComponents, only: [status_badge: 1]
 
@@ -24,7 +25,7 @@ defmodule CinderWeb.SettingsComponents do
 
       <div :if={group == :media_server} class="form-control mb-2">
         <label class="label" for="media_server_type">
-          <span class="label-text">Media server type</span>
+          <span class="label-text">{gettext("Media server type")}</span>
         </label>
         <select id="media_server_type" name="media_server_type" class="select w-full">
           <option
@@ -54,7 +55,9 @@ defmodule CinderWeb.SettingsComponents do
       <div :if={group == :library} class="space-y-2">
         <div :for={%{kind: kind, label: kind_label} <- Settings.library_kinds()} class="form-control">
           <label class="label" for={Settings.library_path_key(kind)}>
-            <span class="label-text">{kind_label} library path (where {kind_label} are hardlinked)</span>
+            <span class="label-text">{gettext("%{kind} library path (where %{kind} are hardlinked)",
+              kind: kind_label
+            )}</span>
           </label>
           <input
             type="text"
@@ -67,8 +70,9 @@ defmodule CinderWeb.SettingsComponents do
           />
         </div>
         <p class="mt-1 text-xs opacity-70">
-          A separate root per library, so Jellyfin/Plex can point distinct libraries at each.
-          Required even if they share a folder — enter the same path.
+          {gettext(
+            "A separate root per library, so Jellyfin/Plex can point distinct libraries at each. Required even if they share a folder — enter the same path."
+          )}
         </p>
 
         <div :if={@show_move_on_import}>
@@ -81,11 +85,12 @@ defmodule CinderWeb.SettingsComponents do
               checked={@form.values["move_on_import"]}
               class="checkbox"
             />
-            <span class="label-text">Remove download after a Usenet import</span>
+            <span class="label-text">{gettext("Remove download after a Usenet import")}</span>
           </label>
           <p class="mt-1 text-xs opacity-70">
-            After a Usenet import, delete the original from the download client. Ensure your library
-            is a separate folder from your downloads. Torrents are never auto-removed (seeding survives).
+            {gettext(
+              "After a Usenet import, delete the original from the download client. Ensure your library is a separate folder from your downloads. Torrents are never auto-removed (seeding survives)."
+            )}
           </p>
         </div>
       </div>
@@ -95,7 +100,7 @@ defmodule CinderWeb.SettingsComponents do
           <p class="text-sm font-medium">{kind_label}</p>
           <div class="form-control">
             <label class="label" for={Settings.min_size_key(kind)}>
-              <span class="label-text">Min size (GB)</span>
+              <span class="label-text">{gettext("Min size (GB)")}</span>
             </label>
             <input
               type="text"
@@ -109,7 +114,7 @@ defmodule CinderWeb.SettingsComponents do
           </div>
           <div class="form-control">
             <label class="label" for={Settings.max_size_key(kind)}>
-              <span class="label-text">Max size (GB)</span>
+              <span class="label-text">{gettext("Max size (GB)")}</span>
             </label>
             <input
               type="text"
@@ -123,22 +128,23 @@ defmodule CinderWeb.SettingsComponents do
           </div>
           <div class="form-control">
             <label class="label" for={Settings.preferred_resolutions_key(kind)}>
-              <span class="label-text">Preferred resolutions (comma-separated)</span>
+              <span class="label-text">{gettext("Preferred resolutions (comma-separated)")}</span>
             </label>
             <input
               type="text"
               id={Settings.preferred_resolutions_key(kind)}
               name={Settings.preferred_resolutions_key(kind)}
               value={@form.values[Settings.preferred_resolutions_key(kind)]}
-              placeholder="1080p, 720p"
+              placeholder={gettext("1080p, 720p")}
               autocomplete="off"
               class="input w-full"
             />
           </div>
         </div>
         <p class="mt-1 text-xs opacity-70">
-          Sizes are decimal GB (1 GB = 1,000,000,000 bytes). For TV they apply <strong>per episode</strong>: a season pack of N episodes is allowed up to N× the max.
-          Leave blank for no limit.
+          {gettext("Sizes are decimal GB (1 GB = 1,000,000,000 bytes). For TV they apply")} <strong>{gettext("per episode")}</strong>{gettext(
+            ": a season pack of N episodes is allowed up to N× the max. Leave blank for no limit."
+          )}
         </p>
       </div>
 
@@ -147,7 +153,7 @@ defmodule CinderWeb.SettingsComponents do
       <div class="mt-3 flex flex-wrap items-center gap-3">
         <div :for={{svc, svc_label} <- services_for(group)} class="flex items-center gap-2">
           <button type="button" class="btn btn-xs" phx-click="test" phx-value-service={svc}>
-            Test {svc_label}
+            {gettext("Test %{service}", service: svc_label)}
           </button>
           <.test_badge :if={@health[svc]} result={@health[svc]} />
         </div>
@@ -159,7 +165,7 @@ defmodule CinderWeb.SettingsComponents do
   def services_for(:tmdb), do: [{"tmdb", "TMDB"}]
   def services_for(:indexer), do: [{"indexer", "Prowlarr"}]
   def services_for(:download), do: [{"torrent", "qBittorrent"}, {"usenet", "SABnzbd"}]
-  def services_for(:media_server), do: [{"media_server", "Media server"}]
+  def services_for(:media_server), do: [{"media_server", gettext("Media server")}]
 
   def services_for(:library) do
     for %{kind: kind, label: label} <- Settings.library_kinds(),
@@ -215,7 +221,7 @@ defmodule CinderWeb.SettingsComponents do
         />
         <label class="label mt-1 cursor-pointer justify-start gap-2">
           <input type="checkbox" name={"clear_" <> @field.key} class="checkbox checkbox-sm" />
-          <span class="label-text">Clear saved value</span>
+          <span class="label-text">{gettext("Clear saved value")}</span>
         </label>
       </div>
     </div>
@@ -232,7 +238,7 @@ defmodule CinderWeb.SettingsComponents do
 
   defp secret_placeholder(field, secrets_set) do
     if MapSet.member?(secrets_set, field.key),
-      do: "•••• saved (leave blank to keep)",
+      do: gettext("•••• saved (leave blank to keep)"),
       else: ""
   end
 end
