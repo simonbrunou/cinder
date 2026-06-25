@@ -588,6 +588,55 @@ defmodule Cinder.Catalog do
     end
   end
 
+  @doc """
+  Deletes one episode's library file (Sonarr "delete episode file"): unlinks the file, then clears
+  `file_path` so the episode reverts to its derived missing state — left monitored (the poller
+  re-grabs next tick) unless `opts[:unmonitor]` also flips `monitored` off. The DB write + audit run
+  in one transaction (mirroring `cancel_movie/2`); broadcasts `{:series_updated, series_id}` after
+  commit. Returns `{:error, :no_file}` when there is no file, or the unlink's `{:error, reason}`
+  (the DB is then untouched — the file is the whole point, so the error is surfaced, not best-effort).
+  Ordering caveat: the unlink runs before the DB txn, so a (rare) txn failure after a successful
+  unlink leaves `file_path` pointing at a now-deleted file (the episode reads falsely-available)
+  until re-deleted — recoverable because `rm` of a missing file is idempotent (`:enoent` → `:ok`).
+  """
+  def delete_episode_file(episode, actor, opts \\ [])
+
+  def delete_episode_file(%Episode{file_path: p}, _actor, _opts) when p in [nil, ""],
+    do: {:error, :no_file}
+
+  def delete_episode_file(%Episode{} = episode, actor, opts) do
+    unmonitor? = Keyword.get(opts, :unmonitor, false)
+
+    with :ok <- Library.delete_file(episode.file_path),
+         {:ok, updated} <- do_delete_episode_file_txn(episode, actor, unmonitor?) do
+      broadcast_series(series_id_for_season(updated.season_id))
+      {:ok, updated}
+    end
+  end
+
+  defp do_delete_episode_file_txn(episode, actor, unmonitor?) do
+    Repo.transaction(fn ->
+      changeset =
+        episode
+        |> Episode.transition_changeset(%{file_path: nil})
+        |> maybe_unmonitor(unmonitor?)
+
+      case Repo.update(changeset) do
+        {:ok, updated} ->
+          Audit.log_or_rollback(actor, :delete_episode_file, updated, %{unmonitored: unmonitor?})
+          updated
+
+        {:error, changeset} ->
+          Repo.rollback(changeset)
+      end
+    end)
+  end
+
+  defp maybe_unmonitor(changeset, true),
+    do: Ecto.Changeset.put_change(changeset, :monitored, false)
+
+  defp maybe_unmonitor(changeset, false), do: changeset
+
   defp now, do: DateTime.truncate(DateTime.utc_now(), :second)
 
   @doc """
