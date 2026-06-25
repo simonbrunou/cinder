@@ -292,6 +292,63 @@ defmodule Cinder.Library do
     end
   end
 
+  @doc """
+  Deletes one imported library file and prunes the folders it leaves empty.
+
+  Idempotent: a `nil`/blank path or an already-missing file is `:ok`. After unlinking, empty
+  parent directories are removed walking up, stopping at (never removing) the configured library
+  root — so a `Title (Year)/` or `Season NN/`→show folder disappears when it empties, but the root
+  and any non-empty or out-of-library directory are untouched. A real unlink error (e.g. `:eacces`)
+  is surfaced and nothing is pruned. Hardlink note: this frees disk space only once the download
+  client also drops its copy. (A path that `Path.expand` can't place strictly inside a root —
+  relative, `..`-laden, or a symlinked root — fails CLOSED: the file is unlinked but no folder is
+  pruned. Safe-by-default for a destructive op; a symlinked root may leave empty folders behind —
+  do NOT "fix" this with `File.read_link`/realpath, which would widen the deletion surface.)
+  """
+  @spec delete_file(String.t() | nil) :: :ok | {:error, term()}
+  def delete_file(path) when path in [nil, ""], do: :ok
+
+  def delete_file(path) do
+    case fs().rm(path) do
+      :ok -> prune_empty_dirs(Path.dirname(path))
+      {:error, :enoent} -> prune_empty_dirs(Path.dirname(path))
+      {:error, _reason} = err -> err
+    end
+  end
+
+  # Remove `dir` if it is empty and strictly inside a library root, then recurse to its parent.
+  # `fs().rmdir/1` only removes an empty dir, so a non-empty parent returns an error and halts the
+  # walk. Always returns :ok — pruning is best-effort cleanup, never the operation's success signal.
+  defp prune_empty_dirs(dir) do
+    if prunable?(dir) do
+      case fs().rmdir(dir) do
+        :ok -> prune_empty_dirs(Path.dirname(dir))
+        {:error, _reason} -> :ok
+      end
+    else
+      :ok
+    end
+  end
+
+  # Prunable only when `dir` sits strictly inside a configured library root (never the root itself,
+  # never a path outside any root) — so a misconfigured/old file_path can never rmdir outside the
+  # library or delete a root. Split into a flat helper to keep credo Refactor.Nesting happy.
+  defp prunable?(dir) do
+    expanded = Path.expand(dir)
+    Enum.any?(@kinds, &prunable_under_kind?(expanded, &1))
+  end
+
+  defp prunable_under_kind?(expanded, kind) do
+    case root(kind) do
+      {:ok, r} ->
+        r = Path.expand(r)
+        expanded != r and String.starts_with?(expanded <> "/", r <> "/")
+
+      _ ->
+        false
+    end
+  end
+
   defp fs, do: Application.fetch_env!(:cinder, :filesystem)
   defp media_server, do: Application.fetch_env!(:cinder, :media_server)
 

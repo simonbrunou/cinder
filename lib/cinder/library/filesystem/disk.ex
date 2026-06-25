@@ -34,4 +34,10 @@ defmodule Cinder.Library.Filesystem.Disk do
 
   @impl true
   def lstat(path), do: File.lstat(path)
+
+  @impl true
+  def rm(path), do: File.rm(path)
+
+  @impl true
+  def rmdir(dir), do: File.rmdir(dir)
 end
