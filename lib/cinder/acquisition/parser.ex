@@ -32,6 +32,7 @@ defmodule Cinder.Acquisition.Parser do
   @languages [
     {~r/\bmulti\b/i, "MULTI"},
     {~r/\bfrench\b/i, "FRENCH"},
+    {~r/\b(?:truefrench|vff|vfq|vfi|vf)\b/i, "FRENCH"},
     {~r/\bgerman\b/i, "GERMAN"},
     {~r/\bspanish\b/i, "SPANISH"},
     {~r/\bitalian\b/i, "ITALIAN"}

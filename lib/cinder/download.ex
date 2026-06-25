@@ -11,7 +11,7 @@ defmodule Cinder.Download do
   Auto-triggered by `Cinder.Download.Poller`'s search sweep.
   """
   require Logger
-  alias Cinder.{Acquisition, Catalog}
+  alias Cinder.{Acquisition, Catalog, Notifier}
   alias Cinder.Catalog.Movie
 
   @doc """
@@ -28,12 +28,25 @@ defmodule Cinder.Download do
   def start(%Movie{} = movie) do
     with {:ok, imdb_id} <- ensure_imdb_id(movie),
          {:ok, movie} <- Catalog.transition(movie, %{status: :searching, imdb_id: imdb_id}) do
-      opts = [protocols: available_protocols()] ++ Acquisition.band_opts(:movies)
+      opts =
+        [
+          protocols: available_protocols(),
+          preferred_language: movie.preferred_language,
+          original_language: movie.original_language
+        ] ++ Acquisition.band_opts(:movies)
 
       case Acquisition.best_release(imdb_id, opts) do
-        {:ok, release} -> add_to_client(movie, release)
-        :no_match -> Catalog.transition(movie, %{status: :no_match})
-        {:error, _} = err -> err
+        {:ok, release} ->
+          add_to_client(movie, release)
+
+        :no_match ->
+          Catalog.transition(movie, %{status: :no_match})
+
+        :no_language_match ->
+          park_no_language(movie)
+
+        {:error, _} = err ->
+          err
       end
     else
       :no_imdb_id -> {:error, :no_imdb_id}
@@ -99,6 +112,13 @@ defmodule Cinder.Download do
       )
 
       :ok
+  end
+
+  defp park_no_language(movie) do
+    with {:ok, parked} <- Catalog.transition(movie, %{status: :no_match}) do
+      Notifier.notify({:movie_failed, parked, :no_language_match})
+      {:ok, parked}
+    end
   end
 
   defp ensure_imdb_id(%Movie{imdb_id: imdb_id}) when is_binary(imdb_id) and imdb_id != "" do

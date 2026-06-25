@@ -4,7 +4,7 @@ defmodule Cinder.CatalogTest do
   import Mox
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.Movie
+  alias Cinder.Catalog.{Episode, Grab, Movie, Season, Series}
 
   setup :verify_on_exit!
 
@@ -223,6 +223,82 @@ defmodule Cinder.CatalogTest do
       Catalog.subscribe_series()
       assert :ok = Catalog.broadcast_series_deleted(7)
       assert_receive {:series_deleted, 7}
+    end
+  end
+
+  describe "set_movie_language/2" do
+    test "re-queues a parked movie" do
+      {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 7, title: "X"})
+      {:ok, movie} = Catalog.transition(movie, %{status: :no_match})
+
+      {:ok, updated} = Catalog.set_movie_language(movie, "french")
+
+      assert updated.preferred_language == "french"
+      assert updated.status == :requested
+      assert updated.search_attempts == 0
+    end
+
+    test "re-queues a search_failed movie" do
+      {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 9, title: "Z"})
+      {:ok, movie} = Catalog.transition(movie, %{status: :search_failed})
+
+      {:ok, updated} = Catalog.set_movie_language(movie, "french")
+
+      assert updated.preferred_language == "french"
+      assert updated.status == :requested
+      assert updated.search_attempts == 0
+    end
+
+    test "on an available movie only updates the field" do
+      {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 8, title: "Y"})
+      {:ok, movie} = Catalog.transition(movie, %{status: :available})
+
+      {:ok, updated} = Catalog.set_movie_language(movie, "any")
+
+      assert updated.preferred_language == "any"
+      assert updated.status == :available
+    end
+  end
+
+  describe "set_series_language/2" do
+    test "zeroes search_attempts on wanted episodes only" do
+      series = Repo.insert!(%Series{tmdb_id: 5, title: "S"})
+      season = Repo.insert!(%Season{series_id: series.id, season_number: 1, monitored: true})
+
+      wanted =
+        Repo.insert!(%Episode{
+          season_id: season.id,
+          episode_number: 1,
+          monitored: true,
+          search_attempts: 9
+        })
+
+      filed =
+        Repo.insert!(%Episode{
+          season_id: season.id,
+          episode_number: 2,
+          monitored: true,
+          search_attempts: 9,
+          file_path: "/x.mkv"
+        })
+
+      grab = Repo.insert!(%Grab{download_id: "dl1", download_protocol: :torrent})
+
+      in_flight =
+        Repo.insert!(%Episode{
+          season_id: season.id,
+          episode_number: 3,
+          monitored: true,
+          search_attempts: 9,
+          grab_id: grab.id
+        })
+
+      {:ok, updated} = Catalog.set_series_language(series, "french")
+
+      assert updated.preferred_language == "french"
+      assert Repo.get!(Episode, wanted.id).search_attempts == 0
+      assert Repo.get!(Episode, filed.id).search_attempts == 9
+      assert Repo.get!(Episode, in_flight.id).search_attempts == 9
     end
   end
 end

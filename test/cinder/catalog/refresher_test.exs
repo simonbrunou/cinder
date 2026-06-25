@@ -30,6 +30,7 @@ defmodule Cinder.Catalog.RefresherTest do
          title: "M",
          year: nil,
          poster_path: nil,
+         original_language: nil,
          seasons: [%{season_number: 1}]
        }}
     end)
@@ -59,6 +60,7 @@ defmodule Cinder.Catalog.RefresherTest do
            title: "B",
            year: nil,
            poster_path: nil,
+           original_language: nil,
            seasons: [%{season_number: 1}]
          }}
     end)

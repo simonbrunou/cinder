@@ -88,7 +88,11 @@ defmodule Cinder.Requests do
         %User{} = admin
       ) do
     with {:ok, _series} <-
-           Catalog.find_or_create_series_at_requested(request.target_id, request.season_number),
+           Catalog.find_or_create_series_at_requested(
+             request.target_id,
+             request.season_number,
+             request.preferred_language || "original"
+           ),
          {:ok, approved} <-
            request
            |> Request.status_changeset(%{status: :approved, approved_by_id: admin.id})
@@ -145,7 +149,11 @@ defmodule Cinder.Requests do
   # NOT transaction-wrapped: find_or_create_series_at_requested does TMDB I/O.
   defp create_approved(user, %{target_type: "season"} = attrs, approver_id) do
     with {:ok, _series} <-
-           Catalog.find_or_create_series_at_requested(attrs.target_id, attrs[:season_number]),
+           Catalog.find_or_create_series_at_requested(
+             attrs.target_id,
+             attrs[:season_number],
+             attrs[:preferred_language] || "original"
+           ),
          {:ok, request} <-
            %Request{}
            |> Request.create_changeset(
@@ -180,7 +188,14 @@ defmodule Cinder.Requests do
   end
 
   defp movie_attrs(%Request{} = r) do
-    %{tmdb_id: r.target_id, title: r.title, year: r.year, poster_path: r.poster_path}
+    %{
+      tmdb_id: r.target_id,
+      title: r.title,
+      year: r.year,
+      poster_path: r.poster_path,
+      original_language: r.original_language,
+      preferred_language: r.preferred_language || "original"
+    }
   end
 
   defp movie_attrs_from(attrs) do
@@ -188,7 +203,9 @@ defmodule Cinder.Requests do
       tmdb_id: attrs.target_id,
       title: attrs[:title],
       year: attrs[:year],
-      poster_path: attrs[:poster_path]
+      poster_path: attrs[:poster_path],
+      original_language: attrs[:original_language],
+      preferred_language: attrs[:preferred_language] || "original"
     }
   end
 

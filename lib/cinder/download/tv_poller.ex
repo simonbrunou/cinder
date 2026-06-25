@@ -169,7 +169,12 @@ defmodule Cinder.Download.TvPoller do
     season_number = hd(episodes).season.season_number
     numbers = Enum.map(episodes, & &1.episode_number)
 
-    opts = [protocols: Download.available_protocols()] ++ Acquisition.band_opts(:tv)
+    opts =
+      [
+        protocols: Download.available_protocols(),
+        preferred_language: series.preferred_language,
+        original_language: series.original_language
+      ] ++ Acquisition.band_opts(:tv)
 
     case Acquisition.best_releases(series, season_number, numbers, opts) do
       {:ok, assignments} ->

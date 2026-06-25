@@ -17,6 +17,8 @@ defmodule Cinder.Requests.Request do
     field :poster_path, :string
     field :status, Ecto.Enum, values: @statuses, default: :pending
     field :denial_reason, :string
+    field :original_language, :string
+    field :preferred_language, :string
     belongs_to :user, Cinder.Accounts.User
     belongs_to :approved_by, Cinder.Accounts.User
     timestamps()
@@ -33,10 +35,13 @@ defmodule Cinder.Requests.Request do
       :year,
       :poster_path,
       :status,
-      :approved_by_id
+      :approved_by_id,
+      :original_language,
+      :preferred_language
     ])
     |> validate_required([:user_id, :target_type, :target_id, :status])
     |> validate_inclusion(:target_type, @target_types)
+    |> validate_inclusion(:preferred_language, ["original", "french", "any"])
     # The constraint name must match the SQLite index name exactly as reported by exqlite
     # on a UNIQUE violation. The partial index is named :requests_pending_unique in the
     # migration; exqlite reports that name directly so we use it here. Using a wrong name

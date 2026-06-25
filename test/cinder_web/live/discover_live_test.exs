@@ -19,7 +19,13 @@ defmodule CinderWeb.DiscoverLiveTest do
     :ok
   end
 
-  @inception %{tmdb_id: 27_205, title: "Inception", year: 2010, poster_path: "/p.jpg"}
+  @inception %{
+    tmdb_id: 27_205,
+    title: "Inception",
+    year: 2010,
+    poster_path: "/p.jpg",
+    original_language: "en"
+  }
   @got %{tmdb_id: 1399, title: "Game of Thrones", year: 2011, poster_path: "/got.jpg"}
 
   defp stub_movies(results),
@@ -65,8 +71,8 @@ defmodule CinderWeb.DiscoverLiveTest do
 
     assert html =~ "Inception"
     assert html =~ "Game of Thrones"
-    # movie → inline Add; TV → season-picker link
-    assert has_element?(lv, "#add-27205")
+    # movie → inline Add form; TV → season-picker link
+    assert has_element?(lv, "#add-form-27205")
     assert has_element?(lv, ~s(#results a[href="/series/tmdb/1399"]))
   end
 
@@ -75,7 +81,7 @@ defmodule CinderWeb.DiscoverLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/")
 
     lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
-    lv |> element("#add-27205") |> render_click()
+    lv |> form("#add-form-27205") |> render_submit()
 
     assert has_element?(lv, "#watchlist", "Inception")
     assert [%Movie{tmdb_id: 27_205, status: :requested}] = Catalog.list_watchlist()
@@ -89,7 +95,7 @@ defmodule CinderWeb.DiscoverLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/")
 
     lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
-    html = lv |> element("#add-27205") |> render_click()
+    html = lv |> form("#add-form-27205") |> render_submit()
 
     assert html =~ "awaiting approval"
     assert Catalog.list_by_status(:requested) == []
@@ -115,7 +121,7 @@ defmodule CinderWeb.DiscoverLiveTest do
     lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
 
     assert has_element?(lv, "#results", "Pending")
-    refute has_element?(lv, "#add-27205")
+    refute has_element?(lv, "#add-form-27205")
   end
 
   test "a quota-exceeded add shows the quota flash", %{conn: _conn} do
@@ -127,10 +133,22 @@ defmodule CinderWeb.DiscoverLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/")
 
     lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
-    html = lv |> element("#add-27205") |> render_click()
+    html = lv |> form("#add-form-27205") |> render_submit()
 
     assert html =~ "request limit"
     assert Requests.list_for_user(user) == []
+  end
+
+  test "adding a movie carries the chosen language", %{conn: conn} do
+    stub_movies([@inception])
+    {:ok, lv, _html} = live(conn, ~p"/")
+
+    lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
+    lv |> form("#add-form-27205", %{"preferred_language" => "french"}) |> render_submit()
+
+    movie = Cinder.Catalog.get_movie_by_tmdb_id(27_205)
+    assert movie.preferred_language == "french"
+    assert movie.original_language == "en"
   end
 
   test "a total TMDB failure flashes and shows 'Search failed', not 'No matches'", %{conn: conn} do

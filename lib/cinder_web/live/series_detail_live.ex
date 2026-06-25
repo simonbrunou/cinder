@@ -218,6 +218,14 @@ defmodule CinderWeb.SeriesDetailLive do
     end
   end
 
+  def handle_event("set_series_language", %{"preferred_language" => lang}, socket)
+      when lang in ["original", "french", "any"] do
+    case Catalog.set_series_language(socket.assigns.series, lang) do
+      {:ok, series} -> {:noreply, assign(socket, :series, series)}
+      {:error, _} -> {:noreply, socket}
+    end
+  end
+
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   @impl true
@@ -348,6 +356,24 @@ defmodule CinderWeb.SeriesDetailLive do
           </.header>
         </div>
       </div>
+
+      <form id="series-detail-language-form" phx-change="set_series_language" class="mb-4 max-w-xs">
+        <select
+          name="preferred_language"
+          class="select select-sm w-full"
+          aria-label={gettext("Preferred language")}
+        >
+          <option value="original" selected={@series.preferred_language == "original"}>
+            {gettext("Original")}
+          </option>
+          <option value="french" selected={@series.preferred_language == "french"}>
+            {gettext("French")}
+          </option>
+          <option value="any" selected={@series.preferred_language == "any"}>
+            {gettext("Any language")}
+          </option>
+        </select>
+      </form>
 
       <.empty_state
         :if={@series.seasons == []}

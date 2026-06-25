@@ -284,6 +284,7 @@ defmodule Cinder.Download.TvPollerTest do
          title: "Show",
          year: 2008,
          poster_path: nil,
+         original_language: nil,
          seasons: [%{season_number: 1}]
        }}
     end)

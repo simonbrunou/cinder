@@ -29,9 +29,17 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
                title: "Inception",
                year: 2010,
                poster_path: "/p.jpg",
-               imdb_id: nil
+               imdb_id: nil,
+               original_language: nil
              },
-             %{tmdb_id: 1, title: "Obscure", year: nil, poster_path: nil, imdb_id: nil}
+             %{
+               tmdb_id: 1,
+               title: "Obscure",
+               year: nil,
+               poster_path: nil,
+               imdb_id: nil,
+               original_language: nil
+             }
            ]
   end
 
@@ -68,7 +76,8 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
         "title" => "Inception",
         "release_date" => "2010-07-16",
         "poster_path" => "/p.jpg",
-        "imdb_id" => "tt1375666"
+        "imdb_id" => "tt1375666",
+        "original_language" => "fr"
       })
     end)
 
@@ -78,7 +87,8 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
               title: "Inception",
               year: 2010,
               poster_path: "/p.jpg",
-              imdb_id: "tt1375666"
+              imdb_id: "tt1375666",
+              original_language: "fr"
             }} = HTTP.get_movie(27_205)
   end
 
@@ -117,6 +127,7 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
         "name" => "Breaking Bad",
         "first_air_date" => "2008-01-20",
         "poster_path" => "/bb.jpg",
+        "original_language" => "fr",
         "external_ids" => %{"tvdb_id" => 81_189, "imdb_id" => "tt0903747"},
         "seasons" => [%{"season_number" => 0}, %{"season_number" => 1}]
       })
@@ -129,6 +140,7 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
               title: "Breaking Bad",
               year: 2008,
               poster_path: "/bb.jpg",
+              original_language: "fr",
               seasons: [%{season_number: 0}, %{season_number: 1}]
             }} = HTTP.get_series(1396)
   end

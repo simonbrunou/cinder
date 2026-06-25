@@ -18,6 +18,34 @@ defmodule Cinder.CatalogSeriesTest do
 
   # A series with a specials season (0) and one regular season (1): one aired
   # episode, one un-aired, one undated (TBA).
+  # Variant of stub_tmdb/1 that stubs tmdb_id=42 and allows overriding original_language.
+  defp stub_tmdb_series(opts) do
+    ol = Keyword.get(opts, :original_language, nil)
+
+    expect(Cinder.Catalog.TMDBMock, :get_series, fn 42 ->
+      {:ok,
+       %{
+         tmdb_id: 42,
+         tvdb_id: 999,
+         title: "Test Show",
+         year: 2001,
+         poster_path: "/p.jpg",
+         original_language: ol,
+         seasons: [%{season_number: 1}]
+       }}
+    end)
+
+    expect(Cinder.Catalog.TMDBMock, :get_season, 1, fn 42, 1 ->
+      {:ok,
+       %{
+         season_number: 1,
+         episodes: [
+           %{tmdb_episode_id: 101, episode_number: 1, title: "Ep1", air_date: @past}
+         ]
+       }}
+    end)
+  end
+
   defp stub_tmdb(tmdb_id) do
     expect(Cinder.Catalog.TMDBMock, :get_series, fn ^tmdb_id ->
       {:ok,
@@ -249,6 +277,21 @@ defmodule Cinder.CatalogSeriesTest do
     end
   end
 
+  describe "language fields" do
+    test "add_series_to_watchlist stores original_language and the chosen preferred_language" do
+      stub_tmdb_series(original_language: "fr")
+
+      {:ok, series} =
+        Catalog.add_series_to_watchlist(42,
+          monitor_strategy: :future,
+          preferred_language: "french"
+        )
+
+      assert series.original_language == "fr"
+      assert series.preferred_language == "french"
+    end
+  end
+
   describe "FK cascade (foreign_keys: :on)" do
     test "deleting a series cascade-deletes its seasons and episodes" do
       series = Repo.insert!(%Series{tmdb_id: 8001, title: "Cascade Show"})
@@ -319,6 +362,18 @@ defmodule Cinder.CatalogSeriesTest do
       tree = Catalog.get_series_with_tree(series.id)
       assert Enum.find(tree.seasons, &(&1.season_number == 1)).monitored
       assert Enum.find(tree.seasons, &(&1.season_number == 2)).monitored
+    end
+
+    test "an existing default-language series adopts a requester's non-default pick (fill-if-default)" do
+      {:ok, _} = Catalog.find_or_create_series_at_requested(1399, 1)
+      {:ok, series} = Catalog.find_or_create_series_at_requested(1399, 2, "french")
+      assert series.preferred_language == "french"
+    end
+
+    test "a series already customized keeps its language against a later requester pick" do
+      {:ok, _} = Catalog.find_or_create_series_at_requested(1399, 1, "french")
+      {:ok, series} = Catalog.find_or_create_series_at_requested(1399, 2, "any")
+      assert series.preferred_language == "french"
     end
   end
 end

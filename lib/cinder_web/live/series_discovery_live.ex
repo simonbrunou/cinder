@@ -25,7 +25,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
 
       {:ok,
        socket
-       |> assign(tmdb_id: tmdb_id, info: info, current_user: user)
+       |> assign(tmdb_id: tmdb_id, info: info, current_user: user, preferred_language: "original")
        |> assign_requests_by_season(user, tmdb_id)}
     else
       _ ->
@@ -50,7 +50,9 @@ defmodule CinderWeb.SeriesDiscoveryLive do
         season_number: season_number,
         title: info.title,
         year: info.year,
-        poster_path: info.poster_path
+        poster_path: info.poster_path,
+        original_language: info[:original_language],
+        preferred_language: socket.assigns.preferred_language
       }
 
       case Requests.create_request(user, attrs) do
@@ -108,6 +110,11 @@ defmodule CinderWeb.SeriesDiscoveryLive do
     end
   end
 
+  def handle_event("set_language", %{"preferred_language" => lang}, socket)
+      when lang in ["original", "french", "any"] do
+    {:noreply, assign(socket, :preferred_language, lang)}
+  end
+
   # The event payload is client-controlled; ignore any malformed/forged frame
   # rather than crashing the LiveView on an unmatched clause.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
@@ -162,6 +169,24 @@ defmodule CinderWeb.SeriesDiscoveryLive do
           </.header>
         </div>
       </div>
+
+      <form id="series-language-form" phx-change="set_language" class="mb-4 max-w-xs">
+        <select
+          name="preferred_language"
+          class="select select-sm w-full"
+          aria-label={gettext("Preferred language")}
+        >
+          <option value="original" selected={@preferred_language == "original"}>
+            {gettext("Original")}
+          </option>
+          <option value="french" selected={@preferred_language == "french"}>
+            {gettext("French")}
+          </option>
+          <option value="any" selected={@preferred_language == "any"}>
+            {gettext("Any language")}
+          </option>
+        </select>
+      </form>
 
       <.empty_state
         :if={@info.seasons == []}
