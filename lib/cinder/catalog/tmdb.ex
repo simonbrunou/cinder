@@ -6,15 +6,18 @@ defmodule Cinder.Catalog.TMDB do
   callbacks are kept distinct (no overloaded `search/1`).
   """
 
+  @doc "Movie search. Returns `%{tmdb_id, title, year, poster_path, imdb_id, original_language}` per result (`imdb_id` and `original_language` are `nil` on search results)."
   @callback search(query :: String.t()) :: {:ok, [map()]} | {:error, term()}
+
+  @doc "Single movie details. Returns `%{tmdb_id, title, year, poster_path, imdb_id, original_language}`."
   @callback get_movie(tmdb_id :: integer()) :: {:ok, map()} | {:error, term()}
 
-  @doc "TV search. Returns normalized series maps (`%{tmdb_id, title, year, poster_path}`)."
+  @doc "TV search. Returns normalized series maps (`%{tmdb_id, title, year, poster_path, original_language}`)."
   @callback search_tv(query :: String.t()) :: {:ok, [map()]} | {:error, term()}
 
   @doc """
   Series details + the list of season numbers. Returns
-  `%{tmdb_id, tvdb_id, title, year, poster_path, seasons: [%{season_number}]}`.
+  `%{tmdb_id, tvdb_id, title, year, poster_path, original_language, seasons: [%{season_number}]}`.
   `tvdb_id` is `nil` when TMDB has no `external_ids` block.
   """
   @callback get_series(tmdb_id :: integer()) :: {:ok, map()} | {:error, term()}

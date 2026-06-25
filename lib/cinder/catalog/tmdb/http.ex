@@ -4,8 +4,8 @@ defmodule Cinder.Catalog.TMDB.HTTP do
 
   Reads `base_url`, `token` (v4 bearer) and optional `req_options` from
   `config :cinder, #{inspect(__MODULE__)}` at runtime. Returns normalized maps for both
-  movies (`%{tmdb_id, title, year, poster_path, imdb_id}`; search results carry
-  `imdb_id: nil`) and TV (see the `Cinder.Catalog.TMDB` callback docs).
+  movies (`%{tmdb_id, title, year, poster_path, imdb_id, original_language}`; search results
+  carry `imdb_id: nil`) and TV (see the `Cinder.Catalog.TMDB` callback docs).
   """
   @behaviour Cinder.Catalog.TMDB
 
@@ -106,7 +106,8 @@ defmodule Cinder.Catalog.TMDB.HTTP do
       title: movie["title"],
       year: year_from(movie["release_date"]),
       poster_path: movie["poster_path"],
-      imdb_id: movie["imdb_id"]
+      imdb_id: movie["imdb_id"],
+      original_language: movie["original_language"]
     }
   end
 
@@ -115,7 +116,8 @@ defmodule Cinder.Catalog.TMDB.HTTP do
       tmdb_id: series["id"],
       title: series["name"],
       year: year_from(series["first_air_date"]),
-      poster_path: series["poster_path"]
+      poster_path: series["poster_path"],
+      original_language: series["original_language"]
     }
   end
 
@@ -130,6 +132,7 @@ defmodule Cinder.Catalog.TMDB.HTTP do
       title: body["name"],
       year: year_from(body["first_air_date"]),
       poster_path: body["poster_path"],
+      original_language: body["original_language"],
       seasons: for(s <- body["seasons"] || [], do: %{season_number: s["season_number"]})
     }
   end
