@@ -19,7 +19,15 @@ defmodule CinderWeb.SeriesDetailLive do
     with {id, ""} <- Integer.parse(id),
          %{} = series <- Catalog.get_series_with_tree(id) do
       if connected?(socket), do: Catalog.subscribe_series()
-      {:ok, assign(socket, series: series, editing?: false, confirming: nil, form: nil)}
+
+      {:ok,
+       assign(socket,
+         series: series,
+         editing?: false,
+         confirming: nil,
+         form: nil,
+         confirm_opt: false
+       )}
     else
       _ ->
         {:ok,
@@ -78,17 +86,23 @@ defmodule CinderWeb.SeriesDetailLive do
     end
   end
 
-  def handle_event("ask_cancel_series", _params, socket) do
-    {:noreply, assign(socket, confirming: :cancel, editing?: false)}
-  end
+  def handle_event("ask_cancel_series", _params, socket),
+    do: {:noreply, assign(socket, confirming: :cancel, editing?: false, confirm_opt: false)}
 
-  def handle_event("ask_delete_series", _params, socket) do
-    {:noreply, assign(socket, confirming: :delete, editing?: false)}
-  end
+  def handle_event("ask_delete_series", _params, socket),
+    do: {:noreply, assign(socket, confirming: :delete, editing?: false, confirm_opt: false)}
 
-  def handle_event("dismiss_confirm", _params, socket) do
-    {:noreply, assign(socket, confirming: nil)}
-  end
+  def handle_event("ask_delete_episode_file", %{"id" => id}, socket),
+    do: {:noreply, assign(socket, confirming: {:episode_file, id}, confirm_opt: false)}
+
+  def handle_event("ask_delete_season_files", %{"id" => id}, socket),
+    do: {:noreply, assign(socket, confirming: {:season_files, id}, confirm_opt: false)}
+
+  def handle_event("toggle_confirm_opt", _params, socket),
+    do: {:noreply, assign(socket, confirm_opt: !socket.assigns.confirm_opt)}
+
+  def handle_event("dismiss_confirm", _params, socket),
+    do: {:noreply, assign(socket, confirming: nil, confirm_opt: false)}
 
   def handle_event("confirm_cancel_series", _params, socket) do
     actor = socket.assigns.current_scope.user
@@ -107,16 +121,55 @@ defmodule CinderWeb.SeriesDetailLive do
   def handle_event("confirm_delete_series", _params, socket) do
     actor = socket.assigns.current_scope.user
 
-    case Catalog.delete_series(socket.assigns.series, actor) do
+    case Catalog.delete_series(socket.assigns.series, actor,
+           delete_files: socket.assigns.confirm_opt
+         ) do
       {:ok, _} ->
         {:noreply,
-         socket
-         |> put_flash(:info, "Series deleted.")
-         |> push_navigate(to: ~p"/library")}
+         socket |> put_flash(:info, "Series deleted.") |> push_navigate(to: ~p"/library")}
 
       _ ->
         {:noreply,
          socket |> assign(confirming: nil) |> put_flash(:error, "Couldn't delete the series.")}
+    end
+  end
+
+  def handle_event("confirm_delete_episode_file", %{"id" => id}, socket) do
+    actor = socket.assigns.current_scope.user
+
+    with {id, ""} <- Integer.parse(id),
+         %Episode{} = ep <- find_episode(socket.assigns.series, id),
+         {:ok, _} <- Catalog.delete_episode_file(ep, actor, unmonitor: socket.assigns.confirm_opt) do
+      {:noreply,
+       socket |> assign(confirming: nil) |> put_flash(:info, "Episode file deleted.") |> reload()}
+    else
+      {:error, :no_file} ->
+        {:noreply,
+         socket |> assign(confirming: nil) |> put_flash(:error, "That episode has no file.")}
+
+      _ ->
+        {:noreply,
+         socket
+         |> assign(confirming: nil)
+         |> put_flash(:error, "Couldn't delete the episode file.")}
+    end
+  end
+
+  def handle_event("confirm_delete_season_files", %{"id" => id}, socket) do
+    actor = socket.assigns.current_scope.user
+
+    with {id, ""} <- Integer.parse(id),
+         %Season{} = season <- find_season(socket.assigns.series, id),
+         {:ok, n} <-
+           Catalog.delete_season_files(season, actor, unmonitor: socket.assigns.confirm_opt) do
+      {:noreply,
+       socket |> assign(confirming: nil) |> put_flash(:info, "Deleted #{n} file(s).") |> reload()}
+    else
+      _ ->
+        {:noreply,
+         socket
+         |> assign(confirming: nil)
+         |> put_flash(:error, "Couldn't delete the season files.")}
     end
   end
 
@@ -200,17 +253,25 @@ defmodule CinderWeb.SeriesDetailLive do
         <:caveat>Cancel this series? Removes its downloads and unmonitors everything.</:caveat>
       </.confirm_action>
 
-      <.confirm_action
-        :if={@confirming == :delete}
-        id="confirm-delete-series"
-        on_confirm="confirm_delete_series"
-        on_cancel="dismiss_confirm"
-        confirm_label="Delete"
-      >
-        <:caveat>
-          Delete this series and its seasons/episodes? (Library files are left on disk.)
-        </:caveat>
-      </.confirm_action>
+      <div :if={@confirming == :delete} class="mb-6 space-y-2">
+        <label class="flex cursor-pointer items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            class="checkbox checkbox-sm"
+            phx-click="toggle_confirm_opt"
+            checked={@confirm_opt}
+          />
+          <span>Also delete files from disk</span>
+        </label>
+        <.confirm_action
+          id="confirm-delete-series"
+          on_confirm="confirm_delete_series"
+          on_cancel="dismiss_confirm"
+          confirm_label="Delete"
+        >
+          <:caveat>Delete this series and its seasons/episodes?</:caveat>
+        </.confirm_action>
+      </div>
 
       <div class="mb-8 flex gap-4">
         <img
@@ -247,35 +308,106 @@ defmodule CinderWeb.SeriesDetailLive do
               {monitored_count(season)}/{length(season.episodes)} monitored
             </span>
           </h2>
-          <button
-            :if={season.episodes != []}
-            type="button"
-            phx-click="toggle_season"
-            phx-value-id={season.id}
-            class="btn btn-xs"
-            aria-label={
-              "#{if all_monitored?(season), do: "Unmonitor", else: "Monitor"} all episodes in " <>
-                season_label(season.season_number)
-            }
+          <div class="flex items-center gap-2">
+            <button
+              :if={season.episodes != []}
+              type="button"
+              phx-click="toggle_season"
+              phx-value-id={season.id}
+              class="btn btn-xs"
+              aria-label={
+                "#{if all_monitored?(season), do: "Unmonitor", else: "Monitor"} all episodes in " <>
+                  season_label(season.season_number)
+              }
+            >
+              {if all_monitored?(season), do: "Unmonitor all", else: "Monitor all"}
+            </button>
+            <button
+              :if={Enum.any?(season.episodes, & &1.file_path)}
+              type="button"
+              class="btn btn-xs btn-error"
+              phx-click="ask_delete_season_files"
+              phx-value-id={season.id}
+              aria-label={"Delete all files in #{season_label(season.season_number)}"}
+            >
+              Delete files
+            </button>
+          </div>
+        </div>
+
+        <div :if={@confirming == {:season_files, to_string(season.id)}} class="mb-2 space-y-2">
+          <label class="flex cursor-pointer items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              class="checkbox checkbox-sm"
+              phx-click="toggle_confirm_opt"
+              checked={@confirm_opt}
+            />
+            <span>Also stop monitoring these episodes</span>
+          </label>
+          <.confirm_action
+            id={"confirm-delete-season-files-#{season.id}"}
+            on_confirm="confirm_delete_season_files"
+            on_cancel="dismiss_confirm"
+            value={season.id}
+            confirm_label="Delete files"
           >
-            {if all_monitored?(season), do: "Unmonitor all", else: "Monitor all"}
-          </button>
+            <:caveat>
+              Delete every downloaded file in {season_label(season.season_number)}? Monitored
+              episodes will be re-downloaded next sweep unless you also stop monitoring.
+            </:caveat>
+          </.confirm_action>
         </div>
 
         <p :if={season.episodes == []} class="text-sm text-base-content/50">No episodes yet.</p>
         <ul class="divide-y divide-base-200">
-          <li :for={ep <- season.episodes} class="flex items-center gap-3 py-2">
-            <input
-              type="checkbox"
-              class="toggle toggle-sm"
-              checked={ep.monitored}
-              phx-click="toggle_episode"
-              phx-value-id={ep.id}
-              aria-label={"Monitor #{season_label(season.season_number)} episode #{ep.episode_number}"}
-            />
-            <span class="w-8 text-sm tabular-nums text-base-content/60">{ep.episode_number}</span>
-            <span class="flex-1 text-sm">{ep.title}</span>
-            <span :if={ep.air_date} class="text-xs text-base-content/50">{ep.air_date}</span>
+          <li :for={ep <- season.episodes} class="flex flex-col gap-2 py-2">
+            <div class="flex items-center gap-3">
+              <input
+                type="checkbox"
+                class="toggle toggle-sm"
+                checked={ep.monitored}
+                phx-click="toggle_episode"
+                phx-value-id={ep.id}
+                aria-label={"Monitor #{season_label(season.season_number)} episode #{ep.episode_number}"}
+              />
+              <span class="w-8 text-sm tabular-nums text-base-content/60">{ep.episode_number}</span>
+              <span class="flex-1 text-sm">{ep.title}</span>
+              <span :if={ep.air_date} class="text-xs text-base-content/50">{ep.air_date}</span>
+              <button
+                :if={ep.file_path}
+                type="button"
+                class="btn btn-xs btn-error"
+                phx-click="ask_delete_episode_file"
+                phx-value-id={ep.id}
+                aria-label={"Delete file for #{season_label(season.season_number)} episode #{ep.episode_number}"}
+              >
+                Delete file
+              </button>
+            </div>
+            <div :if={@confirming == {:episode_file, to_string(ep.id)}} class="space-y-2">
+              <label class="flex cursor-pointer items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  class="checkbox checkbox-sm"
+                  phx-click="toggle_confirm_opt"
+                  checked={@confirm_opt}
+                />
+                <span>Also stop monitoring this episode</span>
+              </label>
+              <.confirm_action
+                id={"confirm-delete-episode-file-#{ep.id}"}
+                on_confirm="confirm_delete_episode_file"
+                on_cancel="dismiss_confirm"
+                value={ep.id}
+                confirm_label="Delete file"
+              >
+                <:caveat>
+                  Delete the downloaded file for this episode? If it stays monitored the poller
+                  re-downloads it next tick — tick "stop monitoring" to keep it gone.
+                </:caveat>
+              </.confirm_action>
+            </div>
           </li>
         </ul>
       </section>
