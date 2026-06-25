@@ -67,6 +67,22 @@ defmodule CinderWeb.SettingsComponents do
           A separate root per library, so Jellyfin/Plex can point distinct libraries at each.
           Required even if they share a folder — enter the same path.
         </p>
+
+        <label class="label cursor-pointer justify-start gap-2 pt-2">
+          <input type="hidden" name="move_on_import" value="false" />
+          <input
+            type="checkbox"
+            name="move_on_import"
+            value="true"
+            checked={@form.values["move_on_import"]}
+            class="checkbox"
+          />
+          <span class="label-text">Remove download after a Usenet import</span>
+        </label>
+        <p class="mt-1 text-xs opacity-70">
+          After a Usenet import, delete the original from the download client. Ensure your library
+          is a separate folder from your downloads. Torrents are never auto-removed (seeding survives).
+        </p>
       </div>
 
       <div :if={group == :releases} class="space-y-3">

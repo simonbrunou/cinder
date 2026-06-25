@@ -1,7 +1,8 @@
 # Move-on-import (Usenet-scoped) — design
 
 **Date:** 2026-06-25
-**Status:** design v2 (council-revised); ready for implementation plan.
+**Status:** **shipped 2026-06-25.** Design v2 (council-revised) implemented as specced; see the
+done note at the bottom.
 
 A Radarr/Sonarr-style import option: after a completed download is imported into the library,
 **remove the original from the downloads folder** so it doesn't linger. Gated behind a toggle,
@@ -169,3 +170,19 @@ the hardlink already guarantees the library copy survives the delete.)
 - Onboarding-wizard exposure — `/settings` only.
 - An env var for the toggle — DB setting only (default safe).
 - Configurable per-library or per-quality policy — YAGNI.
+
+## [done 2026-06-25]
+
+Shipped exactly as specced, with one DRY refinement: instead of duplicating the gate
+(`move_on_import? and usenet and id present`) in both pollers, it lives in one
+`Cinder.Download.remove_after_import/2` so each poller is a single call. The low-level
+`best_effort_remove/2` moved from a private in `Cinder.Catalog` to public in `Cinder.Download`
+(its two reap callers repointed) and gained the `catch` the spec asked for, so a raising client
+can't unwind a poller. Wired on the import-success branch of each poller (`poller.ex` after
+`transition(:available)` + notify; `tv_poller.ex` after `finish_grab`, reading id/protocol off the
+in-hand grab). Settings: `move_on_import` is a standalone global bool with its own tiny overlay
+(`apply_move_on_import`, inline `false` default, no `base/1`), persisted in `plan/1`, reflected in
+`form_state`, and one checkbox in the `/settings` Library section — no `Settings` read accessor
+needed since `remove_after_import/2` reads the env directly. Tests: 11 (gate matrix incl.
+raise/error swallow, both pollers, partial-pack still-removes) + 2 settings overlay round-trips.
+`mix test` green (724).

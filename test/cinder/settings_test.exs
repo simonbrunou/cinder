@@ -28,7 +28,8 @@ defmodule Cinder.SettingsTest do
     :tv_library_path,
     :tv_min_size,
     :tv_max_size,
-    :tv_preferred_resolutions
+    :tv_preferred_resolutions,
+    :move_on_import
   ]
 
   setup do
@@ -68,6 +69,28 @@ defmodule Cinder.SettingsTest do
       refute stored =~ "super-secret-token"
       # is_secret is recorded for redaction/display.
       assert Repo.get_by(Setting, key: "tmdb_token").is_secret
+    end
+
+    test "move_on_import: unset ⇒ false; stored true overlays; cleared reverts to false" do
+      Settings.load_into_env()
+      assert Application.get_env(:cinder, :move_on_import, false) == false
+
+      Settings.put("move_on_import", "true")
+      assert Application.get_env(:cinder, :move_on_import) == true
+
+      Settings.delete("move_on_import")
+      assert Application.get_env(:cinder, :move_on_import, false) == false
+    end
+
+    test "move_on_import: save_form persists the checkbox and round-trips through form_state" do
+      Settings.save_form(%{"move_on_import" => "true"})
+      assert Settings.form_state().values["move_on_import"] == true
+      assert Application.get_env(:cinder, :move_on_import) == true
+
+      # An unchecked checkbox submits the hidden "false".
+      Settings.save_form(%{"move_on_import" => "false"})
+      assert Settings.form_state().values["move_on_import"] == false
+      assert Application.get_env(:cinder, :move_on_import) == false
     end
 
     test "an undecryptable secret is skipped (nil), never crashes load" do

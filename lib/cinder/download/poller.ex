@@ -174,8 +174,12 @@ defmodule Cinder.Download.Poller do
       {:ok, _dest} ->
         # On the (rare) transition error, leave the movie :downloaded for next-tick
         # retry rather than raising — matching the poller's ignore-and-retry convention.
-        with {:ok, available} <- Catalog.transition(movie, %{status: :available}),
-             do: Notifier.notify({:movie_available, available})
+        with {:ok, available} <- Catalog.transition(movie, %{status: :available}) do
+          Notifier.notify({:movie_available, available})
+          # After the DB commit (the file is recorded as imported): a best-effort, gated
+          # remove of the source download. Failure is logged, never strands or re-imports.
+          Download.remove_after_import(movie.download_protocol, movie.download_id)
+        end
 
       {:error, :library_not_configured} ->
         # Hold (no attempt bump, no park) until the movie library root is configured: the file is

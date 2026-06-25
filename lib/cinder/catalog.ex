@@ -267,7 +267,7 @@ defmodule Cinder.Catalog do
 
   defp remove_movie_download(%Movie{download_id: id, download_protocol: protocol}) do
     case Download.client_for(protocol) do
-      {:ok, client} -> best_effort_remove(client, id)
+      {:ok, client} -> Download.best_effort_remove(client, id)
       :error -> :ok
     end
   end
@@ -290,19 +290,6 @@ defmodule Cinder.Catalog do
 
       {:error, reason} ->
         Logger.warning("library file delete failed for #{inspect(path)}: #{inspect(reason)}")
-        :ok
-    end
-  end
-
-  # Best-effort client download removal shared by the movie and series reap paths: never blocks a
-  # cancel/delete. Logs a warning on {:error, _} (or a thrown client failure) and always returns :ok.
-  defp best_effort_remove(client, id) do
-    case client.remove(id, delete_files: true) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        Logger.warning("client remove failed for download #{inspect(id)}: #{inspect(reason)}")
         :ok
     end
   end
@@ -779,7 +766,7 @@ defmodule Cinder.Catalog do
   removing each tracked client download, then unmonitors every season and episode so the TV
   poller's `wanted_episodes` does not re-grab. Broadcasts `{:series_updated, id}`. Audited.
 
-  Client I/O (best-effort — see `best_effort_remove/2`) runs BEFORE the DB transaction. The grab-row
+  Client I/O (best-effort — see `Cinder.Download.best_effort_remove/2`) runs BEFORE the DB transaction. The grab-row
   deletes, the season+episode unmonitor, and the audit row are then written in ONE transaction so
   there is no poller-visible window where an episode is grab-less but still monitored (which would
   re-grab and defeat the cancel), and a failed audit rolls the whole cancel back rather than leaving
@@ -874,7 +861,7 @@ defmodule Cinder.Catalog do
 
   defp remove_grab_download(%Grab{download_id: id, download_protocol: protocol}) do
     case Download.client_for(protocol) do
-      {:ok, client} -> best_effort_remove(client, id)
+      {:ok, client} -> Download.best_effort_remove(client, id)
       :error -> :ok
     end
   end
