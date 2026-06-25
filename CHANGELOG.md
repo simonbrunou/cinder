@@ -7,6 +7,11 @@ All notable changes to Cinder are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Delete media files from disk when removing a movie, TV show, season, or episode (opt-in
+  checkbox on the delete dialogs; mirrors Sonarr/Radarr). Deleting a season/episode file leaves
+  the item monitored so the poller re-grabs it, unless you also tick "stop monitoring". Empty
+  library folders are pruned. Because library files are hardlinks, disk space is reclaimed only
+  once the download client also drops its copy.
 - **Multi-user TV requests (parity with movies)** — any authenticated user can search for a TV
   show on `/series` and request a season from the show's discovery page (`/series/tmdb/:tmdb_id`).
   A non-admin's request is `:pending` until an admin approves/denies it; an admin's own request

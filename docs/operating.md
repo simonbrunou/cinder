@@ -137,6 +137,19 @@ wrong library, and the first-run wizard won't finish until both roots validate w
 > imports hold, red on `/status`, until set). Both roots must still be on the same filesystem as the
 > download client's completed dir (hardlinks).
 
+## Deleting media
+
+The delete dialogs for movies and TV shows (`/library`) and for individual seasons and episodes
+(`/series/:id`) include an opt-in **"Delete file from disk"** checkbox (unchecked by default).
+Ticking it removes the library file when you confirm the deletion; empty parent folders left behind
+are pruned automatically.
+
+- **Season/episode file deletion leaves the item monitored** — the TV poller will re-grab it on
+  the next sweep. Tick "stop monitoring" as well if you want to drop it permanently.
+- **Disk space is reclaimed only once the download client also drops its copy.** Library files are
+  hardlinks; the space frees when the last link (either the library copy or the download client's
+  completed-downloads copy) is deleted.
+
 ## Known limitations
 
 - **BitTorrent v1 only.** Releases with a v2-only (SHA-256) infohash aren't handled; most public
