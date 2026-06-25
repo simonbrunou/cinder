@@ -708,23 +708,31 @@ defmodule Cinder.Catalog do
   episode cascade, so after `Repo.delete(series)` the grabs would be unreachable for client removal
   and orphan their downloads). Each grab's tracked client download is removed (outside the txn),
   then `delete_grab/1`; then `Repo.delete(series)` cascades seasons/episodes at the DB. Broadcasts
-  `{:series_deleted, id}`. Audited. On-disk library files are intentionally left for the deferred
-  unlink feature.
+  `{:series_deleted, id}`. Audited. Pass `delete_files: true` to also unlink every episode
+  `file_path` after the cascade (best-effort, non-blocking).
   """
-  def delete_series(%Series{} = series, actor) do
+  def delete_series(%Series{} = series, actor, opts \\ []) do
+    delete_files? = Keyword.get(opts, :delete_files, false)
     reap_series_grabs(series.id)
+    # Collect episode file paths BEFORE the cascade deletes the rows.
+    paths = if delete_files?, do: episode_file_paths_for_series(series.id), else: []
 
-    with {:ok, deleted} <- do_delete_series_txn(series, actor) do
+    with {:ok, deleted} <- do_delete_series_txn(series, actor, delete_files?) do
+      Enum.each(paths, &best_effort_delete_file/1)
       broadcast_series_deleted(deleted.id)
       {:ok, deleted}
     end
   end
 
-  defp do_delete_series_txn(series, actor) do
+  defp do_delete_series_txn(series, actor, delete_files?) do
     Repo.transaction(fn ->
       case Repo.delete(series) do
         {:ok, deleted} ->
-          Audit.log_or_rollback(actor, :delete_series, deleted, %{title: deleted.title})
+          Audit.log_or_rollback(actor, :delete_series, deleted, %{
+            title: deleted.title,
+            files_deleted: delete_files?
+          })
+
           deleted
 
         {:error, changeset} ->
@@ -735,6 +743,16 @@ defmodule Cinder.Catalog do
     # A concurrent session already deleted the row: Repo.delete/1 raises rather than
     # returning {:error, _}. Convert to a clean tagged error the LiveView callers handle.
     Ecto.StaleEntryError -> {:error, :stale_entry}
+  end
+
+  defp episode_file_paths_for_series(series_id) do
+    Repo.all(
+      from e in Episode,
+        join: s in Season,
+        on: s.id == e.season_id,
+        where: s.series_id == ^series_id and not is_nil(e.file_path),
+        select: e.file_path
+    )
   end
 
   # Remove every grab serving the series: client-remove the tracked download (best-effort, if any),

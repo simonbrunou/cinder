@@ -482,6 +482,49 @@ defmodule Cinder.CatalogAdminTest do
 
       assert {:error, :stale_entry} = Catalog.delete_series(series, actor)
     end
+
+    test "delete_files: true unlinks every episode file, then cascades the tree" do
+      series =
+        series_with_episode_file!(
+          file_path: "/tmp/cinder-test-tv-library/Show (2010)/Season 01/Show (2010) - S01E01.mkv"
+        )
+
+      expect(
+        Cinder.Library.FilesystemMock,
+        :rm,
+        fn "/tmp/cinder-test-tv-library/Show (2010)/Season 01/Show (2010) - S01E01.mkv" -> :ok end
+      )
+
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+      assert {:ok, _} = Catalog.delete_series(series, nil, delete_files: true)
+      refute Repo.get(Series, series.id)
+    end
+
+    test "without delete_files the episode files are left (no FS calls)" do
+      series = series_with_episode_file!(file_path: "/tmp/show.mkv")
+      assert {:ok, _} = Catalog.delete_series(series, nil)
+      refute Repo.get(Series, series.id)
+    end
+
+    defp series_with_episode_file!(file_path: path) do
+      series =
+        Repo.insert!(%Series{
+          tmdb_id: System.unique_integer([:positive]),
+          title: "Show",
+          year: 2010
+        })
+
+      season = Repo.insert!(%Cinder.Catalog.Season{series_id: series.id, season_number: 1})
+
+      Repo.insert!(%Cinder.Catalog.Episode{
+        season_id: season.id,
+        episode_number: 1,
+        file_path: path
+      })
+
+      series
+    end
   end
 
   describe "list_grabs/0" do
