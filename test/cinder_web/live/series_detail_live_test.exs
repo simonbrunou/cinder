@@ -181,4 +181,105 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert Repo.get(Cinder.Catalog.Series, series.id) == nil
     assert_redirect(lv, "/library")
   end
+
+  test "deleting an episode file unlinks it and clears file_path (stays monitored)", %{
+    conn: conn
+  } do
+    %{series: series, episode: ep} =
+      series_with_episode_file_fixture(
+        "/tmp/cinder-test-tv-library/S (2010)/Season 01/S (2010) - S01E01.mkv"
+      )
+
+    expect(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+
+    lv
+    |> element("button[phx-click=ask_delete_episode_file][phx-value-id='#{ep.id}']")
+    |> render_click()
+
+    lv
+    |> element("button[phx-click=confirm_delete_episode_file][phx-value-id='#{ep.id}']")
+    |> render_click()
+
+    reloaded = Cinder.Repo.get(Cinder.Catalog.Episode, ep.id)
+    assert is_nil(reloaded.file_path)
+    assert reloaded.monitored == true
+  end
+
+  test "deleting a season's files clears every episode file", %{conn: conn} do
+    %{series: series, season: season} =
+      season_with_files_fixture([
+        "/tmp/cinder-test-tv-library/S (2010)/Season 01/S (2010) - S01E01.mkv"
+      ])
+
+    expect(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+
+    lv
+    |> element("button[phx-click=ask_delete_season_files][phx-value-id='#{season.id}']")
+    |> render_click()
+
+    lv
+    |> element("button[phx-click=confirm_delete_season_files][phx-value-id='#{season.id}']")
+    |> render_click()
+
+    assert Cinder.Catalog.get_series_with_tree(series.id).seasons
+           |> Enum.flat_map(& &1.episodes)
+           |> Enum.all?(&is_nil(&1.file_path))
+  end
+
+  # Insert a series→season→episode tree with one episode that has a file_path.
+  defp series_with_episode_file_fixture(file_path) do
+    series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 8001, title: "S", year: 2010})
+
+    season =
+      Repo.insert!(%Cinder.Catalog.Season{
+        series_id: series.id,
+        season_number: 1,
+        monitored: true
+      })
+
+    episode =
+      Repo.insert!(%Cinder.Catalog.Episode{
+        season_id: season.id,
+        tmdb_episode_id: 8001,
+        episode_number: 1,
+        title: "Ep1",
+        monitored: true,
+        file_path: file_path
+      })
+
+    %{series: series, season: season, episode: episode}
+  end
+
+  # Insert a series→season→episode tree where the given file_paths are assigned across episodes.
+  defp season_with_files_fixture(file_paths) do
+    series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 8002, title: "S", year: 2010})
+
+    season =
+      Repo.insert!(%Cinder.Catalog.Season{
+        series_id: series.id,
+        season_number: 1,
+        monitored: true
+      })
+
+    file_paths
+    |> Enum.with_index(1)
+    |> Enum.each(fn {fp, n} ->
+      Repo.insert!(%Cinder.Catalog.Episode{
+        season_id: season.id,
+        tmdb_episode_id: 8100 + n,
+        episode_number: n,
+        title: "Ep#{n}",
+        monitored: true,
+        file_path: fp
+      })
+    end)
+
+    %{series: Repo.reload!(series), season: Repo.reload!(season)}
+  end
 end

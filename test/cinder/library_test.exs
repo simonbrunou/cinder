@@ -348,4 +348,73 @@ defmodule Cinder.LibraryTest do
       assert {:error, :no_content_path} = Library.import_episodes(nil, [ep(1, 1)])
     end
   end
+
+  describe "delete_file/1" do
+    test "nil/blank path is a no-op (no filesystem calls)" do
+      assert :ok = Cinder.Library.delete_file(nil)
+      assert :ok = Cinder.Library.delete_file("")
+    end
+
+    test "unlinks the file and prunes the now-empty movie folder, stopping at the root" do
+      path = "#{@lib}/Inception (2010)/Inception (2010).mkv"
+      expect(Cinder.Library.FilesystemMock, :rm, fn ^path -> :ok end)
+      # parent "Inception (2010)" is empty -> removed; its parent is the root -> never attempted.
+      expect(Cinder.Library.FilesystemMock, :rmdir, fn "#{@lib}/Inception (2010)" -> :ok end)
+
+      assert :ok = Cinder.Library.delete_file(path)
+    end
+
+    test "prunes Season + show folders for an episode, stopping at the tv root" do
+      path = "#{@tv_lib}/Show (2010)/Season 01/Show (2010) - S01E01.mkv"
+      expect(Cinder.Library.FilesystemMock, :rm, fn ^path -> :ok end)
+
+      expect(Cinder.Library.FilesystemMock, :rmdir, fn "#{@tv_lib}/Show (2010)/Season 01" ->
+        :ok
+      end)
+
+      expect(Cinder.Library.FilesystemMock, :rmdir, fn "#{@tv_lib}/Show (2010)" -> :ok end)
+
+      assert :ok = Cinder.Library.delete_file(path)
+    end
+
+    test "stops pruning at the first non-empty parent" do
+      path = "#{@lib}/Inception (2010)/Inception (2010).mkv"
+      expect(Cinder.Library.FilesystemMock, :rm, fn ^path -> :ok end)
+      expect(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+      assert :ok = Cinder.Library.delete_file(path)
+    end
+
+    test "a missing file is idempotent (:ok) and still prunes" do
+      path = "#{@lib}/Gone (2000)/Gone (2000).mkv"
+      expect(Cinder.Library.FilesystemMock, :rm, fn ^path -> {:error, :enoent} end)
+      expect(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enoent} end)
+
+      assert :ok = Cinder.Library.delete_file(path)
+    end
+
+    test "a real unlink error is surfaced and nothing is pruned" do
+      path = "#{@lib}/Locked (2000)/Locked (2000).mkv"
+      expect(Cinder.Library.FilesystemMock, :rm, fn ^path -> {:error, :eacces} end)
+      # no rmdir expectation -> verify_on_exit! fails if pruning is attempted.
+
+      assert {:error, :eacces} = Cinder.Library.delete_file(path)
+    end
+
+    # Data-safety guard: a stale/misconfigured file_path OUTSIDE every library root must unlink the
+    # file but NEVER attempt a single rmdir (no rmdir expectation -> verify_on_exit! fails if pruned).
+    test "a path outside every library root unlinks but prunes nothing" do
+      path = "/var/old/loose-movie.mkv"
+      expect(Cinder.Library.FilesystemMock, :rm, fn ^path -> :ok end)
+
+      assert :ok = Cinder.Library.delete_file(path)
+    end
+
+    test "a sibling-prefix path outside the root unlinks but prunes nothing" do
+      path = "#{@lib}-extra/Movie (2000)/Movie (2000).mkv"
+      expect(Cinder.Library.FilesystemMock, :rm, fn ^path -> :ok end)
+
+      assert :ok = Cinder.Library.delete_file(path)
+    end
+  end
 end

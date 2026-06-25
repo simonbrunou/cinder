@@ -260,6 +260,62 @@ defmodule Cinder.CatalogAdminTest do
 
       assert {:error, :stale_entry} = Catalog.delete_movie(movie, actor)
     end
+
+    test "delete_files: true unlinks the file, then deletes the row" do
+      movie = movie!(%{title: "Inception", year: 2010})
+
+      {:ok, movie} =
+        movie
+        |> Ecto.Changeset.change(
+          status: :available,
+          file_path: "/tmp/cinder-test-library/Inception (2010)/Inception (2010).mkv"
+        )
+        |> Repo.update()
+
+      expect(
+        Cinder.Library.FilesystemMock,
+        :rm,
+        fn "/tmp/cinder-test-library/Inception (2010)/Inception (2010).mkv" -> :ok end
+      )
+
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+      assert {:ok, _} = Catalog.delete_movie(movie, nil, delete_files: true)
+      refute Repo.get(Movie, movie.id)
+    end
+
+    test "without delete_files the file is left on disk (no FS calls)" do
+      movie = movie!(%{title: "Inception", year: 2010})
+
+      {:ok, movie} =
+        movie
+        |> Ecto.Changeset.change(status: :available, file_path: "/tmp/x.mkv")
+        |> Repo.update()
+
+      # No FS expectations: verify_on_exit! fails if delete_file is reached.
+      assert {:ok, _} = Catalog.delete_movie(movie, nil)
+      refute Repo.get(Movie, movie.id)
+    end
+
+    test "delete_files: true still deletes the row when the unlink fails (best-effort)" do
+      movie = movie!(%{title: "Inception", year: 2010})
+
+      {:ok, movie} =
+        movie
+        |> Ecto.Changeset.change(status: :available, file_path: "/tmp/locked.mkv")
+        |> Repo.update()
+
+      expect(Cinder.Library.FilesystemMock, :rm, fn _ -> {:error, :eacces} end)
+
+      assert {:ok, _} = Catalog.delete_movie(movie, nil, delete_files: true)
+      refute Repo.get(Movie, movie.id)
+    end
+
+    test "delete_files: true with no file_path makes no FS call" do
+      movie = movie!()
+      assert {:ok, _} = Catalog.delete_movie(movie, nil, delete_files: true)
+      refute Repo.get(Movie, movie.id)
+    end
   end
 
   describe "cancel_series/2 and delete_series/2" do
@@ -426,6 +482,49 @@ defmodule Cinder.CatalogAdminTest do
 
       assert {:error, :stale_entry} = Catalog.delete_series(series, actor)
     end
+
+    test "delete_files: true unlinks every episode file, then cascades the tree" do
+      series =
+        series_with_episode_file!(
+          file_path: "/tmp/cinder-test-tv-library/Show (2010)/Season 01/Show (2010) - S01E01.mkv"
+        )
+
+      expect(
+        Cinder.Library.FilesystemMock,
+        :rm,
+        fn "/tmp/cinder-test-tv-library/Show (2010)/Season 01/Show (2010) - S01E01.mkv" -> :ok end
+      )
+
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+      assert {:ok, _} = Catalog.delete_series(series, nil, delete_files: true)
+      refute Repo.get(Series, series.id)
+    end
+
+    test "without delete_files the episode files are left (no FS calls)" do
+      series = series_with_episode_file!(file_path: "/tmp/show.mkv")
+      assert {:ok, _} = Catalog.delete_series(series, nil)
+      refute Repo.get(Series, series.id)
+    end
+
+    defp series_with_episode_file!(file_path: path) do
+      series =
+        Repo.insert!(%Series{
+          tmdb_id: System.unique_integer([:positive]),
+          title: "Show",
+          year: 2010
+        })
+
+      season = Repo.insert!(%Cinder.Catalog.Season{series_id: series.id, season_number: 1})
+
+      Repo.insert!(%Cinder.Catalog.Episode{
+        season_id: season.id,
+        episode_number: 1,
+        file_path: path
+      })
+
+      series
+    end
   end
 
   describe "list_grabs/0" do
@@ -452,6 +551,181 @@ defmodule Cinder.CatalogAdminTest do
       assert [grab] = Catalog.list_grabs()
       assert [loaded_ep] = grab.episodes
       assert loaded_ep.season.series.id == series.id
+    end
+  end
+
+  describe "delete_episode_file/3" do
+    setup :verify_on_exit!
+
+    defp episode_with_file!(path) do
+      series =
+        Repo.insert!(%Series{
+          tmdb_id: System.unique_integer([:positive]),
+          title: "Show",
+          year: 2010
+        })
+
+      season = Repo.insert!(%Cinder.Catalog.Season{series_id: series.id, season_number: 1})
+
+      ep =
+        Repo.insert!(%Cinder.Catalog.Episode{
+          season_id: season.id,
+          episode_number: 1,
+          monitored: true,
+          file_path: path
+        })
+
+      {series, ep}
+    end
+
+    test "unlinks the file and clears file_path, leaving it monitored (re-grab parity)" do
+      {_series, ep} = episode_with_file!("/tmp/ep.mkv")
+      expect(Cinder.Library.FilesystemMock, :rm, fn "/tmp/ep.mkv" -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+      assert {:ok, updated} = Catalog.delete_episode_file(ep, nil)
+      assert is_nil(updated.file_path)
+      assert updated.monitored == true
+    end
+
+    test "unmonitor: true also clears monitored" do
+      {_series, ep} = episode_with_file!("/tmp/ep.mkv")
+      expect(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+      assert {:ok, updated} = Catalog.delete_episode_file(ep, nil, unmonitor: true)
+      assert is_nil(updated.file_path)
+      assert updated.monitored == false
+    end
+
+    test "no file_path returns {:error, :no_file} and makes no FS call" do
+      {_series, ep} = episode_with_file!(nil)
+      assert {:error, :no_file} = Catalog.delete_episode_file(ep, nil)
+    end
+
+    test "a failed unlink surfaces the error and leaves file_path untouched" do
+      {_series, ep} = episode_with_file!("/tmp/ep.mkv")
+      expect(Cinder.Library.FilesystemMock, :rm, fn _ -> {:error, :eacces} end)
+
+      assert {:error, :eacces} = Catalog.delete_episode_file(ep, nil)
+      assert Repo.get(Cinder.Catalog.Episode, ep.id).file_path == "/tmp/ep.mkv"
+    end
+
+    test "broadcasts {:series_updated, series_id}" do
+      {series, ep} = episode_with_file!("/tmp/ep.mkv")
+      expect(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+      Catalog.subscribe_series()
+
+      assert {:ok, _} = Catalog.delete_episode_file(ep, nil)
+      assert_receive {:series_updated, id}
+      assert id == series.id
+    end
+  end
+
+  describe "delete_season_files/3" do
+    setup :verify_on_exit!
+
+    defp season_with_files!(paths) do
+      series =
+        Repo.insert!(%Series{
+          tmdb_id: System.unique_integer([:positive]),
+          title: "Show",
+          year: 2010
+        })
+
+      season = Repo.insert!(%Cinder.Catalog.Season{series_id: series.id, season_number: 1})
+
+      eps =
+        for {path, n} <- Enum.with_index(paths, 1) do
+          Repo.insert!(%Cinder.Catalog.Episode{
+            season_id: season.id,
+            episode_number: n,
+            monitored: true,
+            file_path: path
+          })
+        end
+
+      {series, season, eps}
+    end
+
+    test "clears file_path on every episode with a file, skips fileless ones, one broadcast" do
+      {series, season, [e1, e2]} = season_with_files!(["/tmp/e1.mkv", nil])
+      expect(Cinder.Library.FilesystemMock, :rm, fn "/tmp/e1.mkv" -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+      Catalog.subscribe_series()
+
+      assert {:ok, 1, 0} = Catalog.delete_season_files(season, nil)
+      assert is_nil(Repo.get(Cinder.Catalog.Episode, e1.id).file_path)
+      assert is_nil(Repo.get(Cinder.Catalog.Episode, e2.id).file_path)
+      assert_receive {:series_updated, id}
+      assert id == series.id
+      refute_received {:series_updated, ^id}
+    end
+
+    test "unmonitor: true clears monitored on the cleared episodes" do
+      {_series, season, [e1]} = season_with_files!(["/tmp/e1.mkv"])
+      expect(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+      assert {:ok, 1, 0} = Catalog.delete_season_files(season, nil, unmonitor: true)
+      assert Repo.get(Cinder.Catalog.Episode, e1.id).monitored == false
+    end
+
+    test "a per-file unlink failure leaves that episode's file_path (not cleared)" do
+      {_series, season, [e1, e2]} = season_with_files!(["/tmp/ok.mkv", "/tmp/bad.mkv"])
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+      # TWO rm calls (one per episode) -> expect/4 with an explicit count of 2. A bare 2-clause
+      # expect/3 is ONE allowed call and the second rm would raise Mox.UnexpectedCallError. The
+      # clauses dispatch in call order (e1 then e2, the Repo.all id order).
+      expect(Cinder.Library.FilesystemMock, :rm, 2, fn
+        "/tmp/ok.mkv" -> :ok
+        "/tmp/bad.mkv" -> {:error, :eacces}
+      end)
+
+      assert {:ok, 1, 1} = Catalog.delete_season_files(season, nil)
+      assert is_nil(Repo.get(Cinder.Catalog.Episode, e1.id).file_path)
+      assert Repo.get(Cinder.Catalog.Episode, e2.id).file_path == "/tmp/bad.mkv"
+    end
+
+    test "all unlinks fail returns {:ok, 0, 1} and leaves file_path untouched" do
+      {_series, season, [e1]} = season_with_files!(["/tmp/bad.mkv"])
+      expect(Cinder.Library.FilesystemMock, :rm, fn "/tmp/bad.mkv" -> {:error, :eacces} end)
+
+      assert {:ok, 0, 1} = Catalog.delete_season_files(season, nil)
+      assert Repo.get(Cinder.Catalog.Episode, e1.id).file_path == "/tmp/bad.mkv"
+    end
+  end
+
+  describe "delete_episode_file/3 stale entry" do
+    setup :verify_on_exit!
+
+    test "concurrent episode row deletion returns {:error, :stale_entry} (no raise)" do
+      series =
+        Repo.insert!(%Series{
+          tmdb_id: System.unique_integer([:positive]),
+          title: "Show",
+          year: 2010
+        })
+
+      season = Repo.insert!(%Cinder.Catalog.Season{series_id: series.id, season_number: 1})
+
+      ep =
+        Repo.insert!(%Cinder.Catalog.Episode{
+          season_id: season.id,
+          episode_number: 1,
+          monitored: true,
+          file_path: "/tmp/ep.mkv"
+        })
+
+      # Simulate concurrent deletion of the episode row out-of-band.
+      Repo.delete!(ep)
+
+      # FS stub: unlink succeeds (the pre-txn step), but the DB update then raises StaleEntryError.
+      stub(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+      assert Catalog.delete_episode_file(ep, nil) == {:error, :stale_entry}
     end
   end
 end

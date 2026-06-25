@@ -11,6 +11,7 @@ defmodule Cinder.Catalog do
   alias Cinder.Audit
   alias Cinder.Catalog.{Episode, Grab, Movie, Season, Series}
   alias Cinder.Download
+  alias Cinder.Library
   alias Cinder.Repo
 
   @topic "movies"
@@ -218,24 +219,33 @@ defmodule Cinder.Catalog do
   @doc """
   Deletes a movie's DB row. An active row with a tracked download is cancelled first (which
   removes the client download) so delete never orphans a live download. Broadcasts
-  `{:movie_deleted, id}` on the `"movies"` topic. On-disk library files are intentionally left
-  for the deferred unlink feature. The delete + audit row are written in one transaction.
+  `{:movie_deleted, id}` on the `"movies"` topic. The delete + audit row are written in one
+  transaction.
+
+  Pass `delete_files: true` in `opts` to also unlink the on-disk library file after the row is
+  deleted (best-effort: a failed unlink is logged, not propagated). Default leaves files on disk.
   """
-  def delete_movie(%Movie{} = movie, actor) do
+  def delete_movie(%Movie{} = movie, actor, opts \\ []) do
+    delete_files? = Keyword.get(opts, :delete_files, false)
     # Client removal is best-effort (see maybe_cancel_download_for_delete/1).
     maybe_cancel_download_for_delete(movie)
 
-    with {:ok, deleted} <- do_delete_txn(movie, actor) do
+    with {:ok, deleted} <- do_delete_txn(movie, actor, delete_files?) do
+      if delete_files?, do: best_effort_delete_file(movie.file_path)
       broadcast_movie_deleted(deleted.id)
       {:ok, deleted}
     end
   end
 
-  defp do_delete_txn(movie, actor) do
+  defp do_delete_txn(movie, actor, delete_files?) do
     Repo.transaction(fn ->
       case Repo.delete(movie) do
         {:ok, deleted} ->
-          Audit.log_or_rollback(actor, :delete_movie, deleted, %{title: deleted.title})
+          Audit.log_or_rollback(actor, :delete_movie, deleted, %{
+            title: deleted.title,
+            files_deleted: delete_files?
+          })
+
           deleted
 
         {:error, changeset} ->
@@ -268,6 +278,20 @@ defmodule Cinder.Catalog do
 
   defp maybe_cancel_download_for_delete(%Movie{} = movie) do
     if cancellable?(movie), do: remove_movie_download(movie), else: :ok
+  end
+
+  # Best-effort library-file unlink shared by the movie and series delete paths: a failed unlink is
+  # logged, never propagated, so it can't strand the row delete. Always returns :ok.
+  # ponytail: no nil clause here — Library.delete_file/1 already guards nil/"" and returns :ok.
+  defp best_effort_delete_file(path) do
+    case Library.delete_file(path) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("library file delete failed for #{inspect(path)}: #{inspect(reason)}")
+        :ok
+    end
   end
 
   # Best-effort client download removal shared by the movie and series reap paths: never blocks a
@@ -563,6 +587,109 @@ defmodule Cinder.Catalog do
     end
   end
 
+  @doc """
+  Deletes one episode's library file (Sonarr "delete episode file"): unlinks the file, then clears
+  `file_path` so the episode reverts to its derived missing state — left monitored (the poller
+  re-grabs next tick) unless `opts[:unmonitor]` also flips `monitored` off. The DB write + audit run
+  in one transaction (mirroring `cancel_movie/2`); broadcasts `{:series_updated, series_id}` after
+  commit. Returns `{:error, :no_file}` when there is no file, or the unlink's `{:error, reason}`
+  (the DB is then untouched — the file is the whole point, so the error is surfaced, not best-effort).
+  Ordering caveat: the unlink runs before the DB txn, so a (rare) txn failure after a successful
+  unlink leaves `file_path` pointing at a now-deleted file (the episode reads falsely-available)
+  until re-deleted — recoverable because `rm` of a missing file is idempotent (`:enoent` → `:ok`).
+  """
+  def delete_episode_file(episode, actor, opts \\ [])
+
+  def delete_episode_file(%Episode{file_path: p}, _actor, _opts) when p in [nil, ""],
+    do: {:error, :no_file}
+
+  def delete_episode_file(%Episode{} = episode, actor, opts) do
+    unmonitor? = Keyword.get(opts, :unmonitor, false)
+
+    with :ok <- Library.delete_file(episode.file_path),
+         {:ok, updated} <- do_delete_episode_file_txn(episode, actor, unmonitor?) do
+      broadcast_series(series_id_for_season(updated.season_id))
+      {:ok, updated}
+    end
+  end
+
+  defp do_delete_episode_file_txn(episode, actor, unmonitor?) do
+    Repo.transaction(fn ->
+      changeset =
+        episode
+        |> Episode.transition_changeset(%{file_path: nil})
+        |> maybe_unmonitor(unmonitor?)
+
+      case Repo.update(changeset) do
+        {:ok, updated} ->
+          Audit.log_or_rollback(actor, :delete_episode_file, updated, %{unmonitored: unmonitor?})
+          updated
+
+        {:error, changeset} ->
+          Repo.rollback(changeset)
+      end
+    end)
+  rescue
+    Ecto.StaleEntryError -> {:error, :stale_entry}
+  end
+
+  defp maybe_unmonitor(changeset, true),
+    do: Ecto.Changeset.put_change(changeset, :monitored, false)
+
+  defp maybe_unmonitor(changeset, false), do: changeset
+
+  @doc """
+  Deletes every library file in a season (Sonarr per-season "delete episode files"): unlinks each
+  episode's file (best-effort, per file), then clears `file_path` — and `monitored` off on
+  `opts[:unmonitor]` — for the episodes whose file was actually removed, in ONE transaction + ONE
+  `{:series_updated, _}` broadcast (mirrors `set_season_monitored/2`). A per-file unlink failure is
+  logged and that episode keeps its `file_path` (so it isn't falsely marked missing). Returns
+  `{:ok, cleared_count, failed_count}` where `failed_count` is the number of episodes whose unlink
+  returned `{:error, _}` (callers should warn the user when `failed_count > 0`).
+  """
+  def delete_season_files(%Season{} = season, actor, opts \\ []) do
+    unmonitor? = Keyword.get(opts, :unmonitor, false)
+
+    # Bulk path mirrors set_season_monitored/2: the txn writes file_path/monitored via update_all
+    # (NOT Episode.transition_changeset — file_path: nil has no validation to enforce), and the
+    # read-then-write window (episodes read, files unlinked, then update_all) is the same one
+    # set_season_monitored carries. Accepted at household scale (WAL + busy_timeout serializes the
+    # writes; worst case a just-imported file is re-cleared and the user re-deletes).
+    episodes =
+      Repo.all(from e in Episode, where: e.season_id == ^season.id and not is_nil(e.file_path))
+
+    results = Enum.map(episodes, fn ep -> {ep, Library.delete_file(ep.file_path)} end)
+    cleared_ids = for {ep, :ok} <- results, do: ep.id
+    failed_count = Enum.count(results, fn {_ep, r} -> r != :ok end)
+
+    for {ep, {:error, reason}} <- results do
+      Logger.warning(
+        "library file delete failed for #{inspect(ep.file_path)}: #{inspect(reason)}"
+      )
+    end
+
+    with {:ok, _} <- do_delete_season_files_txn(season, actor, cleared_ids, unmonitor?) do
+      broadcast_series(season.series_id)
+      {:ok, length(cleared_ids), failed_count}
+    end
+  end
+
+  defp do_delete_season_files_txn(season, actor, cleared_ids, unmonitor?) do
+    Repo.transaction(fn ->
+      sets =
+        [file_path: nil, updated_at: now()] ++ if(unmonitor?, do: [monitored: false], else: [])
+
+      Repo.update_all(from(e in Episode, where: e.id in ^cleared_ids), set: sets)
+
+      Audit.log_or_rollback(actor, :delete_season_files, season, %{
+        count: length(cleared_ids),
+        unmonitored: unmonitor?
+      })
+
+      season
+    end)
+  end
+
   defp now, do: DateTime.truncate(DateTime.utc_now(), :second)
 
   @doc """
@@ -683,23 +810,31 @@ defmodule Cinder.Catalog do
   episode cascade, so after `Repo.delete(series)` the grabs would be unreachable for client removal
   and orphan their downloads). Each grab's tracked client download is removed (outside the txn),
   then `delete_grab/1`; then `Repo.delete(series)` cascades seasons/episodes at the DB. Broadcasts
-  `{:series_deleted, id}`. Audited. On-disk library files are intentionally left for the deferred
-  unlink feature.
+  `{:series_deleted, id}`. Audited. Pass `delete_files: true` to also unlink every episode
+  `file_path` after the cascade (best-effort, non-blocking).
   """
-  def delete_series(%Series{} = series, actor) do
+  def delete_series(%Series{} = series, actor, opts \\ []) do
+    delete_files? = Keyword.get(opts, :delete_files, false)
     reap_series_grabs(series.id)
+    # Collect episode file paths BEFORE the cascade deletes the rows.
+    paths = if delete_files?, do: episode_file_paths_for_series(series.id), else: []
 
-    with {:ok, deleted} <- do_delete_series_txn(series, actor) do
+    with {:ok, deleted} <- do_delete_series_txn(series, actor, delete_files?) do
+      Enum.each(paths, &best_effort_delete_file/1)
       broadcast_series_deleted(deleted.id)
       {:ok, deleted}
     end
   end
 
-  defp do_delete_series_txn(series, actor) do
+  defp do_delete_series_txn(series, actor, delete_files?) do
     Repo.transaction(fn ->
       case Repo.delete(series) do
         {:ok, deleted} ->
-          Audit.log_or_rollback(actor, :delete_series, deleted, %{title: deleted.title})
+          Audit.log_or_rollback(actor, :delete_series, deleted, %{
+            title: deleted.title,
+            files_deleted: delete_files?
+          })
+
           deleted
 
         {:error, changeset} ->
@@ -710,6 +845,16 @@ defmodule Cinder.Catalog do
     # A concurrent session already deleted the row: Repo.delete/1 raises rather than
     # returning {:error, _}. Convert to a clean tagged error the LiveView callers handle.
     Ecto.StaleEntryError -> {:error, :stale_entry}
+  end
+
+  defp episode_file_paths_for_series(series_id) do
+    Repo.all(
+      from e in Episode,
+        join: s in Season,
+        on: s.id == e.season_id,
+        where: s.series_id == ^series_id and not is_nil(e.file_path),
+        select: e.file_path
+    )
   end
 
   # Remove every grab serving the series: client-remove the tracked download (best-effort, if any),
