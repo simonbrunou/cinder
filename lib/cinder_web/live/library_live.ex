@@ -24,7 +24,8 @@ defmodule CinderWeb.LibraryLive do
        series: Catalog.list_series(),
        editing: nil,
        confirming: nil,
-       form: nil
+       form: nil,
+       delete_files: false
      )}
   end
 
@@ -71,7 +72,9 @@ defmodule CinderWeb.LibraryLive do
     do: {:noreply, assign(socket, confirming: {:movie, :cancel, id}, editing: nil)}
 
   def handle_event("ask_delete_movie", %{"id" => id}, socket),
-    do: {:noreply, assign(socket, confirming: {:movie, :delete, id}, editing: nil)}
+    do:
+      {:noreply,
+       assign(socket, confirming: {:movie, :delete, id}, editing: nil, delete_files: false)}
 
   def handle_event("confirm_cancel_movie", %{"id" => id}, socket) do
     actor = socket.assigns.current_scope.user
@@ -97,8 +100,12 @@ defmodule CinderWeb.LibraryLive do
     actor = socket.assigns.current_scope.user
 
     with movie when not is_nil(movie) <- find_movie(socket, id),
-         {:ok, _} <- Catalog.delete_movie(movie, actor) do
-      {:noreply, socket |> assign(confirming: nil) |> put_flash(:info, "Movie deleted.")}
+         {:ok, _} <-
+           Catalog.delete_movie(movie, actor, delete_files: socket.assigns.delete_files) do
+      {:noreply,
+       socket
+       |> assign(confirming: nil, delete_files: false)
+       |> put_flash(:info, "Movie deleted.")}
     else
       _ ->
         {:noreply,
@@ -111,7 +118,7 @@ defmodule CinderWeb.LibraryLive do
     do: {:noreply, assign(socket, confirming: {:series, :cancel, id})}
 
   def handle_event("ask_delete_series", %{"id" => id}, socket),
-    do: {:noreply, assign(socket, confirming: {:series, :delete, id})}
+    do: {:noreply, assign(socket, confirming: {:series, :delete, id}, delete_files: false)}
 
   def handle_event("confirm_cancel_series", %{"id" => id}, socket),
     do:
@@ -123,19 +130,24 @@ defmodule CinderWeb.LibraryLive do
         "Couldn't cancel the series."
       )
 
-  def handle_event("confirm_delete_series", %{"id" => id}, socket),
-    do:
-      run_series_op(
-        socket,
-        id,
-        &Catalog.delete_series/2,
-        "Series deleted.",
-        "Couldn't delete the series."
-      )
+  def handle_event("confirm_delete_series", %{"id" => id}, socket) do
+    flag = socket.assigns.delete_files
+
+    run_series_op(
+      socket,
+      id,
+      fn series, actor -> Catalog.delete_series(series, actor, delete_files: flag) end,
+      "Series deleted.",
+      "Couldn't delete the series."
+    )
+  end
 
   # --- shared ---
+  def handle_event("toggle_delete_files", _params, socket),
+    do: {:noreply, assign(socket, delete_files: !socket.assigns.delete_files)}
+
   def handle_event("dismiss_confirm", _params, socket),
-    do: {:noreply, assign(socket, confirming: nil)}
+    do: {:noreply, assign(socket, confirming: nil, delete_files: false)}
 
   # Client-controlled payloads — ignore anything unmatched rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
@@ -256,16 +268,26 @@ defmodule CinderWeb.LibraryLive do
               <:caveat>Cancel this movie and remove its download?</:caveat>
             </.confirm_action>
 
-            <.confirm_action
-              :if={@confirming == {:movie, :delete, to_string(m.id)}}
-              id={"confirm-delete-movie-#{m.id}"}
-              on_confirm="confirm_delete_movie"
-              on_cancel="dismiss_confirm"
-              value={m.id}
-              confirm_label="Delete"
-            >
-              <:caveat>Delete this movie's record? (Library files are left on disk.)</:caveat>
-            </.confirm_action>
+            <div :if={@confirming == {:movie, :delete, to_string(m.id)}} class="mt-2 space-y-2">
+              <label class="flex cursor-pointer items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  class="checkbox checkbox-sm"
+                  phx-click="toggle_delete_files"
+                  checked={@delete_files}
+                />
+                <span>Also delete the file from disk</span>
+              </label>
+              <.confirm_action
+                id={"confirm-delete-movie-#{m.id}"}
+                on_confirm="confirm_delete_movie"
+                on_cancel="dismiss_confirm"
+                value={m.id}
+                confirm_label="Delete"
+              >
+                <:caveat>Delete this movie's record?</:caveat>
+              </.confirm_action>
+            </div>
           </li>
         </ul>
       </section>
@@ -317,16 +339,26 @@ defmodule CinderWeb.LibraryLive do
               <:caveat>Cancel & unmonitor this series?</:caveat>
             </.confirm_action>
 
-            <.confirm_action
-              :if={@confirming == {:series, :delete, to_string(s.id)}}
-              id={"confirm-delete-series-#{s.id}"}
-              on_confirm="confirm_delete_series"
-              on_cancel="dismiss_confirm"
-              value={s.id}
-              confirm_label="Delete"
-            >
-              <:caveat>Delete this series record? (Library files are left on disk.)</:caveat>
-            </.confirm_action>
+            <div :if={@confirming == {:series, :delete, to_string(s.id)}} class="space-y-2">
+              <label class="flex cursor-pointer items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  class="checkbox checkbox-sm"
+                  phx-click="toggle_delete_files"
+                  checked={@delete_files}
+                />
+                <span>Also delete files from disk</span>
+              </label>
+              <.confirm_action
+                id={"confirm-delete-series-#{s.id}"}
+                on_confirm="confirm_delete_series"
+                on_cancel="dismiss_confirm"
+                value={s.id}
+                confirm_label="Delete"
+              >
+                <:caveat>Delete this series and its seasons/episodes?</:caveat>
+              </.confirm_action>
+            </div>
           </div>
         </div>
       </section>

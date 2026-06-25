@@ -103,6 +103,58 @@ defmodule CinderWeb.LibraryLiveTest do
     assert redirected_to(get(conn, ~p"/movies")) == "/library"
   end
 
+  defp available_movie!(file_path) do
+    movie = movie!(%{title: "M", year: 2010})
+
+    {:ok, movie} =
+      movie
+      |> Ecto.Changeset.change(status: :available, file_path: file_path)
+      |> Cinder.Repo.update()
+
+    movie
+  end
+
+  test "deleting a movie with the delete-files box ticked unlinks the file", %{conn: conn} do
+    movie = available_movie!("/tmp/cinder-test-library/M (2010)/M (2010).mkv")
+
+    expect(
+      Cinder.Library.FilesystemMock,
+      :rm,
+      fn "/tmp/cinder-test-library/M (2010)/M (2010).mkv" -> :ok end
+    )
+
+    stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+    {:ok, lv, _html} = live(conn, ~p"/library")
+
+    lv
+    |> element("button[phx-click=ask_delete_movie][phx-value-id='#{movie.id}']")
+    |> render_click()
+
+    lv |> element("input[phx-click=toggle_delete_files]") |> render_click()
+
+    lv
+    |> element("button[phx-click=confirm_delete_movie][phx-value-id='#{movie.id}']")
+    |> render_click()
+
+    refute Cinder.Repo.get(Cinder.Catalog.Movie, movie.id)
+  end
+
+  test "deleting a movie without ticking the box leaves the file (no FS call)", %{conn: conn} do
+    movie = available_movie!("/tmp/x.mkv")
+    {:ok, lv, _html} = live(conn, ~p"/library")
+
+    lv
+    |> element("button[phx-click=ask_delete_movie][phx-value-id='#{movie.id}']")
+    |> render_click()
+
+    lv
+    |> element("button[phx-click=confirm_delete_movie][phx-value-id='#{movie.id}']")
+    |> render_click()
+
+    refute Cinder.Repo.get(Cinder.Catalog.Movie, movie.id)
+  end
+
   test "Discover no longer renders the Added series block", %{conn: conn} do
     series!(%{title: "Severance"})
     {:ok, _lv, html} = live(conn, ~p"/")
