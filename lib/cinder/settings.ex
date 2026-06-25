@@ -252,9 +252,15 @@ defmodule Cinder.Settings do
   end
 
   @doc """
-  Form state for the LiveView: `%{values: %{key => string}, secrets_set: MapSet}`.
-  Secret *values* are never returned (only whether each is set) so they can't be
-  echoed back to the client.
+  Form state for the LiveView: `%{values:, secrets_set:, placeholders:, secrets_from_env:}`.
+
+  `values` drives the input `value=` and reflects the **DB layer only** (so a blank field
+  still means "no override, inherit env"). `placeholders` carries the **effective env value**
+  for a non-secret field with no DB row, so an env-bootstrapped install reads as configured
+  rather than empty — shown as greyed placeholder text, never as a value (echoing it back
+  would promote env into a DB row on the next save and break clear-to-revert). Secret
+  *values* are never returned (only whether each is set, and whether it comes from env) so
+  they can't be echoed back to the client.
   """
   def form_state do
     rows = rows_by_key()
@@ -286,8 +292,52 @@ defmodule Cinder.Settings do
         f.key
       end
 
-    %{values: values, secrets_set: secrets_set}
+    %{
+      values: values,
+      secrets_set: secrets_set,
+      placeholders: placeholders(rows),
+      secrets_from_env: secrets_from_env(rows)
+    }
   end
+
+  # Effective env value to show as a placeholder for each non-secret field with no DB row
+  # (config creds + the env-backed library_path roots; bands are DB-only, no env to show).
+  defp placeholders(rows) do
+    field_pairs = for f <- config_fields(), not f.secret, do: {f.key, effective_field_value(f)}
+    path_pairs = for k <- library_path_keys(), do: {k, effective_flat_value(k)}
+
+    (field_pairs ++ path_pairs)
+    |> Enum.reject(fn {key, value} -> is_nil(value) or not is_nil(decoded_for(rows, key)) end)
+    |> Map.new()
+  end
+
+  # Secret fields with no DB row but a value seeded from env — marked "set via environment"
+  # in the UI (the value itself is never echoed).
+  defp secrets_from_env(rows) do
+    for f <- config_fields(),
+        f.secret,
+        is_nil(decoded_for(rows, f.key)),
+        not is_nil(effective_field_value(f)),
+        into: MapSet.new() do
+      f.key
+    end
+  end
+
+  defp library_path_keys, do: Enum.map(Cinder.Library.kinds(), &library_path_key/1)
+
+  defp effective_field_value(%{module: module, field: field}) do
+    :cinder |> Application.get_env(module, []) |> Keyword.get(field) |> present()
+  end
+
+  defp effective_flat_value(key) do
+    :cinder |> Application.get_env(:"#{key}") |> present()
+  end
+
+  defp present(value) when is_binary(value) do
+    if String.trim(value) == "", do: nil, else: value
+  end
+
+  defp present(_), do: nil
 
   # --- writes ---
 
