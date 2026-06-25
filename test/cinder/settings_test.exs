@@ -119,6 +119,61 @@ defmodule Cinder.SettingsTest do
     end
   end
 
+  describe "form_state/0 env placeholders" do
+    test "a non-secret value from env (no DB row) is a placeholder, not a value" do
+      Application.put_env(:cinder, Cinder.Acquisition.Indexer.Prowlarr,
+        base_url: "http://env:9696"
+      )
+
+      form = Settings.form_state()
+
+      # The input value stays blank (DB layer is empty → "inherit env"); the effective env
+      # value surfaces as the placeholder so the field doesn't read as unconfigured.
+      assert form.values["prowlarr_url"] == ""
+      assert form.placeholders["prowlarr_url"] == "http://env:9696"
+    end
+
+    test "a saved DB value wins: it's the value, not a placeholder" do
+      Application.put_env(:cinder, Cinder.Acquisition.Indexer.Prowlarr,
+        base_url: "http://env:9696"
+      )
+
+      Settings.put("prowlarr_url", "http://db:9696")
+
+      form = Settings.form_state()
+
+      assert form.values["prowlarr_url"] == "http://db:9696"
+      refute Map.has_key?(form.placeholders, "prowlarr_url")
+    end
+
+    test "showing the env placeholder doesn't promote env into a DB row on save" do
+      # The whole point of placeholder-not-value: an untouched env-bootstrapped field stays
+      # env-sourced. Submitting the (blank) field must not write a row, so clear-to-revert holds.
+      Application.put_env(:cinder, Cinder.Acquisition.Indexer.Prowlarr,
+        base_url: "http://env:9696"
+      )
+
+      Settings.save_form(%{"prowlarr_url" => ""})
+
+      # No row written → the field still inherits env (clear-to-revert intact). Had the
+      # placeholder been rendered as a value, this blank submit would have round-tripped
+      # the env value into a DB row instead.
+      assert Repo.get_by(Setting, key: "prowlarr_url") == nil
+    end
+
+    test "a secret seeded from env is marked set-via-env, never echoed" do
+      Application.put_env(:cinder, Cinder.Catalog.TMDB.HTTP, token: "env-token")
+
+      form = Settings.form_state()
+
+      assert MapSet.member?(form.secrets_from_env, "tmdb_token")
+      refute MapSet.member?(form.secrets_set, "tmdb_token")
+      # The secret value is never in values or placeholders.
+      refute Map.has_key?(form.placeholders, "tmdb_token")
+      refute Map.has_key?(form.values, "tmdb_token")
+    end
+  end
+
   describe "load_into_env/0 overlay" do
     test "DB overrides the env bootstrap on the boot path" do
       # Insert directly (bypassing put/0's auto-load) to exercise load_into_env standalone.

@@ -64,7 +64,7 @@ defmodule CinderWeb.SettingsComponents do
             id={Settings.library_path_key(kind)}
             name={Settings.library_path_key(kind)}
             value={@form.values[Settings.library_path_key(kind)]}
-            placeholder={"/media/#{kind}"}
+            placeholder={@form.placeholders[Settings.library_path_key(kind)] || "/media/#{kind}"}
             autocomplete="off"
             class="input w-full"
           />
@@ -204,7 +204,7 @@ defmodule CinderWeb.SettingsComponents do
         id={@field.key}
         name={@field.key}
         value={@form.values[@field.key]}
-        placeholder={@field.placeholder}
+        placeholder={@form.placeholders[@field.key] || @field.placeholder}
         autocomplete="off"
         class="input w-full"
       />
@@ -215,7 +215,7 @@ defmodule CinderWeb.SettingsComponents do
           id={@field.key}
           name={@field.key}
           value=""
-          placeholder={secret_placeholder(@field, @form.secrets_set)}
+          placeholder={secret_placeholder(@field, @form)}
           autocomplete="off"
           class="input w-full"
         />
@@ -236,9 +236,16 @@ defmodule CinderWeb.SettingsComponents do
     """
   end
 
-  defp secret_placeholder(field, secrets_set) do
-    if MapSet.member?(secrets_set, field.key),
-      do: gettext("•••• saved (leave blank to keep)"),
-      else: ""
+  defp secret_placeholder(field, form) do
+    cond do
+      MapSet.member?(form.secrets_set, field.key) ->
+        gettext("•••• saved (leave blank to keep)")
+
+      MapSet.member?(form.secrets_from_env, field.key) ->
+        gettext("set via environment (leave blank to keep)")
+
+      true ->
+        ""
+    end
   end
 end
