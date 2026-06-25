@@ -57,6 +57,7 @@ defmodule Cinder.CatalogRefreshTest do
           title: "Show",
           year: 2008,
           poster_path: nil,
+          original_language: nil,
           seasons: season_numbers
         },
         info_overrides
@@ -279,6 +280,19 @@ defmodule Cinder.CatalogRefreshTest do
     assert r.poster_path == "/n.jpg"
     assert r.monitor_strategy == :future
     assert r.monitored
+  end
+
+  test "refreshes original_language from TMDB but preserves the user's preferred_language" do
+    s = series(:future, %{original_language: "en", preferred_language: "french"})
+    season(s, 1)
+
+    stub_tmdb(s, [{1, []}], %{original_language: "ja"})
+
+    assert {:ok, _} = Catalog.refresh_series(s)
+
+    r = Repo.get!(Series, s.id)
+    assert r.original_language == "ja"
+    assert r.preferred_language == "french"
   end
 
   # --- Per-season request: monitor_strategy :none + one monitored season ---

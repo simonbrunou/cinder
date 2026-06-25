@@ -81,6 +81,22 @@ where `tag/1` maps a TMDB code to the parser's language token:
   feature backward-safe: existing rows (no `original_language`) behave exactly as before
   until re-requested.
 
+### Refinement (review): Original/Any are SOFT, an explicit language is STRICT
+
+The parser tags a release's `language` from the **whole release name**, so a title whose name
+contains a language word ("The Italian Job" → `ITALIAN`, "The French Connection" → `FRENCH`)
+tags every release for that title. Under the default `preferred_language: "original"` with
+`original_language: "en"`, nothing then satisfies the filter and the item would park at
+`:no_language_match` — a silent default-on regression for an ordinary English title nobody opted
+into a language for. Fix: an unsatisfiable **Original / Any** pick is **soft** — it falls back to
+scoring the *unfiltered* candidates rather than parking. Only an **explicit** language pick
+(`"french"`) is **strict**: an unsatisfiable explicit pick still parks (`:no_language_match` for
+movies; an empty cover-set → `:no_match` → the tv_poller bump path for TV). `Language.strict?/1`
+draws the line (`"original"`/`"any"`/`nil` → soft, anything else → strict); both `best_release/2`
+and `best_releases/4` route through one `language_pool/3` helper that returns the pool to score or
+`:no_language_match`. A deliberate per-title language choice is still visible-and-recoverable when
+unmet; a default pick can never be stranded by a parser title-word collision.
+
 ## Data model changes
 
 All additive migrations; the movie pipeline logic is otherwise untouched.
@@ -91,9 +107,10 @@ All additive migrations; the movie pipeline logic is otherwise untouched.
   `preferred_language` is **not** pipeline state, so it does **not** go through
   `transition_changeset/2`.
 - **`series`**: add the same two fields. Cast `original_language` + `preferred_language` in
-  `Series.create_changeset/1`; **exclude both from `refresh_changeset/2` and
-  `admin_changeset/2`** (user-controlled, like `monitor_strategy`, so a TMDB refresh / admin
-  metadata edit never clobbers them).
+  `Series.create_changeset/1`. `original_language` is TMDB-sourced (like `tvdb_id`), so the M6
+  `refresh_changeset/2` **does** cast it (kept fresh on resync); `preferred_language` is
+  user-controlled, so it is **excluded from `refresh_changeset/2` and `admin_changeset/2`** (like
+  `monitor_strategy`, so a TMDB refresh / admin metadata edit never clobbers the user's pick).
 - **`requests`**: add `preferred_language` (string, nullable) and `original_language`
   (string, nullable). Both are captured from the discover result at request time and carried
   onto the created Movie at approval (and onto the Series for a non-admin season request).

@@ -242,9 +242,9 @@ defmodule Cinder.CatalogTest do
       {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 9, title: "Z"})
       {:ok, movie} = Catalog.transition(movie, %{status: :search_failed})
 
-      {:ok, updated} = Catalog.set_movie_language(movie, "spanish")
+      {:ok, updated} = Catalog.set_movie_language(movie, "french")
 
-      assert updated.preferred_language == "spanish"
+      assert updated.preferred_language == "french"
       assert updated.status == :requested
       assert updated.search_attempts == 0
     end

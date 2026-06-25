@@ -256,12 +256,12 @@ defmodule Cinder.RequestsTest do
     user = user_fixture()
     admin = admin_fixture()
 
-    attrs = Map.merge(@attrs, %{original_language: "ja", preferred_language: "english"})
+    attrs = Map.merge(@attrs, %{original_language: "ja", preferred_language: "french"})
 
     {:ok, req} = Requests.create_request(user, attrs)
     assert {:ok, _} = Requests.approve_request(req, admin)
     movie = Catalog.get_movie_by_tmdb_id(603)
-    assert movie.preferred_language == "english"
+    assert movie.preferred_language == "french"
     assert movie.original_language == "ja"
   end
 

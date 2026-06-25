@@ -141,6 +141,43 @@ defmodule Cinder.AcquisitionTest do
              )
   end
 
+  test "best_release with original pick falls back when a title-word collision tags every release" do
+    # The parser tags `language` from the whole release name, so "The Italian Job" is tagged
+    # ITALIAN. Under the soft default (original/en), nothing satisfies — but rather than parking,
+    # best_release falls back to scoring the unfiltered candidates so the title isn't stranded.
+    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+      {:ok,
+       [
+         raw(title: "The.Italian.Job.2003.720p.BluRay.x264-GRP", size: 6 * @gb),
+         raw(title: "The.Italian.Job.2003.1080p.BluRay.x264-GRP", size: 8 * @gb)
+       ]}
+    end)
+
+    assert {:ok, %Release{language: "ITALIAN", resolution: "1080p"}} =
+             Acquisition.best_release("tt1",
+               max_size: 20 * @gb,
+               preferred_language: "original",
+               original_language: "en"
+             )
+  end
+
+  test "best_release with an explicit language pick still parks on a title-word collision (strict)" do
+    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+      {:ok,
+       [
+         raw(title: "The.Italian.Job.2003.720p.BluRay.x264-GRP", size: 6 * @gb),
+         raw(title: "The.Italian.Job.2003.1080p.BluRay.x264-GRP", size: 8 * @gb)
+       ]}
+    end)
+
+    assert :no_language_match =
+             Acquisition.best_release("tt1",
+               max_size: 20 * @gb,
+               preferred_language: "french",
+               original_language: "en"
+             )
+  end
+
   describe "best_releases/4 (TV)" do
     test "composes search_tv, parse, title-match, and set-cover scoring (release ⇒ coverage)" do
       # Patterns confirm the series' tvdb_id, title, and season number are passed through.
@@ -211,6 +248,26 @@ defmodule Cinder.AcquisitionTest do
 
       # E02 has only an English release -> not covered; E01 (FRENCH) is covered.
       assert chosen |> Enum.flat_map(fn {_r, cov} -> cov end) |> Enum.sort() == [1]
+    end
+
+    test "best_releases with original pick falls back when a title-word collision tags every episode" do
+      # Same soft-default fallback as the movie path: every episode is tagged ITALIAN by the
+      # release name, nothing satisfies original/en, so it covers via the unfiltered candidates.
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn 123, "The Office", 1 ->
+        {:ok,
+         [
+           raw_tv("The.Office.S01E01.ITALIAN.1080p.WEB-DL-GRP"),
+           raw_tv("The.Office.S01E02.ITALIAN.1080p.WEB-DL-GRP")
+         ]}
+      end)
+
+      assert {:ok, chosen} =
+               Acquisition.best_releases(series(), 1, [1, 2],
+                 preferred_language: "original",
+                 original_language: "en"
+               )
+
+      assert chosen |> Enum.flat_map(fn {_r, cov} -> cov end) |> Enum.sort() == [1, 2]
     end
 
     test "best_releases returns :no_match when no episode has a satisfying release" do

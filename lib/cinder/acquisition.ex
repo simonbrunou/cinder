@@ -50,12 +50,9 @@ defmodule Cinder.Acquisition do
           |> Enum.map(&Release.new/1)
           |> filter_protocols(Keyword.get(opts, :protocols))
 
-        filtered = Language.filter(candidates, preferred, original)
-
-        if candidates != [] and filtered == [] and Language.active?(preferred, original) do
-          :no_language_match
-        else
-          Scorer.select(filtered, opts)
+        case language_pool(candidates, preferred, original) do
+          :no_language_match -> :no_language_match
+          pool -> Scorer.select(pool, opts)
         end
 
       {:error, _reason} = error ->
@@ -86,18 +83,41 @@ defmodule Cinder.Acquisition do
   def best_releases(series, season_number, wanted_numbers, opts \\ []) do
     case indexer().search_tv(series.tvdb_id, series.title, season_number) do
       {:ok, raw_results} ->
-        raw_results
-        |> Enum.map(&Release.new/1)
-        |> filter_protocols(Keyword.get(opts, :protocols))
-        |> Enum.filter(&title_matches?(&1, series.title))
-        |> Language.filter(
-          Keyword.get(opts, :preferred_language),
-          Keyword.get(opts, :original_language)
-        )
-        |> Scorer.select_for(season_number, wanted_numbers, opts)
+        preferred = Keyword.get(opts, :preferred_language)
+        original = Keyword.get(opts, :original_language)
+
+        candidates =
+          raw_results
+          |> Enum.map(&Release.new/1)
+          |> filter_protocols(Keyword.get(opts, :protocols))
+          |> Enum.filter(&title_matches?(&1, series.title))
+
+        # A strict total-wipe collapses to [] → select_for → :no_match → the tv_poller bump path.
+        cover_set =
+          case language_pool(candidates, preferred, original) do
+            :no_language_match -> []
+            pool -> pool
+          end
+
+        Scorer.select_for(cover_set, season_number, wanted_numbers, opts)
 
       {:error, _reason} = error ->
         error
+    end
+  end
+
+  # Resolve the candidate pool a language preference scores against. An explicit-language pick
+  # (french) with nothing satisfying it returns :no_language_match so the caller parks visibly;
+  # a soft Original/Any pick falls back to the unfiltered candidates. The parser tags `language`
+  # from the whole release name, so a title-word collision (e.g. "The Italian Job" → ITALIAN)
+  # must not strand a title under the default — hence Original/Any is soft, an explicit pick strict.
+  defp language_pool(candidates, preferred, original) do
+    case Language.filter(candidates, preferred, original) do
+      [] when candidates != [] ->
+        if Language.strict?(preferred), do: :no_language_match, else: candidates
+
+      filtered ->
+        filtered
     end
   end
 

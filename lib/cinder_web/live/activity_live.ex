@@ -144,7 +144,7 @@ defmodule CinderWeb.ActivityLive do
                   {gettext("French")}
                 </option>
                 <option value="any" selected={m.preferred_language == "any"}>
-                  {gettext("Any")}
+                  {gettext("Any language")}
                 </option>
               </select>
             </form>

@@ -41,6 +41,7 @@ defmodule Cinder.Requests.Request do
     ])
     |> validate_required([:user_id, :target_type, :target_id, :status])
     |> validate_inclusion(:target_type, @target_types)
+    |> validate_inclusion(:preferred_language, ["original", "french", "any"])
     # The constraint name must match the SQLite index name exactly as reported by exqlite
     # on a UNIQUE violation. The partial index is named :requests_pending_unique in the
     # migration; exqlite reports that name directly so we use it here. Using a wrong name

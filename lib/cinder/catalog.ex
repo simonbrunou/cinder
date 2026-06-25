@@ -181,15 +181,20 @@ defmodule Cinder.Catalog do
   in-flight or available movies (no quality-upgrade re-grab in this slice).
   """
   def set_movie_language(%Movie{} = movie, language) do
-    {:ok, updated} =
-      movie |> Movie.language_changeset(%{preferred_language: language}) |> Repo.update()
+    case movie |> Movie.language_changeset(%{preferred_language: language}) |> Repo.update() do
+      {:ok, updated} ->
+        if updated.status in @language_retry_statuses do
+          retry_movie(updated)
+        else
+          broadcast({:movie_updated, updated})
+          {:ok, updated}
+        end
 
-    if updated.status in @language_retry_statuses do
-      retry_movie(updated)
-    else
-      broadcast({:movie_updated, updated})
-      {:ok, updated}
+      {:error, _changeset} = error ->
+        error
     end
+  rescue
+    Ecto.StaleEntryError -> {:error, :stale_entry}
   end
 
   @doc """
@@ -198,20 +203,36 @@ defmodule Cinder.Catalog do
   search sweep. Available / in-flight episodes are untouched.
   """
   def set_series_language(%Series{} = series, language) do
-    {:ok, updated} =
-      series |> Series.language_changeset(%{preferred_language: language}) |> Repo.update()
+    result =
+      Repo.transaction(fn ->
+        case series
+             |> Series.language_changeset(%{preferred_language: language})
+             |> Repo.update() do
+          {:ok, updated} ->
+            from(e in Episode,
+              join: s in Season,
+              on: e.season_id == s.id,
+              where:
+                s.series_id == ^series.id and is_nil(e.file_path) and is_nil(e.grab_id) and
+                  e.search_attempts > 0
+            )
+            |> Repo.update_all(set: [search_attempts: 0])
 
-    from(e in Episode,
-      join: s in Season,
-      on: e.season_id == s.id,
-      where:
-        s.series_id == ^series.id and is_nil(e.file_path) and is_nil(e.grab_id) and
-          e.search_attempts > 0
-    )
-    |> Repo.update_all(set: [search_attempts: 0])
+            updated
 
-    broadcast_series(series.id)
-    {:ok, updated}
+          # The row update + the episode reset are one transaction (mirroring
+          # set_season_monitored/2): surface a write failure as {:error, changeset}, roll back.
+          {:error, changeset} ->
+            Repo.rollback(changeset)
+        end
+      end)
+
+    with {:ok, updated} <- result do
+      broadcast_series(series.id)
+      {:ok, updated}
+    end
+  rescue
+    Ecto.StaleEntryError -> {:error, :stale_entry}
   end
 
   # The active set a movie can be cancelled out of (mirrors @retryable's shape).
@@ -419,6 +440,7 @@ defmodule Cinder.Catalog do
   """
   def find_or_create_series_at_requested(tmdb_id, season_number, preferred \\ "original") do
     with {:ok, series} <- ensure_series(tmdb_id, preferred),
+         {:ok, series} <- apply_requester_language(series, preferred),
          %Season{} = season <- season_in(series, season_number),
          {:ok, _} <- set_season_monitored(season, true),
          {:ok, updated} <- mark_series_monitored(series) do
@@ -433,6 +455,15 @@ defmodule Cinder.Catalog do
   # is then flipped on explicitly. An existing series is returned as-is.
   defp ensure_series(tmdb_id, preferred),
     do: add_series_to_watchlist(tmdb_id, monitor_strategy: :none, preferred_language: preferred)
+
+  # Fill-if-default: an existing series whose language was never customized ("original") adopts the
+  # requester's non-default pick; a series already customized to a non-default is left untouched
+  # (first-customization-wins). A brand-new series already carries `preferred` from create_series.
+  defp apply_requester_language(%Series{preferred_language: "original"} = series, preferred)
+       when preferred != "original",
+       do: set_series_language(series, preferred)
+
+  defp apply_requester_language(series, _preferred), do: {:ok, series}
 
   defp season_in(series, season_number) do
     Repo.get_by(Season, series_id: series.id, season_number: season_number)
@@ -1131,7 +1162,8 @@ defmodule Cinder.Catalog do
         tvdb_id: info.tvdb_id,
         title: info.title,
         year: info.year,
-        poster_path: info.poster_path
+        poster_path: info.poster_path,
+        original_language: info.original_language
       })
 
     case Repo.update(changeset) do

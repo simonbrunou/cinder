@@ -363,5 +363,17 @@ defmodule Cinder.CatalogSeriesTest do
       assert Enum.find(tree.seasons, &(&1.season_number == 1)).monitored
       assert Enum.find(tree.seasons, &(&1.season_number == 2)).monitored
     end
+
+    test "an existing default-language series adopts a requester's non-default pick (fill-if-default)" do
+      {:ok, _} = Catalog.find_or_create_series_at_requested(1399, 1)
+      {:ok, series} = Catalog.find_or_create_series_at_requested(1399, 2, "french")
+      assert series.preferred_language == "french"
+    end
+
+    test "a series already customized keeps its language against a later requester pick" do
+      {:ok, _} = Catalog.find_or_create_series_at_requested(1399, 1, "french")
+      {:ok, series} = Catalog.find_or_create_series_at_requested(1399, 2, "any")
+      assert series.preferred_language == "french"
+    end
   end
 end

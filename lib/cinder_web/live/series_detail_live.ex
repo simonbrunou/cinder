@@ -220,8 +220,10 @@ defmodule CinderWeb.SeriesDetailLive do
 
   def handle_event("set_series_language", %{"preferred_language" => lang}, socket)
       when lang in ["original", "french", "any"] do
-    {:ok, series} = Catalog.set_series_language(socket.assigns.series, lang)
-    {:noreply, assign(socket, :series, series)}
+    case Catalog.set_series_language(socket.assigns.series, lang) do
+      {:ok, series} -> {:noreply, assign(socket, :series, series)}
+      {:error, _} -> {:noreply, socket}
+    end
   end
 
   def handle_event(_event, _params, socket), do: {:noreply, socket}

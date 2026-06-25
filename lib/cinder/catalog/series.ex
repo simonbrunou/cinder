@@ -53,6 +53,7 @@ defmodule Cinder.Catalog.Series do
       :preferred_language
     ])
     |> validate_required([:tmdb_id, :title])
+    |> validate_inclusion(:preferred_language, ["original", "french", "any"])
     |> cast_assoc(:seasons, with: &Season.nested_changeset/2)
     |> unique_constraint(:tmdb_id)
   end
@@ -64,11 +65,15 @@ defmodule Cinder.Catalog.Series do
   (user-controlled) are deliberately NOT castable so a refresh preserves them.
   """
   def refresh_changeset(series, attrs) do
-    cast(series, attrs, [:tvdb_id, :title, :year, :poster_path])
+    cast(series, attrs, [:tvdb_id, :title, :year, :poster_path, :original_language])
   end
 
   @doc "Changeset for the in-app series language edit. Excluded from refresh/admin changesets so it survives a TMDB resync."
-  def language_changeset(series, attrs), do: cast(series, attrs, [:preferred_language])
+  def language_changeset(series, attrs) do
+    series
+    |> cast(attrs, [:preferred_language])
+    |> validate_inclusion(:preferred_language, ["original", "french", "any"])
+  end
 
   @doc """
   Changeset for the admin metadata edit (`Catalog.update_series/2`). Casts only the
