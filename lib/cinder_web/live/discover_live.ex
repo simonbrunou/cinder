@@ -38,12 +38,14 @@ defmodule CinderWeb.DiscoverLive do
     end
   end
 
-  def handle_event("add", %{"tmdb_id" => tmdb_id}, socket) when is_binary(tmdb_id) do
+  def handle_event("add", %{"tmdb_id" => tmdb_id} = params, socket) when is_binary(tmdb_id) do
     # phx-value is client-controlled; tolerate non-numeric input and only match movies.
+    preferred = normalize_language(params["preferred_language"])
+
     with {id, ""} <- Integer.parse(tmdb_id),
          movie when not is_nil(movie) <-
            Enum.find(socket.assigns.results, &(&1.type == :movie and &1.tmdb_id == id)) do
-      {:noreply, add(socket, movie)}
+      {:noreply, add(socket, movie, preferred)}
     else
       _ -> {:noreply, socket}
     end
@@ -73,7 +75,11 @@ defmodule CinderWeb.DiscoverLive do
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
-  defp add(socket, movie) do
+  # ponytail: only three valid values; default "original" on anything else (client-controlled).
+  defp normalize_language(lang) when lang in ["original", "french", "any"], do: lang
+  defp normalize_language(_), do: "original"
+
+  defp add(socket, movie, preferred) do
     user = socket.assigns.current_scope.user
 
     attrs = %{
@@ -81,7 +87,9 @@ defmodule CinderWeb.DiscoverLive do
       target_id: movie.tmdb_id,
       title: movie.title,
       year: movie.year,
-      poster_path: movie.poster_path
+      poster_path: movie.poster_path,
+      original_language: movie.original_language,
+      preferred_language: preferred
     }
 
     case Cinder.Requests.create_request(user, attrs) do
@@ -189,6 +197,7 @@ defmodule CinderWeb.DiscoverLive do
               :if={r.type == :movie}
               state={title_state(r.tmdb_id, @request_status, @movie_status)}
               tmdb_id={r.tmdb_id}
+              original_language={r.original_language}
             />
             <.link
               :if={r.type == :tv}
@@ -237,20 +246,40 @@ defmodule CinderWeb.DiscoverLive do
 
   attr :state, :atom, required: true
   attr :tmdb_id, :integer, required: true
+  attr :original_language, :string, default: nil
 
   defp result_action(assigns) do
     ~H"""
     <.status_badge :if={@state != :none} kind={:request} status={@state} />
-    <button
+    <form
       :if={@state in [:none, :denied]}
-      id={"add-#{@tmdb_id}"}
-      phx-click="add"
-      phx-value-tmdb_id={@tmdb_id}
-      phx-disable-with={gettext("Adding…")}
-      class="btn btn-primary btn-sm w-full"
+      id={"add-form-#{@tmdb_id}"}
+      phx-submit="add"
+      class="flex flex-col gap-1"
     >
-      {gettext("Add")}
-    </button>
+      <input type="hidden" name="tmdb_id" value={@tmdb_id} />
+      <select
+        name="preferred_language"
+        class="select select-sm w-full"
+        aria-label={gettext("Preferred language")}
+      >
+        <option value="original">{original_option_label(@original_language)}</option>
+        <option value="french">{gettext("French")}</option>
+        <option value="any">{gettext("Any language")}</option>
+      </select>
+      <button
+        type="submit"
+        class="btn btn-primary btn-sm w-full"
+        phx-disable-with={gettext("Adding…")}
+      >
+        {gettext("Add")}
+      </button>
+    </form>
     """
   end
+
+  defp original_option_label(nil), do: gettext("Original")
+  defp original_option_label("en"), do: gettext("Original (English)")
+  defp original_option_label("fr"), do: gettext("Original (French)")
+  defp original_option_label(_), do: gettext("Original")
 end
