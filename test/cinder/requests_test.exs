@@ -241,6 +241,30 @@ defmodule Cinder.RequestsTest do
     end
   end
 
+  test "approved movie request carries preferred_language and original_language onto the movie row" do
+    admin = admin_fixture()
+
+    attrs = Map.merge(@attrs, %{original_language: "en", preferred_language: "french"})
+
+    assert {:ok, %{status: :approved}} = Requests.create_request(admin, attrs)
+    movie = Catalog.get_movie_by_tmdb_id(603)
+    assert movie.preferred_language == "french"
+    assert movie.original_language == "en"
+  end
+
+  test "approve_request (pending path) carries preferred_language and original_language" do
+    user = user_fixture()
+    admin = admin_fixture()
+
+    attrs = Map.merge(@attrs, %{original_language: "ja", preferred_language: "english"})
+
+    {:ok, req} = Requests.create_request(user, attrs)
+    assert {:ok, _} = Requests.approve_request(req, admin)
+    movie = Catalog.get_movie_by_tmdb_id(603)
+    assert movie.preferred_language == "english"
+    assert movie.original_language == "ja"
+  end
+
   describe "list_requests/0" do
     test "returns requests of every status, newest first, with :user preloaded" do
       user = user_fixture()

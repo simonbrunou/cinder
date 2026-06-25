@@ -180,7 +180,14 @@ defmodule Cinder.Requests do
   end
 
   defp movie_attrs(%Request{} = r) do
-    %{tmdb_id: r.target_id, title: r.title, year: r.year, poster_path: r.poster_path}
+    %{
+      tmdb_id: r.target_id,
+      title: r.title,
+      year: r.year,
+      poster_path: r.poster_path,
+      original_language: r.original_language,
+      preferred_language: r.preferred_language || "original"
+    }
   end
 
   defp movie_attrs_from(attrs) do
@@ -188,7 +195,9 @@ defmodule Cinder.Requests do
       tmdb_id: attrs.target_id,
       title: attrs[:title],
       year: attrs[:year],
-      poster_path: attrs[:poster_path]
+      poster_path: attrs[:poster_path],
+      original_language: attrs[:original_language],
+      preferred_language: attrs[:preferred_language] || "original"
     }
   end
 
