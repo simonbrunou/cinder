@@ -6,6 +6,7 @@ defmodule Cinder.Acquisition do
   resolved from config (`config :cinder, :indexer`) so tests use a Mox mock and
   never hit the network.
   """
+  alias Cinder.Acquisition.Language
   alias Cinder.Acquisition.Release
   alias Cinder.Acquisition.Scorer
 
@@ -40,10 +41,21 @@ defmodule Cinder.Acquisition do
   def best_release(imdb_id, opts \\ []) do
     case indexer().search(imdb_id) do
       {:ok, raw_results} ->
-        raw_results
-        |> Enum.map(&Release.new/1)
-        |> filter_protocols(Keyword.get(opts, :protocols))
-        |> Scorer.select(opts)
+        preferred = Keyword.get(opts, :preferred_language)
+        original = Keyword.get(opts, :original_language)
+
+        candidates =
+          raw_results
+          |> Enum.map(&Release.new/1)
+          |> filter_protocols(Keyword.get(opts, :protocols))
+
+        filtered = Language.filter(candidates, preferred, original)
+
+        if candidates != [] and filtered == [] and Language.active?(preferred, original) do
+          :no_language_match
+        else
+          Scorer.select(filtered, opts)
+        end
 
       {:error, _reason} = error ->
         error

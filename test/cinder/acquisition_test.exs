@@ -81,6 +81,66 @@ defmodule Cinder.AcquisitionTest do
              Acquisition.best_release("tt1", max_size: 20 * @gb)
   end
 
+  test "best_release filters by language: french pick keeps a FRENCH release" do
+    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+      {:ok,
+       [
+         raw(title: "Movie.2020.1080p.BluRay.x264-EN", size: 8 * @gb),
+         raw(title: "Movie.2020.FRENCH.1080p.BluRay.x264-FR", size: 8 * @gb)
+       ]}
+    end)
+
+    assert {:ok, %Release{group: "FR", language: "FRENCH"}} =
+             Acquisition.best_release("tt1",
+               max_size: 20 * @gb,
+               preferred_language: "french",
+               original_language: "en"
+             )
+  end
+
+  test "best_release returns :no_language_match when nothing satisfies the pick" do
+    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+      {:ok, [raw(title: "Movie.2020.1080p.BluRay.x264-EN", size: 8 * @gb)]}
+    end)
+
+    assert :no_language_match =
+             Acquisition.best_release("tt1",
+               max_size: 20 * @gb,
+               preferred_language: "french",
+               original_language: "en"
+             )
+  end
+
+  test "best_release with original pick on an English title accepts untagged, rejects a FRENCH tag" do
+    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+      {:ok,
+       [
+         raw(title: "Movie.2020.FRENCH.1080p.BluRay.x264-FR", size: 8 * @gb),
+         raw(title: "Movie.2020.1080p.BluRay.x264-EN", size: 8 * @gb)
+       ]}
+    end)
+
+    assert {:ok, %Release{group: "EN"}} =
+             Acquisition.best_release("tt1",
+               max_size: 20 * @gb,
+               preferred_language: "original",
+               original_language: "en"
+             )
+  end
+
+  test "best_release with no language preference is unchanged (any/nil)" do
+    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+      {:ok, [raw(title: "Movie.2020.FRENCH.1080p.BluRay.x264-FR", size: 8 * @gb)]}
+    end)
+
+    assert {:ok, %Release{group: "FR"}} =
+             Acquisition.best_release("tt1",
+               max_size: 20 * @gb,
+               preferred_language: "any",
+               original_language: "en"
+             )
+  end
+
   describe "best_releases/4 (TV)" do
     test "composes search_tv, parse, title-match, and set-cover scoring (release ⇒ coverage)" do
       # Patterns confirm the series' tvdb_id, title, and season number are passed through.
