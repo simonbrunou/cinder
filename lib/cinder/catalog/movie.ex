@@ -35,6 +35,8 @@ defmodule Cinder.Catalog.Movie do
     field :file_path, :string
     field :import_attempts, :integer, default: 0
     field :search_attempts, :integer, default: 0
+    field :original_language, :string
+    field :preferred_language, :string, default: "original"
 
     timestamps(type: :utc_datetime)
   end
@@ -42,10 +44,21 @@ defmodule Cinder.Catalog.Movie do
   @doc false
   def changeset(movie, attrs) do
     movie
-    |> cast(attrs, [:tmdb_id, :imdb_id, :title, :year, :poster_path])
+    |> cast(attrs, [
+      :tmdb_id,
+      :imdb_id,
+      :title,
+      :year,
+      :poster_path,
+      :original_language,
+      :preferred_language
+    ])
     |> validate_required([:tmdb_id, :title])
     |> unique_constraint(:tmdb_id)
   end
+
+  @doc "Changeset for the in-app language edit (escape hatch). Not pipeline state — separate from transition_changeset/2."
+  def language_changeset(movie, attrs), do: cast(movie, attrs, [:preferred_language])
 
   @doc "Changeset for pipeline state transitions (status + optional download_id/download_protocol/imdb_id/file_path/attempt counters)."
   def transition_changeset(movie, attrs) do

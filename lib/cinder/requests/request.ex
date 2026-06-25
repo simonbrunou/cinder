@@ -17,6 +17,8 @@ defmodule Cinder.Requests.Request do
     field :poster_path, :string
     field :status, Ecto.Enum, values: @statuses, default: :pending
     field :denial_reason, :string
+    field :original_language, :string
+    field :preferred_language, :string
     belongs_to :user, Cinder.Accounts.User
     belongs_to :approved_by, Cinder.Accounts.User
     timestamps()
@@ -33,7 +35,9 @@ defmodule Cinder.Requests.Request do
       :year,
       :poster_path,
       :status,
-      :approved_by_id
+      :approved_by_id,
+      :original_language,
+      :preferred_language
     ])
     |> validate_required([:user_id, :target_type, :target_id, :status])
     |> validate_inclusion(:target_type, @target_types)

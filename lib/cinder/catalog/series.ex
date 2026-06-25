@@ -24,6 +24,8 @@ defmodule Cinder.Catalog.Series do
     field :poster_path, :string
     field :monitored, :boolean, default: true
     field :monitor_strategy, Ecto.Enum, values: @monitor_strategies, default: :future
+    field :original_language, :string
+    field :preferred_language, :string, default: "original"
     has_many :seasons, Season
 
     timestamps(type: :utc_datetime)
@@ -46,7 +48,9 @@ defmodule Cinder.Catalog.Series do
       :year,
       :poster_path,
       :monitored,
-      :monitor_strategy
+      :monitor_strategy,
+      :original_language,
+      :preferred_language
     ])
     |> validate_required([:tmdb_id, :title])
     |> cast_assoc(:seasons, with: &Season.nested_changeset/2)
@@ -62,6 +66,9 @@ defmodule Cinder.Catalog.Series do
   def refresh_changeset(series, attrs) do
     cast(series, attrs, [:tvdb_id, :title, :year, :poster_path])
   end
+
+  @doc "Changeset for the in-app series language edit. Excluded from refresh/admin changesets so it survives a TMDB resync."
+  def language_changeset(series, attrs), do: cast(series, attrs, [:preferred_language])
 
   @doc """
   Changeset for the admin metadata edit (`Catalog.update_series/2`). Casts only the

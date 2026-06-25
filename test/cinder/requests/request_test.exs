@@ -75,6 +75,21 @@ defmodule Cinder.Requests.RequestTest do
              |> Repo.insert()
   end
 
+  test "create_changeset/2 casts preferred_language and original_language" do
+    cs =
+      Request.create_changeset(%Request{}, %{
+        user_id: 1,
+        target_type: "movie",
+        target_id: 5,
+        status: :pending,
+        preferred_language: "french",
+        original_language: "en"
+      })
+
+    assert get_change(cs, :preferred_language) == "french"
+    assert get_change(cs, :original_language) == "en"
+  end
+
   test "a denied season request does not block a fresh pending request for the same season" do
     user = user_fixture()
     attrs = season_attrs(user.id)
