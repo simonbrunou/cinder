@@ -353,10 +353,12 @@ defmodule Cinder.Catalog do
     # Validate at the boundary: the strategy drives monitored?/3 (a function-clause match)
     # *before* the Ecto.Enum changeset would catch it, so an unknown atom would otherwise
     # crash rather than return a clean error.
+    preferred = Keyword.get(opts, :preferred_language, "original")
+
     if strategy in Series.monitor_strategies() do
       case get_series_by_tmdb_id(tmdb_id) do
         %Series{} = series -> {:ok, series}
-        nil -> create_series(tmdb_id, strategy)
+        nil -> create_series(tmdb_id, strategy, preferred)
       end
     else
       {:error, :invalid_monitor_strategy}
@@ -371,8 +373,8 @@ defmodule Cinder.Catalog do
   Does TMDB I/O on first create, so it must NOT be called inside a `Repo.transaction`.
   Returns `{:ok, %Series{}}`, or `{:error, reason}` if the TMDB fetch fails or the season is absent.
   """
-  def find_or_create_series_at_requested(tmdb_id, season_number) do
-    with {:ok, series} <- ensure_series(tmdb_id),
+  def find_or_create_series_at_requested(tmdb_id, season_number, preferred \\ "original") do
+    with {:ok, series} <- ensure_series(tmdb_id, preferred),
          %Season{} = season <- season_in(series, season_number),
          {:ok, _} <- set_season_monitored(season, true),
          {:ok, updated} <- mark_series_monitored(series) do
@@ -385,7 +387,8 @@ defmodule Cinder.Catalog do
 
   # Create with monitor_strategy: :none so NOTHING is monitored by default; the requested season
   # is then flipped on explicitly. An existing series is returned as-is.
-  defp ensure_series(tmdb_id), do: add_series_to_watchlist(tmdb_id, monitor_strategy: :none)
+  defp ensure_series(tmdb_id, preferred),
+    do: add_series_to_watchlist(tmdb_id, monitor_strategy: :none, preferred_language: preferred)
 
   defp season_in(series, season_number) do
     Repo.get_by(Season, series_id: series.id, season_number: season_number)
@@ -418,10 +421,10 @@ defmodule Cinder.Catalog do
     end
   end
 
-  defp create_series(tmdb_id, strategy) do
+  defp create_series(tmdb_id, strategy, preferred) do
     with {:ok, info} <- tmdb().get_series(tmdb_id),
          {:ok, seasons} <- fetch_seasons(tmdb_id, info.seasons) do
-      insert_series(tmdb_id, series_attrs(info, seasons, strategy))
+      insert_series(tmdb_id, series_attrs(info, seasons, strategy, preferred))
     end
   end
 
@@ -460,7 +463,7 @@ defmodule Cinder.Catalog do
     with {:ok, seasons} <- result, do: {:ok, Enum.reverse(seasons)}
   end
 
-  defp series_attrs(info, seasons, strategy) do
+  defp series_attrs(info, seasons, strategy, preferred) do
     today = Date.utc_today()
 
     %{
@@ -469,6 +472,8 @@ defmodule Cinder.Catalog do
       title: info.title,
       year: info.year,
       poster_path: info.poster_path,
+      original_language: info[:original_language],
+      preferred_language: preferred,
       monitored: strategy != :none,
       monitor_strategy: strategy,
       seasons:
