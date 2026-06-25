@@ -326,18 +326,12 @@ defmodule Cinder.Settings do
   defp library_path_keys, do: Enum.map(Cinder.Library.kinds(), &library_path_key/1)
 
   defp effective_field_value(%{module: module, field: field}) do
-    :cinder |> Application.get_env(module, []) |> Keyword.get(field) |> present()
+    :cinder |> Application.get_env(module, []) |> Keyword.get(field) |> blank_to_nil()
   end
 
   defp effective_flat_value(key) do
-    :cinder |> Application.get_env(:"#{key}") |> present()
+    :cinder |> Application.get_env(:"#{key}") |> blank_to_nil()
   end
-
-  defp present(value) when is_binary(value) do
-    if String.trim(value) == "", do: nil, else: value
-  end
-
-  defp present(_), do: nil
 
   # --- writes ---
 
