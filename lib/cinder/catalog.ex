@@ -282,8 +282,7 @@ defmodule Cinder.Catalog do
 
   # Best-effort library-file unlink shared by the movie and series delete paths: a failed unlink is
   # logged, never propagated, so it can't strand the row delete. Always returns :ok.
-  defp best_effort_delete_file(nil), do: :ok
-
+  # ponytail: no nil clause here — Library.delete_file/1 already guards nil/"" and returns :ok.
   defp best_effort_delete_file(path) do
     case Library.delete_file(path) do
       :ok ->
@@ -630,6 +629,8 @@ defmodule Cinder.Catalog do
           Repo.rollback(changeset)
       end
     end)
+  rescue
+    Ecto.StaleEntryError -> {:error, :stale_entry}
   end
 
   defp maybe_unmonitor(changeset, true),
@@ -643,7 +644,8 @@ defmodule Cinder.Catalog do
   `opts[:unmonitor]` — for the episodes whose file was actually removed, in ONE transaction + ONE
   `{:series_updated, _}` broadcast (mirrors `set_season_monitored/2`). A per-file unlink failure is
   logged and that episode keeps its `file_path` (so it isn't falsely marked missing). Returns
-  `{:ok, cleared_count}`.
+  `{:ok, cleared_count, failed_count}` where `failed_count` is the number of episodes whose unlink
+  returned `{:error, _}` (callers should warn the user when `failed_count > 0`).
   """
   def delete_season_files(%Season{} = season, actor, opts \\ []) do
     unmonitor? = Keyword.get(opts, :unmonitor, false)
@@ -658,6 +660,7 @@ defmodule Cinder.Catalog do
 
     results = Enum.map(episodes, fn ep -> {ep, Library.delete_file(ep.file_path)} end)
     cleared_ids = for {ep, :ok} <- results, do: ep.id
+    failed_count = Enum.count(results, fn {_ep, r} -> r != :ok end)
 
     for {ep, {:error, reason}} <- results do
       Logger.warning(
@@ -667,7 +670,7 @@ defmodule Cinder.Catalog do
 
     with {:ok, _} <- do_delete_season_files_txn(season, actor, cleared_ids, unmonitor?) do
       broadcast_series(season.series_id)
-      {:ok, length(cleared_ids)}
+      {:ok, length(cleared_ids), failed_count}
     end
   end
 

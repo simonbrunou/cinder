@@ -159,11 +159,30 @@ defmodule CinderWeb.SeriesDetailLive do
     actor = socket.assigns.current_scope.user
 
     with {id, ""} <- Integer.parse(id),
-         %Season{} = season <- find_season(socket.assigns.series, id),
-         {:ok, n} <-
-           Catalog.delete_season_files(season, actor, unmonitor: socket.assigns.confirm_opt) do
-      {:noreply,
-       socket |> assign(confirming: nil) |> put_flash(:info, "Deleted #{n} file(s).") |> reload()}
+         %Season{} = season <- find_season(socket.assigns.series, id) do
+      result = Catalog.delete_season_files(season, actor, unmonitor: socket.assigns.confirm_opt)
+      socket = assign(socket, confirming: nil)
+
+      socket =
+        case result do
+          {:ok, cleared, 0} ->
+            put_flash(socket, :info, "Deleted #{cleared} file(s).")
+
+          {:ok, cleared, failed} when cleared > 0 ->
+            put_flash(
+              socket,
+              :warning,
+              "Deleted #{cleared} file(s); #{failed} could not be deleted (see server logs)."
+            )
+
+          {:ok, _cleared, _failed} ->
+            put_flash(socket, :error, "Couldn't delete the season's files (see server logs).")
+
+          _ ->
+            put_flash(socket, :error, "Couldn't delete the season files.")
+        end
+
+      {:noreply, reload(socket)}
     else
       _ ->
         {:noreply,

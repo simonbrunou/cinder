@@ -655,7 +655,7 @@ defmodule Cinder.CatalogAdminTest do
       stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
       Catalog.subscribe_series()
 
-      assert {:ok, 1} = Catalog.delete_season_files(season, nil)
+      assert {:ok, 1, 0} = Catalog.delete_season_files(season, nil)
       assert is_nil(Repo.get(Cinder.Catalog.Episode, e1.id).file_path)
       assert is_nil(Repo.get(Cinder.Catalog.Episode, e2.id).file_path)
       assert_receive {:series_updated, id}
@@ -668,7 +668,7 @@ defmodule Cinder.CatalogAdminTest do
       expect(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
       stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
 
-      assert {:ok, 1} = Catalog.delete_season_files(season, nil, unmonitor: true)
+      assert {:ok, 1, 0} = Catalog.delete_season_files(season, nil, unmonitor: true)
       assert Repo.get(Cinder.Catalog.Episode, e1.id).monitored == false
     end
 
@@ -683,9 +683,49 @@ defmodule Cinder.CatalogAdminTest do
         "/tmp/bad.mkv" -> {:error, :eacces}
       end)
 
-      assert {:ok, 1} = Catalog.delete_season_files(season, nil)
+      assert {:ok, 1, 1} = Catalog.delete_season_files(season, nil)
       assert is_nil(Repo.get(Cinder.Catalog.Episode, e1.id).file_path)
       assert Repo.get(Cinder.Catalog.Episode, e2.id).file_path == "/tmp/bad.mkv"
+    end
+
+    test "all unlinks fail returns {:ok, 0, 1} and leaves file_path untouched" do
+      {_series, season, [e1]} = season_with_files!(["/tmp/bad.mkv"])
+      expect(Cinder.Library.FilesystemMock, :rm, fn "/tmp/bad.mkv" -> {:error, :eacces} end)
+
+      assert {:ok, 0, 1} = Catalog.delete_season_files(season, nil)
+      assert Repo.get(Cinder.Catalog.Episode, e1.id).file_path == "/tmp/bad.mkv"
+    end
+  end
+
+  describe "delete_episode_file/3 stale entry" do
+    setup :verify_on_exit!
+
+    test "concurrent episode row deletion returns {:error, :stale_entry} (no raise)" do
+      series =
+        Repo.insert!(%Series{
+          tmdb_id: System.unique_integer([:positive]),
+          title: "Show",
+          year: 2010
+        })
+
+      season = Repo.insert!(%Cinder.Catalog.Season{series_id: series.id, season_number: 1})
+
+      ep =
+        Repo.insert!(%Cinder.Catalog.Episode{
+          season_id: season.id,
+          episode_number: 1,
+          monitored: true,
+          file_path: "/tmp/ep.mkv"
+        })
+
+      # Simulate concurrent deletion of the episode row out-of-band.
+      Repo.delete!(ep)
+
+      # FS stub: unlink succeeds (the pre-txn step), but the DB update then raises StaleEntryError.
+      stub(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+      assert Catalog.delete_episode_file(ep, nil) == {:error, :stale_entry}
     end
   end
 end
