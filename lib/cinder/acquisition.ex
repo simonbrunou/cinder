@@ -89,6 +89,10 @@ defmodule Cinder.Acquisition do
         |> Enum.map(&Release.new/1)
         |> filter_protocols(Keyword.get(opts, :protocols))
         |> Enum.filter(&title_matches?(&1, series.title))
+        |> Language.filter(
+          Keyword.get(opts, :preferred_language),
+          Keyword.get(opts, :original_language)
+        )
         |> Scorer.select_for(season_number, wanted_numbers, opts)
 
       {:error, _reason} = error ->

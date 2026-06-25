@@ -193,5 +193,40 @@ defmodule Cinder.AcquisitionTest do
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _, _, _ -> {:error, :timeout} end)
       assert {:error, :timeout} = Acquisition.best_releases(series(), 1, [1])
     end
+
+    test "best_releases filters episodes by language: french pick covers only FRENCH/MULTI episodes" do
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn 123, "The Office", 1 ->
+        {:ok,
+         [
+           raw_tv("The.Office.S01E01.FRENCH.1080p.WEB-DL-FR"),
+           raw_tv("The.Office.S01E02.1080p.WEB-DL-EN")
+         ]}
+      end)
+
+      assert {:ok, chosen} =
+               Acquisition.best_releases(series(), 1, [1, 2],
+                 preferred_language: "french",
+                 original_language: "en"
+               )
+
+      # E02 has only an English release -> not covered; E01 (FRENCH) is covered.
+      assert chosen |> Enum.flat_map(fn {_r, cov} -> cov end) |> Enum.sort() == [1]
+    end
+
+    test "best_releases returns :no_match when no episode has a satisfying release" do
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn 123, "The Office", 1 ->
+        {:ok,
+         [
+           raw_tv("The.Office.S01E01.1080p.WEB-DL-EN"),
+           raw_tv("The.Office.S01E02.1080p.WEB-DL-EN")
+         ]}
+      end)
+
+      assert :no_match =
+               Acquisition.best_releases(series(), 1, [1, 2],
+                 preferred_language: "french",
+                 original_language: "en"
+               )
+    end
   end
 end
