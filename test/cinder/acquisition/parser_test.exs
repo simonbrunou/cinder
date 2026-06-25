@@ -140,6 +140,28 @@ defmodule Cinder.Acquisition.ParserTest do
     end
   end
 
+  describe "language: French dub markers (M-language)" do
+    test "TRUEFRENCH tags FRENCH" do
+      assert Parser.parse("Movie.2021.TRUEFRENCH.1080p.BluRay.x264-GRP").language == "FRENCH"
+    end
+
+    test "VFF / VFQ / VFI / VF tag FRENCH" do
+      for marker <- ~w(VFF VFQ VFI VF) do
+        assert Parser.parse("Movie.2021.#{marker}.1080p.WEB-DL.x264-GRP").language == "FRENCH",
+               "expected #{marker} to tag FRENCH"
+      end
+    end
+
+    test "MULTI still wins over a French dub marker" do
+      assert Parser.parse("Movie.2021.MULTI.VFF.1080p.BluRay.x264-GRP").language == "MULTI"
+    end
+
+    test "VOSTFR and SUBFRENCH stay nil (subtitles = original audio, not a French audio tag)" do
+      assert Parser.parse("Movie.2021.VOSTFR.1080p.BluRay.x264-GRP").language == nil
+      assert Parser.parse("Movie.2021.SUBFRENCH.1080p.BluRay.x264-GRP").language == nil
+    end
+  end
+
   describe "TV tail edge cases (keep the leading episode, drop trailing junk)" do
     test "a hyphen-glued resolution keeps the episode instead of dropping the release" do
       assert %{season: 1, episodes: [2], resolution: "720p"} =
