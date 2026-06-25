@@ -93,7 +93,7 @@ defmodule Cinder.RequestsTest do
 
   test "concurrent-pending quota blocks the over-limit request (different targets)" do
     user = user_fixture()
-    {:ok, user} = Cinder.Accounts.update_user_quota(user, 1)
+    {:ok, user} = Cinder.Accounts.update_user_quota(user, user, 1)
 
     assert {:ok, %{status: :pending}} = Requests.create_request(user, @attrs)
     other = Map.put(@attrs, :target_id, 604)
@@ -102,12 +102,12 @@ defmodule Cinder.RequestsTest do
 
   test "quota does not apply to admins or the auto_approve_all path" do
     admin = admin_fixture()
-    {:ok, admin} = Cinder.Accounts.update_user_quota(admin, 0)
+    {:ok, admin} = Cinder.Accounts.update_user_quota(admin, admin, 0)
     assert {:ok, %{status: :approved}} = Requests.create_request(admin, @attrs)
 
     Cinder.Settings.put("auto_approve_all", "true")
     user = user_fixture()
-    {:ok, user} = Cinder.Accounts.update_user_quota(user, 0)
+    {:ok, user} = Cinder.Accounts.update_user_quota(user, user, 0)
 
     assert {:ok, %{status: :approved}} =
              Requests.create_request(user, Map.put(@attrs, :target_id, 605))

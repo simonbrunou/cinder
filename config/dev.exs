@@ -1,20 +1,10 @@
 import Config
 
-# Configure your database
+# Configure your database. WAL + busy_timeout + foreign_keys + default_transaction_mode are
+# pinned once in config/config.exs (shared by every env); only the dev-specific bits live here.
 config :cinder, Cinder.Repo,
   database: Path.expand("../cinder_dev.db", __DIR__),
   pool_size: 5,
-  # Pin WAL + busy_timeout so a web write racing the poller waits rather than
-  # erroring with "database busy". WAL is ecto_sqlite3's default; busy_timeout
-  # defaults to 2000ms, so 5000 is a deliberate raise. Pinning both keeps a
-  # dep-default change from silently altering the contract.
-  journal_mode: :wal,
-  busy_timeout: 5_000,
-  # Pinned for the same defend-against-dep-default-drift reason as journal_mode/
-  # busy_timeout: the admin delete cascades (requests on user delete; seasons/
-  # episodes on series delete) depend on SQLite enforcing FKs. On by ecto_sqlite3
-  # default today, pinned so a dep change can't silently disable it.
-  foreign_keys: :on,
   stacktrace: true,
   show_sensitive_data_on_connection_error: true
 

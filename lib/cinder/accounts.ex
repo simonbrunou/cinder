@@ -226,9 +226,21 @@ defmodule Cinder.Accounts do
   @doc "All users, ordered by id."
   def list_users, do: Repo.all(from u in User, order_by: [asc: u.id])
 
-  @doc "Updates a user's concurrent-pending request quota (nil = unlimited)."
-  def update_user_quota(%User{} = user, quota) do
-    user |> User.quota_changeset(%{request_quota: quota}) |> Repo.update()
+  @doc """
+  Updates a user's concurrent-pending request quota (nil = unlimited). Writes an audit row in
+  the same transaction, like every other destructive admin action.
+  """
+  def update_user_quota(%User{} = actor, %User{} = target, quota) do
+    Repo.transaction(fn ->
+      case target |> User.quota_changeset(%{request_quota: quota}) |> Repo.update() do
+        {:ok, updated} ->
+          Audit.log_or_rollback(actor, "update_user_quota", updated, %{request_quota: quota})
+          updated
+
+        {:error, changeset} ->
+          Repo.rollback(changeset)
+      end
+    end)
   end
 
   ## Settings

@@ -91,6 +91,11 @@ ENV MIX_ENV="prod"
 # Only copy the final release from the build stage
 COPY --from=builder --chown=nobody:root /app/_build/${MIX_ENV}/rel/cinder ./
 
+# The SQLite DB lives on the /data volume. Create + own its mountpoint in the image so a *fresh*
+# named volume inherits nobody-ownership — otherwise Docker creates the mountpoint root-owned and
+# the (uid 65534) process can't open the DB for write, crash-looping on the boot migration.
+RUN mkdir -p /data && chown nobody:root /data
+
 USER nobody
 
 # If using an environment that doesn't automatically reap zombie processes, it is

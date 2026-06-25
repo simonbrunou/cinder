@@ -120,7 +120,7 @@ defmodule CinderWeb.DiscoverLiveTest do
 
   test "a quota-exceeded add shows the quota flash", %{conn: _conn} do
     user = Cinder.AccountsFixtures.user_fixture()
-    {:ok, _} = Cinder.Accounts.update_user_quota(user, 0)
+    {:ok, _} = Cinder.Accounts.update_user_quota(user, user, 0)
     conn = log_in_user(Phoenix.ConnTest.build_conn(), user)
 
     stub_movies([@inception])

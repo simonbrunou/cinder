@@ -47,10 +47,10 @@ defmodule CinderWeb.ActivityLive do
 
   @impl true
   def handle_event("retry", %{"id" => id}, socket) do
-    case Catalog.get_movie_by_id(id) do
-      nil -> :ok
-      movie -> Catalog.retry_movie(movie)
-    end
+    # Look the movie up from the loaded list (string-compare ids, like confirm_delete) so a forged
+    # non-numeric phx-value can't reach Repo.get/CastError — it just resolves to nil and no-ops.
+    movie = Enum.find(socket.assigns.movies, &(to_string(&1.id) == id))
+    if movie, do: Catalog.retry_movie(movie)
 
     {:noreply, socket}
   end

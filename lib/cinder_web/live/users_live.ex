@@ -61,8 +61,10 @@ defmodule CinderWeb.UsersLive do
 
   @impl true
   def handle_event("set_quota", %{"_id" => id, "quota" => quota}, socket) do
+    actor = socket.assigns.current_scope.user
+
     with user when not is_nil(user) <- find_user(id),
-         {:ok, _} <- Accounts.update_user_quota(user, parse_quota(quota)) do
+         {:ok, _} <- Accounts.update_user_quota(actor, user, parse_quota(quota)) do
       {:noreply,
        socket |> assign(users: Accounts.list_users()) |> put_flash(:info, "Quota updated.")}
     else

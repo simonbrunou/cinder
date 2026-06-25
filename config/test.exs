@@ -25,9 +25,7 @@ config :cinder, Cinder.Repo,
   # with no happy-path cost.
   queue_target: 5_000,
   queue_interval: 5_000,
-  journal_mode: :wal,
-  busy_timeout: 5_000,
-  foreign_keys: :on,
+  # journal_mode/busy_timeout/foreign_keys/default_transaction_mode are pinned in config/config.exs.
   pool: Ecto.Adapters.SQL.Sandbox
 
 # We don't run a server during test. If one is required,

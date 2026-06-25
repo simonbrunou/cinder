@@ -80,7 +80,8 @@ defmodule Cinder.Library do
 
   defp do_import_episodes(content_path, episodes, root) do
     with {:ok, videos} <- video_files(content_path) do
-      {to_import, unmatched} = videos |> match_episodes(episodes) |> resolve(videos, episodes)
+      {to_import, unmatched} =
+        videos |> match_episodes(episodes) |> dedupe_per_episode() |> resolve(videos, episodes)
 
       case link_all(to_import, root) do
         {:ok, []} ->
@@ -113,16 +114,29 @@ defmodule Cinder.Library do
   defp only_videos(files),
     do: Enum.filter(files, fn {p, _size} -> String.downcase(Path.extname(p)) in @video_exts end)
 
-  # {episode, source_path} pairs for files that name a specific episode in the grab (a
-  # double-episode file yields two pairs — the same source hardlinked under both names).
+  # {episode, source_path, size} triples for files that name a specific episode in the grab (a
+  # double-episode file yields two — the same source hardlinked under both names).
   defp match_episodes(videos, episodes) do
-    for {path, _size} <- videos,
+    for {path, size} <- videos,
         parsed = Parser.parse(Path.basename(path)),
         not is_nil(parsed.episodes),
         ep <- episodes,
         ep.season.season_number == parsed.season,
         ep.episode_number in parsed.episodes,
-        do: {ep, path}
+        do: {ep, path, size}
+  end
+
+  # One source per episode: when two files parse the same SxxEyy, keep the largest (path breaks
+  # ties for a dest stable across retries) and let the losers fall through to `resolve` as
+  # unmatched (logged) — never link two different sources onto one episode's dest (the second
+  # would collide). Group by episode, not source, so a double-episode file still maps to both.
+  defp dedupe_per_episode(matches) do
+    matches
+    |> Enum.group_by(fn {ep, _path, _size} -> ep.id end)
+    |> Enum.map(fn {_id, group} ->
+      {ep, path, _size} = Enum.max_by(group, fn {_ep, path, size} -> {size, path} end)
+      {ep, path}
+    end)
   end
 
   # Decide the import set + the leftover (unmatched) video files for logging.
@@ -248,14 +262,33 @@ defmodule Cinder.Library do
     title
     |> String.replace(@illegal, "")
     |> String.trim()
+    |> reject_dot_only()
   end
+
+  # A name that is only dots (".", "..", …) would become a path segment that escapes the library
+  # root (`Path.join([root, "..", …])`). Collapse it to "" so library_name falls back to the
+  # tmdb-id folder, same as an all-illegal title.
+  defp reject_dot_only(name), do: if(name =~ ~r/\A\.+\z/, do: "", else: name)
 
   # ponytail: hardlink only; library must share the downloads' filesystem (see spec).
   defp link(source, dest) do
     case fs().ln(source, dest) do
       :ok -> :ok
-      {:error, :eexist} -> :ok
+      {:error, :eexist} -> idempotent_or_collision(source, dest)
       {:error, _reason} = err -> err
+    end
+  end
+
+  # An existing dest is the idempotent re-import case ONLY if it's already a hardlink of source
+  # (same inode). A *different* inode means another title collided on the same `Title (Year)` name
+  # — fail (the item parks) rather than silently claim the other movie/episode's file as this one's.
+  defp idempotent_or_collision(source, dest) do
+    with {:ok, %{inode: si}} <- fs().lstat(source),
+         {:ok, %{inode: di}} <- fs().lstat(dest),
+         true <- si == di do
+      :ok
+    else
+      _ -> {:error, :dest_exists}
     end
   end
 

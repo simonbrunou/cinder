@@ -141,11 +141,11 @@ if config_env() == :prod do
       For example: /etc/cinder/cinder.db
       """
 
+  # WAL + busy_timeout + foreign_keys + default_transaction_mode are pinned in config/config.exs
+  # (shared by every env, so a non-prod release gets them too); only the deploy-specific bits here.
   config :cinder, Cinder.Repo,
     database: database_path,
-    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "5"),
-    journal_mode: :wal,
-    busy_timeout: 5_000
+    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "5")
 
   # secret_key_base + signing salts are resolved above for every environment.
   host = System.get_env("PHX_HOST") || "localhost"
