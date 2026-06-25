@@ -622,4 +622,70 @@ defmodule Cinder.CatalogAdminTest do
       assert id == series.id
     end
   end
+
+  describe "delete_season_files/3" do
+    setup :verify_on_exit!
+
+    defp season_with_files!(paths) do
+      series =
+        Repo.insert!(%Series{
+          tmdb_id: System.unique_integer([:positive]),
+          title: "Show",
+          year: 2010
+        })
+
+      season = Repo.insert!(%Cinder.Catalog.Season{series_id: series.id, season_number: 1})
+
+      eps =
+        for {path, n} <- Enum.with_index(paths, 1) do
+          Repo.insert!(%Cinder.Catalog.Episode{
+            season_id: season.id,
+            episode_number: n,
+            monitored: true,
+            file_path: path
+          })
+        end
+
+      {series, season, eps}
+    end
+
+    test "clears file_path on every episode with a file, skips fileless ones, one broadcast" do
+      {series, season, [e1, e2]} = season_with_files!(["/tmp/e1.mkv", nil])
+      expect(Cinder.Library.FilesystemMock, :rm, fn "/tmp/e1.mkv" -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+      Catalog.subscribe_series()
+
+      assert {:ok, 1} = Catalog.delete_season_files(season, nil)
+      assert is_nil(Repo.get(Cinder.Catalog.Episode, e1.id).file_path)
+      assert is_nil(Repo.get(Cinder.Catalog.Episode, e2.id).file_path)
+      assert_receive {:series_updated, id}
+      assert id == series.id
+      refute_received {:series_updated, ^id}
+    end
+
+    test "unmonitor: true clears monitored on the cleared episodes" do
+      {_series, season, [e1]} = season_with_files!(["/tmp/e1.mkv"])
+      expect(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+      assert {:ok, 1} = Catalog.delete_season_files(season, nil, unmonitor: true)
+      assert Repo.get(Cinder.Catalog.Episode, e1.id).monitored == false
+    end
+
+    test "a per-file unlink failure leaves that episode's file_path (not cleared)" do
+      {_series, season, [e1, e2]} = season_with_files!(["/tmp/ok.mkv", "/tmp/bad.mkv"])
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+      # TWO rm calls (one per episode) -> expect/4 with an explicit count of 2. A bare 2-clause
+      # expect/3 is ONE allowed call and the second rm would raise Mox.UnexpectedCallError. The
+      # clauses dispatch in call order (e1 then e2, the Repo.all id order).
+      expect(Cinder.Library.FilesystemMock, :rm, 2, fn
+        "/tmp/ok.mkv" -> :ok
+        "/tmp/bad.mkv" -> {:error, :eacces}
+      end)
+
+      assert {:ok, 1} = Catalog.delete_season_files(season, nil)
+      assert is_nil(Repo.get(Cinder.Catalog.Episode, e1.id).file_path)
+      assert Repo.get(Cinder.Catalog.Episode, e2.id).file_path == "/tmp/bad.mkv"
+    end
+  end
 end

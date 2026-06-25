@@ -637,6 +637,56 @@ defmodule Cinder.Catalog do
 
   defp maybe_unmonitor(changeset, false), do: changeset
 
+  @doc """
+  Deletes every library file in a season (Sonarr per-season "delete episode files"): unlinks each
+  episode's file (best-effort, per file), then clears `file_path` — and `monitored` off on
+  `opts[:unmonitor]` — for the episodes whose file was actually removed, in ONE transaction + ONE
+  `{:series_updated, _}` broadcast (mirrors `set_season_monitored/2`). A per-file unlink failure is
+  logged and that episode keeps its `file_path` (so it isn't falsely marked missing). Returns
+  `{:ok, cleared_count}`.
+  """
+  def delete_season_files(%Season{} = season, actor, opts \\ []) do
+    unmonitor? = Keyword.get(opts, :unmonitor, false)
+
+    # Bulk path mirrors set_season_monitored/2: the txn writes file_path/monitored via update_all
+    # (NOT Episode.transition_changeset — file_path: nil has no validation to enforce), and the
+    # read-then-write window (episodes read, files unlinked, then update_all) is the same one
+    # set_season_monitored carries. Accepted at household scale (WAL + busy_timeout serializes the
+    # writes; worst case a just-imported file is re-cleared and the user re-deletes).
+    episodes =
+      Repo.all(from e in Episode, where: e.season_id == ^season.id and not is_nil(e.file_path))
+
+    results = Enum.map(episodes, fn ep -> {ep, Library.delete_file(ep.file_path)} end)
+    cleared_ids = for {ep, :ok} <- results, do: ep.id
+
+    for {ep, {:error, reason}} <- results do
+      Logger.warning(
+        "library file delete failed for #{inspect(ep.file_path)}: #{inspect(reason)}"
+      )
+    end
+
+    with {:ok, _} <- do_delete_season_files_txn(season, actor, cleared_ids, unmonitor?) do
+      broadcast_series(season.series_id)
+      {:ok, length(cleared_ids)}
+    end
+  end
+
+  defp do_delete_season_files_txn(season, actor, cleared_ids, unmonitor?) do
+    Repo.transaction(fn ->
+      sets =
+        [file_path: nil, updated_at: now()] ++ if(unmonitor?, do: [monitored: false], else: [])
+
+      Repo.update_all(from(e in Episode, where: e.id in ^cleared_ids), set: sets)
+
+      Audit.log_or_rollback(actor, :delete_season_files, season, %{
+        count: length(cleared_ids),
+        unmonitored: unmonitor?
+      })
+
+      season
+    end)
+  end
+
   defp now, do: DateTime.truncate(DateTime.utc_now(), :second)
 
   @doc """
