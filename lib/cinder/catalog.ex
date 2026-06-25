@@ -11,6 +11,7 @@ defmodule Cinder.Catalog do
   alias Cinder.Audit
   alias Cinder.Catalog.{Episode, Grab, Movie, Season, Series}
   alias Cinder.Download
+  alias Cinder.Library
   alias Cinder.Repo
 
   @topic "movies"
@@ -218,24 +219,33 @@ defmodule Cinder.Catalog do
   @doc """
   Deletes a movie's DB row. An active row with a tracked download is cancelled first (which
   removes the client download) so delete never orphans a live download. Broadcasts
-  `{:movie_deleted, id}` on the `"movies"` topic. On-disk library files are intentionally left
-  for the deferred unlink feature. The delete + audit row are written in one transaction.
+  `{:movie_deleted, id}` on the `"movies"` topic. The delete + audit row are written in one
+  transaction.
+
+  Pass `delete_files: true` in `opts` to also unlink the on-disk library file after the row is
+  deleted (best-effort: a failed unlink is logged, not propagated). Default leaves files on disk.
   """
-  def delete_movie(%Movie{} = movie, actor) do
+  def delete_movie(%Movie{} = movie, actor, opts \\ []) do
+    delete_files? = Keyword.get(opts, :delete_files, false)
     # Client removal is best-effort (see maybe_cancel_download_for_delete/1).
     maybe_cancel_download_for_delete(movie)
 
-    with {:ok, deleted} <- do_delete_txn(movie, actor) do
+    with {:ok, deleted} <- do_delete_txn(movie, actor, delete_files?) do
+      if delete_files?, do: best_effort_delete_file(movie.file_path)
       broadcast_movie_deleted(deleted.id)
       {:ok, deleted}
     end
   end
 
-  defp do_delete_txn(movie, actor) do
+  defp do_delete_txn(movie, actor, delete_files?) do
     Repo.transaction(fn ->
       case Repo.delete(movie) do
         {:ok, deleted} ->
-          Audit.log_or_rollback(actor, :delete_movie, deleted, %{title: deleted.title})
+          Audit.log_or_rollback(actor, :delete_movie, deleted, %{
+            title: deleted.title,
+            files_deleted: delete_files?
+          })
+
           deleted
 
         {:error, changeset} ->
@@ -268,6 +278,21 @@ defmodule Cinder.Catalog do
 
   defp maybe_cancel_download_for_delete(%Movie{} = movie) do
     if cancellable?(movie), do: remove_movie_download(movie), else: :ok
+  end
+
+  # Best-effort library-file unlink shared by the movie and series delete paths: a failed unlink is
+  # logged, never propagated, so it can't strand the row delete. Always returns :ok.
+  defp best_effort_delete_file(nil), do: :ok
+
+  defp best_effort_delete_file(path) do
+    case Library.delete_file(path) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("library file delete failed for #{inspect(path)}: #{inspect(reason)}")
+        :ok
+    end
   end
 
   # Best-effort client download removal shared by the movie and series reap paths: never blocks a

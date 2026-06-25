@@ -260,6 +260,62 @@ defmodule Cinder.CatalogAdminTest do
 
       assert {:error, :stale_entry} = Catalog.delete_movie(movie, actor)
     end
+
+    test "delete_files: true unlinks the file, then deletes the row" do
+      movie = movie!(%{title: "Inception", year: 2010})
+
+      {:ok, movie} =
+        movie
+        |> Ecto.Changeset.change(
+          status: :available,
+          file_path: "/tmp/cinder-test-library/Inception (2010)/Inception (2010).mkv"
+        )
+        |> Repo.update()
+
+      expect(
+        Cinder.Library.FilesystemMock,
+        :rm,
+        fn "/tmp/cinder-test-library/Inception (2010)/Inception (2010).mkv" -> :ok end
+      )
+
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+      assert {:ok, _} = Catalog.delete_movie(movie, nil, delete_files: true)
+      refute Repo.get(Movie, movie.id)
+    end
+
+    test "without delete_files the file is left on disk (no FS calls)" do
+      movie = movie!(%{title: "Inception", year: 2010})
+
+      {:ok, movie} =
+        movie
+        |> Ecto.Changeset.change(status: :available, file_path: "/tmp/x.mkv")
+        |> Repo.update()
+
+      # No FS expectations: verify_on_exit! fails if delete_file is reached.
+      assert {:ok, _} = Catalog.delete_movie(movie, nil)
+      refute Repo.get(Movie, movie.id)
+    end
+
+    test "delete_files: true still deletes the row when the unlink fails (best-effort)" do
+      movie = movie!(%{title: "Inception", year: 2010})
+
+      {:ok, movie} =
+        movie
+        |> Ecto.Changeset.change(status: :available, file_path: "/tmp/locked.mkv")
+        |> Repo.update()
+
+      expect(Cinder.Library.FilesystemMock, :rm, fn _ -> {:error, :eacces} end)
+
+      assert {:ok, _} = Catalog.delete_movie(movie, nil, delete_files: true)
+      refute Repo.get(Movie, movie.id)
+    end
+
+    test "delete_files: true with no file_path makes no FS call" do
+      movie = movie!()
+      assert {:ok, _} = Catalog.delete_movie(movie, nil, delete_files: true)
+      refute Repo.get(Movie, movie.id)
+    end
   end
 
   describe "cancel_series/2 and delete_series/2" do
