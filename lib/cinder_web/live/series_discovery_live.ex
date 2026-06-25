@@ -170,7 +170,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
         </div>
       </div>
 
-      <form phx-change="set_language" class="mb-4 max-w-xs">
+      <form id="series-language-form" phx-change="set_language" class="mb-4 max-w-xs">
         <select
           name="preferred_language"
           class="select select-sm w-full"

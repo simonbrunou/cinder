@@ -355,7 +355,7 @@ defmodule CinderWeb.SeriesDetailLive do
         </div>
       </div>
 
-      <form phx-change="set_series_language" class="mb-4 max-w-xs">
+      <form id="series-detail-language-form" phx-change="set_series_language" class="mb-4 max-w-xs">
         <select
           name="preferred_language"
           class="select select-sm w-full"

@@ -130,7 +130,7 @@ defmodule CinderWeb.ActivityLive do
             >
               {gettext("Retry")}
             </button>
-            <form phx-change="set_movie_language" class="ml-auto">
+            <form id={"movie-language-form-#{m.id}"} phx-change="set_movie_language" class="ml-auto">
               <input type="hidden" name="_id" value={m.id} />
               <select
                 name="preferred_language"
