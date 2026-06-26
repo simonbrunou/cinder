@@ -53,13 +53,35 @@ defmodule Cinder.Acquisition.ScorerTest do
       assert {:ok, %Release{resolution: "1080p"}} = Scorer.select(releases)
     end
 
-    test "unlisted/nil resolutions rank last; size breaks the tie without crashing" do
-      releases = [
-        release(resolution: "2160p", group: "A", size: 30 * @gb),
-        release(resolution: nil, group: "B", size: 5 * @gb)
-      ]
+    test "resolution allow-list: a resolution outside the preferred list is rejected, not down-ranked" do
+      # The user asked for 1080p; a 480p must never be grabbed even when it is the only candidate.
+      assert :no_match =
+               Scorer.select([release(resolution: "480p", group: "A", size: 4 * @gb)],
+                 preferred_resolutions: ["1080p", "720p"]
+               )
 
-      assert {:ok, %Release{group: "A", resolution: "2160p"}} = Scorer.select(releases)
+      # Default preferred is ["1080p","720p"]: 2160p and an untagged (nil) release are both
+      # outside it, so a list of only those parks rather than grabbing a non-asked-for resolution.
+      assert :no_match =
+               Scorer.select([
+                 release(resolution: "2160p", group: "A", size: 30 * @gb),
+                 release(resolution: nil, group: "B", size: 5 * @gb)
+               ])
+
+      # Widening the allow-list lets the higher resolution back in (now in-list, top-ranked).
+      assert {:ok, %Release{resolution: "2160p"}} =
+               Scorer.select(
+                 [
+                   release(resolution: "2160p", group: "A", size: 30 * @gb),
+                   release(resolution: "1080p", group: "B", size: 8 * @gb)
+                 ],
+                 preferred_resolutions: ["2160p", "1080p"]
+               )
+    end
+
+    test "an empty allow-list disables the resolution gate (never bricks grabs)" do
+      releases = [release(resolution: nil, group: "A", size: 5 * @gb)]
+      assert {:ok, %Release{group: "A"}} = Scorer.select(releases, preferred_resolutions: [])
     end
 
     test "empty input -> :no_match" do
@@ -172,6 +194,13 @@ defmodule Cinder.Acquisition.ScorerTest do
     test "a pack with unknown (nil) size is rejected under a configured band (S2)" do
       releases = [release(season: 1, episodes: nil, resolution: "1080p", size: nil)]
       assert :no_match = Scorer.select_for(releases, 1, [1, 2], max_size: 5 * @gb)
+    end
+
+    test "the resolution allow-list also gates TV episode releases" do
+      releases = [release(season: 1, episodes: [1], resolution: "480p", size: 2 * @gb)]
+
+      assert :no_match =
+               Scorer.select_for(releases, 1, [1], preferred_resolutions: ["1080p", "720p"])
     end
   end
 end

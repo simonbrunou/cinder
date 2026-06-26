@@ -98,6 +98,26 @@ defmodule Cinder.AcquisitionTest do
              )
   end
 
+  test "best_release: a french 480p is rejected, not grabbed, when 1080p was asked for" do
+    # The reported bug: a French pick where the only in-band French release is 480p (the higher-res
+    # French one is absent/too big) used to grab the 480p. With the resolution allow-list it parks.
+    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+      {:ok,
+       [
+         raw(title: "Movie.2020.FRENCH.480p.WEB-DL-FR", size: 2 * @gb),
+         raw(title: "Movie.2020.1080p.BluRay.x264-EN", size: 8 * @gb)
+       ]}
+    end)
+
+    assert :no_match =
+             Acquisition.best_release("tt1",
+               max_size: 20 * @gb,
+               preferred_language: "french",
+               original_language: "en",
+               preferred_resolutions: ["1080p", "720p"]
+             )
+  end
+
   test "best_release returns :no_language_match when nothing satisfies the pick" do
     expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
       {:ok, [raw(title: "Movie.2020.1080p.BluRay.x264-EN", size: 8 * @gb)]}

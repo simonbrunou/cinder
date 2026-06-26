@@ -1,7 +1,19 @@
 defmodule Cinder.Acquisition.Scorer do
   @moduledoc """
   Selects the best release from a list by explicit, configurable rules: an
-  inclusive size band, a group blocklist, and an ordered resolution preference.
+  inclusive size band, a group blocklist, and a resolution allow-list that doubles
+  as the ranking order.
+
+  The resolution preference is a **strict allow-list**, not just a tiebreak: a
+  release whose parsed resolution isn't in the list is rejected outright (a 480p is
+  dropped, not merely out-ranked), and an untagged (nil) resolution is rejected too.
+  So a user who wants 1080p never silently gets a 480p — if nothing in the allow-list
+  survives, the result is `:no_match` and the item parks for the next search tick.
+
+  An **empty** list disables the gate — but that's the no-rules programmatic default,
+  not something a cleared `/settings` field produces: a blank field resolves to `nil`,
+  which falls back to the configured default list (`["1080p", "720p"]`), so the gate
+  stays active. To accept more resolutions, list them.
 
   Rules come from `config :cinder, #{inspect(__MODULE__)}` merged with per-call
   `opts`. Returns `{:ok, release}` or `:no_match` when none survive the filters.
@@ -12,7 +24,7 @@ defmodule Cinder.Acquisition.Scorer do
 
   @doc """
   Picks the best release from `releases`, or `:no_match` if none survive the
-  size-band and blocklist filters.
+  size-band, blocklist, and resolution allow-list filters.
   """
   def select(releases, opts \\ []) do
     {min_size, max_size, preferred, blocklist} = rules(opts)
@@ -20,6 +32,7 @@ defmodule Cinder.Acquisition.Scorer do
     releases
     |> Enum.filter(&within_band?(&1, min_size, max_size))
     |> Enum.reject(&blocked?(&1, blocklist))
+    |> Enum.filter(&allowed_resolution?(&1, preferred))
     |> pick_best(preferred)
   end
 
@@ -32,7 +45,8 @@ defmodule Cinder.Acquisition.Scorer do
   from it rather than re-deriving coverage.
 
   Releases for other seasons (and movies, `season: nil`) are dropped; blocklisted
-  groups and out-of-band releases are rejected. The size band is **per-episode**: a
+  groups, out-of-band releases, and releases outside the resolution allow-list (see
+  `select/2`) are rejected. The size band is **per-episode**: a
   release covering `k` still-wanted episodes must satisfy `k*min_size ≤ size ≤
   k*max_size` (so a season pack is judged against the episodes it actually supplies).
   Selection is greedy set-cover — repeatedly take the release covering the most
@@ -53,6 +67,7 @@ defmodule Cinder.Acquisition.Scorer do
     releases
     |> Enum.filter(&(&1.season == season))
     |> Enum.reject(&blocked?(&1, blocklist))
+    |> Enum.filter(&allowed_resolution?(&1, preferred))
     |> cover(MapSet.new(wanted_episodes), [], band)
   end
 
@@ -136,6 +151,14 @@ defmodule Cinder.Acquisition.Scorer do
 
   defp blocked?(%Release{group: nil}, _blocklist), do: false
   defp blocked?(%Release{group: group}, blocklist), do: String.downcase(group) in blocklist
+
+  # Strict allow-list: keep a release only if its resolution is one the user asked for.
+  # nil (untagged) ∉ any list ⇒ rejected. An empty list = no preference configured ⇒ keep all
+  # (a [] allow-list rejecting everything is never the intent; that would brick every grab).
+  defp allowed_resolution?(_release, []), do: true
+
+  defp allowed_resolution?(%Release{resolution: resolution}, preferred),
+    do: resolution in preferred
 
   defp pick_best([], _preferred), do: :no_match
   defp pick_best(releases, preferred), do: {:ok, Enum.min_by(releases, &sort_key(&1, preferred))}
