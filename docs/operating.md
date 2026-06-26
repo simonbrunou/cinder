@@ -92,15 +92,18 @@ your server picks the file up on its next periodic scan.
 | `:search_failed` | A release was found but couldn't be handed off, or transient errors exhausted ~10 min of retries. | Check the server log. Often a malformed/HTML "torrent", a BitTorrent **v2-only** torrent (see limits), or a Prowlarr/qBittorrent outage. **Retry** once fixed. |
 | `:import_failed` | The completed download had no usable video file, import failed repeatedly — commonly a **cross-filesystem** library/download path or a permission mismatch — or (with `ffprobe` installed) the file's audio language didn't match the request. | Verify the hardlink requirement above; the log shows the cross-device/permission error. For a language mismatch, **Retry** re-searches (the wrong release is now filtered out). |
 
-## Audio-language verification (optional)
+## Audio-language verification
 
 If you set a per-title language preference (other than *Any*), Cinder filters releases by the
-language tag in their name. As a backstop for releases whose name lies or omits the language, it can
-also check the **actual audio tracks** of the completed download before importing — if **`ffprobe`**
-(part of FFmpeg) is on the container/host `PATH`. A file whose audio doesn't include the wanted
-language parks at `:import_failed` instead of landing the wrong language in your library. With no
-`ffprobe` installed the check is simply skipped (imports behave as before); it never blocks an import
-on missing or unreadable audio metadata — only a confirmed mismatch parks.
+language tag in their name. As a backstop for releases whose name lies or omits the language, it also
+checks the **actual audio tracks** of a completed **movie** download before importing, using
+**`ffprobe`** (part of FFmpeg, shipped in the Docker image). A file whose audio is a confirmed
+different language parks at `:import_failed` instead of landing the wrong language in your library.
+
+It is conservative by design — a language outside the recognized set, an audio code it doesn't
+recognize, a missing/unreadable probe, or a missing `ffprobe` binary all **import** rather than park,
+so a correctly-languaged file is never stranded; only a provably-different language parks. Enabled by
+default; set `media_info: nil` in config to turn it off. (TV season-pack imports are not yet probed.)
 
 ## TV: monitoring, season packs, and the calendar
 

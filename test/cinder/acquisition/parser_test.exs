@@ -213,30 +213,31 @@ defmodule Cinder.Acquisition.ParserTest do
       assert Parser.parse(name).language == nil
     end
 
-    test "a language word in the title is not read as an audio tag (post-year scoping)" do
-      # Language matching is scoped to the technical tags after the release year, so these
-      # title words stay nil even though the registry contains their language.
+    test "a subtitle marker with a separator before the language word also stays nil" do
+      # The pre-strip removes "<word> SUB(S/BED/TITLE...)" so a subtitle annotation never reads as
+      # audio, including the endonym/abbrev forms the old per-token guard missed.
       for name <- [
-            "The.Italian.Job.2003.1080p.BluRay.x264-GRP",
-            "My.Big.Fat.Greek.Wedding.2002.1080p.BluRay.x264",
-            "Russian.Doll.2019.1080p.NF.WEB-DL.DDP5.1.x264",
-            "The.English.Patient.1996.1080p.BluRay.x264"
+            "Pelicula.2018.LATINO.SUBS.1080p.WEB-DL",
+            "Foreign.Film.2019.ENGLISH.SUBTITLES.1080p.WEB-DL",
+            "Film.2017.Vlaams.Subbed.1080p"
           ] do
-        assert Parser.parse(name).language == nil, "expected nil (title word) from #{name}"
+        assert Parser.parse(name).language == nil, "expected nil (subtitle marker) from #{name}"
       end
     end
 
-    test "the title is ignored but a real post-year tag is still found" do
-      # "Greek" in the title is skipped; the FRENCH tag after the year wins.
+    test "a real audio tag wins over a title-word language (registry order)" do
+      # "Greek" in the title also matches, but the real FRENCH tag is earlier in the registry, so
+      # first_match returns FRENCH. (A bare title-word collision with no real tag is left to the
+      # Original/Any soft fallback in Cinder.Acquisition.)
       assert Parser.parse("The.Greek.Tycoon.1978.FRENCH.1080p.BluRay.x264").language == "FRENCH"
     end
 
-    test "every registry language has both a release tag and ISO 639-2 audio codes (no drift)" do
-      tag_codes = Parser.language_tags() |> Map.keys() |> MapSet.new()
-      audio_codes = Parser.audio_codes() |> Map.keys() |> MapSet.new()
-      assert tag_codes == audio_codes
-      # Each audio entry includes the 639-1 code itself plus at least one form.
-      assert Enum.all?(Parser.audio_codes(), fn {code, forms} -> code in forms and forms != [] end)
+    test "every registry language has ISO 639-2 audio codes (no drift)" do
+      # Map.fetch! in @audio_codes already fails the build on a missing entry; this also asserts
+      # each language carries its 639-1 code plus at least one 639-2 form for the MediaInfo check.
+      assert Enum.all?(Parser.audio_codes(), fn {code, forms} ->
+               code in forms and length(forms) >= 2
+             end)
     end
   end
 

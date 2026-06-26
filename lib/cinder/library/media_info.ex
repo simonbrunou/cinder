@@ -4,10 +4,13 @@ defmodule Cinder.Library.MediaInfo do
   name-based language filter (`Cinder.Acquisition.Language`). A release name can mislabel or omit
   the audio language; the file's actual audio streams can't.
 
-  Reached only through this behaviour, resolved from `config :cinder, :media_info` at runtime. It
-  is **optional**: when the key is unset the importer skips the check (so an instance without
-  `ffprobe` installed imports exactly as before). `config/test.exs` leaves it unset; tests that
-  exercise the check set a Mox mock per-test.
+  Reached only through this behaviour, resolved from `config :cinder, :media_info` at runtime.
+  Enabled by default in prod (`config/config.exs` → `Ffprobe`; the Docker image ships `ffmpeg`), and
+  it degrades safely: if `ffprobe` isn't on `PATH` the probe errors and the importer imports anyway,
+  and the check parks only a *confirmed* mismatch (`Cinder.Acquisition.Language.audio_satisfies?/2`
+  is conservative — an unknown language or unrecognised audio code never parks). Set
+  `config :cinder, media_info: nil` to disable it entirely. `config/test.exs` disables it; the
+  media_info tests opt in with a Mox mock per-test.
   """
 
   @doc """

@@ -15,9 +15,10 @@ defmodule Cinder.Acquisition.Parser do
   `size` is intentionally not parsed here — it comes from the indexer's reported
   byte count (see `Cinder.Acquisition`).
 
-  `language` is matched only in the technical region *after* the release year (see
-  `@language_registry`), so a title word like "The Italian Job" or "Russian Doll" is not
-  mistaken for an audio tag.
+  `language` matches an audio-language tag in the name (see `@language_registry`); subtitle markers
+  ("ENG.SUBS", "VOSTFR") are stripped first so they aren't read as audio. A title word that is also a
+  language ("The Italian Job") can still match — that soft collision is handled downstream by the
+  language filter's Original/Any fallback in `Cinder.Acquisition`.
   """
 
   @resolutions ["2160p", "1080p", "720p", "480p"]
@@ -42,55 +43,53 @@ defmodule Cinder.Acquisition.Parser do
   #
   # Tokens are adapted from Radarr's `LanguageParser` (GPL-3.0, the same licence as Cinder) and
   # vetted for false positives: full English word + native endonym + only low-collision
-  # abbreviations (never a bare 2-letter code), each `\b`-anchored. The `(?![ ._-]*subs?\b)`
-  # guard keeps a subtitle marker ("HUN.ENG.SUBS", "ITA.SUBS") from being read as an audio tag.
-  # `iso_code` matches TMDB `original_language` — note "cn" = Cantonese, "zh" = Mandarin/Chinese.
+  # abbreviations, each `\b`-anchored (the French audio marker `vf` is the lone 2-letter token).
+  # Subtitle markers ("HUN.ENG.SUBS", "LATINO.SUBS") are stripped by `strip_subtitles/1` BEFORE
+  # matching, so the patterns themselves stay simple. `iso_code` matches TMDB `original_language`
+  # — note "cn" = Cantonese, "zh" = Mandarin/Chinese.
   @language_registry [
-    {"fr", "FRENCH",
-     ~r/\bfrench\b(?![ ._-]*subs?\b)|\btruefrench\b|\bvff\b|\bvfq\b|\bvfi\b|\bvf\b/i},
-    {"de", "GERMAN", ~r/\bgerman\b(?![ ._-]*subs?\b)|\bdeutsch\b/i},
-    {"es", "SPANISH", ~r/\bspanish\b(?![ ._-]*subs?\b)|\bcastellano\b|\bespanol\b|\blatino\b/i},
-    {"it", "ITALIAN", ~r/\bitalian\b(?![ ._-]*subs?\b)|\bitaliano\b|\bita\b(?![ ._-]*subs?\b)/i},
-    {"hu", "HUNGARIAN",
-     ~r/\bhungarian\b(?![ ._-]*subs?\b)|\bmagyar\b|\bhun\b(?![ ._-]*subs?\b)/i},
-    {"nl", "DUTCH",
-     ~r/\bdutch\b(?![ ._-]*subs?\b)|\bnederlands\b|\bvlaams\b|\bflemish\b(?![ ._-]*subs?\b)/i},
+    {"fr", "FRENCH", ~r/\bfrench\b|\btruefrench\b|\bvff\b|\bvfq\b|\bvfi\b|\bvf\b/i},
+    {"de", "GERMAN", ~r/\bgerman\b|\bdeutsch\b/i},
+    {"es", "SPANISH", ~r/\bspanish\b|\bcastellano\b|\bespanol\b|\blatino\b/i},
+    {"it", "ITALIAN", ~r/\bitalian\b|\bitaliano\b|\bita\b/i},
+    {"hu", "HUNGARIAN", ~r/\bhungarian\b|\bmagyar\b|\bhun\b/i},
+    {"nl", "DUTCH", ~r/\bdutch\b|\bnederlands\b|\bvlaams\b|\bflemish\b/i},
     {"pt", "PORTUGUESE",
-     ~r/\bportuguese\b(?![ ._-]*subs?\b)|\bportugues\b|\bportuguesa\b|\bbrazilian\b(?![ ._-]*subs?\b)|\bpt[ ._-]?br\b|\bdublado\b/i},
-    {"ru", "RUSSIAN", ~r/\brussian\b(?![ ._-]*subs?\b)|\brus\b(?![ ._-]*subs?\b)/i},
-    {"pl", "POLISH", ~r/\bpolish\b(?![ ._-]*subs?\b)|\bpolski\b|\blektor\b/i},
-    {"cs", "CZECH", ~r/\bczech\b(?![ ._-]*subs?\b)|\bcesky\b|\bcestina\b/i},
-    {"sk", "SLOVAK", ~r/\bslovak\b(?![ ._-]*subs?\b)|\bslovensky\b/i},
-    {"sv", "SWEDISH", ~r/\bswedish\b(?![ ._-]*subs?\b)|\bsvenska\b|\bswe\b(?![ ._-]*subs?\b)/i},
-    {"da", "DANISH", ~r/\bdanish\b(?![ ._-]*subs?\b)|\bdansk\b/i},
-    {"no", "NORWEGIAN", ~r/\bnorwegian\b(?![ ._-]*subs?\b)|\bnorsk\b/i},
-    {"fi", "FINNISH", ~r/\bfinnish\b(?![ ._-]*subs?\b)|\bsuomi\b/i},
-    {"ro", "ROMANIAN", ~r/\bromanian\b(?![ ._-]*subs?\b)|\bromana\b/i},
-    {"bg", "BULGARIAN", ~r/\bbulgarian\b(?![ ._-]*subs?\b)/i},
-    {"uk", "UKRAINIAN", ~r/\bukrainian\b(?![ ._-]*subs?\b)|\bukr\b(?![ ._-]*subs?\b)/i},
-    {"tr", "TURKISH", ~r/\bturkish\b(?![ ._-]*subs?\b)|\bturkce\b/i},
-    {"el", "GREEK", ~r/\bgreek\b(?![ ._-]*subs?\b)/i},
-    {"he", "HEBREW", ~r/\bhebrew\b(?![ ._-]*subs?\b)|\bheb\b(?![ ._-]*subs?\b)/i},
-    {"ar", "ARABIC", ~r/\barabic\b(?![ ._-]*subs?\b)/i},
-    {"hi", "HINDI", ~r/\bhindi\b(?![ ._-]*subs?\b)/i},
-    {"ta", "TAMIL", ~r/\btamil\b(?![ ._-]*subs?\b)/i},
-    {"te", "TELUGU", ~r/\btelugu\b(?![ ._-]*subs?\b)/i},
-    {"ml", "MALAYALAM", ~r/\bmalayalam\b(?![ ._-]*subs?\b)/i},
-    {"kn", "KANNADA", ~r/\bkannada\b(?![ ._-]*subs?\b)/i},
-    {"bn", "BENGALI", ~r/\bbengali\b(?![ ._-]*subs?\b)/i},
-    {"pa", "PUNJABI", ~r/\bpunjabi\b(?![ ._-]*subs?\b)/i},
-    {"mr", "MARATHI", ~r/\bmarathi\b(?![ ._-]*subs?\b)/i},
-    {"ja", "JAPANESE", ~r/\bjapanese\b(?![ ._-]*subs?\b)|\bjpn\b(?![ ._-]*subs?\b)/i},
-    {"ko", "KOREAN", ~r/\bkorean\b(?![ ._-]*subs?\b)|\bkor\b(?![ ._-]*subs?\b)/i},
-    {"zh", "CHINESE", ~r/\bchinese\b(?![ ._-]*subs?\b)|\bmandarin\b(?![ ._-]*subs?\b)/i},
-    {"cn", "CANTONESE", ~r/\bcantonese\b(?![ ._-]*subs?\b)/i},
-    {"th", "THAI", ~r/\bthai\b(?![ ._-]*subs?\b)/i},
-    {"vi", "VIETNAMESE", ~r/\bvietnamese\b(?![ ._-]*subs?\b)/i},
-    {"id", "INDONESIAN", ~r/\bindonesian\b(?![ ._-]*subs?\b)/i},
-    {"fa", "PERSIAN", ~r/\bpersian\b(?![ ._-]*subs?\b)|\bfarsi\b(?![ ._-]*subs?\b)/i},
+     ~r/\bportuguese\b|\bportugues\b|\bportuguesa\b|\bbrazilian\b|\bpt[ ._-]?br\b|\bdublado\b/i},
+    {"ru", "RUSSIAN", ~r/\brussian\b|\brus\b/i},
+    {"pl", "POLISH", ~r/\bpolish\b|\bpolski\b|\blektor\b/i},
+    {"cs", "CZECH", ~r/\bczech\b|\bcesky\b|\bcestina\b/i},
+    {"sk", "SLOVAK", ~r/\bslovak\b|\bslovensky\b/i},
+    {"sv", "SWEDISH", ~r/\bswedish\b|\bsvenska\b|\bswe\b/i},
+    {"da", "DANISH", ~r/\bdanish\b|\bdansk\b/i},
+    {"no", "NORWEGIAN", ~r/\bnorwegian\b|\bnorsk\b/i},
+    {"fi", "FINNISH", ~r/\bfinnish\b|\bsuomi\b/i},
+    {"ro", "ROMANIAN", ~r/\bromanian\b|\bromana\b/i},
+    {"bg", "BULGARIAN", ~r/\bbulgarian\b/i},
+    {"uk", "UKRAINIAN", ~r/\bukrainian\b|\bukr\b/i},
+    {"tr", "TURKISH", ~r/\bturkish\b|\bturkce\b/i},
+    {"el", "GREEK", ~r/\bgreek\b/i},
+    {"he", "HEBREW", ~r/\bhebrew\b|\bheb\b/i},
+    {"ar", "ARABIC", ~r/\barabic\b/i},
+    {"hi", "HINDI", ~r/\bhindi\b/i},
+    {"ta", "TAMIL", ~r/\btamil\b/i},
+    {"te", "TELUGU", ~r/\btelugu\b/i},
+    {"ml", "MALAYALAM", ~r/\bmalayalam\b/i},
+    {"kn", "KANNADA", ~r/\bkannada\b/i},
+    {"bn", "BENGALI", ~r/\bbengali\b/i},
+    {"pa", "PUNJABI", ~r/\bpunjabi\b/i},
+    {"mr", "MARATHI", ~r/\bmarathi\b/i},
+    {"ja", "JAPANESE", ~r/\bjapanese\b|\bjpn\b/i},
+    {"ko", "KOREAN", ~r/\bkorean\b|\bkor\b/i},
+    {"zh", "CHINESE", ~r/\bchinese\b|\bmandarin\b/i},
+    {"cn", "CANTONESE", ~r/\bcantonese\b/i},
+    {"th", "THAI", ~r/\bthai\b/i},
+    {"vi", "VIETNAMESE", ~r/\bvietnamese\b/i},
+    {"id", "INDONESIAN", ~r/\bindonesian\b/i},
+    {"fa", "PERSIAN", ~r/\bpersian\b|\bfarsi\b/i},
     # English LAST so a real foreign full word elsewhere in the name wins `first_match` over a
-    # title word like "The English Patient"; both alternatives sub-guarded ("ENG.SUBS" = subtitles).
-    {"en", "ENGLISH", ~r/\benglish\b(?![ ._-]*subs?\b)|\beng\b(?![ ._-]*subs?\b)/i}
+    # title word like "The English Patient".
+    {"en", "ENGLISH", ~r/\benglish\b|\beng\b/i}
   ]
 
   # MULTI is not an ISO language (it means "several audio tracks, incl. the original"), so it sits
@@ -102,11 +101,18 @@ defmodule Cinder.Acquisition.Parser do
 
   @language_tags Map.new(@language_registry, fn {code, tag, _re} -> {code, tag} end)
 
+  # A subtitle marker — a language token glued by separators to a sub/subbed/subtitle(s/d) word —
+  # names the SUBTITLE language, not the audio. Strip it before language matching so "FRENCH.SUBS",
+  # "ITA.Subbed", "ENG.SUBTITLES", "LATINO.SUBS" don't read as an audio tag. (A bare "SUB"/"SUBS"
+  # with no preceding word, and the glued "SUBFRENCH"/"VOSTFR" forms, were already nil.)
+  @subtitle ~r/\b[a-z]+[ ._-]*sub(?:s|bed|titled?|titles)?\b/i
+
   # ISO 639-2 codes `ffprobe` reports for an audio stream's `language` tag, keyed by the registry's
   # 639-1 code — both the bibliographic (B) and terminological (T) forms where they differ
-  # ("fre"/"fra", "ger"/"deu", "dut"/"nld"). Used by the import-time MediaInfo check
-  # (`Cinder.Acquisition.Language.audio_satisfies?/2`) to compare a file's actual audio tracks to the
-  # wanted language. Kept beside the registry; `parser_test` asserts the two never fall out of sync.
+  # ("fre"/"fra", "ger"/"deu", "dut"/"nld"), plus common sub-variants ("nob"/"nno" for Norwegian,
+  # "cmn" for Mandarin). Used by the import-time MediaInfo check
+  # (`Cinder.Acquisition.Language.audio_satisfies?/2`). `Map.fetch!` below fails the build if a
+  # registry language is added here without its codes, so the two can't drift.
   @iso639_2 %{
     "fr" => ["fra", "fre"],
     "de" => ["deu", "ger"],
@@ -121,7 +127,7 @@ defmodule Cinder.Acquisition.Parser do
     "sk" => ["slk", "slo"],
     "sv" => ["swe"],
     "da" => ["dan"],
-    "no" => ["nor"],
+    "no" => ["nor", "nob", "nno"],
     "fi" => ["fin"],
     "ro" => ["ron", "rum"],
     "bg" => ["bul"],
@@ -140,7 +146,7 @@ defmodule Cinder.Acquisition.Parser do
     "mr" => ["mar"],
     "ja" => ["jpn"],
     "ko" => ["kor"],
-    "zh" => ["zho", "chi"],
+    "zh" => ["zho", "chi", "cmn"],
     "cn" => ["yue", "zho", "chi"],
     "th" => ["tha"],
     "vi" => ["vie"],
@@ -150,15 +156,11 @@ defmodule Cinder.Acquisition.Parser do
   }
 
   # iso1 => the codes a file's audio stream may carry for that language (the 639-1 code itself plus
-  # its 639-2 forms), the accepted set the MediaInfo check matches against.
+  # its 639-2 forms), the accepted set the MediaInfo check matches against. `Map.fetch!` makes a
+  # registry language with no `@iso639_2` entry a compile error rather than a silent false-park.
   @audio_codes Map.new(@language_registry, fn {code, _tag, _re} ->
-                 {code, [code | Map.get(@iso639_2, code, [])]}
+                 {code, [code | Map.fetch!(@iso639_2, code)]}
                end)
-
-  # Release year — the boundary between the title and the technical tags. Language matching is
-  # scoped to the region after it so a title word ("The Italian Job", "My Big Fat Greek Wedding",
-  # "Russian Doll") isn't read as an audio tag.
-  @year ~r/\b(?:19|20)\d{2}\b/
 
   # Adjacent (S01S02) or dash-joined (S01-S03) season tokens — the forms a boundary
   # scan can't see (no separator before the second S). Combined with distinct_seasons/1
@@ -195,7 +197,7 @@ defmodule Cinder.Acquisition.Parser do
       resolution: resolution(name),
       codec: first_match(name, @codecs),
       group: group(name),
-      language: first_match(language_region(name), @languages),
+      language: first_match(strip_subtitles(name), @languages),
       season: season,
       episodes: episodes
     }
@@ -227,21 +229,11 @@ defmodule Cinder.Acquisition.Parser do
     Enum.find_value(table, fn {pattern, value} -> if Regex.match?(pattern, name), do: value end)
   end
 
-  # The substring after the LAST year-like token (a title year such as "Blade Runner 2049"
-  # precedes the real release year, so the last one is the title/tags boundary). A name with no
-  # year — e.g. a TV pack — falls back to the whole name; that residual title-word collision is
-  # netted by the Original/Any soft fallback in `Cinder.Acquisition`.
-  defp language_region(name) do
-    case Regex.scan(@year, name, return: :index) do
-      [] ->
-        name
-
-      matches ->
-        [{start, len} | _] = List.last(matches)
-        offset = start + len
-        binary_part(name, offset, byte_size(name) - offset)
-    end
-  end
+  # Remove subtitle markers ("FRENCH.SUBS", "ENG.SUBTITLES", "LATINO.Subbed") so a subtitle-language
+  # token isn't read as the audio language. A title word that happens to be a language ("The Italian
+  # Job") is still matched — that residual collision is netted by the Original/Any soft fallback in
+  # `Cinder.Acquisition`, and a real audio tag wins over a title word via the registry order.
+  defp strip_subtitles(name), do: Regex.replace(@subtitle, name, " ")
 
   # The trailing "-TOKEN", but only when TOKEN is a single alphanumeric run (no
   # dots/spaces), after stripping a container extension. Otherwise nil — so a

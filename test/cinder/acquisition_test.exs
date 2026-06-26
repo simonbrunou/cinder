@@ -141,10 +141,10 @@ defmodule Cinder.AcquisitionTest do
              )
   end
 
-  test "best_release with original pick: a title word is not read as an audio tag" do
-    # The parser scopes language matching to the technical region after the release year, so
-    # "The Italian Job" is NOT tagged ITALIAN — it parses to nil (English audio for an English
-    # title) and is kept directly for the original/en pick, no soft fallback needed.
+  test "best_release with original pick falls back when a title-word collision tags every release" do
+    # The parser tags `language` from the whole release name, so "The Italian Job" is tagged
+    # ITALIAN. Under the soft default (original/en), nothing satisfies — but rather than parking,
+    # best_release falls back to scoring the unfiltered candidates so the title isn't stranded.
     expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
       {:ok,
        [
@@ -153,7 +153,7 @@ defmodule Cinder.AcquisitionTest do
        ]}
     end)
 
-    assert {:ok, %Release{language: nil, resolution: "1080p"}} =
+    assert {:ok, %Release{language: "ITALIAN", resolution: "1080p"}} =
              Acquisition.best_release("tt1",
                max_size: 20 * @gb,
                preferred_language: "original",
@@ -161,9 +161,7 @@ defmodule Cinder.AcquisitionTest do
              )
   end
 
-  test "best_release with an explicit language pick parks when no release has that audio (strict)" do
-    # English releases (untagged) of an English-titled film never satisfy a french pick, so the
-    # strict pick parks rather than grabbing a wrong-language release.
+  test "best_release with an explicit language pick still parks on a title-word collision (strict)" do
     expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
       {:ok,
        [

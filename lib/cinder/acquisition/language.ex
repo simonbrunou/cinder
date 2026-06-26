@@ -26,6 +26,10 @@ defmodule Cinder.Acquisition.Language do
   # derived from the same registry. Powers the import-time MediaInfo check.
   @audio_codes Parser.audio_codes()
 
+  # Every audio code known for any language — lets `audio_satisfies?/2` tell a *recognised* wrong
+  # language (park) from a code it doesn't recognise (could be a variant of the target; don't park).
+  @known_audio_codes @audio_codes |> Map.values() |> List.flatten() |> MapSet.new()
+
   # An untagged release is English audio by scene convention (non-English is tagged).
   @default_audio "en"
 
@@ -61,15 +65,25 @@ defmodule Cinder.Acquisition.Language do
   def satisfies?(%Release{language: language}, target), do: language == tag(target)
 
   @doc """
-  Whether a media file's actual audio-track languages (`file_langs`, the codes `ffprobe` reports)
-  include the resolved `target` language — the import-time MediaInfo check that backstops the
-  name-based filter. Matches a 639-1 `target` against the file's 639-1/639-2 codes via the
-  registry-derived table; comparison is case-insensitive. Callers skip the check when `target` is
-  nil (an `"any"` pick / unknown original) or when the file reports no language at all.
+  Whether a media file's audio tracks are compatible with the resolved `target` language — the
+  import-time MediaInfo check that backstops the name-based filter (callers skip it when `target`
+  is nil or the file reports no language).
+
+  Conservative on purpose: it returns `false` (a confirmed mismatch → the importer parks) ONLY when
+  `target` is a known language AND the file positively names a *recognised other* language. A target
+  outside the registry, a file code we don't recognise (a 639-2 variant we don't list, junk), or a
+  full-word tag all return `true` — so a correctly-languaged file is never parked, only a file whose
+  audio is provably a different known language.
   """
   def audio_satisfies?(target, file_langs) do
-    accepted = Map.get(@audio_codes, target, [target])
-    Enum.any?(file_langs, &(String.downcase(&1) in accepted))
+    case Map.get(@audio_codes, target) do
+      nil ->
+        true
+
+      accepted ->
+        langs = Enum.map(file_langs, &String.downcase/1)
+        Enum.any?(langs, &(&1 in accepted)) or not Enum.any?(langs, &(&1 in @known_audio_codes))
+    end
   end
 
   defp tag(code), do: Map.get(@tags, code)

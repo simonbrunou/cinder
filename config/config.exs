@@ -53,7 +53,8 @@ config :cinder,
   }
 
 config :cinder, filesystem: Cinder.Library.Filesystem.Disk
-# Import-time audio-language verification (optional; needs `ffprobe` on PATH). Unset = disabled.
+# Import-time audio-language verification (needs `ffprobe`; the Docker image ships it). Enabled by
+# default; degrades to a no-op if ffprobe is absent. Set `media_info: nil` to disable.
 config :cinder, media_info: Cinder.Library.MediaInfo.Ffprobe
 # Default; setting PLEX_URL (see runtime.exs) switches this to Plex.
 config :cinder, media_server: Cinder.Library.MediaServer.Jellyfin
