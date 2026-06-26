@@ -36,6 +36,9 @@ defmodule Cinder.Library.Filesystem.Disk do
   def lstat(path), do: File.lstat(path)
 
   @impl true
+  def rename(source, dest), do: File.rename(source, dest)
+
+  @impl true
   def rm(path), do: File.rm(path)
 
   @impl true

@@ -32,4 +32,17 @@ defmodule Cinder.Library.Filesystem.DiskTest do
     # Hardlink shares the inode; a second link to the same dest is :eexist.
     assert {:error, :eexist} = Disk.ln(src, dest)
   end
+
+  test "rename/2 atomically replaces an existing dest" do
+    dir = Path.join(System.tmp_dir!(), "cinder-rename-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+    src = Path.join(dir, "src")
+    dst = Path.join(dir, "dst")
+    File.write!(src, "new")
+    File.write!(dst, "old")
+    assert :ok = Disk.rename(src, dst)
+    assert File.read!(dst) == "new"
+    refute File.exists?(src)
+  end
 end

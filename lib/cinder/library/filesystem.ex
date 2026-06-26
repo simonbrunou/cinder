@@ -11,6 +11,7 @@ defmodule Cinder.Library.Filesystem do
   @callback mkdir_p(dir :: String.t()) :: :ok | {:error, term()}
   @callback ln(source :: String.t(), dest :: String.t()) :: :ok | {:error, term()}
   @callback lstat(path :: String.t()) :: {:ok, File.Stat.t()} | {:error, term()}
+  @callback rename(source :: String.t(), dest :: String.t()) :: :ok | {:error, term()}
   @callback rm(path :: String.t()) :: :ok | {:error, term()}
   @callback rmdir(dir :: String.t()) :: :ok | {:error, term()}
 end
