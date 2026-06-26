@@ -7,9 +7,13 @@ defmodule Cinder.Acquisition.Scorer do
   The resolution preference is a **strict allow-list**, not just a tiebreak: a
   release whose parsed resolution isn't in the list is rejected outright (a 480p is
   dropped, not merely out-ranked), and an untagged (nil) resolution is rejected too.
-  An empty list means "no preference configured" and disables the gate. So a user
-  who wants 1080p never silently gets a 480p — if nothing in the allow-list survives,
-  the result is `:no_match` and the item parks for the next search tick.
+  So a user who wants 1080p never silently gets a 480p — if nothing in the allow-list
+  survives, the result is `:no_match` and the item parks for the next search tick.
+
+  An **empty** list disables the gate — but that's the no-rules programmatic default,
+  not something a cleared `/settings` field produces: a blank field resolves to `nil`,
+  which falls back to the configured default list (`["1080p", "720p"]`), so the gate
+  stays active. To accept more resolutions, list them.
 
   Rules come from `config :cinder, #{inspect(__MODULE__)}` merged with per-call
   `opts`. Returns `{:ok, release}` or `:no_match` when none survive the filters.

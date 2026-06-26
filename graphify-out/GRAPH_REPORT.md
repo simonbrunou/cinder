@@ -1,16 +1,16 @@
 # Graph Report - cinder  (2026-06-26)
 
 ## Corpus Check
-- 286 files · ~303,021 words
+- 286 files · ~303,179 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 2315 nodes · 2722 edges · 275 communities (163 shown, 112 thin omitted)
+- 2316 nodes · 2723 edges · 275 communities (163 shown, 112 thin omitted)
 - Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 42 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `a9c340e2`
+- Built from commit: `7589d5ab`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -593,8 +593,8 @@ Cohesion: 0.32
 Nodes (8): ensure_season(), episodes_for(), finalize_or_restore(), insert_episode(), log_reconcile_error(), park_episode(), reconcile_tree(), seasons_for()
 
 ### Community 72 - "Community 72"
-Cohesion: 0.14
-Nodes (13): [0.7.0] - 2026-06-23, Added, Added, Added, Added, Added, Added, Added (+5 more)
+Cohesion: 0.13
+Nodes (14): [0.7.0] - 2026-06-23, Added, Added, Added, Added, Added, Added, Added (+6 more)
 
 ### Community 73 - "Community 73"
 Cohesion: 0.25
@@ -905,7 +905,7 @@ Cohesion: 0.53
 Nodes (5): Cinder.Library.MediaInfo.Ffprobe, args(), audio_languages(), bin(), parse()
 
 ## Knowledge Gaps
-- **853 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+848 more)
+- **854 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+849 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **112 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
@@ -919,7 +919,7 @@ _Questions this graph is uniquely positioned to answer:_
 - **Why does `Cinder.Catalog` connect `Community 3` to `Community 37`, `Community 71`, `Community 59`, `Community 147`, `Community 91`, `Community 28`?**
   _High betweenness centrality (0.001) - this node is a cross-community bridge._
 - **What connects `tidewave`, `$schema`, `erlang` to the rest of the system?**
-  _853 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _854 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**
   _Cohesion score 0.07364114552893045 - nodes in this community are weakly interconnected._
 - **Should `Community 1` be split into smaller, more focused modules?**
