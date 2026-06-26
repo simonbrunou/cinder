@@ -99,6 +99,45 @@ defmodule Cinder.Acquisition.ScorerTest do
       releases = [release(resolution: "1080p", group: "A", size: nil)]
       assert {:ok, %Release{group: "A"}} = Scorer.select(releases)
     end
+
+    test "a recognized but unlisted source is rejected" do
+      assert :no_match =
+               Scorer.select([release(resolution: "1080p", source: "hdtv", size: 4 * @gb)],
+                 preferred_sources: ["bluray", "webdl"]
+               )
+    end
+
+    test "an untagged (nil) source passes the source filter" do
+      assert {:ok, %Release{source: nil}} =
+               Scorer.select([release(resolution: "1080p", source: nil, size: 4 * @gb)],
+                 preferred_sources: ["bluray"]
+               )
+    end
+
+    test "prefers the higher-ranked source within the same resolution and size" do
+      releases = [
+        release(resolution: "1080p", source: "webdl", size: 8 * @gb),
+        release(resolution: "1080p", source: "bluray", size: 8 * @gb)
+      ]
+
+      assert {:ok, %Release{source: "bluray"}} =
+               Scorer.select(releases, preferred_sources: ["bluray", "webdl"])
+    end
+
+    test "empty preferred_sources accepts any source" do
+      assert {:ok, %Release{source: "cam"}} =
+               Scorer.select([release(resolution: "1080p", source: "cam", size: 4 * @gb)])
+    end
+
+    test "resolution outranks source: a 1080p webdl beats a 720p bluray" do
+      releases = [
+        release(resolution: "720p", source: "bluray", size: 8 * @gb),
+        release(resolution: "1080p", source: "webdl", size: 8 * @gb)
+      ]
+
+      assert {:ok, %Release{resolution: "1080p"}} =
+               Scorer.select(releases, preferred_sources: ["bluray", "webdl"])
+    end
   end
 
   describe "resolution_rank/2" do
@@ -183,6 +222,25 @@ defmodule Cinder.Acquisition.ScorerTest do
 
     test "no releases -> :no_match" do
       assert :no_match = Scorer.select_for([], 1, [1])
+    end
+
+    test "honours the source filter and tiebreak per episode" do
+      releases = [
+        release(season: 1, episodes: [1], resolution: "1080p", source: "webdl", size: 2 * @gb),
+        release(season: 1, episodes: [1], resolution: "1080p", source: "bluray", size: 2 * @gb),
+        release(season: 1, episodes: [2], resolution: "1080p", source: "hdtv", size: 2 * @gb)
+      ]
+
+      assert {:ok, picks} =
+               Scorer.select_for(releases, 1, [1, 2],
+                 preferred_sources: ["bluray", "webdl"],
+                 max_size: 5 * @gb
+               )
+
+      sources = Enum.map(picks, fn {release, _covered} -> release.source end)
+
+      # ep1 prefers bluray over webdl; ep2's only release (hdtv) is unlisted → rejected, stays wanted.
+      assert sources == ["bluray"]
     end
 
     test "with no size band, any release is acceptable (the band is poller-supplied)" do

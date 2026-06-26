@@ -1,8 +1,8 @@
 defmodule Cinder.Acquisition.Scorer do
   @moduledoc """
   Selects the best release from a list by explicit, configurable rules: an
-  inclusive size band, a group blocklist, and a resolution allow-list that doubles
-  as the ranking order.
+  inclusive size band, a group blocklist, a resolution allow-list, and a source
+  allow-list — each doubles as a ranking tiebreak in that order.
 
   The resolution preference is a **strict allow-list**, not just a tiebreak: a
   release whose parsed resolution isn't in the list is rejected outright (a 480p is
@@ -10,10 +10,16 @@ defmodule Cinder.Acquisition.Scorer do
   So a user who wants 1080p never silently gets a 480p — if nothing in the allow-list
   survives, the result is `:no_match` and the item parks for the next search tick.
 
-  An **empty** list disables the gate — but that's the no-rules programmatic default,
-  not something a cleared `/settings` field produces: a blank field resolves to `nil`,
-  which falls back to the configured default list (`["1080p", "720p"]`), so the gate
-  stays active. To accept more resolutions, list them.
+  The source preference (`preferred_sources`) is a **lenient allow-list**: an empty
+  list (the default) accepts every source; a non-empty list rejects a recognized-but-
+  unlisted source. Crucially, a `nil` source (untagged release) always passes — a
+  parser miss must never strand a grab. Ranking order is resolution → source → size.
+
+  An **empty** resolution list disables the resolution gate — but that's the no-rules
+  programmatic default, not something a cleared `/settings` field produces: a blank
+  field resolves to `nil`, which falls back to the configured default list
+  (`["1080p", "720p"]`), so the gate stays active. To accept more resolutions, list
+  them.
 
   Rules come from `config :cinder, #{inspect(__MODULE__)}` merged with per-call
   `opts`. Returns `{:ok, release}` or `:no_match` when none survive the filters.
@@ -27,13 +33,13 @@ defmodule Cinder.Acquisition.Scorer do
   size-band, blocklist, and resolution allow-list filters.
   """
   def select(releases, opts \\ []) do
-    {min_size, max_size, preferred, blocklist} = rules(opts)
+    {min_size, max_size, preferred, sources, blocklist} = rules(opts)
 
     releases
     |> Enum.filter(&within_band?(&1, min_size, max_size))
     |> Enum.reject(&blocked?(&1, blocklist))
-    |> Enum.filter(&allowed_resolution?(&1, preferred))
-    |> pick_best(preferred)
+    |> Enum.filter(&(allowed_resolution?(&1, preferred) and allowed_source?(&1, sources)))
+    |> pick_best(preferred, sources)
   end
 
   @doc """
@@ -61,13 +67,13 @@ defmodule Cinder.Acquisition.Scorer do
   household release-list sizes; upgrade only if release sets get pathological.
   """
   def select_for(releases, season, wanted_episodes, opts \\ []) do
-    {min_size, max_size, preferred, blocklist} = rules(opts)
-    band = {min_size, max_size, preferred}
+    {min_size, max_size, preferred, sources, blocklist} = rules(opts)
+    band = {min_size, max_size, preferred, sources}
 
     releases
     |> Enum.filter(&(&1.season == season))
     |> Enum.reject(&blocked?(&1, blocklist))
-    |> Enum.filter(&allowed_resolution?(&1, preferred))
+    |> Enum.filter(&(allowed_resolution?(&1, preferred) and allowed_source?(&1, sources)))
     |> cover(MapSet.new(wanted_episodes), [], band)
   end
 
@@ -81,12 +87,13 @@ defmodule Cinder.Acquisition.Scorer do
       Keyword.get(rules, :min_size),
       Keyword.get(rules, :max_size),
       Keyword.get(rules, :preferred_resolutions, @default_preferred),
+      Keyword.get(rules, :preferred_sources, []),
       rules |> Keyword.get(:blocklist, []) |> Enum.map(&String.downcase/1)
     }
   end
 
   defp cover(candidates, needed, chosen, band) do
-    {min_size, max_size, _preferred} = band
+    {min_size, max_size, _preferred, _sources} = band
 
     scored =
       if MapSet.size(needed) == 0 do
@@ -119,9 +126,10 @@ defmodule Cinder.Acquisition.Scorer do
   defp coverage(%Release{episodes: nil}, needed), do: needed
   defp coverage(%Release{episodes: eps}, needed), do: MapSet.intersection(MapSet.new(eps), needed)
 
-  # max_by: more coverage wins; ties go to the more-preferred resolution, then larger size.
-  defp greedy_key(%Release{} = release, cov, {_min, _max, preferred}) do
-    {MapSet.size(cov), -resolution_rank(release, preferred), release.size || 0}
+  # max_by: more coverage wins; ties go to the more-preferred resolution, then source, then larger size.
+  defp greedy_key(%Release{} = release, cov, {_min, _max, preferred, sources}) do
+    {MapSet.size(cov), -resolution_rank(release, preferred), -source_rank(release, sources),
+     release.size || 0}
   end
 
   defp config, do: Application.get_env(:cinder, __MODULE__, [])
@@ -149,6 +157,13 @@ defmodule Cinder.Acquisition.Scorer do
   def resolution_rank(%Release{} = release, preferred),
     do: resolution_rank(release.resolution, preferred)
 
+  @doc "Index of a source string in the preference list (lower = better); nil/unlisted sorts last."
+  def source_rank(source, preferred) when is_binary(source) or is_nil(source),
+    do: Enum.find_index(preferred, &(&1 == source)) || length(preferred)
+
+  def source_rank(%Release{} = release, preferred),
+    do: source_rank(release.source, preferred)
+
   defp blocked?(%Release{group: nil}, _blocklist), do: false
   defp blocked?(%Release{group: group}, blocklist), do: String.downcase(group) in blocklist
 
@@ -160,10 +175,19 @@ defmodule Cinder.Acquisition.Scorer do
   defp allowed_resolution?(%Release{resolution: resolution}, preferred),
     do: resolution in preferred
 
-  defp pick_best([], _preferred), do: :no_match
-  defp pick_best(releases, preferred), do: {:ok, Enum.min_by(releases, &sort_key(&1, preferred))}
+  # Source allow-list, but LENIENT on untagged (unlike resolution): empty list keeps all;
+  # a nil source passes (a parser miss must not strand a grab); only a recognized but unlisted
+  # source is rejected.
+  defp allowed_source?(_release, []), do: true
+  defp allowed_source?(%Release{source: nil}, _preferred), do: true
+  defp allowed_source?(%Release{source: source}, preferred), do: source in preferred
 
-  defp sort_key(%Release{} = release, preferred) do
-    {resolution_rank(release, preferred), -(release.size || 0)}
+  defp pick_best([], _preferred, _sources), do: :no_match
+
+  defp pick_best(releases, preferred, sources),
+    do: {:ok, Enum.min_by(releases, &sort_key(&1, preferred, sources))}
+
+  defp sort_key(%Release{} = release, preferred, sources) do
+    {resolution_rank(release, preferred), source_rank(release, sources), -(release.size || 0)}
   end
 end
