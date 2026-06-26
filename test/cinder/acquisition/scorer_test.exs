@@ -79,6 +79,16 @@ defmodule Cinder.Acquisition.ScorerTest do
     end
   end
 
+  describe "resolution_rank/2" do
+    test "resolution_rank/2 ranks a resolution string by preference, nil/unknown last" do
+      pref = ["1080p", "720p"]
+      assert Scorer.resolution_rank("1080p", pref) == 0
+      assert Scorer.resolution_rank("720p", pref) == 1
+      assert Scorer.resolution_rank("2160p", pref) == 2
+      assert Scorer.resolution_rank(nil, pref) == 2
+    end
+  end
+
   describe "select_for/4 (TV)" do
     test "a season pack covering the whole wanted set is chosen, paired with its coverage" do
       releases = [release(season: 1, episodes: nil, resolution: "1080p", size: 6 * @gb)]

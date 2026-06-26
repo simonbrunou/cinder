@@ -1,19 +1,21 @@
 defmodule Cinder.Library do
   @moduledoc """
-  Import: hardlink a completed download into the Jellyfin library, renamed to
-  `Title (Year)/Title (Year).ext` (or bare `Title` when the year is unknown, or
-  `tmdb-<id>` when the title has no usable characters), then trigger a scan.
+  Import: hardlink a completed download into the Plex library, renamed to
+  `Title (Year) {tmdb-<id>}/Title (Year) {tmdb-<id>}.ext` (or bare `Title {tmdb-<id>}`
+  when the year is unknown, or `tmdb-<id>` when the title has no usable characters),
+  then trigger a scan.
 
   Filesystem ops and the media server are reached only through behaviours
   (`Cinder.Library.Filesystem`, `Cinder.Library.MediaServer`), resolved from
   config at runtime so tests use Mox mocks and never touch disk or the network.
-  Owns filesystem + Jellyfin only — `Catalog` remains the status choke-point.
+  Owns filesystem + Plex only — `Catalog` remains the status choke-point.
   """
 
   require Logger
 
   alias Cinder.Acquisition.{Language, Parser}
   alias Cinder.Catalog.{Episode, Movie, Series}
+  alias Cinder.Library.Upgrade
 
   @video_exts ~w(.mkv .mp4 .avi .m4v .mov .wmv .ts)
   @illegal ~r/[\/\\:*?"<>|]/
@@ -31,16 +33,18 @@ defmodule Cinder.Library do
 
   @doc """
   Hardlinks `movie`'s downloaded file into the library and triggers a scan.
-  Returns `{:ok, dest_path}` or `{:error, reason}`. Idempotent: a dest that
-  already exists (`:eexist`) is treated as success. The scan is best-effort —
-  once the file is hardlinked the import has succeeded, so a failing scan is
-  logged but does not turn into `{:error, _}`.
+  Returns `{:ok, dest_path, quality}` or `{:error, reason}`. Idempotent: a dest
+  that already exists (`:eexist`) is treated as success when it is the same
+  hardlink (same inode). On a collision with a different file, the existing
+  release is kept or replaced based on an upgrade score comparison.
+  The scan is best-effort — once the file is hardlinked the import has
+  succeeded, so a failing scan is logged but does not turn into `{:error, _}`.
 
   When a language is wanted and `:media_info` is configured, the file's actual audio tracks are
   probed first: a confirmed mismatch returns `{:error, :wrong_audio_language}` so the wrong-language
   file is never imported (the poller parks it). Missing/unverifiable audio data imports as before.
   """
-  @spec import_movie(Movie.t()) :: {:ok, String.t()} | {:error, term()}
+  @spec import_movie(Movie.t()) :: {:ok, String.t(), map()} | {:error, term()}
   def import_movie(%Movie{file_path: path}) when path in [nil, ""], do: {:error, :no_file_path}
 
   def import_movie(%Movie{} = movie) do
@@ -51,11 +55,106 @@ defmodule Cinder.Library do
              source,
              Language.target(movie.preferred_language, movie.original_language)
            ),
+         {:ok, %{size: size, inode: si}} <- fs().lstat(source),
+         parsed = Parser.parse(Path.basename(movie.file_path)),
+         new_q = %{resolution: parsed.resolution, size: size, language: parsed.language},
          dest = build_dest(movie, source, root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
-         :ok <- link(source, dest) do
+         {:ok, quality} <- place(source, dest, si, movie, new_q) do
       scan(:movies, dest)
-      {:ok, dest}
+      {:ok, dest, quality}
+    end
+  end
+
+  # Place source at dest; resolve a same-item collision (tmdb-unique folder => same movie) by upgrade decision.
+  defp place(source, dest, si, movie, new_q) do
+    case fs().ln(source, dest) do
+      :ok -> {:ok, new_q}
+      {:error, :eexist} -> resolve_collision(source, dest, si, movie, new_q)
+      {:error, _} = err -> err
+    end
+  end
+
+  defp resolve_collision(source, dest, si, movie, new_q) do
+    with {:ok, %{inode: di}} <- fs().lstat(dest) do
+      do_resolve(source, dest, si == di, upgrade?(movie, new_q), movie, new_q)
+    end
+  end
+
+  defp do_resolve(_source, _dest, true, _upgrade, movie, new_q),
+    do: {:ok, existing_quality(movie, new_q)}
+
+  defp do_resolve(source, dest, false, true, _movie, new_q) do
+    with :ok <- replace(source, dest), do: {:ok, new_q}
+  end
+
+  defp do_resolve(_source, dest, false, false, movie, new_q), do: keep(dest, movie, new_q)
+
+  defp existing_quality(movie, new_q) do
+    if nil_q?(movie),
+      do: new_q,
+      else: %{
+        resolution: movie.imported_resolution,
+        size: movie.imported_size,
+        language: movie.imported_language
+      }
+  end
+
+  defp nil_q?(m),
+    do: is_nil(m.imported_resolution) and is_nil(m.imported_size) and is_nil(m.imported_language)
+
+  defp upgrade?(movie, new_q) do
+    old_q = %{
+      resolution: movie.imported_resolution,
+      size: movie.imported_size,
+      language: movie.imported_language
+    }
+
+    target = Language.target(movie.preferred_language, movie.original_language)
+    Upgrade.better?(new_q, old_q, target, preferred_resolutions(:movies))
+  end
+
+  defp keep(dest, movie, new_q) do
+    old_q = existing_quality(movie, new_q)
+
+    Logger.warning(
+      "kept existing #{inspect(old_q.resolution)} file at #{dest}; new release not an upgrade"
+    )
+
+    {:ok, old_q}
+  end
+
+  defp preferred_resolutions(kind),
+    do: Application.get_env(:cinder, :"#{kind}_preferred_resolutions")
+
+  # Atomic replace of an existing dest with source's content: sweep stale temps (a host crash between
+  # ln and rename can leak one), hardlink source -> unique temp in the dest dir, then rename over dest.
+  defp replace(source, dest) do
+    dir = Path.dirname(dest)
+    sweep_temps(dir)
+    tmp = Path.join(dir, ".cinder-tmp-#{System.unique_integer([:positive])}")
+
+    with :ok <- fs().ln(source, tmp),
+         :ok <- fs().rename(tmp, dest) do
+      :ok
+    else
+      {:error, _} = err ->
+        _ = fs().rm(tmp)
+        err
+    end
+  end
+
+  defp sweep_temps(dir) do
+    case fs().find_files(dir) do
+      {:ok, files} ->
+        for {p, _size} <- files,
+            String.contains?(Path.basename(p), ".cinder-tmp-"),
+            do: fs().rm(p)
+
+        :ok
+
+      _ ->
+        :ok
     end
   end
 
@@ -89,7 +188,8 @@ defmodule Cinder.Library do
   @doc """
   Imports the video files at `content_path` for `episodes` (a grab's episodes, each preloaded
   `season: :series`). Returns `{:ok, imported, unmatched}` — `imported` is
-  `[{episode_id, dest_path}]`, `unmatched` the video files that mapped to no episode (logged,
+  `[{episode_id, dest_path, quality}]` where `quality = %{resolution:, size:, language:}`,
+  `unmatched` the video files that mapped to no episode (logged,
   not an error: graceful park) — or `{:error, reason}` on a transient filesystem error (the grab
   retries). One best-effort scan fires when anything imported.
 
@@ -97,14 +197,14 @@ defmodule Cinder.Library do
   from each name and intersecting with the grab's episodes (a double-episode file maps to both).
   For a single-episode grab whose files name no specific episode, the largest video is assigned
   to it — mirroring `import_movie`'s sample-skipping largest-wins, since the grab already names
-  the one episode. Reuses `import_movie`'s `link`/`scan`/naming primitives.
+  the one episode. Reuses `import_movie`'s place/scan/naming primitives.
 
   When `:media_info` is configured and the series wants a language, a file whose actual audio is a
   confirmed different language is dropped to `unmatched` (logged, not imported) rather than landing
   the wrong language — so the episode re-searches. Same conservative rule as the movie path.
   """
   @spec import_episodes(String.t() | nil, [Episode.t()]) ::
-          {:ok, [{integer(), String.t()}], [String.t()]} | {:error, term()}
+          {:ok, [{integer(), String.t(), map()}], [String.t()]} | {:error, term()}
   def import_episodes(content_path, _episodes) when content_path in [nil, ""],
     do: {:error, :no_content_path}
 
@@ -127,7 +227,7 @@ defmodule Cinder.Library do
         |> resolve(videos, episodes)
         |> reject_wrong_audio(episodes)
 
-      case link_all(to_import, root) do
+      case link_all(to_import, root, episode_target(episodes)) do
         {:ok, []} ->
           # Nothing mapped — still surface the offending file names (don't silently drop them)
           # so a parser gap on a real release is diagnosable; the poller parks the grab.
@@ -254,19 +354,48 @@ defmodule Cinder.Library do
 
   defp paths(videos), do: Enum.map(videos, fn {p, _size} -> p end)
 
-  # Hardlink each match; a transient error halts and returns {:error, _} so the grab retries
-  # the whole import next tick (already-linked files are :eexist ⇒ :ok, so it's idempotent).
-  defp link_all(to_import, root) do
+  # Hardlink each match into its tmdb-tagged dest, resolving a same-episode collision by upgrade
+  # decision (replace if the new file is better, else keep). Returns {ep_id, dest, quality} per episode;
+  # a transient FS error halts and returns {:error, _} so the grab retries the whole import next tick.
+  defp link_all(to_import, root, target) do
     Enum.reduce_while(to_import, {:ok, []}, fn {ep, source}, {:ok, acc} ->
       dest = build_episode_dest(ep, source, root)
 
-      with :ok <- fs().mkdir_p(Path.dirname(dest)),
-           :ok <- link(source, dest) do
-        {:cont, {:ok, [{ep.id, dest} | acc]}}
+      with {:ok, %{size: size, inode: si}} <- fs().lstat(source),
+           parsed = Parser.parse(Path.basename(source)),
+           new_q = %{resolution: parsed.resolution, size: size, language: parsed.language},
+           :ok <- fs().mkdir_p(Path.dirname(dest)),
+           {:ok, q} <- place_episode(source, dest, si, ep, new_q, target) do
+        {:cont, {:ok, [{ep.id, dest, q} | acc]}}
       else
         {:error, _} = err -> {:halt, err}
       end
     end)
+  end
+
+  defp place_episode(source, dest, si, ep, new_q, target) do
+    case fs().ln(source, dest) do
+      :ok ->
+        {:ok, new_q}
+
+      {:error, :eexist} ->
+        with {:ok, %{inode: di}} <- fs().lstat(dest) do
+          do_resolve(source, dest, si == di, ep_upgrade?(ep, new_q, target), ep, new_q)
+        end
+
+      {:error, _} = err ->
+        err
+    end
+  end
+
+  defp ep_upgrade?(ep, new_q, target) do
+    old_q = %{
+      resolution: ep.imported_resolution,
+      size: ep.imported_size,
+      language: ep.imported_language
+    }
+
+    Upgrade.better?(new_q, old_q, target, preferred_resolutions(:tv))
   end
 
   defp build_episode_dest(%Episode{season: season} = ep, source, root) do
@@ -337,13 +466,13 @@ defmodule Cinder.Library do
     Path.join([root, name, name <> Path.extname(source)])
   end
 
-  # Jellyfin's scheme is `Title (Year)`; with no year (a TMDB entry lacking a
-  # release date) fall back to a bare `Title`, and if the title sanitizes to
-  # nothing (all-illegal characters) fall back to a tmdb id so the file lands in
+  # Plex's scheme is `Title (Year) {tmdb-<id>}`; with no year (a TMDB entry lacking a
+  # release date) fall back to `Title {tmdb-<id>}`, and if the title sanitizes to
+  # nothing (all-illegal characters) fall back to a bare tmdb id so the file lands in
   # its own folder rather than the library root.
   defp library_name("", _year, tmdb_id), do: "tmdb-#{tmdb_id}"
-  defp library_name(title, nil, _tmdb_id), do: title
-  defp library_name(title, year, _tmdb_id), do: "#{title} (#{year})"
+  defp library_name(title, nil, tmdb_id), do: "#{title} {tmdb-#{tmdb_id}}"
+  defp library_name(title, year, tmdb_id), do: "#{title} (#{year}) {tmdb-#{tmdb_id}}"
 
   # Strip filesystem-illegal characters, then trim surrounding whitespace so a
   # title that is blank after sanitizing collapses to "" and hits the tmdb-id
@@ -359,28 +488,6 @@ defmodule Cinder.Library do
   # root (`Path.join([root, "..", …])`). Collapse it to "" so library_name falls back to the
   # tmdb-id folder, same as an all-illegal title.
   defp reject_dot_only(name), do: if(name =~ ~r/\A\.+\z/, do: "", else: name)
-
-  # ponytail: hardlink only; library must share the downloads' filesystem (see spec).
-  defp link(source, dest) do
-    case fs().ln(source, dest) do
-      :ok -> :ok
-      {:error, :eexist} -> idempotent_or_collision(source, dest)
-      {:error, _reason} = err -> err
-    end
-  end
-
-  # An existing dest is the idempotent re-import case ONLY if it's already a hardlink of source
-  # (same inode). A *different* inode means another title collided on the same `Title (Year)` name
-  # — fail (the item parks) rather than silently claim the other movie/episode's file as this one's.
-  defp idempotent_or_collision(source, dest) do
-    with {:ok, %{inode: si}} <- fs().lstat(source),
-         {:ok, %{inode: di}} <- fs().lstat(dest),
-         true <- si == di do
-      :ok
-    else
-      _ -> {:error, :dest_exists}
-    end
-  end
 
   @doc """
   Deletes one imported library file and prunes the folders it leaves empty.

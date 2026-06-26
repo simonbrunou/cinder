@@ -21,6 +21,9 @@ defmodule Cinder.Catalog.Episode do
     field :monitored, :boolean, default: true
     field :file_path, :string
     field :search_attempts, :integer, default: 0
+    field :imported_resolution, :string
+    field :imported_size, :integer
+    field :imported_language, :string
     belongs_to :season, Season
     belongs_to :grab, Grab
 
@@ -44,7 +47,14 @@ defmodule Cinder.Catalog.Episode do
   retry budget lives on the grab (`grab.download_attempts`), not the episode.
   """
   def transition_changeset(episode, attrs) do
-    cast(episode, attrs, [:file_path, :grab_id, :search_attempts])
+    cast(episode, attrs, [
+      :file_path,
+      :grab_id,
+      :search_attempts,
+      :imported_resolution,
+      :imported_size,
+      :imported_language
+    ])
   end
 
   @doc """

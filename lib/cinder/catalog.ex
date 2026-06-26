@@ -684,7 +684,12 @@ defmodule Cinder.Catalog do
     Repo.transaction(fn ->
       changeset =
         episode
-        |> Episode.transition_changeset(%{file_path: nil})
+        |> Episode.transition_changeset(%{
+          file_path: nil,
+          imported_resolution: nil,
+          imported_size: nil,
+          imported_language: nil
+        })
         |> maybe_unmonitor(unmonitor?)
 
       case Repo.update(changeset) do
@@ -744,7 +749,13 @@ defmodule Cinder.Catalog do
   defp do_delete_season_files_txn(season, actor, cleared_ids, unmonitor?) do
     Repo.transaction(fn ->
       sets =
-        [file_path: nil, updated_at: now()] ++ if(unmonitor?, do: [monitored: false], else: [])
+        [
+          file_path: nil,
+          imported_resolution: nil,
+          imported_size: nil,
+          imported_language: nil,
+          updated_at: now()
+        ] ++ if(unmonitor?, do: [monitored: false], else: [])
 
       Repo.update_all(from(e in Episode, where: e.id in ^cleared_ids), set: sets)
 
@@ -999,9 +1010,16 @@ defmodule Cinder.Catalog do
       Repo.transaction(fn ->
         ts = now()
 
-        for {episode_id, dest} <- imported do
+        for {episode_id, dest, q} <- imported do
           Repo.update_all(from(e in Episode, where: e.id == ^episode_id),
-            set: [file_path: dest, grab_id: nil, updated_at: ts]
+            set: [
+              file_path: dest,
+              grab_id: nil,
+              imported_resolution: q.resolution,
+              imported_size: q.size,
+              imported_language: q.language,
+              updated_at: ts
+            ]
           )
         end
 
