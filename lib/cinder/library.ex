@@ -150,12 +150,13 @@ defmodule Cinder.Library do
   # imported) so its episode re-searches next tick, instead of importing the wrong language. Skipped
   # when no language is wanted (`target` nil) or the probe is disabled (`media_info` unset).
   defp reject_wrong_audio({to_import, unmatched} = result, episodes) do
+    impl = media_info()
     target = episode_target(episodes)
 
-    if is_nil(target) or is_nil(media_info()) do
+    if is_nil(target) or is_nil(impl) do
       result
     else
-      filter_audio(to_import, unmatched, target, media_info())
+      filter_audio(to_import, unmatched, target, impl)
     end
   end
 
@@ -169,7 +170,18 @@ defmodule Cinder.Library do
 
     {keep, rejected} = Enum.split_with(to_import, fn {_ep, source} -> ok?[source] end)
     rejected_sources = rejected |> Enum.map(fn {_ep, source} -> source end) |> Enum.uniq()
+    # Log distinctly so a language rejection isn't mistaken for a parser miss in `log_unmatched`.
+    log_wrong_audio(rejected_sources, target)
     {keep, unmatched ++ rejected_sources}
+  end
+
+  defp log_wrong_audio([], _target), do: :ok
+
+  defp log_wrong_audio(sources, target) do
+    Logger.info(
+      "skipping #{length(sources)} file(s) with wrong audio language (wanted #{target}): " <>
+        inspect(sources)
+    )
   end
 
   # The series' wanted language for a grab's episodes (they share one series, preloaded

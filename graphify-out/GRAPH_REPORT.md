@@ -1,16 +1,16 @@
 # Graph Report - cinder  (2026-06-26)
 
 ## Corpus Check
-- 281 files · ~294,416 words
+- 281 files · ~294,460 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 2258 nodes · 2643 edges · 270 communities (160 shown, 110 thin omitted)
+- 2259 nodes · 2645 edges · 270 communities (160 shown, 110 thin omitted)
 - Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 41 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `d9e9435a`
+- Built from commit: `53e98bba`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -276,7 +276,7 @@
 ## God Nodes (most connected - your core abstractions)
 1. `Cinder.Catalog` - 98 edges
 2. `Cinder.Settings` - 58 edges
-3. `Cinder.Library` - 40 edges
+3. `Cinder.Library` - 41 edges
 4. `CinderWeb.CoreComponents` - 27 edges
 5. `Cinder.Accounts` - 24 edges
 6. `Cinder.Download.TvPoller` - 24 edges
@@ -317,7 +317,7 @@ Nodes (12): Cinder.Catalog, apply_requester_language(), do_delete_episode_file_t
 
 ### Community 4 - "Community 4"
 Cohesion: 0.11
-Nodes (39): Cinder.Library, audio_result(), build_dest(), build_episode_dest(), check_audio(), dedupe_per_episode(), delete_file(), do_import_episodes() (+31 more)
+Nodes (40): Cinder.Library, audio_result(), build_dest(), build_episode_dest(), check_audio(), dedupe_per_episode(), delete_file(), do_import_episodes() (+32 more)
 
 ### Community 5 - "Community 5"
 Cohesion: 0.07
