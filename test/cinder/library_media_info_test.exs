@@ -11,7 +11,7 @@ defmodule Cinder.LibraryMediaInfoTest do
 
   @lib "/tmp/cinder-test-library"
   @source "/dl/movie.mkv"
-  @dest "#{@lib}/Movie (2024)/Movie (2024).mkv"
+  @dest "#{@lib}/Movie (2024) {tmdb-42}/Movie (2024) {tmdb-42}.mkv"
 
   setup :verify_on_exit!
 
@@ -27,6 +27,7 @@ defmodule Cinder.LibraryMediaInfoTest do
     %Movie{
       title: "Movie",
       year: 2024,
+      tmdb_id: 42,
       file_path: @source,
       preferred_language: "original",
       original_language: "fr"
@@ -155,7 +156,7 @@ defmodule Cinder.LibraryMediaInfoTest do
     assert {:ok, [{1, dest}], ["/dl/Show.S01E02.1080p.mkv"]} =
              Library.import_episodes("/dl", [french_ep(1, 1), french_ep(2, 2)])
 
-    assert dest == "#{@tv_lib}/Show (2008)/Season 01/Show (2008) - S01E01.mkv"
+    assert dest == "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv"
   end
 
   test "TV: an all-wrong-language pack imports nothing (the grab then re-searches)" do

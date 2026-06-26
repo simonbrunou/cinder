@@ -63,7 +63,7 @@ defmodule Cinder.Download.TvPollerTest do
   end
 
   test "advances a completed single-file grab through download to import in one tick" do
-    {_series, season} = series_tree()
+    {series, season} = series_tree()
     e1 = episode(season, 3)
     {:ok, grab} = Catalog.create_grab("hash-a", :torrent, [e1.id])
     start_supervised!({TvPoller, interval: 60_000})
@@ -81,7 +81,7 @@ defmodule Cinder.Download.TvPollerTest do
     imported = Repo.get!(Episode, e1.id)
 
     assert imported.file_path ==
-             "/tmp/cinder-test-tv-library/Show (2008)/Season 01/Show (2008) - S01E03.mkv"
+             "/tmp/cinder-test-tv-library/Show (2008) {tmdb-#{series.tmdb_id}}/Season 01/Show (2008) {tmdb-#{series.tmdb_id}} - S01E03.mkv"
 
     assert is_nil(imported.grab_id)
   end
@@ -326,7 +326,7 @@ defmodule Cinder.Download.TvPollerTest do
   end
 
   test "a downloaded grab is held (not parked, not a raise-loop) when the TV root is unset, then imports once set" do
-    {_series, season} = series_tree()
+    {series, season} = series_tree()
     e1 = episode(season, 3)
     {:ok, grab} = Catalog.create_grab("hash-x", :torrent, [e1.id])
     {:ok, _} = Catalog.mark_grab_downloaded(grab, "/dl/Show.S01E03.1080p.mkv")
@@ -359,7 +359,7 @@ defmodule Cinder.Download.TvPollerTest do
     imported = Repo.get!(Episode, e1.id)
 
     assert imported.file_path ==
-             "/tmp/cinder-test-tv-library/Show (2008)/Season 01/Show (2008) - S01E03.mkv"
+             "/tmp/cinder-test-tv-library/Show (2008) {tmdb-#{series.tmdb_id}}/Season 01/Show (2008) {tmdb-#{series.tmdb_id}} - S01E03.mkv"
   end
 
   test "respects the TV size band: a too-large pack is not grabbed when tv_max_size is set" do

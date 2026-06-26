@@ -1,13 +1,14 @@
 defmodule Cinder.Library do
   @moduledoc """
-  Import: hardlink a completed download into the Jellyfin library, renamed to
-  `Title (Year)/Title (Year).ext` (or bare `Title` when the year is unknown, or
-  `tmdb-<id>` when the title has no usable characters), then trigger a scan.
+  Import: hardlink a completed download into the Plex library, renamed to
+  `Title (Year) {tmdb-<id>}/Title (Year) {tmdb-<id>}.ext` (or bare `Title {tmdb-<id>}`
+  when the year is unknown, or `tmdb-<id>` when the title has no usable characters),
+  then trigger a scan.
 
   Filesystem ops and the media server are reached only through behaviours
   (`Cinder.Library.Filesystem`, `Cinder.Library.MediaServer`), resolved from
   config at runtime so tests use Mox mocks and never touch disk or the network.
-  Owns filesystem + Jellyfin only — `Catalog` remains the status choke-point.
+  Owns filesystem + Plex only — `Catalog` remains the status choke-point.
   """
 
   require Logger
@@ -337,13 +338,13 @@ defmodule Cinder.Library do
     Path.join([root, name, name <> Path.extname(source)])
   end
 
-  # Jellyfin's scheme is `Title (Year)`; with no year (a TMDB entry lacking a
-  # release date) fall back to a bare `Title`, and if the title sanitizes to
-  # nothing (all-illegal characters) fall back to a tmdb id so the file lands in
+  # Plex's scheme is `Title (Year) {tmdb-<id>}`; with no year (a TMDB entry lacking a
+  # release date) fall back to `Title {tmdb-<id>}`, and if the title sanitizes to
+  # nothing (all-illegal characters) fall back to a bare tmdb id so the file lands in
   # its own folder rather than the library root.
   defp library_name("", _year, tmdb_id), do: "tmdb-#{tmdb_id}"
-  defp library_name(title, nil, _tmdb_id), do: title
-  defp library_name(title, year, _tmdb_id), do: "#{title} (#{year})"
+  defp library_name(title, nil, tmdb_id), do: "#{title} {tmdb-#{tmdb_id}}"
+  defp library_name(title, year, tmdb_id), do: "#{title} (#{year}) {tmdb-#{tmdb_id}}"
 
   # Strip filesystem-illegal characters, then trim surrounding whitespace so a
   # title that is blank after sanitizing collapses to "" and hits the tmdb-id
