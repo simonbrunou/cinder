@@ -37,6 +37,9 @@ defmodule Cinder.Catalog.Movie do
     field :search_attempts, :integer, default: 0
     field :original_language, :string
     field :preferred_language, :string, default: "original"
+    field :imported_resolution, :string
+    field :imported_size, :integer
+    field :imported_language, :string
 
     timestamps(type: :utc_datetime)
   end
@@ -75,7 +78,10 @@ defmodule Cinder.Catalog.Movie do
       :imdb_id,
       :file_path,
       :import_attempts,
-      :search_attempts
+      :search_attempts,
+      :imported_resolution,
+      :imported_size,
+      :imported_language
     ])
     |> validate_required([:status])
   end

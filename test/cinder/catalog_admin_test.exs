@@ -621,6 +621,30 @@ defmodule Cinder.CatalogAdminTest do
       assert_receive {:series_updated, id}
       assert id == series.id
     end
+
+    test "clears imported_resolution, imported_size, imported_language on delete" do
+      {_series, ep} = episode_with_file!("/tmp/ep.mkv")
+
+      {:ok, ep} =
+        ep
+        |> Ecto.Changeset.change(
+          imported_resolution: "1080p",
+          imported_size: 4_000_000_000,
+          imported_language: "en"
+        )
+        |> Repo.update()
+
+      expect(Cinder.Library.FilesystemMock, :rm, fn "/tmp/ep.mkv" -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+      assert {:ok, _updated} = Catalog.delete_episode_file(ep, nil)
+
+      reloaded = Repo.get!(Cinder.Catalog.Episode, ep.id)
+      assert is_nil(reloaded.file_path)
+      assert is_nil(reloaded.imported_resolution)
+      assert is_nil(reloaded.imported_size)
+      assert is_nil(reloaded.imported_language)
+    end
   end
 
   describe "delete_season_files/3" do
