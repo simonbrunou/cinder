@@ -140,10 +140,27 @@ defmodule CinderWeb.SettingsComponents do
               class="input w-full"
             />
           </div>
+          <div class="form-control">
+            <label class="label" for={Settings.preferred_sources_key(kind)}>
+              <span class="label-text">{gettext("Preferred sources (comma-separated)")}</span>
+            </label>
+            <input
+              type="text"
+              id={Settings.preferred_sources_key(kind)}
+              name={Settings.preferred_sources_key(kind)}
+              value={@form.values[Settings.preferred_sources_key(kind)]}
+              placeholder={gettext("bluray, webdl")}
+              autocomplete="off"
+              class="input w-full"
+            />
+          </div>
         </div>
         <p class="mt-1 text-xs opacity-70">
           {gettext("Sizes are decimal GB (1 GB = 1,000,000,000 bytes). For TV they apply")} <strong>{gettext("per episode")}</strong>{gettext(
             ": a season pack of N episodes is allowed up to N× the max. Leave blank for no limit."
+          )}
+          {gettext(
+            "Sources: remux, bluray, webrip, webdl, hdtv, dvd, cam. Leave blank to accept any; untagged releases are always kept."
           )}
         </p>
       </div>

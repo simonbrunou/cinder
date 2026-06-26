@@ -25,10 +25,12 @@ defmodule Cinder.SettingsTest do
     :movies_min_size,
     :movies_max_size,
     :movies_preferred_resolutions,
+    :movies_preferred_sources,
     :tv_library_path,
     :tv_min_size,
     :tv_max_size,
     :tv_preferred_resolutions,
+    :tv_preferred_sources,
     :move_on_import
   ]
 
@@ -304,6 +306,14 @@ defmodule Cinder.SettingsTest do
 
       Settings.delete("tv_preferred_resolutions")
       assert Application.get_env(:cinder, :tv_preferred_resolutions) == nil
+    end
+
+    test "a saved movies_preferred_sources overlays the env as a downcased list; clearing reverts to nil" do
+      Settings.put("movies_preferred_sources", "BluRay, WEBDL")
+      assert Application.get_env(:cinder, :movies_preferred_sources) == ["bluray", "webdl"]
+
+      Settings.delete("movies_preferred_sources")
+      assert Application.get_env(:cinder, :movies_preferred_sources) == nil
     end
 
     test "movie size band is editable too (same coercion as TV) and reaches band_opts/1" do
