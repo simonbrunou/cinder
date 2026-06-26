@@ -92,20 +92,20 @@ defmodule Cinder.Acquisition.Parser do
     {"en", "ENGLISH", ~r/\benglish\b|\beng\b/i}
   ]
 
-  # MULTI is not an ISO language (it means "several audio tracks, incl. the original"), so it sits
-  # outside the registry and is matched FIRST — a MULTI release that also names a dub language is
-  # still MULTI.
-  @languages [
-    {~r/\bmulti\b/i, "MULTI"} | Enum.map(@language_registry, fn {_code, tag, re} -> {re, tag} end)
-  ]
+  # MULTI is not an ISO language (it means "several audio tracks, incl. the original"). It is matched
+  # on the RAW name (before the subtitle strip) so a "MULTI.SUBS" descriptor still tags MULTI, and it
+  # wins over any dub language a name also carries.
+  @multi ~r/\bmulti\b/i
+  @registry_languages Enum.map(@language_registry, fn {_code, tag, re} -> {re, tag} end)
 
   @language_tags Map.new(@language_registry, fn {code, tag, _re} -> {code, tag} end)
 
-  # A subtitle marker — a language token glued by separators to a sub/subbed/subtitle(s/d) word —
-  # names the SUBTITLE language, not the audio. Strip it before language matching so "FRENCH.SUBS",
-  # "ITA.Subbed", "ENG.SUBTITLES", "LATINO.SUBS" don't read as an audio tag. (A bare "SUB"/"SUBS"
-  # with no preceding word, and the glued "SUBFRENCH"/"VOSTFR" forms, were already nil.)
-  @subtitle ~r/\b[a-z]+[ ._-]*sub(?:s|bed|titled?|titles)?\b/i
+  # A subtitle-LANGUAGE marker — a language token glued by separators to a sub/subs/subtitle(s) word
+  # — names the subtitle language, not the audio. Strip it before matching so "FRENCH.SUBS",
+  # "ENG.SUBTITLES", "LATINO.SUBS" don't read as an audio tag. Deliberately NOT "subbed"/"subtitled":
+  # "KOREAN.SUBBED" means Korean *audio* (subbed = has subtitles), so the language word stays. (A bare
+  # "SUB"/"SUBS" with no preceding word, and glued "SUBFRENCH"/"VOSTFR", were already nil.)
+  @subtitle ~r/\b[a-z]+[ ._-]*sub(?:s|titles?)?\b/i
 
   # ISO 639-2 codes `ffprobe` reports for an audio stream's `language` tag, keyed by the registry's
   # 639-1 code — both the bibliographic (B) and terminological (T) forms where they differ
@@ -197,7 +197,7 @@ defmodule Cinder.Acquisition.Parser do
       resolution: resolution(name),
       codec: first_match(name, @codecs),
       group: group(name),
-      language: first_match(strip_subtitles(name), @languages),
+      language: language(name),
       season: season,
       episodes: episodes
     }
@@ -229,10 +229,18 @@ defmodule Cinder.Acquisition.Parser do
     Enum.find_value(table, fn {pattern, value} -> if Regex.match?(pattern, name), do: value end)
   end
 
-  # Remove subtitle markers ("FRENCH.SUBS", "ENG.SUBTITLES", "LATINO.Subbed") so a subtitle-language
-  # token isn't read as the audio language. A title word that happens to be a language ("The Italian
-  # Job") is still matched — that residual collision is netted by the Original/Any soft fallback in
-  # `Cinder.Acquisition`, and a real audio tag wins over a title word via the registry order.
+  # MULTI (audio multiplicity) is matched on the raw name so a "MULTI.SUBS" descriptor still tags it;
+  # the per-language tags are matched after stripping subtitle markers. A title word that happens to
+  # be a language ("The Italian Job") is still matched — that residual collision is netted by the
+  # Original/Any soft fallback in `Cinder.Acquisition`, and a real audio tag wins via registry order.
+  defp language(name) do
+    if Regex.match?(@multi, name),
+      do: "MULTI",
+      else: first_match(strip_subtitles(name), @registry_languages)
+  end
+
+  # Remove subtitle-language markers ("FRENCH.SUBS", "ENG.SUBTITLES", "LATINO.SUBS") so they aren't
+  # read as the audio language.
   defp strip_subtitles(name), do: Regex.replace(@subtitle, name, " ")
 
   # The trailing "-TOKEN", but only when TOKEN is a single alphanumeric run (no

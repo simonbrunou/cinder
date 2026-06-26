@@ -75,6 +75,8 @@ defmodule Cinder.Acquisition.Language do
   full-word tag all return `true` — so a correctly-languaged file is never parked, only a file whose
   audio is provably a different known language.
   """
+  def audio_satisfies?(_target, []), do: true
+
   def audio_satisfies?(target, file_langs) do
     case Map.get(@audio_codes, target) do
       nil ->
@@ -82,7 +84,10 @@ defmodule Cinder.Acquisition.Language do
 
       accepted ->
         langs = Enum.map(file_langs, &String.downcase/1)
-        Enum.any?(langs, &(&1 in accepted)) or not Enum.any?(langs, &(&1 in @known_audio_codes))
+        # Satisfied if the target is present, OR any track carries a code we don't recognise (it
+        # could be an unlisted variant of the target). Park only when EVERY track is a recognised
+        # *other* language — never on incomplete data.
+        Enum.any?(langs, &(&1 in accepted)) or Enum.any?(langs, &(&1 not in @known_audio_codes))
     end
   end
 

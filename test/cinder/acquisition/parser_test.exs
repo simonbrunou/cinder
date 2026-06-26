@@ -219,10 +219,18 @@ defmodule Cinder.Acquisition.ParserTest do
       for name <- [
             "Pelicula.2018.LATINO.SUBS.1080p.WEB-DL",
             "Foreign.Film.2019.ENGLISH.SUBTITLES.1080p.WEB-DL",
-            "Film.2017.Vlaams.Subbed.1080p"
+            "Series.2020.GREEK.SUBS.720p.WEB"
           ] do
         assert Parser.parse(name).language == nil, "expected nil (subtitle marker) from #{name}"
       end
+    end
+
+    test "MULTI is kept even when glued to a subtitle token, and a SUBBED audio tag survives" do
+      # MULTI is matched on the raw name, so the subtitle strip can't eat it.
+      assert Parser.parse("Movie.2021.MULTI.SUBS.1080p.BluRay.x264").language == "MULTI"
+      # "SUBBED" = "has subtitles"; the named language is the AUDIO, so it must not be stripped.
+      assert Parser.parse("Movie.2019.KOREAN.SUBBED.1080p.BluRay.x264").language == "KOREAN"
+      assert Parser.parse("Film.2018.TRUEFRENCH.SUBBED.1080p.WEB").language == "FRENCH"
     end
 
     test "a real audio tag wins over a title-word language (registry order)" do
