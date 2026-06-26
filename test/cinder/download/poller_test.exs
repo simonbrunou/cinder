@@ -218,15 +218,28 @@ defmodule Cinder.Download.PollerTest do
     Catalog.subscribe()
     start_supervised!({Poller, interval: 60_000})
 
+    test_pid = self()
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
     stub(Cinder.Library.FilesystemMock, :lstat, fn _ -> {:ok, %File.Stat{size: 1, inode: 1}} end)
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
+
+    stub(Cinder.Library.FilesystemMock, :ln, fn _src, dest ->
+      send(test_pid, {:linked, dest})
+      :ok
+    end)
+
     stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
     assert :ok = Poller.poll()
     assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
     assert_receive {:movie_updated, %Movie{status: :available}}
+
+    # After import, file_path must point at the LIBRARY destination (the imported hardlink),
+    # not the download source — else delete_files unlinks the download copy and strands the
+    # library file on disk.
+    assert_receive {:linked, dest}
+    assert %Movie{file_path: ^dest} = Repo.get!(Movie, movie.id)
+    refute dest == "/downloads/Inception.2010.1080p.mkv"
   end
 
   test "a best-effort scan failure still advances the movie to :available" do

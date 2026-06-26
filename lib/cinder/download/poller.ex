@@ -176,12 +176,15 @@ defmodule Cinder.Download.Poller do
 
   defp import_one(movie) do
     case Library.import_movie(movie) do
-      {:ok, _dest, q} ->
+      {:ok, dest, q} ->
         # On the (rare) transition error, leave the movie :downloaded for next-tick
         # retry rather than raising — matching the poller's ignore-and-retry convention.
+        # file_path moves from the download source to the library destination (the imported
+        # hardlink) so delete_files unlinks the actual library file, not the download copy.
         with {:ok, available} <-
                Catalog.transition(movie, %{
                  status: :available,
+                 file_path: dest,
                  imported_resolution: q.resolution,
                  imported_size: q.size,
                  imported_language: q.language
