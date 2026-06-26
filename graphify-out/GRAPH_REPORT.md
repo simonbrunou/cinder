@@ -1,16 +1,16 @@
 # Graph Report - cinder  (2026-06-26)
 
 ## Corpus Check
-- 281 files · ~293,932 words
+- 281 files · ~294,416 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 2253 nodes · 2633 edges · 270 communities (160 shown, 110 thin omitted)
+- 2258 nodes · 2643 edges · 270 communities (160 shown, 110 thin omitted)
 - Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 41 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `ac5336c9`
+- Built from commit: `d9e9435a`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -276,7 +276,7 @@
 ## God Nodes (most connected - your core abstractions)
 1. `Cinder.Catalog` - 98 edges
 2. `Cinder.Settings` - 58 edges
-3. `Cinder.Library` - 37 edges
+3. `Cinder.Library` - 40 edges
 4. `CinderWeb.CoreComponents` - 27 edges
 5. `Cinder.Accounts` - 24 edges
 6. `Cinder.Download.TvPoller` - 24 edges
@@ -316,8 +316,8 @@ Cohesion: 0.08
 Nodes (12): Cinder.Catalog, apply_requester_language(), do_delete_episode_file_txn(), ensure_series(), find_or_create_series_at_requested(), interleave(), mark_series_monitored(), maybe_unmonitor() (+4 more)
 
 ### Community 4 - "Community 4"
-Cohesion: 0.12
-Nodes (36): Cinder.Library, audio_result(), build_dest(), build_episode_dest(), check_audio(), dedupe_per_episode(), delete_file(), do_import_episodes() (+28 more)
+Cohesion: 0.11
+Nodes (39): Cinder.Library, audio_result(), build_dest(), build_episode_dest(), check_audio(), dedupe_per_episode(), delete_file(), do_import_episodes() (+31 more)
 
 ### Community 5 - "Community 5"
 Cohesion: 0.07
@@ -588,8 +588,8 @@ Cohesion: 0.32
 Nodes (8): ensure_season(), episodes_for(), finalize_or_restore(), insert_episode(), log_reconcile_error(), park_episode(), reconcile_tree(), seasons_for()
 
 ### Community 72 - "Community 72"
-Cohesion: 0.15
-Nodes (12): [0.7.0] - 2026-06-23, Added, Added, Added, Added, Added, Added, Changed (+4 more)
+Cohesion: 0.14
+Nodes (13): [0.7.0] - 2026-06-23, Added, Added, Added, Added, Added, Added, Added (+5 more)
 
 ### Community 73 - "Community 73"
 Cohesion: 0.25
@@ -888,19 +888,19 @@ Cohesion: 0.53
 Nodes (5): Cinder.Library.MediaInfo.Ffprobe, args(), audio_languages(), bin(), parse()
 
 ## Knowledge Gaps
-- **830 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+825 more)
+- **831 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+826 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **110 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Cinder.Catalog` connect `Community 3` to `Community 37`, `Community 71`, `Community 59`, `Community 147`, `Community 91`, `Community 28`?**
-  _High betweenness centrality (0.001) - this node is a cross-community bridge._
 - **Why does `table()` connect `Community 74` to `Community 258`, `Community 259`, `Community 153`, `Community 154`, `Community 266`, `Community 142`, `Community 241`, `Community 145`, `Community 148`, `Community 149`, `Community 22`, `Community 151`, `Community 150`, `Community 249`, `Community 250`, `Community 152`?**
   _High betweenness centrality (0.001) - this node is a cross-community bridge._
+- **Why does `CinderWeb.CoreComponents` connect `Community 22` to `Community 74`?**
+  _High betweenness centrality (0.000) - this node is a cross-community bridge._
 - **What connects `tidewave`, `$schema`, `erlang` to the rest of the system?**
-  _830 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _831 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**
   _Cohesion score 0.07364114552893045 - nodes in this community are weakly interconnected._
 - **Should `Community 1` be split into smaller, more focused modules?**

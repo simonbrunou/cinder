@@ -7,13 +7,15 @@ All notable changes to Cinder are documented here. The format follows
 ## [Unreleased]
 
 ### Added
-- **Import-time audio-language verification** — Cinder probes a completed **movie** download's actual
-  audio tracks (via `ffprobe`, shipped in the Docker image) before importing and parks a file whose
+- **Import-time audio-language verification** — Cinder probes a completed download's actual audio
+  tracks (via `ffprobe`, shipped in the Docker image) before importing and refuses a file whose
   audio is a confirmed different language from the request — the safety net behind the name-based
-  filter (à la Radarr's MediaInfo check), for releases whose name lies or omits the language.
+  filter (à la Radarr's MediaInfo check), for releases whose name lies or omits the language. Covers
+  **movies and TV**: a wrong-language movie parks at `:import_failed`; a wrong-language episode file
+  in a pack is skipped so that episode re-searches, while correctly-languaged episodes still import.
   Conservative: a language outside the recognized set, an unrecognized audio code, or a missing
-  probe all import rather than park, so a correctly-languaged file is never stranded. Enabled by
-  default; set `media_info: nil` (config) to disable. (TV pack imports are not yet probed.)
+  probe all import rather than reject, so a correctly-languaged file is never stranded. Enabled by
+  default; set `media_info: nil` (config) to disable.
 - Delete media files from disk when removing a movie, TV show, season, or episode (opt-in
   checkbox on the delete dialogs; mirrors Sonarr/Radarr). Deleting a season/episode file leaves
   the item monitored so the poller re-grabs it, unless you also tick "stop monitoring". Empty

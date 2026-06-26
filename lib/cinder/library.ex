@@ -13,7 +13,7 @@ defmodule Cinder.Library do
   require Logger
 
   alias Cinder.Acquisition.{Language, Parser}
-  alias Cinder.Catalog.{Episode, Movie}
+  alias Cinder.Catalog.{Episode, Movie, Series}
 
   @video_exts ~w(.mkv .mp4 .avi .m4v .mov .wmv .ts)
   @illegal ~r/[\/\\:*?"<>|]/
@@ -98,6 +98,10 @@ defmodule Cinder.Library do
   For a single-episode grab whose files name no specific episode, the largest video is assigned
   to it — mirroring `import_movie`'s sample-skipping largest-wins, since the grab already names
   the one episode. Reuses `import_movie`'s `link`/`scan`/naming primitives.
+
+  When `:media_info` is configured and the series wants a language, a file whose actual audio is a
+  confirmed different language is dropped to `unmatched` (logged, not imported) rather than landing
+  the wrong language — so the episode re-searches. Same conservative rule as the movie path.
   """
   @spec import_episodes(String.t() | nil, [Episode.t()]) ::
           {:ok, [{integer(), String.t()}], [String.t()]} | {:error, term()}
@@ -117,7 +121,11 @@ defmodule Cinder.Library do
   defp do_import_episodes(content_path, episodes, root) do
     with {:ok, videos} <- video_files(content_path) do
       {to_import, unmatched} =
-        videos |> match_episodes(episodes) |> dedupe_per_episode() |> resolve(videos, episodes)
+        videos
+        |> match_episodes(episodes)
+        |> dedupe_per_episode()
+        |> resolve(videos, episodes)
+        |> reject_wrong_audio(episodes)
 
       case link_all(to_import, root) do
         {:ok, []} ->
@@ -136,6 +144,40 @@ defmodule Cinder.Library do
       end
     end
   end
+
+  # MediaInfo safety net for TV (same as the movie path): drop a file whose actual audio is a
+  # confirmed different language from the series' wanted language into `unmatched` (logged, not
+  # imported) so its episode re-searches next tick, instead of importing the wrong language. Skipped
+  # when no language is wanted (`target` nil) or the probe is disabled (`media_info` unset).
+  defp reject_wrong_audio({to_import, unmatched} = result, episodes) do
+    target = episode_target(episodes)
+
+    if is_nil(target) or is_nil(media_info()) do
+      result
+    else
+      filter_audio(to_import, unmatched, target, media_info())
+    end
+  end
+
+  defp filter_audio(to_import, unmatched, target, impl) do
+    # Probe each unique source once (a double-episode file appears twice in `to_import`).
+    ok? =
+      to_import
+      |> Enum.map(fn {_ep, source} -> source end)
+      |> Enum.uniq()
+      |> Map.new(fn source -> {source, check_audio(impl, source, target) == :ok} end)
+
+    {keep, rejected} = Enum.split_with(to_import, fn {_ep, source} -> ok?[source] end)
+    rejected_sources = rejected |> Enum.map(fn {_ep, source} -> source end) |> Enum.uniq()
+    {keep, unmatched ++ rejected_sources}
+  end
+
+  # The series' wanted language for a grab's episodes (they share one series, preloaded
+  # `season: :series`). nil — skip the check — when the series isn't loaded or wants no language.
+  defp episode_target([%Episode{season: %{series: %Series{} = series}} | _]),
+    do: Language.target(series.preferred_language, series.original_language)
+
+  defp episode_target(_episodes), do: nil
 
   # All video files under content_path: the folder's video files for a pack/multi-file download,
   # or the lone file itself for a single-file one (size 0 — it's the only candidate).

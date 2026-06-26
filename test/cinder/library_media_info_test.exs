@@ -4,8 +4,10 @@ defmodule Cinder.LibraryMediaInfoTest do
 
   import Mox
 
-  alias Cinder.Catalog.Movie
+  alias Cinder.Catalog.{Episode, Movie, Season, Series}
   alias Cinder.Library
+
+  @tv_lib "/tmp/cinder-test-tv-library"
 
   @lib "/tmp/cinder-test-library"
   @source "/dl/movie.mkv"
@@ -117,5 +119,59 @@ defmodule Cinder.LibraryMediaInfoTest do
     expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
     expect(Cinder.Library.FilesystemMock, :ln, fn @source, @dest -> :ok end)
     expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+  end
+
+  # A French series ('original') episode with its season/series preloaded (what the TvPoller passes).
+  defp french_ep(id, ep_num) do
+    series = %Series{
+      title: "Show",
+      year: 2008,
+      tmdb_id: 1,
+      original_language: "fr",
+      preferred_language: "original"
+    }
+
+    %Episode{id: id, episode_number: ep_num, season: %Season{season_number: 1, series: series}}
+  end
+
+  test "TV: a wrong-language episode file is dropped to unmatched; the right one imports" do
+    files = [
+      {"/dl/Show.S01E01.1080p.mkv", 3_000_000_000},
+      {"/dl/Show.S01E02.1080p.mkv", 3_000_000_000}
+    ]
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:ok, files} end)
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
+    stub(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
+
+    # E01 is French audio (kept); E02 is a Hungarian dub (dropped).
+    stub(Cinder.Library.MediaInfoMock, :audio_languages, fn
+      "/dl/Show.S01E01.1080p.mkv" -> {:ok, ["fra"]}
+      "/dl/Show.S01E02.1080p.mkv" -> {:ok, ["hun"]}
+    end)
+
+    assert {:ok, [{1, dest}], ["/dl/Show.S01E02.1080p.mkv"]} =
+             Library.import_episodes("/dl", [french_ep(1, 1), french_ep(2, 2)])
+
+    assert dest == "#{@tv_lib}/Show (2008)/Season 01/Show (2008) - S01E01.mkv"
+  end
+
+  test "TV: an all-wrong-language pack imports nothing (the grab then re-searches)" do
+    files = [
+      {"/dl/Show.S01E01.1080p.mkv", 3_000_000_000},
+      {"/dl/Show.S01E02.1080p.mkv", 3_000_000_000}
+    ]
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:ok, files} end)
+    stub(Cinder.Library.MediaInfoMock, :audio_languages, fn _ -> {:ok, ["hun"]} end)
+
+    assert {:ok, [], unmatched} =
+             Library.import_episodes("/dl", [french_ep(1, 1), french_ep(2, 2)])
+
+    assert Enum.sort(unmatched) ==
+             Enum.sort(["/dl/Show.S01E01.1080p.mkv", "/dl/Show.S01E02.1080p.mkv"])
   end
 end
