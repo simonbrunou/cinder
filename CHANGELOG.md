@@ -7,6 +7,15 @@ All notable changes to Cinder are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Import-time audio-language verification** — Cinder probes a completed download's actual audio
+  tracks (via `ffprobe`, shipped in the Docker image) before importing and refuses a file whose
+  audio is a confirmed different language from the request — the safety net behind the name-based
+  filter (à la Radarr's MediaInfo check), for releases whose name lies or omits the language. Covers
+  **movies and TV**: a wrong-language movie parks at `:import_failed`; a wrong-language episode file
+  in a pack is skipped so that episode re-searches, while correctly-languaged episodes still import.
+  Conservative: a language outside the recognized set, an unrecognized audio code, or a missing
+  probe all import rather than reject, so a correctly-languaged file is never stranded. Enabled by
+  default; set `media_info: nil` (config) to disable.
 - Delete media files from disk when removing a movie, TV show, season, or episode (opt-in
   checkbox on the delete dialogs; mirrors Sonarr/Radarr). Deleting a season/episode file leaves
   the item monitored so the poller re-grabs it, unless you also tick "stop monitoring". Empty
@@ -42,6 +51,13 @@ All notable changes to Cinder are documented here. The format follows
   shown red on `/status`, until you set it).
 
 ### Fixed
+- **Wrong-language matches** — a movie could be grabbed and imported in the wrong language (e.g. a
+  French film matched in Hungarian). The release parser recognized only five languages, so a foreign
+  dub parsed as "no tag" and the language filter then assumed an untagged release was the title's
+  *original* audio. The parser now recognizes ~40 audio-language tags (adapted from Radarr's GPL
+  `LanguageParser`; subtitle markers like `ENG.SUBS` / `LATINO.SUBS` are stripped so they don't read
+  as audio), and an untagged release is treated as **English** (scene convention) rather than the
+  title's original.
 - **qBittorrent v5.x compatibility** — qBittorrent ≥ 5.x answers `POST /api/v2/auth/login` with
   `204 No Content` (not `200`) and names the session cookie `QBT_SID_<port>` (not `SID`). The client
   accepted only `200` and resent a literal `SID=` cookie, so every qBittorrent call (add / status /

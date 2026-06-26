@@ -1,16 +1,16 @@
-# Graph Report - cinder  (2026-06-25)
+# Graph Report - cinder  (2026-06-26)
 
 ## Corpus Check
-- 277 files · ~283,366 words
+- 281 files · ~294,460 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 2206 nodes · 2581 edges · 266 communities (158 shown, 108 thin omitted)
+- 2259 nodes · 2645 edges · 270 communities (160 shown, 110 thin omitted)
 - Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 41 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `2d1ce975`
+- Built from commit: `53e98bba`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -268,18 +268,22 @@
 - [[_COMMUNITY_Community 263|Community 263]]
 - [[_COMMUNITY_Community 264|Community 264]]
 - [[_COMMUNITY_Community 265|Community 265]]
+- [[_COMMUNITY_Community 266|Community 266]]
+- [[_COMMUNITY_Community 268|Community 268]]
+- [[_COMMUNITY_Community 269|Community 269]]
+- [[_COMMUNITY_Community 270|Community 270]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `Cinder.Catalog` - 98 edges
 2. `Cinder.Settings` - 58 edges
-3. `Cinder.Library` - 33 edges
+3. `Cinder.Library` - 41 edges
 4. `CinderWeb.CoreComponents` - 27 edges
 5. `Cinder.Accounts` - 24 edges
 6. `Cinder.Download.TvPoller` - 24 edges
 7. `Cinder.Download.Poller` - 22 edges
 8. `CinderWeb.UserAuth` - 21 edges
 9. `table()` - 19 edges
-10. `Cinder.Download.Client.Sabnzbd` - 18 edges
+10. `Cinder.Acquisition.Parser` - 19 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `change()` --calls--> `table()`  [INFERRED]
@@ -293,7 +297,7 @@
 - `change()` --calls--> `table()`  [INFERRED]
   priv/repo/migrations/20260619094117_add_import_attempts_to_movies.exs → lib/cinder_web/components/core_components.ex
 
-## Communities (266 total, 108 thin omitted)
+## Communities (270 total, 110 thin omitted)
 
 ### Community 0 - "Community 0"
 Cohesion: 0.07
@@ -312,8 +316,8 @@ Cohesion: 0.08
 Nodes (12): Cinder.Catalog, apply_requester_language(), do_delete_episode_file_txn(), ensure_series(), find_or_create_series_at_requested(), interleave(), mark_series_monitored(), maybe_unmonitor() (+4 more)
 
 ### Community 4 - "Community 4"
-Cohesion: 0.13
-Nodes (32): Cinder.Library, build_dest(), build_episode_dest(), dedupe_per_episode(), delete_file(), do_import_episodes(), fs(), idempotent_or_collision() (+24 more)
+Cohesion: 0.11
+Nodes (40): Cinder.Library, audio_result(), build_dest(), build_episode_dest(), check_audio(), dedupe_per_episode(), delete_file(), do_import_episodes() (+32 more)
 
 ### Community 5 - "Community 5"
 Cohesion: 0.07
@@ -400,8 +404,8 @@ Cohesion: 0.12
 Nodes (15): 1. Context: what's already done, and the one real gap, 2. Goals / non-goals, 3.1 Orchestration — extend the Poller, don't add a process, 3.2 Error handling — backoff + bounded retry; honest terminal states, 3.3 qBittorrent — accept base32 magnets; `.torrent` deferred (flagged), 3.4 Status dashboard — `CinderWeb.StatusLive` at `/status`, 3.5 Schema / migration, 3. Design (+7 more)
 
 ### Community 26 - "Community 26"
-Cohesion: 0.21
-Nodes (10): Cinder.Acquisition.Parser, bare(), distinct_seasons(), ep?(), from_tail(), multi_season?(), parse_tail(), season_episodes() (+2 more)
+Cohesion: 0.15
+Nodes (13): Cinder.Acquisition.Parser, bare(), distinct_seasons(), ep?(), first_match(), from_tail(), language(), multi_season?() (+5 more)
 
 ### Community 27 - "Community 27"
 Cohesion: 0.13
@@ -460,8 +464,8 @@ Cohesion: 0.17
 Nodes (11): Claude Installation Status, Configuration Details, Health Check, Hooks Configuration, Installation Overview, MCP Servers, Nested Memories, Quick Actions (+3 more)
 
 ### Community 41 - "Community 41"
-Cohesion: 0.15
-Nodes (12): Backups, Configuration: environment vs in-app, Deleting media, Deploy, First run & security, Health & retry, Known limitations, Library roots: movies vs TV (+4 more)
+Cohesion: 0.13
+Nodes (14): Audio-language verification, Audio-language verification (optional), Backups, Configuration: environment vs in-app, Deleting media, Deploy, First run & security, Health & retry (+6 more)
 
 ### Community 42 - "Community 42"
 Cohesion: 0.17
@@ -584,8 +588,8 @@ Cohesion: 0.32
 Nodes (8): ensure_season(), episodes_for(), finalize_or_restore(), insert_episode(), log_reconcile_error(), park_episode(), reconcile_tree(), seasons_for()
 
 ### Community 72 - "Community 72"
-Cohesion: 0.18
-Nodes (10): [0.7.0] - 2026-06-23, Added, Added, Added, Added, Changed, Changelog, Fixed (+2 more)
+Cohesion: 0.14
+Nodes (13): [0.7.0] - 2026-06-23, Added, Added, Added, Added, Added, Added, Added (+5 more)
 
 ### Community 73 - "Community 73"
 Cohesion: 0.25
@@ -743,6 +747,10 @@ Nodes (12): 1. FS primitive — `Cinder.Library.Filesystem`, 2. `Cinder.Library.
 Cohesion: 0.10
 Nodes (19): 1. Release blocker — fix before tagging v1.0, 2. Should-fix before tag (cheap, real, stranger-facing), 3. Optional code hardening (real, low, safe to defer), 4. Docs (do at tag time — cheap), 5. Confirmed sound — no action (highlights), 6. Refuted (checked and dismissed), 7. The real remaining gate — pending live homelab sign-offs (from ROADMAP M8), B1 · Fresh `docker compose up` crash-loops: `nobody` can't write the SQLite DB (+11 more)
 
+### Community 146 - "Community 146"
+Cohesion: 0.29
+Nodes (6): How to orient (do this first, every run), Invariant 1 — Approval gate: no non-admin path creates a `:requested` movie pre-approval, Invariant 2 — Role/route gating, Invariant 3 — Transition choke-point (status / derived-state writes), Invariant 4 — Secrets redaction, Output format
+
 ### Community 147 - "Community 147"
 Cohesion: 0.22
 Nodes (9): broadcast_series_deleted(), cancel_series(), delete_grab(), delete_series(), do_delete_series_txn(), episode_file_paths_for_series(), grabs_for_series(), reap_series_grabs() (+1 more)
@@ -752,8 +760,8 @@ Cohesion: 0.50
 Nodes (3): CinderWeb.LibraryLiveTest, available_movie!(), movie!()
 
 ### Community 188 - "Community 188"
-Cohesion: 0.13
-Nodes (16): Accumulated Minor findings for final-review triage, Admin CRUD — SDD progress ledger, /code-review on PR #39 push (mandated by hook) — 8 finders → verify, Delete-file feature — progress ledger, Final fix wave (commit eb3a2d6, suite 770): folded the 2 reviewer fix-now docs + 2 cheap coverage tests, Final whole-branch review (ec6cf87..2c4b5f3, opus), FINAL whole-branch review (opus, b87127c..64f479f code-only): READY TO MERGE — Yes, Final whole-phase review (85ab466..3137a65, opus) (+8 more)
+Cohesion: 0.11
+Nodes (19): Accumulated Minor findings for final-review triage, Admin CRUD — SDD progress ledger, CODE REVIEW (adversarial, 6 dimensions × independent Opus verify): 1 important + minors., /code-review on PR #39 push (mandated by hook) — 8 finders → verify, Delete-file feature — progress ledger, Final fix wave (commit eb3a2d6, suite 770): folded the 2 reviewer fix-now docs + 2 cheap coverage tests, Final whole-branch review (ec6cf87..2c4b5f3, opus), FINAL whole-branch review (opus, b87127c..64f479f code-only): READY TO MERGE — Yes (+11 more)
 
 ### Community 221 - "Community 221"
 Cohesion: 0.17
@@ -840,8 +848,8 @@ Cohesion: 0.15
 Nodes (13): CHANGELOG.md, Changes to `discover_live.ex`, Commit, docs/operating.md, Existing tests updated, Files changed, graphify update, mix test (+5 more)
 
 ### Community 248 - "Community 248"
-Cohesion: 0.40
-Nodes (4): Changes, Full suite, RED → GREEN evidence, Review Fix Report — PR #39 delete-files-on-disk
+Cohesion: 0.13
+Nodes (14): Adaptations / nothing skipped, Changes, Files changed (excluding graphify-out / gettext), FINALIZE, FIX 1 (IMPORTANT) — Original/Any SOFT, explicit language STRICT, FIX 2 (minor) — refresh_series refreshes original_language from TMDB, FIX 3 (minor) — validate_inclusion on preferred_language, FIX 4 (minor) — robust error handling on the two language setters (+6 more)
 
 ### Community 252 - "Community 252"
 Cohesion: 0.12
@@ -852,7 +860,7 @@ Cohesion: 0.14
 Nodes (13): `add_series_to_watchlist/2` (unchanged arity — opts keyword list), Concerns, `create_series/2 → create_series/3` (private), `ensure_series/1 → /2` (private), Every caller of the bumped functions and how they were kept working, Files changed, `find_or_create_series_at_requested/2 → /3` (public, default arg), `original_language` in the LiveView (+5 more)
 
 ### Community 254 - "Community 254"
-Cohesion: 0.28
+Cohesion: 0.24
 Nodes (4): Cinder.Acquisition.Language, filter(), satisfies?(), target()
 
 ### Community 255 - "Community 255"
@@ -875,18 +883,24 @@ Nodes (7): 1. `lib/cinder_web/live/series_discovery_live.ex` line 173, 2. `lib/c
 Cohesion: 0.29
 Nodes (6): Concerns, Step 1: Extract + merge, Step 2: Full suite, Step 3: Knowledge graph, Step 4: Commit, Task 11 Report — Extract translations + final green
 
+### Community 268 - "Community 268"
+Cohesion: 0.53
+Nodes (5): Cinder.Library.MediaInfo.Ffprobe, args(), audio_languages(), bin(), parse()
+
 ## Knowledge Gaps
-- **807 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+802 more)
+- **831 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+826 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **108 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **110 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Cinder.Catalog` connect `Community 3` to `Community 37`, `Community 71`, `Community 59`, `Community 147`, `Community 91`, `Community 28`?**
+- **Why does `table()` connect `Community 74` to `Community 258`, `Community 259`, `Community 153`, `Community 154`, `Community 266`, `Community 142`, `Community 241`, `Community 145`, `Community 148`, `Community 149`, `Community 22`, `Community 151`, `Community 150`, `Community 249`, `Community 250`, `Community 152`?**
+  _High betweenness centrality (0.001) - this node is a cross-community bridge._
+- **Why does `CinderWeb.CoreComponents` connect `Community 22` to `Community 74`?**
   _High betweenness centrality (0.000) - this node is a cross-community bridge._
 - **What connects `tidewave`, `$schema`, `erlang` to the rest of the system?**
-  _807 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _831 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**
   _Cohesion score 0.07364114552893045 - nodes in this community are weakly interconnected._
 - **Should `Community 1` be split into smaller, more focused modules?**
@@ -895,5 +909,3 @@ _Questions this graph is uniquely positioned to answer:_
   _Cohesion score 0.05 - nodes in this community are weakly interconnected._
 - **Should `Community 3` be split into smaller, more focused modules?**
   _Cohesion score 0.07862903225806452 - nodes in this community are weakly interconnected._
-- **Should `Community 4` be split into smaller, more focused modules?**
-  _Cohesion score 0.1319073083778966 - nodes in this community are weakly interconnected._

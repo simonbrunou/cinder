@@ -162,6 +162,93 @@ defmodule Cinder.Acquisition.ParserTest do
     end
   end
 
+  describe "language: foreign audio tags (registry)" do
+    test "Hungarian — full word, native 'magyar', and HUN abbreviation all tag HUNGARIAN" do
+      for name <- [
+            "Movie.2019.HUNGARIAN.1080p.BluRay.x264-GRP",
+            "Valami.2020.magyar.szinkron.720p",
+            "Some.Movie.2019.HUN.1080p.WEB-DL.H264"
+          ] do
+        assert Parser.parse(name).language == "HUNGARIAN", "expected HUNGARIAN from #{name}"
+      end
+    end
+
+    test "a spread of languages tag correctly" do
+      cases = [
+        {"Movie.2018.RUS.1080p.BluRay-RUS", "RUSSIAN"},
+        {"Pelicula.2016.SPANISH.Castellano.1080p", "SPANISH"},
+        {"Pelicula.2016.LATINO.1080p.WEB-DL.x264", "SPANISH"},
+        {"Filme.2019.PT-BR.Dublado.1080p.WEB-DL", "PORTUGUESE"},
+        {"Film.2017.PL.Lektor.1080p.WEB-DL", "POLISH"},
+        {"Anime.2020.JPN.1080p.BluRay", "JAPANESE"},
+        {"Movie.2018.MANDARIN.1080p.WEB-DL", "CHINESE"},
+        {"Movie.2018.CANTONESE.1080p.BluRay", "CANTONESE"}
+      ]
+
+      for {name, tag} <- cases do
+        assert Parser.parse(name).language == tag, "expected #{tag} from #{name}"
+      end
+    end
+
+    test "a subtitle marker is not read as an audio tag (sub-guard)" do
+      for name <- [
+            "Movie.2018.1080p.WEB-DL.ENG.SUBS-GRP",
+            "Film.2017.NL.SUBS.1080p.BluRay",
+            "Some.Movie.2018.PL.SUB.1080p.WEB-DL",
+            "Movie.2019.Nordic.SWE.SUBS.720p.WEB-DL",
+            "Doc.2021.1080p.WEB.x265.HUN.SUBS"
+          ] do
+        assert Parser.parse(name).language == nil, "expected nil (subtitle marker) from #{name}"
+      end
+    end
+
+    test "the audio tag wins when subtitles are also named" do
+      # Hungarian audio + English subs → HUNGARIAN, not ENGLISH.
+      assert Parser.parse("Valami.2018.HUN.ENG.SUBS.1080p.WEB-DL").language == "HUNGARIAN"
+      assert Parser.parse("Le.Film.2019.FRENCH.English.Subs.1080p.WEB-DL").language == "FRENCH"
+    end
+
+    test "codec/source tokens are never mistaken for a language" do
+      name = "Movie.2020.2160p.UHD.BluRay.REMUX.HDR.DV.HEVC.DTS-HD.MA-FraMeSToR"
+      assert Parser.parse(name).language == nil
+    end
+
+    test "a subtitle marker with a separator before the language word also stays nil" do
+      # The pre-strip removes "<word> SUB(S/BED/TITLE...)" so a subtitle annotation never reads as
+      # audio, including the endonym/abbrev forms the old per-token guard missed.
+      for name <- [
+            "Pelicula.2018.LATINO.SUBS.1080p.WEB-DL",
+            "Foreign.Film.2019.ENGLISH.SUBTITLES.1080p.WEB-DL",
+            "Series.2020.GREEK.SUBS.720p.WEB"
+          ] do
+        assert Parser.parse(name).language == nil, "expected nil (subtitle marker) from #{name}"
+      end
+    end
+
+    test "MULTI is kept even when glued to a subtitle token, and a SUBBED audio tag survives" do
+      # MULTI is matched on the raw name, so the subtitle strip can't eat it.
+      assert Parser.parse("Movie.2021.MULTI.SUBS.1080p.BluRay.x264").language == "MULTI"
+      # "SUBBED" = "has subtitles"; the named language is the AUDIO, so it must not be stripped.
+      assert Parser.parse("Movie.2019.KOREAN.SUBBED.1080p.BluRay.x264").language == "KOREAN"
+      assert Parser.parse("Film.2018.TRUEFRENCH.SUBBED.1080p.WEB").language == "FRENCH"
+    end
+
+    test "a real audio tag wins over a title-word language (registry order)" do
+      # "Greek" in the title also matches, but the real FRENCH tag is earlier in the registry, so
+      # first_match returns FRENCH. (A bare title-word collision with no real tag is left to the
+      # Original/Any soft fallback in Cinder.Acquisition.)
+      assert Parser.parse("The.Greek.Tycoon.1978.FRENCH.1080p.BluRay.x264").language == "FRENCH"
+    end
+
+    test "every registry language has ISO 639-2 audio codes (no drift)" do
+      # Map.fetch! in @audio_codes already fails the build on a missing entry; this also asserts
+      # each language carries its 639-1 code plus at least one 639-2 form for the MediaInfo check.
+      assert Enum.all?(Parser.audio_codes(), fn {code, forms} ->
+               code in forms and length(forms) >= 2
+             end)
+    end
+  end
+
   describe "TV tail edge cases (keep the leading episode, drop trailing junk)" do
     test "a hyphen-glued resolution keeps the episode instead of dropping the release" do
       assert %{season: 1, episodes: [2], resolution: "720p"} =

@@ -61,6 +61,9 @@ config :cinder,
   indexer: Cinder.Acquisition.IndexerMock,
   media_server: Cinder.Library.MediaServerMock,
   filesystem: Cinder.Library.FilesystemMock,
+  # Disabled by default (overrides the prod Ffprobe impl) so the import suite never shells out;
+  # the media_info tests opt in per-test via Application.put_env(MediaInfoMock).
+  media_info: nil,
   notifier: Cinder.TestNotifier
 
 # Two client mocks so routing is testable by protocol: a torrent release must

@@ -90,7 +90,21 @@ your server picks the file up on its next periodic scan.
 |---|---|---|
 | `:no_match` | No acceptable release found (the scorer rejected all results, or the title has no IMDb id on TMDB). | Passive; nothing to fix. Relax scoring if it's too strict. |
 | `:search_failed` | A release was found but couldn't be handed off, or transient errors exhausted ~10 min of retries. | Check the server log. Often a malformed/HTML "torrent", a BitTorrent **v2-only** torrent (see limits), or a Prowlarr/qBittorrent outage. **Retry** once fixed. |
-| `:import_failed` | The completed download had no usable video file, or import failed repeatedly — commonly a **cross-filesystem** library/download path or a permission mismatch. | Verify the hardlink requirement above; the log shows the cross-device/permission error. **Retry** after fixing. |
+| `:import_failed` | The completed download had no usable video file, import failed repeatedly — commonly a **cross-filesystem** library/download path or a permission mismatch — or (with `ffprobe` installed) the file's audio language didn't match the request. | Verify the hardlink requirement above; the log shows the cross-device/permission error. For a language mismatch, **Retry** re-searches (the wrong release is now filtered out). |
+
+## Audio-language verification
+
+If you set a per-title language preference (other than *Any*), Cinder filters releases by the
+language tag in their name. As a backstop for releases whose name lies or omits the language, it also
+checks the **actual audio tracks** of a completed download before importing, using **`ffprobe`**
+(part of FFmpeg, shipped in the Docker image). This covers both **movies and TV**: a wrong-language
+movie parks at `:import_failed`; a wrong-language episode file in a season pack is skipped so that
+episode re-searches, while the correctly-languaged episodes still import.
+
+It is conservative by design — a language outside the recognized set, an audio code it doesn't
+recognize, a missing/unreadable probe, or a missing `ffprobe` binary all **import** rather than
+reject, so a correctly-languaged file is never stranded; only a provably-different language is
+refused. Enabled by default; set `media_info: nil` in config to turn it off.
 
 ## TV: monitoring, season packs, and the calendar
 

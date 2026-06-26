@@ -178,6 +178,44 @@ defmodule Cinder.AcquisitionTest do
              )
   end
 
+  test "best_release: a recognised foreign dub never outranks the original-language release" do
+    # The Hungarian bug: the dub used to parse to nil, was assumed 'original', and could outscore
+    # the French release. Now it's tagged HUNGARIAN and dropped, so French wins despite being smaller.
+    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+      {:ok,
+       [
+         raw(title: "Chasse.Gardee.2024.HUNGARIAN.1080p.WEB-DL.x264-GRP", size: 12 * @gb),
+         raw(title: "Chasse.Gardee.2024.FRENCH.1080p.BluRay.x264-FR", size: 8 * @gb)
+       ]}
+    end)
+
+    assert {:ok, %Release{language: "FRENCH"}} =
+             Acquisition.best_release("tt1",
+               max_size: 20 * @gb,
+               preferred_language: "original",
+               original_language: "fr"
+             )
+  end
+
+  test "best_release: an untagged release is treated as English, not a non-English original" do
+    # No language token → English by scene convention → dropped for a French 'original' pick,
+    # so it can't masquerade as the French original and outscore the real French release.
+    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+      {:ok,
+       [
+         raw(title: "Chasse.Gardee.2024.1080p.WEB-DL.x264-GRP", size: 12 * @gb),
+         raw(title: "Chasse.Gardee.2024.FRENCH.1080p.BluRay.x264-FR", size: 8 * @gb)
+       ]}
+    end)
+
+    assert {:ok, %Release{language: "FRENCH"}} =
+             Acquisition.best_release("tt1",
+               max_size: 20 * @gb,
+               preferred_language: "original",
+               original_language: "fr"
+             )
+  end
+
   describe "best_releases/4 (TV)" do
     test "composes search_tv, parse, title-match, and set-cover scoring (release ⇒ coverage)" do
       # Patterns confirm the series' tvdb_id, title, and season number are passed through.
