@@ -135,6 +135,11 @@ blank means no limit. A too-low max (or any min above what your indexer carries)
 every release, so the episode stays wanted and nothing grabs; start with the band blank and tighten
 only if you're pulling oversized packs.
 
+**Preferred sources** (per kind): a comma-separated allow-list of `remux, bluray, webrip, webdl,
+hdtv, dvd, cam`. Leave blank to accept any source. An untagged (parser-undetected) release is
+always kept; only a release whose detected source is recognized and *not* in your list is rejected.
+Within a resolution, earlier-listed sources rank higher.
+
 ## Library roots: movies vs TV
 
 Each library kind has its **own** import root — movies under `movies_library_path`, TV under

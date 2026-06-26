@@ -72,7 +72,7 @@ rest with a key derived from `SECRET_KEY_BASE`.
 | Download | qBittorrent URL / username / password, SABnzbd URL + API key, per-client enable toggles |
 | Media server | Jellyfin URL + API key **or** Plex URL + token + a per-library section (Movies, TV); media-server type |
 | Library paths | `movies_library_path` **and** `tv_library_path` — a separate import root per kind, both required |
-| Release size bands | Per-kind min/max size (decimal GB) + preferred-resolution list; for TV the band is per episode (a season pack of N is allowed N× the max) |
+| Release size bands | Per-kind min/max size (decimal GB) + preferred-resolution list + preferred-source list (`remux, bluray, webrip, webdl, hdtv, dvd, cam`); for TV the band is per episode (a season pack of N is allowed N× the max) |
 
 Each can be **bootstrapped** from an environment variable (`TMDB_API_TOKEN`, `PROWLARR_URL`,
 `MOVIES_LIBRARY_PATH`, `TV_LIBRARY_PATH`, `MOVIES_PLEX_SECTION`, `TV_PLEX_SECTION`, …) for an
