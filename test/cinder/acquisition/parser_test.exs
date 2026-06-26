@@ -7,6 +7,7 @@ defmodule Cinder.Acquisition.ParserTest do
     assert Parser.parse("Inception.2010.1080p.BluRay.x264-RARBG") ==
              %{
                resolution: "1080p",
+               source: "bluray",
                codec: "x264",
                group: "RARBG",
                language: nil,
@@ -19,6 +20,7 @@ defmodule Cinder.Acquisition.ParserTest do
     assert Parser.parse("Dune.2021.MULTI.2160p.UHD.BluRay.x265-TERMiNAL") ==
              %{
                resolution: "2160p",
+               source: "bluray",
                codec: "x265",
                group: "TERMiNAL",
                language: "MULTI",
@@ -46,6 +48,7 @@ defmodule Cinder.Acquisition.ParserTest do
     assert Parser.parse("Just A Title") ==
              %{
                resolution: nil,
+               source: nil,
                codec: nil,
                group: nil,
                language: nil,
@@ -65,12 +68,41 @@ defmodule Cinder.Acquisition.ParserTest do
     assert Parser.parse(nil) ==
              %{
                resolution: nil,
+               source: nil,
                codec: nil,
                group: nil,
                language: nil,
                season: nil,
                episodes: nil
              }
+  end
+
+  describe "source parsing" do
+    test "BluRay and its rip variants map to bluray" do
+      for name <- ["M.2020.1080p.BluRay.x264", "M.2020.720p.BRRip", "M.2020.BDRip.x264"] do
+        assert %{source: "bluray"} = Parser.parse(name)
+      end
+    end
+
+    test "remux wins over bluray" do
+      assert %{source: "remux"} = Parser.parse("M.2020.2160p.BluRay.REMUX.x265")
+    end
+
+    test "webrip is distinguished from webdl, and bare WEB is webdl" do
+      assert %{source: "webrip"} = Parser.parse("M.2020.1080p.WEBRip.x264")
+      assert %{source: "webdl"} = Parser.parse("M.2020.1080p.WEB-DL.x264")
+      assert %{source: "webdl"} = Parser.parse("M.2020.1080p.WEB.x264")
+    end
+
+    test "hdtv, dvd, and cam tokens" do
+      assert %{source: "hdtv"} = Parser.parse("M.2020.720p.HDTV.x264")
+      assert %{source: "dvd"} = Parser.parse("M.2019.DVDRip.x264")
+      assert %{source: "cam"} = Parser.parse("M.2021.CAM.x264")
+    end
+
+    test "an untagged source is nil" do
+      assert %{source: nil} = Parser.parse("Inception.2010.x264-GRP")
+    end
   end
 
   describe "TV season/episode parsing" do

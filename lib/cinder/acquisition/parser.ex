@@ -1,6 +1,6 @@
 defmodule Cinder.Acquisition.Parser do
   @moduledoc """
-  Extracts release attributes (`resolution`, `codec`, `group`, `language`, and the
+  Extracts release attributes (`resolution`, `source`, `codec`, `group`, `language`, and the
   TV `season`/`episodes`) from a release name. Pure and best-effort: an unrecognized
   field is `nil`.
 
@@ -22,6 +22,22 @@ defmodule Cinder.Acquisition.Parser do
   """
 
   @resolutions ["2160p", "1080p", "720p", "480p"]
+
+  # Release source, most-specific-first (same first_match/2 mechanism as @codecs). Collision-prone
+  # 2-letter abbreviations (ts, tc, bd, scr, dsr) are excluded on purpose — same discipline as the
+  # language registry's "vf is the lone 2-letter token" note.
+  # ponytail: bare `web` also tags webdl. A title word "web" with no real source token can
+  # mis-tag webdl; low-frequency and only bites when a list excludes webdl. Tighten to `web-dl`
+  # only if it bites in practice.
+  @sources [
+    {~r/\bremux\b/i, "remux"},
+    {~r/\bblu-?ray\b|\bbdremux\b|\bbrrip\b|\bbdrip\b/i, "bluray"},
+    {~r/\bweb-?rip\b/i, "webrip"},
+    {~r/\bweb-?dl\b|\bwebdl\b|\bweb\b/i, "webdl"},
+    {~r/\bhdtv\b|\bpdtv\b/i, "hdtv"},
+    {~r/\bdvd-?rip\b|\bdvd\b/i, "dvd"},
+    {~r/\bcam\b|\btelesync\b|\btelecine\b|\bscreener\b/i, "cam"}
+  ]
 
   @codecs [
     {~r/x265/i, "x265"},
@@ -195,6 +211,7 @@ defmodule Cinder.Acquisition.Parser do
 
     %{
       resolution: resolution(name),
+      source: source(name),
       codec: first_match(name, @codecs),
       group: group(name),
       language: language(name),
@@ -204,7 +221,15 @@ defmodule Cinder.Acquisition.Parser do
   end
 
   def parse(_name),
-    do: %{resolution: nil, codec: nil, group: nil, language: nil, season: nil, episodes: nil}
+    do: %{
+      resolution: nil,
+      source: nil,
+      codec: nil,
+      group: nil,
+      language: nil,
+      season: nil,
+      episodes: nil
+    }
 
   @doc """
   Maps each known TMDB `original_language` code to the release tag the parser emits for it
@@ -224,6 +249,8 @@ defmodule Cinder.Acquisition.Parser do
     down = String.downcase(name)
     Enum.find(@resolutions, &String.contains?(down, &1))
   end
+
+  defp source(name), do: first_match(name, @sources)
 
   defp first_match(name, table) do
     Enum.find_value(table, fn {pattern, value} -> if Regex.match?(pattern, name), do: value end)
