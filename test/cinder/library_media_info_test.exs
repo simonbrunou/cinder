@@ -157,6 +157,11 @@ defmodule Cinder.LibraryMediaInfoTest do
 
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
     stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:ok, files} end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn _ ->
+      {:ok, %File.Stat{size: 3_000_000_000, inode: 1}}
+    end)
+
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
     stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
     stub(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
@@ -167,7 +172,7 @@ defmodule Cinder.LibraryMediaInfoTest do
       "/dl/Show.S01E02.1080p.mkv" -> {:ok, ["hun"]}
     end)
 
-    assert {:ok, [{1, dest}], ["/dl/Show.S01E02.1080p.mkv"]} =
+    assert {:ok, [{1, dest, _q}], ["/dl/Show.S01E02.1080p.mkv"]} =
              Library.import_episodes("/dl", [french_ep(1, 1), french_ep(2, 2)])
 
     assert dest == "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv"

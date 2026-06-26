@@ -353,6 +353,10 @@ defmodule Cinder.LibraryTest do
     end
 
     defp stub_link_ok do
+      stub(Cinder.Library.FilesystemMock, :lstat, fn _ ->
+        {:ok, %File.Stat{size: @gb, inode: 1}}
+      end)
+
       stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
       stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
       stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
@@ -362,7 +366,9 @@ defmodule Cinder.LibraryTest do
       stub_dir([{"/dl/Show.S01E03.1080p.mkv", 9 * @gb}, {"/dl/sample.mkv", 50_000_000}])
       stub_link_ok()
 
-      assert {:ok, [{7, dest}], ["/dl/sample.mkv"]} = Library.import_episodes("/dl", [ep(7, 3)])
+      assert {:ok, [{7, dest, _quality}], ["/dl/sample.mkv"]} =
+               Library.import_episodes("/dl", [ep(7, 3)])
+
       assert dest == "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"
     end
 
@@ -372,10 +378,13 @@ defmodule Cinder.LibraryTest do
 
       assert {:ok, imported, []} = Library.import_episodes("/dl", [ep(1, 1), ep(2, 2)])
 
-      assert Enum.sort(imported) == [
-               {1, "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv"},
-               {2, "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E02.mkv"}
-             ]
+      assert Enum.map(Enum.sort_by(imported, &elem(&1, 0)), fn {id, dest, _q} -> {id, dest} end) ==
+               [
+                 {1,
+                  "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv"},
+                 {2,
+                  "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E02.mkv"}
+               ]
     end
 
     test "a double-episode file hardlinks to both episodes" do
@@ -384,10 +393,13 @@ defmodule Cinder.LibraryTest do
 
       assert {:ok, imported, []} = Library.import_episodes("/dl", [ep(1, 1), ep(2, 2)])
 
-      assert Enum.sort(imported) == [
-               {1, "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv"},
-               {2, "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E02.mkv"}
-             ]
+      assert Enum.map(Enum.sort_by(imported, &elem(&1, 0)), fn {id, dest, _q} -> {id, dest} end) ==
+               [
+                 {1,
+                  "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv"},
+                 {2,
+                  "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E02.mkv"}
+               ]
     end
 
     test "two files parsing the same episode: largest imports, the rest log as unmatched" do
@@ -398,7 +410,7 @@ defmodule Cinder.LibraryTest do
 
       log =
         capture_log(fn ->
-          assert {:ok, [{1, dest}], ["/dl/Show.S01E01.mkv"]} =
+          assert {:ok, [{1, dest, _q}], ["/dl/Show.S01E01.mkv"]} =
                    Library.import_episodes("/dl", [ep(1, 1)])
 
           assert dest ==
@@ -414,7 +426,7 @@ defmodule Cinder.LibraryTest do
 
       log =
         capture_log(fn ->
-          assert {:ok, [{1, dest}], ["/dl/Show.S01E05.mkv"]} =
+          assert {:ok, [{1, dest, _q}], ["/dl/Show.S01E05.mkv"]} =
                    Library.import_episodes("/dl", [ep(1, 1)])
 
           assert dest ==
@@ -429,7 +441,7 @@ defmodule Cinder.LibraryTest do
       stub(Cinder.Library.FilesystemMock, :dir?, fn "/dl/random.mkv" -> false end)
       stub_link_ok()
 
-      assert {:ok, [{1, dest}], []} = Library.import_episodes("/dl/random.mkv", [ep(1, 4)])
+      assert {:ok, [{1, dest, _q}], []} = Library.import_episodes("/dl/random.mkv", [ep(1, 4)])
       assert dest == "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E04.mkv"
     end
 
@@ -437,7 +449,7 @@ defmodule Cinder.LibraryTest do
       stub_dir([{"/dl/show.finale.mkv", 9 * @gb}, {"/dl/sample.mkv", 50_000_000}])
       stub_link_ok()
 
-      assert {:ok, [{1, dest}], ["/dl/sample.mkv"]} =
+      assert {:ok, [{1, dest, _q}], ["/dl/sample.mkv"]} =
                Library.import_episodes("/dl", [ep(1, 3)])
 
       assert dest == "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"
@@ -461,14 +473,22 @@ defmodule Cinder.LibraryTest do
       stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
       stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eexist} end)
       # Same inode for source + dest → already our hardlink → idempotent.
-      stub(Cinder.Library.FilesystemMock, :lstat, fn _ -> {:ok, %{inode: 7}} end)
+      stub(Cinder.Library.FilesystemMock, :lstat, fn _ ->
+        {:ok, %File.Stat{size: @gb, inode: 7}}
+      end)
+
       stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
-      assert {:ok, [{1, _dest}], []} = Library.import_episodes("/dl", [ep(1, 1)])
+      assert {:ok, [{1, _dest, _q}], []} = Library.import_episodes("/dl", [ep(1, 1)])
     end
 
     test "a transient hardlink error returns {:error, reason} so the grab retries" do
       stub_dir([{"/dl/Show.S01E01.mkv", 3 * @gb}])
+
+      stub(Cinder.Library.FilesystemMock, :lstat, fn _ ->
+        {:ok, %File.Stat{size: @gb, inode: 1}}
+      end)
+
       stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
       stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eacces} end)
 
@@ -477,6 +497,89 @@ defmodule Cinder.LibraryTest do
 
     test "nil content_path → {:error, :no_content_path}" do
       assert {:error, :no_content_path} = Library.import_episodes(nil, [ep(1, 1)])
+    end
+
+    test "TV re-import replaces an episode's file on a resolution upgrade" do
+      series = struct(%Series{title: "Show", year: 2008, tmdb_id: 1}, [])
+
+      ep = %Episode{
+        id: 5,
+        episode_number: 1,
+        imported_resolution: "720p",
+        imported_size: 1 * @gb,
+        imported_language: nil,
+        season: %Season{season_number: 1, series: series}
+      }
+
+      source = "/dl/Show.S01E01.1080p.mkv"
+      dest = "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv"
+
+      expect(Cinder.Library.FilesystemMock, :dir?, fn "/dl/grab" -> true end)
+
+      expect(Cinder.Library.FilesystemMock, :find_files, fn "/dl/grab" ->
+        {:ok, [{source, 3 * @gb}]}
+      end)
+
+      expect(Cinder.Library.FilesystemMock, :lstat, fn ^source ->
+        {:ok, %File.Stat{size: 3 * @gb, inode: 7}}
+      end)
+
+      expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+      expect(Cinder.Library.FilesystemMock, :ln, fn ^source, ^dest -> {:error, :eexist} end)
+      expect(Cinder.Library.FilesystemMock, :lstat, fn ^dest -> {:ok, %File.Stat{inode: 99}} end)
+      # sweep_temps
+      expect(Cinder.Library.FilesystemMock, :find_files, fn _dir -> {:ok, []} end)
+
+      expect(Cinder.Library.FilesystemMock, :ln, fn ^source, tmp ->
+        assert String.contains?(tmp, ".cinder-tmp-")
+        :ok
+      end)
+
+      expect(Cinder.Library.FilesystemMock, :rename, fn _tmp, ^dest -> :ok end)
+      expect(Cinder.Library.MediaServerMock, :scan, fn _ -> :ok end)
+
+      assert {:ok, [{5, ^dest, %{resolution: "1080p", size: 3_000_000_000, language: nil}}], []} =
+               Library.import_episodes("/dl/grab", [ep])
+    end
+
+    test "TV re-import keeps the existing episode file when the new release is not an upgrade" do
+      series = struct(%Series{title: "Show", year: 2008, tmdb_id: 1}, [])
+
+      ep = %Episode{
+        id: 6,
+        episode_number: 1,
+        imported_resolution: "1080p",
+        imported_size: 9 * @gb,
+        imported_language: nil,
+        season: %Season{season_number: 1, series: series}
+      }
+
+      source = "/dl/Show.S01E01.720p.mkv"
+      dest = "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv"
+
+      expect(Cinder.Library.FilesystemMock, :dir?, fn "/dl/grab" -> true end)
+
+      expect(Cinder.Library.FilesystemMock, :find_files, fn "/dl/grab" ->
+        {:ok, [{source, 1 * @gb}]}
+      end)
+
+      expect(Cinder.Library.FilesystemMock, :lstat, fn ^source ->
+        {:ok, %File.Stat{size: 1 * @gb, inode: 7}}
+      end)
+
+      expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+      expect(Cinder.Library.FilesystemMock, :ln, fn ^source, ^dest -> {:error, :eexist} end)
+      expect(Cinder.Library.FilesystemMock, :lstat, fn ^dest -> {:ok, %File.Stat{inode: 99}} end)
+      expect(Cinder.Library.MediaServerMock, :scan, fn _ -> :ok end)
+
+      log =
+        capture_log(fn ->
+          assert {:ok, [{6, ^dest, %{resolution: "1080p", size: 9_000_000_000, language: nil}}],
+                  []} =
+                   Library.import_episodes("/dl/grab", [ep])
+        end)
+
+      assert log =~ "kept existing"
     end
   end
 

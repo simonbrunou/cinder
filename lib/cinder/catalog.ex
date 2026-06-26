@@ -1010,9 +1010,16 @@ defmodule Cinder.Catalog do
       Repo.transaction(fn ->
         ts = now()
 
-        for {episode_id, dest} <- imported do
+        for {episode_id, dest, q} <- imported do
           Repo.update_all(from(e in Episode, where: e.id == ^episode_id),
-            set: [file_path: dest, grab_id: nil, updated_at: ts]
+            set: [
+              file_path: dest,
+              grab_id: nil,
+              imported_resolution: q.resolution,
+              imported_size: q.size,
+              imported_language: q.language,
+              updated_at: ts
+            ]
           )
         end
 

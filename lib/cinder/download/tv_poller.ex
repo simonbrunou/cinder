@@ -258,7 +258,7 @@ defmodule Cinder.Download.TvPoller do
   # filter the grab's preloaded episodes to the imported ids (the grab is deleted by finish_grab,
   # but its in-memory episodes — with season: :series preloaded — remain for the event payload).
   defp notify_available(grab, imported) do
-    imported_ids = MapSet.new(imported, fn {id, _dest} -> id end)
+    imported_ids = MapSet.new(imported, fn {id, _dest, _q} -> id end)
     episodes = Enum.filter(grab.episodes, &MapSet.member?(imported_ids, &1.id))
     Notifier.notify({:episodes_available, episodes})
   end

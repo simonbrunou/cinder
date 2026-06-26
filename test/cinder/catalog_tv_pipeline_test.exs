@@ -128,6 +128,9 @@ defmodule Cinder.CatalogTvPipelineTest do
   end
 
   describe "finish_grab/2" do
+    @q1 %{resolution: "1080p", size: 5_000_000_000, language: nil}
+    @q2 %{resolution: "720p", size: 3_000_000_000, language: "FRENCH"}
+
     test "sets each imported episode's own file_path, clears grab_id, deletes the grab, broadcasts" do
       {series, season} = series_with_season()
       e1 = episode(season, %{})
@@ -137,7 +140,10 @@ defmodule Cinder.CatalogTvPipelineTest do
       Catalog.subscribe_series()
 
       assert {:ok, _} =
-               Catalog.finish_grab(grab, [{e1.id, "/lib/s01e01.mkv"}, {e2.id, "/lib/s01e02.mkv"}])
+               Catalog.finish_grab(grab, [
+                 {e1.id, "/lib/s01e01.mkv", @q1},
+                 {e2.id, "/lib/s01e02.mkv", @q2}
+               ])
 
       assert_receive {:series_updated, ^series_id}
 
@@ -150,13 +156,31 @@ defmodule Cinder.CatalogTvPipelineTest do
       assert Repo.get(Grab, grab.id) == nil
     end
 
+    test "persists imported quality (resolution, size, language) per episode" do
+      {_series, season} = series_with_season()
+      ep = episode(season, %{})
+      dest = "/lib/s01e01.mkv"
+      {:ok, grab} = Catalog.create_grab("H", :torrent, [ep.id])
+
+      assert {:ok, _} =
+               Catalog.finish_grab(grab, [
+                 {ep.id, dest, %{resolution: "1080p", size: 123, language: "FRENCH"}}
+               ])
+
+      r = Repo.get!(Episode, ep.id)
+      assert r.file_path == dest
+      assert r.imported_resolution == "1080p"
+      assert r.imported_size == 123
+      assert r.imported_language == "FRENCH"
+    end
+
     test "partial pack: bumps search_attempts on the non-imported episode, deletes the grab" do
       {_series, season} = series_with_season()
       got = episode(season, %{})
       missing = episode(season, %{search_attempts: 2})
       {:ok, grab} = Catalog.create_grab("H", :torrent, [got.id, missing.id])
 
-      assert {:ok, _} = Catalog.finish_grab(grab, [{got.id, "/lib/got.mkv"}])
+      assert {:ok, _} = Catalog.finish_grab(grab, [{got.id, "/lib/got.mkv", @q1}])
 
       assert Repo.get(Episode, got.id).file_path == "/lib/got.mkv"
       m = Repo.get(Episode, missing.id)
