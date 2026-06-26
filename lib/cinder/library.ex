@@ -15,6 +15,7 @@ defmodule Cinder.Library do
 
   alias Cinder.Acquisition.{Language, Parser}
   alias Cinder.Catalog.{Episode, Movie, Series}
+  alias Cinder.Library.Upgrade
 
   @video_exts ~w(.mkv .mp4 .avi .m4v .mov .wmv .ts)
   @illegal ~r/[\/\\:*?"<>|]/
@@ -32,16 +33,18 @@ defmodule Cinder.Library do
 
   @doc """
   Hardlinks `movie`'s downloaded file into the library and triggers a scan.
-  Returns `{:ok, dest_path}` or `{:error, reason}`. Idempotent: a dest that
-  already exists (`:eexist`) is treated as success. The scan is best-effort —
-  once the file is hardlinked the import has succeeded, so a failing scan is
-  logged but does not turn into `{:error, _}`.
+  Returns `{:ok, dest_path, quality}` or `{:error, reason}`. Idempotent: a dest
+  that already exists (`:eexist`) is treated as success when it is the same
+  hardlink (same inode). On a collision with a different file, the existing
+  release is kept or replaced based on an upgrade score comparison.
+  The scan is best-effort — once the file is hardlinked the import has
+  succeeded, so a failing scan is logged but does not turn into `{:error, _}`.
 
   When a language is wanted and `:media_info` is configured, the file's actual audio tracks are
   probed first: a confirmed mismatch returns `{:error, :wrong_audio_language}` so the wrong-language
   file is never imported (the poller parks it). Missing/unverifiable audio data imports as before.
   """
-  @spec import_movie(Movie.t()) :: {:ok, String.t()} | {:error, term()}
+  @spec import_movie(Movie.t()) :: {:ok, String.t(), map()} | {:error, term()}
   def import_movie(%Movie{file_path: path}) when path in [nil, ""], do: {:error, :no_file_path}
 
   def import_movie(%Movie{} = movie) do
@@ -52,11 +55,106 @@ defmodule Cinder.Library do
              source,
              Language.target(movie.preferred_language, movie.original_language)
            ),
+         {:ok, %{size: size, inode: si}} <- fs().lstat(source),
+         parsed = Parser.parse(Path.basename(movie.file_path)),
+         new_q = %{resolution: parsed.resolution, size: size, language: parsed.language},
          dest = build_dest(movie, source, root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
-         :ok <- link(source, dest) do
+         {:ok, quality} <- place(source, dest, si, movie, new_q) do
       scan(:movies, dest)
-      {:ok, dest}
+      {:ok, dest, quality}
+    end
+  end
+
+  # Place source at dest; resolve a same-item collision (tmdb-unique folder => same movie) by upgrade decision.
+  defp place(source, dest, si, movie, new_q) do
+    case fs().ln(source, dest) do
+      :ok -> {:ok, new_q}
+      {:error, :eexist} -> resolve_collision(source, dest, si, movie, new_q)
+      {:error, _} = err -> err
+    end
+  end
+
+  defp resolve_collision(source, dest, si, movie, new_q) do
+    with {:ok, %{inode: di}} <- fs().lstat(dest) do
+      do_resolve(source, dest, si == di, upgrade?(movie, new_q), movie, new_q)
+    end
+  end
+
+  defp do_resolve(_source, _dest, true, _upgrade, movie, new_q),
+    do: {:ok, existing_quality(movie, new_q)}
+
+  defp do_resolve(source, dest, false, true, _movie, new_q) do
+    with :ok <- replace(source, dest), do: {:ok, new_q}
+  end
+
+  defp do_resolve(_source, dest, false, false, movie, new_q), do: keep(dest, movie, new_q)
+
+  defp existing_quality(movie, new_q) do
+    if nil_q?(movie),
+      do: new_q,
+      else: %{
+        resolution: movie.imported_resolution,
+        size: movie.imported_size,
+        language: movie.imported_language
+      }
+  end
+
+  defp nil_q?(m),
+    do: is_nil(m.imported_resolution) and is_nil(m.imported_size) and is_nil(m.imported_language)
+
+  defp upgrade?(movie, new_q) do
+    old_q = %{
+      resolution: movie.imported_resolution,
+      size: movie.imported_size,
+      language: movie.imported_language
+    }
+
+    target = Language.target(movie.preferred_language, movie.original_language)
+    Upgrade.better?(new_q, old_q, target, preferred_resolutions(:movies))
+  end
+
+  defp keep(dest, movie, new_q) do
+    old_q = existing_quality(movie, new_q)
+
+    Logger.warning(
+      "kept existing #{inspect(old_q.resolution)} file at #{dest}; new release not an upgrade"
+    )
+
+    {:ok, old_q}
+  end
+
+  defp preferred_resolutions(kind),
+    do: Application.get_env(:cinder, :"#{kind}_preferred_resolutions")
+
+  # Atomic replace of an existing dest with source's content: sweep stale temps (a host crash between
+  # ln and rename can leak one), hardlink source -> unique temp in the dest dir, then rename over dest.
+  defp replace(source, dest) do
+    dir = Path.dirname(dest)
+    sweep_temps(dir)
+    tmp = Path.join(dir, ".cinder-tmp-#{System.unique_integer([:positive])}")
+
+    with :ok <- fs().ln(source, tmp),
+         :ok <- fs().rename(tmp, dest) do
+      :ok
+    else
+      {:error, _} = err ->
+        _ = fs().rm(tmp)
+        err
+    end
+  end
+
+  defp sweep_temps(dir) do
+    case fs().find_files(dir) do
+      {:ok, files} ->
+        for {p, _size} <- files,
+            String.contains?(Path.basename(p), ".cinder-tmp-"),
+            do: fs().rm(p)
+
+        :ok
+
+      _ ->
+        :ok
     end
   end
 
