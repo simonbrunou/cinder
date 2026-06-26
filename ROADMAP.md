@@ -767,4 +767,12 @@ anime absolute numbering · OIDC / Jellyfin-Plex SSO · per-user permissions fin
 trending/discover landing pages beyond search · multi-node / hosted multi-tenant (precluded by
 the SQLite decision).
 
+**Release blocklist** — remember a rejected/failed release (by infohash / download URL / parsed
+name) so a title whose only available release is wrong-language or keeps failing isn't re-grabbed
+and re-downloaded every search cycle. Bounds the re-download cost the import-time audio-language
+check (PR #46) introduced: today a confirmed wrong-language grab re-searches and can re-download
+the same release until `@max_attempts`, mitigated only by the per-kind size band. The blocklist is
+the real fix (Radarr/Sonarr have one); deferred because it needs a new persisted table + a search
+exclusion path. Also covers repeatedly-failing torrents/usenet items.
+
 Revisit only after v1.0 has run reliably for a couple of weeks.
