@@ -51,6 +51,14 @@ All notable changes to Cinder are documented here. The format follows
   shown red on `/status`, until you set it).
 
 ### Fixed
+- **Low-resolution grabs** — a movie/episode could be grabbed below the requested resolution (e.g.
+  asking for a French film in 1080p and getting 480p). The preferred-resolution setting only
+  *re-ordered* candidates, so when the only in-band release was a lower resolution it was grabbed
+  anyway. It is now a **strict allow-list**: a release whose resolution isn't in
+  `movies_preferred_resolutions` / `tv_preferred_resolutions` (default `1080p, 720p`) is rejected
+  outright, and an **untagged** release (no resolution in its name) is rejected too. If nothing in
+  the allow-list is available, the item parks and re-searches rather than grabbing a worse release —
+  widen the list to allow more resolutions. Clearing the setting disables the gate.
 - **Wrong-language matches** — a movie could be grabbed and imported in the wrong language (e.g. a
   French film matched in Hungarian). The release parser recognized only five languages, so a foreign
   dub parsed as "no tag" and the language filter then assumed an untagged release was the title's
