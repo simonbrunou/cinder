@@ -7,6 +7,12 @@ All notable changes to Cinder are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Import-time audio-language verification (optional)** — when `ffprobe` (FFmpeg) is on `PATH`,
+  Cinder probes a completed download's actual audio tracks before importing and parks a file whose
+  audio doesn't include the wanted language — the safety net behind the name-based language filter
+  (à la Radarr's MediaInfo check), for releases whose name lies or omits the language. It is
+  optional: with no `ffprobe` installed the check is skipped, and it never blocks an import on
+  missing/unreadable audio metadata — only a confirmed mismatch parks (at `:import_failed`).
 - Delete media files from disk when removing a movie, TV show, season, or episode (opt-in
   checkbox on the delete dialogs; mirrors Sonarr/Radarr). Deleting a season/episode file leaves
   the item monitored so the poller re-grabs it, unless you also tick "stop monitoring". Empty
@@ -42,6 +48,13 @@ All notable changes to Cinder are documented here. The format follows
   shown red on `/status`, until you set it).
 
 ### Fixed
+- **Wrong-language matches** — a movie could be grabbed and imported in the wrong language (e.g. a
+  French film matched in Hungarian). The release parser recognized only five languages, so a foreign
+  dub parsed as "no tag" and the language filter then assumed an untagged release was the title's
+  *original* audio. The parser now recognizes ~40 audio-language tags (adapted from Radarr's
+  GPL `LanguageParser`, audio markers only — `ENG.SUBS` and friends stay subtitles), an untagged
+  release is treated as **English** (scene convention) rather than the original, and a language word
+  in the *title* ("The Italian Job", "Russian Doll") is no longer mistaken for an audio tag.
 - **qBittorrent v5.x compatibility** — qBittorrent ≥ 5.x answers `POST /api/v2/auth/login` with
   `204 No Content` (not `200`) and names the session cookie `QBT_SID_<port>` (not `SID`). The client
   accepted only `200` and resent a literal `SID=` cookie, so every qBittorrent call (add / status /

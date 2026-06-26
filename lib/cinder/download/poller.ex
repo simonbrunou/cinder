@@ -166,7 +166,10 @@ defmodule Cinder.Download.Poller do
   # are retried up to @max_attempts before being parked, so a permanent-but-not-
   # pre-classified condition (a read-only mount, a completed torrent that never
   # yields a path) can't loop and re-log forever.
-  @permanent_import_errors [:no_file_path, :no_video_file]
+  # :wrong_audio_language is the MediaInfo check rejecting a confirmed wrong-language file — the
+  # file's audio won't change, so re-importing it can't help; park at :import_failed (a /status
+  # Retry re-searches, and the name filter now excludes that release).
+  @permanent_import_errors [:no_file_path, :no_video_file, :wrong_audio_language]
   @max_attempts 10
 
   defp import_one(movie) do

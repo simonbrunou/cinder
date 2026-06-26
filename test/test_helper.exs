@@ -11,3 +11,6 @@ Mox.defmock(Cinder.Download.ClientMock, for: Cinder.Download.Client)
 Mox.defmock(Cinder.Download.SabnzbdClientMock, for: Cinder.Download.Client)
 Mox.defmock(Cinder.Library.MediaServerMock, for: Cinder.Library.MediaServer)
 Mox.defmock(Cinder.Library.FilesystemMock, for: Cinder.Library.Filesystem)
+# Optional import-time audio probe. Left unset in config/test.exs (disabled by default, so the
+# existing import suite is untouched); the media_info tests set it per-test via Application.put_env.
+Mox.defmock(Cinder.Library.MediaInfoMock, for: Cinder.Library.MediaInfo)

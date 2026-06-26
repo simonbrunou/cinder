@@ -141,10 +141,10 @@ defmodule Cinder.AcquisitionTest do
              )
   end
 
-  test "best_release with original pick falls back when a title-word collision tags every release" do
-    # The parser tags `language` from the whole release name, so "The Italian Job" is tagged
-    # ITALIAN. Under the soft default (original/en), nothing satisfies — but rather than parking,
-    # best_release falls back to scoring the unfiltered candidates so the title isn't stranded.
+  test "best_release with original pick: a title word is not read as an audio tag" do
+    # The parser scopes language matching to the technical region after the release year, so
+    # "The Italian Job" is NOT tagged ITALIAN — it parses to nil (English audio for an English
+    # title) and is kept directly for the original/en pick, no soft fallback needed.
     expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
       {:ok,
        [
@@ -153,7 +153,7 @@ defmodule Cinder.AcquisitionTest do
        ]}
     end)
 
-    assert {:ok, %Release{language: "ITALIAN", resolution: "1080p"}} =
+    assert {:ok, %Release{language: nil, resolution: "1080p"}} =
              Acquisition.best_release("tt1",
                max_size: 20 * @gb,
                preferred_language: "original",
@@ -161,7 +161,9 @@ defmodule Cinder.AcquisitionTest do
              )
   end
 
-  test "best_release with an explicit language pick still parks on a title-word collision (strict)" do
+  test "best_release with an explicit language pick parks when no release has that audio (strict)" do
+    # English releases (untagged) of an English-titled film never satisfy a french pick, so the
+    # strict pick parks rather than grabbing a wrong-language release.
     expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
       {:ok,
        [
@@ -175,6 +177,44 @@ defmodule Cinder.AcquisitionTest do
                max_size: 20 * @gb,
                preferred_language: "french",
                original_language: "en"
+             )
+  end
+
+  test "best_release: a recognised foreign dub never outranks the original-language release" do
+    # The Hungarian bug: the dub used to parse to nil, was assumed 'original', and could outscore
+    # the French release. Now it's tagged HUNGARIAN and dropped, so French wins despite being smaller.
+    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+      {:ok,
+       [
+         raw(title: "Chasse.Gardee.2024.HUNGARIAN.1080p.WEB-DL.x264-GRP", size: 12 * @gb),
+         raw(title: "Chasse.Gardee.2024.FRENCH.1080p.BluRay.x264-FR", size: 8 * @gb)
+       ]}
+    end)
+
+    assert {:ok, %Release{language: "FRENCH"}} =
+             Acquisition.best_release("tt1",
+               max_size: 20 * @gb,
+               preferred_language: "original",
+               original_language: "fr"
+             )
+  end
+
+  test "best_release: an untagged release is treated as English, not a non-English original" do
+    # No language token → English by scene convention → dropped for a French 'original' pick,
+    # so it can't masquerade as the French original and outscore the real French release.
+    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+      {:ok,
+       [
+         raw(title: "Chasse.Gardee.2024.1080p.WEB-DL.x264-GRP", size: 12 * @gb),
+         raw(title: "Chasse.Gardee.2024.FRENCH.1080p.BluRay.x264-FR", size: 8 * @gb)
+       ]}
+    end)
+
+    assert {:ok, %Release{language: "FRENCH"}} =
+             Acquisition.best_release("tt1",
+               max_size: 20 * @gb,
+               preferred_language: "original",
+               original_language: "fr"
              )
   end
 

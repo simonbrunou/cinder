@@ -5,28 +5,32 @@ defmodule Cinder.Acquisition.LanguageTest do
 
   defp rel(language), do: struct(%Release{title: "fixture"}, language: language)
 
-  describe "satisfies?/3" do
+  describe "satisfies?/2" do
     test "MULTI satisfies any target" do
-      assert Language.satisfies?(rel("MULTI"), "fr", "en")
-      assert Language.satisfies?(rel("MULTI"), "en", "fr")
+      assert Language.satisfies?(rel("MULTI"), "fr")
+      assert Language.satisfies?(rel("MULTI"), "en")
     end
 
-    test "french target: exact tag and MULTI satisfy; other tags do not" do
-      assert Language.satisfies?(rel("FRENCH"), "fr", "en")
-      refute Language.satisfies?(rel("GERMAN"), "fr", "en")
+    test "an exact tag match satisfies; another language's tag does not" do
+      assert Language.satisfies?(rel("FRENCH"), "fr")
+      refute Language.satisfies?(rel("GERMAN"), "fr")
     end
 
-    test "french target on an English-original title: untagged is rejected" do
-      refute Language.satisfies?(rel(nil), "fr", "en")
+    test "untagged means English audio — satisfies an English target only (the Hungarian-bug fix)" do
+      # An untagged release is English by scene convention, so a French 'original' pick
+      # (target "fr") drops it rather than treating it as the French original.
+      assert Language.satisfies?(rel(nil), "en")
+      refute Language.satisfies?(rel(nil), "fr")
+      refute Language.satisfies?(rel(nil), "hu")
     end
 
-    test "french target on a French-original title: untagged is accepted (untagged = original audio)" do
-      assert Language.satisfies?(rel(nil), "fr", "fr")
-    end
-
-    test "english/original target: untagged accepted, a foreign tag rejected" do
-      assert Language.satisfies?(rel(nil), "en", "en")
-      refute Language.satisfies?(rel("FRENCH"), "en", "en")
+    test "a recognised foreign tag satisfies only its own target" do
+      # Hungarian dub of a French film (target "fr") or an English film (target "en"): dropped.
+      refute Language.satisfies?(rel("HUNGARIAN"), "fr")
+      refute Language.satisfies?(rel("HUNGARIAN"), "en")
+      # A Hungarian-original film (target "hu") keeps its HUNGARIAN release — proves the parser
+      # registry and this code↔tag table stay in sync (hu ⇒ HUNGARIAN).
+      assert Language.satisfies?(rel("HUNGARIAN"), "hu")
     end
   end
 
@@ -60,6 +64,14 @@ defmodule Cinder.Acquisition.LanguageTest do
       keep_multi = rel("MULTI")
       releases = [keep_fr, rel(nil), rel("GERMAN"), keep_multi]
       assert Language.filter(releases, "french", "en") == [keep_fr, keep_multi]
+    end
+
+    test "original pick on a non-English film keeps only its original-language tag + MULTI" do
+      keep_fr = rel("FRENCH")
+      keep_multi = rel("MULTI")
+      # A Hungarian dub and an untagged (English) release are both dropped for a French original.
+      releases = [keep_fr, rel("HUNGARIAN"), rel(nil), keep_multi]
+      assert Language.filter(releases, "original", "fr") == [keep_fr, keep_multi]
     end
   end
 end

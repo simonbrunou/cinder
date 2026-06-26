@@ -53,6 +53,8 @@ config :cinder,
   }
 
 config :cinder, filesystem: Cinder.Library.Filesystem.Disk
+# Import-time audio-language verification (optional; needs `ffprobe` on PATH). Unset = disabled.
+config :cinder, media_info: Cinder.Library.MediaInfo.Ffprobe
 # Default; setting PLEX_URL (see runtime.exs) switches this to Plex.
 config :cinder, media_server: Cinder.Library.MediaServer.Jellyfin
 config :cinder, notifier: Cinder.Notifier.Log

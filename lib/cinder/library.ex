@@ -12,7 +12,7 @@ defmodule Cinder.Library do
 
   require Logger
 
-  alias Cinder.Acquisition.Parser
+  alias Cinder.Acquisition.{Language, Parser}
   alias Cinder.Catalog.{Episode, Movie}
 
   @video_exts ~w(.mkv .mp4 .avi .m4v .mov .wmv .ts)
@@ -35,6 +35,10 @@ defmodule Cinder.Library do
   already exists (`:eexist`) is treated as success. The scan is best-effort —
   once the file is hardlinked the import has succeeded, so a failing scan is
   logged but does not turn into `{:error, _}`.
+
+  When a language is wanted and `:media_info` is configured, the file's actual audio tracks are
+  probed first: a confirmed mismatch returns `{:error, :wrong_audio_language}` so the wrong-language
+  file is never imported (the poller parks it). Missing/unverifiable audio data imports as before.
   """
   @spec import_movie(Movie.t()) :: {:ok, String.t()} | {:error, term()}
   def import_movie(%Movie{file_path: path}) when path in [nil, ""], do: {:error, :no_file_path}
@@ -42,6 +46,11 @@ defmodule Cinder.Library do
   def import_movie(%Movie{} = movie) do
     with {:ok, root} <- root(:movies),
          {:ok, source} <- resolve_source(movie.file_path),
+         :ok <-
+           verify_audio(
+             source,
+             Language.target(movie.preferred_language, movie.original_language)
+           ),
          dest = build_dest(movie, source, root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
          :ok <- link(source, dest) do
@@ -49,6 +58,33 @@ defmodule Cinder.Library do
       {:ok, dest}
     end
   end
+
+  # MediaInfo safety net behind the name filter: when a language is wanted and the file's audio
+  # tracks positively don't include it, fail with `:wrong_audio_language` so the poller parks the
+  # movie at :import_failed rather than importing the wrong language. Conservative — no impl
+  # configured (`:media_info` unset), no probeable language (empty / `und`), or a probe error all
+  # import; only a confirmed mismatch parks. `target` is nil for an "any" pick or unknown original.
+  defp verify_audio(_source, nil), do: :ok
+
+  defp verify_audio(source, target) do
+    case media_info() do
+      nil -> :ok
+      impl -> check_audio(impl, source, target)
+    end
+  end
+
+  defp check_audio(impl, source, target) do
+    case impl.audio_languages(source) do
+      {:ok, []} -> :ok
+      {:ok, langs} -> audio_result(Language.audio_satisfies?(target, langs))
+      {:error, _reason} -> :ok
+    end
+  end
+
+  defp audio_result(true), do: :ok
+  defp audio_result(false), do: {:error, :wrong_audio_language}
+
+  defp media_info, do: Application.get_env(:cinder, :media_info)
 
   @doc """
   Imports the video files at `content_path` for `episodes` (a grab's episodes, each preloaded

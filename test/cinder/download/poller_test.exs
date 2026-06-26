@@ -269,6 +269,31 @@ defmodule Cinder.Download.PollerTest do
     assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
   end
 
+  test "a confirmed wrong-language file is parked at :import_failed (MediaInfo safety net)" do
+    {:ok, movie} =
+      Catalog.add_to_watchlist(%{
+        tmdb_id: 99,
+        title: "Chasse Gardee",
+        year: 2024,
+        original_language: "fr",
+        preferred_language: "original"
+      })
+
+    {:ok, movie} =
+      Catalog.transition(movie, %{status: :downloaded, file_path: "/downloads/dub.mkv"})
+
+    # Enable the optional probe for this test; the file's only audio track is Hungarian, not French.
+    Application.put_env(:cinder, :media_info, Cinder.Library.MediaInfoMock)
+    on_exit(fn -> Application.delete_env(:cinder, :media_info) end)
+
+    start_supervised!({Poller, interval: 60_000})
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+    stub(Cinder.Library.MediaInfoMock, :audio_languages, fn _ -> {:ok, ["hun"]} end)
+
+    assert :ok = Poller.poll()
+    assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
+  end
+
   test "a :downloaded movie with no file_path is parked at :import_failed" do
     {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 13, title: "M"})
     {:ok, movie} = Catalog.transition(movie, %{status: :downloaded})
