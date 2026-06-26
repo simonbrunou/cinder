@@ -34,6 +34,18 @@ defmodule Cinder.Acquisition.LanguageTest do
     end
   end
 
+  describe "satisfies_lang?/2" do
+    test "satisfies_lang?/2 truth table" do
+      assert Language.satisfies_lang?("MULTI", "fr")
+      assert Language.satisfies_lang?(nil, "en")
+      assert Language.satisfies_lang?("", "en")
+      refute Language.satisfies_lang?(nil, "fr")
+      assert Language.satisfies_lang?("FRENCH", "fr")
+      refute Language.satisfies_lang?("HUNGARIAN", "fr")
+      assert Language.satisfies_lang?("HUNGARIAN", nil) == true
+    end
+  end
+
   describe "target/2 and active?/2" do
     test "any disables the filter" do
       assert Language.target("any", "en") == nil

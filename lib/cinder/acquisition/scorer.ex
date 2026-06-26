@@ -127,10 +127,12 @@ defmodule Cinder.Acquisition.Scorer do
   defp scale(nil, _k), do: nil
   defp scale(size, k), do: k * size
 
-  # Index of the release's resolution in the preference list (lower = better);
-  # an unlisted resolution sorts last.
-  defp resolution_rank(%Release{} = release, preferred),
-    do: Enum.find_index(preferred, &(&1 == release.resolution)) || length(preferred)
+  @doc "Index of a resolution string in the preference list (lower = better); nil/unlisted sorts last."
+  def resolution_rank(resolution, preferred) when is_binary(resolution) or is_nil(resolution),
+    do: Enum.find_index(preferred, &(&1 == resolution)) || length(preferred)
+
+  def resolution_rank(%Release{} = release, preferred),
+    do: resolution_rank(release.resolution, preferred)
 
   defp blocked?(%Release{group: nil}, _blocklist), do: false
   defp blocked?(%Release{group: group}, blocklist), do: String.downcase(group) in blocklist

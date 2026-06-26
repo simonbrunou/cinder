@@ -64,6 +64,12 @@ defmodule Cinder.Acquisition.Language do
   def satisfies?(%Release{language: nil}, target), do: target == @default_audio
   def satisfies?(%Release{language: language}, target), do: language == tag(target)
 
+  @doc "Whether a raw parsed language code satisfies the target (no %Release{} needed). nil target = true."
+  def satisfies_lang?(_code, nil), do: true
+  def satisfies_lang?("MULTI", _target), do: true
+  def satisfies_lang?(code, target) when code in [nil, ""], do: target == @default_audio
+  def satisfies_lang?(code, target), do: code == tag(target)
+
   @doc """
   Whether a media file's audio tracks are compatible with the resolved `target` language — the
   import-time MediaInfo check that backstops the name-based filter (callers skip it when `target`
