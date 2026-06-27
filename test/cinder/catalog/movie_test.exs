@@ -23,4 +23,9 @@ defmodule Cinder.Catalog.MovieTest do
     assert get_change(cs, :preferred_language) == "any"
     assert get_change(cs, :status) == nil
   end
+
+  test "transition_changeset/2 casts imported_source" do
+    cs = Movie.transition_changeset(%Movie{}, %{status: :available, imported_source: "bluray"})
+    assert cs.changes.imported_source == "bluray"
+  end
 end

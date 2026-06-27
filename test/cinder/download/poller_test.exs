@@ -12,35 +12,17 @@ defmodule Cinder.Download.PollerTest do
   alias Cinder.Download.Poller
   alias Cinder.Repo
 
+  import Cinder.CatalogFixtures
+  import Cinder.LibraryStubs
+  import Cinder.PollerHelpers
+
   # The poller runs in its own process (and a fresh pid after a crash), so the
   # mock must be global. Shared Sandbox (async: false) lets those processes use
   # the test-owned DB connection.
   setup :set_mox_global
 
   defp downloading_movie(tmdb_id, download_id) do
-    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: tmdb_id, title: "M"})
-    {:ok, movie} = Catalog.transition(movie, %{status: :downloading, download_id: download_id})
-    movie
-  end
-
-  defp await_restart(name, old_pid) do
-    case GenServer.whereis(name) do
-      new_pid when is_pid(new_pid) and new_pid != old_pid ->
-        new_pid
-
-      _ ->
-        Process.sleep(10)
-        await_restart(name, old_pid)
-    end
-  end
-
-  # Stub a successful single-file import (FS + media server) for the import pass.
-  defp stub_successful_import do
-    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
-    stub(Cinder.Library.FilesystemMock, :lstat, fn _ -> {:ok, %File.Stat{size: 1, inode: 1}} end)
-    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
-    stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
+    movie_fixture(%{tmdb_id: tmdb_id, title: "M", status: :downloading, download_id: download_id})
   end
 
   test "a poll drives a completed download through :downloaded to :available" do
@@ -52,7 +34,7 @@ defmodule Cinder.Download.PollerTest do
       {:ok, %{state: :completed, content_path: "/downloads/M.mkv"}}
     end)
 
-    stub_successful_import()
+    stub_import_ok()
 
     assert :ok = Poller.poll()
 
@@ -80,7 +62,7 @@ defmodule Cinder.Download.PollerTest do
       {:ok, %{state: :completed, content_path: "/downloads/M.mkv"}}
     end)
 
-    stub_successful_import()
+    stub_import_ok()
 
     assert :ok = Poller.poll()
     assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
@@ -128,7 +110,7 @@ defmodule Cinder.Download.PollerTest do
         else: {:ok, %{state: :completed, content_path: "/downloads/M.mkv"}}
     end)
 
-    stub_successful_import()
+    stub_import_ok()
 
     # Three download blips bump import_attempts while the movie stays :downloading.
     Enum.each(1..3, fn _ -> Poller.poll() end)
@@ -178,7 +160,7 @@ defmodule Cinder.Download.PollerTest do
       {:ok, %{state: :completed, content_path: "/downloads/Inception.mkv"}}
     end)
 
-    stub_successful_import()
+    stub_import_ok()
 
     start_supervised!({Poller, interval: 60_000})
 
@@ -195,7 +177,7 @@ defmodule Cinder.Download.PollerTest do
       {:ok, %{state: :completed, content_path: "/downloads/M.mkv"}}
     end)
 
-    stub_successful_import()
+    stub_import_ok()
 
     Process.exit(pid, :kill)
     new_pid = await_restart(Poller, pid)
@@ -206,9 +188,13 @@ defmodule Cinder.Download.PollerTest do
   end
 
   defp downloaded_movie(tmdb_id, file_path) do
-    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: tmdb_id, title: "Inception", year: 2010})
-    {:ok, movie} = Catalog.transition(movie, %{status: :downloaded, file_path: file_path})
-    movie
+    movie_fixture(%{
+      tmdb_id: tmdb_id,
+      title: "Inception",
+      year: 2010,
+      status: :downloaded,
+      file_path: file_path
+    })
   end
 
   # Doubles as the import-pass crash-recovery proof: a movie already stranded at
@@ -369,7 +355,7 @@ defmodule Cinder.Download.PollerTest do
       {:ok, %{state: :completed, content_path: "/downloads/Inception.mkv"}}
     end)
 
-    stub_successful_import()
+    stub_import_ok()
 
     start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
 
@@ -513,7 +499,7 @@ defmodule Cinder.Download.PollerTest do
     Cinder.TestNotifier.subscribe()
     movie = downloaded_movie(40, "/downloads/Inception.2010.1080p.mkv")
     start_supervised!({Poller, interval: 60_000})
-    stub_successful_import()
+    stub_import_ok()
 
     assert :ok = Poller.poll()
     assert %Movie{status: :available} = Repo.get!(Movie, movie.id)

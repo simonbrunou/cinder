@@ -7,39 +7,8 @@ defmodule CinderWeb.SettingsLiveTest do
 
   alias Cinder.Settings
 
-  @env_keys [
-    Cinder.Catalog.TMDB.HTTP,
-    Cinder.Acquisition.Indexer.Prowlarr,
-    Cinder.Download.Client.QBittorrent,
-    Cinder.Download.Client.Sabnzbd,
-    Cinder.Library.MediaServer.Jellyfin,
-    Cinder.Library.MediaServer.Plex,
-    :media_server,
-    :download_clients,
-    :movies_library_path,
-    :movies_min_size,
-    :movies_max_size,
-    :movies_preferred_resolutions,
-    :tv_library_path,
-    :tv_min_size,
-    :tv_max_size,
-    :tv_preferred_resolutions
-  ]
-
   setup :register_and_log_in_admin
-
-  setup do
-    saved = Map.new(@env_keys, fn k -> {k, Application.get_env(:cinder, k)} end)
-
-    on_exit(fn ->
-      Enum.each(saved, fn
-        {k, nil} -> Application.delete_env(:cinder, k)
-        {k, v} -> Application.put_env(:cinder, k, v)
-      end)
-    end)
-
-    :ok
-  end
+  setup :reset_cinder_env
 
   test "renders the grouped settings form", %{conn: conn} do
     {:ok, _lv, html} = live(conn, ~p"/settings")

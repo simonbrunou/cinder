@@ -7,7 +7,7 @@ defmodule Cinder.AccountsFixtures do
   import Ecto.Query
 
   alias Cinder.Accounts
-  alias Cinder.Accounts.{Scope, User}
+  alias Cinder.Accounts.User
   alias Cinder.Repo
 
   def unique_user_email, do: "user#{System.unique_integer()}@example.com"
@@ -46,15 +46,6 @@ defmodule Cinder.AccountsFixtures do
   end
 
   def admin_fixture(attrs \\ %{}), do: user_fixture(attrs) |> set_role(:admin)
-
-  def user_scope_fixture do
-    user = user_fixture()
-    user_scope_fixture(user)
-  end
-
-  def user_scope_fixture(user) do
-    Scope.for_user(user)
-  end
 
   def set_password(user) do
     {:ok, {user, _expired_tokens}} =

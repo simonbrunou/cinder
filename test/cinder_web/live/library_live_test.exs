@@ -7,6 +7,8 @@ defmodule CinderWeb.LibraryLiveTest do
   alias Cinder.Catalog
   alias Cinder.Repo
 
+  import Cinder.CatalogFixtures
+
   setup :register_and_log_in_admin
   setup :set_mox_global
 
@@ -15,15 +17,6 @@ defmodule CinderWeb.LibraryLiveTest do
     stub(Cinder.Download.ClientMock, :remove, fn _id, _opts -> :ok end)
     stub(Cinder.Download.SabnzbdClientMock, :remove, fn _id, _opts -> :ok end)
     :ok
-  end
-
-  defp movie!(attrs) do
-    {:ok, movie} =
-      Catalog.add_to_watchlist(
-        Enum.into(attrs, %{tmdb_id: System.unique_integer([:positive]), title: "Untitled"})
-      )
-
-    movie
   end
 
   defp series!(attrs) do
@@ -40,14 +33,14 @@ defmodule CinderWeb.LibraryLiveTest do
   end
 
   test "lists movies with edit/cancel/delete affordances", %{conn: conn} do
-    movie!(%{title: "Dune", year: 2021})
+    movie_fixture(%{title: "Dune", year: 2021})
     {:ok, _lv, html} = live(conn, ~p"/library")
     assert html =~ "Dune"
     assert html =~ "Movies"
   end
 
   test "edits a movie's metadata", %{conn: conn} do
-    movie = movie!(%{title: "Dune", year: 2021})
+    movie = movie_fixture(%{title: "Dune", year: 2021})
     {:ok, lv, _html} = live(conn, ~p"/library")
 
     lv |> element("#movie-#{movie.id} button", "Edit") |> render_click()
@@ -60,7 +53,7 @@ defmodule CinderWeb.LibraryLiveTest do
   end
 
   test "cancels an active movie through the confirm step", %{conn: conn} do
-    movie = movie!(%{title: "Tenet"})
+    movie = movie_fixture(%{title: "Tenet"})
     {:ok, lv, _html} = live(conn, ~p"/library")
 
     lv |> element("#movie-#{movie.id} button", "Cancel") |> render_click()
@@ -70,7 +63,7 @@ defmodule CinderWeb.LibraryLiveTest do
   end
 
   test "deletes an inactive movie through the confirm step", %{conn: conn} do
-    movie = movie!(%{title: "Old"})
+    movie = movie_fixture(%{title: "Old"})
     {:ok, _} = Catalog.transition(movie, %{status: :cancelled})
     {:ok, lv, _html} = live(conn, ~p"/library")
 
@@ -104,7 +97,7 @@ defmodule CinderWeb.LibraryLiveTest do
   end
 
   defp available_movie!(file_path) do
-    movie = movie!(%{title: "M", year: 2010})
+    movie = movie_fixture(%{title: "M", year: 2010})
 
     {:ok, movie} =
       movie

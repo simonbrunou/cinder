@@ -3,20 +3,13 @@ defmodule Cinder.DownloadTest do
 
   import Mox
 
-  alias Cinder.{Catalog, Download}
   alias Cinder.Catalog.Movie
+  alias Cinder.Download
   alias Cinder.Repo
 
+  import Cinder.CatalogFixtures
+
   setup :verify_on_exit!
-
-  defp requested(attrs) do
-    {:ok, movie} =
-      Catalog.add_to_watchlist(
-        Map.merge(%{tmdb_id: System.unique_integer([:positive]), title: "Inception"}, attrs)
-      )
-
-    movie
-  end
 
   # A raw indexer result that survives the default scorer (1080p, no size band configured).
   defp survivable_result do
@@ -29,7 +22,7 @@ defmodule Cinder.DownloadTest do
   end
 
   test "hands a requested movie off and advances it to :downloading" do
-    movie = requested(%{imdb_id: "tt1375666"})
+    movie = movie_fixture(%{imdb_id: "tt1375666"})
 
     expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1375666" ->
       {:ok, [survivable_result()]}
@@ -57,7 +50,7 @@ defmodule Cinder.DownloadTest do
   end
 
   test "routes a usenet release to the usenet client and persists the protocol" do
-    movie = requested(%{imdb_id: "tt1375666"})
+    movie = movie_fixture(%{imdb_id: "tt1375666"})
 
     expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1375666" ->
       {:ok,
@@ -90,7 +83,7 @@ defmodule Cinder.DownloadTest do
   end
 
   test "lazily resolves a missing imdb_id from TMDB and persists it" do
-    movie = requested(%{imdb_id: nil})
+    movie = movie_fixture(%{imdb_id: nil})
     refute movie.imdb_id
 
     expect(Cinder.Catalog.TMDBMock, :get_movie, fn tmdb_id ->
@@ -108,14 +101,14 @@ defmodule Cinder.DownloadTest do
   end
 
   test "parks the movie at :no_match when no release survives scoring" do
-    movie = requested(%{imdb_id: "tt1375666"})
+    movie = movie_fixture(%{imdb_id: "tt1375666"})
     expect(Cinder.Acquisition.IndexerMock, :search, fn _ -> {:ok, []} end)
 
     assert {:ok, %Movie{status: :no_match}} = Download.start(movie)
   end
 
   test "returns {:error, :no_imdb_id} and leaves the movie :requested when imdb is genuinely missing" do
-    movie = requested(%{imdb_id: nil})
+    movie = movie_fixture(%{imdb_id: nil})
     expect(Cinder.Catalog.TMDBMock, :get_movie, fn _ -> {:ok, %{imdb_id: nil}} end)
 
     assert {:error, :no_imdb_id} = Download.start(movie)
@@ -123,7 +116,7 @@ defmodule Cinder.DownloadTest do
   end
 
   test "returns {:error, :tmdb_unavailable} on a transient TMDB error, movie stays :requested" do
-    movie = requested(%{imdb_id: nil})
+    movie = movie_fixture(%{imdb_id: nil})
     expect(Cinder.Catalog.TMDBMock, :get_movie, fn _ -> {:error, {:tmdb_status, 503}} end)
 
     assert {:error, :tmdb_unavailable} = Download.start(movie)
@@ -131,7 +124,7 @@ defmodule Cinder.DownloadTest do
   end
 
   test "returns the client error and leaves the movie :searching on add failure" do
-    movie = requested(%{imdb_id: "tt1375666"})
+    movie = movie_fixture(%{imdb_id: "tt1375666"})
     expect(Cinder.Acquisition.IndexerMock, :search, fn _ -> {:ok, [survivable_result()]} end)
     expect(Cinder.Download.ClientMock, :add, fn _ -> {:error, :qbittorrent_down} end)
 

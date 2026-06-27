@@ -8,18 +8,11 @@ defmodule Cinder.CatalogAdminTest do
   alias Cinder.Catalog
   alias Cinder.Catalog.{Movie, Series}
 
-  defp movie!(attrs \\ %{}) do
-    {:ok, movie} =
-      Catalog.add_to_watchlist(
-        Map.merge(%{tmdb_id: System.unique_integer([:positive]), title: "Inception"}, attrs)
-      )
-
-    movie
-  end
+  import Cinder.CatalogFixtures
 
   describe "update_movie/2" do
     test "edits metadata via Movie.changeset, leaving status untouched" do
-      movie = movie!(%{title: "Old", year: 2009})
+      movie = movie_fixture(%{title: "Old", year: 2009})
 
       assert {:ok, %Movie{} = updated} =
                Catalog.update_movie(movie, %{title: "Inception", year: 2010})
@@ -32,18 +25,18 @@ defmodule Cinder.CatalogAdminTest do
     end
 
     test "a status key in attrs is ignored (status stays in transition)" do
-      movie = movie!()
+      movie = movie_fixture()
       assert {:ok, updated} = Catalog.update_movie(movie, %{title: "X", status: :available})
       assert updated.status == :requested
     end
 
     test "returns {:error, changeset} on a blank required title" do
-      movie = movie!()
+      movie = movie_fixture()
       assert {:error, %Ecto.Changeset{}} = Catalog.update_movie(movie, %{title: ""})
     end
 
     test "broadcasts {:movie_updated, movie} so other sessions refresh" do
-      movie = movie!(%{title: "Old"})
+      movie = movie_fixture(%{title: "Old"})
       Catalog.subscribe()
 
       assert {:ok, updated} = Catalog.update_movie(movie, %{title: "New"})
@@ -113,7 +106,7 @@ defmodule Cinder.CatalogAdminTest do
       actor = Cinder.AccountsFixtures.admin_fixture()
 
       movie =
-        movie!()
+        movie_fixture()
         |> then(
           &elem(
             Catalog.transition(&1, %{
@@ -136,21 +129,21 @@ defmodule Cinder.CatalogAdminTest do
 
     test "a requested movie with no download is cancelled without touching the client" do
       actor = Cinder.AccountsFixtures.admin_fixture()
-      movie = movie!()
+      movie = movie_fixture()
       # No expect/0 on the client → if cancel_movie called it, verify_on_exit! would fail.
       assert {:ok, %Movie{status: :cancelled}} = Catalog.cancel_movie(movie, actor)
     end
 
     test "a non-cancellable (terminal/available) movie returns {:error, :not_cancellable}" do
       actor = Cinder.AccountsFixtures.admin_fixture()
-      movie = movie!() |> then(&elem(Catalog.transition(&1, %{status: :available}), 1))
+      movie = movie_fixture() |> then(&elem(Catalog.transition(&1, %{status: :available}), 1))
       assert {:error, :not_cancellable} = Catalog.cancel_movie(movie, actor)
       assert Repo.get!(Movie, movie.id).status == :available
     end
 
     test "writes an admin_audit row for the cancel (in-txn)" do
       actor = Cinder.AccountsFixtures.admin_fixture()
-      movie = movie!()
+      movie = movie_fixture()
       assert {:ok, _} = Catalog.cancel_movie(movie, actor)
 
       audit = Repo.one!(Cinder.Audit.AdminAudit)
@@ -164,7 +157,7 @@ defmodule Cinder.CatalogAdminTest do
       actor = Cinder.AccountsFixtures.admin_fixture()
 
       movie =
-        movie!()
+        movie_fixture()
         |> then(
           &elem(
             Catalog.transition(&1, %{
@@ -189,7 +182,7 @@ defmodule Cinder.CatalogAdminTest do
 
     test "deletes an idle movie and broadcasts {:movie_deleted, id}" do
       actor = Cinder.AccountsFixtures.admin_fixture()
-      movie = movie!() |> then(&elem(Catalog.transition(&1, %{status: :available}), 1))
+      movie = movie_fixture() |> then(&elem(Catalog.transition(&1, %{status: :available}), 1))
       id = movie.id
       Catalog.subscribe()
 
@@ -202,7 +195,7 @@ defmodule Cinder.CatalogAdminTest do
       actor = Cinder.AccountsFixtures.admin_fixture()
 
       movie =
-        movie!()
+        movie_fixture()
         |> then(
           &elem(
             Catalog.transition(&1, %{
@@ -224,7 +217,7 @@ defmodule Cinder.CatalogAdminTest do
 
     test "writes an admin_audit row for the delete" do
       actor = Cinder.AccountsFixtures.admin_fixture()
-      movie = movie!()
+      movie = movie_fixture()
       assert {:ok, _} = Catalog.delete_movie(movie, actor)
       assert Repo.one!(Cinder.Audit.AdminAudit).action == "delete_movie"
     end
@@ -233,7 +226,7 @@ defmodule Cinder.CatalogAdminTest do
       actor = Cinder.AccountsFixtures.admin_fixture()
 
       movie =
-        movie!()
+        movie_fixture()
         |> then(
           &elem(
             Catalog.transition(&1, %{
@@ -254,7 +247,7 @@ defmodule Cinder.CatalogAdminTest do
 
     test "deleting an already-deleted movie returns {:error, :stale_entry} (no raise)" do
       actor = Cinder.AccountsFixtures.admin_fixture()
-      movie = movie!() |> then(&elem(Catalog.transition(&1, %{status: :available}), 1))
+      movie = movie_fixture() |> then(&elem(Catalog.transition(&1, %{status: :available}), 1))
       # Another session already deleted the row.
       Repo.delete!(movie)
 
@@ -262,7 +255,7 @@ defmodule Cinder.CatalogAdminTest do
     end
 
     test "delete_files: true unlinks the file, then deletes the row" do
-      movie = movie!(%{title: "Inception", year: 2010})
+      movie = movie_fixture(%{title: "Inception", year: 2010})
 
       {:ok, movie} =
         movie
@@ -285,7 +278,7 @@ defmodule Cinder.CatalogAdminTest do
     end
 
     test "without delete_files the file is left on disk (no FS calls)" do
-      movie = movie!(%{title: "Inception", year: 2010})
+      movie = movie_fixture(%{title: "Inception", year: 2010})
 
       {:ok, movie} =
         movie
@@ -298,7 +291,7 @@ defmodule Cinder.CatalogAdminTest do
     end
 
     test "delete_files: true still deletes the row when the unlink fails (best-effort)" do
-      movie = movie!(%{title: "Inception", year: 2010})
+      movie = movie_fixture(%{title: "Inception", year: 2010})
 
       {:ok, movie} =
         movie
@@ -312,7 +305,7 @@ defmodule Cinder.CatalogAdminTest do
     end
 
     test "delete_files: true with no file_path makes no FS call" do
-      movie = movie!()
+      movie = movie_fixture()
       assert {:ok, _} = Catalog.delete_movie(movie, nil, delete_files: true)
       refute Repo.get(Movie, movie.id)
     end
@@ -324,25 +317,9 @@ defmodule Cinder.CatalogAdminTest do
     alias Cinder.Catalog.{Episode, Grab, Season, Series}
 
     defp series_tree do
-      series =
-        Repo.insert!(%Series{
-          tmdb_id: System.unique_integer([:positive]),
-          title: "Show",
-          year: 2008,
-          monitored: true,
-          monitor_strategy: :all
-        })
-
-      season = Repo.insert!(%Season{series_id: series.id, season_number: 1, monitored: true})
-
-      ep =
-        Repo.insert!(%Episode{
-          season_id: season.id,
-          episode_number: 1,
-          monitored: true,
-          air_date: ~D[2001-01-01]
-        })
-
+      series = series_fixture(%{monitor_strategy: :all})
+      season = season_fixture(series)
+      ep = episode_fixture(season, %{episode_number: 1})
       {series, season, ep}
     end
 

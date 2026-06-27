@@ -3,14 +3,9 @@ defmodule Cinder.Library.MediaServer.PlexTest do
 
   alias Cinder.Library.MediaServer.Plex
 
-  # Test functions within a module run sequentially (ExUnit only parallelizes across
-  # async modules), and only PlexTest reads this module's config — so an override
-  # (restored on exit) can't race another test.
-  defp put_config(overrides) do
-    original = Application.get_env(:cinder, Plex)
-    on_exit(fn -> Application.put_env(:cinder, Plex, original) end)
-    Application.put_env(:cinder, Plex, Keyword.merge(original, overrides))
-  end
+  import Cinder.ConfigCase
+
+  defp put_config(overrides), do: put_config(Plex, overrides)
 
   test "scan/1 refreshes the kind's section with the token and returns :ok on 200" do
     Req.Test.stub(Cinder.PlexStub, fn conn ->
