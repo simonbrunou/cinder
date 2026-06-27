@@ -43,6 +43,12 @@ All notable changes to Cinder are documented here. The format follows
   always kept; only a recognized-but-unlisted source is rejected.
 
 ### Changed
+- The import-time upgrade decision now honors the per-kind **preferred sources** setting
+  (`language → resolution → source → size`), consistent with release selection — so when a
+  collision occurs at the library destination, a same-resolution better-source release replaces an
+  imported lesser-source file instead of being discarded on a size tie. Persists a new
+  `imported_source` per movie/episode (additive migration; existing rows rank a missing source
+  last, and are never re-grabbed, so the change is inert for already-imported items).
 - **BREAKING (config):** library config keys are regularized per kind — the movie env vars gain the
   `MOVIES_` prefix the TV ones already had:
   - `LIBRARY_PATH` → `MOVIES_LIBRARY_PATH`
