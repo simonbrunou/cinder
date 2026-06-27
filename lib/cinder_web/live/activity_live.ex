@@ -116,16 +116,17 @@ defmodule CinderWeb.ActivityLive do
               {m.title}<span :if={m.year} class="text-base-content/50"> ({m.year})</span>
             </span>
             <.status_badge kind={:movie} status={m.status} />
-            <button
+            <.button
               :if={parked?(m.status)}
               type="button"
-              class="btn btn-xs btn-ghost"
+              variant="ghost"
+              size="sm"
               phx-click="retry"
               phx-value-id={m.id}
               phx-disable-with={gettext("Retrying…")}
             >
               {gettext("Retry")}
-            </button>
+            </.button>
             <form id={"movie-language-form-#{m.id}"} phx-change="set_movie_language" class="ml-auto">
               <input type="hidden" name="_id" value={m.id} />
               <.language_select value={m.preferred_language} class="select select-xs" />
@@ -149,15 +150,17 @@ defmodule CinderWeb.ActivityLive do
               <.status_badge kind={:grab} status={grab_state(g)} />
               <span class="text-xs text-base-content/50">{g.download_protocol}</span>
               <span class="text-xs text-base-content/50 truncate">{g.download_id}</span>
-              <button
+              <.button
                 type="button"
-                class="btn btn-xs btn-error ml-auto"
+                variant="danger"
+                size="sm"
+                class="ml-auto"
                 phx-click="ask_delete"
                 phx-value-id={g.id}
                 phx-disable-with={gettext("Deleting…")}
               >
                 {gettext("Delete")}
-              </button>
+              </.button>
             </div>
             <.confirm_action
               :if={@confirming == to_string(g.id)}

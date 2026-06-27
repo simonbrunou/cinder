@@ -206,22 +206,24 @@ defmodule CinderWeb.DashboardLive do
                 <.status_badge kind={:request} status={r.status} />
               </div>
               <div class="mt-3 flex flex-wrap items-center gap-2">
-                <button
-                  class="btn btn-primary btn-sm"
+                <.button
+                  variant="primary"
+                  size="sm"
                   phx-click="approve"
                   phx-value-id={r.id}
                   phx-disable-with={gettext("Approving…")}
                 >
                   {gettext("Approve")}
-                </button>
-                <button
+                </.button>
+                <.button
                   :if={@denying != to_string(r.id)}
-                  class="btn btn-ghost btn-sm"
+                  variant="ghost"
+                  size="sm"
                   phx-click="start_deny"
                   phx-value-id={r.id}
                 >
                   {gettext("Deny")}
-                </button>
+                </.button>
                 <form
                   :if={@denying == to_string(r.id)}
                   phx-submit="deny"
@@ -234,16 +236,17 @@ defmodule CinderWeb.DashboardLive do
                     placeholder={gettext("Reason (optional)")}
                     class="input input-sm input-bordered flex-1"
                   />
-                  <button
+                  <.button
                     type="submit"
-                    class="btn btn-error btn-sm"
+                    variant="danger"
+                    size="sm"
                     phx-disable-with={gettext("Denying…")}
                   >
                     {gettext("Confirm deny")}
-                  </button>
-                  <button type="button" class="btn btn-ghost btn-sm" phx-click="dismiss_deny">
+                  </.button>
+                  <.button type="button" variant="ghost" size="sm" phx-click="dismiss_deny">
                     {gettext("Cancel")}
-                  </button>
+                  </.button>
                 </form>
               </div>
             </li>
@@ -254,14 +257,15 @@ defmodule CinderWeb.DashboardLive do
           <section>
             <div class="mb-3 flex items-center justify-between">
               <h2 class="text-lg font-semibold">{gettext("Service health")}</h2>
-              <button
-                class="btn btn-xs btn-ghost"
+              <.button
+                variant="ghost"
+                size="sm"
                 phx-click="recheck_health"
                 phx-disable-with={gettext("Checking…")}
                 aria-label={gettext("Recheck service health")}
               >
                 {gettext("Recheck")}
-              </button>
+              </.button>
             </div>
             <.spinner :if={@health == :loading} label={gettext("Checking services…")} />
             <ul

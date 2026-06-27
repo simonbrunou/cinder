@@ -222,27 +222,35 @@ defmodule CinderWeb.LibraryLive do
               <span :if={m.year} class="text-base-content/60">({m.year})</span>
               <.status_badge kind={:movie} status={m.status} />
               <div class="ml-auto flex gap-2">
-                <button type="button" class="btn btn-xs" phx-click="edit" phx-value-id={m.id}>
+                <.button
+                  type="button"
+                  variant="neutral"
+                  size="sm"
+                  phx-click="edit"
+                  phx-value-id={m.id}
+                >
                   {gettext("Edit")}
-                </button>
-                <button
+                </.button>
+                <.button
                   :if={Catalog.cancellable?(m)}
                   type="button"
-                  class="btn btn-xs btn-warning"
+                  variant="warning"
+                  size="sm"
                   phx-click="ask_cancel_movie"
                   phx-value-id={m.id}
                 >
                   {gettext("Cancel")}
-                </button>
-                <button
+                </.button>
+                <.button
                   :if={not Catalog.cancellable?(m)}
                   type="button"
-                  class="btn btn-xs btn-error"
+                  variant="danger"
+                  size="sm"
                   phx-click="ask_delete_movie"
                   phx-value-id={m.id}
                 >
                   {gettext("Delete")}
-                </button>
+                </.button>
               </div>
             </div>
 
@@ -256,16 +264,17 @@ defmodule CinderWeb.LibraryLive do
             >
               <.input field={@form[:title]} type="text" label={gettext("Title")} />
               <.input field={@form[:year]} type="number" label={gettext("Year")} />
-              <button
-                class="btn btn-sm btn-primary"
+              <.button
+                variant="primary"
+                size="sm"
                 type="submit"
                 phx-disable-with={gettext("Saving…")}
               >
                 {gettext("Save")}
-              </button>
-              <button class="btn btn-sm btn-ghost" type="button" phx-click="cancel_edit">
+              </.button>
+              <.button variant="ghost" size="sm" type="button" phx-click="cancel_edit">
                 {gettext("Cancel edit")}
-              </button>
+              </.button>
             </.form>
 
             <.confirm_action
@@ -319,18 +328,20 @@ defmodule CinderWeb.LibraryLive do
             </.link>
 
             <div class="flex gap-2">
-              <button
+              <.button
                 type="button"
-                class="btn btn-sm btn-warning"
+                variant="warning"
+                size="sm"
                 phx-click="ask_cancel_series"
                 phx-value-id={s.id}
-              >{gettext("Cancel")}</button>
-              <button
+              >{gettext("Cancel")}</.button>
+              <.button
                 type="button"
-                class="btn btn-sm btn-error"
+                variant="danger"
+                size="sm"
                 phx-click="ask_delete_series"
                 phx-value-id={s.id}
-              >{gettext("Delete")}</button>
+              >{gettext("Delete")}</.button>
             </div>
 
             <.confirm_action

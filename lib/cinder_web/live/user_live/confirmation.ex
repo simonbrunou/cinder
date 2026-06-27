@@ -26,13 +26,14 @@ defmodule CinderWeb.UserLive.Confirmation do
             name={@form[:remember_me].name}
             value="true"
             phx-disable-with={gettext("Confirming...")}
-            class="btn btn-primary w-full"
+            class="w-full"
           >
             {gettext("Confirm and stay logged in")}
           </.button>
           <.button
+            variant="ghost"
             phx-disable-with={gettext("Confirming...")}
-            class="btn btn-primary btn-soft w-full mt-2"
+            class="w-full mt-2"
           >
             {gettext("Confirm and log in only this time")}
           </.button>
@@ -49,7 +50,7 @@ defmodule CinderWeb.UserLive.Confirmation do
         >
           <input type="hidden" name={@form[:token].name} value={@form[:token].value} />
           <%= if @current_scope do %>
-            <.button phx-disable-with={gettext("Logging in...")} class="btn btn-primary w-full">
+            <.button phx-disable-with={gettext("Logging in...")} class="w-full">
               {gettext("Log in")}
             </.button>
           <% else %>
@@ -57,13 +58,14 @@ defmodule CinderWeb.UserLive.Confirmation do
               name={@form[:remember_me].name}
               value="true"
               phx-disable-with={gettext("Logging in...")}
-              class="btn btn-primary w-full"
+              class="w-full"
             >
               {gettext("Keep me logged in on this device")}
             </.button>
             <.button
+              variant="ghost"
               phx-disable-with={gettext("Logging in...")}
-              class="btn btn-primary btn-soft w-full mt-2"
+              class="w-full mt-2"
             >
               {gettext("Log me in only this time")}
             </.button>

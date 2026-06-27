@@ -76,13 +76,13 @@ defmodule CinderWeb.SettingsLive do
 
       <form id="settings-form" phx-submit="save" class="space-y-8">
         <.service_fields form={@form} health={@health} />
-        <button type="submit" class="btn btn-primary" phx-disable-with={gettext("Saving…")}>
+        <.button type="submit" phx-disable-with={gettext("Saving…")}>
           {gettext("Save settings")}
-        </button>
+        </.button>
       </form>
 
       <div class="rounded-box bg-base-200 p-4 mt-8">
-        <p class="text-lg font-semibold mb-3">{gettext("Requests")}</p>
+        <h2 class="text-lg font-semibold mb-3">{gettext("Requests")}</h2>
         <form id="auto-approve-form" phx-change="toggle_auto_approve">
           <label class="label cursor-pointer justify-start gap-2">
             <input

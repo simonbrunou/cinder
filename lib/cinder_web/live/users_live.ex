@@ -238,9 +238,9 @@ defmodule CinderWeb.UsersLive do
       </.header>
 
       <div class="mb-6">
-        <button :if={!@creating} class="btn btn-primary btn-sm" phx-click="start_create">
+        <.button :if={!@creating} variant="primary" size="sm" phx-click="start_create">
           {gettext("New user")}
-        </button>
+        </.button>
         <.form
           :if={@creating}
           id="create-user-form"
@@ -263,16 +263,17 @@ defmodule CinderWeb.UsersLive do
             options={[{gettext("User"), "user"}, {gettext("Admin"), "admin"}]}
           />
           <div class="flex gap-2">
-            <button
-              class="btn btn-primary btn-sm"
+            <.button
+              variant="primary"
+              size="sm"
               type="submit"
               phx-disable-with={gettext("Creating…")}
             >
               {gettext("Create")}
-            </button>
-            <button class="btn btn-ghost btn-sm" type="button" phx-click="cancel_create">
+            </.button>
+            <.button variant="ghost" size="sm" type="button" phx-click="cancel_create">
               {gettext("Cancel")}
-            </button>
+            </.button>
           </div>
         </.form>
       </div>
@@ -297,14 +298,15 @@ defmodule CinderWeb.UsersLive do
             >
               {u.role}
             </button>
-            <button
+            <.button
               id={"edit-email-btn-#{u.id}"}
-              class="btn btn-ghost btn-xs"
+              variant="ghost"
+              size="sm"
               phx-click="start_edit_email"
               phx-value-id={u.id}
             >
               {gettext("Edit email")}
-            </button>
+            </.button>
             <form
               id={"quota-#{u.id}"}
               phx-submit="set_quota"
@@ -321,7 +323,9 @@ defmodule CinderWeb.UsersLive do
                 class="input input-sm w-24"
                 placeholder="∞"
               />
-              <button class="btn btn-sm" phx-disable-with={gettext("Saving…")}>{gettext("Save")}</button>
+              <.button variant="neutral" size="sm" phx-disable-with={gettext("Saving…")}>{gettext(
+                "Save"
+              )}</.button>
             </form>
           </div>
           <.form
@@ -338,31 +342,34 @@ defmodule CinderWeb.UsersLive do
               value={u.email}
               class="input input-sm input-bordered"
             />
-            <button class="btn btn-primary btn-sm" type="submit" phx-disable-with={gettext("Saving…")}>
+            <.button variant="primary" size="sm" type="submit" phx-disable-with={gettext("Saving…")}>
               {gettext("Save email")}
-            </button>
-            <button class="btn btn-ghost btn-sm" type="button" phx-click="cancel_edit_email">
+            </.button>
+            <.button variant="ghost" size="sm" type="button" phx-click="cancel_edit_email">
               {gettext("Cancel")}
-            </button>
+            </.button>
           </.form>
           <div class="mt-2 flex items-center gap-2 flex-wrap">
-            <button
+            <.button
               id={"reset-pw-btn-#{u.id}"}
-              class="btn btn-ghost btn-xs"
+              variant="ghost"
+              size="sm"
               phx-click="start_reset_pw"
               phx-value-id={u.id}
             >
               {gettext("Reset password")}
-            </button>
-            <button
+            </.button>
+            <.button
               :if={@confirming_delete != to_string(u.id)}
               id={"delete-btn-#{u.id}"}
-              class="btn btn-ghost btn-xs text-error"
+              variant="ghost"
+              size="sm"
+              class="text-error"
               phx-click="start_delete"
               phx-value-id={u.id}
             >
               {gettext("Delete")}
-            </button>
+            </.button>
           </div>
           <.confirm_action
             :if={@confirming_delete == to_string(u.id)}
@@ -394,16 +401,17 @@ defmodule CinderWeb.UsersLive do
               placeholder={gettext("Confirm")}
               class="input input-sm input-bordered"
             />
-            <button
-              class="btn btn-primary btn-sm"
+            <.button
+              variant="primary"
+              size="sm"
               type="submit"
               phx-disable-with={gettext("Resetting…")}
             >
               {gettext("Set password")}
-            </button>
-            <button class="btn btn-ghost btn-sm" type="button" phx-click="cancel_reset_pw">
+            </.button>
+            <.button variant="ghost" size="sm" type="button" phx-click="cancel_reset_pw">
               {gettext("Cancel")}
-            </button>
+            </.button>
           </.form>
         </li>
       </ul>

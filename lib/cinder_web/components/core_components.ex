@@ -138,7 +138,8 @@ defmodule CinderWeb.CoreComponents do
   end
 
   defp button_variant("primary"), do: "btn-primary"
-  defp button_variant("neutral"), do: "btn-neutral"
+  # plain daisyUI button (subtle surface) — the unobtrusive secondary action
+  defp button_variant("neutral"), do: nil
   defp button_variant("ghost"), do: "btn-ghost"
   defp button_variant("danger"), do: "btn-error"
   defp button_variant("warning"), do: "btn-warning"

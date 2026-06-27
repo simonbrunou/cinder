@@ -197,16 +197,17 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   defp season_action(assigns) do
     ~H"""
     <.status_badge :if={@status != nil} kind={:request} status={@status} />
-    <button
+    <.button
       :if={@status in [nil, :denied]}
       type="button"
       phx-click="request_season"
       phx-value-season={@season_number}
       phx-disable-with={gettext("Requesting…")}
-      class="btn btn-primary btn-sm"
+      variant="primary"
+      size="sm"
     >
       {gettext("Request")}
-    </button>
+    </.button>
     """
   end
 end

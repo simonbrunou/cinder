@@ -8,7 +8,7 @@ defmodule CinderWeb.SettingsComponents do
   use Phoenix.Component
   use Gettext, backend: CinderWeb.Gettext
 
-  import CinderWeb.CoreComponents, only: [status_badge: 1]
+  import CinderWeb.CoreComponents, only: [status_badge: 1, button: 1]
 
   alias Cinder.Settings
 
@@ -169,9 +169,9 @@ defmodule CinderWeb.SettingsComponents do
 
       <div class="mt-3 flex flex-wrap items-center gap-3">
         <div :for={{svc, svc_label} <- services_for(group)} class="flex items-center gap-2">
-          <button type="button" class="btn btn-xs" phx-click="test" phx-value-service={svc}>
+          <.button type="button" variant="neutral" size="sm" phx-click="test" phx-value-service={svc}>
             {gettext("Test %{service}", service: svc_label)}
-          </button>
+          </.button>
           <.test_badge :if={@health[svc]} result={@health[svc]} />
         </div>
       </div>

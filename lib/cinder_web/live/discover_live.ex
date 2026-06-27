@@ -197,13 +197,15 @@ defmodule CinderWeb.DiscoverLive do
               tmdb_id={r.tmdb_id}
               original_language={r.original_language}
             />
-            <.link
+            <.button
               :if={r.type == :tv}
               navigate={~p"/series/tmdb/#{r.tmdb_id}"}
-              class="btn btn-primary btn-sm w-full"
+              variant="primary"
+              size="sm"
+              class="w-full"
             >
               {gettext("View seasons →")}
-            </.link>
+            </.button>
           </.media_card>
         </div>
       </section>
@@ -221,7 +223,7 @@ defmodule CinderWeb.DiscoverLive do
         message={gettext("TMDB didn't respond. Try again.")}
       />
 
-      <h2 class="pb-4 text-lg font-semibold leading-8">{gettext("Watchlist")}</h2>
+      <h2 class="pb-4 text-lg font-semibold">{gettext("Watchlist")}</h2>
       <.empty_state
         :if={@watchlist == []}
         icon="hero-bookmark"
@@ -257,13 +259,15 @@ defmodule CinderWeb.DiscoverLive do
     >
       <input type="hidden" name="tmdb_id" value={@tmdb_id} />
       <.language_select original_label={original_option_label(@original_language)} />
-      <button
+      <.button
         type="submit"
-        class="btn btn-primary btn-sm w-full"
+        variant="primary"
+        size="sm"
+        class="w-full"
         phx-disable-with={gettext("Adding…")}
       >
         {gettext("Add")}
-      </button>
+      </.button>
     </form>
     """
   end

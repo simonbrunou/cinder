@@ -121,15 +121,16 @@ defmodule CinderWeb.RequestsLive do
               <span class="text-sm opacity-60">— {r.user.email}</span>
             </div>
             <.status_badge kind={:request} status={r.status} />
-            <button
+            <.button
               :if={r.status == :pending}
-              class="btn btn-primary btn-sm"
+              variant="primary"
+              size="sm"
               phx-click="approve"
               phx-value-id={r.id}
               phx-disable-with={gettext("Approving…")}
             >
               {gettext("Approve")}
-            </button>
+            </.button>
             <form
               :if={r.status == :pending and @denying == to_string(r.id)}
               phx-submit="deny"
@@ -142,30 +143,34 @@ defmodule CinderWeb.RequestsLive do
                 placeholder={gettext("Reason")}
                 class="input input-sm input-bordered"
               />
-              <button
-                class="btn btn-error btn-sm"
+              <.button
+                variant="danger"
+                size="sm"
                 type="submit"
                 phx-disable-with={gettext("Denying…")}
               >
                 {gettext("Confirm deny")}
-              </button>
+              </.button>
             </form>
-            <button
+            <.button
               :if={r.status == :pending and @denying != to_string(r.id)}
-              class="btn btn-ghost btn-sm"
+              variant="ghost"
+              size="sm"
               phx-click="start_deny"
               phx-value-id={r.id}
             >
               {gettext("Deny")}
-            </button>
-            <button
+            </.button>
+            <.button
               :if={@confirming_delete != to_string(r.id)}
-              class="btn btn-ghost btn-sm text-error"
+              variant="ghost"
+              size="sm"
+              class="text-error"
               phx-click="start_delete"
               phx-value-id={r.id}
             >
               {gettext("Delete")}
-            </button>
+            </.button>
           </div>
 
           <.confirm_action
