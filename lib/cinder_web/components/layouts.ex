@@ -78,7 +78,7 @@ defmodule CinderWeb.Layouts do
           </a>
 
           <ul class="menu w-full gap-1 px-0">
-            <li class="menu-title">{gettext("Everyone")}</li>
+            <li class="menu-title text-base-content/70">{gettext("Everyone")}</li>
             <.nav_item
               navigate={~p"/"}
               label={gettext("Discover")}
@@ -93,7 +93,7 @@ defmodule CinderWeb.Layouts do
             />
 
             <%= if @admin? do %>
-              <li class="menu-title mt-2">{gettext("Admin")}</li>
+              <li class="menu-title mt-2 text-base-content/70">{gettext("Admin")}</li>
               <.nav_item
                 navigate={~p"/dashboard"}
                 label={gettext("Dashboard")}
