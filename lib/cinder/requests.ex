@@ -118,6 +118,22 @@ defmodule Cinder.Requests do
   def deny_request(%Request{}, _admin, _reason), do: {:error, :not_pending}
 
   @doc """
+  Reopens a denied request back to `:pending` (clearing the denial reason and
+  approver) so an admin can recover from a mistaken deny — the undo path for the
+  approval queue. Re-occupies the partial `requests_pending_unique` slot, so it
+  returns `{:error, changeset}` if a competing pending row for the same target
+  was created in the meantime.
+  """
+  def reopen_request(%Request{status: :denied} = request, %User{} = _admin) do
+    request
+    |> Request.status_changeset(%{status: :pending, denial_reason: nil, approved_by_id: nil})
+    |> Repo.update()
+    |> tap_ok(&broadcast({:request_created, &1}))
+  end
+
+  def reopen_request(%Request{}, _admin), do: {:error, :not_denied}
+
+  @doc """
   Deletes a request as an admin and records an `admin_audit` row in the same
   transaction.
 

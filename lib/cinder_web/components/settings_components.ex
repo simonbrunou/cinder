@@ -8,7 +8,7 @@ defmodule CinderWeb.SettingsComponents do
   use Phoenix.Component
   use Gettext, backend: CinderWeb.Gettext
 
-  import CinderWeb.CoreComponents, only: [status_badge: 1]
+  import CinderWeb.CoreComponents, only: [status_badge: 1, button: 1]
 
   alias Cinder.Settings
 
@@ -71,7 +71,7 @@ defmodule CinderWeb.SettingsComponents do
         </div>
         <p class="mt-1 text-xs opacity-70">
           {gettext(
-            "A separate root per library, so Jellyfin/Plex can point distinct libraries at each. Required even if they share a folder — enter the same path."
+            "A separate root per library, so Jellyfin/Plex can point distinct libraries at each. Required even if they share a folder; enter the same path."
           )}
         </p>
 
@@ -160,7 +160,7 @@ defmodule CinderWeb.SettingsComponents do
             ": a season pack of N episodes is allowed up to N× the max. Leave blank for no limit."
           )}
           {gettext(
-            "Sources: remux, bluray, webrip, webdl, hdtv, dvd, cam. Leave blank to accept any; untagged releases are always kept. These are distinct — listing only bluray excludes remux, so add both to accept either."
+            "Sources: remux, bluray, webrip, webdl, hdtv, dvd, cam. Leave blank to accept any; untagged releases are always kept. These are distinct; listing only bluray excludes remux, so add both to accept either."
           )}
         </p>
       </div>
@@ -169,9 +169,9 @@ defmodule CinderWeb.SettingsComponents do
 
       <div class="mt-3 flex flex-wrap items-center gap-3">
         <div :for={{svc, svc_label} <- services_for(group)} class="flex items-center gap-2">
-          <button type="button" class="btn btn-xs" phx-click="test" phx-value-service={svc}>
+          <.button type="button" variant="neutral" size="sm" phx-click="test" phx-value-service={svc}>
             {gettext("Test %{service}", service: svc_label)}
-          </button>
+          </.button>
           <.test_badge :if={@health[svc]} result={@health[svc]} />
         </div>
       </div>

@@ -68,7 +68,7 @@ defmodule CinderWeb.UserLive.LoginTest do
     test "shows login page with email filled in", %{conn: conn, user: user} do
       {:ok, _lv, html} = live(conn, ~p"/users/log-in")
 
-      assert html =~ "You need to reauthenticate"
+      assert html =~ "You need to log in again"
       refute html =~ "Register"
 
       assert html =~

@@ -105,33 +105,48 @@ defmodule CinderWeb.CoreComponents do
       <.button phx-click="go" variant="primary">Send!</.button>
       <.button navigate={~p"/"}>Home</.button>
   """
-  attr :rest, :global, include: ~w(href navigate patch method download name value disabled)
-  attr :class, :any
-  attr :variant, :string, values: ~w(primary)
+  attr :rest, :global,
+    include: ~w(href navigate patch method download name value disabled type form)
+
+  attr :class, :any, default: nil, doc: "extra classes appended to the computed button classes"
+  attr :variant, :string, default: "primary", values: ~w(primary neutral ghost danger warning)
+  attr :size, :string, default: "md", values: ~w(xs sm md)
   slot :inner_block, required: true
 
   def button(%{rest: rest} = assigns) do
-    variants = %{"primary" => "btn-primary", nil => "btn-primary btn-soft"}
-
     assigns =
-      assign_new(assigns, :class, fn ->
-        ["btn", Map.fetch!(variants, assigns[:variant])]
-      end)
+      assign(assigns, :btn_class, [
+        "btn",
+        button_variant(assigns.variant),
+        button_size(assigns.size),
+        assigns.class
+      ])
 
     if rest[:href] || rest[:navigate] || rest[:patch] do
       ~H"""
-      <.link class={@class} {@rest}>
+      <.link class={@btn_class} {@rest}>
         {render_slot(@inner_block)}
       </.link>
       """
     else
       ~H"""
-      <button class={@class} {@rest}>
+      <button class={@btn_class} {@rest}>
         {render_slot(@inner_block)}
       </button>
       """
     end
   end
+
+  defp button_variant("primary"), do: "btn-primary"
+  # plain daisyUI button (subtle surface) — the unobtrusive secondary action
+  defp button_variant("neutral"), do: nil
+  defp button_variant("ghost"), do: "btn-ghost"
+  defp button_variant("danger"), do: "btn-error"
+  defp button_variant("warning"), do: "btn-warning"
+
+  defp button_size("md"), do: nil
+  defp button_size("sm"), do: "btn-sm"
+  defp button_size("xs"), do: "btn-xs"
 
   @doc """
   A centered empty / zero state: icon, title, optional message, optional `:cta` slot.
@@ -158,7 +173,7 @@ defmodule CinderWeb.CoreComponents do
       />
       <div>
         <p class="font-medium">{@title}</p>
-        <p :if={@message} class="mt-1 text-sm text-base-content/60">{@message}</p>
+        <p :if={@message} class="mt-1 text-sm text-base-content/70">{@message}</p>
       </div>
       <div :if={@cta != []}>{render_slot(@cta)}</div>
     </div>
@@ -208,7 +223,12 @@ defmodule CinderWeb.CoreComponents do
       id={@id}
       role="alert"
       aria-live="assertive"
-      class={["alert alert-warning flex flex-col items-start gap-2", @class]}
+      class={[
+        "alert flex flex-col items-start gap-2",
+        @variant == "warning" && "alert-warning",
+        @variant == "error" && "alert-error",
+        @class
+      ]}
     >
       <label
         :if={@checkbox_event}
@@ -224,18 +244,18 @@ defmodule CinderWeb.CoreComponents do
       </label>
       <p class="text-sm">{render_slot(@caveat)}</p>
       <div class="flex flex-wrap gap-2">
-        <button
+        <.button
           type="button"
-          class={["btn", @variant == "warning" && "btn-warning", @variant == "error" && "btn-error"]}
+          variant={if @variant == "warning", do: "warning", else: "danger"}
           phx-click={@on_confirm}
           phx-value-id={@value}
           phx-disable-with={gettext("Working…")}
         >
           {@confirm_label || gettext("Confirm")}
-        </button>
-        <button type="button" class="btn btn-ghost" phx-click={@on_cancel}>
+        </.button>
+        <.button type="button" variant="ghost" phx-click={@on_cancel}>
           {@cancel_label || gettext("Cancel")}
-        </button>
+        </.button>
       </div>
     </div>
     """
@@ -347,11 +367,15 @@ defmodule CinderWeb.CoreComponents do
             value="true"
             checked={@checked}
             class={@class || "checkbox checkbox-sm"}
+            aria-invalid={@errors != [] && "true"}
+            aria-describedby={@errors != [] && @id && "#{@id}-error"}
             {@rest}
           />{@label}
         </span>
       </label>
-      <.error :for={msg <- @errors}>{msg}</.error>
+      <div :if={@errors != []} id={@id && "#{@id}-error"}>
+        <.error :for={msg <- @errors}>{msg}</.error>
+      </div>
     </div>
     """
   end
@@ -366,13 +390,17 @@ defmodule CinderWeb.CoreComponents do
           name={@name}
           class={[@class || "w-full select", @errors != [] && (@error_class || "select-error")]}
           multiple={@multiple}
+          aria-invalid={@errors != [] && "true"}
+          aria-describedby={@errors != [] && @id && "#{@id}-error"}
           {@rest}
         >
           <option :if={@prompt} value="">{@prompt}</option>
           {Phoenix.HTML.Form.options_for_select(@options, @value)}
         </select>
       </label>
-      <.error :for={msg <- @errors}>{msg}</.error>
+      <div :if={@errors != []} id={@id && "#{@id}-error"}>
+        <.error :for={msg <- @errors}>{msg}</.error>
+      </div>
     </div>
     """
   end
@@ -389,10 +417,14 @@ defmodule CinderWeb.CoreComponents do
             @class || "w-full textarea",
             @errors != [] && (@error_class || "textarea-error")
           ]}
+          aria-invalid={@errors != [] && "true"}
+          aria-describedby={@errors != [] && @id && "#{@id}-error"}
           {@rest}
         >{Phoenix.HTML.Form.normalize_value("textarea", @value)}</textarea>
       </label>
-      <.error :for={msg <- @errors}>{msg}</.error>
+      <div :if={@errors != []} id={@id && "#{@id}-error"}>
+        <.error :for={msg <- @errors}>{msg}</.error>
+      </div>
     </div>
     """
   end
@@ -412,10 +444,14 @@ defmodule CinderWeb.CoreComponents do
             @class || "w-full input",
             @errors != [] && (@error_class || "input-error")
           ]}
+          aria-invalid={@errors != [] && "true"}
+          aria-describedby={@errors != [] && @id && "#{@id}-error"}
           {@rest}
         />
       </label>
-      <.error :for={msg <- @errors}>{msg}</.error>
+      <div :if={@errors != []} id={@id && "#{@id}-error"}>
+        <.error :for={msg <- @errors}>{msg}</.error>
+      </div>
     </div>
     """
   end
@@ -441,7 +477,7 @@ defmodule CinderWeb.CoreComponents do
     ~H"""
     <header class={[@actions != [] && "flex items-center justify-between gap-6", "pb-4"]}>
       <div>
-        <h1 class="text-lg font-semibold leading-8">
+        <h1 class="text-xl font-semibold leading-tight">
           {render_slot(@inner_block)}
         </h1>
         <p :if={@subtitle != []} class="text-sm text-base-content/70">
@@ -463,7 +499,7 @@ defmodule CinderWeb.CoreComponents do
 
   def spinner(assigns) do
     ~H"""
-    <span class="inline-flex items-center gap-2 text-base-content/60">
+    <span class="inline-flex items-center gap-2 text-base-content/70">
       <.icon name="hero-arrow-path" class={["motion-safe:animate-spin", @class]} />
       <span :if={@label} class="text-sm">{@label}</span>
     </span>
@@ -638,8 +674,37 @@ defmodule CinderWeb.CoreComponents do
   defp badge_spec(_kind, status),
     do: {humanize_status(status), "badge-neutral", "hero-question-mark-circle"}
 
-  defp badge_title(:health, {:error, reason}), do: inspect(reason)
+  defp badge_title(:health, {:error, reason}), do: health_reason(reason)
   defp badge_title(_kind, _status), do: nil
+
+  @doc """
+  Maps a service-health error reason to a short, human-readable string. Used both
+  for the badge's hover title and for the visible reason text on `/dashboard`.
+  """
+  def health_reason(:not_configured), do: gettext("Not configured")
+  def health_reason(:no_download_client), do: gettext("No reachable client")
+  def health_reason(:timeout), do: gettext("Timed out")
+  def health_reason(:nxdomain), do: gettext("Host not found")
+  def health_reason(:ehostunreach), do: gettext("Host unreachable")
+  def health_reason(:econnrefused), do: gettext("Connection refused")
+  def health_reason(:closed), do: gettext("Connection closed")
+
+  # Service impls emit namespaced status tuples ({:prowlarr_status, 401}, {:qbittorrent_status, n},
+  # …) as well as the bare {:status, n}, so match any 2-tuple whose second element is an HTTP code.
+  def health_reason({_tag, status}) when is_integer(status) and status in [401, 403],
+    do: gettext("Authentication failed")
+
+  def health_reason({_tag, status}) when is_integer(status),
+    do: gettext("HTTP %{status}", status: status)
+
+  def health_reason({:error, reason}), do: health_reason(reason)
+
+  # Unwrap transport/HTTP error structs, e.g. %Req.TransportError{reason: :econnrefused},
+  # so the visible reason reads "Connection refused" rather than a raw struct dump.
+  def health_reason(%{reason: reason}), do: health_reason(reason)
+  def health_reason(%{__exception__: true}), do: gettext("Check failed")
+  def health_reason(reason) when is_binary(reason), do: String.slice(reason, 0, 80)
+  def health_reason(reason), do: reason |> inspect() |> String.slice(0, 80)
 
   defp humanize_status(status) when is_atom(status),
     do: status |> Atom.to_string() |> String.replace("_", " ") |> String.capitalize()
@@ -675,17 +740,19 @@ defmodule CinderWeb.CoreComponents do
           :if={@poster_path}
           src={poster_url(@poster_path)}
           alt={@title}
+          loading="lazy"
+          decoding="async"
           class="aspect-[2/3] w-full object-cover"
         />
         <div
           :if={!@poster_path}
-          class="grid aspect-[2/3] w-full place-items-center bg-base-300 text-sm text-base-content/40"
+          class="grid aspect-[2/3] w-full place-items-center bg-base-300 text-sm text-base-content/70"
         >
           {gettext("No poster")}
         </div>
         <span
           :if={@type}
-          class="badge badge-sm absolute left-2 top-2 gap-1 border-0 bg-base-100/80 backdrop-blur"
+          class="badge badge-sm absolute left-2 top-2 gap-1 border-0 bg-base-100"
         >
           <.icon name={type_icon(@type)} class="size-3" />{type_label(@type)}
         </span>
@@ -693,7 +760,7 @@ defmodule CinderWeb.CoreComponents do
       <div class="card-body gap-2 p-3">
         <h3 class="text-sm font-semibold leading-tight">
           {@title}
-          <span :if={@year} class="font-normal text-base-content/60">({@year})</span>
+          <span :if={@year} class="font-normal text-base-content/70">({@year})</span>
         </h3>
         {render_slot(@inner_block)}
       </div>

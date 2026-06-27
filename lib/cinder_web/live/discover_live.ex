@@ -104,7 +104,7 @@ defmodule CinderWeb.DiscoverLive do
         socket
         |> put_flash(
           :info,
-          gettext("%{title} requested — awaiting approval.", title: movie.title)
+          gettext("%{title} requested. Awaiting approval.", title: movie.title)
         )
         |> assign_request_state()
 
@@ -118,7 +118,7 @@ defmodule CinderWeb.DiscoverLive do
       {:error, _} ->
         put_flash(
           socket,
-          :error,
+          :info,
           gettext("%{title} is already requested.", title: movie.title)
         )
     end
@@ -164,7 +164,7 @@ defmodule CinderWeb.DiscoverLive do
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.header>
         {gettext("Discover")}
-        <:subtitle>{gettext("Search movies and TV — request what you want to watch.")}</:subtitle>
+        <:subtitle>{gettext("Search movies and TV. Request what you want to watch.")}</:subtitle>
       </.header>
 
       <form id="search-form" phx-change="search" phx-submit="search" class="mb-8">
@@ -183,7 +183,7 @@ defmodule CinderWeb.DiscoverLive do
 
       <section :if={@results != []} class="mb-10">
         <h2 class="sr-only">{gettext("Search results")}</h2>
-        <div id="results" class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+        <div id="results" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
           <.media_card
             :for={r <- @results}
             poster_path={r.poster_path}
@@ -195,15 +195,18 @@ defmodule CinderWeb.DiscoverLive do
               :if={r.type == :movie}
               state={title_state(r.tmdb_id, @request_status, @movie_status)}
               tmdb_id={r.tmdb_id}
+              title={r.title}
               original_language={r.original_language}
             />
-            <.link
+            <.button
               :if={r.type == :tv}
               navigate={~p"/series/tmdb/#{r.tmdb_id}"}
-              class="btn btn-primary btn-sm w-full"
+              variant="primary"
+              size="sm"
+              class="w-full"
             >
-              {gettext("View seasons →")}
-            </.link>
+              {gettext("View seasons")}<.icon name="hero-arrow-right" class="size-3.5" />
+            </.button>
           </.media_card>
         </div>
       </section>
@@ -221,14 +224,14 @@ defmodule CinderWeb.DiscoverLive do
         message={gettext("TMDB didn't respond. Try again.")}
       />
 
-      <h2 class="pb-4 text-lg font-semibold leading-8">{gettext("Watchlist")}</h2>
+      <h2 class="pb-4 text-lg font-semibold">{gettext("Watchlist")}</h2>
       <.empty_state
         :if={@watchlist == []}
         icon="hero-bookmark"
         title={gettext("Your watchlist is empty")}
         message={gettext("Search above to add a movie.")}
       />
-      <div id="watchlist" class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+      <div id="watchlist" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
         <.media_card
           :for={m <- @watchlist}
           poster_path={m.poster_path}
@@ -244,6 +247,7 @@ defmodule CinderWeb.DiscoverLive do
 
   attr :state, :atom, required: true
   attr :tmdb_id, :integer, required: true
+  attr :title, :string, required: true
   attr :original_language, :string, default: nil
 
   defp result_action(assigns) do
@@ -257,13 +261,16 @@ defmodule CinderWeb.DiscoverLive do
     >
       <input type="hidden" name="tmdb_id" value={@tmdb_id} />
       <.language_select original_label={original_option_label(@original_language)} />
-      <button
+      <.button
         type="submit"
-        class="btn btn-primary btn-sm w-full"
+        variant="primary"
+        size="sm"
+        class="w-full"
+        aria-label={gettext("Add %{title}", title: @title)}
         phx-disable-with={gettext("Adding…")}
       >
         {gettext("Add")}
-      </button>
+      </.button>
     </form>
     """
   end

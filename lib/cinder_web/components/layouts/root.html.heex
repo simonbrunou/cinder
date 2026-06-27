@@ -10,6 +10,12 @@
     </script>
     <script>
       (() => {
+        const syncThemeRadios = () => {
+          const choice = localStorage.getItem("phx:theme") || "system";
+          document.querySelectorAll("[data-phx-theme]").forEach((el) => {
+            el.setAttribute("aria-checked", el.dataset.phxTheme === choice ? "true" : "false");
+          });
+        };
         const setTheme = (theme) => {
           if (theme === "system") {
             localStorage.removeItem("phx:theme");
@@ -18,13 +24,15 @@
             localStorage.setItem("phx:theme", theme);
             document.documentElement.setAttribute("data-theme", theme);
           }
+          syncThemeRadios();
         };
         if (!document.documentElement.hasAttribute("data-theme")) {
           setTheme(localStorage.getItem("phx:theme") || "system");
         }
         window.addEventListener("storage", (e) => e.key === "phx:theme" && setTheme(e.newValue || "system"));
-        
         window.addEventListener("phx:set-theme", (e) => setTheme(e.target.dataset.phxTheme));
+        window.addEventListener("DOMContentLoaded", syncThemeRadios);
+        window.addEventListener("phx:page-loading-stop", syncThemeRadios);
       })();
     </script>
   </head>

@@ -77,7 +77,7 @@ defmodule CinderWeb.ActivityLive do
     {:noreply,
      socket
      |> assign(confirming: nil, grabs: Catalog.list_grabs())
-     |> put_flash(:info, gettext("Grab deleted."))}
+     |> put_flash(:info, gettext("Download deleted."))}
   end
 
   # Client-controlled payloads — ignore anything unmatched rather than crash.
@@ -85,7 +85,7 @@ defmodule CinderWeb.ActivityLive do
 
   defp parked?(status), do: status in @parked
   defp series_title(%{episodes: [ep | _]}), do: ep.season.series.title
-  defp series_title(_), do: "—"
+  defp series_title(_), do: gettext("Unknown series")
   defp grab_state(%{content_path: nil}), do: :downloading
   defp grab_state(_), do: :downloaded
 
@@ -113,19 +113,20 @@ defmodule CinderWeb.ActivityLive do
             class="card bg-base-200 p-3 flex flex-row flex-wrap items-center gap-3"
           >
             <span class="min-w-0 flex-1 truncate">
-              {m.title}<span :if={m.year} class="text-base-content/50"> ({m.year})</span>
+              {m.title}<span :if={m.year} class="text-base-content/70"> ({m.year})</span>
             </span>
             <.status_badge kind={:movie} status={m.status} />
-            <button
+            <.button
               :if={parked?(m.status)}
               type="button"
-              class="btn btn-xs btn-ghost"
+              variant="ghost"
+              size="sm"
               phx-click="retry"
               phx-value-id={m.id}
               phx-disable-with={gettext("Retrying…")}
             >
               {gettext("Retry")}
-            </button>
+            </.button>
             <form id={"movie-language-form-#{m.id}"} phx-change="set_movie_language" class="ml-auto">
               <input type="hidden" name="_id" value={m.id} />
               <.language_select value={m.preferred_language} class="select select-xs" />
@@ -147,17 +148,19 @@ defmodule CinderWeb.ActivityLive do
             <div class="flex flex-wrap items-center gap-2">
               <span class="font-semibold">{series_title(g)}</span>
               <.status_badge kind={:grab} status={grab_state(g)} />
-              <span class="text-xs text-base-content/50">{g.download_protocol}</span>
-              <span class="text-xs text-base-content/50 truncate">{g.download_id}</span>
-              <button
+              <span class="text-xs text-base-content/70">{g.download_protocol}</span>
+              <span class="text-xs text-base-content/70 truncate">{g.download_id}</span>
+              <.button
                 type="button"
-                class="btn btn-xs btn-error ml-auto"
+                variant="danger"
+                size="sm"
+                class="ml-auto"
                 phx-click="ask_delete"
                 phx-value-id={g.id}
                 phx-disable-with={gettext("Deleting…")}
               >
                 {gettext("Delete")}
-              </button>
+              </.button>
             </div>
             <.confirm_action
               :if={@confirming == to_string(g.id)}
@@ -167,7 +170,7 @@ defmodule CinderWeb.ActivityLive do
               value={g.id}
               confirm_label={gettext("Delete")}
             >
-              <:caveat>{gettext("Delete this grab? Its episodes are unlinked.")}</:caveat>
+              <:caveat>{gettext("Delete this download? Its episodes are unlinked.")}</:caveat>
             </.confirm_action>
           </li>
         </ul>

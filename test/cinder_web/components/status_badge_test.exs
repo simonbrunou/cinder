@@ -44,12 +44,20 @@ defmodule CinderWeb.StatusBadgeTest do
     end
   end
 
-  test "a health error renders Unreachable, error colour, and the reason as a title" do
+  test "a health error renders Unreachable, error colour, and a human reason as a title" do
     html = badge(%{kind: :health, status: {:error, :timeout}})
     assert html =~ "Unreachable"
     assert html =~ "badge-error"
     assert html =~ ~s(title=)
-    assert html =~ "timeout"
+    assert html =~ "Timed out"
+  end
+
+  test "health_reason unwraps wrapped error shapes into human strings" do
+    f = &CinderWeb.CoreComponents.health_reason/1
+    assert f.(%Req.TransportError{reason: :econnrefused}) == "Connection refused"
+    assert f.(:not_configured) == "Not configured"
+    assert f.({:status, 401}) == "Authentication failed"
+    assert f.(%CaseClauseError{term: nil}) == "Check failed"
   end
 
   test "an unmapped status falls back to a neutral badge instead of raising" do

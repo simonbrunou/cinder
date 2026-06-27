@@ -55,5 +55,9 @@ defmodule Cinder.Requests.Request do
     request
     |> cast(attrs, [:status, :denial_reason, :approved_by_id])
     |> validate_required([:status])
+    # reopen_request/2 moves a denied row back to :pending, which can collide on the partial
+    # requests_pending_unique index; map that to {:error, changeset} rather than raising. Harmless
+    # for approve/deny, which move to non-pending statuses the partial index ignores.
+    |> unique_constraint([:user_id, :target_type, :target_id], name: :requests_pending_unique)
   end
 end

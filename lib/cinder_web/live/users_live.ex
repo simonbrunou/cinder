@@ -103,7 +103,7 @@ defmodule CinderWeb.UsersLive do
 
       {:error, _changeset} ->
         {:noreply,
-         put_flash(socket, :error, gettext("Couldn't update email — check the address."))}
+         put_flash(socket, :error, gettext("Couldn't update email. Check the address."))}
     end
   end
 
@@ -151,7 +151,7 @@ defmodule CinderWeb.UsersLive do
       {:noreply,
        socket
        |> assign(resetting_pw: nil)
-       |> put_flash(:info, gettext("Password reset — the user's sessions were ended."))}
+       |> put_flash(:info, gettext("Password reset. The user's sessions were ended."))}
     else
       nil ->
         {:noreply, socket}
@@ -238,9 +238,9 @@ defmodule CinderWeb.UsersLive do
       </.header>
 
       <div class="mb-6">
-        <button :if={!@creating} class="btn btn-primary btn-sm" phx-click="start_create">
+        <.button :if={!@creating} variant="primary" size="sm" phx-click="start_create">
           {gettext("New user")}
-        </button>
+        </.button>
         <.form
           :if={@creating}
           id="create-user-form"
@@ -263,16 +263,17 @@ defmodule CinderWeb.UsersLive do
             options={[{gettext("User"), "user"}, {gettext("Admin"), "admin"}]}
           />
           <div class="flex gap-2">
-            <button
-              class="btn btn-primary btn-sm"
+            <.button
+              variant="primary"
+              size="sm"
               type="submit"
               phx-disable-with={gettext("Creating…")}
             >
               {gettext("Create")}
-            </button>
-            <button class="btn btn-ghost btn-sm" type="button" phx-click="cancel_create">
+            </.button>
+            <.button variant="ghost" size="sm" type="button" phx-click="cancel_create">
               {gettext("Cancel")}
-            </button>
+            </.button>
           </div>
         </.form>
       </div>
@@ -281,30 +282,31 @@ defmodule CinderWeb.UsersLive do
         <li :for={u <- @users} class="card bg-base-200 p-4">
           <div class="flex items-center gap-3 flex-wrap">
             <span class="font-semibold">{u.email}</span>
-            <button
+            <.button
               id={"role-btn-#{u.id}"}
-              class="badge badge-sm"
+              variant="neutral"
+              size="sm"
               phx-click="toggle_role"
               phx-value-id={u.id}
               phx-disable-with="…"
-              title={gettext("Toggle admin/user")}
               aria-label={
-                gettext("Toggle role for %{email} (currently %{role})",
+                gettext("Change role for %{email}, currently %{role}",
                   email: u.email,
                   role: u.role
                 )
               }
             >
-              {u.role}
-            </button>
-            <button
+              <.icon name="hero-arrows-right-left" class="size-3" />{u.role}
+            </.button>
+            <.button
               id={"edit-email-btn-#{u.id}"}
-              class="btn btn-ghost btn-xs"
+              variant="ghost"
+              size="sm"
               phx-click="start_edit_email"
               phx-value-id={u.id}
             >
               {gettext("Edit email")}
-            </button>
+            </.button>
             <form
               id={"quota-#{u.id}"}
               phx-submit="set_quota"
@@ -321,7 +323,9 @@ defmodule CinderWeb.UsersLive do
                 class="input input-sm w-24"
                 placeholder="∞"
               />
-              <button class="btn btn-sm" phx-disable-with={gettext("Saving…")}>{gettext("Save")}</button>
+              <.button variant="neutral" size="sm" phx-disable-with={gettext("Saving…")}>{gettext(
+                "Save"
+              )}</.button>
             </form>
           </div>
           <.form
@@ -336,33 +340,37 @@ defmodule CinderWeb.UsersLive do
               type="email"
               name="user[email]"
               value={u.email}
+              aria-label={gettext("New email")}
               class="input input-sm input-bordered"
             />
-            <button class="btn btn-primary btn-sm" type="submit" phx-disable-with={gettext("Saving…")}>
+            <.button variant="primary" size="sm" type="submit" phx-disable-with={gettext("Saving…")}>
               {gettext("Save email")}
-            </button>
-            <button class="btn btn-ghost btn-sm" type="button" phx-click="cancel_edit_email">
+            </.button>
+            <.button variant="ghost" size="sm" type="button" phx-click="cancel_edit_email">
               {gettext("Cancel")}
-            </button>
+            </.button>
           </.form>
           <div class="mt-2 flex items-center gap-2 flex-wrap">
-            <button
+            <.button
               id={"reset-pw-btn-#{u.id}"}
-              class="btn btn-ghost btn-xs"
+              variant="ghost"
+              size="sm"
               phx-click="start_reset_pw"
               phx-value-id={u.id}
             >
               {gettext("Reset password")}
-            </button>
-            <button
+            </.button>
+            <.button
               :if={@confirming_delete != to_string(u.id)}
               id={"delete-btn-#{u.id}"}
-              class="btn btn-ghost btn-xs text-error"
+              variant="ghost"
+              size="sm"
+              class="text-error"
               phx-click="start_delete"
               phx-value-id={u.id}
             >
               {gettext("Delete")}
-            </button>
+            </.button>
           </div>
           <.confirm_action
             :if={@confirming_delete == to_string(u.id)}
@@ -372,7 +380,9 @@ defmodule CinderWeb.UsersLive do
             value={u.id}
             confirm_label={gettext("Delete")}
           >
-            <:caveat>{gettext("Delete %{email}? Requests cascade.", email: u.email)}</:caveat>
+            <:caveat>
+              {gettext("Delete %{email}? Their requests are deleted too.", email: u.email)}
+            </:caveat>
           </.confirm_action>
           <.form
             :if={@resetting_pw == to_string(u.id)}
@@ -386,24 +396,27 @@ defmodule CinderWeb.UsersLive do
               type="password"
               name="user[password]"
               placeholder={gettext("New password")}
+              aria-label={gettext("New password")}
               class="input input-sm input-bordered"
             />
             <input
               type="password"
               name="user[password_confirmation]"
               placeholder={gettext("Confirm")}
+              aria-label={gettext("Confirm new password")}
               class="input input-sm input-bordered"
             />
-            <button
-              class="btn btn-primary btn-sm"
+            <.button
+              variant="primary"
+              size="sm"
               type="submit"
               phx-disable-with={gettext("Resetting…")}
             >
               {gettext("Set password")}
-            </button>
-            <button class="btn btn-ghost btn-sm" type="button" phx-click="cancel_reset_pw">
+            </.button>
+            <.button variant="ghost" size="sm" type="button" phx-click="cancel_reset_pw">
               {gettext("Cancel")}
-            </button>
+            </.button>
           </.form>
         </li>
       </ul>

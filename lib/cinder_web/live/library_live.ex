@@ -219,30 +219,38 @@ defmodule CinderWeb.LibraryLive do
           <li :for={m <- @movies} id={"movie-#{m.id}"} class="card bg-base-200 p-4">
             <div class="flex flex-wrap items-center gap-3">
               <span class="font-semibold">{m.title}</span>
-              <span :if={m.year} class="text-base-content/60">({m.year})</span>
+              <span :if={m.year} class="text-base-content/70">({m.year})</span>
               <.status_badge kind={:movie} status={m.status} />
               <div class="ml-auto flex gap-2">
-                <button type="button" class="btn btn-xs" phx-click="edit" phx-value-id={m.id}>
+                <.button
+                  type="button"
+                  variant="neutral"
+                  size="sm"
+                  phx-click="edit"
+                  phx-value-id={m.id}
+                >
                   {gettext("Edit")}
-                </button>
-                <button
+                </.button>
+                <.button
                   :if={Catalog.cancellable?(m)}
                   type="button"
-                  class="btn btn-xs btn-warning"
+                  variant="warning"
+                  size="sm"
                   phx-click="ask_cancel_movie"
                   phx-value-id={m.id}
                 >
                   {gettext("Cancel")}
-                </button>
-                <button
+                </.button>
+                <.button
                   :if={not Catalog.cancellable?(m)}
                   type="button"
-                  class="btn btn-xs btn-error"
+                  variant="danger"
+                  size="sm"
                   phx-click="ask_delete_movie"
                   phx-value-id={m.id}
                 >
                   {gettext("Delete")}
-                </button>
+                </.button>
               </div>
             </div>
 
@@ -256,16 +264,17 @@ defmodule CinderWeb.LibraryLive do
             >
               <.input field={@form[:title]} type="text" label={gettext("Title")} />
               <.input field={@form[:year]} type="number" label={gettext("Year")} />
-              <button
-                class="btn btn-sm btn-primary"
+              <.button
+                variant="primary"
+                size="sm"
                 type="submit"
                 phx-disable-with={gettext("Saving…")}
               >
                 {gettext("Save")}
-              </button>
-              <button class="btn btn-sm btn-ghost" type="button" phx-click="cancel_edit">
+              </.button>
+              <.button variant="ghost" size="sm" type="button" phx-click="cancel_edit">
                 {gettext("Cancel edit")}
-              </button>
+              </.button>
             </.form>
 
             <.confirm_action
@@ -314,23 +323,27 @@ defmodule CinderWeb.LibraryLive do
           <div :for={s <- @series} id={"series-row-#{s.id}"} class="space-y-2">
             <.link navigate={~p"/series/#{s.id}"} class="block">
               <.media_card poster_path={s.poster_path} title={s.title} year={s.year} type={:tv}>
-                <span class="link link-primary text-sm">{gettext("Configure monitoring →")}</span>
+                <span class="link link-primary inline-flex items-center gap-1 text-sm">
+                  {gettext("Configure monitoring")}<.icon name="hero-arrow-right" class="size-3.5" />
+                </span>
               </.media_card>
             </.link>
 
             <div class="flex gap-2">
-              <button
+              <.button
                 type="button"
-                class="btn btn-sm btn-warning"
+                variant="warning"
+                size="sm"
                 phx-click="ask_cancel_series"
                 phx-value-id={s.id}
-              >{gettext("Cancel")}</button>
-              <button
+              >{gettext("Cancel")}</.button>
+              <.button
                 type="button"
-                class="btn btn-sm btn-error"
+                variant="danger"
+                size="sm"
                 phx-click="ask_delete_series"
                 phx-value-id={s.id}
-              >{gettext("Delete")}</button>
+              >{gettext("Delete")}</.button>
             </div>
 
             <.confirm_action

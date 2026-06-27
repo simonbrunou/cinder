@@ -11,7 +11,7 @@ defmodule CinderWeb.UserLive.Login do
             <p>{gettext("Log in")}</p>
             <:subtitle>
               <%= if @current_scope do %>
-                {gettext("You need to reauthenticate to perform sensitive actions on your account.")}
+                {gettext("You need to log in again to perform sensitive actions on your account.")}
               <% else %>
                 {gettext("Don't have an account?")} <.link
                   navigate={~p"/users/register"}
@@ -47,10 +47,10 @@ defmodule CinderWeb.UserLive.Login do
             autocomplete="current-password"
             spellcheck="false"
           />
-          <.button class="btn btn-primary w-full" name={@form[:remember_me].name} value="true">
-            {gettext("Log in and stay logged in")} <span aria-hidden="true">→</span>
+          <.button class="w-full" name={@form[:remember_me].name} value="true">
+            {gettext("Log in and stay logged in")}<.icon name="hero-arrow-right" class="size-3.5" />
           </.button>
-          <.button class="btn btn-primary btn-soft w-full mt-2">
+          <.button variant="ghost" class="w-full mt-2">
             {gettext("Log in only this time")}
           </.button>
         </.form>

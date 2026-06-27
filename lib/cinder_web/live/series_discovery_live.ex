@@ -72,7 +72,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
           socket
           |> put_flash(
             :info,
-            gettext("Season %{number} of %{title} requested — awaiting approval.",
+            gettext("Season %{number} of %{title} requested. Awaiting approval.",
               number: season_number,
               title: info.title
             )
@@ -102,7 +102,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
            put_flash(
              socket,
              :error,
-             gettext("Couldn't complete that request — please try again.")
+             gettext("Couldn't complete that request. Please try again.")
            )}
       end
     else
@@ -147,19 +147,23 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
-      <.link navigate={~p"/"} class="link mb-6 inline-block">{gettext("← Discover")}</.link>
+      <.link navigate={~p"/"} class="link mb-6 inline-flex items-center gap-1">
+        <.icon name="hero-arrow-left" class="size-3.5" />{gettext("Discover")}
+      </.link>
 
       <div class="mb-8 flex gap-4">
         <img
           :if={@info.poster_path}
           src={poster_url(@info.poster_path)}
           alt={@info.title}
+          loading="lazy"
+          decoding="async"
           class="aspect-[2/3] w-24 rounded object-cover"
         />
         <div>
           <.header>
             {@info.title}
-            <span :if={@info.year} class="font-normal text-base-content/60">({@info.year})</span>
+            <span :if={@info.year} class="font-normal text-base-content/70">({@info.year})</span>
           </.header>
         </div>
       </div>
@@ -197,16 +201,17 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   defp season_action(assigns) do
     ~H"""
     <.status_badge :if={@status != nil} kind={:request} status={@status} />
-    <button
+    <.button
       :if={@status in [nil, :denied]}
       type="button"
       phx-click="request_season"
       phx-value-season={@season_number}
       phx-disable-with={gettext("Requesting…")}
-      class="btn btn-primary btn-sm"
+      variant="primary"
+      size="sm"
     >
       {gettext("Request")}
-    </button>
+    </.button>
     """
   end
 end

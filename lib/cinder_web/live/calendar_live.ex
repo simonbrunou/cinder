@@ -65,10 +65,15 @@ defmodule CinderWeb.CalendarLive do
           :for={row <- @rows}
           class="card bg-base-200 p-3 flex flex-row flex-wrap items-center gap-x-3 gap-y-1"
         >
-          <span class="w-24 tabular-nums text-sm text-base-content/60">{row.ep.air_date}</span>
+          <time
+            datetime={Date.to_iso8601(row.ep.air_date)}
+            class="w-24 tabular-nums text-sm text-base-content/70"
+          >
+            {Calendar.strftime(row.ep.air_date, "%b %-d")}
+          </time>
           <.status_badge kind={:episode} status={row.state} />
           <span class="font-medium">{row.ep.season.series.title}</span>
-          <span class="tabular-nums text-sm text-base-content/60">
+          <span class="tabular-nums text-sm text-base-content/70">
             {code(row.ep.season.season_number, row.ep.episode_number)}
           </span>
           <span class="truncate text-base-content/70">{row.ep.title}</span>

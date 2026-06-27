@@ -52,13 +52,13 @@ defmodule CinderWeb.MyRequestsLive do
             <span class="font-semibold">
               {if r.target_type == "season",
                 do:
-                  gettext("%{title} — Season %{number}",
+                  gettext("%{title}: Season %{number}",
                     title: r.title,
                     number: r.season_number
                   ),
                 else: r.title}
             </span>
-            <span :if={r.year} class="text-base-content/60">({r.year})</span>
+            <span :if={r.year} class="text-base-content/70">({r.year})</span>
             <.status_badge kind={:request} status={r.status} />
             <.status_badge
               :if={r.target_type == "movie" and @movie_status[r.target_id]}
@@ -66,8 +66,12 @@ defmodule CinderWeb.MyRequestsLive do
               status={@movie_status[r.target_id]}
             />
           </div>
-          <p :if={r.status == :denied and r.denial_reason} class="mt-1 text-sm text-error">
-            {r.denial_reason}
+          <p
+            :if={r.status == :denied and r.denial_reason}
+            class="mt-1 flex items-start gap-1.5 text-sm text-error"
+          >
+            <.icon name="hero-x-circle" class="mt-0.5 size-4 shrink-0" />
+            <span><span class="font-medium">{gettext("Reason:")}</span> {r.denial_reason}</span>
           </p>
         </li>
       </ul>

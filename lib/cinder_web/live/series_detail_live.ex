@@ -271,16 +271,20 @@ defmodule CinderWeb.SeriesDetailLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
-      <.link navigate={~p"/library"} class="link mb-6 inline-block">{gettext("← Library")}</.link>
+      <.link navigate={~p"/library"} class="link mb-6 inline-flex items-center gap-1">
+        <.icon name="hero-arrow-left" class="size-3.5" />{gettext("Library")}
+      </.link>
 
       <div class="mb-4 flex flex-wrap items-center gap-2">
-        <button type="button" class="btn btn-sm" phx-click="edit_series">{gettext("Edit")}</button>
-        <button type="button" class="btn btn-sm btn-warning" phx-click="ask_cancel_series">
+        <.button type="button" variant="neutral" size="sm" phx-click="edit_series">
+          {gettext("Edit")}
+        </.button>
+        <.button type="button" variant="warning" size="sm" phx-click="ask_cancel_series">
           {gettext("Cancel series")}
-        </button>
-        <button type="button" class="btn btn-sm btn-error" phx-click="ask_delete_series">
+        </.button>
+        <.button type="button" variant="danger" size="sm" phx-click="ask_delete_series">
           {gettext("Delete series")}
-        </button>
+        </.button>
       </div>
 
       <.form
@@ -292,12 +296,12 @@ defmodule CinderWeb.SeriesDetailLive do
       >
         <.input field={@form[:title]} type="text" label={gettext("Title")} />
         <.input field={@form[:year]} type="number" label={gettext("Year")} />
-        <button class="btn btn-sm btn-primary" type="submit" phx-disable-with={gettext("Saving…")}>
+        <.button variant="primary" size="sm" type="submit" phx-disable-with={gettext("Saving…")}>
           {gettext("Save")}
-        </button>
-        <button class="btn btn-sm btn-ghost" type="button" phx-click="cancel_edit_series">
+        </.button>
+        <.button variant="ghost" size="sm" type="button" phx-click="cancel_edit_series">
           {gettext("Cancel")}
-        </button>
+        </.button>
       </.form>
 
       <.confirm_action
@@ -332,12 +336,14 @@ defmodule CinderWeb.SeriesDetailLive do
           :if={@series.poster_path}
           src={poster_url(@series.poster_path)}
           alt={@series.title}
+          loading="lazy"
+          decoding="async"
           class="aspect-[2/3] w-24 rounded object-cover"
         />
         <div>
           <.header>
             {@series.title}
-            <span :if={@series.year} class="font-normal text-base-content/60">({@series.year})</span>
+            <span :if={@series.year} class="font-normal text-base-content/70">({@series.year})</span>
             <:actions>
               <span class={["badge badge-sm", @series.monitored && "badge-success"]}>
                 {if @series.monitored, do: gettext("Monitored"), else: gettext("Unmonitored")}
@@ -362,7 +368,7 @@ defmodule CinderWeb.SeriesDetailLive do
         <div class="mb-2 flex items-center justify-between border-b border-base-300 pb-2">
           <h2 class="text-lg font-semibold">
             {season_label(season.season_number)}
-            <span class="ml-2 text-sm font-normal text-base-content/60">
+            <span class="ml-2 text-sm font-normal text-base-content/70">
               {gettext("%{n}/%{m} monitored",
                 n: monitored_count(season),
                 m: length(season.episodes)
@@ -370,12 +376,13 @@ defmodule CinderWeb.SeriesDetailLive do
             </span>
           </h2>
           <div class="flex items-center gap-2">
-            <button
+            <.button
               :if={season.episodes != []}
               type="button"
               phx-click="toggle_season"
               phx-value-id={season.id}
-              class="btn btn-xs"
+              variant="neutral"
+              size="sm"
               aria-label={
                 if all_monitored?(season),
                   do:
@@ -389,11 +396,12 @@ defmodule CinderWeb.SeriesDetailLive do
               }
             >
               {if all_monitored?(season), do: gettext("Unmonitor all"), else: gettext("Monitor all")}
-            </button>
-            <button
+            </.button>
+            <.button
               :if={Enum.any?(season.episodes, & &1.file_path)}
               type="button"
-              class="btn btn-xs btn-error"
+              variant="danger"
+              size="sm"
               phx-click="ask_delete_season_files"
               phx-value-id={season.id}
               aria-label={
@@ -401,7 +409,7 @@ defmodule CinderWeb.SeriesDetailLive do
               }
             >
               {gettext("Delete files")}
-            </button>
+            </.button>
           </div>
         </div>
 
@@ -425,7 +433,7 @@ defmodule CinderWeb.SeriesDetailLive do
           </:caveat>
         </.confirm_action>
 
-        <p :if={season.episodes == []} class="text-sm text-base-content/50">
+        <p :if={season.episodes == []} class="text-sm text-base-content/70">
           {gettext("No episodes yet.")}
         </p>
         <ul class="divide-y divide-base-200">
@@ -433,7 +441,7 @@ defmodule CinderWeb.SeriesDetailLive do
             <div class="flex items-center gap-3">
               <input
                 type="checkbox"
-                class="toggle toggle-sm"
+                class="toggle"
                 checked={ep.monitored}
                 phx-click="toggle_episode"
                 phx-value-id={ep.id}
@@ -444,13 +452,20 @@ defmodule CinderWeb.SeriesDetailLive do
                   )
                 }
               />
-              <span class="w-8 text-sm tabular-nums text-base-content/60">{ep.episode_number}</span>
+              <span class="w-8 text-sm tabular-nums text-base-content/70">{ep.episode_number}</span>
               <span class="flex-1 text-sm">{ep.title}</span>
-              <span :if={ep.air_date} class="text-xs text-base-content/50">{ep.air_date}</span>
-              <button
+              <time
+                :if={ep.air_date}
+                datetime={Date.to_iso8601(ep.air_date)}
+                class="text-xs text-base-content/70"
+              >
+                {Calendar.strftime(ep.air_date, "%b %-d, %Y")}
+              </time>
+              <.button
                 :if={ep.file_path}
                 type="button"
-                class="btn btn-xs btn-error"
+                variant="danger"
+                size="sm"
                 phx-click="ask_delete_episode_file"
                 phx-value-id={ep.id}
                 aria-label={
@@ -461,7 +476,7 @@ defmodule CinderWeb.SeriesDetailLive do
                 }
               >
                 {gettext("Delete file")}
-              </button>
+              </.button>
             </div>
             <.confirm_action
               :if={@confirming == {:episode_file, to_string(ep.id)}}
@@ -476,7 +491,7 @@ defmodule CinderWeb.SeriesDetailLive do
             >
               <:caveat>
                 {gettext(
-                  "Delete the downloaded file for this episode? If it stays monitored the poller re-downloads it next tick — tick \"stop monitoring\" to keep it gone."
+                  "Delete the downloaded file for this episode? If it stays monitored it will be downloaded again. Stop monitoring it to keep it gone."
                 )}
               </:caveat>
             </.confirm_action>

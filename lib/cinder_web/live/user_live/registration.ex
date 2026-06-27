@@ -57,7 +57,7 @@ defmodule CinderWeb.UserLive.Registration do
             required
           />
 
-          <.button phx-disable-with={gettext("Creating account...")} class="btn btn-primary w-full">
+          <.button phx-disable-with={gettext("Creating account...")} class="w-full">
             {gettext("Create an account")}
           </.button>
         </.form>

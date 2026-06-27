@@ -51,7 +51,7 @@ defmodule CinderWeb.Layouts do
       />
 
       <div class="drawer-content flex min-h-screen flex-col">
-        <header class="navbar border-b border-base-300/60 bg-base-100/80 backdrop-blur lg:hidden">
+        <header class="navbar border-b border-base-300/60 bg-base-100 lg:hidden">
           <label for="nav-drawer" class="btn btn-ghost btn-square" aria-label={gettext("Open menu")}>
             <.icon name="hero-bars-3" class="size-6" />
           </label>
@@ -78,7 +78,7 @@ defmodule CinderWeb.Layouts do
           </a>
 
           <ul class="menu w-full gap-1 px-0">
-            <li class="menu-title">{gettext("Everyone")}</li>
+            <li class="menu-title text-base-content/70">{gettext("Everyone")}</li>
             <.nav_item
               navigate={~p"/"}
               label={gettext("Discover")}
@@ -93,7 +93,7 @@ defmodule CinderWeb.Layouts do
             />
 
             <%= if @admin? do %>
-              <li class="menu-title mt-2">{gettext("Admin")}</li>
+              <li class="menu-title mt-2 text-base-content/70">{gettext("Admin")}</li>
               <.nav_item
                 navigate={~p"/dashboard"}
                 label={gettext("Dashboard")}
@@ -144,7 +144,7 @@ defmodule CinderWeb.Layouts do
               <.theme_toggle />
               <.locale_switcher />
             </div>
-            <div class="px-2 text-xs text-base-content/60 truncate">
+            <div class="px-2 text-xs text-base-content/70 truncate">
               {@current_scope.user.email}
             </div>
             <ul class="menu w-full gap-1 px-0">
@@ -284,11 +284,19 @@ defmodule CinderWeb.Layouts do
   """
   def theme_toggle(assigns) do
     ~H"""
-    <div class="card relative flex flex-row items-center border-2 border-base-300 bg-base-300 rounded-full">
+    <div
+      id="theme-toggle"
+      role="radiogroup"
+      aria-label={gettext("Theme")}
+      phx-update="ignore"
+      class="card relative flex flex-row items-center border-2 border-base-300 bg-base-300 rounded-full"
+    >
       <div class="absolute w-1/3 h-full rounded-full border-1 border-base-200 bg-base-100 brightness-200 [[data-theme=light]_&]:brightness-100 left-0 [[data-theme=light]_&]:left-1/3 [[data-theme=dark]_&]:left-2/3 transition-[left]" />
 
       <button
         type="button"
+        role="radio"
+        aria-checked="true"
         aria-label={gettext("Use system theme")}
         class="flex items-center justify-center min-h-11 w-1/3 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-primary"
         phx-click={JS.dispatch("phx:set-theme")}
@@ -299,6 +307,8 @@ defmodule CinderWeb.Layouts do
 
       <button
         type="button"
+        role="radio"
+        aria-checked="false"
         aria-label={gettext("Use light theme")}
         class="flex items-center justify-center min-h-11 w-1/3 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-primary"
         phx-click={JS.dispatch("phx:set-theme")}
@@ -309,6 +319,8 @@ defmodule CinderWeb.Layouts do
 
       <button
         type="button"
+        role="radio"
+        aria-checked="false"
         aria-label={gettext("Use dark theme")}
         class="flex items-center justify-center min-h-11 w-1/3 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-primary"
         phx-click={JS.dispatch("phx:set-theme")}

@@ -24,6 +24,50 @@ defmodule CinderWeb.RequestsLiveTest do
     assert {:ok, %{status: :approved}} = {:ok, Cinder.Repo.reload(req)}
   end
 
+  test "reopen returns a denied request to pending", %{conn: conn} do
+    user = user_fixture()
+    admin = admin_fixture()
+
+    {:ok, req} =
+      Cinder.Requests.create_request(user, %{
+        target_type: "movie",
+        target_id: 603,
+        title: "The Matrix"
+      })
+
+    {:ok, _} = Cinder.Requests.deny_request(req, admin, "later")
+
+    {:ok, lv, _html} = live(conn, ~p"/requests")
+    lv |> element("button", "Reopen") |> render_click()
+    assert %{status: :pending} = Cinder.Repo.reload(req)
+  end
+
+  test "bulk approve approves every selected pending request", %{conn: conn} do
+    user = user_fixture()
+
+    {:ok, r1} =
+      Cinder.Requests.create_request(user, %{
+        target_type: "movie",
+        target_id: 603,
+        title: "The Matrix"
+      })
+
+    {:ok, r2} =
+      Cinder.Requests.create_request(user, %{
+        target_type: "movie",
+        target_id: 27_205,
+        title: "Inception"
+      })
+
+    {:ok, lv, _html} = live(conn, ~p"/requests")
+    render_hook(lv, "toggle_select", %{"id" => to_string(r1.id)})
+    render_hook(lv, "toggle_select", %{"id" => to_string(r2.id)})
+    render_hook(lv, "approve_selected", %{})
+
+    assert %{status: :approved} = Cinder.Repo.reload(r1)
+    assert %{status: :approved} = Cinder.Repo.reload(r2)
+  end
+
   test "a non-admin cannot reach /requests", %{conn: conn} do
     user = user_fixture()
     conn = log_in_user(conn, user)

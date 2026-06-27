@@ -78,7 +78,9 @@ defmodule CinderWeb.SetupLive do
       <.header>
         {gettext("Set up Cinder")}
         <:subtitle>
-          {gettext("Enter and validate your services. Finish unlocks once the movie loop is green.")}
+          {gettext(
+            "Enter and validate your services. Finish unlocks once every required service is connected."
+          )}
         </:subtitle>
       </.header>
 
@@ -86,21 +88,95 @@ defmodule CinderWeb.SetupLive do
         <div class="space-y-8">
           <.service_fields form={@form} health={@health} show_move_on_import={false} />
         </div>
-        <button type="submit" class="btn btn-primary mt-4" phx-disable-with={gettext("Validating…")}>
+        <.button
+          type="submit"
+          variant="neutral"
+          class="mt-4"
+          phx-disable-with={gettext("Validating…")}
+        >
           {gettext("Save & validate")}
-        </button>
+        </.button>
       </form>
 
-      <button
+      <div class="mt-6 rounded-box border border-base-300 bg-base-200 p-4">
+        <h2 class="mb-3 text-lg font-semibold">{gettext("Setup checklist")}</h2>
+        <ul class="space-y-2 text-sm">
+          <.check_row
+            :for={svc <- required_services()}
+            label={service_label(svc)}
+            status={@health[svc]}
+          />
+          <.check_row
+            label={gettext("A download client (torrent or usenet)")}
+            status={download_status(@health)}
+            hint={gettext("connect at least one")}
+          />
+        </ul>
+      </div>
+
+      <.button
         id="finish-setup"
         phx-click="finish"
         disabled={not @can_finish}
         phx-disable-with={gettext("Finishing…")}
-        class="btn btn-success mt-6"
+        class="mt-6"
       >
         {gettext("Finish setup")}
-      </button>
+      </.button>
     </Layouts.app>
     """
   end
+
+  # One checklist line: a green check when the service is reachable, a red x with
+  # the reason when it failed, or a grey hint when it has not been validated yet.
+  attr :label, :string, required: true
+  attr :status, :any, default: nil
+  attr :hint, :string, default: nil
+
+  defp check_row(assigns) do
+    ~H"""
+    <li class="flex items-start gap-2">
+      <.icon name={check_icon(@status)} class={["mt-0.5 size-4 shrink-0", check_color(@status)]} />
+      <div>
+        <span>{@label}</span>
+        <span :if={match?({:error, _}, @status)} class="text-error">
+          ({health_reason(elem(@status, 1))})
+        </span>
+        <span :if={is_nil(@status)} class="text-base-content/70">
+          ({@hint || gettext("not checked yet")})
+        </span>
+      </div>
+    </li>
+    """
+  end
+
+  defp check_icon(:ok), do: "hero-check-circle"
+  defp check_icon({:error, _}), do: "hero-x-circle"
+  defp check_icon(_), do: "hero-minus-circle"
+
+  defp check_color(:ok), do: "text-success"
+  defp check_color({:error, _}), do: "text-error"
+  defp check_color(_), do: "text-base-content/40"
+
+  # The download requirement is "at least one of torrent/usenet reachable".
+  defp download_status(health) do
+    cond do
+      Enum.any?(@download_services, &(health[&1] == :ok)) ->
+        :ok
+
+      # validated, but every configured client failed — show red, not the grey "not checked yet"
+      Enum.any?(@download_services, &match?({:error, _}, health[&1])) ->
+        {:error, :no_download_client}
+
+      true ->
+        nil
+    end
+  end
+
+  defp service_label("tmdb"), do: gettext("TMDB")
+  defp service_label("indexer"), do: gettext("Indexer (Prowlarr)")
+  defp service_label("media_server"), do: gettext("Media server (Jellyfin/Plex)")
+  defp service_label("movies_library"), do: gettext("Movies library path")
+  defp service_label("tv_library"), do: gettext("TV library path")
+  defp service_label(svc), do: svc |> String.replace("_", " ") |> :string.titlecase()
 end
