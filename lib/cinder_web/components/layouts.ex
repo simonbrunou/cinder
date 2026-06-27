@@ -51,7 +51,7 @@ defmodule CinderWeb.Layouts do
       />
 
       <div class="drawer-content flex min-h-screen flex-col">
-        <header class="navbar border-b border-base-300/60 bg-base-100/80 backdrop-blur lg:hidden">
+        <header class="navbar border-b border-base-300/60 bg-base-100 lg:hidden">
           <label for="nav-drawer" class="btn btn-ghost btn-square" aria-label={gettext("Open menu")}>
             <.icon name="hero-bars-3" class="size-6" />
           </label>

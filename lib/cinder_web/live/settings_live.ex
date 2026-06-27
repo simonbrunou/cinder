@@ -72,7 +72,9 @@ defmodule CinderWeb.SettingsLive do
         </:subtitle>
       </.header>
 
-      <.link navigate={~p"/dashboard"} class="link mb-6 inline-block">{gettext("← Dashboard")}</.link>
+      <.link navigate={~p"/dashboard"} class="link mb-6 inline-flex items-center gap-1">
+        <.icon name="hero-arrow-left" class="size-3.5" />{gettext("Dashboard")}
+      </.link>
 
       <form id="settings-form" phx-submit="save" class="space-y-8">
         <.service_fields form={@form} health={@health} />

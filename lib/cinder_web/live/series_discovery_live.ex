@@ -147,13 +147,17 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
-      <.link navigate={~p"/"} class="link mb-6 inline-block">{gettext("← Discover")}</.link>
+      <.link navigate={~p"/"} class="link mb-6 inline-flex items-center gap-1">
+        <.icon name="hero-arrow-left" class="size-3.5" />{gettext("Discover")}
+      </.link>
 
       <div class="mb-8 flex gap-4">
         <img
           :if={@info.poster_path}
           src={poster_url(@info.poster_path)}
           alt={@info.title}
+          loading="lazy"
+          decoding="async"
           class="aspect-[2/3] w-24 rounded object-cover"
         />
         <div>

@@ -48,7 +48,7 @@ defmodule CinderWeb.UserLive.Login do
             spellcheck="false"
           />
           <.button class="w-full" name={@form[:remember_me].name} value="true">
-            {gettext("Log in and stay logged in")} <span aria-hidden="true">→</span>
+            {gettext("Log in and stay logged in")}<.icon name="hero-arrow-right" class="size-3.5" />
           </.button>
           <.button variant="ghost" class="w-full mt-2">
             {gettext("Log in only this time")}

@@ -271,7 +271,9 @@ defmodule CinderWeb.SeriesDetailLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
-      <.link navigate={~p"/library"} class="link mb-6 inline-block">{gettext("← Library")}</.link>
+      <.link navigate={~p"/library"} class="link mb-6 inline-flex items-center gap-1">
+        <.icon name="hero-arrow-left" class="size-3.5" />{gettext("Library")}
+      </.link>
 
       <div class="mb-4 flex flex-wrap items-center gap-2">
         <.button type="button" variant="neutral" size="sm" phx-click="edit_series">
@@ -334,6 +336,8 @@ defmodule CinderWeb.SeriesDetailLive do
           :if={@series.poster_path}
           src={poster_url(@series.poster_path)}
           alt={@series.title}
+          loading="lazy"
+          decoding="async"
           class="aspect-[2/3] w-24 rounded object-cover"
         />
         <div>
@@ -450,7 +454,13 @@ defmodule CinderWeb.SeriesDetailLive do
               />
               <span class="w-8 text-sm tabular-nums text-base-content/60">{ep.episode_number}</span>
               <span class="flex-1 text-sm">{ep.title}</span>
-              <span :if={ep.air_date} class="text-xs text-base-content/50">{ep.air_date}</span>
+              <time
+                :if={ep.air_date}
+                datetime={Date.to_iso8601(ep.air_date)}
+                class="text-xs text-base-content/70"
+              >
+                {Calendar.strftime(ep.air_date, "%b %-d, %Y")}
+              </time>
               <.button
                 :if={ep.file_path}
                 type="button"

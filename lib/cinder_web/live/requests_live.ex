@@ -105,6 +105,8 @@ defmodule CinderWeb.RequestsLive do
               :if={r.poster_path}
               src={poster_url(r.poster_path, "w92")}
               alt={r.title}
+              loading="lazy"
+              decoding="async"
               class="w-12 rounded"
             />
             <div class="flex-1">

@@ -323,7 +323,9 @@ defmodule CinderWeb.LibraryLive do
           <div :for={s <- @series} id={"series-row-#{s.id}"} class="space-y-2">
             <.link navigate={~p"/series/#{s.id}"} class="block">
               <.media_card poster_path={s.poster_path} title={s.title} year={s.year} type={:tv}>
-                <span class="link link-primary text-sm">{gettext("Configure monitoring →")}</span>
+                <span class="link link-primary inline-flex items-center gap-1 text-sm">
+                  {gettext("Configure monitoring")}<.icon name="hero-arrow-right" class="size-3.5" />
+                </span>
               </.media_card>
             </.link>
 

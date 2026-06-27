@@ -183,7 +183,7 @@ defmodule CinderWeb.DiscoverLive do
 
       <section :if={@results != []} class="mb-10">
         <h2 class="sr-only">{gettext("Search results")}</h2>
-        <div id="results" class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+        <div id="results" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
           <.media_card
             :for={r <- @results}
             poster_path={r.poster_path}
@@ -204,7 +204,7 @@ defmodule CinderWeb.DiscoverLive do
               size="sm"
               class="w-full"
             >
-              {gettext("View seasons →")}
+              {gettext("View seasons")}<.icon name="hero-arrow-right" class="size-3.5" />
             </.button>
           </.media_card>
         </div>
@@ -230,7 +230,7 @@ defmodule CinderWeb.DiscoverLive do
         title={gettext("Your watchlist is empty")}
         message={gettext("Search above to add a movie.")}
       />
-      <div id="watchlist" class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+      <div id="watchlist" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
         <.media_card
           :for={m <- @watchlist}
           poster_path={m.poster_path}

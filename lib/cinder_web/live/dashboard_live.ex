@@ -119,12 +119,11 @@ defmodule CinderWeb.DashboardLive do
 
   defp stat_card(assigns) do
     ~H"""
-    <div class="card bg-base-200 p-4">
-      <div class="flex items-center gap-2 text-sm text-base-content/60">
-        <.icon name={@icon} class="size-4" />{@label}
-      </div>
-      <div class="mt-1 text-2xl font-semibold tabular-nums">{@value}</div>
-      <div :if={@suffix} class="text-xs text-base-content/50">{@suffix}</div>
+    <div class="flex items-baseline gap-2">
+      <.icon name={@icon} class="size-4 shrink-0 self-center text-base-content/70" />
+      <span class="text-lg font-semibold tabular-nums">{@value}</span>
+      <span class="text-sm text-base-content/70">{@label}</span>
+      <span :if={@suffix} class="text-xs text-base-content/60">· {@suffix}</span>
     </div>
     """
   end
@@ -138,7 +137,7 @@ defmodule CinderWeb.DashboardLive do
         <:subtitle>{gettext("Pipeline at a glance.")}</:subtitle>
       </.header>
 
-      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+      <div class="flex flex-col gap-3 rounded-box border border-base-300 bg-base-200/50 p-4 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-8">
         <.stat_card
           label={gettext("Movies available")}
           value={@stats.movies_available}
@@ -171,8 +170,11 @@ defmodule CinderWeb.DashboardLive do
         <section>
           <div class="mb-3 flex items-center justify-between">
             <h2 class="text-lg font-semibold">{gettext("Pending approvals")}</h2>
-            <.link navigate={~p"/requests"} class="link link-hover text-sm">
-              {gettext("All requests →")}
+            <.link
+              navigate={~p"/requests"}
+              class="link link-hover inline-flex items-center gap-1 text-sm"
+            >
+              {gettext("All requests")}<.icon name="hero-arrow-right" class="size-3.5" />
             </.link>
           </div>
           <.empty_state
@@ -188,6 +190,8 @@ defmodule CinderWeb.DashboardLive do
                   :if={r.poster_path}
                   src={poster_url(r.poster_path, "w92")}
                   alt={r.title}
+                  loading="lazy"
+                  decoding="async"
                   class="w-12 rounded"
                 />
                 <div class="min-w-0 flex-1">
@@ -271,13 +275,11 @@ defmodule CinderWeb.DashboardLive do
             <ul
               :if={@health != :loading}
               id="dashboard-health"
-              class="menu menu-sm w-full rounded-box bg-base-200"
+              class="w-full divide-y divide-base-300 overflow-hidden rounded-box border border-base-300 bg-base-200"
             >
-              <li :for={h <- @health}>
-                <div class="flex items-center justify-between">
-                  <span>{h.label}</span>
-                  <.status_badge kind={:health} status={h.status} />
-                </div>
+              <li :for={h <- @health} class="flex items-center justify-between px-4 py-2.5">
+                <span>{h.label}</span>
+                <.status_badge kind={:health} status={h.status} />
               </li>
             </ul>
           </section>
@@ -285,8 +287,11 @@ defmodule CinderWeb.DashboardLive do
           <section>
             <div class="mb-3 flex items-center justify-between">
               <h2 class="text-lg font-semibold">{gettext("Recent activity")}</h2>
-              <.link navigate={~p"/activity"} class="link link-hover text-sm">
-                {gettext("View all →")}
+              <.link
+                navigate={~p"/activity"}
+                class="link link-hover inline-flex items-center gap-1 text-sm"
+              >
+                {gettext("View all")}<.icon name="hero-arrow-right" class="size-3.5" />
               </.link>
             </div>
             <.empty_state
