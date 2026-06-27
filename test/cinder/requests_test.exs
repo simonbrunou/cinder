@@ -84,6 +84,24 @@ defmodule Cinder.RequestsTest do
     assert {:ok, %{status: :pending}} = Requests.create_request(user, @attrs)
   end
 
+  test "reopen_request returns a denied request to pending and clears the reason" do
+    user = user_fixture()
+    admin = admin_fixture()
+    {:ok, req} = Requests.create_request(user, @attrs)
+    {:ok, denied} = Requests.deny_request(req, admin, "not this time")
+
+    assert {:ok, reopened} = Requests.reopen_request(denied, admin)
+    assert reopened.status == :pending
+    assert reopened.denial_reason == nil
+  end
+
+  test "reopen_request only acts on denied requests" do
+    user = user_fixture()
+    admin = admin_fixture()
+    {:ok, req} = Requests.create_request(user, @attrs)
+    assert {:error, :not_denied} = Requests.reopen_request(req, admin)
+  end
+
   test "auto_approve_all on → a non-admin add creates the movie" do
     Cinder.Settings.put("auto_approve_all", "true")
     user = user_fixture()
