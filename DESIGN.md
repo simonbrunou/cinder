@@ -11,8 +11,8 @@ share every token except color: dark is the default/hero, light is a first-class
 near-black charcoal (cool blue-grey, hue ~265) carrying a single warm **ember** accent
 (orange-red, hue ~47) — this replaces the stock Phoenix-orange / Elixir-purple split with one
 accent. The light theme is warm paper (hue ~90) with the same ember, slightly deeper. Flat by
-design: `--depth: 1`, `--noise: 0`, `--border: 1px`, no gradients, no glass except two
-deliberate `backdrop-blur` bars. Theme is chosen via a system / light / dark toggle and applied
+design: `--depth: 1`, `--noise: 0`, `--border: 1px`, no gradients, no glass and no
+`backdrop-blur`. Theme is chosen via a system / light / dark toggle and applied
 to `<html data-theme>` before first paint (inline script in `root.html.heex`), so there is no
 flash; `prefersdark` maps "system" to dark.
 
@@ -96,8 +96,9 @@ base-200 → base-300 step and hairline borders, not by elevation.
 All from `core_components.ex` (daisyUI classes + house markup). Each is the single source of
 truth for its pattern — assemble screens from these, don't reinvent.
 
-- **`button`** — `btn`. Variants: `"primary"` → `btn-primary` (solid ember); default (no variant)
-  → `btn-primary btn-soft` (soft ember). Renders `<button>` or, when `href`/`navigate`/`patch` is
+- **`button`** — `btn`. Variants `primary` (solid ember) / `neutral` (plain) / `ghost` / `danger`
+  / `warning`, sizes `xs|sm|md`; default is solid `primary`, and `class` is additive (extra
+  utilities only). Renders `<button>` or, when `href`/`navigate`/`patch` is
   passed, a `<.link>` with identical styling. Loading via caller `phx-disable-with`.
 - **`input`** — wrapped in a `fieldset` with a `.label`. Type-dispatched: text/email/etc. →
   `input`; `select`; `textarea`; `checkbox` (`checkbox checkbox-sm`, hidden false companion);
@@ -113,7 +114,7 @@ truth for its pattern — assemble screens from these, don't reinvent.
   atom (never crashes a view).
 - **`media_card`** — the poster card for movie/TV results and library records. `card bg-base-200
   shadow-sm`; figure is a `aspect-[2/3]` cover image, or a `bg-base-300` "No poster" placeholder.
-  Optional type chip (top-left, `bg-base-100/80 backdrop-blur`, film/TV icon + label). Body
+  Optional type chip (top-left, `bg-base-100`, film/TV icon + label). Body
   (`card-body p-3`) shows the title (`text-sm font-semibold leading-tight`) + dimmed year, then an
   inner-block action slot (Add button, status badge, season link, admin controls).
 - **`confirm_action`** — inline two-step confirm for destructive actions. `alert alert-warning`,
@@ -152,7 +153,7 @@ Functional only; no bounce, no spring, no decorative motion.
 
 - **App shell (signed in):** daisyUI `drawer lg:drawer-open`. On `lg+` a persistent left sidebar
   (`aside`, `w-64`, `bg-base-200`, `border-r border-base-300/60`); below `lg` it collapses behind
-  a top `navbar` (`bg-base-100/80 backdrop-blur`, hamburger + wordmark) with an overlay drawer.
+  a top `navbar` (`bg-base-100`, hamburger + wordmark) with an overlay drawer.
 - **Sidebar:** brand wordmark; a `menu` grouped by `menu-title` sections — **Everyone** (Discover,
   My requests) and, role-gated, **Admin** (Dashboard, Requests, Library, Activity, Calendar,
   Settings, Users). Active item = `menu-active font-medium text-primary` + `aria-current="page"`.

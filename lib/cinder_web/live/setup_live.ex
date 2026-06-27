@@ -88,7 +88,12 @@ defmodule CinderWeb.SetupLive do
         <div class="space-y-8">
           <.service_fields form={@form} health={@health} show_move_on_import={false} />
         </div>
-        <.button type="submit" class="mt-4" phx-disable-with={gettext("Validating…")}>
+        <.button
+          type="submit"
+          variant="neutral"
+          class="mt-4"
+          phx-disable-with={gettext("Validating…")}
+        >
           {gettext("Save & validate")}
         </.button>
       </form>
