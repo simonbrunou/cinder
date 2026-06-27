@@ -44,8 +44,8 @@ defmodule Cinder.Acquisition.Language do
     end
   end
 
-  @doc "Whether a language filter is active for this preference + original language."
-  def active?(preferred, original), do: not is_nil(target(preferred, original))
+  @doc "The valid `preferred_language` values (the per-title language picks)."
+  def preferences, do: ["original", "french", "any"]
 
   @doc """
   Whether an unsatisfiable preference parks the item (an explicit language pick) rather
@@ -60,9 +60,7 @@ defmodule Cinder.Acquisition.Language do
   def target(_other, _original), do: nil
 
   @doc "Whether a single release's parsed language satisfies the resolved target language."
-  def satisfies?(%Release{language: "MULTI"}, _target), do: true
-  def satisfies?(%Release{language: nil}, target), do: target == @default_audio
-  def satisfies?(%Release{language: language}, target), do: language == tag(target)
+  def satisfies?(%Release{language: language}, target), do: satisfies_lang?(language, target)
 
   @doc "Whether a raw parsed language code satisfies the target (no %Release{} needed). nil target = true."
   def satisfies_lang?(_code, nil), do: true

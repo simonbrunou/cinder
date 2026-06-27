@@ -91,9 +91,6 @@ defmodule Cinder.Accounts do
     end)
   end
 
-  @doc "True if at least one user (hence an admin) exists."
-  def admin_exists?, do: Repo.aggregate(User, :count) > 0
-
   @doc "Counts users with the `:admin` role."
   def count_admins do
     Repo.aggregate(from(u in User, where: u.role == :admin), :count)

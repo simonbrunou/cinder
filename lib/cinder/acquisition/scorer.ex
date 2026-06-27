@@ -28,6 +28,9 @@ defmodule Cinder.Acquisition.Scorer do
 
   @default_preferred ["1080p", "720p"]
 
+  @doc "The default resolution allow-list, used when none is configured."
+  def default_preferred, do: @default_preferred
+
   @doc """
   Picks the best release from `releases`, or `:no_match` if none survive the
   size-band, blocklist, and resolution allow-list filters.

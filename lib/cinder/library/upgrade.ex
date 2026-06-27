@@ -8,17 +8,25 @@ defmodule Cinder.Library.Upgrade do
   """
   alias Cinder.Acquisition.{Language, Scorer}
 
-  @default_preferred ["1080p", "720p"]
-
   @spec better?(map(), map(), String.t() | nil, [String.t()] | nil, [String.t()] | nil) ::
           boolean()
   def better?(new, old, target, preferred, preferred_sources \\ []) do
     lang_verdict = language_decides?(new, old, target)
 
     cond do
-      nil_baseline?(old) -> true
-      lang_verdict != :tie -> lang_verdict == :upgrade
-      true -> quality_better?(new, old, preferred || @default_preferred, preferred_sources || [])
+      nil_baseline?(old) ->
+        true
+
+      lang_verdict != :tie ->
+        lang_verdict == :upgrade
+
+      true ->
+        quality_better?(
+          new,
+          old,
+          preferred || Scorer.default_preferred(),
+          preferred_sources || []
+        )
     end
   end
 

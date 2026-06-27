@@ -10,37 +10,23 @@ defmodule Cinder.CatalogRefreshTest do
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Season, Series}
 
+  import Cinder.CatalogFixtures
+
   setup :verify_on_exit!
 
   @past ~D[2001-01-01]
   @future ~D[2099-01-01]
 
   defp series(strategy, attrs \\ %{}) do
-    Repo.insert!(
-      struct(
-        %Series{
-          tmdb_id: System.unique_integer([:positive]),
-          title: "Show",
-          year: 2008,
-          monitored: strategy != :none,
-          monitor_strategy: strategy
-        },
-        attrs
-      )
-    )
+    series_fixture(Map.merge(%{monitored: strategy != :none, monitor_strategy: strategy}, attrs))
   end
 
   defp season(series, number) do
-    Repo.insert!(%Season{series_id: series.id, season_number: number, monitored: true})
+    season_fixture(series, %{season_number: number})
   end
 
   defp episode(season, attrs) do
-    Repo.insert!(
-      struct(
-        %Episode{season_id: season.id, episode_number: 1, monitored: true, air_date: @past},
-        attrs
-      )
-    )
+    episode_fixture(season, Map.merge(%{episode_number: 1}, attrs))
   end
 
   # Stub TMDB to return the given seasons. `specs` is [{season_number, [episode_map]}].

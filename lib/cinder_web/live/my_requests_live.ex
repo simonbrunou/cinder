@@ -23,9 +23,11 @@ defmodule CinderWeb.MyRequestsLive do
 
   defp load(socket) do
     user = socket.assigns.current_scope.user
-    movie_status = Map.new(Catalog.list_watchlist(), &{&1.tmdb_id, &1.status})
 
-    assign(socket, requests: Requests.list_for_user(user), movie_status: movie_status)
+    assign(socket,
+      requests: Requests.list_for_user(user),
+      movie_status: Catalog.movie_status_map()
+    )
   end
 
   @impl true

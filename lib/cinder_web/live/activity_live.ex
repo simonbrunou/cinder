@@ -8,6 +8,8 @@ defmodule CinderWeb.ActivityLive do
   """
   use CinderWeb, :live_view
 
+  import CinderWeb.LiveHelpers
+
   alias Cinder.Catalog
 
   @parked [:no_match, :search_failed, :import_failed]
@@ -29,10 +31,10 @@ defmodule CinderWeb.ActivityLive do
 
   @impl true
   def handle_info({:movie_updated, movie}, socket),
-    do: {:noreply, assign(socket, movies: upsert(socket.assigns.movies, movie))}
+    do: {:noreply, assign(socket, movies: upsert_by_id(socket.assigns.movies, movie))}
 
   def handle_info({:movie_created, movie}, socket),
-    do: {:noreply, assign(socket, movies: upsert(socket.assigns.movies, movie))}
+    do: {:noreply, assign(socket, movies: upsert_by_id(socket.assigns.movies, movie))}
 
   def handle_info({:movie_deleted, id}, socket),
     do: {:noreply, assign(socket, movies: Enum.reject(socket.assigns.movies, &(&1.id == id)))}
@@ -49,7 +51,7 @@ defmodule CinderWeb.ActivityLive do
   def handle_event("retry", %{"id" => id}, socket) do
     # Look the movie up from the loaded list (string-compare ids, like confirm_delete) so a forged
     # non-numeric phx-value can't reach Repo.get/CastError — it just resolves to nil and no-ops.
-    movie = Enum.find(socket.assigns.movies, &(to_string(&1.id) == id))
+    movie = find_by_id(socket.assigns.movies, id)
     if movie, do: Catalog.retry_movie(movie)
 
     {:noreply, socket}
@@ -57,7 +59,7 @@ defmodule CinderWeb.ActivityLive do
 
   def handle_event("set_movie_language", %{"_id" => id, "preferred_language" => lang}, socket)
       when lang in ["original", "french", "any"] do
-    movie = Enum.find(socket.assigns.movies, &(to_string(&1.id) == id))
+    movie = find_by_id(socket.assigns.movies, id)
     if movie, do: Catalog.set_movie_language(movie, lang)
     {:noreply, socket}
   end
@@ -69,7 +71,7 @@ defmodule CinderWeb.ActivityLive do
     do: {:noreply, assign(socket, confirming: nil)}
 
   def handle_event("confirm_delete", %{"id" => id}, socket) do
-    grab = Enum.find(socket.assigns.grabs, &(to_string(&1.id) == id))
+    grab = find_by_id(socket.assigns.grabs, id)
     if grab, do: Catalog.delete_grab(grab)
 
     {:noreply,
@@ -80,12 +82,6 @@ defmodule CinderWeb.ActivityLive do
 
   # Client-controlled payloads — ignore anything unmatched rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
-
-  defp upsert(movies, movie) do
-    if Enum.any?(movies, &(&1.id == movie.id)),
-      do: Enum.map(movies, &if(&1.id == movie.id, do: movie, else: &1)),
-      else: [movie | movies]
-  end
 
   defp parked?(status), do: status in @parked
   defp series_title(%{episodes: [ep | _]}), do: ep.season.series.title
@@ -132,21 +128,7 @@ defmodule CinderWeb.ActivityLive do
             </button>
             <form id={"movie-language-form-#{m.id}"} phx-change="set_movie_language" class="ml-auto">
               <input type="hidden" name="_id" value={m.id} />
-              <select
-                name="preferred_language"
-                class="select select-xs"
-                aria-label={gettext("Preferred language")}
-              >
-                <option value="original" selected={m.preferred_language == "original"}>
-                  {gettext("Original")}
-                </option>
-                <option value="french" selected={m.preferred_language == "french"}>
-                  {gettext("French")}
-                </option>
-                <option value="any" selected={m.preferred_language == "any"}>
-                  {gettext("Any language")}
-                </option>
-              </select>
+              <.language_select value={m.preferred_language} class="select select-xs" />
             </form>
           </li>
         </ul>

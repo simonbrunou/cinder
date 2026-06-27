@@ -12,6 +12,10 @@ defmodule Cinder.Download.TvPollerTest do
   alias Cinder.Download.TvPoller
   alias Cinder.Repo
 
+  import Cinder.CatalogFixtures
+  import Cinder.LibraryStubs
+  import Cinder.PollerHelpers
+
   # The poller runs in its own process (and a fresh pid after a crash), so the mock must be
   # global. Shared Sandbox (async: false) lets those processes use the test-owned DB connection.
   setup :set_mox_global
@@ -19,53 +23,18 @@ defmodule Cinder.Download.TvPollerTest do
   @past ~D[2001-01-01]
 
   defp series_tree do
-    series =
-      Repo.insert!(%Series{
-        tmdb_id: System.unique_integer([:positive]),
-        tvdb_id: 99,
-        title: "Show",
-        year: 2008,
-        monitored: true,
-        monitor_strategy: :all
-      })
-
-    season = Repo.insert!(%Season{series_id: series.id, season_number: 1, monitored: true})
+    series = series_fixture(%{tvdb_id: 99, monitor_strategy: :all})
+    season = season_fixture(series)
     {series, season}
   end
 
   defp episode(season, ep_num, attrs \\ %{}) do
-    Repo.insert!(
-      struct(
-        %Episode{
-          season_id: season.id,
-          episode_number: ep_num,
-          monitored: true,
-          air_date: @past
-        },
-        attrs
-      )
-    )
+    episode_fixture(season, Map.merge(%{episode_number: ep_num}, Map.new(attrs)))
   end
 
-  defp await_restart(name, old_pid) do
-    case GenServer.whereis(name) do
-      pid when is_pid(pid) and pid != old_pid -> pid
-      _ -> Process.sleep(10) && await_restart(name, old_pid)
-    end
-  end
-
-  # A successful single-file import (content_path is the file itself).
-  defp stub_single_file_import do
-    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
-
-    stub(Cinder.Library.FilesystemMock, :lstat, fn _ ->
-      {:ok, %File.Stat{size: 3_000_000_000, inode: 1}}
-    end)
-
-    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
-    stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
-  end
+  # A successful single-file import (content_path is the file itself). Episodes use a realistic
+  # per-episode size so any size-band logic behaves as in production.
+  defp stub_single_file_import, do: stub_import_ok(3_000_000_000)
 
   test "advances a completed single-file grab through download to import in one tick" do
     {series, season} = series_tree()

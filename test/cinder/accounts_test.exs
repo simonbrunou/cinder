@@ -445,12 +445,6 @@ defmodule Cinder.AccountsTest do
       assert row.entity_id == user.id
     end
 
-    test "admin_exists? reflects whether any user is present" do
-      refute Accounts.admin_exists?()
-      _user = user_fixture()
-      assert Accounts.admin_exists?()
-    end
-
     test "list_users returns all users ordered by id" do
       a = user_fixture()
       b = user_fixture()

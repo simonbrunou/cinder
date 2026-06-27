@@ -6,38 +6,7 @@ defmodule CinderWeb.SetupLiveTest do
   import Mox
 
   setup :set_mox_global
-
-  @env_keys [
-    Cinder.Catalog.TMDB.HTTP,
-    Cinder.Acquisition.Indexer.Prowlarr,
-    Cinder.Download.Client.QBittorrent,
-    Cinder.Download.Client.Sabnzbd,
-    Cinder.Library.MediaServer.Jellyfin,
-    Cinder.Library.MediaServer.Plex,
-    :media_server,
-    :download_clients,
-    :movies_library_path,
-    :movies_min_size,
-    :movies_max_size,
-    :movies_preferred_resolutions,
-    :tv_library_path,
-    :tv_min_size,
-    :tv_max_size,
-    :tv_preferred_resolutions
-  ]
-
-  setup do
-    saved = Map.new(@env_keys, fn k -> {k, Application.get_env(:cinder, k)} end)
-
-    on_exit(fn ->
-      Enum.each(saved, fn
-        {k, nil} -> Application.delete_env(:cinder, k)
-        {k, v} -> Application.put_env(:cinder, k, v)
-      end)
-    end)
-
-    :ok
-  end
+  setup :reset_cinder_env
 
   # Stubs every service green. Saving media_server_type switches :media_server to the
   # real Jellyfin impl, so its health is stubbed at the Req.Test (HTTP) layer instead.

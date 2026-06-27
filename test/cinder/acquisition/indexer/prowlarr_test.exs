@@ -41,21 +41,18 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
                title: "Inception.2010.1080p.BluRay.x264-RARBG",
                size: 8_000_000_000,
                download_url: "http://prowlarr/file/1",
-               seeders: 50,
                protocol: :torrent
              },
              %{
                title: "Inception.2010.2160p.WEB-DL-GRP",
                size: 40_000_000_000,
                download_url: "magnet:?xt=urn:btih:abc",
-               seeders: 10,
                protocol: :torrent
              },
              %{
                title: "Inception.2010.1080p.WEB-DL-GRP",
                size: 9_000_000_000,
                download_url: "http://prowlarr/getnzb/3",
-               seeders: nil,
                protocol: :usenet
              }
            ]
@@ -85,7 +82,6 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
              title: "Breaking.Bad.S01E01.1080p.BluRay.x264-GRP",
              size: 2_000_000_000,
              download_url: "http://prowlarr/file/1",
-             seeders: 30,
              protocol: :torrent
            }
   end

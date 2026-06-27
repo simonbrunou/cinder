@@ -8,10 +8,13 @@ defmodule Cinder.Download.MoveOnImportTest do
   @moduletag :capture_log
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Grab, Movie, Season, Series}
+  alias Cinder.Catalog.{Episode, Grab, Movie}
   alias Cinder.Download
   alias Cinder.Download.{Poller, TvPoller}
   alias Cinder.Repo
+
+  import Cinder.CatalogFixtures
+  import Cinder.LibraryStubs
 
   setup :set_mox_global
 
@@ -40,25 +43,16 @@ defmodule Cinder.Download.MoveOnImportTest do
     end)
   end
 
-  defp stub_single_file_import do
-    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
-    stub(Cinder.Library.FilesystemMock, :lstat, fn _ -> {:ok, %File.Stat{size: 1, inode: 1}} end)
-    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
-    stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
-  end
+  defp stub_single_file_import, do: stub_import_ok()
 
   defp usenet_movie(tmdb_id, download_id) do
-    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: tmdb_id, title: "M"})
-
-    {:ok, movie} =
-      Catalog.transition(movie, %{
-        status: :downloading,
-        download_id: download_id,
-        download_protocol: :usenet
-      })
-
-    movie
+    movie_fixture(%{
+      tmdb_id: tmdb_id,
+      title: "M",
+      status: :downloading,
+      download_id: download_id,
+      download_protocol: :usenet
+    })
   end
 
   defp drive_to_available(mock, download_id) do
@@ -70,27 +64,13 @@ defmodule Cinder.Download.MoveOnImportTest do
   end
 
   defp series_tree do
-    series =
-      Repo.insert!(%Series{
-        tmdb_id: System.unique_integer([:positive]),
-        tvdb_id: 99,
-        title: "Show",
-        year: 2008,
-        monitored: true,
-        monitor_strategy: :all
-      })
-
-    season = Repo.insert!(%Season{series_id: series.id, season_number: 1, monitored: true})
+    series = series_fixture(%{tvdb_id: 99, monitor_strategy: :all})
+    season = season_fixture(series)
     {series, season}
   end
 
   defp episode(season, ep_num) do
-    Repo.insert!(%Episode{
-      season_id: season.id,
-      episode_number: ep_num,
-      monitored: true,
-      air_date: ~D[2001-01-01]
-    })
+    episode_fixture(season, %{episode_number: ep_num})
   end
 
   describe "Download.remove_after_import/2 (the gate)" do

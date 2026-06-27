@@ -4,37 +4,24 @@ defmodule Cinder.CatalogTvPipelineTest do
   use Cinder.DataCase, async: false
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Grab, Season, Series}
+  alias Cinder.Catalog.{Episode, Grab, Season}
   alias Ecto.Adapters.SQL, as: EctoSQL
+
+  import Cinder.CatalogFixtures
 
   @past ~D[2001-01-01]
   @future ~D[2099-01-01]
 
   defp series_with_season do
-    series =
-      Repo.insert!(%Series{
-        tmdb_id: System.unique_integer([:positive]),
-        title: "Show",
-        year: 2008,
-        monitored: true,
-        monitor_strategy: :all
-      })
-
-    season = Repo.insert!(%Season{series_id: series.id, season_number: 1, monitored: true})
+    series = series_fixture(%{monitor_strategy: :all})
+    season = season_fixture(series)
     {series, season}
   end
 
   defp episode(season, attrs) do
-    Repo.insert!(
-      struct(
-        %Episode{
-          season_id: season.id,
-          episode_number: System.unique_integer([:positive]),
-          monitored: true,
-          air_date: @past
-        },
-        attrs
-      )
+    episode_fixture(
+      season,
+      Map.merge(%{episode_number: System.unique_integer([:positive])}, attrs)
     )
   end
 

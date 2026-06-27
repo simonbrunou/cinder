@@ -7,6 +7,8 @@ defmodule CinderWeb.DiscoverLive do
   """
   use CinderWeb, :live_view
 
+  import CinderWeb.LiveHelpers
+
   alias Cinder.Catalog
 
   @impl true
@@ -126,7 +128,7 @@ defmodule CinderWeb.DiscoverLive do
   # status per tmdb_id; together they drive the per-title movie badge.
   defp assign_request_state(socket) do
     user = socket.assigns.current_scope.user
-    request_status = latest_request_status(Cinder.Requests.list_for_user(user))
+    request_status = latest_status_by(Cinder.Requests.list_for_user(user), & &1.target_id)
     assign_movie_status(assign(socket, request_status: request_status))
   end
 
@@ -136,17 +138,13 @@ defmodule CinderWeb.DiscoverLive do
   # yet (its `:movie_created` broadcast rides the movies topic with no cross-topic ordering
   # guarantee vs the `:request_*` event), so the assign can be stale; the DB read isn't.
   defp assign_movie_status(socket) do
-    assign(socket, movie_status: Map.new(Catalog.list_watchlist(), &{&1.tmdb_id, &1.status}))
+    assign(socket, movie_status: Catalog.movie_status_map())
   end
 
   defp patch_movie_status(socket, movie) do
     assign(socket,
       movie_status: Map.put(socket.assigns.movie_status, movie.tmdb_id, movie.status)
     )
-  end
-
-  defp latest_request_status(requests) do
-    Enum.reduce(requests, %{}, fn r, acc -> Map.put_new(acc, r.target_id, r.status) end)
   end
 
   # Precedence: an available movie outranks a stale denied/approved request.
@@ -258,15 +256,7 @@ defmodule CinderWeb.DiscoverLive do
       class="flex flex-col gap-1"
     >
       <input type="hidden" name="tmdb_id" value={@tmdb_id} />
-      <select
-        name="preferred_language"
-        class="select select-sm w-full"
-        aria-label={gettext("Preferred language")}
-      >
-        <option value="original">{original_option_label(@original_language)}</option>
-        <option value="french">{gettext("French")}</option>
-        <option value="any">{gettext("Any language")}</option>
-      </select>
+      <.language_select original_label={original_option_label(@original_language)} />
       <button
         type="submit"
         class="btn btn-primary btn-sm w-full"

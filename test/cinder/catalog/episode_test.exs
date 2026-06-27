@@ -26,4 +26,9 @@ defmodule Cinder.Catalog.EpisodeTest do
 
     assert cs.changes == %{}
   end
+
+  test "transition_changeset/2 casts imported_source" do
+    cs = Episode.transition_changeset(%Episode{}, %{imported_source: "webdl"})
+    assert cs.changes.imported_source == "webdl"
+  end
 end

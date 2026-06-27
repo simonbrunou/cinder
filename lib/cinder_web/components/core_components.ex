@@ -32,7 +32,7 @@ defmodule CinderWeb.CoreComponents do
   alias Phoenix.HTML.Form
   alias Phoenix.LiveView.JS
 
-  @poster_base "https://image.tmdb.org/t/p/w342"
+  @image_base "https://image.tmdb.org/t/p/"
 
   @doc """
   Renders flash notices.
@@ -192,6 +192,14 @@ defmodule CinderWeb.CoreComponents do
   attr :confirm_label, :string, default: nil
   attr :cancel_label, :string, default: nil
   attr :variant, :string, default: "error", values: ~w(error warning)
+  attr :class, :any, default: nil, doc: "extra classes on the root (e.g. caller's outer margin)"
+
+  attr :checkbox_event, :string,
+    default: nil,
+    doc: "optional phx-click for an inline 'also do X' checkbox; nil = no checkbox"
+
+  attr :checkbox_checked, :boolean, default: false, doc: "checked state of the optional checkbox"
+  attr :checkbox_label, :string, default: nil, doc: "label for the optional checkbox"
   slot :caveat, required: true
 
   def confirm_action(assigns) do
@@ -200,8 +208,20 @@ defmodule CinderWeb.CoreComponents do
       id={@id}
       role="alert"
       aria-live="assertive"
-      class="alert alert-warning flex flex-col items-start gap-2"
+      class={["alert alert-warning flex flex-col items-start gap-2", @class]}
     >
+      <label
+        :if={@checkbox_event}
+        class="flex cursor-pointer items-center gap-2 text-sm"
+      >
+        <input
+          type="checkbox"
+          class="checkbox checkbox-sm"
+          phx-click={@checkbox_event}
+          checked={@checkbox_checked}
+        />
+        <span>{@checkbox_label}</span>
+      </label>
       <p class="text-sm">{render_slot(@caveat)}</p>
       <div class="flex flex-wrap gap-2">
         <button
@@ -434,96 +454,6 @@ defmodule CinderWeb.CoreComponents do
   end
 
   @doc """
-  Renders a table with generic styling.
-
-  ## Examples
-
-      <.table id="users" rows={@users}>
-        <:col :let={user} label="id">{user.id}</:col>
-        <:col :let={user} label="username">{user.username}</:col>
-      </.table>
-  """
-  attr :id, :string, required: true
-  attr :rows, :list, required: true
-  attr :row_id, :any, default: nil, doc: "the function for generating the row id"
-  attr :row_click, :any, default: nil, doc: "the function for handling phx-click on each row"
-
-  attr :row_item, :any,
-    default: &Function.identity/1,
-    doc: "the function for mapping each row before calling the :col and :action slots"
-
-  slot :col, required: true do
-    attr :label, :string
-  end
-
-  slot :action, doc: "the slot for showing user actions in the last table column"
-
-  def table(assigns) do
-    assigns =
-      with %{rows: %Phoenix.LiveView.LiveStream{}} <- assigns do
-        assign(assigns, row_id: assigns.row_id || fn {id, _item} -> id end)
-      end
-
-    ~H"""
-    <table class="table table-zebra">
-      <thead>
-        <tr>
-          <th :for={col <- @col} scope="col">{col[:label]}</th>
-          <th :if={@action != []} scope="col">
-            <span class="sr-only">{gettext("Actions")}</span>
-          </th>
-        </tr>
-      </thead>
-      <tbody id={@id} phx-update={is_struct(@rows, Phoenix.LiveView.LiveStream) && "stream"}>
-        <tr :for={row <- @rows} id={@row_id && @row_id.(row)}>
-          <td
-            :for={col <- @col}
-            phx-click={@row_click && @row_click.(row)}
-            class={@row_click && "cursor-pointer hover:bg-base-300"}
-          >
-            {render_slot(col, @row_item.(row))}
-          </td>
-          <td :if={@action != []} class="w-0 font-semibold">
-            <div class="flex gap-4">
-              <%= for action <- @action do %>
-                {render_slot(action, @row_item.(row))}
-              <% end %>
-            </div>
-          </td>
-        </tr>
-      </tbody>
-    </table>
-    """
-  end
-
-  @doc """
-  Renders a data list.
-
-  ## Examples
-
-      <.list>
-        <:item title="Title">{@post.title}</:item>
-        <:item title="Views">{@post.views}</:item>
-      </.list>
-  """
-  slot :item, required: true do
-    attr :title, :string, required: true
-  end
-
-  def list(assigns) do
-    ~H"""
-    <ul class="list">
-      <li :for={item <- @item} class="list-row">
-        <div class="list-col-grow">
-          <div class="font-bold">{item.title}</div>
-          <div>{render_slot(item)}</div>
-        </div>
-      </li>
-    </ul>
-    """
-  end
-
-  @doc """
   A small inline loading spinner (respects `prefers-reduced-motion`).
 
       <.spinner label="Checking services…" />
@@ -609,13 +539,6 @@ defmodule CinderWeb.CoreComponents do
     else
       Gettext.dgettext(CinderWeb.Gettext, "errors", msg, opts)
     end
-  end
-
-  @doc """
-  Translates the errors for a field from a keyword list of errors.
-  """
-  def translate_errors(errors, field) when is_list(errors) do
-    for {^field, {msg, opts}} <- errors, do: translate_error({msg, opts})
   end
 
   @doc """
@@ -783,5 +706,47 @@ defmodule CinderWeb.CoreComponents do
   defp type_label(:movie), do: gettext("Film")
   defp type_label(:tv), do: gettext("TV")
 
-  defp poster_url(path), do: @poster_base <> path
+  @doc """
+  Builds a full TMDB image URL from a `poster_path` fragment (`/abc.jpg`). `size`
+  is the TMDB image size token — `"w342"` for cards (default), `"w92"` for thumbnails.
+  """
+  def poster_url(path, size \\ "w342"), do: @image_base <> size <> path
+
+  @doc """
+  The preferred-language `<select>` shared across the request/edit surfaces: three
+  options (Original / French / Any) with values `"original"` / `"french"` / `"any"`.
+  `value` is the currently-selected language (the matching option gets `selected`);
+  pass `original_label` to show a language-qualified label like "Original (English)".
+  The enclosing `<form>` carries the `phx-change`/`phx-submit` binding.
+
+      <.language_select value={@preferred_language} />
+      <.language_select original_label={original_option_label(@original_language)} />
+  """
+  attr :value, :string, default: nil
+  attr :class, :any, default: "select select-sm w-full"
+  attr :original_label, :string, default: nil
+  attr :rest, :global
+
+  def language_select(assigns) do
+    ~H"""
+    <select
+      name="preferred_language"
+      class={@class}
+      aria-label={gettext("Preferred language")}
+      {@rest}
+    >
+      <option value="original" selected={@value == "original"}>
+        {@original_label || gettext("Original")}
+      </option>
+      <option value="french" selected={@value == "french"}>{gettext("French")}</option>
+      <option value="any" selected={@value == "any"}>{gettext("Any language")}</option>
+    </select>
+    """
+  end
+
+  @doc """
+  Human label for a TV season number: "Specials" for season 0, "Season N" otherwise.
+  """
+  def season_label(0), do: gettext("Specials")
+  def season_label(n), do: gettext("Season %{number}", number: n)
 end

@@ -6,7 +6,7 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   Reads `base_url`, `api_key` and optional `req_options` from
   `config :cinder, #{inspect(__MODULE__)}` at runtime. Searches by IMDb id with
   Prowlarr's `{ImdbId:...}` query token (`type=movie`) and returns normalized
-  release maps (`%{title, size, download_url, seeders, protocol}`). `download_url`
+  release maps (`%{title, size, download_url, protocol}`). `download_url`
   falls back to a magnet link when no torrent-file URL is present; `protocol` is
   `:usenet` for Usenet results, `:torrent` otherwise.
 
@@ -86,7 +86,6 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
       title: result["title"],
       size: result["size"],
       download_url: result["downloadUrl"] || result["magnetUrl"],
-      seeders: result["seeders"],
       protocol: protocol(result["protocol"])
     }
   end

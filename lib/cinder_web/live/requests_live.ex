@@ -9,6 +9,9 @@ defmodule CinderWeb.RequestsLive do
   the `requests_pending_unique` index, making the title requestable again.
   """
   use CinderWeb, :live_view
+
+  import CinderWeb.LiveHelpers
+
   alias Cinder.Requests
 
   @impl true
@@ -81,7 +84,7 @@ defmodule CinderWeb.RequestsLive do
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   # Match a row by its (client-supplied, string) id without raising on garbage input.
-  defp find_request(socket, id), do: Enum.find(socket.assigns.requests, &(to_string(&1.id) == id))
+  defp find_request(socket, id), do: find_by_id(socket.assigns.requests, id)
 
   @impl true
   def render(assigns) do
@@ -100,7 +103,7 @@ defmodule CinderWeb.RequestsLive do
           <div class="flex flex-row items-center gap-4">
             <img
               :if={r.poster_path}
-              src={"https://image.tmdb.org/t/p/w92" <> r.poster_path}
+              src={poster_url(r.poster_path, "w92")}
               alt={r.title}
               class="w-12 rounded"
             />

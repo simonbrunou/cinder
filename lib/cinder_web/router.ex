@@ -18,10 +18,6 @@ defmodule CinderWeb.Router do
     plug :basic_auth
   end
 
-  pipeline :api do
-    plug :accepts, ["json"]
-  end
-
   defp basic_auth(conn, _opts) do
     user = present(System.get_env("CINDER_BASIC_AUTH_USER"))
     pass = present(System.get_env("CINDER_BASIC_AUTH_PASSWORD"))
@@ -101,11 +97,6 @@ defmodule CinderWeb.Router do
     # /movies folded into Library (UX-4); redirect old bookmarks.
     get "/movies", RedirectController, :to_library
   end
-
-  # Other scopes may use custom stacks.
-  # scope "/api", CinderWeb do
-  #   pipe_through :api
-  # end
 
   # Enable LiveDashboard and Swoosh mailbox preview in development.
   # Gated to authenticated admins only — /dev tooling must not be public.

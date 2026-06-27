@@ -11,6 +11,8 @@ defmodule Cinder.Catalog.Movie do
 
   import Ecto.Changeset
 
+  alias Cinder.Acquisition.Language
+
   @statuses [
     :requested,
     :searching,
@@ -58,7 +60,7 @@ defmodule Cinder.Catalog.Movie do
       :preferred_language
     ])
     |> validate_required([:tmdb_id, :title])
-    |> validate_inclusion(:preferred_language, ["original", "french", "any"])
+    |> validate_inclusion(:preferred_language, Language.preferences())
     |> unique_constraint(:tmdb_id)
   end
 
@@ -66,7 +68,7 @@ defmodule Cinder.Catalog.Movie do
   def language_changeset(movie, attrs) do
     movie
     |> cast(attrs, [:preferred_language])
-    |> validate_inclusion(:preferred_language, ["original", "french", "any"])
+    |> validate_inclusion(:preferred_language, Language.preferences())
   end
 
   @doc "Changeset for pipeline state transitions (status + optional download_id/download_protocol/imdb_id/file_path/attempt counters)."

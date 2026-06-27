@@ -6,16 +6,9 @@ defmodule CinderWeb.ActivityLiveTest do
   alias Cinder.Catalog
   alias Cinder.Repo
 
+  import Cinder.CatalogFixtures
+
   setup :register_and_log_in_admin
-
-  defp movie!(attrs) do
-    {:ok, movie} =
-      Catalog.add_to_watchlist(
-        Enum.into(attrs, %{tmdb_id: System.unique_integer([:positive]), title: "Untitled"})
-      )
-
-    movie
-  end
 
   defp grab! do
     series =
@@ -39,7 +32,7 @@ defmodule CinderWeb.ActivityLiveTest do
   end
 
   test "renders the movie pipeline and live-updates on transition", %{conn: conn} do
-    movie = movie!(%{title: "Dune", year: 2021})
+    movie = movie_fixture(%{title: "Dune", year: 2021})
 
     {:ok, lv, html} = live(conn, ~p"/activity")
     assert html =~ "Dune"
@@ -50,7 +43,7 @@ defmodule CinderWeb.ActivityLiveTest do
   end
 
   test "a parked movie shows Retry that re-queues it to :requested", %{conn: conn} do
-    movie = movie!(%{title: "Tenet"})
+    movie = movie_fixture(%{title: "Tenet"})
     {:ok, _} = Catalog.transition(movie, %{status: :no_match})
 
     {:ok, lv, _html} = live(conn, ~p"/activity")
@@ -60,7 +53,7 @@ defmodule CinderWeb.ActivityLiveTest do
   end
 
   test "retry with a forged non-numeric id is a no-op (no crash)", %{conn: conn} do
-    movie = movie!(%{title: "Tenet"})
+    movie = movie_fixture(%{title: "Tenet"})
     {:ok, _} = Catalog.transition(movie, %{status: :no_match})
 
     {:ok, lv, _html} = live(conn, ~p"/activity")
@@ -72,7 +65,7 @@ defmodule CinderWeb.ActivityLiveTest do
   end
 
   test "an in-flight movie shows no Retry button", %{conn: conn} do
-    movie = movie!(%{title: "Sicario"})
+    movie = movie_fixture(%{title: "Sicario"})
     {:ok, _} = Catalog.transition(movie, %{status: :downloading, download_id: "h"})
 
     {:ok, lv, _html} = live(conn, ~p"/activity")
