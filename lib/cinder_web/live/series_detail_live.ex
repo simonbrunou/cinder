@@ -11,8 +11,6 @@ defmodule CinderWeb.SeriesDetailLive do
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Season, Series}
 
-  @poster_base "https://image.tmdb.org/t/p/w342"
-
   @impl true
   def mount(%{"id" => id}, _session, socket) do
     # The :id param is client-controlled; a non-integer must not reach Repo.get (CastError).
@@ -271,8 +269,6 @@ defmodule CinderWeb.SeriesDetailLive do
 
   @impl true
   def render(assigns) do
-    assigns = assign(assigns, :poster_base, @poster_base)
-
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.link navigate={~p"/library"} class="link mb-6 inline-block">{gettext("← Library")}</.link>
@@ -317,30 +313,23 @@ defmodule CinderWeb.SeriesDetailLive do
         </:caveat>
       </.confirm_action>
 
-      <div :if={@confirming == :delete} class="mb-6 space-y-2">
-        <label class="flex cursor-pointer items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            class="checkbox checkbox-sm"
-            phx-click="toggle_confirm_opt"
-            checked={@confirm_opt}
-          />
-          <span>{gettext("Also delete files from disk")}</span>
-        </label>
-        <.confirm_action
-          id="confirm-delete-series"
-          on_confirm="confirm_delete_series"
-          on_cancel="dismiss_confirm"
-          confirm_label={gettext("Delete")}
-        >
-          <:caveat>{gettext("Delete this series and its seasons/episodes?")}</:caveat>
-        </.confirm_action>
-      </div>
+      <.confirm_action
+        :if={@confirming == :delete}
+        id="confirm-delete-series"
+        on_confirm="confirm_delete_series"
+        on_cancel="dismiss_confirm"
+        confirm_label={gettext("Delete")}
+        checkbox_event="toggle_confirm_opt"
+        checkbox_checked={@confirm_opt}
+        checkbox_label={gettext("Also delete files from disk")}
+      >
+        <:caveat>{gettext("Delete this series and its seasons/episodes?")}</:caveat>
+      </.confirm_action>
 
       <div class="mb-8 flex gap-4">
         <img
           :if={@series.poster_path}
-          src={@poster_base <> @series.poster_path}
+          src={poster_url(@series.poster_path)}
           alt={@series.title}
           class="aspect-[2/3] w-24 rounded object-cover"
         />
@@ -358,21 +347,7 @@ defmodule CinderWeb.SeriesDetailLive do
       </div>
 
       <form id="series-detail-language-form" phx-change="set_series_language" class="mb-4 max-w-xs">
-        <select
-          name="preferred_language"
-          class="select select-sm w-full"
-          aria-label={gettext("Preferred language")}
-        >
-          <option value="original" selected={@series.preferred_language == "original"}>
-            {gettext("Original")}
-          </option>
-          <option value="french" selected={@series.preferred_language == "french"}>
-            {gettext("French")}
-          </option>
-          <option value="any" selected={@series.preferred_language == "any"}>
-            {gettext("Any language")}
-          </option>
-        </select>
+        <.language_select value={@series.preferred_language} />
       </form>
 
       <.empty_state
@@ -429,31 +404,24 @@ defmodule CinderWeb.SeriesDetailLive do
           </div>
         </div>
 
-        <div :if={@confirming == {:season_files, to_string(season.id)}} class="mb-2 space-y-2">
-          <label class="flex cursor-pointer items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              class="checkbox checkbox-sm"
-              phx-click="toggle_confirm_opt"
-              checked={@confirm_opt}
-            />
-            <span>{gettext("Also stop monitoring these episodes")}</span>
-          </label>
-          <.confirm_action
-            id={"confirm-delete-season-files-#{season.id}"}
-            on_confirm="confirm_delete_season_files"
-            on_cancel="dismiss_confirm"
-            value={season.id}
-            confirm_label={gettext("Delete files")}
-          >
-            <:caveat>
-              {gettext(
-                "Delete every downloaded file in %{season}? Monitored episodes will be re-downloaded next sweep unless you also stop monitoring.",
-                season: season_label(season.season_number)
-              )}
-            </:caveat>
-          </.confirm_action>
-        </div>
+        <.confirm_action
+          :if={@confirming == {:season_files, to_string(season.id)}}
+          id={"confirm-delete-season-files-#{season.id}"}
+          on_confirm="confirm_delete_season_files"
+          on_cancel="dismiss_confirm"
+          value={season.id}
+          confirm_label={gettext("Delete files")}
+          checkbox_event="toggle_confirm_opt"
+          checkbox_checked={@confirm_opt}
+          checkbox_label={gettext("Also stop monitoring these episodes")}
+        >
+          <:caveat>
+            {gettext(
+              "Delete every downloaded file in %{season}? Monitored episodes will be re-downloaded next sweep unless you also stop monitoring.",
+              season: season_label(season.season_number)
+            )}
+          </:caveat>
+        </.confirm_action>
 
         <p :if={season.episodes == []} class="text-sm text-base-content/50">
           {gettext("No episodes yet.")}
@@ -493,39 +461,29 @@ defmodule CinderWeb.SeriesDetailLive do
                 {gettext("Delete file")}
               </button>
             </div>
-            <div :if={@confirming == {:episode_file, to_string(ep.id)}} class="space-y-2">
-              <label class="flex cursor-pointer items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  class="checkbox checkbox-sm"
-                  phx-click="toggle_confirm_opt"
-                  checked={@confirm_opt}
-                />
-                <span>{gettext("Also stop monitoring this episode")}</span>
-              </label>
-              <.confirm_action
-                id={"confirm-delete-episode-file-#{ep.id}"}
-                on_confirm="confirm_delete_episode_file"
-                on_cancel="dismiss_confirm"
-                value={ep.id}
-                confirm_label={gettext("Delete file")}
-              >
-                <:caveat>
-                  {gettext(
-                    "Delete the downloaded file for this episode? If it stays monitored the poller re-downloads it next tick — tick \"stop monitoring\" to keep it gone."
-                  )}
-                </:caveat>
-              </.confirm_action>
-            </div>
+            <.confirm_action
+              :if={@confirming == {:episode_file, to_string(ep.id)}}
+              id={"confirm-delete-episode-file-#{ep.id}"}
+              on_confirm="confirm_delete_episode_file"
+              on_cancel="dismiss_confirm"
+              value={ep.id}
+              confirm_label={gettext("Delete file")}
+              checkbox_event="toggle_confirm_opt"
+              checkbox_checked={@confirm_opt}
+              checkbox_label={gettext("Also stop monitoring this episode")}
+            >
+              <:caveat>
+                {gettext(
+                  "Delete the downloaded file for this episode? If it stays monitored the poller re-downloads it next tick — tick \"stop monitoring\" to keep it gone."
+                )}
+              </:caveat>
+            </.confirm_action>
           </li>
         </ul>
       </section>
     </Layouts.app>
     """
   end
-
-  defp season_label(0), do: gettext("Specials")
-  defp season_label(n), do: gettext("Season %{number}", number: n)
 
   defp monitored_count(season), do: Enum.count(season.episodes, & &1.monitored)
 end

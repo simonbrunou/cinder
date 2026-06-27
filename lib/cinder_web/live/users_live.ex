@@ -6,6 +6,8 @@ defmodule CinderWeb.UsersLive do
   """
   use CinderWeb, :live_view
 
+  import CinderWeb.LiveHelpers
+
   alias Cinder.Accounts
 
   @impl true
@@ -210,7 +212,7 @@ defmodule CinderWeb.UsersLive do
   # since-deleted row (e.g. a stale second tab) resolves to nil and no-ops instead
   # of raising Ecto.StaleEntryError inside the subsequent mutation.
   defp find_user(id) do
-    Enum.find(Accounts.list_users(), &(to_string(&1.id) == id))
+    find_by_id(Accounts.list_users(), id)
   end
 
   defp role_atom("admin"), do: :admin

@@ -32,7 +32,7 @@ defmodule CinderWeb.CoreComponents do
   alias Phoenix.HTML.Form
   alias Phoenix.LiveView.JS
 
-  @poster_base "https://image.tmdb.org/t/p/w342"
+  @image_base "https://image.tmdb.org/t/p/"
 
   @doc """
   Renders flash notices.
@@ -192,6 +192,13 @@ defmodule CinderWeb.CoreComponents do
   attr :confirm_label, :string, default: nil
   attr :cancel_label, :string, default: nil
   attr :variant, :string, default: "error", values: ~w(error warning)
+
+  attr :checkbox_event, :string,
+    default: nil,
+    doc: "optional phx-click for an inline 'also do X' checkbox; nil = no checkbox"
+
+  attr :checkbox_checked, :boolean, default: false, doc: "checked state of the optional checkbox"
+  attr :checkbox_label, :string, default: nil, doc: "label for the optional checkbox"
   slot :caveat, required: true
 
   def confirm_action(assigns) do
@@ -202,6 +209,18 @@ defmodule CinderWeb.CoreComponents do
       aria-live="assertive"
       class="alert alert-warning flex flex-col items-start gap-2"
     >
+      <label
+        :if={@checkbox_event}
+        class="flex cursor-pointer items-center gap-2 text-sm"
+      >
+        <input
+          type="checkbox"
+          class="checkbox checkbox-sm"
+          phx-click={@checkbox_event}
+          checked={@checkbox_checked}
+        />
+        <span>{@checkbox_label}</span>
+      </label>
       <p class="text-sm">{render_slot(@caveat)}</p>
       <div class="flex flex-wrap gap-2">
         <button
@@ -686,5 +705,47 @@ defmodule CinderWeb.CoreComponents do
   defp type_label(:movie), do: gettext("Film")
   defp type_label(:tv), do: gettext("TV")
 
-  defp poster_url(path), do: @poster_base <> path
+  @doc """
+  Builds a full TMDB image URL from a `poster_path` fragment (`/abc.jpg`). `size`
+  is the TMDB image size token — `"w342"` for cards (default), `"w92"` for thumbnails.
+  """
+  def poster_url(path, size \\ "w342"), do: @image_base <> size <> path
+
+  @doc """
+  The preferred-language `<select>` shared across the request/edit surfaces: three
+  options (Original / French / Any) with values `"original"` / `"french"` / `"any"`.
+  `value` is the currently-selected language (the matching option gets `selected`);
+  pass `original_label` to show a language-qualified label like "Original (English)".
+  The enclosing `<form>` carries the `phx-change`/`phx-submit` binding.
+
+      <.language_select value={@preferred_language} />
+      <.language_select original_label={original_option_label(@original_language)} />
+  """
+  attr :value, :string, default: nil
+  attr :class, :any, default: "select select-sm w-full"
+  attr :original_label, :string, default: nil
+  attr :rest, :global
+
+  def language_select(assigns) do
+    ~H"""
+    <select
+      name="preferred_language"
+      class={@class}
+      aria-label={gettext("Preferred language")}
+      {@rest}
+    >
+      <option value="original" selected={@value == "original"}>
+        {@original_label || gettext("Original")}
+      </option>
+      <option value="french" selected={@value == "french"}>{gettext("French")}</option>
+      <option value="any" selected={@value == "any"}>{gettext("Any language")}</option>
+    </select>
+    """
+  end
+
+  @doc """
+  Human label for a TV season number: "Specials" for season 0, "Season N" otherwise.
+  """
+  def season_label(0), do: gettext("Specials")
+  def season_label(n), do: gettext("Season %{number}", number: n)
 end

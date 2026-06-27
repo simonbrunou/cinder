@@ -8,6 +8,8 @@ defmodule CinderWeb.DashboardLive do
   """
   use CinderWeb, :live_view
 
+  import CinderWeb.LiveHelpers
+
   alias Cinder.{Catalog, Health, Requests}
 
   @parked [:no_match, :search_failed, :import_failed]
@@ -25,16 +27,10 @@ defmodule CinderWeb.DashboardLive do
   end
 
   # Re-load on any pipeline/request change so stats, the queue, and recent activity stay live.
+  # Every message this view receives rides the movies/series/requests topics it subscribes to,
+  # so a single reload catch-all covers them all (mirrors MyRequestsLive).
   @impl true
-  def handle_info({:movie_updated, _}, socket), do: {:noreply, load(socket)}
-  def handle_info({:movie_created, _}, socket), do: {:noreply, load(socket)}
-  def handle_info({:movie_deleted, _}, socket), do: {:noreply, load(socket)}
-  def handle_info({:series_updated, _}, socket), do: {:noreply, load(socket)}
-  def handle_info({:series_deleted, _}, socket), do: {:noreply, load(socket)}
-  def handle_info({:request_created, _}, socket), do: {:noreply, load(socket)}
-  def handle_info({:request_approved, _}, socket), do: {:noreply, load(socket)}
-  def handle_info({:request_denied, _}, socket), do: {:noreply, load(socket)}
-  def handle_info(_msg, socket), do: {:noreply, socket}
+  def handle_info(_msg, socket), do: {:noreply, load(socket)}
 
   @impl true
   def handle_async(:health, {:ok, results}, socket),
@@ -50,11 +46,14 @@ defmodule CinderWeb.DashboardLive do
     do: {:noreply, socket |> cancel_async(:health) |> assign(health: :loading) |> check_health()}
 
   def handle_event("approve", %{"id" => id}, socket) do
-    with %{} = req <- find_pending(socket, id),
-         {:error, _} <- Requests.approve_request(req, socket.assigns.current_scope.user) do
-      {:noreply, put_flash(socket, :error, gettext("Couldn't approve that request."))}
-    else
-      _ -> {:noreply, socket}
+    req = find_pending(socket, id)
+
+    case req && Requests.approve_request(req, socket.assigns.current_scope.user) do
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, gettext("Couldn't approve that request."))}
+
+      _ ->
+        {:noreply, socket}
     end
   end
 
@@ -65,20 +64,24 @@ defmodule CinderWeb.DashboardLive do
     do: {:noreply, assign(socket, denying: nil)}
 
   def handle_event("deny", %{"_id" => id, "reason" => reason}, socket) do
-    with %{} = req <- find_pending(socket, id),
-         {:error, _} <- Requests.deny_request(req, socket.assigns.current_scope.user, reason) do
-      {:noreply,
-       socket |> assign(denying: nil) |> put_flash(:error, gettext("Couldn't deny that request."))}
-    else
-      _ -> {:noreply, assign(socket, denying: nil)}
+    req = find_pending(socket, id)
+
+    case req && Requests.deny_request(req, socket.assigns.current_scope.user, reason) do
+      {:error, _} ->
+        {:noreply,
+         socket
+         |> assign(denying: nil)
+         |> put_flash(:error, gettext("Couldn't deny that request."))}
+
+      _ ->
+        {:noreply, assign(socket, denying: nil)}
     end
   end
 
   # Client-controlled payloads — ignore anything unmatched rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
-  defp find_pending(socket, id),
-    do: Enum.find(socket.assigns.pending, &(to_string(&1.id) == id))
+  defp find_pending(socket, id), do: find_by_id(socket.assigns.pending, id)
 
   # ponytail: derives counts + the recent slice from a single full-watchlist load and a few
   # length(list_*) reads — fine at single-household scale. Swap to count/limit queries if the
@@ -183,7 +186,7 @@ defmodule CinderWeb.DashboardLive do
               <div class="flex flex-row items-center gap-4">
                 <img
                   :if={r.poster_path}
-                  src={"https://image.tmdb.org/t/p/w92" <> r.poster_path}
+                  src={poster_url(r.poster_path, "w92")}
                   alt={r.title}
                   class="w-12 rounded"
                 />

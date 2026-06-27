@@ -9,10 +9,10 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   """
   use CinderWeb, :live_view
 
+  import CinderWeb.LiveHelpers
+
   alias Cinder.Catalog
   alias Cinder.Requests
-
-  @poster_base "https://image.tmdb.org/t/p/w342"
 
   @impl true
   def mount(%{"tmdb_id" => raw}, _session, socket) do
@@ -138,15 +138,13 @@ defmodule CinderWeb.SeriesDiscoveryLive do
       user
       |> Requests.list_for_user()
       |> Enum.filter(&(&1.target_type == "season" and &1.target_id == tmdb_id))
-      |> Enum.reduce(%{}, fn r, acc -> Map.put_new(acc, r.season_number, r.status) end)
+      |> latest_status_by(& &1.season_number)
 
     assign(socket, requests_by_season: requests_by_season)
   end
 
   @impl true
   def render(assigns) do
-    assigns = assign(assigns, :poster_base, @poster_base)
-
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.link navigate={~p"/"} class="link mb-6 inline-block">{gettext("← Discover")}</.link>
@@ -154,13 +152,9 @@ defmodule CinderWeb.SeriesDiscoveryLive do
       <div class="mb-8 flex gap-4">
         <img
           :if={@info.poster_path}
-          src={@poster_base <> @info.poster_path}
+          src={poster_url(@info.poster_path)}
           alt={@info.title}
           class="aspect-[2/3] w-24 rounded object-cover"
-        />
-        <div
-          :if={!@info.poster_path}
-          class="hidden"
         />
         <div>
           <.header>
@@ -171,21 +165,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
       </div>
 
       <form id="series-language-form" phx-change="set_language" class="mb-4 max-w-xs">
-        <select
-          name="preferred_language"
-          class="select select-sm w-full"
-          aria-label={gettext("Preferred language")}
-        >
-          <option value="original" selected={@preferred_language == "original"}>
-            {gettext("Original")}
-          </option>
-          <option value="french" selected={@preferred_language == "french"}>
-            {gettext("French")}
-          </option>
-          <option value="any" selected={@preferred_language == "any"}>
-            {gettext("Any language")}
-          </option>
-        </select>
+        <.language_select value={@preferred_language} />
       </form>
 
       <.empty_state
@@ -229,7 +209,4 @@ defmodule CinderWeb.SeriesDiscoveryLive do
     </button>
     """
   end
-
-  defp season_label(0), do: gettext("Specials")
-  defp season_label(n), do: gettext("Season %{number}", number: n)
 end

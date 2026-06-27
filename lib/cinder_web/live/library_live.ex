@@ -8,6 +8,8 @@ defmodule CinderWeb.LibraryLive do
   """
   use CinderWeb, :live_view
 
+  import CinderWeb.LiveHelpers
+
   alias Cinder.Catalog
   alias Cinder.Catalog.Movie
 
@@ -160,10 +162,10 @@ defmodule CinderWeb.LibraryLive do
 
   @impl true
   def handle_info({:movie_updated, movie}, socket),
-    do: {:noreply, assign(socket, movies: upsert(socket.assigns.movies, movie))}
+    do: {:noreply, assign(socket, movies: upsert_by_id(socket.assigns.movies, movie))}
 
   def handle_info({:movie_created, movie}, socket),
-    do: {:noreply, assign(socket, movies: upsert(socket.assigns.movies, movie))}
+    do: {:noreply, assign(socket, movies: upsert_by_id(socket.assigns.movies, movie))}
 
   def handle_info({:movie_deleted, id}, socket),
     do: {:noreply, assign(socket, movies: Enum.reject(socket.assigns.movies, &(&1.id == id)))}
@@ -179,17 +181,11 @@ defmodule CinderWeb.LibraryLive do
   defp find_movie(socket, id),
     do: Enum.find(socket.assigns.movies, &(to_string(&1.id) == to_string(id)))
 
-  defp upsert(movies, movie) do
-    if Enum.any?(movies, &(&1.id == movie.id)),
-      do: Enum.map(movies, &if(&1.id == movie.id, do: movie, else: &1)),
-      else: [movie | movies]
-  end
-
   # /library is admin-gated by its route, so no in-handler role re-check (Discover needed
   # one because it lived on a non-admin route).
   defp run_series_op(socket, id, op, ok_msg, err_msg) do
     actor = socket.assigns.current_scope.user
-    series = Enum.find(socket.assigns.series, &(to_string(&1.id) == id))
+    series = find_by_id(socket.assigns.series, id)
 
     case series && op.(series, actor) do
       {:ok, _} ->
@@ -285,26 +281,19 @@ defmodule CinderWeb.LibraryLive do
               <:caveat>{gettext("Cancel this movie and remove its download?")}</:caveat>
             </.confirm_action>
 
-            <div :if={@confirming == {:movie, :delete, to_string(m.id)}} class="mt-2 space-y-2">
-              <label class="flex cursor-pointer items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  class="checkbox checkbox-sm"
-                  phx-click="toggle_delete_files"
-                  checked={@delete_files}
-                />
-                <span>{gettext("Also delete the file from disk")}</span>
-              </label>
-              <.confirm_action
-                id={"confirm-delete-movie-#{m.id}"}
-                on_confirm="confirm_delete_movie"
-                on_cancel="dismiss_confirm"
-                value={m.id}
-                confirm_label={gettext("Delete")}
-              >
-                <:caveat>{gettext("Delete this movie's record?")}</:caveat>
-              </.confirm_action>
-            </div>
+            <.confirm_action
+              :if={@confirming == {:movie, :delete, to_string(m.id)}}
+              id={"confirm-delete-movie-#{m.id}"}
+              on_confirm="confirm_delete_movie"
+              on_cancel="dismiss_confirm"
+              value={m.id}
+              confirm_label={gettext("Delete")}
+              checkbox_event="toggle_delete_files"
+              checkbox_checked={@delete_files}
+              checkbox_label={gettext("Also delete the file from disk")}
+            >
+              <:caveat>{gettext("Delete this movie's record?")}</:caveat>
+            </.confirm_action>
           </li>
         </ul>
       </section>
@@ -356,26 +345,19 @@ defmodule CinderWeb.LibraryLive do
               <:caveat>{gettext("Cancel & unmonitor this series?")}</:caveat>
             </.confirm_action>
 
-            <div :if={@confirming == {:series, :delete, to_string(s.id)}} class="space-y-2">
-              <label class="flex cursor-pointer items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  class="checkbox checkbox-sm"
-                  phx-click="toggle_delete_files"
-                  checked={@delete_files}
-                />
-                <span>{gettext("Also delete files from disk")}</span>
-              </label>
-              <.confirm_action
-                id={"confirm-delete-series-#{s.id}"}
-                on_confirm="confirm_delete_series"
-                on_cancel="dismiss_confirm"
-                value={s.id}
-                confirm_label={gettext("Delete")}
-              >
-                <:caveat>{gettext("Delete this series and its seasons/episodes?")}</:caveat>
-              </.confirm_action>
-            </div>
+            <.confirm_action
+              :if={@confirming == {:series, :delete, to_string(s.id)}}
+              id={"confirm-delete-series-#{s.id}"}
+              on_confirm="confirm_delete_series"
+              on_cancel="dismiss_confirm"
+              value={s.id}
+              confirm_label={gettext("Delete")}
+              checkbox_event="toggle_delete_files"
+              checkbox_checked={@delete_files}
+              checkbox_label={gettext("Also delete files from disk")}
+            >
+              <:caveat>{gettext("Delete this series and its seasons/episodes?")}</:caveat>
+            </.confirm_action>
           </div>
         </div>
       </section>

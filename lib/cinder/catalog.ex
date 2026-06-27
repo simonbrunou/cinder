@@ -116,6 +116,9 @@ defmodule Cinder.Catalog do
     Repo.all(from m in Movie, order_by: [desc: m.id])
   end
 
+  @doc "Maps every watchlisted movie's `tmdb_id` to its pipeline `status`."
+  def movie_status_map, do: Map.new(list_watchlist(), &{&1.tmdb_id, &1.status})
+
   @doc "Subscribes the caller to movie state-change broadcasts (`{:movie_updated, movie}`)."
   def subscribe, do: Phoenix.PubSub.subscribe(Cinder.PubSub, @topic)
 
