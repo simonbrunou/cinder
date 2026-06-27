@@ -71,7 +71,7 @@ defmodule CinderWeb.SettingsComponents do
         </div>
         <p class="mt-1 text-xs opacity-70">
           {gettext(
-            "A separate root per library, so Jellyfin/Plex can point distinct libraries at each. Required even if they share a folder — enter the same path."
+            "A separate root per library, so Jellyfin/Plex can point distinct libraries at each. Required even if they share a folder; enter the same path."
           )}
         </p>
 
@@ -160,7 +160,7 @@ defmodule CinderWeb.SettingsComponents do
             ": a season pack of N episodes is allowed up to N× the max. Leave blank for no limit."
           )}
           {gettext(
-            "Sources: remux, bluray, webrip, webdl, hdtv, dvd, cam. Leave blank to accept any; untagged releases are always kept. These are distinct — listing only bluray excludes remux, so add both to accept either."
+            "Sources: remux, bluray, webrip, webdl, hdtv, dvd, cam. Leave blank to accept any; untagged releases are always kept. These are distinct; listing only bluray excludes remux, so add both to accept either."
           )}
         </p>
       </div>

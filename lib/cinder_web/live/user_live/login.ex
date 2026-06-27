@@ -11,7 +11,7 @@ defmodule CinderWeb.UserLive.Login do
             <p>{gettext("Log in")}</p>
             <:subtitle>
               <%= if @current_scope do %>
-                {gettext("You need to reauthenticate to perform sensitive actions on your account.")}
+                {gettext("You need to log in again to perform sensitive actions on your account.")}
               <% else %>
                 {gettext("Don't have an account?")} <.link
                   navigate={~p"/users/register"}

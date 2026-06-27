@@ -78,7 +78,9 @@ defmodule CinderWeb.SetupLive do
       <.header>
         {gettext("Set up Cinder")}
         <:subtitle>
-          {gettext("Enter and validate your services. Finish unlocks once the movie loop is green.")}
+          {gettext(
+            "Enter and validate your services. Finish unlocks once every required service is connected."
+          )}
         </:subtitle>
       </.header>
 

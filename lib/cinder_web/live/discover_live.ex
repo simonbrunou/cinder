@@ -104,7 +104,7 @@ defmodule CinderWeb.DiscoverLive do
         socket
         |> put_flash(
           :info,
-          gettext("%{title} requested — awaiting approval.", title: movie.title)
+          gettext("%{title} requested. Awaiting approval.", title: movie.title)
         )
         |> assign_request_state()
 
@@ -118,7 +118,7 @@ defmodule CinderWeb.DiscoverLive do
       {:error, _} ->
         put_flash(
           socket,
-          :error,
+          :info,
           gettext("%{title} is already requested.", title: movie.title)
         )
     end
@@ -164,7 +164,7 @@ defmodule CinderWeb.DiscoverLive do
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.header>
         {gettext("Discover")}
-        <:subtitle>{gettext("Search movies and TV — request what you want to watch.")}</:subtitle>
+        <:subtitle>{gettext("Search movies and TV. Request what you want to watch.")}</:subtitle>
       </.header>
 
       <form id="search-form" phx-change="search" phx-submit="search" class="mb-8">

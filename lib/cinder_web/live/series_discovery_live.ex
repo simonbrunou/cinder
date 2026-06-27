@@ -72,7 +72,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
           socket
           |> put_flash(
             :info,
-            gettext("Season %{number} of %{title} requested — awaiting approval.",
+            gettext("Season %{number} of %{title} requested. Awaiting approval.",
               number: season_number,
               title: info.title
             )
@@ -102,7 +102,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
            put_flash(
              socket,
              :error,
-             gettext("Couldn't complete that request — please try again.")
+             gettext("Couldn't complete that request. Please try again.")
            )}
       end
     else

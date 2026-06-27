@@ -77,7 +77,7 @@ defmodule CinderWeb.ActivityLive do
     {:noreply,
      socket
      |> assign(confirming: nil, grabs: Catalog.list_grabs())
-     |> put_flash(:info, gettext("Grab deleted."))}
+     |> put_flash(:info, gettext("Download deleted."))}
   end
 
   # Client-controlled payloads — ignore anything unmatched rather than crash.
@@ -85,7 +85,7 @@ defmodule CinderWeb.ActivityLive do
 
   defp parked?(status), do: status in @parked
   defp series_title(%{episodes: [ep | _]}), do: ep.season.series.title
-  defp series_title(_), do: "—"
+  defp series_title(_), do: gettext("Unknown series")
   defp grab_state(%{content_path: nil}), do: :downloading
   defp grab_state(_), do: :downloaded
 
@@ -170,7 +170,7 @@ defmodule CinderWeb.ActivityLive do
               value={g.id}
               confirm_label={gettext("Delete")}
             >
-              <:caveat>{gettext("Delete this grab? Its episodes are unlinked.")}</:caveat>
+              <:caveat>{gettext("Delete this download? Its episodes are unlinked.")}</:caveat>
             </.confirm_action>
           </li>
         </ul>

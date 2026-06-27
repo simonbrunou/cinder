@@ -32,7 +32,7 @@ defmodule CinderWeb.RequestsLive do
          put_flash(
            socket,
            :error,
-           gettext("Couldn't approve that request — please try again.")
+           gettext("Couldn't approve that request. Please try again.")
          )}
 
       _ ->
@@ -113,14 +113,14 @@ defmodule CinderWeb.RequestsLive do
               <span class="font-semibold">
                 {if r.target_type == "season",
                   do:
-                    gettext("%{title} — Season %{number}",
+                    gettext("%{title}: Season %{number}",
                       title: r.title,
                       number: r.season_number
                     ),
                   else: r.title}
               </span>
               <span :if={r.year} class="opacity-60">({r.year})</span>
-              <span class="text-sm opacity-60">— {r.user.email}</span>
+              <span class="text-sm opacity-60">{r.user.email}</span>
             </div>
             <.status_badge kind={:request} status={r.status} />
             <.button
@@ -186,7 +186,7 @@ defmodule CinderWeb.RequestsLive do
           >
             <:caveat>
               {gettext(
-                "Deleting a request does not remove any movie or series it already created — that catalog row stays. If this request was denied or approved, the same title can be requested again afterwards."
+                "Deleting a request does not remove any movie or series it already created; that catalog row stays. If this request was denied or approved, the same title can be requested again afterwards."
               )}
             </:caveat>
           </.confirm_action>

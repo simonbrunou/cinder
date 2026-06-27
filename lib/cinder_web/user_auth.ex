@@ -260,7 +260,7 @@ defmodule CinderWeb.UserAuth do
       true ->
         socket =
           socket
-          |> Phoenix.LiveView.put_flash(:error, gettext("Setup in progress — try again shortly."))
+          |> Phoenix.LiveView.put_flash(:error, gettext("Setup in progress. Try again shortly."))
           |> Phoenix.LiveView.redirect(to: ~p"/users/log-in")
 
         {:halt, socket}

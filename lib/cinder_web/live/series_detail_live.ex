@@ -491,7 +491,7 @@ defmodule CinderWeb.SeriesDetailLive do
             >
               <:caveat>
                 {gettext(
-                  "Delete the downloaded file for this episode? If it stays monitored the poller re-downloads it next tick — tick \"stop monitoring\" to keep it gone."
+                  "Delete the downloaded file for this episode? If it stays monitored it will be downloaded again. Stop monitoring it to keep it gone."
                 )}
               </:caveat>
             </.confirm_action>

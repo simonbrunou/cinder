@@ -198,7 +198,7 @@ defmodule CinderWeb.DashboardLive do
                   <p class="truncate font-medium">
                     {if r.target_type == "season",
                       do:
-                        gettext("%{title} — Season %{number}",
+                        gettext("%{title}: Season %{number}",
                           title: r.title,
                           number: r.season_number
                         ),

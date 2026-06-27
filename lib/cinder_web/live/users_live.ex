@@ -103,7 +103,7 @@ defmodule CinderWeb.UsersLive do
 
       {:error, _changeset} ->
         {:noreply,
-         put_flash(socket, :error, gettext("Couldn't update email — check the address."))}
+         put_flash(socket, :error, gettext("Couldn't update email. Check the address."))}
     end
   end
 
@@ -151,7 +151,7 @@ defmodule CinderWeb.UsersLive do
       {:noreply,
        socket
        |> assign(resetting_pw: nil)
-       |> put_flash(:info, gettext("Password reset — the user's sessions were ended."))}
+       |> put_flash(:info, gettext("Password reset. The user's sessions were ended."))}
     else
       nil ->
         {:noreply, socket}
@@ -380,7 +380,9 @@ defmodule CinderWeb.UsersLive do
             value={u.id}
             confirm_label={gettext("Delete")}
           >
-            <:caveat>{gettext("Delete %{email}? Requests cascade.", email: u.email)}</:caveat>
+            <:caveat>
+              {gettext("Delete %{email}? Their requests are deleted too.", email: u.email)}
+            </:caveat>
           </.confirm_action>
           <.form
             :if={@resetting_pw == to_string(u.id)}

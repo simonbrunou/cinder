@@ -97,7 +97,7 @@ defmodule CinderWeb.DiscoverLiveTest do
     lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
     html = lv |> form("#add-form-27205") |> render_submit()
 
-    assert html =~ "awaiting approval"
+    assert html =~ "Awaiting approval"
     assert Catalog.list_by_status(:requested) == []
     assert [%Requests.Request{status: :pending}] = Requests.list_for_user(user)
   end
