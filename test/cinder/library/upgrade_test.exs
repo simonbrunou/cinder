@@ -3,7 +3,9 @@ defmodule Cinder.Library.UpgradeTest do
   alias Cinder.Library.Upgrade
 
   @pref ["2160p", "1080p", "720p"]
-  defp q(res, size, lang), do: %{resolution: res, size: size, language: lang}
+  @psrc ["bluray", "webdl"]
+  defp q(res, size, lang, source \\ nil),
+    do: %{resolution: res, size: size, language: lang, source: source}
 
   test "nil baseline is always an upgrade" do
     assert Upgrade.better?(q("720p", 1, "en"), q(nil, nil, nil), nil, @pref)
@@ -39,5 +41,54 @@ defmodule Cinder.Library.UpgradeTest do
 
   test "nil preferred falls back to scorer defaults without crashing" do
     assert Upgrade.better?(q("1080p", 1, "en"), q("720p", 1, "en"), nil, nil)
+  end
+
+  test "equal resolution: a more-preferred source wins over size" do
+    # bluray (size 1) beats webdl (size 9000): source ranks above size.
+    assert Upgrade.better?(
+             q("1080p", 1, "en", "bluray"),
+             q("1080p", 9_000, "en", "webdl"),
+             nil,
+             @pref,
+             @psrc
+           )
+
+    refute Upgrade.better?(
+             q("1080p", 9_000, "en", "webdl"),
+             q("1080p", 1, "en", "bluray"),
+             nil,
+             @pref,
+             @psrc
+           )
+  end
+
+  test "a resolution change still outranks source" do
+    refute Upgrade.better?(
+             q("720p", 1, "en", "bluray"),
+             q("1080p", 9_000, "en", "webdl"),
+             nil,
+             @pref,
+             @psrc
+           )
+  end
+
+  test "old nil source ranks last: a known source upgrades at equal resolution" do
+    assert Upgrade.better?(
+             q("1080p", 1, "en", "bluray"),
+             q("1080p", 9_000, "en", nil),
+             nil,
+             @pref,
+             @psrc
+           )
+  end
+
+  test "empty preferred_sources leaves source out (falls to size — old behavior)" do
+    refute Upgrade.better?(
+             q("1080p", 1, "en", "bluray"),
+             q("1080p", 9_000, "en", "webdl"),
+             nil,
+             @pref,
+             []
+           )
   end
 end

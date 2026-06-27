@@ -261,4 +261,13 @@ defmodule Cinder.Acquisition.ScorerTest do
                Scorer.select_for(releases, 1, [1], preferred_resolutions: ["1080p", "720p"])
     end
   end
+
+  describe "source_rank/2 (public for Library.Upgrade)" do
+    test "index in the preference list; nil/unlisted sorts last" do
+      assert Scorer.source_rank("bluray", ["bluray", "webdl"]) == 0
+      assert Scorer.source_rank("webdl", ["bluray", "webdl"]) == 1
+      assert Scorer.source_rank("hdtv", ["bluray", "webdl"]) == 2
+      assert Scorer.source_rank(nil, ["bluray", "webdl"]) == 2
+    end
+  end
 end

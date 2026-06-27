@@ -40,6 +40,7 @@ defmodule Cinder.Catalog.Movie do
     field :imported_resolution, :string
     field :imported_size, :integer
     field :imported_language, :string
+    field :imported_source, :string
 
     timestamps(type: :utc_datetime)
   end
@@ -81,7 +82,8 @@ defmodule Cinder.Catalog.Movie do
       :search_attempts,
       :imported_resolution,
       :imported_size,
-      :imported_language
+      :imported_language,
+      :imported_source
     ])
     |> validate_required([:status])
   end

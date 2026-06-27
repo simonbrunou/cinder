@@ -1,16 +1,16 @@
 # Graph Report - cinder  (2026-06-27)
 
 ## Corpus Check
-- 288 files · ~308,766 words
+- 293 files · ~313,491 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 2376 nodes · 2809 edges · 277 communities (165 shown, 112 thin omitted)
-- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 42 edges (avg confidence: 0.8)
+- 2433 nodes · 2895 edges · 281 communities (167 shown, 114 thin omitted)
+- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 43 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `f55003ed`
+- Built from commit: `519e8161`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -279,18 +279,22 @@
 - [[_COMMUNITY_Community 274|Community 274]]
 - [[_COMMUNITY_Community 275|Community 275]]
 - [[_COMMUNITY_Community 276|Community 276]]
+- [[_COMMUNITY_Community 277|Community 277]]
+- [[_COMMUNITY_Community 279|Community 279]]
+- [[_COMMUNITY_Community 280|Community 280]]
+- [[_COMMUNITY_Community 281|Community 281]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `Cinder.Catalog` - 98 edges
 2. `Cinder.Settings` - 60 edges
-3. `Cinder.Library` - 53 edges
+3. `Cinder.Library` - 54 edges
 4. `CinderWeb.CoreComponents` - 27 edges
 5. `Cinder.Accounts` - 24 edges
 6. `Cinder.Download.TvPoller` - 24 edges
 7. `Cinder.Download.Poller` - 22 edges
 8. `CinderWeb.UserAuth` - 21 edges
-9. `Cinder.Acquisition.Parser` - 21 edges
-10. `table()` - 20 edges
+9. `table()` - 21 edges
+10. `Cinder.Acquisition.Parser` - 21 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `change()` --calls--> `table()`  [INFERRED]
@@ -304,7 +308,7 @@
 - `change()` --calls--> `table()`  [INFERRED]
   priv/repo/migrations/20260619061256_add_file_path_to_movies.exs → lib/cinder_web/components/core_components.ex
 
-## Communities (277 total, 112 thin omitted)
+## Communities (281 total, 114 thin omitted)
 
 ### Community 0 - "Community 0"
 Cohesion: 0.07
@@ -324,7 +328,7 @@ Nodes (12): Cinder.Catalog, apply_requester_language(), do_delete_episode_file_t
 
 ### Community 4 - "Community 4"
 Cohesion: 0.09
-Nodes (52): Cinder.Library, audio_result(), build_dest(), build_episode_dest(), check_audio(), dedupe_per_episode(), delete_file(), do_import_episodes() (+44 more)
+Nodes (53): Cinder.Library, audio_result(), build_dest(), build_episode_dest(), check_audio(), dedupe_per_episode(), delete_file(), do_import_episodes() (+45 more)
 
 ### Community 5 - "Community 5"
 Cohesion: 0.07
@@ -503,8 +507,8 @@ Cohesion: 0.18
 Nodes (10): Additional Commands, Auto-Configure Nested Memories (if requested), Check Installation Status, Claude Installation, Current Claude Configuration, Important Next Steps, Post-Installation Verification, Pre-Installation Check (+2 more)
 
 ### Community 49 - "Community 49"
-Cohesion: 0.29
-Nodes (5): CinderWeb.UserSessionController, create(), update_password(), Cinder.Repo.Migrations.AddWantedEpisodesIndex, change()
+Cohesion: 0.20
+Nodes (7): CinderWeb.UserSessionController, create(), update_password(), Cinder.Repo.Migrations.CreateRequests, change(), Cinder.Repo.Migrations.AddWantedEpisodesIndex, change()
 
 ### Community 50 - "Community 50"
 Cohesion: 0.18
@@ -596,7 +600,7 @@ Nodes (8): ensure_season(), episodes_for(), finalize_or_restore(), insert_episod
 
 ### Community 72 - "Community 72"
 Cohesion: 0.12
-Nodes (15): [0.7.0] - 2026-06-23, Added, Added, Added, Added, Added, Added, Added (+7 more)
+Nodes (16): [0.7.0] - 2026-06-23, Added, Added, Added, Added, Added, Added, Added (+8 more)
 
 ### Community 73 - "Community 73"
 Cohesion: 0.25
@@ -776,59 +780,59 @@ Nodes (3): CinderWeb.LibraryLiveTest, available_movie!(), movie!()
 
 ### Community 188 - "Community 188"
 Cohesion: 0.09
-Nodes (25): Accumulated Minor findings for final-review triage, Admin CRUD — SDD progress ledger, CODE REVIEW (adversarial, 6 dimensions × independent Opus verify): 1 important + minors., /code-review (high, recall) on PR #50 → review-fix wave (suite 830 green), /code-review on fix-delta → found a REGRESSION in my own #1 fix (suite 831 green), /code-review on PR #39 push (mandated by hook) — 8 finders → verify, /code-review on two-tier → 2 CONFIRMED (my "never a title word" claim was wrong) → suite 835, /code-review on year-only fix → 3 CONFIRMED (positional scoping was the wrong model) → two-tier (suite 833) (+17 more)
+Nodes (26): Accumulated Minor findings for final-review triage, Admin CRUD — SDD progress ledger, CODE REVIEW (adversarial, 6 dimensions × independent Opus verify): 1 important + minors., /code-review (high, recall) on PR #50 → review-fix wave (suite 830 green), /code-review on fix-delta → found a REGRESSION in my own #1 fix (suite 831 green), /code-review on PR #39 push (mandated by hook) — 8 finders → verify, /code-review on two-tier → 2 CONFIRMED (my "never a title word" claim was wrong) → suite 835, /code-review on year-only fix → 3 CONFIRMED (positional scoping was the wrong model) → two-tier (suite 833) (+18 more)
 
 ### Community 221 - "Community 221"
 Cohesion: 0.17
 Nodes (11): Decision: `<.page>` is dropped (council 3–0), File structure, Global Constraints, Self-review, Task 1: `<.status_badge>` component (build + unit test), Task 2: Adopt `<.status_badge>`; delete the 6 helpers, Task 3: `<.confirm_action>` component + adopt across the yes/no confirms, Task 4: `<.empty_state>` component + adopt; add `search-error` variant (+3 more)
 
 ### Community 222 - "Community 222"
-Cohesion: 0.13
-Nodes (26): 8 adoption sites, Adaptation to existing test structure, Commit, Component built, Concerns, deny-with-reason confirmed untouched, Files Changed, Full-gate result (+18 more)
+Cohesion: 0.12
+Nodes (29): 8 adoption sites, Adaptation to existing test structure, Commit, Component built, Concerns, deny-with-reason confirmed untouched, Files Changed, Full-gate result (+21 more)
 
 ### Community 223 - "Community 223"
 Cohesion: 0.11
-Nodes (29): Commit, Concerns, Files changed, Full gate result, Full suite, GREEN, GREEN — after implementation, GREEN phase (focused) (+21 more)
+Nodes (32): Commit, Concerns, Files changed, Full gate result, Full suite, GREEN, GREEN — after implementation, GREEN phase (focused) (+24 more)
 
 ### Community 224 - "Community 224"
-Cohesion: 0.12
-Nodes (26): `active?/2`, Changes Summary, Commit, Concerns, Files Changed, Files changed (10), `filter/3`, Full gate result (+18 more)
+Cohesion: 0.13
+Nodes (28): `active?/2`, Changes Summary, Commit, Concerns, Files Changed, Files changed (10), `filter/3`, Full gate result (+20 more)
 
 ### Community 226 - "Community 226"
-Cohesion: 0.33
-Nodes (5): Task 1: ActivityLive — merge `/status` + `/grabs` into `/activity`, Task 1: FS `rm`/`rmdir` primitives + `Library.delete_file/1`, Task 1: Parser `source` field, Task 1: Parser — tag French dub markers, Task 1: `<.status_badge>` component (build + unit test)
+Cohesion: 0.29
+Nodes (6): Task 1: ActivityLive — merge `/status` + `/grabs` into `/activity`, Task 1: FS `rm`/`rmdir` primitives + `Library.delete_file/1`, Task 1: `imported_source` column + schema fields, Task 1: Parser `source` field, Task 1: Parser — tag French dub markers, Task 1: `<.status_badge>` component (build + unit test)
 
 ### Community 227 - "Community 227"
-Cohesion: 0.33
-Nodes (5): Task 2: Adopt `<.status_badge>`; delete the 6 helpers, Task 2: `Catalog.delete_movie/3` — opt-in `delete_files:`, Task 2: `Cinder.Acquisition.Language` predicate module, Task 2: LibraryLive — merge `/movies` + the Discover "Added series" block into `/library`, Task 2: Scorer `preferred_sources` filter + ranking
+Cohesion: 0.29
+Nodes (6): Task 2: Adopt `<.status_badge>`; delete the 6 helpers, Task 2: `Catalog.delete_movie/3` — opt-in `delete_files:`, Task 2: `Cinder.Acquisition.Language` predicate module, Task 2: LibraryLive — merge `/movies` + the Discover "Added series" block into `/library`, Task 2: Re-expose `Scorer.source_rank/2`, Task 2: Scorer `preferred_sources` filter + ranking
 
 ### Community 228 - "Community 228"
-Cohesion: 0.33
-Nodes (5): Task 3: `Catalog.delete_series/3` — opt-in `delete_files:`, Task 3: `<.confirm_action>` component + adopt across the yes/no confirms, Task 3: DashboardLive — role-aware admin landing at `/dashboard`, Task 3: Settings overlay, band_opts, and UI field, Task 3: Thread `original_language` through the TMDB layer
+Cohesion: 0.29
+Nodes (6): Task 3: `Catalog.delete_series/3` — opt-in `delete_files:`, Task 3: `<.confirm_action>` component + adopt across the yes/no confirms, Task 3: DashboardLive — role-aware admin landing at `/dashboard`, Task 3: Settings overlay, band_opts, and UI field, Task 3: Source axis in the `Upgrade` comparator, Task 3: Thread `original_language` through the TMDB layer
 
 ### Community 229 - "Community 229"
-Cohesion: 0.29
-Nodes (6): Notes for the implementer, Task 4: `Catalog.delete_episode_file/3` — file-only delete, Task 4: Docs + graph refresh, Task 4: `<.empty_state>` component + adopt; add `search-error` variant, Task 4: Migration + schema fields (movies, series, requests), Task 4: Sidebar nav — regroup the Admin section + role-aware wordmark
+Cohesion: 0.25
+Nodes (7): Notes for the implementer, Task 4: `Catalog.delete_episode_file/3` — file-only delete, Task 4: Docs + graph refresh, Task 4: `<.empty_state>` component + adopt; add `search-error` variant, Task 4: Migration + schema fields (movies, series, requests), Task 4: Sidebar nav — regroup the Admin section + role-aware wordmark, Task 4: Wire the movie pipeline (capture + persist + comparator call)
 
 ### Community 230 - "Community 230"
 Cohesion: 0.08
 Nodes (26): 3 Conversions, 3 Header assertions added, Added 4 failing tests first:, Back-links preserved, `best_release/2` before/after, Changes, Commit, Concerns (+18 more)
 
 ### Community 231 - "Community 231"
-Cohesion: 0.09
-Nodes (30): Adoption sites, CHANGELOG.md, Commit, Component built, Concerns, docs/operating.md, Files changed, Full gate result (+22 more)
+Cohesion: 0.08
+Nodes (36): Adoption sites, CHANGELOG.md, Commit, Component built, Concerns, docs/operating.md, Files Changed, Full gate result (+28 more)
 
 ### Community 232 - "Community 232"
-Cohesion: 0.15
-Nodes (19): Both helpers before/after, Commit, Concerns, Files changed, Full-gate result, Health-check adoption, Key behaviors verified, phx-disable-with buttons (file:line after edit) (+11 more)
+Cohesion: 0.17
+Nodes (20): Both helpers before/after, Commit, Concerns, Files Changed, Full-gate result, Health-check adoption, Key behaviors verified, phx-disable-with buttons (file:line after edit) (+12 more)
 
 ### Community 233 - "Community 233"
-Cohesion: 0.40
-Nodes (4): Self-review, Task 6: Convert the 3 bare-`<h1>` pages to `<.header>`, Task 6: Filter language in movie acquisition + park visibly, Task 6: `LibraryLive` — delete-files checkbox on movie + series dialogs
+Cohesion: 0.29
+Nodes (6): Notes for the implementer, Self-review, Task 6: Convert the 3 bare-`<h1>` pages to `<.header>`, Task 6: Docs + graph refresh, Task 6: Filter language in movie acquisition + park visibly, Task 6: `LibraryLive` — delete-files checkbox on movie + series dialogs
 
 ### Community 234 - "Community 234"
-Cohesion: 0.40
-Nodes (4): Task 5: Calendar — degrade the table to mobile-safe cards, Task 5: Carry language through the request→approval gate (movies), Task 5: `Catalog.delete_season_files/3` — bulk file-only delete, Task 5: `<.spinner>` + loading feedback (health spinner, phx-disable-with)
+Cohesion: 0.33
+Nodes (5): Task 5: Calendar — degrade the table to mobile-safe cards, Task 5: Carry language through the request→approval gate (movies), Task 5: `Catalog.delete_season_files/3` — bulk file-only delete, Task 5: `<.spinner>` + loading feedback (health spinner, phx-disable-with), Task 5: Wire the TV pipeline (capture + persist + comparator call + resets)
 
 ### Community 235 - "Community 235"
 Cohesion: 0.17
@@ -887,8 +891,8 @@ Cohesion: 0.50
 Nodes (3): Risks / verify-during-implementation, Self-review notes (spec coverage), Task 11: Extract translations + final green
 
 ### Community 259 - "Community 259"
-Cohesion: 0.53
-Nodes (5): Cinder.Library.Upgrade, better?(), language_decides?(), nil_baseline?(), quality_better?()
+Cohesion: 0.48
+Nodes (6): Cinder.Library.Upgrade, better?(), language_decides?(), nil_baseline?(), quality_better?(), rank()
 
 ### Community 263 - "Community 263"
 Cohesion: 0.22
@@ -906,6 +910,10 @@ Nodes (6): Concerns, Step 1: Extract + merge, Step 2: Full suite, Step 3: Knowle
 Cohesion: 0.53
 Nodes (5): Cinder.Library.MediaInfo.Ffprobe, args(), audio_languages(), bin(), parse()
 
+### Community 271 - "Community 271"
+Cohesion: 0.14
+Nodes (13): 1. Migration + schemas, 2. Capture + persist the imported source, 3. The comparator (`upgrade.ex`), 4. Scorer (`scorer.ex`), 5. Call sites, Components, Decisions (settled in brainstorming), Docs (+5 more)
+
 ### Community 275 - "Community 275"
 Cohesion: 0.18
 Nodes (10): 1. Parser — new `source` field (`parser.ex`, `release.ex`), 2. Scorer — `preferred_sources` filter + ranking (`scorer.ex`), 3. Settings — per-kind `preferred_sources` (`settings.ex`, `settings_components.ex`), Components, Decisions (settled in brainstorming), Docs, Problem, Release source preference (web / Blu-ray / …) — design (+2 more)
@@ -914,25 +922,29 @@ Nodes (10): 1. Parser — new `source` field (`parser.ex`, `release.ex`), 2. Sco
 Cohesion: 0.25
 Nodes (7): Global Constraints, Notes for the implementer, Release Source Preference Implementation Plan, Task 1: Parser `source` field, Task 2: Scorer `preferred_sources` filter + ranking, Task 3: Settings overlay, band_opts, and UI field, Task 4: Docs + graph refresh
 
+### Community 277 - "Community 277"
+Cohesion: 0.20
+Nodes (9): Global Constraints, Notes for the implementer, Source-Aware Import-Time Upgrade Implementation Plan, Task 1: `imported_source` column + schema fields, Task 2: Re-expose `Scorer.source_rank/2`, Task 3: Source axis in the `Upgrade` comparator, Task 4: Wire the movie pipeline (capture + persist + comparator call), Task 5: Wire the TV pipeline (capture + persist + comparator call + resets) (+1 more)
+
 ## Knowledge Gaps
-- **893 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+888 more)
+- **927 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+922 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **112 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **114 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `table()` connect `Community 74` to `Community 258`, `Community 249`, `Community 266`, `Community 142`, `Community 271`, `Community 272`, `Community 241`, `Community 145`, `Community 273`, `Community 148`, `Community 149`, `Community 22`, `Community 150`, `Community 152`, `Community 153`, `Community 250`, `Community 274`?**
-  _High betweenness centrality (0.001) - this node is a cross-community bridge._
-- **Why does `CinderWeb.CoreComponents` connect `Community 22` to `Community 74`?**
-  _High betweenness centrality (0.001) - this node is a cross-community bridge._
 - **Why does `Cinder.Catalog` connect `Community 3` to `Community 37`, `Community 71`, `Community 59`, `Community 147`, `Community 91`, `Community 28`?**
   _High betweenness centrality (0.001) - this node is a cross-community bridge._
 - **What connects `tidewave`, `$schema`, `erlang` to the rest of the system?**
-  _893 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _927 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**
   _Cohesion score 0.07049180327868852 - nodes in this community are weakly interconnected._
 - **Should `Community 1` be split into smaller, more focused modules?**
   _Cohesion score 0.04830917874396135 - nodes in this community are weakly interconnected._
 - **Should `Community 2` be split into smaller, more focused modules?**
   _Cohesion score 0.05 - nodes in this community are weakly interconnected._
+- **Should `Community 3` be split into smaller, more focused modules?**
+  _Cohesion score 0.07862903225806452 - nodes in this community are weakly interconnected._
+- **Should `Community 4` be split into smaller, more focused modules?**
+  _Cohesion score 0.08552188552188553 - nodes in this community are weakly interconnected._

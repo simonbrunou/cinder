@@ -688,7 +688,8 @@ defmodule Cinder.Catalog do
           file_path: nil,
           imported_resolution: nil,
           imported_size: nil,
-          imported_language: nil
+          imported_language: nil,
+          imported_source: nil
         })
         |> maybe_unmonitor(unmonitor?)
 
@@ -754,6 +755,7 @@ defmodule Cinder.Catalog do
           imported_resolution: nil,
           imported_size: nil,
           imported_language: nil,
+          imported_source: nil,
           updated_at: now()
         ] ++ if(unmonitor?, do: [monitored: false], else: [])
 
@@ -1018,6 +1020,7 @@ defmodule Cinder.Catalog do
               imported_resolution: q.resolution,
               imported_size: q.size,
               imported_language: q.language,
+              imported_source: q.source,
               updated_at: ts
             ]
           )

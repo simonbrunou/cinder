@@ -187,7 +187,8 @@ defmodule Cinder.Download.Poller do
                  file_path: dest,
                  imported_resolution: q.resolution,
                  imported_size: q.size,
-                 imported_language: q.language
+                 imported_language: q.language,
+                 imported_source: q.source
                }) do
           Notifier.notify({:movie_available, available})
           # After the DB commit (the file is recorded as imported): a best-effort, gated

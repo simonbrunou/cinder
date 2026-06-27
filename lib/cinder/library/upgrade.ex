@@ -1,22 +1,24 @@
 defmodule Cinder.Library.Upgrade do
   @moduledoc """
   Pure decision: is `new` a quality/language upgrade over `old`, per cinder's selection model
-  (language-first, then resolution preference, then size)? `new`/`old` are
-  `%{resolution: String.t()|nil, size: integer|nil, language: String.t()|nil}` describing a
-  release/library file. Name-parsed; resolution is often nil (ranks last); size is a weak proxy.
+  (language-first, then resolution, then source, then size)? `new`/`old` are
+  `%{resolution: String.t()|nil, size: integer|nil, language: String.t()|nil, source: String.t()|nil}`
+  describing a release/library file. Name-parsed; resolution/source are often nil (rank last); size
+  is a weak proxy. `preferred_sources` defaults to `[]` (no source preference ⇒ source ties).
   """
   alias Cinder.Acquisition.{Language, Scorer}
 
   @default_preferred ["1080p", "720p"]
 
-  @spec better?(map(), map(), String.t() | nil, [String.t()] | nil) :: boolean()
-  def better?(new, old, target, preferred) do
+  @spec better?(map(), map(), String.t() | nil, [String.t()] | nil, [String.t()] | nil) ::
+          boolean()
+  def better?(new, old, target, preferred, preferred_sources \\ []) do
     lang_verdict = language_decides?(new, old, target)
 
     cond do
       nil_baseline?(old) -> true
       lang_verdict != :tie -> lang_verdict == :upgrade
-      true -> quality_better?(new, old, preferred || @default_preferred)
+      true -> quality_better?(new, old, preferred || @default_preferred, preferred_sources || [])
     end
   end
 
@@ -41,9 +43,15 @@ defmodule Cinder.Library.Upgrade do
     end
   end
 
-  defp quality_better?(new, old, preferred) do
-    nr = Scorer.resolution_rank(new.resolution, preferred)
-    orr = Scorer.resolution_rank(old.resolution, preferred)
-    nr < orr or (nr == orr and (new.size || 0) > (old.size || 0))
+  # Lexicographic over {resolution rank, source rank, -size}: lower is better — better resolution,
+  # then more-preferred source, then larger size. Mirrors Scorer.sort_key. With preferred_sources []
+  # the source rank ties at 0 for all, so this reduces to the prior resolution-then-size decision.
+  defp quality_better?(new, old, preferred, sources) do
+    rank(new, preferred, sources) < rank(old, preferred, sources)
+  end
+
+  defp rank(q, preferred, sources) do
+    {Scorer.resolution_rank(q.resolution, preferred), Scorer.source_rank(q.source, sources),
+     -(q.size || 0)}
   end
 end

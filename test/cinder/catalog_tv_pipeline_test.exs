@@ -128,8 +128,8 @@ defmodule Cinder.CatalogTvPipelineTest do
   end
 
   describe "finish_grab/2" do
-    @q1 %{resolution: "1080p", size: 5_000_000_000, language: nil}
-    @q2 %{resolution: "720p", size: 3_000_000_000, language: "FRENCH"}
+    @q1 %{resolution: "1080p", size: 5_000_000_000, language: nil, source: nil}
+    @q2 %{resolution: "720p", size: 3_000_000_000, language: "FRENCH", source: nil}
 
     test "sets each imported episode's own file_path, clears grab_id, deletes the grab, broadcasts" do
       {series, season} = series_with_season()
@@ -164,7 +164,8 @@ defmodule Cinder.CatalogTvPipelineTest do
 
       assert {:ok, _} =
                Catalog.finish_grab(grab, [
-                 {ep.id, dest, %{resolution: "1080p", size: 123, language: "FRENCH"}}
+                 {ep.id, dest,
+                  %{resolution: "1080p", size: 123, language: "FRENCH", source: "bluray"}}
                ])
 
       r = Repo.get!(Episode, ep.id)
@@ -172,6 +173,7 @@ defmodule Cinder.CatalogTvPipelineTest do
       assert r.imported_resolution == "1080p"
       assert r.imported_size == 123
       assert r.imported_language == "FRENCH"
+      assert r.imported_source == "bluray"
     end
 
     test "partial pack: bumps search_attempts on the non-imported episode, deletes the grab" do
