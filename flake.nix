@@ -7,7 +7,9 @@
       pkgs = import nixpkgs { inherit system; };
     in {
       devShells.x86_64-linux.default = pkgs.mkShell {
-        packages = with pkgs; [ elixir erlang ];
+        # beamPackages.* (not the deprecated top-level elixir/erlang aliases);
+        # inotify-tools is required by Phoenix live-reload on Linux.
+        packages = with pkgs; [ beamPackages.elixir beamPackages.erlang inotify-tools ];
       };
     };
 }
