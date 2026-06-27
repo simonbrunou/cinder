@@ -123,7 +123,7 @@ defmodule CinderWeb.DashboardLive do
       <.icon name={@icon} class="size-4 shrink-0 self-center text-base-content/70" />
       <span class="text-lg font-semibold tabular-nums">{@value}</span>
       <span class="text-sm text-base-content/70">{@label}</span>
-      <span :if={@suffix} class="text-xs text-base-content/60">· {@suffix}</span>
+      <span :if={@suffix} class="text-xs text-base-content/70">· {@suffix}</span>
     </div>
     """
   end
@@ -203,9 +203,9 @@ defmodule CinderWeb.DashboardLive do
                           number: r.season_number
                         ),
                       else: r.title}
-                    <span :if={r.year} class="text-base-content/50">({r.year})</span>
+                    <span :if={r.year} class="text-base-content/70">({r.year})</span>
                   </p>
-                  <p class="truncate text-sm text-base-content/60">{r.user.email}</p>
+                  <p class="truncate text-sm text-base-content/70">{r.user.email}</p>
                 </div>
                 <.status_badge kind={:request} status={r.status} />
               </div>
@@ -310,8 +310,8 @@ defmodule CinderWeb.DashboardLive do
               <li :for={m <- @recent} class="flex items-center gap-3">
                 <.status_badge kind={:movie} status={m.status} />
                 <span class="truncate">{m.title}</span>
-                <span :if={m.year} class="text-sm text-base-content/50">({m.year})</span>
-                <span class="ml-auto whitespace-nowrap text-xs text-base-content/40">
+                <span :if={m.year} class="text-sm text-base-content/70">({m.year})</span>
+                <span class="ml-auto whitespace-nowrap text-xs text-base-content/70">
                   {Calendar.strftime(m.updated_at, "%b %-d")}
                 </span>
               </li>

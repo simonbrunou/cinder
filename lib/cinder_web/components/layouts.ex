@@ -144,7 +144,7 @@ defmodule CinderWeb.Layouts do
               <.theme_toggle />
               <.locale_switcher />
             </div>
-            <div class="px-2 text-xs text-base-content/60 truncate">
+            <div class="px-2 text-xs text-base-content/70 truncate">
               {@current_scope.user.email}
             </div>
             <ul class="menu w-full gap-1 px-0">

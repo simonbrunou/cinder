@@ -113,7 +113,7 @@ defmodule CinderWeb.ActivityLive do
             class="card bg-base-200 p-3 flex flex-row flex-wrap items-center gap-3"
           >
             <span class="min-w-0 flex-1 truncate">
-              {m.title}<span :if={m.year} class="text-base-content/50"> ({m.year})</span>
+              {m.title}<span :if={m.year} class="text-base-content/70"> ({m.year})</span>
             </span>
             <.status_badge kind={:movie} status={m.status} />
             <.button
@@ -148,8 +148,8 @@ defmodule CinderWeb.ActivityLive do
             <div class="flex flex-wrap items-center gap-2">
               <span class="font-semibold">{series_title(g)}</span>
               <.status_badge kind={:grab} status={grab_state(g)} />
-              <span class="text-xs text-base-content/50">{g.download_protocol}</span>
-              <span class="text-xs text-base-content/50 truncate">{g.download_id}</span>
+              <span class="text-xs text-base-content/70">{g.download_protocol}</span>
+              <span class="text-xs text-base-content/70 truncate">{g.download_id}</span>
               <.button
                 type="button"
                 variant="danger"

@@ -73,7 +73,7 @@ defmodule CinderWeb.CalendarLive do
           </time>
           <.status_badge kind={:episode} status={row.state} />
           <span class="font-medium">{row.ep.season.series.title}</span>
-          <span class="tabular-nums text-sm text-base-content/60">
+          <span class="tabular-nums text-sm text-base-content/70">
             {code(row.ep.season.season_number, row.ep.episode_number)}
           </span>
           <span class="truncate text-base-content/70">{row.ep.title}</span>

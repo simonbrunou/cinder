@@ -343,7 +343,7 @@ defmodule CinderWeb.SeriesDetailLive do
         <div>
           <.header>
             {@series.title}
-            <span :if={@series.year} class="font-normal text-base-content/60">({@series.year})</span>
+            <span :if={@series.year} class="font-normal text-base-content/70">({@series.year})</span>
             <:actions>
               <span class={["badge badge-sm", @series.monitored && "badge-success"]}>
                 {if @series.monitored, do: gettext("Monitored"), else: gettext("Unmonitored")}
@@ -368,7 +368,7 @@ defmodule CinderWeb.SeriesDetailLive do
         <div class="mb-2 flex items-center justify-between border-b border-base-300 pb-2">
           <h2 class="text-lg font-semibold">
             {season_label(season.season_number)}
-            <span class="ml-2 text-sm font-normal text-base-content/60">
+            <span class="ml-2 text-sm font-normal text-base-content/70">
               {gettext("%{n}/%{m} monitored",
                 n: monitored_count(season),
                 m: length(season.episodes)
@@ -433,7 +433,7 @@ defmodule CinderWeb.SeriesDetailLive do
           </:caveat>
         </.confirm_action>
 
-        <p :if={season.episodes == []} class="text-sm text-base-content/50">
+        <p :if={season.episodes == []} class="text-sm text-base-content/70">
           {gettext("No episodes yet.")}
         </p>
         <ul class="divide-y divide-base-200">
@@ -452,7 +452,7 @@ defmodule CinderWeb.SeriesDetailLive do
                   )
                 }
               />
-              <span class="w-8 text-sm tabular-nums text-base-content/60">{ep.episode_number}</span>
+              <span class="w-8 text-sm tabular-nums text-base-content/70">{ep.episode_number}</span>
               <span class="flex-1 text-sm">{ep.title}</span>
               <time
                 :if={ep.air_date}

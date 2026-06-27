@@ -219,7 +219,7 @@ defmodule CinderWeb.LibraryLive do
           <li :for={m <- @movies} id={"movie-#{m.id}"} class="card bg-base-200 p-4">
             <div class="flex flex-wrap items-center gap-3">
               <span class="font-semibold">{m.title}</span>
-              <span :if={m.year} class="text-base-content/60">({m.year})</span>
+              <span :if={m.year} class="text-base-content/70">({m.year})</span>
               <.status_badge kind={:movie} status={m.status} />
               <div class="ml-auto flex gap-2">
                 <.button

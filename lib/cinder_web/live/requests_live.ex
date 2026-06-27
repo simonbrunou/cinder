@@ -227,8 +227,8 @@ defmodule CinderWeb.RequestsLive do
                     ),
                   else: r.title}
               </span>
-              <span :if={r.year} class="opacity-60">({r.year})</span>
-              <span class="text-sm opacity-60">{r.user.email}</span>
+              <span :if={r.year} class="opacity-70">({r.year})</span>
+              <span class="text-sm opacity-70">{r.user.email}</span>
             </div>
             <.status_badge kind={:request} status={r.status} />
             <.button

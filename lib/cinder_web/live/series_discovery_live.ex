@@ -163,7 +163,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
         <div>
           <.header>
             {@info.title}
-            <span :if={@info.year} class="font-normal text-base-content/60">({@info.year})</span>
+            <span :if={@info.year} class="font-normal text-base-content/70">({@info.year})</span>
           </.header>
         </div>
       </div>

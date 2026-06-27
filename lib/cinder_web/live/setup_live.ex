@@ -137,7 +137,7 @@ defmodule CinderWeb.SetupLive do
         <span :if={match?({:error, _}, @status)} class="text-error">
           ({health_reason(elem(@status, 1))})
         </span>
-        <span :if={is_nil(@status)} class="text-base-content/60">
+        <span :if={is_nil(@status)} class="text-base-content/70">
           ({@hint || gettext("not checked yet")})
         </span>
       </div>
