@@ -24,6 +24,7 @@ defmodule Cinder.Catalog.Episode do
     field :imported_resolution, :string
     field :imported_size, :integer
     field :imported_language, :string
+    field :imported_source, :string
     belongs_to :season, Season
     belongs_to :grab, Grab
 
@@ -53,7 +54,8 @@ defmodule Cinder.Catalog.Episode do
       :search_attempts,
       :imported_resolution,
       :imported_size,
-      :imported_language
+      :imported_language,
+      :imported_source
     ])
   end
 
