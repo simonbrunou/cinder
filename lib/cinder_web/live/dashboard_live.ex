@@ -312,7 +312,7 @@ defmodule CinderWeb.DashboardLive do
                 <span class="truncate">{m.title}</span>
                 <span :if={m.year} class="text-sm text-base-content/70">({m.year})</span>
                 <time
-                  datetime={NaiveDateTime.to_iso8601(m.updated_at)}
+                  datetime={DateTime.to_iso8601(m.updated_at)}
                   class="ml-auto whitespace-nowrap text-xs text-base-content/70"
                 >
                   {Calendar.strftime(m.updated_at, "%b %-d")}

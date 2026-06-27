@@ -7,8 +7,7 @@ defmodule CinderWeb.NoEmDashTest do
   # code comments, so this only scans inside gettext("...") calls.
   test "no em dash inside gettext copy under lib/cinder_web" do
     offenders =
-      "lib/cinder_web/**/*.ex"
-      |> Path.wildcard()
+      (Path.wildcard("lib/cinder_web/**/*.ex") ++ Path.wildcard("lib/cinder_web/**/*.heex"))
       |> Enum.flat_map(fn file ->
         file
         |> File.read!()

@@ -682,16 +682,21 @@ defmodule CinderWeb.CoreComponents do
   for the badge's hover title and for the visible reason text on `/dashboard`.
   """
   def health_reason(:not_configured), do: gettext("Not configured")
+  def health_reason(:no_download_client), do: gettext("No reachable client")
   def health_reason(:timeout), do: gettext("Timed out")
   def health_reason(:nxdomain), do: gettext("Host not found")
   def health_reason(:ehostunreach), do: gettext("Host unreachable")
   def health_reason(:econnrefused), do: gettext("Connection refused")
   def health_reason(:closed), do: gettext("Connection closed")
 
-  def health_reason({:status, status}) when status in [401, 403],
+  # Service impls emit namespaced status tuples ({:prowlarr_status, 401}, {:qbittorrent_status, n},
+  # …) as well as the bare {:status, n}, so match any 2-tuple whose second element is an HTTP code.
+  def health_reason({_tag, status}) when is_integer(status) and status in [401, 403],
     do: gettext("Authentication failed")
 
-  def health_reason({:status, status}), do: gettext("HTTP %{status}", status: status)
+  def health_reason({_tag, status}) when is_integer(status),
+    do: gettext("HTTP %{status}", status: status)
+
   def health_reason({:error, reason}), do: health_reason(reason)
 
   # Unwrap transport/HTTP error structs, e.g. %Req.TransportError{reason: :econnrefused},

@@ -124,7 +124,12 @@ defmodule CinderWeb.RequestsLive do
   @impl true
   def handle_info({event, _req}, socket)
       when event in [:request_created, :request_approved, :request_denied] do
-    {:noreply, assign(socket, requests: Requests.list_requests())}
+    requests = Requests.list_requests()
+    # Drop selections whose rows are no longer pending (e.g. a concurrent admin acted on them),
+    # so the "N selected" count and bulk actions stay honest.
+    pending = for r <- requests, r.status == :pending, into: MapSet.new(), do: to_string(r.id)
+    selected = MapSet.intersection(socket.assigns.selected, pending)
+    {:noreply, assign(socket, requests: requests, selected: selected)}
   end
 
   def handle_info(_msg, socket), do: {:noreply, socket}

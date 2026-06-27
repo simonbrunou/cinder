@@ -102,6 +102,16 @@ defmodule Cinder.RequestsTest do
     assert {:error, :not_denied} = Requests.reopen_request(req, admin)
   end
 
+  test "reopen_request returns {:error, changeset} when a pending request already holds the slot" do
+    user = user_fixture()
+    admin = admin_fixture()
+    {:ok, req} = Requests.create_request(user, @attrs)
+    {:ok, denied} = Requests.deny_request(req, admin, "no")
+    # a fresh pending request now occupies that target's partial-unique pending slot
+    {:ok, _pending} = Requests.create_request(user, @attrs)
+    assert {:error, %Ecto.Changeset{}} = Requests.reopen_request(denied, admin)
+  end
+
   test "auto_approve_all on → a non-admin add creates the movie" do
     Cinder.Settings.put("auto_approve_all", "true")
     user = user_fixture()

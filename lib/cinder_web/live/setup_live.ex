@@ -160,7 +160,17 @@ defmodule CinderWeb.SetupLive do
 
   # The download requirement is "at least one of torrent/usenet reachable".
   defp download_status(health) do
-    if Enum.any?(@download_services, &(health[&1] == :ok)), do: :ok
+    cond do
+      Enum.any?(@download_services, &(health[&1] == :ok)) ->
+        :ok
+
+      # validated, but every configured client failed — show red, not the grey "not checked yet"
+      Enum.any?(@download_services, &match?({:error, _}, health[&1])) ->
+        {:error, :no_download_client}
+
+      true ->
+        nil
+    end
   end
 
   defp service_label("tmdb"), do: gettext("TMDB")
