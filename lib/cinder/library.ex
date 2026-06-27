@@ -57,32 +57,29 @@ defmodule Cinder.Library do
            ),
          {:ok, %{size: size, inode: si}} <- fs().lstat(source),
          parsed = Parser.parse(Path.basename(movie.file_path)),
-         new_q = %{
-           resolution: parsed.resolution,
-           source: parsed.source,
-           size: size,
-           language: parsed.language
-         },
+         new_q = new_quality(parsed, size),
          dest = build_dest(movie, source, root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
-         {:ok, quality} <- place(source, dest, si, movie, new_q) do
+         {:ok, quality} <- place(source, dest, si, movie, new_q, upgrade?(movie, new_q)) do
       scan(:movies, dest)
       {:ok, dest, quality}
     end
   end
 
-  # Place source at dest; resolve a same-item collision (tmdb-unique folder => same movie) by upgrade decision.
-  defp place(source, dest, si, movie, new_q) do
+  # Place source at dest; resolve a same-item collision (tmdb-unique folder => same record) by the
+  # caller's precomputed `upgrade` decision. Shared by movie and episode imports.
+  defp place(source, dest, si, record, new_q, upgrade) do
     case fs().ln(source, dest) do
-      :ok -> {:ok, new_q}
-      {:error, :eexist} -> resolve_collision(source, dest, si, movie, new_q)
-      {:error, _} = err -> err
-    end
-  end
+      :ok ->
+        {:ok, new_q}
 
-  defp resolve_collision(source, dest, si, movie, new_q) do
-    with {:ok, %{inode: di}} <- fs().lstat(dest) do
-      do_resolve(source, dest, si == di, upgrade?(movie, new_q), movie, new_q)
+      {:error, :eexist} ->
+        with {:ok, %{inode: di}} <- fs().lstat(dest) do
+          do_resolve(source, dest, si == di, upgrade, record, new_q)
+        end
+
+      {:error, _} = err ->
+        err
     end
   end
 
@@ -95,33 +92,33 @@ defmodule Cinder.Library do
 
   defp do_resolve(_source, dest, false, false, movie, new_q), do: keep(dest, movie, new_q)
 
-  defp existing_quality(movie, new_q) do
-    if nil_q?(movie),
-      do: new_q,
-      else: %{
-        resolution: movie.imported_resolution,
-        size: movie.imported_size,
-        language: movie.imported_language,
-        source: movie.imported_source
-      }
+  defp existing_quality(record, new_q) do
+    if nil_q?(record), do: new_q, else: old_quality(record)
+  end
+
+  # Quality maps shared by movie + episode import (both carry the imported_* fields).
+  defp old_quality(record) do
+    %{
+      resolution: record.imported_resolution,
+      size: record.imported_size,
+      language: record.imported_language,
+      source: record.imported_source
+    }
+  end
+
+  defp new_quality(parsed, size) do
+    %{resolution: parsed.resolution, source: parsed.source, size: size, language: parsed.language}
   end
 
   defp nil_q?(m),
     do: is_nil(m.imported_resolution) and is_nil(m.imported_size) and is_nil(m.imported_language)
 
   defp upgrade?(movie, new_q) do
-    old_q = %{
-      resolution: movie.imported_resolution,
-      size: movie.imported_size,
-      language: movie.imported_language,
-      source: movie.imported_source
-    }
-
     target = Language.target(movie.preferred_language, movie.original_language)
 
     Upgrade.better?(
       new_q,
-      old_q,
+      old_quality(movie),
       target,
       preferred_resolutions(:movies),
       preferred_sources(:movies)
@@ -380,14 +377,9 @@ defmodule Cinder.Library do
 
       with {:ok, %{size: size, inode: si}} <- fs().lstat(source),
            parsed = Parser.parse(Path.basename(source)),
-           new_q = %{
-             resolution: parsed.resolution,
-             source: parsed.source,
-             size: size,
-             language: parsed.language
-           },
+           new_q = new_quality(parsed, size),
            :ok <- fs().mkdir_p(Path.dirname(dest)),
-           {:ok, q} <- place_episode(source, dest, si, ep, new_q, target) do
+           {:ok, q} <- place(source, dest, si, ep, new_q, ep_upgrade?(ep, new_q, target)) do
         {:cont, {:ok, [{ep.id, dest, q} | acc]}}
       else
         {:error, _} = err -> {:halt, err}
@@ -395,30 +387,14 @@ defmodule Cinder.Library do
     end)
   end
 
-  defp place_episode(source, dest, si, ep, new_q, target) do
-    case fs().ln(source, dest) do
-      :ok ->
-        {:ok, new_q}
-
-      {:error, :eexist} ->
-        with {:ok, %{inode: di}} <- fs().lstat(dest) do
-          do_resolve(source, dest, si == di, ep_upgrade?(ep, new_q, target), ep, new_q)
-        end
-
-      {:error, _} = err ->
-        err
-    end
-  end
-
   defp ep_upgrade?(ep, new_q, target) do
-    old_q = %{
-      resolution: ep.imported_resolution,
-      size: ep.imported_size,
-      language: ep.imported_language,
-      source: ep.imported_source
-    }
-
-    Upgrade.better?(new_q, old_q, target, preferred_resolutions(:tv), preferred_sources(:tv))
+    Upgrade.better?(
+      new_q,
+      old_quality(ep),
+      target,
+      preferred_resolutions(:tv),
+      preferred_sources(:tv)
+    )
   end
 
   defp build_episode_dest(%Episode{season: season} = ep, source, root) do
