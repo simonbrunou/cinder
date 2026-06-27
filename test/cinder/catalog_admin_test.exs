@@ -630,7 +630,8 @@ defmodule Cinder.CatalogAdminTest do
         |> Ecto.Changeset.change(
           imported_resolution: "1080p",
           imported_size: 4_000_000_000,
-          imported_language: "en"
+          imported_language: "en",
+          imported_source: "bluray"
         )
         |> Repo.update()
 
@@ -644,6 +645,7 @@ defmodule Cinder.CatalogAdminTest do
       assert is_nil(reloaded.imported_resolution)
       assert is_nil(reloaded.imported_size)
       assert is_nil(reloaded.imported_language)
+      assert is_nil(reloaded.imported_source)
     end
   end
 

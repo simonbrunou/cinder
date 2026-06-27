@@ -380,7 +380,12 @@ defmodule Cinder.Library do
 
       with {:ok, %{size: size, inode: si}} <- fs().lstat(source),
            parsed = Parser.parse(Path.basename(source)),
-           new_q = %{resolution: parsed.resolution, size: size, language: parsed.language},
+           new_q = %{
+             resolution: parsed.resolution,
+             source: parsed.source,
+             size: size,
+             language: parsed.language
+           },
            :ok <- fs().mkdir_p(Path.dirname(dest)),
            {:ok, q} <- place_episode(source, dest, si, ep, new_q, target) do
         {:cont, {:ok, [{ep.id, dest, q} | acc]}}
@@ -409,10 +414,11 @@ defmodule Cinder.Library do
     old_q = %{
       resolution: ep.imported_resolution,
       size: ep.imported_size,
-      language: ep.imported_language
+      language: ep.imported_language,
+      source: ep.imported_source
     }
 
-    Upgrade.better?(new_q, old_q, target, preferred_resolutions(:tv))
+    Upgrade.better?(new_q, old_q, target, preferred_resolutions(:tv), preferred_sources(:tv))
   end
 
   defp build_episode_dest(%Episode{season: season} = ep, source, root) do

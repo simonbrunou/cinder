@@ -164,7 +164,8 @@ defmodule Cinder.CatalogTvPipelineTest do
 
       assert {:ok, _} =
                Catalog.finish_grab(grab, [
-                 {ep.id, dest, %{resolution: "1080p", size: 123, language: "FRENCH"}}
+                 {ep.id, dest,
+                  %{resolution: "1080p", size: 123, language: "FRENCH", source: "bluray"}}
                ])
 
       r = Repo.get!(Episode, ep.id)
@@ -172,6 +173,7 @@ defmodule Cinder.CatalogTvPipelineTest do
       assert r.imported_resolution == "1080p"
       assert r.imported_size == 123
       assert r.imported_language == "FRENCH"
+      assert r.imported_source == "bluray"
     end
 
     test "partial pack: bumps search_attempts on the non-imported episode, deletes the grab" do
