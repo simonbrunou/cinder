@@ -195,6 +195,7 @@ defmodule CinderWeb.DiscoverLive do
               :if={r.type == :movie}
               state={title_state(r.tmdb_id, @request_status, @movie_status)}
               tmdb_id={r.tmdb_id}
+              title={r.title}
               original_language={r.original_language}
             />
             <.button
@@ -246,6 +247,7 @@ defmodule CinderWeb.DiscoverLive do
 
   attr :state, :atom, required: true
   attr :tmdb_id, :integer, required: true
+  attr :title, :string, required: true
   attr :original_language, :string, default: nil
 
   defp result_action(assigns) do
@@ -264,6 +266,7 @@ defmodule CinderWeb.DiscoverLive do
         variant="primary"
         size="sm"
         class="w-full"
+        aria-label={gettext("Add %{title}", title: @title)}
         phx-disable-with={gettext("Adding…")}
       >
         {gettext("Add")}

@@ -44,12 +44,12 @@ defmodule CinderWeb.StatusBadgeTest do
     end
   end
 
-  test "a health error renders Unreachable, error colour, and the reason as a title" do
+  test "a health error renders Unreachable, error colour, and a human reason as a title" do
     html = badge(%{kind: :health, status: {:error, :timeout}})
     assert html =~ "Unreachable"
     assert html =~ "badge-error"
     assert html =~ ~s(title=)
-    assert html =~ "timeout"
+    assert html =~ "Timed out"
   end
 
   test "an unmapped status falls back to a neutral badge instead of raising" do

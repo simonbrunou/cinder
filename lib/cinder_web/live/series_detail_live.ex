@@ -441,7 +441,7 @@ defmodule CinderWeb.SeriesDetailLive do
             <div class="flex items-center gap-3">
               <input
                 type="checkbox"
-                class="toggle toggle-sm"
+                class="toggle"
                 checked={ep.monitored}
                 phx-click="toggle_episode"
                 phx-value-id={ep.id}

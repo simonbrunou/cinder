@@ -238,6 +238,7 @@ defmodule CinderWeb.DashboardLive do
                     type="text"
                     name="reason"
                     placeholder={gettext("Reason (optional)")}
+                    aria-label={gettext("Denial reason")}
                     class="input input-sm input-bordered flex-1"
                   />
                   <.button
@@ -277,8 +278,13 @@ defmodule CinderWeb.DashboardLive do
               id="dashboard-health"
               class="w-full divide-y divide-base-300 overflow-hidden rounded-box border border-base-300 bg-base-200"
             >
-              <li :for={h <- @health} class="flex items-center justify-between px-4 py-2.5">
-                <span>{h.label}</span>
+              <li :for={h <- @health} class="flex items-center justify-between gap-3 px-4 py-2.5">
+                <div class="min-w-0">
+                  <span>{h.label}</span>
+                  <p :if={match?({:error, _}, h.status)} class="text-xs text-error">
+                    {health_reason(elem(h.status, 1))}
+                  </p>
+                </div>
                 <.status_badge kind={:health} status={h.status} />
               </li>
             </ul>

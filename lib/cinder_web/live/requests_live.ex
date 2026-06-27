@@ -143,6 +143,7 @@ defmodule CinderWeb.RequestsLive do
                 type="text"
                 name="reason"
                 placeholder={gettext("Reason")}
+                aria-label={gettext("Denial reason")}
                 class="input input-sm input-bordered"
               />
               <.button

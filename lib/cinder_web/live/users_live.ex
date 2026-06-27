@@ -282,22 +282,22 @@ defmodule CinderWeb.UsersLive do
         <li :for={u <- @users} class="card bg-base-200 p-4">
           <div class="flex items-center gap-3 flex-wrap">
             <span class="font-semibold">{u.email}</span>
-            <button
+            <.button
               id={"role-btn-#{u.id}"}
-              class="badge badge-sm"
+              variant="neutral"
+              size="sm"
               phx-click="toggle_role"
               phx-value-id={u.id}
               phx-disable-with="…"
-              title={gettext("Toggle admin/user")}
               aria-label={
-                gettext("Toggle role for %{email} (currently %{role})",
+                gettext("Change role for %{email}, currently %{role}",
                   email: u.email,
                   role: u.role
                 )
               }
             >
-              {u.role}
-            </button>
+              <.icon name="hero-arrows-right-left" class="size-3" />{u.role}
+            </.button>
             <.button
               id={"edit-email-btn-#{u.id}"}
               variant="ghost"
@@ -340,6 +340,7 @@ defmodule CinderWeb.UsersLive do
               type="email"
               name="user[email]"
               value={u.email}
+              aria-label={gettext("New email")}
               class="input input-sm input-bordered"
             />
             <.button variant="primary" size="sm" type="submit" phx-disable-with={gettext("Saving…")}>
@@ -393,12 +394,14 @@ defmodule CinderWeb.UsersLive do
               type="password"
               name="user[password]"
               placeholder={gettext("New password")}
+              aria-label={gettext("New password")}
               class="input input-sm input-bordered"
             />
             <input
               type="password"
               name="user[password_confirmation]"
               placeholder={gettext("Confirm")}
+              aria-label={gettext("Confirm new password")}
               class="input input-sm input-bordered"
             />
             <.button

@@ -284,11 +284,17 @@ defmodule CinderWeb.Layouts do
   """
   def theme_toggle(assigns) do
     ~H"""
-    <div class="card relative flex flex-row items-center border-2 border-base-300 bg-base-300 rounded-full">
+    <div
+      role="radiogroup"
+      aria-label={gettext("Theme")}
+      class="card relative flex flex-row items-center border-2 border-base-300 bg-base-300 rounded-full"
+    >
       <div class="absolute w-1/3 h-full rounded-full border-1 border-base-200 bg-base-100 brightness-200 [[data-theme=light]_&]:brightness-100 left-0 [[data-theme=light]_&]:left-1/3 [[data-theme=dark]_&]:left-2/3 transition-[left]" />
 
       <button
         type="button"
+        role="radio"
+        aria-checked="true"
         aria-label={gettext("Use system theme")}
         class="flex items-center justify-center min-h-11 w-1/3 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-primary"
         phx-click={JS.dispatch("phx:set-theme")}
@@ -299,6 +305,8 @@ defmodule CinderWeb.Layouts do
 
       <button
         type="button"
+        role="radio"
+        aria-checked="false"
         aria-label={gettext("Use light theme")}
         class="flex items-center justify-center min-h-11 w-1/3 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-primary"
         phx-click={JS.dispatch("phx:set-theme")}
@@ -309,6 +317,8 @@ defmodule CinderWeb.Layouts do
 
       <button
         type="button"
+        role="radio"
+        aria-checked="false"
         aria-label={gettext("Use dark theme")}
         class="flex items-center justify-center min-h-11 w-1/3 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-primary"
         phx-click={JS.dispatch("phx:set-theme")}

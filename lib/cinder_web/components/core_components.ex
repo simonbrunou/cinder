@@ -674,8 +674,23 @@ defmodule CinderWeb.CoreComponents do
   defp badge_spec(_kind, status),
     do: {humanize_status(status), "badge-neutral", "hero-question-mark-circle"}
 
-  defp badge_title(:health, {:error, reason}), do: inspect(reason)
+  defp badge_title(:health, {:error, reason}), do: health_reason(reason)
   defp badge_title(_kind, _status), do: nil
+
+  @doc """
+  Maps a service-health error reason to a short, human-readable string. Used both
+  for the badge's hover title and for the visible reason text on `/dashboard`.
+  """
+  def health_reason(:timeout), do: gettext("Timed out")
+  def health_reason(:nxdomain), do: gettext("Host not found")
+  def health_reason(:econnrefused), do: gettext("Connection refused")
+  def health_reason(:closed), do: gettext("Connection closed")
+
+  def health_reason({:status, status}) when status in [401, 403],
+    do: gettext("Authentication failed")
+
+  def health_reason({:status, status}), do: gettext("HTTP %{status}", status: status)
+  def health_reason(reason), do: reason |> inspect() |> String.slice(0, 80)
 
   defp humanize_status(status) when is_atom(status),
     do: status |> Atom.to_string() |> String.replace("_", " ") |> String.capitalize()
