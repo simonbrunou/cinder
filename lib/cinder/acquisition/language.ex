@@ -60,9 +60,7 @@ defmodule Cinder.Acquisition.Language do
   def target(_other, _original), do: nil
 
   @doc "Whether a single release's parsed language satisfies the resolved target language."
-  def satisfies?(%Release{language: "MULTI"}, _target), do: true
-  def satisfies?(%Release{language: nil}, target), do: target == @default_audio
-  def satisfies?(%Release{language: language}, target), do: language == tag(target)
+  def satisfies?(%Release{language: language}, target), do: satisfies_lang?(language, target)
 
   @doc "Whether a raw parsed language code satisfies the target (no %Release{} needed). nil target = true."
   def satisfies_lang?(_code, nil), do: true
