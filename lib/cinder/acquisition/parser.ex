@@ -40,11 +40,13 @@ defmodule Cinder.Acquisition.Parser do
     {~r/\bcam\b|\btelesync\b|\btelecine\b|\bscreener\b/i, "cam"}
   ]
 
-  # The "tag region" of a release name: everything from the first year (19xx/20xx) or resolution
-  # marker onward — real source tags always sit there, the title precedes it. Scoping source/1 to
-  # this region stops a title word from false-tagging a source. A name with neither anchor falls
-  # back to the whole name (rare; nothing better to scope to).
-  @source_anchor ~r/\b(?:19|20)\d{2}\b|\b(?:2160|1080|720|480)p\b/i
+  # The "tag region" of a release name: everything from the release YEAR onward — source tags sit
+  # after the year, the title precedes it. Scoping source/1 there stops a title word ("Cam",
+  # "...Web") from false-tagging a source. A yearless name falls back to the WHOLE name, so a real
+  # source that precedes the resolution ("Show.S01.DVDRip.480p", "Movie.BDRip.1080p") is still
+  # tagged; the only residual is a yearless name whose TITLE is itself a source word — rare, and an
+  # accepted ceiling (anchoring on the resolution too would drop those real sources instead).
+  @source_anchor ~r/\b(?:19|20)\d{2}\b/
 
   @codecs [
     {~r/x265/i, "x265"},
@@ -257,8 +259,9 @@ defmodule Cinder.Acquisition.Parser do
     Enum.find(@resolutions, &String.contains?(down, &1))
   end
 
-  # Scope the source scan to the tag region (past the first year/resolution), so a title word
-  # like "Cam" or "...Web" can't be read as a source. No anchor ⇒ scan the whole name.
+  # Scope the source scan to the tag region (past the release year), so a title word like "Cam"
+  # or "...Web" can't be read as a source. No year ⇒ scan the whole name (preserves a real source
+  # that precedes the resolution in a yearless name).
   defp source(name) do
     region =
       case String.split(name, @source_anchor, parts: 2) do

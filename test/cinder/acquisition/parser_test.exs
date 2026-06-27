@@ -108,15 +108,20 @@ defmodule Cinder.Acquisition.ParserTest do
       assert %{source: "remux"} = Parser.parse("M.2020.2160p.BDRemux.x265")
     end
 
-    test "a source word in the TITLE does not produce a false source (scan is scoped past the year/resolution)" do
-      # The film "Cam" and "Charlotte's Web": an untagged release must stay nil so the scorer's
+    test "a source word in the TITLE does not produce a false source (scan is scoped past the year)" do
+      # The films "Cam" and "Charlotte's Web": an untagged release must stay nil so the scorer's
       # nil-passes valve isn't defeated by a recognized-but-unlisted false source.
       assert %{source: nil} = Parser.parse("Cam.2018.1080p.x264-GRP")
       assert %{source: nil} = Parser.parse("Charlottes.Web.2006.1080p.x264-GRP")
-      # A title word before a resolution-only anchor (no year) is also excluded.
-      assert %{source: nil} = Parser.parse("Cam.1080p.x264-GRP")
-      # ...but a real source tag in the tag region still matches.
+      # ...but a real source tag after the year still matches.
       assert %{source: "webdl"} = Parser.parse("Cam.2018.1080p.WEB-DL.x264-GRP")
+    end
+
+    test "a yearless name still tags a real source that precedes the resolution" do
+      # Year-only scoping must not drop a real source: a yearless name falls back to a whole-name
+      # scan. (Regression guard — anchoring on the resolution too dropped these to nil.)
+      assert %{source: "dvd"} = Parser.parse("Show.Name.S01.DVDRip.480p.x264-GRP")
+      assert %{source: "bluray"} = Parser.parse("Movie.BDRip.1080p.x264")
     end
   end
 
