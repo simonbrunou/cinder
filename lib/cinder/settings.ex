@@ -146,7 +146,7 @@ defmodule Cinder.Settings do
 
   # The DB-only band suffixes each kind owns (no env bootstrap — unset ⇒ unbounded/default).
   # The root path (`#{kind}_library_path`) is the fourth flat key and DOES have an env bootstrap.
-  @band_suffixes ["min_size", "max_size", "preferred_resolutions"]
+  @band_suffixes ["min_size", "max_size", "preferred_resolutions", "preferred_sources"]
 
   @bytes_per_gb 1_000_000_000
 
@@ -228,6 +228,7 @@ defmodule Cinder.Settings do
   def min_size_key(kind), do: "#{kind}_min_size"
   def max_size_key(kind), do: "#{kind}_max_size"
   def preferred_resolutions_key(kind), do: "#{kind}_preferred_resolutions"
+  def preferred_sources_key(kind), do: "#{kind}_preferred_sources"
 
   # --- reads ---
 
@@ -450,12 +451,14 @@ defmodule Cinder.Settings do
     root = decoded_for(rows, "#{kind}_library_path") || fallback
     min_size = parse_gb(decoded_for(rows, "#{kind}_min_size"))
     max_size = parse_gb(decoded_for(rows, "#{kind}_max_size"))
-    preferred = parse_resolutions(decoded_for(rows, "#{kind}_preferred_resolutions"))
+    preferred = parse_csv_list(decoded_for(rows, "#{kind}_preferred_resolutions"))
+    sources = parse_csv_list(decoded_for(rows, "#{kind}_preferred_sources"))
 
     Application.put_env(:cinder, root_env, root)
     Application.put_env(:cinder, :"#{kind}_min_size", min_size)
     Application.put_env(:cinder, :"#{kind}_max_size", max_size)
     Application.put_env(:cinder, :"#{kind}_preferred_resolutions", preferred)
+    Application.put_env(:cinder, :"#{kind}_preferred_sources", sources)
   end
 
   # Standalone global boolean — not a config field, toggle, or flat key, so it gets its own
@@ -486,11 +489,11 @@ defmodule Cinder.Settings do
     end
   end
 
-  # "1080p, 720P" → ["1080p", "720p"]. Downcased to match the parser's lower-case resolutions;
-  # blank/empty ⇒ nil so the scorer's @default_preferred applies.
-  defp parse_resolutions(nil), do: nil
+  # "1080p, 720P" → ["1080p", "720p"] / "BluRay, web" → ["bluray", "web"]. Downcased to match the
+  # parser's lower-case tokens; blank/empty ⇒ nil so the scorer's per-field default applies.
+  defp parse_csv_list(nil), do: nil
 
-  defp parse_resolutions(value) do
+  defp parse_csv_list(value) do
     case value
          |> String.split(",")
          |> Enum.map(&(&1 |> String.trim() |> String.downcase()))

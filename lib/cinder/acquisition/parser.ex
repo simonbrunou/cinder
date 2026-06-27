@@ -1,6 +1,6 @@
 defmodule Cinder.Acquisition.Parser do
   @moduledoc """
-  Extracts release attributes (`resolution`, `codec`, `group`, `language`, and the
+  Extracts release attributes (`resolution`, `source`, `codec`, `group`, `language`, and the
   TV `season`/`episodes`) from a release name. Pure and best-effort: an unrecognized
   field is `nil`.
 
@@ -22,6 +22,36 @@ defmodule Cinder.Acquisition.Parser do
   """
 
   @resolutions ["2160p", "1080p", "720p", "480p"]
+
+  # Release source, split by ambiguity. @sources are tokens that don't occur as a release-TITLE
+  # word, so they match ANYWHERE in the name (most-specific-first, same first_match/2 mechanism as
+  # @codecs). Collision-prone 2-letter abbreviations (ts, tc, bd, scr, dsr) are excluded — same
+  # discipline as the language registry's "vf is the lone 2-letter token" note. `bdremux` is a remux
+  # (`\bremux\b` alone can't match "BDRemux" — no boundary before remux). `bluray`/`remux` stay here
+  # as common real source-before-resolution tags; a title literally containing them is negligibly rare.
+  @sources [
+    {~r/\bremux\b|\bbdremux\b/i, "remux"},
+    {~r/\bblu-?ray\b|\bbrrip\b|\bbdrip\b/i, "bluray"},
+    {~r/\bweb-?rip\b/i, "webrip"},
+    {~r/\bweb-?dl\b/i, "webdl"},
+    {~r/\bhdtv\b|\bpdtv\b/i, "hdtv"},
+    {~r/\bdvd-?rip\b/i, "dvd"}
+  ]
+
+  # @bare_sources are words that ARE real source tags but ALSO occur as a release TITLE word — the
+  # cam family (`cam`/`screener`/`telecine`/`telesync` are ordinary words) and `web`/`dvd`. They're
+  # scanned only in the tag region (past the first year/resolution marker) so a title word
+  # ("Cam"/"Telecine"/"...Web") can't produce a false (non-nil) source that would defeat the
+  # scorer's nil-passes valve and wrongly reject the release. A bare token with no tag region
+  # (yearless+resolutionless, or before the resolution) falls to nil: benign — the valve keeps it.
+  @bare_sources [
+    {~r/\bweb\b/i, "webdl"},
+    {~r/\bdvd\b/i, "dvd"},
+    {~r/\bcam\b|\btelesync\b|\btelecine\b|\bscreener\b/i, "cam"}
+  ]
+
+  # Start of the tag region: the first year or resolution marker — the title precedes it.
+  @tag_region_anchor ~r/\b(?:19|20)\d{2}\b|\b(?:2160|1080|720|480)p\b/i
 
   @codecs [
     {~r/x265/i, "x265"},
@@ -185,7 +215,7 @@ defmodule Cinder.Acquisition.Parser do
   @tail_token ~r/(-)?e?(\d{1,3})/i
 
   @doc """
-  Parses `name` into `%{resolution, codec, group, language, season, episodes}`. Each
+  Parses `name` into `%{resolution, source, codec, group, language, season, episodes}`. Each
   value is `nil` when no known token matches. A non-binary `name` (e.g. an indexer
   result with a missing title) yields all-`nil` rather than raising, keeping the
   parser total.
@@ -195,6 +225,7 @@ defmodule Cinder.Acquisition.Parser do
 
     %{
       resolution: resolution(name),
+      source: source(name),
       codec: first_match(name, @codecs),
       group: group(name),
       language: language(name),
@@ -204,7 +235,15 @@ defmodule Cinder.Acquisition.Parser do
   end
 
   def parse(_name),
-    do: %{resolution: nil, codec: nil, group: nil, language: nil, season: nil, episodes: nil}
+    do: %{
+      resolution: nil,
+      source: nil,
+      codec: nil,
+      group: nil,
+      language: nil,
+      season: nil,
+      episodes: nil
+    }
 
   @doc """
   Maps each known TMDB `original_language` code to the release tag the parser emits for it
@@ -223,6 +262,24 @@ defmodule Cinder.Acquisition.Parser do
   defp resolution(name) do
     down = String.downcase(name)
     Enum.find(@resolutions, &String.contains?(down, &1))
+  end
+
+  # An unambiguous source tag (@sources) matches anywhere; a bare ambiguous token (@bare_sources,
+  # incl. the cam family) is matched only in the tag region so a title word ("Cam"/"Telecine"/
+  # "...Web") can't false-tag a source. The unambiguous match takes precedence (a real "WEBRip"
+  # never falls to bare "web").
+  defp source(name) do
+    first_match(name, @sources) || first_match(tag_region(name), @bare_sources)
+  end
+
+  # Everything past the first year/resolution marker (the title precedes it). No marker ⇒ "" so the
+  # bare scan never runs over the title: a yearless+resolutionless real bare source drops to nil —
+  # a benign loss (the valve keeps it) over the false-positive of reading a title word as a source.
+  defp tag_region(name) do
+    case String.split(name, @tag_region_anchor, parts: 2) do
+      [_title, tags] -> tags
+      [_no_anchor] -> ""
+    end
   end
 
   defp first_match(name, table) do

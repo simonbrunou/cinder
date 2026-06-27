@@ -7,6 +7,7 @@ defmodule Cinder.Acquisition.ParserTest do
     assert Parser.parse("Inception.2010.1080p.BluRay.x264-RARBG") ==
              %{
                resolution: "1080p",
+               source: "bluray",
                codec: "x264",
                group: "RARBG",
                language: nil,
@@ -19,6 +20,7 @@ defmodule Cinder.Acquisition.ParserTest do
     assert Parser.parse("Dune.2021.MULTI.2160p.UHD.BluRay.x265-TERMiNAL") ==
              %{
                resolution: "2160p",
+               source: "bluray",
                codec: "x265",
                group: "TERMiNAL",
                language: "MULTI",
@@ -46,6 +48,7 @@ defmodule Cinder.Acquisition.ParserTest do
     assert Parser.parse("Just A Title") ==
              %{
                resolution: nil,
+               source: nil,
                codec: nil,
                group: nil,
                language: nil,
@@ -65,12 +68,88 @@ defmodule Cinder.Acquisition.ParserTest do
     assert Parser.parse(nil) ==
              %{
                resolution: nil,
+               source: nil,
                codec: nil,
                group: nil,
                language: nil,
                season: nil,
                episodes: nil
              }
+  end
+
+  describe "source parsing" do
+    test "BluRay and its rip variants map to bluray" do
+      for name <- ["M.2020.1080p.BluRay.x264", "M.2020.720p.BRRip", "M.2020.BDRip.x264"] do
+        assert %{source: "bluray"} = Parser.parse(name)
+      end
+    end
+
+    test "remux wins over bluray" do
+      assert %{source: "remux"} = Parser.parse("M.2020.2160p.BluRay.REMUX.x265")
+    end
+
+    test "webrip is distinguished from webdl, and bare WEB is webdl" do
+      assert %{source: "webrip"} = Parser.parse("M.2020.1080p.WEBRip.x264")
+      assert %{source: "webdl"} = Parser.parse("M.2020.1080p.WEB-DL.x264")
+      assert %{source: "webdl"} = Parser.parse("M.2020.1080p.WEB.x264")
+    end
+
+    test "hdtv, dvd, and cam tokens" do
+      assert %{source: "hdtv"} = Parser.parse("M.2020.720p.HDTV.x264")
+      assert %{source: "dvd"} = Parser.parse("M.2019.DVDRip.x264")
+      assert %{source: "cam"} = Parser.parse("M.2021.CAM.x264")
+    end
+
+    test "an untagged source is nil" do
+      assert %{source: nil} = Parser.parse("Inception.2010.x264-GRP")
+    end
+
+    test "BDRemux is tagged remux, not bluray" do
+      assert %{source: "remux"} = Parser.parse("M.2020.2160p.BDRemux.x265")
+    end
+
+    test "a source word in the TITLE does not produce a false source (scan is scoped past the year)" do
+      # The films "Cam" and "Charlotte's Web": an untagged release must stay nil so the scorer's
+      # nil-passes valve isn't defeated by a recognized-but-unlisted false source.
+      assert %{source: nil} = Parser.parse("Cam.2018.1080p.x264-GRP")
+      assert %{source: nil} = Parser.parse("Charlottes.Web.2006.1080p.x264-GRP")
+      # ...but a real source tag after the year still matches.
+      assert %{source: "webdl"} = Parser.parse("Cam.2018.1080p.WEB-DL.x264-GRP")
+    end
+
+    test "a yearless name still tags a real source that precedes the resolution" do
+      # A compound source tag is unambiguous, so it matches anywhere — a yearless name with the
+      # source before the resolution must not drop it. (Regression guard.)
+      assert %{source: "dvd"} = Parser.parse("Show.Name.S01.DVDRip.480p.x264-GRP")
+      assert %{source: "bluray"} = Parser.parse("Movie.BDRip.1080p.x264")
+    end
+
+    test "a compound source is read even when it precedes the year or trails it" do
+      # Compound tokens match anywhere, so these unusual orderings (source before the year, or a
+      # trailing year) keep their real source instead of dropping to nil. (Regression guards.)
+      assert %{source: "webdl"} = Parser.parse("Title.1080p.WEB-DL.2020.x264")
+      assert %{source: "dvd"} = Parser.parse("Movie.Title.DVDRip.XviD.2009")
+    end
+
+    test "a real compound source outranks a title source-word in a yearless name" do
+      # "Web" in the title must not override a real HDTV tag; the compound match wins.
+      assert %{source: "hdtv"} = Parser.parse("Charlottes.Web.S01.1080p.HDTV.x264-GRP")
+    end
+
+    test "cam-family title words do not produce a false source; a real tag still wins" do
+      # "Telecine"/"Screener" are ordinary words that can be a TITLE; the cam family is scoped to
+      # the tag region, so an untagged release stays nil and a real source after it wins.
+      assert %{source: nil} = Parser.parse("Telecine.2019.1080p.x264-GRP")
+      assert %{source: "webdl"} = Parser.parse("Screener.2019.1080p.WEB.x264")
+      # ...but a genuine screener tag in the tag region is read.
+      assert %{source: "cam"} = Parser.parse("Movie.2024.SCREENER.x264")
+    end
+
+    test "a yearless, resolutionless name does not read a title source-word" do
+      # No tag-region anchor ⇒ the bare scan must not run over the title (no false source).
+      assert %{source: nil} = Parser.parse("Charlottes.Web.XviD-GRP")
+      assert %{source: nil} = Parser.parse("Cam.XviD-GRP")
+    end
   end
 
   describe "TV season/episode parsing" do

@@ -38,6 +38,9 @@ All notable changes to Cinder are documented here. The format follows
   import refreshes the Shows library. Previously a single movie-only section was refreshed and TV
   imports never refreshed Plex (Jellyfin's full refresh was unaffected). `/status` now shows a
   per-kind library health row, and a missing root holds the import (visible red) instead of failing.
+- Per-kind **preferred sources** setting (Blu-ray / WEB-DL / HDTV / …) in `/settings` → Release
+  size bands, mirroring preferred resolutions. Empty = accept any source; untagged releases are
+  always kept; only a recognized-but-unlisted source is rejected.
 
 ### Changed
 - **BREAKING (config):** library config keys are regularized per kind — the movie env vars gain the

@@ -17,6 +17,7 @@ defmodule Cinder.Acquisition.Release do
     :seeders,
     :protocol,
     :resolution,
+    :source,
     :codec,
     :group,
     :language,

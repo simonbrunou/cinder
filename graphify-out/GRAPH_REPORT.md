@@ -1,16 +1,16 @@
-# Graph Report - cinder  (2026-06-26)
+# Graph Report - cinder  (2026-06-27)
 
 ## Corpus Check
-- 286 files · ~303,179 words
+- 288 files · ~308,766 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 2316 nodes · 2723 edges · 275 communities (163 shown, 112 thin omitted)
-- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 42 edges (avg confidence: 0.8)
+- 2376 nodes · 2809 edges · 277 communities (165 shown, 112 thin omitted)
+- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 42 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `7589d5ab`
+- Built from commit: `f55003ed`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -277,18 +277,20 @@
 - [[_COMMUNITY_Community 272|Community 272]]
 - [[_COMMUNITY_Community 273|Community 273]]
 - [[_COMMUNITY_Community 274|Community 274]]
+- [[_COMMUNITY_Community 275|Community 275]]
+- [[_COMMUNITY_Community 276|Community 276]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `Cinder.Catalog` - 98 edges
-2. `Cinder.Settings` - 58 edges
+2. `Cinder.Settings` - 60 edges
 3. `Cinder.Library` - 53 edges
 4. `CinderWeb.CoreComponents` - 27 edges
 5. `Cinder.Accounts` - 24 edges
 6. `Cinder.Download.TvPoller` - 24 edges
 7. `Cinder.Download.Poller` - 22 edges
 8. `CinderWeb.UserAuth` - 21 edges
-9. `table()` - 20 edges
-10. `Cinder.Acquisition.Parser` - 19 edges
+9. `Cinder.Acquisition.Parser` - 21 edges
+10. `table()` - 20 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `change()` --calls--> `table()`  [INFERRED]
@@ -302,11 +304,11 @@
 - `change()` --calls--> `table()`  [INFERRED]
   priv/repo/migrations/20260619061256_add_file_path_to_movies.exs → lib/cinder_web/components/core_components.ex
 
-## Communities (275 total, 112 thin omitted)
+## Communities (277 total, 112 thin omitted)
 
 ### Community 0 - "Community 0"
 Cohesion: 0.07
-Nodes (42): Cinder.Settings, apply_config_fields(), apply_download_clients(), apply_kind_config(), apply_library_config(), apply_media_server(), apply_move_on_import(), base() (+34 more)
+Nodes (43): Cinder.Settings, apply_config_fields(), apply_download_clients(), apply_kind_config(), apply_library_config(), apply_media_server(), apply_move_on_import(), base() (+35 more)
 
 ### Community 1 - "Community 1"
 Cohesion: 0.05
@@ -389,8 +391,8 @@ Cohesion: 0.26
 Nodes (16): Cinder.Catalog.TMDB.HTTP, auth(), date_from(), error(), get_movie(), get_season(), get_series(), health() (+8 more)
 
 ### Community 21 - "Community 21"
-Cohesion: 0.24
-Nodes (16): Cinder.Acquisition.Scorer, allowed_resolution?(), blocked?(), config(), cover(), coverage(), greedy_key(), pick_best() (+8 more)
+Cohesion: 0.21
+Nodes (18): Cinder.Acquisition.Scorer, allowed_resolution?(), allowed_source?(), blocked?(), config(), cover(), coverage(), greedy_key() (+10 more)
 
 ### Community 22 - "Community 22"
 Cohesion: 0.08
@@ -409,8 +411,8 @@ Cohesion: 0.12
 Nodes (15): 1. Context: what's already done, and the one real gap, 2. Goals / non-goals, 3.1 Orchestration — extend the Poller, don't add a process, 3.2 Error handling — backoff + bounded retry; honest terminal states, 3.3 qBittorrent — accept base32 magnets; `.torrent` deferred (flagged), 3.4 Status dashboard — `CinderWeb.StatusLive` at `/status`, 3.5 Schema / migration, 3. Design (+7 more)
 
 ### Community 26 - "Community 26"
-Cohesion: 0.15
-Nodes (13): Cinder.Acquisition.Parser, bare(), distinct_seasons(), ep?(), first_match(), from_tail(), language(), multi_season?() (+5 more)
+Cohesion: 0.14
+Nodes (15): Cinder.Acquisition.Parser, bare(), distinct_seasons(), ep?(), first_match(), from_tail(), language(), multi_season?() (+7 more)
 
 ### Community 27 - "Community 27"
 Cohesion: 0.13
@@ -593,8 +595,8 @@ Cohesion: 0.32
 Nodes (8): ensure_season(), episodes_for(), finalize_or_restore(), insert_episode(), log_reconcile_error(), park_episode(), reconcile_tree(), seasons_for()
 
 ### Community 72 - "Community 72"
-Cohesion: 0.13
-Nodes (14): [0.7.0] - 2026-06-23, Added, Added, Added, Added, Added, Added, Added (+6 more)
+Cohesion: 0.12
+Nodes (15): [0.7.0] - 2026-06-23, Added, Added, Added, Added, Added, Added, Added (+7 more)
 
 ### Community 73 - "Community 73"
 Cohesion: 0.25
@@ -773,48 +775,48 @@ Cohesion: 0.50
 Nodes (3): CinderWeb.LibraryLiveTest, available_movie!(), movie!()
 
 ### Community 188 - "Community 188"
-Cohesion: 0.11
-Nodes (19): Accumulated Minor findings for final-review triage, Admin CRUD — SDD progress ledger, CODE REVIEW (adversarial, 6 dimensions × independent Opus verify): 1 important + minors., /code-review on PR #39 push (mandated by hook) — 8 finders → verify, Delete-file feature — progress ledger, Final fix wave (commit eb3a2d6, suite 770): folded the 2 reviewer fix-now docs + 2 cheap coverage tests, Final whole-branch review (ec6cf87..2c4b5f3, opus), FINAL whole-branch review (opus, b87127c..64f479f code-only): READY TO MERGE — Yes (+11 more)
+Cohesion: 0.09
+Nodes (25): Accumulated Minor findings for final-review triage, Admin CRUD — SDD progress ledger, CODE REVIEW (adversarial, 6 dimensions × independent Opus verify): 1 important + minors., /code-review (high, recall) on PR #50 → review-fix wave (suite 830 green), /code-review on fix-delta → found a REGRESSION in my own #1 fix (suite 831 green), /code-review on PR #39 push (mandated by hook) — 8 finders → verify, /code-review on two-tier → 2 CONFIRMED (my "never a title word" claim was wrong) → suite 835, /code-review on year-only fix → 3 CONFIRMED (positional scoping was the wrong model) → two-tier (suite 833) (+17 more)
 
 ### Community 221 - "Community 221"
 Cohesion: 0.17
 Nodes (11): Decision: `<.page>` is dropped (council 3–0), File structure, Global Constraints, Self-review, Task 1: `<.status_badge>` component (build + unit test), Task 2: Adopt `<.status_badge>`; delete the 6 helpers, Task 3: `<.confirm_action>` component + adopt across the yes/no confirms, Task 4: `<.empty_state>` component + adopt; add `search-error` variant (+3 more)
 
 ### Community 222 - "Community 222"
-Cohesion: 0.17
-Nodes (19): 8 adoption sites, Adaptation to existing test structure, Commit, Component built, Concerns, deny-with-reason confirmed untouched, Files changed, Full-gate result (+11 more)
+Cohesion: 0.13
+Nodes (26): 8 adoption sites, Adaptation to existing test structure, Commit, Component built, Concerns, deny-with-reason confirmed untouched, Files Changed, Full-gate result (+18 more)
 
 ### Community 223 - "Community 223"
-Cohesion: 0.12
-Nodes (25): Commit, Concerns, Files changed, Full gate result, Full suite, GREEN, GREEN — after implementation, Logic (+17 more)
+Cohesion: 0.11
+Nodes (29): Commit, Concerns, Files changed, Full gate result, Full suite, GREEN, GREEN — after implementation, GREEN phase (focused) (+21 more)
 
 ### Community 224 - "Community 224"
-Cohesion: 0.13
-Nodes (22): `active?/2`, Commit, Concerns, Files Changed, Files changed (10), `filter/3`, Full gate result, GREEN (+14 more)
+Cohesion: 0.12
+Nodes (26): `active?/2`, Changes Summary, Commit, Concerns, Files Changed, Files changed (10), `filter/3`, Full gate result (+18 more)
 
 ### Community 226 - "Community 226"
-Cohesion: 0.40
-Nodes (4): Task 1: ActivityLive — merge `/status` + `/grabs` into `/activity`, Task 1: FS `rm`/`rmdir` primitives + `Library.delete_file/1`, Task 1: Parser — tag French dub markers, Task 1: `<.status_badge>` component (build + unit test)
+Cohesion: 0.33
+Nodes (5): Task 1: ActivityLive — merge `/status` + `/grabs` into `/activity`, Task 1: FS `rm`/`rmdir` primitives + `Library.delete_file/1`, Task 1: Parser `source` field, Task 1: Parser — tag French dub markers, Task 1: `<.status_badge>` component (build + unit test)
 
 ### Community 227 - "Community 227"
-Cohesion: 0.40
-Nodes (4): Task 2: Adopt `<.status_badge>`; delete the 6 helpers, Task 2: `Catalog.delete_movie/3` — opt-in `delete_files:`, Task 2: `Cinder.Acquisition.Language` predicate module, Task 2: LibraryLive — merge `/movies` + the Discover "Added series" block into `/library`
+Cohesion: 0.33
+Nodes (5): Task 2: Adopt `<.status_badge>`; delete the 6 helpers, Task 2: `Catalog.delete_movie/3` — opt-in `delete_files:`, Task 2: `Cinder.Acquisition.Language` predicate module, Task 2: LibraryLive — merge `/movies` + the Discover "Added series" block into `/library`, Task 2: Scorer `preferred_sources` filter + ranking
 
 ### Community 228 - "Community 228"
-Cohesion: 0.40
-Nodes (4): Task 3: `Catalog.delete_series/3` — opt-in `delete_files:`, Task 3: `<.confirm_action>` component + adopt across the yes/no confirms, Task 3: DashboardLive — role-aware admin landing at `/dashboard`, Task 3: Thread `original_language` through the TMDB layer
+Cohesion: 0.33
+Nodes (5): Task 3: `Catalog.delete_series/3` — opt-in `delete_files:`, Task 3: `<.confirm_action>` component + adopt across the yes/no confirms, Task 3: DashboardLive — role-aware admin landing at `/dashboard`, Task 3: Settings overlay, band_opts, and UI field, Task 3: Thread `original_language` through the TMDB layer
 
 ### Community 229 - "Community 229"
-Cohesion: 0.40
-Nodes (4): Task 4: `Catalog.delete_episode_file/3` — file-only delete, Task 4: `<.empty_state>` component + adopt; add `search-error` variant, Task 4: Migration + schema fields (movies, series, requests), Task 4: Sidebar nav — regroup the Admin section + role-aware wordmark
+Cohesion: 0.29
+Nodes (6): Notes for the implementer, Task 4: `Catalog.delete_episode_file/3` — file-only delete, Task 4: Docs + graph refresh, Task 4: `<.empty_state>` component + adopt; add `search-error` variant, Task 4: Migration + schema fields (movies, series, requests), Task 4: Sidebar nav — regroup the Admin section + role-aware wordmark
 
 ### Community 230 - "Community 230"
 Cohesion: 0.08
 Nodes (26): 3 Conversions, 3 Header assertions added, Added 4 failing tests first:, Back-links preserved, `best_release/2` before/after, Changes, Commit, Concerns (+18 more)
 
 ### Community 231 - "Community 231"
-Cohesion: 0.12
-Nodes (23): Adoption sites, Commit, Component built, Concerns, Files changed, Full gate result, Implementation notes, `lib/cinder_web/components/layouts.ex` (+15 more)
+Cohesion: 0.09
+Nodes (30): Adoption sites, CHANGELOG.md, Commit, Component built, Concerns, docs/operating.md, Files changed, Full gate result (+22 more)
 
 ### Community 232 - "Community 232"
 Cohesion: 0.15
@@ -904,8 +906,16 @@ Nodes (6): Concerns, Step 1: Extract + merge, Step 2: Full suite, Step 3: Knowle
 Cohesion: 0.53
 Nodes (5): Cinder.Library.MediaInfo.Ffprobe, args(), audio_languages(), bin(), parse()
 
+### Community 275 - "Community 275"
+Cohesion: 0.18
+Nodes (10): 1. Parser — new `source` field (`parser.ex`, `release.ex`), 2. Scorer — `preferred_sources` filter + ranking (`scorer.ex`), 3. Settings — per-kind `preferred_sources` (`settings.ex`, `settings_components.ex`), Components, Decisions (settled in brainstorming), Docs, Problem, Release source preference (web / Blu-ray / …) — design (+2 more)
+
+### Community 276 - "Community 276"
+Cohesion: 0.25
+Nodes (7): Global Constraints, Notes for the implementer, Release Source Preference Implementation Plan, Task 1: Parser `source` field, Task 2: Scorer `preferred_sources` filter + ranking, Task 3: Settings overlay, band_opts, and UI field, Task 4: Docs + graph refresh
+
 ## Knowledge Gaps
-- **854 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+849 more)
+- **893 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+888 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **112 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
@@ -919,9 +929,9 @@ _Questions this graph is uniquely positioned to answer:_
 - **Why does `Cinder.Catalog` connect `Community 3` to `Community 37`, `Community 71`, `Community 59`, `Community 147`, `Community 91`, `Community 28`?**
   _High betweenness centrality (0.001) - this node is a cross-community bridge._
 - **What connects `tidewave`, `$schema`, `erlang` to the rest of the system?**
-  _854 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _893 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**
-  _Cohesion score 0.07364114552893045 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.07049180327868852 - nodes in this community are weakly interconnected._
 - **Should `Community 1` be split into smaller, more focused modules?**
   _Cohesion score 0.04830917874396135 - nodes in this community are weakly interconnected._
 - **Should `Community 2` be split into smaller, more focused modules?**
