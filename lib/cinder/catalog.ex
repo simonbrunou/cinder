@@ -616,14 +616,12 @@ defmodule Cinder.Catalog do
   broadcasts `{:series_updated, series_id}`.
   """
   def set_season_monitored(%Season{} = season, monitored?) do
-    now = DateTime.truncate(DateTime.utc_now(), :second)
-
     result =
       Repo.transaction(fn ->
         case season |> Ecto.Changeset.change(monitored: monitored?) |> Repo.update() do
           {:ok, season} ->
             Repo.update_all(from(e in Episode, where: e.season_id == ^season.id),
-              set: [monitored: monitored?, updated_at: now]
+              set: [monitored: monitored?, updated_at: now()]
             )
 
             season

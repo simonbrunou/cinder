@@ -167,7 +167,7 @@ defmodule Cinder.Requests do
 
   defp create_approved(user, attrs, approver_id) do
     Repo.transaction(fn ->
-      {:ok, _movie} = Catalog.find_or_create_at_requested(movie_attrs_from(attrs))
+      {:ok, _movie} = Catalog.find_or_create_at_requested(movie_attrs(attrs))
 
       %Request{}
       |> Request.create_changeset(
@@ -187,25 +187,15 @@ defmodule Cinder.Requests do
     Notifier.notify({:request_approved, request})
   end
 
-  defp movie_attrs(%Request{} = r) do
+  # Accepts a %Request{} or a plain attrs map — Map.get works on both.
+  defp movie_attrs(source) do
     %{
-      tmdb_id: r.target_id,
-      title: r.title,
-      year: r.year,
-      poster_path: r.poster_path,
-      original_language: r.original_language,
-      preferred_language: r.preferred_language || "original"
-    }
-  end
-
-  defp movie_attrs_from(attrs) do
-    %{
-      tmdb_id: attrs.target_id,
-      title: attrs[:title],
-      year: attrs[:year],
-      poster_path: attrs[:poster_path],
-      original_language: attrs[:original_language],
-      preferred_language: attrs[:preferred_language] || "original"
+      tmdb_id: Map.get(source, :target_id),
+      title: Map.get(source, :title),
+      year: Map.get(source, :year),
+      poster_path: Map.get(source, :poster_path),
+      original_language: Map.get(source, :original_language),
+      preferred_language: Map.get(source, :preferred_language) || "original"
     }
   end
 

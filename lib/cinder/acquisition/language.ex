@@ -44,8 +44,8 @@ defmodule Cinder.Acquisition.Language do
     end
   end
 
-  @doc "Whether a language filter is active for this preference + original language."
-  def active?(preferred, original), do: not is_nil(target(preferred, original))
+  @doc "The valid `preferred_language` values (the per-title language picks)."
+  def preferences, do: ["original", "french", "any"]
 
   @doc """
   Whether an unsatisfiable preference parks the item (an explicit language pick) rather

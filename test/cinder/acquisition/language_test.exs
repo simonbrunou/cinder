@@ -46,10 +46,9 @@ defmodule Cinder.Acquisition.LanguageTest do
     end
   end
 
-  describe "target/2 and active?/2" do
+  describe "target/2" do
     test "any disables the filter" do
       assert Language.target("any", "en") == nil
-      refute Language.active?("any", "en")
     end
 
     test "original resolves to the title's original language, off when unknown" do
@@ -60,7 +59,6 @@ defmodule Cinder.Acquisition.LanguageTest do
 
     test "french always resolves to fr" do
       assert Language.target("french", "en") == "fr"
-      assert Language.active?("french", nil)
     end
   end
 

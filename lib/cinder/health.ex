@@ -68,32 +68,36 @@ defmodule Cinder.Health do
 
   defp check(label, mod), do: %{label: label, status: run(mod)}
 
-  # Runs inside a LiveView async task, so a misbehaving impl must degrade to a red
-  # row rather than take the whole panel down. `catch` covers exits/throws (e.g. a
+  # Both probes run inside a LiveView async task, so a misbehaving impl must degrade to a
+  # red row rather than take the whole panel down. `catch` covers exits/throws (e.g. a
   # pool-checkout timeout deep in the HTTP stack) that `rescue` would miss.
-  defp run(mod) do
-    case mod.health() do
-      :ok -> :ok
-      {:error, _} = err -> err
-    end
+  defp safely(fun) do
+    fun.()
   rescue
     e -> {:error, e}
   catch
     kind, value -> {:error, {kind, value}}
   end
 
+  defp run(mod) do
+    safely(fn ->
+      case mod.health() do
+        :ok -> :ok
+        {:error, _} = err -> err
+      end
+    end)
+  end
+
   # The library import target isn't a behaviour with health/0; "reachable" means the
   # configured path is writable. mkdir_p on an existing dir is a no-op, so this is a
   # cheap probe through the same Filesystem behaviour the import uses (mockable in tests).
   defp library_writable(path) do
-    case Application.fetch_env!(:cinder, :filesystem).mkdir_p(path) do
-      :ok -> :ok
-      {:error, _} = err -> err
-    end
-  rescue
-    e -> {:error, e}
-  catch
-    kind, value -> {:error, {kind, value}}
+    safely(fn ->
+      case Application.fetch_env!(:cinder, :filesystem).mkdir_p(path) do
+        :ok -> :ok
+        {:error, _} = err -> err
+      end
+    end)
   end
 
   defp short(mod), do: mod |> Module.split() |> List.last()

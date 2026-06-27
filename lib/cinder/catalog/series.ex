@@ -12,6 +12,7 @@ defmodule Cinder.Catalog.Series do
 
   import Ecto.Changeset
 
+  alias Cinder.Acquisition.Language
   alias Cinder.Catalog.Season
 
   @monitor_strategies [:all, :future, :none]
@@ -53,7 +54,7 @@ defmodule Cinder.Catalog.Series do
       :preferred_language
     ])
     |> validate_required([:tmdb_id, :title])
-    |> validate_inclusion(:preferred_language, ["original", "french", "any"])
+    |> validate_inclusion(:preferred_language, Language.preferences())
     |> cast_assoc(:seasons, with: &Season.nested_changeset/2)
     |> unique_constraint(:tmdb_id)
   end
@@ -72,7 +73,7 @@ defmodule Cinder.Catalog.Series do
   def language_changeset(series, attrs) do
     series
     |> cast(attrs, [:preferred_language])
-    |> validate_inclusion(:preferred_language, ["original", "french", "any"])
+    |> validate_inclusion(:preferred_language, Language.preferences())
   end
 
   @doc """

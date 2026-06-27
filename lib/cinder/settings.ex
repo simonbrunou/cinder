@@ -248,7 +248,7 @@ defmodule Cinder.Settings do
   def get(key) do
     case Repo.get_by(Setting, key: key) do
       nil -> nil
-      setting -> setting |> decoded() |> unwrap() |> blank_to_nil()
+      setting -> decode_setting(setting)
     end
   end
 
@@ -549,9 +549,11 @@ defmodule Cinder.Settings do
   defp decoded_for(rows, key) do
     case Map.get(rows, key) do
       nil -> nil
-      setting -> setting |> decoded() |> unwrap() |> blank_to_nil()
+      setting -> decode_setting(setting)
     end
   end
+
+  defp decode_setting(setting), do: setting |> decoded() |> unwrap() |> blank_to_nil()
 
   defp unwrap({:ok, value}), do: value
   defp unwrap(:error), do: nil
@@ -574,14 +576,15 @@ defmodule Cinder.Settings do
          {:ok, plaintext} when is_binary(plaintext) <- Cinder.Vault.decrypt(ciphertext) do
       {:ok, plaintext}
     else
-      _ ->
-        Logger.warning("Cinder.Settings: cannot decrypt #{key}; re-enter it in /settings")
-        :error
+      _ -> warn_undecryptable(key)
     end
   rescue
-    _ ->
-      Logger.warning("Cinder.Settings: cannot decrypt #{key}; re-enter it in /settings")
-      :error
+    _ -> warn_undecryptable(key)
+  end
+
+  defp warn_undecryptable(key) do
+    Logger.warning("Cinder.Settings: cannot decrypt #{key}; re-enter it in /settings")
+    :error
   end
 
   defp toggle_values(rows) do
