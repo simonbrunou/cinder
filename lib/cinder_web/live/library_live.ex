@@ -178,8 +178,7 @@ defmodule CinderWeb.LibraryLive do
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
-  defp find_movie(socket, id),
-    do: Enum.find(socket.assigns.movies, &(to_string(&1.id) == to_string(id)))
+  defp find_movie(socket, id), do: find_by_id(socket.assigns.movies, to_string(id))
 
   # /library is admin-gated by its route, so no in-handler role re-check (Discover needed
   # one because it lived on a non-admin route).
@@ -284,6 +283,7 @@ defmodule CinderWeb.LibraryLive do
             <.confirm_action
               :if={@confirming == {:movie, :delete, to_string(m.id)}}
               id={"confirm-delete-movie-#{m.id}"}
+              class="mt-2"
               on_confirm="confirm_delete_movie"
               on_cancel="dismiss_confirm"
               value={m.id}

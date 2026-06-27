@@ -192,6 +192,7 @@ defmodule CinderWeb.CoreComponents do
   attr :confirm_label, :string, default: nil
   attr :cancel_label, :string, default: nil
   attr :variant, :string, default: "error", values: ~w(error warning)
+  attr :class, :any, default: nil, doc: "extra classes on the root (e.g. caller's outer margin)"
 
   attr :checkbox_event, :string,
     default: nil,
@@ -207,7 +208,7 @@ defmodule CinderWeb.CoreComponents do
       id={@id}
       role="alert"
       aria-live="assertive"
-      class="alert alert-warning flex flex-col items-start gap-2"
+      class={["alert alert-warning flex flex-col items-start gap-2", @class]}
     >
       <label
         :if={@checkbox_event}

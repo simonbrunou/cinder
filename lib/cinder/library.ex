@@ -60,22 +60,23 @@ defmodule Cinder.Library do
          new_q = new_quality(parsed, size),
          dest = build_dest(movie, source, root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
-         {:ok, quality} <- place(source, dest, si, movie, new_q, upgrade?(movie, new_q)) do
+         {:ok, quality} <- place(source, dest, si, movie, new_q, fn -> upgrade?(movie, new_q) end) do
       scan(:movies, dest)
       {:ok, dest, quality}
     end
   end
 
   # Place source at dest; resolve a same-item collision (tmdb-unique folder => same record) by the
-  # caller's precomputed `upgrade` decision. Shared by movie and episode imports.
-  defp place(source, dest, si, record, new_q, upgrade) do
+  # caller's `upgrade_fun` decision. Shared by movie and episode imports. `upgrade_fun` is a thunk
+  # so the (config-reading) upgrade comparison runs only on an actual collision, not every import.
+  defp place(source, dest, si, record, new_q, upgrade_fun) do
     case fs().ln(source, dest) do
       :ok ->
         {:ok, new_q}
 
       {:error, :eexist} ->
         with {:ok, %{inode: di}} <- fs().lstat(dest) do
-          do_resolve(source, dest, si == di, upgrade, record, new_q)
+          do_resolve(source, dest, si == di, upgrade_fun.(), record, new_q)
         end
 
       {:error, _} = err ->
@@ -373,18 +374,23 @@ defmodule Cinder.Library do
   # a transient FS error halts and returns {:error, _} so the grab retries the whole import next tick.
   defp link_all(to_import, root, target) do
     Enum.reduce_while(to_import, {:ok, []}, fn {ep, source}, {:ok, acc} ->
-      dest = build_episode_dest(ep, source, root)
-
-      with {:ok, %{size: size, inode: si}} <- fs().lstat(source),
-           parsed = Parser.parse(Path.basename(source)),
-           new_q = new_quality(parsed, size),
-           :ok <- fs().mkdir_p(Path.dirname(dest)),
-           {:ok, q} <- place(source, dest, si, ep, new_q, ep_upgrade?(ep, new_q, target)) do
-        {:cont, {:ok, [{ep.id, dest, q} | acc]}}
-      else
+      case place_episode_file(ep, source, root, target) do
+        {:ok, dest, q} -> {:cont, {:ok, [{ep.id, dest, q} | acc]}}
         {:error, _} = err -> {:halt, err}
       end
     end)
+  end
+
+  defp place_episode_file(ep, source, root, target) do
+    dest = build_episode_dest(ep, source, root)
+
+    with {:ok, %{size: size, inode: si}} <- fs().lstat(source),
+         parsed = Parser.parse(Path.basename(source)),
+         new_q = new_quality(parsed, size),
+         :ok <- fs().mkdir_p(Path.dirname(dest)),
+         {:ok, q} <- place(source, dest, si, ep, new_q, fn -> ep_upgrade?(ep, new_q, target) end) do
+      {:ok, dest, q}
+    end
   end
 
   defp ep_upgrade?(ep, new_q, target) do

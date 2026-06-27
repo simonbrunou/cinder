@@ -316,6 +316,7 @@ defmodule CinderWeb.SeriesDetailLive do
       <.confirm_action
         :if={@confirming == :delete}
         id="confirm-delete-series"
+        class="mb-6"
         on_confirm="confirm_delete_series"
         on_cancel="dismiss_confirm"
         confirm_label={gettext("Delete")}
@@ -407,6 +408,7 @@ defmodule CinderWeb.SeriesDetailLive do
         <.confirm_action
           :if={@confirming == {:season_files, to_string(season.id)}}
           id={"confirm-delete-season-files-#{season.id}"}
+          class="mb-2"
           on_confirm="confirm_delete_season_files"
           on_cancel="dismiss_confirm"
           value={season.id}
