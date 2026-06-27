@@ -27,10 +27,15 @@
         # (run `mix local.hex` / `mix local.rebar` once on a fresh machine).
         # git is needed at `mix deps.get` (heroicons is a github: dep);
         # inotify-tools drives Phoenix live-reload on Linux.
+        # nodejs (full, with npm/npx — not nodejs-slim) backs the Node-based MCP
+        # servers Claude Code launches: chrome-devtools-mcp (`npx
+        # chrome-devtools-mcp`) and @playwright/mcp. They inherit the PATH of the
+        # `claude` process, so Claude Code must be (re)started from this shell.
         packages = [
           elixir
           pkgs.git
           pkgs.inotify-tools
+          pkgs.nodejs_22
         ];
 
         # C.UTF-8 silences Erlang's latin1 locale warning without a glibcLocales
