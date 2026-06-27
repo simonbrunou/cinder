@@ -25,19 +25,26 @@ defmodule Cinder.Acquisition.Parser do
 
   # Release source, most-specific-first (same first_match/2 mechanism as @codecs). Collision-prone
   # 2-letter abbreviations (ts, tc, bd, scr, dsr) are excluded on purpose — same discipline as the
-  # language registry's "vf is the lone 2-letter token" note.
-  # ponytail: bare `web` also tags webdl. A title word "web" with no real source token can
-  # mis-tag webdl; low-frequency and only bites when a list excludes webdl. Tighten to `web-dl`
-  # only if it bites in practice.
+  # language registry's "vf is the lone 2-letter token" note. `bdremux` lives in the remux entry
+  # (it IS a full-disc remux); `\bremux\b` alone can't match "BDRemux" (no boundary before remux).
+  # The bare tokens here (`web`, `cam`, `dvd`, `hdtv`) would false-match a release TITLE word
+  # ("Cam", "Charlotte's Web"); source/1 scopes the scan past the year/resolution to the tag region
+  # so a title word can't produce a false (non-nil) source that the scorer's nil-passes valve can't save.
   @sources [
-    {~r/\bremux\b/i, "remux"},
-    {~r/\bblu-?ray\b|\bbdremux\b|\bbrrip\b|\bbdrip\b/i, "bluray"},
+    {~r/\bremux\b|\bbdremux\b/i, "remux"},
+    {~r/\bblu-?ray\b|\bbrrip\b|\bbdrip\b/i, "bluray"},
     {~r/\bweb-?rip\b/i, "webrip"},
-    {~r/\bweb-?dl\b|\bwebdl\b|\bweb\b/i, "webdl"},
+    {~r/\bweb-?dl\b|\bweb\b/i, "webdl"},
     {~r/\bhdtv\b|\bpdtv\b/i, "hdtv"},
     {~r/\bdvd-?rip\b|\bdvd\b/i, "dvd"},
     {~r/\bcam\b|\btelesync\b|\btelecine\b|\bscreener\b/i, "cam"}
   ]
+
+  # The "tag region" of a release name: everything from the first year (19xx/20xx) or resolution
+  # marker onward — real source tags always sit there, the title precedes it. Scoping source/1 to
+  # this region stops a title word from false-tagging a source. A name with neither anchor falls
+  # back to the whole name (rare; nothing better to scope to).
+  @source_anchor ~r/\b(?:19|20)\d{2}\b|\b(?:2160|1080|720|480)p\b/i
 
   @codecs [
     {~r/x265/i, "x265"},
@@ -201,7 +208,7 @@ defmodule Cinder.Acquisition.Parser do
   @tail_token ~r/(-)?e?(\d{1,3})/i
 
   @doc """
-  Parses `name` into `%{resolution, codec, group, language, season, episodes}`. Each
+  Parses `name` into `%{resolution, source, codec, group, language, season, episodes}`. Each
   value is `nil` when no known token matches. A non-binary `name` (e.g. an indexer
   result with a missing title) yields all-`nil` rather than raising, keeping the
   parser total.
@@ -250,7 +257,17 @@ defmodule Cinder.Acquisition.Parser do
     Enum.find(@resolutions, &String.contains?(down, &1))
   end
 
-  defp source(name), do: first_match(name, @sources)
+  # Scope the source scan to the tag region (past the first year/resolution), so a title word
+  # like "Cam" or "...Web" can't be read as a source. No anchor ⇒ scan the whole name.
+  defp source(name) do
+    region =
+      case String.split(name, @source_anchor, parts: 2) do
+        [_title, tags] -> tags
+        [whole] -> whole
+      end
+
+    first_match(region, @sources)
+  end
 
   defp first_match(name, table) do
     Enum.find_value(table, fn {pattern, value} -> if Regex.match?(pattern, name), do: value end)

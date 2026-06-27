@@ -152,17 +152,19 @@ defmodule Cinder.Acquisition.Scorer do
 
   @doc "Index of a resolution string in the preference list (lower = better); nil/unlisted sorts last."
   def resolution_rank(resolution, preferred) when is_binary(resolution) or is_nil(resolution),
-    do: Enum.find_index(preferred, &(&1 == resolution)) || length(preferred)
+    do: rank_in(resolution, preferred)
 
   def resolution_rank(%Release{} = release, preferred),
     do: resolution_rank(release.resolution, preferred)
 
-  @doc "Index of a source string in the preference list (lower = better); nil/unlisted sorts last."
-  def source_rank(source, preferred) when is_binary(source) or is_nil(source),
-    do: Enum.find_index(preferred, &(&1 == source)) || length(preferred)
+  # Source rank mirrors resolution_rank but stays private — only sort_key/greedy_key use it
+  # (resolution_rank is public because Library.Upgrade also calls it).
+  defp source_rank(%Release{} = release, preferred),
+    do: rank_in(release.source, preferred)
 
-  def source_rank(%Release{} = release, preferred),
-    do: source_rank(release.source, preferred)
+  # Index of value in the preference list (lower = better); nil/unlisted sorts last.
+  defp rank_in(value, preferred),
+    do: Enum.find_index(preferred, &(&1 == value)) || length(preferred)
 
   defp blocked?(%Release{group: nil}, _blocklist), do: false
   defp blocked?(%Release{group: group}, blocklist), do: String.downcase(group) in blocklist

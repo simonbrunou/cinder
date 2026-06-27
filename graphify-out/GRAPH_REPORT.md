@@ -1,16 +1,16 @@
-# Graph Report - cinder  (2026-06-26)
+# Graph Report - cinder  (2026-06-27)
 
 ## Corpus Check
-- 288 files · ~307,286 words
+- 288 files · ~308,022 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 2362 nodes · 2790 edges · 277 communities (165 shown, 112 thin omitted)
-- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 42 edges (avg confidence: 0.8)
+- 2372 nodes · 2804 edges · 277 communities (165 shown, 112 thin omitted)
+- Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 42 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `8cf60ec1`
+- Built from commit: `265544cd`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -391,7 +391,7 @@ Cohesion: 0.26
 Nodes (16): Cinder.Catalog.TMDB.HTTP, auth(), date_from(), error(), get_movie(), get_season(), get_series(), health() (+8 more)
 
 ### Community 21 - "Community 21"
-Cohesion: 0.23
+Cohesion: 0.21
 Nodes (18): Cinder.Acquisition.Scorer, allowed_resolution?(), allowed_source?(), blocked?(), config(), cover(), coverage(), greedy_key() (+10 more)
 
 ### Community 22 - "Community 22"
@@ -411,8 +411,8 @@ Cohesion: 0.12
 Nodes (15): 1. Context: what's already done, and the one real gap, 2. Goals / non-goals, 3.1 Orchestration — extend the Poller, don't add a process, 3.2 Error handling — backoff + bounded retry; honest terminal states, 3.3 qBittorrent — accept base32 magnets; `.torrent` deferred (flagged), 3.4 Status dashboard — `CinderWeb.StatusLive` at `/status`, 3.5 Schema / migration, 3. Design (+7 more)
 
 ### Community 26 - "Community 26"
-Cohesion: 0.14
-Nodes (13): Cinder.Acquisition.Parser, bare(), distinct_seasons(), ep?(), first_match(), from_tail(), language(), multi_season?() (+5 more)
+Cohesion: 0.15
+Nodes (14): Cinder.Acquisition.Parser, bare(), distinct_seasons(), ep?(), first_match(), from_tail(), language(), multi_season?() (+6 more)
 
 ### Community 27 - "Community 27"
 Cohesion: 0.13
@@ -775,8 +775,8 @@ Cohesion: 0.50
 Nodes (3): CinderWeb.LibraryLiveTest, available_movie!(), movie!()
 
 ### Community 188 - "Community 188"
-Cohesion: 0.11
-Nodes (20): Accumulated Minor findings for final-review triage, Admin CRUD — SDD progress ledger, CODE REVIEW (adversarial, 6 dimensions × independent Opus verify): 1 important + minors., /code-review on PR #39 push (mandated by hook) — 8 finders → verify, Delete-file feature — progress ledger, Final fix wave (commit eb3a2d6, suite 770): folded the 2 reviewer fix-now docs + 2 cheap coverage tests, Final whole-branch review (ec6cf87..2c4b5f3, opus), FINAL whole-branch review (opus, b87127c..64f479f code-only): READY TO MERGE — Yes (+12 more)
+Cohesion: 0.10
+Nodes (22): Accumulated Minor findings for final-review triage, Admin CRUD — SDD progress ledger, CODE REVIEW (adversarial, 6 dimensions × independent Opus verify): 1 important + minors., /code-review (high, recall) on PR #50 → review-fix wave (suite 830 green), /code-review on PR #39 push (mandated by hook) — 8 finders → verify, Delete-file feature — progress ledger, Final fix wave (commit eb3a2d6, suite 770): folded the 2 reviewer fix-now docs + 2 cheap coverage tests, Final whole-branch review (ec6cf87..2c4b5f3, opus) (+14 more)
 
 ### Community 221 - "Community 221"
 Cohesion: 0.17
@@ -815,8 +815,8 @@ Cohesion: 0.08
 Nodes (26): 3 Conversions, 3 Header assertions added, Added 4 failing tests first:, Back-links preserved, `best_release/2` before/after, Changes, Commit, Concerns (+18 more)
 
 ### Community 231 - "Community 231"
-Cohesion: 0.12
-Nodes (23): Adoption sites, Commit, Component built, Concerns, Files changed, Full gate result, Implementation notes, `lib/cinder_web/components/layouts.ex` (+15 more)
+Cohesion: 0.09
+Nodes (30): Adoption sites, CHANGELOG.md, Commit, Component built, Concerns, docs/operating.md, Files changed, Full gate result (+22 more)
 
 ### Community 232 - "Community 232"
 Cohesion: 0.15
@@ -915,21 +915,21 @@ Cohesion: 0.25
 Nodes (7): Global Constraints, Notes for the implementer, Release Source Preference Implementation Plan, Task 1: Parser `source` field, Task 2: Scorer `preferred_sources` filter + ranking, Task 3: Settings overlay, band_opts, and UI field, Task 4: Docs + graph refresh
 
 ## Knowledge Gaps
-- **883 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+878 more)
+- **890 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+885 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **112 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Cinder.Catalog` connect `Community 3` to `Community 37`, `Community 71`, `Community 59`, `Community 147`, `Community 91`, `Community 28`?**
-  _High betweenness centrality (0.001) - this node is a cross-community bridge._
 - **Why does `table()` connect `Community 74` to `Community 258`, `Community 249`, `Community 266`, `Community 142`, `Community 271`, `Community 272`, `Community 241`, `Community 145`, `Community 273`, `Community 148`, `Community 149`, `Community 22`, `Community 150`, `Community 152`, `Community 153`, `Community 250`, `Community 274`?**
   _High betweenness centrality (0.001) - this node is a cross-community bridge._
 - **Why does `CinderWeb.CoreComponents` connect `Community 22` to `Community 74`?**
   _High betweenness centrality (0.001) - this node is a cross-community bridge._
+- **Why does `Cinder.Catalog` connect `Community 3` to `Community 37`, `Community 71`, `Community 59`, `Community 147`, `Community 91`, `Community 28`?**
+  _High betweenness centrality (0.001) - this node is a cross-community bridge._
 - **What connects `tidewave`, `$schema`, `erlang` to the rest of the system?**
-  _883 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _890 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**
   _Cohesion score 0.07049180327868852 - nodes in this community are weakly interconnected._
 - **Should `Community 1` be split into smaller, more focused modules?**

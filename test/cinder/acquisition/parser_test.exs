@@ -103,6 +103,21 @@ defmodule Cinder.Acquisition.ParserTest do
     test "an untagged source is nil" do
       assert %{source: nil} = Parser.parse("Inception.2010.x264-GRP")
     end
+
+    test "BDRemux is tagged remux, not bluray" do
+      assert %{source: "remux"} = Parser.parse("M.2020.2160p.BDRemux.x265")
+    end
+
+    test "a source word in the TITLE does not produce a false source (scan is scoped past the year/resolution)" do
+      # The film "Cam" and "Charlotte's Web": an untagged release must stay nil so the scorer's
+      # nil-passes valve isn't defeated by a recognized-but-unlisted false source.
+      assert %{source: nil} = Parser.parse("Cam.2018.1080p.x264-GRP")
+      assert %{source: nil} = Parser.parse("Charlottes.Web.2006.1080p.x264-GRP")
+      # A title word before a resolution-only anchor (no year) is also excluded.
+      assert %{source: nil} = Parser.parse("Cam.1080p.x264-GRP")
+      # ...but a real source tag in the tag region still matches.
+      assert %{source: "webdl"} = Parser.parse("Cam.2018.1080p.WEB-DL.x264-GRP")
+    end
   end
 
   describe "TV season/episode parsing" do
