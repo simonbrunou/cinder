@@ -51,9 +51,7 @@ defmodule Cinder.Library.Upgrade do
   end
 
   defp rank(q, preferred, sources) do
-    # ponytail: Map.get guards callers that pre-date the :source key; later tasks add :source to
-    # every quality map — at that point this is equivalent to q.source.
-    {Scorer.resolution_rank(q.resolution, preferred),
-     Scorer.source_rank(Map.get(q, :source), sources), -(q.size || 0)}
+    {Scorer.resolution_rank(q.resolution, preferred), Scorer.source_rank(q.source, sources),
+     -(q.size || 0)}
   end
 end

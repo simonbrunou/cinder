@@ -128,8 +128,8 @@ defmodule Cinder.CatalogTvPipelineTest do
   end
 
   describe "finish_grab/2" do
-    @q1 %{resolution: "1080p", size: 5_000_000_000, language: nil}
-    @q2 %{resolution: "720p", size: 3_000_000_000, language: "FRENCH"}
+    @q1 %{resolution: "1080p", size: 5_000_000_000, language: nil, source: nil}
+    @q2 %{resolution: "720p", size: 3_000_000_000, language: "FRENCH", source: nil}
 
     test "sets each imported episode's own file_path, clears grab_id, deletes the grab, broadcasts" do
       {series, season} = series_with_season()

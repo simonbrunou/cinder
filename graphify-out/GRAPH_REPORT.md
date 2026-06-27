@@ -1,16 +1,16 @@
 # Graph Report - cinder  (2026-06-27)
 
 ## Corpus Check
-- 293 files · ~313,501 words
+- 293 files · ~313,491 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 2433 nodes · 2895 edges · 282 communities (168 shown, 114 thin omitted)
+- 2433 nodes · 2895 edges · 281 communities (167 shown, 114 thin omitted)
 - Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 43 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `c126a69a`
+- Built from commit: `519e8161`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -280,7 +280,6 @@
 - [[_COMMUNITY_Community 275|Community 275]]
 - [[_COMMUNITY_Community 276|Community 276]]
 - [[_COMMUNITY_Community 277|Community 277]]
-- [[_COMMUNITY_Community 278|Community 278]]
 - [[_COMMUNITY_Community 279|Community 279]]
 - [[_COMMUNITY_Community 280|Community 280]]
 - [[_COMMUNITY_Community 281|Community 281]]
@@ -309,7 +308,7 @@
 - `change()` --calls--> `table()`  [INFERRED]
   priv/repo/migrations/20260619061256_add_file_path_to_movies.exs → lib/cinder_web/components/core_components.ex
 
-## Communities (282 total, 114 thin omitted)
+## Communities (281 total, 114 thin omitted)
 
 ### Community 0 - "Community 0"
 Cohesion: 0.07
@@ -325,7 +324,7 @@ Nodes (39): Admin CRUD on Entities — Implementation Plan, Global Constraints, 
 
 ### Community 3 - "Community 3"
 Cohesion: 0.08
-Nodes (10): Cinder.Catalog, apply_requester_language(), ensure_series(), find_or_create_series_at_requested(), interleave(), mark_series_monitored(), merge_discover(), season_in() (+2 more)
+Nodes (12): Cinder.Catalog, apply_requester_language(), do_delete_episode_file_txn(), ensure_series(), find_or_create_series_at_requested(), interleave(), mark_series_monitored(), maybe_unmonitor() (+4 more)
 
 ### Community 4 - "Community 4"
 Cohesion: 0.09
@@ -425,7 +424,7 @@ Nodes (14): Global Constraints, M3 — Onboarding wizard + requester UX — Impl
 
 ### Community 28 - "Community 28"
 Cohesion: 0.16
-Nodes (19): broadcast_series(), cancel_series(), create_grab(), delete_grab(), delete_season_files(), do_delete_season_files_txn(), finish_grab(), grabs_for_series() (+11 more)
+Nodes (18): broadcast_series(), create_grab(), delete_episode_file(), delete_season_files(), do_delete_season_files_txn(), finish_grab(), increment_grab_attempts(), insert_and_link_grab() (+10 more)
 
 ### Community 29 - "Community 29"
 Cohesion: 0.23
@@ -764,8 +763,8 @@ Cohesion: 0.29
 Nodes (6): How to orient (do this first, every run), Invariant 1 — Approval gate: no non-admin path creates a `:requested` movie pre-approval, Invariant 2 — Role/route gating, Invariant 3 — Transition choke-point (status / derived-state writes), Invariant 4 — Secrets redaction, Output format
 
 ### Community 147 - "Community 147"
-Cohesion: 0.50
-Nodes (4): broadcast_series_deleted(), delete_series(), do_delete_series_txn(), episode_file_paths_for_series()
+Cohesion: 0.22
+Nodes (9): broadcast_series_deleted(), cancel_series(), delete_grab(), delete_series(), do_delete_series_txn(), episode_file_paths_for_series(), grabs_for_series(), reap_series_grabs() (+1 more)
 
 ### Community 151 - "Community 151"
 Cohesion: 0.11
@@ -927,10 +926,6 @@ Nodes (7): Global Constraints, Notes for the implementer, Release Source Prefere
 Cohesion: 0.20
 Nodes (9): Global Constraints, Notes for the implementer, Source-Aware Import-Time Upgrade Implementation Plan, Task 1: `imported_source` column + schema fields, Task 2: Re-expose `Scorer.source_rank/2`, Task 3: Source axis in the `Upgrade` comparator, Task 4: Wire the movie pipeline (capture + persist + comparator call), Task 5: Wire the TV pipeline (capture + persist + comparator call + resets) (+1 more)
 
-### Community 278 - "Community 278"
-Cohesion: 0.33
-Nodes (6): delete_episode_file(), do_delete_episode_file_txn(), maybe_unmonitor(), series_id_for_season(), set_episode_monitored(), transition_episode()
-
 ## Knowledge Gaps
 - **927 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+922 more)
   These have ≤1 connection - possible missing edges or undocumented components.
@@ -939,7 +934,7 @@ Nodes (6): delete_episode_file(), do_delete_episode_file_txn(), maybe_unmonitor(
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Cinder.Catalog` connect `Community 3` to `Community 37`, `Community 71`, `Community 59`, `Community 147`, `Community 278`, `Community 91`, `Community 28`?**
+- **Why does `Cinder.Catalog` connect `Community 3` to `Community 37`, `Community 71`, `Community 59`, `Community 147`, `Community 91`, `Community 28`?**
   _High betweenness centrality (0.001) - this node is a cross-community bridge._
 - **What connects `tidewave`, `$schema`, `erlang` to the rest of the system?**
   _927 weakly-connected nodes found - possible documentation gaps or missing edges._
@@ -950,6 +945,6 @@ _Questions this graph is uniquely positioned to answer:_
 - **Should `Community 2` be split into smaller, more focused modules?**
   _Cohesion score 0.05 - nodes in this community are weakly interconnected._
 - **Should `Community 3` be split into smaller, more focused modules?**
-  _Cohesion score 0.08275862068965517 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.07862903225806452 - nodes in this community are weakly interconnected._
 - **Should `Community 4` be split into smaller, more focused modules?**
   _Cohesion score 0.08552188552188553 - nodes in this community are weakly interconnected._

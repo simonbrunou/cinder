@@ -1020,7 +1020,7 @@ defmodule Cinder.Catalog do
               imported_resolution: q.resolution,
               imported_size: q.size,
               imported_language: q.language,
-              imported_source: Map.get(q, :source),
+              imported_source: q.source,
               updated_at: ts
             ]
           )
