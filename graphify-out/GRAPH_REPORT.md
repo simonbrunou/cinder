@@ -1,16 +1,16 @@
 # Graph Report - cinder  (2026-06-27)
 
 ## Corpus Check
-- 288 files · ~308,227 words
+- 288 files · ~308,474 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 2373 nodes · 2805 edges · 278 communities (166 shown, 112 thin omitted)
+- 2375 nodes · 2808 edges · 277 communities (165 shown, 112 thin omitted)
 - Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 42 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `71601b2c`
+- Built from commit: `4d3143d1`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -279,7 +279,6 @@
 - [[_COMMUNITY_Community 274|Community 274]]
 - [[_COMMUNITY_Community 275|Community 275]]
 - [[_COMMUNITY_Community 276|Community 276]]
-- [[_COMMUNITY_Community 277|Community 277]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `Cinder.Catalog` - 98 edges
@@ -290,8 +289,8 @@
 6. `Cinder.Download.TvPoller` - 24 edges
 7. `Cinder.Download.Poller` - 22 edges
 8. `CinderWeb.UserAuth` - 21 edges
-9. `table()` - 20 edges
-10. `Cinder.Acquisition.Parser` - 20 edges
+9. `Cinder.Acquisition.Parser` - 21 edges
+10. `table()` - 20 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `change()` --calls--> `table()`  [INFERRED]
@@ -305,7 +304,7 @@
 - `change()` --calls--> `table()`  [INFERRED]
   priv/repo/migrations/20260619061256_add_file_path_to_movies.exs → lib/cinder_web/components/core_components.ex
 
-## Communities (278 total, 112 thin omitted)
+## Communities (277 total, 112 thin omitted)
 
 ### Community 0 - "Community 0"
 Cohesion: 0.07
@@ -321,7 +320,7 @@ Nodes (39): Admin CRUD on Entities — Implementation Plan, Global Constraints, 
 
 ### Community 3 - "Community 3"
 Cohesion: 0.08
-Nodes (10): Cinder.Catalog, apply_requester_language(), ensure_series(), find_or_create_series_at_requested(), interleave(), mark_series_monitored(), merge_discover(), season_in() (+2 more)
+Nodes (12): Cinder.Catalog, apply_requester_language(), do_delete_episode_file_txn(), ensure_series(), find_or_create_series_at_requested(), interleave(), mark_series_monitored(), maybe_unmonitor() (+4 more)
 
 ### Community 4 - "Community 4"
 Cohesion: 0.09
@@ -412,8 +411,8 @@ Cohesion: 0.12
 Nodes (15): 1. Context: what's already done, and the one real gap, 2. Goals / non-goals, 3.1 Orchestration — extend the Poller, don't add a process, 3.2 Error handling — backoff + bounded retry; honest terminal states, 3.3 qBittorrent — accept base32 magnets; `.torrent` deferred (flagged), 3.4 Status dashboard — `CinderWeb.StatusLive` at `/status`, 3.5 Schema / migration, 3. Design (+7 more)
 
 ### Community 26 - "Community 26"
-Cohesion: 0.15
-Nodes (14): Cinder.Acquisition.Parser, bare(), distinct_seasons(), ep?(), first_match(), from_tail(), language(), multi_season?() (+6 more)
+Cohesion: 0.14
+Nodes (15): Cinder.Acquisition.Parser, bare(), distinct_seasons(), ep?(), first_match(), from_tail(), language(), multi_season?() (+7 more)
 
 ### Community 27 - "Community 27"
 Cohesion: 0.13
@@ -421,7 +420,7 @@ Nodes (14): Global Constraints, M3 — Onboarding wizard + requester UX — Impl
 
 ### Community 28 - "Community 28"
 Cohesion: 0.16
-Nodes (19): broadcast_series(), cancel_series(), create_grab(), delete_grab(), delete_season_files(), do_delete_season_files_txn(), finish_grab(), grabs_for_series() (+11 more)
+Nodes (18): broadcast_series(), create_grab(), delete_episode_file(), delete_season_files(), do_delete_season_files_txn(), finish_grab(), increment_grab_attempts(), insert_and_link_grab() (+10 more)
 
 ### Community 29 - "Community 29"
 Cohesion: 0.23
@@ -760,8 +759,8 @@ Cohesion: 0.29
 Nodes (6): How to orient (do this first, every run), Invariant 1 — Approval gate: no non-admin path creates a `:requested` movie pre-approval, Invariant 2 — Role/route gating, Invariant 3 — Transition choke-point (status / derived-state writes), Invariant 4 — Secrets redaction, Output format
 
 ### Community 147 - "Community 147"
-Cohesion: 0.50
-Nodes (4): broadcast_series_deleted(), delete_series(), do_delete_series_txn(), episode_file_paths_for_series()
+Cohesion: 0.22
+Nodes (9): broadcast_series_deleted(), cancel_series(), delete_grab(), delete_series(), do_delete_series_txn(), episode_file_paths_for_series(), grabs_for_series(), reap_series_grabs() (+1 more)
 
 ### Community 151 - "Community 151"
 Cohesion: 0.11
@@ -776,8 +775,8 @@ Cohesion: 0.50
 Nodes (3): CinderWeb.LibraryLiveTest, available_movie!(), movie!()
 
 ### Community 188 - "Community 188"
-Cohesion: 0.10
-Nodes (23): Accumulated Minor findings for final-review triage, Admin CRUD — SDD progress ledger, CODE REVIEW (adversarial, 6 dimensions × independent Opus verify): 1 important + minors., /code-review (high, recall) on PR #50 → review-fix wave (suite 830 green), /code-review on fix-delta → found a REGRESSION in my own #1 fix (suite 831 green), /code-review on PR #39 push (mandated by hook) — 8 finders → verify, Delete-file feature — progress ledger, Final fix wave (commit eb3a2d6, suite 770): folded the 2 reviewer fix-now docs + 2 cheap coverage tests (+15 more)
+Cohesion: 0.09
+Nodes (24): Accumulated Minor findings for final-review triage, Admin CRUD — SDD progress ledger, CODE REVIEW (adversarial, 6 dimensions × independent Opus verify): 1 important + minors., /code-review (high, recall) on PR #50 → review-fix wave (suite 830 green), /code-review on fix-delta → found a REGRESSION in my own #1 fix (suite 831 green), /code-review on PR #39 push (mandated by hook) — 8 finders → verify, /code-review on year-only fix → 3 CONFIRMED (positional scoping was the wrong model) → two-tier (suite 833), Delete-file feature — progress ledger (+16 more)
 
 ### Community 221 - "Community 221"
 Cohesion: 0.17
@@ -915,12 +914,8 @@ Nodes (10): 1. Parser — new `source` field (`parser.ex`, `release.ex`), 2. Sco
 Cohesion: 0.25
 Nodes (7): Global Constraints, Notes for the implementer, Release Source Preference Implementation Plan, Task 1: Parser `source` field, Task 2: Scorer `preferred_sources` filter + ranking, Task 3: Settings overlay, band_opts, and UI field, Task 4: Docs + graph refresh
 
-### Community 277 - "Community 277"
-Cohesion: 0.33
-Nodes (6): delete_episode_file(), do_delete_episode_file_txn(), maybe_unmonitor(), series_id_for_season(), set_episode_monitored(), transition_episode()
-
 ## Knowledge Gaps
-- **891 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+886 more)
+- **892 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+887 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **112 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
@@ -931,10 +926,10 @@ _Questions this graph is uniquely positioned to answer:_
   _High betweenness centrality (0.001) - this node is a cross-community bridge._
 - **Why does `CinderWeb.CoreComponents` connect `Community 22` to `Community 74`?**
   _High betweenness centrality (0.001) - this node is a cross-community bridge._
-- **Why does `Cinder.Catalog` connect `Community 3` to `Community 37`, `Community 71`, `Community 59`, `Community 147`, `Community 277`, `Community 91`, `Community 28`?**
+- **Why does `Cinder.Catalog` connect `Community 3` to `Community 37`, `Community 71`, `Community 59`, `Community 147`, `Community 91`, `Community 28`?**
   _High betweenness centrality (0.001) - this node is a cross-community bridge._
 - **What connects `tidewave`, `$schema`, `erlang` to the rest of the system?**
-  _891 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _892 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**
   _Cohesion score 0.07049180327868852 - nodes in this community are weakly interconnected._
 - **Should `Community 1` be split into smaller, more focused modules?**

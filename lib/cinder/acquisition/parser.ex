@@ -23,30 +23,34 @@ defmodule Cinder.Acquisition.Parser do
 
   @resolutions ["2160p", "1080p", "720p", "480p"]
 
-  # Release source, most-specific-first (same first_match/2 mechanism as @codecs). Collision-prone
-  # 2-letter abbreviations (ts, tc, bd, scr, dsr) are excluded on purpose — same discipline as the
-  # language registry's "vf is the lone 2-letter token" note. `bdremux` lives in the remux entry
-  # (it IS a full-disc remux); `\bremux\b` alone can't match "BDRemux" (no boundary before remux).
-  # The bare tokens here (`web`, `cam`, `dvd`, `hdtv`) would false-match a release TITLE word
-  # ("Cam", "Charlotte's Web"); source/1 scopes the scan past the year/resolution to the tag region
-  # so a title word can't produce a false (non-nil) source that the scorer's nil-passes valve can't save.
+  # Release source, split by ambiguity. @sources are compound tokens that are never a release-TITLE
+  # word, so they match ANYWHERE in the name (most-specific-first, same first_match/2 mechanism as
+  # @codecs). Collision-prone 2-letter abbreviations (ts, tc, bd, scr, dsr) are excluded — same
+  # discipline as the language registry's "vf is the lone 2-letter token" note. `bdremux` is a remux
+  # (`\bremux\b` alone can't match "BDRemux" — no boundary before remux).
   @sources [
     {~r/\bremux\b|\bbdremux\b/i, "remux"},
     {~r/\bblu-?ray\b|\bbrrip\b|\bbdrip\b/i, "bluray"},
     {~r/\bweb-?rip\b/i, "webrip"},
-    {~r/\bweb-?dl\b|\bweb\b/i, "webdl"},
+    {~r/\bweb-?dl\b/i, "webdl"},
     {~r/\bhdtv\b|\bpdtv\b/i, "hdtv"},
-    {~r/\bdvd-?rip\b|\bdvd\b/i, "dvd"},
-    {~r/\bcam\b|\btelesync\b|\btelecine\b|\bscreener\b/i, "cam"}
+    {~r/\bdvd-?rip\b/i, "dvd"},
+    {~r/\btelesync\b|\btelecine\b|\bscreener\b/i, "cam"}
   ]
 
-  # The "tag region" of a release name: everything from the release YEAR onward — source tags sit
-  # after the year, the title precedes it. Scoping source/1 there stops a title word ("Cam",
-  # "...Web") from false-tagging a source. A yearless name falls back to the WHOLE name, so a real
-  # source that precedes the resolution ("Show.S01.DVDRip.480p", "Movie.BDRip.1080p") is still
-  # tagged; the only residual is a yearless name whose TITLE is itself a source word — rare, and an
-  # accepted ceiling (anchoring on the resolution too would drop those real sources instead).
-  @source_anchor ~r/\b(?:19|20)\d{2}\b/
+  # @bare_sources are single words that ARE real source tags but can also be a release TITLE word
+  # ("Cam" the film, "...Web", "DVD"). They're scanned only in the tag region (past the first
+  # year/resolution marker) so a title word can't produce a false (non-nil) source — which would
+  # defeat the scorer's nil-passes valve and wrongly reject the release. A bare token before the
+  # resolution in a yearless name (e.g. "Movie.CAM.480p") falls to nil: benign, the valve keeps it.
+  @bare_sources [
+    {~r/\bweb\b/i, "webdl"},
+    {~r/\bdvd\b/i, "dvd"},
+    {~r/\bcam\b/i, "cam"}
+  ]
+
+  # Start of the tag region: the first year or resolution marker — the title precedes it.
+  @tag_region_anchor ~r/\b(?:19|20)\d{2}\b|\b(?:2160|1080|720|480)p\b/i
 
   @codecs [
     {~r/x265/i, "x265"},
@@ -259,17 +263,20 @@ defmodule Cinder.Acquisition.Parser do
     Enum.find(@resolutions, &String.contains?(down, &1))
   end
 
-  # Scope the source scan to the tag region (past the release year), so a title word like "Cam"
-  # or "...Web" can't be read as a source. No year ⇒ scan the whole name (preserves a real source
-  # that precedes the resolution in a yearless name).
+  # A compound source tag (@sources) is unambiguous and matched anywhere; a bare ambiguous token
+  # (@bare_sources) is matched only in the tag region so a title word ("Cam", "...Web") can't
+  # false-tag a source. The compound match takes precedence (a real "WEBRip" never falls to bare "web").
   defp source(name) do
-    region =
-      case String.split(name, @source_anchor, parts: 2) do
-        [_title, tags] -> tags
-        [whole] -> whole
-      end
+    first_match(name, @sources) || first_match(tag_region(name), @bare_sources)
+  end
 
-    first_match(region, @sources)
+  # Everything past the first year/resolution marker (the title precedes it); the whole name when
+  # there's no marker. Only the bare ambiguous tokens are scoped to this — compound tags match anywhere.
+  defp tag_region(name) do
+    case String.split(name, @tag_region_anchor, parts: 2) do
+      [_title, tags] -> tags
+      [whole] -> whole
+    end
   end
 
   defp first_match(name, table) do

@@ -118,10 +118,22 @@ defmodule Cinder.Acquisition.ParserTest do
     end
 
     test "a yearless name still tags a real source that precedes the resolution" do
-      # Year-only scoping must not drop a real source: a yearless name falls back to a whole-name
-      # scan. (Regression guard — anchoring on the resolution too dropped these to nil.)
+      # A compound source tag is unambiguous, so it matches anywhere — a yearless name with the
+      # source before the resolution must not drop it. (Regression guard.)
       assert %{source: "dvd"} = Parser.parse("Show.Name.S01.DVDRip.480p.x264-GRP")
       assert %{source: "bluray"} = Parser.parse("Movie.BDRip.1080p.x264")
+    end
+
+    test "a compound source is read even when it precedes the year or trails it" do
+      # Compound tokens match anywhere, so these unusual orderings (source before the year, or a
+      # trailing year) keep their real source instead of dropping to nil. (Regression guards.)
+      assert %{source: "webdl"} = Parser.parse("Title.1080p.WEB-DL.2020.x264")
+      assert %{source: "dvd"} = Parser.parse("Movie.Title.DVDRip.XviD.2009")
+    end
+
+    test "a real compound source outranks a title source-word in a yearless name" do
+      # "Web" in the title must not override a real HDTV tag; the compound match wins.
+      assert %{source: "hdtv"} = Parser.parse("Charlottes.Web.S01.1080p.HDTV.x264-GRP")
     end
   end
 
