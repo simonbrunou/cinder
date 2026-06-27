@@ -23,30 +23,31 @@ defmodule Cinder.Acquisition.Parser do
 
   @resolutions ["2160p", "1080p", "720p", "480p"]
 
-  # Release source, split by ambiguity. @sources are compound tokens that are never a release-TITLE
+  # Release source, split by ambiguity. @sources are tokens that don't occur as a release-TITLE
   # word, so they match ANYWHERE in the name (most-specific-first, same first_match/2 mechanism as
   # @codecs). Collision-prone 2-letter abbreviations (ts, tc, bd, scr, dsr) are excluded — same
   # discipline as the language registry's "vf is the lone 2-letter token" note. `bdremux` is a remux
-  # (`\bremux\b` alone can't match "BDRemux" — no boundary before remux).
+  # (`\bremux\b` alone can't match "BDRemux" — no boundary before remux). `bluray`/`remux` stay here
+  # as common real source-before-resolution tags; a title literally containing them is negligibly rare.
   @sources [
     {~r/\bremux\b|\bbdremux\b/i, "remux"},
     {~r/\bblu-?ray\b|\bbrrip\b|\bbdrip\b/i, "bluray"},
     {~r/\bweb-?rip\b/i, "webrip"},
     {~r/\bweb-?dl\b/i, "webdl"},
     {~r/\bhdtv\b|\bpdtv\b/i, "hdtv"},
-    {~r/\bdvd-?rip\b/i, "dvd"},
-    {~r/\btelesync\b|\btelecine\b|\bscreener\b/i, "cam"}
+    {~r/\bdvd-?rip\b/i, "dvd"}
   ]
 
-  # @bare_sources are single words that ARE real source tags but can also be a release TITLE word
-  # ("Cam" the film, "...Web", "DVD"). They're scanned only in the tag region (past the first
-  # year/resolution marker) so a title word can't produce a false (non-nil) source — which would
-  # defeat the scorer's nil-passes valve and wrongly reject the release. A bare token before the
-  # resolution in a yearless name (e.g. "Movie.CAM.480p") falls to nil: benign, the valve keeps it.
+  # @bare_sources are words that ARE real source tags but ALSO occur as a release TITLE word — the
+  # cam family (`cam`/`screener`/`telecine`/`telesync` are ordinary words) and `web`/`dvd`. They're
+  # scanned only in the tag region (past the first year/resolution marker) so a title word
+  # ("Cam"/"Telecine"/"...Web") can't produce a false (non-nil) source that would defeat the
+  # scorer's nil-passes valve and wrongly reject the release. A bare token with no tag region
+  # (yearless+resolutionless, or before the resolution) falls to nil: benign — the valve keeps it.
   @bare_sources [
     {~r/\bweb\b/i, "webdl"},
     {~r/\bdvd\b/i, "dvd"},
-    {~r/\bcam\b/i, "cam"}
+    {~r/\bcam\b|\btelesync\b|\btelecine\b|\bscreener\b/i, "cam"}
   ]
 
   # Start of the tag region: the first year or resolution marker — the title precedes it.
@@ -263,19 +264,21 @@ defmodule Cinder.Acquisition.Parser do
     Enum.find(@resolutions, &String.contains?(down, &1))
   end
 
-  # A compound source tag (@sources) is unambiguous and matched anywhere; a bare ambiguous token
-  # (@bare_sources) is matched only in the tag region so a title word ("Cam", "...Web") can't
-  # false-tag a source. The compound match takes precedence (a real "WEBRip" never falls to bare "web").
+  # An unambiguous source tag (@sources) matches anywhere; a bare ambiguous token (@bare_sources,
+  # incl. the cam family) is matched only in the tag region so a title word ("Cam"/"Telecine"/
+  # "...Web") can't false-tag a source. The unambiguous match takes precedence (a real "WEBRip"
+  # never falls to bare "web").
   defp source(name) do
     first_match(name, @sources) || first_match(tag_region(name), @bare_sources)
   end
 
-  # Everything past the first year/resolution marker (the title precedes it); the whole name when
-  # there's no marker. Only the bare ambiguous tokens are scoped to this — compound tags match anywhere.
+  # Everything past the first year/resolution marker (the title precedes it). No marker ⇒ "" so the
+  # bare scan never runs over the title: a yearless+resolutionless real bare source drops to nil —
+  # a benign loss (the valve keeps it) over the false-positive of reading a title word as a source.
   defp tag_region(name) do
     case String.split(name, @tag_region_anchor, parts: 2) do
       [_title, tags] -> tags
-      [whole] -> whole
+      [_no_anchor] -> ""
     end
   end
 

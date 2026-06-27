@@ -1,16 +1,16 @@
 # Graph Report - cinder  (2026-06-27)
 
 ## Corpus Check
-- 288 files · ~308,474 words
+- 288 files · ~308,766 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 2375 nodes · 2808 edges · 277 communities (165 shown, 112 thin omitted)
+- 2376 nodes · 2809 edges · 277 communities (165 shown, 112 thin omitted)
 - Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 42 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `4d3143d1`
+- Built from commit: `f55003ed`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -776,7 +776,7 @@ Nodes (3): CinderWeb.LibraryLiveTest, available_movie!(), movie!()
 
 ### Community 188 - "Community 188"
 Cohesion: 0.09
-Nodes (24): Accumulated Minor findings for final-review triage, Admin CRUD — SDD progress ledger, CODE REVIEW (adversarial, 6 dimensions × independent Opus verify): 1 important + minors., /code-review (high, recall) on PR #50 → review-fix wave (suite 830 green), /code-review on fix-delta → found a REGRESSION in my own #1 fix (suite 831 green), /code-review on PR #39 push (mandated by hook) — 8 finders → verify, /code-review on year-only fix → 3 CONFIRMED (positional scoping was the wrong model) → two-tier (suite 833), Delete-file feature — progress ledger (+16 more)
+Nodes (25): Accumulated Minor findings for final-review triage, Admin CRUD — SDD progress ledger, CODE REVIEW (adversarial, 6 dimensions × independent Opus verify): 1 important + minors., /code-review (high, recall) on PR #50 → review-fix wave (suite 830 green), /code-review on fix-delta → found a REGRESSION in my own #1 fix (suite 831 green), /code-review on PR #39 push (mandated by hook) — 8 finders → verify, /code-review on two-tier → 2 CONFIRMED (my "never a title word" claim was wrong) → suite 835, /code-review on year-only fix → 3 CONFIRMED (positional scoping was the wrong model) → two-tier (suite 833) (+17 more)
 
 ### Community 221 - "Community 221"
 Cohesion: 0.17
@@ -915,7 +915,7 @@ Cohesion: 0.25
 Nodes (7): Global Constraints, Notes for the implementer, Release Source Preference Implementation Plan, Task 1: Parser `source` field, Task 2: Scorer `preferred_sources` filter + ranking, Task 3: Settings overlay, band_opts, and UI field, Task 4: Docs + graph refresh
 
 ## Knowledge Gaps
-- **892 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+887 more)
+- **893 isolated node(s):** `tidewave`, `$schema`, `erlang`, `elixir`, `startCommand` (+888 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **112 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
@@ -929,7 +929,7 @@ _Questions this graph is uniquely positioned to answer:_
 - **Why does `Cinder.Catalog` connect `Community 3` to `Community 37`, `Community 71`, `Community 59`, `Community 147`, `Community 91`, `Community 28`?**
   _High betweenness centrality (0.001) - this node is a cross-community bridge._
 - **What connects `tidewave`, `$schema`, `erlang` to the rest of the system?**
-  _892 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _893 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**
   _Cohesion score 0.07049180327868852 - nodes in this community are weakly interconnected._
 - **Should `Community 1` be split into smaller, more focused modules?**

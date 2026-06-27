@@ -135,6 +135,21 @@ defmodule Cinder.Acquisition.ParserTest do
       # "Web" in the title must not override a real HDTV tag; the compound match wins.
       assert %{source: "hdtv"} = Parser.parse("Charlottes.Web.S01.1080p.HDTV.x264-GRP")
     end
+
+    test "cam-family title words do not produce a false source; a real tag still wins" do
+      # "Telecine"/"Screener" are ordinary words that can be a TITLE; the cam family is scoped to
+      # the tag region, so an untagged release stays nil and a real source after it wins.
+      assert %{source: nil} = Parser.parse("Telecine.2019.1080p.x264-GRP")
+      assert %{source: "webdl"} = Parser.parse("Screener.2019.1080p.WEB.x264")
+      # ...but a genuine screener tag in the tag region is read.
+      assert %{source: "cam"} = Parser.parse("Movie.2024.SCREENER.x264")
+    end
+
+    test "a yearless, resolutionless name does not read a title source-word" do
+      # No tag-region anchor ⇒ the bare scan must not run over the title (no false source).
+      assert %{source: nil} = Parser.parse("Charlottes.Web.XviD-GRP")
+      assert %{source: nil} = Parser.parse("Cam.XviD-GRP")
+    end
   end
 
   describe "TV season/episode parsing" do
