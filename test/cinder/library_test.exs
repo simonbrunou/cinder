@@ -55,6 +55,34 @@ defmodule Cinder.LibraryTest do
              Library.import_movie(movie)
   end
 
+  test "import captures the parsed source into the returned quality" do
+    movie = %Movie{
+      title: "Inception",
+      year: 2010,
+      tmdb_id: 27_205,
+      file_path: "/dl/Inception.2010.1080p.BluRay.x264-GRP.mkv"
+    }
+
+    dest = "#{@lib}/Inception (2010) {tmdb-27205}/Inception (2010) {tmdb-27205}.mkv"
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+
+    expect(
+      Cinder.Library.FilesystemMock,
+      :lstat,
+      fn "/dl/Inception.2010.1080p.BluRay.x264-GRP.mkv" ->
+        {:ok, %File.Stat{size: 8 * @gb, inode: 7}}
+      end
+    )
+
+    expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    expect(Cinder.Library.FilesystemMock, :ln, fn _src, ^dest -> :ok end)
+    expect(Cinder.Library.MediaServerMock, :scan, fn _ -> :ok end)
+
+    assert {:ok, ^dest, %{resolution: "1080p", source: "bluray", language: nil}} =
+             Library.import_movie(movie)
+  end
+
   test "folder source: picks the largest video file and skips the sample" do
     movie = %Movie{title: "Dune", year: 2021, tmdb_id: 438_631, file_path: "/dl/Dune.2021"}
 

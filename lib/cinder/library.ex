@@ -57,7 +57,12 @@ defmodule Cinder.Library do
            ),
          {:ok, %{size: size, inode: si}} <- fs().lstat(source),
          parsed = Parser.parse(Path.basename(movie.file_path)),
-         new_q = %{resolution: parsed.resolution, size: size, language: parsed.language},
+         new_q = %{
+           resolution: parsed.resolution,
+           source: parsed.source,
+           size: size,
+           language: parsed.language
+         },
          dest = build_dest(movie, source, root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
          {:ok, quality} <- place(source, dest, si, movie, new_q) do
@@ -96,7 +101,8 @@ defmodule Cinder.Library do
       else: %{
         resolution: movie.imported_resolution,
         size: movie.imported_size,
-        language: movie.imported_language
+        language: movie.imported_language,
+        source: movie.imported_source
       }
   end
 
@@ -107,11 +113,19 @@ defmodule Cinder.Library do
     old_q = %{
       resolution: movie.imported_resolution,
       size: movie.imported_size,
-      language: movie.imported_language
+      language: movie.imported_language,
+      source: movie.imported_source
     }
 
     target = Language.target(movie.preferred_language, movie.original_language)
-    Upgrade.better?(new_q, old_q, target, preferred_resolutions(:movies))
+
+    Upgrade.better?(
+      new_q,
+      old_q,
+      target,
+      preferred_resolutions(:movies),
+      preferred_sources(:movies)
+    )
   end
 
   defp keep(dest, movie, new_q) do
@@ -126,6 +140,9 @@ defmodule Cinder.Library do
 
   defp preferred_resolutions(kind),
     do: Application.get_env(:cinder, :"#{kind}_preferred_resolutions")
+
+  defp preferred_sources(kind),
+    do: Application.get_env(:cinder, :"#{kind}_preferred_sources")
 
   # Atomic replace of an existing dest with source's content: sweep stale temps (a host crash between
   # ln and rename can leak one), hardlink source -> unique temp in the dest dir, then rename over dest.
