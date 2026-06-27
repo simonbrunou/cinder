@@ -21,8 +21,6 @@ defmodule Cinder.Download.TvPoller do
   `episode.search_attempts`/`updated_at` exactly like the movie poller, and an episode parks
   (derived "couldn't find") at `@max_attempts`.
   """
-  use GenServer
-
   require Logger
 
   alias Cinder.{Acquisition, Catalog, Download, Library, Notifier}
@@ -32,38 +30,7 @@ defmodule Cinder.Download.TvPoller do
   @search_retry_after 60
   @max_attempts 10
 
-  def start_link(opts \\ []) do
-    GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
-  end
-
-  @doc "Runs one poll pass synchronously. The scheduled timer path is asynchronous."
-  def poll(server \\ __MODULE__), do: GenServer.call(server, :poll)
-
-  @impl true
-  def init(opts) do
-    interval = Keyword.get(opts, :interval, config_interval())
-    retry_after = Keyword.get(opts, :search_retry_after, @search_retry_after)
-    {:ok, %{interval: interval, search_retry_after: retry_after}, {:continue, :schedule}}
-  end
-
-  @impl true
-  def handle_continue(:schedule, state) do
-    schedule(state.interval)
-    {:noreply, state}
-  end
-
-  @impl true
-  def handle_info(:poll, state) do
-    do_poll(state)
-    schedule(state.interval)
-    {:noreply, state}
-  end
-
-  @impl true
-  def handle_call(:poll, _from, state) do
-    do_poll(state)
-    {:reply, :ok, state}
-  end
+  use Cinder.Download.PollerSkeleton, log_prefix: "tv poller"
 
   defp do_poll(state) do
     advance_grabs()
@@ -217,14 +184,6 @@ defmodule Cinder.Download.TvPoller do
     |> Catalog.increment_search_attempts()
   end
 
-  # Fresh episodes (search_attempts == 0) attempt immediately; failed ones back off to once per
-  # `retry_after` seconds. retry_after 0 (test) makes everything due. Mirrors the movie poller.
-  defp search_due?(_episode, 0), do: true
-  defp search_due?(%{search_attempts: 0}, _retry_after), do: true
-
-  defp search_due?(episode, retry_after),
-    do: DateTime.diff(DateTime.utc_now(), episode.updated_at) >= retry_after
-
   # --- shared helpers --------------------------------------------------------------------------
 
   # Bounded retry on the grab's single lifetime counter: keep it where it is and retry next tick,
@@ -261,24 +220,5 @@ defmodule Cinder.Download.TvPoller do
     imported_ids = MapSet.new(imported, fn {id, _dest, _q} -> id end)
     episodes = Enum.filter(grab.episodes, &MapSet.member?(imported_ids, &1.id))
     Notifier.notify({:episodes_available, episodes})
-  end
-
-  # Per-unit isolation: an unexpected raise OR exit (e.g. a DBConnection checkout timeout under
-  # two-poller write contention — not rescue-able) skips that one unit instead of crashing the
-  # whole tick. The next tick re-derives the work.
-  defp isolate(label, fun) do
-    fun.()
-  rescue
-    e -> Logger.error("tv poller skipped #{label}: #{Exception.message(e)}")
-  catch
-    kind, value -> Logger.error("tv poller skipped #{label}: #{inspect({kind, value})}")
-  end
-
-  defp schedule(interval), do: Process.send_after(self(), :poll, interval)
-
-  defp config_interval do
-    :cinder
-    |> Application.get_env(__MODULE__, [])
-    |> Keyword.get(:interval, @default_interval)
   end
 end

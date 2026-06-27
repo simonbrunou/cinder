@@ -17,8 +17,6 @@ defmodule Cinder.Download.Poller do
   Holds no in-flight state: every tick re-derives its work from the DB, so it
   recovers cleanly after a crash/restart. That is the OTP payoff Phase 3 proves.
   """
-  use GenServer
-
   require Logger
 
   alias Cinder.Catalog
@@ -29,38 +27,7 @@ defmodule Cinder.Download.Poller do
   @default_interval 5_000
   @search_retry_after 60
 
-  def start_link(opts \\ []) do
-    GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
-  end
-
-  @doc "Runs one poll pass synchronously. The scheduled timer path is asynchronous."
-  def poll(server \\ __MODULE__), do: GenServer.call(server, :poll)
-
-  @impl true
-  def init(opts) do
-    interval = Keyword.get(opts, :interval, config_interval())
-    retry_after = Keyword.get(opts, :search_retry_after, @search_retry_after)
-    {:ok, %{interval: interval, search_retry_after: retry_after}, {:continue, :schedule}}
-  end
-
-  @impl true
-  def handle_continue(:schedule, state) do
-    schedule(state.interval)
-    {:noreply, state}
-  end
-
-  @impl true
-  def handle_info(:poll, state) do
-    do_poll(state)
-    schedule(state.interval)
-    {:noreply, state}
-  end
-
-  @impl true
-  def handle_call(:poll, _from, state) do
-    do_poll(state)
-    {:reply, :ok, state}
-  end
+  use Cinder.Download.PollerSkeleton, log_prefix: "poller"
 
   defp do_poll(state) do
     advance_downloading()
@@ -113,15 +80,6 @@ defmodule Cinder.Download.Poller do
   end
 
   defp reread(movie), do: Catalog.get_movie_by_id(movie.id) || movie
-
-  # Fresh movies (search_attempts == 0) attempt immediately; failed ones back off
-  # to once per `retry_after` seconds (external services — don't hammer). retry_after
-  # 0 (test) makes everything due.
-  defp search_due?(_movie, 0), do: true
-  defp search_due?(%{search_attempts: 0}, _retry_after), do: true
-
-  defp search_due?(movie, retry_after),
-    do: DateTime.diff(DateTime.utc_now(), movie.updated_at) >= retry_after
 
   defp advance(movie) do
     case Download.client_for(movie.download_protocol) do
@@ -240,25 +198,5 @@ defmodule Cinder.Download.Poller do
   defp park(movie, status, reason) do
     with {:ok, parked} <- Catalog.transition(movie, %{status: status}),
          do: Notifier.notify({:movie_failed, parked, reason})
-  end
-
-  # Per-unit isolation: an unexpected raise OR exit (e.g. a DBConnection checkout
-  # timeout under two-poller write contention — not rescue-able) skips that one unit
-  # (leaving it at its current status for retry) instead of crashing the tick for the
-  # rest. Mirrors `Cinder.Download.TvPoller.isolate/2`.
-  defp isolate(label, fun) do
-    fun.()
-  rescue
-    e -> Logger.error("poller skipped #{label}: #{Exception.message(e)}")
-  catch
-    kind, value -> Logger.error("poller skipped #{label}: #{inspect({kind, value})}")
-  end
-
-  defp schedule(interval), do: Process.send_after(self(), :poll, interval)
-
-  defp config_interval do
-    :cinder
-    |> Application.get_env(__MODULE__, [])
-    |> Keyword.get(:interval, @default_interval)
   end
 end
