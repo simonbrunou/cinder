@@ -39,3 +39,7 @@ npm-debug.log
 *.db
 *.db-*
 
+
+# Nix / direnv
+.direnv/
+result
