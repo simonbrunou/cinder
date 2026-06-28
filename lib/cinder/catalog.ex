@@ -9,7 +9,7 @@ defmodule Cinder.Catalog do
   require Logger
 
   alias Cinder.Audit
-  alias Cinder.Catalog.{Episode, Grab, Movie, Season, Series}
+  alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Movie, Season, Series}
   alias Cinder.Download
   alias Cinder.Library
   alias Cinder.Repo
@@ -169,14 +169,17 @@ defmodule Cinder.Catalog do
   """
   def retry_movie(%Movie{status: status} = movie) when status in @retryable do
     # Clear the stale download fields too: a re-queued movie has no download yet,
-    # so leaving an old download_id/protocol/file_path on a :requested row is
-    # misleading and a latent misroute if anything reads them before re-download.
+    # so leaving an old download_id/protocol/file_path/release_title on a :requested
+    # row is misleading and a latent misroute if anything reads them before re-download.
+    # The blocklist row (keyed by movie_id) PERSISTS — clearing it would reintroduce the
+    # re-grab loop; release_title here is stale download state, not the blocklist.
     transition(movie, %{
       status: :requested,
       search_attempts: 0,
       import_attempts: 0,
       download_id: nil,
       download_protocol: nil,
+      release_title: nil,
       file_path: nil
     })
   end
@@ -790,11 +793,16 @@ defmodule Cinder.Catalog do
   @doc """
   Creates a grab for `episode_ids` (a non-empty list of episodes in one series — a single
   episode or a season pack) and links them in one transaction, then broadcasts
-  `{:series_updated, series_id}`. A changeset failure (e.g. a missing `download_id`) rolls the
-  whole thing back as `{:error, changeset}` rather than raising, mirroring `set_season_monitored/2`.
+  `{:series_updated, series_id}`. `release_title` (optional) records the chosen release's name
+  on the grab so the blocklist can skip it if this download later parks. A changeset failure
+  (e.g. a missing `download_id`) rolls the whole thing back as `{:error, changeset}` rather than
+  raising, mirroring `set_season_monitored/2`.
   """
-  def create_grab(download_id, protocol, episode_ids) do
-    result = Repo.transaction(fn -> insert_and_link_grab(download_id, protocol, episode_ids) end)
+  def create_grab(download_id, protocol, episode_ids, release_title \\ nil) do
+    result =
+      Repo.transaction(fn ->
+        insert_and_link_grab(download_id, protocol, episode_ids, release_title)
+      end)
 
     with {:ok, grab} <- result do
       broadcast_series(series_id_for_grab(grab.id))
@@ -802,9 +810,13 @@ defmodule Cinder.Catalog do
     end
   end
 
-  defp insert_and_link_grab(download_id, protocol, episode_ids) do
+  defp insert_and_link_grab(download_id, protocol, episode_ids, release_title) do
     case %Grab{}
-         |> Grab.changeset(%{download_id: download_id, download_protocol: protocol})
+         |> Grab.changeset(%{
+           download_id: download_id,
+           download_protocol: protocol,
+           release_title: release_title
+         })
          |> Repo.insert() do
       {:ok, grab} -> link_grab_episodes(grab, episode_ids)
       {:error, changeset} -> Repo.rollback(changeset)
@@ -1037,6 +1049,71 @@ defmodule Cinder.Catalog do
   bounded, then search-park). The terminal-failure case of `finish_grab/2` (nothing imported).
   """
   def park_grab(%Grab{} = grab), do: finish_grab(grab, [])
+
+  @doc """
+  Records `movie`'s current `release_title` as blocked for that movie, so release selection
+  skips it on the next search. A nil `release_title` (e.g. a pre-grab park) is a no-op.
+
+  **Non-raising**: runs inside the poller's isolated park path, where a raise would re-fire
+  every tick (`isolate` never parks). So it uses a non-bang insert, logs and swallows any
+  `{:error, _}`, and always returns `:ok` (mirrors `Download.best_effort_remove/2`). No broadcast.
+  """
+  def block_release(%Movie{release_title: nil}, _reason), do: :ok
+
+  def block_release(%Movie{release_title: title, id: movie_id}, reason),
+    do:
+      insert_blocked_release(fn ->
+        %{release_title: title, reason: to_string(reason), movie_id: movie_id}
+      end)
+
+  @doc """
+  Records `grab`'s `release_title` as blocked for its series. Resolves the series from the grab's
+  still-linked episodes, so call it **before** `park_grab/1` deletes the grab (the FK nilifies the
+  links on delete). A nil `release_title` is a no-op. **Non-raising** — see `block_release/2`.
+  """
+  def block_grab_release(%Grab{release_title: nil}, _reason), do: :ok
+
+  def block_grab_release(%Grab{release_title: title, id: grab_id}, reason),
+    do:
+      insert_blocked_release(fn ->
+        # series_id_for_grab is a DB query: building attrs lazily keeps it INSIDE the catch below,
+        # so the TV park path's series resolution can't raise/exit out and abort park_grab.
+        %{release_title: title, reason: to_string(reason), series_id: series_id_for_grab(grab_id)}
+      end)
+
+  # Non-raising on every path (mirrors `Download.best_effort_remove/2`): the attrs thunk is run
+  # inside the try, so a changeset/constraint `{:error, _}` is logged-and-swallowed AND a
+  # raised/exited DB failure (in the insert OR the lazy series-id query) is caught — because the
+  # TV caller blocks BEFORE `park_grab` deletes the grab, a raise here would stop the park and
+  # hot-loop the grab every tick.
+  defp insert_blocked_release(build_attrs) do
+    attrs = build_attrs.()
+
+    case %BlockedRelease{} |> BlockedRelease.changeset(attrs) |> Repo.insert() do
+      {:ok, _} ->
+        :ok
+
+      {:error, changeset} ->
+        Logger.warning("block_release failed for #{inspect(attrs)}: #{inspect(changeset.errors)}")
+        :ok
+    end
+  catch
+    kind, value ->
+      Logger.warning("block_release raised: #{inspect({kind, value})}")
+      :ok
+  end
+
+  @doc "Downcased-or-not release titles blocked for `movie` (the exact strings stored)."
+  def blocked_release_titles(%Movie{id: movie_id}),
+    do:
+      Repo.all(from b in BlockedRelease, where: b.movie_id == ^movie_id, select: b.release_title)
+
+  @doc "Release titles blocked for the series `series_id`."
+  def blocked_release_titles_for_series(series_id),
+    do:
+      Repo.all(
+        from b in BlockedRelease, where: b.series_id == ^series_id, select: b.release_title
+      )
 
   @doc """
   Bumps `search_attempts` (and `updated_at`, for the poller's search backoff) on the given

@@ -57,6 +57,17 @@ defmodule Cinder.CatalogTvPipelineTest do
       assert Repo.get(Episode, e2.id).grab_id == grab.id
     end
 
+    test "create_grab/4 persists the release_title on the grab" do
+      {_series, season} = series_with_season()
+      e1 = episode(season, %{})
+
+      assert {:ok, grab} =
+               Catalog.create_grab("HASH1", :torrent, [e1.id], "Show.S01.1080p.WEB-GRP")
+
+      assert grab.release_title == "Show.S01.1080p.WEB-GRP"
+      assert Repo.get(Grab, grab.id).release_title == "Show.S01.1080p.WEB-GRP"
+    end
+
     test "mark_grab_downloaded/2 sets content_path, moves the grab between the lists, broadcasts" do
       {series, season} = series_with_season()
       e1 = episode(season, %{})

@@ -44,6 +44,22 @@ defmodule Cinder.Acquisition.ScorerTest do
       assert {:ok, %Release{group: "EVIL"}} = Scorer.select(releases, max_size: 20 * @gb)
     end
 
+    test "release_blocklist excludes a release by title (case-insensitive), still picks the rest" do
+      a = release(title: "Movie.A.1080p", resolution: "1080p", group: "A", size: 9 * @gb)
+      b = release(title: "Movie.B.720p", resolution: "720p", group: "B", size: 5 * @gb)
+
+      # A is the natural winner (1080p); blocking its title (downcased) drops it -> B.
+      assert {:ok, %Release{title: "Movie.B.720p"}} =
+               Scorer.select([a, b], release_blocklist: ["movie.a.1080p"], max_size: 20 * @gb)
+
+      # Both titles blocked -> :no_match.
+      assert :no_match =
+               Scorer.select([a, b], release_blocklist: ["movie.a.1080p", "movie.b.720p"])
+
+      # Negative control: with no release_blocklist, A wins — the filter is load-bearing.
+      assert {:ok, %Release{title: "Movie.A.1080p"}} = Scorer.select([a, b], max_size: 20 * @gb)
+    end
+
     test "prefers 1080p over an equally-sized 720p" do
       releases = [
         release(resolution: "720p", group: "A", size: 8 * @gb),
@@ -192,6 +208,42 @@ defmodule Cinder.Acquisition.ScorerTest do
 
       assert {:ok, [{%Release{group: "GOOD", episodes: [1]}, [1]}]} =
                Scorer.select_for(releases, 1, [1], blocklist: ["evil"])
+    end
+
+    test "release_blocklist drops a pack by title; the wanted set is covered from the rest" do
+      pack =
+        release(
+          title: "Show.S01.1080p",
+          season: 1,
+          episodes: nil,
+          resolution: "1080p",
+          size: 6 * @gb
+        )
+
+      e1 =
+        release(
+          title: "Show.S01E01.1080p",
+          season: 1,
+          episodes: [1],
+          resolution: "1080p",
+          size: 2 * @gb
+        )
+
+      e2 =
+        release(
+          title: "Show.S01E02.1080p",
+          season: 1,
+          episodes: [2],
+          resolution: "1080p",
+          size: 2 * @gb
+        )
+
+      # The pack would cover both in one grab and win; blocking its title forces the singles.
+      assert {:ok, chosen} =
+               Scorer.select_for([pack, e1, e2], 1, [1, 2], release_blocklist: ["show.s01.1080p"])
+
+      titles = chosen |> Enum.map(fn {r, _} -> r.title end) |> Enum.sort()
+      assert titles == ["Show.S01E01.1080p", "Show.S01E02.1080p"]
     end
 
     test "the size band scales per episode (a pack passes where a single would not)" do

@@ -30,6 +30,11 @@ defmodule Cinder.Download.TvPoller do
   @search_retry_after 60
   @max_attempts 10
 
+  # Download-side failures that only reach park after exhausting @max_attempts retries
+  # (advance_with/2) — symmetric with the movie poller's @download_failure_errors. Past
+  # exhaustion the release itself is the problem, so the grab's release is blocklisted.
+  @download_failure_errors [:download_error, :torrent_not_found, :no_content_path]
+
   use Cinder.Download.PollerSkeleton, log_prefix: "tv poller"
 
   defp do_poll(state) do
@@ -140,7 +145,8 @@ defmodule Cinder.Download.TvPoller do
       [
         protocols: Download.available_protocols(),
         preferred_language: series.preferred_language,
-        original_language: series.original_language
+        original_language: series.original_language,
+        release_blocklist: Catalog.blocked_release_titles_for_series(series.id)
       ] ++ Acquisition.band_opts(:tv)
 
     case Acquisition.best_releases(series, season_number, numbers, opts) do
@@ -168,7 +174,8 @@ defmodule Cinder.Download.TvPoller do
 
     with {:ok, client} <- Download.client_for(release.protocol),
          {:ok, download_id} <- client.add(release),
-         {:ok, _grab} <- Catalog.create_grab(download_id, release.protocol, episode_ids) do
+         {:ok, _grab} <-
+           Catalog.create_grab(download_id, release.protocol, episode_ids, release.title) do
       episode_ids
     else
       other ->
@@ -208,6 +215,14 @@ defmodule Cinder.Download.TvPoller do
   # park/3. Both TV terminal-park sites (empty import, retry exhaustion) route through here so a
   # failed grab is never silent — symmetric with {:movie_failed, _, _}.
   defp park(grab, reason) do
+    # Block BEFORE park_grab deletes the grab: block_grab_release resolves the series from the
+    # grab's still-linked episodes (the grab_id FK nilifies them on delete). It is non-raising,
+    # so it cannot abort the park (a raise here would re-park the grab every tick). :no_files_matched
+    # is the deterministic empty-import; the download-side reasons only reach park post-exhaustion.
+    if reason == :no_files_matched or reason in @download_failure_errors do
+      Catalog.block_grab_release(grab, reason)
+    end
+
     Catalog.park_grab(grab)
     Notifier.notify({:grab_failed, grab, reason})
   end

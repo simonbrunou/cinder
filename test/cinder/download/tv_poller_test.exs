@@ -8,7 +8,7 @@ defmodule Cinder.Download.TvPollerTest do
   @moduletag :capture_log
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Grab, Season, Series}
+  alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Season, Series}
   alias Cinder.Download.TvPoller
   alias Cinder.Repo
 
@@ -167,6 +167,60 @@ defmodule Cinder.Download.TvPollerTest do
     e1 = Repo.get!(Episode, e1.id)
     assert is_nil(e1.grab_id)
     assert e1.search_attempts == 1
+  end
+
+  test "does not re-grab a blocklisted pack; covers the wanted set from the remaining releases" do
+    {series, season} = series_tree()
+    e1 = episode(season, 1)
+    e2 = episode(season, 2)
+
+    # The season pack covers both episodes and would win greedily; blocking it (scoped to the
+    # series) forces the two single-episode releases instead.
+    Repo.insert!(%BlockedRelease{
+      release_title: "Show.S01.1080p.WEB-GRP",
+      reason: "no_files_matched",
+      series_id: series.id
+    })
+
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok,
+       [
+         %{
+           title: "Show.S01.1080p.WEB-GRP",
+           size: 4_000_000_000,
+           download_url: "pack",
+           seeders: 9
+         },
+         %{
+           title: "Show.S01E01.1080p.WEB-GRP",
+           size: 2_000_000_000,
+           download_url: "e1",
+           seeders: 5
+         },
+         %{
+           title: "Show.S01E02.1080p.WEB-GRP",
+           size: 2_000_000_000,
+           download_url: "e2",
+           seeders: 5
+         }
+       ]}
+    end)
+
+    # Use the title as the download id so each grab is traceable to its release. Assertions go on
+    # the resulting DB state, not inside the stub — a raise here runs in the poller's isolated
+    # process and would be swallowed, never failing the test.
+    stub(Cinder.Download.ClientMock, :add, fn release -> {:ok, release.title} end)
+
+    assert :ok = TvPoller.poll()
+
+    assert Repo.get!(Episode, e1.id).grab_id
+    assert Repo.get!(Episode, e2.id).grab_id
+
+    # The blocked pack is never the release of any created grab; the two singles cover the want.
+    titles = Repo.all(Grab) |> Enum.map(& &1.release_title) |> Enum.sort()
+    assert titles == ["Show.S01E01.1080p.WEB-GRP", "Show.S01E02.1080p.WEB-GRP"]
   end
 
   test "recovers from a crash and still advances + imports, with no double-grab (OTP payoff)" do

@@ -4,7 +4,7 @@ defmodule Cinder.CatalogTest do
   import Mox
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Grab, Movie, Season, Series}
+  alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Movie, Season, Series}
 
   setup :verify_on_exit!
 
@@ -125,6 +125,19 @@ defmodule Cinder.CatalogTest do
 
       assert {:error, :not_retryable} = Catalog.retry_movie(downloading)
       assert Catalog.get_movie_by_id(movie.id).status == :downloading
+    end
+
+    test "preserves the blocklist row while clearing release_title on re-queue" do
+      {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 8200, title: "M"})
+
+      {:ok, movie} =
+        Catalog.transition(movie, %{status: :import_failed, release_title: "Bad.Release.1080p"})
+
+      :ok = Catalog.block_release(movie, :wrong_audio_language)
+
+      assert {:ok, %Movie{status: :requested, release_title: nil}} = Catalog.retry_movie(movie)
+      # The blocklist row survives the retry, keyed by movie_id (clearing it would re-grab).
+      assert Catalog.blocked_release_titles(movie) == ["Bad.Release.1080p"]
     end
   end
 
@@ -299,6 +312,43 @@ defmodule Cinder.CatalogTest do
       assert Repo.get!(Episode, wanted.id).search_attempts == 0
       assert Repo.get!(Episode, filed.id).search_attempts == 9
       assert Repo.get!(Episode, in_flight.id).search_attempts == 9
+    end
+  end
+
+  describe "release blocklist" do
+    test "block_release/2 + blocked_release_titles/1 round-trip" do
+      movie = Repo.insert!(%Movie{tmdb_id: 9001, title: "M", release_title: "Bad.Release.1080p"})
+
+      assert :ok = Catalog.block_release(movie, :wrong_audio_language)
+      assert Catalog.blocked_release_titles(movie) == ["Bad.Release.1080p"]
+    end
+
+    test "block_release/2 is a no-op on a nil release_title" do
+      movie = Repo.insert!(%Movie{tmdb_id: 9002, title: "M", release_title: nil})
+
+      assert :ok = Catalog.block_release(movie, :no_match)
+      assert Catalog.blocked_release_titles(movie) == []
+      assert Repo.all(BlockedRelease) == []
+    end
+
+    test "block writers are non-raising on a forced insert error" do
+      # movie_id 999_999 has no movies row → an FK violation raises, which the writer catches:
+      # it logs, returns :ok, and inserts nothing.
+      ghost = %Movie{id: 999_999, release_title: "Ghost.Release"}
+
+      assert :ok = Catalog.block_release(ghost, :download_error)
+      assert Repo.all(BlockedRelease) == []
+    end
+
+    test "block_grab_release/2 scopes the block to the grab's series" do
+      series = Repo.insert!(%Series{tmdb_id: 9003, title: "S"})
+      season = Repo.insert!(%Season{series_id: series.id, season_number: 1, monitored: true})
+      ep = Repo.insert!(%Episode{season_id: season.id, episode_number: 1, monitored: true})
+
+      {:ok, grab} = Catalog.create_grab("H", :torrent, [ep.id], "Pack.S01.720p")
+
+      assert :ok = Catalog.block_grab_release(grab, :no_files_matched)
+      assert Catalog.blocked_release_titles_for_series(series.id) == ["Pack.S01.720p"]
     end
   end
 end

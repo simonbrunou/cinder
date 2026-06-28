@@ -516,4 +516,101 @@ defmodule Cinder.Download.PollerTest do
     assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
     assert_receive {:notify, {:movie_failed, %Movie{status: :import_failed}, :no_file_path}}
   end
+
+  describe "release blocklist capture" do
+    test "a download-side failure that exhausts retries blocks the release; not re-grabbed" do
+      movie =
+        movie_fixture(%{
+          tmdb_id: 50,
+          imdb_id: "tt50",
+          status: :downloading,
+          download_id: "hash-50",
+          release_title: "Bad.Release.1080p-GRP"
+        })
+
+      start_supervised!({Poller, interval: 60_000})
+      stub(Cinder.Download.ClientMock, :status, fn "hash-50" -> {:ok, %{state: :error}} end)
+
+      # Pre-exhaustion polls don't block; the release is only recorded once retries are spent.
+      Enum.each(1..9, fn _ -> Poller.poll() end)
+      assert Catalog.blocked_release_titles(movie) == []
+
+      assert :ok = Poller.poll()
+      assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
+      assert Catalog.blocked_release_titles(movie) == ["Bad.Release.1080p-GRP"]
+
+      # Re-queue (retry nils release_title, keeps the blocklist row) and re-search: the only
+      # available release is the blocked one, so it parks at :no_match instead of re-grabbing.
+      {:ok, requeued} = Catalog.retry_movie(Repo.get!(Movie, movie.id))
+
+      expect(Cinder.Acquisition.IndexerMock, :search, fn _ ->
+        {:ok,
+         [
+           %{
+             title: "Bad.Release.1080p-GRP",
+             size: 8_000_000_000,
+             download_url: "magnet:?xt=urn:btih:bad",
+             seeders: 1
+           }
+         ]}
+      end)
+
+      assert {:ok, %Movie{status: :no_match}} = Download.start(requeued)
+    end
+
+    test "a permanent import failure (:no_file_path) blocks the release" do
+      movie = movie_fixture(%{tmdb_id: 60, status: :downloaded, release_title: "Rel.NoPath-GRP"})
+      start_supervised!({Poller, interval: 60_000})
+
+      assert :ok = Poller.poll()
+      assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
+      assert Catalog.blocked_release_titles(movie) == ["Rel.NoPath-GRP"]
+    end
+
+    test "a permanent import failure (:no_video_file) blocks the release" do
+      movie =
+        movie_fixture(%{
+          tmdb_id: 61,
+          status: :downloaded,
+          file_path: "/downloads/rel-folder",
+          release_title: "Rel.NoVideo-GRP"
+        })
+
+      start_supervised!({Poller, interval: 60_000})
+      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+      stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+        {:ok, [{"/downloads/rel-folder/readme.nfo", 12}]}
+      end)
+
+      assert :ok = Poller.poll()
+      assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
+      assert Catalog.blocked_release_titles(movie) == ["Rel.NoVideo-GRP"]
+    end
+
+    test "a confirmed wrong-audio-language park blocks the release" do
+      movie =
+        movie_fixture(%{
+          tmdb_id: 62,
+          title: "Chasse Gardee",
+          year: 2024,
+          original_language: "fr",
+          preferred_language: "original",
+          status: :downloaded,
+          file_path: "/downloads/dub.mkv",
+          release_title: "Rel.WrongLang-GRP"
+        })
+
+      Application.put_env(:cinder, :media_info, Cinder.Library.MediaInfoMock)
+      on_exit(fn -> Application.delete_env(:cinder, :media_info) end)
+
+      start_supervised!({Poller, interval: 60_000})
+      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+      stub(Cinder.Library.MediaInfoMock, :audio_languages, fn _ -> {:ok, ["hun"]} end)
+
+      assert :ok = Poller.poll()
+      assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
+      assert Catalog.blocked_release_titles(movie) == ["Rel.WrongLang-GRP"]
+    end
+  end
 end
