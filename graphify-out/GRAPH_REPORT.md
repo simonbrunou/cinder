@@ -1,7 +1,7 @@
 # Graph Report - cinder  (2026-06-28)
 
 ## Corpus Check
-- 328 files · ~338,071 words
+- 328 files · ~338,308 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
@@ -10,7 +10,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `ed814691`
+- Built from commit: `379ef626`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -382,7 +382,7 @@ Cohesion: 0.22
 Nodes (8): Cinder.Download.Client.SabnzbdTest, stub(), stub_queue_then_history(), CinderWeb.SetupLiveTest, stub_all_services_ok(), Cinder.LibraryStubs, stub_import_exdev(), stub_import_ok()
 
 ### Community 7 - "Movie Download Poller"
-Cohesion: 0.25
+Cohesion: 0.29
 Nodes (5): Cinder.Notifier, impl(), notify(), Cinder.NotifierTest, Raising
 
 ### Community 8 - "qBittorrent Client"
@@ -486,8 +486,8 @@ Cohesion: 0.25
 Nodes (11): Catch-all handle_event convention, RequestsLive (lib/cinder_web/live/requests_live.ex), PR-20 RequestsLive event hardening, Approval gate (Requests.create_request), find_or_create_at_requested, M2 subagent-driven progress ledger, M2 security spine (non-admin never reaches poller), Task 1.1 brief (generate auth baseline) (+3 more)
 
 ### Community 33 - "Route Gating + Boot Warning"
-Cohesion: 0.29
-Nodes (6): authorization_test.exs gating matrix, Done-when verification (M2), Self-review notes (author), Task 3.1: Gating-test gaps, docs, copy, blank_env?/1 consistency fix (empty/whitespace env counts as unset), Task 3.1 Report: Hardening (gating matrix, CLAUDE.md carve-out, tidy)
+Cohesion: 0.25
+Nodes (7): M2: Accounts, roles, request/approval model, Task 1.4: require_admin (plug + on_mount), Task 1.4 Report: require_admin plug + on_mount, authorization_test.exs gating matrix, Done-when verification (M2), Self-review notes (author), Task 3.1: Gating-test gaps, docs, copy
 
 ### Community 34 - "Community 34"
 Cohesion: 0.43
@@ -634,8 +634,8 @@ Cohesion: 0.40
 Nodes (3): Cinder.Notifier.Log, episodes_summary(), pad()
 
 ### Community 80 - "Admin Approval Queue (M2)"
-Cohesion: 0.22
-Nodes (9): M2: Accounts, roles, request/approval model, User :role Ecto.Enum [:admin, :user], Task 1.4: require_admin (plug + on_mount), UserAuth.require_admin/2 plug + on_mount(:require_admin), Task 1.4 Report: require_admin plug + on_mount, live_session :admin / :authenticated route gating, Task 2.4: Admin approval queue at /requests, CinderWeb.RequestsLive (approve + deny-reason, live) (+1 more)
+Cohesion: 0.33
+Nodes (6): User :role Ecto.Enum [:admin, :user], UserAuth.require_admin/2 plug + on_mount(:require_admin), live_session :admin / :authenticated route gating, Task 2.4: Admin approval queue at /requests, CinderWeb.RequestsLive (approve + deny-reason, live), Task 2.4 Report: Admin approval queue at /requests
 
 ### Community 81 - "Auto-approve Toggle (M2)"
 Cohesion: 0.50
@@ -798,16 +798,16 @@ Cohesion: 0.33
 Nodes (5): Check for Existing CLAUDE.md, Current Configuration, Remove Configuration, Remove Nested Memory Configuration, Update .claude.exs
 
 ### Community 173 - "Community 173"
-Cohesion: 0.33
-Nodes (5): First-user-becomes-admin (server-assigned role), SUB-SESSION 2 — Requests + rewire + toggle, Task 1.6: Boot warning for an unprotected fresh instance, Application.unprotected_fresh_instance?/0 predicate + boot log, Task 1.6 Report: Boot warning (commit 96e01e4)
+Cohesion: 0.22
+Nodes (8): First-user-becomes-admin (server-assigned role), Basic-auth plug moved into :browser (optional outer gate), SUB-SESSION 2 — Requests + rewire + toggle, Task 1.6: Boot warning for an unprotected fresh instance, Application.unprotected_fresh_instance?/0 predicate + boot log, Task 1.6 Report: Boot warning (commit 96e01e4), blank_env?/1 consistency fix (empty/whitespace env counts as unset), Task 3.1 Report: Hardening (gating matrix, CLAUDE.md carve-out, tidy)
 
 ### Community 174 - "Community 174"
 Cohesion: 0.33
 Nodes (5): Deviations / Notes, Files Changed, Full Suite Result, Task 1.4 Report: `require_admin` plug + on_mount, TDD Red/Green Evidence
 
 ### Community 175 - "Community 175"
-Cohesion: 0.33
-Nodes (5): Task 1.5 Report: Router reconciliation + gating-matrix + UI trim, Basic-auth plug moved into :browser (optional outer gate), ConnCase.register_and_log_in_admin/1 helper, Task 1.5a: Router reconciliation + route gating (gating-matrix test), Task 1.5b: Fix existing tests for the auth wall + trim magic-link UI
+Cohesion: 0.40
+Nodes (4): Task 1.5 Report: Router reconciliation + gating-matrix + UI trim, ConnCase.register_and_log_in_admin/1 helper, Task 1.5a: Router reconciliation + route gating (gating-matrix test), Task 1.5b: Fix existing tests for the auth wall + trim magic-link UI
 
 ### Community 176 - "Community 176"
 Cohesion: 0.33

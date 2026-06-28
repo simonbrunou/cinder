@@ -15,7 +15,9 @@ defmodule Cinder.Library.Filesystem.Disk do
     files =
       dir
       |> Path.join("**/*")
-      |> Path.wildcard()
+      # match_dot: true so the import's stale-temp sweep can see its own `.cinder-tmp-*` dotfiles
+      # (Path.wildcard defaults match_dot: false, which would skip them and make the sweep a no-op).
+      |> Path.wildcard(match_dot: true)
       |> Enum.filter(&File.regular?/1)
       |> Enum.flat_map(fn path ->
         case File.stat(path) do

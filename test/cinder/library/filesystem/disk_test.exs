@@ -33,6 +33,34 @@ defmodule Cinder.Library.Filesystem.DiskTest do
     assert {:error, :eexist} = Disk.ln(src, dest)
   end
 
+  @tag :tmp_dir
+  test "find_files/1 includes dotfiles so the stale-temp sweep can find leftovers", %{
+    tmp_dir: tmp
+  } do
+    File.write!(Path.join(tmp, "feature.mkv"), "x")
+    # A `.cinder-tmp-*` partial left by a crash mid-copy — sweep_temps must be able to see it.
+    File.write!(Path.join(tmp, ".cinder-tmp-1"), "partial")
+
+    assert {:ok, files} = Disk.find_files(tmp)
+    paths = Enum.map(files, fn {p, _size} -> p end)
+    assert Path.join(tmp, "feature.mkv") in paths
+    assert Path.join(tmp, ".cinder-tmp-1") in paths
+  end
+
+  @tag :tmp_dir
+  test "cp/2 byte-copies content into an independent inode (not a hardlink)", %{tmp_dir: tmp} do
+    src = Path.join(tmp, "src.mkv")
+    dst = Path.join(tmp, "dst.mkv")
+    File.write!(src, "payload")
+
+    assert :ok = Disk.cp(src, dst)
+    assert File.read!(dst) == "payload"
+
+    # Unlike ln/2 (a hardlink), a copy is a distinct inode: removing the source leaves the copy intact.
+    File.rm!(src)
+    assert File.read!(dst) == "payload"
+  end
+
   test "rename/2 atomically replaces an existing dest" do
     dir = Path.join(System.tmp_dir!(), "cinder-rename-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)

@@ -77,9 +77,10 @@ defmodule Cinder.Library do
 
       {:error, :exdev} ->
         # Fresh placement across filesystems: the hardlink can't span devices, so copy the bytes in
-        # atomically via replace/2 (link-or-copy into a unique temp on the dest fs, then rename).
-        # Logged at :info — a silent switch from instant hardlinks to full copies is worth surfacing.
-        Logger.info("hardlink crossed filesystems; copying #{source} -> #{dest}")
+        # atomically via replace/2 (link-or-copy into a unique temp on the dest fs, then rename). This
+        # is the *fresh* case because on Linux (the deployment target) link(2) reports EEXIST before
+        # EXDEV, so a cross-fs collision with an existing dest surfaces as :eexist (handled below), not
+        # :exdev. The copy logs at :info from link_or_copy/2 — the one choke-point both copy paths hit.
         with :ok <- replace(source, dest), do: {:ok, new_q}
 
       {:error, :eexist} ->
@@ -174,11 +175,20 @@ defmodule Cinder.Library do
 
   # Hardlink source -> target, falling back to a byte copy only when the hardlink crosses filesystems
   # (`:exdev`). Every other ln error (`:eacces`, `:enoent`, `:enospc`, …) is a real failure and
-  # propagates unchanged — a copy would fail the same way.
+  # propagates unchanged — a copy would fail the same way. Both the fresh placement and the
+  # upgrade-replace path route the cross-fs copy through here, so the :info "crossed filesystems" log
+  # lives at this single choke-point and covers every fallback (per docs/operating.md).
   defp link_or_copy(source, target) do
     case fs().ln(source, target) do
-      {:error, :exdev} -> fs().cp(source, target)
-      other -> other
+      {:error, :exdev} ->
+        Logger.info(
+          "hardlink crossed filesystems; copying #{source} into #{Path.dirname(target)}"
+        )
+
+        fs().cp(source, target)
+
+      other ->
+        other
     end
   end
 

@@ -483,6 +483,7 @@ defmodule Cinder.LibraryTest do
       expect(Cinder.Library.MediaServerMock, :scan, fn _ -> :ok end)
 
       # Returns the NEW (better) quality → the upgrade ran; the short-circuit would have returned 720p.
+      # cp + rename below prove this cross-fs upgrade copies through the shared link_or_copy choke-point.
       assert {:ok, @dest, %{resolution: "1080p", size: 5_000_000_000}} =
                Library.import_movie(movie)
     end
