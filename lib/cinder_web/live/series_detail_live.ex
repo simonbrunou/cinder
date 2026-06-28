@@ -271,7 +271,7 @@ defmodule CinderWeb.SeriesDetailLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
-      <.link navigate={~p"/library"} class="link mb-6 inline-flex items-center gap-1">
+      <.link navigate={~p"/library"} class="link link-hover mb-6 inline-flex items-center gap-1">
         <.icon name="hero-arrow-left" class="size-3.5" />{gettext("Library")}
       </.link>
 
@@ -345,9 +345,7 @@ defmodule CinderWeb.SeriesDetailLive do
             {@series.title}
             <span :if={@series.year} class="font-normal text-base-content/70">({@series.year})</span>
             <:actions>
-              <span class={["badge badge-sm", @series.monitored && "badge-success"]}>
-                {if @series.monitored, do: gettext("Monitored"), else: gettext("Unmonitored")}
-              </span>
+              <.status_badge kind={:monitored} status={@series.monitored} />
             </:actions>
           </.header>
         </div>

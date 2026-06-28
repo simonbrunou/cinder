@@ -11,7 +11,7 @@ defmodule CinderWeb.UserLive.Settings do
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <div class="text-center">
         <.header>
-          {gettext("Account Settings")}
+          {gettext("Account settings")}
           <:subtitle>{gettext("Manage your account email address and password settings")}</:subtitle>
         </.header>
       </div>
@@ -25,7 +25,7 @@ defmodule CinderWeb.UserLive.Settings do
           spellcheck="false"
           required
         />
-        <.button variant="primary" phx-disable-with={gettext("Changing...")}>{gettext("Change Email")}</.button>
+        <.button variant="primary" phx-disable-with={gettext("Changing…")}>{gettext("Change email")}</.button>
       </.form>
 
       <div class="divider" />
@@ -61,8 +61,8 @@ defmodule CinderWeb.UserLive.Settings do
           autocomplete="new-password"
           spellcheck="false"
         />
-        <.button variant="primary" phx-disable-with={gettext("Saving...")}>
-          {gettext("Save Password")}
+        <.button variant="primary" phx-disable-with={gettext("Saving…")}>
+          {gettext("Save password")}
         </.button>
       </.form>
     </Layouts.app>

@@ -99,27 +99,44 @@ defmodule CinderWeb.RequestsLive do
 
   def handle_event("approve_selected", _params, socket) do
     admin = socket.assigns.current_scope.user
-    {ok, failed} = bulk(socket, &Requests.approve_request(&1, admin))
+    reqs = selected_pending(socket)
 
+    # Season approvals do blocking TMDB I/O; run the bulk off the LiveView so N seasons can't
+    # freeze the page. Each approval broadcasts, so the list refreshes via handle_info — no
+    # explicit reload here (that was the redundant double-reload the acting view used to do).
     {:noreply,
      socket
-     |> assign(selected: MapSet.new(), requests: Requests.list_requests())
-     |> bulk_flash(gettext("Approved %{count} request(s).", count: ok), ok, failed)}
+     |> assign(selected: MapSet.new())
+     |> start_async(:approve_selected, fn ->
+       bulk(reqs, &Requests.approve_request(&1, admin))
+     end)}
   end
 
   def handle_event("deny_selected", %{"reason" => reason}, socket) do
     admin = socket.assigns.current_scope.user
-    {ok, failed} = bulk(socket, &Requests.deny_request(&1, admin, reason))
+    {ok, failed} = bulk(selected_pending(socket), &Requests.deny_request(&1, admin, reason))
+    msg = ngettext("Denied %{count} request.", "Denied %{count} requests.", ok)
 
+    # Deny is DB-only (no I/O); stays synchronous. Drop the explicit reload — deny_request
+    # broadcasts, so handle_info refreshes the list.
     {:noreply,
      socket
-     |> assign(selected: MapSet.new(), denying: nil, requests: Requests.list_requests())
-     |> bulk_flash(gettext("Denied %{count} request(s).", count: ok), ok, failed)}
+     |> assign(selected: MapSet.new(), denying: nil)
+     |> bulk_flash(msg, ok, failed)}
   end
 
   # The event payload is client-controlled; ignore any malformed/forged frame
   # rather than crashing the LiveView on an unmatched clause.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  @impl true
+  def handle_async(:approve_selected, {:ok, {ok, failed}}, socket) do
+    msg = ngettext("Approved %{count} request.", "Approved %{count} requests.", ok)
+    {:noreply, bulk_flash(socket, msg, ok, failed)}
+  end
+
+  def handle_async(:approve_selected, {:exit, _reason}, socket),
+    do: {:noreply, put_flash(socket, :error, gettext("Bulk approve failed. Please try again."))}
 
   @impl true
   def handle_info({event, _req}, socket)
@@ -141,13 +158,19 @@ defmodule CinderWeb.RequestsLive do
     if MapSet.member?(set, id), do: MapSet.delete(set, id), else: MapSet.put(set, id)
   end
 
-  # Apply `fun` to each selected, still-pending request; tally {ok, failed}.
-  defp bulk(socket, fun) do
+  # Selected, still-pending requests (drops any a concurrent admin already acted on).
+  defp selected_pending(socket) do
     selected = socket.assigns.selected
 
-    socket.assigns.requests
-    |> Enum.filter(&(&1.status == :pending and MapSet.member?(selected, to_string(&1.id))))
-    |> Enum.reduce({0, 0}, fn req, {ok, failed} ->
+    Enum.filter(
+      socket.assigns.requests,
+      &(&1.status == :pending and MapSet.member?(selected, to_string(&1.id)))
+    )
+  end
+
+  # Apply `fun` to each request; tally {ok, failed}.
+  defp bulk(reqs, fun) do
+    Enum.reduce(reqs, {0, 0}, fn req, {ok, failed} ->
       case fun.(req) do
         {:ok, _} -> {ok + 1, failed}
         _ -> {ok, failed + 1}
@@ -161,7 +184,12 @@ defmodule CinderWeb.RequestsLive do
   defp bulk_flash(socket, msg, _ok, 0), do: put_flash(socket, :info, msg)
 
   defp bulk_flash(socket, msg, _ok, failed),
-    do: put_flash(socket, :warning, msg <> " " <> gettext("%{count} failed.", count: failed))
+    do:
+      put_flash(
+        socket,
+        :warning,
+        msg <> " " <> ngettext("%{count} request failed.", "%{count} requests failed.", failed)
+      )
 
   @impl true
   def render(assigns) do
@@ -182,18 +210,12 @@ defmodule CinderWeb.RequestsLive do
         <.button size="sm" phx-click="approve_selected" phx-disable-with={gettext("Approving…")}>
           {gettext("Approve selected")}
         </.button>
-        <form phx-submit="deny_selected" class="flex flex-1 flex-wrap items-center gap-2">
-          <input
-            type="text"
-            name="reason"
-            placeholder={gettext("Reason (optional)")}
-            aria-label={gettext("Denial reason for the selected requests")}
-            class="input input-sm input-bordered flex-1"
-          />
-          <.button variant="danger" size="sm" type="submit" phx-disable-with={gettext("Denying…")}>
-            {gettext("Deny selected")}
-          </.button>
-        </form>
+        <.deny_form
+          event="deny_selected"
+          reason_label={gettext("Denial reason for the selected requests")}
+          submit_label={gettext("Deny selected")}
+          class="flex-1"
+        />
         <.button variant="ghost" size="sm" type="button" phx-click="clear_selection">
           {gettext("Clear")}
         </.button>
@@ -202,7 +224,7 @@ defmodule CinderWeb.RequestsLive do
       <ul :if={@requests != []} class="space-y-3">
         <li
           :for={r <- @requests}
-          class="card bg-base-200 p-4 flex flex-col gap-3"
+          class="rounded-box bg-base-200/50 p-4 flex flex-col gap-3"
         >
           <div class="flex flex-row items-center gap-4">
             <input
@@ -246,28 +268,13 @@ defmodule CinderWeb.RequestsLive do
             >
               {gettext("Approve")}
             </.button>
-            <form
+            <.deny_form
               :if={r.status == :pending and @denying == to_string(r.id)}
-              phx-submit="deny"
-              class="flex gap-2"
-            >
-              <input type="hidden" name="_id" value={r.id} />
-              <input
-                type="text"
-                name="reason"
-                placeholder={gettext("Reason")}
-                aria-label={gettext("Denial reason")}
-                class="input input-sm input-bordered"
-              />
-              <.button
-                variant="danger"
-                size="sm"
-                type="submit"
-                phx-disable-with={gettext("Denying…")}
-              >
-                {gettext("Confirm deny")}
-              </.button>
-            </form>
+              event="deny"
+              id={r.id}
+              reason_label={gettext("Denial reason")}
+              submit_label={gettext("Confirm deny")}
+            />
             <.button
               :if={r.status == :pending and @denying != to_string(r.id)}
               variant="ghost"

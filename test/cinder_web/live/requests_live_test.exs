@@ -63,6 +63,8 @@ defmodule CinderWeb.RequestsLiveTest do
     render_hook(lv, "toggle_select", %{"id" => to_string(r1.id)})
     render_hook(lv, "toggle_select", %{"id" => to_string(r2.id)})
     render_hook(lv, "approve_selected", %{})
+    # Bulk approve now runs off the LiveView via start_async; wait for the task to settle.
+    render_async(lv)
 
     assert %{status: :approved} = Cinder.Repo.reload(r1)
     assert %{status: :approved} = Cinder.Repo.reload(r2)

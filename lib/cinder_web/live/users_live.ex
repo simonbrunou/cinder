@@ -279,7 +279,7 @@ defmodule CinderWeb.UsersLive do
       </div>
 
       <ul class="space-y-3">
-        <li :for={u <- @users} class="card bg-base-200 p-4">
+        <li :for={u <- @users} class="rounded-box bg-base-200/50 p-4">
           <div class="flex items-center gap-3 flex-wrap">
             <span class="font-semibold">{u.email}</span>
             <.button
@@ -329,6 +329,7 @@ defmodule CinderWeb.UsersLive do
             </form>
           </div>
           <.form
+            :let={f}
             :if={@editing_email == to_string(u.id)}
             id={"edit-email-form-#{u.id}"}
             for={to_form(%{"email" => u.email}, as: :user)}
@@ -336,10 +337,10 @@ defmodule CinderWeb.UsersLive do
             class="mt-2 flex items-center gap-2"
           >
             <input type="hidden" name="_id" value={u.id} />
-            <input
+            <.input
+              field={f[:email]}
+              id={"edit-email-#{u.id}"}
               type="email"
-              name="user[email]"
-              value={u.email}
               aria-label={gettext("New email")}
               class="input input-sm input-bordered"
             />
@@ -385,6 +386,7 @@ defmodule CinderWeb.UsersLive do
             </:caveat>
           </.confirm_action>
           <.form
+            :let={f}
             :if={@resetting_pw == to_string(u.id)}
             id={"reset-pw-form-#{u.id}"}
             for={to_form(%{}, as: :user)}
@@ -392,16 +394,18 @@ defmodule CinderWeb.UsersLive do
             class="mt-2 flex items-center gap-2"
           >
             <input type="hidden" name="_id" value={u.id} />
-            <input
+            <.input
+              field={f[:password]}
+              id={"reset-pw-#{u.id}"}
               type="password"
-              name="user[password]"
               placeholder={gettext("New password")}
               aria-label={gettext("New password")}
               class="input input-sm input-bordered"
             />
-            <input
+            <.input
+              field={f[:password_confirmation]}
+              id={"reset-pw-confirm-#{u.id}"}
               type="password"
-              name="user[password_confirmation]"
               placeholder={gettext("Confirm")}
               aria-label={gettext("Confirm new password")}
               class="input input-sm input-bordered"

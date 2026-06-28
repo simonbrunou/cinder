@@ -83,25 +83,23 @@ defmodule CinderWeb.DashboardLive do
 
   defp find_pending(socket, id), do: find_by_id(socket.assigns.pending, id)
 
-  # ponytail: derives counts + the recent slice from a single full-watchlist load and a few
-  # length(list_*) reads — fine at single-household scale. Swap to count/limit queries if the
-  # catalog ever grows large.
+  # Runs on every pipeline/request broadcast, so it leans on count/limit queries (a grouped
+  # status count + a LIMIT-8 recent slice + a few COUNT(*)s) rather than loading whole tables
+  # just to take their length — stays cheap as the catalog grows.
   defp load(socket) do
-    movies = Catalog.list_watchlist()
-    counts = Enum.frequencies_by(movies, & &1.status)
-    recent = movies |> Enum.sort_by(& &1.updated_at, {:desc, DateTime}) |> Enum.take(8)
+    counts = Catalog.movie_status_counts()
 
     assign(socket,
       pending: Requests.list_pending(),
-      recent: recent,
+      recent: Catalog.recent_movies(8),
       stats: %{
-        movies_total: length(movies),
+        movies_total: counts |> Map.values() |> Enum.sum(),
         movies_available: Map.get(counts, :available, 0),
         in_pipeline: Enum.sum(Enum.map(@pipeline, &Map.get(counts, &1, 0))),
         parked: Enum.sum(Enum.map(@parked, &Map.get(counts, &1, 0))),
-        series_total: length(Catalog.list_series()),
-        tv_wanted: length(Catalog.wanted_episodes()),
-        downloading: length(Catalog.list_grabs_downloading())
+        series_total: Catalog.count_series(),
+        tv_wanted: Catalog.count_wanted_episodes(),
+        downloading: Catalog.count_grabs_downloading()
       }
     )
   end
@@ -184,7 +182,7 @@ defmodule CinderWeb.DashboardLive do
             message={gettext("New requests appear here.")}
           />
           <ul :if={@pending != []} class="space-y-3">
-            <li :for={r <- @pending} id={"pending-#{r.id}"} class="card bg-base-200 p-4">
+            <li :for={r <- @pending} id={"pending-#{r.id}"} class="rounded-box bg-base-200/50 p-4">
               <div class="flex flex-row items-center gap-4">
                 <img
                   :if={r.poster_path}
@@ -228,31 +226,15 @@ defmodule CinderWeb.DashboardLive do
                 >
                   {gettext("Deny")}
                 </.button>
-                <form
+                <.deny_form
                   :if={@denying == to_string(r.id)}
-                  phx-submit="deny"
-                  class="flex flex-1 flex-wrap gap-2"
-                >
-                  <input type="hidden" name="_id" value={r.id} />
-                  <input
-                    type="text"
-                    name="reason"
-                    placeholder={gettext("Reason (optional)")}
-                    aria-label={gettext("Denial reason")}
-                    class="input input-sm input-bordered flex-1"
-                  />
-                  <.button
-                    type="submit"
-                    variant="danger"
-                    size="sm"
-                    phx-disable-with={gettext("Denying…")}
-                  >
-                    {gettext("Confirm deny")}
-                  </.button>
-                  <.button type="button" variant="ghost" size="sm" phx-click="dismiss_deny">
-                    {gettext("Cancel")}
-                  </.button>
-                </form>
+                  event="deny"
+                  id={r.id}
+                  reason_label={gettext("Denial reason")}
+                  submit_label={gettext("Confirm deny")}
+                  on_cancel="dismiss_deny"
+                  class="flex-1"
+                />
               </div>
             </li>
           </ul>

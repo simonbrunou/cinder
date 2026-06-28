@@ -144,7 +144,7 @@ defmodule CinderWeb.ActivityLive do
           message={gettext("In-flight TV downloads show here.")}
         />
         <ul :if={@grabs != []} id="activity-grabs" class="space-y-3">
-          <li :for={g <- @grabs} id={"grab-#{g.id}"} class="card bg-base-200 p-4">
+          <li :for={g <- @grabs} id={"grab-#{g.id}"} class="rounded-box bg-base-200/50 p-4">
             <div class="flex flex-wrap items-center gap-2">
               <span class="font-semibold">{series_title(g)}</span>
               <.status_badge kind={:grab} status={grab_state(g)} />
