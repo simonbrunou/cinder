@@ -36,11 +36,11 @@ defmodule Cinder.Acquisition.Scorer do
   size-band, blocklist, and resolution allow-list filters.
   """
   def select(releases, opts \\ []) do
-    {min_size, max_size, preferred, sources, blocklist} = rules(opts)
+    {min_size, max_size, preferred, sources, blocklist, release_blocklist} = rules(opts)
 
     releases
     |> Enum.filter(&within_band?(&1, min_size, max_size))
-    |> Enum.reject(&blocked?(&1, blocklist))
+    |> Enum.reject(&(blocked?(&1, blocklist) or title_blocked?(&1, release_blocklist)))
     |> Enum.filter(&(allowed_resolution?(&1, preferred) and allowed_source?(&1, sources)))
     |> pick_best(preferred, sources)
   end
@@ -70,12 +70,12 @@ defmodule Cinder.Acquisition.Scorer do
   household release-list sizes; upgrade only if release sets get pathological.
   """
   def select_for(releases, season, wanted_episodes, opts \\ []) do
-    {min_size, max_size, preferred, sources, blocklist} = rules(opts)
+    {min_size, max_size, preferred, sources, blocklist, release_blocklist} = rules(opts)
     band = {min_size, max_size, preferred, sources}
 
     releases
     |> Enum.filter(&(&1.season == season))
-    |> Enum.reject(&blocked?(&1, blocklist))
+    |> Enum.reject(&(blocked?(&1, blocklist) or title_blocked?(&1, release_blocklist)))
     |> Enum.filter(&(allowed_resolution?(&1, preferred) and allowed_source?(&1, sources)))
     |> cover(MapSet.new(wanted_episodes), [], band)
   end
@@ -91,7 +91,8 @@ defmodule Cinder.Acquisition.Scorer do
       Keyword.get(rules, :max_size),
       Keyword.get(rules, :preferred_resolutions, @default_preferred),
       Keyword.get(rules, :preferred_sources, []),
-      rules |> Keyword.get(:blocklist, []) |> Enum.map(&String.downcase/1)
+      rules |> Keyword.get(:blocklist, []) |> Enum.map(&String.downcase/1),
+      rules |> Keyword.get(:release_blocklist, []) |> Enum.map(&String.downcase/1)
     }
   end
 
@@ -173,6 +174,11 @@ defmodule Cinder.Acquisition.Scorer do
 
   defp blocked?(%Release{group: nil}, _blocklist), do: false
   defp blocked?(%Release{group: group}, blocklist), do: String.downcase(group) in blocklist
+
+  # Exact (downcased) release-name exclusion, mirroring `blocked?/2`. The per-item blocklist
+  # passes the failed release titles as `release_blocklist`; an untitled release can't match.
+  defp title_blocked?(%Release{title: nil}, _list), do: false
+  defp title_blocked?(%Release{title: title}, list), do: String.downcase(title) in list
 
   # Strict allow-list: keep a release only if its resolution is one the user asked for.
   # nil (untagged) ∉ any list ⇒ rejected. An empty list = no preference configured ⇒ keep all
