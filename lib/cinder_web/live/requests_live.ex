@@ -226,7 +226,7 @@ defmodule CinderWeb.RequestsLive do
           :for={r <- @requests}
           class="rounded-box bg-base-200/50 p-4 flex flex-col gap-3"
         >
-          <div class="flex flex-wrap items-center gap-3 gap-y-2">
+          <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
             <input
               :if={r.status == :pending}
               type="checkbox"

@@ -72,11 +72,11 @@ defmodule CinderWeb.CalendarLive do
             {Calendar.strftime(row.ep.air_date, "%b %-d")}
           </time>
           <.status_badge kind={:episode} status={row.state} />
-          <span class="font-medium">{row.ep.season.series.title}</span>
+          <span class="min-w-0 break-words font-medium">{row.ep.season.series.title}</span>
           <span class="tabular-nums text-sm text-base-content/70">
             {code(row.ep.season.season_number, row.ep.episode_number)}
           </span>
-          <span class="min-w-0 basis-full truncate text-base-content/70">{row.ep.title}</span>
+          <span class="min-w-0 flex-1 truncate text-base-content/70">{row.ep.title}</span>
         </li>
       </ul>
     </Layouts.app>

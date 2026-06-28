@@ -93,7 +93,7 @@ defmodule CinderWeb.SettingsLive do
               class="toggle shrink-0"
               checked={@auto_approve_all}
             />
-            <span class="label-text whitespace-normal">
+            <span class="label-text">
               {gettext("Auto-approve all requests (skip the approval queue)")}
             </span>
           </label>

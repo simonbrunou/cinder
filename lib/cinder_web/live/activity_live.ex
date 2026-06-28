@@ -146,7 +146,7 @@ defmodule CinderWeb.ActivityLive do
         <ul :if={@grabs != []} id="activity-grabs" class="space-y-3">
           <li :for={g <- @grabs} id={"grab-#{g.id}"} class="rounded-box bg-base-200/50 p-4">
             <div class="flex flex-wrap items-center gap-2">
-              <span class="min-w-0 truncate font-semibold">{series_title(g)}</span>
+              <span class="min-w-0 break-words font-semibold">{series_title(g)}</span>
               <.status_badge kind={:grab} status={grab_state(g)} />
               <span class="text-xs text-base-content/70">{g.download_protocol}</span>
               <span class="min-w-0 truncate text-xs text-base-content/70">{g.download_id}</span>

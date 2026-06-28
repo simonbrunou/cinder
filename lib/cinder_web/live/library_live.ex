@@ -332,7 +332,7 @@ defmodule CinderWeb.LibraryLive do
                 "col-span-2 sm:col-span-3 lg:col-span-4"
             ]}
           >
-            <.link navigate={~p"/series/#{s.id}"} class="block">
+            <.link navigate={~p"/series/#{s.id}"} class="block max-w-xs">
               <.media_card poster_path={s.poster_path} title={s.title} year={s.year} type={:tv}>
                 <span class="link link-hover inline-flex items-center gap-1 text-sm">
                   {gettext("Configure monitoring")}<.icon name="hero-arrow-right" class="size-3.5" />

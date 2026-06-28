@@ -451,7 +451,7 @@ defmodule CinderWeb.SeriesDetailLive do
                 }
               />
               <span class="w-8 text-sm tabular-nums text-base-content/70">{ep.episode_number}</span>
-              <span class="min-w-0 flex-1 truncate text-sm">{ep.title}</span>
+              <span class="min-w-0 flex-1 break-words text-sm">{ep.title}</span>
               <time
                 :if={ep.air_date}
                 datetime={Date.to_iso8601(ep.air_date)}
