@@ -1062,11 +1062,9 @@ defmodule Cinder.Catalog do
 
   def block_release(%Movie{release_title: title, id: movie_id}, reason),
     do:
-      insert_blocked_release(%{
-        release_title: title,
-        reason: to_string(reason),
-        movie_id: movie_id
-      })
+      insert_blocked_release(fn ->
+        %{release_title: title, reason: to_string(reason), movie_id: movie_id}
+      end)
 
   @doc """
   Records `grab`'s `release_title` as blocked for its series. Resolves the series from the grab's
@@ -1077,17 +1075,20 @@ defmodule Cinder.Catalog do
 
   def block_grab_release(%Grab{release_title: title, id: grab_id}, reason),
     do:
-      insert_blocked_release(%{
-        release_title: title,
-        reason: to_string(reason),
-        series_id: series_id_for_grab(grab_id)
-      })
+      insert_blocked_release(fn ->
+        # series_id_for_grab is a DB query: building attrs lazily keeps it INSIDE the catch below,
+        # so the TV park path's series resolution can't raise/exit out and abort park_grab.
+        %{release_title: title, reason: to_string(reason), series_id: series_id_for_grab(grab_id)}
+      end)
 
-  # Non-raising on every path (mirrors `Download.best_effort_remove/2`): a changeset/constraint
-  # `{:error, _}` is logged-and-swallowed, and a raised/exited DB failure is caught — because the
+  # Non-raising on every path (mirrors `Download.best_effort_remove/2`): the attrs thunk is run
+  # inside the try, so a changeset/constraint `{:error, _}` is logged-and-swallowed AND a
+  # raised/exited DB failure (in the insert OR the lazy series-id query) is caught — because the
   # TV caller blocks BEFORE `park_grab` deletes the grab, a raise here would stop the park and
   # hot-loop the grab every tick.
-  defp insert_blocked_release(attrs) do
+  defp insert_blocked_release(build_attrs) do
+    attrs = build_attrs.()
+
     case %BlockedRelease{} |> BlockedRelease.changeset(attrs) |> Repo.insert() do
       {:ok, _} ->
         :ok
@@ -1098,7 +1099,7 @@ defmodule Cinder.Catalog do
     end
   catch
     kind, value ->
-      Logger.warning("block_release raised for #{inspect(attrs)}: #{inspect({kind, value})}")
+      Logger.warning("block_release raised: #{inspect({kind, value})}")
       :ok
   end
 
