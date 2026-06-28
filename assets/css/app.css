@@ -142,3 +142,11 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* daisyUI's .label is inline-flex with white-space:nowrap, which the label text inherits.
+   A long or translated (French is wider) toggle/checkbox label then can't wrap and forces
+   horizontal overflow on a phone. Let label text wrap; the control keeps its shape via its
+   own width. One rule covers every settings/setup label. */
+.label-text {
+  white-space: normal;
+}

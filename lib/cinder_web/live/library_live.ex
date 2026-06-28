@@ -320,8 +320,19 @@ defmodule CinderWeb.LibraryLive do
           id="series-list"
           class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4"
         >
-          <div :for={s <- @series} id={"series-row-#{s.id}"} class="space-y-2">
-            <.link navigate={~p"/series/#{s.id}"} class="block">
+          <div
+            :for={s <- @series}
+            id={"series-row-#{s.id}"}
+            class={[
+              "space-y-2",
+              @confirming in [
+                {:series, :cancel, to_string(s.id)},
+                {:series, :delete, to_string(s.id)}
+              ] &&
+                "col-span-2 sm:col-span-3 lg:col-span-4"
+            ]}
+          >
+            <.link navigate={~p"/series/#{s.id}"} class="block max-w-xs">
               <.media_card poster_path={s.poster_path} title={s.title} year={s.year} type={:tv}>
                 <span class="link link-hover inline-flex items-center gap-1 text-sm">
                   {gettext("Configure monitoring")}<.icon name="hero-arrow-right" class="size-3.5" />
@@ -329,7 +340,7 @@ defmodule CinderWeb.LibraryLive do
               </.media_card>
             </.link>
 
-            <div class="flex gap-2">
+            <div class="flex flex-wrap gap-2">
               <.button
                 type="button"
                 variant="warning"

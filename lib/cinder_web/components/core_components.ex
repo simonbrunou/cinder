@@ -480,8 +480,11 @@ defmodule CinderWeb.CoreComponents do
 
   def header(assigns) do
     ~H"""
-    <header class={[@actions != [] && "flex items-center justify-between gap-6", "pb-4"]}>
-      <div>
+    <header class={[
+      @actions != [] && "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-6",
+      "pb-4"
+    ]}>
+      <div class="min-w-0">
         <h1 class="text-2xl font-semibold leading-tight">
           {render_slot(@inner_block)}
         </h1>
@@ -629,7 +632,7 @@ defmodule CinderWeb.CoreComponents do
       )
 
     ~H"""
-    <span class={["badge badge-sm gap-1", @color, @class]} title={@title}>
+    <span class={["badge badge-sm gap-1 shrink-0", @color, @class]} title={@title}>
       <.icon name={@icon} class="size-3.5" />{@label}
     </span>
     """

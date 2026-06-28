@@ -137,7 +137,7 @@ defmodule CinderWeb.SetupLive do
     ~H"""
     <li class="flex items-start gap-2">
       <.icon name={check_icon(@status)} class={["mt-0.5 size-4 shrink-0", check_color(@status)]} />
-      <div>
+      <div class="min-w-0 break-words">
         <span>{@label}</span>
         <span :if={match?({:error, _}, @status)} class="text-error">
           ({health_reason(elem(@status, 1))})

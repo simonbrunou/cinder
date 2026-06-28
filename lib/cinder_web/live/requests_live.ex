@@ -226,7 +226,7 @@ defmodule CinderWeb.RequestsLive do
           :for={r <- @requests}
           class="rounded-box bg-base-200/50 p-4 flex flex-col gap-3"
         >
-          <div class="flex flex-row items-center gap-4">
+          <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
             <input
               :if={r.status == :pending}
               type="checkbox"
@@ -244,7 +244,7 @@ defmodule CinderWeb.RequestsLive do
               decoding="async"
               class="w-12 rounded"
             />
-            <div class="flex-1">
+            <div class="min-w-0 flex-1">
               <span class="font-semibold">
                 {if r.target_type == "season",
                   do:
@@ -255,7 +255,7 @@ defmodule CinderWeb.RequestsLive do
                   else: r.title}
               </span>
               <span :if={r.year} class="opacity-70">({r.year})</span>
-              <span class="text-sm opacity-70">{r.user.email}</span>
+              <span class="block truncate text-sm opacity-70">{r.user.email}</span>
             </div>
             <.status_badge kind={:request} status={r.status} />
             <.button
