@@ -147,7 +147,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
-      <.link navigate={~p"/"} class="link mb-6 inline-flex items-center gap-1">
+      <.link navigate={~p"/"} class="link link-hover mb-6 inline-flex items-center gap-1">
         <.icon name="hero-arrow-left" class="size-3.5" />{gettext("Discover")}
       </.link>
 

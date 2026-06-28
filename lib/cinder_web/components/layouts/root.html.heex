@@ -5,6 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="csrf-token" content={get_csrf_token()} />
     <.live_title default="Cinder" suffix=" · Cinder" phx-no-format>{assigns[:page_title]}</.live_title>
+    <%!-- Preload the variable fonts the CSS @font-face pulls (same plain URL, no digest, so the
+          preload matches the actual fetch) to cut FOUT / LCP. --%>
+    <link
+      rel="preload"
+      href="/fonts/Inter-variable.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin="anonymous"
+    />
+    <link
+      rel="preload"
+      href="/fonts/InterTight-variable.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin="anonymous"
+    />
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/app.css"} />
     <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
     </script>
@@ -13,9 +29,26 @@
         const syncThemeRadios = () => {
           const choice = localStorage.getItem("phx:theme") || "system";
           document.querySelectorAll("[data-phx-theme]").forEach((el) => {
-            el.setAttribute("aria-checked", el.dataset.phxTheme === choice ? "true" : "false");
+            const checked = el.dataset.phxTheme === choice;
+            el.setAttribute("aria-checked", checked ? "true" : "false");
+            // Roving tabindex: the radiogroup is one tab stop (the checked option).
+            el.setAttribute("tabindex", checked ? "0" : "-1");
           });
         };
+        // WAI-ARIA radiogroup keys: arrows move + activate within the group, wrapping.
+        // Delegated on document so it survives LiveView re-renders / head-script timing.
+        document.addEventListener("keydown", (e) => {
+          const group = e.target.closest && e.target.closest("#theme-toggle");
+          if (!group) return;
+          const dir = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+          if (!dir) return;
+          e.preventDefault();
+          const radios = [...group.querySelectorAll("[role=radio]")];
+          const at = radios.findIndex((r) => r.getAttribute("aria-checked") === "true");
+          const next = radios[(at + dir + radios.length) % radios.length];
+          next.dispatchEvent(new CustomEvent("phx:set-theme", { bubbles: true }));
+          next.focus();
+        });
         const setTheme = (theme) => {
           if (theme === "system") {
             localStorage.removeItem("phx:theme");

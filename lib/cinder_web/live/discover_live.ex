@@ -115,13 +115,32 @@ defmodule CinderWeb.DiscoverLive do
           gettext("You've reached your request limit. Wait for approvals to clear.")
         )
 
+      {:error, %Ecto.Changeset{} = cs} ->
+        # Only a duplicate-pending unique-constraint is the benign "already requested" case;
+        # any other changeset failure is a real error, not a reassuring info toast.
+        if duplicate_request?(cs) do
+          put_flash(socket, :info, gettext("%{title} is already requested.", title: movie.title))
+        else
+          put_flash(
+            socket,
+            :error,
+            gettext("Couldn't request %{title}. Try again.", title: movie.title)
+          )
+        end
+
       {:error, _} ->
         put_flash(
           socket,
-          :info,
-          gettext("%{title} is already requested.", title: movie.title)
+          :error,
+          gettext("Couldn't request %{title}. Try again.", title: movie.title)
         )
     end
+  end
+
+  # The pending-request unique index (requests_pending_unique) is the duplicate signal;
+  # Ecto tags that error opt with `constraint: :unique`.
+  defp duplicate_request?(%Ecto.Changeset{} = changeset) do
+    Enum.any?(changeset.errors, fn {_field, {_msg, opts}} -> opts[:constraint] == :unique end)
   end
 
   # The user's request status per target (latest wins) plus the global movie pipeline
@@ -167,7 +186,8 @@ defmodule CinderWeb.DiscoverLive do
         <:subtitle>{gettext("Search movies and TV. Request what you want to watch.")}</:subtitle>
       </.header>
 
-      <form id="search-form" phx-change="search" phx-submit="search" class="mb-8">
+      <form id="search-form" phx-change="search" phx-submit="search" class="relative mb-8">
+        <label for="query" class="sr-only">{gettext("Search movies and TV")}</label>
         <input
           type="text"
           id="query"
@@ -175,10 +195,17 @@ defmodule CinderWeb.DiscoverLive do
           value={@query}
           phx-debounce="300"
           autocomplete="off"
-          aria-label={gettext("Search movies and TV")}
           placeholder={gettext("Search movies and TV…")}
-          class="input input-lg w-full min-h-11"
+          class="input input-lg w-full min-h-11 pr-12"
         />
+        <%!-- Spinner during the (synchronous) TMDB roundtrip — the form carries the phx
+              loading class, the existing app.css custom-variant toggles this descendant. --%>
+        <span
+          class="pointer-events-none absolute right-4 top-1/2 hidden -translate-y-1/2 text-base-content/60 phx-change-loading:block phx-submit-loading:block"
+          aria-hidden="true"
+        >
+          <.icon name="hero-arrow-path" class="size-5 animate-spin" />
+        </span>
       </form>
 
       <section :if={@results != []} class="mb-10">

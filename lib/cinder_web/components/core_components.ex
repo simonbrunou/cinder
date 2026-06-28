@@ -367,8 +367,7 @@ defmodule CinderWeb.CoreComponents do
             value="true"
             checked={@checked}
             class={@class || "checkbox checkbox-sm"}
-            aria-invalid={@errors != [] && "true"}
-            aria-describedby={@errors != [] && @id && "#{@id}-error"}
+            {input_aria(@errors, @id)}
             {@rest}
           />{@label}
         </span>
@@ -390,8 +389,7 @@ defmodule CinderWeb.CoreComponents do
           name={@name}
           class={[@class || "w-full select", @errors != [] && (@error_class || "select-error")]}
           multiple={@multiple}
-          aria-invalid={@errors != [] && "true"}
-          aria-describedby={@errors != [] && @id && "#{@id}-error"}
+          {input_aria(@errors, @id)}
           {@rest}
         >
           <option :if={@prompt} value="">{@prompt}</option>
@@ -417,8 +415,7 @@ defmodule CinderWeb.CoreComponents do
             @class || "w-full textarea",
             @errors != [] && (@error_class || "textarea-error")
           ]}
-          aria-invalid={@errors != [] && "true"}
-          aria-describedby={@errors != [] && @id && "#{@id}-error"}
+          {input_aria(@errors, @id)}
           {@rest}
         >{Phoenix.HTML.Form.normalize_value("textarea", @value)}</textarea>
       </label>
@@ -444,8 +441,7 @@ defmodule CinderWeb.CoreComponents do
             @class || "w-full input",
             @errors != [] && (@error_class || "input-error")
           ]}
-          aria-invalid={@errors != [] && "true"}
-          aria-describedby={@errors != [] && @id && "#{@id}-error"}
+          {input_aria(@errors, @id)}
           {@rest}
         />
       </label>
@@ -454,6 +450,15 @@ defmodule CinderWeb.CoreComponents do
       </div>
     </div>
     """
+  end
+
+  # Shared ARIA error wiring for every input clause (spread with {input_aria(@errors, @id)}):
+  # flag the control invalid and point it at its error node, only when there are errors.
+  defp input_aria(errors, id) do
+    %{
+      "aria-invalid": errors != [] && "true",
+      "aria-describedby": errors != [] && id && "#{id}-error"
+    }
   end
 
   # Helper used by inputs to generate form errors
@@ -477,7 +482,7 @@ defmodule CinderWeb.CoreComponents do
     ~H"""
     <header class={[@actions != [] && "flex items-center justify-between gap-6", "pb-4"]}>
       <div>
-        <h1 class="text-xl font-semibold leading-tight">
+        <h1 class="text-2xl font-semibold leading-tight">
           {render_slot(@inner_block)}
         </h1>
         <p :if={@subtitle != []} class="text-sm text-base-content/70">
@@ -527,10 +532,22 @@ defmodule CinderWeb.CoreComponents do
   attr :name, :string, required: true
   attr :class, :any, default: "size-4"
 
+  attr :rest, :global,
+    doc: "decorative by default (aria-hidden); pass aria-label/role for a meaningful icon"
+
   def icon(%{name: "hero-" <> _} = assigns) do
     ~H"""
-    <span class={[@name, @class]} />
+    <span class={[@name, @class]} aria-hidden={icon_decorative(@rest)} {@rest} />
     """
+  end
+
+  # Heroicons are decorative by default — the label lives on the parent control — so hide them
+  # from assistive tech to avoid double-announcing. A caller that gives the icon meaning
+  # (aria-label or role, or its own aria-hidden) opts out.
+  defp icon_decorative(rest) do
+    if rest[:"aria-label"] || rest[:role] || Map.has_key?(rest, :"aria-hidden"),
+      do: nil,
+      else: "true"
   end
 
   ## JS Commands
@@ -593,7 +610,10 @@ defmodule CinderWeb.CoreComponents do
       <.status_badge kind={:grab} status={:downloaded} />
       <.status_badge kind={:health} status={{:error, :timeout}} />
   """
-  attr :kind, :atom, required: true, values: [:movie, :request, :episode, :grab, :health]
+  attr :kind, :atom,
+    required: true,
+    values: [:movie, :request, :episode, :grab, :health, :monitored]
+
   attr :status, :any, required: true
   attr :class, :any, default: nil
 
@@ -664,6 +684,12 @@ defmodule CinderWeb.CoreComponents do
 
   defp badge_spec(:grab, :downloaded), do: {gettext("Downloaded"), "badge-success", "hero-check"}
 
+  # series monitoring (boolean flag, not pipeline state) — icon + label so it isn't colour-alone
+  defp badge_spec(:monitored, true), do: {gettext("Monitored"), "badge-success", "hero-eye"}
+
+  defp badge_spec(:monitored, false),
+    do: {gettext("Unmonitored"), "badge-ghost", "hero-eye-slash"}
+
   # service health
   defp badge_spec(:health, :ok), do: {gettext("OK"), "badge-success", "hero-check-circle"}
 
@@ -705,6 +731,48 @@ defmodule CinderWeb.CoreComponents do
   def health_reason(%{__exception__: true}), do: gettext("Check failed")
   def health_reason(reason) when is_binary(reason), do: String.slice(reason, 0, 80)
   def health_reason(reason), do: reason |> inspect() |> String.slice(0, 80)
+
+  @doc """
+  Inline "deny request" form: an optional free-text reason, a danger submit, and an optional
+  Cancel button. One component for the three near-identical deny forms (the `/requests` bulk
+  bar + per-row, and the `/dashboard` queue). Pass `id` to deny a single request (rendered as
+  a hidden `_id`); omit it for the bulk action.
+
+  ## Examples
+
+      <.deny_form event="deny" id={r.id} reason_label={gettext("Denial reason")}
+        submit_label={gettext("Confirm deny")} on_cancel="dismiss_deny" />
+      <.deny_form event="deny_selected" reason_label={gettext("Denial reason for the selected requests")}
+        submit_label={gettext("Deny selected")} class="flex-1" />
+  """
+  attr :event, :string, required: true
+  attr :id, :any, default: nil, doc: "request id → hidden _id; omit for the bulk form"
+  attr :reason_label, :string, required: true
+  attr :submit_label, :string, required: true
+  attr :on_cancel, :string, default: nil, doc: "cancel event; nil renders no Cancel button"
+  attr :class, :any, default: nil
+  attr :rest, :global
+
+  def deny_form(assigns) do
+    ~H"""
+    <form phx-submit={@event} class={["flex flex-wrap items-center gap-2", @class]} {@rest}>
+      <input :if={@id} type="hidden" name="_id" value={@id} />
+      <input
+        type="text"
+        name="reason"
+        placeholder={gettext("Reason (optional)")}
+        aria-label={@reason_label}
+        class="input input-sm input-bordered flex-1"
+      />
+      <.button variant="danger" size="sm" type="submit" phx-disable-with={gettext("Denying…")}>
+        {@submit_label}
+      </.button>
+      <.button :if={@on_cancel} type="button" variant="ghost" size="sm" phx-click={@on_cancel}>
+        {gettext("Cancel")}
+      </.button>
+    </form>
+    """
+  end
 
   defp humanize_status(status) when is_atom(status),
     do: status |> Atom.to_string() |> String.replace("_", " ") |> String.capitalize()

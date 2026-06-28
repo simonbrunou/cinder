@@ -119,6 +119,16 @@ defmodule Cinder.Catalog do
   @doc "Maps every watchlisted movie's `tmdb_id` to its pipeline `status`."
   def movie_status_map, do: Map.new(list_watchlist(), &{&1.tmdb_id, &1.status})
 
+  @doc "Counts watchlisted movies grouped by pipeline `status` (`%{status => count}`)."
+  def movie_status_counts do
+    Repo.all(from m in Movie, group_by: m.status, select: {m.status, count(m.id)}) |> Map.new()
+  end
+
+  @doc "The `limit` most-recently-updated movies, newest first (dashboard recent-activity slice)."
+  def recent_movies(limit) do
+    Repo.all(from m in Movie, order_by: [desc: m.updated_at], limit: ^limit)
+  end
+
   @doc "Subscribes the caller to movie state-change broadcasts (`{:movie_updated, movie}`)."
   def subscribe, do: Phoenix.PubSub.subscribe(Cinder.PubSub, @topic)
 
@@ -485,6 +495,9 @@ defmodule Cinder.Catalog do
 
   @doc "Lists watchlisted series, newest first."
   def list_series, do: Repo.all(from s in Series, order_by: [desc: s.id])
+
+  @doc "Number of series in the catalog."
+  def count_series, do: Repo.aggregate(Series, :count)
 
   @doc """
   Admin metadata edit for a series. Uses `Series.admin_changeset/2`, which excludes
@@ -1056,6 +1069,10 @@ defmodule Cinder.Catalog do
   @doc "Grabs still downloading (no `content_path` yet)."
   def list_grabs_downloading, do: Repo.all(from g in Grab, where: is_nil(g.content_path))
 
+  @doc "Count of grabs still downloading (no `content_path` yet)."
+  def count_grabs_downloading,
+    do: Repo.aggregate(from(g in Grab, where: is_nil(g.content_path)), :count)
+
   @doc """
   Grabs downloaded and awaiting import (`content_path` set), with `episodes: [season: :series]`
   preloaded so the TV poller's import pass can map files → episodes and build library paths
@@ -1086,16 +1103,20 @@ defmodule Cinder.Catalog do
   Specials are M6 scope.
   """
   def wanted_episodes do
+    Repo.all(from e in wanted_episodes_query(), preload: [season: :series])
+  end
+
+  @doc "Count of wanted episodes (see `wanted_episodes/0`)."
+  def count_wanted_episodes, do: Repo.aggregate(wanted_episodes_query(), :count)
+
+  defp wanted_episodes_query do
     today = Date.utc_today()
 
-    Repo.all(
-      from e in Episode,
-        join: s in assoc(e, :season),
-        where:
-          s.season_number > 0 and e.monitored and e.episode_number > 0 and is_nil(e.file_path) and
-            is_nil(e.grab_id) and not is_nil(e.air_date) and e.air_date <= ^today,
-        preload: [season: :series]
-    )
+    from e in Episode,
+      join: s in assoc(e, :season),
+      where:
+        s.season_number > 0 and e.monitored and e.episode_number > 0 and is_nil(e.file_path) and
+          is_nil(e.grab_id) and not is_nil(e.air_date) and e.air_date <= ^today
   end
 
   @doc """

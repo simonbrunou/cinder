@@ -12,14 +12,24 @@ defmodule Cinder.Library.MediaServer.Jellyfin do
   @behaviour Cinder.Library.MediaServer
 
   @impl true
-  def scan(_kind), do: req() |> Req.post(url: "/Library/Refresh") |> result()
+  def scan(_kind), do: config() |> req() |> Req.post(url: "/Library/Refresh") |> result()
 
   @impl true
-  def health, do: req() |> Req.get(url: "/System/Info", receive_timeout: 3_000) |> result()
+  # A nil/blank base_url makes Req raise (CaseClauseError in put_base_url) rather than
+  # return {:error,_}, which `Cinder.Health` would rescue into an opaque "Check failed".
+  # Guard it so an unconfigured Jellyfin shows a clean "Not configured" on /status.
+  def health do
+    config = config()
 
-  defp req do
-    config = Application.get_env(:cinder, __MODULE__, [])
+    case Keyword.get(config, :url) do
+      url when url in [nil, ""] -> {:error, :not_configured}
+      _ -> config |> req() |> Req.get(url: "/System/Info", receive_timeout: 3_000) |> result()
+    end
+  end
 
+  defp config, do: Application.get_env(:cinder, __MODULE__, [])
+
+  defp req(config) do
     [
       base_url: Keyword.get(config, :url),
       headers: [{"x-emby-token", Keyword.get(config, :api_key)}]

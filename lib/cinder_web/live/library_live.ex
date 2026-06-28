@@ -216,7 +216,7 @@ defmodule CinderWeb.LibraryLive do
           message={gettext("Requested movies appear here.")}
         />
         <ul :if={@movies != []} class="space-y-3">
-          <li :for={m <- @movies} id={"movie-#{m.id}"} class="card bg-base-200 p-4">
+          <li :for={m <- @movies} id={"movie-#{m.id}"} class="rounded-box bg-base-200/50 p-4">
             <div class="flex flex-wrap items-center gap-3">
               <span class="font-semibold">{m.title}</span>
               <span :if={m.year} class="text-base-content/70">({m.year})</span>
@@ -323,7 +323,7 @@ defmodule CinderWeb.LibraryLive do
           <div :for={s <- @series} id={"series-row-#{s.id}"} class="space-y-2">
             <.link navigate={~p"/series/#{s.id}"} class="block">
               <.media_card poster_path={s.poster_path} title={s.title} year={s.year} type={:tv}>
-                <span class="link link-primary inline-flex items-center gap-1 text-sm">
+                <span class="link link-hover inline-flex items-center gap-1 text-sm">
                   {gettext("Configure monitoring")}<.icon name="hero-arrow-right" class="size-3.5" />
                 </span>
               </.media_card>

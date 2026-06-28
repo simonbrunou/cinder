@@ -269,7 +269,7 @@ defmodule CinderWeb.Layouts do
         :for={loc <- CinderWeb.Locale.locales()}
         href={~p"/locale/#{loc}"}
         aria-current={loc == @current && "true"}
-        class={["btn btn-xs join-item uppercase", loc == @current && "btn-active btn-primary"]}
+        class={["btn btn-sm join-item uppercase", loc == @current && "btn-active btn-primary"]}
       >
         {loc}
       </.link>
@@ -297,6 +297,7 @@ defmodule CinderWeb.Layouts do
         type="button"
         role="radio"
         aria-checked="true"
+        tabindex="0"
         aria-label={gettext("Use system theme")}
         class="flex items-center justify-center min-h-11 w-1/3 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-primary"
         phx-click={JS.dispatch("phx:set-theme")}
@@ -309,6 +310,7 @@ defmodule CinderWeb.Layouts do
         type="button"
         role="radio"
         aria-checked="false"
+        tabindex="-1"
         aria-label={gettext("Use light theme")}
         class="flex items-center justify-center min-h-11 w-1/3 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-primary"
         phx-click={JS.dispatch("phx:set-theme")}
@@ -321,6 +323,7 @@ defmodule CinderWeb.Layouts do
         type="button"
         role="radio"
         aria-checked="false"
+        tabindex="-1"
         aria-label={gettext("Use dark theme")}
         class="flex items-center justify-center min-h-11 w-1/3 cursor-pointer rounded-full focus-visible:outline-2 focus-visible:outline-primary"
         phx-click={JS.dispatch("phx:set-theme")}

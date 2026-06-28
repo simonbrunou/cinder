@@ -37,7 +37,8 @@ defmodule CinderWeb.DiscoverLiveTest do
   test "first load shows an empty-watchlist state and an accessible search field", %{conn: conn} do
     {:ok, lv, html} = live(conn, ~p"/")
     assert html =~ "watchlist is empty"
-    assert has_element?(lv, "input#query[aria-label='Search movies and TV']")
+    assert has_element?(lv, "label[for='query']", "Search movies and TV")
+    assert has_element?(lv, "input#query")
   end
 
   test "typing a query renders movie results", %{conn: conn} do

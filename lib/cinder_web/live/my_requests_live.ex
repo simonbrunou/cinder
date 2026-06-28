@@ -47,7 +47,7 @@ defmodule CinderWeb.MyRequestsLive do
       />
 
       <ul id="my-requests" class="space-y-3">
-        <li :for={r <- @requests} class="card bg-base-200 p-4">
+        <li :for={r <- @requests} class="rounded-box bg-base-200/50 p-4">
           <div class="flex items-center gap-3">
             <span class="font-semibold">
               {if r.target_type == "season",

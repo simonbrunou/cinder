@@ -48,6 +48,11 @@ defmodule Cinder.Library.MediaServer.JellyfinTest do
     assert {:error, {:jellyfin_status, 401}} = Jellyfin.health()
   end
 
+  test "health/0 with no url returns {:error, :not_configured} instead of raising" do
+    put_config(url: nil)
+    assert {:error, :not_configured} = Jellyfin.health()
+  end
+
   test "scan/1 with no api key omits the header and surfaces a clean error (no raise)" do
     put_config(api_key: nil)
 
