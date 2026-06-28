@@ -138,10 +138,13 @@ defmodule Cinder.Download do
          {:ok, download_id} <- client.add(release) do
       # download_id and download_protocol MUST be written in the same transition:
       # a torn write (id set, protocol nil) would route this download to :torrent.
+      # release_title rides the same transition so the blocklist has the chosen
+      # release's name if this download later parks terminally (crash-safe, no re-query).
       Catalog.transition(movie, %{
         status: :downloading,
         download_id: download_id,
-        download_protocol: release.protocol
+        download_protocol: release.protocol,
+        release_title: release.title
       })
     else
       # Unreachable post-filter (best_release only returns a configured protocol);

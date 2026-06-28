@@ -790,11 +790,16 @@ defmodule Cinder.Catalog do
   @doc """
   Creates a grab for `episode_ids` (a non-empty list of episodes in one series — a single
   episode or a season pack) and links them in one transaction, then broadcasts
-  `{:series_updated, series_id}`. A changeset failure (e.g. a missing `download_id`) rolls the
-  whole thing back as `{:error, changeset}` rather than raising, mirroring `set_season_monitored/2`.
+  `{:series_updated, series_id}`. `release_title` (optional) records the chosen release's name
+  on the grab so the blocklist can skip it if this download later parks. A changeset failure
+  (e.g. a missing `download_id`) rolls the whole thing back as `{:error, changeset}` rather than
+  raising, mirroring `set_season_monitored/2`.
   """
-  def create_grab(download_id, protocol, episode_ids) do
-    result = Repo.transaction(fn -> insert_and_link_grab(download_id, protocol, episode_ids) end)
+  def create_grab(download_id, protocol, episode_ids, release_title \\ nil) do
+    result =
+      Repo.transaction(fn ->
+        insert_and_link_grab(download_id, protocol, episode_ids, release_title)
+      end)
 
     with {:ok, grab} <- result do
       broadcast_series(series_id_for_grab(grab.id))
@@ -802,9 +807,13 @@ defmodule Cinder.Catalog do
     end
   end
 
-  defp insert_and_link_grab(download_id, protocol, episode_ids) do
+  defp insert_and_link_grab(download_id, protocol, episode_ids, release_title) do
     case %Grab{}
-         |> Grab.changeset(%{download_id: download_id, download_protocol: protocol})
+         |> Grab.changeset(%{
+           download_id: download_id,
+           download_protocol: protocol,
+           release_title: release_title
+         })
          |> Repo.insert() do
       {:ok, grab} -> link_grab_episodes(grab, episode_ids)
       {:error, changeset} -> Repo.rollback(changeset)

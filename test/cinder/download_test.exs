@@ -38,6 +38,19 @@ defmodule Cinder.DownloadTest do
              Repo.get!(Movie, movie.id)
   end
 
+  test "persists the chosen release_title on the :downloading transition" do
+    movie = movie_fixture(%{imdb_id: "tt1375666"})
+
+    expect(Cinder.Acquisition.IndexerMock, :search, fn _ -> {:ok, [survivable_result()]} end)
+    expect(Cinder.Download.ClientMock, :add, fn _ -> {:ok, "hash-1"} end)
+
+    assert {:ok, %Movie{release_title: "Inception.2010.1080p.BluRay.x264-GRP"}} =
+             Download.start(movie)
+
+    assert %Movie{release_title: "Inception.2010.1080p.BluRay.x264-GRP"} =
+             Repo.get!(Movie, movie.id)
+  end
+
   test "client_for/1 resolves the configured client per protocol (nil -> :torrent)" do
     assert {:ok, Cinder.Download.ClientMock} = Download.client_for(:torrent)
     assert {:ok, Cinder.Download.SabnzbdClientMock} = Download.client_for(:usenet)

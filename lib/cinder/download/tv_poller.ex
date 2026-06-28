@@ -168,7 +168,8 @@ defmodule Cinder.Download.TvPoller do
 
     with {:ok, client} <- Download.client_for(release.protocol),
          {:ok, download_id} <- client.add(release),
-         {:ok, _grab} <- Catalog.create_grab(download_id, release.protocol, episode_ids) do
+         {:ok, _grab} <-
+           Catalog.create_grab(download_id, release.protocol, episode_ids, release.title) do
       episode_ids
     else
       other ->
