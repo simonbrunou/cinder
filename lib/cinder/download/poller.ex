@@ -130,6 +130,12 @@ defmodule Cinder.Download.Poller do
   # Original/Any pick whose only candidates are wrong-language can re-grab the same file, but Retry
   # is manual so that can't loop on its own.
   @permanent_import_errors [:no_file_path, :no_video_file, :wrong_audio_language]
+
+  # Download-side failures that only reach park AFTER exhausting @max_attempts retries (see
+  # advance_with/2): a reason that has burned 10 retries is, by definition, not transient — it's
+  # the "repeatedly-failing torrents/usenet" the blocklist is meant to bound. So a single network
+  # blip can never block a good release; only post-exhaustion does park record it.
+  @download_failure_errors [:download_error, :torrent_not_found, :no_content_path]
   @max_attempts 10
 
   defp import_one(movie) do
@@ -196,7 +202,16 @@ defmodule Cinder.Download.Poller do
   # A terminal failure park: transition once (the choke-point) then notify. Keeps
   # every "movie gave up" path emitting the same event with no per-site duplication.
   defp park(movie, status, reason) do
-    with {:ok, parked} <- Catalog.transition(movie, %{status: status}),
-         do: Notifier.notify({:movie_failed, parked, reason})
+    with {:ok, parked} <- Catalog.transition(movie, %{status: status}) do
+      Notifier.notify({:movie_failed, parked, reason})
+
+      # Best-effort, AFTER the park commits (a side effect like the notify above): record the
+      # failed release so the next search/Retry doesn't re-grab it. Only deterministic import
+      # failures and exhausted download-side failures qualify; block_release is a nil-guarded
+      # no-op for pre-grab parks (no release_title was ever written) and never raises.
+      if reason in @permanent_import_errors or reason in @download_failure_errors do
+        Catalog.block_release(parked, reason)
+      end
+    end
   end
 end
