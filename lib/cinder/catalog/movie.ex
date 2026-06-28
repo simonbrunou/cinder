@@ -34,6 +34,7 @@ defmodule Cinder.Catalog.Movie do
     field :status, Ecto.Enum, values: @statuses, default: :requested
     field :download_id, :string
     field :download_protocol, Ecto.Enum, values: [:torrent, :usenet]
+    field :release_title, :string
     field :file_path, :string
     field :import_attempts, :integer, default: 0
     field :search_attempts, :integer, default: 0
@@ -78,6 +79,7 @@ defmodule Cinder.Catalog.Movie do
       :status,
       :download_id,
       :download_protocol,
+      :release_title,
       :imdb_id,
       :file_path,
       :import_attempts,

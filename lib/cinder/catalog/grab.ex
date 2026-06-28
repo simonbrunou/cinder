@@ -14,6 +14,7 @@ defmodule Cinder.Catalog.Grab do
   schema "grabs" do
     field :download_id, :string
     field :download_protocol, Ecto.Enum, values: [:torrent, :usenet]
+    field :release_title, :string
     field :content_path, :string
     field :download_attempts, :integer, default: 0
     has_many :episodes, Episode
@@ -24,7 +25,13 @@ defmodule Cinder.Catalog.Grab do
   @doc false
   def changeset(grab, attrs) do
     grab
-    |> cast(attrs, [:download_id, :download_protocol, :content_path, :download_attempts])
+    |> cast(attrs, [
+      :download_id,
+      :download_protocol,
+      :release_title,
+      :content_path,
+      :download_attempts
+    ])
     |> validate_required([:download_id, :download_protocol])
   end
 end
