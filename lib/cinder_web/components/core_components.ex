@@ -503,9 +503,13 @@ defmodule CinderWeb.CoreComponents do
       <.spinner label="Checking services…" />
   """
   attr :class, :any, default: "size-5"
-  attr :label, :string, default: "Loading…"
+  # nil default + gettext in the body: a compile-time attr default can't be translated, so the
+  # "Loading…" fallback is resolved per-request instead.
+  attr :label, :string, default: nil
 
   def spinner(assigns) do
+    assigns = assign(assigns, :label, assigns.label || gettext("Loading…"))
+
     ~H"""
     <span class="inline-flex items-center gap-2 text-base-content/70">
       <.icon name="hero-arrow-path" class={["motion-safe:animate-spin", @class]} />

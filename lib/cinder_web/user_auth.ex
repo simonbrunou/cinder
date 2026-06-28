@@ -308,7 +308,7 @@ defmodule CinderWeb.UserAuth do
       conn
     else
       conn
-      |> put_flash(:error, "You must log in to access this page.")
+      |> put_flash(:error, gettext("You must log in to access this page."))
       |> maybe_store_return_to()
       |> redirect(to: ~p"/users/log-in")
       |> halt()
@@ -329,7 +329,7 @@ defmodule CinderWeb.UserAuth do
       conn
     else
       conn
-      |> put_flash(:error, "You don't have access to that page.")
+      |> put_flash(:error, gettext("You don't have access to that page."))
       |> redirect(to: ~p"/")
       |> halt()
     end
