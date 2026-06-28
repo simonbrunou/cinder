@@ -1,7 +1,7 @@
 # Graph Report - cinder  (2026-06-28)
 
 ## Corpus Check
-- 328 files · ~334,785 words
+- 328 files · ~334,920 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
@@ -10,7 +10,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `d4518260`
+- Built from commit: `32bcf41d`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -1106,12 +1106,10 @@ Nodes (4): CinderWeb.UserLive.Registration, assign_form(), handle_event(), mount
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Cinder.Catalog` connect `Catalog Context` to `Community 257`, `Community 258`, `Community 260`, `Community 263`, `Community 267`, `Community 209`, `Community 253`?**
-  _High betweenness centrality (0.025) - this node is a cross-community bridge._
 - **Why does `Cinder.Settings` connect `Settings Store (env overlay)` to `Community 260`?**
-  _High betweenness centrality (0.019) - this node is a cross-community bridge._
-- **Why does `Cinder.Download.Poller` connect `Acquisition Context + Overview` to `Movie Download Poller`?**
-  _High betweenness centrality (0.016) - this node is a cross-community bridge._
+  _High betweenness centrality (0.018) - this node is a cross-community bridge._
+- **Why does `Cinder.Catalog` connect `Catalog Context` to `Community 257`, `Community 258`, `Community 260`, `Community 263`, `Community 267`, `Community 209`, `Community 253`?**
+  _High betweenness centrality (0.018) - this node is a cross-community bridge._
 - **What connects `Cinder.Catalog.BlockedReleaseTest`, `Task 1: Add the `cp/2` callback to the `Filesystem` behaviour + Disk impl`, `Task 2: `link_or_copy/2` helper + wire into `replace/2`` to the rest of the system?**
   _965 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `DB Migrations + Sessions` be split into smaller, more focused modules?**
@@ -1120,3 +1118,5 @@ _Questions this graph is uniquely positioned to answer:_
   _Cohesion score 0.0715846994535519 - nodes in this community are weakly interconnected._
 - **Should `Catalog Context` be split into smaller, more focused modules?**
   _Cohesion score 0.07196969696969698 - nodes in this community are weakly interconnected._
+- **Should `Health Service Checks` be split into smaller, more focused modules?**
+  _Cohesion score 0.14285714285714285 - nodes in this community are weakly interconnected._
