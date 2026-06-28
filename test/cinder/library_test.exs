@@ -373,6 +373,160 @@ defmodule Cinder.LibraryTest do
     assert {:ok, "#{@lib}/tmdb-888/tmdb-888.mkv", _quality} = Library.import_movie(movie)
   end
 
+  describe "cross-filesystem import (:exdev hardlink fallback)" do
+    @source "/dl/Inception.2010.1080p.mkv"
+    @dest "#{@lib}/Inception (2010) {tmdb-27205}/Inception (2010) {tmdb-27205}.mkv"
+
+    defp cross_fs_movie(attrs \\ []) do
+      struct(
+        %Movie{title: "Inception", year: 2010, tmdb_id: 27_205, file_path: @source},
+        attrs
+      )
+    end
+
+    test "ln :exdev falls back to an atomic copy: cp into a temp, then rename onto dest" do
+      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+
+      stub(Cinder.Library.FilesystemMock, :lstat, fn @source ->
+        {:ok, %File.Stat{size: 5 * @gb, inode: 1}}
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+      # Both the fresh placement and the link into the temp cross filesystems.
+      stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dst -> {:error, :exdev} end)
+      # sweep_temps finds no stale temps.
+      stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:ok, []} end)
+
+      # cp targets a temp in the dest dir (never dest directly); record it to prove rename uses it.
+      expect(Cinder.Library.FilesystemMock, :cp, fn @source, tmp ->
+        assert String.contains?(Path.basename(tmp), ".cinder-tmp-")
+        assert Path.dirname(tmp) == Path.dirname(@dest)
+        Process.put(:copied_tmp, tmp)
+        :ok
+      end)
+
+      # rename moves that exact temp onto the real dest — never cp/rename straight to dest.
+      expect(Cinder.Library.FilesystemMock, :rename, fn tmp, @dest ->
+        assert tmp == Process.get(:copied_tmp)
+        :ok
+      end)
+
+      expect(Cinder.Library.MediaServerMock, :scan, fn _ -> :ok end)
+
+      assert {:ok, @dest, %{resolution: "1080p", size: 5_000_000_000, language: nil}} =
+               Library.import_movie(cross_fs_movie())
+    end
+
+    test "a copy failure removes the temp and surfaces the error (no rename)" do
+      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+
+      stub(Cinder.Library.FilesystemMock, :lstat, fn _ ->
+        {:ok, %File.Stat{size: 5 * @gb, inode: 1}}
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dst -> {:error, :exdev} end)
+      stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:ok, []} end)
+      expect(Cinder.Library.FilesystemMock, :cp, fn _src, _tmp -> {:error, :enospc} end)
+      # The temp is cleaned up; no rename, no scan (verify_on_exit! fails if either is called).
+      expect(Cinder.Library.FilesystemMock, :rm, fn tmp ->
+        assert String.contains?(Path.basename(tmp), ".cinder-tmp-")
+        :ok
+      end)
+
+      assert {:error, :enospc} = Library.import_movie(cross_fs_movie())
+    end
+
+    test "a non-:exdev ln error does NOT copy — it propagates unchanged" do
+      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+
+      stub(Cinder.Library.FilesystemMock, :lstat, fn _ ->
+        {:ok, %File.Stat{size: 5 * @gb, inode: 1}}
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dst -> {:error, :eacces} end)
+
+      # No cp stub/expectation: an unexpected cp call would raise, making "never copies" a real assertion.
+
+      assert {:error, :eacces} = Library.import_movie(cross_fs_movie())
+    end
+
+    # The review-caught correctness fix: inode numbers collide across filesystems, so a cross-fs
+    # re-import with the SAME inode but a DIFFERENT device must NOT take the idempotency short-circuit.
+    test "same inode, different device: a better release still replaces (not the inode short-circuit)" do
+      movie =
+        cross_fs_movie(
+          imported_resolution: "720p",
+          imported_size: 1 * @gb,
+          imported_language: nil
+        )
+
+      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+
+      # source: inode 7 on device 1. dest: SAME inode (7) but a DIFFERENT device (2) — a naive
+      # inode-only check would short-circuit and silently skip the upgrade.
+      stub(Cinder.Library.FilesystemMock, :lstat, fn
+        @source -> {:ok, %File.Stat{size: 5 * @gb, inode: 7, major_device: 1}}
+        @dest -> {:ok, %File.Stat{inode: 7, major_device: 2}}
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+      # dest exists; the temp link crosses filesystems → copy.
+      stub(Cinder.Library.FilesystemMock, :ln, fn _src, dst ->
+        if String.contains?(dst, ".cinder-tmp-"), do: {:error, :exdev}, else: {:error, :eexist}
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:ok, []} end)
+      expect(Cinder.Library.FilesystemMock, :cp, fn _src, _tmp -> :ok end)
+      expect(Cinder.Library.FilesystemMock, :rename, fn _tmp, @dest -> :ok end)
+      expect(Cinder.Library.MediaServerMock, :scan, fn _ -> :ok end)
+
+      # Returns the NEW (better) quality → the upgrade ran; the short-circuit would have returned 720p.
+      # cp + rename below prove this cross-fs upgrade copies through the shared link_or_copy choke-point.
+      assert {:ok, @dest, %{resolution: "1080p", size: 5_000_000_000}} =
+               Library.import_movie(movie)
+    end
+
+    test "same inode, different device: an equal release is kept (still bypasses the short-circuit)" do
+      movie =
+        cross_fs_movie(
+          imported_resolution: "1080p",
+          imported_size: 5 * @gb,
+          imported_language: nil
+        )
+
+      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+
+      stub(Cinder.Library.FilesystemMock, :lstat, fn
+        @source -> {:ok, %File.Stat{size: 5 * @gb, inode: 7, major_device: 1}}
+        @dest -> {:ok, %File.Stat{inode: 7, major_device: 2}}
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dst -> {:error, :eexist} end)
+      stub(Cinder.Library.MediaServerMock, :scan, fn _ -> :ok end)
+
+      # Equal quality → keep (logged), returns the existing 1080p, no cp/rename (none stubbed).
+      log =
+        capture_log(fn ->
+          assert {:ok, @dest, %{resolution: "1080p", size: 5_000_000_000}} =
+                   Library.import_movie(movie)
+        end)
+
+      assert log =~ "kept existing"
+    end
+
+    test "TV: import_episodes takes the identical :exdev → copy path and imports the episode" do
+      Cinder.LibraryStubs.stub_import_exdev(3 * @gb)
+
+      assert {:ok, [{7, dest, _q}], []} =
+               Library.import_episodes("/dl/Show.S01E03.1080p.mkv", [ep(7, 3)])
+
+      assert dest == "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"
+    end
+  end
+
   describe "import_episodes/2" do
     # FS/media mocks stubbed (multiple, order-independent calls); assertions read the return value.
     defp stub_dir(files) do

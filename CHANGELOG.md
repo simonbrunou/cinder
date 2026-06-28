@@ -7,6 +7,12 @@ All notable changes to Cinder are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Cross-filesystem import** — when the download and library live on different filesystems, import
+  no longer fails (`:exdev`). Cinder hardlinks when it can and **automatically falls back to an atomic
+  copy** (copy into a temp on the library filesystem, then rename into place) when it can't — a common
+  self-host layout that previously parked at `:import_failed`. Same-filesystem imports are unchanged
+  (instant hardlink). Trade-off: a copy keeps both files (2× disk unless `move_on_import` is on) and
+  takes time proportional to file size; see `docs/operating.md`.
 - **Import-time audio-language verification** — Cinder probes a completed download's actual audio
   tracks (via `ffprobe`, shipped in the Docker image) before importing and refuses a file whose
   audio is a confirmed different language from the request — the safety net behind the name-based
