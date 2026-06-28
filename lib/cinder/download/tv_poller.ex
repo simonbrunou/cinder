@@ -140,7 +140,8 @@ defmodule Cinder.Download.TvPoller do
       [
         protocols: Download.available_protocols(),
         preferred_language: series.preferred_language,
-        original_language: series.original_language
+        original_language: series.original_language,
+        release_blocklist: Catalog.blocked_release_titles_for_series(series.id)
       ] ++ Acquisition.band_opts(:tv)
 
     case Acquisition.best_releases(series, season_number, numbers, opts) do

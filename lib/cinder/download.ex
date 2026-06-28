@@ -32,7 +32,8 @@ defmodule Cinder.Download do
         [
           protocols: available_protocols(),
           preferred_language: movie.preferred_language,
-          original_language: movie.original_language
+          original_language: movie.original_language,
+          release_blocklist: Catalog.blocked_release_titles(movie)
         ] ++ Acquisition.band_opts(:movies)
 
       case Acquisition.best_release(imdb_id, opts) do
