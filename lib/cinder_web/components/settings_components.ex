@@ -11,6 +11,7 @@ defmodule CinderWeb.SettingsComponents do
   import CinderWeb.CoreComponents, only: [status_badge: 1, button: 1]
 
   alias Cinder.Settings
+  alias CinderWeb.SettingsLabels
 
   attr :form, :map, required: true
   attr :health, :map, required: true
@@ -21,7 +22,7 @@ defmodule CinderWeb.SettingsComponents do
   def service_fields(assigns) do
     ~H"""
     <fieldset :for={{group, label} <- Settings.groups()} class="rounded-box bg-base-200 p-4">
-      <legend class="px-2 text-lg font-semibold">{label}</legend>
+      <legend class="px-2 text-lg font-semibold">{SettingsLabels.t(label)}</legend>
 
       <div :if={group == :media_server} class="form-control mb-2">
         <label class="label" for="media_server_type">
@@ -48,7 +49,7 @@ defmodule CinderWeb.SettingsComponents do
             checked={@form.values[t.key]}
             class="checkbox"
           />
-          <span class="label-text">{t.label}</span>
+          <span class="label-text">{SettingsLabels.t(t.label)}</span>
         </label>
       </div>
 
@@ -56,7 +57,7 @@ defmodule CinderWeb.SettingsComponents do
         <div :for={%{kind: kind, label: kind_label} <- Settings.library_kinds()} class="form-control">
           <label class="label" for={Settings.library_path_key(kind)}>
             <span class="label-text">{gettext("%{kind} library path (where %{kind} are hardlinked)",
-              kind: kind_label
+              kind: SettingsLabels.t(kind_label)
             )}</span>
           </label>
           <input
@@ -97,7 +98,7 @@ defmodule CinderWeb.SettingsComponents do
 
       <div :if={group == :releases} class="space-y-3">
         <div :for={%{kind: kind, label: kind_label} <- Settings.library_kinds()} class="space-y-2">
-          <p class="text-sm font-medium">{kind_label}</p>
+          <p class="text-sm font-medium">{SettingsLabels.t(kind_label)}</p>
           <div class="form-control">
             <label class="label" for={Settings.min_size_key(kind)}>
               <span class="label-text">{gettext("Min size (GB)")}</span>
@@ -189,7 +190,7 @@ defmodule CinderWeb.SettingsComponents do
 
   def services_for(:library) do
     for %{kind: kind, label: label} <- Settings.library_kinds(),
-        do: {"#{kind}_library", "#{label} library"}
+        do: {"#{kind}_library", SettingsLabels.t("#{label} library")}
   end
 
   def services_for(_group), do: []
@@ -215,7 +216,7 @@ defmodule CinderWeb.SettingsComponents do
     ~H"""
     <div class="form-control mb-2">
       <label class="label" for={@field.key}>
-        <span class="label-text">{@field.label}</span>
+        <span class="label-text">{SettingsLabels.t(@field.label)}</span>
       </label>
 
       <input
