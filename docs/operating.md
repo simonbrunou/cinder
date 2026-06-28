@@ -43,17 +43,33 @@ size bands — is edited at `/settings` and
 stored in the database. **DB values override the env bootstrap; clearing a setting reverts to the
 env value/default.** Secret fields are encrypted at rest with a key derived from `SECRET_KEY_BASE`.
 
-## The hardlink requirement
+## Hardlink, with an automatic cross-filesystem copy fallback
 
-On a completed download Cinder **hardlinks** the file into the library (instant, no copy, no extra
-disk). A hardlink can't cross filesystems, so:
+On a completed download Cinder **hardlinks** the file into the library — instant, no copy, no extra
+disk. A hardlink can't cross filesystems, so when the download and library live on **different**
+filesystems Cinder **automatically falls back to an atomic copy** instead (it copies into a temporary
+file on the library filesystem, then renames it into place, so a media scan never sees a half-copied
+file). No configuration — Cinder detects the cross-filesystem case and switches per import; a log
+line records each fallback.
 
-- The **library root** and the **download client's completed-downloads directory must be on the
-  same filesystem.** The compose file keeps both under one `/media` mount (`/media/movies`,
-  `/media/tv`, `/media/downloads`).
+Keep both on the **same filesystem** when you can — it's faster and uses no extra disk. The compose
+file keeps both under one `/media` mount (`/media/movies`, `/media/tv`, `/media/downloads`). The copy
+fallback only matters when you can't:
+
+- **Extra disk.** A copy keeps **both** the download and the library file. Unless `move_on_import` is
+  enabled (it deletes the source after a successful import), a cross-filesystem import permanently
+  consumes **2×** the file's size.
+- **Time.** A copy takes time proportional to the file size and runs inside the poller tick, so a
+  large file (or a serially-copied season pack) briefly serializes other pipeline work. Fine at
+  single-household scale.
 - Cinder's container runs as `nobody` (uid/gid **65534**). Give your download client a matching
   `PUID`/`PGID` (the linuxserver.io images take these env vars), or a shared group with group write
-  — otherwise the hardlink fails with a permission error and the item parks as `:import_failed`.
+  — otherwise the link **or copy** fails with a permission error and the item parks as
+  `:import_failed`.
+
+> **Note:** this covers *local* filesystems the Cinder container can read. A remote or
+> container-mapped download path that Cinder can't `stat` (different host, unmounted volume) is a
+> separate, unaddressed gap — mount the download directory into Cinder's container.
 
 ## Backups
 
@@ -90,7 +106,7 @@ your server picks the file up on its next periodic scan.
 |---|---|---|
 | `:no_match` | No acceptable release found (the scorer rejected all results, or the title has no IMDb id on TMDB). | Passive; nothing to fix. Relax scoring if it's too strict. |
 | `:search_failed` | A release was found but couldn't be handed off, or transient errors exhausted ~10 min of retries. | Check the server log. Often a malformed/HTML "torrent", a BitTorrent **v2-only** torrent (see limits), or a Prowlarr/qBittorrent outage. **Retry** once fixed. |
-| `:import_failed` | The completed download had no usable video file, import failed repeatedly — commonly a **cross-filesystem** library/download path or a permission mismatch — or (with `ffprobe` installed) the file's audio language didn't match the request. | Verify the hardlink requirement above; the log shows the cross-device/permission error. For a language mismatch, **Retry** re-searches (the wrong release is now filtered out). |
+| `:import_failed` | The completed download had no usable video file, or import failed repeatedly — commonly a **permission mismatch** or, on a cross-filesystem copy, **a full library disk** (`:enospc`) — or (with `ffprobe` installed) the file's audio language didn't match the request. (A cross-filesystem path itself is **not** a failure — Cinder copies automatically.) | Check the log for the permission/disk error; see the hardlink section above. For a language mismatch, **Retry** re-searches (the wrong release is now filtered out). |
 
 ## Audio-language verification
 
@@ -153,8 +169,9 @@ wrong library, and the first-run wizard won't finish until both roots validate w
 > (and a new `TV_PLEX_SECTION` for the Shows library). Stored `/settings` rows migrate automatically,
 > **but environment variables do not** — if you bootstrap movie config via `docker-compose.yml` /
 > `.env`, rename those vars before redeploying, or the movie root/section reverts to unset (movie
-> imports hold, red on `/status`, until set). Both roots must still be on the same filesystem as the
-> download client's completed dir (hardlinks).
+> imports hold, red on `/status`, until set). Keep both roots on the same filesystem as the download
+> client's completed dir for instant hardlinks; a root on a different filesystem still works via the
+> automatic copy fallback (see "Hardlink, with an automatic cross-filesystem copy fallback").
 
 ## Deleting media
 

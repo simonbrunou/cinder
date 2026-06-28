@@ -55,12 +55,13 @@ defmodule Cinder.Library do
              source,
              Language.target(movie.preferred_language, movie.original_language)
            ),
-         {:ok, %{size: size, inode: si}} <- fs().lstat(source),
+         {:ok, %{size: size, inode: si, major_device: sdev}} <- fs().lstat(source),
          parsed = Parser.parse(Path.basename(movie.file_path)),
          new_q = new_quality(parsed, size),
          dest = build_dest(movie, source, root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
-         {:ok, quality} <- place(source, dest, si, movie, new_q, fn -> upgrade?(movie, new_q) end) do
+         {:ok, quality} <-
+           place(source, dest, {si, sdev}, movie, new_q, fn -> upgrade?(movie, new_q) end) do
       scan(:movies, dest)
       {:ok, dest, quality}
     end
@@ -69,14 +70,24 @@ defmodule Cinder.Library do
   # Place source at dest; resolve a same-item collision (tmdb-unique folder => same record) by the
   # caller's `upgrade_fun` decision. Shared by movie and episode imports. `upgrade_fun` is a thunk
   # so the (config-reading) upgrade comparison runs only on an actual collision, not every import.
-  defp place(source, dest, si, record, new_q, upgrade_fun) do
+  defp place(source, dest, {si, sdev}, record, new_q, upgrade_fun) do
     case fs().ln(source, dest) do
       :ok ->
         {:ok, new_q}
 
+      {:error, :exdev} ->
+        # Fresh placement across filesystems: the hardlink can't span devices, so copy the bytes in
+        # atomically via replace/2 (link-or-copy into a unique temp on the dest fs, then rename).
+        # Logged at :info — a silent switch from instant hardlinks to full copies is worth surfacing.
+        Logger.info("hardlink crossed filesystems; copying #{source} -> #{dest}")
+        with :ok <- replace(source, dest), do: {:ok, new_q}
+
       {:error, :eexist} ->
-        with {:ok, %{inode: di}} <- fs().lstat(dest) do
-          do_resolve(source, dest, si == di, upgrade_fun.(), record, new_q)
+        with {:ok, %{inode: di, major_device: ddev}} <- fs().lstat(dest) do
+          # Inode numbers are unique only within one filesystem, so an idempotency short-circuit must
+          # also match the device — across filesystems two inodes can collide and would otherwise skip
+          # a genuine upgrade. Same-fs hardlink fast path (sdev == ddev) is unchanged.
+          do_resolve(source, dest, si == di and sdev == ddev, upgrade_fun.(), record, new_q)
         end
 
       {:error, _} = err ->
@@ -143,19 +154,31 @@ defmodule Cinder.Library do
     do: Application.get_env(:cinder, :"#{kind}_preferred_sources")
 
   # Atomic replace of an existing dest with source's content: sweep stale temps (a host crash between
-  # ln and rename can leak one), hardlink source -> unique temp in the dest dir, then rename over dest.
+  # link/copy and rename can leak one), link-or-copy source -> unique temp in the dest dir, then rename
+  # over dest. The temp lives on the dest filesystem, so the rename is same-fs and atomic even when the
+  # source content had to be copied across filesystems.
   defp replace(source, dest) do
     dir = Path.dirname(dest)
     sweep_temps(dir)
     tmp = Path.join(dir, ".cinder-tmp-#{System.unique_integer([:positive])}")
 
-    with :ok <- fs().ln(source, tmp),
+    with :ok <- link_or_copy(source, tmp),
          :ok <- fs().rename(tmp, dest) do
       :ok
     else
       {:error, _} = err ->
         _ = fs().rm(tmp)
         err
+    end
+  end
+
+  # Hardlink source -> target, falling back to a byte copy only when the hardlink crosses filesystems
+  # (`:exdev`). Every other ln error (`:eacces`, `:enoent`, `:enospc`, …) is a real failure and
+  # propagates unchanged — a copy would fail the same way.
+  defp link_or_copy(source, target) do
+    case fs().ln(source, target) do
+      {:error, :exdev} -> fs().cp(source, target)
+      other -> other
     end
   end
 
@@ -384,11 +407,12 @@ defmodule Cinder.Library do
   defp place_episode_file(ep, source, root, target) do
     dest = build_episode_dest(ep, source, root)
 
-    with {:ok, %{size: size, inode: si}} <- fs().lstat(source),
+    with {:ok, %{size: size, inode: si, major_device: sdev}} <- fs().lstat(source),
          parsed = Parser.parse(Path.basename(source)),
          new_q = new_quality(parsed, size),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
-         {:ok, q} <- place(source, dest, si, ep, new_q, fn -> ep_upgrade?(ep, new_q, target) end) do
+         {:ok, q} <-
+           place(source, dest, {si, sdev}, ep, new_q, fn -> ep_upgrade?(ep, new_q, target) end) do
       {:ok, dest, q}
     end
   end
