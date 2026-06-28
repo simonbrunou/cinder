@@ -5,22 +5,43 @@ defmodule CinderWeb.TranslationsCompleteTest do
 
   # Two halves of "everything is translated":
   #
-  #   1. completeness — every msgid the catalog knows has a non-empty, non-fuzzy French msgstr;
-  #   2. currency — the catalog actually knows every gettext string in the source.
+  #   1. completeness — every source msgid (from the .pot) is present in fr.po with a non-empty,
+  #      non-fuzzy translation;
+  #   2. currency — the .pot itself knows every gettext string in the source.
   #
-  # Both are needed. Without (2), a `gettext("New")` that was never extracted is simply absent
-  # from the French catalog, falls back to the English msgid at runtime, and (1) never notices —
-  # which is exactly how the catalog silently went stale before. `no_hardcoded_strings_test`
+  # Both are needed. Iterating the .pot (not fr.po) is deliberate: it catches a string that was
+  # extracted to the .pot but never `gettext.merge`d into fr.po (absent → renders the English
+  # fallback, which iterating fr.po alone would never notice), and it ignores an obsolete fr.po
+  # entry no longer in source (present in .po, gone from .pot → not our concern). (2) without (1)
+  # misses an un-merged locale; (1) without (2) misses an un-extracted call. `no_hardcoded_strings_test`
   # covers the third leak: a literal that never reached gettext at all.
 
-  @fr_files Path.wildcard("priv/gettext/fr/LC_MESSAGES/*.po")
+  @domains [
+    {"priv/gettext/default.pot", "priv/gettext/fr/LC_MESSAGES/default.po"},
+    {"priv/gettext/errors.pot", "priv/gettext/fr/LC_MESSAGES/errors.po"}
+  ]
 
-  test "every French message is translated (no empty or fuzzy msgstr)" do
-    untranslated = Enum.flat_map(@fr_files, &gaps/1)
+  test "every source msgid is present and translated in French (no missing/empty/fuzzy)" do
+    gaps =
+      Enum.flat_map(@domains, fn {pot, po} ->
+        fr = po |> messages() |> Map.new(&{msgid(&1), &1})
 
-    assert untranslated == [],
-           "French entries still untranslated or fuzzy (run the translation pass):\n" <>
-             Enum.join(untranslated, "\n")
+        pot
+        |> messages()
+        |> Enum.reject(&header?/1)
+        |> Enum.flat_map(fn message ->
+          id = msgid(message)
+
+          case Map.get(fr, id) do
+            nil -> ["#{po}: missing #{inspect(id)}"]
+            fr_message -> gap(po, fr_message)
+          end
+        end)
+      end)
+
+    assert gaps == [],
+           "French catalog incomplete (run `mix gettext.extract --merge` then translate):\n" <>
+             Enum.join(gaps, "\n")
   end
 
   @tag :gettext_extract
@@ -34,20 +55,16 @@ defmodule CinderWeb.TranslationsCompleteTest do
              "French entries.\n\n" <> out
   end
 
-  # --- PO inspection (Expo) --------------------------------------------------------------------
+  # --- PO/POT inspection (Expo) ----------------------------------------------------------------
 
-  defp gaps(file) do
-    %{messages: messages} = Expo.PO.parse_file!(file)
+  defp messages(file), do: file |> Expo.PO.parse_file!() |> Map.fetch!(:messages)
 
-    messages
-    |> Enum.reject(&header?/1)
-    |> Enum.flat_map(fn message ->
-      cond do
-        fuzzy?(message) -> ["#{file}: fuzzy #{inspect(msgid(message))}"]
-        empty?(message) -> ["#{file}: empty #{inspect(msgid(message))}"]
-        true -> []
-      end
-    end)
+  defp gap(po, message) do
+    cond do
+      fuzzy?(message) -> ["#{po}: fuzzy #{inspect(msgid(message))}"]
+      empty?(message) -> ["#{po}: empty #{inspect(msgid(message))}"]
+      true -> []
+    end
   end
 
   defp header?(message), do: msgid(message) == ""

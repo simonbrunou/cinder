@@ -11,9 +11,15 @@ defmodule CinderWeb.NoHardcodedStringsTest do
 
   @web_files Path.wildcard("lib/cinder_web/**/*.ex") ++ Path.wildcard("lib/cinder_web/**/*.heex")
 
-  # Translatable HTML attributes (their literal values render to the user). class/name/id/phx-*/
-  # value/href etc. are deliberately excluded — they aren't copy.
-  @translatable_attrs ~w(placeholder title aria-label alt)
+  # Attributes whose literal values render to the user — standard HTML copy attrs plus the
+  # copy-bearing component attrs this app uses (`<.input label=>`, `<.empty_state message=>`, …).
+  # class/name/id/phx-*/value/href etc. are deliberately excluded — they aren't copy.
+  #
+  # Known scope limits (regression net, not a proof): a string literal *inside* an interpolation
+  # (`{"x"}`, `{cond || "x"}`) is masked away with the rest of the `{…}` and not seen; a copy attr
+  # outside this list, a non-literal `put_flash` key, a single-quoted attr, or a single-line `~H"…"`
+  # sigil are also out of scope. The HEEx formatter and house style keep those forms from arising.
+  @translatable_attrs ~w(placeholder title aria-label alt label message hint subtitle)
 
   # Product/brand names and bare fragments that are identical in every locale, so a bare literal
   # is intentional. "CIN"/"DER" are the CINDER wordmark split across two spans for colour styling.
@@ -140,7 +146,9 @@ defmodule CinderWeb.NoHardcodedStringsTest do
     |> Enum.uniq()
   end
 
-  defp mask_tags(s), do: mask_pattern(s, ~r/<[^>]*>/s)
+  # Quote-aware so a literal `>` inside a double-quoted attribute value (e.g. a Tailwind
+  # child-combinator class `[&>tbody]:…`) doesn't end the tag early and leak the remainder as text.
+  defp mask_tags(s), do: mask_pattern(s, ~r/<(?:[^>"]|"[^"]*")*>/s)
 
   # `(?<![-\w])` so `data-title="…"` / `xtitle="…"` don't match the bare `title` attribute.
   defp attr_offenders(masked, content, base, file) do
