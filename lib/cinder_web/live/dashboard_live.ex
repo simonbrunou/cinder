@@ -263,7 +263,7 @@ defmodule CinderWeb.DashboardLive do
               <li :for={h <- @health} class="flex items-center justify-between gap-3 px-4 py-2.5">
                 <div class="min-w-0">
                   <span>{h.label}</span>
-                  <p :if={match?({:error, _}, h.status)} class="text-xs text-error">
+                  <p :if={match?({:error, _}, h.status)} class="text-xs text-error break-words">
                     {health_reason(elem(h.status, 1))}
                   </p>
                 </div>

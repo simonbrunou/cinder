@@ -168,7 +168,10 @@ defmodule CinderWeb.SettingsComponents do
       <.setting_field :for={field <- Settings.config_fields(group)} field={field} form={@form} />
 
       <div class="mt-3 flex flex-wrap items-center gap-3">
-        <div :for={{svc, svc_label} <- services_for(group)} class="flex items-center gap-2">
+        <div
+          :for={{svc, svc_label} <- services_for(group)}
+          class="flex flex-wrap items-center gap-x-2 gap-y-1"
+        >
           <.button type="button" variant="neutral" size="sm" phx-click="test" phx-value-service={svc}>
             {gettext("Test %{service}", service: svc_label)}
           </.button>

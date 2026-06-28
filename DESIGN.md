@@ -166,3 +166,22 @@ Functional only; no bounce, no spring, no decorative motion.
 - **Grids:** poster surfaces (Discover, Library) lay `media_card`s in a responsive grid; each card
   is a fixed `aspect-[2/3]` poster + compact body. Content density is calm: generous padding,
   hairline dividers, one accent.
+
+### Responsive rules (every new screen, ~360px first)
+
+The content column is `mx-auto`, so any single descendant wider than the viewport centers its
+overflow and clips the whole page on **both** edges (header included). The whole-app fix is a
+handful of mechanical habits, not per-page tuning:
+
+- **Rows of chips/controls wrap.** A flex row holding 2+ of {badge, button, input, status} gets
+  `flex-wrap` (with `gap-y-*`), or `flex-col sm:flex-row` to stack on a phone. A bare `flex` row of
+  controls is the default bug.
+- **A flex child holding text gets `min-w-0`.** A flex item's min-width defaults to its longest
+  word (`min-content`); an email/URL/path/infohash/title then can't shrink and forces overflow. Add
+  `min-w-0` to the column, plus `truncate` (one-line ellipsis) or `break-words`/`break-all` (wrap)
+  on the text itself. `truncate` does nothing without `min-w-0` on the flex item.
+- **`justify-between`/`ml-auto` fight wrapping.** Pair them with `flex-wrap`, or gate the auto-margin
+  behind `sm:` so the pinned item can drop to the next line on a phone.
+- **Translated labels are wider.** French is ~30% longer; if a label, badge, or button only just
+  fits in English it overflows in French. The shared `status_badge` is `shrink-0` (wraps as a whole
+  unit in a flex row); daisyUI `.label` text is unpinned to wrap globally (`app.css`).

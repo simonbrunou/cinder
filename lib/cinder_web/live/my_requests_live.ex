@@ -48,8 +48,8 @@ defmodule CinderWeb.MyRequestsLive do
 
       <ul id="my-requests" class="space-y-3">
         <li :for={r <- @requests} class="rounded-box bg-base-200/50 p-4">
-          <div class="flex items-center gap-3">
-            <span class="font-semibold">
+          <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <span class="min-w-0 break-words font-semibold">
               {if r.target_type == "season",
                 do:
                   gettext("%{title}: Season %{number}",
@@ -71,7 +71,7 @@ defmodule CinderWeb.MyRequestsLive do
             class="mt-1 flex items-start gap-1.5 text-sm text-error"
           >
             <.icon name="hero-x-circle" class="mt-0.5 size-4 shrink-0" />
-            <span><span class="font-medium">{gettext("Reason:")}</span> {r.denial_reason}</span>
+            <span class="min-w-0 break-words"><span class="font-medium">{gettext("Reason:")}</span> {r.denial_reason}</span>
           </p>
         </li>
       </ul>

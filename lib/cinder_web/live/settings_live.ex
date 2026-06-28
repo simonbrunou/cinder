@@ -90,10 +90,10 @@ defmodule CinderWeb.SettingsLive do
             <input
               type="checkbox"
               name="auto_approve_all"
-              class="toggle"
+              class="toggle shrink-0"
               checked={@auto_approve_all}
             />
-            <span class="label-text">
+            <span class="label-text whitespace-normal">
               {gettext("Auto-approve all requests (skip the approval queue)")}
             </span>
           </label>

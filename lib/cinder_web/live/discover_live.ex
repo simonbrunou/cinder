@@ -265,7 +265,7 @@ defmodule CinderWeb.DiscoverLive do
           title={m.title}
           year={m.year}
         >
-          <.status_badge kind={:movie} status={m.status} />
+          <.status_badge kind={:movie} status={m.status} class="h-auto break-words text-center" />
         </.media_card>
       </div>
     </Layouts.app>
@@ -279,7 +279,12 @@ defmodule CinderWeb.DiscoverLive do
 
   defp result_action(assigns) do
     ~H"""
-    <.status_badge :if={@state != :none} kind={:request} status={@state} />
+    <.status_badge
+      :if={@state != :none}
+      kind={:request}
+      status={@state}
+      class="h-auto break-words text-center"
+    />
     <form
       :if={@state in [:none, :denied]}
       id={"add-form-#{@tmdb_id}"}

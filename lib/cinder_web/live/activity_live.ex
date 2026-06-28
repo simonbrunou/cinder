@@ -112,7 +112,7 @@ defmodule CinderWeb.ActivityLive do
             id={"movie-#{m.id}"}
             class="card bg-base-200 p-3 flex flex-row flex-wrap items-center gap-3"
           >
-            <span class="min-w-0 flex-1 truncate">
+            <span class="w-full truncate sm:w-auto sm:min-w-0 sm:flex-1">
               {m.title}<span :if={m.year} class="text-base-content/70"> ({m.year})</span>
             </span>
             <.status_badge kind={:movie} status={m.status} />
@@ -146,10 +146,10 @@ defmodule CinderWeb.ActivityLive do
         <ul :if={@grabs != []} id="activity-grabs" class="space-y-3">
           <li :for={g <- @grabs} id={"grab-#{g.id}"} class="rounded-box bg-base-200/50 p-4">
             <div class="flex flex-wrap items-center gap-2">
-              <span class="font-semibold">{series_title(g)}</span>
+              <span class="min-w-0 truncate font-semibold">{series_title(g)}</span>
               <.status_badge kind={:grab} status={grab_state(g)} />
               <span class="text-xs text-base-content/70">{g.download_protocol}</span>
-              <span class="text-xs text-base-content/70 truncate">{g.download_id}</span>
+              <span class="min-w-0 truncate text-xs text-base-content/70">{g.download_id}</span>
               <.button
                 type="button"
                 variant="danger"

@@ -160,7 +160,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
           decoding="async"
           class="aspect-[2/3] w-24 rounded object-cover"
         />
-        <div>
+        <div class="min-w-0 flex-1">
           <.header>
             {@info.title}
             <span :if={@info.year} class="font-normal text-base-content/70">({@info.year})</span>
@@ -182,7 +182,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
       <ul class="divide-y divide-base-200">
         <li
           :for={season <- Enum.filter(@info.seasons, &(&1.season_number != 0))}
-          class="flex items-center justify-between gap-4 py-3"
+          class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3"
         >
           <span class="font-medium">{season_label(season.season_number)}</span>
           <.season_action

@@ -281,7 +281,7 @@ defmodule CinderWeb.UsersLive do
       <ul class="space-y-3">
         <li :for={u <- @users} class="rounded-box bg-base-200/50 p-4">
           <div class="flex items-center gap-3 flex-wrap">
-            <span class="font-semibold">{u.email}</span>
+            <span class="min-w-0 break-all font-semibold">{u.email}</span>
             <.button
               id={"role-btn-#{u.id}"}
               variant="neutral"
@@ -310,7 +310,7 @@ defmodule CinderWeb.UsersLive do
             <form
               id={"quota-#{u.id}"}
               phx-submit="set_quota"
-              class="ml-auto flex items-center gap-2"
+              class="flex w-full items-center gap-2 sm:ml-auto sm:w-auto"
             >
               <input type="hidden" name="_id" value={u.id} />
               <label class="text-sm" for={"quota-input-#{u.id}"}>{gettext("Quota")}</label>
@@ -334,7 +334,7 @@ defmodule CinderWeb.UsersLive do
             id={"edit-email-form-#{u.id}"}
             for={to_form(%{"email" => u.email}, as: :user)}
             phx-submit="save_email"
-            class="mt-2 flex items-center gap-2"
+            class="mt-2 flex flex-wrap items-center gap-2"
           >
             <input type="hidden" name="_id" value={u.id} />
             <.input
@@ -391,7 +391,7 @@ defmodule CinderWeb.UsersLive do
             id={"reset-pw-form-#{u.id}"}
             for={to_form(%{}, as: :user)}
             phx-submit="reset_pw"
-            class="mt-2 flex items-center gap-2"
+            class="mt-2 flex flex-wrap items-center gap-2"
           >
             <input type="hidden" name="_id" value={u.id} />
             <.input

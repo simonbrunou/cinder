@@ -76,7 +76,7 @@ defmodule CinderWeb.CalendarLive do
           <span class="tabular-nums text-sm text-base-content/70">
             {code(row.ep.season.season_number, row.ep.episode_number)}
           </span>
-          <span class="truncate text-base-content/70">{row.ep.title}</span>
+          <span class="min-w-0 basis-full truncate text-base-content/70">{row.ep.title}</span>
         </li>
       </ul>
     </Layouts.app>

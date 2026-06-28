@@ -340,7 +340,7 @@ defmodule CinderWeb.SeriesDetailLive do
           decoding="async"
           class="aspect-[2/3] w-24 rounded object-cover"
         />
-        <div>
+        <div class="min-w-0 flex-1">
           <.header>
             {@series.title}
             <span :if={@series.year} class="font-normal text-base-content/70">({@series.year})</span>
@@ -363,7 +363,7 @@ defmodule CinderWeb.SeriesDetailLive do
       />
 
       <section :for={season <- @series.seasons} class="mb-6">
-        <div class="mb-2 flex items-center justify-between border-b border-base-300 pb-2">
+        <div class="mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-base-300 pb-2">
           <h2 class="text-lg font-semibold">
             {season_label(season.season_number)}
             <span class="ml-2 text-sm font-normal text-base-content/70">
@@ -373,7 +373,7 @@ defmodule CinderWeb.SeriesDetailLive do
               )}
             </span>
           </h2>
-          <div class="flex items-center gap-2">
+          <div class="flex flex-wrap items-center gap-2">
             <.button
               :if={season.episodes != []}
               type="button"
@@ -451,7 +451,7 @@ defmodule CinderWeb.SeriesDetailLive do
                 }
               />
               <span class="w-8 text-sm tabular-nums text-base-content/70">{ep.episode_number}</span>
-              <span class="flex-1 text-sm">{ep.title}</span>
+              <span class="min-w-0 flex-1 truncate text-sm">{ep.title}</span>
               <time
                 :if={ep.air_date}
                 datetime={Date.to_iso8601(ep.air_date)}
