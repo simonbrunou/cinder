@@ -1,7 +1,7 @@
 # Graph Report - cinder  (2026-06-28)
 
 ## Corpus Check
-- 328 files · ~335,724 words
+- 328 files · ~335,956 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
@@ -10,7 +10,7 @@
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `9a2c1555`
+- Built from commit: `3de90fea`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -1129,11 +1129,11 @@ Nodes (3): Cinder.LibraryTest, stub_dir(), stub_link_ok()
 _Questions this graph is uniquely positioned to answer:_
 
 - **Why does `Cinder.Catalog` connect `Catalog Context` to `Community 257`, `Community 258`, `Community 267`, `Community 302`, `Community 209`, `Community 214`, `Community 253`?**
-  _High betweenness centrality (0.026) - this node is a cross-community bridge._
+  _High betweenness centrality (0.028) - this node is a cross-community bridge._
 - **Why does `Cinder.Settings` connect `Settings Store (env overlay)` to `Community 260`?**
-  _High betweenness centrality (0.018) - this node is a cross-community bridge._
-- **Why does `Phase 3 Download design` connect `Pipeline Wiring (Phase 5)` to `Community 214`?**
-  _High betweenness centrality (0.010) - this node is a cross-community bridge._
+  _High betweenness centrality (0.019) - this node is a cross-community bridge._
+- **Why does `Cinder.Download.Poller` connect `Acquisition Context + Overview` to `Catalog Series Tests`?**
+  _High betweenness centrality (0.011) - this node is a cross-community bridge._
 - **What connects `Cinder.CatalogTest`, `Cinder.Catalog.BlockedReleaseTest`, `Task 1: Add the `cp/2` callback to the `Filesystem` behaviour + Disk impl` to the rest of the system?**
   _965 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `DB Migrations + Sessions` be split into smaller, more focused modules?**
