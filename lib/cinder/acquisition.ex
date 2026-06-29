@@ -107,6 +107,44 @@ defmodule Cinder.Acquisition do
     end
   end
 
+  @doc """
+  Lists EVERY parsed release for `imdb_id`, each paired with the scorer's verdict (`:ok` or
+  `{:rejected, reason}`), sorted acceptable-first then best-ranked. Unlike `best_release/2` it
+  does not drop or collapse — the interactive manual-search panel shows them all and lets the
+  user grab any (overriding the band/blocklist). `opts[:protocols]` adds a `:wrong_protocol`
+  verdict for releases with no configured client (still listed, but the panel disables grab).
+  """
+  def list_releases(imdb_id, opts \\ []) do
+    case indexer().search(imdb_id) do
+      {:ok, raw} -> {:ok, annotate(Enum.map(raw, &Release.new/1), opts)}
+      {:error, _} = error -> error
+    end
+  end
+
+  @doc "TV variant of `list_releases/2`: searches one `season_number` of `series` and annotates."
+  def list_releases_tv(series, season_number, opts \\ []) do
+    case indexer().search_tv(series.tvdb_id, series.title, season_number) do
+      {:ok, raw} -> {:ok, annotate(Enum.map(raw, &Release.new/1), opts)}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp annotate(releases, opts) do
+    protocols = Keyword.get(opts, :protocols)
+
+    releases
+    |> Enum.map(fn release -> {release, release_verdict(release, protocols, opts)} end)
+    |> Enum.sort_by(fn {release, verdict} -> {verdict != :ok, Scorer.rank_key(release, opts)} end)
+  end
+
+  defp release_verdict(%Release{} = release, protocols, opts) do
+    if is_list(protocols) and not is_nil(release.protocol) and release.protocol not in protocols do
+      {:rejected, :wrong_protocol}
+    else
+      Scorer.verdict(release, opts)
+    end
+  end
+
   # Resolve the candidate pool a language preference scores against. An explicit-language pick
   # (french) with nothing satisfying it returns :no_language_match so the caller parks visibly;
   # a soft Original/Any pick falls back to the unfiltered candidates. The parser tags `language`

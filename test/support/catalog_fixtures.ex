@@ -8,7 +8,17 @@ defmodule Cinder.CatalogFixtures do
   alias Cinder.Catalog.{Episode, Season, Series}
   alias Cinder.Repo
 
-  @movie_pipeline_keys [:status, :download_id, :file_path, :download_protocol, :release_title]
+  @movie_pipeline_keys [
+    :status,
+    :download_id,
+    :file_path,
+    :download_protocol,
+    :release_title,
+    :imported_resolution,
+    :imported_size,
+    :imported_language,
+    :imported_source
+  ]
 
   @doc """
   Creates a watchlisted movie at `:requested`.

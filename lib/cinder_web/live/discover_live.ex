@@ -166,10 +166,12 @@ defmodule CinderWeb.DiscoverLive do
     )
   end
 
-  # Precedence: an available movie outranks a stale denied/approved request.
+  # Precedence: an available movie outranks a stale denied/approved request. An
+  # `:upgrading` movie still has a playable library file, so it reads as available
+  # (and must not re-show the Request affordance).
   defp title_state(tmdb_id, request_status, movie_status) do
     cond do
-      movie_status[tmdb_id] == :available -> :available
+      movie_status[tmdb_id] in [:available, :upgrading] -> :available
       request_status[tmdb_id] == :pending -> :pending
       request_status[tmdb_id] == :approved -> :approved
       request_status[tmdb_id] == :denied -> :denied

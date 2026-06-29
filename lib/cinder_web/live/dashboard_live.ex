@@ -13,7 +13,7 @@ defmodule CinderWeb.DashboardLive do
   alias Cinder.{Catalog, Health, Requests}
 
   @parked [:no_match, :search_failed, :import_failed]
-  @pipeline [:requested, :searching, :downloading, :downloaded]
+  @pipeline [:requested, :searching, :downloading, :downloaded, :upgrading]
 
   @impl true
   def mount(_params, _session, socket) do

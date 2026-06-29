@@ -125,6 +125,27 @@ defmodule CinderWeb.DiscoverLiveTest do
     refute has_element?(lv, "#add-form-27205")
   end
 
+  # An :upgrading movie still has a playable library file, so it reads as Available —
+  # it must NOT re-show the Request affordance (which would file a redundant request).
+  test "an upgrading movie shows the Available state, not a Request affordance", %{conn: conn} do
+    Cinder.CatalogFixtures.movie_fixture(
+      tmdb_id: 27_205,
+      title: "Inception",
+      status: :upgrading,
+      download_id: "dl-up",
+      download_protocol: :torrent,
+      file_path: "/lib/Inception (2010)/Inception (2010).mkv"
+    )
+
+    stub_movies([@inception])
+    {:ok, lv, _html} = live(conn, ~p"/")
+
+    lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
+
+    assert has_element?(lv, "#results", "Available")
+    refute has_element?(lv, "#add-form-27205")
+  end
+
   test "a quota-exceeded add shows the quota flash", %{conn: _conn} do
     user = Cinder.AccountsFixtures.user_fixture()
     {:ok, _} = Cinder.Accounts.update_user_quota(user, user, 0)

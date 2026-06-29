@@ -613,4 +613,117 @@ defmodule Cinder.Download.PollerTest do
       assert Catalog.blocked_release_titles(movie) == ["Rel.WrongLang-GRP"]
     end
   end
+
+  describe "upgrade advance" do
+    test "a completed upgrade imports via forced replace and ends :available with new quality" do
+      movie =
+        movie_fixture(%{
+          tmdb_id: 70,
+          status: :upgrading,
+          download_id: "dl-1",
+          download_protocol: :torrent,
+          release_title: "Better.1080p-GRP",
+          file_path: "/lib/M (2020)/M (2020).mkv",
+          imported_resolution: "720p"
+        })
+
+      start_supervised!({Poller, interval: 60_000})
+
+      expect(Cinder.Download.ClientMock, :status, fn "dl-1" ->
+        {:ok, %{state: :completed, content_path: "/dl/Better.1080p.mkv"}}
+      end)
+
+      # The canonical library dest already holds the live file (ln -> :eexist); lstat returns the
+      # same inode for source+dest, so do_resolve hits the same-inode branch — `replace: true`
+      # forces the NEW quality ("1080p") to be recorded there (without the forced replace it would
+      # keep the stale "720p", so asserting "1080p" proves the forced replace). The old file at a
+      # DIFFERENT path is removed best-effort after the swap.
+      test_pid = self()
+      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+
+      stub(Cinder.Library.FilesystemMock, :lstat, fn _ -> {:ok, %File.Stat{size: 1, inode: 1}} end)
+
+      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eexist} end)
+      stub(Cinder.Library.FilesystemMock, :rm, fn path -> send(test_pid, {:rm, path}) && :ok end)
+      stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
+
+      assert :ok = Poller.poll()
+
+      reloaded = Repo.get!(Movie, movie.id)
+      assert reloaded.status == :available
+      assert reloaded.imported_resolution == "1080p"
+
+      # the live pointer moved to the new library dest (it was never overwritten with content_path)
+      assert reloaded.file_path =~ "/tmp/cinder-test-library"
+      refute reloaded.file_path == "/lib/M (2020)/M (2020).mkv"
+      # the old file (different container path) is unlinked best-effort after the DB commit
+      assert_receive {:rm, "/lib/M (2020)/M (2020).mkv"}
+    end
+
+    test "a failed upgrade reverts to :available with the old file intact and blocklists the release" do
+      movie =
+        movie_fixture(%{
+          tmdb_id: 71,
+          status: :upgrading,
+          download_id: "dl-2",
+          download_protocol: :torrent,
+          release_title: "Bad.1080p-GRP",
+          file_path: "/lib/M (2020)/M (2020).mkv"
+        })
+
+      start_supervised!({Poller, interval: 60_000})
+
+      expect(Cinder.Download.ClientMock, :status, fn "dl-2" ->
+        {:ok, %{state: :completed, content_path: "/dl/Bad"}}
+      end)
+
+      # The download yields no usable video file -> :no_video_file (a permanent import error). The
+      # upgrade reverts WITHOUT touching the live file and blocklists the release it was told to grab.
+      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+      stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+        {:ok, [{"/dl/Bad/readme.nfo", 12}]}
+      end)
+
+      assert :ok = Poller.poll()
+
+      reloaded = Repo.get!(Movie, movie.id)
+      assert reloaded.status == :available
+      assert reloaded.file_path == "/lib/M (2020)/M (2020).mkv"
+      assert reloaded.download_id == nil
+      assert reloaded.download_protocol == nil
+      assert reloaded.release_title == nil
+      assert "Bad.1080p-GRP" in Catalog.blocked_release_titles(reloaded)
+    end
+
+    test "an upgrade with no configured client reverts to :available without blocklisting" do
+      # Drop usenet so the upgrade's status poll can't resolve a client (a config glitch, not a
+      # release failure): it must revert the file-safe upgrade but NOT blocklist a good release.
+      original = Application.fetch_env!(:cinder, :download_clients)
+      Application.put_env(:cinder, :download_clients, %{torrent: Cinder.Download.ClientMock})
+      on_exit(fn -> Application.put_env(:cinder, :download_clients, original) end)
+
+      movie =
+        movie_fixture(%{
+          tmdb_id: 72,
+          status: :upgrading,
+          download_id: "nzo-72",
+          download_protocol: :usenet,
+          release_title: "Good.Release-GRP",
+          file_path: "/lib/M (2020)/M (2020).mkv"
+        })
+
+      start_supervised!({Poller, interval: 60_000})
+
+      assert :ok = Poller.poll()
+
+      reloaded = Repo.get!(Movie, movie.id)
+      assert reloaded.status == :available
+      assert reloaded.file_path == "/lib/M (2020)/M (2020).mkv"
+      assert reloaded.download_id == nil
+      assert reloaded.download_protocol == nil
+      assert Catalog.blocked_release_titles(reloaded) == []
+    end
+  end
 end

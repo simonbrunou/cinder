@@ -322,4 +322,55 @@ defmodule Cinder.Acquisition.ScorerTest do
       assert Scorer.source_rank(nil, ["bluray", "webdl"]) == 2
     end
   end
+
+  describe "verdict/2" do
+    defp rel(attrs),
+      do:
+        struct(
+          Release,
+          Map.merge(
+            %{
+              title: "X",
+              resolution: "1080p",
+              source: "bluray",
+              size: 5_000_000_000,
+              language: "en",
+              group: "G",
+              protocol: :torrent,
+              season: nil,
+              episodes: nil
+            },
+            Map.new(attrs)
+          )
+        )
+
+    test "accepts an in-band, allowed release" do
+      assert Scorer.verdict(rel([]),
+               preferred_resolutions: ["1080p"],
+               min_size: 1,
+               max_size: 10_000_000_000
+             ) == :ok
+    end
+
+    test "flags an out-of-band release" do
+      assert Scorer.verdict(rel(size: 99_000_000_000), max_size: 10_000_000_000) ==
+               {:rejected, :out_of_band}
+    end
+
+    test "flags a blocklisted title" do
+      assert Scorer.verdict(rel(title: "Bad.Release"), release_blocklist: ["bad.release"]) ==
+               {:rejected, :blocklisted}
+    end
+
+    test "flags a disallowed resolution" do
+      assert Scorer.verdict(rel(resolution: "480p"), preferred_resolutions: ["1080p"]) ==
+               {:rejected, :wrong_resolution}
+    end
+
+    test "rank_key orders a preferred resolution ahead of a worse one" do
+      a = Scorer.rank_key(rel(resolution: "1080p"), preferred_resolutions: ["1080p", "720p"])
+      b = Scorer.rank_key(rel(resolution: "720p"), preferred_resolutions: ["1080p", "720p"])
+      assert a < b
+    end
+  end
 end

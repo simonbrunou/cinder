@@ -14,6 +14,7 @@ defmodule CinderWeb.StatusBadgeTest do
           :downloading,
           :downloaded,
           :available,
+          :upgrading,
           :no_match,
           :search_failed,
           :import_failed,
@@ -58,6 +59,13 @@ defmodule CinderWeb.StatusBadgeTest do
     assert f.(:not_configured) == "Not configured"
     assert f.({:status, 401}) == "Authentication failed"
     assert f.(%CaseClauseError{term: nil}) == "Check failed"
+  end
+
+  test "the :upgrading badge uses badge-info and the arrow-up-circle icon" do
+    html = badge(%{kind: :movie, status: :upgrading})
+    assert html =~ "Upgrading"
+    assert html =~ "badge-info"
+    assert html =~ "hero-arrow-up-circle"
   end
 
   test "an unmapped status falls back to a neutral badge instead of raising" do

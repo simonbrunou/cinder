@@ -5,8 +5,10 @@ defmodule Cinder.CatalogSeriesTest do
   use Cinder.DataCase, async: false
 
   import Mox
+  import Cinder.CatalogFixtures
 
   alias Cinder.Catalog
+  alias Cinder.Catalog.Episode
   alias Cinder.Catalog.Series
 
   setup :verify_on_exit!
@@ -374,6 +376,109 @@ defmodule Cinder.CatalogSeriesTest do
       {:ok, _} = Catalog.find_or_create_series_at_requested(1399, 1, "french")
       {:ok, series} = Catalog.find_or_create_series_at_requested(1399, 2, "any")
       assert series.preferred_language == "french"
+    end
+  end
+
+  # Creates a series with one monitored, aired, file-less episode — i.e. a wanted episode.
+  defp series_with_wanted_episode(attrs) do
+    series = series_fixture(%{monitor_strategy: :all})
+    season = season_fixture(series, %{season_number: 1})
+    _ep = episode_fixture(season, Map.new(attrs))
+    series
+  end
+
+  # Creates a series whose season has multiple wanted (monitored, aired, file-less) episodes.
+  defp series_with_wanted_episodes(opts) do
+    season_num = Keyword.get(opts, :season, 1)
+    numbers = Keyword.get(opts, :numbers, [1])
+    series = series_fixture(%{monitor_strategy: :all})
+    season = season_fixture(series, %{season_number: season_num})
+    Enum.each(numbers, fn n -> episode_fixture(season, %{episode_number: n}) end)
+    series
+  end
+
+  # Creates a series whose season has all episodes with files — nothing wanted.
+  defp series_with_available_season(opts) do
+    season_num = Keyword.get(opts, :season, 1)
+    series = series_fixture(%{monitor_strategy: :all})
+    season = season_fixture(series, %{season_number: season_num})
+    episode_fixture(season, %{episode_number: 1, file_path: "/media/ep1.mkv"})
+    series
+  end
+
+  describe "manual_grab_tv/3" do
+    test "creates a grab over the season's still-wanted episodes the release covers" do
+      series = series_with_wanted_episodes(season: 1, numbers: [1, 2, 3])
+
+      release = %Cinder.Acquisition.Release{
+        title: "S01 Pack",
+        protocol: :torrent,
+        season: 1,
+        episodes: nil,
+        download_url: "magnet:?x"
+      }
+
+      Cinder.Download.ClientMock |> expect(:add, fn _ -> {:ok, "dl-tv"} end)
+
+      assert {:ok, grab} = Cinder.Catalog.manual_grab_tv(series, 1, release)
+      grab = Cinder.Repo.preload(grab, :episodes)
+      assert Enum.map(grab.episodes, & &1.episode_number) |> Enum.sort() == [1, 2, 3]
+    end
+
+    test "returns :nothing_wanted when the season has no wanted episodes" do
+      series = series_with_available_season(season: 1)
+
+      release = %Cinder.Acquisition.Release{
+        title: "S01",
+        protocol: :torrent,
+        season: 1,
+        episodes: nil
+      }
+
+      assert Cinder.Catalog.manual_grab_tv(series, 1, release) == {:error, :nothing_wanted}
+    end
+
+    # FIX 3: client.add happens before create_grab. If a concurrent sweep grabs the episodes
+    # during the add (create_grab rolls back :no_episodes_linked), the just-added download must be
+    # removed so it isn't orphaned in the client. The mock's add callback simulates that race by
+    # grabbing the episodes itself before returning.
+    test "removes the just-added download when create_grab rolls back (:no_episodes_linked)" do
+      series = series_with_wanted_episodes(season: 1, numbers: [1, 2, 3])
+
+      release = %Cinder.Acquisition.Release{
+        title: "S01 Pack",
+        protocol: :torrent,
+        season: 1,
+        episodes: nil,
+        download_url: "magnet:?x"
+      }
+
+      Cinder.Download.ClientMock
+      |> expect(:add, fn _ ->
+        ids = Catalog.wanted_episodes() |> Enum.map(& &1.id)
+        {:ok, _other} = Catalog.create_grab("H-concurrent", :torrent, ids)
+        {:ok, "dl-tv"}
+      end)
+      |> expect(:remove, fn "dl-tv", _opts -> :ok end)
+
+      assert Cinder.Catalog.manual_grab_tv(series, 1, release) == {:error, :no_episodes_linked}
+    end
+  end
+
+  describe "search_now" do
+    test "search_series_now zeros search_attempts on wanted episodes" do
+      series = series_with_wanted_episode(search_attempts: 9)
+      assert :ok = Catalog.search_series_now(series)
+      [ep] = Catalog.wanted_episodes()
+      assert ep.search_attempts == 0
+    end
+
+    test "search_episode_now is a no-op on an episode that already has a file" do
+      series = series_fixture(%{monitor_strategy: :all})
+      season = season_fixture(series, %{season_number: 1})
+      ep = episode_fixture(season, %{file_path: "/lib/x.mkv", search_attempts: 9})
+      assert Catalog.search_episode_now(ep) in [:ok, {:ok, ep}]
+      assert Repo.get(Episode, ep.id).search_attempts == 9
     end
   end
 end

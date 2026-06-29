@@ -45,9 +45,15 @@ defmodule Cinder.Library do
   file is never imported (the poller parks it). Missing/unverifiable audio data imports as before.
   """
   @spec import_movie(Movie.t()) :: {:ok, String.t(), map()} | {:error, term()}
-  def import_movie(%Movie{file_path: path}) when path in [nil, ""], do: {:error, :no_file_path}
+  def import_movie(%Movie{} = movie), do: import_movie(movie, [])
 
-  def import_movie(%Movie{} = movie) do
+  @spec import_movie(Movie.t(), keyword()) :: {:ok, String.t(), map()} | {:error, term()}
+  def import_movie(%Movie{file_path: path}, _opts) when path in [nil, ""],
+    do: {:error, :no_file_path}
+
+  def import_movie(%Movie{} = movie, opts) do
+    replace? = Keyword.get(opts, :replace, false)
+
     with {:ok, root} <- root(:movies),
          {:ok, source} <- resolve_source(movie.file_path),
          :ok <-
@@ -61,16 +67,19 @@ defmodule Cinder.Library do
          dest = build_dest(movie, source, root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
          {:ok, quality} <-
-           place(source, dest, {si, sdev}, movie, new_q, fn -> upgrade?(movie, new_q) end) do
+           place(source, dest, {si, sdev}, movie, new_q, replace?, fn ->
+             upgrade?(movie, new_q)
+           end) do
       scan(:movies, dest)
       {:ok, dest, quality}
     end
   end
 
   # Place source at dest; resolve a same-item collision (tmdb-unique folder => same record) by the
-  # caller's `upgrade_fun` decision. Shared by movie and episode imports. `upgrade_fun` is a thunk
-  # so the (config-reading) upgrade comparison runs only on an actual collision, not every import.
-  defp place(source, dest, {si, sdev}, record, new_q, upgrade_fun) do
+  # caller's `upgrade_fun` decision or a forced `replace?`. Shared by movie and episode imports.
+  # `upgrade_fun` is a thunk so the (config-reading) upgrade comparison runs only on an actual
+  # collision, not every import. `replace?` bypasses the upgrade gate entirely.
+  defp place(source, dest, {si, sdev}, record, new_q, replace?, upgrade_fun) do
     case fs().ln(source, dest) do
       :ok ->
         {:ok, new_q}
@@ -88,7 +97,17 @@ defmodule Cinder.Library do
           # Inode numbers are unique only within one filesystem, so an idempotency short-circuit must
           # also match the device — across filesystems two inodes can collide and would otherwise skip
           # a genuine upgrade. Same-fs hardlink fast path (sdev == ddev) is unchanged.
-          do_resolve(source, dest, si == di and sdev == ddev, upgrade_fun.(), record, new_q)
+          same_inode? = si == di and sdev == ddev
+
+          do_resolve(
+            source,
+            dest,
+            same_inode?,
+            replace? or upgrade_fun.(),
+            record,
+            new_q,
+            replace?
+          )
         end
 
       {:error, _} = err ->
@@ -96,14 +115,17 @@ defmodule Cinder.Library do
     end
   end
 
-  defp do_resolve(_source, _dest, true, _upgrade, movie, new_q),
-    do: {:ok, existing_quality(movie, new_q)}
+  # Same inode: the file is already in place (idempotent). Normally keep the recorded quality, but a
+  # forced replace (e.g. manual re-import after a crash) must record the NEW quality.
+  defp do_resolve(_source, _dest, true, _upgrade, movie, new_q, replace?),
+    do: {:ok, if(replace?, do: new_q, else: existing_quality(movie, new_q))}
 
-  defp do_resolve(source, dest, false, true, _movie, new_q) do
+  defp do_resolve(source, dest, false, true, _movie, new_q, _replace?) do
     with :ok <- replace(source, dest), do: {:ok, new_q}
   end
 
-  defp do_resolve(_source, dest, false, false, movie, new_q), do: keep(dest, movie, new_q)
+  defp do_resolve(_source, dest, false, false, movie, new_q, _replace?),
+    do: keep(dest, movie, new_q)
 
   defp existing_quality(record, new_q) do
     if nil_q?(record), do: new_q, else: old_quality(record)
@@ -422,7 +444,9 @@ defmodule Cinder.Library do
          new_q = new_quality(parsed, size),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
          {:ok, q} <-
-           place(source, dest, {si, sdev}, ep, new_q, fn -> ep_upgrade?(ep, new_q, target) end) do
+           place(source, dest, {si, sdev}, ep, new_q, false, fn ->
+             ep_upgrade?(ep, new_q, target)
+           end) do
       {:ok, dest, q}
     end
   end

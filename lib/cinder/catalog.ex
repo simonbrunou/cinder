@@ -8,6 +8,7 @@ defmodule Cinder.Catalog do
   import Ecto.Query
   require Logger
 
+  alias Cinder.Acquisition.Release
   alias Cinder.Audit
   alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Movie, Season, Series}
   alias Cinder.Download
@@ -186,6 +187,104 @@ defmodule Cinder.Catalog do
 
   def retry_movie(%Movie{}), do: {:error, :not_retryable}
 
+  @doc """
+  Grabs a specific user-chosen `release` for `movie`. An `:available` movie enters `:upgrading`
+  (its library `file_path` and `imported_*` are preserved — the poller's upgrade clause swaps the
+  file only on a successful re-import). A parked movie (`#{inspect(@retryable)}`) enters
+  `:downloading` on the normal import path. Any other status returns `{:error, :not_grabbable}`
+  (rejecting in-flight/`:upgrading`/`:cancelled`, which also blocks a double-click). A movie deleted
+  mid-action surfaces `{:error, :stale_entry}`.
+  """
+  def manual_grab_movie(%Movie{status: :available} = movie, %Release{} = release) do
+    grab_and_transition(movie, release, %{status: :upgrading})
+  end
+
+  def manual_grab_movie(%Movie{status: status} = movie, %Release{} = release)
+      when status in @retryable do
+    grab_and_transition(movie, release, %{status: :downloading, search_attempts: 0})
+  end
+
+  def manual_grab_movie(%Movie{}, %Release{}), do: {:error, :not_grabbable}
+
+  # Grabs the release (a client.add side-effect returning a download_id), then transitions the
+  # movie with the shared download bookkeeping merged onto `attrs`. If the row was deleted
+  # mid-action, transition/2 raises Ecto.StaleEntryError; we best-effort remove the just-added
+  # download so it isn't orphaned in the client, then surface {:error, :stale_entry}.
+  defp grab_and_transition(movie, %Release{} = release, attrs) do
+    case Download.grab(release) do
+      {:ok, download_id} ->
+        try do
+          transition(
+            movie,
+            Map.merge(attrs, %{
+              download_id: download_id,
+              download_protocol: release.protocol,
+              release_title: release.title,
+              import_attempts: 0
+            })
+          )
+        rescue
+          Ecto.StaleEntryError ->
+            remove_download(%{download_id: download_id, download_protocol: release.protocol})
+            {:error, :stale_entry}
+        end
+
+      error ->
+        error
+    end
+  end
+
+  @doc """
+  Grabs a user-chosen `release` for one `season_number` of `series`. Recomputes the season's
+  still-wanted episodes server-side (don't trust a stale panel snapshot) and creates the grab over
+  exactly the wanted episodes the release covers (`episodes: nil` = a whole-season pack covers them
+  all). `create_grab/4` itself skips any episode that already has a grab, so a concurrent sweep grab
+  can't be double-linked. `{:error, :nothing_wanted}` when the season has nothing to grab.
+  """
+  def manual_grab_tv(%Series{id: series_id}, season_number, %Release{} = release) do
+    wanted =
+      wanted_episodes()
+      |> Enum.filter(
+        &(&1.season.series.id == series_id and &1.season.season_number == season_number)
+      )
+
+    covered = cover_numbers(release, Enum.map(wanted, & &1.episode_number))
+    episode_ids = wanted |> Enum.filter(&(&1.episode_number in covered)) |> Enum.map(& &1.id)
+
+    case episode_ids do
+      [] -> {:error, :nothing_wanted}
+      ids -> grab_and_create_grab(release, ids)
+    end
+  end
+
+  # Grabs the release (a client.add side-effect returning a download_id), then links the grab over
+  # `episode_ids`. If create_grab/4 rolls back — a concurrent sweep grabbed the episodes first
+  # (:no_episodes_linked) or the insert failed — best-effort remove the just-added download so it
+  # isn't orphaned in the client, then surface the error.
+  defp grab_and_create_grab(%Release{} = release, episode_ids) do
+    case Download.grab(release) do
+      {:ok, download_id} ->
+        case create_grab(download_id, release.protocol, episode_ids, release.title) do
+          {:ok, _grab} = ok ->
+            ok
+
+          {:error, _reason} = error ->
+            remove_download(%{download_id: download_id, download_protocol: release.protocol})
+            error
+        end
+
+      error ->
+        error
+    end
+  end
+
+  # A whole-season pack (episodes: nil) covers every still-wanted number; an episode list covers its
+  # intersection with what's wanted. Mirrors Scorer.coverage/2.
+  defp cover_numbers(%Release{episodes: nil}, wanted_numbers), do: wanted_numbers
+
+  defp cover_numbers(%Release{episodes: eps}, wanted_numbers),
+    do: Enum.filter(wanted_numbers, &(&1 in eps))
+
   # Parked statuses where a language change should trigger a fresh search.
   # :import_failed means a release was found but couldn't be written — not a language issue.
   @language_retry_statuses [:no_match, :search_failed]
@@ -298,6 +397,46 @@ defmodule Cinder.Catalog do
   end
 
   @doc """
+  Aborts an in-flight movie upgrade: removes the replacement download (best-effort) and reverts
+  the movie to `:available`, keeping the existing library file. Distinct from `cancel_movie/2` —
+  an `:upgrading` movie must NOT become `:cancelled` (it still has a good file). Returns
+  `{:error, :not_upgrading}` otherwise.
+
+  Client I/O runs OUTSIDE the DB transaction (external-I/O rule). The `:available` revert +
+  the audit row are written in one transaction so a rolled-back abort leaves no orphan audit row;
+  the `{:movie_updated, _}` broadcast fires after commit.
+  """
+  def abort_upgrade(%Movie{status: :upgrading} = movie, actor) do
+    remove_download(movie)
+
+    result =
+      Repo.transaction(fn ->
+        case movie
+             |> Movie.transition_changeset(%{
+               status: :available,
+               download_id: nil,
+               download_protocol: nil,
+               release_title: nil
+             })
+             |> Repo.update() do
+          {:ok, updated} ->
+            Audit.log_or_rollback(actor, :abort_upgrade, updated, %{from: :upgrading})
+            updated
+
+          {:error, changeset} ->
+            Repo.rollback(changeset)
+        end
+      end)
+
+    with {:ok, updated} <- result do
+      broadcast({:movie_updated, updated})
+      {:ok, updated}
+    end
+  end
+
+  def abort_upgrade(%Movie{}, _actor), do: {:error, :not_upgrading}
+
+  @doc """
   Deletes a movie's DB row. An active row with a tracked download is cancelled first (which
   removes the client download) so delete never orphans a live download. Broadcasts
   `{:movie_deleted, id}` on the `"movies"` topic. The delete + audit row are written in one
@@ -359,7 +498,7 @@ defmodule Cinder.Catalog do
   defp maybe_cancel_download_for_delete(%Movie{download_id: nil}), do: :ok
 
   defp maybe_cancel_download_for_delete(%Movie{} = movie) do
-    if cancellable?(movie), do: remove_download(movie), else: :ok
+    if cancellable?(movie) or movie.status == :upgrading, do: remove_download(movie), else: :ok
   end
 
   # Best-effort library-file unlink shared by the movie and series delete paths: a failed unlink is
@@ -1185,6 +1324,23 @@ defmodule Cinder.Catalog do
 
   @doc "Count of wanted episodes (see `wanted_episodes/0`)."
   def count_wanted_episodes, do: Repo.aggregate(wanted_episodes_query(), :count)
+
+  @doc """
+  Re-queues a single wanted `episode` for the TV sweep by zeroing its `search_attempts` (clearing
+  any backoff/attempt-cap park). A no-op for an episode that already has a file or an active grab
+  (it isn't wanted). The sweep picks it up within one poll interval.
+  """
+  def search_episode_now(%Episode{file_path: nil, grab_id: nil} = episode),
+    do: transition_episode(episode, %{search_attempts: 0})
+
+  def search_episode_now(%Episode{}), do: :ok
+
+  @doc "Re-queues every still-wanted episode of `series` (zeroes their `search_attempts`)."
+  def search_series_now(%Series{id: series_id}) do
+    wanted_episodes()
+    |> Enum.filter(&(&1.season.series.id == series_id))
+    |> Enum.each(&transition_episode(&1, %{search_attempts: 0}))
+  end
 
   defp wanted_episodes_query do
     today = Date.utc_today()

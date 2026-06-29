@@ -12,6 +12,7 @@ defmodule Cinder.Download do
   """
   require Logger
   alias Cinder.{Acquisition, Catalog, Notifier}
+  alias Cinder.Acquisition.Release
   alias Cinder.Catalog.Movie
 
   @doc """
@@ -52,6 +53,19 @@ defmodule Cinder.Download do
     else
       :no_imdb_id -> {:error, :no_imdb_id}
       {:error, _} = err -> err
+    end
+  end
+
+  @doc """
+  Adds one specific `release` to its protocol's download client and returns `{:ok, download_id}`,
+  or `{:error, :no_client}` when no client is configured for the protocol. The manual-search
+  grab path: the caller has already chosen the release, so unlike `start/1` there is no search
+  and no `Catalog.transition` here — the caller records the new download.
+  """
+  def grab(%Release{} = release) do
+    case client_for(release.protocol) do
+      {:ok, client} -> client.add(release)
+      :error -> {:error, :no_client}
     end
   end
 
