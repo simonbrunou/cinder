@@ -394,4 +394,35 @@ defmodule Cinder.CatalogTest do
       assert Catalog.manual_grab_movie(movie, release) == {:error, :not_grabbable}
     end
   end
+
+  describe "abort_upgrade/2" do
+    test "reverts an :upgrading movie to :available and removes the download" do
+      movie =
+        movie_fixture(
+          status: :upgrading,
+          download_id: "dl-3",
+          download_protocol: :torrent,
+          file_path: "/lib/M (2020)/M (2020).mkv"
+        )
+
+      Cinder.Download.ClientMock |> expect(:remove, fn "dl-3", _ -> :ok end)
+      assert {:ok, reverted} = Catalog.abort_upgrade(movie, nil)
+      assert reverted.status == :available
+      assert reverted.download_id == nil
+      assert reverted.file_path == "/lib/M (2020)/M (2020).mkv"
+    end
+
+    test "rejects a non-upgrading movie" do
+      assert Catalog.abort_upgrade(movie_fixture(status: :available), nil) ==
+               {:error, :not_upgrading}
+    end
+  end
+
+  test "delete_movie removes the in-flight download of an :upgrading movie" do
+    movie =
+      movie_fixture(status: :upgrading, download_id: "dl-4", download_protocol: :torrent)
+
+    Cinder.Download.ClientMock |> expect(:remove, fn "dl-4", _ -> :ok end)
+    assert {:ok, _} = Catalog.delete_movie(movie, nil)
+  end
 end

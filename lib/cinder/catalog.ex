@@ -339,6 +339,46 @@ defmodule Cinder.Catalog do
   end
 
   @doc """
+  Aborts an in-flight movie upgrade: removes the replacement download (best-effort) and reverts
+  the movie to `:available`, keeping the existing library file. Distinct from `cancel_movie/2` —
+  an `:upgrading` movie must NOT become `:cancelled` (it still has a good file). Returns
+  `{:error, :not_upgrading}` otherwise.
+
+  Client I/O runs OUTSIDE the DB transaction (external-I/O rule). The `:available` revert +
+  the audit row are written in one transaction so a rolled-back abort leaves no orphan audit row;
+  the `{:movie_updated, _}` broadcast fires after commit.
+  """
+  def abort_upgrade(%Movie{status: :upgrading} = movie, actor) do
+    remove_download(movie)
+
+    result =
+      Repo.transaction(fn ->
+        case movie
+             |> Movie.transition_changeset(%{
+               status: :available,
+               download_id: nil,
+               download_protocol: nil,
+               release_title: nil
+             })
+             |> Repo.update() do
+          {:ok, updated} ->
+            Audit.log_or_rollback(actor, :abort_upgrade, updated, %{from: :upgrading})
+            updated
+
+          {:error, changeset} ->
+            Repo.rollback(changeset)
+        end
+      end)
+
+    with {:ok, updated} <- result do
+      broadcast({:movie_updated, updated})
+      {:ok, updated}
+    end
+  end
+
+  def abort_upgrade(%Movie{}, _actor), do: {:error, :not_upgrading}
+
+  @doc """
   Deletes a movie's DB row. An active row with a tracked download is cancelled first (which
   removes the client download) so delete never orphans a live download. Broadcasts
   `{:movie_deleted, id}` on the `"movies"` topic. The delete + audit row are written in one
@@ -400,7 +440,7 @@ defmodule Cinder.Catalog do
   defp maybe_cancel_download_for_delete(%Movie{download_id: nil}), do: :ok
 
   defp maybe_cancel_download_for_delete(%Movie{} = movie) do
-    if cancellable?(movie), do: remove_download(movie), else: :ok
+    if cancellable?(movie) or movie.status == :upgrading, do: remove_download(movie), else: :ok
   end
 
   # Best-effort library-file unlink shared by the movie and series delete paths: a failed unlink is
