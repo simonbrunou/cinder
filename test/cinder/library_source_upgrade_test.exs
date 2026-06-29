@@ -108,6 +108,44 @@ defmodule Cinder.LibrarySourceUpgradeTest do
     assert log =~ "kept existing"
   end
 
+  test "import_movie/2 replace: true swaps even a non-upgrade and records the new quality" do
+    movie = %Movie{
+      title: "Heat",
+      year: 1995,
+      tmdb_id: 949,
+      imported_resolution: "1080p",
+      imported_size: 9 * @gb,
+      imported_language: nil,
+      imported_source: "bluray",
+      file_path: "/dl/Heat.1995.720p.WEB-DL.x264.mkv"
+    }
+
+    dest = "#{@lib}/Heat (1995) {tmdb-949}/Heat (1995) {tmdb-949}.mkv"
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+
+    expect(Cinder.Library.FilesystemMock, :lstat, fn "/dl/Heat.1995.720p.WEB-DL.x264.mkv" ->
+      {:ok, %File.Stat{size: 2 * @gb, inode: 7}}
+    end)
+
+    expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    expect(Cinder.Library.FilesystemMock, :ln, fn _src, ^dest -> {:error, :eexist} end)
+    expect(Cinder.Library.FilesystemMock, :lstat, fn ^dest -> {:ok, %File.Stat{inode: 99}} end)
+    # replace path: sweep_temps, ln to tmp, rename
+    expect(Cinder.Library.FilesystemMock, :find_files, fn _dir -> {:ok, []} end)
+
+    expect(Cinder.Library.FilesystemMock, :ln, fn _src, tmp ->
+      assert String.contains?(tmp, ".cinder-tmp-")
+      :ok
+    end)
+
+    expect(Cinder.Library.FilesystemMock, :rename, fn _tmp, ^dest -> :ok end)
+    expect(Cinder.Library.MediaServerMock, :scan, fn _ -> :ok end)
+
+    assert {:ok, ^dest, q} = Library.import_movie(movie, replace: true)
+    assert q.resolution == "720p"
+  end
+
   test "same-resolution better source replaces an episode's file" do
     series = struct(%Series{title: "Show", year: 2008, tmdb_id: 1}, [])
 
