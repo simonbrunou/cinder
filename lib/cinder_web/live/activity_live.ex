@@ -25,7 +25,8 @@ defmodule CinderWeb.ActivityLive do
      assign(socket,
        movies: Catalog.list_watchlist(),
        grabs: Catalog.list_grabs(),
-       confirming: nil
+       confirming: nil,
+       searching_movie_id: nil
      )}
   end
 
@@ -45,7 +46,26 @@ defmodule CinderWeb.ActivityLive do
   def handle_info({:series_deleted, _id}, socket),
     do: {:noreply, assign(socket, grabs: Catalog.list_grabs())}
 
+  # The manual-search panel forwards a chosen release back here (it owns no Catalog writes).
+  # Re-resolve the movie from the live list (it may have moved on) before grabbing.
+  def handle_info({:manual_grab, :movie, movie, release}, socket) do
+    {level, msg} =
+      case find_by_id(socket.assigns.movies, to_string(movie.id)) do
+        nil -> {:error, gettext("That movie can't be grabbed right now.")}
+        current -> grab_flash(Catalog.manual_grab_movie(current, release))
+      end
+
+    {:noreply, socket |> assign(searching_movie_id: nil) |> put_flash(level, msg)}
+  end
+
   def handle_info(_message, socket), do: {:noreply, socket}
+
+  defp grab_flash({:ok, _movie}), do: {:info, gettext("Grabbing the selected release…")}
+
+  defp grab_flash({:error, :not_grabbable}),
+    do: {:error, gettext("That movie can't be grabbed right now.")}
+
+  defp grab_flash({:error, _reason}), do: {:error, gettext("Couldn't grab that release.")}
 
   @impl true
   def handle_event("retry", %{"id" => id}, socket) do
@@ -78,6 +98,19 @@ defmodule CinderWeb.ActivityLive do
      socket
      |> assign(confirming: nil, grabs: Catalog.list_grabs())
      |> put_flash(:info, gettext("Download deleted."))}
+  end
+
+  # Toggle the manual-search panel for a movie row (re-clicking the open row closes it).
+  def handle_event("manual_search", %{"id" => id}, socket) do
+    id = to_string(id)
+    open = if socket.assigns.searching_movie_id == id, do: nil, else: id
+    {:noreply, assign(socket, searching_movie_id: open)}
+  end
+
+  def handle_event("cancel_upgrade", %{"id" => id}, socket) do
+    movie = find_by_id(socket.assigns.movies, id)
+    if movie, do: Catalog.abort_upgrade(movie, socket.assigns.current_scope.user)
+    {:noreply, socket}
   end
 
   # Client-controlled payloads — ignore anything unmatched rather than crash.
@@ -127,10 +160,38 @@ defmodule CinderWeb.ActivityLive do
             >
               {gettext("Retry")}
             </.button>
+            <.button
+              :if={m.status == :available or parked?(m.status)}
+              type="button"
+              variant="ghost"
+              size="sm"
+              phx-click="manual_search"
+              phx-value-id={m.id}
+            >
+              {gettext("Find a better match")}
+            </.button>
+            <.button
+              :if={m.status == :upgrading}
+              type="button"
+              variant="ghost"
+              size="sm"
+              phx-click="cancel_upgrade"
+              phx-value-id={m.id}
+            >
+              {gettext("Cancel upgrade")}
+            </.button>
             <form id={"movie-language-form-#{m.id}"} phx-change="set_movie_language" class="ml-auto">
               <input type="hidden" name="_id" value={m.id} />
               <.language_select value={m.preferred_language} class="select select-xs" />
             </form>
+            <div :if={@searching_movie_id == to_string(m.id)} class="w-full">
+              <.live_component
+                module={CinderWeb.ManualSearchComponent}
+                id={"ms-movie-#{m.id}"}
+                mode={:movie}
+                target={m}
+              />
+            </div>
           </li>
         </ul>
       </section>

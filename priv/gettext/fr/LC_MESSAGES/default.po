@@ -72,7 +72,7 @@ msgid "Account created."
 msgstr "Compte créé."
 
 #: lib/cinder_web/components/layouts.ex:117
-#: lib/cinder_web/live/activity_live.ex:97
+#: lib/cinder_web/live/activity_live.ex:130
 #, elixir-autogen, elixir-format
 msgid "Activity"
 msgstr "Activité"
@@ -387,8 +387,8 @@ msgstr "Création…"
 msgid "Dashboard"
 msgstr "Tableau de bord"
 
-#: lib/cinder_web/live/activity_live.ex:162
-#: lib/cinder_web/live/activity_live.ex:171
+#: lib/cinder_web/live/activity_live.ex:223
+#: lib/cinder_web/live/activity_live.ex:232
 #: lib/cinder_web/live/library_live.ex:252
 #: lib/cinder_web/live/library_live.ex:299
 #: lib/cinder_web/live/library_live.ex:357
@@ -459,7 +459,7 @@ msgstr "%{cleared} fichier(s) supprimé(s) ; %{failed} n'ont pas pu être suppri
 msgid "Deleted %{count} file(s)."
 msgstr "%{count} fichier(s) supprimé(s)."
 
-#: lib/cinder_web/live/activity_live.ex:160
+#: lib/cinder_web/live/activity_live.ex:221
 #, elixir-autogen, elixir-format
 msgid "Deleting…"
 msgstr "Suppression…"
@@ -505,7 +505,7 @@ msgstr "Téléchargé"
 msgid "Downloading"
 msgstr "En téléchargement"
 
-#: lib/cinder_web/live/activity_live.ex:139
+#: lib/cinder_web/live/activity_live.ex:200
 #, elixir-autogen, elixir-format
 msgid "Downloads"
 msgstr "Téléchargements"
@@ -589,7 +589,7 @@ msgstr "Échec de l'import"
 msgid "In pipeline"
 msgstr "Dans le pipeline"
 
-#: lib/cinder_web/live/activity_live.ex:144
+#: lib/cinder_web/live/activity_live.ex:205
 #, elixir-autogen, elixir-format
 msgid "In-flight TV downloads show here."
 msgstr "Les téléchargements TV en cours s'affichent ici."
@@ -616,7 +616,7 @@ msgstr "Langue"
 msgid "Library"
 msgstr "Bibliothèque"
 
-#: lib/cinder_web/live/activity_live.ex:98
+#: lib/cinder_web/live/activity_live.ex:131
 #, elixir-autogen, elixir-format
 msgid "Live pipeline and in-flight downloads."
 msgstr "Pipeline en direct et téléchargements en cours."
@@ -723,7 +723,7 @@ msgstr "Film annulé."
 msgid "Movie deleted."
 msgstr "Film supprimé."
 
-#: lib/cinder_web/live/activity_live.ex:102
+#: lib/cinder_web/live/activity_live.ex:135
 #, elixir-autogen, elixir-format
 msgid "Movie pipeline"
 msgstr "Pipeline des films"
@@ -767,7 +767,7 @@ msgstr "Les nouvelles demandes apparaissent ici."
 msgid "New user"
 msgstr "Nouvel utilisateur"
 
-#: lib/cinder_web/live/activity_live.ex:143
+#: lib/cinder_web/live/activity_live.ex:204
 #, elixir-autogen, elixir-format
 msgid "No active downloads"
 msgstr "Aucun téléchargement actif"
@@ -797,7 +797,7 @@ msgstr "Aucune correspondance"
 msgid "No movies or shows matched that search."
 msgstr "Aucun film ou série ne correspond à cette recherche."
 
-#: lib/cinder_web/live/activity_live.ex:106
+#: lib/cinder_web/live/activity_live.ex:139
 #: lib/cinder_web/live/library_live.ex:215
 #, elixir-autogen, elixir-format
 msgid "No movies yet"
@@ -966,7 +966,7 @@ msgstr "Demandé"
 msgid "Requested movies appear here."
 msgstr "Les films demandés apparaissent ici."
 
-#: lib/cinder_web/live/activity_live.ex:107
+#: lib/cinder_web/live/activity_live.ex:140
 #, elixir-autogen, elixir-format
 msgid "Requested movies move through here."
 msgstr "Les films demandés transitent ici."
@@ -993,12 +993,12 @@ msgstr "Réinitialiser le mot de passe"
 msgid "Resetting…"
 msgstr "Réinitialisation…"
 
-#: lib/cinder_web/live/activity_live.ex:128
+#: lib/cinder_web/live/activity_live.ex:161
 #, elixir-autogen, elixir-format
 msgid "Retry"
 msgstr "Réessayer"
 
-#: lib/cinder_web/live/activity_live.ex:126
+#: lib/cinder_web/live/activity_live.ex:159
 #, elixir-autogen, elixir-format
 msgid "Retrying…"
 msgstr "Nouvelle tentative…"
@@ -1617,7 +1617,7 @@ msgstr "Supprimer %{email} ? Ses demandes sont également supprimées."
 msgid "Delete the downloaded file for this episode? If it stays monitored it will be downloaded again. Stop monitoring it to keep it gone."
 msgstr "Supprimer le fichier téléchargé de cet épisode ? S'il reste suivi, il sera de nouveau téléchargé. Arrêtez le suivi pour qu'il le reste."
 
-#: lib/cinder_web/live/activity_live.ex:173
+#: lib/cinder_web/live/activity_live.ex:234
 #, elixir-autogen, elixir-format
 msgid "Delete this download? Its episodes are unlinked."
 msgstr "Supprimer ce téléchargement ? Ses épisodes sont dissociés."
@@ -1655,7 +1655,7 @@ msgstr "Refuser la sélection"
 msgid "Download clients"
 msgstr "Clients de téléchargement"
 
-#: lib/cinder_web/live/activity_live.ex:80
+#: lib/cinder_web/live/activity_live.ex:100
 #, elixir-autogen, elixir-format
 msgid "Download deleted."
 msgstr "Téléchargement supprimé."
@@ -1903,7 +1903,7 @@ msgstr "Thème"
 msgid "Timed out"
 msgstr "Délai dépassé"
 
-#: lib/cinder_web/live/activity_live.ex:88
+#: lib/cinder_web/live/activity_live.ex:121
 #, elixir-autogen, elixir-format
 msgid "Unknown series"
 msgstr "Série inconnue"
@@ -2024,3 +2024,29 @@ msgstr "résolution non préférée"
 #, elixir-autogen, elixir-format
 msgid "source not preferred"
 msgstr "source non préférée"
+
+#: lib/cinder_web/live/activity_live.ex:181
+#, elixir-autogen, elixir-format
+msgid "Cancel upgrade"
+msgstr "Annuler la mise à niveau"
+
+#: lib/cinder_web/live/activity_live.ex:68
+#, elixir-autogen, elixir-format
+msgid "Couldn't grab that release."
+msgstr "Impossible de récupérer cette version."
+
+#: lib/cinder_web/live/activity_live.ex:171
+#, elixir-autogen, elixir-format
+msgid "Find a better match"
+msgstr "Trouver une meilleure version"
+
+#: lib/cinder_web/live/activity_live.ex:63
+#, elixir-autogen, elixir-format
+msgid "Grabbing the selected release…"
+msgstr "Récupération de la version sélectionnée…"
+
+#: lib/cinder_web/live/activity_live.ex:54
+#: lib/cinder_web/live/activity_live.ex:66
+#, elixir-autogen, elixir-format
+msgid "That movie can't be grabbed right now."
+msgstr "Ce film ne peut pas être récupéré pour le moment."

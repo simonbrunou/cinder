@@ -2,6 +2,7 @@ defmodule CinderWeb.ActivityLiveTest do
   use CinderWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
+  import Mox
 
   alias Cinder.Catalog
   alias Cinder.Repo
@@ -9,6 +10,9 @@ defmodule CinderWeb.ActivityLiveTest do
   import Cinder.CatalogFixtures
 
   setup :register_and_log_in_admin
+  # The panel's async indexer search runs in a spawned Task, and the LiveView in its own
+  # process, so the mocks must be visible across processes — global mode (the module is async: false).
+  setup :set_mox_global
 
   defp grab! do
     series =
@@ -84,6 +88,55 @@ defmodule CinderWeb.ActivityLiveTest do
 
     refute has_element?(lv, "#grab-#{grab.id}")
     assert Catalog.list_grabs() == []
+  end
+
+  test "Find a better match opens the panel; grabbing transitions the movie to :upgrading",
+       %{conn: conn} do
+    movie =
+      movie_fixture(%{
+        title: "Metropolis",
+        status: :available,
+        imdb_id: "tt1",
+        file_path: "/lib/Metropolis (1927)/Metropolis (1927).mkv"
+      })
+
+    stub(Cinder.Acquisition.IndexerMock, :search, fn _imdb ->
+      {:ok,
+       [%{title: "Better 1080p", size: 5_000_000_000, protocol: :torrent, download_url: "u"}]}
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release -> {:ok, "dl-x"} end)
+
+    {:ok, lv, _html} = live(conn, ~p"/activity")
+
+    lv |> element("#movie-#{movie.id} button", "Find a better match") |> render_click()
+    assert render_async(lv) =~ "Better 1080p"
+
+    # An :available movie routes through the replace confirm before the grab.
+    lv |> element("#ms-movie-#{movie.id} button", "Grab") |> render_click()
+    lv |> element("button", "Replace file") |> render_click()
+
+    assert render(lv) =~ "Grabbing the selected release"
+    assert Catalog.get_movie_by_id(movie.id).status == :upgrading
+  end
+
+  test "Cancel upgrade reverts an :upgrading movie to :available", %{conn: conn} do
+    movie =
+      movie_fixture(%{
+        title: "Nosferatu",
+        status: :upgrading,
+        imdb_id: "tt2",
+        download_id: "h-up",
+        download_protocol: :torrent,
+        file_path: "/lib/Nosferatu (1922)/Nosferatu (1922).mkv"
+      })
+
+    stub(Cinder.Download.ClientMock, :remove, fn "h-up", _opts -> :ok end)
+
+    {:ok, lv, _html} = live(conn, ~p"/activity")
+    lv |> element("#movie-#{movie.id} button", "Cancel upgrade") |> render_click()
+
+    assert Catalog.get_movie_by_id(movie.id).status == :available
   end
 
   test "non-admins are redirected away from /activity", %{conn: _conn} do
