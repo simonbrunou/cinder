@@ -82,7 +82,10 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     refute season.monitored
 
     {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
-    lv |> element(~s|button[phx-value-id="#{season.id}"]|) |> render_click()
+
+    lv
+    |> element(~s|button[phx-click="toggle_season"][phx-value-id="#{season.id}"]|)
+    |> render_click()
 
     eps = Catalog.get_series_with_tree(series.id).seasons |> hd() |> Map.fetch!(:episodes)
     assert Enum.all?(eps, & &1.monitored)
@@ -230,6 +233,87 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert Cinder.Catalog.get_series_with_tree(series.id).seasons
            |> Enum.flat_map(& &1.episodes)
            |> Enum.all?(&is_nil(&1.file_path))
+  end
+
+  test "Search all missing re-queues the season's wanted episodes", %{conn: conn} do
+    series = series_with_wanted_episode(search_attempts: 9)
+
+    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    lv |> element("button", "Search all missing") |> render_click()
+
+    assert [ep] = Catalog.wanted_episodes()
+    assert ep.search_attempts == 0
+  end
+
+  test "the per-episode Search re-queues a single wanted episode", %{conn: conn} do
+    series = series_with_wanted_episode(search_attempts: 7)
+    [ep] = Catalog.wanted_episodes()
+
+    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+
+    lv
+    |> element("button[phx-click=search_episode][phx-value-id='#{ep.id}']")
+    |> render_click()
+
+    assert [requeued] = Catalog.wanted_episodes()
+    assert requeued.search_attempts == 0
+  end
+
+  test "a malformed search_episode event does not crash the LiveView", %{conn: conn} do
+    series = series_with_wanted_episode(search_attempts: 0)
+    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    render_hook(lv, "search_episode", %{"id" => "not-an-int"})
+    assert render(lv) =~ "Test Show"
+  end
+
+  test "Find a better match opens the TV panel; grabbing creates a grab over the wanted episode",
+       %{conn: conn} do
+    series = series_with_wanted_episode(search_attempts: 0)
+    season = first_season(series.id)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Test Show", 1 ->
+      {:ok,
+       [%{title: "Test Show S01E01 1080p WEB-DL GRP", size: 2_000_000_000, download_url: "u"}]}
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release -> {:ok, "hash-new"} end)
+
+    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+
+    lv |> element("button", "Find a better match") |> render_click()
+    assert render_async(lv) =~ "Test Show S01E01"
+
+    lv |> element("#ms-season-#{season.id} button", "Grab") |> render_click()
+
+    assert render(lv) =~ "Grabbing the selected release"
+    assert [grab] = Repo.all(Cinder.Catalog.Grab)
+    assert grab.download_id == "hash-new"
+  end
+
+  # Insert a series→season→episode tree with one still-wanted episode (monitored, no file,
+  # no grab, aired). `search_attempts` seeds the backoff counter the search controls zero.
+  defp series_with_wanted_episode(opts) do
+    attempts = Keyword.get(opts, :search_attempts, 0)
+    series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 9001, tvdb_id: 99, title: "Test Show"})
+
+    season =
+      Repo.insert!(%Cinder.Catalog.Season{
+        series_id: series.id,
+        season_number: 1,
+        monitored: true
+      })
+
+    Repo.insert!(%Cinder.Catalog.Episode{
+      season_id: season.id,
+      tmdb_episode_id: 9101,
+      episode_number: 1,
+      title: "Pilot",
+      monitored: true,
+      air_date: Date.add(Date.utc_today(), -10),
+      search_attempts: attempts
+    })
+
+    Repo.reload!(series)
   end
 
   # Insert a series→season→episode tree with one episode that has a file_path.

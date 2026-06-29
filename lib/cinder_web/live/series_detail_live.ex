@@ -24,7 +24,8 @@ defmodule CinderWeb.SeriesDetailLive do
          editing?: false,
          confirming: nil,
          form: nil,
-         confirm_opt: false
+         confirm_opt: false,
+         searching_season: nil
        )}
     else
       _ ->
@@ -224,9 +225,52 @@ defmodule CinderWeb.SeriesDetailLive do
     end
   end
 
+  def handle_event("search_episode", %{"id" => id}, socket) do
+    with {id, ""} <- Integer.parse(id),
+         %Episode{} = ep <- find_episode(socket.assigns.series, id) do
+      Catalog.search_episode_now(ep)
+      {:noreply, put_flash(socket, :info, gettext("Searching for this episode…"))}
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("search_season", _params, socket) do
+    Catalog.search_series_now(socket.assigns.series)
+    {:noreply, put_flash(socket, :info, gettext("Searching for missing episodes…"))}
+  end
+
+  # Toggle the manual-search panel for a season (re-clicking the open season closes it).
+  def handle_event("tv_manual_search", %{"season" => n}, socket) do
+    case Integer.parse(n) do
+      {season, ""} ->
+        open = if socket.assigns.searching_season == season, do: nil, else: season
+        {:noreply, assign(socket, searching_season: open)}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("close_search", _params, socket),
+    do: {:noreply, assign(socket, searching_season: nil)}
+
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
+  # The manual-search panel forwards a chosen release back here (it owns no Catalog writes). The
+  # open panel's season is tracked in :searching_season; the grab covers that season's wanted set.
   @impl true
+  def handle_info({:manual_grab, :tv, series, release}, socket) do
+    {level, msg} =
+      case Catalog.manual_grab_tv(series, socket.assigns.searching_season, release) do
+        {:ok, _grab} -> {:info, gettext("Grabbing the selected release…")}
+        {:error, :nothing_wanted} -> {:error, gettext("Nothing left to grab this season.")}
+        {:error, _} -> {:error, gettext("Couldn't grab that release.")}
+      end
+
+    {:noreply, socket |> assign(searching_season: nil) |> put_flash(level, msg) |> reload()}
+  end
+
   def handle_info({:series_updated, id}, socket) do
     if id == socket.assigns.series.id, do: {:noreply, reload(socket)}, else: {:noreply, socket}
   end
@@ -266,6 +310,12 @@ defmodule CinderWeb.SeriesDetailLive do
 
   defp all_monitored?(%{episodes: []}), do: false
   defp all_monitored?(%{episodes: eps}), do: Enum.all?(eps, & &1.monitored)
+
+  # A season has something the search sweep would pick up: a monitored episode with no file and
+  # no active grab. Gates the per-season "Search all missing" control (and matches the per-episode
+  # gate on the row's "Search" button).
+  defp season_wanted?(%{episodes: eps}),
+    do: Enum.any?(eps, &(is_nil(&1.file_path) and is_nil(&1.grab_id) and &1.monitored))
 
   @impl true
   def render(assigns) do
@@ -408,8 +458,35 @@ defmodule CinderWeb.SeriesDetailLive do
             >
               {gettext("Delete files")}
             </.button>
+            <.button
+              :if={season_wanted?(season)}
+              type="button"
+              variant="neutral"
+              size="sm"
+              phx-click="search_season"
+            >
+              {gettext("Search all missing")}
+            </.button>
+            <.button
+              type="button"
+              variant="ghost"
+              size="sm"
+              phx-click="tv_manual_search"
+              phx-value-season={season.season_number}
+            >
+              {gettext("Find a better match")}
+            </.button>
           </div>
         </div>
+
+        <.live_component
+          :if={@searching_season == season.season_number}
+          module={CinderWeb.ManualSearchComponent}
+          id={"ms-season-#{season.id}"}
+          mode={:tv}
+          target={@series}
+          season_number={season.season_number}
+        />
 
         <.confirm_action
           :if={@confirming == {:season_files, to_string(season.id)}}
@@ -474,6 +551,17 @@ defmodule CinderWeb.SeriesDetailLive do
                 }
               >
                 {gettext("Delete file")}
+              </.button>
+              <.button
+                :if={is_nil(ep.file_path) and is_nil(ep.grab_id)}
+                type="button"
+                variant="ghost"
+                size="sm"
+                phx-click="search_episode"
+                phx-value-id={ep.id}
+                aria-label={gettext("Search for episode %{number}", number: ep.episode_number)}
+              >
+                {gettext("Search")}
               </.button>
             </div>
             <.confirm_action
