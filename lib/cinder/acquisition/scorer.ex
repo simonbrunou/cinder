@@ -80,6 +80,40 @@ defmodule Cinder.Acquisition.Scorer do
     |> cover(MapSet.new(wanted_episodes), [], band)
   end
 
+  @doc """
+  Classifies a single `release` against the same rules `select/2` applies, returning `:ok` or
+  `{:rejected, reason}` with `reason` in `[:out_of_band, :blocklisted, :wrong_resolution,
+  :wrong_source]`. Used by the interactive manual-search panel to show WHY the auto-pick would
+  skip a release while still letting the user grab it. Shares the private predicates with
+  `select/2`, so the panel verdict and the auto-pick can never drift.
+  """
+  def verdict(%Release{} = release, opts \\ []) do
+    {min_size, max_size, preferred, sources, blocklist, release_blocklist} = rules(opts)
+
+    cond do
+      not within_band?(release, min_size, max_size) ->
+        {:rejected, :out_of_band}
+
+      blocked?(release, blocklist) or title_blocked?(release, release_blocklist) ->
+        {:rejected, :blocklisted}
+
+      not allowed_resolution?(release, preferred) ->
+        {:rejected, :wrong_resolution}
+
+      not allowed_source?(release, sources) ->
+        {:rejected, :wrong_source}
+
+      true ->
+        :ok
+    end
+  end
+
+  @doc "The ascending sort key `select/2` ranks by (resolution → source → larger size). Best sorts first."
+  def rank_key(%Release{} = release, opts \\ []) do
+    {_min, _max, preferred, sources, _bl, _rbl} = rules(opts)
+    sort_key(release, preferred, sources)
+  end
+
   # The normalized rule set, shared by both entry points: the size band, the
   # resolution preference (defaulted), and the downcased blocklist. Config block
   # overlaid by per-call opts.
