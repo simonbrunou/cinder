@@ -19,6 +19,7 @@ defmodule Cinder.Catalog.Movie do
     :downloading,
     :downloaded,
     :available,
+    :upgrading,
     :no_match,
     :search_failed,
     :import_failed,

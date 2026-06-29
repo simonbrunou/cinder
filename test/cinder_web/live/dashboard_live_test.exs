@@ -74,6 +74,23 @@ defmodule CinderWeb.DashboardLiveTest do
       assert reloaded.denial_reason == "Already own it"
     end
 
+    test "an :upgrading movie counts as in-pipeline", %{conn: conn} do
+      {:ok, movie} =
+        Catalog.add_to_watchlist(%{
+          tmdb_id: System.unique_integer([:positive]),
+          title: "Blade Runner"
+        })
+
+      {:ok, _} = Catalog.transition(movie, %{status: :upgrading})
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      # With exactly one movie — the :upgrading one — the in-pipeline stat must read 1.
+      # Assert the count on the "In pipeline" stat card, not the static label (which is
+      # always present): if :upgrading weren't in @pipeline this would render 0.
+      assert lv |> element("div.items-baseline", "In pipeline") |> render() =~
+               ~r{tabular-nums">\s*1\s*</span>}
+    end
+
     test "shows an empty pending state when there is nothing to approve", %{conn: conn} do
       {:ok, _lv, html} = live(conn, ~p"/dashboard")
       assert html =~ "Nothing to approve"

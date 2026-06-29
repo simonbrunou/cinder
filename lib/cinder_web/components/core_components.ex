@@ -667,6 +667,9 @@ defmodule CinderWeb.CoreComponents do
 
   defp badge_spec(:movie, :cancelled), do: {gettext("Cancelled"), "badge-error", "hero-x-circle"}
 
+  defp badge_spec(:movie, :upgrading),
+    do: {gettext("Upgrading"), "badge-info", "hero-arrow-up-circle"}
+
   # request / composite discovery state
   defp badge_spec(:request, :pending), do: {gettext("Pending"), "badge-warning", "hero-clock"}
   defp badge_spec(:request, :approved), do: {gettext("Approved"), "badge-info", "hero-check"}
