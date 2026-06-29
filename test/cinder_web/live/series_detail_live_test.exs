@@ -289,6 +289,62 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert render(lv) =~ "Test Show"
   end
 
+  # FIX 2: the Search affordance must mirror Catalog.wanted_episodes_query/0 — a monitored,
+  # file-less, grab-less episode the sweep would NOT grab (not yet aired, or undated) must not
+  # show a "Search" button that only flashes "Searching…" and never grabs.
+  test "the per-episode Search button respects the sweep's air-date gate", %{conn: conn} do
+    series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 9301, tvdb_id: 93, title: "Test Show"})
+
+    season =
+      Repo.insert!(%Cinder.Catalog.Season{
+        series_id: series.id,
+        season_number: 1,
+        monitored: true
+      })
+
+    aired = wanted_ep(season, 1, air_date: Date.add(Date.utc_today(), -1))
+    future = wanted_ep(season, 2, air_date: Date.add(Date.utc_today(), 7))
+    undated = wanted_ep(season, 3, air_date: nil)
+
+    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+
+    assert has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{aired.id}']")
+    refute has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{future.id}']")
+    refute has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{undated.id}']")
+  end
+
+  # FIX 2: season 0 (specials) is excluded from the sweep, so its episodes get no Search button.
+  test "the per-episode Search button is absent for a season-0 special", %{conn: conn} do
+    series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 9302, tvdb_id: 94, title: "Test Show"})
+
+    specials =
+      Repo.insert!(%Cinder.Catalog.Season{
+        series_id: series.id,
+        season_number: 0,
+        monitored: true
+      })
+
+    special = wanted_ep(specials, 1, air_date: Date.add(Date.utc_today(), -10))
+
+    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    refute has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{special.id}']")
+  end
+
+  # FIX 1: "Find a better match" is only offered for a season with wanted episodes. An empty
+  # indexer result then reads as "No releases found", and a fully-present season (TV replace is
+  # deferred) is never offered manual search at all.
+  test "Find a better match is offered only for a season with wanted episodes", %{conn: conn} do
+    wanted = series_with_wanted_episode(search_attempts: 0)
+    {:ok, lv, _html} = live(conn, ~p"/series/#{wanted.id}")
+    assert has_element?(lv, "button[phx-click=tv_manual_search]")
+
+    %{series: present} =
+      series_with_episode_file_fixture("/tmp/cinder-test-tv-library/S (2010)/S01E01.mkv")
+
+    {:ok, lv2, _html} = live(conn, ~p"/series/#{present.id}")
+    refute has_element?(lv2, "button[phx-click=tv_manual_search]")
+  end
+
   test "Find a better match opens the TV panel; grabbing creates a grab over the wanted episode",
        %{conn: conn} do
     series = series_with_wanted_episode(search_attempts: 0)
@@ -337,6 +393,18 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     })
 
     Repo.reload!(series)
+  end
+
+  # Insert one wanted-shaped episode (monitored, no file, no grab) with a chosen air_date.
+  defp wanted_ep(season, number, opts) do
+    Repo.insert!(%Cinder.Catalog.Episode{
+      season_id: season.id,
+      tmdb_episode_id: season.id * 100 + number,
+      episode_number: number,
+      title: "Ep#{number}",
+      monitored: true,
+      air_date: Keyword.fetch!(opts, :air_date)
+    })
   end
 
   # Insert a series→season→episode tree with one episode that has a file_path.

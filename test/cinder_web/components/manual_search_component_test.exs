@@ -122,7 +122,10 @@ defmodule CinderWeb.ManualSearchComponentTest do
     refute html =~ "phx-value-index"
   end
 
-  test "a TV season with no results says replacing existing files isn't supported yet" do
+  # FIX 1: an empty TV indexer result is "no releases found", not "season complete". The component
+  # can't tell the two apart, so it must not claim the season is complete (the parent only offers
+  # manual search for seasons that still have wanted episodes).
+  test "a TV season with no results says no releases found (not season complete)" do
     html =
       render_panel(%{
         mode: :tv,
@@ -131,8 +134,22 @@ defmodule CinderWeb.ManualSearchComponentTest do
         results: []
       })
 
-    assert html =~ "Replacing existing TV files"
-    refute html =~ "No releases found."
+    assert html =~ "No releases found."
+    refute html =~ "All episodes present"
+    refute html =~ "Replacing existing TV files"
+  end
+
+  # FIX 4: the Grab button carries phx-disable-with so a fast double-click can't fire two grabs
+  # (two Download.grab calls → one orphaned download) before the list reloads.
+  test "the Grab button is guarded against a double-click (phx-disable-with)" do
+    html =
+      render_panel(%{
+        mode: :movie,
+        target: %Movie{id: 1, status: :requested, imdb_id: "tt1", title: "M"},
+        results: [{%Release{title: "Grabbable", resolution: "1080p", protocol: :torrent}, :ok}]
+      })
+
+    assert html =~ "phx-disable-with"
   end
 
   # FIX 3: two listed releases can share an identical title (multi-tracker Prowlarr dupes), so

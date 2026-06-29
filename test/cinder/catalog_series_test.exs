@@ -437,6 +437,32 @@ defmodule Cinder.CatalogSeriesTest do
 
       assert Cinder.Catalog.manual_grab_tv(series, 1, release) == {:error, :nothing_wanted}
     end
+
+    # FIX 3: client.add happens before create_grab. If a concurrent sweep grabs the episodes
+    # during the add (create_grab rolls back :no_episodes_linked), the just-added download must be
+    # removed so it isn't orphaned in the client. The mock's add callback simulates that race by
+    # grabbing the episodes itself before returning.
+    test "removes the just-added download when create_grab rolls back (:no_episodes_linked)" do
+      series = series_with_wanted_episodes(season: 1, numbers: [1, 2, 3])
+
+      release = %Cinder.Acquisition.Release{
+        title: "S01 Pack",
+        protocol: :torrent,
+        season: 1,
+        episodes: nil,
+        download_url: "magnet:?x"
+      }
+
+      Cinder.Download.ClientMock
+      |> expect(:add, fn _ ->
+        ids = Catalog.wanted_episodes() |> Enum.map(& &1.id)
+        {:ok, _other} = Catalog.create_grab("H-concurrent", :torrent, ids)
+        {:ok, "dl-tv"}
+      end)
+      |> expect(:remove, fn "dl-tv", _opts -> :ok end)
+
+      assert Cinder.Catalog.manual_grab_tv(series, 1, release) == {:error, :no_episodes_linked}
+    end
   end
 
   describe "search_now" do

@@ -196,36 +196,43 @@ defmodule Cinder.Catalog do
   mid-action surfaces `{:error, :stale_entry}`.
   """
   def manual_grab_movie(%Movie{status: :available} = movie, %Release{} = release) do
-    with {:ok, download_id} <- Download.grab(release) do
-      transition(movie, %{
-        status: :upgrading,
-        download_id: download_id,
-        download_protocol: release.protocol,
-        release_title: release.title,
-        import_attempts: 0
-      })
-    end
-  rescue
-    Ecto.StaleEntryError -> {:error, :stale_entry}
+    grab_and_transition(movie, release, %{status: :upgrading})
   end
 
   def manual_grab_movie(%Movie{status: status} = movie, %Release{} = release)
       when status in @retryable do
-    with {:ok, download_id} <- Download.grab(release) do
-      transition(movie, %{
-        status: :downloading,
-        download_id: download_id,
-        download_protocol: release.protocol,
-        release_title: release.title,
-        import_attempts: 0,
-        search_attempts: 0
-      })
-    end
-  rescue
-    Ecto.StaleEntryError -> {:error, :stale_entry}
+    grab_and_transition(movie, release, %{status: :downloading, search_attempts: 0})
   end
 
   def manual_grab_movie(%Movie{}, %Release{}), do: {:error, :not_grabbable}
+
+  # Grabs the release (a client.add side-effect returning a download_id), then transitions the
+  # movie with the shared download bookkeeping merged onto `attrs`. If the row was deleted
+  # mid-action, transition/2 raises Ecto.StaleEntryError; we best-effort remove the just-added
+  # download so it isn't orphaned in the client, then surface {:error, :stale_entry}.
+  defp grab_and_transition(movie, %Release{} = release, attrs) do
+    case Download.grab(release) do
+      {:ok, download_id} ->
+        try do
+          transition(
+            movie,
+            Map.merge(attrs, %{
+              download_id: download_id,
+              download_protocol: release.protocol,
+              release_title: release.title,
+              import_attempts: 0
+            })
+          )
+        rescue
+          Ecto.StaleEntryError ->
+            remove_download(%{download_id: download_id, download_protocol: release.protocol})
+            {:error, :stale_entry}
+        end
+
+      error ->
+        error
+    end
+  end
 
   @doc """
   Grabs a user-chosen `release` for one `season_number` of `series`. Recomputes the season's
@@ -245,13 +252,29 @@ defmodule Cinder.Catalog do
     episode_ids = wanted |> Enum.filter(&(&1.episode_number in covered)) |> Enum.map(& &1.id)
 
     case episode_ids do
-      [] ->
-        {:error, :nothing_wanted}
+      [] -> {:error, :nothing_wanted}
+      ids -> grab_and_create_grab(release, ids)
+    end
+  end
 
-      ids ->
-        with {:ok, download_id} <- Download.grab(release) do
-          create_grab(download_id, release.protocol, ids, release.title)
+  # Grabs the release (a client.add side-effect returning a download_id), then links the grab over
+  # `episode_ids`. If create_grab/4 rolls back — a concurrent sweep grabbed the episodes first
+  # (:no_episodes_linked) or the insert failed — best-effort remove the just-added download so it
+  # isn't orphaned in the client, then surface the error.
+  defp grab_and_create_grab(%Release{} = release, episode_ids) do
+    case Download.grab(release) do
+      {:ok, download_id} ->
+        case create_grab(download_id, release.protocol, episode_ids, release.title) do
+          {:ok, _grab} = ok ->
+            ok
+
+          {:error, _reason} = error ->
+            remove_download(%{download_id: download_id, download_protocol: release.protocol})
+            error
         end
+
+      error ->
+        error
     end
   end
 

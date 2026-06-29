@@ -393,6 +393,20 @@ defmodule Cinder.CatalogTest do
       movie = movie_fixture(status: :downloading)
       assert Catalog.manual_grab_movie(movie, release) == {:error, :not_grabbable}
     end
+
+    # FIX 3: the client.add side-effect happens before the DB write. If the movie row was deleted
+    # mid-action, transition/2 raises StaleEntryError — the just-added download must be removed so
+    # it isn't orphaned in qBittorrent/SABnzbd, not left untracked.
+    test "a movie deleted mid-action removes the just-added download and returns :stale_entry",
+         %{release: release} do
+      movie = movie_fixture(status: :no_match)
+      Repo.delete!(movie)
+
+      Cinder.Download.ClientMock |> expect(:add, fn _ -> {:ok, "dl-stale"} end)
+      Cinder.Download.ClientMock |> expect(:remove, fn "dl-stale", _opts -> :ok end)
+
+      assert Catalog.manual_grab_movie(movie, release) == {:error, :stale_entry}
+    end
   end
 
   describe "abort_upgrade/2" do

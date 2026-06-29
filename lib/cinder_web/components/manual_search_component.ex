@@ -4,8 +4,9 @@ defmodule CinderWeb.ManualSearchComponent do
   asynchronously and lists every release with its scorer verdict, letting the user grab any one
   (overriding the band/blocklist for selection). Grabs are forwarded to the parent LiveView, which
   owns the Catalog writes, via `send(self(), {:manual_grab, mode, target, release})`. For an
-  `:available` movie target a "Replace current file?" confirm gates the grab; for a TV season with
-  no wanted episodes the panel says replacing existing files isn't supported yet.
+  `:available` movie target a "Replace current file?" confirm gates the grab. An empty result
+  shows "No releases found." (the parent only offers manual search for seasons with wanted
+  episodes, so a fully-present season never opens the panel).
 
   Required assigns: `id`, `mode` (`:movie | :tv`), `target` (the `%Movie{}` or `%Series{}`), plus
   `season_number` for `:tv`. A `results:` assign (a list of `{release, verdict}` tuples) is
@@ -111,11 +112,8 @@ defmodule CinderWeb.ManualSearchComponent do
       <p :if={@state == :error} class="text-sm text-error">
         {gettext("Couldn't reach the indexer. Try again.")}
       </p>
-      <p :if={@state == :loaded and @results == [] and not tv_full_season?(assigns)} class="text-sm">
+      <p :if={@state == :loaded and @results == []} class="text-sm">
         {gettext("No releases found.")}
-      </p>
-      <p :if={tv_full_season?(assigns)} class="text-sm text-base-content/70">
-        {gettext("All episodes present. Replacing existing TV files isn't supported yet.")}
       </p>
 
       <ul :if={@state == :loaded and @results != []} class="space-y-1">
@@ -135,6 +133,7 @@ defmodule CinderWeb.ManualSearchComponent do
             phx-target={@myself}
             phx-click={grab_click(@mode, @target, release)}
             phx-value-index={index}
+            phx-disable-with={gettext("Grabbing…")}
           >
             {gettext("Grab")}
           </.button>
@@ -165,9 +164,6 @@ defmodule CinderWeb.ManualSearchComponent do
   # :wrong_protocol means no configured client — can't grab. Everything else the user may override.
   defp grabbable?({:rejected, :wrong_protocol}), do: false
   defp grabbable?(_), do: true
-
-  defp tv_full_season?(%{mode: :tv, state: :loaded, results: []}), do: true
-  defp tv_full_season?(_), do: false
 
   defp verdict_reason({:rejected, :out_of_band}), do: gettext("outside size band")
   defp verdict_reason({:rejected, :blocklisted}), do: gettext("blocklisted")

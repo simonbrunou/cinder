@@ -308,11 +308,21 @@ defmodule CinderWeb.SeriesDetailLive do
   defp all_monitored?(%{episodes: []}), do: false
   defp all_monitored?(%{episodes: eps}), do: Enum.all?(eps, & &1.monitored)
 
-  # A season has something the search sweep would pick up: a monitored episode with no file and
-  # no active grab. Gates the per-season "Search all missing" control (and matches the per-episode
-  # gate on the row's "Search" button).
-  defp season_wanted?(%{episodes: eps}),
-    do: Enum.any?(eps, &(is_nil(&1.file_path) and is_nil(&1.grab_id) and &1.monitored))
+  # A season has something the search sweep would actually pick up. Gates the per-season
+  # "Search all missing" and "Find a better match" controls; mirrors the per-episode "Search"
+  # button.
+  defp season_wanted?(%{episodes: eps, season_number: n}),
+    do: Enum.any?(eps, &episode_searchable?(&1, n))
+
+  # Mirrors Catalog.wanted_episodes_query/0 exactly: an episode the TV sweep would grab. A
+  # monitored, file-less, grab-less episode is NOT enough — it must also be in a real season
+  # (> 0, no specials), a real episode (> 0), and already aired (dated, air_date <= today).
+  # Keeping this in lock-step with the query avoids a "Search…" affordance that never grabs.
+  defp episode_searchable?(ep, season_number) do
+    is_nil(ep.file_path) and is_nil(ep.grab_id) and ep.monitored and season_number > 0 and
+      ep.episode_number > 0 and not is_nil(ep.air_date) and
+      Date.compare(ep.air_date, Date.utc_today()) != :gt
+  end
 
   @impl true
   def render(assigns) do
@@ -465,6 +475,7 @@ defmodule CinderWeb.SeriesDetailLive do
               {gettext("Search all missing")}
             </.button>
             <.button
+              :if={season_wanted?(season)}
               type="button"
               variant="ghost"
               size="sm"
@@ -550,7 +561,7 @@ defmodule CinderWeb.SeriesDetailLive do
                 {gettext("Delete file")}
               </.button>
               <.button
-                :if={is_nil(ep.file_path) and is_nil(ep.grab_id) and ep.monitored}
+                :if={episode_searchable?(ep, season.season_number)}
                 type="button"
                 variant="ghost"
                 size="sm"
