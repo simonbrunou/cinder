@@ -67,17 +67,17 @@ defmodule CinderWeb.ManualSearchComponent do
     do: {:noreply, assign(socket, :state, :error)}
 
   @impl true
-  def handle_event("ask_replace", %{"title" => title}, socket),
-    do: {:noreply, assign(socket, :confirming, title)}
+  def handle_event("ask_replace", %{"index" => index}, socket),
+    do: {:noreply, assign(socket, :confirming, index)}
 
   def handle_event("dismiss_replace", _params, socket),
     do: {:noreply, assign(socket, :confirming, nil)}
 
   def handle_event("grab", params, socket) do
-    # The confirm button carries no phx-value, so fall back to the pending title in @confirming.
-    title = params["title"] || socket.assigns.confirming
-
-    case Enum.find(socket.assigns.results, fn {r, _v} -> r.title == title end) do
+    # Resolve by list index, not title: multi-tracker Prowlarr dupes can share an identical
+    # title, so a title match could grab the wrong release (different protocol/size/download_url).
+    # The confirm button carries no phx-value, so fall back to the pending index in @confirming.
+    case fetch_release(socket.assigns.results, params["index"] || socket.assigns.confirming) do
       {release, _verdict} ->
         send(self(), {:manual_grab, socket.assigns.mode, socket.assigns.target, release})
 
@@ -90,6 +90,16 @@ defmodule CinderWeb.ManualSearchComponent do
 
   # Client-controlled payloads — ignore anything unmatched rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  # phx-value-index arrives as a string; resolve it to the {release, verdict} tuple by position.
+  defp fetch_release(results, index) when is_binary(index) do
+    case Integer.parse(index) do
+      {i, ""} when i >= 0 -> Enum.at(results, i)
+      _ -> nil
+    end
+  end
+
+  defp fetch_release(_results, _index), do: nil
 
   @impl true
   def render(assigns) do
@@ -109,7 +119,10 @@ defmodule CinderWeb.ManualSearchComponent do
       </p>
 
       <ul :if={@state == :loaded and @results != []} class="space-y-1">
-        <li :for={{release, verdict} <- @results} class="flex flex-wrap items-center gap-2 text-sm">
+        <li
+          :for={{{release, verdict}, index} <- Enum.with_index(@results)}
+          class="flex flex-wrap items-center gap-2 text-sm"
+        >
           <span class="min-w-0 flex-1 truncate" title={release.title}>{release.title}</span>
           <span class="badge badge-xs">{release.resolution || gettext("?")}</span>
           <span :if={release.language} class="badge badge-ghost badge-xs">{release.language}</span>
@@ -121,7 +134,7 @@ defmodule CinderWeb.ManualSearchComponent do
             variant="ghost"
             phx-target={@myself}
             phx-click={grab_click(@mode, @target, release)}
-            phx-value-title={release.title}
+            phx-value-index={index}
           >
             {gettext("Grab")}
           </.button>

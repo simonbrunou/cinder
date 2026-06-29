@@ -1,3 +1,50 @@
+# A minimal host LiveView so the component's grab event actually runs (render_component/2 only
+# renders, it doesn't process events). It forwards the {:manual_grab, …} the component sends to
+# its parent on to the test pid, so we can assert which release was resolved from a click.
+defmodule CinderWeb.ManualSearchHostLive do
+  @moduledoc false
+  use Phoenix.LiveView
+
+  alias Cinder.Acquisition.Release
+  alias Cinder.Catalog.Movie
+
+  # Two releases with an IDENTICAL title but distinct download_urls — the multi-tracker dupe
+  # case FIX 3 guards: a title match could resolve the wrong one.
+  @results [
+    {%Release{
+       title: "Same Title",
+       resolution: "1080p",
+       protocol: :torrent,
+       download_url: "url-a"
+     }, :ok},
+    {%Release{title: "Same Title", resolution: "720p", protocol: :torrent, download_url: "url-b"},
+     :ok}
+  ]
+
+  @impl true
+  def mount(_params, %{"test_pid" => pid}, socket),
+    do: {:ok, assign(socket, test_pid: pid, results: @results)}
+
+  @impl true
+  def render(assigns) do
+    ~H"""
+    <.live_component
+      module={CinderWeb.ManualSearchComponent}
+      id="ms"
+      mode={:movie}
+      target={%Movie{id: 1, status: :requested, imdb_id: "tt1", title: "M"}}
+      results={@results}
+    />
+    """
+  end
+
+  @impl true
+  def handle_info({:manual_grab, _mode, _target, release}, socket) do
+    send(socket.assigns.test_pid, {:grabbed, release})
+    {:noreply, socket}
+  end
+end
+
 defmodule CinderWeb.ManualSearchComponentTest do
   use CinderWeb.ConnCase, async: false
 
@@ -72,7 +119,7 @@ defmodule CinderWeb.ManualSearchComponentTest do
     assert html =~ "Usenet only"
     assert html =~ "no client for protocol"
     # No grab control rendered for an ungrabbable release.
-    refute html =~ "phx-value-title"
+    refute html =~ "phx-value-index"
   end
 
   test "a TV season with no results says replacing existing files isn't supported yet" do
@@ -86,5 +133,23 @@ defmodule CinderWeb.ManualSearchComponentTest do
 
     assert html =~ "Replacing existing TV files"
     refute html =~ "No releases found."
+  end
+
+  # FIX 3: two listed releases can share an identical title (multi-tracker Prowlarr dupes), so
+  # the grab handler must resolve by a unique key (the list index), not by title — otherwise the
+  # wrong release (different protocol/size/download_url) could be grabbed.
+  test "two same-title releases resolve to the clicked one, not the first title match", %{
+    conn: conn
+  } do
+    {:ok, lv, _html} =
+      live_isolated(conn, CinderWeb.ManualSearchHostLive, session: %{"test_pid" => self()})
+
+    # The second release (index 1) shares its title with the first but carries url-b.
+    lv |> element("button[phx-value-index='1']", "Grab") |> render_click()
+    assert_receive {:grabbed, %Release{download_url: "url-b"}}
+
+    # And the first (index 0) resolves to its own distinct release.
+    lv |> element("button[phx-value-index='0']", "Grab") |> render_click()
+    assert_receive {:grabbed, %Release{download_url: "url-a"}}
   end
 end

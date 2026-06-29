@@ -252,9 +252,6 @@ defmodule CinderWeb.SeriesDetailLive do
     end
   end
 
-  def handle_event("close_search", _params, socket),
-    do: {:noreply, assign(socket, searching_season: nil)}
-
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   # The manual-search panel forwards a chosen release back here (it owns no Catalog writes). The
@@ -553,7 +550,7 @@ defmodule CinderWeb.SeriesDetailLive do
                 {gettext("Delete file")}
               </.button>
               <.button
-                :if={is_nil(ep.file_path) and is_nil(ep.grab_id)}
+                :if={is_nil(ep.file_path) and is_nil(ep.grab_id) and ep.monitored}
                 type="button"
                 variant="ghost"
                 size="sm"

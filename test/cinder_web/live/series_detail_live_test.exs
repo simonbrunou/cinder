@@ -259,6 +259,29 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert requeued.search_attempts == 0
   end
 
+  # An unmonitored episode is excluded from wanted_episodes/0, so a Search button on it
+  # would be a no-op dressed as a confirmation. Gate it on monitored, like the season control.
+  test "the per-episode Search button is gated on monitored", %{conn: conn} do
+    series = series_with_wanted_episode(search_attempts: 0)
+    [monitored] = Catalog.wanted_episodes()
+    season = first_season(series.id)
+
+    unmonitored =
+      Repo.insert!(%Cinder.Catalog.Episode{
+        season_id: season.id,
+        tmdb_episode_id: 9102,
+        episode_number: 2,
+        title: "Two",
+        monitored: false,
+        air_date: Date.add(Date.utc_today(), -10)
+      })
+
+    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+
+    assert has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{monitored.id}']")
+    refute has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{unmonitored.id}']")
+  end
+
   test "a malformed search_episode event does not crash the LiveView", %{conn: conn} do
     series = series_with_wanted_episode(search_attempts: 0)
     {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
