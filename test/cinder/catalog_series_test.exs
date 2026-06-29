@@ -5,8 +5,10 @@ defmodule Cinder.CatalogSeriesTest do
   use Cinder.DataCase, async: false
 
   import Mox
+  import Cinder.CatalogFixtures
 
   alias Cinder.Catalog
+  alias Cinder.Catalog.Episode
   alias Cinder.Catalog.Series
 
   setup :verify_on_exit!
@@ -374,6 +376,31 @@ defmodule Cinder.CatalogSeriesTest do
       {:ok, _} = Catalog.find_or_create_series_at_requested(1399, 1, "french")
       {:ok, series} = Catalog.find_or_create_series_at_requested(1399, 2, "any")
       assert series.preferred_language == "french"
+    end
+  end
+
+  # Creates a series with one monitored, aired, file-less episode — i.e. a wanted episode.
+  defp series_with_wanted_episode(attrs) do
+    series = series_fixture(%{monitor_strategy: :all})
+    season = season_fixture(series, %{season_number: 1})
+    _ep = episode_fixture(season, Map.new(attrs))
+    series
+  end
+
+  describe "search_now" do
+    test "search_series_now zeros search_attempts on wanted episodes" do
+      series = series_with_wanted_episode(search_attempts: 9)
+      assert :ok = Catalog.search_series_now(series)
+      [ep] = Catalog.wanted_episodes()
+      assert ep.search_attempts == 0
+    end
+
+    test "search_episode_now is a no-op on an episode that already has a file" do
+      series = series_fixture(%{monitor_strategy: :all})
+      season = season_fixture(series, %{season_number: 1})
+      ep = episode_fixture(season, %{file_path: "/lib/x.mkv", search_attempts: 9})
+      assert Catalog.search_episode_now(ep) in [:ok, {:ok, ep}]
+      assert Repo.get(Episode, ep.id).search_attempts == 9
     end
   end
 end

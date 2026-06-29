@@ -1267,6 +1267,23 @@ defmodule Cinder.Catalog do
   @doc "Count of wanted episodes (see `wanted_episodes/0`)."
   def count_wanted_episodes, do: Repo.aggregate(wanted_episodes_query(), :count)
 
+  @doc """
+  Re-queues a single wanted `episode` for the TV sweep by zeroing its `search_attempts` (clearing
+  any backoff/attempt-cap park). A no-op for an episode that already has a file or an active grab
+  (it isn't wanted). The sweep picks it up within one poll interval.
+  """
+  def search_episode_now(%Episode{file_path: nil, grab_id: nil} = episode),
+    do: transition_episode(episode, %{search_attempts: 0})
+
+  def search_episode_now(%Episode{}), do: :ok
+
+  @doc "Re-queues every still-wanted episode of `series` (zeroes their `search_attempts`)."
+  def search_series_now(%Series{id: series_id}) do
+    wanted_episodes()
+    |> Enum.filter(&(&1.season.series.id == series_id))
+    |> Enum.each(&transition_episode(&1, %{search_attempts: 0}))
+  end
+
   defp wanted_episodes_query do
     today = Date.utc_today()
 
