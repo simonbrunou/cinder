@@ -212,11 +212,9 @@ defmodule Cinder.DownloadTest do
     end
 
     test "returns {:error, :no_client} when no client is configured for the protocol" do
-      # Temporarily empty the client map for this test, then restore.
-      prev = Application.fetch_env!(:cinder, :download_clients)
-      Application.put_env(:cinder, :download_clients, %{})
-      on_exit(fn -> Application.put_env(:cinder, :download_clients, prev) end)
-      release = %Cinder.Acquisition.Release{title: "R", protocol: :torrent}
+      # A protocol with no configured client (vs mutating the global :download_clients env,
+      # which would race other tests in this async: true module).
+      release = %Cinder.Acquisition.Release{title: "R", protocol: :unconfigured}
       assert Cinder.Download.grab(release) == {:error, :no_client}
     end
   end
