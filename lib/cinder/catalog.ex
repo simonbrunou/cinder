@@ -227,6 +227,41 @@ defmodule Cinder.Catalog do
 
   def manual_grab_movie(%Movie{}, %Release{}), do: {:error, :not_grabbable}
 
+  @doc """
+  Grabs a user-chosen `release` for one `season_number` of `series`. Recomputes the season's
+  still-wanted episodes server-side (don't trust a stale panel snapshot) and creates the grab over
+  exactly the wanted episodes the release covers (`episodes: nil` = a whole-season pack covers them
+  all). `create_grab/4` itself skips any episode that already has a grab, so a concurrent sweep grab
+  can't be double-linked. `{:error, :nothing_wanted}` when the season has nothing to grab.
+  """
+  def manual_grab_tv(%Series{id: series_id}, season_number, %Release{} = release) do
+    wanted =
+      wanted_episodes()
+      |> Enum.filter(
+        &(&1.season.series.id == series_id and &1.season.season_number == season_number)
+      )
+
+    covered = cover_numbers(release, Enum.map(wanted, & &1.episode_number))
+    episode_ids = wanted |> Enum.filter(&(&1.episode_number in covered)) |> Enum.map(& &1.id)
+
+    case episode_ids do
+      [] ->
+        {:error, :nothing_wanted}
+
+      ids ->
+        with {:ok, download_id} <- Download.grab(release) do
+          create_grab(download_id, release.protocol, ids, release.title)
+        end
+    end
+  end
+
+  # A whole-season pack (episodes: nil) covers every still-wanted number; an episode list covers its
+  # intersection with what's wanted. Mirrors Scorer.coverage/2.
+  defp cover_numbers(%Release{episodes: nil}, wanted_numbers), do: wanted_numbers
+
+  defp cover_numbers(%Release{episodes: eps}, wanted_numbers),
+    do: Enum.filter(wanted_numbers, &(&1 in eps))
+
   # Parked statuses where a language change should trigger a fresh search.
   # :import_failed means a release was found but couldn't be written — not a language issue.
   @language_retry_statuses [:no_match, :search_failed]

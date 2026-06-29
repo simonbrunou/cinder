@@ -387,6 +387,58 @@ defmodule Cinder.CatalogSeriesTest do
     series
   end
 
+  # Creates a series whose season has multiple wanted (monitored, aired, file-less) episodes.
+  defp series_with_wanted_episodes(opts) do
+    season_num = Keyword.get(opts, :season, 1)
+    numbers = Keyword.get(opts, :numbers, [1])
+    series = series_fixture(%{monitor_strategy: :all})
+    season = season_fixture(series, %{season_number: season_num})
+    Enum.each(numbers, fn n -> episode_fixture(season, %{episode_number: n}) end)
+    series
+  end
+
+  # Creates a series whose season has all episodes with files — nothing wanted.
+  defp series_with_available_season(opts) do
+    season_num = Keyword.get(opts, :season, 1)
+    series = series_fixture(%{monitor_strategy: :all})
+    season = season_fixture(series, %{season_number: season_num})
+    episode_fixture(season, %{episode_number: 1, file_path: "/media/ep1.mkv"})
+    series
+  end
+
+  describe "manual_grab_tv/3" do
+    test "creates a grab over the season's still-wanted episodes the release covers" do
+      series = series_with_wanted_episodes(season: 1, numbers: [1, 2, 3])
+
+      release = %Cinder.Acquisition.Release{
+        title: "S01 Pack",
+        protocol: :torrent,
+        season: 1,
+        episodes: nil,
+        download_url: "magnet:?x"
+      }
+
+      Cinder.Download.ClientMock |> expect(:add, fn _ -> {:ok, "dl-tv"} end)
+
+      assert {:ok, grab} = Cinder.Catalog.manual_grab_tv(series, 1, release)
+      grab = Cinder.Repo.preload(grab, :episodes)
+      assert Enum.map(grab.episodes, & &1.episode_number) |> Enum.sort() == [1, 2, 3]
+    end
+
+    test "returns :nothing_wanted when the season has no wanted episodes" do
+      series = series_with_available_season(season: 1)
+
+      release = %Cinder.Acquisition.Release{
+        title: "S01",
+        protocol: :torrent,
+        season: 1,
+        episodes: nil
+      }
+
+      assert Cinder.Catalog.manual_grab_tv(series, 1, release) == {:error, :nothing_wanted}
+    end
+  end
+
   describe "search_now" do
     test "search_series_now zeros search_attempts on wanted episodes" do
       series = series_with_wanted_episode(search_attempts: 9)
