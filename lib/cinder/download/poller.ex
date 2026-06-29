@@ -20,6 +20,7 @@ defmodule Cinder.Download.Poller do
   require Logger
 
   alias Cinder.Catalog
+  alias Cinder.Catalog.Movie
   alias Cinder.Download
   alias Cinder.Library
   alias Cinder.Notifier
@@ -37,8 +38,11 @@ defmodule Cinder.Download.Poller do
   end
 
   defp advance_downloading do
-    for movie <- Catalog.list_by_status(:downloading),
-        do: isolate("movie #{movie.id}", fn -> advance(movie) end)
+    # :upgrading is swept alongside :downloading — an :available movie re-downloading a chosen
+    # replacement. It dispatches to its OWN advance clause (never the :downloading one, which would
+    # overwrite the live file_path with the download path before the swap).
+    movies = Catalog.list_by_status(:downloading) ++ Catalog.list_by_status(:upgrading)
+    for movie <- movies, do: isolate("movie #{movie.id}", fn -> advance(movie) end)
   end
 
   defp import_downloaded do
@@ -80,6 +84,11 @@ defmodule Cinder.Download.Poller do
   end
 
   defp reread(movie), do: Catalog.get_movie_by_id(movie.id) || movie
+
+  # An :upgrading movie re-downloads a user-chosen replacement while its file_path STILL points at
+  # the live library file. It must never reuse the clause below (which writes file_path: content_path
+  # on completion) — that would destroy the live pointer. Its own path swaps the file atomically.
+  defp advance(%Movie{status: :upgrading} = movie), do: advance_upgrade(movie)
 
   defp advance(movie) do
     case Download.client_for(movie.download_protocol) do
@@ -212,6 +221,129 @@ defmodule Cinder.Download.Poller do
       if reason in @permanent_import_errors or reason in @download_failure_errors do
         Catalog.block_release(parked, reason)
       end
+    end
+  end
+
+  # --- upgrade: re-download + atomic replace of an :available movie's file -----------------------
+  #
+  # An :upgrading movie keeps its live file_path the entire time; only the success transition
+  # (after Library.import_movie's atomic replace) rewrites it. Every failure reverts to :available
+  # with the live file untouched. Mirrors the :downloading advance bound (@max_attempts via
+  # import_attempts) but reverts instead of parking — the movie already has a usable file.
+
+  defp advance_upgrade(movie) do
+    case Download.client_for(movie.download_protocol) do
+      {:ok, client} -> advance_upgrade_with(movie, client)
+      # No client for this protocol (a config glitch, not a release failure): revert without
+      # blocklisting (revert_upgrade gates the blocklist), live file untouched.
+      :error -> revert_upgrade(movie, :no_client)
+    end
+  end
+
+  defp advance_upgrade_with(movie, client) do
+    case client.status(movie.download_id) do
+      {:ok, %{state: :completed, content_path: path}} when path not in [nil, ""] ->
+        finish_upgrade(movie, path)
+
+      {:ok, %{state: :completed}} ->
+        retry_or_revert(movie, :no_content_path)
+
+      {:ok, %{state: :error}} ->
+        retry_or_revert(movie, :download_error)
+
+      {:error, :not_found} ->
+        retry_or_revert(movie, :torrent_not_found)
+
+      # Still downloading / stalled / transient client error: wait, no write, live file untouched.
+      _ ->
+        :ok
+    end
+  end
+
+  # Import the completed download by FORCED replace (the user chose this release). On success the
+  # library file is swapped (replace/2) and the movie returns :available carrying the new quality;
+  # if the new dest filename differs (a different container) the old file is removed best-effort so
+  # the library never holds two files. Any failure reverts to :available, live file intact.
+  defp finish_upgrade(movie, content_path) do
+    case Library.import_movie(%{movie | file_path: content_path}, replace: true) do
+      {:ok, dest, q} ->
+        with {:ok, available} <-
+               Catalog.transition(movie, %{
+                 status: :available,
+                 file_path: dest,
+                 imported_resolution: q.resolution,
+                 imported_size: q.size,
+                 imported_language: q.language,
+                 imported_source: q.source
+               }),
+             do: finalize_upgrade(movie, available, dest)
+
+      {:error, :library_not_configured} ->
+        # Hold (no attempt bump, no revert) until the movie library root is configured: the file is
+        # downloaded and waiting, so don't burn the retry budget on a fixable misconfig.
+        Logger.warning(
+          "holding upgrade for movie #{movie.id}: movies_library_path not set; configure it in /settings"
+        )
+
+      {:error, reason} when reason in @permanent_import_errors ->
+        revert_upgrade(movie, reason)
+
+      {:error, reason} ->
+        retry_or_revert(movie, reason)
+    end
+  end
+
+  # Post-commit side effects, all best-effort (none can unwind the committed upgrade): remove the
+  # superseded file only when the dest path actually changed (a same-path replace already overwrote
+  # it), drop the source download, and notify.
+  defp finalize_upgrade(movie, available, dest) do
+    if dest != movie.file_path, do: best_effort_remove_old(movie.file_path)
+    Download.remove_after_import(movie.download_protocol, movie.download_id)
+    Notifier.notify({:movie_available, available})
+  end
+
+  # Bounded retry on the upgrade's download/transient-import side; after @max_attempts, revert.
+  defp retry_or_revert(movie, reason) do
+    attempts = (movie.import_attempts || 0) + 1
+
+    if attempts >= @max_attempts do
+      revert_upgrade(movie, reason)
+    else
+      Logger.info(
+        "movie #{movie.id} upgrade #{attempts}/#{@max_attempts} failed (#{inspect(reason)}); will retry"
+      )
+
+      Catalog.transition(movie, %{import_attempts: attempts, status: :upgrading})
+    end
+  end
+
+  # Abort the upgrade WITHOUT touching the live file: blocklist the failed release (read off the
+  # still-present release_title BEFORE the revert clears it), then revert to :available clearing the
+  # upgrade's download fields. Blocklist only genuine release failures (mirrors park/3) so a config
+  # glitch (:no_client) doesn't blocklist a good release.
+  defp revert_upgrade(movie, reason) do
+    if reason in @permanent_import_errors or reason in @download_failure_errors,
+      do: Catalog.block_release(movie, :upgrade_failed)
+
+    with {:ok, reverted} <-
+           Catalog.transition(movie, %{
+             status: :available,
+             download_id: nil,
+             download_protocol: nil,
+             release_title: nil
+           }) do
+      Logger.warning("movie #{movie.id} upgrade reverted to :available (#{inspect(reason)})")
+      Notifier.notify({:movie_upgrade_failed, reverted, reason})
+    end
+  end
+
+  defp best_effort_remove_old(path) do
+    case Library.delete_file(path) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("upgrade: couldn't remove old file #{inspect(path)}: #{inspect(reason)}")
     end
   end
 end
