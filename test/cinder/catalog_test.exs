@@ -1,6 +1,7 @@
 defmodule Cinder.CatalogTest do
   use Cinder.DataCase, async: true
 
+  import Cinder.CatalogFixtures
   import Mox
 
   alias Cinder.Catalog
@@ -349,6 +350,48 @@ defmodule Cinder.CatalogTest do
 
       assert :ok = Catalog.block_grab_release(grab, :no_files_matched)
       assert Catalog.blocked_release_titles_for_series(series.id) == ["Pack.S01.720p"]
+    end
+  end
+
+  describe "manual_grab_movie/2" do
+    setup do
+      release = %Cinder.Acquisition.Release{
+        title: "Pick",
+        protocol: :torrent,
+        download_url: "magnet:?x"
+      }
+
+      %{release: release}
+    end
+
+    test "an available movie goes :upgrading, preserving its file", %{release: release} do
+      movie =
+        movie_fixture(
+          status: :available,
+          file_path: "/lib/Movie (2020)/Movie (2020).mkv",
+          imported_resolution: "1080p"
+        )
+
+      Cinder.Download.ClientMock |> expect(:add, fn _ -> {:ok, "dl-9"} end)
+
+      assert {:ok, up} = Catalog.manual_grab_movie(movie, release)
+      assert up.status == :upgrading
+      assert up.download_id == "dl-9"
+      assert up.release_title == "Pick"
+      assert up.file_path == "/lib/Movie (2020)/Movie (2020).mkv"
+      assert up.imported_resolution == "1080p"
+    end
+
+    test "a parked movie goes :downloading", %{release: release} do
+      movie = movie_fixture(status: :no_match)
+      Cinder.Download.ClientMock |> expect(:add, fn _ -> {:ok, "dl-7"} end)
+      assert {:ok, dl} = Catalog.manual_grab_movie(movie, release)
+      assert dl.status == :downloading
+    end
+
+    test "an in-flight movie is rejected", %{release: release} do
+      movie = movie_fixture(status: :downloading)
+      assert Catalog.manual_grab_movie(movie, release) == {:error, :not_grabbable}
     end
   end
 end

@@ -8,6 +8,7 @@ defmodule Cinder.Catalog do
   import Ecto.Query
   require Logger
 
+  alias Cinder.Acquisition.Release
   alias Cinder.Audit
   alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Movie, Season, Series}
   alias Cinder.Download
@@ -185,6 +186,46 @@ defmodule Cinder.Catalog do
   end
 
   def retry_movie(%Movie{}), do: {:error, :not_retryable}
+
+  @doc """
+  Grabs a specific user-chosen `release` for `movie`. An `:available` movie enters `:upgrading`
+  (its library `file_path` and `imported_*` are preserved — the poller's upgrade clause swaps the
+  file only on a successful re-import). A parked movie (`#{inspect(@retryable)}`) enters
+  `:downloading` on the normal import path. Any other status returns `{:error, :not_grabbable}`
+  (rejecting in-flight/`:upgrading`/`:cancelled`, which also blocks a double-click). A movie deleted
+  mid-action surfaces `{:error, :stale_entry}`.
+  """
+  def manual_grab_movie(%Movie{status: :available} = movie, %Release{} = release) do
+    with {:ok, download_id} <- Download.grab(release) do
+      transition(movie, %{
+        status: :upgrading,
+        download_id: download_id,
+        download_protocol: release.protocol,
+        release_title: release.title,
+        import_attempts: 0
+      })
+    end
+  rescue
+    Ecto.StaleEntryError -> {:error, :stale_entry}
+  end
+
+  def manual_grab_movie(%Movie{status: status} = movie, %Release{} = release)
+      when status in @retryable do
+    with {:ok, download_id} <- Download.grab(release) do
+      transition(movie, %{
+        status: :downloading,
+        download_id: download_id,
+        download_protocol: release.protocol,
+        release_title: release.title,
+        import_attempts: 0,
+        search_attempts: 0
+      })
+    end
+  rescue
+    Ecto.StaleEntryError -> {:error, :stale_entry}
+  end
+
+  def manual_grab_movie(%Movie{}, %Release{}), do: {:error, :not_grabbable}
 
   # Parked statuses where a language change should trigger a fresh search.
   # :import_failed means a release was found but couldn't be written — not a language issue.
