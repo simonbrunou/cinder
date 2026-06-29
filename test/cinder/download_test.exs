@@ -198,4 +198,26 @@ defmodule Cinder.DownloadTest do
     assert {:error, :qbittorrent_down} = Download.start(movie)
     assert %Movie{status: :searching} = Repo.get!(Movie, movie.id)
   end
+
+  describe "grab/1" do
+    test "adds the release to its client and returns the download id" do
+      release = %Cinder.Acquisition.Release{
+        title: "R",
+        protocol: :torrent,
+        download_url: "magnet:?x"
+      }
+
+      Cinder.Download.ClientMock |> expect(:add, fn ^release -> {:ok, "dl-1"} end)
+      assert Cinder.Download.grab(release) == {:ok, "dl-1"}
+    end
+
+    test "returns {:error, :no_client} when no client is configured for the protocol" do
+      # Temporarily empty the client map for this test, then restore.
+      prev = Application.fetch_env!(:cinder, :download_clients)
+      Application.put_env(:cinder, :download_clients, %{})
+      on_exit(fn -> Application.put_env(:cinder, :download_clients, prev) end)
+      release = %Cinder.Acquisition.Release{title: "R", protocol: :torrent}
+      assert Cinder.Download.grab(release) == {:error, :no_client}
+    end
+  end
 end
