@@ -236,6 +236,57 @@ defmodule Cinder.AcquisitionTest do
              )
   end
 
+  describe "list_releases/2" do
+    test "returns every release annotated with its verdict, acceptable first" do
+      Cinder.Acquisition.IndexerMock
+      |> expect(:search, fn "tt1" ->
+        {:ok,
+         [
+           %{
+             title: "Good 1080p",
+             size: 5_000_000_000,
+             seeders: 9,
+             download_url: "u",
+             protocol: :torrent
+           },
+           %{
+             title: "Huge 1080p",
+             size: 90_000_000_000,
+             seeders: 9,
+             download_url: "u",
+             protocol: :torrent
+           }
+         ]}
+      end)
+
+      assert {:ok, [{first, v1}, {_second, v2}]} =
+               Acquisition.list_releases("tt1",
+                 protocols: [:torrent],
+                 preferred_resolutions: ["1080p"],
+                 max_size: 10_000_000_000
+               )
+
+      assert v1 == :ok
+      assert first.title == "Good 1080p"
+      assert v2 == {:rejected, :out_of_band}
+    end
+
+    test "flags a release on an unconfigured protocol" do
+      Cinder.Acquisition.IndexerMock
+      |> expect(:search, fn _ ->
+        {:ok, [%{title: "U", size: 1_000_000_000, protocol: :usenet, download_url: "u"}]}
+      end)
+
+      assert {:ok, [{_r, {:rejected, :wrong_protocol}}]} =
+               Acquisition.list_releases("tt1", protocols: [:torrent])
+    end
+
+    test "passes through an indexer error" do
+      Cinder.Acquisition.IndexerMock |> expect(:search, fn _ -> {:error, :down} end)
+      assert Acquisition.list_releases("tt1", []) == {:error, :down}
+    end
+  end
+
   describe "best_releases/4 (TV)" do
     test "composes search_tv, parse, title-match, and set-cover scoring (release ⇒ coverage)" do
       # Patterns confirm the series' tvdb_id, title, and season number are passed through.
