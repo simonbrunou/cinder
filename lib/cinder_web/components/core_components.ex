@@ -215,6 +215,10 @@ defmodule CinderWeb.CoreComponents do
 
   attr :checkbox_checked, :boolean, default: false, doc: "checked state of the optional checkbox"
   attr :checkbox_label, :string, default: nil, doc: "label for the optional checkbox"
+
+  attr :rest, :global,
+    doc: "forwarded to both action buttons — e.g. phx-target={@myself} from a LiveComponent"
+
   slot :caveat, required: true
 
   def confirm_action(assigns) do
@@ -250,10 +254,11 @@ defmodule CinderWeb.CoreComponents do
           phx-click={@on_confirm}
           phx-value-id={@value}
           phx-disable-with={gettext("Working…")}
+          {@rest}
         >
           {@confirm_label || gettext("Confirm")}
         </.button>
-        <.button type="button" variant="ghost" phx-click={@on_cancel}>
+        <.button type="button" variant="ghost" phx-click={@on_cancel} {@rest}>
           {@cancel_label || gettext("Cancel")}
         </.button>
       </div>
