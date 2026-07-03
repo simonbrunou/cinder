@@ -1,6 +1,7 @@
 defmodule Cinder.CatalogMetadataTest do
   use Cinder.DataCase, async: false
 
+  import Ecto.Query
   import Mox
   import Cinder.CatalogFixtures
 
@@ -63,6 +64,26 @@ defmodule Cinder.CatalogMetadataTest do
 
       assert Catalog.enrich_movie(movie) == movie
       assert is_nil(Repo.get!(Movie, movie.id).vote_average)
+    end
+
+    test "preserves updated_at so a read (page view) doesn't reorder the Recent slice" do
+      movie = movie_fixture()
+      past = ~U[2020-01-01 00:00:00Z]
+
+      {1, _} =
+        Repo.update_all(from(m in Movie, where: m.id == ^movie.id), set: [updated_at: past])
+
+      movie = Repo.get!(Movie, movie.id)
+
+      details = Map.put(@details, :tmdb_id, movie.tmdb_id)
+      expect(Cinder.Catalog.TMDBMock, :get_movie, fn _ -> {:ok, details} end)
+
+      enriched = Catalog.enrich_movie(movie)
+
+      assert enriched.overview =~ "thief", "metadata was still written"
+
+      assert Repo.get!(Movie, movie.id).updated_at == past,
+             "updated_at must not bump on a backfill"
     end
   end
 
