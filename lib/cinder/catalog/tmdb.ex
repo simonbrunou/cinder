@@ -6,10 +6,10 @@ defmodule Cinder.Catalog.TMDB do
   callbacks are kept distinct (no overloaded `search/1`).
   """
 
-  @doc "Movie search. Returns `%{tmdb_id, title, year, poster_path, imdb_id, original_language}` per result (`imdb_id` is `nil` on search results; `original_language` is populated by TMDB's `/search/movie` response)."
+  @doc "Movie search. Returns `%{tmdb_id, title, year, poster_path, imdb_id, original_language, overview, runtime, genres, vote_average, release_date}` per result (`imdb_id`/`runtime` are `nil` and `genres` is `[]` on search results — only `get_movie` details carry them; `original_language`/`overview`/`vote_average`/`release_date` are populated by `/search/movie`)."
   @callback search(query :: String.t()) :: {:ok, [map()]} | {:error, term()}
 
-  @doc "Single movie details. Returns `%{tmdb_id, title, year, poster_path, imdb_id, original_language}`."
+  @doc "Single movie details. Returns `%{tmdb_id, title, year, poster_path, imdb_id, original_language, overview, runtime, genres, vote_average, release_date}` (`genres` is a list of names, `release_date` a `Date` or `nil`)."
   @callback get_movie(tmdb_id :: integer()) :: {:ok, map()} | {:error, term()}
 
   @doc "TV search. Returns normalized series maps (`%{tmdb_id, title, year, poster_path, original_language}`)."
@@ -17,8 +17,9 @@ defmodule Cinder.Catalog.TMDB do
 
   @doc """
   Series details + the list of season numbers. Returns
-  `%{tmdb_id, tvdb_id, title, year, poster_path, original_language, seasons: [%{season_number}]}`.
-  `tvdb_id` is `nil` when TMDB has no `external_ids` block.
+  `%{tmdb_id, tvdb_id, title, year, poster_path, original_language, overview, genres,
+  vote_average, first_air_date, seasons: [%{season_number}]}`. `tvdb_id` is `nil` when TMDB
+  has no `external_ids` block; `genres` is a list of names, `first_air_date` a `Date` or `nil`.
   """
   @callback get_series(tmdb_id :: integer()) :: {:ok, map()} | {:error, term()}
 

@@ -8,7 +8,7 @@ defmodule CinderWeb.SeriesDetailLive do
   """
   use CinderWeb, :live_view
 
-  import CinderWeb.LiveHelpers, only: [format_date_year: 1]
+  import CinderWeb.LiveHelpers, only: [format_date_year: 1, humanize_bytes: 1, rating: 1]
 
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Season, Series}
@@ -20,15 +20,17 @@ defmodule CinderWeb.SeriesDetailLive do
          %{} = series <- Catalog.get_series_with_tree(id) do
       if connected?(socket), do: Catalog.subscribe_series()
 
-      {:ok,
-       assign(socket,
-         series: series,
-         editing?: false,
-         confirming: nil,
-         form: nil,
-         confirm_opt: false,
-         searching_season: nil
-       )}
+      socket =
+        assign(socket,
+          series: series,
+          editing?: false,
+          confirming: nil,
+          form: nil,
+          confirm_opt: false,
+          searching_season: nil
+        )
+
+      {:ok, maybe_enrich(socket, series)}
     else
       _ ->
         {:ok,
@@ -261,6 +263,20 @@ defmodule CinderWeb.SeriesDetailLive do
 
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
+  # Backfill descriptive metadata once, off the render path (vote_average-nil sentinel).
+  defp maybe_enrich(socket, %Series{vote_average: nil} = series) do
+    if connected?(socket),
+      do: start_async(socket, :enrich, fn -> Catalog.enrich_series(series) end),
+      else: socket
+  end
+
+  defp maybe_enrich(socket, %Series{}), do: socket
+
+  # Metadata backfill landed — reload so the tree + the newly-written descriptive fields render.
+  @impl true
+  def handle_async(:enrich, {:ok, %Series{}}, socket), do: {:noreply, reload(socket)}
+  def handle_async(:enrich, {:exit, _reason}, socket), do: {:noreply, socket}
+
   # The manual-search panel forwards a chosen release back here (it owns no Catalog writes). The
   # open panel's season is tracked in :searching_season; the grab covers that season's wanted set.
   @impl true
@@ -412,6 +428,26 @@ defmodule CinderWeb.SeriesDetailLive do
               <.status_badge kind={:monitored} status={@series.monitored} />
             </:actions>
           </.header>
+
+          <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-base-content/70">
+            <span :if={@series.first_air_date} class="inline-flex items-center gap-1">
+              <.icon name="hero-calendar" class="size-4" />{format_date_year(@series.first_air_date)}
+            </span>
+            <span
+              :if={is_number(@series.vote_average) and @series.vote_average > 0}
+              class="inline-flex items-center gap-1"
+            >
+              <.icon name="hero-star" class="size-4" />{rating(@series.vote_average)}
+            </span>
+          </div>
+
+          <div :if={@series.genres not in [nil, []]} class="mt-2 flex flex-wrap gap-1">
+            <span :for={g <- @series.genres} class="badge badge-outline badge-sm">{g}</span>
+          </div>
+
+          <p :if={@series.overview} class="mt-3 max-w-prose text-sm leading-relaxed">
+            {@series.overview}
+          </p>
         </div>
       </div>
 
@@ -557,6 +593,12 @@ defmodule CinderWeb.SeriesDetailLive do
               >
                 {format_date_year(ep.air_date)}
               </time>
+              <span
+                :if={ep.file_path && episode_file_info(ep) != ""}
+                class="text-xs text-base-content/60"
+              >
+                {episode_file_info(ep)}
+              </span>
               <.button
                 :if={ep.file_path}
                 type="button"
@@ -610,4 +652,11 @@ defmodule CinderWeb.SeriesDetailLive do
   end
 
   defp monitored_count(season), do: Enum.count(season.episodes, & &1.monitored)
+
+  # "1080p · 2.1 GB" for a downloaded episode — drops whichever piece TMDB/import didn't capture.
+  defp episode_file_info(ep) do
+    [ep.imported_resolution, humanize_bytes(ep.imported_size)]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join(" · ")
+  end
 end

@@ -27,6 +27,10 @@ defmodule Cinder.Catalog.Series do
     field :monitor_strategy, Ecto.Enum, values: @monitor_strategies, default: :future
     field :original_language, :string
     field :preferred_language, :string, default: "original"
+    field :overview, :string
+    field :genres, {:array, :string}
+    field :vote_average, :float
+    field :first_air_date, :date
     has_many :seasons, Season
 
     timestamps(type: :utc_datetime)
@@ -66,7 +70,22 @@ defmodule Cinder.Catalog.Series do
   (user-controlled) are deliberately NOT castable so a refresh preserves them.
   """
   def refresh_changeset(series, attrs) do
-    cast(series, attrs, [:tvdb_id, :title, :year, :poster_path, :original_language])
+    cast(series, attrs, [
+      :tvdb_id,
+      :title,
+      :year,
+      :poster_path,
+      :original_language,
+      :overview,
+      :genres,
+      :vote_average,
+      :first_air_date
+    ])
+  end
+
+  @doc "Changeset for the lazy TMDB metadata backfill (`Catalog.enrich_series/1`). Descriptive only; excludes identity/monitoring so a backfill can't disturb the tree."
+  def metadata_changeset(series, attrs) do
+    cast(series, attrs, [:overview, :genres, :vote_average, :first_air_date])
   end
 
   @doc "Changeset for the in-app series language edit. Excluded from refresh/admin changesets so it survives a TMDB resync."

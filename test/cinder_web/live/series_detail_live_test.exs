@@ -10,18 +10,44 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   setup :register_and_log_in_admin
   setup :set_mox_global
 
+  # Baseline so the detail page's lazy metadata backfill (enrich_series) always resolves — for the
+  # tests that build a series directly via Repo.insert! (no get_series stub of their own), and even
+  # when that fire-once async backfill outlives the test as a detached task. Non-pinned + nil
+  # metadata so it never injects unexpected strings; per-test stubs (create_series) override it.
+  setup do
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn tmdb_id ->
+      {:ok, base_series_info(tmdb_id)}
+    end)
+
+    :ok
+  end
+
+  defp base_series_info(tmdb_id) do
+    %{
+      tmdb_id: tmdb_id,
+      tvdb_id: nil,
+      title: "S",
+      year: 2020,
+      poster_path: nil,
+      original_language: "en",
+      overview: nil,
+      genres: nil,
+      vote_average: nil,
+      first_air_date: nil,
+      seasons: []
+    }
+  end
+
   # Build a series tree directly via the context (mocked TMDB), at :none so every
   # episode starts un-monitored — the toggles then have something to flip.
   defp create_series(tmdb_id) do
-    stub(Cinder.Catalog.TMDBMock, :get_series, fn ^tmdb_id ->
+    # Non-pinned so a detached enrich task from another test can't mismatch this stub.
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn _ ->
       {:ok,
        %{
-         tmdb_id: tmdb_id,
-         tvdb_id: nil,
-         title: "Test Show",
-         year: 2020,
-         poster_path: nil,
-         seasons: [%{season_number: 1}]
+         base_series_info(tmdb_id)
+         | title: "Test Show",
+           seasons: [%{season_number: 1}]
        }}
     end)
 
@@ -37,7 +63,19 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     end)
 
     {:ok, series} = Catalog.add_series_to_watchlist(tmdb_id, monitor_strategy: :none)
+
+    # Pre-mark the series enriched (vote_average set) so the detail page's lazy metadata
+    # backfill is skipped — no extra TMDB call, no detached async task crossing into the next
+    # test. enrich_series's fetch path is covered in catalog_metadata_test; here we just want the
+    # metadata block populated and the tree/toggle behaviour isolated from the network.
     series
+    |> Ecto.Changeset.change(%{
+      overview: "A test show overview.",
+      genres: ["Drama"],
+      vote_average: 8.2,
+      first_air_date: ~D[2020-01-01]
+    })
+    |> Repo.update!()
   end
 
   defp first_episode(series_id) do
@@ -63,6 +101,15 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert html =~ "Season 1"
     assert html =~ "Pilot"
     assert html =~ "Two"
+  end
+
+  test "renders the series descriptive metadata block", %{conn: conn} do
+    series = create_series(720)
+    {:ok, _lv, html} = live(conn, ~p"/series/#{series.id}")
+
+    assert html =~ "A test show overview."
+    assert html =~ "Drama"
+    assert html =~ "8.2"
   end
 
   test "toggling an episode flips its monitored flag in the DB", %{conn: conn} do

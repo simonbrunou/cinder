@@ -40,6 +40,20 @@ defmodule CinderWeb.LiveHelpers do
   @doc ~S|Locale-aware date with year ("Jun 3, 2026" / fr "3 juin 2026").|
   def format_date_year(date), do: localized_strftime(date, gettext("%b %-d, %Y"), "%b %-d, %Y")
 
+  @doc ~S|A file size for display ("8.4 GB" / "720 MB"). `nil`/non-positive → `nil` (caller hides the label). ponytail: GB/MB only, one decimal — plenty for a household file-size chip.|
+  def humanize_bytes(bytes) when is_integer(bytes) and bytes >= 1_073_741_824,
+    do: "#{Float.round(bytes / 1_073_741_824, 1)} GB"
+
+  def humanize_bytes(bytes) when is_integer(bytes) and bytes >= 1_048_576,
+    do: "#{Float.round(bytes / 1_048_576, 1)} MB"
+
+  def humanize_bytes(bytes) when is_integer(bytes) and bytes > 0, do: "#{bytes} B"
+  def humanize_bytes(_), do: nil
+
+  @doc ~S|A one-decimal rating string ("8.4") for a TMDB vote average (an Ecto :float). Non-floats fall through to to_string/1 as a defensive fallback.|
+  def rating(v) when is_float(v), do: :erlang.float_to_binary(v, decimals: 1)
+  def rating(v), do: to_string(v)
+
   # The translated format is translator-controlled data executed as strftime syntax;
   # a bad .po directive must degrade to the English msgid format, not crash-loop
   # every view render for that locale. (The test suite pins known locales' catalogs,

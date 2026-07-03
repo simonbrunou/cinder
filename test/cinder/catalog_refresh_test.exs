@@ -44,6 +44,10 @@ defmodule Cinder.CatalogRefreshTest do
           year: 2008,
           poster_path: nil,
           original_language: nil,
+          overview: nil,
+          genres: nil,
+          vote_average: nil,
+          first_air_date: nil,
           seasons: season_numbers
         },
         info_overrides
@@ -56,6 +60,26 @@ defmodule Cinder.CatalogRefreshTest do
     stub(Cinder.Catalog.TMDBMock, :get_season, fn ^tmdb_id, n ->
       {:ok, %{season_number: n, episodes: Map.fetch!(by_number, n)}}
     end)
+  end
+
+  test "backfills the series descriptive metadata from TMDB" do
+    s = series(:future)
+    season(s, 1)
+
+    stub_tmdb(s, [{1, []}], %{
+      overview: "Backfilled overview",
+      genres: ["Comedy"],
+      vote_average: 8.1,
+      first_air_date: ~D[2008-09-24]
+    })
+
+    assert {:ok, _} = Catalog.refresh_series(s)
+
+    r = Repo.get!(Series, s.id)
+    assert r.overview == "Backfilled overview"
+    assert r.genres == ["Comedy"]
+    assert r.vote_average == 8.1
+    assert r.first_air_date == ~D[2008-09-24]
   end
 
   test "fills a late air_date on a matched episode, preserving monitored" do
