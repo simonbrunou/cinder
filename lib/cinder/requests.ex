@@ -178,9 +178,15 @@ defmodule Cinder.Requests do
         # covers :pending rows, so a duplicate pending request created while this one
         # was briefly :approved makes the revert collide — fall back to :denied
         # (never indexed, recoverable via Reopen) so the strand stays visible.
-        # Anything else (a DB disconnect, a transient busy) propagates: denying on an
-        # arbitrary error would silently convert a retryable blip into a decision.
+        #
+        # Match on the MESSAGE, not the class: update_all bypasses Ecto's
+        # to_constraints, so a collision surfaces as a raw Exqlite.Error — the same
+        # class that also carries a transient SQLITE_BUSY or disk-I/O error. Rescuing
+        # the whole class would convert a retryable blip into a permanent :denied, so
+        # anything that isn't a UNIQUE violation re-raises and propagates.
         e in [Ecto.ConstraintError, Exqlite.Error] ->
+          unless unique_collision?(e), do: reraise(e, __STACKTRACE__)
+
           Logger.warning(
             "revert_to_pending for request #{request.id} collided " <>
               "(#{Exception.message(e)}); denying instead"
@@ -208,6 +214,10 @@ defmodule Cinder.Requests do
         broadcast({:request_denied, struct(request, status: :denied)})
     end
   end
+
+  # A UNIQUE-index violation (the only revert failure we down-convert to :denied),
+  # as opposed to a transient busy / disk-I/O Exqlite.Error that must propagate.
+  defp unique_collision?(e), do: Exception.message(e) =~ "UNIQUE constraint failed"
 
   defp now, do: NaiveDateTime.truncate(NaiveDateTime.utc_now(), :second)
 
