@@ -165,34 +165,48 @@ defmodule Cinder.Requests do
   # a view mounted during the approved-then-reverted window would show :approved until
   # the next unrelated request event.
   defp revert_to_pending(%Request{} = request) do
-    Repo.update_all(
-      from(r in Request, where: r.id == ^request.id and r.status == :approved),
-      set: [status: :pending, approved_by_id: nil, updated_at: now()]
-    )
+    reverted_to =
+      try do
+        Repo.update_all(
+          from(r in Request, where: r.id == ^request.id and r.status == :approved),
+          set: [status: :pending, approved_by_id: nil, updated_at: now()]
+        )
 
-    broadcast({:request_created, struct(request, status: :pending, approved_by_id: nil)})
-  rescue
-    # The partial requests_pending_unique index only covers :pending rows, so a
-    # duplicate pending request for the same target created while this one was
-    # briefly :approved makes the revert collide. Fall back to :denied (never
-    # indexed) so the strand stays visible and recoverable instead of raising out
-    # of approve_request.
-    e ->
-      Logger.warning(
-        "revert_to_pending for request #{request.id} collided (#{Exception.message(e)}); " <>
-          "denying instead"
-      )
+        :pending
+      rescue
+        # ONLY the unique-index collision: the partial requests_pending_unique index
+        # covers :pending rows, so a duplicate pending request created while this one
+        # was briefly :approved makes the revert collide — fall back to :denied
+        # (never indexed, recoverable via Reopen) so the strand stays visible.
+        # Anything else (a DB disconnect, a transient busy) propagates: denying on an
+        # arbitrary error would silently convert a retryable blip into a decision.
+        e in [Ecto.ConstraintError, Exqlite.Error] ->
+          Logger.warning(
+            "revert_to_pending for request #{request.id} collided " <>
+              "(#{Exception.message(e)}); denying instead"
+          )
 
-      Repo.update_all(
-        from(r in Request, where: r.id == ^request.id and r.status == :approved),
-        set: [
-          status: :denied,
-          denial_reason: "Approval failed: the series could not be created.",
-          updated_at: now()
-        ]
-      )
+          Repo.update_all(
+            from(r in Request, where: r.id == ^request.id and r.status == :approved),
+            set: [
+              status: :denied,
+              denial_reason: "Approval failed: the series could not be created.",
+              updated_at: now()
+            ]
+          )
 
-      broadcast({:request_denied, struct(request, status: :denied)})
+          :denied
+      end
+
+    # Broadcast OUTSIDE the rescued region — a broadcast failure after a successful
+    # revert must not re-run the fallback and deny an already-reverted request.
+    case reverted_to do
+      :pending ->
+        broadcast({:request_created, struct(request, status: :pending, approved_by_id: nil)})
+
+      :denied ->
+        broadcast({:request_denied, struct(request, status: :denied)})
+    end
   end
 
   defp now, do: NaiveDateTime.truncate(NaiveDateTime.utc_now(), :second)
@@ -225,18 +239,13 @@ defmodule Cinder.Requests do
   """
   def delete_request(%Request{} = request, %User{} = admin) do
     Repo.transaction(fn ->
-      # Re-read inside the txn (safe: default_transaction_mode :immediate takes the
-      # write lock at BEGIN) so the audit records the row's ACTUAL state at delete
-      # time — the caller's struct is a rendered snapshot whose status may be stale.
-      # nil -> {:error, :not_found} with NO audit row and NO broadcast: the losing
-      # admin in a double-delete race must not log a delete that never happened.
-      case Repo.one(from(r in Request, where: r.id == ^request.id)) do
-        nil ->
-          Repo.rollback(:not_found)
-
-        fresh ->
-          Repo.delete_all(from(r in Request, where: r.id == ^fresh.id))
-
+      # One atomic DELETE ... RETURNING (select: r): the audit records the row's
+      # ACTUAL state at delete time — the caller's struct is a rendered snapshot
+      # whose status may be stale. 0 rows -> {:error, :not_found} with NO audit row
+      # and NO broadcast: the losing admin in a double-delete race must not log a
+      # delete that never happened.
+      case Repo.delete_all(from(r in Request, where: r.id == ^request.id, select: r)) do
+        {1, [fresh]} ->
           Audit.log_or_rollback(admin, "delete_request", fresh, %{
             status: fresh.status,
             target_type: fresh.target_type,
@@ -245,6 +254,9 @@ defmodule Cinder.Requests do
           })
 
           fresh
+
+        {0, _} ->
+          Repo.rollback(:not_found)
       end
     end)
     |> tap_ok(&broadcast({:request_deleted, &1}))

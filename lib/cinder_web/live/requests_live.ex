@@ -50,11 +50,21 @@ defmodule CinderWeb.RequestsLive do
 
     # nil (row vanished from under the snapshot) is silent, like the sibling
     # approve/reopen handlers — the broadcast-driven refresh removes it anyway.
+    # :not_pending gets a specific message: another admin already decided it, so
+    # "try again" would be a lie.
     socket =
       case req && Requests.deny_request(req, socket.assigns.current_scope.user, reason) do
-        {:ok, _} -> socket
-        nil -> socket
-        _ -> put_flash(socket, :error, gettext("Couldn't deny that request. Please try again."))
+        {:ok, _} ->
+          socket
+
+        nil ->
+          socket
+
+        {:error, :not_pending} ->
+          put_flash(socket, :error, gettext("That request was already decided."))
+
+        _ ->
+          put_flash(socket, :error, gettext("Couldn't deny that request. Please try again."))
       end
 
     {:noreply, assign(socket, denying: nil)}

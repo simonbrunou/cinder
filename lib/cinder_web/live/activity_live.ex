@@ -74,7 +74,17 @@ defmodule CinderWeb.ActivityLive do
     # Look the movie up from the loaded list (string-compare ids, like confirm_delete) so a forged
     # non-numeric phx-value can't reach Repo.get/CastError — it just resolves to nil and no-ops.
     movie = find_by_id(socket.assigns.movies, id)
-    if movie, do: Catalog.retry_movie(movie)
+
+    # A guarded miss (the movie already re-entered the pipeline under this stale
+    # snapshot) must not be silent — the row visibly doesn't reset otherwise.
+    socket =
+      case movie && Catalog.retry_movie(movie) do
+        {:error, _} ->
+          put_flash(socket, :error, gettext("Couldn't retry: that movie has already moved on."))
+
+        _ ->
+          socket
+      end
 
     {:noreply, socket}
   end

@@ -981,7 +981,20 @@ defmodule Cinder.Catalog do
       end)
 
     with {:ok, grab} <- result do
-      broadcast_series(series_id_for_grab(grab.id))
+      # Post-commit side effect, best-effort: once the txn committed the grab is
+      # real, and a blip here (a pool-checkout timeout on the series lookup) must
+      # not surface as {:error, _} — the TvPoller's cleanup branch would then
+      # remove the client download out from under a live grab and eventually
+      # blocklist a good release.
+      try do
+        broadcast_series(series_id_for_grab(grab.id))
+      rescue
+        e -> Logger.warning("post-commit broadcast for grab #{grab.id} failed: #{inspect(e)}")
+      catch
+        kind, value ->
+          Logger.warning("post-commit broadcast for grab #{grab.id} #{kind}: #{inspect(value)}")
+      end
+
       {:ok, grab}
     end
   end
