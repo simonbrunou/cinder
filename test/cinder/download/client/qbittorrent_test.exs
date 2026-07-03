@@ -217,4 +217,82 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     Req.Test.stub(Cinder.QBittorrentStub, fn conn -> Req.Test.text(conn, "Fails.") end)
     assert {:error, :login_failed} = QBittorrent.remove("abc123", [])
   end
+
+  test "add/1 routes a redirect-to-magnet through the magnet add path" do
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      case {conn.host, conn.request_path} do
+        {"tracker.test", _} ->
+          # Prowlarr-style proxied downloadUrl for a magnet-only indexer.
+          conn
+          |> Plug.Conn.put_resp_header("location", "magnet:?xt=urn:btih:#{@hash}&dn=Movie")
+          |> Plug.Conn.send_resp(302, "")
+
+        {_, "/api/v2/auth/login"} ->
+          conn
+          |> Plug.Conn.put_resp_header("set-cookie", "SID=testsid; path=/")
+          |> Req.Test.text("Ok.")
+
+        {_, "/api/v2/torrents/add"} ->
+          Req.Test.text(conn, "Ok.")
+      end
+    end)
+
+    assert {:ok, "0123456789abcdef0123456789abcdef01234567"} =
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/123"})
+  end
+
+  test "add/1 follows an http redirect to the torrent file" do
+    infoval = "d6:lengthi5e4:name5:M.mkv12:piece lengthi16384ee"
+    torrent_bytes = "d8:announce11:http://x/an4:info" <> infoval <> "e"
+    expected = :crypto.hash(:sha, infoval) |> Base.encode16(case: :lower)
+
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      case {conn.host, conn.request_path} do
+        {"tracker.test", "/dl/123"} ->
+          conn
+          |> Plug.Conn.put_resp_header("location", "https://tracker.test/real.torrent")
+          |> Plug.Conn.send_resp(302, "")
+
+        {"tracker.test", "/real.torrent"} ->
+          Req.Test.text(conn, torrent_bytes)
+
+        {_, "/api/v2/auth/login"} ->
+          conn
+          |> Plug.Conn.put_resp_header("set-cookie", "SID=testsid; path=/")
+          |> Req.Test.text("Ok.")
+
+        {_, "/api/v2/torrents/add"} ->
+          Req.Test.text(conn, "Ok.")
+      end
+    end)
+
+    assert {:ok, ^expected} = QBittorrent.add(%{download_url: "https://tracker.test/dl/123"})
+  end
+
+  test "add/1 rejects a redirect to a non-http scheme" do
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      conn
+      |> Plug.Conn.put_resp_header("location", "ftp://tracker.test/file.torrent")
+      |> Plug.Conn.send_resp(302, "")
+    end)
+
+    assert {:error, :unsupported_download_url} =
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/123"})
+  end
+
+  test "login cools down after a definitive auth failure: one attempt per process" do
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      send(self(), :login_attempted)
+      Req.Test.text(conn, "Fails.")
+    end)
+
+    magnet = "magnet:?xt=urn:btih:#{@hash}"
+
+    assert {:error, :login_failed} = QBittorrent.add(%{download_url: magnet})
+    assert_received :login_attempted
+
+    # Second call in the same (poller-like) process skips the login entirely.
+    assert {:error, :login_failed} = QBittorrent.add(%{download_url: magnet})
+    refute_received :login_attempted
+  end
 end

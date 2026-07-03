@@ -156,8 +156,8 @@ defmodule CinderWeb.UsersLive do
       nil ->
         {:noreply, socket}
 
-      {:error, _changeset} ->
-        {:noreply, put_flash(socket, :error, gettext("Password must be at least 12 characters."))}
+      {:error, changeset} ->
+        {:noreply, put_flash(socket, :error, password_error_message(changeset))}
     end
   end
 
@@ -211,6 +211,14 @@ defmodule CinderWeb.UsersLive do
   # Sourced from a fresh list rather than the possibly-stale socket snapshot, so a
   # since-deleted row (e.g. a stale second tab) resolves to nil and no-ops instead
   # of raising Ecto.StaleEntryError inside the subsequent mutation.
+  # Surface the actual validation failure — a confirmation mismatch mislabeled as a
+  # length problem sends the admin to fix the wrong thing.
+  defp password_error_message(%Ecto.Changeset{errors: [{field, error} | _]}) do
+    "#{Phoenix.Naming.humanize(field)}: #{translate_error(error)}"
+  end
+
+  defp password_error_message(_), do: gettext("Couldn't reset the password.")
+
   defp find_user(id) do
     find_by_id(Accounts.list_users(), id)
   end

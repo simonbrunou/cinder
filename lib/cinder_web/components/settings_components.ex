@@ -13,6 +13,17 @@ defmodule CinderWeb.SettingsComponents do
   alias Cinder.Settings
   alias CinderWeb.SettingsLabels
 
+  @doc """
+  The flash message for a rejected size-band save (`Settings.save_form/1` returning
+  `{:error, invalid_keys}`) — shared by `/settings` and `/setup` so the copy can't drift.
+  """
+  def invalid_band_message(invalid_keys) do
+    gettext(
+      "Not saved: invalid size for %{fields}: enter a positive number of GB, or leave blank for no limit.",
+      fields: Enum.join(invalid_keys, ", ")
+    )
+  end
+
   attr :form, :map, required: true
   attr :health, :map, required: true
   # move_on_import is a /settings-only advanced toggle; the first-run wizard passes false

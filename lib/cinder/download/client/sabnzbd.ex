@@ -155,7 +155,11 @@ defmodule Cinder.Download.Client.Sabnzbd do
   # unauthenticated), so a wrong key surfaces as unhealthy. SABnzbd reports a bad
   # key as HTTP 200 with `{"status": false}`, so that body must be caught too.
   def health do
-    case get(mode: "queue") do
+    # Bounded probe: no retry, short receive AND connect timeouts, so a down/
+    # blackholed SABnzbd can't hang the settings "Test connection" for minutes.
+    probe = [retry: false, receive_timeout: 3_000, connect_options: [timeout: 3_000]]
+
+    case get([mode: "queue"], probe) do
       {:ok, %{status: 200, body: %{"status" => false}}} -> {:error, :bad_api_key}
       {:ok, %{status: status}} when status in 200..299 -> :ok
       other -> error(other)

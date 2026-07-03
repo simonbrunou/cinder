@@ -236,7 +236,7 @@ defmodule CinderWeb.DiscoverLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/")
     render_hook(lv, "confirm_delete_series", %{"id" => to_string(series.id)})
 
-    assert Cinder.Catalog.get_series_by_id(series.id) != nil
+    assert Cinder.Repo.get(Cinder.Catalog.Series, series.id) != nil
   end
 
   test "the old /series route redirects to /", %{conn: conn} do

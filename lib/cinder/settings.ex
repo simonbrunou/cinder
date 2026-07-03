@@ -359,10 +359,31 @@ defmodule Cinder.Settings do
   @doc """
   Applies submitted form `params` (string-keyed): non-secret blanks clear, secret
   blanks keep the existing value, a `clear_<key>` flag deletes a secret.
+
+  Size-band values are validated first: a non-blank value the GB coercion would
+  silently degrade to nil ("abc", "0", "-2") is rejected — persisting it would echo
+  back as if accepted while the scorer runs unbounded. Returns `:ok`, or
+  `{:error, invalid_keys}` with nothing saved.
   """
   def save_form(params) do
-    {puts, deletes} = plan(params)
-    save(puts, deletes)
+    case invalid_band_values(params) do
+      [] ->
+        {puts, deletes} = plan(params)
+        save(puts, deletes)
+
+      invalid ->
+        {:error, invalid}
+    end
+  end
+
+  defp invalid_band_values(params) do
+    for kind <- Cinder.Library.kinds(),
+        key <- [min_size_key(kind), max_size_key(kind)],
+        value = String.trim(params[key] || ""),
+        value != "",
+        is_nil(parse_gb(value)) do
+      key
+    end
   end
 
   # --- env overlay ---
@@ -671,9 +692,17 @@ defmodule Cinder.Settings do
 
   defp plan_config(%{secret: true, key: key}, params, {puts, deletes}) do
     cond do
-      params["clear_" <> key] -> {puts, [key | deletes]}
-      String.trim(params[key] || "") == "" -> {puts, deletes}
-      true -> {Map.put(puts, key, String.trim(params[key])), deletes}
+      # A typed replacement wins over a ticked Clear box: deleting the old secret AND
+      # dropping the newly typed one would leave the service silently unauthenticated
+      # behind a "Settings saved." flash.
+      String.trim(params[key] || "") != "" ->
+        {Map.put(puts, key, String.trim(params[key])), deletes}
+
+      params["clear_" <> key] ->
+        {puts, [key | deletes]}
+
+      true ->
+        {puts, deletes}
     end
   end
 end

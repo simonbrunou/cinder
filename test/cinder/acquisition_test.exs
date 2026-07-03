@@ -302,12 +302,23 @@ defmodule Cinder.AcquisitionTest do
       assert chosen |> Enum.map(fn {_r, cov} -> cov end) |> Enum.sort() == [[1], [2]]
     end
 
-    test "rejects a same-season release of a different series (wrong-series guard)" do
+    test "rejects a same-season release of a different series on the free-text path" do
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
         {:ok, [raw_tv("Parks.and.Recreation.S01E01.1080p.WEB-DL-GRP")]}
       end)
 
-      assert :no_match = Acquisition.best_releases(series(), 1, [1])
+      assert :no_match = Acquisition.best_releases(series(tvdb_id: nil), 1, [1])
+    end
+
+    test "does not title-filter a TvdbId-scoped search, so AKA-titled releases still grab" do
+      # TMDB title "Money Heist", release under the original title — the TvdbId
+      # token already scoped the search to the right show.
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn 123, _title, _season ->
+        {:ok, [raw_tv("La.Casa.de.Papel.S01E01.1080p.WEB-DL-GRP")]}
+      end)
+
+      assert {:ok, [{%Release{episodes: [1]}, [1]}]} =
+               Acquisition.best_releases(series(title: "Money Heist"), 1, [1])
     end
 
     test "title-match folds diacritics so an ASCII-ized release still matches" do
@@ -316,7 +327,16 @@ defmodule Cinder.AcquisitionTest do
       end)
 
       assert {:ok, [{%Release{episodes: [1]}, [1]}]} =
-               Acquisition.best_releases(series(title: "Pokémon"), 1, [1])
+               Acquisition.best_releases(series(tvdb_id: nil, title: "Pokémon"), 1, [1])
+    end
+
+    test "title-match equates '&' and 'and' so scene names match ampersand titles" do
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
+        {:ok, [raw_tv("Law.and.Order.S01E01.1080p.WEB-DL-GRP")]}
+      end)
+
+      assert {:ok, [{%Release{episodes: [1]}, [1]}]} =
+               Acquisition.best_releases(series(tvdb_id: nil, title: "Law & Order"), 1, [1])
     end
 
     test "drops releases whose protocol has no configured client before scoring" do

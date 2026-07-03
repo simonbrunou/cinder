@@ -68,6 +68,31 @@ defmodule Cinder.RequestsTest do
     assert {:error, :not_pending} = Requests.deny_request(approved, admin, "x")
   end
 
+  test "a stale approve cannot overwrite a concurrent deny (guarded on DB status)" do
+    user = user_fixture()
+    admin = admin_fixture()
+    {:ok, req} = Requests.create_request(user, @attrs)
+
+    # Another admin session denies while this session still holds the :pending struct.
+    {:ok, _} = Requests.deny_request(req, admin, "no")
+
+    assert {:error, :not_pending} = Requests.approve_request(req, admin)
+    # The deny stands and no movie was ever created.
+    assert Repo.reload!(req).status == :denied
+    assert Catalog.list_by_status(:requested) == []
+  end
+
+  test "a stale deny cannot overwrite a concurrent approve (guarded on DB status)" do
+    user = user_fixture()
+    admin = admin_fixture()
+    {:ok, req} = Requests.create_request(user, @attrs)
+
+    {:ok, _} = Requests.approve_request(req, admin)
+
+    assert {:error, :not_pending} = Requests.deny_request(req, admin, "x")
+    assert Repo.reload!(req).status == :approved
+  end
+
   test "no duplicate pending request for the same target" do
     user = user_fixture()
     {:ok, _} = Requests.create_request(user, @attrs)

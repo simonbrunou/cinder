@@ -79,6 +79,13 @@ defmodule CinderWeb.ActivityLiveTest do
   test "renders grabs and deletes one through the confirm step", %{conn: conn} do
     grab = grab!()
 
+    # Deleting the grab must also remove the tracked client download — a bare row
+    # delete leaves it running and colliding with the freed episodes' re-grab.
+    expect(Cinder.Download.ClientMock, :remove, fn download_id, _opts ->
+      assert download_id == grab.download_id
+      :ok
+    end)
+
     {:ok, lv, html} = live(conn, ~p"/activity")
     assert html =~ "Severance"
     assert html =~ "Downloads"

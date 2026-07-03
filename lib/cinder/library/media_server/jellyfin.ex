@@ -22,8 +22,19 @@ defmodule Cinder.Library.MediaServer.Jellyfin do
     config = config()
 
     case Keyword.get(config, :url) do
-      url when url in [nil, ""] -> {:error, :not_configured}
-      _ -> config |> req() |> Req.get(url: "/System/Info", receive_timeout: 3_000) |> result()
+      url when url in [nil, ""] ->
+        {:error, :not_configured}
+
+      _ ->
+        config
+        |> req()
+        |> Req.get(
+          url: "/System/Info",
+          receive_timeout: 3_000,
+          retry: false,
+          connect_options: [timeout: 3_000]
+        )
+        |> result()
     end
   end
 

@@ -27,8 +27,14 @@ defmodule Cinder.Download do
   - `{:error, reason}` — indexer or client error; movie left in `:searching`.
   """
   def start(%Movie{} = movie) do
+    # Every transition below is guarded on the status this unit read (expect:) so a
+    # user cancel landing during the indexer/client I/O is never overwritten; a
+    # {:error, :stale_status} skips the unit — the next tick re-derives.
     with {:ok, imdb_id} <- ensure_imdb_id(movie),
-         {:ok, movie} <- Catalog.transition(movie, %{status: :searching, imdb_id: imdb_id}) do
+         {:ok, movie} <-
+           Catalog.transition(movie, %{status: :searching, imdb_id: imdb_id},
+             expect: movie.status
+           ) do
       opts =
         [
           protocols: available_protocols(),
@@ -42,7 +48,7 @@ defmodule Cinder.Download do
           add_to_client(movie, release)
 
         :no_match ->
-          Catalog.transition(movie, %{status: :no_match})
+          Catalog.transition(movie, %{status: :no_match}, expect: movie.status)
 
         :no_language_match ->
           park_no_language(movie)
@@ -130,7 +136,8 @@ defmodule Cinder.Download do
   end
 
   defp park_no_language(movie) do
-    with {:ok, parked} <- Catalog.transition(movie, %{status: :no_match}) do
+    with {:ok, parked} <-
+           Catalog.transition(movie, %{status: :no_match}, expect: movie.status) do
       Notifier.notify({:movie_failed, parked, :no_language_match})
       {:ok, parked}
     end
@@ -155,12 +162,26 @@ defmodule Cinder.Download do
       # a torn write (id set, protocol nil) would route this download to :torrent.
       # release_title rides the same transition so the blocklist has the chosen
       # release's name if this download later parks terminally (crash-safe, no re-query).
-      Catalog.transition(movie, %{
-        status: :downloading,
-        download_id: download_id,
-        download_protocol: release.protocol,
-        release_title: release.title
-      })
+      movie
+      |> Catalog.transition(
+        %{
+          status: :downloading,
+          download_id: download_id,
+          download_protocol: release.protocol,
+          release_title: release.title
+        },
+        expect: movie.status
+      )
+      |> case do
+        {:error, :stale_status} = err ->
+          # Cancelled/re-decided while the client added the download: the row never
+          # recorded the download_id, so remove the download here or it orphans.
+          best_effort_remove(client, download_id)
+          err
+
+        other ->
+          other
+      end
     else
       # Unreachable post-filter (best_release only returns a configured protocol);
       # a fail-loud guard rather than a silent misroute.

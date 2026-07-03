@@ -1,6 +1,7 @@
 defmodule Cinder.Requests do
   @moduledoc "Request/approval gate: the single caller allowed to create a movie row from a user action."
   import Ecto.Query
+  require Logger
   alias Cinder.Accounts.User
   alias Cinder.Audit
   alias Cinder.Catalog
@@ -69,53 +70,156 @@ defmodule Cinder.Requests do
 
   def approve_request(%Request{status: :pending, target_type: "movie"} = request, %User{} = admin) do
     Repo.transaction(fn ->
-      {:ok, _movie} = Catalog.find_or_create_at_requested(movie_attrs(request))
-
-      request
-      |> Request.status_changeset(%{status: :approved, approved_by_id: admin.id})
-      |> Repo.update()
-      |> case do
-        {:ok, r} -> r
-        {:error, cs} -> Repo.rollback(cs)
+      # Flip first (guarded on the DB's :pending), then create the movie: if a racing
+      # admin already decided this request, no movie row is ever written.
+      with {:ok, approved} <-
+             flip_pending(request, %{status: :approved, approved_by_id: admin.id}),
+           {:ok, _movie} <- Catalog.find_or_create_at_requested(movie_attrs(request)) do
+        approved
+      else
+        {:error, reason} -> Repo.rollback(reason)
       end
     end)
     |> tap_ok(&announce_approved/1)
   end
 
-  # NOT transaction-wrapped: find_or_create_series_at_requested does TMDB I/O.
+  # NOT transaction-wrapped: find_or_create_series_at_requested does TMDB I/O. The flip
+  # runs FIRST (guarded on :pending) so a deny landing during the seconds-long TMDB call
+  # can't leave committed series content behind a denied request; a series-creation
+  # failure then compensates by putting the request back to :pending.
   def approve_request(
         %Request{status: :pending, target_type: "season"} = request,
         %User{} = admin
       ) do
-    with {:ok, _series} <-
-           Catalog.find_or_create_series_at_requested(
-             request.target_id,
-             request.season_number,
-             request.preferred_language || "original"
-           ),
-         {:ok, approved} <-
-           request
-           |> Request.status_changeset(%{status: :approved, approved_by_id: admin.id})
-           |> Repo.update() do
-      announce_approved(approved)
-      {:ok, approved}
+    with {:ok, approved} <- flip_pending(request, %{status: :approved, approved_by_id: admin.id}) do
+      case create_series_safely(request) do
+        {:ok, _series} ->
+          announce_approved(approved)
+          {:ok, approved}
+
+        {:error, reason} ->
+          revert_to_pending(approved)
+          {:error, reason}
+      end
     end
   end
 
   def approve_request(%Request{}, _admin), do: {:error, :not_pending}
 
+  # The TMDB call runs while the request already reads :approved; a raise/exit here
+  # must reach the revert path (not strand the request approved with no series), so
+  # every failure mode is normalized to {:error, reason} — loudly: this rescue also
+  # swallows genuine bugs, and a silent one would be undebuggable. Known residual: a
+  # VM kill (deploy/OOM, or the admin closing the tab mid-bulk killing the linked
+  # start_async task) between the flip and the revert strands the request :approved
+  # with no series; recovery is delete + re-request (documented on delete_request/2).
+  defp create_series_safely(request) do
+    Catalog.find_or_create_series_at_requested(
+      request.target_id,
+      request.season_number,
+      request.preferred_language || "original"
+    )
+  rescue
+    e ->
+      Logger.warning("series creation for request #{request.id} raised: #{Exception.message(e)}")
+
+      {:error, e}
+  catch
+    kind, value ->
+      Logger.warning("series creation for request #{request.id} #{kind}: #{inspect(value)}")
+      {:error, {kind, value}}
+  end
+
   def deny_request(%Request{status: :pending} = request, %User{} = admin, reason) do
     request
-    |> Request.status_changeset(%{
-      status: :denied,
-      denial_reason: reason,
-      approved_by_id: admin.id
-    })
-    |> Repo.update()
+    |> flip_pending(%{status: :denied, denial_reason: reason, approved_by_id: admin.id})
     |> tap_ok(&broadcast({:request_denied, &1}))
   end
 
   def deny_request(%Request{}, _admin, _reason), do: {:error, :not_pending}
+
+  # Guarded status flip: applies `attrs` only while the row is still :pending in the DB —
+  # the UPDATE itself is scoped by status, so two racing admin sessions (e.g. a slow bulk
+  # async approve vs a concurrent deny) can't silently reverse each other's committed
+  # decision. Validates via the changeset, then writes with one atomic update_all (no
+  # read-then-write upgrade window for SQLite to reject).
+  defp flip_pending(%Request{} = request, attrs) do
+    changeset = Request.status_changeset(request, attrs)
+
+    with %{valid?: true, changes: changes} <- changeset,
+         {1, _} <-
+           Repo.update_all(
+             from(r in Request, where: r.id == ^request.id and r.status == :pending),
+             set: Map.to_list(changes) ++ [updated_at: now()]
+           ) do
+      {:ok, struct(request, changes)}
+    else
+      {0, _} -> {:error, :not_pending}
+      %Ecto.Changeset{} = invalid -> {:error, invalid}
+    end
+  end
+
+  # Compensation for the season approve path: the series never materialized (e.g. TMDB
+  # down), so the approval must not stand. Guarded the same way — only undoes our own
+  # flip. The {:request_created, _} broadcast nudges open views to re-read: without it,
+  # a view mounted during the approved-then-reverted window would show :approved until
+  # the next unrelated request event.
+  defp revert_to_pending(%Request{} = request) do
+    reverted_to =
+      try do
+        Repo.update_all(
+          from(r in Request, where: r.id == ^request.id and r.status == :approved),
+          set: [status: :pending, approved_by_id: nil, updated_at: now()]
+        )
+
+        :pending
+      rescue
+        # ONLY the unique-index collision: the partial requests_pending_unique index
+        # covers :pending rows, so a duplicate pending request created while this one
+        # was briefly :approved makes the revert collide — fall back to :denied
+        # (never indexed, recoverable via Reopen) so the strand stays visible.
+        #
+        # Match on the MESSAGE, not the class: update_all bypasses Ecto's
+        # to_constraints, so a collision surfaces as a raw Exqlite.Error — the same
+        # class that also carries a transient SQLITE_BUSY or disk-I/O error. Rescuing
+        # the whole class would convert a retryable blip into a permanent :denied, so
+        # anything that isn't a UNIQUE violation re-raises and propagates.
+        e in [Ecto.ConstraintError, Exqlite.Error] ->
+          unless unique_collision?(e), do: reraise(e, __STACKTRACE__)
+
+          Logger.warning(
+            "revert_to_pending for request #{request.id} collided " <>
+              "(#{Exception.message(e)}); denying instead"
+          )
+
+          Repo.update_all(
+            from(r in Request, where: r.id == ^request.id and r.status == :approved),
+            set: [
+              status: :denied,
+              denial_reason: "Approval failed: the series could not be created.",
+              updated_at: now()
+            ]
+          )
+
+          :denied
+      end
+
+    # Broadcast OUTSIDE the rescued region — a broadcast failure after a successful
+    # revert must not re-run the fallback and deny an already-reverted request.
+    case reverted_to do
+      :pending ->
+        broadcast({:request_created, struct(request, status: :pending, approved_by_id: nil)})
+
+      :denied ->
+        broadcast({:request_denied, struct(request, status: :denied)})
+    end
+  end
+
+  # A UNIQUE-index violation (the only revert failure we down-convert to :denied),
+  # as opposed to a transient busy / disk-I/O Exqlite.Error that must propagate.
+  defp unique_collision?(e), do: Exception.message(e) =~ "UNIQUE constraint failed"
+
+  defp now, do: NaiveDateTime.truncate(NaiveDateTime.utc_now(), :second)
 
   @doc """
   Reopens a denied request back to `:pending` (clearing the denial reason and
@@ -145,21 +249,27 @@ defmodule Cinder.Requests do
   """
   def delete_request(%Request{} = request, %User{} = admin) do
     Repo.transaction(fn ->
-      case Repo.delete(request) do
-        {:ok, deleted} ->
-          Audit.log_or_rollback(admin, "delete_request", deleted, %{
-            status: deleted.status,
-            target_type: deleted.target_type,
-            target_id: deleted.target_id,
-            title: deleted.title
+      # One atomic DELETE ... RETURNING (select: r): the audit records the row's
+      # ACTUAL state at delete time — the caller's struct is a rendered snapshot
+      # whose status may be stale. 0 rows -> {:error, :not_found} with NO audit row
+      # and NO broadcast: the losing admin in a double-delete race must not log a
+      # delete that never happened.
+      case Repo.delete_all(from(r in Request, where: r.id == ^request.id, select: r)) do
+        {1, [fresh]} ->
+          Audit.log_or_rollback(admin, "delete_request", fresh, %{
+            status: fresh.status,
+            target_type: fresh.target_type,
+            target_id: fresh.target_id,
+            title: fresh.title
           })
 
-          deleted
+          fresh
 
-        {:error, changeset} ->
-          Repo.rollback(changeset)
+        {0, _} ->
+          Repo.rollback(:not_found)
       end
     end)
+    |> tap_ok(&broadcast({:request_deleted, &1}))
   end
 
   # NOT transaction-wrapped: find_or_create_series_at_requested does TMDB I/O.
@@ -183,15 +293,21 @@ defmodule Cinder.Requests do
 
   defp create_approved(user, attrs, approver_id) do
     Repo.transaction(fn ->
-      {:ok, _movie} = Catalog.find_or_create_at_requested(movie_attrs(attrs))
-
-      %Request{}
-      |> Request.create_changeset(
-        Map.merge(attrs, %{user_id: user.id, status: :approved, approved_by_id: approver_id})
-      )
-      |> Repo.insert()
-      |> case do
-        {:ok, r} -> r
+      # A find_or_create failure rolls back (surfacing {:error, changeset}) rather than
+      # raising a MatchError out of the LiveView that called it.
+      with {:ok, _movie} <- Catalog.find_or_create_at_requested(movie_attrs(attrs)),
+           {:ok, request} <-
+             %Request{}
+             |> Request.create_changeset(
+               Map.merge(attrs, %{
+                 user_id: user.id,
+                 status: :approved,
+                 approved_by_id: approver_id
+               })
+             )
+             |> Repo.insert() do
+        request
+      else
         {:error, cs} -> Repo.rollback(cs)
       end
     end)

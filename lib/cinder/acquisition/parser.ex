@@ -206,10 +206,19 @@ defmodule Cinder.Acquisition.Parser do
   @season_episode ~r/(?:^|[^a-z0-9])s(\d{1,2})[._ ]?((?:e\d{1,3})(?:-?e?\d{1,3})*)/i
   # The 1x02 form (single episode only).
   @alt_episode ~r/(?:^|[^a-z0-9])(\d{1,2})x(\d{1,2})(?!\d)/i
-  # A bare season pack: S01 / S01.COMPLETE (no episode token following).
-  @bare_season ~r/(?:^|[^a-z0-9])s(\d{1,2})(?![0-9e])/i
+  # A bare season pack: S01 / S01.COMPLETE (no episode token following). The trailing
+  # boundary requires a NON-alphanumeric (or end), so a group/title fragment like
+  # "-S1CK" (digit glued to a letter) is never read as a whole-season pack — while
+  # unusual-but-real separators ("S01[1080p]", "S02+Extras") still parse as packs.
+  # An optional single A/B suffix keeps split-season halves ("S05A", "S05B" — the
+  # Money-Heist-style convention) visible as packs of that season.
+  @bare_season ~r/(?:^|[^a-z0-9])s(\d{1,2})[ab]?(?=[^a-z0-9]|$)/i
   # The "Season N" / "Season.05" word form (pack).
   @season_word ~r/season[ ._]?(\d{1,2})(?!\d)/i
+  # The word-form multi-season range ("Season 1-5", "Seasons.1-3") — the dash-joined
+  # sibling of @multi_season that the S-token scan can't see. The (?!\d) keeps a
+  # hyphen-glued resolution ("Season.1-1080p") from reading as a range.
+  @multi_season_word ~r/seasons?[ ._]?\d{1,2}[ ._]?-[ ._]?\d{1,2}(?!\d)/i
   # One episode-tail token: an optional leading "-" (range from the previous), an
   # optional "E", then the number.
   @tail_token ~r/(-)?e?(\d{1,3})/i
@@ -330,7 +339,8 @@ defmodule Cinder.Acquisition.Parser do
   # (nil/nil) so it's never mis-read as one season. Catches adjacent/dash forms via
   # @multi_season and any separator (S01.S02, S01 S02, S01E01.S02E02) via the count.
   defp multi_season?(name) do
-    Regex.match?(@multi_season, name) or distinct_seasons(name) > 1
+    Regex.match?(@multi_season, name) or Regex.match?(@multi_season_word, name) or
+      distinct_seasons(name) > 1
   end
 
   defp distinct_seasons(name) do

@@ -100,6 +100,18 @@ defmodule Cinder.CatalogTvPipelineTest do
       assert Repo.get(Episode, e1.id).grab_id == nil
     end
 
+    test "create_grab/3 does not link an unmonitored episode (post-cancel race guard)" do
+      {_series, season} = series_with_season()
+      e1 = episode(season, %{monitored: false})
+
+      # The search pass snapshots wanted (monitored) episodes, then spends seconds in
+      # indexer/client I/O — a cancel_series in that window unmonitors them. Linking
+      # anyway would resurrect the download the user just cancelled.
+      assert {:error, :no_episodes_linked} = Catalog.create_grab("H9", :torrent, [e1.id])
+      assert Repo.get(Episode, e1.id).grab_id == nil
+      assert Repo.all(Grab) == []
+    end
+
     test "create_grab/3 does not re-link an episode another grab already owns" do
       {_series, season} = series_with_season()
       e1 = episode(season, %{})

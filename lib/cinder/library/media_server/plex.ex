@@ -35,6 +35,16 @@ defmodule Cinder.Library.MediaServer.Plex do
   def health do
     config = Application.get_env(:cinder, __MODULE__, [])
 
+    # A nil/blank base_url makes Req raise rather than return {:error,_}, which
+    # Cinder.Health would rescue into an opaque "Check failed". Guard it so an
+    # unconfigured Plex shows a clean "Not configured" (mirrors Jellyfin).
+    case Keyword.get(config, :url) do
+      url when url in [nil, ""] -> {:error, :not_configured}
+      _ -> check_all_sections(config)
+    end
+  end
+
+  defp check_all_sections(config) do
     Enum.reduce_while(Cinder.Library.kinds(), :ok, fn kind, :ok ->
       case check_section(config, kind) do
         :ok -> {:cont, :ok}
@@ -46,7 +56,12 @@ defmodule Cinder.Library.MediaServer.Plex do
   defp check_section(config, kind) do
     with {:ok, section} <- section(config, kind) do
       req(config)
-      |> Req.get(url: "/library/sections/#{section}", receive_timeout: 3_000)
+      |> Req.get(
+        url: "/library/sections/#{section}",
+        receive_timeout: 3_000,
+        retry: false,
+        connect_options: [timeout: 3_000]
+      )
       |> result()
     end
   end

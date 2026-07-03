@@ -47,12 +47,35 @@ defmodule CinderWeb.RequestsLive do
 
   def handle_event("deny", %{"_id" => id, "reason" => reason}, socket) do
     req = find_request(socket, id)
-    if req, do: Requests.deny_request(req, socket.assigns.current_scope.user, reason)
+
+    # nil (row vanished from under the snapshot) is silent, like the sibling
+    # approve/reopen handlers — the broadcast-driven refresh removes it anyway.
+    # :not_pending gets a specific message: another admin already decided it, so
+    # "try again" would be a lie.
+    socket =
+      case req && Requests.deny_request(req, socket.assigns.current_scope.user, reason) do
+        {:ok, _} ->
+          socket
+
+        nil ->
+          socket
+
+        {:error, :not_pending} ->
+          put_flash(socket, :error, gettext("That request was already decided."))
+
+        _ ->
+          put_flash(socket, :error, gettext("Couldn't deny that request. Please try again."))
+      end
+
     {:noreply, assign(socket, denying: nil)}
   end
 
   def handle_event("start_deny", %{"id" => id}, socket) do
     {:noreply, assign(socket, denying: id)}
+  end
+
+  def handle_event("cancel_deny", _params, socket) do
+    {:noreply, assign(socket, denying: nil)}
   end
 
   def handle_event("start_delete", %{"id" => id}, socket) do
@@ -140,7 +163,7 @@ defmodule CinderWeb.RequestsLive do
 
   @impl true
   def handle_info({event, _req}, socket)
-      when event in [:request_created, :request_approved, :request_denied] do
+      when event in [:request_created, :request_approved, :request_denied, :request_deleted] do
     requests = Requests.list_requests()
     # Drop selections whose rows are no longer pending (e.g. a concurrent admin acted on them),
     # so the "N selected" count and bulk actions stay honest.
@@ -274,6 +297,7 @@ defmodule CinderWeb.RequestsLive do
               id={r.id}
               reason_label={gettext("Denial reason")}
               submit_label={gettext("Confirm deny")}
+              on_cancel="cancel_deny"
             />
             <.button
               :if={r.status == :pending and @denying != to_string(r.id)}

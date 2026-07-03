@@ -157,12 +157,11 @@ defmodule Cinder.CatalogSeriesTest do
       assert second.id == first.id
     end
 
-    test "get_series_by_tmdb_id/1, get_series_by_id/1 and list_series/0" do
+    test "get_series_by_tmdb_id/1 and list_series/0" do
       stub_tmdb(47)
       {:ok, series} = Catalog.add_series_to_watchlist(47)
 
       assert Catalog.get_series_by_tmdb_id(47).id == series.id
-      assert Catalog.get_series_by_id(series.id).tmdb_id == 47
       assert Catalog.get_series_by_tmdb_id(-1) == nil
       assert [%Series{tmdb_id: 47}] = Catalog.list_series()
     end
@@ -380,13 +379,6 @@ defmodule Cinder.CatalogSeriesTest do
   end
 
   # Creates a series with one monitored, aired, file-less episode — i.e. a wanted episode.
-  defp series_with_wanted_episode(attrs) do
-    series = series_fixture(%{monitor_strategy: :all})
-    season = season_fixture(series, %{season_number: 1})
-    _ep = episode_fixture(season, Map.new(attrs))
-    series
-  end
-
   # Creates a series whose season has multiple wanted (monitored, aired, file-less) episodes.
   defp series_with_wanted_episodes(opts) do
     season_num = Keyword.get(opts, :season, 1)
@@ -466,11 +458,17 @@ defmodule Cinder.CatalogSeriesTest do
   end
 
   describe "search_now" do
-    test "search_series_now zeros search_attempts on wanted episodes" do
-      series = series_with_wanted_episode(search_attempts: 9)
-      assert :ok = Catalog.search_series_now(series)
-      [ep] = Catalog.wanted_episodes()
-      assert ep.search_attempts == 0
+    test "search_season_now zeros search_attempts on that season's wanted episodes only" do
+      series = series_fixture(%{monitor_strategy: :all})
+      s1 = season_fixture(series, %{season_number: 1})
+      s2 = season_fixture(series, %{season_number: 2})
+      e1 = episode_fixture(s1, %{search_attempts: 9})
+      e2 = episode_fixture(s2, %{search_attempts: 9})
+
+      assert :ok = Catalog.search_season_now(s1)
+      # Scoped: the other season's parked episode is untouched.
+      assert Repo.get(Episode, e1.id).search_attempts == 0
+      assert Repo.get(Episode, e2.id).search_attempts == 9
     end
 
     test "search_episode_now is a no-op on an episode that already has a file" do

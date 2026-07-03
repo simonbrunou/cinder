@@ -32,6 +32,10 @@ services:
       # are required; editable later in /settings (a DB value overrides this bootstrap).
       MOVIES_LIBRARY_PATH: /media/movies
       TV_LIBRARY_PATH: /media/tv
+      # Optional outer HTTP Basic-auth gate (set BOTH in .env to enable) — a stopgap until
+      # the admin account exists, or a second layer without a reverse proxy/VPN.
+      CINDER_BASIC_AUTH_USER: ${CINDER_BASIC_AUTH_USER:-}
+      CINDER_BASIC_AUTH_PASSWORD: ${CINDER_BASIC_AUTH_PASSWORD:-}
     volumes:
       - cinder_data:/data              # SQLite DB + WAL (named volume; survives recreate)
       - ${MEDIA_ROOT:-./media}:/media  # library + downloads — see the hardlink note below

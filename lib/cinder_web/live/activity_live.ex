@@ -4,7 +4,9 @@ defmodule CinderWeb.ActivityLive do
   in-flight TV downloads (grabs, delete-with-confirm), newest first — as cards, so it
   reflows cleanly on a phone. Merges the old `/status` and `/grabs` pages. Read-mostly:
   Retry routes through the server-guarded `Catalog.retry_movie/1` and delete through
-  `Catalog.delete_grab/1`; no pipeline change. Live via the `movies` + `series` topics.
+  `Catalog.cancel_grab/1` (which also removes the tracked client download, so the
+  freed episodes' re-grab doesn't collide with it). Live via the `movies` + `series`
+  topics.
   """
   use CinderWeb, :live_view
 
@@ -72,7 +74,17 @@ defmodule CinderWeb.ActivityLive do
     # Look the movie up from the loaded list (string-compare ids, like confirm_delete) so a forged
     # non-numeric phx-value can't reach Repo.get/CastError — it just resolves to nil and no-ops.
     movie = find_by_id(socket.assigns.movies, id)
-    if movie, do: Catalog.retry_movie(movie)
+
+    # A guarded miss (the movie already re-entered the pipeline under this stale
+    # snapshot) must not be silent — the row visibly doesn't reset otherwise.
+    socket =
+      case movie && Catalog.retry_movie(movie) do
+        {:error, _} ->
+          put_flash(socket, :error, gettext("Couldn't retry: that movie has already moved on."))
+
+        _ ->
+          socket
+      end
 
     {:noreply, socket}
   end
@@ -91,13 +103,25 @@ defmodule CinderWeb.ActivityLive do
     do: {:noreply, assign(socket, confirming: nil)}
 
   def handle_event("confirm_delete", %{"id" => id}, socket) do
-    grab = find_by_id(socket.assigns.grabs, id)
-    if grab, do: Catalog.delete_grab(grab)
+    # cancel_grab also removes the tracked client download — a bare row delete would
+    # leave it running, colliding with the freed episodes' re-grab. Re-read the row
+    # first: a snapshot grab may have finished importing while the confirm sat open,
+    # and cancelling THAT would remove a completed torrent (killing seeding) for nothing.
+    {level, msg} =
+      with %{} = snapshot <- find_by_id(socket.assigns.grabs, id),
+           %{} = grab <- Catalog.get_grab(snapshot.id) do
+        case Catalog.cancel_grab(grab) do
+          {:ok, _} -> {:info, gettext("Download deleted.")}
+          _ -> {:error, gettext("Couldn't delete the download.")}
+        end
+      else
+        nil -> {:error, gettext("That download is already gone.")}
+      end
 
     {:noreply,
      socket
      |> assign(confirming: nil, grabs: Catalog.list_grabs())
-     |> put_flash(:info, gettext("Download deleted."))}
+     |> put_flash(level, msg)}
   end
 
   # Toggle the manual-search panel for a movie row (re-clicking the open row closes it).

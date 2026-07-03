@@ -761,18 +761,19 @@ check, live TV season-pack smoke test, and cutting `v1.0.0`.
 
 ## Parked (out of scope even for v1.0)
 
-Quality upgrades & cutoffs · per-tracker quirks and tracker RSS (v1.0 monitoring polls TMDB) ·
+*Automatic* quality upgrades & cutoffs (the **manual** upgrade path shipped post-0.7.0: "Find a
+better match" grabs a chosen release for an `:available` movie and atomically swaps the file via
+`:upgrading`) · per-tracker quirks and tracker RSS (v1.0 monitoring polls TMDB) ·
 anime absolute numbering · OIDC / Jellyfin-Plex SSO · per-user permissions finer than
 `admin`/`user` · notification fan-out beyond the M3 `Notifier` seam (Discord/email/etc.) ·
 trending/discover landing pages beyond search · multi-node / hosted multi-tenant (precluded by
 the SQLite decision).
 
-**Release blocklist** — remember a rejected/failed release (by infohash / download URL / parsed
-name) so a title whose only available release is wrong-language or keeps failing isn't re-grabbed
-and re-downloaded every search cycle. Bounds the re-download cost the import-time audio-language
-check (PR #46) introduced: today a confirmed wrong-language grab re-searches and can re-download
-the same release until `@max_attempts`, mitigated only by the per-kind size band. The blocklist is
-the real fix (Radarr/Sonarr have one); deferred because it needs a new persisted table + a search
-exclusion path. Also covers repeatedly-failing torrents/usenet items.
+**[shipped post-0.7.0] Release blocklist** — remember a rejected/failed release (by parsed
+release title, scoped per movie/series) so a title whose only available release is wrong-language
+or keeps failing isn't re-grabbed and re-downloaded every search cycle. Landed as the
+`blocked_releases` table + a `release_blocklist` scorer exclusion fed into both pollers' search
+opts; captured at the terminal park sites (deterministic import failures + exhausted download
+failures), cleared on manual Retry.
 
-Revisit only after v1.0 has run reliably for a couple of weeks.
+Revisit the rest only after v1.0 has run reliably for a couple of weeks.

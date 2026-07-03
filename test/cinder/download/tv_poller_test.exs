@@ -145,7 +145,10 @@ defmodule Cinder.Download.TvPollerTest do
   end
 
   test "rejects a same-season release of a different series (does not grab)" do
-    {_series, season} = series_tree()
+    # tvdb_id: nil — the wrong-series title guard applies only to the free-text
+    # fallback search; a TvdbId-token search is already scoped to the right show.
+    series = series_fixture(%{tvdb_id: nil, monitor_strategy: :all})
+    season = season_fixture(series)
     e1 = episode(season, 1)
     start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
 
