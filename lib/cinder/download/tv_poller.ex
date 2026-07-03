@@ -174,7 +174,7 @@ defmodule Cinder.Download.TvPoller do
 
     with {:ok, client} <- Download.client_for(release.protocol),
          {:ok, download_id} <- client.add(release) do
-      case Catalog.create_grab(download_id, release.protocol, episode_ids, release.title) do
+      case create_grab_safely(download_id, release, episode_ids) do
         {:ok, _grab} ->
           episode_ids
 
@@ -191,6 +191,17 @@ defmodule Cinder.Download.TvPoller do
         Logger.warning("tv grab failed (#{release.title}): #{inspect(other)}")
         []
     end
+  end
+
+  # A raised/exited create_grab (SQLITE_BUSY past busy_timeout, a pool-checkout
+  # timeout under two-poller contention) must reach the cleanup branch above, not
+  # escape to isolate/2 — that would skip the download removal and orphan it.
+  defp create_grab_safely(download_id, release, episode_ids) do
+    Catalog.create_grab(download_id, release.protocol, episode_ids, release.title)
+  rescue
+    e -> {:error, e}
+  catch
+    kind, value -> {:error, {kind, value}}
   end
 
   defp bump_not_grabbed(episodes, grabbed) do

@@ -35,13 +35,20 @@ defmodule CinderWeb.LiveHelpers do
   month names go through gettext, so a translated locale controls word order too —
   `Calendar.strftime`'s built-in month names are English-only.
   """
-  def format_date(date), do: localized_strftime(date, gettext("%b %-d"))
+  def format_date(date), do: localized_strftime(date, gettext("%b %-d"), "%b %-d")
 
   @doc ~S|Locale-aware date with year ("Jun 3, 2026" / fr "3 juin 2026").|
-  def format_date_year(date), do: localized_strftime(date, gettext("%b %-d, %Y"))
+  def format_date_year(date), do: localized_strftime(date, gettext("%b %-d, %Y"), "%b %-d, %Y")
 
-  defp localized_strftime(date, format),
-    do: Calendar.strftime(date, format, abbreviated_month_names: &abbreviated_month_name/1)
+  # The translated format is translator-controlled data executed as strftime syntax;
+  # a bad .po directive must degrade to the English msgid format, not crash-loop
+  # every view render for that locale. (The test suite pins known locales' catalogs,
+  # but a runtime guard is what actually protects a live instance.)
+  defp localized_strftime(date, format, fallback) do
+    Calendar.strftime(date, format, abbreviated_month_names: &abbreviated_month_name/1)
+  rescue
+    _ -> Calendar.strftime(date, fallback, abbreviated_month_names: &abbreviated_month_name/1)
+  end
 
   defp abbreviated_month_name(n) do
     Enum.at(

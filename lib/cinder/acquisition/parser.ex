@@ -210,7 +210,9 @@ defmodule Cinder.Acquisition.Parser do
   # boundary requires a NON-alphanumeric (or end), so a group/title fragment like
   # "-S1CK" (digit glued to a letter) is never read as a whole-season pack — while
   # unusual-but-real separators ("S01[1080p]", "S02+Extras") still parse as packs.
-  @bare_season ~r/(?:^|[^a-z0-9])s(\d{1,2})(?=[^a-z0-9]|$)/i
+  # An optional single A/B suffix keeps split-season halves ("S05A", "S05B" — the
+  # Money-Heist-style convention) visible as packs of that season.
+  @bare_season ~r/(?:^|[^a-z0-9])s(\d{1,2})[ab]?(?=[^a-z0-9]|$)/i
   # The "Season N" / "Season.05" word form (pack).
   @season_word ~r/season[ ._]?(\d{1,2})(?!\d)/i
   # The word-form multi-season range ("Season 1-5", "Seasons.1-3") — the dash-joined

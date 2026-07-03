@@ -201,15 +201,22 @@ defmodule Cinder.Catalog do
     # row is misleading and a latent misroute if anything reads them before re-download.
     # The blocklist row (keyed by movie_id) PERSISTS — clearing it would reintroduce the
     # re-grab loop; release_title here is stale download state, not the blocklist.
-    transition(movie, %{
-      status: :requested,
-      search_attempts: 0,
-      import_attempts: 0,
-      download_id: nil,
-      download_protocol: nil,
-      release_title: nil,
-      file_path: nil
-    })
+    # expect: — the caller's struct is a client-rendered snapshot; if the movie
+    # already re-entered the pipeline (re-searched, downloading), the retry must
+    # miss rather than yank an in-flight movie back and orphan its download.
+    transition(
+      movie,
+      %{
+        status: :requested,
+        search_attempts: 0,
+        import_attempts: 0,
+        download_id: nil,
+        download_protocol: nil,
+        release_title: nil,
+        file_path: nil
+      },
+      expect: movie.status
+    )
   end
 
   def retry_movie(%Movie{}), do: {:error, :not_retryable}
@@ -1361,6 +1368,14 @@ defmodule Cinder.Catalog do
   def list_grabs do
     Repo.all(from g in Grab, order_by: [desc: g.id], preload: [episodes: [season: :series]])
   end
+
+  @doc """
+  Fetches one grab by id, or `nil`. User-initiated grab actions (e.g. /activity's
+  delete) must re-read before acting: a grab resolved from a rendered snapshot may
+  have finished importing meanwhile, and cancelling THAT would remove a completed,
+  already-imported torrent from the client (stopping seeding) for nothing.
+  """
+  def get_grab(id), do: Repo.get(Grab, id)
 
   @doc """
   The SQL-expressible wanted set: monitored episodes with no file and no active grab whose

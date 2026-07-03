@@ -48,9 +48,12 @@ defmodule CinderWeb.RequestsLive do
   def handle_event("deny", %{"_id" => id, "reason" => reason}, socket) do
     req = find_request(socket, id)
 
+    # nil (row vanished from under the snapshot) is silent, like the sibling
+    # approve/reopen handlers — the broadcast-driven refresh removes it anyway.
     socket =
       case req && Requests.deny_request(req, socket.assigns.current_scope.user, reason) do
         {:ok, _} -> socket
+        nil -> socket
         _ -> put_flash(socket, :error, gettext("Couldn't deny that request. Please try again."))
       end
 

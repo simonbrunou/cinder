@@ -4,7 +4,9 @@ defmodule CinderWeb.ActivityLive do
   in-flight TV downloads (grabs, delete-with-confirm), newest first — as cards, so it
   reflows cleanly on a phone. Merges the old `/status` and `/grabs` pages. Read-mostly:
   Retry routes through the server-guarded `Catalog.retry_movie/1` and delete through
-  `Catalog.delete_grab/1`; no pipeline change. Live via the `movies` + `series` topics.
+  `Catalog.cancel_grab/1` (which also removes the tracked client download, so the
+  freed episodes' re-grab doesn't collide with it). Live via the `movies` + `series`
+  topics.
   """
   use CinderWeb, :live_view
 
@@ -92,17 +94,18 @@ defmodule CinderWeb.ActivityLive do
 
   def handle_event("confirm_delete", %{"id" => id}, socket) do
     # cancel_grab also removes the tracked client download — a bare row delete would
-    # leave it running, colliding with the freed episodes' re-grab.
+    # leave it running, colliding with the freed episodes' re-grab. Re-read the row
+    # first: a snapshot grab may have finished importing while the confirm sat open,
+    # and cancelling THAT would remove a completed torrent (killing seeding) for nothing.
     {level, msg} =
-      case find_by_id(socket.assigns.grabs, id) do
-        nil ->
-          {:error, gettext("That download is already gone.")}
-
-        grab ->
-          case Catalog.cancel_grab(grab) do
-            {:ok, _} -> {:info, gettext("Download deleted.")}
-            _ -> {:error, gettext("Couldn't delete the download.")}
-          end
+      with %{} = snapshot <- find_by_id(socket.assigns.grabs, id),
+           %{} = grab <- Catalog.get_grab(snapshot.id) do
+        case Catalog.cancel_grab(grab) do
+          {:ok, _} -> {:info, gettext("Download deleted.")}
+          _ -> {:error, gettext("Couldn't delete the download.")}
+        end
+      else
+        nil -> {:error, gettext("That download is already gone.")}
       end
 
     {:noreply,

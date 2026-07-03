@@ -217,6 +217,11 @@ defmodule Cinder.Acquisition.ParserTest do
       assert %{season: 2, episodes: nil} = Parser.parse("Show S02+Extras 720p")
     end
 
+    test "split-season halves (S05A/S05B) read as packs of that season" do
+      assert %{season: 5, episodes: nil} = Parser.parse("Show.S05A.1080p.WEB-GRP")
+      assert %{season: 5, episodes: nil} = Parser.parse("Show.S05B.720p.WEB")
+    end
+
     test "word-form multi-season ranges are rejected rather than read as one season" do
       assert %{season: nil, episodes: nil} = Parser.parse("Show.Season.1-5.Complete.1080p")
       assert %{season: nil, episodes: nil} = Parser.parse("Show.Season 1-3.720p.WEB")

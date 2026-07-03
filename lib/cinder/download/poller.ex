@@ -298,20 +298,23 @@ defmodule Cinder.Download.Poller do
   defp finish_upgrade(movie, content_path) do
     case Library.import_movie(%{movie | file_path: content_path}, replace: true) do
       {:ok, dest, q} ->
-        with {:ok, available} <-
-               Catalog.transition(
-                 movie,
-                 %{
-                   status: :available,
-                   file_path: dest,
-                   imported_resolution: q.resolution,
-                   imported_size: q.size,
-                   imported_language: q.language,
-                   imported_source: q.source
-                 },
-                 expect: movie.status
-               ),
-             do: finalize_upgrade(movie, available, dest)
+        movie
+        |> Catalog.transition(
+          %{
+            status: :available,
+            file_path: dest,
+            imported_resolution: q.resolution,
+            imported_size: q.size,
+            imported_language: q.language,
+            imported_source: q.source
+          },
+          expect: movie.status
+        )
+        |> case do
+          {:ok, available} -> finalize_upgrade(movie, available, dest)
+          {:error, :stale_status} -> compensate_aborted_upgrade(movie, dest)
+          {:error, _} -> :ok
+        end
 
       {:error, :library_not_configured} ->
         # Hold (no attempt bump, no revert) until the movie library root is configured: the file is
@@ -325,6 +328,22 @@ defmodule Cinder.Download.Poller do
 
       {:error, reason} ->
         retry_or_revert(movie, reason)
+    end
+  end
+
+  # Aborted while the forced replace was landing (the guarded transition missed). The
+  # swap already happened on disk: a different-extension dest is an orphan no row
+  # references — unlink it; a same-path replace can't be undone (the old bytes are
+  # gone), so log the metadata drift instead of destroying the only library file.
+  defp compensate_aborted_upgrade(movie, dest) do
+    if dest != movie.file_path do
+      Logger.info("movie #{movie.id} upgrade aborted mid-swap; unlinking #{dest}")
+      Library.delete_file(dest)
+    else
+      Logger.warning(
+        "movie #{movie.id} upgrade landed on disk despite the abort; " <>
+          "the library file was replaced but the row keeps the old metadata"
+      )
     end
   end
 

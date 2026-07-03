@@ -1,6 +1,7 @@
 defmodule Cinder.Requests do
   @moduledoc "Request/approval gate: the single caller allowed to create a movie row from a user action."
   import Ecto.Query
+  require Logger
   alias Cinder.Accounts.User
   alias Cinder.Audit
   alias Cinder.Catalog
@@ -107,7 +108,11 @@ defmodule Cinder.Requests do
 
   # The TMDB call runs while the request already reads :approved; a raise/exit here
   # must reach the revert path (not strand the request approved with no series), so
-  # every failure mode is normalized to {:error, reason}.
+  # every failure mode is normalized to {:error, reason} — loudly: this rescue also
+  # swallows genuine bugs, and a silent one would be undebuggable. Known residual: a
+  # VM kill (deploy/OOM, or the admin closing the tab mid-bulk killing the linked
+  # start_async task) between the flip and the revert strands the request :approved
+  # with no series; recovery is delete + re-request (documented on delete_request/2).
   defp create_series_safely(request) do
     Catalog.find_or_create_series_at_requested(
       request.target_id,
@@ -115,9 +120,14 @@ defmodule Cinder.Requests do
       request.preferred_language || "original"
     )
   rescue
-    e -> {:error, e}
+    e ->
+      Logger.warning("series creation for request #{request.id} raised: #{Exception.message(e)}")
+
+      {:error, e}
   catch
-    kind, value -> {:error, {kind, value}}
+    kind, value ->
+      Logger.warning("series creation for request #{request.id} #{kind}: #{inspect(value)}")
+      {:error, {kind, value}}
   end
 
   def deny_request(%Request{status: :pending} = request, %User{} = admin, reason) do
@@ -161,6 +171,28 @@ defmodule Cinder.Requests do
     )
 
     broadcast({:request_created, struct(request, status: :pending, approved_by_id: nil)})
+  rescue
+    # The partial requests_pending_unique index only covers :pending rows, so a
+    # duplicate pending request for the same target created while this one was
+    # briefly :approved makes the revert collide. Fall back to :denied (never
+    # indexed) so the strand stays visible and recoverable instead of raising out
+    # of approve_request.
+    e ->
+      Logger.warning(
+        "revert_to_pending for request #{request.id} collided (#{Exception.message(e)}); " <>
+          "denying instead"
+      )
+
+      Repo.update_all(
+        from(r in Request, where: r.id == ^request.id and r.status == :approved),
+        set: [
+          status: :denied,
+          denial_reason: "Approval failed: the series could not be created.",
+          updated_at: now()
+        ]
+      )
+
+      broadcast({:request_denied, struct(request, status: :denied)})
   end
 
   defp now, do: NaiveDateTime.truncate(NaiveDateTime.utc_now(), :second)
@@ -193,22 +225,26 @@ defmodule Cinder.Requests do
   """
   def delete_request(%Request{} = request, %User{} = admin) do
     Repo.transaction(fn ->
-      # delete_all (not Repo.delete): a concurrent admin may have deleted the same
-      # row. 0 rows -> {:error, :not_found} with NO audit row and NO broadcast — the
-      # losing admin must not log a delete that never happened.
-      case Repo.delete_all(from(r in Request, where: r.id == ^request.id)) do
-        {1, _} ->
-          Audit.log_or_rollback(admin, "delete_request", request, %{
-            status: request.status,
-            target_type: request.target_type,
-            target_id: request.target_id,
-            title: request.title
+      # Re-read inside the txn (safe: default_transaction_mode :immediate takes the
+      # write lock at BEGIN) so the audit records the row's ACTUAL state at delete
+      # time — the caller's struct is a rendered snapshot whose status may be stale.
+      # nil -> {:error, :not_found} with NO audit row and NO broadcast: the losing
+      # admin in a double-delete race must not log a delete that never happened.
+      case Repo.one(from(r in Request, where: r.id == ^request.id)) do
+        nil ->
+          Repo.rollback(:not_found)
+
+        fresh ->
+          Repo.delete_all(from(r in Request, where: r.id == ^fresh.id))
+
+          Audit.log_or_rollback(admin, "delete_request", fresh, %{
+            status: fresh.status,
+            target_type: fresh.target_type,
+            target_id: fresh.target_id,
+            title: fresh.title
           })
 
-          request
-
-        {0, _} ->
-          Repo.rollback(:not_found)
+          fresh
       end
     end)
     |> tap_ok(&broadcast({:request_deleted, &1}))
