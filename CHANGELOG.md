@@ -6,6 +6,12 @@ All notable changes to Cinder are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-03
+
+First public release — a single-container, self-hosted replacement for the Sonarr/Radarr/Seerr
+loop (movies + TV + multi-user request/approval), validated ahead of launch by a full pre-v1.0
+audit of functionality, security, and UI/UX.
+
 ### Added
 - **Manual search ("Find a better match")** — an interactive release panel for any title: every
   release the indexer returns, with the scorer's verdict (in band / blocklisted / wrong
@@ -200,5 +206,6 @@ Docker image and a first-run wizard. Pre-1.0: dogfooding ahead of the v1.0 publi
 - **Packaging** — Docker image, `docker-compose.yml` + `.env.example`, a tag-triggered GitHub
   Actions workflow publishing `ghcr.io/simonbrunou/cinder`, and operator + contributor docs.
 
-[Unreleased]: https://github.com/simonbrunou/cinder/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/simonbrunou/cinder/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/simonbrunou/cinder/compare/v0.7.0...v1.0.0
 [0.7.0]: https://github.com/simonbrunou/cinder/releases/tag/v0.7.0
