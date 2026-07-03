@@ -7,6 +7,29 @@ All notable changes to Cinder are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Manual search ("Find a better match")** — an interactive release panel for any title: every
+  release the indexer returns, with the scorer's verdict (in band / blocklisted / wrong
+  resolution…) and the option to **grab any one manually**, overriding the auto-pick. Movies:
+  on `/activity` and the library; TV: per season on the series page. Grabbing a replacement for an
+  **already-available movie** downloads it in the background (`:upgrading`) and **atomically swaps**
+  the library file on completion — any failure reverts to the existing file untouched, and the
+  upgrade can be cancelled mid-download.
+- **Release blocklist** — a release that terminally fails (confirmed wrong-language import,
+  exhausted download retries) is remembered per title and excluded from future searches, so the
+  same bad release is not re-grabbed every cycle. A manual **Retry** clears the slate for a fresh
+  pick.
+- **`move_on_import` setting** — optionally remove the source download after a successful import
+  (Usenet only; torrents are never auto-removed so seeding survives).
+- **French interface** — full interface localization with a language switcher (English/French);
+  translation completeness is enforced by the test suite.
+- **Navigation & pages restructure** — `/dashboard` (service health, approval queue, recent
+  activity), `/activity` (live movie pipeline + TV downloads; absorbs the old `/status` and
+  `/grabs`, which now redirect), and `/library` (browse + manage everything you've added).
+- **Admin efficiency** — bulk approve/deny with row selection in the approval queue, and
+  **Reopen** (undo) for a mistakenly denied request.
+- **UI overhaul** — a unified design system (buttons, badges, forms, empty states), light/dark
+  theme toggle, mobile responsiveness across every page, AA-contrast text, and
+  accessibility labels on icon-only controls.
 - **Cross-filesystem import** — when the download and library live on different filesystems, import
   no longer fails (`:exdev`). Cinder hardlinks when it can and **automatically falls back to an atomic
   copy** (copy into a temp on the library filesystem, then rename into place) when it can't — a common
@@ -105,6 +128,50 @@ All notable changes to Cinder are documented here. The format follows
     other destructive admin action.
   - **TV refresh:** the periodic TMDB reconcile no longer renumbers an episode with an in-flight
     grab (which could mislabel that grab's imported files).
+  - **qBittorrent:** an indexer download URL that redirects to a `magnet:` URI (standard Prowlarr
+    behavior for magnet-only trackers) now routes through the magnet add path instead of crashing
+    the search unit and re-searching every 5s forever; redirects are followed manually with a hop
+    limit, and a redirect to a non-HTTP scheme parks cleanly. Wrong credentials now make **one**
+    login attempt per poller per 10 minutes instead of one per item per tick — which tripped
+    qBittorrent's consecutive-failure IP ban (default: 5 failures → 1 h) within a single tick.
+  - **TV search:** the wrong-series title guard now applies only to free-text (no TVDB id)
+    searches, and equates `&`/`and` — previously every season of an ampersand-titled
+    ("Law & Order") or AKA-titled ("Money Heist" vs `La.Casa.de.Papel.…`) show was rejected and
+    permanently stranded at *couldn't find*.
+  - **Cancel races:** every poller write-back is now guarded on the status it read, so cancelling
+    a movie mid-search/mid-download can no longer be silently overwritten by the in-flight poller
+    unit; a season pack grab links only still-monitored episodes, so **Cancel series** can no
+    longer be resurrected by a search that was already in flight; and a TV grab that fails to link
+    removes the just-added client download instead of orphaning it.
+  - **Approval queue:** approve/deny are now guarded on the row's live status, so two admin
+    sessions racing (e.g. a slow bulk approve vs a concurrent deny) can no longer silently reverse
+    each other's decision; deleting a request updates other admins' open queues live; a failed
+    deny/approve shows an error instead of silently doing nothing; and the per-row deny form has a
+    Cancel button.
+  - **/activity delete:** deleting a download now also removes it from the download client
+    (previously it kept downloading and collided with the automatic re-grab) and reports failure
+    instead of always flashing "Download deleted."
+  - **Parser:** word-form multi-season packs (`Season 1-5`) are rejected instead of read as
+    season 1, and a group fragment like `-S1CK` on a season-less name no longer masquerades as a
+    whole-season pack.
+  - **Manual-search panel:** verdicts now use your configured size band, preferred
+    resolutions/sources, and blocklist — they previously ignored them and contradicted the
+    auto-pick.
+  - **Settings:** typing a replacement secret while also ticking "Clear saved value" now keeps the
+    typed value (previously both were discarded and the service silently lost auth); an unusable
+    size-band value (`abc`, `0`) is rejected with an error naming the field instead of persisted
+    and silently treated as *no limit*; deleting an episode/season file also resets its search
+    counter so a previously parked episode really is re-grabbed.
+  - **Health checks:** every probe is bounded (3 s connect + receive, no retries) so a blackholed
+    host can't hang "Test connection" for minutes; TMDB/Prowlarr calls no longer triple-retry on
+    top of the pollers' own retry budget; an unconfigured Plex shows "Not configured" instead of
+    an opaque failure.
+  - **UI polish:** warning-level flashes (e.g. a partial season-file delete) now actually render;
+    the per-season "Search all missing" button searches only that season (was series-wide);
+    dates are localized in French; the admin **Users** nav entry no longer lights up on the
+    Account page; a specials-only series shows an explanatory empty state instead of a blank
+    list; a TMDB outage on the series page says so instead of "Series not found."; a deleted
+    movie's *Available* badge clears live on the discover page.
 
 ### Internal
 - SQLite correctness settings (`journal_mode: :wal`, `busy_timeout`, `foreign_keys: :on`, and now

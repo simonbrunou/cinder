@@ -14,7 +14,7 @@ defmodule CinderWeb.ManualSearchComponent do
   """
   use CinderWeb, :live_component
 
-  alias Cinder.{Acquisition, Download}
+  alias Cinder.{Acquisition, Catalog, Download}
 
   @impl true
   def update(assigns, socket) do
@@ -47,7 +47,7 @@ defmodule CinderWeb.ManualSearchComponent do
   defp start_search(socket) do
     %{mode: mode, target: target} = socket.assigns
     season = socket.assigns[:season_number]
-    opts = [protocols: Download.available_protocols()]
+    opts = search_opts(mode, target)
 
     start_async(socket, :search, fn ->
       case mode do
@@ -55,6 +55,23 @@ defmodule CinderWeb.ManualSearchComponent do
         :tv -> Acquisition.list_releases_tv(target, season, opts)
       end
     end)
+  end
+
+  # Mirror the auto-search scorer opts (size band, preferred resolutions/sources,
+  # release blocklist) so the panel's verdicts match what the sweep would pick —
+  # without them a release the poller rejects as out-of-band shows as acceptable.
+  defp search_opts(:movie, movie) do
+    [
+      protocols: Download.available_protocols(),
+      release_blocklist: Catalog.blocked_release_titles(movie)
+    ] ++ Acquisition.band_opts(:movies)
+  end
+
+  defp search_opts(:tv, series) do
+    [
+      protocols: Download.available_protocols(),
+      release_blocklist: Catalog.blocked_release_titles_for_series(series.id)
+    ] ++ Acquisition.band_opts(:tv)
   end
 
   @impl true

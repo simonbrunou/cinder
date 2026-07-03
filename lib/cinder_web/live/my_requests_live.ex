@@ -21,6 +21,11 @@ defmodule CinderWeb.MyRequestsLive do
   @impl true
   def handle_info(_message, socket), do: {:noreply, load(socket)}
 
+  # The view renders no interactive elements, but event payloads are client-controlled —
+  # ignore a forged frame rather than crash the LiveView (house rule).
+  @impl true
+  def handle_event(_event, _params, socket), do: {:noreply, socket}
+
   defp load(socket) do
     user = socket.assigns.current_scope.user
 

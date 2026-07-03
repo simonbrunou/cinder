@@ -58,7 +58,13 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
 
   @impl true
   def health do
-    case request(url: "/api/v1/health", receive_timeout: 3_000) do
+    # Short receive AND connect bounds — a blackholed host would otherwise sit on
+    # Mint's default 30s connect timeout despite the 3s receive_timeout.
+    case request(
+           url: "/api/v1/health",
+           receive_timeout: 3_000,
+           connect_options: [timeout: 3_000]
+         ) do
       {:ok, %{status: status}} when status in 200..299 -> :ok
       other -> error(other)
     end
@@ -67,7 +73,13 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   defp request(opts) do
     config = Application.get_env(:cinder, __MODULE__, [])
 
-    [base_url: Keyword.get(config, :base_url, @default_base_url), receive_timeout: 15_000]
+    # retry: false — the pollers carry their own bounded-retry budget; Req's default
+    # 3-retry backoff on top of it only stretches a tick against a failing indexer.
+    [
+      base_url: Keyword.get(config, :base_url, @default_base_url),
+      receive_timeout: 15_000,
+      retry: false
+    ]
     |> auth(Keyword.get(config, :api_key))
     |> Keyword.merge(opts)
     |> Keyword.merge(Keyword.get(config, :req_options, []))

@@ -8,6 +8,8 @@ defmodule CinderWeb.SeriesDetailLive do
   """
   use CinderWeb, :live_view
 
+  import CinderWeb.LiveHelpers, only: [format_date_year: 1]
+
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Season, Series}
 
@@ -235,9 +237,14 @@ defmodule CinderWeb.SeriesDetailLive do
     end
   end
 
-  def handle_event("search_season", _params, socket) do
-    Catalog.search_series_now(socket.assigns.series)
-    {:noreply, put_flash(socket, :info, gettext("Searching for missing episodes…"))}
+  def handle_event("search_season", %{"id" => id}, socket) do
+    with {id, ""} <- Integer.parse(id),
+         %Season{} = season <- find_season(socket.assigns.series, id) do
+      Catalog.search_season_now(season)
+      {:noreply, put_flash(socket, :info, gettext("Searching for missing episodes…"))}
+    else
+      _ -> {:noreply, socket}
+    end
   end
 
   # Toggle the manual-search panel for a season (re-clicking the open season closes it).
@@ -471,6 +478,12 @@ defmodule CinderWeb.SeriesDetailLive do
               variant="neutral"
               size="sm"
               phx-click="search_season"
+              phx-value-id={season.id}
+              aria-label={
+                gettext("Search all missing episodes in %{season}",
+                  season: season_label(season.season_number)
+                )
+              }
             >
               {gettext("Search all missing")}
             </.button>
@@ -542,7 +555,7 @@ defmodule CinderWeb.SeriesDetailLive do
                 datetime={Date.to_iso8601(ep.air_date)}
                 class="text-xs text-base-content/70"
               >
-                {Calendar.strftime(ep.air_date, "%b %-d, %Y")}
+                {format_date_year(ep.air_date)}
               </time>
               <.button
                 :if={ep.file_path}

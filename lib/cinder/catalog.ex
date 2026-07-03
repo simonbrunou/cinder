@@ -151,10 +151,37 @@ defmodule Cinder.Catalog do
   `attrs` must set `:status`; it may also set `:download_id`, `:download_protocol`,
   `:imdb_id`, `:file_path`, `:import_attempts`, and `:search_attempts`.
   """
-  def transition(%Movie{} = movie, attrs) do
+  def transition(movie, attrs, opts \\ [])
+
+  def transition(%Movie{} = movie, attrs, []) do
     with {:ok, updated} <- movie |> Movie.transition_changeset(attrs) |> Repo.update() do
       broadcast({:movie_updated, updated})
       {:ok, updated}
+    end
+  end
+
+  # Guarded variant (`expect: status`): the write lands only if the row's status in the
+  # DB still matches — one atomic conditional UPDATE. The pollers pass the status they
+  # read at tick start, so a write-back after seconds of indexer/client I/O can never
+  # resurrect a movie the user cancelled (or otherwise re-decided) in that window.
+  # Returns {:error, :stale_status} on a miss; callers treat it as "skip, re-derive
+  # next tick". `select: m` makes SQLite RETURNING hand back the post-update row, so
+  # the broadcast payload is the fresh DB state, not the poller's tick-start snapshot
+  # patched in memory (views upsert the payload directly into their assigns).
+  def transition(%Movie{} = movie, attrs, expect: expected) do
+    changeset = Movie.transition_changeset(movie, attrs)
+
+    with %{valid?: true, changes: changes} <- changeset,
+         {1, [updated]} <-
+           Repo.update_all(
+             from(m in Movie, where: m.id == ^movie.id and m.status == ^expected, select: m),
+             set: Map.to_list(changes) ++ [updated_at: now()]
+           ) do
+      broadcast({:movie_updated, updated})
+      {:ok, updated}
+    else
+      {0, _} -> {:error, :stale_status}
+      %Ecto.Changeset{} = invalid -> {:error, invalid}
     end
   end
 
@@ -632,9 +659,6 @@ defmodule Cinder.Catalog do
   @doc "Fetches a watchlisted series by TMDB id, or `nil`."
   def get_series_by_tmdb_id(tmdb_id), do: Repo.get_by(Series, tmdb_id: tmdb_id)
 
-  @doc "Fetches a watchlisted series by primary key, or `nil`."
-  def get_series_by_id(id), do: Repo.get(Series, id)
-
   @doc "Lists watchlisted series, newest first."
   def list_series, do: Repo.all(from s in Series, order_by: [desc: s.id])
 
@@ -843,6 +867,9 @@ defmodule Cinder.Catalog do
         episode
         |> Episode.transition_changeset(%{
           file_path: nil,
+          # Zero the counter so a previously search-parked episode really is
+          # re-grabbed next tick, as the docstring promises.
+          search_attempts: 0,
           imported_resolution: nil,
           imported_size: nil,
           imported_language: nil,
@@ -909,6 +936,9 @@ defmodule Cinder.Catalog do
       sets =
         [
           file_path: nil,
+          # Zero the counter so previously search-parked episodes really are
+          # re-grabbed next tick, as the docstring promises.
+          search_attempts: 0,
           imported_resolution: nil,
           imported_size: nil,
           imported_language: nil,
@@ -964,15 +994,21 @@ defmodule Cinder.Catalog do
 
   defp link_grab_episodes(grab, episode_ids) do
     # Guard `is_nil(grab_id)`: never re-link an episode another grab already owns (defends against
-    # a same-tick double-link silently overwriting an earlier grab).
+    # a same-tick double-link silently overwriting an earlier grab). Guard `monitored`: every
+    # caller sources episode_ids from wanted_episodes (monitored-only), but the poller's search
+    # pass holds that snapshot across seconds of indexer/client I/O — an admin cancel_series in
+    # that window unmonitors the episodes, and linking them anyway would resurrect the download
+    # the user just cancelled.
     {linked, _} =
       Repo.update_all(
-        from(e in Episode, where: e.id in ^episode_ids and is_nil(e.grab_id)),
+        from(e in Episode,
+          where: e.id in ^episode_ids and is_nil(e.grab_id) and e.monitored == true
+        ),
         set: [grab_id: grab.id, updated_at: now()]
       )
 
-    # Every requested episode was already grabbed: roll back so we don't leave an orphan grab
-    # (and so the caller doesn't start a download serving nothing).
+    # Every requested episode was already grabbed (or unmonitored meanwhile): roll back so we
+    # don't leave an orphan grab (and so the caller doesn't start a download serving nothing).
     if linked == 0, do: Repo.rollback(:no_episodes_linked), else: grab
   end
 
@@ -1013,10 +1049,24 @@ defmodule Cinder.Catalog do
   def delete_grab(%Grab{} = grab) do
     series_id = series_id_for_grab(grab.id)
 
-    with {:ok, grab} <- Repo.delete(grab) do
+    # allow_stale: the TV poller may finish/park the same grab concurrently with a
+    # user-initiated delete; an already-gone row is success for an idempotent delete.
+    with {:ok, grab} <- Repo.delete(grab, allow_stale: true) do
       broadcast_series(series_id)
       {:ok, grab}
     end
+  end
+
+  @doc """
+  Aborts one grab as a user action: removes its tracked client download (best-effort,
+  outside any txn — mirrors `cancel_series/2`'s per-grab semantics), then deletes the
+  grab row. Its episodes re-enter the wanted sweep and re-search cleanly — without the
+  client removal the still-running download would collide with the re-grab
+  (duplicate-add rejections) and complete with no grab left to import it.
+  """
+  def cancel_grab(%Grab{} = grab) do
+    remove_download(grab)
+    delete_grab(grab)
   end
 
   @doc """
@@ -1039,7 +1089,10 @@ defmodule Cinder.Catalog do
 
     result =
       Repo.transaction(fn ->
-        for grab <- grabs, do: Repo.delete!(grab)
+        # allow_stale: the TV poller may have finished/parked a grab between the read
+        # above and this txn; raising here would crash the cancel after the client
+        # downloads were already removed.
+        for grab <- grabs, do: Repo.delete!(grab, allow_stale: true)
         unmonitor_series_tree(series.id)
         Audit.log_or_rollback(actor, :cancel_series, series, %{title: series.title})
         series
@@ -1167,7 +1220,9 @@ defmodule Cinder.Catalog do
           set: [updated_at: ts]
         )
 
-        Repo.delete!(grab)
+        # allow_stale: a user cancel_grab may delete the same row while this import
+        # finalizes; raising here would roll back the just-imported file_path writes.
+        Repo.delete!(grab, allow_stale: true)
       end)
 
     with {:ok, _} <- result do
@@ -1335,10 +1390,10 @@ defmodule Cinder.Catalog do
 
   def search_episode_now(%Episode{}), do: :ok
 
-  @doc "Re-queues every still-wanted episode of `series` (zeroes their `search_attempts`)."
-  def search_series_now(%Series{id: series_id}) do
+  @doc "Re-queues every still-wanted episode of one `season` (zeroes their `search_attempts`)."
+  def search_season_now(%Season{id: season_id}) do
     wanted_episodes()
-    |> Enum.filter(&(&1.season.series.id == series_id))
+    |> Enum.filter(&(&1.season_id == season_id))
     |> Enum.each(&transition_episode(&1, %{search_attempts: 0}))
   end
 

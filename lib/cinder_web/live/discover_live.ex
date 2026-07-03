@@ -67,11 +67,16 @@ defmodule CinderWeb.DiscoverLive do
   end
 
   def handle_info({:movie_deleted, id}, socket) do
-    {:noreply, update(socket, :watchlist, fn wl -> Enum.reject(wl, &(&1.id == id)) end)}
+    # Re-derive the status map too — a stale entry would keep an "Available" badge on
+    # the search-result card and never re-offer the Add button until remount.
+    {:noreply,
+     socket
+     |> update(:watchlist, fn wl -> Enum.reject(wl, &(&1.id == id)) end)
+     |> assign_movie_status()}
   end
 
   def handle_info({event, _request}, socket)
-      when event in [:request_created, :request_approved, :request_denied] do
+      when event in [:request_created, :request_approved, :request_denied, :request_deleted] do
     {:noreply, assign_request_state(socket)}
   end
 

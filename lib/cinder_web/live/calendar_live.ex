@@ -6,6 +6,8 @@ defmodule CinderWeb.CalendarLive do
   """
   use CinderWeb, :live_view
 
+  import CinderWeb.LiveHelpers, only: [format_date: 1]
+
   alias Cinder.Catalog
 
   @impl true
@@ -69,7 +71,7 @@ defmodule CinderWeb.CalendarLive do
             datetime={Date.to_iso8601(row.ep.air_date)}
             class="w-24 tabular-nums text-sm text-base-content/70"
           >
-            {Calendar.strftime(row.ep.air_date, "%b %-d")}
+            {format_date(row.ep.air_date)}
           </time>
           <.status_badge kind={:episode} status={row.state} />
           <span class="min-w-0 break-words font-medium">{row.ep.season.series.title}</span>

@@ -135,6 +135,7 @@ defmodule CinderWeb.Layouts do
                 label={gettext("Users")}
                 icon="hero-users"
                 current_path={@current_path}
+                exact
               />
             <% end %>
           </ul>
@@ -190,10 +191,14 @@ defmodule CinderWeb.Layouts do
   attr :icon, :string, required: true
   attr :current_path, :string, default: nil
 
+  attr :exact, :boolean,
+    default: false,
+    doc: "match the path exactly — for an entry whose sub-paths belong to another page"
+
   defp nav_item(assigns) do
     active =
       assigns.current_path == assigns.navigate or
-        (assigns.navigate != "/" and is_binary(assigns.current_path) and
+        (not assigns.exact and assigns.navigate != "/" and is_binary(assigns.current_path) and
            String.starts_with?(assigns.current_path, assigns.navigate))
 
     assigns = assign(assigns, :active, active)
@@ -226,6 +231,7 @@ defmodule CinderWeb.Layouts do
     ~H"""
     <div id={@id} aria-live="polite">
       <.flash kind={:info} flash={@flash} />
+      <.flash kind={:warning} flash={@flash} />
       <.flash kind={:error} flash={@flash} />
 
       <.flash

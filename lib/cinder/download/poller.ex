@@ -68,22 +68,34 @@ defmodule Cinder.Download.Poller do
       {:ok, _movie} ->
         :ok
 
+      # The movie was cancelled/re-decided while this unit was in flight; the guarded
+      # transition skipped the write. Nothing to retry — the next tick re-derives.
+      {:error, :stale_status} ->
+        :ok
+
       {:error, :no_imdb_id} ->
-        park(movie, :no_match, :no_imdb_id)
+        write_back_search(movie, &park(&1, :no_match, :no_imdb_id))
 
       {:error, reason} when reason in @permanent_search_errors ->
         Logger.warning("movie #{movie.id} search failed permanently: #{inspect(reason)}")
-        park(movie, :search_failed, reason)
+        write_back_search(movie, &park(&1, :search_failed, reason))
 
       {:error, reason} ->
-        # Re-read so the counter write preserves start/1's current status
-        # (e.g. :searching after an indexer/client failure) instead of the stale
-        # struct's, which would revert :searching -> :requested.
-        movie |> reread() |> retry_or_fail(reason, :search_attempts, :search_failed)
+        write_back_search(movie, &retry_or_fail(&1, reason, :search_attempts, :search_failed))
     end
   end
 
-  defp reread(movie), do: Catalog.get_movie_by_id(movie.id) || movie
+  # Search-pass write-backs re-read the row first: Download.start advances it to
+  # :searching mid-unit, and a concurrent user action (cancel/delete) may have taken
+  # it out of the search pass entirely — then skip; the next tick re-derives. The
+  # fresh status feeds each guarded transition's expect:, preserving :searching
+  # instead of reverting it to :requested.
+  defp write_back_search(movie, fun) do
+    case Catalog.get_movie_by_id(movie.id) do
+      %Movie{status: status} = fresh when status in [:requested, :searching] -> fun.(fresh)
+      _ -> :ok
+    end
+  end
 
   # An :upgrading movie re-downloads a user-chosen replacement while its file_path STILL points at
   # the live library file. It must never reuse the clause below (which writes file_path: content_path
@@ -106,7 +118,9 @@ defmodule Cinder.Download.Poller do
   defp advance_with(movie, client) do
     case client.status(movie.download_id) do
       {:ok, %{state: :completed, content_path: path}} when path not in [nil, ""] ->
-        Catalog.transition(movie, %{status: :downloaded, file_path: path, import_attempts: 0})
+        Catalog.transition(movie, %{status: :downloaded, file_path: path, import_attempts: 0},
+          expect: movie.status
+        )
 
       {:ok, %{state: :completed}} ->
         # Completed but no usable content_path. A genuinely-slow download is
@@ -154,19 +168,34 @@ defmodule Cinder.Download.Poller do
         # retry rather than raising — matching the poller's ignore-and-retry convention.
         # file_path moves from the download source to the library destination (the imported
         # hardlink) so delete_files unlinks the actual library file, not the download copy.
-        with {:ok, available} <-
-               Catalog.transition(movie, %{
+        case Catalog.transition(
+               movie,
+               %{
                  status: :available,
                  file_path: dest,
                  imported_resolution: q.resolution,
                  imported_size: q.size,
                  imported_language: q.language,
                  imported_source: q.source
-               }) do
-          Notifier.notify({:movie_available, available})
-          # After the DB commit (the file is recorded as imported): a best-effort, gated
-          # remove of the source download. Failure is logged, never strands or re-imports.
-          Download.remove_after_import(movie.download_protocol, movie.download_id)
+               },
+               expect: movie.status
+             ) do
+          {:ok, available} ->
+            Notifier.notify({:movie_available, available})
+            # After the DB commit (the file is recorded as imported): a best-effort, gated
+            # remove of the source download. Failure is logged, never strands or re-imports.
+            Download.remove_after_import(movie.download_protocol, movie.download_id)
+
+          # Cancelled/deleted while the import unit was hardlinking: no row will ever
+          # point at dest, so unlink it or the media server scans an orphaned file.
+          {:error, :stale_status} ->
+            Logger.info("movie #{movie.id} left the import pass mid-import; unlinking #{dest}")
+            Library.delete_file(dest)
+
+          # Rare transition error: leave the movie :downloaded — next tick re-imports
+          # (import_movie treats an existing identical hardlink as idempotent success).
+          {:error, _} ->
+            :ok
         end
 
       {:error, :library_not_configured} ->
@@ -204,14 +233,16 @@ defmodule Cinder.Download.Poller do
       )
 
       # Dynamic key MUST come before keyword pairs in a map literal.
-      Catalog.transition(movie, %{attempts_field => attempts, status: movie.status})
+      Catalog.transition(movie, %{attempts_field => attempts, status: movie.status},
+        expect: movie.status
+      )
     end
   end
 
   # A terminal failure park: transition once (the choke-point) then notify. Keeps
   # every "movie gave up" path emitting the same event with no per-site duplication.
   defp park(movie, status, reason) do
-    with {:ok, parked} <- Catalog.transition(movie, %{status: status}) do
+    with {:ok, parked} <- Catalog.transition(movie, %{status: status}, expect: movie.status) do
       Notifier.notify({:movie_failed, parked, reason})
 
       # Best-effort, AFTER the park commits (a side effect like the notify above): record the
@@ -268,14 +299,18 @@ defmodule Cinder.Download.Poller do
     case Library.import_movie(%{movie | file_path: content_path}, replace: true) do
       {:ok, dest, q} ->
         with {:ok, available} <-
-               Catalog.transition(movie, %{
-                 status: :available,
-                 file_path: dest,
-                 imported_resolution: q.resolution,
-                 imported_size: q.size,
-                 imported_language: q.language,
-                 imported_source: q.source
-               }),
+               Catalog.transition(
+                 movie,
+                 %{
+                   status: :available,
+                   file_path: dest,
+                   imported_resolution: q.resolution,
+                   imported_size: q.size,
+                   imported_language: q.language,
+                   imported_source: q.source
+                 },
+                 expect: movie.status
+               ),
              do: finalize_upgrade(movie, available, dest)
 
       {:error, :library_not_configured} ->
@@ -313,7 +348,9 @@ defmodule Cinder.Download.Poller do
         "movie #{movie.id} upgrade #{attempts}/#{@max_attempts} failed (#{inspect(reason)}); will retry"
       )
 
-      Catalog.transition(movie, %{import_attempts: attempts, status: :upgrading})
+      Catalog.transition(movie, %{import_attempts: attempts, status: :upgrading},
+        expect: movie.status
+      )
     end
   end
 
@@ -326,12 +363,16 @@ defmodule Cinder.Download.Poller do
       do: Catalog.block_release(movie, :upgrade_failed)
 
     with {:ok, reverted} <-
-           Catalog.transition(movie, %{
-             status: :available,
-             download_id: nil,
-             download_protocol: nil,
-             release_title: nil
-           }) do
+           Catalog.transition(
+             movie,
+             %{
+               status: :available,
+               download_id: nil,
+               download_protocol: nil,
+               release_title: nil
+             },
+             expect: movie.status
+           ) do
       Logger.warning("movie #{movie.id} upgrade reverted to :available (#{inspect(reason)})")
       Notifier.notify({:movie_upgrade_failed, reverted, reason})
     end

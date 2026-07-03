@@ -33,6 +33,10 @@ expected to terminate at a reverse proxy):
   can log in and submit requests immediately (no email confirmation step). There is **no
   rate-limiting** on register/login — an accepted single-household ceiling, but another reason the
   instance must not face an untrusted network.
+- **Optional outer Basic-auth gate:** set `CINDER_BASIC_AUTH_USER` **and**
+  `CINDER_BASIC_AUTH_PASSWORD` (environment, both required) to put HTTP Basic auth in front of the
+  whole app — a stopgap while the instance has no admin yet (the boot log warns exactly then), or a
+  second layer when you can't front Cinder with a proxy/VPN. Unset ⇒ no gate.
 
 ## Configuration: environment vs in-app
 
@@ -91,10 +95,12 @@ service credential**, and losing it (or rotating it) means re-entering every cre
 
 ## Health & retry
 
-`/status` (admin) shows every item's live pipeline state plus a **Service health** panel that pings
-each configured service (with a **Recheck** button). A parked item (`:search_failed` / `:no_match` /
-`:import_failed`) shows a **Retry** button that resets it to `:requested` with attempt counters
-zeroed; the poller re-queues it on the next tick.
+`/dashboard` (admin) shows the **Service health** panel that pings each configured service (with a
+**Recheck** button), the approval queue, and recent activity. `/activity` (admin) shows every
+item's live pipeline state — a parked item (`:search_failed` / `:no_match` / `:import_failed`)
+shows a **Retry** button there that resets it to `:requested` with attempt counters zeroed; the
+poller re-queues it on the next tick. (The old `/status` and `/grabs` URLs redirect to
+`/activity`.)
 
 The media-server library scan after an import is **best-effort**: if the scan call fails (e.g. an
 endpoint/header mismatch on your Jellyfin/Plex version) the item still reaches `:available`, and
@@ -120,7 +126,9 @@ episode re-searches, while the correctly-languaged episodes still import.
 It is conservative by design — a language outside the recognized set, an audio code it doesn't
 recognize, a missing/unreadable probe, or a missing `ffprobe` binary all **import** rather than
 reject, so a correctly-languaged file is never stranded; only a provably-different language is
-refused. Enabled by default; set `media_info: nil` in config to turn it off.
+refused. Always on in the shipped image (there is no runtime toggle); setting a title's language
+preference to *Any* skips the check for that title, and an image without `ffprobe` skips it
+entirely (probes then import-permissive).
 
 ## TV: monitoring, season packs, and the calendar
 
@@ -161,7 +169,7 @@ Within a resolution, earlier-listed sources rank higher.
 Each library kind has its **own** import root — movies under `movies_library_path`, TV under
 `tv_library_path` — and (for Plex) its own scan section. Point your media server's Movies and Shows
 libraries at the two roots. **Each root is required and has no fallback:** with one unset, that
-kind's grabs *hold* (downloaded, logged, shown red on `/status`) rather than importing into the
+kind's grabs *hold* (downloaded, logged, shown red on `/dashboard`) rather than importing into the
 wrong library, and the first-run wizard won't finish until both roots validate writable.
 
 > **Upgrading across the key regularization:** the movie config keys gained the `MOVIES_` prefix the
@@ -169,7 +177,7 @@ wrong library, and the first-run wizard won't finish until both roots validate w
 > (and a new `TV_PLEX_SECTION` for the Shows library). Stored `/settings` rows migrate automatically,
 > **but environment variables do not** — if you bootstrap movie config via `docker-compose.yml` /
 > `.env`, rename those vars before redeploying, or the movie root/section reverts to unset (movie
-> imports hold, red on `/status`, until set). Keep both roots on the same filesystem as the download
+> imports hold, red on `/dashboard`, until set). Keep both roots on the same filesystem as the download
 > client's completed dir for instant hardlinks; a root on a different filesystem still works via the
 > automatic copy fallback (see "Hardlink, with an automatic cross-filesystem copy fallback").
 

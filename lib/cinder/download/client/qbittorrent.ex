@@ -24,6 +24,8 @@ defmodule Cinder.Download.Client.QBittorrent do
   @in_transit ~w(moving)
   @errored ~w(error missingFiles)
 
+  @max_redirects 5
+
   @impl true
   def add(%{download_url: "magnet:" <> _ = magnet}) do
     with {:ok, hash} <- btih(magnet),
@@ -49,8 +51,17 @@ defmodule Cinder.Download.Client.QBittorrent do
   # upload the bytes to qBittorrent. decode_body: false keeps the bytes raw so
   # the infohash is over the exact on-the-wire content.
   defp add_torrent_url(url) do
-    with {:ok, bytes} <- fetch_torrent(url),
-         {:ok, hash} <- Torrent.infohash(bytes),
+    case fetch_torrent(url, @max_redirects) do
+      {:ok, bytes} -> add_torrent_bytes(bytes)
+      # Magnet-only indexers answer their proxied downloadUrl with a 3xx to a
+      # magnet: URI — route it through the magnet add path.
+      {:magnet, magnet} -> add(%{download_url: magnet})
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp add_torrent_bytes(bytes) do
+    with {:ok, hash} <- Torrent.infohash(bytes),
          {:ok, %{status: 200, body: body}} <- upload_torrent(bytes) do
       if String.trim(to_string(body)) == "Fails.", do: {:error, :add_rejected}, else: {:ok, hash}
     else
@@ -58,16 +69,44 @@ defmodule Cinder.Download.Client.QBittorrent do
     end
   end
 
-  defp fetch_torrent(url) do
+  # Redirects are followed manually (redirect: false): Req's own redirect step
+  # merges the Location URI without a scheme check, so a 3xx to a magnet: URI
+  # makes Finch raise ArgumentError instead of returning {:error, _}.
+  defp fetch_torrent(_url, 0), do: {:error, :too_many_redirects}
+
+  defp fetch_torrent(url, hops) do
     case Req.get(url,
            receive_timeout: 15_000,
            decode_body: false,
            retry: false,
+           redirect: false,
            plug: fetch_plug()
          ) do
-      {:ok, %{status: 200, body: bytes}} when is_binary(bytes) -> {:ok, bytes}
-      {:ok, %{status: status}} -> {:error, {:torrent_fetch_status, status}}
-      other -> error(other)
+      {:ok, %{status: 200, body: bytes}} when is_binary(bytes) ->
+        {:ok, bytes}
+
+      {:ok, %{status: status} = resp} when status in [301, 302, 303, 307, 308] ->
+        case Req.Response.get_header(resp, "location") do
+          ["magnet:" <> _ = magnet | _] -> {:magnet, magnet}
+          [location | _] -> follow_redirect(url, location, hops)
+          [] -> {:error, {:torrent_fetch_status, status}}
+        end
+
+      {:ok, %{status: status}} ->
+        {:error, {:torrent_fetch_status, status}}
+
+      other ->
+        error(other)
+    end
+  end
+
+  defp follow_redirect(url, location, hops) do
+    next = url |> URI.merge(location) |> URI.to_string()
+
+    if String.starts_with?(next, ["http://", "https://"]) do
+      fetch_torrent(next, hops - 1)
+    else
+      {:error, :unsupported_download_url}
     end
   end
 
@@ -114,31 +153,63 @@ defmodule Cinder.Download.Client.QBittorrent do
 
   @impl true
   def health do
-    case action(fn req ->
-           Req.get(req, url: "/api/v2/app/webapiVersion", receive_timeout: 3_000)
-         end) do
+    # Short bounds on both the login round-trip and the probe itself, so a
+    # blackholed host can't hang the settings "Test connection" for minutes.
+    # A health check is an explicit "probe NOW": drop any login cooldown first —
+    # SettingsLive/SetupLive run this synchronously in the LiveView process, and a
+    # cached failure there would show red for 10 minutes after the server recovered.
+    Process.delete({__MODULE__, :login_cooldown})
+    probe = [receive_timeout: 3_000, connect_options: [timeout: 3_000]]
+
+    case action(fn req -> Req.get(req, url: "/api/v2/app/webapiVersion") end, probe) do
       {:ok, %{status: status}} when status in 200..299 -> :ok
       other -> error(other)
     end
   end
 
   # Logs in, then runs `fun` with a Req carrying the SID cookie + base_url.
-  defp action(fun) do
+  # `overrides` (e.g. health's short timeouts) apply to the login call too.
+  defp action(fun, overrides \\ []) do
     config = config()
 
-    with {:ok, cookie} <- login(config) do
+    with {:ok, cookie} <- login(config, overrides) do
       config
       |> base()
+      |> Keyword.merge(overrides)
       |> Keyword.put(:headers, [{"cookie", cookie}])
       |> Req.new()
       |> fun.()
     end
   end
 
-  defp login(config) do
+  # A definitive auth failure (bad creds, or a 403 from an already-banned IP) is
+  # remembered per process for @login_cooldown_ms: each poller is one long-lived
+  # process, so one bad-creds tick makes ONE login attempt instead of one per
+  # movie/grab — which would trip qBittorrent's consecutive-failure IP ban (default
+  # 5 failures -> 1h ban) within a single tick. A Cinder-side config change (new
+  # sig) retries immediately; health/0 clears the cooldown so a manual
+  # "Test connection" always probes live, even in a long-lived LiveView process.
+  @login_cooldown_ms 10 * 60_000
+
+  defp login(config, overrides) do
+    sig = :erlang.phash2({config[:base_url], config[:username], config[:password]})
+
+    case Process.get({__MODULE__, :login_cooldown}) do
+      {^sig, until} ->
+        if System.monotonic_time(:millisecond) < until,
+          do: {:error, :login_failed},
+          else: attempt_login(config, overrides, sig)
+
+      _ ->
+        attempt_login(config, overrides, sig)
+    end
+  end
+
+  defp attempt_login(config, overrides, sig) do
     resp =
       config
       |> base()
+      |> Keyword.merge(overrides)
       |> Keyword.put(:headers, [{"referer", Keyword.get(config, :base_url, @default_base_url)}])
       |> Req.new()
       |> Req.post(
@@ -152,13 +223,27 @@ defmodule Cinder.Download.Client.QBittorrent do
       # body "Fails." and no cookie, so the missing cookie — not the status — signals failure.
       {:ok, %{status: status} = response} when status in 200..299 ->
         case session_cookie(response) do
-          nil -> {:error, :login_failed}
-          cookie -> {:ok, cookie}
+          nil ->
+            start_cooldown(sig)
+            {:error, :login_failed}
+
+          cookie ->
+            Process.delete({__MODULE__, :login_cooldown})
+            {:ok, cookie}
         end
+
+      {:ok, %{status: 403}} ->
+        start_cooldown(sig)
+        {:error, {:qbittorrent_status, 403}}
 
       other ->
         error(other)
     end
+  end
+
+  defp start_cooldown(sig) do
+    until = System.monotonic_time(:millisecond) + @login_cooldown_ms
+    Process.put({__MODULE__, :login_cooldown}, {sig, until})
   end
 
   # qBittorrent names its session cookie `SID` (<= 4.x) or `QBT_SID_<port>` (>= 5.x). Capture
@@ -209,7 +294,13 @@ defmodule Cinder.Download.Client.QBittorrent do
   defp classify(_state, _progress), do: :downloading
 
   defp base(config) do
-    [base_url: Keyword.get(config, :base_url, @default_base_url), receive_timeout: 15_000]
+    # retry: false — the pollers carry their own bounded-retry budget; Req's default
+    # 3-retry backoff on top of it only stretches a tick against a failing server.
+    [
+      base_url: Keyword.get(config, :base_url, @default_base_url),
+      receive_timeout: 15_000,
+      retry: false
+    ]
     |> Keyword.merge(Keyword.get(config, :req_options, []))
   end
 

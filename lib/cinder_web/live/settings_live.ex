@@ -28,12 +28,16 @@ defmodule CinderWeb.SettingsLive do
 
   @impl true
   def handle_event("save", params, socket) do
-    Settings.save_form(params)
+    case Settings.save_form(params) do
+      :ok ->
+        {:noreply,
+         socket
+         |> assign(form: Settings.form_state(), health: %{})
+         |> put_flash(:info, gettext("Settings saved."))}
 
-    {:noreply,
-     socket
-     |> assign(form: Settings.form_state(), health: %{})
-     |> put_flash(:info, gettext("Settings saved."))}
+      {:error, invalid_keys} ->
+        {:noreply, put_flash(socket, :error, invalid_band_message(invalid_keys))}
+    end
   end
 
   # Probes the saved config synchronously (each impl health/0 has a ~3s timeout).
@@ -58,6 +62,10 @@ defmodule CinderWeb.SettingsLive do
     Settings.put("auto_approve_all", to_string(on))
     {:noreply, assign(socket, auto_approve_all: on)}
   end
+
+  # Event payloads are client-controlled — ignore a forged/unmatched frame rather than
+  # crash the LiveView (and lose unsaved form input). House rule; see sibling views.
+  def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   @impl true
   def render(assigns) do

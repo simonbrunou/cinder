@@ -91,13 +91,24 @@ defmodule CinderWeb.ActivityLive do
     do: {:noreply, assign(socket, confirming: nil)}
 
   def handle_event("confirm_delete", %{"id" => id}, socket) do
-    grab = find_by_id(socket.assigns.grabs, id)
-    if grab, do: Catalog.delete_grab(grab)
+    # cancel_grab also removes the tracked client download — a bare row delete would
+    # leave it running, colliding with the freed episodes' re-grab.
+    {level, msg} =
+      case find_by_id(socket.assigns.grabs, id) do
+        nil ->
+          {:error, gettext("That download is already gone.")}
+
+        grab ->
+          case Catalog.cancel_grab(grab) do
+            {:ok, _} -> {:info, gettext("Download deleted.")}
+            _ -> {:error, gettext("Couldn't delete the download.")}
+          end
+      end
 
     {:noreply,
      socket
      |> assign(confirming: nil, grabs: Catalog.list_grabs())
-     |> put_flash(:info, gettext("Download deleted."))}
+     |> put_flash(level, msg)}
   end
 
   # Toggle the manual-search panel for a movie row (re-clicking the open row closes it).

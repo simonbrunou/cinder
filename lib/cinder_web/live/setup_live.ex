@@ -33,11 +33,20 @@ defmodule CinderWeb.SetupLive do
 
   @impl true
   def handle_event("validate", params, socket) do
-    Settings.save_form(params)
-    health = Map.new(required_services() ++ @download_services, &{&1, check(&1)})
+    case Settings.save_form(params) do
+      :ok ->
+        health = Map.new(required_services() ++ @download_services, &{&1, check(&1)})
 
-    {:noreply,
-     assign(socket, form: Settings.form_state(), health: health, can_finish: all_green?(health))}
+        {:noreply,
+         assign(socket,
+           form: Settings.form_state(),
+           health: health,
+           can_finish: all_green?(health)
+         )}
+
+      {:error, invalid_keys} ->
+        {:noreply, put_flash(socket, :error, invalid_band_message(invalid_keys))}
+    end
   end
 
   def handle_event("finish", _params, socket) do

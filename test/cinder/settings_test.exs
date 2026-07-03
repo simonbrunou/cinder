@@ -395,6 +395,41 @@ defmodule Cinder.SettingsTest do
       assert Settings.get("tmdb_token") == nil
     end
 
+    test "a typed secret replacement wins over a ticked Clear box" do
+      Settings.save_form(%{"tmdb_token" => "old", "media_server_type" => "jellyfin"})
+
+      # Admin replaces the key AND ticks Clear in the same submit: the new value must
+      # win — deleting the old and dropping the new would leave the service silently
+      # unauthenticated behind a "Settings saved." flash.
+      Settings.save_form(%{
+        "tmdb_token" => "new-key",
+        "clear_tmdb_token" => "on",
+        "media_server_type" => "jellyfin"
+      })
+
+      assert Settings.get("tmdb_token") == "new-key"
+    end
+
+    test "rejects an unusable size-band value instead of persisting it" do
+      assert {:error, ["movies_max_size"]} =
+               Settings.save_form(%{
+                 "movies_max_size" => "abc",
+                 "media_server_type" => "jellyfin"
+               })
+
+      assert Settings.get("movies_max_size") == nil
+
+      # Zero/negative degrade to "no limit" at apply time, so they're rejected too.
+      assert {:error, ["tv_min_size"]} =
+               Settings.save_form(%{"tv_min_size" => "0", "media_server_type" => "jellyfin"})
+
+      # A valid decimal still saves.
+      assert :ok =
+               Settings.save_form(%{"tv_min_size" => "1.5", "media_server_type" => "jellyfin"})
+
+      assert Settings.get("tv_min_size") == "1.5"
+    end
+
     test "leaves non-secret keys absent from params unchanged (no collateral wipe)" do
       Settings.put("prowlarr_url", "http://keep")
 

@@ -190,6 +190,19 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     assert {:error, {:sabnzbd_status, 500}} = Sabnzbd.health()
   end
 
+  test "health/0 probes exactly once — no retries against a failing server" do
+    # The probe is bounded (retry: false): Req's default policy would re-hit a 500
+    # up to 3 more times with backoff, hanging "Test connection" for ~7s per probe.
+    stub(fn conn ->
+      send(self(), :probed)
+      conn |> Plug.Conn.put_status(500) |> Req.Test.text("boom")
+    end)
+
+    assert {:error, {:sabnzbd_status, 500}} = Sabnzbd.health()
+    assert_received :probed
+    refute_received :probed
+  end
+
   test "status/1 falls through to history when the queue response omits slots" do
     # A queue payload without a "slots" key must not short-circuit to an error
     # that strands the poll — fall through to history (where a finished job lives).

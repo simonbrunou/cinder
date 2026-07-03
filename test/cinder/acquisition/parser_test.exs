@@ -206,6 +206,27 @@ defmodule Cinder.Acquisition.ParserTest do
       assert %{season: 1, episodes: nil} = Parser.parse("Show.S01.1080p-S5RT")
     end
 
+    test "a group fragment like -S1CK on a season-less name is not a bare season pack" do
+      # No real season token anywhere: reading "-S1CK" as season 1 would let a
+      # title-matching movie release masquerade as a whole-season pack in set-cover.
+      assert %{season: nil, episodes: nil} = Parser.parse("Show.2020.1080p.WEB-S1CK")
+    end
+
+    test "unusual non-alphanumeric separators after a season token still read as a pack" do
+      assert %{season: 1, episodes: nil} = Parser.parse("Show.S01[1080p].WEB")
+      assert %{season: 2, episodes: nil} = Parser.parse("Show S02+Extras 720p")
+    end
+
+    test "word-form multi-season ranges are rejected rather than read as one season" do
+      assert %{season: nil, episodes: nil} = Parser.parse("Show.Season.1-5.Complete.1080p")
+      assert %{season: nil, episodes: nil} = Parser.parse("Show.Season 1-3.720p.WEB")
+      assert %{season: nil, episodes: nil} = Parser.parse("Show.Seasons.1-5.COMPLETE.1080p")
+    end
+
+    test "a hyphen-glued resolution after a word-form season is not a multi-season range" do
+      assert %{season: 1, episodes: nil} = Parser.parse("Show.Season.1-1080p.WEB")
+    end
+
     test "S00 specials park (specials are M6 scope)" do
       assert %{season: nil, episodes: nil} = Parser.parse("Show.S00E01.1080p")
     end

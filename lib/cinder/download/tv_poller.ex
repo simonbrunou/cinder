@@ -173,10 +173,19 @@ defmodule Cinder.Download.TvPoller do
       episodes |> Enum.filter(&(&1.episode_number in covered_numbers)) |> Enum.map(& &1.id)
 
     with {:ok, client} <- Download.client_for(release.protocol),
-         {:ok, download_id} <- client.add(release),
-         {:ok, _grab} <-
-           Catalog.create_grab(download_id, release.protocol, episode_ids, release.title) do
-      episode_ids
+         {:ok, download_id} <- client.add(release) do
+      case Catalog.create_grab(download_id, release.protocol, episode_ids, release.title) do
+        {:ok, _grab} ->
+          episode_ids
+
+        {:error, reason} ->
+          # The client download was already added: remove it (best-effort) so a failed
+          # link — a concurrent grab or an admin cancel took the episodes — doesn't
+          # leave an orphaned full-season download (mirrors the manual grab path).
+          Logger.warning("tv grab failed (#{release.title}): #{inspect(reason)}")
+          Download.best_effort_remove(client, download_id)
+          []
+      end
     else
       other ->
         Logger.warning("tv grab failed (#{release.title}): #{inspect(other)}")

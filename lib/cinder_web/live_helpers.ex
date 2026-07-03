@@ -3,6 +3,7 @@ defmodule CinderWeb.LiveHelpers do
   Small, view-agnostic helpers shared by the LiveViews. Pure functions only —
   no markup (that lives in `CinderWeb.CoreComponents`).
   """
+  use Gettext, backend: CinderWeb.Gettext
 
   @doc """
   Finds an item in `collection` whose `id` stringifies to `id` (a client-supplied,
@@ -27,5 +28,38 @@ defmodule CinderWeb.LiveHelpers do
   """
   def latest_status_by(items, key_fun) do
     Enum.reduce(items, %{}, fn r, acc -> Map.put_new(acc, key_fun.(r), r.status) end)
+  end
+
+  @doc """
+  Locale-aware short date ("Jun 3" / fr "3 juin"). Both the format string and the
+  month names go through gettext, so a translated locale controls word order too —
+  `Calendar.strftime`'s built-in month names are English-only.
+  """
+  def format_date(date), do: localized_strftime(date, gettext("%b %-d"))
+
+  @doc ~S|Locale-aware date with year ("Jun 3, 2026" / fr "3 juin 2026").|
+  def format_date_year(date), do: localized_strftime(date, gettext("%b %-d, %Y"))
+
+  defp localized_strftime(date, format),
+    do: Calendar.strftime(date, format, abbreviated_month_names: &abbreviated_month_name/1)
+
+  defp abbreviated_month_name(n) do
+    Enum.at(
+      [
+        gettext("Jan"),
+        gettext("Feb"),
+        gettext("Mar"),
+        gettext("Apr"),
+        gettext("May"),
+        gettext("Jun"),
+        gettext("Jul"),
+        gettext("Aug"),
+        gettext("Sep"),
+        gettext("Oct"),
+        gettext("Nov"),
+        gettext("Dec")
+      ],
+      n - 1
+    )
   end
 end

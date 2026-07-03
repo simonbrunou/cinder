@@ -297,7 +297,7 @@ defmodule CinderWeb.DashboardLive do
                   datetime={DateTime.to_iso8601(m.updated_at)}
                   class="ml-auto whitespace-nowrap text-xs text-base-content/70"
                 >
-                  {Calendar.strftime(m.updated_at, "%b %-d")}
+                  {format_date(m.updated_at)}
                 </time>
               </li>
             </ul>

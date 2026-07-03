@@ -26,8 +26,17 @@ defmodule CinderWeb.SeriesDiscoveryLive do
       {:ok,
        socket
        |> assign(tmdb_id: tmdb_id, info: info, current_user: user, preferred_language: "original")
+       |> assign(seasons: Enum.filter(info.seasons, &(&1.season_number != 0)))
        |> assign_requests_by_season(user, tmdb_id)}
     else
+      # A TMDB outage is not "not found" — telling the user the series doesn't exist
+      # sends them away from a title that loads fine once TMDB is back.
+      {:error, reason} when reason != {:tmdb_status, 404} ->
+        {:ok,
+         socket
+         |> put_flash(:error, gettext("Couldn't reach TMDB. Please try again in a moment."))
+         |> push_navigate(to: ~p"/")}
+
       _ ->
         {:ok,
          socket
@@ -39,8 +48,10 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   @impl true
   def handle_event("request_season", %{"season" => raw}, socket) do
     with {season_number, ""} <- Integer.parse(raw),
-         # Bug C: reject a season not in the show (prevents orphan-series rows)
-         true <- Enum.any?(socket.assigns.info.seasons, &(&1.season_number == season_number)) do
+         # Reject a season not in the show (prevents orphan-series rows). Validated
+         # against @seasons — the requestable set, excluding Specials — so a forged
+         # event can't create a dangling, never-grabbable season-0 request.
+         true <- Enum.any?(socket.assigns.seasons, &(&1.season_number == season_number)) do
       info = socket.assigns.info
       user = socket.assigns.current_user
 
@@ -121,7 +132,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
 
   @impl true
   def handle_info({event, _request}, socket)
-      when event in [:request_created, :request_approved, :request_denied] do
+      when event in [:request_created, :request_approved, :request_denied, :request_deleted] do
     {:noreply, refresh_requests(socket)}
   end
 
@@ -172,16 +183,22 @@ defmodule CinderWeb.SeriesDiscoveryLive do
         <.language_select value={@preferred_language} />
       </form>
 
+      <%!-- @seasons excludes Specials (season 0, not requestable), so a specials-only
+            series gets this empty state instead of a blank page with nothing to do. --%>
       <.empty_state
-        :if={@info.seasons == []}
+        :if={@seasons == []}
         icon="hero-tv"
-        title={gettext("No seasons found")}
-        message={gettext("TMDB returned no season data for this series.")}
+        title={gettext("No requestable seasons")}
+        message={
+          if @info.seasons == [],
+            do: gettext("TMDB returned no season data for this series."),
+            else: gettext("This series only has specials, which can't be requested yet.")
+        }
       />
 
       <ul class="divide-y divide-base-200">
         <li
-          :for={season <- Enum.filter(@info.seasons, &(&1.season_number != 0))}
+          :for={season <- @seasons}
           class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 py-3"
         >
           <span class="font-medium">{season_label(season.season_number)}</span>

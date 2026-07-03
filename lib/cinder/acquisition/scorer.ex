@@ -21,8 +21,9 @@ defmodule Cinder.Acquisition.Scorer do
   (`["1080p", "720p"]`), so the gate stays active. To accept more resolutions, list
   them.
 
-  Rules come from `config :cinder, #{inspect(__MODULE__)}` merged with per-call
-  `opts`. Returns `{:ok, release}` or `:no_match` when none survive the filters.
+  Rules come from per-call `opts` — the pollers and the manual-search panel pass the
+  settings-store band via `Cinder.Acquisition.band_opts/1`. Returns `{:ok, release}`
+  or `:no_match` when none survive the filters.
   """
   alias Cinder.Acquisition.Release
 
@@ -63,8 +64,7 @@ defmodule Cinder.Acquisition.Scorer do
   handles packs, ranges, and singles uniformly. Partial coverage is fine: the rest
   stay wanted for the next search tick.
 
-  Rules come from `config :cinder, #{inspect(__MODULE__)}` merged with `opts`, exactly
-  like `select/2`.
+  Rules come from per-call `opts`, exactly like `select/2`.
 
   `# ponytail:` greedy, not optimal set-cover. Optimal is NP-hard and pointless at
   household release-list sizes; upgrade only if release sets get pathological.
@@ -115,11 +115,10 @@ defmodule Cinder.Acquisition.Scorer do
   end
 
   # The normalized rule set, shared by both entry points: the size band, the
-  # resolution preference (defaulted), and the downcased blocklist. Config block
-  # overlaid by per-call opts.
-  defp rules(opts) do
-    rules = Keyword.merge(config(), opts)
-
+  # resolution preference (defaulted), and the downcased blocklist. Per-call opts
+  # only — the old `config :cinder, Scorer` env seam was never set anywhere and is
+  # unreachable in the shipped image (operators configure bands via /settings).
+  defp rules(rules) do
     {
       Keyword.get(rules, :min_size),
       Keyword.get(rules, :max_size),
@@ -169,8 +168,6 @@ defmodule Cinder.Acquisition.Scorer do
     {MapSet.size(cov), -resolution_rank(release, preferred), -source_rank(release, sources),
      release.size || 0}
   end
-
-  defp config, do: Application.get_env(:cinder, __MODULE__, [])
 
   # A release whose indexer omits the size is unsizeable: accept it only when there's no band to
   # enforce. This closes the "0 ≤ max" hole — `size = release.size || 0` used to let an unknown

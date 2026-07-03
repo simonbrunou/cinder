@@ -63,10 +63,10 @@ defmodule Cinder.Acquisition do
 
   @doc """
   Searches the configured indexer for one TV `season` of `series`, parses each
-  result, keeps only releases whose name plausibly matches the series title, and
-  returns the chosen releases — each paired with the episode numbers it covers —
-  per `Scorer.select_for/4`. `wanted_numbers` is the still-wanted episode-number
-  set for that season.
+  result, on the free-text path keeps only releases whose name plausibly matches
+  the series title, and returns the chosen releases — each paired with the episode
+  numbers it covers — per `Scorer.select_for/4`. `wanted_numbers` is the
+  still-wanted episode-number set for that season.
 
   `opts[:protocols]` drops releases on any other protocol before scoring (same
   graceful-degradation guard as `best_release/2`); `opts` is otherwise forwarded
@@ -75,11 +75,13 @@ defmodule Cinder.Acquisition do
   Returns `{:ok, [{%Release{}, [number]}]}`, `:no_match`, or `{:error, term}`.
 
   The title guard rejects an obviously-wrong series from a free-text (title-only)
-  indexer search — used when `series.tvdb_id` is nil. `select_for` matches only on
+  indexer search — it applies ONLY when `series.tvdb_id` is nil; a TvdbId-token
+  search is already scoped to the right show. `select_for` matches only on
   season number, so without this a same-season release of another show could be
-  grabbed. It is a normalized substring match (downcase, NFD-fold diacritics, strip
-  non-alphanumerics); it cannot disambiguate same-named variants (e.g. a US vs UK
-  edition) — those rely on `tvdb_id`-based search (M6 reconciliation).
+  grabbed. It is a normalized substring match (downcase, "&"→"and", NFD-fold
+  diacritics, strip non-alphanumerics); it cannot disambiguate same-named variants
+  (e.g. a US vs UK edition) — those rely on `tvdb_id`-based search (M6
+  reconciliation).
   """
   def best_releases(series, season_number, wanted_numbers, opts \\ []) do
     case indexer().search_tv(series.tvdb_id, series.title, season_number) do
@@ -91,7 +93,7 @@ defmodule Cinder.Acquisition do
           raw_results
           |> Enum.map(&Release.new/1)
           |> filter_protocols(Keyword.get(opts, :protocols))
-          |> Enum.filter(&title_matches?(&1, series.title))
+          |> filter_title(series)
 
         # A strict total-wipe collapses to [] → select_for → :no_match → the tv_poller bump path.
         cover_set =
@@ -160,6 +162,15 @@ defmodule Cinder.Acquisition do
     end
   end
 
+  # The title guard protects only the free-text (title-only) fallback search. A
+  # TvdbId-token search is already scoped to the right series by the indexer, and
+  # normalization cannot equate AKA titles ("Money Heist" vs "La.Casa.de.Papel"),
+  # so filtering there would strand whole seasons at :no_match.
+  defp filter_title(candidates, %{tvdb_id: nil, title: title}),
+    do: Enum.filter(candidates, &title_matches?(&1, title))
+
+  defp filter_title(candidates, _series), do: candidates
+
   defp title_matches?(%Release{title: title}, series_title),
     do: String.contains?(normalize_title(title), normalize_title(series_title))
 
@@ -171,6 +182,9 @@ defmodule Cinder.Acquisition do
   defp normalize_title(title) do
     title
     |> String.downcase()
+    # Scene release names never contain "&" — it is always spelled "and"
+    # ("Law.and.Order..."), while TMDB titles keep the ampersand ("Law & Order").
+    |> String.replace("&", "and")
     |> nfd()
     |> String.replace(~r/[^a-z0-9]/, "")
   end

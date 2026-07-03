@@ -74,9 +74,14 @@ defmodule Cinder.Catalog.TMDB.HTTP do
 
   @impl true
   def health do
-    # /3/authentication validates the bearer token; short timeout so a down/slow TMDB
-    # can't hang the settings "Test connection". Errors stay sanitized (no token/headers).
-    case request(url: "/3/authentication", receive_timeout: 3_000) do
+    # /3/authentication validates the bearer token; short timeouts (receive AND
+    # connect) so a down/slow TMDB can't hang the settings "Test connection".
+    # Errors stay sanitized (no token/headers).
+    case request(
+           url: "/3/authentication",
+           receive_timeout: 3_000,
+           connect_options: [timeout: 3_000]
+         ) do
       {:ok, %{status: status}} when status in 200..299 -> :ok
       {:ok, %{status: status}} -> {:error, {:tmdb_status, status}}
       {:error, reason} -> {:error, reason}
@@ -86,7 +91,13 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   defp request(opts) do
     config = Application.get_env(:cinder, __MODULE__, [])
 
-    [base_url: Keyword.get(config, :base_url, @default_base_url), receive_timeout: 15_000]
+    # retry: false — Req's default 3-retry backoff turns one hung/500ing TMDB call
+    # into ~a minute; callers (search UI, poller, refresher) all prefer failing fast.
+    [
+      base_url: Keyword.get(config, :base_url, @default_base_url),
+      receive_timeout: 15_000,
+      retry: false
+    ]
     |> auth(Keyword.get(config, :token))
     |> Keyword.merge(opts)
     |> Keyword.merge(Keyword.get(config, :req_options, []))

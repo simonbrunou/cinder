@@ -62,6 +62,7 @@ rest with a key derived from `SECRET_KEY_BASE`.
 | `POOL_SIZE` | no | `5` | SQLite connection-pool size. |
 | `RELEASE_NAME` | auto | — | Set by the release; its presence triggers DB migrations on boot. |
 | `DNS_CLUSTER_QUERY` | no | — | DNS-based clustering (unused on a single node). |
+| `CINDER_BASIC_AUTH_USER` / `CINDER_BASIC_AUTH_PASSWORD` | no | — | Set **both** to require HTTP Basic auth in front of the whole app — an optional outer gate while no admin exists yet, or a second layer when you can't front Cinder with a proxy/VPN. Unset ⇒ no gate. |
 
 ### In-app service configuration (set in the wizard / `/settings`)
 

@@ -66,6 +66,32 @@ defmodule Cinder.CatalogTest do
                Catalog.transition(movie, %{status: :cancelled})
     end
 
+    test "transition/3 with expect: writes only when the DB status still matches" do
+      {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 4243, title: "M"})
+      {:ok, searching} = Catalog.transition(movie, %{status: :searching})
+
+      assert {:ok, %Movie{status: :downloading}} =
+               Catalog.transition(searching, %{status: :downloading, download_id: "h"},
+                 expect: :searching
+               )
+    end
+
+    test "transition/3 with expect: skips a stale write (poller vs user-cancel race)" do
+      {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 4244, title: "M"})
+      {:ok, searching} = Catalog.transition(movie, %{status: :searching})
+
+      # The user cancels while the poller's unit is in flight with the :searching struct…
+      {:ok, _} = Catalog.transition(searching, %{status: :cancelled})
+
+      # …so the poller's write-back misses and the cancel stands.
+      assert {:error, :stale_status} =
+               Catalog.transition(searching, %{status: :downloading, download_id: "h"},
+                 expect: :searching
+               )
+
+      assert Repo.get!(Movie, movie.id).status == :cancelled
+    end
+
     test "transition/2 persists file_path" do
       {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 9001, title: "Heat"})
 
