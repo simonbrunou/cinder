@@ -1,16 +1,16 @@
 # Graph Report - cinder  (2026-07-03)
 
 ## Corpus Check
-- 348 files · ~369,815 words
+- 352 files · ~373,072 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 2792 nodes · 3374 edges · 320 communities (210 shown, 110 thin omitted)
-- Extraction: 97% EXTRACTED · 3% INFERRED · 0% AMBIGUOUS · INFERRED: 107 edges (avg confidence: 0.8)
+- 2825 nodes · 3426 edges · 326 communities (213 shown, 113 thin omitted)
+- Extraction: 97% EXTRACTED · 3% INFERRED · 0% AMBIGUOUS · INFERRED: 111 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `cd7a1f8d`
+- Built from commit: `be4700e1`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -319,32 +319,38 @@
 - [[_COMMUNITY_Community 315|Community 315]]
 - [[_COMMUNITY_Community 316|Community 316]]
 - [[_COMMUNITY_Community 317|Community 317]]
+- [[_COMMUNITY_Community 318|Community 318]]
+- [[_COMMUNITY_Community 319|Community 319]]
 - [[_COMMUNITY_Community 320|Community 320]]
+- [[_COMMUNITY_Community 321|Community 321]]
 - [[_COMMUNITY_Community 322|Community 322]]
+- [[_COMMUNITY_Community 323|Community 323]]
+- [[_COMMUNITY_Community 324|Community 324]]
+- [[_COMMUNITY_Community 325|Community 325]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `Cinder.Catalog` - 115 edges
+1. `Cinder.Catalog` - 118 edges
 2. `Cinder.Settings` - 62 edges
 3. `Cinder.Library` - 54 edges
-4. `gettext` - 30 edges
+4. `gettext` - 32 edges
 5. `CinderWeb.CoreComponents` - 29 edges
 6. `Cinder.Accounts` - 23 edges
 7. `Cinder.Acquisition.Scorer` - 22 edges
 8. `Cinder.Download.Client.QBittorrent` - 22 edges
-9. `Cinder.Requests` - 21 edges
+9. `Cinder.Requests` - 22 edges
 10. `CinderWeb.UserAuth` - 21 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `change()` --calls--> `create()`  [INFERRED]
-  priv/repo/migrations/20260618120000_create_movies.exs → lib/cinder_web/controllers/user_session_controller.ex
-- `change()` --calls--> `create()`  [INFERRED]
   priv/repo/migrations/20260621120000_create_settings.exs → lib/cinder_web/controllers/user_session_controller.ex
 - `change()` --calls--> `create()`  [INFERRED]
   priv/repo/migrations/20260621191417_create_users_auth_tables.exs → lib/cinder_web/controllers/user_session_controller.ex
+- `up()` --calls--> `create()`  [INFERRED]
+  priv/repo/migrations/20260623113600_add_season_to_requests.exs → lib/cinder_web/controllers/user_session_controller.ex
 - `change()` --calls--> `create()`  [INFERRED]
-  priv/repo/migrations/20260621215843_create_requests.exs → lib/cinder_web/controllers/user_session_controller.ex
+  priv/repo/migrations/20260623120000_add_wanted_episodes_index.exs → lib/cinder_web/controllers/user_session_controller.ex
 - `change()` --calls--> `create()`  [INFERRED]
-  priv/repo/migrations/20260622130000_create_tv_schema.exs → lib/cinder_web/controllers/user_session_controller.ex
+  priv/repo/migrations/20260623130000_create_admin_audit.exs → lib/cinder_web/controllers/user_session_controller.ex
 
 ## Import Cycles
 - None detected.
@@ -359,11 +365,11 @@
 - **Request to approval to grab flow** — m2_requests_context, m2_find_or_create_at_requested, phase_3_download_poller, phase_1_catalog_movie_status_enum [EXTRACTED 0.90]
 - **Grab-centric TV data model** — m5_grabs_table, m4_series_seasons_episodes, m5_wanted_episodes, m5_transition_episode [EXTRACTED 0.90]
 
-## Communities (320 total, 110 thin omitted)
+## Communities (326 total, 113 thin omitted)
 
 ### Community 0 - "DB Migrations + Sessions"
-Cohesion: 0.06
-Nodes (24): CinderWeb.UserSessionController, create(), delete(), update_password(), Cinder.Repo.Migrations.CreateMovies, change(), Cinder.Repo.Migrations.CreateSettings, change() (+16 more)
+Cohesion: 0.09
+Nodes (18): CinderWeb.UserSessionController, create(), delete(), update_password(), Cinder.Repo.Migrations.CreateMovies, change(), Cinder.Repo.Migrations.CreateRequests, change() (+10 more)
 
 ### Community 1 - "Settings Store (env overlay)"
 Cohesion: 0.07
@@ -382,12 +388,12 @@ Cohesion: 0.21
 Nodes (13): M2 Accounts/Roles/Requests design, Accounts.User + roles, auto_approve_all toggle, Catalog.find_or_create_at_requested, Polymorphic requests target shape, Cinder.Requests context (approval gate), M3 Onboarding/requester design, Cinder.Health service checks (+5 more)
 
 ### Community 5 - "User Authentication"
-Cohesion: 0.16
+Cohesion: 0.18
 Nodes (20): CinderWeb.UserAuth, admin?(), create_or_extend_session(), disconnect_sessions(), enforce_setup?(), ensure_user_token(), fetch_current_scope_for_user(), log_in_user() (+12 more)
 
 ### Community 6 - "Download/Poller Tests"
-Cohesion: 0.12
-Nodes (16): Cinder.LibraryTest, stub_dir(), stub_link_ok(), Cinder.Download.Client.SabnzbdTest, stub(), stub_queue_then_history(), Cinder.Download.MoveOnImportTest, drive_to_available() (+8 more)
+Cohesion: 0.10
+Nodes (18): Cinder.LibraryTest, stub_dir(), stub_link_ok(), Cinder.Download.Client.SabnzbdTest, stub(), stub_queue_then_history(), Cinder.Download.MoveOnImportTest, drive_to_available() (+10 more)
 
 ### Community 7 - "Movie Download Poller"
 Cohesion: 0.20
@@ -403,11 +409,11 @@ Nodes (10): Cinder.Accounts, admin_reset_password(), admin_update_email(), count
 
 ### Community 10 - "TMDB HTTP Client"
 Cohesion: 0.26
-Nodes (16): Cinder.Catalog.TMDB.HTTP, auth(), date_from(), error(), get_movie(), get_season(), get_series(), health() (+8 more)
+Nodes (17): Cinder.Catalog.TMDB.HTTP, auth(), date_from(), error(), genre_names(), get_movie(), get_season(), get_series() (+9 more)
 
 ### Community 11 - "Accounts/Auth Tests"
-Cohesion: 0.07
-Nodes (14): Cinder.AccountsTest, Cinder.M3PipelineTest, Cinder.Repo, CinderWeb.UserAuthTest, CinderWeb.UserSessionControllerTest, CinderWeb.ActivityLiveTest, CinderWeb.CalendarLiveTest, Cinder.DataCase (+6 more)
+Cohesion: 0.11
+Nodes (7): Cinder.AccountsTest, CinderWeb.UserAuthTest, CinderWeb.UserSessionControllerTest, CinderWeb.UserLive.Confirmation, mount(), CinderWeb.UserLive.ConfirmationTest, CinderWeb.UserLive.SettingsTest
 
 ### Community 12 - "SABnzbd Client"
 Cohesion: 0.22
@@ -426,8 +432,8 @@ Cohesion: 0.26
 Nodes (15): .claude.exs subagent configuration, Clean-slate subagent design principle, meta-agent subagent, /memory/check command, /claude/config command, /claude/install command, mix claude.install task, Nested memories (directory CLAUDE.md) (+7 more)
 
 ### Community 16 - "Requests/Approval Context"
-Cohesion: 0.21
-Nodes (17): Cinder.Requests, announce_approved(), approve_request(), broadcast(), create_approved(), create_pending(), create_request(), create_series_safely() (+9 more)
+Cohesion: 0.20
+Nodes (18): Cinder.Requests, announce_approved(), approve_request(), broadcast(), create_approved(), create_pending(), create_request(), create_series_safely() (+10 more)
 
 ### Community 17 - "Watchlist LiveView"
 Cohesion: 0.05
@@ -458,8 +464,8 @@ Cohesion: 0.24
 Nodes (9): Cinder.Accounts.UserNotifier, deliver(), deliver_confirmation_instructions(), deliver_login_instructions(), deliver_magic_link_instructions(), deliver_update_email_instructions(), Cinder.Acquisition.Release, new() (+1 more)
 
 ### Community 24 - "Acquisition Context + Overview"
-Cohesion: 0.12
-Nodes (26): Cinder.Download.Poller, advance(), advance_downloading(), advance_upgrade(), advance_upgrade_with(), advance_with(), best_effort_remove_old(), do_poll() (+18 more)
+Cohesion: 0.08
+Nodes (42): Cinder.Download.Poller, advance(), advance_downloading(), advance_upgrade(), advance_upgrade_with(), advance_with(), best_effort_remove_old(), compensate_aborted_upgrade() (+34 more)
 
 ### Community 25 - "Catalog Design + Tests"
 Cohesion: 0.22
@@ -498,8 +504,8 @@ Cohesion: 0.29
 Nodes (6): authorization_test.exs gating matrix, Done-when verification (M2), Self-review notes (author), Task 3.1: Gating-test gaps, docs, copy, blank_env?/1 consistency fix (empty/whitespace env counts as unset), Task 3.1 Report: Hardening (gating matrix, CLAUDE.md carve-out, tidy)
 
 ### Community 34 - "Community 34"
-Cohesion: 0.20
-Nodes (6): find_by_id(), CinderWeb.ActivityLive, grab_flash(), handle_event(), handle_info(), find_user()
+Cohesion: 0.22
+Nodes (5): find_by_id(), CinderWeb.ActivityLive, grab_flash(), handle_event(), handle_info()
 
 ### Community 35 - "Torrent Bencode Parser"
 Cohesion: 0.36
@@ -524,10 +530,6 @@ Nodes (8): CinderWeb.RequestsLive, bulk(), bulk_flash(), find_request(), handle_
 ### Community 40 - "Notifier Behaviour"
 Cohesion: 0.24
 Nodes (10): Cinder.Catalog.Refresher, config_interval(), do_poll(), handle_call(), handle_continue(), handle_info(), init(), isolate() (+2 more)
-
-### Community 41 - "Community 41"
-Cohesion: 0.29
-Nodes (5): Cinder.Notifier, impl(), notify(), Cinder.NotifierTest, Raising
 
 ### Community 42 - "Mix Project Config"
 Cohesion: 0.33
@@ -862,8 +864,8 @@ Cohesion: 0.10
 Nodes (19): 1. Release blocker — fix before tagging v1.0, 2. Should-fix before tag (cheap, real, stranger-facing), 3. Optional code hardening (real, low, safe to defer), 4. Docs (do at tag time — cheap), 5. Confirmed sound — no action (highlights), 6. Refuted (checked and dismissed), 7. The real remaining gate — pending live homelab sign-offs (from ROADMAP M8), B1 · Fresh `docker compose up` crash-loops: `nobody` can't write the SQLite DB (+11 more)
 
 ### Community 187 - "Community 187"
-Cohesion: 0.17
-Nodes (10): latest_status_by(), CinderWeb.DiscoverLive, add(), assign_movie_status(), assign_request_state(), duplicate_request?(), handle_event(), handle_info() (+2 more)
+Cohesion: 0.08
+Nodes (20): CinderWeb.ManualSearchComponent, fetch_release(), handle_event(), preseeded?(), search_opts(), start_search(), update(), CinderWeb.LocaleController (+12 more)
 
 ### Community 188 - "Community 188"
 Cohesion: 0.29
@@ -887,7 +889,7 @@ Nodes (23): Commit, Concerns, Concerns, Files changed, FIX 1 — Restore the ori
 
 ### Community 205 - "Community 205"
 Cohesion: 0.17
-Nodes (12): CinderWeb.SeriesDetailLive, all_monitored?(), find_episode(), find_season(), handle_event(), handle_info(), mount(), reload() (+4 more)
+Nodes (9): CinderWeb.SeriesDetailLive, all_monitored?(), find_episode(), find_season(), handle_event(), handle_info(), maybe_enrich(), mount() (+1 more)
 
 ### Community 206 - "Community 206"
 Cohesion: 0.16
@@ -918,16 +920,16 @@ Cohesion: 0.22
 Nodes (8): Commit, Concerns, Implementation (`lib/cinder/catalog.ex`), Status: DONE, Task 9 Report: `Catalog.search_episode_now/1` + `search_series_now/1`, Test summary, Tests (`test/cinder/catalog_series_test.exs`), What was done
 
 ### Community 214 - "Community 214"
-Cohesion: 0.10
-Nodes (7): Cinder.AuditTest, Cinder.CatalogDiscoverTest, Cinder.CatalogTest, Cinder.LibrarySourceUpgradeTest, Cinder.RequestsTest, CinderWeb.DiscoverLiveTest, CinderWeb.MyRequestsLiveTest
+Cohesion: 0.11
+Nodes (7): Cinder.AuditTest, Cinder.CatalogDiscoverTest, Cinder.CatalogMetadataTest, Cinder.CatalogTest, Cinder.RequestsTest, CinderWeb.DiscoverLiveTest, CinderWeb.MyRequestsLiveTest
 
 ### Community 215 - "Community 215"
 Cohesion: 0.33
 Nodes (6): Architecture decisions (locked in Part II), Decisions deferred to their milestone (with current recommendation), Parked (out of scope even for v1.0), Part II — From slice to v1.0 (the public product), Release & dogfood checkpoints, Top risks to manage
 
 ### Community 216 - "Community 216"
-Cohesion: 0.25
-Nodes (8): [0.7.0] - 2026-06-23, Added, Added, Changed, Changelog, Fixed, Internal, [Unreleased]
+Cohesion: 0.31
+Nodes (9): [0.7.0] - 2026-06-23, [1.0.0] - 2026-07-03, Added, Added, Changed, Changelog, Fixed, Internal (+1 more)
 
 ### Community 223 - "Community 223"
 Cohesion: 0.29
@@ -958,8 +960,8 @@ Cohesion: 0.15
 Nodes (12): Concerns, Fix A — Non-admin dead link (`lib/cinder_web/live/series_live.ex`), Fix B — Silent admin-approve failure (`lib/cinder_web/live/requests_live.ex`), FS-mock stubbing (brief's `stub_filesystem_*` helpers don't exist — written inline, mirroring `Cinder.LibraryStubs` + existing poller FilesystemMock stubs), No regression to :downloading/import, Task 7 (better-match-manual-search) — Poller `:upgrading` advance + finish + revert, Task 7 — Correctness fix: season rows suppress movie pipeline badge, Task 7 — Fix A + Fix B: non-admin dead link + silent approve failure (+4 more)
 
 ### Community 236 - "Community 236"
-Cohesion: 0.28
-Nodes (14): Cinder.Download.TvPoller, advance(), advance_grabs(), advance_with(), bump_not_grabbed(), do_poll(), grab_assignment(), import_grab() (+6 more)
+Cohesion: 0.24
+Nodes (11): cancel_grab(), cancel_movie(), cancel_series(), cancellable?(), delete_grab(), do_cancel_txn(), grabs_for_series(), maybe_cancel_download_for_delete() (+3 more)
 
 ### Community 237 - "Community 237"
 Cohesion: 0.12
@@ -976,6 +978,10 @@ Nodes (15): Admin CRUD on entities — design, Approach (A — extend in place, 
 ### Community 240 - "Community 240"
 Cohesion: 0.14
 Nodes (13): Architecture, [done 2026-06-25], Locked decisions, Move-on-import (Usenet-scoped) — design, Out of scope / deferred, Reading the setting, Settings, `/settings` help text (+5 more)
+
+### Community 241 - "Community 241"
+Cohesion: 0.22
+Nodes (4): CinderWeb.LiveHelpers, abbreviated_month_name(), humanize_bytes(), episode_file_info()
 
 ### Community 243 - "Community 243"
 Cohesion: 0.32
@@ -1010,8 +1016,8 @@ Cohesion: 0.22
 Nodes (4): Cinder.Acquisition.Language, filter(), satisfies?(), target()
 
 ### Community 253 - "Community 253"
-Cohesion: 0.19
-Nodes (14): add_series_to_watchlist(), create_series(), fetch_seasons(), get_series_by_tmdb_id(), insert_series(), interleave(), merge_discover(), refresh_series() (+6 more)
+Cohesion: 0.15
+Nodes (17): add_series_to_watchlist(), create_series(), enrich_movie(), enrich_series(), fetch_seasons(), get_movie(), get_series_by_tmdb_id(), insert_series() (+9 more)
 
 ### Community 254 - "Community 254"
 Cohesion: 0.24
@@ -1026,8 +1032,8 @@ Cohesion: 0.18
 Nodes (10): 1. Parser — new `source` field (`parser.ex`, `release.ex`), 2. Scorer — `preferred_sources` filter + ranking (`scorer.ex`), 3. Settings — per-kind `preferred_sources` (`settings.ex`, `settings_components.ex`), Components, Decisions (settled in brainstorming), Docs, Problem, Release source preference (web / Blu-ray / …) — design (+2 more)
 
 ### Community 257 - "Community 257"
-Cohesion: 0.36
-Nodes (5): CinderWeb.SeriesDiscoveryLive, assign_requests_by_season(), handle_event(), mount(), refresh_requests()
+Cohesion: 0.27
+Nodes (6): latest_status_by(), CinderWeb.SeriesDiscoveryLive, assign_requests_by_season(), handle_event(), mount(), refresh_requests()
 
 ### Community 258 - "Community 258"
 Cohesion: 0.24
@@ -1050,8 +1056,8 @@ Cohesion: 0.20
 Nodes (9): Global Constraints, Notes for the implementer, Source-Aware Import-Time Upgrade Implementation Plan, Task 1: `imported_source` column + schema fields, Task 2: Re-expose `Scorer.source_rank/2`, Task 3: Source axis in the `Upgrade` comparator, Task 4: Wire the movie pipeline (capture + persist + comparator call), Task 5: Wire the TV pipeline (capture + persist + comparator call + resets) (+1 more)
 
 ### Community 263 - "Community 263"
-Cohesion: 0.36
-Nodes (7): CinderWeb.UsersLive, assign_create_form(), handle_event(), mount(), parse_quota(), password_error_message(), role_atom()
+Cohesion: 0.33
+Nodes (8): CinderWeb.UsersLive, assign_create_form(), find_user(), handle_event(), mount(), parse_quota(), password_error_message(), role_atom()
 
 ### Community 264 - "Community 264"
 Cohesion: 0.25
@@ -1062,8 +1068,8 @@ Cohesion: 0.40
 Nodes (4): Fixtures, Orient, Output, What to guard (flag a regression only if you can defend the consequence)
 
 ### Community 267 - "Community 267"
-Cohesion: 0.24
-Nodes (11): cancel_grab(), cancel_movie(), cancel_series(), cancellable?(), delete_grab(), do_cancel_txn(), grabs_for_series(), maybe_cancel_download_for_delete() (+3 more)
+Cohesion: 0.25
+Nodes (4): CinderWeb.MovieDetailLive, handle_info(), maybe_enrich(), mount()
 
 ### Community 268 - "Community 268"
 Cohesion: 0.40
@@ -1106,8 +1112,8 @@ Cohesion: 0.25
 Nodes (6): Cinder.Download.PollerTest, downloaded_movie(), downloading_movie(), CinderWeb.LibraryLiveTest, available_movie!(), movie_fixture()
 
 ### Community 289 - "Community 289"
-Cohesion: 0.27
-Nodes (9): Cinder.AccountsFixtures, extract_user_token(), set_password(), set_role(), unconfirmed_user_fixture(), unique_user_email(), user_fixture(), valid_user_attributes() (+1 more)
+Cohesion: 0.33
+Nodes (4): Cinder.Catalog.SeriesTest, Cinder.CatalogSeriesTest, episodes(), loaded()
 
 ### Community 294 - "Community 294"
 Cohesion: 0.17
@@ -1121,49 +1127,61 @@ Nodes (3): Orient, Output, What to guard
 Cohesion: 0.18
 Nodes (10): Accepted limitations (documented, not built), Copy/Move Import Fallback (Cross-Filesystem) Implementation Plan, Done when, Global Constraints, Task 1: Add the `cp/2` callback to the `Filesystem` behaviour + Disk impl, Task 2: `link_or_copy/2` helper + wire into `replace/2`, Task 3: `:exdev` clause in `place/6` + device-aware inode short-circuit (🔴 correctness fix), Task 4: Test stubs (+2 more)
 
-### Community 303 - "Community 303"
-Cohesion: 0.21
-Nodes (7): CinderWeb.ManualSearchComponent, fetch_release(), handle_event(), preseeded?(), search_opts(), start_search(), update()
-
 ### Community 305 - "Community 305"
-Cohesion: 0.08
-Nodes (26): Cinder.Catalog.SeriesTest, Cinder.CatalogAdminTest, series_tree(), Cinder.CatalogRefreshTest, episode(), season(), series(), stub_tmdb() (+18 more)
+Cohesion: 0.10
+Nodes (22): Cinder.CatalogAdminTest, series_tree(), Cinder.CatalogRefreshTest, episode(), season(), series(), stub_tmdb(), series_with_available_season() (+14 more)
+
+### Community 306 - "Community 306"
+Cohesion: 0.47
+Nodes (4): CinderWeb.UserLive.Registration, assign_form(), handle_event(), mount()
 
 ### Community 308 - "Community 308"
 Cohesion: 0.33
 Nodes (5): Task 1.5 Report: Router reconciliation + gating-matrix + UI trim, Basic-auth plug moved into :browser (optional outer gate), ConnCase.register_and_log_in_admin/1 helper, Task 1.5a: Router reconciliation + route gating (gating-matrix test), Task 1.5b: Fix existing tests for the auth wall + trim magic-link UI
 
-### Community 310 - "Community 310"
-Cohesion: 0.60
-Nodes (4): CinderWeb.LocaleController, back_path(), maybe_put_locale(), update()
+### Community 314 - "Community 314"
+Cohesion: 0.10
+Nodes (6): Cinder.DownloadTest, Cinder.M3PipelineTest, Cinder.Repo, CinderWeb.ActivityLiveTest, CinderWeb.CalendarLiveTest, Cinder.DataCase
 
 ### Community 315 - "Community 315"
 Cohesion: 0.25
 Nodes (7): Concerns, Mox-in-LV setup, Status: DONE, Task 13 report — TV search controls + manual-search panel in series_detail_live, Tests added (test/cinder_web/live/series_detail_live_test.exs) — 4, Wanted-only gating, What shipped
 
+### Community 316 - "Community 316"
+Cohesion: 1.00
+Nodes (3): Cinder.Notifier, impl(), notify()
+
 ### Community 317 - "Community 317"
 Cohesion: 0.20
 Nodes (11): abort_upgrade(), broadcast(), do_insert_at_requested(), find_or_create_at_requested(), get_movie_by_tmdb_id(), grab_and_transition(), manual_grab_movie(), retry_movie() (+3 more)
 
+### Community 324 - "Community 324"
+Cohesion: 0.27
+Nodes (9): Cinder.AccountsFixtures, extract_user_token(), set_password(), set_role(), unconfirmed_user_fixture(), unique_user_email(), user_fixture(), valid_user_attributes() (+1 more)
+
+### Community 325 - "Community 325"
+Cohesion: 0.22
+Nodes (3): CinderWeb.SeriesDetailLiveTest, base_series_info(), create_series()
+
 ## Knowledge Gaps
-- **1030 isolated node(s):** `tidewave`, `csrfToken`, `liveSocket`, `plugin`, `fs` (+1025 more)
+- **1028 isolated node(s):** `tidewave`, `csrfToken`, `liveSocket`, `plugin`, `fs` (+1023 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **110 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **113 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Cinder.Catalog` connect `Catalog Context` to `Community 258`, `Community 260`, `Community 267`, `Community 209`, `Community 21`, `Community 214`, `Community 317`, `Community 253`?**
-  _High betweenness centrality (0.028) - this node is a cross-community bridge._
-- **Why does `gettext` connect `Community 205` to `DB Migrations + Sessions`, `Community 257`, `Community 34`, `User Authentication`, `Community 39`, `Community 263`, `Accounts/Auth Tests`, `Core UI Components`, `Community 315`, `Community 306`, `Community 243`, `Community 184`, `Community 187`, `Community 316`, `Community 254`?**
-  _High betweenness centrality (0.022) - this node is a cross-community bridge._
+- **Why does `Cinder.Catalog` connect `Catalog Context` to `Community 258`, `Community 260`, `Community 236`, `Community 209`, `Community 21`, `Community 214`, `Community 317`, `Community 253`?**
+  _High betweenness centrality (0.029) - this node is a cross-community bridge._
+- **Why does `gettext` connect `DB Migrations + Sessions` to `Community 257`, `Community 34`, `User Authentication`, `Community 39`, `Community 263`, `Community 267`, `Accounts/Auth Tests`, `Core UI Components`, `Community 205`, `Community 241`, `Community 315`, `Community 243`, `Community 306`, `Community 184`, `Community 187`, `Community 254`?**
+  _High betweenness centrality (0.027) - this node is a cross-community bridge._
 - **Why does `Cinder.Settings` connect `Settings Store (env overlay)` to `Community 162`?**
-  _High betweenness centrality (0.019) - this node is a cross-community bridge._
-- **Are the 29 inferred relationships involving `gettext` (e.g. with `abbreviated_month_name()` and `on_mount()`) actually correct?**
-  _`gettext` has 29 INFERRED edges - model-reasoned connections that need verification._
+  _High betweenness centrality (0.021) - this node is a cross-community bridge._
+- **Are the 31 inferred relationships involving `gettext` (e.g. with `abbreviated_month_name()` and `on_mount()`) actually correct?**
+  _`gettext` has 31 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `tidewave`, `csrfToken`, `liveSocket` to the rest of the system?**
-  _1049 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _1047 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `DB Migrations + Sessions` be split into smaller, more focused modules?**
-  _Cohesion score 0.05714285714285714 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.09333333333333334 - nodes in this community are weakly interconnected._
 - **Should `Settings Store (env overlay)` be split into smaller, more focused modules?**
   _Cohesion score 0.07191961924907457 - nodes in this community are weakly interconnected._

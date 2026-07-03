@@ -45,6 +45,11 @@ defmodule Cinder.Catalog.Movie do
     field :imported_size, :integer
     field :imported_language, :string
     field :imported_source, :string
+    field :overview, :string
+    field :runtime, :integer
+    field :genres, {:array, :string}
+    field :vote_average, :float
+    field :release_date, :date
 
     timestamps(type: :utc_datetime)
   end
@@ -64,6 +69,11 @@ defmodule Cinder.Catalog.Movie do
     |> validate_required([:tmdb_id, :title])
     |> validate_inclusion(:preferred_language, Language.preferences())
     |> unique_constraint(:tmdb_id)
+  end
+
+  @doc "Changeset for the lazy TMDB metadata backfill (`Catalog.enrich_movie/1`). Descriptive, not pipeline state — separate from transition_changeset/2, so it never touches status/download fields."
+  def metadata_changeset(movie, attrs) do
+    cast(movie, attrs, [:overview, :runtime, :genres, :vote_average, :release_date])
   end
 
   @doc "Changeset for the in-app language edit (escape hatch). Not pipeline state — separate from transition_changeset/2."

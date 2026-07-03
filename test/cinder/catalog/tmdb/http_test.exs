@@ -23,6 +23,8 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
 
     assert {:ok, results} = HTTP.search("inception")
 
+    # Search bodies omit genres/runtime (details-only), so those come back [] / nil; the
+    # descriptive fields /search/movie does send (overview/vote_average/release_date) pass through.
     assert results == [
              %{
                tmdb_id: 27_205,
@@ -30,7 +32,12 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
                year: 2010,
                poster_path: "/p.jpg",
                imdb_id: nil,
-               original_language: nil
+               original_language: nil,
+               overview: nil,
+               runtime: nil,
+               genres: [],
+               vote_average: nil,
+               release_date: ~D[2010-07-16]
              },
              %{
                tmdb_id: 1,
@@ -38,7 +45,12 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
                year: nil,
                poster_path: nil,
                imdb_id: nil,
-               original_language: nil
+               original_language: nil,
+               overview: nil,
+               runtime: nil,
+               genres: [],
+               vote_average: nil,
+               release_date: nil
              }
            ]
   end

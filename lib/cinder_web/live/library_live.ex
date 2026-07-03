@@ -218,7 +218,9 @@ defmodule CinderWeb.LibraryLive do
         <ul :if={@movies != []} class="space-y-3">
           <li :for={m <- @movies} id={"movie-#{m.id}"} class="rounded-box bg-base-200/50 p-4">
             <div class="flex flex-wrap items-center gap-3">
-              <span class="font-semibold">{m.title}</span>
+              <.link navigate={~p"/movies/#{m.id}"} class="link link-hover font-semibold">
+                {m.title}
+              </.link>
               <span :if={m.year} class="text-base-content/70">({m.year})</span>
               <.status_badge kind={:movie} status={m.status} />
               <div class="ml-auto flex gap-2">

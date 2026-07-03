@@ -118,7 +118,15 @@ defmodule Cinder.Catalog.TMDB.HTTP do
       year: year_from(movie["release_date"]),
       poster_path: movie["poster_path"],
       imdb_id: movie["imdb_id"],
-      original_language: movie["original_language"]
+      original_language: movie["original_language"],
+      # Descriptive metadata — only the details endpoint (get_movie) carries genres/runtime;
+      # /search/movie omits them (genre_ids only), so a search map gets genres: [], runtime: nil.
+      # Harmless: only get_movie feeds Movie.metadata_changeset.
+      overview: movie["overview"],
+      runtime: movie["runtime"],
+      genres: genre_names(movie["genres"]),
+      vote_average: movie["vote_average"],
+      release_date: date_from(movie["release_date"])
     }
   end
 
@@ -144,9 +152,21 @@ defmodule Cinder.Catalog.TMDB.HTTP do
       year: year_from(body["first_air_date"]),
       poster_path: body["poster_path"],
       original_language: body["original_language"],
+      overview: body["overview"],
+      genres: genre_names(body["genres"]),
+      vote_average: body["vote_average"],
+      first_air_date: date_from(body["first_air_date"]),
       seasons: for(s <- body["seasons"] || [], do: %{season_number: s["season_number"]})
     }
   end
+
+  # TMDB genres are `[%{"id" => _, "name" => _}]` on the details endpoints; keep the names only.
+  # Search endpoints send `genre_ids` (no names) — so a search body yields `[]` here.
+  defp genre_names(genres) when is_list(genres) do
+    for %{"name" => name} <- genres, is_binary(name), do: name
+  end
+
+  defp genre_names(_), do: []
 
   defp normalize_season(body) do
     %{
