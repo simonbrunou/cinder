@@ -605,14 +605,14 @@ msgid "Keep me logged in on this device"
 msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:273
-#: lib/cinder_web/live/movie_detail_live.ex:153
+#: lib/cinder_web/live/movie_detail_live.ex:149
 #, elixir-autogen, elixir-format
 msgid "Language"
 msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:111
 #: lib/cinder_web/live/library_live.ex:206
-#: lib/cinder_web/live/movie_detail_live.ex:80
+#: lib/cinder_web/live/movie_detail_live.ex:73
 #: lib/cinder_web/live/series_detail_live.ex:355
 #, elixir-autogen, elixir-format
 msgid "Library"
@@ -721,7 +721,7 @@ msgid "Movie cancelled."
 msgstr ""
 
 #: lib/cinder_web/live/library_live.ex:114
-#: lib/cinder_web/live/movie_detail_live.ex:66
+#: lib/cinder_web/live/movie_detail_live.ex:59
 #, elixir-autogen, elixir-format
 msgid "Movie deleted."
 msgstr ""
@@ -807,7 +807,7 @@ msgid "No movies yet"
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:836
-#: lib/cinder_web/live/movie_detail_live.ex:96
+#: lib/cinder_web/live/movie_detail_live.ex:89
 #, elixir-autogen, elixir-format
 msgid "No poster"
 msgstr ""
@@ -2090,12 +2090,12 @@ msgstr ""
 msgid "%b %-d, %Y"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:69
+#: lib/cinder_web/live_helpers.ex:73
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Apr"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:73
+#: lib/cinder_web/live_helpers.ex:77
 #, elixir-autogen, elixir-format
 msgid "Aug"
 msgstr ""
@@ -2120,37 +2120,37 @@ msgstr ""
 msgid "Couldn't reset the password."
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:77
+#: lib/cinder_web/live_helpers.ex:81
 #, elixir-autogen, elixir-format
 msgid "Dec"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:67
+#: lib/cinder_web/live_helpers.ex:71
 #, elixir-autogen, elixir-format
 msgid "Feb"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:66
+#: lib/cinder_web/live_helpers.ex:70
 #, elixir-autogen, elixir-format
 msgid "Jan"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:72
+#: lib/cinder_web/live_helpers.ex:76
 #, elixir-autogen, elixir-format
 msgid "Jul"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:71
+#: lib/cinder_web/live_helpers.ex:75
 #, elixir-autogen, elixir-format
 msgid "Jun"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:68
+#: lib/cinder_web/live_helpers.ex:72
 #, elixir-autogen, elixir-format
 msgid "Mar"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:70
+#: lib/cinder_web/live_helpers.ex:74
 #, elixir-autogen, elixir-format
 msgid "May"
 msgstr ""
@@ -2160,12 +2160,12 @@ msgstr ""
 msgid "No requestable seasons"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:76
+#: lib/cinder_web/live_helpers.ex:80
 #, elixir-autogen, elixir-format
 msgid "Nov"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:75
+#: lib/cinder_web/live_helpers.ex:79
 #, elixir-autogen, elixir-format
 msgid "Oct"
 msgstr ""
@@ -2175,7 +2175,7 @@ msgstr ""
 msgid "Search all missing episodes in %{season}"
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:74
+#: lib/cinder_web/live_helpers.ex:78
 #, elixir-autogen, elixir-format
 msgid "Sep"
 msgstr ""
@@ -2205,12 +2205,12 @@ msgstr ""
 msgid "Couldn't retry: that movie has already moved on."
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:113
+#: lib/cinder_web/live/movie_detail_live.ex:109
 #, elixir-autogen, elixir-format
 msgid "%{n} min"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:137
+#: lib/cinder_web/live/movie_detail_live.ex:133
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Downloaded file"
 msgstr ""
@@ -2220,27 +2220,27 @@ msgstr ""
 msgid "Movie not found."
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:131
+#: lib/cinder_web/live/movie_detail_live.ex:127
 #, elixir-autogen, elixir-format
 msgid "No description available."
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:158
+#: lib/cinder_web/live/movie_detail_live.ex:154
 #, elixir-autogen, elixir-format
 msgid "Release"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:141
+#: lib/cinder_web/live/movie_detail_live.ex:137
 #, elixir-autogen, elixir-format
 msgid "Resolution"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:145
+#: lib/cinder_web/live/movie_detail_live.ex:141
 #, elixir-autogen, elixir-format
 msgid "Size"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:149
+#: lib/cinder_web/live/movie_detail_live.ex:145
 #, elixir-autogen, elixir-format
 msgid "Source"
 msgstr ""

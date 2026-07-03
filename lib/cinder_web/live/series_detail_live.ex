@@ -8,7 +8,7 @@ defmodule CinderWeb.SeriesDetailLive do
   """
   use CinderWeb, :live_view
 
-  import CinderWeb.LiveHelpers, only: [format_date_year: 1, humanize_bytes: 1]
+  import CinderWeb.LiveHelpers, only: [format_date_year: 1, humanize_bytes: 1, rating: 1]
 
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Season, Series}
@@ -652,10 +652,6 @@ defmodule CinderWeb.SeriesDetailLive do
   end
 
   defp monitored_count(season), do: Enum.count(season.episodes, & &1.monitored)
-
-  # A one-decimal rating string ("7.7"); vote_average is an Ecto :float.
-  defp rating(v) when is_float(v), do: :erlang.float_to_binary(v, decimals: 1)
-  defp rating(v), do: to_string(v)
 
   # "1080p · 2.1 GB" for a downloaded episode — drops whichever piece TMDB/import didn't capture.
   defp episode_file_info(ep) do

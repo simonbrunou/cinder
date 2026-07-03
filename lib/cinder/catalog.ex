@@ -147,16 +147,14 @@ defmodule Cinder.Catalog do
   unchanged so the detail page still renders. Descriptive, not pipeline state — writes via
   `Movie.metadata_changeset/2`, never `transition/2`.
   """
-  def enrich_movie(%Movie{vote_average: nil} = movie) do
-    with {:ok, info} <- tmdb().get_movie(movie.tmdb_id),
-         {:ok, updated} <- movie |> Movie.metadata_changeset(info) |> Repo.update() do
-      updated
-    else
-      error ->
-        Logger.warning("metadata backfill failed for movie #{movie.id}: #{inspect(error)}")
-        movie
-    end
-  end
+  def enrich_movie(%Movie{vote_average: nil} = movie),
+    do:
+      backfill_metadata(
+        movie,
+        &tmdb().get_movie(&1.tmdb_id),
+        &Movie.metadata_changeset/2,
+        "movie"
+      )
 
   def enrich_movie(%Movie{} = movie), do: movie
 
@@ -167,18 +165,34 @@ defmodule Cinder.Catalog do
   the row unchanged, logged, on a TMDB error). No broadcast — the caller reloads its own tree, and
   the periodic `refresh_series/1` keeps the fields fresh thereafter.
   """
-  def enrich_series(%Series{vote_average: nil} = series) do
-    with {:ok, info} <- tmdb().get_series(series.tmdb_id),
-         {:ok, updated} <- series |> Series.metadata_changeset(info) |> Repo.update() do
+  def enrich_series(%Series{vote_average: nil} = series),
+    do:
+      backfill_metadata(
+        series,
+        &tmdb().get_series(&1.tmdb_id),
+        &Series.metadata_changeset/2,
+        "series"
+      )
+
+  def enrich_series(%Series{} = series), do: series
+
+  # Shared lazy descriptive-metadata backfill for a movie/series row. `fetch` and `changeset` are
+  # the type's TMDB call + metadata changeset; `label` is for the log line. `updated_at` is
+  # force-preserved: this write is triggered by a *read* (opening the detail page), so it must not
+  # bump the row's timestamp and shuffle it to the top of the dashboard's updated_at-ordered Recent
+  # slice. On any TMDB/DB error, log and return the row unchanged so the page still renders.
+  defp backfill_metadata(record, fetch, changeset, label) do
+    with {:ok, info} <- fetch.(record),
+         cs = changeset.(record, info),
+         {:ok, updated} <-
+           cs |> Ecto.Changeset.force_change(:updated_at, record.updated_at) |> Repo.update() do
       updated
     else
       error ->
-        Logger.warning("metadata backfill failed for series #{series.id}: #{inspect(error)}")
-        series
+        Logger.warning("metadata backfill failed for #{label} #{record.id}: #{inspect(error)}")
+        record
     end
   end
-
-  def enrich_series(%Series{} = series), do: series
 
   @doc "Lists movies in a given pipeline `status`."
   def list_by_status(status) do

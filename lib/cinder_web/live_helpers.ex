@@ -50,6 +50,10 @@ defmodule CinderWeb.LiveHelpers do
   def humanize_bytes(bytes) when is_integer(bytes) and bytes > 0, do: "#{bytes} B"
   def humanize_bytes(_), do: nil
 
+  @doc ~S|A one-decimal rating string ("8.4") for a TMDB vote average (an Ecto :float). Non-floats fall through to to_string/1 as a defensive fallback.|
+  def rating(v) when is_float(v), do: :erlang.float_to_binary(v, decimals: 1)
+  def rating(v), do: to_string(v)
+
   # The translated format is translator-controlled data executed as strftime syntax;
   # a bad .po directive must degrade to the English msgid format, not crash-loop
   # every view render for that locale. (The test suite pins known locales' catalogs,

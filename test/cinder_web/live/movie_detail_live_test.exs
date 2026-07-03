@@ -5,6 +5,8 @@ defmodule CinderWeb.MovieDetailLiveTest do
   import Mox
   import Cinder.CatalogFixtures
 
+  alias Cinder.Catalog
+
   @moduletag :capture_log
 
   setup :register_and_log_in_admin
@@ -72,5 +74,52 @@ defmodule CinderWeb.MovieDetailLiveTest do
 
   test "a non-integer id redirects to the library instead of crashing", %{conn: conn} do
     assert {:error, {:live_redirect, %{to: "/library"}}} = live(conn, ~p"/movies/not-an-id")
+  end
+
+  test "a stale {:movie_updated} broadcast doesn't blank the metadata (re-reads fresh)", %{
+    conn: conn
+  } do
+    # `movie` is captured pre-enrichment (vote_average/overview nil) — the same stale snapshot an
+    # unguarded transition/2 echoes on its broadcast.
+    movie = movie_fixture(%{title: "Inception"})
+    stub_details(movie.tmdb_id)
+
+    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+    assert render_async(lv) =~ "A thief who steals corporate secrets"
+
+    # Unguarded transition on the stale struct broadcasts {:movie_updated, stale} (nil metadata).
+    {:ok, _} = Catalog.transition(movie, %{status: :downloading})
+    html = render(lv)
+
+    assert html =~ "A thief who steals corporate secrets",
+           "metadata must survive a stale broadcast"
+
+    assert html =~ "Downloading"
+  end
+
+  test "a movie whose TMDB runtime is 0 hides the runtime chip", %{conn: conn} do
+    movie = movie_fixture(%{title: "Obscure"})
+
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn tmdb_id ->
+      {:ok,
+       %{
+         tmdb_id: tmdb_id,
+         title: "Obscure",
+         year: 2010,
+         poster_path: nil,
+         imdb_id: nil,
+         original_language: "en",
+         overview: "No runtime on file.",
+         runtime: 0,
+         genres: [],
+         vote_average: 6.0,
+         release_date: ~D[2010-01-01]
+       }}
+    end)
+
+    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+    html = render_async(lv)
+
+    refute html =~ "0 min"
   end
 end

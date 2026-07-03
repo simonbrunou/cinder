@@ -8,7 +8,7 @@ defmodule CinderWeb.MovieDetailLive do
   """
   use CinderWeb, :live_view
 
-  import CinderWeb.LiveHelpers, only: [format_date_year: 1, humanize_bytes: 1]
+  import CinderWeb.LiveHelpers, only: [format_date_year: 1, humanize_bytes: 1, rating: 1]
 
   alias Cinder.Catalog
   alias Cinder.Catalog.Movie
@@ -39,23 +39,16 @@ defmodule CinderWeb.MovieDetailLive do
   defp maybe_enrich(socket, %Movie{}), do: socket
 
   @impl true
-  def handle_async(:enrich, {:ok, %Movie{}}, socket) do
-    # Re-read rather than trust the task's struct: a status transition may have landed during the
-    # backfill, and the task's snapshot carries the pre-transition status — assigning it would
-    # revert the badge. The fresh row has both the new metadata and the current status.
-    case Catalog.get_movie_by_id(socket.assigns.movie.id) do
-      nil -> {:noreply, socket}
-      movie -> {:noreply, assign(socket, movie: movie)}
-    end
-  end
+  def handle_async(:enrich, {:ok, %Movie{}}, socket),
+    do: {:noreply, assign_fresh(socket, socket.assigns.movie.id)}
 
   # A failed backfill leaves the un-enriched row on screen; the page still renders.
   def handle_async(:enrich, {:exit, _reason}, socket), do: {:noreply, socket}
 
   @impl true
-  def handle_info({:movie_updated, %Movie{id: id} = movie}, socket) do
+  def handle_info({:movie_updated, %Movie{id: id}}, socket) do
     if id == socket.assigns.movie.id,
-      do: {:noreply, assign(socket, movie: movie)},
+      do: {:noreply, assign_fresh(socket, id)},
       else: {:noreply, socket}
   end
 
@@ -109,7 +102,10 @@ defmodule CinderWeb.MovieDetailLive do
             <span :if={@movie.release_date} class="inline-flex items-center gap-1">
               <.icon name="hero-calendar" class="size-4" />{format_date_year(@movie.release_date)}
             </span>
-            <span :if={@movie.runtime} class="inline-flex items-center gap-1">
+            <span
+              :if={is_integer(@movie.runtime) and @movie.runtime > 0}
+              class="inline-flex items-center gap-1"
+            >
               <.icon name="hero-clock" class="size-4" />{gettext("%{n} min", n: @movie.runtime)}
             </span>
             <span
@@ -164,9 +160,17 @@ defmodule CinderWeb.MovieDetailLive do
     """
   end
 
-  # A one-decimal rating string ("8.4"); vote_average is an Ecto :float.
-  defp rating(v) when is_float(v), do: :erlang.float_to_binary(v, decimals: 1)
-  defp rating(v), do: to_string(v)
+  # Re-read the row fresh from the DB — used after the async backfill and on a `:movie_updated`
+  # broadcast. A status transition through the unguarded `transition/2` echoes the caller's
+  # in-memory struct, which may predate this row's metadata backfill (enrich doesn't broadcast);
+  # re-reading pulls both the current status and the persisted metadata. A row deleted mid-flight
+  # leaves the current assign in place (the `:movie_deleted` handler drives the redirect).
+  defp assign_fresh(socket, id) do
+    case Catalog.get_movie_by_id(id) do
+      nil -> socket
+      movie -> assign(socket, movie: movie)
+    end
+  end
 
   defp has_file?(%Movie{file_path: fp}), do: is_binary(fp) and fp != ""
 end
