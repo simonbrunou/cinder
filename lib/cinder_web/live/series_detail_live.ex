@@ -570,62 +570,66 @@ defmodule CinderWeb.SeriesDetailLive do
         </p>
         <ul class="divide-y divide-base-200">
           <li :for={ep <- season.episodes} class="flex flex-col gap-2 py-2">
-            <div class="flex items-center gap-3">
-              <input
-                type="checkbox"
-                class="toggle"
-                checked={ep.monitored}
-                phx-click="toggle_episode"
-                phx-value-id={ep.id}
-                aria-label={
-                  gettext("Monitor %{season} episode %{number}",
-                    season: season_label(season.season_number),
-                    number: ep.episode_number
-                  )
-                }
-              />
-              <span class="w-8 text-sm tabular-nums text-base-content/70">{ep.episode_number}</span>
-              <span class="min-w-0 flex-1 break-words text-sm">{ep.title}</span>
-              <time
-                :if={ep.air_date}
-                datetime={Date.to_iso8601(ep.air_date)}
-                class="text-xs text-base-content/70"
-              >
-                {format_date_year(ep.air_date)}
-              </time>
-              <span
-                :if={ep.file_path && episode_file_info(ep) != ""}
-                class="text-xs text-base-content/60"
-              >
-                {episode_file_info(ep)}
-              </span>
-              <.button
-                :if={ep.file_path}
-                type="button"
-                variant="danger"
-                size="sm"
-                phx-click="ask_delete_episode_file"
-                phx-value-id={ep.id}
-                aria-label={
-                  gettext("Delete file for %{season} episode %{number}",
-                    season: season_label(season.season_number),
-                    number: ep.episode_number
-                  )
-                }
-              >
-                {gettext("Delete file")}
-              </.button>
-              <.button
-                :if={episode_searchable?(ep, season.season_number)}
-                type="button"
-                variant="ghost"
-                size="sm"
-                phx-click="search_episode"
-                phx-value-id={ep.id}
-                aria-label={gettext("Search for episode %{number}", number: ep.episode_number)}
-              >
-                {gettext("Search")}
-              </.button>
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+              <div class="flex min-w-0 items-center gap-3 sm:flex-1">
+                <input
+                  type="checkbox"
+                  class="toggle shrink-0"
+                  checked={ep.monitored}
+                  phx-click="toggle_episode"
+                  phx-value-id={ep.id}
+                  aria-label={
+                    gettext("Monitor %{season} episode %{number}",
+                      season: season_label(season.season_number),
+                      number: ep.episode_number
+                    )
+                  }
+                />
+                <span class="w-8 shrink-0 text-sm tabular-nums text-base-content/70">{ep.episode_number}</span>
+                <span class="min-w-0 flex-1 break-words text-sm">{ep.title}</span>
+              </div>
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1 pl-11 sm:pl-0">
+                <time
+                  :if={ep.air_date}
+                  datetime={Date.to_iso8601(ep.air_date)}
+                  class="text-xs text-base-content/70"
+                >
+                  {format_date_year(ep.air_date)}
+                </time>
+                <span
+                  :if={ep.file_path && episode_file_info(ep) != ""}
+                  class="text-xs text-base-content/60"
+                >
+                  {episode_file_info(ep)}
+                </span>
+                <.button
+                  :if={ep.file_path}
+                  type="button"
+                  variant="danger"
+                  size="sm"
+                  phx-click="ask_delete_episode_file"
+                  phx-value-id={ep.id}
+                  aria-label={
+                    gettext("Delete file for %{season} episode %{number}",
+                      season: season_label(season.season_number),
+                      number: ep.episode_number
+                    )
+                  }
+                >
+                  {gettext("Delete file")}
+                </.button>
+                <.button
+                  :if={episode_searchable?(ep, season.season_number)}
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  phx-click="search_episode"
+                  phx-value-id={ep.id}
+                  aria-label={gettext("Search for episode %{number}", number: ep.episode_number)}
+                >
+                  {gettext("Search")}
+                </.button>
+              </div>
             </div>
             <.confirm_action
               :if={@confirming == {:episode_file, to_string(ep.id)}}
