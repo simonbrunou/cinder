@@ -93,6 +93,12 @@ config :cinder, Cinder.Download.Client.Sabnzbd,
   api_key: "test-key",
   req_options: [plug: {Req.Test, Cinder.SabnzbdStub}, retry: false]
 
+# Discord notifier: a stub webhook so Cinder.Notifier.Discord can exercise the real HTTP
+# path (POST embeds, GET health) in tests without hitting the network.
+config :cinder, Cinder.Notifier.Discord,
+  webhook_url: "https://discord.test/hook",
+  req_options: [plug: {Req.Test, Cinder.DiscordStub}, retry: false]
+
 config :cinder, Cinder.Library.MediaServer.Jellyfin,
   url: "http://localhost:8096",
   api_key: "test-key",
