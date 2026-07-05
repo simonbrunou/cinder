@@ -65,4 +65,9 @@ defmodule Cinder.HealthTest do
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> {:error, :eacces} end)
     assert Cinder.Health.check_service({:library, :tv}) == {:error, :eacces}
   end
+
+  test "check_service(:discord) validates the webhook (GET) and returns :ok" do
+    Req.Test.stub(Cinder.DiscordStub, fn conn -> Req.Test.json(conn, %{"id" => "1"}) end)
+    assert :ok = Cinder.Health.check_service(:discord)
+  end
 end

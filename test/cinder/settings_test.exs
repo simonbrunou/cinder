@@ -364,6 +364,21 @@ defmodule Cinder.SettingsTest do
       Settings.load_into_env()
       assert Application.get_env(:cinder, :tv_library_path) == nil
     end
+
+    test "a stored discord_webhook_url overlays :cinder Discord config and is encrypted at rest" do
+      original = Application.get_env(:cinder, Cinder.Notifier.Discord)
+      on_exit(fn -> Application.put_env(:cinder, Cinder.Notifier.Discord, original) end)
+
+      :ok = Cinder.Settings.put("discord_webhook_url", "https://discord.com/api/webhooks/1/abc")
+
+      assert Application.get_env(:cinder, Cinder.Notifier.Discord)[:webhook_url] ==
+               "https://discord.com/api/webhooks/1/abc"
+
+      # Stored ciphertext is not the plaintext (secret: true → Cloak-encrypted).
+      row = Cinder.Repo.get_by(Cinder.Settings.Setting, key: "discord_webhook_url")
+      assert row.is_secret
+      refute row.value == "https://discord.com/api/webhooks/1/abc"
+    end
   end
 
   describe "save_form/1" do

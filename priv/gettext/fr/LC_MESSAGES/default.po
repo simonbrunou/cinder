@@ -248,7 +248,7 @@ msgstr "Vérification des services…"
 msgid "Checking…"
 msgstr "Vérification…"
 
-#: lib/cinder_web/components/settings_components.ex:256
+#: lib/cinder_web/components/settings_components.ex:258
 #, elixir-autogen, elixir-format
 msgid "Clear saved value"
 msgstr "Effacer la valeur enregistrée"
@@ -737,7 +737,7 @@ msgid "Movie updated."
 msgstr "Film mis à jour."
 
 #: lib/cinder_web/live/library_live.ex:211
-#: lib/cinder_web/settings_labels.ex:33
+#: lib/cinder_web/settings_labels.ex:34
 #, elixir-autogen, elixir-format
 msgid "Movies"
 msgstr "Films"
@@ -1192,7 +1192,7 @@ msgid "TMDB search failed. Try again."
 msgstr "Échec de la recherche TMDB. Réessayez."
 
 #: lib/cinder_web/components/core_components.ex:859
-#: lib/cinder_web/settings_labels.ex:34
+#: lib/cinder_web/settings_labels.ex:35
 #, elixir-autogen, elixir-format
 msgid "TV"
 msgstr "TV"
@@ -1409,7 +1409,7 @@ msgstr "par épisode"
 msgid "to your account now."
 msgstr "à votre compte dès maintenant."
 
-#: lib/cinder_web/components/settings_components.ex:274
+#: lib/cinder_web/components/settings_components.ex:276
 #, elixir-autogen, elixir-format
 msgid "•••• saved (leave blank to keep)"
 msgstr "•••• enregistré (laisser vide pour conserver)"
@@ -1452,7 +1452,7 @@ msgstr "Originale (français)"
 msgid "Preferred language"
 msgstr "Langue préférée"
 
-#: lib/cinder_web/components/settings_components.ex:277
+#: lib/cinder_web/components/settings_components.ex:279
 #, elixir-autogen, elixir-format
 msgid "set via environment (leave blank to keep)"
 msgstr "défini via l'environnement (laisser vide pour conserver)"
@@ -1658,12 +1658,12 @@ msgstr "Clients de téléchargement"
 msgid "Download deleted."
 msgstr "Téléchargement supprimé."
 
-#: lib/cinder_web/settings_labels.ex:31
+#: lib/cinder_web/settings_labels.ex:32
 #, elixir-autogen, elixir-format
 msgid "Enable SABnzbd (usenet)"
 msgstr "Activer SABnzbd (usenet)"
 
-#: lib/cinder_web/settings_labels.ex:30
+#: lib/cinder_web/settings_labels.ex:31
 #, elixir-autogen, elixir-format
 msgid "Enable qBittorrent (torrent)"
 msgstr "Activer qBittorrent (torrent)"
@@ -1698,12 +1698,12 @@ msgstr "Indexeur"
 msgid "Indexer (Prowlarr)"
 msgstr "Indexeur (Prowlarr)"
 
-#: lib/cinder_web/settings_labels.ex:47
+#: lib/cinder_web/settings_labels.ex:48
 #, elixir-autogen, elixir-format
 msgid "Jellyfin API key"
 msgstr "Clé API Jellyfin"
 
-#: lib/cinder_web/settings_labels.ex:46
+#: lib/cinder_web/settings_labels.ex:47
 #, elixir-autogen, elixir-format
 msgid "Jellyfin URL"
 msgstr "URL Jellyfin"
@@ -1730,7 +1730,7 @@ msgstr "Connexion…"
 msgid "Media server (Jellyfin/Plex)"
 msgstr "Serveur multimédia (Jellyfin/Plex)"
 
-#: lib/cinder_web/settings_labels.ex:35
+#: lib/cinder_web/settings_labels.ex:36
 #, elixir-autogen, elixir-format
 msgid "Movies library"
 msgstr "Bibliothèque de films"
@@ -1765,22 +1765,22 @@ msgstr "Aucune modification."
 msgid "Password reset. The user's sessions were ended."
 msgstr "Mot de passe réinitialisé. Les sessions de l'utilisateur ont été terminées."
 
-#: lib/cinder_web/settings_labels.ex:51
+#: lib/cinder_web/settings_labels.ex:53
 #, elixir-autogen, elixir-format
 msgid "Plex Movies library section (numeric id)"
 msgstr "Section de bibliothèque Films Plex (id numérique)"
 
-#: lib/cinder_web/settings_labels.ex:52
+#: lib/cinder_web/settings_labels.ex:54
 #, elixir-autogen, elixir-format
 msgid "Plex TV library section (numeric id)"
 msgstr "Section de bibliothèque TV Plex (id numérique)"
 
-#: lib/cinder_web/settings_labels.ex:48
+#: lib/cinder_web/settings_labels.ex:49
 #, elixir-autogen, elixir-format
 msgid "Plex URL"
 msgstr "URL Plex"
 
-#: lib/cinder_web/settings_labels.ex:49
+#: lib/cinder_web/settings_labels.ex:50
 #, elixir-autogen, elixir-format
 msgid "Plex token"
 msgstr "Jeton Plex"
@@ -1790,12 +1790,12 @@ msgstr "Jeton Plex"
 msgid "Preferred sources (comma-separated)"
 msgstr "Sources préférées (séparées par des virgules)"
 
-#: lib/cinder_web/settings_labels.ex:40
+#: lib/cinder_web/settings_labels.ex:41
 #, elixir-autogen, elixir-format
 msgid "Prowlarr API key"
 msgstr "Clé API Prowlarr"
 
-#: lib/cinder_web/settings_labels.ex:39
+#: lib/cinder_web/settings_labels.ex:40
 #, elixir-autogen, elixir-format
 msgid "Prowlarr URL"
 msgstr "URL Prowlarr"
@@ -1825,12 +1825,12 @@ msgstr "Réouverture…"
 msgid "Request reopened."
 msgstr "Demande rouverte."
 
-#: lib/cinder_web/settings_labels.ex:45
+#: lib/cinder_web/settings_labels.ex:46
 #, elixir-autogen, elixir-format
 msgid "SABnzbd API key"
 msgstr "Clé API SABnzbd"
 
-#: lib/cinder_web/settings_labels.ex:44
+#: lib/cinder_web/settings_labels.ex:45
 #, elixir-autogen, elixir-format
 msgid "SABnzbd URL"
 msgstr "URL SABnzbd"
@@ -1876,12 +1876,12 @@ msgstr "Sources : remux, bluray, webrip, webdl, hdtv, dvd, cam. Laissez vide pou
 msgid "TMDB"
 msgstr "TMDB"
 
-#: lib/cinder_web/settings_labels.ex:38
+#: lib/cinder_web/settings_labels.ex:39
 #, elixir-autogen, elixir-format
 msgid "TMDB API read token (v4 bearer)"
 msgstr "Jeton de lecture API TMDB (bearer v4)"
 
-#: lib/cinder_web/settings_labels.ex:36
+#: lib/cinder_web/settings_labels.ex:37
 #, elixir-autogen, elixir-format
 msgid "TV library"
 msgstr "Bibliothèque TV"
@@ -1936,17 +1936,17 @@ msgstr "connectez-en au moins un"
 msgid "not checked yet"
 msgstr "pas encore vérifié"
 
-#: lib/cinder_web/settings_labels.ex:41
+#: lib/cinder_web/settings_labels.ex:42
 #, elixir-autogen, elixir-format
 msgid "qBittorrent URL"
 msgstr "URL qBittorrent"
 
-#: lib/cinder_web/settings_labels.ex:43
+#: lib/cinder_web/settings_labels.ex:44
 #, elixir-autogen, elixir-format
 msgid "qBittorrent password"
 msgstr "Mot de passe qBittorrent"
 
-#: lib/cinder_web/settings_labels.ex:42
+#: lib/cinder_web/settings_labels.ex:43
 #, elixir-autogen, elixir-format
 msgid "qBittorrent username"
 msgstr "Nom d'utilisateur qBittorrent"
@@ -2244,3 +2244,13 @@ msgstr "Taille"
 #, elixir-autogen, elixir-format
 msgid "Source"
 msgstr "Source"
+
+#: lib/cinder_web/settings_labels.ex:51
+#, elixir-autogen, elixir-format
+msgid "Discord webhook URL"
+msgstr "URL du webhook Discord"
+
+#: lib/cinder_web/settings_labels.ex:29
+#, elixir-autogen, elixir-format
+msgid "Notifications"
+msgstr "Notifications"
