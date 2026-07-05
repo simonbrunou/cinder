@@ -61,11 +61,22 @@ Implements `@behaviour Cinder.Notifier`.
   - catch-all `embed(_other)` → `nil` (unknown events log via Log but don't post).
   - Colors: green `0x2ECC71`, red `0xE74C3C` as module attributes.
 - **`health/0`** — for the `/settings` Test button. `nil` webhook → `{:error, :not_configured}`;
-  otherwise POST a small test embed and return `:ok` on 2xx, `{:error, reason}` otherwise.
+  otherwise a **GET** of the webhook URL (Discord's "Get Webhook with Token" endpoint — validates
+  the webhook exists/is authorized **without posting a message**), `:ok` on 2xx else
+  `{:error, reason}`. (Council fix: the earlier POST-a-test-embed approach spammed the channel on
+  every Test click; a GET is both non-spammy and less code.)
 - **`webhook_url/0`** — `Application.get_env(:cinder, __MODULE__, []) |> Keyword.get(:webhook_url)`,
   blank → nil.
-- **`post/2`** — builds `Req.new(url: url, json: %{embeds: [embed]})` merged with the config's
-  `req_options`, POSTs, maps 2xx → `:ok`, else `{:error, reason}`; logs on error.
+- **`base_req/0` + `post/2`** — `base_req/0` builds `Req.new/1` from `@default_req_options`
+  (`[receive_timeout: 5_000, retry: false]`) merged with the config's `req_options`; `post/2` and
+  `health/0` share it. `post/2` runs `Req.post(url:, json: %{embeds: [embed]})`, `health/0` runs
+  `Req.get(url:)`; both classify 2xx → `:ok`, else `{:error, reason}` (post logs on error).
+  **The bounded `receive_timeout` is a council fix:** every `Notifier.notify/1` fires
+  *synchronously* inline in the poller/TV-poller ticks and the admin's Approve handler, and the
+  seam swallows *raises* but not *latency* — so a hung/dead webhook would otherwise stall a poller
+  tick or the Approve click for Req's multi-second default. `retry: false` also stops a Test-button
+  GET retrying a bad webhook. (Full async dispatch is the parked upgrade if zero latency impact is
+  ever needed; a bounded timeout is the lazy-sufficient fix.)
 
 ## Config / wiring
 
@@ -90,6 +101,14 @@ Implements `@behaviour Cinder.Notifier`.
 - Because the entry is `secret: true`, it is picked up by the compile-time `@secret_keys` set and
   encrypted automatically. The `apply_config_fields/1` overlay writes `webhook_url` onto
   `Application.get_env(:cinder, Cinder.Notifier.Discord)`. No other `Settings` change.
+- **i18n (council blocker):** the two new domain labels — the group header `"Notifications"` and
+  the field label `"Discord webhook URL"` — MUST be registered in `CinderWeb.SettingsLabels.known/0`
+  (as `gettext_noop/1`), or `no_hardcoded_strings_test` fails. That in turn requires
+  `mix gettext.extract --merge` (run **last**, after all lib edits — line refs drift otherwise) and
+  a non-empty French `msgstr` for each in `priv/gettext/fr/LC_MESSAGES/default.po`
+  (`"Notifications"` → `"Notifications"`, `"Discord webhook URL"` → `"URL du webhook Discord"`), or
+  `translations_complete_test` fails. The bare `"Discord"` service-button label is dynamic/masked
+  (like `"Prowlarr"`/`"qBittorrent"`) and needs no registration.
 
 ## Settings UI (Test connection)
 
@@ -117,9 +136,14 @@ hide it from the wizard we would add a flag — deferred unless it looks wrong i
     never hit (assert no POST; the Log delegation isn't asserted — `Logger.info` is below the test
     log level, per the M3 notifier note).
   - Stubbed non-2xx and a simulated transport error → `notify/1` returns `:ok`, no raise.
-  - `health/0`: unset → `{:error, :not_configured}`; 2xx stub → `:ok`.
+  - `health/0`: unset → `{:error, :not_configured}`; a **GET** stub returning 2xx → `:ok` (assert
+    `conn.method == "GET"`, i.e. no message posted).
 - Settings/Health: a small test that `Health.check_service(:discord)` resolves and returns a result
   (reuses the stub), and that `decode_service("discord") == :discord`.
+- The full-suite gates run on every `mix test` (the alias: `compile --warnings-as-errors`,
+  `format --check-formatted`, `credo --strict`): keep the diff formatted, and run
+  `mix gettext.extract --merge` before the final `mix test` so `translations_complete_test` sees
+  the new msgids.
 
 ## Deliberate simplification (ponytail)
 
