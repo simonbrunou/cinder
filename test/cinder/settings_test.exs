@@ -19,6 +19,7 @@ defmodule Cinder.SettingsTest do
     Cinder.Download.Client.Sabnzbd,
     Cinder.Library.MediaServer.Jellyfin,
     Cinder.Library.MediaServer.Plex,
+    Cinder.Notifier.Discord,
     :media_server,
     :download_clients,
     :movies_library_path,

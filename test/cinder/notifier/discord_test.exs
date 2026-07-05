@@ -103,6 +103,16 @@ defmodule Cinder.Notifier.DiscordTest do
     refute Map.has_key?(embed, "thumbnail")
   end
 
+  test "an empty-string poster_path omits the thumbnail (no bare base URL)" do
+    expect_post()
+
+    assert :ok =
+             Discord.notify({:movie_available, %{title: "Tenet", year: 2020, poster_path: ""}})
+
+    assert_receive {:posted, %{"embeds" => [embed]}}
+    refute Map.has_key?(embed, "thumbnail")
+  end
+
   test "with no webhook configured it returns :ok and never posts" do
     original = Application.get_env(:cinder, Cinder.Notifier.Discord)
     on_exit(fn -> Application.put_env(:cinder, Cinder.Notifier.Discord, original) end)

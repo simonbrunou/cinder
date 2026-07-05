@@ -22,8 +22,10 @@ defmodule Cinder.Notifier.Discord do
 
   # Bounded so a hung/dead webhook can't stall the synchronous notify/1 call sites (poller ticks,
   # the admin Approve handler). Bounds both connect (Mint's default is ~30s) and the response
-  # wait. retry: false stops a Test-button GET retrying a bad webhook.
-  @default_req_options [receive_timeout: 5_000, connect_options: [timeout: 5_000], retry: false]
+  # wait — 3s each, matching the other service probes (Prowlarr/TMDB/Jellyfin/…) and the ~3s
+  # assumption behind settings_live's synchronous Test button. retry: false stops a Test-button
+  # GET retrying a bad webhook.
+  @default_req_options [receive_timeout: 3_000, connect_options: [timeout: 3_000], retry: false]
 
   @impl true
   def notify(event) do
@@ -65,27 +67,10 @@ defmodule Cinder.Notifier.Discord do
         movie.poster_path
       )
 
-  defp embed({:movie_failed, movie, reason}),
-    do:
-      with_poster(
-        %{
-          title: "Movie failed",
-          description: "#{title_year(movie)} — #{inspect(reason)}",
-          color: @red
-        },
-        movie.poster_path
-      )
+  defp embed({:movie_failed, movie, reason}), do: failure_embed("Movie failed", movie, reason)
 
   defp embed({:movie_upgrade_failed, movie, reason}),
-    do:
-      with_poster(
-        %{
-          title: "Upgrade failed",
-          description: "#{title_year(movie)} — #{inspect(reason)}",
-          color: @red
-        },
-        movie.poster_path
-      )
+    do: failure_embed("Upgrade failed", movie, reason)
 
   defp embed({:episodes_available, episodes}) do
     {summary, poster} = episodes_summary(episodes)
@@ -99,10 +84,19 @@ defmodule Cinder.Notifier.Discord do
 
   # --- helpers ---
 
+  defp failure_embed(title, movie, reason) do
+    with_poster(
+      %{title: title, description: "#{title_year(movie)} — #{inspect(reason)}", color: @red},
+      movie.poster_path
+    )
+  end
+
   defp title_year(%{title: title, year: year}) when not is_nil(year), do: "#{title} (#{year})"
   defp title_year(%{title: title}), do: title
 
-  defp with_poster(embed, path) when is_binary(path),
+  # A blank poster_path (nil or "") yields no thumbnail: an empty string would otherwise build a
+  # bare base URL with no image path and render as a broken thumbnail in Discord.
+  defp with_poster(embed, path) when is_binary(path) and path != "",
     do: Map.put(embed, :thumbnail, %{url: @image_base <> path})
 
   defp with_poster(embed, _path), do: embed
