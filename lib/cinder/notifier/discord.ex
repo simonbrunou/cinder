@@ -21,8 +21,9 @@ defmodule Cinder.Notifier.Discord do
   @image_base "https://image.tmdb.org/t/p/w342"
 
   # Bounded so a hung/dead webhook can't stall the synchronous notify/1 call sites (poller ticks,
-  # the admin Approve handler). retry: false stops a Test-button GET retrying a bad webhook.
-  @default_req_options [receive_timeout: 5_000, retry: false]
+  # the admin Approve handler). Bounds both connect (Mint's default is ~30s) and the response
+  # wait. retry: false stops a Test-button GET retrying a bad webhook.
+  @default_req_options [receive_timeout: 5_000, connect_options: [timeout: 5_000], retry: false]
 
   @impl true
   def notify(event) do

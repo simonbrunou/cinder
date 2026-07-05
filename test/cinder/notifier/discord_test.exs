@@ -1,6 +1,7 @@
 defmodule Cinder.Notifier.DiscordTest do
   # async: false — the "webhook unset" tests mutate and restore app env.
   use ExUnit.Case, async: false
+  import ExUnit.CaptureLog
 
   alias Cinder.Notifier.Discord
 
@@ -115,13 +116,13 @@ defmodule Cinder.Notifier.DiscordTest do
 
   test "a non-2xx response is swallowed (returns :ok, no raise)" do
     Req.Test.stub(Cinder.DiscordStub, fn conn -> Plug.Conn.send_resp(conn, 500, "boom") end)
-    assert :ok = Discord.notify({:movie_available, movie()})
+    capture_log(fn -> assert :ok = Discord.notify({:movie_available, movie()}) end)
   end
 
   test "a transport error is swallowed (returns :ok, no raise)" do
     Req.Test.stub(Cinder.DiscordStub, fn conn -> Req.Test.transport_error(conn, :econnrefused) end)
 
-    assert :ok = Discord.notify({:movie_available, movie()})
+    capture_log(fn -> assert :ok = Discord.notify({:movie_available, movie()}) end)
   end
 
   test "health/0 GETs the webhook (no message posted) and returns :ok on 2xx" do
