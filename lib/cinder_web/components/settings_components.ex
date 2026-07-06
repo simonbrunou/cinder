@@ -198,6 +198,7 @@ defmodule CinderWeb.SettingsComponents do
   def services_for(:indexer), do: [{"indexer", "Prowlarr"}]
   def services_for(:download), do: [{"torrent", "qBittorrent"}, {"usenet", "SABnzbd"}]
   def services_for(:media_server), do: [{"media_server", gettext("Media server")}]
+  def services_for(:notifications), do: [{"discord", "Discord"}]
 
   def services_for(:library) do
     for %{kind: kind, label: label} <- Settings.library_kinds(),
@@ -212,6 +213,7 @@ defmodule CinderWeb.SettingsComponents do
   def decode_service("media_server"), do: :media_server
   def decode_service("torrent"), do: {:download, :torrent}
   def decode_service("usenet"), do: {:download, :usenet}
+  def decode_service("discord"), do: :discord
 
   # "movies_library"/"tv_library"/… → {:library, kind} for a known kind, else nil.
   def decode_service(service) do

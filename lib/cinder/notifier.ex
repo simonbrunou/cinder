@@ -1,7 +1,8 @@
 defmodule Cinder.Notifier do
   @moduledoc """
   Out-of-band notification seam. `notify/1` dispatches a typed event to the
-  configured impl (default `Cinder.Notifier.Log`). A side-effect that must never
+  configured impl (default `Cinder.Notifier.Discord`, which delegates to `Cinder.Notifier.Log`
+  and posts to Discord only when a webhook is configured). A side-effect that must never
   break the pipeline: a raising/exiting impl is caught, logged, and swallowed.
 
   In-app reactivity (My-requests, per-title badges) rides the existing

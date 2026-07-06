@@ -25,6 +25,7 @@ defmodule Cinder.Health do
   def check_service(:tmdb), do: run(Application.fetch_env!(:cinder, :tmdb))
   def check_service(:indexer), do: run(Application.fetch_env!(:cinder, :indexer))
   def check_service(:media_server), do: run(Application.fetch_env!(:cinder, :media_server))
+  def check_service(:discord), do: run(Cinder.Notifier.Discord)
 
   def check_service({:download, protocol}) do
     case Download.client_for(protocol) do

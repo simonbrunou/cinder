@@ -128,6 +128,15 @@ defmodule Cinder.Settings do
       group: :media_server,
       label: "Plex token",
       placeholder: ""
+    },
+    %{
+      key: "discord_webhook_url",
+      module: Cinder.Notifier.Discord,
+      field: :webhook_url,
+      secret: true,
+      group: :notifications,
+      label: "Discord webhook URL",
+      placeholder: "https://discord.com/api/webhooks/..."
     }
   ]
 
@@ -156,7 +165,8 @@ defmodule Cinder.Settings do
     download: "Download clients",
     media_server: "Media server",
     library: "Library paths",
-    releases: "Release size bands"
+    releases: "Release size bands",
+    notifications: "Notifications"
   ]
 
   # Only static fields can be secret (the generated Plex-section fields are not), so this stays

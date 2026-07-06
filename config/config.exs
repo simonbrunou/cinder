@@ -58,7 +58,7 @@ config :cinder, filesystem: Cinder.Library.Filesystem.Disk
 config :cinder, media_info: Cinder.Library.MediaInfo.Ffprobe
 # Default; setting PLEX_URL (see runtime.exs) switches this to Plex.
 config :cinder, media_server: Cinder.Library.MediaServer.Jellyfin
-config :cinder, notifier: Cinder.Notifier.Log
+config :cinder, notifier: Cinder.Notifier.Discord
 # First-run wizard gate: redirect to /setup until setup_complete. Off in test so the
 # existing LiveView suite (which never marks setup complete) isn't redirected.
 config :cinder, :enforce_setup, true
