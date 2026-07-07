@@ -70,4 +70,16 @@ defmodule Cinder.HealthTest do
     Req.Test.stub(Cinder.DiscordStub, fn conn -> Req.Test.json(conn, %{"id" => "1"}) end)
     assert :ok = Cinder.Health.check_service(:discord)
   end
+
+  test "check_service(:subtitles) is :not_configured with no api key" do
+    # Deliberately no config mutation: check_service(:subtitles) reads the *resolved*
+    # :subtitles_provider (Cinder.Subtitles.ProviderMock in test — config/test.exs), which never
+    # has an :api_key configured, so this is already :not_configured. Mutating the real
+    # Cinder.Subtitles.Provider.OpenSubtitles module's global Application env here (as an earlier
+    # draft of this test did) raced this async suite against
+    # Cinder.Subtitles.Provider.OpenSubtitlesTest (also async: true), which relies on that
+    # module's config (req_options' Req.Test plug) staying intact for the whole run — the window
+    # let real requests through to the live OpenSubtitles.com API.
+    assert {:error, :not_configured} = Cinder.Health.check_service(:subtitles)
+  end
 end

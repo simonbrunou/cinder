@@ -137,6 +137,42 @@ defmodule Cinder.Settings do
       group: :notifications,
       label: "Discord webhook URL",
       placeholder: "https://discord.com/api/webhooks/..."
+    },
+    %{
+      key: "opensubtitles_api_key",
+      module: Cinder.Subtitles.Provider.OpenSubtitles,
+      field: :api_key,
+      secret: true,
+      group: :subtitles,
+      label: "OpenSubtitles API key",
+      placeholder: ""
+    },
+    %{
+      key: "opensubtitles_username",
+      module: Cinder.Subtitles.Provider.OpenSubtitles,
+      field: :username,
+      secret: true,
+      group: :subtitles,
+      label: "OpenSubtitles username",
+      placeholder: ""
+    },
+    %{
+      key: "opensubtitles_password",
+      module: Cinder.Subtitles.Provider.OpenSubtitles,
+      field: :password,
+      secret: true,
+      group: :subtitles,
+      label: "OpenSubtitles password",
+      placeholder: ""
+    },
+    %{
+      key: "subtitle_languages",
+      module: Cinder.Subtitles.Provider.OpenSubtitles,
+      field: :languages,
+      secret: false,
+      group: :subtitles,
+      label: "Subtitle languages (comma-separated, e.g. en,fr)",
+      placeholder: "en,fr"
     }
   ]
 
@@ -166,6 +202,7 @@ defmodule Cinder.Settings do
     media_server: "Media server",
     library: "Library paths",
     releases: "Release size bands",
+    subtitles: "Subtitles",
     notifications: "Notifications"
   ]
 

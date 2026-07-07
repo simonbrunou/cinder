@@ -53,6 +53,16 @@ if base_url = System.get_env("PROWLARR_URL") do
     api_key: System.get_env("PROWLARR_API_KEY")
 end
 
+# Real OpenSubtitles connection, read in every environment. Unset in test/CI, where the
+# suite stubs Req regardless, so it has no effect there.
+if api_key = System.get_env("OPENSUBTITLES_API_KEY") do
+  config :cinder, Cinder.Subtitles.Provider.OpenSubtitles,
+    api_key: api_key,
+    username: System.get_env("OPENSUBTITLES_USERNAME"),
+    password: System.get_env("OPENSUBTITLES_PASSWORD"),
+    languages: System.get_env("SUBTITLE_LANGUAGES")
+end
+
 # Real Jellyfin connection, read in every environment. Unset in test/CI, where
 # the suite either mocks media_server or stubs Req, so it has no effect there.
 if url = System.get_env("JELLYFIN_URL") do

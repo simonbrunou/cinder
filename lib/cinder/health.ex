@@ -14,18 +14,28 @@ defmodule Cinder.Health do
   indexer → download client(s) → media server.
   """
   def check_all do
-    [indexer_check()] ++ download_checks() ++ [media_server_check()] ++ library_checks()
+    [indexer_check()] ++
+      download_checks() ++ [media_server_check()] ++ library_checks() ++ subtitles_check()
   end
 
   @doc """
   Checks a single service against its currently-applied config, returning
   `:ok | {:error, term()}`. Used by the settings "Test connection" buttons.
-  `service` is `:tmdb | :indexer | :media_server | {:download, protocol}`.
+  `service` is `:tmdb | :indexer | :media_server | :discord | :subtitles | {:download, protocol}`.
   """
   def check_service(:tmdb), do: run(Application.fetch_env!(:cinder, :tmdb))
   def check_service(:indexer), do: run(Application.fetch_env!(:cinder, :indexer))
   def check_service(:media_server), do: run(Application.fetch_env!(:cinder, :media_server))
   def check_service(:discord), do: run(Cinder.Notifier.Discord)
+
+  def check_service(:subtitles) do
+    case Application.get_env(:cinder, Application.get_env(:cinder, :subtitles_provider), [])[
+           :api_key
+         ] do
+      blank when blank in [nil, ""] -> {:error, :not_configured}
+      _ -> run(Application.fetch_env!(:cinder, :subtitles_provider))
+    end
+  end
 
   def check_service({:download, protocol}) do
     case Download.client_for(protocol) do
@@ -64,6 +74,15 @@ defmodule Cinder.Health do
   defp library_checks do
     for kind <- Cinder.Library.kinds() do
       %{label: "Library (#{kind})", status: check_service({:library, kind})}
+    end
+  end
+
+  # Subtitles is off-by-default (no api_key ⇒ :not_configured) — omit the row entirely rather
+  # than show red noise on an install that hasn't opted into the feature.
+  defp subtitles_check do
+    case check_service(:subtitles) do
+      {:error, :not_configured} -> []
+      status -> [%{label: "Subtitles (OpenSubtitles)", status: status}]
     end
   end
 

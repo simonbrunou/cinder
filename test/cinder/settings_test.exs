@@ -20,6 +20,7 @@ defmodule Cinder.SettingsTest do
     Cinder.Library.MediaServer.Jellyfin,
     Cinder.Library.MediaServer.Plex,
     Cinder.Notifier.Discord,
+    Cinder.Subtitles.Provider.OpenSubtitles,
     :media_server,
     :download_clients,
     :movies_library_path,
