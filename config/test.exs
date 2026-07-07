@@ -64,7 +64,8 @@ config :cinder,
   # Disabled by default (overrides the prod Ffprobe impl) so the import suite never shells out;
   # the media_info tests opt in per-test via Application.put_env(MediaInfoMock).
   media_info: nil,
-  notifier: Cinder.TestNotifier
+  notifier: Cinder.TestNotifier,
+  subtitles_provider: Cinder.Subtitles.ProviderMock
 
 # Two client mocks so routing is testable by protocol: a torrent release must
 # reach ClientMock and a usenet release must reach SabnzbdClientMock.
@@ -98,6 +99,14 @@ config :cinder, Cinder.Download.Client.Sabnzbd,
 config :cinder, Cinder.Notifier.Discord,
   webhook_url: "https://discord.test/hook",
   req_options: [plug: {Req.Test, Cinder.DiscordStub}, retry: false]
+
+config :cinder, Cinder.Subtitles.Provider.OpenSubtitles,
+  base_url: "https://api.opensubtitles.test/api/v1",
+  api_key: "test-key",
+  username: "user",
+  password: "pass",
+  languages: "en,fr",
+  req_options: [plug: {Req.Test, Cinder.OpenSubtitlesStub}, retry: false]
 
 config :cinder, Cinder.Library.MediaServer.Jellyfin,
   url: "http://localhost:8096",
