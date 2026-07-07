@@ -34,8 +34,8 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
       |> Enum.map(&parse_row/1)
 
     %{
-      audio: for({"audio", lang} <- rows, lang != nil, do: lang),
-      subtitles: for({"subtitle", lang} <- rows, lang != nil, do: lang)
+      audio: Enum.uniq(for({"audio", lang} <- rows, lang != nil, do: lang)),
+      subtitles: Enum.uniq(for({"subtitle", lang} <- rows, lang != nil, do: lang))
     }
   end
 

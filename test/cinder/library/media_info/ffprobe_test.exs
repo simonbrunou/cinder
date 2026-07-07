@@ -6,4 +6,9 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
     out = "video,\naudio,eng\naudio,fre\nsubtitle,eng\nsubtitle,und\naudio,\n"
     assert Ffprobe.parse(out) == %{audio: ["eng", "fre"], subtitles: ["eng"]}
   end
+
+  test "parse dedups repeated audio/subtitle languages, preserving first-seen order" do
+    out = "audio,eng\naudio,eng\naudio,fre\nsubtitle,eng\nsubtitle,eng\n"
+    assert Ffprobe.parse(out) == %{audio: ["eng", "fre"], subtitles: ["eng"]}
+  end
 end

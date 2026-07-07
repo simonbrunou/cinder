@@ -47,7 +47,7 @@ defmodule Cinder.Library.Sidecars do
       subs
       |> Enum.filter(fn p ->
         lone_video? or
-          String.starts_with?(String.downcase(Path.basename(p)), String.downcase(stem))
+          String.starts_with?(String.downcase(Path.basename(p)), String.downcase(stem) <> ".")
       end)
       |> Enum.map(fn p -> {p, language(p)} end)
     else
@@ -59,10 +59,13 @@ defmodule Cinder.Library.Sidecars do
   def link(source_video, dest_video) do
     dest_stem = Path.rootname(dest_video)
 
-    for {path, lang} <- files(source_video),
-        do_link(path, dest_dir_name(dest_stem, path, lang)) == :ok do
-      lang
-    end
+    langs =
+      for {path, lang} <- files(source_video),
+          do_link(path, dest_dir_name(dest_stem, path, lang)) == :ok do
+        lang
+      end
+
+    Enum.uniq(langs)
   end
 
   defp dest_dir_name(dest_stem, src_path, lang) do

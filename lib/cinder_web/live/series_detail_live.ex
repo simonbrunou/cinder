@@ -597,7 +597,7 @@ defmodule CinderWeb.SeriesDetailLive do
                   class="ml-2 inline-flex flex-wrap gap-1 align-middle"
                 >
                   <span
-                    :for={l <- ep.imported_audio_languages}
+                    :for={l <- ep.imported_audio_languages || []}
                     class="badge badge-ghost badge-xs"
                     aria-label={gettext("audio %{lang}", lang: l)}
                   >{l}</span>
