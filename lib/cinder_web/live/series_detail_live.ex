@@ -571,7 +571,7 @@ defmodule CinderWeb.SeriesDetailLive do
         <ul class="divide-y divide-base-200">
           <li :for={ep <- season.episodes} class="flex flex-col gap-2 py-2">
             <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-              <div class="flex min-w-0 items-center gap-3 sm:flex-1">
+              <div class="flex min-w-0 flex-wrap items-center gap-3 sm:flex-1 sm:flex-nowrap">
                 <input
                   type="checkbox"
                   class="toggle shrink-0"
@@ -594,7 +594,7 @@ defmodule CinderWeb.SeriesDetailLive do
                         (ep.imported_embedded_subtitles || []) ++
                         (ep.imported_sidecar_subtitles || []) != []
                   }
-                  class="ml-2 inline-flex flex-wrap gap-1 align-middle"
+                  class="ml-2 inline-flex basis-full flex-wrap gap-1 align-middle sm:basis-auto"
                 >
                   <span
                     :for={l <- ep.imported_audio_languages || []}
