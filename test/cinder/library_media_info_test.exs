@@ -49,7 +49,9 @@ defmodule Cinder.LibraryMediaInfoTest do
   test "imports when the file's audio includes the wanted language (639-2 code match)" do
     expect(Cinder.Library.FilesystemMock, :dir?, fn @source -> false end)
 
-    expect(Cinder.Library.MediaInfoMock, :audio_languages, fn @source -> {:ok, ["fra", "eng"]} end)
+    expect(Cinder.Library.MediaInfoMock, :probe, fn @source ->
+      {:ok, %{audio: ["fra", "eng"], subtitles: []}}
+    end)
 
     expect(Cinder.Library.FilesystemMock, :lstat, fn @source ->
       {:ok, %File.Stat{size: 1, inode: 1}}
@@ -64,7 +66,11 @@ defmodule Cinder.LibraryMediaInfoTest do
 
   test "parks a confirmed wrong-language file without importing it" do
     expect(Cinder.Library.FilesystemMock, :dir?, fn @source -> false end)
-    expect(Cinder.Library.MediaInfoMock, :audio_languages, fn @source -> {:ok, ["hun"]} end)
+
+    expect(Cinder.Library.MediaInfoMock, :probe, fn @source ->
+      {:ok, %{audio: ["hun"], subtitles: []}}
+    end)
+
     # No mkdir_p/ln/scan — the import short-circuits before touching the filesystem.
 
     assert {:error, :wrong_audio_language} = Library.import_movie(french_movie())
@@ -72,7 +78,11 @@ defmodule Cinder.LibraryMediaInfoTest do
 
   test "imports when the probe reports no usable language (can't verify, don't over-park)" do
     expect(Cinder.Library.FilesystemMock, :dir?, fn @source -> false end)
-    expect(Cinder.Library.MediaInfoMock, :audio_languages, fn @source -> {:ok, []} end)
+
+    expect(Cinder.Library.MediaInfoMock, :probe, fn @source ->
+      {:ok, %{audio: [], subtitles: []}}
+    end)
+
     expect_single_file_import_tail()
 
     assert {:ok, @dest, _quality} = Library.import_movie(french_movie())
@@ -80,7 +90,7 @@ defmodule Cinder.LibraryMediaInfoTest do
 
   test "imports when the probe errors (e.g. ffprobe not installed)" do
     expect(Cinder.Library.FilesystemMock, :dir?, fn @source -> false end)
-    expect(Cinder.Library.MediaInfoMock, :audio_languages, fn @source -> {:error, :enoent} end)
+    expect(Cinder.Library.MediaInfoMock, :probe, fn @source -> {:error, :enoent} end)
     expect_single_file_import_tail()
 
     assert {:ok, @dest, _quality} = Library.import_movie(french_movie())
@@ -99,7 +109,11 @@ defmodule Cinder.LibraryMediaInfoTest do
     # correctly-Croatian file must import, not park.
     movie = %{french_movie() | original_language: "hr"}
     expect(Cinder.Library.FilesystemMock, :dir?, fn @source -> false end)
-    expect(Cinder.Library.MediaInfoMock, :audio_languages, fn @source -> {:ok, ["hrv"]} end)
+
+    expect(Cinder.Library.MediaInfoMock, :probe, fn @source ->
+      {:ok, %{audio: ["hrv"], subtitles: []}}
+    end)
+
     expect_single_file_import_tail()
 
     assert {:ok, @dest, _quality} = Library.import_movie(movie)
@@ -108,7 +122,11 @@ defmodule Cinder.LibraryMediaInfoTest do
   test "a 639-2 variant code (Norwegian 'nob') is accepted, not false-parked" do
     movie = %{french_movie() | original_language: "no"}
     expect(Cinder.Library.FilesystemMock, :dir?, fn @source -> false end)
-    expect(Cinder.Library.MediaInfoMock, :audio_languages, fn @source -> {:ok, ["nob"]} end)
+
+    expect(Cinder.Library.MediaInfoMock, :probe, fn @source ->
+      {:ok, %{audio: ["nob"], subtitles: []}}
+    end)
+
     expect_single_file_import_tail()
 
     assert {:ok, @dest, _quality} = Library.import_movie(movie)
@@ -118,14 +136,18 @@ defmodule Cinder.LibraryMediaInfoTest do
     # Norwegian wanted, file tagged with a code we don't list → conservative: don't park.
     movie = %{french_movie() | original_language: "no"}
     expect(Cinder.Library.FilesystemMock, :dir?, fn @source -> false end)
-    expect(Cinder.Library.MediaInfoMock, :audio_languages, fn @source -> {:ok, ["zzz"]} end)
+
+    expect(Cinder.Library.MediaInfoMock, :probe, fn @source ->
+      {:ok, %{audio: ["zzz"], subtitles: []}}
+    end)
+
     expect_single_file_import_tail()
 
     assert {:ok, @dest, _quality} = Library.import_movie(movie)
   end
 
   # The tail of a single-file import after resolve_source's dir? (which the probe tests set
-  # themselves so the audio_languages expectation lands between dir? and mkdir_p).
+  # themselves so the probe expectation lands between dir? and mkdir_p).
   defp expect_single_file_import_tail do
     expect(Cinder.Library.FilesystemMock, :lstat, fn @source ->
       {:ok, %File.Stat{size: 1, inode: 1}}
@@ -167,9 +189,9 @@ defmodule Cinder.LibraryMediaInfoTest do
     stub(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
 
     # E01 is French audio (kept); E02 is a Hungarian dub (dropped).
-    stub(Cinder.Library.MediaInfoMock, :audio_languages, fn
-      "/dl/Show.S01E01.1080p.mkv" -> {:ok, ["fra"]}
-      "/dl/Show.S01E02.1080p.mkv" -> {:ok, ["hun"]}
+    stub(Cinder.Library.MediaInfoMock, :probe, fn
+      "/dl/Show.S01E01.1080p.mkv" -> {:ok, %{audio: ["fra"], subtitles: []}}
+      "/dl/Show.S01E02.1080p.mkv" -> {:ok, %{audio: ["hun"], subtitles: []}}
     end)
 
     assert {:ok, [{1, dest, _q}], ["/dl/Show.S01E02.1080p.mkv"]} =
@@ -186,7 +208,8 @@ defmodule Cinder.LibraryMediaInfoTest do
 
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
     stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:ok, files} end)
-    stub(Cinder.Library.MediaInfoMock, :audio_languages, fn _ -> {:ok, ["hun"]} end)
+
+    stub(Cinder.Library.MediaInfoMock, :probe, fn _ -> {:ok, %{audio: ["hun"], subtitles: []}} end)
 
     assert {:ok, [], unmatched} =
              Library.import_episodes("/dl", [french_ep(1, 1), french_ep(2, 2)])

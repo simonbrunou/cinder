@@ -244,9 +244,9 @@ defmodule Cinder.Library do
   end
 
   defp check_audio(impl, source, target) do
-    case impl.audio_languages(source) do
-      {:ok, []} -> :ok
-      {:ok, langs} -> audio_result(Language.audio_satisfies?(target, langs))
+    case impl.probe(source) do
+      {:ok, %{audio: []}} -> :ok
+      {:ok, %{audio: langs}} -> audio_result(Language.audio_satisfies?(target, langs))
       {:error, _reason} -> :ok
     end
   end
