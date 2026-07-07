@@ -505,18 +505,20 @@ defmodule Cinder.Library do
     Logger.warning("media-server scan failed after importing #{dest}: #{inspect(reason)}")
   end
 
-  # Best-effort, exactly like scan/2: a subtitle failure (return, raise, or exit deep in the HTTP
-  # stack, or a criteria-building surprise) must never turn a correctly-placed file into
-  # :import_failed. Cinder.Subtitles.fetch_missing/2 is already best-effort internally, but this
-  # wraps it too — `criteria_fun` is a thunk so criteria-building runs INSIDE the rescue/catch
-  # rather than in the caller's argument (evaluated before the guard would apply).
+  # Dispatches the subtitle fetch on a supervised Task (fetch_after_import/2) so a slow OpenSubtitles
+  # round-trip can't stall the import poller tick; the fetch's own errors are handled inside the task.
+  # The dispatch is still wrapped best-effort — exactly like scan/2 — so even a supervisor hiccup
+  # can't turn a correctly-placed file into :import_failed. `criteria_fun` is a thunk so it's built
+  # inside the isolated task, not in the caller's argument.
   defp fetch_subtitles(criteria_fun, dest) when is_function(criteria_fun, 0) do
-    Cinder.Subtitles.fetch_missing(criteria_fun.(), dest)
+    Cinder.Subtitles.fetch_after_import(criteria_fun, dest)
   rescue
-    e -> Logger.warning("subtitle fetch failed after importing #{dest}: #{inspect(e)}")
+    e -> Logger.warning("subtitle fetch dispatch failed after importing #{dest}: #{inspect(e)}")
   catch
     kind, value ->
-      Logger.warning("subtitle fetch failed after importing #{dest}: #{inspect({kind, value})}")
+      Logger.warning(
+        "subtitle fetch dispatch failed after importing #{dest}: #{inspect({kind, value})}"
+      )
   end
 
   defp movie_criteria(%Movie{imdb_id: imdb_id, tmdb_id: tmdb_id}),

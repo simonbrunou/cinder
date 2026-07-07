@@ -60,19 +60,26 @@ defmodule Cinder.Subtitles.Sweeper do
   end
 
   defp sweep do
-    for movie <- Catalog.list_available_movies_with_file() do
-      isolate("movie #{movie.id}", fn ->
-        Subtitles.fetch_missing(movie_criteria(movie), movie.file_path)
-      end)
-    end
+    units =
+      Enum.map(Catalog.list_available_movies_with_file(), fn m ->
+        {"movie #{m.id}", fn -> movie_criteria(m) end, m.file_path}
+      end) ++
+        Enum.map(Catalog.list_episodes_with_file(), fn ep ->
+          {"episode #{ep.id}", fn -> episode_criteria(ep) end, ep.file_path}
+        end)
 
-    for ep <- Catalog.list_episodes_with_file() do
-      isolate("episode #{ep.id}", fn ->
-        Subtitles.fetch_missing(episode_criteria(ep), ep.file_path)
-      end)
-    end
+    # reduce_while so a quota hit halts the whole tick — see fetch_unit/2. Returns :ok either way.
+    Enum.reduce_while(units, :ok, &fetch_unit/2)
+  end
 
-    :ok
+  # Fetch one unit's subtitles; stop the whole tick the moment a download hits the daily quota (406):
+  # further downloads would just fail, and their searches would burn the rate-limit for nothing. The
+  # next tick resumes.
+  defp fetch_unit({label, criteria_fun, path}, _acc) do
+    case isolate(label, fn -> Subtitles.fetch_missing(criteria_fun.(), path) end) do
+      :quota_exceeded -> {:halt, :ok}
+      _ -> {:cont, :ok}
+    end
   end
 
   defp movie_criteria(%Movie{imdb_id: imdb_id, tmdb_id: tmdb_id}),

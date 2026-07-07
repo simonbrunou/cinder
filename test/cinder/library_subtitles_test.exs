@@ -5,14 +5,19 @@ defmodule Cinder.LibrarySubtitlesTest do
   # global mutation would race concurrently-running async tests, so this file — like
   # subtitles_test.exs — stays async: false and merges (not replaces) the config to preserve
   # base_url/api_key/req_options for anything else reading it.
+  #
+  # The import-time fetch now runs on a supervised Task (off the poller tick), so the provider call
+  # happens in a *different* process than the test: set_mox_from_context puts Mox in global mode so
+  # that task can use these expectations, and each test blocks on assert_receive until the task has
+  # actually dispatched the fetch.
   use ExUnit.Case, async: false
 
   import Mox
-  import ExUnit.CaptureLog
 
   alias Cinder.Catalog.{Episode, Movie, Season, Series}
   alias Cinder.Library
 
+  setup :set_mox_from_context
   setup :verify_on_exit!
 
   @lib "/tmp/cinder-test-library"
@@ -35,7 +40,9 @@ defmodule Cinder.LibrarySubtitlesTest do
     :ok
   end
 
-  test "import_movie fetches subtitles best-effort and still succeeds when the provider errors" do
+  test "import_movie dispatches the subtitle fetch off the import path, best-effort" do
+    parent = self()
+
     movie = %Movie{
       title: "Heat",
       year: 1995,
@@ -56,25 +63,23 @@ defmodule Cinder.LibrarySubtitlesTest do
     expect(Cinder.Library.FilesystemMock, :ln, fn _src, ^dest -> :ok end)
     expect(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
-    # The sidecar-existence check inside Subtitles.fetch_missing/2 (a *different* lstat call, on
-    # the sidecar path, not the source file above). A stub — not another expect — so it doesn't
-    # have to slot into the precise FIFO sequence above; only one lstat expect is queued (the
-    # source lstat), so this second call falls through to the stub once that expect is consumed.
+    # The async task's sidecar-existence lstat (a *different* lstat, on the sidecar path). A stub, so
+    # it's handled after the single source-file lstat expect above is consumed.
     stub(Cinder.Library.FilesystemMock, :lstat, fn _ -> {:error, :enoent} end)
 
+    # The subtitle fetch runs in the Task (global Mox). It signals the test so we can prove the
+    # dispatch happened and that the provider error stayed off the import path.
     expect(Cinder.Subtitles.ProviderMock, :search, fn %{imdb_id: "tt0113277", languages: ["en"]} ->
+      send(parent, :subtitle_search)
       {:error, :down}
     end)
 
-    log =
-      capture_log(fn ->
-        assert {:ok, ^dest, _quality} = Library.import_movie(movie)
-      end)
-
-    refute log =~ "subtitle fetch failed"
+    assert {:ok, ^dest, _quality} = Library.import_movie(movie)
+    assert_receive :subtitle_search, 2000
   end
 
-  test "import_episodes fetches subtitles best-effort and still succeeds when the provider errors" do
+  test "import_episodes dispatches the subtitle fetch off the import path, best-effort" do
+    parent = self()
     series = %Series{title: "Show", year: 2008, tmdb_id: 1}
 
     episode = %Episode{
@@ -99,7 +104,7 @@ defmodule Cinder.LibrarySubtitlesTest do
     expect(Cinder.Library.FilesystemMock, :ln, fn _src, ^dest -> :ok end)
     expect(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
-    # Sidecar-existence check for the one imported episode file — see the movie test above.
+    # Sidecar-existence check for the imported episode file — see the movie test above.
     stub(Cinder.Library.FilesystemMock, :lstat, fn _ -> {:error, :enoent} end)
 
     expect(Cinder.Subtitles.ProviderMock, :search, fn %{
@@ -108,14 +113,11 @@ defmodule Cinder.LibrarySubtitlesTest do
                                                         episode: 3,
                                                         languages: ["en"]
                                                       } ->
+      send(parent, :subtitle_search)
       {:error, :down}
     end)
 
-    log =
-      capture_log(fn ->
-        assert {:ok, [{7, ^dest, _quality}], []} = Library.import_episodes("/dl", [episode])
-      end)
-
-    refute log =~ "subtitle fetch failed"
+    assert {:ok, [{7, ^dest, _quality}], []} = Library.import_episodes("/dl", [episode])
+    assert_receive :subtitle_search, 2000
   end
 end
