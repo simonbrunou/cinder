@@ -5,6 +5,7 @@
     "elixir": "1.20.1-otp-29"
   },
   "deploy": {
-    "startCommand": "/app/_build/prod/rel/cinder/bin/server"
+    "startCommand": "/app/_build/prod/rel/cinder/bin/server",
+    "aptPackages": ["ffmpeg"]
   }
 }
