@@ -80,4 +80,82 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitlesTest do
 
     assert :ok = OpenSubtitles.health()
   end
+
+  test "search/1 drops a malformed entry (missing \"attributes\") instead of raising" do
+    Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
+      Req.Test.json(conn, %{
+        "data" => [
+          %{
+            "attributes" => %{
+              "language" => "en",
+              "download_count" => 1,
+              "files" => [%{"file_id" => 1}]
+            }
+          },
+          %{"no_attributes_here" => true}
+        ]
+      })
+    end)
+
+    assert {:ok, [_, _]} = OpenSubtitles.search(%{imdb_id: "tt0111161", languages: ["en"]})
+  end
+
+  test "download/1 retries exactly once on 401: re-logs-in and succeeds" do
+    {:ok, download_attempts} = Agent.start_link(fn -> 0 end)
+
+    Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
+      case conn.request_path do
+        "/api/v1/login" ->
+          Req.Test.json(conn, %{"token" => "jwt-123"})
+
+        "/api/v1/download" ->
+          attempt = Agent.get_and_update(download_attempts, fn n -> {n, n + 1} end)
+
+          if attempt == 0 do
+            Plug.Conn.send_resp(conn, 401, ~s({"message":"unauthorized"}))
+          else
+            Req.Test.json(conn, %{"link" => "https://dl.opensubtitles.test/f/42.srt"})
+          end
+
+        "/f/42.srt" ->
+          Plug.Conn.send_resp(conn, 200, "SRT-BYTES")
+      end
+    end)
+
+    assert {:ok, "SRT-BYTES"} = OpenSubtitles.download(42)
+    assert Agent.get(download_attempts, & &1) == 2
+  end
+
+  test "download/1 bounds the 401 retry to exactly once (a persistent 401 does not loop)" do
+    Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
+      case conn.request_path do
+        "/api/v1/login" -> Req.Test.json(conn, %{"token" => "jwt-123"})
+        "/api/v1/download" -> Plug.Conn.send_resp(conn, 401, ~s({"message":"unauthorized"}))
+      end
+    end)
+
+    assert {:error, {:http, 401}} = OpenSubtitles.download(42)
+  end
+
+  test "download/1 caches the token across calls: only one /login for two downloads" do
+    {:ok, login_calls} = Agent.start_link(fn -> 0 end)
+
+    Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
+      case conn.request_path do
+        "/api/v1/login" ->
+          Agent.update(login_calls, &(&1 + 1))
+          Req.Test.json(conn, %{"token" => "jwt-123"})
+
+        "/api/v1/download" ->
+          Req.Test.json(conn, %{"link" => "https://dl.opensubtitles.test/f/42.srt"})
+
+        "/f/42.srt" ->
+          Plug.Conn.send_resp(conn, 200, "SRT-BYTES")
+      end
+    end)
+
+    assert {:ok, "SRT-BYTES"} = OpenSubtitles.download(42)
+    assert {:ok, "SRT-BYTES"} = OpenSubtitles.download(42)
+    assert Agent.get(login_calls, & &1) == 1
+  end
 end
