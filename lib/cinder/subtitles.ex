@@ -12,6 +12,21 @@ defmodule Cinder.Subtitles do
 
   require Logger
 
+  alias Cinder.Catalog.{Episode, Movie, Series}
+
+  @doc "Subtitle-search criteria for a movie: imdb + tmdb id (the provider prefers imdb)."
+  @spec movie_criteria(Movie.t()) :: map()
+  def movie_criteria(%Movie{imdb_id: imdb_id, tmdb_id: tmdb_id}),
+    do: %{imdb_id: imdb_id, tmdb_id: tmdb_id}
+
+  @doc "Subtitle-search criteria for an episode: series tmdb id + season/episode numbers."
+  @spec episode_criteria(Episode.t()) :: map()
+  def episode_criteria(%Episode{
+        episode_number: number,
+        season: %{season_number: season, series: %Series{tmdb_id: tmdb_id}}
+      }),
+      do: %{tmdb_id: tmdb_id, season: season, episode: number}
+
   @doc "Configured subtitle languages (downcased). `[]` — feature off — when the setting is blank."
   @spec wanted_languages() :: [String.t()]
   def wanted_languages do
