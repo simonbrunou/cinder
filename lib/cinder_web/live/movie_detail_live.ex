@@ -149,6 +149,32 @@ defmodule CinderWeb.MovieDetailLive do
               <dt class="text-base-content/60">{gettext("Language")}</dt>
               <dd class="font-medium">{@movie.imported_language}</dd>
             </div>
+            <div :if={@movie.imported_audio_languages not in [nil, []]}>
+              <dt class="text-base-content/60">{gettext("Audio")}</dt>
+              <dd class="flex flex-wrap gap-1 font-medium">
+                <span :for={l <- @movie.imported_audio_languages} class="badge badge-ghost badge-xs">{l}</span>
+              </dd>
+            </div>
+            <div :if={
+              @movie.imported_embedded_subtitles not in [nil, []] or
+                @movie.imported_sidecar_subtitles not in [nil, []]
+            }>
+              <dt class="text-base-content/60">{gettext("Subtitles")}</dt>
+              <dd class="flex flex-wrap gap-1 font-medium">
+                <span
+                  :for={l <- @movie.imported_embedded_subtitles || []}
+                  class="badge badge-ghost badge-xs"
+                >
+                  {l} <span class="opacity-60">{gettext("embedded")}</span>
+                </span>
+                <span
+                  :for={l <- @movie.imported_sidecar_subtitles || []}
+                  class="badge badge-outline badge-xs"
+                >
+                  {l} <span class="opacity-60">{gettext("sidecar")}</span>
+                </span>
+              </dd>
+            </div>
           </dl>
           <div :if={@movie.release_title} class="mt-3 border-t border-base-300 pt-3">
             <dt class="text-sm text-base-content/60">{gettext("Release")}</dt>

@@ -17,7 +17,10 @@ defmodule Cinder.CatalogFixtures do
     :imported_resolution,
     :imported_size,
     :imported_language,
-    :imported_source
+    :imported_source,
+    :imported_audio_languages,
+    :imported_embedded_subtitles,
+    :imported_sidecar_subtitles
   ]
 
   @doc """

@@ -103,6 +103,59 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert html =~ "Two"
   end
 
+  test "shows audio + subtitle badges on a filed episode", %{conn: conn} do
+    series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 8200, title: "S", year: 2010})
+
+    season =
+      Repo.insert!(%Cinder.Catalog.Season{
+        series_id: series.id,
+        season_number: 1,
+        monitored: true
+      })
+
+    Repo.insert!(%Cinder.Catalog.Episode{
+      season_id: season.id,
+      tmdb_episode_id: 8201,
+      episode_number: 1,
+      title: "Ep1",
+      monitored: true,
+      file_path: "/tmp/cinder-test-tv-library/S (2010)/Season 01/S (2010) - S01E01.mkv",
+      imported_audio_languages: ["en", "fr"],
+      imported_embedded_subtitles: ["en"],
+      imported_sidecar_subtitles: ["fr"]
+    })
+
+    {:ok, _lv, html} = live(conn, ~p"/series/#{series.id}")
+    assert html =~ "audio en"
+    assert html =~ "audio fr"
+    assert html =~ "subtitle en"
+    assert html =~ "subtitle fr"
+  end
+
+  test "no audio/subtitle badges on a filed episode with no media info", %{conn: conn} do
+    series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 8202, title: "S", year: 2010})
+
+    season =
+      Repo.insert!(%Cinder.Catalog.Season{
+        series_id: series.id,
+        season_number: 1,
+        monitored: true
+      })
+
+    Repo.insert!(%Cinder.Catalog.Episode{
+      season_id: season.id,
+      tmdb_episode_id: 8203,
+      episode_number: 1,
+      title: "Ep1",
+      monitored: true,
+      file_path: "/tmp/cinder-test-tv-library/S (2010)/Season 01/S (2010) - S01E01.mkv"
+    })
+
+    {:ok, _lv, html} = live(conn, ~p"/series/#{series.id}")
+    refute html =~ ~s(aria-label="audio)
+    refute html =~ ~s(aria-label="subtitle)
+  end
+
   test "renders the series descriptive metadata block", %{conn: conn} do
     series = create_series(720)
     {:ok, _lv, html} = live(conn, ~p"/series/#{series.id}")
