@@ -114,6 +114,28 @@ defmodule Cinder.CatalogTest do
     end
   end
 
+  describe "list_available_movies_with_file/0, list_episodes_with_file/0" do
+    test "list_available_movies_with_file/0 returns only :available movies with a file_path" do
+      m1 = movie_fixture(status: :available, file_path: "/x/a.mkv")
+      _m2 = movie_fixture(status: :available, file_path: nil)
+      _m3 = movie_fixture(status: :requested, file_path: "/x/c.mkv")
+
+      ids = Catalog.list_available_movies_with_file() |> Enum.map(& &1.id)
+      assert ids == [m1.id]
+    end
+
+    test "list_episodes_with_file/0 returns episodes with a file_path, season+series preloaded" do
+      series = series_fixture()
+      season = season_fixture(series)
+      ep = episode_fixture(season, file_path: "/x/e.mkv")
+      _no_file = episode_fixture(season, episode_number: 2, file_path: nil)
+
+      assert [got] = Catalog.list_episodes_with_file()
+      assert got.id == ep.id
+      assert %Series{} = got.season.series
+    end
+  end
+
   describe "retry_movie/1" do
     test "resets a parked movie to :requested, zeroes attempt counters, and broadcasts" do
       Catalog.subscribe()

@@ -39,6 +39,9 @@ defmodule Cinder.Library.Filesystem.Disk do
   def cp(source, dest), do: File.cp(source, dest)
 
   @impl true
+  def write(path, content), do: File.write(path, content)
+
+  @impl true
   def lstat(path), do: File.lstat(path)
 
   @impl true

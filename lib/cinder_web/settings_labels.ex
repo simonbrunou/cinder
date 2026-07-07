@@ -26,6 +26,7 @@ defmodule CinderWeb.SettingsLabels do
       gettext_noop("Media server"),
       gettext_noop("Library paths"),
       gettext_noop("Release size bands"),
+      gettext_noop("Subtitles"),
       gettext_noop("Notifications"),
       # download-client toggles — Settings.toggles/0
       gettext_noop("Enable qBittorrent (torrent)"),
@@ -49,6 +50,10 @@ defmodule CinderWeb.SettingsLabels do
       gettext_noop("Plex URL"),
       gettext_noop("Plex token"),
       gettext_noop("Discord webhook URL"),
+      gettext_noop("OpenSubtitles API key"),
+      gettext_noop("OpenSubtitles username"),
+      gettext_noop("OpenSubtitles password"),
+      gettext_noop("Subtitle languages (comma-separated, e.g. en,fr)"),
       # generated per-kind Plex section labels — Settings.config_fields/0
       gettext_noop("Plex Movies library section (numeric id)"),
       gettext_noop("Plex TV library section (numeric id)")

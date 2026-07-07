@@ -199,6 +199,16 @@ defmodule Cinder.Catalog do
     Repo.all(from m in Movie, where: m.status == ^status)
   end
 
+  @doc "Available movies that have an imported file (subtitle-fetch candidates)."
+  def list_available_movies_with_file do
+    Repo.all(from m in Movie, where: m.status == :available and not is_nil(m.file_path))
+  end
+
+  @doc "Episodes with an imported file, season+series preloaded (subtitle-fetch candidates)."
+  def list_episodes_with_file do
+    Repo.all(from e in Episode, where: not is_nil(e.file_path), preload: [season: :series])
+  end
+
   @doc """
   Applies a pipeline state transition and, on success, broadcasts
   `{:movie_updated, movie}` on the `"movies"` topic. This is the single
