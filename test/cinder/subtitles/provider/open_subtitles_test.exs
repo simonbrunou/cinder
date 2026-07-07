@@ -72,13 +72,23 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitlesTest do
     assert {:error, :quota_exceeded} = OpenSubtitles.download(42)
   end
 
-  test "health/0 is :ok on a 200 from an api-key-only endpoint" do
+  test "health/0 logs in — validating api-key + username/password — and is :ok on a token" do
     Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
-      assert conn.request_path == "/api/v1/infos/formats"
-      Req.Test.json(conn, %{"data" => %{}})
+      assert conn.request_path == "/api/v1/login"
+      assert Plug.Conn.get_req_header(conn, "api-key") == ["test-key"]
+      Req.Test.json(conn, %{"token" => "jwt-123"})
     end)
 
     assert :ok = OpenSubtitles.health()
+  end
+
+  test "health/0 is an error when /login rejects the credentials" do
+    Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
+      assert conn.request_path == "/api/v1/login"
+      Plug.Conn.send_resp(conn, 401, ~s({"message":"invalid credentials"}))
+    end)
+
+    assert {:error, {:http, 401}} = OpenSubtitles.health()
   end
 
   test "search/1 drops a malformed entry (missing \"attributes\") instead of raising" do

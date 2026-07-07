@@ -2,10 +2,12 @@ defmodule Cinder.Subtitles do
   @moduledoc """
   Fetches subtitle sidecars for imported files, in the household's configured languages.
 
-  Best-effort: `fetch_missing/2` always returns `:ok`; failures are logged, never raised, so a
-  subtitle miss can't affect the video import. Idempotent: a language whose sidecar already exists
-  is skipped (no search, no download, no wasted quota). The "which languages / which candidate"
-  policy lives here; the network lives in `Cinder.Subtitles.Provider`.
+  Best-effort: failures are logged, never raised, so a subtitle miss can't affect the video import.
+  `fetch_missing/2` returns `:ok`, or `:quota_exceeded` to tell a batch caller (the sweep) to stop
+  for this run once the daily download quota is spent. `fetch_after_import/2` runs it off-process
+  (a supervised Task) so a slow provider can't stall the import poller. Idempotent: a language whose
+  sidecar already exists is skipped (no search, no download, no wasted quota). The "which languages /
+  which candidate" policy lives here; the network lives in `Cinder.Subtitles.Provider`.
   """
 
   require Logger
@@ -32,12 +34,41 @@ defmodule Cinder.Subtitles do
   @doc """
   For each wanted language whose sidecar is absent, search the provider, pick the best candidate,
   download it, and write the sidecar. `criteria_base` carries `:imdb_id`/`:tmdb_id`
-  (+ `:season`/`:episode` for TV); `:languages` is filled in per language. Always `:ok`.
+  (+ `:season`/`:episode` for TV); `:languages` is filled in per language. Returns `:ok`, or
+  `:quota_exceeded` (the daily download cap is spent) so a batch caller — the sweep — can stop.
   """
-  @spec fetch_missing(map(), String.t()) :: :ok
+  @spec fetch_missing(map(), String.t()) :: :ok | :quota_exceeded
   def fetch_missing(criteria_base, dest_path) do
-    Enum.each(wanted_languages(), fn lang -> fetch_one(criteria_base, lang, dest_path) end)
+    Enum.reduce_while(wanted_languages(), :ok, fn lang, _acc ->
+      case fetch_one(criteria_base, lang, dest_path) do
+        :quota_exceeded -> {:halt, :quota_exceeded}
+        _ -> {:cont, :ok}
+      end
+    end)
+  end
+
+  @doc """
+  Dispatches `fetch_missing/2` for a just-imported file on a supervised Task, so a slow
+  OpenSubtitles round-trip can't stall the import poller tick. Returns `:ok` immediately.
+  `criteria_fun` is a thunk so criteria-building (and any failure) stays inside the isolated task.
+  """
+  @spec fetch_after_import((-> map()), String.t()) :: :ok
+  def fetch_after_import(criteria_fun, dest_path) when is_function(criteria_fun, 0) do
+    Task.Supervisor.start_child(Cinder.Subtitles.TaskSupervisor, fn ->
+      safe_fetch(criteria_fun, dest_path)
+    end)
+
     :ok
+  end
+
+  # criteria_fun runs INSIDE the task (and this rescue/catch) so a preload/criteria surprise or a
+  # provider blow-up crashes only the isolated task, never the import that dispatched it.
+  defp safe_fetch(criteria_fun, dest_path) do
+    fetch_missing(criteria_fun.(), dest_path)
+  rescue
+    e -> Logger.warning("subtitle fetch crashed for #{dest_path}: #{inspect(e)}")
+  catch
+    kind, value -> Logger.warning("subtitle fetch #{kind} for #{dest_path}: #{inspect(value)}")
   end
 
   # The sidecar-existence check (fs().lstat/1) lives INSIDE this rescue/catch, not in a
@@ -66,8 +97,15 @@ defmodule Cinder.Subtitles do
          :ok <- fs().write(path, content) do
       Logger.info("wrote #{lang} subtitle for #{dest_path}")
     else
-      nil -> :ok
-      other -> Logger.info("no #{lang} subtitle for #{dest_path}: #{inspect(other)}")
+      {:error, :quota_exceeded} ->
+        Logger.info("OpenSubtitles daily download quota reached; pausing subtitle fetch this run")
+        :quota_exceeded
+
+      nil ->
+        :ok
+
+      other ->
+        Logger.info("no #{lang} subtitle for #{dest_path}: #{inspect(other)}")
     end
   end
 

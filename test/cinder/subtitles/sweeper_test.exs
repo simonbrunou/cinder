@@ -55,6 +55,34 @@ defmodule Cinder.Subtitles.SweeperTest do
     assert :ok = Sweeper.poll(pid)
   end
 
+  test "poll/1 stops the tick when a download hits the daily quota (406)" do
+    _a = movie_fixture(status: :available, file_path: "/lib/A/A.mkv", imdb_id: "tt1", tmdb_id: 1)
+    _b = movie_fixture(status: :available, file_path: "/lib/B/B.mkv", imdb_id: "tt2", tmdb_id: 2)
+
+    # Whichever movie is processed first: sidecar missing, search returns a candidate, download hits
+    # quota → the sweep halts, so the OTHER movie is never searched. `expect(:search, 1, ...)` makes
+    # a second search a verify failure, proving the halt regardless of DB row order.
+    stub(Cinder.Library.FilesystemMock, :lstat, fn _ -> {:error, :enoent} end)
+
+    Cinder.Subtitles.ProviderMock
+    |> expect(:search, 1, fn _ ->
+      {:ok,
+       [
+         %{
+           file_id: 7,
+           language: "en",
+           downloads: 1,
+           hearing_impaired: false,
+           ai_translated: false
+         }
+       ]}
+    end)
+    |> expect(:download, 1, fn 7 -> {:error, :quota_exceeded} end)
+
+    {:ok, pid} = start_supervised({Sweeper, name: :sweeper_quota_test})
+    assert :ok = Sweeper.poll(pid)
+  end
+
   test "poll/1 skips an item whose sidecar already exists (no provider call)" do
     _m = movie_fixture(status: :available, file_path: "/lib/M/M.mkv", imdb_id: "tt1", tmdb_id: 1)
 

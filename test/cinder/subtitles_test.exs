@@ -75,6 +75,31 @@ defmodule Cinder.SubtitlesTest do
     assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, dest)
   end
 
+  test "fetch_missing/2 stops on quota (406) and doesn't attempt the next language" do
+    # languages "en,fr" from setup; 'en' hits the daily download quota, so 'fr' is never searched.
+    Cinder.Library.FilesystemMock
+    |> expect(:lstat, fn "/lib/M/M.en.srt" -> {:error, :enoent} end)
+
+    Cinder.Subtitles.ProviderMock
+    |> expect(:search, fn %{languages: ["en"]} ->
+      {:ok,
+       [
+         %{
+           file_id: 1,
+           language: "en",
+           downloads: 5,
+           hearing_impaired: false,
+           ai_translated: false
+         }
+       ]}
+    end)
+    |> expect(:download, fn 1 -> {:error, :quota_exceeded} end)
+
+    # No 'fr' lstat/search/download expectations => verify_on_exit! proves 'fr' was never attempted.
+    assert :quota_exceeded =
+             Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
+  end
+
   test "fetch_missing/2 is a no-op when no languages are configured" do
     Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "")
     # No provider/filesystem expectations => any call fails verify_on_exit!.

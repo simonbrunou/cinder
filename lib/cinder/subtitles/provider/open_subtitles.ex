@@ -32,8 +32,13 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
 
   @impl true
   def health do
-    case request(:get, "/infos/formats", [], @health_timeout) do
-      {:ok, %{status: 200}} -> :ok
+    # POST /login validates the Api-Key (header) AND username/password (body) in one call, so a green
+    # health row means downloads will actually work — not just that the key is shaped right. Doesn't
+    # cache the token (the real download path's login/0 owns the cache).
+    body = %{username: cfg(:username), password: cfg(:password)}
+
+    case request(:post, "/login", [json: body], @health_timeout) do
+      {:ok, %{status: 200, body: %{"token" => _}}} -> :ok
       {:ok, %{status: status}} -> {:error, {:http, status}}
       {:error, reason} -> {:error, reason}
     end
