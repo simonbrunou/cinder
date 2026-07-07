@@ -12,6 +12,7 @@ defmodule Cinder.Library.SidecarsTest do
     assert Sidecars.language("Movie (2020).fre.srt") == "fr"
     assert Sidecars.language("subs.srt") == "und"
     assert Sidecars.language("Movie (2020).forced.srt") == "und"
+    assert Sidecars.language("The.Italian.Job.2003.srt") == "und"
   end
 
   test "files/1 returns stem-matching sidecars with languages" do

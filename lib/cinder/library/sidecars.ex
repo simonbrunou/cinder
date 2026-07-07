@@ -27,7 +27,10 @@ defmodule Cinder.Library.Sidecars do
       |> Enum.map(&String.downcase/1)
       |> Enum.reject(&(&1 in @flags))
 
-    Enum.find_value(Enum.reverse(tokens), "und", fn tok -> @aliases[tok] || @names[tok] end)
+    case List.last(tokens) do
+      nil -> "und"
+      tok -> @aliases[tok] || @names[tok] || "und"
+    end
   end
 
   @doc "Sidecar files belonging to `source_video` (stem match, or any sub when the folder holds one video)."
@@ -42,7 +45,10 @@ defmodule Cinder.Library.Sidecars do
       lone_video? = Enum.count(paths, &(String.downcase(Path.extname(&1)) in @video_exts)) == 1
 
       subs
-      |> Enum.filter(fn p -> lone_video? or String.starts_with?(Path.basename(p), stem) end)
+      |> Enum.filter(fn p ->
+        lone_video? or
+          String.starts_with?(String.downcase(Path.basename(p)), String.downcase(stem))
+      end)
       |> Enum.map(fn p -> {p, language(p)} end)
     else
       _ -> []
