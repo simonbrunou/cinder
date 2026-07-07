@@ -164,6 +164,9 @@ defmodule Cinder.LibrarySourceUpgradeTest do
 
     expect(Cinder.Library.FilesystemMock, :dir?, fn "/dl/grab" -> true end)
 
+    # The sidecar scan after the replaced file re-checks the source dir; fall through to "not a dir".
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+
     expect(Cinder.Library.FilesystemMock, :find_files, fn "/dl/grab" ->
       {:ok, [{source, 2 * @gb}]}
     end)

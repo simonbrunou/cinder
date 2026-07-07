@@ -123,7 +123,13 @@ defmodule Cinder.Download.MoveOnImportTest do
       start_supervised!({Poller, interval: 60_000})
 
       assert :ok = Poller.poll()
-      assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
+      imported = Repo.get!(Movie, movie.id)
+      assert imported.status == :available
+      # media_info off + single-file download → the capture columns land as [] (not left nil),
+      # proving the poller threads q.audio_languages/embedded_subtitles/sidecar_subtitles through.
+      assert imported.imported_audio_languages == []
+      assert imported.imported_embedded_subtitles == []
+      assert imported.imported_sidecar_subtitles == []
       assert_receive {:removed, "nzo-1", [delete_files: true]}
     end
 
@@ -228,7 +234,12 @@ defmodule Cinder.Download.MoveOnImportTest do
       start_supervised!({TvPoller, interval: 60_000})
 
       assert :ok = TvPoller.poll()
-      assert Repo.get!(Episode, e1.id).file_path =~ "S01E01"
+      imported = Repo.get!(Episode, e1.id)
+      assert imported.file_path =~ "S01E01"
+
+      # finish_grab's update_all lands the capture columns as [] (not nil), proving it threads them.
+      assert imported.imported_audio_languages == []
+      assert imported.imported_sidecar_subtitles == []
       assert is_nil(Repo.get!(Episode, e2.id).file_path)
       assert_receive {:removed, "nzo-pack", [delete_files: true]}
     end

@@ -1331,6 +1331,9 @@ defmodule Cinder.Catalog do
               imported_size: q.size,
               imported_language: q.language,
               imported_source: q.source,
+              imported_audio_languages: q.audio_languages,
+              imported_embedded_subtitles: q.embedded_subtitles,
+              imported_sidecar_subtitles: q.sidecar_subtitles,
               updated_at: ts
             ]
           )

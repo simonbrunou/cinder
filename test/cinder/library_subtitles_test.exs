@@ -92,6 +92,9 @@ defmodule Cinder.LibrarySubtitlesTest do
 
     expect(Cinder.Library.FilesystemMock, :dir?, fn "/dl" -> true end)
 
+    # The sidecar scan after the placed file re-checks the source dir; fall through to "not a dir".
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+
     expect(Cinder.Library.FilesystemMock, :find_files, fn "/dl" ->
       {:ok, [{"/dl/Show.S01E03.1080p.mkv", 9 * @gb}]}
     end)

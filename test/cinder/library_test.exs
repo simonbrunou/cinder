@@ -55,6 +55,32 @@ defmodule Cinder.LibraryTest do
              Library.import_movie(movie)
   end
 
+  test "single-file import with media_info off returns empty capture lists" do
+    # media_info is nil (config/test.exs default) and the download is a single file, so the probe is
+    # skipped and no sidecar scan runs — all three capture lists come back empty, never nil.
+    movie = %Movie{
+      title: "Solo",
+      year: 2018,
+      tmdb_id: 348_350,
+      file_path: "/dl/Solo.2018.1080p.mkv"
+    }
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+
+    expect(Cinder.Library.FilesystemMock, :lstat, fn "/dl/Solo.2018.1080p.mkv" ->
+      {:ok, %File.Stat{size: 4 * @gb, inode: 1}}
+    end)
+
+    expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    expect(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
+    expect(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
+
+    assert {:ok, _dest, q} = Library.import_movie(movie)
+    assert q.audio_languages == []
+    assert q.embedded_subtitles == []
+    assert q.sidecar_subtitles == []
+  end
+
   test "import captures the parsed source into the returned quality" do
     movie = %Movie{
       title: "Inception",
@@ -87,6 +113,9 @@ defmodule Cinder.LibraryTest do
     movie = %Movie{title: "Dune", year: 2021, tmdb_id: 438_631, file_path: "/dl/Dune.2021"}
 
     expect(Cinder.Library.FilesystemMock, :dir?, fn "/dl/Dune.2021" -> true end)
+    # After the real import consumes the dir? expect above, the sidecar scan re-checks the source
+    # dir; fall through to "not a dir" so no sidecars are found (this test asserts no sidecar behaviour).
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
 
     expect(Cinder.Library.FilesystemMock, :find_files, fn "/dl/Dune.2021" ->
       {:ok,
@@ -697,6 +726,9 @@ defmodule Cinder.LibraryTest do
       dest = "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv"
 
       expect(Cinder.Library.FilesystemMock, :dir?, fn "/dl/grab" -> true end)
+
+      # The sidecar scan after a placed file re-checks the source dir; fall through to "not a dir".
+      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
 
       expect(Cinder.Library.FilesystemMock, :find_files, fn "/dl/grab" ->
         {:ok, [{source, 3 * @gb}]}

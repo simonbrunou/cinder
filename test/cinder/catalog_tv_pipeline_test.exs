@@ -138,8 +138,25 @@ defmodule Cinder.CatalogTvPipelineTest do
   end
 
   describe "finish_grab/2" do
-    @q1 %{resolution: "1080p", size: 5_000_000_000, language: nil, source: nil}
-    @q2 %{resolution: "720p", size: 3_000_000_000, language: "FRENCH", source: nil}
+    # Quality maps carry the media-info capture lists too (import_episodes always sets them).
+    @q1 %{
+      resolution: "1080p",
+      size: 5_000_000_000,
+      language: nil,
+      source: nil,
+      audio_languages: ["eng"],
+      embedded_subtitles: [],
+      sidecar_subtitles: []
+    }
+    @q2 %{
+      resolution: "720p",
+      size: 3_000_000_000,
+      language: "FRENCH",
+      source: nil,
+      audio_languages: ["fre"],
+      embedded_subtitles: [],
+      sidecar_subtitles: []
+    }
 
     test "sets each imported episode's own file_path, clears grab_id, deletes the grab, broadcasts" do
       {series, season} = series_with_season()
@@ -166,7 +183,7 @@ defmodule Cinder.CatalogTvPipelineTest do
       assert Repo.get(Grab, grab.id) == nil
     end
 
-    test "persists imported quality (resolution, size, language) per episode" do
+    test "persists imported quality + media-info capture lists per episode" do
       {_series, season} = series_with_season()
       ep = episode(season, %{})
       dest = "/lib/s01e01.mkv"
@@ -175,7 +192,15 @@ defmodule Cinder.CatalogTvPipelineTest do
       assert {:ok, _} =
                Catalog.finish_grab(grab, [
                  {ep.id, dest,
-                  %{resolution: "1080p", size: 123, language: "FRENCH", source: "bluray"}}
+                  %{
+                    resolution: "1080p",
+                    size: 123,
+                    language: "FRENCH",
+                    source: "bluray",
+                    audio_languages: ["fre", "eng"],
+                    embedded_subtitles: ["eng"],
+                    sidecar_subtitles: ["fr"]
+                  }}
                ])
 
       r = Repo.get!(Episode, ep.id)
@@ -184,6 +209,9 @@ defmodule Cinder.CatalogTvPipelineTest do
       assert r.imported_size == 123
       assert r.imported_language == "FRENCH"
       assert r.imported_source == "bluray"
+      assert r.imported_audio_languages == ["fre", "eng"]
+      assert r.imported_embedded_subtitles == ["eng"]
+      assert r.imported_sidecar_subtitles == ["fr"]
     end
 
     test "partial pack: bumps search_attempts on the non-imported episode, deletes the grab" do
