@@ -71,6 +71,7 @@ defmodule Cinder.Library do
              upgrade?(movie, new_q)
            end) do
       scan(:movies, dest)
+      fetch_subtitles(movie_criteria(movie), dest)
       {:ok, dest, quality}
     end
   end
@@ -307,6 +308,7 @@ defmodule Cinder.Library do
         {:ok, imported} ->
           log_unmatched(unmatched)
           scan(:tv, content_path)
+          fetch_episode_subtitles(imported, episodes)
           {:ok, imported, unmatched}
 
         {:error, _reason} = err ->
@@ -502,6 +504,38 @@ defmodule Cinder.Library do
   defp log_scan_failure(dest, reason) do
     Logger.warning("media-server scan failed after importing #{dest}: #{inspect(reason)}")
   end
+
+  # Best-effort, exactly like scan/2: a subtitle failure (return, raise, or exit deep in the HTTP
+  # stack) must never turn a correctly-placed file into :import_failed. Cinder.Subtitles.fetch_missing/2
+  # is already best-effort internally, but this wraps it too so a criteria-building surprise can't
+  # sink the import.
+  defp fetch_subtitles(criteria, dest) do
+    Cinder.Subtitles.fetch_missing(criteria, dest)
+  rescue
+    e -> Logger.warning("subtitle fetch failed after importing #{dest}: #{inspect(e)}")
+  catch
+    kind, value ->
+      Logger.warning("subtitle fetch failed after importing #{dest}: #{inspect({kind, value})}")
+  end
+
+  defp movie_criteria(%Movie{imdb_id: imdb_id, tmdb_id: tmdb_id}),
+    do: %{imdb_id: imdb_id, tmdb_id: tmdb_id}
+
+  # Match each imported {episode_id, dest, _quality} back to its Episode (for the series tmdb_id +
+  # season/episode numbers) and fetch a subtitle for it; an id absent from `episodes` is skipped.
+  defp fetch_episode_subtitles(imported, episodes) do
+    by_id = Map.new(episodes, &{&1.id, &1})
+
+    for {ep_id, dest, _q} <- imported, ep = by_id[ep_id], not is_nil(ep) do
+      fetch_subtitles(episode_criteria(ep), dest)
+    end
+  end
+
+  defp episode_criteria(%Episode{
+         episode_number: number,
+         season: %{season_number: season, series: %Series{tmdb_id: tmdb_id}}
+       }),
+       do: %{tmdb_id: tmdb_id, season: season, episode: number}
 
   # content_path is a file for single-file torrents, a folder for multi-file ones.
   defp resolve_source(path) do

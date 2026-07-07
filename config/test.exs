@@ -100,12 +100,15 @@ config :cinder, Cinder.Notifier.Discord,
   webhook_url: "https://discord.test/hook",
   req_options: [plug: {Req.Test, Cinder.DiscordStub}, retry: false]
 
+# Blank by default (feature off): fetch_missing/2 makes zero provider/filesystem calls when
+# wanted_languages/0 is [], so the existing async import suite's precise Mox expectations are
+# unaffected. Tests exercising subtitles opt in per-test (subtitles_test.exs, library_subtitles_test.exs).
 config :cinder, Cinder.Subtitles.Provider.OpenSubtitles,
   base_url: "https://api.opensubtitles.test/api/v1",
   api_key: "test-key",
   username: "user",
   password: "pass",
-  languages: "en,fr",
+  languages: "",
   req_options: [plug: {Req.Test, Cinder.OpenSubtitlesStub}, retry: false]
 
 config :cinder, Cinder.Library.MediaServer.Jellyfin,
