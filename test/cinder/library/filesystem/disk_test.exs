@@ -48,6 +48,23 @@ defmodule Cinder.Library.Filesystem.DiskTest do
   end
 
   @tag :tmp_dir
+  test "find_files/1 finds files under a dir whose name has glob metacharacters", %{tmp_dir: tmp} do
+    # cinder names libraries `Title (Year) {tmdb-N}`; `{}` is Path.wildcard brace-expansion, so
+    # globbing the literal base path silently matches nothing. find_files must not glob the base.
+    lib = Path.join(tmp, "Cowboy Bebop (1998) {tmdb-30991}/Season 01")
+    File.mkdir_p!(lib)
+    video = Path.join(lib, "Cowboy Bebop (1998) {tmdb-30991} - S01E07.mkv")
+    sub = Path.join(lib, "Cowboy Bebop (1998) {tmdb-30991} - S01E07.en.srt")
+    File.write!(video, "x")
+    File.write!(sub, "subtitle")
+
+    assert {:ok, files} = Disk.find_files(lib)
+    paths = Enum.map(files, fn {p, _size} -> p end)
+    assert video in paths
+    assert sub in paths
+  end
+
+  @tag :tmp_dir
   test "cp/2 byte-copies content into an independent inode (not a hardlink)", %{tmp_dir: tmp} do
     src = Path.join(tmp, "src.mkv")
     dst = Path.join(tmp, "dst.mkv")

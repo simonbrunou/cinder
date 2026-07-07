@@ -11,22 +11,25 @@ defmodule Cinder.Library.Filesystem.Disk do
   def dir?(path), do: File.dir?(path)
 
   @impl true
-  def find_files(dir) do
-    files =
-      dir
-      |> Path.join("**/*")
-      # match_dot: true so the import's stale-temp sweep can see its own `.cinder-tmp-*` dotfiles
-      # (Path.wildcard defaults match_dot: false, which would skip them and make the sweep a no-op).
-      |> Path.wildcard(match_dot: true)
-      |> Enum.filter(&File.regular?/1)
-      |> Enum.flat_map(fn path ->
-        case File.stat(path) do
-          {:ok, %File.Stat{size: size}} -> [{path, size}]
-          {:error, _reason} -> []
-        end
-      end)
+  def find_files(dir), do: {:ok, walk(dir)}
 
-    {:ok, files}
+  # Recursively collect `{path, size}` for every regular file under `dir`, dotfiles INCLUDED (the
+  # import's stale-temp sweep must see its own `.cinder-tmp-*` leftovers). Walks with File.ls rather
+  # than Path.wildcard: cinder names libraries `Title (Year) {tmdb-N}`, and `{}` is wildcard
+  # brace-expansion — globbing the literal base path would match nothing (`{}`, `[]`, `?`, `*` all).
+  defp walk(dir) do
+    case File.ls(dir) do
+      {:ok, entries} -> Enum.flat_map(entries, &classify(Path.join(dir, &1)))
+      {:error, _reason} -> []
+    end
+  end
+
+  defp classify(path) do
+    case File.stat(path) do
+      {:ok, %File.Stat{type: :directory}} -> walk(path)
+      {:ok, %File.Stat{type: :regular, size: size}} -> [{path, size}]
+      _ -> []
+    end
   end
 
   @impl true
