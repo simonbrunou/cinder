@@ -91,4 +91,87 @@ defmodule Cinder.SubtitlesTest do
 
     assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
   end
+
+  test "fetch_missing/2 swallows a provider raise (best-effort) and downloads nothing" do
+    Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "en")
+
+    Cinder.Library.FilesystemMock
+    |> expect(:lstat, fn "/lib/M/M.en.srt" -> {:error, :enoent} end)
+
+    Cinder.Subtitles.ProviderMock
+    |> expect(:search, fn _ -> raise "boom" end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
+  end
+
+  test "fetch_missing/2 swallows a filesystem raise from the sidecar-existence check itself" do
+    Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "en")
+
+    # lstat raising must be caught by fetch_one/3's rescue/catch, not escape fetch_missing/2 —
+    # no search/download/write expectation is set, so any of those calls fails verify_on_exit!.
+    Cinder.Library.FilesystemMock
+    |> expect(:lstat, fn "/lib/M/M.en.srt" -> raise "fs down" end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
+  end
+
+  test "fetch_missing/2 picks the correct candidate among AI/HI/nil-file_id/wrong-language noise" do
+    Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "en")
+
+    Cinder.Library.FilesystemMock
+    |> expect(:lstat, fn "/lib/M/M.en.srt" -> {:error, :enoent} end)
+    |> expect(:write, fn "/lib/M/M.en.srt", "SRT" -> :ok end)
+
+    Cinder.Subtitles.ProviderMock
+    |> expect(:search, fn %{imdb_id: "tt1", languages: ["en"]} ->
+      {:ok,
+       [
+         %{
+           file_id: 1,
+           language: "en",
+           downloads: 900,
+           hearing_impaired: false,
+           ai_translated: true
+         },
+         %{
+           file_id: 2,
+           language: "en",
+           downloads: 800,
+           hearing_impaired: true,
+           ai_translated: false
+         },
+         %{
+           file_id: nil,
+           language: "en",
+           downloads: 700,
+           hearing_impaired: false,
+           ai_translated: false
+         },
+         %{
+           file_id: 4,
+           language: "FR",
+           downloads: 1000,
+           hearing_impaired: false,
+           ai_translated: false
+         },
+         %{
+           file_id: 5,
+           language: "en",
+           downloads: 42,
+           hearing_impaired: false,
+           ai_translated: false
+         },
+         %{
+           file_id: 6,
+           language: "en",
+           downloads: 10,
+           hearing_impaired: false,
+           ai_translated: false
+         }
+       ]}
+    end)
+    |> expect(:download, fn 5 -> {:ok, "SRT"} end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
+  end
 end
