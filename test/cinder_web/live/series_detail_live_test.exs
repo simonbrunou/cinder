@@ -132,6 +132,32 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert html =~ "subtitle fr"
   end
 
+  test "shows subtitle badges on a filed episode with empty/untagged audio", %{conn: conn} do
+    series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 8204, title: "S", year: 2010})
+
+    season =
+      Repo.insert!(%Cinder.Catalog.Season{
+        series_id: series.id,
+        season_number: 1,
+        monitored: true
+      })
+
+    Repo.insert!(%Cinder.Catalog.Episode{
+      season_id: season.id,
+      tmdb_episode_id: 8205,
+      episode_number: 1,
+      title: "Ep1",
+      monitored: true,
+      file_path: "/tmp/cinder-test-tv-library/S (2010)/Season 01/S (2010) - S01E01.mkv",
+      imported_audio_languages: [],
+      imported_embedded_subtitles: ["en"]
+    })
+
+    {:ok, _lv, html} = live(conn, ~p"/series/#{series.id}")
+    refute html =~ ~s(aria-label="audio)
+    assert html =~ "subtitle en"
+  end
+
   test "no audio/subtitle badges on a filed episode with no media info", %{conn: conn} do
     series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 8202, title: "S", year: 2010})
 

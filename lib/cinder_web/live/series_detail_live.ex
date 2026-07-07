@@ -588,7 +588,12 @@ defmodule CinderWeb.SeriesDetailLive do
                 <span class="w-8 shrink-0 text-sm tabular-nums text-base-content/70">{ep.episode_number}</span>
                 <span class="min-w-0 flex-1 break-words text-sm">{ep.title}</span>
                 <span
-                  :if={ep.file_path && ep.imported_audio_languages not in [nil, []]}
+                  :if={
+                    ep.file_path &&
+                      (ep.imported_audio_languages || []) ++
+                        (ep.imported_embedded_subtitles || []) ++
+                        (ep.imported_sidecar_subtitles || []) != []
+                  }
                   class="ml-2 inline-flex flex-wrap gap-1 align-middle"
                 >
                   <span
