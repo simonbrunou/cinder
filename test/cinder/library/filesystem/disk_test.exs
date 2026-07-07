@@ -73,4 +73,14 @@ defmodule Cinder.Library.Filesystem.DiskTest do
     assert File.read!(dst) == "new"
     refute File.exists?(src)
   end
+
+  test "write/2 writes bytes to disk" do
+    dir = Path.join(System.tmp_dir!(), "cinder-fs-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+    path = Path.join(dir, "out.srt")
+
+    assert :ok = Disk.write(path, "1\n00:00:01,000 --> 00:00:02,000\nhi\n")
+    assert File.read!(path) == "1\n00:00:01,000 --> 00:00:02,000\nhi\n"
+  end
 end
