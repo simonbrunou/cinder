@@ -14,10 +14,11 @@ defmodule Cinder.Library.MediaInfo do
   """
 
   @doc """
-  Returns the language codes of `path`'s audio streams (lowercased; untagged/`und` streams
-  dropped), or `{:error, reason}` if the probe can't run. The importer treats both an empty list
-  and an error as "can't verify" and imports anyway — the check only parks on a *positive*
-  mismatch, never on missing data.
+  Probes `path`'s streams. Returns `{:ok, %{audio: [code], subtitles: [code]}}` — the language
+  codes of the audio and subtitle streams (lowercased; untagged/`und` dropped) — or
+  `{:error, reason}` if the probe can't run. The importer treats an error as "can't verify" and
+  imports anyway; the audio park check reads `.audio` and parks only on a *positive* mismatch.
   """
-  @callback audio_languages(path :: String.t()) :: {:ok, [String.t()]} | {:error, term()}
+  @callback probe(path :: String.t()) ::
+              {:ok, %{audio: [String.t()], subtitles: [String.t()]}} | {:error, term()}
 end

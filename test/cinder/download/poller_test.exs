@@ -291,7 +291,8 @@ defmodule Cinder.Download.PollerTest do
 
     start_supervised!({Poller, interval: 60_000})
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
-    stub(Cinder.Library.MediaInfoMock, :audio_languages, fn _ -> {:ok, ["hun"]} end)
+
+    stub(Cinder.Library.MediaInfoMock, :probe, fn _ -> {:ok, %{audio: ["hun"], subtitles: []}} end)
 
     assert :ok = Poller.poll()
     assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
@@ -606,7 +607,10 @@ defmodule Cinder.Download.PollerTest do
 
       start_supervised!({Poller, interval: 60_000})
       stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
-      stub(Cinder.Library.MediaInfoMock, :audio_languages, fn _ -> {:ok, ["hun"]} end)
+
+      stub(Cinder.Library.MediaInfoMock, :probe, fn _ ->
+        {:ok, %{audio: ["hun"], subtitles: []}}
+      end)
 
       assert :ok = Poller.poll()
       assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)

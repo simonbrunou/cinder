@@ -15,7 +15,7 @@ defmodule Cinder.Library do
 
   alias Cinder.Acquisition.{Language, Parser}
   alias Cinder.Catalog.{Episode, Movie, Series}
-  alias Cinder.Library.Upgrade
+  alias Cinder.Library.{Sidecars, Upgrade}
 
   @video_exts ~w(.mkv .mp4 .avi .m4v .mov .wmv .ts)
   @illegal ~r/[\/\\:*?"<>|]/
@@ -55,7 +55,7 @@ defmodule Cinder.Library do
     replace? = Keyword.get(opts, :replace, false)
 
     with {:ok, root} <- root(:movies),
-         {:ok, source} <- resolve_source(movie.file_path),
+         {:ok, source, folder?} <- resolve_source(movie.file_path),
          :ok <-
            verify_audio(
              source,
@@ -63,13 +63,17 @@ defmodule Cinder.Library do
            ),
          {:ok, %{size: size, inode: si, major_device: sdev}} <- fs().lstat(source),
          parsed = Parser.parse(Path.basename(movie.file_path)),
-         new_q = new_quality(parsed, size),
+         new_q =
+           new_quality(parsed, size)
+           |> Map.merge(capture_media(source))
+           |> Map.put_new(:sidecar_subtitles, []),
          dest = build_dest(movie, source, root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
-         {:ok, quality} <-
+         {:ok, quality, placed?} <-
            place(source, dest, {si, sdev}, movie, new_q, replace?, fn ->
              upgrade?(movie, new_q)
            end) do
+      quality = maybe_link_sidecars(quality, placed?, folder?, source, dest)
       scan(:movies, dest)
       fetch_subtitles(fn -> Cinder.Subtitles.movie_criteria(movie) end, dest)
       {:ok, dest, quality}
@@ -83,7 +87,7 @@ defmodule Cinder.Library do
   defp place(source, dest, {si, sdev}, record, new_q, replace?, upgrade_fun) do
     case fs().ln(source, dest) do
       :ok ->
-        {:ok, new_q}
+        {:ok, new_q, true}
 
       {:error, :exdev} ->
         # Fresh placement across filesystems: the hardlink can't span devices, so copy the bytes in
@@ -91,7 +95,7 @@ defmodule Cinder.Library do
         # is the *fresh* case because on Linux (the deployment target) link(2) reports EEXIST before
         # EXDEV, so a cross-fs collision with an existing dest surfaces as :eexist (handled below), not
         # :exdev. The copy logs at :info from link_or_copy/2 — the one choke-point both copy paths hit.
-        with :ok <- replace(source, dest), do: {:ok, new_q}
+        with :ok <- replace(source, dest), do: {:ok, new_q, true}
 
       {:error, :eexist} ->
         with {:ok, %{inode: di, major_device: ddev}} <- fs().lstat(dest) do
@@ -117,12 +121,13 @@ defmodule Cinder.Library do
   end
 
   # Same inode: the file is already in place (idempotent). Normally keep the recorded quality, but a
-  # forced replace (e.g. manual re-import after a crash) must record the NEW quality.
+  # forced replace (e.g. manual re-import after a crash) must record the NEW quality. `placed?` is
+  # false either way — no fresh bytes landed, so sidecars are not re-linked.
   defp do_resolve(_source, _dest, true, _upgrade, movie, new_q, replace?),
-    do: {:ok, if(replace?, do: new_q, else: existing_quality(movie, new_q))}
+    do: {:ok, if(replace?, do: new_q, else: existing_quality(movie, new_q)), false}
 
   defp do_resolve(source, dest, false, true, _movie, new_q, _replace?) do
-    with :ok <- replace(source, dest), do: {:ok, new_q}
+    with :ok <- replace(source, dest), do: {:ok, new_q, true}
   end
 
   defp do_resolve(_source, dest, false, false, movie, new_q, _replace?),
@@ -132,19 +137,54 @@ defmodule Cinder.Library do
     if nil_q?(record), do: new_q, else: old_quality(record)
   end
 
-  # Quality maps shared by movie + episode import (both carry the imported_* fields).
+  # Quality maps shared by movie + episode import (both carry the imported_* fields). Reads the
+  # stored media-info lists too, so the keep branch carries them forward unchanged.
   defp old_quality(record) do
     %{
       resolution: record.imported_resolution,
       size: record.imported_size,
       language: record.imported_language,
-      source: record.imported_source
+      source: record.imported_source,
+      audio_languages: record.imported_audio_languages,
+      embedded_subtitles: record.imported_embedded_subtitles,
+      sidecar_subtitles: record.imported_sidecar_subtitles
     }
   end
 
   defp new_quality(parsed, size) do
     %{resolution: parsed.resolution, source: parsed.source, size: size, language: parsed.language}
   end
+
+  # Probe the source's audio + embedded-subtitle languages for storage on the imported row. Empty
+  # lists when media_info is disabled or the probe errors — never blocks the import. Runs on every
+  # import (folder or single-file); the release's sidecar languages are captured separately by
+  # maybe_link_sidecars/5 (a folder scan) only when a fresh file is actually placed.
+  defp capture_media(source) do
+    case media_info() do
+      nil -> %{audio_languages: [], embedded_subtitles: []}
+      impl -> probe_media(impl, source)
+    end
+  end
+
+  defp probe_media(impl, source) do
+    case impl.probe(source) do
+      {:ok, %{audio: audio, subtitles: subtitles}} ->
+        %{audio_languages: audio, embedded_subtitles: subtitles}
+
+      _ ->
+        %{audio_languages: [], embedded_subtitles: []}
+    end
+  end
+
+  # Hardlink the release's sidecar subtitles next to a freshly-placed dest and record their
+  # languages — only when the file was actually placed (`placed?`, not a keep/idempotent no-op)
+  # AND the download was a folder (`folder?`); a single-file download ships no sidecars. Best-effort
+  # via Sidecars.link/2, which never raises. Otherwise the quality's `sidecar_subtitles` stays as it
+  # was (the fresh `[]` on new_q, or the stored value on the keep branch's old_quality).
+  defp maybe_link_sidecars(quality, true, true, source, dest),
+    do: Map.put(quality, :sidecar_subtitles, Sidecars.link(source, dest))
+
+  defp maybe_link_sidecars(quality, _placed?, _folder?, _source, _dest), do: quality
 
   defp nil_q?(m),
     do: is_nil(m.imported_resolution) and is_nil(m.imported_size) and is_nil(m.imported_language)
@@ -168,7 +208,7 @@ defmodule Cinder.Library do
       "kept existing #{inspect(old_q.resolution)} file at #{dest}; new release not an upgrade"
     )
 
-    {:ok, old_q}
+    {:ok, old_q, false}
   end
 
   defp preferred_resolutions(kind),
@@ -244,9 +284,9 @@ defmodule Cinder.Library do
   end
 
   defp check_audio(impl, source, target) do
-    case impl.audio_languages(source) do
-      {:ok, []} -> :ok
-      {:ok, langs} -> audio_result(Language.audio_satisfies?(target, langs))
+    case impl.probe(source) do
+      {:ok, %{audio: []}} -> :ok
+      {:ok, %{audio: langs}} -> audio_result(Language.audio_satisfies?(target, langs))
       {:error, _reason} -> :ok
     end
   end
@@ -290,7 +330,7 @@ defmodule Cinder.Library do
   end
 
   defp do_import_episodes(content_path, episodes, root) do
-    with {:ok, videos} <- video_files(content_path) do
+    with {:ok, videos, folder?} <- video_files(content_path) do
       {to_import, unmatched} =
         videos
         |> match_episodes(episodes)
@@ -298,7 +338,7 @@ defmodule Cinder.Library do
         |> resolve(videos, episodes)
         |> reject_wrong_audio(episodes)
 
-      case link_all(to_import, root, episode_target(episodes)) do
+      case link_all(to_import, root, episode_target(episodes), folder?) do
         {:ok, []} ->
           # Nothing mapped — still surface the offending file names (don't silently drop them)
           # so a parser gap on a real release is diagnosable; the poller parks the grab.
@@ -363,13 +403,14 @@ defmodule Cinder.Library do
 
   defp episode_target(_episodes), do: nil
 
-  # All video files under content_path: the folder's video files for a pack/multi-file download,
-  # or the lone file itself for a single-file one (size 0 — it's the only candidate).
+  # All video files under content_path, plus whether content_path is a folder. The folder's video
+  # files for a pack/multi-file download, or the lone file itself for a single-file one (size 0 —
+  # it's the only candidate). `folder?` gates sidecar linking (single-file downloads ship none).
   defp video_files(path) do
     if fs().dir?(path) do
-      with {:ok, files} <- fs().find_files(path), do: {:ok, only_videos(files)}
+      with {:ok, files} <- fs().find_files(path), do: {:ok, only_videos(files), true}
     else
-      {:ok, only_videos([{path, 0}])}
+      {:ok, only_videos([{path, 0}]), false}
     end
   end
 
@@ -429,27 +470,30 @@ defmodule Cinder.Library do
   # Hardlink each match into its tmdb-tagged dest, resolving a same-episode collision by upgrade
   # decision (replace if the new file is better, else keep). Returns {ep_id, dest, quality} per episode;
   # a transient FS error halts and returns {:error, _} so the grab retries the whole import next tick.
-  defp link_all(to_import, root, target) do
+  defp link_all(to_import, root, target, folder?) do
     Enum.reduce_while(to_import, {:ok, []}, fn {ep, source}, {:ok, acc} ->
-      case place_episode_file(ep, source, root, target) do
+      case place_episode_file(ep, source, root, target, folder?) do
         {:ok, dest, q} -> {:cont, {:ok, [{ep.id, dest, q} | acc]}}
         {:error, _} = err -> {:halt, err}
       end
     end)
   end
 
-  defp place_episode_file(ep, source, root, target) do
+  defp place_episode_file(ep, source, root, target, folder?) do
     dest = build_episode_dest(ep, source, root)
 
     with {:ok, %{size: size, inode: si, major_device: sdev}} <- fs().lstat(source),
          parsed = Parser.parse(Path.basename(source)),
-         new_q = new_quality(parsed, size),
+         new_q =
+           new_quality(parsed, size)
+           |> Map.merge(capture_media(source))
+           |> Map.put_new(:sidecar_subtitles, []),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
-         {:ok, q} <-
+         {:ok, q, placed?} <-
            place(source, dest, {si, sdev}, ep, new_q, false, fn ->
              ep_upgrade?(ep, new_q, target)
            end) do
-      {:ok, dest, q}
+      {:ok, dest, maybe_link_sidecars(q, placed?, folder?, source, dest)}
     end
   end
 
@@ -531,12 +575,16 @@ defmodule Cinder.Library do
     end
   end
 
-  # content_path is a file for single-file torrents, a folder for multi-file ones.
+  # content_path is a file for single-file torrents, a folder for multi-file ones. Returns the
+  # picked video plus whether the download was a folder (`folder?` gates sidecar linking).
   defp resolve_source(path) do
     if fs().dir?(path) do
-      with {:ok, files} <- fs().find_files(path), do: pick_video(files)
+      with {:ok, files} <- fs().find_files(path),
+           {:ok, video} <- pick_video(files) do
+        {:ok, video, true}
+      end
     else
-      {:ok, path}
+      {:ok, path, false}
     end
   end
 

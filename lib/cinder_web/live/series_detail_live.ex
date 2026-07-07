@@ -587,6 +587,30 @@ defmodule CinderWeb.SeriesDetailLive do
                 />
                 <span class="w-8 shrink-0 text-sm tabular-nums text-base-content/70">{ep.episode_number}</span>
                 <span class="min-w-0 flex-1 break-words text-sm">{ep.title}</span>
+                <span
+                  :if={
+                    ep.file_path &&
+                      (ep.imported_audio_languages || []) ++
+                        (ep.imported_embedded_subtitles || []) ++
+                        (ep.imported_sidecar_subtitles || []) != []
+                  }
+                  class="ml-2 inline-flex flex-wrap gap-1 align-middle"
+                >
+                  <span
+                    :for={l <- ep.imported_audio_languages || []}
+                    class="badge badge-ghost badge-xs"
+                    aria-label={gettext("audio %{lang}", lang: l)}
+                  >{l}</span>
+                  <span
+                    :for={
+                      l <-
+                        (ep.imported_embedded_subtitles || []) ++
+                          (ep.imported_sidecar_subtitles || [])
+                    }
+                    class="badge badge-outline badge-xs"
+                    aria-label={gettext("subtitle %{lang}", lang: l)}
+                  >{l}</span>
+                </span>
               </div>
               <div class="flex flex-wrap items-center gap-x-3 gap-y-1 pl-11 sm:pl-0">
                 <time

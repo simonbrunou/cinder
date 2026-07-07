@@ -25,6 +25,9 @@ defmodule Cinder.Catalog.Episode do
     field :imported_size, :integer
     field :imported_language, :string
     field :imported_source, :string
+    field :imported_audio_languages, {:array, :string}
+    field :imported_embedded_subtitles, {:array, :string}
+    field :imported_sidecar_subtitles, {:array, :string}
     belongs_to :season, Season
     belongs_to :grab, Grab
 
@@ -55,7 +58,19 @@ defmodule Cinder.Catalog.Episode do
       :imported_resolution,
       :imported_size,
       :imported_language,
-      :imported_source
+      :imported_source,
+      :imported_audio_languages,
+      :imported_embedded_subtitles,
+      :imported_sidecar_subtitles
+    ])
+  end
+
+  @doc "Changeset for the import-time media-info capture / backfill. Descriptive, not pipeline state — separate from transition_changeset/2, so it never touches status/file/download fields."
+  def media_info_changeset(episode, attrs) do
+    cast(episode, attrs, [
+      :imported_audio_languages,
+      :imported_embedded_subtitles,
+      :imported_sidecar_subtitles
     ])
   end
 

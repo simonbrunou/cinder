@@ -151,6 +151,11 @@ Sidecars are named `<video basename>.<lang>.srt` — e.g. `Movie (2020) {tmdb-1}
 `Show (Year) - S01E02.fr.srt` — the convention both Jellyfin and Plex auto-detect next to the video
 file, with no library scan configuration required.
 
+Separately from OpenSubtitles, any loose subtitle files (`.srt`, `.ass`, …) the release itself
+shipped are imported alongside the video only for folder/pack downloads — a bare single-file
+download has no sibling files to carry over — while embedded subtitle tracks are still detected
+for single-file imports either way.
+
 **Matching is id-based** (IMDb id for movies, TMDB id + season/episode for TV), not matched against
 your specific file's hash. That's precise enough to find the right title, but it is a real ceiling:
 an id match returns subtitles uploaded for *that title*, not verified against your release's exact

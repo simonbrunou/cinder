@@ -412,6 +412,36 @@ defmodule Cinder.Catalog do
   end
 
   @doc """
+  Persists the probed media info (audio languages + embedded/sidecar subtitle languages) onto a
+  movie or episode. Descriptive-only — used by the import capture and the backfill task; not a
+  status transition.
+  """
+  def set_media_info(%Movie{} = movie, info) do
+    with {:ok, updated} <-
+           movie |> Movie.media_info_changeset(media_info_attrs(info)) |> Repo.update() do
+      broadcast({:movie_updated, updated})
+      {:ok, updated}
+    end
+  end
+
+  def set_media_info(%Episode{} = episode, info) do
+    with {:ok, updated} <-
+           episode |> Episode.media_info_changeset(media_info_attrs(info)) |> Repo.update() do
+      broadcast_series(series_id_for_season(updated.season_id))
+      {:ok, updated}
+    end
+  end
+
+  # Translate the bare-keyed capture map to the imported_* column names the changeset casts.
+  defp media_info_attrs(info) do
+    %{
+      imported_audio_languages: Map.get(info, :audio_languages, []),
+      imported_embedded_subtitles: Map.get(info, :embedded_subtitles, []),
+      imported_sidecar_subtitles: Map.get(info, :sidecar_subtitles, [])
+    }
+  end
+
+  @doc """
   Sets a series' preferred language and zeroes `search_attempts` on its still-wanted
   episodes (no file, no grab) so a previously language-stranded season re-enters the
   search sweep. Available / in-flight episodes are untouched.
@@ -945,7 +975,10 @@ defmodule Cinder.Catalog do
           imported_resolution: nil,
           imported_size: nil,
           imported_language: nil,
-          imported_source: nil
+          imported_source: nil,
+          imported_audio_languages: nil,
+          imported_embedded_subtitles: nil,
+          imported_sidecar_subtitles: nil
         })
         |> maybe_unmonitor(unmonitor?)
 
@@ -1015,6 +1048,9 @@ defmodule Cinder.Catalog do
           imported_size: nil,
           imported_language: nil,
           imported_source: nil,
+          imported_audio_languages: nil,
+          imported_embedded_subtitles: nil,
+          imported_sidecar_subtitles: nil,
           updated_at: now()
         ] ++ if(unmonitor?, do: [monitored: false], else: [])
 
@@ -1295,6 +1331,9 @@ defmodule Cinder.Catalog do
               imported_size: q.size,
               imported_language: q.language,
               imported_source: q.source,
+              imported_audio_languages: q.audio_languages,
+              imported_embedded_subtitles: q.embedded_subtitles,
+              imported_sidecar_subtitles: q.sidecar_subtitles,
               updated_at: ts
             ]
           )

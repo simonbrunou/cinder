@@ -72,6 +72,43 @@ defmodule CinderWeb.MovieDetailLiveTest do
     assert html =~ "Inception.2010.1080p.BluRay.x264-GRP"
   end
 
+  test "shows audio + subtitle languages when present", %{conn: conn} do
+    movie =
+      movie_fixture(%{
+        status: :available,
+        file_path: "/l/M/M.mkv",
+        imported_audio_languages: ["en", "fr"],
+        imported_embedded_subtitles: ["en"],
+        imported_sidecar_subtitles: ["fr"]
+      })
+
+    stub_details(movie.tmdb_id)
+
+    {:ok, _lv, html} = live(conn, ~p"/movies/#{movie.id}")
+    assert html =~ "Audio"
+    assert html =~ "en"
+    assert html =~ "fr"
+    assert html =~ "embedded"
+    assert html =~ "sidecar"
+  end
+
+  test "hides the Audio/Subtitles rows when the language lists are empty or nil", %{conn: conn} do
+    movie =
+      movie_fixture(%{
+        status: :available,
+        file_path: "/l/M/M.mkv",
+        imported_audio_languages: [],
+        imported_embedded_subtitles: nil,
+        imported_sidecar_subtitles: nil
+      })
+
+    stub_details(movie.tmdb_id)
+
+    {:ok, _lv, html} = live(conn, ~p"/movies/#{movie.id}")
+    refute html =~ "Audio"
+    refute html =~ "Subtitles"
+  end
+
   test "a non-integer id redirects to the library instead of crashing", %{conn: conn} do
     assert {:error, {:live_redirect, %{to: "/library"}}} = live(conn, ~p"/movies/not-an-id")
   end

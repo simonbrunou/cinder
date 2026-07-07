@@ -45,6 +45,9 @@ defmodule Cinder.Catalog.Movie do
     field :imported_size, :integer
     field :imported_language, :string
     field :imported_source, :string
+    field :imported_audio_languages, {:array, :string}
+    field :imported_embedded_subtitles, {:array, :string}
+    field :imported_sidecar_subtitles, {:array, :string}
     field :overview, :string
     field :runtime, :integer
     field :genres, {:array, :string}
@@ -98,8 +101,20 @@ defmodule Cinder.Catalog.Movie do
       :imported_resolution,
       :imported_size,
       :imported_language,
-      :imported_source
+      :imported_source,
+      :imported_audio_languages,
+      :imported_embedded_subtitles,
+      :imported_sidecar_subtitles
     ])
     |> validate_required([:status])
+  end
+
+  @doc "Changeset for the import-time media-info capture / backfill. Descriptive, not pipeline state — separate from transition_changeset/2, so it never touches status/file/download fields."
+  def media_info_changeset(movie, attrs) do
+    cast(movie, attrs, [
+      :imported_audio_languages,
+      :imported_embedded_subtitles,
+      :imported_sidecar_subtitles
+    ])
   end
 end
