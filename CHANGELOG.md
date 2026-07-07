@@ -6,6 +6,12 @@ All notable changes to Cinder are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Subtitles.** Optional OpenSubtitles.com integration fetches `.srt` sidecars for imported
+  movies and episodes in configured languages, at import time and via a 12h backfill sweep.
+  Opt-in: set `Subtitle languages` + OpenSubtitles credentials in Settings. Best-effort — never
+  blocks an import.
+
 ## [1.0.0] - 2026-07-03
 
 First public release — a single-container, self-hosted replacement for the Sonarr/Radarr/Seerr

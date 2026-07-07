@@ -130,6 +130,49 @@ refused. Always on in the shipped image (there is no runtime toggle); setting a 
 preference to *Any* skips the check for that title, and an image without `ffprobe` skips it
 entirely (probes then import-permissive).
 
+## Subtitles
+
+Cinder can fetch `.srt` subtitle sidecars for imported movies and episodes from
+[OpenSubtitles.com](https://www.opensubtitles.com/), in the languages your household wants. It's
+**opt-in and off by default**: nothing is fetched until you set both `Subtitle languages`
+(comma-separated, e.g. `en,fr`) and your OpenSubtitles API key, username, and password in the
+**Subtitles** group in `/settings`. A blank language list keeps the feature fully inert — no
+searches, no downloads, no OpenSubtitles account required.
+
+Two triggers fetch subtitles, both **best-effort** — a subtitle miss never fails or parks a video
+import:
+
+- **At import time**, right after a movie or episode's file lands.
+- **A 12h background sweep** that re-checks every already-imported movie and episode for a missing
+  sidecar in a wanted language — this catches subtitles uploaded to OpenSubtitles *after* the
+  release landed, without needing a re-import.
+
+Sidecars are named `<video basename>.<lang>.srt` — e.g. `Movie (2020) {tmdb-1}.en.srt`,
+`Show (Year) - S01E02.fr.srt` — the convention both Jellyfin and Plex auto-detect next to the video
+file, with no library scan configuration required.
+
+**Matching is id-based** (IMDb id for movies, TMDB id + season/episode for TV), not matched against
+your specific file's hash. That's precise enough to find the right title, but it is a real ceiling:
+an id match returns subtitles uploaded for *that title*, not verified against your release's exact
+framerate, so an atypical release (e.g. a 25fps rip paired with a 23.976fps subtitle) can drift out
+of sync over a long runtime. There's no automatic re-sync — if that happens, source a subtitle
+manually.
+
+Candidate subtitles are filtered to exclude **hearing-impaired** and **machine-translated**
+results; among what's left, the one with the most downloads wins.
+
+**Quota:** a free OpenSubtitles account allows **20 subtitle downloads/day**. Searching doesn't
+count against it, so the 12h sweep re-checking for still-missing subtitles costs nothing extra.
+Once the daily quota is spent, downloads simply stop for the rest of that tick (logged, not
+retried) and resume automatically the next day.
+
+**Don't want to hand Cinder OpenSubtitles credentials?** Both Jellyfin and Plex have their own
+subtitle plugins that fetch subtitles independently, with zero Cinder-side configuration — the
+existing zero-config alternative for a household that would rather not. This is also why Cinder
+doesn't shell out to Bazarr instead of building its own fetch: Bazarr has no standalone folder-scan
+mode, it reads its media list from Sonarr/Radarr's API — so running it against Cinder's library
+would mean also running Sonarr/Radarr, defeating the point of Cinder replacing them.
+
 ## TV: monitoring, season packs, and the calendar
 
 **TV requests work like movie requests.** Any authenticated user can search for a TV show on
