@@ -11,6 +11,13 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
   @default_base "https://api.opensubtitles.com/api/v1"
   @token_key {__MODULE__, :token}
 
+  # Bounded so a hung/blackholed OpenSubtitles can't stall the (synchronous) import/sweep call
+  # sites. health/0 gets the repo's 3s connect+receive probe convention (matches
+  # Prowlarr/Jellyfin/Discord); search/download/login/the external download link get a longer
+  # timeout since they carry an actual request/response body.
+  @health_timeout [receive_timeout: 3_000, connect_options: [timeout: 3_000]]
+  @data_timeout [receive_timeout: 15_000, connect_options: [timeout: 5_000]]
+
   @impl true
   def search(criteria) do
     case request(:get, "/subtitles", params: search_params(criteria)) do
@@ -25,7 +32,7 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
 
   @impl true
   def health do
-    case request(:get, "/infos/formats", []) do
+    case request(:get, "/infos/formats", [], @health_timeout) do
       {:ok, %{status: 200}} -> :ok
       {:ok, %{status: status}} -> {:error, {:http, status}}
       {:error, reason} -> {:error, reason}
@@ -118,19 +125,17 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
 
   # --- HTTP ---
 
-  defp request(method, path, opts) do
+  defp request(method, path, opts, timeout \\ @data_timeout) do
     {auth, opts} = Keyword.pop(opts, :auth)
 
-    Req.request(
-      [
-        method: method,
-        url: base_url() <> path,
-        headers: headers(auth)
-      ] ++ Keyword.merge(req_options(), opts)
-    )
+    base =
+      [method: method, url: base_url() <> path, headers: headers(auth)] ++ timeout
+
+    Req.request(Keyword.merge(base, Keyword.merge(req_options(), opts)))
   end
 
-  defp fetch(link), do: Req.request([method: :get, url: link] ++ req_options())
+  defp fetch(link),
+    do: Req.request(Keyword.merge([method: :get, url: link] ++ @data_timeout, req_options()))
 
   defp headers(auth) do
     base = [{"api-key", cfg(:api_key)}, {"user-agent", user_agent()}]

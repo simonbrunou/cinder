@@ -71,7 +71,7 @@ defmodule Cinder.Library do
              upgrade?(movie, new_q)
            end) do
       scan(:movies, dest)
-      fetch_subtitles(movie_criteria(movie), dest)
+      fetch_subtitles(fn -> movie_criteria(movie) end, dest)
       {:ok, dest, quality}
     end
   end
@@ -506,11 +506,12 @@ defmodule Cinder.Library do
   end
 
   # Best-effort, exactly like scan/2: a subtitle failure (return, raise, or exit deep in the HTTP
-  # stack) must never turn a correctly-placed file into :import_failed. Cinder.Subtitles.fetch_missing/2
-  # is already best-effort internally, but this wraps it too so a criteria-building surprise can't
-  # sink the import.
-  defp fetch_subtitles(criteria, dest) do
-    Cinder.Subtitles.fetch_missing(criteria, dest)
+  # stack, or a criteria-building surprise) must never turn a correctly-placed file into
+  # :import_failed. Cinder.Subtitles.fetch_missing/2 is already best-effort internally, but this
+  # wraps it too — `criteria_fun` is a thunk so criteria-building runs INSIDE the rescue/catch
+  # rather than in the caller's argument (evaluated before the guard would apply).
+  defp fetch_subtitles(criteria_fun, dest) when is_function(criteria_fun, 0) do
+    Cinder.Subtitles.fetch_missing(criteria_fun.(), dest)
   rescue
     e -> Logger.warning("subtitle fetch failed after importing #{dest}: #{inspect(e)}")
   catch
@@ -527,7 +528,7 @@ defmodule Cinder.Library do
     by_id = Map.new(episodes, &{&1.id, &1})
 
     for {ep_id, dest, _q} <- imported, ep = by_id[ep_id], not is_nil(ep) do
-      fetch_subtitles(episode_criteria(ep), dest)
+      fetch_subtitles(fn -> episode_criteria(ep) end, dest)
     end
   end
 
