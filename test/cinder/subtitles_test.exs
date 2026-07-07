@@ -3,6 +3,7 @@ defmodule Cinder.SubtitlesTest do
   # which also carries base_url/api_key/req_options that Provider.OpenSubtitlesTest depends on.
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
   import Mox
 
   alias Cinder.Subtitles
@@ -101,7 +102,12 @@ defmodule Cinder.SubtitlesTest do
     Cinder.Subtitles.ProviderMock
     |> expect(:search, fn _ -> raise "boom" end)
 
-    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
+    log =
+      capture_log(fn ->
+        assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
+      end)
+
+    assert log =~ "subtitle fetch"
   end
 
   test "fetch_missing/2 swallows a filesystem raise from the sidecar-existence check itself" do
@@ -112,7 +118,12 @@ defmodule Cinder.SubtitlesTest do
     Cinder.Library.FilesystemMock
     |> expect(:lstat, fn "/lib/M/M.en.srt" -> raise "fs down" end)
 
-    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
+    log =
+      capture_log(fn ->
+        assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
+      end)
+
+    assert log =~ "subtitle fetch"
   end
 
   test "fetch_missing/2 picks the correct candidate among AI/HI/nil-file_id/wrong-language noise" do
