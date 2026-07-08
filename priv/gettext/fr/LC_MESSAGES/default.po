@@ -82,7 +82,7 @@ msgstr "Activité"
 msgid "Add"
 msgstr "Ajouter"
 
-#: lib/cinder_web/live/library_live.ex:318
+#: lib/cinder_web/live/library_live.ex:332
 #, elixir-autogen, elixir-format
 msgid "Add a show from Discover."
 msgstr "Ajoutez une série depuis Découvrir."
@@ -108,13 +108,13 @@ msgstr "Après un import Usenet, supprimer l'original du client de téléchargem
 msgid "Already registered?"
 msgstr "Déjà inscrit ?"
 
-#: lib/cinder_web/live/library_live.ex:383
+#: lib/cinder_web/live/library_live.ex:397
 #: lib/cinder_web/live/series_detail_live.ex:409
 #, elixir-autogen, elixir-format
 msgid "Also delete files from disk"
 msgstr "Supprimer aussi les fichiers du disque"
 
-#: lib/cinder_web/live/library_live.ex:304
+#: lib/cinder_web/live/library_live.ex:318
 #, elixir-autogen, elixir-format
 msgid "Also delete the file from disk"
 msgstr "Supprimer aussi le fichier du disque"
@@ -187,8 +187,8 @@ msgstr "Impossible de rétrograder le dernier administrateur."
 
 #: lib/cinder_web/components/core_components.ex:264
 #: lib/cinder_web/components/core_components.ex:788
-#: lib/cinder_web/live/library_live.ex:244
-#: lib/cinder_web/live/library_live.ex:352
+#: lib/cinder_web/live/library_live.ex:260
+#: lib/cinder_web/live/library_live.ex:366
 #: lib/cinder_web/live/series_detail_live.ex:383
 #: lib/cinder_web/live/users_live.ex:283
 #: lib/cinder_web/live/users_live.ex:359
@@ -197,22 +197,22 @@ msgstr "Impossible de rétrograder le dernier administrateur."
 msgid "Cancel"
 msgstr "Annuler"
 
-#: lib/cinder_web/live/library_live.ex:368
+#: lib/cinder_web/live/library_live.ex:382
 #, elixir-autogen, elixir-format
 msgid "Cancel & unmonitor"
 msgstr "Annuler et arrêter le suivi"
 
-#: lib/cinder_web/live/library_live.ex:371
+#: lib/cinder_web/live/library_live.ex:385
 #, elixir-autogen, elixir-format
 msgid "Cancel & unmonitor this series?"
 msgstr "Annuler et arrêter le suivi de cette série ?"
 
-#: lib/cinder_web/live/library_live.ex:278
+#: lib/cinder_web/live/library_live.ex:293
 #, elixir-autogen, elixir-format
 msgid "Cancel edit"
 msgstr "Annuler la modification"
 
-#: lib/cinder_web/live/library_live.ex:288
+#: lib/cinder_web/live/library_live.ex:303
 #, elixir-autogen, elixir-format
 msgid "Cancel movie"
 msgstr "Annuler le film"
@@ -223,7 +223,7 @@ msgstr "Annuler le film"
 msgid "Cancel series"
 msgstr "Annuler la série"
 
-#: lib/cinder_web/live/library_live.ex:291
+#: lib/cinder_web/live/library_live.ex:306
 #, elixir-autogen, elixir-format
 msgid "Cancel this movie and remove its download?"
 msgstr "Annuler ce film et supprimer son téléchargement ?"
@@ -389,10 +389,10 @@ msgstr "Tableau de bord"
 
 #: lib/cinder_web/live/activity_live.ex:247
 #: lib/cinder_web/live/activity_live.ex:256
-#: lib/cinder_web/live/library_live.ex:254
-#: lib/cinder_web/live/library_live.ex:301
-#: lib/cinder_web/live/library_live.ex:359
-#: lib/cinder_web/live/library_live.ex:380
+#: lib/cinder_web/live/library_live.ex:270
+#: lib/cinder_web/live/library_live.ex:315
+#: lib/cinder_web/live/library_live.ex:373
+#: lib/cinder_web/live/library_live.ex:394
 #: lib/cinder_web/live/requests_live.ex:329
 #: lib/cinder_web/live/series_detail_live.ex:406
 #: lib/cinder_web/live/users_live.ex:381
@@ -438,12 +438,12 @@ msgstr "Supprimer la demande"
 msgid "Delete series"
 msgstr "Supprimer la série"
 
-#: lib/cinder_web/live/library_live.ex:306
+#: lib/cinder_web/live/library_live.ex:320
 #, elixir-autogen, elixir-format
 msgid "Delete this movie's record?"
 msgstr "Supprimer la fiche de ce film ?"
 
-#: lib/cinder_web/live/library_live.ex:385
+#: lib/cinder_web/live/library_live.ex:399
 #: lib/cinder_web/live/series_detail_live.ex:411
 #, elixir-autogen, elixir-format
 msgid "Delete this series and its seasons/episodes?"
@@ -510,7 +510,7 @@ msgstr "En téléchargement"
 msgid "Downloads"
 msgstr "Téléchargements"
 
-#: lib/cinder_web/live/library_live.ex:234
+#: lib/cinder_web/live/library_live.ex:250
 #: lib/cinder_web/live/series_detail_live.ex:360
 #, elixir-autogen, elixir-format
 msgid "Edit"
@@ -827,7 +827,7 @@ msgstr "Aucune demande pour le moment"
 msgid "No seasons found"
 msgstr "Aucune saison trouvée"
 
-#: lib/cinder_web/live/library_live.ex:317
+#: lib/cinder_web/live/library_live.ex:331
 #, elixir-autogen, elixir-format
 msgid "No series added yet"
 msgstr "Aucune série ajoutée pour le moment"
@@ -1011,7 +1011,7 @@ msgstr "Rôle"
 msgid "Roles and request quotas."
 msgstr "Rôles et quotas de demandes."
 
-#: lib/cinder_web/live/library_live.ex:275
+#: lib/cinder_web/live/library_live.ex:290
 #: lib/cinder_web/live/series_detail_live.ex:380
 #: lib/cinder_web/live/users_live.ex:334
 #, elixir-autogen, elixir-format
@@ -1033,7 +1033,7 @@ msgstr "Enregistrer l'e-mail"
 msgid "Save settings"
 msgstr "Enregistrer les paramètres"
 
-#: lib/cinder_web/live/library_live.ex:273
+#: lib/cinder_web/live/library_live.ex:288
 #: lib/cinder_web/live/series_detail_live.ex:379
 #: lib/cinder_web/live/settings_live.ex:89
 #: lib/cinder_web/live/user_live/settings.ex:64
@@ -1094,7 +1094,7 @@ msgstr "La saison %{number} est déjà demandée."
 msgid "Season %{number} of %{title} added."
 msgstr "Saison %{number} de %{title} ajoutée."
 
-#: lib/cinder_web/live/library_live.ex:313
+#: lib/cinder_web/live/library_live.ex:327
 #, elixir-autogen, elixir-format
 msgid "Series"
 msgstr "Séries"
@@ -1227,7 +1227,7 @@ msgstr "Le lien est invalide ou a expiré."
 msgid "Tip: If you prefer passwords, you can enable them in the user settings."
 msgstr "Astuce : si vous préférez les mots de passe, vous pouvez les activer dans les paramètres utilisateur."
 
-#: lib/cinder_web/live/library_live.ex:267
+#: lib/cinder_web/live/library_live.ex:282
 #: lib/cinder_web/live/series_detail_live.ex:377
 #, elixir-autogen, elixir-format
 msgid "Title"
@@ -1345,7 +1345,7 @@ msgstr "Bon retour !"
 msgid "Working…"
 msgstr "Traitement…"
 
-#: lib/cinder_web/live/library_live.ex:268
+#: lib/cinder_web/live/library_live.ex:283
 #: lib/cinder_web/live/series_detail_live.ex:378
 #, elixir-autogen, elixir-format
 msgid "Year"
@@ -1553,7 +1553,7 @@ msgstr "Échec de la vérification"
 msgid "Clear"
 msgstr "Effacer"
 
-#: lib/cinder_web/live/library_live.ex:340
+#: lib/cinder_web/live/library_live.ex:354
 #, elixir-autogen, elixir-format
 msgid "Configure monitoring"
 msgstr "Configurer le suivi"
