@@ -215,45 +215,60 @@ defmodule CinderWeb.LibraryLive do
           title={gettext("No movies yet")}
           message={gettext("Requested movies appear here.")}
         />
-        <ul :if={@movies != []} class="space-y-3">
-          <li :for={m <- @movies} id={"movie-#{m.id}"} class="rounded-box bg-base-200/50 p-4">
-            <div class="flex flex-wrap items-center gap-3">
-              <.link navigate={~p"/movies/#{m.id}"} class="link link-hover font-semibold">
-                {m.title}
-              </.link>
-              <span :if={m.year} class="text-base-content/70">({m.year})</span>
-              <.status_badge kind={:movie} status={m.status} />
-              <div class="ml-auto flex gap-2">
-                <.button
-                  type="button"
-                  variant="neutral"
-                  size="sm"
-                  phx-click="edit"
-                  phx-value-id={m.id}
-                >
-                  {gettext("Edit")}
-                </.button>
-                <.button
-                  :if={Catalog.cancellable?(m)}
-                  type="button"
-                  variant="warning"
-                  size="sm"
-                  phx-click="ask_cancel_movie"
-                  phx-value-id={m.id}
-                >
-                  {gettext("Cancel")}
-                </.button>
-                <.button
-                  :if={not Catalog.cancellable?(m)}
-                  type="button"
-                  variant="danger"
-                  size="sm"
-                  phx-click="ask_delete_movie"
-                  phx-value-id={m.id}
-                >
-                  {gettext("Delete")}
-                </.button>
-              </div>
+        <div
+          :if={@movies != []}
+          id="movies-list"
+          class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4"
+        >
+          <div
+            :for={m <- @movies}
+            id={"movie-#{m.id}"}
+            class={[
+              "space-y-2",
+              (@editing == m.id or
+                 @confirming in [
+                   {:movie, :cancel, to_string(m.id)},
+                   {:movie, :delete, to_string(m.id)}
+                 ]) &&
+                "col-span-2 sm:col-span-3 lg:col-span-4"
+            ]}
+          >
+            <.link navigate={~p"/movies/#{m.id}"} class="block max-w-xs">
+              <.media_card poster_path={m.poster_path} title={m.title} year={m.year} type={:movie}>
+                <.status_badge kind={:movie} status={m.status} class="h-auto break-words text-center" />
+              </.media_card>
+            </.link>
+
+            <div class="flex flex-wrap gap-2">
+              <.button
+                type="button"
+                variant="neutral"
+                size="sm"
+                phx-click="edit"
+                phx-value-id={m.id}
+              >
+                {gettext("Edit")}
+              </.button>
+              <.button
+                :if={Catalog.cancellable?(m)}
+                type="button"
+                variant="warning"
+                size="sm"
+                phx-click="ask_cancel_movie"
+                phx-value-id={m.id}
+              >
+                {gettext("Cancel")}
+              </.button>
+              <.button
+                :if={not Catalog.cancellable?(m)}
+                type="button"
+                variant="danger"
+                size="sm"
+                phx-click="ask_delete_movie"
+                phx-value-id={m.id}
+              >
+                {gettext("Delete")}
+              </.button>
             </div>
 
             <.form
@@ -262,7 +277,7 @@ defmodule CinderWeb.LibraryLive do
               id={"movie-form-#{m.id}"}
               phx-submit="save"
               phx-value-id={m.id}
-              class="mt-3 flex flex-wrap items-end gap-2"
+              class="flex flex-wrap items-end gap-2"
             >
               <.input field={@form[:title]} type="text" label={gettext("Title")} />
               <.input field={@form[:year]} type="number" label={gettext("Year")} />
@@ -294,7 +309,6 @@ defmodule CinderWeb.LibraryLive do
             <.confirm_action
               :if={@confirming == {:movie, :delete, to_string(m.id)}}
               id={"confirm-delete-movie-#{m.id}"}
-              class="mt-2"
               on_confirm="confirm_delete_movie"
               on_cancel="dismiss_confirm"
               value={m.id}
@@ -305,8 +319,8 @@ defmodule CinderWeb.LibraryLive do
             >
               <:caveat>{gettext("Delete this movie's record?")}</:caveat>
             </.confirm_action>
-          </li>
-        </ul>
+          </div>
+        </div>
       </section>
 
       <section class="mt-10">
