@@ -300,7 +300,7 @@ defmodule Cinder.Download.TvPollerTest do
     {_series, season} = series_tree()
     e1 = episode(season, 1)
     {:ok, grab} = Catalog.create_grab("hash-cap", :torrent, [e1.id])
-    Repo.update_all(Episode, set: [search_attempts: 9])
+    Repo.update_all(from(e in Episode, where: e.id == ^e1.id), set: [search_attempts: 9])
 
     Cinder.TestNotifier.subscribe()
     assert {:ok, _} = Catalog.park_grab(grab)
@@ -314,7 +314,10 @@ defmodule Cinder.Download.TvPollerTest do
     {_series, season} = series_tree()
     e1 = episode(season, 1)
     {:ok, grab} = Catalog.create_grab("hash-unmon", :torrent, [e1.id])
-    Repo.update_all(Episode, set: [search_attempts: 9, monitored: false])
+
+    Repo.update_all(from(e in Episode, where: e.id == ^e1.id),
+      set: [search_attempts: 9, monitored: false]
+    )
 
     Cinder.TestNotifier.subscribe()
     assert {:ok, _} = Catalog.park_grab(grab)

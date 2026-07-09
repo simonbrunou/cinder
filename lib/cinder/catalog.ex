@@ -338,7 +338,7 @@ defmodule Cinder.Catalog do
   Grabs a user-chosen `release` for one `season_number` of `series`. Recomputes the season's
   still-wanted episodes server-side (don't trust a stale panel snapshot) and creates the grab over
   exactly the wanted episodes the release covers (`episodes: nil` = a whole-season pack covers them
-  all). `create_grab/4` itself skips any episode that already has a grab, so a concurrent sweep grab
+  all). `create_grab/5` itself skips any episode that already has a grab, so a concurrent sweep grab
   can't be double-linked. `{:error, :nothing_wanted}` when the season has nothing to grab.
   """
   def manual_grab_tv(%Series{id: series_id}, season_number, %Release{} = release) do
@@ -358,7 +358,7 @@ defmodule Cinder.Catalog do
   end
 
   # Grabs the release (a client.add side-effect returning a download_id), then links the grab over
-  # `episode_ids`. If create_grab/4 rolls back — a concurrent sweep grabbed the episodes first
+  # `episode_ids`. If create_grab/5 rolls back — a concurrent sweep grabbed the episodes first
   # (:no_episodes_linked) or the insert failed — best-effort remove the just-added download so it
   # isn't orphaned in the client, then surface the error.
   defp grab_and_create_grab(%Release{} = release, episode_ids) do
@@ -1077,6 +1077,10 @@ defmodule Cinder.Catalog do
   on the grab so the blocklist can skip it if this download later parks. A changeset failure
   (e.g. a missing `download_id`) rolls the whole thing back as `{:error, changeset}` rather than
   raising, mirroring `set_season_monitored/2`.
+
+  `opts` — `reset_attempts: true` zeroes the linked episodes' `search_attempts` in the same
+  transaction (the manual-grab path uses it, mirroring `manual_grab_movie/2`): the user-chosen
+  release gets a fresh search budget, and new grabs never carry a counter at/above the cap.
   """
   def create_grab(download_id, protocol, episode_ids, release_title \\ nil, opts \\ []) do
     result =
@@ -1475,23 +1479,27 @@ defmodule Cinder.Catalog do
   # permanently, and that moment must never be silent (the movie analogue parks visibly at
   # :search_failed). Lives at the write site so BOTH bump paths announce — the sweep's
   # increment_search_attempts and finish_grab/park_grab's non-imported bump. Re-selecting
-  # fresh rows (== max exactly: a +1 bump from max-1; the manual-grab reset keeps the counter
-  # from ever exceeding the cap) also makes the check immune to stale in-memory counters.
-  # Monitored-only: a parked grab of a just-cancelled series bumps unmonitored episodes the
-  # sweep doesn't own. Single-series by construction (both callers pass one grab/season group);
-  # the notifier payload's episodes carry season: :series for the transports' summary line.
+  # fresh rows also makes the check immune to stale in-memory counters. Monitored-only: a
+  # parked grab of a just-cancelled series bumps unmonitored episodes the sweep doesn't own.
+  # Single-series by construction (both callers pass one grab/season group); the notifier
+  # payload's episodes carry season: :series for the transports' summary line.
   defp announce_search_exhausted([]), do: :ok
 
   # Best-effort like create_grab's post-commit broadcast (and guarded the same way): it runs
   # AFTER the bump/finalize committed, so a re-select raise here (pool-checkout timeout,
   # SQLITE_BUSY) must not escape — in finish_grab's caller that would skip the client-download
   # removal and the availability notification for a grab row that is already gone.
+  #
+  # >= rather than ==: crossings normally land exactly at the cap (new grabs reset or start
+  # below it), but pre-existing data can sit at the cap inside an in-flight grab and get
+  # bumped past it. A capped episode can't re-announce — the sweep skips it and every grab
+  # path resets — so >= adds no duplicates, only catches the above-cap stragglers.
   defp announce_search_exhausted(episode_ids) do
     exhausted =
       Repo.all(
         from e in Episode,
           where:
-            e.id in ^episode_ids and e.search_attempts == ^@max_search_attempts and
+            e.id in ^episode_ids and e.search_attempts >= ^@max_search_attempts and
               is_nil(e.file_path) and is_nil(e.grab_id) and e.monitored == true,
           preload: [season: :series]
       )

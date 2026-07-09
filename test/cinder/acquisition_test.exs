@@ -376,6 +376,16 @@ defmodule Cinder.AcquisitionTest do
       assert :no_match = Acquisition.best_releases(series(tvdb_id: nil, title: "Дом"), 1, [5])
     end
 
+    test "a non-decomposable letter is transliterated, not stripped mid-token ('Æon Flux')" do
+      # æ has no NFD decomposition; stripping it would leave the unmatchable needle "onflux".
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
+        {:ok, [raw_tv("Aeon.Flux.S01E01.1080p.WEB-DL-GRP")]}
+      end)
+
+      assert {:ok, [{%Release{episodes: [1]}, [1]}]} =
+               Acquisition.best_releases(series(tvdb_id: nil, title: "Æon Flux"), 1, [1])
+    end
+
     test "an '&' in a mostly-non-Latin title can't inflate the needle past the fail-closed guard" do
       # "&"→"and" expansion must count on BOTH sides of the ratio: otherwise "Дом & Сад"
       # folds to the needle "and", which matches half the releases on any indexer.

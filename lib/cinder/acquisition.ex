@@ -167,23 +167,24 @@ defmodule Cinder.Acquisition do
   # TvdbId-token search is already scoped to the right series by the indexer, and
   # normalization cannot equate AKA titles ("Money Heist" vs "La.Casa.de.Papel"),
   # so filtering there would strand whole seasons at :no_match.
-  defp filter_title(candidates, %{tvdb_id: nil, title: title}),
-    do: Enum.filter(candidates, &title_matches?(&1, title))
-
-  defp filter_title(candidates, _series), do: candidates
-
+  #
   # Token-run matching: the folded series title must equal the concatenation of a contiguous
   # run of WHOLE release-name tokens — boundary-anchored at both ends. So series "24" matches
   # "24.S01E05" and the tag-prefixed "[TGx] 24.S01E05" but not "Other.Show.2024..." (no "24"
   # token), and "Dark" no longer substring-matches "Darkwing.Duck...". Concatenating the run
   # keeps acronym/possessive/fused variants working ("S.W.A.T." ⇔ "SWAT", "Grey's" ⇔ "Greys",
   # "The Office" ⇔ "TheOffice"). Documented ceilings (need the tvdb_id-scoped path): a spinoff
-  # sharing the title as a leading run ("9-1-1" accepts "9-1-1.Lone.Star..."), and same-named
-  # variants.
-  defp title_matches?(%Release{title: title}, series_title) do
-    needle = series_needle(series_title)
-    needle != "" and token_run_match?(tokens(title), needle)
+  # sharing the title as a leading run ("9-1-1" accepts "9-1-1.Lone.Star..."), a different
+  # show carrying the title as one of its own tokens ("Reno.911" for series "9-1-1"), and
+  # same-named variants.
+  defp filter_title(candidates, %{tvdb_id: nil, title: title}) do
+    case series_needle(title) do
+      "" -> []
+      needle -> Enum.filter(candidates, &token_run_match?(tokens(&1.title), needle))
+    end
   end
+
+  defp filter_title(candidates, _series), do: candidates
 
   # Fail closed when tokenization ate most of the title: a non-Latin title ("Дом") folds to
   # nothing, "Дом 2" to a bare "2" — a remnant that would match almost anything and import the
@@ -202,13 +203,28 @@ defmodule Cinder.Acquisition do
     if String.length(needle) * 2 >= significant, do: needle, else: ""
   end
 
+  # Letters NFD can't decompose to ASCII (the strip below would otherwise eat them mid-token:
+  # "Æon Flux" ⇒ ["on", "flux"], unmatchable against "Aeon.Flux..."). ASCII-ized forms are how
+  # release names spell them.
+  @transliterations %{
+    "æ" => "ae",
+    "œ" => "oe",
+    "ø" => "o",
+    "ß" => "ss",
+    "ð" => "d",
+    "đ" => "d",
+    "ł" => "l",
+    "þ" => "th"
+  }
+
   # Downcase, spell out "&" (scene names always write "and", TMDB keeps the ampersand), drop
-  # possessive apostrophes ("Grey's" ⇒ "greys").
+  # possessive apostrophes ("Grey's" ⇒ "greys"), transliterate the non-decomposable letters.
   defp fold(title) do
     title
     |> String.downcase()
     |> String.replace("&", "and")
     |> String.replace(~r/['’]/u, "")
+    |> String.replace(~r/[æœøßðđłþ]/u, &Map.fetch!(@transliterations, &1))
   end
 
   # fold/1 → NFD-decompose (so ASCII-ized "Pokemon" still matches "Pokémon") → strip non-ASCII
@@ -225,23 +241,19 @@ defmodule Cinder.Acquisition do
   end
 
   # Does any contiguous run of whole tokens concatenate to exactly `needle`?
-  defp token_run_match?(hay, needle) do
-    Enum.any?(0..max(length(hay) - 1, 0), fn start ->
-      hay |> Enum.drop(start) |> run_consumes?(needle)
-    end)
-  end
+  defp token_run_match?([], _needle), do: false
+
+  defp token_run_match?([_ | rest] = hay, needle),
+    do: run_consumes?(hay, needle) or token_run_match?(rest, needle)
 
   defp run_consumes?(_tokens, ""), do: true
   defp run_consumes?([], _needle), do: false
 
   defp run_consumes?([token | rest], needle) do
-    if String.starts_with?(needle, token) do
-      run_consumes?(
-        rest,
-        binary_part(needle, byte_size(token), byte_size(needle) - byte_size(token))
-      )
-    else
-      false
+    # Tokens are never "" (split with trim: true), so an unchanged needle means "not a prefix".
+    case String.replace_prefix(needle, token, "") do
+      ^needle -> false
+      remaining -> run_consumes?(rest, remaining)
     end
   end
 
