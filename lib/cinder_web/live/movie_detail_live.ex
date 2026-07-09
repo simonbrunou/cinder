@@ -178,9 +178,15 @@ defmodule CinderWeb.MovieDetailLive do
 
   def handle_event("set_movie_language", %{"preferred_language" => lang}, socket)
       when lang in ["original", "french", "any"] do
-    # set_movie_language broadcasts {:movie_updated}, which reloads @movie below.
-    Catalog.set_movie_language(socket.assigns.movie, lang)
-    {:noreply, socket}
+    # On success the {:movie_updated} broadcast reloads @movie; on error the dropdown visually
+    # snaps back, so say why — mirrors set_series_language on /series/:id.
+    case Catalog.set_movie_language(socket.assigns.movie, lang) do
+      {:ok, _} ->
+        {:noreply, socket}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, gettext("Couldn't update the language."))}
+    end
   end
 
   # Client-controlled payloads — ignore anything unmatched rather than crash.

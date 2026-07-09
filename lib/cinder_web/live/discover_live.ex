@@ -77,8 +77,10 @@ defmodule CinderWeb.DiscoverLive do
   end
 
   # A season completing (episode import) or a series being removed can flip a TV card's badge.
+  # Only availability can change on a series event — the user's requests and movies are untouched —
+  # so recompute just that map, not the full request state.
   def handle_info({event, _id}, socket) when event in [:series_updated, :series_deleted] do
-    {:noreply, assign_request_state(socket)}
+    {:noreply, assign_available_series(socket)}
   end
 
   def handle_info(_message, socket), do: {:noreply, socket}
@@ -155,15 +157,19 @@ defmodule CinderWeb.DiscoverLive do
     # available once any of its seasons has imported.
     season_requests = Enum.filter(requests, &(&1.target_type == "season"))
     series_request_status = latest_status_by(season_requests, & &1.target_id)
-    available_series = MapSet.new(Catalog.available_season_keys(), fn {tid, _n} -> tid end)
 
     socket
-    |> assign(
-      request_status: request_status,
-      series_request_status: series_request_status,
-      available_series: available_series
-    )
+    |> assign(request_status: request_status, series_request_status: series_request_status)
+    |> assign_available_series()
     |> assign_movie_status()
+  end
+
+  # Series-level availability for the TV badge: the tmdb_ids with ≥1 imported season. Cheap to
+  # recompute on its own so a `series`-topic event needn't rebuild the whole request state.
+  defp assign_available_series(socket) do
+    assign(socket,
+      available_series: MapSet.new(Catalog.available_season_keys(), fn {tid, _n} -> tid end)
+    )
   end
 
   # Read the full movie-status map fresh from the DB (authoritative) on the infrequent
