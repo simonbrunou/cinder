@@ -102,6 +102,7 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
       tmdb_id: (is_nil(criteria[:season]) && criteria[:tmdb_id]) || nil,
       season_number: criteria[:season],
       episode_number: criteria[:episode],
+      moviehash: criteria[:moviehash],
       languages: criteria[:languages] |> List.wrap() |> Enum.join(",")
     ]
     |> Enum.reject(fn {_k, v} -> is_nil(v) or v == "" end)
@@ -118,14 +119,22 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
       language: a["language"],
       downloads: a["download_count"] || 0,
       hearing_impaired: a["hearing_impaired"] || false,
-      ai_translated: a["ai_translated"] || false
+      ai_translated: a["ai_translated"] || false,
+      moviehash_match: a["moviehash_match"] || false
     }
   end
 
   # A malformed entry (missing "attributes") degrades to a droppable result instead of
   # crashing the caller — a garbled provider response must never crash an import/sweep.
   defp normalize(_malformed) do
-    %{file_id: nil, language: nil, downloads: 0, hearing_impaired: false, ai_translated: false}
+    %{
+      file_id: nil,
+      language: nil,
+      downloads: 0,
+      hearing_impaired: false,
+      ai_translated: false,
+      moviehash_match: false
+    }
   end
 
   # --- HTTP ---

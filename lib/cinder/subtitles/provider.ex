@@ -13,6 +13,7 @@ defmodule Cinder.Subtitles.Provider do
           optional(:tmdb_id) => integer() | nil,
           optional(:season) => integer() | nil,
           optional(:episode) => integer() | nil,
+          optional(:moviehash) => String.t() | nil,
           required(:languages) => [String.t()]
         }
 
@@ -21,7 +22,8 @@ defmodule Cinder.Subtitles.Provider do
           language: String.t(),
           downloads: integer(),
           hearing_impaired: boolean(),
-          ai_translated: boolean()
+          ai_translated: boolean(),
+          moviehash_match: boolean()
         }
 
   @callback search(criteria()) :: {:ok, [result()]} | {:error, term()}

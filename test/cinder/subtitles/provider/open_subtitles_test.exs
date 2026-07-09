@@ -39,8 +39,66 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitlesTest do
              language: "en",
              downloads: 500,
              hearing_impaired: false,
-             ai_translated: false
+             ai_translated: false,
+             moviehash_match: false
            }
+  end
+
+  test "search/1 sends the moviehash param and normalizes moviehash_match" do
+    Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
+      params = URI.decode_query(conn.query_string)
+      assert params["moviehash"] == "0123456789abcdef"
+
+      Req.Test.json(conn, %{
+        "data" => [
+          %{
+            "attributes" => %{
+              "language" => "en",
+              "download_count" => 5,
+              "hearing_impaired" => false,
+              "ai_translated" => false,
+              "moviehash_match" => true,
+              "files" => [%{"file_id" => 7}]
+            }
+          }
+        ]
+      })
+    end)
+
+    assert {:ok, [r]} =
+             OpenSubtitles.search(%{
+               imdb_id: "tt0111161",
+               moviehash: "0123456789abcdef",
+               languages: ["en"]
+             })
+
+    assert r == %{
+             file_id: 7,
+             language: "en",
+             downloads: 5,
+             hearing_impaired: false,
+             ai_translated: false,
+             moviehash_match: true
+           }
+  end
+
+  test "search/1 defaults moviehash_match to false when the attribute is absent" do
+    Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
+      Req.Test.json(conn, %{
+        "data" => [
+          %{
+            "attributes" => %{
+              "language" => "en",
+              "download_count" => 1,
+              "files" => [%{"file_id" => 1}]
+            }
+          }
+        ]
+      })
+    end)
+
+    assert {:ok, [%{moviehash_match: false}]} =
+             OpenSubtitles.search(%{imdb_id: "tt0111161", languages: ["en"]})
   end
 
   test "download/1 logs in for a token, then downloads the link body" do
