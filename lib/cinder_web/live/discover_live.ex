@@ -142,12 +142,6 @@ defmodule CinderWeb.DiscoverLive do
     end
   end
 
-  # The pending-request unique index (requests_pending_unique) is the duplicate signal;
-  # Ecto tags that error opt with `constraint: :unique`.
-  defp duplicate_request?(%Ecto.Changeset{} = changeset) do
-    Enum.any?(changeset.errors, fn {_field, {_msg, opts}} -> opts[:constraint] == :unique end)
-  end
-
   # The user's request status per target (latest wins) plus the global movie pipeline
   # status per tmdb_id; together they drive the per-title movie badge.
   defp assign_request_state(socket) do

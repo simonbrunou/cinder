@@ -2,6 +2,7 @@ defmodule CinderWeb.UserSessionController do
   use CinderWeb, :controller
 
   alias Cinder.Accounts
+  alias Cinder.Accounts.LoginRateLimiter
   alias CinderWeb.UserAuth
 
   def create(conn, %{"_action" => "confirmed"} = params) do
@@ -32,19 +33,36 @@ defmodule CinderWeb.UserSessionController do
   # email + password login
   defp create(conn, %{"user" => user_params}, info) do
     %{"email" => email, "password" => password} = user_params
+    ip = ip_string(conn)
 
-    if user = Accounts.get_user_by_email_and_password(email, password) do
-      conn
-      |> put_flash(:info, info)
-      |> UserAuth.log_in_user(user, user_params)
-    else
-      # In order to prevent user enumeration attacks, don't disclose whether the email is registered.
-      conn
-      |> put_flash(:error, gettext("Invalid email or password"))
-      |> put_flash(:email, String.slice(email, 0, 160))
-      |> redirect(to: ~p"/users/log-in")
+    cond do
+      # An exhausted {ip, email} pair gets the SAME generic response as bad credentials,
+      # so the limiter can't be used as an enumeration or lockout oracle.
+      LoginRateLimiter.blocked?(ip, email) ->
+        invalid_credentials(conn, email)
+
+      user = Accounts.get_user_by_email_and_password(email, password) ->
+        LoginRateLimiter.clear(ip, email)
+
+        conn
+        |> put_flash(:info, info)
+        |> UserAuth.log_in_user(user, user_params)
+
+      true ->
+        LoginRateLimiter.register_failure(ip, email)
+        invalid_credentials(conn, email)
     end
   end
+
+  defp invalid_credentials(conn, email) do
+    # In order to prevent user enumeration attacks, don't disclose whether the email is registered.
+    conn
+    |> put_flash(:error, gettext("Invalid email or password"))
+    |> put_flash(:email, String.slice(email, 0, 160))
+    |> redirect(to: ~p"/users/log-in")
+  end
+
+  defp ip_string(conn), do: conn.remote_ip |> :inet.ntoa() |> to_string()
 
   def update_password(conn, %{"user" => user_params} = params) do
     user = conn.assigns.current_scope.user
@@ -53,6 +71,12 @@ defmodule CinderWeb.UserSessionController do
 
     # disconnect all existing LiveViews with old sessions
     UserAuth.disconnect_sessions(expired_tokens)
+
+    # This authenticated, sudo-gated path pipes into the rate-limited create/3 below AFTER
+    # committing the new password and expiring every session token — a blocked {ip, email}
+    # pair here would lock the user out of the password they just set. Clear it: the user
+    # has already proven possession of the account.
+    LoginRateLimiter.clear(ip_string(conn), user.email)
 
     conn
     |> put_session(:user_return_to, ~p"/users/settings")

@@ -101,12 +101,19 @@ defmodule Cinder.Download.TvPoller do
         # Notify only when the finalize transaction commits — otherwise a rolled-back finish_grab
         # would leave the grab undeleted (re-imported next tick) while emitting a false, repeating
         # available event. Mirrors the movie poller's `with {:ok, _} <- transition` guard.
-        with {:ok, _grab} <- Catalog.finish_grab(grab, imported) do
-          notify_available(grab, imported)
-          # After the finalize commit: best-effort, gated remove of the source download.
-          # Read id/protocol off the in-hand grab — finish_grab deleted the row but returns
-          # the in-memory struct. A partial-match pack still removes (don't strand clutter).
-          Download.remove_after_import(grab.download_protocol, grab.download_id)
+        case Catalog.finish_grab(grab, imported) do
+          {:ok, _grab} ->
+            notify_available(grab, imported)
+            # After the finalize commit: best-effort, gated remove of the source download.
+            # Read id/protocol off the in-hand grab — finish_grab deleted the row but returns
+            # the in-memory struct. A partial-match pack still removes (don't strand clutter).
+            Download.remove_after_import(grab.download_protocol, grab.download_id)
+
+          # A failed finalize leaves content_path set, so the grab re-imports next tick —
+          # without a bump that's a silent 5-second loop if the failure is deterministic.
+          # Route it through the same bounded retry as every other failure in this poller.
+          {:error, reason} ->
+            retry_or_park(grab, {:finish_grab, reason})
         end
 
       # A missing TV root is a config error, not a transient one: leave the grab downloaded
@@ -246,8 +253,18 @@ defmodule Cinder.Download.TvPoller do
       Catalog.block_grab_release(grab, reason)
     end
 
-    Catalog.park_grab(grab)
-    Notifier.notify({:grab_failed, grab, reason})
+    # park_grab IS finish_grab(grab, []) — if the finalize transaction itself is what keeps
+    # failing, notifying here would fire {:grab_failed} every 5s tick forever. Warn instead;
+    # the grab stays visible in /activity and the warning names why it won't finalize.
+    case Catalog.park_grab(grab) do
+      {:ok, _} ->
+        Notifier.notify({:grab_failed, grab, reason})
+
+      {:error, park_error} ->
+        Logger.warning(
+          "tv grab #{grab.id} could not be parked (#{inspect(park_error)}); will retry next tick"
+        )
+    end
   end
 
   # On a successful import, announce the episodes that landed — the TV analogue of

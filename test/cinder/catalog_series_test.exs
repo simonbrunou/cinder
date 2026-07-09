@@ -398,6 +398,43 @@ defmodule Cinder.CatalogSeriesTest do
     series
   end
 
+  describe "available_season_keys/1" do
+    test "a season is available only when every aired episode has a file" do
+      series = series_fixture(%{monitor_strategy: :all})
+      s1 = season_fixture(series, %{season_number: 1})
+      episode_fixture(s1, %{episode_number: 1, file_path: "/media/s01e01.mkv"})
+      episode_fixture(s1, %{episode_number: 2, file_path: "/media/s01e02.mkv"})
+      s2 = season_fixture(series, %{season_number: 2})
+      episode_fixture(s2, %{episode_number: 1, file_path: "/media/s02e01.mkv"})
+      episode_fixture(s2, %{episode_number: 2})
+      # A :future-style season: only the newest episode monitored+imported. The 90%-absent
+      # season must NOT read Available (that would hide the Request affordance).
+      s3 = season_fixture(series, %{season_number: 3})
+      episode_fixture(s3, %{episode_number: 1, monitored: false})
+      episode_fixture(s3, %{episode_number: 2, file_path: "/media/s03e02.mkv"})
+
+      keys = Cinder.Catalog.available_season_keys()
+      assert {series.tmdb_id, 1} in keys
+      refute {series.tmdb_id, 2} in keys
+      refute {series.tmdb_id, 3} in keys
+
+      # The scoped variant returns the same keys for that series only.
+      assert {series.tmdb_id, 1} in Cinder.Catalog.available_season_keys(series.tmdb_id)
+    end
+
+    test "count_wanted_episodes/2 scopes to one season" do
+      series = series_fixture(%{monitor_strategy: :all})
+      s1 = season_fixture(series, %{season_number: 1})
+      episode_fixture(s1, %{episode_number: 1})
+      episode_fixture(s1, %{episode_number: 2, file_path: "/media/have.mkv"})
+      s2 = season_fixture(series, %{season_number: 2})
+      episode_fixture(s2, %{episode_number: 1})
+
+      assert Cinder.Catalog.count_wanted_episodes(series.id, 1) == 1
+      assert Cinder.Catalog.count_episodes(series.id, 1) == 2
+    end
+  end
+
   describe "manual_grab_tv/3" do
     test "creates a grab over the season's still-wanted episodes the release covers" do
       series = series_with_wanted_episodes(season: 1, numbers: [1, 2, 3])

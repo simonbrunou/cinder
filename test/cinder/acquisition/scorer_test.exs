@@ -357,6 +357,23 @@ defmodule Cinder.Acquisition.ScorerTest do
                {:rejected, :out_of_band}
     end
 
+    test "scales the band per episode a release names (k×, like select_for)" do
+      assert Scorer.verdict(rel(size: 8_000_000_000, season: 1, episodes: [1, 2]),
+               max_size: 5_000_000_000
+             ) == :ok
+
+      assert Scorer.verdict(rel(size: 12_000_000_000, season: 1, episodes: [1, 2]),
+               max_size: 5_000_000_000
+             ) == {:rejected, :out_of_band}
+    end
+
+    test "a whole-season pack is banded against pack_episode_count, not one episode's size" do
+      pack = rel(size: 30_000_000_000, season: 1, episodes: nil)
+
+      assert Scorer.verdict(pack, max_size: 5_000_000_000) == {:rejected, :out_of_band}
+      assert Scorer.verdict(pack, max_size: 5_000_000_000, pack_episode_count: 10) == :ok
+    end
+
     test "flags a blocklisted title" do
       assert Scorer.verdict(rel(title: "Bad.Release"), release_blocklist: ["bad.release"]) ==
                {:rejected, :blocklisted}

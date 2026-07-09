@@ -51,10 +51,29 @@ defmodule CinderWeb.ManualSearchComponent do
 
     start_async(socket, :search, fn ->
       case mode do
-        :movie -> Acquisition.list_releases(target.imdb_id, opts)
-        :tv -> Acquisition.list_releases_tv(target, season, opts)
+        :movie ->
+          Acquisition.list_releases(target.imdb_id, opts)
+
+        :tv ->
+          # Whole-season packs are verdict-banded per episode (k×band, like the sweep);
+          # pass the season's wanted count so a pack isn't judged as one episode's size.
+          Acquisition.list_releases_tv(
+            target,
+            season,
+            opts ++ [pack_episode_count: pack_count(target, season)]
+          )
       end
     end)
+  end
+
+  # A COMPLETE season (the manual re-grab / better-release case) has zero wanted episodes;
+  # fall back to its total count — 1× would re-create the "pack judged as one episode's
+  # size" verdict bug for exactly that search.
+  defp pack_count(series, season_number) do
+    case Catalog.count_wanted_episodes(series.id, season_number) do
+      0 -> max(Catalog.count_episodes(series.id, season_number), 1)
+      n -> n
+    end
   end
 
   # Mirror the auto-search scorer opts (size band, preferred resolutions/sources,

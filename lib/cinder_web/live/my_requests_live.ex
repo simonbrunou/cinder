@@ -13,6 +13,8 @@ defmodule CinderWeb.MyRequestsLive do
     if connected?(socket) do
       Requests.subscribe()
       Catalog.subscribe()
+      # Season availability derives from episode imports, which broadcast on "series".
+      Catalog.subscribe_series()
     end
 
     {:ok, load(socket)}
@@ -31,9 +33,19 @@ defmodule CinderWeb.MyRequestsLive do
 
     assign(socket,
       requests: Requests.list_for_user(user),
-      movie_status: Catalog.movie_status_map()
+      movie_status: Catalog.movie_status_map(),
+      available_seasons: Catalog.available_season_keys()
     )
   end
+
+  # Availability outranks a stale season request status (mirrors the movie title_state
+  # precedence): a fully imported season must not keep reading "Denied" — one badge,
+  # not contradictory stacked ones, and no stale denial-reason line.
+  defp effective_status(%{target_type: "season", target_id: t, season_number: n} = r, available) do
+    if MapSet.member?(available, {t, n}), do: :available, else: r.status
+  end
+
+  defp effective_status(r, _available), do: r.status
 
   @impl true
   def render(assigns) do
@@ -64,7 +76,7 @@ defmodule CinderWeb.MyRequestsLive do
                 else: r.title}
             </span>
             <span :if={r.year} class="text-base-content/70">({r.year})</span>
-            <.status_badge kind={:request} status={r.status} />
+            <.status_badge kind={:request} status={effective_status(r, @available_seasons)} />
             <.status_badge
               :if={r.target_type == "movie" and @movie_status[r.target_id]}
               kind={:movie}
@@ -72,7 +84,7 @@ defmodule CinderWeb.MyRequestsLive do
             />
           </div>
           <p
-            :if={r.status == :denied and r.denial_reason}
+            :if={effective_status(r, @available_seasons) == :denied and r.denial_reason}
             class="mt-1 flex items-start gap-1.5 text-sm text-error"
           >
             <.icon name="hero-x-circle" class="mt-0.5 size-4 shrink-0" />
