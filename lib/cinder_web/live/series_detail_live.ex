@@ -437,7 +437,7 @@ defmodule CinderWeb.SeriesDetailLive do
           alt={@series.title}
           loading="lazy"
           decoding="async"
-          class="aspect-[2/3] w-24 rounded object-cover"
+          class="aspect-[2/3] w-40 shrink-0 rounded object-cover"
         />
         <div class="min-w-0 flex-1">
           <.header>
