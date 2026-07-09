@@ -20,7 +20,11 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      - "4000:4000"
+      # Bound to localhost on purpose: the FIRST registered user becomes the admin, so a
+      # fresh instance must not be reachable by the whole network before you've claimed it.
+      # To serve the LAN, change to "4000:4000" (or front it with a reverse proxy) AFTER
+      # creating your admin — and note prod redirects non-localhost HTTP to https://$PHX_HOST.
+      - "127.0.0.1:4000:4000"
     environment:
       # Boot-only config — stays in env (needed before the in-app settings store is up).
       SECRET_KEY_BASE: ${SECRET_KEY_BASE:?set SECRET_KEY_BASE in .env (openssl rand -base64 48)}

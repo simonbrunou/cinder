@@ -410,7 +410,14 @@ defmodule Cinder.Library do
     if fs().dir?(path) do
       with {:ok, files} <- fs().find_files(path), do: {:ok, only_videos(files), true}
     else
-      {:ok, only_videos([{path, 0}]), false}
+      # dir? is also false for a path that doesn't EXIST (unmounted volume, deleted download).
+      # A vanished pack folder must surface as a transient FS error — not slip through as a
+      # "lone file" whose non-video extension filters to [] and reads as a deterministic
+      # nothing-matched park + blocklist.
+      case fs().lstat(path) do
+        {:ok, _stat} -> {:ok, only_videos([{path, 0}]), false}
+        {:error, reason} -> {:error, reason}
+      end
     end
   end
 

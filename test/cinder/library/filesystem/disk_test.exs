@@ -33,6 +33,29 @@ defmodule Cinder.Library.Filesystem.DiskTest do
     assert {:error, :eexist} = Disk.ln(src, dest)
   end
 
+  test "find_files/1 propagates an unreadable root as {:error, _}, not an empty listing" do
+    # Regression: {:ok, []} on EACCES/ENOENT read downstream as "release has no video
+    # file" — a permanent park + blocklist for what is a transient filesystem failure.
+    assert {:error, :enoent} =
+             Disk.find_files("/nonexistent/cinder-#{System.unique_integer([:positive])}")
+  end
+
+  @tag :tmp_dir
+  test "find_files/1 propagates an unreadable NESTED directory too", %{tmp_dir: tmp} do
+    # The common torrent layout is a readable root whose single video-bearing subfolder is
+    # unreadable (the documented PUID mismatch); {:ok, []} there is the same park+blocklist
+    # misclassification one level down.
+    sub = Path.join(tmp, "Show.S01.1080p")
+    File.mkdir_p!(sub)
+    File.chmod!(sub, 0o000)
+    on_exit(fn -> File.chmod(sub, 0o755) end)
+
+    # Root can list a 000 directory; the assertion only holds when the OS actually denies.
+    if match?({:error, :eacces}, File.ls(sub)) do
+      assert {:error, :eacces} = Disk.find_files(tmp)
+    end
+  end
+
   @tag :tmp_dir
   test "find_files/1 includes dotfiles so the stale-temp sweep can find leftovers", %{
     tmp_dir: tmp

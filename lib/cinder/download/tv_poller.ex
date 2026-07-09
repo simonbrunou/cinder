@@ -19,7 +19,8 @@ defmodule Cinder.Download.TvPoller do
   the download→import boundary, so the advance and import phases each get a fresh `@max_attempts`
   budget (a download's blips don't starve its import). The search phase backs off per
   `episode.search_attempts`/`updated_at` exactly like the movie poller, and an episode parks
-  (derived "couldn't find") at `@max_attempts`.
+  (derived `:search_parked`) at `Catalog.max_search_attempts/0` — the crossing is warned +
+  announced by Catalog at the counter's write site, covering every bump path.
   """
   require Logger
 
@@ -128,7 +129,7 @@ defmodule Cinder.Download.TvPoller do
 
   defp search_wanted(retry_after) do
     Catalog.wanted_episodes()
-    |> Enum.reject(&(&1.search_attempts >= @max_attempts))
+    |> Enum.reject(&(&1.search_attempts >= Catalog.max_search_attempts()))
     |> Enum.filter(&search_due?(&1, retry_after))
     |> Enum.group_by(&{&1.season.series.id, &1.season.season_number})
     |> Enum.each(fn {{series_id, season}, episodes} ->
@@ -204,6 +205,8 @@ defmodule Cinder.Download.TvPoller do
     kind, value -> {:error, {kind, value}}
   end
 
+  # Crossing the search cap is announced by Catalog.increment_search_attempts itself (at the
+  # write site, so the finish_grab/park_grab bump path announces too — not just this sweep).
   defp bump_not_grabbed(episodes, grabbed) do
     episodes
     |> Enum.map(& &1.id)

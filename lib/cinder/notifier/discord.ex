@@ -80,6 +80,19 @@ defmodule Cinder.Notifier.Discord do
   defp embed({:grab_failed, grab, reason}),
     do: %{title: "TV grab ##{grab.id} failed", description: inspect(reason), color: @red}
 
+  defp embed({:episodes_search_exhausted, episodes}) do
+    {summary, poster} = episodes_summary(episodes)
+
+    with_poster(
+      %{
+        title: "Episode search exhausted",
+        description: "#{summary} — giving up until a manual Search",
+        color: @red
+      },
+      poster
+    )
+  end
+
   defp embed(_other), do: nil
 
   # --- helpers ---

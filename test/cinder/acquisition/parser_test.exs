@@ -163,6 +163,17 @@ defmodule Cinder.Acquisition.ParserTest do
                Parser.parse("Show.Name.1x02.720p.HDTV.x264-GRP")
     end
 
+    test "a dash-separated episode (Sxx-Eyy) is a single episode, not a season pack" do
+      # Regression: the separator class once omitted "-", so this fell through to
+      # @bare_season and out-scored genuine season packs as a fake full-season cover.
+      assert %{season: 1, episodes: [2]} = Parser.parse("Show.Name.S01-E02.1080p.WEB.H264-GRP")
+    end
+
+    test "a spaced-dash separator run (Sxx - Eyy) is a single episode, not a season pack" do
+      assert %{season: 1, episodes: [2]} = Parser.parse("Show - S01 - E02 - 1080p")
+      assert %{season: 1, episodes: [2]} = Parser.parse("Show.S01- E02.1080p")
+    end
+
     test "a range (SxxEyy-Ezz) expands to the inclusive episode list" do
       assert %{season: 1, episodes: [1, 2, 3], group: "GRP"} =
                Parser.parse("Show.S01E01-E03.1080p-GRP")

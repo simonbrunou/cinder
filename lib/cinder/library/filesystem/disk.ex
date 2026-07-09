@@ -7,28 +7,47 @@ defmodule Cinder.Library.Filesystem.Disk do
   """
   @behaviour Cinder.Library.Filesystem
 
+  require Logger
+
   @impl true
   def dir?(path), do: File.dir?(path)
 
+  # ANY unlistable directory in the tree — the root or a nested one — propagates as
+  # {:error, reason}: an EACCES permission mismatch or an unmounted downloads volume must
+  # read as a transient FS failure (a bounded retry), not as {:ok, []}, which callers
+  # classify as a deterministic release defect and answer with a permanent park + blocklist.
+  # (The common torrent layout is a single video-bearing subfolder, so nested failures are
+  # the same bug one level down.) Unstat-able individual ENTRIES stay best-effort + logged:
+  # one broken sidecar file shouldn't block importing the rest.
   @impl true
-  def find_files(dir), do: {:ok, walk(dir)}
+  def find_files(dir) do
+    {:ok, walk!(dir)}
+  catch
+    {:find_files_error, reason} -> {:error, reason}
+  end
 
   # Recursively collect `{path, size}` for every regular file under `dir`, dotfiles INCLUDED (the
   # import's stale-temp sweep must see its own `.cinder-tmp-*` leftovers). Walks with File.ls rather
   # than Path.wildcard: cinder names libraries `Title (Year) {tmdb-N}`, and `{}` is wildcard
   # brace-expansion — globbing the literal base path would match nothing (`{}`, `[]`, `?`, `*` all).
-  defp walk(dir) do
+  defp walk!(dir) do
     case File.ls(dir) do
       {:ok, entries} -> Enum.flat_map(entries, &classify(Path.join(dir, &1)))
-      {:error, _reason} -> []
+      {:error, reason} -> throw({:find_files_error, reason})
     end
   end
 
   defp classify(path) do
     case File.stat(path) do
-      {:ok, %File.Stat{type: :directory}} -> walk(path)
-      {:ok, %File.Stat{type: :regular, size: size}} -> [{path, size}]
-      _ -> []
+      {:ok, %File.Stat{type: :directory}} ->
+        walk!(path)
+
+      {:ok, %File.Stat{type: :regular, size: size}} ->
+        [{path, size}]
+
+      other ->
+        Logger.warning("find_files: cannot stat #{path}: #{inspect(other)}")
+        []
     end
   end
 

@@ -321,6 +321,82 @@ defmodule Cinder.AcquisitionTest do
                Acquisition.best_releases(series(title: "Money Heist"), 1, [1])
     end
 
+    test "a numeric title is token-anchored: a year in another show's name can't match" do
+      # Regression: substring matching let series "24" accept "Other.Show.2024..." —
+      # the scorer then matched on season number alone and imported the wrong show.
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
+        {:ok, [raw_tv("Other.Show.2024.S01E05.1080p.WEB-DL-GRP")]}
+      end)
+
+      assert :no_match = Acquisition.best_releases(series(tvdb_id: nil, title: "24"), 1, [5])
+    end
+
+    test "an all-numeric title still matches its own releases" do
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
+        {:ok, [raw_tv("24.S01E05.1080p.WEB-DL-GRP")]}
+      end)
+
+      assert {:ok, [{%Release{episodes: [5]}, [5]}]} =
+               Acquisition.best_releases(series(tvdb_id: nil, title: "24"), 1, [5])
+    end
+
+    test "a tag-prefixed release name still matches a short title (token, not prefix, anchor)" do
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
+        {:ok, [raw_tv("[TGx] 24.S01E05.1080p.WEB-DL-GRP")]}
+      end)
+
+      assert {:ok, [{%Release{episodes: [5]}, [5]}]} =
+               Acquisition.best_releases(series(tvdb_id: nil, title: "24"), 1, [5])
+    end
+
+    test "a franchise-prefixed release name still matches (series '1883' in 'Yellowstone.1883')" do
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
+        {:ok, [raw_tv("Yellowstone.1883.S01E01.1080p.WEB-DL-GRP")]}
+      end)
+
+      assert {:ok, [{%Release{episodes: [1]}, [1]}]} =
+               Acquisition.best_releases(series(tvdb_id: nil, title: "1883"), 1, [1])
+    end
+
+    test "a title embedded inside another token is rejected ('Dark' vs 'Darkwing.Duck')" do
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
+        {:ok, [raw_tv("Darkwing.Duck.S01E05.1080p.WEB-DL-GRP")]}
+      end)
+
+      assert :no_match = Acquisition.best_releases(series(tvdb_id: nil, title: "Dark"), 1, [5])
+    end
+
+    test "a title that folds to nothing (non-Latin) fails closed instead of matching everything" do
+      # "Дом" tokenizes to [] — matching would accept EVERY same-season release. Those series
+      # need the tvdb_id-scoped path (which skips the guard).
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
+        {:ok, [raw_tv("Random.Show.S01E05.1080p.WEB-DL-GRP")]}
+      end)
+
+      assert :no_match = Acquisition.best_releases(series(tvdb_id: nil, title: "Дом"), 1, [5])
+    end
+
+    test "a non-decomposable letter is transliterated, not stripped mid-token ('Æon Flux')" do
+      # æ has no NFD decomposition; stripping it would leave the unmatchable needle "onflux".
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
+        {:ok, [raw_tv("Aeon.Flux.S01E01.1080p.WEB-DL-GRP")]}
+      end)
+
+      assert {:ok, [{%Release{episodes: [1]}, [1]}]} =
+               Acquisition.best_releases(series(tvdb_id: nil, title: "Æon Flux"), 1, [1])
+    end
+
+    test "an '&' in a mostly-non-Latin title can't inflate the needle past the fail-closed guard" do
+      # "&"→"and" expansion must count on BOTH sides of the ratio: otherwise "Дом & Сад"
+      # folds to the needle "and", which matches half the releases on any indexer.
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
+        {:ok, [raw_tv("Law.and.Order.S01E05.1080p.WEB-DL-GRP")]}
+      end)
+
+      assert :no_match =
+               Acquisition.best_releases(series(tvdb_id: nil, title: "Дом & Сад"), 1, [5])
+    end
+
     test "title-match folds diacritics so an ASCII-ized release still matches" do
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
         {:ok, [raw_tv("Pokemon.S01E01.1080p.WEB-DL-GRP")]}

@@ -710,6 +710,15 @@ defmodule Cinder.LibraryTest do
       assert {:error, :no_content_path} = Library.import_episodes(nil, [ep(1, 1)])
     end
 
+    test "a vanished content_path folder surfaces {:error, reason}, not an empty import" do
+      # dir? is false for a nonexistent path too (unmounted volume): without the lstat guard
+      # the folder name would pass as a "lone file", filter to no videos, and park+blocklist.
+      stub(Cinder.Library.FilesystemMock, :dir?, fn "/dl/gone" -> false end)
+      expect(Cinder.Library.FilesystemMock, :lstat, fn "/dl/gone" -> {:error, :enoent} end)
+
+      assert {:error, :enoent} = Library.import_episodes("/dl/gone", [ep(1, 1)])
+    end
+
     test "TV re-import replaces an episode's file on a resolution upgrade" do
       series = struct(%Series{title: "Show", year: 2008, tmdb_id: 1}, [])
 

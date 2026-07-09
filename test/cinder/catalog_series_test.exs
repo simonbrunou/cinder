@@ -417,6 +417,27 @@ defmodule Cinder.CatalogSeriesTest do
       assert Enum.map(grab.episodes, & &1.episode_number) |> Enum.sort() == [1, 2, 3]
     end
 
+    test "resets search_attempts so the user-chosen release gets a fresh budget" do
+      series = series_with_wanted_episodes(season: 1, numbers: [1])
+      # Search-parked (at the cap) — a manual grab must still work and re-open the budget,
+      # which also keeps the counter from ever exceeding the cap (the crossing check's ==).
+      Cinder.Repo.update_all(Cinder.Catalog.Episode, set: [search_attempts: 10])
+
+      release = %Cinder.Acquisition.Release{
+        title: "S01E01",
+        protocol: :torrent,
+        season: 1,
+        episodes: [1],
+        download_url: "magnet:?x"
+      }
+
+      Cinder.Download.ClientMock |> expect(:add, fn _ -> {:ok, "dl-tv-reset"} end)
+
+      assert {:ok, grab} = Cinder.Catalog.manual_grab_tv(series, 1, release)
+      grab = Cinder.Repo.preload(grab, :episodes)
+      assert [%{search_attempts: 0}] = grab.episodes
+    end
+
     test "returns :nothing_wanted when the season has no wanted episodes" do
       series = series_with_available_season(season: 1)
 
