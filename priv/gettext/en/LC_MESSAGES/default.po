@@ -599,7 +599,7 @@ msgid "Invalid email or password"
 msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:273
-#: lib/cinder_web/live/movie_detail_live.ex:420
+#: lib/cinder_web/live/movie_detail_live.ex:423
 #, elixir-autogen, elixir-format
 msgid "Language"
 msgstr ""
@@ -971,12 +971,12 @@ msgstr ""
 msgid "Resetting…"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:373
+#: lib/cinder_web/live/movie_detail_live.ex:376
 #, elixir-autogen, elixir-format
 msgid "Retry"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:371
+#: lib/cinder_web/live/movie_detail_live.ex:374
 #, elixir-autogen, elixir-format
 msgid "Retrying…"
 msgstr ""
@@ -1943,7 +1943,7 @@ msgstr ""
 msgid "source not preferred"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:391
+#: lib/cinder_web/live/movie_detail_live.ex:394
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Cancel upgrade"
 msgstr ""
@@ -1954,7 +1954,7 @@ msgstr ""
 msgid "Couldn't grab that release."
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:382
+#: lib/cinder_web/live/movie_detail_live.ex:385
 #: lib/cinder_web/live/series_detail_live.ex:553
 #, elixir-autogen, elixir-format
 msgid "Find a better match"
@@ -2138,7 +2138,7 @@ msgstr ""
 msgid "%{n} min"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:404
+#: lib/cinder_web/live/movie_detail_live.ex:407
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Downloaded file"
 msgstr ""
@@ -2153,22 +2153,22 @@ msgstr ""
 msgid "No description available."
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:451
+#: lib/cinder_web/live/movie_detail_live.ex:454
 #, elixir-autogen, elixir-format
 msgid "Release"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:408
+#: lib/cinder_web/live/movie_detail_live.ex:411
 #, elixir-autogen, elixir-format
 msgid "Resolution"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:412
+#: lib/cinder_web/live/movie_detail_live.ex:415
 #, elixir-autogen, elixir-format
 msgid "Size"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:416
+#: lib/cinder_web/live/movie_detail_live.ex:419
 #, elixir-autogen, elixir-format
 msgid "Source"
 msgstr ""
@@ -2203,13 +2203,13 @@ msgstr ""
 msgid "Subtitle languages (comma-separated, e.g. en,fr)"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:433
+#: lib/cinder_web/live/movie_detail_live.ex:436
 #: lib/cinder_web/settings_labels.ex:29
 #, elixir-autogen, elixir-format
 msgid "Subtitles"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:424
+#: lib/cinder_web/live/movie_detail_live.ex:427
 #, elixir-autogen, elixir-format
 msgid "Audio"
 msgstr ""
@@ -2219,12 +2219,12 @@ msgstr ""
 msgid "audio %{lang}"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:439
+#: lib/cinder_web/live/movie_detail_live.ex:442
 #, elixir-autogen, elixir-format
 msgid "embedded"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:445
+#: lib/cinder_web/live/movie_detail_live.ex:448
 #, elixir-autogen, elixir-format
 msgid "sidecar"
 msgstr ""
