@@ -321,6 +321,25 @@ defmodule Cinder.AcquisitionTest do
                Acquisition.best_releases(series(title: "Money Heist"), 1, [1])
     end
 
+    test "an all-numeric title is prefix-anchored: a year in another show's name can't match" do
+      # Regression: substring matching let series "24" accept "Other.Show.2024..." —
+      # the scorer then matched on season number alone and imported the wrong show.
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
+        {:ok, [raw_tv("Other.Show.2024.S01E05.1080p.WEB-DL-GRP")]}
+      end)
+
+      assert :no_match = Acquisition.best_releases(series(tvdb_id: nil, title: "24"), 1, [5])
+    end
+
+    test "an all-numeric title still matches its own releases (scene names lead with the title)" do
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
+        {:ok, [raw_tv("24.S01E05.1080p.WEB-DL-GRP")]}
+      end)
+
+      assert {:ok, [{%Release{episodes: [5]}, [5]}]} =
+               Acquisition.best_releases(series(tvdb_id: nil, title: "24"), 1, [5])
+    end
+
     test "title-match folds diacritics so an ASCII-ized release still matches" do
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
         {:ok, [raw_tv("Pokemon.S01E01.1080p.WEB-DL-GRP")]}

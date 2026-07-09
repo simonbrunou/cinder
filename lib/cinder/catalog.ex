@@ -1512,6 +1512,29 @@ defmodule Cinder.Catalog do
   @doc "Count of wanted episodes (see `wanted_episodes/0`)."
   def count_wanted_episodes, do: Repo.aggregate(wanted_episodes_query(), :count)
 
+  # The TV sweep's per-episode search-attempt cap. Lives here (not in the poller) because the
+  # UI derives :search_parked from it — the sweep's skip bound and the badge must agree.
+  @max_search_attempts 10
+
+  @doc "See `episode_state/2`: past this many search attempts the sweep skips the episode."
+  def max_search_attempts, do: @max_search_attempts
+
+  @doc """
+  Derived pipeline state for an episode (episodes carry no status enum): a file ⇒ `:available`,
+  an active grab ⇒ `:downloading`, unaired/undated ⇒ `:upcoming`, sweep gave up
+  (`search_attempts >= max_search_attempts/0`) ⇒ `:search_parked` (a manual Search re-queues
+  it via `search_episode_now/1`), else `:wanted`.
+  """
+  def episode_state(%Episode{} = episode, today \\ Date.utc_today()) do
+    cond do
+      episode.file_path -> :available
+      episode.grab_id -> :downloading
+      is_nil(episode.air_date) or Date.compare(episode.air_date, today) == :gt -> :upcoming
+      episode.search_attempts >= @max_search_attempts -> :search_parked
+      true -> :wanted
+    end
+  end
+
   @doc """
   Re-queues a single wanted `episode` for the TV sweep by zeroing its `search_attempts` (clearing
   any backoff/attempt-cap park). A no-op for an episode that already has a file or an active grab

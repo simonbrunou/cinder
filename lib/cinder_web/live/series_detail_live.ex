@@ -347,6 +347,13 @@ defmodule CinderWeb.SeriesDetailLive do
       Date.compare(ep.air_date, Date.utc_today()) != :gt
   end
 
+  # The sweep hit its attempt cap and skips this episode — without a badge the row reads
+  # "still trying" forever. The Search button next to it zeroes the counter and re-queues.
+  defp search_exhausted?(ep, season_number) do
+    episode_searchable?(ep, season_number) and
+      ep.search_attempts >= Catalog.max_search_attempts()
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -642,6 +649,11 @@ defmodule CinderWeb.SeriesDetailLive do
                 >
                   {gettext("Delete file")}
                 </.button>
+                <.status_badge
+                  :if={search_exhausted?(ep, season.season_number)}
+                  kind={:episode}
+                  status={:search_parked}
+                />
                 <.button
                   :if={episode_searchable?(ep, season.season_number)}
                   type="button"

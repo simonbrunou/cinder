@@ -171,8 +171,20 @@ defmodule Cinder.Acquisition do
 
   defp filter_title(candidates, _series), do: candidates
 
-  defp title_matches?(%Release{title: title}, series_title),
-    do: String.contains?(normalize_title(title), normalize_title(series_title))
+  # Short/all-numeric titles are anchored to a prefix: a substring match would let
+  # series "24" accept any release with a year in its name ("Other.Show.2024.S01E05")
+  # and "ER" accept "Superhero..." — the scorer then matches on season number alone and
+  # imports the wrong show. Scene names lead with the title, so a prefix is safe there.
+  defp title_matches?(%Release{title: title}, series_title) do
+    release = normalize_title(title)
+    series = normalize_title(series_title)
+
+    if byte_size(series) <= 3 or series =~ ~r/^\d+$/ do
+      String.starts_with?(release, series)
+    else
+      String.contains?(release, series)
+    end
+  end
 
   # Fold to a comparable core: downcase, NFD-decompose so an ASCII-ized release name
   # ("Pokemon") still matches an accented TMDB title ("Pokémon"), then drop everything

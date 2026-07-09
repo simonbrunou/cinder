@@ -19,7 +19,8 @@ defmodule Cinder.Download.TvPoller do
   the download→import boundary, so the advance and import phases each get a fresh `@max_attempts`
   budget (a download's blips don't starve its import). The search phase backs off per
   `episode.search_attempts`/`updated_at` exactly like the movie poller, and an episode parks
-  (derived "couldn't find") at `@max_attempts`.
+  (derived `:search_parked`, warned + announced via the Notifier) at
+  `Catalog.max_search_attempts/0`.
   """
   require Logger
 
@@ -128,7 +129,7 @@ defmodule Cinder.Download.TvPoller do
 
   defp search_wanted(retry_after) do
     Catalog.wanted_episodes()
-    |> Enum.reject(&(&1.search_attempts >= @max_attempts))
+    |> Enum.reject(&(&1.search_attempts >= Catalog.max_search_attempts()))
     |> Enum.filter(&search_due?(&1, retry_after))
     |> Enum.group_by(&{&1.season.series.id, &1.season.season_number})
     |> Enum.each(fn {{series_id, season}, episodes} ->
@@ -205,10 +206,30 @@ defmodule Cinder.Download.TvPoller do
   end
 
   defp bump_not_grabbed(episodes, grabbed) do
-    episodes
-    |> Enum.map(& &1.id)
-    |> Enum.reject(&(&1 in grabbed))
-    |> Catalog.increment_search_attempts()
+    missed = Enum.reject(episodes, &(&1.id in grabbed))
+    Catalog.increment_search_attempts(Enum.map(missed, & &1.id))
+    announce_exhausted(missed)
+  end
+
+  # An episode crossing the search cap leaves the sweep permanently (until a manual Search
+  # zeroes the counter) — that moment must never be silent: the movie analogue parks visibly
+  # at :search_failed, so the TV side warns + notifies, and the UI derives :search_parked.
+  defp announce_exhausted(missed) do
+    case Enum.filter(missed, &(&1.search_attempts + 1 >= Catalog.max_search_attempts())) do
+      [] ->
+        :ok
+
+      exhausted ->
+        %{season: %{series: series, season_number: season}} = hd(exhausted)
+        numbers = Enum.map(exhausted, & &1.episode_number)
+
+        Logger.warning(
+          "tv search exhausted for #{series.title} season #{season} episode(s) " <>
+            "#{inspect(numbers)}; the sweep will skip them until a manual Search"
+        )
+
+        Notifier.notify({:episodes_search_exhausted, exhausted})
+    end
   end
 
   # --- shared helpers --------------------------------------------------------------------------

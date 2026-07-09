@@ -33,6 +33,13 @@ defmodule Cinder.Library.Filesystem.DiskTest do
     assert {:error, :eexist} = Disk.ln(src, dest)
   end
 
+  test "find_files/1 propagates an unreadable root as {:error, _}, not an empty listing" do
+    # Regression: {:ok, []} on EACCES/ENOENT read downstream as "release has no video
+    # file" — a permanent park + blocklist for what is a transient filesystem failure.
+    assert {:error, :enoent} =
+             Disk.find_files("/nonexistent/cinder-#{System.unique_integer([:positive])}")
+  end
+
   @tag :tmp_dir
   test "find_files/1 includes dotfiles so the stale-temp sweep can find leftovers", %{
     tmp_dir: tmp

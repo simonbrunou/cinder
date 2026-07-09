@@ -695,6 +695,10 @@ defmodule CinderWeb.CoreComponents do
   defp badge_spec(:episode, :wanted), do: {gettext("Wanted"), "badge-warning", "hero-eye"}
   defp badge_spec(:episode, :upcoming), do: {gettext("Upcoming"), "badge-ghost", "hero-calendar"}
 
+  # The sweep exhausted its search attempts and skips this episode until a manual Search.
+  defp badge_spec(:episode, :search_parked),
+    do: {gettext("Search failed"), "badge-error", "hero-exclamation-triangle"}
+
   # grab state
   defp badge_spec(:grab, :downloading),
     do: {gettext("Downloading"), "badge-info", "hero-arrow-down-tray"}

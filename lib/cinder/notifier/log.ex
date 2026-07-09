@@ -18,6 +18,9 @@ defmodule Cinder.Notifier.Log do
   def notify({:grab_failed, grab, reason}),
     do: log("tv grab failed: ##{grab.id} (#{inspect(reason)})")
 
+  def notify({:episodes_search_exhausted, episodes}),
+    do: log("episode search exhausted: #{episodes_summary(episodes)}")
+
   def notify(other), do: log("event: #{inspect(other)}")
 
   # "Show (S01E02, S01E03)" from a grab's imported episodes (season: :series preloaded), or a

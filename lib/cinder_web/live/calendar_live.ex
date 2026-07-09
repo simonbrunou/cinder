@@ -26,21 +26,10 @@ defmodule CinderWeb.CalendarLive do
 
     rows =
       for ep <- Catalog.upcoming_episodes() do
-        %{ep: ep, state: episode_state(ep, today)}
+        %{ep: ep, state: Catalog.episode_state(ep, today)}
       end
 
     assign(socket, rows: rows)
-  end
-
-  # Derived episode state (no status enum): a file ⇒ available, an active grab ⇒ downloading,
-  # an aired-but-missing monitored episode ⇒ wanted, else still upcoming.
-  defp episode_state(ep, today) do
-    cond do
-      ep.file_path -> :available
-      ep.grab_id -> :downloading
-      Date.compare(ep.air_date, today) != :gt -> :wanted
-      true -> :upcoming
-    end
   end
 
   defp code(season, episode), do: "S#{pad(season)}E#{pad(episode)}"
