@@ -62,6 +62,32 @@ defmodule CinderWeb.DiscoverLiveTest do
     assert has_element?(lv, ~s(#results a[href="/series/tmdb/1399"]))
   end
 
+  test "a TV card shows the user's season-request state and keeps the season-picker link", %{
+    conn: _conn
+  } do
+    user = Cinder.AccountsFixtures.user_fixture()
+    conn = log_in_user(Phoenix.ConnTest.build_conn(), user)
+
+    {:ok, _} =
+      Requests.create_request(user, %{
+        target_type: "season",
+        target_id: 1399,
+        season_number: 1,
+        title: "Game of Thrones",
+        year: 2011,
+        poster_path: "/got.jpg"
+      })
+
+    stub_tv([@got])
+    {:ok, lv, _html} = live(conn, ~p"/")
+
+    lv |> form("#search-form", %{"query" => "thrones"}) |> render_change()
+
+    assert has_element?(lv, "#results", "Pending")
+    # The badge is additive — the season picker stays reachable for more seasons.
+    assert has_element?(lv, ~s(#results a[href="/series/tmdb/1399"]))
+  end
+
   test "a single query returns movies AND TV together in one grid", %{conn: conn} do
     stub_movies([@inception])
     stub_tv([@got])

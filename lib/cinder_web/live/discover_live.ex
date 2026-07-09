@@ -16,6 +16,7 @@ defmodule CinderWeb.DiscoverLive do
     # ponytail: subscribe-before-read closes the read/subscribe gap.
     if connected?(socket) do
       Catalog.subscribe()
+      Catalog.subscribe_series()
       Cinder.Requests.subscribe()
     end
 
@@ -72,6 +73,11 @@ defmodule CinderWeb.DiscoverLive do
 
   def handle_info({event, _request}, socket)
       when event in [:request_created, :request_approved, :request_denied, :request_deleted] do
+    {:noreply, assign_request_state(socket)}
+  end
+
+  # A season completing (episode import) or a series being removed can flip a TV card's badge.
+  def handle_info({event, _id}, socket) when event in [:series_updated, :series_deleted] do
     {:noreply, assign_request_state(socket)}
   end
 
@@ -141,8 +147,23 @@ defmodule CinderWeb.DiscoverLive do
   # status per tmdb_id; together they drive the per-title movie badge.
   defp assign_request_state(socket) do
     user = socket.assigns.current_scope.user
-    request_status = latest_status_by(Cinder.Requests.list_for_user(user), & &1.target_id)
-    assign_movie_status(assign(socket, request_status: request_status))
+    requests = Cinder.Requests.list_for_user(user)
+    request_status = latest_status_by(requests, & &1.target_id)
+
+    # TV cards mirror the movie badge, but a series' state is per-season: key the newest season
+    # request by the series tmdb_id (a season request's target_id), and treat a series as
+    # available once any of its seasons has imported.
+    season_requests = Enum.filter(requests, &(&1.target_type == "season"))
+    series_request_status = latest_status_by(season_requests, & &1.target_id)
+    available_series = MapSet.new(Catalog.available_season_keys(), fn {tid, _n} -> tid end)
+
+    socket
+    |> assign(
+      request_status: request_status,
+      series_request_status: series_request_status,
+      available_series: available_series
+    )
+    |> assign_movie_status()
   end
 
   # Read the full movie-status map fresh from the DB (authoritative) on the infrequent
@@ -168,6 +189,18 @@ defmodule CinderWeb.DiscoverLive do
       request_status[tmdb_id] == :pending -> :pending
       request_status[tmdb_id] == :approved -> :approved
       request_status[tmdb_id] == :denied -> :denied
+      true -> :none
+    end
+  end
+
+  # Series-level composite for a TV card, same precedence as title_state/3 but sourced from the
+  # user's season requests (keyed by series tmdb_id) and season availability.
+  defp tv_title_state(tmdb_id, series_request_status, available_series) do
+    cond do
+      MapSet.member?(available_series, tmdb_id) -> :available
+      series_request_status[tmdb_id] == :pending -> :pending
+      series_request_status[tmdb_id] == :approved -> :approved
+      series_request_status[tmdb_id] == :denied -> :denied
       true -> :none
     end
   end
@@ -220,15 +253,11 @@ defmodule CinderWeb.DiscoverLive do
               title={r.title}
               original_language={r.original_language}
             />
-            <.button
+            <.tv_result_action
               :if={r.type == :tv}
-              navigate={~p"/series/tmdb/#{r.tmdb_id}"}
-              variant="primary"
-              size="sm"
-              class="w-full"
-            >
-              {gettext("View seasons")}<.icon name="hero-arrow-right" class="size-3.5" />
-            </.button>
+              state={tv_title_state(r.tmdb_id, @series_request_status, @available_series)}
+              tmdb_id={r.tmdb_id}
+            />
           </.media_card>
         </div>
       </section>
@@ -281,6 +310,25 @@ defmodule CinderWeb.DiscoverLive do
         {gettext("Add")}
       </.button>
     </form>
+    """
+  end
+
+  attr :state, :atom, required: true
+  attr :tmdb_id, :integer, required: true
+
+  # TV cards keep the season-picker link always (a show can be re-browsed for more seasons); the
+  # badge is additive, unlike the movie card where an active state replaces the Add form.
+  defp tv_result_action(assigns) do
+    ~H"""
+    <.status_badge
+      :if={@state != :none}
+      kind={:request}
+      status={@state}
+      class="h-auto break-words text-center"
+    />
+    <.button navigate={~p"/series/tmdb/#{@tmdb_id}"} variant="primary" size="sm" class="w-full">
+      {gettext("View seasons")}<.icon name="hero-arrow-right" class="size-3.5" />
+    </.button>
     """
   end
 
