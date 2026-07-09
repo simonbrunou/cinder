@@ -66,6 +66,7 @@ defmodule Cinder.LibrarySubtitlesTest do
     # The async task's sidecar-existence lstat (a *different* lstat, on the sidecar path). A stub, so
     # it's handled after the single source-file lstat expect above is consumed.
     stub(Cinder.Library.FilesystemMock, :lstat, fn _ -> {:error, :enoent} end)
+    stub(Cinder.Library.FilesystemMock, :moviehash_data, fn _ -> :too_small end)
 
     # The subtitle fetch runs in the Task (global Mox). It signals the test so we can prove the
     # dispatch happened and that the provider error stayed off the import path.
@@ -109,6 +110,7 @@ defmodule Cinder.LibrarySubtitlesTest do
 
     # Sidecar-existence check for the imported episode file — see the movie test above.
     stub(Cinder.Library.FilesystemMock, :lstat, fn _ -> {:error, :enoent} end)
+    stub(Cinder.Library.FilesystemMock, :moviehash_data, fn _ -> :too_small end)
 
     expect(Cinder.Subtitles.ProviderMock, :search, fn %{
                                                         tmdb_id: 1,

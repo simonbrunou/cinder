@@ -26,6 +26,8 @@ defmodule Cinder.Subtitles.SweeperTest do
       Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, saved)
     end)
 
+    stub(Cinder.Library.FilesystemMock, :moviehash_data, fn _ -> :too_small end)
+
     :ok
   end
 

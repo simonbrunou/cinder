@@ -18,6 +18,7 @@ defmodule Cinder.SubtitlesTest do
     end)
 
     Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "en,fr")
+    stub(Cinder.Library.FilesystemMock, :moviehash_data, fn _ -> :too_small end)
     :ok
   end
 
@@ -207,6 +208,99 @@ defmodule Cinder.SubtitlesTest do
        ]}
     end)
     |> expect(:download, fn 5 -> {:ok, "SRT"} end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
+  end
+
+  test "fetch_missing/2 merges the file's moviehash into the search criteria" do
+    Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "en")
+    zeros = <<0::size(65_536 * 8)>>
+
+    Cinder.Library.FilesystemMock
+    |> expect(:moviehash_data, fn "/lib/M/M.mkv" -> {:ok, {131_072, zeros, zeros}} end)
+    |> expect(:lstat, fn "/lib/M/M.en.srt" -> {:error, :enoent} end)
+    |> expect(:write, fn "/lib/M/M.en.srt", "SRT" -> :ok end)
+
+    Cinder.Subtitles.ProviderMock
+    |> expect(:search, fn %{imdb_id: "tt1", moviehash: "0000000000020000", languages: ["en"]} ->
+      {:ok,
+       [
+         %{
+           file_id: 1,
+           language: "en",
+           downloads: 10,
+           hearing_impaired: false,
+           ai_translated: false,
+           moviehash_match: false
+         }
+       ]}
+    end)
+    |> expect(:download, fn 1 -> {:ok, "SRT"} end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
+  end
+
+  test "fetch_missing/2 prefers a moviehash-matched candidate over a higher-downloads non-match" do
+    Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "en")
+    zeros = <<0::size(65_536 * 8)>>
+
+    Cinder.Library.FilesystemMock
+    |> expect(:moviehash_data, fn _ -> {:ok, {131_072, zeros, zeros}} end)
+    |> expect(:lstat, fn "/lib/M/M.en.srt" -> {:error, :enoent} end)
+    |> expect(:write, fn "/lib/M/M.en.srt", "SRT" -> :ok end)
+
+    Cinder.Subtitles.ProviderMock
+    |> expect(:search, fn %{languages: ["en"]} ->
+      {:ok,
+       [
+         %{
+           file_id: 1,
+           language: "en",
+           downloads: 999,
+           hearing_impaired: false,
+           ai_translated: false,
+           moviehash_match: false
+         },
+         %{
+           file_id: 2,
+           language: "en",
+           downloads: 5,
+           hearing_impaired: false,
+           ai_translated: false,
+           moviehash_match: true
+         }
+       ]}
+    end)
+    |> expect(:download, fn 2 -> {:ok, "SRT"} end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
+  end
+
+  test "fetch_missing/2 still searches by id when the file is not hashable" do
+    Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "en")
+
+    Cinder.Library.FilesystemMock
+    |> expect(:moviehash_data, fn _ -> :too_small end)
+    |> expect(:lstat, fn "/lib/M/M.en.srt" -> {:error, :enoent} end)
+    |> expect(:write, fn "/lib/M/M.en.srt", "SRT" -> :ok end)
+
+    Cinder.Subtitles.ProviderMock
+    |> expect(:search, fn criteria ->
+      refute Map.has_key?(criteria, :moviehash)
+
+      {:ok,
+       [
+         %{
+           file_id: 1,
+           language: "en",
+           downloads: 1,
+           hearing_impaired: false,
+           ai_translated: false,
+           moviehash_match: false
+         }
+       ]}
+    end)
+    |> expect(:download, fn 1 -> {:ok, "SRT"} end)
 
     assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
   end

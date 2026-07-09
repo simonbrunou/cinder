@@ -13,6 +13,7 @@ defmodule Cinder.Subtitles do
   require Logger
 
   alias Cinder.Catalog.{Episode, Movie, Series}
+  alias Cinder.Subtitles.Moviehash
 
   @doc "Subtitle-search criteria for a movie: imdb + tmdb id (the provider prefers imdb)."
   @spec movie_criteria(Movie.t()) :: map()
@@ -54,12 +55,31 @@ defmodule Cinder.Subtitles do
   """
   @spec fetch_missing(map(), String.t()) :: :ok | :quota_exceeded
   def fetch_missing(criteria_base, dest_path) do
-    Enum.reduce_while(wanted_languages(), :ok, fn lang, _acc ->
+    case wanted_languages() do
+      [] -> :ok
+      langs -> fetch_languages(criteria_base, langs, dest_path)
+    end
+  end
+
+  # Hash computed once per fetch (not per language) and merged into criteria before the loop.
+  defp fetch_languages(criteria_base, langs, dest_path) do
+    criteria_base = with_moviehash(criteria_base, dest_path)
+
+    Enum.reduce_while(langs, :ok, fn lang, _acc ->
       case fetch_one(criteria_base, lang, dest_path) do
         :quota_exceeded -> {:halt, :quota_exceeded}
         _ -> {:cont, :ok}
       end
     end)
+  end
+
+  # Best-effort: a hashable file adds :moviehash (sync-accurate matches); :too_small / error just
+  # leaves the id search as-is.
+  defp with_moviehash(criteria_base, dest_path) do
+    case Moviehash.of_file(dest_path) do
+      {:ok, hash} -> Map.put(criteria_base, :moviehash, hash)
+      _ -> criteria_base
+    end
   end
 
   @doc """
@@ -130,14 +150,17 @@ defmodule Cinder.Subtitles do
     end
   end
 
-  # Best candidate: exact language, not hearing-impaired, not machine-translated, most downloads.
+  # Best candidate: exact language, not hearing-impaired, not machine-translated, has a file_id.
+  # Prefer a moviehash-synced match, then most downloads.
   defp best(results, lang) do
     results
     |> Enum.filter(fn r ->
       String.downcase(r.language || "") == lang and not r.hearing_impaired and not r.ai_translated and
         not is_nil(r.file_id)
     end)
-    |> Enum.max_by(& &1.downloads, fn -> nil end)
+    |> Enum.max_by(&{(Map.get(&1, :moviehash_match, false) && 1) || 0, &1.downloads}, fn ->
+      nil
+    end)
   end
 
   defp sidecar_exists?(path) do
