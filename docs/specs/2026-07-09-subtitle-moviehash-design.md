@@ -41,9 +41,9 @@ A small module — the pure algorithm plus one filesystem orchestration function
 - `compute(size, head, tail) :: String.t()` — **pure.** `head`/`tail` are 65536-byte binaries.
   Sums their u64 little-endian words with `size`, mod 2⁶⁴, renders 16-hex lowercase. This is the
   money logic and carries the test.
-- `of_file(path) :: {:ok, hex} | :too_small | {:error, term}` — `lstat` for size; if
-  `size < 131072` → `:too_small`; else `read_chunk` the first 64 KiB (offset 0) and last 64 KiB
-  (offset `size - 65536`), then `compute`. Resolves the fs impl the same way `Cinder.Subtitles`
+- `of_file(path) :: {:ok, hex} | :too_small | {:error, term}` — calls `fs().moviehash_data(path)`
+  and, on `{:ok, {size, head, tail}}`, returns `{:ok, compute(size, head, tail)}`; passes
+  `:too_small` / `{:error, _}` through. Resolves the fs impl the same way `Cinder.Subtitles`
   does (`Application.fetch_env!(:cinder, :filesystem)`).
 
 ### Changed: `Cinder.Library.Filesystem` (+ `Disk` impl, + Mox mock)
@@ -51,12 +51,23 @@ A small module — the pure algorithm plus one filesystem orchestration function
 One new callback:
 
 ```elixir
-@callback read_chunk(path :: String.t(), offset :: non_neg_integer(), length :: pos_integer()) ::
-            {:ok, binary()} | {:error, term()}
+@callback moviehash_data(path :: String.t()) ::
+            {:ok, {size :: non_neg_integer(), head :: binary(), tail :: binary()}}
+            | :too_small
+            | {:error, term()}
 ```
 
-`Disk` impl: `File.open(path, [:read, :binary])` → `:file.pread(io, offset, length)` → close.
+`Disk` impl: `File.open(path, [:read, :binary])` once → size from `lstat`; if `size < 131072`
+return `:too_small` (can't read two non-overlapping 64 KiB chunks); else `:file.pread` the first
+64 KiB (offset 0) and last 64 KiB (offset `size - 65536`) → close → `{:ok, {size, head, tail}}`.
 The Mox mock (`Cinder.Library.FilesystemMock`) gains it in tests.
+
+**Why a dedicated callback, not a general `read_chunk` + `lstat`:** `of_file` runs inside
+`fetch_missing`, so it touches the fs on the *video* path. `subtitles_test.exs` sets strict
+per-path `expect(:lstat, fn "…​.en.srt" -> … end)`; Mox matches expectations FIFO by call, so a
+`lstat` on the video path would fire the sidecar expectation and raise `FunctionClauseError`. A
+distinct `moviehash_data/1` sidesteps every existing `:lstat` expectation — the existing tests
+add a single `stub(:moviehash_data, fn _ -> :too_small end)` and keep their exact behaviour.
 
 ### Changed: `Cinder.Subtitles`
 
@@ -82,7 +93,7 @@ The Mox mock (`Cinder.Library.FilesystemMock`) gains it in tests.
 ```
 import / sweep
   └─ Subtitles.fetch_missing(criteria_base, path)
-       ├─ Moviehash.of_file(path)              # lstat + 2× read_chunk + compute
+       ├─ Moviehash.of_file(path)              # fs().moviehash_data + compute
        ├─ merge :moviehash into criteria_base  # only on {:ok, hex}
        └─ per language:
             provider.search(%{…id…, moviehash, languages})
@@ -105,9 +116,15 @@ import / sweep
   - all-zero-bytes vector → hash equals size: `compute(131072, <<0::size(524288)>>,
     <<0::size(524288)>>) == "0000000000020000"` (independently verifiable: zero words sum to 0).
   - a non-zero-word vector to cover little-endian summation and 2⁶⁴ wraparound.
+- `of_file/1` (Mox fs): `{:ok, {size, head, tail}}` → hashed; `:too_small` / `{:error, _}`
+  pass through.
+- `Cinder.Library.Filesystem.Disk.moviehash_data/1` against a real temp file (matches the
+  existing `disk_test.exs` convention): a ≥ 128 KiB file yields a 16-hex hash; a small file → `:too_small`.
 - `Cinder.Subtitles` (Mox fs + Mox provider):
-  - criteria carries `:moviehash` when the file is hashable (mock `lstat` + `read_chunk`).
+  - criteria carries `:moviehash` when the file is hashable (mock `moviehash_data`).
   - `best/2` picks the `moviehash_match: true` candidate over a higher-`downloads` non-match.
+  - Existing tests add `stub(:moviehash_data, fn _ -> :too_small end)` so their id-search
+    behaviour is unchanged.
 
 ## Deliberately skipped (add when measured)
 
