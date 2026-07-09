@@ -114,6 +114,24 @@ defmodule Cinder.Library.Filesystem.DiskTest do
     refute File.exists?(src)
   end
 
+  test "moviehash_data/1 returns {size, head, tail} for a >=128KiB file and :too_small below it" do
+    dir = Path.join(System.tmp_dir!(), "cinder-moviehash-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf!(dir) end)
+
+    big = Path.join(dir, "big.mkv")
+    File.write!(big, :binary.copy(<<0>>, 200_000))
+    assert {:ok, {200_000, head, tail}} = Disk.moviehash_data(big)
+    assert byte_size(head) == 65_536
+    assert byte_size(tail) == 65_536
+
+    small = Path.join(dir, "small.mkv")
+    File.write!(small, :binary.copy(<<0>>, 1000))
+    assert :too_small = Disk.moviehash_data(small)
+
+    assert {:error, _} = Disk.moviehash_data(Path.join(dir, "nope.mkv"))
+  end
+
   test "write/2 writes bytes to disk" do
     dir = Path.join(System.tmp_dir!(), "cinder-fs-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)

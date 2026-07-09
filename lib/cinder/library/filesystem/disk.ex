@@ -9,6 +9,9 @@ defmodule Cinder.Library.Filesystem.Disk do
 
   require Logger
 
+  @moviehash_chunk 65_536
+  @moviehash_min 2 * @moviehash_chunk
+
   @impl true
   def dir?(path), do: File.dir?(path)
 
@@ -74,4 +77,23 @@ defmodule Cinder.Library.Filesystem.Disk do
 
   @impl true
   def rmdir(dir), do: File.rmdir(dir)
+
+  @impl true
+  def moviehash_data(path) do
+    with {:ok, %{size: size}} <- lstat(path),
+         true <- size >= @moviehash_min || :too_small,
+         {:ok, io} <- File.open(path, [:read, :binary]) do
+      try do
+        with {:ok, head} <- :file.pread(io, 0, @moviehash_chunk),
+             {:ok, tail} <- :file.pread(io, size - @moviehash_chunk, @moviehash_chunk) do
+          {:ok, {size, head, tail}}
+        end
+      after
+        File.close(io)
+      end
+    else
+      :too_small -> :too_small
+      {:error, _} = err -> err
+    end
+  end
 end
