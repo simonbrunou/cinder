@@ -11,7 +11,7 @@ defmodule CinderWeb.UsersLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/users")
     lv |> form("#quota-#{user.id}", %{"quota" => "2"}) |> render_submit()
 
-    assert Cinder.Accounts.get_user!(user.id).request_quota == 2
+    assert Cinder.Repo.get!(Cinder.Accounts.User, user.id).request_quota == 2
   end
 
   test "clearing the quota field sets unlimited (nil)", %{conn: conn} do
@@ -23,7 +23,7 @@ defmodule CinderWeb.UsersLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/users")
     lv |> form("#quota-#{user.id}", %{"quota" => ""}) |> render_submit()
 
-    assert Cinder.Accounts.get_user!(user.id).request_quota == nil
+    assert Cinder.Repo.get!(Cinder.Accounts.User, user.id).request_quota == nil
   end
 
   test "admin creates a new user", %{conn: conn} do
@@ -46,7 +46,7 @@ defmodule CinderWeb.UsersLiveTest do
     })
     |> render_submit()
 
-    assert Cinder.Accounts.get_user_by_email(email)
+    assert Cinder.Repo.get_by(Cinder.Accounts.User, email: email)
     assert render(lv) =~ email
   end
 
@@ -92,7 +92,7 @@ defmodule CinderWeb.UsersLiveTest do
     })
     |> render_submit()
 
-    created = Cinder.Accounts.get_user_by_email(email)
+    created = Cinder.Repo.get_by(Cinder.Accounts.User, email: email)
     assert created != nil
     assert created.role == :admin
   end
@@ -110,7 +110,7 @@ defmodule CinderWeb.UsersLiveTest do
     |> form("#edit-email-form-#{user.id}", %{"user" => %{"email" => new_email}})
     |> render_submit()
 
-    assert Cinder.Accounts.get_user!(user.id).email == new_email
+    assert Cinder.Repo.get!(Cinder.Accounts.User, user.id).email == new_email
   end
 
   test "admin toggles a user's role", %{conn: conn} do
@@ -121,7 +121,7 @@ defmodule CinderWeb.UsersLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/users")
     lv |> element("#role-btn-#{user.id}") |> render_click()
 
-    assert Cinder.Accounts.get_user!(user.id).role == :admin
+    assert Cinder.Repo.get!(Cinder.Accounts.User, user.id).role == :admin
   end
 
   test "demoting the last admin flashes an error and does not change the role", %{conn: conn} do
@@ -132,7 +132,7 @@ defmodule CinderWeb.UsersLiveTest do
     html = lv |> element("#role-btn-#{admin.id}") |> render_click()
 
     assert html =~ "last admin"
-    assert Cinder.Accounts.get_user!(admin.id).role == :admin
+    assert Cinder.Repo.get!(Cinder.Accounts.User, admin.id).role == :admin
   end
 
   test "admin resets a user's password", %{conn: conn} do
@@ -164,7 +164,7 @@ defmodule CinderWeb.UsersLiveTest do
     lv |> element("#delete-btn-#{user.id}") |> render_click()
     lv |> element("#confirm-delete-#{user.id} button[phx-click=\"delete\"]") |> render_click()
 
-    refute Cinder.Accounts.get_user_by_email(user.email)
+    refute Cinder.Repo.get_by(Cinder.Accounts.User, email: user.email)
     refute render(lv) =~ user.email
   end
 
@@ -180,7 +180,7 @@ defmodule CinderWeb.UsersLiveTest do
       lv |> element("#confirm-delete-#{admin.id} button[phx-click=\"delete\"]") |> render_click()
 
     assert html =~ "your own account"
-    assert Cinder.Accounts.get_user!(admin.id)
+    assert Cinder.Repo.get!(Cinder.Accounts.User, admin.id)
   end
 
   test "deleting the last admin flashes an error", %{conn: conn} do
@@ -196,7 +196,7 @@ defmodule CinderWeb.UsersLiveTest do
       lv |> element("#confirm-delete-#{admin.id} button[phx-click=\"delete\"]") |> render_click()
 
     assert html =~ "last admin"
-    assert Cinder.Accounts.get_user!(admin.id)
+    assert Cinder.Repo.get!(Cinder.Accounts.User, admin.id)
   end
 
   test "a forged non-numeric phx-value id does not crash the LiveView and mutates nothing",
@@ -208,9 +208,9 @@ defmodule CinderWeb.UsersLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/users")
 
     forged = "abc"
-    role_before = Cinder.Accounts.get_user!(user.id).role
-    email_before = Cinder.Accounts.get_user!(user.id).email
-    quota_before = Cinder.Accounts.get_user!(user.id).request_quota
+    role_before = Cinder.Repo.get!(Cinder.Accounts.User, user.id).role
+    email_before = Cinder.Repo.get!(Cinder.Accounts.User, user.id).email
+    quota_before = Cinder.Repo.get!(Cinder.Accounts.User, user.id).request_quota
 
     # Every destructive / mutating handler, plus the start_* handlers that read the
     # raw id into an assign. A forged "abc" must never raise (String.to_integer would).
@@ -235,7 +235,7 @@ defmodule CinderWeb.UsersLiveTest do
     assert Process.alive?(lv.pid)
 
     # No mutation happened to the real user.
-    reloaded = Cinder.Accounts.get_user!(user.id)
+    reloaded = Cinder.Repo.get!(Cinder.Accounts.User, user.id)
     assert reloaded.role == role_before
     assert reloaded.email == email_before
     assert reloaded.request_quota == quota_before
@@ -251,7 +251,7 @@ defmodule CinderWeb.UsersLiveTest do
     # The user is deleted out from under this LiveView (e.g. a stale second tab).
     stale_id = to_string(user.id)
     {:ok, _} = Cinder.Accounts.delete_user(admin, user)
-    refute Cinder.Accounts.get_user_by_email(user.email)
+    refute Cinder.Repo.get_by(Cinder.Accounts.User, email: user.email)
 
     render_hook(lv, "toggle_role", %{"id" => stale_id})
     render_hook(lv, "delete", %{"id" => stale_id})

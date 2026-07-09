@@ -107,6 +107,11 @@ it. Nothing leaks into the image today (verified), but the build context contain
 
 ## P1 — should fix soon after (or before, they're small)
 
+> **[fixed 2026-07-09]** — code items in PR #75 (plus its own review round: async approvals keyed
+> per request, the update_password/rate-limiter interaction, availability semantics for `:future`
+> seasons), docs items in PR #76. Exception: README **screenshots** still need a running instance
+> to capture — the one item left for the maintainer.
+
 ### UI/UX
 - **Single season-approve freezes the page** — `requests_live.ex:34`,
   `dashboard_live.ex:51`, `series_discovery_live.ex:69`: the seconds-long
@@ -179,6 +184,12 @@ it. Nothing leaks into the image today (verified), but the build context contain
 ---
 
 ## P2 — debt worth scheduling (ponytail pass)
+
+> **[done 2026-07-09]** — all items landed (magic-link subtree deleted, PeriodicWorker merged
+> into PollerSkeleton as the `stateful: false` flavour, episode-code/request-title/derivation
+> dedups, dead scorer opt + config line + test-only Accounts fns removed, graphify-out
+> untracked) EXCEPT the Req-boilerplate lift, intentionally left: the shared shape exists
+> verbatim in fewer than three impls and each carries real service quirks. Net ≈ −2,000 lines.
 
 Ranked biggest cut first; net ≈ **−480 lib lines** (−750 with tests):
 

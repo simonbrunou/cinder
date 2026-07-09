@@ -528,18 +528,15 @@ defmodule Cinder.Library do
 
   defp build_episode_dest(%Episode{season: season} = ep, source, root) do
     show = library_name(sanitize(season.series.title), season.series.year, season.series.tmdb_id)
-    code = "S#{pad(season.season_number)}E#{pad(ep.episode_number)}"
+    code = Episode.code(season.season_number, ep.episode_number)
 
     Path.join([
       root,
       show,
-      "Season #{pad(season.season_number)}",
+      "Season #{Episode.pad(season.season_number)}",
       "#{show} - #{code}#{Path.extname(source)}"
     ])
   end
-
-  # Two-digit minimum, never truncated (episode/season can exceed 99 on long-running shows).
-  defp pad(n), do: n |> Integer.to_string() |> String.pad_leading(2, "0")
 
   defp log_unmatched([]), do: :ok
 

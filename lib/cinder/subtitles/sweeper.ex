@@ -6,13 +6,13 @@ defmodule Cinder.Subtitles.Sweeper do
   recovers cleanly after a crash and catches subtitles uploaded after a release landed. 12h default,
   `:start_poller`-gated. A blank `subtitle_languages` setting makes each pass a no-op.
 
-  Lifecycle is `Cinder.PeriodicWorker`. The interval is module config:
+  Lifecycle is `Cinder.Download.PollerSkeleton` (`stateful: false`). The interval is module config:
   `config :cinder, #{inspect(__MODULE__)}, interval: <ms>`.
   """
   alias Cinder.{Catalog, Subtitles}
 
   @default_interval :timer.hours(12)
-  use Cinder.PeriodicWorker, log_prefix: "sweeper"
+  use Cinder.Download.PollerSkeleton, log_prefix: "sweeper", stateful: false
 
   defp do_poll do
     if Subtitles.wanted_languages() == [] do

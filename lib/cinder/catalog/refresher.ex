@@ -6,13 +6,13 @@ defmodule Cinder.Catalog.Refresher do
   (12h by default) — household-scale TMDB load is trivial. `:start_poller`-gated like the pollers,
   so the suite doesn't auto-run it.
 
-  Lifecycle is `Cinder.PeriodicWorker` (self-rescheduling, stateless, `:infinity` poll). The
+  Lifecycle is `Cinder.Download.PollerSkeleton` (`stateful: false`) (self-rescheduling, stateless, `:infinity` poll). The
   interval is module config: `config :cinder, #{inspect(__MODULE__)}, interval: <ms>`.
   """
   alias Cinder.Catalog
 
   @default_interval :timer.hours(12)
-  use Cinder.PeriodicWorker, log_prefix: "refresher"
+  use Cinder.Download.PollerSkeleton, log_prefix: "refresher", stateful: false
 
   defp do_poll do
     for series <- Catalog.list_series(), series.monitored do

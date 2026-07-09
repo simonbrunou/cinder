@@ -9,6 +9,7 @@ defmodule CinderWeb.CalendarLive do
   import CinderWeb.LiveHelpers, only: [format_date: 1]
 
   alias Cinder.Catalog
+  alias Cinder.Catalog.Episode
 
   @impl true
   def mount(_params, _session, socket) do
@@ -31,9 +32,6 @@ defmodule CinderWeb.CalendarLive do
 
     assign(socket, rows: rows)
   end
-
-  defp code(season, episode), do: "S#{pad(season)}E#{pad(episode)}"
-  defp pad(n), do: n |> Integer.to_string() |> String.pad_leading(2, "0")
 
   @impl true
   def render(assigns) do
@@ -65,7 +63,7 @@ defmodule CinderWeb.CalendarLive do
           <.status_badge kind={:episode} status={row.state} />
           <span class="min-w-0 break-words font-medium">{row.ep.season.series.title}</span>
           <span class="tabular-nums text-sm text-base-content/70">
-            {code(row.ep.season.season_number, row.ep.episode_number)}
+            {Episode.code(row.ep.season.season_number, row.ep.episode_number)}
           </span>
           <span class="min-w-0 flex-1 truncate text-base-content/70">{row.ep.title}</span>
         </li>

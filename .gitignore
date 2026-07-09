@@ -48,3 +48,6 @@ npm-debug.log
 # Nix / direnv
 .direnv/
 result
+
+# graphify tool output (stale-prone, regenerated locally)
+graphify-out/

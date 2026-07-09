@@ -121,14 +121,6 @@ defmodule Cinder.Accounts.User do
     end
   end
 
-  @doc """
-  Confirms the account by setting `confirmed_at`.
-  """
-  def confirm_changeset(user) do
-    now = DateTime.utc_now(:second)
-    change(user, confirmed_at: now)
-  end
-
   @doc "Sets the per-user concurrent-pending request quota (nil = unlimited)."
   def quota_changeset(user, attrs) do
     user

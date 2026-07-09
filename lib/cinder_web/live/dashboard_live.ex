@@ -207,13 +207,7 @@ defmodule CinderWeb.DashboardLive do
                 />
                 <div class="min-w-0 flex-1">
                   <p class="truncate font-medium">
-                    {if r.target_type == "season",
-                      do:
-                        gettext("%{title}: Season %{number}",
-                          title: r.title,
-                          number: r.season_number
-                        ),
-                      else: r.title}
+                    {request_title(r)}
                     <span :if={r.year} class="text-base-content/70">({r.year})</span>
                   </p>
                   <p class="truncate text-sm text-base-content/70">{r.user.email}</p>

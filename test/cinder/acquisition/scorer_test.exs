@@ -30,20 +30,6 @@ defmodule Cinder.Acquisition.ScorerTest do
       assert :no_match = Scorer.select(releases, max_size: 20 * @gb)
     end
 
-    test "blocklisted group is excluded even when it would otherwise win" do
-      releases = [
-        release(resolution: "1080p", group: "EVIL", size: 10 * @gb),
-        release(resolution: "1080p", group: "GOOD", size: 8 * @gb)
-      ]
-
-      # EVIL out-ranks GOOD on size; the blocklist must drop it and pick GOOD.
-      assert {:ok, %Release{group: "GOOD"}} =
-               Scorer.select(releases, blocklist: ["evil"], max_size: 20 * @gb)
-
-      # Negative control: with no blocklist, EVIL wins — proving the filter is load-bearing.
-      assert {:ok, %Release{group: "EVIL"}} = Scorer.select(releases, max_size: 20 * @gb)
-    end
-
     test "release_blocklist excludes a release by title (case-insensitive), still picks the rest" do
       a = release(title: "Movie.A.1080p", resolution: "1080p", group: "A", size: 9 * @gb)
       b = release(title: "Movie.B.720p", resolution: "720p", group: "B", size: 5 * @gb)
@@ -198,16 +184,6 @@ defmodule Cinder.Acquisition.ScorerTest do
       assert Enum.map(chosen, fn {r, _cov} -> r.episodes end) == [[1, 2, 3], [4]]
       # Coverage is disjoint and exactly the wanted set, partitioned across the picks.
       assert Enum.map(chosen, fn {_r, cov} -> cov end) == [[1, 2, 3], [4]]
-    end
-
-    test "a blocklisted group is dropped even if it would cover more" do
-      releases = [
-        release(season: 1, episodes: nil, group: "EVIL", resolution: "1080p", size: 6 * @gb),
-        release(season: 1, episodes: [1], group: "GOOD", resolution: "1080p", size: 2 * @gb)
-      ]
-
-      assert {:ok, [{%Release{group: "GOOD", episodes: [1]}, [1]}]} =
-               Scorer.select_for(releases, 1, [1], blocklist: ["evil"])
     end
 
     test "release_blocklist drops a pack by title; the wanted set is covered from the rest" do

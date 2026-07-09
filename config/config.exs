@@ -63,7 +63,6 @@ config :cinder, subtitles_provider: Cinder.Subtitles.Provider.OpenSubtitles
 # First-run wizard gate: redirect to /setup until setup_complete. Off in test so the
 # existing LiveView suite (which never marks setup complete) isn't redirected.
 config :cinder, :enforce_setup, true
-config :cinder, Cinder.Download.Poller, interval: 5_000
 
 # Configure the endpoint
 config :cinder, CinderWeb.Endpoint,

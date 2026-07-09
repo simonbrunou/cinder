@@ -89,4 +89,10 @@ defmodule Cinder.Catalog.Episode do
     |> unique_constraint([:season_id, :episode_number])
     |> foreign_key_constraint(:season_id)
   end
+
+  @doc ~S(The "S01E02"-style code for a season/episode number pair.)
+  def code(season_number, episode_number), do: "S#{pad(season_number)}E#{pad(episode_number)}"
+
+  @doc "Two-digit minimum zero-padding, never truncated (numbers can exceed 99 on long-running shows)."
+  def pad(n), do: n |> Integer.to_string() |> String.pad_leading(2, "0")
 end
