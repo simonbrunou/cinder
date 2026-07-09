@@ -44,7 +44,7 @@ defmodule Cinder.RequestsTest do
     user = user_fixture()
     admin = admin_fixture()
     {:ok, req} = Requests.create_request(user, @attrs)
-    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 603, title: "The Matrix"})
+    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 603, title: "The Matrix"})
     {:ok, _} = Catalog.transition(movie, %{status: :available})
     {:ok, _} = Requests.approve_request(req, admin)
     assert [%Movie{status: :available}] = Catalog.list_by_status(:available)

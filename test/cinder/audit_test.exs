@@ -10,7 +10,7 @@ defmodule Cinder.AuditTest do
   describe "log/4" do
     test "writes an audit row from an actor, action, entity struct, and detail map" do
       admin = admin_fixture()
-      {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 1, title: "M"})
+      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 1, title: "M"})
 
       assert {:ok, %AdminAudit{} = row} =
                Audit.log(admin, :delete_movie, movie, %{title: "M"})
@@ -52,7 +52,7 @@ defmodule Cinder.AuditTest do
   describe "log_or_rollback/4" do
     test "returns the audit entry on success" do
       admin = admin_fixture()
-      {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 2, title: "N"})
+      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 2, title: "N"})
 
       assert {:ok, %AdminAudit{} = row} =
                Repo.transaction(fn ->

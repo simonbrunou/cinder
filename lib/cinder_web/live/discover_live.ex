@@ -2,8 +2,8 @@ defmodule CinderWeb.DiscoverLive do
   @moduledoc """
   Unified Discover surface, mounted at `/`. One search returns movies AND TV in a
   single mixed poster grid: movie cards request inline (Add → `Cinder.Requests`),
-  TV cards link to the season picker (`/series/tmdb/:tmdb_id`). Below the grid: the
-  movie watchlist. Live via the `movies` + `requests` topics.
+  TV cards link to the season picker (`/series/tmdb/:tmdb_id`). Live via the
+  `movies` + `requests` topics.
   """
   use CinderWeb, :live_view
 
@@ -22,7 +22,6 @@ defmodule CinderWeb.DiscoverLive do
     {:ok,
      socket
      |> assign(query: "", results: [], search_error: false)
-     |> assign(watchlist: Catalog.list_watchlist())
      |> assign_request_state()}
   end
 
@@ -58,21 +57,17 @@ defmodule CinderWeb.DiscoverLive do
 
   @impl true
   def handle_info({:movie_updated, movie}, socket) do
-    watchlist = Enum.map(socket.assigns.watchlist, &if(&1.id == movie.id, do: movie, else: &1))
-    {:noreply, socket |> assign(watchlist: watchlist) |> patch_movie_status(movie)}
+    {:noreply, patch_movie_status(socket, movie)}
   end
 
   def handle_info({:movie_created, movie}, socket) do
-    {:noreply, socket |> update(:watchlist, &[movie | &1]) |> patch_movie_status(movie)}
+    {:noreply, patch_movie_status(socket, movie)}
   end
 
-  def handle_info({:movie_deleted, id}, socket) do
-    # Re-derive the status map too — a stale entry would keep an "Available" badge on
-    # the search-result card and never re-offer the Add button until remount.
-    {:noreply,
-     socket
-     |> update(:watchlist, fn wl -> Enum.reject(wl, &(&1.id == id)) end)
-     |> assign_movie_status()}
+  def handle_info({:movie_deleted, _id}, socket) do
+    # Re-derive the status map — a stale entry would keep an "Available" badge on the
+    # search-result card and never re-offer the Add button until remount.
+    {:noreply, assign_movie_status(socket)}
   end
 
   def handle_info({event, _request}, socket)
@@ -150,11 +145,10 @@ defmodule CinderWeb.DiscoverLive do
     assign_movie_status(assign(socket, request_status: request_status))
   end
 
-  # Read the full movie-status map from the DB (authoritative) rather than deriving it
-  # from the cached `watchlist` assign. On the infrequent paths that call this — mount,
-  # add, request events — a just-approved/created movie may not be in the cached watchlist
-  # yet (its `:movie_created` broadcast rides the movies topic with no cross-topic ordering
-  # guarantee vs the `:request_*` event), so the assign can be stale; the DB read isn't.
+  # Read the full movie-status map fresh from the DB (authoritative) on the infrequent
+  # paths that call this — mount, add, request events — so a just-approved/created movie
+  # is reflected even though its `:movie_created` broadcast rides the movies topic with no
+  # cross-topic ordering guarantee vs the `:request_*` event.
   defp assign_movie_status(socket) do
     assign(socket, movie_status: Catalog.movie_status_map())
   end
@@ -251,24 +245,6 @@ defmodule CinderWeb.DiscoverLive do
         title={gettext("Search failed")}
         message={gettext("TMDB didn't respond. Try again.")}
       />
-
-      <h2 class="pb-4 text-lg font-semibold">{gettext("Watchlist")}</h2>
-      <.empty_state
-        :if={@watchlist == []}
-        icon="hero-bookmark"
-        title={gettext("Your watchlist is empty")}
-        message={gettext("Search above to add a movie.")}
-      />
-      <div id="watchlist" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-        <.media_card
-          :for={m <- @watchlist}
-          poster_path={m.poster_path}
-          title={m.title}
-          year={m.year}
-        >
-          <.status_badge kind={:movie} status={m.status} class="h-auto break-words text-center" />
-        </.media_card>
-      </div>
     </Layouts.app>
     """
   end

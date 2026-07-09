@@ -1,6 +1,6 @@
 defmodule CinderWeb.LibraryLive do
   @moduledoc """
-  Admin managed-catalog at `/library`: every watchlisted movie (inline edit / cancel /
+  Admin managed-catalog at `/library`: every movie (inline edit / cancel /
   delete) and every added series (cancel / delete; drill into `/series/:id` for per-episode
   monitoring). Merges the old `/movies` page and the Discover "Added series" block.
   Admin-gated by the `:admin` live_session; every mutation routes through the existing
@@ -22,7 +22,7 @@ defmodule CinderWeb.LibraryLive do
 
     {:ok,
      assign(socket,
-       movies: Catalog.list_watchlist(),
+       movies: Catalog.list_movies(),
        series: Catalog.list_series(),
        editing: nil,
        confirming: nil,
@@ -61,7 +61,7 @@ defmodule CinderWeb.LibraryLive do
           {:ok, _updated} ->
             {:noreply,
              socket
-             |> assign(editing: nil, form: nil, movies: Catalog.list_watchlist())
+             |> assign(editing: nil, form: nil, movies: Catalog.list_movies())
              |> put_flash(:info, gettext("Movie updated."))}
 
           {:error, changeset} ->
@@ -85,7 +85,7 @@ defmodule CinderWeb.LibraryLive do
          {:ok, _} <- Catalog.cancel_movie(movie, actor) do
       {:noreply,
        socket
-       |> assign(confirming: nil, movies: Catalog.list_watchlist())
+       |> assign(confirming: nil, movies: Catalog.list_movies())
        |> put_flash(:info, gettext("Movie cancelled."))}
     else
       {:error, :not_cancellable} ->
@@ -204,7 +204,7 @@ defmodule CinderWeb.LibraryLive do
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.header>
         {gettext("Library")}
-        <:subtitle>{gettext("Manage watchlisted movies and added series.")}</:subtitle>
+        <:subtitle>{gettext("Manage movies and added series.")}</:subtitle>
       </.header>
 
       <section>

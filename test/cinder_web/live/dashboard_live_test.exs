@@ -35,7 +35,7 @@ defmodule CinderWeb.DashboardLiveTest do
     setup :register_and_log_in_admin
 
     test "shows stats, the health panel, and recent activity", %{conn: conn} do
-      {:ok, _} = Catalog.add_to_watchlist(%{tmdb_id: 1, title: "Arrival", year: 2016})
+      {:ok, _} = Catalog.add_movie(%{tmdb_id: 1, title: "Arrival", year: 2016})
 
       {:ok, lv, html} = live(conn, ~p"/dashboard")
       assert html =~ "Dashboard"
@@ -76,7 +76,7 @@ defmodule CinderWeb.DashboardLiveTest do
 
     test "an :upgrading movie counts as in-pipeline", %{conn: conn} do
       {:ok, movie} =
-        Catalog.add_to_watchlist(%{
+        Catalog.add_movie(%{
           tmdb_id: System.unique_integer([:positive]),
           title: "Blade Runner"
         })

@@ -51,12 +51,12 @@ defmodule CinderWeb.SharedComponentsTest do
     test "default no-results state shows title, message and a neutral icon" do
       html =
         render_component(&CoreComponents.empty_state/1, %{
-          title: "Your watchlist is empty",
+          title: "Nothing here yet",
           message: "Search above to add a movie.",
           icon: "hero-bookmark"
         })
 
-      assert html =~ "Your watchlist is empty"
+      assert html =~ "Nothing here yet"
       assert html =~ "Search above to add a movie"
       assert html =~ "hero-bookmark"
       refute html =~ "text-error"

@@ -34,9 +34,8 @@ defmodule CinderWeb.DiscoverLiveTest do
   defp stub_tv(results),
     do: stub(Cinder.Catalog.TMDBMock, :search_tv, fn _ -> {:ok, results} end)
 
-  test "first load shows an empty-watchlist state and an accessible search field", %{conn: conn} do
-    {:ok, lv, html} = live(conn, ~p"/")
-    assert html =~ "watchlist is empty"
+  test "first load shows an accessible search field", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/")
     assert has_element?(lv, "label[for='query']", "Search movies and TV")
     assert has_element?(lv, "input#query")
   end
@@ -77,15 +76,15 @@ defmodule CinderWeb.DiscoverLiveTest do
     assert has_element?(lv, ~s(#results a[href="/series/tmdb/1399"]))
   end
 
-  test "admin add creates a :requested movie and shows it in the watchlist", %{conn: conn} do
+  test "admin add creates a :requested movie and flips the result card off Add", %{conn: conn} do
     stub_movies([@inception])
     {:ok, lv, _html} = live(conn, ~p"/")
 
     lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
     lv |> form("#add-form-27205") |> render_submit()
 
-    assert has_element?(lv, "#watchlist", "Inception")
-    assert [%Movie{tmdb_id: 27_205, status: :requested}] = Catalog.list_watchlist()
+    assert [%Movie{tmdb_id: 27_205, status: :requested}] = Catalog.list_movies()
+    refute has_element?(lv, "#add-form-27205")
   end
 
   # Regression (UX-3 Done-when): a non-admin add creates a pending request, NO :requested movie.
@@ -188,39 +187,30 @@ defmodule CinderWeb.DiscoverLiveTest do
   test "an add with a non-numeric tmdb_id is ignored, not a crash", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/")
     assert render_hook(lv, "add", %{"tmdb_id" => "not-a-number"}) =~ "search-form"
-    assert Catalog.list_watchlist() == []
+    assert Catalog.list_movies() == []
   end
 
   test "a malformed (non-binary) add payload is ignored, not a crash", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/")
     assert render_hook(lv, "add", %{"tmdb_id" => ["x"]}) =~ "search-form"
-    assert Catalog.list_watchlist() == []
+    assert Catalog.list_movies() == []
   end
 
-  test "watchlist renders a colour-coded status badge", %{conn: conn} do
-    {:ok, _movie} = Catalog.add_to_watchlist(%{tmdb_id: 8100, title: "M"})
-    {:ok, _lv, html} = live(conn, ~p"/")
-    assert html =~ "badge-neutral"
-  end
-
-  test "a movie's status change updates its badge live", %{conn: conn} do
-    {:ok, movie} = Catalog.add_to_watchlist(@inception)
+  test "a searched movie flips to Available live when it finishes downloading", %{conn: conn} do
+    {:ok, movie} = Catalog.add_movie(@inception)
+    stub_movies([@inception])
     {:ok, lv, _html} = live(conn, ~p"/")
-    assert has_element?(lv, "#watchlist", "Requested")
+    lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
 
-    {:ok, _} = Catalog.transition(movie, %{status: :downloading, download_id: "h"})
+    {:ok, _} =
+      Catalog.transition(movie, %{
+        status: :available,
+        download_id: "h",
+        download_protocol: :torrent,
+        file_path: "/lib/Inception (2010)/Inception (2010).mkv"
+      })
 
-    assert render(lv) =~ "Downloading"
-    refute has_element?(lv, "#watchlist .badge", "Requested")
-  end
-
-  test "drops a deleted movie from the watchlist on {:movie_deleted, id}", %{conn: conn} do
-    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 9500, title: "Gone Soon"})
-    {:ok, lv, html} = live(conn, ~p"/")
-    assert html =~ "Gone Soon"
-
-    Catalog.broadcast_movie_deleted(movie.id)
-    refute render(lv) =~ "Gone Soon"
+    assert has_element?(lv, "#results", "Available")
   end
 
   test "a forged series event from a non-admin on / is a harmless no-op", %{conn: conn} do
