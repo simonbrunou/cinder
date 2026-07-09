@@ -1,5 +1,5 @@
 defmodule Cinder.CatalogSeriesTest do
-  # async: false — add_series_to_watchlist inserts the tree via cast_assoc, which wraps
+  # async: false — add_series inserts the tree via cast_assoc, which wraps
   # a Repo.transaction; the SQLite sandbox needs shared mode (shared: not async) for a
   # nested transaction (same reason requests_test.exs is async: false).
   use Cinder.DataCase, async: false
@@ -87,12 +87,12 @@ defmodule Cinder.CatalogSeriesTest do
     loaded(series_id).seasons |> Enum.flat_map(& &1.episodes)
   end
 
-  describe "add_series_to_watchlist/2 (Done when)" do
+  describe "add_series/2 (Done when)" do
     test "persists the season/episode tree with monitor flags (:future)" do
       stub_tmdb(42)
 
       assert {:ok, %Series{} = series} =
-               Catalog.add_series_to_watchlist(42, monitor_strategy: :future)
+               Catalog.add_series(42, monitor_strategy: :future)
 
       assert series.tmdb_id == 42
       assert series.tvdb_id == 999
@@ -124,7 +124,7 @@ defmodule Cinder.CatalogSeriesTest do
   describe "monitor strategies" do
     test ":all monitors every episode, specials included" do
       stub_tmdb(43)
-      {:ok, series} = Catalog.add_series_to_watchlist(43, monitor_strategy: :all)
+      {:ok, series} = Catalog.add_series(43, monitor_strategy: :all)
 
       assert series.monitored
       assert Enum.all?(episodes(series.id), & &1.monitored)
@@ -132,7 +132,7 @@ defmodule Cinder.CatalogSeriesTest do
 
     test ":none monitors nothing" do
       stub_tmdb(44)
-      {:ok, series} = Catalog.add_series_to_watchlist(44, monitor_strategy: :none)
+      {:ok, series} = Catalog.add_series(44, monitor_strategy: :none)
 
       refute series.monitored
       assert Enum.all?(episodes(series.id), &(&1.monitored == false))
@@ -140,7 +140,7 @@ defmodule Cinder.CatalogSeriesTest do
 
     test ":future (the default) monitors only un-aired or undated episodes" do
       stub_tmdb(45)
-      {:ok, series} = Catalog.add_series_to_watchlist(45)
+      {:ok, series} = Catalog.add_series(45)
 
       assert series.monitor_strategy == :future
       assert Enum.count(episodes(series.id), & &1.monitored) == 2
@@ -150,16 +150,16 @@ defmodule Cinder.CatalogSeriesTest do
   describe "find-or-create + getters" do
     test "returns the existing series without re-fetching TMDB" do
       stub_tmdb(46)
-      {:ok, first} = Catalog.add_series_to_watchlist(46)
+      {:ok, first} = Catalog.add_series(46)
 
       # No further expect/3 — verify_on_exit! proves TMDB is not called again.
-      assert {:ok, second} = Catalog.add_series_to_watchlist(46)
+      assert {:ok, second} = Catalog.add_series(46)
       assert second.id == first.id
     end
 
     test "get_series_by_tmdb_id/1 and list_series/0" do
       stub_tmdb(47)
-      {:ok, series} = Catalog.add_series_to_watchlist(47)
+      {:ok, series} = Catalog.add_series(47)
 
       assert Catalog.get_series_by_tmdb_id(47).id == series.id
       assert Catalog.get_series_by_tmdb_id(-1) == nil
@@ -169,7 +169,7 @@ defmodule Cinder.CatalogSeriesTest do
     test "a failed TMDB fetch persists nothing" do
       expect(Cinder.Catalog.TMDBMock, :get_series, fn 48 -> {:error, :timeout} end)
 
-      assert {:error, :timeout} = Catalog.add_series_to_watchlist(48)
+      assert {:error, :timeout} = Catalog.add_series(48)
       assert Catalog.get_series_by_tmdb_id(48) == nil
     end
 
@@ -202,14 +202,14 @@ defmodule Cinder.CatalogSeriesTest do
         end
       end)
 
-      assert {:error, :timeout} = Catalog.add_series_to_watchlist(49)
+      assert {:error, :timeout} = Catalog.add_series(49)
       assert Catalog.get_series_by_tmdb_id(49) == nil
     end
 
     test "rejects an unknown monitor_strategy without calling TMDB" do
       # No expect/3 — verify_on_exit! proves TMDB is never reached.
       assert {:error, :invalid_monitor_strategy} =
-               Catalog.add_series_to_watchlist(50, monitor_strategy: :bogus)
+               Catalog.add_series(50, monitor_strategy: :bogus)
 
       assert Catalog.get_series_by_tmdb_id(50) == nil
     end
@@ -230,7 +230,7 @@ defmodule Cinder.CatalogSeriesTest do
   describe "get_series_with_tree/1" do
     test "loads the series with seasons and episodes in order" do
       stub_tmdb(60)
-      {:ok, series} = Catalog.add_series_to_watchlist(60)
+      {:ok, series} = Catalog.add_series(60)
 
       tree = Catalog.get_series_with_tree(series.id)
       assert Enum.map(tree.seasons, & &1.season_number) == [0, 1]
@@ -247,7 +247,7 @@ defmodule Cinder.CatalogSeriesTest do
   describe "monitor toggles" do
     test "set_episode_monitored/2 flips the flag, persists, and broadcasts" do
       stub_tmdb(61)
-      {:ok, series} = Catalog.add_series_to_watchlist(61, monitor_strategy: :none)
+      {:ok, series} = Catalog.add_series(61, monitor_strategy: :none)
       series_id = series.id
       Catalog.subscribe_series()
 
@@ -262,7 +262,7 @@ defmodule Cinder.CatalogSeriesTest do
 
     test "set_season_monitored/2 cascades to every episode in the season and broadcasts" do
       stub_tmdb(62)
-      {:ok, series} = Catalog.add_series_to_watchlist(62, monitor_strategy: :none)
+      {:ok, series} = Catalog.add_series(62, monitor_strategy: :none)
       series_id = series.id
       Catalog.subscribe_series()
 
@@ -279,11 +279,11 @@ defmodule Cinder.CatalogSeriesTest do
   end
 
   describe "language fields" do
-    test "add_series_to_watchlist stores original_language and the chosen preferred_language" do
+    test "add_series stores original_language and the chosen preferred_language" do
       stub_tmdb_series(original_language: "fr")
 
       {:ok, series} =
-        Catalog.add_series_to_watchlist(42,
+        Catalog.add_series(42,
           monitor_strategy: :future,
           preferred_language: "french"
         )

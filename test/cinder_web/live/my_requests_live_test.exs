@@ -69,7 +69,7 @@ defmodule CinderWeb.MyRequestsLiveTest do
 
     # movie whose tmdb_id numerically matches the series tmdb_id
     {:ok, movie} =
-      Cinder.Catalog.add_to_watchlist(%{
+      Cinder.Catalog.add_movie(%{
         tmdb_id: 777,
         title: "Collision Movie",
         year: 2019,
@@ -113,7 +113,7 @@ defmodule CinderWeb.MyRequestsLiveTest do
   test "survives a {:movie_deleted, id} broadcast (reloads, no crash)", %{conn: conn} do
     user = Cinder.AccountsFixtures.user_fixture()
     conn = log_in_user(conn, user)
-    {:ok, movie} = Cinder.Catalog.add_to_watchlist(%{tmdb_id: 9600, title: "Vanish"})
+    {:ok, movie} = Cinder.Catalog.add_movie(%{tmdb_id: 9600, title: "Vanish"})
 
     {:ok, lv, _html} = live(conn, ~p"/my-requests")
     Cinder.Catalog.broadcast_movie_deleted(movie.id)

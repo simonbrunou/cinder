@@ -45,7 +45,7 @@ defmodule Cinder.Download.PollerTest do
   end
 
   test "routes status polling to the client matching the movie's download_protocol" do
-    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 20, title: "M"})
+    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 20, title: "M"})
 
     {:ok, movie} =
       Catalog.transition(movie, %{
@@ -75,7 +75,7 @@ defmodule Cinder.Download.PollerTest do
     Application.put_env(:cinder, :download_clients, %{torrent: Cinder.Download.ClientMock})
     on_exit(fn -> Application.put_env(:cinder, :download_clients, original) end)
 
-    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 21, title: "M"})
+    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 21, title: "M"})
 
     {:ok, movie} =
       Catalog.transition(movie, %{
@@ -137,7 +137,7 @@ defmodule Cinder.Download.PollerTest do
 
   test "drives a movie through the full state machine: requested -> downloaded" do
     {:ok, movie} =
-      Catalog.add_to_watchlist(%{tmdb_id: 3, title: "Inception", imdb_id: "tt1375666"})
+      Catalog.add_movie(%{tmdb_id: 3, title: "Inception", imdb_id: "tt1375666"})
 
     assert movie.status == :requested
     hash = "deadbeef"
@@ -274,7 +274,7 @@ defmodule Cinder.Download.PollerTest do
 
   test "a confirmed wrong-language file is parked at :import_failed (MediaInfo safety net)" do
     {:ok, movie} =
-      Catalog.add_to_watchlist(%{
+      Catalog.add_movie(%{
         tmdb_id: 99,
         title: "Chasse Gardee",
         year: 2024,
@@ -299,7 +299,7 @@ defmodule Cinder.Download.PollerTest do
   end
 
   test "a :downloaded movie with no file_path is parked at :import_failed" do
-    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 13, title: "M"})
+    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 13, title: "M"})
     {:ok, movie} = Catalog.transition(movie, %{status: :downloaded})
     start_supervised!({Poller, interval: 60_000})
 
@@ -334,7 +334,7 @@ defmodule Cinder.Download.PollerTest do
 
   test "auto-wires a :requested movie through to :available with no manual Download.start call" do
     {:ok, movie} =
-      Catalog.add_to_watchlist(%{tmdb_id: 900, title: "Inception", imdb_id: "tt1375666"})
+      Catalog.add_movie(%{tmdb_id: 900, title: "Inception", imdb_id: "tt1375666"})
 
     assert movie.status == :requested
 
@@ -367,7 +367,7 @@ defmodule Cinder.Download.PollerTest do
   end
 
   test "a persistently transient search error parks :search_failed after max attempts" do
-    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 901, title: "M", imdb_id: "tt1"})
+    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 901, title: "M", imdb_id: "tt1"})
     stub(Cinder.Acquisition.IndexerMock, :search, fn "tt1" -> {:error, :prowlarr_down} end)
 
     # search_retry_after: 0 → every poll is due
@@ -381,7 +381,7 @@ defmodule Cinder.Download.PollerTest do
   end
 
   test "backoff: a just-failed movie is not re-attempted until retry_after elapses" do
-    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 902, title: "M", imdb_id: "tt2"})
+    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 902, title: "M", imdb_id: "tt2"})
     stub(Cinder.Acquisition.IndexerMock, :search, fn "tt2" -> {:error, :prowlarr_down} end)
 
     start_supervised!({Poller, interval: 60_000, search_retry_after: 60})
@@ -402,7 +402,7 @@ defmodule Cinder.Download.PollerTest do
   end
 
   test "unsupported download URL parks :search_failed immediately (no retry)" do
-    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 903, title: "M", imdb_id: "tt3"})
+    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 903, title: "M", imdb_id: "tt3"})
 
     stub(Cinder.Acquisition.IndexerMock, :search, fn "tt3" ->
       {:ok, [%{title: "M.1080p", size: 8_000_000_000, download_url: "magnet:?x", seeders: 5}]}
@@ -419,8 +419,8 @@ defmodule Cinder.Download.PollerTest do
   end
 
   test "genuinely-missing imdb parks :no_match; transient TMDB error retries" do
-    {:ok, miss} = Catalog.add_to_watchlist(%{tmdb_id: 904, title: "M"})
-    {:ok, flaky} = Catalog.add_to_watchlist(%{tmdb_id: 905, title: "N"})
+    {:ok, miss} = Catalog.add_movie(%{tmdb_id: 904, title: "M"})
+    {:ok, flaky} = Catalog.add_movie(%{tmdb_id: 905, title: "N"})
 
     stub(Cinder.Catalog.TMDBMock, :get_movie, fn
       904 -> {:ok, %{imdb_id: nil}}
@@ -509,7 +509,7 @@ defmodule Cinder.Download.PollerTest do
 
   test "a parked movie emits the failed notifier event" do
     Cinder.TestNotifier.subscribe()
-    {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 41, title: "M"})
+    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 41, title: "M"})
     {:ok, _} = Catalog.transition(movie, %{status: :downloaded})
     start_supervised!({Poller, interval: 60_000})
 

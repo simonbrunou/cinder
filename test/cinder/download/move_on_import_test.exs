@@ -135,7 +135,7 @@ defmodule Cinder.Download.MoveOnImportTest do
 
     test "torrent + toggle on → no remove (seeding preserved)" do
       enable()
-      {:ok, movie} = Catalog.add_to_watchlist(%{tmdb_id: 2, title: "M"})
+      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 2, title: "M"})
 
       {:ok, movie} =
         Catalog.transition(movie, %{

@@ -1,6 +1,6 @@
 defmodule Cinder.Catalog.Movie do
   @moduledoc """
-  A watchlisted movie.
+  A movie.
 
   Created `:requested`; the download pipeline advances `status`
   (`:searching → :downloading → :downloaded → :available`), parks it at

@@ -24,10 +24,10 @@ defmodule Cinder.CatalogFixtures do
   ]
 
   @doc """
-  Creates a watchlisted movie at `:requested`.
+  Creates a movie at `:requested`.
 
   Defaults `tmdb_id` to a fresh unique integer and `title` to "Inception"; any
-  other key is passed through to `Catalog.add_to_watchlist/1`. Pipeline keys
+  other key is passed through to `Catalog.add_movie/1`. Pipeline keys
   (`:status`, `:download_id`, `:file_path`, `:download_protocol`) are applied via
   a single `Catalog.transition/2` after creation, so a downloading/downloaded
   fixture is a one-liner.
@@ -39,7 +39,7 @@ defmodule Cinder.CatalogFixtures do
     create_attrs =
       Map.merge(%{tmdb_id: System.unique_integer([:positive]), title: "Inception"}, create_attrs)
 
-    {:ok, movie} = Catalog.add_to_watchlist(create_attrs)
+    {:ok, movie} = Catalog.add_movie(create_attrs)
 
     if map_size(pipeline) == 0 do
       movie

@@ -62,7 +62,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
        }}
     end)
 
-    {:ok, series} = Catalog.add_series_to_watchlist(tmdb_id, monitor_strategy: :none)
+    {:ok, series} = Catalog.add_series(tmdb_id, monitor_strategy: :none)
 
     # Pre-mark the series enriched (vote_average set) so the detail page's lazy metadata
     # backfill is skipped — no extra TMDB call, no detached async task crossing into the next

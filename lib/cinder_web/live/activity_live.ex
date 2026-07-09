@@ -25,7 +25,7 @@ defmodule CinderWeb.ActivityLive do
 
     {:ok,
      assign(socket,
-       movies: Catalog.list_watchlist(),
+       movies: Catalog.list_movies(),
        grabs: Catalog.list_grabs(),
        confirming: nil,
        searching_movie_id: nil

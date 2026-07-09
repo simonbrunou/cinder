@@ -1,6 +1,6 @@
 defmodule Cinder.Catalog do
   @moduledoc """
-  Discovery + watchlist: search TMDB for movies and persist requested ones.
+  Discovery: search TMDB for movies and persist requested ones.
 
   TMDB is reached only through the `Cinder.Catalog.TMDB` behaviour, resolved from
   config (`config :cinder, :tmdb`) so tests use a Mox mock and never hit the network.
@@ -91,10 +91,10 @@ defmodule Cinder.Catalog do
   defp tmdb, do: Application.fetch_env!(:cinder, :tmdb)
 
   @doc """
-  Adds a movie to the watchlist as `:requested`. Returns `{:ok, movie}` or
+  Persists a movie as `:requested`. Returns `{:ok, movie}` or
   `{:error, changeset}` (e.g. a duplicate `tmdb_id`).
   """
-  def add_to_watchlist(attrs) do
+  def add_movie(attrs) do
     %Movie{}
     |> Movie.changeset(attrs)
     |> Repo.insert()
@@ -113,15 +113,15 @@ defmodule Cinder.Catalog do
     end
   end
 
-  @doc "Lists watchlisted movies, newest first."
-  def list_watchlist do
+  @doc "Lists movies, newest first."
+  def list_movies do
     Repo.all(from m in Movie, order_by: [desc: m.id])
   end
 
-  @doc "Maps every watchlisted movie's `tmdb_id` to its pipeline `status`."
-  def movie_status_map, do: Map.new(list_watchlist(), &{&1.tmdb_id, &1.status})
+  @doc "Maps every movie's `tmdb_id` to its pipeline `status`."
+  def movie_status_map, do: Map.new(list_movies(), &{&1.tmdb_id, &1.status})
 
-  @doc "Counts watchlisted movies grouped by pipeline `status` (`%{status => count}`)."
+  @doc "Counts movies grouped by pipeline `status` (`%{status => count}`)."
   def movie_status_counts do
     Repo.all(from m in Movie, group_by: m.status, select: {m.status, count(m.id)}) |> Map.new()
   end
@@ -137,7 +137,7 @@ defmodule Cinder.Catalog do
   @doc "Fetches full movie details from TMDB (the details endpoint carries `imdb_id`)."
   def get_movie(tmdb_id), do: tmdb().get_movie(tmdb_id)
 
-  @doc "Fetches a watchlisted movie by primary key, or `nil`."
+  @doc "Fetches a movie by primary key, or `nil`."
   def get_movie_by_id(id), do: Repo.get(Movie, id)
 
   @doc """
@@ -647,7 +647,7 @@ defmodule Cinder.Catalog do
     end
   end
 
-  @doc "Fetches a watchlisted movie by TMDB id, or `nil`."
+  @doc "Fetches a movie by TMDB id, or `nil`."
   def get_movie_by_tmdb_id(tmdb_id), do: Repo.get_by(Movie, tmdb_id: tmdb_id)
 
   @doc """
@@ -700,7 +700,7 @@ defmodule Cinder.Catalog do
   `[seasons: :episodes]` to read the tree), `{:error, :invalid_monitor_strategy}` for an
   unknown strategy, or `{:error, reason}` if a TMDB fetch fails.
   """
-  def add_series_to_watchlist(tmdb_id, opts \\ []) do
+  def add_series(tmdb_id, opts \\ []) do
     strategy = Keyword.get(opts, :monitor_strategy, :future)
 
     # Validate at the boundary: the strategy drives monitored?/3 (a function-clause match)
@@ -742,7 +742,7 @@ defmodule Cinder.Catalog do
   # Create with monitor_strategy: :none so NOTHING is monitored by default; the requested season
   # is then flipped on explicitly. An existing series is returned as-is.
   defp ensure_series(tmdb_id, preferred),
-    do: add_series_to_watchlist(tmdb_id, monitor_strategy: :none, preferred_language: preferred)
+    do: add_series(tmdb_id, monitor_strategy: :none, preferred_language: preferred)
 
   # Fill-if-default: an existing series whose language was never customized ("original") adopts the
   # requester's non-default pick; a series already customized to a non-default is left untouched
@@ -761,10 +761,10 @@ defmodule Cinder.Catalog do
     series |> Ecto.Changeset.change(monitored: true) |> Repo.update()
   end
 
-  @doc "Fetches a watchlisted series by TMDB id, or `nil`."
+  @doc "Fetches a series by TMDB id, or `nil`."
   def get_series_by_tmdb_id(tmdb_id), do: Repo.get_by(Series, tmdb_id: tmdb_id)
 
-  @doc "Lists watchlisted series, newest first."
+  @doc "Lists series, newest first."
   def list_series, do: Repo.all(from s in Series, order_by: [desc: s.id])
 
   @doc "Number of series in the catalog."

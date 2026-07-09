@@ -84,7 +84,7 @@ value wins once set. The size bands have no env bootstrap — set them in `/sett
 
 ## How it works
 
-Four contexts mirror the pipeline: **Catalog** (TMDB discovery + watchlist/series), **Acquisition**
+Four contexts mirror the pipeline: **Catalog** (TMDB discovery + movie/series requests), **Acquisition**
 (Prowlarr search + release parsing/scoring), **Download** (qBittorrent/SABnzbd client + a polling
 GenServer), **Library** (hardlink + rename into the Jellyfin/Plex layout, then scan). Background
 pollers advance each request through its state machine and broadcast over PubSub so the LiveView
