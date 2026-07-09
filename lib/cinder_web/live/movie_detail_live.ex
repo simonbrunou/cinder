@@ -361,7 +361,10 @@ defmodule CinderWeb.MovieDetailLive do
         <.language_select value={@movie.preferred_language} />
       </form>
 
-      <div class="mt-4 flex flex-wrap items-center gap-2">
+      <div
+        :if={parked?(@movie.status) or @movie.status in [:available, :upgrading]}
+        class="mt-4 flex flex-wrap items-center gap-2"
+      >
         <.button
           :if={parked?(@movie.status)}
           type="button"
