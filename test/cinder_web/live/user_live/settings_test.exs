@@ -56,7 +56,7 @@ defmodule CinderWeb.UserLive.SettingsTest do
         |> render_submit()
 
       assert result =~ "A link to confirm your email"
-      assert Accounts.get_user_by_email(user.email)
+      assert Cinder.Repo.get_by(Cinder.Accounts.User, email: user.email)
     end
 
     test "renders errors with invalid data (phx-change)", %{conn: conn} do
@@ -180,8 +180,8 @@ defmodule CinderWeb.UserLive.SettingsTest do
       assert path == ~p"/users/settings"
       assert %{"info" => message} = flash
       assert message == "Email changed successfully."
-      refute Accounts.get_user_by_email(user.email)
-      assert Accounts.get_user_by_email(email)
+      refute Cinder.Repo.get_by(Cinder.Accounts.User, email: user.email)
+      assert Cinder.Repo.get_by(Cinder.Accounts.User, email: email)
 
       # use confirm token again
       {:error, redirect} = live(conn, ~p"/users/settings/confirm-email/#{token}")
@@ -197,7 +197,7 @@ defmodule CinderWeb.UserLive.SettingsTest do
       assert path == ~p"/users/settings"
       assert %{"error" => message} = flash
       assert message == "Email change link is invalid or it has expired."
-      assert Accounts.get_user_by_email(user.email)
+      assert Cinder.Repo.get_by(Cinder.Accounts.User, email: user.email)
     end
 
     test "redirects if user is not logged in", %{token: token} do

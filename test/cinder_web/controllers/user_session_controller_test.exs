@@ -2,10 +2,9 @@ defmodule CinderWeb.UserSessionControllerTest do
   use CinderWeb.ConnCase
 
   import Cinder.AccountsFixtures
-  alias Cinder.Accounts
 
   setup do
-    %{unconfirmed_user: unconfirmed_user_fixture(), user: user_fixture()}
+    %{user: user_fixture()}
   end
 
   describe "POST /users/log-in - email and password" do
@@ -139,63 +138,6 @@ defmodule CinderWeb.UserSessionControllerTest do
 
       assert get_session(conn, :user_token)
       assert redirected_to(conn) == ~p"/users/settings"
-    end
-  end
-
-  describe "POST /users/log-in - magic link" do
-    test "logs the user in", %{conn: conn, user: user} do
-      {token, _hashed_token} = generate_user_magic_link_token(user)
-
-      conn =
-        post(conn, ~p"/users/log-in", %{
-          "user" => %{"token" => token}
-        })
-
-      assert get_session(conn, :user_token)
-      assert redirected_to(conn) == ~p"/"
-
-      # Now do a logged in request and assert on the menu
-      conn = get(conn, ~p"/")
-      response = html_response(conn, 200)
-      assert response =~ user.email
-      assert response =~ ~p"/users/settings"
-      assert response =~ ~p"/users/log-out"
-    end
-
-    test "confirms unconfirmed user", %{conn: conn, unconfirmed_user: user} do
-      {token, _hashed_token} = generate_user_magic_link_token(user)
-      refute user.confirmed_at
-
-      conn =
-        post(conn, ~p"/users/log-in", %{
-          "user" => %{"token" => token},
-          "_action" => "confirmed"
-        })
-
-      assert get_session(conn, :user_token)
-      assert redirected_to(conn) == ~p"/"
-      assert Phoenix.Flash.get(conn.assigns.flash, :info) =~ "User confirmed successfully."
-
-      assert Accounts.get_user!(user.id).confirmed_at
-
-      # Now do a logged in request and assert on the menu
-      conn = get(conn, ~p"/")
-      response = html_response(conn, 200)
-      assert response =~ user.email
-      assert response =~ ~p"/users/settings"
-      assert response =~ ~p"/users/log-out"
-    end
-
-    test "redirects to login page when magic link is invalid", %{conn: conn} do
-      conn =
-        post(conn, ~p"/users/log-in", %{
-          "user" => %{"token" => "invalid"}
-        })
-
-      assert Phoenix.Flash.get(conn.assigns.flash, :error) ==
-               "The link is invalid or it has expired."
-
-      assert redirected_to(conn) == ~p"/users/log-in"
     end
   end
 

@@ -713,18 +713,9 @@ defmodule Cinder.Settings do
     end
   end
 
-  # A flat key (not a @config_fields entry) is planned like a non-secret field: present-but-blank
-  # clears (reverts to env bootstrap / unbounded), absent leaves it untouched.
-  defp plan_flat(key, params, {puts, deletes}) do
-    if Map.has_key?(params, key) do
-      case String.trim(params[key] || "") do
-        "" -> {puts, [key | deletes]}
-        value -> {Map.put(puts, key, value), deletes}
-      end
-    else
-      {puts, deletes}
-    end
-  end
+  # A flat key (not a @config_fields entry) is planned exactly like a non-secret field:
+  # present-but-blank clears (reverts to env bootstrap / unbounded), absent leaves it untouched.
+  defp plan_flat(key, params, acc), do: plan_config(%{secret: false, key: key}, params, acc)
 
   # A field absent from params is left unchanged; only a present-but-blank value clears it
   # (so a partial/programmatic save can't silently wipe unrelated non-secret settings).

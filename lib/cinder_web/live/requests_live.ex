@@ -281,13 +281,7 @@ defmodule CinderWeb.RequestsLive do
             />
             <div class="min-w-0 flex-1">
               <span class="font-semibold">
-                {if r.target_type == "season",
-                  do:
-                    gettext("%{title}: Season %{number}",
-                      title: r.title,
-                      number: r.season_number
-                    ),
-                  else: r.title}
+                {request_title(r)}
               </span>
               <span :if={r.year} class="opacity-70">({r.year})</span>
               <span class="block truncate text-sm opacity-70">{r.user.email}</span>

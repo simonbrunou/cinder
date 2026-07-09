@@ -1,6 +1,8 @@
 defmodule Cinder.Notifier.Log do
   @moduledoc "Default notifier: logs each event. Approvals/failures aren't silent in the logs."
   @behaviour Cinder.Notifier
+
+  alias Cinder.Catalog.Episode
   require Logger
 
   @impl true
@@ -28,15 +30,13 @@ defmodule Cinder.Notifier.Log do
   defp episodes_summary([%{season: %{series: series}} | _] = episodes) do
     codes =
       Enum.map_join(episodes, ", ", fn ep ->
-        "S#{pad(ep.season.season_number)}E#{pad(ep.episode_number)}"
+        Episode.code(ep.season.season_number, ep.episode_number)
       end)
 
     "#{series.title} (#{codes})"
   end
 
   defp episodes_summary(episodes), do: "#{length(episodes)} episode(s)"
-
-  defp pad(n), do: n |> Integer.to_string() |> String.pad_leading(2, "0")
 
   defp log(msg), do: Logger.info("[notifier] " <> msg)
 end

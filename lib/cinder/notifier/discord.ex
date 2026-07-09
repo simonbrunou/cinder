@@ -13,6 +13,7 @@ defmodule Cinder.Notifier.Discord do
   (roadmap-parked). Upgrade path is a real dispatcher behind the same `notify/1` seam.
   """
   @behaviour Cinder.Notifier
+  alias Cinder.Catalog.Episode
   alias Cinder.Notifier.Log
   require Logger
 
@@ -114,21 +115,18 @@ defmodule Cinder.Notifier.Discord do
 
   defp with_poster(embed, _path), do: embed
 
-  # ponytail: mirrors the S0xE0y formatting in Cinder.Notifier.Log (Discord additionally needs the
-  # series poster, which Log's string-only helper doesn't return). Extract a shared helper only if
-  # a third consumer appears. Returns {summary, poster_path | nil}.
+  # Like Cinder.Notifier.Log's summary, but Discord additionally needs the series poster.
+  # Returns {summary, poster_path | nil}.
   defp episodes_summary([%{season: %{series: series}} | _] = episodes) do
     codes =
       Enum.map_join(episodes, ", ", fn ep ->
-        "S#{pad(ep.season.season_number)}E#{pad(ep.episode_number)}"
+        Episode.code(ep.season.season_number, ep.episode_number)
       end)
 
     {"#{series.title} — #{codes}", series.poster_path}
   end
 
   defp episodes_summary(episodes), do: {"#{length(episodes)} episode(s)", nil}
-
-  defp pad(n), do: n |> Integer.to_string() |> String.pad_leading(2, "0")
 
   defp webhook_url do
     :cinder

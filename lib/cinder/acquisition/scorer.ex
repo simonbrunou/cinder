@@ -1,7 +1,7 @@
 defmodule Cinder.Acquisition.Scorer do
   @moduledoc """
   Selects the best release from a list by explicit, configurable rules: an
-  inclusive size band, a group blocklist, a resolution allow-list, and a source
+  inclusive size band, a release-title blocklist, a resolution allow-list, and a source
   allow-list — each doubles as a ranking tiebreak in that order.
 
   The resolution preference is a **strict allow-list**, not just a tiebreak: a
@@ -34,14 +34,14 @@ defmodule Cinder.Acquisition.Scorer do
 
   @doc """
   Picks the best release from `releases`, or `:no_match` if none survive the
-  size-band, blocklist, and resolution allow-list filters.
+  size-band, release-blocklist, and resolution allow-list filters.
   """
   def select(releases, opts \\ []) do
-    {min_size, max_size, preferred, sources, blocklist, release_blocklist} = rules(opts)
+    {min_size, max_size, preferred, sources, release_blocklist} = rules(opts)
 
     releases
     |> Enum.filter(&within_band?(&1, min_size, max_size))
-    |> Enum.reject(&(blocked?(&1, blocklist) or title_blocked?(&1, release_blocklist)))
+    |> Enum.reject(&title_blocked?(&1, release_blocklist))
     |> Enum.filter(&(allowed_resolution?(&1, preferred) and allowed_source?(&1, sources)))
     |> pick_best(preferred, sources)
   end
@@ -55,7 +55,7 @@ defmodule Cinder.Acquisition.Scorer do
   from it rather than re-deriving coverage.
 
   Releases for other seasons (and movies, `season: nil`) are dropped; blocklisted
-  groups, out-of-band releases, and releases outside the resolution allow-list (see
+  titles, out-of-band releases, and releases outside the resolution allow-list (see
   `select/2`) are rejected. The size band is **per-episode**: a
   release covering `k` still-wanted episodes must satisfy `k*min_size ≤ size ≤
   k*max_size` (so a season pack is judged against the episodes it actually supplies).
@@ -70,12 +70,12 @@ defmodule Cinder.Acquisition.Scorer do
   household release-list sizes; upgrade only if release sets get pathological.
   """
   def select_for(releases, season, wanted_episodes, opts \\ []) do
-    {min_size, max_size, preferred, sources, blocklist, release_blocklist} = rules(opts)
+    {min_size, max_size, preferred, sources, release_blocklist} = rules(opts)
     band = {min_size, max_size, preferred, sources}
 
     releases
     |> Enum.filter(&(&1.season == season))
-    |> Enum.reject(&(blocked?(&1, blocklist) or title_blocked?(&1, release_blocklist)))
+    |> Enum.reject(&title_blocked?(&1, release_blocklist))
     |> Enum.filter(&(allowed_resolution?(&1, preferred) and allowed_source?(&1, sources)))
     |> cover(MapSet.new(wanted_episodes), [], band)
   end
@@ -88,7 +88,7 @@ defmodule Cinder.Acquisition.Scorer do
   `select/2`, so the panel verdict and the auto-pick can never drift.
   """
   def verdict(%Release{} = release, opts \\ []) do
-    {min_size, max_size, preferred, sources, blocklist, release_blocklist} = rules(opts)
+    {min_size, max_size, preferred, sources, release_blocklist} = rules(opts)
 
     # The TV band is per-episode: a multi-episode release is judged against the episodes it
     # NAMES, a whole-season pack against `opts[:pack_episode_count]`. This approximates
@@ -102,7 +102,7 @@ defmodule Cinder.Acquisition.Scorer do
       not within_band?(release, scale_band(min_size, k), scale_band(max_size, k)) ->
         {:rejected, :out_of_band}
 
-      blocked?(release, blocklist) or title_blocked?(release, release_blocklist) ->
+      title_blocked?(release, release_blocklist) ->
         {:rejected, :blocklisted}
 
       not allowed_resolution?(release, preferred) ->
@@ -129,12 +129,12 @@ defmodule Cinder.Acquisition.Scorer do
 
   @doc "The ascending sort key `select/2` ranks by (resolution → source → larger size). Best sorts first."
   def rank_key(%Release{} = release, opts \\ []) do
-    {_min, _max, preferred, sources, _bl, _rbl} = rules(opts)
+    {_min, _max, preferred, sources, _rbl} = rules(opts)
     sort_key(release, preferred, sources)
   end
 
   # The normalized rule set, shared by both entry points: the size band, the
-  # resolution preference (defaulted), and the downcased blocklist. Per-call opts
+  # resolution preference (defaulted), and the downcased release blocklist. Per-call opts
   # only — the old `config :cinder, Scorer` env seam was never set anywhere and is
   # unreachable in the shipped image (operators configure bands via /settings).
   defp rules(rules) do
@@ -143,7 +143,6 @@ defmodule Cinder.Acquisition.Scorer do
       Keyword.get(rules, :max_size),
       Keyword.get(rules, :preferred_resolutions, @default_preferred),
       Keyword.get(rules, :preferred_sources, []),
-      rules |> Keyword.get(:blocklist, []) |> Enum.map(&String.downcase/1),
       rules |> Keyword.get(:release_blocklist, []) |> Enum.map(&String.downcase/1)
     }
   end
@@ -222,10 +221,7 @@ defmodule Cinder.Acquisition.Scorer do
   defp rank_in(value, preferred),
     do: Enum.find_index(preferred, &(&1 == value)) || length(preferred)
 
-  defp blocked?(%Release{group: nil}, _blocklist), do: false
-  defp blocked?(%Release{group: group}, blocklist), do: String.downcase(group) in blocklist
-
-  # Exact (downcased) release-name exclusion, mirroring `blocked?/2`. The per-item blocklist
+  # Exact (downcased) release-name exclusion. The per-item blocklist
   # passes the failed release titles as `release_blocklist`; an untitled release can't match.
   defp title_blocked?(%Release{title: nil}, _list), do: false
   defp title_blocked?(%Release{title: title}, list), do: String.downcase(title) in list

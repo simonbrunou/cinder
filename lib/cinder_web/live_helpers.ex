@@ -39,6 +39,12 @@ defmodule CinderWeb.LiveHelpers do
     Enum.any?(changeset.errors, fn {_field, {_msg, opts}} -> opts[:constraint] == :unique end)
   end
 
+  @doc ~S(The display title for a request row: "Title: Season N" for a season request, the bare title otherwise.)
+  def request_title(%{target_type: "season"} = r),
+    do: gettext("%{title}: Season %{number}", title: r.title, number: r.season_number)
+
+  def request_title(r), do: r.title
+
   @doc """
   Locale-aware short date ("Jun 3" / fr "3 juin"). Both the format string and the
   month names go through gettext, so a translated locale controls word order too —

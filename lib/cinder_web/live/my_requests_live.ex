@@ -6,6 +6,8 @@ defmodule CinderWeb.MyRequestsLive do
   """
   use CinderWeb, :live_view
 
+  import CinderWeb.LiveHelpers, only: [request_title: 1]
+
   alias Cinder.{Catalog, Requests}
 
   @impl true
@@ -67,13 +69,7 @@ defmodule CinderWeb.MyRequestsLive do
         <li :for={r <- @requests} class="rounded-box bg-base-200/50 p-4">
           <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
             <span class="min-w-0 break-words font-semibold">
-              {if r.target_type == "season",
-                do:
-                  gettext("%{title}: Season %{number}",
-                    title: r.title,
-                    number: r.season_number
-                  ),
-                else: r.title}
+              {request_title(r)}
             </span>
             <span :if={r.year} class="text-base-content/70">({r.year})</span>
             <.status_badge kind={:request} status={effective_status(r, @available_seasons)} />
