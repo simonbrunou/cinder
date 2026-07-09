@@ -11,6 +11,36 @@ All notable changes to Cinder are documented here. The format follows
   movies and episodes in configured languages, at import time and via a 12h backfill sweep.
   Opt-in: set `Subtitle languages` + OpenSubtitles credentials in Settings. Best-effort — never
   blocks an import.
+- **Discord notifications.** Optional webhook (Settings → Notifications) posts embeds on
+  approvals, availability, and failures; log-only when unset.
+- **Movie/series detail pages** with TMDB metadata and per-file info (resolution, size,
+  audio/subtitle languages captured at import via ffprobe).
+- **Login rate limiting.** Password login capped at 10 failures per `{ip, email}` per 15 min;
+  blocked attempts return the same generic error (no enumeration oracle).
+- **TV search exhaustion is visible.** An episode whose 10 search attempts run out shows a
+  "Search failed" badge (series page + calendar), logs a warning, and notifies — the per-episode
+  Search button re-queues it.
+- Season badges reach **Available** for requesters (series page + My requests) once every aired
+  episode of the season has a file.
+
+### Fixed
+- Dependency updates clearing all known CVE advisories (phoenix, plug, mint, hpax, swoosh).
+- `Show.S01-E02`-style names no longer parse as whole-season packs (and spaced-dash variants
+  parse as episodes).
+- Short/numeric series titles ("24", "1883") no longer match other shows' release names on the
+  free-text indexer path; non-Latin titles fail closed instead of matching everything.
+- A transient filesystem error (unreadable/unmounted downloads dir, at any depth) is retried
+  instead of permanently parking + blocklisting a good release.
+- Season approvals run off the LiveView — a single approve no longer freezes the page during
+  TMDB fetches.
+- The manual-search panel bands TV releases per episode, so season packs no longer all read
+  "out of band".
+- `find_files` walks directories instead of globbing, so `{tmdb-N}` library folders are
+  searchable.
+
+### Changed
+- `docker-compose.yml` binds `127.0.0.1:4000` by default — claim your admin before exposing the
+  port (see the compose comments for LAN/proxy exposure).
 
 ## [1.0.0] - 2026-07-03
 

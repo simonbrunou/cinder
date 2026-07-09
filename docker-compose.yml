@@ -15,7 +15,7 @@ services:
   cinder:
     # `build: .` builds from this repo (works before any image is published, and is
     # what `--build` rebuilds). Once you pull a published release you can drop `build:`
-    # and pin a tag, e.g.  image: ghcr.io/simonbrunou/cinder:0.7.0
+    # and pin a tag, e.g.  image: ghcr.io/simonbrunou/cinder:1.0.0
     image: ghcr.io/simonbrunou/cinder:latest
     build: .
     restart: unless-stopped

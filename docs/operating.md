@@ -30,9 +30,19 @@ expected to terminate at a reverse proxy):
 - **Do not expose port 4000 to an untrusted network.** Run Cinder behind a reverse proxy (with TLS)
   or a VPN — this is the real access control. Registration stays **open** after the admin exists
   (that's how household members sign up), and **self-registered accounts are auto-confirmed**: they
-  can log in and submit requests immediately (no email confirmation step). There is **no
-  rate-limiting** on register/login — an accepted single-household ceiling, but another reason the
-  instance must not face an untrusted network.
+  can log in and submit requests immediately (no email confirmation step).
+- **Login rate limiting:** password login is capped at 10 failures per `{ip, email}` per 15
+  minutes (blocked attempts get the same generic error as bad credentials). Behind a reverse
+  proxy every client shares the proxy's IP, so the cap is effectively per-email there — meaning
+  anyone who can reach the login page can lock a known email's password login for a window
+  (a targeted-lockout nuisance, accepted at household scale; an authenticated password change
+  always clears the block). Registration has no limiter.
+- **Browsing over plain HTTP from another machine won't work.** In production Cinder redirects
+  any non-`localhost` HTTP request to `https://$PHX_HOST`. The compose default binds
+  `127.0.0.1:4000`, so the quickstart (browsing from the Docker host) just works — but the
+  common homelab case, compose on a NAS and a browser at `http://192.168.x.x:4000`, gets
+  redirected to a dead HTTPS URL. Either browse from the host (or an SSH tunnel), or put the
+  TLS-terminating reverse proxy up first and set `PHX_HOST` to its domain.
 - **Optional outer Basic-auth gate:** set `CINDER_BASIC_AUTH_USER` **and**
   `CINDER_BASIC_AUTH_PASSWORD` (environment, both required) to put HTTP Basic auth in front of the
   whole app — a stopgap while the instance has no admin yet (the boot log warns exactly then), or a
@@ -43,9 +53,24 @@ expected to terminate at a reverse proxy):
 Boot-only keys (`SECRET_KEY_BASE`, `DATABASE_PATH`, `PHX_*`, `PORT`, `POOL_SIZE`, `RELEASE_NAME`,
 `DNS_CLUSTER_QUERY`) stay in the environment. Everything else — TMDB, indexer, download clients,
 media server, the per-kind library roots (`movies_library_path`, `tv_library_path`), the per-kind
-size bands — is edited at `/settings` and
+size bands, subtitles, and notifications — is edited at `/settings` and
 stored in the database. **DB values override the env bootstrap; clearing a setting reverts to the
 env value/default.** Secret fields are encrypted at rest with a key derived from `SECRET_KEY_BASE`.
+
+### Discord notifications
+
+Set a **Discord webhook URL** under Notifications in `/settings` and Cinder posts an embed on
+request approvals, newly-available movies/episodes, and pipeline failures (including a TV season
+whose search budget is exhausted). Unset, events go to the server log only. Posts are best-effort
+with a 3-second timeout — a Discord outage never touches the pipeline.
+
+### Trust posture: indexer-supplied download URLs
+
+Cinder fetches `.torrent` files from whatever URL the indexer returns (scheme-limited to
+http/https, response used only to hash and hand to the download client — never rendered). That
+means your indexer/trackers can, in principle, make Cinder issue GET requests to arbitrary
+addresses — the same posture as Radarr/Sonarr. You chose the indexer; point Cinder only at one
+you trust.
 
 ## Hardlink, with an automatic cross-filesystem copy fallback
 
