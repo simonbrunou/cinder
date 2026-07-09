@@ -169,6 +169,11 @@ defmodule Cinder.Acquisition.ParserTest do
       assert %{season: 1, episodes: [2]} = Parser.parse("Show.Name.S01-E02.1080p.WEB.H264-GRP")
     end
 
+    test "a spaced-dash separator run (Sxx - Eyy) is a single episode, not a season pack" do
+      assert %{season: 1, episodes: [2]} = Parser.parse("Show - S01 - E02 - 1080p")
+      assert %{season: 1, episodes: [2]} = Parser.parse("Show.S01- E02.1080p")
+    end
+
     test "a range (SxxEyy-Ezz) expands to the inclusive episode list" do
       assert %{season: 1, episodes: [1, 2, 3], group: "GRP"} =
                Parser.parse("Show.S01E01-E03.1080p-GRP")

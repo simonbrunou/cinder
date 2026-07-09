@@ -13,6 +13,7 @@ defmodule Cinder.Catalog do
   alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Movie, Season, Series}
   alias Cinder.Download
   alias Cinder.Library
+  alias Cinder.Notifier
   alias Cinder.Repo
 
   @topic "movies"
@@ -363,7 +364,9 @@ defmodule Cinder.Catalog do
   defp grab_and_create_grab(%Release{} = release, episode_ids) do
     case Download.grab(release) do
       {:ok, download_id} ->
-        case create_grab(download_id, release.protocol, episode_ids, release.title) do
+        case create_grab(download_id, release.protocol, episode_ids, release.title,
+               reset_attempts: true
+             ) do
           {:ok, _grab} = ok ->
             ok
 
@@ -1075,10 +1078,10 @@ defmodule Cinder.Catalog do
   (e.g. a missing `download_id`) rolls the whole thing back as `{:error, changeset}` rather than
   raising, mirroring `set_season_monitored/2`.
   """
-  def create_grab(download_id, protocol, episode_ids, release_title \\ nil) do
+  def create_grab(download_id, protocol, episode_ids, release_title \\ nil, opts \\ []) do
     result =
       Repo.transaction(fn ->
-        insert_and_link_grab(download_id, protocol, episode_ids, release_title)
+        insert_and_link_grab(download_id, protocol, episode_ids, release_title, opts)
       end)
 
     with {:ok, grab} <- result do
@@ -1100,7 +1103,7 @@ defmodule Cinder.Catalog do
     end
   end
 
-  defp insert_and_link_grab(download_id, protocol, episode_ids, release_title) do
+  defp insert_and_link_grab(download_id, protocol, episode_ids, release_title, opts) do
     case %Grab{}
          |> Grab.changeset(%{
            download_id: download_id,
@@ -1108,12 +1111,16 @@ defmodule Cinder.Catalog do
            release_title: release_title
          })
          |> Repo.insert() do
-      {:ok, grab} -> link_grab_episodes(grab, episode_ids)
+      {:ok, grab} -> link_grab_episodes(grab, episode_ids, opts)
       {:error, changeset} -> Repo.rollback(changeset)
     end
   end
 
-  defp link_grab_episodes(grab, episode_ids) do
+  defp link_grab_episodes(grab, episode_ids, opts) do
+    # reset_attempts: the manual-grab path zeroes search_attempts (mirroring manual_grab_movie),
+    # giving the user-chosen release a fresh budget — and keeping the counter from ever exceeding
+    # the cap, which announce_search_exhausted's == max crossing check relies on.
+    reset = if Keyword.get(opts, :reset_attempts, false), do: [search_attempts: 0], else: []
     # Guard `is_nil(grab_id)`: never re-link an episode another grab already owns (defends against
     # a same-tick double-link silently overwriting an earlier grab). Guard `monitored`: every
     # caller sources episode_ids from wanted_episodes (monitored-only), but the poller's search
@@ -1125,7 +1132,7 @@ defmodule Cinder.Catalog do
         from(e in Episode,
           where: e.id in ^episode_ids and is_nil(e.grab_id) and e.monitored == true
         ),
-        set: [grab_id: grab.id, updated_at: now()]
+        set: [grab_id: grab.id, updated_at: now()] ++ reset
       )
 
     # Every requested episode was already grabbed (or unmonitored meanwhile): roll back so we
@@ -1339,18 +1346,26 @@ defmodule Cinder.Catalog do
           )
         end
 
-        Repo.update_all(missing_episodes_query(grab.id, imported_ids),
-          inc: [search_attempts: 1],
-          set: [updated_at: ts]
-        )
+        # select: in the update_all (RETURNING) hands the bumped ids to the post-commit
+        # exhaustion announce without a leading SELECT — a read-then-write transaction is
+        # the SQLITE_BUSY class busy_timeout can't rescue (see config/test.exs), and the
+        # delete below nilifies grab_id so the ids can't be re-derived afterwards.
+        {_count, bumped_ids} =
+          Repo.update_all(
+            missing_episodes_query(grab.id, imported_ids) |> select([e], e.id),
+            inc: [search_attempts: 1],
+            set: [updated_at: ts]
+          )
 
         # allow_stale: a user cancel_grab may delete the same row while this import
         # finalizes; raising here would roll back the just-imported file_path writes.
         Repo.delete!(grab, allow_stale: true)
+        bumped_ids
       end)
 
-    with {:ok, _} <- result do
+    with {:ok, bumped_ids} <- result do
       broadcast_series(series_id)
+      announce_search_exhausted(bumped_ids)
       {:ok, grab}
     end
   end
@@ -1438,6 +1453,11 @@ defmodule Cinder.Catalog do
   episodes in one write, then broadcasts each affected series. Used by the search pass on
   no-match / client-add failure / indexer error (no grab exists yet on that path).
   """
+  # The TV sweep's per-episode search-attempt cap. Lives here (not in the poller) because the
+  # UI derives :search_parked from it — the sweep's skip bound and the badge must agree.
+  # (Defined before its first use below; read via max_search_attempts/0 further down.)
+  @max_search_attempts 10
+
   def increment_search_attempts([]), do: :ok
 
   def increment_search_attempts(episode_ids) when is_list(episode_ids) do
@@ -1447,7 +1467,53 @@ defmodule Cinder.Catalog do
     )
 
     for series_id <- series_ids_for_episodes(episode_ids), do: broadcast_series(series_id)
+    announce_search_exhausted(episode_ids)
     :ok
+  end
+
+  # After any search_attempts bump: episodes that just crossed the cap leave the sweep
+  # permanently, and that moment must never be silent (the movie analogue parks visibly at
+  # :search_failed). Lives at the write site so BOTH bump paths announce — the sweep's
+  # increment_search_attempts and finish_grab/park_grab's non-imported bump. Re-selecting
+  # fresh rows (== max exactly: a +1 bump from max-1; the manual-grab reset keeps the counter
+  # from ever exceeding the cap) also makes the check immune to stale in-memory counters.
+  # Monitored-only: a parked grab of a just-cancelled series bumps unmonitored episodes the
+  # sweep doesn't own. Single-series by construction (both callers pass one grab/season group);
+  # the notifier payload's episodes carry season: :series for the transports' summary line.
+  defp announce_search_exhausted([]), do: :ok
+
+  # Best-effort like create_grab's post-commit broadcast (and guarded the same way): it runs
+  # AFTER the bump/finalize committed, so a re-select raise here (pool-checkout timeout,
+  # SQLITE_BUSY) must not escape — in finish_grab's caller that would skip the client-download
+  # removal and the availability notification for a grab row that is already gone.
+  defp announce_search_exhausted(episode_ids) do
+    exhausted =
+      Repo.all(
+        from e in Episode,
+          where:
+            e.id in ^episode_ids and e.search_attempts == ^@max_search_attempts and
+              is_nil(e.file_path) and is_nil(e.grab_id) and e.monitored == true,
+          preload: [season: :series]
+      )
+
+    case exhausted do
+      [] ->
+        :ok
+
+      [%{season: %{series: series, season_number: season}} | _] = episodes ->
+        numbers = Enum.map(episodes, & &1.episode_number)
+
+        Logger.warning(
+          "tv search exhausted for #{series.title} season #{season} episode(s) " <>
+            "#{inspect(numbers)}; the sweep will skip them until a manual Search"
+        )
+
+        Notifier.notify({:episodes_search_exhausted, episodes})
+    end
+  rescue
+    e -> Logger.warning("search-exhaustion announce failed: #{inspect(e)}")
+  catch
+    kind, value -> Logger.warning("search-exhaustion announce #{kind}: #{inspect(value)}")
   end
 
   defp series_ids_for_episodes(episode_ids) do
@@ -1511,10 +1577,6 @@ defmodule Cinder.Catalog do
 
   @doc "Count of wanted episodes (see `wanted_episodes/0`)."
   def count_wanted_episodes, do: Repo.aggregate(wanted_episodes_query(), :count)
-
-  # The TV sweep's per-episode search-attempt cap. Lives here (not in the poller) because the
-  # UI derives :search_parked from it — the sweep's skip bound and the badge must agree.
-  @max_search_attempts 10
 
   @doc "See `episode_state/2`: past this many search attempts the sweep skips the episode."
   def max_search_attempts, do: @max_search_attempts

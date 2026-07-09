@@ -201,11 +201,12 @@ defmodule Cinder.Acquisition.Parser do
   # an episode marker, or end — so a group/title fragment like "-S1CK" or "S5RT" (digit
   # glued to a letter) is not counted as a season. Scanned to count distinct seasons.
   @season_token ~r/(?:^|[^a-z0-9])s(\d{1,2})(?=[\s._-]|e\d|$)/i
-  # Season + an episode tail (an optional ./space/_/- separator allowed): SxxEyy, Sxx.Eyy,
-  # Sxx-Eyy, SxxEyyEzz, SxxEyy-Ezz, SxxEyy-zz (tail parsed below). The "-" separator is
-  # safe: S01-S02 is pre-rejected by multi_season?, and S01-1080p has no e-token so it
-  # still reads as a bare-season pack.
-  @season_episode ~r/(?:^|[^a-z0-9])s(\d{1,2})[._ -]?((?:e\d{1,3})(?:-?e?\d{1,3})*)/i
+  # Season + an episode tail, allowing a short separator RUN (up to 3 of ./space/_/-, so the
+  # spaced-dash "Show - S01 - E02" form parses too): SxxEyy, Sxx.Eyy, Sxx-Eyy, Sxx - Eyy,
+  # SxxEyyEzz, SxxEyy-Ezz, SxxEyy-zz (tail parsed below). The "-" separator is safe:
+  # S01-S02/"S01 - S02" are pre-rejected by multi_season?, and S01-1080p has no e-token so
+  # it still reads as a bare-season pack.
+  @season_episode ~r/(?:^|[^a-z0-9])s(\d{1,2})[._ -]{0,3}((?:e\d{1,3})(?:-?e?\d{1,3})*)/i
   # The 1x02 form (single episode only).
   @alt_episode ~r/(?:^|[^a-z0-9])(\d{1,2})x(\d{1,2})(?!\d)/i
   # A bare season pack: S01 / S01.COMPLETE (no episode token following). The trailing

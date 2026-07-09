@@ -349,9 +349,11 @@ defmodule CinderWeb.SeriesDetailLive do
 
   # The sweep hit its attempt cap and skips this episode — without a badge the row reads
   # "still trying" forever. The Search button next to it zeroes the counter and re-queues.
+  # Delegates the park predicate to Catalog.episode_state/2 (the single derivation) so this
+  # badge can't drift from the calendar's; episode_searchable? adds the monitored/specials
+  # legs the state fn doesn't carry.
   defp search_exhausted?(ep, season_number) do
-    episode_searchable?(ep, season_number) and
-      ep.search_attempts >= Catalog.max_search_attempts()
+    episode_searchable?(ep, season_number) and Catalog.episode_state(ep) == :search_parked
   end
 
   @impl true

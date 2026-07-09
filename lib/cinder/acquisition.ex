@@ -78,10 +78,11 @@ defmodule Cinder.Acquisition do
   indexer search — it applies ONLY when `series.tvdb_id` is nil; a TvdbId-token
   search is already scoped to the right show. `select_for` matches only on
   season number, so without this a same-season release of another show could be
-  grabbed. It is a normalized substring match (downcase, "&"→"and", NFD-fold
-  diacritics, strip non-alphanumerics); it cannot disambiguate same-named variants
-  (e.g. a US vs UK edition) — those rely on `tvdb_id`-based search (M6
-  reconciliation).
+  grabbed. It is a boundary-anchored token-run match (see `title_matches?/2`); it
+  cannot disambiguate same-named variants (a US vs UK edition) or spinoffs that
+  share the title as a prefix ("9-1-1" vs "9-1-1: Lone Star"), and it fails closed
+  for titles that fold to nothing (non-Latin scripts) — all of those rely on the
+  `tvdb_id`-based search (M6 reconciliation).
   """
   def best_releases(series, season_number, wanted_numbers, opts \\ []) do
     case indexer().search_tv(series.tvdb_id, series.title, season_number) do
@@ -171,34 +172,77 @@ defmodule Cinder.Acquisition do
 
   defp filter_title(candidates, _series), do: candidates
 
-  # Short/all-numeric titles are anchored to a prefix: a substring match would let
-  # series "24" accept any release with a year in its name ("Other.Show.2024.S01E05")
-  # and "ER" accept "Superhero..." — the scorer then matches on season number alone and
-  # imports the wrong show. Scene names lead with the title, so a prefix is safe there.
+  # Token-run matching: the folded series title must equal the concatenation of a contiguous
+  # run of WHOLE release-name tokens — boundary-anchored at both ends. So series "24" matches
+  # "24.S01E05" and the tag-prefixed "[TGx] 24.S01E05" but not "Other.Show.2024..." (no "24"
+  # token), and "Dark" no longer substring-matches "Darkwing.Duck...". Concatenating the run
+  # keeps acronym/possessive/fused variants working ("S.W.A.T." ⇔ "SWAT", "Grey's" ⇔ "Greys",
+  # "The Office" ⇔ "TheOffice"). Documented ceilings (need the tvdb_id-scoped path): a spinoff
+  # sharing the title as a leading run ("9-1-1" accepts "9-1-1.Lone.Star..."), and same-named
+  # variants.
   defp title_matches?(%Release{title: title}, series_title) do
-    release = normalize_title(title)
-    series = normalize_title(series_title)
-
-    if byte_size(series) <= 3 or series =~ ~r/^\d+$/ do
-      String.starts_with?(release, series)
-    else
-      String.contains?(release, series)
-    end
+    needle = series_needle(series_title)
+    needle != "" and token_run_match?(tokens(title), needle)
   end
 
-  # Fold to a comparable core: downcase, NFD-decompose so an ASCII-ized release name
-  # ("Pokemon") still matches an accented TMDB title ("Pokémon"), then drop everything
-  # that isn't a plain letter/digit (separators, the combining marks NFD exposed).
-  defp normalize_title(nil), do: ""
+  # Fail closed when tokenization ate most of the title: a non-Latin title ("Дом") folds to
+  # nothing, "Дом 2" to a bare "2" — a remnant that would match almost anything and import the
+  # wrong show. Both sides of the ratio start from the same fold/1 so an "&"→"and" expansion
+  # can't inflate the needle past the check. Those series can't be safely matched by name; the
+  # tvdb_id-scoped search (which skips this guard entirely) is the escape hatch.
+  defp series_needle(series_title) do
+    needle = series_title |> tokens() |> Enum.join()
 
-  defp normalize_title(title) do
+    significant =
+      (series_title || "")
+      |> fold()
+      |> String.replace(~r/[^\p{L}\p{N}]/u, "")
+      |> String.length()
+
+    if String.length(needle) * 2 >= significant, do: needle, else: ""
+  end
+
+  # Downcase, spell out "&" (scene names always write "and", TMDB keeps the ampersand), drop
+  # possessive apostrophes ("Grey's" ⇒ "greys").
+  defp fold(title) do
     title
     |> String.downcase()
-    # Scene release names never contain "&" — it is always spelled "and"
-    # ("Law.and.Order..."), while TMDB titles keep the ampersand ("Law & Order").
     |> String.replace("&", "and")
+    |> String.replace(~r/['’]/u, "")
+  end
+
+  # fold/1 → NFD-decompose (so ASCII-ized "Pokemon" still matches "Pokémon") → strip non-ASCII
+  # (the combining marks NFD exposed, plus non-Latin scripts) → split on separator runs.
+  # "Grey's Anatomy" ⇒ ["greys", "anatomy"], "9-1-1" ⇒ ["9", "1", "1"].
+  defp tokens(nil), do: []
+
+  defp tokens(title) do
+    title
+    |> fold()
     |> nfd()
-    |> String.replace(~r/[^a-z0-9]/, "")
+    |> String.replace(~r/[^\x00-\x7f]/u, "")
+    |> String.split(~r/[^a-z0-9]+/, trim: true)
+  end
+
+  # Does any contiguous run of whole tokens concatenate to exactly `needle`?
+  defp token_run_match?(hay, needle) do
+    Enum.any?(0..max(length(hay) - 1, 0), fn start ->
+      hay |> Enum.drop(start) |> run_consumes?(needle)
+    end)
+  end
+
+  defp run_consumes?(_tokens, ""), do: true
+  defp run_consumes?([], _needle), do: false
+
+  defp run_consumes?([token | rest], needle) do
+    if String.starts_with?(needle, token) do
+      run_consumes?(
+        rest,
+        binary_part(needle, byte_size(token), byte_size(needle) - byte_size(token))
+      )
+    else
+      false
+    end
   end
 
   # :unicode.characters_to_nfd_binary returns {:error, _, _} on malformed UTF-8; fall back to the

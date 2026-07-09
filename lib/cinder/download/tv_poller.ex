@@ -19,8 +19,8 @@ defmodule Cinder.Download.TvPoller do
   the download→import boundary, so the advance and import phases each get a fresh `@max_attempts`
   budget (a download's blips don't starve its import). The search phase backs off per
   `episode.search_attempts`/`updated_at` exactly like the movie poller, and an episode parks
-  (derived `:search_parked`, warned + announced via the Notifier) at
-  `Catalog.max_search_attempts/0`.
+  (derived `:search_parked`) at `Catalog.max_search_attempts/0` — the crossing is warned +
+  announced by Catalog at the counter's write site, covering every bump path.
   """
   require Logger
 
@@ -205,31 +205,13 @@ defmodule Cinder.Download.TvPoller do
     kind, value -> {:error, {kind, value}}
   end
 
+  # Crossing the search cap is announced by Catalog.increment_search_attempts itself (at the
+  # write site, so the finish_grab/park_grab bump path announces too — not just this sweep).
   defp bump_not_grabbed(episodes, grabbed) do
-    missed = Enum.reject(episodes, &(&1.id in grabbed))
-    Catalog.increment_search_attempts(Enum.map(missed, & &1.id))
-    announce_exhausted(missed)
-  end
-
-  # An episode crossing the search cap leaves the sweep permanently (until a manual Search
-  # zeroes the counter) — that moment must never be silent: the movie analogue parks visibly
-  # at :search_failed, so the TV side warns + notifies, and the UI derives :search_parked.
-  defp announce_exhausted(missed) do
-    case Enum.filter(missed, &(&1.search_attempts + 1 >= Catalog.max_search_attempts())) do
-      [] ->
-        :ok
-
-      exhausted ->
-        %{season: %{series: series, season_number: season}} = hd(exhausted)
-        numbers = Enum.map(exhausted, & &1.episode_number)
-
-        Logger.warning(
-          "tv search exhausted for #{series.title} season #{season} episode(s) " <>
-            "#{inspect(numbers)}; the sweep will skip them until a manual Search"
-        )
-
-        Notifier.notify({:episodes_search_exhausted, exhausted})
-    end
+    episodes
+    |> Enum.map(& &1.id)
+    |> Enum.reject(&(&1 in grabbed))
+    |> Catalog.increment_search_attempts()
   end
 
   # --- shared helpers --------------------------------------------------------------------------

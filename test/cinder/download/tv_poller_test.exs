@@ -296,6 +296,32 @@ defmodule Cinder.Download.TvPollerTest do
     assert Repo.get!(Episode, e1.id).search_attempts == 10
   end
 
+  test "a grab park that crosses the search cap announces exhaustion (finish_grab bump path)" do
+    {_series, season} = series_tree()
+    e1 = episode(season, 1)
+    {:ok, grab} = Catalog.create_grab("hash-cap", :torrent, [e1.id])
+    Repo.update_all(Episode, set: [search_attempts: 9])
+
+    Cinder.TestNotifier.subscribe()
+    assert {:ok, _} = Catalog.park_grab(grab)
+
+    assert_receive {:notify, {:episodes_search_exhausted, [%Episode{id: id}]}}
+    assert id == e1.id
+    assert Repo.get!(Episode, e1.id).search_attempts == 10
+  end
+
+  test "a parked grab of just-unmonitored episodes does not announce exhaustion" do
+    {_series, season} = series_tree()
+    e1 = episode(season, 1)
+    {:ok, grab} = Catalog.create_grab("hash-unmon", :torrent, [e1.id])
+    Repo.update_all(Episode, set: [search_attempts: 9, monitored: false])
+
+    Cinder.TestNotifier.subscribe()
+    assert {:ok, _} = Catalog.park_grab(grab)
+
+    refute_receive {:notify, {:episodes_search_exhausted, _}}
+  end
+
   test "a late-dated monitored episode becomes wanted after a refresh and grabs (M6 Done-when)" do
     series =
       Repo.insert!(%Series{
