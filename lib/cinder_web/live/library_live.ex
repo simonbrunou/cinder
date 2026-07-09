@@ -1,8 +1,9 @@
 defmodule CinderWeb.LibraryLive do
   @moduledoc """
-  Admin managed-catalog at `/library`: every movie (inline edit / cancel /
-  delete) and every added series (cancel / delete; drill into `/series/:id` for per-episode
-  monitoring). Merges the old `/movies` page and the Discover "Added series" block.
+  Admin managed-catalog at `/library`: every movie (cancel / delete; drill into
+  `/movies/:id` for edit and pipeline actions) and every added series (cancel / delete; drill into
+  `/series/:id` for per-episode monitoring). Merges the old `/movies` page and the Discover
+  "Added series" block.
   Admin-gated by the `:admin` live_session; every mutation routes through the existing
   `Catalog` functions — no pipeline or gate change. Live via the `movies` + `series` topics.
   """
@@ -11,7 +12,6 @@ defmodule CinderWeb.LibraryLive do
   import CinderWeb.LiveHelpers
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.Movie
 
   @impl true
   def mount(_params, _session, socket) do
@@ -24,59 +24,18 @@ defmodule CinderWeb.LibraryLive do
      assign(socket,
        movies: Catalog.list_movies(),
        series: Catalog.list_series(),
-       editing: nil,
        confirming: nil,
-       form: nil,
        delete_files: false
      )}
   end
 
   # --- movies ---
   @impl true
-  def handle_event("edit", %{"id" => id}, socket) do
-    case find_movie(socket, id) do
-      nil ->
-        {:noreply, socket}
-
-      movie ->
-        {:noreply,
-         assign(socket,
-           editing: movie.id,
-           confirming: nil,
-           form: to_form(Movie.changeset(movie, %{}))
-         )}
-    end
-  end
-
-  def handle_event("cancel_edit", _params, socket),
-    do: {:noreply, assign(socket, editing: nil, form: nil)}
-
-  def handle_event("save", %{"id" => id, "movie" => attrs}, socket) do
-    case find_movie(socket, id) do
-      nil ->
-        {:noreply, socket}
-
-      movie ->
-        case Catalog.update_movie(movie, attrs) do
-          {:ok, _updated} ->
-            {:noreply,
-             socket
-             |> assign(editing: nil, form: nil, movies: Catalog.list_movies())
-             |> put_flash(:info, gettext("Movie updated."))}
-
-          {:error, changeset} ->
-            {:noreply, assign(socket, form: to_form(changeset))}
-        end
-    end
-  end
-
   def handle_event("ask_cancel_movie", %{"id" => id}, socket),
-    do: {:noreply, assign(socket, confirming: {:movie, :cancel, id}, editing: nil)}
+    do: {:noreply, assign(socket, confirming: {:movie, :cancel, id})}
 
   def handle_event("ask_delete_movie", %{"id" => id}, socket),
-    do:
-      {:noreply,
-       assign(socket, confirming: {:movie, :delete, id}, editing: nil, delete_files: false)}
+    do: {:noreply, assign(socket, confirming: {:movie, :delete, id}, delete_files: false)}
 
   def handle_event("confirm_cancel_movie", %{"id" => id}, socket) do
     actor = socket.assigns.current_scope.user
@@ -225,11 +184,10 @@ defmodule CinderWeb.LibraryLive do
             id={"movie-#{m.id}"}
             class={[
               "space-y-2",
-              (@editing == m.id or
-                 @confirming in [
-                   {:movie, :cancel, to_string(m.id)},
-                   {:movie, :delete, to_string(m.id)}
-                 ]) &&
+              @confirming in [
+                {:movie, :cancel, to_string(m.id)},
+                {:movie, :delete, to_string(m.id)}
+              ] &&
                 "col-span-2 sm:col-span-3 lg:col-span-4"
             ]}
           >
@@ -240,15 +198,6 @@ defmodule CinderWeb.LibraryLive do
             </.link>
 
             <div class="flex flex-wrap gap-2">
-              <.button
-                type="button"
-                variant="neutral"
-                size="sm"
-                phx-click="edit"
-                phx-value-id={m.id}
-              >
-                {gettext("Edit")}
-              </.button>
               <.button
                 :if={Catalog.cancellable?(m)}
                 type="button"
@@ -270,29 +219,6 @@ defmodule CinderWeb.LibraryLive do
                 {gettext("Delete")}
               </.button>
             </div>
-
-            <.form
-              :if={@editing == m.id}
-              for={@form}
-              id={"movie-form-#{m.id}"}
-              phx-submit="save"
-              phx-value-id={m.id}
-              class="flex flex-wrap items-end gap-2"
-            >
-              <.input field={@form[:title]} type="text" label={gettext("Title")} />
-              <.input field={@form[:year]} type="number" label={gettext("Year")} />
-              <.button
-                variant="primary"
-                size="sm"
-                type="submit"
-                phx-disable-with={gettext("Saving…")}
-              >
-                {gettext("Save")}
-              </.button>
-              <.button variant="ghost" size="sm" type="button" phx-click="cancel_edit">
-                {gettext("Cancel edit")}
-              </.button>
-            </.form>
 
             <.confirm_action
               :if={@confirming == {:movie, :cancel, to_string(m.id)}}
@@ -350,9 +276,11 @@ defmodule CinderWeb.LibraryLive do
           >
             <.link navigate={~p"/series/#{s.id}"} class="block max-w-xs">
               <.media_card poster_path={s.poster_path} title={s.title} year={s.year} type={:tv}>
-                <span class="link link-hover inline-flex items-center gap-1 text-sm">
-                  {gettext("Configure monitoring")}<.icon name="hero-arrow-right" class="size-3.5" />
-                </span>
+                <.status_badge
+                  kind={:monitored}
+                  status={s.monitored}
+                  class="h-auto break-words text-center"
+                />
               </.media_card>
             </.link>
 
