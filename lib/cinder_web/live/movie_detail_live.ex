@@ -1,10 +1,12 @@
 defmodule CinderWeb.MovieDetailLive do
   @moduledoc """
-  Admin movie detail at `/movies/:id`: descriptive TMDB metadata (overview / runtime / genres /
+  Admin movie console at `/movies/:id`: descriptive TMDB metadata (overview / runtime / genres /
   rating / release date — lazily backfilled on first view via `Catalog.enrich_movie/1`, off-process
-  so it never blocks render) plus the downloaded-file panel (resolution / size / source / language /
-  release title). Read-only — management (edit / cancel / delete) stays on `/library`. Subscribes to
-  the `movies` topic so a status change advances the badge live.
+  so it never blocks render), the downloaded-file panel, **and** management — edit / cancel / delete,
+  retry a parked movie, "Find a better match", cancel an in-flight upgrade, and set the preferred
+  language. Mirrors the `/series/:id` console so movies and TV behave identically. Every write goes
+  through an existing `Catalog` function; subscribes to the `movies` topic so a status change (its
+  own or another tab's) advances the page live.
   """
   use CinderWeb, :live_view
 
@@ -13,13 +15,26 @@ defmodule CinderWeb.MovieDetailLive do
   alias Cinder.Catalog
   alias Cinder.Catalog.Movie
 
+  @parked [:no_match, :search_failed, :import_failed]
+
   @impl true
   def mount(%{"id" => id}, _session, socket) do
     # :id is client-controlled; a non-integer must not reach Repo.get (CastError).
     with {id, ""} <- Integer.parse(id),
          %Movie{} = movie <- Catalog.get_movie_by_id(id) do
       if connected?(socket), do: Catalog.subscribe()
-      {:ok, socket |> assign(movie: movie) |> maybe_enrich(movie)}
+
+      {:ok,
+       socket
+       |> assign(
+         movie: movie,
+         editing?: false,
+         confirming: nil,
+         form: nil,
+         delete_files: false,
+         searching?: false
+       )
+       |> maybe_enrich(movie)}
     else
       _ ->
         {:ok,
@@ -38,6 +53,145 @@ defmodule CinderWeb.MovieDetailLive do
 
   defp maybe_enrich(socket, %Movie{}), do: socket
 
+  # --- edit ---
+  @impl true
+  def handle_event("edit", _params, socket) do
+    {:noreply,
+     assign(socket,
+       editing?: true,
+       confirming: nil,
+       form: to_form(Movie.changeset(socket.assigns.movie, %{}))
+     )}
+  end
+
+  def handle_event("cancel_edit", _params, socket),
+    do: {:noreply, assign(socket, editing?: false, form: nil)}
+
+  def handle_event("save", %{"movie" => attrs}, socket) do
+    case Catalog.update_movie(socket.assigns.movie, attrs) do
+      {:ok, _updated} ->
+        {:noreply,
+         socket
+         |> assign(editing?: false, form: nil)
+         |> assign_fresh(socket.assigns.movie.id)
+         |> put_flash(:info, gettext("Movie updated."))}
+
+      {:error, changeset} ->
+        {:noreply, assign(socket, form: to_form(changeset))}
+    end
+  end
+
+  # --- cancel / delete ---
+  def handle_event("ask_cancel", _params, socket),
+    do: {:noreply, assign(socket, confirming: :cancel, editing?: false)}
+
+  def handle_event("ask_delete", _params, socket),
+    do: {:noreply, assign(socket, confirming: :delete, editing?: false, delete_files: false)}
+
+  def handle_event("toggle_delete_files", _params, socket),
+    do: {:noreply, assign(socket, delete_files: !socket.assigns.delete_files)}
+
+  def handle_event("dismiss_confirm", _params, socket),
+    do: {:noreply, assign(socket, confirming: nil, delete_files: false)}
+
+  def handle_event("confirm_cancel", _params, socket) do
+    actor = socket.assigns.current_scope.user
+
+    case Catalog.cancel_movie(socket.assigns.movie, actor) do
+      {:ok, _} ->
+        {:noreply,
+         socket
+         |> assign(confirming: nil)
+         |> assign_fresh(socket.assigns.movie.id)
+         |> put_flash(:info, gettext("Movie cancelled."))}
+
+      {:error, :not_cancellable} ->
+        {:noreply,
+         socket
+         |> assign(confirming: nil)
+         |> put_flash(:error, gettext("That movie can't be cancelled."))}
+
+      _ ->
+        {:noreply,
+         socket
+         |> assign(confirming: nil)
+         |> put_flash(:error, gettext("Couldn't cancel that movie."))}
+    end
+  end
+
+  def handle_event("confirm_delete", _params, socket) do
+    actor = socket.assigns.current_scope.user
+
+    case Catalog.delete_movie(socket.assigns.movie, actor,
+           delete_files: socket.assigns.delete_files
+         ) do
+      {:ok, _} ->
+        {:noreply,
+         socket
+         |> put_flash(:info, gettext("Movie deleted."))
+         |> push_navigate(to: ~p"/library")}
+
+      _ ->
+        {:noreply,
+         socket
+         |> assign(confirming: nil)
+         |> put_flash(:error, gettext("Couldn't delete that movie."))}
+    end
+  end
+
+  # --- pipeline actions ---
+  def handle_event("retry", _params, socket) do
+    # A guarded miss (the movie already re-entered the pipeline) must not be silent —
+    # the badge visibly doesn't reset otherwise.
+    socket =
+      case Catalog.retry_movie(socket.assigns.movie) do
+        {:error, _} ->
+          put_flash(socket, :error, gettext("Couldn't retry: that movie has already moved on."))
+
+        _ ->
+          socket
+      end
+
+    {:noreply, socket}
+  end
+
+  def handle_event("cancel_upgrade", _params, socket) do
+    socket =
+      case Catalog.abort_upgrade(socket.assigns.movie, socket.assigns.current_scope.user) do
+        {:error, _} ->
+          put_flash(
+            socket,
+            :error,
+            gettext("Couldn't cancel: that upgrade has already moved on.")
+          )
+
+        _ ->
+          socket
+      end
+
+    {:noreply, socket}
+  end
+
+  # Toggle the manual-search panel (re-clicking closes it).
+  def handle_event("manual_search", _params, socket),
+    do: {:noreply, assign(socket, searching?: !socket.assigns.searching?)}
+
+  def handle_event("set_movie_language", %{"preferred_language" => lang}, socket)
+      when lang in ["original", "french", "any"] do
+    # On success the {:movie_updated} broadcast reloads @movie; on error the dropdown visually
+    # snaps back, so say why — mirrors set_series_language on /series/:id.
+    case Catalog.set_movie_language(socket.assigns.movie, lang) do
+      {:ok, _} ->
+        {:noreply, socket}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, gettext("Couldn't update the language."))}
+    end
+  end
+
+  # Client-controlled payloads — ignore anything unmatched rather than crash.
+  def handle_event(_event, _params, socket), do: {:noreply, socket}
+
   @impl true
   def handle_async(:enrich, {:ok, %Movie{}}, socket),
     do: {:noreply, assign_fresh(socket, socket.assigns.movie.id)}
@@ -45,7 +199,13 @@ defmodule CinderWeb.MovieDetailLive do
   # A failed backfill leaves the un-enriched row on screen; the page still renders.
   def handle_async(:enrich, {:exit, _reason}, socket), do: {:noreply, socket}
 
+  # The manual-search panel forwards a chosen release back here (it owns no Catalog writes).
   @impl true
+  def handle_info({:manual_grab, :movie, _movie, release}, socket) do
+    {level, msg} = grab_flash(Catalog.manual_grab_movie(socket.assigns.movie, release))
+    {:noreply, socket |> assign(searching?: false) |> put_flash(level, msg)}
+  end
+
   def handle_info({:movie_updated, %Movie{id: id}}, socket) do
     if id == socket.assigns.movie.id,
       do: {:noreply, assign_fresh(socket, id)},
@@ -65,6 +225,13 @@ defmodule CinderWeb.MovieDetailLive do
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
+  defp grab_flash({:ok, _movie}), do: {:info, gettext("Grabbing the selected release…")}
+
+  defp grab_flash({:error, :not_grabbable}),
+    do: {:error, gettext("That movie can't be grabbed right now.")}
+
+  defp grab_flash({:error, _reason}), do: {:error, gettext("Couldn't grab that release.")}
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -72,6 +239,73 @@ defmodule CinderWeb.MovieDetailLive do
       <.link navigate={~p"/library"} class="link link-hover mb-6 inline-flex items-center gap-1">
         <.icon name="hero-arrow-left" class="size-3.5" />{gettext("Library")}
       </.link>
+
+      <div class="mb-4 flex flex-wrap items-center gap-2">
+        <.button type="button" variant="neutral" size="sm" phx-click="edit">
+          {gettext("Edit")}
+        </.button>
+        <.button
+          :if={Catalog.cancellable?(@movie)}
+          type="button"
+          variant="warning"
+          size="sm"
+          phx-click="ask_cancel"
+        >
+          {gettext("Cancel")}
+        </.button>
+        <.button
+          :if={not Catalog.cancellable?(@movie)}
+          type="button"
+          variant="danger"
+          size="sm"
+          phx-click="ask_delete"
+        >
+          {gettext("Delete")}
+        </.button>
+      </div>
+
+      <.form
+        :if={@editing?}
+        for={@form}
+        id="movie-form"
+        phx-submit="save"
+        class="mb-6 flex flex-wrap items-end gap-2"
+      >
+        <.input field={@form[:title]} type="text" label={gettext("Title")} />
+        <.input field={@form[:year]} type="number" label={gettext("Year")} />
+        <.button variant="primary" size="sm" type="submit" phx-disable-with={gettext("Saving…")}>
+          {gettext("Save")}
+        </.button>
+        <.button variant="ghost" size="sm" type="button" phx-click="cancel_edit">
+          {gettext("Cancel edit")}
+        </.button>
+      </.form>
+
+      <.confirm_action
+        :if={@confirming == :cancel}
+        id="confirm-cancel-movie"
+        class="mb-6"
+        on_confirm="confirm_cancel"
+        on_cancel="dismiss_confirm"
+        confirm_label={gettext("Cancel movie")}
+        variant="warning"
+      >
+        <:caveat>{gettext("Cancel this movie and remove its download?")}</:caveat>
+      </.confirm_action>
+
+      <.confirm_action
+        :if={@confirming == :delete}
+        id="confirm-delete-movie"
+        class="mb-6"
+        on_confirm="confirm_delete"
+        on_cancel="dismiss_confirm"
+        confirm_label={gettext("Delete")}
+        checkbox_event="toggle_delete_files"
+        checkbox_checked={@delete_files}
+        checkbox_label={gettext("Also delete the file from disk")}
+      >
+        <:caveat>{gettext("Delete this movie's record?")}</:caveat>
+      </.confirm_action>
 
       <div class="flex flex-col gap-6 sm:flex-row">
         <img
@@ -128,6 +362,52 @@ defmodule CinderWeb.MovieDetailLive do
           </p>
         </div>
       </div>
+
+      <form id="movie-language-form" phx-change="set_movie_language" class="mt-4 max-w-xs">
+        <.language_select value={@movie.preferred_language} />
+      </form>
+
+      <div
+        :if={parked?(@movie.status) or @movie.status in [:available, :upgrading]}
+        class="mt-4 flex flex-wrap items-center gap-2"
+      >
+        <.button
+          :if={parked?(@movie.status)}
+          type="button"
+          variant="ghost"
+          size="sm"
+          phx-click="retry"
+          phx-disable-with={gettext("Retrying…")}
+        >
+          {gettext("Retry")}
+        </.button>
+        <.button
+          :if={@movie.status == :available or parked?(@movie.status)}
+          type="button"
+          variant="ghost"
+          size="sm"
+          phx-click="manual_search"
+        >
+          {gettext("Find a better match")}
+        </.button>
+        <.button
+          :if={@movie.status == :upgrading}
+          type="button"
+          variant="ghost"
+          size="sm"
+          phx-click="cancel_upgrade"
+        >
+          {gettext("Cancel upgrade")}
+        </.button>
+      </div>
+
+      <.live_component
+        :if={@searching?}
+        module={CinderWeb.ManualSearchComponent}
+        id={"ms-movie-#{@movie.id}"}
+        mode={:movie}
+        target={@movie}
+      />
 
       <section :if={has_file?(@movie)} class="mt-8">
         <h2 class="mb-2 text-lg font-semibold">{gettext("Downloaded file")}</h2>
@@ -186,17 +466,19 @@ defmodule CinderWeb.MovieDetailLive do
     """
   end
 
-  # Re-read the row fresh from the DB — used after the async backfill and on a `:movie_updated`
-  # broadcast. A status transition through the unguarded `transition/2` echoes the caller's
-  # in-memory struct, which may predate this row's metadata backfill (enrich doesn't broadcast);
-  # re-reading pulls both the current status and the persisted metadata. A row deleted mid-flight
-  # leaves the current assign in place (the `:movie_deleted` handler drives the redirect).
+  # Re-read the row fresh from the DB — used after the async backfill, a `:movie_updated`
+  # broadcast, and every write. A status transition through the unguarded `transition/2` echoes the
+  # caller's in-memory struct, which may predate this row's metadata backfill (enrich doesn't
+  # broadcast); re-reading pulls both the current status and the persisted metadata. A row deleted
+  # mid-flight leaves the current assign in place (the `:movie_deleted` handler drives the redirect).
   defp assign_fresh(socket, id) do
     case Catalog.get_movie_by_id(id) do
       nil -> socket
       movie -> assign(socket, movie: movie)
     end
   end
+
+  defp parked?(status), do: status in @parked
 
   defp has_file?(%Movie{file_path: fp}), do: is_binary(fp) and fp != ""
 end

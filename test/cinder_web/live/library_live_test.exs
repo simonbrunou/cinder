@@ -32,24 +32,15 @@ defmodule CinderWeb.LibraryLiveTest do
     )
   end
 
-  test "lists movies with edit/cancel/delete affordances", %{conn: conn} do
-    movie_fixture(%{title: "Dune", year: 2021})
-    {:ok, _lv, html} = live(conn, ~p"/library")
+  test "lists movies with cancel/delete quick actions but no inline edit", %{conn: conn} do
+    movie = movie_fixture(%{title: "Dune", year: 2021})
+    {:ok, lv, html} = live(conn, ~p"/library")
     assert html =~ "Dune"
     assert html =~ "Movies"
-  end
-
-  test "edits a movie's metadata", %{conn: conn} do
-    movie = movie_fixture(%{title: "Dune", year: 2021})
-    {:ok, lv, _html} = live(conn, ~p"/library")
-
-    lv |> element("#movie-#{movie.id} button", "Edit") |> render_click()
-
-    lv
-    |> form("#movie-form-#{movie.id}", movie: %{title: "Dune: Part Two", year: 2024})
-    |> render_submit()
-
-    assert Catalog.get_movie_by_id(movie.id).title == "Dune: Part Two"
+    # Edit moved to /movies/:id; the library card links there instead.
+    refute has_element?(lv, "#movie-#{movie.id} button", "Edit")
+    assert has_element?(lv, ~s|#movie-#{movie.id} a[href="/movies/#{movie.id}"]|)
+    assert has_element?(lv, "#movie-#{movie.id} button", "Cancel")
   end
 
   test "cancels an active movie through the confirm step", %{conn: conn} do
@@ -74,11 +65,13 @@ defmodule CinderWeb.LibraryLiveTest do
     assert Catalog.get_movie_by_id(movie.id) == nil
   end
 
-  test "lists series with a drill-down link and deletes one", %{conn: conn} do
+  test "lists series with a drill-down link, a status badge, and deletes one", %{conn: conn} do
     s = series!(%{title: "Severance"})
     {:ok, lv, html} = live(conn, ~p"/library")
     assert html =~ "Severance"
     assert has_element?(lv, ~s|#series-row-#{s.id} a[href="/series/#{s.id}"]|)
+    # Parity with movie cards: a series card carries a monitored/unmonitored badge.
+    assert has_element?(lv, "#series-row-#{s.id} .badge")
 
     lv |> element("#series-row-#{s.id} button", "Delete") |> render_click()
     lv |> element("#confirm-delete-series-#{s.id} button", "Delete") |> render_click()
