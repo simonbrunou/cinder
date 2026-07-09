@@ -128,9 +128,9 @@ defmodule CinderWeb.SeriesDiscoveryLive do
            gettext("You've reached your request limit. Wait for approvals to clear.")
          )}
 
+      # Only the duplicate-pending unique constraint means "already requested"; any
+      # other changeset failure is a real error, not a reassuring info toast.
       {:error, %Ecto.Changeset{} = cs} ->
-        # Only the duplicate-pending unique constraint means "already requested"; any
-        # other changeset failure is a real error, not a reassuring info toast.
         if duplicate_request?(cs) do
           {:noreply,
            put_flash(
@@ -139,28 +139,20 @@ defmodule CinderWeb.SeriesDiscoveryLive do
              gettext("Season %{number} is already requested.", number: season_number)
            )}
         else
-          {:noreply,
-           put_flash(
-             socket,
-             :error,
-             gettext("Couldn't complete that request. Please try again.")
-           )}
+          {:noreply, request_error(socket)}
         end
 
       {:error, _} ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           gettext("Couldn't complete that request. Please try again.")
-         )}
+        {:noreply, request_error(socket)}
     end
   end
 
   def handle_async({:request_season, _season_number}, {:exit, _reason}, socket) do
-    {:noreply,
-     put_flash(socket, :error, gettext("Couldn't complete that request. Please try again."))}
+    {:noreply, request_error(socket)}
   end
+
+  defp request_error(socket),
+    do: put_flash(socket, :error, gettext("Couldn't complete that request. Please try again."))
 
   @impl true
   def handle_info({event, _request}, socket)
@@ -190,8 +182,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
 
     # Availability outranks a stale request status (mirrors the movie title_state
     # precedence): a fully imported season must not read "Denied" with a re-Request button.
-    available =
-      for {tid, n} <- Catalog.available_season_keys(), tid == tmdb_id, into: MapSet.new(), do: n
+    available = MapSet.new(Catalog.available_season_keys(tmdb_id), fn {_tid, n} -> n end)
 
     assign(socket, requests_by_season: requests_by_season, available_seasons: available)
   end

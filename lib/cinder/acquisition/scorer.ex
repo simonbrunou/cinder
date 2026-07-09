@@ -90,10 +90,12 @@ defmodule Cinder.Acquisition.Scorer do
   def verdict(%Release{} = release, opts \\ []) do
     {min_size, max_size, preferred, sources, blocklist, release_blocklist} = rules(opts)
 
-    # The TV band is per-episode (select_for's k×band): a multi-episode release is judged
-    # against the episodes it names, a whole-season pack against `opts[:pack_episode_count]`
-    # (the panel passes the season's wanted count). Without scaling every pack in the
-    # manual-search panel shows {:rejected, :out_of_band} while the auto-pick accepts it.
+    # The TV band is per-episode: a multi-episode release is judged against the episodes it
+    # NAMES, a whole-season pack against `opts[:pack_episode_count]`. This approximates
+    # select_for's still-wanted k (a release naming already-imported episodes bands wider
+    # here than the sweep would — the panel is the manual-override surface, so the lenient
+    # direction is acceptable). Without scaling, every pack in the manual-search panel
+    # shows {:rejected, :out_of_band} while the auto-pick accepts it.
     k = episodes_multiplier(release, opts)
 
     cond do

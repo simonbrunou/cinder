@@ -60,18 +60,20 @@ defmodule CinderWeb.ManualSearchComponent do
           Acquisition.list_releases_tv(
             target,
             season,
-            opts ++ [pack_episode_count: wanted_count(target, season)]
+            opts ++ [pack_episode_count: pack_count(target, season)]
           )
       end
     end)
   end
 
-  defp wanted_count(series, season_number) do
-    Catalog.wanted_episodes()
-    |> Enum.count(
-      &(&1.season.series.id == series.id and &1.season.season_number == season_number)
-    )
-    |> max(1)
+  # A COMPLETE season (the manual re-grab / better-release case) has zero wanted episodes;
+  # fall back to its total count — 1× would re-create the "pack judged as one episode's
+  # size" verdict bug for exactly that search.
+  defp pack_count(series, season_number) do
+    case Catalog.count_wanted_episodes(series.id, season_number) do
+      0 -> max(Catalog.count_episodes(series.id, season_number), 1)
+      n -> n
+    end
   end
 
   # Mirror the auto-search scorer opts (size band, preferred resolutions/sources,

@@ -36,8 +36,12 @@ defmodule CinderWeb.RequestsLive do
       req ->
         # A season approval does blocking TMDB I/O (1 + N season fetches) — run it off the
         # LiveView like the bulk path, so a single click can't freeze the page for seconds.
+        # Keyed per request: a same-name start_async would OVERWRITE an in-flight approval's
+        # task entry and silently drop its result (no error flash for the first request).
         admin = socket.assigns.current_scope.user
-        {:noreply, start_async(socket, :approve, fn -> Requests.approve_request(req, admin) end)}
+
+        {:noreply,
+         start_async(socket, {:approve, req.id}, fn -> Requests.approve_request(req, admin) end)}
     end
   end
 
@@ -149,14 +153,14 @@ defmodule CinderWeb.RequestsLive do
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   @impl true
-  def handle_async(:approve, {:ok, {:ok, _req}}, socket), do: {:noreply, socket}
+  def handle_async({:approve, _id}, {:ok, {:ok, _req}}, socket), do: {:noreply, socket}
 
-  def handle_async(:approve, {:ok, {:error, _reason}}, socket),
-    do:
-      {:noreply,
-       put_flash(socket, :error, gettext("Couldn't approve that request. Please try again."))}
+  # A stale double-click: the first approval already committed (flip_pending is DB-guarded),
+  # so "try again" would be a lie — say what actually happened.
+  def handle_async({:approve, _id}, {:ok, {:error, :not_pending}}, socket),
+    do: {:noreply, put_flash(socket, :error, gettext("That request was already decided."))}
 
-  def handle_async(:approve, {:exit, _reason}, socket),
+  def handle_async({:approve, _id}, _error_or_exit, socket),
     do:
       {:noreply,
        put_flash(socket, :error, gettext("Couldn't approve that request. Please try again."))}

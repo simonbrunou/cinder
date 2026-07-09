@@ -72,6 +72,12 @@ defmodule CinderWeb.UserSessionController do
     # disconnect all existing LiveViews with old sessions
     UserAuth.disconnect_sessions(expired_tokens)
 
+    # This authenticated, sudo-gated path pipes into the rate-limited create/3 below AFTER
+    # committing the new password and expiring every session token — a blocked {ip, email}
+    # pair here would lock the user out of the password they just set. Clear it: the user
+    # has already proven possession of the account.
+    LoginRateLimiter.clear(ip_string(conn), user.email)
+
     conn
     |> put_session(:user_return_to, ~p"/users/settings")
     |> create(params, gettext("Password updated successfully!"))

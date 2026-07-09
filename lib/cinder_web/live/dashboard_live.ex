@@ -36,12 +36,13 @@ defmodule CinderWeb.DashboardLive do
   def handle_async(:health, {:ok, results}, socket),
     do: {:noreply, assign(socket, health: results)}
 
-  def handle_async(:approve, {:ok, {:ok, _req}}, socket), do: {:noreply, socket}
+  def handle_async({:approve, _id}, {:ok, {:ok, _req}}, socket), do: {:noreply, socket}
 
-  def handle_async(:approve, {:ok, {:error, _reason}}, socket),
-    do: {:noreply, put_flash(socket, :error, gettext("Couldn't approve that request."))}
+  # A stale double-click: the first approval already committed — don't say "try again".
+  def handle_async({:approve, _id}, {:ok, {:error, :not_pending}}, socket),
+    do: {:noreply, put_flash(socket, :error, gettext("That request was already decided."))}
 
-  def handle_async(:approve, {:exit, _reason}, socket),
+  def handle_async({:approve, _id}, _error_or_exit, socket),
     do: {:noreply, put_flash(socket, :error, gettext("Couldn't approve that request."))}
 
   def handle_async(:health, {:exit, reason}, socket),
@@ -61,8 +62,11 @@ defmodule CinderWeb.DashboardLive do
       req ->
         # A season approval does blocking TMDB I/O (1 + N season fetches) — run it off the
         # LiveView (matching /requests) so a single click can't freeze the page for seconds.
+        # Keyed per request so overlapping approvals don't overwrite each other's results.
         admin = socket.assigns.current_scope.user
-        {:noreply, start_async(socket, :approve, fn -> Requests.approve_request(req, admin) end)}
+
+        {:noreply,
+         start_async(socket, {:approve, req.id}, fn -> Requests.approve_request(req, admin) end)}
     end
   end
 

@@ -7,10 +7,20 @@ defmodule Cinder.Accounts.LoginRateLimiter do
   enumeration or lockout oracle. bcrypt still slows each counted guess; this closes the
   sustained-run hole on public-facing deployments.
 
+  Deployment ceiling (accepted at household scale): behind the documented reverse proxy,
+  `conn.remote_ip` is the proxy for every client, so the key degrades to effectively
+  per-email — an anonymous visitor can lock a known email's password login for a window
+  with 10 junk attempts (a targeted-lockout DoS, though never an enumeration oracle).
+  Trusting x-forwarded-for WITHOUT a configured trusted-proxy list would be worse (a
+  spoofed header per request bypasses the limiter entirely); the upgrade path if this
+  ever matters is a trusted-proxy remote_ip rewrite (e.g. the `remote_ip` package).
+
   ponytail: a public ETS counter table + periodic sweep, not a rate-limiting dep —
   single-node by design (the SQLite ceiling), household scale. Reads/writes go straight
   to ETS; the GenServer only owns the table and the sweep. The read-then-insert bump can
   lose a concurrent increment — harmless here (it can only undercount by the race width).
+  Every public call fails OPEN if the table is briefly gone (a limiter restart must not
+  turn logins into 500s).
   """
   use GenServer
 
@@ -27,9 +37,15 @@ defmodule Cinder.Accounts.LoginRateLimiter do
       [{_key, count, started}] -> count >= @limit and now() - started < @window_ms
       [] -> false
     end
+  rescue
+    ArgumentError -> false
   end
 
-  @doc "Records a failed password attempt (opens or extends the pair's window)."
+  @doc """
+  Records a failed password attempt. The window is FIXED, anchored at the pair's first
+  failure — later failures increment the counter but never extend it; once it ages out
+  the next failure opens a fresh one.
+  """
   def register_failure(ip, email) do
     key = key(ip, email)
 
@@ -44,12 +60,16 @@ defmodule Cinder.Accounts.LoginRateLimiter do
     end
 
     :ok
+  rescue
+    ArgumentError -> :ok
   end
 
-  @doc "Clears the pair on a successful login."
+  @doc "Clears the pair — on a successful login or an authenticated password change."
   def clear(ip, email) do
     :ets.delete(@table, key(ip, email))
     :ok
+  rescue
+    ArgumentError -> :ok
   end
 
   @doc "Empties the table — test isolation only."
