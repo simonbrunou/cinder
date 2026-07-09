@@ -6,12 +6,35 @@ defmodule CinderWeb.MovieDetailLiveTest do
   import Cinder.CatalogFixtures
 
   alias Cinder.Catalog
+  alias Cinder.Repo
 
   @moduletag :capture_log
 
   setup :register_and_log_in_admin
   # Global: the enrich backfill runs in a start_async task (separate process).
   setup :set_mox_global
+
+  setup do
+    # Action tests don't care about the enrich backfill (their movies have no TMDB stub);
+    # a graceful {:error} keeps the async task from raising an unstubbed-call error. The
+    # metadata tests below re-stub get_movie with the specific id, which wins.
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn _ -> {:error, :nofetch} end)
+    # cancel_movie / delete_movie may remove an active download via the client.
+    stub(Cinder.Download.ClientMock, :remove, fn _id, _opts -> :ok end)
+    stub(Cinder.Download.SabnzbdClientMock, :remove, fn _id, _opts -> :ok end)
+    :ok
+  end
+
+  defp available_movie!(file_path) do
+    movie = movie_fixture(%{title: "M", year: 2010})
+
+    {:ok, movie} =
+      movie
+      |> Ecto.Changeset.change(status: :available, file_path: file_path)
+      |> Repo.update()
+
+    movie
+  end
 
   defp stub_details(tmdb_id) do
     stub(Cinder.Catalog.TMDBMock, :get_movie, fn ^tmdb_id ->
@@ -158,5 +181,152 @@ defmodule CinderWeb.MovieDetailLiveTest do
     html = render_async(lv)
 
     refute html =~ "0 min"
+  end
+
+  # --- console: edit / cancel / delete (relocated from /library) ---
+
+  test "edits a movie's metadata", %{conn: conn} do
+    movie = movie_fixture(%{title: "Dune", year: 2021})
+    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+
+    lv |> element("button", "Edit") |> render_click()
+
+    lv
+    |> form("#movie-form", movie: %{title: "Dune: Part Two", year: 2024})
+    |> render_submit()
+
+    assert Catalog.get_movie_by_id(movie.id).title == "Dune: Part Two"
+  end
+
+  test "cancels an active movie through the confirm step", %{conn: conn} do
+    movie = movie_fixture(%{title: "Tenet"})
+    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+
+    lv |> element("button", "Cancel") |> render_click()
+    lv |> element("#confirm-cancel-movie button", "Cancel movie") |> render_click()
+
+    assert Catalog.get_movie_by_id(movie.id).status == :cancelled
+  end
+
+  test "deletes an inactive movie and redirects to the library", %{conn: conn} do
+    movie = movie_fixture(%{title: "Old"})
+    {:ok, _} = Catalog.transition(movie, %{status: :cancelled})
+    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+
+    lv |> element("button", "Delete") |> render_click()
+    lv |> element("#confirm-delete-movie button", "Delete") |> render_click()
+
+    assert_redirect(lv, ~p"/library")
+    assert Catalog.get_movie_by_id(movie.id) == nil
+  end
+
+  test "deleting a movie with the delete-files box ticked unlinks the file", %{conn: conn} do
+    movie = available_movie!("/tmp/cinder-test-library/M (2010)/M (2010).mkv")
+
+    expect(
+      Cinder.Library.FilesystemMock,
+      :rm,
+      fn "/tmp/cinder-test-library/M (2010)/M (2010).mkv" -> :ok end
+    )
+
+    stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+
+    lv |> element("button", "Delete") |> render_click()
+    lv |> element("input[phx-click=toggle_delete_files]") |> render_click()
+    lv |> element("#confirm-delete-movie button", "Delete") |> render_click()
+
+    refute Repo.get(Cinder.Catalog.Movie, movie.id)
+  end
+
+  test "deleting a movie without ticking the box leaves the file (no FS call)", %{conn: conn} do
+    movie = available_movie!("/tmp/x.mkv")
+    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+
+    lv |> element("button", "Delete") |> render_click()
+    lv |> element("#confirm-delete-movie button", "Delete") |> render_click()
+
+    refute Repo.get(Cinder.Catalog.Movie, movie.id)
+  end
+
+  # --- console: retry / better-match / cancel-upgrade / language (relocated from /activity) ---
+
+  test "a parked movie shows Retry that re-queues it to :requested", %{conn: conn} do
+    movie = movie_fixture(%{title: "Tenet"})
+    {:ok, _} = Catalog.transition(movie, %{status: :no_match})
+
+    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+    lv |> element("button", "Retry") |> render_click()
+
+    assert Catalog.get_movie_by_id(movie.id).status == :requested
+  end
+
+  test "an in-flight movie shows no Retry button", %{conn: conn} do
+    movie = movie_fixture(%{title: "Sicario"})
+    {:ok, _} = Catalog.transition(movie, %{status: :downloading, download_id: "h"})
+
+    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+    refute has_element?(lv, "button", "Retry")
+  end
+
+  test "Find a better match opens the panel; grabbing transitions the movie to :upgrading",
+       %{conn: conn} do
+    movie =
+      movie_fixture(%{
+        title: "Metropolis",
+        status: :available,
+        imdb_id: "tt1",
+        file_path: "/lib/Metropolis (1927)/Metropolis (1927).mkv"
+      })
+
+    stub(Cinder.Acquisition.IndexerMock, :search, fn _imdb ->
+      {:ok,
+       [%{title: "Better 1080p", size: 5_000_000_000, protocol: :torrent, download_url: "u"}]}
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release -> {:ok, "dl-x"} end)
+
+    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+
+    lv |> element("button", "Find a better match") |> render_click()
+    assert render_async(lv) =~ "Better 1080p"
+
+    # An :available movie routes through the replace confirm before the grab.
+    lv |> element("#ms-movie-#{movie.id} button", "Grab") |> render_click()
+    lv |> element("button", "Replace file") |> render_click()
+
+    assert render(lv) =~ "Grabbing the selected release"
+    assert Catalog.get_movie_by_id(movie.id).status == :upgrading
+  end
+
+  test "Cancel upgrade reverts an :upgrading movie to :available", %{conn: conn} do
+    movie =
+      movie_fixture(%{
+        title: "Nosferatu",
+        status: :upgrading,
+        imdb_id: "tt2",
+        download_id: "h-up",
+        download_protocol: :torrent,
+        file_path: "/lib/Nosferatu (1922)/Nosferatu (1922).mkv"
+      })
+
+    stub(Cinder.Download.ClientMock, :remove, fn "h-up", _opts -> :ok end)
+
+    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+    lv |> element("button", "Cancel upgrade") |> render_click()
+
+    assert Catalog.get_movie_by_id(movie.id).status == :available
+  end
+
+  test "changing the language select updates the movie's preferred language", %{conn: conn} do
+    movie = movie_fixture(%{title: "Arrival"})
+    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+
+    lv
+    |> form("#movie-language-form", %{"preferred_language" => "french"})
+    |> render_change()
+
+    assert Catalog.get_movie_by_id(movie.id).preferred_language == "french"
   end
 end
