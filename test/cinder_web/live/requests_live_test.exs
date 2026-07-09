@@ -157,7 +157,9 @@ defmodule CinderWeb.RequestsLiveTest do
     end)
 
     {:ok, lv, _html} = live(conn, ~p"/requests")
-    html = lv |> element("button", "Approve") |> render_click()
+    lv |> element("button", "Approve") |> render_click()
+    # The single approve runs via start_async (season approvals do blocking TMDB I/O).
+    html = render_async(lv)
 
     assert html =~ "Couldn&#39;t approve"
 

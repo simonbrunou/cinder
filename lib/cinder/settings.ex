@@ -394,10 +394,14 @@ defmodule Cinder.Settings do
   transaction, then re-applies the env overlay once.
   """
   def save(puts, deletes \\ []) do
-    Repo.transaction(fn ->
-      Enum.each(puts, fn {k, v} -> upsert(k, v) end)
-      Enum.each(deletes, &delete_row/1)
-    end)
+    # Asserted: upsert/delete_row are bang functions today, so a failure raises out of the
+    # transaction — but the result must never be silently discarded, or a future non-bang
+    # refactor would flash "Settings saved." over an unapplied rollback.
+    {:ok, _} =
+      Repo.transaction(fn ->
+        Enum.each(puts, fn {k, v} -> upsert(k, v) end)
+        Enum.each(deletes, &delete_row/1)
+      end)
 
     load_into_env()
     :ok

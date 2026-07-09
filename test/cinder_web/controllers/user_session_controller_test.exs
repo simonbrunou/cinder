@@ -70,6 +70,46 @@ defmodule CinderWeb.UserSessionControllerTest do
       assert Phoenix.Flash.get(conn.assigns.flash, :error) == "Invalid email or password"
       assert redirected_to(conn) == ~p"/users/log-in"
     end
+
+    test "locks the {ip, email} pair after repeated failures — even with the right password", %{
+      conn: conn,
+      user: user
+    } do
+      user = set_password(user)
+
+      for _ <- 1..10 do
+        post(conn, ~p"/users/log-in", %{
+          "user" => %{"email" => user.email, "password" => "wrong_password"}
+        })
+      end
+
+      conn =
+        post(conn, ~p"/users/log-in", %{
+          "user" => %{"email" => user.email, "password" => valid_user_password()}
+        })
+
+      # Same generic response as bad credentials — the limiter is not a lockout oracle.
+      refute get_session(conn, :user_token)
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) == "Invalid email or password"
+      assert redirected_to(conn) == ~p"/users/log-in"
+    end
+
+    test "a successful login clears the pair's failure budget", %{conn: conn, user: user} do
+      user = set_password(user)
+
+      for _ <- 1..9 do
+        post(conn, ~p"/users/log-in", %{
+          "user" => %{"email" => user.email, "password" => "wrong_password"}
+        })
+      end
+
+      conn =
+        post(conn, ~p"/users/log-in", %{
+          "user" => %{"email" => user.email, "password" => valid_user_password()}
+        })
+
+      assert get_session(conn, :user_token)
+    end
   end
 
   describe "POST /users/log-in - magic link" do

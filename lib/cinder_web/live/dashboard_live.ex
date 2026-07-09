@@ -36,6 +36,14 @@ defmodule CinderWeb.DashboardLive do
   def handle_async(:health, {:ok, results}, socket),
     do: {:noreply, assign(socket, health: results)}
 
+  def handle_async(:approve, {:ok, {:ok, _req}}, socket), do: {:noreply, socket}
+
+  def handle_async(:approve, {:ok, {:error, _reason}}, socket),
+    do: {:noreply, put_flash(socket, :error, gettext("Couldn't approve that request."))}
+
+  def handle_async(:approve, {:exit, _reason}, socket),
+    do: {:noreply, put_flash(socket, :error, gettext("Couldn't approve that request."))}
+
   def handle_async(:health, {:exit, reason}, socket),
     do:
       {:noreply,
@@ -46,14 +54,15 @@ defmodule CinderWeb.DashboardLive do
     do: {:noreply, socket |> cancel_async(:health) |> assign(health: :loading) |> check_health()}
 
   def handle_event("approve", %{"id" => id}, socket) do
-    req = find_pending(socket, id)
-
-    case req && Requests.approve_request(req, socket.assigns.current_scope.user) do
-      {:error, _} ->
-        {:noreply, put_flash(socket, :error, gettext("Couldn't approve that request."))}
-
-      _ ->
+    case find_pending(socket, id) do
+      nil ->
         {:noreply, socket}
+
+      req ->
+        # A season approval does blocking TMDB I/O (1 + N season fetches) — run it off the
+        # LiveView (matching /requests) so a single click can't freeze the page for seconds.
+        admin = socket.assigns.current_scope.user
+        {:noreply, start_async(socket, :approve, fn -> Requests.approve_request(req, admin) end)}
     end
   end
 

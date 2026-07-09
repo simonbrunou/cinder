@@ -398,6 +398,22 @@ defmodule Cinder.CatalogSeriesTest do
     series
   end
 
+  describe "available_season_keys/0" do
+    test "a season is available when every monitored, aired episode has a file" do
+      series = series_fixture(%{monitor_strategy: :all})
+      s1 = season_fixture(series, %{season_number: 1})
+      episode_fixture(s1, %{episode_number: 1, file_path: "/media/s01e01.mkv"})
+      episode_fixture(s1, %{episode_number: 2, file_path: "/media/s01e02.mkv"})
+      s2 = season_fixture(series, %{season_number: 2})
+      episode_fixture(s2, %{episode_number: 1, file_path: "/media/s02e01.mkv"})
+      episode_fixture(s2, %{episode_number: 2})
+
+      keys = Cinder.Catalog.available_season_keys()
+      assert {series.tmdb_id, 1} in keys
+      refute {series.tmdb_id, 2} in keys
+    end
+  end
+
   describe "manual_grab_tv/3" do
     test "creates a grab over the season's still-wanted episodes the release covers" do
       series = series_with_wanted_episodes(season: 1, numbers: [1, 2, 3])

@@ -224,16 +224,26 @@ defmodule CinderWeb.SeriesDetailLive do
   def handle_event("set_series_language", %{"preferred_language" => lang}, socket)
       when lang in ["original", "french", "any"] do
     case Catalog.set_series_language(socket.assigns.series, lang) do
-      {:ok, series} -> {:noreply, assign(socket, :series, series)}
-      {:error, _} -> {:noreply, socket}
+      {:ok, series} ->
+        {:noreply, assign(socket, :series, series)}
+
+      {:error, _} ->
+        # The dropdown visually snaps back — say why, like the sibling toggles do.
+        {:noreply, put_flash(socket, :error, gettext("Couldn't update the language."))}
     end
   end
 
   def handle_event("search_episode", %{"id" => id}, socket) do
     with {id, ""} <- Integer.parse(id),
          %Episode{} = ep <- find_episode(socket.assigns.series, id) do
-      Catalog.search_episode_now(ep)
-      {:noreply, put_flash(socket, :info, gettext("Searching for this episode…"))}
+      # Don't flash "Searching…" for a search that was never queued.
+      case Catalog.search_episode_now(ep) do
+        {:error, _} ->
+          {:noreply, put_flash(socket, :error, gettext("Couldn't queue the search."))}
+
+        _ ->
+          {:noreply, put_flash(socket, :info, gettext("Searching for this episode…"))}
+      end
     else
       _ -> {:noreply, socket}
     end

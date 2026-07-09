@@ -90,8 +90,14 @@ defmodule Cinder.Acquisition.Scorer do
   def verdict(%Release{} = release, opts \\ []) do
     {min_size, max_size, preferred, sources, blocklist, release_blocklist} = rules(opts)
 
+    # The TV band is per-episode (select_for's k×band): a multi-episode release is judged
+    # against the episodes it names, a whole-season pack against `opts[:pack_episode_count]`
+    # (the panel passes the season's wanted count). Without scaling every pack in the
+    # manual-search panel shows {:rejected, :out_of_band} while the auto-pick accepts it.
+    k = episodes_multiplier(release, opts)
+
     cond do
-      not within_band?(release, min_size, max_size) ->
+      not within_band?(release, scale_band(min_size, k), scale_band(max_size, k)) ->
         {:rejected, :out_of_band}
 
       blocked?(release, blocklist) or title_blocked?(release, release_blocklist) ->
@@ -107,6 +113,17 @@ defmodule Cinder.Acquisition.Scorer do
         :ok
     end
   end
+
+  defp episodes_multiplier(%Release{episodes: eps}, _opts) when is_list(eps) and eps != [],
+    do: length(eps)
+
+  defp episodes_multiplier(%Release{season: season}, opts) when not is_nil(season),
+    do: Keyword.get(opts, :pack_episode_count) || 1
+
+  defp episodes_multiplier(_movie_release, _opts), do: 1
+
+  defp scale_band(nil, _k), do: nil
+  defp scale_band(bound, k), do: bound * k
 
   @doc "The ascending sort key `select/2` ranks by (resolution → source → larger size). Best sorts first."
   def rank_key(%Release{} = release, opts \\ []) do

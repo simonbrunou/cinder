@@ -1586,6 +1586,34 @@ defmodule Cinder.Catalog do
   @doc "Count of wanted episodes (see `wanted_episodes/0`)."
   def count_wanted_episodes, do: Repo.aggregate(wanted_episodes_query(), :count)
 
+  @doc """
+  `{series tmdb_id, season_number}` pairs whose content has fully landed: at least one
+  episode file, and no monitored, aired episode still missing one. Drives the
+  requester-facing season badges — availability outranks a stale request status
+  (mirroring the movie `title_state` precedence), otherwise a fully imported season
+  reads "Approved"/"Denied" forever.
+  """
+  def available_season_keys do
+    today = Date.utc_today()
+
+    Repo.all(
+      from e in Episode,
+        join: s in assoc(e, :season),
+        join: sr in assoc(s, :series),
+        where: s.season_number > 0,
+        group_by: [sr.tmdb_id, s.season_number],
+        having:
+          filter(count(e.id), not is_nil(e.file_path)) > 0 and
+            filter(
+              count(e.id),
+              is_nil(e.file_path) and e.monitored and not is_nil(e.air_date) and
+                e.air_date <= ^today
+            ) == 0,
+        select: {sr.tmdb_id, s.season_number}
+    )
+    |> MapSet.new()
+  end
+
   @doc "See `episode_state/2`: past this many search attempts the sweep skips the episode."
   def max_search_attempts, do: @max_search_attempts
 

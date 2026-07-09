@@ -133,7 +133,22 @@ defmodule CinderWeb.ActivityLive do
 
   def handle_event("cancel_upgrade", %{"id" => id}, socket) do
     movie = find_by_id(socket.assigns.movies, id)
-    if movie, do: Catalog.abort_upgrade(movie, socket.assigns.current_scope.user)
+
+    # Mirrors "retry" above: a guarded miss (the upgrade finished/moved on under this
+    # stale snapshot) must not be a silent no-op click.
+    socket =
+      case movie && Catalog.abort_upgrade(movie, socket.assigns.current_scope.user) do
+        {:error, _} ->
+          put_flash(
+            socket,
+            :error,
+            gettext("Couldn't cancel: that upgrade has already moved on.")
+          )
+
+        _ ->
+          socket
+      end
+
     {:noreply, socket}
   end
 

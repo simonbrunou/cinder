@@ -51,7 +51,9 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
     user = Cinder.AccountsFixtures.user_fixture()
     conn = log_in_user(conn, user)
     {:ok, lv, _} = live(conn, ~p"/series/tmdb/1399")
-    html = lv |> element(~s(button[phx-value-season="2"]), "Request") |> render_click()
+    lv |> element(~s(button[phx-value-season="2"]), "Request") |> render_click()
+    # The request runs via start_async (an admin/auto-approve one does seconds of TMDB I/O).
+    html = render_async(lv)
 
     assert [%{target_type: "season", target_id: 1399, season_number: 2, status: :pending}] =
              Cinder.Requests.list_for_user(user)
@@ -83,8 +85,9 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
     assert has_element?(lv, ~s(.badge), "Denied")
     assert has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
 
-    # Clicking Request creates a fresh pending request.
-    html = lv |> element(~s(button[phx-value-season="1"]), "Request") |> render_click()
+    # Clicking Request creates a fresh pending request (off-process via start_async).
+    lv |> element(~s(button[phx-value-season="1"]), "Request") |> render_click()
+    html = render_async(lv)
 
     requests = Cinder.Requests.list_for_user(user)
 

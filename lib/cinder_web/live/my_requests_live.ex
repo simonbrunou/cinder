@@ -13,6 +13,8 @@ defmodule CinderWeb.MyRequestsLive do
     if connected?(socket) do
       Requests.subscribe()
       Catalog.subscribe()
+      # Season availability derives from episode imports, which broadcast on "series".
+      Catalog.subscribe_series()
     end
 
     {:ok, load(socket)}
@@ -31,7 +33,8 @@ defmodule CinderWeb.MyRequestsLive do
 
     assign(socket,
       requests: Requests.list_for_user(user),
-      movie_status: Catalog.movie_status_map()
+      movie_status: Catalog.movie_status_map(),
+      available_seasons: Catalog.available_season_keys()
     )
   end
 
@@ -69,6 +72,14 @@ defmodule CinderWeb.MyRequestsLive do
               :if={r.target_type == "movie" and @movie_status[r.target_id]}
               kind={:movie}
               status={@movie_status[r.target_id]}
+            />
+            <.status_badge
+              :if={
+                r.target_type == "season" and
+                  MapSet.member?(@available_seasons, {r.target_id, r.season_number})
+              }
+              kind={:request}
+              status={:available}
             />
           </div>
           <p

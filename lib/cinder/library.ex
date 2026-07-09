@@ -171,7 +171,11 @@ defmodule Cinder.Library do
       {:ok, %{audio: audio, subtitles: subtitles}} ->
         %{audio_languages: audio, embedded_subtitles: subtitles}
 
-      _ ->
+      other ->
+        # Degrading to empty metadata is deliberate — but a broken/missing ffprobe must be
+        # diagnosable: silently-empty fields read as "the file has no tags", not "the probe
+        # is broken" (media_info is on by default, and there is no health row for it).
+        Logger.warning("media-info probe failed for #{source}: #{inspect(other)}")
         %{audio_languages: [], embedded_subtitles: []}
     end
   end
@@ -285,9 +289,17 @@ defmodule Cinder.Library do
 
   defp check_audio(impl, source, target) do
     case impl.probe(source) do
-      {:ok, %{audio: []}} -> :ok
-      {:ok, %{audio: langs}} -> audio_result(Language.audio_satisfies?(target, langs))
-      {:error, _reason} -> :ok
+      {:ok, %{audio: []}} ->
+        :ok
+
+      {:ok, %{audio: langs}} ->
+        audio_result(Language.audio_satisfies?(target, langs))
+
+      {:error, reason} ->
+        # Only a CONFIRMED mismatch parks (conservative by design) — but skipping the check
+        # silently would disable the advertised wrong-language protection invisibly.
+        Logger.warning("media-info audio check skipped for #{source}: #{inspect(reason)}")
+        :ok
     end
   end
 

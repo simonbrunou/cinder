@@ -19,7 +19,11 @@ defmodule CinderWeb.SeriesDiscoveryLive do
     # The :tmdb_id param is client-controlled; a non-integer must not crash the page.
     with {tmdb_id, ""} <- Integer.parse(raw),
          {:ok, info} <- Catalog.tmdb_series(tmdb_id) do
-      if connected?(socket), do: Requests.subscribe()
+      if connected?(socket) do
+        Requests.subscribe()
+        # Season availability derives from episode imports, which broadcast on "series".
+        Catalog.subscribe_series()
+      end
 
       user = socket.assigns.current_scope.user
 
@@ -66,56 +70,13 @@ defmodule CinderWeb.SeriesDiscoveryLive do
         preferred_language: socket.assigns.preferred_language
       }
 
-      case Requests.create_request(user, attrs) do
-        {:ok, %{status: :approved}} ->
-          socket
-          |> put_flash(
-            :info,
-            gettext("Season %{number} of %{title} added.",
-              number: season_number,
-              title: info.title
-            )
-          )
-          |> refresh_requests()
-          |> then(&{:noreply, &1})
-
-        {:ok, %{status: :pending}} ->
-          socket
-          |> put_flash(
-            :info,
-            gettext("Season %{number} of %{title} requested. Awaiting approval.",
-              number: season_number,
-              title: info.title
-            )
-          )
-          |> refresh_requests()
-          |> then(&{:noreply, &1})
-
-        {:error, :quota_exceeded} ->
-          {:noreply,
-           put_flash(
-             socket,
-             :error,
-             gettext("You've reached your request limit. Wait for approvals to clear.")
-           )}
-
-        # Bug D: only a unique-index violation (duplicate changeset) means "already requested"
-        {:error, %Ecto.Changeset{}} ->
-          {:noreply,
-           put_flash(
-             socket,
-             :info,
-             gettext("Season %{number} is already requested.", number: season_number)
-           )}
-
-        {:error, _} ->
-          {:noreply,
-           put_flash(
-             socket,
-             :error,
-             gettext("Couldn't complete that request. Please try again.")
-           )}
-      end
+      # An admin/auto-approve request runs the season approval inline — seconds of TMDB I/O
+      # (1 + N season fetches) — so it must not run in the event handler: the whole LiveView
+      # would freeze (queued clicks, no flash) for the duration. Same pattern as /requests.
+      {:noreply,
+       start_async(socket, {:request_season, season_number}, fn ->
+         Requests.create_request(user, attrs)
+       end)}
     else
       _ -> {:noreply, socket}
     end
@@ -131,8 +92,84 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   @impl true
+  def handle_async({:request_season, season_number}, {:ok, result}, socket) do
+    info = socket.assigns.info
+
+    case result do
+      {:ok, %{status: :approved}} ->
+        socket
+        |> put_flash(
+          :info,
+          gettext("Season %{number} of %{title} added.",
+            number: season_number,
+            title: info.title
+          )
+        )
+        |> refresh_requests()
+        |> then(&{:noreply, &1})
+
+      {:ok, %{status: :pending}} ->
+        socket
+        |> put_flash(
+          :info,
+          gettext("Season %{number} of %{title} requested. Awaiting approval.",
+            number: season_number,
+            title: info.title
+          )
+        )
+        |> refresh_requests()
+        |> then(&{:noreply, &1})
+
+      {:error, :quota_exceeded} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("You've reached your request limit. Wait for approvals to clear.")
+         )}
+
+      {:error, %Ecto.Changeset{} = cs} ->
+        # Only the duplicate-pending unique constraint means "already requested"; any
+        # other changeset failure is a real error, not a reassuring info toast.
+        if duplicate_request?(cs) do
+          {:noreply,
+           put_flash(
+             socket,
+             :info,
+             gettext("Season %{number} is already requested.", number: season_number)
+           )}
+        else
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Couldn't complete that request. Please try again.")
+           )}
+        end
+
+      {:error, _} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Couldn't complete that request. Please try again.")
+         )}
+    end
+  end
+
+  def handle_async({:request_season, _season_number}, {:exit, _reason}, socket) do
+    {:noreply,
+     put_flash(socket, :error, gettext("Couldn't complete that request. Please try again."))}
+  end
+
+  @impl true
   def handle_info({event, _request}, socket)
       when event in [:request_created, :request_approved, :request_denied, :request_deleted] do
+    {:noreply, refresh_requests(socket)}
+  end
+
+  # Episode imports ride the "series" topic; a season completing flips its badge live.
+  def handle_info({event, _id}, socket) when event in [:series_updated, :series_deleted] do
     {:noreply, refresh_requests(socket)}
   end
 
@@ -151,7 +188,12 @@ defmodule CinderWeb.SeriesDiscoveryLive do
       |> Enum.filter(&(&1.target_type == "season" and &1.target_id == tmdb_id))
       |> latest_status_by(& &1.season_number)
 
-    assign(socket, requests_by_season: requests_by_season)
+    # Availability outranks a stale request status (mirrors the movie title_state
+    # precedence): a fully imported season must not read "Denied" with a re-Request button.
+    available =
+      for {tid, n} <- Catalog.available_season_keys(), tid == tmdb_id, into: MapSet.new(), do: n
+
+    assign(socket, requests_by_season: requests_by_season, available_seasons: available)
   end
 
   @impl true
@@ -204,7 +246,11 @@ defmodule CinderWeb.SeriesDiscoveryLive do
           <span class="font-medium">{season_label(season.season_number)}</span>
           <.season_action
             season_number={season.season_number}
-            status={@requests_by_season[season.season_number]}
+            status={
+              if MapSet.member?(@available_seasons, season.season_number),
+                do: :available,
+                else: @requests_by_season[season.season_number]
+            }
           />
         </li>
       </ul>

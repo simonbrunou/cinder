@@ -22,6 +22,8 @@ defmodule Cinder.Application do
         # DB settings overlay synchronously, before the Endpoint/poller consume config.
         Cinder.Vault,
         Cinder.Settings,
+        # Owns the login-attempt ETS table; must be up before the Endpoint serves logins.
+        Cinder.Accounts.LoginRateLimiter,
         CinderWeb.Endpoint
       ] ++ poller_child()
 

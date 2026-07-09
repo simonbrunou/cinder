@@ -119,6 +119,12 @@ defmodule Cinder.Subtitles do
       nil ->
         :ok
 
+      # Provider failures (revoked key → 401/403, login failure, timeouts) must not be
+      # conflated with "no subtitle exists" at :info — a broken credential would silently
+      # stop subtitles while every 12h sweep "succeeds".
+      {:error, reason} ->
+        Logger.warning("subtitle fetch for #{dest_path} (#{lang}) failed: #{inspect(reason)}")
+
       other ->
         Logger.info("no #{lang} subtitle for #{dest_path}: #{inspect(other)}")
     end

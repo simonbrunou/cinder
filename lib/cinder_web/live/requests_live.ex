@@ -29,19 +29,15 @@ defmodule CinderWeb.RequestsLive do
 
   @impl true
   def handle_event("approve", %{"id" => id}, socket) do
-    req = find_request(socket, id)
-
-    case req && Requests.approve_request(req, socket.assigns.current_scope.user) do
-      {:error, _reason} ->
-        {:noreply,
-         put_flash(
-           socket,
-           :error,
-           gettext("Couldn't approve that request. Please try again.")
-         )}
-
-      _ ->
+    case find_request(socket, id) do
+      nil ->
         {:noreply, socket}
+
+      req ->
+        # A season approval does blocking TMDB I/O (1 + N season fetches) — run it off the
+        # LiveView like the bulk path, so a single click can't freeze the page for seconds.
+        admin = socket.assigns.current_scope.user
+        {:noreply, start_async(socket, :approve, fn -> Requests.approve_request(req, admin) end)}
     end
   end
 
@@ -153,6 +149,18 @@ defmodule CinderWeb.RequestsLive do
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   @impl true
+  def handle_async(:approve, {:ok, {:ok, _req}}, socket), do: {:noreply, socket}
+
+  def handle_async(:approve, {:ok, {:error, _reason}}, socket),
+    do:
+      {:noreply,
+       put_flash(socket, :error, gettext("Couldn't approve that request. Please try again."))}
+
+  def handle_async(:approve, {:exit, _reason}, socket),
+    do:
+      {:noreply,
+       put_flash(socket, :error, gettext("Couldn't approve that request. Please try again."))}
+
   def handle_async(:approve_selected, {:ok, {ok, failed}}, socket) do
     msg = ngettext("Approved %{count} request.", "Approved %{count} requests.", ok)
     {:noreply, bulk_flash(socket, msg, ok, failed)}

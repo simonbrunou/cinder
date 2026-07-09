@@ -31,6 +31,15 @@ defmodule CinderWeb.LiveHelpers do
   end
 
   @doc """
+  Whether a failed `Requests.create_request/2` changeset is the benign duplicate-pending
+  case (the `requests_pending_unique` index; Ecto tags it `constraint: :unique`). Any
+  other changeset failure is a real error, not a reassuring "already requested" toast.
+  """
+  def duplicate_request?(%Ecto.Changeset{} = changeset) do
+    Enum.any?(changeset.errors, fn {_field, {_msg, opts}} -> opts[:constraint] == :unique end)
+  end
+
+  @doc """
   Locale-aware short date ("Jun 3" / fr "3 juin"). Both the format string and the
   month names go through gettext, so a translated locale controls word order too —
   `Calendar.strftime`'s built-in month names are English-only.
