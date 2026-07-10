@@ -35,7 +35,7 @@ defmodule CinderWeb.MyRequestsLive do
 
     assign(socket,
       requests: Requests.list_for_user(user),
-      movie_status: Catalog.movie_status_map(),
+      movies_by_tmdb: Map.new(Catalog.list_movies(), &{&1.tmdb_id, &1}),
       available_seasons: Catalog.available_season_keys()
     )
   end
@@ -68,15 +68,19 @@ defmodule CinderWeb.MyRequestsLive do
       <ul id="my-requests" class="space-y-3">
         <li :for={r <- @requests} class="rounded-box bg-base-200/50 p-4">
           <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <% movie = @movies_by_tmdb[r.target_id] %>
             <span class="min-w-0 break-words font-semibold">
               {request_title(r)}
             </span>
             <span :if={r.year} class="text-base-content/70">({r.year})</span>
             <.status_badge kind={:request} status={effective_status(r, @available_seasons)} />
             <.status_badge
-              :if={r.target_type == "movie" and @movie_status[r.target_id]}
+              :if={r.target_type == "movie" and movie}
               kind={:movie}
-              status={@movie_status[r.target_id]}
+              status={movie.status}
+              progress={movie.download_progress}
+              speed={movie.download_speed}
+              eta={movie.download_eta}
             />
           </div>
           <p

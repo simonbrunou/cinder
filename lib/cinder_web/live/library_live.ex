@@ -193,7 +193,14 @@ defmodule CinderWeb.LibraryLive do
           >
             <.link navigate={~p"/movies/#{m.id}"} class="block max-w-xs">
               <.media_card poster_path={m.poster_path} title={m.title} year={m.year} type={:movie}>
-                <.status_badge kind={:movie} status={m.status} class="h-auto break-words text-center" />
+                <.status_badge
+                  kind={:movie}
+                  status={m.status}
+                  progress={m.download_progress}
+                  speed={m.download_speed}
+                  eta={m.download_eta}
+                  class="h-auto break-words text-center"
+                />
               </.media_card>
             </.link>
 

@@ -45,7 +45,7 @@ defmodule CinderWeb.ActivityLiveTest do
     assert has_element?(lv, ~s|#movie-#{movie.id} a[href="/movies/#{movie.id}"]|)
 
     {:ok, movie} = Catalog.transition(movie, %{status: :downloading})
-    assert render(lv) =~ "badge-info"
+    assert render(lv) =~ "progress-info"
 
     # Reaching a terminal-done state drops the row off the live pipeline (it's in /library now).
     {:ok, _} = Catalog.transition(movie, %{status: :available})
@@ -80,6 +80,20 @@ defmodule CinderWeb.ActivityLiveTest do
 
     refute has_element?(lv, "#grab-#{grab.id}")
     assert Catalog.list_grabs() == []
+  end
+
+  test "renders movie and TV grab download progress", %{conn: conn} do
+    movie = movie_fixture(%{status: :downloading})
+    grab = grab!()
+
+    metrics = %{download_progress: 0.42, download_speed: 1_500_000, download_eta: 90}
+    {:ok, _} = Catalog.update_movie_download_metrics(movie, metrics)
+    {:ok, _} = Catalog.update_grab_download_metrics(grab, metrics)
+
+    {:ok, lv, _html} = live(conn, ~p"/activity")
+
+    assert lv |> element("#movie-#{movie.id}") |> render() =~ "42%"
+    assert lv |> element("#grab-#{grab.id}") |> render() =~ "42%"
   end
 
   test "non-admins are redirected away from /activity", %{conn: _conn} do

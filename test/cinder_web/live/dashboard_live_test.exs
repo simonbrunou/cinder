@@ -7,6 +7,8 @@ defmodule CinderWeb.DashboardLiveTest do
   alias Cinder.Accounts.Scope
   alias Cinder.{Catalog, Requests}
 
+  import Cinder.CatalogFixtures
+
   setup :set_mox_global
 
   setup do
@@ -43,6 +45,20 @@ defmodule CinderWeb.DashboardLiveTest do
       assert html =~ "Arrival"
       # health resolves asynchronously
       assert render_async(lv) =~ "OK"
+    end
+
+    test "renders recent movie download progress", %{conn: conn} do
+      movie = movie_fixture(%{status: :downloading})
+
+      {:ok, _} =
+        Catalog.update_movie_download_metrics(movie, %{
+          download_progress: 0.42,
+          download_speed: 1_500_000,
+          download_eta: 90
+        })
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+      assert render(lv) =~ "42%"
     end
 
     test "approving from the dashboard behaves identically to /requests", %{conn: conn} do

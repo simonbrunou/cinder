@@ -630,6 +630,9 @@ defmodule CinderWeb.CoreComponents do
 
   attr :status, :any, required: true
   attr :class, :any, default: nil
+  attr :progress, :float, default: nil
+  attr :speed, :integer, default: nil
+  attr :eta, :integer, default: nil
 
   def status_badge(assigns) do
     {label, color, icon} = badge_spec(assigns.kind, assigns.status)
@@ -643,11 +646,59 @@ defmodule CinderWeb.CoreComponents do
       )
 
     ~H"""
-    <span class={["badge badge-sm gap-1 shrink-0", @color, @class]} title={@title}>
+    <div :if={operation_badge?(@kind, @status)} class={["min-w-32 space-y-1", @class]} role="status">
+      <div class="flex items-center gap-1 text-sm">
+        <.icon name={@icon} class="size-4" />{@label}
+      </div>
+      <progress
+        :if={is_number(@progress)}
+        class="progress progress-info w-full"
+        value={@progress * 100}
+        max="100"
+      >{round(@progress * 100)}%</progress>
+      <progress :if={is_nil(@progress)} class="progress progress-info w-full" aria-label={@label} />
+      <p :if={is_number(@progress)} class="text-xs tabular-nums">{round(@progress * 100)}%</p>
+      <p :if={@speed || @eta} class="text-xs tabular-nums text-base-content/70">
+        {[format_speed(@speed), format_eta(@eta)]
+        |> Enum.reject(&is_nil/1)
+        |> Enum.join(" · ")}
+      </p>
+    </div>
+    <span
+      :if={!operation_badge?(@kind, @status)}
+      class={["badge badge-sm gap-1 shrink-0", @color, @class]}
+      title={@title}
+    >
       <.icon name={@icon} class="size-3.5" />{@label}
     </span>
     """
   end
+
+  defp operation_badge?(:movie, status)
+       when status in [:searching, :downloading, :downloaded, :upgrading],
+       do: true
+
+  defp operation_badge?(:grab, status) when status in [:downloading, :downloaded], do: true
+  defp operation_badge?(_, _), do: false
+
+  defp format_speed(nil), do: nil
+
+  defp format_speed(speed) do
+    gettext("%{speed} MB/s", speed: :erlang.float_to_binary(speed / 1_000_000, decimals: 1))
+  end
+
+  defp format_eta(nil), do: nil
+
+  defp format_eta(eta) when eta < 3_600 do
+    gettext("%{minutes}m %{seconds}s remaining", minutes: div(eta, 60), seconds: rem(eta, 60))
+  end
+
+  defp format_eta(eta),
+    do:
+      gettext("%{hours}h %{minutes}m remaining",
+        hours: div(eta, 3_600),
+        minutes: rem(div(eta, 60), 60)
+      )
 
   # movie pipeline status
   defp badge_spec(:movie, :requested), do: {gettext("Requested"), "badge-neutral", "hero-clock"}
@@ -658,7 +709,7 @@ defmodule CinderWeb.CoreComponents do
   defp badge_spec(:movie, :downloading),
     do: {gettext("Downloading"), "badge-info", "hero-arrow-down-tray"}
 
-  defp badge_spec(:movie, :downloaded), do: {gettext("Downloaded"), "badge-accent", "hero-check"}
+  defp badge_spec(:movie, :downloaded), do: {gettext("Importing"), "badge-accent", "hero-check"}
 
   defp badge_spec(:movie, :available),
     do: {gettext("Available"), "badge-success", "hero-check-circle"}
@@ -703,7 +754,7 @@ defmodule CinderWeb.CoreComponents do
   defp badge_spec(:grab, :downloading),
     do: {gettext("Downloading"), "badge-info", "hero-arrow-down-tray"}
 
-  defp badge_spec(:grab, :downloaded), do: {gettext("Downloaded"), "badge-success", "hero-check"}
+  defp badge_spec(:grab, :downloaded), do: {gettext("Importing"), "badge-success", "hero-check"}
 
   # series monitoring (boolean flag, not pipeline state) — icon + label so it isn't colour-alone
   defp badge_spec(:monitored, true), do: {gettext("Monitored"), "badge-success", "hero-eye"}

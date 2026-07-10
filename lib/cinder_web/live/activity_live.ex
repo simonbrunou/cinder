@@ -127,7 +127,13 @@ defmodule CinderWeb.ActivityLive do
             >
               {m.title}<span :if={m.year} class="text-base-content/70"> ({m.year})</span>
             </.link>
-            <.status_badge kind={:movie} status={m.status} />
+            <.status_badge
+              kind={:movie}
+              status={m.status}
+              progress={m.download_progress}
+              speed={m.download_speed}
+              eta={m.download_eta}
+            />
           </li>
         </ul>
       </section>
@@ -144,7 +150,13 @@ defmodule CinderWeb.ActivityLive do
           <li :for={g <- @grabs} id={"grab-#{g.id}"} class="rounded-box bg-base-200/50 p-4">
             <div class="flex flex-wrap items-center gap-2">
               <span class="min-w-0 break-words font-semibold">{series_title(g)}</span>
-              <.status_badge kind={:grab} status={grab_state(g)} />
+              <.status_badge
+                kind={:grab}
+                status={grab_state(g)}
+                progress={g.download_progress}
+                speed={g.download_speed}
+                eta={g.download_eta}
+              />
               <span class="text-xs text-base-content/70">{g.download_protocol}</span>
               <span class="min-w-0 truncate text-xs text-base-content/70">{g.download_id}</span>
               <.button

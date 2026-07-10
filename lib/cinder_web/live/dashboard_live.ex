@@ -297,7 +297,13 @@ defmodule CinderWeb.DashboardLive do
             />
             <ul :if={@recent != []} class="space-y-2">
               <li :for={m <- @recent} class="flex items-center gap-3">
-                <.status_badge kind={:movie} status={m.status} />
+                <.status_badge
+                  kind={:movie}
+                  status={m.status}
+                  progress={m.download_progress}
+                  speed={m.download_speed}
+                  eta={m.download_eta}
+                />
                 <span class="truncate">{m.title}</span>
                 <span :if={m.year} class="text-sm text-base-content/70">({m.year})</span>
                 <time
