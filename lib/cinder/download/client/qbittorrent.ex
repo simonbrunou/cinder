@@ -283,9 +283,17 @@ defmodule Cinder.Download.Client.QBittorrent do
     %{
       state: classify(torrent["state"], progress),
       progress: progress,
+      speed: metric(torrent["dlspeed"]),
+      eta: eta(torrent["eta"]),
       content_path: torrent["content_path"]
     }
   end
+
+  defp metric(value) when is_integer(value) and value >= 0, do: value
+  defp metric(_value), do: nil
+
+  defp eta(value) when is_integer(value) and value in 0..8_639_999, do: value
+  defp eta(_value), do: nil
 
   defp classify(state, _progress) when state in @errored, do: :error
   defp classify(state, _progress) when state in @in_transit, do: :downloading

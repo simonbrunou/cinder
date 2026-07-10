@@ -91,12 +91,31 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     assert {:ok, %{state: :completed, progress: 1.0}} = QBittorrent.status("abc123")
   end
 
-  test "status/1 normalizes a still-downloading torrent" do
+  test "status/1 normalizes per-download measurements" do
     stub_qbit(fn conn ->
-      Req.Test.json(conn, [%{"state" => "downloading", "progress" => 0.42}])
+      Req.Test.json(conn, [
+        %{"state" => "downloading", "progress" => 0.42, "dlspeed" => 1_500_000, "eta" => 90}
+      ])
     end)
 
-    assert {:ok, %{state: :downloading, progress: 0.42}} = QBittorrent.status("abc123")
+    assert {:ok, %{state: :downloading, progress: 0.42, speed: 1_500_000, eta: 90}} =
+             QBittorrent.status("abc123")
+  end
+
+  test "status/1 omits qBittorrent's sentinel eta" do
+    stub_qbit(fn conn ->
+      Req.Test.json(conn, [
+        %{
+          "state" => "downloading",
+          "progress" => 0.42,
+          "dlspeed" => 1_500_000,
+          "eta" => 8_640_000
+        }
+      ])
+    end)
+
+    assert {:ok, %{state: :downloading, progress: 0.42, speed: 1_500_000, eta: nil}} =
+             QBittorrent.status("abc123")
   end
 
   test "status/1 returns :not_found when qBittorrent knows no such torrent" do
