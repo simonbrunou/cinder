@@ -17,6 +17,9 @@ defmodule Cinder.Catalog.Grab do
     field :release_title, :string
     field :content_path, :string
     field :download_attempts, :integer, default: 0
+    field :download_progress, :float
+    field :download_speed, :integer
+    field :download_eta, :integer
     has_many :episodes, Episode
 
     timestamps(type: :utc_datetime)
@@ -30,7 +33,10 @@ defmodule Cinder.Catalog.Grab do
       :download_protocol,
       :release_title,
       :content_path,
-      :download_attempts
+      :download_attempts,
+      :download_progress,
+      :download_speed,
+      :download_eta
     ])
     |> validate_required([:download_id, :download_protocol])
   end

@@ -36,6 +36,9 @@ defmodule Cinder.Catalog.Movie do
     field :download_id, :string
     field :download_protocol, Ecto.Enum, values: [:torrent, :usenet]
     field :release_title, :string
+    field :download_progress, :float
+    field :download_speed, :integer
+    field :download_eta, :integer
     field :file_path, :string
     field :import_attempts, :integer, default: 0
     field :search_attempts, :integer, default: 0
@@ -94,6 +97,9 @@ defmodule Cinder.Catalog.Movie do
       :download_id,
       :download_protocol,
       :release_title,
+      :download_progress,
+      :download_speed,
+      :download_eta,
       :imdb_id,
       :file_path,
       :import_attempts,
@@ -106,7 +112,18 @@ defmodule Cinder.Catalog.Movie do
       :imported_embedded_subtitles,
       :imported_sidecar_subtitles
     ])
+    |> reset_download_metrics(movie.status)
     |> validate_required([:status])
+  end
+
+  defp reset_download_metrics(changeset, previous_status) do
+    status = get_field(changeset, :status)
+
+    if status not in [:downloading, :upgrading] or status != previous_status do
+      change(changeset, download_progress: nil, download_speed: nil, download_eta: nil)
+    else
+      changeset
+    end
   end
 
   @doc "Changeset for the import-time media-info capture / backfill. Descriptive, not pipeline state — separate from transition_changeset/2, so it never touches status/file/download fields."

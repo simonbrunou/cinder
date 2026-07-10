@@ -177,6 +177,88 @@ defmodule Cinder.CatalogAdminTest do
     end
   end
 
+  describe "download metrics" do
+    test "direct cancel clears metrics" do
+      movie = movie_fixture(%{status: :downloading})
+
+      assert {:ok, movie} =
+               Catalog.update_movie_download_metrics(movie, %{
+                 download_progress: 0.42,
+                 download_speed: 1_500_000,
+                 download_eta: 90
+               })
+
+      assert {:ok, updated} = Catalog.cancel_movie(movie, Cinder.AccountsFixtures.admin_fixture())
+      assert %{download_progress: nil, download_speed: nil, download_eta: nil} = updated
+    end
+
+    test "direct abort-upgrade clears metrics" do
+      movie = movie_fixture(%{status: :upgrading})
+
+      assert {:ok, movie} =
+               Catalog.update_movie_download_metrics(movie, %{
+                 download_progress: 0.42,
+                 download_speed: 1_500_000,
+                 download_eta: 90
+               })
+
+      assert {:ok, updated} = Catalog.abort_upgrade(movie, nil)
+      assert %{download_progress: nil, download_speed: nil, download_eta: nil} = updated
+    end
+
+    test "a grab metric write broadcasts its series" do
+      series = series_fixture()
+      season = season_fixture(series)
+      episode = episode_fixture(season)
+      {:ok, grab} = Catalog.create_grab("METRICS-1", :torrent, [episode.id])
+      series_id = series.id
+      Catalog.subscribe_series()
+      metrics = %{download_progress: 0.42, download_speed: 1_500_000, download_eta: 90}
+
+      assert {:ok, updated} = Catalog.update_grab_download_metrics(grab, metrics)
+      assert %{download_progress: 0.42, download_speed: 1_500_000, download_eta: 90} = updated
+      assert_receive {:series_updated, ^series_id}
+    end
+
+    test "completion clears grab metrics and rejects a late metric write" do
+      series = series_fixture()
+      season = season_fixture(series)
+      episode = episode_fixture(season)
+      {:ok, grab} = Catalog.create_grab("METRICS-2", :torrent, [episode.id])
+      metrics = %{download_progress: 0.42, download_speed: 1_500_000, download_eta: 90}
+
+      assert {:ok, tracked} = Catalog.update_grab_download_metrics(grab, metrics)
+      assert {:ok, completed} = Catalog.mark_grab_downloaded(tracked, "/downloads/pack")
+      assert %{download_progress: nil, download_speed: nil, download_eta: nil} = completed
+
+      assert {:error, :stale_grab} =
+               Catalog.update_grab_download_metrics(tracked, %{
+                 download_progress: 0.43,
+                 download_speed: 1_600_000,
+                 download_eta: 80
+               })
+    end
+
+    test "a grab retry clears metrics" do
+      series = series_fixture()
+      season = season_fixture(series)
+      episode = episode_fixture(season)
+      {:ok, grab} = Catalog.create_grab("METRICS-3", :torrent, [episode.id])
+
+      assert {:ok, tracked} =
+               Catalog.update_grab_download_metrics(grab, %{
+                 download_progress: 0.42,
+                 download_speed: 1_500_000,
+                 download_eta: 90
+               })
+
+      assert :ok = Catalog.increment_grab_attempts(tracked)
+
+      assert %{download_progress: nil, download_speed: nil, download_eta: nil} =
+               Repo.get!(Cinder.Catalog.Grab, tracked.id)
+    end
+  end
+
   describe "delete_movie/2" do
     setup :verify_on_exit!
 
