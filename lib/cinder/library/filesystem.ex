@@ -15,6 +15,7 @@ defmodule Cinder.Library.Filesystem do
   @callback rename(source :: String.t(), dest :: String.t()) :: :ok | {:error, term()}
   @callback rm(path :: String.t()) :: :ok | {:error, term()}
   @callback rmdir(dir :: String.t()) :: :ok | {:error, term()}
+  @callback rm_rf(path :: String.t()) :: {:ok, [Path.t()]} | {:error, term(), Path.t()}
   @callback write(path :: String.t(), content :: iodata()) :: :ok | {:error, term()}
   @callback moviehash_data(path :: String.t()) ::
               {:ok, {non_neg_integer(), binary(), binary()}} | :too_small | {:error, term()}

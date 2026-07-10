@@ -43,6 +43,16 @@ defmodule Cinder.Download.MoveOnImportTest do
     end)
   end
 
+  # Echoes the authoritative source deletion (rm_rf of content_path). Returns {:ok, _} like File.rm_rf.
+  defp echo_rm_rf do
+    parent = self()
+
+    stub(Cinder.Library.FilesystemMock, :rm_rf, fn path ->
+      send(parent, {:rm_rf, path})
+      {:ok, [path]}
+    end)
+  end
+
   defp stub_single_file_import, do: stub_import_ok()
 
   defp usenet_movie(tmdb_id, download_id) do
@@ -73,44 +83,86 @@ defmodule Cinder.Download.MoveOnImportTest do
     episode_fixture(season, %{episode_number: ep_num})
   end
 
-  describe "Download.remove_after_import/2 (the gate)" do
-    test "removes a usenet download with delete_files when the toggle is on" do
+  describe "Download.remove_after_import/3 (the gate)" do
+    test "usenet + toggle on: drops the client job AND deletes the source directly" do
       enable()
       echo_remove(Cinder.Download.SabnzbdClientMock)
+      echo_rm_rf()
 
-      assert :ok = Download.remove_after_import(:usenet, "nzo-x")
+      assert :ok = Download.remove_after_import(:usenet, "nzo-x", "/downloads/complete/M")
       assert_receive {:removed, "nzo-x", opts}
       assert opts[:delete_files] == true
+
+      # The authoritative cleanup: content_path is rm_rf'd regardless of the client's history state.
+      assert_receive {:rm_rf, "/downloads/complete/M"}
     end
 
     test "is a no-op when the toggle is off" do
       echo_remove(Cinder.Download.SabnzbdClientMock)
-      assert :ok = Download.remove_after_import(:usenet, "nzo-x")
+      echo_rm_rf()
+      assert :ok = Download.remove_after_import(:usenet, "nzo-x", "/downloads/complete/M")
       refute_receive {:removed, _, _}
+      refute_receive {:rm_rf, _}
     end
 
-    test "is a no-op for torrents, unknown/nil protocol, and blank/nil id (fails safe)" do
+    test "is a no-op for torrents and unknown/nil protocol (seeding + fail-safe)" do
       enable()
       echo_remove(Cinder.Download.SabnzbdClientMock)
       echo_remove(Cinder.Download.ClientMock)
+      echo_rm_rf()
 
-      assert :ok = Download.remove_after_import(:torrent, "hash-x")
-      assert :ok = Download.remove_after_import(nil, "x")
-      assert :ok = Download.remove_after_import(:usenet, nil)
-      assert :ok = Download.remove_after_import(:usenet, "")
+      assert :ok = Download.remove_after_import(:torrent, "hash-x", "/dl/x")
+      assert :ok = Download.remove_after_import(nil, "x", "/dl/x")
       refute_receive {:removed, _, _}
+      refute_receive {:rm_rf, _}
+    end
+
+    test "usenet with a blank/nil id: skips the client remove but STILL deletes the source" do
+      # The whole point of #81: the source cleanup must not depend on the client remembering the job.
+      enable()
+      echo_remove(Cinder.Download.SabnzbdClientMock)
+      echo_rm_rf()
+
+      assert :ok = Download.remove_after_import(:usenet, nil, "/dl/M")
+      assert :ok = Download.remove_after_import(:usenet, "", "/dl/M2")
+      refute_receive {:removed, _, _}
+      assert_receive {:rm_rf, "/dl/M"}
+      assert_receive {:rm_rf, "/dl/M2"}
+    end
+
+    test "never rm_rf a blank, root, or relative content_path (data-loss guard)" do
+      enable()
+      # id present, so the client remove still fires each call — but rm_rf must not.
+      echo_remove(Cinder.Download.SabnzbdClientMock)
+      echo_rm_rf()
+
+      for bad <- [nil, "", "/", ".", "relative/path"] do
+        assert :ok = Download.remove_after_import(:usenet, "nzo", bad)
+      end
+
+      refute_receive {:rm_rf, _}
     end
 
     test "a raising client cannot unwind the caller; still returns :ok" do
       enable()
       stub(Cinder.Download.SabnzbdClientMock, :remove, fn _id, _opts -> raise "client down" end)
-      assert :ok = Download.remove_after_import(:usenet, "nzo-x")
+      assert :ok = Download.remove_after_import(:usenet, "nzo-x", nil)
     end
 
     test "a client {:error,_} is swallowed; returns :ok" do
       enable()
       stub(Cinder.Download.SabnzbdClientMock, :remove, fn _id, _opts -> {:error, :boom} end)
-      assert :ok = Download.remove_after_import(:usenet, "nzo-x")
+      assert :ok = Download.remove_after_import(:usenet, "nzo-x", nil)
+    end
+
+    test "a failing source delete (rm_rf error or raise) is swallowed; still :ok" do
+      enable()
+      echo_remove(Cinder.Download.SabnzbdClientMock)
+      stub(Cinder.Library.FilesystemMock, :rm_rf, fn _ -> {:error, :eacces, "/dl/M"} end)
+      assert :ok = Download.remove_after_import(:usenet, "nzo-x", "/dl/M")
+
+      stub(Cinder.Library.FilesystemMock, :rm_rf, fn _ -> raise "fs down" end)
+      assert :ok = Download.remove_after_import(:usenet, "nzo-x", "/dl/M")
     end
   end
 
@@ -120,6 +172,7 @@ defmodule Cinder.Download.MoveOnImportTest do
       movie = usenet_movie(1, "nzo-1")
       drive_to_available(Cinder.Download.SabnzbdClientMock, "nzo-1")
       echo_remove(Cinder.Download.SabnzbdClientMock)
+      echo_rm_rf()
       start_supervised!({Poller, interval: 60_000})
 
       assert :ok = Poller.poll()
@@ -131,6 +184,10 @@ defmodule Cinder.Download.MoveOnImportTest do
       assert imported.imported_embedded_subtitles == []
       assert imported.imported_sidecar_subtitles == []
       assert_receive {:removed, "nzo-1", [delete_files: true]}
+
+      # The pre-import content_path (SAB's completed folder) is deleted directly — the poller passes
+      # movie.file_path (still the source at this point) as content_path.
+      assert_receive {:rm_rf, "/downloads/M.mkv"}
     end
 
     test "torrent + toggle on → no remove (seeding preserved)" do
@@ -146,29 +203,39 @@ defmodule Cinder.Download.MoveOnImportTest do
 
       drive_to_available(Cinder.Download.ClientMock, "hash-2")
       echo_remove(Cinder.Download.ClientMock)
+      echo_rm_rf()
       start_supervised!({Poller, interval: 60_000})
 
       assert :ok = Poller.poll()
       assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
       refute_receive {:removed, _, _}
+      # Torrents are never touched — no client remove and no source deletion (seeding survives).
+      refute_receive {:rm_rf, _}
     end
 
     test "toggle off (default) → no remove; movie still :available" do
       movie = usenet_movie(3, "nzo-3")
       drive_to_available(Cinder.Download.SabnzbdClientMock, "nzo-3")
       echo_remove(Cinder.Download.SabnzbdClientMock)
+      echo_rm_rf()
       start_supervised!({Poller, interval: 60_000})
 
       assert :ok = Poller.poll()
       assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
       refute_receive {:removed, _, _}
+      refute_receive {:rm_rf, _}
     end
 
-    test "a failed remove leaves the movie :available (no strand, no re-import)" do
+    test "a failed remove (client AND source delete) leaves the movie :available (no strand)" do
       enable()
       movie = usenet_movie(4, "nzo-4")
       drive_to_available(Cinder.Download.SabnzbdClientMock, "nzo-4")
       stub(Cinder.Download.SabnzbdClientMock, :remove, fn _id, _opts -> {:error, :down} end)
+
+      stub(Cinder.Library.FilesystemMock, :rm_rf, fn _ ->
+        {:error, :eacces, "/downloads/M.mkv"}
+      end)
+
       start_supervised!({Poller, interval: 60_000})
 
       assert :ok = Poller.poll()
@@ -198,12 +265,16 @@ defmodule Cinder.Download.MoveOnImportTest do
         :ok
       end)
 
+      echo_rm_rf()
+
       start_supervised!({TvPoller, interval: 60_000})
 
       assert :ok = TvPoller.poll()
       assert Repo.get(Grab, grab.id) == nil
       assert Repo.get!(Episode, e1.id).file_path =~ "S01E03"
       assert_receive {:removed, "nzo-tv", [delete_files: true]}
+      # The grab's content_path (the downloaded pack/file) is deleted directly.
+      assert_receive {:rm_rf, "/dl/Show.S01E03.1080p.mkv"}
       assert Agent.get(counter, & &1) == 1
     end
 
@@ -230,6 +301,7 @@ defmodule Cinder.Download.MoveOnImportTest do
       stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
       stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
       echo_remove(Cinder.Download.SabnzbdClientMock)
+      echo_rm_rf()
 
       start_supervised!({TvPoller, interval: 60_000})
 
@@ -242,6 +314,8 @@ defmodule Cinder.Download.MoveOnImportTest do
       assert imported.imported_sidecar_subtitles == []
       assert is_nil(Repo.get!(Episode, e2.id).file_path)
       assert_receive {:removed, "nzo-pack", [delete_files: true]}
+      # The whole pack folder is removed once, even for a partial match.
+      assert_receive {:rm_rf, "/dl/pack"}
     end
   end
 end

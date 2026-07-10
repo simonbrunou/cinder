@@ -79,6 +79,9 @@ defmodule Cinder.Library.Filesystem.Disk do
   def rmdir(dir), do: File.rmdir(dir)
 
   @impl true
+  def rm_rf(path), do: File.rm_rf(path)
+
+  @impl true
   def moviehash_data(path) do
     with {:ok, %{size: size}} <- lstat(path),
          true <- size >= @moviehash_min || :too_small,
