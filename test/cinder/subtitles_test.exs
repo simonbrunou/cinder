@@ -302,6 +302,37 @@ defmodule Cinder.SubtitlesTest do
     assert %{tracks: %{"fr" => %{origin: "embedded"}}} = Manifest.read(@video)
   end
 
+  test "a forced exact embedded track falls through to a default non-forced translation", %{
+    fs: fs
+  } do
+    video = @video
+    Application.put_env(:cinder, :media_info, Cinder.Library.MediaInfoMock)
+
+    expect(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+    expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+      {:ok,
+       [
+         %{index: 2, language: "fr", default?: false, forced?: true},
+         %{index: 3, language: "en", default?: true, forced?: false}
+       ]}
+    end)
+
+    expect(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 3 ->
+      {:ok, "1\n00:00:01,000 --> 00:00:02,000\nHello\n\n"}
+    end)
+
+    expect(Cinder.Subtitles.TranslatorMock, :translate, fn ["Hello"], "fr" ->
+      {:ok, ["Bonjour"]}
+    end)
+
+    expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+    assert Agent.get(fs, &Map.fetch!(&1, "/lib/M/M.fr.srt")) =~ "Bonjour"
+    assert %{tracks: %{"fr" => %{origin: "translated"}}} = Manifest.read(@video)
+  end
+
   test "a default embedded track translates each still-missing target", %{fs: fs} do
     video = @video
     Application.put_env(:cinder, :media_info, Cinder.Library.MediaInfoMock)

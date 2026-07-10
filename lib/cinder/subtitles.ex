@@ -223,7 +223,7 @@ defmodule Cinder.Subtitles do
   defp local_source(video_path, language, cache) do
     {tracks, cache} = subtitle_tracks(video_path, cache)
 
-    case Enum.find(tracks, &(track_language(&1) == language)) do
+    case Enum.find(tracks, &(track_language(&1) == language and not &1.forced?)) do
       nil ->
         default_or_sidecar(video_path, language, tracks, cache)
 
