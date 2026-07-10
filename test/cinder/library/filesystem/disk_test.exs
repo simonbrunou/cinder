@@ -119,11 +119,14 @@ defmodule Cinder.Library.Filesystem.DiskTest do
     File.mkdir_p!(dir)
     on_exit(fn -> File.rm_rf!(dir) end)
 
+    # Non-uniform fixture (head all 0x00, tail all 0xFF) so the content asserts pin BOTH read
+    # offsets: a tail read at the wrong offset would return 0x00 bytes and fail. An all-zero file
+    # would make head == tail and leave the tail offset unproven.
     big = Path.join(dir, "big.mkv")
-    File.write!(big, :binary.copy(<<0>>, 200_000))
+    File.write!(big, :binary.copy(<<0>>, 200_000 - 65_536) <> :binary.copy(<<0xFF>>, 65_536))
     assert {:ok, {200_000, head, tail}} = Disk.moviehash_data(big)
-    assert byte_size(head) == 65_536
-    assert byte_size(tail) == 65_536
+    assert head == :binary.copy(<<0>>, 65_536)
+    assert tail == :binary.copy(<<0xFF>>, 65_536)
 
     small = Path.join(dir, "small.mkv")
     File.write!(small, :binary.copy(<<0>>, 1000))
