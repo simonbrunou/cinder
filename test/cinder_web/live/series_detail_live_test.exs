@@ -103,6 +103,14 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert html =~ "Two"
   end
 
+  test "renders seasons collapsed by default", %{conn: conn} do
+    series = create_series(701)
+    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+
+    assert has_element?(lv, "details > summary", "Season 1")
+    refute has_element?(lv, "details[open]")
+  end
+
   test "shows audio + subtitle badges on a filed episode", %{conn: conn} do
     series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 8200, title: "S", year: 2010})
 
