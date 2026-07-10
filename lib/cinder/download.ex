@@ -127,17 +127,27 @@ defmodule Cinder.Download do
   # Authoritative disk cleanup: rm_rf the imported-from source. `content_path` is the download tree,
   # always distinct from the library dest (the import hardlinked/copied the file elsewhere), so this
   # removes only the download copy — the imported library file survives. Guards a blank/relative path
-  # and the filesystem root so a bad value can never rm_rf "/" or the release cwd; usenet content
-  # paths are always absolute. Best-effort — a failure is logged, never parks the item.
-  defp delete_source(path) when path in [nil, "", "/", "."], do: :ok
+  # and any path that resolves to the filesystem root (`/`, `/..`, `//`, …) so a bad value can never
+  # rm_rf "/" or the release cwd; usenet content paths are always absolute. Best-effort — a failure is
+  # logged, never parks the item.
+  defp delete_source(path) when path in [nil, ""], do: :ok
 
   defp delete_source(path) do
-    if Path.type(path) == :absolute do
-      rm_rf_source(path)
-    else
-      Logger.warning(
-        "move_on_import: refusing to delete non-absolute source path #{inspect(path)}"
-      )
+    cond do
+      Path.type(path) != :absolute ->
+        Logger.warning(
+          "move_on_import: refusing to delete non-absolute source path #{inspect(path)}"
+        )
+
+      # Path.expand collapses `.`/`..`/`//` — reject anything that lands on the root (rm_rf "/" would
+      # wipe the whole filesystem). Safe to expand: the path is absolute, so no cwd is consulted.
+      Path.expand(path) == "/" ->
+        Logger.warning(
+          "move_on_import: refusing to delete filesystem-root source #{inspect(path)}"
+        )
+
+      true ->
+        rm_rf_source(path)
     end
 
     :ok

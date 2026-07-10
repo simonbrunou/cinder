@@ -136,7 +136,9 @@ defmodule Cinder.Download.MoveOnImportTest do
       echo_remove(Cinder.Download.SabnzbdClientMock)
       echo_rm_rf()
 
-      for bad <- [nil, "", "/", ".", "relative/path"] do
+      # Blank/relative, plus absolute paths that RESOLVE to the root (a naive exact-match guard misses
+      # "/.." and "//" — File.rm_rf would then wipe the whole filesystem).
+      for bad <- [nil, "", "/", ".", "relative/path", "/..", "//", "/../.."] do
         assert :ok = Download.remove_after_import(:usenet, "nzo", bad)
       end
 
