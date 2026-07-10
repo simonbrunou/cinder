@@ -61,16 +61,19 @@ defmodule Cinder.Subtitles do
     end
   end
 
-  # Hash computed once per fetch (not per language) and merged into criteria before the loop.
+  # Hash computed lazily on the first language that actually needs a search, then threaded through
+  # the accumulator and reused — so a title whose sidecars all exist reads no bytes, while a fetch
+  # that does search still hashes only once. `nil` = not yet computed.
   defp fetch_languages(criteria_base, langs, dest_path) do
-    criteria_base = with_moviehash(criteria_base, dest_path)
+    {status, _criteria} =
+      Enum.reduce_while(langs, {:ok, nil}, fn lang, {_status, criteria} ->
+        case fetch_one(criteria, criteria_base, lang, dest_path) do
+          {:quota_exceeded, criteria} -> {:halt, {:quota_exceeded, criteria}}
+          {_status, criteria} -> {:cont, {:ok, criteria}}
+        end
+      end)
 
-    Enum.reduce_while(langs, :ok, fn lang, _acc ->
-      case fetch_one(criteria_base, lang, dest_path) do
-        :quota_exceeded -> {:halt, :quota_exceeded}
-        _ -> {:cont, :ok}
-      end
-    end)
+    status
   end
 
   # Best-effort: a hashable file adds :moviehash (sync-accurate matches); :too_small / error just
@@ -108,19 +111,25 @@ defmodule Cinder.Subtitles do
 
   # The sidecar-existence check (fs().lstat/1) lives INSIDE this rescue/catch, not in a
   # comprehension guard — a raising Filesystem impl must not escape fetch_missing/2, same
-  # guarantee as Cinder.Library.scan/2.
-  defp fetch_one(criteria_base, lang, dest_path) do
+  # guarantee as Cinder.Library.scan/2. `criteria` is the memoized (moviehash-merged) criteria,
+  # nil until the first search; returned so the loop reuses a single hash across languages.
+  defp fetch_one(criteria, criteria_base, lang, dest_path) do
     path = sidecar_path(dest_path, lang)
 
     if sidecar_exists?(path) do
-      :ok
+      {:ok, criteria}
     else
-      search_and_write(criteria_base, lang, dest_path, path)
+      criteria = criteria || with_moviehash(criteria_base, dest_path)
+      {search_and_write(criteria, lang, dest_path, path), criteria}
     end
   rescue
-    e -> Logger.warning("subtitle fetch crashed for #{dest_path} (#{lang}): #{inspect(e)}")
+    e ->
+      Logger.warning("subtitle fetch crashed for #{dest_path} (#{lang}): #{inspect(e)}")
+      {:ok, criteria}
   catch
-    kind, value -> Logger.warning("subtitle fetch #{kind} for #{dest_path}: #{inspect(value)}")
+    kind, value ->
+      Logger.warning("subtitle fetch #{kind} for #{dest_path}: #{inspect(value)}")
+      {:ok, criteria}
   end
 
   defp search_and_write(criteria_base, lang, dest_path, path) do

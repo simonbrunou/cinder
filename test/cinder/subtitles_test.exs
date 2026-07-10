@@ -338,4 +338,20 @@ defmodule Cinder.SubtitlesTest do
 
     assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
   end
+
+  test "fetch_missing/2 skips the moviehash read when every sidecar already exists" do
+    test_pid = self()
+
+    # Any moviehash_data call would be the wasteful read the lazy path avoids; flag it.
+    stub(Cinder.Library.FilesystemMock, :moviehash_data, fn _ ->
+      send(test_pid, :hashed)
+      :too_small
+    end)
+
+    # Both wanted-language ("en", "fr") sidecars already present → no search, and no hash read.
+    expect(Cinder.Library.FilesystemMock, :lstat, 2, fn _ -> {:ok, %File.Stat{}} end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
+    refute_received :hashed
+  end
 end

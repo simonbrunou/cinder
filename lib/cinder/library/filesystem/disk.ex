@@ -84,9 +84,15 @@ defmodule Cinder.Library.Filesystem.Disk do
          true <- size >= @moviehash_min || :too_small,
          {:ok, io} <- File.open(path, [:read, :binary]) do
       try do
-        with {:ok, head} <- :file.pread(io, 0, @moviehash_chunk),
-             {:ok, tail} <- :file.pread(io, size - @moviehash_chunk, @moviehash_chunk) do
+        # Guard the chunk sizes: a file shrunk between lstat and pread yields :eof or a short read;
+        # keep moviehash_data within its declared spec instead of leaking either out.
+        with {:ok, head} when byte_size(head) == @moviehash_chunk <-
+               :file.pread(io, 0, @moviehash_chunk),
+             {:ok, tail} when byte_size(tail) == @moviehash_chunk <-
+               :file.pread(io, size - @moviehash_chunk, @moviehash_chunk) do
           {:ok, {size, head, tail}}
+        else
+          _ -> {:error, :read_failed}
         end
       after
         File.close(io)

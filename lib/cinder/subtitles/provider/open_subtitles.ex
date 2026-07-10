@@ -3,8 +3,10 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
   OpenSubtitles.com REST API v1 client. `search/1` needs only the Api-Key; `download/1` needs a
   JWT from `/login`, cached in `:persistent_term` and re-fetched once on a 401. Downloads consume
   a daily quota (20/day free) — a `406` surfaces as `{:error, :quota_exceeded}` so the caller can
-  stop for the tick. `ponytail:` global token (single-instance app); id-based search only —
-  moviehash is the sync-accuracy upgrade path.
+  stop for the tick. `ponytail:` global token (single-instance app). `search/1` sends the imdb/tmdb
+  id plus the file's `moviehash` when available; OpenSubtitles returns the id-matched candidates and
+  flags the hash-synced ones via `moviehash_match` (it does not narrow the result set), which
+  `Cinder.Subtitles` prefers.
   """
   @behaviour Cinder.Subtitles.Provider
 
