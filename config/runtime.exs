@@ -63,6 +63,12 @@ if api_key = System.get_env("OPENSUBTITLES_API_KEY") do
     languages: System.get_env("SUBTITLE_LANGUAGES")
 end
 
+if url = System.get_env("LIBRETRANSLATE_URL") do
+  config :cinder, Cinder.Subtitles.Translator.LibreTranslate,
+    base_url: url,
+    api_key: System.get_env("LIBRETRANSLATE_API_KEY")
+end
+
 # Real Jellyfin connection, read in every environment. Unset in test/CI, where
 # the suite either mocks media_server or stubs Req, so it has no effect there.
 if url = System.get_env("JELLYFIN_URL") do

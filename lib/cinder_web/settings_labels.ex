@@ -54,6 +54,8 @@ defmodule CinderWeb.SettingsLabels do
       gettext_noop("OpenSubtitles username"),
       gettext_noop("OpenSubtitles password"),
       gettext_noop("Subtitle languages (comma-separated, e.g. en,fr)"),
+      gettext_noop("LibreTranslate URL"),
+      gettext_noop("LibreTranslate API key"),
       # generated per-kind Plex section labels — Settings.config_fields/0
       gettext_noop("Plex Movies library section (numeric id)"),
       gettext_noop("Plex TV library section (numeric id)")
