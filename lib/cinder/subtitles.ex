@@ -1,19 +1,16 @@
 defmodule Cinder.Subtitles do
   @moduledoc """
-  Fetches subtitle sidecars for imported files, in the household's configured languages.
+  Best-effort subtitle coordinator for imported videos.
 
-  Best-effort: failures are logged, never raised, so a subtitle miss can't affect the video import.
-  `fetch_missing/2` returns `:ok`, or `:quota_exceeded` to tell a batch caller (the sweep) to stop
-  for this run once the daily download quota is spent. `fetch_after_import/2` runs it off-process
-  (a supervised Task) so a slow provider can't stall the import poller. Idempotent: a language whose
-  sidecar already exists is skipped (no search, no download, no wasted quota). The "which languages /
-  which candidate" policy lives here; the network lives in `Cinder.Subtitles.Provider`.
+  It records Cinder-owned sidecars in a hidden manifest, so hash-matched provider results are
+  stable while ID, embedded, translated, and release sidecars remain eligible for later upgrades.
   """
 
   require Logger
 
   alias Cinder.Catalog.{Episode, Movie, Series}
-  alias Cinder.Subtitles.Moviehash
+  alias Cinder.Library.Sidecars
+  alias Cinder.Subtitles.{Manifest, Moviehash, Srt}
 
   @doc "Subtitle-search criteria for a movie: imdb + tmdb id (the provider prefers imdb)."
   @spec movie_criteria(Movie.t()) :: map()
@@ -39,150 +36,458 @@ defmodule Cinder.Subtitles do
     |> Enum.reject(&(&1 == ""))
   end
 
-  @doc "The sidecar path for `dest_path` in `lang`: the video's extension replaced by `.<lang>.srt`."
+  @doc "The ordinary media-server sidecar path: `video.lang.srt`."
   @spec sidecar_path(String.t(), String.t()) :: String.t()
-  def sidecar_path(dest_path, lang) do
-    dir = Path.dirname(dest_path)
-    base = Path.basename(dest_path, Path.extname(dest_path))
-    Path.join(dir, "#{base}.#{lang}.srt")
+  def sidecar_path(video_path, language) do
+    dir = Path.dirname(video_path)
+    base = Path.basename(video_path, Path.extname(video_path))
+    Path.join(dir, "#{base}.#{language}.srt")
   end
 
-  @doc """
-  For each wanted language whose sidecar is absent, search the provider, pick the best candidate,
-  download it, and write the sidecar. `criteria_base` carries `:imdb_id`/`:tmdb_id`
-  (+ `:season`/`:episode` for TV); `:languages` is filled in per language. Returns `:ok`, or
-  `:quota_exceeded` (the daily download cap is spent) so a batch caller — the sweep — can stop.
-  """
+  @doc "Compatibility wrapper for direct movie-context callers."
   @spec fetch_missing(map(), String.t()) :: :ok | :quota_exceeded
-  def fetch_missing(criteria_base, dest_path) do
+  def fetch_missing(criteria_base, video_path),
+    do: fetch_missing(criteria_base, video_path, :movies)
+
+  @doc "Fetches each configured language, refreshing only sidecars Cinder owns."
+  @spec fetch_missing(map(), String.t(), :movies | :tv) :: :ok | :quota_exceeded
+  def fetch_missing(criteria_base, video_path, kind) do
     case wanted_languages() do
       [] -> :ok
-      langs -> fetch_languages(criteria_base, langs, dest_path)
+      languages -> fetch_languages(criteria_base, languages, video_path, kind)
     end
   end
 
-  # Hash computed lazily on the first language that actually needs a search, then threaded through
-  # the accumulator and reused — so a title whose sidecars all exist reads no bytes, while a fetch
-  # that does search still hashes only once. `nil` = not yet computed.
-  defp fetch_languages(criteria_base, langs, dest_path) do
-    {status, _criteria} =
-      Enum.reduce_while(langs, {:ok, nil}, fn lang, {_status, criteria} ->
-        case fetch_one(criteria, criteria_base, lang, dest_path) do
-          {:quota_exceeded, criteria} -> {:halt, {:quota_exceeded, criteria}}
-          {_status, criteria} -> {:cont, {:ok, criteria}}
-        end
-      end)
-
-    status
-  end
-
-  # Best-effort: a hashable file adds :moviehash (sync-accurate matches); :too_small / error just
-  # leaves the id search as-is.
-  defp with_moviehash(criteria_base, dest_path) do
-    case Moviehash.of_file(dest_path) do
-      {:ok, hash} -> Map.put(criteria_base, :moviehash, hash)
-      _ -> criteria_base
-    end
-  end
-
-  @doc """
-  Dispatches `fetch_missing/2` for a just-imported file on a supervised Task, so a slow
-  OpenSubtitles round-trip can't stall the import poller tick. Returns `:ok` immediately.
-  `criteria_fun` is a thunk so criteria-building (and any failure) stays inside the isolated task.
-  """
+  @doc "Compatibility wrapper for existing import callers; Task 4 supplies provenance arguments."
   @spec fetch_after_import((-> map()), String.t()) :: :ok
-  def fetch_after_import(criteria_fun, dest_path) when is_function(criteria_fun, 0) do
+  def fetch_after_import(criteria_fun, video_path),
+    do: fetch_after_import(criteria_fun, video_path, :movies, [])
+
+  @doc "Runs subtitle work off the import path and marks current release sidecars as Cinder-managed."
+  @spec fetch_after_import((-> map()), String.t(), :movies | :tv, [String.t()]) :: :ok
+  def fetch_after_import(criteria_fun, video_path, kind, release_sidecar_languages)
+      when is_function(criteria_fun, 0) do
     Task.Supervisor.start_child(Cinder.Subtitles.TaskSupervisor, fn ->
-      safe_fetch(criteria_fun, dest_path)
+      safe_fetch(criteria_fun, video_path, kind, release_sidecar_languages)
     end)
 
     :ok
   end
 
-  # criteria_fun runs INSIDE the task (and this rescue/catch) so a preload/criteria surprise or a
-  # provider blow-up crashes only the isolated task, never the import that dispatched it.
-  defp safe_fetch(criteria_fun, dest_path) do
-    fetch_missing(criteria_fun.(), dest_path)
-  rescue
-    e -> Logger.warning("subtitle fetch crashed for #{dest_path}: #{inspect(e)}")
-  catch
-    kind, value -> Logger.warning("subtitle fetch #{kind} for #{dest_path}: #{inspect(value)}")
+  defp fetch_languages(criteria_base, languages, video_path, kind) do
+    criteria_base = with_moviehash(criteria_base, video_path)
+    moviehash = Map.get(criteria_base, :moviehash)
+
+    case Enum.reduce_while(languages, {:ok, local_cache()}, fn language, {:ok, cache} ->
+           fetch_language(criteria_base, video_path, kind, language, moviehash, cache)
+         end) do
+      {:quota_exceeded, _cache} -> :quota_exceeded
+      {:ok, _cache} -> :ok
+    end
   end
 
-  # The sidecar-existence check (fs().lstat/1) lives INSIDE this rescue/catch, not in a
-  # comprehension guard — a raising Filesystem impl must not escape fetch_missing/2, same
-  # guarantee as Cinder.Library.scan/2. `criteria` is the memoized (moviehash-merged) criteria,
-  # nil until the first search; returned so the loop reuses a single hash across languages.
-  # ponytail: on the rare raise-after-hash path the rescue returns the pre-hash `criteria` (Elixir
-  # try scoping), so the next language recomputes — one wasted local read, accepted.
-  defp fetch_one(criteria, criteria_base, lang, dest_path) do
-    path = sidecar_path(dest_path, lang)
+  defp fetch_language(criteria_base, video_path, kind, language, moviehash, cache) do
+    case :global.trans(lock_id(video_path, language), fn ->
+           fetch_one(criteria_base, video_path, kind, language, moviehash, cache)
+         end) do
+      {:quota_exceeded, cache} -> {:halt, {:quota_exceeded, cache}}
+      {:ok, cache} -> {:cont, {:ok, cache}}
+      :aborted -> {:cont, {:ok, cache}}
+    end
+  end
 
-    if sidecar_exists?(path) do
-      {:ok, criteria}
+  defp fetch_one(criteria_base, video_path, kind, language, moviehash, cache) do
+    state = Manifest.read(video_path)
+
+    if Manifest.stable?(state, moviehash, language) do
+      {:ok, cache}
     else
-      criteria = criteria || with_moviehash(criteria_base, dest_path)
-      {search_and_write(criteria, lang, dest_path, path), criteria}
+      search(criteria_base, video_path, kind, language, moviehash, state, cache)
     end
   rescue
-    e ->
-      Logger.warning("subtitle fetch crashed for #{dest_path} (#{lang}): #{inspect(e)}")
-      {:ok, criteria}
+    error ->
+      Logger.warning("subtitle fetch crashed for #{video_path} (#{language}): #{inspect(error)}")
+      {:ok, cache}
   catch
-    kind, value ->
-      Logger.warning("subtitle fetch #{kind} for #{dest_path}: #{inspect(value)}")
-      {:ok, criteria}
+    caught, value ->
+      Logger.warning(
+        "subtitle fetch #{caught} for #{video_path} (#{language}): #{inspect(value)}"
+      )
+
+      {:ok, cache}
   end
 
-  defp search_and_write(criteria_base, lang, dest_path, path) do
-    criteria = Map.put(criteria_base, :languages, [lang])
+  defp search(criteria_base, video_path, kind, language, moviehash, state, cache) do
+    criteria = Map.put(criteria_base, :languages, [language])
 
-    with {:ok, results} <- provider().search(criteria),
-         %{file_id: file_id} <- best(results, lang),
-         {:ok, content} <- provider().download(file_id),
-         :ok <- fs().write(path, content) do
-      Logger.info("wrote #{lang} subtitle for #{dest_path}")
-    else
+    case provider().search(criteria) do
+      {:ok, results} ->
+        case best(results, language) do
+          {:hash, result} ->
+            provider_result(result, :hash, video_path, kind, language, moviehash, state, cache)
+
+          {:id, result} ->
+            provider_result(result, :id, video_path, kind, language, moviehash, state, cache)
+
+          nil ->
+            local_fallback(video_path, kind, language, moviehash, state, cache)
+        end
+
       {:error, :quota_exceeded} ->
         Logger.info("OpenSubtitles daily download quota reached; pausing subtitle fetch this run")
-        :quota_exceeded
+        {:quota_exceeded, cache}
 
-      nil ->
-        :ok
-
-      # Provider failures (revoked key → 401/403, login failure, timeouts) must not be
-      # conflated with "no subtitle exists" at :info — a broken credential would silently
-      # stop subtitles while every 12h sweep "succeeds".
       {:error, reason} ->
-        Logger.warning("subtitle fetch for #{dest_path} (#{lang}) failed: #{inspect(reason)}")
+        Logger.warning(
+          "subtitle fetch for #{video_path} (#{language}) failed: #{inspect(reason)}"
+        )
+
+        {:ok, cache}
 
       other ->
-        Logger.info("no #{lang} subtitle for #{dest_path}: #{inspect(other)}")
+        Logger.warning(
+          "subtitle search for #{video_path} (#{language}) failed: #{inspect(other)}"
+        )
+
+        {:ok, cache}
     end
   end
 
-  # Best candidate: exact language, not hearing-impaired, not machine-translated, has a file_id.
-  # Prefer a moviehash-synced match, then most downloads.
-  defp best(results, lang) do
-    results
-    |> Enum.filter(fn r ->
-      String.downcase(r.language || "") == lang and not r.hearing_impaired and not r.ai_translated and
-        not is_nil(r.file_id)
-    end)
-    |> Enum.max_by(&{(Map.get(&1, :moviehash_match, false) && 1) || 0, &1.downloads}, fn ->
-      nil
+  defp provider_result(result, match, video_path, kind, language, moviehash, state, cache) do
+    target = sidecar_path(video_path, language)
+    exists? = sidecar_exists?(target)
+
+    cond do
+      not writable?(state, language, exists?) ->
+        {:ok, cache}
+
+      match == :id and exists? and origin(state, language) == "opensubtitles_id" ->
+        {:ok, cache}
+
+      true ->
+        download_and_commit(result, match, video_path, kind, language, moviehash, target, cache)
+    end
+  end
+
+  defp download_and_commit(result, match, video_path, kind, language, moviehash, target, cache) do
+    case provider().download(result.file_id) do
+      {:ok, content} ->
+        origin = if match == :hash, do: "opensubtitles_hash", else: "opensubtitles_id"
+        commit(video_path, kind, language, moviehash, origin, target, content)
+        {:ok, cache}
+
+      {:error, :quota_exceeded} ->
+        Logger.info("OpenSubtitles daily download quota reached; pausing subtitle fetch this run")
+        {:quota_exceeded, cache}
+
+      {:error, reason} ->
+        Logger.warning(
+          "subtitle download for #{video_path} (#{language}) failed: #{inspect(reason)}"
+        )
+
+        {:ok, cache}
+
+      other ->
+        Logger.warning(
+          "subtitle download for #{video_path} (#{language}) failed: #{inspect(other)}"
+        )
+
+        {:ok, cache}
+    end
+  end
+
+  defp local_fallback(video_path, kind, language, moviehash, state, cache) do
+    target = sidecar_path(video_path, language)
+
+    if writable?(state, language, sidecar_exists?(target)) do
+      {source, cache} = local_source(video_path, language, cache)
+
+      case source do
+        {:direct, content, origin} ->
+          commit(video_path, kind, language, moviehash, origin, target, content)
+
+        {:translate, srt} ->
+          translate_and_commit(video_path, kind, language, moviehash, target, srt)
+
+        nil ->
+          :ok
+      end
+
+      {:ok, cache}
+    else
+      {:ok, cache}
+    end
+  end
+
+  defp local_source(video_path, language, cache) do
+    {tracks, cache} = subtitle_tracks(video_path, cache)
+
+    case Enum.find(tracks, &(track_language(&1) == language)) do
+      nil ->
+        default_or_sidecar(video_path, language, tracks, cache)
+
+      track ->
+        case extract(video_path, track) do
+          {:ok, content} -> {{:direct, content, "embedded"}, cache}
+          :error -> default_or_sidecar(video_path, language, tracks, cache)
+        end
+    end
+  end
+
+  defp default_or_sidecar(video_path, language, tracks, cache) do
+    case default_srt(video_path, tracks, cache) do
+      {{:ok, srt}, cache} -> {{:translate, srt}, cache}
+      {:none, cache} -> sidecar_source(video_path, language, cache)
+    end
+  end
+
+  defp subtitle_tracks(video_path, %{tracks: :unknown} = cache) do
+    tracks =
+      case media_info() do
+        nil ->
+          []
+
+        impl ->
+          case impl.subtitle_tracks(video_path) do
+            {:ok, tracks} ->
+              tracks
+
+            other ->
+              Logger.warning("subtitle track probe failed for #{video_path}: #{inspect(other)}")
+              []
+          end
+      end
+
+    {tracks, %{cache | tracks: tracks}}
+  end
+
+  defp subtitle_tracks(_video_path, %{tracks: tracks} = cache), do: {tracks, cache}
+
+  defp default_srt(video_path, tracks, %{default_srt: :unknown} = cache) do
+    result =
+      case Enum.find(tracks, &(&1.default? and not &1.forced?)) do
+        nil ->
+          :none
+
+        track ->
+          with {:ok, content} <- extract(video_path, track),
+               {:ok, srt} <- parse_srt(content, video_path) do
+            {:ok, srt}
+          else
+            _ -> :none
+          end
+      end
+
+    {result, %{cache | default_srt: result}}
+  end
+
+  defp default_srt(_video_path, _tracks, %{default_srt: result} = cache), do: {result, cache}
+
+  defp sidecar_source(video_path, language, cache) do
+    {sidecars, cache} = srt_sidecars(video_path, cache)
+
+    case Enum.find(sidecars, fn {_path, source_language} -> source_language == language end) do
+      {path, _language} ->
+        case read(path) do
+          {:ok, content} -> {{:direct, content, "translated"}, cache}
+          :error -> translation_sidecar(video_path, language, sidecars, cache)
+        end
+
+      nil ->
+        translation_sidecar(video_path, language, sidecars, cache)
+    end
+  end
+
+  defp translation_sidecar(video_path, _language, sidecars, %{sidecar_srt: :unknown} = cache) do
+    result =
+      case sidecars do
+        [{path, _language} | _] ->
+          with {:ok, content} <- read(path),
+               {:ok, srt} <- parse_srt(content, video_path) do
+            {:ok, srt}
+          else
+            _ -> :none
+          end
+
+        [] ->
+          :none
+      end
+
+    result_to_source(result, %{cache | sidecar_srt: result})
+  end
+
+  defp translation_sidecar(_video_path, _language, _sidecars, %{sidecar_srt: result} = cache),
+    do: result_to_source(result, cache)
+
+  defp result_to_source({:ok, srt}, cache), do: {{:translate, srt}, cache}
+  defp result_to_source(:none, cache), do: {nil, cache}
+
+  defp srt_sidecars(video_path, %{sidecars: :unknown} = cache) do
+    sidecars = Sidecars.srt_files(video_path)
+    {sidecars, %{cache | sidecars: sidecars}}
+  end
+
+  defp srt_sidecars(_video_path, %{sidecars: sidecars} = cache), do: {sidecars, cache}
+
+  defp extract(video_path, %{index: index}) do
+    case media_info().extract_subtitle(video_path, index) do
+      {:ok, content} ->
+        {:ok, content}
+
+      other ->
+        Logger.warning("subtitle extraction failed for #{video_path}: #{inspect(other)}")
+        :error
+    end
+  end
+
+  defp parse_srt(content, video_path) do
+    case Srt.parse(content) do
+      {:ok, srt} ->
+        {:ok, srt}
+
+      other ->
+        Logger.warning("subtitle SRT parse failed for #{video_path}: #{inspect(other)}")
+        :error
+    end
+  end
+
+  defp read(path) do
+    case fs().read(path) do
+      {:ok, content} ->
+        {:ok, content}
+
+      other ->
+        Logger.warning("subtitle sidecar read failed for #{path}: #{inspect(other)}")
+        :error
+    end
+  end
+
+  defp translate_and_commit(video_path, kind, language, moviehash, target, srt) do
+    case translator().translate(Srt.dialogue(srt), language) do
+      {:ok, translated} ->
+        case Srt.render(srt, translated) do
+          rendered when is_binary(rendered) ->
+            commit(video_path, kind, language, moviehash, "translated", target, rendered)
+
+          other ->
+            Logger.warning("subtitle render failed for #{video_path}: #{inspect(other)}")
+        end
+
+      {:error, reason} ->
+        Logger.warning(
+          "subtitle translation failed for #{video_path} (#{language}): #{inspect(reason)}"
+        )
+
+      other ->
+        Logger.warning(
+          "subtitle translation failed for #{video_path} (#{language}): #{inspect(other)}"
+        )
+    end
+  end
+
+  defp commit(video_path, kind, language, moviehash, origin, target, content) do
+    with :ok <- write_subtitle(target, content),
+         :ok <- Manifest.put(video_path, moviehash, language, origin) do
+      Cinder.Library.refresh(kind, video_path)
+      Logger.info("wrote #{language} subtitle for #{video_path}")
+    else
+      other ->
+        Logger.warning("subtitle write failed for #{video_path} (#{language}): #{inspect(other)}")
+    end
+  end
+
+  defp write_subtitle(target, content) do
+    temporary =
+      Path.join(
+        Path.dirname(target),
+        ".cinder-subtitle-#{System.unique_integer([:positive])}"
+      )
+
+    with :ok <- fs().write(temporary, content) do
+      fs().rename(temporary, target)
+    end
+  end
+
+  defp best(results, language) do
+    candidates =
+      Enum.filter(results, fn result ->
+        String.downcase(Map.get(result, :language, "")) == language and
+          not Map.get(result, :hearing_impaired, false) and
+          not Map.get(result, :ai_translated, false) and not is_nil(Map.get(result, :file_id))
+      end)
+
+    case Enum.filter(candidates, &Map.get(&1, :moviehash_match, false)) do
+      [] -> candidates |> Enum.max_by(&Map.get(&1, :downloads, 0), fn -> nil end) |> tag(:id)
+      matches -> matches |> Enum.max_by(&Map.get(&1, :downloads, 0)) |> tag(:hash)
+    end
+  end
+
+  defp tag(nil, _match), do: nil
+  defp tag(result, match), do: {match, result}
+
+  defp writable?(state, language, exists?), do: not exists? or Manifest.managed?(state, language)
+  defp origin(state, language), do: get_in(state, [:tracks, language, :origin])
+  defp sidecar_exists?(path), do: match?({:ok, _}, fs().lstat(path))
+  defp track_language(track), do: Map.get(track, :language, "") |> String.downcase()
+
+  defp with_moviehash(criteria_base, video_path) do
+    case Moviehash.of_file(video_path) do
+      {:ok, moviehash} -> Map.put(criteria_base, :moviehash, moviehash)
+      _ -> criteria_base
+    end
+  end
+
+  defp safe_fetch(criteria_fun, video_path, kind, release_sidecar_languages) do
+    mark_release_sidecars(video_path, release_sidecar_languages)
+    fetch_missing(criteria_fun.(), video_path, kind)
+  rescue
+    error -> Logger.warning("subtitle fetch crashed for #{video_path}: #{inspect(error)}")
+  catch
+    caught, value ->
+      Logger.warning("subtitle fetch #{caught} for #{video_path}: #{inspect(value)}")
+  end
+
+  defp mark_release_sidecars(video_path, languages) do
+    moviehash = current_moviehash(video_path)
+
+    Enum.each(Enum.uniq(languages), &mark_release_sidecar(video_path, moviehash, &1))
+
+    :ok
+  end
+
+  defp mark_release_sidecar(video_path, moviehash, language) do
+    :global.trans(lock_id(video_path, language), fn ->
+      target = sidecar_path(video_path, language)
+      put_release_sidecar(video_path, moviehash, language, target)
     end)
   end
 
-  defp sidecar_exists?(path) do
-    match?({:ok, _}, fs().lstat(path))
+  defp put_release_sidecar(video_path, moviehash, language, target) do
+    if sidecar_exists?(target) do
+      case Manifest.put(video_path, moviehash, language, "release_sidecar") do
+        :ok -> :ok
+        other -> Logger.warning("subtitle manifest write failed for #{target}: #{inspect(other)}")
+      end
+    end
   end
+
+  defp current_moviehash(video_path) do
+    case Moviehash.of_file(video_path) do
+      {:ok, moviehash} -> moviehash
+      _ -> nil
+    end
+  end
+
+  defp lock_id(video_path, language), do: {{__MODULE__, video_path, language}, self()}
+
+  defp local_cache,
+    do: %{tracks: :unknown, default_srt: :unknown, sidecars: :unknown, sidecar_srt: :unknown}
 
   defp provider, do: Application.fetch_env!(:cinder, :subtitles_provider)
+  defp translator, do: Application.fetch_env!(:cinder, :subtitles_translator)
+  defp media_info, do: Application.get_env(:cinder, :media_info)
   defp fs, do: Application.fetch_env!(:cinder, :filesystem)
 
-  # Languages live under the OpenSubtitles provider config (the single provider today; if a second
-  # provider is ever added, promote this to a provider-agnostic flat key — see the design ceiling).
   defp provider_config,
     do: Application.get_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, [])
 end

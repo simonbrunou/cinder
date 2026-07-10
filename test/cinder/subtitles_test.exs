@@ -1,327 +1,246 @@
 defmodule Cinder.SubtitlesTest do
-  # async: false — mutates and restores the shared Cinder.Subtitles.Provider.OpenSubtitles app env,
-  # which also carries base_url/api_key/req_options that Provider.OpenSubtitlesTest depends on.
   use ExUnit.Case, async: false
 
-  import ExUnit.CaptureLog
   import Mox
 
   alias Cinder.Subtitles
+  alias Cinder.Subtitles.Manifest
 
+  @video "/lib/M/M.mkv"
   setup :verify_on_exit!
 
   setup do
-    original = Application.get_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, [])
+    saved_provider = Application.get_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, [])
+    saved_media_info = Application.get_env(:cinder, :media_info)
 
     on_exit(fn ->
-      Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, original)
+      Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, saved_provider)
+      Application.put_env(:cinder, :media_info, saved_media_info)
     end)
 
-    Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "en,fr")
+    Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "fr")
+    Application.put_env(:cinder, :media_info, nil)
+
+    fs = start_supervised!({Agent, fn -> %{} end})
+
     stub(Cinder.Library.FilesystemMock, :moviehash_data, fn _ -> :too_small end)
-    :ok
+
+    stub(Cinder.Library.FilesystemMock, :read, fn path ->
+      send(self(), {:read, path})
+
+      Agent.get(fs, fn files ->
+        case files do
+          %{^path => content} -> {:ok, content}
+          _ -> {:error, :enoent}
+        end
+      end)
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :write, fn path, content ->
+      Agent.update(fs, &Map.put(&1, path, IO.iodata_to_binary(content)))
+      :ok
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :rename, fn source, dest ->
+      Agent.get_and_update(fs, fn files ->
+        {{:ok, Map.fetch!(files, source)},
+         files |> Map.delete(source) |> Map.put(dest, Map.fetch!(files, source))}
+      end)
+      |> elem(0)
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
+      if Agent.get(fs, &Map.has_key?(&1, path)), do: {:ok, %File.Stat{}}, else: {:error, :enoent}
+    end)
+
+    {:ok, fs: fs}
   end
 
-  test "wanted_languages/0 parses csv, downcases, and is [] when blank" do
+  test "wanted_languages/0 parses csv and is [] when blank" do
+    Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "en, FR")
     assert Subtitles.wanted_languages() == ["en", "fr"]
+
     Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "  ")
     assert Subtitles.wanted_languages() == []
   end
 
-  test "sidecar_path/2 swaps the video extension for .<lang>.srt" do
-    dest = "/lib/Movie (2020) {tmdb-1}/Movie (2020) {tmdb-1}.mkv"
-
-    assert Subtitles.sidecar_path(dest, "en") ==
-             "/lib/Movie (2020) {tmdb-1}/Movie (2020) {tmdb-1}.en.srt"
+  test "sidecar_path/2 preserves the normal video.lang.srt name" do
+    assert Subtitles.sidecar_path(@video, "fr") == "/lib/M/M.fr.srt"
   end
 
-  test "fetch_missing/2 picks highest-downloads non-HI non-AI result and writes the sidecar" do
-    dest = "/lib/M/M.mkv"
+  test "an ID result is provisional and a later hash result replaces it", %{fs: fs} do
+    video = @video
+    target = "/lib/M/M.fr.srt"
+    zeros = <<0::size(65_536 * 8)>>
 
-    # 'en' sidecar missing, 'fr' sidecar already present.
-    Cinder.Library.FilesystemMock
-    |> expect(:lstat, fn "/lib/M/M.en.srt" -> {:error, :enoent} end)
-    |> expect(:lstat, fn "/lib/M/M.fr.srt" -> {:ok, %File.Stat{}} end)
-    |> expect(:write, fn "/lib/M/M.en.srt", "SRT" -> :ok end)
+    expect(Cinder.Library.FilesystemMock, :moviehash_data, 2, fn ^video ->
+      case Agent.get_and_update(fs, fn files ->
+             count = Map.get(files, :hash_reads, 0)
+             {count, Map.put(files, :hash_reads, count + 1)}
+           end) do
+        0 -> :too_small
+        1 -> {:ok, {131_072, zeros, zeros}}
+      end
+    end)
 
-    Cinder.Subtitles.ProviderMock
-    |> expect(:search, fn %{imdb_id: "tt1", languages: ["en"]} ->
+    expect(Cinder.Subtitles.ProviderMock, :search, 2, fn %{languages: ["fr"]} ->
+      case Agent.get_and_update(fs, fn files ->
+             count = Map.get(files, :searches, 0)
+             {count, Map.put(files, :searches, count + 1)}
+           end) do
+        0 ->
+          {:ok,
+           [
+             %{
+               file_id: 1,
+               language: "fr",
+               downloads: 1,
+               hearing_impaired: false,
+               ai_translated: false,
+               moviehash_match: false
+             }
+           ]}
+
+        1 ->
+          {:ok,
+           [
+             %{
+               file_id: 2,
+               language: "fr",
+               downloads: 1,
+               hearing_impaired: false,
+               ai_translated: false,
+               moviehash_match: true
+             }
+           ]}
+      end
+    end)
+
+    expect(Cinder.Subtitles.ProviderMock, :download, 2, fn
+      1 -> {:ok, "ID SRT"}
+      2 -> {:ok, "HASH SRT"}
+    end)
+
+    expect(Cinder.Library.MediaServerMock, :scan, 2, fn :movies -> :ok end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+    assert %{tracks: %{"fr" => %{origin: "opensubtitles_id"}}} = Manifest.read(@video)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+    assert %{tracks: %{"fr" => %{origin: "opensubtitles_hash"}}} = Manifest.read(@video)
+    assert Agent.get(fs, &Map.fetch!(&1, target)) == "HASH SRT"
+  end
+
+  test "a provider failure does not call an embedded source or LibreTranslate" do
+    expect(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:error, :down} end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+  end
+
+  test "an empty provider result extracts an exact embedded target track", %{fs: fs} do
+    video = @video
+    Application.put_env(:cinder, :media_info, Cinder.Library.MediaInfoMock)
+
+    expect(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+    expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+      {:ok, [%{index: 2, language: "fr", default?: false, forced?: false}]}
+    end)
+
+    expect(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 2 -> {:ok, "FR SRT"} end)
+    expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+    assert Agent.get(fs, &Map.fetch!(&1, "/lib/M/M.fr.srt")) == "FR SRT"
+    assert %{tracks: %{"fr" => %{origin: "embedded"}}} = Manifest.read(@video)
+  end
+
+  test "a default embedded track translates each still-missing target", %{fs: fs} do
+    video = @video
+    Application.put_env(:cinder, :media_info, Cinder.Library.MediaInfoMock)
+
+    expect(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+
+    expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video ->
+      {:ok, [%{index: 3, language: "en", default?: true, forced?: false}]}
+    end)
+
+    expect(Cinder.Library.MediaInfoMock, :extract_subtitle, fn ^video, 3 ->
+      {:ok, "1\n00:00:01,000 --> 00:00:02,000\nHello\n\n"}
+    end)
+
+    expect(Cinder.Subtitles.TranslatorMock, :translate, fn ["Hello"], "fr" ->
+      {:ok, ["Bonjour"]}
+    end)
+
+    expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+    assert Agent.get(fs, &Map.fetch!(&1, "/lib/M/M.fr.srt")) =~ "Bonjour"
+    assert %{tracks: %{"fr" => %{origin: "translated"}}} = Manifest.read(@video)
+  end
+
+  test "an SRT sidecar supplies the translation source when no embedded track is usable", %{
+    fs: fs
+  } do
+    video = @video
+    Application.put_env(:cinder, :media_info, Cinder.Library.MediaInfoMock)
+    source = "/lib/M/M.en.srt"
+
+    Agent.update(fs, &Map.put(&1, source, "1\n00:00:01,000 --> 00:00:02,000\nHello\n\n"))
+
+    expect(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:ok, []} end)
+    expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video -> {:ok, []} end)
+    expect(Cinder.Library.FilesystemMock, :dir?, fn "/lib/M" -> true end)
+
+    expect(Cinder.Library.FilesystemMock, :find_files, fn "/lib/M" ->
+      {:ok, [{@video, 1}, {source, 1}]}
+    end)
+
+    expect(Cinder.Subtitles.TranslatorMock, :translate, fn ["Hello"], "fr" ->
+      {:ok, ["Bonjour"]}
+    end)
+
+    expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+    assert_received {:read, ^source}
+    assert Agent.get(fs, &Map.fetch!(&1, "/lib/M/M.fr.srt")) =~ "Bonjour"
+  end
+
+  test "an unmarked target sidecar is never overwritten even when a provider candidate exists", %{
+    fs: fs
+  } do
+    target = "/lib/M/M.fr.srt"
+    Agent.update(fs, &Map.put(&1, target, "manual"))
+
+    expect(Cinder.Subtitles.ProviderMock, :search, fn _ ->
       {:ok,
        [
          %{
            file_id: 1,
-           language: "en",
-           downloads: 10,
+           language: "fr",
+           downloads: 1,
            hearing_impaired: false,
-           ai_translated: false
-         },
-         %{
-           file_id: 2,
-           language: "en",
-           downloads: 99,
-           hearing_impaired: true,
-           ai_translated: false
-         },
-         %{
-           file_id: 3,
-           language: "en",
-           downloads: 50,
-           hearing_impaired: false,
-           ai_translated: false
+           ai_translated: false,
+           moviehash_match: false
          }
        ]}
     end)
-    |> expect(:download, fn 3 -> {:ok, "SRT"} end)
 
-    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, dest)
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+    assert Agent.get(fs, &Map.fetch!(&1, target)) == "manual"
   end
 
-  test "fetch_missing/2 stops on quota (406) and doesn't attempt the next language" do
-    # languages "en,fr" from setup; 'en' hits the daily download quota, so 'fr' is never searched.
-    Cinder.Library.FilesystemMock
-    |> expect(:lstat, fn "/lib/M/M.en.srt" -> {:error, :enoent} end)
-
-    Cinder.Subtitles.ProviderMock
-    |> expect(:search, fn %{languages: ["en"]} ->
-      {:ok,
-       [
-         %{
-           file_id: 1,
-           language: "en",
-           downloads: 5,
-           hearing_impaired: false,
-           ai_translated: false
-         }
-       ]}
-    end)
-    |> expect(:download, fn 1 -> {:error, :quota_exceeded} end)
-
-    # No 'fr' lstat/search/download expectations => verify_on_exit! proves 'fr' was never attempted.
-    assert :quota_exceeded =
-             Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
-  end
-
-  test "fetch_missing/2 is a no-op when no languages are configured" do
+  test "fetch_missing/2 remains a movies wrapper" do
     Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "")
-    # No provider/filesystem expectations => any call fails verify_on_exit!.
-    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video)
   end
 
-  test "fetch_missing/2 swallows a provider error (best-effort) and writes nothing" do
-    Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "en")
+  test "fetch_missing/3 stops after the provider reports quota" do
+    Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "en,fr")
 
-    Cinder.Library.FilesystemMock
-    |> expect(:lstat, fn "/lib/M/M.en.srt" -> {:error, :enoent} end)
-
-    Cinder.Subtitles.ProviderMock
-    |> expect(:search, fn _ -> {:error, :boom} end)
-
-    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
-  end
-
-  test "fetch_missing/2 swallows a provider raise (best-effort) and downloads nothing" do
-    Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "en")
-
-    Cinder.Library.FilesystemMock
-    |> expect(:lstat, fn "/lib/M/M.en.srt" -> {:error, :enoent} end)
-
-    Cinder.Subtitles.ProviderMock
-    |> expect(:search, fn _ -> raise "boom" end)
-
-    log =
-      capture_log(fn ->
-        assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
-      end)
-
-    assert log =~ "subtitle fetch"
-  end
-
-  test "fetch_missing/2 swallows a filesystem raise from the sidecar-existence check itself" do
-    Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "en")
-
-    # lstat raising must be caught by fetch_one/3's rescue/catch, not escape fetch_missing/2 —
-    # no search/download/write expectation is set, so any of those calls fails verify_on_exit!.
-    Cinder.Library.FilesystemMock
-    |> expect(:lstat, fn "/lib/M/M.en.srt" -> raise "fs down" end)
-
-    log =
-      capture_log(fn ->
-        assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
-      end)
-
-    assert log =~ "subtitle fetch"
-  end
-
-  test "fetch_missing/2 picks the correct candidate among AI/HI/nil-file_id/wrong-language noise" do
-    Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "en")
-
-    Cinder.Library.FilesystemMock
-    |> expect(:lstat, fn "/lib/M/M.en.srt" -> {:error, :enoent} end)
-    |> expect(:write, fn "/lib/M/M.en.srt", "SRT" -> :ok end)
-
-    Cinder.Subtitles.ProviderMock
-    |> expect(:search, fn %{imdb_id: "tt1", languages: ["en"]} ->
-      {:ok,
-       [
-         %{
-           file_id: 1,
-           language: "en",
-           downloads: 900,
-           hearing_impaired: false,
-           ai_translated: true
-         },
-         %{
-           file_id: 2,
-           language: "en",
-           downloads: 800,
-           hearing_impaired: true,
-           ai_translated: false
-         },
-         %{
-           file_id: nil,
-           language: "en",
-           downloads: 700,
-           hearing_impaired: false,
-           ai_translated: false
-         },
-         %{
-           file_id: 4,
-           language: "FR",
-           downloads: 1000,
-           hearing_impaired: false,
-           ai_translated: false
-         },
-         %{
-           file_id: 5,
-           language: "en",
-           downloads: 42,
-           hearing_impaired: false,
-           ai_translated: false
-         },
-         %{
-           file_id: 6,
-           language: "en",
-           downloads: 10,
-           hearing_impaired: false,
-           ai_translated: false
-         }
-       ]}
-    end)
-    |> expect(:download, fn 5 -> {:ok, "SRT"} end)
-
-    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
-  end
-
-  test "fetch_missing/2 merges the file's moviehash into the search criteria" do
-    Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "en")
-    zeros = <<0::size(65_536 * 8)>>
-
-    Cinder.Library.FilesystemMock
-    |> expect(:moviehash_data, fn "/lib/M/M.mkv" -> {:ok, {131_072, zeros, zeros}} end)
-    |> expect(:lstat, fn "/lib/M/M.en.srt" -> {:error, :enoent} end)
-    |> expect(:write, fn "/lib/M/M.en.srt", "SRT" -> :ok end)
-
-    Cinder.Subtitles.ProviderMock
-    |> expect(:search, fn %{imdb_id: "tt1", moviehash: "0000000000020000", languages: ["en"]} ->
-      {:ok,
-       [
-         %{
-           file_id: 1,
-           language: "en",
-           downloads: 10,
-           hearing_impaired: false,
-           ai_translated: false,
-           moviehash_match: false
-         }
-       ]}
-    end)
-    |> expect(:download, fn 1 -> {:ok, "SRT"} end)
-
-    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
-  end
-
-  test "fetch_missing/2 hashes once for all wanted languages, not per language" do
-    # setup default languages: "en,fr" — two languages, one hash computation. If the hash
-    # ever moved back inside the per-language loop, the second language would re-hash via the
-    # setup's `:too_small` stub (the single expect below being spent), drop the :moviehash key,
-    # and fail the search pattern. Both searches carrying the hash proves it's computed once.
-    zeros = <<0::size(65_536 * 8)>>
-
-    Cinder.Library.FilesystemMock
-    |> expect(:moviehash_data, fn "/lib/M/M.mkv" -> {:ok, {131_072, zeros, zeros}} end)
-    |> expect(:lstat, fn "/lib/M/M.en.srt" -> {:error, :enoent} end)
-    |> expect(:lstat, fn "/lib/M/M.fr.srt" -> {:error, :enoent} end)
-    |> expect(:write, 2, fn _path, "SRT" -> :ok end)
-
-    Cinder.Subtitles.ProviderMock
-    |> expect(:search, 2, fn %{moviehash: "0000000000020000"} = criteria ->
-      [lang] = criteria.languages
-
-      {:ok,
-       [
-         %{
-           file_id: 1,
-           language: lang,
-           downloads: 1,
-           hearing_impaired: false,
-           ai_translated: false,
-           moviehash_match: false
-         }
-       ]}
-    end)
-    |> expect(:download, 2, fn 1 -> {:ok, "SRT"} end)
-
-    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
-  end
-
-  test "fetch_missing/2 prefers a moviehash-matched candidate over a higher-downloads non-match" do
-    Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "en")
-    zeros = <<0::size(65_536 * 8)>>
-
-    Cinder.Library.FilesystemMock
-    |> expect(:moviehash_data, fn _ -> {:ok, {131_072, zeros, zeros}} end)
-    |> expect(:lstat, fn "/lib/M/M.en.srt" -> {:error, :enoent} end)
-    |> expect(:write, fn "/lib/M/M.en.srt", "SRT" -> :ok end)
-
-    Cinder.Subtitles.ProviderMock
-    |> expect(:search, fn %{languages: ["en"]} ->
-      {:ok,
-       [
-         %{
-           file_id: 1,
-           language: "en",
-           downloads: 999,
-           hearing_impaired: false,
-           ai_translated: false,
-           moviehash_match: false
-         },
-         %{
-           file_id: 2,
-           language: "en",
-           downloads: 5,
-           hearing_impaired: false,
-           ai_translated: false,
-           moviehash_match: true
-         }
-       ]}
-    end)
-    |> expect(:download, fn 2 -> {:ok, "SRT"} end)
-
-    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
-  end
-
-  test "fetch_missing/2 still searches by id when the file is not hashable" do
-    Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "en")
-
-    Cinder.Library.FilesystemMock
-    |> expect(:moviehash_data, fn _ -> :too_small end)
-    |> expect(:lstat, fn "/lib/M/M.en.srt" -> {:error, :enoent} end)
-    |> expect(:write, fn "/lib/M/M.en.srt", "SRT" -> :ok end)
-
-    Cinder.Subtitles.ProviderMock
-    |> expect(:search, fn criteria ->
-      refute Map.has_key?(criteria, :moviehash)
-
+    expect(Cinder.Subtitles.ProviderMock, :search, fn %{languages: ["en"]} ->
       {:ok,
        [
          %{
@@ -334,24 +253,9 @@ defmodule Cinder.SubtitlesTest do
          }
        ]}
     end)
-    |> expect(:download, fn 1 -> {:ok, "SRT"} end)
 
-    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
-  end
+    expect(Cinder.Subtitles.ProviderMock, :download, fn 1 -> {:error, :quota_exceeded} end)
 
-  test "fetch_missing/2 skips the moviehash read when every sidecar already exists" do
-    test_pid = self()
-
-    # Any moviehash_data call would be the wasteful read the lazy path avoids; flag it.
-    stub(Cinder.Library.FilesystemMock, :moviehash_data, fn _ ->
-      send(test_pid, :hashed)
-      :too_small
-    end)
-
-    # Both wanted-language ("en", "fr") sidecars already present → no search, and no hash read.
-    expect(Cinder.Library.FilesystemMock, :lstat, 2, fn _ -> {:ok, %File.Stat{}} end)
-
-    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
-    refute_received :hashed
+    assert :quota_exceeded = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
   end
 end

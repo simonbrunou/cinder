@@ -83,7 +83,7 @@ defmodule Cinder.Library do
              upgrade?(movie, new_q)
            end) do
       quality = maybe_link_sidecars(quality, placed?, folder?, source, dest)
-      scan(:movies, dest)
+      refresh(:movies, dest)
       fetch_subtitles(fn -> Cinder.Subtitles.movie_criteria(movie) end, dest)
       {:ok, dest, quality}
     end
@@ -372,7 +372,7 @@ defmodule Cinder.Library do
 
         {:ok, imported} ->
           log_unmatched(unmatched)
-          scan(:tv, content_path)
+          refresh(:tv, content_path)
           fetch_episode_subtitles(imported, episodes)
           {:ok, imported, unmatched}
 
@@ -587,7 +587,9 @@ defmodule Cinder.Library do
   # deep in the HTTP stack) — must not strand a correctly-imported movie at
   # :import_failed. The media server picks it up on its next periodic scan. Log and
   # report the import as done.
-  defp scan(kind, dest) do
+  @doc false
+  @spec refresh(:movies | :tv, String.t()) :: :ok
+  def refresh(kind, dest) do
     case media_server().scan(kind) do
       {:error, reason} -> log_scan_failure(dest, reason)
       _ -> :ok
