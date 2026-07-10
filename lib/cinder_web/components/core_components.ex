@@ -655,6 +655,7 @@ defmodule CinderWeb.CoreComponents do
         class="progress progress-info w-full"
         value={@progress * 100}
         max="100"
+        aria-label={@label}
       >{round(@progress * 100)}%</progress>
       <progress :if={is_nil(@progress)} class="progress progress-info w-full" aria-label={@label} />
       <p :if={is_number(@progress)} class="text-xs tabular-nums">{round(@progress * 100)}%</p>

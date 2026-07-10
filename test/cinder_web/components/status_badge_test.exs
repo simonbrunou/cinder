@@ -37,6 +37,7 @@ defmodule CinderWeb.StatusBadgeTest do
       })
 
     assert html =~ "<progress"
+    assert html =~ ~r/<progress[^>]*aria-label="Downloading"/
     assert html =~ "42%"
     assert html =~ "1.5 MB/s"
     assert html =~ "1m 30s remaining"

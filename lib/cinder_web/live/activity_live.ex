@@ -1,6 +1,6 @@
 defmodule CinderWeb.ActivityLive do
   @moduledoc """
-  Admin live activity at `/activity`: the movie pipeline (status only — each row links to
+  Admin live activity at `/activity`: the movie pipeline (live operation progress — each row links to
   `/movies/:id` for management) and in-flight TV downloads (grabs, delete-with-confirm),
   newest first — as cards, so it reflows cleanly on a phone. Merges the old `/status` and
   `/grabs` pages. Terminal-done movies (`:available`/`:cancelled`) drop off the pipeline —
