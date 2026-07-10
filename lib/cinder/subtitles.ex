@@ -87,7 +87,7 @@ defmodule Cinder.Subtitles do
   end
 
   defp fetch_language(criteria_base, video_path, kind, language, moviehash, cache) do
-    case :global.trans(lock_id(video_path, language), fn ->
+    case :global.trans(lock_id(video_path), fn ->
            fetch_one(criteria_base, video_path, kind, language, moviehash, cache)
          end) do
       {:quota_exceeded, cache} -> {:halt, {:quota_exceeded, cache}}
@@ -99,7 +99,8 @@ defmodule Cinder.Subtitles do
   defp fetch_one(criteria_base, video_path, kind, language, moviehash, cache) do
     state = Manifest.read(video_path)
 
-    if Manifest.stable?(state, moviehash, language) do
+    if Manifest.stable?(state, moviehash, language) and
+         sidecar_exists?(sidecar_path(video_path, language)) do
       {:ok, cache}
     else
       search(criteria_base, video_path, kind, language, moviehash, state, cache)
@@ -411,9 +412,15 @@ defmodule Cinder.Subtitles do
   defp best(results, language) do
     candidates =
       Enum.filter(results, fn result ->
-        String.downcase(Map.get(result, :language, "")) == language and
-          not Map.get(result, :hearing_impaired, false) and
-          not Map.get(result, :ai_translated, false) and not is_nil(Map.get(result, :file_id))
+        case Map.get(result, :language) do
+          candidate_language when is_binary(candidate_language) ->
+            String.downcase(candidate_language) == language and
+              not Map.get(result, :hearing_impaired, false) and
+              not Map.get(result, :ai_translated, false) and not is_nil(Map.get(result, :file_id))
+
+          _ ->
+            false
+        end
       end)
 
     case Enum.filter(candidates, &Map.get(&1, :moviehash_match, false)) do
@@ -456,7 +463,7 @@ defmodule Cinder.Subtitles do
   end
 
   defp mark_release_sidecar(video_path, moviehash, language) do
-    :global.trans(lock_id(video_path, language), fn ->
+    :global.trans(lock_id(video_path), fn ->
       target = sidecar_path(video_path, language)
       put_release_sidecar(video_path, moviehash, language, target)
     end)
@@ -478,7 +485,7 @@ defmodule Cinder.Subtitles do
     end
   end
 
-  defp lock_id(video_path, language), do: {{__MODULE__, video_path, language}, self()}
+  defp lock_id(video_path), do: {{__MODULE__, video_path}, self()}
 
   defp local_cache,
     do: %{tracks: :unknown, default_srt: :unknown, sidecars: :unknown, sidecar_srt: :unknown}

@@ -5,6 +5,7 @@ defmodule Cinder.SubtitlesTest do
 
   alias Cinder.Subtitles
   alias Cinder.Subtitles.Manifest
+  alias Cinder.Subtitles.Moviehash
 
   @video "/lib/M/M.mkv"
   setup :verify_on_exit!
@@ -66,6 +67,152 @@ defmodule Cinder.SubtitlesTest do
 
   test "sidecar_path/2 preserves the normal video.lang.srt name" do
     assert Subtitles.sidecar_path(@video, "fr") == "/lib/M/M.fr.srt"
+  end
+
+  test "a current hash manifest re-searches when its target sidecar is missing", %{fs: fs} do
+    zeros = <<0::size(65_536 * 8)>>
+    moviehash = Moviehash.compute(131_072, zeros, zeros)
+    manifest = Manifest.path(@video)
+
+    Agent.update(fs, fn files ->
+      Map.put(
+        files,
+        manifest,
+        Jason.encode!(%{
+          video_moviehash: moviehash,
+          tracks: %{"fr" => %{origin: "opensubtitles_hash"}}
+        })
+      )
+    end)
+
+    expect(Cinder.Library.FilesystemMock, :moviehash_data, fn @video ->
+      {:ok, {131_072, zeros, zeros}}
+    end)
+
+    expect(Cinder.Subtitles.ProviderMock, :search, fn %{languages: ["fr"]} ->
+      {:ok,
+       [
+         %{
+           file_id: 1,
+           language: "fr",
+           downloads: 1,
+           hearing_impaired: false,
+           ai_translated: false,
+           moviehash_match: true
+         }
+       ]}
+    end)
+
+    expect(Cinder.Subtitles.ProviderMock, :download, fn 1 -> {:ok, "HASH SRT"} end)
+    expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+    assert Agent.get(fs, &Map.get(&1, Subtitles.sidecar_path(@video, "fr"))) == "HASH SRT"
+  end
+
+  test "a malformed provider language does not hide a valid later candidate", %{fs: fs} do
+    expect(Cinder.Subtitles.ProviderMock, :search, fn %{languages: ["fr"]} ->
+      {:ok,
+       [
+         %{
+           file_id: 1,
+           language: nil,
+           downloads: 10,
+           hearing_impaired: false,
+           ai_translated: false,
+           moviehash_match: false
+         },
+         %{
+           file_id: 2,
+           language: "fr",
+           downloads: 1,
+           hearing_impaired: false,
+           ai_translated: false,
+           moviehash_match: false
+         }
+       ]}
+    end)
+
+    expect(Cinder.Subtitles.ProviderMock, :download, fn 2 -> {:ok, "FR SRT"} end)
+    expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+    assert Agent.get(fs, &Map.get(&1, Subtitles.sidecar_path(@video, "fr"))) == "FR SRT"
+  end
+
+  test "concurrent release-sidecar manifests serialize by video", %{fs: fs} do
+    set_mox_global()
+    Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "")
+
+    fr_target = Subtitles.sidecar_path(@video, "fr")
+    en_target = Subtitles.sidecar_path(@video, "en")
+    parent = self()
+
+    Agent.update(fs, fn files ->
+      files
+      |> Map.put(fr_target, "FR SRT")
+      |> Map.put(en_target, "EN SRT")
+      |> Map.put(:manifest_read_barrier, true)
+    end)
+
+    manifest = Manifest.path(@video)
+
+    stub(Cinder.Library.FilesystemMock, :read, fn path ->
+      result =
+        Agent.get(fs, fn files ->
+          case files do
+            %{^path => content} -> {:ok, content}
+            _ -> {:error, :enoent}
+          end
+        end)
+
+      if path == manifest and Agent.get(fs, &Map.get(&1, :manifest_read_barrier)) do
+        waiter = self()
+
+        Agent.update(fs, fn files ->
+          Map.update(files, :manifest_waiters, [waiter], fn waiters -> [waiter | waiters] end)
+        end)
+
+        send(parent, {:manifest_read_ready, waiter})
+
+        receive do
+          :continue_manifest_read -> result
+        end
+      else
+        result
+      end
+    end)
+
+    try do
+      assert :ok = Subtitles.fetch_after_import(fn -> %{} end, @video, :movies, ["fr"])
+      assert :ok = Subtitles.fetch_after_import(fn -> %{} end, @video, :movies, ["en"])
+
+      assert_receive {:manifest_read_ready, first}, 1_000
+      refute_receive {:manifest_read_ready, _second}, 200
+
+      first_ref = Process.monitor(first)
+      send(first, :continue_manifest_read)
+
+      assert_receive {:manifest_read_ready, second}, 1_000
+      second_ref = Process.monitor(second)
+      send(second, :continue_manifest_read)
+
+      assert_receive {:DOWN, ^first_ref, :process, ^first, :normal}, 1_000
+      assert_receive {:DOWN, ^second_ref, :process, ^second, :normal}, 1_000
+
+      Agent.update(fs, &Map.delete(&1, :manifest_read_barrier))
+
+      assert %{
+               tracks: %{
+                 "en" => %{origin: "release_sidecar"},
+                 "fr" => %{origin: "release_sidecar"}
+               }
+             } = Manifest.read(@video)
+    after
+      fs
+      |> Agent.get(&Map.get(&1, :manifest_waiters, []))
+      |> Enum.each(&send(&1, :continue_manifest_read))
+    end
   end
 
   test "an ID result is provisional and a later hash result replaces it", %{fs: fs} do
@@ -227,6 +374,9 @@ defmodule Cinder.SubtitlesTest do
          }
        ]}
     end)
+
+    deny(Cinder.Library.FilesystemMock, :write, 2)
+    deny(Cinder.Library.FilesystemMock, :rename, 2)
 
     assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
     assert Agent.get(fs, &Map.fetch!(&1, target)) == "manual"

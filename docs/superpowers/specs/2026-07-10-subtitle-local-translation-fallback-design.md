@@ -133,7 +133,7 @@ video and release sidecars are in the library. It passes the media kind so a suc
 write can refresh the right library.
 
 The 12-hour sweep derives work from imported files as today. It skips only stable hash-provenance
-targets; missing and provisional targets are rechecked. A small per-video/per-language lock
+targets; missing and provisional targets are rechecked. A small per-video lock
 serializes import and sweep work, preventing duplicate downloads or competing writes. The app is a
 single-instance household deployment, so no distributed locking system is introduced.
 
