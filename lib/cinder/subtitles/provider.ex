@@ -13,15 +13,18 @@ defmodule Cinder.Subtitles.Provider do
           optional(:tmdb_id) => integer() | nil,
           optional(:season) => integer() | nil,
           optional(:episode) => integer() | nil,
+          optional(:moviehash) => String.t() | nil,
           required(:languages) => [String.t()]
         }
 
   @type result :: %{
-          file_id: term(),
-          language: String.t(),
-          downloads: integer(),
-          hearing_impaired: boolean(),
-          ai_translated: boolean()
+          required(:file_id) => term(),
+          required(:language) => String.t(),
+          required(:downloads) => integer(),
+          required(:hearing_impaired) => boolean(),
+          required(:ai_translated) => boolean(),
+          # Optional: a provider that can't report hash-sync omits it; consumers default to false.
+          optional(:moviehash_match) => boolean()
         }
 
   @callback search(criteria()) :: {:ok, [result()]} | {:error, term()}
