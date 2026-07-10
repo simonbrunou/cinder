@@ -102,8 +102,10 @@ defmodule Cinder.Library do
         # Fresh placement onto a filesystem that can't hardlink this source (cross-mount `:exdev`, or a
         # no-hardlink-support mount → `:eperm`/`:eopnotsupp`/`:enotsup`): copy the bytes in atomically
         # via replace/2 (link-or-copy into a unique temp on the dest fs, then rename). This is the
-        # *fresh* case because on Linux (the deployment target) link(2) reports EEXIST before EXDEV, so
-        # a cross-fs collision with an existing dest surfaces as :eexist (handled below). The copy logs
+        # *fresh* case because on Linux (the deployment target) link(2) reports EEXIST before EXDEV/EPERM
+        # (filename_create checks EEXIST before vfs_link), so a collision with an existing dest surfaces
+        # as :eexist below and still runs the upgrade/keep gate — never an unconditional overwrite here.
+        # The copy logs
         # at :info from link_or_copy/2 — the one choke-point both copy paths hit.
         with :ok <- replace(source, dest), do: {:ok, new_q, true}
 
