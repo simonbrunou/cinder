@@ -446,6 +446,25 @@ defmodule Cinder.LibraryTest do
                Library.import_movie(cross_fs_movie())
     end
 
+    test "ln :eperm (no-hardlink filesystem) also falls back to the atomic copy" do
+      # FAT/exFAT/SMB-without-Unix-extensions on a single mount: link() fails with :eperm, not :exdev.
+      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+
+      stub(Cinder.Library.FilesystemMock, :lstat, fn @source ->
+        {:ok, %File.Stat{size: 5 * @gb, inode: 1}}
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dst -> {:error, :eperm} end)
+      stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:ok, []} end)
+      expect(Cinder.Library.FilesystemMock, :cp, fn @source, _tmp -> :ok end)
+      expect(Cinder.Library.FilesystemMock, :rename, fn _tmp, @dest -> :ok end)
+      expect(Cinder.Library.MediaServerMock, :scan, fn _ -> :ok end)
+
+      assert {:ok, @dest, %{resolution: "1080p", size: 5_000_000_000}} =
+               Library.import_movie(cross_fs_movie())
+    end
+
     test "a copy failure removes the temp and surfaces the error (no rename)" do
       stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
 

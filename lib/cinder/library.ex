@@ -20,6 +20,15 @@ defmodule Cinder.Library do
   @video_exts ~w(.mkv .mp4 .avi .m4v .mov .wmv .ts)
   @illegal ~r/[\/\\:*?"<>|]/
 
+  # link(2) errnos that mean "this dest can't be hardlinked to" — fall back to an atomic byte copy
+  # rather than parking. `:exdev` = source and dest on different mounts. `:eperm`/`:eopnotsupp`/
+  # `:enotsup` = a single mount whose filesystem has no hardlink support at all (FAT/exFAT on USB
+  # drives, SMB/CIFS without Unix extensions, some FUSE), where `link()` fails without `:exdev` ever
+  # firing (issue #59). `:eperm` can also be a genuine permission error, but then the copy fails the
+  # same way (`cp` can't open the dest) and the item still parks — a wasted copy attempt, not a
+  # wrong import. Every other errno (`:enoent`, `:enospc`, …) is a real failure and propagates.
+  @copy_fallback_errnos [:exdev, :eperm, :eopnotsupp, :enotsup]
+
   # The library kinds Cinder manages. The single source of truth — config keys
   # (`:"#{kind}_library_path"`, the per-kind Plex section, the size band), the
   # settings UI, health checks, and the media-server scan all derive from it, so a
@@ -89,12 +98,15 @@ defmodule Cinder.Library do
       :ok ->
         {:ok, new_q, true}
 
-      {:error, :exdev} ->
-        # Fresh placement across filesystems: the hardlink can't span devices, so copy the bytes in
-        # atomically via replace/2 (link-or-copy into a unique temp on the dest fs, then rename). This
-        # is the *fresh* case because on Linux (the deployment target) link(2) reports EEXIST before
-        # EXDEV, so a cross-fs collision with an existing dest surfaces as :eexist (handled below), not
-        # :exdev. The copy logs at :info from link_or_copy/2 — the one choke-point both copy paths hit.
+      {:error, errno} when errno in @copy_fallback_errnos ->
+        # Fresh placement onto a filesystem that can't hardlink this source (cross-mount `:exdev`, or a
+        # no-hardlink-support mount → `:eperm`/`:eopnotsupp`/`:enotsup`): copy the bytes in atomically
+        # via replace/2 (link-or-copy into a unique temp on the dest fs, then rename). This is the
+        # *fresh* case because on Linux (the deployment target) link(2) reports EEXIST before EXDEV/EPERM
+        # (filename_create checks EEXIST before vfs_link), so a collision with an existing dest surfaces
+        # as :eexist below and still runs the upgrade/keep gate — never an unconditional overwrite here.
+        # The copy logs
+        # at :info from link_or_copy/2 — the one choke-point both copy paths hit.
         with :ok <- replace(source, dest), do: {:ok, new_q, true}
 
       {:error, :eexist} ->
@@ -240,16 +252,17 @@ defmodule Cinder.Library do
     end
   end
 
-  # Hardlink source -> target, falling back to a byte copy only when the hardlink crosses filesystems
-  # (`:exdev`). Every other ln error (`:eacces`, `:enoent`, `:enospc`, …) is a real failure and
-  # propagates unchanged — a copy would fail the same way. Both the fresh placement and the
-  # upgrade-replace path route the cross-fs copy through here, so the :info "crossed filesystems" log
-  # lives at this single choke-point and covers every fallback (per docs/operating.md).
+  # Hardlink source -> target, falling back to a byte copy only when the dest filesystem can't be
+  # hardlinked to (@copy_fallback_errnos: cross-mount `:exdev`, or no hardlink support at all →
+  # `:eperm`/`:eopnotsupp`/`:enotsup`). Every other ln error (`:eacces`, `:enoent`, `:enospc`, …) is a
+  # real failure and propagates unchanged — a copy would fail the same way. Both the fresh placement
+  # and the upgrade-replace path route the copy through here, so the :info fallback log lives at this
+  # single choke-point and covers every fallback (per docs/operating.md).
   defp link_or_copy(source, target) do
     case fs().ln(source, target) do
-      {:error, :exdev} ->
+      {:error, errno} when errno in @copy_fallback_errnos ->
         Logger.info(
-          "hardlink crossed filesystems; copying #{source} into #{Path.dirname(target)}"
+          "hardlink unsupported (#{errno}); copying #{source} into #{Path.dirname(target)}"
         )
 
         fs().cp(source, target)
