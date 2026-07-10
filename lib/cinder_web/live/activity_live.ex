@@ -3,15 +3,22 @@ defmodule CinderWeb.ActivityLive do
   Admin live activity at `/activity`: the movie pipeline (status only — each row links to
   `/movies/:id` for management) and in-flight TV downloads (grabs, delete-with-confirm),
   newest first — as cards, so it reflows cleanly on a phone. Merges the old `/status` and
-  `/grabs` pages. Delete routes through `Catalog.cancel_grab/1` (which also removes the
-  tracked client download, so the freed episodes' re-grab doesn't collide with it). Live
-  via the `movies` + `series` topics.
+  `/grabs` pages. Terminal-done movies (`:available`/`:cancelled`) drop off the pipeline —
+  they live in `/library`; only in-flight or parked-needing-retry movies stay here.
+  Delete routes through `Catalog.cancel_grab/1` (which also removes the tracked client
+  download, so the freed episodes' re-grab doesn't collide with it). Live via the
+  `movies` + `series` topics.
   """
   use CinderWeb, :live_view
 
   import CinderWeb.LiveHelpers
 
   alias Cinder.Catalog
+
+  # Terminal-done: imported (in the Library) or cancelled — no in-flight work left, so
+  # showing them in a *live pipeline* is just noise. Parked failures (`:no_match` etc.)
+  # stay, since they need a Retry.
+  @pipeline_done [:available, :cancelled]
 
   @impl true
   def mount(_params, _session, socket) do
@@ -22,15 +29,21 @@ defmodule CinderWeb.ActivityLive do
 
     {:ok,
      assign(socket,
-       movies: Catalog.list_movies(),
+       movies: Enum.filter(Catalog.list_movies(), &in_pipeline?/1),
        grabs: Catalog.list_grabs(),
        confirming: nil
      )}
   end
 
   @impl true
-  def handle_info({:movie_updated, movie}, socket),
-    do: {:noreply, assign(socket, movies: upsert_by_id(socket.assigns.movies, movie))}
+  def handle_info({:movie_updated, movie}, socket) do
+    movies =
+      if in_pipeline?(movie),
+        do: upsert_by_id(socket.assigns.movies, movie),
+        else: Enum.reject(socket.assigns.movies, &(&1.id == movie.id))
+
+    {:noreply, assign(socket, movies: movies)}
+  end
 
   def handle_info({:movie_created, movie}, socket),
     do: {:noreply, assign(socket, movies: upsert_by_id(socket.assigns.movies, movie))}
@@ -77,6 +90,8 @@ defmodule CinderWeb.ActivityLive do
 
   # Client-controlled payloads — ignore anything unmatched rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  defp in_pipeline?(%{status: status}), do: status not in @pipeline_done
 
   defp series_title(%{episodes: [ep | _]}), do: ep.season.series.title
   defp series_title(_), do: gettext("Unknown series")

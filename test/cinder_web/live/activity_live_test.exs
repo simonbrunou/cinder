@@ -44,8 +44,21 @@ defmodule CinderWeb.ActivityLiveTest do
     # Management moved to the detail page — the row links there.
     assert has_element?(lv, ~s|#movie-#{movie.id} a[href="/movies/#{movie.id}"]|)
 
-    {:ok, _} = Catalog.transition(movie, %{status: :downloading})
+    {:ok, movie} = Catalog.transition(movie, %{status: :downloading})
     assert render(lv) =~ "badge-info"
+
+    # Reaching a terminal-done state drops the row off the live pipeline (it's in /library now).
+    {:ok, _} = Catalog.transition(movie, %{status: :available})
+    refute has_element?(lv, "#movie-#{movie.id}")
+  end
+
+  test "terminal-done movies are absent from the pipeline at mount", %{conn: conn} do
+    available = movie_fixture(%{title: "Arrival", status: :available})
+    pending = movie_fixture(%{title: "Tenet", status: :requested})
+
+    {:ok, lv, _html} = live(conn, ~p"/activity")
+    refute has_element?(lv, "#movie-#{available.id}")
+    assert has_element?(lv, "#movie-#{pending.id}")
   end
 
   test "renders grabs and deletes one through the confirm step", %{conn: conn} do
