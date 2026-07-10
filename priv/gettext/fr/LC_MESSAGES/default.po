@@ -120,12 +120,12 @@ msgstr "Supprimer aussi les fichiers du disque"
 msgid "Also delete the file from disk"
 msgstr "Supprimer aussi le fichier du disque"
 
-#: lib/cinder_web/live/series_detail_live.ex:575
+#: lib/cinder_web/live/series_detail_live.ex:577
 #, elixir-autogen, elixir-format
 msgid "Also stop monitoring these episodes"
 msgstr "Arrêter aussi de suivre ces épisodes"
 
-#: lib/cinder_web/live/series_detail_live.ex:689
+#: lib/cinder_web/live/series_detail_live.ex:691
 #, elixir-autogen, elixir-format
 msgid "Also stop monitoring this episode"
 msgstr "Arrêter aussi de suivre cet épisode"
@@ -399,29 +399,29 @@ msgstr "Tableau de bord"
 msgid "Delete"
 msgstr "Supprimer"
 
-#: lib/cinder_web/live/series_detail_live.ex:523
+#: lib/cinder_web/live/series_detail_live.ex:525
 #, elixir-autogen, elixir-format
 msgid "Delete all files in %{season}"
 msgstr "Supprimer tous les fichiers de %{season}"
 
-#: lib/cinder_web/live/series_detail_live.ex:578
+#: lib/cinder_web/live/series_detail_live.ex:580
 #, elixir-autogen, elixir-format
 msgid "Delete every downloaded file in %{season}? Monitored episodes will be re-downloaded next sweep unless you also stop monitoring."
 msgstr "Supprimer tous les fichiers téléchargés de %{season} ? Les épisodes suivis seront re-téléchargés au prochain passage, sauf si vous arrêtez aussi le suivi."
 
-#: lib/cinder_web/live/series_detail_live.ex:660
-#: lib/cinder_web/live/series_detail_live.ex:686
+#: lib/cinder_web/live/series_detail_live.ex:662
+#: lib/cinder_web/live/series_detail_live.ex:688
 #, elixir-autogen, elixir-format
 msgid "Delete file"
 msgstr "Supprimer le fichier"
 
-#: lib/cinder_web/live/series_detail_live.ex:654
+#: lib/cinder_web/live/series_detail_live.ex:656
 #, elixir-autogen, elixir-format
 msgid "Delete file for %{season} episode %{number}"
 msgstr "Supprimer le fichier de %{season} épisode %{number}"
 
-#: lib/cinder_web/live/series_detail_live.ex:526
-#: lib/cinder_web/live/series_detail_live.ex:572
+#: lib/cinder_web/live/series_detail_live.ex:528
+#: lib/cinder_web/live/series_detail_live.ex:574
 #, elixir-autogen, elixir-format
 msgid "Delete files"
 msgstr "Supprimer les fichiers"
@@ -657,17 +657,17 @@ msgstr "Type de serveur multimédia"
 msgid "Min size (GB)"
 msgstr "Taille min (Go)"
 
-#: lib/cinder_web/live/series_detail_live.ex:599
+#: lib/cinder_web/live/series_detail_live.ex:601
 #, elixir-autogen, elixir-format
 msgid "Monitor %{season} episode %{number}"
 msgstr "Suivre %{season} épisode %{number}"
 
-#: lib/cinder_web/live/series_detail_live.ex:513
+#: lib/cinder_web/live/series_detail_live.ex:515
 #, elixir-autogen, elixir-format
 msgid "Monitor all"
 msgstr "Tout suivre"
 
-#: lib/cinder_web/live/series_detail_live.ex:508
+#: lib/cinder_web/live/series_detail_live.ex:510
 #, elixir-autogen, elixir-format
 msgid "Monitor all episodes in %{season}"
 msgstr "Suivre tous les épisodes de %{season}"
@@ -754,7 +754,7 @@ msgstr "Aucun téléchargement actif"
 msgid "No activity yet"
 msgstr "Aucune activité pour le moment"
 
-#: lib/cinder_web/live/series_detail_live.ex:586
+#: lib/cinder_web/live/series_detail_live.ex:588
 #, elixir-autogen, elixir-format
 msgid "No episodes yet."
 msgstr "Aucun épisode pour le moment."
@@ -1204,12 +1204,12 @@ msgstr "Basculer le menu de navigation"
 msgid "Track what you've asked for."
 msgstr "Suivez ce que vous avez demandé."
 
-#: lib/cinder_web/live/series_detail_live.ex:513
+#: lib/cinder_web/live/series_detail_live.ex:515
 #, elixir-autogen, elixir-format
 msgid "Unmonitor all"
 msgstr "Tout arrêter de suivre"
 
-#: lib/cinder_web/live/series_detail_live.ex:504
+#: lib/cinder_web/live/series_detail_live.ex:506
 #, elixir-autogen, elixir-format
 msgid "Unmonitor all episodes in %{season}"
 msgstr "Arrêter de suivre tous les épisodes de %{season}"
@@ -1538,7 +1538,7 @@ msgstr "Création du compte…"
 msgid "Delete %{email}? Their requests are deleted too."
 msgstr "Supprimer %{email} ? Ses demandes sont également supprimées."
 
-#: lib/cinder_web/live/series_detail_live.ex:692
+#: lib/cinder_web/live/series_detail_live.ex:694
 #, elixir-autogen, elixir-format
 msgid "Delete the downloaded file for this episode? If it stays monitored it will be downloaded again. Stop monitoring it to keep it gone."
 msgstr "Supprimer le fichier téléchargé de cet épisode ? S'il reste suivi, il sera de nouveau téléchargé. Arrêtez le suivi pour qu'il le reste."
@@ -1949,7 +1949,7 @@ msgid "Couldn't grab that release."
 msgstr "Impossible de récupérer cette version."
 
 #: lib/cinder_web/live/movie_detail_live.ex:395
-#: lib/cinder_web/live/series_detail_live.ex:551
+#: lib/cinder_web/live/series_detail_live.ex:553
 #, elixir-autogen, elixir-format
 msgid "Find a better match"
 msgstr "Trouver une meilleure version"
@@ -1970,17 +1970,17 @@ msgstr "Ce film ne peut pas être récupéré pour le moment."
 msgid "Nothing left to grab this season."
 msgstr "Plus rien à récupérer pour cette saison."
 
-#: lib/cinder_web/live/series_detail_live.ex:676
+#: lib/cinder_web/live/series_detail_live.ex:678
 #, elixir-autogen, elixir-format
 msgid "Search"
 msgstr "Rechercher"
 
-#: lib/cinder_web/live/series_detail_live.ex:541
+#: lib/cinder_web/live/series_detail_live.ex:543
 #, elixir-autogen, elixir-format
 msgid "Search all missing"
 msgstr "Rechercher les épisodes manquants"
 
-#: lib/cinder_web/live/series_detail_live.ex:674
+#: lib/cinder_web/live/series_detail_live.ex:676
 #, elixir-autogen, elixir-format
 msgid "Search for episode %{number}"
 msgstr "Rechercher l'épisode %{number}"
@@ -2090,7 +2090,7 @@ msgstr "nov."
 msgid "Oct"
 msgstr "oct."
 
-#: lib/cinder_web/live/series_detail_live.ex:536
+#: lib/cinder_web/live/series_detail_live.ex:538
 #, elixir-autogen, elixir-format
 msgid "Search all missing episodes in %{season}"
 msgstr "Rechercher tous les épisodes manquants de %{season}"
@@ -2208,7 +2208,7 @@ msgstr "Sous-titres"
 msgid "Audio"
 msgstr "Audio"
 
-#: lib/cinder_web/live/series_detail_live.ex:619
+#: lib/cinder_web/live/series_detail_live.ex:621
 #, elixir-autogen, elixir-format
 msgid "audio %{lang}"
 msgstr "audio %{lang}"
@@ -2223,7 +2223,7 @@ msgstr "intégré"
 msgid "sidecar"
 msgstr "externe"
 
-#: lib/cinder_web/live/series_detail_live.ex:628
+#: lib/cinder_web/live/series_detail_live.ex:630
 #, elixir-autogen, elixir-format
 msgid "subtitle %{lang}"
 msgstr "sous-titre %{lang}"
