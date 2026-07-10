@@ -10,9 +10,9 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   setup :register_and_log_in_admin
   setup :set_mox_global
 
-  # Baseline so the detail page's lazy metadata backfill (enrich_series) always resolves — for the
-  # tests that build a series directly via Repo.insert! (no get_series stub of their own), and even
-  # when that fire-once async backfill outlives the test as a detached task. Non-pinned + nil
+  # Baseline so every detail-page metadata refresh (enrich_series) resolves — for the tests that
+  # build a series directly via Repo.insert! (no get_series stub of their own), and even when an
+  # async refresh outlives the test as a detached task. Non-pinned + nil
   # metadata so it never injects unexpected strings; per-test stubs (create_series) override it.
   setup do
     stub(Cinder.Catalog.TMDBMock, :get_series, fn tmdb_id ->
@@ -47,6 +47,10 @@ defmodule CinderWeb.SeriesDetailLiveTest do
        %{
          base_series_info(tmdb_id)
          | title: "Test Show",
+           overview: "A test show overview.",
+           genres: ["Drama"],
+           vote_average: 8.2,
+           first_air_date: ~D[2020-01-01],
            seasons: [%{season_number: 1}]
        }}
     end)
@@ -64,10 +68,8 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     {:ok, series} = Catalog.add_series(tmdb_id, monitor_strategy: :none)
 
-    # Pre-mark the series enriched (vote_average set) so the detail page's lazy metadata
-    # backfill is skipped — no extra TMDB call, no detached async task crossing into the next
-    # test. enrich_series's fetch path is covered in catalog_metadata_test; here we just want the
-    # metadata block populated and the tree/toggle behaviour isolated from the network.
+    # Keep the persisted metadata in sync with the stubbed detail response so the page refresh
+    # can't erase it while these tests focus on the tree and toggle behavior.
     series
     |> Ecto.Changeset.change(%{
       overview: "A test show overview.",
@@ -91,6 +93,25 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     {:ok, _lv, html} = live(conn, ~p"/series/#{series.id}")
     assert html =~ "Test Show"
     refute html =~ ~s(<h1 class="text-2xl font-semibold">)
+  end
+
+  test "refreshes descriptive metadata when reopening an enriched series", %{conn: conn} do
+    series =
+      Repo.insert!(%Cinder.Catalog.Series{
+        tmdb_id: 8_001,
+        title: "S",
+        year: 2020,
+        overview: "Old overview",
+        vote_average: 1.0
+      })
+
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn 8_001 ->
+      {:ok, %{base_series_info(8_001) | overview: "A show about things.", vote_average: 7.7}}
+    end)
+
+    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+
+    assert render_async(lv) =~ "A show about things"
   end
 
   test "renders the season/episode tree", %{conn: conn} do

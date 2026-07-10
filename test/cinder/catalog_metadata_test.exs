@@ -47,12 +47,11 @@ defmodule Cinder.CatalogMetadataTest do
       assert Repo.get!(Movie, movie.id).overview =~ "thief"
     end
 
-    test "is idempotent — an already-enriched movie is not re-fetched" do
+    test "refreshes an already-enriched movie" do
       movie = movie_fixture()
       details = Map.put(@details, :tmdb_id, movie.tmdb_id)
 
-      # arity-1 expectation: a second TMDB call would fail verify_on_exit!
-      expect(Cinder.Catalog.TMDBMock, :get_movie, 1, fn _ -> {:ok, details} end)
+      expect(Cinder.Catalog.TMDBMock, :get_movie, 2, fn _ -> {:ok, details} end)
 
       enriched = Catalog.enrich_movie(movie)
       assert Catalog.enrich_movie(enriched) == enriched
@@ -84,6 +83,32 @@ defmodule Cinder.CatalogMetadataTest do
 
       assert Repo.get!(Movie, movie.id).updated_at == past,
              "updated_at must not bump on a backfill"
+    end
+
+    test "does not restore a stale timestamp over a concurrent transition" do
+      movie = movie_fixture()
+      past = ~U[2020-01-01 00:00:00Z]
+
+      {1, _} =
+        Repo.update_all(from(m in Movie, where: m.id == ^movie.id), set: [updated_at: past])
+
+      movie = Repo.get!(Movie, movie.id)
+      details = Map.put(@details, :tmdb_id, movie.tmdb_id)
+      test_pid = self()
+
+      expect(Cinder.Catalog.TMDBMock, :get_movie, fn _ ->
+        {:ok, transitioned} = Catalog.transition(movie, %{status: :downloading})
+        send(test_pid, {:transitioned, transitioned.updated_at})
+        {:ok, details}
+      end)
+
+      Catalog.enrich_movie(movie)
+
+      assert_receive {:transitioned, transitioned_at}
+      refreshed = Repo.get!(Movie, movie.id)
+      assert refreshed.status == :downloading
+      assert refreshed.updated_at == transitioned_at
+      assert refreshed.overview =~ "thief"
     end
   end
 

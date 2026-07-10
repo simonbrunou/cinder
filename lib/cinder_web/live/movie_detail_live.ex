@@ -1,7 +1,7 @@
 defmodule CinderWeb.MovieDetailLive do
   @moduledoc """
   Admin movie console at `/movies/:id`: descriptive TMDB metadata (overview / runtime / genres /
-  rating / release date — lazily backfilled on first view via `Catalog.enrich_movie/1`, off-process
+  rating / release date — refreshed on each detail view via `Catalog.enrich_movie/1`, off-process
   so it never blocks render), the downloaded-file panel, **and** management — edit / cancel / delete,
   retry a parked movie, "Find a better match", cancel an in-flight upgrade, and set the preferred
   language. Mirrors the `/series/:id` console so movies and TV behave identically. Every write goes
@@ -44,14 +44,12 @@ defmodule CinderWeb.MovieDetailLive do
     end
   end
 
-  # Backfill descriptive metadata once, off the render path (vote_average-nil sentinel).
-  defp maybe_enrich(socket, %Movie{vote_average: nil} = movie) do
+  # Refresh descriptive metadata off the render path whenever the detail page opens.
+  defp maybe_enrich(socket, %Movie{} = movie) do
     if connected?(socket),
       do: start_async(socket, :enrich, fn -> Catalog.enrich_movie(movie) end),
       else: socket
   end
-
-  defp maybe_enrich(socket, %Movie{}), do: socket
 
   # --- edit ---
   @impl true
@@ -196,7 +194,7 @@ defmodule CinderWeb.MovieDetailLive do
   def handle_async(:enrich, {:ok, %Movie{}}, socket),
     do: {:noreply, assign_fresh(socket, socket.assigns.movie.id)}
 
-  # A failed backfill leaves the un-enriched row on screen; the page still renders.
+  # A failed refresh leaves the current row on screen; the page still renders.
   def handle_async(:enrich, {:exit, _reason}, socket), do: {:noreply, socket}
 
   # The manual-search panel forwards a chosen release back here (it owns no Catalog writes).
@@ -466,9 +464,9 @@ defmodule CinderWeb.MovieDetailLive do
     """
   end
 
-  # Re-read the row fresh from the DB — used after the async backfill, a `:movie_updated`
+  # Re-read the row fresh from the DB — used after the async refresh, a `:movie_updated`
   # broadcast, and every write. A status transition through the unguarded `transition/2` echoes the
-  # caller's in-memory struct, which may predate this row's metadata backfill (enrich doesn't
+  # caller's in-memory struct, which may predate this row's metadata refresh (enrich doesn't
   # broadcast); re-reading pulls both the current status and the persisted metadata. A row deleted
   # mid-flight leaves the current assign in place (the `:movie_deleted` handler drives the redirect).
   defp assign_fresh(socket, id) do
