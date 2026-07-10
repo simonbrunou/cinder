@@ -141,14 +141,12 @@ defmodule Cinder.Catalog do
   def get_movie_by_id(id), do: Repo.get(Movie, id)
 
   @doc """
-  Lazily backfills a movie's descriptive TMDB metadata (overview/runtime/genres/rating/release
-  date) the first time its detail page is viewed. `vote_average`-nil is the "not yet fetched"
-  sentinel — the details endpoint always returns a `vote_average` (≥ 0.0), so an enriched row is
-  never re-fetched. Returns the enriched `%Movie{}`; on a TMDB error it logs and returns the row
-  unchanged so the detail page still renders. Descriptive, not pipeline state — writes via
+  Refreshes a movie's descriptive TMDB metadata (overview/runtime/genres/rating/release date).
+  Returns the refreshed `%Movie{}`; on a TMDB error it logs and returns the row unchanged so the
+  detail page still renders. Descriptive, not pipeline state — writes via
   `Movie.metadata_changeset/2`, never `transition/2`.
   """
-  def enrich_movie(%Movie{vote_average: nil} = movie),
+  def enrich_movie(%Movie{} = movie),
     do:
       backfill_metadata(
         movie,
@@ -157,16 +155,13 @@ defmodule Cinder.Catalog do
         "movie"
       )
 
-  def enrich_movie(%Movie{} = movie), do: movie
-
   @doc """
-  Lazily backfills a series' descriptive TMDB metadata (overview/genres/rating/first air date) on
-  first detail-view — a lightweight `get_series`-only fetch, NOT the full `refresh_series/1` season
-  walk. Same `vote_average`-nil sentinel as `enrich_movie/1`. Returns the enriched `%Series{}` (or
-  the row unchanged, logged, on a TMDB error). No broadcast — the caller reloads its own tree, and
-  the periodic `refresh_series/1` keeps the fields fresh thereafter.
+  Refreshes a series' descriptive TMDB metadata (overview/genres/rating/first air date) with a
+  lightweight `get_series` fetch, not the full `refresh_series/1` season walk. Returns the
+  refreshed `%Series{}` (or the row unchanged, logged, on a TMDB error). No broadcast — the caller
+  reloads its own tree.
   """
-  def enrich_series(%Series{vote_average: nil} = series),
+  def enrich_series(%Series{} = series),
     do:
       backfill_metadata(
         series,
@@ -175,20 +170,27 @@ defmodule Cinder.Catalog do
         "series"
       )
 
-  def enrich_series(%Series{} = series), do: series
-
-  # Shared lazy descriptive-metadata backfill for a movie/series row. `fetch` and `changeset` are
+  # Shared descriptive-metadata refresh for a movie/series row. `fetch` and `changeset` are
   # the type's TMDB call + metadata changeset; `label` is for the log line. `updated_at` is
-  # force-preserved: this write is triggered by a *read* (opening the detail page), so it must not
-  # bump the row's timestamp and shuffle it to the top of the dashboard's updated_at-ordered Recent
-  # slice. On any TMDB/DB error, log and return the row unchanged so the page still renders.
+  # never written: this read-triggered refresh must not reorder the dashboard's Recent slice or
+  # overwrite a concurrent pipeline transition's timestamp. On a TMDB error, log and return the
+  # row unchanged so the page still renders.
   defp backfill_metadata(record, fetch, changeset, label) do
-    with {:ok, info} <- fetch.(record),
-         cs = changeset.(record, info),
-         {:ok, updated} <-
-           cs |> Ecto.Changeset.force_change(:updated_at, record.updated_at) |> Repo.update() do
-      updated
-    else
+    case fetch.(record) do
+      {:ok, info} ->
+        changes = changeset.(record, info).changes
+
+        if changes != %{} do
+          schema = record.__struct__
+
+          Repo.update_all(
+            from(r in schema, where: r.id == ^record.id),
+            set: Map.to_list(changes)
+          )
+        end
+
+        Repo.get(record.__struct__, record.id) || record
+
       error ->
         Logger.warning("metadata backfill failed for #{label} #{record.id}: #{inspect(error)}")
         record

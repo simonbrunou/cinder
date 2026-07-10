@@ -55,7 +55,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
     end)
   end
 
-  test "lazily backfills and renders descriptive metadata", %{conn: conn} do
+  test "refreshes and renders descriptive metadata", %{conn: conn} do
     movie = movie_fixture(%{title: "Inception"})
     stub_details(movie.tmdb_id)
 
@@ -67,6 +67,19 @@ defmodule CinderWeb.MovieDetailLiveTest do
     assert html =~ "Science Fiction"
     assert html =~ "148 min"
     assert html =~ "8.4"
+  end
+
+  test "refreshes descriptive metadata when reopening an enriched movie", %{conn: conn} do
+    movie =
+      movie_fixture(%{title: "Inception"})
+      |> Ecto.Changeset.change(%{overview: "Old overview", vote_average: 1.0})
+      |> Repo.update!()
+
+    stub_details(movie.tmdb_id)
+
+    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+
+    assert render_async(lv) =~ "A thief who steals corporate secrets"
   end
 
   test "renders the downloaded-file panel from the imported_* fields", %{conn: conn} do

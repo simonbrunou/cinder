@@ -74,7 +74,7 @@ defmodule Cinder.Catalog.Movie do
     |> unique_constraint(:tmdb_id)
   end
 
-  @doc "Changeset for the lazy TMDB metadata backfill (`Catalog.enrich_movie/1`). Descriptive, not pipeline state — separate from transition_changeset/2, so it never touches status/download fields."
+  @doc "Changeset for the TMDB metadata refresh (`Catalog.enrich_movie/1`). Descriptive, not pipeline state — separate from transition_changeset/2, so it never touches status/download fields."
   def metadata_changeset(movie, attrs) do
     cast(movie, attrs, [:overview, :runtime, :genres, :vote_average, :release_date])
   end

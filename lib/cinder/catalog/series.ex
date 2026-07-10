@@ -83,7 +83,7 @@ defmodule Cinder.Catalog.Series do
     ])
   end
 
-  @doc "Changeset for the lazy TMDB metadata backfill (`Catalog.enrich_series/1`). Descriptive only; excludes identity/monitoring so a backfill can't disturb the tree."
+  @doc "Changeset for the TMDB metadata refresh (`Catalog.enrich_series/1`). Descriptive only; excludes identity/monitoring so a refresh can't disturb the tree."
   def metadata_changeset(series, attrs) do
     cast(series, attrs, [:overview, :genres, :vote_average, :first_air_date])
   end

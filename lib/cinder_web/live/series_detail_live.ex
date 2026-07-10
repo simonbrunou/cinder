@@ -273,16 +273,14 @@ defmodule CinderWeb.SeriesDetailLive do
 
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
-  # Backfill descriptive metadata once, off the render path (vote_average-nil sentinel).
-  defp maybe_enrich(socket, %Series{vote_average: nil} = series) do
+  # Refresh descriptive metadata off the render path whenever the detail page opens.
+  defp maybe_enrich(socket, %Series{} = series) do
     if connected?(socket),
       do: start_async(socket, :enrich, fn -> Catalog.enrich_series(series) end),
       else: socket
   end
 
-  defp maybe_enrich(socket, %Series{}), do: socket
-
-  # Metadata backfill landed — reload so the tree + the newly-written descriptive fields render.
+  # Metadata refresh landed — reload so the tree + the newly-written descriptive fields render.
   @impl true
   def handle_async(:enrich, {:ok, %Series{}}, socket), do: {:noreply, reload(socket)}
   def handle_async(:enrich, {:exit, _reason}, socket), do: {:noreply, socket}
