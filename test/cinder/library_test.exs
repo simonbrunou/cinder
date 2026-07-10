@@ -651,6 +651,23 @@ defmodule Cinder.LibraryTest do
       refute_received {:linked, _, _}
     end
 
+    test "a non-contiguous multi-episode file keeps its distinct episode tokens" do
+      source = "/dl/Show.S01E01E03.1080p.mkv"
+
+      stub_dir([{source, 4 * @gb}])
+      stub_link_ok()
+
+      assert {:ok, imported, []} = Library.import_episodes("/dl", [ep(1, 1), ep(3, 3)])
+
+      assert Enum.map(Enum.sort_by(imported, &elem(&1, 0)), fn {id, dest, _q} -> {id, dest} end) ==
+               [
+                 {1,
+                  "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01E03.mkv"},
+                 {3,
+                  "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01E03.mkv"}
+               ]
+    end
+
     test "two files parsing the same episode: largest imports, the rest log as unmatched" do
       # Both parse S01E01; only one source can own the episode's dest — keep the largest, route
       # the loser to unmatched (logged) rather than colliding two sources onto one dest.
