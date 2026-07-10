@@ -943,9 +943,10 @@ defmodule Cinder.Catalog do
   @doc """
   Deletes one episode's library file (Sonarr "delete episode file"): unlinks the file, then clears
   `file_path` so the episode reverts to its derived missing state — left monitored (the poller
-  re-grabs next tick) unless `opts[:unmonitor]` also flips `monitored` off. The DB write + audit run
-  in one transaction (mirroring `cancel_movie/2`); broadcasts `{:series_updated, series_id}` after
-  commit. Returns `{:error, :no_file}` when there is no file, or the unlink's `{:error, reason}`
+  re-grabs next tick) unless `opts[:unmonitor]` also flips `monitored` off. A multi-episode file
+  is shared, so its other episode rows are cleared too. The DB write + audit run in one transaction
+  (mirroring `cancel_movie/2`); broadcasts `{:series_updated, series_id}` after commit. Returns
+  `{:error, :no_file}` when there is no file, or the unlink's `{:error, reason}`
   (the DB is then untouched — the file is the whole point, so the error is surfaced, not best-effort).
   Ordering caveat: the unlink runs before the DB txn, so a (rare) txn failure after a successful
   unlink leaves `file_path` pointing at a now-deleted file (the episode reads falsely-available)
@@ -987,6 +988,7 @@ defmodule Cinder.Catalog do
 
       case Repo.update(changeset) do
         {:ok, updated} ->
+          clear_shared_file_paths(episode.file_path)
           Audit.log_or_rollback(actor, :delete_episode_file, updated, %{unmonitored: unmonitor?})
           updated
 
@@ -996,6 +998,23 @@ defmodule Cinder.Catalog do
     end)
   rescue
     Ecto.StaleEntryError -> {:error, :stale_entry}
+  end
+
+  defp clear_shared_file_paths(path) do
+    Repo.update_all(from(e in Episode, where: e.file_path == ^path),
+      set: [
+        file_path: nil,
+        search_attempts: 0,
+        imported_resolution: nil,
+        imported_size: nil,
+        imported_language: nil,
+        imported_source: nil,
+        imported_audio_languages: nil,
+        imported_embedded_subtitles: nil,
+        imported_sidecar_subtitles: nil,
+        updated_at: now()
+      ]
+    )
   end
 
   defp maybe_unmonitor(changeset, true),

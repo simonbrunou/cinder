@@ -565,6 +565,25 @@ defmodule Cinder.CatalogAdminTest do
       assert updated.monitored == true
     end
 
+    test "clears every episode that shares the deleted multi-episode file" do
+      {_series, ep} = episode_with_file!("/tmp/S01E01-E02.mkv")
+
+      shared =
+        Repo.insert!(%Cinder.Catalog.Episode{
+          season_id: ep.season_id,
+          episode_number: 2,
+          monitored: true,
+          file_path: ep.file_path
+        })
+
+      expect(Cinder.Library.FilesystemMock, :rm, fn "/tmp/S01E01-E02.mkv" -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+      assert {:ok, _updated} = Catalog.delete_episode_file(ep, nil)
+      assert is_nil(Repo.get!(Cinder.Catalog.Episode, ep.id).file_path)
+      assert is_nil(Repo.get!(Cinder.Catalog.Episode, shared.id).file_path)
+    end
+
     test "unmonitor: true also clears monitored" do
       {_series, ep} = episode_with_file!("/tmp/ep.mkv")
       expect(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
