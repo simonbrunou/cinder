@@ -72,7 +72,7 @@ msgid "Account created."
 msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:117
-#: lib/cinder_web/live/activity_live.ex:91
+#: lib/cinder_web/live/activity_live.ex:106
 #, elixir-autogen, elixir-format
 msgid "Activity"
 msgstr ""
@@ -383,8 +383,8 @@ msgstr ""
 msgid "Dashboard"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:144
-#: lib/cinder_web/live/activity_live.ex:153
+#: lib/cinder_web/live/activity_live.ex:159
+#: lib/cinder_web/live/activity_live.ex:168
 #: lib/cinder_web/live/library_live.ex:219
 #: lib/cinder_web/live/library_live.ex:241
 #: lib/cinder_web/live/library_live.ex:301
@@ -458,7 +458,7 @@ msgstr ""
 msgid "Deleted %{count} file(s)."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:142
+#: lib/cinder_web/live/activity_live.ex:157
 #, elixir-autogen, elixir-format
 msgid "Deleting…"
 msgstr ""
@@ -504,7 +504,7 @@ msgstr ""
 msgid "Downloading"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:121
+#: lib/cinder_web/live/activity_live.ex:136
 #, elixir-autogen, elixir-format
 msgid "Downloads"
 msgstr ""
@@ -588,7 +588,7 @@ msgstr ""
 msgid "In pipeline"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:126
+#: lib/cinder_web/live/activity_live.ex:141
 #, elixir-autogen, elixir-format
 msgid "In-flight TV downloads show here."
 msgstr ""
@@ -612,7 +612,7 @@ msgstr ""
 msgid "Library"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:92
+#: lib/cinder_web/live/activity_live.ex:107
 #, elixir-autogen, elixir-format
 msgid "Live pipeline and in-flight downloads."
 msgstr ""
@@ -706,7 +706,7 @@ msgstr ""
 msgid "Movie deleted."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:96
+#: lib/cinder_web/live/activity_live.ex:111
 #, elixir-autogen, elixir-format
 msgid "Movie pipeline"
 msgstr ""
@@ -750,7 +750,7 @@ msgstr ""
 msgid "New user"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:125
+#: lib/cinder_web/live/activity_live.ex:140
 #, elixir-autogen, elixir-format
 msgid "No active downloads"
 msgstr ""
@@ -780,7 +780,7 @@ msgstr ""
 msgid "No movies or shows matched that search."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:100
+#: lib/cinder_web/live/activity_live.ex:115
 #: lib/cinder_web/live/library_live.ex:174
 #, elixir-autogen, elixir-format
 msgid "No movies yet"
@@ -944,7 +944,7 @@ msgstr ""
 msgid "Requested movies appear here."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:101
+#: lib/cinder_web/live/activity_live.ex:116
 #, elixir-autogen, elixir-format
 msgid "Requested movies move through here."
 msgstr ""
@@ -1549,7 +1549,7 @@ msgstr ""
 msgid "Delete the downloaded file for this episode? If it stays monitored it will be downloaded again. Stop monitoring it to keep it gone."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:155
+#: lib/cinder_web/live/activity_live.ex:170
 #, elixir-autogen, elixir-format
 msgid "Delete this download? Its episodes are unlinked."
 msgstr ""
@@ -1587,7 +1587,7 @@ msgstr ""
 msgid "Download clients"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:65
+#: lib/cinder_web/live/activity_live.ex:78
 #, elixir-autogen, elixir-format
 msgid "Download deleted."
 msgstr ""
@@ -1828,7 +1828,7 @@ msgstr ""
 msgid "Timed out"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:82
+#: lib/cinder_web/live/activity_live.ex:97
 #, elixir-autogen, elixir-format
 msgid "Unknown series"
 msgstr ""
@@ -2026,7 +2026,7 @@ msgstr ""
 msgid "Aug"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:66
+#: lib/cinder_web/live/activity_live.ex:79
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Couldn't delete the download."
 msgstr ""
@@ -2106,7 +2106,7 @@ msgstr ""
 msgid "Sep"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:69
+#: lib/cinder_web/live/activity_live.ex:82
 #, elixir-autogen, elixir-format
 msgid "That download is already gone."
 msgstr ""
