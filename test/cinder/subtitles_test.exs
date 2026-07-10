@@ -240,6 +240,40 @@ defmodule Cinder.SubtitlesTest do
     assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
   end
 
+  test "fetch_missing/2 hashes once for all wanted languages, not per language" do
+    # setup default languages: "en,fr" — two languages, one hash computation. If the hash
+    # ever moved back inside the per-language loop, the second language would re-hash via the
+    # setup's `:too_small` stub (the single expect below being spent), drop the :moviehash key,
+    # and fail the search pattern. Both searches carrying the hash proves it's computed once.
+    zeros = <<0::size(65_536 * 8)>>
+
+    Cinder.Library.FilesystemMock
+    |> expect(:moviehash_data, fn "/lib/M/M.mkv" -> {:ok, {131_072, zeros, zeros}} end)
+    |> expect(:lstat, fn "/lib/M/M.en.srt" -> {:error, :enoent} end)
+    |> expect(:lstat, fn "/lib/M/M.fr.srt" -> {:error, :enoent} end)
+    |> expect(:write, 2, fn _path, "SRT" -> :ok end)
+
+    Cinder.Subtitles.ProviderMock
+    |> expect(:search, 2, fn %{moviehash: "0000000000020000"} = criteria ->
+      [lang] = criteria.languages
+
+      {:ok,
+       [
+         %{
+           file_id: 1,
+           language: lang,
+           downloads: 1,
+           hearing_impaired: false,
+           ai_translated: false,
+           moviehash_match: false
+         }
+       ]}
+    end)
+    |> expect(:download, 2, fn 1 -> {:ok, "SRT"} end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1", tmdb_id: 1}, "/lib/M/M.mkv")
+  end
+
   test "fetch_missing/2 prefers a moviehash-matched candidate over a higher-downloads non-match" do
     Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "en")
     zeros = <<0::size(65_536 * 8)>>
