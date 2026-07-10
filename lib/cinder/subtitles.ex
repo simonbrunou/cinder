@@ -113,6 +113,8 @@ defmodule Cinder.Subtitles do
   # comprehension guard — a raising Filesystem impl must not escape fetch_missing/2, same
   # guarantee as Cinder.Library.scan/2. `criteria` is the memoized (moviehash-merged) criteria,
   # nil until the first search; returned so the loop reuses a single hash across languages.
+  # ponytail: on the rare raise-after-hash path the rescue returns the pre-hash `criteria` (Elixir
+  # try scoping), so the next language recomputes — one wasted local read, accepted.
   defp fetch_one(criteria, criteria_base, lang, dest_path) do
     path = sidecar_path(dest_path, lang)
 
