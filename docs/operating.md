@@ -75,11 +75,12 @@ you trust.
 ## Hardlink, with an automatic cross-filesystem copy fallback
 
 On a completed download Cinder **hardlinks** the file into the library — instant, no copy, no extra
-disk. A hardlink can't cross filesystems, so when the download and library live on **different**
-filesystems Cinder **automatically falls back to an atomic copy** instead (it copies into a temporary
-file on the library filesystem, then renames it into place, so a media scan never sees a half-copied
-file). No configuration — Cinder detects the cross-filesystem case and switches per import; a log
-line records each fallback.
+disk. When a hardlink isn't possible Cinder **automatically falls back to an atomic copy** instead
+(it copies into a temporary file on the library filesystem, then renames it into place, so a media
+scan never sees a half-copied file). This covers both the download and library living on **different**
+filesystems *and* a single mount whose filesystem has no hardlink support at all (FAT/exFAT on a USB
+drive, SMB/CIFS without Unix extensions, some FUSE mounts). No configuration — Cinder detects the case
+and switches per import; a log line records each fallback.
 
 Keep both on the **same filesystem** when you can — it's faster and uses no extra disk. The compose
 file keeps both under one `/media` mount (`/media/movies`, `/media/tv`, `/media/downloads`). The copy
