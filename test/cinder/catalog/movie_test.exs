@@ -47,6 +47,22 @@ defmodule Cinder.Catalog.MovieTest do
       assert %{download_progress: nil, download_speed: nil, download_eta: nil} = updated
     end
 
+    test "a guarded transition clears metrics written after its snapshot" do
+      movie = movie_fixture(%{status: :downloading})
+
+      assert {:ok, _} =
+               Catalog.update_movie_download_metrics(movie, %{
+                 download_progress: 0.42,
+                 download_speed: 1_500_000,
+                 download_eta: 90
+               })
+
+      assert {:ok, updated} =
+               Catalog.transition(movie, %{status: :downloaded}, expect: :downloading)
+
+      assert %{download_progress: nil, download_speed: nil, download_eta: nil} = updated
+    end
+
     test "changed movie metrics broadcast once and an equal snapshot is silent" do
       movie = movie_fixture(%{status: :downloading})
       Catalog.subscribe()

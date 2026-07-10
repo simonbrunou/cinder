@@ -239,6 +239,18 @@ defmodule Cinder.CatalogAdminTest do
                })
     end
 
+    test "completion rejects a stale equal grab metric snapshot" do
+      series = series_fixture()
+      season = season_fixture(series)
+      episode = episode_fixture(season)
+      {:ok, grab} = Catalog.create_grab("METRICS-4", :torrent, [episode.id])
+      metrics = %{download_progress: 0.42, download_speed: 1_500_000, download_eta: 90}
+
+      assert {:ok, tracked} = Catalog.update_grab_download_metrics(grab, metrics)
+      assert {:ok, _} = Catalog.mark_grab_downloaded(tracked, "/downloads/pack")
+      assert {:error, :stale_grab} = Catalog.update_grab_download_metrics(tracked, metrics)
+    end
+
     test "a grab retry clears metrics" do
       series = series_fixture()
       season = season_fixture(series)

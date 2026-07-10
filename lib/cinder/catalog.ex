@@ -270,7 +270,11 @@ defmodule Cinder.Catalog do
     changes = metric_changes(grab, attrs)
 
     if changes == %{} do
-      {:ok, grab}
+      if Repo.exists?(from(g in Grab, where: g.id == ^grab.id and is_nil(g.content_path))) do
+        {:ok, grab}
+      else
+        {:error, :stale_grab}
+      end
     else
       case Repo.update_all(
              from(g in Grab,

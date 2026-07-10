@@ -120,7 +120,10 @@ defmodule Cinder.Catalog.Movie do
     status = get_field(changeset, :status)
 
     if status not in [:downloading, :upgrading] or status != previous_status do
-      change(changeset, download_progress: nil, download_speed: nil, download_eta: nil)
+      changeset
+      |> force_change(:download_progress, nil)
+      |> force_change(:download_speed, nil)
+      |> force_change(:download_eta, nil)
     else
       changeset
     end
