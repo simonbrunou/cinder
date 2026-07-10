@@ -1686,12 +1686,12 @@ msgstr "Aucune modification."
 msgid "Password reset. The user's sessions were ended."
 msgstr "Mot de passe réinitialisé. Les sessions de l'utilisateur ont été terminées."
 
-#: lib/cinder_web/settings_labels.ex:58
+#: lib/cinder_web/settings_labels.ex:60
 #, elixir-autogen, elixir-format
 msgid "Plex Movies library section (numeric id)"
 msgstr "Section de bibliothèque Films Plex (id numérique)"
 
-#: lib/cinder_web/settings_labels.ex:59
+#: lib/cinder_web/settings_labels.ex:61
 #, elixir-autogen, elixir-format
 msgid "Plex TV library section (numeric id)"
 msgstr "Section de bibliothèque TV Plex (id numérique)"
@@ -2269,3 +2269,13 @@ msgstr "%{speed} MB/s"
 #, elixir-autogen, elixir-format
 msgid "Importing"
 msgstr "Importation en cours"
+
+#: lib/cinder_web/settings_labels.ex:58
+#, elixir-autogen, elixir-format
+msgid "LibreTranslate API key"
+msgstr "Clé API LibreTranslate"
+
+#: lib/cinder_web/settings_labels.ex:57
+#, elixir-autogen, elixir-format
+msgid "LibreTranslate URL"
+msgstr "URL LibreTranslate"

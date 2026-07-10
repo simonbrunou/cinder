@@ -21,6 +21,7 @@ defmodule Cinder.SettingsTest do
     Cinder.Library.MediaServer.Plex,
     Cinder.Notifier.Discord,
     Cinder.Subtitles.Provider.OpenSubtitles,
+    Cinder.Subtitles.Translator.LibreTranslate,
     :media_server,
     :download_clients,
     :movies_library_path,
@@ -209,6 +210,36 @@ defmodule Cinder.SettingsTest do
 
       Settings.delete("jellyfin_url")
       assert Application.get_env(:cinder, Cinder.Library.MediaServer.Jellyfin)[:url] == original
+    end
+
+    test "a saved LibreTranslate URL overlays its module config; clearing restores the bootstrap" do
+      original =
+        Application.get_env(:cinder, Cinder.Subtitles.Translator.LibreTranslate)[:base_url]
+
+      Settings.put("libretranslate_url", "https://translate.example")
+
+      assert Application.get_env(:cinder, Cinder.Subtitles.Translator.LibreTranslate)[:base_url] ==
+               "https://translate.example"
+
+      Settings.delete("libretranslate_url")
+
+      assert Application.get_env(:cinder, Cinder.Subtitles.Translator.LibreTranslate)[:base_url] ==
+               original
+    end
+
+    test "a saved LibreTranslate API key overlays its module config; clearing restores the bootstrap" do
+      original =
+        Application.get_env(:cinder, Cinder.Subtitles.Translator.LibreTranslate)[:api_key]
+
+      Settings.put("libretranslate_api_key", "test-api-key")
+
+      assert Application.get_env(:cinder, Cinder.Subtitles.Translator.LibreTranslate)[:api_key] ==
+               "test-api-key"
+
+      Settings.delete("libretranslate_api_key")
+
+      assert Application.get_env(:cinder, Cinder.Subtitles.Translator.LibreTranslate)[:api_key] ==
+               original
     end
 
     test "media_server_type selects the impl; absent leaves the bootstrap untouched" do

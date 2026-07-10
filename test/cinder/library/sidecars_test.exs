@@ -37,6 +37,25 @@ defmodule Cinder.Library.SidecarsTest do
            ]
   end
 
+  test "srt_files/1 excludes ASS sidecars while retaining matching SRT sidecars" do
+    dir = "/dl/Movie (2020)"
+    src = "#{dir}/Movie (2020).mkv"
+    srt = "#{dir}/Movie (2020).en.srt"
+
+    expect(FilesystemMock, :dir?, fn ^dir -> true end)
+
+    expect(FilesystemMock, :find_files, fn ^dir ->
+      {:ok,
+       [
+         {src, 900},
+         {srt, 10},
+         {"#{dir}/Movie (2020).fr.ass", 10}
+       ]}
+    end)
+
+    assert Sidecars.srt_files(src) == [{srt, "en"}]
+  end
+
   test "link/2 hardlinks each sidecar next to the dest, renamed, returns languages" do
     dir = "/dl/Movie (2020)"
     src = "#{dir}/Movie (2020).mkv"

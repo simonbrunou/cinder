@@ -65,7 +65,8 @@ config :cinder,
   # the media_info tests opt in per-test via Application.put_env(MediaInfoMock).
   media_info: nil,
   notifier: Cinder.TestNotifier,
-  subtitles_provider: Cinder.Subtitles.ProviderMock
+  subtitles_provider: Cinder.Subtitles.ProviderMock,
+  subtitles_translator: Cinder.Subtitles.TranslatorMock
 
 # Two client mocks so routing is testable by protocol: a torrent release must
 # reach ClientMock and a usenet release must reach SabnzbdClientMock.
@@ -110,6 +111,10 @@ config :cinder, Cinder.Subtitles.Provider.OpenSubtitles,
   password: "pass",
   languages: "",
   req_options: [plug: {Req.Test, Cinder.OpenSubtitlesStub}, retry: false]
+
+config :cinder, Cinder.Subtitles.Translator.LibreTranslate,
+  base_url: "https://libretranslate.test",
+  req_options: [plug: {Req.Test, Cinder.LibreTranslateStub}, retry: false]
 
 config :cinder, Cinder.Library.MediaServer.Jellyfin,
   url: "http://localhost:8096",

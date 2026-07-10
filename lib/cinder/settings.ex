@@ -173,6 +173,24 @@ defmodule Cinder.Settings do
       group: :subtitles,
       label: "Subtitle languages (comma-separated, e.g. en,fr)",
       placeholder: "en,fr"
+    },
+    %{
+      key: "libretranslate_url",
+      module: Cinder.Subtitles.Translator.LibreTranslate,
+      field: :base_url,
+      secret: false,
+      group: :subtitles,
+      label: "LibreTranslate URL",
+      placeholder: "http://localhost:5000"
+    },
+    %{
+      key: "libretranslate_api_key",
+      module: Cinder.Subtitles.Translator.LibreTranslate,
+      field: :api_key,
+      secret: true,
+      group: :subtitles,
+      label: "LibreTranslate API key",
+      placeholder: ""
     }
   ]
 

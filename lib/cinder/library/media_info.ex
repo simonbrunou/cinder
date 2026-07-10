@@ -13,6 +13,13 @@ defmodule Cinder.Library.MediaInfo do
   media_info tests opt in with a Mox mock per-test.
   """
 
+  @type subtitle_track :: %{
+          required(:index) => non_neg_integer(),
+          required(:language) => String.t(),
+          required(:default?) => boolean(),
+          required(:forced?) => boolean()
+        }
+
   @doc """
   Probes `path`'s streams. Returns `{:ok, %{audio: [code], subtitles: [code]}}` — the language
   codes of the audio and subtitle streams (lowercased; untagged/`und` dropped) — or
@@ -21,4 +28,10 @@ defmodule Cinder.Library.MediaInfo do
   """
   @callback probe(path :: String.t()) ::
               {:ok, %{audio: [String.t()], subtitles: [String.t()]}} | {:error, term()}
+
+  @callback subtitle_tracks(path :: String.t()) ::
+              {:ok, [subtitle_track()]} | {:error, term()}
+
+  @callback extract_subtitle(path :: String.t(), index :: non_neg_integer()) ::
+              {:ok, binary()} | {:error, term()}
 end

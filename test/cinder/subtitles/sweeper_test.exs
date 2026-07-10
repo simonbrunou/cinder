@@ -27,16 +27,19 @@ defmodule Cinder.Subtitles.SweeperTest do
     end)
 
     stub(Cinder.Library.FilesystemMock, :moviehash_data, fn _ -> :too_small end)
+    stub(Cinder.Library.FilesystemMock, :read, fn _ -> {:error, :enoent} end)
+    stub(Cinder.Library.FilesystemMock, :write, fn _, _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rename, fn _, _ -> :ok end)
 
     :ok
   end
 
-  test "poll/1 fetches a missing sidecar for an available movie" do
+  test "movie sweep refreshes the movies library after a committed subtitle" do
+    parent = self()
     _m = movie_fixture(status: :available, file_path: "/lib/M/M.mkv", imdb_id: "tt1", tmdb_id: 1)
 
     Cinder.Library.FilesystemMock
     |> expect(:lstat, fn "/lib/M/M.en.srt" -> {:error, :enoent} end)
-    |> expect(:write, fn "/lib/M/M.en.srt", "SRT" -> :ok end)
 
     Cinder.Subtitles.ProviderMock
     |> expect(:search, fn %{imdb_id: "tt1", languages: ["en"]} ->
@@ -53,8 +56,14 @@ defmodule Cinder.Subtitles.SweeperTest do
     end)
     |> expect(:download, fn 7 -> {:ok, "SRT"} end)
 
+    expect(Cinder.Library.MediaServerMock, :scan, fn kind ->
+      send(parent, {:subtitle_scan, kind})
+      :ok
+    end)
+
     {:ok, pid} = start_supervised({Sweeper, name: :sweeper_test})
     assert :ok = Sweeper.poll(pid)
+    assert_receive {:subtitle_scan, :movies}
   end
 
   test "poll/1 stops the tick when a download hits the daily quota (406)" do
@@ -85,17 +94,6 @@ defmodule Cinder.Subtitles.SweeperTest do
     assert :ok = Sweeper.poll(pid)
   end
 
-  test "poll/1 skips an item whose sidecar already exists (no provider call)" do
-    _m = movie_fixture(status: :available, file_path: "/lib/M/M.mkv", imdb_id: "tt1", tmdb_id: 1)
-
-    Cinder.Library.FilesystemMock
-    |> expect(:lstat, fn "/lib/M/M.en.srt" -> {:ok, %File.Stat{}} end)
-
-    # No ProviderMock expectations => verify_on_exit! fails if search/download is called.
-    {:ok, pid} = start_supervised({Sweeper, name: :sweeper_test})
-    assert :ok = Sweeper.poll(pid)
-  end
-
   test "poll/1 is a no-op when no languages are configured" do
     Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, languages: "")
     _m = movie_fixture(status: :available, file_path: "/lib/M/M.mkv", imdb_id: "tt1", tmdb_id: 1)
@@ -104,14 +102,14 @@ defmodule Cinder.Subtitles.SweeperTest do
     assert :ok = Sweeper.poll(pid)
   end
 
-  test "poll/1 fetches a missing sidecar for an imported episode" do
+  test "episode sweep refreshes the TV library after a committed subtitle" do
+    parent = self()
     series = series_fixture(tmdb_id: 42)
     season = season_fixture(series, %{season_number: 2})
     _ep = episode_fixture(season, %{episode_number: 5, file_path: "/lib/S/S02E05.mkv"})
 
     Cinder.Library.FilesystemMock
     |> expect(:lstat, fn "/lib/S/S02E05.en.srt" -> {:error, :enoent} end)
-    |> expect(:write, fn "/lib/S/S02E05.en.srt", "SRT" -> :ok end)
 
     Cinder.Subtitles.ProviderMock
     |> expect(:search, fn %{tmdb_id: 42, season: 2, episode: 5, languages: ["en"]} ->
@@ -128,7 +126,13 @@ defmodule Cinder.Subtitles.SweeperTest do
     end)
     |> expect(:download, fn 9 -> {:ok, "SRT"} end)
 
+    expect(Cinder.Library.MediaServerMock, :scan, fn kind ->
+      send(parent, {:subtitle_scan, kind})
+      :ok
+    end)
+
     {:ok, pid} = start_supervised({Sweeper, name: :sweeper_test})
     assert :ok = Sweeper.poll(pid)
+    assert_receive {:subtitle_scan, :tv}
   end
 end

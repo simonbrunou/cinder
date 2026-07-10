@@ -15,3 +15,4 @@ Mox.defmock(Cinder.Library.FilesystemMock, for: Cinder.Library.Filesystem)
 # suite never shells out); the media_info tests enable it per-test via Application.put_env.
 Mox.defmock(Cinder.Library.MediaInfoMock, for: Cinder.Library.MediaInfo)
 Mox.defmock(Cinder.Subtitles.ProviderMock, for: Cinder.Subtitles.Provider)
+Mox.defmock(Cinder.Subtitles.TranslatorMock, for: Cinder.Subtitles.Translator)
