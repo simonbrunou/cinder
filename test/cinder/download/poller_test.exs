@@ -25,6 +25,16 @@ defmodule Cinder.Download.PollerTest do
     movie_fixture(%{tmdb_id: tmdb_id, title: "M", status: :downloading, download_id: download_id})
   end
 
+  defp upgrading_movie(tmdb_id, download_id) do
+    movie_fixture(%{
+      tmdb_id: tmdb_id,
+      title: "M",
+      status: :upgrading,
+      download_id: download_id,
+      file_path: "/lib/M.mkv"
+    })
+  end
+
   test "a poll drives a completed download through :downloaded to :available" do
     movie = downloading_movie(1, "hash-1")
     Catalog.subscribe()
@@ -133,6 +143,166 @@ defmodule Cinder.Download.PollerTest do
 
     assert :ok = Poller.poll()
     assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
+  end
+
+  test "publishes a fresh downloading snapshot once" do
+    movie = downloading_movie(5, "hash-5")
+    movie_id = movie.id
+    Catalog.subscribe()
+    start_supervised!({Poller, interval: 60_000})
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-5" ->
+      {:ok, %{state: :downloading, progress: 0.42, speed: 1_500_000, eta: 90}}
+    end)
+
+    assert :ok = Poller.poll()
+
+    assert %Movie{
+             status: :downloading,
+             download_progress: 0.42,
+             download_speed: 1_500_000,
+             download_eta: 90
+           } = Repo.get!(Movie, movie.id)
+
+    assert_receive {:movie_updated,
+                    %Movie{
+                      id: ^movie_id,
+                      download_progress: 0.42,
+                      download_speed: 1_500_000,
+                      download_eta: 90
+                    }}
+
+    assert :ok = Poller.poll()
+    refute_receive {:movie_updated, _}
+  end
+
+  test "publishes a fresh upgrading snapshot" do
+    movie = upgrading_movie(6, "hash-6")
+    start_supervised!({Poller, interval: 60_000})
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-6" ->
+      {:ok, %{state: :downloading, progress: 0.42, speed: 1_500_000, eta: 90}}
+    end)
+
+    assert :ok = Poller.poll()
+
+    assert %Movie{
+             status: :upgrading,
+             download_progress: 0.42,
+             download_speed: 1_500_000,
+             download_eta: 90
+           } = Repo.get!(Movie, movie.id)
+  end
+
+  test "a transient client error clears a downloading snapshot" do
+    movie = downloading_movie(7, "hash-7")
+    movie_id = movie.id
+
+    assert {:ok, _movie} =
+             Catalog.update_movie_download_metrics(movie, %{
+               download_progress: 0.42,
+               download_speed: 1_500_000,
+               download_eta: 90
+             })
+
+    Catalog.subscribe()
+    start_supervised!({Poller, interval: 60_000})
+    stub(Cinder.Download.ClientMock, :status, fn "hash-7" -> {:error, :timeout} end)
+
+    assert :ok = Poller.poll()
+
+    assert %Movie{
+             status: :downloading,
+             download_progress: nil,
+             download_speed: nil,
+             download_eta: nil
+           } = Repo.get!(Movie, movie.id)
+
+    assert_receive {:movie_updated,
+                    %Movie{
+                      id: ^movie_id,
+                      download_progress: nil,
+                      download_speed: nil,
+                      download_eta: nil
+                    }}
+  end
+
+  test "a retryable download error clears a downloading snapshot" do
+    movie = downloading_movie(8, "hash-8")
+
+    assert {:ok, _movie} =
+             Catalog.update_movie_download_metrics(movie, %{
+               download_progress: 0.42,
+               download_speed: 1_500_000,
+               download_eta: 90
+             })
+
+    start_supervised!({Poller, interval: 60_000})
+    stub(Cinder.Download.ClientMock, :status, fn "hash-8" -> {:ok, %{state: :error}} end)
+
+    assert :ok = Poller.poll()
+
+    assert %Movie{
+             status: :downloading,
+             import_attempts: 1,
+             download_progress: nil,
+             download_speed: nil,
+             download_eta: nil
+           } = Repo.get!(Movie, movie.id)
+  end
+
+  test "a retryable upgrade error clears an upgrading snapshot" do
+    movie = upgrading_movie(9, "hash-9")
+
+    assert {:ok, _movie} =
+             Catalog.update_movie_download_metrics(movie, %{
+               download_progress: 0.42,
+               download_speed: 1_500_000,
+               download_eta: 90
+             })
+
+    start_supervised!({Poller, interval: 60_000})
+    stub(Cinder.Download.ClientMock, :status, fn "hash-9" -> {:ok, %{state: :error}} end)
+
+    assert :ok = Poller.poll()
+
+    assert %Movie{
+             status: :upgrading,
+             import_attempts: 1,
+             download_progress: nil,
+             download_speed: nil,
+             download_eta: nil
+           } = Repo.get!(Movie, movie.id)
+  end
+
+  test "a completed download clears its snapshot before import" do
+    movie = downloading_movie(10, "hash-10")
+
+    assert {:ok, _movie} =
+             Catalog.update_movie_download_metrics(movie, %{
+               download_progress: 0.42,
+               download_speed: 1_500_000,
+               download_eta: 90
+             })
+
+    Catalog.subscribe()
+    start_supervised!({Poller, interval: 60_000})
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-10" ->
+      {:ok, %{state: :completed, content_path: "/downloads/M.mkv"}}
+    end)
+
+    stub_import_ok()
+
+    assert :ok = Poller.poll()
+
+    assert_receive {:movie_updated,
+                    %Movie{
+                      status: :downloaded,
+                      download_progress: nil,
+                      download_speed: nil,
+                      download_eta: nil
+                    }}
   end
 
   test "drives a movie through the full state machine: requested -> downloaded" do
