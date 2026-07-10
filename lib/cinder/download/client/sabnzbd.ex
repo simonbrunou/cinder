@@ -56,9 +56,15 @@ defmodule Cinder.Download.Client.Sabnzbd do
   # than polling a stalled job forever (e.g. SABnzbd's "Pause on Duplicates" mode,
   # which parks the job paused in the queue).
   defp classify_queue(%{"status" => status} = slot) when status in ["Paused", "Failed"],
-    do: %{state: :error, progress: pct(slot["percentage"]), content_path: nil}
+    do: %{
+      state: :error,
+      progress: pct(slot["percentage"]),
+      speed: nil,
+      eta: eta(slot["timeleft"]),
+      content_path: nil
+    }
 
-  defp classify_queue(slot), do: downloading(slot["percentage"])
+  defp classify_queue(slot), do: downloading(slot["percentage"], slot["timeleft"])
 
   defp queue_slot(nzo_id) do
     case get(mode: "queue", nzo_ids: nzo_id) do
@@ -94,18 +100,38 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   defp find_slot(_body, _key, _nzo_id), do: nil
 
-  defp downloading(percentage),
-    do: %{state: :downloading, progress: pct(percentage), content_path: nil}
+  defp downloading(percentage, timeleft),
+    do: %{
+      state: :downloading,
+      progress: pct(percentage),
+      speed: nil,
+      eta: eta(timeleft),
+      content_path: nil
+    }
 
   defp classify_history(%{"status" => "Completed"} = slot),
-    do: %{state: :completed, progress: 1.0, content_path: slot["storage"]}
+    do: %{state: :completed, progress: 1.0, speed: nil, eta: nil, content_path: slot["storage"]}
 
   defp classify_history(%{"status" => "Failed"}),
-    do: %{state: :error, progress: 1.0, content_path: nil}
+    do: %{state: :error, progress: 1.0, speed: nil, eta: nil, content_path: nil}
 
   # Extracting / Repairing / Verifying / Moving / … — still in flight.
   defp classify_history(_slot),
-    do: %{state: :downloading, progress: 1.0, content_path: nil}
+    do: %{state: :downloading, progress: 1.0, speed: nil, eta: nil, content_path: nil}
+
+  defp eta(timeleft) when is_binary(timeleft) do
+    with [hours, minutes, seconds] <- String.split(String.trim(timeleft), ":"),
+         {hours, ""} <- Integer.parse(hours),
+         {minutes, ""} <- Integer.parse(minutes),
+         {seconds, ""} <- Integer.parse(seconds),
+         true <- hours >= 0 and minutes in 0..59 and seconds in 0..59 do
+      hours * 3600 + minutes * 60 + seconds
+    else
+      _ -> nil
+    end
+  end
+
+  defp eta(_timeleft), do: nil
 
   # SABnzbd reports queue percentage as a string ("42"); coerce before dividing.
   defp pct(p) when is_binary(p) do

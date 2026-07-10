@@ -21,10 +21,34 @@ defmodule CinderWeb.StatusBadgeTest do
           :cancelled
         ] do
       html = badge(%{kind: :movie, status: status})
-      assert html =~ "badge"
       # icon+text, never colour alone: a heroicon span is present
       assert html =~ "hero-"
     end
+  end
+
+  test "operation badges render progress while request badges stay compact" do
+    html =
+      badge(%{
+        kind: :movie,
+        status: :downloading,
+        progress: 0.42,
+        speed: 1_500_000,
+        eta: 90
+      })
+
+    assert html =~ "<progress"
+    assert html =~ ~r/<progress[^>]*aria-label="Downloading"/
+    assert html =~ "42%"
+    assert html =~ "1.5 MB/s"
+    assert html =~ "1m 30s remaining"
+
+    assert badge(%{kind: :movie, status: :searching}) =~ "aria-label=\"Searching\""
+    assert badge(%{kind: :movie, status: :downloaded}) =~ "Importing"
+    assert badge(%{kind: :grab, status: :downloaded}) =~ "Importing"
+
+    request = badge(%{kind: :request, status: :pending})
+    assert request =~ "badge"
+    refute request =~ "<progress"
   end
 
   test "covers request, episode, grab and health kinds with icon+text" do
@@ -34,7 +58,7 @@ defmodule CinderWeb.StatusBadgeTest do
       {%{kind: :episode, status: :wanted}, "Wanted"},
       {%{kind: :episode, status: :upcoming}, "Upcoming"},
       {%{kind: :grab, status: :downloading}, "Downloading"},
-      {%{kind: :grab, status: :downloaded}, "Downloaded"},
+      {%{kind: :grab, status: :downloaded}, "Importing"},
       {%{kind: :health, status: :ok}, "OK"}
     ]
 
@@ -61,10 +85,10 @@ defmodule CinderWeb.StatusBadgeTest do
     assert f.(%CaseClauseError{term: nil}) == "Check failed"
   end
 
-  test "the :upgrading badge uses badge-info and the arrow-up-circle icon" do
+  test "the :upgrading badge uses progress-info and the arrow-up-circle icon" do
     html = badge(%{kind: :movie, status: :upgrading})
     assert html =~ "Upgrading"
-    assert html =~ "badge-info"
+    assert html =~ "progress-info"
     assert html =~ "hero-arrow-up-circle"
   end
 

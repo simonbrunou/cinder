@@ -17,6 +17,7 @@ defmodule Cinder.Catalog do
   alias Cinder.Repo
 
   @topic "movies"
+  @download_metric_fields [:download_progress, :download_speed, :download_eta]
 
   @doc """
   Searches TMDB for `query`. A blank/whitespace query short-circuits to `{:ok, []}`
@@ -251,6 +252,50 @@ defmodule Cinder.Catalog do
       {0, _} -> {:error, :stale_status}
       %Ecto.Changeset{} = invalid -> {:error, invalid}
     end
+  end
+
+  @doc "Updates a downloading movie's progress snapshot without broadcasting equal values."
+  def update_movie_download_metrics(%Movie{} = movie, attrs) do
+    changes = metric_changes(movie, attrs)
+
+    if changes == %{} do
+      {:ok, movie}
+    else
+      transition(movie, Map.put(changes, :status, movie.status), expect: movie.status)
+    end
+  end
+
+  @doc "Updates an in-flight grab's progress snapshot and broadcasts its owning series."
+  def update_grab_download_metrics(%Grab{} = grab, attrs) do
+    changes = metric_changes(grab, attrs)
+
+    if changes == %{} do
+      if Repo.exists?(from(g in Grab, where: g.id == ^grab.id and is_nil(g.content_path))) do
+        {:ok, grab}
+      else
+        {:error, :stale_grab}
+      end
+    else
+      case Repo.update_all(
+             from(g in Grab,
+               where: g.id == ^grab.id and is_nil(g.content_path),
+               select: g
+             ),
+             set: Map.to_list(changes) ++ [updated_at: now()]
+           ) do
+        {1, [updated]} ->
+          broadcast_series(series_id_for_grab(grab.id))
+          {:ok, updated}
+
+        {0, _} ->
+          {:error, :stale_grab}
+      end
+    end
+  end
+
+  defp metric_changes(record, attrs) do
+    attrs = Map.take(attrs, @download_metric_fields)
+    if Map.take(record, @download_metric_fields) == attrs, do: %{}, else: attrs
   end
 
   # Parked terminal states a user can re-queue. An in-flight movie must never be
@@ -1172,7 +1217,14 @@ defmodule Cinder.Catalog do
   grab-lifetime retry budget the import pass then draws from.
   """
   def mark_grab_downloaded(%Grab{} = grab, content_path) do
-    changeset = Grab.changeset(grab, %{content_path: content_path, download_attempts: 0})
+    changeset =
+      Grab.changeset(grab, %{
+        content_path: content_path,
+        download_attempts: 0,
+        download_progress: nil,
+        download_speed: nil,
+        download_eta: nil
+      })
 
     with {:ok, grab} <- Repo.update(changeset) do
       broadcast_series(series_id_for_grab(grab.id))
@@ -1188,7 +1240,7 @@ defmodule Cinder.Catalog do
   def increment_grab_attempts(%Grab{} = grab) do
     Repo.update_all(from(g in Grab, where: g.id == ^grab.id),
       inc: [download_attempts: 1],
-      set: [updated_at: now()]
+      set: [download_progress: nil, download_speed: nil, download_eta: nil, updated_at: now()]
     )
 
     broadcast_series(series_id_for_grab(grab.id))

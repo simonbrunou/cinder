@@ -170,6 +170,20 @@ defmodule CinderWeb.MovieDetailLiveTest do
     assert html =~ "Downloading"
   end
 
+  test "renders download progress", %{conn: conn} do
+    movie = movie_fixture(%{status: :downloading})
+
+    {:ok, _} =
+      Catalog.update_movie_download_metrics(movie, %{
+        download_progress: 0.42,
+        download_speed: 1_500_000,
+        download_eta: 90
+      })
+
+    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+    assert render(lv) =~ "42%"
+  end
+
   test "a movie whose TMDB runtime is 0 hides the runtime chip", %{conn: conn} do
     movie = movie_fixture(%{title: "Obscure"})
 

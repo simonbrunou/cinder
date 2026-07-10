@@ -326,7 +326,13 @@ defmodule CinderWeb.MovieDetailLive do
             {@movie.title}
             <span :if={@movie.year} class="font-normal text-base-content/70">({@movie.year})</span>
             <:actions>
-              <.status_badge kind={:movie} status={@movie.status} />
+              <.status_badge
+                kind={:movie}
+                status={@movie.status}
+                progress={@movie.download_progress}
+                speed={@movie.download_speed}
+                eta={@movie.download_eta}
+              />
             </:actions>
           </.header>
 

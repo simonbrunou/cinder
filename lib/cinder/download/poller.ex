@@ -135,8 +135,22 @@ defmodule Cinder.Download.Poller do
       {:error, :not_found} ->
         retry_or_fail(movie, :torrent_not_found, :import_attempts, :import_failed)
 
-      # Still downloading, stalled, in transit, or a client error: leave it and
-      # retry next tick (a slow download must not count toward the bound).
+      {:ok, %{state: :downloading} = status} ->
+        Catalog.update_movie_download_metrics(movie, %{
+          download_progress: Map.get(status, :progress),
+          download_speed: Map.get(status, :speed),
+          download_eta: Map.get(status, :eta)
+        })
+
+      {:error, _reason} ->
+        Catalog.update_movie_download_metrics(movie, %{
+          download_progress: nil,
+          download_speed: nil,
+          download_eta: nil
+        })
+
+      # Still stalled or in transit: leave it and retry next tick (a slow download
+      # must not count toward the bound).
       _ ->
         :ok
     end
@@ -236,7 +250,15 @@ defmodule Cinder.Download.Poller do
       )
 
       # Dynamic key MUST come before keyword pairs in a map literal.
-      Catalog.transition(movie, %{attempts_field => attempts, status: movie.status},
+      Catalog.transition(
+        movie,
+        %{
+          attempts_field => attempts,
+          status: movie.status,
+          download_progress: nil,
+          download_speed: nil,
+          download_eta: nil
+        },
         expect: movie.status
       )
     end
@@ -288,7 +310,21 @@ defmodule Cinder.Download.Poller do
       {:error, :not_found} ->
         retry_or_revert(movie, :torrent_not_found)
 
-      # Still downloading / stalled / transient client error: wait, no write, live file untouched.
+      {:ok, %{state: :downloading} = status} ->
+        Catalog.update_movie_download_metrics(movie, %{
+          download_progress: Map.get(status, :progress),
+          download_speed: Map.get(status, :speed),
+          download_eta: Map.get(status, :eta)
+        })
+
+      {:error, _reason} ->
+        Catalog.update_movie_download_metrics(movie, %{
+          download_progress: nil,
+          download_speed: nil,
+          download_eta: nil
+        })
+
+      # Still stalled or in transit: wait, no write, live file untouched.
       _ ->
         :ok
     end
@@ -373,7 +409,15 @@ defmodule Cinder.Download.Poller do
         "movie #{movie.id} upgrade #{attempts}/#{@max_attempts} failed (#{inspect(reason)}); will retry"
       )
 
-      Catalog.transition(movie, %{import_attempts: attempts, status: :upgrading},
+      Catalog.transition(
+        movie,
+        %{
+          import_attempts: attempts,
+          status: :upgrading,
+          download_progress: nil,
+          download_speed: nil,
+          download_eta: nil
+        },
         expect: movie.status
       )
     end

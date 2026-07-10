@@ -60,6 +60,86 @@ defmodule Cinder.Download.TvPollerTest do
     assert is_nil(imported.grab_id)
   end
 
+  test "publishes a downloading grab snapshot without rewriting an equal poll" do
+    {_series, season} = series_tree()
+    e1 = episode(season, 1)
+    {:ok, grab} = Catalog.create_grab("hash-progress", :torrent, [e1.id])
+    start_supervised!({TvPoller, interval: 60_000})
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-progress" ->
+      {:ok, %{state: :downloading, progress: 0.42, speed: nil, eta: 90}}
+    end)
+
+    assert :ok = TvPoller.poll()
+
+    assert %Grab{
+             download_progress: 0.42,
+             download_speed: nil,
+             download_eta: 90,
+             updated_at: updated_at
+           } = Repo.get!(Grab, grab.id)
+
+    # Timestamps are second-precision, so make an unintended write observable.
+    Process.sleep(1_100)
+    assert :ok = TvPoller.poll()
+    assert Repo.get!(Grab, grab.id).updated_at == updated_at
+  end
+
+  test "clears a downloading grab snapshot after a transient client error" do
+    {_series, season} = series_tree()
+    e1 = episode(season, 1)
+    {:ok, grab} = Catalog.create_grab("hash-timeout", :torrent, [e1.id])
+
+    assert {:ok, _grab} =
+             Catalog.update_grab_download_metrics(grab, %{
+               download_progress: 0.42,
+               download_speed: 1_500_000,
+               download_eta: 90
+             })
+
+    start_supervised!({TvPoller, interval: 60_000})
+    stub(Cinder.Download.ClientMock, :status, fn "hash-timeout" -> {:error, :timeout} end)
+
+    assert :ok = TvPoller.poll()
+
+    assert %Grab{
+             download_attempts: 0,
+             download_progress: nil,
+             download_speed: nil,
+             download_eta: nil
+           } = Repo.get!(Grab, grab.id)
+  end
+
+  test "marking a grab downloaded clears its snapshot and rejects a stale observation" do
+    {_series, season} = series_tree()
+    e1 = episode(season, 1)
+    {:ok, grab} = Catalog.create_grab("hash-complete", :torrent, [e1.id])
+
+    assert {:ok, progressed_grab} =
+             Catalog.update_grab_download_metrics(grab, %{
+               download_progress: 0.42,
+               download_speed: 1_500_000,
+               download_eta: 90
+             })
+
+    assert {:ok, _grab} =
+             Catalog.mark_grab_downloaded(progressed_grab, "/dl/Show.S01E01.1080p.mkv")
+
+    assert %Grab{
+             content_path: "/dl/Show.S01E01.1080p.mkv",
+             download_progress: nil,
+             download_speed: nil,
+             download_eta: nil
+           } = Repo.get!(Grab, grab.id)
+
+    assert {:error, :stale_grab} =
+             Catalog.update_grab_download_metrics(progressed_grab, %{
+               download_progress: 0.5,
+               download_speed: 2_000_000,
+               download_eta: 60
+             })
+  end
+
   test "imports a downloaded season pack, mapping each file to its episode, then finalizes" do
     {_series, season} = series_tree()
     e1 = episode(season, 1)

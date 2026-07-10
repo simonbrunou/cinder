@@ -35,6 +35,35 @@ defmodule CinderWeb.MyRequestsLiveTest do
     assert render(lv) =~ "Pending"
   end
 
+  test "renders request and matching movie download progress", %{conn: conn} do
+    user = Cinder.AccountsFixtures.user_fixture()
+    tmdb_id = System.unique_integer([:positive])
+
+    {:ok, _} =
+      Requests.create_request(user, %{
+        target_type: "movie",
+        target_id: tmdb_id,
+        title: "Progress",
+        year: 2001
+      })
+
+    {:ok, movie} = Cinder.Catalog.add_movie(%{tmdb_id: tmdb_id, title: "Progress", year: 2001})
+    {:ok, movie} = Cinder.Catalog.transition(movie, %{status: :downloading})
+
+    {:ok, _} =
+      Cinder.Catalog.update_movie_download_metrics(movie, %{
+        download_progress: 0.42,
+        download_speed: 1_500_000,
+        download_eta: 90
+      })
+
+    conn = log_in_user(conn, user)
+    {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+    assert render(lv) =~ "Pending"
+    assert render(lv) =~ "42%"
+  end
+
   test "a season request shows the show title and season number", %{conn: conn} do
     user = Cinder.AccountsFixtures.user_fixture()
 

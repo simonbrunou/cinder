@@ -77,6 +77,20 @@ defmodule Cinder.Download.TvPoller do
       {:error, :not_found} ->
         retry_or_park(grab, :torrent_not_found)
 
+      {:ok, %{state: :downloading} = status} ->
+        Catalog.update_grab_download_metrics(grab, %{
+          download_progress: Map.get(status, :progress),
+          download_speed: Map.get(status, :speed),
+          download_eta: Map.get(status, :eta)
+        })
+
+      {:error, _reason} ->
+        Catalog.update_grab_download_metrics(grab, %{
+          download_progress: nil,
+          download_speed: nil,
+          download_eta: nil
+        })
+
       _ ->
         :ok
     end

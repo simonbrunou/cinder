@@ -43,6 +43,20 @@ defmodule CinderWeb.LibraryLiveTest do
     assert has_element?(lv, "#movie-#{movie.id} button", "Cancel")
   end
 
+  test "renders movie download progress", %{conn: conn} do
+    movie = movie_fixture(%{status: :downloading})
+
+    {:ok, _} =
+      Catalog.update_movie_download_metrics(movie, %{
+        download_progress: 0.42,
+        download_speed: 1_500_000,
+        download_eta: 90
+      })
+
+    {:ok, lv, _html} = live(conn, ~p"/library")
+    assert lv |> element("#movie-#{movie.id}") |> render() =~ "42%"
+  end
+
   test "cancels an active movie through the confirm step", %{conn: conn} do
     movie = movie_fixture(%{title: "Tenet"})
     {:ok, lv, _html} = live(conn, ~p"/library")

@@ -51,3 +51,6 @@ result
 
 # graphify tool output (stale-prone, regenerated locally)
 graphify-out/
+
+# Isolated feature worktrees
+.worktrees/
