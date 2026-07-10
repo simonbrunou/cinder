@@ -1,0 +1,65 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd $CLAUDE_PROJECT_DIR && elixir '/Users/simonbrunou/Projects/cinder/.claude/worktrees/fix-github-issues/.codex/hooks/wrapper.exs' pre_tool_use"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "HIT=$(python3 -c 'import json,sys;d=json.load(sys.stdin);c=str(d.get(\"tool_input\",d).get(\"command\",\"\"));c=c.split(\" #\")[0];c=\"\".join(\" \" if ch in \"|&;()<>`\" else ch for ch in c);t={\"grep\",\"egrep\",\"fgrep\",\"rg\",\"ripgrep\",\"ag\",\"ack\",\"find\",\"fd\",\"fdfind\"};sys.stdout.write(\"1\" if any(w in t or w.rsplit(\"/\",1)[-1] in t for w in c.split()) else \"\")' 2>/dev/null || true); if [ \"$HIT\" = 1 ] && [ -f $CLAUDE_PROJECT_DIR/graphify-out/graph.json ]; then echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"MANDATORY: graphify-out/graph.json exists. You MUST run `graphify query \\\"<question>\\\"` before grepping raw files. Only grep after graphify has oriented you, or to modify/debug specific lines.\"}}'; fi || true"
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "HIT=$(python3 -c \"import json,sys;d=json.load(sys.stdin);t=d.get('tool_input',d);s=(str(t.get('file_path') or '')+' '+str(t.get('pattern') or '')+' '+str(t.get('path') or '')).lower().replace(chr(92),'/');exts=('.py','.js','.ts','.tsx','.jsx','.go','.rs','.java','.rb','.c','.h','.cpp','.hpp','.cc','.cs','.kt','.swift','.php','.scala','.lua','.sh','.ex','.exs','.heex');sys.stdout.write('1' if 'graphify-out/' not in s and any(e in s for e in exts) else '')\" 2>/dev/null || true); if [ \"$HIT\" = 1 ] && [ -f $CLAUDE_PROJECT_DIR/graphify-out/graph.json ]; then echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"additionalContext\":\"MANDATORY: graphify-out/graph.json exists. You MUST run graphify before reading source files. Use: `graphify query \\\"<question>\\\"` (scoped subgraph), `graphify explain \\\"<concept>\\\"`, or `graphify path \\\"<A>\\\" \\\"<B>\\\"`. Only read raw files after graphify has oriented you, or to modify/debug specific lines. This rule applies to subagents too — include it in every subagent prompt involving code exploration.\"}}'; fi || true"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd $CLAUDE_PROJECT_DIR && elixir '/Users/simonbrunou/Projects/cinder/.claude/worktrees/fix-github-issues/.codex/hooks/wrapper.exs' post_tool_use"
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd $CLAUDE_PROJECT_DIR && elixir '/Users/simonbrunou/Projects/cinder/.claude/worktrees/fix-github-issues/.codex/hooks/wrapper.exs' subagent_stop"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd $CLAUDE_PROJECT_DIR && elixir '/Users/simonbrunou/Projects/cinder/.claude/worktrees/fix-github-issues/.codex/hooks/wrapper.exs' stop"
+          }
+        ]
+      }
+    ]
+  }
+}

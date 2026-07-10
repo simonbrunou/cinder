@@ -186,8 +186,14 @@ defmodule Cinder.Download.Poller do
           {:ok, available} ->
             Notifier.notify({:movie_available, available})
             # After the DB commit (the file is recorded as imported): a best-effort, gated
-            # remove of the source download. Failure is logged, never strands or re-imports.
-            Download.remove_after_import(movie.download_protocol, movie.download_id)
+            # remove of the source download. `movie.file_path` is the pre-import content_path
+            # (import_movie read it as the source; the transition above moved file_path to dest).
+            # Failure is logged, never strands or re-imports.
+            Download.remove_after_import(
+              movie.download_protocol,
+              movie.download_id,
+              movie.file_path
+            )
 
           # Cancelled/deleted while the import unit was hardlinking: no row will ever
           # point at dest, so unlink it or the media server scans an orphaned file.
@@ -317,7 +323,7 @@ defmodule Cinder.Download.Poller do
           expect: movie.status
         )
         |> case do
-          {:ok, available} -> finalize_upgrade(movie, available, dest)
+          {:ok, available} -> finalize_upgrade(movie, available, dest, content_path)
           {:error, :stale_status} -> compensate_aborted_upgrade(movie, dest)
           {:error, _} -> :ok
         end
@@ -355,10 +361,11 @@ defmodule Cinder.Download.Poller do
 
   # Post-commit side effects, all best-effort (none can unwind the committed upgrade): remove the
   # superseded file only when the dest path actually changed (a same-path replace already overwrote
-  # it), drop the source download, and notify.
-  defp finalize_upgrade(movie, available, dest) do
+  # it), drop the source download, and notify. `content_path` is the download source (movie.file_path
+  # here is the OLD library file being superseded, NOT the download — so it can't stand in for it).
+  defp finalize_upgrade(movie, available, dest, content_path) do
     if dest != movie.file_path, do: best_effort_remove_old(movie.file_path)
-    Download.remove_after_import(movie.download_protocol, movie.download_id)
+    Download.remove_after_import(movie.download_protocol, movie.download_id, content_path)
     Notifier.notify({:movie_available, available})
   end
 

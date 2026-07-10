@@ -105,9 +105,13 @@ defmodule Cinder.Download.TvPoller do
           {:ok, _grab} ->
             notify_available(grab, imported)
             # After the finalize commit: best-effort, gated remove of the source download.
-            # Read id/protocol off the in-hand grab — finish_grab deleted the row but returns
-            # the in-memory struct. A partial-match pack still removes (don't strand clutter).
-            Download.remove_after_import(grab.download_protocol, grab.download_id)
+            # Read id/protocol/content_path off the in-hand grab — finish_grab deleted the row but
+            # returns the in-memory struct. A partial-match pack still removes (don't strand clutter).
+            Download.remove_after_import(
+              grab.download_protocol,
+              grab.download_id,
+              grab.content_path
+            )
 
           # A failed finalize leaves content_path set, so the grab re-imports next tick —
           # without a bump that's a silent 5-second loop if the failure is deterministic.

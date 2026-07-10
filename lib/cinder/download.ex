@@ -94,22 +94,83 @@ defmodule Cinder.Download do
 
   @doc """
   After a successful import, removes the source download when the `move_on_import`
-  setting is on. Usenet-only (an allowlist, so a nil/unknown protocol no-ops) and
-  only when a download id is tracked — torrents are never auto-removed so seeding
-  survives. Best-effort: a remove failure is logged, never propagated. Always `:ok`.
-  """
-  def remove_after_import(protocol, download_id) do
-    move_on_import? = Application.get_env(:cinder, :move_on_import, false)
+  setting is on. Usenet-only (an allowlist, so a nil/unknown protocol no-ops) —
+  torrents are never auto-removed so seeding survives. Best-effort: every failure is
+  logged, never propagated. Always `:ok`.
 
-    if move_on_import? and protocol == :usenet and download_id not in [nil, ""] do
-      case client_for(protocol) do
-        {:ok, client} -> best_effort_remove(client, download_id)
-        :error -> :ok
-      end
-    else
-      :ok
+  Two independent removals, because the client can't be trusted to still know the job:
+  it asks the client to drop the job (cleans its history/nzb, when a `download_id` is
+  tracked), AND deletes `content_path` (the folder it imported from) directly. The
+  client-side delete goes through the client's *history*, which a short history-retention
+  setting or a bulk import can evict before we import — then the client remove silently
+  finds nothing and the download files accumulate forever (issue #81). The direct delete
+  of `content_path` is authoritative regardless of client history state.
+  """
+  def remove_after_import(protocol, download_id, content_path) do
+    if Application.get_env(:cinder, :move_on_import, false) and protocol == :usenet do
+      remove_client_job(protocol, download_id)
+      delete_source(content_path)
+    end
+
+    :ok
+  end
+
+  defp remove_client_job(_protocol, id) when id in [nil, ""], do: :ok
+
+  defp remove_client_job(protocol, id) do
+    case client_for(protocol) do
+      {:ok, client} -> best_effort_remove(client, id)
+      :error -> :ok
     end
   end
+
+  # Authoritative disk cleanup: rm_rf the imported-from source. `content_path` is the download tree,
+  # always distinct from the library dest (the import hardlinked/copied the file elsewhere), so this
+  # removes only the download copy — the imported library file survives. Guards a blank/relative path
+  # and any path that resolves to the filesystem root (`/`, `/..`, `//`, …) so a bad value can never
+  # rm_rf "/" or the release cwd; usenet content paths are always absolute. Best-effort — a failure is
+  # logged, never parks the item.
+  defp delete_source(path) when path in [nil, ""], do: :ok
+
+  defp delete_source(path) do
+    cond do
+      Path.type(path) != :absolute ->
+        Logger.warning(
+          "move_on_import: refusing to delete non-absolute source path #{inspect(path)}"
+        )
+
+      # Path.expand collapses `.`/`..`/`//` — reject anything that lands on the root (rm_rf "/" would
+      # wipe the whole filesystem). Safe to expand: the path is absolute, so no cwd is consulted.
+      Path.expand(path) == "/" ->
+        Logger.warning(
+          "move_on_import: refusing to delete filesystem-root source #{inspect(path)}"
+        )
+
+      true ->
+        rm_rf_source(path)
+    end
+
+    :ok
+  end
+
+  defp rm_rf_source(path) do
+    case fs().rm_rf(path) do
+      {:ok, _removed} ->
+        :ok
+
+      {:error, reason, file} ->
+        Logger.warning(
+          "move_on_import: failed to delete source #{inspect(path)} at #{inspect(file)}: #{inspect(reason)}"
+        )
+    end
+  catch
+    kind, value ->
+      Logger.warning(
+        "move_on_import: deleting source #{inspect(path)} raised: #{inspect({kind, value})}"
+      )
+  end
+
+  defp fs, do: Application.fetch_env!(:cinder, :filesystem)
 
   @doc """
   Removes a tracked client download best-effort: logs (and swallows) an `{:error,_}`
