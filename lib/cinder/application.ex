@@ -15,9 +15,10 @@ defmodule Cinder.Application do
          repos: Application.fetch_env!(:cinder, :ecto_repos), skip: skip_migrations?()},
         {DNSCluster, query: Application.get_env(:cinder, :dns_cluster_query) || :ignore},
         {Phoenix.PubSub, name: Cinder.PubSub},
-        # Off-process, best-effort subtitle fetches dispatched from the import path — supervised so
-        # they don't run in (and can't stall) the poller tick. Always on; inert when subtitles off.
-        {Task.Supervisor, name: Cinder.Subtitles.TaskSupervisor},
+        # Off-tick, best-effort subtitle fetches dispatched from the import path — serialized through
+        # one process so a bulk import can't burst OpenSubtitles into rate-limiting it (issue #80).
+        # Always on; inert when subtitles off.
+        Cinder.Subtitles.Fetcher,
         # Vault before the loader (it decrypts secret settings); the loader applies the
         # DB settings overlay synchronously, before the Endpoint/poller consume config.
         Cinder.Vault,

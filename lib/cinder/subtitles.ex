@@ -13,7 +13,7 @@ defmodule Cinder.Subtitles do
   require Logger
 
   alias Cinder.Catalog.{Episode, Movie, Series}
-  alias Cinder.Subtitles.Moviehash
+  alias Cinder.Subtitles.{Fetcher, Moviehash}
 
   @doc "Subtitle-search criteria for a movie: imdb + tmdb id (the provider prefers imdb)."
   @spec movie_criteria(Movie.t()) :: map()
@@ -86,22 +86,24 @@ defmodule Cinder.Subtitles do
   end
 
   @doc """
-  Dispatches `fetch_missing/2` for a just-imported file on a supervised Task, so a slow
-  OpenSubtitles round-trip can't stall the import poller tick. Returns `:ok` immediately.
-  `criteria_fun` is a thunk so criteria-building (and any failure) stays inside the isolated task.
+  Dispatches `fetch_missing/2` for a just-imported file, off the import poller tick so a slow
+  OpenSubtitles round-trip can't stall it. Returns `:ok` immediately. The fetch is enqueued on the
+  single serializing `Cinder.Subtitles.Fetcher` — one request in flight at a time — so a bulk import
+  (a whole series added at once) can't burst OpenSubtitles into rate-limiting it (issue #80).
+  `criteria_fun` is a thunk so criteria-building (and any failure) stays inside the isolated fetch.
   """
   @spec fetch_after_import((-> map()), String.t()) :: :ok
   def fetch_after_import(criteria_fun, dest_path) when is_function(criteria_fun, 0) do
-    Task.Supervisor.start_child(Cinder.Subtitles.TaskSupervisor, fn ->
-      safe_fetch(criteria_fun, dest_path)
-    end)
-
-    :ok
+    Fetcher.enqueue(criteria_fun, dest_path)
   end
 
-  # criteria_fun runs INSIDE the task (and this rescue/catch) so a preload/criteria surprise or a
-  # provider blow-up crashes only the isolated task, never the import that dispatched it.
-  defp safe_fetch(criteria_fun, dest_path) do
+  @doc """
+  Runs one import's subtitle fetch synchronously (the body the `Fetcher` executes per queued file).
+  `criteria_fun` runs INSIDE this rescue/catch so a preload/criteria surprise or a provider blow-up
+  crashes nothing — it logs and the caller (the Fetcher) moves on to the next queued fetch.
+  """
+  @spec fetch_now((-> map()), String.t()) :: :ok | :quota_exceeded
+  def fetch_now(criteria_fun, dest_path) when is_function(criteria_fun, 0) do
     fetch_missing(criteria_fun.(), dest_path)
   rescue
     e -> Logger.warning("subtitle fetch crashed for #{dest_path}: #{inspect(e)}")
