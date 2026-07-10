@@ -481,9 +481,9 @@ defmodule CinderWeb.SeriesDetailLive do
         message={gettext("TMDB returned no season data for this series.")}
       />
 
-      <section :for={season <- @series.seasons} class="mb-6">
-        <div class="mb-2 flex flex-wrap items-center justify-between gap-2 border-b border-base-300 pb-2">
-          <h2 class="text-lg font-semibold">
+      <details :for={season <- @series.seasons} class="mb-6">
+        <summary class="cursor-pointer border-b border-base-300 pb-2">
+          <span class="text-lg font-semibold">
             {season_label(season.season_number)}
             <span class="ml-2 text-sm font-normal text-base-content/70">
               {gettext("%{n}/%{m} monitored",
@@ -491,7 +491,9 @@ defmodule CinderWeb.SeriesDetailLive do
                 m: length(season.episodes)
               )}
             </span>
-          </h2>
+          </span>
+        </summary>
+        <div class="mb-2 flex flex-wrap justify-end pt-2">
           <div class="flex flex-wrap items-center gap-2">
             <.button
               :if={season.episodes != []}
@@ -698,7 +700,7 @@ defmodule CinderWeb.SeriesDetailLive do
             </.confirm_action>
           </li>
         </ul>
-      </section>
+      </details>
     </Layouts.app>
     """
   end
