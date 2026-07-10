@@ -182,12 +182,16 @@ shipped are imported alongside the video only for folder/pack downloads — a ba
 download has no sibling files to carry over — while embedded subtitle tracks are still detected
 for single-file imports either way.
 
-**Matching is id-based** (IMDb id for movies, TMDB id + season/episode for TV), not matched against
-your specific file's hash. That's precise enough to find the right title, but it is a real ceiling:
-an id match returns subtitles uploaded for *that title*, not verified against your release's exact
-framerate, so an atypical release (e.g. a 25fps rip paired with a 23.976fps subtitle) can drift out
-of sync over a long runtime. There's no automatic re-sync — if that happens, source a subtitle
-manually.
+**Matching is moviehash-first**: a hash match is specific to the imported file and becomes stable.
+When no hash match is available, Cinder falls back to the movie/episode IDs (IMDb for movies; TMDB
+plus season/episode for TV). ID matches are provisional and are rechecked on later sweeps, so a
+later hash-matched subtitle can replace one that may not match an atypical release's framerate.
+
+After an empty successful OpenSubtitles response, Cinder can fall back to an embedded subtitle track
+or an SRT that shipped with the release. It only creates the configured target languages. If that
+local source needs translation, Cinder calls a separately self-hosted LibreTranslate instance; set
+its URL and optional API key in **Subtitles**. LibreTranslate is never contacted when OpenSubtitles
+returns a result or an error.
 
 Candidate subtitles are filtered to exclude **hearing-impaired** and **machine-translated**
 results; among what's left, the one with the most downloads wins.

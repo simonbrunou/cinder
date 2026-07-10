@@ -84,7 +84,14 @@ defmodule Cinder.Library do
            end) do
       quality = maybe_link_sidecars(quality, placed?, folder?, source, dest)
       refresh(:movies, dest)
-      fetch_subtitles(fn -> Cinder.Subtitles.movie_criteria(movie) end, dest)
+
+      fetch_subtitles(
+        fn -> Cinder.Subtitles.movie_criteria(movie) end,
+        dest,
+        :movies,
+        quality.sidecar_subtitles
+      )
+
       {:ok, dest, quality}
     end
   end
@@ -604,13 +611,14 @@ defmodule Cinder.Library do
     Logger.warning("media-server scan failed after importing #{dest}: #{inspect(reason)}")
   end
 
-  # Dispatches the subtitle fetch on a supervised Task (fetch_after_import/2) so a slow OpenSubtitles
+  # Dispatches the subtitle fetch on a supervised Task (fetch_after_import/4) so a slow OpenSubtitles
   # round-trip can't stall the import poller tick; the fetch's own errors are handled inside the task.
   # The dispatch is still wrapped best-effort — exactly like scan/2 — so even a supervisor hiccup
   # can't turn a correctly-placed file into :import_failed. `criteria_fun` is a thunk so it's built
   # inside the isolated task, not in the caller's argument.
-  defp fetch_subtitles(criteria_fun, dest) when is_function(criteria_fun, 0) do
-    Cinder.Subtitles.fetch_after_import(criteria_fun, dest)
+  defp fetch_subtitles(criteria_fun, dest, kind, release_sidecar_languages)
+       when is_function(criteria_fun, 0) do
+    Cinder.Subtitles.fetch_after_import(criteria_fun, dest, kind, release_sidecar_languages)
   rescue
     e -> Logger.warning("subtitle fetch dispatch failed after importing #{dest}: #{inspect(e)}")
   catch
@@ -620,13 +628,18 @@ defmodule Cinder.Library do
       )
   end
 
-  # Match each imported {episode_id, dest, _quality} back to its Episode (for the series tmdb_id +
+  # Match each imported {episode_id, dest, quality} back to its Episode (for the series tmdb_id +
   # season/episode numbers) and fetch a subtitle for it; an id absent from `episodes` is skipped.
   defp fetch_episode_subtitles(imported, episodes) do
     by_id = Map.new(episodes, &{&1.id, &1})
 
-    for {ep_id, dest, _q} <- imported, ep = by_id[ep_id], not is_nil(ep) do
-      fetch_subtitles(fn -> Cinder.Subtitles.episode_criteria(ep) end, dest)
+    for {ep_id, dest, quality} <- imported, ep = by_id[ep_id], not is_nil(ep) do
+      fetch_subtitles(
+        fn -> Cinder.Subtitles.episode_criteria(ep) end,
+        dest,
+        :tv,
+        Map.get(quality, :sidecar_subtitles, [])
+      )
     end
   end
 

@@ -73,13 +73,13 @@ rest with a key derived from `SECRET_KEY_BASE`.
 | Media server | Jellyfin URL + API key **or** Plex URL + token + a per-library section (Movies, TV); media-server type |
 | Library paths | `movies_library_path` **and** `tv_library_path` — a separate import root per kind, both required |
 | Release size bands | Per-kind min/max size (decimal GB) + preferred-resolution list + preferred-source list (`remux, bluray, webrip, webdl, hdtv, dvd, cam`); for TV the band is per episode (a season pack of N is allowed N× the max) |
-| Subtitles | OpenSubtitles API key + username + password, preferred subtitle languages (csv) — fetched automatically after each import and swept every 12 h |
+| Subtitles | OpenSubtitles API key + username + password, LibreTranslate URL + API key (optional fallback translation), preferred subtitle languages (csv) — fetched automatically after each import and swept every 12 h; local/ID subtitle results stay provisional for later upgrades |
 | Notifications | Discord webhook URL — posts an embed on approvals, availability, and failures (unset ⇒ log-only) |
 | Behaviour toggles | `auto_approve_all` (trusted households: every request grabs immediately), `move_on_import` (move instead of hardlink), media-server type (Jellyfin/Plex) |
 
 Each can be **bootstrapped** from an environment variable (`TMDB_API_TOKEN`, `PROWLARR_URL`,
 `MOVIES_LIBRARY_PATH`, `TV_LIBRARY_PATH`, `MOVIES_PLEX_SECTION`, `TV_PLEX_SECTION`,
-`OPENSUBTITLES_API_KEY`, `SUBTITLE_LANGUAGES`, …) for an unattended first boot, but the in-app
+`OPENSUBTITLES_API_KEY`, `LIBRETRANSLATE_URL`, `LIBRETRANSLATE_API_KEY`, `SUBTITLE_LANGUAGES`, …) for an unattended first boot, but the in-app
 value wins once set. The size bands have no env bootstrap — set them in `/settings`.
 
 ## How it works
