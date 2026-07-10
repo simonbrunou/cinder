@@ -387,13 +387,45 @@ defmodule Cinder.Subtitles do
   end
 
   defp commit(video_path, kind, language, moviehash, origin, target, content) do
-    with :ok <- write_subtitle(target, content),
-         :ok <- Manifest.put(video_path, moviehash, language, origin) do
-      Cinder.Library.refresh(kind, video_path)
-      Logger.info("wrote #{language} subtitle for #{video_path}")
+    with {:ok, previous} <- sidecar_snapshot(target),
+         :ok <- write_subtitle(target, content) do
+      case Manifest.put(video_path, moviehash, language, origin) do
+        :ok ->
+          Cinder.Library.refresh(kind, video_path)
+          Logger.info("wrote #{language} subtitle for #{video_path}")
+
+        error ->
+          rollback_sidecar(target, previous)
+
+          Logger.warning(
+            "subtitle provenance write failed for #{video_path} (#{language}): #{inspect(error)}"
+          )
+      end
     else
-      other ->
-        Logger.warning("subtitle write failed for #{video_path} (#{language}): #{inspect(other)}")
+      error ->
+        Logger.warning("subtitle write failed for #{video_path} (#{language}): #{inspect(error)}")
+    end
+  end
+
+  defp sidecar_snapshot(target) do
+    case fs().read(target) do
+      {:ok, content} -> {:ok, {:existing, content}}
+      {:error, :enoent} -> {:ok, :missing}
+      error -> {:error, error}
+    end
+  end
+
+  defp rollback_sidecar(target, :missing) do
+    case fs().rm(target) do
+      :ok -> :ok
+      error -> Logger.warning("subtitle rollback failed for #{target}: #{inspect(error)}")
+    end
+  end
+
+  defp rollback_sidecar(target, {:existing, content}) do
+    case write_subtitle(target, content) do
+      :ok -> :ok
+      error -> Logger.warning("subtitle rollback failed for #{target}: #{inspect(error)}")
     end
   end
 
