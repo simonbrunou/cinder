@@ -449,8 +449,8 @@ defmodule Cinder.Library do
   defp only_videos(files),
     do: Enum.filter(files, fn {p, _size} -> String.downcase(Path.extname(p)) in @video_exts end)
 
-  # {episode, source_path, size} triples for files that name a specific episode in the grab (a
-  # double-episode file yields two — the same source hardlinked under both names).
+  # {episode, source_path, size} triples for files that name a specific episode in the grab. A
+  # double-episode file yields two entries; `link_all/4` groups them back to one library file.
   defp match_episodes(videos, episodes) do
     for {path, size} <- videos,
         parsed = Parser.parse(Path.basename(path)),
@@ -500,19 +500,29 @@ defmodule Cinder.Library do
   defp paths(videos), do: Enum.map(videos, fn {p, _size} -> p end)
 
   # Hardlink each match into its tmdb-tagged dest, resolving a same-episode collision by upgrade
-  # decision (replace if the new file is better, else keep). Returns {ep_id, dest, quality} per episode;
-  # a transient FS error halts and returns {:error, _} so the grab retries the whole import next tick.
+  # decision (replace if the new file is better, else keep). One source covering several episodes
+  # gets one multi-episode destination, which every covered episode references. Returns
+  # {ep_id, dest, quality} per episode; a transient FS error halts and returns {:error, _} so the
+  # grab retries the whole import next tick.
   defp link_all(to_import, root, target, folder?) do
-    Enum.reduce_while(to_import, {:ok, []}, fn {ep, source}, {:ok, acc} ->
-      case place_episode_file(ep, source, root, target, folder?) do
-        {:ok, dest, q} -> {:cont, {:ok, [{ep.id, dest, q} | acc]}}
-        {:error, _} = err -> {:halt, err}
+    to_import
+    |> Enum.group_by(fn {_ep, source} -> source end, fn {ep, _source} -> ep end)
+    |> Enum.reduce_while({:ok, []}, fn {source, episodes}, {:ok, acc} ->
+      episodes = Enum.sort_by(episodes, & &1.episode_number)
+
+      case place_episode_file(episodes, source, root, target, folder?) do
+        {:ok, dest, q} ->
+          imported = Enum.map(episodes, &{&1.id, dest, q})
+          {:cont, {:ok, Enum.reverse(imported, acc)}}
+
+        {:error, _} = err ->
+          {:halt, err}
       end
     end)
   end
 
-  defp place_episode_file(ep, source, root, target, folder?) do
-    dest = build_episode_dest(ep, source, root)
+  defp place_episode_file([ep | _] = episodes, source, root, target, folder?) do
+    dest = build_episode_dest(episodes, source, root)
 
     with {:ok, %{size: size, inode: si, major_device: sdev}} <- fs().lstat(source),
          parsed = Parser.parse(Path.basename(source)),
@@ -539,9 +549,9 @@ defmodule Cinder.Library do
     )
   end
 
-  defp build_episode_dest(%Episode{season: season} = ep, source, root) do
+  defp build_episode_dest([%Episode{season: season} | _] = episodes, source, root) do
     show = library_name(sanitize(season.series.title), season.series.year, season.series.tmdb_id)
-    code = Episode.code(season.season_number, ep.episode_number)
+    code = episode_code(episodes)
 
     Path.join([
       root,
@@ -549,6 +559,13 @@ defmodule Cinder.Library do
       "Season #{Episode.pad(season.season_number)}",
       "#{show} - #{code}#{Path.extname(source)}"
     ])
+  end
+
+  defp episode_code([%Episode{} = ep]),
+    do: Episode.code(ep.season.season_number, ep.episode_number)
+
+  defp episode_code([%Episode{} = first | rest]) do
+    "#{Episode.code(first.season.season_number, first.episode_number)}-E#{Episode.pad(List.last(rest).episode_number)}"
   end
 
   defp log_unmatched([]), do: :ok

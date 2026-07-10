@@ -617,19 +617,38 @@ defmodule Cinder.LibraryTest do
                ]
     end
 
-    test "a double-episode file hardlinks to both episodes" do
-      stub_dir([{"/dl/Show.S01E01E02.1080p.mkv", 4 * @gb}])
-      stub_link_ok()
+    test "a double-episode file links once at a range-named path shared by both episodes" do
+      source = "/dl/Show.S01E01E02.1080p.mkv"
+
+      dest =
+        "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01-E02.mkv"
+
+      stub_dir([{source, 4 * @gb}])
+      parent = self()
+
+      stub(Cinder.Library.FilesystemMock, :lstat, fn _ ->
+        {:ok, %File.Stat{size: @gb, inode: 1}}
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+
+      stub(Cinder.Library.FilesystemMock, :ln, fn path, target ->
+        send(parent, {:linked, path, target})
+        :ok
+      end)
+
+      stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
       assert {:ok, imported, []} = Library.import_episodes("/dl", [ep(1, 1), ep(2, 2)])
 
       assert Enum.map(Enum.sort_by(imported, &elem(&1, 0)), fn {id, dest, _q} -> {id, dest} end) ==
                [
-                 {1,
-                  "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv"},
-                 {2,
-                  "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E02.mkv"}
+                 {1, dest},
+                 {2, dest}
                ]
+
+      assert_received {:linked, ^source, ^dest}
+      refute_received {:linked, _, _}
     end
 
     test "two files parsing the same episode: largest imports, the rest log as unmatched" do
