@@ -55,6 +55,13 @@ defmodule Cinder.Library.Sidecars do
     end
   end
 
+  @doc "SRT sidecars belonging to `source_video`, for the translation source fallback."
+  def srt_files(source_video) do
+    Enum.filter(files(source_video), fn {path, _language} ->
+      String.downcase(Path.extname(path)) == ".srt"
+    end)
+  end
+
   @doc "Hardlinks belonging sidecars next to `dest_video`; returns linked languages (best-effort)."
   def link(source_video, dest_video) do
     dest_stem = Path.rootname(dest_video)

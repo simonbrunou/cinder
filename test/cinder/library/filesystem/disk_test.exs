@@ -41,6 +41,15 @@ defmodule Cinder.Library.Filesystem.DiskTest do
   end
 
   @tag :tmp_dir
+  test "read/1 returns a temporary SRT file's bytes", %{tmp_dir: tmp} do
+    path = Path.join(tmp, "Movie (2020).en.srt")
+    contents = "1\n00:00:01,000 --> 00:00:02,000\nHello\n\n"
+    File.write!(path, contents)
+
+    assert Disk.read(path) == {:ok, contents}
+  end
+
+  @tag :tmp_dir
   test "find_files/1 propagates an unreadable NESTED directory too", %{tmp_dir: tmp} do
     # The common torrent layout is a readable root whose single video-bearing subfolder is
     # unreadable (the documented PUID mismatch); {:ok, []} there is the same park+blocklist
