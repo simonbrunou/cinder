@@ -65,6 +65,14 @@ defmodule CinderWeb.AppShellTest do
       {:ok, _lv, html} = live(conn, ~p"/")
       assert html =~ ~s(aria-label="Toggle navigation menu")
     end
+
+    test "the mobile drawer stays viewport-bound and centers its brand", %{conn: conn} do
+      {:ok, _lv, html} = live(conn, ~p"/")
+
+      assert html =~ ~s(class="navbar relative justify-center)
+      assert html =~ ~s(class="flex h-dvh w-64 flex-col)
+      assert html =~ "overflow-y-auto"
+    end
   end
 
   describe "auth pages (unauthenticated)" do

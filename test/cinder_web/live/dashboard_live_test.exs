@@ -1,6 +1,7 @@
 defmodule CinderWeb.DashboardLiveTest do
   use CinderWeb.ConnCase, async: false
 
+  import ExUnit.CaptureLog
   import Phoenix.LiveViewTest
   import Mox
 
@@ -10,6 +11,7 @@ defmodule CinderWeb.DashboardLiveTest do
   import Cinder.CatalogFixtures
 
   setup :set_mox_global
+  setup :verify_on_exit!
 
   setup do
     # Dashboard runs Health.check_all/0 in a start_async task (separate process) → global mocks.
@@ -35,6 +37,139 @@ defmodule CinderWeb.DashboardLiveTest do
 
   describe "as an admin" do
     setup :register_and_log_in_admin
+
+    test "shows the six maintenance actions", %{conn: conn} do
+      {:ok, _lv, html} = live(conn, ~p"/dashboard")
+
+      for id <-
+            ~w(movie-pipeline tv-pipeline series-refresh subtitle-backfill scan-movies scan-tv) do
+        assert html =~ ~s(id="maintenance-#{id}")
+      end
+    end
+
+    for {id, worker} <- [
+          {"movie-pipeline", Cinder.Download.Poller},
+          {"tv-pipeline", Cinder.Download.TvPoller},
+          {"series-refresh", Cinder.Catalog.Refresher},
+          {"subtitle-backfill", Cinder.Subtitles.Sweeper}
+        ] do
+      @tag worker: worker
+      test "#{id} runs its supervised worker once", %{conn: conn, worker: worker} do
+        start_supervised!({worker, interval: 60_000})
+        {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+        lv |> element("#maintenance-#{unquote(id)}") |> render_click()
+
+        render_async(lv)
+        assert has_element?(lv, "#maintenance-result-#{unquote(id)}", "Completed")
+      end
+    end
+
+    test "movie and TV scan actions pass the intended library kind", %{conn: conn} do
+      expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+      expect(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      lv |> element("#maintenance-scan-movies") |> render_click()
+      render_async(lv)
+      assert has_element?(lv, "#maintenance-result-scan-movies", "Completed")
+
+      lv |> element("#maintenance-scan-tv") |> render_click()
+      render_async(lv)
+      assert has_element?(lv, "#maintenance-result-scan-tv", "Completed")
+    end
+
+    test "only the running action is disabled", %{conn: conn} do
+      parent = self()
+
+      expect(Cinder.Library.MediaServerMock, :scan, fn :movies ->
+        send(parent, {:scan_started, self()})
+
+        receive do
+          :finish_scan -> :ok
+        end
+      end)
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+      lv |> element("#maintenance-scan-movies") |> render_click()
+      assert_receive {:scan_started, task}
+
+      assert has_element?(lv, "#maintenance-scan-movies[disabled]")
+
+      assert has_element?(
+               lv,
+               ~s(#maintenance-scan-movies[aria-label="Running Movie library scan"])
+             )
+
+      refute has_element?(lv, "#maintenance-scan-tv[disabled]")
+
+      send(task, :finish_scan)
+      render_async(lv)
+      assert has_element?(lv, "#maintenance-result-scan-movies", "Completed")
+    end
+
+    test "concurrent actions retain independent results", %{conn: conn} do
+      stub(Cinder.Library.MediaServerMock, :scan, fn
+        :movies -> :ok
+        :tv -> {:error, :unavailable}
+      end)
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      lv |> element("#maintenance-scan-movies") |> render_click()
+      lv |> element("#maintenance-scan-tv") |> render_click()
+      render_async(lv)
+
+      assert has_element?(lv, "#maintenance-result-scan-movies", "Completed")
+      assert has_element?(lv, "#maintenance-result-scan-tv", "Failed")
+    end
+
+    test "a forged duplicate event does not start an already-running action twice", %{conn: conn} do
+      parent = self()
+
+      stub(Cinder.Library.MediaServerMock, :scan, fn :movies ->
+        send(parent, {:scan_started, self()})
+
+        receive do
+          :finish_scan -> :ok
+        end
+      end)
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+      lv |> element("#maintenance-scan-movies") |> render_click()
+      assert_receive {:scan_started, task}
+
+      render_click(lv, "run_maintenance", %{"action" => "scan-movies"})
+      refute_receive {:scan_started, _other_task}, 100
+
+      send(task, :finish_scan)
+      render_async(lv)
+    end
+
+    test "a returned scan error produces a failure result and logs the reason", %{conn: conn} do
+      expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> {:error, :unavailable} end)
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      log =
+        capture_log(fn ->
+          lv |> element("#maintenance-scan-movies") |> render_click()
+          render_async(lv)
+        end)
+
+      assert has_element?(lv, "#maintenance-result-scan-movies", "Failed")
+      refute has_element?(lv, "#maintenance-scan-movies[disabled]")
+      assert log =~ "maintenance scan_movies failed: :unavailable"
+    end
+
+    test "a missing worker produces a failure result", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      lv |> element("#maintenance-movie-pipeline") |> render_click()
+
+      render_async(lv)
+      assert has_element?(lv, "#maintenance-result-movie-pipeline", "Failed")
+      refute has_element?(lv, "#maintenance-movie-pipeline[disabled]")
+    end
 
     test "shows stats, the health panel, and recent activity", %{conn: conn} do
       {:ok, _} = Catalog.add_movie(%{tmdb_id: 1, title: "Arrival", year: 2016})

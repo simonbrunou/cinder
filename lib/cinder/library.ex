@@ -594,10 +594,14 @@ defmodule Cinder.Library do
   # deep in the HTTP stack) — must not strand a correctly-imported movie at
   # :import_failed. The media server picks it up on its next periodic scan. Log and
   # report the import as done.
+  @doc "Requests a library scan and returns the configured media server's result."
+  @spec scan(:movies | :tv) :: :ok | {:error, term()}
+  def scan(kind), do: media_server().scan(kind)
+
   @doc false
   @spec refresh(:movies | :tv, String.t()) :: :ok
   def refresh(kind, dest) do
-    case media_server().scan(kind) do
+    case scan(kind) do
       {:error, reason} -> log_scan_failure(dest, reason)
       _ -> :ok
     end
