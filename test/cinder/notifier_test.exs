@@ -17,6 +17,20 @@ defmodule Cinder.NotifierTest do
     assert log =~ "The Matrix"
   end
 
+  test "Log impl formats maintenance outcomes" do
+    Logger.configure(level: :info)
+    on_exit(fn -> Logger.configure(level: :warning) end)
+
+    log =
+      capture_log(fn ->
+        assert :ok = Notifier.Log.notify({:maintenance_completed, :scan_tv})
+        assert :ok = Notifier.Log.notify({:maintenance_failed, :scan_movies, :unavailable})
+      end)
+
+    assert log =~ "maintenance completed: scan_tv"
+    assert log =~ "maintenance failed: scan_movies (:unavailable)"
+  end
+
   test "notify/1 dispatches to the configured impl" do
     Cinder.TestNotifier.subscribe()
     assert :ok = Notifier.notify({:movie_failed, %{title: "Dune"}, :boom})

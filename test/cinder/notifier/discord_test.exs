@@ -49,6 +49,34 @@ defmodule Cinder.Notifier.DiscordTest do
     assert embed["color"] == 0xE74C3C
   end
 
+  test "maintenance_completed posts a green embed with the operation name" do
+    expect_post()
+    assert :ok = Discord.notify({:maintenance_completed, :movie_pipeline})
+
+    assert_receive {:posted, %{"embeds" => [embed]}}
+    assert embed["title"] == "Maintenance completed"
+    assert embed["description"] == "Movie pipeline"
+    assert embed["color"] == 0x2ECC71
+  end
+
+  test "maintenance_failed posts a red embed with the technical reason" do
+    expect_post()
+    assert :ok = Discord.notify({:maintenance_failed, :scan_movies, :unavailable})
+
+    assert_receive {:posted, %{"embeds" => [embed]}}
+    assert embed["title"] == "Maintenance failed"
+    assert embed["description"] == "Movie library scan — :unavailable"
+    assert embed["color"] == 0xE74C3C
+  end
+
+  test "maintenance events safely render an unknown action key" do
+    expect_post()
+    assert :ok = Discord.notify({:maintenance_completed, :unknown_action})
+
+    assert_receive {:posted, %{"embeds" => [embed]}}
+    assert embed["description"] == ":unknown_action"
+  end
+
   test "request_approved stays in the app and does not post to Discord" do
     request = %{title: "Arrival", poster_path: "/arr.jpg", user_id: 3}
     assert :ok = Discord.notify({:request_approved, request})
