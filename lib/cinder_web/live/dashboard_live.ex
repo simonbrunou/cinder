@@ -10,7 +10,7 @@ defmodule CinderWeb.DashboardLive do
 
   import CinderWeb.LiveHelpers
 
-  alias Cinder.{Catalog, Health, Library, Requests}
+  alias Cinder.{Catalog, Health, Library, Notifier, Requests}
   alias Cinder.Catalog.Refresher
   alias Cinder.Download.{Poller, TvPoller}
   alias Cinder.Subtitles.Sweeper
@@ -65,8 +65,10 @@ defmodule CinderWeb.DashboardLive do
       {:noreply,
        assign(socket, health: [%{label: gettext("Health check"), status: {:error, reason}}])}
 
-  def handle_async({:maintenance, key}, {:ok, :ok}, socket),
-    do: {:noreply, finish_maintenance(socket, key, :ok)}
+  def handle_async({:maintenance, key}, {:ok, :ok}, socket) do
+    Notifier.notify({:maintenance_completed, key})
+    {:noreply, finish_maintenance(socket, key, :ok)}
+  end
 
   def handle_async({:maintenance, key}, {:ok, {:error, reason}}, socket),
     do: {:noreply, maintenance_failed(socket, key, reason)}
@@ -221,6 +223,7 @@ defmodule CinderWeb.DashboardLive do
 
   defp maintenance_failed(socket, key, reason) do
     Logger.warning("maintenance #{key} failed: #{inspect(reason)}")
+    Notifier.notify({:maintenance_failed, key, reason})
     finish_maintenance(socket, key, :error)
   end
 

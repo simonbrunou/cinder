@@ -79,6 +79,18 @@ defmodule CinderWeb.DashboardLiveTest do
       assert has_element?(lv, "#maintenance-result-scan-tv", "Completed")
     end
 
+    test "a completed maintenance action emits one completion notification", %{conn: conn} do
+      Cinder.TestNotifier.subscribe()
+      expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      lv |> element("#maintenance-scan-movies") |> render_click()
+      render_async(lv)
+
+      assert_receive {:notify, {:maintenance_completed, :scan_movies}}
+      refute_receive {:notify, _}
+    end
+
     test "only the running action is disabled", %{conn: conn} do
       parent = self()
 
@@ -124,8 +136,9 @@ defmodule CinderWeb.DashboardLiveTest do
       assert has_element?(lv, "#maintenance-result-scan-tv", "Failed")
     end
 
-    test "a forged duplicate event does not start an already-running action twice", %{conn: conn} do
+    test "a forged duplicate event does not start or notify twice", %{conn: conn} do
       parent = self()
+      Cinder.TestNotifier.subscribe()
 
       stub(Cinder.Library.MediaServerMock, :scan, fn :movies ->
         send(parent, {:scan_started, self()})
@@ -138,15 +151,20 @@ defmodule CinderWeb.DashboardLiveTest do
       {:ok, lv, _html} = live(conn, ~p"/dashboard")
       lv |> element("#maintenance-scan-movies") |> render_click()
       assert_receive {:scan_started, task}
+      refute_receive {:notify, _}
 
       render_click(lv, "run_maintenance", %{"action" => "scan-movies"})
       refute_receive {:scan_started, _other_task}, 100
+      refute_receive {:notify, _}
 
       send(task, :finish_scan)
       render_async(lv)
+      assert_receive {:notify, {:maintenance_completed, :scan_movies}}
+      refute_receive {:notify, _}
     end
 
     test "a returned scan error produces a failure result and logs the reason", %{conn: conn} do
+      Cinder.TestNotifier.subscribe()
       expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> {:error, :unavailable} end)
       {:ok, lv, _html} = live(conn, ~p"/dashboard")
 
@@ -159,9 +177,12 @@ defmodule CinderWeb.DashboardLiveTest do
       assert has_element?(lv, "#maintenance-result-scan-movies", "Failed")
       refute has_element?(lv, "#maintenance-scan-movies[disabled]")
       assert log =~ "maintenance scan_movies failed: :unavailable"
+      assert_receive {:notify, {:maintenance_failed, :scan_movies, :unavailable}}
+      refute_receive {:notify, _}
     end
 
     test "a missing worker produces a failure result", %{conn: conn} do
+      Cinder.TestNotifier.subscribe()
       {:ok, lv, _html} = live(conn, ~p"/dashboard")
 
       lv |> element("#maintenance-movie-pipeline") |> render_click()
@@ -169,6 +190,8 @@ defmodule CinderWeb.DashboardLiveTest do
       render_async(lv)
       assert has_element?(lv, "#maintenance-result-movie-pipeline", "Failed")
       refute has_element?(lv, "#maintenance-movie-pipeline[disabled]")
+      assert_receive {:notify, {:maintenance_failed, :movie_pipeline, _reason}}
+      refute_receive {:notify, _}
     end
 
     test "shows stats, the health panel, and recent activity", %{conn: conn} do
