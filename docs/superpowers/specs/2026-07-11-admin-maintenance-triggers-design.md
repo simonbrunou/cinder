@@ -24,7 +24,8 @@ per-title retry, search, monitoring, cancellation, and deletion controls remain 
 
 Add a compact **Run maintenance** section to `/dashboard`. Each action has its own labelled button
 and short description. While an action is running, only its button is disabled and shows a
-progress label. Completion or failure is reported with the existing LiveView flash mechanism.
+progress label. Completion or failure is retained beside that action for the life of the Dashboard
+session, so concurrent results cannot overwrite one another.
 
 The Dashboard is already inside the admin-only LiveView session, so no new route, navigation item,
 or authorization mechanism is needed.
@@ -56,9 +57,12 @@ Worker passes deliberately isolate and log individual item failures, so a succes
 means the pass finished, not that every item advanced. The success message should use "completed"
 rather than promise that work was found or changed.
 
-An action remains runnable after either outcome. Leaving the page may discard its UI result, but a
+An action remains runnable after either outcome. Returned and raised failures are logged with the
+action key and reason while the UI keeps the reason generic. Leaving the page may discard its UI result, but a
 worker pass already accepted by its GenServer continues. Button disabling is local to one Dashboard
-session; the GenServer provides the cross-session serialization for worker actions. Direct movie
+session; the GenServer provides the cross-session serialization for worker actions. Two sessions
+can still request the same worker and will produce two sequential passes rather than deduplicate.
+Direct movie
 and TV scan requests may overlap across browser sessions, which is acceptable at single-household
 scale because the configured media-server scan endpoints are idempotent triggers.
 
@@ -69,8 +73,9 @@ Use LiveView tests on the existing Dashboard test module:
 - The six controls render for an admin.
 - Each control dispatches the intended worker or library scan.
 - A running action disables only its own button.
-- Successful completion produces a completion flash.
-- A returned scan error and an async exit produce a failure flash.
+- Concurrent actions retain independent completion/failure results.
+- A forged duplicate event does not start an already-running action twice in one session.
+- A returned scan error and an async exit produce a failure result, and the reason is logged.
 - The existing non-admin Dashboard redirect remains the authorization regression check.
 
 Add a focused `Cinder.Library` test proving `scan/1` returns the media-server result while
@@ -82,3 +87,8 @@ source-of-truth gate.
 No database-backed job records, progress percentages, run history, cross-session button state, or
 new dependency. Add persistent operations tracking only if operators later need to diagnose runs
 after leaving the page or across application restarts.
+
+Like every existing admin LiveView, authorization is checked when the LiveView mounts. Demoting an
+admin does not currently disconnect their already-open LiveView sessions; event-time role
+revalidation or session revocation is a system-wide authentication hardening task, not part of this
+maintenance surface.
