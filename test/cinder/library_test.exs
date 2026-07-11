@@ -237,6 +237,16 @@ defmodule Cinder.LibraryTest do
     assert log =~ "kept existing"
   end
 
+  describe "scan/1" do
+    test "returns the configured media server result" do
+      expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+      expect(Cinder.Library.MediaServerMock, :scan, fn :tv -> {:error, :unavailable} end)
+
+      assert :ok = Library.scan(:movies)
+      assert {:error, :unavailable} = Library.scan(:tv)
+    end
+  end
+
   test "scan failure is best-effort: import still succeeds once the file is linked" do
     movie = %Movie{title: "Heat", year: 1995, tmdb_id: 9799, file_path: "/dl/Heat.mkv"}
 
