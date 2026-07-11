@@ -112,12 +112,9 @@ defmodule Cinder.Download.TvPoller do
         park(grab, :no_files_matched)
 
       {:ok, imported, _unmatched} ->
-        # Notify only when the finalize transaction commits — otherwise a rolled-back finish_grab
-        # would leave the grab undeleted (re-imported next tick) while emitting a false, repeating
-        # available event. Mirrors the movie poller's `with {:ok, _} <- transition` guard.
+        # Catalog announces a season only when this committed import makes it fully available.
         case Catalog.finish_grab(grab, imported) do
           {:ok, _grab} ->
-            notify_available(grab, imported)
             # After the finalize commit: best-effort, gated remove of the source download.
             # Read id/protocol off the in-hand grab — finish_grab deleted the row but returns
             # the in-memory struct. A partial-match pack still removes (don't strand clutter).
@@ -279,15 +276,5 @@ defmodule Cinder.Download.TvPoller do
           "tv grab #{grab.id} could not be parked (#{inspect(park_error)}); will retry next tick"
         )
     end
-  end
-
-  # On a successful import, announce the episodes that landed — the TV analogue of
-  # {:movie_available, movie}. The grab fans out to N episodes, so the event carries the list;
-  # filter the grab's preloaded episodes to the imported ids (the grab is deleted by finish_grab,
-  # but its in-memory episodes — with season: :series preloaded — remain for the event payload).
-  defp notify_available(grab, imported) do
-    imported_ids = MapSet.new(imported, fn {id, _dest, _q} -> id end)
-    episodes = Enum.filter(grab.episodes, &MapSet.member?(imported_ids, &1.id))
-    Notifier.notify({:episodes_available, episodes})
   end
 end

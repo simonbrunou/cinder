@@ -1389,7 +1389,8 @@ defmodule Cinder.Catalog do
   @doc """
   Finalizes a grab after import, in **one transaction**: sets `file_path` (and clears `grab_id`)
   on each imported episode, bumps `search_attempts` on the grab's still-missing episodes, then
-  deletes the grab. `imported` is `[{episode_id, dest_path}]`. Broadcasts `{:series_updated, _}`.
+  deletes the grab. `imported` is `[{episode_id, dest_path}]`. Broadcasts `{:series_updated, _}`
+  and announces any season the import completes.
 
   The search_attempts bump on the non-imported episodes makes a pack that never yields a wanted
   episode re-search with backoff and eventually search-park, rather than re-grabbing forever. It
@@ -1434,15 +1435,18 @@ defmodule Cinder.Catalog do
             set: [updated_at: ts]
           )
 
+        completed_seasons = completed_seasons_for_imported_episodes(imported_ids)
+
         # allow_stale: a user cancel_grab may delete the same row while this import
         # finalizes; raising here would roll back the just-imported file_path writes.
         Repo.delete!(grab, allow_stale: true)
-        bumped_ids
+        {bumped_ids, completed_seasons}
       end)
 
-    with {:ok, bumped_ids} <- result do
+    with {:ok, {bumped_ids, completed_seasons}} <- result do
       broadcast_series(series_id)
       announce_search_exhausted(bumped_ids)
+      Enum.each(completed_seasons, &Notifier.notify({:season_available, &1}))
       {:ok, grab}
     end
   end
@@ -1453,6 +1457,28 @@ defmodule Cinder.Catalog do
 
   defp missing_episodes_query(grab_id, imported_ids),
     do: from(e in Episode, where: e.grab_id == ^grab_id and e.id not in ^imported_ids)
+
+  defp completed_seasons_for_imported_episodes([]), do: []
+
+  defp completed_seasons_for_imported_episodes(imported_ids) do
+    today = Date.utc_today()
+
+    imported_season_ids =
+      from e in Episode,
+        where: e.id in ^imported_ids and not is_nil(e.air_date) and e.air_date <= ^today,
+        select: e.season_id,
+        distinct: true
+
+    from([_episode, season, series] in available_seasons_query(today),
+      where: season.id in subquery(imported_season_ids),
+      select: %{
+        title: series.title,
+        season_number: season.season_number,
+        poster_path: series.poster_path
+      }
+    )
+    |> Repo.all()
+  end
 
   @doc """
   Parks a grab: deletes it and bumps every linked episode's `search_attempts` (so they re-search,
@@ -1671,22 +1697,28 @@ defmodule Cinder.Catalog do
   def available_season_keys(tmdb_id \\ nil) do
     today = Date.utc_today()
 
-    query =
-      from e in Episode,
-        join: s in assoc(e, :season),
-        join: sr in assoc(s, :series),
-        where: s.season_number > 0,
-        group_by: [sr.tmdb_id, s.season_number],
-        having:
-          filter(count(e.id), not is_nil(e.file_path)) > 0 and
-            filter(
-              count(e.id),
-              is_nil(e.file_path) and not is_nil(e.air_date) and e.air_date <= ^today
-            ) == 0,
-        select: {sr.tmdb_id, s.season_number}
+    query = available_seasons_query(today)
 
     query = if tmdb_id, do: where(query, [_e, _s, sr], sr.tmdb_id == ^tmdb_id), else: query
-    query |> Repo.all() |> MapSet.new()
+
+    query
+    |> select([_e, s, sr], {sr.tmdb_id, s.season_number})
+    |> Repo.all()
+    |> MapSet.new()
+  end
+
+  defp available_seasons_query(today) do
+    from e in Episode,
+      join: s in assoc(e, :season),
+      join: sr in assoc(s, :series),
+      where: s.season_number > 0,
+      group_by: [s.id, s.season_number, sr.id, sr.tmdb_id, sr.title, sr.poster_path],
+      having:
+        filter(count(e.id), not is_nil(e.file_path)) > 0 and
+          filter(
+            count(e.id),
+            is_nil(e.file_path) and not is_nil(e.air_date) and e.air_date <= ^today
+          ) == 0
   end
 
   @doc "Count of still-wanted episodes in one season of `series_id` (see `wanted_episodes/0`)."

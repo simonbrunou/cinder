@@ -1,10 +1,10 @@
 defmodule Cinder.Notifier.Discord do
   @moduledoc """
   Discord-webhook notifier. Delegates the log line to `Cinder.Notifier.Log`, then — when a
-  webhook URL is configured — posts a rich embed per pipeline event. Best-effort: a failed post
-  is logged and swallowed so a Discord outage never touches the pipeline, and the request carries
-  a bounded `receive_timeout` so a hung webhook can't stall the (synchronous) poller/approval call
-  sites either. `Cinder.Notifier.notify/1` catches raises on top of this.
+  webhook URL is configured — posts embeds for availability and failures. Best-effort: a failed
+  post is logged and swallowed so a Discord outage never touches the pipeline, and the request
+  carries a bounded `receive_timeout` so a hung webhook can't stall synchronous poller call sites.
+  `Cinder.Notifier.notify/1` catches raises on top of this.
 
   The webhook URL is a `Cinder.Settings` registry entry, overlaid onto
   `Application.get_env(:cinder, __MODULE__)[:webhook_url]`.
@@ -54,13 +54,6 @@ defmodule Cinder.Notifier.Discord do
 
   # --- embeds (one per event; nil for anything unknown so notify/1 skips the post) ---
 
-  defp embed({:request_approved, request}),
-    do:
-      with_poster(
-        %{title: "Request approved", description: request.title, color: @green},
-        request.poster_path
-      )
-
   defp embed({:movie_available, movie}),
     do:
       with_poster(
@@ -73,10 +66,16 @@ defmodule Cinder.Notifier.Discord do
   defp embed({:movie_upgrade_failed, movie, reason}),
     do: failure_embed("Upgrade failed", movie, reason)
 
-  defp embed({:episodes_available, episodes}) do
-    {summary, poster} = episodes_summary(episodes)
-    with_poster(%{title: "📺 Now available", description: summary, color: @green}, poster)
-  end
+  defp embed({:season_available, season}),
+    do:
+      with_poster(
+        %{
+          title: "📺 Season now available",
+          description: "#{season.title} — Season #{season.season_number}",
+          color: @green
+        },
+        season.poster_path
+      )
 
   defp embed({:grab_failed, grab, reason}),
     do: %{title: "TV grab ##{grab.id} failed", description: inspect(reason), color: @red}
@@ -115,8 +114,6 @@ defmodule Cinder.Notifier.Discord do
 
   defp with_poster(embed, _path), do: embed
 
-  # Like Cinder.Notifier.Log's summary, but Discord additionally needs the series poster.
-  # Returns {summary, poster_path | nil}.
   defp episodes_summary([%{season: %{series: series}} | _] = episodes) do
     codes =
       Enum.map_join(episodes, ", ", fn ep ->
