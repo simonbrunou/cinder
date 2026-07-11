@@ -3,6 +3,12 @@ defmodule Cinder.Subtitles.Translator.LibreTranslateTest do
 
   alias Cinder.Subtitles.Translator.LibreTranslate
 
+  defp put_batch_size(size) do
+    saved = Application.get_env(:cinder, LibreTranslate)
+    Application.put_env(:cinder, LibreTranslate, Keyword.put(saved, :batch_size, size))
+    on_exit(fn -> Application.put_env(:cinder, LibreTranslate, saved) end)
+  end
+
   test "translate/2 posts ordered cue bodies with autodetection and HTML preservation" do
     Req.Test.stub(Cinder.LibreTranslateStub, fn conn ->
       assert conn.request_path == "/translate"
@@ -20,6 +26,63 @@ defmodule Cinder.Subtitles.Translator.LibreTranslateTest do
 
     assert {:ok, ["<i>Bonjour</i>", "Au revoir"]} =
              LibreTranslate.translate(["<i>Hello</i>", "Goodbye"], "fr")
+  end
+
+  test "translate/2 splits large cue lists into ordered batches and concatenates in order" do
+    parent = self()
+    put_batch_size(2)
+
+    Req.Test.stub(Cinder.LibreTranslateStub, fn conn ->
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+      %{"q" => q} = Jason.decode!(body)
+      send(parent, {:batch, q})
+      Req.Test.json(conn, %{"translatedText" => Enum.map(q, &("fr:" <> &1))})
+    end)
+
+    assert {:ok, ~w(fr:a fr:b fr:c fr:d fr:e)} =
+             LibreTranslate.translate(~w(a b c d e), "fr")
+
+    # batch_size 2 → [a,b] [c,d] [e], in order, nothing more
+    assert_received {:batch, ["a", "b"]}
+    assert_received {:batch, ["c", "d"]}
+    assert_received {:batch, ["e"]}
+    refute_received {:batch, _}
+  end
+
+  test "translate/2 halts on the first failing batch and returns its error" do
+    parent = self()
+    put_batch_size(2)
+
+    Req.Test.stub(Cinder.LibreTranslateStub, fn conn ->
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+      %{"q" => q} = Jason.decode!(body)
+      send(parent, {:batch, q})
+
+      if "BOOM" in q do
+        Plug.Conn.send_resp(conn, 500, "boom")
+      else
+        Req.Test.json(conn, %{"translatedText" => Enum.map(q, &("fr:" <> &1))})
+      end
+    end)
+
+    assert {:error, {:http, 500}} = LibreTranslate.translate(~w(a b BOOM d), "fr")
+
+    # first batch ran, the BOOM batch failed and halted, no further batch sent
+    assert_received {:batch, ["a", "b"]}
+    assert_received {:batch, ["BOOM", "d"]}
+    refute_received {:batch, _}
+  end
+
+  test "translate/2 returns {:ok, []} for empty cues without any HTTP call" do
+    parent = self()
+
+    Req.Test.stub(Cinder.LibreTranslateStub, fn conn ->
+      send(parent, :called)
+      Req.Test.json(conn, %{"translatedText" => []})
+    end)
+
+    assert {:ok, []} = LibreTranslate.translate([], "fr")
+    refute_received :called
   end
 
   test "translate/2 returns the HTTP status for non-200 responses" do
