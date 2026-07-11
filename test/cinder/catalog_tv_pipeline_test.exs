@@ -229,6 +229,26 @@ defmodule Cinder.CatalogTvPipelineTest do
       assert m.search_attempts == 3
       assert Repo.get(Grab, grab.id) == nil
     end
+
+    test "announces a season only when its final aired episode imports" do
+      Cinder.TestNotifier.subscribe()
+      {series, season} = series_with_season()
+      poster_path = series.poster_path
+      first = episode(season, %{})
+      final = episode(season, %{})
+      {:ok, first_grab} = Catalog.create_grab("H1", :torrent, [first.id])
+
+      assert {:ok, _} = Catalog.finish_grab(first_grab, [{first.id, "/lib/first.mkv", @q1}])
+      refute_receive {:notify, {:season_available, _}}
+
+      {:ok, final_grab} = Catalog.create_grab("H2", :torrent, [final.id])
+
+      assert {:ok, _} = Catalog.finish_grab(final_grab, [{final.id, "/lib/final.mkv", @q2}])
+
+      assert_receive {:notify,
+                      {:season_available,
+                       %{title: "Show", season_number: 1, poster_path: ^poster_path}}}
+    end
   end
 
   describe "park_grab/1" do

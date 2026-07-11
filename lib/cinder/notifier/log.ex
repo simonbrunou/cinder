@@ -14,8 +14,8 @@ defmodule Cinder.Notifier.Log do
   def notify({:movie_failed, movie, reason}),
     do: log("movie failed: #{movie.title} (#{inspect(reason)})")
 
-  def notify({:episodes_available, episodes}),
-    do: log("episodes available: #{episodes_summary(episodes)}")
+  def notify({:season_available, season}),
+    do: log("season available: #{season.title} season #{season.season_number}")
 
   def notify({:grab_failed, grab, reason}),
     do: log("tv grab failed: ##{grab.id} (#{inspect(reason)})")
@@ -25,8 +25,6 @@ defmodule Cinder.Notifier.Log do
 
   def notify(other), do: log("event: #{inspect(other)}")
 
-  # "Show (S01E02, S01E03)" from a grab's imported episodes (season: :series preloaded), or a
-  # bare count if the tree isn't loaded — best-effort, this only feeds a log line.
   defp episodes_summary([%{season: %{series: series}} | _] = episodes) do
     codes =
       Enum.map_join(episodes, ", ", fn ep ->

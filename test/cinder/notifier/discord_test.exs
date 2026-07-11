@@ -49,37 +49,21 @@ defmodule Cinder.Notifier.DiscordTest do
     assert embed["color"] == 0xE74C3C
   end
 
-  test "request_approved posts a green embed with the request title and poster" do
-    expect_post()
+  test "request_approved stays in the app and does not post to Discord" do
     request = %{title: "Arrival", poster_path: "/arr.jpg", user_id: 3}
     assert :ok = Discord.notify({:request_approved, request})
-
-    assert_receive {:posted, %{"embeds" => [embed]}}
-    assert embed["title"] == "Request approved"
-    assert embed["description"] == "Arrival"
-    assert embed["color"] == 0x2ECC71
-    assert embed["thumbnail"]["url"] == "https://image.tmdb.org/t/p/w342/arr.jpg"
+    refute_receive {:posted, _}
   end
 
-  test "episodes_available posts series title + episode codes with the series poster" do
+  test "season_available posts the series title and season with the series poster" do
     expect_post()
 
-    episodes = [
-      %{
-        episode_number: 1,
-        season: %{season_number: 2, series: %{title: "Severance", poster_path: "/sev.jpg"}}
-      },
-      %{
-        episode_number: 2,
-        season: %{season_number: 2, series: %{title: "Severance", poster_path: "/sev.jpg"}}
-      }
-    ]
-
-    assert :ok = Discord.notify({:episodes_available, episodes})
+    season = %{title: "Severance", season_number: 2, poster_path: "/sev.jpg"}
+    assert :ok = Discord.notify({:season_available, season})
 
     assert_receive {:posted, %{"embeds" => [embed]}}
-    assert embed["title"] == "📺 Now available"
-    assert embed["description"] == "Severance — S02E01, S02E02"
+    assert embed["title"] == "📺 Season now available"
+    assert embed["description"] == "Severance — Season 2"
     assert embed["thumbnail"]["url"] == "https://image.tmdb.org/t/p/w342/sev.jpg"
   end
 

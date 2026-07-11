@@ -541,7 +541,7 @@ defmodule Cinder.Download.TvPollerTest do
     assert e1.search_attempts == 1
   end
 
-  test "a successful import emits the episodes-available notifier event" do
+  test "a successful import emits the season-available notifier event" do
     Cinder.TestNotifier.subscribe()
     {_series, season} = series_tree()
     e1 = episode(season, 3)
@@ -555,8 +555,9 @@ defmodule Cinder.Download.TvPollerTest do
     stub_single_file_import()
 
     assert :ok = TvPoller.poll()
-    assert_receive {:notify, {:episodes_available, [%Episode{id: id}]}}
-    assert id == e1.id
+
+    assert_receive {:notify,
+                    {:season_available, %{title: "Show", season_number: 1, poster_path: nil}}}
   end
 
   test "a parked grab emits the grab-failed notifier event (symmetric with :movie_failed)" do
