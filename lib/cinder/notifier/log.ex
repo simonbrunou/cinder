@@ -23,6 +23,12 @@ defmodule Cinder.Notifier.Log do
   def notify({:episodes_search_exhausted, episodes}),
     do: log("episode search exhausted: #{episodes_summary(episodes)}")
 
+  def notify({:maintenance_completed, key}),
+    do: log("maintenance completed: #{key}")
+
+  def notify({:maintenance_failed, key, reason}),
+    do: log("maintenance failed: #{key} (#{inspect(reason)})")
+
   def notify(other), do: log("event: #{inspect(other)}")
 
   defp episodes_summary([%{season: %{series: series}} | _] = episodes) do

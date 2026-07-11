@@ -20,6 +20,14 @@ defmodule Cinder.Notifier.Discord do
   @green 0x2ECC71
   @red 0xE74C3C
   @image_base "https://image.tmdb.org/t/p/w342"
+  @maintenance_names %{
+    movie_pipeline: "Movie pipeline",
+    tv_pipeline: "TV pipeline",
+    series_refresh: "Monitored series refresh",
+    subtitle_backfill: "Subtitle backfill",
+    scan_movies: "Movie library scan",
+    scan_tv: "TV library scan"
+  }
 
   # Bounded so a hung/dead webhook can't stall the synchronous notify/1 call sites (poller ticks,
   # the admin Approve handler). Bounds both connect (Mint's default is ~30s) and the response
@@ -93,9 +101,21 @@ defmodule Cinder.Notifier.Discord do
     )
   end
 
+  defp embed({:maintenance_completed, key}),
+    do: %{title: "Maintenance completed", description: maintenance_name(key), color: @green}
+
+  defp embed({:maintenance_failed, key, reason}),
+    do: %{
+      title: "Maintenance failed",
+      description: "#{maintenance_name(key)} — #{inspect(reason)}",
+      color: @red
+    }
+
   defp embed(_other), do: nil
 
   # --- helpers ---
+
+  defp maintenance_name(key), do: Map.get(@maintenance_names, key, inspect(key))
 
   defp failure_embed(title, movie, reason) do
     with_poster(
