@@ -85,6 +85,26 @@ defmodule Cinder.Subtitles.Translator.LibreTranslateTest do
     refute_received :called
   end
 
+  test "translate/2 halts with :invalid_response when a batch returns a mismatched length" do
+    parent = self()
+    put_batch_size(2)
+
+    Req.Test.stub(Cinder.LibreTranslateStub, fn conn ->
+      {:ok, body, conn} = Plug.Conn.read_body(conn)
+      %{"q" => q} = Jason.decode!(body)
+      send(parent, {:batch, q})
+      # one fewer translation than requested (engine dropped/merged a cue) — the
+      # equal-length guard is what protects Srt.render from a misaligned sidecar
+      Req.Test.json(conn, %{"translatedText" => Enum.drop(Enum.map(q, &("fr:" <> &1)), 1)})
+    end)
+
+    assert {:error, :invalid_response} = LibreTranslate.translate(~w(a b c d), "fr")
+
+    # the short first batch halts; the second batch is never sent
+    assert_received {:batch, ["a", "b"]}
+    refute_received {:batch, _}
+  end
+
   test "translate/2 returns the HTTP status for non-200 responses" do
     Req.Test.stub(Cinder.LibreTranslateStub, fn conn ->
       Plug.Conn.send_resp(conn, 429, "too many requests")
