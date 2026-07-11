@@ -51,8 +51,12 @@ defmodule CinderWeb.Layouts do
       />
 
       <div class="drawer-content flex min-h-screen flex-col">
-        <header class="navbar border-b border-base-300/60 bg-base-100 lg:hidden">
-          <label for="nav-drawer" class="btn btn-ghost btn-square" aria-label={gettext("Open menu")}>
+        <header class="navbar relative justify-center border-b border-base-300/60 bg-base-100 lg:hidden">
+          <label
+            for="nav-drawer"
+            class="btn btn-ghost btn-square absolute left-2"
+            aria-label={gettext("Open menu")}
+          >
             <.icon name="hero-bars-3" class="size-6" />
           </label>
           <span class="font-display text-lg font-bold tracking-wide">
@@ -67,7 +71,7 @@ defmodule CinderWeb.Layouts do
 
       <div class="drawer-side z-20">
         <label for="nav-drawer" aria-label={gettext("Close menu")} class="drawer-overlay"></label>
-        <aside class="flex min-h-screen w-64 flex-col gap-2 border-r border-base-300/60 bg-base-200 p-4">
+        <aside class="flex h-dvh w-64 flex-col gap-2 overflow-y-auto border-r border-base-300/60 bg-base-200 p-4">
           <a
             href={if @admin?, do: ~p"/dashboard", else: ~p"/"}
             class="mb-2 flex items-center gap-2 px-2"
