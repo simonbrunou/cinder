@@ -95,6 +95,12 @@ defmodule CinderWeb.DashboardLiveTest do
       assert_receive {:scan_started, task}
 
       assert has_element?(lv, "#maintenance-scan-movies[disabled]")
+
+      assert has_element?(
+               lv,
+               ~s(#maintenance-scan-movies[aria-label="Running Movie library scan"])
+             )
+
       refute has_element?(lv, "#maintenance-scan-tv[disabled]")
 
       send(task, :finish_scan)

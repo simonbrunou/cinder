@@ -316,7 +316,11 @@ defmodule CinderWeb.DashboardLive do
               phx-click="run_maintenance"
               phx-value-action={action.id}
               disabled={action.key in @running_maintenance}
-              aria-label={gettext("Run %{action}", action: action.label)}
+              aria-label={
+                if action.key in @running_maintenance,
+                  do: gettext("Running %{action}", action: action.label),
+                  else: gettext("Run %{action}", action: action.label)
+              }
             >
               {if action.key in @running_maintenance, do: gettext("Running…"), else: gettext("Run")}
             </.button>

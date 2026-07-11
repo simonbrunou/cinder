@@ -130,7 +130,7 @@ msgstr "Arrêter aussi de suivre ces épisodes"
 msgid "Also stop monitoring this episode"
 msgstr "Arrêter aussi de suivre cet épisode"
 
-#: lib/cinder_web/live/dashboard_live.ex:372
+#: lib/cinder_web/live/dashboard_live.ex:376
 #: lib/cinder_web/live/requests_live.ex:298
 #, elixir-autogen, elixir-format
 msgid "Approve"
@@ -146,7 +146,7 @@ msgstr "Approuver, refuser ou supprimer les demandes du catalogue."
 msgid "Approved"
 msgstr "Approuvé"
 
-#: lib/cinder_web/live/dashboard_live.ex:370
+#: lib/cinder_web/live/dashboard_live.ex:374
 #: lib/cinder_web/live/requests_live.ex:245
 #: lib/cinder_web/live/requests_live.ex:296
 #, elixir-autogen, elixir-format
@@ -242,12 +242,12 @@ msgstr "Annuler cette série ? Supprime ses téléchargements et arrête tout su
 msgid "Cancelled"
 msgstr "Annulé"
 
-#: lib/cinder_web/live/dashboard_live.ex:411
+#: lib/cinder_web/live/dashboard_live.ex:415
 #, elixir-autogen, elixir-format
 msgid "Checking services…"
 msgstr "Vérification des services…"
 
-#: lib/cinder_web/live/dashboard_live.ex:405
+#: lib/cinder_web/live/dashboard_live.ex:409
 #, elixir-autogen, elixir-format
 msgid "Checking…"
 msgstr "Vérification…"
@@ -268,7 +268,7 @@ msgstr "Fermer le menu"
 msgid "Confirm"
 msgstr "Confirmer"
 
-#: lib/cinder_web/live/dashboard_live.ex:388
+#: lib/cinder_web/live/dashboard_live.ex:392
 #: lib/cinder_web/live/requests_live.ex:305
 #, elixir-autogen, elixir-format
 msgid "Confirm deny"
@@ -468,7 +468,7 @@ msgstr "Suppression…"
 msgid "Denied"
 msgstr "Refusé"
 
-#: lib/cinder_web/live/dashboard_live.ex:381
+#: lib/cinder_web/live/dashboard_live.ex:385
 #: lib/cinder_web/live/requests_live.ex:315
 #, elixir-autogen, elixir-format
 msgid "Deny"
@@ -735,7 +735,7 @@ msgstr "Mes demandes"
 msgid "New password"
 msgstr "Nouveau mot de passe"
 
-#: lib/cinder_web/live/dashboard_live.ex:342
+#: lib/cinder_web/live/dashboard_live.ex:346
 #, elixir-autogen, elixir-format
 msgid "New requests appear here."
 msgstr "Les nouvelles demandes apparaissent ici."
@@ -750,7 +750,7 @@ msgstr "Nouvel utilisateur"
 msgid "No active downloads"
 msgstr "Aucun téléchargement actif"
 
-#: lib/cinder_web/live/dashboard_live.ex:442
+#: lib/cinder_web/live/dashboard_live.ex:446
 #, elixir-autogen, elixir-format
 msgid "No activity yet"
 msgstr "Aucune activité pour le moment"
@@ -807,7 +807,7 @@ msgstr "Aucune saison trouvée"
 msgid "No series added yet"
 msgstr "Aucune série ajoutée pour le moment"
 
-#: lib/cinder_web/live/dashboard_live.ex:341
+#: lib/cinder_web/live/dashboard_live.ex:345
 #, elixir-autogen, elixir-format
 msgid "Nothing to approve"
 msgstr "Rien à approuver"
@@ -844,7 +844,7 @@ msgstr "Mot de passe mis à jour avec succès !"
 msgid "Pending"
 msgstr "En attente"
 
-#: lib/cinder_web/live/dashboard_live.ex:330
+#: lib/cinder_web/live/dashboard_live.ex:334
 #, elixir-autogen, elixir-format
 msgid "Pending approvals"
 msgstr "Approbations en attente"
@@ -889,17 +889,17 @@ msgstr "Quota mis à jour."
 msgid "Reason (optional)"
 msgstr "Motif (facultatif)"
 
-#: lib/cinder_web/live/dashboard_live.ex:431
+#: lib/cinder_web/live/dashboard_live.ex:435
 #, elixir-autogen, elixir-format
 msgid "Recent activity"
 msgstr "Activité récente"
 
-#: lib/cinder_web/live/dashboard_live.ex:408
+#: lib/cinder_web/live/dashboard_live.ex:412
 #, elixir-autogen, elixir-format
 msgid "Recheck"
 msgstr "Revérifier"
 
-#: lib/cinder_web/live/dashboard_live.ex:406
+#: lib/cinder_web/live/dashboard_live.ex:410
 #, elixir-autogen, elixir-format
 msgid "Recheck service health"
 msgstr "Revérifier l'état des services"
@@ -919,7 +919,7 @@ msgstr "Supprimer le téléchargement après un import Usenet"
 msgid "Request"
 msgstr "Demander"
 
-#: lib/cinder_web/live/dashboard_live.ex:443
+#: lib/cinder_web/live/dashboard_live.ex:447
 #, elixir-autogen, elixir-format
 msgid "Request a movie to get started."
 msgstr "Demandez un film pour commencer."
@@ -1095,7 +1095,7 @@ msgstr "Série introuvable."
 msgid "Series updated."
 msgstr "Série mise à jour."
 
-#: lib/cinder_web/live/dashboard_live.ex:400
+#: lib/cinder_web/live/dashboard_live.ex:404
 #, elixir-autogen, elixir-format
 msgid "Service health"
 msgstr "État des services"
@@ -1441,7 +1441,7 @@ msgstr "Paramètres du compte"
 msgid "Add %{title}"
 msgstr "Ajouter %{title}"
 
-#: lib/cinder_web/live/dashboard_live.ex:335
+#: lib/cinder_web/live/dashboard_live.ex:339
 #, elixir-autogen, elixir-format
 msgid "All requests"
 msgstr "Toutes les demandes"
@@ -1554,7 +1554,7 @@ msgstr "Supprimer ce téléchargement ? Ses épisodes sont dissociés."
 msgid "Deleting a request does not remove any movie or series it already created; that catalog row stays. If this request was denied or approved, the same title can be requested again afterwards."
 msgstr "Supprimer une demande ne supprime pas le film ou la série qu'elle a déjà créé ; cette entrée du catalogue reste. Si cette demande a été refusée ou approuvée, le même titre peut être redemandé ensuite."
 
-#: lib/cinder_web/live/dashboard_live.ex:387
+#: lib/cinder_web/live/dashboard_live.ex:391
 #: lib/cinder_web/live/requests_live.ex:304
 #, elixir-autogen, elixir-format
 msgid "Denial reason"
@@ -1828,7 +1828,7 @@ msgstr "Délai dépassé"
 msgid "Unknown series"
 msgstr "Série inconnue"
 
-#: lib/cinder_web/live/dashboard_live.ex:436
+#: lib/cinder_web/live/dashboard_live.ex:440
 #, elixir-autogen, elixir-format
 msgid "View all"
 msgstr "Tout voir"
@@ -2331,12 +2331,12 @@ msgstr "Demander au serveur multimédia d’actualiser la médiathèque de séri
 msgid "Request a movie-library refresh from the media server."
 msgstr "Demander au serveur multimédia d’actualiser la médiathèque de films."
 
-#: lib/cinder_web/live/dashboard_live.ex:321
+#: lib/cinder_web/live/dashboard_live.ex:325
 #, elixir-autogen, elixir-format
 msgid "Run"
 msgstr "Exécuter"
 
-#: lib/cinder_web/live/dashboard_live.ex:319
+#: lib/cinder_web/live/dashboard_live.ex:322
 #, elixir-autogen, elixir-format
 msgid "Run %{action}"
 msgstr "Exécuter : %{action}"
@@ -2351,7 +2351,7 @@ msgstr "Exécuter une passe en arrière-plan sans modifier sa planification."
 msgid "Run maintenance"
 msgstr "Exécuter la maintenance"
 
-#: lib/cinder_web/live/dashboard_live.ex:321
+#: lib/cinder_web/live/dashboard_live.ex:325
 #, elixir-autogen, elixir-format
 msgid "Running…"
 msgstr "Exécution…"
@@ -2370,3 +2370,8 @@ msgstr "Analyse de la médiathèque de séries"
 #, elixir-autogen, elixir-format
 msgid "TV pipeline"
 msgstr "Pipeline des séries"
+
+#: lib/cinder_web/live/dashboard_live.ex:321
+#, elixir-autogen, elixir-format
+msgid "Running %{action}"
+msgstr "Exécution : %{action}"
