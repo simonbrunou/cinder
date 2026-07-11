@@ -10,7 +10,12 @@ defmodule CinderWeb.DashboardLive do
 
   import CinderWeb.LiveHelpers
 
-  alias Cinder.{Catalog, Health, Requests}
+  alias Cinder.{Catalog, Health, Library, Requests}
+  alias Cinder.Catalog.Refresher
+  alias Cinder.Download.{Poller, TvPoller}
+  alias Cinder.Subtitles.Sweeper
+
+  require Logger
 
   @parked [:no_match, :search_failed, :import_failed]
   @pipeline [:requested, :searching, :downloading, :downloaded, :upgrading]
@@ -23,7 +28,17 @@ defmodule CinderWeb.DashboardLive do
       Requests.subscribe()
     end
 
-    {:ok, socket |> assign(health: :loading, denying: nil) |> load() |> check_health()}
+    {:ok,
+     socket
+     |> assign(
+       health: :loading,
+       denying: nil,
+       maintenance_actions: maintenance_actions(),
+       running_maintenance: [],
+       maintenance_results: %{}
+     )
+     |> load()
+     |> check_health()}
   end
 
   # Re-load on any pipeline/request change so stats, the queue, and recent activity stay live.
@@ -49,6 +64,15 @@ defmodule CinderWeb.DashboardLive do
     do:
       {:noreply,
        assign(socket, health: [%{label: gettext("Health check"), status: {:error, reason}}])}
+
+  def handle_async({:maintenance, key}, {:ok, :ok}, socket),
+    do: {:noreply, finish_maintenance(socket, key, :ok)}
+
+  def handle_async({:maintenance, key}, {:ok, {:error, reason}}, socket),
+    do: {:noreply, maintenance_failed(socket, key, reason)}
+
+  def handle_async({:maintenance, key}, {:exit, reason}, socket),
+    do: {:noreply, maintenance_failed(socket, key, reason)}
 
   @impl true
   def handle_event("recheck_health", _params, socket),
@@ -91,6 +115,24 @@ defmodule CinderWeb.DashboardLive do
     end
   end
 
+  def handle_event("run_maintenance", %{"action" => id}, socket) do
+    case Enum.find(socket.assigns.maintenance_actions, &(&1.id == id)) do
+      %{key: key} ->
+        if key in socket.assigns.running_maintenance do
+          {:noreply, socket}
+        else
+          {:noreply,
+           socket
+           |> assign(:running_maintenance, [key | socket.assigns.running_maintenance])
+           |> assign(:maintenance_results, Map.delete(socket.assigns.maintenance_results, key))
+           |> start_async({:maintenance, key}, fn -> run_maintenance(key) end)}
+        end
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
   # Client-controlled payloads — ignore anything unmatched rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
@@ -121,6 +163,65 @@ defmodule CinderWeb.DashboardLive do
     if connected?(socket),
       do: start_async(socket, :health, &Health.check_all/0),
       else: socket
+  end
+
+  defp maintenance_actions do
+    [
+      %{
+        id: "movie-pipeline",
+        key: :movie_pipeline,
+        label: gettext("Movie pipeline"),
+        description: gettext("Advance movie searches, downloads, imports, and upgrades.")
+      },
+      %{
+        id: "tv-pipeline",
+        key: :tv_pipeline,
+        label: gettext("TV pipeline"),
+        description: gettext("Advance monitored TV searches, downloads, and imports.")
+      },
+      %{
+        id: "series-refresh",
+        key: :series_refresh,
+        label: gettext("Monitored series refresh"),
+        description: gettext("Reconcile monitored series and episodes with TMDB.")
+      },
+      %{
+        id: "subtitle-backfill",
+        key: :subtitle_backfill,
+        label: gettext("Subtitle backfill"),
+        description: gettext("Find missing subtitles for imported movies and episodes.")
+      },
+      %{
+        id: "scan-movies",
+        key: :scan_movies,
+        label: gettext("Movie library scan"),
+        description: gettext("Request a movie-library refresh from the media server.")
+      },
+      %{
+        id: "scan-tv",
+        key: :scan_tv,
+        label: gettext("TV library scan"),
+        description: gettext("Request a TV-library refresh from the media server.")
+      }
+    ]
+  end
+
+  defp run_maintenance(:movie_pipeline), do: Poller.poll()
+  defp run_maintenance(:tv_pipeline), do: TvPoller.poll()
+  defp run_maintenance(:series_refresh), do: Refresher.poll()
+  defp run_maintenance(:subtitle_backfill), do: Sweeper.poll()
+  defp run_maintenance(:scan_movies), do: Library.scan(:movies)
+  defp run_maintenance(:scan_tv), do: Library.scan(:tv)
+
+  defp finish_maintenance(socket, key, result) do
+    socket
+    |> assign(:running_maintenance, List.delete(socket.assigns.running_maintenance, key))
+    |> assign(:maintenance_results, Map.put(socket.assigns.maintenance_results, key, result))
+  end
+
+  defp maintenance_failed(socket, key, reason) do
+    Logger.warning("maintenance #{key} failed: #{inspect(reason)}")
+    finish_maintenance(socket, key, :error)
   end
 
   attr :label, :string, required: true
@@ -176,6 +277,52 @@ defmodule CinderWeb.DashboardLive do
           icon="hero-inbox-arrow-down"
         />
       </div>
+
+      <section class="mt-8">
+        <div class="mb-3">
+          <h2 class="text-lg font-semibold">{gettext("Run maintenance")}</h2>
+          <p class="text-sm text-base-content/70">
+            {gettext("Run a background pass now without changing its schedule.")}
+          </p>
+        </div>
+        <ul class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          <li
+            :for={action <- @maintenance_actions}
+            class="flex items-center justify-between gap-4 rounded-box border border-base-300 bg-base-200/50 p-4"
+          >
+            <div class="min-w-0">
+              <p class="font-medium">{action.label}</p>
+              <p class="text-sm text-base-content/70">{action.description}</p>
+              <p
+                :if={Map.get(@maintenance_results, action.key)}
+                id={"maintenance-result-#{action.id}"}
+                role="status"
+                aria-live="polite"
+                class={[
+                  "mt-1 text-xs font-medium",
+                  Map.get(@maintenance_results, action.key) == :ok && "text-success",
+                  Map.get(@maintenance_results, action.key) == :error && "text-error"
+                ]}
+              >
+                {if Map.get(@maintenance_results, action.key) == :ok,
+                  do: gettext("Completed"),
+                  else: gettext("Failed")}
+              </p>
+            </div>
+            <.button
+              id={"maintenance-#{action.id}"}
+              variant="neutral"
+              size="sm"
+              phx-click="run_maintenance"
+              phx-value-action={action.id}
+              disabled={action.key in @running_maintenance}
+              aria-label={gettext("Run %{action}", action: action.label)}
+            >
+              {if action.key in @running_maintenance, do: gettext("Running…"), else: gettext("Run")}
+            </.button>
+          </li>
+        </ul>
+      </section>
 
       <div class="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
         <section>

@@ -35,7 +35,7 @@ defmodule Cinder.Download.PollerSkeleton do
       if stateful do
         quote do
           @doc "Runs one poll pass synchronously. The scheduled timer path is asynchronous."
-          def poll(server \\ __MODULE__), do: GenServer.call(server, :poll)
+          def poll(server \\ __MODULE__), do: GenServer.call(server, :poll, :infinity)
 
           @impl true
           def init(opts) do
