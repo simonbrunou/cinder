@@ -783,6 +783,9 @@ additional provider or implementing schema. **Done when:** must-support expected
 wrong automatic mappings, required Prowlarr fields, safe-stop fixtures, and the provider decision are
 recorded.
 
+**[done 2026-07-12]** Corpus v1 passes with zero known incorrect automatic mappings; the A0 audit
+records the metadata-provider decision, Prowlarr field coverage, and safe-stop fixtures.
+
 ### A1 — Identity foundation
 
 Land profiles, request/approval proposals, title aliases, many-to-many coordinates, sourced episode
