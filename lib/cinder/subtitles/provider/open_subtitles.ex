@@ -28,6 +28,17 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
   @max_api_response_bytes 4 * 1024 * 1024
   @max_subtitle_bytes 10 * 1024 * 1024
   @max_redirects 5
+  @untrusted_req_option_keys [
+    :plug,
+    :finch,
+    :finch_request,
+    :connect_options,
+    :pool_timeout,
+    :receive_timeout,
+    :inet6,
+    :unix_socket,
+    :pool_max_idle_time
+  ]
 
   @impl true
   def search(criteria) do
@@ -156,11 +167,10 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
     base =
       [method: method, url: base_url() <> path, headers: headers(auth)] ++ timeout
 
-    base
-    |> Keyword.merge(req_options())
-    |> Keyword.merge(opts)
-    |> Keyword.put(:redirect, false)
+    req_options()
     |> Req.new()
+    |> Req.merge(base ++ opts)
+    |> Req.merge(auth: nil, redirect: false)
     |> HTTPPolicy.bounded_request(@max_api_response_bytes)
   end
 
@@ -174,7 +184,8 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
     request =
       [method: :get, url: uri, redirect: false]
       |> Keyword.merge(@data_timeout)
-      |> Keyword.merge(req_options())
+      |> Keyword.merge(untrusted_req_options())
+      |> Keyword.put(:retry, false)
       |> Keyword.put(:redirect, false)
       |> Req.new()
 
@@ -210,6 +221,7 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
 
   defp base_url, do: cfg(:base_url) || @default_base
   defp req_options, do: cfg(:req_options) || []
+  defp untrusted_req_options, do: Keyword.take(req_options(), @untrusted_req_option_keys)
 
   defp validate_url(url) do
     case cfg(:url_resolver) do

@@ -19,6 +19,10 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   SABnzbd requires `apikey` in the query string. Redirects and redirect logging are disabled so
   that protocol-required secret is never replayed to another origin or written to Cinder's logs.
+  `addurl` remains a deputy boundary: Cinder validates the initial provider URL, but SABnzbd then
+  performs its own DNS resolution and redirects outside this policy. Isolate SABnzbd's network and
+  deny access to private control-plane/metadata destinations; migrating to `addfile` is a separate
+  compatibility change.
 
   Validated against a live SABnzbd only in Phase 5; the unit test is a shape
   sanity-check against `Req.Test`.

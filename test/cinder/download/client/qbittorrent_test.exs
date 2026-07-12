@@ -300,8 +300,10 @@ defmodule Cinder.Download.Client.QBittorrentTest do
   end
 
   test "login cools down after a definitive auth failure: one attempt per process" do
+    parent = self()
+
     Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
-      send(self(), :login_attempted)
+      send(parent, :login_attempted)
       Req.Test.text(conn, "Fails.")
     end)
 

@@ -3,6 +3,8 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitlesTest do
 
   alias Cinder.Subtitles.Provider.OpenSubtitles
 
+  import Cinder.ConfigCase
+
   setup do
     # Isolate the token cache between tests (persistent_term is global).
     on_exit(fn -> :persistent_term.erase({OpenSubtitles, :token}) end)
@@ -320,5 +322,56 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitlesTest do
     end)
 
     assert {:error, :response_too_large} = OpenSubtitles.download(42)
+  end
+
+  test "download/1 strips configured secrets from the untrusted link and its redirects" do
+    config = Application.fetch_env!(:cinder, OpenSubtitles)
+
+    put_config(OpenSubtitles,
+      req_options: [
+        plug: {Req.Test, Cinder.OpenSubtitlesStub},
+        retry: false,
+        headers: [{"x-config-secret", "header-secret"}, {"cookie", "sid=cookie-secret"}],
+        auth: {:bearer, "generic-secret"},
+        body: "configured-secret-body"
+      ]
+    )
+
+    :persistent_term.put({OpenSubtitles, :token}, "jwt-123")
+
+    Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
+      case {conn.host, conn.request_path} do
+        {"api.opensubtitles.test", "/api/v1/download"} ->
+          assert Plug.Conn.get_req_header(conn, "api-key") == ["test-key"]
+          assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer jwt-123"]
+          assert Plug.Conn.get_req_header(conn, "x-config-secret") == ["header-secret"]
+          assert Plug.Conn.get_req_header(conn, "cookie") == ["sid=cookie-secret"]
+          Req.Test.json(conn, %{"link" => "https://dl.opensubtitles.test/start.srt"})
+
+        {"dl.opensubtitles.test", "/start.srt"} ->
+          assert_untrusted_request_is_clean(conn)
+
+          conn
+          |> Plug.Conn.put_resp_header("location", "https://cdn.opensubtitles.test/final.srt")
+          |> Plug.Conn.send_resp(307, "")
+
+        {"cdn.opensubtitles.test", "/final.srt"} ->
+          assert_untrusted_request_is_clean(conn)
+          Plug.Conn.send_resp(conn, 200, "SRT-BYTES")
+      end
+    end)
+
+    assert config[:url_resolver]
+    assert {:ok, "SRT-BYTES"} = OpenSubtitles.download(42)
+  end
+
+  defp assert_untrusted_request_is_clean(conn) do
+    assert conn.method == "GET"
+    assert Plug.Conn.get_req_header(conn, "api-key") == []
+    assert Plug.Conn.get_req_header(conn, "authorization") == []
+    assert Plug.Conn.get_req_header(conn, "x-config-secret") == []
+    assert Plug.Conn.get_req_header(conn, "cookie") == []
+    {:ok, body, _conn} = Plug.Conn.read_body(conn)
+    assert body == ""
   end
 end

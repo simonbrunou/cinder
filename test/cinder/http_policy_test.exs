@@ -1,6 +1,8 @@
 defmodule Cinder.HTTPPolicyTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias Cinder.HTTPPolicy
 
   @public_ipv4 {93, 184, 216, 34}
@@ -310,30 +312,55 @@ defmodule Cinder.HTTPPolicyTest do
                )
     end
 
-    test "halts a trickling response at its total deadline without retaining the body" do
-      parent = self()
-
+    test "collects a trickling response that completes within the total deadline" do
       adapter = fn request ->
         response = Req.Response.new(status: 200)
         {:cont, acc} = request.into.({:data, "first"}, {request, response})
-        Process.sleep(20)
-
-        case request.into.({:data, "late-secret"}, acc) do
-          {:halt, {request, response}} ->
-            send(parent, :stream_halted)
-            {request, response}
-
-          {:cont, acc} ->
-            send(parent, :stream_continued)
-            acc
-        end
+        Process.sleep(5)
+        {:cont, acc} = request.into.({:data, "second"}, acc)
+        acc
       end
 
-      assert {:error, :request_timeout} =
-               HTTPPolicy.bounded_request(Req.new(adapter: adapter), 64, 10)
+      assert {:ok, %{body: "firstsecond"}} =
+               HTTPPolicy.bounded_request(Req.new(adapter: adapter), 64, 50)
+    end
 
-      assert_received :stream_halted
-      refute_received :stream_continued
+    test "cancels a request blocked before headers at the wall-clock deadline" do
+      parent = self()
+
+      Req.Test.stub(Cinder.HTTPPolicyBlockedStub, fn conn ->
+        send(parent, {:request_started, self()})
+        Process.sleep(100)
+        Req.Test.text(conn, "late-secret")
+      end)
+
+      started_at = System.monotonic_time(:millisecond)
+
+      assert {:error, :request_timeout} =
+               HTTPPolicy.bounded_request(
+                 [
+                   url: "https://public.example/blocked",
+                   plug: {Req.Test, Cinder.HTTPPolicyBlockedStub}
+                 ],
+                 64,
+                 20
+               )
+
+      elapsed = System.monotonic_time(:millisecond) - started_at
+      assert elapsed < 80
+      assert_received {:request_started, request_pid}
+      refute request_pid == self()
+      refute Process.alive?(request_pid)
+      refute_received _late_task_message
+    end
+
+    test "isolates an unexpected request crash from the caller" do
+      adapter = fn _request -> raise "adapter crashed" end
+
+      capture_log(fn ->
+        assert {:error, {%RuntimeError{message: "adapter crashed"}, _stacktrace}} =
+                 HTTPPolicy.bounded_request(Req.new(adapter: adapter), 64, 200)
+      end)
     end
   end
 

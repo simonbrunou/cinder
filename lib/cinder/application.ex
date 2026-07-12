@@ -15,6 +15,8 @@ defmodule Cinder.Application do
          repos: Application.fetch_env!(:cinder, :ecto_repos), skip: skip_migrations?()},
         {DNSCluster, query: Application.get_env(:cinder, :dns_cluster_query) || :ignore},
         {Phoenix.PubSub, name: Cinder.PubSub},
+        # Owns cancellable outbound HTTP requests so wall-clock deadlines never link-crash callers.
+        {Task.Supervisor, name: Cinder.HTTPPolicy.TaskSupervisor},
         # Off-process, best-effort subtitle fetches dispatched from the import path — supervised so
         # they don't run in (and can't stall) the poller tick. Always on; inert when subtitles off.
         {Task.Supervisor, name: Cinder.Subtitles.TaskSupervisor},

@@ -86,6 +86,29 @@ defmodule Cinder.HTTPPolicy do
         ) :: {:ok, Req.Response.t()} | {:error, term()}
   def bounded_request(request, max_bytes, timeout_ms)
       when is_integer(max_bytes) and max_bytes > 0 and is_integer(timeout_ms) and timeout_ms > 0 do
+    request = request_struct(request)
+    gate = make_ref()
+    owner = self()
+
+    task =
+      Task.Supervisor.async_nolink(Cinder.HTTPPolicy.TaskSupervisor, fn ->
+        receive do
+          {^gate, :run} -> run_bounded_request(request, max_bytes, timeout_ms)
+        end
+      end)
+
+    case allow_req_test(request, owner, task.pid) do
+      :ok ->
+        send(task.pid, {gate, :run})
+        await_request(task, timeout_ms)
+
+      {:error, reason} ->
+        Task.shutdown(task, :brutal_kill)
+        {:error, reason}
+    end
+  end
+
+  defp run_bounded_request(request, max_bytes, timeout_ms) do
     started_at = System.monotonic_time(:millisecond)
 
     into = fn {:data, chunk}, {req, resp} ->
@@ -342,4 +365,32 @@ defmodule Cinder.HTTPPolicy do
   end
 
   defp finish_bounded_request(result, _started_at, _timeout_ms), do: result
+
+  defp request_struct(%Req.Request{} = request), do: request
+  defp request_struct(%URI{} = url), do: Req.new(url: url)
+  defp request_struct(url) when is_binary(url), do: Req.new(url: url)
+  defp request_struct(options) when is_list(options), do: Req.new(options)
+
+  defp allow_req_test(%Req.Request{options: %{plug: {Req.Test, name}}}, owner, request_pid),
+    do: allow_req_test_result(Req.Test.allow(name, owner, request_pid))
+
+  defp allow_req_test(_request, _owner, _request_pid), do: :ok
+
+  defp allow_req_test_result(:ok), do: :ok
+  defp allow_req_test_result({:error, %{reason: :cant_allow_in_shared_mode}}), do: :ok
+  defp allow_req_test_result({:error, reason}), do: {:error, reason}
+
+  defp await_request(task, timeout_ms) do
+    case Task.yield(task, timeout_ms) do
+      {:ok, result} ->
+        result
+
+      {:exit, reason} ->
+        {:error, reason}
+
+      nil ->
+        Task.shutdown(task, :brutal_kill)
+        {:error, :request_timeout}
+    end
+  end
 end

@@ -223,8 +223,10 @@ defmodule Cinder.Download.Client.SabnzbdTest do
   test "health/0 probes exactly once — no retries against a failing server" do
     # The probe is bounded (retry: false): Req's default policy would re-hit a 500
     # up to 3 more times with backoff, hanging "Test connection" for ~7s per probe.
+    parent = self()
+
     stub(fn conn ->
-      send(self(), :probed)
+      send(parent, :probed)
       conn |> Plug.Conn.put_status(500) |> Req.Test.text("boom")
     end)
 
