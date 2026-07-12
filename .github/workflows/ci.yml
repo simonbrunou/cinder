@@ -42,3 +42,30 @@ jobs:
       # `mix test` is the project alias: compile --warnings-as-errors,
       # format --check-formatted, credo --strict, ecto create/migrate, test.
       - run: mix test
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29"
+          elixir-version: "1.20"
+
+      - run: mix hex.audit
+
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: docker build --check .
+      - run: docker build -t cinder:ci .
+
+      - uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: cinder:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: 1

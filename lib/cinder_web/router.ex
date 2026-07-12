@@ -45,6 +45,10 @@ defmodule CinderWeb.Router do
     do: if(String.trim(value) == "", do: nil, else: value)
 
   scope "/", CinderWeb do
+    get "/healthz", HealthController, :show
+  end
+
+  scope "/", CinderWeb do
     pipe_through :browser
 
     get "/locale/:locale", LocaleController, :update
