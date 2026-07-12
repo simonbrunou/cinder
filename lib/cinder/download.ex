@@ -20,7 +20,12 @@ defmodule Cinder.Download do
 
   @retry_base_seconds 5
   @retry_max_seconds 300
-  @permanent_submission_errors [:unsupported_download_url, :bad_torrent, :invalid_intent_release]
+  @permanent_submission_errors [
+    :unsupported_download_url,
+    :bad_torrent,
+    :invalid_intent_release,
+    :add_rejected
+  ]
 
   @doc "Reserves a durable downloader operation before any external side effect."
   def reserve_intent(%{release: %Release{download_url: url} = release} = attrs)
@@ -148,18 +153,37 @@ defmodule Cinder.Download do
   end
 
   defp submit_due_intent(intent) do
-    case configured_client(intent.protocol) do
-      {:ok, client} -> submit_with_client(intent, client)
-      {:error, reason} -> schedule_retry(intent, reason)
+    if submission_target_active?(intent) do
+      case configured_client(intent.protocol) do
+        {:ok, client} -> submit_with_client(intent, client)
+        {:error, reason} -> schedule_retry(intent, reason)
+      end
+    else
+      cleanup_ineligible_intent(intent)
     end
   end
 
   defp submit_with_client(intent, client) do
     case client.find_by_operation_key(intent.operation_key) do
       {:ok, remote_id} -> store_remote_id(intent, remote_id)
-      :not_found -> add_reserved_release(intent, client)
+      :not_found -> maybe_add_reserved_release(intent, client)
       {:error, reason} -> schedule_retry(intent, reason)
     end
+  end
+
+  defp maybe_add_reserved_release(intent, client) do
+    if submission_target_active?(intent),
+      do: add_reserved_release(intent, client),
+      else: release_ineligible_after_not_found(intent)
+  end
+
+  defp release_ineligible_after_not_found(intent) do
+    case Repo.get(Intent, intent.id) do
+      nil -> :ok
+      fresh -> complete_intent(fresh, :absent)
+    end
+
+    {:error, ineligible_reason(intent)}
   end
 
   @doc "Attaches a durable intent's remote ID to its movie/grab owner and removes the intent."
@@ -196,39 +220,98 @@ defmodule Cinder.Download do
   end
 
   @doc false
-  def cancel_movie_intents(movie_id),
-    do: cancel_intents(from i in Intent, where: i.kind == :movie and i.target_id == ^movie_id)
+  def fence_movie_cleanup(%Movie{} = movie, opts \\ []) do
+    intent = Repo.get_by(Intent, kind: :movie, target_id: movie.id)
+    remote_id = if Keyword.get(opts, :include_remote, true), do: movie.download_id
 
-  @doc false
-  def cancel_episode_intents(episode_ids) do
-    from(i in Intent,
-      join: r in IntentEpisode,
-      on: r.intent_id == i.id,
-      where: r.episode_id in ^episode_ids,
-      distinct: true
-    )
-    |> cancel_intents()
+    case {intent, remote_id} do
+      {%Intent{} = existing, _} -> [mark_cleanup!(existing, remote_id).id]
+      {nil, id} when is_binary(id) -> [insert_movie_cleanup!(movie, id).id]
+      {nil, _} -> []
+    end
   end
 
-  defp cancel_intents(query) do
-    query |> Repo.all() |> Enum.each(&cancel_intent/1)
+  @doc false
+  def fence_episode_cleanup(episode_ids, grab_specs) do
+    pending =
+      Repo.all(
+        from i in Intent,
+          join: r in IntentEpisode,
+          on: r.intent_id == i.id,
+          where: r.episode_id in ^episode_ids,
+          distinct: true
+      )
+
+    pending_ids = Enum.map(pending, &mark_cleanup!(&1, nil).id)
+
+    carrier_ids =
+      for spec <- grab_specs,
+          not Enum.any?(pending, &(&1.remote_id == spec.remote_id)),
+          do: insert_episode_cleanup!(spec).id
+
+    Enum.uniq(pending_ids ++ carrier_ids)
+  end
+
+  @doc false
+  def cleanup_intents(intent_ids) do
+    Enum.each(intent_ids, fn id ->
+      case Repo.get(Intent, id) do
+        nil -> :ok
+        intent -> reconcile_intent(intent)
+      end
+    end)
+
     :ok
   end
 
-  defp cancel_intent(intent) do
-    with_intent_lock(intent, fn fresh ->
-      case fresh
-           |> Intent.changeset(%{
-             status: :cleanup_pending,
-             attempt_count: 0,
-             next_attempt_at: nil,
-             last_error: nil
-           })
-           |> Repo.update() do
-        {:ok, cleanup} -> do_cleanup(cleanup)
-        {:error, changeset} -> {:error, changeset}
-      end
-    end)
+  defp mark_cleanup!(intent, remote_id) do
+    attrs = %{
+      status: :cleanup_pending,
+      attempt_count: 0,
+      next_attempt_at: nil,
+      last_error: nil
+    }
+
+    attrs = if is_binary(remote_id), do: Map.put(attrs, :remote_id, remote_id), else: attrs
+    intent |> Intent.changeset(attrs) |> Repo.update!()
+  end
+
+  defp insert_movie_cleanup!(movie, remote_id) do
+    insert_cleanup_intent!(%{
+      operation_key: Ecto.UUID.generate(),
+      kind: :movie,
+      target_id: movie.id,
+      episode_ids: [],
+      protocol: movie.download_protocol || :torrent,
+      release: %{"title" => movie.release_title || movie.title},
+      status: :cleanup_pending,
+      remote_id: remote_id
+    })
+  end
+
+  defp insert_episode_cleanup!(spec) do
+    insert_cleanup_intent!(%{
+      operation_key: Ecto.UUID.generate(),
+      kind: if(length(spec.episode_ids) == 1, do: :episode, else: :season_pack),
+      target_id: hd(spec.episode_ids),
+      episode_ids: spec.episode_ids,
+      protocol: spec.protocol || :torrent,
+      release: %{"title" => spec.title || ""},
+      status: :cleanup_pending,
+      remote_id: spec.remote_id
+    })
+  end
+
+  defp insert_cleanup_intent!(attrs) do
+    intent = %Intent{} |> Intent.changeset(attrs) |> Repo.insert!()
+    Enum.each(intent.episode_ids, &insert_episode_reservation!(intent.id, &1))
+    intent
+  end
+
+  defp insert_episode_reservation!(intent_id, episode_id) do
+    %IntentEpisode{}
+    |> IntentEpisode.changeset(%{intent_id: intent_id, episode_id: episode_id})
+    |> Repo.insert!()
   end
 
   defp do_cleanup(intent) do
@@ -315,15 +398,31 @@ defmodule Cinder.Download do
   defp decrypt_download_url(_release), do: {:error, :invalid_intent_release}
 
   defp store_remote_id(intent, remote_id) do
-    intent
-    |> Intent.changeset(%{
-      status: :submitted,
-      remote_id: remote_id,
-      attempt_count: 0,
-      next_attempt_at: nil,
-      last_error: nil
-    })
-    |> Repo.update()
+    case Repo.get(Intent, intent.id) do
+      %Intent{status: :cleanup_pending} = cleanup ->
+        cleanup
+        |> Intent.changeset(%{
+          remote_id: remote_id,
+          attempt_count: 0,
+          next_attempt_at: nil,
+          last_error: nil
+        })
+        |> Repo.update()
+
+      %Intent{} = fresh ->
+        fresh
+        |> Intent.changeset(%{
+          status: :submitted,
+          remote_id: remote_id,
+          attempt_count: 0,
+          next_attempt_at: nil,
+          last_error: nil
+        })
+        |> Repo.update()
+
+      nil ->
+        {:error, :intent_completed}
+    end
   end
 
   defp store_cleanup_remote_id(intent, remote_id) do
@@ -364,6 +463,41 @@ defmodule Cinder.Download do
   defp abandon_reserved(intent, reason) do
     delete_intent(intent)
     {:error, reason}
+  end
+
+  defp cleanup_ineligible_intent(intent) do
+    case Repo.get(Intent, intent.id) do
+      nil ->
+        {:error, :intent_completed}
+
+      fresh ->
+        fresh = if fresh.status == :cleanup_pending, do: fresh, else: mark_cleanup!(fresh, nil)
+        do_cleanup(fresh)
+        {:error, ineligible_reason(intent)}
+    end
+  end
+
+  defp ineligible_reason(%Intent{kind: :movie, target_id: movie_id}) do
+    if Repo.get(Movie, movie_id), do: :stale_target, else: :stale_entry
+  end
+
+  defp ineligible_reason(%Intent{}), do: :stale_target
+
+  defp submission_target_active?(%Intent{kind: :movie, target_id: movie_id}) do
+    case Repo.get(Movie, movie_id) do
+      %Movie{status: status} ->
+        status in [:requested, :searching, :no_match, :search_failed, :import_failed, :available]
+
+      nil ->
+        false
+    end
+  end
+
+  defp submission_target_active?(%Intent{episode_ids: episode_ids}) do
+    Repo.exists?(
+      from e in Cinder.Catalog.Episode,
+        where: e.id in ^episode_ids and e.monitored == true and is_nil(e.grab_id)
+    )
   end
 
   defp reconcile_movie(%Intent{remote_id: remote_id, target_id: movie_id} = intent) do

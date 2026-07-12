@@ -50,14 +50,22 @@ defmodule Cinder.Download.Client.SabnzbdTest do
 
   test "find_by_operation_key/1 finds an exact queue name" do
     stub(fn conn ->
-      assert conn.params["mode"] == "queue"
       assert conn.params["search"] == "cinder-op-123"
 
-      Req.Test.json(conn, %{
-        "queue" => %{
-          "slots" => [%{"filename" => "cinder-op-123", "nzo_id" => "nzo-queue"}]
-        }
-      })
+      body =
+        case conn.params["mode"] do
+          "queue" ->
+            %{
+              "queue" => %{
+                "slots" => [%{"filename" => "cinder-op-123", "nzo_id" => "nzo-queue"}]
+              }
+            }
+
+          "history" ->
+            %{"history" => %{"slots" => []}}
+        end
+
+      Req.Test.json(conn, body)
     end)
 
     assert {:ok, "nzo-queue"} = Sabnzbd.find_by_operation_key("op-123")
@@ -81,6 +89,9 @@ defmodule Cinder.Download.Client.SabnzbdTest do
               "slots" => [%{"name" => "cinder-op-123", "nzo_id" => "nzo-history"}]
             }
           })
+
+        {"history", "1"} ->
+          Req.Test.json(conn, %{"history" => %{"slots" => []}})
       end
     end)
 
@@ -112,17 +123,60 @@ defmodule Cinder.Download.Client.SabnzbdTest do
 
   test "find_by_operation_key/1 rejects duplicate exact queue names" do
     stub(fn conn ->
+      body =
+        case conn.params["mode"] do
+          "queue" ->
+            %{
+              "queue" => %{
+                "slots" => [
+                  %{"filename" => "cinder-op-123", "nzo_id" => "nzo-1"},
+                  %{"filename" => "cinder-op-123", "nzo_id" => "nzo-2"}
+                ]
+              }
+            }
+
+          "history" ->
+            %{"history" => %{"slots" => []}}
+        end
+
+      Req.Test.json(conn, body)
+    end)
+
+    assert {:error, :ambiguous_operation_key} = Sabnzbd.find_by_operation_key("op-123")
+  end
+
+  test "find_by_operation_key/1 rejects distinct exact matches across queue and history" do
+    stub(fn conn ->
+      body =
+        case {conn.params["mode"], conn.params["archive"]} do
+          {"queue", _} ->
+            %{"queue" => %{"slots" => [%{"name" => "cinder-op-123", "nzo_id" => "nzo-1"}]}}
+
+          {"history", "0"} ->
+            %{"history" => %{"slots" => [%{"name" => "cinder-op-123", "nzo_id" => "nzo-2"}]}}
+
+          {"history", "1"} ->
+            %{"history" => %{"slots" => []}}
+        end
+
+      Req.Test.json(conn, body)
+    end)
+
+    assert {:error, :ambiguous_operation_key} = Sabnzbd.find_by_operation_key("op-123")
+  end
+
+  test "find_by_operation_key/1 deduplicates one nzo_id repeated across tiers" do
+    stub(fn conn ->
+      mode = conn.params["mode"]
+
       Req.Test.json(conn, %{
-        "queue" => %{
-          "slots" => [
-            %{"filename" => "cinder-op-123", "nzo_id" => "nzo-1"},
-            %{"filename" => "cinder-op-123", "nzo_id" => "nzo-2"}
-          ]
+        mode => %{
+          "slots" => [%{"name" => "cinder-op-123", "nzo_id" => "same-nzo"}]
         }
       })
     end)
 
-    assert {:error, :ambiguous_operation_key} = Sabnzbd.find_by_operation_key("op-123")
+    assert {:ok, "same-nzo"} = Sabnzbd.find_by_operation_key("op-123")
   end
 
   test "find_by_operation_key/1 returns :not_found when queue and history miss" do

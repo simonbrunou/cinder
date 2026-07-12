@@ -70,53 +70,58 @@ defmodule Cinder.Download.Client.Sabnzbd do
   def find_by_operation_key(key) do
     name = "cinder-#{key}"
 
-    case named_slot("queue", name) do
-      {:ok, nil} -> find_named_history(name)
-      {:ok, slot} -> remote_id(slot)
-      other -> other
-    end
+    [
+      named_slots("queue", name),
+      named_slots("history", name, archive: 0),
+      named_slots("history", name, archive: 1)
+    ]
+    |> unique_remote_id()
   end
 
-  defp find_named_history(name) do
-    case named_slot("history", name, archive: 0) do
-      {:ok, nil} -> find_named_archive(name)
-      {:ok, slot} -> remote_id(slot)
-      other -> other
-    end
-  end
-
-  defp find_named_archive(name) do
-    case named_slot("history", name, archive: 1) do
-      {:ok, nil} -> :not_found
-      {:ok, slot} -> remote_id(slot)
-      other -> other
-    end
-  end
-
-  defp named_slot(mode, name, extra \\ []) do
+  defp named_slots(mode, name, extra \\ []) do
     case get([mode: mode, search: name] ++ extra) do
-      {:ok, %{status: 200, body: body}} -> exact_named_slot(body, mode, name)
+      {:ok, %{status: 200, body: body}} -> {:ok, exact_named_slots(body, mode, name)}
       other -> error(other)
     end
   end
 
-  defp exact_named_slot(body, mode, name) do
-    matches =
-      case body do
-        %{^mode => %{"slots" => slots}} when is_list(slots) ->
-          Enum.filter(slots, fn slot ->
-            slot["filename"] == name or slot["name"] == name or slot["nzb_name"] == name
-          end)
+  defp exact_named_slots(body, mode, name) do
+    case body do
+      %{^mode => %{"slots" => slots}} when is_list(slots) ->
+        Enum.filter(slots, fn slot ->
+          slot["filename"] == name or slot["name"] == name or slot["nzb_name"] == name
+        end)
 
-        _ ->
-          []
-      end
-
-    case matches do
-      [] -> {:ok, nil}
-      [slot] -> {:ok, slot}
-      [_ | _] -> {:error, :ambiguous_operation_key}
+      _ ->
+        []
     end
+  end
+
+  defp unique_remote_id(results) do
+    with {:ok, slots} <- collect_slots(results),
+         {:ok, ids} <- collect_remote_ids(slots) do
+      case Enum.uniq(ids) do
+        [] -> :not_found
+        [id] -> {:ok, id}
+        [_ | _] -> {:error, :ambiguous_operation_key}
+      end
+    end
+  end
+
+  defp collect_slots(results) do
+    Enum.reduce_while(results, {:ok, []}, fn
+      {:ok, slots}, {:ok, acc} -> {:cont, {:ok, slots ++ acc}}
+      error, _acc -> {:halt, error}
+    end)
+  end
+
+  defp collect_remote_ids(slots) do
+    Enum.reduce_while(slots, {:ok, []}, fn slot, {:ok, ids} ->
+      case remote_id(slot) do
+        {:ok, id} -> {:cont, {:ok, [id | ids]}}
+        error -> {:halt, error}
+      end
+    end)
   end
 
   defp remote_id(%{"nzo_id" => id}) when is_binary(id), do: {:ok, id}

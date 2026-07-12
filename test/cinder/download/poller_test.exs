@@ -668,6 +668,34 @@ defmodule Cinder.Download.PollerTest do
     assert movie.search_attempts == 0
   end
 
+  test "a definite add rejection releases the movie for the next search tick" do
+    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 906, title: "M", imdb_id: "tt906"})
+    {:ok, adds} = Agent.start_link(fn -> 0 end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt906" ->
+      {:ok,
+       [%{title: "M.1080p.WEB-GRP", size: 8_000_000_000, download_url: "magnet:?x", seeders: 5}]}
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+      case Agent.get_and_update(adds, &{&1, &1 + 1}) do
+        0 -> {:error, :add_rejected}
+        _ -> {:ok, "hash-after-rejection"}
+      end
+    end)
+
+    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+
+    assert :ok = Poller.poll()
+    assert Repo.get!(Movie, movie.id).status == :searching
+    refute Repo.get_by(Intent, kind: :movie, target_id: movie.id)
+
+    assert :ok = Poller.poll()
+
+    assert %Movie{status: :downloading, download_id: "hash-after-rejection"} =
+             Repo.get!(Movie, movie.id)
+  end
+
   test "genuinely-missing imdb parks :no_match; transient TMDB error retries" do
     {:ok, miss} = Catalog.add_movie(%{tmdb_id: 904, title: "M"})
     {:ok, flaky} = Catalog.add_movie(%{tmdb_id: 905, title: "N"})

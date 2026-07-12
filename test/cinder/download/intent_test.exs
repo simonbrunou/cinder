@@ -189,9 +189,10 @@ defmodule Cinder.Download.IntentTest do
   test "cleanup lookup failure retains the only operation key" do
     movie = movie_fixture(%{status: :searching})
     {:ok, intent} = reserve_movie_intent(movie.id)
+    cleanup = mark_cleanup(intent)
     expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _ -> {:error, :timeout} end)
 
-    assert :ok = Download.cancel_movie_intents(movie.id)
+    assert {:error, :timeout} = Download.reconcile_intent(cleanup)
     saved = Repo.get!(Intent, intent.id)
     assert saved.status == :cleanup_pending
     assert saved.attempt_count == 1
@@ -201,9 +202,10 @@ defmodule Cinder.Download.IntentTest do
   test "cleanup remove failure retains a retryable cleanup record" do
     movie = movie_fixture(%{status: :searching})
     intent = submitted_movie_intent(movie.id, "hash-remove-failed")
+    cleanup = mark_cleanup(intent)
     expect(Cinder.Download.ClientMock, :remove, fn _id, _opts -> {:error, :timeout} end)
 
-    assert :ok = Download.cancel_movie_intents(movie.id)
+    assert {:error, :timeout} = Download.reconcile_intent(cleanup)
     saved = Repo.get!(Intent, intent.id)
     assert saved.status == :cleanup_pending
     assert saved.remote_id == "hash-remove-failed"
@@ -213,15 +215,17 @@ defmodule Cinder.Download.IntentTest do
   test "cleanup deletes the record after direct remove succeeds" do
     movie = movie_fixture(%{status: :searching})
     intent = submitted_movie_intent(movie.id, "hash-remove-ok")
+    cleanup = mark_cleanup(intent)
     expect(Cinder.Download.ClientMock, :remove, fn _id, _opts -> :ok end)
 
-    assert :ok = Download.cancel_movie_intents(movie.id)
+    assert {:ok, :removed} = Download.reconcile_intent(cleanup)
     refute Repo.get(Intent, intent.id)
   end
 
   test "cleanup converges after process death during remote removal" do
     movie = movie_fixture(%{status: :searching})
     intent = submitted_movie_intent(movie.id, "hash-cleanup-crash")
+    cleanup = mark_cleanup(intent)
     {:ok, calls} = Agent.start_link(fn -> 0 end)
 
     stub(Cinder.Download.ClientMock, :remove, fn _id, _opts ->
@@ -231,7 +235,7 @@ defmodule Cinder.Download.IntentTest do
       end
     end)
 
-    {pid, ref} = spawn_monitor(fn -> Download.cancel_movie_intents(movie.id) end)
+    {pid, ref} = spawn_monitor(fn -> Download.reconcile_intent(cleanup) end)
     assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
     assert Repo.get!(Intent, intent.id).status == :cleanup_pending
 
@@ -240,7 +244,7 @@ defmodule Cinder.Download.IntentTest do
     assert Agent.get(calls, & &1) == 2
   end
 
-  test "cancellation racing a submission removes the newly attached remote job" do
+  test "cancellation racing a submission fences it before add or attachment" do
     movie = movie_fixture(%{status: :searching})
     actor = Cinder.AccountsFixtures.admin_fixture()
     {:ok, intent} = reserve_movie_intent(movie.id)
@@ -251,17 +255,204 @@ defmodule Cinder.Download.IntentTest do
       receive do: (:continue -> :not_found)
     end)
 
-    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-cancel-race"} end)
-    expect(Cinder.Download.ClientMock, :remove, fn "hash-cancel-race", _opts -> :ok end)
-
     submit = Task.async(fn -> Download.reconcile_intent(intent) end)
     assert_receive {:lookup_blocked, lookup_pid}
     cancel = Task.async(fn -> Catalog.cancel_movie(movie, actor) end)
     Process.sleep(25)
     send(lookup_pid, :continue)
 
-    assert {:ok, _downloading} = Task.await(submit)
+    assert {:error, :stale_target} = Task.await(submit)
     assert {:ok, %Cinder.Catalog.Movie{status: :cancelled}} = Task.await(cancel)
+  end
+
+  test "movie cancellation commits before cleanup and a cleanup crash keeps its fence" do
+    movie = movie_fixture(%{status: :searching})
+    actor = Cinder.AccountsFixtures.admin_fixture()
+    intent = submitted_movie_intent(movie.id, "hash-cancel-after-commit")
+    {:ok, calls} = Agent.start_link(fn -> 0 end)
+    parent = self()
+
+    stub(Cinder.Download.ClientMock, :remove, fn _id, _opts ->
+      send(parent, {:remove_observed_movie, Repo.get!(Cinder.Catalog.Movie, movie.id).status})
+
+      case Agent.get_and_update(calls, &{&1, &1 + 1}) do
+        0 -> Process.exit(self(), :kill)
+        _ -> :ok
+      end
+    end)
+
+    {pid, ref} = spawn_monitor(fn -> Catalog.cancel_movie(movie, actor) end)
+    assert_receive {:remove_observed_movie, :cancelled}
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+    assert Repo.get!(Intent, intent.id).status == :cleanup_pending
+
+    assert :ok = Download.reconcile_pending_intents([:movie])
+    refute Repo.get(Intent, intent.id)
+  end
+
+  test "series cancellation commits unmonitoring before cleanup and preserves a crashed fence" do
+    series = series_fixture(%{monitor_strategy: :all})
+    season = season_fixture(series)
+    episode = episode_fixture(season)
+    actor = Cinder.AccountsFixtures.admin_fixture()
+    {:ok, intent} = reserve_episode_intent([episode.id], release("Show.Cancel"))
+
+    intent =
+      intent
+      |> Intent.changeset(%{status: :submitted, remote_id: "hash-tv-fence"})
+      |> Repo.update!()
+
+    {:ok, calls} = Agent.start_link(fn -> 0 end)
+    parent = self()
+
+    stub(Cinder.Download.ClientMock, :remove, fn _id, _opts ->
+      send(
+        parent,
+        {:remove_observed_episode, Repo.get!(Cinder.Catalog.Episode, episode.id).monitored}
+      )
+
+      case Agent.get_and_update(calls, &{&1, &1 + 1}) do
+        0 -> Process.exit(self(), :kill)
+        _ -> :ok
+      end
+    end)
+
+    {pid, ref} = spawn_monitor(fn -> Catalog.cancel_series(series, actor) end)
+    assert_receive {:remove_observed_episode, false}
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+    assert Repo.get!(Intent, intent.id).status == :cleanup_pending
+
+    assert :ok = Download.reconcile_pending_intents([:episode, :season_pack])
+    refute Repo.get(Intent, intent.id)
+  end
+
+  test "movie and series deletion commit before pending-intent cleanup" do
+    movie = movie_fixture(%{status: :searching})
+    movie_intent = submitted_movie_intent(movie.id, "hash-delete-fence")
+
+    series = series_fixture(%{monitor_strategy: :all})
+    season = season_fixture(series)
+    episode = episode_fixture(season)
+    {:ok, tv_intent} = reserve_episode_intent([episode.id], release("Show.Delete"))
+
+    tv_intent =
+      tv_intent
+      |> Intent.changeset(%{status: :submitted, remote_id: "hash-tv-delete"})
+      |> Repo.update!()
+
+    parent = self()
+
+    stub(Cinder.Download.ClientMock, :remove, fn id, _opts ->
+      send(
+        parent,
+        {:delete_cleanup_state, id, Repo.get(Cinder.Catalog.Movie, movie.id),
+         Repo.get(Cinder.Catalog.Series, series.id)}
+      )
+
+      :ok
+    end)
+
+    assert {:ok, _} = Catalog.delete_movie(movie, nil)
+    assert_receive {:delete_cleanup_state, "hash-delete-fence", nil, %Cinder.Catalog.Series{}}
+    refute Repo.get(Intent, movie_intent.id)
+
+    assert {:ok, _} = Catalog.delete_series(series, nil)
+    assert_receive {:delete_cleanup_state, "hash-tv-delete", nil, nil}
+    refute Repo.get(Intent, tv_intent.id)
+  end
+
+  test "a live movie submission cannot add or attach after cancellation commits" do
+    movie = movie_fixture(%{status: :searching})
+    actor = Cinder.AccountsFixtures.admin_fixture()
+    {:ok, intent} = reserve_movie_intent(movie.id)
+    {:ok, lookups} = Agent.start_link(fn -> 0 end)
+    {:ok, adds} = Agent.start_link(fn -> 0 end)
+    parent = self()
+
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _ ->
+      case Agent.get_and_update(lookups, &{&1, &1 + 1}) do
+        0 ->
+          send(parent, {:submission_lookup_blocked, self()})
+          receive do: (:continue -> :not_found)
+
+        _ ->
+          :not_found
+      end
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+      Agent.update(adds, &(&1 + 1))
+      {:ok, "must-not-be-added"}
+    end)
+
+    submit = Task.async(fn -> Download.reconcile_intent(intent) end)
+    assert_receive {:submission_lookup_blocked, lookup_pid}
+    cancel = Task.async(fn -> Catalog.cancel_movie(movie, actor) end)
+
+    assert eventually(fn -> Repo.get!(Cinder.Catalog.Movie, movie.id).status == :cancelled end)
+    send(lookup_pid, :continue)
+
+    assert {:ok, %Cinder.Catalog.Movie{status: :cancelled}} = Task.await(cancel)
+    assert {:error, _reason} = Task.await(submit)
+    assert Agent.get(adds, & &1) == 0
+    refute Repo.get(Intent, intent.id)
+  end
+
+  test "an accepted movie submission racing cancellation is removed without attachment" do
+    movie = movie_fixture(%{status: :searching})
+    actor = Cinder.AccountsFixtures.admin_fixture()
+    {:ok, intent} = reserve_movie_intent(movie.id)
+    parent = self()
+
+    expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _ -> :not_found end)
+
+    expect(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+      send(parent, {:movie_remote_accepted, self()})
+      receive do: (:return_remote -> {:ok, "hash-racing-cancel"})
+    end)
+
+    expect(Cinder.Download.ClientMock, :remove, fn "hash-racing-cancel", _opts -> :ok end)
+
+    submit = Task.async(fn -> Download.reconcile_intent(intent) end)
+    assert_receive {:movie_remote_accepted, add_pid}
+    cancel = Task.async(fn -> Catalog.cancel_movie(movie, actor) end)
+    assert eventually(fn -> Repo.get!(Cinder.Catalog.Movie, movie.id).status == :cancelled end)
+    send(add_pid, :return_remote)
+
+    assert {:ok, :removed} = Task.await(submit)
+    assert {:ok, %Cinder.Catalog.Movie{status: :cancelled}} = Task.await(cancel)
+    refute Repo.get(Intent, intent.id)
+    assert Repo.get!(Cinder.Catalog.Movie, movie.id).download_id == nil
+  end
+
+  test "an accepted TV submission racing series cancellation is removed without a grab" do
+    series = series_fixture(%{monitor_strategy: :all})
+    season = season_fixture(series)
+    episode = episode_fixture(season)
+    actor = Cinder.AccountsFixtures.admin_fixture()
+    {:ok, intent} = reserve_episode_intent([episode.id], release("Show.Race"))
+    parent = self()
+
+    expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _ -> :not_found end)
+
+    expect(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+      send(parent, {:tv_remote_accepted, self()})
+      receive do: (:return_remote -> {:ok, "hash-tv-racing-cancel"})
+    end)
+
+    expect(Cinder.Download.ClientMock, :remove, fn "hash-tv-racing-cancel", _opts -> :ok end)
+
+    submit = Task.async(fn -> Download.reconcile_intent(intent) end)
+    assert_receive {:tv_remote_accepted, add_pid}
+    cancel = Task.async(fn -> Catalog.cancel_series(series, actor) end)
+    assert eventually(fn -> Repo.get!(Cinder.Catalog.Episode, episode.id).monitored == false end)
+    send(add_pid, :return_remote)
+
+    assert {:ok, :removed} = Task.await(submit)
+    assert {:ok, _series} = Task.await(cancel)
+    refute Repo.get(Intent, intent.id)
+    assert Repo.all(Grab) == []
+    assert Repo.get!(Cinder.Catalog.Episode, episode.id).grab_id == nil
   end
 
   test "manual movie release returns busy instead of submitting an older intent" do
@@ -279,6 +470,27 @@ defmodule Cinder.Download.IntentTest do
 
     assert {:error, :download_intent_busy} =
              Download.grab_episodes(release("Chosen.Show"), [episode.id])
+  end
+
+  test "a definite add rejection releases movie and TV targets for another search" do
+    movie = movie_fixture(%{status: :no_match})
+    {:ok, movie_intent} = reserve_movie_intent(movie.id, release("Rejected.Movie"))
+
+    series = series_fixture(%{monitor_strategy: :all})
+    season = season_fixture(series)
+    episode = episode_fixture(season)
+    {:ok, tv_intent} = reserve_episode_intent([episode.id], release("Rejected.Show"))
+
+    expect(Cinder.Download.ClientMock, :find_by_operation_key, 2, fn _ -> :not_found end)
+    expect(Cinder.Download.ClientMock, :add, 2, fn _release, _opts -> {:error, :add_rejected} end)
+
+    assert {:error, :add_rejected} = Download.reconcile_intent(movie_intent)
+    assert {:error, :add_rejected} = Download.reconcile_intent(tv_intent)
+    refute Repo.get(Intent, movie_intent.id)
+    refute Repo.get(Intent, tv_intent.id)
+
+    assert {:ok, _next_movie_search} = reserve_movie_intent(movie.id, release("Next.Movie"))
+    assert {:ok, _next_tv_search} = reserve_episode_intent([episode.id], release("Next.Show"))
   end
 
   test "a reserved intent survives process death and later submits once" do
@@ -506,6 +718,17 @@ defmodule Cinder.Download.IntentTest do
     |> Repo.update!()
   end
 
+  defp mark_cleanup(intent) do
+    intent
+    |> Intent.changeset(%{
+      status: :cleanup_pending,
+      attempt_count: 0,
+      next_attempt_at: nil,
+      last_error: nil
+    })
+    |> Repo.update!()
+  end
+
   defp release(title),
     do: %Release{title: title, download_url: "magnet:?xt=urn:btih:#{title}", protocol: :torrent}
 
@@ -531,5 +754,17 @@ defmodule Cinder.Download.IntentTest do
 
     Enum.each(pids, &send(&1, :go))
     Enum.map(tasks, &Task.await/1)
+  end
+
+  defp eventually(fun, attempts \\ 100)
+  defp eventually(fun, 0), do: fun.()
+
+  defp eventually(fun, attempts) do
+    if fun.() do
+      true
+    else
+      Process.sleep(5)
+      eventually(fun, attempts - 1)
+    end
   end
 end

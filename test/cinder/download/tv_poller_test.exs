@@ -250,6 +250,41 @@ defmodule Cinder.Download.TvPollerTest do
     assert grab.download_protocol == :torrent
   end
 
+  test "a definite add rejection releases the episode for the next search tick" do
+    {_series, season} = series_tree()
+    episode = episode(season, 1)
+    {:ok, adds} = Agent.start_link(fn -> 0 end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok,
+       [
+         %{
+           title: "Show.S01E01.1080p.WEB-DL-GRP",
+           size: 2_000_000_000,
+           download_url: "u",
+           seeders: 5
+         }
+       ]}
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+      case Agent.get_and_update(adds, &{&1, &1 + 1}) do
+        0 -> {:error, :add_rejected}
+        _ -> {:ok, "hash-tv-after-rejection"}
+      end
+    end)
+
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    assert :ok = TvPoller.poll()
+    assert Repo.get!(Episode, episode.id).grab_id == nil
+    assert MapSet.size(Cinder.Download.pending_episode_ids()) == 0
+
+    assert :ok = TvPoller.poll()
+    linked = Repo.get!(Episode, episode.id)
+    assert Repo.get!(Grab, linked.grab_id).download_id == "hash-tv-after-rejection"
+  end
+
   test "recovers a remotely accepted episode after process death without submitting twice" do
     {_series, season} = series_tree()
     episode = episode(season, 1)
