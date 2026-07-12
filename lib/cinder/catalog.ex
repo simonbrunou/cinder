@@ -241,26 +241,20 @@ defmodule Cinder.Catalog do
   # the broadcast payload is the fresh DB state, not the poller's tick-start snapshot
   # patched in memory (views upsert the payload directly into their assigns).
   def transition(%Movie{} = movie, attrs, expect: expected) do
-    changeset = Movie.transition_changeset(movie, attrs)
-
-    with %{valid?: true, changes: changes} <- changeset,
-         {1, [updated]} <-
-           Repo.update_all(
-             from(m in Movie, where: m.id == ^movie.id and m.status == ^expected, select: m),
-             set: Map.to_list(changes) ++ [updated_at: now()]
-           ) do
-      broadcast({:movie_updated, updated})
-      {:ok, updated}
-    else
-      {0, _} -> {:error, :stale_status}
-      %Ecto.Changeset{} = invalid -> {:error, invalid}
-    end
+    movie
+    |> run_guarded_movie_transition(attrs, expected)
+    |> publish_guarded_movie_transition()
   end
 
   def transition(%Movie{} = movie, attrs, opts) when is_list(opts) do
     expected = Keyword.fetch!(opts, :expect)
     stage_ids = Keyword.get(opts, :import_stage_ids, [])
-    guarded_transition_with_stages(movie, attrs, expected, stage_ids)
+
+    movie
+    |> run_guarded_movie_transition(attrs, expected, fn _updated ->
+      ImportStage.mark_committed!(stage_ids)
+    end)
+    |> publish_guarded_movie_transition()
   end
 
   @doc false
@@ -312,7 +306,7 @@ defmodule Cinder.Catalog do
     attempts = (movie.search_attempts || 0) + 1
 
     if attempts >= @max_search_attempts do
-      case guarded_movie_update(movie, %{status: :search_failed}) do
+      case guarded_movie_transition(movie, %{status: :search_failed}, movie.status) do
         {:ok, parked} ->
           intent_ids = Download.fence_movie_cleanup(parked, include_remote: false)
           {:parked, parked, intent_ids}
@@ -321,19 +315,26 @@ defmodule Cinder.Catalog do
           Repo.rollback(reason)
       end
     else
-      case guarded_movie_update(movie, %{status: movie.status, search_attempts: attempts}) do
+      case guarded_movie_transition(
+             movie,
+             %{status: movie.status, search_attempts: attempts},
+             movie.status
+           ) do
         {:ok, updated} -> {:retry, updated}
         {:error, reason} -> Repo.rollback(reason)
       end
     end
   end
 
-  defp guarded_movie_update(movie, attrs) do
+  # Transaction-safe state-change primitive: every guarded movie writer uses this exact changeset
+  # and compare-and-swap update. It performs no publication, so callers publish only after their
+  # encompassing transaction commits.
+  defp guarded_movie_transition(movie, attrs, expected) do
     with %{valid?: true, changes: changes} <- Movie.transition_changeset(movie, attrs),
          {1, [updated]} <-
            Repo.update_all(
              from(m in Movie,
-               where: m.id == ^movie.id and m.status == ^movie.status,
+               where: m.id == ^movie.id and m.status == ^expected,
                select: m
              ),
              set: Map.to_list(changes) ++ [updated_at: now()]
@@ -354,45 +355,38 @@ defmodule Cinder.Catalog do
   end
 
   defp publish_movie_intent_retry({:ok, {:parked, parked, intent_ids}}, reason) do
-    Download.cleanup_intents(intent_ids)
     broadcast({:movie_updated, parked})
     Notifier.notify({:movie_failed, parked, reason})
+    Download.cleanup_intents(intent_ids)
     :ok
   end
 
   defp publish_movie_intent_retry({:error, reason}, _submission_reason), do: {:error, reason}
 
-  defp guarded_transition_with_stages(movie, attrs, expected, stage_ids) do
-    case Movie.transition_changeset(movie, attrs) do
-      %{valid?: true, changes: changes} ->
-        commit_guarded_movie_transition(movie, expected, changes, stage_ids)
+  defp run_guarded_movie_transition(
+         movie,
+         attrs,
+         expected,
+         after_update \\ fn _updated -> :ok end
+       ) do
+    Repo.transaction(fn ->
+      case guarded_movie_transition(movie, attrs, expected) do
+        {:ok, updated} ->
+          after_update.(updated)
+          updated
 
-      %Ecto.Changeset{} = invalid ->
-        {:error, invalid}
-    end
+        {:error, reason} ->
+          Repo.rollback(reason)
+      end
+    end)
   end
 
-  defp commit_guarded_movie_transition(movie, expected, changes, stage_ids) do
-    result =
-      Repo.transaction(fn ->
-        case Repo.update_all(
-               from(m in Movie, where: m.id == ^movie.id and m.status == ^expected, select: m),
-               set: Map.to_list(changes) ++ [updated_at: now()]
-             ) do
-          {1, [updated]} ->
-            ImportStage.mark_committed!(stage_ids)
-            updated
-
-          {0, _} ->
-            Repo.rollback(:stale_status)
-        end
-      end)
-
-    with {:ok, updated} <- result do
-      broadcast({:movie_updated, updated})
-      {:ok, updated}
-    end
+  defp publish_guarded_movie_transition({:ok, updated}) do
+    broadcast({:movie_updated, updated})
+    {:ok, updated}
   end
+
+  defp publish_guarded_movie_transition({:error, reason}), do: {:error, reason}
 
   @doc "Updates a downloading movie's progress snapshot without broadcasting equal values."
   def update_movie_download_metrics(%Movie{} = movie, attrs) do

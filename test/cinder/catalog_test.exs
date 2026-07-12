@@ -93,6 +93,29 @@ defmodule Cinder.CatalogTest do
       assert Repo.get!(Movie, movie.id).status == :cancelled
     end
 
+    test "guarded transition broadcasts exactly once and a stale guard stays silent" do
+      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 4245, title: "M"})
+      Catalog.subscribe()
+
+      {:ok, searching} = Catalog.transition(movie, %{status: :searching})
+      assert_receive {:movie_updated, %Movie{id: id, status: :searching}}
+      assert id == movie.id
+
+      assert {:ok, %Movie{status: :downloading}} =
+               Catalog.transition(searching, %{status: :downloading, download_id: "guarded"},
+                 expect: :searching
+               )
+
+      assert_receive {:movie_updated, %Movie{id: ^id, status: :downloading}}
+      refute_receive {:movie_updated, %Movie{id: ^id}}
+
+      assert {:error, :stale_status} =
+               Catalog.transition(searching, %{status: :downloaded}, expect: :searching)
+
+      refute_receive {:movie_updated, %Movie{id: ^id}}
+      assert Repo.get!(Movie, id).status == :downloading
+    end
+
     test "transition/2 persists file_path" do
       {:ok, movie} = Catalog.add_movie(%{tmdb_id: 9001, title: "Heat"})
 

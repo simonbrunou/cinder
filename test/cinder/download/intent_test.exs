@@ -273,6 +273,36 @@ defmodule Cinder.Download.IntentTest do
     assert movie_id == movie.id
   end
 
+  test "an exhausting retry publishes once before fatal cleanup and retains its fence" do
+    Cinder.TestNotifier.subscribe()
+
+    movie = movie_fixture(%{status: :searching})
+    {:ok, movie} = Catalog.transition(movie, %{status: :searching, search_attempts: 9})
+    {:ok, intent} = reserve_movie_intent(movie.id)
+    {:ok, calls} = Agent.start_link(fn -> 0 end)
+    Catalog.subscribe()
+
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _ ->
+      case Agent.get_and_update(calls, &{&1, &1 + 1}) do
+        0 -> {:error, :timeout}
+        _ -> Process.exit(self(), :kill)
+      end
+    end)
+
+    {pid, ref} = spawn_monitor(fn -> Download.reconcile_intent(intent) end)
+
+    assert_receive {:movie_updated, %{id: movie_id, status: :search_failed}}
+    assert_receive {:notify, {:movie_failed, %{id: ^movie_id, status: :search_failed}, :timeout}}
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+
+    refute_receive {:movie_updated, %{id: ^movie_id}}
+    refute_receive {:notify, {:movie_failed, %{id: ^movie_id}, _reason}}
+
+    assert movie_id == movie.id
+    assert Repo.get!(Intent, intent.id).status == :cleanup_pending
+    assert Repo.get!(Cinder.Catalog.Movie, movie.id).status == :search_failed
+  end
+
   test "cleanup lookup failure retains the only operation key" do
     movie = movie_fixture(%{status: :searching})
     {:ok, intent} = reserve_movie_intent(movie.id)
