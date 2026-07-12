@@ -147,17 +147,19 @@ cannot prove it owns instead of repeatedly deleting or overwriting an unknown pa
 Inspect quarantined journals from the release container:
 
 ```sh
-docker compose exec cinder bin/cinder eval \
+docker compose exec cinder bin/cinder rpc \
   'IO.inspect(Cinder.Library.quarantined_import_stages(), pretty: true, limit: :infinity)'
 ```
 
 After fixing the reported permission, mount, or destination conflict, explicitly release one by
-its journal `id`:
+its journal `id`. Replace `123` below with the integer `id` shown by the inspection command:
 
 ```sh
-docker compose exec cinder bin/cinder eval \
-  'IO.inspect(Cinder.Library.retry_import_stage(ID))'
+docker compose exec cinder bin/cinder rpc \
+  'IO.inspect(Cinder.Library.retry_import_stage(123))'
 ```
+
+`rpc` connects to the running Cinder release, so the container must already be running.
 
 Retry only resets the cleanup attempt budget and makes the preserved rollback or committed-cleanup
 action due. It does **not** discard the journal, delete files, change the recovery direction, or

@@ -5,6 +5,36 @@ defmodule Cinder.Library.Filesystem.DiskTest do
 
   alias Cinder.Library.Filesystem.Disk
 
+  defmodule OutputCloseErrorFile do
+    @moduledoc false
+
+    def open(path, modes) do
+      case :file.open(path, modes) do
+        {:ok, io} = opened ->
+          if :write in modes, do: Process.put({__MODULE__, :output}, io)
+          opened
+
+        error ->
+          error
+      end
+    end
+
+    defdelegate read(io, count), to: :file
+    defdelegate write(io, bytes), to: :file
+    defdelegate read_file_info(io), to: :file
+
+    def close(io) do
+      result = :file.close(io)
+
+      if io == Process.get({__MODULE__, :output}) do
+        Process.delete({__MODULE__, :output})
+        {:error, :enospc}
+      else
+        result
+      end
+    end
+  end
+
   @tag :tmp_dir
   test "dir?/find_files/mkdir_p/ln operate on real files", %{tmp_dir: tmp} do
     refute Disk.dir?(Path.join(tmp, "nope.mkv"))
@@ -153,5 +183,82 @@ defmodule Cinder.Library.Filesystem.DiskTest do
 
     assert :ok = Disk.write(path, "1\n00:00:01,000 --> 00:00:02,000\nhi\n")
     assert File.read!(path) == "1\n00:00:01,000 --> 00:00:02,000\nhi\n"
+  end
+
+  @tag :tmp_dir
+  test "cp_exclusive reports the identity of the opened output, not a replacement path", %{
+    tmp_dir: tmp
+  } do
+    source = Path.join(tmp, "source.mkv")
+    dest = Path.join(tmp, "dest.mkv")
+    displaced = Path.join(tmp, "displaced.mkv")
+    File.write!(source, "candidate")
+
+    assert :ok =
+             Disk.cp_exclusive(source, dest, fn opened_stat ->
+               File.rename!(dest, displaced)
+               File.write!(dest, "user replacement")
+               send(self(), {:opened_stat, opened_stat})
+               :ok
+             end)
+
+    assert_receive {:opened_stat, opened_stat}
+    assert opened_stat.inode == File.lstat!(displaced).inode
+    assert opened_stat.major_device == File.lstat!(displaced).major_device
+    refute opened_stat.inode == File.lstat!(dest).inode
+    assert File.read!(dest) == "user replacement"
+    assert File.read!(displaced) == "candidate"
+  end
+
+  @tag :tmp_dir
+  test "cp_exclusive does not remove a replacement when its creation callback fails", %{
+    tmp_dir: tmp
+  } do
+    source = Path.join(tmp, "source.mkv")
+    dest = Path.join(tmp, "dest.mkv")
+    displaced = Path.join(tmp, "displaced.mkv")
+    File.write!(source, "candidate")
+
+    assert {:error, :journal_failed} =
+             Disk.cp_exclusive(source, dest, fn _opened_stat ->
+               File.rename!(dest, displaced)
+               File.write!(dest, "user replacement")
+               {:error, :journal_failed}
+             end)
+
+    assert File.read!(dest) == "user replacement"
+    assert File.exists?(displaced)
+  end
+
+  @tag :tmp_dir
+  test "cp_exclusive retains its output on callback failure when conditional unlink is unavailable",
+       %{
+         tmp_dir: tmp
+       } do
+    source = Path.join(tmp, "source.mkv")
+    dest = Path.join(tmp, "dest.mkv")
+    File.write!(source, "candidate")
+
+    assert {:error, :journal_failed} =
+             Disk.cp_exclusive(source, dest, fn _opened_stat ->
+               {:error, :journal_failed}
+             end)
+
+    assert File.exists?(dest)
+  end
+
+  @tag :tmp_dir
+  test "cp_exclusive propagates a delayed output close error", %{tmp_dir: tmp} do
+    source = Path.join(tmp, "source.mkv")
+    dest = Path.join(tmp, "dest.mkv")
+    File.write!(source, "candidate")
+
+    assert {:error, :enospc} =
+             Disk.cp_exclusive_with(
+               source,
+               dest,
+               fn _opened_stat -> :ok end,
+               OutputCloseErrorFile
+             )
   end
 end

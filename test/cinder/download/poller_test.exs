@@ -58,6 +58,7 @@ defmodule Cinder.Download.PollerTest do
       Enum.each(saved, fn {key, value} -> Application.put_env(:cinder, key, value) end)
       Application.delete_env(:cinder, :filesystem_barrier)
       Application.delete_env(:cinder, :filesystem_failure)
+      Application.delete_env(:cinder, :exclusive_copy_file_module)
       Application.delete_env(:cinder, :import_stage_claim_barrier)
     end)
 
@@ -92,6 +93,28 @@ defmodule Cinder.Download.PollerTest do
       })
 
     %{source: source, dest: dest, movie: movie}
+  end
+
+  defp prejournal_crash_movie(tmp, false) do
+    %{downloads: downloads} = use_real_library(tmp)
+    source = Path.join(downloads, "Crash.2020.mkv")
+    File.write!(source, "candidate")
+
+    movie =
+      movie_fixture(%{
+        tmdb_id: 10_020,
+        title: "Crash",
+        year: 2020,
+        status: :downloaded,
+        file_path: source
+      })
+
+    {source, movie}
+  end
+
+  defp prejournal_crash_movie(tmp, true) do
+    %{source: source, movie: movie} = real_upgrading_movie(tmp, 10_021, "crash")
+    {source, movie}
   end
 
   test "a poll drives a completed download through :downloaded to :available" do
@@ -876,6 +899,129 @@ defmodule Cinder.Download.PollerTest do
     assert File.read!(dest) == "original"
     refute File.exists?(journal.backup)
     refute Repo.exists?(ImportStage)
+  end
+
+  @tag :tmp_dir
+  test "exclusive landing rejects a path replacement after opening without deleting it", %{
+    tmp_dir: tmp
+  } do
+    %{downloads: downloads} = use_real_library(tmp)
+    source = Path.join(downloads, "Opened.2020.mkv")
+    File.write!(source, String.duplicate("candidate", 1_000))
+
+    movie =
+      movie_fixture(%{
+        tmdb_id: 10_018,
+        title: "Opened",
+        year: 2020,
+        status: :downloaded,
+        file_path: source
+      })
+
+    Application.put_env(:cinder, :filesystem_failure, %{
+      operation: :ln,
+      source_contains: tmp,
+      reason: :eperm
+    })
+
+    Application.put_env(:cinder, :filesystem_barrier, %{
+      owner: self(),
+      operation: :cp_exclusive,
+      contains: "Opened (2020) {tmdb-10018}.mkv",
+      once: true
+    })
+
+    task = Task.async(fn -> Cinder.Library.stage_movie(movie) end)
+    assert_receive {:filesystem_barrier, pid, ref, :cp_exclusive, dest}, 1_000
+    displaced = dest <> ".opened"
+    File.rename!(dest, displaced)
+    File.write!(dest, "user replacement")
+    send(pid, {ref, :continue})
+
+    assert {:error, :import_stage_destination_changed} = Task.await(task)
+    assert File.read!(dest) == "user replacement"
+    assert File.exists?(displaced)
+    assert [%ImportStage{state: :preparing} = journal] = Repo.all(ImportStage)
+    assert File.exists?(journal.candidate)
+
+    assert :ok = Cinder.Library.reconcile_stages()
+    assert Repo.get!(ImportStage, journal.id).state == :quarantined
+    assert File.read!(dest) == "user replacement"
+  end
+
+  @tag :tmp_dir
+  test "an output close failure leaves the candidate and journal unprepared", %{tmp_dir: tmp} do
+    %{downloads: downloads} = use_real_library(tmp)
+    source = Path.join(downloads, "Close.2020.mkv")
+    File.write!(source, "candidate")
+
+    movie =
+      movie_fixture(%{
+        tmdb_id: 10_019,
+        title: "Close",
+        year: 2020,
+        status: :downloaded,
+        file_path: source
+      })
+
+    Application.put_env(:cinder, :filesystem_failure, %{
+      operation: :ln,
+      source_contains: tmp,
+      reason: :eperm
+    })
+
+    Application.put_env(
+      :cinder,
+      :exclusive_copy_file_module,
+      Cinder.Library.Filesystem.DiskTest.OutputCloseErrorFile
+    )
+
+    assert {:error, :enospc} = Cinder.Library.stage_movie(movie)
+    assert [%ImportStage{state: :preparing} = journal] = Repo.all(ImportStage)
+    assert File.exists?(journal.candidate)
+    assert File.exists?(journal.dest)
+  end
+
+  for {label, replace?} <- [{"fresh", false}, {"replacement", true}] do
+    @tag :tmp_dir
+    test "a pre-journal exclusive-copy crash quarantines an unknown #{label} destination", %{
+      tmp_dir: tmp
+    } do
+      replace? = unquote(replace?)
+
+      {source, movie} = prejournal_crash_movie(tmp, replace?)
+
+      Application.put_env(:cinder, :filesystem_failure, %{
+        operation: :ln,
+        source_contains: tmp,
+        reason: :eperm
+      })
+
+      Application.put_env(:cinder, :filesystem_barrier, %{
+        owner: self(),
+        operation: :cp_exclusive_created,
+        contains: ".mkv",
+        once: true
+      })
+
+      task =
+        Task.async(fn ->
+          Cinder.Library.stage_movie(%{movie | file_path: source}, replace: replace?)
+        end)
+
+      Process.unlink(task.pid)
+      assert_receive {:filesystem_barrier, pid, _ref, :cp_exclusive_created, dest}, 1_000
+      journal = Repo.one!(ImportStage)
+      assert journal.staged_inode == nil
+      assert File.exists?(dest)
+      Process.exit(pid, :kill)
+      catch_exit(Task.await(task))
+      Application.delete_env(:cinder, :filesystem_barrier)
+
+      assert :ok = Cinder.Library.reconcile_stages()
+      assert Repo.get!(ImportStage, journal.id).state == :quarantined
+      assert File.exists?(dest)
+    end
   end
 
   @tag :tmp_dir

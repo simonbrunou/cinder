@@ -437,9 +437,22 @@ defmodule Cinder.Library do
 
     with :ok <- fs().cp_exclusive(stage.candidate, stage.dest, on_create),
          {:ok, landed_stat} <- fs().lstat(stage.dest),
+         :ok <- verify_opened_destination(stage.id, landed_stat),
          _stage <- ImportStage.update!(stage, identity_attrs(:staged, landed_stat)),
          :ok <- remove_owned(stage.candidate, identity(candidate_stat), stage.root) do
       {:ok, landed_stat}
+    end
+  end
+
+  defp verify_opened_destination(stage_id, landed_stat) do
+    case ImportStage.get(stage_id) do
+      %ImportStage{} = stage ->
+        if staged_identity_matches?(landed_stat, stage),
+          do: :ok,
+          else: {:error, :import_stage_destination_changed}
+
+      nil ->
+        {:error, :import_stage_journal_missing}
     end
   end
 
@@ -619,7 +632,8 @@ defmodule Cinder.Library do
     end
   end
 
-  defp fail_if_backup_waits(%ImportStage{backup: nil}), do: :ok
+  defp fail_if_backup_waits(%ImportStage{backup: nil}),
+    do: {:error, :import_stage_destination_changed}
 
   defp fail_if_backup_waits(stage) do
     case fs().lstat(stage.backup) do

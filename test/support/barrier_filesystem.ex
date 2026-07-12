@@ -42,11 +42,20 @@ defmodule Cinder.Test.BarrierFilesystem do
   def cp_exclusive(source, dest, on_create) do
     pause(:cp_exclusive, dest, :before)
 
-    Disk.cp_exclusive(source, dest, fn stat ->
-      with :ok <- on_create.(stat) do
-        pause(:cp_exclusive, dest)
-      end
-    end)
+    file_module = Application.get_env(:cinder, :exclusive_copy_file_module, :file)
+
+    Disk.cp_exclusive_with(
+      source,
+      dest,
+      fn stat ->
+        pause(:cp_exclusive_created, dest)
+
+        with :ok <- on_create.(stat) do
+          pause(:cp_exclusive, dest)
+        end
+      end,
+      file_module
+    )
   end
 
   @impl true
