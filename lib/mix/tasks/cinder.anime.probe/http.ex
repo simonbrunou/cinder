@@ -32,11 +32,7 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTP do
     map_ok(title.discovery_queries, fn query ->
       case tmdb_request(config, url: "/3/search/#{tmdb_kind(title.kind)}", params: [query: query]) do
         {:ok, %{status: 200, body: %{"results" => results}}} when is_list(results) ->
-          {:ok,
-           %{
-             query: query,
-             results: Enum.map(results, &normalize_search_result(&1, title.kind))
-           }}
+          normalize_tmdb_search(results, query, title.kind)
 
         other ->
           provider_error(:tmdb, other)
@@ -55,11 +51,7 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTP do
             :movie -> body["titles"]
           end
 
-        if is_list(alternatives) do
-          {:ok, Enum.map(alternatives, &%{title: &1["title"]})}
-        else
-          {:error, :unexpected_response}
-        end
+        normalize_maps(alternatives, &%{title: &1["title"]})
 
       other ->
         provider_error(:tmdb, other)
@@ -71,16 +63,15 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTP do
 
     case tmdb_request(config, url: path) do
       {:ok, %{status: 200, body: %{"id" => _id} = body}} ->
-        {:ok,
-         %{
-           id: body["id"],
-           title: body[tmdb_title_key(title.kind)],
-           seasons:
-             for(
-               %{"season_number" => number} <- body["seasons"] || [],
-               do: %{season_number: number}
-             )
-         }}
+        with {:ok, seasons} <-
+               normalize_optional_maps(body["seasons"], &%{season_number: &1["season_number"]}) do
+          {:ok,
+           %{
+             id: body["id"],
+             title: body[tmdb_title_key(title.kind)],
+             seasons: seasons
+           }}
+        end
 
       other ->
         provider_error(:tmdb, other)
@@ -94,9 +85,11 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTP do
       {:ok, %{status: 200, body: %{"results" => groups}}} when is_list(groups) ->
         required_types = MapSet.new([2 | title.expect.required_group_types])
 
-        groups
-        |> Enum.filter(&MapSet.member?(required_types, &1["type"]))
-        |> map_ok(&tmdb_group(&1, config))
+        with {:ok, groups} <- normalize_maps(groups, & &1) do
+          groups
+          |> Enum.filter(&MapSet.member?(required_types, &1["type"]))
+          |> map_ok(&tmdb_group(&1, config))
+        end
 
       other ->
         provider_error(:tmdb, other)
@@ -106,13 +99,15 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTP do
   defp tmdb_group(group, config) do
     case tmdb_request(config, url: "/3/tv/episode_group/#{group["id"]}") do
       {:ok, %{status: 200, body: body}} when is_map(body) ->
-        {:ok,
-         %{
-           id: body["id"] || group["id"],
-           type: body["type"] || group["type"],
-           name: body["name"] || group["name"],
-           entries: normalize_group_entries(body["groups"])
-         }}
+        with {:ok, entries} <- normalize_group_entries(body["groups"]) do
+          {:ok,
+           %{
+             id: body["id"] || group["id"],
+             type: body["type"] || group["type"],
+             name: body["name"] || group["name"],
+             entries: entries
+           }}
+        end
 
       other ->
         provider_error(:tmdb, other)
@@ -120,16 +115,24 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTP do
   end
 
   defp normalize_group_entries(groups) do
-    for %{"order" => group_order, "episodes" => episodes} <- groups || [],
-        is_list(episodes),
-        episode <- episodes do
-      %{
-        episode_id: episode["id"],
-        group_order: group_order,
-        order: episode["order"],
-        season_number: episode["season_number"],
-        episode_number: episode["episode_number"]
-      }
+    with {:ok, groups} <- normalize_maps(groups, & &1),
+         {:ok, entries} <- map_ok(groups, &normalize_episode_group/1) do
+      {:ok, List.flatten(entries)}
+    end
+  end
+
+  defp normalize_episode_group(group) do
+    with {:ok, episodes} <- normalize_maps(group["episodes"], & &1) do
+      {:ok,
+       Enum.map(episodes, fn episode ->
+         %{
+           episode_id: episode["id"],
+           group_order: group["order"],
+           order: episode["order"],
+           season_number: episode["season_number"],
+           episode_number: episode["episode_number"]
+         }
+       end)}
     end
   end
 
@@ -143,12 +146,7 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTP do
 
       case prowlarr_request(config, url: "/api/v1/search", params: params) do
         {:ok, %{status: 200, body: results}} when is_list(results) ->
-          {:ok,
-           %{
-             query: query,
-             mode: mode,
-             results: results |> Enum.take(50) |> Enum.map(&normalize_release/1)
-           }}
+          normalize_prowlarr_results(results, query, mode)
 
         other ->
           provider_error(:prowlarr, other)
@@ -159,18 +157,31 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTP do
   defp maybe_add_category(params, :all), do: params
   defp maybe_add_category(params, :anime), do: Keyword.put(params, :categories, 5070)
 
+  defp normalize_tmdb_search(results, query, kind) do
+    with {:ok, results} <- normalize_maps(results, &normalize_search_result(&1, kind)) do
+      {:ok, %{query: query, results: results}}
+    end
+  end
+
+  defp normalize_prowlarr_results(results, query, mode) do
+    with {:ok, results} <- normalize_maps(Enum.take(results, 50), & &1),
+         {:ok, results} <- map_ok(results, &normalize_release/1) do
+      {:ok, %{query: query, mode: mode, results: results}}
+    end
+  end
+
   defp normalize_release(result) do
-    %{
-      title: result["title"],
-      size: result["size"],
-      protocol: result["protocol"],
-      categories:
-        for(
-          %{"id" => id, "name" => name} <- result["categories"] || [],
-          do: %{id: id, name: name}
-        ),
-      published_at: result["publishDate"]
-    }
+    with {:ok, categories} <-
+           normalize_optional_maps(result["categories"], &%{id: &1["id"], name: &1["name"]}) do
+      {:ok,
+       %{
+         title: result["title"],
+         size: result["size"],
+         protocol: result["protocol"],
+         categories: categories,
+         published_at: result["publishDate"]
+       }}
+    end
   end
 
   defp normalize_search_result(result, kind) do
@@ -206,6 +217,9 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTP do
   defp bounded_request(opts, config) do
     opts
     |> Keyword.merge(Keyword.get(config, :req_options, []))
+    |> Keyword.put(:method, :get)
+    |> Keyword.put(:receive_timeout, 15_000)
+    |> Keyword.put(:connect_options, timeout: 15_000)
     |> Keyword.put(:redirect, false)
     |> Req.new()
     |> HTTPPolicy.bounded_request(@max_response_bytes)
@@ -251,4 +265,15 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTP do
 
   defp reverse_ok({:ok, values}), do: {:ok, Enum.reverse(values)}
   defp reverse_ok(error), do: error
+
+  defp normalize_optional_maps(nil, function), do: normalize_maps([], function)
+  defp normalize_optional_maps(values, function), do: normalize_maps(values, function)
+
+  defp normalize_maps(values, function) when is_list(values) do
+    if Enum.all?(values, &is_map/1),
+      do: {:ok, Enum.map(values, function)},
+      else: {:error, :unexpected_response}
+  end
+
+  defp normalize_maps(_values, _function), do: {:error, :unexpected_response}
 end

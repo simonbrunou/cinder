@@ -253,6 +253,106 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTPTest do
     refute_received {:attacker_called, _}
   end
 
+  test "forces GET and request bounds after merging hostile req_options" do
+    parent = self()
+
+    capture_options = fn request ->
+      Req.Request.append_request_steps(request,
+        capture_probe_options: fn request ->
+          send(
+            parent,
+            {:probe_options, request.method, request.options[:receive_timeout],
+             request.options[:connect_options]}
+          )
+
+          request
+        end
+      )
+    end
+
+    Req.Test.stub(@tmdb_stub, fn conn ->
+      assert conn.method == "GET"
+
+      case conn.request_path do
+        "/3/search/tv" -> Req.Test.json(conn, %{"results" => []})
+        "/3/tv/37854/alternative_titles" -> Req.Test.json(conn, %{"results" => []})
+        "/3/tv/37854" -> Req.Test.json(conn, %{"id" => 37_854, "name" => "One Piece"})
+        "/3/tv/37854/episode_groups" -> Req.Test.json(conn, %{"results" => []})
+      end
+    end)
+
+    Req.Test.stub(@prowlarr_stub, fn conn ->
+      assert conn.method == "GET"
+      Req.Test.json(conn, [])
+    end)
+
+    hostile_options = [
+      method: :post,
+      receive_timeout: 1,
+      connect_options: [timeout: 1],
+      redirect: true,
+      plugins: [capture_options]
+    ]
+
+    assert {:ok, _observation} =
+             HTTP.fetch_title(
+               @title,
+               tmdb_config(hostile_options),
+               prowlarr_config(hostile_options)
+             )
+
+    for _request <- 1..6 do
+      assert_receive {:probe_options, :get, 15_000, [timeout: 15_000]}
+    end
+  end
+
+  test "rejects malformed TMDB list elements with a sanitized error" do
+    malformed_responses = [
+      %{"/3/search/tv" => %{"results" => ["remote-secret"]}},
+      %{"/3/tv/37854/alternative_titles" => %{"results" => ["remote-secret"]}},
+      %{
+        "/3/tv/37854" => %{"id" => 37_854, "name" => "One Piece", "seasons" => ["remote-secret"]}
+      },
+      %{"/3/tv/37854/episode_groups" => %{"results" => ["remote-secret"]}},
+      %{
+        "/3/tv/37854/episode_groups" => %{
+          "results" => [%{"id" => "absolute-group", "type" => 2, "name" => "Absolute"}]
+        },
+        "/3/tv/episode_group/absolute-group" => %{
+          "id" => "absolute-group",
+          "type" => 2,
+          "name" => "Absolute",
+          "groups" => [%{"order" => 0, "episodes" => ["remote-secret"]}]
+        }
+      }
+    ]
+
+    for overrides <- malformed_responses do
+      stub_tmdb_responses(overrides)
+      Req.Test.stub(@prowlarr_stub, fn conn -> Req.Test.json(conn, []) end)
+
+      result = HTTP.fetch_title(@title, tmdb_config(), prowlarr_config())
+
+      assert result == {:error, :unexpected_response}
+      refute inspect(result) =~ "remote-secret"
+    end
+  end
+
+  test "rejects malformed Prowlarr results and categories with a sanitized error" do
+    for payload <- [
+          ["remote-secret"],
+          [%{release_fixture() | "categories" => ["remote-secret"]}]
+        ] do
+      stub_tmdb_success()
+      Req.Test.stub(@prowlarr_stub, fn conn -> Req.Test.json(conn, payload) end)
+
+      result = HTTP.fetch_title(@title, tmdb_config(), prowlarr_config())
+
+      assert result == {:error, :unexpected_response}
+      refute inspect(result) =~ "remote-secret"
+    end
+  end
+
   defp stub_tmdb_success do
     Req.Test.stub(@tmdb_stub, fn conn ->
       case conn.request_path do
@@ -261,6 +361,27 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTPTest do
         "/3/tv/37854" -> Req.Test.json(conn, %{"id" => 37_854, "name" => "One Piece"})
         "/3/tv/37854/episode_groups" -> Req.Test.json(conn, %{"results" => []})
       end
+    end)
+  end
+
+  defp stub_tmdb_responses(overrides) do
+    responses =
+      Map.merge(
+        %{
+          "/3/search/tv" => %{"results" => []},
+          "/3/tv/37854/alternative_titles" => %{"results" => []},
+          "/3/tv/37854" => %{
+            "id" => 37_854,
+            "name" => "One Piece",
+            "seasons" => []
+          },
+          "/3/tv/37854/episode_groups" => %{"results" => []}
+        },
+        overrides
+      )
+
+    Req.Test.stub(@tmdb_stub, fn conn ->
+      Req.Test.json(conn, Map.fetch!(responses, conn.request_path))
     end)
   end
 
