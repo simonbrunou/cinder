@@ -101,9 +101,9 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTP do
   defp tmdb_group(group, config) do
     case tmdb_request(config, url: "/3/tv/episode_group/#{group.id}") do
       {:ok, %{status: 200, body: body}} when is_map(body) ->
-        with {:ok, id} <- required_string(body["id"] || group.id),
-             {:ok, type} <- integer(body["type"] || group.type),
-             {:ok, name} <- required_string(body["name"] || group.name),
+        with {:ok, id} <- required_string(Map.get(body, "id", group.id)),
+             {:ok, type} <- integer(Map.get(body, "type", group.type)),
+             {:ok, name} <- required_string(Map.get(body, "name", group.name)),
              {:ok, entries} <- normalize_group_entries(body["groups"]) do
           {:ok,
            %{

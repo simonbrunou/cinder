@@ -436,6 +436,21 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTPTest do
     end
   end
 
+  test "rejects explicit nil or false group detail fields instead of using summary fallbacks" do
+    for key <- ["id", "type", "name"], value <- [nil, false] do
+      overrides =
+        group_detail_override(%{key => value, "rawMarker" => "remote-secret"})
+
+      stub_tmdb_responses(overrides)
+      Req.Test.stub(@prowlarr_stub, fn conn -> Req.Test.json(conn, []) end)
+
+      result = HTTP.fetch_title(@title, tmdb_config(), prowlarr_config())
+
+      assert result == {:error, :unexpected_response}
+      refute inspect(result) =~ "remote-secret"
+    end
+  end
+
   test "rejects malformed Prowlarr results and categories with a sanitized error" do
     for payload <- [
           ["remote-secret"],
