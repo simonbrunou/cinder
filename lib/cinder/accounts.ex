@@ -69,7 +69,8 @@ defmodule Cinder.Accounts do
   def valid_bootstrap_token?(submitted) when is_binary(submitted) do
     expected = Application.get_env(:cinder, :bootstrap_token)
 
-    is_binary(expected) and byte_size(expected) == byte_size(submitted) and
+    is_binary(expected) and String.trim(expected) != "" and String.trim(submitted) != "" and
+      byte_size(expected) == byte_size(submitted) and
       Plug.Crypto.secure_compare(expected, submitted)
   end
 

@@ -27,6 +27,24 @@ defmodule Cinder.AccountsTest do
   end
 
   describe "register_user/2 (password + auto-confirm)" do
+    test "treats blank configured bootstrap tokens as missing" do
+      previous = Application.get_env(:cinder, :bootstrap_token)
+
+      on_exit(fn -> Application.put_env(:cinder, :bootstrap_token, previous) end)
+
+      for token <- ["", " \t\n"] do
+        Application.put_env(:cinder, :bootstrap_token, token)
+
+        refute Accounts.valid_bootstrap_token?(token)
+
+        assert {:error, :invalid_bootstrap_token} =
+                 Accounts.register_user(
+                   %{email: unique_user_email(), password: valid_user_password()},
+                   token
+                 )
+      end
+    end
+
     test "hashes password and auto-confirms" do
       email = unique_user_email()
 
