@@ -8,9 +8,10 @@ defmodule Cinder.Download.PollerTest do
   # capture them so test output stays pristine (they print on failure).
   @moduletag :capture_log
 
+  alias Cinder.Acquisition.Release
   alias Cinder.{Catalog, Download}
   alias Cinder.Catalog.Movie
-  alias Cinder.Download.Poller
+  alias Cinder.Download.{Intent, Poller}
   alias Cinder.Repo
 
   import Cinder.CatalogFixtures
@@ -405,6 +406,35 @@ defmodule Cinder.Download.PollerTest do
 
     assert %Movie{status: :downloading, download_id: "hash-crash"} =
              Repo.get!(Movie, movie.id)
+  end
+
+  test "an intent backoff does not consume a movie search attempt every poll tick" do
+    movie = movie_fixture(%{status: :searching, search_attempts: 2})
+    attempts_before = Repo.get!(Movie, movie.id).search_attempts
+
+    assert {:ok, intent} =
+             Download.reserve_intent(%{
+               kind: :movie,
+               target_id: movie.id,
+               episode_ids: [],
+               protocol: :torrent,
+               release: %Release{
+                 title: "Backoff.Movie",
+                 download_url: "magnet:?x",
+                 protocol: :torrent
+               }
+             })
+
+    intent
+    |> Intent.changeset(%{
+      attempt_count: 1,
+      next_attempt_at: DateTime.utc_now(:second) |> DateTime.add(300, :second)
+    })
+    |> Repo.update!()
+
+    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+    assert :ok = Poller.poll()
+    assert Repo.get!(Movie, movie.id).search_attempts == attempts_before
   end
 
   defp downloaded_movie(tmdb_id, file_path) do

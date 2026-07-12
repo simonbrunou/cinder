@@ -9,6 +9,10 @@ defmodule Cinder.Download.Client.QBittorrent do
   cookie (`SID` on <= 4.x, `QBT_SID_<port>` on >= 5.x) into the action request,
   then performs it.
 
+  Durable operation-key reconciliation requires qBittorrent Web API 2.8.3 or
+  newer. Health checks and operation-key lookup reject older or malformed
+  versions before relying on tag-filtered torrent listing.
+
   Validated against a live qBittorrent only in Phase 5; the unit test is a shape
   sanity-check against `Req.Test`.
   """
@@ -28,6 +32,7 @@ defmodule Cinder.Download.Client.QBittorrent do
   @max_redirects 5
   @max_torrent_bytes 10 * 1024 * 1024
   @max_response_bytes 4 * 1024 * 1024
+  @minimum_webapi_version "2.8.3"
 
   def add(release), do: add(release, [])
 
@@ -146,14 +151,31 @@ defmodule Cinder.Download.Client.QBittorrent do
 
   @impl true
   def find_by_operation_key(key) do
-    case action(method: :get, url: "/api/v2/torrents/info", params: [tag: "cinder-#{key}"]) do
-      {:ok, %{status: 200, body: [%{"hash" => hash}]}} when is_binary(hash) -> {:ok, hash}
-      {:ok, %{status: 200, body: []}} -> :not_found
-      {:ok, %{status: 200, body: [_ | _]}} -> {:error, :ambiguous_operation_key}
-      {:ok, %{status: 200}} -> {:error, :unexpected_response}
-      other -> error(other)
+    tag = "cinder-#{key}"
+
+    with :ok <- require_tag_filter_webapi() do
+      case action(method: :get, url: "/api/v2/torrents/info", params: [tag: tag]) do
+        {:ok, %{status: 200, body: torrents}} when is_list(torrents) ->
+          torrents |> Enum.filter(&tagged?(&1, tag)) |> operation_hash()
+
+        {:ok, %{status: 200}} ->
+          {:error, :unexpected_response}
+
+        other ->
+          error(other)
+      end
     end
   end
+
+  defp tagged?(%{"tags" => tags}, wanted) when is_binary(tags) do
+    tags |> String.split(",") |> Enum.map(&String.trim/1) |> Enum.member?(wanted)
+  end
+
+  defp tagged?(_torrent, _wanted), do: false
+
+  defp operation_hash([]), do: :not_found
+  defp operation_hash([%{"hash" => hash}]) when is_binary(hash), do: {:ok, hash}
+  defp operation_hash([_ | _]), do: {:error, :ambiguous_operation_key}
 
   # In prod, no plug (real HTTP). In test, config can inject a Req.Test plug.
   defp fetch_plug, do: Keyword.get(config(), :fetch_plug)
@@ -195,10 +217,28 @@ defmodule Cinder.Download.Client.QBittorrent do
     probe = [receive_timeout: 3_000, connect_options: [timeout: 3_000]]
 
     case action([method: :get, url: "/api/v2/app/webapiVersion"], probe) do
-      {:ok, %{status: status}} when status in 200..299 -> :ok
+      {:ok, %{status: status, body: version}} when status in 200..299 -> validate_webapi(version)
       other -> error(other)
     end
   end
+
+  defp require_tag_filter_webapi do
+    case action(method: :get, url: "/api/v2/app/webapiVersion") do
+      {:ok, %{status: status, body: version}} when status in 200..299 -> validate_webapi(version)
+      other -> error(other)
+    end
+  end
+
+  defp validate_webapi(version) when is_binary(version) do
+    case Version.compare(version, @minimum_webapi_version) do
+      order when order in [:eq, :gt] -> :ok
+      _ -> {:error, {:unsupported_webapi_version, version}}
+    end
+  rescue
+    Version.InvalidVersionError -> {:error, {:unsupported_webapi_version, version}}
+  end
+
+  defp validate_webapi(version), do: {:error, {:unsupported_webapi_version, to_string(version)}}
 
   # Logs in, then runs `fun` with a Req carrying the SID cookie + base_url.
   # `overrides` (e.g. health's short timeouts) apply to the login call too.

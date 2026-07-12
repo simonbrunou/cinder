@@ -507,6 +507,7 @@ defmodule Cinder.Catalog do
   def cancel_movie(%Movie{} = movie, actor) do
     if cancellable?(movie) do
       Download.cancel_movie_intents(movie.id)
+      movie = Repo.get(Movie, movie.id) || movie
       # Client removal is best-effort: a stuck movie must always be clearable even if
       # qBit/SAB is down. A failed remove is logged, not propagated (see remove_download/1).
       remove_download(movie)

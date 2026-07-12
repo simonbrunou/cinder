@@ -50,17 +50,49 @@ defmodule Cinder.Download.Client.QBittorrentTest do
 
   test "find_by_operation_key/1 returns the tagged torrent's infohash" do
     stub_qbit(fn conn ->
-      assert conn.request_path == "/api/v2/torrents/info"
-      assert conn.params["tag"] == "cinder-op-123"
-      Req.Test.json(conn, [%{"hash" => "abc123"}])
+      case conn.request_path do
+        "/api/v2/app/webapiVersion" ->
+          Req.Test.text(conn, "2.8.3")
+
+        "/api/v2/torrents/info" ->
+          assert conn.params["tag"] == "cinder-op-123"
+          Req.Test.json(conn, [%{"hash" => "abc123", "tags" => "other,cinder-op-123"}])
+      end
     end)
 
     assert {:ok, "abc123"} = QBittorrent.find_by_operation_key("op-123")
   end
 
   test "find_by_operation_key/1 returns :not_found for an unused tag" do
-    stub_qbit(fn conn -> Req.Test.json(conn, []) end)
+    stub_qbit(fn conn ->
+      case conn.request_path do
+        "/api/v2/app/webapiVersion" -> Req.Test.text(conn, "2.8.3")
+        "/api/v2/torrents/info" -> Req.Test.json(conn, [])
+      end
+    end)
+
     assert :not_found = QBittorrent.find_by_operation_key("missing")
+  end
+
+  test "find_by_operation_key/1 rejects an older WebAPI before tag lookup" do
+    stub_qbit(fn conn ->
+      assert conn.request_path == "/api/v2/app/webapiVersion"
+      Req.Test.text(conn, "2.8.2")
+    end)
+
+    assert {:error, {:unsupported_webapi_version, "2.8.2"}} =
+             QBittorrent.find_by_operation_key("op-123")
+  end
+
+  test "find_by_operation_key/1 cannot accept an unrelated torrent if tag filtering is ignored" do
+    stub_qbit(fn conn ->
+      case conn.request_path do
+        "/api/v2/app/webapiVersion" -> Req.Test.text(conn, "2.8.3")
+        "/api/v2/torrents/info" -> Req.Test.json(conn, [%{"hash" => "wrong", "tags" => "other"}])
+      end
+    end)
+
+    assert :not_found = QBittorrent.find_by_operation_key("op-123")
   end
 
   defp stub_torrent_flow(torrent_bytes) do
@@ -196,6 +228,14 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     Req.Test.stub(Cinder.QBittorrentStub, fn conn -> Req.Test.text(conn, "Fails.") end)
 
     assert {:error, :login_failed} = QBittorrent.health()
+  end
+
+  test "health/0 rejects old and malformed WebAPI versions" do
+    for version <- ["2.8.2", "not-a-version"] do
+      stub_qbit(fn conn -> Req.Test.text(conn, version) end)
+
+      assert {:error, {:unsupported_webapi_version, ^version}} = QBittorrent.health()
+    end
   end
 
   test "add/1 accepts a base32 magnet and returns its lowercase-hex infohash" do

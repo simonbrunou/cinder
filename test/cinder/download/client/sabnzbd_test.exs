@@ -63,19 +63,18 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     assert {:ok, "nzo-queue"} = Sabnzbd.find_by_operation_key("op-123")
   end
 
-  test "find_by_operation_key/1 searches history after an exact queue miss" do
+  test "find_by_operation_key/1 searches normal history after an exact queue miss" do
     stub(fn conn ->
-      case conn.params["mode"] do
-        "queue" ->
+      case {conn.params["mode"], conn.params["archive"]} do
+        {"queue", _} ->
           Req.Test.json(conn, %{
             "queue" => %{
               "slots" => [%{"filename" => "cinder-op-123-extra", "nzo_id" => "wrong"}]
             }
           })
 
-        "history" ->
+        {"history", "0"} ->
           assert conn.params["search"] == "cinder-op-123"
-          assert conn.params["archive"] == "1"
 
           Req.Test.json(conn, %{
             "history" => %{
@@ -86,6 +85,29 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     end)
 
     assert {:ok, "nzo-history"} = Sabnzbd.find_by_operation_key("op-123")
+  end
+
+  test "find_by_operation_key/1 searches archived history after normal history misses" do
+    stub(fn conn ->
+      case {conn.params["mode"], conn.params["archive"]} do
+        {"queue", _} ->
+          Req.Test.json(conn, %{"queue" => %{"slots" => []}})
+
+        {"history", "0"} ->
+          Req.Test.json(conn, %{"history" => %{"slots" => []}})
+
+        {"history", "1"} ->
+          assert conn.params["search"] == "cinder-op-123"
+
+          Req.Test.json(conn, %{
+            "history" => %{
+              "slots" => [%{"nzb_name" => "cinder-op-123", "nzo_id" => "nzo-archive"}]
+            }
+          })
+      end
+    end)
+
+    assert {:ok, "nzo-archive"} = Sabnzbd.find_by_operation_key("op-123")
   end
 
   test "find_by_operation_key/1 rejects duplicate exact queue names" do

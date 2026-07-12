@@ -12,8 +12,15 @@ defmodule Cinder.Download.Intent do
     field :episode_ids, {:array, :integer}, default: []
     field :protocol, Ecto.Enum, values: [:torrent, :usenet]
     field :release, :map
-    field :status, Ecto.Enum, values: [:reserved, :submitted], default: :reserved
+
+    field :status, Ecto.Enum,
+      values: [:reserved, :submitted, :cleanup_pending],
+      default: :reserved
+
     field :remote_id, :string
+    field :attempt_count, :integer, default: 0
+    field :next_attempt_at, :utc_datetime
+    field :last_error, :string
 
     timestamps(type: :utc_datetime)
   end
@@ -28,9 +35,13 @@ defmodule Cinder.Download.Intent do
       :protocol,
       :release,
       :status,
-      :remote_id
+      :remote_id,
+      :attempt_count,
+      :next_attempt_at,
+      :last_error
     ])
     |> validate_required([:operation_key, :kind, :target_id, :protocol, :release, :status])
     |> unique_constraint(:operation_key)
+    |> unique_constraint(:target_id)
   end
 end

@@ -74,6 +74,10 @@ defmodule Cinder.Download.Poller do
       {:error, :stale_status} ->
         :ok
 
+      {:error, reason}
+      when reason in [:intent_backoff, :cleanup_pending, :download_intent_busy, :intent_completed] ->
+        :ok
+
       {:error, :no_imdb_id} ->
         write_back_search(movie, &park(&1, :no_match, :no_imdb_id))
 

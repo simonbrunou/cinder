@@ -78,6 +78,14 @@ defmodule Cinder.Download.Client.Sabnzbd do
   end
 
   defp find_named_history(name) do
+    case named_slot("history", name, archive: 0) do
+      {:ok, nil} -> find_named_archive(name)
+      {:ok, slot} -> remote_id(slot)
+      other -> other
+    end
+  end
+
+  defp find_named_archive(name) do
     case named_slot("history", name, archive: 1) do
       {:ok, nil} -> :not_found
       {:ok, slot} -> remote_id(slot)

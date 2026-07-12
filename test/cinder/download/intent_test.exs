@@ -8,6 +8,7 @@ defmodule Cinder.Download.IntentTest do
   alias Cinder.Catalog.Grab
   alias Cinder.Download
   alias Cinder.Download.Intent
+  alias Cinder.Download.IntentEpisode
   alias Cinder.Repo
 
   import Cinder.CatalogFixtures
@@ -55,8 +56,353 @@ defmodule Cinder.Download.IntentTest do
     }
 
     assert {:ok, _} = %Intent{} |> Intent.changeset(attrs) |> Repo.insert()
-    assert {:error, changeset} = %Intent{} |> Intent.changeset(attrs) |> Repo.insert()
+
+    assert {:error, changeset} =
+             %Intent{} |> Intent.changeset(%{attrs | target_id: 43}) |> Repo.insert()
+
     assert "has already been taken" in errors_on(changeset).operation_key
+  end
+
+  test "concurrent reservations allow only one intent for the same movie" do
+    movie = movie_fixture(%{status: :searching})
+    release = release("Movie.A")
+
+    results = concurrently(fn -> reserve_movie_intent(movie.id, release) end)
+
+    assert Enum.count(results, &match?({:ok, _}, &1)) == 1
+    assert Enum.count(results, &(&1 == {:error, :download_intent_busy})) == 1
+    assert Repo.aggregate(Intent, :count) == 1
+  end
+
+  test "concurrent reservations reject overlapping TV episode assignments" do
+    series = series_fixture(%{monitor_strategy: :all})
+    season = season_fixture(series)
+    e1 = episode_fixture(season, %{episode_number: 1})
+    e2 = episode_fixture(season, %{episode_number: 2})
+    e3 = episode_fixture(season, %{episode_number: 3})
+
+    results =
+      concurrently(
+        fn -> reserve_episode_intent([e1.id, e2.id], release("Pack.A")) end,
+        fn -> reserve_episode_intent([e2.id, e3.id], release("Pack.B")) end
+      )
+
+    assert Enum.count(results, &match?({:ok, _}, &1)) == 1
+    assert Enum.count(results, &(&1 == {:error, :download_intent_busy})) == 1
+    assert Repo.aggregate(IntentEpisode, :count) == 2
+  end
+
+  test "submit_intent serializes lookup through remote-id persistence" do
+    movie = movie_fixture(%{status: :searching})
+    {:ok, intent} = reserve_movie_intent(movie.id)
+    parent = self()
+
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key ->
+      send(parent, {:lookup, self()})
+      receive do: (:continue -> :not_found)
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-single"} end)
+
+    first = Task.async(fn -> Download.submit_intent(intent) end)
+    assert_receive {:lookup, first_pid}
+    second = Task.async(fn -> Download.submit_intent(intent) end)
+
+    second_lookup =
+      receive do
+        {:lookup, pid} -> pid
+      after
+        150 -> nil
+      end
+
+    send(first_pid, :continue)
+    if second_lookup, do: send(second_lookup, :continue)
+    Task.await(first)
+    Task.await(second)
+
+    assert second_lookup == nil
+  end
+
+  test "permanent pre-submission errors release the intent and TV reservations" do
+    series = series_fixture(%{monitor_strategy: :all})
+    season = season_fixture(series)
+    episode = episode_fixture(season)
+    {:ok, intent} = reserve_episode_intent([episode.id], release("Bad"))
+
+    expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _ -> :not_found end)
+
+    expect(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+      {:error, :unsupported_download_url}
+    end)
+
+    assert {:error, :unsupported_download_url} = Download.reconcile_intent(intent)
+    refute Repo.get(Intent, intent.id)
+    assert Repo.all(IntentEpisode) == []
+
+    assert {:ok, _replacement} = reserve_episode_intent([episode.id], release("Replacement"))
+  end
+
+  test "invalid encrypted payload releases a pre-submission intent" do
+    movie = movie_fixture(%{status: :searching})
+    {:ok, intent} = reserve_movie_intent(movie.id)
+    intent = intent |> Intent.changeset(%{release: %{"title" => "broken"}}) |> Repo.update!()
+
+    expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _ -> :not_found end)
+
+    assert {:error, :invalid_intent_release} = Download.reconcile_intent(intent)
+    refute Repo.get(Intent, intent.id)
+  end
+
+  test "transient submission errors retain the key with bounded retry metadata" do
+    movie = movie_fixture(%{status: :searching})
+    {:ok, intent} = reserve_movie_intent(movie.id)
+    expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _ -> {:error, :timeout} end)
+
+    assert {:error, :timeout} = Download.reconcile_intent(intent)
+    saved = Repo.get!(Intent, intent.id)
+    assert saved.attempt_count == 1
+    assert DateTime.after?(saved.next_attempt_at, DateTime.utc_now())
+    assert saved.last_error == ":timeout"
+
+    assert {:error, :intent_backoff} = Download.reconcile_intent(saved)
+    assert Repo.get!(Intent, intent.id).attempt_count == 1
+
+    due =
+      saved
+      |> Intent.changeset(%{attempt_count: 100, next_attempt_at: nil})
+      |> Repo.update!()
+
+    expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _ ->
+      {:error, {:http_error, "https://user:secret@example.test"}}
+    end)
+
+    before_retry = DateTime.utc_now(:second)
+
+    assert {:error, {:http_error, _secret}} = Download.reconcile_intent(due)
+    capped = Repo.get!(Intent, intent.id)
+    assert capped.attempt_count == 101
+    assert DateTime.diff(capped.next_attempt_at, before_retry, :second) in 299..300
+    assert capped.last_error == ":http_error"
+    refute capped.last_error =~ "secret"
+  end
+
+  test "cleanup lookup failure retains the only operation key" do
+    movie = movie_fixture(%{status: :searching})
+    {:ok, intent} = reserve_movie_intent(movie.id)
+    expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _ -> {:error, :timeout} end)
+
+    assert :ok = Download.cancel_movie_intents(movie.id)
+    saved = Repo.get!(Intent, intent.id)
+    assert saved.status == :cleanup_pending
+    assert saved.attempt_count == 1
+    assert saved.operation_key == intent.operation_key
+  end
+
+  test "cleanup remove failure retains a retryable cleanup record" do
+    movie = movie_fixture(%{status: :searching})
+    intent = submitted_movie_intent(movie.id, "hash-remove-failed")
+    expect(Cinder.Download.ClientMock, :remove, fn _id, _opts -> {:error, :timeout} end)
+
+    assert :ok = Download.cancel_movie_intents(movie.id)
+    saved = Repo.get!(Intent, intent.id)
+    assert saved.status == :cleanup_pending
+    assert saved.remote_id == "hash-remove-failed"
+    assert saved.attempt_count == 1
+  end
+
+  test "cleanup deletes the record after direct remove succeeds" do
+    movie = movie_fixture(%{status: :searching})
+    intent = submitted_movie_intent(movie.id, "hash-remove-ok")
+    expect(Cinder.Download.ClientMock, :remove, fn _id, _opts -> :ok end)
+
+    assert :ok = Download.cancel_movie_intents(movie.id)
+    refute Repo.get(Intent, intent.id)
+  end
+
+  test "cleanup converges after process death during remote removal" do
+    movie = movie_fixture(%{status: :searching})
+    intent = submitted_movie_intent(movie.id, "hash-cleanup-crash")
+    {:ok, calls} = Agent.start_link(fn -> 0 end)
+
+    stub(Cinder.Download.ClientMock, :remove, fn _id, _opts ->
+      case Agent.get_and_update(calls, &{&1, &1 + 1}) do
+        0 -> Process.exit(self(), :kill)
+        _ -> :ok
+      end
+    end)
+
+    {pid, ref} = spawn_monitor(fn -> Download.cancel_movie_intents(movie.id) end)
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+    assert Repo.get!(Intent, intent.id).status == :cleanup_pending
+
+    assert :ok = Download.reconcile_pending_intents([:movie])
+    refute Repo.get(Intent, intent.id)
+    assert Agent.get(calls, & &1) == 2
+  end
+
+  test "cancellation racing a submission removes the newly attached remote job" do
+    movie = movie_fixture(%{status: :searching})
+    actor = Cinder.AccountsFixtures.admin_fixture()
+    {:ok, intent} = reserve_movie_intent(movie.id)
+    parent = self()
+
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _ ->
+      send(parent, {:lookup_blocked, self()})
+      receive do: (:continue -> :not_found)
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-cancel-race"} end)
+    expect(Cinder.Download.ClientMock, :remove, fn "hash-cancel-race", _opts -> :ok end)
+
+    submit = Task.async(fn -> Download.reconcile_intent(intent) end)
+    assert_receive {:lookup_blocked, lookup_pid}
+    cancel = Task.async(fn -> Catalog.cancel_movie(movie, actor) end)
+    Process.sleep(25)
+    send(lookup_pid, :continue)
+
+    assert {:ok, _downloading} = Task.await(submit)
+    assert {:ok, %Cinder.Catalog.Movie{status: :cancelled}} = Task.await(cancel)
+  end
+
+  test "manual movie release returns busy instead of submitting an older intent" do
+    movie = movie_fixture(%{status: :no_match})
+    {:ok, _intent} = reserve_movie_intent(movie.id, release("Old.Movie"))
+
+    assert {:error, :download_intent_busy} = Download.grab_movie(movie, release("Chosen.Movie"))
+  end
+
+  test "manual TV release returns busy instead of submitting an older overlapping intent" do
+    series = series_fixture(%{monitor_strategy: :all})
+    season = season_fixture(series)
+    episode = episode_fixture(season)
+    {:ok, _intent} = reserve_episode_intent([episode.id], release("Old.Show"))
+
+    assert {:error, :download_intent_busy} =
+             Download.grab_episodes(release("Chosen.Show"), [episode.id])
+  end
+
+  test "a reserved intent survives process death and later submits once" do
+    movie = movie_fixture(%{status: :searching})
+    parent = self()
+
+    {pid, ref} =
+      spawn_monitor(fn ->
+        {:ok, intent} = reserve_movie_intent(movie.id)
+        send(parent, {:reserved, intent.id})
+        Process.exit(self(), :kill)
+      end)
+
+    assert_receive {:reserved, intent_id}
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+    intent = Repo.get!(Intent, intent_id)
+
+    expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _ -> :not_found end)
+    expect(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-reserved"} end)
+
+    assert {:ok, _movie} = Download.reconcile_intent(intent)
+    assert Repo.get!(Cinder.Catalog.Movie, movie.id).download_id == "hash-reserved"
+  end
+
+  test "process death after lookup re-runs lookup before one add" do
+    movie = movie_fixture(%{status: :searching})
+    {:ok, intent} = reserve_movie_intent(movie.id)
+    {:ok, lookups} = Agent.start_link(fn -> 0 end)
+    {:ok, adds} = Agent.start_link(fn -> 0 end)
+
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _ ->
+      case Agent.get_and_update(lookups, &{&1, &1 + 1}) do
+        0 -> Process.exit(self(), :kill)
+        _ -> :not_found
+      end
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+      Agent.update(adds, &(&1 + 1))
+      {:ok, "hash-after-lookup"}
+    end)
+
+    {pid, ref} = spawn_monitor(fn -> Download.reconcile_intent(intent) end)
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+    assert {:ok, _movie} = Download.reconcile_intent(intent)
+    assert Agent.get(lookups, & &1) == 2
+    assert Agent.get(adds, & &1) == 1
+  end
+
+  test "process death after movie ownership commit converges without add or orphan cleanup" do
+    movie = movie_fixture(%{status: :searching})
+    intent = submitted_movie_intent(movie.id, "hash-owned")
+    parent = self()
+
+    {pid, ref} =
+      spawn_monitor(fn ->
+        {:ok, downloading} =
+          Catalog.transition(movie, %{
+            status: :downloading,
+            download_id: "hash-owned",
+            download_protocol: :torrent
+          })
+
+        send(parent, {:movie_owner_committed, downloading.id})
+        Process.exit(self(), :kill)
+      end)
+
+    assert_receive {:movie_owner_committed, movie_id}
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+    assert {:ok, reconciled} = Download.reconcile_intent(intent)
+    assert reconciled.id == movie_id
+    assert reconciled.download_id == "hash-owned"
+    refute Repo.get(Intent, intent.id)
+  end
+
+  test "process death after remote-id persistence resumes from submitted without adding again" do
+    movie = movie_fixture(%{status: :searching})
+    {:ok, intent} = reserve_movie_intent(movie.id)
+    parent = self()
+
+    expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _ -> :not_found end)
+    expect(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-submitted"} end)
+
+    {pid, ref} =
+      spawn_monitor(fn ->
+        {:ok, submitted} = Download.submit_intent(intent)
+        send(parent, {:remote_stored, submitted.id})
+        Process.exit(self(), :kill)
+      end)
+
+    assert_receive {:remote_stored, intent_id}
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+    submitted = Repo.get!(Intent, intent_id)
+    assert submitted.status == :submitted
+
+    assert {:ok, _movie} = Download.reconcile_intent(submitted)
+    assert Repo.get!(Cinder.Catalog.Movie, movie.id).download_id == "hash-submitted"
+  end
+
+  test "process death after grab ownership commit removes only the intent on recovery" do
+    series = series_fixture(%{monitor_strategy: :all})
+    season = season_fixture(series)
+    episode = episode_fixture(season)
+    {:ok, intent} = reserve_episode_intent([episode.id], release("Owned.Show"))
+
+    intent =
+      intent
+      |> Intent.changeset(%{status: :submitted, remote_id: "hash-grab-owned"})
+      |> Repo.update!()
+
+    parent = self()
+
+    {pid, ref} =
+      spawn_monitor(fn ->
+        {:ok, grab} = Catalog.create_grab("hash-grab-owned", :torrent, [episode.id], "Owned.Show")
+        send(parent, {:grab_committed, grab.id})
+        Process.exit(self(), :kill)
+      end)
+
+    assert_receive {:grab_committed, grab_id}
+    assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+    assert {:ok, %Grab{id: ^grab_id}} = Download.reconcile_intent(intent)
+    refute Repo.get(Intent, intent.id)
+    assert Repo.get!(Grab, grab_id).download_id == "hash-grab-owned"
   end
 
   test "cancelling a movie removes its submitted remote job and intent" do
@@ -132,15 +478,58 @@ defmodule Cinder.Download.IntentTest do
     refute Repo.get(Intent, intent.id)
   end
 
-  defp reserve_movie_intent(movie_id) do
-    release = %Release{title: "Movie", download_url: "magnet:?x", protocol: :torrent}
-
+  defp reserve_movie_intent(movie_id, chosen \\ release("Movie")) do
     Download.reserve_intent(%{
       kind: :movie,
       target_id: movie_id,
       episode_ids: [],
       protocol: :torrent,
-      release: release
+      release: chosen
     })
+  end
+
+  defp reserve_episode_intent(episode_ids, chosen) do
+    Download.reserve_intent(%{
+      kind: if(length(episode_ids) == 1, do: :episode, else: :season_pack),
+      target_id: hd(episode_ids),
+      episode_ids: episode_ids,
+      protocol: :torrent,
+      release: chosen
+    })
+  end
+
+  defp submitted_movie_intent(movie_id, remote_id) do
+    {:ok, intent} = reserve_movie_intent(movie_id)
+
+    intent
+    |> Intent.changeset(%{status: :submitted, remote_id: remote_id})
+    |> Repo.update!()
+  end
+
+  defp release(title),
+    do: %Release{title: title, download_url: "magnet:?xt=urn:btih:#{title}", protocol: :torrent}
+
+  defp concurrently(first, second \\ nil) do
+    parent = self()
+    second = second || first
+
+    tasks =
+      for fun <- [first, second] do
+        Task.async(fn ->
+          send(parent, {:ready, self()})
+          receive do: (:go -> fun.())
+        end)
+      end
+
+    pids =
+      for _ <- 1..2,
+          do:
+            (
+              assert_receive {:ready, pid}
+              pid
+            )
+
+    Enum.each(pids, &send(&1, :go))
+    Enum.map(tasks, &Task.await/1)
   end
 end
