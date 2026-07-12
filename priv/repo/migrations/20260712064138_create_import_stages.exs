@@ -5,6 +5,8 @@ defmodule Cinder.Repo.Migrations.CreateImportStages do
     create table(:import_stages) do
       add :operation_key, :string, null: false
       add :state, :string, null: false, default: "preparing"
+      add :kind, :string, null: false, default: "placement"
+      add :recovery_action, :string
       add :root, :string, null: false
       add :dest, :string, null: false
       add :candidate, :string, null: false
@@ -19,11 +21,15 @@ defmodule Cinder.Repo.Migrations.CreateImportStages do
       add :backup_device, :integer
       add :backup_size, :integer
       add :last_error, :string
+      add :attempt_count, :integer, null: false, default: 0
+      add :next_attempt_at, :utc_datetime
+      add :effects_claimed_at, :utc_datetime
 
       timestamps(type: :utc_datetime)
     end
 
     create unique_index(:import_stages, [:operation_key])
+    create unique_index(:import_stages, [:dest])
     create index(:import_stages, [:state])
   end
 end

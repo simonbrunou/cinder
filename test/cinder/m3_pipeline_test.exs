@@ -66,6 +66,7 @@ defmodule Cinder.M3PipelineTest do
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
     stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
     stub(Cinder.Library.FilesystemMock, :rename, fn _src, _dest -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
     stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
     # Admin approval creates the movie at :requested.

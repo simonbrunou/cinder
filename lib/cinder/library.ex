@@ -149,10 +149,12 @@ defmodule Cinder.Library do
   @spec commit_stage(%{dest: String.t(), rollback: map(), quality: map()}) ::
           :ok | {:error, term()}
   def commit_stage(%{dest: dest, rollback: rollback, quality: quality}) do
-    result = commit(rollback)
-    maybe_commit_sidecars(rollback, dest)
-    run_after_commit(rollback, dest, quality)
-    result
+    if claim_post_commit_effects(rollback) do
+      maybe_commit_sidecars(rollback, dest)
+      run_after_commit(rollback, dest, quality)
+    end
+
+    commit(rollback)
   end
 
   @doc "Rolls a staged import back. Safe to call repeatedly."
@@ -172,9 +174,7 @@ defmodule Cinder.Library do
   @doc "Converges durable import stages left by process death or a prior filesystem error."
   @spec reconcile_stages() :: :ok
   def reconcile_stages do
-    Enum.each(ImportStage.list(), fn stage ->
-      ImportStage.with_lock(stage.operation_key, fn -> reconcile_stage(stage.id, :auto) end)
-    end)
+    Enum.each(ImportStage.list(), &reconcile_stage(&1.id, :auto))
 
     :ok
   end
@@ -247,19 +247,28 @@ defmodule Cinder.Library do
   defp stage_place(source, dest, root, {si, sdev}, record, new_q, replace?, upgrade_fun) do
     with {:ok, source} <- safe_source_file(source),
          {:ok, dest} <- safe_destination(dest, root) do
-      case fs().lstat(dest) do
-        {:error, :enoent} ->
-          stage_new(source, dest, root, new_q)
+      # Lock ordering is always destination -> operation -> DB claim. The stable destination lock
+      # serializes local staging decisions; the unique DB index extends exclusion across nodes.
+      ImportStage.with_destination_lock(dest, fn ->
+        stage_place_locked(source, dest, root, {si, sdev}, record, new_q, replace?, upgrade_fun)
+      end)
+    end
+  end
 
-        {:ok, %{inode: ^si, major_device: ^sdev}} ->
-          {:ok, existing_quality_for_stage(record, new_q, replace?), noop_rollback(), false}
+  defp stage_place_locked(source, dest, root, {si, sdev}, record, new_q, replace?, upgrade_fun) do
+    case fs().lstat(dest) do
+      {:error, :enoent} ->
+        stage_new(source, dest, root, new_q)
 
-        {:ok, stat} ->
-          stage_existing(source, dest, root, stat, record, new_q, replace?, upgrade_fun)
+      {:ok, %{inode: ^si, major_device: ^sdev}} ->
+        quality = existing_quality_for_stage(record, new_q, replace?)
+        stage_noop(dest, root, quality)
 
-        {:error, _} = error ->
-          error
-      end
+      {:ok, stat} ->
+        stage_existing(source, dest, root, stat, record, new_q, replace?, upgrade_fun)
+
+      {:error, _} = error ->
+        error
     end
   end
 
@@ -268,7 +277,7 @@ defmodule Cinder.Library do
       stage_replacement(source, dest, root, stat, new_q)
     else
       {:ok, quality, false} = keep(dest, record, new_q)
-      {:ok, quality, noop_rollback(), false}
+      stage_noop(dest, root, quality)
     end
   end
 
@@ -281,48 +290,78 @@ defmodule Cinder.Library do
   defp stage_replacement(source, dest, root, original_stat, quality),
     do: prepare_durable_stage(source, dest, root, dest, original_stat, quality)
 
+  defp stage_noop(dest, root, quality) do
+    operation_key = Ecto.UUID.generate()
+
+    ImportStage.with_lock(operation_key, fn ->
+      case create_stage(%{
+             operation_key: operation_key,
+             state: :prepared,
+             kind: :noop,
+             root: root,
+             dest: dest,
+             candidate: dest
+           }) do
+        {:ok, stage} -> {:ok, quality, durable_rollback(stage), false}
+        {:error, _} = error -> error
+      end
+    end)
+  end
+
   defp prepare_durable_stage(source, dest, root, backup_source, backup_stat, quality) do
     operation_key = Ecto.UUID.generate()
     candidate = stage_path(dest, operation_key)
     backup = if backup_source, do: rollback_path(dest, operation_key)
 
     ImportStage.with_lock(operation_key, fn ->
-      stage =
-        ImportStage.create!(
-          Map.merge(
-            %{
-              operation_key: operation_key,
-              root: root,
-              dest: dest,
-              candidate: candidate,
-              backup: backup
-            },
-            identity_attrs(:backup, backup_stat)
-          )
+      attrs =
+        Map.merge(
+          %{
+            operation_key: operation_key,
+            root: root,
+            dest: dest,
+            candidate: candidate,
+            backup: backup
+          },
+          identity_attrs(:backup, backup_stat)
         )
 
-      case do_prepare_stage(stage, source, backup_source) do
-        {:ok, prepared} ->
-          {:ok, quality, durable_rollback(prepared), true}
+      case create_stage(attrs) do
+        {:ok, stage} ->
+          prepare_created_stage(stage, source, backup_source, quality)
 
-        {:error, reason} = error ->
-          record_stage_error(stage.id, reason)
+        {:error, _} = error ->
           error
       end
     end)
   end
 
+  defp prepare_created_stage(stage, source, backup_source, quality) do
+    case do_prepare_stage(stage, source, backup_source) do
+      {:ok, prepared} ->
+        {:ok, quality, durable_rollback(prepared), true}
+
+      {:error, reason} = error ->
+        record_stage_error(stage.id, reason)
+        error
+    end
+  end
+
+  defp create_stage(attrs) do
+    case ImportStage.create(attrs) do
+      {:ok, stage} -> {:ok, stage}
+      {:error, _changeset} -> {:error, :import_stage_busy}
+    end
+  end
+
   defp do_prepare_stage(stage, source, backup_source) do
     candidate = stage.candidate
-    dest = stage.dest
 
     with :ok <- link_or_copy(source, candidate, stage.root),
          {:ok, candidate_stat} <- fs().lstat(candidate),
          stage <- ImportStage.update!(stage, identity_attrs(:candidate, candidate_stat)),
          {:ok, stage} <- maybe_move_backup(stage, backup_source),
-         {:ok, ^candidate} <- safe_destination(candidate, stage.root),
-         {:ok, ^dest} <- safe_destination(dest, stage.root),
-         :ok <- fs().rename(candidate, dest) do
+         :ok <- land_candidate(stage, candidate_stat) do
       {:ok,
        ImportStage.update!(
          stage,
@@ -336,17 +375,33 @@ defmodule Cinder.Library do
   defp maybe_move_backup(stage, source) do
     backup = stage.backup
 
-    with {:ok, ^source} <- safe_destination(source, stage.root),
+    with {:ok, current} <- fs().lstat(source),
+         true <-
+           identity_matches?(current, backup_identity(stage)) ||
+             {:error, :import_stage_destination_changed},
+         {:ok, ^source} <- safe_destination(source, stage.root),
          {:ok, ^backup} <- safe_destination(backup, stage.root),
          :ok <- fs().rename(source, backup) do
       {:ok, stage}
     end
   end
 
+  # `link(2)` is the no-replace primitive: a file appearing at dest while a long copy builds the
+  # candidate yields EEXIST and is preserved. For replacement, the immediately preceding identity
+  # recheck minimizes the unavoidable same-host lstat->rename TOCTOU window established in Task 3.
+  defp land_candidate(stage, candidate_stat) do
+    candidate = stage.candidate
+    dest = stage.dest
+
+    with {:ok, ^candidate} <- safe_destination(candidate, stage.root),
+         {:ok, ^dest} <- safe_destination(dest, stage.root),
+         :ok <- fs().ln(candidate, dest) do
+      remove_owned(candidate, identity(candidate_stat), stage.root)
+    end
+  end
+
   defp durable_rollback(stage),
     do: %{state: :durable, stage_id: stage.id, operation_key: stage.operation_key}
-
-  defp noop_rollback, do: %{state: :noop}
 
   defp stage_path(dest, operation_key),
     do: Path.join(Path.dirname(dest), ".cinder-stage-#{operation_key}")
@@ -369,11 +424,16 @@ defmodule Cinder.Library do
   defp identity_attrs(:backup, stat),
     do: %{backup_inode: stat.inode, backup_device: stat.major_device, backup_size: stat.size}
 
-  defp rollback(%{state: :noop}), do: :ok
+  defp identity(stat), do: {stat.inode, stat.major_device, stat.size}
+
   defp rollback(%{state: :durable, stage_id: id}), do: reconcile_stage(id, :rollback)
 
-  defp commit(%{state: :noop}), do: :ok
   defp commit(%{state: :durable, stage_id: id}), do: reconcile_stage(id, :commit)
+
+  defp claim_post_commit_effects(%{state: :durable, stage_id: id}),
+    do: match?({:claimed, _stage}, ImportStage.claim_effects(id))
+
+  defp claim_post_commit_effects(_rollback), do: false
 
   defp reconcile_stage(id, mode) do
     case ImportStage.get(id) do
@@ -381,20 +441,65 @@ defmodule Cinder.Library do
         :ok
 
       stage ->
-        stage
-        |> reconcile_stage_state(mode)
-        |> finish_stage_reconciliation(stage)
+        # Every path observes destination -> operation lock ordering. Correctness across Catalog
+        # transactions comes from the conditional DB claims below, not from these process locks.
+        reconcile_stage_with_locks(stage, mode)
     end
   end
 
+  defp reconcile_stage_with_locks(stage, mode) do
+    ImportStage.with_destination_lock(stage.dest, fn ->
+      ImportStage.with_lock(stage.operation_key, fn ->
+        stage.id
+        |> ImportStage.get()
+        |> reconcile_stage_state(mode)
+      end)
+    end)
+  end
+
+  defp reconcile_stage_state(nil, _mode), do: :ok
+
+  defp reconcile_stage_state(%ImportStage{state: state}, :commit)
+       when state in [:preparing, :prepared, :rolling_back],
+       do: {:error, :import_stage_not_committed}
+
+  defp reconcile_stage_state(%ImportStage{state: state} = stage, _mode)
+       when state in [:preparing, :prepared],
+       do: claim_stage(stage, [:preparing, :prepared], :rolling_back, :rollback)
+
   defp reconcile_stage_state(%ImportStage{state: :committed} = stage, _mode),
-    do: cleanup_committed_stage(stage)
+    do: claim_stage(stage, [:committed], :cleaning, :cleanup)
 
-  defp reconcile_stage_state(%ImportStage{}, :commit),
-    do: {:error, :import_stage_not_committed}
+  defp reconcile_stage_state(%ImportStage{state: state} = stage, _mode)
+       when state in [:rolling_back, :cleaning],
+       do: retry_stage(stage)
 
-  defp reconcile_stage_state(%ImportStage{} = stage, _mode),
-    do: rollback_uncommitted_stage(stage)
+  defp reconcile_stage_state(%ImportStage{state: :quarantined}, :auto), do: :ok
+
+  defp reconcile_stage_state(%ImportStage{state: :quarantined}, _mode),
+    do: {:error, :import_stage_quarantined}
+
+  defp claim_stage(stage, from_states, state, action) do
+    case ImportStage.claim(stage.id, from_states, state, action) do
+      {:claimed, claimed} -> reconcile_claimed_stage(claimed)
+      :not_claimed -> stage.id |> ImportStage.get() |> reconcile_stage_state(:auto)
+    end
+  end
+
+  defp retry_stage(stage) do
+    case ImportStage.claim_retry(stage.id, stage.state) do
+      {:claimed, claimed} -> reconcile_claimed_stage(claimed)
+      :not_claimed -> :ok
+    end
+  end
+
+  defp reconcile_claimed_stage(%ImportStage{kind: :noop} = stage), do: delete_stage(stage)
+
+  defp reconcile_claimed_stage(%ImportStage{recovery_action: :cleanup} = stage),
+    do: stage |> cleanup_committed_stage() |> finish_stage_reconciliation(stage)
+
+  defp reconcile_claimed_stage(%ImportStage{recovery_action: :rollback} = stage),
+    do: stage |> rollback_uncommitted_stage() |> finish_stage_reconciliation(stage)
 
   defp cleanup_committed_stage(stage) do
     with :ok <- remove_owned(stage.backup, backup_identity(stage), stage.root),
@@ -408,13 +513,11 @@ defmodule Cinder.Library do
          do: delete_stage(stage)
   end
 
-  defp remove_unlanded_candidate(%ImportStage{state: :preparing, candidate_inode: nil} = stage),
+  defp remove_unlanded_candidate(%ImportStage{candidate_inode: nil} = stage),
     do: remove_unique_candidate(stage)
 
-  defp remove_unlanded_candidate(%ImportStage{state: :preparing} = stage),
+  defp remove_unlanded_candidate(%ImportStage{} = stage),
     do: remove_owned(stage.candidate, candidate_identity(stage), stage.root)
-
-  defp remove_unlanded_candidate(%ImportStage{}), do: :ok
 
   # The UUID candidate path belongs exclusively to its journal row. A crash can land between the
   # link/copy and its first lstat; in that narrow window there is no identity to persist, but the
@@ -537,9 +640,47 @@ defmodule Cinder.Library do
   defp finish_stage_reconciliation(:ok, _stage), do: :ok
 
   defp finish_stage_reconciliation({:error, reason} = error, stage) do
-    record_stage_error(stage.id, reason)
+    persist_cleanup_failure(stage, reason)
     error
   end
+
+  @max_cleanup_attempts 3
+  @permanent_cleanup_errors [
+    :import_stage_destination_changed,
+    :import_stage_backup_changed,
+    :import_stage_file_changed,
+    :import_stage_restore_changed
+  ]
+
+  defp persist_cleanup_failure(stage, reason) do
+    attempt = stage.attempt_count + 1
+    error = stage_error(reason)
+    quarantine? = reason in @permanent_cleanup_errors or attempt >= @max_cleanup_attempts
+
+    attrs =
+      if quarantine? do
+        %{state: :quarantined, attempt_count: attempt, next_attempt_at: nil, last_error: error}
+      else
+        %{
+          attempt_count: attempt,
+          next_attempt_at: DateTime.add(DateTime.utc_now(:second), cleanup_backoff(attempt)),
+          last_error: error
+        }
+      end
+
+    if quarantine? do
+      Logger.error(
+        "import stage #{stage.id} quarantined after #{attempt} cleanup attempt(s): #{error}"
+      )
+    else
+      Logger.warning("import stage #{stage.id} cleanup pending: #{error}")
+    end
+
+    ImportStage.update(stage, attrs)
+    :ok
+  end
+
+  defp cleanup_backoff(attempt), do: 5 * Integer.pow(2, attempt - 1)
 
   defp record_stage_error(id, reason) do
     case ImportStage.get(id) do

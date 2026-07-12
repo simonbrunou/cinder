@@ -221,6 +221,7 @@ defmodule Cinder.Download.TvPollerTest do
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
     stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
     stub(Cinder.Library.FilesystemMock, :rename, fn _src, _dest -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
     stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
     assert :ok = TvPoller.poll()
@@ -245,13 +246,13 @@ defmodule Cinder.Download.TvPollerTest do
 
     Application.put_env(:cinder, :filesystem_barrier, %{
       owner: self(),
-      operation: :rename,
+      operation: :ln,
       contains: "Show (2008) {tmdb-#{series.tmdb_id}} - S01E01.mkv"
     })
 
     poll = Task.async(fn -> TvPoller.poll() end)
     assert_receive {:filesystem_barrier, pid, ref, operation, dest}, 1_000
-    assert operation == :rename
+    assert operation == :ln
     assert File.read!(dest) == "candidate"
     assert {:ok, _} = Catalog.cancel_grab(Repo.get!(Grab, grab.id))
     send(pid, {ref, :continue})

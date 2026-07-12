@@ -20,13 +20,24 @@ defmodule Cinder.Test.BarrierFilesystem do
   defdelegate mkdir_p(path), to: Disk
   @impl true
   def ln(source, dest) do
-    result = Disk.ln(source, dest)
-    pause(:ln, dest)
-    result
+    case injected_failure(:ln, source, dest) do
+      :ok ->
+        result = Disk.ln(source, dest)
+        pause(:ln, dest)
+        result
+
+      {:error, _} = error ->
+        error
+    end
   end
 
   @impl true
-  defdelegate cp(source, dest), to: Disk
+  def cp(source, dest) do
+    result = Disk.cp(source, dest)
+    pause(:cp, dest)
+    result
+  end
+
   @impl true
   def lstat(path) do
     result = Disk.lstat(path)
