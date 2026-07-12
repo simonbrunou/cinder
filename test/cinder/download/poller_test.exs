@@ -325,7 +325,7 @@ defmodule Cinder.Download.PollerTest do
        ]}
     end)
 
-    stub(Cinder.Download.ClientMock, :add, fn _release -> {:ok, hash} end)
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, hash} end)
 
     stub(Cinder.Download.ClientMock, :status, fn ^hash ->
       {:ok, %{state: :completed, content_path: "/downloads/Inception.mkv"}}
@@ -356,6 +356,55 @@ defmodule Cinder.Download.PollerTest do
 
     assert :ok = Poller.poll(new_pid)
     assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
+  end
+
+  test "recovers a remotely accepted movie after process death without submitting twice" do
+    {:ok, movie} =
+      Catalog.add_movie(%{tmdb_id: 401, title: "Crash Window", imdb_id: "tt0000401"})
+
+    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt0000401" ->
+      {:ok,
+       [
+         %{
+           title: "Crash.Window.1080p.WEB-GRP",
+           size: 2_000_000_000,
+           download_url: "magnet:?xt=urn:btih:crash",
+           seeders: 1
+         }
+       ]}
+    end)
+
+    {:ok, accepted} = Agent.start_link(fn -> %{adds: 0, jobs: %{}} end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, operation_key: key ->
+      Agent.update(accepted, fn state ->
+        %{state | adds: state.adds + 1, jobs: Map.put(state.jobs, key, "hash-crash")}
+      end)
+
+      Process.exit(self(), :kill)
+    end)
+
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn key ->
+      case Agent.get(accepted, &Map.get(&1.jobs, key)) do
+        nil -> :not_found
+        id -> {:ok, id}
+      end
+    end)
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-crash" ->
+      {:ok, %{state: :downloading, progress: 0.0}}
+    end)
+
+    pid = start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+    catch_exit(Poller.poll(pid))
+
+    new_pid = await_restart(Poller, pid)
+    assert :ok = Poller.poll(new_pid)
+
+    assert %{adds: 1} = Agent.get(accepted, & &1)
+
+    assert %Movie{status: :downloading, download_id: "hash-crash"} =
+             Repo.get!(Movie, movie.id)
   end
 
   defp downloaded_movie(tmdb_id, file_path) do
@@ -521,7 +570,7 @@ defmodule Cinder.Download.PollerTest do
        ]}
     end)
 
-    stub(Cinder.Download.ClientMock, :add, fn _release -> {:ok, "hash-900"} end)
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-900"} end)
 
     stub(Cinder.Download.ClientMock, :status, fn "hash-900" ->
       {:ok, %{state: :completed, content_path: "/downloads/Inception.mkv"}}
@@ -579,7 +628,7 @@ defmodule Cinder.Download.PollerTest do
       {:ok, [%{title: "M.1080p", size: 8_000_000_000, download_url: "magnet:?x", seeders: 5}]}
     end)
 
-    stub(Cinder.Download.ClientMock, :add, fn _ -> {:error, :unsupported_download_url} end)
+    stub(Cinder.Download.ClientMock, :add, fn _, _opts -> {:error, :unsupported_download_url} end)
 
     start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
 

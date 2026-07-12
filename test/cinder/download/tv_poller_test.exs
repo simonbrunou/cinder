@@ -37,6 +37,31 @@ defmodule Cinder.Download.TvPollerTest do
   # per-episode size so any size-band logic behaves as in production.
   defp stub_single_file_import, do: stub_import_ok(3_000_000_000)
 
+  defp stub_accept_then_crash(remote_id) do
+    {:ok, accepted} = Agent.start_link(fn -> %{adds: 0, jobs: %{}} end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, operation_key: key ->
+      Agent.update(accepted, fn state ->
+        %{state | adds: state.adds + 1, jobs: Map.put(state.jobs, key, remote_id)}
+      end)
+
+      Process.exit(self(), :kill)
+    end)
+
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn key ->
+      case Agent.get(accepted, &Map.get(&1.jobs, key)) do
+        nil -> :not_found
+        id -> {:ok, id}
+      end
+    end)
+
+    stub(Cinder.Download.ClientMock, :status, fn ^remote_id ->
+      {:ok, %{state: :downloading, progress: 0.0}}
+    end)
+
+    accepted
+  end
+
   test "advances a completed single-file grab through download to import in one tick" do
     {series, season} = series_tree()
     e1 = episode(season, 3)
@@ -214,7 +239,7 @@ defmodule Cinder.Download.TvPollerTest do
        ]}
     end)
 
-    stub(Cinder.Download.ClientMock, :add, fn _release -> {:ok, "hash-new"} end)
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-new"} end)
 
     assert :ok = TvPoller.poll()
 
@@ -223,6 +248,66 @@ defmodule Cinder.Download.TvPollerTest do
     grab = Repo.get!(Grab, linked.grab_id)
     assert grab.download_id == "hash-new"
     assert grab.download_protocol == :torrent
+  end
+
+  test "recovers a remotely accepted episode after process death without submitting twice" do
+    {_series, season} = series_tree()
+    episode = episode(season, 1)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok,
+       [
+         %{
+           title: "Show.S01E01.1080p.WEB-GRP",
+           size: 2_000_000_000,
+           download_url: "episode",
+           seeders: 1
+         }
+       ]}
+    end)
+
+    accepted = stub_accept_then_crash("hash-episode-crash")
+    pid = start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+    catch_exit(TvPoller.poll(pid))
+
+    new_pid = await_restart(TvPoller, pid)
+    assert :ok = TvPoller.poll(new_pid)
+    assert %{adds: 1} = Agent.get(accepted, & &1)
+
+    linked = Repo.get!(Episode, episode.id)
+    assert linked.grab_id
+    assert Repo.get!(Grab, linked.grab_id).download_id == "hash-episode-crash"
+  end
+
+  test "recovers a remotely accepted season pack after process death without submitting twice" do
+    {_series, season} = series_tree()
+    e1 = episode(season, 1)
+    e2 = episode(season, 2)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok,
+       [
+         %{
+           title: "Show.S01.1080p.WEB-GRP",
+           size: 4_000_000_000,
+           download_url: "pack",
+           seeders: 1
+         }
+       ]}
+    end)
+
+    accepted = stub_accept_then_crash("hash-pack-crash")
+    pid = start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+    catch_exit(TvPoller.poll(pid))
+
+    new_pid = await_restart(TvPoller, pid)
+    assert :ok = TvPoller.poll(new_pid)
+    assert %{adds: 1} = Agent.get(accepted, & &1)
+
+    grab_id = Repo.get!(Episode, e1.id).grab_id
+    assert grab_id
+    assert Repo.get!(Episode, e2.id).grab_id == grab_id
+    assert Repo.get!(Grab, grab_id).download_id == "hash-pack-crash"
   end
 
   test "sanitizes remote release titles in client failure logs" do
@@ -242,7 +327,7 @@ defmodule Cinder.Download.TvPollerTest do
        ]}
     end)
 
-    stub(Cinder.Download.ClientMock, :add, fn _release -> {:error, :remote_rejected} end)
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:error, :remote_rejected} end)
 
     log = capture_log(fn -> assert :ok = TvPoller.poll() end)
 
@@ -321,7 +406,7 @@ defmodule Cinder.Download.TvPollerTest do
     # Use the title as the download id so each grab is traceable to its release. Assertions go on
     # the resulting DB state, not inside the stub — a raise here runs in the poller's isolated
     # process and would be swallowed, never failing the test.
-    stub(Cinder.Download.ClientMock, :add, fn release -> {:ok, release.title} end)
+    stub(Cinder.Download.ClientMock, :add, fn release, _opts -> {:ok, release.title} end)
 
     assert :ok = TvPoller.poll()
 
@@ -498,7 +583,7 @@ defmodule Cinder.Download.TvPollerTest do
        ]}
     end)
 
-    stub(Cinder.Download.ClientMock, :add, fn _release -> {:ok, "hash-m6"} end)
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-m6"} end)
 
     assert :ok = TvPoller.poll()
 

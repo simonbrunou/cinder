@@ -40,6 +40,7 @@ defmodule Cinder.Download.TvPoller do
   use Cinder.Download.PollerSkeleton, log_prefix: "tv poller"
 
   defp do_poll(state) do
+    Download.reconcile_pending_intents([:episode, :season_pack])
     advance_grabs()
     import_grabs()
     search_wanted(state.search_retry_after)
@@ -155,8 +156,13 @@ defmodule Cinder.Download.TvPoller do
   # --- search: wanted episodes -----------------------------------------------------------------
 
   defp search_wanted(retry_after) do
+    pending = Download.pending_episode_ids()
+
     Catalog.wanted_episodes()
-    |> Enum.reject(&(&1.search_attempts >= Catalog.max_search_attempts()))
+    |> Enum.reject(
+      &(MapSet.member?(pending, &1.id) or
+          &1.search_attempts >= Catalog.max_search_attempts())
+    )
     |> Enum.filter(&search_due?(&1, retry_after))
     |> Enum.group_by(&{&1.season.series.id, &1.season.season_number})
     |> Enum.each(fn {{series_id, season}, episodes} ->
@@ -200,24 +206,10 @@ defmodule Cinder.Download.TvPoller do
     episode_ids =
       episodes |> Enum.filter(&(&1.episode_number in covered_numbers)) |> Enum.map(& &1.id)
 
-    with {:ok, client} <- Download.client_for(release.protocol),
-         {:ok, download_id} <- client.add(release) do
-      case create_grab_safely(download_id, release, episode_ids) do
-        {:ok, _grab} ->
-          episode_ids
+    case Download.grab_episodes(release, episode_ids) do
+      {:ok, _grab} ->
+        episode_ids
 
-        {:error, reason} ->
-          # The client download was already added: remove it (best-effort) so a failed
-          # link — a concurrent grab or an admin cancel took the episodes — doesn't
-          # leave an orphaned full-season download (mirrors the manual grab path).
-          Logger.warning(
-            "tv grab failed (#{HTTPPolicy.sanitize_log(release.title)}): #{HTTPPolicy.sanitize_log(reason)}"
-          )
-
-          Download.best_effort_remove(client, download_id)
-          []
-      end
-    else
       other ->
         Logger.warning(
           "tv grab failed (#{HTTPPolicy.sanitize_log(release.title)}): #{HTTPPolicy.sanitize_log(other)}"
@@ -225,17 +217,6 @@ defmodule Cinder.Download.TvPoller do
 
         []
     end
-  end
-
-  # A raised/exited create_grab (SQLITE_BUSY past busy_timeout, a pool-checkout
-  # timeout under two-poller contention) must reach the cleanup branch above, not
-  # escape to isolate/2 — that would skip the download removal and orphan it.
-  defp create_grab_safely(download_id, release, episode_ids) do
-    Catalog.create_grab(download_id, release.protocol, episode_ids, release.title)
-  rescue
-    e -> {:error, e}
-  catch
-    kind, value -> {:error, {kind, value}}
   end
 
   # Crossing the search cap is announced by Catalog.increment_search_attempts itself (at the

@@ -48,7 +48,7 @@ defmodule Cinder.M3PipelineTest do
        ]}
     end)
 
-    stub(Cinder.Download.ClientMock, :add, fn _ -> {:ok, "hash-3"} end)
+    stub(Cinder.Download.ClientMock, :add, fn _, _opts -> {:ok, "hash-3"} end)
 
     stub(Cinder.Download.ClientMock, :status, fn "hash-3" ->
       {:ok, %{state: :completed, content_path: "/downloads/Inception.mkv"}}

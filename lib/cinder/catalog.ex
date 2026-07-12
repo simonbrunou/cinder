@@ -343,43 +343,15 @@ defmodule Cinder.Catalog do
   mid-action surfaces `{:error, :stale_entry}`.
   """
   def manual_grab_movie(%Movie{status: :available} = movie, %Release{} = release) do
-    grab_and_transition(movie, release, %{status: :upgrading})
+    Download.grab_movie(movie, release)
   end
 
   def manual_grab_movie(%Movie{status: status} = movie, %Release{} = release)
       when status in @retryable do
-    grab_and_transition(movie, release, %{status: :downloading, search_attempts: 0})
+    Download.grab_movie(movie, release)
   end
 
   def manual_grab_movie(%Movie{}, %Release{}), do: {:error, :not_grabbable}
-
-  # Grabs the release (a client.add side-effect returning a download_id), then transitions the
-  # movie with the shared download bookkeeping merged onto `attrs`. If the row was deleted
-  # mid-action, transition/2 raises Ecto.StaleEntryError; we best-effort remove the just-added
-  # download so it isn't orphaned in the client, then surface {:error, :stale_entry}.
-  defp grab_and_transition(movie, %Release{} = release, attrs) do
-    case Download.grab(release) do
-      {:ok, download_id} ->
-        try do
-          transition(
-            movie,
-            Map.merge(attrs, %{
-              download_id: download_id,
-              download_protocol: release.protocol,
-              release_title: release.title,
-              import_attempts: 0
-            })
-          )
-        rescue
-          Ecto.StaleEntryError ->
-            remove_download(%{download_id: download_id, download_protocol: release.protocol})
-            {:error, :stale_entry}
-        end
-
-      error ->
-        error
-    end
-  end
 
   @doc """
   Grabs a user-chosen `release` for one `season_number` of `series`. Recomputes the season's
@@ -409,22 +381,7 @@ defmodule Cinder.Catalog do
   # (:no_episodes_linked) or the insert failed — best-effort remove the just-added download so it
   # isn't orphaned in the client, then surface the error.
   defp grab_and_create_grab(%Release{} = release, episode_ids) do
-    case Download.grab(release) do
-      {:ok, download_id} ->
-        case create_grab(download_id, release.protocol, episode_ids, release.title,
-               reset_attempts: true
-             ) do
-          {:ok, _grab} = ok ->
-            ok
-
-          {:error, _reason} = error ->
-            remove_download(%{download_id: download_id, download_protocol: release.protocol})
-            error
-        end
-
-      error ->
-        error
-    end
+    Download.grab_episodes(release, episode_ids)
   end
 
   # A whole-season pack (episodes: nil) covers every still-wanted number; an episode list covers its
@@ -549,6 +506,7 @@ defmodule Cinder.Catalog do
   """
   def cancel_movie(%Movie{} = movie, actor) do
     if cancellable?(movie) do
+      Download.cancel_movie_intents(movie.id)
       # Client removal is best-effort: a stuck movie must always be clearable even if
       # qBit/SAB is down. A failed remove is logged, not propagated (see remove_download/1).
       remove_download(movie)
@@ -586,6 +544,7 @@ defmodule Cinder.Catalog do
   the `{:movie_updated, _}` broadcast fires after commit.
   """
   def abort_upgrade(%Movie{status: :upgrading} = movie, actor) do
+    Download.cancel_movie_intents(movie.id)
     remove_download(movie)
 
     result =
@@ -626,6 +585,7 @@ defmodule Cinder.Catalog do
   """
   def delete_movie(%Movie{} = movie, actor, opts \\ []) do
     delete_files? = Keyword.get(opts, :delete_files, false)
+    Download.cancel_movie_intents(movie.id)
     # Client removal is best-effort (see maybe_cancel_download_for_delete/1).
     maybe_cancel_download_for_delete(movie)
 
@@ -1270,6 +1230,7 @@ defmodule Cinder.Catalog do
   (duplicate-add rejections) and complete with no grab left to import it.
   """
   def cancel_grab(%Grab{} = grab) do
+    Download.cancel_episode_intents(episode_ids_for_grab(grab.id))
     remove_download(grab)
     delete_grab(grab)
   end
@@ -1287,6 +1248,7 @@ defmodule Cinder.Catalog do
   the series reaped-but-unaudited. The `{:series_updated, _}` broadcast fires after commit.
   """
   def cancel_series(%Series{} = series, actor) do
+    Download.cancel_episode_intents(episode_ids_for_series(series.id))
     grabs = grabs_for_series(series.id)
 
     # External I/O outside the txn: best-effort, never blocks the cancel.
@@ -1319,6 +1281,7 @@ defmodule Cinder.Catalog do
   """
   def delete_series(%Series{} = series, actor, opts \\ []) do
     delete_files? = Keyword.get(opts, :delete_files, false)
+    Download.cancel_episode_intents(episode_ids_for_series(series.id))
     reap_series_grabs(series.id)
     # Collect episode file paths BEFORE the cascade deletes the rows.
     paths = if delete_files?, do: episode_file_paths_for_series(series.id), else: []
@@ -1338,6 +1301,20 @@ defmodule Cinder.Catalog do
         where: s.series_id == ^series_id and not is_nil(e.file_path),
         select: e.file_path
     )
+  end
+
+  defp episode_ids_for_series(series_id) do
+    Repo.all(
+      from e in Episode,
+        join: s in Season,
+        on: s.id == e.season_id,
+        where: s.series_id == ^series_id,
+        select: e.id
+    )
+  end
+
+  defp episode_ids_for_grab(grab_id) do
+    Repo.all(from e in Episode, where: e.grab_id == ^grab_id, select: e.id)
   end
 
   # Remove every grab serving the series: client-remove the tracked download (best-effort, if any),

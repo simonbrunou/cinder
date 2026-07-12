@@ -35,6 +35,34 @@ defmodule Cinder.Download.Client.QBittorrentTest do
              QBittorrent.add(%{download_url: magnet})
   end
 
+  test "add/2 tags the torrent with the operation key" do
+    stub_qbit(fn conn ->
+      assert conn.request_path == "/api/v2/torrents/add"
+      assert conn.params["tags"] == "cinder-op-123"
+      Req.Test.text(conn, "Ok.")
+    end)
+
+    magnet = "magnet:?xt=urn:btih:#{@hash}&dn=Movie"
+
+    assert {:ok, "0123456789abcdef0123456789abcdef01234567"} =
+             QBittorrent.add(%{download_url: magnet}, operation_key: "op-123")
+  end
+
+  test "find_by_operation_key/1 returns the tagged torrent's infohash" do
+    stub_qbit(fn conn ->
+      assert conn.request_path == "/api/v2/torrents/info"
+      assert conn.params["tag"] == "cinder-op-123"
+      Req.Test.json(conn, [%{"hash" => "abc123"}])
+    end)
+
+    assert {:ok, "abc123"} = QBittorrent.find_by_operation_key("op-123")
+  end
+
+  test "find_by_operation_key/1 returns :not_found for an unused tag" do
+    stub_qbit(fn conn -> Req.Test.json(conn, []) end)
+    assert :not_found = QBittorrent.find_by_operation_key("missing")
+  end
+
   defp stub_torrent_flow(torrent_bytes) do
     Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
       case {conn.host, conn.request_path} do

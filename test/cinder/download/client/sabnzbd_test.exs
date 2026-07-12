@@ -37,6 +37,80 @@ defmodule Cinder.Download.Client.SabnzbdTest do
              Sabnzbd.add(%{download_url: "http://prowlarr/getnzb/1?apikey=k&id=9"})
   end
 
+  test "add/2 names the job with the operation key" do
+    stub(fn conn ->
+      assert conn.params["mode"] == "addurl"
+      assert conn.params["nzbname"] == "cinder-op-123"
+      Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["nzo-123"]})
+    end)
+
+    assert {:ok, "nzo-123"} =
+             Sabnzbd.add(%{download_url: "http://x/nzb"}, operation_key: "op-123")
+  end
+
+  test "find_by_operation_key/1 finds an exact queue name" do
+    stub(fn conn ->
+      assert conn.params["mode"] == "queue"
+      assert conn.params["search"] == "cinder-op-123"
+
+      Req.Test.json(conn, %{
+        "queue" => %{
+          "slots" => [%{"filename" => "cinder-op-123", "nzo_id" => "nzo-queue"}]
+        }
+      })
+    end)
+
+    assert {:ok, "nzo-queue"} = Sabnzbd.find_by_operation_key("op-123")
+  end
+
+  test "find_by_operation_key/1 searches history after an exact queue miss" do
+    stub(fn conn ->
+      case conn.params["mode"] do
+        "queue" ->
+          Req.Test.json(conn, %{
+            "queue" => %{
+              "slots" => [%{"filename" => "cinder-op-123-extra", "nzo_id" => "wrong"}]
+            }
+          })
+
+        "history" ->
+          assert conn.params["search"] == "cinder-op-123"
+          assert conn.params["archive"] == "1"
+
+          Req.Test.json(conn, %{
+            "history" => %{
+              "slots" => [%{"name" => "cinder-op-123", "nzo_id" => "nzo-history"}]
+            }
+          })
+      end
+    end)
+
+    assert {:ok, "nzo-history"} = Sabnzbd.find_by_operation_key("op-123")
+  end
+
+  test "find_by_operation_key/1 rejects duplicate exact queue names" do
+    stub(fn conn ->
+      Req.Test.json(conn, %{
+        "queue" => %{
+          "slots" => [
+            %{"filename" => "cinder-op-123", "nzo_id" => "nzo-1"},
+            %{"filename" => "cinder-op-123", "nzo_id" => "nzo-2"}
+          ]
+        }
+      })
+    end)
+
+    assert {:error, :ambiguous_operation_key} = Sabnzbd.find_by_operation_key("op-123")
+  end
+
+  test "find_by_operation_key/1 returns :not_found when queue and history miss" do
+    stub(fn conn ->
+      Req.Test.json(conn, %{conn.params["mode"] => %{"slots" => []}})
+    end)
+
+    assert :not_found = Sabnzbd.find_by_operation_key("missing")
+  end
+
   test "add/1 returns :add_rejected when SABnzbd creates no job (duplicate)" do
     stub(fn conn -> Req.Test.json(conn, %{"status" => true, "nzo_ids" => []}) end)
 

@@ -312,7 +312,8 @@ defmodule CinderWeb.MovieDetailLiveTest do
        [%{title: "Better 1080p", size: 5_000_000_000, protocol: :torrent, download_url: "u"}]}
     end)
 
-    stub(Cinder.Download.ClientMock, :add, fn _release -> {:ok, "dl-x"} end)
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "dl-x"} end)
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
 
     {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
 

@@ -31,6 +31,11 @@ defmodule Cinder.DataCase do
 
   setup tags do
     Cinder.DataCase.setup_sandbox(tags)
+
+    for client <- [Cinder.Download.ClientMock, Cinder.Download.SabnzbdClientMock] do
+      Mox.stub(client, :find_by_operation_key, fn _key -> :not_found end)
+    end
+
     :ok
   end
 

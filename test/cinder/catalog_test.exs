@@ -420,7 +420,7 @@ defmodule Cinder.CatalogTest do
           imported_resolution: "1080p"
         )
 
-      Cinder.Download.ClientMock |> expect(:add, fn _ -> {:ok, "dl-9"} end)
+      Cinder.Download.ClientMock |> expect(:add, fn _, _opts -> {:ok, "dl-9"} end)
 
       assert {:ok, up} = Catalog.manual_grab_movie(movie, release)
       assert up.status == :upgrading
@@ -432,7 +432,7 @@ defmodule Cinder.CatalogTest do
 
     test "a parked movie goes :downloading", %{release: release} do
       movie = movie_fixture(status: :no_match)
-      Cinder.Download.ClientMock |> expect(:add, fn _ -> {:ok, "dl-7"} end)
+      Cinder.Download.ClientMock |> expect(:add, fn _, _opts -> {:ok, "dl-7"} end)
       assert {:ok, dl} = Catalog.manual_grab_movie(movie, release)
       assert dl.status == :downloading
     end
@@ -450,7 +450,7 @@ defmodule Cinder.CatalogTest do
       movie = movie_fixture(status: :no_match)
       Repo.delete!(movie)
 
-      Cinder.Download.ClientMock |> expect(:add, fn _ -> {:ok, "dl-stale"} end)
+      Cinder.Download.ClientMock |> expect(:add, fn _, _opts -> {:ok, "dl-stale"} end)
       Cinder.Download.ClientMock |> expect(:remove, fn "dl-stale", _opts -> :ok end)
 
       assert Catalog.manual_grab_movie(movie, release) == {:error, :stale_entry}

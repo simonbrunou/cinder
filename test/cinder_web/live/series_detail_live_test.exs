@@ -510,7 +510,8 @@ defmodule CinderWeb.SeriesDetailLiveTest do
        [%{title: "Test Show S01E01 1080p WEB-DL GRP", size: 2_000_000_000, download_url: "u"}]}
     end)
 
-    stub(Cinder.Download.ClientMock, :add, fn _release -> {:ok, "hash-new"} end)
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-new"} end)
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
 
     {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
 

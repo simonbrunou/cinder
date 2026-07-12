@@ -29,14 +29,16 @@ defmodule Cinder.Download.Client.QBittorrent do
   @max_torrent_bytes 10 * 1024 * 1024
   @max_response_bytes 4 * 1024 * 1024
 
+  def add(release), do: add(release, [])
+
   @impl true
-  def add(%{download_url: "magnet:" <> _ = magnet}) do
+  def add(%{download_url: "magnet:" <> _ = magnet}, opts) do
     with {:ok, hash} <- btih(magnet),
          {:ok, %{status: 200, body: body}} <-
            action(
              method: :post,
              url: "/api/v2/torrents/add",
-             form_multipart: [urls: magnet]
+             form_multipart: [urls: magnet] ++ tag_part(opts)
            ) do
       # ponytail: magnet-only hash extraction; base32 btih and .torrent-URL→hash
       # (info-by-name lookup) are Phase-5 live concerns.
@@ -47,27 +49,27 @@ defmodule Cinder.Download.Client.QBittorrent do
     end
   end
 
-  def add(%{download_url: "http://" <> _ = url}), do: add_torrent_url(url)
-  def add(%{download_url: "https://" <> _ = url}), do: add_torrent_url(url)
+  def add(%{download_url: "http://" <> _ = url}, opts), do: add_torrent_url(url, opts)
+  def add(%{download_url: "https://" <> _ = url}, opts), do: add_torrent_url(url, opts)
 
-  def add(%{download_url: _}), do: {:error, :unsupported_download_url}
+  def add(%{download_url: _}, _opts), do: {:error, :unsupported_download_url}
 
   # Fetch the .torrent, compute its infohash (so status/1 can poll it), then
   # upload the bytes to qBittorrent. decode_body: false keeps the bytes raw so
   # the infohash is over the exact on-the-wire content.
-  defp add_torrent_url(url) do
+  defp add_torrent_url(url, opts) do
     case fetch_torrent(url, @max_redirects) do
-      {:ok, bytes} -> add_torrent_bytes(bytes)
+      {:ok, bytes} -> add_torrent_bytes(bytes, opts)
       # Magnet-only indexers answer their proxied downloadUrl with a 3xx to a
       # magnet: URI — route it through the magnet add path.
-      {:magnet, magnet} -> add(%{download_url: magnet})
+      {:magnet, magnet} -> add(%{download_url: magnet}, opts)
       {:error, reason} -> {:error, reason}
     end
   end
 
-  defp add_torrent_bytes(bytes) do
+  defp add_torrent_bytes(bytes, opts) do
     with {:ok, hash} <- Torrent.infohash(bytes),
-         {:ok, %{status: 200, body: body}} <- upload_torrent(bytes) do
+         {:ok, %{status: 200, body: body}} <- upload_torrent(bytes, opts) do
       if String.trim(to_string(body)) == "Fails.", do: {:error, :add_rejected}, else: {:ok, hash}
     else
       other -> error(other)
@@ -124,14 +126,33 @@ defmodule Cinder.Download.Client.QBittorrent do
     end
   end
 
-  defp upload_torrent(bytes) do
+  defp upload_torrent(bytes, opts) do
     action(
       method: :post,
       url: "/api/v2/torrents/add",
-      form_multipart: [
-        torrents: {bytes, filename: "t.torrent", content_type: "application/x-bittorrent"}
-      ]
+      form_multipart:
+        [
+          torrents: {bytes, filename: "t.torrent", content_type: "application/x-bittorrent"}
+        ] ++ tag_part(opts)
     )
+  end
+
+  defp tag_part(opts) do
+    case Keyword.get(opts, :operation_key) do
+      key when is_binary(key) -> [tags: "cinder-#{key}"]
+      _ -> []
+    end
+  end
+
+  @impl true
+  def find_by_operation_key(key) do
+    case action(method: :get, url: "/api/v2/torrents/info", params: [tag: "cinder-#{key}"]) do
+      {:ok, %{status: 200, body: [%{"hash" => hash}]}} when is_binary(hash) -> {:ok, hash}
+      {:ok, %{status: 200, body: []}} -> :not_found
+      {:ok, %{status: 200, body: [_ | _]}} -> {:error, :ambiguous_operation_key}
+      {:ok, %{status: 200}} -> {:error, :unexpected_response}
+      other -> error(other)
+    end
   end
 
   # In prod, no plug (real HTTP). In test, config can inject a Req.Test plug.

@@ -29,7 +29,7 @@ defmodule Cinder.DownloadTest do
     end)
 
     # The mock receives the chosen %Cinder.Acquisition.Release{}; we don't assert its internals here.
-    expect(Cinder.Download.ClientMock, :add, fn _release -> {:ok, "hash-1"} end)
+    expect(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-1"} end)
 
     assert {:ok, %Movie{status: :downloading, download_id: "hash-1", download_protocol: :torrent}} =
              Download.start(movie)
@@ -42,7 +42,7 @@ defmodule Cinder.DownloadTest do
     movie = movie_fixture(%{imdb_id: "tt1375666"})
 
     expect(Cinder.Acquisition.IndexerMock, :search, fn _ -> {:ok, [survivable_result()]} end)
-    expect(Cinder.Download.ClientMock, :add, fn _ -> {:ok, "hash-1"} end)
+    expect(Cinder.Download.ClientMock, :add, fn _, _opts -> {:ok, "hash-1"} end)
 
     assert {:ok, %Movie{release_title: "Inception.2010.1080p.BluRay.x264-GRP"}} =
              Download.start(movie)
@@ -80,7 +80,7 @@ defmodule Cinder.DownloadTest do
     expect(Cinder.Acquisition.IndexerMock, :search, fn _ -> {:ok, [release_a(), release_b()]} end)
 
     # A would win on resolution; the blocklist drops it, so the client must receive B.
-    expect(Cinder.Download.ClientMock, :add, fn release ->
+    expect(Cinder.Download.ClientMock, :add, fn release, _opts ->
       assert release.title == "Movie.B.720p.WEB-GRP"
       {:ok, "hash-b"}
     end)
@@ -134,7 +134,7 @@ defmodule Cinder.DownloadTest do
 
     # Only the usenet client may be called; ClientMock has no expectation, so
     # verify_on_exit! fails the test if a usenet release is misrouted to it.
-    expect(Cinder.Download.SabnzbdClientMock, :add, fn release ->
+    expect(Cinder.Download.SabnzbdClientMock, :add, fn release, _opts ->
       assert release.protocol == :usenet
       {:ok, "SABnzbd_nzo_1"}
     end)
@@ -162,7 +162,7 @@ defmodule Cinder.DownloadTest do
       {:ok, [survivable_result()]}
     end)
 
-    expect(Cinder.Download.ClientMock, :add, fn _ -> {:ok, "hash-2"} end)
+    expect(Cinder.Download.ClientMock, :add, fn _, _opts -> {:ok, "hash-2"} end)
 
     assert {:ok, %Movie{status: :downloading, imdb_id: "tt1375666"}} = Download.start(movie)
   end
@@ -193,29 +193,9 @@ defmodule Cinder.DownloadTest do
   test "returns the client error and leaves the movie :searching on add failure" do
     movie = movie_fixture(%{imdb_id: "tt1375666"})
     expect(Cinder.Acquisition.IndexerMock, :search, fn _ -> {:ok, [survivable_result()]} end)
-    expect(Cinder.Download.ClientMock, :add, fn _ -> {:error, :qbittorrent_down} end)
+    expect(Cinder.Download.ClientMock, :add, fn _, _opts -> {:error, :qbittorrent_down} end)
 
     assert {:error, :qbittorrent_down} = Download.start(movie)
     assert %Movie{status: :searching} = Repo.get!(Movie, movie.id)
-  end
-
-  describe "grab/1" do
-    test "adds the release to its client and returns the download id" do
-      release = %Cinder.Acquisition.Release{
-        title: "R",
-        protocol: :torrent,
-        download_url: "magnet:?x"
-      }
-
-      Cinder.Download.ClientMock |> expect(:add, fn ^release -> {:ok, "dl-1"} end)
-      assert Cinder.Download.grab(release) == {:ok, "dl-1"}
-    end
-
-    test "returns {:error, :no_client} when no client is configured for the protocol" do
-      # A protocol with no configured client (vs mutating the global :download_clients env,
-      # which would race other tests in this async: true module).
-      release = %Cinder.Acquisition.Release{title: "R", protocol: :unconfigured}
-      assert Cinder.Download.grab(release) == {:error, :no_client}
-    end
   end
 end

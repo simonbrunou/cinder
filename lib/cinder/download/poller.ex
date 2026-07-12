@@ -31,6 +31,7 @@ defmodule Cinder.Download.Poller do
   use Cinder.Download.PollerSkeleton, log_prefix: "poller"
 
   defp do_poll(state) do
+    Download.reconcile_pending_intents([:movie])
     advance_downloading()
     import_downloaded()
     search_requested(state.search_retry_after)

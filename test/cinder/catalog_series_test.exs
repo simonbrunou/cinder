@@ -447,7 +447,7 @@ defmodule Cinder.CatalogSeriesTest do
         download_url: "magnet:?x"
       }
 
-      Cinder.Download.ClientMock |> expect(:add, fn _ -> {:ok, "dl-tv"} end)
+      Cinder.Download.ClientMock |> expect(:add, fn _, _opts -> {:ok, "dl-tv"} end)
 
       assert {:ok, grab} = Cinder.Catalog.manual_grab_tv(series, 1, release)
       grab = Cinder.Repo.preload(grab, :episodes)
@@ -468,7 +468,7 @@ defmodule Cinder.CatalogSeriesTest do
         download_url: "magnet:?x"
       }
 
-      Cinder.Download.ClientMock |> expect(:add, fn _ -> {:ok, "dl-tv-reset"} end)
+      Cinder.Download.ClientMock |> expect(:add, fn _, _opts -> {:ok, "dl-tv-reset"} end)
 
       assert {:ok, grab} = Cinder.Catalog.manual_grab_tv(series, 1, release)
       grab = Cinder.Repo.preload(grab, :episodes)
@@ -504,7 +504,7 @@ defmodule Cinder.CatalogSeriesTest do
       }
 
       Cinder.Download.ClientMock
-      |> expect(:add, fn _ ->
+      |> expect(:add, fn _, _opts ->
         ids = Catalog.wanted_episodes() |> Enum.map(& &1.id)
         {:ok, _other} = Catalog.create_grab("H-concurrent", :torrent, ids)
         {:ok, "dl-tv"}

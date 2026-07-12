@@ -34,20 +34,28 @@ defmodule Cinder.Download.Client.Sabnzbd do
   @default_base_url "http://localhost:8080"
   @max_response_bytes 4 * 1024 * 1024
 
+  def add(release), do: add(release, [])
+
   @impl true
-  def add(%{download_url: url}) when is_binary(url) do
+  def add(%{download_url: url}, opts) when is_binary(url) do
     # retry: false — `addurl` is side-effecting (SABnzbd queues the NZB), but it's a GET, which
     # Req's default :safe_transient policy would retry up to 3× on a transient failure, re-queuing
     # the same download. Disable retry on the add path only (status/health stay idempotent-retryable).
     with {:ok, _uri} <- validate_url(url) do
-      add_url(url)
+      add_url(url, opts)
     end
   end
 
-  def add(%{download_url: _}), do: {:error, :unsupported_download_url}
+  def add(%{download_url: _}, _opts), do: {:error, :unsupported_download_url}
 
-  defp add_url(url) do
-    case get([mode: "addurl", name: url], retry: false) do
+  defp add_url(url, opts) do
+    params =
+      case Keyword.get(opts, :operation_key) do
+        key when is_binary(key) -> [mode: "addurl", name: url, nzbname: "cinder-#{key}"]
+        _ -> [mode: "addurl", name: url]
+      end
+
+    case get(params, retry: false) do
       # A returned job id is success; key on it rather than the `status` field,
       # whose type varies across SABnzbd versions (boolean true vs 1).
       {:ok, %{status: 200, body: %{"nzo_ids" => [id | _]}}} -> {:ok, id}
@@ -57,6 +65,54 @@ defmodule Cinder.Download.Client.Sabnzbd do
       other -> error(other)
     end
   end
+
+  @impl true
+  def find_by_operation_key(key) do
+    name = "cinder-#{key}"
+
+    case named_slot("queue", name) do
+      {:ok, nil} -> find_named_history(name)
+      {:ok, slot} -> remote_id(slot)
+      other -> other
+    end
+  end
+
+  defp find_named_history(name) do
+    case named_slot("history", name, archive: 1) do
+      {:ok, nil} -> :not_found
+      {:ok, slot} -> remote_id(slot)
+      other -> other
+    end
+  end
+
+  defp named_slot(mode, name, extra \\ []) do
+    case get([mode: mode, search: name] ++ extra) do
+      {:ok, %{status: 200, body: body}} -> exact_named_slot(body, mode, name)
+      other -> error(other)
+    end
+  end
+
+  defp exact_named_slot(body, mode, name) do
+    matches =
+      case body do
+        %{^mode => %{"slots" => slots}} when is_list(slots) ->
+          Enum.filter(slots, fn slot ->
+            slot["filename"] == name or slot["name"] == name or slot["nzb_name"] == name
+          end)
+
+        _ ->
+          []
+      end
+
+    case matches do
+      [] -> {:ok, nil}
+      [slot] -> {:ok, slot}
+      [_ | _] -> {:error, :ambiguous_operation_key}
+    end
+  end
+
+  defp remote_id(%{"nzo_id" => id}) when is_binary(id), do: {:ok, id}
+  defp remote_id(_slot), do: {:error, :unexpected_response}
 
   @impl true
   def status(nzo_id) do
