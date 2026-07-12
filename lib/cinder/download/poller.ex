@@ -223,6 +223,11 @@ defmodule Cinder.Download.Poller do
           "holding import for movie #{movie.id}: movies_library_path not set; configure it in /settings"
         )
 
+      {:error, :download_roots_not_configured} ->
+        Logger.warning(
+          "holding import for movie #{movie.id}: download import roots not configured; configure them in /settings"
+        )
+
       {:error, reason} when reason in @permanent_import_errors ->
         Logger.warning("import permanently failed for movie #{movie.id}: #{inspect(reason)}")
         park(movie, :import_failed, reason)

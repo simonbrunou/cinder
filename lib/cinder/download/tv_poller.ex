@@ -135,6 +135,11 @@ defmodule Cinder.Download.TvPoller do
           "tv grab #{grab.id}: tv_library_path not set; holding the download until it is configured"
         )
 
+      {:error, :download_roots_not_configured} ->
+        Logger.warning(
+          "tv grab #{grab.id}: download import roots not configured; holding the download until they are configured"
+        )
+
       # Every remaining error is transient (a filesystem hiccup): the one deterministic
       # "unusable content" case surfaces as {:ok, [], _} above and is parked immediately, so
       # unlike the movie poller there is no @permanent_*_errors set to classify here.

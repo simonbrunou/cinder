@@ -263,6 +263,37 @@ defmodule Cinder.Library.PathPolicyTest do
       movie = %Movie{title: "Movie", year: 2024, tmdb_id: 42, file_path: source}
       assert {:error, :download_roots_not_configured} = Library.import_movie(movie)
     end
+
+    @tag :tmp_dir
+    test "empty-parent pruning rejects an ancestor replaced after the file unlink", %{
+      tmp_dir: tmp
+    } do
+      %{tv: tv} = configure_roots(tmp)
+      show = Path.join(tv, "Show")
+      season = Path.join(show, "Season 01")
+      file = Path.join(season, "Show - S01E01.mkv")
+      outside_show = Path.join(tmp, "outside-show")
+      outside_season = Path.join(outside_show, "Season 01")
+      File.mkdir_p!(season)
+      File.mkdir_p!(outside_season)
+      File.write!(file, "episode")
+      Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
+
+      Application.put_env(:cinder, :filesystem_barrier, %{
+        owner: self(),
+        operation: :rm,
+        contains: Path.basename(file)
+      })
+
+      task = Task.async(fn -> Library.delete_file(file) end)
+      assert_receive {:filesystem_barrier, pid, ref, :rm, ^file}, 1_000
+      File.rename!(show, show <> ".old")
+      File.ln_s!(outside_show, show)
+      send(pid, {ref, :continue})
+
+      assert Task.await(task) == :ok
+      assert File.dir?(outside_season)
+    end
   end
 
   defp configure_roots(tmp) do

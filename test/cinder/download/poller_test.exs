@@ -1,6 +1,7 @@
 defmodule Cinder.Download.PollerTest do
   use Cinder.DataCase, async: false
 
+  import ExUnit.CaptureLog
   import Mox
 
   # The poller logs warnings/errors on the import failure paths exercised below;
@@ -619,6 +620,29 @@ defmodule Cinder.Download.PollerTest do
 
     assert :ok = Poller.poll()
     assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
+  end
+
+  test "missing download roots hold a downloaded movie without consuming import attempts" do
+    movie =
+      movie_fixture(%{
+        tmdb_id: 401,
+        status: :downloaded,
+        file_path: "/downloads/held.mkv"
+      })
+
+    assert {:ok, movie} =
+             Catalog.transition(movie, %{status: :downloaded, import_attempts: 4})
+
+    saved = Application.get_env(:cinder, :import_roots)
+    Application.put_env(:cinder, :import_roots, [])
+    on_exit(fn -> Application.put_env(:cinder, :import_roots, saved) end)
+    start_supervised!({Poller, interval: 60_000})
+
+    log = capture_log(fn -> Enum.each(1..12, fn _ -> Poller.poll() end) end)
+
+    assert %Movie{status: :downloaded, import_attempts: 4} = Repo.get!(Movie, movie.id)
+    assert log =~ "download import roots not configured"
+    refute log =~ movie.file_path
   end
 
   test "a completed download that never yields a content_path is parked after max attempts" do

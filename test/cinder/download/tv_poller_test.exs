@@ -1,6 +1,7 @@
 defmodule Cinder.Download.TvPollerTest do
   use Cinder.DataCase, async: false
 
+  import ExUnit.CaptureLog
   import Mox
 
   # The poller logs warnings/errors on the park/retry paths exercised below; capture them so
@@ -515,6 +516,26 @@ defmodule Cinder.Download.TvPollerTest do
 
     assert imported.file_path ==
              "/tmp/cinder-test-tv-library/Show (2008) {tmdb-#{series.tmdb_id}}/Season 01/Show (2008) {tmdb-#{series.tmdb_id}} - S01E03.mkv"
+  end
+
+  test "missing download roots hold a downloaded grab without consuming attempts" do
+    {_series, season} = series_tree()
+    e1 = episode(season, 3)
+    {:ok, grab} = Catalog.create_grab("hash-roots", :torrent, [e1.id])
+    {:ok, _} = Catalog.mark_grab_downloaded(grab, "/downloads/Show.S01E03.mkv")
+
+    saved = Application.get_env(:cinder, :import_roots)
+    Application.put_env(:cinder, :import_roots, [])
+    on_exit(fn -> Application.put_env(:cinder, :import_roots, saved) end)
+    start_supervised!({TvPoller, interval: 60_000})
+
+    log = capture_log(fn -> Enum.each(1..12, fn _ -> TvPoller.poll() end) end)
+
+    assert %Grab{download_attempts: 0} = Repo.get!(Grab, grab.id)
+    assert %Episode{grab_id: grab_id, search_attempts: 0} = Repo.get!(Episode, e1.id)
+    assert grab_id == grab.id
+    assert log =~ "download import roots not configured"
+    refute log =~ "/downloads/Show.S01E03.mkv"
   end
 
   test "respects the TV size band: a too-large pack is not grabbed when tv_max_size is set" do

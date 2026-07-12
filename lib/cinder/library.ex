@@ -764,7 +764,7 @@ defmodule Cinder.Library do
   # `fs().rmdir/1` only removes an empty dir, so a non-empty parent returns an error and halts the
   # walk. Always returns :ok — pruning is best-effort cleanup, never the operation's success signal.
   defp prune_empty_dirs(dir) do
-    if prunable?(dir) do
+    if prunable?(dir) and safe_directory?(dir) do
       case fs().rmdir(dir) do
         :ok -> prune_empty_dirs(Path.dirname(dir))
         {:error, _reason} -> :ok
@@ -793,6 +793,13 @@ defmodule Cinder.Library do
     end
   end
 
+  defp safe_directory?(dir) do
+    match?(
+      {:ok, _expanded},
+      path_policy().destination(dir, library_roots(), filesystem: fs())
+    )
+  end
+
   defp safe_source_file(path) do
     case Settings.import_roots() do
       [] -> {:error, :download_roots_not_configured}
@@ -815,11 +822,7 @@ defmodule Cinder.Library do
          do: fs().rm(path)
   end
 
-  defp library_roots do
-    for kind <- @kinds,
-        {:ok, root} <- [root(kind)],
-        do: root
-  end
+  defp library_roots, do: Settings.library_roots()
 
   defp fs, do: Application.fetch_env!(:cinder, :filesystem)
   defp media_server, do: Application.fetch_env!(:cinder, :media_server)

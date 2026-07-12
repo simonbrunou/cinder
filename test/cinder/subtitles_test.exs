@@ -532,4 +532,83 @@ defmodule Cinder.SubtitlesTest do
 
     assert :quota_exceeded = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
   end
+
+  @tag :tmp_dir
+  test "subtitle rename rejects a library parent replaced by a symlink after the temp write", %{
+    tmp_dir: tmp
+  } do
+    saved = configure_real_policy(tmp)
+    on_exit(fn -> restore_env(saved) end)
+    movies = Application.fetch_env!(:cinder, :movies_library_path)
+    parent = Path.join(movies, "Movie")
+    video = Path.join(parent, "Movie.mkv")
+    outside = Path.join(tmp, "outside")
+    target = Subtitles.sidecar_path(video, "fr")
+    File.mkdir_p!(parent)
+    File.mkdir_p!(outside)
+    File.write!(video, "video")
+
+    Application.put_env(:cinder, :filesystem_barrier, %{
+      owner: self(),
+      operation: :write,
+      contains: ".cinder-subtitle-",
+      excludes: "manifest"
+    })
+
+    expect(Cinder.Subtitles.ProviderMock, :search, fn _criteria ->
+      {:ok,
+       [
+         %{
+           file_id: 1,
+           language: "fr",
+           downloads: 1,
+           hearing_impaired: false,
+           ai_translated: false,
+           moviehash_match: false
+         }
+       ]}
+    end)
+
+    expect(Cinder.Subtitles.ProviderMock, :download, fn 1 -> {:ok, "subtitle"} end)
+    stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
+
+    task = Task.async(fn -> Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies) end)
+
+    assert_receive {:filesystem_barrier, pid, ref, :write, temporary}, 1_000
+    replace_parent(parent, outside, temporary)
+    send(pid, {ref, :continue})
+
+    assert Task.await(task) == :ok
+    refute File.exists?(Path.join(outside, Path.basename(target)))
+  end
+
+  defp configure_real_policy(tmp) do
+    keys = [:filesystem, :path_policy, :movies_library_path, :tv_library_path]
+    saved = Map.new(keys, &{&1, Application.get_env(:cinder, &1)})
+    Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
+    Application.put_env(:cinder, :path_policy, Cinder.Library.PathPolicy)
+    Application.put_env(:cinder, :movies_library_path, Path.join(tmp, "movies"))
+    Application.put_env(:cinder, :tv_library_path, Path.join(tmp, "tv"))
+    saved
+  end
+
+  defp restore_env(saved) do
+    Application.delete_env(:cinder, :filesystem_barrier)
+
+    Enum.each(saved, fn
+      {key, nil} -> Application.delete_env(:cinder, key)
+      {key, value} -> Application.put_env(:cinder, key, value)
+    end)
+  end
+
+  defp replace_parent(parent, outside, temporary) do
+    backup = parent <> ".old"
+    File.rename!(parent, backup)
+    File.ln_s!(outside, parent)
+
+    File.rename!(
+      Path.join(backup, Path.basename(temporary)),
+      Path.join(outside, Path.basename(temporary))
+    )
+  end
 end

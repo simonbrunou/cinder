@@ -317,6 +317,15 @@ defmodule Cinder.Settings do
     end
   end
 
+  @doc "Expanded library roots permitted as managed destinations."
+  @spec library_roots() :: [String.t()]
+  def library_roots do
+    for kind <- Cinder.Library.kinds(),
+        root = Application.get_env(:cinder, :"#{kind}_library_path"),
+        is_binary(root) and root != "",
+        do: Path.expand(root)
+  end
+
   @doc "Marks the first-run wizard complete."
   def mark_setup_complete, do: put("setup_complete", "true")
 

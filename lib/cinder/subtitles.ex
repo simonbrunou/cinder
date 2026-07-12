@@ -9,7 +9,8 @@ defmodule Cinder.Subtitles do
   require Logger
 
   alias Cinder.Catalog.{Episode, Movie, Series}
-  alias Cinder.Library.Sidecars
+  alias Cinder.Library.{PathPolicy, Sidecars}
+  alias Cinder.Settings
   alias Cinder.Subtitles.{Manifest, Moviehash, Srt}
 
   @doc "Subtitle-search criteria for a movie: imdb + tmdb id (the provider prefers imdb)."
@@ -353,12 +354,19 @@ defmodule Cinder.Subtitles do
   end
 
   defp read(path) do
-    case fs().read(path) do
-      {:ok, content} ->
-        {:ok, content}
+    with {:ok, path} <- safe_destination(path),
+         result <- fs().read(path) do
+      case result do
+        {:ok, content} ->
+          {:ok, content}
 
-      other ->
-        Logger.warning("subtitle sidecar read failed for #{path}: #{inspect(other)}")
+        other ->
+          Logger.warning("subtitle sidecar read failed: #{inspect(other)}")
+          :error
+      end
+    else
+      error ->
+        Logger.warning("subtitle sidecar read rejected: #{inspect(error)}")
         :error
     end
   end
@@ -408,17 +416,19 @@ defmodule Cinder.Subtitles do
   end
 
   defp sidecar_snapshot(target) do
-    case fs().read(target) do
-      {:ok, content} -> {:ok, {:existing, content}}
-      {:error, :enoent} -> {:ok, :missing}
-      error -> {:error, error}
+    with {:ok, target} <- safe_destination(target) do
+      case fs().read(target) do
+        {:ok, content} -> {:ok, {:existing, content}}
+        {:error, :enoent} -> {:ok, :missing}
+        error -> {:error, error}
+      end
     end
   end
 
   defp rollback_sidecar(target, :missing) do
-    case fs().rm(target) do
+    case safe_remove(target) do
       :ok -> :ok
-      error -> Logger.warning("subtitle rollback failed for #{target}: #{inspect(error)}")
+      error -> Logger.warning("subtitle rollback rejected: #{inspect(error)}")
     end
   end
 
@@ -436,9 +446,22 @@ defmodule Cinder.Subtitles do
         ".cinder-subtitle-#{System.unique_integer([:positive])}"
       )
 
-    with :ok <- fs().write(temporary, content) do
-      fs().rename(temporary, target)
+    with {:ok, target} <- safe_destination(target),
+         {:ok, temporary} <- safe_destination(temporary),
+         :ok <- fs().write(temporary, content) do
+      rename_subtitle(temporary, target)
     end
+  end
+
+  defp rename_subtitle(temporary, target) do
+    result =
+      with {:ok, temporary} <- safe_destination(temporary),
+           {:ok, target} <- safe_destination(target) do
+        fs().rename(temporary, target)
+      end
+
+    if result != :ok, do: safe_remove(temporary)
+    result
   end
 
   defp best(results, language) do
@@ -466,7 +489,14 @@ defmodule Cinder.Subtitles do
 
   defp writable?(state, language, exists?), do: not exists? or Manifest.managed?(state, language)
   defp origin(state, language), do: get_in(state, [:tracks, language, :origin])
-  defp sidecar_exists?(path), do: match?({:ok, _}, fs().lstat(path))
+
+  defp sidecar_exists?(path) do
+    with {:ok, path} <- safe_destination(path),
+         {:ok, _stat} <- fs().lstat(path),
+         do: true,
+         else: (_ -> false)
+  end
+
   defp track_language(track), do: Map.get(track, :language, "") |> String.downcase()
 
   defp with_moviehash(criteria_base, video_path) do
@@ -526,6 +556,16 @@ defmodule Cinder.Subtitles do
   defp translator, do: Application.fetch_env!(:cinder, :subtitles_translator)
   defp media_info, do: Application.get_env(:cinder, :media_info)
   defp fs, do: Application.fetch_env!(:cinder, :filesystem)
+  defp path_policy, do: Application.get_env(:cinder, :path_policy, PathPolicy)
+
+  defp safe_destination(path),
+    do: path_policy().destination(path, Settings.library_roots(), filesystem: fs())
+
+  defp safe_remove(path) do
+    with :ok <-
+           path_policy().deletable_file(path, Settings.library_roots(), filesystem: fs()),
+         do: fs().rm(path)
+  end
 
   defp provider_config,
     do: Application.get_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, [])

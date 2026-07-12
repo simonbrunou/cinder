@@ -30,11 +30,20 @@ defmodule Cinder.Library.PathPolicy do
     end
   end
 
-  @spec destination(String.t(), String.t()) ::
+  @spec destination(String.t(), String.t() | [String.t()]) ::
           {:ok, String.t()} | {:error, :unsafe_destination}
   def destination(path, root), do: destination(path, root, filesystem: File)
 
   @doc false
+  def destination(path, roots, opts) when is_list(roots) do
+    Enum.find_value(roots, {:error, :unsafe_destination}, fn root ->
+      case destination(path, root, opts) do
+        {:ok, _expanded} = ok -> ok
+        {:error, :unsafe_destination} -> nil
+      end
+    end)
+  end
+
   def destination(path, root, opts) do
     filesystem = Keyword.fetch!(opts, :filesystem)
     expanded = Path.expand(path)
