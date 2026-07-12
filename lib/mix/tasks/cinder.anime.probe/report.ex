@@ -34,8 +34,7 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.Report do
          else: "blocked"
 
     %{
-      corpus_version: corpus.version,
-      references: Enum.map(@references, fn {name, url} -> %{name: name, url: url} end),
+      version: corpus.version,
       titles: titles,
       prowlarr_checks: prowlarr_checks,
       blocking_prowlarr_gaps: blocking_prowlarr_gaps,
@@ -59,11 +58,11 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.Report do
     """
     # Anime provider contract report
 
-    Corpus version: `#{report.corpus_version}`
+    Corpus version: `#{report.version}`
 
     ## Official references
 
-    #{reference_markdown(report.references)}
+    #{reference_markdown(@references)}
 
     ## Must-support title checks
 
@@ -352,7 +351,7 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.Report do
     do: "Run a provider council for discovery aliases and episode ordering before A1."
 
   defp reference_markdown(references) do
-    Enum.map_join(references, "\n", &"- [#{&1.name}](#{&1.url})")
+    Enum.map_join(references, "\n", fn {name, url} -> "- [#{name}](#{url})" end)
   end
 
   defp title_check_markdown(titles) do

@@ -36,6 +36,21 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.ReportTest do
     assert markdown =~ "Future behavior contracts: 24 recorded"
   end
 
+  test "keeps the corpus version in JSON and official references in Markdown only", context do
+    report = Report.build(context.corpus, context.observations)
+    json = Jason.encode!(report)
+    markdown = Report.markdown(report)
+
+    assert %{"version" => 1} = Jason.decode!(json)
+    refute json =~ "http://"
+    refute json =~ "https://"
+
+    assert markdown =~ "https://developer.themoviedb.org/reference/intro/getting-started"
+    assert markdown =~ "https://github.com/thetvdb/v4-api"
+    assert markdown =~ "https://wiki.anidb.net/HTTP_API_Definition"
+    assert markdown =~ "https://github.com/Prowlarr/Prowlarr"
+  end
+
   test "selects AniDB when only discovery coverage fails", context do
     observations = fail_discovery(context.observations)
 
