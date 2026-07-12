@@ -62,7 +62,7 @@ msgid "A link to confirm your email change has been sent to the new address."
 msgstr "Un lien de confirmation du changement d'adresse e-mail a été envoyé à la nouvelle adresse."
 
 #: lib/cinder_web/components/layouts.ex:158
-#: lib/cinder_web/user_auth.ex:330
+#: lib/cinder_web/user_auth.ex:332
 #, elixir-autogen, elixir-format
 msgid "Account"
 msgstr "Compte"
@@ -74,7 +74,7 @@ msgstr "Compte créé."
 
 #: lib/cinder_web/components/layouts.ex:122
 #: lib/cinder_web/live/activity_live.ex:106
-#: lib/cinder_web/user_auth.ex:318
+#: lib/cinder_web/user_auth.ex:320
 #, elixir-autogen, elixir-format
 msgid "Activity"
 msgstr "Activité"
@@ -174,7 +174,7 @@ msgid "Available"
 msgstr "Disponible"
 
 #: lib/cinder_web/components/layouts.ex:128
-#: lib/cinder_web/user_auth.ex:323
+#: lib/cinder_web/user_auth.ex:325
 #, elixir-autogen, elixir-format
 msgid "Calendar"
 msgstr "Calendrier"
@@ -382,7 +382,7 @@ msgstr "Création…"
 #: lib/cinder_web/components/layouts.ex:104
 #: lib/cinder_web/live/dashboard_live.ex:251
 #: lib/cinder_web/live/settings_live.ex:93
-#: lib/cinder_web/user_auth.ex:317
+#: lib/cinder_web/user_auth.ex:319
 #, elixir-autogen, elixir-format
 msgid "Dashboard"
 msgstr "Tableau de bord"
@@ -486,8 +486,8 @@ msgstr "Refus…"
 #: lib/cinder_web/components/layouts.ex:89
 #: lib/cinder_web/live/discover_live.ex:219
 #: lib/cinder_web/live/series_discovery_live.ex:195
-#: lib/cinder_web/user_auth.ex:315
-#: lib/cinder_web/user_auth.ex:327
+#: lib/cinder_web/user_auth.ex:317
+#: lib/cinder_web/user_auth.ex:329
 #, elixir-autogen, elixir-format
 msgid "Discover"
 msgstr "Découvrir"
@@ -608,9 +608,9 @@ msgstr "Langue"
 #: lib/cinder_web/live/library_live.ex:165
 #: lib/cinder_web/live/movie_detail_live.ex:238
 #: lib/cinder_web/live/series_detail_live.ex:372
-#: lib/cinder_web/user_auth.ex:322
-#: lib/cinder_web/user_auth.ex:328
-#: lib/cinder_web/user_auth.ex:329
+#: lib/cinder_web/user_auth.ex:324
+#: lib/cinder_web/user_auth.ex:330
+#: lib/cinder_web/user_auth.ex:331
 #, elixir-autogen, elixir-format
 msgid "Library"
 msgstr "Bibliothèque"
@@ -622,7 +622,7 @@ msgstr "Pipeline en direct et téléchargements en cours."
 
 #: lib/cinder_web/live/user_live/login.ex:11
 #: lib/cinder_web/live/user_live/registration.ex:21
-#: lib/cinder_web/user_auth.ex:326
+#: lib/cinder_web/user_auth.ex:328
 #, elixir-autogen, elixir-format
 msgid "Log in"
 msgstr "Se connecter"
@@ -734,7 +734,7 @@ msgstr "Films disponibles"
 
 #: lib/cinder_web/components/layouts.ex:95
 #: lib/cinder_web/live/my_requests_live.ex:57
-#: lib/cinder_web/user_auth.ex:316
+#: lib/cinder_web/user_auth.ex:318
 #, elixir-autogen, elixir-format
 msgid "My requests"
 msgstr "Mes demandes"
@@ -963,7 +963,7 @@ msgstr "Demande…"
 #: lib/cinder_web/components/layouts.ex:110
 #: lib/cinder_web/live/requests_live.ex:234
 #: lib/cinder_web/live/settings_live.ex:110
-#: lib/cinder_web/user_auth.ex:320
+#: lib/cinder_web/user_auth.ex:322
 #, elixir-autogen, elixir-format
 msgid "Requests"
 msgstr "Demandes"
@@ -1124,7 +1124,7 @@ msgstr "Configurer Cinder"
 
 #: lib/cinder_web/components/layouts.ex:134
 #: lib/cinder_web/live/settings_live.ex:84
-#: lib/cinder_web/user_auth.ex:319
+#: lib/cinder_web/user_auth.ex:321
 #, elixir-autogen, elixir-format
 msgid "Settings"
 msgstr "Paramètres"
@@ -1276,7 +1276,7 @@ msgstr "Utilisateur supprimé."
 
 #: lib/cinder_web/components/layouts.ex:140
 #: lib/cinder_web/live/users_live.ex:274
-#: lib/cinder_web/user_auth.ex:321
+#: lib/cinder_web/user_auth.ex:323
 #, elixir-autogen, elixir-format
 msgid "Users"
 msgstr "Utilisateurs"
@@ -1318,19 +1318,19 @@ msgid "You can't delete your own account."
 msgstr "Vous ne pouvez pas supprimer votre propre compte."
 
 #: lib/cinder_web/live/users_live.ex:249
-#: lib/cinder_web/user_auth.ex:269
-#: lib/cinder_web/user_auth.ex:381
+#: lib/cinder_web/user_auth.ex:271
+#: lib/cinder_web/user_auth.ex:383
 #, elixir-autogen, elixir-format
 msgid "You don't have access to that page."
 msgstr "Vous n'avez pas accès à cette page."
 
-#: lib/cinder_web/user_auth.ex:238
-#: lib/cinder_web/user_auth.ex:360
+#: lib/cinder_web/user_auth.ex:240
+#: lib/cinder_web/user_auth.ex:362
 #, elixir-autogen, elixir-format
 msgid "You must log in to access this page."
 msgstr "Vous devez vous connecter pour accéder à cette page."
 
-#: lib/cinder_web/user_auth.ex:255
+#: lib/cinder_web/user_auth.ex:257
 #, elixir-autogen, elixir-format
 msgid "You must re-authenticate to access this page."
 msgstr "Vous devez vous ré-authentifier pour accéder à cette page."
@@ -1797,7 +1797,7 @@ msgstr "Sélectionner la demande pour %{title}"
 msgid "Setup checklist"
 msgstr "Liste de configuration"
 
-#: lib/cinder_web/user_auth.ex:287
+#: lib/cinder_web/user_auth.ex:289
 #, elixir-autogen, elixir-format
 msgid "Setup in progress. Try again shortly."
 msgstr "Configuration en cours. Réessayez sous peu."
@@ -2417,12 +2417,12 @@ msgstr "Racines d'import des téléchargements"
 msgid "Primary"
 msgstr "Principale"
 
-#: lib/cinder_web/user_auth.ex:325
+#: lib/cinder_web/user_auth.ex:327
 #, elixir-autogen, elixir-format
 msgid "Register"
 msgstr "S’inscrire"
 
-#: lib/cinder_web/user_auth.ex:324
+#: lib/cinder_web/user_auth.ex:326
 #, elixir-autogen, elixir-format
 msgid "Setup"
 msgstr "Configuration"

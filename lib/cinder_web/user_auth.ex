@@ -108,10 +108,12 @@ defmodule CinderWeb.UserAuth do
           conn
 
         {:error, :session_revoked} ->
+          # The missing DB token is the authorization boundary, so this request is fail-closed.
+          # Emit no cookie/session write: a concurrent request may already have rotated the same old
+          # token, and a later-arriving loser response must not overwrite the winner's session.
           conn
           |> assign(:current_scope, Scope.for_user(nil))
-          |> renew_session(nil)
-          |> delete_resp_cookie(@remember_me_cookie, remember_me_options())
+          |> configure_session(ignore: true)
       end
     else
       conn

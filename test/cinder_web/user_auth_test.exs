@@ -248,6 +248,46 @@ defmodule CinderWeb.UserAuthTest do
       assert new_signed_token != signed_token
       assert max_age == @remember_me_cookie_max_age
     end
+
+    test "a concurrent reissue loser does not clear the winning browser session", %{
+      conn: conn,
+      user: user
+    } do
+      token = Accounts.generate_user_session_token(user)
+      offset_user_token(token, -10, :day)
+      {task, barrier} = pause_after_session_lookup(conn, token)
+
+      assert {:ok, new_token, _old_tokens} = Accounts.replace_user_session_token(user, token)
+      send(task.pid, {barrier, :continue})
+      loser_conn = Task.await(task)
+
+      refute loser_conn.assigns.current_scope
+      assert get_session(loser_conn, :user_token) == token
+      assert loser_conn.private.plug_session_info == :ignore
+      refute loser_conn.resp_cookies[@remember_me_cookie]
+      assert {winner, _inserted_at} = Accounts.get_user_by_session_token(new_token)
+      assert winner.id == user.id
+    end
+
+    test "revocation during reissue remains fail-closed without clearing browser state", %{
+      conn: conn,
+      user: user
+    } do
+      token = Accounts.generate_user_session_token(user)
+      offset_user_token(token, -10, :day)
+      {task, barrier} = pause_after_session_lookup(conn, token)
+
+      assert :ok = Accounts.delete_user_session_token(token)
+      send(task.pid, {barrier, :continue})
+      revoked_conn = Task.await(task)
+
+      refute revoked_conn.assigns.current_scope
+      assert get_session(revoked_conn, :user_token) == token
+      assert revoked_conn.private.plug_session_info == :ignore
+      refute revoked_conn.resp_cookies[@remember_me_cookie]
+      refute Accounts.get_user_by_session_token(token)
+      refute Cinder.Repo.get_by(Cinder.Accounts.UserToken, user_id: user.id, context: "session")
+    end
   end
 
   describe "on_mount :mount_current_scope" do
@@ -452,5 +492,46 @@ defmodule CinderWeb.UserAuthTest do
         topic: "users_sessions:dG9rZW4y"
       }
     end
+  end
+
+  defp pause_after_session_lookup(conn, token) do
+    parent = self()
+    supervisor = start_supervised!({Task.Supervisor, []})
+
+    task =
+      Task.Supervisor.async_nolink(supervisor, fn ->
+        receive do
+          :start ->
+            conn
+            |> put_session(:user_token, token)
+            |> put_session(:user_remember_me, true)
+            |> UserAuth.fetch_current_scope_for_user([])
+        end
+      end)
+
+    barrier = {__MODULE__, make_ref()}
+
+    :ok =
+      :telemetry.attach(
+        barrier,
+        [:cinder, :repo, :query],
+        fn _event, _measurements, metadata, config ->
+          if self() == config.task and is_binary(metadata.query) and
+               String.contains?(metadata.query, ~s(FROM "users_tokens")) do
+            :telemetry.detach(config.barrier)
+            send(config.parent, {config.barrier, :session_loaded})
+
+            receive do
+              {barrier, :continue} when barrier == config.barrier -> :ok
+            end
+          end
+        end,
+        %{barrier: barrier, parent: parent, task: task.pid}
+      )
+
+    on_exit(fn -> :telemetry.detach(barrier) end)
+    send(task.pid, :start)
+    assert_receive {^barrier, :session_loaded}
+    {task, barrier}
   end
 end
