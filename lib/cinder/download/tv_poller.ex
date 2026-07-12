@@ -26,6 +26,7 @@ defmodule Cinder.Download.TvPoller do
 
   alias Cinder.{Acquisition, Catalog, Download, Library, Notifier}
   alias Cinder.Catalog.Grab
+  alias Cinder.HTTPPolicy
 
   @default_interval 5_000
   @search_retry_after 60
@@ -108,7 +109,10 @@ defmodule Cinder.Download.TvPoller do
       {:ok, [], _unmatched} ->
         # Deterministic: nothing in content_path mapped to a grab episode. Re-importing can't
         # help, so park — the episodes re-search (bounded), rather than re-importing forever.
-        Logger.warning("tv grab #{grab.id} imported nothing from #{grab.content_path}; parking")
+        Logger.warning(
+          "tv grab #{grab.id} imported nothing from #{HTTPPolicy.sanitize_log(grab.content_path)}; parking"
+        )
+
         park(grab, :no_files_matched)
 
       {:ok, imported, _unmatched} ->
@@ -183,7 +187,7 @@ defmodule Cinder.Download.TvPoller do
 
       {:error, reason} ->
         Logger.info(
-          "tv search failed for series #{series.id} season #{season_number}: #{inspect(reason)}"
+          "tv search failed for series #{series.id} season #{season_number}: #{HTTPPolicy.sanitize_log(reason)}"
         )
 
         bump_not_grabbed(episodes, [])
@@ -206,13 +210,19 @@ defmodule Cinder.Download.TvPoller do
           # The client download was already added: remove it (best-effort) so a failed
           # link — a concurrent grab or an admin cancel took the episodes — doesn't
           # leave an orphaned full-season download (mirrors the manual grab path).
-          Logger.warning("tv grab failed (#{release.title}): #{inspect(reason)}")
+          Logger.warning(
+            "tv grab failed (#{HTTPPolicy.sanitize_log(release.title)}): #{HTTPPolicy.sanitize_log(reason)}"
+          )
+
           Download.best_effort_remove(client, download_id)
           []
       end
     else
       other ->
-        Logger.warning("tv grab failed (#{release.title}): #{inspect(other)}")
+        Logger.warning(
+          "tv grab failed (#{HTTPPolicy.sanitize_log(release.title)}): #{HTTPPolicy.sanitize_log(other)}"
+        )
+
         []
     end
   end
@@ -246,11 +256,14 @@ defmodule Cinder.Download.TvPoller do
     attempts = (grab.download_attempts || 0) + 1
 
     if attempts >= @max_attempts do
-      Logger.warning("tv grab #{grab.id} exhausted after #{attempts}: #{inspect(reason)}")
+      Logger.warning(
+        "tv grab #{grab.id} exhausted after #{attempts}: #{HTTPPolicy.sanitize_log(reason)}"
+      )
+
       park(grab, reason)
     else
       Logger.info(
-        "tv grab #{grab.id} attempt #{attempts}/#{@max_attempts} failed (#{inspect(reason)}); will retry"
+        "tv grab #{grab.id} attempt #{attempts}/#{@max_attempts} failed (#{HTTPPolicy.sanitize_log(reason)}); will retry"
       )
 
       Catalog.increment_grab_attempts(grab)
@@ -278,7 +291,7 @@ defmodule Cinder.Download.TvPoller do
 
       {:error, park_error} ->
         Logger.warning(
-          "tv grab #{grab.id} could not be parked (#{inspect(park_error)}); will retry next tick"
+          "tv grab #{grab.id} could not be parked (#{HTTPPolicy.sanitize_log(park_error)}); will retry next tick"
         )
     end
   end

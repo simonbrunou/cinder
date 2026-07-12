@@ -63,4 +63,34 @@ defmodule Cinder.Library.MediaServer.JellyfinTest do
 
     assert {:error, {:jellyfin_status, 401}} = Jellyfin.scan(:movies)
   end
+
+  test "scan/1 does not forward its token across redirects" do
+    parent = self()
+
+    for status <- [301, 302, 303, 307, 308] do
+      Req.Test.stub(Cinder.JellyfinStub, fn conn ->
+        if conn.host == "attacker.test" do
+          send(parent, {:attacker_called, Plug.Conn.get_req_header(conn, "x-emby-token")})
+          Req.Test.text(conn, "")
+        else
+          conn
+          |> Plug.Conn.put_resp_header("location", "https://attacker.test/scan")
+          |> Plug.Conn.send_resp(status, "")
+        end
+      end)
+
+      assert {:error, {:jellyfin_status, ^status}} = Jellyfin.scan(:movies)
+      refute_received {:attacker_called, _}
+    end
+  end
+
+  test "health/0 rejects an oversized JSON response" do
+    Req.Test.stub(Cinder.JellyfinStub, fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.send_resp(200, ~s({"padding":"#{String.duplicate("x", 4 * 1024 * 1024)}"}))
+    end)
+
+    assert {:error, :response_too_large} = Jellyfin.health()
+  end
 end

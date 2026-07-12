@@ -225,6 +225,32 @@ defmodule Cinder.Download.TvPollerTest do
     assert grab.download_protocol == :torrent
   end
 
+  test "sanitizes remote release titles in client failure logs" do
+    {_series, season} = series_tree()
+    _episode = episode(season, 1)
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok,
+       [
+         %{
+           title: "Show.S01E01.1080p.WEB-DL-GRP\r\nFORGED",
+           size: 2_000_000_000,
+           download_url: "u",
+           seeders: 5
+         }
+       ]}
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release -> {:error, :remote_rejected} end)
+
+    log = capture_log(fn -> assert :ok = TvPoller.poll() end)
+
+    assert log =~ "Show.S01E01.1080p.WEB-DL-GRPFORGED"
+    assert log =~ ":remote_rejected"
+    refute log =~ "\nFORGED"
+  end
+
   test "rejects a same-season release of a different series (does not grab)" do
     # tvdb_id: nil — the wrong-series title guard applies only to the free-text
     # fallback search; a TvdbId-token search is already scoped to the right show.

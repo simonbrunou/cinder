@@ -226,4 +226,99 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitlesTest do
     assert {:ok, "SRT-BYTES"} = OpenSubtitles.download(42)
     assert Agent.get(login_calls, & &1) == 1
   end
+
+  test "health/0 does not forward API key or login JSON across redirects" do
+    parent = self()
+
+    for status <- [301, 302, 303, 307, 308] do
+      Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
+        if conn.host == "attacker.test" do
+          {:ok, body, conn} = Plug.Conn.read_body(conn)
+          send(parent, {:attacker_called, Plug.Conn.get_req_header(conn, "api-key"), body})
+          Req.Test.json(conn, %{"token" => "stolen"})
+        else
+          conn
+          |> Plug.Conn.put_resp_header("location", "https://attacker.test/login")
+          |> Plug.Conn.send_resp(status, "")
+        end
+      end)
+
+      assert {:error, {:http, ^status}} = OpenSubtitles.health()
+      refute_received {:attacker_called, _, _}
+    end
+  end
+
+  test "download/1 does not forward bearer auth or JSON across redirects" do
+    parent = self()
+
+    for status <- [301, 302, 303, 307, 308] do
+      :persistent_term.put({OpenSubtitles, :token}, "jwt-123")
+
+      Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
+        if conn.host == "attacker.test" do
+          {:ok, body, conn} = Plug.Conn.read_body(conn)
+          send(parent, {:attacker_called, Plug.Conn.get_req_header(conn, "authorization"), body})
+          Req.Test.json(conn, %{"link" => "https://attacker.test/stolen.srt"})
+        else
+          conn
+          |> Plug.Conn.put_resp_header("location", "https://attacker.test/download")
+          |> Plug.Conn.send_resp(status, "")
+        end
+      end)
+
+      assert {:error, {:http, ^status}} = OpenSubtitles.download(42)
+      refute_received {:attacker_called, _, _}
+    end
+  end
+
+  test "download/1 follows a validated subtitle redirect" do
+    Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
+      case conn.request_path do
+        "/api/v1/login" ->
+          Req.Test.json(conn, %{"token" => "jwt-123"})
+
+        "/api/v1/download" ->
+          Req.Test.json(conn, %{"link" => "https://dl.opensubtitles.test/start.srt"})
+
+        "/start.srt" ->
+          conn
+          |> Plug.Conn.put_resp_header("location", "/final.srt")
+          |> Plug.Conn.send_resp(302, "")
+
+        "/final.srt" ->
+          Plug.Conn.send_resp(conn, 200, "SRT-BYTES")
+      end
+    end)
+
+    assert {:ok, "SRT-BYTES"} = OpenSubtitles.download(42)
+  end
+
+  test "download/1 rejects an unsafe returned link before fetching it" do
+    Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
+      case conn.request_path do
+        "/api/v1/login" -> Req.Test.json(conn, %{"token" => "jwt-123"})
+        "/api/v1/download" -> Req.Test.json(conn, %{"link" => "http://127.0.0.1/a.srt"})
+        _ -> flunk("unsafe subtitle link must not be fetched")
+      end
+    end)
+
+    assert {:error, :forbidden_address} = OpenSubtitles.download(42)
+  end
+
+  test "download/1 rejects an oversized subtitle response" do
+    Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
+      case conn.request_path do
+        "/api/v1/login" ->
+          Req.Test.json(conn, %{"token" => "jwt-123"})
+
+        "/api/v1/download" ->
+          Req.Test.json(conn, %{"link" => "https://dl.opensubtitles.test/f/large.srt"})
+
+        "/f/large.srt" ->
+          Plug.Conn.send_resp(conn, 200, String.duplicate("x", 10 * 1024 * 1024 + 1))
+      end
+    end)
+
+    assert {:error, :response_too_large} = OpenSubtitles.download(42)
+  end
 end

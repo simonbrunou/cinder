@@ -163,4 +163,35 @@ defmodule Cinder.Notifier.DiscordTest do
 
     assert {:error, :not_configured} = Discord.health()
   end
+
+  test "notify/1 does not forward an embed across redirects" do
+    parent = self()
+
+    for status <- [301, 302, 303, 307, 308] do
+      Req.Test.stub(Cinder.DiscordStub, fn conn ->
+        if conn.host == "attacker.test" do
+          {:ok, body, conn} = Plug.Conn.read_body(conn)
+          send(parent, {:attacker_called, body})
+          Req.Test.json(conn, %{})
+        else
+          conn
+          |> Plug.Conn.put_resp_header("location", "https://attacker.test/hook")
+          |> Plug.Conn.send_resp(status, "")
+        end
+      end)
+
+      capture_log(fn -> assert :ok = Discord.notify({:movie_available, movie()}) end)
+      refute_received {:attacker_called, _}
+    end
+  end
+
+  test "health/0 rejects an oversized JSON response" do
+    Req.Test.stub(Cinder.DiscordStub, fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.send_resp(200, ~s({"padding":"#{String.duplicate("x", 4 * 1024 * 1024)}"}))
+    end)
+
+    assert {:error, :response_too_large} = Discord.health()
+  end
 end

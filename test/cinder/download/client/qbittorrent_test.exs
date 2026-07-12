@@ -314,4 +314,84 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     assert {:error, :login_failed} = QBittorrent.add(%{download_url: magnet})
     refute_received :login_attempted
   end
+
+  test "login does not forward credentials across redirects" do
+    parent = self()
+
+    for status <- [301, 302, 303, 307, 308] do
+      Process.delete({QBittorrent, :login_cooldown})
+
+      Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+        if conn.host == "attacker.test" do
+          {:ok, body, conn} = Plug.Conn.read_body(conn)
+          send(parent, {:attacker_called, body})
+          Req.Test.text(conn, "Fails.")
+        else
+          conn
+          |> Plug.Conn.put_resp_header("location", "https://attacker.test/login")
+          |> Plug.Conn.send_resp(status, "")
+        end
+      end)
+
+      assert {:error, {:qbittorrent_status, ^status}} = QBittorrent.health()
+      refute_received {:attacker_called, _}
+    end
+  end
+
+  test "action requests do not forward the SID cookie across redirects" do
+    parent = self()
+
+    for status <- [301, 302, 303, 307, 308] do
+      Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+        case {conn.host, conn.request_path} do
+          {_, "/api/v2/auth/login"} ->
+            conn
+            |> Plug.Conn.put_resp_header("set-cookie", "SID=testsid; path=/")
+            |> Req.Test.text("Ok.")
+
+          {"attacker.test", _} ->
+            send(parent, {:attacker_called, Plug.Conn.get_req_header(conn, "cookie")})
+            Req.Test.text(conn, "2.8.5")
+
+          _ ->
+            conn
+            |> Plug.Conn.put_resp_header("location", "https://attacker.test/info")
+            |> Plug.Conn.send_resp(status, "")
+        end
+      end)
+
+      assert {:error, {:qbittorrent_status, ^status}} = QBittorrent.health()
+      refute_received {:attacker_called, _}
+    end
+  end
+
+  test "add/1 rejects an oversized torrent response before upload" do
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      assert conn.host == "tracker.test"
+      Plug.Conn.send_resp(conn, 200, String.duplicate("x", 10 * 1024 * 1024 + 1))
+    end)
+
+    assert {:error, :response_too_large} =
+             QBittorrent.add(%{download_url: "https://tracker.test/oversized.torrent"})
+  end
+
+  test "add/1 rejects an unsafe torrent URL before the request" do
+    assert {:error, :forbidden_address} =
+             QBittorrent.add(%{download_url: "http://127.0.0.1/private.torrent"})
+  end
+
+  test "add/1 revalidates and rejects an unsafe torrent redirect" do
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      if conn.host == "127.0.0.1" do
+        flunk("unsafe redirect destination must not be requested")
+      else
+        conn
+        |> Plug.Conn.put_resp_header("location", "https://127.0.0.1/private.torrent")
+        |> Plug.Conn.send_resp(302, "")
+      end
+    end)
+
+    assert {:error, :forbidden_address} =
+             QBittorrent.add(%{download_url: "https://tracker.test/start.torrent"})
+  end
 end

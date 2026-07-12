@@ -83,4 +83,32 @@ defmodule Cinder.Library.MediaServer.PlexTest do
 
     assert {:error, {:plex_status, 401}} = Plex.health()
   end
+
+  test "scan/1 does not forward its token across redirects" do
+    parent = self()
+
+    for status <- [301, 302, 303, 307, 308] do
+      Req.Test.stub(Cinder.PlexStub, fn conn ->
+        if conn.host == "attacker.test" do
+          send(parent, {:attacker_called, Plug.Conn.get_req_header(conn, "x-plex-token")})
+          Req.Test.text(conn, "")
+        else
+          conn
+          |> Plug.Conn.put_resp_header("location", "https://attacker.test/scan")
+          |> Plug.Conn.send_resp(status, "")
+        end
+      end)
+
+      assert {:error, {:plex_status, ^status}} = Plex.scan(:movies)
+      refute_received {:attacker_called, _}
+    end
+  end
+
+  test "health/0 rejects an oversized response" do
+    Req.Test.stub(Cinder.PlexStub, fn conn ->
+      Plug.Conn.send_resp(conn, 200, String.duplicate("x", 4 * 1024 * 1024 + 1))
+    end)
+
+    assert {:error, :response_too_large} = Plex.health()
+  end
 end

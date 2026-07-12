@@ -137,4 +137,34 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
 
     assert {:error, {:prowlarr_status, 503}} = Prowlarr.health()
   end
+
+  test "search/1 does not forward its API key across redirects" do
+    parent = self()
+
+    for status <- [301, 302, 303, 307, 308] do
+      Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+        if conn.host == "attacker.test" do
+          send(parent, {:attacker_called, Plug.Conn.get_req_header(conn, "x-api-key")})
+          Req.Test.json(conn, [])
+        else
+          conn
+          |> Plug.Conn.put_resp_header("location", "https://attacker.test/search")
+          |> Plug.Conn.send_resp(status, "")
+        end
+      end)
+
+      assert {:error, {:prowlarr_status, ^status}} = Prowlarr.search("tt1375666")
+      refute_received {:attacker_called, _}
+    end
+  end
+
+  test "search/1 rejects an oversized JSON response" do
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.send_resp(200, ~s({"padding":"#{String.duplicate("x", 4 * 1024 * 1024)}"}))
+    end)
+
+    assert {:error, :response_too_large} = Prowlarr.search("tt1375666")
+  end
 end

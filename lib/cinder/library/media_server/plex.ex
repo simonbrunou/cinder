@@ -13,14 +13,17 @@ defmodule Cinder.Library.MediaServer.Plex do
   """
   @behaviour Cinder.Library.MediaServer
 
+  alias Cinder.HTTPPolicy
+
+  @max_response_bytes 4 * 1024 * 1024
+
   @impl true
   # ponytail: refreshes one section; loop `/library/sections` if you ever need all.
   def scan(kind) do
     config = Application.get_env(:cinder, __MODULE__, [])
 
     with {:ok, section} <- section(config, kind) do
-      req(config)
-      |> Req.get(url: "/library/sections/#{section}/refresh")
+      request(config, :get, "/library/sections/#{section}/refresh")
       |> result()
     end
   end
@@ -55,9 +58,10 @@ defmodule Cinder.Library.MediaServer.Plex do
 
   defp check_section(config, kind) do
     with {:ok, section} <- section(config, kind) do
-      req(config)
-      |> Req.get(
-        url: "/library/sections/#{section}",
+      request(
+        config,
+        :get,
+        "/library/sections/#{section}",
         receive_timeout: 3_000,
         retry: false,
         connect_options: [timeout: 3_000]
@@ -85,10 +89,21 @@ defmodule Cinder.Library.MediaServer.Plex do
   defp req(config) do
     [
       base_url: Keyword.get(config, :url),
+      receive_timeout: 15_000,
+      pool_timeout: 5_000,
+      connect_options: [timeout: 5_000],
       headers: [{"x-plex-token", Keyword.get(config, :token)}]
     ]
     |> Keyword.merge(Keyword.get(config, :req_options, []))
+    |> Keyword.put(:redirect, false)
     |> Req.new()
+  end
+
+  defp request(config, method, url, options \\ []) do
+    config
+    |> req()
+    |> Req.merge([method: method, url: url] ++ options)
+    |> HTTPPolicy.bounded_request(@max_response_bytes)
   end
 
   defp result({:ok, %{status: status}}) when status in 200..299, do: :ok

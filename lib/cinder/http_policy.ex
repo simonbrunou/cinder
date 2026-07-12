@@ -8,6 +8,7 @@ defmodule Cinder.HTTPPolicy do
   """
 
   @max_log_bytes 500
+  @default_request_timeout_ms 60_000
 
   @type address :: :inet.ip_address()
   @type resolver :: (String.t() -> {:ok, [address()]} | {:error, term()})
@@ -71,23 +72,29 @@ defmodule Cinder.HTTPPolicy do
     end
   end
 
-  @doc "Runs a Req request while retaining at most `max_bytes` of its response body."
+  @doc "Runs a Req request with total-time and retained-response-body limits."
   @spec bounded_request(Req.Request.t() | String.t() | keyword(), pos_integer()) ::
           {:ok, Req.Response.t()} | {:error, term()}
-  def bounded_request(request, max_bytes) when is_integer(max_bytes) and max_bytes > 0 do
+  def bounded_request(request, max_bytes),
+    do: bounded_request(request, max_bytes, @default_request_timeout_ms)
+
+  @doc "Like `bounded_request/2`, with an explicit total request deadline in milliseconds."
+  @spec bounded_request(
+          Req.Request.t() | String.t() | keyword(),
+          pos_integer(),
+          pos_integer()
+        ) :: {:ok, Req.Response.t()} | {:error, term()}
+  def bounded_request(request, max_bytes, timeout_ms)
+      when is_integer(max_bytes) and max_bytes > 0 and is_integer(timeout_ms) and timeout_ms > 0 do
+    started_at = System.monotonic_time(:millisecond)
+
     into = fn {:data, chunk}, {req, resp} ->
-      if byte_size(resp.body) + byte_size(chunk) > max_bytes do
-        {:halt, {req, %{resp | body: {:error, :response_too_large}}}}
-      else
-        {:cont, {req, %{resp | body: resp.body <> chunk}}}
-      end
+      collect_chunk(chunk, {req, resp}, max_bytes, started_at, timeout_ms)
     end
 
-    case Req.request(request, decode_body: false, into: into) do
-      {:ok, %{body: {:error, :response_too_large}}} -> {:error, :response_too_large}
-      {:ok, response} -> decode_json(response)
-      result -> result
-    end
+    request
+    |> Req.request(decode_body: false, into: into)
+    |> finish_bounded_request(started_at, timeout_ms)
   end
 
   @doc "Removes line breaks and limits a remote value before logging it."
@@ -307,4 +314,32 @@ defmodule Cinder.HTTPPolicy do
       {_status, valid, _rest} -> valid
     end
   end
+
+  defp request_expired?(started_at, timeout_ms),
+    do: System.monotonic_time(:millisecond) - started_at >= timeout_ms
+
+  defp collect_chunk(chunk, {req, resp}, max_bytes, started_at, timeout_ms) do
+    cond do
+      request_expired?(started_at, timeout_ms) ->
+        {:halt, {req, %{resp | body: {:error, :request_timeout}}}}
+
+      byte_size(resp.body) + byte_size(chunk) > max_bytes ->
+        {:halt, {req, %{resp | body: {:error, :response_too_large}}}}
+
+      true ->
+        {:cont, {req, %{resp | body: resp.body <> chunk}}}
+    end
+  end
+
+  defp finish_bounded_request({:ok, %{body: {:error, reason}}}, _started_at, _timeout_ms)
+       when reason in [:request_timeout, :response_too_large],
+       do: {:error, reason}
+
+  defp finish_bounded_request({:ok, response}, started_at, timeout_ms) do
+    if request_expired?(started_at, timeout_ms),
+      do: {:error, :request_timeout},
+      else: decode_json(response)
+  end
+
+  defp finish_bounded_request(result, _started_at, _timeout_ms), do: result
 end

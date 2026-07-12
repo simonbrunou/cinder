@@ -17,18 +17,32 @@ defmodule Cinder.Download.Client.Sabnzbd do
   NOTE: SABnzbd must have "Pause on Duplicates" disabled — that mode re-keys the
   `nzo_id` after `addurl`, so the stored id would never reappear.
 
+  SABnzbd requires `apikey` in the query string. Redirects and redirect logging are disabled so
+  that protocol-required secret is never replayed to another origin or written to Cinder's logs.
+
   Validated against a live SABnzbd only in Phase 5; the unit test is a shape
   sanity-check against `Req.Test`.
   """
   @behaviour Cinder.Download.Client
 
+  alias Cinder.HTTPPolicy
+
   @default_base_url "http://localhost:8080"
+  @max_response_bytes 4 * 1024 * 1024
 
   @impl true
   def add(%{download_url: url}) when is_binary(url) do
     # retry: false — `addurl` is side-effecting (SABnzbd queues the NZB), but it's a GET, which
     # Req's default :safe_transient policy would retry up to 3× on a transient failure, re-queuing
     # the same download. Disable retry on the add path only (status/health stay idempotent-retryable).
+    with {:ok, _uri} <- validate_url(url) do
+      add_url(url)
+    end
+  end
+
+  def add(%{download_url: _}), do: {:error, :unsupported_download_url}
+
+  defp add_url(url) do
     case get([mode: "addurl", name: url], retry: false) do
       # A returned job id is success; key on it rather than the `status` field,
       # whose type varies across SABnzbd versions (boolean true vs 1).
@@ -39,8 +53,6 @@ defmodule Cinder.Download.Client.Sabnzbd do
       other -> error(other)
     end
   end
-
-  def add(%{download_url: _}), do: {:error, :unsupported_download_url}
 
   @impl true
   def status(nzo_id) do
@@ -195,17 +207,31 @@ defmodule Cinder.Download.Client.Sabnzbd do
   defp get(params, extra \\ []) do
     config = config()
 
-    [base_url: Keyword.get(config, :base_url, @default_base_url), receive_timeout: 15_000]
+    [
+      base_url: Keyword.get(config, :base_url, @default_base_url),
+      receive_timeout: 15_000,
+      pool_timeout: 5_000,
+      connect_options: [timeout: 5_000]
+    ]
     |> Keyword.merge(Keyword.get(config, :req_options, []))
     |> Keyword.merge(extra)
+    |> Keyword.put(:redirect, false)
     |> Req.new()
-    |> Req.get(url: "/api", params: query(config, params))
+    |> Req.merge(method: :get, url: "/api", params: query(config, params))
+    |> HTTPPolicy.bounded_request(@max_response_bytes)
   end
 
   defp query(config, params),
     do: Keyword.merge([apikey: Keyword.get(config, :api_key), output: "json"], params)
 
   defp config, do: Application.get_env(:cinder, __MODULE__, [])
+
+  defp validate_url(url) do
+    case Keyword.get(config(), :url_resolver) do
+      resolver when is_function(resolver, 1) -> HTTPPolicy.validate_untrusted_url(url, resolver)
+      nil -> HTTPPolicy.validate_untrusted_url(url)
+    end
+  end
 
   defp error({:ok, %{status: status}}), do: {:error, {:sabnzbd_status, status}}
   defp error({:error, reason}), do: {:error, reason}

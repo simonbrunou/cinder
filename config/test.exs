@@ -91,11 +91,13 @@ config :cinder, Cinder.Download.Client.QBittorrent,
   username: "test",
   password: "test",
   fetch_plug: {Req.Test, Cinder.QBittorrentStub},
+  url_resolver: fn _host -> {:ok, [{93, 184, 216, 34}]} end,
   req_options: [plug: {Req.Test, Cinder.QBittorrentStub}, retry: false]
 
 config :cinder, Cinder.Download.Client.Sabnzbd,
   base_url: "http://localhost:8080",
   api_key: "test-key",
+  url_resolver: fn _host -> {:ok, [{93, 184, 216, 34}]} end,
   req_options: [plug: {Req.Test, Cinder.SabnzbdStub}, retry: false]
 
 # Discord notifier: a stub webhook so Cinder.Notifier.Discord can exercise the real HTTP
@@ -113,6 +115,7 @@ config :cinder, Cinder.Subtitles.Provider.OpenSubtitles,
   username: "user",
   password: "pass",
   languages: "",
+  url_resolver: fn _host -> {:ok, [{93, 184, 216, 34}]} end,
   req_options: [plug: {Req.Test, Cinder.OpenSubtitlesStub}, retry: false]
 
 config :cinder, Cinder.Subtitles.Translator.LibreTranslate,

@@ -16,7 +16,10 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   """
   @behaviour Cinder.Acquisition.Indexer
 
+  alias Cinder.HTTPPolicy
+
   @default_base_url "http://localhost:9696"
+  @max_response_bytes 4 * 1024 * 1024
 
   @impl true
   def search(imdb_id) do
@@ -78,13 +81,16 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
     [
       base_url: Keyword.get(config, :base_url, @default_base_url),
       receive_timeout: 15_000,
+      pool_timeout: 5_000,
+      connect_options: [timeout: 5_000],
       retry: false
     ]
     |> auth(Keyword.get(config, :api_key))
     |> Keyword.merge(opts)
     |> Keyword.merge(Keyword.get(config, :req_options, []))
+    |> Keyword.put(:redirect, false)
     |> Req.new()
-    |> Req.request()
+    |> HTTPPolicy.bounded_request(@max_response_bytes)
   end
 
   defp auth(opts, nil), do: opts

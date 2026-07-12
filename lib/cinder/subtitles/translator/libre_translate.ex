@@ -3,6 +3,8 @@ defmodule Cinder.Subtitles.Translator.LibreTranslate do
 
   @behaviour Cinder.Subtitles.Translator
 
+  alias Cinder.HTTPPolicy
+
   # LibreTranslate on CPU translates sequentially and slowly, so the whole
   # file cannot go in one request under a short timeout. Split the cues into
   # small batches, translate them one at a time (the engine is CPU-bound with a
@@ -11,6 +13,7 @@ defmodule Cinder.Subtitles.Translator.LibreTranslate do
   # given box's throughput without a code change.
   @default_batch_size 50
   @default_receive_timeout 60_000
+  @max_batch_bytes 8 * 1024 * 1024
 
   @impl true
   def translate(cues, target) when is_list(cues) do
@@ -41,7 +44,7 @@ defmodule Cinder.Subtitles.Translator.LibreTranslate do
   defp finalize({:error, _} = error), do: error
 
   defp translate_batch(url, cues, target) do
-    case Req.post(url, req_args(cues, target)) do
+    case request(url, cues, target) do
       {:ok, %{status: 200, body: %{"translatedText" => translated}}}
       when is_list(translated) and length(translated) == length(cues) ->
         {:ok, translated}
@@ -60,15 +63,26 @@ defmodule Cinder.Subtitles.Translator.LibreTranslate do
     end
   end
 
-  defp req_args(cues, target) do
-    Keyword.merge(
+  defp request(url, cues, target) do
+    with {:ok, body} <- Jason.encode(request_body(cues, target)),
+         true <- byte_size(body) <= @max_batch_bytes do
       [
-        json: request_body(cues, target),
+        method: :post,
+        url: url,
+        body: body,
+        headers: [{"content-type", "application/json"}],
         receive_timeout: receive_timeout(),
+        pool_timeout: 5_000,
         connect_options: [timeout: 5_000]
-      ],
-      req_options()
-    )
+      ]
+      |> Keyword.merge(req_options())
+      |> Keyword.put(:redirect, false)
+      |> Req.new()
+      |> HTTPPolicy.bounded_request(@max_batch_bytes)
+    else
+      false -> {:error, :request_too_large}
+      {:error, _reason} -> {:error, :invalid_request}
+    end
   end
 
   defp request_body(cues, target) do

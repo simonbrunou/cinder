@@ -309,6 +309,32 @@ defmodule Cinder.HTTPPolicyTest do
                  4
                )
     end
+
+    test "halts a trickling response at its total deadline without retaining the body" do
+      parent = self()
+
+      adapter = fn request ->
+        response = Req.Response.new(status: 200)
+        {:cont, acc} = request.into.({:data, "first"}, {request, response})
+        Process.sleep(20)
+
+        case request.into.({:data, "late-secret"}, acc) do
+          {:halt, {request, response}} ->
+            send(parent, :stream_halted)
+            {request, response}
+
+          {:cont, acc} ->
+            send(parent, :stream_continued)
+            acc
+        end
+      end
+
+      assert {:error, :request_timeout} =
+               HTTPPolicy.bounded_request(Req.new(adapter: adapter), 64, 10)
+
+      assert_received :stream_halted
+      refute_received :stream_continued
+    end
   end
 
   describe "sanitize_log/1" do

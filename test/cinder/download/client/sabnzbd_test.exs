@@ -1,6 +1,8 @@
 defmodule Cinder.Download.Client.SabnzbdTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias Cinder.Download.Client.Sabnzbd
 
   defp stub(fun), do: Req.Test.stub(Cinder.SabnzbdStub, fun)
@@ -60,6 +62,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     Application.put_env(:cinder, Sabnzbd,
       base_url: "http://localhost:8080",
       api_key: "test-key",
+      url_resolver: fn _host -> {:ok, [{93, 184, 216, 34}]} end,
       req_options: [plug: {Req.Test, Cinder.SabnzbdStub}]
     )
 
@@ -297,5 +300,49 @@ defmodule Cinder.Download.Client.SabnzbdTest do
   test "remove/2 returns an error tuple on a non-2xx status" do
     stub(fn conn -> conn |> Plug.Conn.put_status(500) |> Req.Test.text("boom") end)
     assert {:error, {:sabnzbd_status, 500}} = Sabnzbd.remove("nzo-1", [])
+  end
+
+  test "add/1 does not forward the API query key across redirects" do
+    parent = self()
+
+    for status <- [301, 302, 303, 307, 308] do
+      stub(fn conn ->
+        if conn.host == "attacker.test" do
+          send(parent, {:attacker_called, conn.query_string})
+          Req.Test.json(conn, %{"nzo_ids" => ["bad"]})
+        else
+          conn
+          |> Plug.Conn.put_resp_header("location", "https://attacker.test/api")
+          |> Plug.Conn.send_resp(status, "")
+        end
+      end)
+
+      log =
+        capture_log(fn ->
+          assert {:error, {:sabnzbd_status, ^status}} =
+                   Sabnzbd.add(%{download_url: "https://provider.test/file.nzb"})
+        end)
+
+      refute_received {:attacker_called, _}
+      refute log =~ "test-key"
+      refute log =~ "provider.test"
+    end
+  end
+
+  test "add/1 rejects an unsafe provider URL before delegating the fetch" do
+    stub(fn _conn -> flunk("unsafe provider URL must not reach SABnzbd") end)
+
+    assert {:error, :forbidden_address} =
+             Sabnzbd.add(%{download_url: "http://127.0.0.1/private.nzb"})
+  end
+
+  test "status/1 rejects an oversized JSON response" do
+    stub(fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.send_resp(200, ~s({"padding":"#{String.duplicate("x", 4 * 1024 * 1024)}"}))
+    end)
+
+    assert {:error, :response_too_large} = Sabnzbd.status("nzo-1")
   end
 end

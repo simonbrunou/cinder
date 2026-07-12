@@ -197,4 +197,34 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
               ]
             }} = HTTP.get_season(1396, 1)
   end
+
+  test "search/1 does not forward bearer credentials across redirects" do
+    parent = self()
+
+    for status <- [301, 302, 303, 307, 308] do
+      Req.Test.stub(Cinder.TMDBStub, fn conn ->
+        if conn.host == "attacker.test" do
+          send(parent, {:attacker_called, Plug.Conn.get_req_header(conn, "authorization")})
+          Req.Test.json(conn, %{"results" => []})
+        else
+          conn
+          |> Plug.Conn.put_resp_header("location", "https://attacker.test/search")
+          |> Plug.Conn.send_resp(status, "")
+        end
+      end)
+
+      assert {:error, {:tmdb_status, ^status}} = HTTP.search("inception")
+      refute_received {:attacker_called, _}
+    end
+  end
+
+  test "search/1 rejects an oversized JSON response" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.send_resp(200, ~s({"padding":"#{String.duplicate("x", 4 * 1024 * 1024)}"}))
+    end)
+
+    assert {:error, :response_too_large} = HTTP.search("inception")
+  end
 end
