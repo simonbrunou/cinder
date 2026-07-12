@@ -10,12 +10,26 @@ defmodule Cinder.HTTPPolicyTest do
     test "normalizes scheme and host case and default ports" do
       assert HTTPPolicy.same_origin?("HTTP://Example.COM/path", "http://example.com:80/other")
       assert HTTPPolicy.same_origin?("https://EXAMPLE.com", "HTTPS://example.COM:443/path")
+      assert HTTPPolicy.same_origin?("https://example.com:8443/a", "https://EXAMPLE.com:8443/b")
+    end
+
+    test "canonicalizes equivalent IP literal hosts" do
+      for alternate <- ["2130706433", "0x7f000001", "017700000001", "127.1"] do
+        assert HTTPPolicy.same_origin?("http://#{alternate}/a", "http://127.0.0.1/b")
+      end
+
+      assert HTTPPolicy.same_origin?(
+               "https://[2001:0db8:0:0:0:0:0:1]/a",
+               "https://[2001:db8::1]/b"
+             )
     end
 
     test "rejects different schemes, hosts, and effective ports" do
       refute HTTPPolicy.same_origin?("http://example.com", "https://example.com")
       refute HTTPPolicy.same_origin?("https://example.com", "https://other.example")
       refute HTTPPolicy.same_origin?("https://example.com", "https://example.com:444")
+      refute HTTPPolicy.same_origin?("https://[2001:db8::1]", "https://[2001:db8::2]")
+      refute HTTPPolicy.same_origin?("https://example.com:0", "https://example.com:0")
       refute HTTPPolicy.same_origin?("not a URL", "not a URL")
     end
   end
@@ -109,6 +123,22 @@ defmodule Cinder.HTTPPolicyTest do
       assert {:error, :dns_resolution_failed} =
                HTTPPolicy.validate_untrusted_url("https://empty.example", fn _ -> {:ok, []} end)
     end
+
+    test "rejects invalid ports before resolution and accepts a valid non-default port" do
+      resolver = fn
+        "public.example" -> {:ok, [@public_ipv4]}
+        _host -> flunk("invalid ports must not use DNS")
+      end
+
+      assert {:error, :invalid_port} =
+               HTTPPolicy.validate_untrusted_url("https://invalid.example:0/file", resolver)
+
+      assert {:error, :invalid_port} =
+               HTTPPolicy.validate_untrusted_url("https://invalid.example:65536/file", resolver)
+
+      assert {:ok, %URI{port: 8443}} =
+               HTTPPolicy.validate_untrusted_url("https://public.example:8443/file", resolver)
+    end
   end
 
   describe "resolve_redirect/3" do
@@ -152,6 +182,15 @@ defmodule Cinder.HTTPPolicyTest do
       end
     end
 
+    test "rejects an invalid redirect port" do
+      assert {:error, :invalid_port} =
+               HTTPPolicy.resolve_redirect(
+                 "https://api.example:8443/start",
+                 "https://api.example:65536/next",
+                 :same_origin
+               )
+    end
+
     test "revalidates every untrusted redirect destination" do
       parent = self()
 
@@ -188,10 +227,10 @@ defmodule Cinder.HTTPPolicyTest do
   end
 
   describe "bounded_request/2" do
-    test "collects a response within the byte limit without decoding it" do
+    test "decodes application/json only after bounded collection" do
       Req.Test.stub(Cinder.HTTPPolicyStub, fn conn -> Req.Test.json(conn, %{ok: true}) end)
 
-      assert {:ok, %{status: 200, body: body}} =
+      assert {:ok, %{status: 200, body: %{"ok" => true}}} =
                HTTPPolicy.bounded_request(
                  [
                    url: "https://public.example/data",
@@ -199,12 +238,67 @@ defmodule Cinder.HTTPPolicyTest do
                  ],
                  64
                )
-
-      assert body == ~s({"ok":true})
     end
 
-    test "halts oversized bodies with a stable error" do
-      Req.Test.stub(Cinder.HTTPPolicyLargeStub, fn conn -> Req.Test.text(conn, "12345") end)
+    test "decodes structured +json media types" do
+      Req.Test.stub(Cinder.HTTPPolicyProblemStub, fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/problem+json")
+        |> Plug.Conn.send_resp(200, ~s({"error":"nope"}))
+      end)
+
+      assert {:ok, %{body: %{"error" => "nope"}}} =
+               HTTPPolicy.bounded_request(
+                 [
+                   url: "https://public.example/problem",
+                   plug: {Req.Test, Cinder.HTTPPolicyProblemStub}
+                 ],
+                 64
+               )
+    end
+
+    test "preserves raw non-JSON response bytes" do
+      bytes = <<0, 255, 1, 2>>
+
+      Req.Test.stub(Cinder.HTTPPolicyBinaryStub, fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/x-bittorrent")
+        |> Plug.Conn.send_resp(200, bytes)
+      end)
+
+      assert {:ok, %{body: ^bytes}} =
+               HTTPPolicy.bounded_request(
+                 [
+                   url: "https://public.example/file.torrent",
+                   plug: {Req.Test, Cinder.HTTPPolicyBinaryStub}
+                 ],
+                 64
+               )
+    end
+
+    test "returns a stable malformed JSON error without retaining remote content" do
+      Req.Test.stub(Cinder.HTTPPolicyMalformedJSONStub, fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, ~s({"token":"super-secret"))
+      end)
+
+      assert {:error, :invalid_json} =
+               HTTPPolicy.bounded_request(
+                 [
+                   url: "https://public.example/data",
+                   plug: {Req.Test, Cinder.HTTPPolicyMalformedJSONStub}
+                 ],
+                 64
+               )
+    end
+
+    test "halts oversized JSON before decoding with a stable error" do
+      Req.Test.stub(Cinder.HTTPPolicyLargeStub, fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, "{bad}")
+      end)
 
       assert {:error, :response_too_large} =
                HTTPPolicy.bounded_request(

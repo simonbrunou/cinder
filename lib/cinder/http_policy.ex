@@ -85,6 +85,7 @@ defmodule Cinder.HTTPPolicy do
 
     case Req.request(request, decode_body: false, into: into) do
       {:ok, %{body: {:error, :response_too_large}}} -> {:error, :response_too_large}
+      {:ok, response} -> decode_json(response)
       result -> result
     end
   end
@@ -113,12 +114,23 @@ defmodule Cinder.HTTPPolicy do
 
   defp normalize_http_uri(%URI{} = uri) do
     scheme = uri.scheme && String.downcase(uri.scheme, :ascii)
-    host = uri.host && String.downcase(uri.host, :ascii)
+    host = uri.host && normalize_host(uri.host)
+    uri = %{uri | scheme: scheme, host: host}
 
     cond do
       scheme not in ["http", "https"] -> {:error, :unsupported_scheme}
       host in [nil, ""] -> {:error, :missing_host}
-      true -> {:ok, %{uri | scheme: scheme, host: host}}
+      not valid_port?(uri) -> {:error, :invalid_port}
+      true -> {:ok, uri}
+    end
+  end
+
+  defp normalize_host(host) do
+    host = String.downcase(host, :ascii)
+
+    case :inet.parse_address(String.to_charlist(host)) do
+      {:ok, address} -> address |> :inet.ntoa() |> List.to_string()
+      {:error, :einval} -> host
     end
   end
 
@@ -138,6 +150,11 @@ defmodule Cinder.HTTPPolicy do
   defp effective_port(%URI{port: nil, scheme: "http"}), do: 80
   defp effective_port(%URI{port: nil, scheme: "https"}), do: 443
   defp effective_port(%URI{port: port}), do: port
+
+  defp valid_port?(uri) do
+    port = effective_port(uri)
+    is_integer(port) and port in 1..65_535
+  end
 
   defp merge_uri(current, location) when is_binary(location) do
     {:ok, URI.merge(current, location)}
@@ -247,6 +264,34 @@ defmodule Cinder.HTTPPolicy do
 
   defp embedded_ipv4(high, low) do
     {div(high, 256), rem(high, 256), div(low, 256), rem(low, 256)}
+  end
+
+  defp decode_json(%Req.Response{body: body} = response) when is_binary(body) and body != "" do
+    if json_content_type?(response) do
+      case Jason.decode(body) do
+        {:ok, decoded} -> {:ok, %{response | body: decoded}}
+        {:error, _exception} -> {:error, :invalid_json}
+      end
+    else
+      {:ok, response}
+    end
+  end
+
+  defp decode_json(response), do: {:ok, response}
+
+  defp json_content_type?(response) do
+    response
+    |> Req.Response.get_header("content-type")
+    |> Enum.any?(fn value ->
+      media_type =
+        value
+        |> String.split(";", parts: 2)
+        |> hd()
+        |> String.trim()
+        |> String.downcase(:ascii)
+
+      media_type == "application/json" or String.ends_with?(media_type, "+json")
+    end)
   end
 
   defp log_string(value) when is_binary(value), do: value
