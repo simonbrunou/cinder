@@ -309,6 +309,33 @@ defmodule Cinder.CatalogAdminTest do
       assert Repo.get(Movie, id) == nil
     end
 
+    test "a download attached after the caller snapshot is fenced and removed" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      stale = movie_fixture(%{status: :available})
+
+      assert {:ok, %Movie{status: :upgrading}} =
+               Catalog.transition(
+                 stale,
+                 %{
+                   status: :upgrading,
+                   download_id: "HASH-LATE-ATTACH",
+                   download_protocol: :torrent,
+                   release_title: "Movie.Upgrade"
+                 },
+                 expect: :available
+               )
+
+      expect(Cinder.Download.ClientMock, :remove, fn "HASH-LATE-ATTACH", _opts -> :ok end)
+
+      assert {:ok, %Movie{}} = Catalog.delete_movie(stale, actor)
+      refute Repo.get(Movie, stale.id)
+
+      refute Repo.get_by(Cinder.Download.Intent,
+               kind: :movie,
+               target_id: stale.id
+             )
+    end
+
     test "writes an admin_audit row for the delete" do
       actor = Cinder.AccountsFixtures.admin_fixture()
       movie = movie_fixture()

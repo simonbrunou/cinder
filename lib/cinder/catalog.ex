@@ -583,9 +583,11 @@ defmodule Cinder.Catalog do
   """
   def delete_movie(%Movie{} = movie, actor, opts \\ []) do
     delete_files? = Keyword.get(opts, :delete_files, false)
-    include_remote? = cancellable?(movie) or movie.status == :upgrading
 
-    prepare = &Download.fence_movie_cleanup(&1, include_remote: include_remote?)
+    prepare = fn fresh ->
+      include_remote? = cancellable?(fresh) or fresh.status == :upgrading
+      Download.fence_movie_cleanup(fresh, include_remote: include_remote?)
+    end
 
     with {:ok, {deleted, intent_ids}} <-
            delete_with_audit(movie, actor, :delete_movie, delete_files?, prepare) do
