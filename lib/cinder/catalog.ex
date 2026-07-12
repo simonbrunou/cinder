@@ -13,6 +13,7 @@ defmodule Cinder.Catalog do
   alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Movie, Season, Series}
   alias Cinder.Download
   alias Cinder.Library
+  alias Cinder.Library.ImportStage
   alias Cinder.Notifier
   alias Cinder.Repo
 
@@ -251,6 +252,44 @@ defmodule Cinder.Catalog do
     else
       {0, _} -> {:error, :stale_status}
       %Ecto.Changeset{} = invalid -> {:error, invalid}
+    end
+  end
+
+  def transition(%Movie{} = movie, attrs, opts) when is_list(opts) do
+    expected = Keyword.fetch!(opts, :expect)
+    stage_ids = Keyword.get(opts, :import_stage_ids, [])
+    guarded_transition_with_stages(movie, attrs, expected, stage_ids)
+  end
+
+  defp guarded_transition_with_stages(movie, attrs, expected, stage_ids) do
+    case Movie.transition_changeset(movie, attrs) do
+      %{valid?: true, changes: changes} ->
+        commit_guarded_movie_transition(movie, expected, changes, stage_ids)
+
+      %Ecto.Changeset{} = invalid ->
+        {:error, invalid}
+    end
+  end
+
+  defp commit_guarded_movie_transition(movie, expected, changes, stage_ids) do
+    result =
+      Repo.transaction(fn ->
+        case Repo.update_all(
+               from(m in Movie, where: m.id == ^movie.id and m.status == ^expected, select: m),
+               set: Map.to_list(changes) ++ [updated_at: now()]
+             ) do
+          {1, [updated]} ->
+            ImportStage.mark_committed!(stage_ids)
+            updated
+
+          {0, _} ->
+            Repo.rollback(:stale_status)
+        end
+      end)
+
+    with {:ok, updated} <- result do
+      broadcast({:movie_updated, updated})
+      {:ok, updated}
     end
   end
 
@@ -1383,7 +1422,9 @@ defmodule Cinder.Catalog do
   could not give each its own dest); `n` is one season pack, so the per-row writes are cheap. The
   `file_path` XOR `grab_id` invariant (derived state) is maintained here, the single write site.
   """
-  def finish_grab(%Grab{} = grab, imported \\ []) do
+  def finish_grab(%Grab{} = grab, imported \\ []), do: finish_grab(grab, imported, [])
+
+  def finish_grab(%Grab{} = grab, imported, stage_ids) do
     imported_ids = imported |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
     series_id = series_id_for_grab(grab.id)
 
@@ -1408,6 +1449,7 @@ defmodule Cinder.Catalog do
 
         completed_seasons = completed_seasons_for_imported_episodes(imported_ids)
 
+        ImportStage.mark_committed!(stage_ids)
         Repo.delete!(grab)
         {bumped_ids, completed_seasons}
       end)

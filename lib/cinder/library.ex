@@ -15,7 +15,7 @@ defmodule Cinder.Library do
 
   alias Cinder.Acquisition.{Language, Parser}
   alias Cinder.Catalog.{Episode, Movie, Series}
-  alias Cinder.Library.{PathPolicy, Sidecars, Upgrade}
+  alias Cinder.Library.{ImportStage, PathPolicy, Sidecars, Upgrade}
   alias Cinder.Settings
 
   @video_exts ~w(.mkv .mp4 .avi .m4v .mov .wmv .ts)
@@ -146,17 +146,38 @@ defmodule Cinder.Library do
   end
 
   @doc "Commits a staged import. Safe to call repeatedly."
-  @spec commit_stage(%{dest: String.t(), rollback: map(), quality: map()}) :: :ok
+  @spec commit_stage(%{dest: String.t(), rollback: map(), quality: map()}) ::
+          :ok | {:error, term()}
   def commit_stage(%{dest: dest, rollback: rollback, quality: quality}) do
-    commit_rollback(rollback)
+    result = commit(rollback)
     maybe_commit_sidecars(rollback, dest)
     run_after_commit(rollback, dest, quality)
-    :ok
+    result
   end
 
   @doc "Rolls a staged import back. Safe to call repeatedly."
   @spec rollback_stage(%{rollback: map()}) :: :ok | {:error, term()}
   def rollback_stage(%{rollback: rollback}), do: rollback(rollback)
+
+  @doc false
+  def stage_ids(stages),
+    do:
+      stages
+      |> Enum.flat_map(fn
+        %{rollback: %{state: :durable, stage_id: id}} -> [id]
+        _stage -> []
+      end)
+      |> Enum.uniq()
+
+  @doc "Converges durable import stages left by process death or a prior filesystem error."
+  @spec reconcile_stages() :: :ok
+  def reconcile_stages do
+    Enum.each(ImportStage.list(), fn stage ->
+      ImportStage.with_lock(stage.operation_key, fn -> reconcile_stage(stage.id, :auto) end)
+    end)
+
+    :ok
+  end
 
   # Place source at dest; resolve a same-item collision (tmdb-unique folder => same record) by the
   # caller's `upgrade_fun` decision or a forced `replace?`. Shared by movie and episode imports.
@@ -225,19 +246,16 @@ defmodule Cinder.Library do
 
   defp stage_place(source, dest, root, {si, sdev}, record, new_q, replace?, upgrade_fun) do
     with {:ok, source} <- safe_source_file(source),
-         {:ok, dest} <- safe_destination(dest, root),
-         :ok <- remove_if_present(stage_path(dest), root),
-         :ok <- recover_interrupted_replacement(dest, root) do
+         {:ok, dest} <- safe_destination(dest, root) do
       case fs().lstat(dest) do
         {:error, :enoent} ->
           stage_new(source, dest, root, new_q)
 
         {:ok, %{inode: ^si, major_device: ^sdev}} ->
-          {:ok, existing_quality_for_stage(record, new_q, replace?), noop_rollback(root, dest),
-           false}
+          {:ok, existing_quality_for_stage(record, new_q, replace?), noop_rollback(), false}
 
-        {:ok, _stat} ->
-          stage_existing(source, dest, root, record, new_q, replace?, upgrade_fun)
+        {:ok, stat} ->
+          stage_existing(source, dest, root, stat, record, new_q, replace?, upgrade_fun)
 
         {:error, _} = error ->
           error
@@ -245,123 +263,304 @@ defmodule Cinder.Library do
     end
   end
 
-  defp stage_existing(source, dest, root, record, new_q, replace?, upgrade_fun) do
+  defp stage_existing(source, dest, root, stat, record, new_q, replace?, upgrade_fun) do
     if replace? or upgrade_fun.() do
-      stage_replacement(source, dest, root, new_q)
+      stage_replacement(source, dest, root, stat, new_q)
     else
       {:ok, quality, false} = keep(dest, record, new_q)
-      {:ok, quality, noop_rollback(root, dest), false}
+      {:ok, quality, noop_rollback(), false}
     end
   end
 
   defp existing_quality_for_stage(_record, new_q, true), do: new_q
   defp existing_quality_for_stage(record, new_q, false), do: existing_quality(record, new_q)
 
-  defp stage_new(source, dest, root, quality) do
-    candidate = stage_path(dest)
+  defp stage_new(source, dest, root, quality),
+    do: prepare_durable_stage(source, dest, root, nil, nil, quality)
 
-    with :ok <- link_or_copy(source, candidate, root),
-         {:ok, ^candidate} <- safe_destination(candidate, root),
-         {:ok, ^dest} <- safe_destination(dest, root),
+  defp stage_replacement(source, dest, root, original_stat, quality),
+    do: prepare_durable_stage(source, dest, root, dest, original_stat, quality)
+
+  defp prepare_durable_stage(source, dest, root, backup_source, backup_stat, quality) do
+    operation_key = Ecto.UUID.generate()
+    candidate = stage_path(dest, operation_key)
+    backup = if backup_source, do: rollback_path(dest, operation_key)
+
+    ImportStage.with_lock(operation_key, fn ->
+      stage =
+        ImportStage.create!(
+          Map.merge(
+            %{
+              operation_key: operation_key,
+              root: root,
+              dest: dest,
+              candidate: candidate,
+              backup: backup
+            },
+            identity_attrs(:backup, backup_stat)
+          )
+        )
+
+      case do_prepare_stage(stage, source, backup_source) do
+        {:ok, prepared} ->
+          {:ok, quality, durable_rollback(prepared), true}
+
+        {:error, reason} = error ->
+          record_stage_error(stage.id, reason)
+          error
+      end
+    end)
+  end
+
+  defp do_prepare_stage(stage, source, backup_source) do
+    candidate = stage.candidate
+    dest = stage.dest
+
+    with :ok <- link_or_copy(source, candidate, stage.root),
+         {:ok, candidate_stat} <- fs().lstat(candidate),
+         stage <- ImportStage.update!(stage, identity_attrs(:candidate, candidate_stat)),
+         {:ok, stage} <- maybe_move_backup(stage, backup_source),
+         {:ok, ^candidate} <- safe_destination(candidate, stage.root),
+         {:ok, ^dest} <- safe_destination(dest, stage.root),
          :ok <- fs().rename(candidate, dest) do
-      {:ok, quality, %{state: :new, root: root, dest: dest}, true}
-    else
-      {:error, _} = error ->
-        remove_if_present(candidate, root)
-        error
+      {:ok,
+       ImportStage.update!(
+         stage,
+         Map.merge(%{state: :prepared, last_error: nil}, identity_attrs(:staged, candidate_stat))
+       )}
     end
   end
 
-  defp stage_replacement(source, dest, root, quality) do
-    candidate = stage_path(dest)
-    backup = rollback_path(dest)
+  defp maybe_move_backup(stage, nil), do: {:ok, stage}
 
-    with :ok <- link_or_copy(source, candidate, root),
-         {:ok, ^dest} <- safe_destination(dest, root),
-         {:ok, ^backup} <- safe_destination(backup, root),
-         :ok <- fs().rename(dest, backup),
-         :ok <- land_replacement(candidate, dest, backup, root) do
-      {:ok, quality, %{state: :replaced, root: root, dest: dest, backup: backup}, true}
-    else
-      {:error, _} = error ->
-        remove_if_present(candidate, root)
-        error
+  defp maybe_move_backup(stage, source) do
+    backup = stage.backup
+
+    with {:ok, ^source} <- safe_destination(source, stage.root),
+         {:ok, ^backup} <- safe_destination(backup, stage.root),
+         :ok <- fs().rename(source, backup) do
+      {:ok, stage}
     end
   end
 
-  defp land_replacement(candidate, dest, backup, root) do
-    with {:ok, ^candidate} <- safe_destination(candidate, root),
-         {:ok, ^dest} <- safe_destination(dest, root),
-         :ok <- fs().rename(candidate, dest) do
-      :ok
-    else
-      {:error, _} = error ->
-        _ = fs().rename(backup, dest)
-        error
-    end
-  end
+  defp durable_rollback(stage),
+    do: %{state: :durable, stage_id: stage.id, operation_key: stage.operation_key}
 
-  defp noop_rollback(root, dest), do: %{state: :noop, root: root, dest: dest}
+  defp noop_rollback, do: %{state: :noop}
 
-  defp stage_path(dest),
-    do: Path.join(Path.dirname(dest), ".#{Path.basename(dest)}.cinder-stage")
+  defp stage_path(dest, operation_key),
+    do: Path.join(Path.dirname(dest), ".cinder-stage-#{operation_key}")
 
-  # ponytail: one rollback slot per destination relies on the pollers' serialized imports;
-  # persist stage records if concurrent import workers are introduced.
-  defp rollback_path(dest),
-    do: Path.join(Path.dirname(dest), ".#{Path.basename(dest)}.cinder-rollback")
+  defp rollback_path(dest, operation_key),
+    do: Path.join(Path.dirname(dest), ".cinder-rollback-#{operation_key}")
 
-  defp recover_interrupted_replacement(dest, root) do
-    backup = rollback_path(dest)
+  defp identity_attrs(_prefix, nil), do: %{}
 
-    case fs().lstat(backup) do
-      {:ok, _} ->
-        with :ok <- remove_if_present(dest, root),
-             {:ok, ^backup} <- safe_destination(backup, root),
-             {:ok, ^dest} <- safe_destination(dest, root),
-             do: fs().rename(backup, dest)
+  defp identity_attrs(:candidate, stat),
+    do: %{
+      candidate_inode: stat.inode,
+      candidate_device: stat.major_device,
+      candidate_size: stat.size
+    }
 
-      {:error, :enoent} ->
-        :ok
+  defp identity_attrs(:staged, stat),
+    do: %{staged_inode: stat.inode, staged_device: stat.major_device, staged_size: stat.size}
 
-      {:error, _} = error ->
-        error
-    end
-  end
-
-  defp commit_rollback(%{state: :replaced, root: root, backup: backup}),
-    do: remove_if_present(backup, root)
-
-  defp commit_rollback(_rollback), do: :ok
+  defp identity_attrs(:backup, stat),
+    do: %{backup_inode: stat.inode, backup_device: stat.major_device, backup_size: stat.size}
 
   defp rollback(%{state: :noop}), do: :ok
+  defp rollback(%{state: :durable, stage_id: id}), do: reconcile_stage(id, :rollback)
 
-  defp rollback(%{state: :new, root: root, dest: dest}),
-    do: remove_if_present(dest, root)
+  defp commit(%{state: :noop}), do: :ok
+  defp commit(%{state: :durable, stage_id: id}), do: reconcile_stage(id, :commit)
 
-  defp rollback(%{state: :replaced, root: root, dest: dest, backup: backup}) do
-    case fs().lstat(backup) do
-      {:ok, _} ->
-        with :ok <- remove_if_present(dest, root),
-             {:ok, ^backup} <- safe_destination(backup, root),
-             {:ok, ^dest} <- safe_destination(dest, root),
-             do: fs().rename(backup, dest)
-
-      {:error, :enoent} ->
+  defp reconcile_stage(id, mode) do
+    case ImportStage.get(id) do
+      nil ->
         :ok
 
-      {:error, _} = error ->
-        error
+      stage ->
+        stage
+        |> reconcile_stage_state(mode)
+        |> finish_stage_reconciliation(stage)
     end
   end
 
-  defp remove_if_present(path, root) do
-    case fs().lstat(path) do
-      {:ok, _} -> safe_remove(path, [root])
+  defp reconcile_stage_state(%ImportStage{state: :committed} = stage, _mode),
+    do: cleanup_committed_stage(stage)
+
+  defp reconcile_stage_state(%ImportStage{}, :commit),
+    do: {:error, :import_stage_not_committed}
+
+  defp reconcile_stage_state(%ImportStage{} = stage, _mode),
+    do: rollback_uncommitted_stage(stage)
+
+  defp cleanup_committed_stage(stage) do
+    with :ok <- remove_owned(stage.backup, backup_identity(stage), stage.root),
+         do: delete_stage(stage)
+  end
+
+  defp rollback_uncommitted_stage(stage) do
+    with :ok <- remove_owned_destination(stage),
+         :ok <- restore_owned_backup(stage),
+         :ok <- remove_unlanded_candidate(stage),
+         do: delete_stage(stage)
+  end
+
+  defp remove_unlanded_candidate(%ImportStage{state: :preparing, candidate_inode: nil} = stage),
+    do: remove_unique_candidate(stage)
+
+  defp remove_unlanded_candidate(%ImportStage{state: :preparing} = stage),
+    do: remove_owned(stage.candidate, candidate_identity(stage), stage.root)
+
+  defp remove_unlanded_candidate(%ImportStage{}), do: :ok
+
+  # The UUID candidate path belongs exclusively to its journal row. A crash can land between the
+  # link/copy and its first lstat; in that narrow window there is no identity to persist, but the
+  # unique path is still durable ownership evidence and must remain recoverable.
+  defp remove_unique_candidate(stage) do
+    case fs().lstat(stage.candidate) do
       {:error, :enoent} -> :ok
+      {:ok, _stat} -> safe_remove(stage.candidate, [stage.root])
       {:error, _} = error -> error
     end
   end
+
+  defp remove_owned_destination(stage) do
+    case fs().lstat(stage.dest) do
+      {:error, :enoent} ->
+        :ok
+
+      {:ok, stat} ->
+        remove_or_preserve_destination(stage, stat)
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  defp remove_or_preserve_destination(stage, stat) do
+    if identity_matches?(stat, staged_identity(stage)) or
+         identity_matches?(stat, candidate_identity(stage)) do
+      safe_remove(stage.dest, [stage.root])
+    else
+      fail_if_backup_waits(stage)
+    end
+  end
+
+  defp fail_if_backup_waits(%ImportStage{backup: nil}), do: :ok
+
+  defp fail_if_backup_waits(stage) do
+    case fs().lstat(stage.backup) do
+      {:error, :enoent} -> :ok
+      {:ok, _} -> {:error, :import_stage_destination_changed}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp restore_owned_backup(%ImportStage{backup: nil}), do: :ok
+
+  defp restore_owned_backup(stage) do
+    case fs().lstat(stage.backup) do
+      {:error, :enoent} ->
+        :ok
+
+      {:ok, stat} ->
+        restore_matching_backup(stage, stat)
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  defp restore_matching_backup(stage, stat) do
+    if identity_matches?(stat, backup_identity(stage)) do
+      backup = stage.backup
+      dest = stage.dest
+
+      with {:error, :enoent} <- fs().lstat(dest),
+           {:ok, ^backup} <- safe_destination(backup, stage.root),
+           {:ok, ^dest} <- safe_destination(dest, stage.root),
+           :ok <- fs().rename(backup, dest),
+           {:ok, restored} <- fs().lstat(dest),
+           true <-
+             identity_matches?(restored, backup_identity(stage)) ||
+               {:error, :import_stage_restore_changed} do
+        :ok
+      else
+        {:ok, _occupant} -> {:error, :import_stage_destination_changed}
+        {:error, _} = error -> error
+      end
+    else
+      {:error, :import_stage_backup_changed}
+    end
+  end
+
+  defp remove_owned(nil, _identity, _root), do: :ok
+
+  defp remove_owned(path, identity, root) do
+    case fs().lstat(path) do
+      {:error, :enoent} ->
+        :ok
+
+      {:ok, stat} ->
+        if identity_matches?(stat, identity),
+          do: safe_remove(path, [root]),
+          else: {:error, :import_stage_file_changed}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  defp candidate_identity(stage),
+    do: {stage.candidate_inode, stage.candidate_device, stage.candidate_size}
+
+  defp staged_identity(stage), do: {stage.staged_inode, stage.staged_device, stage.staged_size}
+  defp backup_identity(stage), do: {stage.backup_inode, stage.backup_device, stage.backup_size}
+
+  defp identity_matches?(_stat, {nil, _device, _size}), do: false
+  defp identity_matches?(_stat, {_inode, nil, _size}), do: false
+  defp identity_matches?(_stat, {_inode, _device, nil}), do: false
+
+  defp identity_matches?(stat, {inode, device, size}),
+    do: stat.inode == inode and stat.major_device == device and stat.size == size
+
+  defp delete_stage(stage) do
+    case ImportStage.delete(stage) do
+      {:ok, _} -> :ok
+      {:error, changeset} -> {:error, changeset}
+    end
+  end
+
+  defp finish_stage_reconciliation(:ok, _stage), do: :ok
+
+  defp finish_stage_reconciliation({:error, reason} = error, stage) do
+    record_stage_error(stage.id, reason)
+    error
+  end
+
+  defp record_stage_error(id, reason) do
+    case ImportStage.get(id) do
+      nil ->
+        :ok
+
+      stage ->
+        error = stage_error(reason)
+
+        if stage.last_error != error do
+          Logger.warning("import stage #{stage.id} cleanup pending: #{error}")
+          ImportStage.update(stage, %{last_error: error})
+        end
+
+        :ok
+    end
+  end
+
+  defp stage_error(reason) when is_atom(reason), do: Atom.to_string(reason)
+  defp stage_error({tag, _detail}) when is_atom(tag), do: Atom.to_string(tag)
+  defp stage_error(_reason), do: "filesystem_error"
 
   defp staged_sidecar_quality(quality, true, true, source) do
     languages = source |> Sidecars.files() |> Enum.map(&elem(&1, 1)) |> Enum.uniq()

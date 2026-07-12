@@ -36,13 +36,20 @@ defmodule Cinder.Test.BarrierFilesystem do
 
   @impl true
   def rename(source, dest) do
-    result = Disk.rename(source, dest)
-    pause(:rename, dest)
-    result
+    case injected_failure(:rename, source, dest) do
+      :ok ->
+        result = Disk.rename(source, dest)
+        pause(:rename, dest)
+        result
+
+      {:error, _} = error ->
+        error
+    end
   end
 
   @impl true
   def rm(path) do
+    pause(:rm, path, :before)
     result = Disk.rm(path)
     pause(:rm, path)
     result
@@ -63,17 +70,42 @@ defmodule Cinder.Test.BarrierFilesystem do
   @impl true
   defdelegate moviehash_data(path), to: Disk
 
-  defp pause(operation, path) do
+  defp pause(operation, path, phase \\ :after) do
     case Application.get_env(:cinder, :filesystem_barrier) do
-      %{owner: owner, operation: ^operation, contains: contains} = barrier ->
+      %{owner: owner, operation: ^operation, contains: contains} = barrier
+      when phase == :after ->
+        maybe_pause(barrier, owner, operation, path, contains)
+
+      %{owner: owner, operation: ^operation, contains: contains, phase: ^phase} = barrier ->
         maybe_pause(barrier, owner, operation, path, contains)
 
       %{owner: owner, operations: operations, contains: contains} = barrier ->
-        if operation in operations,
+        if phase == :after and operation in operations,
           do: maybe_pause(barrier, owner, operation, path, contains)
 
       _ ->
         :ok
+    end
+  end
+
+  defp injected_failure(operation, source, _dest) do
+    case Application.get_env(:cinder, :filesystem_failure) do
+      %{operation: ^operation, source_contains: contains, reason: reason} = failure ->
+        failure_result(failure, source, contains, reason)
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp failure_result(failure, source, contains, reason) do
+    if String.contains?(source, contains) do
+      if Map.get(failure, :once, false),
+        do: Application.delete_env(:cinder, :filesystem_failure)
+
+      {:error, reason}
+    else
+      :ok
     end
   end
 

@@ -31,6 +31,7 @@ defmodule Cinder.Download.Poller do
   use Cinder.Download.PollerSkeleton, log_prefix: "poller"
 
   defp do_poll(state) do
+    Library.reconcile_stages()
     Download.reconcile_pending_intents([:movie])
     advance_downloading()
     import_downloaded()
@@ -200,10 +201,11 @@ defmodule Cinder.Download.Poller do
                  imported_embedded_subtitles: q.embedded_subtitles,
                  imported_sidecar_subtitles: q.sidecar_subtitles
                },
-               expect: movie.status
+               expect: movie.status,
+               import_stage_ids: Library.stage_ids([stage])
              ) do
           {:ok, available} ->
-            Library.commit_stage(stage)
+            finish_stage(stage, :commit)
             Notifier.notify({:movie_available, available})
             # After the DB commit (the file is recorded as imported): a best-effort, gated
             # remove of the source download. Failure is logged, never strands or re-imports.
@@ -213,10 +215,10 @@ defmodule Cinder.Download.Poller do
           # point at dest, so unlink it or the media server scans an orphaned file.
           {:error, :stale_status} ->
             Logger.info("movie #{movie.id} left the import pass mid-import; unlinking #{dest}")
-            Library.rollback_stage(stage)
+            finish_stage(stage, :rollback)
 
           {:error, _} ->
-            Library.rollback_stage(stage)
+            finish_stage(stage, :rollback)
         end
 
       {:error, :library_not_configured} ->
@@ -359,18 +361,19 @@ defmodule Cinder.Download.Poller do
             imported_embedded_subtitles: q.embedded_subtitles,
             imported_sidecar_subtitles: q.sidecar_subtitles
           },
-          expect: movie.status
+          expect: movie.status,
+          import_stage_ids: Library.stage_ids([stage])
         )
         |> case do
           {:ok, available} ->
-            Library.commit_stage(stage)
+            finish_stage(stage, :commit)
             finalize_upgrade(movie, available, dest)
 
           {:error, :stale_status} ->
             compensate_aborted_upgrade(movie, stage)
 
           {:error, _} ->
-            Library.rollback_stage(stage)
+            finish_stage(stage, :rollback)
         end
 
       {:error, :library_not_configured} ->
@@ -395,7 +398,20 @@ defmodule Cinder.Download.Poller do
 
   defp compensate_aborted_upgrade(movie, stage) do
     Logger.info("movie #{movie.id} upgrade aborted mid-swap; restoring the prior library file")
-    Library.rollback_stage(stage)
+    finish_stage(stage, :rollback)
+  end
+
+  defp finish_stage(stage, action) do
+    result =
+      case action do
+        :commit -> Library.commit_stage(stage)
+        :rollback -> Library.rollback_stage(stage)
+      end
+
+    if match?({:error, _}, result),
+      do: Logger.warning("movie import stage cleanup remains pending")
+
+    result
   end
 
   # Post-commit side effects, all best-effort (none can unwind the committed upgrade): remove the

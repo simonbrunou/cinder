@@ -40,6 +40,7 @@ defmodule Cinder.Download.TvPoller do
   use Cinder.Download.PollerSkeleton, log_prefix: "tv poller"
 
   defp do_poll(state) do
+    Library.reconcile_stages()
     Download.reconcile_pending_intents([:episode, :season_pack])
     advance_grabs()
     import_grabs()
@@ -121,7 +122,11 @@ defmodule Cinder.Download.TvPoller do
           Enum.map(staged, fn {episode_id, stage} -> {episode_id, stage.dest, stage.quality} end)
 
         # Catalog announces a season only when this committed import makes it fully available.
-        case Catalog.finish_grab(grab, imported) do
+        case Catalog.finish_grab(
+               grab,
+               imported,
+               Library.stage_ids(Enum.map(staged, &elem(&1, 1)))
+             ) do
           {:ok, _grab} ->
             commit_stages(staged)
             # After the finalize commit: best-effort, gated remove of the source download.
@@ -164,13 +169,26 @@ defmodule Cinder.Download.TvPoller do
   defp commit_stages(staged) do
     staged
     |> unique_stages()
-    |> Enum.each(&Library.commit_stage/1)
+    |> Enum.each(&finish_stage(&1, :commit))
   end
 
   defp rollback_stages(staged) do
     staged
     |> unique_stages()
-    |> Enum.each(&Library.rollback_stage/1)
+    |> Enum.each(&finish_stage(&1, :rollback))
+  end
+
+  defp finish_stage(stage, action) do
+    result =
+      case action do
+        :commit -> Library.commit_stage(stage)
+        :rollback -> Library.rollback_stage(stage)
+      end
+
+    if match?({:error, _}, result),
+      do: Logger.warning("TV import stage cleanup remains pending")
+
+    result
   end
 
   defp unique_stages(staged),

@@ -57,9 +57,10 @@ defmodule Cinder.M3PipelineTest do
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
 
     stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
-      if String.starts_with?(path, "/tmp/cinder-test-library/"),
-        do: {:error, :enoent},
-        else: {:ok, %File.Stat{size: 1, inode: 1}}
+      if String.contains?(path, ".cinder-stage-") or
+           not String.starts_with?(path, "/tmp/cinder-test-library/"),
+         do: {:ok, %File.Stat{size: 1, inode: 1, major_device: 1}},
+         else: {:error, :enoent}
     end)
 
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)

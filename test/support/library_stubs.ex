@@ -19,9 +19,7 @@ defmodule Cinder.LibraryStubs do
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
 
     stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
-      if library_path?(path),
-        do: {:error, :enoent},
-        else: {:ok, %File.Stat{size: size, inode: 1}}
+      import_stat(path, size)
     end)
 
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
@@ -39,9 +37,7 @@ defmodule Cinder.LibraryStubs do
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
 
     stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
-      if library_path?(path),
-        do: {:error, :enoent},
-        else: {:ok, %File.Stat{size: size, inode: 1}}
+      import_stat(path, size)
     end)
 
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
@@ -56,4 +52,17 @@ defmodule Cinder.LibraryStubs do
     do:
       String.starts_with?(path, "/tmp/cinder-test-library/") or
         String.starts_with?(path, "/tmp/cinder-test-tv-library/")
+
+  defp import_stat(path, size) do
+    cond do
+      String.contains?(path, ".cinder-stage-") ->
+        {:ok, %File.Stat{size: size, inode: 1, major_device: 1}}
+
+      library_path?(path) ->
+        {:error, :enoent}
+
+      true ->
+        {:ok, %File.Stat{size: size, inode: 1, major_device: 1}}
+    end
+  end
 end

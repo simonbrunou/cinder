@@ -12,6 +12,7 @@ defmodule Cinder.Download.PollerTest do
   alias Cinder.{Catalog, Download}
   alias Cinder.Catalog.Movie
   alias Cinder.Download.{Intent, Poller}
+  alias Cinder.Library.ImportStage
   alias Cinder.Repo
 
   import Cinder.CatalogFixtures
@@ -56,15 +57,40 @@ defmodule Cinder.Download.PollerTest do
     on_exit(fn ->
       Enum.each(saved, fn {key, value} -> Application.put_env(:cinder, key, value) end)
       Application.delete_env(:cinder, :filesystem_barrier)
+      Application.delete_env(:cinder, :filesystem_failure)
     end)
 
     %{downloads: downloads, movies: movies}
   end
 
   defp import_stat(path, size \\ 1) do
-    if String.starts_with?(path, "/tmp/cinder-test-library/"),
-      do: {:error, :enoent},
-      else: {:ok, %File.Stat{size: size, inode: 1}}
+    if String.contains?(path, ".cinder-stage-") or
+         not String.starts_with?(path, "/tmp/cinder-test-library/"),
+       do: {:ok, %File.Stat{size: size, inode: 1, major_device: 1}},
+       else: {:error, :enoent}
+  end
+
+  defp real_upgrading_movie(tmp, tmdb_id, download_id) do
+    %{downloads: downloads, movies: movies} = use_real_library(tmp)
+    source = Path.join(downloads, "M.2020.1080p.mkv")
+    dest = Path.join([movies, "M (2020) {tmdb-#{tmdb_id}}", "M (2020) {tmdb-#{tmdb_id}}.mkv"])
+    File.mkdir_p!(Path.dirname(dest))
+    File.write!(source, "candidate")
+    File.write!(dest, "original")
+
+    movie =
+      movie_fixture(%{
+        tmdb_id: tmdb_id,
+        title: "M",
+        year: 2020,
+        status: :upgrading,
+        download_id: download_id,
+        download_protocol: :torrent,
+        file_path: dest,
+        imported_resolution: "720p"
+      })
+
+    %{source: source, dest: dest, movie: movie}
   end
 
   test "a poll drives a completed download through :downloaded to :available" do
@@ -552,10 +578,20 @@ defmodule Cinder.Download.PollerTest do
         "Inception (2010) {tmdb-10004}.mkv"
       ])
 
-    stale = Path.join(Path.dirname(dest), ".#{Path.basename(dest)}.cinder-stage")
+    operation_key = Ecto.UUID.generate()
+    stale = Path.join(Path.dirname(dest), ".cinder-stage-#{operation_key}")
     File.mkdir_p!(Path.dirname(dest))
     File.write!(source, "candidate")
     File.write!(stale, "partial")
+
+    ImportStage.create!(%{
+      operation_key: operation_key,
+      state: :preparing,
+      root: movies,
+      dest: dest,
+      candidate: stale
+    })
+
     movie = downloaded_movie(10_004, source)
     start_supervised!({Poller, interval: 60_000})
     stub(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
@@ -564,6 +600,36 @@ defmodule Cinder.Download.PollerTest do
     assert Repo.get!(Movie, movie.id).status == :available
     assert File.read!(dest) == "candidate"
     refute File.exists?(stale)
+  end
+
+  @tag :tmp_dir
+  test "delayed rollback preserves a user file that replaced the staged destination", %{
+    tmp_dir: tmp
+  } do
+    %{downloads: downloads} = use_real_library(tmp)
+    source = Path.join(downloads, "Inception.2010.1080p.mkv")
+    File.write!(source, "candidate")
+    movie = downloaded_movie(10_005, source)
+    start_supervised!({Poller, interval: 60_000})
+
+    Application.put_env(:cinder, :filesystem_barrier, %{
+      owner: self(),
+      operation: :rename,
+      contains: "Inception (2010) {tmdb-10005}.mkv",
+      once: true
+    })
+
+    poll = Task.async(fn -> Poller.poll() end)
+    assert_receive {:filesystem_barrier, pid, ref, :rename, dest}, 1_000
+    assert {:ok, _} = Catalog.delete_movie(Repo.get!(Movie, movie.id), nil)
+    File.rm!(dest)
+    File.write!(dest, "user replacement")
+    assert [%ImportStage{state: :preparing, candidate_size: 9}] = Repo.all(ImportStage)
+    assert File.stat!(dest).size == 16
+    send(pid, {ref, :continue})
+
+    assert :ok = Task.await(poll)
+    assert File.read!(dest) == "user replacement"
   end
 
   test "a best-effort scan failure still advances the movie to :available" do
@@ -588,7 +654,12 @@ defmodule Cinder.Download.PollerTest do
     start_supervised!({Poller, interval: 60_000})
 
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
-    stub(Cinder.Library.FilesystemMock, :lstat, &import_stat/1)
+    stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
+      if String.contains?(path, ".cinder-stage-"),
+        do: {:error, :enoent},
+        else: import_stat(path)
+    end)
+
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
     stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eacces} end)
 
@@ -806,7 +877,12 @@ defmodule Cinder.Download.PollerTest do
     start_supervised!({Poller, interval: 60_000})
 
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
-    stub(Cinder.Library.FilesystemMock, :lstat, &import_stat/1)
+    stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
+      if String.contains?(path, ".cinder-stage-"),
+        do: {:error, :enoent},
+        else: import_stat(path)
+    end)
+
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
     stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eacces} end)
 
@@ -1084,7 +1160,7 @@ defmodule Cinder.Download.PollerTest do
       stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
 
       stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
-        if String.ends_with?(path, [".cinder-rollback", ".cinder-stage"]),
+        if String.contains?(path, [".cinder-rollback-", ".cinder-stage-"]),
           do: {:error, :enoent},
           else: {:ok, %File.Stat{size: 1, inode: 1}}
       end)
@@ -1206,13 +1282,102 @@ defmodule Cinder.Download.PollerTest do
 
       assert Enum.any?(
                File.ls!(Path.dirname(dest)),
-               &String.ends_with?(&1, ".cinder-rollback")
+               &String.starts_with?(&1, ".cinder-rollback-")
              )
 
       new_pid = await_restart(Poller, pid)
       assert :ok = Poller.poll(new_pid)
       assert File.read!(dest) == "candidate"
       assert Repo.get!(Movie, movie.id).status == :available
+
+      refute Enum.any?(
+               File.ls!(Path.dirname(dest)),
+               &String.contains?(&1, ".cinder-")
+             )
+    end
+
+    @tag :tmp_dir
+    test "a poller death after Catalog commit keeps candidate bytes and cleans the backup", %{
+      tmp_dir: tmp
+    } do
+      %{source: source, dest: dest, movie: movie} =
+        real_upgrading_movie(tmp, 10_006, "upgrade-10006")
+
+      pid = start_supervised!({Poller, interval: 60_000})
+
+      stub(Cinder.Download.ClientMock, :status, fn "upgrade-10006" ->
+        {:ok, %{state: :completed, content_path: source}}
+      end)
+
+      Application.put_env(:cinder, :filesystem_barrier, %{
+        owner: self(),
+        operation: :rm,
+        phase: :before,
+        contains: ".cinder-rollback",
+        once: true
+      })
+
+      poll = Task.async(fn -> Poller.poll(pid) end)
+      Process.unlink(poll.pid)
+      assert_receive {:filesystem_barrier, ^pid, _ref, :rm, backup}, 1_000
+      assert Repo.get!(Movie, movie.id).status == :available
+      assert File.read!(dest) == "candidate"
+      assert File.exists?(backup)
+
+      Process.exit(pid, :kill)
+      catch_exit(Task.await(poll))
+
+      new_pid = await_restart(Poller, pid)
+      assert :ok = Poller.poll(new_pid)
+      assert File.read!(dest) == "candidate"
+      refute File.exists?(backup)
+      assert :ok = Cinder.Library.reconcile_stages()
+    end
+
+    @tag :tmp_dir
+    test "a failed rollback restore remains durable and converges on the next poll", %{
+      tmp_dir: tmp
+    } do
+      %{source: source, dest: dest, movie: movie} =
+        real_upgrading_movie(tmp, 10_007, "upgrade-10007")
+
+      start_supervised!({Poller, interval: 60_000})
+
+      stub(Cinder.Download.ClientMock, :status, fn "upgrade-10007" ->
+        {:ok, %{state: :completed, content_path: source}}
+      end)
+
+      Application.put_env(:cinder, :filesystem_barrier, %{
+        owner: self(),
+        operation: :rename,
+        contains: Path.basename(dest),
+        excludes: ".cinder-rollback",
+        once: true
+      })
+
+      Application.put_env(:cinder, :filesystem_failure, %{
+        operation: :rename,
+        source_contains: ".cinder-rollback",
+        reason: :eacces,
+        once: true
+      })
+
+      poll = Task.async(fn -> Poller.poll() end)
+      assert_receive {:filesystem_barrier, pid, ref, :rename, ^dest}, 1_000
+
+      assert {:ok, _} =
+               Catalog.transition(Repo.get!(Movie, movie.id), %{status: :available},
+                 expect: :upgrading
+               )
+
+      send(pid, {ref, :continue})
+      assert :ok = Task.await(poll)
+      refute File.exists?(dest)
+      assert [%ImportStage{last_error: "eacces"}] = Repo.all(ImportStage)
+
+      assert :ok = Poller.poll()
+      assert File.read!(dest) == "original"
+      assert :ok = Cinder.Library.reconcile_stages()
 
       refute Enum.any?(
                File.ls!(Path.dirname(dest)),

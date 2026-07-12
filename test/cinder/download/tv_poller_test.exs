@@ -56,15 +56,17 @@ defmodule Cinder.Download.TvPollerTest do
     on_exit(fn ->
       Enum.each(saved, fn {key, value} -> Application.put_env(:cinder, key, value) end)
       Application.delete_env(:cinder, :filesystem_barrier)
+      Application.delete_env(:cinder, :filesystem_failure)
     end)
 
     %{downloads: downloads, tv: tv}
   end
 
   defp import_stat(path, size) do
-    if String.starts_with?(path, "/tmp/cinder-test-tv-library/"),
-      do: {:error, :enoent},
-      else: {:ok, %File.Stat{size: size, inode: 1}}
+    if String.contains?(path, ".cinder-stage-") or
+         not String.starts_with?(path, "/tmp/cinder-test-tv-library/"),
+       do: {:ok, %File.Stat{size: size, inode: 1, major_device: 1}},
+       else: {:error, :enoent}
   end
 
   defp stub_accept_then_crash(remote_id) do
