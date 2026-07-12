@@ -93,6 +93,39 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.ReportTest do
     assert "prowlarr-published-at" in report.blocking_prowlarr_gaps
   end
 
+  test "requires an anime-mode release that actually carries category 5070", context do
+    without_anime_category =
+      set_anime_categories(context.observations, [%{id: 5000, name: "TV"}])
+
+    blocked = Report.build(context.corpus, without_anime_category)
+
+    blocked_check =
+      Enum.find(blocked.prowlarr_checks, &(&1.id == "prowlarr-anime-category-sample"))
+
+    assert blocked.decision == "tmdb_sufficient"
+    assert blocked.a0_status == "blocked"
+    assert "prowlarr-anime-category-sample" in blocked.blocking_prowlarr_gaps
+
+    assert blocked_check == %{
+             id: "prowlarr-anime-category-sample",
+             family: :prowlarr_contract,
+             status: "fail",
+             evidence: %{observed: 0}
+           }
+
+    with_anime_category =
+      set_anime_categories(without_anime_category, [%{id: 5070, name: "TV/Anime"}])
+
+    passed = Report.build(context.corpus, with_anime_category)
+    passed_check = Enum.find(passed.prowlarr_checks, &(&1.id == "prowlarr-anime-category-sample"))
+    qualifying = Enum.count(passed.releases, &(&1.mode == "anime"))
+
+    assert passed.decision == "tmdb_sufficient"
+    assert passed.a0_status == "pass"
+    assert passed_check.status == "pass"
+    assert passed_check.evidence == %{observed: qualifying}
+  end
+
   test "blocks A0 when sampled releases lack indexer identity without changing provider selection",
        context do
     observations =
@@ -304,4 +337,19 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.ReportTest do
       function
     )
   end
+
+  defp set_anime_categories(observations, categories) do
+    Enum.map(observations, fn observation ->
+      Map.update!(
+        observation,
+        :prowlarr,
+        &Enum.map(&1, fn search -> set_search_categories(search, categories) end)
+      )
+    end)
+  end
+
+  defp set_search_categories(%{mode: :anime} = search, categories),
+    do: %{search | results: Enum.map(search.results, &Map.put(&1, :categories, categories))}
+
+  defp set_search_categories(search, _categories), do: search
 end

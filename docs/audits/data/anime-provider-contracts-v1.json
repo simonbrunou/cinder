@@ -16654,34 +16654,6 @@
       "has_indexer_identity": true
     },
     {
-      "size": 103312479,
-      "mode": "all",
-      "protocol": "usenet",
-      "title": "One Piece - 1101v2 - 720p WEB x264 -NanDesuKa (CR)",
-      "query": "One Piece",
-      "published_at": "2026-07-07T00:58:38Z",
-      "slug": "one-piece",
-      "categories": [
-        {
-          "id": 5000,
-          "name": "TV"
-        },
-        {
-          "id": 5070,
-          "name": "TV/Anime"
-        },
-        {
-          "id": 105000,
-          "name": null
-        },
-        {
-          "id": 105070,
-          "name": null
-        }
-      ],
-      "has_indexer_identity": true
-    },
-    {
       "size": 1346593319,
       "mode": "all",
       "protocol": "usenet",
@@ -16732,6 +16704,62 @@
         },
         {
           "id": 105070,
+          "name": null
+        }
+      ],
+      "has_indexer_identity": true
+    },
+    {
+      "size": 1621342740,
+      "mode": "all",
+      "protocol": "usenet",
+      "title": "One.Piece.E1169.1080p.WEB.H264-SKYANiME",
+      "query": "One Piece",
+      "published_at": "2026-07-12T20:02:21Z",
+      "slug": "one-piece",
+      "categories": [
+        {
+          "id": 2000,
+          "name": "Movies"
+        },
+        {
+          "id": 2040,
+          "name": "Movies/HD"
+        },
+        {
+          "id": 102000,
+          "name": null
+        },
+        {
+          "id": 102040,
+          "name": null
+        }
+      ],
+      "has_indexer_identity": true
+    },
+    {
+      "size": 851968661,
+      "mode": "all",
+      "protocol": "usenet",
+      "title": "One.Piece.E1169.720p.WEB.H264-SKYANiME",
+      "query": "One Piece",
+      "published_at": "2026-07-12T20:02:02Z",
+      "slug": "one-piece",
+      "categories": [
+        {
+          "id": 2000,
+          "name": "Movies"
+        },
+        {
+          "id": 2040,
+          "name": "Movies/HD"
+        },
+        {
+          "id": 102000,
+          "name": null
+        },
+        {
+          "id": 102040,
           "name": null
         }
       ],
@@ -16850,34 +16878,6 @@
       "has_indexer_identity": true
     },
     {
-      "size": 1624093525,
-      "mode": "all",
-      "protocol": "usenet",
-      "title": "One.Piece.Heroines.2026.1080p.CR.WEB-DL.JPN.AAC2.0.H.264.MSubs-ToonsHub",
-      "query": "One Piece",
-      "published_at": "2026-07-08T20:15:12Z",
-      "slug": "one-piece",
-      "categories": [
-        {
-          "id": 5000,
-          "name": "TV"
-        },
-        {
-          "id": 5070,
-          "name": "TV/Anime"
-        },
-        {
-          "id": 105000,
-          "name": null
-        },
-        {
-          "id": 105070,
-          "name": null
-        }
-      ],
-      "has_indexer_identity": true
-    },
-    {
       "size": 1018246526,
       "mode": "all",
       "protocol": "usenet",
@@ -16984,62 +16984,6 @@
         },
         {
           "id": 102040,
-          "name": null
-        }
-      ],
-      "has_indexer_identity": true
-    },
-    {
-      "size": 307374876,
-      "mode": "all",
-      "protocol": "usenet",
-      "title": "One.Piece.Heroines.2026.1080p.iQ.WEB-DL.JPN.AAC2.0.H.264.MSubs-ToonsHub",
-      "query": "One Piece",
-      "published_at": "2026-07-08T20:01:52Z",
-      "slug": "one-piece",
-      "categories": [
-        {
-          "id": 5000,
-          "name": "TV"
-        },
-        {
-          "id": 5070,
-          "name": "TV/Anime"
-        },
-        {
-          "id": 105000,
-          "name": null
-        },
-        {
-          "id": 105070,
-          "name": null
-        }
-      ],
-      "has_indexer_identity": true
-    },
-    {
-      "size": 1623940635,
-      "mode": "all",
-      "protocol": "usenet",
-      "title": "One.Piece.S01E01.HEROINES.1080p.CR.WEB-DL.AAC2.0.H.264-VARYG",
-      "query": "One Piece",
-      "published_at": "2026-07-08T20:25:49Z",
-      "slug": "one-piece",
-      "categories": [
-        {
-          "id": 5000,
-          "name": "TV"
-        },
-        {
-          "id": 5070,
-          "name": "TV/Anime"
-        },
-        {
-          "id": 105000,
-          "name": null
-        },
-        {
-          "id": 105070,
           "name": null
         }
       ],
@@ -17214,12 +17158,12 @@
       "has_indexer_identity": true
     },
     {
-      "size": 460789178,
+      "size": 1644099189,
       "mode": "all",
       "protocol": "usenet",
-      "title": "[ASW] One Piece Novel Heroines [1080p HEVC][EC5A9559]",
+      "title": "[Erai-raws] One Piece - 1169 [1080p CR WEB-DL AVC AAC][C22933AE]",
       "query": "One Piece",
-      "published_at": "2026-07-08T20:49:10Z",
+      "published_at": "2026-07-12T16:11:09Z",
       "slug": "one-piece",
       "categories": [
         {
@@ -17242,12 +17186,96 @@
       "has_indexer_identity": true
     },
     {
-      "size": 1624270508,
+      "size": 275498262,
       "mode": "all",
       "protocol": "usenet",
-      "title": "[Erai-raws] One Piece - Heroines [1080p CR WEB-DL AVC AAC][F3CC3FFA]",
+      "title": "[Erai-raws] One Piece - 1169 [480p CR WEB-DL AVC AAC][967589A2]",
       "query": "One Piece",
-      "published_at": "2026-07-08T20:28:54Z",
+      "published_at": "2026-07-12T16:27:04Z",
+      "slug": "one-piece",
+      "categories": [
+        {
+          "id": 5000,
+          "name": "TV"
+        },
+        {
+          "id": 5070,
+          "name": "TV/Anime"
+        },
+        {
+          "id": 105000,
+          "name": null
+        },
+        {
+          "id": 105070,
+          "name": null
+        }
+      ],
+      "has_indexer_identity": true
+    },
+    {
+      "size": 275508496,
+      "mode": "all",
+      "protocol": "usenet",
+      "title": "[Erai-raws] One Piece - 1169 [480p CR WEB-DL AVC AAC][967589A2]",
+      "query": "One Piece",
+      "published_at": "2026-07-12T16:07:01Z",
+      "slug": "one-piece",
+      "categories": [
+        {
+          "id": 5000,
+          "name": "TV"
+        },
+        {
+          "id": 5070,
+          "name": "TV/Anime"
+        },
+        {
+          "id": 105000,
+          "name": null
+        },
+        {
+          "id": 105070,
+          "name": null
+        }
+      ],
+      "has_indexer_identity": true
+    },
+    {
+      "size": 494425929,
+      "mode": "all",
+      "protocol": "usenet",
+      "title": "[Erai-raws] One Piece - 1169 [720p CR WEB-DL AVC AAC][6E5A7BB3]",
+      "query": "One Piece",
+      "published_at": "2026-07-12T16:06:44Z",
+      "slug": "one-piece",
+      "categories": [
+        {
+          "id": 5000,
+          "name": "TV"
+        },
+        {
+          "id": 5070,
+          "name": "TV/Anime"
+        },
+        {
+          "id": 105000,
+          "name": null
+        },
+        {
+          "id": 105070,
+          "name": null
+        }
+      ],
+      "has_indexer_identity": true
+    },
+    {
+      "size": 496543609,
+      "mode": "all",
+      "protocol": "usenet",
+      "title": "[Erai-raws] One Piece - 1169 [720p CR WEB-DL AVC AAC][6E5A7BB3]",
+      "query": "One Piece",
+      "published_at": "2026-07-12T16:43:35Z",
       "slug": "one-piece",
       "categories": [
         {
@@ -17298,34 +17326,6 @@
       "has_indexer_identity": true
     },
     {
-      "size": 1630622250,
-      "mode": "all",
-      "protocol": "usenet",
-      "title": "[Erai-raws] One Piece - Heroines [1080p CR WEB-DL AVC AAC][MultiSub][0F375049]",
-      "query": "One Piece",
-      "published_at": "2026-07-07T20:27:07Z",
-      "slug": "one-piece",
-      "categories": [
-        {
-          "id": 5000,
-          "name": "TV"
-        },
-        {
-          "id": 5070,
-          "name": "TV/Anime"
-        },
-        {
-          "id": 105000,
-          "name": null
-        },
-        {
-          "id": 105070,
-          "name": null
-        }
-      ],
-      "has_indexer_identity": true
-    },
-    {
       "size": 513528119,
       "mode": "all",
       "protocol": "usenet",
@@ -17354,96 +17354,12 @@
       "has_indexer_identity": true
     },
     {
-      "size": 513595678,
-      "mode": "all",
-      "protocol": "usenet",
-      "title": "[Erai-raws] One Piece - Heroines [1080p CR WEBRip HEVC AAC][MultiSub][7770B0E2]",
-      "query": "One Piece",
-      "published_at": "2026-07-07T20:19:06Z",
-      "slug": "one-piece",
-      "categories": [
-        {
-          "id": 5000,
-          "name": "TV"
-        },
-        {
-          "id": 5070,
-          "name": "TV/Anime"
-        },
-        {
-          "id": 105000,
-          "name": null
-        },
-        {
-          "id": 105070,
-          "name": null
-        }
-      ],
-      "has_indexer_identity": true
-    },
-    {
-      "size": 506435326,
-      "mode": "all",
-      "protocol": "usenet",
-      "title": "[Erai-raws] One Piece - Heroines [720p CR WEB-DL AVC AAC][MultiSub][CEF6DD4C]",
-      "query": "One Piece",
-      "published_at": "2026-07-07T20:21:34Z",
-      "slug": "one-piece",
-      "categories": [
-        {
-          "id": 5000,
-          "name": "TV"
-        },
-        {
-          "id": 5070,
-          "name": "TV/Anime"
-        },
-        {
-          "id": 105000,
-          "name": null
-        },
-        {
-          "id": 105070,
-          "name": null
-        }
-      ],
-      "has_indexer_identity": true
-    },
-    {
       "size": 1614246097,
       "mode": "all",
       "protocol": "usenet",
       "title": "[Feibanyama] One Piece Heroines [IQIYI WebRip 2160p HEVC AAC Multi-Subs]",
       "query": "One Piece",
       "published_at": "2026-07-09T07:21:38Z",
-      "slug": "one-piece",
-      "categories": [
-        {
-          "id": 5000,
-          "name": "TV"
-        },
-        {
-          "id": 5070,
-          "name": "TV/Anime"
-        },
-        {
-          "id": 105000,
-          "name": null
-        },
-        {
-          "id": 105070,
-          "name": null
-        }
-      ],
-      "has_indexer_identity": true
-    },
-    {
-      "size": 1614759008,
-      "mode": "all",
-      "protocol": "usenet",
-      "title": "[Feibanyama] One Piece Heroines [IQIYI WebRip 2160p HEVC AAC Multi-Subs]",
-      "query": "One Piece",
-      "published_at": "2026-07-07T01:50:27Z",
       "slug": "one-piece",
       "categories": [
         {
@@ -17886,12 +17802,12 @@
       "has_indexer_identity": true
     },
     {
-      "size": 1617458023,
+      "size": 1637963731,
       "mode": "all",
       "protocol": "usenet",
-      "title": "[SubsPlease] One Piece Novel Heroines (1080p) [951AD374]",
+      "title": "[SubsPlease] One Piece - 1169 (1080p) [F1E2F6BA]",
       "query": "One Piece",
-      "published_at": "2026-07-08T20:20:35Z",
+      "published_at": "2026-07-12T16:20:27Z",
       "slug": "one-piece",
       "categories": [
         {
@@ -17914,12 +17830,96 @@
       "has_indexer_identity": true
     },
     {
-      "size": 541067320,
+      "size": 435080729,
       "mode": "all",
       "protocol": "usenet",
-      "title": "[YE] One Piece Heroines (THK 1280x720 x265 10bit AAC)",
+      "title": "[SubsPlease] One Piece - 1169 (480p) [7A04C4CF]",
       "query": "One Piece",
-      "published_at": "2026-07-08T05:42:16Z",
+      "published_at": "2026-07-12T16:11:46Z",
+      "slug": "one-piece",
+      "categories": [
+        {
+          "id": 5000,
+          "name": "TV"
+        },
+        {
+          "id": 5070,
+          "name": "TV/Anime"
+        },
+        {
+          "id": 105000,
+          "name": null
+        },
+        {
+          "id": 105070,
+          "name": null
+        }
+      ],
+      "has_indexer_identity": true
+    },
+    {
+      "size": 438286049,
+      "mode": "all",
+      "protocol": "usenet",
+      "title": "[SubsPlease] One Piece - 1169 (480p) [7A04C4CF]",
+      "query": "One Piece",
+      "published_at": "2026-07-12T16:38:15Z",
+      "slug": "one-piece",
+      "categories": [
+        {
+          "id": 5000,
+          "name": "TV"
+        },
+        {
+          "id": 5070,
+          "name": "TV/Anime"
+        },
+        {
+          "id": 105000,
+          "name": null
+        },
+        {
+          "id": 105070,
+          "name": null
+        }
+      ],
+      "has_indexer_identity": true
+    },
+    {
+      "size": 836986424,
+      "mode": "all",
+      "protocol": "usenet",
+      "title": "[SubsPlease] One Piece - 1169 (720p) [E0F45B42]",
+      "query": "One Piece",
+      "published_at": "2026-07-12T16:12:08Z",
+      "slug": "one-piece",
+      "categories": [
+        {
+          "id": 5000,
+          "name": "TV"
+        },
+        {
+          "id": 5070,
+          "name": "TV/Anime"
+        },
+        {
+          "id": 105000,
+          "name": null
+        },
+        {
+          "id": 105070,
+          "name": null
+        }
+      ],
+      "has_indexer_identity": true
+    },
+    {
+      "size": 837920493,
+      "mode": "all",
+      "protocol": "usenet",
+      "title": "[SubsPlease] One Piece - 1169 (720p) [E0F45B42]",
+      "query": "One Piece",
+      "published_at": "2026-07-12T16:51:13Z",
       "slug": "one-piece",
       "categories": [
         {
@@ -18004,34 +18004,6 @@
       "title": "ONE.PIECE.HEROINES.2026.REPACK.1080p.CR.WEB-DL.DDP2.0.H.264-AnoZu",
       "query": "One Piece",
       "published_at": "2026-07-10T20:12:51Z",
-      "slug": "one-piece",
-      "categories": [
-        {
-          "id": 5000,
-          "name": "TV"
-        },
-        {
-          "id": 5070,
-          "name": "TV/Anime"
-        },
-        {
-          "id": 105000,
-          "name": null
-        },
-        {
-          "id": 105070,
-          "name": null
-        }
-      ],
-      "has_indexer_identity": true
-    },
-    {
-      "size": 103312479,
-      "mode": "anime",
-      "protocol": "usenet",
-      "title": "One Piece - 1101v2 - 720p WEB x264 -NanDesuKa (CR)",
-      "query": "One Piece",
-      "published_at": "2026-07-07T00:58:38Z",
       "slug": "one-piece",
       "categories": [
         {
@@ -18474,6 +18446,146 @@
       "has_indexer_identity": true
     },
     {
+      "size": 1644099189,
+      "mode": "anime",
+      "protocol": "usenet",
+      "title": "[Erai-raws] One Piece - 1169 [1080p CR WEB-DL AVC AAC][C22933AE]",
+      "query": "One Piece",
+      "published_at": "2026-07-12T16:11:09Z",
+      "slug": "one-piece",
+      "categories": [
+        {
+          "id": 5000,
+          "name": "TV"
+        },
+        {
+          "id": 5070,
+          "name": "TV/Anime"
+        },
+        {
+          "id": 105000,
+          "name": null
+        },
+        {
+          "id": 105070,
+          "name": null
+        }
+      ],
+      "has_indexer_identity": true
+    },
+    {
+      "size": 275498262,
+      "mode": "anime",
+      "protocol": "usenet",
+      "title": "[Erai-raws] One Piece - 1169 [480p CR WEB-DL AVC AAC][967589A2]",
+      "query": "One Piece",
+      "published_at": "2026-07-12T16:27:04Z",
+      "slug": "one-piece",
+      "categories": [
+        {
+          "id": 5000,
+          "name": "TV"
+        },
+        {
+          "id": 5070,
+          "name": "TV/Anime"
+        },
+        {
+          "id": 105000,
+          "name": null
+        },
+        {
+          "id": 105070,
+          "name": null
+        }
+      ],
+      "has_indexer_identity": true
+    },
+    {
+      "size": 275508496,
+      "mode": "anime",
+      "protocol": "usenet",
+      "title": "[Erai-raws] One Piece - 1169 [480p CR WEB-DL AVC AAC][967589A2]",
+      "query": "One Piece",
+      "published_at": "2026-07-12T16:07:01Z",
+      "slug": "one-piece",
+      "categories": [
+        {
+          "id": 5000,
+          "name": "TV"
+        },
+        {
+          "id": 5070,
+          "name": "TV/Anime"
+        },
+        {
+          "id": 105000,
+          "name": null
+        },
+        {
+          "id": 105070,
+          "name": null
+        }
+      ],
+      "has_indexer_identity": true
+    },
+    {
+      "size": 494425929,
+      "mode": "anime",
+      "protocol": "usenet",
+      "title": "[Erai-raws] One Piece - 1169 [720p CR WEB-DL AVC AAC][6E5A7BB3]",
+      "query": "One Piece",
+      "published_at": "2026-07-12T16:06:44Z",
+      "slug": "one-piece",
+      "categories": [
+        {
+          "id": 5000,
+          "name": "TV"
+        },
+        {
+          "id": 5070,
+          "name": "TV/Anime"
+        },
+        {
+          "id": 105000,
+          "name": null
+        },
+        {
+          "id": 105070,
+          "name": null
+        }
+      ],
+      "has_indexer_identity": true
+    },
+    {
+      "size": 496543609,
+      "mode": "anime",
+      "protocol": "usenet",
+      "title": "[Erai-raws] One Piece - 1169 [720p CR WEB-DL AVC AAC][6E5A7BB3]",
+      "query": "One Piece",
+      "published_at": "2026-07-12T16:43:35Z",
+      "slug": "one-piece",
+      "categories": [
+        {
+          "id": 5000,
+          "name": "TV"
+        },
+        {
+          "id": 5070,
+          "name": "TV/Anime"
+        },
+        {
+          "id": 105000,
+          "name": null
+        },
+        {
+          "id": 105070,
+          "name": null
+        }
+      ],
+      "has_indexer_identity": true
+    },
+    {
       "size": 1624270508,
       "mode": "anime",
       "protocol": "usenet",
@@ -18586,96 +18698,12 @@
       "has_indexer_identity": true
     },
     {
-      "size": 513595678,
-      "mode": "anime",
-      "protocol": "usenet",
-      "title": "[Erai-raws] One Piece - Heroines [1080p CR WEBRip HEVC AAC][MultiSub][7770B0E2]",
-      "query": "One Piece",
-      "published_at": "2026-07-07T20:19:06Z",
-      "slug": "one-piece",
-      "categories": [
-        {
-          "id": 5000,
-          "name": "TV"
-        },
-        {
-          "id": 5070,
-          "name": "TV/Anime"
-        },
-        {
-          "id": 105000,
-          "name": null
-        },
-        {
-          "id": 105070,
-          "name": null
-        }
-      ],
-      "has_indexer_identity": true
-    },
-    {
-      "size": 506435326,
-      "mode": "anime",
-      "protocol": "usenet",
-      "title": "[Erai-raws] One Piece - Heroines [720p CR WEB-DL AVC AAC][MultiSub][CEF6DD4C]",
-      "query": "One Piece",
-      "published_at": "2026-07-07T20:21:34Z",
-      "slug": "one-piece",
-      "categories": [
-        {
-          "id": 5000,
-          "name": "TV"
-        },
-        {
-          "id": 5070,
-          "name": "TV/Anime"
-        },
-        {
-          "id": 105000,
-          "name": null
-        },
-        {
-          "id": 105070,
-          "name": null
-        }
-      ],
-      "has_indexer_identity": true
-    },
-    {
       "size": 1614246097,
       "mode": "anime",
       "protocol": "usenet",
       "title": "[Feibanyama] One Piece Heroines [IQIYI WebRip 2160p HEVC AAC Multi-Subs]",
       "query": "One Piece",
       "published_at": "2026-07-09T07:21:38Z",
-      "slug": "one-piece",
-      "categories": [
-        {
-          "id": 5000,
-          "name": "TV"
-        },
-        {
-          "id": 5070,
-          "name": "TV/Anime"
-        },
-        {
-          "id": 105000,
-          "name": null
-        },
-        {
-          "id": 105070,
-          "name": null
-        }
-      ],
-      "has_indexer_identity": true
-    },
-    {
-      "size": 1614759008,
-      "mode": "anime",
-      "protocol": "usenet",
-      "title": "[Feibanyama] One Piece Heroines [IQIYI WebRip 2160p HEVC AAC Multi-Subs]",
-      "query": "One Piece",
-      "published_at": "2026-07-07T01:50:27Z",
       "slug": "one-piece",
       "categories": [
         {
@@ -18754,68 +18782,12 @@
       "has_indexer_identity": true
     },
     {
-      "size": 1476008525,
-      "mode": "anime",
-      "protocol": "usenet",
-      "title": "[HatSubs] One Piece 1094-1099 (BD 1080p 10-bit)",
-      "query": "One Piece",
-      "published_at": "2026-07-06T18:43:51Z",
-      "slug": "one-piece",
-      "categories": [
-        {
-          "id": 5000,
-          "name": "TV"
-        },
-        {
-          "id": 5070,
-          "name": "TV/Anime"
-        },
-        {
-          "id": 105000,
-          "name": null
-        },
-        {
-          "id": 105070,
-          "name": null
-        }
-      ],
-      "has_indexer_identity": true
-    },
-    {
       "size": 2380373676,
       "mode": "anime",
       "protocol": "usenet",
       "title": "[HatSubs] One Piece 1095 (BD 1080p 10-bit Opus) [92BC0124]",
       "query": "One Piece",
       "published_at": "2026-07-09T01:38:09Z",
-      "slug": "one-piece",
-      "categories": [
-        {
-          "id": 5000,
-          "name": "TV"
-        },
-        {
-          "id": 5070,
-          "name": "TV/Anime"
-        },
-        {
-          "id": 105000,
-          "name": null
-        },
-        {
-          "id": 105070,
-          "name": null
-        }
-      ],
-      "has_indexer_identity": true
-    },
-    {
-      "size": 2381173165,
-      "mode": "anime",
-      "protocol": "usenet",
-      "title": "[HatSubs] One Piece 1095 (BD 1080p 10-bit Opus) [92BC0124]",
-      "query": "One Piece",
-      "published_at": "2026-07-06T18:32:34Z",
       "slug": "one-piece",
       "categories": [
         {
@@ -18866,68 +18838,12 @@
       "has_indexer_identity": true
     },
     {
-      "size": 2364891959,
-      "mode": "anime",
-      "protocol": "usenet",
-      "title": "[HatSubs] One Piece 1096 (BD 1080p 10-bit Opus) [34AE9755]",
-      "query": "One Piece",
-      "published_at": "2026-07-06T18:34:09Z",
-      "slug": "one-piece",
-      "categories": [
-        {
-          "id": 5000,
-          "name": "TV"
-        },
-        {
-          "id": 5070,
-          "name": "TV/Anime"
-        },
-        {
-          "id": 105000,
-          "name": null
-        },
-        {
-          "id": 105070,
-          "name": null
-        }
-      ],
-      "has_indexer_identity": true
-    },
-    {
       "size": 2294246108,
       "mode": "anime",
       "protocol": "usenet",
       "title": "[HatSubs] One Piece 1097 (BD 1080p 10-bit Opus) [AE550B14]",
       "query": "One Piece",
       "published_at": "2026-07-09T01:48:32Z",
-      "slug": "one-piece",
-      "categories": [
-        {
-          "id": 5000,
-          "name": "TV"
-        },
-        {
-          "id": 5070,
-          "name": "TV/Anime"
-        },
-        {
-          "id": 105000,
-          "name": null
-        },
-        {
-          "id": 105070,
-          "name": null
-        }
-      ],
-      "has_indexer_identity": true
-    },
-    {
-      "size": 2295040046,
-      "mode": "anime",
-      "protocol": "usenet",
-      "title": "[HatSubs] One Piece 1097 (BD 1080p 10-bit Opus) [AE550B14]",
-      "query": "One Piece",
-      "published_at": "2026-07-06T18:36:00Z",
       "slug": "one-piece",
       "categories": [
         {
@@ -18978,68 +18894,12 @@
       "has_indexer_identity": true
     },
     {
-      "size": 2760093796,
-      "mode": "anime",
-      "protocol": "usenet",
-      "title": "[HatSubs] One Piece 1098 (BD 1080p 10-bit Opus) [88442231]",
-      "query": "One Piece",
-      "published_at": "2026-07-06T18:37:45Z",
-      "slug": "one-piece",
-      "categories": [
-        {
-          "id": 5000,
-          "name": "TV"
-        },
-        {
-          "id": 5070,
-          "name": "TV/Anime"
-        },
-        {
-          "id": 105000,
-          "name": null
-        },
-        {
-          "id": 105070,
-          "name": null
-        }
-      ],
-      "has_indexer_identity": true
-    },
-    {
       "size": 2469450019,
       "mode": "anime",
       "protocol": "usenet",
       "title": "[HatSubs] One Piece 1099 (BD 1080p 10-bit Opus) [131D7544]",
       "query": "One Piece",
       "published_at": "2026-07-09T01:58:20Z",
-      "slug": "one-piece",
-      "categories": [
-        {
-          "id": 5000,
-          "name": "TV"
-        },
-        {
-          "id": 5070,
-          "name": "TV/Anime"
-        },
-        {
-          "id": 105000,
-          "name": null
-        },
-        {
-          "id": 105070,
-          "name": null
-        }
-      ],
-      "has_indexer_identity": true
-    },
-    {
-      "size": 2470269420,
-      "mode": "anime",
-      "protocol": "usenet",
-      "title": "[HatSubs] One Piece 1099 (BD 1080p 10-bit Opus) [131D7544]",
-      "query": "One Piece",
-      "published_at": "2026-07-06T18:40:07Z",
       "slug": "one-piece",
       "categories": [
         {
@@ -19264,6 +19124,146 @@
       "title": "[MicroHatSubs] One Piece 1099 (BD 1080p AV1 Opus) [83E0B39A]",
       "query": "One Piece",
       "published_at": "2026-07-09T01:13:24Z",
+      "slug": "one-piece",
+      "categories": [
+        {
+          "id": 5000,
+          "name": "TV"
+        },
+        {
+          "id": 5070,
+          "name": "TV/Anime"
+        },
+        {
+          "id": 105000,
+          "name": null
+        },
+        {
+          "id": 105070,
+          "name": null
+        }
+      ],
+      "has_indexer_identity": true
+    },
+    {
+      "size": 1637963731,
+      "mode": "anime",
+      "protocol": "usenet",
+      "title": "[SubsPlease] One Piece - 1169 (1080p) [F1E2F6BA]",
+      "query": "One Piece",
+      "published_at": "2026-07-12T16:20:27Z",
+      "slug": "one-piece",
+      "categories": [
+        {
+          "id": 5000,
+          "name": "TV"
+        },
+        {
+          "id": 5070,
+          "name": "TV/Anime"
+        },
+        {
+          "id": 105000,
+          "name": null
+        },
+        {
+          "id": 105070,
+          "name": null
+        }
+      ],
+      "has_indexer_identity": true
+    },
+    {
+      "size": 435080729,
+      "mode": "anime",
+      "protocol": "usenet",
+      "title": "[SubsPlease] One Piece - 1169 (480p) [7A04C4CF]",
+      "query": "One Piece",
+      "published_at": "2026-07-12T16:11:46Z",
+      "slug": "one-piece",
+      "categories": [
+        {
+          "id": 5000,
+          "name": "TV"
+        },
+        {
+          "id": 5070,
+          "name": "TV/Anime"
+        },
+        {
+          "id": 105000,
+          "name": null
+        },
+        {
+          "id": 105070,
+          "name": null
+        }
+      ],
+      "has_indexer_identity": true
+    },
+    {
+      "size": 438286049,
+      "mode": "anime",
+      "protocol": "usenet",
+      "title": "[SubsPlease] One Piece - 1169 (480p) [7A04C4CF]",
+      "query": "One Piece",
+      "published_at": "2026-07-12T16:38:15Z",
+      "slug": "one-piece",
+      "categories": [
+        {
+          "id": 5000,
+          "name": "TV"
+        },
+        {
+          "id": 5070,
+          "name": "TV/Anime"
+        },
+        {
+          "id": 105000,
+          "name": null
+        },
+        {
+          "id": 105070,
+          "name": null
+        }
+      ],
+      "has_indexer_identity": true
+    },
+    {
+      "size": 836986424,
+      "mode": "anime",
+      "protocol": "usenet",
+      "title": "[SubsPlease] One Piece - 1169 (720p) [E0F45B42]",
+      "query": "One Piece",
+      "published_at": "2026-07-12T16:12:08Z",
+      "slug": "one-piece",
+      "categories": [
+        {
+          "id": 5000,
+          "name": "TV"
+        },
+        {
+          "id": 5070,
+          "name": "TV/Anime"
+        },
+        {
+          "id": 105000,
+          "name": null
+        },
+        {
+          "id": 105070,
+          "name": null
+        }
+      ],
+      "has_indexer_identity": true
+    },
+    {
+      "size": 837920493,
+      "mode": "anime",
+      "protocol": "usenet",
+      "title": "[SubsPlease] One Piece - 1169 (720p) [E0F45B42]",
+      "query": "One Piece",
+      "published_at": "2026-07-12T16:51:13Z",
       "slug": "one-piece",
       "categories": [
         {
@@ -38819,9 +38819,6 @@
   "titles": [
     {
       "slug": "attack-on-titan",
-      "tmdb_id": 1429,
-      "automatic_wrong_mappings": 0,
-      "passed": true,
       "checks": [
         {
           "id": "absolute-entries",
@@ -38930,13 +38927,13 @@
             "observed": true
           }
         }
-      ]
+      ],
+      "automatic_wrong_mappings": 0,
+      "passed": true,
+      "tmdb_id": 1429
     },
     {
       "slug": "bleach",
-      "tmdb_id": 30984,
-      "automatic_wrong_mappings": 0,
-      "passed": true,
       "checks": [
         {
           "id": "absolute-entries",
@@ -39055,13 +39052,13 @@
             "observed": true
           }
         }
-      ]
+      ],
+      "automatic_wrong_mappings": 0,
+      "passed": true,
+      "tmdb_id": 30984
     },
     {
       "slug": "demon-slayer",
-      "tmdb_id": 85937,
-      "automatic_wrong_mappings": 0,
-      "passed": true,
       "checks": [
         {
           "id": "absolute-entries",
@@ -39163,13 +39160,13 @@
             "observed": true
           }
         }
-      ]
+      ],
+      "automatic_wrong_mappings": 0,
+      "passed": true,
+      "tmdb_id": 85937
     },
     {
       "slug": "one-piece",
-      "tmdb_id": 37854,
-      "automatic_wrong_mappings": 0,
-      "passed": true,
       "checks": [
         {
           "id": "absolute-entries",
@@ -39307,13 +39304,13 @@
             "observed": true
           }
         }
-      ]
+      ],
+      "automatic_wrong_mappings": 0,
+      "passed": true,
+      "tmdb_id": 37854
     },
     {
       "slug": "pokemon",
-      "tmdb_id": 60572,
-      "automatic_wrong_mappings": 0,
-      "passed": true,
       "checks": [
         {
           "id": "absolute-entries",
@@ -39459,13 +39456,13 @@
             "observed": true
           }
         }
-      ]
+      ],
+      "automatic_wrong_mappings": 0,
+      "passed": true,
+      "tmdb_id": 60572
     },
     {
       "slug": "re-zero",
-      "tmdb_id": 65942,
-      "automatic_wrong_mappings": 0,
-      "passed": true,
       "checks": [
         {
           "id": "absolute-entries",
@@ -39573,13 +39570,13 @@
             "observed": true
           }
         }
-      ]
+      ],
+      "automatic_wrong_mappings": 0,
+      "passed": true,
+      "tmdb_id": 65942
     },
     {
       "slug": "your-name",
-      "tmdb_id": 372058,
-      "automatic_wrong_mappings": 0,
-      "passed": true,
       "checks": [
         {
           "id": "absolute-entries",
@@ -39710,20 +39707,70 @@
             "observed": false
           }
         }
-      ]
+      ],
+      "automatic_wrong_mappings": 0,
+      "passed": true,
+      "tmdb_id": 372058
     }
   ],
-  "decision": "tmdb_sufficient",
-  "a0_status": "pass",
+  "prowlarr_checks": [
+    {
+      "id": "prowlarr-anime-category-sample",
+      "status": "pass",
+      "family": "prowlarr_contract",
+      "evidence": {
+        "observed": 700
+      }
+    },
+    {
+      "id": "prowlarr-categories",
+      "status": "pass",
+      "family": "prowlarr_contract",
+      "evidence": {
+        "complete": 1400,
+        "sampled": 1400
+      }
+    },
+    {
+      "id": "prowlarr-indexer-identity",
+      "status": "pass",
+      "family": "prowlarr_contract",
+      "evidence": {
+        "complete": 1400,
+        "sampled": 1400
+      }
+    },
+    {
+      "id": "prowlarr-published-at",
+      "status": "pass",
+      "family": "prowlarr_contract",
+      "evidence": {
+        "complete": 1400,
+        "sampled": 1400
+      }
+    },
+    {
+      "id": "prowlarr-sample",
+      "status": "pass",
+      "family": "prowlarr_contract",
+      "evidence": {
+        "observed": 1400
+      }
+    }
+  ],
+  "blocking_prowlarr_gaps": [],
   "behavior_contracts": {
     "status": "recorded_for_future_phases",
+    "recorded": 24,
     "by_phase": {
       "A1": 4,
       "A2": 15,
       "A3": 5
-    },
-    "recorded": 24
+    }
   },
+  "decision": "tmdb_sufficient",
+  "a0_status": "pass",
+  "recommended_next_action": "Proceed to A1 with TMDB as the metadata provider.",
   "behavior_contract_inventory": [
     {
       "id": "absolute-over-99",
@@ -40214,52 +40261,5 @@
         "reason": "unknown_video"
       }
     }
-  ],
-  "blocking_prowlarr_gaps": [],
-  "prowlarr_checks": [
-    {
-      "id": "prowlarr-anime-category-sample",
-      "status": "pass",
-      "family": "prowlarr_contract",
-      "evidence": {
-        "observed": 700
-      }
-    },
-    {
-      "id": "prowlarr-categories",
-      "status": "pass",
-      "family": "prowlarr_contract",
-      "evidence": {
-        "complete": 1400,
-        "sampled": 1400
-      }
-    },
-    {
-      "id": "prowlarr-indexer-identity",
-      "status": "pass",
-      "family": "prowlarr_contract",
-      "evidence": {
-        "complete": 1400,
-        "sampled": 1400
-      }
-    },
-    {
-      "id": "prowlarr-published-at",
-      "status": "pass",
-      "family": "prowlarr_contract",
-      "evidence": {
-        "complete": 1400,
-        "sampled": 1400
-      }
-    },
-    {
-      "id": "prowlarr-sample",
-      "status": "pass",
-      "family": "prowlarr_contract",
-      "evidence": {
-        "observed": 1400
-      }
-    }
-  ],
-  "recommended_next_action": "Proceed to A1 with TMDB as the metadata provider."
+  ]
 }

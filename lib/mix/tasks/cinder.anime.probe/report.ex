@@ -287,7 +287,12 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.Report do
 
   defp prowlarr_checks(releases) do
     total = length(releases)
-    anime = Enum.count(releases, &(&1.mode == "anime"))
+
+    anime =
+      Enum.count(releases, fn release ->
+        release.mode == "anime" and Enum.any?(release.categories, &(&1.id == 5070))
+      end)
+
     categorized = Enum.count(releases, &(Map.get(&1, :categories, []) != []))
 
     published =

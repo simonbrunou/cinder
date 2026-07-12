@@ -523,7 +523,10 @@ Commit: `feat: add read-only anime provider probe`
 
 Create synthetic observations proving:
 
-1. every discovery query returns the expected TMDB ID, required group types exist, Absolute entry counts meet minima, specials exist, and the aggregate Prowlarr sample includes uncategorized and category-5070 results with complete required fields -> `tmdb_sufficient` plus `a0_status: pass`;
+1. every discovery query returns the expected TMDB ID, required group types exist, Absolute entry
+   counts meet minima, specials exist, and the aggregate Prowlarr sample includes complete results
+   plus an anime-mode release that actually carries integer category ID 5070 -> `tmdb_sufficient`
+   plus `a0_status: pass`;
 2. discovery aliases fail -> `anidb_required`;
 3. only required absolute/order coverage fails -> `tvdb_required`;
 4. both alias and order families fail -> `provider_council_required`;
@@ -573,7 +576,10 @@ For each title, emit checks with stable IDs:
 - `absolute-entries` passes when summed unique episode IDs across type-2 details meet `min_absolute_entries`;
 - `group-integrity` passes when every fetched group entry has an integer TMDB episode ID and every `{group_order, order}` coordinate maps to exactly one episode ID inside one episode group;
 - `prowlarr-results:<query>:<mode>` records a per-query count for evidence but does not fail a title merely because the configured indexers currently have no matching release;
-- aggregate `prowlarr-sample` and `prowlarr-anime-category-sample` pass only when at least one result is observed overall and at least one came from a category-5070 request;
+- aggregate `prowlarr-sample` passes when at least one result is observed overall;
+- aggregate `prowlarr-anime-category-sample` passes only when at least one returned anime-mode
+  release contains a validated category object with integer `id == 5070`; issuing a
+  category-5070 request alone is insufficient evidence;
 - aggregate `prowlarr-categories` and `prowlarr-published-at` record coverage counts and pass only when every sampled result contains a non-empty category list and publication timestamp.
 - aggregate `prowlarr-indexer-identity` records availability coverage and passes only when every
   sampled result has `has_indexer_identity == true`; it is a blocking Prowlarr contract check and
