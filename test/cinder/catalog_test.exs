@@ -2,6 +2,7 @@ defmodule Cinder.CatalogTest do
   use Cinder.DataCase, async: true
 
   import Cinder.CatalogFixtures
+  import ExUnit.CaptureLog
   import Mox
 
   alias Cinder.Catalog
@@ -90,6 +91,29 @@ defmodule Cinder.CatalogTest do
                )
 
       assert Repo.get!(Movie, movie.id).status == :cancelled
+    end
+
+    test "guarded transition broadcasts exactly once and a stale guard stays silent" do
+      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 4245, title: "M"})
+      Catalog.subscribe()
+
+      {:ok, searching} = Catalog.transition(movie, %{status: :searching})
+      assert_receive {:movie_updated, %Movie{id: id, status: :searching}}
+      assert id == movie.id
+
+      assert {:ok, %Movie{status: :downloading}} =
+               Catalog.transition(searching, %{status: :downloading, download_id: "guarded"},
+                 expect: :searching
+               )
+
+      assert_receive {:movie_updated, %Movie{id: ^id, status: :downloading}}
+      refute_receive {:movie_updated, %Movie{id: ^id}}
+
+      assert {:error, :stale_status} =
+               Catalog.transition(searching, %{status: :downloaded}, expect: :searching)
+
+      refute_receive {:movie_updated, %Movie{id: ^id}}
+      assert Repo.get!(Movie, id).status == :downloading
     end
 
     test "transition/2 persists file_path" do
@@ -385,7 +409,10 @@ defmodule Cinder.CatalogTest do
       # it logs, returns :ok, and inserts nothing.
       ghost = %Movie{id: 999_999, release_title: "Ghost.Release"}
 
-      assert :ok = Catalog.block_release(ghost, :download_error)
+      log = capture_log(fn -> assert :ok = Catalog.block_release(ghost, :download_error) end)
+
+      assert log =~ "block_release raised:"
+      assert log =~ "foreign_key_constraint"
       assert Repo.all(BlockedRelease) == []
     end
 
@@ -420,7 +447,7 @@ defmodule Cinder.CatalogTest do
           imported_resolution: "1080p"
         )
 
-      Cinder.Download.ClientMock |> expect(:add, fn _ -> {:ok, "dl-9"} end)
+      Cinder.Download.ClientMock |> expect(:add, fn _, _opts -> {:ok, "dl-9"} end)
 
       assert {:ok, up} = Catalog.manual_grab_movie(movie, release)
       assert up.status == :upgrading
@@ -432,7 +459,7 @@ defmodule Cinder.CatalogTest do
 
     test "a parked movie goes :downloading", %{release: release} do
       movie = movie_fixture(status: :no_match)
-      Cinder.Download.ClientMock |> expect(:add, fn _ -> {:ok, "dl-7"} end)
+      Cinder.Download.ClientMock |> expect(:add, fn _, _opts -> {:ok, "dl-7"} end)
       assert {:ok, dl} = Catalog.manual_grab_movie(movie, release)
       assert dl.status == :downloading
     end
@@ -442,16 +469,10 @@ defmodule Cinder.CatalogTest do
       assert Catalog.manual_grab_movie(movie, release) == {:error, :not_grabbable}
     end
 
-    # FIX 3: the client.add side-effect happens before the DB write. If the movie row was deleted
-    # mid-action, transition/2 raises StaleEntryError — the just-added download must be removed so
-    # it isn't orphaned in qBittorrent/SABnzbd, not left untracked.
-    test "a movie deleted mid-action removes the just-added download and returns :stale_entry",
+    test "a movie deleted mid-action is rejected before add and returns :stale_entry",
          %{release: release} do
       movie = movie_fixture(status: :no_match)
       Repo.delete!(movie)
-
-      Cinder.Download.ClientMock |> expect(:add, fn _ -> {:ok, "dl-stale"} end)
-      Cinder.Download.ClientMock |> expect(:remove, fn "dl-stale", _opts -> :ok end)
 
       assert Catalog.manual_grab_movie(movie, release) == {:error, :stale_entry}
     end

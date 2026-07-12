@@ -56,6 +56,19 @@ defmodule CinderWeb.UserLive.Registration do
             autocomplete="new-password"
             required
           />
+          <div :if={@bootstrap_required}>
+            <label for="bootstrap-token" class="label">
+              <span class="label-text">{gettext("Bootstrap token")}</span>
+            </label>
+            <input
+              id="bootstrap-token"
+              name="bootstrap_token"
+              type="password"
+              autocomplete="off"
+              required
+              class="input input-bordered w-full"
+            />
+          </div>
 
           <.button phx-disable-with={gettext("Creating account…")} class="w-full">
             {gettext("Create an account")}
@@ -75,13 +88,15 @@ defmodule CinderWeb.UserLive.Registration do
   def mount(_params, _session, socket) do
     changeset = User.registration_changeset(%User{}, %{}, validate_unique: false)
 
-    {:ok, socket |> assign(trigger_submit: false) |> assign_form(changeset),
-     temporary_assigns: [form: nil]}
+    {:ok,
+     socket
+     |> assign(trigger_submit: false, bootstrap_required: Accounts.list_users() == [])
+     |> assign_form(changeset), temporary_assigns: [form: nil]}
   end
 
   @impl true
-  def handle_event("save", %{"user" => user_params}, socket) do
-    case Accounts.register_user(user_params) do
+  def handle_event("save", %{"user" => user_params} = params, socket) do
+    case Accounts.register_user(user_params, params["bootstrap_token"]) do
       {:ok, _user} ->
         {:noreply,
          socket
@@ -91,6 +106,14 @@ defmodule CinderWeb.UserLive.Registration do
 
       {:error, %Ecto.Changeset{} = changeset} ->
         {:noreply, assign_form(socket, changeset)}
+
+      {:error, :invalid_bootstrap_token} ->
+        changeset = User.registration_changeset(%User{}, user_params, validate_unique: false)
+
+        {:noreply,
+         socket
+         |> put_flash(:error, gettext("Invalid bootstrap token."))
+         |> assign_form(changeset)}
     end
   end
 

@@ -11,8 +11,12 @@ defmodule Cinder.Library.MediaServer.Jellyfin do
   """
   @behaviour Cinder.Library.MediaServer
 
+  alias Cinder.HTTPPolicy
+
+  @max_response_bytes 4 * 1024 * 1024
+
   @impl true
-  def scan(_kind), do: config() |> req() |> Req.post(url: "/Library/Refresh") |> result()
+  def scan(_kind), do: config() |> request(:post, "/Library/Refresh") |> result()
 
   @impl true
   # A nil/blank base_url makes Req raise (CaseClauseError in put_base_url) rather than
@@ -26,10 +30,10 @@ defmodule Cinder.Library.MediaServer.Jellyfin do
         {:error, :not_configured}
 
       _ ->
-        config
-        |> req()
-        |> Req.get(
-          url: "/System/Info",
+        request(
+          config,
+          :get,
+          "/System/Info",
           receive_timeout: 3_000,
           retry: false,
           connect_options: [timeout: 3_000]
@@ -43,10 +47,21 @@ defmodule Cinder.Library.MediaServer.Jellyfin do
   defp req(config) do
     [
       base_url: Keyword.get(config, :url),
+      receive_timeout: 15_000,
+      pool_timeout: 5_000,
+      connect_options: [timeout: 5_000],
       headers: [{"x-emby-token", Keyword.get(config, :api_key)}]
     ]
     |> Keyword.merge(Keyword.get(config, :req_options, []))
+    |> Keyword.put(:redirect, false)
     |> Req.new()
+  end
+
+  defp request(config, method, url, options \\ []) do
+    config
+    |> req()
+    |> Req.merge([method: method, url: url] ++ options)
+    |> HTTPPolicy.bounded_request(@max_response_bytes)
   end
 
   defp result({:ok, %{status: status}}) when status in 200..299, do: :ok

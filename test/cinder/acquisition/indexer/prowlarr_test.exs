@@ -14,7 +14,7 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
         %{
           "title" => "Inception.2010.1080p.BluRay.x264-RARBG",
           "size" => 8_000_000_000,
-          "downloadUrl" => "http://prowlarr/file/1",
+          "downloadUrl" => "http://prowlarr:9696/file/1",
           "seeders" => 50,
           "protocol" => "torrent"
         },
@@ -28,8 +28,14 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
         %{
           "title" => "Inception.2010.1080p.WEB-DL-GRP",
           "size" => 9_000_000_000,
-          "downloadUrl" => "http://prowlarr/getnzb/3",
+          "downloadUrl" => "http://prowlarr:9696/getnzb/3",
           "protocol" => "usenet"
+        },
+        %{
+          "title" => "Inception.2010.720p.WEB-DL-GRP",
+          "size" => 4_000_000_000,
+          "downloadUrl" => "https://provider.test/file/4",
+          "protocol" => "torrent"
         }
       ])
     end)
@@ -40,20 +46,30 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
              %{
                title: "Inception.2010.1080p.BluRay.x264-RARBG",
                size: 8_000_000_000,
-               download_url: "http://prowlarr/file/1",
+               download_url: "http://prowlarr:9696/file/1",
+               download_url_origin: "http://prowlarr:9696",
                protocol: :torrent
              },
              %{
                title: "Inception.2010.2160p.WEB-DL-GRP",
                size: 40_000_000_000,
                download_url: "magnet:?xt=urn:btih:abc",
+               download_url_origin: nil,
                protocol: :torrent
              },
              %{
                title: "Inception.2010.1080p.WEB-DL-GRP",
                size: 9_000_000_000,
-               download_url: "http://prowlarr/getnzb/3",
+               download_url: "http://prowlarr:9696/getnzb/3",
+               download_url_origin: "http://prowlarr:9696",
                protocol: :usenet
+             },
+             %{
+               title: "Inception.2010.720p.WEB-DL-GRP",
+               size: 4_000_000_000,
+               download_url: "https://provider.test/file/4",
+               download_url_origin: nil,
+               protocol: :torrent
              }
            ]
   end
@@ -69,7 +85,7 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
         %{
           "title" => "Breaking.Bad.S01E01.1080p.BluRay.x264-GRP",
           "size" => 2_000_000_000,
-          "downloadUrl" => "http://prowlarr/file/1",
+          "downloadUrl" => "http://prowlarr:9696/file/1",
           "seeders" => 30,
           "protocol" => "torrent"
         }
@@ -81,7 +97,8 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
     assert result == %{
              title: "Breaking.Bad.S01E01.1080p.BluRay.x264-GRP",
              size: 2_000_000_000,
-             download_url: "http://prowlarr/file/1",
+             download_url: "http://prowlarr:9696/file/1",
+             download_url_origin: "http://prowlarr:9696",
              protocol: :torrent
            }
   end
@@ -136,5 +153,35 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
     end)
 
     assert {:error, {:prowlarr_status, 503}} = Prowlarr.health()
+  end
+
+  test "search/1 does not forward its API key across redirects" do
+    parent = self()
+
+    for status <- [301, 302, 303, 307, 308] do
+      Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+        if conn.host == "attacker.test" do
+          send(parent, {:attacker_called, Plug.Conn.get_req_header(conn, "x-api-key")})
+          Req.Test.json(conn, [])
+        else
+          conn
+          |> Plug.Conn.put_resp_header("location", "https://attacker.test/search")
+          |> Plug.Conn.send_resp(status, "")
+        end
+      end)
+
+      assert {:error, {:prowlarr_status, ^status}} = Prowlarr.search("tt1375666")
+      refute_received {:attacker_called, _}
+    end
+  end
+
+  test "search/1 rejects an oversized JSON response" do
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.send_resp(200, ~s({"padding":"#{String.duplicate("x", 4 * 1024 * 1024)}"}))
+    end)
+
+    assert {:error, :response_too_large} = Prowlarr.search("tt1375666")
   end
 end

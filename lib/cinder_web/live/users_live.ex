@@ -9,6 +9,7 @@ defmodule CinderWeb.UsersLive do
   import CinderWeb.LiveHelpers
 
   alias Cinder.Accounts
+  alias CinderWeb.UserAuth
 
   @impl true
   def mount(_params, _session, socket) do
@@ -41,6 +42,8 @@ defmodule CinderWeb.UsersLive do
   end
 
   def handle_event("create", %{"user" => params}, socket) do
+    actor = socket.assigns.current_scope.user
+
     attrs = %{
       email: params["email"],
       password: params["password"],
@@ -48,7 +51,7 @@ defmodule CinderWeb.UsersLive do
       role: role_atom(params["role"])
     }
 
-    case Accounts.create_user(attrs) do
+    case Accounts.create_user(actor, attrs) do
       {:ok, _user} ->
         {:noreply,
          socket
@@ -56,7 +59,10 @@ defmodule CinderWeb.UsersLive do
          |> assign_create_form()
          |> put_flash(:info, gettext("User created."))}
 
-      {:error, changeset} ->
+      {:error, :unauthorized} ->
+        unauthorized(socket)
+
+      {:error, %Ecto.Changeset{} = changeset} ->
         {:noreply, assign(socket, :create_form, to_form(changeset, as: :user))}
     end
   end
@@ -74,6 +80,9 @@ defmodule CinderWeb.UsersLive do
     else
       nil ->
         {:noreply, socket}
+
+      {:error, :unauthorized} ->
+        unauthorized(socket)
 
       {:error, _} ->
         {:noreply, put_flash(socket, :error, gettext("Quota must be a non-negative number."))}
@@ -101,6 +110,9 @@ defmodule CinderWeb.UsersLive do
       nil ->
         {:noreply, socket}
 
+      {:error, :unauthorized} ->
+        unauthorized(socket)
+
       {:error, _changeset} ->
         {:noreply,
          put_flash(socket, :error, gettext("Couldn't update email. Check the address."))}
@@ -118,8 +130,12 @@ defmodule CinderWeb.UsersLive do
         new_role = if user.role == :admin, do: :user, else: :admin
 
         case Accounts.update_user_role(actor, user, new_role) do
-          {:ok, _} ->
+          {:ok, _, revoked_tokens} ->
+            UserAuth.disconnect_sessions(revoked_tokens)
             {:noreply, assign(socket, users: Accounts.list_users())}
+
+          {:error, :unauthorized} ->
+            unauthorized(socket)
 
           {:error, :last_admin} ->
             {:noreply, put_flash(socket, :error, gettext("Can't demote the last admin."))}
@@ -147,7 +163,9 @@ defmodule CinderWeb.UsersLive do
     }
 
     with user when not is_nil(user) <- find_user(id),
-         {:ok, _} <- Accounts.admin_reset_password(actor, user, attrs) do
+         {:ok, _, revoked_tokens} <- Accounts.admin_reset_password(actor, user, attrs) do
+      UserAuth.disconnect_sessions(revoked_tokens)
+
       {:noreply,
        socket
        |> assign(resetting_pw: nil)
@@ -155,6 +173,9 @@ defmodule CinderWeb.UsersLive do
     else
       nil ->
         {:noreply, socket}
+
+      {:error, :unauthorized} ->
+        unauthorized(socket)
 
       {:error, changeset} ->
         {:noreply, put_flash(socket, :error, password_error_message(changeset))}
@@ -177,7 +198,9 @@ defmodule CinderWeb.UsersLive do
       nil ->
         {:noreply, socket}
 
-      {:ok, _} ->
+      {:ok, _, revoked_tokens} ->
+        UserAuth.disconnect_sessions(revoked_tokens)
+
         {:noreply,
          socket
          |> assign(users: Accounts.list_users(), confirming_delete: nil)
@@ -194,6 +217,9 @@ defmodule CinderWeb.UsersLive do
          socket
          |> assign(confirming_delete: nil)
          |> put_flash(:error, gettext("Can't delete the last admin."))}
+
+      {:error, :unauthorized} ->
+        unauthorized(socket)
 
       {:error, _} ->
         {:noreply,
@@ -218,6 +244,10 @@ defmodule CinderWeb.UsersLive do
   end
 
   defp password_error_message(_), do: gettext("Couldn't reset the password.")
+
+  defp unauthorized(socket) do
+    {:noreply, put_flash(socket, :error, gettext("You don't have access to that page."))}
+  end
 
   defp find_user(id) do
     find_by_id(Accounts.list_users(), id)

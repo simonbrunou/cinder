@@ -72,7 +72,7 @@ FROM ${RUNNER_IMAGE} AS final
 
 # ffmpeg ships `ffprobe`, used (optionally) to verify a download's audio language before import.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends libstdc++6 openssl libncurses6 locales ca-certificates ffmpeg \
+  && apt-get install -y --no-install-recommends libstdc++6 openssl libncurses6 locales ca-certificates ffmpeg curl \
   && rm -rf /var/lib/apt/lists/*
 
 # Set the locale
@@ -108,4 +108,7 @@ USER nobody
 # (see Cinder.Application — skip_migrations? is false in a release), so the start
 # command is just the server. Execing the release directly keeps the BEAM as
 # PID 1 so it receives SIGTERM and shuts down gracefully.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \
+  CMD ["/bin/sh", "-c", "curl --fail --silent --show-error http://127.0.0.1:${PORT:-4000}/healthz >/dev/null"]
+
 CMD ["/app/bin/server"]

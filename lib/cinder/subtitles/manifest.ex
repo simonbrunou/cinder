@@ -3,6 +3,9 @@ defmodule Cinder.Subtitles.Manifest do
 
   require Logger
 
+  alias Cinder.Library.PathPolicy
+  alias Cinder.Settings
+
   @origins ~w(opensubtitles_hash opensubtitles_id embedded translated release_sidecar)
 
   @spec path(String.t()) :: String.t()
@@ -15,7 +18,14 @@ defmodule Cinder.Subtitles.Manifest do
 
   @spec read(String.t()) :: %{video_moviehash: String.t() | nil, tracks: map()}
   def read(video_path) do
-    case fs().read(path(video_path)) do
+    case safe_destination(path(video_path)) do
+      {:ok, manifest_path} -> read_manifest(manifest_path, video_path)
+      {:error, :unsafe_destination} -> empty()
+    end
+  end
+
+  defp read_manifest(manifest_path, video_path) do
+    case fs().read(manifest_path) do
       {:ok, json} -> decode(json, video_path)
       _ -> empty()
     end
@@ -38,10 +48,23 @@ defmodule Cinder.Subtitles.Manifest do
         ".cinder-subtitle-manifest-#{System.unique_integer([:positive])}"
       )
 
-    with {:ok, json} <- Jason.encode(state),
+    with {:ok, manifest_path} <- safe_destination(manifest_path),
+         {:ok, temporary} <- safe_destination(temporary),
+         {:ok, json} <- Jason.encode(state),
          :ok <- fs().write(temporary, json) do
-      fs().rename(temporary, manifest_path)
+      rename_manifest(temporary, manifest_path)
     end
+  end
+
+  defp rename_manifest(temporary, manifest_path) do
+    result =
+      with {:ok, temporary} <- safe_destination(temporary),
+           {:ok, manifest_path} <- safe_destination(manifest_path) do
+        fs().rename(temporary, manifest_path)
+      end
+
+    if result != :ok, do: safe_remove(temporary)
+    result
   end
 
   @spec stable?(map(), String.t() | nil, String.t()) :: boolean()
@@ -86,4 +109,14 @@ defmodule Cinder.Subtitles.Manifest do
   defp origin(state, language), do: get_in(state, [:tracks, language, :origin])
   defp empty, do: %{video_moviehash: nil, tracks: %{}}
   defp fs, do: Application.fetch_env!(:cinder, :filesystem)
+  defp path_policy, do: Application.get_env(:cinder, :path_policy, PathPolicy)
+
+  defp safe_destination(path),
+    do: path_policy().destination(path, Settings.library_roots(), filesystem: fs())
+
+  defp safe_remove(path) do
+    with :ok <-
+           path_policy().deletable_file(path, Settings.library_roots(), filesystem: fs()),
+         do: fs().rm(path)
+  end
 end

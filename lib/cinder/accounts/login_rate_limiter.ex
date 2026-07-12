@@ -17,10 +17,8 @@ defmodule Cinder.Accounts.LoginRateLimiter do
 
   ponytail: a public ETS counter table + periodic sweep, not a rate-limiting dep —
   single-node by design (the SQLite ceiling), household scale. Reads/writes go straight
-  to ETS; the GenServer only owns the table and the sweep. The read-then-insert bump can
-  lose a concurrent increment — harmless here (it can only undercount by the race width).
-  Every public call fails OPEN if the table is briefly gone (a limiter restart must not
-  turn logins into 500s).
+  to ETS; the GenServer only owns the table and the sweep. Every public call fails OPEN
+  if the table is briefly gone (a limiter restart must not turn logins into 500s).
   """
   use GenServer
 
@@ -48,16 +46,15 @@ defmodule Cinder.Accounts.LoginRateLimiter do
   """
   def register_failure(ip, email) do
     key = key(ip, email)
+    timestamp = now()
+    cutoff = timestamp - @window_ms
 
-    case :ets.lookup(@table, key) do
-      [{^key, count, started}] ->
-        if now() - started < @window_ms,
-          do: :ets.insert(@table, {key, count + 1, started}),
-          else: :ets.insert(@table, {key, 1, now()})
+    :ets.select_replace(@table, [
+      {{:"$1", :_, :"$2"}, [{:==, :"$1", {:const, key}}, {:"=<", :"$2", cutoff}],
+       [{{:"$1", 0, timestamp}}]}
+    ])
 
-      [] ->
-        :ets.insert(@table, {key, 1, now()})
-    end
+    :ets.update_counter(@table, key, {2, 1}, {key, 0, timestamp})
 
     :ok
   rescue

@@ -9,7 +9,10 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   """
   @behaviour Cinder.Catalog.TMDB
 
+  alias Cinder.HTTPPolicy
+
   @default_base_url "https://api.themoviedb.org"
+  @max_response_bytes 4 * 1024 * 1024
 
   @impl true
   def search(query) do
@@ -96,13 +99,16 @@ defmodule Cinder.Catalog.TMDB.HTTP do
     [
       base_url: Keyword.get(config, :base_url, @default_base_url),
       receive_timeout: 15_000,
+      pool_timeout: 5_000,
+      connect_options: [timeout: 5_000],
       retry: false
     ]
     |> auth(Keyword.get(config, :token))
     |> Keyword.merge(opts)
     |> Keyword.merge(Keyword.get(config, :req_options, []))
+    |> Keyword.put(:redirect, false)
     |> Req.new()
-    |> Req.request()
+    |> HTTPPolicy.bounded_request(@max_response_bytes)
   end
 
   defp auth(opts, nil), do: opts

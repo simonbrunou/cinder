@@ -35,6 +35,66 @@ defmodule Cinder.Download.Client.QBittorrentTest do
              QBittorrent.add(%{download_url: magnet})
   end
 
+  test "add/2 tags the torrent with the operation key" do
+    stub_qbit(fn conn ->
+      assert conn.request_path == "/api/v2/torrents/add"
+      assert conn.params["tags"] == "cinder-op-123"
+      Req.Test.text(conn, "Ok.")
+    end)
+
+    magnet = "magnet:?xt=urn:btih:#{@hash}&dn=Movie"
+
+    assert {:ok, "0123456789abcdef0123456789abcdef01234567"} =
+             QBittorrent.add(%{download_url: magnet}, operation_key: "op-123")
+  end
+
+  test "find_by_operation_key/1 returns the tagged torrent's infohash" do
+    stub_qbit(fn conn ->
+      case conn.request_path do
+        "/api/v2/app/webapiVersion" ->
+          Req.Test.text(conn, "2.8.3")
+
+        "/api/v2/torrents/info" ->
+          assert conn.params["tag"] == "cinder-op-123"
+          Req.Test.json(conn, [%{"hash" => "abc123", "tags" => "other,cinder-op-123"}])
+      end
+    end)
+
+    assert {:ok, "abc123"} = QBittorrent.find_by_operation_key("op-123")
+  end
+
+  test "find_by_operation_key/1 returns :not_found for an unused tag" do
+    stub_qbit(fn conn ->
+      case conn.request_path do
+        "/api/v2/app/webapiVersion" -> Req.Test.text(conn, "2.8.3")
+        "/api/v2/torrents/info" -> Req.Test.json(conn, [])
+      end
+    end)
+
+    assert :not_found = QBittorrent.find_by_operation_key("missing")
+  end
+
+  test "find_by_operation_key/1 rejects an older WebAPI before tag lookup" do
+    stub_qbit(fn conn ->
+      assert conn.request_path == "/api/v2/app/webapiVersion"
+      Req.Test.text(conn, "2.8.2")
+    end)
+
+    assert {:error, {:unsupported_webapi_version, "2.8.2"}} =
+             QBittorrent.find_by_operation_key("op-123")
+  end
+
+  test "find_by_operation_key/1 cannot accept an unrelated torrent if tag filtering is ignored" do
+    stub_qbit(fn conn ->
+      case conn.request_path do
+        "/api/v2/app/webapiVersion" -> Req.Test.text(conn, "2.8.3")
+        "/api/v2/torrents/info" -> Req.Test.json(conn, [%{"hash" => "wrong", "tags" => "other"}])
+      end
+    end)
+
+    assert :not_found = QBittorrent.find_by_operation_key("op-123")
+  end
+
   defp stub_torrent_flow(torrent_bytes) do
     Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
       case {conn.host, conn.request_path} do
@@ -170,6 +230,14 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     assert {:error, :login_failed} = QBittorrent.health()
   end
 
+  test "health/0 rejects old and malformed WebAPI versions" do
+    for version <- ["2.8.2", "not-a-version"] do
+      stub_qbit(fn conn -> Req.Test.text(conn, version) end)
+
+      assert {:error, {:unsupported_webapi_version, ^version}} = QBittorrent.health()
+    end
+  end
+
   test "add/1 accepts a base32 magnet and returns its lowercase-hex infohash" do
     raw = :crypto.hash(:sha, "phase5")
     b32 = Base.encode32(raw, padding: false)
@@ -300,8 +368,10 @@ defmodule Cinder.Download.Client.QBittorrentTest do
   end
 
   test "login cools down after a definitive auth failure: one attempt per process" do
+    parent = self()
+
     Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
-      send(self(), :login_attempted)
+      send(parent, :login_attempted)
       Req.Test.text(conn, "Fails.")
     end)
 
@@ -313,5 +383,145 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     # Second call in the same (poller-like) process skips the login entirely.
     assert {:error, :login_failed} = QBittorrent.add(%{download_url: magnet})
     refute_received :login_attempted
+  end
+
+  test "login does not forward credentials across redirects" do
+    parent = self()
+
+    for status <- [301, 302, 303, 307, 308] do
+      Process.delete({QBittorrent, :login_cooldown})
+
+      Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+        if conn.host == "attacker.test" do
+          {:ok, body, conn} = Plug.Conn.read_body(conn)
+          send(parent, {:attacker_called, body})
+          Req.Test.text(conn, "Fails.")
+        else
+          conn
+          |> Plug.Conn.put_resp_header("location", "https://attacker.test/login")
+          |> Plug.Conn.send_resp(status, "")
+        end
+      end)
+
+      assert {:error, {:qbittorrent_status, ^status}} = QBittorrent.health()
+      refute_received {:attacker_called, _}
+    end
+  end
+
+  test "action requests do not forward the SID cookie across redirects" do
+    parent = self()
+
+    for status <- [301, 302, 303, 307, 308] do
+      Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+        case {conn.host, conn.request_path} do
+          {_, "/api/v2/auth/login"} ->
+            conn
+            |> Plug.Conn.put_resp_header("set-cookie", "SID=testsid; path=/")
+            |> Req.Test.text("Ok.")
+
+          {"attacker.test", _} ->
+            send(parent, {:attacker_called, Plug.Conn.get_req_header(conn, "cookie")})
+            Req.Test.text(conn, "2.8.5")
+
+          _ ->
+            conn
+            |> Plug.Conn.put_resp_header("location", "https://attacker.test/info")
+            |> Plug.Conn.send_resp(status, "")
+        end
+      end)
+
+      assert {:error, {:qbittorrent_status, ^status}} = QBittorrent.health()
+      refute_received {:attacker_called, _}
+    end
+  end
+
+  test "add/1 rejects an oversized torrent response before upload" do
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      assert conn.host == "tracker.test"
+      Plug.Conn.send_resp(conn, 200, String.duplicate("x", 10 * 1024 * 1024 + 1))
+    end)
+
+    assert {:error, :response_too_large} =
+             QBittorrent.add(%{download_url: "https://tracker.test/oversized.torrent"})
+  end
+
+  test "add/1 rejects an unsafe torrent URL before the request" do
+    assert {:error, :forbidden_address} =
+             QBittorrent.add(%{download_url: "http://127.0.0.1/private.torrent"})
+  end
+
+  test "add/1 allows a private URL proven to share the configured indexer origin" do
+    infoval = "d6:lengthi5e4:name5:M.mkv12:piece lengthi16384ee"
+    torrent_bytes = "d8:announce11:http://x/an4:info" <> infoval <> "e"
+    expected = :crypto.hash(:sha, infoval) |> Base.encode16(case: :lower)
+
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      case conn.request_path do
+        "/file/1" ->
+          assert conn.host == "127.0.0.1"
+
+          conn
+          |> Plug.Conn.put_resp_header("location", "/file/2")
+          |> Plug.Conn.send_resp(302, "")
+
+        "/file/2" ->
+          assert conn.host == "127.0.0.1"
+          Req.Test.text(conn, torrent_bytes)
+
+        "/api/v2/auth/login" ->
+          conn
+          |> Plug.Conn.put_resp_header("set-cookie", "SID=testsid; path=/")
+          |> Req.Test.text("Ok.")
+
+        "/api/v2/torrents/add" ->
+          Req.Test.text(conn, "Ok.")
+      end
+    end)
+
+    assert {:ok, ^expected} =
+             QBittorrent.add(%{
+               download_url: "http://127.0.0.1:9696/file/1",
+               download_url_origin: "http://127.0.0.1:9696"
+             })
+  end
+
+  test "add/1 never restores indexer-origin trust after a cross-origin redirect" do
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      case {conn.host, conn.request_path} do
+        {"127.0.0.1", "/file/1"} ->
+          conn
+          |> Plug.Conn.put_resp_header("location", "https://tracker.test/step")
+          |> Plug.Conn.send_resp(302, "")
+
+        {"tracker.test", "/step"} ->
+          conn
+          |> Plug.Conn.put_resp_header("location", "https://127.0.0.1:9696/private.torrent")
+          |> Plug.Conn.send_resp(302, "")
+
+        {"127.0.0.1", "/private.torrent"} ->
+          flunk("an untrusted redirect chain must not regain private-origin access")
+      end
+    end)
+
+    assert {:error, :forbidden_address} =
+             QBittorrent.add(%{
+               download_url: "https://127.0.0.1:9696/file/1",
+               download_url_origin: "https://127.0.0.1:9696"
+             })
+  end
+
+  test "add/1 revalidates and rejects an unsafe torrent redirect" do
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      if conn.host == "127.0.0.1" do
+        flunk("unsafe redirect destination must not be requested")
+      else
+        conn
+        |> Plug.Conn.put_resp_header("location", "https://127.0.0.1/private.torrent")
+        |> Plug.Conn.send_resp(302, "")
+      end
+    end)
+
+    assert {:error, :forbidden_address} =
+             QBittorrent.add(%{download_url: "https://tracker.test/start.torrent"})
   end
 end

@@ -81,93 +81,94 @@ defmodule CinderWeb.Layouts do
             </span>
           </a>
 
-          <ul class="menu w-full gap-1 px-0">
-            <li class="menu-title text-base-content/70">{gettext("Everyone")}</li>
-            <.nav_item
-              navigate={~p"/"}
-              label={gettext("Discover")}
-              icon="hero-magnifying-glass"
-              current_path={@current_path}
-            />
-            <.nav_item
-              navigate={~p"/my-requests"}
-              label={gettext("My requests")}
-              icon="hero-bookmark"
-              current_path={@current_path}
-            />
-
-            <%= if @admin? do %>
-              <li class="menu-title mt-2 text-base-content/70">{gettext("Admin")}</li>
-              <.nav_item
-                navigate={~p"/dashboard"}
-                label={gettext("Dashboard")}
-                icon="hero-squares-2x2"
-                current_path={@current_path}
-              />
-              <.nav_item
-                navigate={~p"/requests"}
-                label={gettext("Requests")}
-                icon="hero-inbox-arrow-down"
-                current_path={@current_path}
-              />
-              <.nav_item
-                navigate={~p"/library"}
-                label={gettext("Library")}
-                icon="hero-rectangle-stack"
-                current_path={@current_path}
-              />
-              <.nav_item
-                navigate={~p"/activity"}
-                label={gettext("Activity")}
-                icon="hero-bolt"
-                current_path={@current_path}
-              />
-              <.nav_item
-                navigate={~p"/calendar"}
-                label={gettext("Calendar")}
-                icon="hero-calendar"
-                current_path={@current_path}
-              />
-              <.nav_item
-                navigate={~p"/settings"}
-                label={gettext("Settings")}
-                icon="hero-cog-6-tooth"
-                current_path={@current_path}
-              />
-              <.nav_item
-                navigate={~p"/users"}
-                label={gettext("Users")}
-                icon="hero-users"
-                current_path={@current_path}
-                exact
-              />
-            <% end %>
-          </ul>
-
-          <div class="mt-auto flex flex-col gap-3 border-t border-base-300/60 pt-3">
-            <div class="flex items-center justify-between gap-2">
-              <.theme_toggle />
-              <.locale_switcher />
-            </div>
-            <div class="px-2 text-xs text-base-content/70 truncate">
-              {@current_scope.user.email}
-            </div>
+          <nav aria-label={gettext("Primary")} class="flex min-h-0 flex-1 flex-col gap-2">
             <ul class="menu w-full gap-1 px-0">
+              <li class="menu-title text-base-content/70">{gettext("Everyone")}</li>
               <.nav_item
-                navigate={~p"/users/settings"}
-                label={gettext("Account")}
-                icon="hero-user-circle"
+                navigate={~p"/"}
+                label={gettext("Discover")}
+                icon="hero-magnifying-glass"
                 current_path={@current_path}
               />
-              <li>
-                <.link href={~p"/users/log-out"} method="delete" class="flex items-center gap-3">
-                  <.icon name="hero-arrow-right-start-on-rectangle" class="size-5" /> {gettext(
-                    "Log out"
-                  )}
-                </.link>
-              </li>
+              <.nav_item
+                navigate={~p"/my-requests"}
+                label={gettext("My requests")}
+                icon="hero-bookmark"
+                current_path={@current_path}
+              />
+
+              <%= if @admin? do %>
+                <li class="menu-title mt-2 text-base-content/70">{gettext("Admin")}</li>
+                <.nav_item
+                  navigate={~p"/dashboard"}
+                  label={gettext("Dashboard")}
+                  icon="hero-squares-2x2"
+                  current_path={@current_path}
+                />
+                <.nav_item
+                  navigate={~p"/requests"}
+                  label={gettext("Requests")}
+                  icon="hero-inbox-arrow-down"
+                  current_path={@current_path}
+                />
+                <.nav_item
+                  navigate={~p"/library"}
+                  label={gettext("Library")}
+                  icon="hero-rectangle-stack"
+                  current_path={@current_path}
+                />
+                <.nav_item
+                  navigate={~p"/activity"}
+                  label={gettext("Activity")}
+                  icon="hero-bolt"
+                  current_path={@current_path}
+                />
+                <.nav_item
+                  navigate={~p"/calendar"}
+                  label={gettext("Calendar")}
+                  icon="hero-calendar"
+                  current_path={@current_path}
+                />
+                <.nav_item
+                  navigate={~p"/settings"}
+                  label={gettext("Settings")}
+                  icon="hero-cog-6-tooth"
+                  current_path={@current_path}
+                />
+                <.nav_item
+                  navigate={~p"/users"}
+                  label={gettext("Users")}
+                  icon="hero-users"
+                  current_path={@current_path}
+                  exact
+                />
+              <% end %>
             </ul>
-          </div>
+            <div class="mt-auto flex flex-col gap-3 border-t border-base-300/60 pt-3">
+              <div class="flex items-center justify-between gap-2">
+                <.theme_toggle />
+                <.locale_switcher />
+              </div>
+              <div class="px-2 text-xs text-base-content/70 truncate">
+                {@current_scope.user.email}
+              </div>
+              <ul class="menu w-full gap-1 px-0">
+                <.nav_item
+                  navigate={~p"/users/settings"}
+                  label={gettext("Account")}
+                  icon="hero-user-circle"
+                  current_path={@current_path}
+                />
+                <li>
+                  <.link href={~p"/users/log-out"} method="delete" class="flex items-center gap-3">
+                    <.icon name="hero-arrow-right-start-on-rectangle" class="size-5" /> {gettext(
+                      "Log out"
+                    )}
+                  </.link>
+                </li>
+              </ul>
+            </div>
+          </nav>
         </aside>
       </div>
     </div>
@@ -279,7 +280,10 @@ defmodule CinderWeb.Layouts do
         :for={loc <- CinderWeb.Locale.locales()}
         href={~p"/locale/#{loc}"}
         aria-current={loc == @current && "true"}
-        class={["btn btn-sm join-item uppercase", loc == @current && "btn-active btn-primary"]}
+        class={[
+          "btn btn-sm join-item min-h-11 min-w-11 uppercase",
+          loc == @current && "btn-active btn-primary"
+        ]}
       >
         {loc}
       </.link>

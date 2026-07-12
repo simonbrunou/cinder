@@ -120,4 +120,47 @@ defmodule Cinder.Subtitles.Translator.LibreTranslateTest do
 
     assert {:error, :not_configured} = LibreTranslate.translate(["Hello"], "fr")
   end
+
+  test "translate/2 does not forward JSON or API key across redirects" do
+    parent = self()
+    saved = Application.get_env(:cinder, LibreTranslate)
+    Application.put_env(:cinder, LibreTranslate, Keyword.put(saved, :api_key, "secret-key"))
+    on_exit(fn -> Application.put_env(:cinder, LibreTranslate, saved) end)
+
+    for status <- [301, 302, 303, 307, 308] do
+      Req.Test.stub(Cinder.LibreTranslateStub, fn conn ->
+        if conn.host == "attacker.test" do
+          {:ok, body, conn} = Plug.Conn.read_body(conn)
+          send(parent, {:attacker_called, body})
+          Req.Test.json(conn, %{"translatedText" => ["stolen"]})
+        else
+          conn
+          |> Plug.Conn.put_resp_header("location", "https://attacker.test/translate")
+          |> Plug.Conn.send_resp(status, "")
+        end
+      end)
+
+      assert {:error, {:http, ^status}} = LibreTranslate.translate(["Hello"], "fr")
+      refute_received {:attacker_called, _}
+    end
+  end
+
+  test "translate/2 rejects an oversized request before sending it" do
+    Req.Test.stub(Cinder.LibreTranslateStub, fn _conn ->
+      flunk("oversized body must not be sent")
+    end)
+
+    assert {:error, :request_too_large} =
+             LibreTranslate.translate([String.duplicate("x", 8 * 1024 * 1024)], "fr")
+  end
+
+  test "translate/2 rejects an oversized JSON response" do
+    Req.Test.stub(Cinder.LibreTranslateStub, fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.send_resp(200, ~s({"padding":"#{String.duplicate("x", 8 * 1024 * 1024)}"}))
+    end)
+
+    assert {:error, :response_too_large} = LibreTranslate.translate(["Hello"], "fr")
+  end
 end

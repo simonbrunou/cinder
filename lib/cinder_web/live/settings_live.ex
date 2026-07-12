@@ -22,6 +22,7 @@ defmodule CinderWeb.SettingsLive do
      assign(socket,
        form: Settings.form_state(),
        health: %{},
+       form_revision: 0,
        auto_approve_all: Settings.auto_approve_all?()
      )}
   end
@@ -32,11 +33,19 @@ defmodule CinderWeb.SettingsLive do
       :ok ->
         {:noreply,
          socket
-         |> assign(form: Settings.form_state(), health: %{})
+         |> assign(
+           form: Settings.form_state(),
+           health: %{},
+           form_revision: socket.assigns.form_revision + 1
+         )
          |> put_flash(:info, gettext("Settings saved."))}
 
       {:error, invalid_keys} ->
-        {:noreply, put_flash(socket, :error, invalid_band_message(invalid_keys))}
+        {:noreply,
+         socket
+         |> assign(form: Settings.form_state(params, invalid_keys))
+         |> push_event("focus-invalid", %{id: List.first(invalid_keys)})
+         |> put_flash(:error, invalid_band_message(invalid_keys))}
     end
   end
 
@@ -84,7 +93,13 @@ defmodule CinderWeb.SettingsLive do
         <.icon name="hero-arrow-left" class="size-3.5" />{gettext("Dashboard")}
       </.link>
 
-      <form id="settings-form" phx-submit="save" class="space-y-8">
+      <form
+        id="settings-form"
+        phx-submit="save"
+        phx-hook="FormState"
+        data-form-revision={@form_revision}
+        class="space-y-8"
+      >
         <.service_fields form={@form} health={@health} />
         <.button type="submit" phx-disable-with={gettext("Saving…")}>
           {gettext("Save settings")}

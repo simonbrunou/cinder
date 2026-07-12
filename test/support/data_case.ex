@@ -31,6 +31,11 @@ defmodule Cinder.DataCase do
 
   setup tags do
     Cinder.DataCase.setup_sandbox(tags)
+
+    for client <- [Cinder.Download.ClientMock, Cinder.Download.SabnzbdClientMock] do
+      Mox.stub(client, :find_by_operation_key, fn _key -> :not_found end)
+    end
+
     :ok
   end
 
@@ -45,7 +50,7 @@ defmodule Cinder.DataCase do
   @doc """
   A helper that transforms changeset errors into a map of messages.
 
-      assert {:error, changeset} = Accounts.create_user(%{password: "short"})
+      assert {:error, changeset} = Accounts.create_user(admin, %{password: "short"})
       assert "password is too short" in errors_on(changeset).password
       assert %{password: ["password is too short"]} = errors_on(changeset)
 

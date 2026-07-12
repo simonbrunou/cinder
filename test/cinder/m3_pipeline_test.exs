@@ -48,16 +48,25 @@ defmodule Cinder.M3PipelineTest do
        ]}
     end)
 
-    stub(Cinder.Download.ClientMock, :add, fn _ -> {:ok, "hash-3"} end)
+    stub(Cinder.Download.ClientMock, :add, fn _, _opts -> {:ok, "hash-3"} end)
 
     stub(Cinder.Download.ClientMock, :status, fn "hash-3" ->
       {:ok, %{state: :completed, content_path: "/downloads/Inception.mkv"}}
     end)
 
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
-    stub(Cinder.Library.FilesystemMock, :lstat, fn _ -> {:ok, %File.Stat{size: 1, inode: 1}} end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
+      if String.contains?(path, ".cinder-stage-") or
+           not String.starts_with?(path, "/tmp/cinder-test-library/"),
+         do: {:ok, %File.Stat{size: 1, inode: 1, major_device: 1}},
+         else: {:error, :enoent}
+    end)
+
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
     stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rename, fn _src, _dest -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
     stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
     # Admin approval creates the movie at :requested.

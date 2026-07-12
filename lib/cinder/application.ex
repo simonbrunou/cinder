@@ -15,6 +15,8 @@ defmodule Cinder.Application do
          repos: Application.fetch_env!(:cinder, :ecto_repos), skip: skip_migrations?()},
         {DNSCluster, query: Application.get_env(:cinder, :dns_cluster_query) || :ignore},
         {Phoenix.PubSub, name: Cinder.PubSub},
+        # Owns cancellable outbound HTTP requests so wall-clock deadlines never link-crash callers.
+        {Task.Supervisor, name: Cinder.HTTPPolicy.TaskSupervisor},
         # Off-process, best-effort subtitle fetches dispatched from the import path — supervised so
         # they don't run in (and can't stall) the poller tick. Always on; inert when subtitles off.
         {Task.Supervisor, name: Cinder.Subtitles.TaskSupervisor},
@@ -62,9 +64,9 @@ defmodule Cinder.Application do
       require Logger
 
       Logger.warning(
-        "Cinder has no accounts and no CINDER_BASIC_AUTH_* gate set: registration is open to " <>
-          "anyone who reaches this instance, and the first registrant becomes admin. Put it behind " <>
-          "a reverse-proxy/VPN or set CINDER_BASIC_AUTH_USER/PASSWORD until you create your admin."
+        "Cinder has no accounts and no CINDER_BASIC_AUTH_* gate set. First registration requires " <>
+          "CINDER_BOOTSTRAP_TOKEN and remains unavailable while it is unset. Keep the token private " <>
+          "and put the instance behind a reverse-proxy/VPN until you create your admin."
       )
     end
   end

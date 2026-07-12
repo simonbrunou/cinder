@@ -26,6 +26,7 @@ defmodule Cinder.Download.TvPoller do
 
   alias Cinder.{Acquisition, Catalog, Download, Library, Notifier}
   alias Cinder.Catalog.Grab
+  alias Cinder.HTTPPolicy
 
   @default_interval 5_000
   @search_retry_after 60
@@ -39,6 +40,8 @@ defmodule Cinder.Download.TvPoller do
   use Cinder.Download.PollerSkeleton, log_prefix: "tv poller"
 
   defp do_poll(state) do
+    Library.reconcile_stages()
+    Download.reconcile_pending_intents([:episode, :season_pack])
     advance_grabs()
     import_grabs()
     search_wanted(state.search_retry_after)
@@ -104,26 +107,41 @@ defmodule Cinder.Download.TvPoller do
   end
 
   defp import_grab(grab) do
-    case Library.import_episodes(grab.content_path, grab.episodes) do
+    case Library.stage_episodes(grab.content_path, grab.episodes) do
       {:ok, [], _unmatched} ->
         # Deterministic: nothing in content_path mapped to a grab episode. Re-importing can't
         # help, so park — the episodes re-search (bounded), rather than re-importing forever.
-        Logger.warning("tv grab #{grab.id} imported nothing from #{grab.content_path}; parking")
+        Logger.warning(
+          "tv grab #{grab.id} imported nothing from #{HTTPPolicy.sanitize_log(grab.content_path)}; parking"
+        )
+
         park(grab, :no_files_matched)
 
-      {:ok, imported, _unmatched} ->
+      {:ok, staged, _unmatched} ->
+        imported =
+          Enum.map(staged, fn {episode_id, stage} -> {episode_id, stage.dest, stage.quality} end)
+
         # Catalog announces a season only when this committed import makes it fully available.
-        case Catalog.finish_grab(grab, imported) do
+        case Catalog.finish_grab(
+               grab,
+               imported,
+               Library.stage_ids(Enum.map(staged, &elem(&1, 1)))
+             ) do
           {:ok, _grab} ->
+            commit_stages(staged)
             # After the finalize commit: best-effort, gated remove of the source download.
             # Read id/protocol off the in-hand grab — finish_grab deleted the row but returns
             # the in-memory struct. A partial-match pack still removes (don't strand clutter).
             Download.remove_after_import(grab.download_protocol, grab.download_id)
 
+          {:error, :stale_grab} ->
+            rollback_stages(staged)
+
           # A failed finalize leaves content_path set, so the grab re-imports next tick —
           # without a bump that's a silent 5-second loop if the failure is deterministic.
           # Route it through the same bounded retry as every other failure in this poller.
           {:error, reason} ->
+            rollback_stages(staged)
             retry_or_park(grab, {:finish_grab, reason})
         end
 
@@ -135,6 +153,11 @@ defmodule Cinder.Download.TvPoller do
           "tv grab #{grab.id}: tv_library_path not set; holding the download until it is configured"
         )
 
+      {:error, :download_roots_not_configured} ->
+        Logger.warning(
+          "tv grab #{grab.id}: download import roots not configured; holding the download until they are configured"
+        )
+
       # Every remaining error is transient (a filesystem hiccup): the one deterministic
       # "unusable content" case surfaces as {:ok, [], _} above and is parked immediately, so
       # unlike the movie poller there is no @permanent_*_errors set to classify here.
@@ -143,11 +166,44 @@ defmodule Cinder.Download.TvPoller do
     end
   end
 
+  defp commit_stages(staged) do
+    staged
+    |> unique_stages()
+    |> Enum.each(&finish_stage(&1, :commit))
+  end
+
+  defp rollback_stages(staged) do
+    staged
+    |> unique_stages()
+    |> Enum.each(&finish_stage(&1, :rollback))
+  end
+
+  defp finish_stage(stage, action) do
+    result =
+      case action do
+        :commit -> Library.commit_stage(stage)
+        :rollback -> Library.rollback_stage(stage)
+      end
+
+    if match?({:error, _}, result),
+      do: Logger.warning("TV import stage cleanup remains pending")
+
+    result
+  end
+
+  defp unique_stages(staged),
+    do: staged |> Enum.map(&elem(&1, 1)) |> Enum.uniq_by(& &1.dest)
+
   # --- search: wanted episodes -----------------------------------------------------------------
 
   defp search_wanted(retry_after) do
+    pending = Download.pending_episode_ids()
+
     Catalog.wanted_episodes()
-    |> Enum.reject(&(&1.search_attempts >= Catalog.max_search_attempts()))
+    |> Enum.reject(
+      &(MapSet.member?(pending, &1.id) or
+          &1.search_attempts >= Catalog.max_search_attempts())
+    )
     |> Enum.filter(&search_due?(&1, retry_after))
     |> Enum.group_by(&{&1.season.series.id, &1.season.season_number})
     |> Enum.each(fn {{series_id, season}, episodes} ->
@@ -178,7 +234,7 @@ defmodule Cinder.Download.TvPoller do
 
       {:error, reason} ->
         Logger.info(
-          "tv search failed for series #{series.id} season #{season_number}: #{inspect(reason)}"
+          "tv search failed for series #{series.id} season #{season_number}: #{HTTPPolicy.sanitize_log(reason)}"
         )
 
         bump_not_grabbed(episodes, [])
@@ -191,36 +247,17 @@ defmodule Cinder.Download.TvPoller do
     episode_ids =
       episodes |> Enum.filter(&(&1.episode_number in covered_numbers)) |> Enum.map(& &1.id)
 
-    with {:ok, client} <- Download.client_for(release.protocol),
-         {:ok, download_id} <- client.add(release) do
-      case create_grab_safely(download_id, release, episode_ids) do
-        {:ok, _grab} ->
-          episode_ids
+    case Download.grab_episodes(release, episode_ids) do
+      {:ok, _grab} ->
+        episode_ids
 
-        {:error, reason} ->
-          # The client download was already added: remove it (best-effort) so a failed
-          # link — a concurrent grab or an admin cancel took the episodes — doesn't
-          # leave an orphaned full-season download (mirrors the manual grab path).
-          Logger.warning("tv grab failed (#{release.title}): #{inspect(reason)}")
-          Download.best_effort_remove(client, download_id)
-          []
-      end
-    else
       other ->
-        Logger.warning("tv grab failed (#{release.title}): #{inspect(other)}")
+        Logger.warning(
+          "tv grab failed (#{HTTPPolicy.sanitize_log(release.title)}): #{HTTPPolicy.sanitize_log(other)}"
+        )
+
         []
     end
-  end
-
-  # A raised/exited create_grab (SQLITE_BUSY past busy_timeout, a pool-checkout
-  # timeout under two-poller contention) must reach the cleanup branch above, not
-  # escape to isolate/2 — that would skip the download removal and orphan it.
-  defp create_grab_safely(download_id, release, episode_ids) do
-    Catalog.create_grab(download_id, release.protocol, episode_ids, release.title)
-  rescue
-    e -> {:error, e}
-  catch
-    kind, value -> {:error, {kind, value}}
   end
 
   # Crossing the search cap is announced by Catalog.increment_search_attempts itself (at the
@@ -241,11 +278,14 @@ defmodule Cinder.Download.TvPoller do
     attempts = (grab.download_attempts || 0) + 1
 
     if attempts >= @max_attempts do
-      Logger.warning("tv grab #{grab.id} exhausted after #{attempts}: #{inspect(reason)}")
+      Logger.warning(
+        "tv grab #{grab.id} exhausted after #{attempts}: #{HTTPPolicy.sanitize_log(reason)}"
+      )
+
       park(grab, reason)
     else
       Logger.info(
-        "tv grab #{grab.id} attempt #{attempts}/#{@max_attempts} failed (#{inspect(reason)}); will retry"
+        "tv grab #{grab.id} attempt #{attempts}/#{@max_attempts} failed (#{HTTPPolicy.sanitize_log(reason)}); will retry"
       )
 
       Catalog.increment_grab_attempts(grab)
@@ -273,7 +313,7 @@ defmodule Cinder.Download.TvPoller do
 
       {:error, park_error} ->
         Logger.warning(
-          "tv grab #{grab.id} could not be parked (#{inspect(park_error)}); will retry next tick"
+          "tv grab #{grab.id} could not be parked (#{HTTPPolicy.sanitize_log(park_error)}); will retry next tick"
         )
     end
   end

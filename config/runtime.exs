@@ -20,6 +20,10 @@ if System.get_env("PHX_SERVER") do
   config :cinder, CinderWeb.Endpoint, server: true
 end
 
+if bootstrap_token = System.get_env("CINDER_BOOTSTRAP_TOKEN") do
+  config :cinder, :bootstrap_token, bootstrap_token
+end
+
 # Real TMDB client bearer token, read in every environment. Normally unset in
 # test/CI; the suite stubs Req regardless, so it has no effect there.
 if token = System.get_env("TMDB_API_TOKEN") do
@@ -164,6 +168,8 @@ config :cinder, Cinder.Vault,
   ]
 
 if config_env() == :prod do
+  config :cinder, :secure_cookies, true
+
   database_path =
     System.get_env("DATABASE_PATH") ||
       raise """

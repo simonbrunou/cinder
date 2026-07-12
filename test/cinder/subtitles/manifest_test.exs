@@ -1,5 +1,5 @@
 defmodule Cinder.Subtitles.ManifestTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   import ExUnit.CaptureLog
   import Mox
@@ -62,5 +62,56 @@ defmodule Cinder.Subtitles.ManifestTest do
     end)
 
     assert :ok = Manifest.put("/lib/M/M.mkv", "hash", "fr", "embedded")
+  end
+
+  @tag :tmp_dir
+  test "put/4 rejects a library parent replaced by a symlink after the temp write", %{
+    tmp_dir: tmp
+  } do
+    keys = [:filesystem, :path_policy, :movies_library_path, :tv_library_path]
+    saved = Map.new(keys, &{&1, Application.get_env(:cinder, &1)})
+    movies = Path.join(tmp, "movies")
+    parent = Path.join(movies, "Movie")
+    video = Path.join(parent, "Movie.mkv")
+    outside = Path.join(tmp, "outside")
+    manifest = Manifest.path(video)
+    File.mkdir_p!(parent)
+    File.mkdir_p!(outside)
+    File.write!(video, "video")
+    Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
+    Application.put_env(:cinder, :path_policy, Cinder.Library.PathPolicy)
+    Application.put_env(:cinder, :movies_library_path, movies)
+    Application.put_env(:cinder, :tv_library_path, Path.join(tmp, "tv"))
+
+    Application.put_env(:cinder, :filesystem_barrier, %{
+      owner: self(),
+      operation: :write,
+      contains: ".cinder-subtitle-manifest-"
+    })
+
+    on_exit(fn ->
+      Application.delete_env(:cinder, :filesystem_barrier)
+
+      Enum.each(saved, fn
+        {key, nil} -> Application.delete_env(:cinder, key)
+        {key, value} -> Application.put_env(:cinder, key, value)
+      end)
+    end)
+
+    task = Task.async(fn -> Manifest.put(video, "hash", "fr", "embedded") end)
+    assert_receive {:filesystem_barrier, pid, ref, :write, temporary}, 1_000
+    backup = parent <> ".old"
+    File.rename!(parent, backup)
+    File.ln_s!(outside, parent)
+
+    File.rename!(
+      Path.join(backup, Path.basename(temporary)),
+      Path.join(outside, Path.basename(temporary))
+    )
+
+    send(pid, {ref, :continue})
+
+    assert Task.await(task) == {:error, :unsafe_destination}
+    refute File.exists?(Path.join(outside, Path.basename(manifest)))
   end
 end

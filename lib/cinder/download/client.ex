@@ -5,7 +5,12 @@ defmodule Cinder.Download.Client do
   Fleshed out in Phase 3.
   """
 
-  @callback add(release :: map()) :: {:ok, id :: String.t()} | {:error, term()}
+  @callback add(release :: map(), opts :: keyword()) ::
+              {:ok, id :: String.t()} | {:error, term()}
+
+  @doc "Finds a previously submitted download by Cinder's operation key."
+  @callback find_by_operation_key(key :: String.t()) ::
+              {:ok, id :: String.t()} | :not_found | {:error, term()}
 
   @doc """
   Reports the status of a download by id. The `:ok` map carries at least

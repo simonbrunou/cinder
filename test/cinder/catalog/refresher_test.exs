@@ -6,8 +6,9 @@ defmodule Cinder.Catalog.RefresherTest do
 
   @moduletag :capture_log
 
+  alias Cinder.Catalog
+  alias Cinder.Catalog.{Episode, Season, Series}
   alias Cinder.Catalog.Refresher
-  alias Cinder.Catalog.{Season, Series}
 
   # The Refresher runs in its own process, so the mock must be global; shared Sandbox
   # (async: false) lets that process use the test-owned DB connection.
@@ -86,5 +87,66 @@ defmodule Cinder.Catalog.RefresherTest do
     log = capture_log(fn -> assert :ok = Refresher.poll() end)
     assert log =~ "refresh failed"
     assert log =~ "series #{s.id}"
+  end
+
+  test "a concurrent series cancellation keeps a newly announced season unmonitored" do
+    series =
+      Repo.insert!(%Series{
+        tmdb_id: 8301,
+        title: "T",
+        monitored: true,
+        monitor_strategy: :all
+      })
+
+    Repo.insert!(%Season{series_id: series.id, season_number: 1, monitored: true})
+    owner = self()
+
+    expect(Cinder.Catalog.TMDBMock, :get_series, fn 8301 ->
+      send(owner, {:refresh_started, self()})
+
+      receive do
+        :continue ->
+          {:ok,
+           %{
+             tmdb_id: 8301,
+             tvdb_id: nil,
+             title: "T",
+             year: nil,
+             poster_path: nil,
+             original_language: nil,
+             seasons: [%{season_number: 1}, %{season_number: 2}]
+           }}
+      end
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_season, fn 8301, season_number ->
+      {:ok,
+       %{
+         season_number: season_number,
+         episodes: [
+           %{
+             tmdb_episode_id: 83_000 + season_number,
+             episode_number: 1,
+             title: "Episode",
+             air_date: ~D[2026-07-12]
+           }
+         ]
+       }}
+    end)
+
+    start_supervised!({Refresher, interval: 60_000})
+    refresh = Task.async(fn -> Refresher.poll() end)
+    assert_receive {:refresh_started, refresher_pid}, 1_000
+    assert {:ok, _} = Catalog.cancel_series(Repo.get!(Series, series.id), nil)
+    send(refresher_pid, :continue)
+    assert :ok = Task.await(refresh)
+
+    cancelled = Repo.get!(Series, series.id)
+    refute cancelled.monitored
+    assert cancelled.monitor_strategy == :none
+
+    season = Repo.get_by!(Season, series_id: series.id, season_number: 2)
+    refute season.monitored
+    refute Repo.get_by!(Episode, season_id: season.id, episode_number: 1).monitored
   end
 end

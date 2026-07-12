@@ -606,10 +606,16 @@ defmodule Cinder.LibraryTest do
       stub_dir([{"/dl/Show.S01E03.1080p.mkv", 9 * @gb}, {"/dl/sample.mkv", 50_000_000}])
       stub_link_ok()
 
-      assert {:ok, [{7, dest, _quality}], ["/dl/sample.mkv"]} =
-               Library.import_episodes("/dl", [ep(7, 3)])
+      log =
+        capture_log(fn ->
+          assert {:ok, [{7, dest, _quality}], ["/dl/sample.mkv"]} =
+                   Library.import_episodes("/dl", [ep(7, 3)])
 
-      assert dest == "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"
+          assert dest ==
+                   "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"
+        end)
+
+      assert log =~ "import skipped 1 unmatched file(s): [\"/dl/sample.mkv\"]"
     end
 
     test "season pack: each file maps to its own episode and dest" do
@@ -725,17 +731,29 @@ defmodule Cinder.LibraryTest do
       stub_dir([{"/dl/show.finale.mkv", 9 * @gb}, {"/dl/sample.mkv", 50_000_000}])
       stub_link_ok()
 
-      assert {:ok, [{1, dest, _q}], ["/dl/sample.mkv"]} =
-               Library.import_episodes("/dl", [ep(1, 3)])
+      log =
+        capture_log(fn ->
+          assert {:ok, [{1, dest, _q}], ["/dl/sample.mkv"]} =
+                   Library.import_episodes("/dl", [ep(1, 3)])
 
-      assert dest == "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"
+          assert dest ==
+                   "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"
+        end)
+
+      assert log =~ "import skipped 1 unmatched file(s): [\"/dl/sample.mkv\"]"
     end
 
     test "lone-episode grab does NOT fall back when a file names a different specific episode" do
       # Show.S01E04 clearly names E04; the grab wants E03 — never mislabel E04 as E03.
       stub_dir([{"/dl/Show.S01E04.mkv", 3 * @gb}])
 
-      assert {:ok, [], ["/dl/Show.S01E04.mkv"]} = Library.import_episodes("/dl", [ep(1, 3)])
+      log =
+        capture_log(fn ->
+          assert {:ok, [], ["/dl/Show.S01E04.mkv"]} =
+                   Library.import_episodes("/dl", [ep(1, 3)])
+        end)
+
+      assert log =~ "import skipped 1 unmatched file(s): [\"/dl/Show.S01E04.mkv\"]"
     end
 
     test "no video file → {:ok, [], []} and no scan" do
@@ -921,22 +939,6 @@ defmodule Cinder.LibraryTest do
       # no rmdir expectation -> verify_on_exit! fails if pruning is attempted.
 
       assert {:error, :eacces} = Cinder.Library.delete_file(path)
-    end
-
-    # Data-safety guard: a stale/misconfigured file_path OUTSIDE every library root must unlink the
-    # file but NEVER attempt a single rmdir (no rmdir expectation -> verify_on_exit! fails if pruned).
-    test "a path outside every library root unlinks but prunes nothing" do
-      path = "/var/old/loose-movie.mkv"
-      expect(Cinder.Library.FilesystemMock, :rm, fn ^path -> :ok end)
-
-      assert :ok = Cinder.Library.delete_file(path)
-    end
-
-    test "a sibling-prefix path outside the root unlinks but prunes nothing" do
-      path = "#{@lib}-extra/Movie (2000)/Movie (2000).mkv"
-      expect(Cinder.Library.FilesystemMock, :rm, fn ^path -> :ok end)
-
-      assert :ok = Cinder.Library.delete_file(path)
     end
   end
 end

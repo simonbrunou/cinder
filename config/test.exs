@@ -61,12 +61,15 @@ config :cinder,
   indexer: Cinder.Acquisition.IndexerMock,
   media_server: Cinder.Library.MediaServerMock,
   filesystem: Cinder.Library.FilesystemMock,
+  path_policy: Cinder.Test.PermissivePathPolicy,
   # Disabled by default (overrides the prod Ffprobe impl) so the import suite never shells out;
   # the media_info tests opt in per-test via Application.put_env(MediaInfoMock).
   media_info: nil,
   notifier: Cinder.TestNotifier,
   subtitles_provider: Cinder.Subtitles.ProviderMock,
-  subtitles_translator: Cinder.Subtitles.TranslatorMock
+  subtitles_translator: Cinder.Subtitles.TranslatorMock,
+  bootstrap_token: "test-bootstrap-token",
+  secure_cookies: false
 
 # Two client mocks so routing is testable by protocol: a torrent release must
 # reach ClientMock and a usenet release must reach SabnzbdClientMock.
@@ -80,6 +83,7 @@ config :cinder,
 config :cinder, Cinder.Catalog.TMDB.HTTP, req_options: [plug: {Req.Test, Cinder.TMDBStub}]
 
 config :cinder, Cinder.Acquisition.Indexer.Prowlarr,
+  base_url: "http://prowlarr:9696",
   req_options: [plug: {Req.Test, Cinder.ProwlarrStub}, retry: false],
   api_key: "test-key"
 
@@ -88,11 +92,13 @@ config :cinder, Cinder.Download.Client.QBittorrent,
   username: "test",
   password: "test",
   fetch_plug: {Req.Test, Cinder.QBittorrentStub},
+  url_resolver: fn _host -> {:ok, [{93, 184, 216, 34}]} end,
   req_options: [plug: {Req.Test, Cinder.QBittorrentStub}, retry: false]
 
 config :cinder, Cinder.Download.Client.Sabnzbd,
   base_url: "http://localhost:8080",
   api_key: "test-key",
+  url_resolver: fn _host -> {:ok, [{93, 184, 216, 34}]} end,
   req_options: [plug: {Req.Test, Cinder.SabnzbdStub}, retry: false]
 
 # Discord notifier: a stub webhook so Cinder.Notifier.Discord can exercise the real HTTP
@@ -110,6 +116,7 @@ config :cinder, Cinder.Subtitles.Provider.OpenSubtitles,
   username: "user",
   password: "pass",
   languages: "",
+  url_resolver: fn _host -> {:ok, [{93, 184, 216, 34}]} end,
   req_options: [plug: {Req.Test, Cinder.OpenSubtitlesStub}, retry: false]
 
 config :cinder, Cinder.Subtitles.Translator.LibreTranslate,

@@ -6,6 +6,8 @@ defmodule Cinder.AccountsTest do
   import Cinder.AccountsFixtures
   alias Cinder.Accounts.{User, UserToken}
 
+  @bootstrap_token "test-bootstrap-token"
+
   describe "get_user_by_email_and_password/2" do
     test "does not return the user if the email does not exist" do
       refute Accounts.get_user_by_email_and_password("unknown@example.com", "hello world!")
@@ -24,10 +26,34 @@ defmodule Cinder.AccountsTest do
     end
   end
 
-  describe "register_user/1 (password + auto-confirm)" do
+  describe "register_user/2 (password + auto-confirm)" do
+    test "treats blank configured bootstrap tokens as missing" do
+      previous = Application.get_env(:cinder, :bootstrap_token)
+
+      on_exit(fn -> Application.put_env(:cinder, :bootstrap_token, previous) end)
+
+      for token <- ["", " \t\n"] do
+        Application.put_env(:cinder, :bootstrap_token, token)
+
+        refute Accounts.valid_bootstrap_token?(token)
+
+        assert {:error, :invalid_bootstrap_token} =
+                 Accounts.register_user(
+                   %{email: unique_user_email(), password: valid_user_password()},
+                   token
+                 )
+      end
+    end
+
     test "hashes password and auto-confirms" do
       email = unique_user_email()
-      {:ok, user} = Accounts.register_user(%{email: email, password: valid_user_password()})
+
+      {:ok, user} =
+        Accounts.register_user(
+          %{email: email, password: valid_user_password()},
+          @bootstrap_token
+        )
+
       assert user.email == email
       assert is_binary(user.hashed_password)
       assert is_nil(user.password)
@@ -36,7 +62,10 @@ defmodule Cinder.AccountsTest do
 
     test "first user becomes admin, subsequent users are :user" do
       {:ok, first} =
-        Accounts.register_user(%{email: unique_user_email(), password: valid_user_password()})
+        Accounts.register_user(
+          %{email: unique_user_email(), password: valid_user_password()},
+          @bootstrap_token
+        )
 
       {:ok, second} =
         Accounts.register_user(%{email: unique_user_email(), password: valid_user_password()})
@@ -47,7 +76,10 @@ defmodule Cinder.AccountsTest do
 
     test "ignores a role param (no privilege escalation)" do
       {:ok, _admin} =
-        Accounts.register_user(%{email: unique_user_email(), password: valid_user_password()})
+        Accounts.register_user(
+          %{email: unique_user_email(), password: valid_user_password()},
+          @bootstrap_token
+        )
 
       {:ok, user} =
         Accounts.register_user(%{
@@ -61,7 +93,10 @@ defmodule Cinder.AccountsTest do
 
     test "requires a valid password" do
       {:error, changeset} =
-        Accounts.register_user(%{email: unique_user_email(), password: "short"})
+        Accounts.register_user(
+          %{email: unique_user_email(), password: "short"},
+          @bootstrap_token
+        )
 
       assert %{password: _} = errors_on(changeset)
     end
@@ -262,6 +297,19 @@ defmodule Cinder.AccountsTest do
     end
   end
 
+  describe "replace_user_session_token/2" do
+    test "does not mint a replacement after the old session was revoked" do
+      user = user_fixture()
+      old_token = Accounts.generate_user_session_token(user)
+      assert :ok = Accounts.delete_user_session_token(old_token)
+
+      assert {:error, :session_revoked} =
+               Accounts.replace_user_session_token(user, old_token)
+
+      refute Repo.get_by(UserToken, user_id: user.id, context: "session")
+    end
+  end
+
   describe "get_user_by_session_token/1" do
     setup do
       user = user_fixture()
@@ -371,9 +419,13 @@ defmodule Cinder.AccountsTest do
     test "promotes a user to admin and audits it" do
       actor = admin_fixture()
       target = user_fixture()
+      tokens = for _ <- 1..2, do: Accounts.generate_user_session_token(target)
 
-      assert {:ok, %User{role: :admin, id: tid}} =
+      assert {:ok, %User{role: :admin, id: tid}, revoked_tokens} =
                Accounts.update_user_role(actor, target, :admin)
+
+      assert Enum.map(revoked_tokens, & &1.token) |> Enum.sort() == Enum.sort(tokens)
+      Enum.each(tokens, &refute(Accounts.get_user_by_session_token(&1)))
 
       audit = Repo.one!(from a in Cinder.Audit.AdminAudit, where: a.entity_id == ^tid)
       assert audit.action == "update_user_role"
@@ -385,7 +437,7 @@ defmodule Cinder.AccountsTest do
     test "demotes a second admin to user" do
       actor = admin_fixture()
       target = admin_fixture()
-      assert {:ok, %User{role: :user}} = Accounts.update_user_role(actor, target, :user)
+      assert {:ok, %User{role: :user}, []} = Accounts.update_user_role(actor, target, :user)
     end
 
     test "refuses to demote the last admin and writes no audit row" do
@@ -395,14 +447,29 @@ defmodule Cinder.AccountsTest do
       assert Repo.reload!(actor).role == :admin
       assert Repo.aggregate(Cinder.Audit.AdminAudit, :count) == 0
     end
+
+    test "rejects an actor whose persisted admin role was revoked" do
+      stale_admin = admin_fixture()
+      demoter = admin_fixture()
+      target = user_fixture()
+
+      {:ok, _} = stale_admin |> Ecto.Changeset.change(role: :user) |> Repo.update()
+
+      assert {:error, :unauthorized} =
+               Accounts.update_user_role(stale_admin, target, :admin)
+
+      assert Repo.reload!(target).role == :user
+      assert Repo.reload!(demoter).role == :admin
+    end
   end
 
   describe "create_user/1" do
     test "creates a confirmed user with the default :user role" do
+      actor = admin_fixture()
       email = unique_user_email()
 
       assert {:ok, %User{} = user} =
-               Accounts.create_user(%{
+               Accounts.create_user(actor, %{
                  email: email,
                  password: valid_user_password(),
                  password_confirmation: valid_user_password()
@@ -415,8 +482,10 @@ defmodule Cinder.AccountsTest do
     end
 
     test "creates an admin when role: :admin is given" do
+      actor = admin_fixture()
+
       assert {:ok, %User{role: :admin}} =
-               Accounts.create_user(%{
+               Accounts.create_user(actor, %{
                  email: unique_user_email(),
                  password: valid_user_password(),
                  password_confirmation: valid_user_password(),
@@ -425,8 +494,10 @@ defmodule Cinder.AccountsTest do
     end
 
     test "rejects a password confirmation mismatch" do
+      actor = admin_fixture()
+
       assert {:error, changeset} =
-               Accounts.create_user(%{
+               Accounts.create_user(actor, %{
                  email: unique_user_email(),
                  password: valid_user_password(),
                  password_confirmation: "nope nope nope"
@@ -436,10 +507,11 @@ defmodule Cinder.AccountsTest do
     end
 
     test "rejects a duplicate email" do
+      actor = admin_fixture()
       existing = user_fixture()
 
       assert {:error, changeset} =
-               Accounts.create_user(%{
+               Accounts.create_user(actor, %{
                  email: existing.email,
                  password: valid_user_password(),
                  password_confirmation: valid_user_password()
@@ -494,12 +566,13 @@ defmodule Cinder.AccountsTest do
       target = user_fixture() |> set_password()
       old_token = Accounts.generate_user_session_token(target)
 
-      assert {:ok, %User{} = updated} =
+      assert {:ok, %User{} = updated, revoked_tokens} =
                Accounts.admin_reset_password(actor, target, %{
                  password: "brand new password!",
                  password_confirmation: "brand new password!"
                })
 
+      assert Enum.map(revoked_tokens, & &1.token) == [old_token]
       assert Accounts.get_user_by_email_and_password(updated.email, "brand new password!")
       refute Accounts.get_user_by_session_token(old_token)
 
@@ -535,7 +608,10 @@ defmodule Cinder.AccountsTest do
           status: :pending
         })
 
-      assert {:ok, %User{id: tid}} = Accounts.delete_user(actor, target)
+      old_token = Accounts.generate_user_session_token(target)
+
+      assert {:ok, %User{id: tid}, revoked_tokens} = Accounts.delete_user(actor, target)
+      assert Enum.map(revoked_tokens, & &1.token) == [old_token]
       refute Repo.get(User, tid)
       refute Repo.get(Cinder.Requests.Request, req.id)
 
@@ -561,18 +637,15 @@ defmodule Cinder.AccountsTest do
           status: :approved
         })
 
-      assert {:ok, _} = Accounts.delete_user(actor, approver)
+      assert {:ok, _, _} = Accounts.delete_user(actor, approver)
       assert Repo.get(Cinder.Requests.Request, req.id).approved_by_id == nil
     end
 
     test "refuses to delete the last admin and writes no audit row" do
       actor = admin_fixture()
-      other = admin_fixture()
-      # demote `other` so `actor` is the only admin
-      {:ok, _} = Accounts.update_user_role(actor, other, :user)
       Repo.delete_all(Cinder.Audit.AdminAudit)
 
-      assert {:error, :last_admin} = Accounts.delete_user(other, actor)
+      assert {:error, :last_admin} = Accounts.delete_user(actor, actor)
       assert Repo.reload!(actor)
       assert Repo.aggregate(Cinder.Audit.AdminAudit, :count) == 0
     end

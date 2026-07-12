@@ -1,7 +1,7 @@
 defmodule Cinder.Acquisition.Release do
   @moduledoc """
   A candidate release: the indexer-reported fields (`title`, `size`,
-  `download_url`, `protocol`) plus the attributes parsed from its name.
+  `download_url`, `download_url_origin`, `protocol`) plus the attributes parsed from its name.
   The shared shape passed between the indexer, parser, and scorer.
 
   `protocol` (`:torrent | :usenet`) routes the release to the matching download
@@ -13,6 +13,7 @@ defmodule Cinder.Acquisition.Release do
     :title,
     :size,
     :download_url,
+    :download_url_origin,
     :protocol,
     :resolution,
     :source,
@@ -32,6 +33,7 @@ defmodule Cinder.Acquisition.Release do
       title: title,
       size: Map.get(indexer_map, :size),
       download_url: Map.get(indexer_map, :download_url),
+      download_url_origin: Map.get(indexer_map, :download_url_origin),
       protocol: Map.get(indexer_map, :protocol, :torrent)
     }
     |> struct(Parser.parse(title))

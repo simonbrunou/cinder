@@ -20,6 +20,40 @@ defmodule CinderWeb.UserAuthTest do
     %{user: %{user_fixture() | authenticated_at: DateTime.utc_now(:second)}, conn: conn}
   end
 
+  describe "page_title/1" do
+    test "maps every routed LiveView, including dynamic routes, to its section" do
+      routes = %{
+        "/" => "Discover",
+        "/my-requests" => "My requests",
+        "/series/tmdb/123" => "Discover",
+        "/dashboard" => "Dashboard",
+        "/activity" => "Activity",
+        "/settings" => "Settings",
+        "/requests" => "Requests",
+        "/users" => "Users",
+        "/library" => "Library",
+        "/movies/123" => "Library",
+        "/series/123" => "Library",
+        "/calendar" => "Calendar",
+        "/setup" => "Setup",
+        "/users/settings" => "Account",
+        "/users/settings/confirm-email/token" => "Account",
+        "/users/register" => "Register",
+        "/users/log-in" => "Log in"
+      }
+
+      assert Map.new(routes, fn {path, _title} -> {path, UserAuth.page_title(path)} end) == routes
+    end
+
+    test "localizes route titles" do
+      Gettext.put_locale(CinderWeb.Gettext, "fr")
+      on_exit(fn -> Gettext.put_locale(CinderWeb.Gettext, "en") end)
+
+      assert UserAuth.page_title("/settings") == "Paramètres"
+      assert UserAuth.page_title("/users/log-in") == "Se connecter"
+    end
+  end
+
   describe "log_in_user/3" do
     test "stores the user token in the session", %{conn: conn, user: user} do
       conn = UserAuth.log_in_user(conn, user)
@@ -192,6 +226,8 @@ defmodule CinderWeb.UserAuthTest do
 
       offset_user_token(token, -10, :day)
       {user, _} = Accounts.get_user_by_session_token(token)
+      old_topic = "users_sessions:#{Base.url_encode64(token)}"
+      CinderWeb.Endpoint.subscribe(old_topic)
 
       conn =
         conn
@@ -204,9 +240,53 @@ defmodule CinderWeb.UserAuthTest do
       assert conn.assigns.current_scope.user.authenticated_at == user.authenticated_at
       assert new_token = get_session(conn, :user_token)
       assert new_token != token
+      refute Accounts.get_user_by_session_token(token)
+      assert {new_user, _inserted_at} = Accounts.get_user_by_session_token(new_token)
+      assert new_user.id == user.id
+      assert_receive %Phoenix.Socket.Broadcast{event: "disconnect", topic: ^old_topic}
       assert %{value: new_signed_token, max_age: max_age} = conn.resp_cookies[@remember_me_cookie]
       assert new_signed_token != signed_token
       assert max_age == @remember_me_cookie_max_age
+    end
+
+    test "a concurrent reissue loser does not clear the winning browser session", %{
+      conn: conn,
+      user: user
+    } do
+      token = Accounts.generate_user_session_token(user)
+      offset_user_token(token, -10, :day)
+      {task, barrier} = pause_after_session_lookup(conn, token)
+
+      assert {:ok, new_token, _old_tokens} = Accounts.replace_user_session_token(user, token)
+      send(task.pid, {barrier, :continue})
+      loser_conn = Task.await(task)
+
+      refute loser_conn.assigns.current_scope
+      assert get_session(loser_conn, :user_token) == token
+      assert loser_conn.private.plug_session_info == :ignore
+      refute loser_conn.resp_cookies[@remember_me_cookie]
+      assert {winner, _inserted_at} = Accounts.get_user_by_session_token(new_token)
+      assert winner.id == user.id
+    end
+
+    test "revocation during reissue remains fail-closed without clearing browser state", %{
+      conn: conn,
+      user: user
+    } do
+      token = Accounts.generate_user_session_token(user)
+      offset_user_token(token, -10, :day)
+      {task, barrier} = pause_after_session_lookup(conn, token)
+
+      assert :ok = Accounts.delete_user_session_token(token)
+      send(task.pid, {barrier, :continue})
+      revoked_conn = Task.await(task)
+
+      refute revoked_conn.assigns.current_scope
+      assert get_session(revoked_conn, :user_token) == token
+      assert revoked_conn.private.plug_session_info == :ignore
+      refute revoked_conn.resp_cookies[@remember_me_cookie]
+      refute Accounts.get_user_by_session_token(token)
+      refute Cinder.Repo.get_by(Cinder.Accounts.UserToken, user_id: user.id, context: "session")
     end
   end
 
@@ -412,5 +492,46 @@ defmodule CinderWeb.UserAuthTest do
         topic: "users_sessions:dG9rZW4y"
       }
     end
+  end
+
+  defp pause_after_session_lookup(conn, token) do
+    parent = self()
+    supervisor = start_supervised!({Task.Supervisor, []})
+
+    task =
+      Task.Supervisor.async_nolink(supervisor, fn ->
+        receive do
+          :start ->
+            conn
+            |> put_session(:user_token, token)
+            |> put_session(:user_remember_me, true)
+            |> UserAuth.fetch_current_scope_for_user([])
+        end
+      end)
+
+    barrier = {__MODULE__, make_ref()}
+
+    :ok =
+      :telemetry.attach(
+        barrier,
+        [:cinder, :repo, :query],
+        fn _event, _measurements, metadata, config ->
+          if self() == config.task and is_binary(metadata.query) and
+               String.contains?(metadata.query, ~s(FROM "users_tokens")) do
+            :telemetry.detach(config.barrier)
+            send(config.parent, {config.barrier, :session_loaded})
+
+            receive do
+              {barrier, :continue} when barrier == config.barrier -> :ok
+            end
+          end
+        end,
+        %{barrier: barrier, parent: parent, task: task.pid}
+      )
+
+    on_exit(fn -> :telemetry.detach(barrier) end)
+    send(task.pid, :start)
+    assert_receive {^barrier, :session_loaded}
+    {task, barrier}
   end
 end

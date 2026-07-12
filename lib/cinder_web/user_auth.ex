@@ -14,11 +14,6 @@ defmodule CinderWeb.UserAuth do
   # the session validity setting in UserToken.
   @max_cookie_age_in_days 14
   @remember_me_cookie "_cinder_web_user_remember_me"
-  @remember_me_options [
-    sign: true,
-    max_age: @max_cookie_age_in_days * 24 * 60 * 60,
-    same_site: "Lax"
-  ]
 
   # How old the session token should be before a new one is issued. When a request is made
   # with a session token older than this value, then a new session token will be created
@@ -58,7 +53,7 @@ defmodule CinderWeb.UserAuth do
 
     conn
     |> renew_session(nil)
-    |> delete_resp_cookie(@remember_me_cookie, @remember_me_options)
+    |> delete_resp_cookie(@remember_me_cookie, remember_me_options())
     |> redirect(to: ~p"/")
   end
 
@@ -97,7 +92,29 @@ defmodule CinderWeb.UserAuth do
     token_age = DateTime.diff(DateTime.utc_now(:second), token_inserted_at, :day)
 
     if token_age >= @session_reissue_age_in_days do
-      create_or_extend_session(conn, user, %{})
+      old_token = get_session(conn, :user_token)
+
+      case Accounts.replace_user_session_token(user, old_token) do
+        {:ok, new_token, old_tokens} ->
+          remember_me = get_session(conn, :user_remember_me)
+
+          conn =
+            conn
+            |> renew_session(user)
+            |> put_token_in_session(new_token)
+            |> maybe_write_remember_me_cookie(new_token, %{}, remember_me)
+
+          disconnect_sessions(old_tokens)
+          conn
+
+        {:error, :session_revoked} ->
+          # The missing DB token is the authorization boundary, so this request is fail-closed.
+          # Emit no cookie/session write: a concurrent request may already have rotated the same old
+          # token, and a later-arriving loser response must not overwrite the winner's session.
+          conn
+          |> assign(:current_scope, Scope.for_user(nil))
+          |> configure_session(ignore: true)
+      end
     else
       conn
     end
@@ -147,7 +164,16 @@ defmodule CinderWeb.UserAuth do
   defp write_remember_me_cookie(conn, token) do
     conn
     |> put_session(:user_remember_me, true)
-    |> put_resp_cookie(@remember_me_cookie, token, @remember_me_options)
+    |> put_resp_cookie(@remember_me_cookie, token, remember_me_options())
+  end
+
+  defp remember_me_options do
+    [
+      sign: true,
+      max_age: @max_cookie_age_in_days * 24 * 60 * 60,
+      same_site: "Lax",
+      secure: Application.get_env(:cinder, :secure_cookies, false)
+    ]
   end
 
   defp put_token_in_session(conn, token) do
@@ -267,19 +293,44 @@ defmodule CinderWeb.UserAuth do
     end
   end
 
-  # Assigns `@current_path` on initial mount and every live navigation so layouts can
-  # highlight the active nav item. Read-only: attaches a `:handle_params` hook and never
-  # halts, so it does not affect authorization.
+  # Assigns route metadata on initial mount and every live navigation so layouts can
+  # highlight the active nav item and render a useful document title. Read-only: attaches
+  # a `:handle_params` hook and never halts, so it does not affect authorization.
   def on_mount(:current_path, _params, _session, socket) do
     socket =
       Phoenix.LiveView.attach_hook(socket, :current_path, :handle_params, fn _params,
                                                                              uri,
                                                                              socket ->
-        {:cont, Phoenix.Component.assign(socket, :current_path, URI.parse(uri).path)}
+        path = URI.parse(uri).path
+
+        {:cont,
+         Phoenix.Component.assign(socket,
+           current_path: path,
+           page_title: page_title(path)
+         )}
       end)
 
     {:cont, socket}
   end
+
+  @doc "Returns the localized section title for a routed LiveView path."
+  def page_title("/"), do: gettext("Discover")
+  def page_title("/my-requests"), do: gettext("My requests")
+  def page_title("/dashboard"), do: gettext("Dashboard")
+  def page_title("/activity"), do: gettext("Activity")
+  def page_title("/settings"), do: gettext("Settings")
+  def page_title("/requests"), do: gettext("Requests")
+  def page_title("/users"), do: gettext("Users")
+  def page_title("/library"), do: gettext("Library")
+  def page_title("/calendar"), do: gettext("Calendar")
+  def page_title("/setup"), do: gettext("Setup")
+  def page_title("/users/register"), do: gettext("Register")
+  def page_title("/users/log-in"), do: gettext("Log in")
+  def page_title("/series/tmdb/" <> _id), do: gettext("Discover")
+  def page_title("/movies/" <> _id), do: gettext("Library")
+  def page_title("/series/" <> _id), do: gettext("Library")
+  def page_title("/users/settings" <> _rest), do: gettext("Account")
+  def page_title(_path), do: "Cinder"
 
   defp enforce_setup?, do: Application.get_env(:cinder, :enforce_setup, true)
 

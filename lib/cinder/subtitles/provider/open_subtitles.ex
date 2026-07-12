@@ -10,6 +10,8 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
   """
   @behaviour Cinder.Subtitles.Provider
 
+  alias Cinder.HTTPPolicy
+
   @default_base "https://api.opensubtitles.com/api/v1"
   @token_key {__MODULE__, :token}
 
@@ -18,7 +20,25 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
   # Prowlarr/Jellyfin/Discord); search/download/login/the external download link get a longer
   # timeout since they carry an actual request/response body.
   @health_timeout [receive_timeout: 3_000, connect_options: [timeout: 3_000]]
-  @data_timeout [receive_timeout: 15_000, connect_options: [timeout: 5_000]]
+  @data_timeout [
+    receive_timeout: 15_000,
+    pool_timeout: 5_000,
+    connect_options: [timeout: 5_000]
+  ]
+  @max_api_response_bytes 4 * 1024 * 1024
+  @max_subtitle_bytes 10 * 1024 * 1024
+  @max_redirects 5
+  @untrusted_req_option_keys [
+    :plug,
+    :finch,
+    :finch_request,
+    :connect_options,
+    :pool_timeout,
+    :receive_timeout,
+    :inet6,
+    :unix_socket,
+    :pool_max_idle_time
+  ]
 
   @impl true
   def search(criteria) do
@@ -147,11 +167,50 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
     base =
       [method: method, url: base_url() <> path, headers: headers(auth)] ++ timeout
 
-    Req.request(Keyword.merge(base, Keyword.merge(req_options(), opts)))
+    req_options()
+    |> Req.new()
+    |> Req.merge(base ++ opts)
+    |> Req.merge(auth: nil, redirect: false)
+    |> HTTPPolicy.bounded_request(@max_api_response_bytes)
   end
 
-  defp fetch(link),
-    do: Req.request(Keyword.merge([method: :get, url: link] ++ @data_timeout, req_options()))
+  defp fetch(link) do
+    with {:ok, uri} <- validate_url(link) do
+      fetch_subtitle(uri, @max_redirects)
+    end
+  end
+
+  defp fetch_subtitle(uri, redirects_left) do
+    request =
+      [method: :get, url: uri, redirect: false]
+      |> Keyword.merge(@data_timeout)
+      |> Keyword.merge(untrusted_req_options())
+      |> Keyword.put(:retry, false)
+      |> Keyword.put(:redirect, false)
+      |> Req.new()
+
+    case HTTPPolicy.bounded_request(request, @max_subtitle_bytes) do
+      {:ok, %{status: status} = response} when status in [301, 302, 303, 307, 308] ->
+        follow_subtitle_redirect(uri, response, redirects_left)
+
+      result ->
+        result
+    end
+  end
+
+  defp follow_subtitle_redirect(_uri, _response, 0), do: {:error, :too_many_redirects}
+
+  defp follow_subtitle_redirect(uri, response, redirects_left) do
+    case Req.Response.get_header(response, "location") do
+      [location | _] ->
+        with {:ok, next} <- resolve_redirect(uri, location) do
+          fetch_subtitle(next, redirects_left - 1)
+        end
+
+      [] ->
+        {:ok, response}
+    end
+  end
 
   defp headers(auth) do
     base = [{"api-key", cfg(:api_key)}, {"user-agent", user_agent()}]
@@ -162,6 +221,24 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
 
   defp base_url, do: cfg(:base_url) || @default_base
   defp req_options, do: cfg(:req_options) || []
+  defp untrusted_req_options, do: Keyword.take(req_options(), @untrusted_req_option_keys)
+
+  defp validate_url(url) do
+    case cfg(:url_resolver) do
+      resolver when is_function(resolver, 1) -> HTTPPolicy.validate_untrusted_url(url, resolver)
+      nil -> HTTPPolicy.validate_untrusted_url(url)
+    end
+  end
+
+  defp resolve_redirect(current, location) do
+    case cfg(:url_resolver) do
+      resolver when is_function(resolver, 1) ->
+        HTTPPolicy.resolve_redirect(current, location, resolver)
+
+      nil ->
+        HTTPPolicy.resolve_redirect(current, location, :untrusted)
+    end
+  end
 
   defp cfg(field) do
     :cinder |> Application.get_env(__MODULE__, []) |> Keyword.get(field)

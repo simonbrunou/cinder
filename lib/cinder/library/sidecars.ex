@@ -8,6 +8,8 @@ defmodule Cinder.Library.Sidecars do
   require Logger
 
   alias Cinder.Acquisition.Parser
+  alias Cinder.Library.PathPolicy
+  alias Cinder.Settings
 
   @sub_exts ~w(.srt .ass .ssa .sub .vtt)
   @flags ~w(forced sdh cc hi)
@@ -36,11 +38,14 @@ defmodule Cinder.Library.Sidecars do
   @doc "Sidecar files belonging to `source_video` (stem match, or any sub when the folder holds one video)."
   def files(source_video) do
     dir = Path.dirname(source_video)
+    roots = source_roots()
 
-    with true <- fs().dir?(dir),
+    with {:ok, source_video} <-
+           path_policy().source_file(source_video, roots, @video_exts, filesystem: fs()),
+         true <- fs().dir?(dir),
          {:ok, entries} <- fs().find_files(dir) do
       paths = Enum.map(entries, fn {p, _size} -> p end)
-      subs = Enum.filter(paths, &(String.downcase(Path.extname(&1)) in @sub_exts))
+      subs = safe_sidecars(paths, roots)
       stem = Path.rootname(Path.basename(source_video))
       lone_video? = Enum.count(paths, &(String.downcase(Path.extname(&1)) in @video_exts)) == 1
 
@@ -90,15 +95,32 @@ defmodule Cinder.Library.Sidecars do
   end
 
   defp do_link(src, dest) do
-    case fs().ln(src, dest) do
-      :ok ->
-        :ok
-
+    with {:ok, src} <-
+           path_policy().source_file(src, source_roots(), @sub_exts, filesystem: fs()),
+         {:ok, dest} <-
+           path_policy().destination(dest, Settings.library_roots(), filesystem: fs()),
+         :ok <- fs().ln(src, dest) do
+      :ok
+    else
       {:error, reason} ->
-        Logger.warning("sidecar link failed #{src} -> #{dest}: #{inspect(reason)}")
+        Logger.warning("sidecar link rejected: #{inspect(reason)}")
         :error
     end
   end
 
+  defp safe_sidecars(paths, roots) do
+    paths
+    |> Enum.filter(&(String.downcase(Path.extname(&1)) in @sub_exts))
+    |> Enum.flat_map(fn path ->
+      case path_policy().source_file(path, roots, @sub_exts, filesystem: fs()) do
+        {:ok, safe_path} -> [safe_path]
+        {:error, :unsafe_source} -> []
+      end
+    end)
+  end
+
+  defp source_roots, do: Enum.uniq(Settings.import_roots() ++ Settings.library_roots())
+
   defp fs, do: Application.get_env(:cinder, :filesystem)
+  defp path_policy, do: Application.get_env(:cinder, :path_policy, PathPolicy)
 end

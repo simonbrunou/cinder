@@ -85,7 +85,7 @@ defmodule CinderWeb.CoreComponents do
         <div class="flex-1" />
         <button
           type="button"
-          class="group self-start cursor-pointer rounded focus-visible:outline-2 focus-visible:outline-current"
+          class="group flex min-h-6 min-w-6 items-center justify-center self-start cursor-pointer rounded focus-visible:outline-2 focus-visible:outline-current"
           aria-label={gettext("close")}
         >
           <.icon
@@ -146,9 +146,9 @@ defmodule CinderWeb.CoreComponents do
   defp button_variant("danger"), do: "btn-error"
   defp button_variant("warning"), do: "btn-warning"
 
-  defp button_size("md"), do: nil
-  defp button_size("sm"), do: "btn-sm"
-  defp button_size("xs"), do: "btn-xs"
+  defp button_size("md"), do: "min-h-11"
+  defp button_size("sm"), do: "btn-sm min-h-6 min-w-6"
+  defp button_size("xs"), do: "btn-xs min-h-6 min-w-6"
 
   @doc """
   A centered empty / zero state: icon, title, optional message, optional `:cta` slot.

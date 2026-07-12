@@ -14,6 +14,7 @@ defmodule Cinder.Notifier.Discord do
   """
   @behaviour Cinder.Notifier
   alias Cinder.Catalog.Episode
+  alias Cinder.HTTPPolicy
   alias Cinder.Notifier.Log
   require Logger
 
@@ -35,6 +36,7 @@ defmodule Cinder.Notifier.Discord do
   # assumption behind settings_live's synchronous Test button. retry: false stops a Test-button
   # GET retrying a bad webhook.
   @default_req_options [receive_timeout: 3_000, connect_options: [timeout: 3_000], retry: false]
+  @max_response_bytes 4 * 1024 * 1024
 
   @impl true
   def notify(event) do
@@ -56,7 +58,7 @@ defmodule Cinder.Notifier.Discord do
   def health do
     case webhook_url() do
       nil -> {:error, :not_configured}
-      url -> base_req() |> Req.get(url: url) |> classify()
+      url -> request(:get, url) |> classify()
     end
   end
 
@@ -162,14 +164,23 @@ defmodule Cinder.Notifier.Discord do
   # test plug (+ retry: false) in :test and is empty in prod.
   defp base_req do
     req_options = :cinder |> Application.get_env(__MODULE__, []) |> Keyword.get(:req_options, [])
-    @default_req_options |> Keyword.merge(req_options) |> Req.new()
+
+    @default_req_options
+    |> Keyword.merge(req_options)
+    |> Keyword.put(:redirect, false)
+    |> Req.new()
   end
 
   defp post(url, embed) do
-    base_req()
-    |> Req.post(url: url, json: %{embeds: [embed]})
+    request(:post, url, json: %{embeds: [embed]})
     |> classify()
     |> log_if_error()
+  end
+
+  defp request(method, url, options \\ []) do
+    base_req()
+    |> Req.merge([method: method, url: url] ++ options)
+    |> HTTPPolicy.bounded_request(@max_response_bytes)
   end
 
   defp classify({:ok, %{status: status}}) when status in 200..299, do: :ok
@@ -179,7 +190,7 @@ defmodule Cinder.Notifier.Discord do
   defp log_if_error(:ok), do: :ok
 
   defp log_if_error({:error, reason} = error) do
-    Logger.warning("Discord notify failed: #{inspect(reason)}")
+    Logger.warning("Discord notify failed: #{HTTPPolicy.sanitize_log(reason)}")
     error
   end
 end

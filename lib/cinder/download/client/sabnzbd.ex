@@ -17,19 +17,45 @@ defmodule Cinder.Download.Client.Sabnzbd do
   NOTE: SABnzbd must have "Pause on Duplicates" disabled — that mode re-keys the
   `nzo_id` after `addurl`, so the stored id would never reappear.
 
+  SABnzbd requires `apikey` in the query string. Redirects and redirect logging are disabled so
+  that protocol-required secret is never replayed to another origin or written to Cinder's logs.
+  `addurl` remains a deputy boundary: Cinder validates the initial provider URL, but SABnzbd then
+  performs its own DNS resolution and redirects outside this policy. Isolate SABnzbd's network and
+  deny access to private control-plane/metadata destinations; migrating to `addfile` is a separate
+  compatibility change.
+
   Validated against a live SABnzbd only in Phase 5; the unit test is a shape
   sanity-check against `Req.Test`.
   """
   @behaviour Cinder.Download.Client
 
+  alias Cinder.HTTPPolicy
+
   @default_base_url "http://localhost:8080"
+  @max_response_bytes 4 * 1024 * 1024
+
+  def add(release), do: add(release, [])
 
   @impl true
-  def add(%{download_url: url}) when is_binary(url) do
+  def add(%{download_url: url} = release, opts) when is_binary(url) do
     # retry: false — `addurl` is side-effecting (SABnzbd queues the NZB), but it's a GET, which
     # Req's default :safe_transient policy would retry up to 3× on a transient failure, re-queuing
     # the same download. Disable retry on the add path only (status/health stay idempotent-retryable).
-    case get([mode: "addurl", name: url], retry: false) do
+    with {:ok, _uri} <- validate_url(url, Map.get(release, :download_url_origin)) do
+      add_url(url, opts)
+    end
+  end
+
+  def add(%{download_url: _}, _opts), do: {:error, :unsupported_download_url}
+
+  defp add_url(url, opts) do
+    params =
+      case Keyword.get(opts, :operation_key) do
+        key when is_binary(key) -> [mode: "addurl", name: url, nzbname: "cinder-#{key}"]
+        _ -> [mode: "addurl", name: url]
+      end
+
+    case get(params, retry: false) do
       # A returned job id is success; key on it rather than the `status` field,
       # whose type varies across SABnzbd versions (boolean true vs 1).
       {:ok, %{status: 200, body: %{"nzo_ids" => [id | _]}}} -> {:ok, id}
@@ -40,7 +66,66 @@ defmodule Cinder.Download.Client.Sabnzbd do
     end
   end
 
-  def add(%{download_url: _}), do: {:error, :unsupported_download_url}
+  @impl true
+  def find_by_operation_key(key) do
+    name = "cinder-#{key}"
+
+    [
+      named_slots("queue", name),
+      named_slots("history", name, archive: 0),
+      named_slots("history", name, archive: 1)
+    ]
+    |> unique_remote_id()
+  end
+
+  defp named_slots(mode, name, extra \\ []) do
+    case get([mode: mode, search: name] ++ extra) do
+      {:ok, %{status: 200, body: body}} -> {:ok, exact_named_slots(body, mode, name)}
+      other -> error(other)
+    end
+  end
+
+  defp exact_named_slots(body, mode, name) do
+    case body do
+      %{^mode => %{"slots" => slots}} when is_list(slots) ->
+        Enum.filter(slots, fn slot ->
+          slot["filename"] == name or slot["name"] == name or slot["nzb_name"] == name
+        end)
+
+      _ ->
+        []
+    end
+  end
+
+  defp unique_remote_id(results) do
+    with {:ok, slots} <- collect_slots(results),
+         {:ok, ids} <- collect_remote_ids(slots) do
+      case Enum.uniq(ids) do
+        [] -> :not_found
+        [id] -> {:ok, id}
+        [_ | _] -> {:error, :ambiguous_operation_key}
+      end
+    end
+  end
+
+  defp collect_slots(results) do
+    Enum.reduce_while(results, {:ok, []}, fn
+      {:ok, slots}, {:ok, acc} -> {:cont, {:ok, slots ++ acc}}
+      error, _acc -> {:halt, error}
+    end)
+  end
+
+  defp collect_remote_ids(slots) do
+    Enum.reduce_while(slots, {:ok, []}, fn slot, {:ok, ids} ->
+      case remote_id(slot) do
+        {:ok, id} -> {:cont, {:ok, [id | ids]}}
+        error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp remote_id(%{"nzo_id" => id}) when is_binary(id), do: {:ok, id}
+  defp remote_id(_slot), do: {:error, :unexpected_response}
 
   @impl true
   def status(nzo_id) do
@@ -195,17 +280,34 @@ defmodule Cinder.Download.Client.Sabnzbd do
   defp get(params, extra \\ []) do
     config = config()
 
-    [base_url: Keyword.get(config, :base_url, @default_base_url), receive_timeout: 15_000]
+    [
+      base_url: Keyword.get(config, :base_url, @default_base_url),
+      receive_timeout: 15_000,
+      pool_timeout: 5_000,
+      connect_options: [timeout: 5_000]
+    ]
     |> Keyword.merge(Keyword.get(config, :req_options, []))
     |> Keyword.merge(extra)
+    |> Keyword.put(:redirect, false)
     |> Req.new()
-    |> Req.get(url: "/api", params: query(config, params))
+    |> Req.merge(method: :get, url: "/api", params: query(config, params))
+    |> HTTPPolicy.bounded_request(@max_response_bytes)
   end
 
   defp query(config, params),
     do: Keyword.merge([apikey: Keyword.get(config, :api_key), output: "json"], params)
 
   defp config, do: Application.get_env(:cinder, __MODULE__, [])
+
+  defp validate_url(url, source_origin) do
+    case Keyword.get(config(), :url_resolver) do
+      resolver when is_function(resolver, 1) ->
+        HTTPPolicy.validate_source_url(url, source_origin, resolver)
+
+      nil ->
+        HTTPPolicy.validate_source_url(url, source_origin)
+    end
+  end
 
   defp error({:ok, %{status: status}}), do: {:error, {:sabnzbd_status, status}}
   defp error({:error, reason}), do: {:error, reason}

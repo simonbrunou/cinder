@@ -12,12 +12,15 @@ defmodule Cinder.Catalog do
   alias Cinder.Audit
   alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Movie, Season, Series}
   alias Cinder.Download
+  alias Cinder.Download.Intent
   alias Cinder.Library
+  alias Cinder.Library.ImportStage
   alias Cinder.Notifier
   alias Cinder.Repo
 
   @topic "movies"
   @download_metric_fields [:download_progress, :download_speed, :download_eta]
+  @max_search_attempts 10
 
   @doc """
   Searches TMDB for `query`. A blank/whitespace query short-circuits to `{:ok, []}`
@@ -238,21 +241,152 @@ defmodule Cinder.Catalog do
   # the broadcast payload is the fresh DB state, not the poller's tick-start snapshot
   # patched in memory (views upsert the payload directly into their assigns).
   def transition(%Movie{} = movie, attrs, expect: expected) do
-    changeset = Movie.transition_changeset(movie, attrs)
+    movie
+    |> run_guarded_movie_transition(attrs, expected)
+    |> publish_guarded_movie_transition()
+  end
 
-    with %{valid?: true, changes: changes} <- changeset,
+  def transition(%Movie{} = movie, attrs, opts) when is_list(opts) do
+    expected = Keyword.fetch!(opts, :expect)
+    stage_ids = Keyword.get(opts, :import_stage_ids, [])
+
+    movie
+    |> run_guarded_movie_transition(attrs, expected, fn _updated ->
+      ImportStage.mark_committed!(stage_ids)
+    end)
+    |> publish_guarded_movie_transition()
+  end
+
+  @doc false
+  def account_movie_intent_retry(
+        %Intent{kind: :movie, status: :reserved} = intent,
+        retry_attrs,
+        reason
+      )
+      when is_map(retry_attrs) do
+    result =
+      Repo.transaction(fn ->
+        case claim_intent_retry_generation(intent, retry_attrs) do
+          {:ok, claimed} -> account_claimed_movie_retry(claimed)
+          :stale_generation -> :stale_generation
+        end
+      end)
+
+    publish_movie_intent_retry(result, reason)
+  end
+
+  defp claim_intent_retry_generation(intent, retry_attrs) do
+    observed_attempt = intent.attempt_count || 0
+
+    case Repo.update_all(
+           from(i in Intent,
+             where:
+               i.id == ^intent.id and i.status == :reserved and
+                 i.attempt_count == ^observed_attempt,
+             select: i
+           ),
+           set: Map.to_list(retry_attrs) ++ [updated_at: now()]
+         ) do
+      {1, [claimed]} -> {:ok, claimed}
+      {0, _} -> :stale_generation
+    end
+  end
+
+  defp account_claimed_movie_retry(%Intent{target_id: movie_id}) do
+    case Repo.get(Movie, movie_id) do
+      %Movie{status: status} = movie when status in [:requested, :searching] ->
+        account_active_movie_retry(movie)
+
+      _other ->
+        {:retry, nil}
+    end
+  end
+
+  defp account_active_movie_retry(movie) do
+    attempts = (movie.search_attempts || 0) + 1
+
+    if attempts >= @max_search_attempts do
+      case guarded_movie_transition(movie, %{status: :search_failed}, movie.status) do
+        {:ok, parked} ->
+          intent_ids = Download.fence_movie_cleanup(parked, include_remote: false)
+          {:parked, parked, intent_ids}
+
+        {:error, reason} ->
+          Repo.rollback(reason)
+      end
+    else
+      case guarded_movie_transition(
+             movie,
+             %{status: movie.status, search_attempts: attempts},
+             movie.status
+           ) do
+        {:ok, updated} -> {:retry, updated}
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end
+  end
+
+  # Transaction-safe state-change primitive: every guarded movie writer uses this exact changeset
+  # and compare-and-swap update. It performs no publication, so callers publish only after their
+  # encompassing transaction commits.
+  defp guarded_movie_transition(movie, attrs, expected) do
+    with %{valid?: true, changes: changes} <- Movie.transition_changeset(movie, attrs),
          {1, [updated]} <-
            Repo.update_all(
-             from(m in Movie, where: m.id == ^movie.id and m.status == ^expected, select: m),
+             from(m in Movie,
+               where: m.id == ^movie.id and m.status == ^expected,
+               select: m
+             ),
              set: Map.to_list(changes) ++ [updated_at: now()]
            ) do
-      broadcast({:movie_updated, updated})
       {:ok, updated}
     else
       {0, _} -> {:error, :stale_status}
       %Ecto.Changeset{} = invalid -> {:error, invalid}
     end
   end
+
+  defp publish_movie_intent_retry({:ok, {:retry, nil}}, _reason), do: :ok
+  defp publish_movie_intent_retry({:ok, :stale_generation}, _reason), do: :ok
+
+  defp publish_movie_intent_retry({:ok, {:retry, updated}}, _reason) do
+    broadcast({:movie_updated, updated})
+    :ok
+  end
+
+  defp publish_movie_intent_retry({:ok, {:parked, parked, intent_ids}}, reason) do
+    broadcast({:movie_updated, parked})
+    Notifier.notify({:movie_failed, parked, reason})
+    Download.cleanup_intents(intent_ids)
+    :ok
+  end
+
+  defp publish_movie_intent_retry({:error, reason}, _submission_reason), do: {:error, reason}
+
+  defp run_guarded_movie_transition(
+         movie,
+         attrs,
+         expected,
+         after_update \\ fn _updated -> :ok end
+       ) do
+    Repo.transaction(fn ->
+      case guarded_movie_transition(movie, attrs, expected) do
+        {:ok, updated} ->
+          after_update.(updated)
+          updated
+
+        {:error, reason} ->
+          Repo.rollback(reason)
+      end
+    end)
+  end
+
+  defp publish_guarded_movie_transition({:ok, updated}) do
+    broadcast({:movie_updated, updated})
+    {:ok, updated}
+  end
+
+  defp publish_guarded_movie_transition({:error, reason}), do: {:error, reason}
 
   @doc "Updates a downloading movie's progress snapshot without broadcasting equal values."
   def update_movie_download_metrics(%Movie{} = movie, attrs) do
@@ -343,43 +477,15 @@ defmodule Cinder.Catalog do
   mid-action surfaces `{:error, :stale_entry}`.
   """
   def manual_grab_movie(%Movie{status: :available} = movie, %Release{} = release) do
-    grab_and_transition(movie, release, %{status: :upgrading})
+    Download.grab_movie(movie, release)
   end
 
   def manual_grab_movie(%Movie{status: status} = movie, %Release{} = release)
       when status in @retryable do
-    grab_and_transition(movie, release, %{status: :downloading, search_attempts: 0})
+    Download.grab_movie(movie, release)
   end
 
   def manual_grab_movie(%Movie{}, %Release{}), do: {:error, :not_grabbable}
-
-  # Grabs the release (a client.add side-effect returning a download_id), then transitions the
-  # movie with the shared download bookkeeping merged onto `attrs`. If the row was deleted
-  # mid-action, transition/2 raises Ecto.StaleEntryError; we best-effort remove the just-added
-  # download so it isn't orphaned in the client, then surface {:error, :stale_entry}.
-  defp grab_and_transition(movie, %Release{} = release, attrs) do
-    case Download.grab(release) do
-      {:ok, download_id} ->
-        try do
-          transition(
-            movie,
-            Map.merge(attrs, %{
-              download_id: download_id,
-              download_protocol: release.protocol,
-              release_title: release.title,
-              import_attempts: 0
-            })
-          )
-        rescue
-          Ecto.StaleEntryError ->
-            remove_download(%{download_id: download_id, download_protocol: release.protocol})
-            {:error, :stale_entry}
-        end
-
-      error ->
-        error
-    end
-  end
 
   @doc """
   Grabs a user-chosen `release` for one `season_number` of `series`. Recomputes the season's
@@ -409,22 +515,7 @@ defmodule Cinder.Catalog do
   # (:no_episodes_linked) or the insert failed — best-effort remove the just-added download so it
   # isn't orphaned in the client, then surface the error.
   defp grab_and_create_grab(%Release{} = release, episode_ids) do
-    case Download.grab(release) do
-      {:ok, download_id} ->
-        case create_grab(download_id, release.protocol, episode_ids, release.title,
-               reset_attempts: true
-             ) do
-          {:ok, _grab} = ok ->
-            ok
-
-          {:error, _reason} = error ->
-            remove_download(%{download_id: download_id, download_protocol: release.protocol})
-            error
-        end
-
-      error ->
-        error
-    end
+    Download.grab_episodes(release, episode_ids)
   end
 
   # A whole-season pack (episodes: nil) covers every still-wanted number; an episode list covers its
@@ -543,17 +634,13 @@ defmodule Cinder.Catalog do
   it to `:cancelled`. Guards `cancellable?/1` server-side (`transition/2` does not validate the
   transition). Returns `{:error, :not_cancellable}` for a terminal/available/parked movie.
 
-  Client I/O runs OUTSIDE the DB transaction (external-I/O rule). The `:cancelled` transition +
-  the audit row are written in one transaction so a rolled-back cancel leaves no orphan audit row;
-  the `{:movie_updated, _}` broadcast (via the transition) fires after commit.
+  The `:cancelled` transition, audit row, and durable cleanup fence are written in one transaction.
+  Client I/O runs only after commit; failures leave the fence for background reconciliation.
   """
   def cancel_movie(%Movie{} = movie, actor) do
     if cancellable?(movie) do
-      # Client removal is best-effort: a stuck movie must always be clearable even if
-      # qBit/SAB is down. A failed remove is logged, not propagated (see remove_download/1).
-      remove_download(movie)
-
-      with {:ok, updated} <- do_cancel_txn(movie, actor) do
+      with {:ok, {updated, intent_ids}} <- do_cancel_txn(movie, actor) do
+        Download.cleanup_intents(intent_ids)
         broadcast({:movie_updated, updated})
         {:ok, updated}
       end
@@ -566,8 +653,10 @@ defmodule Cinder.Catalog do
     Repo.transaction(fn ->
       case movie |> Movie.transition_changeset(%{status: :cancelled}) |> Repo.update() do
         {:ok, updated} ->
+          updated = Repo.get!(Movie, updated.id)
+          intent_ids = Download.fence_movie_cleanup(updated)
           Audit.log_or_rollback(actor, :cancel_movie, updated, %{from: movie.status})
-          updated
+          {updated, intent_ids}
 
         {:error, changeset} ->
           Repo.rollback(changeset)
@@ -581,16 +670,15 @@ defmodule Cinder.Catalog do
   an `:upgrading` movie must NOT become `:cancelled` (it still has a good file). Returns
   `{:error, :not_upgrading}` otherwise.
 
-  Client I/O runs OUTSIDE the DB transaction (external-I/O rule). The `:available` revert +
-  the audit row are written in one transaction so a rolled-back abort leaves no orphan audit row;
-  the `{:movie_updated, _}` broadcast fires after commit.
+  The `:available` revert, audit row, and durable cleanup fence are written in one transaction.
+  Client I/O runs only after commit; failures leave the fence for background reconciliation.
   """
   def abort_upgrade(%Movie{status: :upgrading} = movie, actor) do
-    remove_download(movie)
-
     result =
       Repo.transaction(fn ->
-        case movie
+        cleanup_source = Repo.get!(Movie, movie.id)
+
+        case cleanup_source
              |> Movie.transition_changeset(%{
                status: :available,
                download_id: nil,
@@ -599,15 +687,18 @@ defmodule Cinder.Catalog do
              })
              |> Repo.update() do
           {:ok, updated} ->
+            updated = Repo.get!(Movie, updated.id)
+            intent_ids = Download.fence_movie_cleanup(cleanup_source)
             Audit.log_or_rollback(actor, :abort_upgrade, updated, %{from: :upgrading})
-            updated
+            {updated, intent_ids}
 
           {:error, changeset} ->
             Repo.rollback(changeset)
         end
       end)
 
-    with {:ok, updated} <- result do
+    with {:ok, {updated, intent_ids}} <- result do
+      Download.cleanup_intents(intent_ids)
       broadcast({:movie_updated, updated})
       {:ok, updated}
     end
@@ -616,8 +707,8 @@ defmodule Cinder.Catalog do
   def abort_upgrade(%Movie{}, _actor), do: {:error, :not_upgrading}
 
   @doc """
-  Deletes a movie's DB row. An active row with a tracked download is cancelled first (which
-  removes the client download) so delete never orphans a live download. Broadcasts
+  Deletes a movie's DB row. An active row's tracked download is captured in a durable cleanup
+  fence in the same transaction, then removed after commit. Broadcasts
   `{:movie_deleted, id}` on the `"movies"` topic. The delete + audit row are written in one
   transaction.
 
@@ -626,10 +717,15 @@ defmodule Cinder.Catalog do
   """
   def delete_movie(%Movie{} = movie, actor, opts \\ []) do
     delete_files? = Keyword.get(opts, :delete_files, false)
-    # Client removal is best-effort (see maybe_cancel_download_for_delete/1).
-    maybe_cancel_download_for_delete(movie)
 
-    with {:ok, deleted} <- delete_with_audit(movie, actor, :delete_movie, delete_files?) do
+    prepare = fn fresh ->
+      include_remote? = cancellable?(fresh) or fresh.status == :upgrading
+      Download.fence_movie_cleanup(fresh, include_remote: include_remote?)
+    end
+
+    with {:ok, {deleted, intent_ids}} <-
+           delete_with_audit(movie, actor, :delete_movie, delete_files?, prepare) do
+      Download.cleanup_intents(intent_ids)
       if delete_files?, do: best_effort_delete_file(movie.file_path)
       broadcast_movie_deleted(deleted.id)
       {:ok, deleted}
@@ -638,16 +734,26 @@ defmodule Cinder.Catalog do
 
   # Deletes a movie or series row and writes the audit entry in one transaction; a concurrent
   # delete (Repo.delete/1 raises) becomes a clean {:error, :stale_entry}.
-  defp delete_with_audit(record, actor, action, delete_files?) do
+  defp delete_with_audit(record, actor, action, delete_files?, prepare) do
     Repo.transaction(fn ->
-      case Repo.delete(record) do
+      module = record.__struct__
+
+      case Repo.update_all(from(r in module, where: r.id == ^record.id), set: [updated_at: now()]) do
+        {1, _} -> :ok
+        {0, _} -> Repo.rollback(:stale_entry)
+      end
+
+      fresh = Repo.get!(module, record.id)
+      prepared = prepare.(fresh)
+
+      case Repo.delete(fresh) do
         {:ok, deleted} ->
           Audit.log_or_rollback(actor, action, deleted, %{
             title: deleted.title,
             files_deleted: delete_files?
           })
 
-          deleted
+          {deleted, prepared}
 
         {:error, changeset} ->
           Repo.rollback(changeset)
@@ -655,29 +761,6 @@ defmodule Cinder.Catalog do
     end)
   rescue
     Ecto.StaleEntryError -> {:error, :stale_entry}
-  end
-
-  # Remove the tracked client download if present; skip entirely when download_id is nil. Works on
-  # any struct carrying download_id + download_protocol (a %Movie{} or a %Grab{}).
-  # client_for/1 maps a nil protocol to :torrent; an unconfigured protocol (:error) is treated
-  # as "nothing to remove" so a cancel/delete is never blocked by client resolution. Best-effort:
-  # a client error is logged, not propagated, so a stuck item can always be cleared even with the
-  # client down. Always returns :ok.
-  defp remove_download(%{download_id: nil}), do: :ok
-
-  defp remove_download(%{download_id: id, download_protocol: protocol}) do
-    case Download.client_for(protocol) do
-      {:ok, client} -> Download.best_effort_remove(client, id)
-      :error -> :ok
-    end
-  end
-
-  # For delete: only an active (cancellable) row with a tracked download needs the client removed.
-  # A terminal/available row keeps its (already-imported or absent) download untouched.
-  defp maybe_cancel_download_for_delete(%Movie{download_id: nil}), do: :ok
-
-  defp maybe_cancel_download_for_delete(%Movie{} = movie) do
-    if cancellable?(movie) or movie.status == :upgrading, do: remove_download(movie), else: :ok
   end
 
   # Best-effort library-file unlink shared by the movie and series delete paths: a failed unlink is
@@ -1263,15 +1346,34 @@ defmodule Cinder.Catalog do
   end
 
   @doc """
-  Aborts one grab as a user action: removes its tracked client download (best-effort,
-  outside any txn — mirrors `cancel_series/2`'s per-grab semantics), then deletes the
-  grab row. Its episodes re-enter the wanted sweep and re-search cleanly — without the
-  client removal the still-running download would collide with the re-grab
-  (duplicate-add rejections) and complete with no grab left to import it.
+  Aborts one grab as a user action. Its delete and durable cleanup fence commit together; remote
+  cleanup runs afterward and retries from the fence on failure. Its episodes then re-enter the
+  wanted sweep and re-search cleanly.
   """
   def cancel_grab(%Grab{} = grab) do
-    remove_download(grab)
-    delete_grab(grab)
+    result =
+      Repo.transaction(fn ->
+        case Repo.update_all(from(g in Grab, where: g.id == ^grab.id), set: [updated_at: now()]) do
+          {0, _} ->
+            {grab, [], nil}
+
+          {1, _} ->
+            episode_ids = episode_ids_for_grab(grab.id)
+            series_id = series_id_for_grab(grab.id)
+
+            intent_ids =
+              Download.fence_episode_cleanup(episode_ids, [grab_cleanup_spec(grab, episode_ids)])
+
+            {:ok, deleted} = Repo.delete(grab, allow_stale: true)
+            {deleted, intent_ids, series_id}
+        end
+      end)
+
+    with {:ok, {deleted, intent_ids, series_id}} <- result do
+      Download.cleanup_intents(intent_ids)
+      broadcast_series(series_id)
+      {:ok, deleted}
+    end
   end
 
   @doc """
@@ -1280,50 +1382,48 @@ defmodule Cinder.Catalog do
   removing each tracked client download, then unmonitors every season and episode so the TV
   poller's `wanted_episodes` does not re-grab. Broadcasts `{:series_updated, id}`. Audited.
 
-  Client I/O (best-effort — see `Cinder.Download.best_effort_remove/2`) runs BEFORE the DB transaction. The grab-row
-  deletes, the season+episode unmonitor, and the audit row are then written in ONE transaction so
-  there is no poller-visible window where an episode is grab-less but still monitored (which would
-  re-grab and defeat the cancel), and a failed audit rolls the whole cancel back rather than leaving
-  the series reaped-but-unaudited. The `{:series_updated, _}` broadcast fires after commit.
+  Grab deletes, season+episode unmonitoring, the audit row, and durable cleanup fences are written
+  in one transaction, so there is no poller-visible window where an episode is grab-less but still
+  monitored. Client I/O runs only after commit; failures leave fences for reconciliation.
   """
   def cancel_series(%Series{} = series, actor) do
-    grabs = grabs_for_series(series.id)
-
-    # External I/O outside the txn: best-effort, never blocks the cancel.
-    for grab <- grabs, do: remove_download(grab)
-
     result =
       Repo.transaction(fn ->
-        # allow_stale: the TV poller may have finished/parked a grab between the read
-        # above and this txn; raising here would crash the cancel after the client
-        # downloads were already removed.
-        for grab <- grabs, do: Repo.delete!(grab, allow_stale: true)
+        episode_ids = episode_ids_for_series(series.id)
         unmonitor_series_tree(series.id)
+        grabs = grabs_for_series(series.id)
+        specs = Enum.map(grabs, &grab_cleanup_spec(&1, episode_ids_for_grab(&1.id)))
+
+        # allow_stale: the TV poller may have finished/parked a grab between reads.
+        for grab <- grabs, do: Repo.delete!(grab, allow_stale: true)
+        intent_ids = Download.fence_episode_cleanup(episode_ids, specs)
         Audit.log_or_rollback(actor, :cancel_series, series, %{title: series.title})
-        series
+        {series, intent_ids}
       end)
 
-    with {:ok, _} <- result do
+    with {:ok, {_, intent_ids}} <- result do
+      Download.cleanup_intents(intent_ids)
       broadcast_series(series.id)
       {:ok, series}
     end
   end
 
   @doc """
-  Deletes a series and its tree. Grabs are reaped FIRST (the `episode.grab_id` FK nilifies on the
-  episode cascade, so after `Repo.delete(series)` the grabs would be unreachable for client removal
-  and orphan their downloads). Each grab's tracked client download is removed (outside the txn),
-  then `delete_grab/1`; then `Repo.delete(series)` cascades seasons/episodes at the DB. Broadcasts
+  Deletes a series and its tree. Grab deletes and durable remote-cleanup fences commit in the same
+  transaction as the series cascade, so the episode links cannot disappear before their remote IDs
+  are recoverable. Client I/O runs after commit. Broadcasts
   `{:series_deleted, id}`. Audited. Pass `delete_files: true` to also unlink every episode
   `file_path` after the cascade (best-effort, non-blocking).
   """
   def delete_series(%Series{} = series, actor, opts \\ []) do
     delete_files? = Keyword.get(opts, :delete_files, false)
-    reap_series_grabs(series.id)
     # Collect episode file paths BEFORE the cascade deletes the rows.
     paths = if delete_files?, do: episode_file_paths_for_series(series.id), else: []
+    prepare = &prepare_series_cleanup/1
 
-    with {:ok, deleted} <- delete_with_audit(series, actor, :delete_series, delete_files?) do
+    with {:ok, {deleted, intent_ids}} <-
+           delete_with_audit(series, actor, :delete_series, delete_files?, prepare) do
+      Download.cleanup_intents(intent_ids)
       Enum.each(paths, &best_effort_delete_file/1)
       broadcast_series_deleted(deleted.id)
       {:ok, deleted}
@@ -1340,17 +1440,36 @@ defmodule Cinder.Catalog do
     )
   end
 
-  # Remove every grab serving the series: client-remove the tracked download (best-effort, if any),
-  # then delete_grab/1. Used by delete_series (the grabs must be reaped before Repo.delete(series)
-  # cascades the tree, after which their downloads would be orphaned). cancel_series does its own
-  # atomic reap+unmonitor+audit in one transaction; see cancel_series/2.
-  defp reap_series_grabs(series_id) do
-    for grab <- grabs_for_series(series_id) do
-      remove_download(grab)
-      delete_grab(grab)
-    end
+  defp episode_ids_for_series(series_id) do
+    Repo.all(
+      from e in Episode,
+        join: s in Season,
+        on: s.id == e.season_id,
+        where: s.series_id == ^series_id,
+        select: e.id
+    )
+  end
 
-    :ok
+  defp episode_ids_for_grab(grab_id) do
+    Repo.all(from e in Episode, where: e.grab_id == ^grab_id, select: e.id)
+  end
+
+  defp prepare_series_cleanup(series) do
+    episode_ids = episode_ids_for_series(series.id)
+    grabs = grabs_for_series(series.id)
+    specs = Enum.map(grabs, &grab_cleanup_spec(&1, episode_ids_for_grab(&1.id)))
+    intent_ids = Download.fence_episode_cleanup(episode_ids, specs)
+    Enum.each(grabs, &Repo.delete!(&1, allow_stale: true))
+    intent_ids
+  end
+
+  defp grab_cleanup_spec(grab, episode_ids) do
+    %{
+      remote_id: grab.download_id,
+      protocol: grab.download_protocol,
+      title: grab.release_title,
+      episode_ids: episode_ids
+    }
   end
 
   # Grabs whose episodes belong to this series (via the episode→season join), ALL states.
@@ -1369,6 +1488,10 @@ defmodule Cinder.Catalog do
   # Unmonitor every season + episode of the series in one write each so wanted_episodes is empty.
   defp unmonitor_series_tree(series_id) do
     ts = now()
+
+    Repo.update_all(from(s in Series, where: s.id == ^series_id),
+      set: [monitored: false, monitor_strategy: :none, updated_at: ts]
+    )
 
     Repo.update_all(from(s in Season, where: s.series_id == ^series_id),
       set: [monitored: false, updated_at: ts]
@@ -1399,7 +1522,9 @@ defmodule Cinder.Catalog do
   could not give each its own dest); `n` is one season pack, so the per-row writes are cheap. The
   `file_path` XOR `grab_id` invariant (derived state) is maintained here, the single write site.
   """
-  def finish_grab(%Grab{} = grab, imported \\ []) do
+  def finish_grab(%Grab{} = grab, imported \\ []), do: finish_grab(grab, imported, [])
+
+  def finish_grab(%Grab{} = grab, imported, stage_ids) do
     imported_ids = imported |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
     series_id = series_id_for_grab(grab.id)
 
@@ -1408,20 +1533,7 @@ defmodule Cinder.Catalog do
         ts = now()
 
         for {episode_id, dest, q} <- imported do
-          Repo.update_all(from(e in Episode, where: e.id == ^episode_id),
-            set: [
-              file_path: dest,
-              grab_id: nil,
-              imported_resolution: q.resolution,
-              imported_size: q.size,
-              imported_language: q.language,
-              imported_source: q.source,
-              imported_audio_languages: q.audio_languages,
-              imported_embedded_subtitles: q.embedded_subtitles,
-              imported_sidecar_subtitles: q.sidecar_subtitles,
-              updated_at: ts
-            ]
-          )
+          update_imported_episode!(grab.id, episode_id, dest, q, ts)
         end
 
         # select: in the update_all (RETURNING) hands the bumped ids to the post-commit
@@ -1437,9 +1549,8 @@ defmodule Cinder.Catalog do
 
         completed_seasons = completed_seasons_for_imported_episodes(imported_ids)
 
-        # allow_stale: a user cancel_grab may delete the same row while this import
-        # finalizes; raising here would roll back the just-imported file_path writes.
-        Repo.delete!(grab, allow_stale: true)
+        ImportStage.mark_committed!(stage_ids)
+        Repo.delete!(grab)
         {bumped_ids, completed_seasons}
       end)
 
@@ -1448,6 +1559,32 @@ defmodule Cinder.Catalog do
       announce_search_exhausted(bumped_ids)
       Enum.each(completed_seasons, &Notifier.notify({:season_available, &1}))
       {:ok, grab}
+    end
+  rescue
+    Ecto.StaleEntryError -> {:error, :stale_grab}
+  end
+
+  defp update_imported_episode!(grab_id, episode_id, dest, quality, timestamp) do
+    query =
+      from e in Episode,
+        where: e.id == ^episode_id and e.grab_id == ^grab_id and e.monitored == true
+
+    updates = [
+      file_path: dest,
+      grab_id: nil,
+      imported_resolution: quality.resolution,
+      imported_size: quality.size,
+      imported_language: quality.language,
+      imported_source: quality.source,
+      imported_audio_languages: quality.audio_languages,
+      imported_embedded_subtitles: quality.embedded_subtitles,
+      imported_sidecar_subtitles: quality.sidecar_subtitles,
+      updated_at: timestamp
+    ]
+
+    case Repo.update_all(query, set: updates) do
+      {1, _} -> :ok
+      {0, _} -> Repo.rollback(:stale_grab)
     end
   end
 
@@ -1559,8 +1696,6 @@ defmodule Cinder.Catalog do
   # The TV sweep's per-episode search-attempt cap. Lives here (not in the poller) because the
   # UI derives :search_parked from it — the sweep's skip bound and the badge must agree.
   # (Defined before its first use below; read via max_search_attempts/0 further down.)
-  @max_search_attempts 10
-
   def increment_search_attempts([]), do: :ok
 
   def increment_search_attempts(episode_ids) when is_list(episode_ids) do
@@ -1823,15 +1958,27 @@ defmodule Cinder.Catalog do
   def refresh_series(%Series{} = series) do
     with {:ok, info} <- tmdb().get_series(series.tmdb_id),
          {:ok, seasons} <- fetch_seasons(series.tmdb_id, info.seasons) do
-      {:ok, updated} =
-        Repo.transaction(fn ->
-          s = update_series_row(series, info)
-          reconcile_tree(s, seasons)
-          s
-        end)
+      Repo.transaction(fn -> refresh_current_series(series.id, info, seasons) end)
+      |> finish_series_refresh(series.id)
+    end
+  end
 
-      broadcast_series(series.id)
-      {:ok, updated}
+  defp finish_series_refresh({:ok, updated}, series_id) do
+    broadcast_series(series_id)
+    {:ok, updated}
+  end
+
+  defp finish_series_refresh({:error, reason}, _series_id), do: {:error, reason}
+
+  defp refresh_current_series(series_id, info, seasons) do
+    case Repo.get(Series, series_id) do
+      %Series{} = current ->
+        updated = update_series_row(current, info)
+        reconcile_tree(updated, seasons)
+        updated
+
+      nil ->
+        Repo.rollback(:stale_series)
     end
   end
 

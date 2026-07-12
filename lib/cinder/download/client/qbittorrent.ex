@@ -9,12 +9,17 @@ defmodule Cinder.Download.Client.QBittorrent do
   cookie (`SID` on <= 4.x, `QBT_SID_<port>` on >= 5.x) into the action request,
   then performs it.
 
+  Durable operation-key reconciliation requires qBittorrent Web API 2.8.3 or
+  newer. Health checks and operation-key lookup reject older or malformed
+  versions before relying on tag-filtered torrent listing.
+
   Validated against a live qBittorrent only in Phase 5; the unit test is a shape
   sanity-check against `Req.Test`.
   """
   @behaviour Cinder.Download.Client
 
   alias Cinder.Download.Torrent
+  alias Cinder.HTTPPolicy
 
   @default_base_url "http://localhost:8080"
 
@@ -25,14 +30,21 @@ defmodule Cinder.Download.Client.QBittorrent do
   @errored ~w(error missingFiles)
 
   @max_redirects 5
+  @max_torrent_bytes 10 * 1024 * 1024
+  @max_response_bytes 4 * 1024 * 1024
+  @minimum_webapi_version "2.8.3"
+
+  def add(release), do: add(release, [])
 
   @impl true
-  def add(%{download_url: "magnet:" <> _ = magnet}) do
+  def add(%{download_url: "magnet:" <> _ = magnet}, opts) do
     with {:ok, hash} <- btih(magnet),
          {:ok, %{status: 200, body: body}} <-
-           action(fn req ->
-             Req.post(req, url: "/api/v2/torrents/add", form_multipart: [urls: magnet])
-           end) do
+           action(
+             method: :post,
+             url: "/api/v2/torrents/add",
+             form_multipart: [urls: magnet] ++ tag_part(opts)
+           ) do
       # ponytail: magnet-only hash extraction; base32 btih and .torrent-URL→hash
       # (info-by-name lookup) are Phase-5 live concerns.
       if String.trim(body) == "Fails.", do: {:error, :add_rejected}, else: {:ok, hash}
@@ -42,27 +54,29 @@ defmodule Cinder.Download.Client.QBittorrent do
     end
   end
 
-  def add(%{download_url: "http://" <> _ = url}), do: add_torrent_url(url)
-  def add(%{download_url: "https://" <> _ = url}), do: add_torrent_url(url)
+  def add(%{download_url: "http://" <> _} = release, opts), do: add_torrent_url(release, opts)
+  def add(%{download_url: "https://" <> _} = release, opts), do: add_torrent_url(release, opts)
 
-  def add(%{download_url: _}), do: {:error, :unsupported_download_url}
+  def add(%{download_url: _}, _opts), do: {:error, :unsupported_download_url}
 
   # Fetch the .torrent, compute its infohash (so status/1 can poll it), then
   # upload the bytes to qBittorrent. decode_body: false keeps the bytes raw so
   # the infohash is over the exact on-the-wire content.
-  defp add_torrent_url(url) do
-    case fetch_torrent(url, @max_redirects) do
-      {:ok, bytes} -> add_torrent_bytes(bytes)
+  defp add_torrent_url(%{download_url: url} = release, opts) do
+    source_origin = Map.get(release, :download_url_origin)
+
+    case fetch_torrent(url, source_origin, @max_redirects) do
+      {:ok, bytes} -> add_torrent_bytes(bytes, opts)
       # Magnet-only indexers answer their proxied downloadUrl with a 3xx to a
       # magnet: URI — route it through the magnet add path.
-      {:magnet, magnet} -> add(%{download_url: magnet})
+      {:magnet, magnet} -> add(%{download_url: magnet}, opts)
       {:error, reason} -> {:error, reason}
     end
   end
 
-  defp add_torrent_bytes(bytes) do
+  defp add_torrent_bytes(bytes, opts) do
     with {:ok, hash} <- Torrent.infohash(bytes),
-         {:ok, %{status: 200, body: body}} <- upload_torrent(bytes) do
+         {:ok, %{status: 200, body: body}} <- upload_torrent(bytes, opts) do
       if String.trim(to_string(body)) == "Fails.", do: {:error, :add_rejected}, else: {:ok, hash}
     else
       other -> error(other)
@@ -72,23 +86,37 @@ defmodule Cinder.Download.Client.QBittorrent do
   # Redirects are followed manually (redirect: false): Req's own redirect step
   # merges the Location URI without a scheme check, so a 3xx to a magnet: URI
   # makes Finch raise ArgumentError instead of returning {:error, _}.
-  defp fetch_torrent(_url, 0), do: {:error, :too_many_redirects}
+  defp fetch_torrent(url, source_origin, hops) do
+    with {:ok, uri} <- validate_url(url, source_origin) do
+      trust =
+        if HTTPPolicy.same_origin?(uri, source_origin),
+          do: {:source, source_origin},
+          else: :untrusted
 
-  defp fetch_torrent(url, hops) do
-    case Req.get(url,
-           receive_timeout: 15_000,
-           decode_body: false,
-           retry: false,
-           redirect: false,
-           plug: fetch_plug()
-         ) do
+      request_torrent(uri, trust, hops)
+    end
+  end
+
+  defp request_torrent(uri, trust, hops) do
+    request =
+      Req.new(
+        url: uri,
+        receive_timeout: 15_000,
+        pool_timeout: 5_000,
+        connect_options: [timeout: 5_000],
+        retry: false,
+        redirect: false,
+        plug: fetch_plug()
+      )
+
+    case HTTPPolicy.bounded_request(request, @max_torrent_bytes) do
       {:ok, %{status: 200, body: bytes}} when is_binary(bytes) ->
         {:ok, bytes}
 
       {:ok, %{status: status} = resp} when status in [301, 302, 303, 307, 308] ->
         case Req.Response.get_header(resp, "location") do
           ["magnet:" <> _ = magnet | _] -> {:magnet, magnet}
-          [location | _] -> follow_redirect(url, location, hops)
+          [location | _] -> follow_redirect(uri, location, trust, hops)
           [] -> {:error, {:torrent_fetch_status, status}}
         end
 
@@ -100,33 +128,68 @@ defmodule Cinder.Download.Client.QBittorrent do
     end
   end
 
-  defp follow_redirect(url, location, hops) do
-    next = url |> URI.merge(location) |> URI.to_string()
+  defp follow_redirect(_url, _location, _trust, 0), do: {:error, :too_many_redirects}
 
-    if String.starts_with?(next, ["http://", "https://"]) do
-      fetch_torrent(next, hops - 1)
-    else
-      {:error, :unsupported_download_url}
+  defp follow_redirect(url, location, trust, hops) do
+    case resolve_redirect(url, location, trust) do
+      {:ok, next, next_trust} -> request_torrent(next, next_trust, hops - 1)
+      {:error, :unsupported_scheme} -> {:error, :unsupported_download_url}
+      {:error, reason} -> {:error, reason}
     end
   end
 
-  defp upload_torrent(bytes) do
-    action(fn req ->
-      Req.post(req,
-        url: "/api/v2/torrents/add",
-        form_multipart: [
+  defp upload_torrent(bytes, opts) do
+    action(
+      method: :post,
+      url: "/api/v2/torrents/add",
+      form_multipart:
+        [
           torrents: {bytes, filename: "t.torrent", content_type: "application/x-bittorrent"}
-        ]
-      )
-    end)
+        ] ++ tag_part(opts)
+    )
   end
+
+  defp tag_part(opts) do
+    case Keyword.get(opts, :operation_key) do
+      key when is_binary(key) -> [tags: "cinder-#{key}"]
+      _ -> []
+    end
+  end
+
+  @impl true
+  def find_by_operation_key(key) do
+    tag = "cinder-#{key}"
+
+    with :ok <- require_tag_filter_webapi() do
+      case action(method: :get, url: "/api/v2/torrents/info", params: [tag: tag]) do
+        {:ok, %{status: 200, body: torrents}} when is_list(torrents) ->
+          torrents |> Enum.filter(&tagged?(&1, tag)) |> operation_hash()
+
+        {:ok, %{status: 200}} ->
+          {:error, :unexpected_response}
+
+        other ->
+          error(other)
+      end
+    end
+  end
+
+  defp tagged?(%{"tags" => tags}, wanted) when is_binary(tags) do
+    tags |> String.split(",") |> Enum.map(&String.trim/1) |> Enum.member?(wanted)
+  end
+
+  defp tagged?(_torrent, _wanted), do: false
+
+  defp operation_hash([]), do: :not_found
+  defp operation_hash([%{"hash" => hash}]) when is_binary(hash), do: {:ok, hash}
+  defp operation_hash([_ | _]), do: {:error, :ambiguous_operation_key}
 
   # In prod, no plug (real HTTP). In test, config can inject a Req.Test plug.
   defp fetch_plug, do: Keyword.get(config(), :fetch_plug)
 
   @impl true
   def status(hash) do
-    case action(fn req -> Req.get(req, url: "/api/v2/torrents/info", params: [hashes: hash]) end) do
+    case action(method: :get, url: "/api/v2/torrents/info", params: [hashes: hash]) do
       {:ok, %{status: 200, body: [torrent | _]}} -> {:ok, normalize(torrent)}
       {:ok, %{status: 200, body: []}} -> {:error, :not_found}
       {:ok, %{status: 200}} -> {:error, :unexpected_response}
@@ -138,12 +201,11 @@ defmodule Cinder.Download.Client.QBittorrent do
   def remove(hash, opts \\ []) do
     delete_files = Keyword.get(opts, :delete_files, true)
 
-    case action(fn req ->
-           Req.post(req,
-             url: "/api/v2/torrents/delete",
-             form: [hashes: hash, deleteFiles: to_string(delete_files)]
-           )
-         end) do
+    case action(
+           method: :post,
+           url: "/api/v2/torrents/delete",
+           form: [hashes: hash, deleteFiles: to_string(delete_files)]
+         ) do
       # qBittorrent answers /torrents/delete with 200 and an empty body whether or
       # not the hash was known — so it is idempotent for free (unknown hash → :ok).
       {:ok, %{status: status}} when status in 200..299 -> :ok
@@ -161,15 +223,33 @@ defmodule Cinder.Download.Client.QBittorrent do
     Process.delete({__MODULE__, :login_cooldown})
     probe = [receive_timeout: 3_000, connect_options: [timeout: 3_000]]
 
-    case action(fn req -> Req.get(req, url: "/api/v2/app/webapiVersion") end, probe) do
-      {:ok, %{status: status}} when status in 200..299 -> :ok
+    case action([method: :get, url: "/api/v2/app/webapiVersion"], probe) do
+      {:ok, %{status: status, body: version}} when status in 200..299 -> validate_webapi(version)
       other -> error(other)
     end
   end
 
+  defp require_tag_filter_webapi do
+    case action(method: :get, url: "/api/v2/app/webapiVersion") do
+      {:ok, %{status: status, body: version}} when status in 200..299 -> validate_webapi(version)
+      other -> error(other)
+    end
+  end
+
+  defp validate_webapi(version) when is_binary(version) do
+    case Version.compare(version, @minimum_webapi_version) do
+      order when order in [:eq, :gt] -> :ok
+      _ -> {:error, {:unsupported_webapi_version, version}}
+    end
+  rescue
+    Version.InvalidVersionError -> {:error, {:unsupported_webapi_version, version}}
+  end
+
+  defp validate_webapi(version), do: {:error, {:unsupported_webapi_version, to_string(version)}}
+
   # Logs in, then runs `fun` with a Req carrying the SID cookie + base_url.
   # `overrides` (e.g. health's short timeouts) apply to the login call too.
-  defp action(fun, overrides \\ []) do
+  defp action(options, overrides \\ []) do
     config = config()
 
     with {:ok, cookie} <- login(config, overrides) do
@@ -178,7 +258,8 @@ defmodule Cinder.Download.Client.QBittorrent do
       |> Keyword.merge(overrides)
       |> Keyword.put(:headers, [{"cookie", cookie}])
       |> Req.new()
-      |> fun.()
+      |> Req.merge(options)
+      |> HTTPPolicy.bounded_request(@max_response_bytes)
     end
   end
 
@@ -212,10 +293,12 @@ defmodule Cinder.Download.Client.QBittorrent do
       |> Keyword.merge(overrides)
       |> Keyword.put(:headers, [{"referer", Keyword.get(config, :base_url, @default_base_url)}])
       |> Req.new()
-      |> Req.post(
+      |> Req.merge(
+        method: :post,
         url: "/api/v2/auth/login",
         form: [username: Keyword.get(config, :username), password: Keyword.get(config, :password)]
       )
+      |> HTTPPolicy.bounded_request(@max_response_bytes)
 
     case resp do
       # qBittorrent answers a successful login with 200 ("Ok." on <= 4.x) or 204 No Content
@@ -307,12 +390,49 @@ defmodule Cinder.Download.Client.QBittorrent do
     [
       base_url: Keyword.get(config, :base_url, @default_base_url),
       receive_timeout: 15_000,
+      pool_timeout: 5_000,
+      connect_options: [timeout: 5_000],
+      redirect: false,
       retry: false
     ]
     |> Keyword.merge(Keyword.get(config, :req_options, []))
+    |> Keyword.put(:redirect, false)
   end
 
   defp config, do: Application.get_env(:cinder, __MODULE__, [])
+
+  defp validate_url(url, source_origin) do
+    case Keyword.get(config(), :url_resolver) do
+      resolver when is_function(resolver, 1) ->
+        HTTPPolicy.validate_source_url(url, source_origin, resolver)
+
+      nil ->
+        HTTPPolicy.validate_source_url(url, source_origin)
+    end
+  end
+
+  defp resolve_redirect(current, location, {:source, source_origin}) do
+    case HTTPPolicy.resolve_redirect(current, location, :same_origin) do
+      {:ok, next} -> {:ok, next, {:source, source_origin}}
+      {:error, :cross_origin_redirect} -> resolve_untrusted_redirect(current, location)
+      error -> error
+    end
+  end
+
+  defp resolve_redirect(current, location, :untrusted),
+    do: resolve_untrusted_redirect(current, location)
+
+  defp resolve_untrusted_redirect(current, location) do
+    case Keyword.get(config(), :url_resolver) do
+      resolver when is_function(resolver, 1) ->
+        with {:ok, next} <- HTTPPolicy.resolve_redirect(current, location, resolver),
+             do: {:ok, next, :untrusted}
+
+      nil ->
+        with {:ok, next} <- HTTPPolicy.resolve_redirect(current, location, :untrusted),
+             do: {:ok, next, :untrusted}
+    end
+  end
 
   defp error({:ok, %{status: status}}), do: {:error, {:qbittorrent_status, status}}
   defp error({:error, reason}), do: {:error, reason}

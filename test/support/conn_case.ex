@@ -92,6 +92,7 @@ defmodule CinderWeb.ConnCase do
     Cinder.Library.MediaServer.Plex,
     :media_server,
     :download_clients,
+    :import_roots,
     :movies_library_path,
     :movies_min_size,
     :movies_max_size,

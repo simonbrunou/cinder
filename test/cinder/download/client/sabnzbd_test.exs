@@ -1,6 +1,8 @@
 defmodule Cinder.Download.Client.SabnzbdTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias Cinder.Download.Client.Sabnzbd
 
   defp stub(fun), do: Req.Test.stub(Cinder.SabnzbdStub, fun)
@@ -35,6 +37,156 @@ defmodule Cinder.Download.Client.SabnzbdTest do
              Sabnzbd.add(%{download_url: "http://prowlarr/getnzb/1?apikey=k&id=9"})
   end
 
+  test "add/2 names the job with the operation key" do
+    stub(fn conn ->
+      assert conn.params["mode"] == "addurl"
+      assert conn.params["nzbname"] == "cinder-op-123"
+      Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["nzo-123"]})
+    end)
+
+    assert {:ok, "nzo-123"} =
+             Sabnzbd.add(%{download_url: "http://x/nzb"}, operation_key: "op-123")
+  end
+
+  test "find_by_operation_key/1 finds an exact queue name" do
+    stub(fn conn ->
+      assert conn.params["search"] == "cinder-op-123"
+
+      body =
+        case conn.params["mode"] do
+          "queue" ->
+            %{
+              "queue" => %{
+                "slots" => [%{"filename" => "cinder-op-123", "nzo_id" => "nzo-queue"}]
+              }
+            }
+
+          "history" ->
+            %{"history" => %{"slots" => []}}
+        end
+
+      Req.Test.json(conn, body)
+    end)
+
+    assert {:ok, "nzo-queue"} = Sabnzbd.find_by_operation_key("op-123")
+  end
+
+  test "find_by_operation_key/1 searches normal history after an exact queue miss" do
+    stub(fn conn ->
+      case {conn.params["mode"], conn.params["archive"]} do
+        {"queue", _} ->
+          Req.Test.json(conn, %{
+            "queue" => %{
+              "slots" => [%{"filename" => "cinder-op-123-extra", "nzo_id" => "wrong"}]
+            }
+          })
+
+        {"history", "0"} ->
+          assert conn.params["search"] == "cinder-op-123"
+
+          Req.Test.json(conn, %{
+            "history" => %{
+              "slots" => [%{"name" => "cinder-op-123", "nzo_id" => "nzo-history"}]
+            }
+          })
+
+        {"history", "1"} ->
+          Req.Test.json(conn, %{"history" => %{"slots" => []}})
+      end
+    end)
+
+    assert {:ok, "nzo-history"} = Sabnzbd.find_by_operation_key("op-123")
+  end
+
+  test "find_by_operation_key/1 searches archived history after normal history misses" do
+    stub(fn conn ->
+      case {conn.params["mode"], conn.params["archive"]} do
+        {"queue", _} ->
+          Req.Test.json(conn, %{"queue" => %{"slots" => []}})
+
+        {"history", "0"} ->
+          Req.Test.json(conn, %{"history" => %{"slots" => []}})
+
+        {"history", "1"} ->
+          assert conn.params["search"] == "cinder-op-123"
+
+          Req.Test.json(conn, %{
+            "history" => %{
+              "slots" => [%{"nzb_name" => "cinder-op-123", "nzo_id" => "nzo-archive"}]
+            }
+          })
+      end
+    end)
+
+    assert {:ok, "nzo-archive"} = Sabnzbd.find_by_operation_key("op-123")
+  end
+
+  test "find_by_operation_key/1 rejects duplicate exact queue names" do
+    stub(fn conn ->
+      body =
+        case conn.params["mode"] do
+          "queue" ->
+            %{
+              "queue" => %{
+                "slots" => [
+                  %{"filename" => "cinder-op-123", "nzo_id" => "nzo-1"},
+                  %{"filename" => "cinder-op-123", "nzo_id" => "nzo-2"}
+                ]
+              }
+            }
+
+          "history" ->
+            %{"history" => %{"slots" => []}}
+        end
+
+      Req.Test.json(conn, body)
+    end)
+
+    assert {:error, :ambiguous_operation_key} = Sabnzbd.find_by_operation_key("op-123")
+  end
+
+  test "find_by_operation_key/1 rejects distinct exact matches across queue and history" do
+    stub(fn conn ->
+      body =
+        case {conn.params["mode"], conn.params["archive"]} do
+          {"queue", _} ->
+            %{"queue" => %{"slots" => [%{"name" => "cinder-op-123", "nzo_id" => "nzo-1"}]}}
+
+          {"history", "0"} ->
+            %{"history" => %{"slots" => [%{"name" => "cinder-op-123", "nzo_id" => "nzo-2"}]}}
+
+          {"history", "1"} ->
+            %{"history" => %{"slots" => []}}
+        end
+
+      Req.Test.json(conn, body)
+    end)
+
+    assert {:error, :ambiguous_operation_key} = Sabnzbd.find_by_operation_key("op-123")
+  end
+
+  test "find_by_operation_key/1 deduplicates one nzo_id repeated across tiers" do
+    stub(fn conn ->
+      mode = conn.params["mode"]
+
+      Req.Test.json(conn, %{
+        mode => %{
+          "slots" => [%{"name" => "cinder-op-123", "nzo_id" => "same-nzo"}]
+        }
+      })
+    end)
+
+    assert {:ok, "same-nzo"} = Sabnzbd.find_by_operation_key("op-123")
+  end
+
+  test "find_by_operation_key/1 returns :not_found when queue and history miss" do
+    stub(fn conn ->
+      Req.Test.json(conn, %{conn.params["mode"] => %{"slots" => []}})
+    end)
+
+    assert :not_found = Sabnzbd.find_by_operation_key("missing")
+  end
+
   test "add/1 returns :add_rejected when SABnzbd creates no job (duplicate)" do
     stub(fn conn -> Req.Test.json(conn, %{"status" => true, "nzo_ids" => []}) end)
 
@@ -60,6 +212,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     Application.put_env(:cinder, Sabnzbd,
       base_url: "http://localhost:8080",
       api_key: "test-key",
+      url_resolver: fn _host -> {:ok, [{93, 184, 216, 34}]} end,
       req_options: [plug: {Req.Test, Cinder.SabnzbdStub}]
     )
 
@@ -220,8 +373,10 @@ defmodule Cinder.Download.Client.SabnzbdTest do
   test "health/0 probes exactly once — no retries against a failing server" do
     # The probe is bounded (retry: false): Req's default policy would re-hit a 500
     # up to 3 more times with backoff, hanging "Test connection" for ~7s per probe.
+    parent = self()
+
     stub(fn conn ->
-      send(self(), :probed)
+      send(parent, :probed)
       conn |> Plug.Conn.put_status(500) |> Req.Test.text("boom")
     end)
 
@@ -297,5 +452,62 @@ defmodule Cinder.Download.Client.SabnzbdTest do
   test "remove/2 returns an error tuple on a non-2xx status" do
     stub(fn conn -> conn |> Plug.Conn.put_status(500) |> Req.Test.text("boom") end)
     assert {:error, {:sabnzbd_status, 500}} = Sabnzbd.remove("nzo-1", [])
+  end
+
+  test "add/1 does not forward the API query key across redirects" do
+    parent = self()
+
+    for status <- [301, 302, 303, 307, 308] do
+      stub(fn conn ->
+        if conn.host == "attacker.test" do
+          send(parent, {:attacker_called, conn.query_string})
+          Req.Test.json(conn, %{"nzo_ids" => ["bad"]})
+        else
+          conn
+          |> Plug.Conn.put_resp_header("location", "https://attacker.test/api")
+          |> Plug.Conn.send_resp(status, "")
+        end
+      end)
+
+      log =
+        capture_log(fn ->
+          assert {:error, {:sabnzbd_status, ^status}} =
+                   Sabnzbd.add(%{download_url: "https://provider.test/file.nzb"})
+        end)
+
+      refute_received {:attacker_called, _}
+      refute log =~ "test-key"
+      refute log =~ "provider.test"
+    end
+  end
+
+  test "add/1 rejects an unsafe provider URL before delegating the fetch" do
+    stub(fn _conn -> flunk("unsafe provider URL must not reach SABnzbd") end)
+
+    assert {:error, :forbidden_address} =
+             Sabnzbd.add(%{download_url: "http://127.0.0.1/private.nzb"})
+  end
+
+  test "add/1 delegates a private URL proven to share the configured indexer origin" do
+    stub(fn conn ->
+      assert conn.params["name"] == "http://127.0.0.1:9696/getnzb/1"
+      Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["nzo-proxy"]})
+    end)
+
+    assert {:ok, "nzo-proxy"} =
+             Sabnzbd.add(%{
+               download_url: "http://127.0.0.1:9696/getnzb/1",
+               download_url_origin: "http://127.0.0.1:9696"
+             })
+  end
+
+  test "status/1 rejects an oversized JSON response" do
+    stub(fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Plug.Conn.send_resp(200, ~s({"padding":"#{String.duplicate("x", 4 * 1024 * 1024)}"}))
+    end)
+
+    assert {:error, :response_too_large} = Sabnzbd.status("nzo-1")
   end
 end

@@ -2,6 +2,7 @@ defmodule Cinder.SubtitlesTest do
   use ExUnit.Case, async: false
 
   import Mox
+  import ExUnit.CaptureLog
 
   alias Cinder.Subtitles
   alias Cinder.Subtitles.Manifest
@@ -324,7 +325,12 @@ defmodule Cinder.SubtitlesTest do
     expect(Cinder.Subtitles.ProviderMock, :download, fn 1 -> {:ok, "NEW SRT"} end)
     deny(Cinder.Library.MediaServerMock, :scan, 1)
 
-    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+    log =
+      capture_log(fn ->
+        assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+      end)
+
+    assert log =~ "subtitle provenance write failed for /lib/M/M.mkv (fr): {:error, :eio}"
     assert Agent.get(fs, &Map.fetch!(&1, target)) == "OLD SRT"
     assert %{tracks: %{"fr" => %{origin: "opensubtitles_id"}}} = Manifest.read(@video)
   end
@@ -367,14 +373,24 @@ defmodule Cinder.SubtitlesTest do
     expect(Cinder.Subtitles.ProviderMock, :download, fn 1 -> {:ok, "NEW SRT"} end)
     deny(Cinder.Library.MediaServerMock, :scan, 1)
 
-    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+    log =
+      capture_log(fn ->
+        assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+      end)
+
+    assert log =~ "subtitle provenance write failed for /lib/M/M.mkv (fr): {:error, :eio}"
     refute Agent.get(fs, &Map.has_key?(&1, target))
   end
 
   test "a provider failure does not call an embedded source or LibreTranslate" do
     expect(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:error, :down} end)
 
-    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+    log =
+      capture_log(fn ->
+        assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+      end)
+
+    assert log =~ "subtitle fetch for /lib/M/M.mkv (fr) failed: :down"
   end
 
   test "an empty provider result extracts an exact embedded target track", %{fs: fs} do
@@ -531,5 +547,145 @@ defmodule Cinder.SubtitlesTest do
     expect(Cinder.Subtitles.ProviderMock, :download, fn 1 -> {:error, :quota_exceeded} end)
 
     assert :quota_exceeded = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+  end
+
+  @tag :tmp_dir
+  test "subtitle rename rejects a library parent replaced by a symlink after the temp write", %{
+    tmp_dir: tmp
+  } do
+    saved = configure_real_policy(tmp)
+    on_exit(fn -> restore_env(saved) end)
+    movies = Application.fetch_env!(:cinder, :movies_library_path)
+    parent = Path.join(movies, "Movie")
+    video = Path.join(parent, "Movie.mkv")
+    outside = Path.join(tmp, "outside")
+    target = Subtitles.sidecar_path(video, "fr")
+    File.mkdir_p!(parent)
+    File.mkdir_p!(outside)
+    File.write!(video, "video")
+
+    Application.put_env(:cinder, :filesystem_barrier, %{
+      owner: self(),
+      operation: :write,
+      contains: ".cinder-subtitle-",
+      excludes: "manifest"
+    })
+
+    expect(Cinder.Subtitles.ProviderMock, :search, fn _criteria ->
+      {:ok,
+       [
+         %{
+           file_id: 1,
+           language: "fr",
+           downloads: 1,
+           hearing_impaired: false,
+           ai_translated: false,
+           moviehash_match: false
+         }
+       ]}
+    end)
+
+    expect(Cinder.Subtitles.ProviderMock, :download, fn 1 -> {:ok, "subtitle"} end)
+    stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
+
+    task = Task.async(fn -> Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies) end)
+
+    assert_receive {:filesystem_barrier, pid, ref, :write, temporary}, 1_000
+    replace_parent(parent, outside, temporary)
+    send(pid, {ref, :continue})
+
+    log = capture_log(fn -> assert Task.await(task) == :ok end)
+
+    assert log =~ "subtitle write failed for"
+    assert log =~ "{:error, :unsafe_destination}"
+    refute File.exists?(Path.join(outside, Path.basename(target)))
+  end
+
+  @tag :tmp_dir
+  test "subtitle rollback refuses an outside unlink after the library parent becomes a symlink",
+       %{
+         tmp_dir: tmp
+       } do
+    saved = configure_real_policy(tmp)
+    on_exit(fn -> restore_env(saved) end)
+    movies = Application.fetch_env!(:cinder, :movies_library_path)
+    parent = Path.join(movies, "Movie")
+    video = Path.join(parent, "Movie.mkv")
+    outside = Path.join(tmp, "outside")
+    target = Subtitles.sidecar_path(video, "fr")
+    outside_target = Path.join(outside, Path.basename(target))
+    File.mkdir_p!(parent)
+    File.mkdir_p!(outside)
+    File.write!(video, "video")
+    File.write!(outside_target, "outside subtitle")
+
+    Application.put_env(:cinder, :filesystem_barrier, %{
+      owner: self(),
+      operation: :write,
+      contains: ".cinder-subtitle-manifest-"
+    })
+
+    expect(Cinder.Subtitles.ProviderMock, :search, fn _criteria ->
+      {:ok,
+       [
+         %{
+           file_id: 1,
+           language: "fr",
+           downloads: 1,
+           hearing_impaired: false,
+           ai_translated: false,
+           moviehash_match: false
+         }
+       ]}
+    end)
+
+    expect(Cinder.Subtitles.ProviderMock, :download, fn 1 -> {:ok, "new subtitle"} end)
+    deny(Cinder.Library.MediaServerMock, :scan, 1)
+
+    task = Task.async(fn -> Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies) end)
+
+    assert_receive {:filesystem_barrier, pid, ref, :write, manifest_temporary}, 1_000
+    assert File.exists?(target)
+    assert String.contains?(manifest_temporary, ".cinder-subtitle-manifest-")
+
+    File.rename!(parent, parent <> ".old")
+    File.ln_s!(outside, parent)
+    send(pid, {ref, :continue})
+
+    log = capture_log(fn -> assert Task.await(task) == :ok end)
+
+    assert log =~ "subtitle rollback rejected: {:error, :unsafe_delete}"
+    assert log =~ "subtitle provenance write failed for"
+    assert File.read!(outside_target) == "outside subtitle"
+  end
+
+  defp configure_real_policy(tmp) do
+    keys = [:filesystem, :path_policy, :movies_library_path, :tv_library_path]
+    saved = Map.new(keys, &{&1, Application.get_env(:cinder, &1)})
+    Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
+    Application.put_env(:cinder, :path_policy, Cinder.Library.PathPolicy)
+    Application.put_env(:cinder, :movies_library_path, Path.join(tmp, "movies"))
+    Application.put_env(:cinder, :tv_library_path, Path.join(tmp, "tv"))
+    saved
+  end
+
+  defp restore_env(saved) do
+    Application.delete_env(:cinder, :filesystem_barrier)
+
+    Enum.each(saved, fn
+      {key, nil} -> Application.delete_env(:cinder, key)
+      {key, value} -> Application.put_env(:cinder, key, value)
+    end)
+  end
+
+  defp replace_parent(parent, outside, temporary) do
+    backup = parent <> ".old"
+    File.rename!(parent, backup)
+    File.ln_s!(outside, parent)
+
+    File.rename!(
+      Path.join(backup, Path.basename(temporary)),
+      Path.join(outside, Path.basename(temporary))
+    )
   end
 end

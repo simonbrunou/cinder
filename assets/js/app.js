@@ -26,16 +26,62 @@ import {hooks as colocatedHooks} from "phoenix-colocated/cinder"
 import topbar from "../vendor/topbar"
 
 const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
+
+const DisclosureState = {
+  beforeUpdate() {
+    this.wasOpen = this.el.open
+  },
+  updated() {
+    this.el.open = this.el.dataset.forceOpen === "true" || this.wasOpen
+  },
+}
+
+const formControls = form => Array.from(form.elements)
+  .filter(({type}) => !["button", "file", "reset", "submit"].includes(type))
+
+const FormState = {
+  mounted() {
+    this.revision = this.el.dataset.formRevision
+  },
+  beforeUpdate() {
+    this.controls = formControls(this.el)
+      .map(({name, type, value, checked}) => ({name, type, value, checked}))
+  },
+  updated() {
+    const revision = this.el.dataset.formRevision
+
+    if (revision === this.revision) {
+      formControls(this.el).forEach((control, index) => {
+        const saved = this.controls[index]
+
+        if (!saved || control.name !== saved.name || control.type !== saved.type) return
+
+        if (["checkbox", "radio"].includes(control.type)) {
+          control.checked = saved.checked
+        } else if (control.type !== "file") {
+          control.value = saved.value
+        }
+      })
+    }
+
+    this.revision = revision
+    this.controls = undefined
+  },
+}
+
 const liveSocket = new LiveSocket("/live", Socket, {
   longPollFallbackMs: 2500,
   params: {_csrf_token: csrfToken},
-  hooks: {...colocatedHooks},
+  hooks: {...colocatedHooks, DisclosureState, FormState},
 })
 
 // Show progress bar on live navigation and form submits
 topbar.config({barColors: {0: "#29d"}, shadowColor: "rgba(0, 0, 0, .3)"})
 window.addEventListener("phx:page-loading-start", _info => topbar.show(300))
 window.addEventListener("phx:page-loading-stop", _info => topbar.hide())
+window.addEventListener("phx:focus-invalid", ({detail: {id}}) => {
+  requestAnimationFrame(() => document.getElementById(id)?.focus())
+})
 
 // connect if there are any LiveViews on the page
 liveSocket.connect()
@@ -80,4 +126,3 @@ if (process.env.NODE_ENV === "development") {
     window.liveReloader = reloader
   })
 }
-

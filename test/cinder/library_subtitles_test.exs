@@ -12,10 +12,11 @@ defmodule Cinder.LibrarySubtitlesTest do
   # actually dispatched the fetch.
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
   import Mox
 
   alias Cinder.Catalog.{Episode, Movie, Season, Series}
-  alias Cinder.Library
+  alias Cinder.{Library, Subtitles}
 
   setup :set_mox_from_context
   setup :verify_on_exit!
@@ -76,6 +77,26 @@ defmodule Cinder.LibrarySubtitlesTest do
     {:ok, subtitle_fs: subtitle_fs}
   end
 
+  test "blank languages and nil or empty release sidecars skip asynchronous filesystem work" do
+    saved = Application.get_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, [])
+
+    Application.put_env(
+      :cinder,
+      Cinder.Subtitles.Provider.OpenSubtitles,
+      Keyword.put(saved, :languages, "")
+    )
+
+    parent = self()
+    stub(Cinder.Library.FilesystemMock, :moviehash_data, fn _ -> send(parent, :moviehash) end)
+    stub(Cinder.Subtitles.ProviderMock, :search, fn _ -> send(parent, :provider_search) end)
+
+    for sidecars <- [nil, []] do
+      assert :ok = Subtitles.fetch_after_import(fn -> %{} end, "/lib/M/M.mkv", :movies, sidecars)
+      refute_receive :moviehash, 100
+      refute_receive :provider_search
+    end
+  end
+
   test "import_movie dispatches the subtitle fetch off the import path, best-effort" do
     parent = self()
 
@@ -106,9 +127,15 @@ defmodule Cinder.LibrarySubtitlesTest do
       {:error, :down}
     end)
 
-    assert {:ok, ^dest, quality} = Library.import_movie(movie)
-    assert quality.sidecar_subtitles == []
-    assert_receive :subtitle_search, 2000
+    log =
+      capture_log(fn ->
+        assert {:ok, ^dest, quality} = Library.import_movie(movie)
+        assert quality.sidecar_subtitles == []
+        assert_receive :subtitle_search, 2_000
+        await_subtitle_tasks()
+      end)
+
+    assert log =~ "subtitle fetch for #{dest} (en) failed: :down"
   end
 
   test "import_episodes dispatches the subtitle fetch off the import path, best-effort" do
@@ -150,9 +177,15 @@ defmodule Cinder.LibrarySubtitlesTest do
       {:error, :down}
     end)
 
-    assert {:ok, [{7, ^dest, quality}], []} = Library.import_episodes("/dl", [episode])
-    assert quality.sidecar_subtitles == []
-    assert_receive :subtitle_search, 2000
+    log =
+      capture_log(fn ->
+        assert {:ok, [{7, ^dest, quality}], []} = Library.import_episodes("/dl", [episode])
+        assert quality.sidecar_subtitles == []
+        assert_receive :subtitle_search, 2_000
+        await_subtitle_tasks()
+      end)
+
+    assert log =~ "subtitle fetch for #{dest} (en) failed: :down"
   end
 
   test "folder movie import passes linked sidecars to the movies subtitle task", %{
@@ -313,5 +346,14 @@ defmodule Cinder.LibrarySubtitlesTest do
     assert Enum.any?(Agent.get(fs, &Map.get(&1, :writes, [])), fn {_path, content} ->
              content =~ "release_sidecar"
            end)
+  end
+
+  defp await_subtitle_tasks do
+    Cinder.Subtitles.TaskSupervisor
+    |> Task.Supervisor.children()
+    |> Enum.each(fn pid ->
+      ref = Process.monitor(pid)
+      assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 2_000
+    end)
   end
 end

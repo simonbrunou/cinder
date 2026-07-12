@@ -1,6 +1,7 @@
 defmodule Cinder.Download.TvPollerTest do
   use Cinder.DataCase, async: false
 
+  import ExUnit.CaptureLog
   import Mox
 
   # The poller logs warnings/errors on the park/retry paths exercised below; capture them so
@@ -35,6 +36,63 @@ defmodule Cinder.Download.TvPollerTest do
   # A successful single-file import (content_path is the file itself). Episodes use a realistic
   # per-episode size so any size-band logic behaves as in production.
   defp stub_single_file_import, do: stub_import_ok(3_000_000_000)
+
+  defp use_real_tv_library(tmp) do
+    downloads = Path.join(tmp, "downloads")
+    tv = Path.join(tmp, "tv")
+    File.mkdir_p!(downloads)
+    File.mkdir_p!(tv)
+
+    saved =
+      Map.new([:filesystem, :path_policy, :import_roots, :tv_library_path], fn key ->
+        {key, Application.get_env(:cinder, key)}
+      end)
+
+    Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
+    Application.put_env(:cinder, :path_policy, Cinder.Library.PathPolicy)
+    Application.put_env(:cinder, :import_roots, [downloads])
+    Application.put_env(:cinder, :tv_library_path, tv)
+
+    on_exit(fn ->
+      Enum.each(saved, fn {key, value} -> Application.put_env(:cinder, key, value) end)
+      Application.delete_env(:cinder, :filesystem_barrier)
+      Application.delete_env(:cinder, :filesystem_failure)
+    end)
+
+    %{downloads: downloads, tv: tv}
+  end
+
+  defp import_stat(path, size) do
+    if String.contains?(path, ".cinder-stage-") or
+         not String.starts_with?(path, "/tmp/cinder-test-tv-library/"),
+       do: {:ok, %File.Stat{size: size, inode: 1, major_device: 1}},
+       else: {:error, :enoent}
+  end
+
+  defp stub_accept_then_crash(remote_id) do
+    {:ok, accepted} = Agent.start_link(fn -> %{adds: 0, jobs: %{}} end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, operation_key: key ->
+      Agent.update(accepted, fn state ->
+        %{state | adds: state.adds + 1, jobs: Map.put(state.jobs, key, remote_id)}
+      end)
+
+      Process.exit(self(), :kill)
+    end)
+
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn key ->
+      case Agent.get(accepted, &Map.get(&1.jobs, key)) do
+        nil -> :not_found
+        id -> {:ok, id}
+      end
+    end)
+
+    stub(Cinder.Download.ClientMock, :status, fn ^remote_id ->
+      {:ok, %{state: :downloading, progress: 0.0}}
+    end)
+
+    accepted
+  end
 
   test "advances a completed single-file grab through download to import in one tick" do
     {series, season} = series_tree()
@@ -158,12 +216,12 @@ defmodule Cinder.Download.TvPollerTest do
        ]}
     end)
 
-    stub(Cinder.Library.FilesystemMock, :lstat, fn _ ->
-      {:ok, %File.Stat{size: 3_000_000_000, inode: 1}}
-    end)
+    stub(Cinder.Library.FilesystemMock, :lstat, &import_stat(&1, 3_000_000_000))
 
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
     stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rename, fn _src, _dest -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
     stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
     assert :ok = TvPoller.poll()
@@ -171,6 +229,64 @@ defmodule Cinder.Download.TvPollerTest do
     assert Repo.get(Grab, grab.id) == nil
     assert Repo.get!(Episode, e1.id).file_path =~ "S01E01"
     assert Repo.get!(Episode, e2.id).file_path =~ "S01E02"
+  end
+
+  @tag :tmp_dir
+  test "cancelling a grab after file staging rolls every destination back", %{tmp_dir: tmp} do
+    %{downloads: downloads} = use_real_tv_library(tmp)
+    {series, season} = series_tree()
+    episode = episode(season, 1)
+    source = Path.join(downloads, "Show.S01E01.1080p.mkv")
+    File.write!(source, "candidate")
+    {:ok, grab} = Catalog.create_grab("race-grab", :torrent, [episode.id])
+    {:ok, _} = Catalog.mark_grab_downloaded(grab, source)
+    start_supervised!({TvPoller, interval: 60_000})
+
+    stub(Cinder.Download.ClientMock, :remove, fn "race-grab", delete_files: true -> :ok end)
+
+    Application.put_env(:cinder, :filesystem_barrier, %{
+      owner: self(),
+      operation: :ln,
+      contains: "Show (2008) {tmdb-#{series.tmdb_id}} - S01E01.mkv"
+    })
+
+    poll = Task.async(fn -> TvPoller.poll() end)
+    assert_receive {:filesystem_barrier, pid, ref, operation, dest}, 1_000
+    assert operation == :ln
+    assert File.read!(dest) == "candidate"
+    assert {:ok, _} = Catalog.cancel_grab(Repo.get!(Grab, grab.id))
+    send(pid, {ref, :continue})
+
+    assert :ok = Task.await(poll)
+    refute File.exists?(dest)
+    assert Repo.get(Grab, grab.id) == nil
+    assert Repo.get!(Episode, episode.id).file_path == nil
+  end
+
+  test "finish_grab rejects an episode that lost monitoring after staging" do
+    {_series, season} = series_tree()
+    episode = episode(season, 1)
+    {:ok, grab} = Catalog.create_grab("stale-owner", :torrent, [episode.id])
+
+    Repo.update_all(from(e in Episode, where: e.id == ^episode.id), set: [monitored: false])
+
+    quality = %{
+      resolution: "1080p",
+      size: 3_000_000_000,
+      language: nil,
+      source: "web",
+      audio_languages: [],
+      embedded_subtitles: [],
+      sidecar_subtitles: []
+    }
+
+    assert {:error, :stale_grab} =
+             Catalog.finish_grab(grab, [{episode.id, "/library/Show.S01E01.mkv", quality}])
+
+    assert Repo.get(Grab, grab.id)
+    stale = Repo.get!(Episode, episode.id)
+    assert stale.file_path == nil
+    assert stale.grab_id == grab.id
   end
 
   test "parks a downloaded grab whose content matches no episode; its episode re-searches" do
@@ -213,7 +329,7 @@ defmodule Cinder.Download.TvPollerTest do
        ]}
     end)
 
-    stub(Cinder.Download.ClientMock, :add, fn _release -> {:ok, "hash-new"} end)
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-new"} end)
 
     assert :ok = TvPoller.poll()
 
@@ -222,6 +338,127 @@ defmodule Cinder.Download.TvPollerTest do
     grab = Repo.get!(Grab, linked.grab_id)
     assert grab.download_id == "hash-new"
     assert grab.download_protocol == :torrent
+  end
+
+  test "a definite add rejection releases the episode for the next search tick" do
+    {_series, season} = series_tree()
+    episode = episode(season, 1)
+    {:ok, adds} = Agent.start_link(fn -> 0 end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok,
+       [
+         %{
+           title: "Show.S01E01.1080p.WEB-DL-GRP",
+           size: 2_000_000_000,
+           download_url: "u",
+           seeders: 5
+         }
+       ]}
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+      case Agent.get_and_update(adds, &{&1, &1 + 1}) do
+        0 -> {:error, :add_rejected}
+        _ -> {:ok, "hash-tv-after-rejection"}
+      end
+    end)
+
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    assert :ok = TvPoller.poll()
+    assert Repo.get!(Episode, episode.id).grab_id == nil
+    assert MapSet.size(Cinder.Download.pending_episode_ids()) == 0
+
+    assert :ok = TvPoller.poll()
+    linked = Repo.get!(Episode, episode.id)
+    assert Repo.get!(Grab, linked.grab_id).download_id == "hash-tv-after-rejection"
+  end
+
+  test "recovers a remotely accepted episode after process death without submitting twice" do
+    {_series, season} = series_tree()
+    episode = episode(season, 1)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok,
+       [
+         %{
+           title: "Show.S01E01.1080p.WEB-GRP",
+           size: 2_000_000_000,
+           download_url: "episode",
+           seeders: 1
+         }
+       ]}
+    end)
+
+    accepted = stub_accept_then_crash("hash-episode-crash")
+    pid = start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+    catch_exit(TvPoller.poll(pid))
+
+    new_pid = await_restart(TvPoller, pid)
+    assert :ok = TvPoller.poll(new_pid)
+    assert %{adds: 1} = Agent.get(accepted, & &1)
+
+    linked = Repo.get!(Episode, episode.id)
+    assert linked.grab_id
+    assert Repo.get!(Grab, linked.grab_id).download_id == "hash-episode-crash"
+  end
+
+  test "recovers a remotely accepted season pack after process death without submitting twice" do
+    {_series, season} = series_tree()
+    e1 = episode(season, 1)
+    e2 = episode(season, 2)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok,
+       [
+         %{
+           title: "Show.S01.1080p.WEB-GRP",
+           size: 4_000_000_000,
+           download_url: "pack",
+           seeders: 1
+         }
+       ]}
+    end)
+
+    accepted = stub_accept_then_crash("hash-pack-crash")
+    pid = start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+    catch_exit(TvPoller.poll(pid))
+
+    new_pid = await_restart(TvPoller, pid)
+    assert :ok = TvPoller.poll(new_pid)
+    assert %{adds: 1} = Agent.get(accepted, & &1)
+
+    grab_id = Repo.get!(Episode, e1.id).grab_id
+    assert grab_id
+    assert Repo.get!(Episode, e2.id).grab_id == grab_id
+    assert Repo.get!(Grab, grab_id).download_id == "hash-pack-crash"
+  end
+
+  test "sanitizes remote release titles in client failure logs" do
+    {_series, season} = series_tree()
+    _episode = episode(season, 1)
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok,
+       [
+         %{
+           title: "Show.S01E01.1080p.WEB-DL-GRP\r\nFORGED",
+           size: 2_000_000_000,
+           download_url: "u",
+           seeders: 5
+         }
+       ]}
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:error, :remote_rejected} end)
+
+    log = capture_log(fn -> assert :ok = TvPoller.poll() end)
+
+    assert log =~ "Show.S01E01.1080p.WEB-DL-GRPFORGED"
+    assert log =~ ":remote_rejected"
+    refute log =~ "\nFORGED"
   end
 
   test "rejects a same-season release of a different series (does not grab)" do
@@ -294,7 +531,7 @@ defmodule Cinder.Download.TvPollerTest do
     # Use the title as the download id so each grab is traceable to its release. Assertions go on
     # the resulting DB state, not inside the stub — a raise here runs in the poller's isolated
     # process and would be swallowed, never failing the test.
-    stub(Cinder.Download.ClientMock, :add, fn release -> {:ok, release.title} end)
+    stub(Cinder.Download.ClientMock, :add, fn release, _opts -> {:ok, release.title} end)
 
     assert :ok = TvPoller.poll()
 
@@ -471,7 +708,7 @@ defmodule Cinder.Download.TvPollerTest do
        ]}
     end)
 
-    stub(Cinder.Download.ClientMock, :add, fn _release -> {:ok, "hash-m6"} end)
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-m6"} end)
 
     assert :ok = TvPoller.poll()
 
@@ -515,6 +752,26 @@ defmodule Cinder.Download.TvPollerTest do
 
     assert imported.file_path ==
              "/tmp/cinder-test-tv-library/Show (2008) {tmdb-#{series.tmdb_id}}/Season 01/Show (2008) {tmdb-#{series.tmdb_id}} - S01E03.mkv"
+  end
+
+  test "missing download roots hold a downloaded grab without consuming attempts" do
+    {_series, season} = series_tree()
+    e1 = episode(season, 3)
+    {:ok, grab} = Catalog.create_grab("hash-roots", :torrent, [e1.id])
+    {:ok, _} = Catalog.mark_grab_downloaded(grab, "/downloads/Show.S01E03.mkv")
+
+    saved = Application.get_env(:cinder, :import_roots)
+    Application.put_env(:cinder, :import_roots, [])
+    on_exit(fn -> Application.put_env(:cinder, :import_roots, saved) end)
+    start_supervised!({TvPoller, interval: 60_000})
+
+    log = capture_log(fn -> Enum.each(1..12, fn _ -> TvPoller.poll() end) end)
+
+    assert %Grab{download_attempts: 0} = Repo.get!(Grab, grab.id)
+    assert %Episode{grab_id: grab_id, search_attempts: 0} = Repo.get!(Episode, e1.id)
+    assert grab_id == grab.id
+    assert log =~ "download import roots not configured"
+    refute log =~ "/downloads/Show.S01E03.mkv"
   end
 
   test "respects the TV size band: a too-large pack is not grabbed when tv_max_size is set" do

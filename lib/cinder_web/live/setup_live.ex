@@ -27,7 +27,13 @@ defmodule CinderWeb.SetupLive do
     if Settings.setup_complete?() do
       {:ok, push_navigate(socket, to: ~p"/")}
     else
-      {:ok, assign(socket, form: Settings.form_state(), health: %{}, can_finish: false)}
+      {:ok,
+       assign(socket,
+         form: Settings.form_state(),
+         health: %{},
+         form_revision: 0,
+         can_finish: false
+       )}
     end
   end
 
@@ -41,11 +47,16 @@ defmodule CinderWeb.SetupLive do
          assign(socket,
            form: Settings.form_state(),
            health: health,
+           form_revision: socket.assigns.form_revision + 1,
            can_finish: all_green?(health)
          )}
 
       {:error, invalid_keys} ->
-        {:noreply, put_flash(socket, :error, invalid_band_message(invalid_keys))}
+        {:noreply,
+         socket
+         |> assign(form: Settings.form_state(params, invalid_keys))
+         |> push_event("focus-invalid", %{id: List.first(invalid_keys)})
+         |> put_flash(:error, invalid_band_message(invalid_keys))}
     end
   end
 
@@ -93,9 +104,18 @@ defmodule CinderWeb.SetupLive do
         </:subtitle>
       </.header>
 
-      <form id="setup-form" phx-submit="validate">
+      <form
+        id="setup-form"
+        phx-submit="validate"
+        phx-hook="FormState"
+        data-form-revision={@form_revision}
+      >
         <div class="space-y-8">
-          <.service_fields form={@form} health={@health} show_move_on_import={false} />
+          <.service_fields
+            form={@form}
+            health={@health}
+            show_move_on_import={false}
+          />
         </div>
         <.button
           type="submit"

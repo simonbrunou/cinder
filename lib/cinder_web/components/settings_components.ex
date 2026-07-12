@@ -8,7 +8,7 @@ defmodule CinderWeb.SettingsComponents do
   use Phoenix.Component
   use Gettext, backend: CinderWeb.Gettext
 
-  import CinderWeb.CoreComponents, only: [status_badge: 1, button: 1]
+  import CinderWeb.CoreComponents, only: [status_badge: 1, button: 1, icon: 1]
 
   alias Cinder.Settings
   alias CinderWeb.SettingsLabels
@@ -18,10 +18,17 @@ defmodule CinderWeb.SettingsComponents do
   `{:error, invalid_keys}`) — shared by `/settings` and `/setup` so the copy can't drift.
   """
   def invalid_band_message(invalid_keys) do
-    gettext(
-      "Not saved: invalid size for %{fields}: enter a positive number of GB, or leave blank for no limit.",
-      fields: Enum.join(invalid_keys, ", ")
+    gettext("Not saved. Check: %{fields}.",
+      fields: Enum.map_join(invalid_keys, ", ", &invalid_field_label/1)
     )
+  end
+
+  defp invalid_groups(keys) do
+    keys
+    |> Enum.map(fn key ->
+      if key == Settings.import_roots_key(), do: :library, else: :releases
+    end)
+    |> MapSet.new()
   end
 
   attr :form, :map, required: true
@@ -31,166 +38,248 @@ defmodule CinderWeb.SettingsComponents do
   attr :show_move_on_import, :boolean, default: true
 
   def service_fields(assigns) do
+    [{first_group, _label} | _groups] = Settings.groups()
+
+    assigns =
+      assigns
+      |> assign(:first_group, first_group)
+      |> assign(:invalid_groups, invalid_groups(assigns.form.invalid_keys))
+
     ~H"""
-    <fieldset :for={{group, label} <- Settings.groups()} class="rounded-box bg-base-200 p-4">
-      <legend class="px-2 text-lg font-semibold">{SettingsLabels.t(label)}</legend>
+    <details
+      :for={{group, label} <- Settings.groups()}
+      id={"settings-group-#{group}"}
+      open={group == @first_group or MapSet.member?(@invalid_groups, group)}
+      phx-hook="DisclosureState"
+      data-force-open={to_string(MapSet.member?(@invalid_groups, group))}
+      class="rounded-box bg-base-200"
+    >
+      <summary class="min-h-11 cursor-pointer px-4 py-3 text-lg font-semibold focus-visible:outline-2 focus-visible:outline-primary">
+        {SettingsLabels.t(label)}
+      </summary>
 
-      <div :if={group == :media_server} class="form-control mb-2">
-        <label class="label" for="media_server_type">
-          <span class="label-text">{gettext("Media server type")}</span>
-        </label>
-        <select id="media_server_type" name="media_server_type" class="select w-full">
-          <option
-            :for={opt <- Settings.media_server_options()}
-            value={opt}
-            selected={@form.values[Settings.media_server_key()] == opt}
-          >
-            {opt}
-          </option>
-        </select>
-      </div>
-
-      <div :if={group == :download} class="mb-3">
-        <label :for={t <- Settings.toggles()} class="label cursor-pointer justify-start gap-2">
-          <input type="hidden" name={t.key} value="false" />
-          <input
-            type="checkbox"
-            name={t.key}
-            value="true"
-            checked={@form.values[t.key]}
-            class="checkbox"
-          />
-          <span class="label-text">{SettingsLabels.t(t.label)}</span>
-        </label>
-      </div>
-
-      <div :if={group == :library} class="space-y-2">
-        <div :for={%{kind: kind, label: kind_label} <- Settings.library_kinds()} class="form-control">
-          <label class="label" for={Settings.library_path_key(kind)}>
-            <span class="label-text">{gettext("%{kind} library path (where %{kind} are hardlinked)",
-              kind: SettingsLabels.t(kind_label)
-            )}</span>
+      <div class="px-4 pb-4">
+        <div :if={group == :media_server} class="form-control mb-2">
+          <label class="label" for="media_server_type">
+            <span class="label-text">{gettext("Media server type")}</span>
           </label>
-          <input
-            type="text"
-            id={Settings.library_path_key(kind)}
-            name={Settings.library_path_key(kind)}
-            value={@form.values[Settings.library_path_key(kind)]}
-            placeholder={@form.placeholders[Settings.library_path_key(kind)] || "/media/#{kind}"}
-            autocomplete="off"
-            class="input w-full"
-          />
+          <select id="media_server_type" name="media_server_type" class="select w-full">
+            <option
+              :for={opt <- Settings.media_server_options()}
+              value={opt}
+              selected={@form.values[Settings.media_server_key()] == opt}
+            >
+              {opt}
+            </option>
+          </select>
         </div>
-        <p class="mt-1 text-xs opacity-70">
-          {gettext(
-            "A separate root per library, so Jellyfin/Plex can point distinct libraries at each. Required even if they share a folder; enter the same path."
-          )}
-        </p>
 
-        <div :if={@show_move_on_import}>
-          <label class="label cursor-pointer justify-start gap-2 pt-2">
-            <input type="hidden" name="move_on_import" value="false" />
+        <div :if={group == :download} class="mb-3">
+          <label :for={t <- Settings.toggles()} class="label cursor-pointer justify-start gap-2">
+            <input type="hidden" name={t.key} value="false" />
             <input
               type="checkbox"
-              name="move_on_import"
+              name={t.key}
               value="true"
-              checked={@form.values["move_on_import"]}
+              checked={@form.values[t.key]}
               class="checkbox"
             />
-            <span class="label-text">{gettext("Remove download after a Usenet import")}</span>
+            <span class="label-text">{SettingsLabels.t(t.label)}</span>
           </label>
+        </div>
+
+        <div :if={group == :library} class="space-y-2">
+          <div class="form-control">
+            <label class="label" for={Settings.import_roots_key()}>
+              <span class="label-text">{gettext("Download import roots")}</span>
+            </label>
+            <textarea
+              id={Settings.import_roots_key()}
+              name={Settings.import_roots_key()}
+              placeholder={gettext("/media/downloads")}
+              autocomplete="off"
+              class={[
+                "textarea w-full",
+                invalid?(@form, Settings.import_roots_key()) && "textarea-error"
+              ]}
+              aria-invalid={invalid?(@form, Settings.import_roots_key()) && "true"}
+              aria-describedby={
+                invalid?(@form, Settings.import_roots_key()) &&
+                  "#{Settings.import_roots_key()}-error"
+              }
+            >{@form.values[Settings.import_roots_key()]}</textarea>
+            <.field_error
+              :if={invalid?(@form, Settings.import_roots_key())}
+              field={Settings.import_roots_key()}
+            />
+            <p class="mt-1 text-xs opacity-70">
+              {gettext(
+                "Allowed download folders, separated by commas or new lines. The filesystem root is not allowed."
+              )}
+            </p>
+          </div>
+
+          <div
+            :for={%{kind: kind, label: kind_label} <- Settings.library_kinds()}
+            class="form-control"
+          >
+            <label class="label" for={Settings.library_path_key(kind)}>
+              <span class="label-text">{gettext("%{kind} library path (where %{kind} are hardlinked)",
+                kind: SettingsLabels.t(kind_label)
+              )}</span>
+            </label>
+            <input
+              type="text"
+              id={Settings.library_path_key(kind)}
+              name={Settings.library_path_key(kind)}
+              value={@form.values[Settings.library_path_key(kind)]}
+              placeholder={@form.placeholders[Settings.library_path_key(kind)] || "/media/#{kind}"}
+              autocomplete="off"
+              class="input w-full"
+            />
+          </div>
           <p class="mt-1 text-xs opacity-70">
             {gettext(
-              "After a Usenet import, delete the original from the download client. Ensure your library is a separate folder from your downloads. Torrents are never auto-removed (seeding survives)."
+              "A separate root per library, so Jellyfin/Plex can point distinct libraries at each. Required even if they share a folder; enter the same path."
+            )}
+          </p>
+
+          <div :if={@show_move_on_import}>
+            <label class="label cursor-pointer justify-start gap-2 pt-2">
+              <input type="hidden" name="move_on_import" value="false" />
+              <input
+                type="checkbox"
+                name="move_on_import"
+                value="true"
+                checked={@form.values["move_on_import"]}
+                class="checkbox"
+              />
+              <span class="label-text">{gettext("Remove download after a Usenet import")}</span>
+            </label>
+            <p class="mt-1 text-xs opacity-70">
+              {gettext(
+                "After a Usenet import, delete the original from the download client. Ensure your library is a separate folder from your downloads. Torrents are never auto-removed (seeding survives)."
+              )}
+            </p>
+          </div>
+        </div>
+
+        <div :if={group == :releases} class="space-y-3">
+          <div :for={%{kind: kind, label: kind_label} <- Settings.library_kinds()} class="space-y-2">
+            <p class="text-sm font-medium">{SettingsLabels.t(kind_label)}</p>
+            <div class="form-control">
+              <label class="label" for={Settings.min_size_key(kind)}>
+                <span class="label-text">{gettext("Min size (GB)")}</span>
+              </label>
+              <input
+                type="text"
+                id={Settings.min_size_key(kind)}
+                name={Settings.min_size_key(kind)}
+                value={@form.values[Settings.min_size_key(kind)]}
+                inputmode="decimal"
+                autocomplete="off"
+                class={[
+                  "input w-full",
+                  invalid?(@form, Settings.min_size_key(kind)) && "input-error"
+                ]}
+                aria-invalid={invalid?(@form, Settings.min_size_key(kind)) && "true"}
+                aria-describedby={
+                  invalid?(@form, Settings.min_size_key(kind)) &&
+                    "#{Settings.min_size_key(kind)}-error"
+                }
+              />
+              <.field_error
+                :if={invalid?(@form, Settings.min_size_key(kind))}
+                field={Settings.min_size_key(kind)}
+              />
+            </div>
+            <div class="form-control">
+              <label class="label" for={Settings.max_size_key(kind)}>
+                <span class="label-text">{gettext("Max size (GB)")}</span>
+              </label>
+              <input
+                type="text"
+                id={Settings.max_size_key(kind)}
+                name={Settings.max_size_key(kind)}
+                value={@form.values[Settings.max_size_key(kind)]}
+                inputmode="decimal"
+                autocomplete="off"
+                class={[
+                  "input w-full",
+                  invalid?(@form, Settings.max_size_key(kind)) && "input-error"
+                ]}
+                aria-invalid={invalid?(@form, Settings.max_size_key(kind)) && "true"}
+                aria-describedby={
+                  invalid?(@form, Settings.max_size_key(kind)) &&
+                    "#{Settings.max_size_key(kind)}-error"
+                }
+              />
+              <.field_error
+                :if={invalid?(@form, Settings.max_size_key(kind))}
+                field={Settings.max_size_key(kind)}
+              />
+            </div>
+            <div class="form-control">
+              <label class="label" for={Settings.preferred_resolutions_key(kind)}>
+                <span class="label-text">{gettext("Preferred resolutions (comma-separated)")}</span>
+              </label>
+              <input
+                type="text"
+                id={Settings.preferred_resolutions_key(kind)}
+                name={Settings.preferred_resolutions_key(kind)}
+                value={@form.values[Settings.preferred_resolutions_key(kind)]}
+                placeholder={gettext("1080p, 720p")}
+                autocomplete="off"
+                class="input w-full"
+              />
+            </div>
+            <div class="form-control">
+              <label class="label" for={Settings.preferred_sources_key(kind)}>
+                <span class="label-text">{gettext("Preferred sources (comma-separated)")}</span>
+              </label>
+              <input
+                type="text"
+                id={Settings.preferred_sources_key(kind)}
+                name={Settings.preferred_sources_key(kind)}
+                value={@form.values[Settings.preferred_sources_key(kind)]}
+                placeholder={gettext("bluray, webdl")}
+                autocomplete="off"
+                class="input w-full"
+              />
+            </div>
+          </div>
+          <p class="mt-1 text-xs opacity-70">
+            {gettext("Sizes are decimal GB (1 GB = 1,000,000,000 bytes). For TV they apply")} <strong>{gettext("per episode")}</strong>{gettext(
+              ": a season pack of N episodes is allowed up to N× the max. Leave blank for no limit."
+            )}
+            {gettext(
+              "Sources: remux, bluray, webrip, webdl, hdtv, dvd, cam. Leave blank to accept any; untagged releases are always kept. These are distinct; listing only bluray excludes remux, so add both to accept either."
             )}
           </p>
         </div>
-      </div>
 
-      <div :if={group == :releases} class="space-y-3">
-        <div :for={%{kind: kind, label: kind_label} <- Settings.library_kinds()} class="space-y-2">
-          <p class="text-sm font-medium">{SettingsLabels.t(kind_label)}</p>
-          <div class="form-control">
-            <label class="label" for={Settings.min_size_key(kind)}>
-              <span class="label-text">{gettext("Min size (GB)")}</span>
-            </label>
-            <input
-              type="text"
-              id={Settings.min_size_key(kind)}
-              name={Settings.min_size_key(kind)}
-              value={@form.values[Settings.min_size_key(kind)]}
-              inputmode="decimal"
-              autocomplete="off"
-              class="input w-full"
-            />
-          </div>
-          <div class="form-control">
-            <label class="label" for={Settings.max_size_key(kind)}>
-              <span class="label-text">{gettext("Max size (GB)")}</span>
-            </label>
-            <input
-              type="text"
-              id={Settings.max_size_key(kind)}
-              name={Settings.max_size_key(kind)}
-              value={@form.values[Settings.max_size_key(kind)]}
-              inputmode="decimal"
-              autocomplete="off"
-              class="input w-full"
-            />
-          </div>
-          <div class="form-control">
-            <label class="label" for={Settings.preferred_resolutions_key(kind)}>
-              <span class="label-text">{gettext("Preferred resolutions (comma-separated)")}</span>
-            </label>
-            <input
-              type="text"
-              id={Settings.preferred_resolutions_key(kind)}
-              name={Settings.preferred_resolutions_key(kind)}
-              value={@form.values[Settings.preferred_resolutions_key(kind)]}
-              placeholder={gettext("1080p, 720p")}
-              autocomplete="off"
-              class="input w-full"
-            />
-          </div>
-          <div class="form-control">
-            <label class="label" for={Settings.preferred_sources_key(kind)}>
-              <span class="label-text">{gettext("Preferred sources (comma-separated)")}</span>
-            </label>
-            <input
-              type="text"
-              id={Settings.preferred_sources_key(kind)}
-              name={Settings.preferred_sources_key(kind)}
-              value={@form.values[Settings.preferred_sources_key(kind)]}
-              placeholder={gettext("bluray, webdl")}
-              autocomplete="off"
-              class="input w-full"
-            />
+        <.setting_field :for={field <- Settings.config_fields(group)} field={field} form={@form} />
+
+        <div class="mt-3 flex flex-wrap items-center gap-3">
+          <div
+            :for={{svc, svc_label} <- services_for(group)}
+            class="flex flex-wrap items-center gap-x-2 gap-y-1"
+          >
+            <.button
+              type="button"
+              variant="neutral"
+              size="sm"
+              class="min-h-11"
+              phx-click="test"
+              phx-value-service={svc}
+            >
+              {gettext("Test %{service}", service: svc_label)}
+            </.button>
+            <.test_badge :if={@health[svc]} result={@health[svc]} />
           </div>
         </div>
-        <p class="mt-1 text-xs opacity-70">
-          {gettext("Sizes are decimal GB (1 GB = 1,000,000,000 bytes). For TV they apply")} <strong>{gettext("per episode")}</strong>{gettext(
-            ": a season pack of N episodes is allowed up to N× the max. Leave blank for no limit."
-          )}
-          {gettext(
-            "Sources: remux, bluray, webrip, webdl, hdtv, dvd, cam. Leave blank to accept any; untagged releases are always kept. These are distinct; listing only bluray excludes remux, so add both to accept either."
-          )}
-        </p>
       </div>
-
-      <.setting_field :for={field <- Settings.config_fields(group)} field={field} form={@form} />
-
-      <div class="mt-3 flex flex-wrap items-center gap-3">
-        <div
-          :for={{svc, svc_label} <- services_for(group)}
-          class="flex flex-wrap items-center gap-x-2 gap-y-1"
-        >
-          <.button type="button" variant="neutral" size="sm" phx-click="test" phx-value-service={svc}>
-            {gettext("Test %{service}", service: svc_label)}
-          </.button>
-          <.test_badge :if={@health[svc]} result={@health[svc]} />
-        </div>
-      </div>
-    </fieldset>
+    </details>
     """
   end
 
@@ -256,7 +345,12 @@ defmodule CinderWeb.SettingsComponents do
           class="input w-full"
         />
         <label class="label mt-1 cursor-pointer justify-start gap-2">
-          <input type="checkbox" name={"clear_" <> @field.key} class="checkbox checkbox-sm" />
+          <input
+            type="checkbox"
+            name={"clear_" <> @field.key}
+            checked={MapSet.member?(@form.clear_secrets, @field.key)}
+            class="checkbox checkbox-sm"
+          />
           <span class="label-text">{gettext("Clear saved value")}</span>
         </label>
       </div>
@@ -270,6 +364,43 @@ defmodule CinderWeb.SettingsComponents do
     ~H"""
     <.status_badge kind={:health} status={@result} />
     """
+  end
+
+  attr :field, :string, required: true
+
+  defp field_error(assigns) do
+    ~H"""
+    <p id={"#{@field}-error"} class="mt-1 flex items-center gap-1 text-sm text-error">
+      <.icon name="hero-exclamation-circle" class="size-4 shrink-0" />
+      {invalid_field_message(@field)}
+    </p>
+    """
+  end
+
+  defp invalid?(form, key), do: MapSet.member?(form.invalid_keys, key)
+
+  defp invalid_field_message(key) when key == "import_roots",
+    do: gettext("The filesystem root (/) is not allowed.")
+
+  defp invalid_field_message(_key),
+    do: gettext("Enter a positive number of GB, or leave blank for no limit.")
+
+  defp invalid_field_label(key) when key == "import_roots",
+    do: gettext("Download import roots")
+
+  defp invalid_field_label(key) do
+    Enum.find_value(Settings.library_kinds(), key, fn %{kind: kind, label: label} ->
+      cond do
+        key == Settings.min_size_key(kind) ->
+          gettext("%{kind}: Min size (GB)", kind: SettingsLabels.t(label))
+
+        key == Settings.max_size_key(kind) ->
+          gettext("%{kind}: Max size (GB)", kind: SettingsLabels.t(label))
+
+        true ->
+          nil
+      end
+    end)
   end
 
   defp secret_placeholder(field, form) do

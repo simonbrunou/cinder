@@ -2,6 +2,7 @@ defmodule CinderWeb.DiscoverLiveTest do
   use CinderWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
+  import ExUnit.CaptureLog
   import Mox
 
   alias Cinder.Catalog
@@ -172,8 +173,9 @@ defmodule CinderWeb.DiscoverLiveTest do
   end
 
   test "a quota-exceeded add shows the quota flash", %{conn: _conn} do
+    admin = Cinder.AccountsFixtures.admin_fixture()
     user = Cinder.AccountsFixtures.user_fixture()
-    {:ok, _} = Cinder.Accounts.update_user_quota(user, user, 0)
+    {:ok, _} = Cinder.Accounts.update_user_quota(admin, user, 0)
     conn = log_in_user(Phoenix.ConnTest.build_conn(), user)
 
     stub_movies([@inception])
@@ -203,10 +205,16 @@ defmodule CinderWeb.DiscoverLiveTest do
     stub(Cinder.Catalog.TMDBMock, :search_tv, fn _ -> {:error, :nxdomain} end)
     {:ok, lv, _html} = live(conn, ~p"/")
 
-    html = lv |> form("#search-form", %{"query" => "boom"}) |> render_change()
+    log =
+      capture_log(fn ->
+        html = lv |> form("#search-form", %{"query" => "boom"}) |> render_change()
 
-    assert html =~ "Search failed"
-    refute html =~ "No matches"
+        assert html =~ "Search failed"
+        refute html =~ "No matches"
+      end)
+
+    assert log =~ "Discover search failed entirely:"
+    assert log =~ "movies={:error, :timeout} tv={:error, :nxdomain}"
     assert render(lv) =~ "search-form"
   end
 

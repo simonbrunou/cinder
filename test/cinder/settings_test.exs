@@ -3,6 +3,7 @@ defmodule Cinder.SettingsTest do
   use Cinder.DataCase, async: false
 
   import Mox
+  import ExUnit.CaptureLog
 
   alias Cinder.Health
   alias Cinder.Settings
@@ -34,6 +35,7 @@ defmodule Cinder.SettingsTest do
     :tv_max_size,
     :tv_preferred_resolutions,
     :tv_preferred_sources,
+    :import_roots,
     :move_on_import
   ]
 
@@ -51,6 +53,56 @@ defmodule Cinder.SettingsTest do
   end
 
   describe "storage" do
+    test "import_roots parses newline/comma input, expands paths, and removes duplicates" do
+      Settings.put("import_roots", " /srv/downloads, /srv/usenet\n/srv/downloads ")
+
+      assert Settings.import_roots() == ["/srv/downloads", "/srv/usenet"]
+      refute Repo.get_by!(Setting, key: "import_roots").is_secret
+    end
+
+    test "import_roots overlay refreshes on replacement and clear" do
+      Settings.put("import_roots", "/srv/one")
+      assert Settings.import_roots() == ["/srv/one"]
+
+      Settings.put("import_roots", "/srv/two")
+      assert Settings.import_roots() == ["/srv/two"]
+
+      Settings.delete("import_roots")
+      assert Settings.import_roots() == inferred_import_roots()
+    end
+
+    test "import_roots rejects a filesystem-root entry" do
+      Application.delete_env(:cinder, :import_roots)
+      Settings.load_into_env()
+      expected = Settings.import_roots()
+
+      assert {:error, ["import_roots"]} =
+               Settings.save_form(%{
+                 "import_roots" => "/, /srv/downloads",
+                 "media_server_type" => "jellyfin"
+               })
+
+      assert Settings.get("import_roots") == nil
+      assert Settings.import_roots() == expected
+    end
+
+    test "import_roots conservatively infers only a shared non-root parent" do
+      Application.put_env(:cinder, :movies_library_path, "/srv/media/movies")
+      Application.put_env(:cinder, :tv_library_path, "/srv/media/tv")
+      Application.delete_env(:cinder, :import_roots)
+      assert Settings.import_roots() == ["/srv/media"]
+
+      Application.put_env(:cinder, :movies_library_path, "/movies")
+      Application.put_env(:cinder, :tv_library_path, "/tv")
+      Application.delete_env(:cinder, :import_roots)
+      assert Settings.import_roots() == []
+
+      Application.put_env(:cinder, :movies_library_path, "/srv/media")
+      Application.put_env(:cinder, :tv_library_path, "/srv/media/tv")
+      Application.delete_env(:cinder, :import_roots)
+      assert Settings.import_roots() == []
+    end
+
     test "non-secret values are stored as plaintext and round-trip" do
       Settings.put("prowlarr_url", "http://example:9696")
 
@@ -102,8 +154,13 @@ defmodule Cinder.SettingsTest do
       # A bad ciphertext (e.g. after a SECRET_KEY_BASE change) must not brick anything.
       Repo.insert!(%Setting{key: "tmdb_token", value: "@@@not-base64@@@", is_secret: true})
 
-      assert Settings.get("tmdb_token") == nil
-      assert Settings.load_into_env() == :ok
+      log =
+        capture_log(fn ->
+          assert Settings.get("tmdb_token") == nil
+          assert Settings.load_into_env() == :ok
+        end)
+
+      assert log =~ "cannot decrypt tmdb_token; re-enter it in /settings"
     end
 
     test "a secret that fails GCM authentication (wrong key) is skipped, not poured into env" do
@@ -118,13 +175,24 @@ defmodule Cinder.SettingsTest do
       corrupted = Base.encode64(head <> <<rem(last + 1, 256)>>)
       row |> Ecto.Changeset.change(value: corrupted) |> Repo.update!()
 
-      assert Settings.get("tmdb_token") == nil
-      assert Settings.load_into_env() == :ok
+      log =
+        capture_log(fn ->
+          assert Settings.get("tmdb_token") == nil
+          assert Settings.load_into_env() == :ok
+        end)
+
+      assert log =~ "cannot decrypt tmdb_token; re-enter it in /settings"
       assert Application.get_env(:cinder, Cinder.Catalog.TMDB.HTTP)[:token] != :error
     end
   end
 
   describe "form_state/0 env placeholders" do
+    test "includes the DB-only import roots field" do
+      Settings.put("import_roots", "/srv/downloads")
+
+      assert Settings.form_state().values["import_roots"] == "/srv/downloads"
+    end
+
     test "a non-secret value from env (no DB row) is a placeholder, not a value" do
       Application.put_env(:cinder, Cinder.Acquisition.Indexer.Prowlarr,
         base_url: "http://env:9696"
@@ -176,6 +244,30 @@ defmodule Cinder.SettingsTest do
       # The secret value is never in values or placeholders.
       refute Map.has_key?(form.placeholders, "tmdb_token")
       refute Map.has_key?(form.values, "tmdb_token")
+    end
+
+    test "submitted state preserves only known safe values and secret clear intent" do
+      form =
+        Settings.form_state(
+          %{
+            "prowlarr_url" => "http://typed:9696",
+            "movies_min_size" => "wrong",
+            "qbittorrent_enabled" => "true",
+            "clear_tmdb_token" => "on",
+            "tmdb_token" => "never-echo",
+            "unknown" => "ignored"
+          },
+          ["movies_min_size"]
+        )
+
+      assert form.values["prowlarr_url"] == "http://typed:9696"
+      assert form.values["movies_min_size"] == "wrong"
+      assert form.values["qbittorrent_enabled"] == true
+      assert MapSet.member?(form.clear_secrets, "tmdb_token")
+      assert MapSet.member?(form.invalid_keys, "movies_min_size")
+      refute Map.has_key?(form.values, "tmdb_token")
+      refute Map.has_key?(form.values, "unknown")
+      refute inspect(form) =~ "never-echo"
     end
   end
 
@@ -528,6 +620,16 @@ defmodule Cinder.SettingsTest do
       assert Health.check_service(:indexer) == {:error, :down}
       assert Health.check_service(:media_server) == :ok
       assert Health.check_service({:download, :torrent}) == :ok
+    end
+  end
+
+  defp inferred_import_roots do
+    movie = Application.fetch_env!(:cinder, :movies_library_path)
+    tv = Application.fetch_env!(:cinder, :tv_library_path)
+
+    case {Path.dirname(movie), Path.dirname(tv)} do
+      {same, same} when same != "/" -> [same]
+      _ -> []
     end
   end
 end

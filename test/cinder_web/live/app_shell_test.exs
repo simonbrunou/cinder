@@ -33,6 +33,16 @@ defmodule CinderWeb.AppShellTest do
       assert html =~ ~s(href="#main")
       assert html =~ ~s(id="main")
     end
+
+    test "renders a localized route title and one labelled primary navigation", %{conn: conn} do
+      {:ok, lv, html} = live(conn, ~p"/calendar")
+
+      assert html =~ ">Calendar · Cinder</title>"
+      refute html =~ ">Cinder · Cinder</title>"
+      assert length(Regex.scan(~r/<nav[^>]+aria-label="Primary"/, html)) == 1
+      assert has_element?(lv, ~s(nav[aria-label="Primary"] a[href="/users/settings"]), "Account")
+      assert has_element?(lv, ~s(nav[aria-label="Primary"] a[href="/users/log-out"]), "Log out")
+    end
   end
 
   describe "as a non-admin user" do
@@ -76,6 +86,14 @@ defmodule CinderWeb.AppShellTest do
   end
 
   describe "auth pages (unauthenticated)" do
+    test "render their route titles", %{conn: conn} do
+      {:ok, _lv, login} = live(conn, ~p"/users/log-in")
+      assert login =~ ">Log in · Cinder</title>"
+
+      {:ok, _lv, register} = live(conn, ~p"/users/register")
+      assert register =~ ">Register · Cinder</title>"
+    end
+
     test "use the ember accent token, not the undefined text-brand class", %{conn: conn} do
       {:ok, _lv, login} = live(conn, ~p"/users/log-in")
       refute login =~ "text-brand"
