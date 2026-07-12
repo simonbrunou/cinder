@@ -83,6 +83,7 @@ config :cinder,
 config :cinder, Cinder.Catalog.TMDB.HTTP, req_options: [plug: {Req.Test, Cinder.TMDBStub}]
 
 config :cinder, Cinder.Acquisition.Indexer.Prowlarr,
+  base_url: "http://prowlarr:9696",
   req_options: [plug: {Req.Test, Cinder.ProwlarrStub}, retry: false],
   api_key: "test-key"
 

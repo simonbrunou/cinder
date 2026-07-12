@@ -63,6 +63,29 @@ defmodule Cinder.Download.IntentTest do
     assert "has already been taken" in errors_on(changeset).operation_key
   end
 
+  test "source-origin provenance survives durable reservation and submission" do
+    movie = movie_fixture(%{status: :searching})
+
+    release = %Release{
+      title: "Movie.1080p.WEB-GRP",
+      download_url: "http://prowlarr:9696/download/1",
+      download_url_origin: "http://prowlarr:9696",
+      protocol: :torrent
+    }
+
+    assert {:ok, intent} = reserve_movie_intent(movie.id, release)
+    assert intent.release["download_url_origin"] == "http://prowlarr:9696"
+
+    expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+
+    expect(Cinder.Download.ClientMock, :add, fn submitted, _opts ->
+      assert submitted.download_url_origin == "http://prowlarr:9696"
+      {:ok, "hash-provenance"}
+    end)
+
+    assert {:ok, %{download_id: "hash-provenance"}} = Download.reconcile_intent(intent)
+  end
+
   test "concurrent reservations allow only one intent for the same movie" do
     movie = movie_fixture(%{status: :searching})
     release = release("Movie.A")

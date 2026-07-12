@@ -143,6 +143,26 @@ defmodule Cinder.HTTPPolicyTest do
     end
   end
 
+  describe "validate_source_url/3" do
+    test "allows a private URL only when it matches its recorded source origin" do
+      resolver = fn _host -> flunk("the configured source origin must not use DNS validation") end
+
+      assert {:ok, %URI{host: "127.0.0.1", port: 9696}} =
+               HTTPPolicy.validate_source_url(
+                 "http://127.0.0.1:9696/download/1",
+                 "http://127.0.0.1:9696",
+                 resolver
+               )
+
+      assert {:error, :forbidden_address} =
+               HTTPPolicy.validate_source_url(
+                 "http://127.0.0.2/download/1",
+                 "http://127.0.0.1:9696",
+                 resolver
+               )
+    end
+  end
+
   describe "resolve_redirect/3" do
     test "allows relative same-origin redirects for configured origins" do
       assert {:ok, %URI{} = uri} =

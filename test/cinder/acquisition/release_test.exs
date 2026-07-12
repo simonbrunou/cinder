@@ -7,13 +7,15 @@ defmodule Cinder.Acquisition.ReleaseTest do
     indexer_map = %{
       title: "Inception.2010.1080p.BluRay.x264-RARBG",
       size: 8_000_000_000,
-      download_url: "http://prowlarr/download/1"
+      download_url: "http://prowlarr/download/1",
+      download_url_origin: "http://prowlarr"
     }
 
     assert %Release{
              title: "Inception.2010.1080p.BluRay.x264-RARBG",
              size: 8_000_000_000,
              download_url: "http://prowlarr/download/1",
+             download_url_origin: "http://prowlarr",
              resolution: "1080p",
              codec: "x264",
              group: "RARBG",

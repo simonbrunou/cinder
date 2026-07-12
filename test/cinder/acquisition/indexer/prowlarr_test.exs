@@ -14,7 +14,7 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
         %{
           "title" => "Inception.2010.1080p.BluRay.x264-RARBG",
           "size" => 8_000_000_000,
-          "downloadUrl" => "http://prowlarr/file/1",
+          "downloadUrl" => "http://prowlarr:9696/file/1",
           "seeders" => 50,
           "protocol" => "torrent"
         },
@@ -28,8 +28,14 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
         %{
           "title" => "Inception.2010.1080p.WEB-DL-GRP",
           "size" => 9_000_000_000,
-          "downloadUrl" => "http://prowlarr/getnzb/3",
+          "downloadUrl" => "http://prowlarr:9696/getnzb/3",
           "protocol" => "usenet"
+        },
+        %{
+          "title" => "Inception.2010.720p.WEB-DL-GRP",
+          "size" => 4_000_000_000,
+          "downloadUrl" => "https://provider.test/file/4",
+          "protocol" => "torrent"
         }
       ])
     end)
@@ -40,20 +46,30 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
              %{
                title: "Inception.2010.1080p.BluRay.x264-RARBG",
                size: 8_000_000_000,
-               download_url: "http://prowlarr/file/1",
+               download_url: "http://prowlarr:9696/file/1",
+               download_url_origin: "http://prowlarr:9696",
                protocol: :torrent
              },
              %{
                title: "Inception.2010.2160p.WEB-DL-GRP",
                size: 40_000_000_000,
                download_url: "magnet:?xt=urn:btih:abc",
+               download_url_origin: nil,
                protocol: :torrent
              },
              %{
                title: "Inception.2010.1080p.WEB-DL-GRP",
                size: 9_000_000_000,
-               download_url: "http://prowlarr/getnzb/3",
+               download_url: "http://prowlarr:9696/getnzb/3",
+               download_url_origin: "http://prowlarr:9696",
                protocol: :usenet
+             },
+             %{
+               title: "Inception.2010.720p.WEB-DL-GRP",
+               size: 4_000_000_000,
+               download_url: "https://provider.test/file/4",
+               download_url_origin: nil,
+               protocol: :torrent
              }
            ]
   end
@@ -69,7 +85,7 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
         %{
           "title" => "Breaking.Bad.S01E01.1080p.BluRay.x264-GRP",
           "size" => 2_000_000_000,
-          "downloadUrl" => "http://prowlarr/file/1",
+          "downloadUrl" => "http://prowlarr:9696/file/1",
           "seeders" => 30,
           "protocol" => "torrent"
         }
@@ -81,7 +97,8 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
     assert result == %{
              title: "Breaking.Bad.S01E01.1080p.BluRay.x264-GRP",
              size: 2_000_000_000,
-             download_url: "http://prowlarr/file/1",
+             download_url: "http://prowlarr:9696/file/1",
+             download_url_origin: "http://prowlarr:9696",
              protocol: :torrent
            }
   end

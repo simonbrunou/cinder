@@ -37,11 +37,11 @@ defmodule Cinder.Download.Client.Sabnzbd do
   def add(release), do: add(release, [])
 
   @impl true
-  def add(%{download_url: url}, opts) when is_binary(url) do
+  def add(%{download_url: url} = release, opts) when is_binary(url) do
     # retry: false — `addurl` is side-effecting (SABnzbd queues the NZB), but it's a GET, which
     # Req's default :safe_transient policy would retry up to 3× on a transient failure, re-queuing
     # the same download. Disable retry on the add path only (status/health stay idempotent-retryable).
-    with {:ok, _uri} <- validate_url(url) do
+    with {:ok, _uri} <- validate_url(url, Map.get(release, :download_url_origin)) do
       add_url(url, opts)
     end
   end
@@ -299,10 +299,13 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   defp config, do: Application.get_env(:cinder, __MODULE__, [])
 
-  defp validate_url(url) do
+  defp validate_url(url, source_origin) do
     case Keyword.get(config(), :url_resolver) do
-      resolver when is_function(resolver, 1) -> HTTPPolicy.validate_untrusted_url(url, resolver)
-      nil -> HTTPPolicy.validate_untrusted_url(url)
+      resolver when is_function(resolver, 1) ->
+        HTTPPolicy.validate_source_url(url, source_origin, resolver)
+
+      nil ->
+        HTTPPolicy.validate_source_url(url, source_origin)
     end
   end
 

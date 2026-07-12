@@ -35,6 +35,22 @@ defmodule Cinder.HTTPPolicy do
     end
   end
 
+  @doc "Validates a remote URL, allowing an exact recorded source origin to be private."
+  @spec validate_source_url(String.t() | URI.t(), String.t() | nil, resolver()) ::
+          {:ok, URI.t()} | {:error, atom()}
+  def validate_source_url(url, source_origin, resolver \\ &resolve_host/1)
+
+  def validate_source_url(url, source_origin, resolver)
+      when is_binary(source_origin) and is_function(resolver, 1) do
+    case resolve_redirect(source_origin, url, :same_origin) do
+      {:error, :cross_origin_redirect} -> validate_untrusted_url(url, resolver)
+      result -> result
+    end
+  end
+
+  def validate_source_url(url, _source_origin, resolver) when is_function(resolver, 1),
+    do: validate_untrusted_url(url, resolver)
+
   @doc """
   Resolves and validates a redirect.
 

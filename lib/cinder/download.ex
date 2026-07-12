@@ -38,7 +38,8 @@ defmodule Cinder.Download do
       protocol: Map.fetch!(attrs, :protocol),
       release: %{
         "title" => release.title,
-        "download_url_ciphertext" => url |> Vault.encrypt!() |> Base.encode64()
+        "download_url_ciphertext" => url |> Vault.encrypt!() |> Base.encode64(),
+        "download_url_origin" => release.download_url_origin
       },
       status: :reserved
     }
@@ -393,6 +394,7 @@ defmodule Cinder.Download do
     release = %Release{
       title: intent.release["title"],
       download_url: download_url,
+      download_url_origin: intent.release["download_url_origin"],
       protocol: intent.protocol
     }
 

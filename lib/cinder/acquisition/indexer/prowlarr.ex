@@ -6,7 +6,7 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   Reads `base_url`, `api_key` and optional `req_options` from
   `config :cinder, #{inspect(__MODULE__)}` at runtime. Searches by IMDb id with
   Prowlarr's `{ImdbId:...}` query token (`type=movie`) and returns normalized
-  release maps (`%{title, size, download_url, protocol}`). `download_url`
+  release maps (`%{title, size, download_url, download_url_origin, protocol}`). `download_url`
   falls back to a magnet link when no torrent-file URL is present; `protocol` is
   `:usenet` for Usenet results, `:torrent` otherwise.
 
@@ -74,7 +74,7 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   end
 
   defp request(opts) do
-    config = Application.get_env(:cinder, __MODULE__, [])
+    config = config()
 
     # retry: false — the pollers carry their own bounded-retry budget; Req's default
     # 3-retry backoff on top of it only stretches a tick against a failing indexer.
@@ -96,17 +96,29 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   defp auth(opts, nil), do: opts
   defp auth(opts, api_key), do: Keyword.put(opts, :headers, [{"x-api-key", api_key}])
 
+  defp config, do: Application.get_env(:cinder, __MODULE__, [])
+
   defp error({:ok, %{status: status}}), do: {:error, {:prowlarr_status, status}}
   defp error({:error, reason}), do: {:error, reason}
 
   defp normalize(result) do
+    download_url = result["downloadUrl"] || result["magnetUrl"]
+
     %{
       title: result["title"],
       size: result["size"],
-      download_url: result["downloadUrl"] || result["magnetUrl"],
+      download_url: download_url,
+      download_url_origin: download_url_origin(download_url),
       protocol: protocol(result["protocol"])
     }
   end
+
+  defp download_url_origin(download_url) when is_binary(download_url) do
+    origin = Keyword.get(config(), :base_url, @default_base_url)
+    if HTTPPolicy.same_origin?(download_url, origin), do: origin
+  end
+
+  defp download_url_origin(_download_url), do: nil
 
   # Prowlarr's unified search tags each result "torrent" or "usenet"; anything
   # absent/unexpected defaults to :torrent (the conservative routing choice).

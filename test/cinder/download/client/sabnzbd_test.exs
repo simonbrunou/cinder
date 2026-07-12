@@ -488,6 +488,19 @@ defmodule Cinder.Download.Client.SabnzbdTest do
              Sabnzbd.add(%{download_url: "http://127.0.0.1/private.nzb"})
   end
 
+  test "add/1 delegates a private URL proven to share the configured indexer origin" do
+    stub(fn conn ->
+      assert conn.params["name"] == "http://127.0.0.1:9696/getnzb/1"
+      Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["nzo-proxy"]})
+    end)
+
+    assert {:ok, "nzo-proxy"} =
+             Sabnzbd.add(%{
+               download_url: "http://127.0.0.1:9696/getnzb/1",
+               download_url_origin: "http://127.0.0.1:9696"
+             })
+  end
+
   test "status/1 rejects an oversized JSON response" do
     stub(fn conn ->
       conn

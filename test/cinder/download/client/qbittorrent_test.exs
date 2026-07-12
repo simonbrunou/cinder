@@ -450,6 +450,66 @@ defmodule Cinder.Download.Client.QBittorrentTest do
              QBittorrent.add(%{download_url: "http://127.0.0.1/private.torrent"})
   end
 
+  test "add/1 allows a private URL proven to share the configured indexer origin" do
+    infoval = "d6:lengthi5e4:name5:M.mkv12:piece lengthi16384ee"
+    torrent_bytes = "d8:announce11:http://x/an4:info" <> infoval <> "e"
+    expected = :crypto.hash(:sha, infoval) |> Base.encode16(case: :lower)
+
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      case conn.request_path do
+        "/file/1" ->
+          assert conn.host == "127.0.0.1"
+
+          conn
+          |> Plug.Conn.put_resp_header("location", "/file/2")
+          |> Plug.Conn.send_resp(302, "")
+
+        "/file/2" ->
+          assert conn.host == "127.0.0.1"
+          Req.Test.text(conn, torrent_bytes)
+
+        "/api/v2/auth/login" ->
+          conn
+          |> Plug.Conn.put_resp_header("set-cookie", "SID=testsid; path=/")
+          |> Req.Test.text("Ok.")
+
+        "/api/v2/torrents/add" ->
+          Req.Test.text(conn, "Ok.")
+      end
+    end)
+
+    assert {:ok, ^expected} =
+             QBittorrent.add(%{
+               download_url: "http://127.0.0.1:9696/file/1",
+               download_url_origin: "http://127.0.0.1:9696"
+             })
+  end
+
+  test "add/1 never restores indexer-origin trust after a cross-origin redirect" do
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      case {conn.host, conn.request_path} do
+        {"127.0.0.1", "/file/1"} ->
+          conn
+          |> Plug.Conn.put_resp_header("location", "https://tracker.test/step")
+          |> Plug.Conn.send_resp(302, "")
+
+        {"tracker.test", "/step"} ->
+          conn
+          |> Plug.Conn.put_resp_header("location", "https://127.0.0.1:9696/private.torrent")
+          |> Plug.Conn.send_resp(302, "")
+
+        {"127.0.0.1", "/private.torrent"} ->
+          flunk("an untrusted redirect chain must not regain private-origin access")
+      end
+    end)
+
+    assert {:error, :forbidden_address} =
+             QBittorrent.add(%{
+               download_url: "https://127.0.0.1:9696/file/1",
+               download_url_origin: "https://127.0.0.1:9696"
+             })
+  end
+
   test "add/1 revalidates and rejects an unsafe torrent redirect" do
     Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
       if conn.host == "127.0.0.1" do
