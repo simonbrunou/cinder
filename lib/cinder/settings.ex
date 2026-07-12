@@ -202,6 +202,7 @@ defmodule Cinder.Settings do
 
   @media_server_key "media_server_type"
   @media_server_options ["jellyfin", "plex"]
+  @import_roots_key "import_roots"
 
   # Display labels for the library kinds. `Cinder.Library.kinds/0` stays a pure context list;
   # the UI labels live here alongside the other settings-group labels.
@@ -277,6 +278,7 @@ defmodule Cinder.Settings do
 
   def media_server_key, do: @media_server_key
   def media_server_options, do: @media_server_options
+  def import_roots_key, do: @import_roots_key
 
   @doc "The library kinds with display labels, for the settings/setup UI (`[%{kind:, label:}]`)."
   def library_kinds, do: Enum.map(Cinder.Library.kinds(), &%{kind: &1, label: kind_label(&1)})
@@ -305,6 +307,15 @@ defmodule Cinder.Settings do
 
   @doc "True once the first-run wizard has been completed."
   def setup_complete?, do: get("setup_complete") == "true"
+
+  @doc "Expanded download roots permitted as import sources."
+  @spec import_roots() :: [String.t()]
+  def import_roots do
+    case Application.get_env(:cinder, :import_roots) do
+      roots when is_list(roots) -> roots
+      _ -> inferred_import_roots()
+    end
+  end
 
   @doc "Marks the first-run wizard complete."
   def mark_setup_complete, do: put("setup_complete", "true")
@@ -347,6 +358,7 @@ defmodule Cinder.Settings do
           Map.put(acc, key, decoded_for(rows, key) || "")
         end)
       end)
+      |> Map.put(@import_roots_key, decoded_for(rows, @import_roots_key) || "")
       |> Map.merge(toggle_values(rows))
       |> Map.put("move_on_import", decoded_for(rows, "move_on_import") == "true")
 
@@ -429,13 +441,14 @@ defmodule Cinder.Settings do
   Applies submitted form `params` (string-keyed): non-secret blanks clear, secret
   blanks keep the existing value, a `clear_<key>` flag deletes a secret.
 
-  Size-band values are validated first: a non-blank value the GB coercion would
+  Values are validated first: a non-blank size the GB coercion would
   silently degrade to nil ("abc", "0", "-2") is rejected — persisting it would echo
-  back as if accepted while the scorer runs unbounded. Returns `:ok`, or
+  back as if accepted while the scorer runs unbounded, and `/` is never accepted as
+  an import root. Returns `:ok`, or
   `{:error, invalid_keys}` with nothing saved.
   """
   def save_form(params) do
-    case invalid_band_values(params) do
+    case invalid_values(params) do
       [] ->
         {puts, deletes} = plan(params)
         save(puts, deletes)
@@ -444,6 +457,14 @@ defmodule Cinder.Settings do
         {:error, invalid}
     end
   end
+
+  defp invalid_values(params), do: invalid_band_values(params) ++ invalid_import_roots(params)
+
+  defp invalid_import_roots(%{@import_roots_key => value}) do
+    if "/" in split_import_roots(value || ""), do: [@import_roots_key], else: []
+  end
+
+  defp invalid_import_roots(_params), do: []
 
   defp invalid_band_values(params) do
     for kind <- Cinder.Library.kinds(),
@@ -467,6 +488,7 @@ defmodule Cinder.Settings do
     apply_media_server(rows)
     apply_download_clients(rows)
     apply_library_config(rows)
+    apply_import_roots(rows)
     apply_move_on_import(rows)
     :ok
   rescue
@@ -530,6 +552,16 @@ defmodule Cinder.Settings do
     :ok
   end
 
+  defp apply_import_roots(rows) do
+    roots =
+      case decoded_for(rows, @import_roots_key) do
+        nil -> inferred_import_roots()
+        value -> parse_import_roots(value)
+      end
+
+    Application.put_env(:cinder, :import_roots, roots)
+  end
+
   defp apply_kind_config(rows, kind) do
     root_env = :"#{kind}_library_path"
 
@@ -591,6 +623,50 @@ defmodule Cinder.Settings do
       [] -> nil
       list -> list
     end
+  end
+
+  defp parse_import_roots(value) do
+    roots = split_import_roots(value)
+    if "/" in roots, do: [], else: roots
+  end
+
+  defp split_import_roots(value) do
+    value
+    |> String.split(~r/[,\n]/)
+    |> Enum.map(&String.trim/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.map(&Path.expand/1)
+    |> Enum.uniq()
+  end
+
+  defp inferred_import_roots do
+    roots =
+      Cinder.Library.kinds()
+      |> Enum.map(&Application.get_env(:cinder, :"#{&1}_library_path"))
+      |> Enum.filter(&(is_binary(&1) and String.trim(&1) != ""))
+      |> Enum.map(&Path.expand/1)
+
+    infer_common_root(roots, length(Cinder.Library.kinds()))
+  end
+
+  defp infer_common_root(roots, expected_count) when length(roots) == expected_count do
+    [first | rest] = roots
+
+    common =
+      rest
+      |> Enum.reduce(Path.split(first), &common_path_parts/2)
+      |> Path.join()
+
+    if common == "/" or common in roots, do: [], else: [common]
+  end
+
+  defp infer_common_root(_roots, _expected_count), do: []
+
+  defp common_path_parts(path, parts) do
+    parts
+    |> Enum.zip(Path.split(path))
+    |> Enum.take_while(fn {left, right} -> left == right end)
+    |> Enum.map(&elem(&1, 0))
   end
 
   # Toggles build the client map from the captured base map (so a protocol with no toggle
@@ -710,6 +786,7 @@ defmodule Cinder.Settings do
   defp plan(params) do
     config_plan = Enum.reduce(config_fields(), {%{}, []}, &plan_config(&1, params, &2))
     {puts, deletes} = Enum.reduce(flat_keys(), config_plan, &plan_flat(&1, params, &2))
+    {puts, deletes} = plan_flat(@import_roots_key, params, {puts, deletes})
 
     puts =
       puts

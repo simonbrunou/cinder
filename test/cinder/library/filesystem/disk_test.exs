@@ -9,6 +9,7 @@ defmodule Cinder.Library.Filesystem.DiskTest do
   test "dir?/find_files/mkdir_p/ln operate on real files", %{tmp_dir: tmp} do
     refute Disk.dir?(Path.join(tmp, "nope.mkv"))
     assert Disk.dir?(tmp)
+    assert {:ok, _entries} = Disk.ls(tmp)
 
     release = Path.join(tmp, "release")
     File.mkdir_p!(Path.join(release, "Sample"))

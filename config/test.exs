@@ -61,6 +61,7 @@ config :cinder,
   indexer: Cinder.Acquisition.IndexerMock,
   media_server: Cinder.Library.MediaServerMock,
   filesystem: Cinder.Library.FilesystemMock,
+  path_policy: Cinder.Test.PermissivePathPolicy,
   # Disabled by default (overrides the prod Ffprobe impl) so the import suite never shells out;
   # the media_info tests opt in per-test via Application.put_env(MediaInfoMock).
   media_info: nil,

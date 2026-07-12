@@ -26,7 +26,7 @@ msgstr ""
 msgid "%{count} series"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:70
+#: lib/cinder_web/components/settings_components.ex:92
 #, elixir-autogen, elixir-format
 msgid "%{kind} library path (where %{kind} are hardlinked)"
 msgstr ""
@@ -46,12 +46,12 @@ msgstr ""
 msgid "%{title} is already requested."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:150
+#: lib/cinder_web/components/settings_components.ex:172
 #, elixir-autogen, elixir-format
 msgid "1080p, 720p"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:171
+#: lib/cinder_web/components/settings_components.ex:193
 #, elixir-autogen, elixir-format
 msgid ": a season pack of N episodes is allowed up to N× the max. Leave blank for no limit."
 msgstr ""
@@ -98,7 +98,7 @@ msgstr ""
 msgid "Admin"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:103
+#: lib/cinder_web/components/settings_components.ex:125
 #, elixir-autogen, elixir-format
 msgid "After a Usenet import, delete the original from the download client. Ensure your library is a separate folder from your downloads. Torrents are never auto-removed (seeding survives)."
 msgstr ""
@@ -252,7 +252,7 @@ msgstr ""
 msgid "Checking…"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:260
+#: lib/cinder_web/components/settings_components.ex:282
 #, elixir-autogen, elixir-format
 msgid "Clear saved value"
 msgstr ""
@@ -642,17 +642,17 @@ msgstr ""
 msgid "Manage your account email address and password settings"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:129
+#: lib/cinder_web/components/settings_components.ex:151
 #, elixir-autogen, elixir-format
 msgid "Max size (GB)"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:40
+#: lib/cinder_web/components/settings_components.ex:44
 #, elixir-autogen, elixir-format
 msgid "Media server type"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:115
+#: lib/cinder_web/components/settings_components.ex:137
 #, elixir-autogen, elixir-format
 msgid "Min size (GB)"
 msgstr ""
@@ -864,7 +864,7 @@ msgstr ""
 msgid "Pipeline at a glance."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:143
+#: lib/cinder_web/components/settings_components.ex:165
 #, elixir-autogen, elixir-format
 msgid "Preferred resolutions (comma-separated)"
 msgstr ""
@@ -909,7 +909,7 @@ msgstr ""
 msgid "Register for an account"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:100
+#: lib/cinder_web/components/settings_components.ex:122
 #, elixir-autogen, elixir-format
 msgid "Remove download after a Usenet import"
 msgstr ""
@@ -1126,7 +1126,7 @@ msgstr ""
 msgid "Sign up"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:171
+#: lib/cinder_web/components/settings_components.ex:193
 #, elixir-autogen, elixir-format
 msgid "Sizes are decimal GB (1 GB = 1,000,000,000 bytes). For TV they apply"
 msgstr ""
@@ -1173,7 +1173,7 @@ msgstr ""
 msgid "TV wanted"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:188
+#: lib/cinder_web/components/settings_components.ex:210
 #, elixir-autogen, elixir-format
 msgid "Test %{service}"
 msgstr ""
@@ -1304,19 +1304,19 @@ msgid "You can't delete your own account."
 msgstr ""
 
 #: lib/cinder_web/live/users_live.ex:249
-#: lib/cinder_web/user_auth.ex:260
-#: lib/cinder_web/user_auth.ex:347
+#: lib/cinder_web/user_auth.ex:269
+#: lib/cinder_web/user_auth.ex:356
 #, elixir-autogen, elixir-format
 msgid "You don't have access to that page."
 msgstr ""
 
-#: lib/cinder_web/user_auth.ex:229
-#: lib/cinder_web/user_auth.ex:326
+#: lib/cinder_web/user_auth.ex:238
+#: lib/cinder_web/user_auth.ex:335
 #, elixir-autogen, elixir-format
 msgid "You must log in to access this page."
 msgstr ""
 
-#: lib/cinder_web/user_auth.ex:246
+#: lib/cinder_web/user_auth.ex:255
 #, elixir-autogen, elixir-format
 msgid "You must re-authenticate to access this page."
 msgstr ""
@@ -1342,7 +1342,7 @@ msgstr ""
 msgid "of %{count} total"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:171
+#: lib/cinder_web/components/settings_components.ex:193
 #, elixir-autogen, elixir-format
 msgid "per episode"
 msgstr ""
@@ -1352,12 +1352,12 @@ msgstr ""
 msgid "to your account now."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:278
+#: lib/cinder_web/components/settings_components.ex:300
 #, elixir-autogen, elixir-format
 msgid "•••• saved (leave blank to keep)"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:200
+#: lib/cinder_web/components/settings_components.ex:222
 #: lib/cinder_web/settings_labels.ex:26
 #, elixir-autogen, elixir-format
 msgid "Media server"
@@ -1395,7 +1395,7 @@ msgstr ""
 msgid "Preferred language"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:281
+#: lib/cinder_web/components/settings_components.ex:303
 #, elixir-autogen, elixir-format
 msgid "set via environment (leave blank to keep)"
 msgstr ""
@@ -1427,7 +1427,7 @@ msgstr ""
 msgid "A download client (torrent or usenet)"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:85
+#: lib/cinder_web/components/settings_components.ex:107
 #, elixir-autogen, elixir-format
 msgid "A separate root per library, so Jellyfin/Plex can point distinct libraries at each. Required even if they share a folder; enter the same path."
 msgstr ""
@@ -1708,7 +1708,7 @@ msgstr ""
 msgid "Plex token"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:157
+#: lib/cinder_web/components/settings_components.ex:179
 #, elixir-autogen, elixir-format
 msgid "Preferred sources (comma-separated)"
 msgstr ""
@@ -1783,12 +1783,12 @@ msgstr ""
 msgid "Setup checklist"
 msgstr ""
 
-#: lib/cinder_web/user_auth.ex:278
+#: lib/cinder_web/user_auth.ex:287
 #, elixir-autogen, elixir-format
 msgid "Setup in progress. Try again shortly."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:174
+#: lib/cinder_web/components/settings_components.ex:196
 #, elixir-autogen, elixir-format
 msgid "Sources: remux, bluray, webrip, webdl, hdtv, dvd, cam. Leave blank to accept any; untagged releases are always kept. These are distinct; listing only bluray excludes remux, so add both to accept either."
 msgstr ""
@@ -1844,7 +1844,7 @@ msgstr ""
 msgid "You need to log in again to perform sensitive actions on your account."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:164
+#: lib/cinder_web/components/settings_components.ex:186
 #, elixir-autogen, elixir-format
 msgid "bluray, webdl"
 msgstr ""
@@ -2112,7 +2112,7 @@ msgstr ""
 msgid "This series only has specials, which can't be requested yet."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:21
+#: lib/cinder_web/components/settings_components.ex:24
 #, elixir-autogen, elixir-format
 msgid "Not saved: invalid size for %{fields}: enter a positive number of GB, or leave blank for no limit."
 msgstr ""
@@ -2385,4 +2385,24 @@ msgstr ""
 #: lib/cinder_web/live/user_live/registration.ex:115
 #, elixir-autogen, elixir-format
 msgid "Invalid bootstrap token."
+msgstr ""
+
+#: lib/cinder_web/components/settings_components.ex:79
+#, elixir-autogen, elixir-format
+msgid "/media/downloads"
+msgstr ""
+
+#: lib/cinder_web/components/settings_components.ex:84
+#, elixir-autogen, elixir-format
+msgid "Allowed download folders, separated by commas or new lines. The filesystem root is not allowed."
+msgstr ""
+
+#: lib/cinder_web/components/settings_components.ex:74
+#, elixir-autogen, elixir-format
+msgid "Download import roots"
+msgstr ""
+
+#: lib/cinder_web/components/settings_components.ex:22
+#, elixir-autogen, elixir-format
+msgid "Not saved: Import roots cannot include the filesystem root (/)."
 msgstr ""

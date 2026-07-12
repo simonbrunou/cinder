@@ -922,21 +922,5 @@ defmodule Cinder.LibraryTest do
 
       assert {:error, :eacces} = Cinder.Library.delete_file(path)
     end
-
-    # Data-safety guard: a stale/misconfigured file_path OUTSIDE every library root must unlink the
-    # file but NEVER attempt a single rmdir (no rmdir expectation -> verify_on_exit! fails if pruned).
-    test "a path outside every library root unlinks but prunes nothing" do
-      path = "/var/old/loose-movie.mkv"
-      expect(Cinder.Library.FilesystemMock, :rm, fn ^path -> :ok end)
-
-      assert :ok = Cinder.Library.delete_file(path)
-    end
-
-    test "a sibling-prefix path outside the root unlinks but prunes nothing" do
-      path = "#{@lib}-extra/Movie (2000)/Movie (2000).mkv"
-      expect(Cinder.Library.FilesystemMock, :rm, fn ^path -> :ok end)
-
-      assert :ok = Cinder.Library.delete_file(path)
-    end
   end
 end

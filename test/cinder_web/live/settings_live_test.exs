@@ -19,9 +19,39 @@ defmodule CinderWeb.SettingsLiveTest do
     assert html =~ "Media server"
     assert html =~ "Library"
     assert html =~ ~s(name="movies_library_path")
+    assert html =~ ~s(name="import_roots")
     # The remove-after-import toggle lives on /settings (Library section).
     assert html =~ ~s(name="move_on_import")
     assert html =~ "Save settings"
+  end
+
+  test "saving import roots persists a non-secret download boundary", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    lv
+    |> form("#settings-form", %{
+      "import_roots" => "/srv/downloads, /srv/usenet",
+      "media_server_type" => "jellyfin"
+    })
+    |> render_submit()
+
+    assert Settings.get("import_roots") == "/srv/downloads, /srv/usenet"
+    assert Settings.import_roots() == ["/srv/downloads", "/srv/usenet"]
+  end
+
+  test "rejects a filesystem-root import boundary", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    html =
+      lv
+      |> form("#settings-form", %{
+        "import_roots" => "/",
+        "media_server_type" => "jellyfin"
+      })
+      |> render_submit()
+
+    assert html =~ "Import roots cannot include the filesystem root"
+    assert Settings.get("import_roots") == nil
   end
 
   test "saving the movie library path overlays :cinder, :movies_library_path", %{conn: conn} do

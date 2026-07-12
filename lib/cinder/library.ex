@@ -15,7 +15,8 @@ defmodule Cinder.Library do
 
   alias Cinder.Acquisition.{Language, Parser}
   alias Cinder.Catalog.{Episode, Movie, Series}
-  alias Cinder.Library.{Sidecars, Upgrade}
+  alias Cinder.Library.{PathPolicy, Sidecars, Upgrade}
+  alias Cinder.Settings
 
   @video_exts ~w(.mkv .mp4 .avi .m4v .mov .wmv .ts)
   @illegal ~r/[\/\\:*?"<>|]/
@@ -77,9 +78,10 @@ defmodule Cinder.Library do
            |> Map.merge(capture_media(source))
            |> Map.put_new(:sidecar_subtitles, []),
          dest = build_dest(movie, source, root),
+         {:ok, dest} <- safe_destination(dest, root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
          {:ok, quality, placed?} <-
-           place(source, dest, {si, sdev}, movie, new_q, replace?, fn ->
+           place(source, dest, root, {si, sdev}, movie, new_q, replace?, fn ->
              upgrade?(movie, new_q)
            end) do
       quality = maybe_link_sidecars(quality, placed?, folder?, source, dest)
@@ -100,7 +102,14 @@ defmodule Cinder.Library do
   # caller's `upgrade_fun` decision or a forced `replace?`. Shared by movie and episode imports.
   # `upgrade_fun` is a thunk so the (config-reading) upgrade comparison runs only on an actual
   # collision, not every import. `replace?` bypasses the upgrade gate entirely.
-  defp place(source, dest, {si, sdev}, record, new_q, replace?, upgrade_fun) do
+  defp place(source, dest, root, {si, sdev}, record, new_q, replace?, upgrade_fun) do
+    with {:ok, source} <- safe_source_file(source),
+         {:ok, dest} <- safe_destination(dest, root) do
+      do_place(source, dest, root, {si, sdev}, record, new_q, replace?, upgrade_fun)
+    end
+  end
+
+  defp do_place(source, dest, root, {si, sdev}, record, new_q, replace?, upgrade_fun) do
     case fs().ln(source, dest) do
       :ok ->
         {:ok, new_q, true}
@@ -114,10 +123,11 @@ defmodule Cinder.Library do
         # as :eexist below and still runs the upgrade/keep gate — never an unconditional overwrite here.
         # The copy logs
         # at :info from link_or_copy/2 — the one choke-point both copy paths hit.
-        with :ok <- replace(source, dest), do: {:ok, new_q, true}
+        with :ok <- replace(source, dest, root), do: {:ok, new_q, true}
 
       {:error, :eexist} ->
-        with {:ok, %{inode: di, major_device: ddev}} <- fs().lstat(dest) do
+        with {:ok, ^dest} <- safe_destination(dest, root),
+             {:ok, %{inode: di, major_device: ddev}} <- fs().lstat(dest) do
           # Inode numbers are unique only within one filesystem, so an idempotency short-circuit must
           # also match the device — across filesystems two inodes can collide and would otherwise skip
           # a genuine upgrade. Same-fs hardlink fast path (sdev == ddev) is unchanged.
@@ -130,7 +140,8 @@ defmodule Cinder.Library do
             replace? or upgrade_fun.(),
             record,
             new_q,
-            replace?
+            replace?,
+            root
           )
         end
 
@@ -142,14 +153,14 @@ defmodule Cinder.Library do
   # Same inode: the file is already in place (idempotent). Normally keep the recorded quality, but a
   # forced replace (e.g. manual re-import after a crash) must record the NEW quality. `placed?` is
   # false either way — no fresh bytes landed, so sidecars are not re-linked.
-  defp do_resolve(_source, _dest, true, _upgrade, movie, new_q, replace?),
+  defp do_resolve(_source, _dest, true, _upgrade, movie, new_q, replace?, _root),
     do: {:ok, if(replace?, do: new_q, else: existing_quality(movie, new_q)), false}
 
-  defp do_resolve(source, dest, false, true, _movie, new_q, _replace?) do
-    with :ok <- replace(source, dest), do: {:ok, new_q, true}
+  defp do_resolve(source, dest, false, true, _movie, new_q, _replace?, root) do
+    with :ok <- replace(source, dest, root), do: {:ok, new_q, true}
   end
 
-  defp do_resolve(_source, dest, false, false, movie, new_q, _replace?),
+  defp do_resolve(_source, dest, false, false, movie, new_q, _replace?, _root),
     do: keep(dest, movie, new_q)
 
   defp existing_quality(record, new_q) do
@@ -244,17 +255,21 @@ defmodule Cinder.Library do
   # link/copy and rename can leak one), link-or-copy source -> unique temp in the dest dir, then rename
   # over dest. The temp lives on the dest filesystem, so the rename is same-fs and atomic even when the
   # source content had to be copied across filesystems.
-  defp replace(source, dest) do
+  defp replace(source, dest, root) do
     dir = Path.dirname(dest)
-    sweep_temps(dir)
+    sweep_temps(dir, root)
     tmp = Path.join(dir, ".cinder-tmp-#{System.unique_integer([:positive])}")
 
-    with :ok <- link_or_copy(source, tmp),
+    with {:ok, ^dest} <- safe_destination(dest, root),
+         {:ok, ^tmp} <- safe_destination(tmp, root),
+         :ok <- link_or_copy(source, tmp, root),
+         {:ok, ^tmp} <- safe_destination(tmp, root),
+         {:ok, ^dest} <- safe_destination(dest, root),
          :ok <- fs().rename(tmp, dest) do
       :ok
     else
       {:error, _} = err ->
-        _ = fs().rm(tmp)
+        _ = safe_remove(tmp, [root])
         err
     end
   end
@@ -265,26 +280,35 @@ defmodule Cinder.Library do
   # real failure and propagates unchanged — a copy would fail the same way. Both the fresh placement
   # and the upgrade-replace path route the copy through here, so the :info fallback log lives at this
   # single choke-point and covers every fallback (per docs/operating.md).
-  defp link_or_copy(source, target) do
+  defp link_or_copy(source, target, root) do
+    with {:ok, source} <- safe_source_file(source),
+         {:ok, target} <- safe_destination(target, root) do
+      do_link_or_copy(source, target, root)
+    end
+  end
+
+  defp do_link_or_copy(source, target, root) do
     case fs().ln(source, target) do
       {:error, errno} when errno in @copy_fallback_errnos ->
         Logger.info(
           "hardlink unsupported (#{errno}); copying #{source} into #{Path.dirname(target)}"
         )
 
-        fs().cp(source, target)
+        with {:ok, ^source} <- safe_source_file(source),
+             {:ok, ^target} <- safe_destination(target, root),
+             do: fs().cp(source, target)
 
       other ->
         other
     end
   end
 
-  defp sweep_temps(dir) do
-    case fs().find_files(dir) do
+  defp sweep_temps(dir, root) do
+    case path_policy().walk(dir, roots: [root], filesystem: fs()) do
       {:ok, files} ->
         for {p, _size} <- files,
             String.contains?(Path.basename(p), ".cinder-tmp-"),
-            do: fs().rm(p)
+            do: safe_remove(p, [root])
 
         :ok
 
@@ -439,17 +463,15 @@ defmodule Cinder.Library do
   # files for a pack/multi-file download, or the lone file itself for a single-file one (size 0 —
   # it's the only candidate). `folder?` gates sidecar linking (single-file downloads ship none).
   defp video_files(path) do
-    if fs().dir?(path) do
-      with {:ok, files} <- fs().find_files(path), do: {:ok, only_videos(files), true}
-    else
-      # dir? is also false for a path that doesn't EXIST (unmounted volume, deleted download).
-      # A vanished pack folder must surface as a transient FS error — not slip through as a
-      # "lone file" whose non-video extension filters to [] and reads as a deterministic
-      # nothing-matched park + blocklist.
-      case fs().lstat(path) do
-        {:ok, _stat} -> {:ok, only_videos([{path, 0}]), false}
-        {:error, reason} -> {:error, reason}
-      end
+    case safe_walk(path) do
+      {:ok, files} ->
+        {:ok, only_videos(files), true}
+
+      {:error, :enotdir} ->
+        with {:ok, source} <- safe_source_file(path), do: {:ok, [{source, 0}], false}
+
+      {:error, _reason} = error ->
+        error
     end
   end
 
@@ -531,15 +553,17 @@ defmodule Cinder.Library do
   defp place_episode_file([ep | _] = episodes, source, root, target, folder?) do
     dest = build_episode_dest(episodes, source, root)
 
-    with {:ok, %{size: size, inode: si, major_device: sdev}} <- fs().lstat(source),
+    with {:ok, source} <- safe_source_file(source),
+         {:ok, %{size: size, inode: si, major_device: sdev}} <- fs().lstat(source),
          parsed = Parser.parse(Path.basename(source)),
          new_q =
            new_quality(parsed, size)
            |> Map.merge(capture_media(source))
            |> Map.put_new(:sidecar_subtitles, []),
+         {:ok, dest} <- safe_destination(dest, root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
          {:ok, q, placed?} <-
-           place(source, dest, {si, sdev}, ep, new_q, false, fn ->
+           place(source, dest, root, {si, sdev}, ep, new_q, false, fn ->
              ep_upgrade?(ep, new_q, target)
            end) do
       {:ok, dest, maybe_link_sidecars(q, placed?, folder?, source, dest)}
@@ -650,13 +674,17 @@ defmodule Cinder.Library do
   # content_path is a file for single-file torrents, a folder for multi-file ones. Returns the
   # picked video plus whether the download was a folder (`folder?` gates sidecar linking).
   defp resolve_source(path) do
-    if fs().dir?(path) do
-      with {:ok, files} <- fs().find_files(path),
-           {:ok, video} <- pick_video(files) do
-        {:ok, video, true}
-      end
-    else
-      {:ok, path, false}
+    case safe_walk(path) do
+      {:ok, files} ->
+        with {:ok, video} <- pick_video(files),
+             {:ok, source} <- safe_source_file(video),
+             do: {:ok, source, true}
+
+      {:error, :enotdir} ->
+        with {:ok, source} <- safe_source_file(path), do: {:ok, source, false}
+
+      {:error, _reason} = error ->
+        error
     end
   end
 
@@ -708,18 +736,26 @@ defmodule Cinder.Library do
   root — so a `Title (Year)/` or `Season NN/`→show folder disappears when it empties, but the root
   and any non-empty or out-of-library directory are untouched. A real unlink error (e.g. `:eacces`)
   is surfaced and nothing is pruned. Hardlink note: this frees disk space only once the download
-  client also drops its copy. (A path that `Path.expand` can't place strictly inside a root —
-  relative, `..`-laden, or a symlinked root — fails CLOSED: the file is unlinked but no folder is
-  pruned. Safe-by-default for a destructive op; a symlinked root may leave empty folders behind —
-  do NOT "fix" this with `File.read_link`/realpath, which would widen the deletion surface.)
+  client also drops its copy. Paths outside the configured roots, symlink leaves, and paths with
+  symlinked components fail closed with `{:error, :unsafe_delete}` before unlinking.
   """
   @spec delete_file(String.t() | nil) :: :ok | {:error, term()}
   def delete_file(path) when path in [nil, ""], do: :ok
 
   def delete_file(path) do
-    case fs().rm(path) do
-      :ok -> prune_empty_dirs(Path.dirname(path))
-      {:error, :enoent} -> prune_empty_dirs(Path.dirname(path))
+    roots = library_roots()
+
+    with :ok <- path_policy().deletable_file(path, roots, filesystem: fs()) do
+      do_delete_file(path)
+    end
+  end
+
+  defp do_delete_file(path) do
+    expanded = Path.expand(path)
+
+    case fs().rm(expanded) do
+      :ok -> prune_empty_dirs(Path.dirname(expanded))
+      {:error, :enoent} -> prune_empty_dirs(Path.dirname(expanded))
       {:error, _reason} = err -> err
     end
   end
@@ -757,8 +793,39 @@ defmodule Cinder.Library do
     end
   end
 
+  defp safe_source_file(path) do
+    case Settings.import_roots() do
+      [] -> {:error, :download_roots_not_configured}
+      roots -> path_policy().source_file(path, roots, @video_exts, filesystem: fs())
+    end
+  end
+
+  defp safe_walk(path) do
+    case Settings.import_roots() do
+      [] -> {:error, :download_roots_not_configured}
+      roots -> path_policy().walk(path, roots: roots, filesystem: fs(), source: true)
+    end
+  end
+
+  defp safe_destination(path, root),
+    do: path_policy().destination(path, root, filesystem: fs())
+
+  defp safe_remove(path, roots) do
+    with :ok <- path_policy().deletable_file(path, roots, filesystem: fs()),
+         do: fs().rm(path)
+  end
+
+  defp library_roots do
+    for kind <- @kinds,
+        {:ok, root} <- [root(kind)],
+        do: root
+  end
+
   defp fs, do: Application.fetch_env!(:cinder, :filesystem)
   defp media_server, do: Application.fetch_env!(:cinder, :media_server)
+
+  @doc false
+  def path_policy, do: Application.get_env(:cinder, :path_policy, PathPolicy)
 
   # The configured import root for a kind, or {:error, :library_not_configured} when unset/blank —
   # used by both importers so an unconfigured root holds (poller retries) instead of raising. The

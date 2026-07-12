@@ -18,10 +18,14 @@ defmodule CinderWeb.SettingsComponents do
   `{:error, invalid_keys}`) — shared by `/settings` and `/setup` so the copy can't drift.
   """
   def invalid_band_message(invalid_keys) do
-    gettext(
-      "Not saved: invalid size for %{fields}: enter a positive number of GB, or leave blank for no limit.",
-      fields: Enum.join(invalid_keys, ", ")
-    )
+    if Settings.import_roots_key() in invalid_keys do
+      gettext("Not saved: Import roots cannot include the filesystem root (/).")
+    else
+      gettext(
+        "Not saved: invalid size for %{fields}: enter a positive number of GB, or leave blank for no limit.",
+        fields: Enum.join(invalid_keys, ", ")
+      )
+    end
   end
 
   attr :form, :map, required: true
@@ -65,6 +69,24 @@ defmodule CinderWeb.SettingsComponents do
       </div>
 
       <div :if={group == :library} class="space-y-2">
+        <div class="form-control">
+          <label class="label" for={Settings.import_roots_key()}>
+            <span class="label-text">{gettext("Download import roots")}</span>
+          </label>
+          <textarea
+            id={Settings.import_roots_key()}
+            name={Settings.import_roots_key()}
+            placeholder={gettext("/media/downloads")}
+            autocomplete="off"
+            class="textarea w-full"
+          >{@form.values[Settings.import_roots_key()]}</textarea>
+          <p class="mt-1 text-xs opacity-70">
+            {gettext(
+              "Allowed download folders, separated by commas or new lines. The filesystem root is not allowed."
+            )}
+          </p>
+        </div>
+
         <div :for={%{kind: kind, label: kind_label} <- Settings.library_kinds()} class="form-control">
           <label class="label" for={Settings.library_path_key(kind)}>
             <span class="label-text">{gettext("%{kind} library path (where %{kind} are hardlinked)",

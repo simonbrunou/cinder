@@ -34,6 +34,7 @@ defmodule Cinder.SettingsTest do
     :tv_max_size,
     :tv_preferred_resolutions,
     :tv_preferred_sources,
+    :import_roots,
     :move_on_import
   ]
 
@@ -51,6 +52,56 @@ defmodule Cinder.SettingsTest do
   end
 
   describe "storage" do
+    test "import_roots parses newline/comma input, expands paths, and removes duplicates" do
+      Settings.put("import_roots", " /srv/downloads, /srv/usenet\n/srv/downloads ")
+
+      assert Settings.import_roots() == ["/srv/downloads", "/srv/usenet"]
+      refute Repo.get_by!(Setting, key: "import_roots").is_secret
+    end
+
+    test "import_roots overlay refreshes on replacement and clear" do
+      Settings.put("import_roots", "/srv/one")
+      assert Settings.import_roots() == ["/srv/one"]
+
+      Settings.put("import_roots", "/srv/two")
+      assert Settings.import_roots() == ["/srv/two"]
+
+      Settings.delete("import_roots")
+      assert Settings.import_roots() == inferred_import_roots()
+    end
+
+    test "import_roots rejects a filesystem-root entry" do
+      Application.delete_env(:cinder, :import_roots)
+      Settings.load_into_env()
+      expected = Settings.import_roots()
+
+      assert {:error, ["import_roots"]} =
+               Settings.save_form(%{
+                 "import_roots" => "/, /srv/downloads",
+                 "media_server_type" => "jellyfin"
+               })
+
+      assert Settings.get("import_roots") == nil
+      assert Settings.import_roots() == expected
+    end
+
+    test "import_roots conservatively infers only a shared non-root parent" do
+      Application.put_env(:cinder, :movies_library_path, "/srv/media/movies")
+      Application.put_env(:cinder, :tv_library_path, "/srv/media/tv")
+      Application.delete_env(:cinder, :import_roots)
+      assert Settings.import_roots() == ["/srv/media"]
+
+      Application.put_env(:cinder, :movies_library_path, "/movies")
+      Application.put_env(:cinder, :tv_library_path, "/tv")
+      Application.delete_env(:cinder, :import_roots)
+      assert Settings.import_roots() == []
+
+      Application.put_env(:cinder, :movies_library_path, "/srv/media")
+      Application.put_env(:cinder, :tv_library_path, "/srv/media/tv")
+      Application.delete_env(:cinder, :import_roots)
+      assert Settings.import_roots() == []
+    end
+
     test "non-secret values are stored as plaintext and round-trip" do
       Settings.put("prowlarr_url", "http://example:9696")
 
@@ -125,6 +176,12 @@ defmodule Cinder.SettingsTest do
   end
 
   describe "form_state/0 env placeholders" do
+    test "includes the DB-only import roots field" do
+      Settings.put("import_roots", "/srv/downloads")
+
+      assert Settings.form_state().values["import_roots"] == "/srv/downloads"
+    end
+
     test "a non-secret value from env (no DB row) is a placeholder, not a value" do
       Application.put_env(:cinder, Cinder.Acquisition.Indexer.Prowlarr,
         base_url: "http://env:9696"
@@ -528,6 +585,16 @@ defmodule Cinder.SettingsTest do
       assert Health.check_service(:indexer) == {:error, :down}
       assert Health.check_service(:media_server) == :ok
       assert Health.check_service({:download, :torrent}) == :ok
+    end
+  end
+
+  defp inferred_import_roots do
+    movie = Application.fetch_env!(:cinder, :movies_library_path)
+    tv = Application.fetch_env!(:cinder, :tv_library_path)
+
+    case {Path.dirname(movie), Path.dirname(tv)} do
+      {same, same} when same != "/" -> [same]
+      _ -> []
     end
   end
 end

@@ -6,6 +6,7 @@ defmodule Cinder.Library.Filesystem do
   """
 
   @callback dir?(path :: String.t()) :: boolean()
+  @callback ls(path :: String.t()) :: {:ok, [String.t()]} | {:error, term()}
   @callback find_files(dir :: String.t()) ::
               {:ok, [{String.t(), non_neg_integer()}]} | {:error, term()}
   @callback mkdir_p(dir :: String.t()) :: :ok | {:error, term()}
