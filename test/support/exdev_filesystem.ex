@@ -15,6 +15,8 @@ defmodule Cinder.Test.ExdevFilesystem do
   @impl true
   defdelegate cp(source, dest), to: Disk
   @impl true
+  defdelegate cp_exclusive(source, dest, on_create), to: Disk
+  @impl true
   defdelegate lstat(path), to: Disk
   @impl true
   defdelegate rename(source, dest), to: Disk

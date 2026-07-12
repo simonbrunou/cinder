@@ -39,6 +39,17 @@ defmodule Cinder.Test.BarrierFilesystem do
   end
 
   @impl true
+  def cp_exclusive(source, dest, on_create) do
+    pause(:cp_exclusive, dest, :before)
+
+    Disk.cp_exclusive(source, dest, fn stat ->
+      with :ok <- on_create.(stat) do
+        pause(:cp_exclusive, dest)
+      end
+    end)
+  end
+
+  @impl true
   def lstat(path) do
     result = Disk.lstat(path)
     pause(:lstat, path)

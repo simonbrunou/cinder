@@ -29,6 +29,7 @@ defmodule Cinder.Library do
   # same way (`cp` can't open the dest) and the item still parks — a wasted copy attempt, not a
   # wrong import. Every other errno (`:enoent`, `:enospc`, …) is a real failure and propagates.
   @copy_fallback_errnos [:exdev, :eperm, :eopnotsupp, :enotsup]
+  @exclusive_copy_fallback_errnos [:eperm, :eopnotsupp, :enotsup]
 
   # The library kinds Cinder manages. The single source of truth — config keys
   # (`:"#{kind}_library_path"`, the per-kind Plex section, the size band), the
@@ -179,6 +180,14 @@ defmodule Cinder.Library do
     :ok
   end
 
+  @doc "Lists quarantined import journals for operator inspection."
+  @spec quarantined_import_stages() :: [map()]
+  def quarantined_import_stages, do: ImportStage.quarantined()
+
+  @doc "Releases a quarantined import journal for a safe retry without discarding its files."
+  @spec retry_import_stage(pos_integer()) :: {:ok, map()} | {:error, term()}
+  def retry_import_stage(id), do: ImportStage.retry_quarantined(id)
+
   # Place source at dest; resolve a same-item collision (tmdb-unique folder => same record) by the
   # caller's `upgrade_fun` decision or a forced `replace?`. Shared by movie and episode imports.
   # `upgrade_fun` is a thunk so the (config-reading) upgrade comparison runs only on an actual
@@ -298,6 +307,7 @@ defmodule Cinder.Library do
              operation_key: operation_key,
              state: :prepared,
              kind: :noop,
+             next_attempt_at: ImportStage.handoff_deadline(),
              root: root,
              dest: dest,
              candidate: dest
@@ -361,11 +371,18 @@ defmodule Cinder.Library do
          {:ok, candidate_stat} <- fs().lstat(candidate),
          stage <- ImportStage.update!(stage, identity_attrs(:candidate, candidate_stat)),
          {:ok, stage} <- maybe_move_backup(stage, backup_source),
-         :ok <- land_candidate(stage, candidate_stat) do
+         {:ok, landed_stat} <- land_candidate(stage, candidate_stat) do
       {:ok,
        ImportStage.update!(
          stage,
-         Map.merge(%{state: :prepared, last_error: nil}, identity_attrs(:staged, candidate_stat))
+         Map.merge(
+           %{
+             state: :prepared,
+             next_attempt_at: ImportStage.handoff_deadline(),
+             last_error: nil
+           },
+           identity_attrs(:staged, landed_stat)
+         )
        )}
     end
   end
@@ -394,10 +411,46 @@ defmodule Cinder.Library do
     dest = stage.dest
 
     with {:ok, ^candidate} <- safe_destination(candidate, stage.root),
-         {:ok, ^dest} <- safe_destination(dest, stage.root),
-         :ok <- fs().ln(candidate, dest) do
-      remove_owned(candidate, identity(candidate_stat), stage.root)
+         {:ok, ^dest} <- safe_destination(dest, stage.root) do
+      case fs().ln(candidate, dest) do
+        :ok ->
+          finish_candidate_land(stage, candidate_stat)
+
+        {:error, errno} when errno in @exclusive_copy_fallback_errnos ->
+          exclusive_copy_candidate(stage, candidate_stat)
+
+        {:error, _} = error ->
+          error
+      end
     end
+  end
+
+  defp finish_candidate_land(stage, candidate_stat) do
+    case remove_owned(stage.candidate, identity(candidate_stat), stage.root) do
+      :ok -> {:ok, candidate_stat}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp exclusive_copy_candidate(stage, candidate_stat) do
+    on_create = fn stat -> persist_partial_destination_identity(stage, stat) end
+
+    with :ok <- fs().cp_exclusive(stage.candidate, stage.dest, on_create),
+         {:ok, landed_stat} <- fs().lstat(stage.dest),
+         _stage <- ImportStage.update!(stage, identity_attrs(:staged, landed_stat)),
+         :ok <- remove_owned(stage.candidate, identity(candidate_stat), stage.root) do
+      {:ok, landed_stat}
+    end
+  end
+
+  defp persist_partial_destination_identity(stage, stat) do
+    ImportStage.update!(stage, %{
+      staged_inode: stat.inode,
+      staged_device: stat.major_device,
+      staged_size: nil
+    })
+
+    :ok
   end
 
   defp durable_rollback(stage),
@@ -463,9 +516,16 @@ defmodule Cinder.Library do
        when state in [:preparing, :prepared, :rolling_back],
        do: {:error, :import_stage_not_committed}
 
+  defp reconcile_stage_state(%ImportStage{state: state} = stage, :auto)
+       when state in [:preparing, :prepared],
+       do: claim_stage_due(stage, [:preparing, :prepared], :rolling_back, :rollback)
+
   defp reconcile_stage_state(%ImportStage{state: state} = stage, _mode)
        when state in [:preparing, :prepared],
        do: claim_stage(stage, [:preparing, :prepared], :rolling_back, :rollback)
+
+  defp reconcile_stage_state(%ImportStage{state: :committed} = stage, :auto),
+    do: claim_stage_due(stage, [:committed], :cleaning, :cleanup)
 
   defp reconcile_stage_state(%ImportStage{state: :committed} = stage, _mode),
     do: claim_stage(stage, [:committed], :cleaning, :cleanup)
@@ -483,6 +543,13 @@ defmodule Cinder.Library do
     case ImportStage.claim(stage.id, from_states, state, action) do
       {:claimed, claimed} -> reconcile_claimed_stage(claimed)
       :not_claimed -> stage.id |> ImportStage.get() |> reconcile_stage_state(:auto)
+    end
+  end
+
+  defp claim_stage_due(stage, from_states, state, action) do
+    case ImportStage.claim_due(stage.id, from_states, state, action) do
+      {:claimed, claimed} -> reconcile_claimed_stage(claimed)
+      :not_claimed -> :ok
     end
   end
 
@@ -544,7 +611,7 @@ defmodule Cinder.Library do
   end
 
   defp remove_or_preserve_destination(stage, stat) do
-    if identity_matches?(stat, staged_identity(stage)) or
+    if staged_identity_matches?(stat, stage) or
          identity_matches?(stat, candidate_identity(stage)) do
       safe_remove(stage.dest, [stage.root])
     else
@@ -630,6 +697,16 @@ defmodule Cinder.Library do
   defp identity_matches?(stat, {inode, device, size}),
     do: stat.inode == inode and stat.major_device == device and stat.size == size
 
+  defp staged_identity_matches?(stat, %{
+         staged_inode: inode,
+         staged_device: device,
+         staged_size: nil
+       })
+       when not is_nil(inode) and not is_nil(device),
+       do: stat.inode == inode and stat.major_device == device
+
+  defp staged_identity_matches?(stat, stage), do: identity_matches?(stat, staged_identity(stage))
+
   defp delete_stage(stage) do
     case ImportStage.delete(stage) do
       {:ok, _} -> :ok
@@ -644,7 +721,9 @@ defmodule Cinder.Library do
     error
   end
 
-  @max_cleanup_attempts 3
+  @max_cleanup_attempts 8
+  @cleanup_backoff_base 30
+  @cleanup_backoff_cap 1_800
   @permanent_cleanup_errors [
     :import_stage_destination_changed,
     :import_stage_backup_changed,
@@ -680,7 +759,8 @@ defmodule Cinder.Library do
     :ok
   end
 
-  defp cleanup_backoff(attempt), do: 5 * Integer.pow(2, attempt - 1)
+  defp cleanup_backoff(attempt),
+    do: min(@cleanup_backoff_base * Integer.pow(2, attempt - 1), @cleanup_backoff_cap)
 
   defp record_stage_error(id, reason) do
     case ImportStage.get(id) do

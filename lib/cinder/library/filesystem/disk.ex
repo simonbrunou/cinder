@@ -11,6 +11,7 @@ defmodule Cinder.Library.Filesystem.Disk do
 
   @moviehash_chunk 65_536
   @moviehash_min 2 * @moviehash_chunk
+  @copy_chunk 1_048_576
 
   @impl true
   def dir?(path), do: File.dir?(path)
@@ -37,6 +38,41 @@ defmodule Cinder.Library.Filesystem.Disk do
 
   @impl true
   def cp(source, dest), do: File.cp(source, dest)
+
+  @impl true
+  def cp_exclusive(source, dest, on_create) do
+    with {:ok, output} <- :file.open(dest, [:write, :exclusive, :binary, :raw]) do
+      try do
+        with {:ok, stat} <- File.lstat(dest),
+             :ok <- on_create.(stat),
+             {:ok, input} <- :file.open(source, [:read, :binary, :raw]) do
+          try do
+            stream_copy(input, output)
+          after
+            :file.close(input)
+          end
+        end
+      after
+        :file.close(output)
+      end
+    end
+  end
+
+  defp stream_copy(input, output) do
+    case :file.read(input, @copy_chunk) do
+      {:ok, bytes} ->
+        case :file.write(output, bytes) do
+          :ok -> stream_copy(input, output)
+          {:error, _} = error -> error
+        end
+
+      :eof ->
+        :ok
+
+      {:error, _} = error ->
+        error
+    end
+  end
 
   @impl true
   def read(path), do: File.read(path)

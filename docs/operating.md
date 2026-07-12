@@ -72,15 +72,19 @@ means your indexer/trackers can, in principle, make Cinder issue GET requests to
 addresses — the same posture as Radarr/Sonarr. You chose the indexer; point Cinder only at one
 you trust.
 
-## Hardlink, with an automatic cross-filesystem copy fallback
+## Hardlink, with an automatic safe-copy fallback
 
 On a completed download Cinder **hardlinks** the file into the library — instant, no copy, no extra
-disk. When a hardlink isn't possible Cinder **automatically falls back to an atomic copy** instead
-(it copies into a temporary file on the library filesystem, then renames it into place, so a media
-scan never sees a half-copied file). This covers both the download and library living on **different**
-filesystems *and* a single mount whose filesystem has no hardlink support at all (FAT/exFAT on a USB
-drive, SMB/CIFS without Unix extensions, some FUSE mounts). No configuration — Cinder detects the case
-and switches per import; a log line records each fallback.
+disk. When a hardlink isn't possible Cinder **automatically falls back to a crash-safe copy**. A
+hidden journaled candidate is built first. If the library filesystem also rejects the final
+candidate hardlink, Cinder exclusively creates the destination (never overwriting another creator),
+records its identity, and streams bounded chunks. Cinder does not commit or request a media-server
+scan until that stream completes; a crash leaves an identifiable partial that recovery safely
+removes or rolls back. A media server independently watching the directory may briefly notice that
+in-progress file before Cinder commits it. This covers both the download and library living on
+**different** filesystems *and* a single mount whose filesystem has no hardlink support at all
+(FAT/exFAT on a USB drive, SMB/CIFS without Unix extensions, some FUSE mounts). No configuration —
+Cinder detects the case and switches per import; a log line records each fallback.
 
 Keep both on the **same filesystem** when you can — it's faster and uses no extra disk. The compose
 file keeps both under one `/media` mount (`/media/movies`, `/media/tv`, `/media/downloads`). The copy
@@ -131,6 +135,33 @@ poller re-queues it on the next tick. (The old `/status` and `/grabs` URLs redir
 The media-server library scan after an import is **best-effort**: if the scan call fails (e.g. an
 endpoint/header mismatch on your Jellyfin/Plex version) the item still reaches `:available`, and
 your server picks the file up on its next periodic scan.
+
+### Quarantined import recovery
+
+Cinder journals every staged import so a crash cannot confuse an uncommitted file with one the
+catalog owns. Transient cleanup failures retry with capped exponential backoff (30 seconds through
+30 minutes) and quarantine after eight failed attempts; a permanent file-identity conflict
+quarantines immediately. Quarantine is fail-closed: Cinder retains the journal and every file it
+cannot prove it owns instead of repeatedly deleting or overwriting an unknown path.
+
+Inspect quarantined journals from the release container:
+
+```sh
+docker compose exec cinder bin/cinder eval \
+  'IO.inspect(Cinder.Library.quarantined_import_stages(), pretty: true, limit: :infinity)'
+```
+
+After fixing the reported permission, mount, or destination conflict, explicitly release one by
+its journal `id`:
+
+```sh
+docker compose exec cinder bin/cinder eval \
+  'IO.inspect(Cinder.Library.retry_import_stage(ID))'
+```
+
+Retry only resets the cleanup attempt budget and makes the preserved rollback or committed-cleanup
+action due. It does **not** discard the journal, delete files, change the recovery direction, or
+override identity checks; the next poll performs the same fail-closed reconciliation.
 
 ## Troubleshooting parked states
 

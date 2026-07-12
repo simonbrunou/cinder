@@ -73,6 +73,7 @@ defmodule Cinder.Library.ImportStage do
   def update(stage, attrs), do: stage |> changeset(attrs) |> Repo.update()
   def update!(stage, attrs), do: stage |> changeset(attrs) |> Repo.update!()
   def list, do: Repo.all(__MODULE__)
+  def quarantined, do: Repo.all(from(s in __MODULE__, where: s.state == :quarantined))
   def get(id), do: Repo.get(__MODULE__, id)
   def delete(stage), do: Repo.delete(stage)
 
@@ -84,7 +85,7 @@ defmodule Cinder.Library.ImportStage do
            set: [
              state: :committed,
              recovery_action: nil,
-             next_attempt_at: nil,
+             next_attempt_at: handoff_deadline(),
              last_error: nil,
              updated_at: DateTime.utc_now(:second)
            ]
@@ -95,6 +96,9 @@ defmodule Cinder.Library.ImportStage do
   end
 
   @lease_seconds 30
+  @handoff_seconds 30
+
+  def handoff_deadline, do: DateTime.add(DateTime.utc_now(:second), @handoff_seconds)
 
   def claim(id, from_states, state, recovery_action) do
     now = DateTime.utc_now(:second)
@@ -103,6 +107,28 @@ defmodule Cinder.Library.ImportStage do
       Repo.update_all(
         from(s in __MODULE__,
           where: s.id == ^id and s.state in ^from_states,
+          select: s
+        ),
+        set: [
+          state: state,
+          recovery_action: recovery_action,
+          next_attempt_at: DateTime.add(now, @lease_seconds),
+          updated_at: now
+        ]
+      )
+
+    claimed_result(result, state)
+  end
+
+  def claim_due(id, from_states, state, recovery_action) do
+    now = DateTime.utc_now(:second)
+
+    result =
+      Repo.update_all(
+        from(s in __MODULE__,
+          where:
+            s.id == ^id and s.state in ^from_states and
+              (is_nil(s.next_attempt_at) or s.next_attempt_at <= ^now),
           select: s
         ),
         set: [
@@ -151,6 +177,42 @@ defmodule Cinder.Library.ImportStage do
     end
   end
 
+  def retry_quarantined(id) do
+    case get(id) do
+      %__MODULE__{state: :quarantined, recovery_action: action}
+      when action in [:rollback, :cleanup] ->
+        retry_quarantined_action(id, action)
+
+      %__MODULE__{} ->
+        {:error, :import_stage_not_quarantined}
+
+      nil ->
+        {:error, :import_stage_not_found}
+    end
+  end
+
+  defp retry_quarantined_action(id, action) do
+    state = if action == :rollback, do: :rolling_back, else: :cleaning
+    now = DateTime.utc_now(:second)
+
+    case Repo.update_all(
+           from(s in __MODULE__,
+             where: s.id == ^id and s.state == :quarantined and s.recovery_action == ^action,
+             select: s
+           ),
+           set: [
+             state: state,
+             attempt_count: 0,
+             next_attempt_at: now,
+             last_error: nil,
+             updated_at: now
+           ]
+         ) do
+      {1, [stage]} -> {:ok, stage}
+      {0, _} -> {:error, :stale_import_stage}
+    end
+  end
+
   defp claimed_result({1, [stage]}, state) do
     pause_after_claim(stage, state)
     {:claimed, stage}
@@ -174,8 +236,8 @@ defmodule Cinder.Library.ImportStage do
   end
 
   def with_destination_lock(dest, fun),
-    do: :global.trans({{__MODULE__, :destination}, dest}, fun)
+    do: :global.trans({{__MODULE__, :destination, dest}, self()}, fun)
 
   def with_lock(operation_key, fun),
-    do: :global.trans({{__MODULE__, :operation}, operation_key}, fun)
+    do: :global.trans({{__MODULE__, :operation, operation_key}, self()}, fun)
 end
