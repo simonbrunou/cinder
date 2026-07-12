@@ -582,6 +582,61 @@ defmodule Cinder.SubtitlesTest do
     refute File.exists?(Path.join(outside, Path.basename(target)))
   end
 
+  @tag :tmp_dir
+  test "subtitle rollback refuses an outside unlink after the library parent becomes a symlink",
+       %{
+         tmp_dir: tmp
+       } do
+    saved = configure_real_policy(tmp)
+    on_exit(fn -> restore_env(saved) end)
+    movies = Application.fetch_env!(:cinder, :movies_library_path)
+    parent = Path.join(movies, "Movie")
+    video = Path.join(parent, "Movie.mkv")
+    outside = Path.join(tmp, "outside")
+    target = Subtitles.sidecar_path(video, "fr")
+    outside_target = Path.join(outside, Path.basename(target))
+    File.mkdir_p!(parent)
+    File.mkdir_p!(outside)
+    File.write!(video, "video")
+    File.write!(outside_target, "outside subtitle")
+
+    Application.put_env(:cinder, :filesystem_barrier, %{
+      owner: self(),
+      operation: :write,
+      contains: ".cinder-subtitle-manifest-"
+    })
+
+    expect(Cinder.Subtitles.ProviderMock, :search, fn _criteria ->
+      {:ok,
+       [
+         %{
+           file_id: 1,
+           language: "fr",
+           downloads: 1,
+           hearing_impaired: false,
+           ai_translated: false,
+           moviehash_match: false
+         }
+       ]}
+    end)
+
+    expect(Cinder.Subtitles.ProviderMock, :download, fn 1 -> {:ok, "new subtitle"} end)
+    deny(Cinder.Library.MediaServerMock, :scan, 1)
+
+    task = Task.async(fn -> Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies) end)
+
+    assert_receive {:filesystem_barrier, pid, ref, :write, manifest_temporary}, 1_000
+    assert File.exists?(target)
+    assert String.contains?(manifest_temporary, ".cinder-subtitle-manifest-")
+
+    File.rename!(parent, parent <> ".old")
+    File.ln_s!(outside, parent)
+    send(pid, {ref, :continue})
+
+    assert Task.await(task) == :ok
+    assert File.read!(outside_target) == "outside subtitle"
+  end
+
   defp configure_real_policy(tmp) do
     keys = [:filesystem, :path_policy, :movies_library_path, :tv_library_path]
     saved = Map.new(keys, &{&1, Application.get_env(:cinder, &1)})

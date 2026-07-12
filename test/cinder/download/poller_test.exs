@@ -813,6 +813,54 @@ defmodule Cinder.Download.PollerTest do
   end
 
   describe "upgrade advance" do
+    test "missing download roots hold a completed upgrade without consuming attempts or metadata" do
+      movie =
+        movie_fixture(%{
+          tmdb_id: 69,
+          status: :upgrading,
+          download_id: "dl-roots",
+          download_protocol: :torrent,
+          release_title: "Better.1080p-GRP",
+          file_path: "/lib/M (2020)/M (2020).mkv"
+        })
+
+      assert {:ok, movie} =
+               Catalog.transition(movie, %{status: :upgrading, import_attempts: 4})
+
+      assert {:ok, _movie} =
+               Catalog.update_movie_download_metrics(movie, %{
+                 download_progress: 1.0,
+                 download_speed: 0,
+                 download_eta: 0
+               })
+
+      saved = Application.get_env(:cinder, :import_roots)
+      Application.put_env(:cinder, :import_roots, [])
+      on_exit(fn -> Application.put_env(:cinder, :import_roots, saved) end)
+      start_supervised!({Poller, interval: 60_000})
+
+      stub(Cinder.Download.ClientMock, :status, fn "dl-roots" ->
+        {:ok, %{state: :completed, content_path: "/downloads/Better.1080p.mkv"}}
+      end)
+
+      log = capture_log(fn -> Enum.each(1..12, fn _ -> Poller.poll() end) end)
+
+      assert %Movie{
+               status: :upgrading,
+               import_attempts: 4,
+               download_id: "dl-roots",
+               download_protocol: :torrent,
+               release_title: "Better.1080p-GRP",
+               file_path: "/lib/M (2020)/M (2020).mkv",
+               download_progress: 1.0,
+               download_speed: 0,
+               download_eta: 0
+             } = Repo.get!(Movie, movie.id)
+
+      assert log =~ "download import roots not configured"
+      refute log =~ "/downloads/Better.1080p.mkv"
+    end
+
     test "a completed upgrade imports via forced replace and ends :available with new quality" do
       movie =
         movie_fixture(%{
