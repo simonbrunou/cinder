@@ -209,6 +209,70 @@ defmodule Cinder.Download.IntentTest do
     refute capped.last_error =~ "secret"
   end
 
+  test "a committed movie retry generation is charged once across crash replay" do
+    movie = movie_fixture(%{status: :searching})
+    {:ok, movie} = Catalog.transition(movie, %{status: :searching, search_attempts: 3})
+    {:ok, intent} = reserve_movie_intent(movie.id)
+
+    expect(Cinder.Download.ClientMock, :find_by_operation_key, fn _ -> {:error, :timeout} end)
+
+    # A caller may die as soon as reconcile_intent/1 returns. The intent generation and
+    # movie budget therefore have to be committed before control returns to that caller.
+    assert {:error, :timeout} = Download.reconcile_intent(intent)
+    assert Repo.get!(Intent, intent.id).attempt_count == 1
+    assert Repo.get!(Cinder.Catalog.Movie, movie.id).search_attempts == 4
+
+    # Replaying recovery while that persisted generation is in backoff cannot charge it again.
+    assert :ok = Download.reconcile_pending_intents([:movie])
+    assert Repo.get!(Intent, intent.id).attempt_count == 1
+    assert Repo.get!(Cinder.Catalog.Movie, movie.id).search_attempts == 4
+  end
+
+  test "concurrent reconciliation charges one movie attempt for one intent generation" do
+    movie = movie_fixture(%{status: :searching})
+    {:ok, movie} = Catalog.transition(movie, %{status: :searching, search_attempts: 3})
+    {:ok, intent} = reserve_movie_intent(movie.id)
+    {:ok, calls} = Agent.start_link(fn -> 0 end)
+
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _ ->
+      Agent.update(calls, &(&1 + 1))
+      {:error, :timeout}
+    end)
+
+    assert [first, second] = concurrently(fn -> Download.reconcile_intent(intent) end)
+
+    assert Enum.sort([first, second]) ==
+             Enum.sort([{:error, :timeout}, {:error, :intent_backoff}])
+
+    assert Agent.get(calls, & &1) == 1
+    assert Repo.get!(Intent, intent.id).attempt_count == 1
+    assert Repo.get!(Cinder.Catalog.Movie, movie.id).search_attempts == 4
+  end
+
+  test "the exhausting movie retry generation atomically becomes its cleanup carrier" do
+    Cinder.TestNotifier.subscribe()
+    Catalog.subscribe()
+
+    movie = movie_fixture(%{status: :searching})
+    {:ok, movie} = Catalog.transition(movie, %{status: :searching, search_attempts: 9})
+    {:ok, intent} = reserve_movie_intent(movie.id)
+
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _ -> {:error, :timeout} end)
+
+    assert {:error, :timeout} = Download.reconcile_intent(intent)
+
+    assert %{status: :search_failed, search_attempts: 9} =
+             Repo.get!(Cinder.Catalog.Movie, movie.id)
+
+    cleanup = Repo.get!(Intent, intent.id)
+    assert cleanup.status == :cleanup_pending
+    assert cleanup.operation_key == intent.operation_key
+
+    assert_receive {:movie_updated, %{id: movie_id, status: :search_failed}}
+    assert_receive {:notify, {:movie_failed, %{id: ^movie_id, status: :search_failed}, :timeout}}
+    assert movie_id == movie.id
+  end
+
   test "cleanup lookup failure retains the only operation key" do
     movie = movie_fixture(%{status: :searching})
     {:ok, intent} = reserve_movie_intent(movie.id)

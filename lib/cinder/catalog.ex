@@ -12,6 +12,7 @@ defmodule Cinder.Catalog do
   alias Cinder.Audit
   alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Movie, Season, Series}
   alias Cinder.Download
+  alias Cinder.Download.Intent
   alias Cinder.Library
   alias Cinder.Library.ImportStage
   alias Cinder.Notifier
@@ -19,6 +20,7 @@ defmodule Cinder.Catalog do
 
   @topic "movies"
   @download_metric_fields [:download_progress, :download_speed, :download_eta]
+  @max_search_attempts 10
 
   @doc """
   Searches TMDB for `query`. A blank/whitespace query short-circuits to `{:ok, []}`
@@ -262,34 +264,103 @@ defmodule Cinder.Catalog do
   end
 
   @doc false
-  def fail_movie_search(%Movie{} = movie) do
-    changeset = Movie.transition_changeset(movie, %{status: :search_failed})
-
+  def account_movie_intent_retry(
+        %Intent{kind: :movie, status: :reserved} = intent,
+        retry_attrs,
+        reason
+      )
+      when is_map(retry_attrs) do
     result =
       Repo.transaction(fn ->
-        with %{valid?: true, changes: changes} <- changeset,
-             {1, [updated]} <-
-               Repo.update_all(
-                 from(m in Movie,
-                   where: m.id == ^movie.id and m.status == ^movie.status,
-                   select: m
-                 ),
-                 set: Map.to_list(changes) ++ [updated_at: now()]
-               ) do
-          intent_ids = Download.fence_movie_cleanup(updated, include_remote: false)
-          {updated, intent_ids}
-        else
-          {0, _} -> Repo.rollback(:stale_status)
-          %Ecto.Changeset{} = invalid -> Repo.rollback(invalid)
+        case claim_intent_retry_generation(intent, retry_attrs) do
+          {:ok, claimed} -> account_claimed_movie_retry(claimed)
+          :stale_generation -> :stale_generation
         end
       end)
 
-    with {:ok, {updated, intent_ids}} <- result do
-      Download.cleanup_intents(intent_ids)
-      broadcast({:movie_updated, updated})
-      {:ok, updated}
+    publish_movie_intent_retry(result, reason)
+  end
+
+  defp claim_intent_retry_generation(intent, retry_attrs) do
+    observed_attempt = intent.attempt_count || 0
+
+    case Repo.update_all(
+           from(i in Intent,
+             where:
+               i.id == ^intent.id and i.status == :reserved and
+                 i.attempt_count == ^observed_attempt,
+             select: i
+           ),
+           set: Map.to_list(retry_attrs) ++ [updated_at: now()]
+         ) do
+      {1, [claimed]} -> {:ok, claimed}
+      {0, _} -> :stale_generation
     end
   end
+
+  defp account_claimed_movie_retry(%Intent{target_id: movie_id}) do
+    case Repo.get(Movie, movie_id) do
+      %Movie{status: status} = movie when status in [:requested, :searching] ->
+        account_active_movie_retry(movie)
+
+      _other ->
+        {:retry, nil}
+    end
+  end
+
+  defp account_active_movie_retry(movie) do
+    attempts = (movie.search_attempts || 0) + 1
+
+    if attempts >= @max_search_attempts do
+      case guarded_movie_update(movie, %{status: :search_failed}) do
+        {:ok, parked} ->
+          intent_ids = Download.fence_movie_cleanup(parked, include_remote: false)
+          {:parked, parked, intent_ids}
+
+        {:error, reason} ->
+          Repo.rollback(reason)
+      end
+    else
+      case guarded_movie_update(movie, %{status: movie.status, search_attempts: attempts}) do
+        {:ok, updated} -> {:retry, updated}
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end
+  end
+
+  defp guarded_movie_update(movie, attrs) do
+    with %{valid?: true, changes: changes} <- Movie.transition_changeset(movie, attrs),
+         {1, [updated]} <-
+           Repo.update_all(
+             from(m in Movie,
+               where: m.id == ^movie.id and m.status == ^movie.status,
+               select: m
+             ),
+             set: Map.to_list(changes) ++ [updated_at: now()]
+           ) do
+      {:ok, updated}
+    else
+      {0, _} -> {:error, :stale_status}
+      %Ecto.Changeset{} = invalid -> {:error, invalid}
+    end
+  end
+
+  defp publish_movie_intent_retry({:ok, {:retry, nil}}, _reason), do: :ok
+  defp publish_movie_intent_retry({:ok, :stale_generation}, _reason), do: :ok
+
+  defp publish_movie_intent_retry({:ok, {:retry, updated}}, _reason) do
+    broadcast({:movie_updated, updated})
+    :ok
+  end
+
+  defp publish_movie_intent_retry({:ok, {:parked, parked, intent_ids}}, reason) do
+    Download.cleanup_intents(intent_ids)
+    broadcast({:movie_updated, parked})
+    Notifier.notify({:movie_failed, parked, reason})
+    :ok
+  end
+
+  defp publish_movie_intent_retry({:error, reason}, _submission_reason), do: {:error, reason}
 
   defp guarded_transition_with_stages(movie, attrs, expected, stage_ids) do
     case Movie.transition_changeset(movie, attrs) do
@@ -1631,8 +1702,6 @@ defmodule Cinder.Catalog do
   # The TV sweep's per-episode search-attempt cap. Lives here (not in the poller) because the
   # UI derives :search_parked from it — the sweep's skip bound and the badge must agree.
   # (Defined before its first use below; read via max_search_attempts/0 further down.)
-  @max_search_attempts 10
-
   def increment_search_attempts([]), do: :ok
 
   def increment_search_attempts(episode_ids) when is_list(episode_ids) do

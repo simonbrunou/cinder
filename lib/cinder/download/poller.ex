@@ -22,7 +22,6 @@ defmodule Cinder.Download.Poller do
   alias Cinder.Catalog
   alias Cinder.Catalog.Movie
   alias Cinder.Download
-  alias Cinder.Download.Intent
   alias Cinder.Library
   alias Cinder.Notifier
 
@@ -33,33 +32,11 @@ defmodule Cinder.Download.Poller do
 
   defp do_poll(state) do
     Library.reconcile_stages()
-
-    Download.reconcile_pending_intents([:movie], fn intent, reason ->
-      isolate("movie #{intent.target_id} intent retry", fn ->
-        account_movie_intent_retry(intent, reason)
-      end)
-    end)
-
+    Download.reconcile_pending_intents([:movie])
     advance_downloading()
     import_downloaded()
     search_requested(state.search_retry_after)
     :ok
-  end
-
-  defp account_movie_intent_retry(%Intent{target_id: movie_id}, reason) do
-    case Catalog.get_movie_by_id(movie_id) do
-      %Movie{status: status} = movie when status in [:requested, :searching] ->
-        retry_or_fail(
-          movie,
-          reason,
-          :search_attempts,
-          :search_failed,
-          &park_after_intent_exhaustion/3
-        )
-
-      _other ->
-        :ok
-    end
   end
 
   defp advance_downloading do
@@ -110,7 +87,9 @@ defmodule Cinder.Download.Poller do
         write_back_search(movie, &park(&1, :search_failed, reason))
 
       {:error, reason} ->
-        write_back_search(movie, &retry_or_fail(&1, reason, :search_attempts, :search_failed))
+        unless Download.movie_retry_accounted?(movie.id) do
+          write_back_search(movie, &retry_or_fail(&1, reason, :search_attempts, :search_failed))
+        end
     end
   end
 
@@ -269,10 +248,7 @@ defmodule Cinder.Download.Poller do
   # Bounded retry: keep the movie where it is and try again next tick, but after
   # @max_attempts park it at `terminal_status` so a persistent failure surfaces a
   # terminal state instead of looping (and re-logging) forever.
-  defp retry_or_fail(movie, reason, attempts_field, terminal_status),
-    do: retry_or_fail(movie, reason, attempts_field, terminal_status, &park/3)
-
-  defp retry_or_fail(movie, reason, attempts_field, terminal_status, park_fun) do
+  defp retry_or_fail(movie, reason, attempts_field, terminal_status) do
     attempts = (Map.get(movie, attempts_field) || 0) + 1
 
     if attempts >= @max_attempts do
@@ -280,7 +256,7 @@ defmodule Cinder.Download.Poller do
         "movie #{movie.id} #{attempts_field} exhausted after #{attempts}: #{inspect(reason)}"
       )
 
-      park_fun.(movie, terminal_status, reason)
+      park(movie, terminal_status, reason)
     else
       Logger.info(
         "movie #{movie.id} #{attempts_field} #{attempts}/#{@max_attempts} failed (#{inspect(reason)}); will retry"
@@ -298,12 +274,6 @@ defmodule Cinder.Download.Poller do
         },
         expect: movie.status
       )
-    end
-  end
-
-  defp park_after_intent_exhaustion(movie, :search_failed, reason) do
-    with {:ok, parked} <- Catalog.fail_movie_search(movie) do
-      Notifier.notify({:movie_failed, parked, reason})
     end
   end
 

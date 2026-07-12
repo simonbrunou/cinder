@@ -209,33 +209,21 @@ defmodule Cinder.Download do
   end
 
   @doc false
-  def reconcile_pending_intents(kinds, on_submission_retry \\ fn _intent, _reason -> :ok end)
-      when is_list(kinds) and is_function(on_submission_retry, 2) do
+  def reconcile_pending_intents(kinds) when is_list(kinds) do
     intents = Repo.all(from i in Intent, where: i.kind in ^kinds, order_by: [asc: i.id])
-
-    Enum.each(intents, fn intent ->
-      result = reconcile_intent(intent)
-      maybe_report_submission_retry(intent, result, on_submission_retry)
-    end)
-
+    Enum.each(intents, &reconcile_intent/1)
     :ok
   end
 
-  defp maybe_report_submission_retry(
-         %Intent{status: :reserved, attempt_count: before} = intent,
-         {:error, reason},
-         on_submission_retry
-       ) do
-    case Repo.get(Intent, intent.id) do
-      %Intent{status: :reserved, attempt_count: after_count} when after_count > before ->
-        on_submission_retry.(intent, reason)
-
-      _other ->
-        :ok
-    end
+  @doc false
+  def movie_retry_accounted?(movie_id) do
+    Repo.exists?(
+      from i in Intent,
+        where:
+          i.kind == :movie and i.target_id == ^movie_id and i.status == :reserved and
+            i.attempt_count > 0
+    )
   end
-
-  defp maybe_report_submission_retry(_intent, _result, _on_submission_retry), do: :ok
 
   @doc false
   def pending_episode_ids do
@@ -457,13 +445,19 @@ defmodule Cinder.Download do
     attempt = (intent.attempt_count || 0) + 1
     delay = min(@retry_base_seconds * Integer.pow(2, min(attempt - 1, 6)), @retry_max_seconds)
 
-    intent
-    |> Intent.changeset(%{
+    retry_attrs = %{
       attempt_count: attempt,
       next_attempt_at: DateTime.utc_now(:second) |> DateTime.add(delay, :second),
       last_error: retry_error(reason)
-    })
-    |> Repo.update()
+    }
+
+    case intent do
+      %Intent{kind: :movie, status: :reserved} ->
+        Catalog.account_movie_intent_retry(intent, retry_attrs, reason)
+
+      %Intent{} ->
+        intent |> Intent.changeset(retry_attrs) |> Repo.update()
+    end
 
     {:error, reason}
   end
