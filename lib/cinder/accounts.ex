@@ -351,16 +351,19 @@ defmodule Cinder.Accounts do
     {new_token, user_token} = UserToken.build_session_token(user)
 
     Repo.transaction(fn ->
-      Repo.insert!(user_token)
+      query =
+        from t in UserToken,
+          where: t.user_id == ^user.id and t.token == ^old_token and t.context == "session"
 
-      old_tokens =
-        Repo.all(
-          from t in UserToken,
-            where: t.user_id == ^user.id and t.token == ^old_token and t.context == "session"
-        )
+      case Repo.one(query) do
+        %UserToken{} = old_user_token ->
+          {:ok, _} = Repo.delete(old_user_token)
+          Repo.insert!(user_token)
+          {new_token, [old_user_token]}
 
-      delete_tokens(old_tokens)
-      {new_token, old_tokens}
+        nil ->
+          Repo.rollback(:session_revoked)
+      end
     end)
     |> flatten_revocation_result()
   end

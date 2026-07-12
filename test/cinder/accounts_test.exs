@@ -279,6 +279,19 @@ defmodule Cinder.AccountsTest do
     end
   end
 
+  describe "replace_user_session_token/2" do
+    test "does not mint a replacement after the old session was revoked" do
+      user = user_fixture()
+      old_token = Accounts.generate_user_session_token(user)
+      assert :ok = Accounts.delete_user_session_token(old_token)
+
+      assert {:error, :session_revoked} =
+               Accounts.replace_user_session_token(user, old_token)
+
+      refute Repo.get_by(UserToken, user_id: user.id, context: "session")
+    end
+  end
+
   describe "get_user_by_session_token/1" do
     setup do
       user = user_fixture()

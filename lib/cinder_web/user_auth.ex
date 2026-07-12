@@ -93,17 +93,26 @@ defmodule CinderWeb.UserAuth do
 
     if token_age >= @session_reissue_age_in_days do
       old_token = get_session(conn, :user_token)
-      {:ok, new_token, old_tokens} = Accounts.replace_user_session_token(user, old_token)
-      remember_me = get_session(conn, :user_remember_me)
 
-      conn =
-        conn
-        |> renew_session(user)
-        |> put_token_in_session(new_token)
-        |> maybe_write_remember_me_cookie(new_token, %{}, remember_me)
+      case Accounts.replace_user_session_token(user, old_token) do
+        {:ok, new_token, old_tokens} ->
+          remember_me = get_session(conn, :user_remember_me)
 
-      disconnect_sessions(old_tokens)
-      conn
+          conn =
+            conn
+            |> renew_session(user)
+            |> put_token_in_session(new_token)
+            |> maybe_write_remember_me_cookie(new_token, %{}, remember_me)
+
+          disconnect_sessions(old_tokens)
+          conn
+
+        {:error, :session_revoked} ->
+          conn
+          |> assign(:current_scope, Scope.for_user(nil))
+          |> renew_session(nil)
+          |> delete_resp_cookie(@remember_me_cookie, remember_me_options())
+      end
     else
       conn
     end
