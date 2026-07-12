@@ -21,6 +21,7 @@ git clone https://github.com/simonbrunou/cinder.git
 cd cinder
 cp .env.example .env
 echo "SECRET_KEY_BASE=$(openssl rand -base64 48)" >> .env   # or edit .env by hand
+echo "CINDER_BOOTSTRAP_TOKEN=$(openssl rand -hex 32)" >> .env
 mkdir -p media/{movies,tv,downloads} && sudo chown -R 65534:65534 media
 docker compose up --build      # builds the image locally on first run
 ```
@@ -29,14 +30,16 @@ Cinder runs as `nobody` (uid 65534), so the bind-mounted `media/` directory must
 otherwise the first-run wizard can't create the library roots and won't let you finish. (The
 database volume is set up by the image itself.)
 
-Open <http://localhost:4000>. The **first-run wizard** creates your admin account and collects
-your TMDB / indexer / download-client / media-server details, validating each before it lets you
-finish. The first account you create is the admin.
+Open <http://localhost:4000>. Paste the `CINDER_BOOTSTRAP_TOKEN` from `.env` into the registration
+form to claim the first admin, then remove both that `.env` value and its environment entry from
+`docker-compose.yml`. The **first-run wizard** then collects your TMDB / indexer / download-client /
+media-server details, validating each before it lets you finish. Later household self-registration
+stays open and always creates a normal user. A fresh instance without a bootstrap token fails
+closed: it cannot create the first account.
 
-> ⚠️ **Secure it before exposing it.** The first registered user becomes the admin, and
-> registration stays open afterward (that's how household members sign up to request). Create your
-> admin **immediately**, and don't expose port 4000 to an untrusted network — run Cinder behind a
-> reverse proxy (with TLS) or a VPN. See [`docs/operating.md`](docs/operating.md).
+> ⚠️ **Secure it before exposing it.** Keep the one-time bootstrap token private, and don't expose
+> port 4000 to an untrusted network — run Cinder behind a reverse proxy (with TLS) or a VPN. See
+> [`docs/operating.md`](docs/operating.md).
 
 > 🔗 **Hardlinks.** Cinder hardlinks finished downloads into your library, so the library and your
 > download client's completed-downloads directory must be on the **same filesystem**. The compose
@@ -54,6 +57,7 @@ rest with a key derived from `SECRET_KEY_BASE`.
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `SECRET_KEY_BASE` | **yes** | — | Signs sessions/cookies; also derives the at-rest encryption key and signing salts. Generate with `openssl rand -base64 48`. |
+| `CINDER_BOOTSTRAP_TOKEN` | **first claim only** | — | One-time credential required while no account exists. Generate with `openssl rand -hex 32`, use it to create the first admin, then remove it from the deployment. |
 | `DATABASE_PATH` | **yes** | — | Path to the SQLite database file (compose: `/data/cinder.db`). |
 | `PHX_SERVER` | set `true` | — | Start the web server in the release. |
 | `PHX_HOST` | no | `localhost` | Public hostname; used in generated URLs + HSTS. |

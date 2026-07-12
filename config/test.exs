@@ -66,7 +66,9 @@ config :cinder,
   media_info: nil,
   notifier: Cinder.TestNotifier,
   subtitles_provider: Cinder.Subtitles.ProviderMock,
-  subtitles_translator: Cinder.Subtitles.TranslatorMock
+  subtitles_translator: Cinder.Subtitles.TranslatorMock,
+  bootstrap_token: "test-bootstrap-token",
+  secure_cookies: false
 
 # Two client mocks so routing is testable by protocol: a torrent release must
 # reach ClientMock and a usenet release must reach SabnzbdClientMock.

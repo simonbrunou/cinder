@@ -3,9 +3,10 @@
 # Quickstart:
 #   cp .env.example .env
 #   echo "SECRET_KEY_BASE=$(openssl rand -base64 48)" >> .env
+#   echo "CINDER_BOOTSTRAP_TOKEN=$(openssl rand -hex 32)" >> .env
 #   mkdir -p media/{movies,tv,downloads} && sudo chown -R 65534:65534 media
 #   docker compose up --build      # builds the image locally on first run
-# Then open http://localhost:4000 and create your admin in the first-run wizard.
+# Then open http://localhost:4000 and use the bootstrap token to create your admin.
 #
 # The chown step matters: Cinder runs as `nobody` (uid 65534) and the ./media bind mount keeps host
 # ownership, so without it the onboarding wizard can't create/write the library roots and won't
@@ -28,6 +29,8 @@ services:
     environment:
       # Boot-only config — stays in env (needed before the in-app settings store is up).
       SECRET_KEY_BASE: ${SECRET_KEY_BASE:?set SECRET_KEY_BASE in .env (openssl rand -base64 48)}
+      # One-time first-admin claim. After creating the admin, remove this line and its .env value.
+      CINDER_BOOTSTRAP_TOKEN: ${CINDER_BOOTSTRAP_TOKEN:?set CINDER_BOOTSTRAP_TOKEN in .env (openssl rand -hex 32)}
       DATABASE_PATH: /data/cinder.db
       PHX_SERVER: "true"
       PORT: "4000"

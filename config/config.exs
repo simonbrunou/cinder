@@ -22,7 +22,9 @@ config :cinder, :scopes,
 
 config :cinder,
   ecto_repos: [Cinder.Repo],
-  generators: [timestamp_type: :utc_datetime]
+  generators: [timestamp_type: :utc_datetime],
+  bootstrap_token: nil,
+  secure_cookies: false
 
 # SQLite correctness, pinned in ONE place so every environment gets it — including a non-prod
 # release that never reaches runtime.exs's prod-only branch. Env files add only `database`/

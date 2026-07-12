@@ -36,16 +36,22 @@ defmodule Cinder.Accounts do
 
   ## Examples
 
-      iex> register_user(%{field: value})
+      iex> register_user(%{field: value}, bootstrap_token)
       {:ok, %User{}}
 
-      iex> register_user(%{field: bad_value})
+      iex> register_user(%{field: bad_value}, bootstrap_token)
       {:error, %Ecto.Changeset{}}
 
   """
-  def register_user(attrs) do
+  def register_user(attrs, submitted_bootstrap_token \\ nil) do
     Repo.transaction(fn ->
-      role = if Repo.aggregate(User, :count) == 0, do: :admin, else: :user
+      first_user? = Repo.aggregate(User, :count) == 0
+
+      if first_user? and not valid_bootstrap_token?(submitted_bootstrap_token) do
+        Repo.rollback(:invalid_bootstrap_token)
+      end
+
+      role = if first_user?, do: :admin, else: :user
 
       %User{}
       |> User.registration_changeset(attrs)
@@ -59,6 +65,16 @@ defmodule Cinder.Accounts do
     end)
   end
 
+  @doc "Checks the one-time first-user bootstrap credential in constant time."
+  def valid_bootstrap_token?(submitted) when is_binary(submitted) do
+    expected = Application.get_env(:cinder, :bootstrap_token)
+
+    is_binary(expected) and byte_size(expected) == byte_size(submitted) and
+      Plug.Crypto.secure_compare(expected, submitted)
+  end
+
+  def valid_bootstrap_token?(_), do: false
+
   @doc "Counts users with the `:admin` role."
   def count_admins do
     Repo.aggregate(from(u in User, where: u.role == :admin), :count)
@@ -69,14 +85,28 @@ defmodule Cinder.Accounts do
   `:confirmed_at` are applied via `put_change` — never castable — while email and
   password are validated by `registration_changeset/2`.
   """
-  def create_user(attrs) do
-    role = Map.get(attrs, :role, :user)
+  def create_user(%User{} = actor, attrs) do
+    admin_transaction(actor, fn _actor ->
+      role = Map.get(attrs, :role, :user)
 
-    %User{}
-    |> User.registration_changeset(attrs)
-    |> Ecto.Changeset.put_change(:confirmed_at, DateTime.utc_now(:second))
-    |> Ecto.Changeset.put_change(:role, role)
-    |> Repo.insert()
+      %User{}
+      |> User.registration_changeset(attrs)
+      |> Ecto.Changeset.put_change(:confirmed_at, DateTime.utc_now(:second))
+      |> Ecto.Changeset.put_change(:role, role)
+      |> Repo.insert()
+      |> case do
+        {:ok, user} -> user
+        {:error, changeset} -> Repo.rollback(changeset)
+      end
+    end)
+  end
+
+  @doc "Reloads an actor and authorizes their current persisted admin role."
+  def fetch_current_admin(%User{id: id}) do
+    case Repo.get(User, id) do
+      %User{role: :admin} = actor -> {:ok, actor}
+      _ -> {:error, :unauthorized}
+    end
   end
 
   @doc """
@@ -86,7 +116,10 @@ defmodule Cinder.Accounts do
   the same transaction.
   """
   def update_user_role(%User{} = actor, %User{} = target, role) when role in [:admin, :user] do
-    Repo.transaction(fn ->
+    actor
+    |> admin_transaction(fn actor ->
+      revoked_tokens = user_session_tokens(target)
+
       {:ok, updated} =
         target |> Ecto.Changeset.change(role: role) |> Repo.update()
 
@@ -96,8 +129,10 @@ defmodule Cinder.Accounts do
 
       Audit.log_or_rollback(actor, "update_user_role", updated, %{role: to_string(role)})
 
-      updated
+      delete_tokens(revoked_tokens)
+      {updated, revoked_tokens}
     end)
+    |> flatten_revocation_result()
   end
 
   @doc """
@@ -111,14 +146,14 @@ defmodule Cinder.Accounts do
   and a real change still updates + audits in one transaction.
   """
   def admin_update_email(%User{} = actor, %User{} = target, attrs) do
-    changeset = User.email_changeset(target, attrs)
-    no_change? = Ecto.Changeset.get_change(changeset, :email) == nil
+    admin_transaction(actor, fn actor ->
+      changeset = User.email_changeset(target, attrs)
+      no_change? = Ecto.Changeset.get_change(changeset, :email) == nil
 
-    if no_change? and Ecto.Changeset.get_field(changeset, :email) != nil do
-      {:ok, target}
-    else
-      Repo.transaction(fn -> do_admin_update_email(actor, changeset) end)
-    end
+      if no_change? and Ecto.Changeset.get_field(changeset, :email) != nil,
+        do: target,
+        else: do_admin_update_email(actor, changeset)
+    end)
   end
 
   defp do_admin_update_email(%User{} = actor, changeset) do
@@ -139,18 +174,20 @@ defmodule Cinder.Accounts do
   same transaction.
   """
   def admin_reset_password(%User{} = actor, %User{} = target, attrs) do
-    changeset = User.password_changeset(target, attrs)
+    actor
+    |> admin_transaction(fn actor ->
+      changeset = User.password_changeset(target, attrs)
 
-    Repo.transaction(fn ->
       case update_user_and_delete_all_tokens(changeset) do
-        {:ok, {user, _expired}} ->
+        {:ok, {user, expired_tokens}} ->
           Audit.log_or_rollback(actor, "admin_reset_password", user, %{})
-          user
+          {user, expired_tokens}
 
         {:error, changeset} ->
           Repo.rollback(changeset)
       end
     end)
+    |> flatten_revocation_result()
   end
 
   @doc """
@@ -164,11 +201,14 @@ defmodule Cinder.Accounts do
   the audit `detail` can record it.
   """
   def delete_user(%User{} = actor, %User{} = target) do
-    Repo.transaction(fn -> do_delete_user(actor, target) end)
+    actor
+    |> admin_transaction(fn actor -> do_delete_user(actor, target) end)
+    |> flatten_revocation_result()
   end
 
   defp do_delete_user(%User{} = actor, %User{} = target) do
     email = target.email
+    revoked_tokens = user_session_tokens(target)
     {:ok, _} = Repo.delete(target)
 
     cond do
@@ -184,7 +224,7 @@ defmodule Cinder.Accounts do
           cascaded_requests: true
         })
 
-        target
+        {target, revoked_tokens}
     end
   end
 
@@ -196,7 +236,7 @@ defmodule Cinder.Accounts do
   the same transaction, like every other destructive admin action.
   """
   def update_user_quota(%User{} = actor, %User{} = target, quota) do
-    Repo.transaction(fn ->
+    admin_transaction(actor, fn actor ->
       case target |> User.quota_changeset(%{request_quota: quota}) |> Repo.update() do
         {:ok, updated} ->
           Audit.log_or_rollback(actor, "update_user_quota", updated, %{request_quota: quota})
@@ -306,6 +346,25 @@ defmodule Cinder.Accounts do
     token
   end
 
+  @doc "Atomically replaces one session token and returns its revoked token records."
+  def replace_user_session_token(user, old_token) when is_binary(old_token) do
+    {new_token, user_token} = UserToken.build_session_token(user)
+
+    Repo.transaction(fn ->
+      Repo.insert!(user_token)
+
+      old_tokens =
+        Repo.all(
+          from t in UserToken,
+            where: t.user_id == ^user.id and t.token == ^old_token and t.context == "session"
+        )
+
+      delete_tokens(old_tokens)
+      {new_token, old_tokens}
+    end)
+    |> flatten_revocation_result()
+  end
+
   @doc """
   Gets the user with the given signed token.
 
@@ -353,5 +412,30 @@ defmodule Cinder.Accounts do
         {:ok, {user, tokens_to_expire}}
       end
     end)
+  end
+
+  defp admin_transaction(actor, fun) do
+    Repo.transaction(fn ->
+      case fetch_current_admin(actor) do
+        {:ok, current_actor} -> fun.(current_actor)
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+  end
+
+  defp flatten_revocation_result({:ok, {value, revoked_tokens}}),
+    do: {:ok, value, revoked_tokens}
+
+  defp flatten_revocation_result(result), do: result
+
+  defp user_session_tokens(user) do
+    Repo.all(from t in UserToken, where: t.user_id == ^user.id and t.context == "session")
+  end
+
+  defp delete_tokens([]), do: :ok
+
+  defp delete_tokens(tokens) do
+    Repo.delete_all(from t in UserToken, where: t.id in ^Enum.map(tokens, & &1.id))
+    :ok
   end
 end

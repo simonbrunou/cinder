@@ -8,6 +8,37 @@ defmodule CinderWeb.UserSessionControllerTest do
   end
 
   describe "POST /users/log-in - email and password" do
+    test "records all concurrent failures atomically" do
+      limiter = Cinder.Accounts.LoginRateLimiter
+      ip = "203.0.113.9"
+      email = "RACE@example.com"
+      limiter.reset()
+      parent = self()
+
+      runner =
+        Task.async(fn ->
+          1..100
+          |> Task.async_stream(
+            fn _ ->
+              send(parent, {:ready, self()})
+              receive do: (:go -> limiter.register_failure(ip, email))
+            end,
+            max_concurrency: 100,
+            ordered: false
+          )
+          |> Stream.run()
+        end)
+
+      tasks = for _ <- 1..100, do: receive(do: ({:ready, pid} -> pid))
+      Enum.each(tasks, &send(&1, :go))
+      Task.await(runner)
+
+      assert [{{^ip, "race@example.com"}, 100, _started}] =
+               :ets.lookup(:cinder_login_attempts, {ip, "race@example.com"})
+
+      assert limiter.blocked?(ip, email)
+    end
+
     test "logs the user in", %{conn: conn, user: user} do
       user = set_password(user)
 
@@ -41,6 +72,35 @@ defmodule CinderWeb.UserSessionControllerTest do
 
       assert conn.resp_cookies["_cinder_web_user_remember_me"]
       assert redirected_to(conn) == ~p"/"
+    end
+
+    test "sets Secure on the production-configured remember-me cookie", %{
+      conn: conn,
+      user: user
+    } do
+      previous = Application.get_env(:cinder, :secure_cookies)
+      Application.put_env(:cinder, :secure_cookies, true)
+
+      on_exit(fn ->
+        if is_nil(previous),
+          do: Application.delete_env(:cinder, :secure_cookies),
+          else: Application.put_env(:cinder, :secure_cookies, previous)
+      end)
+
+      user = set_password(user)
+
+      conn =
+        post(conn, ~p"/users/log-in", %{
+          "user" => %{
+            "email" => user.email,
+            "password" => valid_user_password(),
+            "remember_me" => "true"
+          }
+        })
+
+      assert Enum.any?(get_resp_header(conn, "set-cookie"), fn header ->
+               header =~ "_cinder_web_user_remember_me=" and header =~ "; secure"
+             end)
     end
 
     test "logs the user in with return to", %{conn: conn, user: user} do

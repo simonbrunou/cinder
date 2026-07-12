@@ -116,12 +116,14 @@ defmodule CinderWeb.UsersLiveTest do
   test "admin toggles a user's role", %{conn: conn} do
     admin = Cinder.AccountsFixtures.admin_fixture()
     user = Cinder.AccountsFixtures.user_fixture()
+    topics = session_topics(user)
     conn = log_in_user(conn, admin)
 
     {:ok, lv, _html} = live(conn, ~p"/users")
     lv |> element("#role-btn-#{user.id}") |> render_click()
 
     assert Cinder.Repo.get!(Cinder.Accounts.User, user.id).role == :admin
+    assert_disconnects(topics)
   end
 
   test "demoting the last admin flashes an error and does not change the role", %{conn: conn} do
@@ -138,6 +140,7 @@ defmodule CinderWeb.UsersLiveTest do
   test "admin resets a user's password", %{conn: conn} do
     admin = Cinder.AccountsFixtures.admin_fixture()
     user = Cinder.AccountsFixtures.user_fixture()
+    topics = session_topics(user)
     conn = log_in_user(conn, admin)
 
     {:ok, lv, _html} = live(conn, ~p"/users")
@@ -153,11 +156,13 @@ defmodule CinderWeb.UsersLiveTest do
     |> render_submit()
 
     assert Cinder.Accounts.get_user_by_email_and_password(user.email, "a fresh password!")
+    assert_disconnects(topics)
   end
 
   test "admin deletes a user via the confirm panel", %{conn: conn} do
     admin = Cinder.AccountsFixtures.admin_fixture()
     user = Cinder.AccountsFixtures.user_fixture()
+    topics = session_topics(user)
     conn = log_in_user(conn, admin)
 
     {:ok, lv, _html} = live(conn, ~p"/users")
@@ -166,6 +171,53 @@ defmodule CinderWeb.UsersLiveTest do
 
     refute Cinder.Repo.get_by(Cinder.Accounts.User, email: user.email)
     refute render(lv) =~ user.email
+    assert_disconnects(topics)
+  end
+
+  test "a mounted admin loses every privileged writer after demotion", %{conn: conn} do
+    stale_admin = Cinder.AccountsFixtures.admin_fixture()
+    demoter = Cinder.AccountsFixtures.admin_fixture()
+    target = Cinder.AccountsFixtures.user_fixture() |> Cinder.AccountsFixtures.set_password()
+    created_email = Cinder.AccountsFixtures.unique_user_email()
+    changed_email = Cinder.AccountsFixtures.unique_user_email()
+    conn = log_in_user(conn, stale_admin)
+
+    {:ok, lv, _html} = live(conn, ~p"/users")
+    demote(demoter, stale_admin)
+
+    results = [
+      render_hook(lv, "create", %{
+        "user" => %{
+          "email" => created_email,
+          "password" => Cinder.AccountsFixtures.valid_user_password(),
+          "password_confirmation" => Cinder.AccountsFixtures.valid_user_password(),
+          "role" => "admin"
+        }
+      }),
+      render_hook(lv, "set_quota", %{"_id" => to_string(target.id), "quota" => "7"}),
+      render_hook(lv, "save_email", %{
+        "_id" => to_string(target.id),
+        "user" => %{"email" => changed_email}
+      }),
+      render_hook(lv, "toggle_role", %{"id" => to_string(target.id)}),
+      render_hook(lv, "reset_pw", %{
+        "_id" => to_string(target.id),
+        "user" => %{
+          "password" => "a stale reset password!",
+          "password_confirmation" => "a stale reset password!"
+        }
+      }),
+      render_hook(lv, "delete", %{"id" => to_string(target.id)})
+    ]
+
+    assert Enum.all?(results, &(&1 =~ "access to that page"))
+    refute Cinder.Repo.get_by(Cinder.Accounts.User, email: created_email)
+
+    reloaded = Cinder.Repo.get!(Cinder.Accounts.User, target.id)
+    assert reloaded.role == :user
+    assert reloaded.request_quota == nil
+    assert reloaded.email == target.email
+    assert Cinder.Accounts.get_user_by_email_and_password(target.email, valid_password())
   end
 
   test "deleting your own account flashes an error", %{conn: conn} do
@@ -186,7 +238,7 @@ defmodule CinderWeb.UsersLiveTest do
   test "deleting the last admin flashes an error", %{conn: conn} do
     admin = Cinder.AccountsFixtures.admin_fixture()
     other = Cinder.AccountsFixtures.admin_fixture()
-    {:ok, _} = Cinder.Accounts.update_user_role(admin, other, :user)
+    {:ok, _, _} = Cinder.Accounts.update_user_role(admin, other, :user)
     conn = log_in_user(conn, admin)
 
     {:ok, lv, _html} = live(conn, ~p"/users")
@@ -250,7 +302,7 @@ defmodule CinderWeb.UsersLiveTest do
 
     # The user is deleted out from under this LiveView (e.g. a stale second tab).
     stale_id = to_string(user.id)
-    {:ok, _} = Cinder.Accounts.delete_user(admin, user)
+    {:ok, _, _} = Cinder.Accounts.delete_user(admin, user)
     refute Cinder.Repo.get_by(Cinder.Accounts.User, email: user.email)
 
     render_hook(lv, "toggle_role", %{"id" => stale_id})
@@ -285,4 +337,28 @@ defmodule CinderWeb.UsersLiveTest do
   test "a logged-out visitor is redirected to log in", %{conn: conn} do
     assert {:error, {:redirect, %{to: "/users/log-in"}}} = live(conn, ~p"/users")
   end
+
+  defp demote(actor, target) do
+    case Cinder.Accounts.update_user_role(actor, target, :user) do
+      {:ok, user} -> user
+      {:ok, user, _tokens} -> user
+    end
+  end
+
+  defp session_topics(user) do
+    for _ <- 1..2 do
+      token = Cinder.Accounts.generate_user_session_token(user)
+      topic = "users_sessions:#{Base.url_encode64(token)}"
+      CinderWeb.Endpoint.subscribe(topic)
+      topic
+    end
+  end
+
+  defp assert_disconnects(topics) do
+    Enum.each(topics, fn topic ->
+      assert_receive %Phoenix.Socket.Broadcast{event: "disconnect", topic: ^topic}
+    end)
+  end
+
+  defp valid_password, do: Cinder.AccountsFixtures.valid_user_password()
 end

@@ -14,11 +14,6 @@ defmodule CinderWeb.UserAuth do
   # the session validity setting in UserToken.
   @max_cookie_age_in_days 14
   @remember_me_cookie "_cinder_web_user_remember_me"
-  @remember_me_options [
-    sign: true,
-    max_age: @max_cookie_age_in_days * 24 * 60 * 60,
-    same_site: "Lax"
-  ]
 
   # How old the session token should be before a new one is issued. When a request is made
   # with a session token older than this value, then a new session token will be created
@@ -58,7 +53,7 @@ defmodule CinderWeb.UserAuth do
 
     conn
     |> renew_session(nil)
-    |> delete_resp_cookie(@remember_me_cookie, @remember_me_options)
+    |> delete_resp_cookie(@remember_me_cookie, remember_me_options())
     |> redirect(to: ~p"/")
   end
 
@@ -97,7 +92,18 @@ defmodule CinderWeb.UserAuth do
     token_age = DateTime.diff(DateTime.utc_now(:second), token_inserted_at, :day)
 
     if token_age >= @session_reissue_age_in_days do
-      create_or_extend_session(conn, user, %{})
+      old_token = get_session(conn, :user_token)
+      {:ok, new_token, old_tokens} = Accounts.replace_user_session_token(user, old_token)
+      remember_me = get_session(conn, :user_remember_me)
+
+      conn =
+        conn
+        |> renew_session(user)
+        |> put_token_in_session(new_token)
+        |> maybe_write_remember_me_cookie(new_token, %{}, remember_me)
+
+      disconnect_sessions(old_tokens)
+      conn
     else
       conn
     end
@@ -147,7 +153,16 @@ defmodule CinderWeb.UserAuth do
   defp write_remember_me_cookie(conn, token) do
     conn
     |> put_session(:user_remember_me, true)
-    |> put_resp_cookie(@remember_me_cookie, token, @remember_me_options)
+    |> put_resp_cookie(@remember_me_cookie, token, remember_me_options())
+  end
+
+  defp remember_me_options do
+    [
+      sign: true,
+      max_age: @max_cookie_age_in_days * 24 * 60 * 60,
+      same_site: "Lax",
+      secure: Application.get_env(:cinder, :secure_cookies, false)
+    ]
   end
 
   defp put_token_in_session(conn, token) do

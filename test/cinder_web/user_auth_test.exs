@@ -192,6 +192,8 @@ defmodule CinderWeb.UserAuthTest do
 
       offset_user_token(token, -10, :day)
       {user, _} = Accounts.get_user_by_session_token(token)
+      old_topic = "users_sessions:#{Base.url_encode64(token)}"
+      CinderWeb.Endpoint.subscribe(old_topic)
 
       conn =
         conn
@@ -204,6 +206,10 @@ defmodule CinderWeb.UserAuthTest do
       assert conn.assigns.current_scope.user.authenticated_at == user.authenticated_at
       assert new_token = get_session(conn, :user_token)
       assert new_token != token
+      refute Accounts.get_user_by_session_token(token)
+      assert {new_user, _inserted_at} = Accounts.get_user_by_session_token(new_token)
+      assert new_user.id == user.id
+      assert_receive %Phoenix.Socket.Broadcast{event: "disconnect", topic: ^old_topic}
       assert %{value: new_signed_token, max_age: max_age} = conn.resp_cookies[@remember_me_cookie]
       assert new_signed_token != signed_token
       assert max_age == @remember_me_cookie_max_age
