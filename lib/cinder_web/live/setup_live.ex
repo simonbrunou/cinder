@@ -27,7 +27,13 @@ defmodule CinderWeb.SetupLive do
     if Settings.setup_complete?() do
       {:ok, push_navigate(socket, to: ~p"/")}
     else
-      {:ok, assign(socket, form: Settings.form_state(), health: %{}, can_finish: false)}
+      {:ok,
+       assign(socket,
+         form: Settings.form_state(),
+         health: %{},
+         open_groups: initial_open_groups(),
+         can_finish: false
+       )}
     end
   end
 
@@ -45,8 +51,19 @@ defmodule CinderWeb.SetupLive do
          )}
 
       {:error, invalid_keys} ->
-        {:noreply, put_flash(socket, :error, invalid_band_message(invalid_keys))}
+        {:noreply,
+         socket
+         |> assign(
+           form: Settings.form_state(params, invalid_keys),
+           open_groups: MapSet.union(socket.assigns.open_groups, invalid_groups(invalid_keys))
+         )
+         |> push_event("focus-invalid", %{id: List.first(invalid_keys)})
+         |> put_flash(:error, invalid_band_message(invalid_keys))}
     end
+  end
+
+  def handle_event("toggle_group", %{"group" => group}, socket) do
+    {:noreply, assign(socket, open_groups: toggle_open_group(socket.assigns.open_groups, group))}
   end
 
   def handle_event("finish", _params, socket) do
@@ -95,7 +112,12 @@ defmodule CinderWeb.SetupLive do
 
       <form id="setup-form" phx-submit="validate">
         <div class="space-y-8">
-          <.service_fields form={@form} health={@health} show_move_on_import={false} />
+          <.service_fields
+            form={@form}
+            health={@health}
+            open_groups={@open_groups}
+            show_move_on_import={false}
+          />
         </div>
         <.button
           type="submit"

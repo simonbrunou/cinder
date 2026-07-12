@@ -8,7 +8,7 @@ defmodule CinderWeb.SettingsComponents do
   use Phoenix.Component
   use Gettext, backend: CinderWeb.Gettext
 
-  import CinderWeb.CoreComponents, only: [status_badge: 1, button: 1]
+  import CinderWeb.CoreComponents, only: [status_badge: 1, button: 1, icon: 1]
 
   alias Cinder.Settings
   alias CinderWeb.SettingsLabels
@@ -18,14 +18,33 @@ defmodule CinderWeb.SettingsComponents do
   `{:error, invalid_keys}`) — shared by `/settings` and `/setup` so the copy can't drift.
   """
   def invalid_band_message(invalid_keys) do
-    if Settings.import_roots_key() in invalid_keys do
-      gettext("Not saved: Import roots cannot include the filesystem root (/).")
-    else
-      gettext(
-        "Not saved: invalid size for %{fields}: enter a positive number of GB, or leave blank for no limit.",
-        fields: Enum.join(invalid_keys, ", ")
-      )
+    gettext("Not saved. Check: %{fields}.",
+      fields: Enum.map_join(invalid_keys, ", ", &invalid_field_label/1)
+    )
+  end
+
+  def initial_open_groups do
+    Settings.groups() |> Enum.take(1) |> Enum.map(&elem(&1, 0)) |> MapSet.new()
+  end
+
+  def toggle_open_group(open_groups, group_name) do
+    case Enum.find(Settings.groups(), &(to_string(elem(&1, 0)) == group_name)) do
+      {group, _label} ->
+        if MapSet.member?(open_groups, group),
+          do: MapSet.delete(open_groups, group),
+          else: MapSet.put(open_groups, group)
+
+      nil ->
+        open_groups
     end
+  end
+
+  def invalid_groups(keys) do
+    keys
+    |> Enum.map(fn key ->
+      if key == Settings.import_roots_key(), do: :library, else: :releases
+    end)
+    |> MapSet.new()
   end
 
   attr :form, :map, required: true
@@ -37,8 +56,7 @@ defmodule CinderWeb.SettingsComponents do
 
   def service_fields(assigns) do
     open_groups =
-      assigns.open_groups ||
-        Settings.groups() |> Enum.take(1) |> Enum.map(&elem(&1, 0)) |> MapSet.new()
+      assigns.open_groups || initial_open_groups()
 
     assigns = assign(assigns, :open_groups, open_groups)
 
@@ -49,7 +67,11 @@ defmodule CinderWeb.SettingsComponents do
       open={MapSet.member?(@open_groups, group)}
       class="rounded-box bg-base-200"
     >
-      <summary class="min-h-11 cursor-pointer px-4 py-3 text-lg font-semibold focus-visible:outline-2 focus-visible:outline-primary">
+      <summary
+        class="min-h-11 cursor-pointer px-4 py-3 text-lg font-semibold focus-visible:outline-2 focus-visible:outline-primary"
+        phx-click="toggle_group"
+        phx-value-group={group}
+      >
         {SettingsLabels.t(label)}
       </summary>
 
@@ -93,8 +115,20 @@ defmodule CinderWeb.SettingsComponents do
               name={Settings.import_roots_key()}
               placeholder={gettext("/media/downloads")}
               autocomplete="off"
-              class="textarea w-full"
+              class={[
+                "textarea w-full",
+                invalid?(@form, Settings.import_roots_key()) && "textarea-error"
+              ]}
+              aria-invalid={invalid?(@form, Settings.import_roots_key()) && "true"}
+              aria-describedby={
+                invalid?(@form, Settings.import_roots_key()) &&
+                  "#{Settings.import_roots_key()}-error"
+              }
             >{@form.values[Settings.import_roots_key()]}</textarea>
+            <.field_error
+              :if={invalid?(@form, Settings.import_roots_key())}
+              field={Settings.import_roots_key()}
+            />
             <p class="mt-1 text-xs opacity-70">
               {gettext(
                 "Allowed download folders, separated by commas or new lines. The filesystem root is not allowed."
@@ -161,7 +195,19 @@ defmodule CinderWeb.SettingsComponents do
                 value={@form.values[Settings.min_size_key(kind)]}
                 inputmode="decimal"
                 autocomplete="off"
-                class="input w-full"
+                class={[
+                  "input w-full",
+                  invalid?(@form, Settings.min_size_key(kind)) && "input-error"
+                ]}
+                aria-invalid={invalid?(@form, Settings.min_size_key(kind)) && "true"}
+                aria-describedby={
+                  invalid?(@form, Settings.min_size_key(kind)) &&
+                    "#{Settings.min_size_key(kind)}-error"
+                }
+              />
+              <.field_error
+                :if={invalid?(@form, Settings.min_size_key(kind))}
+                field={Settings.min_size_key(kind)}
               />
             </div>
             <div class="form-control">
@@ -175,7 +221,19 @@ defmodule CinderWeb.SettingsComponents do
                 value={@form.values[Settings.max_size_key(kind)]}
                 inputmode="decimal"
                 autocomplete="off"
-                class="input w-full"
+                class={[
+                  "input w-full",
+                  invalid?(@form, Settings.max_size_key(kind)) && "input-error"
+                ]}
+                aria-invalid={invalid?(@form, Settings.max_size_key(kind)) && "true"}
+                aria-describedby={
+                  invalid?(@form, Settings.max_size_key(kind)) &&
+                    "#{Settings.max_size_key(kind)}-error"
+                }
+              />
+              <.field_error
+                :if={invalid?(@form, Settings.max_size_key(kind))}
+                field={Settings.max_size_key(kind)}
               />
             </div>
             <div class="form-control">
@@ -304,7 +362,12 @@ defmodule CinderWeb.SettingsComponents do
           class="input w-full"
         />
         <label class="label mt-1 cursor-pointer justify-start gap-2">
-          <input type="checkbox" name={"clear_" <> @field.key} class="checkbox checkbox-sm" />
+          <input
+            type="checkbox"
+            name={"clear_" <> @field.key}
+            checked={MapSet.member?(@form.clear_secrets, @field.key)}
+            class="checkbox checkbox-sm"
+          />
           <span class="label-text">{gettext("Clear saved value")}</span>
         </label>
       </div>
@@ -318,6 +381,43 @@ defmodule CinderWeb.SettingsComponents do
     ~H"""
     <.status_badge kind={:health} status={@result} />
     """
+  end
+
+  attr :field, :string, required: true
+
+  defp field_error(assigns) do
+    ~H"""
+    <p id={"#{@field}-error"} class="mt-1 flex items-center gap-1 text-sm text-error">
+      <.icon name="hero-exclamation-circle" class="size-4 shrink-0" />
+      {invalid_field_message(@field)}
+    </p>
+    """
+  end
+
+  defp invalid?(form, key), do: MapSet.member?(form.invalid_keys, key)
+
+  defp invalid_field_message(key) when key == "import_roots",
+    do: gettext("The filesystem root (/) is not allowed.")
+
+  defp invalid_field_message(_key),
+    do: gettext("Enter a positive number of GB, or leave blank for no limit.")
+
+  defp invalid_field_label(key) when key == "import_roots",
+    do: gettext("Download import roots")
+
+  defp invalid_field_label(key) do
+    Enum.find_value(Settings.library_kinds(), key, fn %{kind: kind, label: label} ->
+      cond do
+        key == Settings.min_size_key(kind) ->
+          gettext("%{kind}: Min size (GB)", kind: SettingsLabels.t(label))
+
+        key == Settings.max_size_key(kind) ->
+          gettext("%{kind}: Max size (GB)", kind: SettingsLabels.t(label))
+
+        true ->
+          nil
+      end
+    end)
   end
 
   defp secret_placeholder(field, form) do

@@ -39,6 +39,30 @@ defmodule CinderWeb.SettingsLiveTest do
     assert has_element?(lv, "#settings-group-#{hd(groups)}[open]")
   end
 
+  test "server-owned disclosure state survives invalid form patches", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    lv |> element("#settings-group-tmdb > summary") |> render_click()
+    refute has_element?(lv, "#settings-group-tmdb[open]")
+
+    lv |> element("#settings-group-library > summary") |> render_click()
+    assert has_element?(lv, "#settings-group-library[open]")
+
+    lv
+    |> form("#settings-form", %{
+      "movies_min_size" => "invalid",
+      "media_server_type" => "jellyfin"
+    })
+    |> render_submit()
+
+    refute has_element?(lv, "#settings-group-tmdb[open]")
+    assert has_element?(lv, "#settings-group-library[open]")
+    assert has_element?(lv, "#settings-group-releases[open]")
+
+    lv |> element("#settings-group-tmdb > summary") |> render_click()
+    assert has_element?(lv, "#settings-group-tmdb[open]")
+  end
+
   test "opens the group containing invalid fields", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/settings")
 
@@ -50,6 +74,34 @@ defmodule CinderWeb.SettingsLiveTest do
     |> render_submit()
 
     assert has_element?(lv, "#settings-group-releases[open]")
+  end
+
+  test "invalid saves preserve safe values and expose the exact field error", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    html =
+      lv
+      |> form("#settings-form", %{
+        "prowlarr_url" => "http://typed:9696",
+        "movies_min_size" => "not-a-size",
+        "qbittorrent_enabled" => "true",
+        "clear_tmdb_token" => "on",
+        "tmdb_token" => "must-never-echo",
+        "media_server_type" => "jellyfin"
+      })
+      |> render_submit()
+
+    assert has_element?(lv, ~s|#prowlarr_url[value="http://typed:9696"]|)
+    assert has_element?(lv, ~s|#movies_min_size[value="not-a-size"][aria-invalid="true"]|)
+    assert has_element?(lv, "#movies_min_size[aria-describedby=movies_min_size-error]")
+    assert has_element?(lv, "#movies_min_size-error")
+    assert has_element?(lv, ~s(input[name="qbittorrent_enabled"][checked]))
+    assert has_element?(lv, ~s(input[name="clear_tmdb_token"][checked]))
+    refute html =~ "must-never-echo"
+    flash = lv |> element("#flash-error") |> render()
+    refute flash =~ "movies_min_size"
+    assert flash =~ "Movies: Min size (GB)"
+    assert_push_event(lv, "focus-invalid", %{id: "movies_min_size"})
   end
 
   test "mobile save and service test actions use full-size targets", %{conn: conn} do
@@ -84,7 +136,7 @@ defmodule CinderWeb.SettingsLiveTest do
       })
       |> render_submit()
 
-    assert html =~ "Import roots cannot include the filesystem root"
+    assert html =~ "The filesystem root (/) is not allowed."
     assert Settings.get("import_roots") == nil
   end
 

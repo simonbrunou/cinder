@@ -35,11 +35,13 @@ defmodule CinderWeb.AppShellTest do
     end
 
     test "renders a localized route title and one labelled primary navigation", %{conn: conn} do
-      {:ok, _lv, html} = live(conn, ~p"/calendar")
+      {:ok, lv, html} = live(conn, ~p"/calendar")
 
       assert html =~ ">Calendar · Cinder</title>"
       refute html =~ ">Cinder · Cinder</title>"
       assert length(Regex.scan(~r/<nav[^>]+aria-label="Primary"/, html)) == 1
+      assert has_element?(lv, ~s(nav[aria-label="Primary"] a[href="/users/settings"]), "Account")
+      assert has_element?(lv, ~s(nav[aria-label="Primary"] a[href="/users/log-out"]), "Log out")
     end
   end
 

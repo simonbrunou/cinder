@@ -5,6 +5,16 @@ defmodule CinderWeb.SharedComponentsTest do
   import Phoenix.Component
 
   alias CinderWeb.CoreComponents
+  alias CinderWeb.SettingsComponents
+
+  test "settings validation copy is translated without exposing internal keys" do
+    Gettext.put_locale(CinderWeb.Gettext, "fr")
+    on_exit(fn -> Gettext.put_locale(CinderWeb.Gettext, "en") end)
+
+    message = SettingsComponents.invalid_band_message(["movies_min_size"])
+    assert message =~ "Taille minimale (Go)"
+    refute message =~ "movies_min_size"
+  end
 
   describe "interactive target sizing" do
     test "compact buttons keep a 24px minimum target" do

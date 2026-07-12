@@ -234,6 +234,30 @@ defmodule Cinder.SettingsTest do
       refute Map.has_key?(form.placeholders, "tmdb_token")
       refute Map.has_key?(form.values, "tmdb_token")
     end
+
+    test "submitted state preserves only known safe values and secret clear intent" do
+      form =
+        Settings.form_state(
+          %{
+            "prowlarr_url" => "http://typed:9696",
+            "movies_min_size" => "wrong",
+            "qbittorrent_enabled" => "true",
+            "clear_tmdb_token" => "on",
+            "tmdb_token" => "never-echo",
+            "unknown" => "ignored"
+          },
+          ["movies_min_size"]
+        )
+
+      assert form.values["prowlarr_url"] == "http://typed:9696"
+      assert form.values["movies_min_size"] == "wrong"
+      assert form.values["qbittorrent_enabled"] == true
+      assert MapSet.member?(form.clear_secrets, "tmdb_token")
+      assert MapSet.member?(form.invalid_keys, "movies_min_size")
+      refute Map.has_key?(form.values, "tmdb_token")
+      refute Map.has_key?(form.values, "unknown")
+      refute inspect(form) =~ "never-echo"
+    end
   end
 
   describe "load_into_env/0 overlay" do

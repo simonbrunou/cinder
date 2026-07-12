@@ -76,6 +76,56 @@ defmodule CinderWeb.SetupLiveTest do
     assert html =~ "OK"
   end
 
+  test "disclosure state survives service tests and validation", %{conn: conn} do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    conn = log_in_user(conn, admin)
+    stub_all_services_ok()
+
+    {:ok, lv, _html} = live(conn, ~p"/setup")
+    lv |> element("#settings-group-tmdb > summary") |> render_click()
+    lv |> element("#settings-group-indexer > summary") |> render_click()
+
+    refute has_element?(lv, "#settings-group-tmdb[open]")
+    assert has_element?(lv, "#settings-group-indexer[open]")
+
+    lv |> element("button", "Test TMDB") |> render_click()
+    refute has_element?(lv, "#settings-group-tmdb[open]")
+    assert has_element?(lv, "#settings-group-indexer[open]")
+
+    lv |> form("#setup-form", @valid_params) |> render_submit()
+    refute has_element?(lv, "#settings-group-tmdb[open]")
+    assert has_element?(lv, "#settings-group-indexer[open]")
+  end
+
+  test "invalid setup preserves safe values and opens, describes, and focuses the field", %{
+    conn: conn
+  } do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    conn = log_in_user(conn, admin)
+
+    {:ok, lv, _html} = live(conn, ~p"/setup")
+
+    html =
+      lv
+      |> form("#setup-form", %{
+        "prowlarr_url" => "http://typed:9696",
+        "movies_min_size" => "wrong",
+        "tmdb_token" => "must-never-echo",
+        "media_server_type" => "jellyfin"
+      })
+      |> render_submit()
+
+    assert has_element?(lv, "#settings-group-releases[open]")
+    assert has_element?(lv, ~s|#prowlarr_url[value="http://typed:9696"]|)
+    assert has_element?(lv, ~s|#movies_min_size[value="wrong"][aria-invalid="true"]|)
+    assert has_element?(lv, "#movies_min_size-error")
+    refute html =~ "must-never-echo"
+    flash = lv |> element("#flash-error") |> render()
+    refute flash =~ "movies_min_size"
+    assert flash =~ "Movies: Min size (GB)"
+    assert_push_event(lv, "focus-invalid", %{id: "movies_min_size"})
+  end
+
   test "non-admins cannot reach /setup", %{conn: conn} do
     user = Cinder.AccountsFixtures.user_fixture()
     conn = log_in_user(conn, user)

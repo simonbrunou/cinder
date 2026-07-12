@@ -338,7 +338,8 @@ defmodule Cinder.Settings do
   end
 
   @doc """
-  Form state for the LiveView: `%{values:, secrets_set:, placeholders:, secrets_from_env:}`.
+  Form state for the LiveView. `form_state/2` safely overlays submitted, non-secret
+  values after validation errors so the operator can correct them without retyping.
 
   `values` drives the input `value=` and reflects the **DB layer only** (so a blank field
   still means "no override, inherit env"). `placeholders` carries the **effective env value**
@@ -383,9 +384,63 @@ defmodule Cinder.Settings do
       values: values,
       secrets_set: secrets_set,
       placeholders: placeholders(rows),
-      secrets_from_env: secrets_from_env(rows)
+      secrets_from_env: secrets_from_env(rows),
+      clear_secrets: MapSet.new(),
+      invalid_keys: MapSet.new()
     }
   end
+
+  def form_state(params, invalid_keys \\ []) when is_map(params) do
+    state = form_state()
+
+    text_keys =
+      for(f <- config_fields(), not f.secret, do: f.key) ++
+        flat_keys() ++ [@import_roots_key]
+
+    values =
+      text_keys
+      |> Enum.uniq()
+      |> Enum.reduce(state.values, fn key, values ->
+        case params[key] do
+          value when is_binary(value) -> Map.put(values, key, value)
+          _ -> values
+        end
+      end)
+      |> preserve_media_server(params)
+      |> preserve_booleans(params)
+
+    clear_secrets =
+      for field <- config_fields(),
+          field.secret,
+          truthy?(params["clear_" <> field.key]),
+          into: MapSet.new(),
+          do: field.key
+
+    %{
+      state
+      | values: values,
+        clear_secrets: clear_secrets,
+        invalid_keys: MapSet.new(invalid_keys)
+    }
+  end
+
+  defp preserve_media_server(values, %{@media_server_key => value})
+       when value in @media_server_options,
+       do: Map.put(values, @media_server_key, value)
+
+  defp preserve_media_server(values, _params), do: values
+
+  defp preserve_booleans(values, params) do
+    keys = Enum.map(@toggles, & &1.key) ++ ["move_on_import"]
+
+    Enum.reduce(keys, values, fn key, values ->
+      if Map.has_key?(params, key),
+        do: Map.put(values, key, truthy?(params[key])),
+        else: values
+    end)
+  end
+
+  defp truthy?(value), do: value in [true, "true", "1", "on"]
 
   # Effective env value to show as a placeholder for each non-secret field with no DB row
   # (config creds + the env-backed library_path roots; bands are DB-only, no env to show).

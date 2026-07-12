@@ -81,7 +81,7 @@ defmodule CinderWeb.Layouts do
             </span>
           </a>
 
-          <nav aria-label={gettext("Primary")}>
+          <nav aria-label={gettext("Primary")} class="flex min-h-0 flex-1 flex-col gap-2">
             <ul class="menu w-full gap-1 px-0">
               <li class="menu-title text-base-content/70">{gettext("Everyone")}</li>
               <.nav_item
@@ -144,32 +144,31 @@ defmodule CinderWeb.Layouts do
                 />
               <% end %>
             </ul>
+            <div class="mt-auto flex flex-col gap-3 border-t border-base-300/60 pt-3">
+              <div class="flex items-center justify-between gap-2">
+                <.theme_toggle />
+                <.locale_switcher />
+              </div>
+              <div class="px-2 text-xs text-base-content/70 truncate">
+                {@current_scope.user.email}
+              </div>
+              <ul class="menu w-full gap-1 px-0">
+                <.nav_item
+                  navigate={~p"/users/settings"}
+                  label={gettext("Account")}
+                  icon="hero-user-circle"
+                  current_path={@current_path}
+                />
+                <li>
+                  <.link href={~p"/users/log-out"} method="delete" class="flex items-center gap-3">
+                    <.icon name="hero-arrow-right-start-on-rectangle" class="size-5" /> {gettext(
+                      "Log out"
+                    )}
+                  </.link>
+                </li>
+              </ul>
+            </div>
           </nav>
-
-          <div class="mt-auto flex flex-col gap-3 border-t border-base-300/60 pt-3">
-            <div class="flex items-center justify-between gap-2">
-              <.theme_toggle />
-              <.locale_switcher />
-            </div>
-            <div class="px-2 text-xs text-base-content/70 truncate">
-              {@current_scope.user.email}
-            </div>
-            <ul class="menu w-full gap-1 px-0">
-              <.nav_item
-                navigate={~p"/users/settings"}
-                label={gettext("Account")}
-                icon="hero-user-circle"
-                current_path={@current_path}
-              />
-              <li>
-                <.link href={~p"/users/log-out"} method="delete" class="flex items-center gap-3">
-                  <.icon name="hero-arrow-right-start-on-rectangle" class="size-5" /> {gettext(
-                    "Log out"
-                  )}
-                </.link>
-              </li>
-            </ul>
-          </div>
         </aside>
       </div>
     </div>

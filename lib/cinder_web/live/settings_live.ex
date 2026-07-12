@@ -22,7 +22,7 @@ defmodule CinderWeb.SettingsLive do
      assign(socket,
        form: Settings.form_state(),
        health: %{},
-       open_groups: first_group(),
+       open_groups: initial_open_groups(),
        auto_approve_all: Settings.auto_approve_all?()
      )}
   end
@@ -40,10 +40,16 @@ defmodule CinderWeb.SettingsLive do
         {:noreply,
          socket
          |> assign(
+           form: Settings.form_state(params, invalid_keys),
            open_groups: MapSet.union(socket.assigns.open_groups, invalid_groups(invalid_keys))
          )
+         |> push_event("focus-invalid", %{id: List.first(invalid_keys)})
          |> put_flash(:error, invalid_band_message(invalid_keys))}
     end
+  end
+
+  def handle_event("toggle_group", %{"group" => group}, socket) do
+    {:noreply, assign(socket, open_groups: toggle_open_group(socket.assigns.open_groups, group))}
   end
 
   # Probes the saved config synchronously (each impl health/0 has a ~3s timeout).
@@ -115,17 +121,5 @@ defmodule CinderWeb.SettingsLive do
       </div>
     </Layouts.app>
     """
-  end
-
-  defp first_group do
-    Settings.groups() |> Enum.take(1) |> Enum.map(&elem(&1, 0)) |> MapSet.new()
-  end
-
-  defp invalid_groups(keys) do
-    keys
-    |> Enum.map(fn key ->
-      if key == Settings.import_roots_key(), do: :library, else: :releases
-    end)
-    |> MapSet.new()
   end
 end
