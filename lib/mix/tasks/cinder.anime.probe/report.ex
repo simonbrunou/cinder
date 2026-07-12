@@ -189,9 +189,10 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.Report do
 
   defp wrong_mapping_count(groups) do
     groups
-    |> Enum.uniq()
-    |> Enum.reduce(0, fn group, count ->
-      entries = Enum.uniq(group.entries)
+    |> Enum.group_by(& &1.id)
+    |> Map.values()
+    |> Enum.reduce(0, fn observations, count ->
+      entries = observations |> Enum.flat_map(& &1.entries) |> Enum.uniq()
       missing = Enum.count(entries, &(not is_integer(&1.episode_id)))
 
       conflicts =

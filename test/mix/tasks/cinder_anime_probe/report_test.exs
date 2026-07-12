@@ -95,6 +95,20 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.ReportTest do
     assert Report.markdown(report) == Report.markdown(reversed)
   end
 
+  test "detects coordinate conflicts split across observations of one episode group", context do
+    observations =
+      update_in(context.observations, [Access.at(0), :groups], fn [group] ->
+        conflicting_entry = %{hd(group.entries) | episode_id: 99_999}
+        [group, %{group | entries: [conflicting_entry]}]
+      end)
+
+    report = Report.build(context.corpus, observations)
+
+    assert report.summary.automatic_wrong_mappings == 1
+    assert report.decision == "tvdb_required"
+    assert report.a0_status == "blocked"
+  end
+
   test "generated artifacts contain no forbidden provider fields", context do
     observations =
       update_first_release(context.observations, fn release ->
