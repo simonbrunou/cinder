@@ -261,6 +261,36 @@ defmodule Cinder.Catalog do
     guarded_transition_with_stages(movie, attrs, expected, stage_ids)
   end
 
+  @doc false
+  def fail_movie_search(%Movie{} = movie) do
+    changeset = Movie.transition_changeset(movie, %{status: :search_failed})
+
+    result =
+      Repo.transaction(fn ->
+        with %{valid?: true, changes: changes} <- changeset,
+             {1, [updated]} <-
+               Repo.update_all(
+                 from(m in Movie,
+                   where: m.id == ^movie.id and m.status == ^movie.status,
+                   select: m
+                 ),
+                 set: Map.to_list(changes) ++ [updated_at: now()]
+               ) do
+          intent_ids = Download.fence_movie_cleanup(updated, include_remote: false)
+          {updated, intent_ids}
+        else
+          {0, _} -> Repo.rollback(:stale_status)
+          %Ecto.Changeset{} = invalid -> Repo.rollback(invalid)
+        end
+      end)
+
+    with {:ok, {updated, intent_ids}} <- result do
+      Download.cleanup_intents(intent_ids)
+      broadcast({:movie_updated, updated})
+      {:ok, updated}
+    end
+  end
+
   defp guarded_transition_with_stages(movie, attrs, expected, stage_ids) do
     case Movie.transition_changeset(movie, attrs) do
       %{valid?: true, changes: changes} ->

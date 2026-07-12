@@ -517,6 +517,60 @@ defmodule Cinder.Download.PollerTest do
     assert Repo.get!(Movie, movie.id).search_attempts == attempts_before
   end
 
+  test "persistent movie intent failures consume the search budget and park safely" do
+    Cinder.TestNotifier.subscribe()
+
+    {:ok, movie} =
+      Catalog.add_movie(%{tmdb_id: 402, title: "Intent Retry", imdb_id: "tt0000402"})
+
+    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt0000402" ->
+      {:ok,
+       [
+         %{
+           title: "Intent.Retry.1080p.WEB-GRP",
+           size: 2_000_000_000,
+           download_url: "magnet:?xt=urn:btih:retry",
+           seeders: 1
+         }
+       ]}
+    end)
+
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> {:error, :timeout} end)
+
+    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+
+    assert :ok = Poller.poll()
+    intent = Repo.get_by!(Intent, kind: :movie, target_id: movie.id)
+    operation_key = intent.operation_key
+    assert Repo.get!(Movie, movie.id).search_attempts == 1
+
+    Enum.each(2..9, fn expected_attempts ->
+      intent
+      |> Repo.reload!()
+      |> Intent.changeset(%{next_attempt_at: nil})
+      |> Repo.update!()
+
+      assert :ok = Poller.poll()
+      assert Repo.get!(Movie, movie.id).search_attempts == expected_attempts
+    end)
+
+    intent
+    |> Repo.reload!()
+    |> Intent.changeset(%{next_attempt_at: nil})
+    |> Repo.update!()
+
+    assert :ok = Poller.poll()
+    assert %Movie{status: :search_failed, search_attempts: 9} = Repo.get!(Movie, movie.id)
+
+    cleanup = Repo.get_by!(Intent, kind: :movie, target_id: movie.id)
+    assert cleanup.status == :cleanup_pending
+    assert cleanup.operation_key == operation_key
+
+    assert_receive {:notify, {:movie_failed, %Movie{id: id, status: :search_failed}, :timeout}}
+
+    assert id == movie.id
+  end
+
   defp downloaded_movie(tmdb_id, file_path) do
     movie_fixture(%{
       tmdb_id: tmdb_id,

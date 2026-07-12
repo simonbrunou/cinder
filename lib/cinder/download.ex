@@ -208,11 +208,33 @@ defmodule Cinder.Download do
   end
 
   @doc false
-  def reconcile_pending_intents(kinds) when is_list(kinds) do
+  def reconcile_pending_intents(kinds, on_submission_retry \\ fn _intent, _reason -> :ok end)
+      when is_list(kinds) and is_function(on_submission_retry, 2) do
     intents = Repo.all(from i in Intent, where: i.kind in ^kinds, order_by: [asc: i.id])
-    Enum.each(intents, &reconcile_intent/1)
+
+    Enum.each(intents, fn intent ->
+      result = reconcile_intent(intent)
+      maybe_report_submission_retry(intent, result, on_submission_retry)
+    end)
+
     :ok
   end
+
+  defp maybe_report_submission_retry(
+         %Intent{status: :reserved, attempt_count: before} = intent,
+         {:error, reason},
+         on_submission_retry
+       ) do
+    case Repo.get(Intent, intent.id) do
+      %Intent{status: :reserved, attempt_count: after_count} when after_count > before ->
+        on_submission_retry.(intent, reason)
+
+      _other ->
+        :ok
+    end
+  end
+
+  defp maybe_report_submission_retry(_intent, _result, _on_submission_retry), do: :ok
 
   @doc false
   def pending_episode_ids do
