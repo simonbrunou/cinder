@@ -37,6 +37,36 @@ defmodule Cinder.Download.TvPollerTest do
   # per-episode size so any size-band logic behaves as in production.
   defp stub_single_file_import, do: stub_import_ok(3_000_000_000)
 
+  defp use_real_tv_library(tmp) do
+    downloads = Path.join(tmp, "downloads")
+    tv = Path.join(tmp, "tv")
+    File.mkdir_p!(downloads)
+    File.mkdir_p!(tv)
+
+    saved =
+      Map.new([:filesystem, :path_policy, :import_roots, :tv_library_path], fn key ->
+        {key, Application.get_env(:cinder, key)}
+      end)
+
+    Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
+    Application.put_env(:cinder, :path_policy, Cinder.Library.PathPolicy)
+    Application.put_env(:cinder, :import_roots, [downloads])
+    Application.put_env(:cinder, :tv_library_path, tv)
+
+    on_exit(fn ->
+      Enum.each(saved, fn {key, value} -> Application.put_env(:cinder, key, value) end)
+      Application.delete_env(:cinder, :filesystem_barrier)
+    end)
+
+    %{downloads: downloads, tv: tv}
+  end
+
+  defp import_stat(path, size) do
+    if String.starts_with?(path, "/tmp/cinder-test-tv-library/"),
+      do: {:error, :enoent},
+      else: {:ok, %File.Stat{size: size, inode: 1}}
+  end
+
   defp stub_accept_then_crash(remote_id) do
     {:ok, accepted} = Agent.start_link(fn -> %{adds: 0, jobs: %{}} end)
 
@@ -184,12 +214,11 @@ defmodule Cinder.Download.TvPollerTest do
        ]}
     end)
 
-    stub(Cinder.Library.FilesystemMock, :lstat, fn _ ->
-      {:ok, %File.Stat{size: 3_000_000_000, inode: 1}}
-    end)
+    stub(Cinder.Library.FilesystemMock, :lstat, &import_stat(&1, 3_000_000_000))
 
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
     stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rename, fn _src, _dest -> :ok end)
     stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
     assert :ok = TvPoller.poll()
@@ -197,6 +226,64 @@ defmodule Cinder.Download.TvPollerTest do
     assert Repo.get(Grab, grab.id) == nil
     assert Repo.get!(Episode, e1.id).file_path =~ "S01E01"
     assert Repo.get!(Episode, e2.id).file_path =~ "S01E02"
+  end
+
+  @tag :tmp_dir
+  test "cancelling a grab after file staging rolls every destination back", %{tmp_dir: tmp} do
+    %{downloads: downloads} = use_real_tv_library(tmp)
+    {series, season} = series_tree()
+    episode = episode(season, 1)
+    source = Path.join(downloads, "Show.S01E01.1080p.mkv")
+    File.write!(source, "candidate")
+    {:ok, grab} = Catalog.create_grab("race-grab", :torrent, [episode.id])
+    {:ok, _} = Catalog.mark_grab_downloaded(grab, source)
+    start_supervised!({TvPoller, interval: 60_000})
+
+    stub(Cinder.Download.ClientMock, :remove, fn "race-grab", delete_files: true -> :ok end)
+
+    Application.put_env(:cinder, :filesystem_barrier, %{
+      owner: self(),
+      operation: :rename,
+      contains: "Show (2008) {tmdb-#{series.tmdb_id}} - S01E01.mkv"
+    })
+
+    poll = Task.async(fn -> TvPoller.poll() end)
+    assert_receive {:filesystem_barrier, pid, ref, operation, dest}, 1_000
+    assert operation == :rename
+    assert File.read!(dest) == "candidate"
+    assert {:ok, _} = Catalog.cancel_grab(Repo.get!(Grab, grab.id))
+    send(pid, {ref, :continue})
+
+    assert :ok = Task.await(poll)
+    refute File.exists?(dest)
+    assert Repo.get(Grab, grab.id) == nil
+    assert Repo.get!(Episode, episode.id).file_path == nil
+  end
+
+  test "finish_grab rejects an episode that lost monitoring after staging" do
+    {_series, season} = series_tree()
+    episode = episode(season, 1)
+    {:ok, grab} = Catalog.create_grab("stale-owner", :torrent, [episode.id])
+
+    Repo.update_all(from(e in Episode, where: e.id == ^episode.id), set: [monitored: false])
+
+    quality = %{
+      resolution: "1080p",
+      size: 3_000_000_000,
+      language: nil,
+      source: "web",
+      audio_languages: [],
+      embedded_subtitles: [],
+      sidecar_subtitles: []
+    }
+
+    assert {:error, :stale_grab} =
+             Catalog.finish_grab(grab, [{episode.id, "/library/Show.S01E01.mkv", quality}])
+
+    assert Repo.get(Grab, grab.id)
+    stale = Repo.get!(Episode, episode.id)
+    assert stale.file_path == nil
+    assert stale.grab_id == grab.id
   end
 
   test "parks a downloaded grab whose content matches no episode; its episode re-searches" do

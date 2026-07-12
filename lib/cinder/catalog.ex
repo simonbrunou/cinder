@@ -1350,6 +1350,10 @@ defmodule Cinder.Catalog do
   defp unmonitor_series_tree(series_id) do
     ts = now()
 
+    Repo.update_all(from(s in Series, where: s.id == ^series_id),
+      set: [monitored: false, monitor_strategy: :none, updated_at: ts]
+    )
+
     Repo.update_all(from(s in Season, where: s.series_id == ^series_id),
       set: [monitored: false, updated_at: ts]
     )
@@ -1388,20 +1392,7 @@ defmodule Cinder.Catalog do
         ts = now()
 
         for {episode_id, dest, q} <- imported do
-          Repo.update_all(from(e in Episode, where: e.id == ^episode_id),
-            set: [
-              file_path: dest,
-              grab_id: nil,
-              imported_resolution: q.resolution,
-              imported_size: q.size,
-              imported_language: q.language,
-              imported_source: q.source,
-              imported_audio_languages: q.audio_languages,
-              imported_embedded_subtitles: q.embedded_subtitles,
-              imported_sidecar_subtitles: q.sidecar_subtitles,
-              updated_at: ts
-            ]
-          )
+          update_imported_episode!(grab.id, episode_id, dest, q, ts)
         end
 
         # select: in the update_all (RETURNING) hands the bumped ids to the post-commit
@@ -1417,9 +1408,7 @@ defmodule Cinder.Catalog do
 
         completed_seasons = completed_seasons_for_imported_episodes(imported_ids)
 
-        # allow_stale: a user cancel_grab may delete the same row while this import
-        # finalizes; raising here would roll back the just-imported file_path writes.
-        Repo.delete!(grab, allow_stale: true)
+        Repo.delete!(grab)
         {bumped_ids, completed_seasons}
       end)
 
@@ -1428,6 +1417,32 @@ defmodule Cinder.Catalog do
       announce_search_exhausted(bumped_ids)
       Enum.each(completed_seasons, &Notifier.notify({:season_available, &1}))
       {:ok, grab}
+    end
+  rescue
+    Ecto.StaleEntryError -> {:error, :stale_grab}
+  end
+
+  defp update_imported_episode!(grab_id, episode_id, dest, quality, timestamp) do
+    query =
+      from e in Episode,
+        where: e.id == ^episode_id and e.grab_id == ^grab_id and e.monitored == true
+
+    updates = [
+      file_path: dest,
+      grab_id: nil,
+      imported_resolution: quality.resolution,
+      imported_size: quality.size,
+      imported_language: quality.language,
+      imported_source: quality.source,
+      imported_audio_languages: quality.audio_languages,
+      imported_embedded_subtitles: quality.embedded_subtitles,
+      imported_sidecar_subtitles: quality.sidecar_subtitles,
+      updated_at: timestamp
+    ]
+
+    case Repo.update_all(query, set: updates) do
+      {1, _} -> :ok
+      {0, _} -> Repo.rollback(:stale_grab)
     end
   end
 
@@ -1803,15 +1818,27 @@ defmodule Cinder.Catalog do
   def refresh_series(%Series{} = series) do
     with {:ok, info} <- tmdb().get_series(series.tmdb_id),
          {:ok, seasons} <- fetch_seasons(series.tmdb_id, info.seasons) do
-      {:ok, updated} =
-        Repo.transaction(fn ->
-          s = update_series_row(series, info)
-          reconcile_tree(s, seasons)
-          s
-        end)
+      Repo.transaction(fn -> refresh_current_series(series.id, info, seasons) end)
+      |> finish_series_refresh(series.id)
+    end
+  end
 
-      broadcast_series(series.id)
-      {:ok, updated}
+  defp finish_series_refresh({:ok, updated}, series_id) do
+    broadcast_series(series_id)
+    {:ok, updated}
+  end
+
+  defp finish_series_refresh({:error, reason}, _series_id), do: {:error, reason}
+
+  defp refresh_current_series(series_id, info, seasons) do
+    case Repo.get(Series, series_id) do
+      %Series{} = current ->
+        updated = update_series_row(current, info)
+        reconcile_tree(updated, seasons)
+        updated
+
+      nil ->
+        Repo.rollback(:stale_series)
     end
   end
 

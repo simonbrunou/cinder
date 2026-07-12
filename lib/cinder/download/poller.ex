@@ -181,8 +181,8 @@ defmodule Cinder.Download.Poller do
   @max_attempts 10
 
   defp import_one(movie) do
-    case Library.import_movie(movie) do
-      {:ok, dest, q} ->
+    case Library.stage_movie(movie) do
+      {:ok, %{dest: dest, quality: q} = stage} ->
         # On the (rare) transition error, leave the movie :downloaded for next-tick
         # retry rather than raising — matching the poller's ignore-and-retry convention.
         # file_path moves from the download source to the library destination (the imported
@@ -203,6 +203,7 @@ defmodule Cinder.Download.Poller do
                expect: movie.status
              ) do
           {:ok, available} ->
+            Library.commit_stage(stage)
             Notifier.notify({:movie_available, available})
             # After the DB commit (the file is recorded as imported): a best-effort, gated
             # remove of the source download. Failure is logged, never strands or re-imports.
@@ -212,12 +213,10 @@ defmodule Cinder.Download.Poller do
           # point at dest, so unlink it or the media server scans an orphaned file.
           {:error, :stale_status} ->
             Logger.info("movie #{movie.id} left the import pass mid-import; unlinking #{dest}")
-            Library.delete_file(dest)
+            Library.rollback_stage(stage)
 
-          # Rare transition error: leave the movie :downloaded — next tick re-imports
-          # (import_movie treats an existing identical hardlink as idempotent success).
           {:error, _} ->
-            :ok
+            Library.rollback_stage(stage)
         end
 
       {:error, :library_not_configured} ->
@@ -345,8 +344,8 @@ defmodule Cinder.Download.Poller do
   # if the new dest filename differs (a different container) the old file is removed best-effort so
   # the library never holds two files. Any failure reverts to :available, live file intact.
   defp finish_upgrade(movie, content_path) do
-    case Library.import_movie(%{movie | file_path: content_path}, replace: true) do
-      {:ok, dest, q} ->
+    case Library.stage_movie(%{movie | file_path: content_path}, replace: true) do
+      {:ok, %{dest: dest, quality: q} = stage} ->
         movie
         |> Catalog.transition(
           %{
@@ -363,9 +362,15 @@ defmodule Cinder.Download.Poller do
           expect: movie.status
         )
         |> case do
-          {:ok, available} -> finalize_upgrade(movie, available, dest)
-          {:error, :stale_status} -> compensate_aborted_upgrade(movie, dest)
-          {:error, _} -> :ok
+          {:ok, available} ->
+            Library.commit_stage(stage)
+            finalize_upgrade(movie, available, dest)
+
+          {:error, :stale_status} ->
+            compensate_aborted_upgrade(movie, stage)
+
+          {:error, _} ->
+            Library.rollback_stage(stage)
         end
 
       {:error, :library_not_configured} ->
@@ -388,20 +393,9 @@ defmodule Cinder.Download.Poller do
     end
   end
 
-  # Aborted while the forced replace was landing (the guarded transition missed). The
-  # swap already happened on disk: a different-extension dest is an orphan no row
-  # references — unlink it; a same-path replace can't be undone (the old bytes are
-  # gone), so log the metadata drift instead of destroying the only library file.
-  defp compensate_aborted_upgrade(movie, dest) do
-    if dest != movie.file_path do
-      Logger.info("movie #{movie.id} upgrade aborted mid-swap; unlinking #{dest}")
-      Library.delete_file(dest)
-    else
-      Logger.warning(
-        "movie #{movie.id} upgrade landed on disk despite the abort; " <>
-          "the library file was replaced but the row keeps the old metadata"
-      )
-    end
+  defp compensate_aborted_upgrade(movie, stage) do
+    Logger.info("movie #{movie.id} upgrade aborted mid-swap; restoring the prior library file")
+    Library.rollback_stage(stage)
   end
 
   # Post-commit side effects, all best-effort (none can unwind the committed upgrade): remove the

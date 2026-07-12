@@ -106,7 +106,7 @@ defmodule Cinder.Download.TvPoller do
   end
 
   defp import_grab(grab) do
-    case Library.import_episodes(grab.content_path, grab.episodes) do
+    case Library.stage_episodes(grab.content_path, grab.episodes) do
       {:ok, [], _unmatched} ->
         # Deterministic: nothing in content_path mapped to a grab episode. Re-importing can't
         # help, so park — the episodes re-search (bounded), rather than re-importing forever.
@@ -116,19 +116,27 @@ defmodule Cinder.Download.TvPoller do
 
         park(grab, :no_files_matched)
 
-      {:ok, imported, _unmatched} ->
+      {:ok, staged, _unmatched} ->
+        imported =
+          Enum.map(staged, fn {episode_id, stage} -> {episode_id, stage.dest, stage.quality} end)
+
         # Catalog announces a season only when this committed import makes it fully available.
         case Catalog.finish_grab(grab, imported) do
           {:ok, _grab} ->
+            commit_stages(staged)
             # After the finalize commit: best-effort, gated remove of the source download.
             # Read id/protocol off the in-hand grab — finish_grab deleted the row but returns
             # the in-memory struct. A partial-match pack still removes (don't strand clutter).
             Download.remove_after_import(grab.download_protocol, grab.download_id)
 
+          {:error, :stale_grab} ->
+            rollback_stages(staged)
+
           # A failed finalize leaves content_path set, so the grab re-imports next tick —
           # without a bump that's a silent 5-second loop if the failure is deterministic.
           # Route it through the same bounded retry as every other failure in this poller.
           {:error, reason} ->
+            rollback_stages(staged)
             retry_or_park(grab, {:finish_grab, reason})
         end
 
@@ -152,6 +160,21 @@ defmodule Cinder.Download.TvPoller do
         retry_or_park(grab, reason)
     end
   end
+
+  defp commit_stages(staged) do
+    staged
+    |> unique_stages()
+    |> Enum.each(&Library.commit_stage/1)
+  end
+
+  defp rollback_stages(staged) do
+    staged
+    |> unique_stages()
+    |> Enum.each(&Library.rollback_stage/1)
+  end
+
+  defp unique_stages(staged),
+    do: staged |> Enum.map(&elem(&1, 1)) |> Enum.uniq_by(& &1.dest)
 
   # --- search: wanted episodes -----------------------------------------------------------------
 

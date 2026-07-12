@@ -25,6 +25,59 @@ defmodule Cinder.LibraryTest do
     }
   end
 
+  test "commit_stage removes replacement rollback material idempotently" do
+    dest = Path.join(@lib, "Movie/Film.mkv")
+    backup = Path.join(@lib, "Movie/.Film.mkv.cinder-rollback")
+    {:ok, calls} = Agent.start_link(fn -> 0 end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn ^backup ->
+      case Agent.get_and_update(calls, &{&1, &1 + 1}) do
+        0 -> {:ok, %File.Stat{type: :regular}}
+        _ -> {:error, :enoent}
+      end
+    end)
+
+    expect(Cinder.Library.FilesystemMock, :rm, fn ^backup -> :ok end)
+
+    stage = %{
+      dest: dest,
+      quality: %{},
+      rollback: %{state: :replaced, root: @lib, dest: dest, backup: backup}
+    }
+
+    assert :ok = Library.commit_stage(stage)
+    assert :ok = Library.commit_stage(stage)
+  end
+
+  test "rollback_stage restores replacement bytes idempotently" do
+    dest = Path.join(@lib, "Movie/Film.mkv")
+    backup = Path.join(@lib, "Movie/.Film.mkv.cinder-rollback")
+    {:ok, calls} = Agent.start_link(fn -> 0 end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn
+      ^backup ->
+        case Agent.get_and_update(calls, &{&1, &1 + 1}) do
+          0 -> {:ok, %File.Stat{type: :regular}}
+          _ -> {:error, :enoent}
+        end
+
+      ^dest ->
+        {:ok, %File.Stat{type: :regular}}
+    end)
+
+    expect(Cinder.Library.FilesystemMock, :rm, fn ^dest -> :ok end)
+    expect(Cinder.Library.FilesystemMock, :rename, fn ^backup, ^dest -> :ok end)
+
+    stage = %{
+      dest: dest,
+      quality: %{},
+      rollback: %{state: :replaced, root: @lib, dest: dest, backup: backup}
+    }
+
+    assert :ok = Library.rollback_stage(stage)
+    assert :ok = Library.rollback_stage(stage)
+  end
+
   test "single-file source: hardlinks to Title (Year) {tmdb-N}/… and scans" do
     movie = %Movie{
       title: "Inception",

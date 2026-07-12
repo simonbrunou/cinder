@@ -19,7 +19,12 @@ defmodule Cinder.Test.BarrierFilesystem do
   @impl true
   defdelegate mkdir_p(path), to: Disk
   @impl true
-  defdelegate ln(source, dest), to: Disk
+  def ln(source, dest) do
+    result = Disk.ln(source, dest)
+    pause(:ln, dest)
+    result
+  end
+
   @impl true
   defdelegate cp(source, dest), to: Disk
   @impl true
@@ -30,7 +35,11 @@ defmodule Cinder.Test.BarrierFilesystem do
   end
 
   @impl true
-  defdelegate rename(source, dest), to: Disk
+  def rename(source, dest) do
+    result = Disk.rename(source, dest)
+    pause(:rename, dest)
+    result
+  end
 
   @impl true
   def rm(path) do
@@ -57,16 +66,25 @@ defmodule Cinder.Test.BarrierFilesystem do
   defp pause(operation, path) do
     case Application.get_env(:cinder, :filesystem_barrier) do
       %{owner: owner, operation: ^operation, contains: contains} = barrier ->
-        excluded? = String.contains?(path, Map.get(barrier, :excludes, "\0"))
+        maybe_pause(barrier, owner, operation, path, contains)
 
-        if String.contains?(path, contains) and not excluded? do
-          ref = make_ref()
-          send(owner, {:filesystem_barrier, self(), ref, operation, path})
-          receive do: ({^ref, :continue} -> :ok)
-        end
+      %{owner: owner, operations: operations, contains: contains} = barrier ->
+        if operation in operations,
+          do: maybe_pause(barrier, owner, operation, path, contains)
 
       _ ->
         :ok
+    end
+  end
+
+  defp maybe_pause(barrier, owner, operation, path, contains) do
+    excluded? = String.contains?(path, Map.get(barrier, :excludes, "\0"))
+
+    if String.contains?(path, contains) and not excluded? do
+      if Map.get(barrier, :once, false), do: Application.delete_env(:cinder, :filesystem_barrier)
+      ref = make_ref()
+      send(owner, {:filesystem_barrier, self(), ref, operation, path})
+      receive do: ({^ref, :continue} -> :ok)
     end
   end
 end

@@ -98,6 +98,66 @@ defmodule Cinder.Library do
     end
   end
 
+  @doc "Stages a movie import with rollback material for a guarded Catalog transition."
+  @spec stage_movie(Movie.t(), keyword()) ::
+          {:ok, %{dest: String.t(), rollback: map(), quality: map()}} | {:error, term()}
+  def stage_movie(movie, opts \\ [])
+
+  def stage_movie(%Movie{file_path: path}, _opts) when path in [nil, ""],
+    do: {:error, :no_file_path}
+
+  def stage_movie(%Movie{} = movie, opts) do
+    replace? = Keyword.get(opts, :replace, false)
+
+    with {:ok, root} <- root(:movies),
+         {:ok, source, folder?} <- resolve_source(movie.file_path),
+         :ok <-
+           verify_audio(
+             source,
+             Language.target(movie.preferred_language, movie.original_language)
+           ),
+         {:ok, %{size: size, inode: si, major_device: sdev}} <- fs().lstat(source),
+         parsed = Parser.parse(Path.basename(movie.file_path)),
+         new_q =
+           new_quality(parsed, size)
+           |> Map.merge(capture_media(source))
+           |> Map.put_new(:sidecar_subtitles, []),
+         dest = build_dest(movie, source, root),
+         {:ok, dest} <- safe_destination(dest, root),
+         :ok <- fs().mkdir_p(Path.dirname(dest)),
+         {:ok, quality, rollback, placed?} <-
+           stage_place(source, dest, root, {si, sdev}, movie, new_q, replace?, fn ->
+             upgrade?(movie, new_q)
+           end) do
+      quality = staged_sidecar_quality(quality, placed?, folder?, source)
+
+      {:ok,
+       %{
+         dest: dest,
+         quality: quality,
+         rollback:
+           Map.merge(rollback, %{
+             after_commit: {:movie, movie},
+             folder?: folder?,
+             source: source
+           })
+       }}
+    end
+  end
+
+  @doc "Commits a staged import. Safe to call repeatedly."
+  @spec commit_stage(%{dest: String.t(), rollback: map(), quality: map()}) :: :ok
+  def commit_stage(%{dest: dest, rollback: rollback, quality: quality}) do
+    commit_rollback(rollback)
+    maybe_commit_sidecars(rollback, dest)
+    run_after_commit(rollback, dest, quality)
+    :ok
+  end
+
+  @doc "Rolls a staged import back. Safe to call repeatedly."
+  @spec rollback_stage(%{rollback: map()}) :: :ok | {:error, term()}
+  def rollback_stage(%{rollback: rollback}), do: rollback(rollback)
+
   # Place source at dest; resolve a same-item collision (tmdb-unique folder => same record) by the
   # caller's `upgrade_fun` decision or a forced `replace?`. Shared by movie and episode imports.
   # `upgrade_fun` is a thunk so the (config-reading) upgrade comparison runs only on an actual
@@ -162,6 +222,176 @@ defmodule Cinder.Library do
 
   defp do_resolve(_source, dest, false, false, movie, new_q, _replace?, _root),
     do: keep(dest, movie, new_q)
+
+  defp stage_place(source, dest, root, {si, sdev}, record, new_q, replace?, upgrade_fun) do
+    with {:ok, source} <- safe_source_file(source),
+         {:ok, dest} <- safe_destination(dest, root),
+         :ok <- remove_if_present(stage_path(dest), root),
+         :ok <- recover_interrupted_replacement(dest, root) do
+      case fs().lstat(dest) do
+        {:error, :enoent} ->
+          stage_new(source, dest, root, new_q)
+
+        {:ok, %{inode: ^si, major_device: ^sdev}} ->
+          {:ok, existing_quality_for_stage(record, new_q, replace?), noop_rollback(root, dest),
+           false}
+
+        {:ok, _stat} ->
+          stage_existing(source, dest, root, record, new_q, replace?, upgrade_fun)
+
+        {:error, _} = error ->
+          error
+      end
+    end
+  end
+
+  defp stage_existing(source, dest, root, record, new_q, replace?, upgrade_fun) do
+    if replace? or upgrade_fun.() do
+      stage_replacement(source, dest, root, new_q)
+    else
+      {:ok, quality, false} = keep(dest, record, new_q)
+      {:ok, quality, noop_rollback(root, dest), false}
+    end
+  end
+
+  defp existing_quality_for_stage(_record, new_q, true), do: new_q
+  defp existing_quality_for_stage(record, new_q, false), do: existing_quality(record, new_q)
+
+  defp stage_new(source, dest, root, quality) do
+    candidate = stage_path(dest)
+
+    with :ok <- link_or_copy(source, candidate, root),
+         {:ok, ^candidate} <- safe_destination(candidate, root),
+         {:ok, ^dest} <- safe_destination(dest, root),
+         :ok <- fs().rename(candidate, dest) do
+      {:ok, quality, %{state: :new, root: root, dest: dest}, true}
+    else
+      {:error, _} = error ->
+        remove_if_present(candidate, root)
+        error
+    end
+  end
+
+  defp stage_replacement(source, dest, root, quality) do
+    candidate = stage_path(dest)
+    backup = rollback_path(dest)
+
+    with :ok <- link_or_copy(source, candidate, root),
+         {:ok, ^dest} <- safe_destination(dest, root),
+         {:ok, ^backup} <- safe_destination(backup, root),
+         :ok <- fs().rename(dest, backup),
+         :ok <- land_replacement(candidate, dest, backup, root) do
+      {:ok, quality, %{state: :replaced, root: root, dest: dest, backup: backup}, true}
+    else
+      {:error, _} = error ->
+        remove_if_present(candidate, root)
+        error
+    end
+  end
+
+  defp land_replacement(candidate, dest, backup, root) do
+    with {:ok, ^candidate} <- safe_destination(candidate, root),
+         {:ok, ^dest} <- safe_destination(dest, root),
+         :ok <- fs().rename(candidate, dest) do
+      :ok
+    else
+      {:error, _} = error ->
+        _ = fs().rename(backup, dest)
+        error
+    end
+  end
+
+  defp noop_rollback(root, dest), do: %{state: :noop, root: root, dest: dest}
+
+  defp stage_path(dest),
+    do: Path.join(Path.dirname(dest), ".#{Path.basename(dest)}.cinder-stage")
+
+  # ponytail: one rollback slot per destination relies on the pollers' serialized imports;
+  # persist stage records if concurrent import workers are introduced.
+  defp rollback_path(dest),
+    do: Path.join(Path.dirname(dest), ".#{Path.basename(dest)}.cinder-rollback")
+
+  defp recover_interrupted_replacement(dest, root) do
+    backup = rollback_path(dest)
+
+    case fs().lstat(backup) do
+      {:ok, _} ->
+        with :ok <- remove_if_present(dest, root),
+             {:ok, ^backup} <- safe_destination(backup, root),
+             {:ok, ^dest} <- safe_destination(dest, root),
+             do: fs().rename(backup, dest)
+
+      {:error, :enoent} ->
+        :ok
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  defp commit_rollback(%{state: :replaced, root: root, backup: backup}),
+    do: remove_if_present(backup, root)
+
+  defp commit_rollback(_rollback), do: :ok
+
+  defp rollback(%{state: :noop}), do: :ok
+
+  defp rollback(%{state: :new, root: root, dest: dest}),
+    do: remove_if_present(dest, root)
+
+  defp rollback(%{state: :replaced, root: root, dest: dest, backup: backup}) do
+    case fs().lstat(backup) do
+      {:ok, _} ->
+        with :ok <- remove_if_present(dest, root),
+             {:ok, ^backup} <- safe_destination(backup, root),
+             {:ok, ^dest} <- safe_destination(dest, root),
+             do: fs().rename(backup, dest)
+
+      {:error, :enoent} ->
+        :ok
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  defp remove_if_present(path, root) do
+    case fs().lstat(path) do
+      {:ok, _} -> safe_remove(path, [root])
+      {:error, :enoent} -> :ok
+      {:error, _} = error -> error
+    end
+  end
+
+  defp staged_sidecar_quality(quality, true, true, source) do
+    languages = source |> Sidecars.files() |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
+    Map.put(quality, :sidecar_subtitles, languages)
+  end
+
+  defp staged_sidecar_quality(quality, _placed?, _folder?, _source), do: quality
+
+  defp maybe_commit_sidecars(%{folder?: true, source: source}, dest),
+    do: Sidecars.link(source, dest)
+
+  defp maybe_commit_sidecars(_rollback, _dest), do: []
+
+  defp run_after_commit(%{after_commit: {:movie, movie}}, dest, quality) do
+    refresh(:movies, dest)
+
+    fetch_subtitles(
+      fn -> Cinder.Subtitles.movie_criteria(movie) end,
+      dest,
+      :movies,
+      quality.sidecar_subtitles
+    )
+  end
+
+  defp run_after_commit(%{after_commit: {:episodes, episodes}}, dest, quality) do
+    refresh(:tv, dest)
+    fetch_episode_subtitles_for_dest(episodes, dest, quality)
+  end
+
+  defp run_after_commit(_rollback, _dest, _quality), do: :ok
 
   defp existing_quality(record, new_q) do
     if nil_q?(record), do: new_q, else: old_quality(record)
@@ -385,6 +615,37 @@ defmodule Cinder.Library do
     end
   end
 
+  @doc "Stages episode imports with rollback material for `Catalog.finish_grab/2`."
+  @spec stage_episodes(String.t() | nil, [Episode.t()]) ::
+          {:ok, [{integer(), map()}], [String.t()]} | {:error, term()}
+  def stage_episodes(content_path, _episodes) when content_path in [nil, ""],
+    do: {:error, :no_content_path}
+
+  def stage_episodes(content_path, episodes) do
+    with {:ok, root} <- root(:tv),
+         {:ok, videos, folder?} <- video_files(content_path) do
+      {to_import, unmatched} =
+        videos
+        |> match_episodes(episodes)
+        |> dedupe_per_episode()
+        |> resolve(videos, episodes)
+        |> reject_wrong_audio(episodes)
+
+      case stage_all(to_import, root, episode_target(episodes), folder?) do
+        {:ok, []} ->
+          log_unmatched(unmatched)
+          {:ok, [], unmatched}
+
+        {:ok, imported} ->
+          log_unmatched(unmatched)
+          {:ok, imported, unmatched}
+
+        {:error, _} = error ->
+          error
+      end
+    end
+  end
+
   defp do_import_episodes(content_path, episodes, root) do
     with {:ok, videos, folder?} <- video_files(content_path) do
       {to_import, unmatched} =
@@ -550,6 +811,24 @@ defmodule Cinder.Library do
     end)
   end
 
+  defp stage_all(to_import, root, target, folder?) do
+    to_import
+    |> Enum.group_by(fn {_ep, source} -> source end, fn {ep, _source} -> ep end)
+    |> Enum.reduce_while({:ok, []}, fn {source, episodes}, {:ok, acc} ->
+      episodes = Enum.sort_by(episodes, & &1.episode_number)
+
+      case stage_episode_file(episodes, source, root, target, folder?) do
+        {:ok, stage} ->
+          imported = Enum.map(episodes, &{&1.id, stage})
+          {:cont, {:ok, Enum.reverse(imported, acc)}}
+
+        {:error, _} = error ->
+          acc |> Enum.map(&elem(&1, 1)) |> Enum.uniq_by(& &1.dest) |> Enum.each(&rollback_stage/1)
+          {:halt, error}
+      end
+    end)
+  end
+
   defp place_episode_file([ep | _] = episodes, source, root, target, folder?) do
     dest = build_episode_dest(episodes, source, root)
 
@@ -567,6 +846,38 @@ defmodule Cinder.Library do
              ep_upgrade?(ep, new_q, target)
            end) do
       {:ok, dest, maybe_link_sidecars(q, placed?, folder?, source, dest)}
+    end
+  end
+
+  defp stage_episode_file([ep | _] = episodes, source, root, target, folder?) do
+    dest = build_episode_dest(episodes, source, root)
+
+    with {:ok, source} <- safe_source_file(source),
+         {:ok, %{size: size, inode: si, major_device: sdev}} <- fs().lstat(source),
+         parsed = Parser.parse(Path.basename(source)),
+         new_q =
+           new_quality(parsed, size)
+           |> Map.merge(capture_media(source))
+           |> Map.put_new(:sidecar_subtitles, []),
+         {:ok, dest} <- safe_destination(dest, root),
+         :ok <- fs().mkdir_p(Path.dirname(dest)),
+         {:ok, quality, rollback, placed?} <-
+           stage_place(source, dest, root, {si, sdev}, ep, new_q, false, fn ->
+             ep_upgrade?(ep, new_q, target)
+           end) do
+      quality = staged_sidecar_quality(quality, placed?, folder?, source)
+
+      {:ok,
+       %{
+         dest: dest,
+         quality: quality,
+         rollback:
+           Map.merge(rollback, %{
+             after_commit: {:episodes, episodes},
+             folder?: folder?,
+             source: source
+           })
+       }}
     end
   end
 
@@ -669,6 +980,11 @@ defmodule Cinder.Library do
         Map.get(quality, :sidecar_subtitles, [])
       )
     end
+  end
+
+  defp fetch_episode_subtitles_for_dest(episodes, dest, quality) do
+    imported = Enum.map(episodes, &{&1.id, dest, quality})
+    fetch_episode_subtitles(imported, episodes)
   end
 
   # content_path is a file for single-file torrents, a folder for multi-file ones. Returns the
