@@ -1,5 +1,6 @@
 defmodule Cinder.Library.SidecarsTest do
   use ExUnit.Case, async: false
+  import ExUnit.CaptureLog
   import Mox
   setup :verify_on_exit!
 
@@ -195,7 +196,9 @@ defmodule Cinder.Library.SidecarsTest do
       File.ln_s!(outside, parent)
       send(pid, {ref, :continue})
 
-      assert Task.await(task) == []
+      log = capture_log(fn -> assert Task.await(task) == [] end)
+
+      assert log =~ "sidecar link rejected: :unsafe_destination"
       refute File.exists?(Path.join(outside, "Movie.en.srt"))
     end
   end

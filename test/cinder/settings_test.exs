@@ -3,6 +3,7 @@ defmodule Cinder.SettingsTest do
   use Cinder.DataCase, async: false
 
   import Mox
+  import ExUnit.CaptureLog
 
   alias Cinder.Health
   alias Cinder.Settings
@@ -153,8 +154,13 @@ defmodule Cinder.SettingsTest do
       # A bad ciphertext (e.g. after a SECRET_KEY_BASE change) must not brick anything.
       Repo.insert!(%Setting{key: "tmdb_token", value: "@@@not-base64@@@", is_secret: true})
 
-      assert Settings.get("tmdb_token") == nil
-      assert Settings.load_into_env() == :ok
+      log =
+        capture_log(fn ->
+          assert Settings.get("tmdb_token") == nil
+          assert Settings.load_into_env() == :ok
+        end)
+
+      assert log =~ "cannot decrypt tmdb_token; re-enter it in /settings"
     end
 
     test "a secret that fails GCM authentication (wrong key) is skipped, not poured into env" do
@@ -169,8 +175,13 @@ defmodule Cinder.SettingsTest do
       corrupted = Base.encode64(head <> <<rem(last + 1, 256)>>)
       row |> Ecto.Changeset.change(value: corrupted) |> Repo.update!()
 
-      assert Settings.get("tmdb_token") == nil
-      assert Settings.load_into_env() == :ok
+      log =
+        capture_log(fn ->
+          assert Settings.get("tmdb_token") == nil
+          assert Settings.load_into_env() == :ok
+        end)
+
+      assert log =~ "cannot decrypt tmdb_token; re-enter it in /settings"
       assert Application.get_env(:cinder, Cinder.Catalog.TMDB.HTTP)[:token] != :error
     end
   end

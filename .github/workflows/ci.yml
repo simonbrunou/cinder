@@ -63,6 +63,20 @@ jobs:
       - run: docker build --check .
       - run: docker build -t cinder:ci .
 
+      - name: Boot a fresh database
+        run: |
+          docker run --detach --name cinder-ci -p 127.0.0.1:4000:4000 \
+            -e SECRET_KEY_BASE=ci-only-not-a-real-secret-key-base-0123456789abcdefghijklmnopqrstuvwxyz \
+            -e DATABASE_PATH=/data/cinder.db \
+            -e CINDER_BOOTSTRAP_TOKEN=ci-only-not-a-real-bootstrap-token \
+            cinder:ci
+          trap 'docker logs cinder-ci; docker rm --force cinder-ci' EXIT
+          for attempt in {1..30}; do
+            curl --fail --silent http://127.0.0.1:4000/healthz && exit 0
+            sleep 1
+          done
+          exit 1
+
       - uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: cinder:ci

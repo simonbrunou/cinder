@@ -2,6 +2,7 @@ defmodule Cinder.SubtitlesTest do
   use ExUnit.Case, async: false
 
   import Mox
+  import ExUnit.CaptureLog
 
   alias Cinder.Subtitles
   alias Cinder.Subtitles.Manifest
@@ -324,7 +325,12 @@ defmodule Cinder.SubtitlesTest do
     expect(Cinder.Subtitles.ProviderMock, :download, fn 1 -> {:ok, "NEW SRT"} end)
     deny(Cinder.Library.MediaServerMock, :scan, 1)
 
-    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+    log =
+      capture_log(fn ->
+        assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+      end)
+
+    assert log =~ "subtitle provenance write failed for /lib/M/M.mkv (fr): {:error, :eio}"
     assert Agent.get(fs, &Map.fetch!(&1, target)) == "OLD SRT"
     assert %{tracks: %{"fr" => %{origin: "opensubtitles_id"}}} = Manifest.read(@video)
   end
@@ -367,14 +373,24 @@ defmodule Cinder.SubtitlesTest do
     expect(Cinder.Subtitles.ProviderMock, :download, fn 1 -> {:ok, "NEW SRT"} end)
     deny(Cinder.Library.MediaServerMock, :scan, 1)
 
-    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+    log =
+      capture_log(fn ->
+        assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+      end)
+
+    assert log =~ "subtitle provenance write failed for /lib/M/M.mkv (fr): {:error, :eio}"
     refute Agent.get(fs, &Map.has_key?(&1, target))
   end
 
   test "a provider failure does not call an embedded source or LibreTranslate" do
     expect(Cinder.Subtitles.ProviderMock, :search, fn _ -> {:error, :down} end)
 
-    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+    log =
+      capture_log(fn ->
+        assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+      end)
+
+    assert log =~ "subtitle fetch for /lib/M/M.mkv (fr) failed: :down"
   end
 
   test "an empty provider result extracts an exact embedded target track", %{fs: fs} do
@@ -578,7 +594,10 @@ defmodule Cinder.SubtitlesTest do
     replace_parent(parent, outside, temporary)
     send(pid, {ref, :continue})
 
-    assert Task.await(task) == :ok
+    log = capture_log(fn -> assert Task.await(task) == :ok end)
+
+    assert log =~ "subtitle write failed for"
+    assert log =~ "{:error, :unsafe_destination}"
     refute File.exists?(Path.join(outside, Path.basename(target)))
   end
 
@@ -633,7 +652,10 @@ defmodule Cinder.SubtitlesTest do
     File.ln_s!(outside, parent)
     send(pid, {ref, :continue})
 
-    assert Task.await(task) == :ok
+    log = capture_log(fn -> assert Task.await(task) == :ok end)
+
+    assert log =~ "subtitle rollback rejected: {:error, :unsafe_delete}"
+    assert log =~ "subtitle provenance write failed for"
     assert File.read!(outside_target) == "outside subtitle"
   end
 

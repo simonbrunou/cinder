@@ -516,6 +516,8 @@ defmodule Cinder.Subtitles do
       Logger.warning("subtitle fetch #{caught} for #{video_path}: #{inspect(value)}")
   end
 
+  defp mark_release_sidecars(_video_path, languages) when languages in [nil, []], do: :ok
+
   defp mark_release_sidecars(video_path, languages) do
     moviehash = current_moviehash(video_path)
 

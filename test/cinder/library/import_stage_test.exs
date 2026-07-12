@@ -2,6 +2,7 @@ defmodule Cinder.Library.ImportStageTest do
   use Cinder.DataCase, async: false
 
   import Mox
+  import ExUnit.CaptureLog
 
   alias Cinder.Catalog.Movie
   alias Cinder.Library
@@ -93,7 +94,9 @@ defmodule Cinder.Library.ImportStageTest do
     stub(Cinder.Library.FilesystemMock, :lstat, fn _path -> {:error, :eacces} end)
     token = token(stage.id, stage.operation_key)
 
-    assert {:error, :eacces} = Library.commit_stage(token)
+    log = capture_log(fn -> assert {:error, :eacces} = Library.commit_stage(token) end)
+
+    assert log =~ "import stage #{stage.id} cleanup pending: eacces"
     assert :ok = Library.commit_stage(token)
     assert Agent.get(counter, & &1) == 1
   end

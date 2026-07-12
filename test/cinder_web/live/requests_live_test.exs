@@ -20,6 +20,7 @@ defmodule CinderWeb.RequestsLiveTest do
     {:ok, lv, html} = live(conn, ~p"/requests")
     assert html =~ "The Matrix"
     lv |> element("button", "Approve") |> render_click()
+    render_async(lv)
     assert [%Cinder.Catalog.Movie{status: :requested}] = Cinder.Catalog.list_by_status(:requested)
     assert {:ok, %{status: :approved}} = {:ok, Cinder.Repo.reload(req)}
   end

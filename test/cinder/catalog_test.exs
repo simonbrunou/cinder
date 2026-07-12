@@ -2,6 +2,7 @@ defmodule Cinder.CatalogTest do
   use Cinder.DataCase, async: true
 
   import Cinder.CatalogFixtures
+  import ExUnit.CaptureLog
   import Mox
 
   alias Cinder.Catalog
@@ -385,7 +386,10 @@ defmodule Cinder.CatalogTest do
       # it logs, returns :ok, and inserts nothing.
       ghost = %Movie{id: 999_999, release_title: "Ghost.Release"}
 
-      assert :ok = Catalog.block_release(ghost, :download_error)
+      log = capture_log(fn -> assert :ok = Catalog.block_release(ghost, :download_error) end)
+
+      assert log =~ "block_release raised:"
+      assert log =~ "foreign_key_constraint"
       assert Repo.all(BlockedRelease) == []
     end
 

@@ -128,12 +128,16 @@ defmodule CinderWeb.DashboardLiveTest do
 
       {:ok, lv, _html} = live(conn, ~p"/dashboard")
 
-      lv |> element("#maintenance-scan-movies") |> render_click()
-      lv |> element("#maintenance-scan-tv") |> render_click()
-      render_async(lv)
+      log =
+        capture_log(fn ->
+          lv |> element("#maintenance-scan-movies") |> render_click()
+          lv |> element("#maintenance-scan-tv") |> render_click()
+          render_async(lv)
+        end)
 
       assert has_element?(lv, "#maintenance-result-scan-movies", "Completed")
       assert has_element?(lv, "#maintenance-result-scan-tv", "Failed")
+      assert log =~ "maintenance scan_tv failed: :unavailable"
     end
 
     test "a forged duplicate event does not start or notify twice", %{conn: conn} do
@@ -185,11 +189,16 @@ defmodule CinderWeb.DashboardLiveTest do
       Cinder.TestNotifier.subscribe()
       {:ok, lv, _html} = live(conn, ~p"/dashboard")
 
-      lv |> element("#maintenance-movie-pipeline") |> render_click()
+      log =
+        capture_log(fn ->
+          lv |> element("#maintenance-movie-pipeline") |> render_click()
+          render_async(lv)
+        end)
 
-      render_async(lv)
       assert has_element?(lv, "#maintenance-result-movie-pipeline", "Failed")
       refute has_element?(lv, "#maintenance-movie-pipeline[disabled]")
+      assert log =~ "maintenance movie_pipeline failed:"
+      assert log =~ ":noproc"
       assert_receive {:notify, {:maintenance_failed, :movie_pipeline, _reason}}
       refute_receive {:notify, _}
     end
@@ -227,6 +236,7 @@ defmodule CinderWeb.DashboardLiveTest do
       assert html =~ "Dune"
 
       lv |> element("#pending-#{req.id} button", "Approve") |> render_click()
+      render_async(lv)
 
       assert Cinder.Repo.get(Cinder.Requests.Request, req.id).status == :approved
       assert Catalog.get_movie_by_tmdb_id(req.target_id).status == :requested
@@ -242,6 +252,8 @@ defmodule CinderWeb.DashboardLiveTest do
       lv
       |> form("#pending-#{req.id} form", %{reason: "Already own it"})
       |> render_submit()
+
+      render(lv)
 
       reloaded = Cinder.Repo.get(Cinder.Requests.Request, req.id)
       assert reloaded.status == :denied

@@ -4,6 +4,7 @@ defmodule Cinder.CatalogAdminTest do
   use Cinder.DataCase, async: false
 
   import Mox
+  import ExUnit.CaptureLog
 
   alias Cinder.Catalog
   alias Cinder.Catalog.{Movie, Series}
@@ -421,7 +422,12 @@ defmodule Cinder.CatalogAdminTest do
 
       expect(Cinder.Library.FilesystemMock, :rm, fn _ -> {:error, :eacces} end)
 
-      assert {:ok, _} = Catalog.delete_movie(movie, nil, delete_files: true)
+      log =
+        capture_log(fn ->
+          assert {:ok, _} = Catalog.delete_movie(movie, nil, delete_files: true)
+        end)
+
+      assert log =~ ~s(library file delete failed for "/tmp/locked.mkv": :eacces)
       refute Repo.get(Movie, movie.id)
     end
 
@@ -826,7 +832,9 @@ defmodule Cinder.CatalogAdminTest do
         "/tmp/bad.mkv" -> {:error, :eacces}
       end)
 
-      assert {:ok, 1, 1} = Catalog.delete_season_files(season, nil)
+      log = capture_log(fn -> assert {:ok, 1, 1} = Catalog.delete_season_files(season, nil) end)
+
+      assert log =~ ~s(library file delete failed for "/tmp/bad.mkv": :eacces)
       assert is_nil(Repo.get(Cinder.Catalog.Episode, e1.id).file_path)
       assert Repo.get(Cinder.Catalog.Episode, e2.id).file_path == "/tmp/bad.mkv"
     end
@@ -835,7 +843,9 @@ defmodule Cinder.CatalogAdminTest do
       {_series, season, [e1]} = season_with_files!(["/tmp/bad.mkv"])
       expect(Cinder.Library.FilesystemMock, :rm, fn "/tmp/bad.mkv" -> {:error, :eacces} end)
 
-      assert {:ok, 0, 1} = Catalog.delete_season_files(season, nil)
+      log = capture_log(fn -> assert {:ok, 0, 1} = Catalog.delete_season_files(season, nil) end)
+
+      assert log =~ ~s(library file delete failed for "/tmp/bad.mkv": :eacces)
       assert Repo.get(Cinder.Catalog.Episode, e1.id).file_path == "/tmp/bad.mkv"
     end
   end

@@ -2,6 +2,7 @@ defmodule CinderWeb.DiscoverLiveTest do
   use CinderWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
+  import ExUnit.CaptureLog
   import Mox
 
   alias Cinder.Catalog
@@ -204,10 +205,16 @@ defmodule CinderWeb.DiscoverLiveTest do
     stub(Cinder.Catalog.TMDBMock, :search_tv, fn _ -> {:error, :nxdomain} end)
     {:ok, lv, _html} = live(conn, ~p"/")
 
-    html = lv |> form("#search-form", %{"query" => "boom"}) |> render_change()
+    log =
+      capture_log(fn ->
+        html = lv |> form("#search-form", %{"query" => "boom"}) |> render_change()
 
-    assert html =~ "Search failed"
-    refute html =~ "No matches"
+        assert html =~ "Search failed"
+        refute html =~ "No matches"
+      end)
+
+    assert log =~ "Discover search failed entirely:"
+    assert log =~ "movies={:error, :timeout} tv={:error, :nxdomain}"
     assert render(lv) =~ "search-form"
   end
 

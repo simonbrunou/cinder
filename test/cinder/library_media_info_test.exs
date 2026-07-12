@@ -3,6 +3,7 @@ defmodule Cinder.LibraryMediaInfoTest do
   use ExUnit.Case, async: false
 
   import Mox
+  import ExUnit.CaptureLog
 
   alias Cinder.Catalog.{Episode, Movie, Season, Series}
   alias Cinder.Library
@@ -94,7 +95,11 @@ defmodule Cinder.LibraryMediaInfoTest do
     stub(Cinder.Library.MediaInfoMock, :probe, fn @source -> {:error, :enoent} end)
     expect_single_file_import_tail()
 
-    assert {:ok, @dest, _quality} = Library.import_movie(french_movie())
+    log =
+      capture_log(fn -> assert {:ok, @dest, _quality} = Library.import_movie(french_movie()) end)
+
+    assert log =~ "media-info audio check skipped for /dl/movie.mkv: :enoent"
+    assert log =~ "media-info probe failed for /dl/movie.mkv: {:error, :enoent}"
   end
 
   test "an 'any' pick still captures via probe but never parks (no wanted language to verify)" do
@@ -160,6 +165,8 @@ defmodule Cinder.LibraryMediaInfoTest do
     source = "#{folder}/M.2020.1080p.mkv"
     srt = "#{folder}/M.2020.1080p.fr.srt"
     dest = "#{@lib}/M (2020) {tmdb-99}/M (2020) {tmdb-99}.mkv"
+    sidecar_dest = "#{@lib}/M (2020) {tmdb-99}/M (2020) {tmdb-99}.fr.srt"
+    Mox.set_mox_global()
 
     # "any" pick → no wanted language → verify_audio adds no probe; capture_media does the one probe.
     movie = %Movie{
@@ -180,9 +187,12 @@ defmodule Cinder.LibraryMediaInfoTest do
       {:ok, %{audio: ["eng", "fre"], subtitles: ["eng"]}}
     end)
 
-    stub(Cinder.Library.FilesystemMock, :lstat, fn ^source ->
-      {:ok, %File.Stat{size: 5 * @gb, inode: 1}}
+    stub(Cinder.Library.FilesystemMock, :lstat, fn
+      ^source -> {:ok, %File.Stat{size: 5 * @gb, inode: 1}}
+      ^sidecar_dest -> {:error, :enoent}
     end)
+
+    stub(Cinder.Library.FilesystemMock, :moviehash_data, fn ^dest -> :too_small end)
 
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
 
@@ -200,7 +210,8 @@ defmodule Cinder.LibraryMediaInfoTest do
     assert q.sidecar_subtitles == ["fr"]
 
     assert_received {:ln, ^source, ^dest}
-    assert_received {:ln, ^srt, "#{@lib}/M (2020) {tmdb-99}/M (2020) {tmdb-99}.fr.srt"}
+    assert_received {:ln, ^srt, ^sidecar_dest}
+    await_subtitle_tasks()
   end
 
   # The tail of a single-file import after resolve_source's dir? (which the probe tests set
@@ -251,10 +262,17 @@ defmodule Cinder.LibraryMediaInfoTest do
       "/dl/Show.S01E02.1080p.mkv" -> {:ok, %{audio: ["hun"], subtitles: []}}
     end)
 
-    assert {:ok, [{1, dest, _q}], ["/dl/Show.S01E02.1080p.mkv"]} =
-             Library.import_episodes("/dl", [french_ep(1, 1), french_ep(2, 2)])
+    log =
+      capture_log(fn ->
+        assert {:ok, [{1, dest, _q}], ["/dl/Show.S01E02.1080p.mkv"]} =
+                 Library.import_episodes("/dl", [french_ep(1, 1), french_ep(2, 2)])
 
-    assert dest == "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv"
+        assert dest ==
+                 "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv"
+      end)
+
+    assert log =~
+             "import skipped 1 unmatched file(s): [\"/dl/Show.S01E02.1080p.mkv\"]"
   end
 
   test "TV: an all-wrong-language pack imports nothing (the grab then re-searches)" do
@@ -268,11 +286,16 @@ defmodule Cinder.LibraryMediaInfoTest do
 
     stub(Cinder.Library.MediaInfoMock, :probe, fn _ -> {:ok, %{audio: ["hun"], subtitles: []}} end)
 
-    assert {:ok, [], unmatched} =
-             Library.import_episodes("/dl", [french_ep(1, 1), french_ep(2, 2)])
+    log =
+      capture_log(fn ->
+        assert {:ok, [], unmatched} =
+                 Library.import_episodes("/dl", [french_ep(1, 1), french_ep(2, 2)])
 
-    assert Enum.sort(unmatched) ==
-             Enum.sort(["/dl/Show.S01E01.1080p.mkv", "/dl/Show.S01E02.1080p.mkv"])
+        assert Enum.sort(unmatched) ==
+                 Enum.sort(["/dl/Show.S01E01.1080p.mkv", "/dl/Show.S01E02.1080p.mkv"])
+      end)
+
+    assert log =~ "import skipped 2 unmatched file(s):"
   end
 
   test "import_episodes captures audio + embedded + sidecar languages per imported episode" do
@@ -291,6 +314,11 @@ defmodule Cinder.LibraryMediaInfoTest do
     srt = "/dl/Show.S01E01.1080p.fr.srt"
     dest = "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.mkv"
 
+    sidecar_dest =
+      "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.fr.srt"
+
+    Mox.set_mox_global()
+
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
 
     stub(Cinder.Library.FilesystemMock, :find_files, fn "/dl" ->
@@ -301,9 +329,12 @@ defmodule Cinder.LibraryMediaInfoTest do
       {:ok, %{audio: ["eng", "fre"], subtitles: ["eng"]}}
     end)
 
-    stub(Cinder.Library.FilesystemMock, :lstat, fn ^source ->
-      {:ok, %File.Stat{size: 3 * @gb, inode: 1}}
+    stub(Cinder.Library.FilesystemMock, :lstat, fn
+      ^source -> {:ok, %File.Stat{size: 3 * @gb, inode: 1}}
+      ^sidecar_dest -> {:error, :enoent}
     end)
+
+    stub(Cinder.Library.FilesystemMock, :moviehash_data, fn ^dest -> :too_small end)
 
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
 
@@ -321,7 +352,16 @@ defmodule Cinder.LibraryMediaInfoTest do
 
     assert_received {:ln, ^source, ^dest}
 
-    assert_received {:ln, ^srt,
-                     "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01.fr.srt"}
+    assert_received {:ln, ^srt, ^sidecar_dest}
+    await_subtitle_tasks()
+  end
+
+  defp await_subtitle_tasks do
+    Cinder.Subtitles.TaskSupervisor
+    |> Task.Supervisor.children()
+    |> Enum.each(fn pid ->
+      ref = Process.monitor(pid)
+      assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 2_000
+    end)
   end
 end
