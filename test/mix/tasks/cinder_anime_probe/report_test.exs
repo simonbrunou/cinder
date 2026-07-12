@@ -4,7 +4,15 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.ReportTest do
   alias Mix.Tasks.Cinder.Anime.Probe.{Corpus, Report}
 
   @corpus_path "test/support/fixtures/anime/corpus-v1.json"
-  @forbidden ~w(downloadUrl magnetUrl api_key token indexerId indexer)
+  @forbidden [
+    "downloadUrl",
+    "magnetUrl",
+    "api_key",
+    "token-secret",
+    "\"indexerId\"",
+    "\"indexer\":",
+    "indexer-secret"
+  ]
 
   setup do
     corpus = Corpus.load!(@corpus_path)
@@ -85,6 +93,34 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.ReportTest do
     assert "prowlarr-published-at" in report.blocking_prowlarr_gaps
   end
 
+  test "blocks A0 when sampled releases lack indexer identity without changing provider selection",
+       context do
+    observations =
+      update_first_release(context.observations, fn release ->
+        %{release | has_indexer_identity: false}
+      end)
+
+    report = Report.build(context.corpus, observations)
+
+    assert report.decision == "tmdb_sufficient"
+    assert report.a0_status == "blocked"
+    assert "prowlarr-indexer-identity" in report.blocking_prowlarr_gaps
+  end
+
+  test "treats wrong-type indexer identity evidence as unavailable", context do
+    observations =
+      update_first_release(context.observations, fn release ->
+        %{release | has_indexer_identity: %{"indexer" => "forbidden"}}
+      end)
+
+    report = Report.build(context.corpus, observations)
+
+    assert report.decision == "tmdb_sufficient"
+    assert report.a0_status == "blocked"
+    assert "prowlarr-indexer-identity" in report.blocking_prowlarr_gaps
+    refute Jason.encode!(report) =~ "forbidden"
+  end
+
   test "deduplicates repeated integrity errors and renders deterministically", context do
     bad_entries = [
       %{episode_id: nil, group_order: 0, order: 0, season_number: 1, episode_number: 1},
@@ -122,6 +158,36 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.ReportTest do
     assert report.summary.automatic_wrong_mappings == 1
     assert report.decision == "tvdb_required"
     assert report.a0_status == "blocked"
+  end
+
+  test "counts missing or invalid group coordinates and episode IDs as wrong mappings", context do
+    invalid_entries = [
+      %{episode_id: 1, group_order: nil, order: 0, season_number: 1, episode_number: 1},
+      %{
+        episode_id: 2,
+        group_order: 0,
+        order: %{"token" => "forbidden"},
+        season_number: 1,
+        episode_number: 2
+      },
+      %{episode_id: 3, group_order: 0, order: 2, season_number: nil, episode_number: 3},
+      %{episode_id: 4, group_order: 0, order: 3, season_number: 1},
+      %{group_order: 0, order: 4, season_number: 1, episode_number: 5}
+    ]
+
+    observations =
+      put_in(
+        context.observations,
+        [Access.at(0), :groups, Access.at(0), :entries],
+        invalid_entries
+      )
+
+    report = Report.build(context.corpus, observations)
+
+    assert report.summary.automatic_wrong_mappings == 5
+    assert report.decision == "tvdb_required"
+    assert report.a0_status == "blocked"
+    refute Jason.encode!(report) =~ "forbidden"
   end
 
   test "generated artifacts contain no forbidden provider fields", context do
@@ -218,7 +284,8 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.ReportTest do
       size: 1_000_000,
       protocol: "torrent",
       categories: [%{id: 5070, name: "TV/Anime"}],
-      published_at: "2026-07-01T12:00:00Z"
+      published_at: "2026-07-01T12:00:00Z",
+      has_indexer_identity: true
     }
   end
 

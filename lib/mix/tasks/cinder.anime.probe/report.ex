@@ -174,8 +174,11 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.Report do
     count =
       groups
       |> Enum.filter(&(&1.type == 2))
-      |> Enum.flat_map(& &1.entries)
-      |> Enum.map(& &1.episode_id)
+      |> Enum.flat_map(&group_entries/1)
+      |> Enum.map(fn
+        entry when is_map(entry) -> Map.get(entry, :episode_id)
+        _entry -> nil
+      end)
       |> Enum.filter(&is_integer/1)
       |> Enum.uniq()
       |> length()
@@ -188,26 +191,43 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.Report do
 
   defp wrong_mapping_count(groups) do
     groups
-    |> Enum.group_by(& &1.id)
+    |> Enum.filter(&is_map/1)
+    |> Enum.group_by(&Map.get(&1, :id))
     |> Map.values()
     |> Enum.reduce(0, fn observations, count ->
-      entries = observations |> Enum.flat_map(& &1.entries) |> Enum.uniq()
-      missing = Enum.count(entries, &(not is_integer(&1.episode_id)))
+      entries = observations |> Enum.flat_map(&group_entries/1) |> Enum.uniq()
+      invalid = Enum.count(entries, &(not valid_entry?(&1)))
 
       conflicts =
         entries
-        |> Enum.group_by(&{&1.group_order, &1.order})
+        |> Enum.filter(&valid_entry?/1)
+        |> Enum.group_by(&{Map.fetch!(&1, :group_order), Map.fetch!(&1, :order)})
         |> Enum.count(fn {_coordinate, entries} ->
           entries
-          |> Enum.map(& &1.episode_id)
-          |> Enum.filter(&is_integer/1)
+          |> Enum.map(&Map.fetch!(&1, :episode_id))
           |> Enum.uniq()
           |> length() > 1
         end)
 
-      count + missing + conflicts
+      count + invalid + conflicts
     end)
   end
+
+  defp group_entries(group) do
+    case Map.get(group, :entries) do
+      entries when is_list(entries) -> entries
+      _entries -> [:invalid]
+    end
+  end
+
+  defp valid_entry?(entry) when is_map(entry) do
+    Enum.all?(
+      [:episode_id, :group_order, :order, :season_number, :episode_number],
+      &(entry |> Map.get(&1) |> is_integer())
+    )
+  end
+
+  defp valid_entry?(_entry), do: false
 
   defp prowlarr_inventory_checks(title, observation) do
     for query <- title.prowlarr_queries, mode <- [:all, :anime] do
@@ -254,13 +274,14 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.Report do
             |> Map.get(:categories, [])
             |> Enum.map(&%{id: &1.id, name: &1.name})
             |> Enum.sort_by(&{&1.id, &1.name}),
-          published_at: release.published_at
+          published_at: release.published_at,
+          has_indexer_identity: Map.get(release, :has_indexer_identity) == true
         }
       end
     end)
     |> Enum.sort_by(
       &{&1.slug, &1.query, &1.mode, &1.title, &1.size, &1.protocol, &1.categories,
-       &1.published_at}
+       &1.published_at, &1.has_indexer_identity}
     )
   end
 
@@ -274,6 +295,8 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.Report do
         is_binary(release.published_at) and String.trim(release.published_at) != ""
       end)
 
+    identified = Enum.count(releases, &(&1.has_indexer_identity == true))
+
     [
       check("prowlarr-sample", :prowlarr_contract, total > 0, %{observed: total}),
       check("prowlarr-anime-category-sample", :prowlarr_contract, anime > 0, %{
@@ -285,6 +308,10 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.Report do
       }),
       check("prowlarr-published-at", :prowlarr_contract, published == total, %{
         complete: published,
+        sampled: total
+      }),
+      check("prowlarr-indexer-identity", :prowlarr_contract, identified == total, %{
+        complete: identified,
         sampled: total
       })
     ]

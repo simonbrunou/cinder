@@ -84,7 +84,16 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTPTest do
       assert conn.params["categories"] in [nil, "5070"]
       assert Plug.Conn.get_req_header(conn, "x-api-key") == ["prowlarr-key"]
 
-      Req.Test.json(conn, [release_fixture()])
+      release =
+        %{
+          release_fixture()
+          | "categories" => [
+              %{"id" => 5070, "name" => "TV/Anime"},
+              %{"id" => 105_070, "name" => nil}
+            ]
+        }
+
+      Req.Test.json(conn, [release])
     end)
 
     assert {:ok, observation} = HTTP.fetch_title(@title, tmdb_config(), prowlarr_config())
@@ -126,9 +135,32 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTPTest do
              title: "[SubsPlease] One Piece - 1122 (1080p) [ABCDEF01]",
              size: 1_400_000_000,
              protocol: "torrent",
-             categories: [%{id: 5070, name: "TV/Anime"}],
-             published_at: "2026-07-01T12:00:00Z"
+             categories: [%{id: 5070, name: "TV/Anime"}, %{id: 105_070, name: nil}],
+             published_at: "2026-07-01T12:00:00Z",
+             has_indexer_identity: true
            }
+  end
+
+  test "derives indexer identity availability without retaining identity values" do
+    stub_tmdb_success()
+
+    releases = [
+      %{release_fixture() | "indexer" => "named-indexer", "indexerId" => nil},
+      %{release_fixture() | "indexer" => nil, "indexerId" => 42},
+      %{release_fixture() | "indexer" => %{"token" => "remote-secret"}, "indexerId" => "42"}
+    ]
+
+    Req.Test.stub(@prowlarr_stub, fn conn -> Req.Test.json(conn, releases) end)
+
+    assert {:ok, %{prowlarr: [%{results: normalized} | _]}} =
+             HTTP.fetch_title(@title, tmdb_config(), prowlarr_config())
+
+    assert Enum.map(normalized, & &1.has_indexer_identity) == [true, true, false]
+
+    refute inspect(normalized) =~ "named-indexer"
+    refute inspect(normalized) =~ "remote-secret"
+    refute inspect(normalized) =~ "indexerId"
+    refute inspect(normalized) =~ "indexer:"
   end
 
   test "uses the matching movie routes and skips episode groups" do
@@ -338,6 +370,72 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTPTest do
     end
   end
 
+  test "rejects malformed TMDB retained scalars with exactly the sanitized error" do
+    secret = %{"token" => "remote-secret"}
+
+    malformed_responses = [
+      %{"/3/search/tv" => %{"results" => [%{"id" => secret, "name" => "One Piece"}]}},
+      %{"/3/search/tv" => %{"results" => [%{"id" => 37_854, "name" => nil}]}},
+      %{"/3/search/tv" => %{"results" => [%{"id" => 37_854, "name" => "  "}]}},
+      %{
+        "/3/search/tv" => %{
+          "results" => [%{"id" => 37_854, "name" => String.duplicate("x", 4_097)}]
+        }
+      },
+      %{"/3/tv/37854/alternative_titles" => %{"results" => [%{"title" => secret}]}},
+      %{"/3/tv/37854" => %{"id" => nil, "name" => "One Piece", "seasons" => []}},
+      %{"/3/tv/37854" => %{"id" => 37_854, "name" => secret, "seasons" => []}},
+      %{
+        "/3/tv/37854" => %{
+          "id" => 37_854,
+          "name" => "One Piece",
+          "seasons" => [%{"season_number" => secret}]
+        }
+      },
+      %{
+        "/3/tv/37854/episode_groups" => %{
+          "results" => [%{"id" => secret, "type" => 2, "name" => "Absolute"}]
+        }
+      },
+      %{
+        "/3/tv/37854/episode_groups" => %{
+          "results" => [%{"id" => "absolute-group", "type" => secret, "name" => "Absolute"}]
+        }
+      },
+      %{
+        "/3/tv/37854/episode_groups" => %{
+          "results" => [%{"id" => "absolute-group", "type" => 2, "name" => secret}]
+        }
+      },
+      group_detail_override(%{"id" => secret}),
+      group_detail_override(%{"type" => secret}),
+      group_detail_override(%{"name" => secret}),
+      group_detail_override(%{"groups" => [%{"order" => secret, "episodes" => [episode()]}]}),
+      group_detail_override(%{
+        "groups" => [%{"order" => 0, "episodes" => [%{episode() | "id" => nil}]}]
+      }),
+      group_detail_override(%{
+        "groups" => [%{"order" => 0, "episodes" => [%{episode() | "order" => secret}]}]
+      }),
+      group_detail_override(%{
+        "groups" => [%{"order" => 0, "episodes" => [%{episode() | "season_number" => secret}]}]
+      }),
+      group_detail_override(%{
+        "groups" => [%{"order" => 0, "episodes" => [%{episode() | "episode_number" => secret}]}]
+      })
+    ]
+
+    for overrides <- malformed_responses do
+      stub_tmdb_responses(overrides)
+      Req.Test.stub(@prowlarr_stub, fn conn -> Req.Test.json(conn, []) end)
+
+      result = HTTP.fetch_title(@title, tmdb_config(), prowlarr_config())
+
+      assert result == {:error, :unexpected_response}
+      refute inspect(result) =~ "remote-secret"
+    end
+  end
+
   test "rejects malformed Prowlarr results and categories with a sanitized error" do
     for payload <- [
           ["remote-secret"],
@@ -345,6 +443,38 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTPTest do
         ] do
       stub_tmdb_success()
       Req.Test.stub(@prowlarr_stub, fn conn -> Req.Test.json(conn, payload) end)
+
+      result = HTTP.fetch_title(@title, tmdb_config(), prowlarr_config())
+
+      assert result == {:error, :unexpected_response}
+      refute inspect(result) =~ "remote-secret"
+    end
+  end
+
+  test "rejects malformed Prowlarr retained scalars with exactly the sanitized error" do
+    secret = %{"api_key" => "remote-secret"}
+
+    malformed_releases = [
+      %{release_fixture() | "title" => nil},
+      %{release_fixture() | "title" => secret},
+      %{release_fixture() | "size" => -1},
+      %{release_fixture() | "size" => secret},
+      %{release_fixture() | "protocol" => secret},
+      %{release_fixture() | "protocol" => " \n "},
+      %{release_fixture() | "protocol" => String.duplicate("x", 4_097)},
+      %{release_fixture() | "categories" => [%{"id" => secret, "name" => "TV/Anime"}]},
+      %{release_fixture() | "categories" => [%{"id" => 5070, "name" => ""}]},
+      %{release_fixture() | "categories" => [%{"id" => 5070, "name" => " \n "}]},
+      %{release_fixture() | "categories" => [%{"id" => 5070, "name" => ["remote-secret"]}]},
+      %{release_fixture() | "categories" => [%{"id" => 5070, "name" => secret}]},
+      %{release_fixture() | "publishDate" => nil},
+      %{release_fixture() | "publishDate" => "not-a-timestamp"},
+      %{release_fixture() | "publishDate" => secret}
+    ]
+
+    for release <- malformed_releases do
+      stub_tmdb_success()
+      Req.Test.stub(@prowlarr_stub, fn conn -> Req.Test.json(conn, [release]) end)
 
       result = HTTP.fetch_title(@title, tmdb_config(), prowlarr_config())
 
@@ -383,6 +513,33 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTPTest do
     Req.Test.stub(@tmdb_stub, fn conn ->
       Req.Test.json(conn, Map.fetch!(responses, conn.request_path))
     end)
+  end
+
+  defp group_detail_override(detail_overrides) do
+    %{
+      "/3/tv/37854/episode_groups" => %{
+        "results" => [%{"id" => "absolute-group", "type" => 2, "name" => "Absolute"}]
+      },
+      "/3/tv/episode_group/absolute-group" =>
+        Map.merge(
+          %{
+            "id" => "absolute-group",
+            "type" => 2,
+            "name" => "Absolute",
+            "groups" => [%{"order" => 0, "episodes" => [episode()]}]
+          },
+          detail_overrides
+        )
+    }
+  end
+
+  defp episode do
+    %{
+      "id" => 12_345,
+      "order" => 0,
+      "season_number" => 1,
+      "episode_number" => 1
+    }
   end
 
   defp tmdb_config(req_options \\ []) do

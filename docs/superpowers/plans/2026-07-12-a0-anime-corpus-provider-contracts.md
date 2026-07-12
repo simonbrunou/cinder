@@ -15,7 +15,10 @@
 - The live probe is read-only: TMDB search/details/alternative-title/episode-group GETs and Prowlarr search GETs only.
 - Tests never hit a network; route every provider call through Req.Test.
 - Apply `redirect: false`, 15-second receive/connect bounds, and `Cinder.HTTPPolicy.bounded_request/2` with a 4 MiB response limit.
-- Generated artifacts may contain release titles, sizes, protocols, category IDs/names, publication timestamps, and fixed official-documentation links. They must never contain credentials, request headers, provider-returned download/magnet/source URLs, indexer IDs/names, cookies, or raw response bodies.
+- Generated artifacts may contain release titles, sizes, protocols, category IDs/names, publication
+  timestamps, a derived `has_indexer_identity` boolean, and fixed official-documentation links.
+  They must never contain credentials, request headers, provider-returned download/magnet/source
+  URLs, indexer IDs/names, cookies, or raw response bodies.
 - TMDB group type `2` means Absolute. Prowlarr anime category `5070` is probed in addition to the uncategorized query.
 - The corpus is versioned. Every must-support query has an exact TMDB ID and explicit capability assertions, and every future parser/resolver/preflight/snapshot behavior has an expected outcome recorded before implementation.
 - A1 cannot begin until the generated report records `a0_status: pass`; metadata-provider choice alone is insufficient when Prowlarr contract gaps remain.
@@ -405,9 +408,14 @@ Stub one Prowlarr result containing `downloadUrl`, `magnetUrl`, `indexerId`, and
   size: 1_400_000_000,
   protocol: "torrent",
   categories: [%{id: 5070, name: "TV/Anime"}],
-  published_at: "2026-07-01T12:00:00Z"
+  published_at: "2026-07-01T12:00:00Z",
+  has_indexer_identity: true
 }
 ```
+
+`has_indexer_identity` is true only when the response supplied a valid non-empty `indexer` name or
+an integer `indexerId`. The normalizer never retains either raw field or value. Missing or
+wrong-type identity evidence becomes `false` so the report can block A0 without leaking identity.
 
 Stub one Absolute episode-group detail and assert its allowlisted entry retains enough identity to audit ordering safely:
 
@@ -471,10 +479,19 @@ defp normalize_release(result) do
       for(%{"id" => id, "name" => name} <- result["categories"] || [],
         do: %{id: id, name: name}
       ),
-    published_at: result["publishDate"]
+    published_at: result["publishDate"],
+    has_indexer_identity:
+      valid_bounded_non_empty_string?(result["indexer"]) or is_integer(result["indexerId"])
   }
 end
 ```
+
+Validate each retained scalar before returning it. Provider IDs, group types/orders, season/episode
+coordinates, and category IDs are integers; sizes are non-negative integers; retained titles,
+group names, protocols, and publication fields are bounded non-empty strings; category names are
+optional display metadata and may be `nil` or a bounded non-empty string; and publication fields
+parse as ISO-8601 timestamps. Blank or container-valued category names and any other malformed
+successful payload return exactly `{:error, :unexpected_response}`.
 
 Build both clients from the existing configs, merge `req_options`, force `redirect: false`, and call `HTTPPolicy.bounded_request(request, 4 * 1024 * 1024)`. Return only `{:error, {:tmdb_status, status}}`, `{:error, {:prowlarr_status, status}}`, or `{:error, atom}`; never embed the request/config/body in errors.
 
@@ -511,7 +528,9 @@ Create synthetic observations proving:
 3. only required absolute/order coverage fails -> `tvdb_required`;
 4. both alias and order families fail -> `provider_council_required`;
 5. metadata checks can select `tmdb_sufficient` while a missing Prowlarr contract field still sets `a0_status` to `blocked`;
-6. no generated JSON or Markdown contains `downloadUrl`, `magnetUrl`, `api_key`, `token`, `indexerId`, or `indexer`.
+6. no generated JSON or Markdown contains raw `downloadUrl`, `magnetUrl`, `api_key`, `token`,
+   `indexerId`, or `indexer` keys/values; the derived `has_indexer_identity` boolean and its stable
+   report check ID are allowed.
 
 Representative assertion:
 
@@ -556,6 +575,9 @@ For each title, emit checks with stable IDs:
 - `prowlarr-results:<query>:<mode>` records a per-query count for evidence but does not fail a title merely because the configured indexers currently have no matching release;
 - aggregate `prowlarr-sample` and `prowlarr-anime-category-sample` pass only when at least one result is observed overall and at least one came from a category-5070 request;
 - aggregate `prowlarr-categories` and `prowlarr-published-at` record coverage counts and pass only when every sampled result contains a non-empty category list and publication timestamp.
+- aggregate `prowlarr-indexer-identity` records availability coverage and passes only when every
+  sampled result has `has_indexer_identity == true`; it is a blocking Prowlarr contract check and
+  never changes metadata-provider selection.
 
 Set `automatic_wrong_mappings` to the count of missing episode IDs plus coordinates that carry more than one distinct episode ID. Repeated identical observations are deduplicated and do not inflate the count. Any nonzero value fails the title regardless of other checks.
 
@@ -760,7 +782,7 @@ unless report["version"] == 1 and valid_decision? and report["a0_status"] in ~w(
 Run:
 
 ```bash
-rg -n 'downloadUrl|magnetUrl|api[_-]?key|authorization|cookie|indexerId|"indexer"|https?://' \
+rg -n 'downloadUrl|magnetUrl|api[_-]?key|authorization|cookie|"indexer(Id)?"[[:space:]]*:|https?://' \
   docs/audits/data/anime-provider-contracts-v1.json
 ```
 

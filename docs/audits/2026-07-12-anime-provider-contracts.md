@@ -99,6 +99,7 @@ Corpus version: `1`
 | --- | --- | --- |
 | prowlarr-anime-category-sample | pass | %{observed: 700} |
 | prowlarr-categories | pass | %{complete: 1400, sampled: 1400} |
+| prowlarr-indexer-identity | pass | %{complete: 1400, sampled: 1400} |
 | prowlarr-published-at | pass | %{complete: 1400, sampled: 1400} |
 | prowlarr-sample | pass | %{observed: 1400} |
 
@@ -713,6 +714,7 @@ Corpus version: `1`
 | one-piece | One Piece | all | One Piece - 1101v2 - 720p WEB x264 -NanDesuKa (CR) | 103312479 | usenet | 5000:TV, 5070:TV/Anime, 105000:, 105070: | 2026-07-07T00:58:38Z |
 | one-piece | One Piece | all | One Piece - Heroines [H3LL][1080p][x264][10bit][AAC][Multi-Subs] | 1346593319 | usenet | 5000:TV, 5070:TV/Anime, 105000:, 105070: | 2026-07-08T21:03:33Z |
 | one-piece | One Piece | all | One Piece Episode 1025 - 1036 [English Dub][720p][Crunchyroll] | 734249970 | usenet | 5000:TV, 5070:TV/Anime, 105000:, 105070: | 2026-07-10T13:03:44Z |
+| one-piece | One Piece | all | One.Piece.E1169.SUBFRENCH.1080p.WEB.x264-AMB3R | 1644498936 | usenet | 2000:Movies, 2010:Movies/Foreign, 102000:, 102010: | 2026-07-12T19:50:07Z |
 | one-piece | One Piece | all | One.Piece.EP1169.1080p.iQ.WEB-DL.JPN.AAC2.0.H.264.MSubs-ToonsHub | 313584436 | usenet | 5000:TV, 5070:TV/Anime, 105000:, 105070: | 2026-07-12T15:57:49Z |
 | one-piece | One Piece | all | One.Piece.EP1169.The.Legend.Lurking.in.Elbaph.The.Identity.of.the.Mountain-Eater.1080p.CR.WEB-DL.JPN.AAC2.0.H.264.ESub-ToonsHub | 1643586016 | usenet | 5000:TV, 5070:TV/Anime, 105000:, 105070: | 2026-07-12T16:20:35Z |
 | one-piece | One Piece | all | One.Piece.EP1169.The.Legend.Lurking.in.Elbaph.The.Identity.of.the.Mountain-Eater.1080p.CR.WEB-DL.JPN.AAC2.0.H.264.ESub-ToonsHub | 1790717315 | usenet | 2000:Movies, 2040:Movies/HD, 102000:, 102040: | 2026-07-12T16:26:53Z |
@@ -740,7 +742,6 @@ Corpus version: `1`
 | one-piece | One Piece | all | [Feibanyama] One Piece Heroines [IQIYI WebRip 2160p HEVC AAC Multi-Subs] | 1614759008 | usenet | 5000:TV, 5070:TV/Anime, 105000:, 105070: | 2026-07-07T01:50:27Z |
 | one-piece | One Piece | all | [HatSubs] One Piece (BD 1080p 10-bit) | 1492527150 | usenet | 5000:TV, 5070:TV/Anime, 105000:, 105070: | 2026-07-09T02:04:25Z |
 | one-piece | One Piece | all | [HatSubs] One Piece 1094 (BD 1080p 10-bit Opus) [EBB00250] | 2433133090 | usenet | 5000:TV, 5070:TV/Anime, 105000:, 105070: | 2026-07-09T01:34:21Z |
-| one-piece | One Piece | all | [HatSubs] One Piece 1094-1099 (BD 1080p 10-bit) | 1476008525 | usenet | 5000:TV, 5070:TV/Anime, 105000:, 105070: | 2026-07-06T18:43:51Z |
 | one-piece | One Piece | all | [HatSubs] One Piece 1095 (BD 1080p 10-bit Opus) [92BC0124] | 2380373676 | usenet | 5000:TV, 5070:TV/Anime, 105000:, 105070: | 2026-07-09T01:38:09Z |
 | one-piece | One Piece | all | [HatSubs] One Piece 1096 (BD 1080p 10-bit Opus) [34AE9755] | 2364083471 | usenet | 5000:TV, 5070:TV/Anime, 105000:, 105070: | 2026-07-09T01:43:25Z |
 | one-piece | One Piece | all | [HatSubs] One Piece 1097 (BD 1080p 10-bit Opus) [AE550B14] | 2294246108 | usenet | 5000:TV, 5070:TV/Anime, 105000:, 105070: | 2026-07-09T01:48:32Z |

@@ -6,6 +6,7 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTP do
   @tmdb_base_url "https://api.themoviedb.org"
   @prowlarr_base_url "http://localhost:9696"
   @max_response_bytes 4 * 1024 * 1024
+  @max_scalar_bytes 4_096
 
   @spec fetch_title(map(), keyword(), keyword()) :: {:ok, map()} | {:error, term()}
   def fetch_title(title, tmdb_config, prowlarr_config) do
@@ -51,7 +52,7 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTP do
             :movie -> body["titles"]
           end
 
-        normalize_maps(alternatives, &%{title: &1["title"]})
+        normalize_maps(alternatives, &normalize_alternative/1)
 
       other ->
         provider_error(:tmdb, other)
@@ -63,12 +64,13 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTP do
 
     case tmdb_request(config, url: path) do
       {:ok, %{status: 200, body: %{"id" => _id} = body}} ->
-        with {:ok, seasons} <-
-               normalize_optional_maps(body["seasons"], &%{season_number: &1["season_number"]}) do
+        with {:ok, id} <- integer(body["id"]),
+             {:ok, title} <- required_string(body[tmdb_title_key(title.kind)]),
+             {:ok, seasons} <- normalize_optional_maps(body["seasons"], &normalize_season/1) do
           {:ok,
            %{
-             id: body["id"],
-             title: body[tmdb_title_key(title.kind)],
+             id: id,
+             title: title,
              seasons: seasons
            }}
         end
@@ -85,9 +87,9 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTP do
       {:ok, %{status: 200, body: %{"results" => groups}}} when is_list(groups) ->
         required_types = MapSet.new([2 | title.expect.required_group_types])
 
-        with {:ok, groups} <- normalize_maps(groups, & &1) do
+        with {:ok, groups} <- normalize_maps(groups, &normalize_group/1) do
           groups
-          |> Enum.filter(&MapSet.member?(required_types, &1["type"]))
+          |> Enum.filter(&MapSet.member?(required_types, &1.type))
           |> map_ok(&tmdb_group(&1, config))
         end
 
@@ -97,14 +99,17 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTP do
   end
 
   defp tmdb_group(group, config) do
-    case tmdb_request(config, url: "/3/tv/episode_group/#{group["id"]}") do
+    case tmdb_request(config, url: "/3/tv/episode_group/#{group.id}") do
       {:ok, %{status: 200, body: body}} when is_map(body) ->
-        with {:ok, entries} <- normalize_group_entries(body["groups"]) do
+        with {:ok, id} <- required_string(body["id"] || group.id),
+             {:ok, type} <- integer(body["type"] || group.type),
+             {:ok, name} <- required_string(body["name"] || group.name),
+             {:ok, entries} <- normalize_group_entries(body["groups"]) do
           {:ok,
            %{
-             id: body["id"] || group["id"],
-             type: body["type"] || group["type"],
-             name: body["name"] || group["name"],
+             id: id,
+             type: type,
+             name: name,
              entries: entries
            }}
         end
@@ -115,24 +120,18 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTP do
   end
 
   defp normalize_group_entries(groups) do
-    with {:ok, groups} <- normalize_maps(groups, & &1),
-         {:ok, entries} <- map_ok(groups, &normalize_episode_group/1) do
+    with {:ok, entries} <- normalize_maps(groups, &normalize_episode_group/1) do
       {:ok, List.flatten(entries)}
     end
   end
 
   defp normalize_episode_group(group) do
-    with {:ok, episodes} <- normalize_maps(group["episodes"], & &1) do
-      {:ok,
-       Enum.map(episodes, fn episode ->
-         %{
-           episode_id: episode["id"],
-           group_order: group["order"],
-           order: episode["order"],
-           season_number: episode["season_number"],
-           episode_number: episode["episode_number"]
-         }
-       end)}
+    case integer(group["order"]) do
+      {:ok, group_order} ->
+        normalize_maps(group["episodes"], &normalize_episode(&1, group_order))
+
+      {:error, _reason} = error ->
+        error
     end
   end
 
@@ -164,28 +163,78 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTP do
   end
 
   defp normalize_prowlarr_results(results, query, mode) do
-    with {:ok, results} <- normalize_maps(Enum.take(results, 50), & &1),
-         {:ok, results} <- map_ok(results, &normalize_release/1) do
+    with {:ok, results} <- normalize_maps(Enum.take(results, 50), &normalize_release/1) do
       {:ok, %{query: query, mode: mode, results: results}}
     end
   end
 
   defp normalize_release(result) do
-    with {:ok, categories} <-
-           normalize_optional_maps(result["categories"], &%{id: &1["id"], name: &1["name"]}) do
+    with {:ok, title} <- required_string(result["title"]),
+         {:ok, size} <- non_negative_integer(result["size"]),
+         {:ok, protocol} <- required_string(result["protocol"]),
+         {:ok, categories} <-
+           normalize_optional_maps(result["categories"], &normalize_category/1),
+         {:ok, published_at} <- timestamp(result["publishDate"]) do
       {:ok,
        %{
-         title: result["title"],
-         size: result["size"],
-         protocol: result["protocol"],
+         title: title,
+         size: size,
+         protocol: protocol,
          categories: categories,
-         published_at: result["publishDate"]
+         published_at: published_at,
+         has_indexer_identity: indexer_identity?(result)
        }}
     end
   end
 
   defp normalize_search_result(result, kind) do
-    %{id: result["id"], title: result[tmdb_title_key(kind)]}
+    with {:ok, id} <- integer(result["id"]),
+         {:ok, title} <- required_string(result[tmdb_title_key(kind)]) do
+      {:ok, %{id: id, title: title}}
+    end
+  end
+
+  defp normalize_alternative(result) do
+    with {:ok, title} <- required_string(result["title"]) do
+      {:ok, %{title: title}}
+    end
+  end
+
+  defp normalize_season(result) do
+    with {:ok, season_number} <- integer(result["season_number"]) do
+      {:ok, %{season_number: season_number}}
+    end
+  end
+
+  defp normalize_group(result) do
+    with {:ok, id} <- required_string(result["id"]),
+         {:ok, type} <- integer(result["type"]),
+         {:ok, name} <- required_string(result["name"]) do
+      {:ok, %{id: id, type: type, name: name}}
+    end
+  end
+
+  defp normalize_episode(result, group_order) do
+    with {:ok, episode_id} <- integer(result["id"]),
+         {:ok, order} <- integer(result["order"]),
+         {:ok, season_number} <- integer(result["season_number"]),
+         {:ok, episode_number} <- integer(result["episode_number"]) do
+      {:ok,
+       %{
+         episode_id: episode_id,
+         group_order: group_order,
+         order: order,
+         season_number: season_number,
+         episode_number: episode_number
+       }}
+    end
+  end
+
+  defp normalize_category(result) do
+    with {:ok, id} <- integer(result["id"]),
+         {:ok, name} <- optional_string(result["name"]) do
+      {:ok, %{id: id, name: name}}
+    end
   end
 
   defp tmdb_request(config, opts) do
@@ -269,11 +318,41 @@ defmodule Mix.Tasks.Cinder.Anime.Probe.HTTP do
   defp normalize_optional_maps(nil, function), do: normalize_maps([], function)
   defp normalize_optional_maps(values, function), do: normalize_maps(values, function)
 
-  defp normalize_maps(values, function) when is_list(values) do
-    if Enum.all?(values, &is_map/1),
-      do: {:ok, Enum.map(values, function)},
-      else: {:error, :unexpected_response}
-  end
+  defp normalize_maps(values, function) when is_list(values),
+    do:
+      map_ok(values, fn
+        value when is_map(value) -> function.(value)
+        _value -> {:error, :unexpected_response}
+      end)
 
   defp normalize_maps(_values, _function), do: {:error, :unexpected_response}
+
+  defp integer(value) when is_integer(value), do: {:ok, value}
+  defp integer(_value), do: {:error, :unexpected_response}
+
+  defp non_negative_integer(value) when is_integer(value) and value >= 0, do: {:ok, value}
+  defp non_negative_integer(_value), do: {:error, :unexpected_response}
+
+  defp required_string(value)
+       when is_binary(value) and byte_size(value) > 0 and byte_size(value) <= @max_scalar_bytes do
+    if String.trim(value) == "", do: {:error, :unexpected_response}, else: {:ok, value}
+  end
+
+  defp required_string(_value), do: {:error, :unexpected_response}
+
+  defp optional_string(nil), do: {:ok, nil}
+  defp optional_string(value), do: required_string(value)
+
+  defp timestamp(value) do
+    with {:ok, value} <- required_string(value),
+         {:ok, _datetime, _offset} <- DateTime.from_iso8601(value) do
+      {:ok, value}
+    else
+      _error -> {:error, :unexpected_response}
+    end
+  end
+
+  defp indexer_identity?(result) do
+    match?({:ok, _name}, required_string(result["indexer"])) or is_integer(result["indexerId"])
+  end
 end

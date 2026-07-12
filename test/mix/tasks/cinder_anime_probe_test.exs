@@ -142,6 +142,7 @@ defmodule Mix.Tasks.Cinder.Anime.ProbeTest do
           "protocol" => "torrent",
           "categories" => [%{"id" => 5070, "name" => "TV/Anime"}],
           "publishDate" => "2026-07-01T12:00:00Z",
+          "indexer" => "private-indexer-name",
           "downloadUrl" => "https://prowlarr.test/download-secret"
         }
       ])
