@@ -1258,15 +1258,20 @@ defmodule Cinder.Catalog do
   def cancel_grab(%Grab{} = grab) do
     result =
       Repo.transaction(fn ->
-        Repo.update_all(from(g in Grab, where: g.id == ^grab.id), set: [updated_at: now()])
-        episode_ids = episode_ids_for_grab(grab.id)
-        series_id = series_id_for_grab(grab.id)
+        case Repo.update_all(from(g in Grab, where: g.id == ^grab.id), set: [updated_at: now()]) do
+          {0, _} ->
+            {grab, [], nil}
 
-        intent_ids =
-          Download.fence_episode_cleanup(episode_ids, [grab_cleanup_spec(grab, episode_ids)])
+          {1, _} ->
+            episode_ids = episode_ids_for_grab(grab.id)
+            series_id = series_id_for_grab(grab.id)
 
-        {:ok, deleted} = Repo.delete(grab, allow_stale: true)
-        {deleted, intent_ids, series_id}
+            intent_ids =
+              Download.fence_episode_cleanup(episode_ids, [grab_cleanup_spec(grab, episode_ids)])
+
+            {:ok, deleted} = Repo.delete(grab, allow_stale: true)
+            {deleted, intent_ids, series_id}
+        end
       end)
 
     with {:ok, {deleted, intent_ids, series_id}} <- result do

@@ -290,6 +290,23 @@ defmodule Cinder.Download.IntentTest do
     refute Repo.get(Intent, intent.id)
   end
 
+  test "cancel_grab is idempotent when the poller deletes the re-read grab first" do
+    series = series_fixture(%{monitor_strategy: :all})
+    season = season_fixture(series)
+    episode = episode_fixture(season)
+    {:ok, grab} = Catalog.create_grab("hash-already-finished", :torrent, [episode.id])
+
+    # Simulate the poller winning after the LiveView re-read but before cancel_grab's transaction.
+    assert {:ok, _deleted} = Repo.delete(grab)
+    refute Repo.get(Grab, grab.id)
+    assert Repo.get!(Cinder.Catalog.Episode, episode.id).grab_id == nil
+
+    assert {:ok, %Grab{id: id}} = Catalog.cancel_grab(grab)
+    assert id == grab.id
+    assert Repo.aggregate(Intent, :count) == 0
+    assert Repo.aggregate(IntentEpisode, :count) == 0
+  end
+
   test "series cancellation commits unmonitoring before cleanup and preserves a crashed fence" do
     series = series_fixture(%{monitor_strategy: :all})
     season = season_fixture(series)
