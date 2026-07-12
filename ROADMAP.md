@@ -5,11 +5,12 @@ Phoenix/LiveView. This roadmap covers the **movies-only vertical slice**: reques
 find the best release → download it → import it into Jellyfin. TV, quality upgrades, and
 multi-user are deliberately out of scope until the slice is solid (see *Parked*, bottom).
 
-> **Status (2026-06-21):** the slice (Phases 0–5) is built and validated live. The active plan
-> is now **Part II — From slice to v1.0** (bottom of this file): turn the POC into a public,
-> open-source, self-hostable product that replaces all three of Radarr (movies), Sonarr (TV),
-> and Seerr (multi-user request/approval). TV and multi-user are **no longer parked** — they are
-> v1.0 scope. Phases 0–5 below are kept as the build record.
+> **Status (2026-07-12):** the original slice and Part II form the current movies+TV product;
+> remaining release sign-offs stay recorded in M8. The next approved feature program is
+> **Part III — Anime-aware media handling** (bottom): make discovery, release matching,
+> numbering, specials, audio/subtitle preferences, and ambiguous-import recovery genuinely
+> anime-aware without creating a third pipeline. A0 is complete; A1 is the next phase.
+> Phases 0–5 and Part II remain the build record.
 
 ## How to run this with Claude Code
 
@@ -759,12 +760,78 @@ check, live TV season-pack smoke test, and cutting `v1.0.0`.
 
 ---
 
+# Part III — Anime-aware media handling
+
+**Design:** `docs/superpowers/specs/2026-07-12-anime-media-handling-design.md`.
+
+**Goal:** beat Sonarr's anime handling while preserving the existing movie and TV pipelines and
+portable Jellyfin/Plex naming. Anime is a handling profile, not a third media type. Stable Cinder
+episode IDs own identity; absolute, scene, provider, and cour-local values are many-to-many
+coordinates used for discovery and acquisition.
+
+**Safety invariant:** no anime import stages or finalizes until every video is uniquely mapped or
+explicitly ignored as an extra, every mapped ID belongs to the grab's reserved target set, and every
+reserved target is mapped exactly once. Unknown, ambiguous, missing, duplicate, and outside mappings
+enter `Needs mapping` with content and retry budgets preserved.
+
+The program is intentionally split into six bounded phases:
+
+### A0 — Corpus and provider contracts
+
+Build the versioned release/mapping corpus and measure TMDB and Prowlarr behavior before choosing an
+additional provider or implementing schema. **Done when:** must-support expected outputs, zero known
+wrong automatic mappings, required Prowlarr fields, safe-stop fixtures, and the provider decision are
+recorded.
+
+**[done 2026-07-12]** Corpus v1 passes with zero known incorrect automatic mappings; the A0 audit
+records the metadata-provider decision, Prowlarr field coverage, and safe-stop fixtures.
+
+### A1 — Identity foundation
+
+Land profiles, request/approval proposals, title aliases, many-to-many coordinates, sourced episode
+classification, selected provider callbacks, refresh rules, and the pure resolver. **Done when:** the
+A0 corpus plus identity, precedence, same-series, refresh, and profile-preservation tests pass and
+`mix test` is green.
+
+### A2 — Anime acquisition
+
+Land additive alias/category searches, context-aware parsing, stable-ID set cover, anime-movie
+selection, preferred-group waiting, and durable intent snapshots. **Done when:** corpus selection is
+correct, standard movie/TV results are unchanged, waiting does not consume attempts, restart loses no
+reservation meaning, and `mix test` is green.
+
+### A3 — Safe import and mapping recovery
+
+Land atomic intent→grab snapshot copy, inventory-bound exact preflight, file roles, `Needs mapping`,
+grab-local correction/promotion, resume/cancel UI, and same-/cross-season canonical naming. **Done
+when:** single/range/batch/many-to-many/mutated-inventory/cross-season fixtures import or stop exactly
+as expected with no partial data loss, and `mix test` is green.
+
+### A4 — Specials and release preferences
+
+Land sourced specials/Season 00 behavior, global and per-title audio/subtitle/group preferences,
+fallback-delay UX, and post-download MediaInfo hard-policy enforcement. **Done when:** story specials
+are controllable, extras cannot bypass preflight, mismatches block/requeue only the exact release,
+preference fixtures pass, and `mix test` is green.
+
+### A5 — Live dogfood and provider sign-off
+
+Run the versioned corpus plus live Jellyfin/Plex single/range/batch/special/cross-season/dual-audio
+paths. Add another service-specific provider only if evidence requires it. **Done when:** designated
+fixtures pass, automatic wrong imports remain zero, unsupported cases stop safely and are documented,
+live library output matches expectations, and the standard suite is green.
+
+One phase per session; each phase gets its own design/plan and commit boundary. Do not start a later
+phase until the current Done-when block is green.
+
+---
+
 ## Parked (out of scope even for v1.0)
 
 *Automatic* quality upgrades & cutoffs (the **manual** upgrade path shipped post-0.7.0: "Find a
 better match" grabs a chosen release for an `:available` movie and atomically swaps the file via
 `:upgrading`) · per-tracker quirks and tracker RSS (v1.0 monitoring polls TMDB) ·
-anime absolute numbering · OIDC / Jellyfin-Plex SSO · per-user permissions finer than
+OIDC / Jellyfin-Plex SSO · per-user permissions finer than
 `admin`/`user` · notification fan-out beyond the M3 `Notifier` seam (Discord/email/etc.) ·
 trending/discover landing pages beyond search · multi-node / hosted multi-tenant (precluded by
 the SQLite decision).

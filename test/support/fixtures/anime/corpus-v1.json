@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "titles": [
+    {
+      "slug": "one-piece",
+      "kind": "tv",
+      "tmdb_id": 37854,
+      "discovery_queries": ["One Piece", "ONE PIECE", "ワンピース"],
+      "prowlarr_queries": ["One Piece", "One Piece 1122"],
+      "expect": {"min_discovery_hits": 3, "required_group_types": [2], "min_absolute_entries": 1000, "require_specials": true}
+    },
+    {
+      "slug": "bleach",
+      "kind": "tv",
+      "tmdb_id": 30984,
+      "discovery_queries": ["Bleach", "BLEACH", "ブリーチ"],
+      "prowlarr_queries": ["Bleach", "Bleach 366"],
+      "expect": {"min_discovery_hits": 3, "required_group_types": [2], "min_absolute_entries": 366, "require_specials": true}
+    },
+    {
+      "slug": "attack-on-titan",
+      "kind": "tv",
+      "tmdb_id": 1429,
+      "discovery_queries": ["Attack on Titan", "Shingeki no Kyojin", "進撃の巨人"],
+      "prowlarr_queries": ["Attack on Titan", "Shingeki no Kyojin"],
+      "expect": {"min_discovery_hits": 3, "required_group_types": [], "min_absolute_entries": 0, "require_specials": true}
+    },
+    {
+      "slug": "re-zero",
+      "kind": "tv",
+      "tmdb_id": 65942,
+      "discovery_queries": ["Re:ZERO -Starting Life in Another World-", "Re Zero", "Re:ゼロから始める異世界生活"],
+      "prowlarr_queries": ["Re Zero", "Re Zero Season 2"],
+      "expect": {"min_discovery_hits": 3, "required_group_types": [], "min_absolute_entries": 0, "require_specials": true}
+    },
+    {
+      "slug": "pokemon",
+      "kind": "tv",
+      "tmdb_id": 60572,
+      "discovery_queries": ["Pokémon", "Pokemon", "ポケットモンスター"],
+      "prowlarr_queries": ["Pokemon", "Pocket Monsters"],
+      "expect": {"min_discovery_hits": 3, "required_group_types": [], "min_absolute_entries": 0, "require_specials": true}
+    },
+    {
+      "slug": "demon-slayer",
+      "kind": "tv",
+      "tmdb_id": 85937,
+      "discovery_queries": ["Demon Slayer: Kimetsu no Yaiba", "Kimetsu no Yaiba", "鬼滅の刃"],
+      "prowlarr_queries": ["Demon Slayer", "Kimetsu no Yaiba"],
+      "expect": {"min_discovery_hits": 3, "required_group_types": [], "min_absolute_entries": 0, "require_specials": false}
+    },
+    {
+      "slug": "your-name",
+      "kind": "movie",
+      "tmdb_id": 372058,
+      "discovery_queries": ["Your Name.", "Kimi no Na wa.", "君の名は。"],
+      "prowlarr_queries": ["Your Name 2016", "Kimi no Na wa"],
+      "expect": {"min_discovery_hits": 3, "required_group_types": [], "min_absolute_entries": 0, "require_specials": false}
+    }
+  ],
+  "behavior_contracts": [
+    {"id":"ordinary-cour-sxxeyy","phase":"A2","kind":"release","input":{"media_profile":"anime","title":"[Group] Demon Slayer - S01E03 [1080p]"},"expect":{"coordinates":[{"scheme":"standard","values":["S01E03"]}],"role":"story","outcome":"candidates"}},
+    {"id":"absolute-over-99","phase":"A2","kind":"release","input":{"media_profile":"anime","title":"[Group] Bleach - 366 [1080p]"},"expect":{"coordinates":[{"scheme":"absolute","values":["366"]}],"role":"story","outcome":"candidates"}},
+    {"id":"absolute-over-999-v2-crc","phase":"A2","kind":"release","input":{"media_profile":"anime","title":"[SubsPlease] One Piece - 1122v2 (1080p) [ABCDEF01]"},"expect":{"coordinates":[{"scheme":"absolute","values":["1122"]}],"role":"story","outcome":"candidates"}},
+    {"id":"split-cour-absolute-range","phase":"A2","kind":"release","input":{"media_profile":"anime","title":"[Group] Re Zero - 25-28 [1080p]"},"expect":{"coordinates":[{"scheme":"absolute","values":["25","26","27","28"]}],"role":"story","outcome":"candidates"}},
+    {"id":"cross-season-batch","phase":"A2","kind":"release","input":{"media_profile":"anime","title":"[Group] Attack on Titan S01E25-S02E01 [1080p]"},"expect":{"coordinates":[{"scheme":"standard","values":["S01E25","S02E01"]}],"role":"story","outcome":"candidates"}},
+    {"id":"dual-audio-dub-ass-markers","phase":"A2","kind":"release","input":{"media_profile":"anime","title":"[Group] Demon Slayer - 07 [Dual Audio][ENG Dub][ASS][1080p]"},"expect":{"coordinates":[{"scheme":"absolute","values":["7"]}],"role":"story","outcome":"candidates"}},
+    {"id":"ova-typed-special","phase":"A2","kind":"release","input":{"media_profile":"anime","title":"[Group] Show OVA 1 [1080p]"},"expect":{"coordinates":[{"scheme":"typed_special","values":["OVA:1"]}],"role":"unknown","outcome":"candidates"}},
+    {"id":"ona-not-automatically-special","phase":"A2","kind":"release","input":{"media_profile":"anime","title":"[Group] Show ONA 1 [1080p]"},"expect":{"coordinates":[{"scheme":"typed_special","values":["ONA:1"]}],"role":"unknown","outcome":"candidates"}},
+    {"id":"recap-is-story-candidate","phase":"A2","kind":"release","input":{"media_profile":"anime","title":"[Group] Show Recap [1080p]"},"expect":{"coordinates":[{"scheme":"typed_special","values":["RECAP"]}],"role":"unknown","outcome":"candidates"}},
+    {"id":"episode-zero","phase":"A2","kind":"release","input":{"media_profile":"anime","title":"[Group] Show - Episode 0 [1080p]"},"expect":{"coordinates":[{"scheme":"typed_special","values":["EPISODE:0"]}],"role":"unknown","outcome":"candidates"}},
+    {"id":"ncop-extra","phase":"A2","kind":"release","input":{"media_profile":"anime","title":"[Group] Show NCOP [1080p]"},"expect":{"coordinates":[],"role":"extra","outcome":"ignore_extra"}},
+    {"id":"nced-extra","phase":"A2","kind":"release","input":{"media_profile":"anime","title":"[Group] Show NCED [1080p]"},"expect":{"coordinates":[],"role":"extra","outcome":"ignore_extra"}},
+    {"id":"trailer-extra","phase":"A2","kind":"release","input":{"media_profile":"anime","title":"[Group] Show Trailer 2 [1080p]"},"expect":{"coordinates":[],"role":"extra","outcome":"ignore_extra"}},
+    {"id":"ambiguous-bare-number","phase":"A2","kind":"release","input":{"media_profile":"anime","title":"[Group] 86 - 2024 [1080p] [ABCDEF01]"},"expect":{"coordinates":[],"role":"unknown","outcome":"unmatched"}},
+    {"id":"anime-movie-release","phase":"A2","kind":"release","input":{"media_profile":"anime","title":"[Group] Your Name (2016) [Dual Audio][1080p]"},"expect":{"coordinates":[],"role":"story","outcome":"movie_candidate"}},
+    {"id":"coordinate-to-many","phase":"A1","kind":"resolver","input":{"coordinates":["fixture:absolute:12"],"memberships":{"fixture:absolute:12":["episode-a","episode-b"]}},"expect":{"episode_keys":["episode-a","episode-b"],"outcome":"resolved"}},
+    {"id":"coordinates-to-one","phase":"A1","kind":"resolver","input":{"coordinates":["fixture:absolute:12","fixture:standard:S01E12"],"memberships":{"fixture:absolute:12":["episode-a"],"fixture:standard:S01E12":["episode-a"]}},"expect":{"episode_keys":["episode-a"],"outcome":"resolved"}},
+    {"id":"unknown-video-needs-mapping","phase":"A3","kind":"preflight","input":{"videos":["mystery.mkv"],"reserved":["episode-a"],"mappings":{}},"expect":{"reason":"unknown_video","outcome":"needs_mapping"}},
+    {"id":"duplicate-target-needs-mapping","phase":"A3","kind":"preflight","input":{"videos":["a.mkv","b.mkv"],"reserved":["episode-a"],"mappings":{"a.mkv":["episode-a"],"b.mkv":["episode-a"]}},"expect":{"reason":"duplicate_target","outcome":"needs_mapping"}},
+    {"id":"outside-reservation-needs-mapping","phase":"A3","kind":"preflight","input":{"videos":["a.mkv"],"reserved":["episode-a"],"mappings":{"a.mkv":["episode-b"]}},"expect":{"reason":"outside_reservation","outcome":"needs_mapping"}},
+    {"id":"explicit-extra-can-ignore","phase":"A3","kind":"preflight","input":{"videos":["story.mkv","NCOP.mkv"],"reserved":["episode-a"],"mappings":{"story.mkv":["episode-a"],"NCOP.mkv":"ignore_extra"}},"expect":{"outcome":"ready"}},
+    {"id":"sidecar-does-not-count-as-video","phase":"A3","kind":"preflight","input":{"videos":["story.mkv"],"sidecars":["story.ass"],"reserved":["episode-a"],"mappings":{"story.mkv":["episode-a"]}},"expect":{"outcome":"ready"}},
+    {"id":"ambiguous-coordinate-needs-mapping","phase":"A1","kind":"resolver","input":{"coordinates":["fixture:absolute:12","fixture:scene:12"],"memberships":{"fixture:absolute:12":["episode-a"],"fixture:scene:12":["episode-b"]}},"expect":{"outcome":"ambiguous"}},
+    {"id":"provider-renumbering-preserves-active-work","phase":"A1","kind":"snapshot","input":{"coordinate":"fixture:absolute:12","snapshot_episode_keys":["episode-a"],"refreshed_episode_keys":["episode-b"]},"expect":{"active_episode_keys":["episode-a"],"future_episode_keys":["episode-b"]}}
+  ]
+}
