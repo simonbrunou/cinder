@@ -22,6 +22,7 @@ defmodule CinderWeb.SettingsLive do
      assign(socket,
        form: Settings.form_state(),
        health: %{},
+       open_groups: first_group(),
        auto_approve_all: Settings.auto_approve_all?()
      )}
   end
@@ -36,7 +37,12 @@ defmodule CinderWeb.SettingsLive do
          |> put_flash(:info, gettext("Settings saved."))}
 
       {:error, invalid_keys} ->
-        {:noreply, put_flash(socket, :error, invalid_band_message(invalid_keys))}
+        {:noreply,
+         socket
+         |> assign(
+           open_groups: MapSet.union(socket.assigns.open_groups, invalid_groups(invalid_keys))
+         )
+         |> put_flash(:error, invalid_band_message(invalid_keys))}
     end
   end
 
@@ -85,7 +91,7 @@ defmodule CinderWeb.SettingsLive do
       </.link>
 
       <form id="settings-form" phx-submit="save" class="space-y-8">
-        <.service_fields form={@form} health={@health} />
+        <.service_fields form={@form} health={@health} open_groups={@open_groups} />
         <.button type="submit" phx-disable-with={gettext("Saving…")}>
           {gettext("Save settings")}
         </.button>
@@ -109,5 +115,17 @@ defmodule CinderWeb.SettingsLive do
       </div>
     </Layouts.app>
     """
+  end
+
+  defp first_group do
+    Settings.groups() |> Enum.take(1) |> Enum.map(&elem(&1, 0)) |> MapSet.new()
+  end
+
+  defp invalid_groups(keys) do
+    keys
+    |> Enum.map(fn key ->
+      if key == Settings.import_roots_key(), do: :library, else: :releases
+    end)
+    |> MapSet.new()
   end
 end

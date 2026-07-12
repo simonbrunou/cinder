@@ -6,6 +6,38 @@ defmodule CinderWeb.SharedComponentsTest do
 
   alias CinderWeb.CoreComponents
 
+  describe "interactive target sizing" do
+    test "compact buttons keep a 24px minimum target" do
+      for size <- ["xs", "sm"] do
+        html =
+          render_component(&CoreComponents.button/1, %{
+            size: size,
+            inner_block: [%{__slot__: :inner_block, inner_block: fn _, _ -> "Test" end}]
+          })
+
+        assert html =~ "min-h-6"
+        assert html =~ "min-w-6"
+      end
+    end
+
+    test "primary buttons and flash dismiss controls meet their target policy" do
+      button =
+        render_component(&CoreComponents.button/1, %{
+          inner_block: [%{__slot__: :inner_block, inner_block: fn _, _ -> "Save" end}]
+        })
+
+      flash =
+        render_component(&CoreComponents.flash/1, %{
+          kind: :info,
+          inner_block: [%{__slot__: :inner_block, inner_block: fn _, _ -> "Saved" end}]
+        })
+
+      assert button =~ "min-h-11"
+      assert flash =~ "min-h-6"
+      assert flash =~ "min-w-6"
+    end
+  end
+
   describe "confirm_action/1" do
     defp confirm(assigns) do
       render_component(

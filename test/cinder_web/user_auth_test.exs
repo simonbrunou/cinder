@@ -20,6 +20,40 @@ defmodule CinderWeb.UserAuthTest do
     %{user: %{user_fixture() | authenticated_at: DateTime.utc_now(:second)}, conn: conn}
   end
 
+  describe "page_title/1" do
+    test "maps every routed LiveView, including dynamic routes, to its section" do
+      routes = %{
+        "/" => "Discover",
+        "/my-requests" => "My requests",
+        "/series/tmdb/123" => "Discover",
+        "/dashboard" => "Dashboard",
+        "/activity" => "Activity",
+        "/settings" => "Settings",
+        "/requests" => "Requests",
+        "/users" => "Users",
+        "/library" => "Library",
+        "/movies/123" => "Library",
+        "/series/123" => "Library",
+        "/calendar" => "Calendar",
+        "/setup" => "Setup",
+        "/users/settings" => "Account",
+        "/users/settings/confirm-email/token" => "Account",
+        "/users/register" => "Register",
+        "/users/log-in" => "Log in"
+      }
+
+      assert Map.new(routes, fn {path, _title} -> {path, UserAuth.page_title(path)} end) == routes
+    end
+
+    test "localizes route titles" do
+      Gettext.put_locale(CinderWeb.Gettext, "fr")
+      on_exit(fn -> Gettext.put_locale(CinderWeb.Gettext, "en") end)
+
+      assert UserAuth.page_title("/settings") == "Paramètres"
+      assert UserAuth.page_title("/users/log-in") == "Se connecter"
+    end
+  end
+
   describe "log_in_user/3" do
     test "stores the user token in the session", %{conn: conn, user: user} do
       conn = UserAuth.log_in_user(conn, user)

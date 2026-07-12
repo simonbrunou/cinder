@@ -25,6 +25,40 @@ defmodule CinderWeb.SettingsLiveTest do
     assert html =~ "Save settings"
   end
 
+  test "renders stable keyboard-native group disclosures inside one form", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    groups = Settings.groups() |> Enum.map(&elem(&1, 0))
+    assert has_element?(lv, "form#settings-form")
+
+    for group <- groups do
+      assert has_element?(lv, "#settings-group-#{group} > summary")
+      assert has_element?(lv, "#settings-group-#{group} [name]")
+    end
+
+    assert has_element?(lv, "#settings-group-#{hd(groups)}[open]")
+  end
+
+  test "opens the group containing invalid fields", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    lv
+    |> form("#settings-form", %{
+      "movies_min_size" => "invalid",
+      "media_server_type" => "jellyfin"
+    })
+    |> render_submit()
+
+    assert has_element?(lv, "#settings-group-releases[open]")
+  end
+
+  test "mobile save and service test actions use full-size targets", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    assert has_element?(lv, "#settings-form button[type=submit].min-h-11")
+    assert has_element?(lv, "#settings-form button[phx-click=test].min-h-11")
+  end
+
   test "saving import roots persists a non-secret download boundary", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/settings")
 

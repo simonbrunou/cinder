@@ -291,19 +291,44 @@ defmodule CinderWeb.UserAuth do
     end
   end
 
-  # Assigns `@current_path` on initial mount and every live navigation so layouts can
-  # highlight the active nav item. Read-only: attaches a `:handle_params` hook and never
-  # halts, so it does not affect authorization.
+  # Assigns route metadata on initial mount and every live navigation so layouts can
+  # highlight the active nav item and render a useful document title. Read-only: attaches
+  # a `:handle_params` hook and never halts, so it does not affect authorization.
   def on_mount(:current_path, _params, _session, socket) do
     socket =
       Phoenix.LiveView.attach_hook(socket, :current_path, :handle_params, fn _params,
                                                                              uri,
                                                                              socket ->
-        {:cont, Phoenix.Component.assign(socket, :current_path, URI.parse(uri).path)}
+        path = URI.parse(uri).path
+
+        {:cont,
+         Phoenix.Component.assign(socket,
+           current_path: path,
+           page_title: page_title(path)
+         )}
       end)
 
     {:cont, socket}
   end
+
+  @doc "Returns the localized section title for a routed LiveView path."
+  def page_title("/"), do: gettext("Discover")
+  def page_title("/my-requests"), do: gettext("My requests")
+  def page_title("/dashboard"), do: gettext("Dashboard")
+  def page_title("/activity"), do: gettext("Activity")
+  def page_title("/settings"), do: gettext("Settings")
+  def page_title("/requests"), do: gettext("Requests")
+  def page_title("/users"), do: gettext("Users")
+  def page_title("/library"), do: gettext("Library")
+  def page_title("/calendar"), do: gettext("Calendar")
+  def page_title("/setup"), do: gettext("Setup")
+  def page_title("/users/register"), do: gettext("Register")
+  def page_title("/users/log-in"), do: gettext("Log in")
+  def page_title("/series/tmdb/" <> _id), do: gettext("Discover")
+  def page_title("/movies/" <> _id), do: gettext("Library")
+  def page_title("/series/" <> _id), do: gettext("Library")
+  def page_title("/users/settings" <> _rest), do: gettext("Account")
+  def page_title(_path), do: "Cinder"
 
   defp enforce_setup?, do: Application.get_env(:cinder, :enforce_setup, true)
 
