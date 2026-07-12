@@ -9,7 +9,7 @@ multi-user are deliberately out of scope until the slice is solid (see *Parked*,
 > remaining release sign-offs stay recorded in M8. The next approved feature program is
 > **Part III — Anime-aware media handling** (bottom): make discovery, release matching,
 > numbering, specials, audio/subtitle preferences, and ambiguous-import recovery genuinely
-> anime-aware without creating a third pipeline. A0 is the next phase after written-spec review.
+> anime-aware without creating a third pipeline. A0 is complete; A1 is the next phase.
 > Phases 0–5 and Part II remain the build record.
 
 ## How to run this with Claude Code

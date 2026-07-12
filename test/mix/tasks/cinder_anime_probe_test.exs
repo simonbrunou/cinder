@@ -8,6 +8,45 @@ defmodule Mix.Tasks.Cinder.Anime.ProbeTest do
 
   @tmdb_stub __MODULE__.TMDBStub
   @prowlarr_stub __MODULE__.ProwlarrStub
+  @worker_modules [
+    Cinder.Download.Poller,
+    Cinder.Download.TvPoller,
+    Cinder.Catalog.Refresher,
+    Cinder.Subtitles.Sweeper
+  ]
+
+  test "starts the application without background workers and restores configuration" do
+    script = """
+    Application.put_env(:cinder, :start_poller, true)
+
+    try do
+      Mix.Tasks.Cinder.Anime.Probe.run(["--corpus", "/missing-anime-probe-corpus"])
+    rescue
+      File.Error -> :ok
+    end
+
+    child_ids =
+      Cinder.Supervisor
+      |> Supervisor.which_children()
+      |> Enum.map(&elem(&1, 0))
+
+    workers = #{inspect(@worker_modules)}
+    result = {Enum.filter(workers, &(&1 in child_ids)), Application.fetch_env!(:cinder, :start_poller)}
+
+    IO.puts("PROBE_STARTUP_RESULT=" <> Base.encode64(:erlang.term_to_binary(result)))
+    System.halt(0)
+    """
+
+    {output, 0} =
+      System.cmd(System.find_executable("mix"), ["run", "--no-start", "-e", script],
+        env: [{"MIX_ENV", "test"}],
+        stderr_to_stdout: true
+      )
+
+    [encoded] = Regex.run(~r/PROBE_STARTUP_RESULT=(\S+)/, output, capture: :all_but_first)
+    assert {[], true} = encoded |> Base.decode64!() |> :erlang.binary_to_term([:safe])
+    assert Application.fetch_env!(:cinder, :start_poller) == false
+  end
 
   @tag :tmp_dir
   test "writes sanitized JSON and Markdown artifacts", %{tmp_dir: tmp_dir} do

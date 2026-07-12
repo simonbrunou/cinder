@@ -13,7 +13,7 @@ defmodule Mix.Tasks.Cinder.Anime.Probe do
     {opts, rest, invalid} = OptionParser.parse(args, strict: @switches)
     if rest != [] or invalid != [], do: Mix.raise("invalid anime probe options")
 
-    Mix.Task.run("app.start")
+    start_read_only_app()
 
     corpus_path = opts[:corpus] || "test/support/fixtures/anime/corpus-v1.json"
     json_path = opts[:json] || "docs/audits/data/anime-provider-contracts-v1.json"
@@ -53,6 +53,22 @@ defmodule Mix.Tasks.Cinder.Anime.Probe do
 
     config
   end
+
+  defp start_read_only_app do
+    start_poller = Application.fetch_env(:cinder, :start_poller)
+    Application.put_env(:cinder, :start_poller, false)
+
+    try do
+      Mix.Task.run("app.start")
+    after
+      restore_start_poller(start_poller)
+    end
+  end
+
+  defp restore_start_poller({:ok, value}),
+    do: Application.put_env(:cinder, :start_poller, value)
+
+  defp restore_start_poller(:error), do: Application.delete_env(:cinder, :start_poller)
 
   defp atomic_write!(path, contents) do
     File.mkdir_p!(Path.dirname(path))
