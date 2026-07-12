@@ -76,25 +76,23 @@ defmodule CinderWeb.SetupLiveTest do
     assert html =~ "OK"
   end
 
-  test "disclosure state survives service tests and validation", %{conn: conn} do
+  test "native disclosures avoid server events and successful validation resets form state", %{
+    conn: conn
+  } do
     admin = Cinder.AccountsFixtures.admin_fixture()
     conn = log_in_user(conn, admin)
     stub_all_services_ok()
 
     {:ok, lv, _html} = live(conn, ~p"/setup")
-    lv |> element("#settings-group-tmdb > summary") |> render_click()
-    lv |> element("#settings-group-indexer > summary") |> render_click()
-
-    refute has_element?(lv, "#settings-group-tmdb[open]")
-    assert has_element?(lv, "#settings-group-indexer[open]")
+    assert has_element?(lv, ~s|#setup-form[phx-hook="FormState"][data-form-revision="0"]|)
+    assert has_element?(lv, "#settings-group-tmdb[phx-hook=DisclosureState]")
+    refute has_element?(lv, "#settings-group-tmdb > summary[phx-click]")
 
     lv |> element("button", "Test TMDB") |> render_click()
-    refute has_element?(lv, "#settings-group-tmdb[open]")
-    assert has_element?(lv, "#settings-group-indexer[open]")
+    assert has_element?(lv, ~s|#setup-form[data-form-revision="0"]|)
 
     lv |> form("#setup-form", @valid_params) |> render_submit()
-    refute has_element?(lv, "#settings-group-tmdb[open]")
-    assert has_element?(lv, "#settings-group-indexer[open]")
+    assert has_element?(lv, ~s|#setup-form[data-form-revision="1"]|)
   end
 
   test "invalid setup preserves safe values and opens, describes, and focuses the field", %{

@@ -4,11 +4,13 @@ defmodule CinderWeb.SettingsLiveTest do
   use CinderWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
+  import Mox
 
   alias Cinder.Settings
 
   setup :register_and_log_in_admin
   setup :reset_cinder_env
+  setup :set_mox_global
 
   test "renders the grouped settings form", %{conn: conn} do
     {:ok, _lv, html} = live(conn, ~p"/settings")
@@ -39,14 +41,15 @@ defmodule CinderWeb.SettingsLiveTest do
     assert has_element?(lv, "#settings-group-#{hd(groups)}[open]")
   end
 
-  test "server-owned disclosure state survives invalid form patches", %{conn: conn} do
+  test "disclosures keep native toggles local and force-open only invalid groups", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/settings")
 
-    lv |> element("#settings-group-tmdb > summary") |> render_click()
-    refute has_element?(lv, "#settings-group-tmdb[open]")
+    assert has_element?(
+             lv,
+             ~s|#settings-group-tmdb[phx-hook="DisclosureState"][data-force-open="false"]|
+           )
 
-    lv |> element("#settings-group-library > summary") |> render_click()
-    assert has_element?(lv, "#settings-group-library[open]")
+    refute has_element?(lv, "#settings-group-tmdb > summary[phx-click]")
 
     lv
     |> form("#settings-form", %{
@@ -55,12 +58,25 @@ defmodule CinderWeb.SettingsLiveTest do
     })
     |> render_submit()
 
-    refute has_element?(lv, "#settings-group-tmdb[open]")
-    assert has_element?(lv, "#settings-group-library[open]")
-    assert has_element?(lv, "#settings-group-releases[open]")
+    assert has_element?(lv, ~s|#settings-group-tmdb[data-force-open="false"]|)
+    assert has_element?(lv, ~s|#settings-group-releases[open][data-force-open="true"]|)
+  end
 
-    lv |> element("#settings-group-tmdb > summary") |> render_click()
-    assert has_element?(lv, "#settings-group-tmdb[open]")
+  test "service patches preserve the form revision while a successful save resets it", %{
+    conn: conn
+  } do
+    stub(Cinder.Catalog.TMDBMock, :health, fn -> :ok end)
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    assert has_element?(lv, ~s|#settings-form[phx-hook="FormState"][data-form-revision="0"]|)
+    lv |> element("button", "Test TMDB") |> render_click()
+    assert has_element?(lv, ~s|#settings-form[data-form-revision="0"]|)
+
+    lv
+    |> form("#settings-form", %{"media_server_type" => "jellyfin"})
+    |> render_submit()
+
+    assert has_element?(lv, ~s|#settings-form[data-form-revision="1"]|)
   end
 
   test "opens the group containing invalid fields", %{conn: conn} do

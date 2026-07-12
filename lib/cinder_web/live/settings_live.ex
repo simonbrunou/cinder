@@ -22,7 +22,7 @@ defmodule CinderWeb.SettingsLive do
      assign(socket,
        form: Settings.form_state(),
        health: %{},
-       open_groups: initial_open_groups(),
+       form_revision: 0,
        auto_approve_all: Settings.auto_approve_all?()
      )}
   end
@@ -33,23 +33,20 @@ defmodule CinderWeb.SettingsLive do
       :ok ->
         {:noreply,
          socket
-         |> assign(form: Settings.form_state(), health: %{})
+         |> assign(
+           form: Settings.form_state(),
+           health: %{},
+           form_revision: socket.assigns.form_revision + 1
+         )
          |> put_flash(:info, gettext("Settings saved."))}
 
       {:error, invalid_keys} ->
         {:noreply,
          socket
-         |> assign(
-           form: Settings.form_state(params, invalid_keys),
-           open_groups: MapSet.union(socket.assigns.open_groups, invalid_groups(invalid_keys))
-         )
+         |> assign(form: Settings.form_state(params, invalid_keys))
          |> push_event("focus-invalid", %{id: List.first(invalid_keys)})
          |> put_flash(:error, invalid_band_message(invalid_keys))}
     end
-  end
-
-  def handle_event("toggle_group", %{"group" => group}, socket) do
-    {:noreply, assign(socket, open_groups: toggle_open_group(socket.assigns.open_groups, group))}
   end
 
   # Probes the saved config synchronously (each impl health/0 has a ~3s timeout).
@@ -96,8 +93,14 @@ defmodule CinderWeb.SettingsLive do
         <.icon name="hero-arrow-left" class="size-3.5" />{gettext("Dashboard")}
       </.link>
 
-      <form id="settings-form" phx-submit="save" class="space-y-8">
-        <.service_fields form={@form} health={@health} open_groups={@open_groups} />
+      <form
+        id="settings-form"
+        phx-submit="save"
+        phx-hook="FormState"
+        data-form-revision={@form_revision}
+        class="space-y-8"
+      >
+        <.service_fields form={@form} health={@health} />
         <.button type="submit" phx-disable-with={gettext("Saving…")}>
           {gettext("Save settings")}
         </.button>

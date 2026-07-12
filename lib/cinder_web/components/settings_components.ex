@@ -23,23 +23,7 @@ defmodule CinderWeb.SettingsComponents do
     )
   end
 
-  def initial_open_groups do
-    Settings.groups() |> Enum.take(1) |> Enum.map(&elem(&1, 0)) |> MapSet.new()
-  end
-
-  def toggle_open_group(open_groups, group_name) do
-    case Enum.find(Settings.groups(), &(to_string(elem(&1, 0)) == group_name)) do
-      {group, _label} ->
-        if MapSet.member?(open_groups, group),
-          do: MapSet.delete(open_groups, group),
-          else: MapSet.put(open_groups, group)
-
-      nil ->
-        open_groups
-    end
-  end
-
-  def invalid_groups(keys) do
+  defp invalid_groups(keys) do
     keys
     |> Enum.map(fn key ->
       if key == Settings.import_roots_key(), do: :library, else: :releases
@@ -49,29 +33,28 @@ defmodule CinderWeb.SettingsComponents do
 
   attr :form, :map, required: true
   attr :health, :map, required: true
-  attr :open_groups, :any, default: nil
   # move_on_import is a /settings-only advanced toggle; the first-run wizard passes false
   # so it isn't offered before the operator has validated a real import (spec: settings-only).
   attr :show_move_on_import, :boolean, default: true
 
   def service_fields(assigns) do
-    open_groups =
-      assigns.open_groups || initial_open_groups()
+    [{first_group, _label} | _groups] = Settings.groups()
 
-    assigns = assign(assigns, :open_groups, open_groups)
+    assigns =
+      assigns
+      |> assign(:first_group, first_group)
+      |> assign(:invalid_groups, invalid_groups(assigns.form.invalid_keys))
 
     ~H"""
     <details
       :for={{group, label} <- Settings.groups()}
       id={"settings-group-#{group}"}
-      open={MapSet.member?(@open_groups, group)}
+      open={group == @first_group or MapSet.member?(@invalid_groups, group)}
+      phx-hook="DisclosureState"
+      data-force-open={to_string(MapSet.member?(@invalid_groups, group))}
       class="rounded-box bg-base-200"
     >
-      <summary
-        class="min-h-11 cursor-pointer px-4 py-3 text-lg font-semibold focus-visible:outline-2 focus-visible:outline-primary"
-        phx-click="toggle_group"
-        phx-value-group={group}
-      >
+      <summary class="min-h-11 cursor-pointer px-4 py-3 text-lg font-semibold focus-visible:outline-2 focus-visible:outline-primary">
         {SettingsLabels.t(label)}
       </summary>
 
