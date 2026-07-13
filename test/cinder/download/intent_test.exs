@@ -166,6 +166,20 @@ defmodule Cinder.Download.IntentTest do
     assert Repo.aggregate(Grab, :count) == 0
   end
 
+  test "direct incomplete episodic intent is rejected before restart reconciliation client I/O" do
+    series = series_fixture(%{monitor_strategy: :all})
+    episode = episode_fixture(season_fixture(series))
+
+    assert_invalid_episode_intent_rejected([episode.id, -1], [episode])
+  end
+
+  test "direct mixed-series intent is rejected before restart reconciliation client I/O" do
+    first = episode_fixture(season_fixture(series_fixture(%{monitor_strategy: :all})))
+    second = episode_fixture(season_fixture(series_fixture(%{monitor_strategy: :all})))
+
+    assert_invalid_episode_intent_rejected([first.id, second.id], [first, second])
+  end
+
   test "Standard movie and TV reservations and owners keep policy nil" do
     movie = movie_fixture(%{status: :no_match, media_profile: :standard})
 
@@ -1349,6 +1363,39 @@ defmodule Cinder.Download.IntentTest do
        |> Intent.changeset(%{status: :submitted, remote_id: remote_id})
        |> Repo.update!()}
     end
+  end
+
+  defp assert_invalid_episode_intent_rejected(episode_ids, episodes) do
+    chosen = release("Direct.Invalid.Episodes")
+
+    assert {:ok, intent} =
+             Download.reserve_intent(%{
+               kind: :season_pack,
+               target_id: hd(episode_ids),
+               episode_ids: episode_ids,
+               protocol: chosen.protocol,
+               release: chosen
+             })
+
+    calls = start_supervised!({Agent, fn -> 0 end})
+
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _operation_key ->
+      Agent.update(calls, &(&1 + 1))
+      :not_found
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+      Agent.update(calls, &(&1 + 1))
+      {:ok, "hash-invalid-episodic-intent"}
+    end)
+
+    assert {:error, :episode_series_mismatch} =
+             Download.reconcile_intent(Repo.reload!(intent))
+
+    assert Agent.get(calls, & &1) == 0
+    refute Repo.get(Intent, intent.id)
+    assert Repo.aggregate(Grab, :count) == 0
+    Enum.each(episodes, &refute(Repo.reload!(&1).grab_id))
   end
 
   defp release_policy_snapshot(title) do
