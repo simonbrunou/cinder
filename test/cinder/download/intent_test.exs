@@ -3,7 +3,7 @@ defmodule Cinder.Download.IntentTest do
 
   import Mox
 
-  alias Cinder.Acquisition.Release
+  alias Cinder.Acquisition.{Anime, Release}
   alias Cinder.Catalog
   alias Cinder.Catalog.Grab
   alias Cinder.Download
@@ -15,6 +15,81 @@ defmodule Cinder.Download.IntentTest do
 
   setup :set_mox_global
   setup :verify_on_exit!
+
+  test "episodic reservation persists an immutable snapshot after Catalog evidence changes" do
+    fixture = anime_reservation_fixture()
+
+    assert {:ok, intent} = reserve_anime_intent(fixture)
+    assert Repo.reload(intent).mapping_snapshot == fixture.snapshot
+
+    assert Enum.map(Repo.all(IntentEpisode), & &1.episode_id) |> Enum.sort() ==
+             Enum.sort([fixture.first.id, fixture.second.id])
+
+    Repo.delete!(fixture.coordinate)
+    assert Repo.reload(intent).mapping_snapshot == fixture.snapshot
+
+    ignored = Intent.changeset(intent, %{mapping_snapshot: %{"version" => 999}})
+    refute get_change(ignored, :mapping_snapshot)
+    assert {:ok, unchanged} = Repo.update(ignored)
+    assert unchanged.mapping_snapshot == fixture.snapshot
+
+    immutable = Intent.reservation_changeset(unchanged, %{mapping_snapshot: fixture.snapshot})
+    assert "is immutable" in errors_on(immutable).mapping_snapshot
+  end
+
+  test "reservation rejects mismatched markers and malformed version-one snapshots explicitly" do
+    fixture = anime_reservation_fixture()
+
+    assert {:error, :invalid_mapping_snapshot} =
+             Download.reserve_intent(%{
+               kind: :season_pack,
+               target_id: fixture.first.id,
+               episode_ids: [fixture.first.id, fixture.second.id],
+               protocol: :torrent,
+               release: %{fixture.release | mapping_snapshot: nil},
+               mapping_snapshot: fixture.snapshot
+             })
+
+    assert {:error, :invalid_mapping_snapshot} =
+             Download.reserve_intent(%{
+               kind: :season_pack,
+               target_id: fixture.first.id,
+               episode_ids: [fixture.first.id, fixture.second.id],
+               protocol: :torrent,
+               release: fixture.release,
+               mapping_snapshot: nil
+             })
+
+    for {label, invalid} <- invalid_snapshots(fixture.snapshot) do
+      marked = %{fixture.release | mapping_snapshot: invalid}
+
+      assert {:error, :invalid_mapping_snapshot} =
+               Download.reserve_intent(%{
+                 kind: :season_pack,
+                 target_id: fixture.first.id,
+                 episode_ids: [fixture.first.id, fixture.second.id],
+                 protocol: :torrent,
+                 release: marked,
+                 mapping_snapshot: invalid
+               }),
+             label
+    end
+
+    movie = movie_fixture()
+
+    assert {:error, :invalid_mapping_snapshot} =
+             Download.reserve_intent(%{
+               kind: :movie,
+               target_id: movie.id,
+               episode_ids: [],
+               protocol: :torrent,
+               release: fixture.release,
+               mapping_snapshot: fixture.snapshot
+             })
+
+    assert Repo.aggregate(Intent, :count) == 0
+    assert Repo.aggregate(IntentEpisode, :count) == 0
+  end
 
   test "reserve_intent/1 generates a unique key and stores only resubmission fields" do
     release = %Release{
@@ -832,6 +907,128 @@ defmodule Cinder.Download.IntentTest do
       protocol: :torrent,
       release: chosen
     })
+  end
+
+  defp anime_reservation_fixture do
+    series = series_fixture(%{monitor_strategy: :all})
+    season = season_fixture(series)
+    first = episode_fixture(season, episode_number: 1)
+    second = episode_fixture(season, episode_number: 2)
+
+    assert {:ok, coordinate} =
+             Catalog.put_episode_coordinate(
+               series,
+               %{
+                 source: "manual",
+                 scheme: "absolute",
+                 namespace: "manual",
+                 canonical_value: "1-2",
+                 precedence: :manual
+               },
+               [first.id, second.id]
+             )
+
+    context = Catalog.anime_series_acquisition_context(series)
+
+    candidate = %Release{
+      title: "[Group] Show S01E01-S01E02 [1080p]",
+      size: 4_000_000_000,
+      download_url: "magnet:?xt=urn:btih:anime-snapshot",
+      protocol: :torrent,
+      resolution: "1080p"
+    }
+
+    assert {:ok, %{assignments: [assignment]}} =
+             Anime.select_episodes([candidate], context, [first.id, second.id], [])
+
+    %{
+      first: first,
+      second: second,
+      coordinate: coordinate,
+      release: assignment.release,
+      snapshot: assignment.mapping_snapshot
+    }
+  end
+
+  defp reserve_anime_intent(fixture) do
+    Download.reserve_intent(%{
+      kind: :season_pack,
+      target_id: fixture.first.id,
+      episode_ids: [fixture.first.id, fixture.second.id],
+      protocol: :torrent,
+      release: fixture.release,
+      mapping_snapshot: fixture.snapshot
+    })
+  end
+
+  defp invalid_snapshots(snapshot) do
+    first_value = get_in(snapshot, ["selected_resolution", "values", Access.at(0)])
+    second_value = get_in(snapshot, ["selected_resolution", "values", Access.at(1)])
+    first_identity = hd(first_value["mapping_identities"])
+
+    [
+      {"reserved ID mismatch",
+       put_in(snapshot, ["reserved_episode_ids"], [hd(snapshot["reserved_episode_ids"])])},
+      {"non-integer reserved ID", put_in(snapshot, ["reserved_episode_ids"], ["bad"])},
+      {"empty mapping identity references",
+       update_selected_value(snapshot, 0, &Map.put(&1, "mapping_identities", []))},
+      {"missing mapping identity reference",
+       update_selected_value(snapshot, 0, fn value ->
+         Map.put(value, "mapping_identities", [%{first_identity | "source" => "missing"}])
+       end)},
+      {"duplicate mapping identity references",
+       update_selected_value(snapshot, 0, fn value ->
+         Map.put(value, "mapping_identities", [first_identity, first_identity])
+       end)},
+      {"mapping without reserved intersection",
+       update_in(snapshot, ["mappings"], fn mappings ->
+         mappings ++
+           [
+             %{
+               "identity" => %{
+                 "source" => "bad",
+                 "scheme" => "absolute",
+                 "namespace" => "bad",
+                 "canonical_value" => "99"
+               },
+               "precedence" => "manual",
+               "episode_ids" => [999],
+               "evidence" => %{}
+             }
+           ]
+       end)},
+      {"missing closure coverage", put_in(snapshot, ["mappings"], [hd(snapshot["mappings"])])},
+      {"selected scheme mismatch",
+       update_selected_value(snapshot, 0, &Map.put(&1, "scheme", "absolute"))},
+      {"selected ordered ID mismatch",
+       update_selected_value(
+         snapshot,
+         0,
+         &Map.put(&1, "episode_ids", second_value["episode_ids"])
+       )},
+      {"omitted parsed coordinate value",
+       put_in(snapshot, ["selected_resolution", "values"], [first_value])},
+      {"duplicated selected coordinate value",
+       put_in(
+         snapshot,
+         ["selected_resolution", "values"],
+         [first_value, first_value, second_value]
+       )},
+      {"selected coordinate absent from release",
+       update_selected_value(snapshot, 0, &Map.put(&1, "canonical_value", "S09E09"))},
+      {"selected episode concatenation mismatch",
+       put_in(
+         snapshot,
+         ["selected_resolution", "episode_ids"],
+         Enum.reverse(snapshot["selected_resolution"]["episode_ids"])
+       )}
+    ]
+  end
+
+  defp update_selected_value(snapshot, index, fun) do
+    update_in(snapshot, ["selected_resolution", "values"], fn values ->
+      List.update_at(values, index, fun)
+    end)
   end
 
   defp reserve_episode_intent(episode_ids, chosen) do
