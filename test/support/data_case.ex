@@ -44,7 +44,6 @@ defmodule Cinder.DataCase do
   """
   def setup_sandbox(%{unboxed: true}) do
     :ok = Sandbox.checkout(Cinder.Repo, sandbox: false)
-    on_exit(fn -> Sandbox.checkin(Cinder.Repo) end)
   end
 
   def setup_sandbox(tags) do

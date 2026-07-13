@@ -820,6 +820,12 @@ grab-local correction/promotion, resume/cancel UI, and same-/cross-season canoni
 when:** single/range/batch/many-to-many/mutated-inventory/cross-season fixtures import or stop exactly
 as expected with no partial data loss, and `mix test` is green.
 
+**[done 2026-07-13]** Snapshot intents now copy atomically into grabs, inventory-bound exact
+preflight persists file decisions before staging, and ambiguous imports enter a durable
+`Needs mapping` hold that survives restarts. Grab-local corrections can be promoted and resumed on
+the same grab, or cancelled without a partial import. The versioned `import-v1.json` fixture and the
+full `mix test` gate pass; A4 preference enforcement remains deferred.
+
 ### A4 — Specials and release preferences
 
 Land sourced specials/Season 00 behavior, global and per-title audio/subtitle/group preferences,
