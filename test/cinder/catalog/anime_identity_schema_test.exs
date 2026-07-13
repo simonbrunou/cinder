@@ -45,6 +45,30 @@ defmodule Cinder.Catalog.AnimeIdentitySchemaTest do
              |> Repo.insert()
   end
 
+  test "duplicate movie aliases return a changeset error" do
+    movie = movie_fixture()
+    attrs = alias_attrs()
+
+    Repo.insert!(TitleAlias.changeset(%TitleAlias{movie_id: movie.id}, attrs))
+
+    assert {:error, changeset} =
+             Repo.insert(TitleAlias.changeset(%TitleAlias{movie_id: movie.id}, attrs))
+
+    refute changeset.valid?
+  end
+
+  test "duplicate series aliases return a changeset error" do
+    series = series_fixture()
+    attrs = alias_attrs()
+
+    Repo.insert!(TitleAlias.changeset(%TitleAlias{series_id: series.id}, attrs))
+
+    assert {:error, changeset} =
+             Repo.insert(TitleAlias.changeset(%TitleAlias{series_id: series.id}, attrs))
+
+    refute changeset.valid?
+  end
+
   test "coordinate membership is ordered and unique" do
     series = series_fixture()
     season = season_fixture(series)
@@ -70,5 +94,15 @@ defmodule Cinder.Catalog.AnimeIdentitySchemaTest do
 
     assert {:error, _} =
              Repo.insert(EpisodeCoordinateMembership.changeset(membership, %{position: 0}))
+  end
+
+  defp alias_attrs do
+    %{
+      title: "Alias",
+      source: "manual",
+      namespace: "manual",
+      kind: :alternative,
+      precedence: :manual
+    }
   end
 end

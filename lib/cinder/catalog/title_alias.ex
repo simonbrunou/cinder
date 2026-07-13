@@ -38,10 +38,10 @@ defmodule Cinder.Catalog.TitleAlias do
     |> validate_required([:title, :normalized_title, :kind, :source, :namespace, :precedence])
     |> check_constraint(:movie_id, name: :title_aliases_exactly_one_owner)
     |> unique_constraint([:movie_id, :source, :namespace, :normalized_title],
-      name: :title_aliases_movie_source_unique
+      name: :title_aliases_movie_id_source_namespace_normalized_title_index
     )
     |> unique_constraint([:series_id, :source, :namespace, :normalized_title],
-      name: :title_aliases_series_source_unique
+      name: :title_aliases_series_id_source_namespace_normalized_title_index
     )
   end
 
