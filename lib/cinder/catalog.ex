@@ -2230,7 +2230,7 @@ defmodule Cinder.Catalog do
   def list_grabs_downloaded do
     Repo.all(
       from g in Grab,
-        where: not is_nil(g.content_path),
+        where: not is_nil(g.content_path) and g.mapping_status == :resolved,
         preload: [episodes: [season: :series]]
     )
   end

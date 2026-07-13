@@ -31,6 +31,7 @@ defmodule Cinder.Library do
   # wrong import. Every other errno (`:enoent`, `:enospc`, …) is a real failure and propagates.
   @copy_fallback_errnos [:exdev, :eperm, :eopnotsupp, :enotsup]
   @exclusive_copy_fallback_errnos [:eperm, :eopnotsupp, :enotsup]
+  @anime_identity_keys ~w(relative_path size major_device inode mtime)
 
   # The library kinds Cinder manages. The single source of truth — config keys
   # (`:"#{kind}_library_path"`, the per-kind Plex section, the size band), the
@@ -1113,11 +1114,102 @@ defmodule Cinder.Library do
     end
   end
 
+  @doc "Stages persisted anime assignments after revalidating the download inventory."
+  def stage_anime_episodes(%Grab{} = grab, preflight) do
+    with {:ok, current} <- inventory_anime_videos(grab.content_path),
+         :ok <- same_inventory(current.files, preflight.decisions),
+         :ok <- same_container_kind(current.folder?, preflight.folder?),
+         {:ok, root} <- root(:tv),
+         {:ok, to_import} <- anime_import_pairs(grab, preflight.assignments) do
+      stage_anime_all(to_import, root, episode_target(grab.episodes), current.folder?)
+    else
+      {:error, :inventory_changed} -> {:restart_preflight, :inventory_changed}
+      {:error, _reason} = error -> error
+    end
+  end
+
   defp attach_preflight_grab({:ok, preflight}, grab, folder?),
     do: {:ok, preflight |> Map.put(:grab, grab) |> Map.put(:folder?, folder?)}
 
   defp attach_preflight_grab({:needs_mapping, preflight}, grab, _folder?),
     do: {:needs_mapping, Map.put(preflight, :grab, grab)}
+
+  defp same_container_kind(container?, container?), do: :ok
+  defp same_container_kind(_current, _persisted), do: {:error, :inventory_changed}
+
+  defp same_inventory(current, %{"files" => persisted}) when is_list(persisted) do
+    current =
+      Enum.map(current, fn %{relative_path: relative_path, identity: identity} ->
+        identity
+        |> Map.new(fn {key, value} -> {Atom.to_string(key), value} end)
+        |> Map.put("relative_path", relative_path)
+      end)
+
+    persisted = Enum.map(persisted, &Map.take(&1, @anime_identity_keys))
+
+    if sort_inventory(current) == sort_inventory(persisted),
+      do: :ok,
+      else: {:error, :inventory_changed}
+  end
+
+  defp same_inventory(_current, _persisted), do: {:error, :inventory_changed}
+
+  defp sort_inventory(files), do: Enum.sort_by(files, & &1["relative_path"])
+
+  defp anime_import_pairs(%Grab{} = grab, assignments) do
+    episodes = Map.new(grab.episodes, &{&1.id, &1})
+    folder? = fs().dir?(grab.content_path)
+
+    assignments
+    |> Enum.reduce_while({:ok, []}, fn assignment, {:ok, acc} ->
+      case anime_assignment_pairs(grab.content_path, folder?, assignment, episodes) do
+        {:ok, pairs} -> {:cont, {:ok, Enum.reverse(pairs, acc)}}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, pairs} -> {:ok, Enum.reverse(pairs)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp anime_assignment_pairs(
+         content_path,
+         folder?,
+         %{relative_path: relative_path, episode_ids: episode_ids},
+         episodes
+       ) do
+    with {:ok, source} <- anime_assignment_source(content_path, relative_path, folder?),
+         {:ok, assigned} <- assigned_episodes(episode_ids, episodes) do
+      {:ok, Enum.map(assigned, &{&1, source})}
+    end
+  end
+
+  defp anime_assignment_pairs(_content_path, _folder?, _assignment, _episodes),
+    do: {:error, :invalid_anime_assignment}
+
+  defp anime_assignment_source(content_path, relative_path, true),
+    do: content_path |> Path.join(relative_path) |> safe_source_file()
+
+  defp anime_assignment_source(content_path, relative_path, false) do
+    if relative_path == Path.basename(content_path),
+      do: safe_source_file(content_path),
+      else: {:error, :invalid_anime_assignment}
+  end
+
+  defp assigned_episodes(ids, episodes) do
+    ids
+    |> Enum.reduce_while({:ok, []}, fn id, {:ok, acc} ->
+      case Map.fetch(episodes, id) do
+        {:ok, episode} -> {:cont, {:ok, [episode | acc]}}
+        :error -> {:halt, {:error, :invalid_anime_assignment}}
+      end
+    end)
+    |> case do
+      {:ok, assigned} -> {:ok, Enum.reverse(assigned)}
+      {:error, _reason} = error -> error
+    end
+  end
 
   defp inventory_anime_files(videos, content_path, folder?) do
     videos
@@ -1340,6 +1432,28 @@ defmodule Cinder.Library do
           {:cont, {:ok, Enum.reverse(imported, acc)}}
 
         {:error, _} = error ->
+          acc |> Enum.map(&elem(&1, 1)) |> Enum.uniq_by(& &1.dest) |> Enum.each(&rollback_stage/1)
+          {:halt, error}
+      end
+    end)
+  end
+
+  defp stage_anime_all(to_import, root, target, folder?) do
+    to_import
+    |> Enum.group_by(
+      fn {episode, source} -> {source, episode.season.season_number} end,
+      fn {episode, _source} -> episode end
+    )
+    |> Enum.sort_by(fn {{source, season}, _episodes} -> {source, season} end)
+    |> Enum.reduce_while({:ok, []}, fn {{source, _season}, episodes}, {:ok, acc} ->
+      episodes = Enum.sort_by(episodes, & &1.episode_number)
+
+      case stage_episode_file(episodes, source, root, target, folder?) do
+        {:ok, stage} ->
+          rows = Enum.map(episodes, &{&1.id, stage})
+          {:cont, {:ok, Enum.reverse(rows, acc)}}
+
+        {:error, _reason} = error ->
           acc |> Enum.map(&elem(&1, 1)) |> Enum.uniq_by(& &1.dest) |> Enum.each(&rollback_stage/1)
           {:halt, error}
       end

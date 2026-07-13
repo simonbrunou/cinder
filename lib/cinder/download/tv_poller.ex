@@ -106,7 +106,36 @@ defmodule Cinder.Download.TvPoller do
         do: isolate("grab #{grab.id}", fn -> import_grab(grab) end)
   end
 
-  defp import_grab(grab) do
+  defp import_grab(%Grab{mapping_snapshot: nil} = grab), do: import_standard_grab(grab)
+
+  defp import_grab(%Grab{} = grab) do
+    case Library.preflight_anime_grab(grab) do
+      {:ok, preflight} ->
+        import_preflighted_grab(preflight)
+
+      {:needs_mapping, _result} ->
+        :ok
+
+      {:error, :library_not_configured} ->
+        hold_for_configuration(grab, :tv_library_path)
+
+      {:error, :download_roots_not_configured} ->
+        hold_for_configuration(grab, :download_import_roots)
+
+      {:error, reason} ->
+        retry_or_park(grab, reason)
+    end
+  end
+
+  defp import_preflighted_grab(preflight) do
+    case Library.stage_anime_episodes(preflight.grab, preflight) do
+      {:ok, staged} -> finalize_staged_grab(preflight.grab, staged)
+      {:restart_preflight, :inventory_changed} -> :ok
+      {:error, reason} -> retry_or_park(preflight.grab, reason)
+    end
+  end
+
+  defp import_standard_grab(grab) do
     case Library.stage_episodes(grab.content_path, grab.episodes) do
       {:ok, [], _unmatched} ->
         # Deterministic: nothing in content_path mapped to a grab episode. Re-importing can't
@@ -118,45 +147,16 @@ defmodule Cinder.Download.TvPoller do
         park(grab, :no_files_matched)
 
       {:ok, staged, _unmatched} ->
-        imported =
-          Enum.map(staged, fn {episode_id, stage} -> {episode_id, stage.dest, stage.quality} end)
-
-        # Catalog announces a season only when this committed import makes it fully available.
-        case Catalog.finish_grab(
-               grab,
-               imported,
-               Library.stage_ids(Enum.map(staged, &elem(&1, 1)))
-             ) do
-          {:ok, _grab} ->
-            commit_stages(staged)
-            # After the finalize commit: best-effort, gated remove of the source download.
-            # Read id/protocol off the in-hand grab — finish_grab deleted the row but returns
-            # the in-memory struct. A partial-match pack still removes (don't strand clutter).
-            Download.remove_after_import(grab.download_protocol, grab.download_id)
-
-          {:error, :stale_grab} ->
-            rollback_stages(staged)
-
-          # A failed finalize leaves content_path set, so the grab re-imports next tick —
-          # without a bump that's a silent 5-second loop if the failure is deterministic.
-          # Route it through the same bounded retry as every other failure in this poller.
-          {:error, reason} ->
-            rollback_stages(staged)
-            retry_or_park(grab, {:finish_grab, reason})
-        end
+        finalize_staged_grab(grab, staged)
 
       # A missing TV root is a config error, not a transient one: leave the grab downloaded
       # (no bump, no park) so the already-downloaded content imports as soon as tv_library_path
       # is set — parking would delete the download and re-search the episode for nothing.
       {:error, :library_not_configured} ->
-        Logger.warning(
-          "tv grab #{grab.id}: tv_library_path not set; holding the download until it is configured"
-        )
+        hold_for_configuration(grab, :tv_library_path)
 
       {:error, :download_roots_not_configured} ->
-        Logger.warning(
-          "tv grab #{grab.id}: download import roots not configured; holding the download until they are configured"
-        )
+        hold_for_configuration(grab, :download_import_roots)
 
       # Every remaining error is transient (a filesystem hiccup): the one deterministic
       # "unusable content" case surfaces as {:ok, [], _} above and is parked immediately, so
@@ -164,6 +164,40 @@ defmodule Cinder.Download.TvPoller do
       {:error, reason} ->
         retry_or_park(grab, reason)
     end
+  end
+
+  defp finalize_staged_grab(grab, staged) do
+    imported =
+      Enum.map(staged, fn {episode_id, stage} -> {episode_id, stage.dest, stage.quality} end)
+
+    case Catalog.finish_grab(
+           grab,
+           imported,
+           Library.stage_ids(Enum.map(staged, &elem(&1, 1)))
+         ) do
+      {:ok, _grab} ->
+        commit_stages(staged)
+        Download.remove_after_import(grab.download_protocol, grab.download_id)
+
+      {:error, :stale_grab} ->
+        rollback_stages(staged)
+
+      {:error, reason} ->
+        rollback_stages(staged)
+        retry_or_park(grab, {:finish_grab, reason})
+    end
+  end
+
+  defp hold_for_configuration(grab, :tv_library_path) do
+    Logger.warning(
+      "tv grab #{grab.id}: tv_library_path not set; holding the download until it is configured"
+    )
+  end
+
+  defp hold_for_configuration(grab, :download_import_roots) do
+    Logger.warning(
+      "tv grab #{grab.id}: download import roots not configured; holding the download until they are configured"
+    )
   end
 
   defp commit_stages(staged) do

@@ -14,6 +14,7 @@ defmodule Cinder.Download.TvPollerTest do
   alias Cinder.Download
   alias Cinder.Download.{Intent, IntentEpisode}
   alias Cinder.Download.TvPoller
+  alias Cinder.Library.ImportStage
   alias Cinder.Repo
 
   import Cinder.CatalogFixtures
@@ -148,6 +149,133 @@ defmodule Cinder.Download.TvPollerTest do
     assert is_nil(imported.grab_id)
   end
 
+  @tag :tmp_dir
+  test "a resolved snapshot persists decisions before the first stage link", %{tmp_dir: tmp} do
+    %{downloads: downloads} = use_real_tv_library(tmp)
+    {_series, season} = series_tree()
+    episode = episode(season, 1)
+    source = Path.join(downloads, "Show.S01E01.1080p.mkv")
+    File.write!(source, "candidate")
+
+    grab =
+      downloaded_snapshot_grab(
+        [episode],
+        source,
+        anime_standard_snapshot(episode)
+      )
+
+    Application.put_env(:cinder, :filesystem_barrier, %{
+      owner: self(),
+      operation: :ln,
+      contains: "Season 01",
+      once: true
+    })
+
+    stub(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
+    start_supervised!({TvPoller, interval: 60_000})
+
+    poll = Task.async(fn -> TvPoller.poll() end)
+    assert_receive {:filesystem_barrier, pid, ref, :ln, _candidate}, 1_000
+
+    assert %Grab{
+             mapping_status: :resolved,
+             automatic_mapping_decisions: %{"files" => [%{"relative_path" => relative_path}]}
+           } = Repo.get!(Grab, grab.id)
+
+    assert relative_path == Path.basename(source)
+    send(pid, {ref, :continue})
+
+    assert :ok = Task.await(poll)
+    refute Repo.get(Grab, grab.id)
+    assert Repo.get!(Episode, episode.id).file_path =~ "S01E01"
+  end
+
+  test "an ambiguous snapshot grab is held once without attempts, stages, or client removal" do
+    {_series, season} = series_tree()
+    episodes = Enum.map(1..3, &episode(season, &1))
+    source = "/downloads/Show - 11-12.mkv"
+    snapshot = anime_ambiguous_snapshot(episodes)
+    grab = downloaded_snapshot_grab(episodes, source, snapshot)
+
+    saved_import_roots = Application.get_env(:cinder, :import_roots)
+    Application.put_env(:cinder, :import_roots, ["/downloads"])
+    on_exit(fn -> Application.put_env(:cinder, :import_roots, saved_import_roots) end)
+
+    expect(Cinder.Library.FilesystemMock, :dir?, 1, fn ^source -> false end)
+
+    expect(Cinder.Library.FilesystemMock, :lstat, 1, fn ^source ->
+      {:ok,
+       %File.Stat{
+         type: :regular,
+         size: 1016,
+         major_device: 1,
+         inode: 116,
+         mtime: {{2026, 7, 13}, {12, 0, 0}}
+       }}
+    end)
+
+    start_supervised!({TvPoller, interval: 60_000})
+
+    assert :ok = TvPoller.poll()
+
+    assert %Grab{
+             mapping_status: :needs_mapping,
+             download_attempts: 0,
+             mapping_issue: %{"reason" => "unresolved_file"}
+           } = Repo.get!(Grab, grab.id)
+
+    assert Repo.aggregate(ImportStage, :count) == 0
+    assert Enum.all?(episodes, &(Repo.get!(Episode, &1.id).grab_id == grab.id))
+    assert Catalog.list_grabs_downloaded() == []
+
+    assert :ok = TvPoller.poll()
+    assert Repo.get!(Grab, grab.id).mapping_status == :needs_mapping
+  end
+
+  @tag :tmp_dir
+  test "inventory mutation restarts a fresh preflight next tick without a retry bump", %{
+    tmp_dir: tmp
+  } do
+    %{downloads: downloads} = use_real_tv_library(tmp)
+    Application.put_env(:cinder, :path_policy, Cinder.Test.PermissivePathPolicy)
+    {_series, season} = series_tree()
+    episode = episode(season, 1)
+    source = Path.join(downloads, "Show.S01E01.1080p.mkv")
+    File.write!(source, "before")
+
+    grab =
+      downloaded_snapshot_grab(
+        [episode],
+        source,
+        anime_standard_snapshot(episode)
+      )
+
+    Application.put_env(:cinder, :filesystem_barrier, %{
+      owner: self(),
+      operation: :lstat,
+      contains: Path.basename(source),
+      once: true
+    })
+
+    stub(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
+    start_supervised!({TvPoller, interval: 60_000})
+
+    poll = Task.async(fn -> TvPoller.poll() end)
+    assert_receive {:filesystem_barrier, pid, ref, :lstat, ^source}, 1_000
+    File.write!(source, "after-mutation")
+    send(pid, {ref, :continue})
+
+    assert :ok = Task.await(poll)
+
+    assert %Grab{mapping_status: :resolved, download_attempts: 0} = Repo.get!(Grab, grab.id)
+    assert Repo.aggregate(ImportStage, :count) == 0
+    assert Repo.get!(Episode, episode.id).file_path == nil
+
+    assert :ok = TvPoller.poll()
+    refute Repo.get(Grab, grab.id)
+    assert Repo.get!(Episode, episode.id).file_path =~ "S01E01"
+  end
+
   defp anime_snapshot_release(episode) do
     canonical_value = "S01E01"
 
@@ -196,6 +324,69 @@ defmodule Cinder.Download.TvPollerTest do
     }
 
     {snapshot, release}
+  end
+
+  defp anime_standard_snapshot(episode) do
+    canonical_value =
+      "S01E#{episode.episode_number |> Integer.to_string() |> String.pad_leading(2, "0")}"
+
+    %{
+      "version" => 2,
+      "parser_context" => %{"title" => "Show", "aliases" => [], "year" => 2008},
+      "mappings" => [
+        %{
+          "identity" => %{
+            "source" => "cinder",
+            "scheme" => "standard",
+            "namespace" => "canonical",
+            "canonical_value" => canonical_value
+          },
+          "precedence" => "manual",
+          "episode_ids" => [episode.id],
+          "evidence" => nil
+        }
+      ]
+    }
+  end
+
+  defp anime_ambiguous_snapshot([first, second, third]) do
+    %{
+      "version" => 2,
+      "parser_context" => %{"title" => "Show", "aliases" => [], "year" => 2008},
+      "mappings" => [
+        anime_absolute_mapping("one", "11", [first.id]),
+        anime_absolute_mapping("one", "12", [second.id]),
+        anime_absolute_mapping("two", "12", [third.id])
+      ]
+    }
+  end
+
+  defp anime_absolute_mapping(source, value, episode_ids) do
+    %{
+      "identity" => %{
+        "source" => source,
+        "scheme" => "absolute",
+        "namespace" => source,
+        "canonical_value" => value
+      },
+      "precedence" => "manual",
+      "episode_ids" => episode_ids,
+      "evidence" => nil
+    }
+  end
+
+  defp downloaded_snapshot_grab(episodes, content_path, snapshot) do
+    grab =
+      Repo.insert!(%Grab{
+        download_id: "anime-#{System.unique_integer([:positive])}",
+        download_protocol: :torrent,
+        content_path: content_path,
+        mapping_snapshot: snapshot
+      })
+
+    ids = Enum.map(episodes, & &1.id)
+    Repo.update_all(from(e in Episode, where: e.id in ^ids), set: [grab_id: grab.id])
+    grab
   end
 
   test "publishes a downloading grab snapshot without rewriting an equal poll" do

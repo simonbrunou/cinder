@@ -1,18 +1,22 @@
 defmodule Cinder.LibraryTest do
   # In-test-process unit tests: expect + verify_on_exit!, no DB, no disk.
-  use ExUnit.Case, async: false
+  use Cinder.DataCase, async: false
 
   import Mox
   import ExUnit.CaptureLog
 
-  alias Cinder.Catalog.{Episode, Movie, Season, Series}
+  alias Cinder.Catalog.{Episode, Grab, Movie, Season, Series}
   alias Cinder.Library
+  alias Cinder.Library.ImportStage
 
   setup :verify_on_exit!
 
   @lib "/tmp/cinder-test-library"
   @tv_lib "/tmp/cinder-test-tv-library"
   @gb 1_000_000_000
+  @anime_fixture_path "test/support/fixtures/anime/import-v1.json"
+  @external_resource @anime_fixture_path
+  @anime_cases @anime_fixture_path |> File.read!() |> Jason.decode!() |> Map.fetch!("cases")
 
   # An in-memory episode with its season/series preloaded (what wanted_episodes/the poller pass).
   defp ep(id, ep_num, season_num \\ 1, series_attrs \\ []) do
@@ -134,6 +138,128 @@ defmodule Cinder.LibraryTest do
 
     defp restore_env(key, nil), do: Application.delete_env(:cinder, key)
     defp restore_env(key, value), do: Application.put_env(:cinder, key, value)
+  end
+
+  describe "stage_anime_episodes/2" do
+    setup do
+      saved_path_policy = Application.get_env(:cinder, :path_policy)
+      saved_import_roots = Application.get_env(:cinder, :import_roots)
+
+      Application.put_env(:cinder, :path_policy, Cinder.Test.PermissivePathPolicy)
+      Application.put_env(:cinder, :import_roots, ["/downloads"])
+
+      on_exit(fn ->
+        restore_env(:path_policy, saved_path_policy)
+        restore_env(:import_roots, saved_import_roots)
+      end)
+
+      :ok
+    end
+
+    test "one source covering two episodes in one season creates one canonical stage" do
+      fixture = anime_fixture("many-to-many-mapping")
+      grab = anime_grab(fixture)
+      stub_anime_filesystem(fixture)
+
+      assert {:ok, staged} = Library.stage_anime_episodes(grab, anime_preflight(fixture))
+
+      expected = Enum.map(fixture["expected"]["destinations"], &Path.join(@tv_lib, &1))
+
+      assert staged |> Enum.map(fn {_episode_id, stage} -> stage.dest end) |> Enum.uniq() ==
+               expected
+
+      assert length(staged) == 2
+      assert length(Library.stage_ids(Enum.map(staged, &elem(&1, 1)))) == 1
+      assert Repo.aggregate(ImportStage, :count) == 1
+    end
+
+    test "one source crossing seasons creates one canonical destination per season" do
+      fixture = anime_fixture("cross-season-output")
+      grab = anime_grab(fixture)
+      stub_anime_filesystem(fixture)
+
+      assert {:ok, staged} = Library.stage_anime_episodes(grab, anime_preflight(fixture))
+
+      expected =
+        fixture["expected"]["destinations"] |> Enum.map(&Path.join(@tv_lib, &1)) |> Enum.sort()
+
+      assert staged
+             |> Enum.map(fn {_episode_id, stage} -> stage.dest end)
+             |> Enum.uniq()
+             |> Enum.sort() == expected
+
+      series_root = Path.join(@tv_lib, "Frieren (2023) {tmdb-209867}")
+      [season_one_episode, season_two_episode] = grab.episodes
+
+      assert staged
+             |> Enum.map(fn {episode_id, stage} -> {episode_id, Path.dirname(stage.dest)} end)
+             |> Map.new() == %{
+               season_one_episode.id => Path.join(series_root, "Season 01"),
+               season_two_episode.id => Path.join(series_root, "Season 02")
+             }
+
+      assert Repo.aggregate(ImportStage, :count) == 2
+    end
+
+    test "a second-season staging failure rolls the first season back" do
+      fixture = anime_fixture("cross-season-output")
+      grab = anime_grab(fixture)
+      virtual = stub_anime_filesystem(fixture, fail_on: "Season 02")
+
+      capture_log(fn ->
+        assert {:error, :eacces} =
+                 Library.stage_anime_episodes(grab, anime_preflight(fixture))
+      end)
+
+      expected = Enum.map(fixture["expected"]["destinations"], &Path.join(@tv_lib, &1))
+      files = Agent.get(virtual, & &1.files)
+      assert Enum.all?(expected, &(not Map.has_key?(files, &1)))
+
+      assert [%ImportStage{dest: remaining}] = ImportStage.list()
+      assert remaining == Enum.find(expected, &String.contains?(&1, "Season 02"))
+    end
+
+    test "any persisted file identity mutation restarts preflight before creating a stage" do
+      fixture = anime_fixture("inventory-mutation")
+      grab = anime_grab(fixture)
+      [before] = fixture["before_inventory"]
+
+      mutations = [
+        [Map.put(before, "size", 1027)],
+        [Map.put(before, "major_device", 2)],
+        [Map.put(before, "inode", 127)],
+        fixture["after_inventory"]
+      ]
+
+      for current <- mutations do
+        virtual = stub_anime_filesystem(fixture, inventory: current)
+
+        assert {:restart_preflight, :inventory_changed} =
+                 Library.stage_anime_episodes(
+                   grab,
+                   anime_preflight(fixture, fixture["before_inventory"])
+                 )
+
+        assert Repo.aggregate(ImportStage, :count) == 0
+        assert Agent.get(virtual, & &1.links) == []
+      end
+    end
+
+    test "rejects assignments outside the grab's authoritative episode set" do
+      fixture = anime_fixture("many-to-many-mapping")
+      grab = anime_grab(fixture)
+      stub_anime_filesystem(fixture)
+
+      preflight = %{
+        anime_preflight(fixture)
+        | assignments: [%{relative_path: "Frieren - 12.mkv", episode_ids: [999]}]
+      }
+
+      assert {:error, :invalid_anime_assignment} =
+               Library.stage_anime_episodes(grab, preflight)
+
+      assert Repo.aggregate(ImportStage, :count) == 0
+    end
   end
 
   test "single-file source: hardlinks to Title (Year) {tmdb-N}/… and scans" do
@@ -1051,5 +1177,139 @@ defmodule Cinder.LibraryTest do
 
       assert {:error, :eacces} = Cinder.Library.delete_file(path)
     end
+  end
+
+  defp anime_fixture(id), do: Enum.find(@anime_cases, &(&1["id"] == id))
+
+  defp anime_grab(fixture) do
+    series = %Series{title: "Frieren", year: 2023, tmdb_id: 209_867}
+
+    episodes =
+      Enum.map(fixture["episodes"], fn episode ->
+        %Episode{
+          id: episode["id"],
+          episode_number: episode["episode_number"],
+          season: %Season{
+            season_number: episode["season_number"],
+            series: series
+          }
+        }
+      end)
+
+    %Grab{content_path: fixture["absolute_download_root"], episodes: episodes}
+  end
+
+  defp anime_preflight(fixture, inventory \\ nil) do
+    inventory = inventory || fixture["inventory"]
+    decision_files = fixture["expected"]["decisions"]["files"]
+
+    decisions =
+      Map.put(
+        fixture["expected"]["decisions"],
+        "files",
+        Enum.map(inventory, fn identity ->
+          decision =
+            Enum.find(decision_files, %{}, &(&1["relative_path"] == identity["relative_path"]))
+
+          Map.merge(decision, identity)
+        end)
+      )
+
+    assignments =
+      Enum.map(fixture["expected"]["assignments"] || fixture["before_assignments"], fn
+        {relative_path, episode_ids} ->
+          %{relative_path: relative_path, episode_ids: episode_ids}
+      end)
+
+    %{assignments: assignments, decisions: decisions, folder?: true}
+  end
+
+  defp stub_anime_filesystem(fixture, opts \\ []) do
+    inventory = Keyword.get(opts, :inventory, fixture["inventory"])
+    root = fixture["absolute_download_root"]
+    fail_on = Keyword.get(opts, :fail_on)
+
+    files =
+      Map.new(inventory, fn entry ->
+        {Path.join(root, entry["relative_path"]), anime_file_stat(entry)}
+      end)
+
+    {:ok, virtual} = Agent.start_link(fn -> %{files: files, links: []} end)
+
+    stub(Cinder.Library.FilesystemMock, :dir?, &(&1 == root))
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn ^root ->
+      {:ok,
+       Enum.map(inventory, fn entry ->
+         {Path.join(root, entry["relative_path"]), entry["size"]}
+       end)}
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
+      virtual_lstat(virtual, path)
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _path -> :ok end)
+
+    stub(Cinder.Library.FilesystemMock, :ln, fn source, target ->
+      anime_link(virtual, source, target, fail_on)
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :rm, fn path ->
+      Agent.update(virtual, fn state -> %{state | files: Map.delete(state.files, path)} end)
+      :ok
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :rmdir, fn _path -> {:error, :enotempty} end)
+    stub(Cinder.Library.FilesystemMock, :rename, fn _source, _target -> :ok end)
+
+    virtual
+  end
+
+  defp anime_file_stat(entry) do
+    %File.Stat{
+      type: :regular,
+      size: entry["size"],
+      major_device: entry["major_device"],
+      inode: entry["inode"],
+      mtime: entry["mtime"] |> NaiveDateTime.from_iso8601!() |> NaiveDateTime.to_erl()
+    }
+  end
+
+  defp anime_link(virtual, source, target, fail_on) do
+    if stage_failure?(target, fail_on),
+      do: {:error, :eacces},
+      else: link_virtual_file(virtual, source, target)
+  end
+
+  defp stage_failure?(target, fail_on) when is_binary(fail_on),
+    do:
+      String.contains?(target, fail_on) &&
+        String.contains?(Path.basename(target), ".cinder-stage-")
+
+  defp stage_failure?(_target, _fail_on), do: false
+
+  defp virtual_lstat(virtual, path) do
+    case Agent.get(virtual, fn state -> Map.fetch(state.files, path) end) do
+      {:ok, stat} -> {:ok, stat}
+      :error -> {:error, :enoent}
+    end
+  end
+
+  defp link_virtual_file(virtual, source, target) do
+    Agent.get_and_update(virtual, fn state ->
+      case Map.fetch(state.files, source) do
+        {:ok, stat} ->
+          {:ok,
+           %{
+             state
+             | files: Map.put(state.files, target, stat),
+               links: [{source, target} | state.links]
+           }}
+
+        :error ->
+          {{:error, :enoent}, state}
+      end
+    end)
   end
 end
