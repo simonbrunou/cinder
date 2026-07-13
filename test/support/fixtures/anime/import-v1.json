@@ -185,8 +185,8 @@
     {
       "id": "many-to-many-mapping",
       "snapshot_version": 2,
-      "files": ["Frieren - 11-12.mkv"],
-      "authoritative_episode_ids": [101, 102, 103],
+      "files": ["Frieren - 12.mkv"],
+      "authoritative_episode_ids": [101, 102],
       "absolute_download_root": "/downloads/Frieren",
       "parser_context": {"title": "Frieren", "aliases": [], "year": 2023},
       "mappings": [{"identity": {"source": "fixture", "scheme": "absolute", "namespace": "combined", "canonical_value": "12"}, "precedence": "manual", "episode_ids": [101, 102], "evidence": null}],
@@ -279,8 +279,8 @@
     {
       "id": "ambiguous-coordinate",
       "snapshot_version": 2,
-      "files": ["Frieren - 12.mkv"],
-      "authoritative_episode_ids": [101, 102],
+      "files": ["Frieren - 11-12.mkv"],
+      "authoritative_episode_ids": [101, 102, 103],
       "absolute_download_root": "/downloads/Frieren",
       "parser_context": {"title": "Frieren", "aliases": [], "year": 2023},
       "mappings": [

@@ -16,6 +16,11 @@ defmodule Cinder.Library.AnimePreflightTest do
       fixture = unquote(Macro.escape(fixture))
       expected = fixture["expected"]
 
+      assert Enum.sort(fixture["files"]) ==
+               fixture["inventory"] |> Enum.map(& &1["relative_path"]) |> Enum.sort()
+
+      assert fixture["authoritative_episode_ids"] == Enum.map(fixture["episodes"], & &1["id"])
+
       case expected["status"] do
         "resolved" ->
           assert {:ok, result} = run_fixture(fixture)
