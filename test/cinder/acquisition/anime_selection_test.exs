@@ -129,6 +129,33 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     assert assignment.release.mapping_snapshot == snapshot
   end
 
+  test "automatic episode selection freezes the exact hard policy used to select" do
+    release = Release.new(raw("[SubsPlease] Show - 1 [1080p]", "anime-policy-episode"))
+
+    policy =
+      policy(
+        required_audio_languages: ["ja", "fr"],
+        embedded_subtitle_mode: :require,
+        subtitle_languages: ["fr"]
+      )
+
+    assert {:ok, %{assignments: [%{release: selected}]}} =
+             Anime.select_episodes(
+               [release],
+               absolute_context(1..1),
+               [1],
+               AnimePreferences.selection_opts(policy)
+             )
+
+    assert selected.release_policy_snapshot == %{
+             "version" => 1,
+             "required_audio_languages" => ["ja", "fr"],
+             "required_embedded_subtitle_languages" => ["fr"],
+             "release_group" => "subsplease",
+             "release_title" => selected.title
+           }
+  end
+
   test "snapshot builder freezes the exact complete Catalog mapping closure" do
     mappings = [
       mapping("cinder", "standard", "canonical", "S01E01", [11, 12]),
@@ -246,6 +273,33 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
                [blocked, preferred],
                AnimePreferences.selection_opts(policy)
              )
+  end
+
+  test "automatic movie selection freezes the exact hard policy used to select" do
+    release =
+      Release.new(%{
+        title: "[SubsPlease] Suzume 2022 [1080p]",
+        size: 2_000_000_000,
+        download_url: "anime-policy-movie"
+      })
+
+    policy =
+      policy(
+        required_audio_languages: ["ja", "fr"],
+        embedded_subtitle_mode: :require,
+        subtitle_languages: ["fr"]
+      )
+
+    assert {:ok, selected} =
+             Anime.select_movie([release], AnimePreferences.selection_opts(policy))
+
+    assert selected.release_policy_snapshot == %{
+             "version" => 1,
+             "required_audio_languages" => ["ja", "fr"],
+             "required_embedded_subtitle_languages" => ["fr"],
+             "release_group" => "subsplease",
+             "release_title" => selected.title
+           }
   end
 
   test "public Anime movie search uses complete audio claims instead of legacy singular language" do

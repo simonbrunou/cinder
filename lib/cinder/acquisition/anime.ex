@@ -79,9 +79,16 @@ defmodule Cinder.Acquisition.Anime do
         groups -> select_timed_movie(hard_valid, groups, opts)
       end
 
-    if result == :no_match and Keyword.get(opts, :incomplete_search?, false),
-      do: {:error, :incomplete_search},
-      else: result
+    cond do
+      result == :no_match and Keyword.get(opts, :incomplete_search?, false) ->
+        {:error, :incomplete_search}
+
+      match?({:ok, %Release{}}, result) ->
+        mark_policy(result, opts)
+
+      true ->
+        result
+    end
   end
 
   @doc "Parses Anime movie traits for manual annotation without filtering operator choices."
@@ -299,7 +306,7 @@ defmodule Cinder.Acquisition.Anime do
   defp select_immediately(candidates, context, wanted_ids, opts) do
     case Scorer.select_for_ids(candidates, wanted_ids, opts) do
       {:ok, selections} ->
-        {:ok, %{assignments: assignments(selections, context), waiting: nil}}
+        {:ok, %{assignments: assignments(selections, context, opts), waiting: nil}}
 
       :no_match ->
         :no_match
@@ -433,18 +440,18 @@ defmodule Cinder.Acquisition.Anime do
     covered = selections |> Enum.flat_map(fn {_release, ids} -> ids end) |> MapSet.new()
 
     if MapSet.equal?(covered, component.ids) do
-      %{assignments: assignments(selections, context), waiting: false}
+      %{assignments: assignments(selections, context, opts), waiting: false}
     else
       uncovered = MapSet.difference(component.ids, covered)
       relevant_delayed = Enum.filter(delayed, &(not MapSet.disjoint?(&1.ids, uncovered)))
 
       case relevant_delayed do
         [] ->
-          %{assignments: assignments(selections, context), waiting: false}
+          %{assignments: assignments(selections, context, opts), waiting: false}
 
         relevant_delayed ->
           %{
-            assignments: assignments(selections, context),
+            assignments: assignments(selections, context, opts),
             waiting: true,
             ids: uncovered,
             retry_at: relevant_delayed |> Enum.map(& &1.retry_at) |> Enum.min(DateTime)
@@ -462,12 +469,21 @@ defmodule Cinder.Acquisition.Anime do
     end
   end
 
-  defp assignments(selections, context) do
+  defp assignments(selections, context, opts) do
     Enum.map(selections, fn {release, episode_ids} ->
       snapshot = build_mapping_snapshot(release, episode_ids, context)
-      marked = %{release | mapping_snapshot: snapshot}
+      marked = release |> Map.put(:mapping_snapshot, snapshot) |> mark_policy(opts)
       %{release: marked, episode_ids: episode_ids, mapping_snapshot: snapshot}
     end)
+  end
+
+  defp mark_policy({:ok, release}, opts), do: {:ok, mark_policy(release, opts)}
+
+  defp mark_policy(%Release{} = release, opts) do
+    case Keyword.get(opts, :anime_policy) do
+      nil -> release
+      policy -> %{release | release_policy_snapshot: AnimePreferences.snapshot(policy, release)}
+    end
   end
 
   defp selection_result([], nil), do: :no_match

@@ -5,6 +5,8 @@ defmodule Cinder.Download.Intent do
 
   import Ecto.Changeset
 
+  alias Cinder.Acquisition.AnimePreferences
+
   schema "download_intents" do
     field :operation_key, :string
     field :kind, Ecto.Enum, values: [:movie, :episode, :season_pack]
@@ -50,14 +52,33 @@ defmodule Cinder.Download.Intent do
   def reservation_changeset(%__MODULE__{id: nil} = intent, attrs) do
     intent
     |> changeset(attrs)
-    |> cast(attrs, [:mapping_snapshot])
+    |> cast(attrs, [:mapping_snapshot, :release_policy_snapshot])
     |> validate_mapping_snapshot()
+    |> validate_release_policy_snapshot()
   end
 
   def reservation_changeset(%__MODULE__{} = intent, attrs) do
     intent
     |> changeset(attrs)
     |> add_error(:mapping_snapshot, "is immutable")
+    |> add_error(:release_policy_snapshot, "is immutable")
+  end
+
+  defp validate_release_policy_snapshot(changeset) do
+    release_title =
+      case get_field(changeset, :release) do
+        %{"title" => title} -> title
+        _release -> nil
+      end
+
+    if AnimePreferences.valid_snapshot?(
+         get_field(changeset, :release_policy_snapshot),
+         release_title
+       ) do
+      changeset
+    else
+      add_error(changeset, :release_policy_snapshot, "is invalid")
+    end
   end
 
   defp validate_mapping_snapshot(changeset) do

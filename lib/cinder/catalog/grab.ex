@@ -51,13 +51,14 @@ defmodule Cinder.Catalog.Grab do
   def reservation_changeset(%__MODULE__{id: nil} = grab, attrs) do
     grab
     |> changeset(attrs)
-    |> cast(attrs, [:mapping_snapshot, :mapping_status])
+    |> cast(attrs, [:mapping_snapshot, :release_policy_snapshot, :mapping_status])
   end
 
   def reservation_changeset(%__MODULE__{} = grab, attrs) do
     grab
     |> changeset(attrs)
     |> add_error(:mapping_snapshot, "is immutable")
+    |> add_error(:release_policy_snapshot, "is immutable")
   end
 
   @doc false

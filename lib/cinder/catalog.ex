@@ -207,6 +207,27 @@ defmodule Cinder.Catalog do
 
   def media_profile_summary(%Movie{} = movie), do: MediaProfile.summary(movie)
 
+  @doc "Returns the one series owning every supplied episode ID."
+  def get_single_series_for_episode_ids(episode_ids) when is_list(episode_ids) do
+    requested_ids = Enum.sort(episode_ids)
+
+    rows =
+      Repo.all(
+        from e in Episode,
+          join: season in Season,
+          on: season.id == e.season_id,
+          where: e.id in ^episode_ids,
+          select: {e.id, season.series_id}
+      )
+
+    case {Enum.sort(Enum.map(rows, &elem(&1, 0))), Enum.uniq(Enum.map(rows, &elem(&1, 1)))} do
+      {^requested_ids, [series_id]} -> {:ok, Repo.get!(Series, series_id)}
+      _invalid -> {:error, :episode_series_mismatch}
+    end
+  end
+
+  def get_single_series_for_episode_ids(_episode_ids), do: {:error, :episode_series_mismatch}
+
   @doc "Lists sourced aliases for a movie or series."
   defdelegate list_title_aliases(owner), to: Identity, as: :list_aliases
 
@@ -675,6 +696,7 @@ defmodule Cinder.Catalog do
         download_id: nil,
         download_protocol: nil,
         release_title: nil,
+        release_policy_snapshot: nil,
         file_path: nil
       },
       expect: movie.status
@@ -911,7 +933,9 @@ defmodule Cinder.Catalog do
 
   defp do_cancel_txn(movie, actor) do
     Repo.transaction(fn ->
-      case movie |> Movie.transition_changeset(%{status: :cancelled}) |> Repo.update() do
+      case movie
+           |> Movie.transition_changeset(%{status: :cancelled, release_policy_snapshot: nil})
+           |> Repo.update() do
         {:ok, updated} ->
           updated = Repo.get!(Movie, updated.id)
           intent_ids = Download.fence_movie_cleanup(updated)
@@ -943,7 +967,8 @@ defmodule Cinder.Catalog do
                status: :available,
                download_id: nil,
                download_protocol: nil,
-               release_title: nil
+               release_title: nil,
+               release_policy_snapshot: nil
              })
              |> Repo.update() do
           {:ok, updated} ->
@@ -1748,6 +1773,7 @@ defmodule Cinder.Catalog do
           download_protocol: fresh.protocol,
           release_title: fresh.release["title"],
           mapping_snapshot: fresh.mapping_snapshot,
+          release_policy_snapshot: fresh.release_policy_snapshot,
           mapping_status: :resolved
         }
 

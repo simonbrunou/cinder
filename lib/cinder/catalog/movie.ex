@@ -129,6 +129,7 @@ defmodule Cinder.Catalog.Movie do
       :download_id,
       :download_protocol,
       :release_title,
+      :release_policy_snapshot,
       :download_progress,
       :download_speed,
       :download_eta,

@@ -31,17 +31,35 @@ defmodule Cinder.Download do
   def reserve_intent(%{release: %Release{download_url: url} = release} = attrs)
       when is_binary(url) do
     mapping_snapshot = Map.get(attrs, :mapping_snapshot)
+    release_policy_snapshot = Map.get(attrs, :release_policy_snapshot)
 
-    if mapping_snapshot == release.mapping_snapshot do
-      reserve_marked_intent(attrs, release, url, mapping_snapshot)
-    else
-      {:error, :invalid_mapping_snapshot}
+    cond do
+      mapping_snapshot != release.mapping_snapshot ->
+        {:error, :invalid_mapping_snapshot}
+
+      release_policy_snapshot != release.release_policy_snapshot ->
+        {:error, :invalid_release_evidence}
+
+      true ->
+        reserve_marked_intent(
+          attrs,
+          release,
+          url,
+          mapping_snapshot,
+          release_policy_snapshot
+        )
     end
   end
 
   def reserve_intent(%{release: %Release{}}), do: {:error, :unsupported_download_url}
 
-  defp reserve_marked_intent(attrs, release, url, mapping_snapshot) do
+  defp reserve_marked_intent(
+         attrs,
+         release,
+         url,
+         mapping_snapshot,
+         release_policy_snapshot
+       ) do
     intent_attrs = %{
       operation_key: Ecto.UUID.generate(),
       kind: Map.fetch!(attrs, :kind),
@@ -49,6 +67,7 @@ defmodule Cinder.Download do
       episode_ids: Map.get(attrs, :episode_ids, []),
       protocol: Map.fetch!(attrs, :protocol),
       mapping_snapshot: mapping_snapshot,
+      release_policy_snapshot: release_policy_snapshot,
       release: %{
         "title" => release.title,
         "download_url_ciphertext" => url |> Vault.encrypt!() |> Base.encode64(),
@@ -90,6 +109,9 @@ defmodule Cinder.Download do
       Keyword.has_key?(changeset.errors, :mapping_snapshot) ->
         {:error, :invalid_mapping_snapshot}
 
+      Keyword.has_key?(changeset.errors, :release_policy_snapshot) ->
+        {:error, :invalid_release_policy_snapshot}
+
       changeset.errors == [] ->
         {:error, changeset}
 
@@ -101,24 +123,38 @@ defmodule Cinder.Download do
   @doc "Durably submits a movie release and attaches the remote ID to the movie."
   def grab_movie(%Movie{} = movie, %Release{} = release) do
     case Repo.get_by(Intent, kind: :movie, target_id: movie.id) do
-      nil -> reserve_and_reconcile(:movie, movie.id, [], release)
-      %Intent{status: :cleanup_pending} -> {:error, :download_intent_busy}
-      intent -> reconcile_matching_intent(intent, release, [])
-    end
-  end
-
-  @doc "Durably submits a TV release and creates its guarded episode grab."
-  def grab_episodes(%Release{} = release, episode_ids) when episode_ids != [] do
-    case overlapping_episode_intent(episode_ids) do
       nil ->
-        kind = if length(episode_ids) == 1, do: :episode, else: :season_pack
-        reserve_and_reconcile(kind, hd(episode_ids), episode_ids, release)
+        with {:ok, marked} <- ensure_policy_marker(release, movie) do
+          reserve_and_reconcile(:movie, movie.id, [], marked)
+        end
 
       %Intent{status: :cleanup_pending} ->
         {:error, :download_intent_busy}
 
       intent ->
-        reconcile_matching_intent(intent, release, episode_ids)
+        reconcile_matching_intent(intent, release, [])
+    end
+  end
+
+  @doc "Durably submits a TV release and creates its guarded episode grab."
+  def grab_episodes(%Release{} = release, episode_ids) when episode_ids != [] do
+    with {:ok, series} <- Catalog.get_single_series_for_episode_ids(episode_ids) do
+      grab_validated_episodes(release, episode_ids, series)
+    end
+  end
+
+  defp grab_validated_episodes(release, episode_ids, series) do
+    case overlapping_episode_intent(episode_ids) do
+      nil -> reserve_episode_intent(release, episode_ids, series)
+      %Intent{status: :cleanup_pending} -> {:error, :download_intent_busy}
+      intent -> reconcile_matching_intent(intent, release, episode_ids)
+    end
+  end
+
+  defp reserve_episode_intent(release, episode_ids, series) do
+    with {:ok, marked} <- ensure_policy_marker(release, series) do
+      kind = if length(episode_ids) == 1, do: :episode, else: :season_pack
+      reserve_and_reconcile(kind, hd(episode_ids), episode_ids, marked)
     end
   end
 
@@ -144,11 +180,38 @@ defmodule Cinder.Download do
              episode_ids: episode_ids,
              protocol: release.protocol,
              release: release,
-             mapping_snapshot: release.mapping_snapshot
+             mapping_snapshot: release.mapping_snapshot,
+             release_policy_snapshot: release.release_policy_snapshot
            }) do
       reconcile_intent(intent)
     end
   end
+
+  defp ensure_policy_marker(%Release{} = release, title) do
+    case Catalog.media_profile_summary(title).effective do
+      :standard ->
+        {:ok, %{release | release_policy_snapshot: nil}}
+
+      :anime ->
+        mark_anime_policy(release, title)
+    end
+  end
+
+  defp mark_anime_policy(release, title) do
+    with {:ok, policy} <- AnimePreferences.resolve(title, Settings.anime_defaults()) do
+      put_anime_policy_marker(release, policy)
+    end
+  end
+
+  defp put_anime_policy_marker(%Release{release_policy_snapshot: %{}} = release, _policy),
+    do: {:ok, release}
+
+  defp put_anime_policy_marker(%Release{release_policy_snapshot: nil} = release, policy) do
+    {:ok, %{release | release_policy_snapshot: AnimePreferences.snapshot(policy, release)}}
+  end
+
+  defp put_anime_policy_marker(%Release{}, _policy),
+    do: {:error, :invalid_release_policy_snapshot}
 
   defp overlapping_episode_intent(episode_ids) do
     Repo.one(
@@ -573,6 +636,7 @@ defmodule Cinder.Download do
         download_id: intent.remote_id,
         download_protocol: intent.protocol,
         release_title: intent.release["title"],
+        release_policy_snapshot: intent.release_policy_snapshot,
         import_attempts: 0
       })
 
@@ -591,7 +655,7 @@ defmodule Cinder.Download do
 
       nil ->
         result =
-          if is_nil(intent.mapping_snapshot) do
+          if is_nil(intent.mapping_snapshot) and is_nil(intent.release_policy_snapshot) do
             Catalog.create_grab(
               remote_id,
               intent.protocol,
@@ -694,7 +758,11 @@ defmodule Cinder.Download do
           add_to_client(movie, release)
 
         :no_match ->
-          Catalog.transition(movie, %{status: :no_match}, expect: movie.status)
+          Catalog.transition(
+            movie,
+            %{status: :no_match, release_policy_snapshot: nil},
+            expect: movie.status
+          )
 
         :no_language_match ->
           park_no_language(movie)
@@ -788,7 +856,11 @@ defmodule Cinder.Download do
 
   defp park_no_language(movie) do
     with {:ok, parked} <-
-           Catalog.transition(movie, %{status: :no_match}, expect: movie.status) do
+           Catalog.transition(
+             movie,
+             %{status: :no_match, release_policy_snapshot: nil},
+             expect: movie.status
+           ) do
       Notifier.notify({:movie_failed, parked, :no_language_match})
       {:ok, parked}
     end

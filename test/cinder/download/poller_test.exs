@@ -187,7 +187,9 @@ defmodule Cinder.Download.PollerTest do
     stub_import_ok()
 
     assert :ok = Poller.poll()
-    assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
+
+    assert %Movie{status: :available, release_policy_snapshot: nil} =
+             Repo.get!(Movie, movie.id)
   end
 
   test "a download_protocol with no configured client is parked at :import_failed (no hang)" do

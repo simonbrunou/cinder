@@ -8,7 +8,7 @@ defmodule Cinder.Download.TvPollerTest do
   # test output stays pristine (they print on failure).
   @moduletag :capture_log
 
-  alias Cinder.Acquisition.{Anime, Release}
+  alias Cinder.Acquisition.{Anime, AnimePreferences, Release}
   alias Cinder.Catalog
   alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Identity, Season, Series}
   alias Cinder.Download
@@ -122,7 +122,11 @@ defmodule Cinder.Download.TvPollerTest do
 
     assert :ok = TvPoller.poll()
 
-    assert %Intent{mapping_snapshot: %{"version" => 2}} = intent = Repo.one!(Intent)
+    assert %Intent{
+             mapping_snapshot: %{"version" => 2},
+             release_policy_snapshot: %{"version" => 1}
+           } = intent = Repo.one!(Intent)
+
     assert Enum.sort(intent.episode_ids) == Enum.sort([first.id, second.id])
 
     assert Enum.sort(intent.mapping_snapshot["reserved_episode_ids"]) ==
@@ -224,13 +228,31 @@ defmodule Cinder.Download.TvPollerTest do
                episode_ids: assignment.episode_ids,
                protocol: :torrent,
                release: assignment.release,
-               mapping_snapshot: assignment.mapping_snapshot
+               mapping_snapshot: assignment.mapping_snapshot,
+               release_policy_snapshot: assignment.release.release_policy_snapshot
              })
 
     intent =
       intent
       |> Intent.changeset(%{status: :submitted, remote_id: "hash-anime-restart"})
       |> Repo.update!()
+
+    frozen_policy = assignment.release.release_policy_snapshot
+    assert intent.release_policy_snapshot == frozen_policy
+
+    series
+    |> Series.anime_preferences_changeset(%{
+      audio_mode: :any,
+      embedded_subtitle_mode: :require,
+      subtitle_languages: ["fr"]
+    })
+    |> Repo.update!()
+
+    {:ok, current_policy} =
+      AnimePreferences.resolve(Repo.get!(Series, series.id), Cinder.Settings.anime_defaults())
+
+    current_snapshot = AnimePreferences.snapshot(current_policy, assignment.release)
+    refute current_snapshot == frozen_policy
 
     stub(Cinder.Download.ClientMock, :status, fn "hash-anime-restart" ->
       {:ok, %{state: :downloading, progress: 0.0}}
@@ -242,6 +264,8 @@ defmodule Cinder.Download.TvPollerTest do
 
     assert %Grab{mapping_snapshot: snapshot} = grab = Repo.one!(Grab)
     assert snapshot == assignment.mapping_snapshot
+    assert grab.release_policy_snapshot == frozen_policy
+    refute grab.release_policy_snapshot == current_snapshot
 
     assert grab
            |> Repo.preload(:episodes)
@@ -295,7 +319,8 @@ defmodule Cinder.Download.TvPollerTest do
                episode_ids: [episode.id],
                protocol: :torrent,
                release: assignment.release,
-               mapping_snapshot: assignment.mapping_snapshot
+               mapping_snapshot: assignment.mapping_snapshot,
+               release_policy_snapshot: assignment.release.release_policy_snapshot
              })
 
     intent =
@@ -487,9 +512,15 @@ defmodule Cinder.Download.TvPollerTest do
   defp anime_assignment(series, episodes, title \\ "[Group] Show S01E25-S02E01 [1080p]") do
     candidate = title |> raw_release("anime-assignment") |> Release.new()
     context = Catalog.anime_series_acquisition_context(series)
+    {:ok, policy} = AnimePreferences.resolve(series, Cinder.Settings.anime_defaults())
 
     assert {:ok, %{assignments: [assignment]}} =
-             Anime.select_episodes([candidate], context, Enum.map(episodes, & &1.id), [])
+             Anime.select_episodes(
+               [candidate],
+               context,
+               Enum.map(episodes, & &1.id),
+               AnimePreferences.selection_opts(policy)
+             )
 
     assignment
   end
