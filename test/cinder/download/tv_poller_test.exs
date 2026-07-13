@@ -976,6 +976,27 @@ defmodule Cinder.Download.TvPollerTest do
     assert Repo.get!(Episode, e1.id).search_attempts == 10
   end
 
+  test "a search-exhausted Anime story special stays in the wanted set but is skipped" do
+    series = series_fixture(%{media_profile: :anime, monitor_strategy: :all})
+    specials = season_fixture(series, %{season_number: 0})
+
+    special =
+      episode(specials, 0, %{
+        classification: :story_special,
+        monitored: true,
+        search_attempts: Catalog.max_search_attempts()
+      })
+
+    assert special.id in Enum.map(Catalog.wanted_episodes(), & &1.id)
+
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+    assert :ok = TvPoller.poll()
+
+    assert Repo.reload!(special).search_attempts == Catalog.max_search_attempts()
+    assert Repo.all(Intent) == []
+    assert Repo.all(Grab) == []
+  end
+
   test "a grab park that crosses the search cap announces exhaustion (finish_grab bump path)" do
     {_series, season} = series_tree()
     e1 = episode(season, 1)

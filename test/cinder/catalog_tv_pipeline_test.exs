@@ -8,9 +8,12 @@ defmodule Cinder.CatalogTvPipelineTest do
   alias Ecto.Adapters.SQL, as: EctoSQL
 
   import Cinder.CatalogFixtures
+  import Mox
 
   @past ~D[2001-01-01]
   @future ~D[2099-01-01]
+
+  setup :verify_on_exit!
 
   @anime_preferences %{
     audio_mode: :dual,
@@ -32,6 +35,36 @@ defmodule Cinder.CatalogTvPipelineTest do
       season,
       Map.merge(%{episode_number: System.unique_integer([:positive])}, attrs)
     )
+  end
+
+  defp anime_fixture!(name) do
+    Path.join(["test", "support", "fixtures", "anime", name])
+    |> File.read!()
+    |> Jason.decode!()
+  end
+
+  defp episode_from_special_case!(case_data) do
+    profile = String.to_existing_atom(case_data["profile"])
+    classification = String.to_existing_atom(case_data["classification"])
+    series = series_fixture(%{media_profile: profile})
+    season = season_fixture(series, %{season_number: case_data["season"]})
+
+    episode(season, %{
+      episode_number: case_data["episode"],
+      classification: classification,
+      monitored: case_data["monitored"],
+      air_date: if(case_data["aired"], do: @past, else: @future)
+    })
+  end
+
+  defp wanted_ids, do: Enum.map(Catalog.wanted_episodes(), & &1.id)
+
+  defp episode_by_tmdb_id(series, tmdb_episode_id) do
+    series.id
+    |> Catalog.get_series_with_tree()
+    |> Map.fetch!(:seasons)
+    |> Enum.flat_map(& &1.episodes)
+    |> Enum.find(&(&1.tmdb_episode_id == tmdb_episode_id))
   end
 
   describe "Anime preference persistence" do
@@ -365,9 +398,14 @@ defmodule Cinder.CatalogTvPipelineTest do
       q =
         from e in Episode,
           join: s in assoc(e, :season),
+          join: series in assoc(s, :series),
           where:
-            s.season_number > 0 and e.monitored and e.episode_number > 0 and is_nil(e.file_path) and
-              is_nil(e.grab_id) and not is_nil(e.air_date) and e.air_date <= ^Date.utc_today(),
+            e.monitored == true and is_nil(e.file_path) and is_nil(e.grab_id) and
+              not is_nil(e.air_date) and e.air_date <= ^Date.utc_today(),
+          where:
+            (s.season_number > 0 and e.episode_number > 0) or
+              (series.media_profile == :anime and
+                 e.classification in [:story_special, :recap]),
           select: e.id
 
       {sql, params} = EctoSQL.to_sql(:all, Repo, q)
@@ -379,6 +417,104 @@ defmodule Cinder.CatalogTvPipelineTest do
   end
 
   describe "wanted_episodes/0" do
+    test "matches the versioned Anime specials eligibility matrix" do
+      assert anime_fixture!("specials-v1.json")["version"] == 1
+
+      for case_data <- anime_fixture!("specials-v1.json")["cases"] do
+        episode = episode_from_special_case!(case_data)
+        assert episode.id in wanted_ids() == case_data["wanted"], case_data["id"]
+      end
+    end
+
+    test "excludes Anime specials already owned by a grab or imported" do
+      series = series_fixture(%{media_profile: :anime})
+      specials = season_fixture(series, %{season_number: 0})
+
+      owned =
+        episode(specials, %{
+          episode_number: 20,
+          classification: :story_special,
+          monitored: true
+        })
+
+      imported =
+        episode(specials, %{
+          episode_number: 21,
+          classification: :recap,
+          monitored: true,
+          file_path: "/library/special.mkv"
+        })
+
+      assert {:ok, _grab} = Catalog.create_grab("special-owned", :torrent, [owned.id])
+      refute owned.id in wanted_ids()
+      refute imported.id in wanted_ids()
+    end
+
+    test "new provider-classified specials default unmonitored and refresh preserves an operator toggle" do
+      tmdb_id = System.unique_integer([:positive])
+      calls = start_supervised!({Agent, fn -> 0 end})
+
+      stub(Cinder.Catalog.TMDBMock, :get_series, fn ^tmdb_id ->
+        {:ok,
+         %{
+           tmdb_id: tmdb_id,
+           tvdb_id: 77,
+           title: "Anime",
+           year: 2026,
+           poster_path: nil,
+           original_language: "ja",
+           seasons: [%{season_number: 0}]
+         }}
+      end)
+
+      stub(Cinder.Catalog.TMDBMock, :get_season, fn ^tmdb_id, 0 ->
+        refresh? = Agent.get_and_update(calls, &{&1 > 0, &1 + 1})
+
+        episodes = [
+          %{tmdb_episode_id: 7001, episode_number: 1, title: "OVA", air_date: @past},
+          %{tmdb_episode_id: 7003, episode_number: 3, title: "NCOP", air_date: @past}
+        ]
+
+        episodes =
+          if refresh? do
+            episodes ++
+              [%{tmdb_episode_id: 7002, episode_number: 2, title: "Recap", air_date: @past}]
+          else
+            episodes
+          end
+
+        {:ok, %{season_number: 0, episodes: episodes}}
+      end)
+
+      stub(Cinder.Catalog.TMDBMock, :get_series_alternative_titles, fn ^tmdb_id -> {:ok, []} end)
+      stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn ^tmdb_id -> {:ok, []} end)
+
+      assert {:ok, series} =
+               Catalog.add_series(tmdb_id, monitor_strategy: :all, media_profile: :anime)
+
+      special = episode_by_tmdb_id(series, 7001)
+      refute special.monitored
+      assert special.classification == :story_special
+      assert special.classification_source == "tmdb"
+
+      extra = episode_by_tmdb_id(series, 7003)
+      refute extra.monitored
+      assert extra.classification == :extra
+      assert extra.classification_source == "tmdb"
+
+      assert {:ok, _} = Catalog.set_episode_monitored(special, true)
+      assert {:ok, _} = Catalog.refresh_series(series)
+      assert Repo.reload!(special).monitored
+
+      recap = episode_by_tmdb_id(series, 7002)
+      refute recap.monitored
+      assert recap.classification == :recap
+      assert recap.classification_source == "tmdb"
+
+      assert {:ok, _} = Catalog.set_episode_classification(Repo.reload!(special), :recap, "OVA")
+      assert Repo.reload!(special).monitored
+    end
+
     test "returns monitored, aired (incl. today), file-less, grab-less episodes only" do
       {_series, season} = series_with_season()
       past = episode(season, %{air_date: @past, monitored: true})
@@ -425,11 +561,17 @@ defmodule Cinder.CatalogTvPipelineTest do
       assert ep.season.series.id == series.id
     end
 
-    test "excludes season 0 (specials) — unaddressable by the parser/scorer in M5" do
+    test "keeps Standard season 0 excluded" do
       {series, season} = series_with_season()
       regular = episode(season, %{air_date: @past, monitored: true})
       specials = Repo.insert!(%Season{series_id: series.id, season_number: 0, monitored: true})
-      special = episode(specials, %{air_date: @past, monitored: true})
+
+      special =
+        episode(specials, %{
+          air_date: @past,
+          monitored: true,
+          classification: :story_special
+        })
 
       ids = Enum.map(Catalog.wanted_episodes(), & &1.id)
       assert regular.id in ids

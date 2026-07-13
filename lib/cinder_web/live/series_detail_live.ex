@@ -555,26 +555,26 @@ defmodule CinderWeb.SeriesDetailLive do
   # A season has something the search sweep would actually pick up. Gates the per-season
   # "Search all missing" and "Find a better match" controls; mirrors the per-episode "Search"
   # button.
-  defp season_wanted?(%{episodes: eps, season_number: n}),
-    do: Enum.any?(eps, &episode_searchable?(&1, n))
+  defp season_wanted?(%{episodes: episodes} = season, profile),
+    do: Enum.any?(episodes, &episode_searchable?(&1, season, profile))
 
-  # Mirrors Catalog.wanted_episodes_query/0 exactly: an episode the TV sweep would grab. A
-  # monitored, file-less, grab-less episode is NOT enough — it must also be in a real season
-  # (> 0, no specials), a real episode (> 0), and already aired (dated, air_date <= today).
-  # Keeping this in lock-step with the query avoids a "Search…" affordance that never grabs.
-  defp episode_searchable?(ep, season_number) do
-    is_nil(ep.file_path) and is_nil(ep.grab_id) and ep.monitored and season_number > 0 and
-      ep.episode_number > 0 and not is_nil(ep.air_date) and
-      Date.compare(ep.air_date, Date.utc_today()) != :gt
-  end
+  # Eligibility lives in Catalog so the sweep and detail actions cannot drift.
+  # Episodes arrive nested under their season rather than with the back-reference
+  # preloaded; attaching that already-loaded parent is a pure in-memory operation.
+  # The current profile summary is already assigned for the page, so passing it
+  # through also keeps Auto's effective Standard semantics identical to the query.
+  # No extra database query is needed while rendering the episode list.
+  defp episode_searchable?(episode, season, profile),
+    do: Catalog.episode_searchable?(%{episode | season: season}, profile)
 
   # The sweep hit its attempt cap and skips this episode — without a badge the row reads
   # "still trying" forever. The Search button next to it zeroes the counter and re-queues.
   # Delegates the park predicate to Catalog.episode_state/2 (the single derivation) so this
   # badge can't drift from the calendar's; episode_searchable? adds the monitored/specials
   # legs the state fn doesn't carry.
-  defp search_exhausted?(ep, season_number) do
-    episode_searchable?(ep, season_number) and Catalog.episode_state(ep) == :search_parked
+  defp search_exhausted?(episode, season, profile) do
+    episode_searchable?(episode, season, profile) and
+      Catalog.episode_state(episode) == :search_parked
   end
 
   @impl true
@@ -880,7 +880,7 @@ defmodule CinderWeb.SeriesDetailLive do
               {gettext("Delete files")}
             </.button>
             <.button
-              :if={season_wanted?(season)}
+              :if={season_wanted?(season, @profile_summary)}
               type="button"
               variant="neutral"
               size="sm"
@@ -895,7 +895,7 @@ defmodule CinderWeb.SeriesDetailLive do
               {gettext("Search all missing")}
             </.button>
             <.button
-              :if={season_wanted?(season)}
+              :if={season_wanted?(season, @profile_summary)}
               type="button"
               variant="ghost"
               size="sm"
@@ -1016,12 +1016,12 @@ defmodule CinderWeb.SeriesDetailLive do
                   {gettext("Delete file")}
                 </.button>
                 <.status_badge
-                  :if={search_exhausted?(ep, season.season_number)}
+                  :if={search_exhausted?(ep, season, @profile_summary)}
                   kind={:episode}
                   status={:search_parked}
                 />
                 <.button
-                  :if={episode_searchable?(ep, season.season_number)}
+                  :if={episode_searchable?(ep, season, @profile_summary)}
                   type="button"
                   variant="ghost"
                   size="sm"

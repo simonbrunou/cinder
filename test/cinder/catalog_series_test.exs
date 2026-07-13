@@ -158,12 +158,15 @@ defmodule Cinder.CatalogSeriesTest do
   end
 
   describe "monitor strategies" do
-    test ":all monitors every episode, specials included" do
+    test ":all monitors regular episodes but leaves provider-classified specials explicit" do
       stub_tmdb(43)
       {:ok, series} = Catalog.add_series(43, monitor_strategy: :all)
 
       assert series.monitored
-      assert Enum.all?(episodes(series.id), & &1.monitored)
+
+      assert Enum.all?(episodes(series.id), fn episode ->
+               episode.monitored == (episode.classification == :regular)
+             end)
     end
 
     test ":none monitors nothing" do

@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "cases": [
+    {"id": "story-special", "profile": "anime", "season": 0, "episode": 1, "classification": "story_special", "monitored": true, "aired": true, "wanted": true},
+    {"id": "episode-zero", "profile": "anime", "season": 0, "episode": 0, "classification": "story_special", "monitored": true, "aired": true, "wanted": true},
+    {"id": "recap", "profile": "anime", "season": 0, "episode": 2, "classification": "recap", "monitored": true, "aired": true, "wanted": true},
+    {"id": "unmonitored-special", "profile": "anime", "season": 0, "episode": 3, "classification": "story_special", "monitored": false, "aired": true, "wanted": false},
+    {"id": "extra", "profile": "anime", "season": 0, "episode": 4, "classification": "extra", "monitored": true, "aired": true, "wanted": false},
+    {"id": "standard-special", "profile": "standard", "season": 0, "episode": 5, "classification": "story_special", "monitored": true, "aired": true, "wanted": false},
+    {"id": "unaired-special", "profile": "anime", "season": 0, "episode": 6, "classification": "story_special", "monitored": true, "aired": false, "wanted": false},
+    {"id": "regular", "profile": "anime", "season": 1, "episode": 1, "classification": "regular", "monitored": true, "aired": true, "wanted": true}
+  ]
+}

@@ -1399,16 +1399,29 @@ defmodule Cinder.Catalog do
             monitored: strategy != :none,
             episodes:
               for ep <- season.episodes do
-                Map.put(ep, :monitored, monitored?(strategy, ep.air_date, today))
+                provider_episode_attrs(ep, season.season_number, strategy, today)
               end
           }
         end
     }
   end
 
-  # Strategy is applied uniformly across seasons (specials included) — Sonarr-style
-  # specials handling is an M6 monitoring concern. `:future` treats undated/TBA
-  # episodes as monitored and counts "today" as eligible.
+  defp provider_episode_attrs(ep, season_number, strategy, today) do
+    {classification, label} = Identity.classify_tmdb_episode(season_number, ep.title)
+
+    ep
+    |> Map.put(:classification, classification)
+    |> Map.put(:classification_source, "tmdb")
+    |> Map.put(:classification_label, label)
+    |> Map.put(
+      :monitored,
+      classification == :regular and monitored?(strategy, ep.air_date, today)
+    )
+  end
+
+  # Strategy applies to regular episodes. Provider-classified specials start unmonitored and
+  # require an explicit operator toggle. `:future` treats undated/TBA regular episodes as
+  # monitored and counts "today" as eligible.
   defp monitored?(:all, _air_date, _today), do: true
   defp monitored?(:none, _air_date, _today), do: false
   defp monitored?(:future, nil, _today), do: true
@@ -2763,9 +2776,9 @@ defmodule Cinder.Catalog do
   by the TV poller, matching the movie poller's split. Gated on the leaf `episode.monitored`
   flag (the cascade/add keep it the single source of truth).
 
-  Season 0 (specials) is excluded: the parser/scorer can't address it in M5 (a `{Season:0}`
-  search yields nothing matchable), so including specials would only churn search attempts.
-  Specials are M6 scope.
+  Regular episodes keep the existing positive season/episode-number gate. Explicitly monitored,
+  classified Anime story specials and recaps share the common missing/air-date predicates; extras
+  and Standard Season 00 rows remain excluded.
   """
   def wanted_episodes do
     Repo.all(from e in wanted_episodes_query(), preload: [season: :series])
@@ -2851,14 +2864,29 @@ defmodule Cinder.Catalog do
   end
 
   @doc """
-  Re-queues a single wanted `episode` for the TV sweep by zeroing its `search_attempts` (clearing
-  any backoff/attempt-cap park). A no-op for an episode that already has a file or an active grab
-  (it isn't wanted). The sweep picks it up within one poll interval.
+  Re-queues a single searchable `episode` for the TV sweep by zeroing its `search_attempts`
+  (clearing any backoff/attempt-cap park). The episode is re-read with its series profile before
+  writing so a stale LiveView click cannot requeue an episode that is no longer eligible. Already
+  imported or grabbed episodes preserve the existing no-op contract.
   """
-  def search_episode_now(%Episode{file_path: nil, grab_id: nil} = episode),
-    do: transition_episode(episode, %{search_attempts: 0})
+  def search_episode_now(%Episode{id: id}) do
+    case Repo.one(from e in Episode, where: e.id == ^id, preload: [season: :series]) do
+      %Episode{} = episode ->
+        cond do
+          not is_nil(episode.file_path) or not is_nil(episode.grab_id) ->
+            :ok
 
-  def search_episode_now(%Episode{}), do: :ok
+          episode_searchable?(episode, media_profile_summary(episode.season.series)) ->
+            transition_episode(episode, %{search_attempts: 0})
+
+          true ->
+            {:error, :not_searchable}
+        end
+
+      nil ->
+        {:error, :not_found}
+    end
+  end
 
   @doc "Re-queues every still-wanted episode of one `season` (zeroes their `search_attempts`)."
   def search_season_now(%Season{id: season_id}) do
@@ -2872,9 +2900,29 @@ defmodule Cinder.Catalog do
 
     from e in Episode,
       join: s in assoc(e, :season),
+      join: series in assoc(s, :series),
       where:
-        s.season_number > 0 and e.monitored and e.episode_number > 0 and is_nil(e.file_path) and
-          is_nil(e.grab_id) and not is_nil(e.air_date) and e.air_date <= ^today
+        e.monitored == true and is_nil(e.file_path) and is_nil(e.grab_id) and
+          not is_nil(e.air_date) and e.air_date <= ^today,
+      where:
+        (s.season_number > 0 and e.episode_number > 0) or
+          (series.media_profile == :anime and e.classification in [:story_special, :recap])
+  end
+
+  @doc "Whether one preloaded episode shares the wanted query's current eligibility semantics."
+  def episode_searchable?(
+        %Episode{season: %Season{} = season} = episode,
+        profile,
+        today \\ Date.utc_today()
+      ) do
+    common? =
+      episode.monitored and is_nil(episode.file_path) and is_nil(episode.grab_id) and
+        not is_nil(episode.air_date) and Date.compare(episode.air_date, today) != :gt
+
+    regular? = season.season_number > 0 and episode.episode_number > 0
+    special? = profile.effective == :anime and episode.classification in [:story_special, :recap]
+
+    common? and (regular? or special?)
   end
 
   @doc """
@@ -2903,8 +2951,9 @@ defmodule Cinder.Catalog do
   broadcasts `{:series_updated, series.id}` once. Existing episodes are matched by
   `tmdb_episode_id` (series-wide, so a renumber that moves an episode across seasons is handled)
   and updated in place — preserving `monitored`, `file_path`, `grab_id`, and the attempt counters.
-  Genuinely new episodes are inserted with `monitored` per the series' `monitor_strategy`; new
-  seasons are inserted; rows that vanished from TMDB are left untouched.
+  Genuinely new regular episodes are inserted with `monitored` per the season flag; classified
+  specials start unmonitored. New seasons are inserted; rows that vanished from TMDB are left
+  untouched.
 
   Returns `{:ok, series}`, or `{:error, reason}` if a TMDB fetch fails (short-circuits before any
   write, mirroring `create_series/2`).
@@ -3034,7 +3083,7 @@ defmodule Cinder.Catalog do
     # `monitored` flag as the source of truth: a per-season request sets monitor_strategy: :none
     # on the series but flips the requested season's monitored flag to true, so season.monitored
     # correctly reflects "do we want this season" while series.monitor_strategy does not.
-    Enum.each(new, fn {fe, season} -> insert_episode(season.id, season.monitored, fe) end)
+    Enum.each(new, fn {fe, season} -> insert_episode(season, fe) end)
   end
 
   # Vacate a matched row's real slot before the finalize pass: -id never collides with a positive
@@ -3124,15 +3173,20 @@ defmodule Cinder.Catalog do
     end
   end
 
-  defp insert_episode(season_id, season_monitored, fe) do
+  defp insert_episode(%Season{} = season, fe) do
+    {classification, label} = Identity.classify_tmdb_episode(season.season_number, fe.title)
+
     %Episode{}
     |> Episode.refresh_changeset(%{
-      season_id: season_id,
+      season_id: season.id,
       tmdb_episode_id: fe.tmdb_episode_id,
       episode_number: fe.episode_number,
       title: fe.title,
       air_date: fe.air_date,
-      monitored: season_monitored
+      classification: classification,
+      classification_source: "tmdb",
+      classification_label: label,
+      monitored: season.monitored and classification == :regular
     })
     |> Repo.insert()
     |> log_reconcile_error("insert episode tmdb_ep #{fe.tmdb_episode_id}")

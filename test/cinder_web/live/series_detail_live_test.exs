@@ -774,21 +774,95 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     refute has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{undated.id}']")
   end
 
-  # FIX 2: season 0 (specials) is excluded from the sweep, so its episodes get no Search button.
-  test "the per-episode Search button is absent for a season-0 special", %{conn: conn} do
-    series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 9302, tvdb_id: 94, title: "Test Show"})
+  test "Search is limited to monitored Anime story specials and recaps", %{conn: conn} do
+    anime =
+      Repo.insert!(%Cinder.Catalog.Series{
+        tmdb_id: 9302,
+        tvdb_id: 94,
+        title: "Anime",
+        media_profile: :anime
+      })
 
     specials =
       Repo.insert!(%Cinder.Catalog.Season{
-        series_id: series.id,
+        series_id: anime.id,
         season_number: 0,
         monitored: true
       })
 
-    special = wanted_ep(specials, 1, air_date: Date.add(Date.utc_today(), -10))
+    story =
+      wanted_ep(specials, 1,
+        air_date: Date.add(Date.utc_today(), -10),
+        classification: :story_special
+      )
 
+    episode_zero =
+      wanted_ep(specials, 0,
+        air_date: Date.add(Date.utc_today(), -10),
+        classification: :story_special
+      )
+
+    recap =
+      wanted_ep(specials, 2,
+        air_date: Date.add(Date.utc_today(), -10),
+        classification: :recap
+      )
+
+    extra =
+      wanted_ep(specials, 3,
+        air_date: Date.add(Date.utc_today(), -10),
+        classification: :extra
+      )
+
+    {:ok, lv, _html} = live_series(conn, anime)
+    assert has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{story.id}']")
+    assert has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{episode_zero.id}']")
+    assert has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{recap.id}']")
+    refute has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{extra.id}']")
+
+    standard =
+      Repo.insert!(%Cinder.Catalog.Series{
+        tmdb_id: 9303,
+        tvdb_id: 95,
+        title: "Standard",
+        media_profile: :standard
+      })
+
+    standard_specials =
+      Repo.insert!(%Cinder.Catalog.Season{
+        series_id: standard.id,
+        season_number: 0,
+        monitored: true
+      })
+
+    standard_story =
+      wanted_ep(standard_specials, 1,
+        air_date: Date.add(Date.utc_today(), -10),
+        classification: :story_special
+      )
+
+    {:ok, standard_lv, _html} = live_series(conn, standard)
+
+    refute has_element?(
+             standard_lv,
+             "button[phx-click=search_episode][phx-value-id='#{standard_story.id}']"
+           )
+  end
+
+  test "a stale Search click is re-authorized against the current episode", %{conn: conn} do
+    series = series_with_wanted_episode(search_attempts: 7)
+    [episode] = Catalog.wanted_episodes()
     {:ok, lv, _html} = live_series(conn, series)
-    refute has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{special.id}']")
+
+    episode
+    |> Ecto.Changeset.change(monitored: false)
+    |> Repo.update!()
+
+    lv
+    |> element("button[phx-click=search_episode][phx-value-id='#{episode.id}']")
+    |> render_click()
+
+    assert Repo.reload!(episode).search_attempts == 7
   end
 
   # FIX 1: "Find a better match" is only offered for a season with wanted episodes. An empty
@@ -859,14 +933,18 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
   # Insert one wanted-shaped episode (monitored, no file, no grab) with a chosen air_date.
   defp wanted_ep(season, number, opts) do
-    Repo.insert!(%Cinder.Catalog.Episode{
-      season_id: season.id,
-      tmdb_episode_id: season.id * 100 + number,
-      episode_number: number,
-      title: "Ep#{number}",
-      monitored: true,
-      air_date: Keyword.fetch!(opts, :air_date)
-    })
+    Repo.insert!(
+      struct(
+        %Cinder.Catalog.Episode{
+          season_id: season.id,
+          tmdb_episode_id: season.id * 100 + number,
+          episode_number: number,
+          title: "Ep#{number}",
+          monitored: true
+        },
+        Map.new(opts)
+      )
+    )
   end
 
   # Insert a series→season→episode tree with one episode that has a file_path.
