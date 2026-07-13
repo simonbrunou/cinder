@@ -37,14 +37,20 @@ defmodule CinderWeb.DashboardLiveTest do
     :ok
   end
 
-  defp pending_movie_request(requester) do
+  defp pending_movie_request(requester, attrs \\ %{}) do
     {:ok, req} =
-      Requests.create_request(requester, %{
-        target_type: "movie",
-        target_id: System.unique_integer([:positive]),
-        title: "Dune",
-        year: 2021
-      })
+      Requests.create_request(
+        requester,
+        Map.merge(
+          %{
+            target_type: "movie",
+            target_id: System.unique_integer([:positive]),
+            title: "Dune",
+            year: 2021
+          },
+          attrs
+        )
+      )
 
     req
   end
@@ -249,13 +255,55 @@ defmodule CinderWeb.DashboardLiveTest do
       {:ok, lv, html} = live(conn, ~p"/dashboard")
       assert html =~ "Dune"
 
-      lv |> element("#pending-#{req.id} button", "Approve") |> render_click()
+      lv
+      |> form("#dashboard-approval-form-#{req.id}", %{
+        "_id" => to_string(req.id),
+        "profile" => "standard"
+      })
+      |> render_submit()
+
       render_async(lv)
 
       assert Cinder.Repo.get(Cinder.Requests.Request, req.id).status == :approved
       movie = Catalog.get_movie_by_tmdb_id(req.target_id)
       assert movie.status == :requested
       assert movie.media_profile == :standard
+    end
+
+    test "shows an Anime proposal and lets the admin confirm Standard instead", %{conn: conn} do
+      requester = Cinder.AccountsFixtures.user_fixture()
+      req = pending_movie_request(requester, %{proposed_media_profile: :anime})
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+      selector = "#dashboard-approval-profile-#{req.id}"
+      form = "#dashboard-approval-form-#{req.id}"
+      assert has_element?(lv, "#{selector} option[value='anime'][selected]")
+
+      lv
+      |> form(form, %{"_id" => to_string(req.id), "profile" => "standard"})
+      |> render_submit()
+
+      render_async(lv)
+
+      assert Catalog.get_movie_by_tmdb_id(req.target_id).media_profile == :standard
+    end
+
+    test "explicitly confirms an Anime proposal from the dashboard", %{conn: conn} do
+      requester = Cinder.AccountsFixtures.user_fixture()
+      req = pending_movie_request(requester, %{proposed_media_profile: :anime})
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      lv
+      |> form("#dashboard-approval-form-#{req.id}", %{
+        "_id" => to_string(req.id),
+        "profile" => "anime"
+      })
+      |> render_submit()
+
+      render_async(lv)
+
+      assert Catalog.get_movie_by_tmdb_id(req.target_id).media_profile == :anime
     end
 
     test "denying from the dashboard records the reason", %{conn: conn} do
@@ -266,7 +314,7 @@ defmodule CinderWeb.DashboardLiveTest do
       lv |> element("#pending-#{req.id} button", "Deny") |> render_click()
 
       lv
-      |> form("#pending-#{req.id} form", %{reason: "Already own it"})
+      |> form("#pending-#{req.id} form[phx-submit='deny']", %{reason: "Already own it"})
       |> render_submit()
 
       render(lv)

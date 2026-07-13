@@ -142,6 +142,36 @@ defmodule Cinder.CatalogRefreshTest do
     assert Repo.reload!(first).episode_number == 2
   end
 
+  test "a partially unmapped provider group persists no coordinates" do
+    s = series(:all, %{tmdb_id: 9_004})
+    sn = season(s, 1)
+    episode(sn, %{tmdb_episode_id: 90_040, episode_number: 1})
+
+    stub_tmdb(s, [
+      {1, [%{tmdb_episode_id: 90_040, episode_number: 1, title: "Known", air_date: @past}]}
+    ])
+
+    expect(Cinder.Catalog.TMDBMock, :get_episode_groups, fn 9_004 ->
+      {:ok, [%{id: "mixed", type: 2, name: "Mixed"}]}
+    end)
+
+    expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn "mixed" ->
+      {:ok,
+       %{
+         id: "mixed",
+         type: 2,
+         name: "Mixed",
+         entries: [
+           %{tmdb_episode_id: 90_040, group_order: 0, order: 0},
+           %{tmdb_episode_id: 90_041, group_order: 0, order: 1}
+         ]
+       }}
+    end)
+
+    assert {:ok, _} = Catalog.refresh_series(s)
+    refute Enum.any?(Catalog.list_episode_coordinates(s), &(&1.source == "tmdb"))
+  end
+
   test "an identity changeset failure rolls the refresh back and returns the error" do
     s = series(:all, %{tmdb_id: 9_003, title: "Original"})
     sn = season(s, 1)
