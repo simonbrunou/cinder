@@ -12,6 +12,7 @@ defmodule Cinder.Catalog.Movie do
   import Ecto.Changeset
 
   alias Cinder.Acquisition.Language
+  alias Cinder.Catalog.TitleAlias
 
   @statuses [
     :requested,
@@ -56,9 +57,14 @@ defmodule Cinder.Catalog.Movie do
     field :genres, {:array, :string}
     field :vote_average, :float
     field :release_date, :date
+    field :media_profile, Ecto.Enum, values: [:auto, :standard, :anime], default: :auto
+    has_many :title_aliases, TitleAlias
 
     timestamps(type: :utc_datetime)
   end
+
+  @doc "Changeset for the operator-owned media handling profile."
+  def profile_changeset(movie, attrs), do: cast(movie, attrs, [:media_profile])
 
   @doc false
   def changeset(movie, attrs) do
@@ -70,7 +76,8 @@ defmodule Cinder.Catalog.Movie do
       :year,
       :poster_path,
       :original_language,
-      :preferred_language
+      :preferred_language,
+      :media_profile
     ])
     |> validate_required([:tmdb_id, :title])
     |> validate_inclusion(:preferred_language, Language.preferences())

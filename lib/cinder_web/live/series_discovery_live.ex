@@ -29,7 +29,13 @@ defmodule CinderWeb.SeriesDiscoveryLive do
 
       {:ok,
        socket
-       |> assign(tmdb_id: tmdb_id, info: info, current_user: user, preferred_language: "original")
+       |> assign(
+         tmdb_id: tmdb_id,
+         info: info,
+         current_user: user,
+         preferred_language: "original",
+         proposed_media_profile: nil
+       )
        |> assign(seasons: Enum.filter(info.seasons, &(&1.season_number != 0)))
        |> assign_requests_by_season(user, tmdb_id)}
     else
@@ -67,7 +73,8 @@ defmodule CinderWeb.SeriesDiscoveryLive do
         year: info.year,
         poster_path: info.poster_path,
         original_language: info[:original_language],
-        preferred_language: socket.assigns.preferred_language
+        preferred_language: socket.assigns.preferred_language,
+        proposed_media_profile: socket.assigns.proposed_media_profile
       }
 
       # An admin/auto-approve request runs the season approval inline — seconds of TMDB I/O
@@ -85,6 +92,12 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   def handle_event("set_language", %{"preferred_language" => lang}, socket)
       when lang in ["original", "french", "any"] do
     {:noreply, assign(socket, :preferred_language, lang)}
+  end
+
+  def handle_event("set_profile", %{"proposed_media_profile" => profile}, socket)
+      when profile in ["auto", "standard", "anime"] do
+    profile = if profile == "auto", do: nil, else: String.to_existing_atom(profile)
+    {:noreply, assign(socket, :proposed_media_profile, profile)}
   end
 
   # The event payload is client-controlled; ignore any malformed/forged frame
@@ -214,6 +227,9 @@ defmodule CinderWeb.SeriesDiscoveryLive do
 
       <form id="series-language-form" phx-change="set_language" class="mb-4 max-w-xs">
         <.language_select value={@preferred_language} />
+      </form>
+      <form id="series-profile-form" phx-change="set_profile" class="mb-4 max-w-xs">
+        <.media_profile_select value={@proposed_media_profile} />
       </form>
 
       <%!-- @seasons excludes Specials (season 0, not requestable), so a specials-only

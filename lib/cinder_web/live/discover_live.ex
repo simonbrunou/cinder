@@ -45,9 +45,10 @@ defmodule CinderWeb.DiscoverLive do
     preferred = normalize_language(params["preferred_language"])
 
     with {id, ""} <- Integer.parse(tmdb_id),
+         {:ok, profile} <- normalize_profile(params["proposed_media_profile"]),
          movie when not is_nil(movie) <-
            Enum.find(socket.assigns.results, &(&1.type == :movie and &1.tmdb_id == id)) do
-      {:noreply, add(socket, movie, preferred)}
+      {:noreply, add(socket, movie, preferred, profile)}
     else
       _ -> {:noreply, socket}
     end
@@ -85,11 +86,27 @@ defmodule CinderWeb.DiscoverLive do
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
+  @impl true
+  def handle_async({:add, _tmdb_id, title}, {:ok, result}, socket) do
+    {:noreply, request_result(socket, title, result)}
+  end
+
+  def handle_async({:add, _tmdb_id, title}, {:exit, _reason}, socket) do
+    {:noreply,
+     put_flash(socket, :error, gettext("Couldn't request %{title}. Try again.", title: title))}
+  end
+
   # ponytail: only three valid values; default "original" on anything else (client-controlled).
   defp normalize_language(lang) when lang in ["original", "french", "any"], do: lang
   defp normalize_language(_), do: "original"
 
-  defp add(socket, movie, preferred) do
+  defp normalize_profile(nil), do: {:ok, nil}
+  defp normalize_profile("auto"), do: {:ok, nil}
+  defp normalize_profile("standard"), do: {:ok, :standard}
+  defp normalize_profile("anime"), do: {:ok, :anime}
+  defp normalize_profile(_), do: {:error, :invalid_media_profile}
+
+  defp add(socket, movie, preferred, profile) do
     user = socket.assigns.current_scope.user
 
     attrs = %{
@@ -99,20 +116,27 @@ defmodule CinderWeb.DiscoverLive do
       year: movie.year,
       poster_path: movie.poster_path,
       original_language: movie.original_language,
-      preferred_language: preferred
+      preferred_language: preferred,
+      proposed_media_profile: profile
     }
 
-    case Cinder.Requests.create_request(user, attrs) do
+    start_async(socket, {:add, movie.tmdb_id, movie.title}, fn ->
+      Cinder.Requests.create_request(user, attrs)
+    end)
+  end
+
+  defp request_result(socket, title, result) do
+    case result do
       {:ok, %{status: :approved}} ->
         socket
-        |> put_flash(:info, gettext("%{title} added.", title: movie.title))
+        |> put_flash(:info, gettext("%{title} added.", title: title))
         |> assign_request_state()
 
       {:ok, %{status: :pending}} ->
         socket
         |> put_flash(
           :info,
-          gettext("%{title} requested. Awaiting approval.", title: movie.title)
+          gettext("%{title} requested. Awaiting approval.", title: title)
         )
         |> assign_request_state()
 
@@ -127,12 +151,12 @@ defmodule CinderWeb.DiscoverLive do
         # Only a duplicate-pending unique-constraint is the benign "already requested" case;
         # any other changeset failure is a real error, not a reassuring info toast.
         if duplicate_request?(cs) do
-          put_flash(socket, :info, gettext("%{title} is already requested.", title: movie.title))
+          put_flash(socket, :info, gettext("%{title} is already requested.", title: title))
         else
           put_flash(
             socket,
             :error,
-            gettext("Couldn't request %{title}. Try again.", title: movie.title)
+            gettext("Couldn't request %{title}. Try again.", title: title)
           )
         end
 
@@ -140,7 +164,7 @@ defmodule CinderWeb.DiscoverLive do
         put_flash(
           socket,
           :error,
-          gettext("Couldn't request %{title}. Try again.", title: movie.title)
+          gettext("Couldn't request %{title}. Try again.", title: title)
         )
     end
   end
@@ -305,6 +329,7 @@ defmodule CinderWeb.DiscoverLive do
     >
       <input type="hidden" name="tmdb_id" value={@tmdb_id} />
       <.language_select original_label={original_option_label(@original_language)} />
+      <.media_profile_select />
       <.button
         type="submit"
         variant="primary"

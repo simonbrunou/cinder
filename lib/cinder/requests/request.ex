@@ -19,6 +19,7 @@ defmodule Cinder.Requests.Request do
     field :denial_reason, :string
     field :original_language, :string
     field :preferred_language, :string
+    field :proposed_media_profile, Ecto.Enum, values: [:standard, :anime]
     belongs_to :user, Cinder.Accounts.User
     belongs_to :approved_by, Cinder.Accounts.User
     timestamps()
@@ -37,7 +38,8 @@ defmodule Cinder.Requests.Request do
       :status,
       :approved_by_id,
       :original_language,
-      :preferred_language
+      :preferred_language,
+      :proposed_media_profile
     ])
     |> validate_required([:user_id, :target_type, :target_id, :status])
     |> validate_inclusion(:target_type, @target_types)

@@ -34,7 +34,19 @@ defmodule Cinder.M3PipelineTest do
     assert Repo.aggregate(Movie, :count) == 0
 
     # The approved movie carries no imdb_id, so the search pass resolves it via TMDB.
-    stub(Cinder.Catalog.TMDBMock, :get_movie, fn 3 -> {:ok, %{imdb_id: "tt1375666"}} end)
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn 3 ->
+      {:ok,
+       %{
+         tmdb_id: 3,
+         imdb_id: "tt1375666",
+         title: "Inception",
+         year: 2010,
+         poster_path: "/i.jpg",
+         original_language: "en"
+       }}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_movie_alternative_titles, fn 3 -> {:ok, []} end)
 
     stub(Cinder.Acquisition.IndexerMock, :search, fn "tt1375666" ->
       {:ok,
@@ -70,7 +82,7 @@ defmodule Cinder.M3PipelineTest do
     stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
 
     # Admin approval creates the movie at :requested.
-    {:ok, approved} = Requests.approve_request(req, admin)
+    {:ok, approved} = Requests.approve_request(req, admin, :standard)
     assert approved.status == :approved
     assert [%Movie{status: :requested, tmdb_id: 3}] = Catalog.list_by_status(:requested)
 

@@ -1,6 +1,7 @@
 defmodule CinderWeb.MyRequestsLiveTest do
   use CinderWeb.ConnCase, async: false
 
+  import Mox
   import Phoenix.LiveViewTest
 
   alias Cinder.Requests
@@ -135,7 +136,21 @@ defmodule CinderWeb.MyRequestsLiveTest do
     conn = log_in_user(conn, user)
     {:ok, lv, _html} = live(conn, ~p"/my-requests")
 
-    {:ok, _} = Requests.approve_request(req, admin)
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn id ->
+      {:ok,
+       %{
+         tmdb_id: id,
+         imdb_id: nil,
+         title: "Live",
+         year: 2003,
+         poster_path: "/c.jpg",
+         original_language: "en"
+       }}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_movie_alternative_titles, fn _ -> {:ok, []} end)
+
+    {:ok, _} = Requests.approve_request(req, admin, :standard)
     assert render(lv) =~ "Approved"
   end
 

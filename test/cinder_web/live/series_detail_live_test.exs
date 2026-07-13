@@ -4,20 +4,23 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   import Phoenix.LiveViewTest
   import Mox
   import Cinder.AccountsFixtures
+  import Cinder.CatalogFixtures
 
   alias Cinder.{Catalog, Repo}
+  alias Cinder.Catalog.TitleAlias
 
   setup :register_and_log_in_admin
   setup :set_mox_global
 
-  # Baseline so every detail-page metadata refresh (enrich_series) resolves — for the tests that
-  # build a series directly via Repo.insert! (no get_series stub of their own), and even when an
-  # async refresh outlives the test as a detached task. Non-pinned + nil
-  # metadata so it never injects unexpected strings; per-test stubs (create_series) override it.
+  # Baseline so every detail-page metadata refresh resolves for tests that build a series directly.
+  # Nil metadata never injects unexpected strings; create_series/1 overrides this stub per test.
   setup do
     stub(Cinder.Catalog.TMDBMock, :get_series, fn tmdb_id ->
       {:ok, base_series_info(tmdb_id)}
     end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_series_alternative_titles, fn _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ -> {:ok, []} end)
 
     :ok
   end
@@ -41,7 +44,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   # Build a series tree directly via the context (mocked TMDB), at :none so every
   # episode starts un-monitored — the toggles then have something to flip.
   defp create_series(tmdb_id) do
-    # Non-pinned so a detached enrich task from another test can't mismatch this stub.
+    # Non-pinned so tests can open more than one locally-created series with this shared response.
     stub(Cinder.Catalog.TMDBMock, :get_series, fn _ ->
       {:ok,
        %{
@@ -88,9 +91,162 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     Catalog.get_series_with_tree(series_id).seasons |> hd()
   end
 
+  # A connected detail mount always starts :enrich. Drain it before returning so its DB work cannot
+  # outlive the SQL sandbox owner at the end of the test.
+  defp live_series(conn, series, drain? \\ true) do
+    {:ok, view, html} = live(conn, ~p"/series/#{series.id}")
+    on_exit(fn -> stop_live_view(view) end)
+
+    if drain? do
+      render_async(view)
+      {:ok, view, render(view)}
+    else
+      {:ok, view, html}
+    end
+  end
+
+  defp stop_live_view(view) do
+    if Process.alive?(view.pid), do: GenServer.stop(view.pid)
+  catch
+    :exit, _reason -> :ok
+  end
+
+  test "admin changes a series profile and manages sourced aliases", %{conn: conn} do
+    series = create_series(6_900)
+
+    provider =
+      %TitleAlias{series_id: series.id}
+      |> TitleAlias.changeset(%{
+        title: "Provider title",
+        kind: :native,
+        source: "tmdb",
+        namespace: "alternative_titles",
+        precedence: :curated
+      })
+      |> Repo.insert!()
+
+    {:ok, view, _} = live_series(conn, series)
+
+    view
+    |> form("#series-profile-form", %{"media_profile" => "anime"})
+    |> render_change()
+
+    assert Repo.reload(series).media_profile == :anime
+
+    view
+    |> form("#series-alias-form", %{
+      "alias" => %{
+        "title" => "Shingeki no Kyojin",
+        "kind" => "romaji",
+        "country_code" => "JP",
+        "language_code" => "ja"
+      }
+    })
+    |> render_submit()
+
+    assert has_element?(view, "#series-title-aliases [data-alias='Shingeki no Kyojin']")
+    assert has_element?(view, "[data-alias='Provider title'][data-source='tmdb']")
+    refute has_element?(view, "#edit-series-alias-#{provider.id}")
+    refute has_element?(view, "#delete-series-alias-#{provider.id}")
+
+    manual = Enum.find(Catalog.list_title_aliases(series), &(&1.precedence == :manual))
+
+    refute has_element?(view, "#series-alias-edit-status")
+    refute has_element?(view, "#edit-series-alias-#{manual.id}[phx-click*='focus']")
+    assert has_element?(view, "#edit-series-alias-#{manual.id}[phx-click*='push']")
+
+    view
+    |> element("#edit-series-alias-#{manual.id}")
+    |> render_click()
+
+    assert has_element?(
+             view,
+             "#series-alias-edit-status[role='status'][phx-mounted*='focus'][phx-mounted*='#series-alias-title']",
+             "Editing alias Shingeki no Kyojin"
+           )
+  end
+
+  test "series identity events tolerate forged profiles and aliases", %{conn: conn} do
+    series = create_series(6_901)
+    other = series_fixture()
+    {:ok, other_alias} = Catalog.save_manual_alias(other, %{title: "Other series"})
+    {:ok, view, _} = live_series(conn, series)
+
+    render_hook(view, "set_media_profile", %{"media_profile" => "forged"})
+    render_hook(view, "edit_alias", %{"id" => "not-an-id"})
+    render_hook(view, "delete_alias", %{"id" => other_alias.id})
+
+    assert Repo.reload(series).media_profile == :auto
+    assert Repo.reload(other_alias).title == "Other series"
+  end
+
+  test "series episodes show sourced classification and ordered coordinates", %{conn: conn} do
+    series = series_fixture()
+    season = season_fixture(series, season_number: 1)
+    episode = episode_fixture(season, episode_number: 1)
+    earlier_member = episode_fixture(season, episode_number: 2)
+    {:ok, _} = Catalog.set_episode_classification(episode, :story_special, "OVA")
+
+    {:ok, _} =
+      Catalog.put_episode_coordinate(
+        series,
+        %{
+          source: "tmdb",
+          scheme: "absolute",
+          namespace: "absolute-group",
+          canonical_value: "25",
+          precedence: :curated
+        },
+        [earlier_member.id, episode.id]
+      )
+
+    {:ok, _} =
+      Catalog.put_episode_coordinate(
+        series,
+        %{
+          source: "manual",
+          scheme: "scene",
+          namespace: "manual",
+          canonical_value: "26",
+          precedence: :manual
+        },
+        [episode.id]
+      )
+
+    {:ok, view, _} = live_series(conn, series)
+
+    assert has_element?(view, "#episode-#{episode.id}", "S01E01")
+
+    assert has_element?(
+             view,
+             "#episode-#{episode.id} [data-coordinate='absolute:25']",
+             "Absolute 25"
+           )
+
+    assert has_element?(view, "#episode-#{episode.id} [data-coordinate='scene:26']", "Scene 26")
+
+    assert has_element?(
+             view,
+             "#episode-#{episode.id} [data-classification='story_special']",
+             "Story special"
+           )
+
+    assert has_element?(view, "#episode-#{episode.id}", "OVA")
+
+    coordinates =
+      view
+      |> element("#episode-#{episode.id}")
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query("[data-coordinate]")
+      |> LazyHTML.attribute("data-coordinate")
+
+    assert coordinates == ["scene:26", "absolute:25"]
+  end
+
   test "renders the page under the shared header", %{conn: conn} do
     series = create_series(799)
-    {:ok, _lv, html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, _lv, html} = live_series(conn, series)
     assert html =~ "Test Show"
     refute html =~ ~s(<h1 class="text-2xl font-semibold">)
   end
@@ -109,14 +265,16 @@ defmodule CinderWeb.SeriesDetailLiveTest do
       {:ok, %{base_series_info(8_001) | overview: "A show about things.", vote_average: 7.7}}
     end)
 
-    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, lv, initial_html} = live_series(conn, series, false)
 
+    assert initial_html =~ "Old overview"
     assert render_async(lv) =~ "A show about things"
+    render(lv)
   end
 
   test "renders the season/episode tree", %{conn: conn} do
     series = create_series(700)
-    {:ok, _lv, html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, _lv, html} = live_series(conn, series)
 
     assert html =~ "Test Show"
     assert html =~ "Season 1"
@@ -126,7 +284,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
   test "renders seasons collapsed by default", %{conn: conn} do
     series = create_series(701)
-    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, lv, _html} = live_series(conn, series)
 
     assert has_element?(lv, "details > summary", "Season 1")
     refute has_element?(lv, "details[open]")
@@ -154,7 +312,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
       imported_sidecar_subtitles: ["fr"]
     })
 
-    {:ok, _lv, html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, _lv, html} = live_series(conn, series)
     assert html =~ "audio en"
     assert html =~ "audio fr"
     assert html =~ "subtitle en"
@@ -182,7 +340,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
       imported_embedded_subtitles: ["en"]
     })
 
-    {:ok, _lv, html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, _lv, html} = live_series(conn, series)
     refute html =~ ~s(aria-label="audio)
     assert html =~ "subtitle en"
   end
@@ -206,14 +364,14 @@ defmodule CinderWeb.SeriesDetailLiveTest do
       file_path: "/tmp/cinder-test-tv-library/S (2010)/Season 01/S (2010) - S01E01.mkv"
     })
 
-    {:ok, _lv, html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, _lv, html} = live_series(conn, series)
     refute html =~ ~s(aria-label="audio)
     refute html =~ ~s(aria-label="subtitle)
   end
 
   test "renders the series descriptive metadata block", %{conn: conn} do
     series = create_series(720)
-    {:ok, _lv, html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, _lv, html} = live_series(conn, series)
 
     assert html =~ "A test show overview."
     assert html =~ "Drama"
@@ -225,7 +383,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     ep = first_episode(series.id)
     refute ep.monitored
 
-    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, lv, _html} = live_series(conn, series)
     lv |> element(~s|input[phx-value-id="#{ep.id}"]|) |> render_click()
 
     assert Repo.reload(ep).monitored
@@ -236,7 +394,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     season = first_season(series.id)
     refute season.monitored
 
-    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, lv, _html} = live_series(conn, series)
 
     lv
     |> element(~s|button[phx-click="toggle_season"][phx-value-id="#{season.id}"]|)
@@ -258,14 +416,14 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
   test "a malformed toggle event does not crash the LiveView", %{conn: conn} do
     series = create_series(703)
-    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, lv, _html} = live_series(conn, series)
     render_hook(lv, "toggle_episode", %{"id" => "not-an-int"})
     assert render(lv) =~ "Test Show"
   end
 
   test "a series that vanishes out-of-band redirects on the next reload", %{conn: conn} do
     series = create_series(705)
-    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, lv, _html} = live_series(conn, series)
 
     # Delete the tree (cascades), then a series broadcast forces a reload that finds nothing.
     Repo.delete!(series)
@@ -285,7 +443,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   test "redirects to Library (/library) when the open series is deleted", %{conn: conn} do
     series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 7001, title: "Detail Show"})
 
-    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, lv, _html} = live_series(conn, series)
 
     Cinder.Catalog.broadcast_series_deleted(series.id)
     assert_redirect(lv, ~p"/library")
@@ -294,14 +452,14 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   test "ignores a {:series_deleted, id} for a different series", %{conn: conn} do
     series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 7002, title: "Stay Show"})
 
-    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, lv, _html} = live_series(conn, series)
     Cinder.Catalog.broadcast_series_deleted(series.id + 999)
     assert render(lv) =~ "Stay Show"
   end
 
   test "admin edits the series title", %{conn: conn} do
     series = create_series(710)
-    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, lv, _html} = live_series(conn, series)
 
     lv |> element(~s|button[phx-click="edit_series"]|) |> render_click()
 
@@ -310,6 +468,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     |> render_submit()
 
     assert Repo.get!(Cinder.Catalog.Series, series.id).title == "Renamed"
+    render(lv)
   end
 
   test "admin cancels the series: grabs reaped, episodes unmonitored", %{conn: conn} do
@@ -321,7 +480,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     expect(Cinder.Download.ClientMock, :remove, fn "H-711", _opts -> :ok end)
 
-    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, lv, _html} = live_series(conn, series)
     lv |> element(~s|button[phx-click="ask_cancel_series"]|) |> render_click()
     lv |> element(~s|button[phx-click="confirm_cancel_series"]|) |> render_click()
 
@@ -331,7 +490,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
   test "admin deletes the series and is redirected to Library (/library)", %{conn: conn} do
     series = create_series(712)
-    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, lv, _html} = live_series(conn, series)
 
     lv |> element(~s|button[phx-click="ask_delete_series"]|) |> render_click()
     lv |> element(~s|button[phx-click="confirm_delete_series"]|) |> render_click()
@@ -351,7 +510,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     expect(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
     stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
 
-    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, lv, _html} = live_series(conn, series)
 
     lv
     |> element("button[phx-click=ask_delete_episode_file][phx-value-id='#{ep.id}']")
@@ -375,7 +534,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     expect(Cinder.Library.FilesystemMock, :rm, fn _ -> :ok end)
     stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
 
-    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, lv, _html} = live_series(conn, series)
 
     lv
     |> element("button[phx-click=ask_delete_season_files][phx-value-id='#{season.id}']")
@@ -393,7 +552,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   test "Search all missing re-queues the season's wanted episodes", %{conn: conn} do
     series = series_with_wanted_episode(search_attempts: 9)
 
-    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, lv, _html} = live_series(conn, series)
     lv |> element("button", "Search all missing") |> render_click()
 
     assert [ep] = Catalog.wanted_episodes()
@@ -404,7 +563,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     series = series_with_wanted_episode(search_attempts: 7)
     [ep] = Catalog.wanted_episodes()
 
-    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, lv, _html} = live_series(conn, series)
 
     lv
     |> element("button[phx-click=search_episode][phx-value-id='#{ep.id}']")
@@ -431,7 +590,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
         air_date: Date.add(Date.utc_today(), -10)
       })
 
-    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, lv, _html} = live_series(conn, series)
 
     assert has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{monitored.id}']")
     refute has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{unmonitored.id}']")
@@ -439,7 +598,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
   test "a malformed search_episode event does not crash the LiveView", %{conn: conn} do
     series = series_with_wanted_episode(search_attempts: 0)
-    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, lv, _html} = live_series(conn, series)
     render_hook(lv, "search_episode", %{"id" => "not-an-int"})
     assert render(lv) =~ "Test Show"
   end
@@ -461,7 +620,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     future = wanted_ep(season, 2, air_date: Date.add(Date.utc_today(), 7))
     undated = wanted_ep(season, 3, air_date: nil)
 
-    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, lv, _html} = live_series(conn, series)
 
     assert has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{aired.id}']")
     refute has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{future.id}']")
@@ -481,7 +640,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     special = wanted_ep(specials, 1, air_date: Date.add(Date.utc_today(), -10))
 
-    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, lv, _html} = live_series(conn, series)
     refute has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{special.id}']")
   end
 
@@ -490,13 +649,13 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   # deferred) is never offered manual search at all.
   test "Find a better match is offered only for a season with wanted episodes", %{conn: conn} do
     wanted = series_with_wanted_episode(search_attempts: 0)
-    {:ok, lv, _html} = live(conn, ~p"/series/#{wanted.id}")
+    {:ok, lv, _html} = live_series(conn, wanted)
     assert has_element?(lv, "button[phx-click=tv_manual_search]")
 
     %{series: present} =
       series_with_episode_file_fixture("/tmp/cinder-test-tv-library/S (2010)/S01E01.mkv")
 
-    {:ok, lv2, _html} = live(conn, ~p"/series/#{present.id}")
+    {:ok, lv2, _html} = live_series(conn, present)
     refute has_element?(lv2, "button[phx-click=tv_manual_search]")
   end
 
@@ -513,7 +672,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-new"} end)
     stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
 
-    {:ok, lv, _html} = live(conn, ~p"/series/#{series.id}")
+    {:ok, lv, _html} = live_series(conn, series)
 
     lv |> element("button", "Find a better match") |> render_click()
     assert render_async(lv) =~ "Test Show S01E01"

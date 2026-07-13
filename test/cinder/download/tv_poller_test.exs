@@ -689,6 +689,9 @@ defmodule Cinder.Download.TvPollerTest do
        }}
     end)
 
+    stub(Cinder.Catalog.TMDBMock, :get_series_alternative_titles, fn _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ -> {:ok, []} end)
+
     assert {:ok, _} = Catalog.refresh_series(series)
     assert [%Episode{id: id}] = Catalog.wanted_episodes()
     assert id == ep.id

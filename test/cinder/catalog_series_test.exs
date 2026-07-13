@@ -13,6 +13,12 @@ defmodule Cinder.CatalogSeriesTest do
 
   setup :verify_on_exit!
 
+  setup do
+    stub(Cinder.Catalog.TMDBMock, :get_series_alternative_titles, fn _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ -> {:ok, []} end)
+    :ok
+  end
+
   # Far-past / far-future / undated, so the :future assertions never depend on the
   # wall clock (Date.utc_today/0 sits safely between these).
   @past ~D[2001-01-01]
@@ -91,6 +97,32 @@ defmodule Cinder.CatalogSeriesTest do
     test "persists the season/episode tree with monitor flags (:future)" do
       stub_tmdb(42)
 
+      expect(Cinder.Catalog.TMDBMock, :get_series_alternative_titles, fn 42 ->
+        {:ok, [%{title: "Test Alias", country_code: "JP", kind: :alternative}]}
+      end)
+
+      expect(Cinder.Catalog.TMDBMock, :get_episode_groups, fn 42 ->
+        {:ok, [%{id: "absolute", type: 2, name: "Absolute"}]}
+      end)
+
+      expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn "absolute" ->
+        {:ok,
+         %{
+           id: "absolute",
+           type: 2,
+           name: "Absolute",
+           entries: [
+             %{
+               tmdb_episode_id: 101,
+               group_order: 0,
+               order: 0,
+               season_number: 1,
+               episode_number: 1
+             }
+           ]
+         }}
+      end)
+
       assert {:ok, %Series{} = series} =
                Catalog.add_series(42, monitor_strategy: :future)
 
@@ -118,6 +150,10 @@ defmodule Cinder.CatalogSeriesTest do
       assert s1_eps[3].monitored, "undated/TBA episode is monitored under :future"
 
       assert by_num.(s0)[1].monitored == false
+
+      assert [%{title: "Test Alias", source: "tmdb"}] = Catalog.list_title_aliases(series)
+      assert [%{canonical_value: "1"}] = Catalog.list_episode_coordinates(series)
+      assert Repo.get_by!(Episode, tmdb_episode_id: 900).classification == :story_special
     end
   end
 

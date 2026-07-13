@@ -13,7 +13,7 @@ defmodule Cinder.Catalog.Series do
   import Ecto.Changeset
 
   alias Cinder.Acquisition.Language
-  alias Cinder.Catalog.Season
+  alias Cinder.Catalog.{EpisodeCoordinate, Season, TitleAlias}
 
   @monitor_strategies [:all, :future, :none]
 
@@ -31,10 +31,16 @@ defmodule Cinder.Catalog.Series do
     field :genres, {:array, :string}
     field :vote_average, :float
     field :first_air_date, :date
+    field :media_profile, Ecto.Enum, values: [:auto, :standard, :anime], default: :auto
     has_many :seasons, Season
+    has_many :title_aliases, TitleAlias
+    has_many :episode_coordinates, EpisodeCoordinate
 
     timestamps(type: :utc_datetime)
   end
+
+  @doc "Changeset for the operator-owned media handling profile."
+  def profile_changeset(series, attrs), do: cast(series, attrs, [:media_profile])
 
   @doc "The valid `monitor_strategy` values."
   def monitor_strategies, do: @monitor_strategies
@@ -55,7 +61,12 @@ defmodule Cinder.Catalog.Series do
       :monitored,
       :monitor_strategy,
       :original_language,
-      :preferred_language
+      :preferred_language,
+      :overview,
+      :genres,
+      :vote_average,
+      :first_air_date,
+      :media_profile
     ])
     |> validate_required([:tmdb_id, :title])
     |> validate_inclusion(:preferred_language, Language.preferences())

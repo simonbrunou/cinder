@@ -7,6 +7,23 @@ defmodule CinderWeb.RequestsLiveTest do
   setup :register_and_log_in_admin
   setup :set_mox_global
 
+  setup do
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn id ->
+      {:ok,
+       %{
+         tmdb_id: id,
+         imdb_id: nil,
+         title: "Movie #{id}",
+         year: nil,
+         poster_path: nil,
+         original_language: "en"
+       }}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_movie_alternative_titles, fn _ -> {:ok, []} end)
+    :ok
+  end
+
   test "lists pending and approves", %{conn: conn} do
     user = user_fixture()
 
@@ -23,6 +40,64 @@ defmodule CinderWeb.RequestsLiveTest do
     render_async(lv)
     assert [%Cinder.Catalog.Movie{status: :requested}] = Cinder.Catalog.list_by_status(:requested)
     assert {:ok, %{status: :approved}} = {:ok, Cinder.Repo.reload(req)}
+  end
+
+  test "approval defaults to the proposal and requires an explicit Standard or Anime choice", %{
+    conn: conn
+  } do
+    user = user_fixture()
+
+    {:ok, req} =
+      Cinder.Requests.create_request(user, %{
+        target_type: "movie",
+        target_id: 604,
+        title: "Akira",
+        proposed_media_profile: :anime
+      })
+
+    {:ok, lv, _html} = live(conn, ~p"/requests")
+    selector = "#approval-profile-#{req.id}"
+    assert has_element?(lv, "#{selector} option[value='anime'][selected]")
+
+    lv
+    |> form("#approval-profile-form-#{req.id}", %{
+      "_id" => to_string(req.id),
+      "profile" => "standard"
+    })
+    |> render_change()
+
+    lv |> element("button[phx-click='approve'][phx-value-id='#{req.id}']") |> render_click()
+    render_async(lv)
+
+    assert Cinder.Catalog.get_movie_by_tmdb_id(604).media_profile == :standard
+  end
+
+  test "bulk approval uses each row's confirmed profile", %{conn: conn} do
+    user = user_fixture()
+
+    {:ok, standard} =
+      Cinder.Requests.create_request(user, %{
+        target_type: "movie",
+        target_id: 605,
+        title: "Standard"
+      })
+
+    {:ok, anime} =
+      Cinder.Requests.create_request(user, %{
+        target_type: "movie",
+        target_id: 606,
+        title: "Anime",
+        proposed_media_profile: :anime
+      })
+
+    {:ok, lv, _html} = live(conn, ~p"/requests")
+    render_hook(lv, "toggle_select", %{"id" => to_string(standard.id)})
+    render_hook(lv, "toggle_select", %{"id" => to_string(anime.id)})
+    render_hook(lv, "approve_selected", %{})
+    render_async(lv)
+
+    assert Cinder.Catalog.get_movie_by_tmdb_id(605).media_profile == :standard
+    assert Cinder.Catalog.get_movie_by_tmdb_id(606).media_profile == :anime
   end
 
   test "reopen returns a denied request to pending", %{conn: conn} do

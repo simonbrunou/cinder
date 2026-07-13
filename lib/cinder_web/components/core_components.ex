@@ -952,6 +952,85 @@ defmodule CinderWeb.CoreComponents do
     """
   end
 
+  attr :name, :string, default: "proposed_media_profile"
+  attr :value, :any, default: nil
+  attr :include_auto, :boolean, default: true
+  attr :class, :any, default: "select select-sm w-full"
+  attr :rest, :global
+
+  def media_profile_select(assigns) do
+    ~H"""
+    <select name={@name} class={@class} aria-label={gettext("Media profile")} {@rest}>
+      <option :if={@include_auto} value="auto" selected={@value in [nil, :auto]}>
+        {gettext("Auto")}
+      </option>
+      <option value="standard" selected={@value == :standard}>{gettext("Standard")}</option>
+      <option value="anime" selected={@value == :anime}>{gettext("Anime")}</option>
+    </select>
+    """
+  end
+
+  attr :field, Phoenix.HTML.FormField, required: true
+  attr :include_auto, :boolean, default: true
+  attr :class, :any, default: "select select-sm w-full"
+
+  def profile_select(assigns) do
+    options =
+      [{gettext("Standard"), "standard"}, {gettext("Anime"), "anime"}]
+      |> then(fn options ->
+        if assigns.include_auto, do: [{gettext("Auto"), "auto"} | options], else: options
+      end)
+
+    assigns = assign(assigns, :options, options)
+
+    ~H"""
+    <.input
+      field={@field}
+      type="select"
+      label={gettext("Media profile")}
+      options={@options}
+      class={@class}
+    />
+    """
+  end
+
+  attr :id, :string, required: true
+  attr :summary, :map, required: true
+
+  def profile_summary(assigns) do
+    ~H"""
+    <div
+      id={@id}
+      data-selected={@summary.selected}
+      data-effective={@summary.effective}
+      class="text-xs leading-relaxed text-base-content/60"
+    >
+      <span class="font-medium text-base-content/75">
+        {profile_label(@summary.selected)} <span aria-hidden="true">→</span>
+        <span class="sr-only">{gettext("effective")}</span> {profile_label(@summary.effective)}
+      </span>
+      <span :if={@summary.suggestion}>
+        · {gettext("%{profile} suggested by %{evidence}. Auto remains %{effective} until selected.",
+          profile: profile_label(@summary.suggestion),
+          evidence: evidence_label(@summary.evidence),
+          effective: profile_label(@summary.effective)
+        )}
+      </span>
+    </div>
+    """
+  end
+
+  defp profile_label(:auto), do: gettext("Auto")
+  defp profile_label(:standard), do: gettext("Standard")
+  defp profile_label(:anime), do: gettext("Anime")
+
+  defp evidence_label(evidence) do
+    Enum.map_join(evidence, gettext(" and "), &evidence_item_label/1)
+  end
+
+  defp evidence_item_label(:japanese_animation), do: gettext("Japanese animation")
+  defp evidence_item_label(:absolute_episode_group), do: gettext("an absolute episode group")
+
   @doc """
   Human label for a TV season number: "Specials" for season 0, "Season N" otherwise.
   """

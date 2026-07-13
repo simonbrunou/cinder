@@ -35,6 +35,7 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
     assert html =~ "GoT"
     assert has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
     assert has_element?(lv, ~s(button[phx-value-season="2"]), "Request")
+    assert has_element?(lv, "#series-profile-form select[name='proposed_media_profile']")
   end
 
   # Bug B: season 0 (Specials) must not be rendered at all — the TV poller excludes it.
@@ -59,6 +60,23 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
              Cinder.Requests.list_for_user(user)
 
     assert html =~ "Pending"
+  end
+
+  test "requesting a season carries only a validated profile proposal", %{conn: conn} do
+    user = Cinder.AccountsFixtures.user_fixture()
+    conn = log_in_user(conn, user)
+    {:ok, lv, _} = live(conn, ~p"/series/tmdb/1399")
+
+    lv
+    |> form("#series-profile-form", %{"proposed_media_profile" => "anime"})
+    |> render_change()
+
+    lv |> element(~s(button[phx-value-season="2"]), "Request") |> render_click()
+    render_async(lv)
+    assert [%{proposed_media_profile: :anime}] = Cinder.Requests.list_for_user(user)
+
+    render_hook(lv, "set_profile", %{"proposed_media_profile" => "forged"})
+    assert render(lv) =~ "GoT"
   end
 
   test "a denied season still shows a Request button so the user can re-request", %{conn: conn} do

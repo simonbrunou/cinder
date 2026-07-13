@@ -80,7 +80,8 @@ defmodule CinderWeb.DashboardLive do
   def handle_event("recheck_health", _params, socket),
     do: {:noreply, socket |> cancel_async(:health) |> assign(health: :loading) |> check_health()}
 
-  def handle_event("approve", %{"id" => id}, socket) do
+  def handle_event("approve", %{"_id" => id, "profile" => profile}, socket)
+      when profile in ["standard", "anime"] do
     case find_pending(socket, id) do
       nil ->
         {:noreply, socket}
@@ -90,9 +91,12 @@ defmodule CinderWeb.DashboardLive do
         # LiveView (matching /requests) so a single click can't freeze the page for seconds.
         # Keyed per request so overlapping approvals don't overwrite each other's results.
         admin = socket.assigns.current_scope.user
+        profile = String.to_existing_atom(profile)
 
         {:noreply,
-         start_async(socket, {:approve, req.id}, fn -> Requests.approve_request(req, admin) end)}
+         start_async(socket, {:approve, req.id}, fn ->
+           Requests.approve_request(req, admin, profile)
+         end)}
     end
   end
 
@@ -369,15 +373,31 @@ defmodule CinderWeb.DashboardLive do
                 <.status_badge kind={:request} status={r.status} />
               </div>
               <div class="mt-3 flex flex-wrap items-center gap-2">
-                <.button
-                  variant="primary"
-                  size="sm"
-                  phx-click="approve"
-                  phx-value-id={r.id}
-                  phx-disable-with={gettext("Approving…")}
+                <form
+                  id={"dashboard-approval-form-#{r.id}"}
+                  phx-submit="approve"
+                  class="flex items-center gap-2"
                 >
-                  {gettext("Approve")}
-                </.button>
+                  <input type="hidden" name="_id" value={r.id} />
+                  <label for={"dashboard-approval-profile-#{r.id}"} class="sr-only">
+                    {gettext("Confirmed media profile for %{title}", title: r.title)}
+                  </label>
+                  <.media_profile_select
+                    id={"dashboard-approval-profile-#{r.id}"}
+                    name="profile"
+                    value={r.proposed_media_profile || :standard}
+                    include_auto={false}
+                    class="select select-sm w-auto"
+                  />
+                  <.button
+                    type="submit"
+                    variant="primary"
+                    size="sm"
+                    phx-disable-with={gettext("Approving…")}
+                  >
+                    {gettext("Approve")}
+                  </.button>
+                </form>
                 <.button
                   :if={@denying != to_string(r.id)}
                   variant="ghost"

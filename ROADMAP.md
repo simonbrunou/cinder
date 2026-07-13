@@ -9,7 +9,7 @@ multi-user are deliberately out of scope until the slice is solid (see *Parked*,
 > remaining release sign-offs stay recorded in M8. The next approved feature program is
 > **Part III — Anime-aware media handling** (bottom): make discovery, release matching,
 > numbering, specials, audio/subtitle preferences, and ambiguous-import recovery genuinely
-> anime-aware without creating a third pipeline. A0 is complete; A1 is the next phase.
+> anime-aware without creating a third pipeline. A1 is complete; A2 is the next phase.
 > Phases 0–5 and Part II remain the build record.
 
 ## How to run this with Claude Code
@@ -792,6 +792,13 @@ Land profiles, request/approval proposals, title aliases, many-to-many coordinat
 classification, selected provider callbacks, refresh rules, and the pure resolver. **Done when:** the
 A0 corpus plus identity, precedence, same-series, refresh, and profile-preservation tests pass and
 `mix test` is green.
+
+**[done 2026-07-13]** Added operator-owned Auto/Standard/Anime profiles for movies and series,
+request/approval profile proposals, source-scoped title aliases, ordered many-to-many episode
+coordinates, sourced episode classifications, TMDB alternative-title/Absolute-group refresh, and
+the pure precedence-aware resolver. Auto remains Standard unless explicitly confirmed because A0
+selected TMDB without a strong anime identity signal. The A0 A1 corpus contracts and full `mix test`
+gate pass; acquisition/download/import behavior remains unchanged for A2/A3.
 
 ### A2 — Anime acquisition
 

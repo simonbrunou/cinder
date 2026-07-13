@@ -10,7 +10,19 @@ defmodule Cinder.Catalog do
 
   alias Cinder.Acquisition.Release
   alias Cinder.Audit
-  alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Movie, Season, Series}
+
+  alias Cinder.Catalog.{
+    BlockedRelease,
+    Episode,
+    EpisodeCoordinate,
+    Grab,
+    Identity,
+    MediaProfile,
+    Movie,
+    Season,
+    Series
+  }
+
   alias Cinder.Download
   alias Cinder.Download.Intent
   alias Cinder.Library
@@ -102,6 +114,55 @@ defmodule Cinder.Catalog do
     %Movie{}
     |> Movie.changeset(attrs)
     |> Repo.insert()
+  end
+
+  @doc "Sets the operator-owned handling profile for a movie or series."
+  def set_media_profile(%Movie{} = movie, profile) do
+    movie |> Movie.profile_changeset(%{media_profile: profile}) |> Repo.update()
+  end
+
+  def set_media_profile(%Series{} = series, profile) do
+    series |> Series.profile_changeset(%{media_profile: profile}) |> Repo.update()
+  end
+
+  @doc "Returns selected/effective profile policy and bounded suggestion evidence."
+  def media_profile_summary(%Series{} = series) do
+    extra_evidence =
+      if Repo.exists?(
+           from c in EpisodeCoordinate,
+             where: c.series_id == ^series.id and c.source == "tmdb" and c.scheme == "absolute"
+         ),
+         do: [:absolute_episode_group],
+         else: []
+
+    MediaProfile.summary(series, extra_evidence)
+  end
+
+  def media_profile_summary(%Movie{} = movie), do: MediaProfile.summary(movie)
+
+  @doc "Lists sourced aliases for a movie or series."
+  defdelegate list_title_aliases(owner), to: Identity, as: :list_aliases
+
+  @doc "Adds an operator-owned alias."
+  defdelegate save_manual_alias(owner, attrs), to: Identity
+
+  @doc "Updates an operator-owned alias belonging to the supplied owner."
+  defdelegate update_manual_alias(owner, alias_id, attrs), to: Identity
+
+  @doc "Deletes an operator-owned alias belonging to the supplied owner."
+  defdelegate delete_manual_alias(owner, alias_id), to: Identity
+
+  @doc "Stores one ordered coordinate after validating every episode belongs to the series."
+  defdelegate put_episode_coordinate(series, attrs, episode_ids),
+    to: Identity,
+    as: :put_coordinate
+
+  @doc "Lists a series' coordinates with ordered episode memberships preloaded."
+  defdelegate list_episode_coordinates(series), to: Identity, as: :list_coordinates
+
+  @doc "Sets an explicit operator-owned episode classification."
+  def set_episode_classification(%Episode{} = episode, classification, label \\ nil) do
+    Identity.set_manual_classification(episode, classification, label)
   end
 
   @doc """
@@ -788,27 +849,78 @@ defmodule Cinder.Catalog do
   A lost insert race (unique_constraint on `:tmdb_id`) is handled by re-fetching
   the winner and returning it, so callers always get `{:ok, movie}`.
   """
-  def find_or_create_at_requested(attrs) do
+  def find_or_create_at_requested(attrs, aliases \\ []) do
     case get_movie_by_tmdb_id(attrs.tmdb_id) do
-      %Movie{} = movie -> {:ok, movie}
-      nil -> do_insert_at_requested(attrs)
+      %Movie{} = movie -> apply_confirmed_profile(movie, Map.get(attrs, :media_profile))
+      nil -> do_insert_at_requested(attrs, aliases)
     end
   end
 
-  defp do_insert_at_requested(attrs) do
-    case %Movie{} |> Movie.changeset(attrs) |> Repo.insert() do
+  @doc "Fetches requested-movie details and aliases before any Catalog write."
+  def prepare_requested_movie(attrs) do
+    tmdb_id = Map.fetch!(attrs, :tmdb_id)
+
+    case get_movie_by_tmdb_id(tmdb_id) do
+      %Movie{} ->
+        {:ok, %{attrs: attrs, aliases: []}}
+
+      nil ->
+        with {:ok, info} <- tmdb().get_movie(tmdb_id),
+             {:ok, aliases} <- tmdb().get_movie_alternative_titles(info.tmdb_id) do
+          create_attrs =
+            info
+            |> Map.take([
+              :tmdb_id,
+              :imdb_id,
+              :title,
+              :year,
+              :poster_path,
+              :original_language
+            ])
+            |> Map.merge(Map.take(attrs, [:preferred_language, :media_profile]))
+
+          {:ok, %{attrs: create_attrs, aliases: aliases}}
+        end
+    end
+  end
+
+  defp do_insert_at_requested(attrs, aliases) do
+    result =
+      Repo.transaction(fn ->
+        with {:ok, movie} <- %Movie{} |> Movie.changeset(attrs) |> Repo.insert(),
+             {:ok, _aliases} <-
+               Identity.replace_provider_aliases(
+                 movie,
+                 "tmdb",
+                 "alternative_titles",
+                 :inferred,
+                 aliases
+               ) do
+          movie
+        else
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      end)
+
+    case result do
       {:ok, movie} ->
         broadcast({:movie_created, movie})
         {:ok, movie}
 
-      {:error, changeset} ->
+      {:error, reason} ->
         # Lost the insert race (unique_constraint :tmdb_id) — the row now exists.
         case get_movie_by_tmdb_id(attrs.tmdb_id) do
-          %Movie{} = movie -> {:ok, movie}
-          nil -> {:error, changeset}
+          %Movie{} = movie -> apply_confirmed_profile(movie, Map.get(attrs, :media_profile))
+          nil -> {:error, reason}
         end
     end
   end
+
+  defp apply_confirmed_profile(%{media_profile: :auto} = media, profile)
+       when profile in [:standard, :anime],
+       do: set_media_profile(media, profile)
+
+  defp apply_confirmed_profile(media, _profile), do: {:ok, media}
 
   defp broadcast(message), do: Phoenix.PubSub.broadcast(Cinder.PubSub, @topic, message)
 
@@ -837,11 +949,12 @@ defmodule Cinder.Catalog do
     # *before* the Ecto.Enum changeset would catch it, so an unknown atom would otherwise
     # crash rather than return a clean error.
     preferred = Keyword.get(opts, :preferred_language, "original")
+    media_profile = Keyword.get(opts, :media_profile, :auto)
 
     if strategy in Series.monitor_strategies() do
       case get_series_by_tmdb_id(tmdb_id) do
         %Series{} = series -> {:ok, series}
-        nil -> create_series(tmdb_id, strategy, preferred)
+        nil -> create_series(tmdb_id, strategy, preferred, media_profile)
       end
     else
       {:error, :invalid_monitor_strategy}
@@ -856,8 +969,17 @@ defmodule Cinder.Catalog do
   Does TMDB I/O on first create, so it must NOT be called inside a `Repo.transaction`.
   Returns `{:ok, %Series{}}`, or `{:error, reason}` if the TMDB fetch fails or the season is absent.
   """
-  def find_or_create_series_at_requested(tmdb_id, season_number, preferred \\ "original") do
-    with {:ok, series} <- ensure_series(tmdb_id, preferred),
+  def find_or_create_series_at_requested(
+        tmdb_id,
+        season_number,
+        preferred \\ "original",
+        media_profile \\ :auto
+      )
+
+  def find_or_create_series_at_requested(tmdb_id, season_number, preferred, media_profile)
+      when media_profile in [:auto, :standard, :anime] do
+    with {:ok, series} <- ensure_series(tmdb_id, preferred, media_profile),
+         {:ok, series} <- apply_confirmed_profile(series, media_profile),
          {:ok, series} <- apply_requester_language(series, preferred),
          %Season{} = season <- season_in(series, season_number),
          {:ok, _} <- set_season_monitored(season, true),
@@ -869,10 +991,18 @@ defmodule Cinder.Catalog do
     end
   end
 
+  def find_or_create_series_at_requested(_tmdb_id, _season_number, _preferred, _media_profile),
+    do: {:error, :invalid_media_profile}
+
   # Create with monitor_strategy: :none so NOTHING is monitored by default; the requested season
   # is then flipped on explicitly. An existing series is returned as-is.
-  defp ensure_series(tmdb_id, preferred),
-    do: add_series(tmdb_id, monitor_strategy: :none, preferred_language: preferred)
+  defp ensure_series(tmdb_id, preferred, media_profile),
+    do:
+      add_series(tmdb_id,
+        monitor_strategy: :none,
+        preferred_language: preferred,
+        media_profile: media_profile
+      )
 
   # Fill-if-default: an existing series whose language was never customized ("original") adopts the
   # requester's non-default pick; a series already customized to a non-default is left untouched
@@ -914,15 +1044,31 @@ defmodule Cinder.Catalog do
     end
   end
 
-  defp create_series(tmdb_id, strategy, preferred) do
+  defp create_series(tmdb_id, strategy, preferred, media_profile) do
     with {:ok, info} <- tmdb().get_series(tmdb_id),
-         {:ok, seasons} <- fetch_seasons(tmdb_id, info.seasons) do
-      insert_series(tmdb_id, series_attrs(info, seasons, strategy, preferred))
+         {:ok, seasons} <- fetch_seasons(tmdb_id, info.seasons),
+         {:ok, identity} <- fetch_series_identity(tmdb_id) do
+      insert_series(
+        tmdb_id,
+        series_attrs(info, seasons, strategy, preferred, media_profile),
+        seasons,
+        identity
+      )
     end
   end
 
-  defp insert_series(tmdb_id, attrs) do
-    case attrs |> Series.create_changeset() |> Repo.insert() do
+  defp insert_series(tmdb_id, attrs, seasons, identity) do
+    result =
+      Repo.transaction(fn ->
+        with {:ok, series} <- attrs |> Series.create_changeset() |> Repo.insert(),
+             :ok <- sync_series_identity(series, seasons, identity) do
+          series
+        else
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      end)
+
+    case result do
       {:ok, series} ->
         # Return the re-read row (not the cast_assoc result) so every add path —
         # found-existing, freshly-inserted, race-loss — returns a series with its
@@ -931,13 +1077,13 @@ defmodule Cinder.Catalog do
         # contract stays {:ok, %Series{}} and never {:ok, nil}.
         {:ok, get_series_by_tmdb_id(tmdb_id) || series}
 
-      {:error, %Ecto.Changeset{} = changeset} ->
+      {:error, reason} ->
         # A unique_constraint(:tmdb_id) race rolls the whole tree back (no partial
         # rows), so the winner now exists — return it. Any other changeset error
         # finds no winner and propagates unchanged.
         case get_series_by_tmdb_id(tmdb_id) do
           %Series{} = series -> {:ok, series}
-          nil -> {:error, changeset}
+          nil -> {:error, reason}
         end
     end
   end
@@ -956,7 +1102,125 @@ defmodule Cinder.Catalog do
     with {:ok, seasons} <- result, do: {:ok, Enum.reverse(seasons)}
   end
 
-  defp series_attrs(info, seasons, strategy, preferred) do
+  defp fetch_series_identity(tmdb_id) do
+    with {:ok, aliases} <- tmdb().get_series_alternative_titles(tmdb_id),
+         {:ok, groups} <- tmdb().get_episode_groups(tmdb_id),
+         {:ok, absolute_groups} <- fetch_absolute_groups(groups) do
+      {:ok, %{aliases: aliases, absolute_groups: absolute_groups}}
+    end
+  end
+
+  defp fetch_absolute_groups(groups) do
+    groups
+    |> Enum.filter(&(&1.type == 2))
+    |> Enum.reduce_while({:ok, []}, fn group, {:ok, details} ->
+      case tmdb().get_episode_group(group.id) do
+        {:ok, detail} -> {:cont, {:ok, [detail | details]}}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, details} -> {:ok, Enum.reverse(details)}
+      error -> error
+    end
+  end
+
+  defp sync_series_identity(series, seasons, identity) do
+    with {:ok, _} <-
+           Identity.replace_provider_aliases(
+             series,
+             "tmdb",
+             "alternative_titles",
+             :inferred,
+             identity.aliases
+           ),
+         :ok <- sync_absolute_coordinates(series, identity.absolute_groups),
+         {:ok, _} <- sync_tmdb_classifications(series, seasons) do
+      :ok
+    end
+  end
+
+  defp sync_absolute_coordinates(series, absolute_groups) do
+    episode_ids =
+      Repo.all(
+        from e in Episode,
+          join: season in assoc(e, :season),
+          where: season.series_id == ^series.id and not is_nil(e.tmdb_episode_id),
+          select: {e.tmdb_episode_id, e.id}
+      )
+      |> Map.new()
+
+    details_by_namespace = Map.new(absolute_groups, &{&1.id, &1})
+
+    existing_namespaces =
+      Repo.all(
+        from c in EpisodeCoordinate,
+          where: c.series_id == ^series.id and c.source == "tmdb" and c.scheme == "absolute",
+          select: c.namespace,
+          distinct: true
+      )
+
+    (existing_namespaces ++ Map.keys(details_by_namespace))
+    |> Enum.uniq()
+    |> Enum.reduce_while(:ok, fn namespace, :ok ->
+      coordinates =
+        details_by_namespace
+        |> Map.get(namespace)
+        |> absolute_coordinate_attrs(episode_ids)
+
+      case Identity.replace_provider_coordinates(series, "tmdb", namespace, coordinates) do
+        {:ok, _} -> {:cont, :ok}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+  end
+
+  defp absolute_coordinate_attrs(nil, _episode_ids), do: []
+
+  defp absolute_coordinate_attrs(group, episode_ids) do
+    entries = Enum.sort_by(group.entries, &{&1.group_order, &1.order})
+
+    if Enum.all?(entries, &Map.has_key?(episode_ids, &1.tmdb_episode_id)) do
+      entries
+      |> Enum.with_index(1)
+      |> Enum.map(fn {entry, absolute_number} ->
+        %{
+          scheme: "absolute",
+          canonical_value: Integer.to_string(absolute_number),
+          precedence: :inferred,
+          episode_ids: [Map.fetch!(episode_ids, entry.tmdb_episode_id)]
+        }
+      end)
+    else
+      []
+    end
+  end
+
+  defp sync_tmdb_classifications(series, seasons) do
+    episode_ids =
+      Repo.all(
+        from e in Episode,
+          join: season in assoc(e, :season),
+          where: season.series_id == ^series.id and not is_nil(e.tmdb_episode_id),
+          select: {e.tmdb_episode_id, e.id}
+      )
+      |> Map.new()
+
+    classifications =
+      for season <- seasons,
+          episode <- season.episodes,
+          episode_id = episode_ids[episode.tmdb_episode_id],
+          not is_nil(episode_id) do
+        {classification, label} =
+          Identity.classify_tmdb_episode(season.season_number, episode.title)
+
+        {episode_id, classification, label}
+      end
+
+    Identity.put_provider_classifications("tmdb", classifications)
+  end
+
+  defp series_attrs(info, seasons, strategy, preferred, media_profile) do
     today = Date.utc_today()
 
     %{
@@ -967,6 +1231,11 @@ defmodule Cinder.Catalog do
       poster_path: info.poster_path,
       original_language: info[:original_language],
       preferred_language: preferred,
+      overview: Map.get(info, :overview),
+      genres: Map.get(info, :genres),
+      vote_average: Map.get(info, :vote_average),
+      first_air_date: Map.get(info, :first_air_date),
+      media_profile: media_profile,
       monitored: strategy != :none,
       monitor_strategy: strategy,
       seasons:
@@ -1015,7 +1284,19 @@ defmodule Cinder.Catalog do
 
       series ->
         seasons_q = from(s in Season, order_by: s.season_number)
-        eps_q = from(e in Episode, order_by: e.episode_number)
+
+        memberships_q =
+          from(m in Cinder.Catalog.EpisodeCoordinateMembership,
+            order_by: m.position,
+            preload: [:episode_coordinate]
+          )
+
+        eps_q =
+          from(e in Episode,
+            order_by: e.episode_number,
+            preload: [coordinate_memberships: ^memberships_q]
+          )
+
         Repo.preload(series, seasons: {seasons_q, [episodes: eps_q]})
     end
   end
@@ -1957,8 +2238,9 @@ defmodule Cinder.Catalog do
   """
   def refresh_series(%Series{} = series) do
     with {:ok, info} <- tmdb().get_series(series.tmdb_id),
-         {:ok, seasons} <- fetch_seasons(series.tmdb_id, info.seasons) do
-      Repo.transaction(fn -> refresh_current_series(series.id, info, seasons) end)
+         {:ok, seasons} <- fetch_seasons(series.tmdb_id, info.seasons),
+         {:ok, identity} <- fetch_series_identity(series.tmdb_id) do
+      Repo.transaction(fn -> refresh_current_series(series.id, info, seasons, identity) end)
       |> finish_series_refresh(series.id)
     end
   end
@@ -1970,12 +2252,16 @@ defmodule Cinder.Catalog do
 
   defp finish_series_refresh({:error, reason}, _series_id), do: {:error, reason}
 
-  defp refresh_current_series(series_id, info, seasons) do
+  defp refresh_current_series(series_id, info, seasons, identity) do
     case Repo.get(Series, series_id) do
       %Series{} = current ->
         updated = update_series_row(current, info)
         reconcile_tree(updated, seasons)
-        updated
+
+        case sync_series_identity(updated, seasons, identity) do
+          :ok -> updated
+          {:error, reason} -> Repo.rollback(reason)
+        end
 
       nil ->
         Repo.rollback(:stale_series)
