@@ -741,12 +741,18 @@ defmodule Cinder.Catalog do
 
   defp safe_anime_mapping?(%Release{
          resolved_episode_ids: ids,
-         mapping_snapshot: %{"version" => 2, "reserved_episode_ids" => reserved}
+         mapping_snapshot: %{"version" => 2} = snapshot
        })
-       when is_list(ids) and ids != [],
-       do: ids == reserved
+       when is_list(ids) and ids != [] do
+    kind = if length(ids) == 1, do: :episode, else: :season_pack
+    Intent.valid_mapping_snapshot?(snapshot, kind, ids)
+  end
 
   defp safe_anime_mapping?(_release), do: false
+
+  defp manual_grab_standard_tv(_series, _season_number, %Release{mapping_snapshot: snapshot})
+       when not is_nil(snapshot),
+       do: {:error, :unsafe_anime_mapping}
 
   defp manual_grab_standard_tv(%Series{id: series_id}, season_number, %Release{} = release) do
     wanted =

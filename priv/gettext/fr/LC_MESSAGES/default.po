@@ -1907,62 +1907,62 @@ msgstr "Nom d'utilisateur qBittorrent"
 msgid "Upgrading"
 msgstr "Mise à niveau"
 
-#: lib/cinder_web/components/manual_search_component.ex:192
+#: lib/cinder_web/components/manual_search_component.ex:236
 #, elixir-autogen, elixir-format
 msgid "?"
 msgstr "?"
 
-#: lib/cinder_web/components/manual_search_component.ex:180
+#: lib/cinder_web/components/manual_search_component.ex:224
 #, elixir-autogen, elixir-format
 msgid "Couldn't reach the indexer. Try again."
 msgstr "Impossible de joindre l'indexeur. Réessayez."
 
-#: lib/cinder_web/components/manual_search_component.ex:205
+#: lib/cinder_web/components/manual_search_component.ex:249
 #, elixir-autogen, elixir-format
 msgid "Grab"
 msgstr "Récupérer"
 
-#: lib/cinder_web/components/manual_search_component.ex:183
+#: lib/cinder_web/components/manual_search_component.ex:227
 #, elixir-autogen, elixir-format
 msgid "No releases found."
 msgstr "Aucune version trouvée."
 
-#: lib/cinder_web/components/manual_search_component.ex:217
+#: lib/cinder_web/components/manual_search_component.ex:261
 #, elixir-autogen, elixir-format
 msgid "Replace file"
 msgstr "Remplacer le fichier"
 
-#: lib/cinder_web/components/manual_search_component.ex:220
+#: lib/cinder_web/components/manual_search_component.ex:264
 #, elixir-autogen, elixir-format
 msgid "Replace the current file for this movie with the selected release?"
 msgstr "Remplacer le fichier actuel de ce film par la version sélectionnée ?"
 
-#: lib/cinder_web/components/manual_search_component.ex:177
+#: lib/cinder_web/components/manual_search_component.ex:221
 #, elixir-autogen, elixir-format
 msgid "Searching releases…"
 msgstr "Recherche de versions…"
 
-#: lib/cinder_web/components/manual_search_component.ex:237
+#: lib/cinder_web/components/manual_search_component.ex:281
 #, elixir-autogen, elixir-format
 msgid "blocklisted"
 msgstr "sur liste de blocage"
 
-#: lib/cinder_web/components/manual_search_component.ex:240
+#: lib/cinder_web/components/manual_search_component.ex:284
 #, elixir-autogen, elixir-format
 msgid "no client for protocol"
 msgstr "aucun client pour ce protocole"
 
-#: lib/cinder_web/components/manual_search_component.ex:236
+#: lib/cinder_web/components/manual_search_component.ex:280
 #, elixir-autogen, elixir-format
 msgid "outside size band"
 msgstr "hors de la plage de taille"
 
-#: lib/cinder_web/components/manual_search_component.ex:238
+#: lib/cinder_web/components/manual_search_component.ex:282
 #, elixir-autogen, elixir-format
 msgid "resolution not preferred"
 msgstr "résolution non préférée"
 
-#: lib/cinder_web/components/manual_search_component.ex:239
+#: lib/cinder_web/components/manual_search_component.ex:283
 #, elixir-autogen, elixir-format
 msgid "source not preferred"
 msgstr "source non préférée"
@@ -2025,7 +2025,7 @@ msgstr "Recherche des épisodes manquants…"
 msgid "Searching for this episode…"
 msgstr "Recherche de cet épisode…"
 
-#: lib/cinder_web/components/manual_search_component.ex:203
+#: lib/cinder_web/components/manual_search_component.ex:247
 #, elixir-autogen, elixir-format
 msgid "Grabbing…"
 msgstr "Récupération…"
@@ -3166,32 +3166,32 @@ msgid_plural "Effective fallback delay: %{count} hours"
 msgstr[0] "Délai de repli effectif : %{count} heure"
 msgstr[1] "Délai de repli effectif : %{count} heures"
 
-#: lib/cinder_web/components/manual_search_component.ex:248
+#: lib/cinder_web/components/manual_search_component.ex:292
 #, elixir-autogen, elixir-format
 msgid "awaiting preferred group"
 msgstr "en attente du groupe préféré"
 
-#: lib/cinder_web/components/manual_search_component.ex:241
+#: lib/cinder_web/components/manual_search_component.ex:285
 #, elixir-autogen, elixir-format
 msgid "blocked anime group"
 msgstr "groupe anime bloqué"
 
-#: lib/cinder_web/components/manual_search_component.ex:242
+#: lib/cinder_web/components/manual_search_component.ex:286
 #, elixir-autogen, elixir-format
 msgid "contradictory audio"
 msgstr "audio contradictoire"
 
-#: lib/cinder_web/components/manual_search_component.ex:245
+#: lib/cinder_web/components/manual_search_component.ex:289
 #, elixir-autogen, elixir-format
 msgid "contradictory subtitles"
 msgstr "sous-titres contradictoires"
 
-#: lib/cinder_web/components/manual_search_component.ex:251
+#: lib/cinder_web/components/manual_search_component.ex:295
 #, elixir-autogen, elixir-format
 msgid "publication time required"
 msgstr "heure de publication requise"
 
-#: lib/cinder_web/components/manual_search_component.ex:254
+#: lib/cinder_web/components/manual_search_component.ex:298
 #, elixir-autogen, elixir-format
 msgid "stable episode mapping required"
 msgstr "correspondance stable des épisodes requise"

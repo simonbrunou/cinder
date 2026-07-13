@@ -141,6 +141,7 @@ defmodule Cinder.Acquisition.Parser do
   @vostfr ~r/(?:^|[^\p{L}\p{N}])VOSTFR(?:[^\p{L}\p{N}]|$)/iu
   @raw_bracket ~r/\[\s*RAW\s*\]/iu
   @raw_token ~r/(?:^|[^\p{L}\p{N}])RAW(?:[^\p{L}\p{N}]|$)/iu
+  @raw_suffix ~r/(?:\b(?:S\d{1,2}E\d{1,3}|\d{1,4}|2160p|1080p|720p|480p)\b|\])[ ._-]+RAW(?:\.(?:mkv|mp4|avi|m4v|ts))?\s*$/iu
 
   # A subtitle-LANGUAGE marker — a language token glued by separators to a sub/subs/subtitle(s) word
   # — names the subtitle language, not the audio. Strip it before matching so "FRENCH.SUBS",
@@ -366,7 +367,9 @@ defmodule Cinder.Acquisition.Parser do
     do: Map.get(@claim_language_aliases, language |> String.trim() |> String.downcase())
 
   defp raw_claim?(name),
-    do: Regex.match?(@raw_bracket, name) or Regex.match?(@raw_token, tag_region(name))
+    do:
+      Regex.match?(@raw_bracket, name) or Regex.match?(@raw_token, tag_region(name)) or
+        Regex.match?(@raw_suffix, name)
 
   # The trailing "-TOKEN", but only when TOKEN is a single alphanumeric run (no
   # dots/spaces), after stripping a container extension. Otherwise nil — so a

@@ -3,6 +3,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
 
   import Mox
 
+  alias Cinder.Acquisition
   alias Cinder.Acquisition.{Anime, AnimePreferences}
   alias Cinder.Acquisition.IndexerMock
   alias Cinder.Acquisition.Release
@@ -245,6 +246,28 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
                [blocked, preferred],
                AnimePreferences.selection_opts(policy)
              )
+  end
+
+  test "public Anime movie search uses complete audio claims instead of legacy singular language" do
+    context = %{kind: :movie, title: "Suzume", year: 2022, aliases: []}
+
+    expect(IndexerMock, :search, fn "tt4425200" ->
+      {:ok,
+       [
+         raw("[Group] Suzume 2022 [1080p] [FR Audio]", "french-dub",
+           published_at: ~U[2026-07-13 12:00:00Z]
+         )
+       ]}
+    end)
+
+    expect(IndexerMock, :search_movie_query, fn "Suzume 2022", categories: [5070] -> {:ok, []} end)
+
+    opts =
+      [preferred_language: "french", original_language: "ja"] ++
+        AnimePreferences.selection_opts(policy(required_audio_languages: ["fr"]))
+
+    assert {:ok, %Release{audio_languages: ["fr"], audio_claim_complete?: true}} =
+             Acquisition.best_anime_movie("tt4425200", context, opts)
   end
 
   test "a complete contradictory audio claim is rejected while unknown evidence survives", %{

@@ -620,6 +620,58 @@ defmodule Cinder.CatalogSeriesTest do
 
       assert {:error, :unsafe_anime_mapping} = Catalog.manual_grab_tv(series, 0, release)
     end
+
+    test "a malformed Anime snapshot cannot reconcile an existing intent or reach client I/O" do
+      series = series_fixture(%{media_profile: :anime, monitor_strategy: :all})
+      season = season_fixture(series, %{season_number: 0})
+
+      special =
+        episode_fixture(season, %{episode_number: 0, classification: :story_special})
+
+      context = Catalog.anime_series_acquisition_context(series)
+
+      candidate =
+        Release.new(%{title: "[Group] Show S00E00 [1080p]", download_url: "existing-anime"})
+
+      assert {:ok, %{assignments: [%{release: valid_release}]}} =
+               Anime.select_episodes([candidate], context, [special.id], [])
+
+      assert {:ok, _intent} =
+               Cinder.Download.reserve_intent(%{
+                 kind: :episode,
+                 target_id: special.id,
+                 episode_ids: [special.id],
+                 protocol: valid_release.protocol,
+                 release: valid_release,
+                 mapping_snapshot: valid_release.mapping_snapshot
+               })
+
+      malformed = %{
+        valid_release
+        | mapping_snapshot: %{"version" => 2, "reserved_episode_ids" => [special.id]}
+      }
+
+      expect(Cinder.Download.ClientMock, :find_by_operation_key, 0, fn _ -> :not_found end)
+      expect(Cinder.Download.ClientMock, :add, 0, fn _, _opts -> {:ok, "must-not-run"} end)
+
+      assert {:error, :unsafe_anime_mapping} = Catalog.manual_grab_tv(series, 0, malformed)
+    end
+
+    test "a marked Anime release cannot fall through the Standard whole-season manual path" do
+      series = series_with_wanted_episodes(season: 1, numbers: [1, 2])
+
+      release = %Release{
+        title: "[Group] Stale Anime Pack",
+        protocol: :torrent,
+        episodes: nil,
+        download_url: "stale-anime",
+        mapping_snapshot: %{"version" => 2, "reserved_episode_ids" => [1, 2]}
+      }
+
+      expect(Cinder.Download.ClientMock, :add, 0, fn _, _opts -> {:ok, "must-not-run"} end)
+
+      assert {:error, :unsafe_anime_mapping} = Catalog.manual_grab_tv(series, 1, release)
+    end
   end
 
   describe "search_now" do

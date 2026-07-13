@@ -74,10 +74,11 @@ defmodule Cinder.Download.Intent do
     end
   end
 
-  defp valid_mapping_snapshot?(nil, _kind, _episode_ids), do: true
+  @doc "Whether a mapping snapshot satisfies the durable intent reservation contract."
+  def valid_mapping_snapshot?(nil, _kind, _episode_ids), do: true
 
-  defp valid_mapping_snapshot?(snapshot, kind, intent_episode_ids)
-       when kind in [:episode, :season_pack] and is_map(snapshot) do
+  def valid_mapping_snapshot?(snapshot, kind, intent_episode_ids)
+      when kind in [:episode, :season_pack] and is_map(snapshot) do
     with %{
            "reserved_episode_ids" => reserved_ids,
            "release" => release,
@@ -97,7 +98,7 @@ defmodule Cinder.Download.Intent do
     end
   end
 
-  defp valid_mapping_snapshot?(_snapshot, _kind, _episode_ids), do: false
+  def valid_mapping_snapshot?(_snapshot, _kind, _episode_ids), do: false
 
   defp valid_snapshot_version?(%{"version" => 1}), do: true
 

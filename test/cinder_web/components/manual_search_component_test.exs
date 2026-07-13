@@ -53,6 +53,7 @@ defmodule CinderWeb.ManualSearchComponentTest do
   alias Cinder.Acquisition.Release
   alias Cinder.Catalog.{Movie, Series}
   alias CinderWeb.ManualSearchComponent
+  alias Phoenix.LiveView.Socket
 
   # A pre-seeded `results:` assign makes update/2 skip the async indexer fetch, so the panel can be
   # rendered and asserted without a host LiveView. The async path is covered in Tasks 12/13.
@@ -153,6 +154,41 @@ defmodule CinderWeb.ManualSearchComponentTest do
 
     for index <- 0..4, do: assert(html =~ ~s(phx-value-index="#{index}"))
     refute html =~ ~s(phx-value-index="5")
+  end
+
+  test "switching from an Anime target to Standard clears stale release state" do
+    old_target = %Series{id: 1, title: "Anime", media_profile: :anime}
+
+    old_release = %Release{
+      title: "Anime whole-series result",
+      episodes: nil,
+      mapping_snapshot: %{"version" => 2}
+    }
+
+    socket = %Socket{
+      assigns: %{
+        __changed__: %{},
+        id: "ms",
+        mode: :tv,
+        target: old_target,
+        season_number: 0,
+        state: :loaded,
+        results: [{old_release, :ok}],
+        confirming: "0"
+      }
+    }
+
+    new_assigns = %{
+      id: "ms",
+      mode: :tv,
+      target: %Series{id: 2, title: "Standard", media_profile: :standard},
+      season_number: 1
+    }
+
+    assert {:ok, updated} = ManualSearchComponent.update(new_assigns, socket)
+    assert updated.assigns.state == :loading
+    assert updated.assigns.results == []
+    assert updated.assigns.confirming == nil
   end
 
   # FIX 1: an empty TV indexer result is "no releases found", not "season complete". The component

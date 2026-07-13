@@ -19,7 +19,15 @@ defmodule CinderWeb.ManualSearchComponent do
 
   @impl true
   def update(assigns, socket) do
-    socket = socket |> assign(assigns) |> assign_new(:confirming, fn -> nil end)
+    search_context = search_context(assigns)
+    context_changed? = search_context_changed?(socket, search_context)
+
+    socket =
+      socket
+      |> assign(assigns)
+      |> assign(:search_context, search_context)
+      |> assign_new(:confirming, fn -> nil end)
+      |> maybe_cancel_stale_search(context_changed?)
 
     socket =
       cond do
@@ -27,7 +35,11 @@ defmodule CinderWeb.ManualSearchComponent do
         preseeded?(assigns) ->
           assign(socket, :state, :loaded)
 
-        # Already initialised (a parent re-render) — keep state/results/confirming as they are.
+        # A new target/profile/policy context must never consume an old result list.
+        context_changed? ->
+          restart_search(socket)
+
+        # Already initialised for this context — keep state/results/confirming as they are.
         not is_nil(socket.assigns[:state]) ->
           socket
 
@@ -44,6 +56,38 @@ defmodule CinderWeb.ManualSearchComponent do
   end
 
   defp preseeded?(assigns), do: Map.has_key?(assigns, :results) and not is_nil(assigns[:results])
+
+  defp search_context(assigns) do
+    target = assigns.target
+    profile = Catalog.media_profile_summary(target).effective
+
+    policy =
+      if profile == :anime,
+        do: AnimePreferences.resolve(target, Settings.anime_defaults()),
+        else: nil
+
+    {assigns.mode, target.__struct__, target.id, assigns[:season_number], profile, policy}
+  end
+
+  defp search_context_changed?(socket, current) do
+    previous = socket.assigns[:search_context] || previous_search_context(socket.assigns)
+    not is_nil(previous) and previous != current
+  end
+
+  defp previous_search_context(%{mode: _mode, target: _target} = assigns),
+    do: search_context(assigns)
+
+  defp previous_search_context(_assigns), do: nil
+
+  defp maybe_cancel_stale_search(socket, true),
+    do: socket |> cancel_async(:search) |> assign(:confirming, nil)
+
+  defp maybe_cancel_stale_search(socket, false), do: socket
+
+  defp restart_search(socket) do
+    socket = assign(socket, state: :loading, results: [])
+    if connected?(socket), do: start_search(socket), else: socket
+  end
 
   defp start_search(socket) do
     %{mode: mode, target: target} = socket.assigns

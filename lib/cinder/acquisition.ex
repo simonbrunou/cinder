@@ -57,7 +57,7 @@ defmodule Cinder.Acquisition do
   @doc "Searches additive anime movie queries and selects through the standard hard rules."
   def best_anime_movie(imdb_id, context, opts \\ []) do
     with {:ok, releases, failed?} <- Anime.search_movie(indexer(), imdb_id, context, opts) do
-      case movie_pool(releases, opts) do
+      case anime_movie_pool(releases, opts) do
         :no_language_match ->
           :no_language_match
 
@@ -249,6 +249,13 @@ defmodule Cinder.Acquisition do
     preferred = Keyword.get(opts, :preferred_language)
     original = Keyword.get(opts, :original_language)
     language_pool(candidates, preferred, original)
+  end
+
+  defp anime_movie_pool(releases, opts) do
+    case Keyword.get(opts, :anime_policy) do
+      nil -> movie_pool(releases, opts)
+      _policy -> filter_protocols(releases, Keyword.get(opts, :protocols))
+    end
   end
 
   # The title guard protects only the free-text (title-only) fallback search. A

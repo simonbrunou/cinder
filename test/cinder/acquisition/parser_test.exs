@@ -335,6 +335,14 @@ defmodule Cinder.Acquisition.ParserTest do
 
       assert %{embedded_subtitle_claim: :unknown} = Parser.parse("Raw Deal 1986 [1080p]")
     end
+
+    test "a bounded suffix RAW tag is absent without matching ordinary title words" do
+      assert %{embedded_subtitle_claim: :absent} =
+               Parser.parse("[Group] Frieren - 29 RAW")
+
+      assert %{embedded_subtitle_claim: :unknown} = Parser.parse("Raw Deal")
+      assert %{embedded_subtitle_claim: :unknown} = Parser.parse("A Very Raw Story")
+    end
   end
 
   describe "language: foreign audio tags (registry)" do
