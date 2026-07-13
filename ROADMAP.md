@@ -793,6 +793,13 @@ classification, selected provider callbacks, refresh rules, and the pure resolve
 A0 corpus plus identity, precedence, same-series, refresh, and profile-preservation tests pass and
 `mix test` is green.
 
+**[done 2026-07-13]** Added operator-owned Auto/Standard/Anime profiles for movies and series,
+request/approval profile proposals, source-scoped title aliases, ordered many-to-many episode
+coordinates, sourced episode classifications, TMDB alternative-title/Absolute-group refresh, and
+the pure precedence-aware resolver. Auto remains Standard unless explicitly confirmed because A0
+selected TMDB without a strong anime identity signal. The A0 A1 corpus contracts and full `mix test`
+gate pass; acquisition/download/import behavior remains unchanged for A2/A3.
+
 ### A2 — Anime acquisition
 
 Land additive alias/category searches, context-aware parsing, stable-ID set cover, anime-movie

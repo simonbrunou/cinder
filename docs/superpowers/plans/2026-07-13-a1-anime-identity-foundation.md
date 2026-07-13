@@ -67,7 +67,7 @@
 - Produces: `Episode.classification` values `[:regular, :story_special, :recap, :extra]`, plus source/raw-label fields.
 - Produces: `Movie.has_many :title_aliases`, `Series.has_many :title_aliases` / `:episode_coordinates`, and ordered Episode membership associations.
 
-- [ ] **Step 1: Write the failing schema and constraint tests**
+- [x] **Step 1: Write the failing schema and constraint tests**
 
 ```elixir
 defmodule Cinder.Catalog.AnimeIdentitySchemaTest do
@@ -124,13 +124,13 @@ defmodule Cinder.Catalog.AnimeIdentitySchemaTest do
 end
 ```
 
-- [ ] **Step 2: Run the tests and prove the schema is absent**
+- [x] **Step 2: Run the tests and prove the schema is absent**
 
 Run: `direnv exec . mix test test/cinder/catalog/anime_identity_schema_test.exs`
 
 Expected: FAIL because the migration and identity schemas do not exist.
 
-- [ ] **Step 3: Generate and fill the migration**
+- [x] **Step 3: Generate and fill the migration**
 
 Run: `direnv exec . mix ecto.gen.migration add_anime_identity_foundation`
 
@@ -202,7 +202,7 @@ defmodule Cinder.Repo.Migrations.AddAnimeIdentityFoundation do
 end
 ```
 
-- [ ] **Step 4: Implement the three schemas and cast only owner-controlled fields in profile changesets**
+- [x] **Step 4: Implement the three schemas and cast only owner-controlled fields in profile changesets**
 
 `TitleAlias.changeset/2` must normalize with this deterministic function and register both partial indexes plus the owner check:
 
@@ -218,7 +218,7 @@ end
 
 `Movie.profile_changeset/2` and `Series.profile_changeset/2` cast only `:media_profile`. Do not add `:media_profile` to metadata, refresh, transition, or media-info changesets. `Request.create_changeset/2` casts `:proposed_media_profile`; `Episode.provider_classification_changeset/2` casts only classification fields. Owner IDs and identity foreign keys are never cast: initialize them on structs or use `Ecto.build_assoc/3`, then cast only user/provider metadata and membership position.
 
-- [ ] **Step 5: Verify the focused schema suite and migration application**
+- [x] **Step 5: Verify the focused schema suite and migration application**
 
 Run: `direnv exec . mix format priv/repo/migrations/*_add_anime_identity_foundation.exs lib/cinder/catalog/title_alias.ex lib/cinder/catalog/episode_coordinate.ex lib/cinder/catalog/episode_coordinate_membership.ex lib/cinder/catalog/movie.ex lib/cinder/catalog/series.ex lib/cinder/catalog/episode.ex lib/cinder/requests/request.ex test/cinder/catalog/anime_identity_schema_test.exs`
 
@@ -228,7 +228,7 @@ Run: `direnv exec . mix test test/cinder/catalog/anime_identity_schema_test.exs`
 
 Expected: profile defaults, owner checks, and membership uniqueness pass.
 
-- [ ] **Step 6: Commit the additive schema**
+- [x] **Step 6: Commit the additive schema**
 
 ```bash
 git add priv/repo/migrations/*_add_anime_identity_foundation.exs \
@@ -253,7 +253,7 @@ git commit -m "feat: add anime identity schema"
 - Produces: `get_episode_groups/1 :: {:ok, [%{id: String.t(), type: integer(), name: String.t()}]} | {:error, term()}`.
 - Produces: `get_episode_group/1 :: {:ok, %{id: String.t(), type: integer(), name: String.t(), entries: [map()]}} | {:error, term()}`.
 
-- [ ] **Step 1: Write failing Req.Test contracts for all four callbacks**
+- [x] **Step 1: Write failing Req.Test contracts for all four callbacks**
 
 ```elixir
 test "normalizes movie and TV alternative titles" do
@@ -299,13 +299,13 @@ end
 
 Also assert 200 responses with malformed IDs, container-valued titles, or malformed entry coordinates return `{:error, :unexpected_response}`; redirect, status, and body-limit behavior remains inherited from `request/1`.
 
-- [ ] **Step 2: Run the HTTP tests and prove the callbacks are absent**
+- [x] **Step 2: Run the HTTP tests and prove the callbacks are absent**
 
 Run: `direnv exec . mix test test/cinder/catalog/tmdb/http_test.exs`
 
 Expected: FAIL because the behavior and HTTP functions do not exist.
 
-- [ ] **Step 3: Add the behavior callbacks and minimal normalized requests**
+- [x] **Step 3: Add the behavior callbacks and minimal normalized requests**
 
 ```elixir
 def get_movie_alternative_titles(id),
@@ -327,7 +327,7 @@ end
 
 Flatten group detail entries in `{group_order, order}` order and retain only `tmdb_episode_id`, `group_order`, `order`, `season_number`, and `episode_number`. Reject the complete payload if a retained scalar has the wrong type. Do not infer alias kinds from TMDB's free-form `type` string; every TMDB alias is `:alternative`.
 
-- [ ] **Step 4: Verify behavior/implementation/mock compatibility and commit**
+- [x] **Step 4: Verify behavior/implementation/mock compatibility and commit**
 
 Run: `direnv exec . mix format lib/cinder/catalog/tmdb.ex lib/cinder/catalog/tmdb/http.ex test/cinder/catalog/tmdb/http_test.exs`
 
@@ -363,7 +363,7 @@ Commit: `feat: add TMDB anime identity callbacks`
 - Produces: `Catalog.set_episode_classification/3` for explicit manual classification.
 - Produces: TMDB source-scoped synchronization during movie preparation and full series creation/refresh.
 
-- [ ] **Step 1: Write failing context tests for profile preservation, aliases, coordinates, classification, and refresh ownership**
+- [x] **Step 1: Write failing context tests for profile preservation, aliases, coordinates, classification, and refresh ownership**
 
 ```elixir
 test "a coordinate cannot claim an episode from another series" do
@@ -448,13 +448,13 @@ end
 
 Add a same-series positive test with one coordinate ordered across two episode IDs, partial-index alias de-duplication tests, and a provider-renumbering test that holds the old resolver result while a refreshed coordinate resolves to the new episode.
 
-- [ ] **Step 2: Run the focused tests and prove the context APIs are absent**
+- [x] **Step 2: Run the focused tests and prove the context APIs are absent**
 
 Run: `direnv exec . mix test test/cinder/catalog/anime_identity_test.exs test/cinder/catalog_refresh_test.exs test/cinder/catalog_metadata_test.exs`
 
 Expected: FAIL on missing Catalog identity APIs.
 
-- [ ] **Step 3: Implement the minimal profile summary**
+- [x] **Step 3: Implement the minimal profile summary**
 
 ```elixir
 def summary(%{media_profile: :anime}),
@@ -472,7 +472,7 @@ end
 
 Weak evidence is limited to `:japanese_animation` (`original_language == "ja"` and genre `Animation`) and `:absolute_episode_group` (persisted TMDB absolute coordinate). It never changes `effective`.
 
-- [ ] **Step 4: Implement transactional source-scoped writes**
+- [x] **Step 4: Implement transactional source-scoped writes**
 
 `Identity.replace_provider_aliases/5` and `replace_provider_coordinates/4` must delete only rows matching `{owner, source, namespace}` and `precedence != :manual`, then insert the replacement set. `Identity.put_coordinate/3` must load every episode through Season, reject a mixed series before inserting anything, and store positions with `Enum.with_index/1`.
 
@@ -535,7 +535,7 @@ def classify_tmdb_episode(_season, _title), do: {:regular, nil}
 
 Provider classification writes skip rows whose `classification_source == "manual"`. This lands sourced identity only; A4 owns monitoring/acquisition policy for the classifications.
 
-- [ ] **Step 5: Wire identity fetches into the existing Catalog flows**
+- [x] **Step 5: Wire identity fetches into the existing Catalog flows**
 
 Add `Catalog.prepare_requested_movie/1`, which short-circuits without network when the movie already exists; otherwise it fetches `get_movie/1` and `get_movie_alternative_titles/1` before any write and returns `%{attrs: attrs, aliases: aliases}`. Keep `find_or_create_at_requested(attrs, aliases \\ [])` DB-only and insert the movie plus aliases in one transaction.
 
@@ -557,7 +557,7 @@ For series creation and `refresh_series/1`, fetch alternative titles, group summ
 
 Update `get_series_with_tree/1` to preload ordered coordinate memberships for display. Do not touch Acquisition, either poller, `Grab`, `Intent`, or Library.
 
-- [ ] **Step 6: Verify focused Catalog behavior and commit**
+- [x] **Step 6: Verify focused Catalog behavior and commit**
 
 Run: `direnv exec . mix format lib/cinder/catalog/media_profile.ex lib/cinder/catalog/identity.ex lib/cinder/catalog.ex test/cinder/catalog/anime_identity_test.exs test/cinder/catalog_refresh_test.exs test/cinder/catalog_metadata_test.exs`
 
@@ -581,7 +581,7 @@ Commit: `feat: persist anime identity metadata`
 - Input: candidate coordinate keys, mappings `%{coordinate:, episode_ids:, precedence:, evidence:}`, and optional `:overrides`, `:role`, `:extra_evidence`.
 - Output: `{:ok, ordered_episode_ids, evidence}`, `{:ambiguous, candidates, evidence}`, `{:ignore, :extra, evidence}`, or `:unmatched`.
 
-- [ ] **Step 1: Write failing resolver and corpus tests**
+- [x] **Step 1: Write failing resolver and corpus tests**
 
 ```elixir
 test "manual mapping suppresses lower-precedence ambiguity" do
@@ -610,13 +610,13 @@ end
 
 Reuse `Mix.Tasks.Cinder.Anime.Probe.Corpus.load!/1` to load `test/support/fixtures/anime/corpus-v1.json`, select `phase == "A1"`, run the three resolver contracts, and prove provider renumbering leaves the first returned result unchanged while a second resolution uses the refreshed mapping.
 
-- [ ] **Step 2: Run the tests and prove the resolver is absent**
+- [x] **Step 2: Run the tests and prove the resolver is absent**
 
 Run: `direnv exec . mix test test/cinder/catalog/anime_resolver_test.exs test/cinder/catalog/anime_corpus_a1_test.exs`
 
 Expected: FAIL because `AnimeResolver` is undefined.
 
-- [ ] **Step 3: Implement the resolver**
+- [x] **Step 3: Implement the resolver**
 
 ```elixir
 @precedence %{inferred: 0, curated: 1, manual: 2}
@@ -634,7 +634,7 @@ end
 
 At the highest present precedence, preserve each mapping's episode order, de-duplicate identical ordered lists, and resolve only when one unique list remains. Conflicting lists return sorted candidates as `:ambiguous`. Evidence contains the chosen precedence and the matched coordinate/evidence records but never mutable schema structs.
 
-- [ ] **Step 4: Verify the pure and corpus suites and commit**
+- [x] **Step 4: Verify the pure and corpus suites and commit**
 
 Run: `direnv exec . mix format lib/cinder/catalog/anime_resolver.ex test/cinder/catalog/anime_resolver_test.exs test/cinder/catalog/anime_corpus_a1_test.exs`
 
@@ -665,7 +665,7 @@ Commit: `feat: resolve anime episode coordinates`
 - Preserves: admin/`auto_approve_all` calls use explicit proposal when present and `:auto` otherwise.
 - Preserves: non-admin pending requests create no movie/series before approval.
 
-- [ ] **Step 1: Write failing request-gate tests**
+- [x] **Step 1: Write failing request-gate tests**
 
 ```elixir
 test "requester anime proposal creates no catalog row until confirmed" do
@@ -705,13 +705,13 @@ end
 
 Add movie and season cases for manual Standard confirmation, admin-own explicit Anime, `auto_approve_all` explicit Anime, invalid profile rejection, and no catalog row when a racing deny wins while movie identity is being prepared.
 
-- [ ] **Step 2: Run request tests and prove profile proposals are not carried**
+- [x] **Step 2: Run request tests and prove profile proposals are not carried**
 
 Run: `direnv exec . mix test test/cinder/requests_test.exs`
 
 Expected: FAIL on the new proposal/approval assertions.
 
-- [ ] **Step 3: Refactor movie approval to keep provider I/O outside the guarded write transaction**
+- [x] **Step 3: Refactor movie approval to keep provider I/O outside the guarded write transaction**
 
 For pending movies: call `Catalog.prepare_requested_movie/1`, then start one transaction that first performs the existing guarded `flip_pending/2` and then calls DB-only `Catalog.find_or_create_at_requested(prepared.attrs, prepared.aliases)`. A racing deny therefore prevents movie creation. For admin/auto-approved movies, prepare first, then insert movie, aliases, and request in one transaction.
 
@@ -736,7 +736,7 @@ end
 
 Pass `media_profile` into `Catalog.find_or_create_at_requested/2` and `Catalog.find_or_create_series_at_requested/4`. Existing rows keep their explicit profile; only a row still at `:auto` may adopt a newly confirmed explicit profile.
 
-- [ ] **Step 4: Add profile selectors to request creation and explicit confirmation to the queue**
+- [x] **Step 4: Add profile selectors to request creation and explicit confirmation to the queue**
 
 Discover and series-discovery forms expose `Auto`, `Standard`, and `Anime`; normalize client values to `nil`, `:standard`, or `:anime`. Admin/auto-approved movie creation now runs with `start_async`, matching the existing season path because movie identity preparation performs TMDB calls.
 
@@ -748,7 +748,7 @@ approval_profiles = Map.new(pending, &{to_string(&1.id), &1.proposed_media_profi
 
 The row renders a labelled Standard/Anime select; `approve` and bulk approve pass the selected value to `Requests.approve_request/3`. This selection is the administrator's explicit confirmation.
 
-- [ ] **Step 5: Verify context and LiveView request flows and commit**
+- [x] **Step 5: Verify context and LiveView request flows and commit**
 
 Run: `direnv exec . mix format lib/cinder/requests.ex lib/cinder/requests/request.ex lib/cinder_web/live/discover_live.ex lib/cinder_web/live/series_discovery_live.ex lib/cinder_web/live/requests_live.ex test/cinder/requests_test.exs test/cinder_web/live/discover_live_test.exs test/cinder_web/live/series_discovery_live_test.exs test/cinder_web/live/requests_live_test.exs`
 
@@ -778,7 +778,7 @@ Commit: `feat: confirm anime profiles on requests`
 - Produces: sourced aliases on both pages and ordered alternative coordinates/classification on series episode rows.
 - Does not add an anime landing page or mapping-correction UI.
 
-- [ ] **Step 1: Write failing LiveView tests for profile and identity controls**
+- [x] **Step 1: Write failing LiveView tests for profile and identity controls**
 
 ```elixir
 test "admin changes a movie profile and manages a manual alias", %{conn: conn} do
@@ -812,13 +812,13 @@ end
 
 Add tests for invalid/forged profile values, editing/deleting only manual aliases, provider aliases having no edit/delete action, Auto showing effective Standard plus suggestion evidence, and profile surviving the connected-page metadata enrichment.
 
-- [ ] **Step 2: Run detail-page tests and prove the controls are absent**
+- [x] **Step 2: Run detail-page tests and prove the controls are absent**
 
 Run: `direnv exec . mix test test/cinder_web/live/movie_detail_live_test.exs test/cinder_web/live/series_detail_live_test.exs`
 
 Expected: FAIL on missing profile/alias/coordinate UI.
 
-- [ ] **Step 3: Add shared small components and page events**
+- [x] **Step 3: Add shared small components and page events**
 
 Add `profile_select/1` and `profile_summary/1` function components to the existing `CoreComponents`; do not create a new design system. Keep each page's aliases in `stream(:title_aliases, aliases, reset: true)` with a separate empty-state assign, and render the stream under a unique `phx-update="stream"` container. Both LiveViews handle:
 
@@ -834,13 +834,13 @@ end
 
 Use a `to_form/2`-backed alias form with title, kind (`alternative`, `native`, `romaji`, `licensed`, `scene`), optional country, optional language, and hidden alias ID for edit. Resolve every submitted ID against the currently loaded owner's aliases before update/delete. Provider rows render provenance but no mutation buttons. Series episode rows render preloaded memberships ordered by `position` and label only stored provider/user coordinates; never derive cour labels.
 
-- [ ] **Step 4: Extract and merge translations**
+- [x] **Step 4: Extract and merge translations**
 
 Run: `direnv exec . mix gettext.extract --merge`
 
 Translate the new profile, alias, evidence, classification, and coordinate copy in French. Keep English msgids in `en/default.po` consistent with the current repository convention.
 
-- [ ] **Step 5: Verify detail UI and commit**
+- [x] **Step 5: Verify detail UI and commit**
 
 Run: `direnv exec . mix format lib/cinder_web/components/core_components.ex lib/cinder_web/live/movie_detail_live.ex lib/cinder_web/live/series_detail_live.ex test/cinder_web/live/movie_detail_live_test.exs test/cinder_web/live/series_detail_live_test.exs`
 
@@ -862,7 +862,7 @@ Commit: `feat: expose anime identity controls`
 - Produces: A1 marked done only after corpus, focused, full-suite, and graph gates pass.
 - Produces: one phase-boundary commit with no A2/A3 behavior.
 
-- [ ] **Step 1: Run every focused A1 owner suite**
+- [x] **Step 1: Run every focused A1 owner suite**
 
 ```bash
 direnv exec . mix test \
@@ -882,19 +882,19 @@ direnv exec . mix test \
 
 Expected: all focused suites pass with zero failures and zero unexpected log output.
 
-- [ ] **Step 2: Run the repository source-of-truth gate**
+- [x] **Step 2: Run the repository source-of-truth gate**
 
 Run: `direnv exec . mix test`
 
 Expected: compile warnings-as-errors, format check, Credo strict, migrations, and the complete ExUnit suite pass.
 
-- [ ] **Step 3: Prove standard pipeline behavior did not move**
+- [x] **Step 3: Prove standard pipeline behavior did not move**
 
 Run: `git diff codex/anime-provider-contracts -- lib/cinder/acquisition.ex lib/cinder/acquisition lib/cinder/download lib/cinder/library.ex lib/cinder/library`
 
 Expected: no diff. A1 may change only Catalog identity, Requests, TMDB, UI, tests, docs, and the additive migration.
 
-- [ ] **Step 4: Update Graphify and inspect the final diff**
+- [x] **Step 4: Update Graphify and inspect the final diff**
 
 Run: `graphify update .`
 
@@ -904,7 +904,7 @@ Run: `git status --short`
 
 Expected: graph update succeeds, diff check is clean, and only A1 files are changed.
 
-- [ ] **Step 5: Mark A1 complete and commit the phase boundary**
+- [x] **Step 5: Mark A1 complete and commit the phase boundary**
 
 Append under A1 in `ROADMAP.md`:
 
