@@ -194,8 +194,8 @@ defmodule Cinder.Catalog.Identity do
 
   defp manual_alias_attrs(attrs) do
     attrs
-    |> Map.new()
-    |> Map.merge(%{source: "manual", namespace: "manual", precedence: :manual})
+    |> Map.new(fn {key, value} -> {to_string(key), value} end)
+    |> Map.merge(%{"source" => "manual", "namespace" => "manual", "precedence" => :manual})
   end
 
   defp insert_or_rollback(changeset) do

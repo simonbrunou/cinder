@@ -6,6 +6,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
   import Cinder.CatalogFixtures
 
   alias Cinder.Catalog
+  alias Cinder.Catalog.TitleAlias
   alias Cinder.Repo
 
   @moduletag :capture_log
@@ -53,6 +54,134 @@ defmodule CinderWeb.MovieDetailLiveTest do
          release_date: ~D[2010-07-16]
        }}
     end)
+  end
+
+  test "admin changes a movie profile and manages a manual alias", %{conn: conn} do
+    movie = movie_fixture()
+    {:ok, view, _} = live(conn, ~p"/movies/#{movie.id}")
+
+    assert has_element?(view, "#movie-profile-form")
+
+    view
+    |> form("#movie-profile-form", %{"media_profile" => "anime"})
+    |> render_change()
+
+    assert Repo.reload(movie).media_profile == :anime
+
+    view
+    |> form("#movie-alias-form", %{
+      "alias" => %{
+        "title" => "Kimi no Na wa.",
+        "kind" => "romaji",
+        "country_code" => "JP",
+        "language_code" => "ja"
+      }
+    })
+    |> render_submit()
+
+    assert has_element?(view, "#movie-title-aliases [data-alias='Kimi no Na wa.']")
+    assert [alias_record] = Catalog.list_title_aliases(movie)
+
+    view
+    |> element("#edit-movie-alias-#{alias_record.id}")
+    |> render_click()
+
+    view
+    |> form("#movie-alias-form", %{
+      "alias" => %{
+        "id" => alias_record.id,
+        "title" => "Your Name.",
+        "kind" => "licensed",
+        "country_code" => "US",
+        "language_code" => "en"
+      }
+    })
+    |> render_submit()
+
+    assert has_element?(view, "#movie-title-aliases [data-alias='Your Name.']")
+
+    view
+    |> element("#delete-movie-alias-#{alias_record.id}")
+    |> render_click()
+
+    assert Catalog.list_title_aliases(movie) == []
+    assert has_element?(view, "#movie-aliases-empty")
+  end
+
+  test "movie profile and alias events reject forged values and provider aliases are read-only",
+       %{
+         conn: conn
+       } do
+    movie = movie_fixture()
+    other = movie_fixture()
+    {:ok, manual} = Catalog.save_manual_alias(other, %{title: "Other owner"})
+
+    provider =
+      %TitleAlias{movie_id: movie.id}
+      |> TitleAlias.changeset(%{
+        title: "Provider title",
+        kind: :alternative,
+        source: "tmdb",
+        namespace: "alternative_titles",
+        precedence: :curated
+      })
+      |> Repo.insert!()
+
+    {:ok, view, _} = live(conn, ~p"/movies/#{movie.id}")
+
+    render_hook(view, "set_media_profile", %{"media_profile" => "forged"})
+
+    render_hook(view, "save_alias", %{
+      "alias" => %{"id" => "not-an-id", "title" => "Forged create"}
+    })
+
+    render_hook(view, "edit_alias", %{"id" => provider.id})
+    render_hook(view, "delete_alias", %{"id" => provider.id})
+    render_hook(view, "delete_alias", %{"id" => manual.id})
+
+    assert Repo.reload(movie).media_profile == :auto
+    assert Repo.reload(provider).title == "Provider title"
+    assert Repo.reload(manual).title == "Other owner"
+    refute Enum.any?(Catalog.list_title_aliases(movie), &(&1.title == "Forged create"))
+    assert has_element?(view, "[data-alias='Provider title'][data-source='tmdb']")
+    refute has_element?(view, "#edit-movie-alias-#{provider.id}")
+    refute has_element?(view, "#delete-movie-alias-#{provider.id}")
+  end
+
+  test "movie Auto profile shows effective Standard and evidence after metadata enrichment", %{
+    conn: conn
+  } do
+    movie =
+      movie_fixture(%{title: "Anime film", media_profile: :auto, original_language: "ja"})
+
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn tmdb_id ->
+      {:ok,
+       %{
+         tmdb_id: tmdb_id,
+         title: "Anime film",
+         year: 2020,
+         poster_path: nil,
+         imdb_id: nil,
+         original_language: "ja",
+         overview: nil,
+         runtime: 100,
+         genres: ["Animation"],
+         vote_average: 7.0,
+         release_date: ~D[2020-01-01]
+       }}
+    end)
+
+    {:ok, view, _} = live(conn, ~p"/movies/#{movie.id}")
+    render_async(view)
+
+    assert Repo.reload(movie).media_profile == :auto
+
+    assert has_element?(
+             view,
+             "#movie-profile-summary[data-selected='auto'][data-effective='standard']"
+           )
+
+    assert has_element?(view, "#movie-profile-summary", "Japanese animation")
   end
 
   test "refreshes and renders descriptive metadata", %{conn: conn} do

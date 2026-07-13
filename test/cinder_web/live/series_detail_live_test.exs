@@ -4,8 +4,10 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   import Phoenix.LiveViewTest
   import Mox
   import Cinder.AccountsFixtures
+  import Cinder.CatalogFixtures
 
   alias Cinder.{Catalog, Repo}
+  alias Cinder.Catalog.TitleAlias
 
   setup :register_and_log_in_admin
   setup :set_mox_global
@@ -89,6 +91,115 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
   defp first_season(series_id) do
     Catalog.get_series_with_tree(series_id).seasons |> hd()
+  end
+
+  test "admin changes a series profile and manages sourced aliases", %{conn: conn} do
+    series = create_series(6_900)
+
+    provider =
+      %TitleAlias{series_id: series.id}
+      |> TitleAlias.changeset(%{
+        title: "Provider title",
+        kind: :native,
+        source: "tmdb",
+        namespace: "alternative_titles",
+        precedence: :curated
+      })
+      |> Repo.insert!()
+
+    {:ok, view, _} = live(conn, ~p"/series/#{series.id}")
+
+    view
+    |> form("#series-profile-form", %{"media_profile" => "anime"})
+    |> render_change()
+
+    assert Repo.reload(series).media_profile == :anime
+
+    view
+    |> form("#series-alias-form", %{
+      "alias" => %{
+        "title" => "Shingeki no Kyojin",
+        "kind" => "romaji",
+        "country_code" => "JP",
+        "language_code" => "ja"
+      }
+    })
+    |> render_submit()
+
+    assert has_element?(view, "#series-title-aliases [data-alias='Shingeki no Kyojin']")
+    assert has_element?(view, "[data-alias='Provider title'][data-source='tmdb']")
+    refute has_element?(view, "#edit-series-alias-#{provider.id}")
+    refute has_element?(view, "#delete-series-alias-#{provider.id}")
+  end
+
+  test "series identity events tolerate forged profiles and aliases", %{conn: conn} do
+    series = create_series(6_901)
+    other = series_fixture()
+    {:ok, other_alias} = Catalog.save_manual_alias(other, %{title: "Other series"})
+    {:ok, view, _} = live(conn, ~p"/series/#{series.id}")
+
+    render_hook(view, "set_media_profile", %{"media_profile" => "forged"})
+    render_hook(view, "edit_alias", %{"id" => "not-an-id"})
+    render_hook(view, "delete_alias", %{"id" => other_alias.id})
+
+    assert Repo.reload(series).media_profile == :auto
+    assert Repo.reload(other_alias).title == "Other series"
+  end
+
+  test "series episodes show sourced classification and ordered coordinates", %{conn: conn} do
+    series = series_fixture()
+    season = season_fixture(series, season_number: 1)
+    episode = episode_fixture(season, episode_number: 1)
+    {:ok, _} = Catalog.set_episode_classification(episode, :story_special, "OVA")
+
+    {:ok, _} =
+      Catalog.put_episode_coordinate(
+        series,
+        %{
+          source: "tmdb",
+          scheme: "absolute",
+          namespace: "absolute-group",
+          canonical_value: "25",
+          precedence: :curated
+        },
+        [episode.id]
+      )
+
+    {:ok, _} =
+      Catalog.put_episode_coordinate(
+        series,
+        %{
+          source: "manual",
+          scheme: "scene",
+          namespace: "manual",
+          canonical_value: "26",
+          precedence: :manual
+        },
+        [episode.id]
+      )
+
+    {:ok, view, _} = live(conn, ~p"/series/#{series.id}")
+
+    assert has_element?(view, "#episode-#{episode.id}", "S01E01")
+
+    assert has_element?(
+             view,
+             "#episode-#{episode.id} [data-coordinate='absolute:25']",
+             "Absolute 25"
+           )
+
+    assert has_element?(view, "#episode-#{episode.id} [data-coordinate='scene:26']", "Scene 26")
+
+    assert has_element?(
+             view,
+             "#episode-#{episode.id} [data-classification='story_special']",
+             "Story special"
+           )
+
+    assert has_element?(view, "#episode-#{episode.id}", "OVA")
+
+    html = render(view)
+    assert :binary.match(html, "absolute:25") < :binary.match(html, "scene:26")
   end
 
   test "renders the page under the shared header", %{conn: conn} do

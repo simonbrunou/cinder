@@ -31,9 +31,13 @@ defmodule CinderWeb.MovieDetailLive do
          editing?: false,
          confirming: nil,
          form: nil,
+         profile_form: profile_form(movie),
+         alias_form: alias_form(),
+         aliases_empty?: true,
          delete_files: false,
          searching?: false
        )
+       |> refresh_identity(movie)
        |> maybe_enrich(movie)}
     else
       _ ->
@@ -184,6 +188,66 @@ defmodule CinderWeb.MovieDetailLive do
 
       {:error, _} ->
         {:noreply, put_flash(socket, :error, gettext("Couldn't update the language."))}
+    end
+  end
+
+  def handle_event("set_media_profile", %{"media_profile" => profile}, socket)
+      when profile in ["auto", "standard", "anime"] do
+    case Catalog.set_media_profile(socket.assigns.movie, String.to_existing_atom(profile)) do
+      {:ok, _} ->
+        {:noreply, assign_fresh(socket, socket.assigns.movie.id)}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, gettext("Couldn't update the profile."))}
+    end
+  end
+
+  def handle_event("save_alias", %{"alias" => params}, socket) when is_map(params) do
+    result =
+      case params["id"] do
+        id when id in [nil, ""] -> Catalog.save_manual_alias(socket.assigns.movie, params)
+        id -> update_current_alias(socket.assigns.movie, parse_alias_id(id), params)
+      end
+
+    case result do
+      {:ok, _} ->
+        {:noreply,
+         socket
+         |> assign(:alias_form, alias_form())
+         |> refresh_identity(socket.assigns.movie)}
+
+      {:error, %Ecto.Changeset{}} ->
+        {:noreply,
+         socket
+         |> assign(:alias_form, alias_form(params))
+         |> put_flash(:error, gettext("Couldn't save the alias."))}
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("edit_alias", %{"id" => id}, socket) do
+    with id when not is_nil(id) <- parse_alias_id(id),
+         alias_record when not is_nil(alias_record) <-
+           current_manual_alias(socket.assigns.movie, id) do
+      {:noreply, assign(socket, :alias_form, alias_form(alias_record))}
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("cancel_alias_edit", _params, socket),
+    do: {:noreply, assign(socket, :alias_form, alias_form())}
+
+  def handle_event("delete_alias", %{"id" => id}, socket) do
+    with id when not is_nil(id) <- parse_alias_id(id),
+         alias_record when not is_nil(alias_record) <-
+           current_manual_alias(socket.assigns.movie, id),
+         {:ok, _} <- Catalog.delete_manual_alias(socket.assigns.movie, alias_record.id) do
+      {:noreply, refresh_identity(socket, socket.assigns.movie)}
+    else
+      _ -> {:noreply, socket}
     end
   end
 
@@ -367,9 +431,105 @@ defmodule CinderWeb.MovieDetailLive do
         </div>
       </div>
 
-      <form id="movie-language-form" phx-change="set_movie_language" class="mt-4 max-w-xs">
-        <.language_select value={@movie.preferred_language} />
-      </form>
+      <div class="mt-4 grid max-w-2xl gap-3 sm:grid-cols-2">
+        <form id="movie-language-form" phx-change="set_movie_language">
+          <.language_select value={@movie.preferred_language} />
+        </form>
+        <div>
+          <.form for={@profile_form} id="movie-profile-form" phx-change="set_media_profile">
+            <.profile_select field={@profile_form[:media_profile]} />
+          </.form>
+          <.profile_summary id="movie-profile-summary" summary={@profile_summary} />
+        </div>
+      </div>
+
+      <section class="mt-6 max-w-3xl" aria-labelledby="movie-aliases-heading">
+        <h2 id="movie-aliases-heading" class="mb-2 text-lg font-semibold">
+          {gettext("Title aliases")}
+        </h2>
+        <.form
+          for={@alias_form}
+          id="movie-alias-form"
+          phx-submit="save_alias"
+          class="grid items-end gap-x-2 sm:grid-cols-2 lg:grid-cols-5"
+        >
+          <.input field={@alias_form[:id]} type="hidden" />
+          <.input field={@alias_form[:title]} label={gettext("Alias title")} required />
+          <.input
+            field={@alias_form[:kind]}
+            type="select"
+            label={gettext("Alias kind")}
+            options={alias_kind_options()}
+          />
+          <.input field={@alias_form[:country_code]} label={gettext("Country (optional)")} />
+          <.input field={@alias_form[:language_code]} label={gettext("Language (optional)")} />
+          <div class="mb-2 flex gap-1">
+            <.button type="submit" variant="primary" size="sm">{gettext("Save alias")}</.button>
+            <.button
+              :if={@alias_form[:id].value not in [nil, ""]}
+              type="button"
+              variant="ghost"
+              size="sm"
+              phx-click="cancel_alias_edit"
+            >
+              {gettext("Cancel")}
+            </.button>
+          </div>
+        </.form>
+
+        <div id="movie-title-aliases" phx-update="stream" class="divide-y divide-base-200">
+          <p
+            :if={@aliases_empty?}
+            id="movie-aliases-empty"
+            class="py-2 text-sm text-base-content/60"
+          >
+            {gettext("No title aliases.")}
+          </p>
+          <div
+            :for={{id, title_alias} <- @streams.title_aliases}
+            id={id}
+            data-alias={title_alias.title}
+            data-source={title_alias.source}
+            class="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-sm"
+          >
+            <span class="font-medium">{title_alias.title}</span>
+            <span class="text-xs text-base-content/60">{alias_kind_label(title_alias.kind)}</span>
+            <span :if={title_alias.country_code} class="badge badge-ghost badge-xs">
+              {title_alias.country_code}
+            </span>
+            <span :if={title_alias.language_code} class="badge badge-outline badge-xs">
+              {title_alias.language_code}
+            </span>
+            <span class="text-xs text-base-content/50">
+              {gettext("Source: %{source}", source: title_alias.source)}
+            </span>
+            <span :if={title_alias.precedence == :manual} class="ml-auto flex gap-1">
+              <.button
+                id={"edit-movie-alias-#{title_alias.id}"}
+                type="button"
+                variant="ghost"
+                size="sm"
+                phx-click="edit_alias"
+                phx-value-id={title_alias.id}
+                aria-label={gettext("Edit alias %{title}", title: title_alias.title)}
+              >
+                {gettext("Edit")}
+              </.button>
+              <.button
+                id={"delete-movie-alias-#{title_alias.id}"}
+                type="button"
+                variant="danger"
+                size="sm"
+                phx-click="delete_alias"
+                phx-value-id={title_alias.id}
+                aria-label={gettext("Delete alias %{title}", title: title_alias.title)}
+              >
+                {gettext("Delete")}
+              </.button>
+            </span>
+          </div>
+        </div>
+      </section>
 
       <div
         :if={parked?(@movie.status) or @movie.status in [:available, :upgrading]}
@@ -478,9 +638,87 @@ defmodule CinderWeb.MovieDetailLive do
   defp assign_fresh(socket, id) do
     case Catalog.get_movie_by_id(id) do
       nil -> socket
-      movie -> assign(socket, movie: movie)
+      movie -> socket |> assign(movie: movie) |> refresh_identity(movie)
     end
   end
+
+  defp refresh_identity(socket, movie) do
+    aliases = Catalog.list_title_aliases(movie)
+
+    socket
+    |> assign(
+      profile_form: profile_form(movie),
+      profile_summary: Catalog.media_profile_summary(movie),
+      aliases_empty?: aliases == []
+    )
+    |> stream(:title_aliases, aliases, reset: true)
+  end
+
+  defp profile_form(movie),
+    do: to_form(%{"media_profile" => Atom.to_string(movie.media_profile)})
+
+  defp alias_form(params \\ %{})
+
+  defp alias_form(%Cinder.Catalog.TitleAlias{} = alias_record) do
+    alias_form(%{
+      "id" => alias_record.id,
+      "title" => alias_record.title,
+      "kind" => alias_record.kind,
+      "country_code" => alias_record.country_code,
+      "language_code" => alias_record.language_code
+    })
+  end
+
+  defp alias_form(params) do
+    defaults = %{
+      "id" => "",
+      "title" => "",
+      "kind" => "alternative",
+      "country_code" => "",
+      "language_code" => ""
+    }
+
+    params = Map.new(params, fn {key, value} -> {to_string(key), value} end)
+    to_form(Map.merge(defaults, params), as: :alias)
+  end
+
+  defp update_current_alias(movie, id, params) do
+    case current_manual_alias(movie, id) do
+      nil -> {:error, :not_manual_alias}
+      alias_record -> Catalog.update_manual_alias(movie, alias_record.id, params)
+    end
+  end
+
+  defp current_manual_alias(movie, id) do
+    Enum.find(Catalog.list_title_aliases(movie), &(&1.id == id and &1.precedence == :manual))
+  end
+
+  defp parse_alias_id(id) when is_integer(id), do: id
+
+  defp parse_alias_id(id) when is_binary(id) do
+    case Integer.parse(id) do
+      {id, ""} -> id
+      _ -> nil
+    end
+  end
+
+  defp parse_alias_id(_id), do: nil
+
+  defp alias_kind_options do
+    [
+      {gettext("Alternative"), "alternative"},
+      {gettext("Native"), "native"},
+      {gettext("Romaji"), "romaji"},
+      {gettext("Licensed"), "licensed"},
+      {gettext("Scene"), "scene"}
+    ]
+  end
+
+  defp alias_kind_label(:alternative), do: gettext("Alternative")
+  defp alias_kind_label(:native), do: gettext("Native")
+  defp alias_kind_label(:romaji), do: gettext("Romaji")
+  defp alias_kind_label(:licensed), do: gettext("Licensed")
+  defp alias_kind_label(:scene), do: gettext("Scene")
 
   defp parked?(status), do: status in @parked
 
