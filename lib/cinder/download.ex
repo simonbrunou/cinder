@@ -603,13 +603,20 @@ defmodule Cinder.Download do
         complete_intent(intent, grab)
 
       nil ->
-        case Catalog.create_grab(
-               remote_id,
-               intent.protocol,
-               intent.episode_ids,
-               intent.release["title"],
-               reset_attempts: true
-             ) do
+        result =
+          if is_nil(intent.mapping_snapshot) do
+            Catalog.create_grab(
+              remote_id,
+              intent.protocol,
+              intent.episode_ids,
+              intent.release["title"],
+              reset_attempts: true
+            )
+          else
+            Catalog.create_grab_from_intent(intent)
+          end
+
+        case result do
           {:ok, grab} -> complete_intent(intent, grab)
           {:error, _} -> cleanup_failed_ownership(intent, :no_episodes_linked)
         end

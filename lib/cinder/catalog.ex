@@ -1606,22 +1606,69 @@ defmodule Cinder.Catalog do
       end)
 
     with {:ok, grab} <- result do
-      # Post-commit side effect, best-effort: once the txn committed the grab is
-      # real, and a blip here (a pool-checkout timeout on the series lookup) must
-      # not surface as {:error, _} — the TvPoller's cleanup branch would then
-      # remove the client download out from under a live grab and eventually
-      # blocklist a good release.
-      try do
-        broadcast_series(series_id_for_grab(grab.id))
-      rescue
-        e -> Logger.warning("post-commit broadcast for grab #{grab.id} failed: #{inspect(e)}")
-      catch
-        kind, value ->
-          Logger.warning("post-commit broadcast for grab #{grab.id} #{kind}: #{inspect(value)}")
-      end
-
+      broadcast_grab_series(grab)
       {:ok, grab}
     end
+  end
+
+  @doc "Atomically transfers an anime intent's frozen mapping snapshot and episode ownership."
+  def create_grab_from_intent(%Cinder.Download.Intent{} = intent) do
+    result =
+      Repo.transaction(fn ->
+        fresh = Repo.get(Cinder.Download.Intent, intent.id)
+        if is_nil(fresh), do: Repo.rollback(:stale_intent)
+
+        attrs = %{
+          download_id: fresh.remote_id,
+          download_protocol: fresh.protocol,
+          release_title: fresh.release["title"],
+          mapping_snapshot: fresh.mapping_snapshot,
+          mapping_status: :resolved
+        }
+
+        grab =
+          %Grab{}
+          |> Grab.reservation_changeset(attrs)
+          |> Repo.insert()
+          |> case do
+            {:ok, grab} -> grab
+            {:error, changeset} -> Repo.rollback(changeset)
+          end
+
+        {linked, _rows} =
+          Repo.update_all(
+            from(e in Episode,
+              where:
+                e.id in ^fresh.episode_ids and is_nil(e.grab_id) and is_nil(e.file_path) and
+                  e.monitored == true
+            ),
+            set: [grab_id: grab.id, updated_at: now()]
+          )
+
+        if linked != length(fresh.episode_ids), do: Repo.rollback(:episode_ownership_changed)
+
+        Repo.delete!(fresh)
+        grab
+      end)
+
+    with {:ok, grab} <- result do
+      broadcast_grab_series(grab)
+      {:ok, grab}
+    end
+  end
+
+  defp broadcast_grab_series(grab) do
+    # Post-commit side effect, best-effort: once the txn committed the grab is
+    # real, and a blip here (a pool-checkout timeout on the series lookup) must
+    # not surface as {:error, _} — the TvPoller's cleanup branch would then
+    # remove the client download out from under a live grab and eventually
+    # blocklist a good release.
+    broadcast_series(series_id_for_grab(grab.id))
+  rescue
+    e -> Logger.warning("post-commit broadcast for grab #{grab.id} failed: #{inspect(e)}")
+  catch
+    kind, value ->
+      Logger.warning("post-commit broadcast for grab #{grab.id} #{kind}: #{inspect(value)}")
   end
 
   defp insert_and_link_grab(download_id, protocol, episode_ids, release_title, opts) do

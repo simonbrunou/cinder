@@ -182,11 +182,17 @@ defmodule Cinder.Download.IntentTest do
     assert {:ok, intent} = reserve_anime_intent(fixture)
 
     assert {:error, :anime_import_not_ready} = Download.submit_intent(intent)
-    assert {:error, :anime_import_not_ready} = Download.reconcile_intent(intent)
 
-    held = Repo.reload(intent)
-    assert held.status == :reserved
-    assert held.remote_id == nil
+    submitted =
+      intent
+      |> Intent.changeset(%{status: :submitted, remote_id: "hash-anime-held"})
+      |> Repo.update!()
+
+    assert {:error, :anime_import_not_ready} = Download.reconcile_intent(submitted)
+
+    held = Repo.reload(submitted)
+    assert held.status == :submitted
+    assert held.remote_id == "hash-anime-held"
     assert held.mapping_snapshot == fixture.snapshot
     assert Repo.aggregate(IntentEpisode, :count) == 2
     assert Repo.aggregate(Grab, :count) == 0
