@@ -84,4 +84,16 @@ defmodule Cinder.Acquisition.LanguageTest do
       assert Language.filter(releases, "original", "fr") == [keep_fr, keep_multi]
     end
   end
+
+  describe "stream_status/3" do
+    test "an exact normalized code satisfies even when it has no registered aliases" do
+      assert Language.stream_status("is", ["is"], false) == :satisfied
+      assert Language.stream_status("IS", ["iS"], false) == :satisfied
+    end
+
+    test "registered aliases and conservative unknown evidence retain their status" do
+      assert Language.stream_status("fr", ["FRA"], false) == :satisfied
+      assert Language.stream_status("is", ["zzz"], false) == :unknown
+    end
+  end
 end

@@ -1,7 +1,7 @@
 defmodule Cinder.Library.MediaInfo.FfprobeTest do
   use ExUnit.Case, async: false
 
-  alias Cinder.Library.MediaInfo.Ffprobe
+  alias Cinder.Library.{MediaInfo.Ffprobe, PolicyVerifier}
 
   setup do
     ffmpeg_bin = Application.get_env(:cinder, :ffmpeg_bin)
@@ -53,6 +53,27 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
               }}
   end
 
+  @tag :tmp_dir
+  test "policy failure evidence strips ffprobe stderr while Standard probe keeps diagnostics", %{
+    tmp_dir: tmp
+  } do
+    source = "/downloads/private/anime.mkv"
+    stderr = "#{source}: token=secret: invalid data"
+    path = Path.join(tmp, "ffprobe")
+    File.write!(path, "#!/bin/sh\nprintf '#{stderr}\\n' >&2\nexit 7\n")
+    File.chmod!(path, 0o755)
+    Application.put_env(:cinder, :ffprobe_bin, path)
+
+    assert Ffprobe.probe(source) == {:error, {:ffprobe_exit, 7, stderr}}
+
+    assert {:unavailable, {:probe_failed, "anime.mkv", {:ffprobe_exit, 7}}} =
+             result = PolicyVerifier.verify_sources([source], policy_snapshot(), Ffprobe)
+
+    refute inspect(result) =~ source
+    refute inspect(result) =~ stderr
+    refute inspect(result) =~ "secret"
+  end
+
   test "parse_subtitle_tracks/1 keeps supported text tracks in ffprobe order" do
     assert Ffprobe.parse_subtitle_tracks(%{
              "streams" => [
@@ -92,6 +113,13 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
     File.write!(path, "#!/bin/sh\n#{script}\n")
     File.chmod!(path, 0o755)
     Application.put_env(:cinder, :ffmpeg_bin, path)
+  end
+
+  defp policy_snapshot do
+    %{
+      "required_audio_languages" => ["ja"],
+      "required_embedded_subtitle_languages" => []
+    }
   end
 
   defp restore_bin(key, nil), do: Application.delete_env(:cinder, key)

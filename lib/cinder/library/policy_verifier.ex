@@ -44,10 +44,20 @@ defmodule Cinder.Library.PolicyVerifier do
 
   defp verify_source(source, snapshot, media_info) do
     case media_info.probe_policy(source) do
-      {:ok, report} -> classify_result(classify(source, report, snapshot), report)
-      {:error, reason} -> {:unavailable, {:probe_failed, source_id(source), reason}}
+      {:ok, report} ->
+        classify_result(classify(source, report, snapshot), report)
+
+      {:error, reason} ->
+        {:unavailable, {:probe_failed, source_id(source), safe_probe_reason(reason)}}
     end
   end
+
+  defp safe_probe_reason(reason) when is_atom(reason), do: reason
+
+  defp safe_probe_reason({:ffprobe_exit, code, _stderr}) when is_integer(code),
+    do: {:ffprobe_exit, code}
+
+  defp safe_probe_reason(_reason), do: :probe_error
 
   defp classify_result(:ok, report), do: {:ok, report}
   defp classify_result({:mismatch, _evidence} = mismatch, _report), do: mismatch

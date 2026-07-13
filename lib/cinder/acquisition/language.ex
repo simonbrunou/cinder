@@ -121,7 +121,8 @@ defmodule Cinder.Acquisition.Language do
   evidence into a match or mismatch.
   """
   def stream_status(required, present, unknown?) do
-    accepted = Map.get(@audio_codes, normalize(required), [])
+    required = normalize(required)
+    accepted = [required | Map.get(@audio_codes, required, [])]
     present = Enum.map(present, &String.downcase/1)
 
     cond do

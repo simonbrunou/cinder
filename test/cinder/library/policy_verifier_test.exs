@@ -60,6 +60,35 @@ defmodule Cinder.Library.PolicyVerifierTest do
              )
   end
 
+  test "probe failure evidence drops raw stderr, absolute paths, and arbitrary strings" do
+    source = "/downloads/private/a.mkv"
+    stderr = "#{source}: token=secret: invalid data"
+
+    expect(Cinder.Library.MediaInfoMock, :probe_policy, 2, fn
+      ^source -> {:error, {:ffprobe_exit, 7, stderr}}
+      "b.mkv" -> {:error, "token=secret"}
+    end)
+
+    assert {:unavailable, {:probe_failed, "a.mkv", {:ffprobe_exit, 7}}} =
+             result =
+             PolicyVerifier.verify_sources(
+               [source],
+               policy_snapshot(),
+               Cinder.Library.MediaInfoMock
+             )
+
+    refute inspect(result) =~ source
+    refute inspect(result) =~ stderr
+    refute inspect(result) =~ "secret"
+
+    assert {:unavailable, {:probe_failed, "b.mkv", :probe_error}} =
+             PolicyVerifier.verify_sources(
+               ["b.mkv"],
+               policy_snapshot(),
+               Cinder.Library.MediaInfoMock
+             )
+  end
+
   test "deduplicates a shared story source and probes it once" do
     report = policy_report(audio: ["ja", "fr"], subtitles: ["fr"])
 
