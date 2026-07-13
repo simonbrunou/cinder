@@ -42,6 +42,11 @@ defmodule Cinder.DataCase do
   @doc """
   Sets up the sandbox based on the test tags.
   """
+  def setup_sandbox(%{unboxed: true}) do
+    :ok = Sandbox.checkout(Cinder.Repo, sandbox: false)
+    on_exit(fn -> Sandbox.checkin(Cinder.Repo) end)
+  end
+
   def setup_sandbox(tags) do
     pid = Sandbox.start_owner!(Cinder.Repo, shared: not tags[:async])
     on_exit(fn -> Sandbox.stop_owner(pid) end)

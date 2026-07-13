@@ -1721,6 +1721,12 @@ defmodule Cinder.Catalog do
 
   @doc "Promotes one coordinate already present in a held grab's persisted parser decision."
   def promote_grab_mapping(%Grab{id: grab_id}, attrs) when is_map(attrs) do
+    Repo.transaction(fn -> promote_grab_mapping_or_rollback(grab_id, attrs) end, mode: :immediate)
+  end
+
+  def promote_grab_mapping(%Grab{}, _attrs), do: {:error, :invalid_mapping_input}
+
+  defp promote_grab_mapping_or_rollback(grab_id, attrs) do
     fresh = Repo.get(Grab, grab_id) |> preload_mapping_grab()
 
     with {:ok, series_id} <- held_mapping_series_id(fresh),
@@ -1728,24 +1734,29 @@ defmodule Cinder.Catalog do
          :ok <- reusable_coordinate(fresh.automatic_mapping_decisions, path, scheme, value),
          :ok <- validate_series_episode_ids(series_id, episode_ids),
          %Series{} = series <- Repo.get(Series, series_id) do
-      put_episode_coordinate(
-        series,
-        %{
-          source: "manual",
-          scheme: scheme,
-          namespace: "mapping-recovery",
-          canonical_value: value,
-          precedence: :manual
-        },
-        episode_ids
-      )
+      promote_episode_coordinate(series, scheme, value, episode_ids)
     else
-      nil -> {:error, :stale_series}
-      {:error, _reason} = error -> error
+      nil -> Repo.rollback(:stale_series)
+      {:error, reason} -> Repo.rollback(reason)
     end
   end
 
-  def promote_grab_mapping(%Grab{}, _attrs), do: {:error, :invalid_mapping_input}
+  defp promote_episode_coordinate(series, scheme, value, episode_ids) do
+    case put_episode_coordinate(
+           series,
+           %{
+             source: "manual",
+             scheme: scheme,
+             namespace: "mapping-recovery",
+             canonical_value: value,
+             precedence: :manual
+           },
+           episode_ids
+         ) do
+      {:ok, coordinate} -> coordinate
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
 
   defp preload_mapping_grab(nil), do: nil
   defp preload_mapping_grab(grab), do: Repo.preload(grab, episodes: [season: :series])

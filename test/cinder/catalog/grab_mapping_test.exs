@@ -244,6 +244,7 @@ defmodule Cinder.Catalog.GrabMappingTest do
       assert resumed.mapping_status == :resolved
       assert resumed.mapping_issue == nil
       assert resumed.mapping_snapshot == grab.mapping_snapshot
+      assert resumed.automatic_mapping_decisions == grab.automatic_mapping_decisions
 
       assert resumed.manual_mapping_overrides == %{
                "version" => 1,
@@ -358,13 +359,24 @@ defmodule Cinder.Catalog.GrabMappingTest do
       })
     end
 
+    test "resume rejects a missing target without changing held state or broadcasting" do
+      {grab, original, _target} = recovery_fixture()
+      missing_id = System.unique_integer([:positive]) + 1_000_000_000
+
+      assert :episode_not_found =
+               assert_resume_rejected(grab, original, resume_attrs(missing_id))
+    end
+
     test "resume rejects a deleted grab" do
       {grab, original, target} = recovery_fixture()
+      series_id = original |> Repo.preload(season: :series) |> then(& &1.season.series.id)
+      Catalog.subscribe_series()
       Repo.delete!(grab)
 
       assert {:error, :stale_grab} = Catalog.resume_grab_mapping(grab, resume_attrs(target.id))
       assert Repo.get!(Episode, original.id).grab_id == nil
       assert Repo.get!(Episode, target.id).grab_id == nil
+      refute_received {:series_updated, ^series_id}
     end
 
     test "resume rejects a grab that is no longer held" do
@@ -417,6 +429,43 @@ defmodule Cinder.Catalog.GrabMappingTest do
       assert_resume_rejected(grab, original, assignment_outside)
       assert_resume_rejected(grab, original, monitor_outside)
       assert Repo.get!(Episode, outside.id).grab_id == nil
+    end
+
+    test "resume rolls back when target ownership changes after validation" do
+      {grab, original, target} = recovery_fixture()
+
+      competing_grab =
+        Repo.insert!(%Grab{
+          download_id: "racing-owner",
+          download_protocol: :torrent
+        })
+
+      trigger = "mapping_target_ownership_race"
+
+      Repo.query!("""
+      CREATE TEMP TRIGGER #{trigger}
+      AFTER UPDATE OF grab_id ON episodes
+      WHEN OLD.id = #{original.id} AND NEW.grab_id IS NULL
+      BEGIN
+        UPDATE episodes SET grab_id = #{competing_grab.id} WHERE id = #{target.id};
+      END
+      """)
+
+      before = mapping_documents(grab)
+      series_id = original |> Repo.preload(season: :series) |> then(& &1.season.series.id)
+      Catalog.subscribe_series()
+
+      try do
+        assert {:error, :episode_ownership_changed} =
+                 Catalog.resume_grab_mapping(grab, resume_attrs(target.id))
+
+        assert mapping_documents(Repo.get!(Grab, grab.id)) == before
+        assert Repo.get!(Episode, original.id).grab_id == grab.id
+        assert Repo.get!(Episode, target.id).grab_id == nil
+        refute_received {:series_updated, ^series_id}
+      after
+        Repo.query!("DROP TRIGGER IF EXISTS #{trigger}")
+      end
     end
   end
 
@@ -517,6 +566,76 @@ defmodule Cinder.Catalog.GrabMappingTest do
 
       assert Map.take(mapping_documents(persisted), [:snapshot, :overrides]) ==
                Map.take(before, [:snapshot, :overrides])
+    end
+
+    test "promotion rejects a deleted grab without creating a coordinate" do
+      {grab, original, target} = recovery_fixture()
+      series = original |> Repo.preload(season: :series) |> then(& &1.season.series)
+      Repo.delete!(grab)
+
+      assert {:error, :stale_grab} =
+               Catalog.promote_grab_mapping(grab, %{
+                 "relative_path" => "Frieren - 28.mkv",
+                 "scheme" => "absolute",
+                 "value" => "28",
+                 "episode_ids" => [target.id]
+               })
+
+      assert Catalog.list_episode_coordinates(series) == []
+    end
+
+    @tag :unboxed
+    test "promotion holds an immediate write gate from held-state read through identity write" do
+      series = series_fixture(%{monitor_strategy: :all})
+      season = season_fixture(series)
+      first = episode_fixture(season, episode_number: 1)
+      second = episode_fixture(season, episode_number: 2)
+      grab = held_grab_fixture!(first)
+      database = Application.fetch_env!(:cinder, Cinder.Repo) |> Keyword.fetch!(:database)
+      {:ok, racer} = Exqlite.Sqlite3.open(database)
+      :ok = Exqlite.Sqlite3.set_busy_timeout(racer, 0)
+      handler_id = {__MODULE__, self(), make_ref()}
+      test_process = self()
+
+      :ok =
+        :telemetry.attach(
+          handler_id,
+          [:cinder, :repo, :query],
+          fn _event, _measurements, metadata, {owner, connection, grab_id, marker} ->
+            if self() == owner and metadata.source == "episodes" and
+                 not Process.get(marker, false) do
+              Process.put(marker, true)
+
+              result =
+                Exqlite.Sqlite3.execute(
+                  connection,
+                  "UPDATE grabs SET mapping_status = 'resolved' WHERE id = #{grab_id}"
+                )
+
+              send(owner, {:promotion_race, result})
+            end
+          end,
+          {test_process, racer, grab.id, handler_id}
+        )
+
+      try do
+        assert {:ok, _coordinate} =
+                 Catalog.promote_grab_mapping(grab, %{
+                   "relative_path" => "Frieren - 28.mkv",
+                   "scheme" => "absolute",
+                   "value" => "28",
+                   "episode_ids" => [second.id]
+                 })
+
+        assert_receive {:promotion_race, {:error, reason}}
+        assert to_string(reason) =~ ~r/busy|locked/i
+        assert Repo.get!(Grab, grab.id).mapping_status == :needs_mapping
+      after
+        :telemetry.detach(handler_id)
+        Exqlite.Sqlite3.close(racer)
+        Repo.delete_all(from g in Grab, where: g.id == ^grab.id)
+        Repo.delete_all(from s in Cinder.Catalog.Series, where: s.id == ^series.id)
+      end
     end
   end
 
@@ -668,13 +787,17 @@ defmodule Cinder.Catalog.GrabMappingTest do
   defp assert_resume_rejected(grab, original, attrs) do
     before = mapping_documents(Repo.get!(Grab, grab.id))
     original_links = episode_ids(grab)
+    series_id = original |> Repo.preload(season: :series) |> then(& &1.season.series.id)
+    Catalog.subscribe_series()
 
-    assert {:error, _reason} = Catalog.resume_grab_mapping(grab, attrs)
+    assert {:error, reason} = Catalog.resume_grab_mapping(grab, attrs)
 
     persisted = Repo.get!(Grab, grab.id)
     assert mapping_documents(persisted) == before
     assert episode_ids(grab) == original_links
     assert Repo.get!(Episode, original.id).grab_id == grab.id
+    refute_received {:series_updated, ^series_id}
+    reason
   end
 
   defp mapping_documents(grab) do
