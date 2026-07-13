@@ -31,6 +31,29 @@ defmodule Cinder.Catalog.TMDB do
   @callback get_season(series_id :: integer(), season_number :: integer()) ::
               {:ok, map()} | {:error, term()}
 
+  @doc "Alternative movie titles normalized as title, country code, and `:alternative` kind."
+  @callback get_movie_alternative_titles(tmdb_id :: integer()) ::
+              {:ok, [map()]} | {:error, term()}
+
+  @doc "Alternative series titles normalized as title, country code, and `:alternative` kind."
+  @callback get_series_alternative_titles(tmdb_id :: integer()) ::
+              {:ok, [map()]} | {:error, term()}
+
+  @doc "Lists a series' TMDB episode groups."
+  @callback get_episode_groups(series_id :: integer()) ::
+              {:ok, [%{id: String.t(), type: integer(), name: String.t()}]} | {:error, term()}
+
+  @doc "Fetches an episode group with its flattened, ordered episode coordinates."
+  @callback get_episode_group(group_id :: String.t()) ::
+              {:ok,
+               %{
+                 id: String.t(),
+                 type: integer(),
+                 name: String.t(),
+                 entries: [map()]
+               }}
+              | {:error, term()}
+
   @doc "Lightweight reachability/token check — `:ok` if TMDB answers, else `{:error, reason}`."
   @callback health() :: :ok | {:error, term()}
 end

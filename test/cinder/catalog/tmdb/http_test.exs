@@ -198,6 +198,144 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
             }} = HTTP.get_season(1396, 1)
   end
 
+  test "normalizes movie and TV alternative titles" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      case conn.request_path do
+        "/3/movie/372058/alternative_titles" ->
+          Req.Test.json(conn, %{
+            "titles" => [
+              %{"title" => "Kimi no Na wa.", "iso_3166_1" => "JP", "type" => ""}
+            ]
+          })
+
+        "/3/tv/37854/alternative_titles" ->
+          Req.Test.json(conn, %{
+            "results" => [
+              %{"title" => "Pocket Monsters", "iso_3166_1" => "US", "type" => "working"}
+            ]
+          })
+      end
+    end)
+
+    assert {:ok, [%{title: "Kimi no Na wa.", country_code: "JP", kind: :alternative}]} =
+             HTTP.get_movie_alternative_titles(372_058)
+
+    assert {:ok, [%{title: "Pocket Monsters", country_code: "US", kind: :alternative}]} =
+             HTTP.get_series_alternative_titles(37_854)
+  end
+
+  test "normalizes and orders an episode group" do
+    Req.Test.expect(Cinder.TMDBStub, fn conn ->
+      assert conn.request_path == "/3/tv/37854/episode_groups"
+
+      Req.Test.json(conn, %{
+        "results" => [%{"id" => "absolute-id", "type" => 2, "name" => "Absolute"}]
+      })
+    end)
+
+    assert {:ok, [%{id: "absolute-id", type: 2, name: "Absolute"}]} =
+             HTTP.get_episode_groups(37_854)
+
+    Req.Test.expect(Cinder.TMDBStub, fn conn ->
+      assert conn.request_path == "/3/tv/episode_group/absolute-id"
+
+      Req.Test.json(conn, %{
+        "id" => "absolute-id",
+        "type" => 2,
+        "name" => "Absolute",
+        "groups" => [
+          %{
+            "order" => 1,
+            "episodes" => [
+              %{
+                "id" => 12_347,
+                "order" => 0,
+                "season_number" => 1,
+                "episode_number" => 3,
+                "name" => "Ignored"
+              }
+            ]
+          },
+          %{
+            "order" => 0,
+            "episodes" => [
+              %{"id" => 12_346, "order" => 1, "season_number" => 1, "episode_number" => 2},
+              %{"id" => 12_345, "order" => 0, "season_number" => 1, "episode_number" => 1}
+            ]
+          }
+        ]
+      })
+    end)
+
+    assert {:ok,
+            %{
+              id: "absolute-id",
+              type: 2,
+              name: "Absolute",
+              entries: [
+                %{
+                  tmdb_episode_id: 12_345,
+                  group_order: 0,
+                  order: 0,
+                  season_number: 1,
+                  episode_number: 1
+                },
+                %{
+                  tmdb_episode_id: 12_346,
+                  group_order: 0,
+                  order: 1,
+                  season_number: 1,
+                  episode_number: 2
+                },
+                %{
+                  tmdb_episode_id: 12_347,
+                  group_order: 1,
+                  order: 0,
+                  season_number: 1,
+                  episode_number: 3
+                }
+              ]
+            }} = HTTP.get_episode_group("absolute-id")
+  end
+
+  test "alternative titles reject container-valued retained fields" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      key = if String.starts_with?(conn.request_path, "/3/movie/"), do: "titles", else: "results"
+      Req.Test.json(conn, %{key => [%{"title" => ["not", "a", "title"], "iso_3166_1" => "JP"}]})
+    end)
+
+    assert {:error, :unexpected_response} = HTTP.get_movie_alternative_titles(372_058)
+    assert {:error, :unexpected_response} = HTTP.get_series_alternative_titles(37_854)
+  end
+
+  test "episode groups reject malformed retained fields" do
+    Req.Test.expect(Cinder.TMDBStub, fn conn ->
+      Req.Test.json(conn, %{
+        "results" => [%{"id" => 123, "type" => 2, "name" => "Absolute"}]
+      })
+    end)
+
+    assert {:error, :unexpected_response} = HTTP.get_episode_groups(37_854)
+
+    Req.Test.expect(Cinder.TMDBStub, fn conn ->
+      Req.Test.json(conn, %{
+        "id" => "absolute-id",
+        "type" => 2,
+        "name" => "Absolute",
+        "groups" => [
+          %{
+            "order" => 0,
+            "episodes" => [
+              %{"id" => 12_345, "order" => "0", "season_number" => 1, "episode_number" => 1}
+            ]
+          }
+        ]
+      })
+    end)
+
+    assert {:error, :unexpected_response} = HTTP.get_episode_group("absolute-id")
+  end
+
   test "search/1 does not forward bearer credentials across redirects" do
     parent = self()
 

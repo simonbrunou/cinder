@@ -76,6 +76,29 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   end
 
   @impl true
+  def get_movie_alternative_titles(tmdb_id) do
+    alternative_titles("/3/movie/#{tmdb_id}/alternative_titles", "titles")
+  end
+
+  @impl true
+  def get_series_alternative_titles(tmdb_id) do
+    alternative_titles("/3/tv/#{tmdb_id}/alternative_titles", "results")
+  end
+
+  @impl true
+  def get_episode_groups(series_id) do
+    normalized_list("/3/tv/#{series_id}/episode_groups", "results", &normalize_group/1)
+  end
+
+  @impl true
+  def get_episode_group(group_id) do
+    case request(url: "/3/tv/episode_group/#{group_id}") do
+      {:ok, %{status: 200, body: body}} -> normalize_group_detail(body)
+      other -> error(other)
+    end
+  end
+
+  @impl true
   def health do
     # /3/authentication validates the bearer token; short timeouts (receive AND
     # connect) so a down/slow TMDB can't hang the settings "Test connection".
@@ -116,6 +139,102 @@ defmodule Cinder.Catalog.TMDB.HTTP do
 
   defp error({:ok, %{status: status}}), do: {:error, {:tmdb_status, status}}
   defp error({:error, reason}), do: {:error, reason}
+
+  defp alternative_titles(path, container) do
+    normalized_list(path, container, &normalize_alternative_title/1)
+  end
+
+  defp normalized_list(path, container, normalize) do
+    case request(url: path) do
+      {:ok, %{status: 200, body: body}} when is_map(body) ->
+        case Map.fetch(body, container) do
+          {:ok, items} when is_list(items) -> normalize_items(items, normalize)
+          _other -> {:error, :unexpected_response}
+        end
+
+      {:ok, %{status: 200}} ->
+        {:error, :unexpected_response}
+
+      other ->
+        error(other)
+    end
+  end
+
+  defp normalize_items(items, normalize) do
+    Enum.reduce_while(items, {:ok, []}, fn item, {:ok, normalized} ->
+      case normalize.(item) do
+        {:ok, value} -> {:cont, {:ok, [value | normalized]}}
+        {:error, :unexpected_response} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, normalized} -> {:ok, Enum.reverse(normalized)}
+      error -> error
+    end
+  end
+
+  defp normalize_alternative_title(%{"title" => title, "iso_3166_1" => country_code})
+       when is_binary(title) and is_binary(country_code) do
+    {:ok, %{title: title, country_code: country_code, kind: :alternative}}
+  end
+
+  defp normalize_alternative_title(_title), do: {:error, :unexpected_response}
+
+  defp normalize_group(%{"id" => id, "type" => type, "name" => name})
+       when is_binary(id) and is_integer(type) and is_binary(name) do
+    {:ok, %{id: id, type: type, name: name}}
+  end
+
+  defp normalize_group(_group), do: {:error, :unexpected_response}
+
+  defp normalize_group_detail(%{
+         "id" => id,
+         "type" => type,
+         "name" => name,
+         "groups" => groups
+       })
+       when is_binary(id) and is_integer(type) and is_binary(name) and is_list(groups) do
+    with {:ok, nested_entries} <- normalize_items(groups, &normalize_group_entries/1) do
+      entries =
+        nested_entries
+        |> List.flatten()
+        |> Enum.sort_by(&{&1.group_order, &1.order})
+
+      {:ok, %{id: id, type: type, name: name, entries: entries}}
+    end
+  end
+
+  defp normalize_group_detail(_body), do: {:error, :unexpected_response}
+
+  defp normalize_group_entries(%{"order" => group_order, "episodes" => episodes})
+       when is_integer(group_order) and is_list(episodes) do
+    normalize_items(episodes, &normalize_group_entry(&1, group_order))
+  end
+
+  defp normalize_group_entries(_group), do: {:error, :unexpected_response}
+
+  defp normalize_group_entry(
+         %{
+           "id" => tmdb_episode_id,
+           "order" => order,
+           "season_number" => season_number,
+           "episode_number" => episode_number
+         },
+         group_order
+       )
+       when is_integer(tmdb_episode_id) and is_integer(order) and is_integer(season_number) and
+              is_integer(episode_number) do
+    {:ok,
+     %{
+       tmdb_episode_id: tmdb_episode_id,
+       group_order: group_order,
+       order: order,
+       season_number: season_number,
+       episode_number: episode_number
+     }}
+  end
+
+  defp normalize_group_entry(_episode, _group_order), do: {:error, :unexpected_response}
 
   defp normalize(movie) do
     %{
