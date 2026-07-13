@@ -40,6 +40,11 @@ defmodule Cinder.Download.IntentTest do
   test "reservation rejects mismatched markers and malformed version-one snapshots explicitly" do
     fixture = anime_reservation_fixture()
 
+    version_one =
+      fixture.snapshot
+      |> Map.put("version", 1)
+      |> Map.delete("parser_context")
+
     assert {:error, :invalid_mapping_snapshot} =
              Download.reserve_intent(%{
                kind: :season_pack,
@@ -60,7 +65,7 @@ defmodule Cinder.Download.IntentTest do
                mapping_snapshot: nil
              })
 
-    for {label, invalid} <- invalid_snapshots(fixture.snapshot) do
+    for {label, invalid} <- invalid_snapshots(version_one) do
       marked = %{fixture.release | mapping_snapshot: invalid}
 
       assert {:error, :invalid_mapping_snapshot} =
@@ -89,6 +94,61 @@ defmodule Cinder.Download.IntentTest do
 
     assert Repo.aggregate(Intent, :count) == 0
     assert Repo.aggregate(IntentEpisode, :count) == 0
+  end
+
+  test "reservation accepts version-one and valid version-two snapshots" do
+    fixture = anime_reservation_fixture()
+
+    version_one =
+      fixture.snapshot
+      |> Map.put("version", 1)
+      |> Map.delete("parser_context")
+
+    version_two =
+      fixture.snapshot
+      |> Map.put("version", 2)
+      |> Map.put("parser_context", %{
+        "title" => "Frieren",
+        "aliases" => ["Sousou no Frieren"],
+        "year" => 2023
+      })
+
+    assert Intent.reservation_changeset(
+             %Intent{},
+             valid_anime_intent_attrs(fixture, version_one)
+           ).valid?
+
+    assert Intent.reservation_changeset(
+             %Intent{},
+             valid_anime_intent_attrs(fixture, version_two)
+           ).valid?
+  end
+
+  test "reservation rejects invalid version-two parser contexts" do
+    fixture = anime_reservation_fixture()
+
+    snapshot =
+      fixture.snapshot
+      |> Map.put("version", 2)
+      |> Map.put("parser_context", %{
+        "title" => "Frieren",
+        "aliases" => [],
+        "year" => 2023
+      })
+
+    for invalid_context <- [
+          nil,
+          %{},
+          %{"title" => "", "aliases" => [], "year" => 2023},
+          %{"title" => "Frieren", "aliases" => [42], "year" => 2023},
+          %{"title" => "Frieren", "aliases" => List.duplicate("alias", 8), "year" => 2023},
+          %{"title" => "Frieren", "aliases" => [], "year" => "2023"}
+        ] do
+      attrs =
+        valid_anime_intent_attrs(fixture, put_in(snapshot["parser_context"], invalid_context))
+
+      refute Intent.reservation_changeset(%Intent{}, attrs).valid?
+    end
   end
 
   test "grab_episodes holds every non-nil mapping marker before reservation lookup" do
@@ -1007,6 +1067,19 @@ defmodule Cinder.Download.IntentTest do
       release: fixture.release,
       mapping_snapshot: fixture.snapshot
     })
+  end
+
+  defp valid_anime_intent_attrs(fixture, mapping_snapshot) do
+    %{
+      operation_key: Ecto.UUID.generate(),
+      kind: :season_pack,
+      target_id: fixture.first.id,
+      episode_ids: [fixture.first.id, fixture.second.id],
+      protocol: :torrent,
+      release: %{"title" => fixture.release.title},
+      status: :reserved,
+      mapping_snapshot: mapping_snapshot
+    }
   end
 
   defp invalid_snapshots(snapshot) do

@@ -99,7 +99,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
 
     snapshot = assignment.mapping_snapshot
 
-    assert snapshot["version"] == 1
+    assert snapshot["version"] == 2
     assert snapshot["reserved_episode_ids"] == [11, 12]
     assert snapshot["selected_resolution"]["episode_ids"] == [11, 12]
     assert Enum.any?(snapshot["mappings"], &(&1["episode_ids"] == [11, 12, 13]))
@@ -117,10 +117,10 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
 
     context = %{
       kind: :series,
-      title: "Show",
-      year: 2020,
+      title: "Frieren: Beyond Journey's End",
+      year: 2023,
       tvdb_id: 99,
-      aliases: [],
+      aliases: [%{title: "Sousou no Frieren"}, %{title: "葬送のフリーレン"}],
       episodes: [],
       mappings: mappings
     }
@@ -145,6 +145,14 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     }
 
     snapshot = Anime.build_mapping_snapshot(release, [11, 12], context)
+
+    assert snapshot["version"] == 2
+
+    assert snapshot["parser_context"] == %{
+             "title" => "Frieren: Beyond Journey's End",
+             "aliases" => ["Sousou no Frieren", "葬送のフリーレン"],
+             "year" => 2023
+           }
 
     assert snapshot["mappings"] == Enum.map(Enum.take(mappings, 4), &snapshot_mapping/1)
 

@@ -91,7 +91,12 @@ defmodule Cinder.Acquisition.Anime do
       |> Enum.map(&snapshot_mapping/1)
 
     %{
-      "version" => 1,
+      "version" => 2,
+      "parser_context" => %{
+        "title" => context.title,
+        "aliases" => context.aliases |> Enum.map(& &1.title) |> Enum.take(@max_aliases),
+        "year" => context.year
+      },
       "reserved_episode_ids" => reserved_ids,
       "release" => %{
         "title" => release.title,
