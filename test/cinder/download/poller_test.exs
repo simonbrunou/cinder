@@ -1701,7 +1701,7 @@ defmodule Cinder.Download.PollerTest do
 
     assert :ok = Poller.poll()
 
-    assert %Movie{status: :import_failed, import_attempts: 9} =
+    assert %Movie{status: :import_failed, import_attempts: 10} =
              failed =
              Repo.get!(Movie, movie.id)
 

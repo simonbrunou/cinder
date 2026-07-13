@@ -272,7 +272,13 @@ defmodule Cinder.Download.Poller do
         "movie #{movie.id} #{attempts_field} exhausted after #{attempts}: #{inspect(reason)}"
       )
 
-      park(movie, terminal_status, reason)
+      attrs =
+        case reason do
+          {:release_policy_unavailable, _reason} -> %{attempts_field => attempts}
+          _reason -> %{}
+        end
+
+      park(movie, terminal_status, reason, attrs)
     else
       Logger.info(
         "movie #{movie.id} #{attempts_field} #{attempts}/#{@max_attempts} failed (#{inspect(reason)}); will retry"
@@ -295,8 +301,9 @@ defmodule Cinder.Download.Poller do
 
   # A terminal failure park: transition once (the choke-point) then notify. Keeps
   # every "movie gave up" path emitting the same event with no per-site duplication.
-  defp park(movie, status, reason) do
-    with {:ok, parked} <- Catalog.transition(movie, %{status: status}, expect: movie.status) do
+  defp park(movie, status, reason, attrs \\ %{}) do
+    with {:ok, parked} <-
+           Catalog.transition(movie, Map.put(attrs, :status, status), expect: movie.status) do
       Notifier.notify({:movie_failed, parked, reason})
 
       # Best-effort, AFTER the park commits (a side effect like the notify above): record the
