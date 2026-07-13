@@ -151,8 +151,8 @@ defmodule Cinder.Download.Intent do
        )
        when is_list(values) and values != [] do
     episode_ids == reserved_ids and
-      coordinate_pairs(release["coordinates"]) == selected_pairs(values) and
       Enum.all?(values, &valid_selected_value?(&1, mapping_index)) and
+      coordinate_pairs(release["coordinates"]) == selected_pairs(values) and
       ordered_uniq(Enum.flat_map(values, & &1["episode_ids"])) == episode_ids
   end
 

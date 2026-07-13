@@ -75,7 +75,7 @@ defmodule Cinder.Acquisition.AnimeParser do
 
   defp typed_special(title) do
     cond do
-      captures = Regex.run(~r/\b(OVA|ONA)\s*[-._ ]?\s*(\d+)\b/iu, title) ->
+      captures = Regex.run(~r/\b(OVA|OAD|ONA)\s*[-._ ]?\s*(\d+)\b/iu, title) ->
         [_match, type, number] = captures
         [coordinate("typed_special", ["#{String.upcase(type)}:#{String.to_integer(number)}"])]
 

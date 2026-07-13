@@ -1018,6 +1018,7 @@ defmodule Cinder.Download.IntentTest do
       {"reserved ID mismatch",
        put_in(snapshot, ["reserved_episode_ids"], [hd(snapshot["reserved_episode_ids"])])},
       {"non-integer reserved ID", put_in(snapshot, ["reserved_episode_ids"], ["bad"])},
+      {"non-map selected value", put_in(snapshot, ["selected_resolution", "values"], ["bad"])},
       {"empty mapping identity references",
        update_selected_value(snapshot, 0, &Map.put(&1, "mapping_identities", []))},
       {"missing mapping identity reference",

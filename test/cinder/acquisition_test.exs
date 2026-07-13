@@ -51,6 +51,18 @@ defmodule Cinder.AcquisitionTest do
     assert {:ok, ^no_timestamp} = Anime.select_movie([no_timestamp], preferred_groups: [])
   end
 
+  test "anime movie preference recognizes a leading bracketed group" do
+    release =
+      Release.new(%{
+        title: "[Trusted] Your Name (2016) [1080p]",
+        size: 8 * @gb,
+        download_url: "preferred"
+      })
+
+    assert {:ok, %Release{group: "Trusted"}} =
+             Anime.select_movie([release], preferred_groups: ["trusted"])
+  end
+
   test "best_anime_releases/3 exposes stable-ID selection without changing the TV poller API" do
     context = %{
       kind: :series,
@@ -84,6 +96,29 @@ defmodule Cinder.AcquisitionTest do
 
     assert {:ok, %{assignments: [%{episode_ids: [11]}]}} =
              Acquisition.best_anime_releases(context, [11])
+  end
+
+  test "best_anime_releases/3 skips indexer work for an empty wanted set" do
+    stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, _opts ->
+      send(self(), :unexpected_empty_search)
+      {:ok, []}
+    end)
+
+    assert :no_match =
+             Acquisition.best_anime_releases(
+               %{
+                 kind: :series,
+                 title: "Show",
+                 year: 2020,
+                 tvdb_id: 99,
+                 aliases: [],
+                 episodes: [],
+                 mappings: []
+               },
+               []
+             )
+
+    refute_received :unexpected_empty_search
   end
 
   test "best_release/2 composes indexer search, parse, and scoring" do

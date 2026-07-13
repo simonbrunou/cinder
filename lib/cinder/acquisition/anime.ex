@@ -26,6 +26,8 @@ defmodule Cinder.Acquisition.Anime do
     run_queries([{:id_scoped, fn -> indexer.search(imdb_id) end} | free_text_queries], context)
   end
 
+  def search_episodes(_indexer, _context, [], _opts), do: {:ok, [], false}
+
   def search_episodes(indexer, context, wanted_ids, _opts) do
     context
     |> episode_queries(indexer, wanted_ids)
@@ -62,7 +64,10 @@ defmodule Cinder.Acquisition.Anime do
   end
 
   def select_movie(releases, opts \\ []) do
-    hard_valid = Enum.filter(releases, &(Scorer.verdict(&1, opts) == :ok))
+    hard_valid =
+      releases
+      |> Enum.map(&fill_movie_group/1)
+      |> Enum.filter(&(Scorer.verdict(&1, opts) == :ok))
 
     result =
       case preferred_groups(opts) do
@@ -131,9 +136,16 @@ defmodule Cinder.Acquisition.Anime do
       release
       | coordinates: parsed.coordinates,
         role: parsed.role,
-        group: parsed.group
+        group: release.group || parsed.group
     }
   end
+
+  defp fill_movie_group(%Release{group: nil} = release) do
+    parsed = AnimeParser.parse(release.title, %{kind: :movie})
+    %{release | group: parsed.group}
+  end
+
+  defp fill_movie_group(release), do: release
 
   defp language_pool(candidates, opts) do
     preferred = Keyword.get(opts, :preferred_language)

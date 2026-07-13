@@ -42,6 +42,16 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
              Anime.select_episodes([release], context, [11], preferred_groups: [])
   end
 
+  test "episodic preference keeps a trailing group parsed by the standard release parser" do
+    context = absolute_context(1..1)
+    release = Release.new(raw("Show - 1 [1080p]-Trusted", "single"))
+
+    assert {:ok, %{assignments: [%{release: selected}], waiting: nil}} =
+             Anime.select_episodes([release], context, [1], preferred_groups: ["trusted"])
+
+    assert selected.group == "Trusted"
+  end
+
   test "overlap components wait as a whole for a delayed covering pack" do
     now = ~U[2026-07-13 12:00:00Z]
     context = absolute_context(1..12)

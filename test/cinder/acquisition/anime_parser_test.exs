@@ -47,6 +47,13 @@ defmodule Cinder.Acquisition.AnimeParserTest do
     assert %{coordinates: [], role: :unknown} = AnimeParser.parse("Show - 1-101", context)
   end
 
+  test "keeps OAD releases unresolved as typed specials" do
+    context = %{kind: :series, titles: ["Show"], year: 2020}
+
+    assert %{coordinates: [%{scheme: "typed_special", values: ["OAD:2"]}], role: :unknown} =
+             AnimeParser.parse("[Group] Show OAD 2 [1080p]", context)
+  end
+
   defp atomize_kind(%{"kind" => kind} = context) do
     %{
       kind: if(kind == "movie", do: :movie, else: :series),
