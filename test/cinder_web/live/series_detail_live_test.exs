@@ -468,6 +468,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     |> render_submit()
 
     assert Repo.get!(Cinder.Catalog.Series, series.id).title == "Renamed"
+    render(lv)
   end
 
   test "admin cancels the series: grabs reaped, episodes unmonitored", %{conn: conn} do
