@@ -56,9 +56,29 @@ defmodule CinderWeb.MovieDetailLiveTest do
     end)
   end
 
+  # A connected detail mount always starts :enrich. Drain it before returning so its DB work cannot
+  # outlive the SQL sandbox owner at the end of the test.
+  defp live_movie(conn, movie, drain? \\ true) do
+    {:ok, view, html} = live(conn, ~p"/movies/#{movie.id}")
+    on_exit(fn -> stop_live_view(view) end)
+
+    if drain? do
+      render_async(view)
+      {:ok, view, render(view)}
+    else
+      {:ok, view, html}
+    end
+  end
+
+  defp stop_live_view(view) do
+    if Process.alive?(view.pid), do: GenServer.stop(view.pid)
+  catch
+    :exit, _reason -> :ok
+  end
+
   test "admin changes a movie profile and manages a manual alias", %{conn: conn} do
     movie = movie_fixture()
-    {:ok, view, _} = live(conn, ~p"/movies/#{movie.id}")
+    {:ok, view, _} = live_movie(conn, movie)
 
     assert has_element?(view, "#movie-profile-form")
 
@@ -137,7 +157,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
       })
       |> Repo.insert!()
 
-    {:ok, view, _} = live(conn, ~p"/movies/#{movie.id}")
+    {:ok, view, _} = live_movie(conn, movie)
 
     render_hook(view, "set_media_profile", %{"media_profile" => "forged"})
 
@@ -181,7 +201,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
        }}
     end)
 
-    {:ok, view, _} = live(conn, ~p"/movies/#{movie.id}")
+    {:ok, view, _} = live_movie(conn, movie, false)
     render_async(view)
 
     assert Repo.reload(movie).media_profile == :auto
@@ -198,7 +218,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
     movie = movie_fixture(%{title: "Inception"})
     stub_details(movie.tmdb_id)
 
-    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+    {:ok, lv, _html} = live_movie(conn, movie, false)
     html = render_async(lv)
 
     assert html =~ "A thief who steals corporate secrets"
@@ -216,7 +236,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
 
     stub_details(movie.tmdb_id)
 
-    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+    {:ok, lv, _html} = live_movie(conn, movie, false)
 
     assert render_async(lv) =~ "A thief who steals corporate secrets"
   end
@@ -237,7 +257,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
 
     stub_details(movie.tmdb_id)
 
-    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+    {:ok, lv, _html} = live_movie(conn, movie, false)
     html = render_async(lv)
 
     assert html =~ "Downloaded file"
@@ -259,7 +279,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
 
     stub_details(movie.tmdb_id)
 
-    {:ok, _lv, html} = live(conn, ~p"/movies/#{movie.id}")
+    {:ok, _lv, html} = live_movie(conn, movie)
     assert html =~ "Audio"
     assert html =~ "en"
     assert html =~ "fr"
@@ -279,7 +299,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
 
     stub_details(movie.tmdb_id)
 
-    {:ok, _lv, html} = live(conn, ~p"/movies/#{movie.id}")
+    {:ok, _lv, html} = live_movie(conn, movie)
     refute html =~ "Audio"
     refute html =~ "Subtitles"
   end
@@ -296,7 +316,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
     movie = movie_fixture(%{title: "Inception"})
     stub_details(movie.tmdb_id)
 
-    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+    {:ok, lv, _html} = live_movie(conn, movie, false)
     assert render_async(lv) =~ "A thief who steals corporate secrets"
 
     # Unguarded transition on the stale struct broadcasts {:movie_updated, stale} (nil metadata).
@@ -319,7 +339,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
         download_eta: 90
       })
 
-    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+    {:ok, lv, _html} = live_movie(conn, movie)
     assert render(lv) =~ "42%"
   end
 
@@ -343,7 +363,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
        }}
     end)
 
-    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+    {:ok, lv, _html} = live_movie(conn, movie, false)
     html = render_async(lv)
 
     refute html =~ "0 min"
@@ -353,7 +373,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
 
   test "edits a movie's metadata", %{conn: conn} do
     movie = movie_fixture(%{title: "Dune", year: 2021})
-    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+    {:ok, lv, _html} = live_movie(conn, movie)
 
     lv |> element("button", "Edit") |> render_click()
 
@@ -366,7 +386,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
 
   test "cancels an active movie through the confirm step", %{conn: conn} do
     movie = movie_fixture(%{title: "Tenet"})
-    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+    {:ok, lv, _html} = live_movie(conn, movie)
 
     lv |> element("button", "Cancel") |> render_click()
     lv |> element("#confirm-cancel-movie button", "Cancel movie") |> render_click()
@@ -377,7 +397,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
   test "deletes an inactive movie and redirects to the library", %{conn: conn} do
     movie = movie_fixture(%{title: "Old"})
     {:ok, _} = Catalog.transition(movie, %{status: :cancelled})
-    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+    {:ok, lv, _html} = live_movie(conn, movie)
 
     lv |> element("button", "Delete") |> render_click()
     lv |> element("#confirm-delete-movie button", "Delete") |> render_click()
@@ -397,7 +417,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
 
     stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
 
-    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+    {:ok, lv, _html} = live_movie(conn, movie)
 
     lv |> element("button", "Delete") |> render_click()
     lv |> element("input[phx-click=toggle_delete_files]") |> render_click()
@@ -408,7 +428,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
 
   test "deleting a movie without ticking the box leaves the file (no FS call)", %{conn: conn} do
     movie = available_movie!("/tmp/x.mkv")
-    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+    {:ok, lv, _html} = live_movie(conn, movie)
 
     lv |> element("button", "Delete") |> render_click()
     lv |> element("#confirm-delete-movie button", "Delete") |> render_click()
@@ -422,7 +442,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
     movie = movie_fixture(%{title: "Tenet"})
     {:ok, _} = Catalog.transition(movie, %{status: :no_match})
 
-    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+    {:ok, lv, _html} = live_movie(conn, movie)
     lv |> element("button", "Retry") |> render_click()
 
     assert Catalog.get_movie_by_id(movie.id).status == :requested
@@ -432,7 +452,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
     movie = movie_fixture(%{title: "Sicario"})
     {:ok, _} = Catalog.transition(movie, %{status: :downloading, download_id: "h"})
 
-    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+    {:ok, lv, _html} = live_movie(conn, movie)
     refute has_element?(lv, "button", "Retry")
   end
 
@@ -454,7 +474,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
     stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "dl-x"} end)
     stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
 
-    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+    {:ok, lv, _html} = live_movie(conn, movie)
 
     lv |> element("button", "Find a better match") |> render_click()
     assert render_async(lv) =~ "Better 1080p"
@@ -480,7 +500,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
 
     stub(Cinder.Download.ClientMock, :remove, fn "h-up", _opts -> :ok end)
 
-    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+    {:ok, lv, _html} = live_movie(conn, movie)
     lv |> element("button", "Cancel upgrade") |> render_click()
 
     assert Catalog.get_movie_by_id(movie.id).status == :available
@@ -488,7 +508,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
 
   test "changing the language select updates the movie's preferred language", %{conn: conn} do
     movie = movie_fixture(%{title: "Arrival"})
-    {:ok, lv, _html} = live(conn, ~p"/movies/#{movie.id}")
+    {:ok, lv, _html} = live_movie(conn, movie)
 
     lv
     |> form("#movie-language-form", %{"preferred_language" => "french"})
