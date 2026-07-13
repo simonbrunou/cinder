@@ -10,7 +10,8 @@ defmodule CinderWeb.SeriesDetailLive do
 
   import CinderWeb.LiveHelpers, only: [format_date_year: 1, humanize_bytes: 1, rating: 1]
 
-  alias Cinder.Catalog
+  alias Cinder.Acquisition.AnimePreferences
+  alias Cinder.{Catalog, Settings}
   alias Cinder.Catalog.{Episode, Season, Series}
 
   @impl true
@@ -247,6 +248,26 @@ defmodule CinderWeb.SeriesDetailLive do
     end
   end
 
+  def handle_event(
+        "save_anime_preferences",
+        %{"anime_preferences" => params},
+        socket
+      )
+      when is_map(params) do
+    case Catalog.set_anime_preferences(socket.assigns.series, params) do
+      {:ok, _updated} ->
+        {:noreply, reload(socket)}
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:noreply,
+         assign(
+           socket,
+           :anime_preferences_form,
+           anime_preferences_form_state(socket.assigns.series, params, changeset)
+         )}
+    end
+  end
+
   def handle_event("save_alias", %{"alias" => params}, socket) when is_map(params) do
     result =
       case params["id"] do
@@ -403,6 +424,8 @@ defmodule CinderWeb.SeriesDetailLive do
 
     socket
     |> assign(
+      anime_policy: anime_policy(series),
+      anime_preferences_form: anime_preferences_form_state(series),
       profile_form: profile_form(series),
       profile_summary: Catalog.media_profile_summary(series),
       aliases_empty?: aliases == []
@@ -412,6 +435,31 @@ defmodule CinderWeb.SeriesDetailLive do
 
   defp profile_form(series),
     do: to_form(%{"media_profile" => Atom.to_string(series.media_profile)})
+
+  defp anime_preferences_form_state(series, params \\ %{}, changeset \\ nil) do
+    errors =
+      case changeset do
+        %Ecto.Changeset{} ->
+          Enum.map(changeset.errors, fn
+            {:group_fallback_delay, error} -> {:group_fallback_delay_hours, error}
+            error -> error
+          end)
+
+        nil ->
+          []
+      end
+
+    series
+    |> AnimePreferences.form_state(params)
+    |> to_form(as: :anime_preferences, errors: errors, action: :validate)
+  end
+
+  defp anime_policy(series) do
+    case AnimePreferences.resolve(series, Settings.anime_defaults()) do
+      {:ok, policy} -> policy
+      {:error, _reason} -> nil
+    end
+  end
 
   defp alias_form(params \\ %{})
 
@@ -666,6 +714,12 @@ defmodule CinderWeb.SeriesDetailLive do
           <.profile_summary id="series-profile-summary" summary={@profile_summary} />
         </div>
       </div>
+
+      <.anime_preferences_form
+        :if={@profile_summary.effective == :anime or @profile_summary.selected == :anime}
+        form={@anime_preferences_form}
+        effective={@anime_policy}
+      />
 
       <section class="mb-6 max-w-3xl" aria-labelledby="series-aliases-heading">
         <h2 id="series-aliases-heading" class="mb-2 text-lg font-semibold">

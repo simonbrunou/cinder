@@ -111,6 +111,24 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     :exit, _reason -> :ok
   end
 
+  defp anime_preferences_params(overrides \\ %{}) do
+    Map.merge(
+      %{
+        "audio_mode" => "dual",
+        "embedded_subtitle_mode" => "require",
+        "subtitle_languages_mode" => "override",
+        "subtitle_languages" => "fr",
+        "preferred_release_groups_mode" => "override",
+        "preferred_release_groups" => "SubsPlease, subsplease",
+        "blocked_release_groups_mode" => "override",
+        "blocked_release_groups" => "BadGroup",
+        "group_fallback_delay_mode" => "override",
+        "group_fallback_delay_hours" => "6"
+      },
+      overrides
+    )
+  end
+
   test "admin changes a series profile and manages sourced aliases", %{conn: conn} do
     series = create_series(6_900)
 
@@ -164,6 +182,111 @@ defmodule CinderWeb.SeriesDetailLiveTest do
              "#series-alias-edit-status[role='status'][phx-mounted*='focus'][phx-mounted*='#series-alias-title']",
              "Editing alias Shingeki no Kyojin"
            )
+  end
+
+  test "admin saves series Anime preferences and stored overrides stay dormant while Standard", %{
+    conn: conn
+  } do
+    series =
+      series_fixture(%{
+        media_profile: :anime,
+        original_language: "ja",
+        preferred_language: "french"
+      })
+
+    {:ok, view, _} = live_series(conn, series)
+    assert has_element?(view, "#anime-preferences-form")
+
+    view
+    |> form("#anime-preferences-form", anime_preferences: anime_preferences_params())
+    |> render_submit()
+
+    fresh = Repo.reload!(series)
+    assert fresh.audio_mode == :dual
+    assert fresh.embedded_subtitle_mode == :require
+    assert fresh.subtitle_languages == ["fr"]
+    assert fresh.preferred_release_groups == ["subsplease"]
+    assert fresh.blocked_release_groups == ["badgroup"]
+    assert fresh.group_fallback_delay == 21_600
+
+    view
+    |> form("#series-profile-form", %{"media_profile" => "standard"})
+    |> render_change()
+
+    refute has_element?(view, "#anime-preferences-form")
+
+    view
+    |> form("#series-profile-form", %{"media_profile" => "anime"})
+    |> render_change()
+
+    assert has_element?(
+             view,
+             "#anime_preferences_audio_mode option[value='dual'][selected]"
+           )
+
+    assert has_element?(
+             view,
+             "#anime_preferences_preferred_release_groups[value='subsplease']"
+           )
+
+    assert has_element?(view, "#anime_preferences_group_fallback_delay_hours[value='6']")
+  end
+
+  test "series Anime preference errors are inline, retain input, and persist nothing", %{
+    conn: conn
+  } do
+    series =
+      series_fixture(%{
+        media_profile: :anime,
+        original_language: "ja",
+        preferred_language: "original"
+      })
+
+    {:ok, view, _} = live_series(conn, series)
+
+    view
+    |> form(
+      "#anime-preferences-form",
+      anime_preferences: anime_preferences_params(%{"audio_mode" => "dual"})
+    )
+    |> render_submit()
+
+    assert has_element?(view, "#anime_preferences_audio_mode-error")
+    assert has_element?(view, "#anime_preferences_audio_mode option[value='dual'][selected]")
+
+    view
+    |> form(
+      "#anime-preferences-form",
+      anime_preferences:
+        anime_preferences_params(%{
+          "audio_mode" => "inherit",
+          "group_fallback_delay_hours" => "-1"
+        })
+    )
+    |> render_submit()
+
+    assert has_element?(view, "#anime_preferences_group_fallback_delay_hours-error")
+    assert has_element?(view, "#anime_preferences_group_fallback_delay_hours[value='-1']")
+
+    view
+    |> form(
+      "#anime-preferences-form",
+      anime_preferences:
+        anime_preferences_params(%{
+          "audio_mode" => "inherit",
+          "subtitle_languages" => ""
+        })
+    )
+    |> render_submit()
+
+    assert has_element?(view, "#anime_preferences_subtitle_languages-error")
+    assert has_element?(view, "#anime_preferences_subtitle_languages[value='']")
+
+    fresh = Repo.reload!(series)
+    assert fresh.audio_mode == nil
+    assert fresh.embedded_subtitle_mode == nil
+    assert fresh.subtitle_languages == nil
+    assert fresh.group_fallback_delay == nil
   end
 
   test "series identity events tolerate forged profiles and aliases", %{conn: conn} do

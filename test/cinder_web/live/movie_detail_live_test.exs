@@ -76,6 +76,24 @@ defmodule CinderWeb.MovieDetailLiveTest do
     :exit, _reason -> :ok
   end
 
+  defp anime_preferences_params(overrides \\ %{}) do
+    Map.merge(
+      %{
+        "audio_mode" => "dual",
+        "embedded_subtitle_mode" => "require",
+        "subtitle_languages_mode" => "override",
+        "subtitle_languages" => "fr",
+        "preferred_release_groups_mode" => "override",
+        "preferred_release_groups" => "SubsPlease, subsplease",
+        "blocked_release_groups_mode" => "override",
+        "blocked_release_groups" => "BadGroup",
+        "group_fallback_delay_mode" => "override",
+        "group_fallback_delay_hours" => "6"
+      },
+      overrides
+    )
+  end
+
   test "admin changes a movie profile and manages a manual alias", %{conn: conn} do
     movie = movie_fixture()
     {:ok, view, _} = live_movie(conn, movie)
@@ -136,6 +154,135 @@ defmodule CinderWeb.MovieDetailLiveTest do
 
     assert Catalog.list_title_aliases(movie) == []
     assert has_element?(view, "#movie-aliases-empty")
+  end
+
+  test "admin saves movie Anime preferences and stored overrides stay dormant while Standard", %{
+    conn: conn
+  } do
+    movie =
+      movie_fixture(%{
+        media_profile: :anime,
+        original_language: "ja",
+        preferred_language: "french"
+      })
+
+    {:ok, view, _} = live_movie(conn, movie)
+    assert has_element?(view, "#anime-preferences-form")
+
+    assert has_element?(
+             view,
+             "label[for='anime_preferences_subtitle_languages']",
+             "Subtitle languages"
+           )
+
+    assert has_element?(
+             view,
+             "label[for='anime_preferences_preferred_release_groups']",
+             "Preferred groups"
+           )
+
+    assert has_element?(
+             view,
+             "label[for='anime_preferences_blocked_release_groups']",
+             "Blocked groups"
+           )
+
+    assert has_element?(
+             view,
+             "label[for='anime_preferences_group_fallback_delay_hours']",
+             "Preferred-group fallback delay"
+           )
+
+    view
+    |> form("#anime-preferences-form", anime_preferences: anime_preferences_params())
+    |> render_submit()
+
+    fresh = Repo.reload!(movie)
+    assert fresh.audio_mode == :dual
+    assert fresh.embedded_subtitle_mode == :require
+    assert fresh.subtitle_languages == ["fr"]
+    assert fresh.preferred_release_groups == ["subsplease"]
+    assert fresh.blocked_release_groups == ["badgroup"]
+    assert fresh.group_fallback_delay == 21_600
+
+    view
+    |> form("#movie-profile-form", %{"media_profile" => "standard"})
+    |> render_change()
+
+    refute has_element?(view, "#anime-preferences-form")
+
+    view
+    |> form("#movie-profile-form", %{"media_profile" => "anime"})
+    |> render_change()
+
+    assert has_element?(
+             view,
+             "#anime_preferences_audio_mode option[value='dual'][selected]"
+           )
+
+    assert has_element?(
+             view,
+             "#anime_preferences_preferred_release_groups[value='subsplease']"
+           )
+
+    assert has_element?(view, "#anime_preferences_group_fallback_delay_hours[value='6']")
+  end
+
+  test "movie Anime preference errors are inline, retain input, and persist nothing", %{
+    conn: conn
+  } do
+    movie =
+      movie_fixture(%{
+        media_profile: :anime,
+        original_language: "ja",
+        preferred_language: "original"
+      })
+
+    {:ok, view, _} = live_movie(conn, movie)
+
+    view
+    |> form(
+      "#anime-preferences-form",
+      anime_preferences: anime_preferences_params(%{"audio_mode" => "dub"})
+    )
+    |> render_submit()
+
+    assert has_element?(view, "#anime_preferences_audio_mode-error")
+    assert has_element?(view, "#anime_preferences_audio_mode option[value='dub'][selected]")
+
+    view
+    |> form(
+      "#anime-preferences-form",
+      anime_preferences:
+        anime_preferences_params(%{
+          "audio_mode" => "inherit",
+          "group_fallback_delay_hours" => "-1"
+        })
+    )
+    |> render_submit()
+
+    assert has_element?(view, "#anime_preferences_group_fallback_delay_hours-error")
+    assert has_element?(view, "#anime_preferences_group_fallback_delay_hours[value='-1']")
+
+    view
+    |> form(
+      "#anime-preferences-form",
+      anime_preferences:
+        anime_preferences_params(%{
+          "audio_mode" => "inherit",
+          "subtitle_languages" => ""
+        })
+    )
+    |> render_submit()
+
+    assert has_element?(view, "#anime_preferences_subtitle_languages-error")
+    assert has_element?(view, "#anime_preferences_subtitle_languages[value='']")
+
+    fresh = Repo.reload!(movie)
+    assert fresh.audio_mode == nil
+    assert fresh.embedded_subtitle_mode == nil
+    assert fresh.subtitle_languages == nil
+    assert fresh.group_fallback_delay == nil
   end
 
   test "movie profile and alias events reject forged values and provider aliases are read-only",

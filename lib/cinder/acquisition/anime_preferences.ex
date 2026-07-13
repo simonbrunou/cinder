@@ -6,6 +6,27 @@ defmodule Cinder.Acquisition.AnimePreferences do
   """
 
   alias Cinder.Acquisition.Language
+  alias Ecto.Changeset
+
+  @audio_modes %{
+    "original" => :original,
+    "dub" => :dub,
+    "dual" => :dual,
+    "any" => :any
+  }
+  @embedded_modes %{"allow" => :allow, "prefer" => :prefer, "require" => :require}
+  @form_fields ~w(
+    audio_mode
+    embedded_subtitle_mode
+    subtitle_languages_mode
+    subtitle_languages
+    preferred_release_groups_mode
+    preferred_release_groups
+    blocked_release_groups_mode
+    blocked_release_groups
+    group_fallback_delay_mode
+    group_fallback_delay_hours
+  )
 
   def resolve(title, defaults) do
     audio_mode = inherited(title.audio_mode, defaults.audio_mode)
@@ -21,6 +42,7 @@ defmodule Cinder.Acquisition.AnimePreferences do
          :ok <- validate_embedded(embedded, subtitles) do
       {:ok,
        %{
+         audio_mode: audio_mode,
          required_audio_languages: required_audio,
          subtitle_languages: subtitles,
          embedded_subtitle_mode: embedded,
@@ -36,6 +58,84 @@ defmodule Cinder.Acquisition.AnimePreferences do
            inherited(title.group_fallback_delay, defaults.group_fallback_delay),
          provenance: provenance(title)
        }}
+    end
+  end
+
+  @doc "Parses a per-title form without collapsing inherited and explicitly empty values."
+  def override_attrs(params) when is_map(params) do
+    with {:ok, audio_mode} <-
+           enum_override(params["audio_mode"], @audio_modes, :invalid_audio_mode),
+         {:ok, embedded_subtitle_mode} <-
+           enum_override(
+             params["embedded_subtitle_mode"],
+             @embedded_modes,
+             :invalid_embedded_subtitle_mode
+           ),
+         {:ok, subtitle_languages} <-
+           list_override(
+             params,
+             "subtitle_languages",
+             &normalize_languages/1,
+             :invalid_subtitle_languages_mode
+           ),
+         {:ok, preferred_release_groups} <-
+           list_override(
+             params,
+             "preferred_release_groups",
+             &normalize_groups/1,
+             :invalid_preferred_release_groups_mode
+           ),
+         {:ok, blocked_release_groups} <-
+           list_override(
+             params,
+             "blocked_release_groups",
+             &normalize_groups/1,
+             :invalid_blocked_release_groups_mode
+           ),
+         {:ok, group_fallback_delay} <- delay_override(params) do
+      {:ok,
+       %{
+         audio_mode: audio_mode,
+         embedded_subtitle_mode: embedded_subtitle_mode,
+         subtitle_languages: subtitle_languages,
+         preferred_release_groups: preferred_release_groups,
+         blocked_release_groups: blocked_release_groups,
+         group_fallback_delay: group_fallback_delay
+       }}
+    end
+  end
+
+  @doc "Builds the shared string-keyed form state, overlaid with the last submission."
+  def form_state(title, params) when is_map(params) do
+    %{
+      "audio_mode" => enum_form_value(title.audio_mode),
+      "embedded_subtitle_mode" => enum_form_value(title.embedded_subtitle_mode),
+      "subtitle_languages_mode" => override_mode(title.subtitle_languages),
+      "subtitle_languages" => csv_value(title.subtitle_languages),
+      "preferred_release_groups_mode" => override_mode(title.preferred_release_groups),
+      "preferred_release_groups" => csv_value(title.preferred_release_groups),
+      "blocked_release_groups_mode" => override_mode(title.blocked_release_groups),
+      "blocked_release_groups" => csv_value(title.blocked_release_groups),
+      "group_fallback_delay_mode" => override_mode(title.group_fallback_delay),
+      "group_fallback_delay_hours" => delay_hours(title.group_fallback_delay)
+    }
+    |> Map.merge(Map.take(params, @form_fields))
+  end
+
+  @doc "Validates the effective candidate and returns field-specific changeset errors."
+  def validate_effective(%Changeset{valid?: false} = changeset, _defaults),
+    do: {:error, changeset}
+
+  def validate_effective(%Changeset{} = changeset, defaults) do
+    case changeset |> Changeset.apply_changes() |> resolve(defaults) do
+      {:ok, _policy} ->
+        {:ok, changeset}
+
+      {:error, :dub_language_required} ->
+        {:error, Changeset.add_error(changeset, :audio_mode, "is invalid")}
+
+      {:error, :subtitle_language_required} ->
+        {:error, Changeset.add_error(changeset, :subtitle_languages, "can't be blank")}
     end
   end
 
@@ -73,6 +173,66 @@ defmodule Cinder.Acquisition.AnimePreferences do
 
   def normalize_group(nil), do: nil
   def normalize_group(group), do: group |> String.trim() |> String.downcase()
+
+  defp enum_override(value, _modes, _error) when value in [nil, "", "inherit"], do: {:ok, nil}
+
+  defp enum_override(value, modes, error) do
+    case Map.fetch(modes, value) do
+      {:ok, mode} -> {:ok, mode}
+      :error -> {:error, error}
+    end
+  end
+
+  defp list_override(params, field, normalize, error) do
+    case params[field <> "_mode"] do
+      mode when mode in [nil, "", "inherit"] ->
+        {:ok, nil}
+
+      "override" ->
+        case params[field] do
+          value when is_binary(value) or is_nil(value) ->
+            {:ok, value |> split_csv() |> normalize.()}
+
+          _other ->
+            {:error, error}
+        end
+
+      _other ->
+        {:error, error}
+    end
+  end
+
+  defp delay_override(params) do
+    case params["group_fallback_delay_mode"] do
+      mode when mode in [nil, "", "inherit"] -> {:ok, nil}
+      "override" -> parse_delay_hours(params["group_fallback_delay_hours"])
+      _other -> {:error, :invalid_group_fallback_delay}
+    end
+  end
+
+  defp parse_delay_hours(hours) when is_binary(hours) do
+    case Integer.parse(String.trim(hours)) do
+      {hours, ""} when hours >= 0 -> {:ok, hours * 3_600}
+      _other -> {:error, :invalid_group_fallback_delay}
+    end
+  end
+
+  defp parse_delay_hours(_hours), do: {:error, :invalid_group_fallback_delay}
+
+  defp split_csv(nil), do: []
+  defp split_csv(value), do: String.split(value, ",")
+
+  defp enum_form_value(nil), do: "inherit"
+  defp enum_form_value(value), do: Atom.to_string(value)
+
+  defp override_mode(nil), do: "inherit"
+  defp override_mode(_value), do: "override"
+
+  defp csv_value(nil), do: ""
+  defp csv_value(values), do: Enum.join(values, ", ")
+
+  defp delay_hours(nil), do: ""
+  defp delay_hours(seconds), do: seconds |> div(3_600) |> Integer.to_string()
 
   defp required_audio(:original, title), do: {:ok, original_languages(title)}
   defp required_audio(:any, _title), do: {:ok, []}

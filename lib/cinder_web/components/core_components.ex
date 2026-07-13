@@ -1023,6 +1023,171 @@ defmodule CinderWeb.CoreComponents do
     """
   end
 
+  attr :form, Phoenix.HTML.Form, required: true
+  attr :effective, :map, default: nil
+
+  def anime_preferences_form(assigns) do
+    assigns =
+      assign(assigns,
+        audio_options: [
+          {gettext("Use Anime default"), "inherit"},
+          {gettext("Original"), "original"},
+          {gettext("Dub"), "dub"},
+          {gettext("Dual audio"), "dual"},
+          {gettext("Any"), "any"}
+        ],
+        embedded_options: [
+          {gettext("Use Anime default"), "inherit"},
+          {gettext("Allow"), "allow"},
+          {gettext("Prefer embedded"), "prefer"},
+          {gettext("Require embedded"), "require"}
+        ],
+        override_options: [
+          {gettext("Use Anime default"), "inherit"},
+          {gettext("Override"), "override"}
+        ]
+      )
+
+    ~H"""
+    <section id="anime-preferences" class="mb-6 max-w-3xl rounded-box border border-base-300 p-4">
+      <h2 class="mb-3 text-lg font-semibold">{gettext("Anime preferences")}</h2>
+      <.form
+        for={@form}
+        id="anime-preferences-form"
+        phx-submit="save_anime_preferences"
+        class="grid gap-x-3 sm:grid-cols-2"
+      >
+        <div>
+          <.input
+            field={@form[:audio_mode]}
+            type="select"
+            label={gettext("Audio mode")}
+            options={@audio_options}
+          />
+          <p class="mb-3 text-xs text-base-content/60">
+            {gettext("Effective: %{value}", value: effective_audio(@effective))}
+          </p>
+          <p
+            :if={
+              @effective && @effective.audio_mode == :original &&
+                @effective.required_audio_languages == []
+            }
+            id="anime-original-language-help"
+            class="mb-3 text-xs text-warning"
+          >
+            {gettext("Original audio cannot be verified because the original language is unknown")}
+          </p>
+        </div>
+        <div>
+          <.input
+            field={@form[:embedded_subtitle_mode]}
+            type="select"
+            label={gettext("Embedded subtitles")}
+            options={@embedded_options}
+          />
+          <p class="mb-3 text-xs text-base-content/60">
+            {gettext("Effective: %{value}", value: effective_embedded(@effective))}
+          </p>
+        </div>
+
+        <div>
+          <.input
+            field={@form[:subtitle_languages_mode]}
+            type="select"
+            label={gettext("Subtitle languages (comma-separated, e.g. en,fr)")}
+            options={@override_options}
+          />
+          <.input
+            field={@form[:subtitle_languages]}
+            label={gettext("Subtitle languages (comma-separated, e.g. en,fr)")}
+          />
+          <p class="mb-3 text-xs text-base-content/60">
+            {gettext("Effective: %{value}",
+              value: effective_list(@effective, :subtitle_languages)
+            )} · {gettext("Blank override disables the global list")}
+          </p>
+        </div>
+        <div>
+          <.input
+            field={@form[:preferred_release_groups_mode]}
+            type="select"
+            label={gettext("Preferred groups")}
+            options={@override_options}
+          />
+          <.input field={@form[:preferred_release_groups]} label={gettext("Preferred groups")} />
+          <p class="mb-3 text-xs text-base-content/60">
+            {gettext("Effective: %{value}",
+              value: effective_list(@effective, :preferred_groups)
+            )} · {gettext("Blank override disables the global list")}
+          </p>
+        </div>
+        <div>
+          <.input
+            field={@form[:blocked_release_groups_mode]}
+            type="select"
+            label={gettext("Blocked groups")}
+            options={@override_options}
+          />
+          <.input field={@form[:blocked_release_groups]} label={gettext("Blocked groups")} />
+          <p class="mb-3 text-xs text-base-content/60">
+            {gettext("Effective: %{value}", value: effective_list(@effective, :blocked_groups))} · {gettext(
+              "Blank override disables the global list"
+            )}
+          </p>
+        </div>
+        <div>
+          <.input
+            field={@form[:group_fallback_delay_mode]}
+            type="select"
+            label={gettext("Preferred-group fallback delay (hours)")}
+            options={@override_options}
+          />
+          <.input
+            field={@form[:group_fallback_delay_hours]}
+            type="number"
+            label={gettext("Preferred-group fallback delay (hours)")}
+            min="0"
+          />
+          <p class="mb-3 text-xs text-base-content/60">
+            {gettext("Effective fallback delay: %{hours} hours",
+              hours: effective_delay_hours(@effective)
+            )}
+          </p>
+        </div>
+
+        <div class="sm:col-span-2">
+          <.button type="submit" variant="primary" size="sm">{gettext("Save")}</.button>
+        </div>
+      </.form>
+    </section>
+    """
+  end
+
+  defp effective_audio(nil), do: "—"
+  defp effective_audio(policy), do: audio_mode_label(policy.audio_mode)
+
+  defp audio_mode_label(:original), do: gettext("Original")
+  defp audio_mode_label(:dub), do: gettext("Dub")
+  defp audio_mode_label(:dual), do: gettext("Dual audio")
+  defp audio_mode_label(:any), do: gettext("Any")
+
+  defp effective_embedded(nil), do: "—"
+  defp effective_embedded(%{embedded_subtitle_mode: :allow}), do: gettext("Allow")
+  defp effective_embedded(%{embedded_subtitle_mode: :prefer}), do: gettext("Prefer embedded")
+  defp effective_embedded(%{embedded_subtitle_mode: :require}), do: gettext("Require embedded")
+
+  defp effective_list(nil, _field), do: "—"
+
+  defp effective_list(policy, field) do
+    case policy |> Map.fetch!(field) |> Enum.join(", ") do
+      "" -> "—"
+      value -> value
+    end
+  end
+
+  defp effective_delay_hours(nil), do: "—"
+  defp effective_delay_hours(policy), do: div(policy.group_fallback_delay, 3_600)
+
   defp profile_label(:auto), do: gettext("Auto")
   defp profile_label(:standard), do: gettext("Standard")
   defp profile_label(:anime), do: gettext("Anime")
