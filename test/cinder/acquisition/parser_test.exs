@@ -340,6 +340,7 @@ defmodule Cinder.Acquisition.ParserTest do
       assert %{embedded_subtitle_claim: :absent} =
                Parser.parse("[Group] Frieren - 29 RAW")
 
+      assert %{embedded_subtitle_claim: :unknown} = Parser.parse("[Group] RAW")
       assert %{embedded_subtitle_claim: :unknown} = Parser.parse("Raw Deal")
       assert %{embedded_subtitle_claim: :unknown} = Parser.parse("A Very Raw Story")
     end

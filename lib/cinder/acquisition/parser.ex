@@ -141,7 +141,7 @@ defmodule Cinder.Acquisition.Parser do
   @vostfr ~r/(?:^|[^\p{L}\p{N}])VOSTFR(?:[^\p{L}\p{N}]|$)/iu
   @raw_bracket ~r/\[\s*RAW\s*\]/iu
   @raw_token ~r/(?:^|[^\p{L}\p{N}])RAW(?:[^\p{L}\p{N}]|$)/iu
-  @raw_suffix ~r/(?:\b(?:S\d{1,2}E\d{1,3}|\d{1,4}|2160p|1080p|720p|480p)\b|\])[ ._-]+RAW(?:\.(?:mkv|mp4|avi|m4v|ts))?\s*$/iu
+  @raw_suffix ~r/(?:\b(?:S\d{1,2}E\d{1,3}|\d{1,4}|2160p|1080p|720p|480p)\b|\[(?:S\d{1,2}E\d{1,3}|\d{1,4}|2160p|1080p|720p|480p)\])[ ._-]+RAW(?:\.(?:mkv|mp4|avi|m4v|ts))?\s*$/iu
 
   # A subtitle-LANGUAGE marker — a language token glued by separators to a sub/subs/subtitle(s) word
   # — names the subtitle language, not the audio. Strip it before matching so "FRENCH.SUBS",
