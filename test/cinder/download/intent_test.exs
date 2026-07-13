@@ -180,6 +180,28 @@ defmodule Cinder.Download.IntentTest do
     assert_invalid_episode_intent_rejected([first.id, second.id], [first, second])
   end
 
+  test "direct incomplete episodic intent is rejected before submit client I/O" do
+    series = series_fixture(%{monitor_strategy: :all})
+    episode = episode_fixture(season_fixture(series))
+
+    assert_invalid_episode_intent_rejected(
+      [episode.id, -1],
+      [episode],
+      &Download.submit_intent/1
+    )
+  end
+
+  test "direct mixed-series intent is rejected before submit client I/O" do
+    first = episode_fixture(season_fixture(series_fixture(%{monitor_strategy: :all})))
+    second = episode_fixture(season_fixture(series_fixture(%{monitor_strategy: :all})))
+
+    assert_invalid_episode_intent_rejected(
+      [first.id, second.id],
+      [first, second],
+      &Download.submit_intent/1
+    )
+  end
+
   test "Standard movie and TV reservations and owners keep policy nil" do
     movie = movie_fixture(%{status: :no_match, media_profile: :standard})
 
@@ -1365,7 +1387,11 @@ defmodule Cinder.Download.IntentTest do
     end
   end
 
-  defp assert_invalid_episode_intent_rejected(episode_ids, episodes) do
+  defp assert_invalid_episode_intent_rejected(
+         episode_ids,
+         episodes,
+         action \\ &Download.reconcile_intent/1
+       ) do
     chosen = release("Direct.Invalid.Episodes")
 
     assert {:ok, intent} =
@@ -1389,8 +1415,7 @@ defmodule Cinder.Download.IntentTest do
       {:ok, "hash-invalid-episodic-intent"}
     end)
 
-    assert {:error, :episode_series_mismatch} =
-             Download.reconcile_intent(Repo.reload!(intent))
+    assert {:error, :episode_series_mismatch} = action.(Repo.reload!(intent))
 
     assert Agent.get(calls, & &1) == 0
     refute Repo.get(Intent, intent.id)
