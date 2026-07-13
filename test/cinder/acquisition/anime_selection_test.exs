@@ -52,6 +52,17 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     assert selected.group == "Trusted"
   end
 
+  test "an eighth alias cannot influence selection beyond the frozen parser context" do
+    context = %{
+      absolute_context(1..1)
+      | aliases: Enum.map(1..8, &%{title: "Alias #{&1}"})
+    }
+
+    release = Release.new(raw("Alias 8 - 1 [1080p]", "eighth-alias"))
+
+    assert :no_match = Anime.select_episodes([release], context, [1], [])
+  end
+
   test "overlap components wait as a whole for a delayed covering pack" do
     now = ~U[2026-07-13 12:00:00Z]
     context = absolute_context(1..12)

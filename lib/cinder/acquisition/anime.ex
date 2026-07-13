@@ -94,7 +94,7 @@ defmodule Cinder.Acquisition.Anime do
       "version" => 2,
       "parser_context" => %{
         "title" => context.title,
-        "aliases" => context.aliases |> Enum.map(& &1.title) |> Enum.take(@max_aliases),
+        "aliases" => parser_alias_titles(context),
         "year" => context.year
       },
       "reserved_episode_ids" => reserved_ids,
@@ -131,7 +131,7 @@ defmodule Cinder.Acquisition.Anime do
   defp parse_anime_release(release, context) do
     parser_context = %{
       kind: :series,
-      titles: [context.title | Enum.map(context.aliases, & &1.title)],
+      titles: [context.title | parser_alias_titles(context)],
       year: context.year
     }
 
@@ -143,6 +143,10 @@ defmodule Cinder.Acquisition.Anime do
         role: parsed.role,
         group: release.group || parsed.group
     }
+  end
+
+  defp parser_alias_titles(context) do
+    context.aliases |> Enum.map(& &1.title) |> Enum.take(@max_aliases)
   end
 
   defp fill_movie_group(%Release{group: nil} = release) do

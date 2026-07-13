@@ -37,7 +37,7 @@ defmodule Cinder.Download.IntentTest do
     assert "is immutable" in errors_on(immutable).mapping_snapshot
   end
 
-  test "reservation rejects mismatched markers and malformed version-one snapshots explicitly" do
+  test "reservation rejects mismatched markers and malformed snapshots explicitly" do
     fixture = anime_reservation_fixture()
 
     version_one =
@@ -65,7 +65,11 @@ defmodule Cinder.Download.IntentTest do
                mapping_snapshot: nil
              })
 
-    for {label, invalid} <- invalid_snapshots(version_one) do
+    for {version_label, snapshot} <- [
+          {"version-one", version_one},
+          {"version-two", fixture.snapshot}
+        ],
+        {label, invalid} <- invalid_snapshots(snapshot) do
       marked = %{fixture.release | mapping_snapshot: invalid}
 
       assert {:error, :invalid_mapping_snapshot} =
@@ -77,7 +81,7 @@ defmodule Cinder.Download.IntentTest do
                  release: marked,
                  mapping_snapshot: invalid
                }),
-             label
+             "#{version_label}: #{label}"
     end
 
     movie = movie_fixture()
