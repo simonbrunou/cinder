@@ -31,9 +31,7 @@ defmodule CinderWeb.MovieDetailLive do
          editing?: false,
          confirming: nil,
          form: nil,
-         profile_form: profile_form(movie),
          alias_form: alias_form(),
-         aliases_empty?: true,
          delete_files: false,
          searching?: false
        )
@@ -447,6 +445,16 @@ defmodule CinderWeb.MovieDetailLive do
         <h2 id="movie-aliases-heading" class="mb-2 text-lg font-semibold">
           {gettext("Title aliases")}
         </h2>
+        <p
+          id="movie-alias-edit-status"
+          role="status"
+          aria-live="polite"
+          class="mb-2 text-sm text-base-content/60"
+        >
+          <%= if @alias_form[:id].value not in [nil, ""] do %>
+            {gettext("Editing alias %{title}", title: @alias_form[:title].value)}
+          <% end %>
+        </p>
         <.form
           for={@alias_form}
           id="movie-alias-form"
@@ -454,7 +462,12 @@ defmodule CinderWeb.MovieDetailLive do
           class="grid items-end gap-x-2 sm:grid-cols-2 lg:grid-cols-5"
         >
           <.input field={@alias_form[:id]} type="hidden" />
-          <.input field={@alias_form[:title]} label={gettext("Alias title")} required />
+          <.input
+            field={@alias_form[:title]}
+            id="movie-alias-title"
+            label={gettext("Alias title")}
+            required
+          />
           <.input
             field={@alias_form[:kind]}
             type="select"
@@ -509,7 +522,7 @@ defmodule CinderWeb.MovieDetailLive do
                 type="button"
                 variant="ghost"
                 size="sm"
-                phx-click="edit_alias"
+                phx-click={JS.push("edit_alias") |> JS.focus(to: "#movie-alias-title")}
                 phx-value-id={title_alias.id}
                 aria-label={gettext("Edit alias %{title}", title: title_alias.title)}
               >

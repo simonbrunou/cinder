@@ -82,9 +82,20 @@ defmodule CinderWeb.MovieDetailLiveTest do
     assert has_element?(view, "#movie-title-aliases [data-alias='Kimi no Na wa.']")
     assert [alias_record] = Catalog.list_title_aliases(movie)
 
+    assert has_element?(
+             view,
+             "#edit-movie-alias-#{alias_record.id}[phx-click*='focus'][phx-click*='#movie-alias-title']"
+           )
+
     view
     |> element("#edit-movie-alias-#{alias_record.id}")
     |> render_click()
+
+    assert has_element?(
+             view,
+             "#movie-alias-edit-status[role='status']",
+             "Editing alias Kimi no Na wa."
+           )
 
     view
     |> form("#movie-alias-form", %{

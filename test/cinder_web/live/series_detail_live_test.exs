@@ -130,6 +130,23 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert has_element?(view, "[data-alias='Provider title'][data-source='tmdb']")
     refute has_element?(view, "#edit-series-alias-#{provider.id}")
     refute has_element?(view, "#delete-series-alias-#{provider.id}")
+
+    manual = Enum.find(Catalog.list_title_aliases(series), &(&1.precedence == :manual))
+
+    assert has_element?(
+             view,
+             "#edit-series-alias-#{manual.id}[phx-click*='focus'][phx-click*='#series-alias-title']"
+           )
+
+    view
+    |> element("#edit-series-alias-#{manual.id}")
+    |> render_click()
+
+    assert has_element?(
+             view,
+             "#series-alias-edit-status[role='status']",
+             "Editing alias Shingeki no Kyojin"
+           )
   end
 
   test "series identity events tolerate forged profiles and aliases", %{conn: conn} do
@@ -150,6 +167,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     series = series_fixture()
     season = season_fixture(series, season_number: 1)
     episode = episode_fixture(season, episode_number: 1)
+    earlier_member = episode_fixture(season, episode_number: 2)
     {:ok, _} = Catalog.set_episode_classification(episode, :story_special, "OVA")
 
     {:ok, _} =
@@ -162,7 +180,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
           canonical_value: "25",
           precedence: :curated
         },
-        [episode.id]
+        [earlier_member.id, episode.id]
       )
 
     {:ok, _} =
@@ -198,8 +216,15 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     assert has_element?(view, "#episode-#{episode.id}", "OVA")
 
-    html = render(view)
-    assert :binary.match(html, "absolute:25") < :binary.match(html, "scene:26")
+    coordinates =
+      view
+      |> element("#episode-#{episode.id}")
+      |> render()
+      |> LazyHTML.from_fragment()
+      |> LazyHTML.query("[data-coordinate]")
+      |> LazyHTML.attribute("data-coordinate")
+
+    assert coordinates == ["scene:26", "absolute:25"]
   end
 
   test "renders the page under the shared header", %{conn: conn} do

@@ -26,10 +26,7 @@ defmodule CinderWeb.SeriesDetailLive do
           editing?: false,
           confirming: nil,
           form: nil,
-          profile_form: profile_form(series),
-          profile_summary: Catalog.media_profile_summary(series),
           alias_form: alias_form(),
-          aliases_empty?: true,
           confirm_opt: false,
           searching_season: nil
         )
@@ -646,6 +643,16 @@ defmodule CinderWeb.SeriesDetailLive do
         <h2 id="series-aliases-heading" class="mb-2 text-lg font-semibold">
           {gettext("Title aliases")}
         </h2>
+        <p
+          id="series-alias-edit-status"
+          role="status"
+          aria-live="polite"
+          class="mb-2 text-sm text-base-content/60"
+        >
+          <%= if @alias_form[:id].value not in [nil, ""] do %>
+            {gettext("Editing alias %{title}", title: @alias_form[:title].value)}
+          <% end %>
+        </p>
         <.form
           for={@alias_form}
           id="series-alias-form"
@@ -653,7 +660,12 @@ defmodule CinderWeb.SeriesDetailLive do
           class="grid items-end gap-x-2 sm:grid-cols-2 lg:grid-cols-5"
         >
           <.input field={@alias_form[:id]} type="hidden" />
-          <.input field={@alias_form[:title]} label={gettext("Alias title")} required />
+          <.input
+            field={@alias_form[:title]}
+            id="series-alias-title"
+            label={gettext("Alias title")}
+            required
+          />
           <.input
             field={@alias_form[:kind]}
             type="select"
@@ -708,7 +720,7 @@ defmodule CinderWeb.SeriesDetailLive do
                 type="button"
                 variant="ghost"
                 size="sm"
-                phx-click="edit_alias"
+                phx-click={JS.push("edit_alias") |> JS.focus(to: "#series-alias-title")}
                 phx-value-id={title_alias.id}
                 aria-label={gettext("Edit alias %{title}", title: title_alias.title)}
               >
