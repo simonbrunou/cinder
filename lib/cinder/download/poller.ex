@@ -255,6 +255,8 @@ defmodule Cinder.Download.Poller do
         park(movie, :import_failed, reason)
 
       {:error, reason} ->
+        # An unavailable policy probe is deliberately transient here: exhausting the bound parks
+        # the movie without classifying, blocklisting, or cleaning up a possibly valid release.
         retry_or_fail(movie, reason, :import_attempts, :import_failed)
     end
   end

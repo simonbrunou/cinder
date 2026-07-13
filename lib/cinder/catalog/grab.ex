@@ -2,8 +2,8 @@ defmodule Cinder.Catalog.Grab do
   @moduledoc """
   An in-flight download serving one or more `Cinder.Catalog.Episode`s (a single episode or
   a season pack). `content_path` nil ⇒ still downloading; set ⇒ downloaded and ready to
-  import. Grabs are transient: deleted once their episodes import (or on a terminal park),
-  so the table only ever holds in-flight downloads.
+  import. Grabs are deleted once their episodes import or the operator cancels them; mapping and
+  verification holds stay durable until their guarded recovery action runs.
   """
   use Ecto.Schema
 
@@ -22,7 +22,11 @@ defmodule Cinder.Catalog.Grab do
     field :download_eta, :integer
     field :mapping_snapshot, :map
     field :release_policy_snapshot, :map
-    field :mapping_status, Ecto.Enum, values: [:resolved, :needs_mapping], default: :resolved
+
+    field :mapping_status, Ecto.Enum,
+      values: [:resolved, :needs_mapping, :verification_blocked],
+      default: :resolved
+
     field :automatic_mapping_decisions, :map
     field :manual_mapping_overrides, :map
     field :mapping_issue, :map

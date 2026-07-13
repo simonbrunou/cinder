@@ -2329,6 +2329,51 @@ defmodule Cinder.Catalog do
     :ok
   end
 
+  @doc "Atomically holds a downloaded resolved grab after its final verification attempt."
+  def hold_grab_verification(%Grab{} = grab) do
+    observed_attempts = grab.download_attempts || 0
+
+    case Repo.update_all(
+           from(g in Grab,
+             where:
+               g.id == ^grab.id and g.mapping_status == :resolved and
+                 g.download_attempts == ^observed_attempts and
+                 g.row_version == ^grab.row_version and not is_nil(g.content_path),
+             select: g
+           ),
+           set: [
+             mapping_status: :verification_blocked,
+             download_attempts: observed_attempts + 1,
+             updated_at: now()
+           ]
+         ) do
+      {1, [held]} -> broadcast_grab_and_ok(held)
+      {0, _} -> {:error, :stale_grab}
+    end
+  end
+
+  @doc "Atomically releases a verification hold and resets only its verification attempts."
+  def retry_grab_verification(%Grab{} = grab) do
+    case Repo.update_all(
+           from(g in Grab,
+             where:
+               g.id == ^grab.id and g.mapping_status == :verification_blocked and
+                 g.row_version == ^grab.row_version,
+             select: g
+           ),
+           set: [mapping_status: :resolved, download_attempts: 0, updated_at: now()]
+         ) do
+      {1, [retried]} -> broadcast_grab_and_ok(retried)
+      {0, _} -> {:error, :verification_not_held}
+    end
+  end
+
+  defp broadcast_grab_and_ok(grab) do
+    grab = reload_after_version_bump(grab)
+    broadcast_series(series_id_for_grab(grab.id))
+    {:ok, grab}
+  end
+
   @doc """
   Deletes a grab; the `grab_id` FK (`on_delete: :nilify_all`) unlinks its episodes. Broadcasts
   `{:series_updated, series_id}` (captured before the delete, while the links still exist).
@@ -2968,11 +3013,13 @@ defmodule Cinder.Catalog do
     Repo.all(from g in Grab, order_by: [desc: g.id], preload: [episodes: [season: :series]])
   end
 
-  @doc "Fetches one grab that carries a mapping snapshot, with its series tree preloaded."
+  @doc "Fetches one mapping-held grab, with its series tree preloaded."
   def get_mapping_grab(id) do
     Repo.one(
       from g in Grab,
-        where: g.id == ^id and not is_nil(g.mapping_snapshot),
+        where:
+          g.id == ^id and g.mapping_status == :needs_mapping and
+            not is_nil(g.mapping_snapshot),
         preload: [episodes: [season: :series]]
     )
   end

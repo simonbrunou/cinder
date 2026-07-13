@@ -151,6 +151,12 @@ defmodule Cinder.Download.PollerTest do
     movie
   end
 
+  defp cleanup_pending_for?(remote_id) do
+    Repo.exists?(
+      from i in Intent, where: i.remote_id == ^remote_id and i.status == :cleanup_pending
+    )
+  end
+
   defp real_upgrading_movie(tmp, tmdb_id, download_id) do
     %{downloads: downloads, movies: movies} = use_real_library(tmp)
     source = Path.join(downloads, "M.2020.1080p.mkv")
@@ -1673,29 +1679,38 @@ defmodule Cinder.Download.PollerTest do
     refute Repo.exists?(ImportStage)
   end
 
-  test "an unavailable movie policy probe keeps the existing bounded retry behavior" do
+  test "an unavailable movie policy probe exhausts the bound without discarding content" do
     enable_policy_probe()
     source = "/downloads/Anime.Movie.Unavailable.mkv"
     movie = policy_movie(:downloaded, "hash-policy-unavailable", source)
 
-    expect(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
-    expect(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source -> {:error, :timeout} end)
+    assert {:ok, downloaded} =
+             Catalog.transition(movie, %{status: :downloaded, import_attempts: 0})
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
+    stub(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source -> {:error, :timeout} end)
 
     start_supervised!({Poller, interval: 60_000})
+
+    for attempt <- 1..9 do
+      assert :ok = Poller.poll()
+
+      assert %Movie{status: :downloaded, import_attempts: ^attempt} =
+               Repo.get!(Movie, movie.id)
+    end
+
     assert :ok = Poller.poll()
 
-    assert %Movie{
-             status: :downloaded,
-             download_id: "hash-policy-unavailable",
-             release_title: release_title,
-             release_policy_snapshot: snapshot,
-             file_path: ^source,
-             import_attempts: 4
-           } = Repo.get!(Movie, movie.id)
+    assert %Movie{status: :import_failed, import_attempts: 9} =
+             failed =
+             Repo.get!(Movie, movie.id)
 
-    assert release_title == movie.release_title
-    assert snapshot == movie.release_policy_snapshot
-    assert Catalog.blocked_release_titles(movie) == []
+    assert failed.file_path == downloaded.file_path
+    assert failed.download_id == downloaded.download_id
+    assert failed.release_title == downloaded.release_title
+    assert failed.release_policy_snapshot == downloaded.release_policy_snapshot
+    assert Catalog.blocked_release_titles(failed) == []
+    refute cleanup_pending_for?(failed.download_id)
     assert Repo.all(Intent) == []
     refute Repo.exists?(ImportStage)
   end

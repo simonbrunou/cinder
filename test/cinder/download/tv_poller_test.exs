@@ -113,6 +113,12 @@ defmodule Cinder.Download.TvPollerTest do
     }
   end
 
+  defp cleanup_pending_for?(remote_id) do
+    Repo.exists?(
+      from i in Intent, where: i.remote_id == ^remote_id and i.status == :cleanup_pending
+    )
+  end
+
   defp stub_accept_then_crash(remote_id) do
     {:ok, accepted} = Agent.start_link(fn -> %{adds: 0, jobs: %{}} end)
 
@@ -556,34 +562,91 @@ defmodule Cinder.Download.TvPollerTest do
     refute Repo.exists?(ImportStage)
   end
 
-  test "an unavailable episodic policy probe keeps the existing bounded retry behavior" do
+  test "an unavailable episodic policy probe holds the tenth attempt without losing evidence" do
     enable_policy_probe()
+    Cinder.TestNotifier.subscribe()
     series = series_fixture(%{monitor_strategy: :all, media_profile: :anime})
-    episode = episode(season_fixture(series), 1)
+    episode = episode(season_fixture(series), 1, %{search_attempts: 4})
     source = "/downloads/Show.S01E01.Unavailable.mkv"
     grab = downloaded_policy_grab(episode, source, "[Group] Show S01E01 [1080p]")
     stub_policy_inventory(source)
 
-    expect(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source -> {:error, :timeout} end)
+    stub(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source -> {:error, :timeout} end)
 
     start_supervised!({TvPoller, interval: 60_000})
+
+    assert :ok = TvPoller.poll()
+    first_attempt = Repo.get!(Grab, grab.id)
+    assert first_attempt.mapping_status == :resolved
+    assert first_attempt.download_attempts == 1
+
+    for attempt <- 2..9 do
+      assert :ok = TvPoller.poll()
+
+      assert %Grab{mapping_status: :resolved, download_attempts: ^attempt} =
+               Repo.get!(Grab, grab.id)
+    end
+
+    assert Enum.any?(Catalog.list_grabs_downloaded(), &(&1.id == grab.id))
     assert :ok = TvPoller.poll()
 
-    assert %Grab{
-             download_id: download_id,
-             release_title: release_title,
-             release_policy_snapshot: snapshot,
-             download_attempts: 1,
-             mapping_status: :resolved
-           } = Repo.get!(Grab, grab.id)
+    assert %Grab{mapping_status: :verification_blocked, download_attempts: 10} =
+             held =
+             Repo.get!(Grab, grab.id)
 
-    assert download_id == grab.download_id
-    assert release_title == grab.release_title
-    assert snapshot == grab.release_policy_snapshot
+    assert held.download_id == grab.download_id
+    assert held.release_title == grab.release_title
+    assert held.content_path == grab.content_path
+    assert held.mapping_snapshot == grab.mapping_snapshot
+    assert held.automatic_mapping_decisions == first_attempt.automatic_mapping_decisions
+    assert held.manual_mapping_overrides == grab.manual_mapping_overrides
+    assert held.mapping_issue == grab.mapping_issue
+    assert held.release_policy_snapshot == grab.release_policy_snapshot
     assert Repo.reload!(episode).grab_id == grab.id
+    assert Repo.reload!(episode).search_attempts == episode.search_attempts
     assert Catalog.blocked_release_titles_for_series(series.id) == []
+    refute Enum.any?(Catalog.list_grabs_downloaded(), &(&1.id == grab.id))
+    assert Enum.any?(Catalog.list_grabs(), &(&1.id == grab.id))
+    assert Catalog.get_mapping_grab(grab.id) == nil
+    refute cleanup_pending_for?(grab.download_id)
     assert Repo.all(Intent) == []
     refute Repo.exists?(ImportStage)
+    refute_receive {:notify, {:grab_failed, _, _}}
+
+    assert {:ok, retried} = Catalog.retry_grab_verification(held)
+    assert retried.mapping_status == :resolved
+    assert retried.download_attempts == 0
+    assert retried.row_version > held.row_version
+    assert retried.content_path == held.content_path
+    assert retried.download_id == held.download_id
+    assert retried.mapping_snapshot == held.mapping_snapshot
+    assert retried.automatic_mapping_decisions == held.automatic_mapping_decisions
+    assert retried.release_policy_snapshot == held.release_policy_snapshot
+    assert Repo.reload!(episode).grab_id == held.id
+
+    assert {:error, :verification_not_held} =
+             Catalog.retry_grab_verification(retried)
+  end
+
+  test "verification hold rejects a stale resolved observation" do
+    series = series_fixture(%{monitor_strategy: :all, media_profile: :anime})
+    episode = episode(season_fixture(series), 1)
+
+    grab =
+      downloaded_policy_grab(
+        episode,
+        "/downloads/Show.S01E01.StaleVerification.mkv",
+        "[Group] Show S01E01 [1080p]"
+      )
+
+    Repo.update_all(from(g in Grab, where: g.id == ^grab.id),
+      set: [download_attempts: 9, download_progress: 0.5]
+    )
+
+    assert {:error, :stale_grab} = Catalog.hold_grab_verification(grab)
+
+    assert %Grab{mapping_status: :resolved, download_attempts: 9, download_progress: 0.5} =
+             Repo.get!(Grab, grab.id)
   end
 
   test "a stale episodic rejection is skipped without attempts, mapping issues, or cleanup" do
