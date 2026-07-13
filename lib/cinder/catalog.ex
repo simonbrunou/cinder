@@ -1657,6 +1657,37 @@ defmodule Cinder.Catalog do
     end
   end
 
+  @doc "Persists anime mapping preflight evidence and broadcasts the series update."
+  def record_mapping_result(%Grab{} = grab, {:ok, %{decisions: decisions}}) do
+    persist_mapping_result(grab, %{
+      mapping_status: :resolved,
+      automatic_mapping_decisions: decisions,
+      mapping_issue: nil
+    })
+  end
+
+  def record_mapping_result(
+        %Grab{} = grab,
+        {:needs_mapping, %{decisions: decisions, issue: issue}}
+      ) do
+    persist_mapping_result(grab, %{
+      mapping_status: :needs_mapping,
+      automatic_mapping_decisions: decisions,
+      mapping_issue: issue
+    })
+  end
+
+  defp persist_mapping_result(grab, attrs) do
+    case grab |> Grab.mapping_changeset(attrs) |> Repo.update() do
+      {:ok, updated} ->
+        broadcast_grab_series(updated)
+        {:ok, updated}
+
+      {:error, _changeset} = error ->
+        error
+    end
+  end
+
   defp broadcast_grab_series(grab) do
     # Post-commit side effect, best-effort: once the txn committed the grab is
     # real, and a blip here (a pool-checkout timeout on the series lookup) must

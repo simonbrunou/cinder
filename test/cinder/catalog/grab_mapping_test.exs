@@ -1,12 +1,17 @@
 defmodule Cinder.Catalog.GrabMappingTest do
   use Cinder.DataCase, async: false
 
+  import Mox
+
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Grab}
   alias Cinder.Download.Intent
+  alias Cinder.Library
   alias Cinder.Repo
 
   import Cinder.CatalogFixtures
+
+  setup :verify_on_exit!
 
   test "standard grabs default to resolved without mapping documents" do
     episode = episode_fixture(season_fixture(series_fixture(%{monitor_strategy: :all})))
@@ -105,6 +110,133 @@ defmodule Cinder.Catalog.GrabMappingTest do
     refute Repo.get!(Episode, episode_a.id).grab_id
   end
 
+  describe "record_mapping_result/2" do
+    test "persists resolved evidence and broadcasts exactly once" do
+      series = series_fixture(%{monitor_strategy: :all})
+      episode = episode_fixture(season_fixture(series))
+      {:ok, grab} = Catalog.create_grab("resolved-hash", :torrent, [episode.id])
+      decisions = decisions_document("Season 1/Frieren - 01.mkv", episode.id)
+      series_id = series.id
+      Catalog.subscribe_series()
+
+      assert {:ok, resolved} = Catalog.record_mapping_result(grab, {:ok, %{decisions: decisions}})
+
+      assert resolved.mapping_status == :resolved
+      assert resolved.automatic_mapping_decisions == decisions
+      assert resolved.mapping_issue == nil
+      assert_receive {:series_updated, ^series_id}
+      refute_received {:series_updated, ^series_id}
+
+      json = Jason.encode!(resolved.automatic_mapping_decisions)
+      refute json =~ "/downloads/anime"
+    end
+
+    test "a mapping hold only persists evidence and broadcasts" do
+      series = series_fixture(%{monitor_strategy: :all})
+      season = season_fixture(series)
+      episode = episode_fixture(season, search_attempts: 4)
+
+      {:ok, grab} =
+        Catalog.create_grab(
+          "held-hash",
+          :torrent,
+          [episode.id],
+          "Frieren.01.1080p-GROUP"
+        )
+
+      decisions = decisions_document("Season 1/Frieren - 01.mkv", episode.id)
+
+      issue = %{
+        "version" => 1,
+        "reason" => "ambiguous",
+        "relative_paths" => ["Season 1/Frieren - 01.mkv"],
+        "candidate_episode_ids" => [episode.id]
+      }
+
+      series_id = series.id
+      Catalog.subscribe_series()
+
+      assert {:ok, held} =
+               Catalog.record_mapping_result(
+                 grab,
+                 {:needs_mapping, %{decisions: decisions, issue: issue}}
+               )
+
+      assert held.mapping_status == :needs_mapping
+      assert held.automatic_mapping_decisions == decisions
+      assert held.mapping_issue == issue
+      assert_receive {:series_updated, ^series_id}
+      refute_received {:series_updated, ^series_id}
+
+      persisted_episode = Repo.get!(Episode, episode.id)
+      assert Repo.get!(Grab, grab.id).id == grab.id
+      assert persisted_episode.grab_id == grab.id
+      assert persisted_episode.search_attempts == 4
+      assert Catalog.blocked_release_titles_for_series(series.id) == []
+
+      json =
+        Jason.encode!(%{decisions: held.automatic_mapping_decisions, issue: held.mapping_issue})
+
+      refute json =~ "/downloads/anime"
+    end
+  end
+
+  test "preflight_anime_grab inventories, resolves overrides, and persists before staging" do
+    series = series_fixture(%{monitor_strategy: :all})
+    season = season_fixture(series)
+    episode = episode_fixture(season, episode_number: 1)
+    source = "/tmp/downloads/Frieren - 01.mkv"
+    mtime = "2026-07-13T12:01:00"
+
+    override = %{
+      "relative_path" => "Frieren - 01.mkv",
+      "size" => 10,
+      "major_device" => 7,
+      "inode" => 21,
+      "mtime" => mtime,
+      "action" => "assign",
+      "episode_ids" => [episode.id]
+    }
+
+    grab =
+      Repo.insert!(%Grab{
+        download_id: "preflight-hash",
+        download_protocol: :torrent,
+        content_path: source,
+        mapping_snapshot: %{"version" => 1},
+        manual_mapping_overrides: %{"files" => [override]}
+      })
+
+    episode |> Ecto.Changeset.change(grab_id: grab.id) |> Repo.update!()
+    grab = Repo.preload(grab, episodes: :season)
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
+
+    expect(Cinder.Library.FilesystemMock, :lstat, fn ^source ->
+      {:ok,
+       %File.Stat{
+         type: :regular,
+         size: 10,
+         major_device: 7,
+         inode: 21,
+         mtime: {{2026, 7, 13}, {12, 1, 0}}
+       }}
+    end)
+
+    series_id = series.id
+    Catalog.subscribe_series()
+
+    assert {:ok, %{grab: persisted, folder?: false, assignments: [assignment]}} =
+             Library.preflight_anime_grab(grab)
+
+    assert assignment == %{relative_path: "Frieren - 01.mkv", episode_ids: [episode.id]}
+    assert persisted.mapping_status == :resolved
+    assert_receive {:series_updated, ^series_id}
+
+    json = Jason.encode!(persisted.automatic_mapping_decisions)
+    refute json =~ "/tmp/downloads"
+  end
+
   defp snapshot_intent!(episode_ids, snapshot) do
     Repo.insert!(%Intent{
       operation_key: Ecto.UUID.generate(),
@@ -121,5 +253,18 @@ defmodule Cinder.Catalog.GrabMappingTest do
 
   defp episode_ids(grab) do
     Repo.all(from e in Episode, where: e.grab_id == ^grab.id, select: e.id)
+  end
+
+  defp decisions_document(relative_path, episode_id) do
+    %{
+      "version" => 1,
+      "files" => [
+        %{
+          "relative_path" => relative_path,
+          "episode_ids" => [episode_id],
+          "ignored" => false
+        }
+      ]
+    }
   end
 end

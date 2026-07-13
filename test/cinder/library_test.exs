@@ -1,6 +1,6 @@
 defmodule Cinder.LibraryTest do
   # In-test-process unit tests: expect + verify_on_exit!, no DB, no disk.
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   import Mox
   import ExUnit.CaptureLog
@@ -23,6 +23,117 @@ defmodule Cinder.LibraryTest do
       episode_number: ep_num,
       season: %Season{season_number: season_num, series: series}
     }
+  end
+
+  describe "inventory_anime_videos/1" do
+    setup do
+      saved_path_policy = Application.get_env(:cinder, :path_policy)
+      saved_import_roots = Application.get_env(:cinder, :import_roots)
+
+      Application.put_env(:cinder, :path_policy, Cinder.Library.PathPolicy)
+      Application.put_env(:cinder, :import_roots, ["/downloads"])
+
+      on_exit(fn ->
+        restore_env(:path_policy, saved_path_policy)
+        restore_env(:import_roots, saved_import_roots)
+      end)
+
+      :ok
+    end
+
+    test "inventories sorted relative video paths with stable file identities" do
+      release = "/downloads/Frieren"
+      season = "#{release}/Season 1"
+
+      stats = %{
+        "/" => dir_stat(1),
+        "/downloads" => dir_stat(2),
+        release => dir_stat(3),
+        season => dir_stat(4),
+        "#{season}/Frieren - 02.MP4" => file_stat(22, 20, {{2026, 7, 13}, {12, 2, 0}}),
+        "#{season}/notes.txt" => file_stat(23, 5, {{2026, 7, 13}, {12, 3, 0}}),
+        "#{season}/Frieren - 01.mkv" => file_stat(21, 10, {{2026, 7, 13}, {12, 1, 0}})
+      }
+
+      stub_virtual_tree(stats, %{
+        release => ["Season 1"],
+        season => ["Frieren - 02.MP4", "notes.txt", "Frieren - 01.mkv"]
+      })
+
+      assert {:ok, %{files: [first, second], folder?: true} = inventory} =
+               Library.inventory_anime_videos(release)
+
+      assert first == %{
+               relative_path: "Season 1/Frieren - 01.mkv",
+               identity: %{
+                 size: 10,
+                 major_device: 7,
+                 inode: 21,
+                 mtime: "2026-07-13T12:01:00"
+               }
+             }
+
+      assert second.relative_path == "Season 1/Frieren - 02.MP4"
+      refute Map.has_key?(first, :path)
+      refute Jason.encode!(inventory) =~ release
+    end
+
+    test "normalizes a single-file download to its basename" do
+      source = "/downloads/Frieren - 01.mkv"
+
+      stub_virtual_tree(
+        %{
+          "/" => dir_stat(1),
+          "/downloads" => dir_stat(2),
+          source => file_stat(21, 10, {{2026, 7, 13}, {12, 1, 0}})
+        },
+        %{}
+      )
+
+      assert {:ok, %{files: [video], folder?: false}} =
+               Library.inventory_anime_videos(source)
+
+      assert video.relative_path == "Frieren - 01.mkv"
+
+      assert %{size: 10, major_device: 7, inode: 21, mtime: "2026-07-13T12:01:00"} =
+               video.identity
+    end
+
+    test "retains PathPolicy rejection for symlink and out-of-root sources" do
+      symlink = "/downloads/escaped.mkv"
+
+      stub_virtual_tree(
+        %{
+          "/" => dir_stat(1),
+          "/downloads" => dir_stat(2),
+          symlink => %File.Stat{type: :symlink, inode: 30, major_device: 7}
+        },
+        %{}
+      )
+
+      assert {:error, :unsafe_source} = Library.inventory_anime_videos(symlink)
+      assert {:error, :unsafe_source} = Library.inventory_anime_videos("/outside/video.mkv")
+    end
+
+    defp stub_virtual_tree(stats, listings) do
+      stub(Cinder.Library.FilesystemMock, :lstat, fn path -> Map.fetch(stats, path) end)
+      stub(Cinder.Library.FilesystemMock, :ls, fn path -> Map.fetch(listings, path) end)
+    end
+
+    defp dir_stat(inode),
+      do: %File.Stat{type: :directory, inode: inode, major_device: 7}
+
+    defp file_stat(inode, size, mtime),
+      do: %File.Stat{
+        type: :regular,
+        inode: inode,
+        major_device: 7,
+        size: size,
+        mtime: mtime
+      }
+
+    defp restore_env(key, nil), do: Application.delete_env(:cinder, key)
+    defp restore_env(key, value), do: Application.put_env(:cinder, key, value)
   end
 
   test "single-file source: hardlinks to Title (Year) {tmdb-N}/… and scans" do

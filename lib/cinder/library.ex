@@ -14,8 +14,9 @@ defmodule Cinder.Library do
   require Logger
 
   alias Cinder.Acquisition.{Language, Parser}
-  alias Cinder.Catalog.{Episode, Movie, Series}
-  alias Cinder.Library.{ImportStage, PathPolicy, Sidecars, Upgrade}
+  alias Cinder.Catalog
+  alias Cinder.Catalog.{Episode, Grab, Movie, Series}
+  alias Cinder.Library.{AnimePreflight, ImportStage, PathPolicy, Sidecars, Upgrade}
   alias Cinder.Settings
 
   @video_exts ~w(.mkv .mp4 .avi .m4v .mov .wmv .ts)
@@ -1078,6 +1079,88 @@ defmodule Cinder.Library do
           error
       end
     end
+  end
+
+  @doc "Inventories anime videos without exposing their absolute source paths."
+  def inventory_anime_videos(content_path) do
+    with {:ok, videos, folder?} <- video_files(content_path),
+         {:ok, files} <- inventory_anime_files(videos, content_path, folder?) do
+      {:ok, %{files: Enum.sort_by(files, & &1.relative_path), folder?: folder?}}
+    end
+  end
+
+  @doc "Runs anime mapping preflight and persists its evidence before import staging."
+  def preflight_anime_grab(%Grab{} = grab) do
+    episodes =
+      Enum.map(grab.episodes, fn episode ->
+        %{
+          id: episode.id,
+          season_number: episode.season.season_number,
+          episode_number: episode.episode_number
+        }
+      end)
+
+    with {:ok, inventory} <- inventory_anime_videos(grab.content_path),
+         result =
+           AnimePreflight.run(
+             grab.mapping_snapshot,
+             inventory.files,
+             get_in(grab.manual_mapping_overrides || %{}, ["files"]) || [],
+             episodes
+           ),
+         {:ok, persisted} <- Catalog.record_mapping_result(grab, result) do
+      attach_preflight_grab(result, persisted, inventory.folder?)
+    end
+  end
+
+  defp attach_preflight_grab({:ok, preflight}, grab, folder?),
+    do: {:ok, preflight |> Map.put(:grab, grab) |> Map.put(:folder?, folder?)}
+
+  defp attach_preflight_grab({:needs_mapping, preflight}, grab, _folder?),
+    do: {:needs_mapping, Map.put(preflight, :grab, grab)}
+
+  defp inventory_anime_files(videos, content_path, folder?) do
+    videos
+    |> Enum.reduce_while({:ok, []}, fn {path, _size}, {:ok, files} ->
+      case inventory_anime_file(path, content_path, folder?) do
+        {:ok, file} -> {:cont, {:ok, [file | files]}}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, files} -> {:ok, Enum.map(files, &inventory_entry/1)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp inventory_anime_file(path, content_path, folder?) do
+    with {:ok, source} <- safe_source_file(path),
+         {:ok, stat} <- fs().lstat(source),
+         {:ok, relative_path} <- inventory_relative_path(source, content_path, folder?) do
+      {:ok, {source, relative_path, stat}}
+    end
+  end
+
+  defp inventory_relative_path(source, _content_path, false), do: {:ok, Path.basename(source)}
+
+  defp inventory_relative_path(source, content_path, true) do
+    relative_path = Path.relative_to(source, Path.expand(content_path))
+
+    if relative_path == ".." or String.starts_with?(relative_path, "../"),
+      do: {:error, :unsafe_source},
+      else: {:ok, relative_path}
+  end
+
+  defp inventory_entry({_source, relative_path, stat}) do
+    %{
+      relative_path: relative_path,
+      identity: %{
+        size: stat.size,
+        major_device: stat.major_device,
+        inode: stat.inode,
+        mtime: stat.mtime |> NaiveDateTime.from_erl!() |> NaiveDateTime.to_iso8601()
+      }
+    }
   end
 
   defp do_import_episodes(content_path, episodes, root) do
