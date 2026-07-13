@@ -160,6 +160,93 @@ defmodule Cinder.Catalog do
   @doc "Lists a series' coordinates with ordered episode memberships preloaded."
   defdelegate list_episode_coordinates(series), to: Identity, as: :list_coordinates
 
+  @doc "Builds the plain Catalog-owned identity context used for anime movie acquisition."
+  def anime_movie_acquisition_context(%Movie{} = movie) do
+    %{
+      kind: :movie,
+      title: movie.title,
+      year: movie.year,
+      aliases: acquisition_aliases(movie),
+      profile: media_profile_summary(movie)
+    }
+  end
+
+  @doc "Builds the plain Catalog-owned identity context used for anime series acquisition."
+  def anime_series_acquisition_context(%Series{} = series) do
+    episodes = acquisition_episodes(series)
+    mappings = Enum.map(episodes, &canonical_mapping/1) ++ persisted_mappings(series)
+
+    %{
+      kind: :series,
+      title: series.title,
+      year: series.year,
+      tvdb_id: series.tvdb_id,
+      aliases: acquisition_aliases(series),
+      episodes: episodes,
+      mappings: Enum.sort_by(mappings, &mapping_sort_key/1)
+    }
+  end
+
+  defp acquisition_aliases(owner) do
+    owner
+    |> Identity.list_aliases()
+    |> Enum.map(&Map.take(&1, [:title, :kind, :precedence, :normalized_title]))
+  end
+
+  defp acquisition_episodes(series) do
+    series
+    |> Repo.preload(seasons: :episodes)
+    |> Map.fetch!(:seasons)
+    |> Enum.flat_map(fn season ->
+      Enum.map(season.episodes, fn episode ->
+        %{
+          id: episode.id,
+          season_number: season.season_number,
+          episode_number: episode.episode_number,
+          classification: episode.classification
+        }
+      end)
+    end)
+    |> Enum.sort_by(&{&1.season_number, &1.episode_number, &1.id})
+  end
+
+  defp canonical_mapping(episode) do
+    %{
+      identity: %{
+        source: "cinder",
+        scheme: "standard",
+        namespace: "canonical",
+        canonical_value: Episode.code(episode.season_number, episode.episode_number)
+      },
+      precedence: :manual,
+      episode_ids: [episode.id],
+      evidence: %{"kind" => "canonical_standard"}
+    }
+  end
+
+  defp persisted_mappings(series) do
+    series
+    |> Identity.list_coordinates()
+    |> Enum.map(fn coordinate ->
+      %{
+        identity: %{
+          source: coordinate.source,
+          scheme: coordinate.scheme,
+          namespace: coordinate.namespace,
+          canonical_value: coordinate.canonical_value
+        },
+        precedence: coordinate.precedence,
+        episode_ids: Enum.map(coordinate.memberships, & &1.episode_id),
+        evidence: %{"kind" => "persisted_coordinate", "coordinate_id" => coordinate.id}
+      }
+    end)
+  end
+
+  defp mapping_sort_key(mapping) do
+    identity = mapping.identity
+    {identity.source, identity.scheme, identity.namespace, identity.canonical_value}
+  end
+
   @doc "Sets an explicit operator-owned episode classification."
   def set_episode_classification(%Episode{} = episode, classification, label \\ nil) do
     Identity.set_manual_classification(episode, classification, label)

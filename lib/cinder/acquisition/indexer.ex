@@ -7,6 +7,14 @@ defmodule Cinder.Acquisition.Indexer do
 
   @callback search(imdb_id :: String.t()) :: {:ok, [map()]} | {:error, term()}
 
+  @doc "Searches movie releases by a bounded free-text query."
+  @callback search_movie_query(query :: String.t(), opts :: keyword()) ::
+              {:ok, [map()]} | {:error, term()}
+
+  @doc "Searches TV releases by a bounded free-text query."
+  @callback search_tv_query(query :: String.t(), opts :: keyword()) ::
+              {:ok, [map()]} | {:error, term()}
+
   @doc """
   Searches for releases of one TV season. Prefer the `tvdb_id` when present; fall
   back to `title` + season otherwise. Returns the same normalized release maps as

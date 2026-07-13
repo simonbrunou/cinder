@@ -30,12 +30,25 @@ defmodule Cinder.Download do
   @doc "Reserves a durable downloader operation before any external side effect."
   def reserve_intent(%{release: %Release{download_url: url} = release} = attrs)
       when is_binary(url) do
+    mapping_snapshot = Map.get(attrs, :mapping_snapshot)
+
+    if mapping_snapshot == release.mapping_snapshot do
+      reserve_marked_intent(attrs, release, url, mapping_snapshot)
+    else
+      {:error, :invalid_mapping_snapshot}
+    end
+  end
+
+  def reserve_intent(%{release: %Release{}}), do: {:error, :unsupported_download_url}
+
+  defp reserve_marked_intent(attrs, release, url, mapping_snapshot) do
     intent_attrs = %{
       operation_key: Ecto.UUID.generate(),
       kind: Map.fetch!(attrs, :kind),
       target_id: Map.fetch!(attrs, :target_id),
       episode_ids: Map.get(attrs, :episode_ids, []),
       protocol: Map.fetch!(attrs, :protocol),
+      mapping_snapshot: mapping_snapshot,
       release: %{
         "title" => release.title,
         "download_url_ciphertext" => url |> Vault.encrypt!() |> Base.encode64(),
@@ -50,10 +63,8 @@ defmodule Cinder.Download do
     Ecto.ConstraintError -> {:error, :download_intent_busy}
   end
 
-  def reserve_intent(%{release: %Release{}}), do: {:error, :unsupported_download_url}
-
   defp insert_reserved_intent(attrs) do
-    case %Intent{} |> Intent.changeset(attrs) |> Repo.insert() do
+    case %Intent{} |> Intent.reservation_changeset(attrs) |> Repo.insert() do
       {:ok, intent} ->
         Enum.each(intent.episode_ids, &insert_episode_reservation(intent.id, &1))
         intent
@@ -75,7 +86,16 @@ defmodule Cinder.Download do
   defp normalize_reservation({:ok, intent}), do: {:ok, intent}
 
   defp normalize_reservation({:error, %Ecto.Changeset{} = changeset}) do
-    if changeset.errors == [], do: {:error, changeset}, else: {:error, :download_intent_busy}
+    cond do
+      Keyword.has_key?(changeset.errors, :mapping_snapshot) ->
+        {:error, :invalid_mapping_snapshot}
+
+      changeset.errors == [] ->
+        {:error, changeset}
+
+      true ->
+        {:error, :download_intent_busy}
+    end
   end
 
   @doc "Durably submits a movie release and attaches the remote ID to the movie."
@@ -88,6 +108,10 @@ defmodule Cinder.Download do
   end
 
   @doc "Durably submits a TV release and creates its guarded episode grab."
+  def grab_episodes(%Release{mapping_snapshot: snapshot}, _episode_ids)
+      when not is_nil(snapshot),
+      do: {:error, :anime_import_not_ready}
+
   def grab_episodes(%Release{} = release, episode_ids) when episode_ids != [] do
     case overlapping_episode_intent(episode_ids) do
       nil ->
@@ -142,6 +166,10 @@ defmodule Cinder.Download do
   @doc "Finds or submits the reserved remote job, then records its normal downloader ID."
   def submit_intent(%Intent{} = intent), do: with_intent_lock(intent, &do_submit_intent/1)
 
+  defp do_submit_intent(%Intent{mapping_snapshot: snapshot, kind: kind})
+       when kind in [:episode, :season_pack] and not is_nil(snapshot),
+       do: {:error, :anime_import_not_ready}
+
   defp do_submit_intent(%Intent{status: :submitted, remote_id: id} = intent)
        when is_binary(id),
        do: {:ok, intent}
@@ -192,6 +220,10 @@ defmodule Cinder.Download do
 
   defp do_reconcile_intent(%Intent{status: :cleanup_pending} = intent), do: do_cleanup(intent)
 
+  defp do_reconcile_intent(%Intent{mapping_snapshot: snapshot, kind: kind})
+       when kind in [:episode, :season_pack] and not is_nil(snapshot),
+       do: {:error, :anime_import_not_ready}
+
   defp do_reconcile_intent(%Intent{remote_id: nil} = intent) do
     with {:ok, submitted} <- do_submit_intent(intent), do: do_reconcile_intent(submitted)
   end
@@ -210,7 +242,15 @@ defmodule Cinder.Download do
 
   @doc false
   def reconcile_pending_intents(kinds) when is_list(kinds) do
-    intents = Repo.all(from i in Intent, where: i.kind in ^kinds, order_by: [asc: i.id])
+    intents =
+      Repo.all(
+        from i in Intent,
+          where:
+            i.kind in ^kinds and
+              (i.status == :cleanup_pending or is_nil(i.mapping_snapshot)),
+          order_by: [asc: i.id]
+      )
+
     Enum.each(intents, &reconcile_intent/1)
     :ok
   end
@@ -645,7 +685,17 @@ defmodule Cinder.Download do
           release_blocklist: Catalog.blocked_release_titles(movie)
         ] ++ Acquisition.band_opts(:movies)
 
-      case Acquisition.best_release(imdb_id, opts) do
+      result =
+        case Catalog.media_profile_summary(movie).effective do
+          :anime ->
+            context = Catalog.anime_movie_acquisition_context(movie)
+            Acquisition.best_anime_movie(imdb_id, context, opts)
+
+          :standard ->
+            Acquisition.best_release(imdb_id, opts)
+        end
+
+      case result do
         {:ok, release} ->
           add_to_client(movie, release)
 

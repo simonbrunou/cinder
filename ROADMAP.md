@@ -807,6 +807,12 @@ selection, preferred-group waiting, and durable intent snapshots. **Done when:**
 correct, standard movie/TV results are unchanged, waiting does not consume attempts, restart loses no
 reservation meaning, and `mix test` is green.
 
+**[done 2026-07-13]** Added bounded provider-ID plus alias/category anime searches, Unicode-safe
+context parsing, stable-ID set cover, Anime movie activation, options-only preferred-group waiting,
+and immutable episodic intent snapshots. Snapshot-bearing episodic work remains held before every
+downloader/grab side effect until A3 provides exact preflight and mapping recovery. The versioned A2
+acquisition corpus and full `mix test` gate pass without changing Standard movie/TV selection.
+
 ### A3 — Safe import and mapping recovery
 
 Land atomic intent→grab snapshot copy, inventory-bound exact preflight, file roles, `Needs mapping`,

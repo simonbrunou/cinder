@@ -77,7 +77,27 @@ defmodule Cinder.Acquisition.Scorer do
     |> Enum.filter(&(&1.season == season))
     |> Enum.reject(&title_blocked?(&1, release_blocklist))
     |> Enum.filter(&(allowed_resolution?(&1, preferred) and allowed_source?(&1, sources)))
-    |> cover(MapSet.new(wanted_episodes), [], band)
+    |> cover(MapSet.new(wanted_episodes), [], band, &coverage/2)
+  end
+
+  @doc """
+  Selects releases by resolved stable episode IDs.
+
+  A release is eligible only while every ID it claims is still needed, so the
+  greedy cover never truncates one release's durable meaning. Returned IDs keep
+  the resolver's membership order rather than database-ID sort order.
+  """
+  def select_for_ids(releases, wanted_ids, opts \\ []) do
+    {min_size, max_size, preferred, sources, release_blocklist} = rules(opts)
+    band = {min_size, max_size, preferred, sources}
+
+    result =
+      releases
+      |> Enum.reject(&title_blocked?(&1, release_blocklist))
+      |> Enum.filter(&(allowed_resolution?(&1, preferred) and allowed_source?(&1, sources)))
+      |> cover(MapSet.new(wanted_ids), [], band, &id_coverage/2)
+
+    restore_id_order(result)
   end
 
   @doc """
@@ -147,7 +167,7 @@ defmodule Cinder.Acquisition.Scorer do
     }
   end
 
-  defp cover(candidates, needed, chosen, band) do
+  defp cover(candidates, needed, chosen, band, coverage_fun) do
     {min_size, max_size, _preferred, _sources} = band
 
     scored =
@@ -155,7 +175,7 @@ defmodule Cinder.Acquisition.Scorer do
         []
       else
         candidates
-        |> Enum.map(fn release -> {release, coverage(release, needed)} end)
+        |> Enum.map(fn release -> {release, coverage_fun.(release, needed)} end)
         |> Enum.reject(fn {release, cov} ->
           # Per-episode band: a release covering k still-wanted episodes is judged
           # against k×the band (a pack is allowed proportionally more size).
@@ -166,20 +186,38 @@ defmodule Cinder.Acquisition.Scorer do
 
     case scored do
       [] -> if chosen == [], do: :no_match, else: {:ok, Enum.reverse(chosen)}
-      _ -> take_best(scored, candidates, needed, chosen, band)
+      _ -> take_best(scored, candidates, needed, chosen, band, coverage_fun)
     end
   end
 
-  defp take_best(scored, candidates, needed, chosen, band) do
+  defp take_best(scored, candidates, needed, chosen, band, coverage_fun) do
     {pick, cov} = Enum.max_by(scored, fn {release, cov} -> greedy_key(release, cov, band) end)
     covered = cov |> MapSet.to_list() |> Enum.sort()
-    cover(candidates -- [pick], MapSet.difference(needed, cov), [{pick, covered} | chosen], band)
+
+    cover(
+      candidates -- [pick],
+      MapSet.difference(needed, cov),
+      [{pick, covered} | chosen],
+      band,
+      coverage_fun
+    )
   end
 
   # A whole-season pack (no episode list) covers every still-needed episode; an
   # episode list covers its intersection with what's still needed.
   defp coverage(%Release{episodes: nil}, needed), do: needed
   defp coverage(%Release{episodes: eps}, needed), do: MapSet.intersection(MapSet.new(eps), needed)
+
+  defp id_coverage(%Release{resolved_episode_ids: resolved_episode_ids}, needed) do
+    ids = MapSet.new(resolved_episode_ids || [])
+    if MapSet.size(ids) > 0 and MapSet.subset?(ids, needed), do: ids, else: MapSet.new()
+  end
+
+  defp restore_id_order({:ok, selections}) do
+    {:ok, Enum.map(selections, fn {release, _ids} -> {release, release.resolved_episode_ids} end)}
+  end
+
+  defp restore_id_order(:no_match), do: :no_match
 
   # max_by: more coverage wins; ties go to the more-preferred resolution, then source, then larger size.
   defp greedy_key(%Release{} = release, cov, {_min, _max, preferred, sources}) do

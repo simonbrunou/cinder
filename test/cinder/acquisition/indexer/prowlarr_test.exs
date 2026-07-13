@@ -48,30 +48,100 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
                size: 8_000_000_000,
                download_url: "http://prowlarr:9696/file/1",
                download_url_origin: "http://prowlarr:9696",
-               protocol: :torrent
+               protocol: :torrent,
+               category_ids: [],
+               indexer_id: nil,
+               published_at: nil
              },
              %{
                title: "Inception.2010.2160p.WEB-DL-GRP",
                size: 40_000_000_000,
                download_url: "magnet:?xt=urn:btih:abc",
                download_url_origin: nil,
-               protocol: :torrent
+               protocol: :torrent,
+               category_ids: [],
+               indexer_id: nil,
+               published_at: nil
              },
              %{
                title: "Inception.2010.1080p.WEB-DL-GRP",
                size: 9_000_000_000,
                download_url: "http://prowlarr:9696/getnzb/3",
                download_url_origin: "http://prowlarr:9696",
-               protocol: :usenet
+               protocol: :usenet,
+               category_ids: [],
+               indexer_id: nil,
+               published_at: nil
              },
              %{
                title: "Inception.2010.720p.WEB-DL-GRP",
                size: 4_000_000_000,
                download_url: "https://provider.test/file/4",
                download_url_origin: nil,
-               protocol: :torrent
+               protocol: :torrent,
+               category_ids: [],
+               indexer_id: nil,
+               published_at: nil
              }
            ]
+  end
+
+  test "search_movie_query/2 sends the measured movie/category contract and retains anime metadata" do
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      assert conn.params["query"] == "Kimi no Na wa 2016"
+      assert conn.params["type"] == "moviesearch"
+      assert conn.params["categories"] == "5070"
+
+      Req.Test.json(conn, [
+        nil,
+        %{"title" => nil, "downloadUrl" => "http://prowlarr:9696/bad"},
+        %{
+          "title" => "[Group] Kimi no Na wa (2016) [1080p]",
+          "size" => 8_000_000_000,
+          "downloadUrl" => "http://prowlarr:9696/movie/1",
+          "protocol" => "torrent",
+          "categories" => [%{"id" => 5070}, %{"id" => "not-an-integer"}],
+          "indexerId" => 12,
+          "publishDate" => "2026-07-13T10:00:00Z"
+        }
+      ])
+    end)
+
+    assert {:ok, [result]} =
+             Prowlarr.search_movie_query("Kimi no Na wa 2016", categories: [5070])
+
+    assert result.category_ids == [5070]
+    assert result.indexer_id == 12
+    assert result.published_at == ~U[2026-07-13 10:00:00Z]
+  end
+
+  test "search_tv_query/2 uses tvsearch and drops entries without a usable URL" do
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      assert conn.params["query"] == "ワンピース 1122"
+      assert conn.params["type"] == "tvsearch"
+      assert conn.params["categories"] == "5070"
+
+      Req.Test.json(conn, [
+        %{"title" => "No URL", "downloadUrl" => 42},
+        %{
+          "title" => "[Group] ワンピース - 1122 [1080p]",
+          "size" => "unknown",
+          "downloadUrl" => "   ",
+          "magnetUrl" => "magnet:?xt=urn:btih:onepiece",
+          "protocol" => %{"bad" => true},
+          "categories" => "bad",
+          "indexerId" => "bad",
+          "publishDate" => "bad"
+        }
+      ])
+    end)
+
+    assert {:ok, [result]} = Prowlarr.search_tv_query("ワンピース 1122", categories: [5070])
+    assert result.size == nil
+    assert result.protocol == :torrent
+    assert result.category_ids == []
+    assert result.indexer_id == nil
+    assert result.published_at == nil
   end
 
   test "search_tv/3 queries tvsearch by TVDB id + season and normalizes results" do
@@ -99,7 +169,10 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
              size: 2_000_000_000,
              download_url: "http://prowlarr:9696/file/1",
              download_url_origin: "http://prowlarr:9696",
-             protocol: :torrent
+             protocol: :torrent,
+             category_ids: [],
+             indexer_id: nil,
+             published_at: nil
            }
   end
 

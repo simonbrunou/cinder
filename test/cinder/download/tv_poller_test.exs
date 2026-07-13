@@ -8,8 +8,11 @@ defmodule Cinder.Download.TvPollerTest do
   # test output stays pristine (they print on failure).
   @moduletag :capture_log
 
+  alias Cinder.Acquisition.Release
   alias Cinder.Catalog
   alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Season, Series}
+  alias Cinder.Download
+  alias Cinder.Download.{Intent, IntentEpisode}
   alias Cinder.Download.TvPoller
   alias Cinder.Repo
 
@@ -94,6 +97,33 @@ defmodule Cinder.Download.TvPollerTest do
     accepted
   end
 
+  test "poll leaves a reserved anime snapshot intent held without side effects" do
+    {_series, season} = series_tree()
+    first = episode(season, 1)
+    {snapshot, release} = anime_snapshot_release(first)
+
+    assert {:ok, intent} =
+             Download.reserve_intent(%{
+               kind: :episode,
+               target_id: first.id,
+               episode_ids: [first.id],
+               protocol: :torrent,
+               release: release,
+               mapping_snapshot: snapshot
+             })
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 -> {:ok, []} end)
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    assert :ok = TvPoller.poll()
+
+    assert Repo.get!(Intent, intent.id).mapping_snapshot == snapshot
+    assert Repo.aggregate(IntentEpisode, :count) == 1
+    assert Repo.aggregate(Grab, :count) == 0
+    assert Repo.reload(first).grab_id == nil
+    assert Repo.reload(first).search_attempts == 0
+  end
+
   test "advances a completed single-file grab through download to import in one tick" do
     {series, season} = series_tree()
     e1 = episode(season, 3)
@@ -116,6 +146,56 @@ defmodule Cinder.Download.TvPollerTest do
              "/tmp/cinder-test-tv-library/Show (2008) {tmdb-#{series.tmdb_id}}/Season 01/Show (2008) {tmdb-#{series.tmdb_id}} - S01E03.mkv"
 
     assert is_nil(imported.grab_id)
+  end
+
+  defp anime_snapshot_release(episode) do
+    canonical_value = "S01E01"
+
+    identity = %{
+      "source" => "cinder",
+      "scheme" => "standard",
+      "namespace" => "canonical",
+      "canonical_value" => canonical_value
+    }
+
+    snapshot = %{
+      "version" => 1,
+      "reserved_episode_ids" => [episode.id],
+      "release" => %{
+        "title" => "[Group] Show S01E01 [1080p]",
+        "coordinates" => [%{"scheme" => "standard", "values" => [canonical_value]}]
+      },
+      "mappings" => [
+        %{
+          "identity" => identity,
+          "precedence" => "inferred",
+          "episode_ids" => [episode.id],
+          "evidence" => %{}
+        }
+      ],
+      "selected_resolution" => %{
+        "episode_ids" => [episode.id],
+        "values" => [
+          %{
+            "scheme" => "standard",
+            "canonical_value" => canonical_value,
+            "episode_ids" => [episode.id],
+            "precedence" => "inferred",
+            "mapping_identities" => [identity]
+          }
+        ]
+      }
+    }
+
+    release = %Release{
+      title: snapshot["release"]["title"],
+      download_url: "magnet:?xt=urn:btih:anime-poller-hold",
+      protocol: :torrent,
+      coordinates: [%{scheme: "standard", values: [canonical_value]}],
+      mapping_snapshot: snapshot
+    }
+
+    {snapshot, release}
   end
 
   test "publishes a downloading grab snapshot without rewriting an equal poll" do

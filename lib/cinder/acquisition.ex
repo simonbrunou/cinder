@@ -6,6 +6,7 @@ defmodule Cinder.Acquisition do
   resolved from config (`config :cinder, :indexer`) so tests use a Mox mock and
   never hit the network.
   """
+  alias Cinder.Acquisition.Anime
   alias Cinder.Acquisition.Language
   alias Cinder.Acquisition.Release
   alias Cinder.Acquisition.Scorer
@@ -43,21 +44,26 @@ defmodule Cinder.Acquisition do
   def best_release(imdb_id, opts \\ []) do
     case indexer().search(imdb_id) do
       {:ok, raw_results} ->
-        preferred = Keyword.get(opts, :preferred_language)
-        original = Keyword.get(opts, :original_language)
-
-        candidates =
-          raw_results
-          |> Enum.map(&Release.new/1)
-          |> filter_protocols(Keyword.get(opts, :protocols))
-
-        case language_pool(candidates, preferred, original) do
+        case movie_pool(Enum.map(raw_results, &Release.new/1), opts) do
           :no_language_match -> :no_language_match
           pool -> Scorer.select(pool, opts)
         end
 
       {:error, _reason} = error ->
         error
+    end
+  end
+
+  @doc "Searches additive anime movie queries and selects through the standard hard rules."
+  def best_anime_movie(imdb_id, context, opts \\ []) do
+    with {:ok, releases, failed?} <- Anime.search_movie(indexer(), imdb_id, context, opts) do
+      case movie_pool(releases, opts) do
+        :no_language_match ->
+          :no_language_match
+
+        pool ->
+          Anime.select_movie(pool, Keyword.put(opts, :incomplete_search?, failed?))
+      end
     end
   end
 
@@ -108,6 +114,11 @@ defmodule Cinder.Acquisition do
       {:error, _reason} = error ->
         error
     end
+  end
+
+  @doc "Selects anime episodic releases by stable Catalog episode IDs."
+  def best_anime_releases(context, wanted_episode_ids, opts \\ []) do
+    Anime.best_episodes(indexer(), context, wanted_episode_ids, opts)
   end
 
   @doc """
@@ -161,6 +172,13 @@ defmodule Cinder.Acquisition do
       filtered ->
         filtered
     end
+  end
+
+  defp movie_pool(releases, opts) do
+    candidates = filter_protocols(releases, Keyword.get(opts, :protocols))
+    preferred = Keyword.get(opts, :preferred_language)
+    original = Keyword.get(opts, :original_language)
+    language_pool(candidates, preferred, original)
   end
 
   # The title guard protects only the free-text (title-only) fallback search. A

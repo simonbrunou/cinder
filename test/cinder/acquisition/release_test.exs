@@ -28,6 +28,26 @@ defmodule Cinder.Acquisition.ReleaseTest do
              Release.new(%{title: "Inception.2010.1080p.WEB-DL-GRP", protocol: :usenet})
   end
 
+  test "new/1 carries normalized indexer metadata without trusting anime interpretation" do
+    published_at = ~U[2026-07-13 10:00:00Z]
+
+    release =
+      Release.new(%{
+        title: "Show - 12 [1080p]",
+        category_ids: [5070],
+        indexer_id: 12,
+        published_at: published_at,
+        coordinates: [%{scheme: "absolute", values: ["12"]}],
+        role: :story
+      })
+
+    assert release.category_ids == [5070]
+    assert release.indexer_id == 12
+    assert release.published_at == published_at
+    assert release.coordinates == nil
+    assert release.role == nil
+  end
+
   test "new/1 defaults protocol to :torrent when the indexer map omits it" do
     assert %Release{protocol: :torrent} =
              Release.new(%{title: "Inception.2010.1080p.WEB-DL-GRP"})

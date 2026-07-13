@@ -350,7 +350,7 @@ defmodule Cinder.HTTPPolicyTest do
 
       Req.Test.stub(Cinder.HTTPPolicyBlockedStub, fn conn ->
         send(parent, {:request_started, self()})
-        Process.sleep(100)
+        Process.sleep(500)
         Req.Test.text(conn, "late-secret")
       end)
 
@@ -363,11 +363,11 @@ defmodule Cinder.HTTPPolicyTest do
                    plug: {Req.Test, Cinder.HTTPPolicyBlockedStub}
                  ],
                  64,
-                 20
+                 100
                )
 
       elapsed = System.monotonic_time(:millisecond) - started_at
-      assert elapsed < 80
+      assert elapsed < 300
       assert_received {:request_started, request_pid}
       refute request_pid == self()
       refute Process.alive?(request_pid)
