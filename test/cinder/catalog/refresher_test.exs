@@ -15,6 +15,12 @@ defmodule Cinder.Catalog.RefresherTest do
   setup :set_mox_global
   setup :verify_on_exit!
 
+  setup do
+    stub(Cinder.Catalog.TMDBMock, :get_series_alternative_titles, fn _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ -> {:ok, []} end)
+    :ok
+  end
+
   test "poll refreshes every monitored series and skips unmonitored ones" do
     monitored =
       Repo.insert!(%Series{tmdb_id: 8001, title: "M", monitored: true, monitor_strategy: :all})

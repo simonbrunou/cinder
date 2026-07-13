@@ -60,6 +60,136 @@ defmodule Cinder.CatalogRefreshTest do
     stub(Cinder.Catalog.TMDBMock, :get_season, fn ^tmdb_id, n ->
       {:ok, %{season_number: n, episodes: Map.fetch!(by_number, n)}}
     end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_series_alternative_titles, fn ^tmdb_id -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn ^tmdb_id -> {:ok, []} end)
+  end
+
+  test "provider refresh replaces only TMDB identity and preserves manual choices" do
+    s = series(:all, %{tmdb_id: 9_001, media_profile: :anime})
+    sn = season(s, 0)
+
+    ep =
+      episode(sn, %{
+        tmdb_episode_id: 90_010,
+        episode_number: 1,
+        title: "NCOP"
+      })
+
+    {:ok, manual_alias} = Catalog.save_manual_alias(s, %{title: "Local title"})
+    {:ok, _} = Catalog.set_episode_classification(ep, :extra, "Local extra")
+
+    {:ok, manual_coordinate} =
+      Catalog.put_episode_coordinate(
+        s,
+        %{
+          source: "manual",
+          scheme: "absolute",
+          namespace: "manual",
+          canonical_value: "99",
+          precedence: :manual
+        },
+        [ep.id]
+      )
+
+    stub_tmdb(s, [
+      {0, [%{tmdb_episode_id: 90_010, episode_number: 1, title: "NCOP", air_date: nil}]}
+    ])
+
+    expect_identity_refresh(s, "Old provider title", 90_010)
+    assert {:ok, _} = Catalog.refresh_series(s)
+
+    expect_identity_refresh(s, "New provider title", 90_010)
+    assert {:ok, _} = Catalog.refresh_series(s)
+
+    aliases = Catalog.list_title_aliases(s)
+    assert Enum.any?(aliases, &(&1.id == manual_alias.id and &1.title == "Local title"))
+    refute Enum.any?(aliases, &(&1.title == "Old provider title"))
+    assert Enum.any?(aliases, &(&1.title == "New provider title" and &1.source == "tmdb"))
+
+    coordinates = Catalog.list_episode_coordinates(s)
+    assert Enum.any?(coordinates, &(&1.id == manual_coordinate.id))
+    assert Enum.any?(coordinates, &(&1.source == "tmdb" and &1.canonical_value == "1"))
+
+    refreshed = Repo.reload!(ep)
+    assert refreshed.classification == :extra
+    assert refreshed.classification_source == "manual"
+    assert Repo.reload!(s).media_profile == :anime
+  end
+
+  test "renumbered provider coordinates point at the refreshed stable episode row" do
+    s = series(:all, %{tmdb_id: 9_002})
+    sn = season(s, 1)
+    first = episode(sn, %{tmdb_episode_id: 90_020, episode_number: 1})
+    second = episode(sn, %{tmdb_episode_id: 90_021, episode_number: 2})
+
+    old_resolution = [first.id]
+
+    stub_tmdb(s, [
+      {1,
+       [
+         %{tmdb_episode_id: 90_020, episode_number: 2, title: "Moved", air_date: @past},
+         %{tmdb_episode_id: 90_021, episode_number: 1, title: "Other", air_date: @past}
+       ]}
+    ])
+
+    expect_identity_refresh(s, "Alias", 90_021)
+    assert {:ok, _} = Catalog.refresh_series(s)
+
+    assert old_resolution == [first.id]
+    assert [coordinate] = Enum.filter(Catalog.list_episode_coordinates(s), &(&1.source == "tmdb"))
+    assert Enum.map(coordinate.memberships, & &1.episode_id) == [second.id]
+    assert Repo.reload!(first).episode_number == 2
+  end
+
+  test "an identity changeset failure rolls the refresh back and returns the error" do
+    s = series(:all, %{tmdb_id: 9_003, title: "Original"})
+    sn = season(s, 1)
+    ep = episode(sn, %{tmdb_episode_id: 90_030, episode_number: 1, title: "Original"})
+
+    stub_tmdb(
+      s,
+      [{1, [%{tmdb_episode_id: 90_030, episode_number: 1, title: "Changed", air_date: @past}]}],
+      %{title: "Changed"}
+    )
+
+    expect(Cinder.Catalog.TMDBMock, :get_series_alternative_titles, fn _ ->
+      {:ok, [%{title: "Invalid kind", country_code: "JP", kind: :bogus}]}
+    end)
+
+    assert {:error, %Ecto.Changeset{}} = Catalog.refresh_series(s)
+    assert Repo.reload!(s).title == "Original"
+    assert Repo.reload!(ep).title == "Original"
+  end
+
+  defp expect_identity_refresh(series, alias_title, coordinate_tmdb_id) do
+    expect(Cinder.Catalog.TMDBMock, :get_series_alternative_titles, fn id ->
+      assert id == series.tmdb_id
+      {:ok, [%{title: alias_title, country_code: "JP", kind: :alternative}]}
+    end)
+
+    expect(Cinder.Catalog.TMDBMock, :get_episode_groups, fn id ->
+      assert id == series.tmdb_id
+      {:ok, [%{id: "absolute", type: 2, name: "Absolute"}]}
+    end)
+
+    expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn "absolute" ->
+      {:ok,
+       %{
+         id: "absolute",
+         type: 2,
+         name: "Absolute",
+         entries: [
+           %{
+             tmdb_episode_id: coordinate_tmdb_id,
+             group_order: 0,
+             order: 0,
+             season_number: 0,
+             episode_number: 1
+           }
+         ]
+       }}
+    end)
   end
 
   test "backfills the series descriptive metadata from TMDB" do

@@ -19,6 +19,9 @@ defmodule CinderWeb.SeriesDetailLiveTest do
       {:ok, base_series_info(tmdb_id)}
     end)
 
+    stub(Cinder.Catalog.TMDBMock, :get_series_alternative_titles, fn _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ -> {:ok, []} end)
+
     :ok
   end
 

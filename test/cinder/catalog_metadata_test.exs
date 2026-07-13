@@ -25,6 +25,57 @@ defmodule Cinder.CatalogMetadataTest do
     release_date: ~D[2010-07-16]
   }
 
+  describe "prepare_requested_movie/1" do
+    test "fetches details and aliases before the database-only insert" do
+      details = Map.put(@details, :tmdb_id, 372_058)
+
+      expect(Cinder.Catalog.TMDBMock, :get_movie, fn 372_058 -> {:ok, details} end)
+
+      expect(Cinder.Catalog.TMDBMock, :get_movie_alternative_titles, fn 372_058 ->
+        {:ok, [%{title: "Kimi no Na wa.", country_code: "JP", kind: :alternative}]}
+      end)
+
+      assert {:ok, prepared} =
+               Catalog.prepare_requested_movie(%{
+                 tmdb_id: 372_058,
+                 preferred_language: "french",
+                 media_profile: :anime
+               })
+
+      assert Repo.get_by(Movie, tmdb_id: 372_058) == nil
+      assert prepared.attrs.media_profile == :anime
+      assert prepared.attrs.preferred_language == "french"
+
+      assert {:ok, movie} =
+               Catalog.find_or_create_at_requested(prepared.attrs, prepared.aliases)
+
+      assert movie.media_profile == :anime
+      assert [%{title: "Kimi no Na wa.", source: "tmdb"}] = Catalog.list_title_aliases(movie)
+    end
+
+    test "an existing movie short-circuits without provider I/O" do
+      movie = movie_fixture(tmdb_id: 372_059)
+
+      assert {:ok, %{attrs: attrs, aliases: []}} =
+               Catalog.prepare_requested_movie(%{tmdb_id: movie.tmdb_id, title: "Ignored"})
+
+      assert attrs.tmdb_id == movie.tmdb_id
+    end
+
+    test "a provider error writes neither movie nor aliases" do
+      expect(Cinder.Catalog.TMDBMock, :get_movie, fn 372_060 ->
+        {:ok, Map.put(@details, :tmdb_id, 372_060)}
+      end)
+
+      expect(Cinder.Catalog.TMDBMock, :get_movie_alternative_titles, fn 372_060 ->
+        {:error, :timeout}
+      end)
+
+      assert {:error, :timeout} = Catalog.prepare_requested_movie(%{tmdb_id: 372_060})
+      assert Repo.get_by(Movie, tmdb_id: 372_060) == nil
+    end
+  end
+
   describe "enrich_movie/1" do
     test "backfills descriptive metadata from TMDB details on first view" do
       movie = movie_fixture()

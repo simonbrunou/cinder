@@ -76,7 +76,8 @@ defmodule Cinder.Catalog.Movie do
       :year,
       :poster_path,
       :original_language,
-      :preferred_language
+      :preferred_language,
+      :media_profile
     ])
     |> validate_required([:tmdb_id, :title])
     |> validate_inclusion(:preferred_language, Language.preferences())

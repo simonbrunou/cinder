@@ -61,7 +61,12 @@ defmodule Cinder.Catalog.Series do
       :monitored,
       :monitor_strategy,
       :original_language,
-      :preferred_language
+      :preferred_language,
+      :overview,
+      :genres,
+      :vote_average,
+      :first_air_date,
+      :media_profile
     ])
     |> validate_required([:tmdb_id, :title])
     |> validate_inclusion(:preferred_language, Language.preferences())

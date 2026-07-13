@@ -208,6 +208,9 @@ defmodule Cinder.RequestsTest do
          }}
       end)
 
+      stub(Cinder.Catalog.TMDBMock, :get_series_alternative_titles, fn 1399 -> {:ok, []} end)
+      stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn 1399 -> {:ok, []} end)
+
       :ok
     end
 

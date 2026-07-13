@@ -47,7 +47,9 @@ defmodule Cinder.Catalog.Episode do
 
   @doc "Changeset for provider-owned episode classification metadata."
   def provider_classification_changeset(episode, attrs) do
-    cast(episode, attrs, [:classification, :classification_source, :classification_label])
+    episode
+    |> cast(attrs, [:classification, :classification_source, :classification_label])
+    |> validate_required([:classification, :classification_source])
   end
 
   @doc """
