@@ -3,6 +3,8 @@ defmodule Cinder.DownloadTest do
 
   import Mox
 
+  alias Cinder.Acquisition.{Anime, Release}
+  alias Cinder.Catalog
   alias Cinder.Catalog.{BlockedRelease, Movie}
   alias Cinder.Download
   alias Cinder.Repo
@@ -36,6 +38,85 @@ defmodule Cinder.DownloadTest do
 
     assert %Movie{status: :downloading, download_id: "hash-1", download_protocol: :torrent} =
              Repo.get!(Movie, movie.id)
+  end
+
+  test "anime movie search adds stored aliases and submits an alias-only result" do
+    movie =
+      movie_fixture(%{
+        imdb_id: "tt-anime",
+        title: "Your Name",
+        year: 2016,
+        media_profile: :anime
+      })
+
+    assert {:ok, _alias_record} =
+             Catalog.save_manual_alias(movie, %{title: "Kimi no Na wa", kind: :romaji})
+
+    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt-anime" -> {:ok, []} end)
+
+    expect(Cinder.Acquisition.IndexerMock, :search_movie_query, 2, fn
+      "Your Name 2016", categories: [5070] ->
+        {:ok, []}
+
+      "Kimi no Na wa 2016", categories: [5070] ->
+        {:ok,
+         [
+           %{
+             title: "[Group] Kimi no Na wa (2016) [1080p]",
+             size: 8_000_000_000,
+             download_url: "magnet:?xt=urn:btih:anime",
+             protocol: :torrent
+           }
+         ]}
+    end)
+
+    expect(Cinder.Download.ClientMock, :add, fn release, _opts ->
+      assert release.title == "[Group] Kimi no Na wa (2016) [1080p]"
+      {:ok, "anime-hash"}
+    end)
+
+    assert {:ok, %Movie{status: :downloading, download_id: "anime-hash"}} =
+             Download.start(movie)
+  end
+
+  test "standard movie selection never calls the additive free-text callbacks" do
+    movie = movie_fixture(%{imdb_id: "tt-standard", media_profile: :standard})
+    deny(Cinder.Acquisition.IndexerMock, :search_movie_query, 2)
+    deny(Cinder.Acquisition.IndexerMock, :search_tv_query, 2)
+
+    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt-standard" ->
+      {:ok, [survivable_result()]}
+    end)
+
+    expect(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "standard-hash"} end)
+
+    assert {:ok, %Movie{status: :downloading, download_id: "standard-hash"}} =
+             Download.start(movie)
+  end
+
+  test "preferred-group waiting is pure and does not increment movie attempts" do
+    movie = movie_fixture(%{search_attempts: 0})
+    now = ~U[2026-07-13 12:00:00Z]
+
+    fallback =
+      %{
+        Release.new(%{
+          title: "Your Name (2016) [1080p]",
+          size: 8_000_000_000,
+          download_url: "fallback",
+          published_at: now
+        })
+        | group: "Other"
+      }
+
+    assert {:waiting_for_preferred_group, %{retry_at: ~U[2026-07-14 12:00:00Z]}} =
+             Anime.select_movie([fallback],
+               preferred_groups: ["Trusted"],
+               fallback_delay: 86_400,
+               now: now
+             )
+
+    assert Repo.reload(movie).search_attempts == 0
   end
 
   test "persists the chosen release_title on the :downloading transition" do

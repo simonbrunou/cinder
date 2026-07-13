@@ -4,6 +4,7 @@ defmodule Cinder.AcquisitionTest do
   import Mox
 
   alias Cinder.Acquisition
+  alias Cinder.Acquisition.Anime
   alias Cinder.Acquisition.Release
   alias Cinder.Catalog.Series
 
@@ -23,6 +24,32 @@ defmodule Cinder.AcquisitionTest do
 
   defp raw_tv(title, attrs \\ []),
     do: Map.merge(%{title: title, size: 2 * @gb, download_url: "u", seeders: 10}, Map.new(attrs))
+
+  test "anime movie waiting is advisory and empty preferences are a no-op" do
+    now = ~U[2026-07-13 12:00:00Z]
+
+    fallback =
+      %{
+        Release.new(%{
+          title: "Your Name (2016) [1080p]",
+          size: 8 * @gb,
+          download_url: "fallback",
+          published_at: now
+        })
+        | group: "Other"
+      }
+
+    assert {:waiting_for_preferred_group, %{retry_at: ~U[2026-07-14 12:00:00Z]}} =
+             Anime.select_movie([fallback],
+               preferred_groups: ["Trusted"],
+               fallback_delay: 86_400,
+               now: now
+             )
+
+    no_timestamp = %{fallback | published_at: nil}
+    assert {:ok, ^no_timestamp} = Anime.select_movie([no_timestamp])
+    assert {:ok, ^no_timestamp} = Anime.select_movie([no_timestamp], preferred_groups: [])
+  end
 
   test "best_anime_releases/3 exposes stable-ID selection without changing the TV poller API" do
     context = %{

@@ -645,7 +645,17 @@ defmodule Cinder.Download do
           release_blocklist: Catalog.blocked_release_titles(movie)
         ] ++ Acquisition.band_opts(:movies)
 
-      case Acquisition.best_release(imdb_id, opts) do
+      result =
+        case Catalog.media_profile_summary(movie).effective do
+          :anime ->
+            context = Catalog.anime_movie_acquisition_context(movie)
+            Acquisition.best_anime_movie(imdb_id, context, opts)
+
+          :standard ->
+            Acquisition.best_release(imdb_id, opts)
+        end
+
+      case result do
         {:ok, release} ->
           add_to_client(movie, release)
 

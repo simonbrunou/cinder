@@ -61,6 +61,20 @@ defmodule Cinder.Acquisition.Anime do
     end
   end
 
+  def select_movie(releases, opts \\ []) do
+    hard_valid = Enum.filter(releases, &(Scorer.verdict(&1, opts) == :ok))
+
+    result =
+      case preferred_groups(opts) do
+        [] -> Scorer.select(hard_valid, opts)
+        groups -> select_timed_movie(hard_valid, groups, opts)
+      end
+
+    if result == :no_match and Keyword.get(opts, :incomplete_search?, false),
+      do: {:error, :incomplete_search},
+      else: result
+  end
+
   def build_mapping_snapshot(%Release{} = release, reserved_ids, context) do
     reserved = MapSet.new(reserved_ids)
 
@@ -245,6 +259,29 @@ defmodule Cinder.Acquisition.Anime do
 
   defp normalize_group(group), do: group |> String.trim() |> String.downcase()
 
+  defp select_timed_movie(candidates, groups, opts) do
+    now = Keyword.get_lazy(opts, :now, &DateTime.utc_now/0)
+    delay = Keyword.get(opts, :fallback_delay, 0)
+    entries = Enum.flat_map(candidates, &timed_entry(&1, groups, now, delay))
+    eligible = for %{status: :eligible, release: release} <- entries, do: release
+
+    case Scorer.select(eligible, opts) do
+      {:ok, _release} = selected ->
+        selected
+
+      :no_match ->
+        delayed = Enum.filter(entries, &(&1.status == :delayed))
+        movie_waiting_result(delayed)
+    end
+  end
+
+  defp movie_waiting_result([]), do: :no_match
+
+  defp movie_waiting_result(delayed) do
+    retry_at = delayed |> Enum.map(& &1.retry_at) |> Enum.min(DateTime)
+    {:waiting_for_preferred_group, %{retry_at: retry_at}}
+  end
+
   defp select_with_waiting(candidates, context, wanted_ids, groups, opts) do
     now = Keyword.get_lazy(opts, :now, &DateTime.utc_now/0)
     delay = Keyword.get(opts, :fallback_delay, 0)
@@ -279,7 +316,7 @@ defmodule Cinder.Acquisition.Anime do
   end
 
   defp timed_entry(release, groups, now, delay) do
-    ids = MapSet.new(release.resolved_episode_ids)
+    ids = MapSet.new(release.resolved_episode_ids || [])
 
     if normalize_group(release.group || "") in groups do
       [%{release: release, ids: ids, status: :eligible, retry_at: nil}]
