@@ -107,6 +107,11 @@ defmodule Cinder.Acquisition.AnimePreferences do
 
   @doc "Builds the shared string-keyed form state, overlaid with the last submission."
   def form_state(title, params) when is_map(params) do
+    retained_params =
+      params
+      |> Map.take(@form_fields)
+      |> Map.filter(fn {_field, value} -> is_binary(value) end)
+
     %{
       "audio_mode" => enum_form_value(title.audio_mode),
       "embedded_subtitle_mode" => enum_form_value(title.embedded_subtitle_mode),
@@ -119,7 +124,7 @@ defmodule Cinder.Acquisition.AnimePreferences do
       "group_fallback_delay_mode" => override_mode(title.group_fallback_delay),
       "group_fallback_delay_hours" => delay_hours(title.group_fallback_delay)
     }
-    |> Map.merge(Map.take(params, @form_fields))
+    |> Map.merge(retained_params)
   end
 
   @doc "Validates the effective candidate and returns field-specific changeset errors."

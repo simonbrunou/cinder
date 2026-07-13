@@ -6,7 +6,7 @@ defmodule CinderWeb.MovieDetailLiveTest do
   import Cinder.CatalogFixtures
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.TitleAlias
+  alias Cinder.Catalog.{Movie, TitleAlias}
   alias Cinder.Repo
 
   @moduletag :capture_log
@@ -92,6 +92,14 @@ defmodule CinderWeb.MovieDetailLiveTest do
       },
       overrides
     )
+  end
+
+  defp anime_preferences_help(view) do
+    view
+    |> render()
+    |> LazyHTML.from_fragment()
+    |> LazyHTML.query("#anime-preferences-form p")
+    |> LazyHTML.text(separator: " ")
   end
 
   test "admin changes a movie profile and manages a manual alias", %{conn: conn} do
@@ -283,6 +291,51 @@ defmodule CinderWeb.MovieDetailLiveTest do
     assert fresh.embedded_subtitle_mode == nil
     assert fresh.subtitle_languages == nil
     assert fresh.group_fallback_delay == nil
+  end
+
+  test "forged Movie Anime list values fail closed at the render boundary", %{conn: conn} do
+    movie =
+      movie_fixture(%{
+        media_profile: :anime,
+        original_language: "ja",
+        preferred_language: "french"
+      })
+      |> Movie.anime_preferences_changeset(%{subtitle_languages: ["en"]})
+      |> Repo.update!()
+
+    {:ok, view, _} = live_movie(conn, movie)
+
+    render_hook(view, "save_anime_preferences", %{
+      "anime_preferences" => anime_preferences_params(%{"subtitle_languages" => %{}})
+    })
+
+    assert has_element?(view, "#anime_preferences_subtitle_languages-error")
+    assert has_element?(view, "#anime_preferences_subtitle_languages[value='en']")
+
+    fresh = Repo.reload!(movie)
+    assert fresh.subtitle_languages == ["en"]
+    assert fresh.audio_mode == nil
+    assert fresh.group_fallback_delay == nil
+  end
+
+  test "movie Anime fallback help pluralizes hours", %{conn: conn} do
+    movie =
+      movie_fixture(%{media_profile: :anime, original_language: "ja"})
+      |> Movie.anime_preferences_changeset(%{group_fallback_delay: 3_600})
+      |> Repo.update!()
+
+    {:ok, singular_view, _} = live_movie(conn, movie)
+    singular = anime_preferences_help(singular_view)
+    assert singular =~ "Effective fallback delay: 1 hour"
+    refute singular =~ "Effective fallback delay: 1 hours"
+
+    movie =
+      movie
+      |> Movie.anime_preferences_changeset(%{group_fallback_delay: 7_200})
+      |> Repo.update!()
+
+    {:ok, plural_view, _} = live_movie(conn, movie)
+    assert anime_preferences_help(plural_view) =~ "Effective fallback delay: 2 hours"
   end
 
   test "movie profile and alias events reject forged values and provider aliases are read-only",

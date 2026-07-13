@@ -199,6 +199,34 @@ defmodule Cinder.Acquisition.AnimePreferencesTest do
     refute_received {:movie_updated, _}
   end
 
+  test "Catalog writer validates the current title at the write boundary" do
+    stale =
+      movie_fixture(%{
+        media_profile: :anime,
+        original_language: "ja",
+        preferred_language: "french"
+      })
+
+    assert {:ok, current} = Catalog.set_movie_language(stale, "original")
+    assert current.preferred_language == "original"
+    Catalog.subscribe()
+
+    assert {:error, changeset} =
+             Catalog.set_anime_preferences(stale, valid_override_params())
+
+    assert errors_on(changeset).audio_mode != []
+
+    fresh = Repo.reload!(stale)
+    assert fresh.preferred_language == "original"
+    assert fresh.audio_mode == nil
+    assert fresh.embedded_subtitle_mode == nil
+    assert fresh.subtitle_languages == nil
+    assert fresh.preferred_release_groups == nil
+    assert fresh.blocked_release_groups == nil
+    assert fresh.group_fallback_delay == nil
+    refute_received {:movie_updated, _}
+  end
+
   test "audio modes produce ordered hard requirements" do
     base = %Series{original_language: "jpn", preferred_language: "fra"}
 

@@ -148,11 +148,13 @@ defmodule Cinder.Catalog do
   defp persist_anime_preferences(title, params, changeset_fun, publish) do
     case AnimePreferences.override_attrs(params) do
       {:ok, attrs} ->
-        changeset = changeset_fun.(title, attrs)
+        result =
+          Repo.transaction(
+            fn -> persist_anime_preferences_or_rollback(title, attrs, changeset_fun) end,
+            mode: :immediate
+          )
 
-        with {:ok, changeset} <-
-               AnimePreferences.validate_effective(changeset, Settings.anime_defaults()),
-             {:ok, updated} <- Repo.update(changeset) do
+        with {:ok, updated} <- result do
           publish.(updated)
           {:ok, updated}
         end
@@ -162,6 +164,19 @@ defmodule Cinder.Catalog do
 
         {:error,
          Ecto.Changeset.add_error(changeset, preference_error_field(reason), "is invalid")}
+    end
+  end
+
+  defp persist_anime_preferences_or_rollback(title, attrs, changeset_fun) do
+    current = Repo.get!(title.__struct__, title.id)
+    changeset = changeset_fun.(current, attrs)
+
+    with {:ok, changeset} <-
+           AnimePreferences.validate_effective(changeset, Settings.anime_defaults()),
+         {:ok, updated} <- Repo.update(changeset) do
+      updated
+    else
+      {:error, reason} -> Repo.rollback(reason)
     end
   end
 

@@ -1149,9 +1149,7 @@ defmodule CinderWeb.CoreComponents do
             min="0"
           />
           <p class="mb-3 text-xs text-base-content/60">
-            {gettext("Effective fallback delay: %{hours} hours",
-              hours: effective_delay_hours(@effective)
-            )}
+            {effective_fallback_delay(@effective)}
           </p>
         </div>
 
@@ -1185,8 +1183,15 @@ defmodule CinderWeb.CoreComponents do
     end
   end
 
-  defp effective_delay_hours(nil), do: "—"
-  defp effective_delay_hours(policy), do: div(policy.group_fallback_delay, 3_600)
+  defp effective_fallback_delay(nil), do: "—"
+
+  defp effective_fallback_delay(policy) do
+    ngettext(
+      "Effective fallback delay: %{count} hour",
+      "Effective fallback delay: %{count} hours",
+      div(policy.group_fallback_delay, 3_600)
+    )
+  end
 
   defp profile_label(:auto), do: gettext("Auto")
   defp profile_label(:standard), do: gettext("Standard")
