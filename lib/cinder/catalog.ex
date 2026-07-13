@@ -1831,6 +1831,7 @@ defmodule Cinder.Catalog do
   defp persist_mapping_result(grab, attrs) do
     case grab |> Grab.mapping_changeset(attrs) |> Repo.update() do
       {:ok, updated} ->
+        updated = reload_after_version_bump(updated)
         broadcast_grab_series(updated)
         {:ok, updated}
 
@@ -2654,7 +2655,7 @@ defmodule Cinder.Catalog do
                   m.status in [:downloaded, :upgrading] and
                   m.release_title == ^expected.release_title and
                   m.release_policy_snapshot == ^expected.release_policy_snapshot and
-                  m.updated_at == ^expected.updated_at
+                  m.row_version == ^expected.row_version
             ),
             set: [updated_at: now()]
           )
@@ -2680,7 +2681,13 @@ defmodule Cinder.Catalog do
         }
 
         attrs = if fresh.status == :upgrading, do: attrs, else: Map.put(attrs, :file_path, nil)
-        updated = fresh |> Movie.transition_changeset(attrs) |> Repo.update!()
+
+        updated =
+          fresh
+          |> Movie.transition_changeset(attrs)
+          |> Repo.update!()
+          |> reload_after_version_bump()
+
         {updated, intent_ids}
       end)
 
@@ -2709,10 +2716,12 @@ defmodule Cinder.Catalog do
         if claimed != 1, do: Repo.rollback(:stale_release)
         fresh = Repo.get!(Grab, expected.id)
         episode_ids = episode_ids_for_grab(fresh.id) |> Enum.sort()
-        series_id = series_id_for_grab(fresh.id)
+        series_ids = series_ids_for_episode_ids(episode_ids)
 
-        if stale_grab_ownership?(episode_ids, expected_episode_ids, series_id),
+        if stale_grab_ownership?(episode_ids, expected_episode_ids, series_ids),
           do: Repo.rollback(:stale_release)
+
+        [series_id] = series_ids
 
         insert_blocked_release!(%{
           series_id: series_id,
@@ -2740,11 +2749,22 @@ defmodule Cinder.Catalog do
         g.id == ^expected.id and g.mapping_status == ^expected.mapping_status and
           g.mapping_status == :resolved and g.release_title == ^expected.release_title and
           g.release_policy_snapshot == ^expected.release_policy_snapshot and
-          g.updated_at == ^expected.updated_at
+          g.row_version == ^expected.row_version
   end
 
-  defp stale_grab_ownership?(episode_ids, expected_episode_ids, series_id),
-    do: episode_ids == [] or episode_ids != expected_episode_ids or is_nil(series_id)
+  defp stale_grab_ownership?(episode_ids, expected_episode_ids, series_ids),
+    do: episode_ids == [] or episode_ids != expected_episode_ids or length(series_ids) != 1
+
+  defp series_ids_for_episode_ids(episode_ids) do
+    Repo.all(
+      from e in Episode,
+        join: s in Season,
+        on: s.id == e.season_id,
+        where: e.id in ^episode_ids,
+        select: s.series_id,
+        distinct: true
+    )
+  end
 
   defp expected_grab_episode_ids(%Grab{episodes: episodes}) when is_list(episodes),
     do: episodes |> Enum.map(& &1.id) |> Enum.sort()
@@ -2758,6 +2778,18 @@ defmodule Cinder.Catalog do
   defp expected_grab_episode_ids(%Grab{}), do: :unknown
 
   defp policy_reason(evidence), do: inspect({:release_policy_mismatch, evidence})
+
+  defp reload_after_version_bump(%Movie{} = movie) do
+    aliases_loaded? = Ecto.assoc_loaded?(movie.title_aliases)
+    movie = Repo.reload!(movie)
+    if aliases_loaded?, do: Repo.preload(movie, :title_aliases), else: movie
+  end
+
+  defp reload_after_version_bump(%Grab{} = grab) do
+    episodes_loaded? = Ecto.assoc_loaded?(grab.episodes)
+    grab = Repo.reload!(grab)
+    if episodes_loaded?, do: Repo.preload(grab, episodes: [season: :series]), else: grab
+  end
 
   defp insert_blocked_release!(attrs) do
     %BlockedRelease{}

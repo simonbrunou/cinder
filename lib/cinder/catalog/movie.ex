@@ -65,6 +65,7 @@ defmodule Cinder.Catalog.Movie do
     field :vote_average, :float
     field :release_date, :date
     field :media_profile, Ecto.Enum, values: [:auto, :standard, :anime], default: :auto
+    field :row_version, :integer, default: 1
     has_many :title_aliases, TitleAlias
 
     timestamps(type: :utc_datetime)
