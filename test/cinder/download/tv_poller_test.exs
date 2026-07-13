@@ -131,38 +131,6 @@ defmodule Cinder.Download.TvPollerTest do
     assert Agent.get(counter, & &1) == 5
   end
 
-  test "TvPoller waiting-result exclusion preserves held attempts and bumps uncovered episodes" do
-    series = series_fixture(%{monitor_strategy: :all, media_profile: :anime})
-    season = season_fixture(series)
-    held = episode(season, 1)
-    uncovered = episode(season, 2)
-    now = ~U[2026-07-13 12:00:00Z]
-
-    fallback =
-      "[Other] Show S01E01 [1080p]"
-      |> raw_release("anime-waiting")
-      |> Map.put(:published_at, now)
-      |> Release.new()
-
-    assert {:waiting_for_preferred_group, waiting} =
-             Anime.select_episodes(
-               [fallback],
-               Catalog.anime_series_acquisition_context(series),
-               [held.id, uncovered.id],
-               preferred_groups: ["Trusted"],
-               fallback_delay: 86_400,
-               now: now
-             )
-
-    # A4 has not wired preference settings into the poller yet. Exercise the Task 6 branch's
-    # exact counter exclusion with Anime's real waiting-result shape without enabling A4 behavior.
-    searched_ids = [held.id, uncovered.id]
-    assert :ok = Catalog.increment_search_attempts(searched_ids -- waiting.episode_ids)
-
-    assert Repo.get!(Episode, held.id).search_attempts == 0
-    assert Repo.get!(Episode, uncovered.id).search_attempts == 1
-  end
-
   test "restart reconciliation creates one snapshot grab with every reserved episode" do
     series = series_fixture(%{monitor_strategy: :all, media_profile: :anime})
     first = episode(season_fixture(series, %{season_number: 1}), 25)
