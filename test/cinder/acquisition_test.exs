@@ -24,6 +24,41 @@ defmodule Cinder.AcquisitionTest do
   defp raw_tv(title, attrs \\ []),
     do: Map.merge(%{title: title, size: 2 * @gb, download_url: "u", seeders: 10}, Map.new(attrs))
 
+  test "best_anime_releases/3 exposes stable-ID selection without changing the TV poller API" do
+    context = %{
+      kind: :series,
+      title: "Show",
+      year: 2020,
+      tvdb_id: 99,
+      aliases: [],
+      episodes: [%{id: 11, season_number: 1, episode_number: 1}],
+      mappings: [
+        %{
+          identity: %{
+            source: "cinder",
+            scheme: "standard",
+            namespace: "canonical",
+            canonical_value: "S01E01"
+          },
+          precedence: :manual,
+          episode_ids: [11],
+          evidence: %{"kind" => "canonical_standard"}
+        }
+      ]
+    }
+
+    expect(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok, [raw_tv("[Group] Show S01E01 [1080p]", download_url: "anime")]}
+    end)
+
+    expect(Cinder.Acquisition.IndexerMock, :search_tv_query, 2, fn _query, categories: [5070] ->
+      {:ok, []}
+    end)
+
+    assert {:ok, %{assignments: [%{episode_ids: [11]}]}} =
+             Acquisition.best_anime_releases(context, [11])
+  end
+
   test "best_release/2 composes indexer search, parse, and scoring" do
     expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1375666" ->
       {:ok,

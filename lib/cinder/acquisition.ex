@@ -6,6 +6,7 @@ defmodule Cinder.Acquisition do
   resolved from config (`config :cinder, :indexer`) so tests use a Mox mock and
   never hit the network.
   """
+  alias Cinder.Acquisition.Anime
   alias Cinder.Acquisition.Language
   alias Cinder.Acquisition.Release
   alias Cinder.Acquisition.Scorer
@@ -108,6 +109,11 @@ defmodule Cinder.Acquisition do
       {:error, _reason} = error ->
         error
     end
+  end
+
+  @doc "Selects anime episodic releases by stable Catalog episode IDs."
+  def best_anime_releases(context, wanted_episode_ids, opts \\ []) do
+    Anime.best_episodes(indexer(), context, wanted_episode_ids, opts)
   end
 
   @doc """

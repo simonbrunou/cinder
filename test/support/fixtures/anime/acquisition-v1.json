@@ -16,5 +16,117 @@
     "trailer-extra": {"kind": "series", "titles": ["Show"], "year": 2020},
     "ambiguous-bare-number": {"kind": "series", "titles": ["86"], "year": 2021},
     "anime-movie-release": {"kind": "movie", "titles": ["Your Name", "Kimi no Na wa"], "year": 2016}
-  }
+  },
+  "selection_cases": [
+    {
+      "id": "standard-single",
+      "context": {
+        "title": "Show", "year": 2020, "episodes": [{"id": 11, "season_number": 1, "episode_number": 3}],
+        "mappings": [{"source": "cinder", "scheme": "standard", "namespace": "canonical", "canonical_value": "S01E03", "precedence": "manual", "episode_ids": [11]}]
+      },
+      "wanted_episode_ids": [11],
+      "candidates": [{"title": "[Group] Show S01E03 [1080p]", "size": 2000000000, "download_url": "standard", "protocol": "torrent"}],
+      "expect": {"status": "ok", "assignments": [{"title": "[Group] Show S01E03 [1080p]", "episode_ids": [11]}]}
+    },
+    {
+      "id": "absolute-range",
+      "context": {
+        "title": "Show", "year": 2020,
+        "episodes": [{"id": 11, "season_number": 2, "episode_number": 1}, {"id": 12, "season_number": 2, "episode_number": 2}, {"id": 13, "season_number": 2, "episode_number": 3}, {"id": 14, "season_number": 2, "episode_number": 4}],
+        "mappings": [
+          {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "25", "precedence": "manual", "episode_ids": [11]},
+          {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "26", "precedence": "manual", "episode_ids": [12]},
+          {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "27", "precedence": "manual", "episode_ids": [13]},
+          {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "28", "precedence": "manual", "episode_ids": [14]}
+        ]
+      },
+      "wanted_episode_ids": [11, 12, 13, 14],
+      "candidates": [{"title": "[Group] Show - 25-28 [1080p]", "size": 8000000000, "download_url": "range", "protocol": "torrent"}],
+      "expect": {"status": "ok", "assignments": [{"title": "[Group] Show - 25-28 [1080p]", "episode_ids": [11, 12, 13, 14]}]}
+    },
+    {
+      "id": "cross-season-order",
+      "context": {
+        "title": "Show", "year": 2020,
+        "episodes": [{"id": 20, "season_number": 1, "episode_number": 25}, {"id": 10, "season_number": 2, "episode_number": 1}],
+        "mappings": [
+          {"source": "cinder", "scheme": "standard", "namespace": "canonical", "canonical_value": "S01E25", "precedence": "manual", "episode_ids": [20]},
+          {"source": "cinder", "scheme": "standard", "namespace": "canonical", "canonical_value": "S02E01", "precedence": "manual", "episode_ids": [10]}
+        ]
+      },
+      "wanted_episode_ids": [10, 20],
+      "candidates": [{"title": "[Group] Show S01E25-S02E01 [1080p]", "size": 4000000000, "download_url": "cross", "protocol": "torrent"}],
+      "expect": {"status": "ok", "assignments": [{"title": "[Group] Show S01E25-S02E01 [1080p]", "episode_ids": [20, 10]}]}
+    },
+    {
+      "id": "coordinate-to-many",
+      "context": {
+        "title": "Show", "year": 2020,
+        "episodes": [{"id": 11, "season_number": 1, "episode_number": 1}, {"id": 12, "season_number": 1, "episode_number": 2}],
+        "mappings": [{"source": "fixture", "scheme": "absolute", "namespace": "combined", "canonical_value": "12", "precedence": "manual", "episode_ids": [11, 12]}]
+      },
+      "wanted_episode_ids": [11, 12],
+      "candidates": [{"title": "[Group] Show - 12 [1080p]", "size": 4000000000, "download_url": "many", "protocol": "torrent"}],
+      "expect": {"status": "ok", "assignments": [{"title": "[Group] Show - 12 [1080p]", "episode_ids": [11, 12]}]}
+    },
+    {
+      "id": "ambiguity-and-outside-rejected",
+      "context": {
+        "title": "Show", "year": 2020,
+        "episodes": [{"id": 11, "season_number": 1, "episode_number": 1}, {"id": 12, "season_number": 1, "episode_number": 2}, {"id": 99, "season_number": 1, "episode_number": 99}],
+        "mappings": [
+          {"source": "one", "scheme": "absolute", "namespace": "a", "canonical_value": "12", "precedence": "manual", "episode_ids": [11]},
+          {"source": "two", "scheme": "absolute", "namespace": "b", "canonical_value": "12", "precedence": "manual", "episode_ids": [12]},
+          {"source": "fixture", "scheme": "absolute", "namespace": "outside", "canonical_value": "13", "precedence": "manual", "episode_ids": [11, 99]}
+        ]
+      },
+      "wanted_episode_ids": [11, 12],
+      "candidates": [
+        {"title": "[Group] Show - 12 [1080p]", "size": 2000000000, "download_url": "ambiguous", "protocol": "torrent"},
+        {"title": "[Group] Show - 13 [1080p]", "size": 4000000000, "download_url": "outside", "protocol": "torrent"}
+      ],
+      "expect": {"status": "no_match", "assignments": []}
+    },
+    {
+      "id": "role-protocol-language-filters",
+      "context": {
+        "title": "Show", "year": 2020,
+        "episodes": [{"id": 11, "season_number": 1, "episode_number": 1}, {"id": 12, "season_number": 1, "episode_number": 2}, {"id": 13, "season_number": 1, "episode_number": 3}],
+        "mappings": [
+          {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "1", "precedence": "manual", "episode_ids": [11]},
+          {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "2", "precedence": "manual", "episode_ids": [12]},
+          {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "3", "precedence": "manual", "episode_ids": [13]},
+          {"source": "fixture", "scheme": "typed_special", "namespace": "main", "canonical_value": "OVA:1", "precedence": "manual", "episode_ids": [11]}
+        ]
+      },
+      "wanted_episode_ids": [11, 12, 13],
+      "opts": {"protocols": ["torrent"], "preferred_language": "french", "original_language": "ja"},
+      "candidates": [
+        {"title": "[Group] Show OVA 1 [1080p]", "size": 2000000000, "download_url": "ova", "protocol": "torrent"},
+        {"title": "[Group] Show - 1 NCOP [1080p]", "size": 2000000000, "download_url": "extra", "protocol": "torrent"},
+        {"title": "[Group] Show - 1 [1080p]", "size": 2000000000, "download_url": "wrong-protocol", "protocol": "usenet"},
+        {"title": "[Group] Show - 2 [1080p]", "size": 2000000000, "download_url": "wrong-language", "protocol": "torrent"},
+        {"title": "[Group] Show - 3 FRENCH [1080p]", "size": 2000000000, "download_url": "good", "protocol": "torrent"}
+      ],
+      "expect": {"status": "ok", "assignments": [{"title": "[Group] Show - 3 FRENCH [1080p]", "episode_ids": [13]}]}
+    },
+    {
+      "id": "complete-stable-id-assignment",
+      "context": {
+        "title": "Show", "year": 2020,
+        "episodes": [{"id": 11, "season_number": 1, "episode_number": 1}, {"id": 12, "season_number": 1, "episode_number": 2}, {"id": 13, "season_number": 1, "episode_number": 3}],
+        "mappings": [
+          {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "1", "precedence": "manual", "episode_ids": [11]},
+          {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "2", "precedence": "manual", "episode_ids": [12]},
+          {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "3", "precedence": "manual", "episode_ids": [13]}
+        ]
+      },
+      "wanted_episode_ids": [11, 12, 13],
+      "candidates": [
+        {"title": "[Group] Show - 1-2 [1080p]", "size": 4000000000, "download_url": "pack", "protocol": "torrent"},
+        {"title": "[Group] Show - 3 [1080p]", "size": 2000000000, "download_url": "single", "protocol": "torrent"}
+      ],
+      "expect": {"status": "ok", "assignments": [{"title": "[Group] Show - 1-2 [1080p]", "episode_ids": [11, 12]}, {"title": "[Group] Show - 3 [1080p]", "episode_ids": [13]}]}
+    }
+  ]
 }
