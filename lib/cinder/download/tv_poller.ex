@@ -24,7 +24,8 @@ defmodule Cinder.Download.TvPoller do
   """
   require Logger
 
-  alias Cinder.{Acquisition, Catalog, Download, Library, Notifier}
+  alias Cinder.{Acquisition, Catalog, Download, Library, Notifier, Settings}
+  alias Cinder.Acquisition.AnimePreferences
   alias Cinder.Catalog.Grab
   alias Cinder.HTTPPolicy
 
@@ -291,7 +292,20 @@ defmodule Cinder.Download.TvPoller do
     wanted_ids = Enum.map(episodes, & &1.id)
     context = Catalog.anime_series_acquisition_context(series)
 
-    case Acquisition.best_anime_releases(context, wanted_ids, search_opts(series)) do
+    case AnimePreferences.resolve(series, Settings.anime_defaults()) do
+      {:ok, policy} ->
+        search_anime_with_policy(series, episodes, context, wanted_ids, policy)
+
+      {:error, _reason} ->
+        Logger.info("anime search held for series #{series.id}: invalid preferences")
+        :ok
+    end
+  end
+
+  defp search_anime_with_policy(series, episodes, context, wanted_ids, policy) do
+    opts = search_opts(series) ++ AnimePreferences.selection_opts(policy)
+
+    case Acquisition.best_anime_releases(context, wanted_ids, opts) do
       {:ok, %{assignments: assignments, waiting: waiting}} ->
         grabbed = Enum.flat_map(assignments, &grab_anime_assignment/1)
         held = if waiting, do: waiting.episode_ids, else: []

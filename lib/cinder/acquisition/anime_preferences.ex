@@ -158,6 +158,52 @@ defmodule Cinder.Acquisition.AnimePreferences do
     }
   end
 
+  @doc "Whether positive Anime release evidence does not contradict the resolved policy."
+  def release_allowed?(release, policy), do: verdict(release, policy) == :ok
+
+  @doc "Returns the Anime policy rejection reason used by the manual-search surface."
+  def verdict(release, policy) do
+    cond do
+      group_blocked?(release.group, policy.blocked_groups) ->
+        {:rejected, :blocked_anime_group}
+
+      contradictory_audio?(release, policy.required_audio_languages) ->
+        {:rejected, :contradictory_audio}
+
+      contradictory_subtitles?(release, policy) ->
+        {:rejected, :contradictory_subtitles}
+
+      true ->
+        :ok
+    end
+  end
+
+  @doc "Ascending Anime-only soft preference key; unknown evidence sorts after a positive match."
+  def rank_key(release, policy) do
+    {
+      if(policy.preferred_groups == [] or preferred_group?(release, policy), do: 0, else: 1),
+      if(policy.required_audio_languages == [] or explicit_audio_match?(release, policy),
+        do: 0,
+        else: 1
+      ),
+      if(
+        policy.embedded_subtitle_mode == :allow or policy.subtitle_languages == [] or
+          explicit_subtitle_match?(release, policy),
+        do: 0,
+        else: 1
+      )
+    }
+  end
+
+  @doc "The legacy timing options plus the resolved Anime policy consumed by selection."
+  def selection_opts(policy) do
+    [
+      anime_policy: policy,
+      preferred_groups: policy.preferred_groups,
+      fallback_delay: policy.group_fallback_delay
+    ]
+  end
+
   def normalize_languages(nil), do: []
 
   def normalize_languages(languages) do
@@ -178,6 +224,43 @@ defmodule Cinder.Acquisition.AnimePreferences do
 
   def normalize_group(nil), do: nil
   def normalize_group(group), do: group |> String.trim() |> String.downcase()
+
+  defp group_blocked?(group, blocked), do: normalize_group(group) in blocked
+
+  defp preferred_group?(release, policy),
+    do: normalize_group(release.group) in policy.preferred_groups
+
+  defp contradictory_audio?(%{audio_claim_complete?: true} = release, required)
+       when required != [] do
+    not Enum.all?(required, &Language.audio_satisfies?(&1, release.audio_languages || []))
+  end
+
+  defp contradictory_audio?(_release, _required), do: false
+
+  defp contradictory_subtitles?(release, %{embedded_subtitle_mode: :require} = policy) do
+    release.embedded_subtitle_claim == :absent or
+      (release.embedded_subtitle_claim == :present and
+         release.embedded_subtitle_languages != [] and
+         not Enum.any?(policy.subtitle_languages, fn wanted ->
+           Language.audio_satisfies?(wanted, release.embedded_subtitle_languages)
+         end))
+  end
+
+  defp contradictory_subtitles?(_release, _policy), do: false
+
+  defp explicit_audio_match?(release, policy) do
+    release.audio_claim_complete? and
+      Enum.all?(policy.required_audio_languages, fn wanted ->
+        Language.audio_satisfies?(wanted, release.audio_languages || [])
+      end)
+  end
+
+  defp explicit_subtitle_match?(release, policy) do
+    release.embedded_subtitle_claim == :present and
+      Enum.any?(policy.subtitle_languages, fn wanted ->
+        Language.audio_satisfies?(wanted, release.embedded_subtitle_languages || [])
+      end)
+  end
 
   defp enum_override(value, _modes, _error) when value in [nil, "", "inherit"], do: {:ok, nil}
 

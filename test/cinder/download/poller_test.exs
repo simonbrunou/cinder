@@ -19,6 +19,36 @@ defmodule Cinder.Download.PollerTest do
   import Cinder.LibraryStubs
   import Cinder.PollerHelpers
 
+  defmodule OutputCloseErrorFile do
+    @moduledoc false
+
+    def open(path, modes) do
+      case :file.open(path, modes) do
+        {:ok, io} = opened ->
+          if :write in modes, do: Process.put({__MODULE__, :output}, io)
+          opened
+
+        error ->
+          error
+      end
+    end
+
+    defdelegate read(io, count), to: :file
+    defdelegate write(io, bytes), to: :file
+    defdelegate read_file_info(io), to: :file
+
+    def close(io) do
+      result = :file.close(io)
+
+      if io == Process.get({__MODULE__, :output}) do
+        Process.delete({__MODULE__, :output})
+        {:error, :enospc}
+      else
+        result
+      end
+    end
+  end
+
   # The poller runs in its own process (and a fresh pid after a crash), so the
   # mock must be global. Shared Sandbox (async: false) lets those processes use
   # the test-owned DB connection.
@@ -1027,7 +1057,7 @@ defmodule Cinder.Download.PollerTest do
     Application.put_env(
       :cinder,
       :exclusive_copy_file_module,
-      Cinder.Library.Filesystem.DiskTest.OutputCloseErrorFile
+      OutputCloseErrorFile
     )
 
     assert {:error, :enospc} = Cinder.Library.stage_movie(movie)
@@ -1455,6 +1485,81 @@ defmodule Cinder.Download.PollerTest do
     assert :ok = Poller.poll()
     assert :ok = Poller.poll()
     assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
+  end
+
+  test "an Anime movie waits for its preferred group without client I/O or an attempt bump" do
+    movie =
+      movie_fixture(%{
+        title: "Inception",
+        year: 2010,
+        imdb_id: "tt-anime-wait",
+        media_profile: :anime
+      })
+      |> Movie.anime_preferences_changeset(%{
+        audio_mode: :any,
+        preferred_release_groups: ["subsplease"],
+        group_fallback_delay: 3_600
+      })
+      |> Repo.update!()
+
+    release = %{
+      title: "[Other] Inception 2010 [1080p]",
+      size: 2_000_000_000,
+      download_url: "anime-movie-wait",
+      published_at: DateTime.utc_now(:second)
+    }
+
+    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt-anime-wait" -> {:ok, [release]} end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _query, categories: [5070] ->
+      {:ok, [release]}
+    end)
+
+    adds = start_supervised!({Agent, fn -> 0 end})
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+      Agent.update(adds, &(&1 + 1))
+      {:ok, "unexpected-anime-movie"}
+    end)
+
+    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+    assert :ok = Poller.poll()
+
+    assert %Movie{status: :searching, search_attempts: 0} = Repo.get!(Movie, movie.id)
+    assert Agent.get(adds, & &1) == 0
+  end
+
+  test "invalid Anime movie preferences hold without searching or consuming attempts" do
+    movie =
+      movie_fixture(%{
+        title: "Invalid Anime",
+        year: 2020,
+        imdb_id: "tt-anime-invalid",
+        media_profile: :anime
+      })
+      |> Movie.anime_preferences_changeset(%{
+        embedded_subtitle_mode: :require,
+        subtitle_languages: []
+      })
+      |> Repo.update!()
+
+    searches = start_supervised!({Agent, fn -> 0 end})
+
+    stub(Cinder.Acquisition.IndexerMock, :search, fn _imdb_id ->
+      Agent.update(searches, &(&1 + 1))
+      {:ok, []}
+    end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _query, _opts ->
+      Agent.update(searches, &(&1 + 1))
+      {:ok, []}
+    end)
+
+    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+    assert :ok = Poller.poll()
+
+    assert %Movie{status: :searching, search_attempts: 0} = Repo.get!(Movie, movie.id)
+    assert Agent.get(searches, & &1) == 0
   end
 
   test "a persistently transient search error parks :search_failed after max attempts" do

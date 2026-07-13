@@ -709,7 +709,46 @@ defmodule Cinder.Catalog do
   all). `create_grab/5` itself skips any episode that already has a grab, so a concurrent sweep grab
   can't be double-linked. `{:error, :nothing_wanted}` when the season has nothing to grab.
   """
-  def manual_grab_tv(%Series{id: series_id}, season_number, %Release{} = release) do
+  def manual_grab_tv(%Series{} = series, season_number, %Release{} = release) do
+    case media_profile_summary(series).effective do
+      :anime -> manual_grab_anime_tv(series, season_number, release)
+      :standard -> manual_grab_standard_tv(series, season_number, release)
+    end
+  end
+
+  defp manual_grab_anime_tv(
+         %Series{id: series_id},
+         season_number,
+         %Release{} = release
+       ) do
+    wanted_ids =
+      wanted_episodes()
+      |> Enum.filter(
+        &(&1.season.series.id == series_id and &1.season.season_number == season_number)
+      )
+      |> Enum.map(& &1.id)
+
+    with true <- safe_anime_mapping?(release),
+         true <- MapSet.subset?(MapSet.new(release.resolved_episode_ids), MapSet.new(wanted_ids)) do
+      case grab_and_create_grab(release, release.resolved_episode_ids) do
+        {:error, :invalid_mapping_snapshot} -> {:error, :unsafe_anime_mapping}
+        result -> result
+      end
+    else
+      false -> {:error, :unsafe_anime_mapping}
+    end
+  end
+
+  defp safe_anime_mapping?(%Release{
+         resolved_episode_ids: ids,
+         mapping_snapshot: %{"version" => 2, "reserved_episode_ids" => reserved}
+       })
+       when is_list(ids) and ids != [],
+       do: ids == reserved
+
+  defp safe_anime_mapping?(_release), do: false
+
+  defp manual_grab_standard_tv(%Series{id: series_id}, season_number, %Release{} = release) do
     wanted =
       wanted_episodes()
       |> Enum.filter(

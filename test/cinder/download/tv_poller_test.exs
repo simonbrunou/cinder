@@ -131,6 +131,86 @@ defmodule Cinder.Download.TvPollerTest do
     assert Agent.get(counter, & &1) == 5
   end
 
+  test "Anime preferred-group waiting holds only uncovered IDs without consuming attempts" do
+    series =
+      series_fixture(%{
+        tvdb_id: 99,
+        monitor_strategy: :all,
+        media_profile: :anime,
+        audio_mode: :any,
+        preferred_release_groups: ["subsplease"],
+        group_fallback_delay: 3_600
+      })
+
+    season = season_fixture(series, %{season_number: 1})
+    first = episode(season, 1)
+    second = episode(season, 2)
+
+    releases = [
+      %{
+        title: "[SubsPlease] Show S01E01 [1080p]",
+        size: 2_000_000_000,
+        download_url: "preferred-one"
+      },
+      %{
+        title: "[Other] Show S01E02 [1080p]",
+        size: 2_000_000_000,
+        download_url: "delayed-two",
+        published_at: DateTime.utc_now(:second)
+      }
+    ]
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 -> {:ok, releases} end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, categories: [5070] ->
+      {:ok, releases}
+    end)
+
+    adds = start_supervised!({Agent, fn -> 0 end})
+
+    stub(Cinder.Download.ClientMock, :add, fn release, _opts ->
+      Agent.update(adds, &(&1 + 1))
+      {:ok, "grab-#{release.download_url}"}
+    end)
+
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+    assert :ok = TvPoller.poll()
+
+    assert Repo.get!(Episode, first.id).grab_id
+    assert %Episode{grab_id: nil, search_attempts: 0} = Repo.get!(Episode, second.id)
+    assert Agent.get(adds, & &1) == 1
+  end
+
+  test "invalid Anime series preferences hold the group without search or attempt bumps" do
+    series =
+      series_fixture(%{
+        tvdb_id: 99,
+        monitor_strategy: :all,
+        media_profile: :anime,
+        embedded_subtitle_mode: :require,
+        subtitle_languages: []
+      })
+
+    wanted = episode(season_fixture(series), 1)
+    searches = start_supervised!({Agent, fn -> 0 end})
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
+      Agent.update(searches, &(&1 + 1))
+      {:ok, []}
+    end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, _opts ->
+      Agent.update(searches, &(&1 + 1))
+      {:ok, []}
+    end)
+
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+    assert :ok = TvPoller.poll()
+
+    assert %Episode{grab_id: nil, search_attempts: 0} = Repo.get!(Episode, wanted.id)
+    assert Agent.get(searches, & &1) == 0
+  end
+
   test "restart reconciliation creates one snapshot grab with every reserved episode" do
     series = series_fixture(%{monitor_strategy: :all, media_profile: :anime})
     first = episode(season_fixture(series, %{season_number: 1}), 25)

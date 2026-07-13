@@ -13,8 +13,8 @@ defmodule Cinder.Download do
   import Ecto.Query
 
   require Logger
-  alias Cinder.{Acquisition, Catalog, Notifier, Repo, Vault}
-  alias Cinder.Acquisition.Release
+  alias Cinder.{Acquisition, Catalog, Notifier, Repo, Settings, Vault}
+  alias Cinder.Acquisition.{AnimePreferences, Release}
   alias Cinder.Catalog.{Grab, Movie}
   alias Cinder.Download.{Intent, IntentEpisode}
 
@@ -683,7 +683,7 @@ defmodule Cinder.Download do
         case Catalog.media_profile_summary(movie).effective do
           :anime ->
             context = Catalog.anime_movie_acquisition_context(movie)
-            Acquisition.best_anime_movie(imdb_id, context, opts)
+            anime_movie_result(movie, imdb_id, context, opts)
 
           :standard ->
             Acquisition.best_release(imdb_id, opts)
@@ -699,12 +699,30 @@ defmodule Cinder.Download do
         :no_language_match ->
           park_no_language(movie)
 
+        {:waiting_for_preferred_group, %{retry_at: retry_at}} ->
+          Logger.info("movie #{movie.id} waiting for preferred anime group until #{retry_at}")
+          {:ok, movie}
+
         {:error, _} = err ->
           err
       end
     else
       :no_imdb_id -> {:error, :no_imdb_id}
       {:error, _} = err -> err
+    end
+  end
+
+  defp anime_movie_result(movie, imdb_id, context, opts) do
+    case AnimePreferences.resolve(movie, Settings.anime_defaults()) do
+      {:ok, policy} ->
+        Acquisition.best_anime_movie(
+          imdb_id,
+          context,
+          opts ++ AnimePreferences.selection_opts(policy)
+        )
+
+      {:error, _reason} ->
+        {:error, :invalid_anime_preferences}
     end
   end
 

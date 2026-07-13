@@ -122,6 +122,39 @@ defmodule CinderWeb.ManualSearchComponentTest do
     refute html =~ "phx-value-index"
   end
 
+  test "Anime policy verdicts stay overridable while unsafe mappings are not grabbable" do
+    html =
+      render_panel(%{
+        mode: :tv,
+        target: %Series{id: 1, title: "Anime", media_profile: :anime},
+        season_number: 0,
+        results: [
+          {%Release{title: "Blocked", resolution: "1080p", protocol: :torrent},
+           {:rejected, :blocked_anime_group}},
+          {%Release{title: "Audio", resolution: "1080p", protocol: :torrent},
+           {:rejected, :contradictory_audio}},
+          {%Release{title: "Subtitles", resolution: "1080p", protocol: :torrent},
+           {:rejected, :contradictory_subtitles}},
+          {%Release{title: "Waiting", resolution: "1080p", protocol: :torrent},
+           {:rejected, :awaiting_preferred_group}},
+          {%Release{title: "Undated", resolution: "1080p", protocol: :torrent},
+           {:rejected, :publication_time_required}},
+          {%Release{title: "Unresolved", resolution: "1080p", protocol: :torrent},
+           {:rejected, :unsafe_anime_mapping}}
+        ]
+      })
+
+    assert html =~ "blocked anime group"
+    assert html =~ "contradictory audio"
+    assert html =~ "contradictory subtitles"
+    assert html =~ "awaiting preferred group"
+    assert html =~ "publication time required"
+    assert html =~ "stable episode mapping required"
+
+    for index <- 0..4, do: assert(html =~ ~s(phx-value-index="#{index}"))
+    refute html =~ ~s(phx-value-index="5")
+  end
+
   # FIX 1: an empty TV indexer result is "no releases found", not "season complete". The component
   # can't tell the two apart, so it must not claim the season is complete (the parent only offers
   # manual search for seasons that still have wanted episodes).

@@ -6,7 +6,7 @@ defmodule Cinder.Acquisition do
   resolved from config (`config :cinder, :indexer`) so tests use a Mox mock and
   never hit the network.
   """
-  alias Cinder.Acquisition.Anime
+  alias Cinder.Acquisition.{Anime, AnimePreferences}
   alias Cinder.Acquisition.Language
   alias Cinder.Acquisition.Release
   alias Cinder.Acquisition.Scorer
@@ -143,6 +143,25 @@ defmodule Cinder.Acquisition do
     end
   end
 
+  @doc "Lists Anime movie releases with manual, overridable policy verdicts."
+  def list_anime_movie_releases(imdb_id, context, opts) do
+    with {:ok, releases, _failed?} <- Anime.search_movie(indexer(), imdb_id, context, opts) do
+      {:ok, releases |> Anime.manual_movie_candidates(opts) |> annotate(opts)}
+    end
+  end
+
+  @doc "Lists Anime episode releases with frozen stable-ID mappings when resolvable."
+  def list_anime_episode_releases(context, wanted_ids, opts) do
+    with {:ok, releases, _failed?} <- Anime.search_episodes(indexer(), context, wanted_ids, opts) do
+      manual_opts = Keyword.put(opts, :manual_anime_tv, true)
+
+      {:ok,
+       releases
+       |> Anime.manual_episode_candidates(context, wanted_ids, opts)
+       |> annotate(manual_opts)}
+    end
+  end
+
   defp annotate(releases, opts) do
     protocols = Keyword.get(opts, :protocols)
 
@@ -152,12 +171,63 @@ defmodule Cinder.Acquisition do
   end
 
   defp release_verdict(%Release{} = release, protocols, opts) do
-    if is_list(protocols) and not is_nil(release.protocol) and release.protocol not in protocols do
-      {:rejected, :wrong_protocol}
-    else
-      Scorer.verdict(release, opts)
+    cond do
+      is_list(protocols) and not is_nil(release.protocol) and release.protocol not in protocols ->
+        {:rejected, :wrong_protocol}
+
+      Keyword.get(opts, :manual_anime_tv, false) and not safe_anime_mapping?(release) ->
+        {:rejected, :unsafe_anime_mapping}
+
+      policy = Keyword.get(opts, :anime_policy) ->
+        anime_manual_verdict(release, policy, opts)
+
+      true ->
+        Scorer.verdict(release, opts)
     end
   end
+
+  defp anime_manual_verdict(release, policy, opts) do
+    case AnimePreferences.verdict(release, policy) do
+      :ok -> anime_timing_verdict(release, policy, opts)
+      rejection -> rejection
+    end
+  end
+
+  defp anime_timing_verdict(release, %{preferred_groups: []}, opts),
+    do: Scorer.verdict(release, opts)
+
+  defp anime_timing_verdict(release, policy, opts) do
+    if AnimePreferences.normalize_group(release.group) in policy.preferred_groups do
+      Scorer.verdict(release, opts)
+    else
+      fallback_timing_verdict(release, policy, opts)
+    end
+  end
+
+  defp fallback_timing_verdict(
+         %Release{published_at: %DateTime{} = published_at} = release,
+         policy,
+         opts
+       ) do
+    retry_at = DateTime.add(published_at, policy.group_fallback_delay, :second)
+    now = Keyword.get_lazy(opts, :now, &DateTime.utc_now/0)
+
+    if DateTime.compare(retry_at, now) == :gt,
+      do: {:rejected, :awaiting_preferred_group},
+      else: Scorer.verdict(release, opts)
+  end
+
+  defp fallback_timing_verdict(_release, _policy, _opts),
+    do: {:rejected, :publication_time_required}
+
+  defp safe_anime_mapping?(%Release{
+         resolved_episode_ids: ids,
+         mapping_snapshot: %{"version" => 2, "reserved_episode_ids" => reserved}
+       })
+       when is_list(ids) and ids != [],
+       do: ids == reserved
+
+  defp safe_anime_mapping?(_release), do: false
 
   # Resolve the candidate pool a language preference scores against. An explicit-language pick
   # (french) with nothing satisfying it returns :no_language_match so the caller parks visibly;

@@ -29,6 +29,11 @@ defmodule Cinder.Acquisition.Release do
     :codec,
     :group,
     :language,
+    :audio_languages,
+    :audio_claim_complete?,
+    :embedded_subtitle_languages,
+    :embedded_subtitle_claim,
+    :release_policy_snapshot,
     :season,
     :episodes
   ]

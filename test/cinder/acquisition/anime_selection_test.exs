@@ -3,18 +3,26 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
 
   import Mox
 
-  alias Cinder.Acquisition.Anime
+  alias Cinder.Acquisition.{Anime, AnimePreferences}
   alias Cinder.Acquisition.IndexerMock
   alias Cinder.Acquisition.Release
+  alias Cinder.Acquisition.Scorer
 
   @fixture_path "test/support/fixtures/anime/acquisition-v1.json"
+  @preferences_fixture_path "test/support/fixtures/anime/preferences-v1.json"
 
   setup :verify_on_exit!
 
   setup_all do
     fixture = @fixture_path |> File.read!() |> Jason.decode!()
+    preferences_fixture = @preferences_fixture_path |> File.read!() |> Jason.decode!()
     assert fixture["version"] == 1
-    %{cases: fixture["selection_cases"]}
+    assert preferences_fixture["version"] == 1
+
+    %{
+      cases: fixture["selection_cases"],
+      preference_cases: preferences_fixture["cases"]
+    }
   end
 
   test "satisfies every versioned stable-ID selection case", %{cases: cases} do
@@ -63,7 +71,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     assert :no_match = Anime.select_episodes([release], context, [1], [])
   end
 
-  test "overlap components wait as a whole for a delayed covering pack" do
+  test "overlap components report only IDs not covered by an eligible release" do
     now = ~U[2026-07-13 12:00:00Z]
     context = absolute_context(1..12)
 
@@ -77,15 +85,18 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
         )
       )
 
-    assert {:waiting_for_preferred_group,
-            %{episode_ids: episode_ids, retry_at: ~U[2026-07-14 12:00:00Z]}} =
+    assert {:ok,
+            %{
+              assignments: [%{episode_ids: [1]}],
+              waiting: %{episode_ids: episode_ids, retry_at: ~U[2026-07-14 12:00:00Z]}
+            }} =
              Anime.select_episodes([preferred, delayed], context, Enum.to_list(1..12),
                preferred_groups: [" trusted "],
                fallback_delay: 86_400,
                now: now
              )
 
-    assert episode_ids == Enum.to_list(1..12)
+    assert episode_ids == Enum.to_list(2..12)
   end
 
   test "selected assignments carry the same full-closure snapshot on both markers" do
@@ -184,6 +195,224 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     expect(IndexerMock, :search_tv_query, 2, fn _query, categories: [5070] -> {:ok, []} end)
 
     assert {:error, :incomplete_search} = Anime.best_episodes(IndexerMock, context, [11], [])
+  end
+
+  test "blocked groups are removed before stable-ID cover and one release freezes regular plus episode-zero IDs",
+       %{preference_cases: cases} do
+    context = preference_context()
+    blocked = preference_release(cases, "blocked")
+    preferred = preference_release(cases, "episode-preferred")
+    policy = policy(blocked_groups: ["badgroup"])
+
+    assert {:ok, %{assignments: [assignment], waiting: nil}} =
+             Anime.select_episodes(
+               [blocked, preferred],
+               context,
+               [11, 12],
+               AnimePreferences.selection_opts(policy)
+             )
+
+    assert assignment.release.group == "SubsPlease"
+    assert assignment.episode_ids == [11, 12]
+    assert assignment.release.resolved_episode_ids == [11, 12]
+    assert assignment.mapping_snapshot["version"] == 2
+    assert assignment.mapping_snapshot["reserved_episode_ids"] == [11, 12]
+  end
+
+  test "Anime movie selection applies the same hard policy without changing Standard scoring", %{
+    preference_cases: cases
+  } do
+    blocked =
+      Release.new(%{
+        title: "[BadGroup] Suzume 2022 [1080p] [JA Audio] [FR Subs]",
+        size: 2_000_000_000,
+        download_url: "blocked-movie",
+        published_at: ~U[2026-07-13 12:00:00Z]
+      })
+
+    preferred = preference_release(cases, "movie-preferred")
+
+    policy =
+      policy(
+        required_audio_languages: ["ja"],
+        embedded_subtitle_mode: :require,
+        subtitle_languages: ["fr"],
+        blocked_groups: ["badgroup"]
+      )
+
+    assert {:ok, %Release{title: "[SubsPlease] Suzume 2022 [1080p] [JA Audio] [FR Subs]"}} =
+             Anime.select_movie(
+               [blocked, preferred],
+               AnimePreferences.selection_opts(policy)
+             )
+  end
+
+  test "a complete contradictory audio claim is rejected while unknown evidence survives", %{
+    preference_cases: cases
+  } do
+    policy = policy(required_audio_languages: ["ja"])
+
+    assert {:ok, %{assignments: [%{release: selected}]}} =
+             Anime.select_episodes(
+               [
+                 preference_release(cases, "dub-only"),
+                 preference_release(cases, "unknown-undated")
+               ],
+               preference_context(),
+               [11, 12],
+               AnimePreferences.selection_opts(policy)
+             )
+
+    assert selected.group == "Mystery"
+  end
+
+  test "RAW is contradictory only when embedded subtitles are required", %{
+    preference_cases: cases
+  } do
+    release = preference_release(cases, "raw")
+    context = preference_context()
+
+    assert :no_match =
+             Anime.select_episodes(
+               [release],
+               context,
+               [11, 12],
+               AnimePreferences.selection_opts(
+                 policy(embedded_subtitle_mode: :require, subtitle_languages: ["fr"])
+               )
+             )
+
+    assert {:ok, %{assignments: [_]}} =
+             Anime.select_episodes(
+               [release],
+               context,
+               [11, 12],
+               AnimePreferences.selection_opts(policy(embedded_subtitle_mode: :allow))
+             )
+  end
+
+  test "preferred group wins the soft rank after a fallback becomes eligible", %{
+    preference_cases: cases
+  } do
+    policy = policy(preferred_groups: ["subsplease"], group_fallback_delay: 3_600)
+    opts = AnimePreferences.selection_opts(policy) ++ [now: ~U[2026-07-13 13:00:00Z]]
+
+    assert {:ok, %{assignments: [%{release: selected}]}} =
+             Anime.select_episodes(
+               [
+                 preference_release(cases, "episode-fallback"),
+                 preference_release(cases, "episode-preferred")
+               ],
+               preference_context(),
+               [11, 12],
+               opts
+             )
+
+    assert selected.group == "SubsPlease"
+  end
+
+  test "fallback eligibility starts at the exact published_at plus delay boundary", %{
+    preference_cases: cases
+  } do
+    policy = policy(preferred_groups: ["subsplease"], group_fallback_delay: 3_600)
+    release = preference_release(cases, "episode-fallback")
+
+    assert {:waiting_for_preferred_group,
+            %{episode_ids: [11, 12], retry_at: ~U[2026-07-13 13:00:00Z]}} =
+             Anime.select_episodes(
+               [release],
+               preference_context(),
+               [11, 12],
+               AnimePreferences.selection_opts(policy) ++ [now: ~U[2026-07-13 12:59:59Z]]
+             )
+
+    assert {:ok, %{assignments: [_], waiting: nil}} =
+             Anime.select_episodes(
+               [release],
+               preference_context(),
+               [11, 12],
+               AnimePreferences.selection_opts(policy) ++ [now: ~U[2026-07-13 13:00:00Z]]
+             )
+  end
+
+  test "undated candidates are automatic-omitted but manual-visible with exact stable IDs", %{
+    preference_cases: cases
+  } do
+    release = preference_release(cases, "unknown-undated")
+    context = preference_context()
+    policy = policy(preferred_groups: ["subsplease"])
+    opts = AnimePreferences.selection_opts(policy)
+
+    assert :no_match = Anime.select_episodes([release], context, [11, 12], opts)
+
+    assert [manual] = Anime.manual_episode_candidates([release], context, [11, 12], opts)
+    assert manual.resolved_episode_ids == [11, 12]
+    assert manual.mapping_snapshot["version"] == 2
+    assert manual.mapping_snapshot["reserved_episode_ids"] == [11, 12]
+
+    invalid = %{
+      release
+      | title: "[Mystery] Frieren - 29 [1080p] invalid-date",
+        published_at: "bad"
+    }
+
+    assert :no_match = Anime.select_episodes([invalid], context, [11, 12], opts)
+
+    assert [%Release{title: title}] =
+             Anime.manual_episode_candidates([invalid], context, [11, 12], opts)
+
+    assert title =~ "invalid-date"
+  end
+
+  test "stable-ID coverage dominates Anime rank and Standard order remains resolution then source then size" do
+    wanted = [11, 12]
+    policy = policy(preferred_groups: ["preferred"])
+
+    covering_two = %Release{
+      title: "two",
+      group: "other",
+      size: 2,
+      resolution: "1080p",
+      resolved_episode_ids: wanted
+    }
+
+    covering_one = %Release{
+      title: "one",
+      group: "preferred",
+      size: 2,
+      resolution: "1080p",
+      resolved_episode_ids: [11]
+    }
+
+    assert {:ok, [{^covering_two, ^wanted}]} =
+             Scorer.select_for_ids(
+               [covering_one, covering_two],
+               wanted,
+               anime_policy: policy,
+               preferred_resolutions: ["1080p"]
+             )
+
+    releases = [
+      %Release{title: "larger", resolution: "720p", source: "webdl", size: 3},
+      %Release{title: "source", resolution: "1080p", source: "bluray", size: 2},
+      %Release{title: "resolution", resolution: "1080p", source: "webdl", size: 1}
+    ]
+
+    assert {:ok, %Release{title: "resolution"}} =
+             Scorer.select(releases,
+               preferred_resolutions: ["1080p", "720p"],
+               preferred_sources: ["webdl", "bluray"]
+             )
+
+    assert {:ok, %Release{title: "larger"}} =
+             Scorer.select(
+               [
+                 %Release{title: "smaller", resolution: "1080p", source: "webdl", size: 1},
+                 %Release{title: "larger", resolution: "1080p", source: "webdl", size: 2}
+               ],
+               preferred_resolutions: ["1080p"],
+               preferred_sources: ["webdl"]
+             )
   end
 
   defp result_for_fixture(:no_match), do: %{"status" => "no_match", "assignments" => []}
@@ -298,6 +527,53 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
         published_at: nil
       },
       Map.new(attrs)
+    )
+  end
+
+  defp preference_release(cases, id) do
+    fixture_case = Enum.find(cases, &(&1["id"] == id))
+
+    Release.new(%{
+      title: fixture_case["title"],
+      size: 2_000_000_000,
+      download_url: id,
+      protocol: :torrent,
+      published_at: parse_datetime(fixture_case["published_at"])
+    })
+  end
+
+  defp parse_datetime(nil), do: nil
+
+  defp parse_datetime(value) do
+    {:ok, datetime, 0} = DateTime.from_iso8601(value)
+    datetime
+  end
+
+  defp preference_context do
+    %{
+      kind: :series,
+      title: "Frieren",
+      year: 2023,
+      tvdb_id: 99,
+      aliases: [],
+      episodes: [episode(11, 1, 29), episode(12, 0, 0)],
+      mappings: [mapping("fixture", "absolute", "main", "29", [11, 12])]
+    }
+  end
+
+  defp policy(overrides) do
+    Map.merge(
+      %{
+        audio_mode: :any,
+        required_audio_languages: [],
+        subtitle_languages: [],
+        embedded_subtitle_mode: :allow,
+        preferred_groups: [],
+        blocked_groups: [],
+        group_fallback_delay: 0,
+        provenance: %{}
+      },
+      Map.new(overrides)
     )
   end
 

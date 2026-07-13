@@ -75,8 +75,17 @@ defmodule Cinder.Download.Poller do
       {:error, :stale_status} ->
         :ok
 
+      {:error, :invalid_anime_preferences} ->
+        Logger.info("movie #{movie.id} search held: invalid anime preferences")
+        :ok
+
       {:error, reason}
-      when reason in [:intent_backoff, :cleanup_pending, :download_intent_busy, :intent_completed] ->
+      when reason in [
+             :intent_backoff,
+             :cleanup_pending,
+             :download_intent_busy,
+             :intent_completed
+           ] ->
         :ok
 
       {:error, :no_imdb_id} ->

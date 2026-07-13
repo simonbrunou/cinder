@@ -25,7 +25,7 @@ defmodule Cinder.Acquisition.Scorer do
   settings-store band via `Cinder.Acquisition.band_opts/1`. Returns `{:ok, release}`
   or `:no_match` when none survive the filters.
   """
-  alias Cinder.Acquisition.Release
+  alias Cinder.Acquisition.{AnimePreferences, Release}
 
   @default_preferred ["1080p", "720p"]
 
@@ -43,7 +43,7 @@ defmodule Cinder.Acquisition.Scorer do
     |> Enum.filter(&within_band?(&1, min_size, max_size))
     |> Enum.reject(&title_blocked?(&1, release_blocklist))
     |> Enum.filter(&(allowed_resolution?(&1, preferred) and allowed_source?(&1, sources)))
-    |> pick_best(preferred, sources)
+    |> pick_best(opts)
   end
 
   @doc """
@@ -77,7 +77,7 @@ defmodule Cinder.Acquisition.Scorer do
     |> Enum.filter(&(&1.season == season))
     |> Enum.reject(&title_blocked?(&1, release_blocklist))
     |> Enum.filter(&(allowed_resolution?(&1, preferred) and allowed_source?(&1, sources)))
-    |> cover(MapSet.new(wanted_episodes), [], band, &coverage/2)
+    |> cover(MapSet.new(wanted_episodes), [], band, &coverage/2, opts)
   end
 
   @doc """
@@ -95,7 +95,7 @@ defmodule Cinder.Acquisition.Scorer do
       releases
       |> Enum.reject(&title_blocked?(&1, release_blocklist))
       |> Enum.filter(&(allowed_resolution?(&1, preferred) and allowed_source?(&1, sources)))
-      |> cover(MapSet.new(wanted_ids), [], band, &id_coverage/2)
+      |> cover(MapSet.new(wanted_ids), [], band, &id_coverage/2, opts)
 
     restore_id_order(result)
   end
@@ -139,6 +139,10 @@ defmodule Cinder.Acquisition.Scorer do
   defp episodes_multiplier(%Release{episodes: eps}, _opts) when is_list(eps) and eps != [],
     do: length(eps)
 
+  defp episodes_multiplier(%Release{resolved_episode_ids: ids}, _opts)
+       when is_list(ids) and ids != [],
+       do: length(ids)
+
   defp episodes_multiplier(%Release{season: season}, opts) when not is_nil(season),
     do: Keyword.get(opts, :pack_episode_count) || 1
 
@@ -150,7 +154,14 @@ defmodule Cinder.Acquisition.Scorer do
   @doc "The ascending sort key `select/2` ranks by (resolution → source → larger size). Best sorts first."
   def rank_key(%Release{} = release, opts \\ []) do
     {_min, _max, preferred, sources, _rbl} = rules(opts)
-    sort_key(release, preferred, sources)
+    {anime_rank_key(release, opts), sort_key(release, preferred, sources)}
+  end
+
+  defp anime_rank_key(release, opts) do
+    case Keyword.get(opts, :anime_policy) do
+      nil -> {0, 0, 0}
+      policy -> AnimePreferences.rank_key(release, policy)
+    end
   end
 
   # The normalized rule set, shared by both entry points: the size band, the
@@ -167,7 +178,7 @@ defmodule Cinder.Acquisition.Scorer do
     }
   end
 
-  defp cover(candidates, needed, chosen, band, coverage_fun) do
+  defp cover(candidates, needed, chosen, band, coverage_fun, opts) do
     {min_size, max_size, _preferred, _sources} = band
 
     scored =
@@ -186,12 +197,16 @@ defmodule Cinder.Acquisition.Scorer do
 
     case scored do
       [] -> if chosen == [], do: :no_match, else: {:ok, Enum.reverse(chosen)}
-      _ -> take_best(scored, candidates, needed, chosen, band, coverage_fun)
+      _ -> take_best(scored, candidates, needed, chosen, band, coverage_fun, opts)
     end
   end
 
-  defp take_best(scored, candidates, needed, chosen, band, coverage_fun) do
-    {pick, cov} = Enum.max_by(scored, fn {release, cov} -> greedy_key(release, cov, band) end)
+  defp take_best(scored, candidates, needed, chosen, band, coverage_fun, opts) do
+    {pick, cov} =
+      Enum.min_by(scored, fn {release, coverage} ->
+        {-MapSet.size(coverage), rank_key(release, opts)}
+      end)
+
     covered = cov |> MapSet.to_list() |> Enum.sort()
 
     cover(
@@ -199,7 +214,8 @@ defmodule Cinder.Acquisition.Scorer do
       MapSet.difference(needed, cov),
       [{pick, covered} | chosen],
       band,
-      coverage_fun
+      coverage_fun,
+      opts
     )
   end
 
@@ -218,12 +234,6 @@ defmodule Cinder.Acquisition.Scorer do
   end
 
   defp restore_id_order(:no_match), do: :no_match
-
-  # max_by: more coverage wins; ties go to the more-preferred resolution, then source, then larger size.
-  defp greedy_key(%Release{} = release, cov, {_min, _max, preferred, sources}) do
-    {MapSet.size(cov), -resolution_rank(release, preferred), -source_rank(release, sources),
-     release.size || 0}
-  end
 
   # A release whose indexer omits the size is unsizeable: accept it only when there's no band to
   # enforce. This closes the "0 ≤ max" hole — `size = release.size || 0` used to let an unknown
@@ -279,10 +289,9 @@ defmodule Cinder.Acquisition.Scorer do
   defp allowed_source?(%Release{source: nil}, _preferred), do: true
   defp allowed_source?(%Release{source: source}, preferred), do: source in preferred
 
-  defp pick_best([], _preferred, _sources), do: :no_match
+  defp pick_best([], _opts), do: :no_match
 
-  defp pick_best(releases, preferred, sources),
-    do: {:ok, Enum.min_by(releases, &sort_key(&1, preferred, sources))}
+  defp pick_best(releases, opts), do: {:ok, Enum.min_by(releases, &rank_key(&1, opts))}
 
   defp sort_key(%Release{} = release, preferred, sources) do
     {resolution_rank(release, preferred), source_rank(release, sources), -(release.size || 0)}
