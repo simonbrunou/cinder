@@ -155,58 +155,54 @@ defmodule Cinder.Download.IntentTest do
     end
   end
 
-  test "grab_episodes holds every non-nil mapping marker before reservation lookup" do
+  test "grab_episodes submits a snapshot release and creates one exact-all grab" do
     fixture = anime_reservation_fixture()
 
-    assert {:error, :anime_import_not_ready} =
+    expect(Cinder.Download.ClientMock, :add, fn release, _opts ->
+      assert release.title == fixture.release.title
+      {:ok, "hash-anime-exact-all"}
+    end)
+
+    assert {:ok, %Grab{} = grab} =
              Download.grab_episodes(fixture.release, [fixture.first.id, fixture.second.id])
 
+    assert grab.mapping_snapshot == fixture.snapshot
+
+    assert grab
+           |> Repo.preload(:episodes)
+           |> Map.fetch!(:episodes)
+           |> Enum.map(& &1.id)
+           |> Enum.sort() ==
+             Enum.sort([fixture.first.id, fixture.second.id])
+
     assert Repo.aggregate(Intent, :count) == 0
-
-    unmarked = %{fixture.release | mapping_snapshot: nil}
-
-    assert {:ok, existing} =
-             reserve_episode_intent([fixture.first.id, fixture.second.id], unmarked)
-
-    malformed = %{unmarked | mapping_snapshot: "invalid"}
-
-    assert {:error, :anime_import_not_ready} =
-             Download.grab_episodes(malformed, [fixture.first.id, fixture.second.id])
-
-    assert Repo.reload(existing).status == :reserved
-    assert Repo.aggregate(IntentEpisode, :count) == 2
+    assert Repo.aggregate(IntentEpisode, :count) == 0
   end
 
-  test "snapshot intents cannot submit or reconcile, while cleanup remains operable" do
+  test "snapshot ownership conflict leaves the remote download fenced for cleanup" do
     fixture = anime_reservation_fixture()
     assert {:ok, intent} = reserve_anime_intent(fixture)
 
-    assert {:error, :anime_import_not_ready} = Download.submit_intent(intent)
-
     submitted =
       intent
-      |> Intent.changeset(%{status: :submitted, remote_id: "hash-anime-held"})
+      |> Intent.changeset(%{status: :submitted, remote_id: "hash-anime-conflict"})
       |> Repo.update!()
 
-    assert {:error, :anime_import_not_ready} = Download.reconcile_intent(submitted)
+    assert {:ok, other} =
+             Catalog.create_grab("hash-other-owner", :torrent, [fixture.second.id])
 
-    held = Repo.reload(submitted)
-    assert held.status == :submitted
-    assert held.remote_id == "hash-anime-held"
-    assert held.mapping_snapshot == fixture.snapshot
-    assert Repo.aggregate(IntentEpisode, :count) == 2
-    assert Repo.aggregate(Grab, :count) == 0
+    expect(Cinder.Download.ClientMock, :remove, fn "hash-anime-conflict", delete_files: true ->
+      {:error, :timeout}
+    end)
 
-    cleanup =
-      held
-      |> Intent.changeset(%{status: :cleanup_pending, remote_id: "hash-anime-cleanup"})
-      |> Repo.update!()
+    assert {:error, :no_episodes_linked} = Download.reconcile_intent(submitted)
 
-    expect(Cinder.Download.ClientMock, :remove, fn "hash-anime-cleanup", _opts -> :ok end)
+    assert %Intent{status: :cleanup_pending, remote_id: "hash-anime-conflict"} =
+             Repo.get!(Intent, submitted.id)
 
-    assert :ok = Download.reconcile_pending_intents([:episode, :season_pack])
-    refute Repo.get(Intent, cleanup.id)
-    assert Repo.aggregate(IntentEpisode, :count) == 0
+    assert Repo.reload(fixture.first).grab_id == nil
+    assert Repo.reload(fixture.second).grab_id == other.id
+    refute Repo.get_by(Grab, download_id: "hash-anime-conflict")
   end
 
   test "reserve_intent/1 generates a unique key and stores only resubmission fields" do

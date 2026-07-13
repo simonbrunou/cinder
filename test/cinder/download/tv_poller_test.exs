@@ -8,11 +8,11 @@ defmodule Cinder.Download.TvPollerTest do
   # test output stays pristine (they print on failure).
   @moduletag :capture_log
 
-  alias Cinder.Acquisition.Release
+  alias Cinder.Acquisition.{Anime, Release}
   alias Cinder.Catalog
-  alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Season, Series}
+  alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Identity, Season, Series}
   alias Cinder.Download
-  alias Cinder.Download.{Intent, IntentEpisode}
+  alias Cinder.Download.Intent
   alias Cinder.Download.TvPoller
   alias Cinder.Library.ImportStage
   alias Cinder.Repo
@@ -98,31 +98,159 @@ defmodule Cinder.Download.TvPollerTest do
     accepted
   end
 
-  test "poll leaves a reserved anime snapshot intent held without side effects" do
-    {_series, season} = series_tree()
-    first = episode(season, 1)
-    {snapshot, release} = anime_snapshot_release(first)
+  test "anime poll groups wanted episodes across seasons by series and reserves marked assignments" do
+    series =
+      series_fixture(%{tvdb_id: 99, monitor_strategy: :all, media_profile: :anime})
 
-    assert {:ok, intent} =
-             Download.reserve_intent(%{
-               kind: :episode,
-               target_id: first.id,
-               episode_ids: [first.id],
-               protocol: :torrent,
-               release: release,
-               mapping_snapshot: snapshot
-             })
+    first = episode(season_fixture(series, %{season_number: 1}), 25)
+    second = episode(season_fixture(series, %{season_number: 2}), 1)
+    release = raw_release("[Group] Show S01E25-S02E01 [1080p]", "anime-cross-season")
+    counter = start_supervised!({Agent, fn -> 0 end})
 
-    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 -> {:ok, []} end)
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb_id, _title, _season ->
+      Agent.update(counter, &(&1 + 1))
+      {:ok, [release]}
+    end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, categories: [5070] ->
+      Agent.update(counter, &(&1 + 1))
+      {:ok, []}
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:error, :timeout} end)
     start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
 
     assert :ok = TvPoller.poll()
 
-    assert Repo.get!(Intent, intent.id).mapping_snapshot == snapshot
-    assert Repo.aggregate(IntentEpisode, :count) == 1
+    assert %Intent{mapping_snapshot: %{"version" => 2}} = intent = Repo.one!(Intent)
+    assert Enum.sort(intent.episode_ids) == Enum.sort([first.id, second.id])
+
+    assert Enum.sort(intent.mapping_snapshot["reserved_episode_ids"]) ==
+             Enum.sort([first.id, second.id])
+
+    assert Agent.get(counter, & &1) == 5
+  end
+
+  test "restart reconciliation creates one snapshot grab with every reserved episode" do
+    series = series_fixture(%{monitor_strategy: :all, media_profile: :anime})
+    first = episode(season_fixture(series, %{season_number: 1}), 25)
+    second = episode(season_fixture(series, %{season_number: 2}), 1)
+    assignment = anime_assignment(series, [first, second])
+
+    assert {:ok, intent} =
+             Download.reserve_intent(%{
+               kind: :season_pack,
+               target_id: first.id,
+               episode_ids: assignment.episode_ids,
+               protocol: :torrent,
+               release: assignment.release,
+               mapping_snapshot: assignment.mapping_snapshot
+             })
+
+    intent =
+      intent
+      |> Intent.changeset(%{status: :submitted, remote_id: "hash-anime-restart"})
+      |> Repo.update!()
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-anime-restart" ->
+      {:ok, %{state: :downloading, progress: 0.0}}
+    end)
+
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    assert :ok = TvPoller.poll()
+
+    assert %Grab{mapping_snapshot: snapshot} = grab = Repo.one!(Grab)
+    assert snapshot == assignment.mapping_snapshot
+
+    assert grab
+           |> Repo.preload(:episodes)
+           |> Map.fetch!(:episodes)
+           |> Enum.map(& &1.id)
+           |> Enum.sort() ==
+             Enum.sort(intent.episode_ids)
+
+    refute Repo.get(Intent, intent.id)
+  end
+
+  @tag :tmp_dir
+  test "restart import keeps the reserved parser context after provider aliases refresh", %{
+    tmp_dir: tmp
+  } do
+    %{downloads: downloads} = use_real_tv_library(tmp)
+    series = series_fixture(%{monitor_strategy: :all, media_profile: :anime})
+    episode = episode(season_fixture(series), 1)
+
+    assert {:ok, _coordinate} =
+             Catalog.put_episode_coordinate(
+               series,
+               %{
+                 source: "manual",
+                 scheme: "absolute",
+                 namespace: "manual",
+                 canonical_value: "1",
+                 precedence: :manual
+               },
+               [episode.id]
+             )
+
+    assert {:ok, [_alias]} =
+             Identity.replace_provider_aliases(
+               series,
+               "tmdb",
+               "alternative_titles",
+               :inferred,
+               [%{title: "Frozen Alias", kind: :alternative}]
+             )
+
+    assignment =
+      anime_assignment(series, [episode], "[Group] Frozen Alias - 1 [1080p]")
+
+    assert assignment.mapping_snapshot["parser_context"]["aliases"] == ["Frozen Alias"]
+
+    assert {:ok, intent} =
+             Download.reserve_intent(%{
+               kind: :episode,
+               target_id: episode.id,
+               episode_ids: [episode.id],
+               protocol: :torrent,
+               release: assignment.release,
+               mapping_snapshot: assignment.mapping_snapshot
+             })
+
+    intent =
+      intent
+      |> Intent.changeset(%{status: :submitted, remote_id: "hash-frozen-context"})
+      |> Repo.update!()
+
+    assert {:ok, [_alias]} =
+             Identity.replace_provider_aliases(
+               series,
+               "tmdb",
+               "alternative_titles",
+               :inferred,
+               [%{title: "Replacement Alias", kind: :alternative}]
+             )
+
+    refute Enum.any?(Catalog.anime_series_acquisition_context(series).aliases, fn alias_record ->
+             alias_record.title == "Frozen Alias"
+           end)
+
+    source = Path.join(downloads, "Frozen Alias - 1.mkv")
+    File.write!(source, "candidate")
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-frozen-context" ->
+      {:ok, %{state: :completed, content_path: source}}
+    end)
+
+    stub(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
+    start_supervised!({TvPoller, interval: 60_000})
+
+    assert :ok = TvPoller.poll()
+
+    refute Repo.get(Intent, intent.id)
+    assert Repo.get!(Episode, episode.id).file_path =~ "S01E01"
     assert Repo.aggregate(Grab, :count) == 0
-    assert Repo.reload(first).grab_id == nil
-    assert Repo.reload(first).search_attempts == 0
   end
 
   test "advances a completed single-file grab through download to import in one tick" do
@@ -276,54 +404,18 @@ defmodule Cinder.Download.TvPollerTest do
     assert Repo.get!(Episode, episode.id).file_path =~ "S01E01"
   end
 
-  defp anime_snapshot_release(episode) do
-    canonical_value = "S01E01"
+  defp anime_assignment(series, episodes, title \\ "[Group] Show S01E25-S02E01 [1080p]") do
+    candidate = title |> raw_release("anime-assignment") |> Release.new()
+    context = Catalog.anime_series_acquisition_context(series)
 
-    identity = %{
-      "source" => "cinder",
-      "scheme" => "standard",
-      "namespace" => "canonical",
-      "canonical_value" => canonical_value
-    }
+    assert {:ok, %{assignments: [assignment]}} =
+             Anime.select_episodes([candidate], context, Enum.map(episodes, & &1.id), [])
 
-    snapshot = %{
-      "version" => 1,
-      "reserved_episode_ids" => [episode.id],
-      "release" => %{
-        "title" => "[Group] Show S01E01 [1080p]",
-        "coordinates" => [%{"scheme" => "standard", "values" => [canonical_value]}]
-      },
-      "mappings" => [
-        %{
-          "identity" => identity,
-          "precedence" => "inferred",
-          "episode_ids" => [episode.id],
-          "evidence" => %{}
-        }
-      ],
-      "selected_resolution" => %{
-        "episode_ids" => [episode.id],
-        "values" => [
-          %{
-            "scheme" => "standard",
-            "canonical_value" => canonical_value,
-            "episode_ids" => [episode.id],
-            "precedence" => "inferred",
-            "mapping_identities" => [identity]
-          }
-        ]
-      }
-    }
+    assignment
+  end
 
-    release = %Release{
-      title: snapshot["release"]["title"],
-      download_url: "magnet:?xt=urn:btih:anime-poller-hold",
-      protocol: :torrent,
-      coordinates: [%{scheme: "standard", values: [canonical_value]}],
-      mapping_snapshot: snapshot
-    }
-
-    {snapshot, release}
+  defp raw_release(title, download_url) do
+    %{title: title, size: 4_000_000_000, download_url: download_url, seeders: 10}
   end
 
   defp anime_standard_snapshot(episode) do

@@ -7,8 +7,8 @@ defmodule Cinder.Download.TvPoller do
   2. **import** — imports downloaded grabs (`list_grabs_downloaded`) via `Library.import_episodes`,
      mapping each file to its episode; on success the grab is finalized, on a transient FS error
      it is bounded-retried, on a deterministic empty import it is parked (its episodes re-search).
-  3. **search** — sweeps `wanted_episodes`, skipping search-parked and backed-off episodes, groups
-     them by `{series, season}`, and grabs the best release(s) per `Acquisition.best_releases`.
+  3. **search** — sweeps `wanted_episodes`, skipping search-parked and backed-off episodes, then
+     searches Standard series by season and Anime series by stable episode IDs.
 
   Holds no in-flight state: every tick re-derives its work from the DB, so it recovers cleanly
   after a crash/restart — the same OTP payoff the movie poller proves. State and the download
@@ -239,26 +239,38 @@ defmodule Cinder.Download.TvPoller do
           &1.search_attempts >= Catalog.max_search_attempts())
     )
     |> Enum.filter(&search_due?(&1, retry_after))
-    |> Enum.group_by(&{&1.season.series.id, &1.season.season_number})
-    |> Enum.each(fn {{series_id, season}, episodes} ->
-      isolate("series #{series_id} s#{season}", fn -> search_group(episodes) end)
+    |> Enum.group_by(& &1.season.series.id)
+    |> Enum.each(fn {series_id, episodes} ->
+      isolate("series #{series_id}", fn -> search_series(episodes) end)
     end)
   end
 
-  defp search_group(episodes) do
+  defp search_series(episodes) do
+    series = hd(episodes).season.series
+
+    case Catalog.media_profile_summary(series).effective do
+      :anime ->
+        search_anime_series(series, episodes)
+
+      :standard ->
+        search_standard_series(series, episodes)
+    end
+  end
+
+  defp search_standard_series(series, episodes) do
+    episodes
+    |> Enum.group_by(& &1.season.season_number)
+    |> Enum.each(fn {season_number, group} ->
+      isolate("series #{series.id} s#{season_number}", fn -> search_standard_group(group) end)
+    end)
+  end
+
+  defp search_standard_group(episodes) do
     series = hd(episodes).season.series
     season_number = hd(episodes).season.season_number
     numbers = Enum.map(episodes, & &1.episode_number)
 
-    opts =
-      [
-        protocols: Download.available_protocols(),
-        preferred_language: series.preferred_language,
-        original_language: series.original_language,
-        release_blocklist: Catalog.blocked_release_titles_for_series(series.id)
-      ] ++ Acquisition.band_opts(:tv)
-
-    case Acquisition.best_releases(series, season_number, numbers, opts) do
+    case Acquisition.best_releases(series, season_number, numbers, search_opts(series)) do
       {:ok, assignments} ->
         grabbed = Enum.flat_map(assignments, &grab_assignment(&1, episodes))
         bump_not_grabbed(episodes, grabbed)
@@ -273,6 +285,40 @@ defmodule Cinder.Download.TvPoller do
 
         bump_not_grabbed(episodes, [])
     end
+  end
+
+  defp search_anime_series(series, episodes) do
+    wanted_ids = Enum.map(episodes, & &1.id)
+    context = Catalog.anime_series_acquisition_context(series)
+
+    case Acquisition.best_anime_releases(context, wanted_ids, search_opts(series)) do
+      {:ok, %{assignments: assignments, waiting: waiting}} ->
+        grabbed = Enum.flat_map(assignments, &grab_anime_assignment/1)
+        held = if waiting, do: waiting.episode_ids, else: []
+        bump_not_grabbed(episodes, grabbed ++ held)
+
+      {:waiting_for_preferred_group, waiting} ->
+        bump_not_grabbed(episodes, waiting.episode_ids)
+
+      :no_match ->
+        bump_not_grabbed(episodes, [])
+
+      {:error, reason} ->
+        Logger.info(
+          "anime search failed for series #{series.id}: #{HTTPPolicy.sanitize_log(reason)}"
+        )
+
+        bump_not_grabbed(episodes, [])
+    end
+  end
+
+  defp search_opts(series) do
+    [
+      protocols: Download.available_protocols(),
+      preferred_language: series.preferred_language,
+      original_language: series.original_language,
+      release_blocklist: Catalog.blocked_release_titles_for_series(series.id)
+    ] ++ Acquisition.band_opts(:tv)
   end
 
   # Add one chosen release to its client and create the grab linking exactly the episodes it
@@ -291,6 +337,13 @@ defmodule Cinder.Download.TvPoller do
         )
 
         []
+    end
+  end
+
+  defp grab_anime_assignment(%{release: release, episode_ids: episode_ids}) do
+    case Download.grab_episodes(release, episode_ids) do
+      {:ok, _grab} -> episode_ids
+      _failure -> []
     end
   end
 

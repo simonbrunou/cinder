@@ -108,10 +108,6 @@ defmodule Cinder.Download do
   end
 
   @doc "Durably submits a TV release and creates its guarded episode grab."
-  def grab_episodes(%Release{mapping_snapshot: snapshot}, _episode_ids)
-      when not is_nil(snapshot),
-      do: {:error, :anime_import_not_ready}
-
   def grab_episodes(%Release{} = release, episode_ids) when episode_ids != [] do
     case overlapping_episode_intent(episode_ids) do
       nil ->
@@ -147,7 +143,8 @@ defmodule Cinder.Download do
              target_id: target_id,
              episode_ids: episode_ids,
              protocol: release.protocol,
-             release: release
+             release: release,
+             mapping_snapshot: release.mapping_snapshot
            }) do
       reconcile_intent(intent)
     end
@@ -165,10 +162,6 @@ defmodule Cinder.Download do
 
   @doc "Finds or submits the reserved remote job, then records its normal downloader ID."
   def submit_intent(%Intent{} = intent), do: with_intent_lock(intent, &do_submit_intent/1)
-
-  defp do_submit_intent(%Intent{mapping_snapshot: snapshot, kind: kind})
-       when kind in [:episode, :season_pack] and not is_nil(snapshot),
-       do: {:error, :anime_import_not_ready}
 
   defp do_submit_intent(%Intent{status: :submitted, remote_id: id} = intent)
        when is_binary(id),
@@ -220,10 +213,6 @@ defmodule Cinder.Download do
 
   defp do_reconcile_intent(%Intent{status: :cleanup_pending} = intent), do: do_cleanup(intent)
 
-  defp do_reconcile_intent(%Intent{mapping_snapshot: snapshot, kind: kind})
-       when kind in [:episode, :season_pack] and not is_nil(snapshot),
-       do: {:error, :anime_import_not_ready}
-
   defp do_reconcile_intent(%Intent{remote_id: nil} = intent) do
     with {:ok, submitted} <- do_submit_intent(intent), do: do_reconcile_intent(submitted)
   end
@@ -245,9 +234,7 @@ defmodule Cinder.Download do
     intents =
       Repo.all(
         from i in Intent,
-          where:
-            i.kind in ^kinds and
-              (i.status == :cleanup_pending or is_nil(i.mapping_snapshot)),
+          where: i.kind in ^kinds,
           order_by: [asc: i.id]
       )
 
