@@ -1067,6 +1067,9 @@ defmodule CinderWeb.CoreComponents do
           <p class="mb-3 text-xs text-base-content/60">
             {gettext("Effective: %{value}", value: effective_audio(@effective))}
           </p>
+          <p id="anime-dual-language-help" class="mb-3 text-xs text-base-content/60">
+            {gettext("Dual audio requires known original-language metadata and a dub target")}
+          </p>
           <p
             :if={
               @effective && @effective.audio_mode == :original &&

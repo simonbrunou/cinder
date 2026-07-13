@@ -272,13 +272,13 @@ defmodule Cinder.Download.Poller do
         "movie #{movie.id} #{attempts_field} exhausted after #{attempts}: #{inspect(reason)}"
       )
 
-      attrs =
-        case reason do
-          {:release_policy_unavailable, _reason} -> %{attempts_field => attempts}
-          _reason -> %{}
-        end
+      case reason do
+        {:release_policy_unavailable, _reason} ->
+          hold_policy_verification(movie, :download, attempts, reason)
 
-      park(movie, terminal_status, reason, attrs)
+        _reason ->
+          park(movie, terminal_status, reason)
+      end
     else
       Logger.info(
         "movie #{movie.id} #{attempts_field} #{attempts}/#{@max_attempts} failed (#{inspect(reason)}); will retry"
@@ -313,6 +313,12 @@ defmodule Cinder.Download.Poller do
       if reason in @permanent_import_errors or reason in @download_failure_errors do
         Catalog.block_release(parked, reason)
       end
+    end
+  end
+
+  defp hold_policy_verification(movie, origin, attempts, reason) do
+    with {:ok, held} <- Catalog.hold_movie_verification(movie, origin, attempts) do
+      Notifier.notify({:movie_failed, held, reason})
     end
   end
 
@@ -470,7 +476,13 @@ defmodule Cinder.Download.Poller do
     attempts = (movie.import_attempts || 0) + 1
 
     if attempts >= @max_attempts do
-      revert_upgrade(movie, reason)
+      case reason do
+        {:release_policy_unavailable, _reason} ->
+          hold_policy_verification(movie, :upgrade, attempts, reason)
+
+        _reason ->
+          revert_upgrade(movie, reason)
+      end
     else
       Logger.info(
         "movie #{movie.id} upgrade #{attempts}/#{@max_attempts} failed (#{inspect(reason)}); will retry"

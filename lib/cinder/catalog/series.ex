@@ -61,9 +61,12 @@ defmodule Cinder.Catalog.Series do
     series
     |> cast(attrs, @anime_preference_fields)
     |> validate_number(:group_fallback_delay, greater_than_or_equal_to: 0)
-    |> update_change(:subtitle_languages, &AnimePreferences.normalize_languages/1)
-    |> update_change(:preferred_release_groups, &AnimePreferences.normalize_groups/1)
-    |> update_change(:blocked_release_groups, &AnimePreferences.normalize_groups/1)
+    |> update_change(:subtitle_languages, &AnimePreferences.normalize_optional_languages/1)
+    |> update_change(
+      :preferred_release_groups,
+      &AnimePreferences.normalize_optional_groups/1
+    )
+    |> update_change(:blocked_release_groups, &AnimePreferences.normalize_optional_groups/1)
   end
 
   @doc "The valid `monitor_strategy` values."

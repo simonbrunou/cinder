@@ -7,7 +7,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   import Cinder.CatalogFixtures
 
   alias Cinder.{Catalog, Repo}
-  alias Cinder.Catalog.{Grab, TitleAlias}
+  alias Cinder.Catalog.{Grab, Series, TitleAlias}
 
   setup :register_and_log_in_admin
   setup :set_mox_global
@@ -127,6 +127,28 @@ defmodule CinderWeb.SeriesDetailLiveTest do
       },
       overrides
     )
+  end
+
+  defp put_nonempty_anime_defaults! do
+    anime = Application.fetch_env!(:cinder, :anime_preferences)
+    subtitles = Application.get_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, [])
+
+    Application.put_env(
+      :cinder,
+      :anime_preferences,
+      Keyword.merge(anime, preferred_groups: ["subsplease"], blocked_groups: ["badgroup"])
+    )
+
+    Application.put_env(
+      :cinder,
+      Cinder.Subtitles.Provider.OpenSubtitles,
+      Keyword.put(subtitles, :languages, "fr,en")
+    )
+
+    on_exit(fn ->
+      Application.put_env(:cinder, :anime_preferences, anime)
+      Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, subtitles)
+    end)
   end
 
   test "admin changes a series profile and manages sourced aliases", %{conn: conn} do
@@ -287,6 +309,74 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert fresh.embedded_subtitle_mode == nil
     assert fresh.subtitle_languages == nil
     assert fresh.group_fallback_delay == nil
+  end
+
+  test "series list controls can return to inherited non-empty Anime defaults", %{conn: conn} do
+    put_nonempty_anime_defaults!()
+
+    series =
+      series_fixture(%{
+        media_profile: :anime,
+        original_language: "ja",
+        preferred_language: "french"
+      })
+      |> Series.anime_preferences_changeset(%{
+        subtitle_languages: ["en"],
+        preferred_release_groups: ["old"],
+        blocked_release_groups: ["old-blocked"]
+      })
+      |> Repo.update!()
+
+    {:ok, view, _} = live_series(conn, series)
+
+    view
+    |> form(
+      "#anime-preferences-form",
+      anime_preferences:
+        anime_preferences_params(%{
+          "audio_mode" => "inherit",
+          "embedded_subtitle_mode" => "inherit",
+          "subtitle_languages_mode" => "inherit",
+          "preferred_release_groups_mode" => "inherit",
+          "blocked_release_groups_mode" => "inherit",
+          "group_fallback_delay_mode" => "inherit"
+        })
+    )
+    |> render_submit()
+
+    fresh = Repo.reload!(series)
+    assert fresh.subtitle_languages == nil
+    assert fresh.preferred_release_groups == nil
+    assert fresh.blocked_release_groups == nil
+    html = render(view)
+    assert html =~ "fr, en"
+    assert html =~ "subsplease"
+    assert html =~ "badgroup"
+  end
+
+  test "series dual audio without original metadata is field-invalid with explanatory help", %{
+    conn: conn
+  } do
+    series =
+      series_fixture(%{
+        media_profile: :anime,
+        original_language: nil,
+        preferred_language: "french"
+      })
+
+    {:ok, view, _} = live_series(conn, series)
+
+    view
+    |> form(
+      "#anime-preferences-form",
+      anime_preferences: anime_preferences_params(%{"embedded_subtitle_mode" => "prefer"})
+    )
+    |> render_submit()
+
+    assert has_element?(view, "#anime_preferences_audio_mode-error")
+    assert has_element?(view, "#anime-dual-language-help")
+    assert render(view) =~ "Dual audio requires known original-language metadata and a dub target"
+    assert Repo.reload!(series).audio_mode == nil
   end
 
   test "series identity events tolerate forged profiles and aliases", %{conn: conn} do

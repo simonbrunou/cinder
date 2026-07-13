@@ -102,6 +102,28 @@ defmodule CinderWeb.MovieDetailLiveTest do
     |> LazyHTML.text(separator: " ")
   end
 
+  defp put_nonempty_anime_defaults! do
+    anime = Application.fetch_env!(:cinder, :anime_preferences)
+    subtitles = Application.get_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, [])
+
+    Application.put_env(
+      :cinder,
+      :anime_preferences,
+      Keyword.merge(anime, preferred_groups: ["subsplease"], blocked_groups: ["badgroup"])
+    )
+
+    Application.put_env(
+      :cinder,
+      Cinder.Subtitles.Provider.OpenSubtitles,
+      Keyword.put(subtitles, :languages, "fr,en")
+    )
+
+    on_exit(fn ->
+      Application.put_env(:cinder, :anime_preferences, anime)
+      Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, subtitles)
+    end)
+  end
+
   test "admin changes a movie profile and manages a manual alias", %{conn: conn} do
     movie = movie_fixture()
     {:ok, view, _} = live_movie(conn, movie)
@@ -291,6 +313,74 @@ defmodule CinderWeb.MovieDetailLiveTest do
     assert fresh.embedded_subtitle_mode == nil
     assert fresh.subtitle_languages == nil
     assert fresh.group_fallback_delay == nil
+  end
+
+  test "movie list controls can return to inherited non-empty Anime defaults", %{conn: conn} do
+    put_nonempty_anime_defaults!()
+
+    movie =
+      movie_fixture(%{
+        media_profile: :anime,
+        original_language: "ja",
+        preferred_language: "french"
+      })
+      |> Movie.anime_preferences_changeset(%{
+        subtitle_languages: ["en"],
+        preferred_release_groups: ["old"],
+        blocked_release_groups: ["old-blocked"]
+      })
+      |> Repo.update!()
+
+    {:ok, view, _} = live_movie(conn, movie)
+
+    view
+    |> form(
+      "#anime-preferences-form",
+      anime_preferences:
+        anime_preferences_params(%{
+          "audio_mode" => "inherit",
+          "embedded_subtitle_mode" => "inherit",
+          "subtitle_languages_mode" => "inherit",
+          "preferred_release_groups_mode" => "inherit",
+          "blocked_release_groups_mode" => "inherit",
+          "group_fallback_delay_mode" => "inherit"
+        })
+    )
+    |> render_submit()
+
+    fresh = Repo.reload!(movie)
+    assert fresh.subtitle_languages == nil
+    assert fresh.preferred_release_groups == nil
+    assert fresh.blocked_release_groups == nil
+    help = anime_preferences_help(view)
+    assert help =~ "fr, en"
+    assert help =~ "subsplease"
+    assert help =~ "badgroup"
+  end
+
+  test "movie dual audio without original metadata is field-invalid with explanatory help", %{
+    conn: conn
+  } do
+    movie =
+      movie_fixture(%{
+        media_profile: :anime,
+        original_language: nil,
+        preferred_language: "french"
+      })
+
+    {:ok, view, _} = live_movie(conn, movie)
+
+    view
+    |> form(
+      "#anime-preferences-form",
+      anime_preferences: anime_preferences_params(%{"embedded_subtitle_mode" => "prefer"})
+    )
+    |> render_submit()
+
+    assert has_element?(view, "#anime_preferences_audio_mode-error")
+    assert has_element?(view, "#anime-dual-language-help")
+    assert render(view) =~ "Dual audio requires known original-language metadata and a dub target"
+    assert Repo.reload!(movie).audio_mode == nil
   end
 
   test "forged Movie Anime list values fail closed at the render boundary", %{conn: conn} do
@@ -648,6 +738,48 @@ defmodule CinderWeb.MovieDetailLiveTest do
     assert Catalog.get_movie_by_id(movie.id).status == :requested
   end
 
+  test "a held normal verification failure retries preserved content instead of search", %{
+    conn: conn
+  } do
+    movie = verification_held_movie!(:download)
+    {:ok, lv, _html} = live_movie(conn, movie)
+
+    assert has_element?(lv, "button", "Retry")
+    assert has_element?(lv, "button", "Cancel")
+    refute has_element?(lv, "button", "Find a better match")
+
+    lv |> element("button", "Retry") |> render_click()
+
+    assert %Movie{
+             status: :downloaded,
+             import_attempts: 0,
+             verification_hold_origin: nil,
+             download_id: "HASH-HELD-download",
+             file_path: "/downloads/Anime Movie.mkv"
+           } = Catalog.get_movie_by_id(movie.id)
+  end
+
+  test "a held upgrade exposes Retry and safe Cancel upgrade while preserving the live file", %{
+    conn: conn
+  } do
+    movie = verification_held_movie!(:upgrade)
+    {:ok, lv, _html} = live_movie(conn, movie)
+
+    assert has_element?(lv, "button", "Retry")
+    assert has_element?(lv, "button", "Cancel upgrade")
+    refute has_element?(lv, "button", "Find a better match")
+
+    lv |> element("button", "Cancel upgrade") |> render_click()
+
+    assert %Movie{
+             status: :available,
+             verification_hold_origin: nil,
+             download_id: nil,
+             file_path: "/library/Anime Movie.mkv",
+             imported_resolution: "720p"
+           } = Catalog.get_movie_by_id(movie.id)
+  end
+
   test "an in-flight movie shows no Retry button", %{conn: conn} do
     movie = movie_fixture(%{title: "Sicario"})
     {:ok, _} = Catalog.transition(movie, %{status: :downloading, download_id: "h"})
@@ -715,5 +847,39 @@ defmodule CinderWeb.MovieDetailLiveTest do
     |> render_change()
 
     assert Catalog.get_movie_by_id(movie.id).preferred_language == "french"
+  end
+
+  defp verification_held_movie!(origin) do
+    file_path =
+      if origin == :upgrade,
+        do: "/library/Anime Movie.mkv",
+        else: "/downloads/Anime Movie.mkv"
+
+    movie =
+      movie_fixture(%{
+        title: "Anime Movie",
+        status: :import_failed,
+        download_id: "HASH-HELD-#{origin}",
+        download_protocol: :torrent,
+        release_title: "[Group] Anime Movie",
+        file_path: file_path,
+        imported_resolution: "720p"
+      })
+
+    {:ok, held} =
+      Catalog.transition(movie, %{
+        status: :import_failed,
+        import_attempts: 10,
+        verification_hold_origin: origin,
+        release_policy_snapshot: %{
+          "version" => 1,
+          "required_audio_languages" => ["ja", "fr"],
+          "required_embedded_subtitle_languages" => [],
+          "release_group" => "group",
+          "release_title" => movie.release_title
+        }
+      })
+
+    Repo.reload!(held)
   end
 end

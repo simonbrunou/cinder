@@ -678,6 +678,17 @@ defmodule Cinder.Catalog do
   counters so the poller picks it up fresh. Returns `{:error, :not_retryable}`
   for any non-parked movie. Replaces the old IEx reset.
   """
+  def retry_movie(%Movie{status: :import_failed, verification_hold_origin: origin} = movie)
+      when origin in [:download, :upgrade] do
+    status = if origin == :download, do: :downloaded, else: :upgrading
+
+    transition_verification_hold(movie, %{
+      status: status,
+      import_attempts: 0,
+      verification_hold_origin: nil
+    })
+  end
+
   def retry_movie(%Movie{status: status} = movie) when status in @retryable do
     # Clear the stale download fields too: a re-queued movie has no download yet,
     # so leaving an old download_id/protocol/file_path/release_title on a :requested
@@ -705,6 +716,64 @@ defmodule Cinder.Catalog do
 
   def retry_movie(%Movie{}), do: {:error, :not_retryable}
 
+  @doc "Atomically parks an unverifiable Movie release without clearing its frozen ownership."
+  def hold_movie_verification(%Movie{status: :downloaded} = movie, :download, attempts),
+    do: do_hold_movie_verification(movie, :download, attempts)
+
+  def hold_movie_verification(%Movie{status: :upgrading} = movie, :upgrade, attempts),
+    do: do_hold_movie_verification(movie, :upgrade, attempts)
+
+  def hold_movie_verification(%Movie{}, _origin, _attempts), do: {:error, :stale_status}
+
+  defp do_hold_movie_verification(movie, origin, attempts) do
+    attrs = %{
+      status: :import_failed,
+      import_attempts: attempts,
+      verification_hold_origin: origin
+    }
+
+    changes = Movie.transition_changeset(movie, attrs).changes
+
+    result =
+      Repo.transaction(fn ->
+        case Repo.update_all(
+               from(m in Movie,
+                 where:
+                   m.id == ^movie.id and m.status == ^movie.status and
+                     m.row_version == ^movie.row_version
+               ),
+               set: Map.to_list(changes) ++ [updated_at: now()]
+             ) do
+          {1, _} -> Repo.get!(Movie, movie.id)
+          {0, _} -> Repo.rollback(:stale_status)
+        end
+      end)
+
+    publish_guarded_movie_transition(result)
+  end
+
+  defp transition_verification_hold(movie, attrs) do
+    changes = Movie.transition_changeset(movie, attrs).changes
+
+    result =
+      Repo.transaction(fn ->
+        case Repo.update_all(
+               from(m in Movie,
+                 where:
+                   m.id == ^movie.id and m.status == :import_failed and
+                     m.verification_hold_origin == ^movie.verification_hold_origin and
+                     m.row_version == ^movie.row_version
+               ),
+               set: Map.to_list(changes) ++ [updated_at: now()]
+             ) do
+          {1, _} -> Repo.get!(Movie, movie.id)
+          {0, _} -> Repo.rollback(:stale_status)
+        end
+      end)
+
+    publish_guarded_movie_transition(result)
+  end
+
   @doc """
   Grabs a specific user-chosen `release` for `movie`. An `:available` movie enters `:upgrading`
   (its library `file_path` and `imported_*` are preserved — the poller's upgrade clause swaps the
@@ -717,7 +786,10 @@ defmodule Cinder.Catalog do
     Download.grab_movie(movie, release)
   end
 
-  def manual_grab_movie(%Movie{status: status} = movie, %Release{} = release)
+  def manual_grab_movie(
+        %Movie{status: status, verification_hold_origin: nil} = movie,
+        %Release{} = release
+      )
       when status in @retryable do
     Download.grab_movie(movie, release)
   end
@@ -909,6 +981,7 @@ defmodule Cinder.Catalog do
   @cancellable_movie_statuses [:requested, :searching, :downloading, :downloaded]
 
   @doc "True if `movie` is in an active status that can be cancelled (`#{inspect(@cancellable_movie_statuses)}`)."
+  def cancellable?(%Movie{status: :import_failed, verification_hold_origin: :download}), do: true
   def cancellable?(%Movie{status: status}), do: status in @cancellable_movie_statuses
 
   @doc """
@@ -919,6 +992,12 @@ defmodule Cinder.Catalog do
   The `:cancelled` transition, audit row, and durable cleanup fence are written in one transaction.
   Client I/O runs only after commit; failures leave the fence for background reconciliation.
   """
+  def cancel_movie(
+        %Movie{status: :import_failed, verification_hold_origin: :download} = movie,
+        actor
+      ),
+      do: clear_verification_hold(movie, actor, :cancelled, :cancel_movie)
+
   def cancel_movie(%Movie{} = movie, actor) do
     if cancellable?(movie) do
       with {:ok, {updated, intent_ids}} <- do_cancel_txn(movie, actor) do
@@ -946,6 +1025,53 @@ defmodule Cinder.Catalog do
           Repo.rollback(changeset)
       end
     end)
+  end
+
+  defp clear_verification_hold(movie, actor, target_status, action) do
+    result =
+      Repo.transaction(fn ->
+        fresh = claim_verification_hold!(movie)
+        intent_ids = Download.fence_movie_cleanup(fresh)
+
+        attrs = %{
+          status: target_status,
+          download_id: nil,
+          download_protocol: nil,
+          release_title: nil,
+          release_policy_snapshot: nil,
+          verification_hold_origin: nil
+        }
+
+        attrs =
+          if movie.verification_hold_origin == :download,
+            do: Map.put(attrs, :file_path, nil),
+            else: attrs
+
+        updated = fresh |> Movie.transition_changeset(attrs) |> Repo.update!()
+        Audit.log_or_rollback(actor, action, updated, %{from: :import_failed})
+        {Repo.get!(Movie, updated.id), intent_ids}
+      end)
+
+    with {:ok, {updated, intent_ids}} <- result do
+      Download.cleanup_intents(intent_ids)
+      broadcast({:movie_updated, updated})
+      {:ok, updated}
+    end
+  end
+
+  defp claim_verification_hold!(movie) do
+    case Repo.update_all(
+           from(m in Movie,
+             where:
+               m.id == ^movie.id and m.status == :import_failed and
+                 m.verification_hold_origin == ^movie.verification_hold_origin and
+                 m.row_version == ^movie.row_version
+           ),
+           set: [updated_at: now()]
+         ) do
+      {1, _} -> Repo.get!(Movie, movie.id)
+      {0, _} -> Repo.rollback(:stale_status)
+    end
   end
 
   @doc """
@@ -989,6 +1115,12 @@ defmodule Cinder.Catalog do
     end
   end
 
+  def abort_upgrade(
+        %Movie{status: :import_failed, verification_hold_origin: :upgrade} = movie,
+        actor
+      ),
+      do: clear_verification_hold(movie, actor, :available, :abort_upgrade)
+
   def abort_upgrade(%Movie{}, _actor), do: {:error, :not_upgrading}
 
   @doc """
@@ -1004,7 +1136,10 @@ defmodule Cinder.Catalog do
     delete_files? = Keyword.get(opts, :delete_files, false)
 
     prepare = fn fresh ->
-      include_remote? = cancellable?(fresh) or fresh.status == :upgrading
+      include_remote? =
+        cancellable?(fresh) or fresh.status == :upgrading or
+          fresh.verification_hold_origin in [:download, :upgrade]
+
       Download.fence_movie_cleanup(fresh, include_remote: include_remote?)
     end
 

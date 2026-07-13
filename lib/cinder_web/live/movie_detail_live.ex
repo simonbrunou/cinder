@@ -586,7 +586,10 @@ defmodule CinderWeb.MovieDetailLive do
           {gettext("Retry")}
         </.button>
         <.button
-          :if={@movie.status == :available or parked?(@movie.status)}
+          :if={
+            @movie.status == :available or
+              (parked?(@movie.status) and is_nil(@movie.verification_hold_origin))
+          }
           type="button"
           variant="ghost"
           size="sm"
@@ -595,7 +598,10 @@ defmodule CinderWeb.MovieDetailLive do
           {gettext("Find a better match")}
         </.button>
         <.button
-          :if={@movie.status == :upgrading}
+          :if={
+            @movie.status == :upgrading or
+              @movie.verification_hold_origin == :upgrade
+          }
           type="button"
           variant="ghost"
           size="sm"

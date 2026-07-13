@@ -258,7 +258,7 @@ msgstr ""
 msgid "Checking…"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:426
+#: lib/cinder_web/components/settings_components.ex:431
 #, elixir-autogen, elixir-format
 msgid "Clear saved value"
 msgstr ""
@@ -606,7 +606,7 @@ msgid "Invalid email or password"
 msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:278
-#: lib/cinder_web/live/movie_detail_live.ex:633
+#: lib/cinder_web/live/movie_detail_live.ex:639
 #, elixir-autogen, elixir-format
 msgid "Language"
 msgstr ""
@@ -1005,7 +1005,7 @@ msgstr ""
 msgid "Roles and request quotas."
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1157
+#: lib/cinder_web/components/core_components.ex:1160
 #: lib/cinder_web/live/movie_detail_live.ex:358
 #: lib/cinder_web/live/series_detail_live.ex:610
 #: lib/cinder_web/live/users_live.ex:364
@@ -1071,7 +1071,7 @@ msgstr ""
 msgid "Searching"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1211
+#: lib/cinder_web/components/core_components.ex:1214
 #, elixir-autogen, elixir-format
 msgid "Season %{number}"
 msgstr ""
@@ -1163,7 +1163,7 @@ msgstr ""
 msgid "Something went wrong!"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1210
+#: lib/cinder_web/components/core_components.ex:1213
 #, elixir-autogen, elixir-format
 msgid "Specials"
 msgstr ""
@@ -1375,12 +1375,12 @@ msgstr ""
 msgid "to your account now."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:502
+#: lib/cinder_web/components/settings_components.ex:507
 #, elixir-autogen, elixir-format
 msgid "•••• saved (leave blank to keep)"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:361
+#: lib/cinder_web/components/settings_components.ex:366
 #: lib/cinder_web/settings_labels.ex:26
 #, elixir-autogen, elixir-format
 msgid "Media server"
@@ -1398,8 +1398,8 @@ msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:950
 #: lib/cinder_web/components/core_components.ex:1034
-#: lib/cinder_web/components/core_components.ex:1167
-#: lib/cinder_web/components/settings_components.ex:312
+#: lib/cinder_web/components/core_components.ex:1170
+#: lib/cinder_web/components/settings_components.ex:313
 #: lib/cinder_web/live/discover_live.ex:366
 #: lib/cinder_web/live/discover_live.ex:369
 #, elixir-autogen, elixir-format
@@ -1421,7 +1421,7 @@ msgstr ""
 msgid "Preferred language"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:505
+#: lib/cinder_web/components/settings_components.ex:510
 #, elixir-autogen, elixir-format
 msgid "set via environment (leave blank to keep)"
 msgstr ""
@@ -1967,7 +1967,7 @@ msgstr ""
 msgid "source not preferred"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:604
+#: lib/cinder_web/live/movie_detail_live.ex:610
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Cancel upgrade"
 msgstr ""
@@ -1978,7 +1978,7 @@ msgstr ""
 msgid "Couldn't grab that release."
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:595
+#: lib/cinder_web/live/movie_detail_live.ex:598
 #: lib/cinder_web/live/series_detail_live.ex:905
 #, elixir-autogen, elixir-format
 msgid "Find a better match"
@@ -2157,7 +2157,7 @@ msgstr ""
 msgid "%{n} min"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:617
+#: lib/cinder_web/live/movie_detail_live.ex:623
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Downloaded file"
 msgstr ""
@@ -2173,22 +2173,22 @@ msgid "No description available."
 msgstr ""
 
 #: lib/cinder_web/live/grab_mapping_live.ex:495
-#: lib/cinder_web/live/movie_detail_live.ex:664
+#: lib/cinder_web/live/movie_detail_live.ex:670
 #, elixir-autogen, elixir-format
 msgid "Release"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:621
+#: lib/cinder_web/live/movie_detail_live.ex:627
 #, elixir-autogen, elixir-format
 msgid "Resolution"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:625
+#: lib/cinder_web/live/movie_detail_live.ex:631
 #, elixir-autogen, elixir-format
 msgid "Size"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:629
+#: lib/cinder_web/live/movie_detail_live.ex:635
 #, elixir-autogen, elixir-format
 msgid "Source"
 msgstr ""
@@ -2218,20 +2218,20 @@ msgstr ""
 msgid "OpenSubtitles username"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1097
-#: lib/cinder_web/components/core_components.ex:1102
+#: lib/cinder_web/components/core_components.ex:1100
+#: lib/cinder_web/components/core_components.ex:1105
 #: lib/cinder_web/settings_labels.ex:56
 #, elixir-autogen, elixir-format
 msgid "Subtitle languages (comma-separated, e.g. en,fr)"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:646
+#: lib/cinder_web/live/movie_detail_live.ex:652
 #: lib/cinder_web/settings_labels.ex:29
 #, elixir-autogen, elixir-format
 msgid "Subtitles"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:637
+#: lib/cinder_web/live/movie_detail_live.ex:643
 #, elixir-autogen, elixir-format
 msgid "Audio"
 msgstr ""
@@ -2241,12 +2241,12 @@ msgstr ""
 msgid "audio %{lang}"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:652
+#: lib/cinder_web/live/movie_detail_live.ex:658
 #, elixir-autogen, elixir-format
 msgid "embedded"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:658
+#: lib/cinder_web/live/movie_detail_live.ex:664
 #, elixir-autogen, elixir-format
 msgid "sidecar"
 msgstr ""
@@ -2424,7 +2424,7 @@ msgid "Allowed download folders, separated by commas or new lines. The filesyste
 msgstr ""
 
 #: lib/cinder_web/components/settings_components.ex:101
-#: lib/cinder_web/components/settings_components.ex:474
+#: lib/cinder_web/components/settings_components.ex:479
 #, elixir-autogen, elixir-format
 msgid "Download import roots"
 msgstr ""
@@ -2444,17 +2444,17 @@ msgstr ""
 msgid "Setup"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:491
+#: lib/cinder_web/components/settings_components.ex:496
 #, elixir-autogen, elixir-format
 msgid "%{kind}: Max size (GB)"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:488
+#: lib/cinder_web/components/settings_components.ex:493
 #, elixir-autogen, elixir-format
 msgid "%{kind}: Min size (GB)"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:471
+#: lib/cinder_web/components/settings_components.ex:476
 #, elixir-autogen, elixir-format
 msgid "Enter a positive number of GB, or leave blank for no limit."
 msgstr ""
@@ -2464,21 +2464,21 @@ msgstr ""
 msgid "Not saved. Check: %{fields}."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:459
+#: lib/cinder_web/components/settings_components.ex:464
 #, elixir-autogen, elixir-format
 msgid "The filesystem root (/) is not allowed."
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:971
 #: lib/cinder_web/components/core_components.ex:982
-#: lib/cinder_web/components/core_components.ex:1198
+#: lib/cinder_web/components/core_components.ex:1201
 #, elixir-autogen, elixir-format
 msgid "Anime"
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:968
 #: lib/cinder_web/components/core_components.ex:984
-#: lib/cinder_web/components/core_components.ex:1196
+#: lib/cinder_web/components/core_components.ex:1199
 #, elixir-autogen, elixir-format
 msgid "Auto"
 msgstr ""
@@ -2497,13 +2497,13 @@ msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:970
 #: lib/cinder_web/components/core_components.ex:982
-#: lib/cinder_web/components/core_components.ex:1197
+#: lib/cinder_web/components/core_components.ex:1200
 #: lib/cinder_web/live/grab_mapping_live.ex:420
 #, elixir-autogen, elixir-format
 msgid "Standard"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1201
+#: lib/cinder_web/components/core_components.ex:1204
 #, elixir-autogen, elixir-format
 msgid " and "
 msgstr ""
@@ -2530,8 +2530,8 @@ msgstr ""
 msgid "Alias title"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:776
-#: lib/cinder_web/live/movie_detail_live.ex:784
+#: lib/cinder_web/live/movie_detail_live.ex:782
+#: lib/cinder_web/live/movie_detail_live.ex:790
 #: lib/cinder_web/live/series_detail_live.ex:513
 #: lib/cinder_web/live/series_detail_live.ex:521
 #, elixir-autogen, elixir-format
@@ -2589,7 +2589,7 @@ msgstr ""
 msgid "Extra"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1204
+#: lib/cinder_web/components/core_components.ex:1207
 #, elixir-autogen, elixir-format
 msgid "Japanese animation"
 msgstr ""
@@ -2600,16 +2600,16 @@ msgstr ""
 msgid "Language (optional)"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:779
-#: lib/cinder_web/live/movie_detail_live.ex:787
+#: lib/cinder_web/live/movie_detail_live.ex:785
+#: lib/cinder_web/live/movie_detail_live.ex:793
 #: lib/cinder_web/live/series_detail_live.ex:516
 #: lib/cinder_web/live/series_detail_live.ex:524
 #, elixir-autogen, elixir-format
 msgid "Licensed"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:777
-#: lib/cinder_web/live/movie_detail_live.ex:785
+#: lib/cinder_web/live/movie_detail_live.ex:783
+#: lib/cinder_web/live/movie_detail_live.ex:791
 #: lib/cinder_web/live/series_detail_live.ex:514
 #: lib/cinder_web/live/series_detail_live.ex:522
 #, elixir-autogen, elixir-format
@@ -2632,8 +2632,8 @@ msgstr ""
 msgid "Regular"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:778
-#: lib/cinder_web/live/movie_detail_live.ex:786
+#: lib/cinder_web/live/movie_detail_live.ex:784
+#: lib/cinder_web/live/movie_detail_live.ex:792
 #: lib/cinder_web/live/series_detail_live.ex:515
 #: lib/cinder_web/live/series_detail_live.ex:523
 #, elixir-autogen, elixir-format
@@ -2647,8 +2647,8 @@ msgid "Save alias"
 msgstr ""
 
 #: lib/cinder_web/live/grab_mapping_live.ex:421
-#: lib/cinder_web/live/movie_detail_live.ex:780
-#: lib/cinder_web/live/movie_detail_live.ex:788
+#: lib/cinder_web/live/movie_detail_live.ex:786
+#: lib/cinder_web/live/movie_detail_live.ex:794
 #: lib/cinder_web/live/series_detail_live.ex:517
 #: lib/cinder_web/live/series_detail_live.ex:525
 #, elixir-autogen, elixir-format
@@ -2684,7 +2684,7 @@ msgstr ""
 msgid "Title aliases"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1205
+#: lib/cinder_web/components/core_components.ex:1208
 #, elixir-autogen, elixir-format
 msgid "an absolute episode group"
 msgstr ""
@@ -3005,8 +3005,8 @@ msgid "Curated"
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:1041
-#: lib/cinder_web/components/core_components.ex:1173
-#: lib/cinder_web/components/settings_components.ex:327
+#: lib/cinder_web/components/core_components.ex:1176
+#: lib/cinder_web/components/settings_components.ex:332
 #, elixir-autogen, elixir-format
 msgid "Allow"
 msgstr ""
@@ -3016,110 +3016,110 @@ msgstr ""
 msgid "Anime releases"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:476
+#: lib/cinder_web/components/settings_components.ex:481
 #, elixir-autogen, elixir-format
 msgid "Anime: Audio mode"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:479
+#: lib/cinder_web/components/settings_components.ex:484
 #, elixir-autogen, elixir-format
 msgid "Anime: Embedded subtitles"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:482
+#: lib/cinder_web/components/settings_components.ex:487
 #, elixir-autogen, elixir-format
 msgid "Anime: Preferred-group fallback delay"
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:1037
-#: lib/cinder_web/components/core_components.ex:1170
-#: lib/cinder_web/components/settings_components.ex:315
+#: lib/cinder_web/components/core_components.ex:1173
+#: lib/cinder_web/components/settings_components.ex:316
 #, elixir-autogen, elixir-format
 msgid "Any"
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:1064
-#: lib/cinder_web/components/settings_components.ex:309
+#: lib/cinder_web/components/settings_components.ex:310
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Audio mode"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1128
 #: lib/cinder_web/components/core_components.ex:1131
-#: lib/cinder_web/components/settings_components.ex:342
+#: lib/cinder_web/components/core_components.ex:1134
+#: lib/cinder_web/components/settings_components.ex:347
 #, elixir-autogen, elixir-format
 msgid "Blocked groups"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:468
+#: lib/cinder_web/components/settings_components.ex:473
 #, elixir-autogen, elixir-format
 msgid "Choose a valid audio mode."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:465
+#: lib/cinder_web/components/settings_components.ex:470
 #, elixir-autogen, elixir-format
 msgid "Choose a valid mode and at least one subtitle language when required."
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:1036
-#: lib/cinder_web/components/core_components.ex:1169
-#: lib/cinder_web/components/settings_components.ex:314
+#: lib/cinder_web/components/core_components.ex:1172
+#: lib/cinder_web/components/settings_components.ex:315
 #, elixir-autogen, elixir-format
 msgid "Dual audio"
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:1035
-#: lib/cinder_web/components/core_components.ex:1168
-#: lib/cinder_web/components/settings_components.ex:313
+#: lib/cinder_web/components/core_components.ex:1171
+#: lib/cinder_web/components/settings_components.ex:314
 #, elixir-autogen, elixir-format
 msgid "Dub"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1085
-#: lib/cinder_web/components/settings_components.ex:324
+#: lib/cinder_web/components/core_components.ex:1088
+#: lib/cinder_web/components/settings_components.ex:329
 #, elixir-autogen, elixir-format
 msgid "Embedded subtitles"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:462
+#: lib/cinder_web/components/settings_components.ex:467
 #, elixir-autogen, elixir-format
 msgid "Enter a non-negative whole number of hours."
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:1042
-#: lib/cinder_web/components/core_components.ex:1174
-#: lib/cinder_web/components/settings_components.ex:328
+#: lib/cinder_web/components/core_components.ex:1177
+#: lib/cinder_web/components/settings_components.ex:333
 #, elixir-autogen, elixir-format
 msgid "Prefer embedded"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1114
 #: lib/cinder_web/components/core_components.ex:1117
-#: lib/cinder_web/components/settings_components.ex:336
+#: lib/cinder_web/components/core_components.ex:1120
+#: lib/cinder_web/components/settings_components.ex:341
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Preferred groups"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1142
-#: lib/cinder_web/components/core_components.ex:1148
-#: lib/cinder_web/components/settings_components.ex:351
+#: lib/cinder_web/components/core_components.ex:1145
+#: lib/cinder_web/components/core_components.ex:1151
+#: lib/cinder_web/components/settings_components.ex:356
 #, elixir-autogen, elixir-format
 msgid "Preferred-group fallback delay (hours)"
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:1043
-#: lib/cinder_web/components/core_components.ex:1175
-#: lib/cinder_web/components/settings_components.ex:329
+#: lib/cinder_web/components/core_components.ex:1178
+#: lib/cinder_web/components/settings_components.ex:334
 #, elixir-autogen, elixir-format
 msgid "Require embedded"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:310
+#: lib/cinder_web/components/settings_components.ex:311
 #, elixir-autogen, elixir-format
 msgid "Use server default (Original)"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:325
+#: lib/cinder_web/components/settings_components.ex:330
 #, elixir-autogen, elixir-format
 msgid "Use server default (Prefer embedded)"
 msgstr ""
@@ -3129,25 +3129,31 @@ msgstr ""
 msgid "Anime preferences"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1107
-#: lib/cinder_web/components/core_components.ex:1121
-#: lib/cinder_web/components/core_components.ex:1133
+#: lib/cinder_web/components/core_components.ex:1110
+#: lib/cinder_web/components/core_components.ex:1124
+#: lib/cinder_web/components/core_components.ex:1136
 #, elixir-autogen, elixir-format
 msgid "Blank override disables the global list"
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:1068
-#: lib/cinder_web/components/core_components.ex:1089
-#: lib/cinder_web/components/core_components.ex:1105
-#: lib/cinder_web/components/core_components.ex:1119
-#: lib/cinder_web/components/core_components.ex:1133
+#: lib/cinder_web/components/core_components.ex:1092
+#: lib/cinder_web/components/core_components.ex:1108
+#: lib/cinder_web/components/core_components.ex:1122
+#: lib/cinder_web/components/core_components.ex:1136
 #, elixir-autogen, elixir-format
 msgid "Effective: %{value}"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1078
+#: lib/cinder_web/components/core_components.ex:1081
 #, elixir-autogen, elixir-format
 msgid "Original audio cannot be verified because the original language is unknown"
+msgstr ""
+
+#: lib/cinder_web/components/core_components.ex:1071
+#: lib/cinder_web/components/settings_components.ex:320
+#, elixir-autogen, elixir-format
+msgid "Dual audio requires known original-language metadata and a dub target"
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:1047
@@ -3162,7 +3168,7 @@ msgstr ""
 msgid "Use Anime default"
 msgstr ""
 
-#: lib/cinder_web/components/core_components.ex:1189
+#: lib/cinder_web/components/core_components.ex:1192
 #, elixir-autogen, elixir-format
 msgid "Effective fallback delay: %{count} hour"
 msgid_plural "Effective fallback delay: %{count} hours"

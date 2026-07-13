@@ -1687,8 +1687,11 @@ defmodule Cinder.Download.PollerTest do
     assert {:ok, downloaded} =
              Catalog.transition(movie, %{status: :downloaded, import_attempts: 0})
 
-    stub(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
-    stub(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source -> {:error, :timeout} end)
+    expect(Cinder.Library.FilesystemMock, :dir?, 10, fn ^source -> false end)
+
+    expect(Cinder.Library.MediaInfoMock, :probe_policy, 10, fn ^source ->
+      {:error, :timeout}
+    end)
 
     start_supervised!({Poller, interval: 60_000})
 
@@ -1701,7 +1704,11 @@ defmodule Cinder.Download.PollerTest do
 
     assert :ok = Poller.poll()
 
-    assert %Movie{status: :import_failed, import_attempts: 10} =
+    assert %Movie{
+             status: :import_failed,
+             import_attempts: 10,
+             verification_hold_origin: :download
+           } =
              failed =
              Repo.get!(Movie, movie.id)
 
@@ -1713,6 +1720,102 @@ defmodule Cinder.Download.PollerTest do
     refute cleanup_pending_for?(failed.download_id)
     assert Repo.all(Intent) == []
     refute Repo.exists?(ImportStage)
+
+    assert :ok = Poller.poll()
+    stop_supervised(Poller)
+    start_supervised!({Poller, interval: 60_000})
+    assert :ok = Poller.poll()
+
+    assert {:ok, retried} = Catalog.retry_movie(failed)
+    assert retried.status == :downloaded
+    assert retried.import_attempts == 0
+    assert retried.verification_hold_origin == nil
+    assert retried.file_path == failed.file_path
+    assert retried.download_id == failed.download_id
+    assert retried.release_title == failed.release_title
+    assert retried.release_policy_snapshot == failed.release_policy_snapshot
+  end
+
+  test "an unavailable upgrade policy probe holds durably and Retry resumes the same replacement" do
+    enable_policy_probe()
+    source = "/downloads/Anime.Movie.Upgrade.Unavailable.mkv"
+    live_file = "/library/Anime Movie.mkv"
+    movie = policy_movie(:upgrading, "hash-policy-upgrade-unavailable", live_file)
+
+    expect(Cinder.Download.ClientMock, :status, 10, fn "hash-policy-upgrade-unavailable" ->
+      {:ok, %{state: :completed, content_path: source}}
+    end)
+
+    expect(Cinder.Library.FilesystemMock, :dir?, 10, fn ^source -> false end)
+
+    expect(Cinder.Library.MediaInfoMock, :probe_policy, 10, fn ^source ->
+      {:error, :timeout}
+    end)
+
+    start_supervised!({Poller, interval: 60_000})
+
+    for _attempt <- 1..10, do: assert(:ok = Poller.poll())
+
+    assert %Movie{
+             status: :import_failed,
+             import_attempts: 10,
+             verification_hold_origin: :upgrade,
+             download_id: "hash-policy-upgrade-unavailable",
+             release_title: "[Group] Anime Movie [1080p]",
+             file_path: ^live_file,
+             imported_resolution: "720p",
+             imported_size: 1_234
+           } = failed = Repo.get!(Movie, movie.id)
+
+    assert failed.release_policy_snapshot == movie.release_policy_snapshot
+    assert Catalog.blocked_release_titles(failed) == []
+    refute cleanup_pending_for?(failed.download_id)
+    refute Repo.exists?(ImportStage)
+
+    assert :ok = Poller.poll()
+    stop_supervised(Poller)
+    start_supervised!({Poller, interval: 60_000})
+    assert :ok = Poller.poll()
+
+    assert {:ok, retried} = Catalog.retry_movie(failed)
+    assert retried.status == :upgrading
+    assert retried.import_attempts == 0
+    assert retried.verification_hold_origin == nil
+    assert retried.download_id == failed.download_id
+    assert retried.release_title == failed.release_title
+    assert retried.release_policy_snapshot == failed.release_policy_snapshot
+    assert retried.file_path == live_file
+    assert retried.imported_resolution == "720p"
+    assert retried.imported_size == 1_234
+  end
+
+  test "a stale unavailable probe cannot hold a changed release" do
+    enable_policy_probe()
+    source = "/downloads/Anime.Movie.Unavailable.Stale.mkv"
+    movie = policy_movie(:downloaded, "hash-policy-unavailable-stale", source)
+
+    assert {:ok, movie} =
+             Catalog.transition(movie, %{status: :downloaded, import_attempts: 9})
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
+
+    expect(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source ->
+      Repo.update_all(from(m in Movie, where: m.id == ^movie.id),
+        set: [release_title: "Concurrent.Release"]
+      )
+
+      {:error, :timeout}
+    end)
+
+    start_supervised!({Poller, interval: 60_000})
+    assert :ok = Poller.poll()
+
+    assert %Movie{
+             status: :downloaded,
+             release_title: "Concurrent.Release",
+             import_attempts: 9,
+             verification_hold_origin: nil
+           } = Repo.get!(Movie, movie.id)
   end
 
   test "a stale movie rejection is skipped without retrying or partial cleanup" do

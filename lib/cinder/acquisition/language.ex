@@ -68,6 +68,9 @@ defmodule Cinder.Acquisition.Language do
     Map.get(@language_aliases, normalized, normalized)
   end
 
+  @doc "Whether a value normalizes to a language supported by the release and stream registry."
+  def known?(code), do: normalize(code) in Map.keys(@audio_codes)
+
   @doc """
   Whether an unsatisfiable preference parks the item (an explicit language pick) rather
   than falling back to the unfiltered candidates (the soft Original/Any default).

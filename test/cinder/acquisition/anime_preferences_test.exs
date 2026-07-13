@@ -3,7 +3,7 @@ defmodule Cinder.Acquisition.AnimePreferencesTest do
 
   alias Cinder.Acquisition.{AnimePreferences, Language, Release}
   alias Cinder.Catalog
-  alias Cinder.Catalog.Series
+  alias Cinder.Catalog.{Movie, Series}
   alias Cinder.Download.Intent
 
   import Cinder.CatalogFixtures
@@ -45,6 +45,45 @@ defmodule Cinder.Acquisition.AnimePreferencesTest do
                "subtitle_languages_mode" => "override",
                "subtitle_languages" => ""
              })
+  end
+
+  test "Catalog list inheritance persists nil and resolves current non-empty defaults" do
+    movie =
+      movie_fixture(%{media_profile: :anime, original_language: "ja"})
+      |> Movie.anime_preferences_changeset(%{
+        subtitle_languages: ["en"],
+        preferred_release_groups: ["old"],
+        blocked_release_groups: ["blocked"]
+      })
+      |> Repo.update!()
+
+    series =
+      series_fixture(%{media_profile: :anime, original_language: "ja"})
+      |> Series.anime_preferences_changeset(%{
+        subtitle_languages: ["en"],
+        preferred_release_groups: ["old"],
+        blocked_release_groups: ["blocked"]
+      })
+      |> Repo.update!()
+
+    inherit = %{
+      "subtitle_languages_mode" => "inherit",
+      "preferred_release_groups_mode" => "inherit",
+      "blocked_release_groups_mode" => "inherit"
+    }
+
+    assert {:ok, movie} = Catalog.set_anime_preferences(movie, inherit)
+    assert {:ok, series} = Catalog.set_anime_preferences(series, inherit)
+
+    for title <- [movie, series] do
+      assert title.subtitle_languages == nil
+      assert title.preferred_release_groups == nil
+      assert title.blocked_release_groups == nil
+      assert {:ok, policy} = AnimePreferences.resolve(title, @defaults)
+      assert policy.subtitle_languages == ["fr", "en"]
+      assert policy.preferred_groups == ["subsplease"]
+      assert policy.blocked_groups == ["badgroup"]
+    end
   end
 
   test "override attrs normalize fixed enums, lists, and whole-hour delays" do
@@ -252,6 +291,41 @@ defmodule Cinder.Acquisition.AnimePreferencesTest do
   test "original mode has no hard requirement when the source language is missing" do
     assert {:ok, %{required_audio_languages: []}} =
              AnimePreferences.resolve(%Series{original_language: nil}, @defaults)
+  end
+
+  test "dual rejects missing original metadata instead of degrading to dub-only" do
+    title = %Series{audio_mode: :dual, original_language: nil, preferred_language: "fra"}
+
+    assert {:error, :original_language_required} =
+             AnimePreferences.resolve(title, @defaults)
+
+    assert {:ok, %{required_audio_languages: ["fr"]}} =
+             AnimePreferences.resolve(%{title | audio_mode: :dub}, @defaults)
+  end
+
+  test "unusable original metadata is not treated as a hard audio language" do
+    title = %Series{audio_mode: :dual, original_language: "und", preferred_language: "fra"}
+
+    assert {:error, :original_language_required} =
+             AnimePreferences.resolve(title, @defaults)
+
+    assert {:ok, %{required_audio_languages: []}} =
+             AnimePreferences.resolve(%{title | audio_mode: :original}, @defaults)
+  end
+
+  test "Catalog reports missing original metadata on the audio mode field" do
+    movie =
+      movie_fixture(%{
+        media_profile: :anime,
+        original_language: nil,
+        preferred_language: "french"
+      })
+
+    assert {:error, changeset} =
+             Catalog.set_anime_preferences(movie, %{"audio_mode" => "dual"})
+
+    assert errors_on(changeset).audio_mode != []
+    assert Repo.reload!(movie).audio_mode == nil
   end
 
   test "dub and dual require an explicit dub target" do

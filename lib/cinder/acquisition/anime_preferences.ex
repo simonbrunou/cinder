@@ -139,6 +139,10 @@ defmodule Cinder.Acquisition.AnimePreferences do
       {:error, :dub_language_required} ->
         {:error, Changeset.add_error(changeset, :audio_mode, "is invalid")}
 
+      {:error, :original_language_required} ->
+        {:error,
+         Changeset.add_error(changeset, :audio_mode, "requires original language metadata")}
+
       {:error, :subtitle_language_required} ->
         {:error, Changeset.add_error(changeset, :subtitle_languages, "can't be blank")}
     end
@@ -237,6 +241,9 @@ defmodule Cinder.Acquisition.AnimePreferences do
     |> Enum.uniq()
   end
 
+  def normalize_optional_languages(nil), do: nil
+  def normalize_optional_languages(languages), do: normalize_languages(languages)
+
   def normalize_groups(nil), do: []
 
   def normalize_groups(groups) do
@@ -245,6 +252,9 @@ defmodule Cinder.Acquisition.AnimePreferences do
     |> Enum.reject(&(&1 in [nil, ""]))
     |> Enum.uniq()
   end
+
+  def normalize_optional_groups(nil), do: nil
+  def normalize_optional_groups(groups), do: normalize_groups(groups)
 
   def normalize_group(nil), do: nil
   def normalize_group(group), do: group |> String.trim() |> String.downcase()
@@ -370,12 +380,21 @@ defmodule Cinder.Acquisition.AnimePreferences do
   end
 
   defp required_audio(:dual, title) do
-    with {:ok, dub_language} <- dub_language(title) do
-      {:ok, Enum.uniq(original_languages(title) ++ [dub_language])}
+    with {:ok, dub_language} <- dub_language(title),
+         [original_language | _rest] <- original_languages(title) do
+      {:ok, Enum.uniq([original_language, dub_language])}
+    else
+      [] -> {:error, :original_language_required}
+      {:error, _reason} = error -> error
     end
   end
 
-  defp original_languages(title), do: normalize_languages([title.original_language])
+  defp original_languages(title) do
+    title.original_language
+    |> List.wrap()
+    |> normalize_languages()
+    |> Enum.filter(&Language.known?/1)
+  end
 
   defp dub_language(%{preferred_language: preferred})
        when preferred in [nil, "", "original", "any"],

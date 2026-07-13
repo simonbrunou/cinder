@@ -60,6 +60,7 @@ defmodule CinderWeb.SettingsLiveTest do
 
     assert has_element?(lv, "#anime-settings > summary", "Anime releases")
     assert has_element?(lv, "#anime_audio_mode option[value=original]")
+    assert has_element?(lv, "#anime-dual-language-settings-help")
     assert has_element?(lv, "#anime_embedded_subtitle_mode option[value=require]")
     assert has_element?(lv, ~s|#anime_group_fallback_delay[type="number"][min="0"]|)
 
