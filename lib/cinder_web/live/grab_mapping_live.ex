@@ -595,10 +595,10 @@ defmodule CinderWeb.GrabMappingLive do
             )}
           </p>
           <div
-            :if={evidence_resolution(decision)}
+            :if={evidence_resolution(decision) || evidence_resolutions(decision) != []}
             class="mt-1 space-y-1 text-xs text-base-content/70"
           >
-            <p data-resolution>
+            <p :if={evidence_resolution(decision)} data-resolution>
               {gettext("Resolution: %{resolution}",
                 resolution: resolution_label(evidence_resolution(decision))
               )}

@@ -82,6 +82,27 @@ defmodule CinderWeb.GrabMappingLiveTest do
     refute html =~ grab.content_path
   end
 
+  test "renders resolved coordinate evidence when an assignment-wide issue holds the grab", %{
+    conn: conn
+  } do
+    %{grab: grab, mapped: mapped, missing: missing} = missing_assignment_fixture!()
+
+    {:ok, view, _html} = live(conn, "/activity/grabs/#{grab.id}/mapping")
+
+    assert has_element?(view, "#mapping-issue", "Missing episode assignment")
+    assert has_element?(view, "#mapping-issue", "candidate #{missing.id}")
+    assert has_element?(view, "#mapping-file-0-source", "Automatic")
+    assert has_element?(view, "#mapping-file-0 [data-provenance]", "Manual")
+    assert has_element?(view, "#mapping-file-0 [data-provenance]", "fixture")
+    assert has_element?(view, "#mapping-file-0 [data-provenance]", "main")
+    assert has_element?(view, "#mapping-file-0 [data-provenance]", "Episode IDs: #{mapped.id}")
+    refute has_element?(view, "#mapping-file-0 [data-resolution]")
+
+    html = render(view)
+    refute html =~ "/downloads/Frieren"
+    refute html =~ grab.content_path
+  end
+
   test "assign and ignore save exact integer IDs and redirect to Activity", %{conn: conn} do
     %{grab: grab, original: original, target: target} =
       held_mapping_fixture!(target_monitored: false)
@@ -398,5 +419,85 @@ defmodule CinderWeb.GrabMappingLiveTest do
       alternate: alternate,
       series: series
     }
+  end
+
+  defp missing_assignment_fixture! do
+    series = series_fixture(%{title: "Frieren", monitor_strategy: :all})
+    season = season_fixture(series, season_number: 1)
+    mapped = episode_fixture(season, episode_number: 1)
+    missing = episode_fixture(season, episode_number: 2)
+
+    decisions = %{
+      "version" => 1,
+      "files" => [
+        %{
+          "relative_path" => "Frieren - 1.mkv",
+          "size" => 1_020,
+          "major_device" => 1,
+          "inode" => 120,
+          "mtime" => 100,
+          "parsed" => %{
+            "coordinates" => [%{"scheme" => "absolute", "values" => ["1"]}],
+            "role" => "story",
+            "group" => nil
+          },
+          "episode_ids" => [mapped.id],
+          "source" => "automatic",
+          "ignored" => false,
+          "evidence" => %{
+            "resolutions" => [
+              %{
+                "scheme" => "absolute",
+                "canonical_value" => "1",
+                "episode_ids" => [mapped.id],
+                "resolver" => %{
+                  "precedence" => "manual",
+                  "matches" => [
+                    %{
+                      "coordinate" => %{
+                        "source" => "fixture",
+                        "scheme" => "absolute",
+                        "namespace" => "main",
+                        "canonical_value" => "1"
+                      },
+                      "episode_ids" => [mapped.id],
+                      "evidence" => nil
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+
+    grab =
+      Repo.insert!(%Grab{
+        download_id: "held-missing-web-#{System.unique_integer([:positive])}",
+        download_protocol: :torrent,
+        release_title: "Frieren.01.1080p-GROUP",
+        content_path: "/downloads/Frieren",
+        mapping_snapshot: %{
+          "version" => 2,
+          "reserved_episode_ids" => [mapped.id, missing.id],
+          "release" => %{
+            "title" => "Frieren.01.1080p-GROUP",
+            "coordinates" => [%{"scheme" => "absolute", "values" => ["1"]}]
+          }
+        },
+        mapping_status: :needs_mapping,
+        automatic_mapping_decisions: decisions,
+        mapping_issue: %{
+          "version" => 1,
+          "reason" => "missing_episode_assignment",
+          "relative_paths" => [],
+          "candidate_episode_ids" => [missing.id]
+        }
+      })
+
+    mapped |> Ecto.Changeset.change(grab_id: grab.id) |> Repo.update!()
+
+    %{grab: Repo.reload!(grab), mapped: mapped, missing: missing}
   end
 end
