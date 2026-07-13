@@ -644,14 +644,14 @@ defmodule CinderWeb.SeriesDetailLive do
           {gettext("Title aliases")}
         </h2>
         <p
+          :if={@alias_form[:id].value not in [nil, ""]}
           id="series-alias-edit-status"
           role="status"
           aria-live="polite"
+          phx-mounted={JS.focus(to: "#series-alias-title")}
           class="mb-2 text-sm text-base-content/60"
         >
-          <%= if @alias_form[:id].value not in [nil, ""] do %>
-            {gettext("Editing alias %{title}", title: @alias_form[:title].value)}
-          <% end %>
+          {gettext("Editing alias %{title}", title: @alias_form[:title].value)}
         </p>
         <.form
           for={@alias_form}
@@ -720,7 +720,7 @@ defmodule CinderWeb.SeriesDetailLive do
                 type="button"
                 variant="ghost"
                 size="sm"
-                phx-click={JS.push("edit_alias") |> JS.focus(to: "#series-alias-title")}
+                phx-click={JS.push("edit_alias")}
                 phx-value-id={title_alias.id}
                 aria-label={gettext("Edit alias %{title}", title: title_alias.title)}
               >

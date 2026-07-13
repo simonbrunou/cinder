@@ -133,10 +133,9 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     manual = Enum.find(Catalog.list_title_aliases(series), &(&1.precedence == :manual))
 
-    assert has_element?(
-             view,
-             "#edit-series-alias-#{manual.id}[phx-click*='focus'][phx-click*='#series-alias-title']"
-           )
+    refute has_element?(view, "#series-alias-edit-status")
+    refute has_element?(view, "#edit-series-alias-#{manual.id}[phx-click*='focus']")
+    assert has_element?(view, "#edit-series-alias-#{manual.id}[phx-click*='push']")
 
     view
     |> element("#edit-series-alias-#{manual.id}")
@@ -144,7 +143,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     assert has_element?(
              view,
-             "#series-alias-edit-status[role='status']",
+             "#series-alias-edit-status[role='status'][phx-mounted*='focus'][phx-mounted*='#series-alias-title']",
              "Editing alias Shingeki no Kyojin"
            )
   end
