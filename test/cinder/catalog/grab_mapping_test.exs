@@ -5,7 +5,7 @@ defmodule Cinder.Catalog.GrabMappingTest do
 
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Grab}
-  alias Cinder.Download.Intent
+  alias Cinder.Download.{Intent, IntentEpisode}
   alias Cinder.Library
   alias Cinder.Repo
 
@@ -181,6 +181,345 @@ defmodule Cinder.Catalog.GrabMappingTest do
     end
   end
 
+  describe "mapping recovery" do
+    test "reads held mapping grabs with their series tree" do
+      series = series_fixture(%{monitor_strategy: :all})
+      season = season_fixture(series)
+      first = episode_fixture(season, episode_number: 1)
+      second = episode_fixture(season, episode_number: 2)
+      held_a = held_grab_fixture!(first)
+      held_b = held_grab_fixture!(second)
+
+      other_episode =
+        %{monitor_strategy: :all}
+        |> series_fixture()
+        |> season_fixture()
+        |> episode_fixture()
+
+      _other = held_grab_fixture!(other_episode)
+
+      resolved =
+        held_a
+        |> Grab.mapping_changeset(%{mapping_status: :resolved})
+        |> Repo.update!()
+
+      loaded = Catalog.get_mapping_grab(resolved.id)
+      assert Ecto.assoc_loaded?(loaded.episodes)
+      assert hd(loaded.episodes).season.series.id == series.id
+      assert Catalog.get_mapping_grab(-1) == nil
+
+      assert [listed] = Catalog.list_mapping_grabs_for_series(series.id)
+      assert listed.id == held_b.id
+      assert Ecto.assoc_loaded?(listed.episodes)
+      assert hd(listed.episodes).season.series.id == series.id
+    end
+
+    test "resume atomically replaces current targets and stores identity-bound overrides" do
+      series = series_fixture(%{monitor_strategy: :all})
+      season = season_fixture(series)
+      episode_a = episode_fixture(season, episode_number: 1, search_attempts: 4)
+      episode_b = episode_fixture(season, episode_number: 2)
+      grab = held_grab_fixture!(episode_a)
+      series_id = series.id
+      Catalog.subscribe_series()
+
+      assert {:ok, resumed} =
+               Catalog.resume_grab_mapping(grab, %{
+                 "files" => [
+                   %{
+                     "relative_path" => "Frieren - 28.mkv",
+                     "size" => 999,
+                     "major_device" => 999,
+                     "inode" => 999,
+                     "mtime" => "forged",
+                     "evidence" => %{"forged" => true},
+                     "action" => "assign",
+                     "episode_ids" => [to_string(episode_b.id)]
+                   }
+                 ],
+                 "target_episode_ids" => [to_string(episode_b.id)],
+                 "monitor_episode_ids" => []
+               })
+
+      assert resumed.mapping_status == :resolved
+      assert resumed.mapping_issue == nil
+      assert resumed.mapping_snapshot == grab.mapping_snapshot
+
+      assert resumed.manual_mapping_overrides == %{
+               "version" => 1,
+               "files" => [
+                 %{
+                   "relative_path" => "Frieren - 28.mkv",
+                   "size" => 10,
+                   "major_device" => 7,
+                   "inode" => 21,
+                   "mtime" => "2026-07-13T12:01:00",
+                   "action" => "assign",
+                   "episode_ids" => [episode_b.id]
+                 }
+               ],
+               "original_episode_ids" => [episode_a.id],
+               "target_episode_ids" => [episode_b.id],
+               "monitor_episode_ids" => []
+             }
+
+      assert %Episode{grab_id: nil, search_attempts: 4, monitored: true} =
+               Repo.get!(Episode, episode_a.id)
+
+      assert Repo.get!(Episode, episode_b.id).grab_id == grab.id
+      assert_receive {:series_updated, ^series_id}
+      refute_received {:series_updated, ^series_id}
+    end
+
+    test "resume opts selected unmonitored targets in without touching other monitor flags" do
+      series = series_fixture(%{monitor_strategy: :all})
+      season = season_fixture(series)
+      episode_a = episode_fixture(season, episode_number: 1)
+      episode_b = episode_fixture(season, episode_number: 2, monitored: false)
+      episode_c = episode_fixture(season, episode_number: 3, monitored: false)
+      grab = held_grab_fixture!(episode_a)
+
+      assert {:ok, _resumed} =
+               Catalog.resume_grab_mapping(
+                 grab,
+                 resume_attrs(episode_b.id, monitor_episode_ids: [episode_b.id])
+               )
+
+      assert Repo.get!(Episode, episode_b.id).monitored
+      refute Repo.get!(Episode, episode_c.id).monitored
+    end
+
+    test "resume rolls back for a target in another series" do
+      {grab, original, _same_series_target} = recovery_fixture()
+
+      foreign =
+        %{monitor_strategy: :all}
+        |> series_fixture()
+        |> season_fixture()
+        |> episode_fixture()
+
+      assert_resume_rejected(grab, original, resume_attrs(foreign.id))
+      assert Repo.get!(Episode, foreign.id).grab_id == nil
+    end
+
+    test "resume rolls back for an already available target" do
+      {grab, original, target} = recovery_fixture(%{file_path: "/library/Frieren 28.mkv"})
+
+      assert_resume_rejected(grab, original, resume_attrs(target.id))
+      assert Repo.get!(Episode, target.id).file_path == "/library/Frieren 28.mkv"
+    end
+
+    test "resume rolls back for a target owned by another grab" do
+      {grab, original, target} = recovery_fixture()
+      assert {:ok, owner} = Catalog.create_grab("other-owner", :torrent, [target.id])
+
+      assert_resume_rejected(grab, original, resume_attrs(target.id))
+      assert Repo.get!(Episode, target.id).grab_id == owner.id
+    end
+
+    test "resume rolls back for a target reserved by an active intent" do
+      {grab, original, target} = recovery_fixture()
+      intent = reserved_intent_fixture!(target)
+
+      assert_resume_rejected(grab, original, resume_attrs(target.id))
+      assert Repo.get!(Intent, intent.id)
+      assert Repo.get!(Episode, target.id).grab_id == nil
+    end
+
+    test "resume rolls back for an unmonitored target without explicit opt-in" do
+      {grab, original, target} = recovery_fixture(%{monitored: false})
+
+      assert_resume_rejected(grab, original, resume_attrs(target.id))
+      refute Repo.get!(Episode, target.id).monitored
+    end
+
+    test "resume rejects duplicate episode IDs without changing held state" do
+      {grab, original, target} = recovery_fixture()
+
+      for attrs <- [
+            resume_attrs(target.id, target_episode_ids: [target.id, to_string(target.id)]),
+            resume_attrs(target.id, monitor_episode_ids: [target.id, target.id]),
+            resume_attrs(target.id,
+              episode_ids: [target.id, target.id],
+              monitor_episode_ids: []
+            )
+          ] do
+        assert_resume_rejected(grab, original, attrs)
+      end
+    end
+
+    test "resume rejects an empty target set without changing held state" do
+      {grab, original, _target} = recovery_fixture()
+
+      assert_resume_rejected(grab, original, %{
+        "files" => [%{"relative_path" => "Frieren - 28.mkv", "action" => "ignore"}],
+        "target_episode_ids" => [],
+        "monitor_episode_ids" => []
+      })
+    end
+
+    test "resume rejects a deleted grab" do
+      {grab, original, target} = recovery_fixture()
+      Repo.delete!(grab)
+
+      assert {:error, :stale_grab} = Catalog.resume_grab_mapping(grab, resume_attrs(target.id))
+      assert Repo.get!(Episode, original.id).grab_id == nil
+      assert Repo.get!(Episode, target.id).grab_id == nil
+    end
+
+    test "resume rejects a grab that is no longer held" do
+      {grab, original, target} = recovery_fixture()
+      resolved = grab |> Grab.mapping_changeset(%{mapping_status: :resolved}) |> Repo.update!()
+
+      assert_resume_rejected(resolved, original, resume_attrs(target.id))
+      assert Repo.get!(Grab, grab.id).mapping_status == :resolved
+    end
+
+    test "resume rejects unknown or duplicate persisted file paths" do
+      {grab, original, target} = recovery_fixture()
+      attrs = resume_attrs(target.id)
+
+      unknown =
+        put_in(attrs, ["files", Access.at(0), "relative_path"], "Unknown - 28.mkv")
+
+      duplicate = Map.update!(attrs, "files", fn [file] -> [file, file] end)
+
+      assert_resume_rejected(grab, original, unknown)
+      assert_resume_rejected(grab, original, duplicate)
+    end
+
+    test "resume rejects malformed actions and assignments" do
+      {grab, original, target} = recovery_fixture()
+      attrs = resume_attrs(target.id)
+
+      malformed = put_in(attrs, ["files", Access.at(0), "action"], "rename")
+      empty_assignment = put_in(attrs, ["files", Access.at(0), "episode_ids"], [])
+      invalid_id = put_in(attrs, ["files", Access.at(0), "episode_ids"], [0])
+
+      assert_resume_rejected(grab, original, malformed)
+      assert_resume_rejected(grab, original, empty_assignment)
+      assert_resume_rejected(grab, original, invalid_id)
+    end
+
+    test "resume rejects assignments and monitor additions outside the target set" do
+      {grab, original, target} = recovery_fixture()
+
+      season =
+        Repo.get!(Episode, target.id).season_id |> then(&Repo.get!(Cinder.Catalog.Season, &1))
+
+      outside = episode_fixture(season, episode_number: 3)
+
+      assignment_outside =
+        resume_attrs(target.id, episode_ids: [outside.id], monitor_episode_ids: [])
+
+      monitor_outside = resume_attrs(target.id, monitor_episode_ids: [outside.id])
+
+      assert_resume_rejected(grab, original, assignment_outside)
+      assert_resume_rejected(grab, original, monitor_outside)
+      assert Repo.get!(Episode, outside.id).grab_id == nil
+    end
+  end
+
+  describe "mapping identity promotion" do
+    test "promotes one persisted parsed coordinate with explicit episode order" do
+      series = series_fixture(%{monitor_strategy: :all})
+      season = season_fixture(series)
+      first = episode_fixture(season, episode_number: 1)
+      second = episode_fixture(season, episode_number: 2)
+      grab = held_grab_fixture!(first)
+      before = mapping_documents(grab)
+
+      assert {:ok, coordinate} =
+               Catalog.promote_grab_mapping(grab, %{
+                 "relative_path" => "Frieren - 28.mkv",
+                 "scheme" => "absolute",
+                 "value" => "28",
+                 "episode_ids" => [to_string(second.id), first.id]
+               })
+
+      assert coordinate.source == "manual"
+      assert coordinate.scheme == "absolute"
+      assert coordinate.namespace == "mapping-recovery"
+      assert coordinate.canonical_value == "28"
+      assert coordinate.precedence == :manual
+      assert Enum.map(coordinate.memberships, & &1.episode_id) == [second.id, first.id]
+      assert mapping_documents(Repo.get!(Grab, grab.id)) == before
+    end
+
+    test "promotion rejects an unknown or non-reusable persisted decision" do
+      {grab, _original, _target} = recovery_fixture()
+
+      assert {:error, _reason} =
+               Catalog.promote_grab_mapping(grab, %{
+                 "relative_path" => "Unknown.mkv",
+                 "scheme" => "absolute",
+                 "value" => "28",
+                 "episode_ids" => episode_ids(grab)
+               })
+
+      assert {:error, _reason} =
+               Catalog.promote_grab_mapping(grab, %{
+                 "relative_path" => "Frieren - 28.mkv",
+                 "scheme" => "absolute",
+                 "value" => "29",
+                 "episode_ids" => episode_ids(grab)
+               })
+
+      series = hd(Repo.preload(grab, episodes: [season: :series]).episodes).season.series
+      assert Catalog.list_episode_coordinates(series) == []
+    end
+
+    test "promotion rejects foreign, duplicate, or empty episode selections" do
+      {grab, original, target} = recovery_fixture()
+
+      foreign =
+        %{monitor_strategy: :all}
+        |> series_fixture()
+        |> season_fixture()
+        |> episode_fixture()
+
+      attrs = %{
+        "relative_path" => "Frieren - 28.mkv",
+        "scheme" => "absolute",
+        "value" => "28"
+      }
+
+      assert {:error, _reason} =
+               Catalog.promote_grab_mapping(grab, Map.put(attrs, "episode_ids", [foreign.id]))
+
+      assert {:error, _reason} =
+               Catalog.promote_grab_mapping(
+                 grab,
+                 Map.put(attrs, "episode_ids", [target.id, target.id])
+               )
+
+      assert {:error, _reason} =
+               Catalog.promote_grab_mapping(grab, Map.put(attrs, "episode_ids", []))
+
+      series = Repo.get!(Cinder.Catalog.Season, original.season_id) |> Repo.preload(:series)
+      assert Catalog.list_episode_coordinates(series.series) == []
+    end
+
+    test "promotion re-reads and rejects a grab that is no longer held" do
+      {grab, _original, target} = recovery_fixture()
+      before = mapping_documents(grab)
+      grab |> Grab.mapping_changeset(%{mapping_status: :resolved}) |> Repo.update!()
+
+      assert {:error, :mapping_not_held} =
+               Catalog.promote_grab_mapping(grab, %{
+                 "relative_path" => "Frieren - 28.mkv",
+                 "scheme" => "absolute",
+                 "value" => "28",
+                 "episode_ids" => [target.id]
+               })
+
+      persisted = Repo.get!(Grab, grab.id)
+
+      assert Map.take(mapping_documents(persisted), [:snapshot, :overrides]) ==
+               Map.take(before, [:snapshot, :overrides])
+    end
+  end
+
   test "preflight_anime_grab inventories, resolves overrides, and persists before staging" do
     series = series_fixture(%{monitor_strategy: :all})
     season = season_fixture(series)
@@ -261,10 +600,111 @@ defmodule Cinder.Catalog.GrabMappingTest do
       "files" => [
         %{
           "relative_path" => relative_path,
+          "size" => 10,
+          "major_device" => 7,
+          "inode" => 21,
+          "mtime" => "2026-07-13T12:01:00",
+          "parsed" => %{
+            "coordinates" => [%{"scheme" => "absolute", "values" => ["28"]}],
+            "role" => "main",
+            "group" => nil
+          },
           "episode_ids" => [episode_id],
+          "source" => "automatic",
           "ignored" => false
         }
       ]
     }
+  end
+
+  defp held_grab_fixture!(episode, opts \\ []) do
+    snapshot =
+      Keyword.get(opts, :snapshot, %{"version" => 2, "reserved_episode_ids" => [episode.id]})
+
+    decisions =
+      Keyword.get(opts, :decisions, decisions_document("Frieren - 28.mkv", episode.id))
+
+    grab =
+      Repo.insert!(%Grab{
+        download_id: "held-#{System.unique_integer([:positive])}",
+        download_protocol: :torrent,
+        mapping_snapshot: snapshot,
+        mapping_status: Keyword.get(opts, :mapping_status, :needs_mapping),
+        automatic_mapping_decisions: decisions,
+        manual_mapping_overrides: %{"version" => 1, "files" => []},
+        mapping_issue: %{"version" => 1, "reason" => "ambiguous"}
+      })
+
+    episode |> Ecto.Changeset.change(grab_id: grab.id) |> Repo.update!()
+    Repo.preload(grab, episodes: [season: :series])
+  end
+
+  defp recovery_fixture(target_attrs \\ %{}) do
+    series = series_fixture(%{monitor_strategy: :all})
+    season = season_fixture(series)
+    original = episode_fixture(season, episode_number: 1, search_attempts: 3)
+    target = episode_fixture(season, Map.merge(%{episode_number: 2}, target_attrs))
+    {held_grab_fixture!(original), original, target}
+  end
+
+  defp resume_attrs(target_id, opts \\ []) do
+    episode_ids = Keyword.get(opts, :episode_ids, [target_id])
+    target_episode_ids = Keyword.get(opts, :target_episode_ids, [target_id])
+    monitor_episode_ids = Keyword.get(opts, :monitor_episode_ids, [])
+
+    %{
+      "files" => [
+        %{
+          "relative_path" => "Frieren - 28.mkv",
+          "action" => "assign",
+          "episode_ids" => episode_ids
+        }
+      ],
+      "target_episode_ids" => target_episode_ids,
+      "monitor_episode_ids" => monitor_episode_ids
+    }
+  end
+
+  defp assert_resume_rejected(grab, original, attrs) do
+    before = mapping_documents(Repo.get!(Grab, grab.id))
+    original_links = episode_ids(grab)
+
+    assert {:error, _reason} = Catalog.resume_grab_mapping(grab, attrs)
+
+    persisted = Repo.get!(Grab, grab.id)
+    assert mapping_documents(persisted) == before
+    assert episode_ids(grab) == original_links
+    assert Repo.get!(Episode, original.id).grab_id == grab.id
+  end
+
+  defp mapping_documents(grab) do
+    Map.take(grab, [
+      :mapping_snapshot,
+      :mapping_status,
+      :automatic_mapping_decisions,
+      :manual_mapping_overrides,
+      :mapping_issue
+    ])
+    |> Map.new(fn
+      {:mapping_snapshot, value} -> {:snapshot, value}
+      {:manual_mapping_overrides, value} -> {:overrides, value}
+      pair -> pair
+    end)
+  end
+
+  defp reserved_intent_fixture!(episode) do
+    intent =
+      Repo.insert!(%Intent{
+        operation_key: Ecto.UUID.generate(),
+        kind: :episode,
+        target_id: episode.id,
+        episode_ids: [episode.id],
+        protocol: :torrent,
+        release: %{"title" => "Reserved.Release"},
+        status: :reserved
+      })
+
+    Repo.insert!(%IntentEpisode{intent_id: intent.id, episode_id: episode.id})
+    intent
   end
 end
