@@ -15,6 +15,15 @@ defmodule Cinder.Acquisition.Release do
     :download_url,
     :download_url_origin,
     :protocol,
+    :category_ids,
+    :indexer_id,
+    :published_at,
+    :query_origins,
+    :coordinates,
+    :role,
+    :resolved_episode_ids,
+    :resolution_evidence,
+    :mapping_snapshot,
     :resolution,
     :source,
     :codec,
@@ -34,7 +43,10 @@ defmodule Cinder.Acquisition.Release do
       size: Map.get(indexer_map, :size),
       download_url: Map.get(indexer_map, :download_url),
       download_url_origin: Map.get(indexer_map, :download_url_origin),
-      protocol: Map.get(indexer_map, :protocol, :torrent)
+      protocol: Map.get(indexer_map, :protocol, :torrent),
+      category_ids: Map.get(indexer_map, :category_ids),
+      indexer_id: Map.get(indexer_map, :indexer_id),
+      published_at: Map.get(indexer_map, :published_at)
     }
     |> struct(Parser.parse(title))
   end

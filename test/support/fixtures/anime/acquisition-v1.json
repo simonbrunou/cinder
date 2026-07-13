@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "parser_contexts": {
+    "ordinary-cour-sxxeyy": {"kind": "series", "titles": ["Demon Slayer"], "year": 2019},
+    "absolute-over-99": {"kind": "series", "titles": ["Bleach"], "year": 2004},
+    "absolute-over-999-v2-crc": {"kind": "series", "titles": ["One Piece", "ワンピース"], "year": 1999},
+    "split-cour-absolute-range": {"kind": "series", "titles": ["Re Zero"], "year": 2016},
+    "cross-season-batch": {"kind": "series", "titles": ["Attack on Titan"], "year": 2013},
+    "dual-audio-dub-ass-markers": {"kind": "series", "titles": ["Demon Slayer"], "year": 2019},
+    "ova-typed-special": {"kind": "series", "titles": ["Show"], "year": 2020},
+    "ona-not-automatically-special": {"kind": "series", "titles": ["Show"], "year": 2020},
+    "recap-is-story-candidate": {"kind": "series", "titles": ["Show"], "year": 2020},
+    "episode-zero": {"kind": "series", "titles": ["Show"], "year": 2020},
+    "ncop-extra": {"kind": "series", "titles": ["Show"], "year": 2020},
+    "nced-extra": {"kind": "series", "titles": ["Show"], "year": 2020},
+    "trailer-extra": {"kind": "series", "titles": ["Show"], "year": 2020},
+    "ambiguous-bare-number": {"kind": "series", "titles": ["86"], "year": 2021},
+    "anime-movie-release": {"kind": "movie", "titles": ["Your Name", "Kimi no Na wa"], "year": 2016}
+  }
+}
