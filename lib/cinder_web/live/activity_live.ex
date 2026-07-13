@@ -95,6 +95,7 @@ defmodule CinderWeb.ActivityLive do
 
   defp series_title(%{episodes: [ep | _]}), do: ep.season.series.title
   defp series_title(_), do: gettext("Unknown series")
+  defp grab_state(%{mapping_status: :needs_mapping}), do: :needs_mapping
   defp grab_state(%{content_path: nil}), do: :downloading
   defp grab_state(_), do: :downloaded
 
@@ -159,6 +160,13 @@ defmodule CinderWeb.ActivityLive do
               />
               <span class="text-xs text-base-content/70">{g.download_protocol}</span>
               <span class="min-w-0 truncate text-xs text-base-content/70">{g.download_id}</span>
+              <.link
+                :if={g.mapping_status == :needs_mapping}
+                navigate={~p"/activity/grabs/#{g.id}/mapping"}
+                class="link link-hover text-sm"
+              >
+                {gettext("Review mapping")}
+              </.link>
               <.button
                 type="button"
                 variant="danger"

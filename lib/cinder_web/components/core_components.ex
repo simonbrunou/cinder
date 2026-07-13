@@ -757,6 +757,9 @@ defmodule CinderWeb.CoreComponents do
 
   defp badge_spec(:grab, :downloaded), do: {gettext("Importing"), "badge-success", "hero-check"}
 
+  defp badge_spec(:grab, :needs_mapping),
+    do: {gettext("Needs mapping"), "badge-warning", "hero-exclamation-triangle"}
+
   # series monitoring (boolean flag, not pipeline state) — icon + label so it isn't colour-alone
   defp badge_spec(:monitored, true), do: {gettext("Monitored"), "badge-success", "hero-eye"}
 

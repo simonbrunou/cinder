@@ -7,7 +7,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   import Cinder.CatalogFixtures
 
   alias Cinder.{Catalog, Repo}
-  alias Cinder.Catalog.TitleAlias
+  alias Cinder.Catalog.{Grab, TitleAlias}
 
   setup :register_and_log_in_admin
   setup :set_mox_global
@@ -249,6 +249,30 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     {:ok, _lv, html} = live_series(conn, series)
     assert html =~ "Test Show"
     refute html =~ ~s(<h1 class="text-2xl font-semibold">)
+  end
+
+  test "held grabs link to the shared mapping recovery route", %{conn: conn} do
+    series = create_series(798)
+    episode = first_episode(series.id)
+
+    grab =
+      Repo.insert!(%Grab{
+        download_id: "series-held-mapping",
+        download_protocol: :torrent,
+        mapping_snapshot: %{"version" => 2, "reserved_episode_ids" => [episode.id]},
+        mapping_status: :needs_mapping,
+        automatic_mapping_decisions: %{"version" => 1, "files" => []}
+      })
+
+    episode |> Ecto.Changeset.change(grab_id: grab.id) |> Repo.update!()
+
+    {:ok, view, _html} = live_series(conn, series)
+
+    assert has_element?(
+             view,
+             ~s|#series-mapping-grab-#{grab.id} a[href="/activity/grabs/#{grab.id}/mapping"]|,
+             "Review mapping"
+           )
   end
 
   test "refreshes descriptive metadata when reopening an enriched series", %{conn: conn} do

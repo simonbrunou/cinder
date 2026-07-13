@@ -96,6 +96,29 @@ defmodule CinderWeb.ActivityLiveTest do
     assert lv |> element("#grab-#{grab.id}") |> render() =~ "42%"
   end
 
+  test "held grabs show Needs mapping and link to the shared recovery route", %{conn: conn} do
+    grab = grab!()
+
+    held =
+      grab
+      |> Ecto.Changeset.change(%{
+        mapping_snapshot: %{"version" => 2, "reserved_episode_ids" => []},
+        mapping_status: :needs_mapping,
+        automatic_mapping_decisions: %{"version" => 1, "files" => []}
+      })
+      |> Repo.update!()
+
+    {:ok, view, _html} = live(conn, ~p"/activity")
+
+    assert has_element?(view, "#grab-#{held.id}", "Needs mapping")
+
+    assert has_element?(
+             view,
+             ~s|#grab-#{held.id} a[href="/activity/grabs/#{held.id}/mapping"]|,
+             "Review mapping"
+           )
+  end
+
   test "non-admins are redirected away from /activity", %{conn: _conn} do
     conn = build_conn() |> log_in_user(Cinder.AccountsFixtures.user_fixture())
     assert {:error, {:redirect, %{to: "/"}}} = live(conn, ~p"/activity")
