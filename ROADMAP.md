@@ -838,9 +838,10 @@ preference fixtures pass, and `mix test` is green.
 monitored story-special/recap acquisition, publication-time preferred-group fallback, immutable
 reservation policy snapshots, pre-stage MediaInfo verification, exact-release rejection with
 durable cleanup, and preserved-content verification holds. Gate evidence: the exact Task 10
-21-file focused `mix test` command passed 560 tests, the explicit Standard/A2/A3 regression command
-passed 110 tests, the full `mix test` quality alias passed 1,675 tests, and `graphify update .`
-rebuilt the current code graph. Live Jellyfin/Plex dogfood and provider sign-off remain A5 work.
+21-file focused `mix test` command passed 572 tests, the explicit Standard/A2/A3 regression command
+passed 110 tests, the full `mix test` quality alias passed 1,691 tests, and the current
+`graphify update .` graph has 24,673 nodes, 76,222 edges, and 283 communities. Live Jellyfin/Plex
+dogfood and provider sign-off remain A5 work.
 
 ### A5 — Live dogfood and provider sign-off
 
