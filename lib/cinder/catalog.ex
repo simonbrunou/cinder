@@ -1721,7 +1721,15 @@ defmodule Cinder.Catalog do
 
   @doc "Promotes one coordinate already present in a held grab's persisted parser decision."
   def promote_grab_mapping(%Grab{id: grab_id}, attrs) when is_map(attrs) do
-    Repo.transaction(fn -> promote_grab_mapping_or_rollback(grab_id, attrs) end, mode: :immediate)
+    result =
+      Repo.transaction(fn -> promote_grab_mapping_or_rollback(grab_id, attrs) end,
+        mode: :immediate
+      )
+
+    with {:ok, {coordinate, series_id}} <- result do
+      broadcast_series(series_id)
+      {:ok, coordinate}
+    end
   end
 
   def promote_grab_mapping(%Grab{}, _attrs), do: {:error, :invalid_mapping_input}
@@ -1734,7 +1742,7 @@ defmodule Cinder.Catalog do
          :ok <- reusable_coordinate(fresh.automatic_mapping_decisions, path, scheme, value),
          :ok <- validate_series_episode_ids(series_id, episode_ids),
          %Series{} = series <- Repo.get(Series, series_id) do
-      promote_episode_coordinate(series, scheme, value, episode_ids)
+      {promote_episode_coordinate(series, scheme, value, episode_ids), series_id}
     else
       nil -> Repo.rollback(:stale_series)
       {:error, reason} -> Repo.rollback(reason)

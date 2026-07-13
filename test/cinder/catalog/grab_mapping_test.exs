@@ -511,6 +511,8 @@ defmodule Cinder.Catalog.GrabMappingTest do
       second = episode_fixture(season, episode_number: 2)
       grab = held_grab_fixture!(first)
       before = mapping_documents(grab)
+      series_id = series.id
+      Catalog.subscribe_series()
 
       assert {:ok, coordinate} =
                Catalog.promote_grab_mapping(grab, %{
@@ -527,10 +529,14 @@ defmodule Cinder.Catalog.GrabMappingTest do
       assert coordinate.precedence == :manual
       assert Enum.map(coordinate.memberships, & &1.episode_id) == [second.id, first.id]
       assert mapping_documents(Repo.get!(Grab, grab.id)) == before
+      assert_receive {:series_updated, ^series_id}
+      refute_received {:series_updated, ^series_id}
     end
 
     test "promotion rejects an unknown or non-reusable persisted decision" do
       {grab, _original, _target} = recovery_fixture()
+      series_id = hd(Repo.preload(grab, episodes: [season: :series]).episodes).season.series.id
+      Catalog.subscribe_series()
 
       assert {:error, _reason} =
                Catalog.promote_grab_mapping(grab, %{
@@ -550,6 +556,7 @@ defmodule Cinder.Catalog.GrabMappingTest do
 
       series = hd(Repo.preload(grab, episodes: [season: :series]).episodes).season.series
       assert Catalog.list_episode_coordinates(series) == []
+      refute_received {:series_updated, ^series_id}
     end
 
     test "promotion rejects foreign, duplicate, or empty episode selections" do

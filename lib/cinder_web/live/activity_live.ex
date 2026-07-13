@@ -6,8 +6,8 @@ defmodule CinderWeb.ActivityLive do
   `/grabs` pages. Terminal-done movies (`:available`/`:cancelled`) drop off the pipeline —
   they live in `/library`; only in-flight or parked-needing-retry movies stay here.
   Delete routes through `Catalog.cancel_grab/1` (which also removes the tracked client
-  download, so the freed episodes' re-grab doesn't collide with it). Live via the
-  `movies` + `series` topics.
+  download, so the freed episodes' re-grab doesn't collide with it). Mapping holds use the
+  state-guarded `Catalog.cancel_mapping_grab/1`. Live via the `movies` + `series` topics.
   """
   use CinderWeb, :live_view
 
@@ -63,6 +63,9 @@ defmodule CinderWeb.ActivityLive do
   def handle_event("ask_delete", %{"id" => id}, socket),
     do: {:noreply, assign(socket, confirming: id)}
 
+  def handle_event("ask_cancel_mapping", %{"id" => id}, socket),
+    do: {:noreply, assign(socket, confirming: "mapping:#{id}")}
+
   def handle_event("dismiss_confirm", _params, socket),
     do: {:noreply, assign(socket, confirming: nil)}
 
@@ -80,6 +83,21 @@ defmodule CinderWeb.ActivityLive do
         end
       else
         nil -> {:error, gettext("That download is already gone.")}
+      end
+
+    {:noreply,
+     socket
+     |> assign(confirming: nil, grabs: Catalog.list_grabs())
+     |> put_flash(level, msg)}
+  end
+
+  def handle_event("confirm_cancel_mapping", %{"id" => id}, socket) do
+    {level, msg} =
+      with %{} = grab <- find_by_id(socket.assigns.grabs, id),
+           {:ok, _deleted} <- Catalog.cancel_mapping_grab(grab) do
+        {:info, gettext("Download deleted.")}
+      else
+        _ -> {:error, gettext("The download could not be cancelled.")}
       end
 
     {:noreply,
@@ -168,6 +186,19 @@ defmodule CinderWeb.ActivityLive do
                 {gettext("Review mapping")}
               </.link>
               <.button
+                :if={g.mapping_status == :needs_mapping}
+                id={"ask-cancel-mapping-grab-#{g.id}"}
+                type="button"
+                variant="danger"
+                size="sm"
+                class="ml-auto"
+                phx-click="ask_cancel_mapping"
+                phx-value-id={g.id}
+              >
+                {gettext("Cancel download")}
+              </.button>
+              <.button
+                :if={g.mapping_status != :needs_mapping}
                 type="button"
                 variant="danger"
                 size="sm"
@@ -179,6 +210,19 @@ defmodule CinderWeb.ActivityLive do
                 {gettext("Delete")}
               </.button>
             </div>
+            <.confirm_action
+              :if={@confirming == "mapping:#{g.id}"}
+              id={"confirm-cancel-mapping-grab-#{g.id}"}
+              on_confirm="confirm_cancel_mapping"
+              on_cancel="dismiss_confirm"
+              value={g.id}
+              confirm_label={gettext("Cancel download")}
+              variant="warning"
+            >
+              <:caveat>
+                {gettext("Cancel this download? Its episodes will return to the wanted queue.")}
+              </:caveat>
+            </.confirm_action>
             <.confirm_action
               :if={@confirming == to_string(g.id)}
               id={"confirm-delete-grab-#{g.id}"}

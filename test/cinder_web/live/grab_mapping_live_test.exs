@@ -103,6 +103,17 @@ defmodule CinderWeb.GrabMappingLiveTest do
     refute html =~ grab.content_path
   end
 
+  test "renders scene and combined coordinates with curated precedence", %{conn: conn} do
+    grab = localized_evidence_fixture!()
+
+    {:ok, view, _html} = live(conn, "/activity/grabs/#{grab.id}/mapping")
+
+    assert has_element?(view, "#mapping-file-0", "Scene 12")
+    assert has_element?(view, "#mapping-file-0", "Combined 11")
+    assert has_element?(view, "#mapping-file-0 [data-provenance]", "Curated")
+    refute has_element?(view, "#mapping-file-0", "Unknown 12")
+  end
+
   test "assign and ignore save exact integer IDs and redirect to Activity", %{conn: conn} do
     %{grab: grab, original: original, target: target} =
       held_mapping_fixture!(target_monitored: false)
@@ -250,17 +261,19 @@ defmodule CinderWeb.GrabMappingLiveTest do
   end
 
   test "localizes persisted mapping domain values", %{conn: conn} do
-    grab = held_mapping_fixture!().grab
+    grab = localized_evidence_fixture!()
+
     conn = Plug.Conn.put_session(conn, :locale, "fr")
 
     {:ok, view, _html} = live(conn, "/activity/grabs/#{grab.id}/mapping")
 
     assert has_element?(view, "#mapping-issue", "Fichier non résolu")
-    assert has_element?(view, "#mapping-file-0", "Absolu 11, 12")
+    assert has_element?(view, "#mapping-file-0", "Scène 12")
+    assert has_element?(view, "#mapping-file-0", "Combiné 11")
     assert has_element?(view, "#mapping-file-0", "Rôle : histoire")
     assert has_element?(view, "#mapping-file-0-source", "Automatique")
     assert has_element?(view, "#mapping-file-0 [data-resolution]", "Ambigu")
-    assert has_element?(view, "#mapping-file-0 [data-provenance]", "Manuel")
+    assert has_element?(view, "#mapping-file-0 [data-provenance]", "Sélectionné")
     assert has_element?(view, "#mapping-file-1 [data-resolution]", "Sans correspondance")
   end
 
@@ -279,6 +292,36 @@ defmodule CinderWeb.GrabMappingLiveTest do
         "monitor_episode_ids" => []
       }
     }
+  end
+
+  defp localized_evidence_fixture! do
+    grab = held_mapping_fixture!().grab
+
+    decisions =
+      grab.automatic_mapping_decisions
+      |> put_in(["files", Access.at(0), "parsed", "coordinates"], [
+        %{"scheme" => "scene", "values" => ["12"]}
+      ])
+      |> put_in(
+        ["files", Access.at(0), "evidence", "resolutions", Access.at(0), "scheme"],
+        "combined"
+      )
+      |> put_in(
+        [
+          "files",
+          Access.at(0),
+          "evidence",
+          "resolutions",
+          Access.at(0),
+          "resolver",
+          "precedence"
+        ],
+        "curated"
+      )
+
+    grab
+    |> Grab.mapping_changeset(%{automatic_mapping_decisions: decisions})
+    |> Repo.update!()
   end
 
   defp held_mapping_fixture!(opts \\ []) do

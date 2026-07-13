@@ -418,6 +418,8 @@ defmodule CinderWeb.GrabMappingLive do
 
   defp scheme_label("absolute"), do: gettext("Absolute")
   defp scheme_label("standard"), do: gettext("Standard")
+  defp scheme_label("scene"), do: gettext("Scene")
+  defp scheme_label("combined"), do: gettext("Combined")
   defp scheme_label("typed_special"), do: gettext("Typed special")
   defp scheme_label(_scheme), do: gettext("Unknown")
 
@@ -437,6 +439,7 @@ defmodule CinderWeb.GrabMappingLive do
   defp resolution_label(_resolution), do: gettext("Unknown")
 
   defp precedence_label("manual"), do: gettext("Manual")
+  defp precedence_label("curated"), do: gettext("Curated")
   defp precedence_label("inferred"), do: gettext("Inferred")
   defp precedence_label(_precedence), do: gettext("Unknown")
 

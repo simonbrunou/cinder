@@ -117,6 +117,75 @@ defmodule CinderWeb.ActivityLiveTest do
              ~s|#grab-#{held.id} a[href="/activity/grabs/#{held.id}/mapping"]|,
              "Review mapping"
            )
+
+    assert has_element?(view, "#ask-cancel-mapping-grab-#{held.id}", "Cancel download")
+    refute has_element?(view, "#grab-#{held.id} button", "Delete")
+  end
+
+  test "a stale held confirmation cannot cancel a concurrently resumed grab", %{conn: conn} do
+    grab = grab!() |> Repo.preload(:episodes)
+    [episode] = grab.episodes
+
+    decisions = %{
+      "version" => 1,
+      "files" => [
+        %{
+          "relative_path" => "Severance - 01.mkv",
+          "size" => 10,
+          "major_device" => 7,
+          "inode" => 21,
+          "mtime" => "2026-07-13T12:01:00",
+          "parsed" => %{
+            "coordinates" => [%{"scheme" => "absolute", "values" => ["1"]}],
+            "role" => "main",
+            "group" => nil
+          },
+          "episode_ids" => [episode.id],
+          "source" => "automatic",
+          "ignored" => false
+        }
+      ]
+    }
+
+    held =
+      grab
+      |> Ecto.Changeset.change(%{
+        mapping_snapshot: %{"version" => 2, "reserved_episode_ids" => [episode.id]},
+        mapping_status: :needs_mapping,
+        automatic_mapping_decisions: decisions
+      })
+      |> Repo.update!()
+
+    parent = self()
+
+    stub(Cinder.Download.ClientMock, :remove, fn remote_id, opts ->
+      send(parent, {:remote_remove, remote_id, opts})
+      :ok
+    end)
+
+    {:ok, view, _html} = live(conn, ~p"/activity")
+    view |> element("#ask-cancel-mapping-grab-#{held.id}") |> render_click()
+    assert has_element?(view, "#confirm-cancel-mapping-grab-#{held.id}")
+
+    assert {:ok, resumed} =
+             Catalog.resume_grab_mapping(held, %{
+               "files" => [
+                 %{
+                   "relative_path" => "Severance - 01.mkv",
+                   "action" => "assign",
+                   "episode_ids" => [episode.id]
+                 }
+               ],
+               "target_episode_ids" => [episode.id],
+               "monitor_episode_ids" => []
+             })
+
+    render_click(view, "confirm_cancel_mapping", %{"id" => to_string(held.id)})
+
+    assert Repo.get!(Cinder.Catalog.Grab, held.id).mapping_status == :resolved
+    assert Repo.get!(Cinder.Catalog.Episode, episode.id).grab_id == resumed.id
+    assert Repo.aggregate(Cinder.Download.Intent, :count) == 0
+    refute_received {:remote_remove, _, [delete_files: true]}
   end
 
   test "non-admins are redirected away from /activity", %{conn: _conn} do
