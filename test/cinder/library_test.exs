@@ -9,6 +9,19 @@ defmodule Cinder.LibraryTest do
   alias Cinder.Library
   alias Cinder.Library.ImportStage
 
+  defmodule DisappearingPathPolicy do
+    def source_file(path, _roots, _extensions, _opts) do
+      calls = Application.fetch_env!(:cinder, :disappearing_path_policy_calls)
+      call = Agent.get_and_update(calls, &{&1, &1 + 1})
+
+      if call == 0, do: {:ok, Path.expand(path)}, else: {:error, :unsafe_source}
+    end
+
+    defdelegate destination(path, root, opts), to: Cinder.Test.PermissivePathPolicy
+    defdelegate deletable_file(path, roots, opts), to: Cinder.Test.PermissivePathPolicy
+    defdelegate walk(path, opts), to: Cinder.Test.PermissivePathPolicy
+  end
+
   setup :verify_on_exit!
 
   @lib "/tmp/cinder-test-library"
@@ -243,6 +256,27 @@ defmodule Cinder.LibraryTest do
         assert Repo.aggregate(ImportStage, :count) == 0
         assert Agent.get(virtual, & &1.links) == []
       end
+    end
+
+    test "a container disappearing after inventory validation restarts preflight" do
+      fixture = anime_fixture("cross-season-output")
+      grab = anime_grab(fixture)
+      virtual = stub_anime_filesystem(fixture)
+      {:ok, dir_calls} = Agent.start_link(fn -> [true, false] end)
+      {:ok, policy_calls} = Agent.start_link(fn -> 0 end)
+      root = fixture["absolute_download_root"]
+
+      Application.put_env(:cinder, :path_policy, DisappearingPathPolicy)
+      Application.put_env(:cinder, :disappearing_path_policy_calls, policy_calls)
+      on_exit(fn -> Application.delete_env(:cinder, :disappearing_path_policy_calls) end)
+
+      stub(Cinder.Library.FilesystemMock, :dir?, fn ^root -> next_call(dir_calls, false) end)
+
+      assert {:restart_preflight, :inventory_changed} =
+               Library.stage_anime_episodes(grab, anime_preflight(fixture))
+
+      assert Repo.aggregate(ImportStage, :count) == 0
+      assert Agent.get(virtual, & &1.links) == []
     end
 
     test "rejects assignments outside the grab's authoritative episode set" do
@@ -1310,6 +1344,13 @@ defmodule Cinder.LibraryTest do
         :error ->
           {{:error, :enoent}, state}
       end
+    end)
+  end
+
+  defp next_call(agent, default) do
+    Agent.get_and_update(agent, fn
+      [value | rest] -> {value, rest}
+      [] -> {default, []}
     end)
   end
 end

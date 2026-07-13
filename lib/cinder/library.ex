@@ -1120,7 +1120,8 @@ defmodule Cinder.Library do
          :ok <- same_inventory(current.files, preflight.decisions),
          :ok <- same_container_kind(current.folder?, preflight.folder?),
          {:ok, root} <- root(:tv),
-         {:ok, to_import} <- anime_import_pairs(grab, preflight.assignments) do
+         {:ok, to_import} <-
+           anime_import_pairs(grab, preflight.assignments, current.folder?) do
       stage_anime_all(to_import, root, episode_target(grab.episodes), current.folder?)
     else
       {:error, :inventory_changed} -> {:restart_preflight, :inventory_changed}
@@ -1156,9 +1157,8 @@ defmodule Cinder.Library do
 
   defp sort_inventory(files), do: Enum.sort_by(files, & &1["relative_path"])
 
-  defp anime_import_pairs(%Grab{} = grab, assignments) do
+  defp anime_import_pairs(%Grab{} = grab, assignments, folder?) do
     episodes = Map.new(grab.episodes, &{&1.id, &1})
-    folder? = fs().dir?(grab.content_path)
 
     assignments
     |> Enum.reduce_while({:ok, []}, fn assignment, {:ok, acc} ->
@@ -1189,12 +1189,20 @@ defmodule Cinder.Library do
     do: {:error, :invalid_anime_assignment}
 
   defp anime_assignment_source(content_path, relative_path, true),
-    do: content_path |> Path.join(relative_path) |> safe_source_file()
+    do: content_path |> Path.join(relative_path) |> revalidate_anime_source()
 
   defp anime_assignment_source(content_path, relative_path, false) do
     if relative_path == Path.basename(content_path),
-      do: safe_source_file(content_path),
+      do: revalidate_anime_source(content_path),
       else: {:error, :invalid_anime_assignment}
+  end
+
+  defp revalidate_anime_source(path) do
+    case safe_source_file(path) do
+      {:ok, _source} = ok -> ok
+      {:error, :download_roots_not_configured} = error -> error
+      {:error, _reason} -> {:error, :inventory_changed}
+    end
   end
 
   defp assigned_episodes(ids, episodes) do
