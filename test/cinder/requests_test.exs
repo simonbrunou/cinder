@@ -3,7 +3,9 @@ defmodule Cinder.RequestsTest do
   import Mox
   alias Cinder.Catalog
   alias Cinder.Catalog.Movie
+  alias Cinder.Catalog.TitleAlias
   alias Cinder.Requests
+  alias Ecto.Adapters.SQL.Sandbox
   import Cinder.AccountsFixtures
 
   @attrs %{
@@ -14,12 +16,151 @@ defmodule Cinder.RequestsTest do
     poster_path: "/p.jpg"
   }
 
+  setup do
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn id ->
+      {:ok,
+       %{
+         tmdb_id: id,
+         imdb_id: nil,
+         title: "Movie #{id}",
+         year: 1999,
+         poster_path: "/p.jpg",
+         original_language: "ja"
+       }}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_movie_alternative_titles, fn _id -> {:ok, []} end)
+    :ok
+  end
+
   test "a non-admin request is pending and creates NO movie (the gate)" do
     user = user_fixture()
     assert {:ok, req} = Requests.create_request(user, @attrs)
     assert req.status == :pending
     assert Repo.aggregate(Movie, :count) == 0
     assert Catalog.list_by_status(:requested) == []
+  end
+
+  test "a requester's anime proposal creates no movie until an admin confirms it" do
+    user = user_fixture()
+    admin = admin_fixture()
+
+    assert {:ok, request} =
+             Requests.create_request(user, Map.put(@attrs, :proposed_media_profile, :anime))
+
+    assert request.proposed_media_profile == :anime
+    assert Catalog.get_movie_by_tmdb_id(request.target_id) == nil
+
+    assert {:ok, _approved} = Requests.approve_request(request, admin, :anime)
+    assert Catalog.get_movie_by_tmdb_id(request.target_id).media_profile == :anime
+  end
+
+  test "auto approve without a proposal keeps Auto effectively Standard" do
+    Cinder.Settings.put("auto_approve_all", "true")
+    user = user_fixture()
+
+    assert {:ok, %{status: :approved}} = Requests.create_request(user, @attrs)
+    movie = Catalog.get_movie_by_tmdb_id(@attrs.target_id)
+    assert movie.media_profile == :auto
+    assert %{selected: :auto, effective: :standard} = Catalog.media_profile_summary(movie)
+  end
+
+  test "admin and auto-approved requests carry an explicit Anime proposal" do
+    admin = admin_fixture()
+
+    assert {:ok, %{status: :approved}} =
+             Requests.create_request(
+               admin,
+               Map.put(@attrs, :proposed_media_profile, :anime)
+             )
+
+    assert Catalog.get_movie_by_tmdb_id(@attrs.target_id).media_profile == :anime
+
+    Cinder.Settings.put("auto_approve_all", "true")
+    user = user_fixture()
+    attrs = @attrs |> Map.put(:target_id, 604) |> Map.put(:proposed_media_profile, :anime)
+    assert {:ok, %{status: :approved}} = Requests.create_request(user, attrs)
+    assert Catalog.get_movie_by_tmdb_id(604).media_profile == :anime
+  end
+
+  test "invalid profile values are rejected before request or catalog writes" do
+    user = user_fixture()
+    admin = admin_fixture()
+    invalid = Map.put(@attrs, :proposed_media_profile, "forged")
+
+    assert {:error, :invalid_media_profile} = Requests.create_request(user, invalid)
+    assert {:error, :invalid_media_profile} = Requests.create_request(admin, invalid)
+    assert Requests.list_requests() == []
+    assert Catalog.get_movie_by_tmdb_id(@attrs.target_id) == nil
+
+    {:ok, request} = Requests.create_request(user, @attrs)
+    assert {:error, :invalid_media_profile} = Requests.approve_request(request, admin, :auto)
+    assert Repo.reload!(request).status == :pending
+    assert Catalog.get_movie_by_tmdb_id(@attrs.target_id) == nil
+  end
+
+  test "a confirmed profile only replaces Auto on an existing movie" do
+    user = user_fixture()
+    admin = admin_fixture()
+    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 603, title: "Existing"})
+
+    {:ok, request} = Requests.create_request(user, @attrs)
+    assert {:ok, _} = Requests.approve_request(request, admin, :anime)
+    assert Repo.reload!(movie).media_profile == :anime
+
+    {:ok, explicit} = Catalog.add_movie(%{tmdb_id: 604, title: "Explicit"})
+    {:ok, explicit} = Catalog.set_media_profile(explicit, :standard)
+    attrs = Map.put(@attrs, :target_id, 604)
+    {:ok, request} = Requests.create_request(user, attrs)
+    assert {:ok, _} = Requests.approve_request(request, admin, :anime)
+    assert Repo.reload!(explicit).media_profile == :standard
+  end
+
+  test "a racing deny wins after movie identity preparation and before any catalog write" do
+    Mox.set_mox_global()
+    parent = self()
+    user = user_fixture()
+    admin = admin_fixture()
+    {:ok, request} = Requests.create_request(user, @attrs)
+
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn id ->
+      send(parent, {:movie_preparing, self()})
+
+      receive do
+        :continue ->
+          {:ok,
+           %{
+             tmdb_id: id,
+             imdb_id: nil,
+             title: "The Matrix",
+             year: 1999,
+             poster_path: "/p.jpg",
+             original_language: "en"
+           }}
+      end
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_movie_alternative_titles, fn _ ->
+      {:ok, [%{title: "Matrix, The", country_code: "US"}]}
+    end)
+
+    task =
+      Task.async(fn ->
+        receive do
+          :go -> Requests.approve_request(request, admin, :anime)
+        end
+      end)
+
+    Sandbox.allow(Cinder.Repo, self(), task.pid)
+    send(task.pid, :go)
+    assert_receive {:movie_preparing, provider_task}
+
+    assert {:ok, _} = Requests.deny_request(request, admin, "no")
+    send(provider_task, :continue)
+
+    assert {:error, :not_pending} = Task.await(task)
+    assert Catalog.get_movie_by_tmdb_id(@attrs.target_id) == nil
+    assert Repo.aggregate(TitleAlias, :count) == 0
   end
 
   test "an admin request auto-approves and creates the movie" do
@@ -34,10 +175,12 @@ defmodule Cinder.RequestsTest do
     user = user_fixture()
     admin = admin_fixture()
     {:ok, req} = Requests.create_request(user, @attrs)
-    assert {:ok, approved} = Requests.approve_request(req, admin)
+    assert {:ok, approved} = Requests.approve_request(req, admin, :standard)
     assert approved.status == :approved
     assert approved.approved_by_id == admin.id
-    assert [%Movie{status: :requested}] = Catalog.list_by_status(:requested)
+
+    assert [%Movie{status: :requested, media_profile: :standard}] =
+             Catalog.list_by_status(:requested)
   end
 
   test "approving an already-available movie does not reset it" do
@@ -46,7 +189,7 @@ defmodule Cinder.RequestsTest do
     {:ok, req} = Requests.create_request(user, @attrs)
     {:ok, movie} = Catalog.add_movie(%{tmdb_id: 603, title: "The Matrix"})
     {:ok, _} = Catalog.transition(movie, %{status: :available})
-    {:ok, _} = Requests.approve_request(req, admin)
+    {:ok, _} = Requests.approve_request(req, admin, :standard)
     assert [%Movie{status: :available}] = Catalog.list_by_status(:available)
     assert Catalog.list_by_status(:requested) == []
   end
@@ -64,7 +207,7 @@ defmodule Cinder.RequestsTest do
     user = user_fixture()
     admin = admin_fixture()
     {:ok, req} = Requests.create_request(user, @attrs)
-    {:ok, approved} = Requests.approve_request(req, admin)
+    {:ok, approved} = Requests.approve_request(req, admin, :standard)
     assert {:error, :not_pending} = Requests.deny_request(approved, admin, "x")
   end
 
@@ -76,7 +219,7 @@ defmodule Cinder.RequestsTest do
     # Another admin session denies while this session still holds the :pending struct.
     {:ok, _} = Requests.deny_request(req, admin, "no")
 
-    assert {:error, :not_pending} = Requests.approve_request(req, admin)
+    assert {:error, :not_pending} = Requests.approve_request(req, admin, :standard)
     # The deny stands and no movie was ever created.
     assert Repo.reload!(req).status == :denied
     assert Catalog.list_by_status(:requested) == []
@@ -87,7 +230,7 @@ defmodule Cinder.RequestsTest do
     admin = admin_fixture()
     {:ok, req} = Requests.create_request(user, @attrs)
 
-    {:ok, _} = Requests.approve_request(req, admin)
+    {:ok, _} = Requests.approve_request(req, admin, :standard)
 
     assert {:error, :not_pending} = Requests.deny_request(req, admin, "x")
     assert Repo.reload!(req).status == :approved
@@ -180,7 +323,7 @@ defmodule Cinder.RequestsTest do
     user = user_fixture()
     admin = admin_fixture()
     {:ok, req} = Requests.create_request(user, @attrs)
-    {:ok, _} = Requests.approve_request(req, admin)
+    {:ok, _} = Requests.approve_request(req, admin, :standard)
     assert_receive {:notify, {:request_approved, %{title: "The Matrix"}}}
   end
 
@@ -230,10 +373,11 @@ defmodule Cinder.RequestsTest do
       admin = admin_fixture()
       {:ok, req} = Requests.create_request(user, season_attrs())
 
-      assert {:ok, approved} = Requests.approve_request(req, admin)
+      assert {:ok, approved} = Requests.approve_request(req, admin, :standard)
       assert approved.status == :approved
 
       series = Cinder.Catalog.get_series_by_tmdb_id(1399)
+      assert series.media_profile == :standard
       tree = Cinder.Catalog.get_series_with_tree(series.id)
       assert Enum.find(tree.seasons, &(&1.season_number == 2)).monitored
       refute Enum.find(tree.seasons, &(&1.season_number == 1)).monitored
@@ -243,7 +387,29 @@ defmodule Cinder.RequestsTest do
       admin = admin_fixture()
       assert {:ok, req} = Requests.create_request(admin, season_attrs())
       assert req.status == :approved
-      assert Cinder.Catalog.get_series_by_tmdb_id(1399)
+      assert Cinder.Catalog.get_series_by_tmdb_id(1399).media_profile == :auto
+    end
+
+    test "an explicit season proposal is carried and only replaces Auto" do
+      user = user_fixture()
+      admin = admin_fixture()
+
+      assert {:ok, series} =
+               Cinder.Catalog.add_series(1399,
+                 monitor_strategy: :none,
+                 media_profile: :auto
+               )
+
+      attrs = Map.put(season_attrs(), :proposed_media_profile, :anime)
+      {:ok, request} = Requests.create_request(user, attrs)
+      assert {:ok, _} = Requests.approve_request(request, admin, :anime)
+      assert Repo.reload!(series).media_profile == :anime
+
+      assert {:ok, explicit} = Cinder.Catalog.set_media_profile(Repo.reload!(series), :standard)
+      attrs = Map.put(season_attrs(), :season_number, 1)
+      {:ok, request} = Requests.create_request(user, attrs)
+      assert {:ok, _} = Requests.approve_request(request, admin, :anime)
+      assert Repo.reload!(explicit).media_profile == :standard
     end
   end
 
@@ -301,6 +467,18 @@ defmodule Cinder.RequestsTest do
   test "approved movie request carries preferred_language and original_language onto the movie row" do
     admin = admin_fixture()
 
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn id ->
+      {:ok,
+       %{
+         tmdb_id: id,
+         imdb_id: nil,
+         title: "The Matrix",
+         year: 1999,
+         poster_path: "/p.jpg",
+         original_language: "en"
+       }}
+    end)
+
     attrs = Map.merge(@attrs, %{original_language: "en", preferred_language: "french"})
 
     assert {:ok, %{status: :approved}} = Requests.create_request(admin, attrs)
@@ -316,7 +494,7 @@ defmodule Cinder.RequestsTest do
     attrs = Map.merge(@attrs, %{original_language: "ja", preferred_language: "french"})
 
     {:ok, req} = Requests.create_request(user, attrs)
-    assert {:ok, _} = Requests.approve_request(req, admin)
+    assert {:ok, _} = Requests.approve_request(req, admin, :standard)
     movie = Catalog.get_movie_by_tmdb_id(603)
     assert movie.preferred_language == "french"
     assert movie.original_language == "ja"

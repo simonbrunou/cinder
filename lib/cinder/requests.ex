@@ -30,13 +30,19 @@ defmodule Cinder.Requests do
   end
 
   def create_request(%User{} = user, attrs) do
-    if user.role == :admin or Settings.auto_approve_all?() do
-      approver_id = if user.role == :admin, do: user.id, else: nil
-      create_approved(user, attrs, approver_id)
+    if valid_proposed_profile?(attrs) do
+      create_request_for(user, attrs, user.role == :admin or Settings.auto_approve_all?())
     else
-      create_pending(user, attrs)
+      {:error, :invalid_media_profile}
     end
   end
+
+  defp create_request_for(user, attrs, true) do
+    approver_id = if user.role == :admin, do: user.id, else: nil
+    create_approved(user, attrs, approver_id)
+  end
+
+  defp create_request_for(user, attrs, false), do: create_pending(user, attrs)
 
   # Insert, then re-count inside one transaction. SQLite serializes write transactions,
   # so the post-insert count sees any concurrently-committed pending row — closing the
@@ -68,19 +74,17 @@ defmodule Cinder.Requests do
     pending > quota
   end
 
-  def approve_request(%Request{status: :pending, target_type: "movie"} = request, %User{} = admin) do
-    Repo.transaction(fn ->
-      # Flip first (guarded on the DB's :pending), then create the movie: if a racing
-      # admin already decided this request, no movie row is ever written.
-      with {:ok, approved} <-
-             flip_pending(request, %{status: :approved, approved_by_id: admin.id}),
-           {:ok, _movie} <- Catalog.find_or_create_at_requested(movie_attrs(request)) do
-        approved
-      else
-        {:error, reason} -> Repo.rollback(reason)
-      end
-    end)
-    |> tap_ok(&announce_approved/1)
+  def approve_request(
+        %Request{status: :pending, target_type: "movie"} = request,
+        %User{} = admin,
+        profile
+      )
+      when profile in [:standard, :anime] do
+    with {:ok, prepared} <-
+           Catalog.prepare_requested_movie(movie_attrs(request, media_profile: profile)) do
+      approve_prepared_movie(request, admin, prepared)
+      |> tap_ok(&announce_approved/1)
+    end
   end
 
   # NOT transaction-wrapped: find_or_create_series_at_requested does TMDB I/O. The flip
@@ -89,10 +93,12 @@ defmodule Cinder.Requests do
   # failure then compensates by putting the request back to :pending.
   def approve_request(
         %Request{status: :pending, target_type: "season"} = request,
-        %User{} = admin
-      ) do
+        %User{} = admin,
+        profile
+      )
+      when profile in [:standard, :anime] do
     with {:ok, approved} <- flip_pending(request, %{status: :approved, approved_by_id: admin.id}) do
-      case create_series_safely(request) do
+      case create_series_safely(request, profile) do
         {:ok, _series} ->
           announce_approved(approved)
           {:ok, approved}
@@ -104,7 +110,25 @@ defmodule Cinder.Requests do
     end
   end
 
-  def approve_request(%Request{}, _admin), do: {:error, :not_pending}
+  def approve_request(%Request{status: :pending}, _admin, _profile),
+    do: {:error, :invalid_media_profile}
+
+  def approve_request(%Request{}, _admin, _profile), do: {:error, :not_pending}
+
+  defp approve_prepared_movie(request, admin, prepared) do
+    Repo.transaction(fn ->
+      # Provider I/O finished before this transaction. Flip first so a racing deny
+      # prevents both the movie and its aliases from being written.
+      with {:ok, approved} <-
+             flip_pending(request, %{status: :approved, approved_by_id: admin.id}),
+           {:ok, _movie} <-
+             Catalog.find_or_create_at_requested(prepared.attrs, prepared.aliases) do
+        approved
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+  end
 
   # The TMDB call runs while the request already reads :approved; a raise/exit here
   # must reach the revert path (not strand the request approved with no series), so
@@ -113,11 +137,12 @@ defmodule Cinder.Requests do
   # VM kill (deploy/OOM, or the admin closing the tab mid-bulk killing the linked
   # start_async task) between the flip and the revert strands the request :approved
   # with no series; recovery is delete + re-request (documented on delete_request/2).
-  defp create_series_safely(request) do
+  defp create_series_safely(request, profile) do
     Catalog.find_or_create_series_at_requested(
       request.target_id,
       request.season_number,
-      request.preferred_language || "original"
+      request.preferred_language || "original",
+      profile
     )
   rescue
     e ->
@@ -278,7 +303,8 @@ defmodule Cinder.Requests do
            Catalog.find_or_create_series_at_requested(
              attrs.target_id,
              attrs[:season_number],
-             attrs[:preferred_language] || "original"
+             attrs[:preferred_language] || "original",
+             attrs[:proposed_media_profile] || :auto
            ),
          {:ok, request} <-
            %Request{}
@@ -292,10 +318,19 @@ defmodule Cinder.Requests do
   end
 
   defp create_approved(user, attrs, approver_id) do
+    profile = attrs[:proposed_media_profile] || :auto
+
+    with {:ok, prepared} <-
+           Catalog.prepare_requested_movie(movie_attrs(attrs, media_profile: profile)) do
+      insert_approved_movie(user, attrs, approver_id, prepared)
+      |> tap_ok(&announce_approved/1)
+    end
+  end
+
+  defp insert_approved_movie(user, attrs, approver_id, prepared) do
     Repo.transaction(fn ->
-      # A find_or_create failure rolls back (surfacing {:error, changeset}) rather than
-      # raising a MatchError out of the LiveView that called it.
-      with {:ok, _movie} <- Catalog.find_or_create_at_requested(movie_attrs(attrs)),
+      with {:ok, _movie} <-
+             Catalog.find_or_create_at_requested(prepared.attrs, prepared.aliases),
            {:ok, request} <-
              %Request{}
              |> Request.create_changeset(
@@ -308,10 +343,9 @@ defmodule Cinder.Requests do
              |> Repo.insert() do
         request
       else
-        {:error, cs} -> Repo.rollback(cs)
+        {:error, reason} -> Repo.rollback(reason)
       end
     end)
-    |> tap_ok(&announce_approved/1)
   end
 
   defp announce_approved(request) do
@@ -320,15 +354,26 @@ defmodule Cinder.Requests do
   end
 
   # Accepts a %Request{} or a plain attrs map — Map.get works on both.
-  defp movie_attrs(source) do
-    %{
-      tmdb_id: Map.get(source, :target_id),
-      title: Map.get(source, :title),
-      year: Map.get(source, :year),
-      poster_path: Map.get(source, :poster_path),
-      original_language: Map.get(source, :original_language),
-      preferred_language: Map.get(source, :preferred_language) || "original"
-    }
+  defp movie_attrs(source, overrides) do
+    Map.merge(
+      %{
+        tmdb_id: Map.get(source, :target_id),
+        title: Map.get(source, :title),
+        year: Map.get(source, :year),
+        poster_path: Map.get(source, :poster_path),
+        original_language: Map.get(source, :original_language),
+        preferred_language: Map.get(source, :preferred_language) || "original"
+      },
+      Map.new(overrides)
+    )
+  end
+
+  defp valid_proposed_profile?(attrs) do
+    Map.get(attrs, :proposed_media_profile, Map.get(attrs, "proposed_media_profile")) in [
+      nil,
+      :standard,
+      :anime
+    ]
   end
 
   defp tap_ok({:ok, value} = res, fun) do

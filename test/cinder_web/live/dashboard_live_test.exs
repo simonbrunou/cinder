@@ -20,6 +20,20 @@ defmodule CinderWeb.DashboardLiveTest do
     stub(Cinder.Download.SabnzbdClientMock, :health, fn -> :ok end)
     stub(Cinder.Library.MediaServerMock, :health, fn -> :ok end)
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn id ->
+      {:ok,
+       %{
+         tmdb_id: id,
+         imdb_id: nil,
+         title: "Dune",
+         year: 2021,
+         poster_path: nil,
+         original_language: "en"
+       }}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_movie_alternative_titles, fn _ -> {:ok, []} end)
     :ok
   end
 
@@ -239,7 +253,9 @@ defmodule CinderWeb.DashboardLiveTest do
       render_async(lv)
 
       assert Cinder.Repo.get(Cinder.Requests.Request, req.id).status == :approved
-      assert Catalog.get_movie_by_tmdb_id(req.target_id).status == :requested
+      movie = Catalog.get_movie_by_tmdb_id(req.target_id)
+      assert movie.status == :requested
+      assert movie.media_profile == :standard
     end
 
     test "denying from the dashboard records the reason", %{conn: conn} do

@@ -17,10 +17,12 @@ defmodule CinderWeb.RequestsLive do
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket), do: Requests.subscribe()
+    requests = Requests.list_requests()
 
     {:ok,
      assign(socket,
-       requests: Requests.list_requests(),
+       requests: requests,
+       approval_profiles: approval_profiles(requests),
        denying: nil,
        confirming_delete: nil,
        selected: MapSet.new()
@@ -39,9 +41,26 @@ defmodule CinderWeb.RequestsLive do
         # Keyed per request: a same-name start_async would OVERWRITE an in-flight approval's
         # task entry and silently drop its result (no error flash for the first request).
         admin = socket.assigns.current_scope.user
+        profile = socket.assigns.approval_profiles[to_string(req.id)]
 
         {:noreply,
-         start_async(socket, {:approve, req.id}, fn -> Requests.approve_request(req, admin) end)}
+         start_async(socket, {:approve, req.id}, fn ->
+           Requests.approve_request(req, admin, profile)
+         end)}
+    end
+  end
+
+  def handle_event("set_approval_profile", %{"_id" => id, "profile" => profile}, socket)
+      when profile in ["standard", "anime"] do
+    if match?(%{status: :pending}, find_request(socket, id)) do
+      {:noreply,
+       assign(
+         socket,
+         :approval_profiles,
+         Map.put(socket.assigns.approval_profiles, id, String.to_existing_atom(profile))
+       )}
+    else
+      {:noreply, socket}
     end
   end
 
@@ -123,6 +142,7 @@ defmodule CinderWeb.RequestsLive do
   def handle_event("approve_selected", _params, socket) do
     admin = socket.assigns.current_scope.user
     reqs = selected_pending(socket)
+    profiles = socket.assigns.approval_profiles
 
     # Season approvals do blocking TMDB I/O; run the bulk off the LiveView so N seasons can't
     # freeze the page. Each approval broadcasts, so the list refreshes via handle_info — no
@@ -131,7 +151,7 @@ defmodule CinderWeb.RequestsLive do
      socket
      |> assign(selected: MapSet.new())
      |> start_async(:approve_selected, fn ->
-       bulk(reqs, &Requests.approve_request(&1, admin))
+       bulk(reqs, &Requests.approve_request(&1, admin, profiles[to_string(&1.id)]))
      end)}
   end
 
@@ -181,7 +201,13 @@ defmodule CinderWeb.RequestsLive do
     # so the "N selected" count and bulk actions stay honest.
     pending = for r <- requests, r.status == :pending, into: MapSet.new(), do: to_string(r.id)
     selected = MapSet.intersection(socket.assigns.selected, pending)
-    {:noreply, assign(socket, requests: requests, selected: selected)}
+
+    {:noreply,
+     assign(socket,
+       requests: requests,
+       selected: selected,
+       approval_profiles: approval_profiles(requests, socket.assigns.approval_profiles)
+     )}
   end
 
   def handle_info(_msg, socket), do: {:noreply, socket}
@@ -191,6 +217,15 @@ defmodule CinderWeb.RequestsLive do
 
   defp toggle(set, id) do
     if MapSet.member?(set, id), do: MapSet.delete(set, id), else: MapSet.put(set, id)
+  end
+
+  defp approval_profiles(requests, current \\ %{}) do
+    requests
+    |> Enum.filter(&(&1.status == :pending))
+    |> Map.new(fn request ->
+      id = to_string(request.id)
+      {id, Map.get(current, id, request.proposed_media_profile || :standard)}
+    end)
   end
 
   # Selected, still-pending requests (drops any a concurrent admin already acted on).
@@ -287,6 +322,22 @@ defmodule CinderWeb.RequestsLive do
               <span class="block truncate text-sm opacity-70">{r.user.email}</span>
             </div>
             <.status_badge kind={:request} status={r.status} />
+            <form
+              :if={r.status == :pending}
+              id={"approval-profile-form-#{r.id}"}
+              phx-change="set_approval_profile"
+            >
+              <input type="hidden" name="_id" value={r.id} />
+              <label for={"approval-profile-#{r.id}"} class="sr-only">
+                {gettext("Confirmed media profile for %{title}", title: r.title)}
+              </label>
+              <.media_profile_select
+                id={"approval-profile-#{r.id}"}
+                name="profile"
+                value={@approval_profiles[to_string(r.id)]}
+                include_auto={false}
+              />
+            </form>
             <.button
               :if={r.status == :pending}
               variant="primary"

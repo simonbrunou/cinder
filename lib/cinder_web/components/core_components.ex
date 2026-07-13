@@ -952,6 +952,24 @@ defmodule CinderWeb.CoreComponents do
     """
   end
 
+  attr :name, :string, default: "proposed_media_profile"
+  attr :value, :any, default: nil
+  attr :include_auto, :boolean, default: true
+  attr :class, :any, default: "select select-sm w-full"
+  attr :rest, :global
+
+  def media_profile_select(assigns) do
+    ~H"""
+    <select name={@name} class={@class} aria-label={gettext("Media profile")} {@rest}>
+      <option :if={@include_auto} value="auto" selected={@value in [nil, :auto]}>
+        {gettext("Auto")}
+      </option>
+      <option value="standard" selected={@value == :standard}>{gettext("Standard")}</option>
+      <option value="anime" selected={@value == :anime}>{gettext("Anime")}</option>
+    </select>
+    """
+  end
+
   @doc """
   Human label for a TV season number: "Specials" for season 0, "Season N" otherwise.
   """

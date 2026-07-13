@@ -17,6 +17,20 @@ defmodule CinderWeb.DiscoverLiveTest do
     # search_discover always hits both endpoints; default both to empty.
     stub(Cinder.Catalog.TMDBMock, :search, fn _ -> {:ok, []} end)
     stub(Cinder.Catalog.TMDBMock, :search_tv, fn _ -> {:ok, []} end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn id ->
+      {:ok,
+       %{
+         tmdb_id: id,
+         imdb_id: nil,
+         title: "Inception",
+         year: 2010,
+         poster_path: "/p.jpg",
+         original_language: "en"
+       }}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_movie_alternative_titles, fn _ -> {:ok, []} end)
     :ok
   end
 
@@ -109,6 +123,7 @@ defmodule CinderWeb.DiscoverLiveTest do
 
     lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
     lv |> form("#add-form-27205") |> render_submit()
+    render_async(lv)
 
     assert [%Movie{tmdb_id: 27_205, status: :requested}] = Catalog.list_movies()
     refute has_element?(lv, "#add-form-27205")
@@ -122,7 +137,8 @@ defmodule CinderWeb.DiscoverLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/")
 
     lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
-    html = lv |> form("#add-form-27205") |> render_submit()
+    lv |> form("#add-form-27205") |> render_submit()
+    html = render_async(lv)
 
     assert html =~ "Awaiting approval"
     assert Catalog.list_by_status(:requested) == []
@@ -182,7 +198,8 @@ defmodule CinderWeb.DiscoverLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/")
 
     lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
-    html = lv |> form("#add-form-27205") |> render_submit()
+    lv |> form("#add-form-27205") |> render_submit()
+    html = render_async(lv)
 
     assert html =~ "request limit"
     assert Requests.list_for_user(user) == []
@@ -194,10 +211,39 @@ defmodule CinderWeb.DiscoverLiveTest do
 
     lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
     lv |> form("#add-form-27205", %{"preferred_language" => "french"}) |> render_submit()
+    render_async(lv)
 
     movie = Cinder.Catalog.get_movie_by_tmdb_id(27_205)
     assert movie.preferred_language == "french"
     assert movie.original_language == "en"
+  end
+
+  test "movie request forms carry a validated media profile proposal", %{conn: _conn} do
+    user = Cinder.AccountsFixtures.user_fixture()
+    conn = log_in_user(Phoenix.ConnTest.build_conn(), user)
+    stub_movies([@inception])
+    {:ok, lv, _html} = live(conn, ~p"/")
+    lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
+
+    assert has_element?(lv, "#add-form-27205 select[name='proposed_media_profile']")
+
+    lv
+    |> form("#add-form-27205", %{"proposed_media_profile" => "anime"})
+    |> render_submit()
+
+    render_async(lv)
+    assert [%{proposed_media_profile: :anime}] = Requests.list_for_user(user)
+
+    other = Map.put(@inception, :tmdb_id, 27_206)
+    stub_movies([other])
+    lv |> form("#search-form", %{"query" => "other"}) |> render_change()
+
+    render_hook(lv, "add", %{
+      "tmdb_id" => "27206",
+      "proposed_media_profile" => "forged"
+    })
+
+    assert length(Requests.list_for_user(user)) == 1
   end
 
   test "a total TMDB failure flashes and shows 'Search failed', not 'No matches'", %{conn: conn} do

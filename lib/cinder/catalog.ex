@@ -851,7 +851,7 @@ defmodule Cinder.Catalog do
   """
   def find_or_create_at_requested(attrs, aliases \\ []) do
     case get_movie_by_tmdb_id(attrs.tmdb_id) do
-      %Movie{} = movie -> {:ok, movie}
+      %Movie{} = movie -> apply_confirmed_profile(movie, Map.get(attrs, :media_profile))
       nil -> do_insert_at_requested(attrs, aliases)
     end
   end
@@ -910,11 +910,17 @@ defmodule Cinder.Catalog do
       {:error, reason} ->
         # Lost the insert race (unique_constraint :tmdb_id) — the row now exists.
         case get_movie_by_tmdb_id(attrs.tmdb_id) do
-          %Movie{} = movie -> {:ok, movie}
+          %Movie{} = movie -> apply_confirmed_profile(movie, Map.get(attrs, :media_profile))
           nil -> {:error, reason}
         end
     end
   end
+
+  defp apply_confirmed_profile(%{media_profile: :auto} = media, profile)
+       when profile in [:standard, :anime],
+       do: set_media_profile(media, profile)
+
+  defp apply_confirmed_profile(media, _profile), do: {:ok, media}
 
   defp broadcast(message), do: Phoenix.PubSub.broadcast(Cinder.PubSub, @topic, message)
 
@@ -963,8 +969,17 @@ defmodule Cinder.Catalog do
   Does TMDB I/O on first create, so it must NOT be called inside a `Repo.transaction`.
   Returns `{:ok, %Series{}}`, or `{:error, reason}` if the TMDB fetch fails or the season is absent.
   """
-  def find_or_create_series_at_requested(tmdb_id, season_number, preferred \\ "original") do
-    with {:ok, series} <- ensure_series(tmdb_id, preferred),
+  def find_or_create_series_at_requested(
+        tmdb_id,
+        season_number,
+        preferred \\ "original",
+        media_profile \\ :auto
+      )
+
+  def find_or_create_series_at_requested(tmdb_id, season_number, preferred, media_profile)
+      when media_profile in [:auto, :standard, :anime] do
+    with {:ok, series} <- ensure_series(tmdb_id, preferred, media_profile),
+         {:ok, series} <- apply_confirmed_profile(series, media_profile),
          {:ok, series} <- apply_requester_language(series, preferred),
          %Season{} = season <- season_in(series, season_number),
          {:ok, _} <- set_season_monitored(season, true),
@@ -976,10 +991,18 @@ defmodule Cinder.Catalog do
     end
   end
 
+  def find_or_create_series_at_requested(_tmdb_id, _season_number, _preferred, _media_profile),
+    do: {:error, :invalid_media_profile}
+
   # Create with monitor_strategy: :none so NOTHING is monitored by default; the requested season
   # is then flipped on explicitly. An existing series is returned as-is.
-  defp ensure_series(tmdb_id, preferred),
-    do: add_series(tmdb_id, monitor_strategy: :none, preferred_language: preferred)
+  defp ensure_series(tmdb_id, preferred, media_profile),
+    do:
+      add_series(tmdb_id,
+        monitor_strategy: :none,
+        preferred_language: preferred,
+        media_profile: media_profile
+      )
 
   # Fill-if-default: an existing series whose language was never customized ("original") adopts the
   # requester's non-default pick; a series already customized to a non-default is left untouched

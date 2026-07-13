@@ -90,9 +90,12 @@ defmodule CinderWeb.DashboardLive do
         # LiveView (matching /requests) so a single click can't freeze the page for seconds.
         # Keyed per request so overlapping approvals don't overwrite each other's results.
         admin = socket.assigns.current_scope.user
+        profile = req.proposed_media_profile || :standard
 
         {:noreply,
-         start_async(socket, {:approve, req.id}, fn -> Requests.approve_request(req, admin) end)}
+         start_async(socket, {:approve, req.id}, fn ->
+           Requests.approve_request(req, admin, profile)
+         end)}
     end
   end
 
