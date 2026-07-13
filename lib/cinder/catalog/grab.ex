@@ -21,6 +21,7 @@ defmodule Cinder.Catalog.Grab do
     field :download_speed, :integer
     field :download_eta, :integer
     field :mapping_snapshot, :map
+    field :release_policy_snapshot, :map
     field :mapping_status, Ecto.Enum, values: [:resolved, :needs_mapping], default: :resolved
     field :automatic_mapping_decisions, :map
     field :manual_mapping_overrides, :map

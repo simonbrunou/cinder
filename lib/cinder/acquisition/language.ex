@@ -26,6 +26,19 @@ defmodule Cinder.Acquisition.Language do
   # derived from the same registry. Powers the import-time MediaInfo check.
   @audio_codes Parser.audio_codes()
 
+  @language_aliases @audio_codes
+                    |> Enum.flat_map(fn {canonical, aliases} ->
+                      Enum.map(aliases, &{&1, canonical})
+                    end)
+                    |> Map.new()
+
+  @language_aliases Map.merge(
+                      @language_aliases,
+                      Map.new(@tags, fn {canonical, tag} ->
+                        {String.downcase(tag), canonical}
+                      end)
+                    )
+
   # Every audio code known for any language — lets `audio_satisfies?/2` tell a *recognised* wrong
   # language (park) from a code it doesn't recognise (could be a variant of the target; don't park).
   @known_audio_codes @audio_codes |> Map.values() |> List.flatten() |> MapSet.new()
@@ -46,6 +59,14 @@ defmodule Cinder.Acquisition.Language do
 
   @doc "The valid `preferred_language` values (the per-title language picks)."
   def preferences, do: ["original", "french", "any"]
+
+  @doc "Normalizes a language code or known parser tag to its ISO 639-1 code."
+  def normalize(nil), do: nil
+
+  def normalize(code) when is_binary(code) do
+    normalized = code |> String.trim() |> String.downcase()
+    Map.get(@language_aliases, normalized, normalized)
+  end
 
   @doc """
   Whether an unsatisfiable preference parks the item (an explicit language pick) rather

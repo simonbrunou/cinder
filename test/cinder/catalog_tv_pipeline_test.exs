@@ -4,13 +4,22 @@ defmodule Cinder.CatalogTvPipelineTest do
   use Cinder.DataCase, async: false
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Grab, Season}
+  alias Cinder.Catalog.{Episode, Grab, Season, Series}
   alias Ecto.Adapters.SQL, as: EctoSQL
 
   import Cinder.CatalogFixtures
 
   @past ~D[2001-01-01]
   @future ~D[2099-01-01]
+
+  @anime_preferences %{
+    audio_mode: :dual,
+    subtitle_languages: [" JPN ", "ja", "FRA"],
+    embedded_subtitle_mode: :require,
+    preferred_release_groups: [" SubsPlease ", "subsplease"],
+    blocked_release_groups: [" BadGroup "],
+    group_fallback_delay: 21_600
+  }
 
   defp series_with_season do
     series = series_fixture(%{monitor_strategy: :all})
@@ -23,6 +32,53 @@ defmodule Cinder.CatalogTvPipelineTest do
       season,
       Map.merge(%{episode_number: System.unique_integer([:positive])}, attrs)
     )
+  end
+
+  describe "Anime preference persistence" do
+    test "anime_preferences_changeset/2 exclusively casts and normalizes preferences" do
+      changeset = Series.anime_preferences_changeset(%Series{}, @anime_preferences)
+
+      assert changeset.valid?
+
+      assert %Series{
+               audio_mode: :dual,
+               subtitle_languages: ["ja", "fr"],
+               embedded_subtitle_mode: :require,
+               preferred_release_groups: ["subsplease"],
+               blocked_release_groups: ["badgroup"],
+               group_fallback_delay: 21_600
+             } = apply_changes(changeset)
+
+      general =
+        @anime_preferences
+        |> Map.merge(%{tmdb_id: 1, title: "Ignored preferences"})
+        |> Series.create_changeset()
+
+      for field <- Map.keys(@anime_preferences), do: refute(get_change(general, field))
+    end
+
+    test "anime_preferences_changeset/2 rejects a negative fallback delay" do
+      changeset = Series.anime_preferences_changeset(%Series{}, %{group_fallback_delay: -1})
+      assert "must be greater than or equal to 0" in errors_on(changeset).group_fallback_delay
+    end
+
+    test "refresh, metadata, admin, and language changesets preserve stored preferences" do
+      stored = struct(%Series{tmdb_id: 1, title: "Stored"}, @anime_preferences)
+      replacements = Map.new(@anime_preferences, fn {key, _value} -> {key, nil} end)
+
+      for changeset <- [
+            Series.refresh_changeset(stored, Map.put(replacements, :title, "Provider")),
+            Series.metadata_changeset(stored, replacements),
+            Series.admin_changeset(stored, Map.put(replacements, :title, "Admin")),
+            Series.language_changeset(
+              stored,
+              Map.put(replacements, :preferred_language, "any")
+            )
+          ],
+          field <- Map.keys(@anime_preferences) do
+        assert Map.fetch!(apply_changes(changeset), field) == Map.fetch!(stored, field)
+      end
+    end
   end
 
   describe "transition_episode/2" do
@@ -51,6 +107,7 @@ defmodule Cinder.CatalogTvPipelineTest do
       assert grab.download_id == "HASH1"
       assert grab.download_protocol == :torrent
       assert is_nil(grab.content_path)
+      assert %Grab{release_policy_snapshot: nil} = grab
       assert_receive {:series_updated, ^series_id}
 
       assert Repo.get(Episode, e1.id).grab_id == grab.id

@@ -13,6 +13,7 @@ defmodule Cinder.Download.Intent do
     field :protocol, Ecto.Enum, values: [:torrent, :usenet]
     field :release, :map
     field :mapping_snapshot, :map
+    field :release_policy_snapshot, :map
 
     field :status, Ecto.Enum,
       values: [:reserved, :submitted, :cleanup_pending],

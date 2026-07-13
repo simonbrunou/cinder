@@ -11,7 +11,7 @@ defmodule Cinder.Catalog.Movie do
 
   import Ecto.Changeset
 
-  alias Cinder.Acquisition.Language
+  alias Cinder.Acquisition.{AnimePreferences, Language}
   alias Cinder.Catalog.TitleAlias
 
   @statuses [
@@ -37,6 +37,7 @@ defmodule Cinder.Catalog.Movie do
     field :download_id, :string
     field :download_protocol, Ecto.Enum, values: [:torrent, :usenet]
     field :release_title, :string
+    field :release_policy_snapshot, :map
     field :download_progress, :float
     field :download_speed, :integer
     field :download_eta, :integer
@@ -45,6 +46,12 @@ defmodule Cinder.Catalog.Movie do
     field :search_attempts, :integer, default: 0
     field :original_language, :string
     field :preferred_language, :string, default: "original"
+    field :audio_mode, Ecto.Enum, values: [:original, :dub, :dual, :any]
+    field :subtitle_languages, {:array, :string}
+    field :embedded_subtitle_mode, Ecto.Enum, values: [:allow, :prefer, :require]
+    field :preferred_release_groups, {:array, :string}
+    field :blocked_release_groups, {:array, :string}
+    field :group_fallback_delay, :integer
     field :imported_resolution, :string
     field :imported_size, :integer
     field :imported_language, :string
@@ -65,6 +72,24 @@ defmodule Cinder.Catalog.Movie do
 
   @doc "Changeset for the operator-owned media handling profile."
   def profile_changeset(movie, attrs), do: cast(movie, attrs, [:media_profile])
+
+  @anime_preference_fields [
+    :audio_mode,
+    :subtitle_languages,
+    :embedded_subtitle_mode,
+    :preferred_release_groups,
+    :blocked_release_groups,
+    :group_fallback_delay
+  ]
+
+  def anime_preferences_changeset(movie, attrs) do
+    movie
+    |> cast(attrs, @anime_preference_fields)
+    |> validate_number(:group_fallback_delay, greater_than_or_equal_to: 0)
+    |> update_change(:subtitle_languages, &AnimePreferences.normalize_languages/1)
+    |> update_change(:preferred_release_groups, &AnimePreferences.normalize_groups/1)
+    |> update_change(:blocked_release_groups, &AnimePreferences.normalize_groups/1)
+  end
 
   @doc false
   def changeset(movie, attrs) do
