@@ -9,20 +9,20 @@ defmodule CinderWeb.SettingsLiveTest do
   alias Cinder.Settings
 
   setup :register_and_log_in_admin
-  setup :reset_cinder_env
-  setup :set_mox_global
 
   setup do
-    anime = Application.get_env(:cinder, :anime_preferences)
+    keys = [Cinder.Subtitles.Provider.OpenSubtitles, :anime_preferences]
+    original = Map.new(keys, &{&1, Application.get_env(:cinder, &1)})
 
     on_exit(fn ->
-      if anime,
-        do: Application.put_env(:cinder, :anime_preferences, anime),
-        else: Application.delete_env(:cinder, :anime_preferences)
+      assert Map.new(keys, &{&1, Application.get_env(:cinder, &1)}) == original
     end)
 
     :ok
   end
+
+  setup :reset_cinder_env
+  setup :set_mox_global
 
   test "renders the grouped settings form", %{conn: conn} do
     {:ok, _lv, html} = live(conn, ~p"/settings")
