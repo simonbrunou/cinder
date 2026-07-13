@@ -78,12 +78,12 @@ defmodule Cinder.Download.Intent do
   defp valid_mapping_snapshot?(snapshot, kind, intent_episode_ids)
        when kind in [:episode, :season_pack] and is_map(snapshot) do
     with %{
-           "version" => 1,
            "reserved_episode_ids" => reserved_ids,
            "release" => release,
            "mappings" => mappings,
            "selected_resolution" => selected
          } <- snapshot,
+         true <- valid_snapshot_version?(snapshot),
          true <- valid_episode_ids?(reserved_ids),
          true <- reserved_ids == intent_episode_ids,
          true <- valid_release?(release),
@@ -97,6 +97,18 @@ defmodule Cinder.Download.Intent do
   end
 
   defp valid_mapping_snapshot?(_snapshot, _kind, _episode_ids), do: false
+
+  defp valid_snapshot_version?(%{"version" => 1}), do: true
+
+  defp valid_snapshot_version?(%{
+         "version" => 2,
+         "parser_context" => %{"title" => title, "aliases" => aliases, "year" => year}
+       }) do
+    nonempty_string?(title) and is_list(aliases) and length(aliases) <= 7 and
+      Enum.all?(aliases, &nonempty_string?/1) and (is_nil(year) or is_integer(year))
+  end
+
+  defp valid_snapshot_version?(_snapshot), do: false
 
   defp valid_release?(%{"coordinates" => coordinates}) when is_list(coordinates) do
     coordinates != [] and Enum.all?(coordinates, &valid_coordinate?/1)

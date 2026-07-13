@@ -28,7 +28,8 @@ defmodule CinderWeb.SeriesDetailLive do
           form: nil,
           alias_form: alias_form(),
           confirm_opt: false,
-          searching_season: nil
+          searching_season: nil,
+          mapping_grabs: Catalog.list_mapping_grabs_for_series(series.id)
         )
         |> refresh_identity(series)
 
@@ -388,7 +389,12 @@ defmodule CinderWeb.SeriesDetailLive do
         |> push_navigate(to: ~p"/library")
 
       series ->
-        socket |> assign(series: series) |> refresh_identity(series)
+        socket
+        |> assign(
+          series: series,
+          mapping_grabs: Catalog.list_mapping_grabs_for_series(series.id)
+        )
+        |> refresh_identity(series)
     end
   end
 
@@ -626,6 +632,28 @@ defmodule CinderWeb.SeriesDetailLive do
           </p>
         </div>
       </div>
+
+      <section
+        :if={@mapping_grabs != []}
+        id="series-mapping-grabs"
+        class="mb-6 rounded-box border border-base-300 p-4"
+      >
+        <h2 class="font-semibold">{gettext("Needs mapping")}</h2>
+        <div
+          :for={grab <- @mapping_grabs}
+          id={"series-mapping-grab-#{grab.id}"}
+          class="mt-2 flex flex-wrap items-center gap-2"
+        >
+          <span class="min-w-0 flex-1 break-words text-sm">{grab.release_title || grab.download_id}</span>
+          <.status_badge kind={:grab} status={:needs_mapping} />
+          <.link
+            navigate={~p"/activity/grabs/#{grab.id}/mapping"}
+            class="link link-hover text-sm"
+          >
+            {gettext("Review mapping")}
+          </.link>
+        </div>
+      </section>
 
       <div class="mb-4 grid max-w-2xl gap-3 sm:grid-cols-2">
         <form id="series-detail-language-form" phx-change="set_series_language">

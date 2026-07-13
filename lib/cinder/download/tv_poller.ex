@@ -7,8 +7,8 @@ defmodule Cinder.Download.TvPoller do
   2. **import** — imports downloaded grabs (`list_grabs_downloaded`) via `Library.import_episodes`,
      mapping each file to its episode; on success the grab is finalized, on a transient FS error
      it is bounded-retried, on a deterministic empty import it is parked (its episodes re-search).
-  3. **search** — sweeps `wanted_episodes`, skipping search-parked and backed-off episodes, groups
-     them by `{series, season}`, and grabs the best release(s) per `Acquisition.best_releases`.
+  3. **search** — sweeps `wanted_episodes`, skipping search-parked and backed-off episodes, then
+     searches Standard series by season and Anime series by stable episode IDs.
 
   Holds no in-flight state: every tick re-derives its work from the DB, so it recovers cleanly
   after a crash/restart — the same OTP payoff the movie poller proves. State and the download
@@ -106,7 +106,36 @@ defmodule Cinder.Download.TvPoller do
         do: isolate("grab #{grab.id}", fn -> import_grab(grab) end)
   end
 
-  defp import_grab(grab) do
+  defp import_grab(%Grab{mapping_snapshot: nil} = grab), do: import_standard_grab(grab)
+
+  defp import_grab(%Grab{} = grab) do
+    case Library.preflight_anime_grab(grab) do
+      {:ok, preflight} ->
+        import_preflighted_grab(preflight)
+
+      {:needs_mapping, _result} ->
+        :ok
+
+      {:error, :library_not_configured} ->
+        hold_for_configuration(grab, :tv_library_path)
+
+      {:error, :download_roots_not_configured} ->
+        hold_for_configuration(grab, :download_import_roots)
+
+      {:error, reason} ->
+        retry_or_park(grab, reason)
+    end
+  end
+
+  defp import_preflighted_grab(preflight) do
+    case Library.stage_anime_episodes(preflight.grab, preflight) do
+      {:ok, staged} -> finalize_staged_grab(preflight.grab, staged)
+      {:restart_preflight, :inventory_changed} -> :ok
+      {:error, reason} -> retry_or_park(preflight.grab, reason)
+    end
+  end
+
+  defp import_standard_grab(grab) do
     case Library.stage_episodes(grab.content_path, grab.episodes) do
       {:ok, [], _unmatched} ->
         # Deterministic: nothing in content_path mapped to a grab episode. Re-importing can't
@@ -118,45 +147,16 @@ defmodule Cinder.Download.TvPoller do
         park(grab, :no_files_matched)
 
       {:ok, staged, _unmatched} ->
-        imported =
-          Enum.map(staged, fn {episode_id, stage} -> {episode_id, stage.dest, stage.quality} end)
-
-        # Catalog announces a season only when this committed import makes it fully available.
-        case Catalog.finish_grab(
-               grab,
-               imported,
-               Library.stage_ids(Enum.map(staged, &elem(&1, 1)))
-             ) do
-          {:ok, _grab} ->
-            commit_stages(staged)
-            # After the finalize commit: best-effort, gated remove of the source download.
-            # Read id/protocol off the in-hand grab — finish_grab deleted the row but returns
-            # the in-memory struct. A partial-match pack still removes (don't strand clutter).
-            Download.remove_after_import(grab.download_protocol, grab.download_id)
-
-          {:error, :stale_grab} ->
-            rollback_stages(staged)
-
-          # A failed finalize leaves content_path set, so the grab re-imports next tick —
-          # without a bump that's a silent 5-second loop if the failure is deterministic.
-          # Route it through the same bounded retry as every other failure in this poller.
-          {:error, reason} ->
-            rollback_stages(staged)
-            retry_or_park(grab, {:finish_grab, reason})
-        end
+        finalize_staged_grab(grab, staged)
 
       # A missing TV root is a config error, not a transient one: leave the grab downloaded
       # (no bump, no park) so the already-downloaded content imports as soon as tv_library_path
       # is set — parking would delete the download and re-search the episode for nothing.
       {:error, :library_not_configured} ->
-        Logger.warning(
-          "tv grab #{grab.id}: tv_library_path not set; holding the download until it is configured"
-        )
+        hold_for_configuration(grab, :tv_library_path)
 
       {:error, :download_roots_not_configured} ->
-        Logger.warning(
-          "tv grab #{grab.id}: download import roots not configured; holding the download until they are configured"
-        )
+        hold_for_configuration(grab, :download_import_roots)
 
       # Every remaining error is transient (a filesystem hiccup): the one deterministic
       # "unusable content" case surfaces as {:ok, [], _} above and is parked immediately, so
@@ -164,6 +164,40 @@ defmodule Cinder.Download.TvPoller do
       {:error, reason} ->
         retry_or_park(grab, reason)
     end
+  end
+
+  defp finalize_staged_grab(grab, staged) do
+    imported =
+      Enum.map(staged, fn {episode_id, stage} -> {episode_id, stage.dest, stage.quality} end)
+
+    case Catalog.finish_grab(
+           grab,
+           imported,
+           Library.stage_ids(Enum.map(staged, &elem(&1, 1)))
+         ) do
+      {:ok, _grab} ->
+        commit_stages(staged)
+        Download.remove_after_import(grab.download_protocol, grab.download_id)
+
+      {:error, :stale_grab} ->
+        rollback_stages(staged)
+
+      {:error, reason} ->
+        rollback_stages(staged)
+        retry_or_park(grab, {:finish_grab, reason})
+    end
+  end
+
+  defp hold_for_configuration(grab, :tv_library_path) do
+    Logger.warning(
+      "tv grab #{grab.id}: tv_library_path not set; holding the download until it is configured"
+    )
+  end
+
+  defp hold_for_configuration(grab, :download_import_roots) do
+    Logger.warning(
+      "tv grab #{grab.id}: download import roots not configured; holding the download until they are configured"
+    )
   end
 
   defp commit_stages(staged) do
@@ -205,26 +239,38 @@ defmodule Cinder.Download.TvPoller do
           &1.search_attempts >= Catalog.max_search_attempts())
     )
     |> Enum.filter(&search_due?(&1, retry_after))
-    |> Enum.group_by(&{&1.season.series.id, &1.season.season_number})
-    |> Enum.each(fn {{series_id, season}, episodes} ->
-      isolate("series #{series_id} s#{season}", fn -> search_group(episodes) end)
+    |> Enum.group_by(& &1.season.series.id)
+    |> Enum.each(fn {series_id, episodes} ->
+      isolate("series #{series_id}", fn -> search_series(episodes) end)
     end)
   end
 
-  defp search_group(episodes) do
+  defp search_series(episodes) do
+    series = hd(episodes).season.series
+
+    case Catalog.media_profile_summary(series).effective do
+      :anime ->
+        search_anime_series(series, episodes)
+
+      :standard ->
+        search_standard_series(series, episodes)
+    end
+  end
+
+  defp search_standard_series(series, episodes) do
+    episodes
+    |> Enum.group_by(& &1.season.season_number)
+    |> Enum.each(fn {season_number, group} ->
+      isolate("series #{series.id} s#{season_number}", fn -> search_standard_group(group) end)
+    end)
+  end
+
+  defp search_standard_group(episodes) do
     series = hd(episodes).season.series
     season_number = hd(episodes).season.season_number
     numbers = Enum.map(episodes, & &1.episode_number)
 
-    opts =
-      [
-        protocols: Download.available_protocols(),
-        preferred_language: series.preferred_language,
-        original_language: series.original_language,
-        release_blocklist: Catalog.blocked_release_titles_for_series(series.id)
-      ] ++ Acquisition.band_opts(:tv)
-
-    case Acquisition.best_releases(series, season_number, numbers, opts) do
+    case Acquisition.best_releases(series, season_number, numbers, search_opts(series)) do
       {:ok, assignments} ->
         grabbed = Enum.flat_map(assignments, &grab_assignment(&1, episodes))
         bump_not_grabbed(episodes, grabbed)
@@ -239,6 +285,40 @@ defmodule Cinder.Download.TvPoller do
 
         bump_not_grabbed(episodes, [])
     end
+  end
+
+  defp search_anime_series(series, episodes) do
+    wanted_ids = Enum.map(episodes, & &1.id)
+    context = Catalog.anime_series_acquisition_context(series)
+
+    case Acquisition.best_anime_releases(context, wanted_ids, search_opts(series)) do
+      {:ok, %{assignments: assignments, waiting: waiting}} ->
+        grabbed = Enum.flat_map(assignments, &grab_anime_assignment/1)
+        held = if waiting, do: waiting.episode_ids, else: []
+        bump_not_grabbed(episodes, grabbed ++ held)
+
+      {:waiting_for_preferred_group, waiting} ->
+        bump_not_grabbed(episodes, waiting.episode_ids)
+
+      :no_match ->
+        bump_not_grabbed(episodes, [])
+
+      {:error, reason} ->
+        Logger.info(
+          "anime search failed for series #{series.id}: #{HTTPPolicy.sanitize_log(reason)}"
+        )
+
+        bump_not_grabbed(episodes, [])
+    end
+  end
+
+  defp search_opts(series) do
+    [
+      protocols: Download.available_protocols(),
+      preferred_language: series.preferred_language,
+      original_language: series.original_language,
+      release_blocklist: Catalog.blocked_release_titles_for_series(series.id)
+    ] ++ Acquisition.band_opts(:tv)
   end
 
   # Add one chosen release to its client and create the grab linking exactly the episodes it
@@ -257,6 +337,13 @@ defmodule Cinder.Download.TvPoller do
         )
 
         []
+    end
+  end
+
+  defp grab_anime_assignment(%{release: release, episode_ids: episode_ids}) do
+    case Download.grab_episodes(release, episode_ids) do
+      {:ok, _grab} -> episode_ids
+      _failure -> []
     end
   end
 

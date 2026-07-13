@@ -1,0 +1,544 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "single-standard",
+      "snapshot_version": 2,
+      "files": ["Frieren - S01E01.mkv"],
+      "authoritative_episode_ids": [101],
+      "absolute_download_root": "/downloads/Frieren",
+      "parser_context": {"title": "Frieren", "aliases": ["Sousou no Frieren"], "year": 2023},
+      "mappings": [
+        {"identity": {"source": "cinder", "scheme": "standard", "namespace": "canonical", "canonical_value": "S01E01"}, "precedence": "manual", "episode_ids": [101], "evidence": null}
+      ],
+      "episodes": [{"id": 101, "season_number": 1, "episode_number": 1}],
+      "inventory": [{"relative_path": "Frieren - S01E01.mkv", "size": 1001, "major_device": 1, "inode": 101, "mtime": 100}],
+      "overrides": [],
+      "expected": {
+        "status": "resolved",
+        "assignments": {"Frieren - S01E01.mkv": [101]},
+        "decisions": {"version": 1, "files": [
+          {"relative_path": "Frieren - S01E01.mkv", "size": 1001, "major_device": 1, "inode": 101, "mtime": 100, "parsed": {"coordinates": [{"scheme": "standard", "values": ["S01E01"]}], "role": "story", "group": null}, "episode_ids": [101], "source": "automatic", "ignored": false, "evidence": {"resolutions": [
+            {"scheme": "standard", "canonical_value": "S01E01", "episode_ids": [101], "resolver": {"precedence": "manual", "matches": [
+              {"coordinate": {"source": "cinder", "scheme": "standard", "namespace": "canonical", "canonical_value": "S01E01"}, "episode_ids": [101], "evidence": null}
+            ]}}
+          ]}}
+        ]}
+      }
+    },
+    {
+      "id": "cross-season-batch",
+      "snapshot_version": 2,
+      "files": ["Frieren - 27-29.mkv"],
+      "authoritative_episode_ids": [127, 201, 202],
+      "absolute_download_root": "/downloads/Frieren",
+      "parser_context": {"title": "Frieren", "aliases": ["Sousou no Frieren"], "year": 2023},
+      "mappings": [
+        {"identity": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "27"}, "precedence": "manual", "episode_ids": [127], "evidence": null},
+        {"identity": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "28"}, "precedence": "manual", "episode_ids": [201], "evidence": null},
+        {"identity": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "29"}, "precedence": "manual", "episode_ids": [202], "evidence": null}
+      ],
+      "episodes": [
+        {"id": 127, "season_number": 1, "episode_number": 27},
+        {"id": 201, "season_number": 2, "episode_number": 1},
+        {"id": 202, "season_number": 2, "episode_number": 2}
+      ],
+      "inventory": [{"relative_path": "Frieren - 27-29.mkv", "size": 1002, "major_device": 1, "inode": 102, "mtime": "2026-07-13T12:00:00"}],
+      "overrides": [],
+      "expected": {
+        "status": "resolved",
+        "assignments": {"Frieren - 27-29.mkv": [127, 201, 202]},
+        "destinations": [
+          "Frieren (2023) {tmdb-209867}/Season 01/Frieren (2023) {tmdb-209867} - S01E27.mkv",
+          "Frieren (2023) {tmdb-209867}/Season 02/Frieren (2023) {tmdb-209867} - S02E01-E02.mkv"
+        ],
+        "decisions": {"version": 1, "files": [
+          {"relative_path": "Frieren - 27-29.mkv", "size": 1002, "major_device": 1, "inode": 102, "mtime": "2026-07-13T12:00:00", "parsed": {"coordinates": [{"scheme": "absolute", "values": ["27", "28", "29"]}], "role": "story", "group": null}, "episode_ids": [127, 201, 202], "source": "automatic", "ignored": false, "evidence": {"resolutions": [
+            {"scheme": "absolute", "canonical_value": "27", "episode_ids": [127], "resolver": {"precedence": "manual", "matches": [{"coordinate": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "27"}, "episode_ids": [127], "evidence": null}]}},
+            {"scheme": "absolute", "canonical_value": "28", "episode_ids": [201], "resolver": {"precedence": "manual", "matches": [{"coordinate": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "28"}, "episode_ids": [201], "evidence": null}]}},
+            {"scheme": "absolute", "canonical_value": "29", "episode_ids": [202], "resolver": {"precedence": "manual", "matches": [{"coordinate": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "29"}, "episode_ids": [202], "evidence": null}]}}
+          ]}}
+        ]}
+      }
+    },
+    {
+      "id": "legacy-snapshot",
+      "snapshot_version": 1,
+      "files": ["Frieren - 01.mkv"],
+      "authoritative_episode_ids": [101],
+      "absolute_download_root": "/downloads/Frieren",
+      "parser_context": null,
+      "mappings": [],
+      "episodes": [{"id": 101, "season_number": 1, "episode_number": 1}],
+      "inventory": [{"relative_path": "Frieren - 01.mkv", "size": 1003, "major_device": 1, "inode": 103, "mtime": 100}],
+      "overrides": [],
+      "expected": {
+        "status": "needs_mapping",
+        "reason": "legacy_snapshot",
+        "issue": {"version": 1, "reason": "legacy_snapshot", "relative_paths": ["Frieren - 01.mkv"], "candidate_episode_ids": []},
+        "decisions": {"version": 1, "files": [
+          {"relative_path": "Frieren - 01.mkv", "size": 1003, "major_device": 1, "inode": 103, "mtime": 100, "parsed": {"coordinates": [], "role": "unknown", "group": null}, "episode_ids": [], "source": "automatic", "ignored": false, "evidence": {"resolution": "legacy_snapshot"}}
+        ]}
+      }
+    },
+    {
+      "id": "standard-multi-episode",
+      "snapshot_version": 2,
+      "files": ["Frieren - S01E01-S01E02.mkv"],
+      "authoritative_episode_ids": [101, 102],
+      "absolute_download_root": "/downloads/Frieren",
+      "parser_context": {"title": "Frieren", "aliases": [], "year": 2023},
+      "mappings": [
+        {"identity": {"source": "cinder", "scheme": "standard", "namespace": "canonical", "canonical_value": "S01E01"}, "precedence": "manual", "episode_ids": [101], "evidence": null},
+        {"identity": {"source": "cinder", "scheme": "standard", "namespace": "canonical", "canonical_value": "S01E02"}, "precedence": "manual", "episode_ids": [102], "evidence": null}
+      ],
+      "episodes": [{"id": 101, "season_number": 1, "episode_number": 1}, {"id": 102, "season_number": 1, "episode_number": 2}],
+      "inventory": [{"relative_path": "Frieren - S01E01-S01E02.mkv", "size": 1004, "major_device": 1, "inode": 104, "mtime": 100}],
+      "overrides": [],
+      "expected": {
+        "status": "resolved",
+        "assignments": {"Frieren - S01E01-S01E02.mkv": [101, 102]},
+        "decisions": {"version": 1, "files": [
+          {"relative_path": "Frieren - S01E01-S01E02.mkv", "size": 1004, "major_device": 1, "inode": 104, "mtime": 100, "parsed": {"coordinates": [{"scheme": "standard", "values": ["S01E01", "S01E02"]}], "role": "story", "group": null}, "episode_ids": [101, 102], "source": "automatic", "ignored": false, "evidence": {"resolutions": [
+            {"scheme": "standard", "canonical_value": "S01E01", "episode_ids": [101], "resolver": {"precedence": "manual", "matches": [{"coordinate": {"source": "cinder", "scheme": "standard", "namespace": "canonical", "canonical_value": "S01E01"}, "episode_ids": [101], "evidence": null}]}},
+            {"scheme": "standard", "canonical_value": "S01E02", "episode_ids": [102], "resolver": {"precedence": "manual", "matches": [{"coordinate": {"source": "cinder", "scheme": "standard", "namespace": "canonical", "canonical_value": "S01E02"}, "episode_ids": [102], "evidence": null}]}}
+          ]}}
+        ]}
+      }
+    },
+    {
+      "id": "absolute-single",
+      "snapshot_version": 2,
+      "files": ["Frieren - 1.mkv"],
+      "authoritative_episode_ids": [101],
+      "absolute_download_root": "/downloads/Frieren",
+      "parser_context": {"title": "Frieren", "aliases": [], "year": 2023},
+      "mappings": [{"identity": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "1"}, "precedence": "manual", "episode_ids": [101], "evidence": null}],
+      "episodes": [{"id": 101, "season_number": 1, "episode_number": 1}],
+      "inventory": [{"relative_path": "Frieren - 1.mkv", "size": 1005, "major_device": 1, "inode": 105, "mtime": 100}],
+      "overrides": [],
+      "expected": {
+        "status": "resolved",
+        "assignments": {"Frieren - 1.mkv": [101]},
+        "decisions": {"version": 1, "files": [
+          {"relative_path": "Frieren - 1.mkv", "size": 1005, "major_device": 1, "inode": 105, "mtime": 100, "parsed": {"coordinates": [{"scheme": "absolute", "values": ["1"]}], "role": "story", "group": null}, "episode_ids": [101], "source": "automatic", "ignored": false, "evidence": {"resolutions": [
+            {"scheme": "absolute", "canonical_value": "1", "episode_ids": [101], "resolver": {"precedence": "manual", "matches": [{"coordinate": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "1"}, "episode_ids": [101], "evidence": null}]}}
+          ]}}
+        ]}
+      }
+    },
+    {
+      "id": "absolute-range",
+      "snapshot_version": 2,
+      "files": ["Frieren - 1-2.mkv"],
+      "authoritative_episode_ids": [101, 102],
+      "absolute_download_root": "/downloads/Frieren",
+      "parser_context": {"title": "Frieren", "aliases": [], "year": 2023},
+      "mappings": [
+        {"identity": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "1"}, "precedence": "manual", "episode_ids": [101], "evidence": null},
+        {"identity": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "2"}, "precedence": "manual", "episode_ids": [102], "evidence": null}
+      ],
+      "episodes": [{"id": 101, "season_number": 1, "episode_number": 1}, {"id": 102, "season_number": 1, "episode_number": 2}],
+      "inventory": [{"relative_path": "Frieren - 1-2.mkv", "size": 1006, "major_device": 1, "inode": 106, "mtime": 100}],
+      "overrides": [],
+      "expected": {
+        "status": "resolved",
+        "assignments": {"Frieren - 1-2.mkv": [101, 102]},
+        "decisions": {"version": 1, "files": [
+          {"relative_path": "Frieren - 1-2.mkv", "size": 1006, "major_device": 1, "inode": 106, "mtime": 100, "parsed": {"coordinates": [{"scheme": "absolute", "values": ["1", "2"]}], "role": "story", "group": null}, "episode_ids": [101, 102], "source": "automatic", "ignored": false, "evidence": {"resolutions": [
+            {"scheme": "absolute", "canonical_value": "1", "episode_ids": [101], "resolver": {"precedence": "manual", "matches": [{"coordinate": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "1"}, "episode_ids": [101], "evidence": null}]}},
+            {"scheme": "absolute", "canonical_value": "2", "episode_ids": [102], "resolver": {"precedence": "manual", "matches": [{"coordinate": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "2"}, "episode_ids": [102], "evidence": null}]}}
+          ]}}
+        ]}
+      }
+    },
+    {
+      "id": "multi-file-batch",
+      "snapshot_version": 2,
+      "files": ["Frieren - 1.mkv", "Frieren - 2.mkv"],
+      "authoritative_episode_ids": [101, 102],
+      "absolute_download_root": "/downloads/Frieren",
+      "parser_context": {"title": "Frieren", "aliases": [], "year": 2023},
+      "mappings": [
+        {"identity": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "1"}, "precedence": "manual", "episode_ids": [101], "evidence": null},
+        {"identity": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "2"}, "precedence": "manual", "episode_ids": [102], "evidence": null}
+      ],
+      "episodes": [{"id": 101, "season_number": 1, "episode_number": 1}, {"id": 102, "season_number": 1, "episode_number": 2}],
+      "inventory": [
+        {"relative_path": "Frieren - 2.mkv", "size": 1008, "major_device": 1, "inode": 108, "mtime": 100},
+        {"relative_path": "Frieren - 1.mkv", "size": 1007, "major_device": 1, "inode": 107, "mtime": 100}
+      ],
+      "overrides": [],
+      "expected": {
+        "status": "resolved",
+        "assignments": {"Frieren - 1.mkv": [101], "Frieren - 2.mkv": [102]},
+        "decisions": {"version": 1, "files": [
+          {"relative_path": "Frieren - 1.mkv", "size": 1007, "major_device": 1, "inode": 107, "mtime": 100, "parsed": {"coordinates": [{"scheme": "absolute", "values": ["1"]}], "role": "story", "group": null}, "episode_ids": [101], "source": "automatic", "ignored": false, "evidence": {"resolutions": [
+            {"scheme": "absolute", "canonical_value": "1", "episode_ids": [101], "resolver": {"precedence": "manual", "matches": [{"coordinate": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "1"}, "episode_ids": [101], "evidence": null}]}}
+          ]}},
+          {"relative_path": "Frieren - 2.mkv", "size": 1008, "major_device": 1, "inode": 108, "mtime": 100, "parsed": {"coordinates": [{"scheme": "absolute", "values": ["2"]}], "role": "story", "group": null}, "episode_ids": [102], "source": "automatic", "ignored": false, "evidence": {"resolutions": [
+            {"scheme": "absolute", "canonical_value": "2", "episode_ids": [102], "resolver": {"precedence": "manual", "matches": [{"coordinate": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "2"}, "episode_ids": [102], "evidence": null}]}}
+          ]}}
+        ]}
+      }
+    },
+    {
+      "id": "many-to-many-mapping",
+      "snapshot_version": 2,
+      "files": ["Frieren - 12.mkv"],
+      "authoritative_episode_ids": [101, 102],
+      "absolute_download_root": "/downloads/Frieren",
+      "parser_context": {"title": "Frieren", "aliases": [], "year": 2023},
+      "mappings": [{"identity": {"source": "fixture", "scheme": "absolute", "namespace": "combined", "canonical_value": "12"}, "precedence": "manual", "episode_ids": [101, 102], "evidence": null}],
+      "episodes": [{"id": 101, "season_number": 1, "episode_number": 1}, {"id": 102, "season_number": 1, "episode_number": 2}],
+      "inventory": [{"relative_path": "Frieren - 12.mkv", "size": 1009, "major_device": 1, "inode": 109, "mtime": "2026-07-13T12:00:00"}],
+      "overrides": [],
+      "expected": {
+        "status": "resolved",
+        "assignments": {"Frieren - 12.mkv": [101, 102]},
+        "destinations": ["Frieren (2023) {tmdb-209867}/Season 01/Frieren (2023) {tmdb-209867} - S01E01-E02.mkv"],
+        "decisions": {"version": 1, "files": [
+          {"relative_path": "Frieren - 12.mkv", "size": 1009, "major_device": 1, "inode": 109, "mtime": "2026-07-13T12:00:00", "parsed": {"coordinates": [{"scheme": "absolute", "values": ["12"]}], "role": "story", "group": null}, "episode_ids": [101, 102], "source": "automatic", "ignored": false, "evidence": {"resolutions": [
+            {"scheme": "absolute", "canonical_value": "12", "episode_ids": [101, 102], "resolver": {"precedence": "manual", "matches": [{"coordinate": {"source": "fixture", "scheme": "absolute", "namespace": "combined", "canonical_value": "12"}, "episode_ids": [101, 102], "evidence": null}]}}
+          ]}}
+        ]}
+      }
+    },
+    {
+      "id": "cross-season-output",
+      "snapshot_version": 2,
+      "files": ["Frieren - 27.mkv"],
+      "authoritative_episode_ids": [127, 201],
+      "absolute_download_root": "/downloads/Frieren",
+      "parser_context": {"title": "Frieren", "aliases": [], "year": 2023},
+      "mappings": [{"identity": {"source": "fixture", "scheme": "absolute", "namespace": "combined", "canonical_value": "27"}, "precedence": "manual", "episode_ids": [127, 201], "evidence": null}],
+      "episodes": [{"id": 127, "season_number": 1, "episode_number": 27}, {"id": 201, "season_number": 2, "episode_number": 1}],
+      "inventory": [{"relative_path": "Frieren - 27.mkv", "size": 1010, "major_device": 1, "inode": 110, "mtime": "2026-07-13T12:00:00"}],
+      "overrides": [],
+      "expected": {
+        "status": "resolved",
+        "assignments": {"Frieren - 27.mkv": [127, 201]},
+        "destinations": [
+          "Frieren (2023) {tmdb-209867}/Season 01/Frieren (2023) {tmdb-209867} - S01E27.mkv",
+          "Frieren (2023) {tmdb-209867}/Season 02/Frieren (2023) {tmdb-209867} - S02E01.mkv"
+        ],
+        "decisions": {"version": 1, "files": [
+          {"relative_path": "Frieren - 27.mkv", "size": 1010, "major_device": 1, "inode": 110, "mtime": "2026-07-13T12:00:00", "parsed": {"coordinates": [{"scheme": "absolute", "values": ["27"]}], "role": "story", "group": null}, "episode_ids": [127, 201], "source": "automatic", "ignored": false, "evidence": {"resolutions": [
+            {"scheme": "absolute", "canonical_value": "27", "episode_ids": [127, 201], "resolver": {"precedence": "manual", "matches": [{"coordinate": {"source": "fixture", "scheme": "absolute", "namespace": "combined", "canonical_value": "27"}, "episode_ids": [127, 201], "evidence": null}]}}
+          ]}}
+        ]}
+      }
+    },
+    {
+      "id": "positive-extras",
+      "snapshot_version": 2,
+      "files": ["Frieren - 1.mkv", "Frieren - NCOP.mkv", "Frieren - NCED.mkv", "Frieren - Trailer.mkv"],
+      "authoritative_episode_ids": [101],
+      "absolute_download_root": "/downloads/Frieren",
+      "parser_context": {"title": "Frieren", "aliases": [], "year": 2023},
+      "mappings": [{"identity": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "1"}, "precedence": "manual", "episode_ids": [101], "evidence": null}],
+      "episodes": [{"id": 101, "season_number": 1, "episode_number": 1}],
+      "inventory": [
+        {"relative_path": "Frieren - Trailer.mkv", "size": 1014, "major_device": 1, "inode": 114, "mtime": 100},
+        {"relative_path": "Frieren - NCOP.mkv", "size": 1012, "major_device": 1, "inode": 112, "mtime": 100},
+        {"relative_path": "Frieren - 1.mkv", "size": 1011, "major_device": 1, "inode": 111, "mtime": 100},
+        {"relative_path": "Frieren - NCED.mkv", "size": 1013, "major_device": 1, "inode": 113, "mtime": 100}
+      ],
+      "overrides": [],
+      "expected": {
+        "status": "resolved",
+        "assignments": {"Frieren - 1.mkv": [101]},
+        "decisions": {"version": 1, "files": [
+          {"relative_path": "Frieren - 1.mkv", "size": 1011, "major_device": 1, "inode": 111, "mtime": 100, "parsed": {"coordinates": [{"scheme": "absolute", "values": ["1"]}], "role": "story", "group": null}, "episode_ids": [101], "source": "automatic", "ignored": false, "evidence": {"resolutions": [
+            {"scheme": "absolute", "canonical_value": "1", "episode_ids": [101], "resolver": {"precedence": "manual", "matches": [{"coordinate": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "1"}, "episode_ids": [101], "evidence": null}]}}
+          ]}},
+          {"relative_path": "Frieren - NCED.mkv", "size": 1013, "major_device": 1, "inode": 113, "mtime": 100, "parsed": {"coordinates": [], "role": "extra", "group": null}, "episode_ids": [], "source": "automatic", "ignored": true, "evidence": {"role": "extra", "evidence": {"parser": "anime_v1"}}},
+          {"relative_path": "Frieren - NCOP.mkv", "size": 1012, "major_device": 1, "inode": 112, "mtime": 100, "parsed": {"coordinates": [], "role": "extra", "group": null}, "episode_ids": [], "source": "automatic", "ignored": true, "evidence": {"role": "extra", "evidence": {"parser": "anime_v1"}}},
+          {"relative_path": "Frieren - Trailer.mkv", "size": 1014, "major_device": 1, "inode": 114, "mtime": 100, "parsed": {"coordinates": [], "role": "extra", "group": null}, "episode_ids": [], "source": "automatic", "ignored": true, "evidence": {"role": "extra", "evidence": {"parser": "anime_v1"}}}
+        ]}
+      }
+    },
+    {
+      "id": "manual-ignored-extra",
+      "snapshot_version": 2,
+      "files": ["Frieren Bonus.mkv"],
+      "authoritative_episode_ids": [],
+      "absolute_download_root": "/downloads/Frieren",
+      "parser_context": {"title": "Frieren", "aliases": [], "year": 2023},
+      "mappings": [],
+      "episodes": [],
+      "inventory": [{"relative_path": "Frieren Bonus.mkv", "size": 1015, "major_device": 1, "inode": 115, "mtime": 100}],
+      "overrides": [{"relative_path": "Frieren Bonus.mkv", "size": 1015, "major_device": 1, "inode": 115, "mtime": 100, "action": "ignore"}],
+      "expected": {
+        "status": "resolved",
+        "assignments": {},
+        "decisions": {"version": 1, "files": [
+          {"relative_path": "Frieren Bonus.mkv", "size": 1015, "major_device": 1, "inode": 115, "mtime": 100, "parsed": {"coordinates": [], "role": "unknown", "group": null}, "episode_ids": [], "source": "manual", "ignored": true, "evidence": {"override": "ignore"}}
+        ]}
+      }
+    },
+    {
+      "id": "ambiguous-coordinate",
+      "snapshot_version": 2,
+      "files": ["Frieren - 11-12.mkv"],
+      "authoritative_episode_ids": [101, 102, 103],
+      "absolute_download_root": "/downloads/Frieren",
+      "parser_context": {"title": "Frieren", "aliases": [], "year": 2023},
+      "mappings": [
+        {"identity": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "11"}, "precedence": "manual", "episode_ids": [101], "evidence": null},
+        {"identity": {"source": "one", "scheme": "absolute", "namespace": "a", "canonical_value": "12"}, "precedence": "manual", "episode_ids": [102], "evidence": null},
+        {"identity": {"source": "two", "scheme": "absolute", "namespace": "b", "canonical_value": "12"}, "precedence": "manual", "episode_ids": [103], "evidence": null}
+      ],
+      "episodes": [{"id": 101, "season_number": 1, "episode_number": 1}, {"id": 102, "season_number": 1, "episode_number": 2}, {"id": 103, "season_number": 1, "episode_number": 3}],
+      "inventory": [{"relative_path": "Frieren - 11-12.mkv", "size": 1016, "major_device": 1, "inode": 116, "mtime": 100}],
+      "overrides": [],
+      "expected": {
+        "status": "needs_mapping",
+        "reason": "unresolved_file",
+        "issue": {"version": 1, "reason": "unresolved_file", "relative_paths": ["Frieren - 11-12.mkv"], "candidate_episode_ids": [102, 103]},
+        "decisions": {"version": 1, "files": [
+          {"relative_path": "Frieren - 11-12.mkv", "size": 1016, "major_device": 1, "inode": 116, "mtime": 100, "parsed": {"coordinates": [{"scheme": "absolute", "values": ["11", "12"]}], "role": "story", "group": null}, "episode_ids": [], "source": "automatic", "ignored": false, "evidence": {"resolution": "ambiguous", "resolutions": [
+            {"scheme": "absolute", "canonical_value": "11", "episode_ids": [101], "resolver": {"precedence": "manual", "matches": [
+              {"coordinate": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "11"}, "episode_ids": [101], "evidence": null}
+            ]}},
+            {"scheme": "absolute", "canonical_value": "12", "candidates": [[102], [103]], "resolver": {"precedence": "manual", "matches": [
+              {"coordinate": {"source": "one", "scheme": "absolute", "namespace": "a", "canonical_value": "12"}, "episode_ids": [102], "evidence": null},
+              {"coordinate": {"source": "two", "scheme": "absolute", "namespace": "b", "canonical_value": "12"}, "episode_ids": [103], "evidence": null}
+            ]}}
+          ]}}
+        ]}
+      }
+    },
+    {
+      "id": "unmatched-story-file",
+      "snapshot_version": 2,
+      "files": ["Frieren - S01E03.mkv"],
+      "authoritative_episode_ids": [103],
+      "absolute_download_root": "/downloads/Frieren",
+      "parser_context": {"title": "Frieren", "aliases": [], "year": 2023},
+      "mappings": [],
+      "episodes": [{"id": 103, "season_number": 1, "episode_number": 3}],
+      "inventory": [{"relative_path": "Frieren - S01E03.mkv", "size": 1017, "major_device": 1, "inode": 117, "mtime": 100}],
+      "overrides": [],
+      "expected": {
+        "status": "needs_mapping",
+        "reason": "unresolved_file",
+        "issue": {"version": 1, "reason": "unresolved_file", "relative_paths": ["Frieren - S01E03.mkv"], "candidate_episode_ids": []},
+        "decisions": {"version": 1, "files": [
+          {"relative_path": "Frieren - S01E03.mkv", "size": 1017, "major_device": 1, "inode": 117, "mtime": 100, "parsed": {"coordinates": [{"scheme": "standard", "values": ["S01E03"]}], "role": "story", "group": null}, "episode_ids": [], "source": "automatic", "ignored": false, "evidence": {"resolution": "unmatched"}}
+        ]}
+      }
+    },
+    {
+      "id": "unknown-role-file",
+      "snapshot_version": 2,
+      "files": ["Frieren Bonus.mkv"],
+      "authoritative_episode_ids": [101],
+      "absolute_download_root": "/downloads/Frieren",
+      "parser_context": {"title": "Frieren", "aliases": [], "year": 2023},
+      "mappings": [],
+      "episodes": [{"id": 101, "season_number": 1, "episode_number": 1}],
+      "inventory": [{"relative_path": "Frieren Bonus.mkv", "size": 1018, "major_device": 1, "inode": 118, "mtime": 100}],
+      "overrides": [],
+      "expected": {
+        "status": "needs_mapping",
+        "reason": "unresolved_file",
+        "issue": {"version": 1, "reason": "unresolved_file", "relative_paths": ["Frieren Bonus.mkv"], "candidate_episode_ids": []},
+        "decisions": {"version": 1, "files": [
+          {"relative_path": "Frieren Bonus.mkv", "size": 1018, "major_device": 1, "inode": 118, "mtime": 100, "parsed": {"coordinates": [], "role": "unknown", "group": null}, "episode_ids": [], "source": "automatic", "ignored": false, "evidence": {"resolution": "unmatched"}}
+        ]}
+      }
+    },
+    {
+      "id": "mapped-unknown-role",
+      "snapshot_version": 2,
+      "files": ["Frieren OVA 1.mkv"],
+      "authoritative_episode_ids": [100],
+      "absolute_download_root": "/downloads/Frieren",
+      "parser_context": {"title": "Frieren", "aliases": [], "year": 2023},
+      "mappings": [{"identity": {"source": "fixture", "scheme": "typed_special", "namespace": "main", "canonical_value": "OVA:1"}, "precedence": "manual", "episode_ids": [100], "evidence": null}],
+      "episodes": [{"id": 100, "season_number": 0, "episode_number": 1}],
+      "inventory": [{"relative_path": "Frieren OVA 1.mkv", "size": 1019, "major_device": 1, "inode": 119, "mtime": 100}],
+      "overrides": [],
+      "expected": {
+        "status": "resolved",
+        "assignments": {"Frieren OVA 1.mkv": [100]},
+        "decisions": {"version": 1, "files": [
+          {"relative_path": "Frieren OVA 1.mkv", "size": 1019, "major_device": 1, "inode": 119, "mtime": 100, "parsed": {"coordinates": [{"scheme": "typed_special", "values": ["OVA:1"]}], "role": "unknown", "group": null}, "episode_ids": [100], "source": "automatic", "ignored": false, "evidence": {"resolutions": [
+            {"scheme": "typed_special", "canonical_value": "OVA:1", "episode_ids": [100], "resolver": {"precedence": "manual", "matches": [{"coordinate": {"source": "fixture", "scheme": "typed_special", "namespace": "main", "canonical_value": "OVA:1"}, "episode_ids": [100], "evidence": null}]}}
+          ]}}
+        ]}
+      }
+    },
+    {
+      "id": "missing-authoritative-episode",
+      "snapshot_version": 2,
+      "files": ["Frieren - 1.mkv"],
+      "authoritative_episode_ids": [101, 102],
+      "absolute_download_root": "/downloads/Frieren",
+      "parser_context": {"title": "Frieren", "aliases": [], "year": 2023},
+      "mappings": [{"identity": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "1"}, "precedence": "manual", "episode_ids": [101], "evidence": null}],
+      "episodes": [{"id": 101, "season_number": 1, "episode_number": 1}, {"id": 102, "season_number": 1, "episode_number": 2}],
+      "inventory": [{"relative_path": "Frieren - 1.mkv", "size": 1020, "major_device": 1, "inode": 120, "mtime": 100}],
+      "overrides": [],
+      "expected": {
+        "status": "needs_mapping",
+        "reason": "missing_episode_assignment",
+        "issue": {"version": 1, "reason": "missing_episode_assignment", "relative_paths": [], "candidate_episode_ids": [102]},
+        "decisions": {"version": 1, "files": [
+          {"relative_path": "Frieren - 1.mkv", "size": 1020, "major_device": 1, "inode": 120, "mtime": 100, "parsed": {"coordinates": [{"scheme": "absolute", "values": ["1"]}], "role": "story", "group": null}, "episode_ids": [101], "source": "automatic", "ignored": false, "evidence": {"resolutions": [
+            {"scheme": "absolute", "canonical_value": "1", "episode_ids": [101], "resolver": {"precedence": "manual", "matches": [{"coordinate": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "1"}, "episode_ids": [101], "evidence": null}]}}
+          ]}}
+        ]}
+      }
+    },
+    {
+      "id": "outside-authoritative-resolution",
+      "snapshot_version": 2,
+      "files": ["Frieren - 1.mkv"],
+      "authoritative_episode_ids": [101],
+      "absolute_download_root": "/downloads/Frieren",
+      "parser_context": {"title": "Frieren", "aliases": [], "year": 2023},
+      "mappings": [{"identity": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "1"}, "precedence": "manual", "episode_ids": [101, 999], "evidence": null}],
+      "episodes": [{"id": 101, "season_number": 1, "episode_number": 1}],
+      "inventory": [{"relative_path": "Frieren - 1.mkv", "size": 1021, "major_device": 1, "inode": 121, "mtime": 100}],
+      "overrides": [],
+      "expected": {
+        "status": "needs_mapping",
+        "reason": "outside_authoritative_set",
+        "issue": {"version": 1, "reason": "outside_authoritative_set", "relative_paths": ["Frieren - 1.mkv"], "candidate_episode_ids": [999]},
+        "decisions": {"version": 1, "files": [
+          {"relative_path": "Frieren - 1.mkv", "size": 1021, "major_device": 1, "inode": 121, "mtime": 100, "parsed": {"coordinates": [{"scheme": "absolute", "values": ["1"]}], "role": "story", "group": null}, "episode_ids": [101, 999], "source": "automatic", "ignored": false, "evidence": {"resolutions": [
+            {"scheme": "absolute", "canonical_value": "1", "episode_ids": [101, 999], "resolver": {"precedence": "manual", "matches": [{"coordinate": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "1"}, "episode_ids": [101, 999], "evidence": null}]}}
+          ]}}
+        ]}
+      }
+    },
+    {
+      "id": "duplicate-episode-across-files",
+      "snapshot_version": 2,
+      "files": ["Frieren - 1.mkv", "Frieren - S01E01.mkv"],
+      "authoritative_episode_ids": [101],
+      "absolute_download_root": "/downloads/Frieren",
+      "parser_context": {"title": "Frieren", "aliases": [], "year": 2023},
+      "mappings": [
+        {"identity": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "1"}, "precedence": "manual", "episode_ids": [101], "evidence": null},
+        {"identity": {"source": "cinder", "scheme": "standard", "namespace": "canonical", "canonical_value": "S01E01"}, "precedence": "manual", "episode_ids": [101], "evidence": null}
+      ],
+      "episodes": [{"id": 101, "season_number": 1, "episode_number": 1}],
+      "inventory": [
+        {"relative_path": "Frieren - S01E01.mkv", "size": 1023, "major_device": 1, "inode": 123, "mtime": 100},
+        {"relative_path": "Frieren - 1.mkv", "size": 1022, "major_device": 1, "inode": 122, "mtime": 100}
+      ],
+      "overrides": [],
+      "expected": {
+        "status": "needs_mapping",
+        "reason": "duplicate_episode_assignment",
+        "issue": {"version": 1, "reason": "duplicate_episode_assignment", "relative_paths": ["Frieren - 1.mkv", "Frieren - S01E01.mkv"], "candidate_episode_ids": [101]},
+        "decisions": {"version": 1, "files": [
+          {"relative_path": "Frieren - 1.mkv", "size": 1022, "major_device": 1, "inode": 122, "mtime": 100, "parsed": {"coordinates": [{"scheme": "absolute", "values": ["1"]}], "role": "story", "group": null}, "episode_ids": [101], "source": "automatic", "ignored": false, "evidence": {"resolutions": [
+            {"scheme": "absolute", "canonical_value": "1", "episode_ids": [101], "resolver": {"precedence": "manual", "matches": [{"coordinate": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "1"}, "episode_ids": [101], "evidence": null}]}}
+          ]}},
+          {"relative_path": "Frieren - S01E01.mkv", "size": 1023, "major_device": 1, "inode": 123, "mtime": 100, "parsed": {"coordinates": [{"scheme": "standard", "values": ["S01E01"]}], "role": "story", "group": null}, "episode_ids": [101], "source": "automatic", "ignored": false, "evidence": {"resolutions": [
+            {"scheme": "standard", "canonical_value": "S01E01", "episode_ids": [101], "resolver": {"precedence": "manual", "matches": [{"coordinate": {"source": "cinder", "scheme": "standard", "namespace": "canonical", "canonical_value": "S01E01"}, "episode_ids": [101], "evidence": null}]}}
+          ]}}
+        ]}
+      }
+    },
+    {
+      "id": "override-success",
+      "snapshot_version": 2,
+      "files": ["mystery.mkv"],
+      "authoritative_episode_ids": [101],
+      "absolute_download_root": "/downloads/Frieren",
+      "parser_context": {"title": "Frieren", "aliases": [], "year": 2023},
+      "mappings": [],
+      "episodes": [{"id": 101, "season_number": 1, "episode_number": 1}],
+      "inventory": [{"relative_path": "mystery.mkv", "size": 1024, "major_device": 1, "inode": 124, "mtime": 100}],
+      "overrides": [{"relative_path": "mystery.mkv", "size": 1024, "major_device": 1, "inode": 124, "mtime": 100, "action": "assign", "episode_ids": [101]}],
+      "expected": {
+        "status": "resolved",
+        "assignments": {"mystery.mkv": [101]},
+        "decisions": {"version": 1, "files": [
+          {"relative_path": "mystery.mkv", "size": 1024, "major_device": 1, "inode": 124, "mtime": 100, "parsed": {"coordinates": [], "role": "unknown", "group": null}, "episode_ids": [101], "source": "manual", "ignored": false, "evidence": {"override": "assign"}}
+        ]}
+      }
+    },
+    {
+      "id": "override-conflict",
+      "snapshot_version": 2,
+      "files": ["Frieren - 1.mkv"],
+      "authoritative_episode_ids": [101],
+      "absolute_download_root": "/downloads/Frieren",
+      "parser_context": {"title": "Frieren", "aliases": [], "year": 2023},
+      "mappings": [{"identity": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "1"}, "precedence": "manual", "episode_ids": [101], "evidence": null}],
+      "episodes": [{"id": 101, "season_number": 1, "episode_number": 1}],
+      "inventory": [{"relative_path": "Frieren - 1.mkv", "size": 1025, "major_device": 1, "inode": 125, "mtime": 100}],
+      "overrides": [
+        {"relative_path": "Frieren - 1.mkv", "size": 1025, "major_device": 1, "inode": 125, "mtime": 100, "action": "assign", "episode_ids": [101]},
+        {"relative_path": "Frieren - 1.mkv", "size": 1025, "major_device": 1, "inode": 125, "mtime": 100, "action": "ignore"}
+      ],
+      "expected": {
+        "status": "needs_mapping",
+        "reason": "stale_override",
+        "issue": {"version": 1, "reason": "stale_override", "relative_paths": ["Frieren - 1.mkv"], "candidate_episode_ids": [101]},
+        "decisions": {"version": 1, "files": [
+          {"relative_path": "Frieren - 1.mkv", "size": 1025, "major_device": 1, "inode": 125, "mtime": 100, "parsed": {"coordinates": [{"scheme": "absolute", "values": ["1"]}], "role": "story", "group": null}, "episode_ids": [101], "source": "automatic", "ignored": false, "evidence": {"resolutions": [
+            {"scheme": "absolute", "canonical_value": "1", "episode_ids": [101], "resolver": {"precedence": "manual", "matches": [{"coordinate": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "1"}, "episode_ids": [101], "evidence": null}]}}
+          ]}}
+        ]}
+      }
+    },
+    {
+      "id": "inventory-mutation",
+      "snapshot_version": 2,
+      "files": ["Frieren - 1.mkv"],
+      "authoritative_episode_ids": [101],
+      "absolute_download_root": "/downloads/Frieren",
+      "parser_context": {"title": "Frieren", "aliases": [], "year": 2023},
+      "mappings": [{"identity": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "1"}, "precedence": "manual", "episode_ids": [101], "evidence": null}],
+      "episodes": [{"id": 101, "season_number": 1, "episode_number": 1}],
+      "before_assignments": {"Frieren - 1.mkv": [101]},
+      "before_inventory": [{"relative_path": "Frieren - 1.mkv", "size": 1026, "major_device": 1, "inode": 126, "mtime": "2026-07-13T12:00:00"}],
+      "after_inventory": [{"relative_path": "Frieren - 1.mkv", "size": 1026, "major_device": 1, "inode": 126, "mtime": "2026-07-13T12:00:01"}],
+      "inventory": [{"relative_path": "Frieren - 1.mkv", "size": 1026, "major_device": 1, "inode": 126, "mtime": "2026-07-13T12:00:01"}],
+      "overrides": [{"relative_path": "Frieren - 1.mkv", "size": 1026, "major_device": 1, "inode": 126, "mtime": "2026-07-13T12:00:00", "action": "assign", "episode_ids": [101]}],
+      "expected": {
+        "status": "needs_mapping",
+        "reason": "stale_override",
+        "issue": {"version": 1, "reason": "stale_override", "relative_paths": ["Frieren - 1.mkv"], "candidate_episode_ids": [101]},
+        "decisions": {"version": 1, "files": [
+          {"relative_path": "Frieren - 1.mkv", "size": 1026, "major_device": 1, "inode": 126, "mtime": "2026-07-13T12:00:01", "parsed": {"coordinates": [{"scheme": "absolute", "values": ["1"]}], "role": "story", "group": null}, "episode_ids": [101], "source": "automatic", "ignored": false, "evidence": {"resolutions": [
+            {"scheme": "absolute", "canonical_value": "1", "episode_ids": [101], "resolver": {"precedence": "manual", "matches": [{"coordinate": {"source": "fixture", "scheme": "absolute", "namespace": "main", "canonical_value": "1"}, "episode_ids": [101], "evidence": null}]}}
+          ]}}
+        ]}
+      }
+    },
+    {
+      "id": "version-one-manual-only-resolution",
+      "snapshot_version": 1,
+      "files": ["legacy-episode.mkv", "legacy-extra.mkv"],
+      "authoritative_episode_ids": [101],
+      "absolute_download_root": "/downloads/Frieren",
+      "parser_context": null,
+      "mappings": [],
+      "episodes": [{"id": 101, "season_number": 1, "episode_number": 1}],
+      "inventory": [
+        {"relative_path": "legacy-extra.mkv", "size": 1028, "major_device": 1, "inode": 128, "mtime": 100},
+        {"relative_path": "legacy-episode.mkv", "size": 1027, "major_device": 1, "inode": 127, "mtime": 100}
+      ],
+      "overrides": [
+        {"relative_path": "legacy-episode.mkv", "size": 1027, "major_device": 1, "inode": 127, "mtime": 100, "action": "assign", "episode_ids": [101]},
+        {"relative_path": "legacy-extra.mkv", "size": 1028, "major_device": 1, "inode": 128, "mtime": 100, "action": "ignore"}
+      ],
+      "expected": {
+        "status": "resolved",
+        "assignments": {"legacy-episode.mkv": [101]},
+        "decisions": {"version": 1, "files": [
+          {"relative_path": "legacy-episode.mkv", "size": 1027, "major_device": 1, "inode": 127, "mtime": 100, "parsed": {"coordinates": [], "role": "unknown", "group": null}, "episode_ids": [101], "source": "manual", "ignored": false, "evidence": {"override": "assign"}},
+          {"relative_path": "legacy-extra.mkv", "size": 1028, "major_device": 1, "inode": 128, "mtime": 100, "parsed": {"coordinates": [], "role": "unknown", "group": null}, "episode_ids": [], "source": "manual", "ignored": true, "evidence": {"override": "ignore"}}
+        ]}
+      }
+    }
+  ]
+}
