@@ -2189,10 +2189,23 @@ defmodule Cinder.Catalog do
   cleanup runs afterward and retries from the fence on failure. Its episodes then re-enter the
   wanted sweep and re-search cleanly.
   """
-  def cancel_grab(%Grab{} = grab) do
+  def cancel_grab(%Grab{} = grab), do: cancel_grab(grab, :any_state)
+
+  @doc """
+  Aborts a grab only while it is still held for mapping. The held-state claim, cleanup fence, and
+  delete share one transaction so a concurrent mapping resume cannot be cancelled afterward.
+  """
+  def cancel_mapping_grab(%Grab{} = grab), do: cancel_grab(grab, :needs_mapping)
+
+  defp cancel_grab(grab, required_state) do
     result =
       Repo.transaction(fn ->
-        case Repo.update_all(from(g in Grab, where: g.id == ^grab.id), set: [updated_at: now()]) do
+        case Repo.update_all(cancel_grab_query(grab.id, required_state),
+               set: [updated_at: now()]
+             ) do
+          {0, _} when required_state == :needs_mapping ->
+            Repo.rollback(:mapping_not_held)
+
           {0, _} ->
             {grab, [], nil}
 
@@ -2214,6 +2227,11 @@ defmodule Cinder.Catalog do
       {:ok, deleted}
     end
   end
+
+  defp cancel_grab_query(id, :any_state), do: from(g in Grab, where: g.id == ^id)
+
+  defp cancel_grab_query(id, :needs_mapping),
+    do: from(g in Grab, where: g.id == ^id and g.mapping_status == :needs_mapping)
 
   @doc """
   Cancels an entire series WITHOUT deleting it: reaps every grab serving the series (any state,

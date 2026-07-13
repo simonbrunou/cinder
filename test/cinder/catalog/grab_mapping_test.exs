@@ -11,6 +11,7 @@ defmodule Cinder.Catalog.GrabMappingTest do
 
   import Cinder.CatalogFixtures
 
+  setup :set_mox_global
   setup :verify_on_exit!
 
   test "standard grabs default to resolved without mapping documents" do
@@ -385,6 +386,39 @@ defmodule Cinder.Catalog.GrabMappingTest do
 
       assert_resume_rejected(resolved, original, resume_attrs(target.id))
       assert Repo.get!(Grab, grab.id).mapping_status == :resolved
+    end
+
+    test "a resume winning after a held read cannot be followed by stale cancellation" do
+      {grab, original, target} = recovery_fixture()
+      parent = self()
+
+      stub(Cinder.Download.ClientMock, :remove, fn remote_id, opts ->
+        send(parent, {:remote_remove, remote_id, opts})
+        :ok
+      end)
+
+      cancel =
+        Task.async(fn ->
+          held = Catalog.get_mapping_grab(grab.id)
+          send(parent, {:held_read, self()})
+
+          receive do
+            :cancel -> Catalog.cancel_mapping_grab(held)
+          end
+        end)
+
+      assert_receive {:held_read, cancel_pid}
+      assert cancel_pid == cancel.pid
+      assert {:ok, resumed} = Catalog.resume_grab_mapping(grab, resume_attrs(target.id))
+      send(cancel.pid, :cancel)
+
+      assert {:error, :mapping_not_held} = Task.await(cancel)
+      assert Repo.get!(Grab, grab.id).mapping_status == :resolved
+      assert Repo.get!(Episode, original.id).grab_id == nil
+      assert Repo.get!(Episode, target.id).grab_id == resumed.id
+      assert Repo.aggregate(Intent, :count) == 0
+      assert Repo.aggregate(IntentEpisode, :count) == 0
+      refute_received {:remote_remove, _, [delete_files: true]}
     end
 
     test "resume rejects unknown or duplicate persisted file paths" do

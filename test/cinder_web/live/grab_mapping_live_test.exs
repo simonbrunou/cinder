@@ -46,7 +46,8 @@ defmodule CinderWeb.GrabMappingLiveTest do
   test "renders relative evidence, same-series choices, and no absolute content path", %{
     conn: conn
   } do
-    %{grab: grab, original: original, target: target} = held_mapping_fixture!()
+    %{grab: grab, alternate: alternate, original: original, target: target} =
+      held_mapping_fixture!()
 
     foreign = episode_fixture(season_fixture(series_fixture()), episode_number: 9)
 
@@ -55,10 +56,21 @@ defmodule CinderWeb.GrabMappingLiveTest do
     assert has_element?(view, "#mapping-release", "Frieren.01-02.1080p-GROUP")
     assert has_element?(view, "#mapping-original-targets", to_string(original.id))
     assert has_element?(view, "#mapping-current-targets", "S01E01")
-    assert has_element?(view, "#mapping-file-0", "Season 01/Frieren - 02.mkv")
-    assert has_element?(view, "#mapping-file-0", "device 7")
-    assert has_element?(view, "#mapping-file-0", "Absolute 2")
+    assert has_element?(view, "#mapping-file-0", "Frieren - 11-12.mkv")
+    assert has_element?(view, "#mapping-file-0", "device 1")
+    assert has_element?(view, "#mapping-file-0", "Absolute 11, 12")
     assert has_element?(view, "#mapping-file-0", "candidate #{target.id}")
+    assert has_element?(view, "#mapping-file-0", "candidate #{alternate.id}")
+    assert has_element?(view, "#mapping-file-0-source", "Automatic")
+    assert has_element?(view, "#mapping-file-0 [data-resolution]", "Ambiguous")
+    assert has_element?(view, "#mapping-file-0 [data-candidate-set]", to_string(target.id))
+    assert has_element?(view, "#mapping-file-0 [data-candidate-set]", to_string(alternate.id))
+    assert has_element?(view, "#mapping-file-0 [data-provenance]", "Manual")
+    assert has_element?(view, "#mapping-file-0 [data-provenance]", "one")
+    assert has_element?(view, "#mapping-file-0 [data-provenance]", "a")
+    assert has_element?(view, "#mapping-issue", "Unresolved file")
+    assert has_element?(view, "#mapping-issue", "candidate #{target.id}")
+    assert has_element?(view, "#mapping-issue", "candidate #{alternate.id}")
     assert has_element?(view, "#mapping-target-delta")
     assert has_element?(view, "#mapping-file-0-episode-#{target.id}")
     assert has_element?(view, "#mapping-target-episode-#{original.id}")
@@ -80,7 +92,7 @@ defmodule CinderWeb.GrabMappingLiveTest do
       "mapping" => %{
         "files" => %{
           "0" => %{
-            "relative_path" => "Season 01/Frieren - 02.mkv",
+            "relative_path" => "Frieren - 11-12.mkv",
             "action" => "assign",
             "episode_ids" => [to_string(target.id)]
           },
@@ -102,7 +114,7 @@ defmodule CinderWeb.GrabMappingLiveTest do
     files = persisted.manual_mapping_overrides["files"]
     assigned = Enum.find(files, &(&1["action"] == "assign"))
     ignored = Enum.find(files, &(&1["action"] == "ignore"))
-    assert assigned["relative_path"] == "Season 01/Frieren - 02.mkv"
+    assert assigned["relative_path"] == "Frieren - 11-12.mkv"
     assert assigned["episode_ids"] == [target.id]
     refute Map.has_key?(assigned, "content_path")
     refute Map.has_key?(assigned, "evidence")
@@ -143,7 +155,7 @@ defmodule CinderWeb.GrabMappingLiveTest do
       "mapping" => %{
         "files" => %{
           "0" => %{
-            "relative_path" => "Season 01/Frieren - 02.mkv",
+            "relative_path" => "Frieren - 11-12.mkv",
             "action" => "assign",
             "episode_ids" => ["not-an-id"]
           }
@@ -189,12 +201,12 @@ defmodule CinderWeb.GrabMappingLiveTest do
     |> element("#mapping-form")
     |> render_change(save_params(target.id))
 
-    view |> element("#promote-coordinate-0-0-0") |> render_click()
+    view |> element("#promote-coordinate-0-0-1") |> render_click()
 
     assert has_element?(view, "#mapping-promotion-status", "Coordinate saved")
     assert [coordinate] = Catalog.list_episode_coordinates(series)
     assert coordinate.scheme == "absolute"
-    assert coordinate.canonical_value == "2"
+    assert coordinate.canonical_value == "12"
     assert Enum.map(coordinate.memberships, & &1.episode_id) == [target.id]
     assert Repo.get!(Grab, grab.id).mapping_status == :needs_mapping
     assert Repo.get!(Episode, original.id).grab_id == grab.id
@@ -216,12 +228,27 @@ defmodule CinderWeb.GrabMappingLiveTest do
     assert Repo.get(Grab, grab.id) == nil
   end
 
+  test "localizes persisted mapping domain values", %{conn: conn} do
+    grab = held_mapping_fixture!().grab
+    conn = Plug.Conn.put_session(conn, :locale, "fr")
+
+    {:ok, view, _html} = live(conn, "/activity/grabs/#{grab.id}/mapping")
+
+    assert has_element?(view, "#mapping-issue", "Fichier non résolu")
+    assert has_element?(view, "#mapping-file-0", "Absolu 11, 12")
+    assert has_element?(view, "#mapping-file-0", "Rôle : histoire")
+    assert has_element?(view, "#mapping-file-0-source", "Automatique")
+    assert has_element?(view, "#mapping-file-0 [data-resolution]", "Ambigu")
+    assert has_element?(view, "#mapping-file-0 [data-provenance]", "Manuel")
+    assert has_element?(view, "#mapping-file-1 [data-resolution]", "Sans correspondance")
+  end
+
   defp save_params(target_id) do
     %{
       "mapping" => %{
         "files" => %{
           "0" => %{
-            "relative_path" => "Season 01/Frieren - 02.mkv",
+            "relative_path" => "Frieren - 11-12.mkv",
             "action" => "assign",
             "episode_ids" => [to_string(target_id)]
           },
@@ -244,21 +271,23 @@ defmodule CinderWeb.GrabMappingLiveTest do
         monitored: Keyword.get(opts, :target_monitored, true)
       )
 
+    alternate = episode_fixture(season, episode_number: 3)
+
     decisions = %{
       "version" => 1,
       "files" => [
         %{
-          "relative_path" => "Season 01/Frieren - 02.mkv",
-          "size" => 2_000,
-          "major_device" => 7,
-          "inode" => 21,
-          "mtime" => "2026-07-13T12:01:00",
+          "relative_path" => "Frieren - 11-12.mkv",
+          "size" => 1_016,
+          "major_device" => 1,
+          "inode" => 116,
+          "mtime" => 100,
           "parsed" => %{
-            "coordinates" => [%{"scheme" => "absolute", "values" => ["2"]}],
+            "coordinates" => [%{"scheme" => "absolute", "values" => ["11", "12"]}],
             "role" => "story",
-            "group" => "GROUP"
+            "group" => nil
           },
-          "episode_ids" => [target.id],
+          "episode_ids" => [],
           "source" => "automatic",
           "ignored" => false,
           "evidence" => %{
@@ -266,9 +295,53 @@ defmodule CinderWeb.GrabMappingLiveTest do
             "resolutions" => [
               %{
                 "scheme" => "absolute",
-                "canonical_value" => "2",
-                "episode_ids" => [target.id],
-                "resolver" => %{"precedence" => "manual"}
+                "canonical_value" => "11",
+                "episode_ids" => [original.id],
+                "resolver" => %{
+                  "precedence" => "manual",
+                  "matches" => [
+                    %{
+                      "coordinate" => %{
+                        "source" => "fixture",
+                        "namespace" => "main",
+                        "scheme" => "absolute",
+                        "canonical_value" => "11"
+                      },
+                      "episode_ids" => [original.id],
+                      "evidence" => nil
+                    }
+                  ]
+                }
+              },
+              %{
+                "scheme" => "absolute",
+                "canonical_value" => "12",
+                "candidates" => [[target.id], [alternate.id]],
+                "resolver" => %{
+                  "precedence" => "manual",
+                  "matches" => [
+                    %{
+                      "coordinate" => %{
+                        "source" => "one",
+                        "namespace" => "a",
+                        "scheme" => "absolute",
+                        "canonical_value" => "12"
+                      },
+                      "episode_ids" => [target.id],
+                      "evidence" => nil
+                    },
+                    %{
+                      "coordinate" => %{
+                        "source" => "two",
+                        "namespace" => "b",
+                        "scheme" => "absolute",
+                        "canonical_value" => "12"
+                      },
+                      "episode_ids" => [alternate.id],
+                      "evidence" => nil
+                    }
+                  ]
+                }
               }
             ]
           }
@@ -290,7 +363,7 @@ defmodule CinderWeb.GrabMappingLiveTest do
 
     snapshot = %{
       "version" => 2,
-      "reserved_episode_ids" => [original.id],
+      "reserved_episode_ids" => [original.id, target.id, alternate.id],
       "release" => %{
         "title" => "Frieren.01-02.1080p-GROUP",
         "coordinates" => [%{"scheme" => "absolute", "values" => ["1", "2"]}]
@@ -308,17 +381,21 @@ defmodule CinderWeb.GrabMappingLiveTest do
         automatic_mapping_decisions: decisions,
         mapping_issue: %{
           "version" => 1,
-          "reason" => "ambiguous",
-          "candidate_episode_ids" => [target.id]
+          "reason" => "unresolved_file",
+          "relative_paths" => ["Frieren - 11-12.mkv"],
+          "candidate_episode_ids" => [target.id, alternate.id]
         }
       })
 
     original |> Ecto.Changeset.change(grab_id: grab.id) |> Repo.update!()
+    target |> Ecto.Changeset.change(grab_id: grab.id) |> Repo.update!()
+    alternate |> Ecto.Changeset.change(grab_id: grab.id) |> Repo.update!()
 
     %{
       grab: Repo.reload!(grab),
       original: original,
       target: target,
+      alternate: alternate,
       series: series
     }
   end

@@ -64,12 +64,11 @@ defmodule CinderWeb.GrabMappingLive do
     do: {:noreply, assign(socket, :confirming_cancel?, false)}
 
   def handle_event("confirm_cancel", _params, socket) do
-    with %Grab{mapping_status: :needs_mapping} = grab <-
-           Catalog.get_mapping_grab(socket.assigns.grab.id),
-         {:ok, _deleted} <- Catalog.cancel_grab(grab) do
-      {:noreply, push_navigate(socket, to: ~p"/activity")}
-    else
-      _failure ->
+    case Catalog.cancel_mapping_grab(socket.assigns.grab) do
+      {:ok, _deleted} ->
+        {:noreply, push_navigate(socket, to: ~p"/activity")}
+
+      {:error, _reason} ->
         {:noreply,
          socket
          |> assign(:confirming_cancel?, false)
@@ -357,9 +356,12 @@ defmodule CinderWeb.GrabMappingLive do
       "#{Episode.code(season.season_number, episode.episode_number)} · #{episode.title || gettext("Untitled")}"
 
   defp coordinate_label(%{"scheme" => scheme, "values" => values}) when is_list(values),
-    do: "#{humanize(scheme)} #{Enum.join(values, ", ")}"
+    do: "#{scheme_label(scheme)} #{Enum.join(values, ", ")}"
 
   defp coordinate_label(_coordinate), do: gettext("Unknown coordinate")
+
+  defp resolution_coordinate_label(resolution),
+    do: "#{scheme_label(resolution["scheme"])} #{resolution["canonical_value"]}"
 
   defp promotion_values(decision) do
     for {coordinate, coordinate_index} <-
@@ -368,21 +370,83 @@ defmodule CinderWeb.GrabMappingLive do
         do: {coordinate, value, coordinate_index, value_index}
   end
 
-  defp evidence_lines(decision) do
-    resolution = get_in(decision, ["evidence", "resolution"])
+  defp evidence_resolution(decision), do: get_in(decision, ["evidence", "resolution"])
 
-    resolved =
-      for item <- get_in(decision, ["evidence", "resolutions"]) || [] do
-        ids = Enum.join(item["episode_ids"] || [], ", ")
-        precedence = get_in(item, ["resolver", "precedence"])
-
-        [item["scheme"], item["canonical_value"], ids, precedence]
-        |> Enum.reject(&(&1 in [nil, ""]))
-        |> Enum.join(" · ")
-      end
-
-    [resolution | resolved] |> Enum.reject(&(&1 in [nil, ""]))
+  defp evidence_resolutions(decision) do
+    case get_in(decision, ["evidence", "resolutions"]) do
+      resolutions when is_list(resolutions) -> resolutions
+      _ -> []
+    end
   end
+
+  defp resolution_candidate_sets(resolution) do
+    resolution
+    |> Map.get("candidates", [])
+    |> Enum.filter(&is_list/1)
+  end
+
+  defp resolution_matches(resolution) do
+    case get_in(resolution, ["resolver", "matches"]) do
+      matches when is_list(matches) -> matches
+      _ -> []
+    end
+  end
+
+  defp resolution_precedence(resolution),
+    do: get_in(resolution, ["resolver", "precedence"])
+
+  defp decision_candidate_ids(decision) do
+    nested_ids =
+      Enum.flat_map(evidence_resolutions(decision), fn resolution ->
+        (resolution["episode_ids"] || []) ++ List.flatten(resolution_candidate_sets(resolution))
+      end)
+
+    ((decision["episode_ids"] || []) ++ nested_ids)
+    |> Enum.filter(&is_integer/1)
+    |> Enum.uniq()
+    |> Enum.sort()
+  end
+
+  defp issue_candidate_ids(%{"candidate_episode_ids" => ids}) when is_list(ids), do: ids
+  defp issue_candidate_ids(_issue), do: []
+
+  defp safe_provenance_value(value) when is_binary(value) do
+    if Path.type(value) == :absolute, do: gettext("Hidden"), else: value
+  end
+
+  defp safe_provenance_value(_value), do: gettext("Unknown")
+
+  defp scheme_label("absolute"), do: gettext("Absolute")
+  defp scheme_label("standard"), do: gettext("Standard")
+  defp scheme_label("typed_special"), do: gettext("Typed special")
+  defp scheme_label(_scheme), do: gettext("Unknown")
+
+  defp role_label("story"), do: gettext("Story")
+  defp role_label("main"), do: gettext("Story")
+  defp role_label("extra"), do: gettext("Extra")
+  defp role_label("unknown"), do: gettext("Unknown")
+  defp role_label(_role), do: gettext("Unknown")
+
+  defp source_label("automatic"), do: gettext("Automatic")
+  defp source_label("manual"), do: gettext("Manual")
+  defp source_label(_source), do: gettext("Unknown")
+
+  defp resolution_label("ambiguous"), do: gettext("Ambiguous")
+  defp resolution_label("unmatched"), do: gettext("Unmatched")
+  defp resolution_label("legacy_snapshot"), do: gettext("Legacy snapshot")
+  defp resolution_label(_resolution), do: gettext("Unknown")
+
+  defp precedence_label("manual"), do: gettext("Manual")
+  defp precedence_label("inferred"), do: gettext("Inferred")
+  defp precedence_label(_precedence), do: gettext("Unknown")
+
+  defp issue_label("unresolved_file"), do: gettext("Unresolved file")
+  defp issue_label("outside_authoritative_set"), do: gettext("Outside authoritative set")
+  defp issue_label("duplicate_episode_assignment"), do: gettext("Duplicate episode assignment")
+  defp issue_label("missing_episode_assignment"), do: gettext("Missing episode assignment")
+  defp issue_label("stale_override"), do: gettext("Stale override")
+  defp issue_label("legacy_snapshot"), do: gettext("Legacy snapshot")
+  defp issue_label(_reason), do: gettext("Unknown mapping issue")
 
   defp current_ids(grab), do: Enum.map(grab.episodes, & &1.id)
 
@@ -410,9 +474,6 @@ defmodule CinderWeb.GrabMappingLive do
 
   defp delta_label([]), do: gettext("None")
   defp delta_label(ids), do: Enum.join(ids, ", ")
-
-  defp humanize(value) when is_binary(value),
-    do: value |> String.replace("_", " ") |> String.capitalize()
 
   @impl true
   def render(assigns) do
@@ -453,6 +514,25 @@ defmodule CinderWeb.GrabMappingLive do
         </section>
       </div>
 
+      <section
+        :if={is_map(@grab.mapping_issue)}
+        id="mapping-issue"
+        class="mt-4 rounded-box border border-warning/40 bg-warning/10 p-4"
+      >
+        <h2 class="font-semibold">{gettext("Blocking reason")}</h2>
+        <p>{issue_label(@grab.mapping_issue["reason"])}</p>
+        <p class="mt-1 text-sm text-base-content/70">
+          {gettext("Candidates: %{ids}",
+            ids:
+              Enum.map_join(
+                issue_candidate_ids(@grab.mapping_issue),
+                ", ",
+                &gettext("candidate %{id}", id: &1)
+              )
+          )}
+        </p>
+      </section>
+
       <.form
         for={@form}
         id="mapping-form"
@@ -486,10 +566,15 @@ defmodule CinderWeb.GrabMappingLive do
             )}
           </p>
           <p class="mt-2 text-sm">
-            {gettext("Role: %{role}", role: get_in(decision, ["parsed", "role"]) || "unknown")}
+            {gettext("Role: %{role}",
+              role: role_label(get_in(decision, ["parsed", "role"]) || "unknown")
+            )}
             <span :if={get_in(decision, ["parsed", "group"])}>
               · {gettext("Group: %{group}", group: get_in(decision, ["parsed", "group"]))}
             </span>
+          </p>
+          <p id={"mapping-file-#{index}-source"} class="mt-1 text-sm text-base-content/70">
+            {gettext("Source: %{source}", source: source_label(decision["source"]))}
           </p>
           <div class="mt-2 flex flex-wrap gap-2">
             <span
@@ -503,15 +588,59 @@ defmodule CinderWeb.GrabMappingLive do
             {gettext("Candidates: %{ids}",
               ids:
                 Enum.map_join(
-                  decision["episode_ids"] || [],
+                  decision_candidate_ids(decision),
                   ", ",
                   &gettext("candidate %{id}", id: &1)
                 )
             )}
           </p>
-          <ul :if={evidence_lines(decision) != []} class="mt-1 text-xs text-base-content/70">
-            <li :for={line <- evidence_lines(decision)} data-evidence>{line}</li>
-          </ul>
+          <div
+            :if={evidence_resolution(decision)}
+            class="mt-1 space-y-1 text-xs text-base-content/70"
+          >
+            <p data-resolution>
+              {gettext("Resolution: %{resolution}",
+                resolution: resolution_label(evidence_resolution(decision))
+              )}
+            </p>
+            <div
+              :for={resolution <- evidence_resolutions(decision)}
+              class="rounded border border-base-300/70 p-2"
+            >
+              <p>{resolution_coordinate_label(resolution)}</p>
+              <p :if={(resolution["episode_ids"] || []) != []}>
+                {gettext("Episode IDs: %{ids}", ids: delta_label(resolution["episode_ids"]))}
+              </p>
+              <p
+                :for={candidate_set <- resolution_candidate_sets(resolution)}
+                data-candidate-set
+              >
+                {gettext("Candidate set: %{ids}", ids: delta_label(candidate_set))}
+              </p>
+              <div
+                :if={resolution_precedence(resolution) || resolution_matches(resolution) != []}
+                data-provenance
+                class="mt-1"
+              >
+                <p :if={resolution_precedence(resolution)}>
+                  {gettext("Precedence: %{precedence}",
+                    precedence: precedence_label(resolution_precedence(resolution))
+                  )}
+                </p>
+                <p :for={match <- resolution_matches(resolution)}>
+                  {gettext("Source: %{source}",
+                    source: safe_provenance_value(get_in(match, ["coordinate", "source"]))
+                  )} · {gettext("Namespace: %{namespace}",
+                    namespace: safe_provenance_value(get_in(match, ["coordinate", "namespace"]))
+                  )} · {scheme_label(get_in(match, ["coordinate", "scheme"]))}
+                  {safe_provenance_value(
+                    get_in(match, ["coordinate", "canonical_value"]) ||
+                      get_in(match, ["coordinate", "value"])
+                  )} · {gettext("Episode IDs: %{ids}", ids: delta_label(match["episode_ids"] || []))}
+                </p>
+              </div>
+            </div>
+          </div>
 
           <fieldset class="mt-4">
             <legend class="font-medium">{gettext("File action")}</legend>
@@ -575,7 +704,7 @@ defmodule CinderWeb.GrabMappingLive do
               phx-value-value={value}
             >
               {gettext("Promote %{coordinate}",
-                coordinate: "#{humanize(coordinate["scheme"])} #{value}"
+                coordinate: "#{scheme_label(coordinate["scheme"])} #{value}"
               )}
             </.button>
           </div>

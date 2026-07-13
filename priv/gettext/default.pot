@@ -74,7 +74,7 @@ msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:122
 #: lib/cinder_web/live/activity_live.ex:107
-#: lib/cinder_web/live/grab_mapping_live.ex:422
+#: lib/cinder_web/live/grab_mapping_live.ex:483
 #: lib/cinder_web/user_auth.ex:320
 #, elixir-autogen, elixir-format
 msgid "Activity"
@@ -1027,7 +1027,7 @@ msgstr ""
 msgid "Save settings"
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:630
+#: lib/cinder_web/live/grab_mapping_live.ex:759
 #: lib/cinder_web/live/movie_detail_live.ex:336
 #: lib/cinder_web/live/series_detail_live.ex:561
 #: lib/cinder_web/live/settings_live.ex:104
@@ -2167,7 +2167,7 @@ msgstr ""
 msgid "No description available."
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:431
+#: lib/cinder_web/live/grab_mapping_live.ex:492
 #: lib/cinder_web/live/movie_detail_live.ex:637
 #, elixir-autogen, elixir-format
 msgid "Release"
@@ -2491,6 +2491,7 @@ msgstr ""
 #: lib/cinder_web/components/core_components.ex:970
 #: lib/cinder_web/components/core_components.ex:982
 #: lib/cinder_web/components/core_components.ex:1027
+#: lib/cinder_web/live/grab_mapping_live.ex:420
 #, elixir-autogen, elixir-format
 msgid "Standard"
 msgstr ""
@@ -2575,6 +2576,7 @@ msgstr ""
 msgid "Edit alias %{title}"
 msgstr ""
 
+#: lib/cinder_web/live/grab_mapping_live.ex:426
 #: lib/cinder_web/live/series_detail_live.ex:482
 #, elixir-autogen, elixir-format
 msgid "Extra"
@@ -2650,6 +2652,8 @@ msgstr ""
 msgid "Scene %{value}"
 msgstr ""
 
+#: lib/cinder_web/live/grab_mapping_live.ex:577
+#: lib/cinder_web/live/grab_mapping_live.ex:631
 #: lib/cinder_web/live/movie_detail_live.ex:517
 #: lib/cinder_web/live/series_detail_live.ex:743
 #, elixir-autogen, elixir-format
@@ -2688,38 +2692,39 @@ msgstr ""
 msgid "Editing alias %{title}"
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:481
+#: lib/cinder_web/live/grab_mapping_live.ex:561
 #, elixir-autogen, elixir-format
 msgid "%{size} bytes · device %{device} · inode %{inode} · mtime %{mtime}"
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:624
+#: lib/cinder_web/live/grab_mapping_live.ex:753
 #, elixir-autogen, elixir-format
 msgid "Additions: %{ids}"
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:615
+#: lib/cinder_web/live/grab_mapping_live.ex:744
 #, elixir-autogen, elixir-format
 msgid "Also monitor this episode"
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:530
+#: lib/cinder_web/live/grab_mapping_live.ex:659
 #, elixir-autogen, elixir-format
 msgid "Assign"
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:639
-#: lib/cinder_web/live/grab_mapping_live.ex:659
+#: lib/cinder_web/live/grab_mapping_live.ex:768
+#: lib/cinder_web/live/grab_mapping_live.ex:788
 #, elixir-autogen, elixir-format
 msgid "Cancel download"
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:663
+#: lib/cinder_web/live/grab_mapping_live.ex:792
 #, elixir-autogen, elixir-format
 msgid "Cancel this download? Its episodes will return to the wanted queue."
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:503
+#: lib/cinder_web/live/grab_mapping_live.ex:525
+#: lib/cinder_web/live/grab_mapping_live.ex:588
 #, elixir-autogen, elixir-format
 msgid "Candidates: %{ids}"
 msgstr ""
@@ -2730,22 +2735,22 @@ msgstr ""
 msgid "Coordinate saved for future releases."
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:447
+#: lib/cinder_web/live/grab_mapping_live.ex:508
 #, elixir-autogen, elixir-format
 msgid "Current linked episodes"
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:517
+#: lib/cinder_web/live/grab_mapping_live.ex:646
 #, elixir-autogen, elixir-format
 msgid "File action"
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:491
+#: lib/cinder_web/live/grab_mapping_live.ex:573
 #, elixir-autogen, elixir-format
 msgid "Group: %{group}"
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:561
+#: lib/cinder_web/live/grab_mapping_live.ex:690
 #, elixir-autogen, elixir-format
 msgid "Ignore as extra"
 msgstr ""
@@ -2755,7 +2760,7 @@ msgstr ""
 msgid "Mapping saved. Import will retry shortly."
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:626
+#: lib/cinder_web/live/grab_mapping_live.ex:755
 #, elixir-autogen, elixir-format
 msgid "Monitor opt-ins: %{ids}"
 msgstr ""
@@ -2766,49 +2771,49 @@ msgstr ""
 msgid "Needs mapping"
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:411
+#: lib/cinder_web/live/grab_mapping_live.ex:475
 #, elixir-autogen, elixir-format
 msgid "None"
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:443
+#: lib/cinder_web/live/grab_mapping_live.ex:504
 #, elixir-autogen, elixir-format
 msgid "Original reserved episode IDs"
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:577
+#: lib/cinder_web/live/grab_mapping_live.ex:706
 #, elixir-autogen, elixir-format
 msgid "Promote %{coordinate}"
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:625
+#: lib/cinder_web/live/grab_mapping_live.ex:754
 #, elixir-autogen, elixir-format
 msgid "Removals: %{ids}"
 msgstr ""
 
 #: lib/cinder_web/live/activity_live.ex:168
-#: lib/cinder_web/live/grab_mapping_live.ex:426
+#: lib/cinder_web/live/grab_mapping_live.ex:487
 #: lib/cinder_web/live/series_detail_live.ex:653
 #, elixir-autogen, elixir-format
 msgid "Review mapping"
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:489
+#: lib/cinder_web/live/grab_mapping_live.ex:569
 #, elixir-autogen, elixir-format
 msgid "Role: %{role}"
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:631
+#: lib/cinder_web/live/grab_mapping_live.ex:760
 #, elixir-autogen, elixir-format
 msgid "Save and retry"
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:622
+#: lib/cinder_web/live/grab_mapping_live.ex:751
 #, elixir-autogen, elixir-format
 msgid "Target changes"
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:585
+#: lib/cinder_web/live/grab_mapping_live.ex:714
 #, elixir-autogen, elixir-format
 msgid "Target episodes"
 msgstr ""
@@ -2818,32 +2823,158 @@ msgstr ""
 msgid "That coordinate cannot be promoted."
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:139
+#: lib/cinder_web/live/grab_mapping_live.ex:138
 #, elixir-autogen, elixir-format
 msgid "That mapping no longer needs attention."
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:76
+#: lib/cinder_web/live/grab_mapping_live.ex:75
 #, elixir-autogen, elixir-format
 msgid "The download could not be cancelled."
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:133
+#: lib/cinder_web/live/grab_mapping_live.ex:132
 #, elixir-autogen, elixir-format
 msgid "The mapping could not be saved."
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:362
+#: lib/cinder_web/live/grab_mapping_live.ex:361
 #, elixir-autogen, elixir-format
 msgid "Unknown coordinate"
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:357
+#: lib/cinder_web/live/grab_mapping_live.ex:356
 #, elixir-autogen, elixir-format
 msgid "Untitled"
 msgstr ""
 
-#: lib/cinder_web/live/grab_mapping_live.ex:508
+#: lib/cinder_web/live/grab_mapping_live.ex:530
+#: lib/cinder_web/live/grab_mapping_live.ex:593
 #, elixir-autogen, elixir-format
 msgid "candidate %{id}"
+msgstr ""
+
+#: lib/cinder_web/live/grab_mapping_live.ex:419
+#, elixir-autogen, elixir-format
+msgid "Absolute"
+msgstr ""
+
+#: lib/cinder_web/live/grab_mapping_live.ex:434
+#, elixir-autogen, elixir-format
+msgid "Ambiguous"
+msgstr ""
+
+#: lib/cinder_web/live/grab_mapping_live.ex:430
+#, elixir-autogen, elixir-format
+msgid "Automatic"
+msgstr ""
+
+#: lib/cinder_web/live/grab_mapping_live.ex:522
+#, elixir-autogen, elixir-format
+msgid "Blocking reason"
+msgstr ""
+
+#: lib/cinder_web/live/grab_mapping_live.ex:618
+#, elixir-autogen, elixir-format
+msgid "Candidate set: %{ids}"
+msgstr ""
+
+#: lib/cinder_web/live/grab_mapping_live.ex:445
+#, elixir-autogen, elixir-format
+msgid "Duplicate episode assignment"
+msgstr ""
+
+#: lib/cinder_web/live/grab_mapping_live.ex:612
+#: lib/cinder_web/live/grab_mapping_live.ex:639
+#, elixir-autogen, elixir-format
+msgid "Episode IDs: %{ids}"
+msgstr ""
+
+#: lib/cinder_web/live/grab_mapping_live.ex:414
+#, elixir-autogen, elixir-format
+msgid "Hidden"
+msgstr ""
+
+#: lib/cinder_web/live/grab_mapping_live.ex:440
+#, elixir-autogen, elixir-format
+msgid "Inferred"
+msgstr ""
+
+#: lib/cinder_web/live/grab_mapping_live.ex:436
+#: lib/cinder_web/live/grab_mapping_live.ex:448
+#, elixir-autogen, elixir-format
+msgid "Legacy snapshot"
+msgstr ""
+
+#: lib/cinder_web/live/grab_mapping_live.ex:431
+#: lib/cinder_web/live/grab_mapping_live.ex:439
+#, elixir-autogen, elixir-format
+msgid "Manual"
+msgstr ""
+
+#: lib/cinder_web/live/grab_mapping_live.ex:446
+#, elixir-autogen, elixir-format
+msgid "Missing episode assignment"
+msgstr ""
+
+#: lib/cinder_web/live/grab_mapping_live.ex:633
+#, elixir-autogen, elixir-format
+msgid "Namespace: %{namespace}"
+msgstr ""
+
+#: lib/cinder_web/live/grab_mapping_live.ex:444
+#, elixir-autogen, elixir-format
+msgid "Outside authoritative set"
+msgstr ""
+
+#: lib/cinder_web/live/grab_mapping_live.ex:626
+#, elixir-autogen, elixir-format
+msgid "Precedence: %{precedence}"
+msgstr ""
+
+#: lib/cinder_web/live/grab_mapping_live.ex:602
+#, elixir-autogen, elixir-format
+msgid "Resolution: %{resolution}"
+msgstr ""
+
+#: lib/cinder_web/live/grab_mapping_live.ex:447
+#, elixir-autogen, elixir-format
+msgid "Stale override"
+msgstr ""
+
+#: lib/cinder_web/live/grab_mapping_live.ex:424
+#: lib/cinder_web/live/grab_mapping_live.ex:425
+#, elixir-autogen, elixir-format
+msgid "Story"
+msgstr ""
+
+#: lib/cinder_web/live/grab_mapping_live.ex:421
+#, elixir-autogen, elixir-format
+msgid "Typed special"
+msgstr ""
+
+#: lib/cinder_web/live/grab_mapping_live.ex:417
+#: lib/cinder_web/live/grab_mapping_live.ex:422
+#: lib/cinder_web/live/grab_mapping_live.ex:427
+#: lib/cinder_web/live/grab_mapping_live.ex:428
+#: lib/cinder_web/live/grab_mapping_live.ex:432
+#: lib/cinder_web/live/grab_mapping_live.ex:437
+#: lib/cinder_web/live/grab_mapping_live.ex:441
+#, elixir-autogen, elixir-format
+msgid "Unknown"
+msgstr ""
+
+#: lib/cinder_web/live/grab_mapping_live.ex:449
+#, elixir-autogen, elixir-format
+msgid "Unknown mapping issue"
+msgstr ""
+
+#: lib/cinder_web/live/grab_mapping_live.ex:435
+#, elixir-autogen, elixir-format
+msgid "Unmatched"
+msgstr ""
+
+#: lib/cinder_web/live/grab_mapping_live.ex:443
+#, elixir-autogen, elixir-format
+msgid "Unresolved file"
 msgstr ""
