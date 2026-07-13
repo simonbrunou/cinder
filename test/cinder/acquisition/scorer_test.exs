@@ -290,6 +290,34 @@ defmodule Cinder.Acquisition.ScorerTest do
     end
   end
 
+  describe "select_for_ids/3" do
+    test "greedily assigns disjoint stable IDs and keeps the per-episode size band" do
+      pack = release(resolved_episode_ids: [11, 12], resolution: "1080p", size: 4 * @gb)
+      single = release(resolved_episode_ids: [13], resolution: "1080p", size: 2 * @gb)
+
+      assert {:ok, [{^pack, [11, 12]}, {^single, [13]}]} =
+               Scorer.select_for_ids([single, pack], [11, 12, 13], max_size: 3 * @gb)
+    end
+
+    test "rejects a candidate with no wanted stable IDs" do
+      release = release(resolved_episode_ids: [99], resolution: "1080p", size: @gb)
+      assert :no_match = Scorer.select_for_ids([release], [11])
+    end
+
+    test "does not truncate an overlapping release to the remaining IDs" do
+      first = release(resolved_episode_ids: [11, 12], resolution: "1080p", size: 4 * @gb)
+      overlap = release(resolved_episode_ids: [12, 13], resolution: "720p", size: 4 * @gb)
+
+      assert {:ok, [{^first, [11, 12]}]} =
+               Scorer.select_for_ids([overlap, first], [11, 12, 13])
+    end
+
+    test "preserves non-monotonic resolved membership order" do
+      release = release(resolved_episode_ids: [20, 10], resolution: "1080p", size: 2 * @gb)
+      assert {:ok, [{^release, [20, 10]}]} = Scorer.select_for_ids([release], [10, 20])
+    end
+  end
+
   describe "source_rank/2 (public for Library.Upgrade)" do
     test "index in the preference list; nil/unlisted sorts last" do
       assert Scorer.source_rank("bluray", ["bluray", "webdl"]) == 0
