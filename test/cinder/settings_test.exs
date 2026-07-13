@@ -36,7 +36,8 @@ defmodule Cinder.SettingsTest do
     :tv_preferred_resolutions,
     :tv_preferred_sources,
     :import_roots,
-    :move_on_import
+    :move_on_import,
+    :anime_preferences
   ]
 
   setup do
@@ -272,6 +273,59 @@ defmodule Cinder.SettingsTest do
   end
 
   describe "load_into_env/0 overlay" do
+    test "anime defaults are typed and DB rows overlay then clear to the bootstrap" do
+      assert Settings.anime_defaults() == %{
+               audio_mode: :original,
+               subtitle_languages: [],
+               embedded_subtitle_mode: :prefer,
+               preferred_groups: [],
+               blocked_groups: [],
+               group_fallback_delay: 86_400
+             }
+
+      assert :ok =
+               Settings.save_form(%{
+                 "anime_audio_mode" => "dual",
+                 "anime_embedded_subtitle_mode" => "require",
+                 "anime_preferred_groups" => " SubsPlease, Erai-Raws, subsplease ",
+                 "anime_blocked_groups" => "BadGroup",
+                 "anime_group_fallback_delay" => "12",
+                 "subtitle_languages" => "fr,en"
+               })
+
+      assert Settings.anime_defaults() == %{
+               audio_mode: :dual,
+               subtitle_languages: ["fr", "en"],
+               embedded_subtitle_mode: :require,
+               preferred_groups: ["subsplease", "erai-raws"],
+               blocked_groups: ["badgroup"],
+               group_fallback_delay: 43_200
+             }
+
+      for field <- Settings.anime_fields() do
+        refute Repo.get_by!(Setting, key: field.key).is_secret
+      end
+
+      assert :ok =
+               Settings.save_form(%{
+                 "anime_audio_mode" => "",
+                 "anime_embedded_subtitle_mode" => "",
+                 "anime_preferred_groups" => "",
+                 "anime_blocked_groups" => "",
+                 "anime_group_fallback_delay" => "",
+                 "subtitle_languages" => ""
+               })
+
+      assert Settings.anime_defaults() == %{
+               audio_mode: :original,
+               subtitle_languages: [],
+               embedded_subtitle_mode: :prefer,
+               preferred_groups: [],
+               blocked_groups: [],
+               group_fallback_delay: 86_400
+             }
+    end
+
     test "DB overrides the env bootstrap on the boot path" do
       # Insert directly (bypassing put/0's auto-load) to exercise load_into_env standalone.
       Repo.insert!(%Setting{key: "jellyfin_url", value: "http://boot-jellyfin", is_secret: false})
@@ -507,6 +561,23 @@ defmodule Cinder.SettingsTest do
   end
 
   describe "save_form/1" do
+    test "invalid anime enums, delay, and required subtitles save nothing" do
+      for params <- [
+            valid_anime_params(%{"anime_audio_mode" => "surround"}),
+            valid_anime_params(%{"anime_group_fallback_delay" => "-1"}),
+            valid_anime_params(%{
+              "anime_embedded_subtitle_mode" => "require",
+              "subtitle_languages" => ""
+            })
+          ] do
+        assert {:error, [_ | _]} = Settings.save_form(params)
+
+        for field <- Settings.anime_fields() do
+          assert Settings.get(field.key) == nil
+        end
+      end
+    end
+
     test "non-secret blank clears; secret blank keeps; clear flag deletes" do
       Settings.save_form(%{
         "prowlarr_url" => "http://p",
@@ -631,5 +702,19 @@ defmodule Cinder.SettingsTest do
       {same, same} when same != "/" -> [same]
       _ -> []
     end
+  end
+
+  defp valid_anime_params(overrides) do
+    Map.merge(
+      %{
+        "anime_audio_mode" => "original",
+        "anime_embedded_subtitle_mode" => "prefer",
+        "anime_preferred_groups" => "SubsPlease",
+        "anime_blocked_groups" => "BadGroup",
+        "anime_group_fallback_delay" => "24",
+        "subtitle_languages" => "en"
+      },
+      overrides
+    )
   end
 end

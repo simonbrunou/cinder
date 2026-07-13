@@ -39,15 +39,16 @@ defmodule CinderWeb.SetupLiveTest do
     assert Cinder.Settings.setup_complete?()
   end
 
-  test "the first-run wizard does not expose the remove-after-import toggle", %{conn: conn} do
+  test "the first-run wizard excludes settings-only controls", %{conn: conn} do
     admin = Cinder.AccountsFixtures.admin_fixture()
     conn = log_in_user(conn, admin)
 
-    {:ok, _lv, html} = live(conn, ~p"/setup")
+    {:ok, lv, html} = live(conn, ~p"/setup")
 
     # move_on_import is a /settings-only advanced toggle (it deletes a download); a
     # first-run operator hasn't validated their hardlink topology yet, so keep it out.
     refute html =~ ~s(name="move_on_import")
+    refute has_element?(lv, "#anime-settings")
     # But the wizard still shows the library paths it needs to validate.
     assert html =~ ~s(name="movies_library_path")
   end
