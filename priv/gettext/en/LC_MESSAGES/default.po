@@ -2543,13 +2543,13 @@ msgstr ""
 
 #: lib/cinder_web/live/movie_detail_live.ex:221
 #: lib/cinder_web/live/series_detail_live.ex:267
-#, elixir-autogen, elixir-format, fuzzy
+#, elixir-autogen, elixir-format
 msgid "Couldn't save the alias."
 msgstr ""
 
 #: lib/cinder_web/live/movie_detail_live.ex:199
 #: lib/cinder_web/live/series_detail_live.ex:245
-#, elixir-autogen, elixir-format, fuzzy
+#, elixir-autogen, elixir-format
 msgid "Couldn't update the profile."
 msgstr ""
 
@@ -2583,7 +2583,7 @@ msgstr ""
 
 #: lib/cinder_web/live/movie_detail_live.ex:478
 #: lib/cinder_web/live/series_detail_live.ex:676
-#, elixir-autogen, elixir-format, fuzzy
+#, elixir-autogen, elixir-format
 msgid "Language (optional)"
 msgstr ""
 
@@ -2629,7 +2629,7 @@ msgstr ""
 
 #: lib/cinder_web/live/movie_detail_live.ex:480
 #: lib/cinder_web/live/series_detail_live.ex:678
-#, elixir-autogen, elixir-format, fuzzy
+#, elixir-autogen, elixir-format
 msgid "Save alias"
 msgstr ""
 
@@ -2653,7 +2653,7 @@ msgid "Source: %{source}"
 msgstr ""
 
 #: lib/cinder_web/live/series_detail_live.ex:488
-#, elixir-autogen, elixir-format, fuzzy
+#, elixir-autogen, elixir-format
 msgid "Standard %{value}"
 msgstr ""
 
@@ -2678,8 +2678,8 @@ msgstr ""
 msgid "effective"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:455
-#: lib/cinder_web/live/series_detail_live.ex:653
-#, elixir-autogen, elixir-format, fuzzy
+#: lib/cinder_web/live/movie_detail_live.ex:456
+#: lib/cinder_web/live/series_detail_live.ex:654
+#, elixir-autogen, elixir-format
 msgid "Editing alias %{title}"
 msgstr ""

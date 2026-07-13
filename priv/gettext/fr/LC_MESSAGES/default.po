@@ -2678,8 +2678,8 @@ msgstr "un groupe d’épisodes absolus"
 msgid "effective"
 msgstr "effectif"
 
-#: lib/cinder_web/live/movie_detail_live.ex:455
-#: lib/cinder_web/live/series_detail_live.ex:653
+#: lib/cinder_web/live/movie_detail_live.ex:456
+#: lib/cinder_web/live/series_detail_live.ex:654
 #, elixir-autogen, elixir-format
 msgid "Editing alias %{title}"
 msgstr "Modification de l’alias %{title}"
