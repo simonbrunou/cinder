@@ -91,6 +91,54 @@ defmodule Cinder.Download.IntentTest do
     assert Repo.aggregate(IntentEpisode, :count) == 0
   end
 
+  test "grab_episodes holds every non-nil mapping marker before reservation lookup" do
+    fixture = anime_reservation_fixture()
+
+    assert {:error, :anime_import_not_ready} =
+             Download.grab_episodes(fixture.release, [fixture.first.id, fixture.second.id])
+
+    assert Repo.aggregate(Intent, :count) == 0
+
+    unmarked = %{fixture.release | mapping_snapshot: nil}
+
+    assert {:ok, existing} =
+             reserve_episode_intent([fixture.first.id, fixture.second.id], unmarked)
+
+    malformed = %{unmarked | mapping_snapshot: "invalid"}
+
+    assert {:error, :anime_import_not_ready} =
+             Download.grab_episodes(malformed, [fixture.first.id, fixture.second.id])
+
+    assert Repo.reload(existing).status == :reserved
+    assert Repo.aggregate(IntentEpisode, :count) == 2
+  end
+
+  test "snapshot intents cannot submit or reconcile, while cleanup remains operable" do
+    fixture = anime_reservation_fixture()
+    assert {:ok, intent} = reserve_anime_intent(fixture)
+
+    assert {:error, :anime_import_not_ready} = Download.submit_intent(intent)
+    assert {:error, :anime_import_not_ready} = Download.reconcile_intent(intent)
+
+    held = Repo.reload(intent)
+    assert held.status == :reserved
+    assert held.remote_id == nil
+    assert held.mapping_snapshot == fixture.snapshot
+    assert Repo.aggregate(IntentEpisode, :count) == 2
+    assert Repo.aggregate(Grab, :count) == 0
+
+    cleanup =
+      held
+      |> Intent.changeset(%{status: :cleanup_pending, remote_id: "hash-anime-cleanup"})
+      |> Repo.update!()
+
+    expect(Cinder.Download.ClientMock, :remove, fn "hash-anime-cleanup", _opts -> :ok end)
+
+    assert :ok = Download.reconcile_pending_intents([:episode, :season_pack])
+    refute Repo.get(Intent, cleanup.id)
+    assert Repo.aggregate(IntentEpisode, :count) == 0
+  end
+
   test "reserve_intent/1 generates a unique key and stores only resubmission fields" do
     release = %Release{
       title: "Movie.1080p.WEB-GRP",
