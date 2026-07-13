@@ -186,6 +186,91 @@ defmodule Cinder.LibraryTest do
       assert Repo.aggregate(ImportStage, :count) == 1
     end
 
+    test "a shared story source is policy-probed once and its report supplies stage metadata" do
+      fixture = anime_fixture("many-to-many-mapping")
+      source = Path.join(fixture["absolute_download_root"], "Frieren - 12.mkv")
+      grab = %{anime_grab(fixture) | release_policy_snapshot: release_policy_snapshot()}
+      enable_media_info()
+      stub_anime_filesystem(fixture)
+
+      expect(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source ->
+        {:ok, policy_report()}
+      end)
+
+      assert {:ok, staged} = Library.stage_anime_episodes(grab, anime_preflight(fixture))
+      assert length(staged) == 2
+
+      assert Enum.all?(staged, fn {_episode_id, stage} ->
+               stage.quality.audio_languages == ["ja", "fr"] and
+                 stage.quality.embedded_subtitles == ["fr"]
+             end)
+    end
+
+    test "a second story-source mismatch creates no stage or filesystem write" do
+      fixture = anime_fixture("multi-file-batch") |> normalize_fixture_mtimes()
+      [first, second] = fixture["expected"]["assignments"] |> Map.keys() |> Enum.sort()
+      root = fixture["absolute_download_root"]
+      first_source = Path.join(root, first)
+      second_source = Path.join(root, second)
+      grab = %{anime_grab(fixture) | release_policy_snapshot: release_policy_snapshot()}
+      preflight = anime_preflight(fixture)
+
+      preflight = %{
+        preflight
+        | assignments: Enum.sort_by(preflight.assignments, & &1.relative_path)
+      }
+
+      enable_media_info()
+      stub_anime_inventory(fixture)
+
+      expect(Cinder.Library.MediaInfoMock, :probe_policy, 2, fn
+        ^first_source ->
+          {:ok, policy_report()}
+
+        ^second_source ->
+          {:ok, policy_report(audio: ["ja"])}
+      end)
+
+      assert {:error, {:release_policy_mismatch, %{source: ^second, missing_audio: ["fr"]}}} =
+               Library.stage_anime_episodes(grab, preflight)
+
+      assert Repo.aggregate(ImportStage, :count) == 0
+    end
+
+    test "an unavailable story-source policy probe creates no stage or filesystem write" do
+      fixture = anime_fixture("many-to-many-mapping")
+      source = Path.join(fixture["absolute_download_root"], "Frieren - 12.mkv")
+      grab = %{anime_grab(fixture) | release_policy_snapshot: release_policy_snapshot()}
+      enable_media_info()
+      stub_anime_inventory(fixture)
+
+      expect(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source -> {:error, :timeout} end)
+
+      assert {:error,
+              {:release_policy_unavailable, {:probe_failed, "Frieren - 12.mkv", :timeout}}} =
+               Library.stage_anime_episodes(grab, anime_preflight(fixture))
+
+      assert Repo.aggregate(ImportStage, :count) == 0
+    end
+
+    test "positively ignored extras are never policy-probed" do
+      fixture = anime_fixture("positive-extras") |> normalize_fixture_mtimes()
+      story = Path.join(fixture["absolute_download_root"], "Frieren - 1.mkv")
+      grab = %{anime_grab(fixture) | release_policy_snapshot: release_policy_snapshot()}
+      enable_media_info()
+      stub_anime_filesystem(fixture)
+
+      expect(Cinder.Library.MediaInfoMock, :probe_policy, fn ^story ->
+        {:ok, policy_report()}
+      end)
+
+      assert {:ok, [{101, stage}]} =
+               Library.stage_anime_episodes(grab, anime_preflight(fixture))
+
+      assert stage.quality.audio_languages == ["ja", "fr"]
+      assert Repo.aggregate(ImportStage, :count) == 1
+    end
+
     test "one source crossing seasons creates one canonical destination per season" do
       fixture = anime_fixture("cross-season-output")
       grab = anime_grab(fixture)
@@ -291,6 +376,74 @@ defmodule Cinder.LibraryTest do
 
       assert {:error, :invalid_anime_assignment} =
                Library.stage_anime_episodes(grab, preflight)
+
+      assert Repo.aggregate(ImportStage, :count) == 0
+    end
+  end
+
+  describe "stage_movie/2 frozen release policy" do
+    setup do
+      enable_media_info()
+      :ok
+    end
+
+    test "a passing detailed probe is reused for movie stage metadata" do
+      source = "/downloads/Anime.Movie.mkv"
+
+      dest =
+        "#{@lib}/Anime Movie (2026) {tmdb-42}/Anime Movie (2026) {tmdb-42}.mkv"
+
+      stat = %File.Stat{type: :regular, size: 4 * @gb, inode: 7, major_device: 1}
+      movie = policy_movie(source)
+
+      expect(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
+
+      expect(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source ->
+        {:ok, policy_report()}
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :lstat, fn
+        ^source -> {:ok, stat}
+        ^dest -> {:error, :enoent}
+        _candidate -> {:ok, stat}
+      end)
+
+      expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _directory -> :ok end)
+      expect(Cinder.Library.FilesystemMock, :ln, 2, fn _source, _destination -> :ok end)
+      expect(Cinder.Library.FilesystemMock, :rm, fn _candidate -> :ok end)
+
+      assert {:ok, %{quality: quality}} = Library.stage_movie(movie)
+      assert quality.audio_languages == ["ja", "fr"]
+      assert quality.embedded_subtitles == ["fr"]
+      assert Repo.aggregate(ImportStage, :count) == 1
+    end
+
+    test "a confirmed mismatch returns evidence without any staging side effect" do
+      source = "/downloads/Anime.Movie.mkv"
+      movie = policy_movie(source)
+
+      expect(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
+
+      expect(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source ->
+        {:ok, policy_report(audio: ["ja"])}
+      end)
+
+      assert {:error,
+              {:release_policy_mismatch, %{source: "Anime.Movie.mkv", missing_audio: ["fr"]}}} =
+               Library.stage_movie(movie)
+
+      assert Repo.aggregate(ImportStage, :count) == 0
+    end
+
+    test "an unavailable probe returns its reason without any staging side effect" do
+      source = "/downloads/Anime.Movie.mkv"
+      movie = policy_movie(source)
+
+      expect(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
+      expect(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source -> {:error, :timeout} end)
+
+      assert {:error, {:release_policy_unavailable, {:probe_failed, "Anime.Movie.mkv", :timeout}}} =
+               Library.stage_movie(movie)
 
       assert Repo.aggregate(ImportStage, :count) == 0
     end
@@ -1215,6 +1368,17 @@ defmodule Cinder.LibraryTest do
 
   defp anime_fixture(id), do: Enum.find(@anime_cases, &(&1["id"] == id))
 
+  defp normalize_fixture_mtimes(fixture) do
+    mtime = "2026-07-13T12:00:00"
+
+    fixture =
+      update_in(fixture["inventory"], &Enum.map(&1, fn file -> Map.put(file, "mtime", mtime) end))
+
+    update_in(fixture["expected"]["decisions"]["files"], fn files ->
+      Enum.map(files, &Map.put(&1, "mtime", mtime))
+    end)
+  end
+
   defp anime_grab(fixture) do
     series = %Series{title: "Frieren", year: 2023, tmdb_id: 209_867}
 
@@ -1298,6 +1462,65 @@ defmodule Cinder.LibraryTest do
     stub(Cinder.Library.FilesystemMock, :rename, fn _source, _target -> :ok end)
 
     virtual
+  end
+
+  defp stub_anime_inventory(fixture) do
+    inventory = fixture["inventory"]
+    root = fixture["absolute_download_root"]
+    files = Map.new(inventory, &{Path.join(root, &1["relative_path"]), anime_file_stat(&1)})
+
+    stub(Cinder.Library.FilesystemMock, :dir?, &(&1 == root))
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn ^root ->
+      {:ok, Enum.map(inventory, &{Path.join(root, &1["relative_path"]), &1["size"]})}
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, &Map.fetch(files, &1))
+  end
+
+  defp enable_media_info do
+    saved = Application.get_env(:cinder, :media_info)
+    Application.put_env(:cinder, :media_info, Cinder.Library.MediaInfoMock)
+
+    on_exit(fn ->
+      if saved,
+        do: Application.put_env(:cinder, :media_info, saved),
+        else: Application.delete_env(:cinder, :media_info)
+    end)
+  end
+
+  defp policy_movie(source) do
+    %Movie{
+      title: "Anime Movie",
+      year: 2026,
+      tmdb_id: 42,
+      file_path: source,
+      preferred_language: "french",
+      original_language: "ja",
+      release_policy_snapshot: release_policy_snapshot()
+    }
+  end
+
+  defp release_policy_snapshot do
+    %{
+      "version" => 1,
+      "required_audio_languages" => ["ja", "fr"],
+      "required_embedded_subtitle_languages" => ["fr"],
+      "release_group" => "subsplease",
+      "release_title" => "Anime.Release"
+    }
+  end
+
+  defp policy_report(overrides \\ []) do
+    Map.merge(
+      %{
+        audio: ["ja", "fr"],
+        subtitles: ["fr"],
+        audio_unknown?: false,
+        subtitle_unknown?: false
+      },
+      Map.new(overrides)
+    )
   end
 
   defp anime_file_stat(entry) do

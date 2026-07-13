@@ -116,6 +116,21 @@ defmodule Cinder.Acquisition.Language do
     end
   end
 
+  @doc """
+  Classifies whether tagged streams satisfy a required language without collapsing incomplete
+  evidence into a match or mismatch.
+  """
+  def stream_status(required, present, unknown?) do
+    accepted = Map.get(@audio_codes, normalize(required), [])
+    present = Enum.map(present, &String.downcase/1)
+
+    cond do
+      Enum.any?(present, &(&1 in accepted)) -> :satisfied
+      unknown? or Enum.any?(present, &(&1 not in @known_audio_codes)) -> :unknown
+      true -> :mismatch
+    end
+  end
+
   defp tag(code), do: Map.get(@tags, code)
 
   defp presence(code) when code in [nil, ""], do: nil

@@ -5,6 +5,7 @@ defmodule Cinder.LibraryMediaInfoTest do
   import Mox
   import ExUnit.CaptureLog
 
+  alias Cinder.Acquisition.Language
   alias Cinder.Catalog.{Episode, Movie, Season, Series}
   alias Cinder.Library
 
@@ -33,6 +34,13 @@ defmodule Cinder.LibraryMediaInfoTest do
       preferred_language: "original",
       original_language: "fr"
     }
+  end
+
+  test "stream status distinguishes a match, known absence, and incomplete evidence" do
+    assert Language.stream_status("fr", ["fra"], false) == :satisfied
+    assert Language.stream_status("fr", ["eng"], false) == :mismatch
+    assert Language.stream_status("fr", ["eng"], true) == :unknown
+    assert Language.stream_status("fr", ["zzz"], false) == :unknown
   end
 
   defp expect_single_file_import do

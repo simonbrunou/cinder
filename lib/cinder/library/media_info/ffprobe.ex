@@ -18,9 +18,14 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   @stderr_env "CINDER_FFMPEG_STDERR"
 
   @impl true
-  def probe(path) do
+  def probe(path), do: run_probe(path, &parse/1)
+
+  @impl true
+  def probe_policy(path), do: run_probe(path, &parse_policy/1)
+
+  defp run_probe(path, parser) do
     case System.cmd(bin(), args(path), stderr_to_stdout: true) do
-      {out, 0} -> {:ok, parse(out)}
+      {out, 0} -> {:ok, parser.(out)}
       {out, code} -> {:error, {:ffprobe_exit, code, String.trim(out)}}
     end
   rescue
@@ -74,14 +79,23 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
 
   @doc false
   def parse(out) do
-    rows =
-      out
-      |> String.split(["\r\n", "\n"], trim: true)
-      |> Enum.map(&parse_row/1)
+    rows = parse_rows(out)
 
     %{
       audio: Enum.uniq(for({"audio", lang} <- rows, lang != nil, do: lang)),
       subtitles: Enum.uniq(for({"subtitle", lang} <- rows, lang != nil, do: lang))
+    }
+  end
+
+  @doc false
+  def parse_policy(out) do
+    rows = parse_rows(out)
+
+    %{
+      audio: Enum.uniq(for({"audio", lang} <- rows, is_binary(lang), do: lang)),
+      subtitles: Enum.uniq(for({"subtitle", lang} <- rows, is_binary(lang), do: lang)),
+      audio_unknown?: Enum.any?(rows, &match?({"audio", nil}, &1)),
+      subtitle_unknown?: Enum.any?(rows, &match?({"subtitle", nil}, &1))
     }
   end
 
@@ -102,6 +116,12 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   def parse_subtitle_tracks(_), do: []
 
   # "audio,eng" -> {"audio", "eng"}; "video," / "audio,und" -> {_, nil} (dropped downstream).
+  defp parse_rows(out) do
+    out
+    |> String.split(["\r\n", "\n"], trim: true)
+    |> Enum.map(&parse_row/1)
+  end
+
   defp parse_row(line) do
     case String.split(line, ",", parts: 2) do
       [type, lang] -> {String.trim(type), normalize(lang)}
