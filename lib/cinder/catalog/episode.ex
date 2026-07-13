@@ -11,7 +11,7 @@ defmodule Cinder.Catalog.Episode do
 
   import Ecto.Changeset
 
-  alias Cinder.Catalog.{Grab, Season}
+  alias Cinder.Catalog.{EpisodeCoordinateMembership, Grab, Season}
 
   schema "episodes" do
     field :tmdb_episode_id, :integer
@@ -28,10 +28,26 @@ defmodule Cinder.Catalog.Episode do
     field :imported_audio_languages, {:array, :string}
     field :imported_embedded_subtitles, {:array, :string}
     field :imported_sidecar_subtitles, {:array, :string}
+
+    field :classification, Ecto.Enum,
+      values: [:regular, :story_special, :recap, :extra],
+      default: :regular
+
+    field :classification_source, :string, default: "legacy"
+    field :classification_label, :string
     belongs_to :season, Season
     belongs_to :grab, Grab
 
+    has_many :coordinate_memberships, EpisodeCoordinateMembership, preload_order: [asc: :position]
+
+    has_many :episode_coordinates, through: [:coordinate_memberships, :episode_coordinate]
+
     timestamps(type: :utc_datetime)
+  end
+
+  @doc "Changeset for provider-owned episode classification metadata."
+  def provider_classification_changeset(episode, attrs) do
+    cast(episode, attrs, [:classification, :classification_source, :classification_label])
   end
 
   @doc """

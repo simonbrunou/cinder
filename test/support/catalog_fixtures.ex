@@ -5,7 +5,7 @@ defmodule Cinder.CatalogFixtures do
   """
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Season, Series}
+  alias Cinder.Catalog.{Episode, Movie, Season, Series}
   alias Cinder.Repo
 
   @movie_pipeline_keys [
@@ -34,6 +34,7 @@ defmodule Cinder.CatalogFixtures do
   """
   def movie_fixture(attrs \\ %{}) do
     attrs = Map.new(attrs)
+    {media_profile, attrs} = Map.pop(attrs, :media_profile)
     {pipeline, create_attrs} = Map.split(attrs, @movie_pipeline_keys)
 
     create_attrs =
@@ -41,12 +42,17 @@ defmodule Cinder.CatalogFixtures do
 
     {:ok, movie} = Catalog.add_movie(create_attrs)
 
-    if map_size(pipeline) == 0 do
-      movie
-    else
-      {:ok, movie} = Catalog.transition(movie, pipeline)
-      movie
-    end
+    movie =
+      if map_size(pipeline) == 0 do
+        movie
+      else
+        {:ok, movie} = Catalog.transition(movie, pipeline)
+        movie
+      end
+
+    if media_profile,
+      do: Repo.update!(Movie.profile_changeset(movie, %{media_profile: media_profile})),
+      else: movie
   end
 
   @doc """
