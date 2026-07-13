@@ -23,35 +23,19 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
 
   @impl true
   def search(imdb_id) do
-    params = [query: "{ImdbId:#{imdb_id}}", type: "movie"]
-
-    case request(url: "/api/v1/search", params: params) do
-      {:ok, %{status: 200, body: results}} when is_list(results) ->
-        {:ok, Enum.map(results, &normalize/1)}
-
-      {:ok, %{status: 200}} ->
-        {:error, :unexpected_response}
-
-      other ->
-        error(other)
-    end
+    search_query("{ImdbId:#{imdb_id}}", "movie", [])
   end
 
   @impl true
   def search_tv(tvdb_id, title, season) do
-    params = [query: tv_query(tvdb_id, title, season), type: "tvsearch"]
-
-    case request(url: "/api/v1/search", params: params) do
-      {:ok, %{status: 200, body: results}} when is_list(results) ->
-        {:ok, Enum.map(results, &normalize/1)}
-
-      {:ok, %{status: 200}} ->
-        {:error, :unexpected_response}
-
-      other ->
-        error(other)
-    end
+    search_query(tv_query(tvdb_id, title, season), "tvsearch", [])
   end
+
+  @impl true
+  def search_movie_query(query, opts), do: search_query(query, "moviesearch", opts)
+
+  @impl true
+  def search_tv_query(query, opts), do: search_query(query, "tvsearch", opts)
 
   # Prowlarr parses brace tokens out of the query (same syntax as the movie
   # `{ImdbId:...}` path). Prefer the TVDB id; fall back to a free-text title scoped
@@ -101,24 +85,84 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   defp error({:ok, %{status: status}}), do: {:error, {:prowlarr_status, status}}
   defp error({:error, reason}), do: {:error, reason}
 
-  defp normalize(result) do
-    download_url = result["downloadUrl"] || result["magnetUrl"]
+  defp search_query(query, type, opts) do
+    params =
+      [query: query, type: type]
+      |> add_categories(Keyword.get(opts, :categories, []))
 
-    %{
-      title: result["title"],
-      size: result["size"],
-      download_url: download_url,
-      download_url_origin: download_url_origin(download_url),
-      protocol: protocol(result["protocol"])
-    }
+    case request(url: "/api/v1/search", params: params) do
+      {:ok, %{status: 200, body: results}} when is_list(results) ->
+        {:ok, Enum.flat_map(results, &normalize/1)}
+
+      {:ok, %{status: 200}} ->
+        {:error, :unexpected_response}
+
+      other ->
+        error(other)
+    end
   end
+
+  defp add_categories(params, []), do: params
+
+  defp add_categories(params, categories),
+    do: Keyword.put(params, :categories, Enum.join(categories, ","))
+
+  defp normalize(result) when is_map(result) do
+    with title when is_binary(title) <- nonblank(result["title"]),
+         download_url when is_binary(download_url) <-
+           nonblank(result["downloadUrl"]) || nonblank(result["magnetUrl"]) do
+      [
+        %{
+          title: title,
+          size: integer_or_nil(result["size"]),
+          download_url: download_url,
+          download_url_origin: download_url_origin(download_url),
+          protocol: protocol(result["protocol"]),
+          category_ids: category_ids(result["categories"]),
+          indexer_id: integer_or_nil(result["indexerId"]),
+          published_at: published_at(result["publishDate"])
+        }
+      ]
+    else
+      _ -> []
+    end
+  end
+
+  defp normalize(_result), do: []
+
+  defp nonblank(value) when is_binary(value) do
+    if String.trim(value) == "", do: nil, else: value
+  end
+
+  defp nonblank(_value), do: nil
+
+  defp integer_or_nil(value) when is_integer(value), do: value
+  defp integer_or_nil(_value), do: nil
+
+  defp category_ids(categories) when is_list(categories) do
+    categories
+    |> Enum.flat_map(fn
+      %{"id" => id} when is_integer(id) -> [id]
+      _ -> []
+    end)
+    |> Enum.uniq()
+  end
+
+  defp category_ids(_categories), do: []
+
+  defp published_at(value) when is_binary(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, datetime, _offset} -> datetime
+      {:error, _reason} -> nil
+    end
+  end
+
+  defp published_at(_value), do: nil
 
   defp download_url_origin(download_url) when is_binary(download_url) do
     origin = Keyword.get(config(), :base_url, @default_base_url)
     if HTTPPolicy.same_origin?(download_url, origin), do: origin
   end
-
-  defp download_url_origin(_download_url), do: nil
 
   # Prowlarr's unified search tags each result "torrent" or "usenet"; anything
   # absent/unexpected defaults to :torrent (the conservative routing choice).
