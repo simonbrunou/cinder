@@ -192,8 +192,13 @@ defmodule Cinder.Download.Poller do
   @download_failure_errors [:download_error, :torrent_not_found, :no_content_path]
   @max_attempts 10
 
-  defp import_one(movie) do
-    case Library.stage_movie(movie) do
+  defp import_one(movie), do: movie |> Library.stage_movie() |> import_one_result(movie)
+
+  defp import_one_result({:error, {:release_policy_mismatch, evidence}}, movie),
+    do: reject_release(movie, evidence)
+
+  defp import_one_result(result, movie) do
+    case result do
       {:ok, %{dest: dest, quality: q} = stage} ->
         # On the (rare) transition error, leave the movie :downloaded for next-tick
         # retry rather than raising — matching the poller's ignore-and-retry convention.
@@ -356,8 +361,17 @@ defmodule Cinder.Download.Poller do
   # library file is swapped (replace/2) and the movie returns :available carrying the new quality;
   # if the new dest filename differs (a different container) the old file is removed best-effort so
   # the library never holds two files. Any failure reverts to :available, live file intact.
-  defp finish_upgrade(movie, content_path) do
-    case Library.stage_movie(%{movie | file_path: content_path}, replace: true) do
+  defp finish_upgrade(movie, content_path),
+    do:
+      %{movie | file_path: content_path}
+      |> Library.stage_movie(replace: true)
+      |> finish_upgrade_result(movie)
+
+  defp finish_upgrade_result({:error, {:release_policy_mismatch, evidence}}, movie),
+    do: reject_release(movie, evidence)
+
+  defp finish_upgrade_result(result, movie) do
+    case result do
       {:ok, %{dest: dest, quality: q} = stage} ->
         movie
         |> Catalog.transition(
@@ -410,6 +424,14 @@ defmodule Cinder.Download.Poller do
   defp compensate_aborted_upgrade(movie, stage) do
     Logger.info("movie #{movie.id} upgrade aborted mid-swap; restoring the prior library file")
     finish_stage(stage, :rollback)
+  end
+
+  defp reject_release(movie, evidence) do
+    case Catalog.reject_movie_release(movie, evidence) do
+      {:ok, _movie} -> :ok
+      {:error, :stale_release} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   defp finish_stage(stage, action) do

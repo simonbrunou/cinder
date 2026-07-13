@@ -2640,6 +2640,132 @@ defmodule Cinder.Catalog do
   def park_grab(%Grab{} = grab), do: finish_grab(grab, [])
 
   @doc """
+  Atomically rejects one confirmed movie release: exact-title blocklist, durable remote cleanup,
+  and guarded requeue. Upgrade rejection keeps the live library file and imported quality.
+  """
+  def reject_movie_release(%Movie{} = expected, evidence) do
+    result =
+      Repo.transaction(fn ->
+        {claimed, _} =
+          Repo.update_all(
+            from(m in Movie,
+              where:
+                m.id == ^expected.id and m.status == ^expected.status and
+                  m.status in [:downloaded, :upgrading] and
+                  m.release_title == ^expected.release_title and
+                  m.release_policy_snapshot == ^expected.release_policy_snapshot and
+                  m.updated_at == ^expected.updated_at
+            ),
+            set: [updated_at: now()]
+          )
+
+        if claimed != 1, do: Repo.rollback(:stale_release)
+        fresh = Repo.get!(Movie, expected.id)
+
+        insert_blocked_release!(%{
+          movie_id: fresh.id,
+          release_title: fresh.release_title,
+          reason: policy_reason(evidence)
+        })
+
+        intent_ids = Download.fence_movie_cleanup(fresh)
+        target_status = if fresh.status == :upgrading, do: :available, else: :requested
+
+        attrs = %{
+          status: target_status,
+          download_id: nil,
+          download_protocol: nil,
+          release_title: nil,
+          release_policy_snapshot: nil
+        }
+
+        attrs = if fresh.status == :upgrading, do: attrs, else: Map.put(attrs, :file_path, nil)
+        updated = fresh |> Movie.transition_changeset(attrs) |> Repo.update!()
+        {updated, intent_ids}
+      end)
+
+    with {:ok, {updated, intent_ids}} <- result do
+      Download.cleanup_intents(intent_ids)
+      broadcast({:movie_updated, updated})
+      {:ok, updated}
+    end
+  end
+
+  @doc """
+  Atomically rejects one confirmed episodic release, guarding the resolved grab and its exact
+  episode ownership before blocklisting, fencing cleanup, and deleting it.
+  """
+  def reject_grab_release(%Grab{} = expected, evidence) do
+    expected_episode_ids = expected_grab_episode_ids(expected)
+
+    result =
+      Repo.transaction(fn ->
+        {claimed, _} =
+          Repo.update_all(
+            reject_grab_query(expected),
+            set: [updated_at: now()]
+          )
+
+        if claimed != 1, do: Repo.rollback(:stale_release)
+        fresh = Repo.get!(Grab, expected.id)
+        episode_ids = episode_ids_for_grab(fresh.id) |> Enum.sort()
+        series_id = series_id_for_grab(fresh.id)
+
+        if stale_grab_ownership?(episode_ids, expected_episode_ids, series_id),
+          do: Repo.rollback(:stale_release)
+
+        insert_blocked_release!(%{
+          series_id: series_id,
+          release_title: fresh.release_title,
+          reason: policy_reason(evidence)
+        })
+
+        intent_ids =
+          Download.fence_episode_cleanup(episode_ids, [grab_cleanup_spec(fresh, episode_ids)])
+
+        deleted = Repo.delete!(fresh)
+        {deleted, intent_ids, series_id}
+      end)
+
+    with {:ok, {deleted, intent_ids, series_id}} <- result do
+      Download.cleanup_intents(intent_ids)
+      broadcast_series(series_id)
+      {:ok, deleted}
+    end
+  end
+
+  defp reject_grab_query(expected) do
+    from g in Grab,
+      where:
+        g.id == ^expected.id and g.mapping_status == ^expected.mapping_status and
+          g.mapping_status == :resolved and g.release_title == ^expected.release_title and
+          g.release_policy_snapshot == ^expected.release_policy_snapshot and
+          g.updated_at == ^expected.updated_at
+  end
+
+  defp stale_grab_ownership?(episode_ids, expected_episode_ids, series_id),
+    do: episode_ids == [] or episode_ids != expected_episode_ids or is_nil(series_id)
+
+  defp expected_grab_episode_ids(%Grab{episodes: episodes}) when is_list(episodes),
+    do: episodes |> Enum.map(& &1.id) |> Enum.sort()
+
+  defp expected_grab_episode_ids(%Grab{
+         mapping_snapshot: %{"reserved_episode_ids" => episode_ids}
+       })
+       when is_list(episode_ids),
+       do: Enum.sort(episode_ids)
+
+  defp expected_grab_episode_ids(%Grab{}), do: :unknown
+
+  defp policy_reason(evidence), do: inspect({:release_policy_mismatch, evidence})
+
+  defp insert_blocked_release!(attrs) do
+    %BlockedRelease{}
+    |> BlockedRelease.changeset(attrs)
+    |> Repo.insert!()
+  end
+
+  @doc """
   Records `movie`'s current `release_title` as blocked for that movie, so release selection
   skips it on the next search. A nil `release_title` (e.g. a pre-grab park) is a no-op.
 

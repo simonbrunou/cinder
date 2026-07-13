@@ -132,7 +132,16 @@ defmodule Cinder.Download.TvPoller do
     case Library.stage_anime_episodes(preflight.grab, preflight) do
       {:ok, staged} -> finalize_staged_grab(preflight.grab, staged)
       {:restart_preflight, :inventory_changed} -> :ok
+      {:error, {:release_policy_mismatch, evidence}} -> reject_release(preflight.grab, evidence)
       {:error, reason} -> retry_or_park(preflight.grab, reason)
+    end
+  end
+
+  defp reject_release(grab, evidence) do
+    case Catalog.reject_grab_release(grab, evidence) do
+      {:ok, _grab} -> :ok
+      {:error, :stale_release} -> :ok
+      {:error, reason} -> {:error, reason}
     end
   end
 
