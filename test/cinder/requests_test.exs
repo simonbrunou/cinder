@@ -390,6 +390,31 @@ defmodule Cinder.RequestsTest do
       assert Cinder.Catalog.get_series_by_tmdb_id(1399).media_profile == :auto
     end
 
+    test "an admin's explicit Anime season proposal auto-approves as Anime" do
+      admin = admin_fixture()
+      attrs = Map.put(season_attrs(), :proposed_media_profile, :anime)
+
+      assert {:ok, %{status: :approved}} = Requests.create_request(admin, attrs)
+      assert Cinder.Catalog.get_series_by_tmdb_id(1399).media_profile == :anime
+    end
+
+    test "auto_approve_all carries a non-admin's explicit Anime season proposal" do
+      Cinder.Settings.put("auto_approve_all", "true")
+      user = user_fixture()
+      attrs = Map.put(season_attrs(), :proposed_media_profile, :anime)
+
+      assert {:ok, %{status: :approved}} = Requests.create_request(user, attrs)
+      assert Cinder.Catalog.get_series_by_tmdb_id(1399).media_profile == :anime
+    end
+
+    test "an invalid season profile is rejected without creating a series" do
+      admin = admin_fixture()
+      attrs = Map.put(season_attrs(), :proposed_media_profile, "forged")
+
+      assert {:error, :invalid_media_profile} = Requests.create_request(admin, attrs)
+      assert Cinder.Catalog.get_series_by_tmdb_id(1399) == nil
+    end
+
     test "an explicit season proposal is carried and only replaces Auto" do
       user = user_fixture()
       admin = admin_fixture()
