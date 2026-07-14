@@ -481,19 +481,20 @@ defmodule CinderWeb.SeriesDetailLive do
   defp classification_label(:recap), do: gettext("Recap")
   defp classification_label(:extra), do: gettext("Extra")
 
-  defp coordinate_label(%{scheme: "absolute", canonical_value: value}),
-    do: gettext("Absolute %{value}", value: value)
+  # The only coordinate an operator needs: absolute numbering, shown as a small "#1122" next to
+  # the episode code — it's how anime releases are actually named. Scene/combined/standard
+  # coordinates, and every coordinate/classification source or precedence, are
+  # acquisition-internal and stay out of the UI entirely.
+  defp absolute_annotation(%{coordinate_memberships: memberships}, %{effective: :anime}) do
+    Enum.find_value(memberships, fn membership ->
+      case membership.episode_coordinate do
+        %{scheme: "absolute", canonical_value: value} -> "##{value}"
+        _ -> nil
+      end
+    end)
+  end
 
-  defp coordinate_label(%{scheme: "scene", canonical_value: value}),
-    do: gettext("Scene %{value}", value: value)
-
-  defp coordinate_label(%{scheme: "combined", canonical_value: value}),
-    do: gettext("Combined %{value}", value: value)
-
-  defp coordinate_label(%{scheme: "standard", canonical_value: value}),
-    do: gettext("Standard %{value}", value: value)
-
-  defp coordinate_label(%{scheme: scheme, canonical_value: value}), do: "#{scheme} #{value}"
+  defp absolute_annotation(_episode, _profile), do: nil
 
   defp find_episode(series, id) do
     series.seasons |> Enum.flat_map(& &1.episodes) |> Enum.find(&(&1.id == id))
@@ -664,10 +665,13 @@ defmodule CinderWeb.SeriesDetailLive do
         </div>
       </div>
 
-      <section class="mb-6 max-w-3xl" aria-labelledby="series-aliases-heading">
-        <h2 id="series-aliases-heading" class="mb-2 text-lg font-semibold">
+      <details class="mb-6 max-w-3xl">
+        <summary class="cursor-pointer border-b border-base-300 pb-2 text-lg font-semibold">
           {gettext("Title aliases")}
-        </h2>
+        </summary>
+        <p class="mb-2 mt-2 text-sm text-base-content/70">
+          {gettext("Extra titles tried when searching indexers, alongside the main title.")}
+        </p>
         <p
           :if={@alias_form[:id].value not in [nil, ""]}
           id="series-alias-edit-status"
@@ -765,7 +769,7 @@ defmodule CinderWeb.SeriesDetailLive do
             </span>
           </div>
         </div>
-      </section>
+      </details>
 
       <.empty_state
         :if={@series.seasons == []}
@@ -899,8 +903,14 @@ defmodule CinderWeb.SeriesDetailLive do
                     )
                   }
                 />
-                <span class="w-14 shrink-0 text-sm tabular-nums text-base-content/70">
+                <span class="shrink-0 text-sm tabular-nums text-base-content/70">
                   {Episode.code(season.season_number, ep.episode_number)}
+                </span>
+                <span
+                  :if={absolute_annotation(ep, @profile_summary)}
+                  class="shrink-0 text-xs tabular-nums text-base-content/40"
+                >
+                  {absolute_annotation(ep, @profile_summary)}
                 </span>
                 <span class="min-w-0 flex-1 break-words text-sm">{ep.title}</span>
                 <span
@@ -976,29 +986,12 @@ defmodule CinderWeb.SeriesDetailLive do
                 </.button>
               </div>
             </div>
-            <div class="flex flex-wrap gap-x-3 gap-y-1 pl-11 text-xs text-base-content/60 sm:pl-[5.75rem]">
-              <span
-                data-classification={ep.classification}
-                title={gettext("Classification source: %{source}", source: ep.classification_source)}
-              >
-                {classification_label(ep.classification)}
-                <span :if={ep.classification_label}>({ep.classification_label})</span>
-                · {ep.classification_source}
-              </span>
-              <span
-                :for={membership <- ep.coordinate_memberships}
-                data-coordinate={
-                  "#{membership.episode_coordinate.scheme}:#{membership.episode_coordinate.canonical_value}"
-                }
-                title={
-                  gettext("Coordinate source: %{source}",
-                    source: membership.episode_coordinate.source
-                  )
-                }
-              >
-                {coordinate_label(membership.episode_coordinate)} · {membership.episode_coordinate.source}
-              </span>
-            </div>
+            <span
+              :if={season.season_number == 0}
+              class="pl-11 text-xs text-base-content/60 sm:pl-[5.75rem]"
+            >
+              {classification_label(ep.classification)}
+            </span>
             <.confirm_action
               :if={@confirming == {:episode_file, to_string(ep.id)}}
               id={"confirm-delete-episode-file-#{ep.id}"}

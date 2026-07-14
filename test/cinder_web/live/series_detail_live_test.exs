@@ -180,19 +180,23 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert Repo.reload(other_alias).title == "Other series"
   end
 
-  test "series episodes show sourced classification and ordered coordinates", %{conn: conn} do
-    series = series_fixture()
-    season = season_fixture(series, season_number: 1)
+  # A household admin needs the absolute number (it's how anime releases are named) and an
+  # actionable classification (a Special that is/isn't grabbable) — nothing else about how
+  # either was derived belongs on the row, even for a legacy row still carrying old provenance.
+  test "an Anime episode row shows the absolute number and classification, never provenance",
+       %{conn: conn} do
+    series = series_fixture(media_profile: :anime)
+    specials = season_fixture(series, season_number: 0)
 
     episode =
-      episode_fixture(season,
+      episode_fixture(specials,
         episode_number: 1,
         classification: :story_special,
         classification_source: "manual",
         classification_label: "OVA"
       )
 
-    earlier_member = episode_fixture(season, episode_number: 2)
+    earlier_member = episode_fixture(specials, episode_number: 2)
 
     {:ok, _} =
       Catalog.put_episode_coordinate(
@@ -222,33 +226,50 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     {:ok, view, _} = live_series(conn, series)
 
-    assert has_element?(view, "#episode-#{episode.id}", "S01E01")
+    row = view |> element("#episode-#{episode.id}") |> render()
 
-    assert has_element?(
-             view,
-             "#episode-#{episode.id} [data-coordinate='absolute:25']",
-             "Absolute 25"
-           )
+    assert row =~ "#25"
+    assert row =~ "Story special"
+    refute row =~ "26"
+    refute row =~ "OVA"
+    refute row =~ "manual"
+    refute row =~ "Source"
+  end
 
-    assert has_element?(view, "#episode-#{episode.id} [data-coordinate='scene:26']", "Scene 26")
+  test "the absolute-number annotation is withheld from a non-Anime-profiled series",
+       %{conn: conn} do
+    series = series_fixture(media_profile: :standard)
+    season = season_fixture(series, season_number: 1)
+    episode = episode_fixture(season, episode_number: 1)
 
-    assert has_element?(
-             view,
-             "#episode-#{episode.id} [data-classification='story_special']",
-             "Story special"
-           )
+    {:ok, _} =
+      Catalog.put_episode_coordinate(
+        series,
+        %{
+          source: "tmdb",
+          scheme: "absolute",
+          namespace: "absolute-group",
+          canonical_value: "25",
+          precedence: :curated
+        },
+        [episode.id]
+      )
 
-    assert has_element?(view, "#episode-#{episode.id}", "OVA")
+    {:ok, view, _} = live_series(conn, series)
 
-    coordinates =
-      view
-      |> element("#episode-#{episode.id}")
-      |> render()
-      |> LazyHTML.from_fragment()
-      |> LazyHTML.query("[data-coordinate]")
-      |> LazyHTML.attribute("data-coordinate")
+    refute has_element?(view, "#episode-#{episode.id}", "#25")
+  end
 
-    assert coordinates == ["scene:26", "absolute:25"]
+  # A classification annotation only ever changes behavior for a Season 0 special (regular
+  # episodes are never classified otherwise) — a regular Season 1 episode shows none of it.
+  test "a regular episode carries no classification annotation", %{conn: conn} do
+    series = series_fixture()
+    season = season_fixture(series, season_number: 1)
+    episode = episode_fixture(season, episode_number: 1)
+
+    {:ok, view, _} = live_series(conn, series)
+
+    refute has_element?(view, "#episode-#{episode.id}", "Regular")
   end
 
   test "renders the page under the shared header", %{conn: conn} do
