@@ -10,7 +10,8 @@ defmodule CinderWeb.MovieDetailLive do
   """
   use CinderWeb, :live_view
 
-  import CinderWeb.LiveHelpers, only: [format_date_year: 1, humanize_bytes: 1, rating: 1]
+  import CinderWeb.LiveHelpers,
+    only: [format_date_year: 1, humanize_bytes: 1, rating: 1, movie_badge_status: 1]
 
   alias Cinder.Catalog
   alias Cinder.Catalog.Movie
@@ -390,7 +391,7 @@ defmodule CinderWeb.MovieDetailLive do
             <:actions>
               <.status_badge
                 kind={:movie}
-                status={@movie.status}
+                status={movie_badge_status(@movie)}
                 progress={@movie.download_progress}
                 speed={@movie.download_speed}
                 eta={@movie.download_eta}
@@ -556,7 +557,9 @@ defmodule CinderWeb.MovieDetailLive do
           phx-click="retry"
           phx-disable-with={gettext("Retrying…")}
         >
-          {gettext("Retry")}
+          {if @movie.verification_hold_origin,
+            do: gettext("Retry verification"),
+            else: gettext("Retry")}
         </.button>
         <.button
           :if={

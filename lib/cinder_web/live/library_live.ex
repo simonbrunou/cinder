@@ -195,7 +195,7 @@ defmodule CinderWeb.LibraryLive do
               <.media_card poster_path={m.poster_path} title={m.title} year={m.year} type={:movie}>
                 <.status_badge
                   kind={:movie}
-                  status={m.status}
+                  status={movie_badge_status(m)}
                   progress={m.download_progress}
                   speed={m.download_speed}
                   eta={m.download_eta}

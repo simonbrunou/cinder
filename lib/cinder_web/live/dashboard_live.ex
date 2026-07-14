@@ -473,7 +473,7 @@ defmodule CinderWeb.DashboardLive do
               <li :for={m <- @recent} class="flex items-center gap-3">
                 <.status_badge
                   kind={:movie}
-                  status={m.status}
+                  status={movie_badge_status(m)}
                   progress={m.download_progress}
                   speed={m.download_speed}
                   eta={m.download_eta}

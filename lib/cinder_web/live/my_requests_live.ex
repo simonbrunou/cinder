@@ -6,7 +6,7 @@ defmodule CinderWeb.MyRequestsLive do
   """
   use CinderWeb, :live_view
 
-  import CinderWeb.LiveHelpers, only: [request_title: 1]
+  import CinderWeb.LiveHelpers, only: [request_title: 1, movie_badge_status: 1]
 
   alias Cinder.{Catalog, Requests}
 
@@ -77,7 +77,7 @@ defmodule CinderWeb.MyRequestsLive do
             <.status_badge
               :if={r.target_type == "movie" and movie}
               kind={:movie}
-              status={movie.status}
+              status={movie_badge_status(movie)}
               progress={movie.download_progress}
               speed={movie.download_speed}
               eta={movie.download_eta}

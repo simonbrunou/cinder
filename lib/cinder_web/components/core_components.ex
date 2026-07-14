@@ -729,6 +729,11 @@ defmodule CinderWeb.CoreComponents do
   defp badge_spec(:movie, :upgrading),
     do: {gettext("Upgrading"), "badge-info", "hero-arrow-up-circle"}
 
+  # parked mid post-download verification (`Movie.verification_hold_origin` set) — a
+  # distinct hold from a plain :import_failed, surfaced via `LiveHelpers.movie_badge_status/1`.
+  defp badge_spec(:movie, :verification_hold),
+    do: {gettext("Needs verification"), "badge-warning", "hero-exclamation-triangle"}
+
   # request / composite discovery state
   defp badge_spec(:request, :pending), do: {gettext("Pending"), "badge-warning", "hero-clock"}
   defp badge_spec(:request, :approved), do: {gettext("Approved"), "badge-info", "hero-check"}
@@ -759,6 +764,9 @@ defmodule CinderWeb.CoreComponents do
 
   defp badge_spec(:grab, :needs_mapping),
     do: {gettext("Needs mapping"), "badge-warning", "hero-exclamation-triangle"}
+
+  defp badge_spec(:grab, :verification_blocked),
+    do: {gettext("Needs verification"), "badge-warning", "hero-exclamation-triangle"}
 
   # series monitoring (boolean flag, not pipeline state) — icon + label so it isn't colour-alone
   defp badge_spec(:monitored, true), do: {gettext("Monitored"), "badge-success", "hero-eye"}

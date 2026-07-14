@@ -454,11 +454,12 @@ defmodule CinderWeb.MovieDetailLiveTest do
     movie = verification_held_movie!(:download)
     {:ok, lv, _html} = live_movie(conn, movie)
 
-    assert has_element?(lv, "button", "Retry")
+    assert has_element?(lv, "span.badge-warning", "Needs verification")
+    assert has_element?(lv, "button", "Retry verification")
     assert has_element?(lv, "button", "Cancel")
     refute has_element?(lv, "button", "Find a better match")
 
-    lv |> element("button", "Retry") |> render_click()
+    lv |> element("button", "Retry verification") |> render_click()
 
     assert %Movie{
              status: :downloaded,
@@ -475,7 +476,8 @@ defmodule CinderWeb.MovieDetailLiveTest do
     movie = verification_held_movie!(:upgrade)
     {:ok, lv, _html} = live_movie(conn, movie)
 
-    assert has_element?(lv, "button", "Retry")
+    assert has_element?(lv, "span.badge-warning", "Needs verification")
+    assert has_element?(lv, "button", "Retry verification")
     assert has_element?(lv, "button", "Cancel upgrade")
     refute has_element?(lv, "button", "Find a better match")
 

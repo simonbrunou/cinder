@@ -69,6 +69,18 @@ defmodule CinderWeb.StatusBadgeTest do
     end
   end
 
+  test "a grab needing verification and a movie held mid-verification share the same treatment" do
+    for assigns <- [
+          %{kind: :grab, status: :verification_blocked},
+          %{kind: :movie, status: :verification_hold}
+        ] do
+      html = badge(assigns)
+      assert html =~ "Needs verification"
+      assert html =~ "badge-warning"
+      assert html =~ "hero-exclamation-triangle"
+    end
+  end
+
   test "a health error renders Unreachable, error colour, and a human reason as a title" do
     html = badge(%{kind: :health, status: {:error, :timeout}})
     assert html =~ "Unreachable"

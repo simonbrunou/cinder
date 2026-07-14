@@ -201,7 +201,9 @@ defmodule CinderWeb.ActivityLiveTest do
 
     {:ok, view, _html} = live(conn, ~p"/activity")
 
-    assert has_element?(view, "#grab-#{held.id}", "Needs verification")
+    # Goes through the shared badge_spec (kind: :grab, status: :verification_blocked), not a
+    # hand-rolled span — same warning treatment as a movie held mid-verification.
+    assert has_element?(view, "#grab-#{held.id} span.badge-warning", "Needs verification")
     assert has_element?(view, "#retry-verification-grab-#{held.id}", "Retry verification")
     assert has_element?(view, "#cancel-verification-grab-#{held.id}", "Cancel download")
 

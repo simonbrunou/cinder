@@ -149,6 +149,7 @@ defmodule CinderWeb.ActivityLive do
   defp series_title(%{episodes: [ep | _]}), do: ep.season.series.title
   defp series_title(_), do: gettext("Unknown series")
   defp grab_state(%{mapping_status: :needs_mapping}), do: :needs_mapping
+  defp grab_state(%{mapping_status: :verification_blocked}), do: :verification_blocked
   defp grab_state(%{content_path: nil}), do: :downloading
   defp grab_state(_), do: :downloaded
 
@@ -208,7 +209,7 @@ defmodule CinderWeb.ActivityLive do
             </.link>
             <.status_badge
               kind={:movie}
-              status={m.status}
+              status={movie_badge_status(m)}
               progress={m.download_progress}
               speed={m.download_speed}
               eta={m.download_eta}
@@ -238,12 +239,6 @@ defmodule CinderWeb.ActivityLive do
               />
               <span class="text-xs text-base-content/70">{g.download_protocol}</span>
               <span class="min-w-0 truncate text-xs text-base-content/70">{g.download_id}</span>
-              <span
-                :if={g.mapping_status == :verification_blocked}
-                class="badge badge-warning"
-              >
-                {gettext("Needs verification")}
-              </span>
               <.button
                 :if={g.mapping_status == :needs_mapping}
                 id={"retry-mapping-grab-#{g.id}"}
