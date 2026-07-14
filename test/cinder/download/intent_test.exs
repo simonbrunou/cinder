@@ -1314,18 +1314,18 @@ defmodule Cinder.Download.IntentTest do
     first = episode_fixture(season, episode_number: 1)
     second = episode_fixture(season, episode_number: 2)
 
-    assert {:ok, coordinate} =
-             Catalog.put_episode_coordinate(
-               series,
-               %{
-                 source: "manual",
-                 scheme: "absolute",
-                 namespace: "manual",
-                 canonical_value: "1-2",
-                 precedence: :manual
-               },
-               [first.id, second.id]
-             )
+    coordinate =
+      episode_coordinate_fixture(
+        series,
+        %{
+          source: "manual",
+          scheme: "absolute",
+          namespace: "manual",
+          canonical_value: "1-2",
+          precedence: :manual
+        },
+        [first.id, second.id]
+      )
 
     context = Catalog.anime_series_acquisition_context(series)
 

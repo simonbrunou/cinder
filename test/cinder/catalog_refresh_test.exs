@@ -81,8 +81,8 @@ defmodule Cinder.CatalogRefreshTest do
 
     {:ok, manual_alias} = Catalog.save_manual_alias(s, %{title: "Local title"})
 
-    {:ok, manual_coordinate} =
-      Catalog.put_episode_coordinate(
+    manual_coordinate =
+      episode_coordinate_fixture(
         s,
         %{
           source: "manual",

@@ -221,6 +221,21 @@ defmodule Cinder.CatalogAdminTest do
                target_id: movie.id
              ).status == :cleanup_pending
     end
+
+    test "a held cancel rejects a stale release snapshot without clearing the current hold" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      stale = verification_held_movie(:download)
+
+      assert {:ok, current} =
+               Catalog.transition(stale, %{status: :import_failed, release_title: "Concurrent"},
+                 expect: :import_failed
+               )
+
+      assert {:error, :stale_status} = Catalog.cancel_movie(stale, actor)
+      assert Repo.reload!(current).release_title == "Concurrent"
+      assert Repo.reload!(current).download_id == "HASH-HELD-download"
+      assert Repo.reload!(current).verification_hold_origin == :download
+    end
   end
 
   describe "download metrics" do

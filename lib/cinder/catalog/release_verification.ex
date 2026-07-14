@@ -110,7 +110,8 @@ defmodule Cinder.Catalog.ReleaseVerification do
            from(m in Movie,
              where:
                m.id == ^movie.id and m.status == :import_failed and
-                 m.verification_hold_origin == ^movie.verification_hold_origin
+                 m.verification_hold_origin == ^movie.verification_hold_origin and
+                 m.release_title == ^movie.release_title
            ),
            set: [updated_at: Catalog.now()]
          ) do
@@ -142,30 +143,22 @@ defmodule Cinder.Catalog.ReleaseVerification do
   end
 
   @doc false
-  def retry_grab_verification(%Grab{} = grab) do
-    case Repo.update_all(
-           from(g in Grab,
-             where: g.id == ^grab.id and g.mapping_status == :verification_blocked,
-             select: g
-           ),
-           set: [mapping_status: :resolved, download_attempts: 0, updated_at: Catalog.now()]
-         ) do
-      {1, [retried]} -> broadcast_grab_and_ok(retried)
-      {0, _} -> {:error, :verification_not_held}
-    end
-  end
+  def retry_grab_verification(%Grab{} = grab),
+    do: retry_grab(grab, :verification_blocked, :verification_not_held)
 
   @doc false
-  def retry_grab_mapping(%Grab{} = grab) do
+  def retry_grab_mapping(%Grab{} = grab), do: retry_grab(grab, :needs_mapping, :mapping_not_held)
+
+  defp retry_grab(grab, from_status, error_atom) do
     case Repo.update_all(
            from(g in Grab,
-             where: g.id == ^grab.id and g.mapping_status == :needs_mapping,
+             where: g.id == ^grab.id and g.mapping_status == ^from_status,
              select: g
            ),
            set: [mapping_status: :resolved, download_attempts: 0, updated_at: Catalog.now()]
          ) do
       {1, [retried]} -> broadcast_grab_and_ok(retried)
-      {0, _} -> {:error, :mapping_not_held}
+      {0, _} -> {:error, error_atom}
     end
   end
 
@@ -274,8 +267,8 @@ defmodule Cinder.Catalog.ReleaseVerification do
   defp reject_grab_query(expected) do
     from g in Grab,
       where:
-        g.id == ^expected.id and g.mapping_status == ^expected.mapping_status and
-          g.mapping_status == :resolved and g.release_title == ^expected.release_title and
+        g.id == ^expected.id and g.mapping_status == :resolved and
+          g.release_title == ^expected.release_title and
           g.release_policy_snapshot == ^expected.release_policy_snapshot
   end
 

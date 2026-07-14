@@ -174,11 +174,6 @@ defmodule Cinder.Catalog do
   @doc "Deletes an operator-owned alias belonging to the supplied owner."
   defdelegate delete_manual_alias(owner, alias_id), to: Identity
 
-  @doc "Stores one ordered coordinate after validating every episode belongs to the series."
-  defdelegate put_episode_coordinate(series, attrs, episode_ids),
-    to: Identity,
-    as: :put_coordinate
-
   @doc "Lists a series' coordinates with ordered episode memberships preloaded."
   defdelegate list_episode_coordinates(series), to: Identity, as: :list_coordinates
 
@@ -2391,17 +2386,6 @@ defmodule Cinder.Catalog do
   @doc "All grabs newest-first, with `episodes: [season: :series]` preloaded for the admin /grabs view."
   def list_grabs do
     Repo.all(from g in Grab, order_by: [desc: g.id], preload: [episodes: [season: :series]])
-  end
-
-  @doc "Fetches one mapping-held grab, with its series tree preloaded."
-  def get_mapping_grab(id) do
-    Repo.one(
-      from g in Grab,
-        where:
-          g.id == ^id and g.mapping_status == :needs_mapping and
-            not is_nil(g.mapping_snapshot),
-        preload: [episodes: [season: :series]]
-    )
   end
 
   @doc "Lists held mapping grabs for one series, oldest first, with their series tree preloaded."

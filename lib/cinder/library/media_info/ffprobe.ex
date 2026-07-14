@@ -44,6 +44,7 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
       {:ok, {:error, _} = error} -> error
       {:ok, {_out, 0}} -> :ok
       {:ok, {out, code}} -> {:error, {:ffprobe_exit, code, String.trim(out)}}
+      {:exit, reason} -> {:error, {:ffprobe_exit, reason}}
       nil -> {:error, :timeout}
     end
   end

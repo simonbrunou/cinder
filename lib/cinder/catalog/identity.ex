@@ -98,11 +98,6 @@ defmodule Cinder.Catalog.Identity do
     )
   end
 
-  def put_coordinate(%Series{} = series, attrs, episode_ids) do
-    Repo.transaction(fn -> put_coordinate_or_rollback(series, attrs, episode_ids) end)
-    |> broadcast_owner(series)
-  end
-
   def replace_provider_coordinates(%Series{} = series, source, namespace, coordinates) do
     Repo.transaction(fn ->
       Repo.delete_all(

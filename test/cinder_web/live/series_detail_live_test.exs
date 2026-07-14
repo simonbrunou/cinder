@@ -198,31 +198,29 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     earlier_member = episode_fixture(specials, episode_number: 2)
 
-    {:ok, _} =
-      Catalog.put_episode_coordinate(
-        series,
-        %{
-          source: "tmdb",
-          scheme: "absolute",
-          namespace: "absolute-group",
-          canonical_value: "25",
-          precedence: :curated
-        },
-        [earlier_member.id, episode.id]
-      )
+    episode_coordinate_fixture(
+      series,
+      %{
+        source: "tmdb",
+        scheme: "absolute",
+        namespace: "absolute-group",
+        canonical_value: "25",
+        precedence: :curated
+      },
+      [earlier_member.id, episode.id]
+    )
 
-    {:ok, _} =
-      Catalog.put_episode_coordinate(
-        series,
-        %{
-          source: "manual",
-          scheme: "scene",
-          namespace: "manual",
-          canonical_value: "26",
-          precedence: :manual
-        },
-        [episode.id]
-      )
+    episode_coordinate_fixture(
+      series,
+      %{
+        source: "manual",
+        scheme: "scene",
+        namespace: "manual",
+        canonical_value: "26",
+        precedence: :manual
+      },
+      [episode.id]
+    )
 
     {:ok, view, _} = live_series(conn, series)
 
@@ -242,18 +240,17 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     season = season_fixture(series, season_number: 1)
     episode = episode_fixture(season, episode_number: 1)
 
-    {:ok, _} =
-      Catalog.put_episode_coordinate(
-        series,
-        %{
-          source: "tmdb",
-          scheme: "absolute",
-          namespace: "absolute-group",
-          canonical_value: "25",
-          precedence: :curated
-        },
-        [episode.id]
-      )
+    episode_coordinate_fixture(
+      series,
+      %{
+        source: "tmdb",
+        scheme: "absolute",
+        namespace: "absolute-group",
+        canonical_value: "25",
+        precedence: :curated
+      },
+      [episode.id]
+    )
 
     {:ok, view, _} = live_series(conn, series)
 

@@ -35,18 +35,17 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
       season = season_fixture(series)
       episode = episode_fixture(season)
 
-      assert {:ok, _} =
-               Catalog.put_episode_coordinate(
-                 series,
-                 %{
-                   source: "tmdb",
-                   scheme: "absolute",
-                   namespace: "group-1",
-                   canonical_value: "1",
-                   precedence: :inferred
-                 },
-                 [episode.id]
-               )
+      episode_coordinate_fixture(
+        series,
+        %{
+          source: "tmdb",
+          scheme: "absolute",
+          namespace: "group-1",
+          canonical_value: "1",
+          precedence: :inferred
+        },
+        [episode.id]
+      )
 
       assert Catalog.media_profile_summary(series) == %{
                selected: :auto,
@@ -115,58 +114,6 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
 
       assert {:ok, _} = Catalog.save_manual_alias(series, %{title: "Alias"})
       assert length(Catalog.list_title_aliases(series)) == 1
-    end
-  end
-
-  describe "episode identity" do
-    test "a coordinate cannot claim an episode from another series" do
-      a = series_fixture()
-      b = series_fixture()
-      episode = b |> season_fixture() |> episode_fixture()
-
-      assert {:error, :episode_series_mismatch} =
-               Catalog.put_episode_coordinate(
-                 a,
-                 %{
-                   source: "manual",
-                   scheme: "absolute",
-                   namespace: "manual",
-                   canonical_value: "12",
-                   precedence: :manual
-                 },
-                 [episode.id]
-               )
-
-      assert Catalog.list_episode_coordinates(a) == []
-    end
-
-    test "one coordinate preserves membership order across two episodes" do
-      series = series_fixture()
-      season = season_fixture(series)
-      first = episode_fixture(season, episode_number: 1)
-      second = episode_fixture(season, episode_number: 2)
-      series_id = series.id
-      Catalog.subscribe_series()
-
-      assert {:ok, coordinate} =
-               Catalog.put_episode_coordinate(
-                 series,
-                 %{
-                   source: "manual",
-                   scheme: "combined",
-                   namespace: "manual",
-                   canonical_value: "1-2",
-                   precedence: :manual
-                 },
-                 [second.id, first.id]
-               )
-
-      assert Enum.map(coordinate.memberships, & &1.position) == [0, 1]
-      assert Enum.map(coordinate.memberships, & &1.episode_id) == [second.id, first.id]
-      assert_receive {:series_updated, ^series_id}
-
-      assert [listed] = Catalog.list_episode_coordinates(series)
-      assert Enum.map(listed.memberships, & &1.episode_id) == [second.id, first.id]
     end
   end
 end

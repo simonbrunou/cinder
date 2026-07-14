@@ -340,18 +340,17 @@ defmodule Cinder.Download.TvPollerTest do
     series = series_fixture(%{monitor_strategy: :all, media_profile: :anime})
     episode = episode(season_fixture(series), 1)
 
-    assert {:ok, _coordinate} =
-             Catalog.put_episode_coordinate(
-               series,
-               %{
-                 source: "manual",
-                 scheme: "absolute",
-                 namespace: "manual",
-                 canonical_value: "1",
-                 precedence: :manual
-               },
-               [episode.id]
-             )
+    episode_coordinate_fixture(
+      series,
+      %{
+        source: "manual",
+        scheme: "absolute",
+        namespace: "manual",
+        canonical_value: "1",
+        precedence: :manual
+      },
+      [episode.id]
+    )
 
     assert {:ok, [_alias]} =
              Identity.replace_provider_aliases(
@@ -727,7 +726,7 @@ defmodule Cinder.Download.TvPollerTest do
     assert Catalog.blocked_release_titles_for_series(series.id) == []
     refute Enum.any?(Catalog.list_grabs_downloaded(), &(&1.id == grab.id))
     assert Enum.any?(Catalog.list_grabs(), &(&1.id == grab.id))
-    assert Catalog.get_mapping_grab(grab.id) == nil
+    assert Catalog.get_grab(grab.id).mapping_status != :needs_mapping
     refute cleanup_pending_for?(grab.download_id)
     assert Repo.all(Intent) == []
     refute Repo.exists?(ImportStage)

@@ -557,7 +557,7 @@ defmodule CinderWeb.MovieDetailLive do
           phx-click="retry"
           phx-disable-with={gettext("Retrying…")}
         >
-          {if @movie.verification_hold_origin,
+          {if movie_badge_status(@movie) == :verification_hold,
             do: gettext("Retry verification"),
             else: gettext("Retry")}
         </.button>

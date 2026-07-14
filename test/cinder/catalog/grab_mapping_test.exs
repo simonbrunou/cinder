@@ -175,12 +175,12 @@ defmodule Cinder.Catalog.GrabMappingTest do
         |> Grab.mapping_changeset(%{mapping_status: :resolved})
         |> Repo.update!()
 
-      assert Catalog.get_mapping_grab(resolved.id) == nil
+      assert Catalog.get_grab(resolved.id).mapping_status == :resolved
 
-      loaded = Catalog.get_mapping_grab(held_b.id)
+      loaded = Catalog.get_grab(held_b.id) |> Repo.preload(episodes: [season: :series])
       assert Ecto.assoc_loaded?(loaded.episodes)
       assert hd(loaded.episodes).season.series.id == series.id
-      assert Catalog.get_mapping_grab(-1) == nil
+      assert Catalog.get_grab(-1) == nil
 
       assert [listed] = Catalog.list_mapping_grabs_for_series(series.id)
       assert listed.id == held_b.id
