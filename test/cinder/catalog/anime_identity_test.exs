@@ -4,6 +4,7 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
   import Cinder.CatalogFixtures
 
   alias Cinder.Catalog
+  alias Cinder.Catalog.Identity
 
   describe "media profiles" do
     test "explicit profiles win and weak evidence only suggests anime" do
@@ -114,6 +115,52 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
 
       assert {:ok, _} = Catalog.save_manual_alias(series, %{title: "Alias"})
       assert length(Catalog.list_title_aliases(series)) == 1
+    end
+  end
+
+  # Exercises put_coordinate_or_rollback/3 through its live caller (the TMDB refresh path goes
+  # Catalog.sync_absolute_coordinates → Identity.replace_provider_coordinates), the same direct
+  # Identity seam tv_poller_test uses for replace_provider_aliases.
+  describe "episode identity" do
+    test "a provider coordinate cannot claim an episode from another series" do
+      a = series_fixture()
+      b = series_fixture()
+      episode = b |> season_fixture() |> episode_fixture()
+
+      assert {:error, :episode_series_mismatch} =
+               Identity.replace_provider_coordinates(a, "tmdb", "group-1", [
+                 %{
+                   scheme: "absolute",
+                   canonical_value: "12",
+                   precedence: :inferred,
+                   episode_ids: [episode.id]
+                 }
+               ])
+
+      assert Catalog.list_episode_coordinates(a) == []
+    end
+
+    test "provider coordinates preserve caller-supplied membership order" do
+      series = series_fixture()
+      season = season_fixture(series)
+      first = episode_fixture(season, episode_number: 1)
+      second = episode_fixture(season, episode_number: 2)
+
+      assert {:ok, [coordinate]} =
+               Identity.replace_provider_coordinates(series, "tmdb", "group-1", [
+                 %{
+                   scheme: "combined",
+                   canonical_value: "1-2",
+                   precedence: :inferred,
+                   episode_ids: [second.id, first.id]
+                 }
+               ])
+
+      assert Enum.map(coordinate.memberships, & &1.position) == [0, 1]
+      assert Enum.map(coordinate.memberships, & &1.episode_id) == [second.id, first.id]
+
+      assert [listed] = Catalog.list_episode_coordinates(series)
+      assert Enum.map(listed.memberships, & &1.episode_id) == [second.id, first.id]
     end
   end
 end
