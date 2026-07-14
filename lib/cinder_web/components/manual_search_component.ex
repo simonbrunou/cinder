@@ -14,11 +14,20 @@ defmodule CinderWeb.ManualSearchComponent do
   """
   use CinderWeb, :live_component
 
-  alias Cinder.{Acquisition, Catalog, Download}
+  alias Cinder.{Acquisition, Catalog, Download, Settings}
+  alias Cinder.Acquisition.AnimePreferences
 
   @impl true
   def update(assigns, socket) do
-    socket = socket |> assign(assigns) |> assign_new(:confirming, fn -> nil end)
+    search_context = search_context(assigns)
+    context_changed? = search_context_changed?(socket, search_context)
+
+    socket =
+      socket
+      |> assign(assigns)
+      |> assign(:search_context, search_context)
+      |> assign_new(:confirming, fn -> nil end)
+      |> maybe_cancel_stale_search(context_changed?)
 
     socket =
       cond do
@@ -26,7 +35,11 @@ defmodule CinderWeb.ManualSearchComponent do
         preseeded?(assigns) ->
           assign(socket, :state, :loaded)
 
-        # Already initialised (a parent re-render) — keep state/results/confirming as they are.
+        # A new target/profile/policy context must never consume an old result list.
+        context_changed? ->
+          restart_search(socket)
+
+        # Already initialised for this context — keep state/results/confirming as they are.
         not is_nil(socket.assigns[:state]) ->
           socket
 
@@ -44,26 +57,88 @@ defmodule CinderWeb.ManualSearchComponent do
 
   defp preseeded?(assigns), do: Map.has_key?(assigns, :results) and not is_nil(assigns[:results])
 
+  defp search_context(assigns) do
+    target = assigns.target
+    profile = Catalog.media_profile_summary(target).effective
+
+    policy =
+      if profile == :anime,
+        do: AnimePreferences.resolve(target, Settings.anime_defaults()),
+        else: nil
+
+    {assigns.mode, target.__struct__, target.id, assigns[:season_number], profile, policy}
+  end
+
+  defp search_context_changed?(socket, current) do
+    previous = socket.assigns[:search_context] || previous_search_context(socket.assigns)
+    not is_nil(previous) and previous != current
+  end
+
+  defp previous_search_context(%{mode: _mode, target: _target} = assigns),
+    do: search_context(assigns)
+
+  defp previous_search_context(_assigns), do: nil
+
+  defp maybe_cancel_stale_search(socket, true),
+    do: socket |> cancel_async(:search) |> assign(:confirming, nil)
+
+  defp maybe_cancel_stale_search(socket, false), do: socket
+
+  defp restart_search(socket) do
+    socket = assign(socket, state: :loading, results: [])
+    if connected?(socket), do: start_search(socket), else: socket
+  end
+
   defp start_search(socket) do
     %{mode: mode, target: target} = socket.assigns
     season = socket.assigns[:season_number]
     opts = search_opts(mode, target)
+    profile = Catalog.media_profile_summary(target).effective
 
     start_async(socket, :search, fn ->
-      case mode do
-        :movie ->
-          Acquisition.list_releases(target.imdb_id, opts)
-
-        :tv ->
-          # Whole-season packs are verdict-banded per episode (k×band, like the sweep);
-          # pass the season's wanted count so a pack isn't judged as one episode's size.
-          Acquisition.list_releases_tv(
-            target,
-            season,
-            opts ++ [pack_episode_count: pack_count(target, season)]
-          )
-      end
+      search(profile, mode, target, season, opts)
     end)
+  end
+
+  defp search(:anime, :movie, target, _season, opts) do
+    with {:ok, policy} <- AnimePreferences.resolve(target, Settings.anime_defaults()) do
+      Acquisition.list_anime_movie_releases(
+        target.imdb_id,
+        Catalog.anime_movie_acquisition_context(target),
+        opts ++ AnimePreferences.selection_opts(policy)
+      )
+    end
+  end
+
+  defp search(:anime, :tv, target, season, opts) do
+    with {:ok, policy} <- AnimePreferences.resolve(target, Settings.anime_defaults()) do
+      Acquisition.list_anime_episode_releases(
+        Catalog.anime_series_acquisition_context(target),
+        wanted_ids(target, season),
+        opts ++ AnimePreferences.selection_opts(policy)
+      )
+    end
+  end
+
+  defp search(:standard, :movie, target, _season, opts),
+    do: Acquisition.list_releases(target.imdb_id, opts)
+
+  defp search(:standard, :tv, target, season, opts) do
+    # Whole-season packs are verdict-banded per episode (k×band, like the sweep);
+    # pass the season's wanted count so a pack isn't judged as one episode's size.
+    Acquisition.list_releases_tv(
+      target,
+      season,
+      opts ++ [pack_episode_count: pack_count(target, season)]
+    )
+  end
+
+  defp wanted_ids(series, season_number) do
+    Catalog.wanted_episodes()
+    |> Enum.filter(
+      &(&1.season.series.id == series.id and &1.season.season_number == season_number)
+    )
+    |> Enum.map(& &1.id)
   end
 
   # A COMPLETE season (the manual re-grab / better-release case) has zero wanted episodes;
@@ -197,8 +272,9 @@ defmodule CinderWeb.ManualSearchComponent do
   defp grab_click(:movie, %{status: :available}, _release), do: "ask_replace"
   defp grab_click(_mode, _target, _release), do: "grab"
 
-  # :wrong_protocol means no configured client — can't grab. Everything else the user may override.
+  # Protocol and stable-ID safety cannot be overridden. Policy/quality verdicts can.
   defp grabbable?({:rejected, :wrong_protocol}), do: false
+  defp grabbable?({:rejected, :unsafe_anime_mapping}), do: false
   defp grabbable?(_), do: true
 
   defp verdict_reason({:rejected, :out_of_band}), do: gettext("outside size band")
@@ -206,5 +282,20 @@ defmodule CinderWeb.ManualSearchComponent do
   defp verdict_reason({:rejected, :wrong_resolution}), do: gettext("resolution not preferred")
   defp verdict_reason({:rejected, :wrong_source}), do: gettext("source not preferred")
   defp verdict_reason({:rejected, :wrong_protocol}), do: gettext("no client for protocol")
+  defp verdict_reason({:rejected, :blocked_anime_group}), do: gettext("blocked anime group")
+  defp verdict_reason({:rejected, :contradictory_audio}), do: gettext("contradictory audio")
+
+  defp verdict_reason({:rejected, :contradictory_subtitles}),
+    do: gettext("contradictory subtitles")
+
+  defp verdict_reason({:rejected, :awaiting_preferred_group}),
+    do: gettext("awaiting preferred group")
+
+  defp verdict_reason({:rejected, :publication_time_required}),
+    do: gettext("publication time required")
+
+  defp verdict_reason({:rejected, :unsafe_anime_mapping}),
+    do: gettext("stable episode mapping required")
+
   defp verdict_reason(_), do: ""
 end

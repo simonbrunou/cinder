@@ -176,6 +176,51 @@ defmodule Cinder.CatalogAdminTest do
       assert {:ok, %Movie{status: :cancelled}} = Catalog.cancel_movie(movie, actor)
       assert Repo.get!(Movie, movie.id).status == :cancelled
     end
+
+    test "a held normal policy verification cancel fences cleanup before clearing ownership" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      movie = verification_held_movie(:download)
+
+      expect(Cinder.Download.ClientMock, :remove, fn "HASH-HELD-download", _opts ->
+        {:error, :down}
+      end)
+
+      assert {:ok, cancelled} = Catalog.cancel_movie(movie, actor)
+      assert cancelled.status == :cancelled
+      assert cancelled.download_id == nil
+      assert cancelled.release_title == nil
+      assert cancelled.release_policy_snapshot == nil
+      assert cancelled.verification_hold_origin == nil
+      assert cancelled.file_path == nil
+
+      assert Repo.get_by!(Cinder.Download.Intent,
+               kind: :movie,
+               target_id: movie.id
+             ).status == :cleanup_pending
+    end
+
+    test "a held upgrade cancel fences cleanup and preserves the live library file" do
+      movie = verification_held_movie(:upgrade)
+
+      expect(Cinder.Download.ClientMock, :remove, fn "HASH-HELD-upgrade", _opts ->
+        {:error, :down}
+      end)
+
+      assert {:ok, available} = Catalog.abort_upgrade(movie, nil)
+      assert available.status == :available
+      assert available.download_id == nil
+      assert available.release_title == nil
+      assert available.release_policy_snapshot == nil
+      assert available.verification_hold_origin == nil
+      assert available.file_path == "/library/Anime Movie.mkv"
+      assert available.imported_resolution == "720p"
+      assert available.imported_size == 1_234
+
+      assert Repo.get_by!(Cinder.Download.Intent,
+               kind: :movie,
+               target_id: movie.id
+             ).status == :cleanup_pending
+    end
   end
 
   describe "download metrics" do
@@ -365,6 +410,35 @@ defmodule Cinder.CatalogAdminTest do
       id = movie.id
       assert {:ok, %Movie{}} = Catalog.delete_movie(movie, actor)
       assert Repo.get(Movie, id) == nil
+    end
+
+    test "deleting a held upgrade leaves the live file and preserves failed remote cleanup" do
+      movie = verification_held_movie(:upgrade)
+
+      expect(Cinder.Download.ClientMock, :remove, fn "HASH-HELD-upgrade", _opts ->
+        {:error, :down}
+      end)
+
+      assert {:ok, _deleted} = Catalog.delete_movie(movie, nil)
+      refute Repo.get(Movie, movie.id)
+
+      assert Repo.get_by!(Cinder.Download.Intent,
+               kind: :movie,
+               target_id: movie.id
+             ).status == :cleanup_pending
+    end
+
+    test "held Retry rejects a stale snapshot without clearing preserved ownership" do
+      stale = verification_held_movie(:download)
+
+      assert {:ok, current} =
+               Catalog.transition(stale, %{status: :import_failed, release_title: "Concurrent"},
+                 expect: :import_failed
+               )
+
+      assert {:error, :stale_status} = Catalog.retry_movie(stale)
+      assert Repo.reload!(current).download_id == "HASH-HELD-download"
+      assert Repo.reload!(current).verification_hold_origin == :download
     end
 
     test "deleting an already-deleted movie returns {:error, :stale_entry} (no raise)" do
@@ -880,5 +954,40 @@ defmodule Cinder.CatalogAdminTest do
 
       assert Catalog.delete_episode_file(ep, nil) == {:error, :stale_entry}
     end
+  end
+
+  defp verification_held_movie(origin) do
+    file_path =
+      if origin == :upgrade,
+        do: "/library/Anime Movie.mkv",
+        else: "/downloads/Anime Movie.mkv"
+
+    movie =
+      movie_fixture(%{
+        title: "Anime Movie",
+        status: :import_failed,
+        download_id: "HASH-HELD-#{origin}",
+        download_protocol: :torrent,
+        release_title: "[Group] Anime Movie",
+        file_path: file_path,
+        imported_resolution: "720p",
+        imported_size: 1_234
+      })
+
+    {:ok, held} =
+      Catalog.transition(movie, %{
+        status: :import_failed,
+        import_attempts: 10,
+        verification_hold_origin: origin,
+        release_policy_snapshot: %{
+          "version" => 1,
+          "required_audio_languages" => ["ja", "fr"],
+          "required_embedded_subtitle_languages" => [],
+          "release_group" => "group",
+          "release_title" => movie.release_title
+        }
+      })
+
+    Repo.reload!(held)
   end
 end

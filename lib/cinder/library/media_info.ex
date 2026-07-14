@@ -20,6 +20,13 @@ defmodule Cinder.Library.MediaInfo do
           required(:forced?) => boolean()
         }
 
+  @type probe_report :: %{
+          required(:audio) => [String.t()],
+          required(:subtitles) => [String.t()],
+          required(:audio_unknown?) => boolean(),
+          required(:subtitle_unknown?) => boolean()
+        }
+
   @doc """
   Probes `path`'s streams. Returns `{:ok, %{audio: [code], subtitles: [code]}}` — the language
   codes of the audio and subtitle streams (lowercased; untagged/`und` dropped) — or
@@ -28,6 +35,9 @@ defmodule Cinder.Library.MediaInfo do
   """
   @callback probe(path :: String.t()) ::
               {:ok, %{audio: [String.t()], subtitles: [String.t()]}} | {:error, term()}
+
+  @doc "Probes streams while preserving whether audio or subtitle language tags are unknown."
+  @callback probe_policy(path :: String.t()) :: {:ok, probe_report()} | {:error, term()}
 
   @callback subtitle_tracks(path :: String.t()) ::
               {:ok, [subtitle_track()]} | {:error, term()}

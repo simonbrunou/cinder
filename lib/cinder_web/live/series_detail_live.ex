@@ -10,7 +10,8 @@ defmodule CinderWeb.SeriesDetailLive do
 
   import CinderWeb.LiveHelpers, only: [format_date_year: 1, humanize_bytes: 1, rating: 1]
 
-  alias Cinder.Catalog
+  alias Cinder.Acquisition.AnimePreferences
+  alias Cinder.{Catalog, Settings}
   alias Cinder.Catalog.{Episode, Season, Series}
 
   @impl true
@@ -247,6 +248,26 @@ defmodule CinderWeb.SeriesDetailLive do
     end
   end
 
+  def handle_event(
+        "save_anime_preferences",
+        %{"anime_preferences" => params},
+        socket
+      )
+      when is_map(params) do
+    case Catalog.set_anime_preferences(socket.assigns.series, params) do
+      {:ok, _updated} ->
+        {:noreply, reload(socket)}
+
+      {:error, %Ecto.Changeset{} = changeset} ->
+        {:noreply,
+         assign(
+           socket,
+           :anime_preferences_form,
+           anime_preferences_form_state(socket.assigns.series, params, changeset)
+         )}
+    end
+  end
+
   def handle_event("save_alias", %{"alias" => params}, socket) when is_map(params) do
     result =
       case params["id"] do
@@ -403,6 +424,8 @@ defmodule CinderWeb.SeriesDetailLive do
 
     socket
     |> assign(
+      anime_policy: anime_policy(series),
+      anime_preferences_form: anime_preferences_form_state(series),
       profile_form: profile_form(series),
       profile_summary: Catalog.media_profile_summary(series),
       aliases_empty?: aliases == []
@@ -412,6 +435,31 @@ defmodule CinderWeb.SeriesDetailLive do
 
   defp profile_form(series),
     do: to_form(%{"media_profile" => Atom.to_string(series.media_profile)})
+
+  defp anime_preferences_form_state(series, params \\ %{}, changeset \\ nil) do
+    errors =
+      case changeset do
+        %Ecto.Changeset{} ->
+          Enum.map(changeset.errors, fn
+            {:group_fallback_delay, error} -> {:group_fallback_delay_hours, error}
+            error -> error
+          end)
+
+        nil ->
+          []
+      end
+
+    series
+    |> AnimePreferences.form_state(params)
+    |> to_form(as: :anime_preferences, errors: errors, action: :validate)
+  end
+
+  defp anime_policy(series) do
+    case AnimePreferences.resolve(series, Settings.anime_defaults()) do
+      {:ok, policy} -> policy
+      {:error, _reason} -> nil
+    end
+  end
 
   defp alias_form(params \\ %{})
 
@@ -507,26 +555,26 @@ defmodule CinderWeb.SeriesDetailLive do
   # A season has something the search sweep would actually pick up. Gates the per-season
   # "Search all missing" and "Find a better match" controls; mirrors the per-episode "Search"
   # button.
-  defp season_wanted?(%{episodes: eps, season_number: n}),
-    do: Enum.any?(eps, &episode_searchable?(&1, n))
+  defp season_wanted?(%{episodes: episodes} = season, profile),
+    do: Enum.any?(episodes, &episode_searchable?(&1, season, profile))
 
-  # Mirrors Catalog.wanted_episodes_query/0 exactly: an episode the TV sweep would grab. A
-  # monitored, file-less, grab-less episode is NOT enough — it must also be in a real season
-  # (> 0, no specials), a real episode (> 0), and already aired (dated, air_date <= today).
-  # Keeping this in lock-step with the query avoids a "Search…" affordance that never grabs.
-  defp episode_searchable?(ep, season_number) do
-    is_nil(ep.file_path) and is_nil(ep.grab_id) and ep.monitored and season_number > 0 and
-      ep.episode_number > 0 and not is_nil(ep.air_date) and
-      Date.compare(ep.air_date, Date.utc_today()) != :gt
-  end
+  # Eligibility lives in Catalog so the sweep and detail actions cannot drift.
+  # Episodes arrive nested under their season rather than with the back-reference
+  # preloaded; attaching that already-loaded parent is a pure in-memory operation.
+  # The current profile summary is already assigned for the page, so passing it
+  # through also keeps Auto's effective Standard semantics identical to the query.
+  # No extra database query is needed while rendering the episode list.
+  defp episode_searchable?(episode, season, profile),
+    do: Catalog.episode_searchable?(%{episode | season: season}, profile)
 
   # The sweep hit its attempt cap and skips this episode — without a badge the row reads
   # "still trying" forever. The Search button next to it zeroes the counter and re-queues.
   # Delegates the park predicate to Catalog.episode_state/2 (the single derivation) so this
   # badge can't drift from the calendar's; episode_searchable? adds the monitored/specials
   # legs the state fn doesn't carry.
-  defp search_exhausted?(ep, season_number) do
-    episode_searchable?(ep, season_number) and Catalog.episode_state(ep) == :search_parked
+  defp search_exhausted?(episode, season, profile) do
+    episode_searchable?(episode, season, profile) and
+      Catalog.episode_state(episode) == :search_parked
   end
 
   @impl true
@@ -666,6 +714,12 @@ defmodule CinderWeb.SeriesDetailLive do
           <.profile_summary id="series-profile-summary" summary={@profile_summary} />
         </div>
       </div>
+
+      <.anime_preferences_form
+        :if={@profile_summary.effective == :anime or @profile_summary.selected == :anime}
+        form={@anime_preferences_form}
+        effective={@anime_policy}
+      />
 
       <section class="mb-6 max-w-3xl" aria-labelledby="series-aliases-heading">
         <h2 id="series-aliases-heading" class="mb-2 text-lg font-semibold">
@@ -826,7 +880,7 @@ defmodule CinderWeb.SeriesDetailLive do
               {gettext("Delete files")}
             </.button>
             <.button
-              :if={season_wanted?(season)}
+              :if={season_wanted?(season, @profile_summary)}
               type="button"
               variant="neutral"
               size="sm"
@@ -841,7 +895,7 @@ defmodule CinderWeb.SeriesDetailLive do
               {gettext("Search all missing")}
             </.button>
             <.button
-              :if={season_wanted?(season)}
+              :if={season_wanted?(season, @profile_summary)}
               type="button"
               variant="ghost"
               size="sm"
@@ -962,12 +1016,12 @@ defmodule CinderWeb.SeriesDetailLive do
                   {gettext("Delete file")}
                 </.button>
                 <.status_badge
-                  :if={search_exhausted?(ep, season.season_number)}
+                  :if={search_exhausted?(ep, season, @profile_summary)}
                   kind={:episode}
                   status={:search_parked}
                 />
                 <.button
-                  :if={episode_searchable?(ep, season.season_number)}
+                  :if={episode_searchable?(ep, season, @profile_summary)}
                   type="button"
                   variant="ghost"
                   size="sm"

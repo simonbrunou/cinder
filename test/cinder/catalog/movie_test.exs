@@ -7,6 +7,61 @@ defmodule Cinder.Catalog.MovieTest do
   import Cinder.CatalogFixtures
   import Ecto.Changeset
 
+  @anime_preferences %{
+    audio_mode: :dual,
+    subtitle_languages: [" JPN ", "ja", "FRA"],
+    embedded_subtitle_mode: :require,
+    preferred_release_groups: [" SubsPlease ", "subsplease"],
+    blocked_release_groups: [" BadGroup "],
+    group_fallback_delay: 21_600
+  }
+
+  test "anime_preferences_changeset/2 exclusively casts and normalizes Anime preferences" do
+    changeset = Movie.anime_preferences_changeset(%Movie{}, @anime_preferences)
+
+    assert changeset.valid?
+
+    assert %Movie{
+             audio_mode: :dual,
+             subtitle_languages: ["ja", "fr"],
+             embedded_subtitle_mode: :require,
+             preferred_release_groups: ["subsplease"],
+             blocked_release_groups: ["badgroup"],
+             group_fallback_delay: 21_600
+           } = apply_changes(changeset)
+
+    general =
+      Movie.changeset(
+        %Movie{},
+        Map.merge(@anime_preferences, %{tmdb_id: 1, title: "Ignored preferences"})
+      )
+
+    for field <- Map.keys(@anime_preferences), do: refute(get_change(general, field))
+  end
+
+  test "anime_preferences_changeset/2 rejects a negative fallback delay" do
+    changeset = Movie.anime_preferences_changeset(%Movie{}, %{group_fallback_delay: -1})
+    assert "must be greater than or equal to 0" in errors_on(changeset).group_fallback_delay
+  end
+
+  test "general and provider changesets preserve stored Anime preferences" do
+    stored = struct(%Movie{tmdb_id: 1, title: "Stored"}, @anime_preferences)
+    replacements = Map.new(@anime_preferences, fn {key, _value} -> {key, nil} end)
+
+    for changeset <- [
+          Movie.changeset(stored, Map.put(replacements, :title, "Admin")),
+          Movie.metadata_changeset(stored, replacements),
+          Movie.language_changeset(stored, Map.put(replacements, :preferred_language, "any"))
+        ],
+        field <- Map.keys(@anime_preferences) do
+      assert Map.fetch!(apply_changes(changeset), field) == Map.fetch!(stored, field)
+    end
+  end
+
+  test "a standard movie exposes no release policy snapshot by default" do
+    assert %Movie{release_policy_snapshot: nil} = movie_fixture()
+  end
+
   test "changeset/2 casts original_language and preferred_language" do
     cs =
       Movie.changeset(%Movie{}, %{

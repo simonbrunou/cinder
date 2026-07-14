@@ -1,10 +1,13 @@
 defmodule CinderWeb.ActivityLiveTest do
   use CinderWeb.ConnCase, async: false
 
+  import Ecto.Query
   import Phoenix.LiveViewTest
   import Mox
 
   alias Cinder.Catalog
+  alias Cinder.Catalog.{Episode, Grab}
+  alias Cinder.Download.Intent
   alias Cinder.Repo
 
   import Cinder.CatalogFixtures
@@ -33,6 +36,28 @@ defmodule CinderWeb.ActivityLiveTest do
 
     {:ok, grab} = Catalog.create_grab("abc123", :torrent, [episode.id])
     grab
+  end
+
+  defp verification_grab! do
+    grab = grab!()
+
+    grab
+    |> Ecto.Changeset.change(%{
+      content_path: "/downloads/Severance.S01E01.mkv",
+      download_attempts: 10,
+      mapping_snapshot: %{"version" => 2, "reserved_episode_ids" => []},
+      release_policy_snapshot: %{
+        "version" => 1,
+        "required_audio_languages" => ["ja"],
+        "required_embedded_subtitle_languages" => [],
+        "release_group" => "group",
+        "release_title" => "[Group] Severance S01E01"
+      },
+      mapping_status: :verification_blocked,
+      automatic_mapping_decisions: %{"version" => 1, "files" => []}
+    })
+    |> Repo.update!()
+    |> Repo.preload(:episodes)
   end
 
   test "renders the movie pipeline and live-updates on transition", %{conn: conn} do
@@ -120,6 +145,99 @@ defmodule CinderWeb.ActivityLiveTest do
 
     assert has_element?(view, "#ask-cancel-mapping-grab-#{held.id}", "Cancel download")
     refute has_element?(view, "#grab-#{held.id} button", "Delete")
+  end
+
+  test "verification holds show retry and cancel without exposing the mapping editor", %{
+    conn: conn
+  } do
+    held = verification_grab!()
+
+    {:ok, view, _html} = live(conn, ~p"/activity")
+
+    assert has_element?(view, "#grab-#{held.id}", "Needs verification")
+    assert has_element?(view, "#retry-verification-grab-#{held.id}", "Retry verification")
+    assert has_element?(view, "#cancel-verification-grab-#{held.id}", "Cancel download")
+
+    refute has_element?(
+             view,
+             ~s|#grab-#{held.id} a[href="/activity/grabs/#{held.id}/mapping"]|
+           )
+
+    refute has_element?(view, "#grab-#{held.id}", "Review mapping")
+    refute has_element?(view, "#grab-#{held.id} input")
+
+    assert {:error, {kind, %{to: "/activity"}}} =
+             live(conn, "/activity/grabs/#{held.id}/mapping")
+
+    assert kind in [:redirect, :live_redirect]
+  end
+
+  test "retry verification resets only the hold and counter without service I/O", %{conn: conn} do
+    held = verification_grab!()
+    saved_media_info = Application.get_env(:cinder, :media_info)
+    Application.put_env(:cinder, :media_info, Cinder.Library.MediaInfoMock)
+
+    on_exit(fn ->
+      if saved_media_info,
+        do: Application.put_env(:cinder, :media_info, saved_media_info),
+        else: Application.delete_env(:cinder, :media_info)
+    end)
+
+    calls = start_supervised!({Agent, fn -> %{filesystem: 0, media_info: 0, client: 0} end})
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _path ->
+      Agent.update(calls, &Map.update!(&1, :filesystem, fn count -> count + 1 end))
+      false
+    end)
+
+    stub(Cinder.Library.MediaInfoMock, :probe_policy, fn _path ->
+      Agent.update(calls, &Map.update!(&1, :media_info, fn count -> count + 1 end))
+      {:error, :unexpected}
+    end)
+
+    stub(Cinder.Download.ClientMock, :remove, fn _remote_id, _opts ->
+      Agent.update(calls, &Map.update!(&1, :client, fn count -> count + 1 end))
+      :ok
+    end)
+
+    {:ok, view, _html} = live(conn, ~p"/activity")
+    view |> element("#retry-verification-grab-#{held.id}") |> render_click()
+
+    assert %Grab{mapping_status: :resolved, download_attempts: 0} =
+             retried =
+             Repo.get!(Grab, held.id)
+
+    assert retried.content_path == held.content_path
+    assert retried.mapping_snapshot == held.mapping_snapshot
+    assert retried.release_policy_snapshot == held.release_policy_snapshot
+    assert Agent.get(calls, & &1) == %{filesystem: 0, media_info: 0, client: 0}
+  end
+
+  test "cancel verification keeps the existing durable cleanup fence", %{conn: conn} do
+    held = verification_grab!()
+    [episode] = held.episodes
+
+    expect(Cinder.Download.ClientMock, :remove, fn remote_id, delete_files: true ->
+      assert remote_id == held.download_id
+      {:error, :client_down}
+    end)
+
+    {:ok, view, _html} = live(conn, ~p"/activity")
+    view |> element("#cancel-verification-grab-#{held.id}") |> render_click()
+
+    view
+    |> element("#confirm-delete-grab-#{held.id} button", "Cancel download")
+    |> render_click()
+
+    refute Repo.get(Grab, held.id)
+    assert Repo.get!(Episode, episode.id).grab_id == nil
+
+    remote_id = held.download_id
+
+    assert Repo.exists?(
+             from i in Intent,
+               where: i.remote_id == ^remote_id and i.status == :cleanup_pending
+           )
   end
 
   test "a stale held confirmation cannot cancel a concurrently resumed grab", %{conn: conn} do

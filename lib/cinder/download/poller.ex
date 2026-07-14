@@ -75,8 +75,17 @@ defmodule Cinder.Download.Poller do
       {:error, :stale_status} ->
         :ok
 
+      {:error, :invalid_anime_preferences} ->
+        Logger.info("movie #{movie.id} search held: invalid anime preferences")
+        :ok
+
       {:error, reason}
-      when reason in [:intent_backoff, :cleanup_pending, :download_intent_busy, :intent_completed] ->
+      when reason in [
+             :intent_backoff,
+             :cleanup_pending,
+             :download_intent_busy,
+             :intent_completed
+           ] ->
         :ok
 
       {:error, :no_imdb_id} ->
@@ -183,8 +192,13 @@ defmodule Cinder.Download.Poller do
   @download_failure_errors [:download_error, :torrent_not_found, :no_content_path]
   @max_attempts 10
 
-  defp import_one(movie) do
-    case Library.stage_movie(movie) do
+  defp import_one(movie), do: movie |> Library.stage_movie() |> import_one_result(movie)
+
+  defp import_one_result({:error, {:release_policy_mismatch, evidence}}, movie),
+    do: reject_release(movie, evidence)
+
+  defp import_one_result(result, movie) do
+    case result do
       {:ok, %{dest: dest, quality: q} = stage} ->
         # On the (rare) transition error, leave the movie :downloaded for next-tick
         # retry rather than raising — matching the poller's ignore-and-retry convention.
@@ -241,6 +255,8 @@ defmodule Cinder.Download.Poller do
         park(movie, :import_failed, reason)
 
       {:error, reason} ->
+        # An unavailable policy probe is deliberately transient here: exhausting the bound parks
+        # the movie without classifying, blocklisting, or cleaning up a possibly valid release.
         retry_or_fail(movie, reason, :import_attempts, :import_failed)
     end
   end
@@ -256,7 +272,13 @@ defmodule Cinder.Download.Poller do
         "movie #{movie.id} #{attempts_field} exhausted after #{attempts}: #{inspect(reason)}"
       )
 
-      park(movie, terminal_status, reason)
+      case reason do
+        {:release_policy_unavailable, _reason} ->
+          hold_policy_verification(movie, :download, attempts, reason)
+
+        _reason ->
+          park(movie, terminal_status, reason)
+      end
     else
       Logger.info(
         "movie #{movie.id} #{attempts_field} #{attempts}/#{@max_attempts} failed (#{inspect(reason)}); will retry"
@@ -279,8 +301,9 @@ defmodule Cinder.Download.Poller do
 
   # A terminal failure park: transition once (the choke-point) then notify. Keeps
   # every "movie gave up" path emitting the same event with no per-site duplication.
-  defp park(movie, status, reason) do
-    with {:ok, parked} <- Catalog.transition(movie, %{status: status}, expect: movie.status) do
+  defp park(movie, status, reason, attrs \\ %{}) do
+    with {:ok, parked} <-
+           Catalog.transition(movie, Map.put(attrs, :status, status), expect: movie.status) do
       Notifier.notify({:movie_failed, parked, reason})
 
       # Best-effort, AFTER the park commits (a side effect like the notify above): record the
@@ -290,6 +313,12 @@ defmodule Cinder.Download.Poller do
       if reason in @permanent_import_errors or reason in @download_failure_errors do
         Catalog.block_release(parked, reason)
       end
+    end
+  end
+
+  defp hold_policy_verification(movie, origin, attempts, reason) do
+    with {:ok, held} <- Catalog.hold_movie_verification(movie, origin, attempts) do
+      Notifier.notify({:movie_failed, held, reason})
     end
   end
 
@@ -347,8 +376,17 @@ defmodule Cinder.Download.Poller do
   # library file is swapped (replace/2) and the movie returns :available carrying the new quality;
   # if the new dest filename differs (a different container) the old file is removed best-effort so
   # the library never holds two files. Any failure reverts to :available, live file intact.
-  defp finish_upgrade(movie, content_path) do
-    case Library.stage_movie(%{movie | file_path: content_path}, replace: true) do
+  defp finish_upgrade(movie, content_path),
+    do:
+      %{movie | file_path: content_path}
+      |> Library.stage_movie(replace: true)
+      |> finish_upgrade_result(movie)
+
+  defp finish_upgrade_result({:error, {:release_policy_mismatch, evidence}}, movie),
+    do: reject_release(movie, evidence)
+
+  defp finish_upgrade_result(result, movie) do
+    case result do
       {:ok, %{dest: dest, quality: q} = stage} ->
         movie
         |> Catalog.transition(
@@ -403,6 +441,14 @@ defmodule Cinder.Download.Poller do
     finish_stage(stage, :rollback)
   end
 
+  defp reject_release(movie, evidence) do
+    case Catalog.reject_movie_release(movie, evidence) do
+      {:ok, _movie} -> :ok
+      {:error, :stale_release} -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   defp finish_stage(stage, action) do
     result =
       case action do
@@ -430,7 +476,13 @@ defmodule Cinder.Download.Poller do
     attempts = (movie.import_attempts || 0) + 1
 
     if attempts >= @max_attempts do
-      revert_upgrade(movie, reason)
+      case reason do
+        {:release_policy_unavailable, _reason} ->
+          hold_policy_verification(movie, :upgrade, attempts, reason)
+
+        _reason ->
+          revert_upgrade(movie, reason)
+      end
     else
       Logger.info(
         "movie #{movie.id} upgrade #{attempts}/#{@max_attempts} failed (#{inspect(reason)}); will retry"

@@ -9,6 +9,18 @@ defmodule CinderWeb.SettingsLiveTest do
   alias Cinder.Settings
 
   setup :register_and_log_in_admin
+
+  setup do
+    keys = [Cinder.Subtitles.Provider.OpenSubtitles, :anime_preferences]
+    original = Map.new(keys, &{&1, Application.get_env(:cinder, &1)})
+
+    on_exit(fn ->
+      assert Map.new(keys, &{&1, Application.get_env(:cinder, &1)}) == original
+    end)
+
+    :ok
+  end
+
   setup :reset_cinder_env
   setup :set_mox_global
 
@@ -39,6 +51,65 @@ defmodule CinderWeb.SettingsLiveTest do
     end
 
     assert has_element?(lv, "#settings-group-#{hd(groups)}[open]")
+  end
+
+  test "renders Anime defaults in display units and preserves safe values on validation", %{
+    conn: conn
+  } do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    assert has_element?(lv, "#anime-settings > summary", "Anime releases")
+    assert has_element?(lv, "#anime_audio_mode option[value=original]")
+    assert has_element?(lv, "#anime-dual-language-settings-help")
+    assert has_element?(lv, "#anime_embedded_subtitle_mode option[value=require]")
+    assert has_element?(lv, ~s|#anime_group_fallback_delay[type="number"][min="0"]|)
+
+    html =
+      lv
+      |> form("#settings-form", %{
+        "anime_audio_mode" => "dual",
+        "anime_embedded_subtitle_mode" => "prefer",
+        "anime_preferred_groups" => "SubsPlease",
+        "anime_blocked_groups" => "BadGroup",
+        "anime_group_fallback_delay" => "-1",
+        "subtitle_languages" => "en",
+        "tmdb_token" => "must-never-echo",
+        "media_server_type" => "jellyfin"
+      })
+      |> render_submit()
+
+    assert has_element?(lv, "#anime_audio_mode option[value=dual][selected]")
+    assert has_element?(lv, "#anime_embedded_subtitle_mode option[value=prefer][selected]")
+
+    assert has_element?(
+             lv,
+             "#anime_group_fallback_delay[value='-1'][aria-invalid=true]"
+           )
+
+    refute html =~ "must-never-echo"
+  end
+
+  test "saving Anime defaults persists them and flashes success", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    html =
+      lv
+      |> form("#settings-form", %{
+        "anime_audio_mode" => "dual",
+        "anime_embedded_subtitle_mode" => "require",
+        "anime_preferred_groups" => "SubsPlease, Erai-Raws",
+        "anime_blocked_groups" => "BadGroup",
+        "anime_group_fallback_delay" => "12",
+        "subtitle_languages" => "fr,en",
+        "media_server_type" => "jellyfin"
+      })
+      |> render_submit()
+
+    assert html =~ "Settings saved."
+    assert Settings.anime_defaults().audio_mode == :dual
+    assert Settings.anime_defaults().group_fallback_delay == 43_200
+    assert has_element?(lv, "#anime_audio_mode option[value=dual][selected]")
+    assert has_element?(lv, "#anime_group_fallback_delay[value='12']")
   end
 
   test "disclosures keep native toggles local and force-open only invalid groups", %{conn: conn} do

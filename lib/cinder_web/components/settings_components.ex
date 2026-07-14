@@ -8,7 +8,7 @@ defmodule CinderWeb.SettingsComponents do
   use Phoenix.Component
   use Gettext, backend: CinderWeb.Gettext
 
-  import CinderWeb.CoreComponents, only: [status_badge: 1, button: 1, icon: 1]
+  import CinderWeb.CoreComponents, only: [status_badge: 1, button: 1, icon: 1, input: 1]
 
   alias Cinder.Settings
   alias CinderWeb.SettingsLabels
@@ -24,9 +24,15 @@ defmodule CinderWeb.SettingsComponents do
   end
 
   defp invalid_groups(keys) do
+    anime_keys = MapSet.new(Settings.anime_fields(), & &1.key)
+
     keys
     |> Enum.map(fn key ->
-      if key == Settings.import_roots_key(), do: :library, else: :releases
+      cond do
+        key == Settings.import_roots_key() -> :library
+        MapSet.member?(anime_keys, key) -> :anime
+        true -> :releases
+      end
     end)
     |> MapSet.new()
   end
@@ -36,6 +42,7 @@ defmodule CinderWeb.SettingsComponents do
   # move_on_import is a /settings-only advanced toggle; the first-run wizard passes false
   # so it isn't offered before the operator has validated a real import (spec: settings-only).
   attr :show_move_on_import, :boolean, default: true
+  attr :show_anime, :boolean, default: true
 
   def service_fields(assigns) do
     [{first_group, _label} | _groups] = Settings.groups()
@@ -280,6 +287,76 @@ defmodule CinderWeb.SettingsComponents do
         </div>
       </div>
     </details>
+
+    <details
+      :if={@show_anime}
+      id="anime-settings"
+      open={MapSet.member?(@invalid_groups, :anime)}
+      phx-hook="DisclosureState"
+      data-force-open={to_string(MapSet.member?(@invalid_groups, :anime))}
+      class="collapse collapse-arrow rounded-box bg-base-200"
+    >
+      <summary class="min-h-11 cursor-pointer px-4 py-3 text-lg font-semibold focus-visible:outline-2 focus-visible:outline-primary">
+        {gettext("Anime releases")}
+      </summary>
+      <div class="collapse-content grid gap-4 md:grid-cols-2">
+        <div>
+          <.input
+            id="anime_audio_mode"
+            name="anime_audio_mode"
+            value={@form.values["anime_audio_mode"]}
+            errors={field_errors(@form, "anime_audio_mode")}
+            type="select"
+            label={gettext("Audio mode")}
+            prompt={gettext("Use server default (Original)")}
+            options={[
+              {gettext("Original"), "original"},
+              {gettext("Dub"), "dub"},
+              {gettext("Dual audio"), "dual"},
+              {gettext("Any"), "any"}
+            ]}
+          />
+          <p id="anime-dual-language-settings-help" class="text-xs text-base-content/60">
+            {gettext("Dual audio requires known original-language metadata and a dub target")}
+          </p>
+        </div>
+        <.input
+          id="anime_embedded_subtitle_mode"
+          name="anime_embedded_subtitle_mode"
+          value={@form.values["anime_embedded_subtitle_mode"]}
+          errors={field_errors(@form, "anime_embedded_subtitle_mode")}
+          type="select"
+          label={gettext("Embedded subtitles")}
+          prompt={gettext("Use server default (Prefer embedded)")}
+          options={[
+            {gettext("Allow"), "allow"},
+            {gettext("Prefer embedded"), "prefer"},
+            {gettext("Require embedded"), "require"}
+          ]}
+        />
+        <.input
+          id="anime_preferred_groups"
+          name="anime_preferred_groups"
+          value={@form.values["anime_preferred_groups"]}
+          label={gettext("Preferred groups")}
+        />
+        <.input
+          id="anime_blocked_groups"
+          name="anime_blocked_groups"
+          value={@form.values["anime_blocked_groups"]}
+          label={gettext("Blocked groups")}
+        />
+        <.input
+          id="anime_group_fallback_delay"
+          name="anime_group_fallback_delay"
+          value={@form.values["anime_group_fallback_delay"]}
+          errors={field_errors(@form, "anime_group_fallback_delay")}
+          type="number"
+          min="0"
+          label={gettext("Preferred-group fallback delay (hours)")}
+        />
+      </div>
+    </details>
     """
   end
 
@@ -379,14 +456,35 @@ defmodule CinderWeb.SettingsComponents do
 
   defp invalid?(form, key), do: MapSet.member?(form.invalid_keys, key)
 
+  defp field_errors(form, key) do
+    if invalid?(form, key), do: [invalid_field_message(key)], else: []
+  end
+
   defp invalid_field_message(key) when key == "import_roots",
     do: gettext("The filesystem root (/) is not allowed.")
+
+  defp invalid_field_message(key) when key == "anime_group_fallback_delay",
+    do: gettext("Enter a non-negative whole number of hours.")
+
+  defp invalid_field_message(key) when key == "anime_embedded_subtitle_mode",
+    do: gettext("Choose a valid mode and at least one subtitle language when required.")
+
+  defp invalid_field_message(key) when key == "anime_audio_mode",
+    do: gettext("Choose a valid audio mode.")
 
   defp invalid_field_message(_key),
     do: gettext("Enter a positive number of GB, or leave blank for no limit.")
 
   defp invalid_field_label(key) when key == "import_roots",
     do: gettext("Download import roots")
+
+  defp invalid_field_label("anime_audio_mode"), do: gettext("Anime: Audio mode")
+
+  defp invalid_field_label("anime_embedded_subtitle_mode"),
+    do: gettext("Anime: Embedded subtitles")
+
+  defp invalid_field_label("anime_group_fallback_delay"),
+    do: gettext("Anime: Preferred-group fallback delay")
 
   defp invalid_field_label(key) do
     Enum.find_value(Settings.library_kinds(), key, fn %{kind: kind, label: label} ->

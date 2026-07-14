@@ -8,7 +8,7 @@ defmodule Cinder.Download.TvPollerTest do
   # test output stays pristine (they print on failure).
   @moduletag :capture_log
 
-  alias Cinder.Acquisition.{Anime, Release}
+  alias Cinder.Acquisition.{Anime, AnimePreferences, Release}
   alias Cinder.Catalog
   alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Identity, Season, Series}
   alias Cinder.Download
@@ -73,6 +73,52 @@ defmodule Cinder.Download.TvPollerTest do
        else: {:error, :enoent}
   end
 
+  defp enable_policy_probe do
+    saved_media_info = Application.get_env(:cinder, :media_info)
+    saved_import_roots = Application.get_env(:cinder, :import_roots)
+    Application.put_env(:cinder, :media_info, Cinder.Library.MediaInfoMock)
+    Application.put_env(:cinder, :import_roots, ["/downloads"])
+
+    on_exit(fn ->
+      if saved_media_info,
+        do: Application.put_env(:cinder, :media_info, saved_media_info),
+        else: Application.delete_env(:cinder, :media_info)
+
+      if saved_import_roots,
+        do: Application.put_env(:cinder, :import_roots, saved_import_roots),
+        else: Application.delete_env(:cinder, :import_roots)
+    end)
+  end
+
+  defp stub_policy_inventory(source) do
+    stat = %File.Stat{
+      type: :regular,
+      size: 2_000_000_000,
+      major_device: 1,
+      inode: 116,
+      mtime: {{2026, 7, 13}, {12, 0, 0}}
+    }
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
+    stub(Cinder.Library.FilesystemMock, :lstat, fn ^source -> {:ok, stat} end)
+  end
+
+  defp policy_snapshot(release_title) do
+    %{
+      "version" => 1,
+      "required_audio_languages" => ["ja", "fr"],
+      "required_embedded_subtitle_languages" => [],
+      "release_group" => "group",
+      "release_title" => release_title
+    }
+  end
+
+  defp cleanup_pending_for?(remote_id) do
+    Repo.exists?(
+      from i in Intent, where: i.remote_id == ^remote_id and i.status == :cleanup_pending
+    )
+  end
+
   defp stub_accept_then_crash(remote_id) do
     {:ok, accepted} = Agent.start_link(fn -> %{adds: 0, jobs: %{}} end)
 
@@ -122,13 +168,97 @@ defmodule Cinder.Download.TvPollerTest do
 
     assert :ok = TvPoller.poll()
 
-    assert %Intent{mapping_snapshot: %{"version" => 2}} = intent = Repo.one!(Intent)
+    assert %Intent{
+             mapping_snapshot: %{"version" => 2},
+             release_policy_snapshot: %{"version" => 1}
+           } = intent = Repo.one!(Intent)
+
     assert Enum.sort(intent.episode_ids) == Enum.sort([first.id, second.id])
 
     assert Enum.sort(intent.mapping_snapshot["reserved_episode_ids"]) ==
              Enum.sort([first.id, second.id])
 
     assert Agent.get(counter, & &1) == 5
+  end
+
+  test "Anime preferred-group waiting holds only uncovered IDs without consuming attempts" do
+    series =
+      series_fixture(%{
+        tvdb_id: 99,
+        monitor_strategy: :all,
+        media_profile: :anime,
+        audio_mode: :any,
+        preferred_release_groups: ["subsplease"],
+        group_fallback_delay: 3_600
+      })
+
+    season = season_fixture(series, %{season_number: 1})
+    first = episode(season, 1)
+    second = episode(season, 2)
+
+    releases = [
+      %{
+        title: "[SubsPlease] Show S01E01 [1080p]",
+        size: 2_000_000_000,
+        download_url: "preferred-one"
+      },
+      %{
+        title: "[Other] Show S01E02 [1080p]",
+        size: 2_000_000_000,
+        download_url: "delayed-two",
+        published_at: DateTime.utc_now(:second)
+      }
+    ]
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 -> {:ok, releases} end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, categories: [5070] ->
+      {:ok, releases}
+    end)
+
+    adds = start_supervised!({Agent, fn -> 0 end})
+
+    stub(Cinder.Download.ClientMock, :add, fn release, _opts ->
+      Agent.update(adds, &(&1 + 1))
+      {:ok, "grab-#{release.download_url}"}
+    end)
+
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+    assert :ok = TvPoller.poll()
+
+    assert Repo.get!(Episode, first.id).grab_id
+    assert %Episode{grab_id: nil, search_attempts: 0} = Repo.get!(Episode, second.id)
+    assert Agent.get(adds, & &1) == 1
+  end
+
+  test "invalid Anime series preferences hold the group without search or attempt bumps" do
+    series =
+      series_fixture(%{
+        tvdb_id: 99,
+        monitor_strategy: :all,
+        media_profile: :anime,
+        embedded_subtitle_mode: :require,
+        subtitle_languages: []
+      })
+
+    wanted = episode(season_fixture(series), 1)
+    searches = start_supervised!({Agent, fn -> 0 end})
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
+      Agent.update(searches, &(&1 + 1))
+      {:ok, []}
+    end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, _opts ->
+      Agent.update(searches, &(&1 + 1))
+      {:ok, []}
+    end)
+
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+    assert :ok = TvPoller.poll()
+
+    assert %Episode{grab_id: nil, search_attempts: 0} = Repo.get!(Episode, wanted.id)
+    assert Agent.get(searches, & &1) == 0
   end
 
   test "restart reconciliation creates one snapshot grab with every reserved episode" do
@@ -144,13 +274,31 @@ defmodule Cinder.Download.TvPollerTest do
                episode_ids: assignment.episode_ids,
                protocol: :torrent,
                release: assignment.release,
-               mapping_snapshot: assignment.mapping_snapshot
+               mapping_snapshot: assignment.mapping_snapshot,
+               release_policy_snapshot: assignment.release.release_policy_snapshot
              })
 
     intent =
       intent
       |> Intent.changeset(%{status: :submitted, remote_id: "hash-anime-restart"})
       |> Repo.update!()
+
+    frozen_policy = assignment.release.release_policy_snapshot
+    assert intent.release_policy_snapshot == frozen_policy
+
+    series
+    |> Series.anime_preferences_changeset(%{
+      audio_mode: :any,
+      embedded_subtitle_mode: :require,
+      subtitle_languages: ["fr"]
+    })
+    |> Repo.update!()
+
+    {:ok, current_policy} =
+      AnimePreferences.resolve(Repo.get!(Series, series.id), Cinder.Settings.anime_defaults())
+
+    current_snapshot = AnimePreferences.snapshot(current_policy, assignment.release)
+    refute current_snapshot == frozen_policy
 
     stub(Cinder.Download.ClientMock, :status, fn "hash-anime-restart" ->
       {:ok, %{state: :downloading, progress: 0.0}}
@@ -162,6 +310,8 @@ defmodule Cinder.Download.TvPollerTest do
 
     assert %Grab{mapping_snapshot: snapshot} = grab = Repo.one!(Grab)
     assert snapshot == assignment.mapping_snapshot
+    assert grab.release_policy_snapshot == frozen_policy
+    refute grab.release_policy_snapshot == current_snapshot
 
     assert grab
            |> Repo.preload(:episodes)
@@ -215,7 +365,8 @@ defmodule Cinder.Download.TvPollerTest do
                episode_ids: [episode.id],
                protocol: :torrent,
                release: assignment.release,
-               mapping_snapshot: assignment.mapping_snapshot
+               mapping_snapshot: assignment.mapping_snapshot,
+               release_policy_snapshot: assignment.release.release_policy_snapshot
              })
 
     intent =
@@ -360,6 +511,176 @@ defmodule Cinder.Download.TvPollerTest do
     assert Repo.get!(Grab, grab.id).mapping_status == :needs_mapping
   end
 
+  test "a confirmed episodic policy mismatch releases the targets and grabs an exact sibling" do
+    enable_policy_probe()
+    series = series_fixture(%{monitor_strategy: :all, media_profile: :anime})
+    episode = episode(season_fixture(series), 1)
+    source = "/downloads/Show.S01E01.1080p.mkv"
+    old_title = "[Group] Show S01E01 [1080p]"
+    sibling_title = "[Group] Show S01E01 v2 [1080p]"
+    grab = downloaded_policy_grab(episode, source, old_title)
+    stub_policy_inventory(source)
+
+    expect(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source ->
+      {:ok, %{audio: ["ja"], subtitles: [], audio_unknown?: false, subtitle_unknown?: false}}
+    end)
+
+    remote_id = grab.download_id
+
+    expect(Cinder.Download.ClientMock, :remove, fn ^remote_id, delete_files: true -> :ok end)
+
+    releases = [
+      raw_release(old_title, "old-policy-release"),
+      raw_release(sibling_title, "sibling-policy-release")
+    ]
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
+      {:ok, releases}
+    end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, categories: [5070] ->
+      {:ok, releases}
+    end)
+
+    selected = start_supervised!({Agent, fn -> nil end})
+
+    expect(Cinder.Download.ClientMock, :add, fn release, _opts ->
+      Agent.update(selected, fn _ -> release.title end)
+      {:ok, "hash-policy-sibling"}
+    end)
+
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+    assert :ok = TvPoller.poll()
+
+    assert Agent.get(selected, & &1) == sibling_title
+    refute Repo.get(Grab, grab.id)
+
+    assert %Grab{release_title: ^sibling_title, mapping_issue: nil} = sibling = Repo.one!(Grab)
+    assert Repo.reload!(episode).grab_id == sibling.id
+    assert Repo.reload!(episode).search_attempts == episode.search_attempts
+    assert Catalog.blocked_release_titles_for_series(series.id) == [old_title]
+    refute Repo.exists?(ImportStage)
+  end
+
+  test "an unavailable episodic policy probe holds the tenth attempt without losing evidence" do
+    enable_policy_probe()
+    Cinder.TestNotifier.subscribe()
+    series = series_fixture(%{monitor_strategy: :all, media_profile: :anime})
+    episode = episode(season_fixture(series), 1, %{search_attempts: 4})
+    source = "/downloads/Show.S01E01.Unavailable.mkv"
+    grab = downloaded_policy_grab(episode, source, "[Group] Show S01E01 [1080p]")
+    stub_policy_inventory(source)
+
+    stub(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source -> {:error, :timeout} end)
+
+    start_supervised!({TvPoller, interval: 60_000})
+
+    assert :ok = TvPoller.poll()
+    first_attempt = Repo.get!(Grab, grab.id)
+    assert first_attempt.mapping_status == :resolved
+    assert first_attempt.download_attempts == 1
+
+    for attempt <- 2..9 do
+      assert :ok = TvPoller.poll()
+
+      assert %Grab{mapping_status: :resolved, download_attempts: ^attempt} =
+               Repo.get!(Grab, grab.id)
+    end
+
+    assert Enum.any?(Catalog.list_grabs_downloaded(), &(&1.id == grab.id))
+    assert :ok = TvPoller.poll()
+
+    assert %Grab{mapping_status: :verification_blocked, download_attempts: 10} =
+             held =
+             Repo.get!(Grab, grab.id)
+
+    assert held.download_id == grab.download_id
+    assert held.release_title == grab.release_title
+    assert held.content_path == grab.content_path
+    assert held.mapping_snapshot == grab.mapping_snapshot
+    assert held.automatic_mapping_decisions == first_attempt.automatic_mapping_decisions
+    assert held.manual_mapping_overrides == grab.manual_mapping_overrides
+    assert held.mapping_issue == grab.mapping_issue
+    assert held.release_policy_snapshot == grab.release_policy_snapshot
+    assert Repo.reload!(episode).grab_id == grab.id
+    assert Repo.reload!(episode).search_attempts == episode.search_attempts
+    assert Catalog.blocked_release_titles_for_series(series.id) == []
+    refute Enum.any?(Catalog.list_grabs_downloaded(), &(&1.id == grab.id))
+    assert Enum.any?(Catalog.list_grabs(), &(&1.id == grab.id))
+    assert Catalog.get_mapping_grab(grab.id) == nil
+    refute cleanup_pending_for?(grab.download_id)
+    assert Repo.all(Intent) == []
+    refute Repo.exists?(ImportStage)
+    refute_receive {:notify, {:grab_failed, _, _}}
+
+    assert {:ok, retried} = Catalog.retry_grab_verification(held)
+    assert retried.mapping_status == :resolved
+    assert retried.download_attempts == 0
+    assert retried.row_version > held.row_version
+    assert retried.content_path == held.content_path
+    assert retried.download_id == held.download_id
+    assert retried.mapping_snapshot == held.mapping_snapshot
+    assert retried.automatic_mapping_decisions == held.automatic_mapping_decisions
+    assert retried.release_policy_snapshot == held.release_policy_snapshot
+    assert Repo.reload!(episode).grab_id == held.id
+
+    assert {:error, :verification_not_held} =
+             Catalog.retry_grab_verification(retried)
+  end
+
+  test "verification hold rejects a stale resolved observation" do
+    series = series_fixture(%{monitor_strategy: :all, media_profile: :anime})
+    episode = episode(season_fixture(series), 1)
+
+    grab =
+      downloaded_policy_grab(
+        episode,
+        "/downloads/Show.S01E01.StaleVerification.mkv",
+        "[Group] Show S01E01 [1080p]"
+      )
+
+    Repo.update_all(from(g in Grab, where: g.id == ^grab.id),
+      set: [download_attempts: 9, download_progress: 0.5]
+    )
+
+    assert {:error, :stale_grab} = Catalog.hold_grab_verification(grab)
+
+    assert %Grab{mapping_status: :resolved, download_attempts: 9, download_progress: 0.5} =
+             Repo.get!(Grab, grab.id)
+  end
+
+  test "a stale episodic rejection is skipped without attempts, mapping issues, or cleanup" do
+    enable_policy_probe()
+    series = series_fixture(%{monitor_strategy: :all, media_profile: :anime})
+    episode = episode(season_fixture(series), 1)
+    source = "/downloads/Show.S01E01.Stale.mkv"
+    grab = downloaded_policy_grab(episode, source, "[Group] Show S01E01 [1080p]")
+    stub_policy_inventory(source)
+
+    expect(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source ->
+      Repo.update_all(from(g in Grab, where: g.id == ^grab.id),
+        set: [release_title: "Concurrent.Release"]
+      )
+
+      {:ok, %{audio: ["ja"], subtitles: [], audio_unknown?: false, subtitle_unknown?: false}}
+    end)
+
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    assert %Grab{
+             release_title: "Concurrent.Release",
+             download_attempts: 0,
+             mapping_status: :resolved,
+             mapping_issue: nil
+           } = Repo.get!(Grab, grab.id)
+
+    assert Repo.reload!(episode).grab_id == grab.id
+    assert Catalog.blocked_release_titles_for_series(series.id) == []
+    assert Repo.all(Intent) == []
+    refute Repo.exists?(ImportStage)
+  end
+
   @tag :tmp_dir
   test "inventory mutation restarts a fresh preflight next tick without a retry bump", %{
     tmp_dir: tmp
@@ -407,9 +728,15 @@ defmodule Cinder.Download.TvPollerTest do
   defp anime_assignment(series, episodes, title \\ "[Group] Show S01E25-S02E01 [1080p]") do
     candidate = title |> raw_release("anime-assignment") |> Release.new()
     context = Catalog.anime_series_acquisition_context(series)
+    {:ok, policy} = AnimePreferences.resolve(series, Cinder.Settings.anime_defaults())
 
     assert {:ok, %{assignments: [assignment]}} =
-             Anime.select_episodes([candidate], context, Enum.map(episodes, & &1.id), [])
+             Anime.select_episodes(
+               [candidate],
+               context,
+               Enum.map(episodes, & &1.id),
+               AnimePreferences.selection_opts(policy)
+             )
 
     assignment
   end
@@ -478,6 +805,24 @@ defmodule Cinder.Download.TvPollerTest do
 
     ids = Enum.map(episodes, & &1.id)
     Repo.update_all(from(e in Episode, where: e.id in ^ids), set: [grab_id: grab.id])
+    grab
+  end
+
+  defp downloaded_policy_grab(episode, content_path, release_title) do
+    snapshot = anime_standard_snapshot(episode) |> Map.put("reserved_episode_ids", [episode.id])
+
+    grab =
+      Repo.insert!(%Grab{
+        download_id: "anime-policy-#{System.unique_integer([:positive])}",
+        download_protocol: :torrent,
+        release_title: release_title,
+        content_path: content_path,
+        mapping_snapshot: snapshot,
+        release_policy_snapshot: policy_snapshot(release_title),
+        mapping_status: :resolved
+      })
+
+    Repo.update_all(from(e in Episode, where: e.id == ^episode.id), set: [grab_id: grab.id])
     grab
   end
 
@@ -974,6 +1319,27 @@ defmodule Cinder.Download.TvPollerTest do
     # Search-parked now (search_attempts >= max): further ticks no longer attempt it.
     assert :ok = TvPoller.poll()
     assert Repo.get!(Episode, e1.id).search_attempts == 10
+  end
+
+  test "a search-exhausted Anime story special stays in the wanted set but is skipped" do
+    series = series_fixture(%{media_profile: :anime, monitor_strategy: :all})
+    specials = season_fixture(series, %{season_number: 0})
+
+    special =
+      episode(specials, 0, %{
+        classification: :story_special,
+        monitored: true,
+        search_attempts: Catalog.max_search_attempts()
+      })
+
+    assert special.id in Enum.map(Catalog.wanted_episodes(), & &1.id)
+
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+    assert :ok = TvPoller.poll()
+
+    assert Repo.reload!(special).search_attempts == Catalog.max_search_attempts()
+    assert Repo.all(Intent) == []
+    assert Repo.all(Grab) == []
   end
 
   test "a grab park that crosses the search cap announces exhaustion (finish_grab bump path)" do

@@ -7,6 +7,7 @@ defmodule Cinder.CatalogSeriesTest do
   import Mox
   import Cinder.CatalogFixtures
 
+  alias Cinder.Acquisition.{Anime, Release}
   alias Cinder.Catalog
   alias Cinder.Catalog.Episode
   alias Cinder.Catalog.Series
@@ -158,12 +159,15 @@ defmodule Cinder.CatalogSeriesTest do
   end
 
   describe "monitor strategies" do
-    test ":all monitors every episode, specials included" do
+    test ":all monitors regular episodes but leaves provider-classified specials explicit" do
       stub_tmdb(43)
       {:ok, series} = Catalog.add_series(43, monitor_strategy: :all)
 
       assert series.monitored
-      assert Enum.all?(episodes(series.id), & &1.monitored)
+
+      assert Enum.all?(episodes(series.id), fn episode ->
+               episode.monitored == (episode.classification == :regular)
+             end)
     end
 
     test ":none monitors nothing" do
@@ -548,6 +552,125 @@ defmodule Cinder.CatalogSeriesTest do
       |> expect(:remove, fn "dl-tv", _opts -> :ok end)
 
       assert Cinder.Catalog.manual_grab_tv(series, 1, release) == {:error, :no_episodes_linked}
+    end
+
+    test "Anime grabs use the candidate's exact version-2 stable IDs, including episode zero" do
+      series = series_fixture(%{media_profile: :anime, monitor_strategy: :all})
+      season = season_fixture(series, %{season_number: 0})
+
+      episode_zero =
+        episode_fixture(season, %{episode_number: 0, classification: :story_special})
+
+      other_special =
+        episode_fixture(season, %{episode_number: 1, classification: :story_special})
+
+      context = Catalog.anime_series_acquisition_context(series)
+      candidate = Release.new(%{title: "[Group] Show S00E00 [1080p]", download_url: "anime-0"})
+
+      assert {:ok, %{assignments: [%{release: release}]}} =
+               Anime.select_episodes(
+                 [candidate],
+                 context,
+                 [episode_zero.id, other_special.id],
+                 []
+               )
+
+      expect(Cinder.Download.ClientMock, :add, fn _, _opts -> {:ok, "anime-zero"} end)
+
+      assert {:ok, grab} = Catalog.manual_grab_tv(series, 0, release)
+      assert [linked] = grab |> Cinder.Repo.preload(:episodes) |> Map.fetch!(:episodes)
+      assert linked.id == episode_zero.id
+    end
+
+    test "an unmarked Anime candidate is rejected before download client I/O" do
+      series = series_fixture(%{media_profile: :anime, monitor_strategy: :all})
+      season = season_fixture(series, %{season_number: 0})
+
+      special =
+        episode_fixture(season, %{episode_number: 0, classification: :story_special})
+
+      release = %Release{
+        title: "[Group] Show S00E00 [1080p]",
+        protocol: :torrent,
+        download_url: "unsafe",
+        resolved_episode_ids: [special.id]
+      }
+
+      expect(Cinder.Download.ClientMock, :add, 0, fn _, _opts -> {:ok, "must-not-run"} end)
+
+      assert {:error, :unsafe_anime_mapping} = Catalog.manual_grab_tv(series, 0, release)
+    end
+
+    test "a structurally invalid Anime snapshot is reported as unsafe before client I/O" do
+      series = series_fixture(%{media_profile: :anime, monitor_strategy: :all})
+      season = season_fixture(series, %{season_number: 0})
+
+      special =
+        episode_fixture(season, %{episode_number: 0, classification: :story_special})
+
+      release = %Release{
+        title: "[Group] Show S00E00 [1080p]",
+        protocol: :torrent,
+        download_url: "malformed",
+        resolved_episode_ids: [special.id],
+        mapping_snapshot: %{"version" => 2, "reserved_episode_ids" => [special.id]}
+      }
+
+      expect(Cinder.Download.ClientMock, :add, 0, fn _, _opts -> {:ok, "must-not-run"} end)
+
+      assert {:error, :unsafe_anime_mapping} = Catalog.manual_grab_tv(series, 0, release)
+    end
+
+    test "a malformed Anime snapshot cannot reconcile an existing intent or reach client I/O" do
+      series = series_fixture(%{media_profile: :anime, monitor_strategy: :all})
+      season = season_fixture(series, %{season_number: 0})
+
+      special =
+        episode_fixture(season, %{episode_number: 0, classification: :story_special})
+
+      context = Catalog.anime_series_acquisition_context(series)
+
+      candidate =
+        Release.new(%{title: "[Group] Show S00E00 [1080p]", download_url: "existing-anime"})
+
+      assert {:ok, %{assignments: [%{release: valid_release}]}} =
+               Anime.select_episodes([candidate], context, [special.id], [])
+
+      assert {:ok, _intent} =
+               Cinder.Download.reserve_intent(%{
+                 kind: :episode,
+                 target_id: special.id,
+                 episode_ids: [special.id],
+                 protocol: valid_release.protocol,
+                 release: valid_release,
+                 mapping_snapshot: valid_release.mapping_snapshot
+               })
+
+      malformed = %{
+        valid_release
+        | mapping_snapshot: %{"version" => 2, "reserved_episode_ids" => [special.id]}
+      }
+
+      expect(Cinder.Download.ClientMock, :find_by_operation_key, 0, fn _ -> :not_found end)
+      expect(Cinder.Download.ClientMock, :add, 0, fn _, _opts -> {:ok, "must-not-run"} end)
+
+      assert {:error, :unsafe_anime_mapping} = Catalog.manual_grab_tv(series, 0, malformed)
+    end
+
+    test "a marked Anime release cannot fall through the Standard whole-season manual path" do
+      series = series_with_wanted_episodes(season: 1, numbers: [1, 2])
+
+      release = %Release{
+        title: "[Group] Stale Anime Pack",
+        protocol: :torrent,
+        episodes: nil,
+        download_url: "stale-anime",
+        mapping_snapshot: %{"version" => 2, "reserved_episode_ids" => [1, 2]}
+      }
+
+      expect(Cinder.Download.ClientMock, :add, 0, fn _, _opts -> {:ok, "must-not-run"} end)
+
+      assert {:error, :unsafe_anime_mapping} = Catalog.manual_grab_tv(series, 1, release)
     end
   end
 

@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "episode-preferred",
+      "kind": "episode",
+      "title": "[SubsPlease] Frieren - 29 [1080p] [JA Audio] [FR Subs]",
+      "published_at": "2026-07-13T12:00:00Z",
+      "expected": {"group": "SubsPlease", "audio": ["ja"], "audio_complete": true, "subtitles": ["fr"], "subtitle_claim": "present"}
+    },
+    {
+      "id": "episode-fallback",
+      "kind": "episode",
+      "title": "[Erai-raws] Frieren - 29 [1080p] [JA Audio] [FR Subs]",
+      "published_at": "2026-07-13T12:00:00Z",
+      "expected": {"group": "Erai-raws", "audio": ["ja"], "audio_complete": true, "subtitles": ["fr"], "subtitle_claim": "present"}
+    },
+    {
+      "id": "movie-preferred",
+      "kind": "movie",
+      "title": "[SubsPlease] Suzume 2022 [1080p] [JA Audio] [FR Subs]",
+      "published_at": "2026-07-13T12:00:00Z",
+      "expected": {"group": "SubsPlease", "audio": ["ja"], "audio_complete": true, "subtitles": ["fr"], "subtitle_claim": "present"}
+    },
+    {
+      "id": "blocked",
+      "kind": "episode",
+      "title": "[BadGroup] Frieren - 29 [1080p]",
+      "published_at": "2026-07-13T12:00:00Z",
+      "expected": {"group": "BadGroup", "audio": [], "audio_complete": false, "subtitles": [], "subtitle_claim": "unknown"}
+    },
+    {
+      "id": "dub-only",
+      "kind": "episode",
+      "title": "[Group] Frieren - 29 [1080p] [FR Audio]",
+      "published_at": "2026-07-13T12:00:00Z",
+      "expected": {"group": "Group", "audio": ["fr"], "audio_complete": true, "subtitles": [], "subtitle_claim": "unknown"}
+    },
+    {
+      "id": "dual",
+      "kind": "episode",
+      "title": "[Group] Frieren - 29 [1080p] [JA+FR Audio]",
+      "published_at": "2026-07-13T12:00:00Z",
+      "expected": {"group": "Group", "audio": ["ja", "fr"], "audio_complete": true, "subtitles": [], "subtitle_claim": "unknown"}
+    },
+    {
+      "id": "embedded-fr",
+      "kind": "episode",
+      "title": "[Group] Frieren - 29 [1080p] [FR Subs]",
+      "published_at": "2026-07-13T12:00:00Z",
+      "expected": {"group": "Group", "audio": [], "audio_complete": false, "subtitles": ["fr"], "subtitle_claim": "present"}
+    },
+    {
+      "id": "raw",
+      "kind": "episode",
+      "title": "[Group] Frieren - 29 [1080p] [RAW]",
+      "published_at": "2026-07-13T12:00:00Z",
+      "expected": {"group": "Group", "audio": [], "audio_complete": false, "subtitles": [], "subtitle_claim": "absent"}
+    },
+    {
+      "id": "unknown-undated",
+      "kind": "episode",
+      "title": "[Mystery] Frieren - 29 [1080p]",
+      "published_at": null,
+      "expected": {"group": "Mystery", "audio": [], "audio_complete": false, "subtitles": [], "subtitle_claim": "unknown"}
+    }
+  ]
+}

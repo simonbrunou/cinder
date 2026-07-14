@@ -2,8 +2,8 @@ defmodule Cinder.Catalog.Grab do
   @moduledoc """
   An in-flight download serving one or more `Cinder.Catalog.Episode`s (a single episode or
   a season pack). `content_path` nil ⇒ still downloading; set ⇒ downloaded and ready to
-  import. Grabs are transient: deleted once their episodes import (or on a terminal park),
-  so the table only ever holds in-flight downloads.
+  import. Grabs are deleted once their episodes import or the operator cancels them; mapping and
+  verification holds stay durable until their guarded recovery action runs.
   """
   use Ecto.Schema
 
@@ -21,10 +21,16 @@ defmodule Cinder.Catalog.Grab do
     field :download_speed, :integer
     field :download_eta, :integer
     field :mapping_snapshot, :map
-    field :mapping_status, Ecto.Enum, values: [:resolved, :needs_mapping], default: :resolved
+    field :release_policy_snapshot, :map
+
+    field :mapping_status, Ecto.Enum,
+      values: [:resolved, :needs_mapping, :verification_blocked],
+      default: :resolved
+
     field :automatic_mapping_decisions, :map
     field :manual_mapping_overrides, :map
     field :mapping_issue, :map
+    field :row_version, :integer, default: 1
     has_many :episodes, Episode
 
     timestamps(type: :utc_datetime)
@@ -50,13 +56,14 @@ defmodule Cinder.Catalog.Grab do
   def reservation_changeset(%__MODULE__{id: nil} = grab, attrs) do
     grab
     |> changeset(attrs)
-    |> cast(attrs, [:mapping_snapshot, :mapping_status])
+    |> cast(attrs, [:mapping_snapshot, :release_policy_snapshot, :mapping_status])
   end
 
   def reservation_changeset(%__MODULE__{} = grab, attrs) do
     grab
     |> changeset(attrs)
     |> add_error(:mapping_snapshot, "is immutable")
+    |> add_error(:release_policy_snapshot, "is immutable")
   end
 
   @doc false

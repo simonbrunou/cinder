@@ -14,6 +14,7 @@ defmodule Cinder.Settings do
   """
   require Logger
 
+  alias Cinder.Acquisition.AnimePreferences
   alias Cinder.Repo
   alias Cinder.Settings.Setting
 
@@ -204,6 +205,18 @@ defmodule Cinder.Settings do
   @media_server_options ["jellyfin", "plex"]
   @import_roots_key "import_roots"
 
+  @anime_fields [
+    %{key: "anime_audio_mode", type: :select, options: ~w(original dub dual any)},
+    %{
+      key: "anime_embedded_subtitle_mode",
+      type: :select,
+      options: ~w(allow prefer require)
+    },
+    %{key: "anime_preferred_groups", type: :csv},
+    %{key: "anime_blocked_groups", type: :csv},
+    %{key: "anime_group_fallback_delay", type: :hours}
+  ]
+
   # Display labels for the library kinds. `Cinder.Library.kinds/0` stays a pure context list;
   # the UI labels live here alongside the other settings-group labels.
   @kind_labels %{movies: "Movies", tv: "TV"}
@@ -279,6 +292,7 @@ defmodule Cinder.Settings do
   def media_server_key, do: @media_server_key
   def media_server_options, do: @media_server_options
   def import_roots_key, do: @import_roots_key
+  def anime_fields, do: @anime_fields
 
   @doc "The library kinds with display labels, for the settings/setup UI (`[%{kind:, label:}]`)."
   def library_kinds, do: Enum.map(Cinder.Library.kinds(), &%{kind: &1, label: kind_label(&1)})
@@ -326,6 +340,19 @@ defmodule Cinder.Settings do
         do: Path.expand(root)
   end
 
+  @doc "Typed global Anime release defaults with normalized language and group lists."
+  def anime_defaults do
+    anime = Application.fetch_env!(:cinder, :anime_preferences)
+    subtitle = Application.get_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, [])
+
+    anime
+    |> Map.new()
+    |> Map.put(
+      :subtitle_languages,
+      subtitle |> Keyword.get(:languages, "") |> normalize_anime_languages()
+    )
+  end
+
   @doc "Marks the first-run wizard complete."
   def mark_setup_complete, do: put("setup_complete", "true")
 
@@ -369,6 +396,11 @@ defmodule Cinder.Settings do
         end)
       end)
       |> Map.put(@import_roots_key, decoded_for(rows, @import_roots_key) || "")
+      |> then(fn values ->
+        Enum.reduce(@anime_fields, values, fn field, values ->
+          Map.put(values, field.key, decoded_for(rows, field.key) || "")
+        end)
+      end)
       |> Map.merge(toggle_values(rows))
       |> Map.put("move_on_import", decoded_for(rows, "move_on_import") == "true")
 
@@ -395,7 +427,7 @@ defmodule Cinder.Settings do
 
     text_keys =
       for(f <- config_fields(), not f.secret, do: f.key) ++
-        flat_keys() ++ [@import_roots_key]
+        flat_keys() ++ [@import_roots_key] ++ Enum.map(@anime_fields, & &1.key)
 
     values =
       text_keys
@@ -522,7 +554,9 @@ defmodule Cinder.Settings do
     end
   end
 
-  defp invalid_values(params), do: invalid_band_values(params) ++ invalid_import_roots(params)
+  defp invalid_values(params) do
+    invalid_band_values(params) ++ invalid_import_roots(params) ++ invalid_anime_values(params)
+  end
 
   defp invalid_import_roots(%{@import_roots_key => value}) do
     if "/" in split_import_roots(value || ""), do: [@import_roots_key], else: []
@@ -540,6 +574,76 @@ defmodule Cinder.Settings do
     end
   end
 
+  defp invalid_anime_values(params) do
+    enum_keys =
+      for %{key: key, type: :select, options: options} <- @anime_fields,
+          Map.has_key?(params, key),
+          value = String.trim(params[key] || ""),
+          value != "",
+          value not in options,
+          do: key
+
+    delay_key = "anime_group_fallback_delay"
+    delay = String.trim(params[delay_key] || "")
+
+    delay_keys =
+      if Map.has_key?(params, delay_key) and delay != "" and not valid_anime_hours?(delay),
+        do: [delay_key],
+        else: []
+
+    subtitle_keys =
+      if effective_embedded_subtitle_mode(params) == :require and
+           effective_subtitle_languages(params) == [],
+         do: ["anime_embedded_subtitle_mode"],
+         else: []
+
+    Enum.uniq(enum_keys ++ delay_keys ++ subtitle_keys)
+  end
+
+  defp valid_anime_hours?(value) do
+    case Integer.parse(value) do
+      {hours, ""} when hours >= 0 -> true
+      _ -> false
+    end
+  end
+
+  defp effective_embedded_subtitle_mode(params) do
+    case Map.fetch(params, "anime_embedded_subtitle_mode") do
+      {:ok, value} ->
+        case String.trim(value || "") do
+          "require" -> :require
+          "" -> base(:anime_preferences)[:embedded_subtitle_mode]
+          _value -> :other
+        end
+
+      :error ->
+        anime_defaults().embedded_subtitle_mode
+    end
+  end
+
+  defp effective_subtitle_languages(params) do
+    languages =
+      case Map.fetch(params, "subtitle_languages") do
+        {:ok, value} when is_binary(value) and byte_size(value) > 0 ->
+          if String.trim(value) == "",
+            do: base(Cinder.Subtitles.Provider.OpenSubtitles)[:languages] || "",
+            else: value
+
+        {:ok, value} when is_list(value) ->
+          value
+
+        {:ok, _blank} ->
+          base(Cinder.Subtitles.Provider.OpenSubtitles)[:languages] || ""
+
+        :error ->
+          :cinder
+          |> Application.get_env(Cinder.Subtitles.Provider.OpenSubtitles, [])
+          |> Keyword.get(:languages, "")
+      end
+
+    normalize_anime_languages(languages)
+  end
+
   # --- env overlay ---
 
   @doc """
@@ -549,6 +653,7 @@ defmodule Cinder.Settings do
   def load_into_env do
     rows = rows_by_key()
     apply_config_fields(rows)
+    apply_anime_config(rows)
     apply_media_server(rows)
     apply_download_clients(rows)
     apply_library_config(rows)
@@ -585,6 +690,53 @@ defmodule Cinder.Settings do
       Application.put_env(:cinder, module, Keyword.merge(base(module), db_values))
     end)
   end
+
+  defp apply_anime_config(rows) do
+    base = base(:anime_preferences)
+
+    config = [
+      audio_mode: anime_enum(rows, "anime_audio_mode", base[:audio_mode]),
+      embedded_subtitle_mode:
+        anime_enum(
+          rows,
+          "anime_embedded_subtitle_mode",
+          base[:embedded_subtitle_mode]
+        ),
+      preferred_groups: anime_csv(rows, "anime_preferred_groups", base[:preferred_groups] || []),
+      blocked_groups: anime_csv(rows, "anime_blocked_groups", base[:blocked_groups] || []),
+      group_fallback_delay:
+        anime_hours(rows, "anime_group_fallback_delay", base[:group_fallback_delay] || 86_400)
+    ]
+
+    Application.put_env(:cinder, :anime_preferences, config)
+  end
+
+  defp anime_enum(rows, key, fallback) do
+    value = decoded_for(rows, key)
+    field = Enum.find(@anime_fields, &(&1.key == key))
+
+    if value in field.options, do: String.to_existing_atom(value), else: fallback
+  end
+
+  defp anime_csv(rows, key, fallback) do
+    case decoded_for(rows, key) do
+      nil -> AnimePreferences.normalize_groups(fallback)
+      value -> value |> String.split(",") |> AnimePreferences.normalize_groups()
+    end
+  end
+
+  defp anime_hours(rows, key, fallback) do
+    case Integer.parse(decoded_for(rows, key) || "") do
+      {hours, ""} when hours >= 0 -> hours * 60 * 60
+      _ -> fallback
+    end
+  end
+
+  defp normalize_anime_languages(languages) when is_binary(languages) do
+    languages |> String.split(",") |> AnimePreferences.normalize_languages()
+  end
+
+  defp normalize_anime_languages(languages), do: AnimePreferences.normalize_languages(languages)
 
   # The setting picks the impl; with no setting fall back to the PLEX_URL bootstrap, then
   # to the captured base (config.exs default in prod, the Mox mock in tests). `fallback`
@@ -851,6 +1003,9 @@ defmodule Cinder.Settings do
     config_plan = Enum.reduce(config_fields(), {%{}, []}, &plan_config(&1, params, &2))
     {puts, deletes} = Enum.reduce(flat_keys(), config_plan, &plan_flat(&1, params, &2))
     {puts, deletes} = plan_flat(@import_roots_key, params, {puts, deletes})
+
+    {puts, deletes} =
+      Enum.reduce(@anime_fields, {puts, deletes}, &plan_flat(&1.key, params, &2))
 
     puts =
       puts

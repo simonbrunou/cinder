@@ -130,6 +130,19 @@ defmodule Cinder.Acquisition.Parser do
 
   @language_tags Map.new(@language_registry, fn {code, tag, _re} -> {code, tag} end)
 
+  @claim_language_aliases @language_tags
+                          |> Enum.flat_map(fn {code, tag} ->
+                            [{code, code}, {String.downcase(tag), code}]
+                          end)
+                          |> Map.new()
+
+  @audio_declaration ~r/\[([\p{L}]{2,}(?:\s*\+\s*[\p{L}]{2,})*)\s+Audio\]/iu
+  @subtitle_declaration ~r/\[([\p{L}]{2,})\s+(?:Subs|Subtitles)\]/iu
+  @vostfr ~r/(?:^|[^\p{L}\p{N}])VOSTFR(?:[^\p{L}\p{N}]|$)/iu
+  @raw_bracket ~r/\[\s*RAW\s*\]/iu
+  @raw_token ~r/(?:^|[^\p{L}\p{N}])RAW(?:[^\p{L}\p{N}]|$)/iu
+  @raw_suffix ~r/(?:\b(?:S\d{1,2}E\d{1,3}|\d{1,4}|2160p|1080p|720p|480p)\b|\[(?:S\d{1,2}E\d{1,3}|\d{1,4}|2160p|1080p|720p|480p)\])[ ._-]+RAW(?:\.(?:mkv|mp4|avi|m4v|ts))?\s*$/iu
+
   # A subtitle-LANGUAGE marker — a language token glued by separators to a sub/subs/subtitle(s) word
   # — names the subtitle language, not the audio. Strip it before matching so "FRENCH.SUBS",
   # "ENG.SUBTITLES", "LATINO.SUBS" don't read as an audio tag. Deliberately NOT "subbed"/"subtitled":
@@ -241,6 +254,10 @@ defmodule Cinder.Acquisition.Parser do
       codec: first_match(name, @codecs),
       group: group(name),
       language: language(name),
+      audio_languages: declared_audio_languages(name),
+      audio_claim_complete?: complete_audio_claim?(name),
+      embedded_subtitle_languages: declared_subtitle_languages(name),
+      embedded_subtitle_claim: embedded_subtitle_claim(name),
       season: season,
       episodes: episodes
     }
@@ -253,6 +270,10 @@ defmodule Cinder.Acquisition.Parser do
       codec: nil,
       group: nil,
       language: nil,
+      audio_languages: [],
+      audio_claim_complete?: false,
+      embedded_subtitle_languages: [],
+      embedded_subtitle_claim: :unknown,
       season: nil,
       episodes: nil
     }
@@ -312,6 +333,44 @@ defmodule Cinder.Acquisition.Parser do
   # read as the audio language.
   defp strip_subtitles(name), do: Regex.replace(@subtitle, name, " ")
 
+  defp declared_audio_languages(name), do: name |> audio_claim() |> elem(0)
+  defp complete_audio_claim?(name), do: name |> audio_claim() |> elem(1)
+
+  defp audio_claim(name) do
+    tokens =
+      @audio_declaration
+      |> Regex.scan(name, capture: :all_but_first)
+      |> Enum.flat_map(fn [declaration] -> String.split(declaration, ~r/\s*\+\s*/u) end)
+
+    languages = tokens |> Enum.map(&claim_language/1) |> Enum.reject(&is_nil/1) |> Enum.uniq()
+    {languages, tokens != [] and length(languages) == length(Enum.uniq(tokens))}
+  end
+
+  defp declared_subtitle_languages(name) do
+    declared =
+      @subtitle_declaration
+      |> Regex.scan(name, capture: :all_but_first)
+      |> Enum.flat_map(fn [language] -> List.wrap(claim_language(language)) end)
+
+    if Regex.match?(@vostfr, name), do: Enum.uniq(["fr" | declared]), else: Enum.uniq(declared)
+  end
+
+  defp embedded_subtitle_claim(name) do
+    cond do
+      declared_subtitle_languages(name) != [] -> :present
+      raw_claim?(name) -> :absent
+      true -> :unknown
+    end
+  end
+
+  defp claim_language(language),
+    do: Map.get(@claim_language_aliases, language |> String.trim() |> String.downcase())
+
+  defp raw_claim?(name),
+    do:
+      Regex.match?(@raw_bracket, name) or Regex.match?(@raw_token, tag_region(name)) or
+        Regex.match?(@raw_suffix, name)
+
   # The trailing "-TOKEN", but only when TOKEN is a single alphanumeric run (no
   # dots/spaces), after stripping a container extension. Otherwise nil — so a
   # hyphenated title ("Spider-Man") or a source token ("WEB-DL.H264") is never read
@@ -321,7 +380,14 @@ defmodule Cinder.Acquisition.Parser do
 
     case Regex.run(~r/-([A-Za-z0-9]+)$/, stripped) do
       [_, group] -> group
-      nil -> nil
+      nil -> leading_group(name)
+    end
+  end
+
+  defp leading_group(name) do
+    case Regex.run(~r/^\s*\[([^\]\r\n]+)\]/u, name, capture: :all_but_first) do
+      [group] -> if String.trim(group) == "", do: nil, else: String.trim(group)
+      _ -> nil
     end
   end
 

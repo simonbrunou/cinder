@@ -3,6 +3,8 @@ defmodule Cinder.Acquisition.ParserTest do
 
   alias Cinder.Acquisition.Parser
 
+  @preferences_fixture "test/support/fixtures/anime/preferences-v1.json"
+
   test "parses a standard p2p release name" do
     assert Parser.parse("Inception.2010.1080p.BluRay.x264-RARBG") ==
              %{
@@ -11,6 +13,10 @@ defmodule Cinder.Acquisition.ParserTest do
                codec: "x264",
                group: "RARBG",
                language: nil,
+               audio_languages: [],
+               audio_claim_complete?: false,
+               embedded_subtitle_languages: [],
+               embedded_subtitle_claim: :unknown,
                season: nil,
                episodes: nil
              }
@@ -24,6 +30,10 @@ defmodule Cinder.Acquisition.ParserTest do
                codec: "x265",
                group: "TERMiNAL",
                language: "MULTI",
+               audio_languages: [],
+               audio_claim_complete?: false,
+               embedded_subtitle_languages: [],
+               embedded_subtitle_claim: :unknown,
                season: nil,
                episodes: nil
              }
@@ -52,6 +62,10 @@ defmodule Cinder.Acquisition.ParserTest do
                codec: nil,
                group: nil,
                language: nil,
+               audio_languages: [],
+               audio_claim_complete?: false,
+               embedded_subtitle_languages: [],
+               embedded_subtitle_claim: :unknown,
                season: nil,
                episodes: nil
              }
@@ -72,6 +86,10 @@ defmodule Cinder.Acquisition.ParserTest do
                codec: nil,
                group: nil,
                language: nil,
+               audio_languages: [],
+               audio_claim_complete?: false,
+               embedded_subtitle_languages: [],
+               embedded_subtitle_claim: :unknown,
                season: nil,
                episodes: nil
              }
@@ -278,6 +296,56 @@ defmodule Cinder.Acquisition.ParserTest do
     end
   end
 
+  describe "conservative Anime release claims" do
+    test "parses every versioned preference fixture case" do
+      fixture = @preferences_fixture |> File.read!() |> Jason.decode!()
+      assert fixture["version"] == 1
+
+      for fixture_case <- fixture["cases"] do
+        expected = fixture_case["expected"]
+        parsed = Parser.parse(fixture_case["title"])
+
+        assert Map.take(parsed, [
+                 :group,
+                 :audio_languages,
+                 :audio_claim_complete?,
+                 :embedded_subtitle_languages,
+                 :embedded_subtitle_claim
+               ]) == %{
+                 group: expected["group"],
+                 audio_languages: expected["audio"],
+                 audio_claim_complete?: expected["audio_complete"],
+                 embedded_subtitle_languages: expected["subtitles"],
+                 embedded_subtitle_claim: subtitle_claim(expected["subtitle_claim"])
+               },
+               fixture_case["id"]
+      end
+    end
+
+    test "keeps trailing Standard group precedence over a leading Anime token" do
+      assert Parser.parse("[Fansub] Show.2020.1080p.WEB-Scene").group == "Scene"
+    end
+
+    test "bare multiplicity and title-word collisions stay unknown" do
+      assert %{audio_languages: [], audio_claim_complete?: false} =
+               Parser.parse("[Group] Show - 1 [1080p] Dual Audio")
+
+      assert %{audio_languages: [], audio_claim_complete?: false} =
+               Parser.parse("[Group] Show - 1 [1080p] MULTI")
+
+      assert %{embedded_subtitle_claim: :unknown} = Parser.parse("Raw Deal 1986 [1080p]")
+    end
+
+    test "a bounded suffix RAW tag is absent without matching ordinary title words" do
+      assert %{embedded_subtitle_claim: :absent} =
+               Parser.parse("[Group] Frieren - 29 RAW")
+
+      assert %{embedded_subtitle_claim: :unknown} = Parser.parse("[Group] RAW")
+      assert %{embedded_subtitle_claim: :unknown} = Parser.parse("Raw Deal")
+      assert %{embedded_subtitle_claim: :unknown} = Parser.parse("A Very Raw Story")
+    end
+  end
+
   describe "language: foreign audio tags (registry)" do
     test "Hungarian — full word, native 'magyar', and HUN abbreviation all tag HUNGARIAN" do
       for name <- [
@@ -380,4 +448,8 @@ defmodule Cinder.Acquisition.ParserTest do
       assert %{season: 1, episodes: [2]} = Parser.parse("Show S01 E02 1080p")
     end
   end
+
+  defp subtitle_claim("present"), do: :present
+  defp subtitle_claim("absent"), do: :absent
+  defp subtitle_claim("unknown"), do: :unknown
 end

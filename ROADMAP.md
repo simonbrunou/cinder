@@ -5,11 +5,12 @@ Phoenix/LiveView. This roadmap covers the **movies-only vertical slice**: reques
 find the best release → download it → import it into Jellyfin. TV, quality upgrades, and
 multi-user are deliberately out of scope until the slice is solid (see *Parked*, bottom).
 
-> **Status (2026-07-13):** the original slice and Part II form the current movies+TV product;
+> **Status (2026-07-14):** the original slice and Part II form the current movies+TV product;
 > remaining release sign-offs stay recorded in M8. The next approved feature program is
 > **Part III — Anime-aware media handling** (bottom): make discovery, release matching,
 > numbering, specials, audio/subtitle preferences, and ambiguous-import recovery genuinely
-> anime-aware without creating a third pipeline. A3 is complete; A4 is the next phase.
+> anime-aware without creating a third pipeline. A4 is complete; A5 is the next phase and remains
+> pending live dogfood and provider sign-off.
 > Phases 0–5 and Part II remain the build record.
 
 ## How to run this with Claude Code
@@ -832,6 +833,15 @@ Land sourced specials/Season 00 behavior, global and per-title audio/subtitle/gr
 fallback-delay UX, and post-download MediaInfo hard-policy enforcement. **Done when:** story specials
 are controllable, extras cannot bypass preflight, mismatches block/requeue only the exact release,
 preference fixtures pass, and `mix test` is green.
+
+**[done 2026-07-14]** Added typed global and per-title Anime release preferences, explicitly
+monitored story-special/recap acquisition, publication-time preferred-group fallback, immutable
+reservation policy snapshots, pre-stage MediaInfo verification, exact-release rejection with
+durable cleanup, and preserved-content verification holds. Gate evidence: the exact Task 10
+21-file focused `mix test` command passed 572 tests, the explicit Standard/A2/A3 regression command
+passed 110 tests, the full `mix test` quality alias passed 1,691 tests, and the current
+`graphify update .` graph has 24,673 nodes, 76,222 edges, and 283 communities. Live Jellyfin/Plex
+dogfood and provider sign-off remain A5 work.
 
 ### A5 — Live dogfood and provider sign-off
 

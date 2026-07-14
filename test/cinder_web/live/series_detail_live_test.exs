@@ -7,7 +7,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   import Cinder.CatalogFixtures
 
   alias Cinder.{Catalog, Repo}
-  alias Cinder.Catalog.{Grab, TitleAlias}
+  alias Cinder.Catalog.{Grab, Series, TitleAlias}
 
   setup :register_and_log_in_admin
   setup :set_mox_global
@@ -111,6 +111,46 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     :exit, _reason -> :ok
   end
 
+  defp anime_preferences_params(overrides \\ %{}) do
+    Map.merge(
+      %{
+        "audio_mode" => "dual",
+        "embedded_subtitle_mode" => "require",
+        "subtitle_languages_mode" => "override",
+        "subtitle_languages" => "fr",
+        "preferred_release_groups_mode" => "override",
+        "preferred_release_groups" => "SubsPlease, subsplease",
+        "blocked_release_groups_mode" => "override",
+        "blocked_release_groups" => "BadGroup",
+        "group_fallback_delay_mode" => "override",
+        "group_fallback_delay_hours" => "6"
+      },
+      overrides
+    )
+  end
+
+  defp put_nonempty_anime_defaults! do
+    anime = Application.fetch_env!(:cinder, :anime_preferences)
+    subtitles = Application.get_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, [])
+
+    Application.put_env(
+      :cinder,
+      :anime_preferences,
+      Keyword.merge(anime, preferred_groups: ["subsplease"], blocked_groups: ["badgroup"])
+    )
+
+    Application.put_env(
+      :cinder,
+      Cinder.Subtitles.Provider.OpenSubtitles,
+      Keyword.put(subtitles, :languages, "fr,en")
+    )
+
+    on_exit(fn ->
+      Application.put_env(:cinder, :anime_preferences, anime)
+      Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, subtitles)
+    end)
+  end
+
   test "admin changes a series profile and manages sourced aliases", %{conn: conn} do
     series = create_series(6_900)
 
@@ -164,6 +204,179 @@ defmodule CinderWeb.SeriesDetailLiveTest do
              "#series-alias-edit-status[role='status'][phx-mounted*='focus'][phx-mounted*='#series-alias-title']",
              "Editing alias Shingeki no Kyojin"
            )
+  end
+
+  test "admin saves series Anime preferences and stored overrides stay dormant while Standard", %{
+    conn: conn
+  } do
+    series =
+      series_fixture(%{
+        media_profile: :anime,
+        original_language: "ja",
+        preferred_language: "french"
+      })
+
+    {:ok, view, _} = live_series(conn, series)
+    assert has_element?(view, "#anime-preferences-form")
+
+    view
+    |> form("#anime-preferences-form", anime_preferences: anime_preferences_params())
+    |> render_submit()
+
+    fresh = Repo.reload!(series)
+    assert fresh.audio_mode == :dual
+    assert fresh.embedded_subtitle_mode == :require
+    assert fresh.subtitle_languages == ["fr"]
+    assert fresh.preferred_release_groups == ["subsplease"]
+    assert fresh.blocked_release_groups == ["badgroup"]
+    assert fresh.group_fallback_delay == 21_600
+
+    view
+    |> form("#series-profile-form", %{"media_profile" => "standard"})
+    |> render_change()
+
+    refute has_element?(view, "#anime-preferences-form")
+
+    view
+    |> form("#series-profile-form", %{"media_profile" => "anime"})
+    |> render_change()
+
+    assert has_element?(
+             view,
+             "#anime_preferences_audio_mode option[value='dual'][selected]"
+           )
+
+    assert has_element?(
+             view,
+             "#anime_preferences_preferred_release_groups[value='subsplease']"
+           )
+
+    assert has_element?(view, "#anime_preferences_group_fallback_delay_hours[value='6']")
+  end
+
+  test "series Anime preference errors are inline, retain input, and persist nothing", %{
+    conn: conn
+  } do
+    series =
+      series_fixture(%{
+        media_profile: :anime,
+        original_language: "ja",
+        preferred_language: "original"
+      })
+
+    {:ok, view, _} = live_series(conn, series)
+
+    view
+    |> form(
+      "#anime-preferences-form",
+      anime_preferences: anime_preferences_params(%{"audio_mode" => "dual"})
+    )
+    |> render_submit()
+
+    assert has_element?(view, "#anime_preferences_audio_mode-error")
+    assert has_element?(view, "#anime_preferences_audio_mode option[value='dual'][selected]")
+
+    view
+    |> form(
+      "#anime-preferences-form",
+      anime_preferences:
+        anime_preferences_params(%{
+          "audio_mode" => "inherit",
+          "group_fallback_delay_hours" => "-1"
+        })
+    )
+    |> render_submit()
+
+    assert has_element?(view, "#anime_preferences_group_fallback_delay_hours-error")
+    assert has_element?(view, "#anime_preferences_group_fallback_delay_hours[value='-1']")
+
+    view
+    |> form(
+      "#anime-preferences-form",
+      anime_preferences:
+        anime_preferences_params(%{
+          "audio_mode" => "inherit",
+          "subtitle_languages" => ""
+        })
+    )
+    |> render_submit()
+
+    assert has_element?(view, "#anime_preferences_subtitle_languages-error")
+    assert has_element?(view, "#anime_preferences_subtitle_languages[value='']")
+
+    fresh = Repo.reload!(series)
+    assert fresh.audio_mode == nil
+    assert fresh.embedded_subtitle_mode == nil
+    assert fresh.subtitle_languages == nil
+    assert fresh.group_fallback_delay == nil
+  end
+
+  test "series list controls can return to inherited non-empty Anime defaults", %{conn: conn} do
+    put_nonempty_anime_defaults!()
+
+    series =
+      series_fixture(%{
+        media_profile: :anime,
+        original_language: "ja",
+        preferred_language: "french"
+      })
+      |> Series.anime_preferences_changeset(%{
+        subtitle_languages: ["en"],
+        preferred_release_groups: ["old"],
+        blocked_release_groups: ["old-blocked"]
+      })
+      |> Repo.update!()
+
+    {:ok, view, _} = live_series(conn, series)
+
+    view
+    |> form(
+      "#anime-preferences-form",
+      anime_preferences:
+        anime_preferences_params(%{
+          "audio_mode" => "inherit",
+          "embedded_subtitle_mode" => "inherit",
+          "subtitle_languages_mode" => "inherit",
+          "preferred_release_groups_mode" => "inherit",
+          "blocked_release_groups_mode" => "inherit",
+          "group_fallback_delay_mode" => "inherit"
+        })
+    )
+    |> render_submit()
+
+    fresh = Repo.reload!(series)
+    assert fresh.subtitle_languages == nil
+    assert fresh.preferred_release_groups == nil
+    assert fresh.blocked_release_groups == nil
+    html = render(view)
+    assert html =~ "fr, en"
+    assert html =~ "subsplease"
+    assert html =~ "badgroup"
+  end
+
+  test "series dual audio without original metadata is field-invalid with explanatory help", %{
+    conn: conn
+  } do
+    series =
+      series_fixture(%{
+        media_profile: :anime,
+        original_language: nil,
+        preferred_language: "french"
+      })
+
+    {:ok, view, _} = live_series(conn, series)
+
+    view
+    |> form(
+      "#anime-preferences-form",
+      anime_preferences: anime_preferences_params(%{"embedded_subtitle_mode" => "prefer"})
+    )
+    |> render_submit()
+
+    assert has_element?(view, "#anime_preferences_audio_mode-error")
+    assert has_element?(view, "#anime-dual-language-help")
+    assert render(view) =~ "Dual audio requires known original-language metadata and a dub target"
+    assert Repo.reload!(series).audio_mode == nil
   end
 
   test "series identity events tolerate forged profiles and aliases", %{conn: conn} do
@@ -651,21 +864,95 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     refute has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{undated.id}']")
   end
 
-  # FIX 2: season 0 (specials) is excluded from the sweep, so its episodes get no Search button.
-  test "the per-episode Search button is absent for a season-0 special", %{conn: conn} do
-    series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 9302, tvdb_id: 94, title: "Test Show"})
+  test "Search is limited to monitored Anime story specials and recaps", %{conn: conn} do
+    anime =
+      Repo.insert!(%Cinder.Catalog.Series{
+        tmdb_id: 9302,
+        tvdb_id: 94,
+        title: "Anime",
+        media_profile: :anime
+      })
 
     specials =
       Repo.insert!(%Cinder.Catalog.Season{
-        series_id: series.id,
+        series_id: anime.id,
         season_number: 0,
         monitored: true
       })
 
-    special = wanted_ep(specials, 1, air_date: Date.add(Date.utc_today(), -10))
+    story =
+      wanted_ep(specials, 1,
+        air_date: Date.add(Date.utc_today(), -10),
+        classification: :story_special
+      )
 
+    episode_zero =
+      wanted_ep(specials, 0,
+        air_date: Date.add(Date.utc_today(), -10),
+        classification: :story_special
+      )
+
+    recap =
+      wanted_ep(specials, 2,
+        air_date: Date.add(Date.utc_today(), -10),
+        classification: :recap
+      )
+
+    extra =
+      wanted_ep(specials, 3,
+        air_date: Date.add(Date.utc_today(), -10),
+        classification: :extra
+      )
+
+    {:ok, lv, _html} = live_series(conn, anime)
+    assert has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{story.id}']")
+    assert has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{episode_zero.id}']")
+    assert has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{recap.id}']")
+    refute has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{extra.id}']")
+
+    standard =
+      Repo.insert!(%Cinder.Catalog.Series{
+        tmdb_id: 9303,
+        tvdb_id: 95,
+        title: "Standard",
+        media_profile: :standard
+      })
+
+    standard_specials =
+      Repo.insert!(%Cinder.Catalog.Season{
+        series_id: standard.id,
+        season_number: 0,
+        monitored: true
+      })
+
+    standard_story =
+      wanted_ep(standard_specials, 1,
+        air_date: Date.add(Date.utc_today(), -10),
+        classification: :story_special
+      )
+
+    {:ok, standard_lv, _html} = live_series(conn, standard)
+
+    refute has_element?(
+             standard_lv,
+             "button[phx-click=search_episode][phx-value-id='#{standard_story.id}']"
+           )
+  end
+
+  test "a stale Search click is re-authorized against the current episode", %{conn: conn} do
+    series = series_with_wanted_episode(search_attempts: 7)
+    [episode] = Catalog.wanted_episodes()
     {:ok, lv, _html} = live_series(conn, series)
-    refute has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{special.id}']")
+
+    episode
+    |> Ecto.Changeset.change(monitored: false)
+    |> Repo.update!()
+
+    lv
+    |> element("button[phx-click=search_episode][phx-value-id='#{episode.id}']")
+    |> render_click()
+
+    assert Repo.reload!(episode).search_attempts == 7
   end
 
   # FIX 1: "Find a better match" is only offered for a season with wanted episodes. An empty
@@ -736,14 +1023,18 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
   # Insert one wanted-shaped episode (monitored, no file, no grab) with a chosen air_date.
   defp wanted_ep(season, number, opts) do
-    Repo.insert!(%Cinder.Catalog.Episode{
-      season_id: season.id,
-      tmdb_episode_id: season.id * 100 + number,
-      episode_number: number,
-      title: "Ep#{number}",
-      monitored: true,
-      air_date: Keyword.fetch!(opts, :air_date)
-    })
+    Repo.insert!(
+      struct(
+        %Cinder.Catalog.Episode{
+          season_id: season.id,
+          tmdb_episode_id: season.id * 100 + number,
+          episode_number: number,
+          title: "Ep#{number}",
+          monitored: true
+        },
+        Map.new(opts)
+      )
+    )
   end
 
   # Insert a series→season→episode tree with one episode that has a file_path.

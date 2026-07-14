@@ -53,6 +53,7 @@ defmodule CinderWeb.ManualSearchComponentTest do
   alias Cinder.Acquisition.Release
   alias Cinder.Catalog.{Movie, Series}
   alias CinderWeb.ManualSearchComponent
+  alias Phoenix.LiveView.Socket
 
   # A pre-seeded `results:` assign makes update/2 skip the async indexer fetch, so the panel can be
   # rendered and asserted without a host LiveView. The async path is covered in Tasks 12/13.
@@ -120,6 +121,74 @@ defmodule CinderWeb.ManualSearchComponentTest do
     assert html =~ "no client for protocol"
     # No grab control rendered for an ungrabbable release.
     refute html =~ "phx-value-index"
+  end
+
+  test "Anime policy verdicts stay overridable while unsafe mappings are not grabbable" do
+    html =
+      render_panel(%{
+        mode: :tv,
+        target: %Series{id: 1, title: "Anime", media_profile: :anime},
+        season_number: 0,
+        results: [
+          {%Release{title: "Blocked", resolution: "1080p", protocol: :torrent},
+           {:rejected, :blocked_anime_group}},
+          {%Release{title: "Audio", resolution: "1080p", protocol: :torrent},
+           {:rejected, :contradictory_audio}},
+          {%Release{title: "Subtitles", resolution: "1080p", protocol: :torrent},
+           {:rejected, :contradictory_subtitles}},
+          {%Release{title: "Waiting", resolution: "1080p", protocol: :torrent},
+           {:rejected, :awaiting_preferred_group}},
+          {%Release{title: "Undated", resolution: "1080p", protocol: :torrent},
+           {:rejected, :publication_time_required}},
+          {%Release{title: "Unresolved", resolution: "1080p", protocol: :torrent},
+           {:rejected, :unsafe_anime_mapping}}
+        ]
+      })
+
+    assert html =~ "blocked anime group"
+    assert html =~ "contradictory audio"
+    assert html =~ "contradictory subtitles"
+    assert html =~ "awaiting preferred group"
+    assert html =~ "publication time required"
+    assert html =~ "stable episode mapping required"
+
+    for index <- 0..4, do: assert(html =~ ~s(phx-value-index="#{index}"))
+    refute html =~ ~s(phx-value-index="5")
+  end
+
+  test "switching from an Anime target to Standard clears stale release state" do
+    old_target = %Series{id: 1, title: "Anime", media_profile: :anime}
+
+    old_release = %Release{
+      title: "Anime whole-series result",
+      episodes: nil,
+      mapping_snapshot: %{"version" => 2}
+    }
+
+    socket = %Socket{
+      assigns: %{
+        __changed__: %{},
+        id: "ms",
+        mode: :tv,
+        target: old_target,
+        season_number: 0,
+        state: :loaded,
+        results: [{old_release, :ok}],
+        confirming: "0"
+      }
+    }
+
+    new_assigns = %{
+      id: "ms",
+      mode: :tv,
+      target: %Series{id: 2, title: "Standard", media_profile: :standard},
+      season_number: 1
+    }
+
+    assert {:ok, updated} = ManualSearchComponent.update(new_assigns, socket)
+    assert updated.assigns.state == :loading
+    assert updated.assigns.results == []
+    assert updated.assigns.confirming == nil
   end
 
   # FIX 1: an empty TV indexer result is "no releases found", not "season complete". The component

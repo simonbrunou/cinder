@@ -115,6 +115,7 @@ defmodule CinderWeb.SetupLive do
             form={@form}
             health={@health}
             show_move_on_import={false}
+            show_anime={false}
           />
         </div>
         <.button

@@ -7,7 +7,8 @@ defmodule CinderWeb.ActivityLive do
   they live in `/library`; only in-flight or parked-needing-retry movies stay here.
   Delete routes through `Catalog.cancel_grab/1` (which also removes the tracked client
   download, so the freed episodes' re-grab doesn't collide with it). Mapping holds use the
-  state-guarded `Catalog.cancel_mapping_grab/1`. Live via the `movies` + `series` topics.
+  state-guarded `Catalog.cancel_mapping_grab/1`; verification holds reuse the regular durable
+  cancel path and add only a guarded retry. Live via the `movies` + `series` topics.
   """
   use CinderWeb, :live_view
 
@@ -106,6 +107,22 @@ defmodule CinderWeb.ActivityLive do
      |> put_flash(level, msg)}
   end
 
+  def handle_event("retry_verification", %{"id" => id}, socket) when is_binary(id) do
+    {level, msg} =
+      with {id, ""} <- Integer.parse(id),
+           %{} = grab <- Catalog.get_grab(id),
+           {:ok, _retried} <- Catalog.retry_grab_verification(grab) do
+        {:info, gettext("Verification will retry shortly.")}
+      else
+        _ -> {:error, gettext("The verification could not be retried.")}
+      end
+
+    {:noreply,
+     socket
+     |> assign(grabs: Catalog.list_grabs())
+     |> put_flash(level, msg)}
+  end
+
   # Client-controlled payloads — ignore anything unmatched rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
@@ -178,6 +195,12 @@ defmodule CinderWeb.ActivityLive do
               />
               <span class="text-xs text-base-content/70">{g.download_protocol}</span>
               <span class="min-w-0 truncate text-xs text-base-content/70">{g.download_id}</span>
+              <span
+                :if={g.mapping_status == :verification_blocked}
+                class="badge badge-warning"
+              >
+                {gettext("Needs verification")}
+              </span>
               <.link
                 :if={g.mapping_status == :needs_mapping}
                 navigate={~p"/activity/grabs/#{g.id}/mapping"}
@@ -198,7 +221,21 @@ defmodule CinderWeb.ActivityLive do
                 {gettext("Cancel download")}
               </.button>
               <.button
+                :if={g.mapping_status == :verification_blocked}
+                id={"retry-verification-grab-#{g.id}"}
+                type="button"
+                size="xs"
+                phx-click="retry_verification"
+                phx-value-id={g.id}
+              >
+                {gettext("Retry verification")}
+              </.button>
+              <.button
                 :if={g.mapping_status != :needs_mapping}
+                id={
+                  if g.mapping_status == :verification_blocked,
+                    do: "cancel-verification-grab-#{g.id}"
+                }
                 type="button"
                 variant="danger"
                 size="sm"
@@ -207,7 +244,9 @@ defmodule CinderWeb.ActivityLive do
                 phx-value-id={g.id}
                 phx-disable-with={gettext("Deleting…")}
               >
-                {gettext("Delete")}
+                {if g.mapping_status == :verification_blocked,
+                  do: gettext("Cancel download"),
+                  else: gettext("Delete")}
               </.button>
             </div>
             <.confirm_action
@@ -229,9 +268,17 @@ defmodule CinderWeb.ActivityLive do
               on_confirm="confirm_delete"
               on_cancel="dismiss_confirm"
               value={g.id}
-              confirm_label={gettext("Delete")}
+              confirm_label={
+                if g.mapping_status == :verification_blocked,
+                  do: gettext("Cancel download"),
+                  else: gettext("Delete")
+              }
             >
-              <:caveat>{gettext("Delete this download? Its episodes are unlinked.")}</:caveat>
+              <:caveat>
+                {if g.mapping_status == :verification_blocked,
+                  do: gettext("Cancel this download? Its episodes will return to the wanted queue."),
+                  else: gettext("Delete this download? Its episodes are unlinked.")}
+              </:caveat>
             </.confirm_action>
           </li>
         </ul>

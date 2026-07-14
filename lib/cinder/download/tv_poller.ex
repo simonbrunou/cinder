@@ -17,14 +17,16 @@ defmodule Cinder.Download.TvPoller do
 
   Bounded retry uses the grab's `download_attempts` counter; `mark_grab_downloaded` resets it at
   the download→import boundary, so the advance and import phases each get a fresh `@max_attempts`
-  budget (a download's blips don't starve its import). The search phase backs off per
+  budget (a download's blips don't starve its import). An unavailable policy probe preserves the
+  content in a durable verification hold at that bound. The search phase backs off per
   `episode.search_attempts`/`updated_at` exactly like the movie poller, and an episode parks
   (derived `:search_parked`) at `Catalog.max_search_attempts/0` — the crossing is warned +
   announced by Catalog at the counter's write site, covering every bump path.
   """
   require Logger
 
-  alias Cinder.{Acquisition, Catalog, Download, Library, Notifier}
+  alias Cinder.{Acquisition, Catalog, Download, Library, Notifier, Settings}
+  alias Cinder.Acquisition.AnimePreferences
   alias Cinder.Catalog.Grab
   alias Cinder.HTTPPolicy
 
@@ -129,9 +131,28 @@ defmodule Cinder.Download.TvPoller do
 
   defp import_preflighted_grab(preflight) do
     case Library.stage_anime_episodes(preflight.grab, preflight) do
-      {:ok, staged} -> finalize_staged_grab(preflight.grab, staged)
-      {:restart_preflight, :inventory_changed} -> :ok
-      {:error, reason} -> retry_or_park(preflight.grab, reason)
+      {:ok, staged} ->
+        finalize_staged_grab(preflight.grab, staged)
+
+      {:restart_preflight, :inventory_changed} ->
+        :ok
+
+      {:error, {:release_policy_mismatch, evidence}} ->
+        reject_release(preflight.grab, evidence)
+
+      {:error, {:release_policy_unavailable, reason}} ->
+        retry_or_hold_verification(preflight.grab, reason)
+
+      {:error, reason} ->
+        retry_or_park(preflight.grab, reason)
+    end
+  end
+
+  defp reject_release(grab, evidence) do
+    case Catalog.reject_grab_release(grab, evidence) do
+      {:ok, _grab} -> :ok
+      {:error, :stale_release} -> :ok
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -291,7 +312,20 @@ defmodule Cinder.Download.TvPoller do
     wanted_ids = Enum.map(episodes, & &1.id)
     context = Catalog.anime_series_acquisition_context(series)
 
-    case Acquisition.best_anime_releases(context, wanted_ids, search_opts(series)) do
+    case AnimePreferences.resolve(series, Settings.anime_defaults()) do
+      {:ok, policy} ->
+        search_anime_with_policy(series, episodes, context, wanted_ids, policy)
+
+      {:error, _reason} ->
+        Logger.info("anime search held for series #{series.id}: invalid preferences")
+        :ok
+    end
+  end
+
+  defp search_anime_with_policy(series, episodes, context, wanted_ids, policy) do
+    opts = search_opts(series) ++ AnimePreferences.selection_opts(policy)
+
+    case Acquisition.best_anime_releases(context, wanted_ids, opts) do
       {:ok, %{assignments: assignments, waiting: waiting}} ->
         grabbed = Enum.flat_map(assignments, &grab_anime_assignment/1)
         held = if waiting, do: waiting.episode_ids, else: []
@@ -373,6 +407,27 @@ defmodule Cinder.Download.TvPoller do
     else
       Logger.info(
         "tv grab #{grab.id} attempt #{attempts}/#{@max_attempts} failed (#{HTTPPolicy.sanitize_log(reason)}); will retry"
+      )
+
+      Catalog.increment_grab_attempts(grab)
+    end
+  end
+
+  defp retry_or_hold_verification(%Grab{} = grab, reason) do
+    attempts = (grab.download_attempts || 0) + 1
+
+    if attempts == @max_attempts do
+      Logger.warning(
+        "tv grab #{grab.id} verification held after #{attempts}: #{HTTPPolicy.sanitize_log(reason)}"
+      )
+
+      case Catalog.hold_grab_verification(grab) do
+        {:ok, _held} -> :ok
+        {:error, :stale_grab} -> :ok
+      end
+    else
+      Logger.info(
+        "tv grab #{grab.id} verification attempt #{attempts}/#{@max_attempts} unavailable (#{HTTPPolicy.sanitize_log(reason)}); will retry"
       )
 
       Catalog.increment_grab_attempts(grab)

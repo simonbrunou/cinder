@@ -58,7 +58,16 @@ defmodule Cinder.Catalog.Episode do
   """
   def nested_changeset(episode, attrs) do
     episode
-    |> cast(attrs, [:tmdb_episode_id, :episode_number, :title, :air_date, :monitored])
+    |> cast(attrs, [
+      :tmdb_episode_id,
+      :episode_number,
+      :title,
+      :air_date,
+      :monitored,
+      :classification,
+      :classification_source,
+      :classification_label
+    ])
     |> validate_required([:episode_number])
   end
 
@@ -102,7 +111,17 @@ defmodule Cinder.Catalog.Episode do
   """
   def refresh_changeset(episode, attrs) do
     episode
-    |> cast(attrs, [:season_id, :tmdb_episode_id, :episode_number, :title, :air_date, :monitored])
+    |> cast(attrs, [
+      :season_id,
+      :tmdb_episode_id,
+      :episode_number,
+      :title,
+      :air_date,
+      :monitored,
+      :classification,
+      :classification_source,
+      :classification_label
+    ])
     |> validate_required([:season_id, :episode_number])
     |> unique_constraint([:season_id, :episode_number])
     |> foreign_key_constraint(:season_id)

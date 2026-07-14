@@ -5,7 +5,7 @@ defmodule Cinder.Download.IntentTest do
 
   alias Cinder.Acquisition.{Anime, Release}
   alias Cinder.Catalog
-  alias Cinder.Catalog.Grab
+  alias Cinder.Catalog.{Grab, Movie}
   alias Cinder.Download
   alias Cinder.Download.Intent
   alias Cinder.Download.IntentEpisode
@@ -15,6 +15,232 @@ defmodule Cinder.Download.IntentTest do
 
   setup :set_mox_global
   setup :verify_on_exit!
+
+  test "policy reservation validates the exact bounded v1 document and keeps it immutable" do
+    title = "[SubsPlease] Show [1080p]"
+    snapshot = release_policy_snapshot(title)
+
+    attrs = %{
+      operation_key: Ecto.UUID.generate(),
+      kind: :movie,
+      target_id: 42,
+      episode_ids: [],
+      protocol: :torrent,
+      release: %{"title" => title},
+      status: :reserved,
+      release_policy_snapshot: snapshot
+    }
+
+    assert Intent.reservation_changeset(%Intent{}, attrs).valid?
+
+    invalid = [
+      Map.put(snapshot, "version", 2),
+      Map.put(snapshot, "required_audio_languages", "ja"),
+      Map.put(snapshot, "required_embedded_subtitle_languages", "fr"),
+      Map.put(snapshot, "required_audio_languages", [""]),
+      Map.put(snapshot, "required_audio_languages", [42]),
+      Map.put(snapshot, "required_audio_languages", ["JA"]),
+      Map.put(snapshot, "required_audio_languages", ["ja", "ja"]),
+      Map.put(snapshot, "release_group", " SubsPlease "),
+      Map.put(snapshot, "release_group", 42),
+      Map.put(snapshot, "release_title", "Another.Release"),
+      Map.put(snapshot, "provenance", %{"source" => "settings"})
+    ]
+
+    for malformed <- invalid do
+      refute Intent.reservation_changeset(
+               %Intent{},
+               %{attrs | release_policy_snapshot: malformed}
+             ).valid?
+    end
+
+    assert {:ok, intent} = %Intent{} |> Intent.reservation_changeset(attrs) |> Repo.insert()
+
+    ignored = Intent.changeset(intent, %{release_policy_snapshot: nil})
+    refute get_change(ignored, :release_policy_snapshot)
+    assert {:ok, unchanged} = Repo.update(ignored)
+    assert unchanged.release_policy_snapshot == snapshot
+
+    immutable =
+      Intent.reservation_changeset(unchanged, %{release_policy_snapshot: snapshot})
+
+    assert "is immutable" in errors_on(immutable).release_policy_snapshot
+  end
+
+  test "reservation requires explicit policy evidence equal to the selected release marker" do
+    snapshot = release_policy_snapshot("Marked.Anime")
+
+    release = %Release{
+      title: "Marked.Anime",
+      download_url: "magnet:?marked-anime",
+      protocol: :torrent,
+      release_policy_snapshot: snapshot
+    }
+
+    attrs = %{
+      kind: :movie,
+      target_id: 42,
+      episode_ids: [],
+      protocol: :torrent,
+      release: release
+    }
+
+    assert {:error, :invalid_release_evidence} = Download.reserve_intent(attrs)
+
+    assert {:error, :invalid_release_evidence} =
+             Download.reserve_intent(
+               Map.put(attrs, :release_policy_snapshot, %{snapshot | "release_group" => "other"})
+             )
+
+    assert {:ok, intent} =
+             Download.reserve_intent(Map.put(attrs, :release_policy_snapshot, snapshot))
+
+    assert intent.release_policy_snapshot == snapshot
+  end
+
+  test "manual Anime movie and episode grabs freeze policy before reservation" do
+    movie =
+      movie_fixture(%{
+        status: :no_match,
+        media_profile: :anime,
+        original_language: "ja",
+        preferred_language: "french"
+      })
+      |> Movie.anime_preferences_changeset(%{
+        audio_mode: :dual,
+        embedded_subtitle_mode: :require,
+        subtitle_languages: ["fr"]
+      })
+      |> Repo.update!()
+
+    movie_release =
+      %Release{
+        title: "[SubsPlease] Manual.Movie [1080p]",
+        download_url: "magnet:?manual-anime-movie",
+        protocol: :torrent,
+        group: "SubsPlease"
+      }
+
+    expect(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+      {:ok, "hash-manual-anime-movie"}
+    end)
+
+    assert {:ok, %Movie{} = downloading} = Download.grab_movie(movie, movie_release)
+
+    assert downloading.release_policy_snapshot == %{
+             "version" => 1,
+             "required_audio_languages" => ["ja", "fr"],
+             "required_embedded_subtitle_languages" => ["fr"],
+             "release_group" => "subsplease",
+             "release_title" => movie_release.title
+           }
+
+    fixture = anime_reservation_fixture()
+    refute fixture.release.release_policy_snapshot
+
+    expect(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+      {:ok, "hash-manual-anime-episodes"}
+    end)
+
+    assert {:ok, %Grab{} = grab} =
+             Download.grab_episodes(fixture.release, [fixture.first.id, fixture.second.id])
+
+    assert grab.release_policy_snapshot["version"] == 1
+    assert grab.release_policy_snapshot["release_title"] == fixture.release.title
+  end
+
+  test "episode boundary rejects missing or mixed-series IDs before client I/O" do
+    first_series = series_fixture(%{media_profile: :anime})
+    second_series = series_fixture(%{media_profile: :anime})
+    first = episode_fixture(season_fixture(first_series))
+    second = episode_fixture(season_fixture(second_series))
+    release = release("Mixed.Show")
+
+    assert {:error, :episode_series_mismatch} =
+             Download.grab_episodes(release, [first.id, second.id])
+
+    assert {:error, :episode_series_mismatch} =
+             Download.grab_episodes(release, [first.id, -1])
+
+    assert Repo.aggregate(Intent, :count) == 0
+    assert Repo.aggregate(Grab, :count) == 0
+  end
+
+  test "direct incomplete episodic intent is rejected before restart reconciliation client I/O" do
+    series = series_fixture(%{monitor_strategy: :all})
+    episode = episode_fixture(season_fixture(series))
+
+    assert_invalid_episode_intent_rejected([episode.id, -1], [episode])
+  end
+
+  test "direct mixed-series intent is rejected before restart reconciliation client I/O" do
+    first = episode_fixture(season_fixture(series_fixture(%{monitor_strategy: :all})))
+    second = episode_fixture(season_fixture(series_fixture(%{monitor_strategy: :all})))
+
+    assert_invalid_episode_intent_rejected([first.id, second.id], [first, second])
+  end
+
+  test "direct incomplete episodic intent is rejected before submit client I/O" do
+    series = series_fixture(%{monitor_strategy: :all})
+    episode = episode_fixture(season_fixture(series))
+
+    assert_invalid_episode_intent_rejected(
+      [episode.id, -1],
+      [episode],
+      &Download.submit_intent/1
+    )
+  end
+
+  test "direct mixed-series intent is rejected before submit client I/O" do
+    first = episode_fixture(season_fixture(series_fixture(%{monitor_strategy: :all})))
+    second = episode_fixture(season_fixture(series_fixture(%{monitor_strategy: :all})))
+
+    assert_invalid_episode_intent_rejected(
+      [first.id, second.id],
+      [first, second],
+      &Download.submit_intent/1
+    )
+  end
+
+  test "Standard movie and TV reservations and owners keep policy nil" do
+    movie = movie_fixture(%{status: :no_match, media_profile: :standard})
+
+    expect(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+      {:ok, "hash-standard-movie-policy"}
+    end)
+
+    assert {:ok, %Movie{release_policy_snapshot: nil}} =
+             Download.grab_movie(movie, release("Standard.Movie"))
+
+    series = series_fixture(%{monitor_strategy: :all, media_profile: :standard})
+    episode = episode_fixture(season_fixture(series))
+
+    expect(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+      {:ok, "hash-standard-tv-policy"}
+    end)
+
+    assert {:ok, %Grab{release_policy_snapshot: nil}} =
+             Download.grab_episodes(release("Standard.Show.S01E01"), [episode.id])
+
+    assert {:ok, %Intent{release_policy_snapshot: nil}} =
+             Download.reserve_intent(%{
+               kind: :movie,
+               target_id: 123_456,
+               episode_ids: [],
+               protocol: :torrent,
+               release: release("Standard.Intent")
+             })
+
+    retryable = movie_fixture(%{status: :no_match})
+
+    assert {:ok, retryable} =
+             Catalog.transition(retryable, %{
+               status: :no_match,
+               release_policy_snapshot: release_policy_snapshot("Stale.Release")
+             })
+
+    assert {:ok, %Movie{release_policy_snapshot: nil}} = Catalog.retry_movie(retryable)
+  end
 
   test "episodic reservation persists an immutable snapshot after Catalog evidence changes" do
     fixture = anime_reservation_fixture()
@@ -203,6 +429,68 @@ defmodule Cinder.Download.IntentTest do
     assert Repo.reload(fixture.first).grab_id == nil
     assert Repo.reload(fixture.second).grab_id == other.id
     refute Repo.get_by(Grab, download_id: "hash-anime-conflict")
+  end
+
+  test "episode reservation copies policy atomically through intent to grab" do
+    fixture = anime_reservation_fixture()
+    policy = release_policy_snapshot(fixture.release.title)
+    release = %{fixture.release | release_policy_snapshot: policy}
+
+    assert {:ok, intent} =
+             Download.reserve_intent(%{
+               kind: :season_pack,
+               target_id: fixture.first.id,
+               episode_ids: [fixture.first.id, fixture.second.id],
+               protocol: :torrent,
+               release: release,
+               mapping_snapshot: fixture.snapshot,
+               release_policy_snapshot: policy
+             })
+
+    assert intent.release_policy_snapshot == policy
+
+    submitted =
+      intent
+      |> Intent.changeset(%{status: :submitted, remote_id: "hash-policy-atomic-grab"})
+      |> Repo.update!()
+
+    assert {:ok, %Grab{} = grab} = Download.reconcile_intent(submitted)
+    assert grab.mapping_snapshot == fixture.snapshot
+    assert grab.release_policy_snapshot == policy
+    refute Repo.get(Intent, intent.id)
+  end
+
+  test "movie attach stores policy with remote ownership and stale status stores neither" do
+    snapshot = release_policy_snapshot("[SubsPlease] Movie [1080p]")
+
+    release = %Release{
+      title: snapshot["release_title"],
+      download_url: "magnet:?policy-atomic-movie",
+      protocol: :torrent,
+      release_policy_snapshot: snapshot
+    }
+
+    movie = movie_fixture()
+
+    assert {:ok, intent} =
+             reserve_marked_movie_intent(movie, release, snapshot, "hash-policy-atomic-movie")
+
+    assert {:ok, %Movie{} = downloading} = Download.reconcile_intent(intent)
+    assert downloading.download_id == "hash-policy-atomic-movie"
+    assert downloading.release_policy_snapshot == snapshot
+
+    cancelled = movie_fixture()
+
+    assert {:ok, stale} =
+             reserve_marked_movie_intent(cancelled, release, snapshot, "hash-policy-stale-movie")
+
+    assert {:ok, _cancelled} = Catalog.transition(cancelled, %{status: :cancelled})
+
+    expect(Cinder.Download.ClientMock, :remove, fn "hash-policy-stale-movie", _opts -> :ok end)
+
+    assert {:error, :stale_target} = Download.reconcile_intent(stale)
+    refute Repo.get!(Movie, cancelled.id).release_policy_snapshot
+    refute Repo.get(Intent, stale.id)
   end
 
   test "reserve_intent/1 generates a unique key and stores only resubmission fields" do
@@ -944,6 +1232,12 @@ defmodule Cinder.Download.IntentTest do
     movie = movie_fixture(%{status: :searching})
     actor = Cinder.AccountsFixtures.admin_fixture()
 
+    assert {:ok, movie} =
+             Catalog.transition(movie, %{
+               status: :searching,
+               release_policy_snapshot: release_policy_snapshot("Cancelled.Release")
+             })
+
     assert {:ok, intent} = reserve_movie_intent(movie.id)
 
     intent =
@@ -953,7 +1247,7 @@ defmodule Cinder.Download.IntentTest do
 
     expect(Cinder.Download.ClientMock, :remove, fn "hash-cancel", _opts -> :ok end)
 
-    assert {:ok, _movie} = Catalog.cancel_movie(movie, actor)
+    assert {:ok, %Movie{release_policy_snapshot: nil}} = Catalog.cancel_movie(movie, actor)
     refute Repo.get(Intent, intent.id)
   end
 
@@ -1024,7 +1318,7 @@ defmodule Cinder.Download.IntentTest do
   end
 
   defp anime_reservation_fixture do
-    series = series_fixture(%{monitor_strategy: :all})
+    series = series_fixture(%{monitor_strategy: :all, media_profile: :anime, audio_mode: :any})
     season = season_fixture(series)
     first = episode_fixture(season, episode_number: 1)
     second = episode_fixture(season, episode_number: 2)
@@ -1056,6 +1350,7 @@ defmodule Cinder.Download.IntentTest do
              Anime.select_episodes([candidate], context, [first.id, second.id], [])
 
     %{
+      series: series,
       first: first,
       second: second,
       coordinate: coordinate,
@@ -1073,6 +1368,69 @@ defmodule Cinder.Download.IntentTest do
       release: fixture.release,
       mapping_snapshot: fixture.snapshot
     })
+  end
+
+  defp reserve_marked_movie_intent(movie, release, snapshot, remote_id) do
+    with {:ok, intent} <-
+           Download.reserve_intent(%{
+             kind: :movie,
+             target_id: movie.id,
+             episode_ids: [],
+             protocol: release.protocol,
+             release: release,
+             release_policy_snapshot: snapshot
+           }) do
+      {:ok,
+       intent
+       |> Intent.changeset(%{status: :submitted, remote_id: remote_id})
+       |> Repo.update!()}
+    end
+  end
+
+  defp assert_invalid_episode_intent_rejected(
+         episode_ids,
+         episodes,
+         action \\ &Download.reconcile_intent/1
+       ) do
+    chosen = release("Direct.Invalid.Episodes")
+
+    assert {:ok, intent} =
+             Download.reserve_intent(%{
+               kind: :season_pack,
+               target_id: hd(episode_ids),
+               episode_ids: episode_ids,
+               protocol: chosen.protocol,
+               release: chosen
+             })
+
+    calls = start_supervised!({Agent, fn -> 0 end})
+
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _operation_key ->
+      Agent.update(calls, &(&1 + 1))
+      :not_found
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+      Agent.update(calls, &(&1 + 1))
+      {:ok, "hash-invalid-episodic-intent"}
+    end)
+
+    assert {:error, :episode_series_mismatch} = action.(Repo.reload!(intent))
+
+    assert Agent.get(calls, & &1) == 0
+    refute Repo.get(Intent, intent.id)
+    assert Repo.aggregate(Grab, :count) == 0
+    Enum.each(episodes, &refute(Repo.reload!(&1).grab_id))
+  end
+
+  defp release_policy_snapshot(title) do
+    %{
+      "version" => 1,
+      "required_audio_languages" => ["ja", "fr"],
+      "required_embedded_subtitle_languages" => ["fr"],
+      "release_group" => "subsplease",
+      "release_title" => title
+    }
   end
 
   defp valid_anime_intent_attrs(fixture, mapping_snapshot) do

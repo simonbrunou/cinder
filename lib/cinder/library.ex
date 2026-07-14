@@ -16,7 +16,16 @@ defmodule Cinder.Library do
   alias Cinder.Acquisition.{Language, Parser}
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Grab, Movie, Series}
-  alias Cinder.Library.{AnimePreflight, ImportStage, PathPolicy, Sidecars, Upgrade}
+
+  alias Cinder.Library.{
+    AnimePreflight,
+    ImportStage,
+    PathPolicy,
+    PolicyVerifier,
+    Sidecars,
+    Upgrade
+  }
+
   alias Cinder.Settings
 
   @video_exts ~w(.mkv .mp4 .avi .m4v .mov .wmv .ts)
@@ -114,16 +123,12 @@ defmodule Cinder.Library do
 
     with {:ok, root} <- root(:movies),
          {:ok, source, folder?} <- resolve_source(movie.file_path),
-         :ok <-
-           verify_audio(
-             source,
-             Language.target(movie.preferred_language, movie.original_language)
-           ),
+         {:ok, reports} <- verify_movie_policy(movie, source),
          {:ok, %{size: size, inode: si, major_device: sdev}} <- fs().lstat(source),
          parsed = Parser.parse(Path.basename(movie.file_path)),
          new_q =
            new_quality(parsed, size)
-           |> Map.merge(capture_media(source))
+           |> Map.merge(cached_or_capture_media(source, reports))
            |> Map.put_new(:sidecar_subtitles, []),
          dest = build_dest(movie, source, root),
          {:ok, dest} <- safe_destination(dest, root),
@@ -862,6 +867,16 @@ defmodule Cinder.Library do
     end
   end
 
+  defp cached_or_capture_media(source, reports) do
+    case Map.fetch(reports, source) do
+      {:ok, report} -> captured_media(report)
+      :error -> capture_media(source)
+    end
+  end
+
+  defp captured_media(%{audio: audio, subtitles: subtitles}),
+    do: %{audio_languages: audio, embedded_subtitles: subtitles}
+
   defp probe_media(impl, source) do
     case impl.probe(source) do
       {:ok, %{audio: audio, subtitles: subtitles}} ->
@@ -1016,6 +1031,28 @@ defmodule Cinder.Library do
   defp audio_result(true), do: :ok
   defp audio_result(false), do: {:error, :wrong_audio_language}
 
+  defp verify_movie_policy(%Movie{release_policy_snapshot: snapshot}, source)
+       when is_map(snapshot),
+       do: verify_release_policy([source], snapshot)
+
+  defp verify_movie_policy(%Movie{} = movie, source) do
+    case verify_audio(
+           source,
+           Language.target(movie.preferred_language, movie.original_language)
+         ) do
+      :ok -> {:ok, %{}}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp verify_release_policy(paths, snapshot) do
+    case PolicyVerifier.verify_sources(paths, snapshot, media_info()) do
+      {:ok, reports} -> {:ok, reports}
+      {:mismatch, evidence} -> {:error, {:release_policy_mismatch, evidence}}
+      {:unavailable, reason} -> {:error, {:release_policy_unavailable, reason}}
+    end
+  end
+
   defp media_info, do: Application.get_env(:cinder, :media_info)
 
   @doc """
@@ -1121,8 +1158,9 @@ defmodule Cinder.Library do
          :ok <- same_container_kind(current.folder?, preflight.folder?),
          {:ok, root} <- root(:tv),
          {:ok, to_import} <-
-           anime_import_pairs(grab, preflight.assignments, current.folder?) do
-      stage_anime_all(to_import, root, episode_target(grab.episodes), current.folder?)
+           anime_import_pairs(grab, preflight.assignments, current.folder?),
+         {:ok, reports} <- verify_grab_policy(grab, to_import) do
+      stage_anime_all(to_import, root, episode_target(grab.episodes), current.folder?, reports)
     else
       {:error, :inventory_changed} -> {:restart_preflight, :inventory_changed}
       {:error, _reason} = error -> error
@@ -1218,6 +1256,14 @@ defmodule Cinder.Library do
       {:error, _reason} = error -> error
     end
   end
+
+  defp verify_grab_policy(%Grab{release_policy_snapshot: snapshot}, to_import)
+       when is_map(snapshot) do
+    paths = to_import |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
+    verify_release_policy(paths, snapshot)
+  end
+
+  defp verify_grab_policy(%Grab{}, _to_import), do: {:ok, %{}}
 
   defp inventory_anime_files(videos, content_path, folder?) do
     videos
@@ -1446,7 +1492,7 @@ defmodule Cinder.Library do
     end)
   end
 
-  defp stage_anime_all(to_import, root, target, folder?) do
+  defp stage_anime_all(to_import, root, target, folder?, reports) do
     to_import
     |> Enum.group_by(
       fn {episode, source} -> {source, episode.season.season_number} end,
@@ -1456,7 +1502,7 @@ defmodule Cinder.Library do
     |> Enum.reduce_while({:ok, []}, fn {{source, _season}, episodes}, {:ok, acc} ->
       episodes = Enum.sort_by(episodes, & &1.episode_number)
 
-      case stage_episode_file(episodes, source, root, target, folder?) do
+      case stage_episode_file(episodes, source, root, target, folder?, reports) do
         {:ok, stage} ->
           rows = Enum.map(episodes, &{&1.id, stage})
           {:cont, {:ok, Enum.reverse(rows, acc)}}
@@ -1488,7 +1534,11 @@ defmodule Cinder.Library do
     end
   end
 
-  defp stage_episode_file([ep | _] = episodes, source, root, target, folder?) do
+  defp stage_episode_file([_ep | _] = episodes, source, root, target, folder?) do
+    stage_episode_file(episodes, source, root, target, folder?, %{})
+  end
+
+  defp stage_episode_file([ep | _] = episodes, source, root, target, folder?, reports) do
     dest = build_episode_dest(episodes, source, root)
 
     with {:ok, source} <- safe_source_file(source),
@@ -1496,7 +1546,7 @@ defmodule Cinder.Library do
          parsed = Parser.parse(Path.basename(source)),
          new_q =
            new_quality(parsed, size)
-           |> Map.merge(capture_media(source))
+           |> Map.merge(cached_or_capture_media(source, reports))
            |> Map.put_new(:sidecar_subtitles, []),
          {:ok, dest} <- safe_destination(dest, root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),

@@ -26,6 +26,19 @@ defmodule Cinder.Acquisition.Language do
   # derived from the same registry. Powers the import-time MediaInfo check.
   @audio_codes Parser.audio_codes()
 
+  @language_aliases @audio_codes
+                    |> Enum.flat_map(fn {canonical, aliases} ->
+                      Enum.map(aliases, &{&1, canonical})
+                    end)
+                    |> Map.new()
+
+  @language_aliases Map.merge(
+                      @language_aliases,
+                      Map.new(@tags, fn {canonical, tag} ->
+                        {String.downcase(tag), canonical}
+                      end)
+                    )
+
   # Every audio code known for any language — lets `audio_satisfies?/2` tell a *recognised* wrong
   # language (park) from a code it doesn't recognise (could be a variant of the target; don't park).
   @known_audio_codes @audio_codes |> Map.values() |> List.flatten() |> MapSet.new()
@@ -46,6 +59,17 @@ defmodule Cinder.Acquisition.Language do
 
   @doc "The valid `preferred_language` values (the per-title language picks)."
   def preferences, do: ["original", "french", "any"]
+
+  @doc "Normalizes a language code or known parser tag to its ISO 639-1 code."
+  def normalize(nil), do: nil
+
+  def normalize(code) when is_binary(code) do
+    normalized = code |> String.trim() |> String.downcase()
+    Map.get(@language_aliases, normalized, normalized)
+  end
+
+  @doc "Whether a value normalizes to a language supported by the release and stream registry."
+  def known?(code), do: normalize(code) in Map.keys(@audio_codes)
 
   @doc """
   Whether an unsatisfiable preference parks the item (an explicit language pick) rather
@@ -92,6 +116,22 @@ defmodule Cinder.Acquisition.Language do
         # could be an unlisted variant of the target). Park only when EVERY track is a recognised
         # *other* language — never on incomplete data.
         Enum.any?(langs, &(&1 in accepted)) or Enum.any?(langs, &(&1 not in @known_audio_codes))
+    end
+  end
+
+  @doc """
+  Classifies whether tagged streams satisfy a required language without collapsing incomplete
+  evidence into a match or mismatch.
+  """
+  def stream_status(required, present, unknown?) do
+    required = normalize(required)
+    accepted = [required | Map.get(@audio_codes, required, [])]
+    present = Enum.map(present, &String.downcase/1)
+
+    cond do
+      Enum.any?(present, &(&1 in accepted)) -> :satisfied
+      unknown? or Enum.any?(present, &(&1 not in @known_audio_codes)) -> :unknown
+      true -> :mismatch
     end
   end
 
