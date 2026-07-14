@@ -16,6 +16,28 @@ defmodule Cinder.Download.IntentTest do
   setup :set_mox_global
   setup :verify_on_exit!
 
+  # Anime preferences are global-only (no per-title override) — a test needing a non-default
+  # policy overrides the global settings env for its duration and restores it on exit.
+  defp set_anime_defaults!(overrides) do
+    saved = Application.fetch_env!(:cinder, :anime_preferences)
+    Application.put_env(:cinder, :anime_preferences, Keyword.merge(saved, overrides))
+    on_exit(fn -> Application.put_env(:cinder, :anime_preferences, saved) end)
+  end
+
+  defp set_anime_subtitle_languages!(csv) do
+    saved = Application.get_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, [])
+
+    Application.put_env(
+      :cinder,
+      Cinder.Subtitles.Provider.OpenSubtitles,
+      Keyword.put(saved, :languages, csv)
+    )
+
+    on_exit(fn ->
+      Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, saved)
+    end)
+  end
+
   test "policy reservation validates the exact bounded v1 document and keeps it immutable" do
     title = "[SubsPlease] Show [1080p]"
     snapshot = release_policy_snapshot(title)
@@ -99,6 +121,9 @@ defmodule Cinder.Download.IntentTest do
   end
 
   test "manual Anime movie and episode grabs freeze policy before reservation" do
+    set_anime_defaults!(audio_mode: :dual, embedded_subtitle_mode: :require)
+    set_anime_subtitle_languages!("fr")
+
     movie =
       movie_fixture(%{
         status: :no_match,
@@ -106,12 +131,6 @@ defmodule Cinder.Download.IntentTest do
         original_language: "ja",
         preferred_language: "french"
       })
-      |> Movie.anime_preferences_changeset(%{
-        audio_mode: :dual,
-        embedded_subtitle_mode: :require,
-        subtitle_languages: ["fr"]
-      })
-      |> Repo.update!()
 
     movie_release =
       %Release{
@@ -1281,7 +1300,16 @@ defmodule Cinder.Download.IntentTest do
   end
 
   defp anime_reservation_fixture do
-    series = series_fixture(%{monitor_strategy: :all, media_profile: :anime, audio_mode: :any})
+    # original_language/preferred_language satisfy a dub/dual-mode global default (some callers
+    # override the global Anime audio mode for the duration of their test).
+    series =
+      series_fixture(%{
+        monitor_strategy: :all,
+        media_profile: :anime,
+        original_language: "ja",
+        preferred_language: "french"
+      })
+
     season = season_fixture(series)
     first = episode_fixture(season, episode_number: 1)
     second = episode_fixture(season, episode_number: 2)

@@ -8,7 +8,7 @@ defmodule Cinder.Catalog do
   import Ecto.Query
   require Logger
 
-  alias Cinder.Acquisition.{AnimePreferences, Release}
+  alias Cinder.Acquisition.Release
   alias Cinder.Audit
 
   alias Cinder.Catalog.{
@@ -29,7 +29,6 @@ defmodule Cinder.Catalog do
   alias Cinder.Library.ImportStage
   alias Cinder.Notifier
   alias Cinder.Repo
-  alias Cinder.Settings
 
   @topic "movies"
   @download_metric_fields [:download_progress, :download_speed, :download_eta]
@@ -125,72 +124,6 @@ defmodule Cinder.Catalog do
   def set_media_profile(%Series{} = series, profile) do
     series |> Series.profile_changeset(%{media_profile: profile}) |> Repo.update()
   end
-
-  @doc "Sets nullable per-title Anime release preferences for a movie or series."
-  def set_anime_preferences(%Movie{} = movie, params) do
-    persist_anime_preferences(
-      movie,
-      params,
-      &Movie.anime_preferences_changeset/2,
-      fn updated -> broadcast({:movie_updated, updated}) end
-    )
-  end
-
-  def set_anime_preferences(%Series{} = series, params) do
-    persist_anime_preferences(
-      series,
-      params,
-      &Series.anime_preferences_changeset/2,
-      fn updated -> broadcast_series(updated.id) end
-    )
-  end
-
-  defp persist_anime_preferences(title, params, changeset_fun, publish) do
-    case AnimePreferences.override_attrs(params) do
-      {:ok, attrs} ->
-        result =
-          Repo.transaction(
-            fn -> persist_anime_preferences_or_rollback(title, attrs, changeset_fun) end,
-            mode: :immediate
-          )
-
-        with {:ok, updated} <- result do
-          publish.(updated)
-          {:ok, updated}
-        end
-
-      {:error, reason} ->
-        changeset = changeset_fun.(title, %{})
-
-        {:error,
-         Ecto.Changeset.add_error(changeset, preference_error_field(reason), "is invalid")}
-    end
-  end
-
-  defp persist_anime_preferences_or_rollback(title, attrs, changeset_fun) do
-    current = Repo.get!(title.__struct__, title.id)
-    changeset = changeset_fun.(current, attrs)
-
-    with {:ok, changeset} <-
-           AnimePreferences.validate_effective(changeset, Settings.anime_defaults()),
-         {:ok, updated} <- Repo.update(changeset) do
-      updated
-    else
-      {:error, reason} -> Repo.rollback(reason)
-    end
-  end
-
-  defp preference_error_field(:invalid_audio_mode), do: :audio_mode
-  defp preference_error_field(:invalid_embedded_subtitle_mode), do: :embedded_subtitle_mode
-  defp preference_error_field(:invalid_subtitle_languages_mode), do: :subtitle_languages
-
-  defp preference_error_field(:invalid_preferred_release_groups_mode),
-    do: :preferred_release_groups
-
-  defp preference_error_field(:invalid_blocked_release_groups_mode),
-    do: :blocked_release_groups
-
-  defp preference_error_field(:invalid_group_fallback_delay), do: :group_fallback_delay
 
   @doc "Returns selected/effective profile policy and bounded suggestion evidence."
   def media_profile_summary(%Series{} = series) do

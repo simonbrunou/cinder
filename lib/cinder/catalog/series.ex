@@ -12,7 +12,7 @@ defmodule Cinder.Catalog.Series do
 
   import Ecto.Changeset
 
-  alias Cinder.Acquisition.{AnimePreferences, Language}
+  alias Cinder.Acquisition.Language
   alias Cinder.Catalog.{EpisodeCoordinate, Season, TitleAlias}
 
   @monitor_strategies [:all, :future, :none]
@@ -27,12 +27,6 @@ defmodule Cinder.Catalog.Series do
     field :monitor_strategy, Ecto.Enum, values: @monitor_strategies, default: :future
     field :original_language, :string
     field :preferred_language, :string, default: "original"
-    field :audio_mode, Ecto.Enum, values: [:original, :dub, :dual, :any]
-    field :subtitle_languages, {:array, :string}
-    field :embedded_subtitle_mode, Ecto.Enum, values: [:allow, :prefer, :require]
-    field :preferred_release_groups, {:array, :string}
-    field :blocked_release_groups, {:array, :string}
-    field :group_fallback_delay, :integer
     field :overview, :string
     field :genres, {:array, :string}
     field :vote_average, :float
@@ -47,27 +41,6 @@ defmodule Cinder.Catalog.Series do
 
   @doc "Changeset for the operator-owned media handling profile."
   def profile_changeset(series, attrs), do: cast(series, attrs, [:media_profile])
-
-  @anime_preference_fields [
-    :audio_mode,
-    :subtitle_languages,
-    :embedded_subtitle_mode,
-    :preferred_release_groups,
-    :blocked_release_groups,
-    :group_fallback_delay
-  ]
-
-  def anime_preferences_changeset(series, attrs) do
-    series
-    |> cast(attrs, @anime_preference_fields)
-    |> validate_number(:group_fallback_delay, greater_than_or_equal_to: 0)
-    |> update_change(:subtitle_languages, &AnimePreferences.normalize_optional_languages/1)
-    |> update_change(
-      :preferred_release_groups,
-      &AnimePreferences.normalize_optional_groups/1
-    )
-    |> update_change(:blocked_release_groups, &AnimePreferences.normalize_optional_groups/1)
-  end
 
   @doc "The valid `monitor_strategy` values."
   def monitor_strategies, do: @monitor_strategies

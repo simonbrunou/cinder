@@ -37,6 +37,28 @@ defmodule Cinder.Download.TvPollerTest do
     episode_fixture(season, Map.merge(%{episode_number: ep_num}, Map.new(attrs)))
   end
 
+  # Anime preferences are global-only (no per-title override) — a test needing a non-default
+  # policy overrides the global settings env for its duration and restores it on exit.
+  defp set_anime_defaults!(overrides) do
+    saved = Application.fetch_env!(:cinder, :anime_preferences)
+    Application.put_env(:cinder, :anime_preferences, Keyword.merge(saved, overrides))
+    on_exit(fn -> Application.put_env(:cinder, :anime_preferences, saved) end)
+  end
+
+  defp set_anime_subtitle_languages!(csv) do
+    saved = Application.get_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, [])
+
+    Application.put_env(
+      :cinder,
+      Cinder.Subtitles.Provider.OpenSubtitles,
+      Keyword.put(saved, :languages, csv)
+    )
+
+    on_exit(fn ->
+      Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, saved)
+    end)
+  end
+
   # A successful single-file import (content_path is the file itself). Episodes use a realistic
   # per-episode size so any size-band logic behaves as in production.
   defp stub_single_file_import, do: stub_import_ok(3_000_000_000)
@@ -182,15 +204,13 @@ defmodule Cinder.Download.TvPollerTest do
   end
 
   test "Anime preferred-group waiting holds only uncovered IDs without consuming attempts" do
-    series =
-      series_fixture(%{
-        tvdb_id: 99,
-        monitor_strategy: :all,
-        media_profile: :anime,
-        audio_mode: :any,
-        preferred_release_groups: ["subsplease"],
-        group_fallback_delay: 3_600
-      })
+    set_anime_defaults!(
+      audio_mode: :any,
+      preferred_groups: ["subsplease"],
+      group_fallback_delay: 3_600
+    )
+
+    series = series_fixture(%{tvdb_id: 99, monitor_strategy: :all, media_profile: :anime})
 
     season = season_fixture(series, %{season_number: 1})
     first = episode(season, 1)
@@ -232,14 +252,8 @@ defmodule Cinder.Download.TvPollerTest do
   end
 
   test "invalid Anime series preferences hold the group without search or attempt bumps" do
-    series =
-      series_fixture(%{
-        tvdb_id: 99,
-        monitor_strategy: :all,
-        media_profile: :anime,
-        embedded_subtitle_mode: :require,
-        subtitle_languages: []
-      })
+    set_anime_defaults!(embedded_subtitle_mode: :require)
+    series = series_fixture(%{tvdb_id: 99, monitor_strategy: :all, media_profile: :anime})
 
     wanted = episode(season_fixture(series), 1)
     searches = start_supervised!({Agent, fn -> 0 end})
@@ -286,13 +300,8 @@ defmodule Cinder.Download.TvPollerTest do
     frozen_policy = assignment.release.release_policy_snapshot
     assert intent.release_policy_snapshot == frozen_policy
 
-    series
-    |> Series.anime_preferences_changeset(%{
-      audio_mode: :any,
-      embedded_subtitle_mode: :require,
-      subtitle_languages: ["fr"]
-    })
-    |> Repo.update!()
+    set_anime_defaults!(audio_mode: :any, embedded_subtitle_mode: :require)
+    set_anime_subtitle_languages!("fr")
 
     {:ok, current_policy} =
       AnimePreferences.resolve(Repo.get!(Series, series.id), Cinder.Settings.anime_defaults())
