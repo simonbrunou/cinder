@@ -147,3 +147,11 @@ config :cinder, :enforce_setup, false
 
 config :cinder, :movies_library_path, "/tmp/cinder-test-library"
 config :cinder, :tv_library_path, "/tmp/cinder-test-tv-library"
+
+# Neutralize the shipped default size bands: suite fixtures use arbitrary/tiny/absent sizes,
+# and the Settings band tests seed their own bootstrap snapshot explicitly.
+config :cinder,
+  movies_min_size: nil,
+  movies_max_size: nil,
+  tv_min_size: nil,
+  tv_max_size: nil

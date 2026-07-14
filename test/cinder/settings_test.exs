@@ -473,14 +473,16 @@ defmodule Cinder.SettingsTest do
       assert Application.fetch_env!(:cinder, :tv_library_path) == bootstrap
     end
 
-    test "tv size band: GB strings coerce to bytes; blank/zero/negative clear to unbounded (nil)" do
+    test "tv size band: GB strings coerce to bytes; zero/negative opt out; clearing reverts" do
       Settings.put("tv_max_size", "5")
       assert Application.get_env(:cinder, :tv_max_size) == 5_000_000_000
 
       Settings.put("tv_min_size", "1.5")
       assert Application.get_env(:cinder, :tv_min_size) == 1_500_000_000
 
-      # A cleared, zero, or negative value degrades to "no limit" rather than rejecting everything.
+      # A delete reverts to the bootstrap default (config/test.exs neutralizes the shipped
+      # bands to nil); a zero or negative value degrades to "no limit" rather than rejecting
+      # everything.
       Settings.delete("tv_max_size")
       assert Application.get_env(:cinder, :tv_max_size) == nil
 
@@ -489,6 +491,47 @@ defmodule Cinder.SettingsTest do
 
       Settings.put("tv_min_size", "-3")
       assert Application.get_env(:cinder, :tv_min_size) == nil
+    end
+
+    test "size bands fall back to the config bootstrap defaults when no DB row exists" do
+      # Simulate the shipped config.exs defaults (config/test.exs neutralizes them so the
+      # suite's fixtures stay unbounded); module setup restores the env keys afterwards.
+      for key <- [:tv_min_size, :tv_max_size] do
+        :persistent_term.erase({Cinder.Settings, :base, key})
+      end
+
+      on_exit(fn ->
+        for key <- [:tv_min_size, :tv_max_size] do
+          :persistent_term.erase({Cinder.Settings, :base, key})
+        end
+      end)
+
+      Application.put_env(:cinder, :tv_min_size, 50_000_000)
+      Application.put_env(:cinder, :tv_max_size, 4_000_000_000)
+
+      Settings.load_into_env()
+
+      assert Application.get_env(:cinder, :tv_min_size) == 50_000_000
+      assert Application.get_env(:cinder, :tv_max_size) == 4_000_000_000
+    end
+
+    test "a saved band overrides the default, an explicit 0 opts out, clearing reverts to it" do
+      :persistent_term.erase({Cinder.Settings, :base, :movies_max_size})
+      on_exit(fn -> :persistent_term.erase({Cinder.Settings, :base, :movies_max_size}) end)
+      Application.put_env(:cinder, :movies_max_size, 15_000_000_000)
+
+      # The DB row wins over the bootstrap default (base captured eagerly on this first load,
+      # even though the row short-circuits the fallback — the same regression as the roots).
+      Settings.put("movies_max_size", "20")
+      assert Application.get_env(:cinder, :movies_max_size) == 20_000_000_000
+
+      # An explicit 0 row is unbounded — it must NOT fall back to the default.
+      Settings.put("movies_max_size", "0")
+      assert Application.get_env(:cinder, :movies_max_size) == nil
+
+      # Clearing the row reverts to the bootstrap default, not to unbounded.
+      Settings.delete("movies_max_size")
+      assert Application.get_env(:cinder, :movies_max_size) == 15_000_000_000
     end
 
     test "tv_preferred_resolutions: comma list coerces to a downcased list; blank → nil" do
@@ -642,9 +685,15 @@ defmodule Cinder.SettingsTest do
 
       assert Settings.get("movies_max_size") == nil
 
-      # Zero/negative degrade to "no limit" at apply time, so they're rejected too.
-      assert {:error, ["tv_min_size"]} =
+      # An explicit 0 is the documented unbounded opt-out, so it saves; negatives still reject.
+      assert :ok =
                Settings.save_form(%{"tv_min_size" => "0", "media_server_type" => "jellyfin"})
+
+      assert Settings.get("tv_min_size") == "0"
+      assert Application.get_env(:cinder, :tv_min_size) == nil
+
+      assert {:error, ["tv_min_size"]} =
+               Settings.save_form(%{"tv_min_size" => "-2", "media_server_type" => "jellyfin"})
 
       # A valid decimal still saves.
       assert :ok =
