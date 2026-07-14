@@ -54,6 +54,38 @@ defmodule Cinder.Acquisition.AnimeParserTest do
              AnimeParser.parse("[Group] Show OAD 2 [1080p]", context)
   end
 
+  test "expands a same-season E-tail batch shorthand (S01E01-E12) to the full episode range" do
+    context = %{kind: :series, titles: ["Show"], year: 2020}
+
+    expected = Enum.map(1..12, &"S01E#{String.pad_leading(Integer.to_string(&1), 2, "0")}")
+
+    assert %{coordinates: [%{scheme: "standard", values: ^expected}], role: :story} =
+             AnimeParser.parse("[Group] Show S01E01-E12 [1080p]", context)
+  end
+
+  test "expands a same-season dash-only batch shorthand (S01E01-12) to the full episode range" do
+    context = %{kind: :series, titles: ["Show"], year: 2020}
+
+    expected = Enum.map(1..12, &"S01E#{String.pad_leading(Integer.to_string(&1), 2, "0")}")
+
+    assert %{coordinates: [%{scheme: "standard", values: ^expected}], role: :story} =
+             AnimeParser.parse("[Group] Show S01E01-12 [1080p]", context)
+  end
+
+  test "treats a descending same-season tail as unparseable and keeps only the leading episode" do
+    context = %{kind: :series, titles: ["Show"], year: 2020}
+
+    assert %{coordinates: [%{scheme: "standard", values: ["S01E12"]}], role: :story} =
+             AnimeParser.parse("[Group] Show S01E12-E01 [1080p]", context)
+  end
+
+  test "does not read a glued resolution token as a same-season episode tail" do
+    context = %{kind: :series, titles: ["Show"], year: 2020}
+
+    assert %{coordinates: [%{scheme: "standard", values: ["S01E01"]}], role: :story} =
+             AnimeParser.parse("[Group] Show S01E01-1080p", context)
+  end
+
   defp atomize_kind(%{"kind" => kind} = context) do
     %{
       kind: if(kind == "movie", do: :movie, else: :series),
