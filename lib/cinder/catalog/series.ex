@@ -32,6 +32,8 @@ defmodule Cinder.Catalog.Series do
     field :vote_average, :float
     field :first_air_date, :date
     field :media_profile, Ecto.Enum, values: [:auto, :standard, :anime], default: :auto
+    field :anime_audio_mode, Ecto.Enum, values: [:original, :dub, :dual, :any]
+    field :anime_hold_reason, :string
     has_many :seasons, Season
     has_many :title_aliases, TitleAlias
     has_many :episode_coordinates, EpisodeCoordinate
@@ -39,8 +41,12 @@ defmodule Cinder.Catalog.Series do
     timestamps(type: :utc_datetime)
   end
 
-  @doc "Changeset for the operator-owned media handling profile."
-  def profile_changeset(series, attrs), do: cast(series, attrs, [:media_profile])
+  @doc "Changeset for the operator-owned media handling profile (+ its per-title audio-mode override; nil = use the global setting)."
+  def profile_changeset(series, attrs),
+    do: cast(series, attrs, [:media_profile, :anime_audio_mode])
+
+  @doc "Changeset for the sweep-owned search-time Anime preferences hold marker (see `Catalog.set_anime_hold/2`)."
+  def anime_hold_changeset(series, attrs), do: cast(series, attrs, [:anime_hold_reason])
 
   @doc "The valid `monitor_strategy` values."
   def monitor_strategies, do: @monitor_strategies

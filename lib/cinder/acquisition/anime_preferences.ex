@@ -3,19 +3,23 @@ defmodule Cinder.Acquisition.AnimePreferences do
   Resolves the global Anime release policy (from `Cinder.Settings.anime_defaults/0`)
   against a title's own audio-language metadata.
 
-  Per-title overrides were removed (global-only until dogfood proves per-title need) —
-  the "policy" is just the global defaults, plus the per-title hard-audio-requirement
+  The A4.5 per-title preference tier stays removed; the one exception (dogfood F4,
+  issue #107) is the single-axis `anime_audio_mode` override on a title — effective
+  audio mode = the title's override if set, else the global default. Beyond that the
+  "policy" is just the global defaults, plus the per-title hard-audio-requirement
   derivation (`:dub`/`:dual` modes need the title's `original_language`/`preferred_language`).
   """
 
   alias Cinder.Acquisition.Language
 
   def resolve(title, defaults) do
-    with {:ok, required_audio} <- required_audio(defaults.audio_mode, title),
+    audio_mode = Map.get(title, :anime_audio_mode) || defaults.audio_mode
+
+    with {:ok, required_audio} <- required_audio(audio_mode, title),
          :ok <- validate_embedded(defaults.embedded_subtitle_mode, defaults.subtitle_languages) do
       {:ok,
        %{
-         audio_mode: defaults.audio_mode,
+         audio_mode: audio_mode,
          required_audio_languages: required_audio,
          subtitle_languages: defaults.subtitle_languages,
          embedded_subtitle_mode: defaults.embedded_subtitle_mode,

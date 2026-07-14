@@ -310,6 +310,34 @@ defmodule CinderWeb.ActivityLiveTest do
     assert Repo.get!(Cinder.Catalog.Episode, episode.id).grab_id == held.id
   end
 
+  test "titles held on unsatisfiable Anime preferences surface with a reason and clear live", %{
+    conn: conn
+  } do
+    series = series_fixture(%{title: "Re:Zero", year: 2016, media_profile: :anime})
+    {:ok, series} = Catalog.set_anime_hold(series, :dub_language_required)
+
+    movie = movie_fixture(%{title: "Your Name", status: :searching, media_profile: :anime})
+    {:ok, movie} = Catalog.set_anime_hold(movie, :dub_language_required)
+
+    {:ok, lv, html} = live(conn, ~p"/activity")
+
+    # Held series get their own section (no movie row or grab exists to badge).
+    assert html =~ "Held series"
+    assert has_element?(lv, "#held-series-#{series.id} span.badge-warning", "Needs preferences")
+    assert has_element?(lv, "#held-series-#{series.id}-reason", "needs a dub language")
+
+    # A held movie reads "Needs preferences" in the pipeline (not a spinning "Searching").
+    assert has_element?(lv, "#movie-#{movie.id} span.badge-warning", "Needs preferences")
+    assert has_element?(lv, "#movie-#{movie.id}-hold-reason", "needs a dub language")
+
+    # The sweep clearing the hold (preferences became satisfiable) updates the page live.
+    {:ok, _} = Catalog.set_anime_hold(series, nil)
+    {:ok, _} = Catalog.set_anime_hold(movie, nil)
+
+    refute has_element?(lv, "#held-series-#{series.id}")
+    refute has_element?(lv, "#movie-#{movie.id}-hold-reason")
+  end
+
   test "non-admins are redirected away from /activity", %{conn: _conn} do
     conn = build_conn() |> log_in_user(Cinder.AccountsFixtures.user_fixture())
     assert {:error, {:redirect, %{to: "/"}}} = live(conn, ~p"/activity")

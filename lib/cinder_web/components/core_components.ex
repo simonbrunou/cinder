@@ -626,7 +626,7 @@ defmodule CinderWeb.CoreComponents do
   """
   attr :kind, :atom,
     required: true,
-    values: [:movie, :request, :episode, :grab, :health, :monitored]
+    values: [:movie, :series, :request, :episode, :grab, :health, :monitored]
 
   attr :status, :any, required: true
   attr :class, :any, default: nil
@@ -733,6 +733,12 @@ defmodule CinderWeb.CoreComponents do
   # distinct hold from a plain :import_failed, surfaced via `LiveHelpers.movie_badge_status/1`.
   defp badge_spec(:movie, :verification_hold),
     do: {gettext("Needs verification"), "badge-warning", "hero-exclamation-triangle"}
+
+  # held at search time on unsatisfiable Anime preferences (`anime_hold_reason` set) —
+  # distinct from a not-yet-swept "Requested"/"Searching"; clears itself once preferences
+  # become satisfiable (movies via `LiveHelpers.movie_badge_status/1`, series on /activity).
+  defp badge_spec(kind, :anime_hold) when kind in [:movie, :series],
+    do: {gettext("Needs preferences"), "badge-warning", "hero-pause-circle"}
 
   # request / composite discovery state
   defp badge_spec(:request, :pending), do: {gettext("Pending"), "badge-warning", "hero-clock"}
@@ -959,6 +965,32 @@ defmodule CinderWeb.CoreComponents do
       </option>
       <option value="french" selected={@value == "french"}>{gettext("French")}</option>
       <option value="any" selected={@value == "any"}>{gettext("Any language")}</option>
+    </select>
+    """
+  end
+
+  @doc """
+  The per-title Anime audio-mode override `<select>` shared by the movie/series detail
+  pages: "Use global" (empty value → `nil`, the default) or one of the global setting's
+  modes. `value` is the stored override as a string (`nil` when unset). The enclosing
+  `<form>` carries the `phx-change` binding.
+
+      <.anime_audio_mode_select value={@movie.anime_audio_mode} />
+  """
+  attr :value, :any, default: nil
+  attr :class, :any, default: "select select-sm w-full"
+  attr :rest, :global
+
+  def anime_audio_mode_select(assigns) do
+    assigns = assign(assigns, :value, assigns.value && to_string(assigns.value))
+
+    ~H"""
+    <select name="anime_audio_mode" class={@class} aria-label={gettext("Anime audio mode")} {@rest}>
+      <option value="" selected={@value in [nil, ""]}>{gettext("Use global audio mode")}</option>
+      <option value="original" selected={@value == "original"}>{gettext("Original")}</option>
+      <option value="dub" selected={@value == "dub"}>{gettext("Dub")}</option>
+      <option value="dual" selected={@value == "dual"}>{gettext("Dual audio")}</option>
+      <option value="any" selected={@value == "any"}>{gettext("Any")}</option>
     </select>
     """
   end

@@ -48,6 +48,22 @@ defmodule Cinder.Acquisition.AnimePreferencesTest do
              )
   end
 
+  test "a per-title audio-mode override takes precedence over the global default" do
+    base = %Series{original_language: "jpn", preferred_language: "original"}
+    defaults = %{@defaults | audio_mode: :dual}
+
+    # Global :dual has no dub target here (the dogfood-F4 silent hold)…
+    assert {:error, :dub_language_required} = AnimePreferences.resolve(base, defaults)
+
+    # …but the title's :original override resolves and shapes the frozen policy.
+    assert {:ok, %{audio_mode: :original, required_audio_languages: ["ja"]}} =
+             AnimePreferences.resolve(%{base | anime_audio_mode: :original}, defaults)
+
+    # A nil override keeps the global mode.
+    assert {:error, :dub_language_required} =
+             AnimePreferences.resolve(%{base | anime_audio_mode: nil}, defaults)
+  end
+
   test "original mode has no hard requirement when the source language is missing" do
     assert {:ok, %{required_audio_languages: []}} =
              AnimePreferences.resolve(%Series{original_language: nil}, @defaults)

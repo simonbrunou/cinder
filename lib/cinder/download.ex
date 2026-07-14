@@ -777,6 +777,8 @@ defmodule Cinder.Download do
             anime_movie_result(movie, imdb_id, context, opts)
 
           :standard ->
+            # A profile switched back to Standard must not keep a stale Anime hold marker.
+            Catalog.set_anime_hold(movie, nil)
             Acquisition.best_release(imdb_id, opts)
         end
 
@@ -810,13 +812,18 @@ defmodule Cinder.Download do
   defp anime_movie_result(movie, imdb_id, context, opts) do
     case AnimePreferences.resolve(movie, Settings.anime_defaults()) do
       {:ok, policy} ->
+        Catalog.set_anime_hold(movie, nil)
+
         Acquisition.best_anime_movie(
           imdb_id,
           context,
           opts ++ AnimePreferences.selection_opts(policy)
         )
 
-      {:error, _reason} ->
+      {:error, reason} ->
+        # DB-visible hold (badges + /activity), re-evaluated every sweep: the next tick
+        # with satisfiable preferences clears it and searches normally.
+        Catalog.set_anime_hold(movie, reason)
         {:error, :invalid_anime_preferences}
     end
   end

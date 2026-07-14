@@ -138,6 +138,42 @@ defmodule CinderWeb.MovieDetailLiveTest do
     assert has_element?(view, "#movie-aliases-empty")
   end
 
+  test "the per-title Anime audio-mode override renders for Anime titles and persists", %{
+    conn: conn
+  } do
+    standard = movie_fixture(%{media_profile: :standard})
+    {:ok, view, _} = live_movie(conn, standard)
+
+    # Only an effective-Anime title shows the override (it does nothing for Standard).
+    refute has_element?(view, "#movie-anime-audio-form")
+
+    movie = movie_fixture(%{media_profile: :anime})
+    {:ok, view, _} = live_movie(conn, movie)
+
+    assert has_element?(
+             view,
+             "#movie-anime-audio-form option[value=''][selected]",
+             "Use global audio mode"
+           )
+
+    view
+    |> form("#movie-anime-audio-form", %{"anime_audio_mode" => "original"})
+    |> render_change()
+
+    assert Repo.reload(movie).anime_audio_mode == :original
+    assert has_element?(view, "#movie-anime-audio-form option[value='original'][selected]")
+
+    # A forged value falls through to the catch-all; "" (Use global) clears the override.
+    render_hook(view, "set_anime_audio_mode", %{"anime_audio_mode" => "forged"})
+    assert Repo.reload(movie).anime_audio_mode == :original
+
+    view
+    |> form("#movie-anime-audio-form", %{"anime_audio_mode" => ""})
+    |> render_change()
+
+    assert Repo.reload(movie).anime_audio_mode == nil
+  end
+
   test "movie profile and alias events reject forged values and provider aliases are read-only",
        %{
          conn: conn

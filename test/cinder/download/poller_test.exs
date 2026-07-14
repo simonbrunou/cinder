@@ -1884,6 +1884,58 @@ defmodule Cinder.Download.PollerTest do
 
     assert %Movie{status: :searching, search_attempts: 0} = Repo.get!(Movie, movie.id)
     assert Agent.get(searches, & &1) == 0
+
+    # The hold is DB-visible (issue #107) — the badge reads "Needs preferences", not "Searching".
+    assert Repo.get!(Movie, movie.id).anime_hold_reason == "subtitle_language_required"
+
+    # Preferences become satisfiable → the next sweep clears the hold and searches normally.
+    set_anime_defaults!(embedded_subtitle_mode: :prefer)
+    assert :ok = Poller.poll()
+
+    assert Repo.get!(Movie, movie.id).anime_hold_reason == nil
+    assert Agent.get(searches, & &1) > 0
+  end
+
+  test "a per-title audio-mode override grabs (and is frozen into the snapshot) while the global mode is unsatisfiable" do
+    set_anime_defaults!(audio_mode: :dual)
+
+    movie =
+      movie_fixture(%{
+        title: "Your Name",
+        year: 2016,
+        imdb_id: "tt-anime-override",
+        original_language: "ja",
+        media_profile: :anime
+      })
+
+    # Global :dual + preferred_language "original" has no dub target (the dogfood-F4 hold);
+    # the single-axis per-title override makes this title grab under :original instead.
+    {:ok, _} = Catalog.set_anime_audio_mode(movie, :original)
+
+    release = %{
+      title: "[Group] Your Name 2016 [1080p]",
+      size: 2_000_000_000,
+      download_url: "magnet:?override"
+    }
+
+    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt-anime-override" -> {:ok, [release]} end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _query, categories: [5070] ->
+      {:ok, [release]}
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-anime-override"} end)
+
+    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+    assert :ok = Poller.poll()
+
+    # The frozen release-policy snapshot carries the override's requirement (original audio
+    # only), proving the override is read at snapshot-freeze time — not just at display time.
+    assert %Movie{
+             status: :downloading,
+             anime_hold_reason: nil,
+             release_policy_snapshot: %{"required_audio_languages" => ["ja"]}
+           } = Repo.get!(Movie, movie.id)
   end
 
   test "a persistently transient search error parks :search_failed after max attempts" do

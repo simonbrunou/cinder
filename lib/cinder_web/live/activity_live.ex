@@ -9,8 +9,11 @@ defmodule CinderWeb.ActivityLive do
   download, so the freed episodes' re-grab doesn't collide with it). A mapping hold shows its
   reason inline and offers Retry import (`Catalog.retry_grab_mapping/1`, resolves next poller
   tick) or Discard (the state-guarded `Catalog.cancel_mapping_grab/1`); verification holds reuse
-  the regular durable cancel path and add only a guarded retry. Live via the `movies` + `series`
-  topics.
+  the regular durable cancel path and add only a guarded retry. Titles held at search time on
+  unsatisfiable Anime preferences (`anime_hold_reason`) show a "Needs preferences" badge with
+  the reason — movies in the pipeline list, series in their own section (a held series has no
+  movie row or grab to hang the badge on); no action needed here, the sweep clears the hold
+  once preferences resolve. Live via the `movies` + `series` topics.
   """
   use CinderWeb, :live_view
 
@@ -34,6 +37,7 @@ defmodule CinderWeb.ActivityLive do
      assign(socket,
        movies: Enum.filter(Catalog.list_movies(), &in_pipeline?/1),
        grabs: Catalog.list_grabs(),
+       held_series: Catalog.list_anime_held_series(),
        confirming: nil
      )}
   end
@@ -54,11 +58,15 @@ defmodule CinderWeb.ActivityLive do
   def handle_info({:movie_deleted, id}, socket),
     do: {:noreply, assign(socket, movies: Enum.reject(socket.assigns.movies, &(&1.id == id)))}
 
-  def handle_info({:series_updated, _id}, socket),
-    do: {:noreply, assign(socket, grabs: Catalog.list_grabs())}
+  def handle_info({:series_updated, _id}, socket) do
+    {:noreply,
+     assign(socket, grabs: Catalog.list_grabs(), held_series: Catalog.list_anime_held_series())}
+  end
 
-  def handle_info({:series_deleted, _id}, socket),
-    do: {:noreply, assign(socket, grabs: Catalog.list_grabs())}
+  def handle_info({:series_deleted, _id}, socket) do
+    {:noreply,
+     assign(socket, grabs: Catalog.list_grabs(), held_series: Catalog.list_anime_held_series())}
+  end
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
@@ -178,6 +186,29 @@ defmodule CinderWeb.ActivityLive do
   defp id_list(ids) when is_list(ids) and ids != [], do: Enum.join(ids, ", ")
   defp id_list(_ids), do: gettext("unknown")
 
+  # Plain-English search-time hold reason (`anime_hold_reason`, the AnimePreferences.resolve
+  # error) naming the fix — cleared automatically by the next sweep once preferences resolve.
+  defp anime_hold_reason("dub_language_required"),
+    do:
+      gettext(
+        "The Anime audio mode needs a dub language: set this title's preferred language, or change the audio mode."
+      )
+
+  defp anime_hold_reason("original_language_required"),
+    do:
+      gettext(
+        "Dual audio needs this title's original language, which is unknown: change the audio mode."
+      )
+
+  defp anime_hold_reason("subtitle_language_required"),
+    do:
+      gettext(
+        "Requiring embedded subtitles needs subtitle languages: configure them in Settings."
+      )
+
+  defp anime_hold_reason(_reason),
+    do: gettext("The Anime release preferences can't be satisfied for this title.")
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -214,6 +245,43 @@ defmodule CinderWeb.ActivityLive do
               speed={m.download_speed}
               eta={m.download_eta}
             />
+            <p
+              :if={movie_badge_status(m) == :anime_hold}
+              id={"movie-#{m.id}-hold-reason"}
+              class="w-full text-sm text-base-content/70"
+            >
+              {anime_hold_reason(m.anime_hold_reason)}
+            </p>
+          </li>
+        </ul>
+      </section>
+
+      <section :if={@held_series != []} class="mt-10">
+        <h2 class="pb-3 text-lg font-semibold">{gettext("Held series")}</h2>
+        <p class="pb-3 text-sm text-base-content/70">
+          {gettext(
+            "These series are skipped by the search sweep until their Anime preferences can be satisfied; the hold clears automatically once they can."
+          )}
+        </p>
+        <ul id="activity-held-series" class="space-y-2">
+          <li
+            :for={s <- @held_series}
+            id={"held-series-#{s.id}"}
+            class="card bg-base-200 p-3 flex flex-row flex-wrap items-center gap-3"
+          >
+            <.link
+              navigate={~p"/series/#{s.id}"}
+              class="link link-hover w-full truncate sm:w-auto sm:min-w-0 sm:flex-1"
+            >
+              {s.title}<span :if={s.year} class="text-base-content/70"> ({s.year})</span>
+            </.link>
+            <.status_badge kind={:series} status={:anime_hold} />
+            <p
+              id={"held-series-#{s.id}-reason"}
+              class="w-full text-sm text-base-content/70"
+            >
+              {anime_hold_reason(s.anime_hold_reason)}
+            </p>
           </li>
         </ul>
       </section>

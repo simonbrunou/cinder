@@ -201,6 +201,19 @@ defmodule CinderWeb.MovieDetailLive do
     end
   end
 
+  def handle_event("set_anime_audio_mode", %{"anime_audio_mode" => mode}, socket)
+      when mode in ["", "original", "dub", "dual", "any"] do
+    value = if mode == "", do: nil, else: String.to_existing_atom(mode)
+
+    case Catalog.set_anime_audio_mode(socket.assigns.movie, value) do
+      {:ok, _} ->
+        {:noreply, assign_fresh(socket, socket.assigns.movie.id)}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, gettext("Couldn't update the audio mode."))}
+    end
+  end
+
   def handle_event("save_alias", %{"alias" => params}, socket) when is_map(params) do
     result =
       case params["id"] do
@@ -439,6 +452,14 @@ defmodule CinderWeb.MovieDetailLive do
             <.profile_select field={@profile_form[:media_profile]} />
           </.form>
           <.profile_summary id="movie-profile-summary" summary={@profile_summary} />
+          <form
+            :if={@profile_summary.effective == :anime}
+            id="movie-anime-audio-form"
+            phx-change="set_anime_audio_mode"
+            class="mt-2"
+          >
+            <.anime_audio_mode_select value={@movie.anime_audio_mode} />
+          </form>
         </div>
       </div>
 
