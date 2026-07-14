@@ -27,8 +27,6 @@ defmodule Cinder.Catalog.Grab do
       values: [:resolved, :needs_mapping, :verification_blocked],
       default: :resolved
 
-    field :automatic_mapping_decisions, :map
-    field :manual_mapping_overrides, :map
     field :mapping_issue, :map
     field :row_version, :integer, default: 1
     has_many :episodes, Episode
@@ -68,11 +66,6 @@ defmodule Cinder.Catalog.Grab do
 
   @doc false
   def mapping_changeset(grab, attrs) do
-    cast(grab, attrs, [
-      :mapping_status,
-      :automatic_mapping_decisions,
-      :manual_mapping_overrides,
-      :mapping_issue
-    ])
+    cast(grab, attrs, [:mapping_status, :mapping_issue])
   end
 end

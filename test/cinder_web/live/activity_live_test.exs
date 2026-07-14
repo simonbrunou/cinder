@@ -53,8 +53,7 @@ defmodule CinderWeb.ActivityLiveTest do
         "release_group" => "group",
         "release_title" => "[Group] Severance S01E01"
       },
-      mapping_status: :verification_blocked,
-      automatic_mapping_decisions: %{"version" => 1, "files" => []}
+      mapping_status: :verification_blocked
     })
     |> Repo.update!()
     |> Repo.preload(:episodes)
@@ -121,7 +120,9 @@ defmodule CinderWeb.ActivityLiveTest do
     assert lv |> element("#grab-#{grab.id}") |> render() =~ "42%"
   end
 
-  test "held grabs show Needs mapping and link to the shared recovery route", %{conn: conn} do
+  test "a held grab shows Needs mapping, its reason, and Retry import/Discard actions", %{
+    conn: conn
+  } do
     grab = grab!()
 
     held =
@@ -129,25 +130,71 @@ defmodule CinderWeb.ActivityLiveTest do
       |> Ecto.Changeset.change(%{
         mapping_snapshot: %{"version" => 2, "reserved_episode_ids" => []},
         mapping_status: :needs_mapping,
-        automatic_mapping_decisions: %{"version" => 1, "files" => []}
+        mapping_issue: %{
+          "version" => 1,
+          "reason" => "unresolved_file",
+          "relative_paths" => ["Severance - 01.mkv"],
+          "candidate_episode_ids" => []
+        }
       })
       |> Repo.update!()
 
     {:ok, view, _html} = live(conn, ~p"/activity")
 
     assert has_element?(view, "#grab-#{held.id}", "Needs mapping")
-
-    assert has_element?(
-             view,
-             ~s|#grab-#{held.id} a[href="/activity/grabs/#{held.id}/mapping"]|,
-             "Review mapping"
-           )
-
-    assert has_element?(view, "#ask-cancel-mapping-grab-#{held.id}", "Cancel download")
+    assert has_element?(view, "#grab-#{held.id}-mapping-reason", "Severance - 01.mkv")
+    assert has_element?(view, "#retry-mapping-grab-#{held.id}", "Retry import")
+    assert has_element?(view, "#ask-cancel-mapping-grab-#{held.id}", "Discard")
     refute has_element?(view, "#grab-#{held.id} button", "Delete")
   end
 
-  test "verification holds show retry and cancel without exposing the mapping editor", %{
+  test "Retry import releases a held grab back to resolved", %{conn: conn} do
+    grab = grab!()
+
+    held =
+      grab
+      |> Ecto.Changeset.change(%{
+        mapping_snapshot: %{"version" => 2, "reserved_episode_ids" => []},
+        mapping_status: :needs_mapping,
+        mapping_issue: %{"version" => 1, "reason" => "unresolved_file"}
+      })
+      |> Repo.update!()
+
+    {:ok, view, _html} = live(conn, ~p"/activity")
+    view |> element("#retry-mapping-grab-#{held.id}") |> render_click()
+
+    assert Repo.get!(Grab, held.id).mapping_status == :resolved
+    refute has_element?(view, "#retry-mapping-grab-#{held.id}")
+  end
+
+  test "Discard removes a held grab and frees its episode", %{conn: conn} do
+    grab = grab!() |> Repo.preload(:episodes)
+    [episode] = grab.episodes
+
+    held =
+      grab
+      |> Ecto.Changeset.change(%{
+        mapping_snapshot: %{"version" => 2, "reserved_episode_ids" => [episode.id]},
+        mapping_status: :needs_mapping,
+        mapping_issue: %{"version" => 1, "reason" => "unresolved_file"}
+      })
+      |> Repo.update!()
+
+    expect(Cinder.Download.ClientMock, :remove, fn remote_id, delete_files: true ->
+      assert remote_id == held.download_id
+      :ok
+    end)
+
+    {:ok, view, _html} = live(conn, ~p"/activity")
+    view |> element("#ask-cancel-mapping-grab-#{held.id}") |> render_click()
+    view |> element("#confirm-cancel-mapping-grab-#{held.id} button", "Discard") |> render_click()
+
+    refute has_element?(view, "#grab-#{held.id}")
+    refute Repo.get(Grab, held.id)
+    assert Repo.get!(Episode, episode.id).grab_id == nil
+  end
+
+  test "verification holds show retry and cancel without exposing mapping actions", %{
     conn: conn
   } do
     held = verification_grab!()
@@ -158,18 +205,9 @@ defmodule CinderWeb.ActivityLiveTest do
     assert has_element?(view, "#retry-verification-grab-#{held.id}", "Retry verification")
     assert has_element?(view, "#cancel-verification-grab-#{held.id}", "Cancel download")
 
-    refute has_element?(
-             view,
-             ~s|#grab-#{held.id} a[href="/activity/grabs/#{held.id}/mapping"]|
-           )
-
-    refute has_element?(view, "#grab-#{held.id}", "Review mapping")
+    refute has_element?(view, "#grab-#{held.id}", "Retry import")
+    refute has_element?(view, "#grab-#{held.id}", "Discard")
     refute has_element?(view, "#grab-#{held.id} input")
-
-    assert {:error, {kind, %{to: "/activity"}}} =
-             live(conn, "/activity/grabs/#{held.id}/mapping")
-
-    assert kind in [:redirect, :live_redirect]
   end
 
   test "retry verification resets only the hold and counter without service I/O", %{conn: conn} do
@@ -240,70 +278,38 @@ defmodule CinderWeb.ActivityLiveTest do
            )
   end
 
-  test "a stale held confirmation cannot cancel a concurrently resumed grab", %{conn: conn} do
+  test "a stale held confirmation cannot discard a grab a concurrent Retry already released", %{
+    conn: conn
+  } do
     grab = grab!() |> Repo.preload(:episodes)
     [episode] = grab.episodes
 
-    decisions = %{
-      "version" => 1,
-      "files" => [
-        %{
-          "relative_path" => "Severance - 01.mkv",
-          "size" => 10,
-          "major_device" => 7,
-          "inode" => 21,
-          "mtime" => "2026-07-13T12:01:00",
-          "parsed" => %{
-            "coordinates" => [%{"scheme" => "absolute", "values" => ["1"]}],
-            "role" => "main",
-            "group" => nil
-          },
-          "episode_ids" => [episode.id],
-          "source" => "automatic",
-          "ignored" => false
-        }
-      ]
-    }
+    grab
+    |> Ecto.Changeset.change(%{
+      mapping_snapshot: %{"version" => 2, "reserved_episode_ids" => [episode.id]},
+      mapping_status: :needs_mapping,
+      mapping_issue: %{"version" => 1, "reason" => "unresolved_file"}
+    })
+    |> Repo.update!()
 
-    held =
-      grab
-      |> Ecto.Changeset.change(%{
-        mapping_snapshot: %{"version" => 2, "reserved_episode_ids" => [episode.id]},
-        mapping_status: :needs_mapping,
-        automatic_mapping_decisions: decisions
-      })
-      |> Repo.update!()
-
-    parent = self()
-
-    stub(Cinder.Download.ClientMock, :remove, fn remote_id, opts ->
-      send(parent, {:remote_remove, remote_id, opts})
-      :ok
-    end)
+    # Re-read: the schema's `row_version` trigger bumped the row on that update, and
+    # `retry_grab_mapping/1`'s compare-and-swap needs the current value, not the stale one
+    # `Repo.update!/1` returned.
+    held = Repo.get!(Grab, grab.id)
 
     {:ok, view, _html} = live(conn, ~p"/activity")
     view |> element("#ask-cancel-mapping-grab-#{held.id}") |> render_click()
     assert has_element?(view, "#confirm-cancel-mapping-grab-#{held.id}")
 
-    assert {:ok, resumed} =
-             Catalog.resume_grab_mapping(held, %{
-               "files" => [
-                 %{
-                   "relative_path" => "Severance - 01.mkv",
-                   "action" => "assign",
-                   "episode_ids" => [episode.id]
-                 }
-               ],
-               "target_episode_ids" => [episode.id],
-               "monitor_episode_ids" => []
-             })
+    # A concurrent Retry (e.g. from another admin tab) resolves the grab before this confirm
+    # completes — the guarded discard must not undo it.
+    assert {:ok, retried} = Catalog.retry_grab_mapping(held)
 
     render_click(view, "confirm_cancel_mapping", %{"id" => to_string(held.id)})
 
+    assert Repo.get!(Cinder.Catalog.Grab, held.id).id == retried.id
     assert Repo.get!(Cinder.Catalog.Grab, held.id).mapping_status == :resolved
-    assert Repo.get!(Cinder.Catalog.Episode, episode.id).grab_id == resumed.id
-    assert Repo.aggregate(Cinder.Download.Intent, :count) == 0
-    refute_received {:remote_remove, _, [delete_files: true]}
+    assert Repo.get!(Cinder.Catalog.Episode, episode.id).grab_id == held.id
   end
 
   test "non-admins are redirected away from /activity", %{conn: _conn} do

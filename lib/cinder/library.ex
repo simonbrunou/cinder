@@ -1139,13 +1139,7 @@ defmodule Cinder.Library do
       end)
 
     with {:ok, inventory} <- inventory_anime_videos(grab.content_path),
-         result =
-           AnimePreflight.run(
-             grab.mapping_snapshot,
-             inventory.files,
-             get_in(grab.manual_mapping_overrides || %{}, ["files"]) || [],
-             episodes
-           ),
+         result = AnimePreflight.run(grab.mapping_snapshot, inventory.files, episodes),
          {:ok, persisted} <- Catalog.record_mapping_result(grab, result) do
       attach_preflight_grab(result, persisted, inventory.folder?)
     end

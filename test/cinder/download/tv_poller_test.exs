@@ -429,7 +429,7 @@ defmodule Cinder.Download.TvPollerTest do
   end
 
   @tag :tmp_dir
-  test "a resolved snapshot persists decisions before the first stage link", %{tmp_dir: tmp} do
+  test "a resolved preflight persists before the first stage link", %{tmp_dir: tmp} do
     %{downloads: downloads} = use_real_tv_library(tmp)
     {_series, season} = series_tree()
     episode = episode(season, 1)
@@ -456,12 +456,9 @@ defmodule Cinder.Download.TvPollerTest do
     poll = Task.async(fn -> TvPoller.poll() end)
     assert_receive {:filesystem_barrier, pid, ref, :ln, _candidate}, 1_000
 
-    assert %Grab{
-             mapping_status: :resolved,
-             automatic_mapping_decisions: %{"files" => [%{"relative_path" => relative_path}]}
-           } = Repo.get!(Grab, grab.id)
-
-    assert relative_path == Path.basename(source)
+    # The preflight decision (mapping_status: :resolved) commits before the hardlink is even
+    # attempted — so a crash mid-link never leaves a grab that looks unexamined.
+    assert %Grab{mapping_status: :resolved} = Repo.get!(Grab, grab.id)
     send(pid, {ref, :continue})
 
     assert :ok = Task.await(poll)
@@ -509,6 +506,122 @@ defmodule Cinder.Download.TvPollerTest do
 
     assert :ok = TvPoller.poll()
     assert Repo.get!(Grab, grab.id).mapping_status == :needs_mapping
+  end
+
+  @tag :tmp_dir
+  test "an operator rename resolves a held grab, and Retry import finishes it", %{tmp_dir: tmp} do
+    %{downloads: downloads} = use_real_tv_library(tmp)
+    {_series, season} = series_tree()
+    episode = episode(season, 1)
+    release_dir = Path.join(downloads, "Show.Batch")
+    File.mkdir_p!(release_dir)
+    bad_path = Path.join(release_dir, "Show.mkv")
+    good_path = Path.join(release_dir, "Show.S01E01.mkv")
+    File.write!(bad_path, "content")
+
+    grab = downloaded_snapshot_grab([episode], release_dir, anime_standard_snapshot(episode))
+
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    held = Repo.get!(Grab, grab.id)
+    assert held.mapping_status == :needs_mapping
+    assert held.mapping_issue["reason"] == "unresolved_file"
+    refute Repo.get!(Episode, episode.id).file_path
+    assert File.exists?(bad_path)
+
+    # The operator fixes the release on disk, then asks for a retry.
+    File.rename!(bad_path, good_path)
+    assert {:ok, retried} = Catalog.retry_grab_mapping(held)
+    assert retried.mapping_status == :resolved
+    assert retried.download_attempts == 0
+
+    stub(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
+    assert :ok = TvPoller.poll()
+
+    refute Repo.get(Grab, grab.id)
+    assert Repo.get!(Episode, episode.id).file_path =~ "S01E01"
+  end
+
+  test "a mapping retry with still-bad files re-holds with a fresh reason, no infinite loop" do
+    {_series, season} = series_tree()
+    episodes = Enum.map(1..3, &episode(season, &1))
+    source = "/downloads/Show - 11-12.mkv"
+    grab = downloaded_snapshot_grab(episodes, source, anime_ambiguous_snapshot(episodes))
+
+    saved_import_roots = Application.get_env(:cinder, :import_roots)
+    Application.put_env(:cinder, :import_roots, ["/downloads"])
+    on_exit(fn -> Application.put_env(:cinder, :import_roots, saved_import_roots) end)
+
+    stat = %File.Stat{
+      type: :regular,
+      size: 1016,
+      major_device: 1,
+      inode: 116,
+      mtime: {{2026, 7, 13}, {12, 0, 0}}
+    }
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
+    stub(Cinder.Library.FilesystemMock, :lstat, fn ^source -> {:ok, stat} end)
+
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    held = Repo.get!(Grab, grab.id)
+    assert held.mapping_status == :needs_mapping
+    first_issue = held.mapping_issue
+
+    assert {:ok, retried} = Catalog.retry_grab_mapping(held)
+    assert retried.download_attempts == 0
+
+    # The files on disk are unchanged, so the fresh preflight fails the same way and re-holds —
+    # not a bump-and-park loop, just a single re-derived hold.
+    assert :ok = TvPoller.poll()
+
+    re_held = Repo.get!(Grab, grab.id)
+    assert re_held.mapping_status == :needs_mapping
+    assert re_held.mapping_issue == first_issue
+    assert re_held.download_attempts == 0
+    assert Catalog.list_grabs_downloaded() == []
+
+    # A held grab is excluded from the downloaded-import query, so further ticks are no-ops —
+    # not a hot loop re-touching it every 5s.
+    assert :ok = TvPoller.poll()
+    assert Repo.get!(Grab, grab.id).mapping_status == :needs_mapping
+  end
+
+  test "a mapping hold survives a poller crash and restart, still skipped after" do
+    {_series, season} = series_tree()
+    episodes = Enum.map(1..3, &episode(season, &1))
+    source = "/downloads/Show - 11-12.mkv"
+    grab = downloaded_snapshot_grab(episodes, source, anime_ambiguous_snapshot(episodes))
+
+    saved_import_roots = Application.get_env(:cinder, :import_roots)
+    Application.put_env(:cinder, :import_roots, ["/downloads"])
+    on_exit(fn -> Application.put_env(:cinder, :import_roots, saved_import_roots) end)
+
+    stat = %File.Stat{
+      type: :regular,
+      size: 1016,
+      major_device: 1,
+      inode: 116,
+      mtime: {{2026, 7, 13}, {12, 0, 0}}
+    }
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
+    stub(Cinder.Library.FilesystemMock, :lstat, fn ^source -> {:ok, stat} end)
+
+    pid = start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+    assert Repo.get!(Grab, grab.id).mapping_status == :needs_mapping
+
+    Process.exit(pid, :kill)
+    new_pid = await_restart(TvPoller, pid)
+    assert new_pid != pid
+
+    assert :ok = TvPoller.poll(new_pid)
+    assert Repo.get!(Grab, grab.id).mapping_status == :needs_mapping
+    assert Catalog.list_grabs_downloaded() == []
   end
 
   test "a confirmed episodic policy mismatch releases the targets and grabs an exact sibling" do
@@ -598,8 +711,6 @@ defmodule Cinder.Download.TvPollerTest do
     assert held.release_title == grab.release_title
     assert held.content_path == grab.content_path
     assert held.mapping_snapshot == grab.mapping_snapshot
-    assert held.automatic_mapping_decisions == first_attempt.automatic_mapping_decisions
-    assert held.manual_mapping_overrides == grab.manual_mapping_overrides
     assert held.mapping_issue == grab.mapping_issue
     assert held.release_policy_snapshot == grab.release_policy_snapshot
     assert Repo.reload!(episode).grab_id == grab.id
@@ -620,7 +731,6 @@ defmodule Cinder.Download.TvPollerTest do
     assert retried.content_path == held.content_path
     assert retried.download_id == held.download_id
     assert retried.mapping_snapshot == held.mapping_snapshot
-    assert retried.automatic_mapping_decisions == held.automatic_mapping_decisions
     assert retried.release_policy_snapshot == held.release_policy_snapshot
     assert Repo.reload!(episode).grab_id == held.id
 

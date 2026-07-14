@@ -694,11 +694,8 @@ defmodule CinderWeb.SeriesDetailLive do
         >
           <span class="min-w-0 flex-1 break-words text-sm">{grab.release_title || grab.download_id}</span>
           <.status_badge kind={:grab} status={:needs_mapping} />
-          <.link
-            navigate={~p"/activity/grabs/#{grab.id}/mapping"}
-            class="link link-hover text-sm"
-          >
-            {gettext("Review mapping")}
+          <.link navigate={~p"/activity"} class="link link-hover text-sm">
+            {gettext("View in Activity")}
           </.link>
         </div>
       </section>

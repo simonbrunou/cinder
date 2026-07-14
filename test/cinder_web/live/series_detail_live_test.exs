@@ -471,7 +471,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     refute html =~ ~s(<h1 class="text-2xl font-semibold">)
   end
 
-  test "held grabs link to the shared mapping recovery route", %{conn: conn} do
+  test "held grabs show the Needs mapping badge and link to Activity", %{conn: conn} do
     series = create_series(798)
     episode = first_episode(series.id)
 
@@ -481,17 +481,19 @@ defmodule CinderWeb.SeriesDetailLiveTest do
         download_protocol: :torrent,
         mapping_snapshot: %{"version" => 2, "reserved_episode_ids" => [episode.id]},
         mapping_status: :needs_mapping,
-        automatic_mapping_decisions: %{"version" => 1, "files" => []}
+        mapping_issue: %{"version" => 1, "reason" => "unresolved_file"}
       })
 
     episode |> Ecto.Changeset.change(grab_id: grab.id) |> Repo.update!()
 
     {:ok, view, _html} = live_series(conn, series)
 
+    assert has_element?(view, "#series-mapping-grab-#{grab.id}", "Needs mapping")
+
     assert has_element?(
              view,
-             ~s|#series-mapping-grab-#{grab.id} a[href="/activity/grabs/#{grab.id}/mapping"]|,
-             "Review mapping"
+             ~s|#series-mapping-grab-#{grab.id} a[href="/activity"]|,
+             "View in Activity"
            )
   end
 
