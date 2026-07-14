@@ -265,10 +265,11 @@ view (admin) lists upcoming monitored episodes.
 **Tuning grabs.** The `Release size bands` group in `/settings` sets a min/max size (decimal GB)
 and a preferred-resolution list **per library kind** (Movies and TV). For TV the band is **per
 episode**: a season pack of N episodes is allowed up to N× the max, so don't set the max to a
-whole-pack figure (the movie band is per movie). Both bounds are optional —
-blank means no limit. A too-low max (or any min above what your indexer carries) silently rejects
-every release, so the episode stays wanted and nothing grabs; start with the band blank and tighten
-only if you're pulling oversized packs.
+whole-pack figure (the movie band is per movie). The bands ship with defaults — movies 0.3–15 GB,
+TV 0.05–4 GB per episode — so a fresh install can't match a multi-hundred-GB batch archive for a
+single wanted episode. A blank field means the default; an explicit `0` means no limit. A too-low
+max (or any min above what your indexer carries) silently rejects every release, so the episode
+stays wanted and nothing grabs; loosen the band if legitimate releases are being excluded.
 
 **Preferred sources** (per kind): a comma-separated allow-list of `remux, bluray, webrip, webdl,
 hdtv, dvd, cam`. Leave blank to accept any source. An untagged (parser-undetected) release is

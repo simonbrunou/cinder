@@ -222,8 +222,10 @@ defmodule Cinder.Settings do
   # the UI labels live here alongside the other settings-group labels.
   @kind_labels %{movies: "Movies", tv: "TV"}
 
-  # The DB-only band suffixes each kind owns (no env bootstrap — unset ⇒ unbounded/default).
-  # The root path (`#{kind}_library_path`) is the fourth flat key and DOES have an env bootstrap.
+  # The band suffixes each kind owns. min/max_size have a config.exs bootstrap (the shipped
+  # default bands; a stored 0 opts out to unbounded); the resolution/source lists stay DB-only
+  # (unset ⇒ scorer default). The root path (`#{kind}_library_path`) is the fourth flat key and
+  # DOES have an env bootstrap.
   @band_suffixes ["min_size", "max_size", "preferred_resolutions", "preferred_sources"]
 
   @bytes_per_gb 1_000_000_000
@@ -479,8 +481,8 @@ defmodule Cinder.Settings do
   defp truthy?(value), do: value in [true, "true", "1", "on"]
 
   # Effective env value to show as a placeholder for each non-secret field with no DB row
-  # (config creds + the env-backed library_path roots and ffprobe_bin; bands are DB-only, no
-  # env to show).
+  # (config creds + the env-backed library_path roots and ffprobe_bin; the band defaults are
+  # raw bytes — stated in the group's help text instead of echoed as a placeholder).
   defp placeholders(rows) do
     field_pairs = for f <- config_fields(), not f.secret, do: {f.key, effective_field_value(f)}
 
@@ -545,9 +547,10 @@ defmodule Cinder.Settings do
   blanks keep the existing value, a `clear_<key>` flag deletes a secret.
 
   Values are validated first: a non-blank size the GB coercion would
-  silently degrade to nil ("abc", "0", "-2") is rejected — persisting it would echo
-  back as if accepted while the scorer runs unbounded, and `/` is never accepted as
-  an import root. Returns `:ok`, or
+  silently degrade to nil ("abc", "-2") is rejected — persisting it would echo
+  back as if accepted while the scorer runs unbounded — except an explicit 0,
+  the documented unbounded opt-out (blank reverts to the shipped default band).
+  `/` is never accepted as an import root. Returns `:ok`, or
   `{:error, invalid_keys}` with nothing saved.
   """
   def save_form(params) do
@@ -576,8 +579,18 @@ defmodule Cinder.Settings do
         key <- [min_size_key(kind), max_size_key(kind)],
         value = String.trim(params[key] || ""),
         value != "",
-        is_nil(parse_gb(value)) do
+        is_nil(parse_gb(value)),
+        not unbounded_band?(value) do
       key
+    end
+  end
+
+  # An explicit 0 is the unbounded opt-out (blank means "use the shipped default"), so it is
+  # valid where the other parse_gb-nil values ("abc", "-2") stay rejected.
+  defp unbounded_band?(value) do
+    case Float.parse(value) do
+      {gb, ""} -> gb == 0
+      _ -> false
     end
   end
 
@@ -795,8 +808,8 @@ defmodule Cinder.Settings do
     # (a cleared setting would then revert to the overlaid value, not the env default).
     fallback = base_path(root_env)
     root = decoded_for(rows, "#{kind}_library_path") || fallback
-    min_size = parse_gb(decoded_for(rows, "#{kind}_min_size"))
-    max_size = parse_gb(decoded_for(rows, "#{kind}_max_size"))
+    min_size = band_size(rows, "#{kind}_min_size")
+    max_size = band_size(rows, "#{kind}_max_size")
     preferred = parse_csv_list(decoded_for(rows, "#{kind}_preferred_resolutions"))
     sources = parse_csv_list(decoded_for(rows, "#{kind}_preferred_sources"))
 
@@ -831,6 +844,27 @@ defmodule Cinder.Settings do
   defp base_path(env_key) do
     case base(env_key) do
       path when is_binary(path) -> path
+      _ -> nil
+    end
+  end
+
+  # A band with no DB row falls back to the shipped config.exs default (a fresh install starts
+  # bounded); a stored value coerces via parse_gb, so an explicit 0 opts out to nil = unbounded.
+  # The fallback is captured eagerly, before the row lookup, for the same reason as base_path
+  # in apply_kind_config: a lazy capture during a later delete would snapshot the overlaid value.
+  defp band_size(rows, key) do
+    fallback = base_band(:"#{key}")
+
+    case decoded_for(rows, key) do
+      nil -> fallback
+      value -> parse_gb(value)
+    end
+  end
+
+  # base/1 defaults to [] for unset keys; a band is bytes-or-nil, so coerce anything else to nil.
+  defp base_band(env_key) do
+    case base(env_key) do
+      bytes when is_integer(bytes) and bytes > 0 -> bytes
       _ -> nil
     end
   end

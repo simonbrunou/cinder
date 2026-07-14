@@ -73,6 +73,16 @@ config :cinder, :anime_preferences,
   blocked_groups: [],
   group_fallback_delay: 24 * 60 * 60
 
+# Shipped release size bands, in bytes (decimal GB in /settings; the TV band applies per wanted
+# episode covered: k*min <= size <= k*max). A fresh install starts bounded so a single wanted
+# episode can't legally match a multi-hundred-GB batch archive (issue #108). Tunable at
+# /settings, where a stored 0 means unbounded and blank reverts to these defaults.
+config :cinder,
+  movies_min_size: 300_000_000,
+  movies_max_size: 15_000_000_000,
+  tv_min_size: 50_000_000,
+  tv_max_size: 4_000_000_000
+
 # First-run wizard gate: redirect to /setup until setup_complete. Off in test so the
 # existing LiveView suite (which never marks setup complete) isn't redirected.
 config :cinder, :enforce_setup, true
