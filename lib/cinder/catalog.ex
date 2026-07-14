@@ -335,11 +335,6 @@ defmodule Cinder.Catalog do
     {identity.source, identity.scheme, identity.namespace, identity.canonical_value}
   end
 
-  @doc "Sets an explicit operator-owned episode classification."
-  def set_episode_classification(%Episode{} = episode, classification, label \\ nil) do
-    Identity.set_manual_classification(episode, classification, label)
-  end
-
   @doc """
   Admin metadata edit for a movie (title/year/poster/ids). Reuses `Movie.changeset/2`, which
   does NOT cast `:status` — status changes go through `transition/2` (the choke-point). On success

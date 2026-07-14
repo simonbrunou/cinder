@@ -6,13 +6,6 @@ defmodule Cinder.Library.AnimePreflight do
 
   @empty_parsed %{coordinates: [], role: :unknown, group: nil}
 
-  def run(%{"version" => 1}, inventory, overrides, episodes) do
-    inventory
-    |> build_state(overrides, nil)
-    |> validate(authoritative_ids(episodes), fallback_reason: "legacy_snapshot")
-    |> result()
-  end
-
   def run(%{"version" => 2} = snapshot, inventory, overrides, episodes) do
     context = snapshot["parser_context"]
 
@@ -86,10 +79,6 @@ defmodule Cinder.Library.AnimePreflight do
 
   defp manual_decision(entry, %{"action" => "ignore"}) do
     decision(entry, @empty_parsed, [], :manual, true, %{override: "ignore"})
-  end
-
-  defp automatic_decision(entry, nil) do
-    decision(entry, @empty_parsed, [], :automatic, false, %{resolution: :legacy_snapshot})
   end
 
   defp automatic_decision(entry, {context, mappings}) do
@@ -196,23 +185,18 @@ defmodule Cinder.Library.AnimePreflight do
     }
   end
 
-  defp validate(state, authoritative, opts \\ [])
-
-  defp validate(%{stale_paths: [_ | _]} = state, _authoritative, _opts) do
+  defp validate(%{stale_paths: [_ | _]} = state, _authoritative) do
     {:error, state, issue("stale_override", state.stale_paths, state.stale_ids)}
   end
 
-  defp validate(state, authoritative, opts) do
+  defp validate(state, authoritative) do
     unresolved = Enum.filter(state.files, &(&1.episode_ids == [] and not &1.ignored))
 
     cond do
       unresolved != [] ->
-        fallback_reason = Keyword.get(opts, :fallback_reason)
         paths = Enum.map(unresolved, & &1.relative_path) |> Enum.sort()
-        paths = if fallback_reason, do: Enum.take(paths, 1), else: paths
-        reason = fallback_reason || "unresolved_file"
         candidates = unresolved |> Enum.flat_map(&candidate_ids/1) |> Enum.uniq() |> Enum.sort()
-        {:error, state, issue(reason, paths, candidates)}
+        {:error, state, issue("unresolved_file", paths, candidates)}
 
       outside = outside_ids(state.files, authoritative) ->
         paths = paths_assigning(state.files, outside)

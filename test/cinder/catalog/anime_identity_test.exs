@@ -142,16 +142,5 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
       assert [listed] = Catalog.list_episode_coordinates(series)
       assert Enum.map(listed.memberships, & &1.episode_id) == [second.id, first.id]
     end
-
-    test "manual classification records ownership" do
-      episode = series_fixture() |> season_fixture() |> episode_fixture()
-
-      assert {:ok, classified} =
-               Catalog.set_episode_classification(episode, :story_special, "OVA")
-
-      assert classified.classification == :story_special
-      assert classified.classification_source == "manual"
-      assert classified.classification_label == "OVA"
-    end
   end
 end

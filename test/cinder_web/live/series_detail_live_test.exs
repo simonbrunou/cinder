@@ -396,9 +396,16 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   test "series episodes show sourced classification and ordered coordinates", %{conn: conn} do
     series = series_fixture()
     season = season_fixture(series, season_number: 1)
-    episode = episode_fixture(season, episode_number: 1)
+
+    episode =
+      episode_fixture(season,
+        episode_number: 1,
+        classification: :story_special,
+        classification_source: "manual",
+        classification_label: "OVA"
+      )
+
     earlier_member = episode_fixture(season, episode_number: 2)
-    {:ok, _} = Catalog.set_episode_classification(episode, :story_special, "OVA")
 
     {:ok, _} =
       Catalog.put_episode_coordinate(

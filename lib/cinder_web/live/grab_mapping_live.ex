@@ -435,7 +435,6 @@ defmodule CinderWeb.GrabMappingLive do
 
   defp resolution_label("ambiguous"), do: gettext("Ambiguous")
   defp resolution_label("unmatched"), do: gettext("Unmatched")
-  defp resolution_label("legacy_snapshot"), do: gettext("Legacy snapshot")
   defp resolution_label(_resolution), do: gettext("Unknown")
 
   defp precedence_label("manual"), do: gettext("Manual")
@@ -448,7 +447,6 @@ defmodule CinderWeb.GrabMappingLive do
   defp issue_label("duplicate_episode_assignment"), do: gettext("Duplicate episode assignment")
   defp issue_label("missing_episode_assignment"), do: gettext("Missing episode assignment")
   defp issue_label("stale_override"), do: gettext("Stale override")
-  defp issue_label("legacy_snapshot"), do: gettext("Legacy snapshot")
   defp issue_label(_reason), do: gettext("Unknown mapping issue")
 
   defp current_ids(grab), do: Enum.map(grab.episodes, & &1.id)

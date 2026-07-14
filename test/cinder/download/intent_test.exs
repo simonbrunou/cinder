@@ -266,11 +266,6 @@ defmodule Cinder.Download.IntentTest do
   test "reservation rejects mismatched markers and malformed snapshots explicitly" do
     fixture = anime_reservation_fixture()
 
-    version_one =
-      fixture.snapshot
-      |> Map.put("version", 1)
-      |> Map.delete("parser_context")
-
     assert {:error, :invalid_mapping_snapshot} =
              Download.reserve_intent(%{
                kind: :season_pack,
@@ -291,11 +286,7 @@ defmodule Cinder.Download.IntentTest do
                mapping_snapshot: nil
              })
 
-    for {version_label, snapshot} <- [
-          {"version-one", version_one},
-          {"version-two", fixture.snapshot}
-        ],
-        {label, invalid} <- invalid_snapshots(snapshot) do
+    for {label, invalid} <- invalid_snapshots(fixture.snapshot) do
       marked = %{fixture.release | mapping_snapshot: invalid}
 
       assert {:error, :invalid_mapping_snapshot} =
@@ -307,7 +298,7 @@ defmodule Cinder.Download.IntentTest do
                  release: marked,
                  mapping_snapshot: invalid
                }),
-             "#{version_label}: #{label}"
+             label
     end
 
     movie = movie_fixture()
@@ -324,34 +315,6 @@ defmodule Cinder.Download.IntentTest do
 
     assert Repo.aggregate(Intent, :count) == 0
     assert Repo.aggregate(IntentEpisode, :count) == 0
-  end
-
-  test "reservation accepts version-one and valid version-two snapshots" do
-    fixture = anime_reservation_fixture()
-
-    version_one =
-      fixture.snapshot
-      |> Map.put("version", 1)
-      |> Map.delete("parser_context")
-
-    version_two =
-      fixture.snapshot
-      |> Map.put("version", 2)
-      |> Map.put("parser_context", %{
-        "title" => "Frieren",
-        "aliases" => ["Sousou no Frieren"],
-        "year" => 2023
-      })
-
-    assert Intent.reservation_changeset(
-             %Intent{},
-             valid_anime_intent_attrs(fixture, version_one)
-           ).valid?
-
-    assert Intent.reservation_changeset(
-             %Intent{},
-             valid_anime_intent_attrs(fixture, version_two)
-           ).valid?
   end
 
   test "reservation rejects invalid version-two parser contexts" do

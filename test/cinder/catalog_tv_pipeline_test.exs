@@ -510,9 +510,6 @@ defmodule Cinder.CatalogTvPipelineTest do
       refute recap.monitored
       assert recap.classification == :recap
       assert recap.classification_source == "tmdb"
-
-      assert {:ok, _} = Catalog.set_episode_classification(Repo.reload!(special), :recap, "OVA")
-      assert Repo.reload!(special).monitored
     end
 
     test "returns monitored, aired (incl. today), file-less, grab-less episodes only" do

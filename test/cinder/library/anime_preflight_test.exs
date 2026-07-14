@@ -6,10 +6,12 @@ defmodule Cinder.Library.AnimePreflightTest do
   @fixture_path "test/support/fixtures/anime/import-v1.json"
   @external_resource @fixture_path
   @corpus @fixture_path |> File.read!() |> Jason.decode!()
-  @cases @corpus["cases"]
+  # ponytail: snapshot version 1 (never-shipped legacy format) has no runtime path anymore;
+  # its two fixture cases stay in the shared fixture file but are excluded here.
+  @cases Enum.reject(@corpus["cases"], &(&1["snapshot_version"] == 1))
 
   assert @corpus["version"] == 1
-  assert length(@cases) == 22
+  assert length(@cases) == 20
 
   for fixture <- @cases do
     test fixture["id"] do

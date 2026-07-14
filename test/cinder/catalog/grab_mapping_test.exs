@@ -704,7 +704,11 @@ defmodule Cinder.Catalog.GrabMappingTest do
         download_id: "preflight-hash",
         download_protocol: :torrent,
         content_path: source,
-        mapping_snapshot: %{"version" => 1},
+        mapping_snapshot: %{
+          "version" => 2,
+          "parser_context" => %{"title" => "Frieren", "aliases" => [], "year" => nil},
+          "mappings" => []
+        },
         manual_mapping_overrides: %{"files" => [override]}
       })
 

@@ -104,16 +104,6 @@ defmodule Cinder.Catalog.Identity do
     end)
   end
 
-  def set_manual_classification(%Episode{} = episode, classification, label) do
-    episode
-    |> Episode.provider_classification_changeset(%{
-      classification: classification,
-      classification_source: "manual",
-      classification_label: label
-    })
-    |> Repo.update()
-  end
-
   def put_provider_classifications(source, classifications) do
     Repo.transaction(fn ->
       Enum.each(classifications, &put_provider_classification(source, &1))
