@@ -6,11 +6,11 @@ find the best release → download it → import it into Jellyfin. TV, quality u
 multi-user are deliberately out of scope until the slice is solid (see *Parked*, bottom).
 
 > **Status (2026-07-14):** the original slice and Part II form the current movies+TV product;
-> remaining release sign-offs stay recorded in M8. The next approved feature program is
-> **Part III — Anime-aware media handling** (bottom): make discovery, release matching,
-> numbering, specials, audio/subtitle preferences, and ambiguous-import recovery genuinely
-> anime-aware without creating a third pipeline. A4 is complete; A5 is the next phase and remains
-> pending live dogfood and provider sign-off.
+> remaining release sign-offs stay recorded in M8. **Part III — Anime-aware media handling**
+> (bottom) is the current feature program: a per-title opt-in profile that makes discovery,
+> release matching, numbering, specials, and audio/subtitle preferences anime-aware without a
+> third pipeline. A0–A4 are done; a same-day cleanup pass (**A4.5**) simplified the
+> implementation in place. **A5 (live dogfood + provider sign-off) is next.**
 > Phases 0–5 and Part II remain the build record.
 
 ## How to run this with Claude Code
@@ -765,90 +765,248 @@ check, live TV season-pack smoke test, and cutting `v1.0.0`.
 
 **Design:** `docs/superpowers/specs/2026-07-12-anime-media-handling-design.md`.
 
-**Goal:** beat Sonarr's anime handling while preserving the existing movie and TV pipelines and
-portable Jellyfin/Plex naming. Anime is a handling profile, not a third media type. Stable Cinder
-episode IDs own identity; absolute, scene, provider, and cour-local values are many-to-many
-coordinates used for discovery and acquisition.
+Anime is a **per-title opt-in handling profile** (`Auto` / `Standard` / `Anime`) layered onto the
+existing movie and TV pipelines — not a third pipeline, not a separate library layout, not a new
+context. `Auto` behaves exactly like `Standard` unless a title is explicitly confirmed as Anime: A0
+found no metadata signal reliable enough to auto-detect anime safely, so a Western cartoon or a
+Japanese live-action title is never silently reclassified. Confirming a title as Anime changes how
+Cinder searches for and imports it — title aliases and absolute/scene episode numbering, specials
+(Season 0) handling, audio/subtitle/release-group preferences, and a stricter post-download check —
+never where the file lands or how Jellyfin/Plex see it.
 
-**Safety invariant:** no anime import stages or finalizes until every video is uniquely mapped or
-explicitly ignored as an extra, every mapped ID belongs to the grab's reserved target set, and every
-reserved target is mapped exactly once. Unknown, ambiguous, missing, duplicate, and outside mappings
-enter `Needs mapping` with content and retry budgets preserved.
+The one piece of vocabulary worth knowing is the **grab snapshot**: when a release is reserved,
+Cinder freezes an immutable copy of the episode-mapping decision and the release-policy values
+(audio mode, subtitle mode, release-group preferences) in force at that moment, and that frozen copy
+— not whatever `/settings` says later — is what the completed download gets checked against. That's
+what stops a mid-flight grab from being invalidated by a settings change or a TMDB renumber that
+happens while it's downloading.
 
-The program is intentionally split into six bounded phases:
+**Safety invariant, plainly:** Cinder will not file away a downloaded anime batch until it is certain
+which episode every video in it is. A file that's ambiguous, unidentifiable, a duplicate claim, or
+doesn't belong to what was actually grabbed stops the *whole* batch and waits for a human to look at
+it — it never guesses.
 
-### A0 — Corpus and provider contracts
+This was the single largest feature program in the codebase to date — five phases, each sized **XL**.
+It was designed and built end-to-end by a different model as a trial run; a same-day audit
+(2026-07-14) found the result functionally sound (every gate below was green throughout) but
+substantially over-built for the problem and stylistically inconsistent with the rest of the app.
+**A4.5**, below, simplified the implementation in place without touching the safety invariant.
+**A5 (live dogfood + provider sign-off) is next.**
 
-Build the versioned release/mapping corpus and measure TMDB and Prowlarr behavior before choosing an
-additional provider or implementing schema. **Done when:** must-support expected outputs, zero known
-wrong automatic mappings, required Prowlarr fields, safe-stop fixtures, and the provider decision are
-recorded.
+### A0 — Corpus and provider contracts (XL)
 
-**[done 2026-07-12]** Corpus v1 passes with zero known incorrect automatic mappings; the A0 audit
-records the metadata-provider decision, Prowlarr field coverage, and safe-stop fixtures.
+**Goal:** before writing any anime-specific code, measure what TMDB and Prowlarr actually return for
+a fixed set of well-known anime titles, and decide whether a second metadata provider is needed on
+top of TMDB.
 
-### A1 — Identity foundation
+**Build:**
+- A versioned fixture corpus (One Piece, Attack on Titan, Bleach, Demon Slayer, Pokémon, Re:Zero…)
+  with must-support checks: discovery under native/romaji/licensed titles, absolute-episode-count
+  coverage, specials presence, episode-group integrity.
+- A one-shot research tool (`mix cinder.anime.probe`) running the corpus live against TMDB and
+  Prowlarr and recording a raw evidence dump.
+- A written audit of the results: required Prowlarr fields/categories for anime, and the
+  metadata-provider decision.
+- Safe-stop fixtures: cases the corpus expects to fail closed rather than guess.
 
-Land profiles, request/approval proposals, title aliases, many-to-many coordinates, sourced episode
-classification, selected provider callbacks, refresh rules, and the pure resolver. **Done when:** the
-A0 corpus plus identity, precedence, same-series, refresh, and profile-preservation tests pass and
-`mix test` is green.
+**Done when:** for the fixed title corpus, TMDB search finds every title under its native, romaji,
+and English-licensed name; Prowlarr's anime category and the fields Cinder needs are documented; and
+the write-up records zero cases where the corpus data would have produced an automatic wrong
+mapping, plus the provider decision (TMDB alone vs. TMDB+AniDB) with its evidence.
 
-**[done 2026-07-13]** Added operator-owned Auto/Standard/Anime profiles for movies and series,
-request/approval profile proposals, source-scoped title aliases, ordered many-to-many episode
-coordinates, sourced episode classifications, TMDB alternative-title/Absolute-group refresh, and
-the pure precedence-aware resolver. Auto remains Standard unless explicitly confirmed because A0
-selected TMDB without a strong anime identity signal. The A0 A1 corpus contracts and full `mix test`
-gate pass; acquisition/download/import behavior remains unchanged for A2/A3.
+**[done 2026-07-12]** (plan: `docs/superpowers/plans/2026-07-12-a0-anime-corpus-provider-contracts.md`;
+audit: `docs/audits/2026-07-12-anime-provider-contracts.md`). Corpus v1 passed with zero known
+incorrect automatic mappings; TMDB was chosen as the only metadata provider for A1–A4 (no
+anime-identity signal strong enough on its own to justify a second provider — see A6). The probe
+tool and its 40k-line raw evidence dump were deleted in the A4.5 cleanup once the decision was
+recorded in the audit doc and git history; the corpus fixtures stay and keep running.
 
-### A2 — Anime acquisition
+### A1 — Identity foundation (XL)
 
-Land additive alias/category searches, context-aware parsing, stable-ID set cover, anime-movie
-selection, preferred-group waiting, and durable intent snapshots. **Done when:** corpus selection is
-correct, standard movie/TV results are unchanged, waiting does not consume attempts, restart loses no
-reservation meaning, and `mix test` is green.
+**Goal:** give Cinder somewhere to record "this title is anime" and the genuinely many-to-many
+mapping between a canonical episode and however different providers/releases number it, without
+touching how Standard movies/TV behave.
 
-**[done 2026-07-13]** Added bounded provider-ID plus alias/category anime searches, Unicode-safe
-context parsing, stable-ID set cover, Anime movie activation, options-only preferred-group waiting,
-and immutable episodic intent snapshots. Snapshot-bearing episodic work remains held before every
-downloader/grab side effect until A3 provides exact preflight and mapping recovery. The versioned A2
-acquisition corpus and full `mix test` gate pass without changing Standard movie/TV selection.
+**Build:**
+- An operator-owned `media_profile` (`:auto` / `:standard` / `:anime`) on movies and series,
+  defaulting to `:auto`.
+- A request/approval seam where a requester can propose Anime for a new title and an admin's
+  approval confirms it; a direct admin picker on the movie/series detail page for changing it later.
+- `title_aliases` (native/romaji/licensed/scene names, sourced and precedence-ranked) and
+  `episode_coordinates` + `episode_coordinate_memberships` (many-to-many: absolute number, scene
+  number, provider group entry ↔ Cinder's own episode id).
+- Sourced episode classification (`:regular` / `:story_special` / `:recap` / `:extra`).
+- A TMDB refresh that keeps aliases and numbering current without ever overwriting a manual
+  correction, and a pure resolver turning a parsed release's coordinates into "this is episode N."
 
-### A3 — Safe import and mapping recovery
+**Done when:** a series can be switched to Anime (directly, or by requester proposal + admin
+approval) and a later TMDB refresh doesn't silently switch it back or lose a manual alias edit; a
+series with both a Japanese and an English title alias resolves a release under either name to the
+same episode; and a hand-corrected episode mapping survives the next provider refresh untouched.
 
-Land atomic intent→grab snapshot copy, inventory-bound exact preflight, file roles, `Needs mapping`,
-grab-local correction/promotion, resume/cancel UI, and same-/cross-season canonical naming. **Done
-when:** single/range/batch/many-to-many/mutated-inventory/cross-season fixtures import or stop exactly
-as expected with no partial data loss, and `mix test` is green.
+**[done 2026-07-13]** (design: `docs/superpowers/specs/2026-07-12-anime-media-handling-design.md`,
+plan: `docs/superpowers/plans/2026-07-13-a1-anime-identity-foundation.md`). Shipped the Build list
+above. `Auto` stays `Standard` unless explicitly confirmed, per the A0 finding that no metadata
+signal is strong enough to auto-detect anime safely. Acquisition, download, and import behavior are
+untouched at this point — A1 is identity-only.
 
-**[done 2026-07-13]** Snapshot intents now copy atomically into grabs, inventory-bound exact
-preflight persists file decisions before staging, and ambiguous imports enter a durable
-`Needs mapping` hold that survives restarts. Grab-local corrections can be promoted and resumed on
-the same grab, or cancelled without a partial import. The versioned `import-v1.json` fixture and the
-full `mix test` gate pass; A4 preference enforcement remains deferred.
+### A2 — Anime acquisition (XL)
 
-### A4 — Specials and release preferences
+**Goal:** make release search and selection anime-aware — search by alias and anime category, parse
+absolute/scene numbering, pick the right release out of a batch — while leaving the movie and
+standard-TV search paths byte-for-byte alone.
 
-Land sourced specials/Season 00 behavior, global and per-title audio/subtitle/group preferences,
-fallback-delay UX, and post-download MediaInfo hard-policy enforcement. **Done when:** story specials
-are controllable, extras cannot bypass preflight, mismatches block/requeue only the exact release,
-preference fixtures pass, and `mix test` is green.
+**Build:**
+- Additive Prowlarr searches (anime category, stored title aliases, provider-ID queries) layered
+  onto the existing search, not replacing it.
+- Context-aware release parsing recognizing absolute numbers, scene groups, and anime-specific
+  tokens.
+- Stable-ID set-cover selection: resolve every coordinate in a candidate release to a Cinder episode
+  id and pick the release(s) covering the most of what's still wanted.
+- Anime-movie selection reusing the existing movie pipeline (a movie needs no episode mapping).
+- Preferred-group waiting: hold for a configured group up to a fallback delay before grabbing the
+  next-best option, without spending a search attempt while waiting.
+- Immutable intent snapshots recording exactly what a release matched, so a later refresh or
+  restart can't retroactively change what a grab thought it downloaded.
 
-**[done 2026-07-14]** Added typed global and per-title Anime release preferences, explicitly
-monitored story-special/recap acquisition, publication-time preferred-group fallback, immutable
-reservation policy snapshots, pre-stage MediaInfo verification, exact-release rejection with
-durable cleanup, and preserved-content verification holds. Gate evidence: the exact Task 10
-21-file focused `mix test` command passed 572 tests, the explicit Standard/A2/A3 regression command
-passed 110 tests, the full `mix test` quality alias passed 1,691 tests, and the current
-`graphify update .` graph has 24,673 nodes, 76,222 edges, and 283 communities. Live Jellyfin/Plex
-dogfood and provider sign-off remain A5 work.
+**Done when:** a One Piece `1122v2` absolute-numbered release resolves to the correct episode
+without any TMDB season/episode math; a season pack from a group that isn't on the preferred list
+waits (without burning a retry) until the configured fallback delay passes, then grabs the
+next-best option; and an ordinary (non-anime) movie or TV search's results are unchanged.
 
-### A5 — Live dogfood and provider sign-off
+**[done 2026-07-13]** (design: `docs/superpowers/specs/2026-07-13-a2-anime-acquisition-design.md`,
+plan: `docs/superpowers/plans/2026-07-13-a2-anime-acquisition.md`). Shipped the Build list above; the
+A0 corpus's expected releases were selected correctly and the Standard movie/TV selection paths were
+unchanged. Episodic anime still has no safe import path, so none of this reaches the live
+`TvPoller` yet — snapshot-bearing episodic matches are held pending A3.
 
-Run the versioned corpus plus live Jellyfin/Plex single/range/batch/special/cross-season/dual-audio
-paths. Add another service-specific provider only if evidence requires it. **Done when:** designated
-fixtures pass, automatic wrong imports remain zero, unsupported cases stop safely and are documented,
-live library output matches expectations, and the standard suite is green.
+### A3 — Safe import and mapping recovery (XL)
+
+**Goal:** actually let an anime batch download and import, with the safety invariant enforced:
+nothing is filed away until every video in the batch is certainly mapped to one episode.
+
+**Build:**
+- Copy an A2 intent snapshot atomically into the grab at download time, so the mapping decision
+  that chose the release is frozen, not re-derived later.
+- Inventory-bound exact preflight: before staging anything, check every file in the batch against
+  the grab's reserved episode set; an unmapped, ambiguous, duplicate, or outside-the-set file fails
+  the *whole* batch closed.
+- A durable `Needs mapping` hold for a batch that fails preflight, surviving an app restart.
+- Same-season and cross-season canonical Jellyfin/Plex naming for whatever the batch turns out to
+  contain.
+- *(Superseded by A4.5, below.)* The initial ship also included a bespoke grab-local
+  correction/promotion/resume UI for fixing a `Needs mapping` hold in place.
+
+**Done when:** a season pack where every file cleanly maps to one wanted episode imports
+automatically; a batch with one duplicate-claimed file or one file the parser can't identify holds
+the *entire* grab as `Needs mapping` rather than importing the other 90%; and after an app restart,
+that held grab is still there with the same reason, not lost or auto-resolved.
+
+**[done 2026-07-13]** (design:
+`docs/superpowers/specs/2026-07-13-a3-safe-import-mapping-recovery-design.md`, plan:
+`docs/superpowers/plans/2026-07-13-a3-safe-import-mapping-recovery.md`). Shipped the Build list
+above, including the grab-local correction UI later replaced in A4.5. The versioned `import-v1.json`
+fixture (single/range/batch/many-to-many/mutated-inventory/cross-season cases) and the full suite
+passed with no partial-import cases.
+
+### A4 — Specials and release preferences (XL)
+
+**Goal:** make specials (Season 0) individually controllable instead of ignored, give Anime titles
+their own audio/subtitle/release-group preferences, and verify a downloaded file's actual
+audio/subtitles against those preferences before it's ever staged.
+
+**Build:**
+- Classification-driven specials acquisition: a Season 0 episode is searched and grabbed only when
+  it's classified `story_special` or `recap` *and* monitored — an unclassified special or a pure
+  `extra` is never auto-grabbed.
+- Global Anime release preferences in `/settings` — audio mode (original/dub/dual/any),
+  embedded-subtitle mode (allow/prefer/require), preferred/blocked release groups, and a
+  preferred-group fallback delay — plus, in the initial ship, a per-title override tier (dropped in
+  A4.5).
+- The hard portion of that policy frozen into the grab's snapshot at reservation time.
+- Post-download MediaInfo (`ffprobe`) verification against the frozen policy: a file that provably
+  violates it is rejected and blocklisted (not imported, not silently accepted) and its episode
+  requeues; a probe that can't reach a verdict (e.g. `ffprobe` missing) holds the release for a
+  manual re-check rather than guessing either way.
+
+**Done when:** a Season 0 episode classified as a story special and monitored gets searched and
+grabbed exactly like a regular episode, while an unclassified special never does; a downloaded
+release whose actual audio track (checked via `ffprobe`) doesn't match the configured Anime
+audio-mode policy is rejected and blocklisted rather than staged, and its episode re-searches; and
+the global Anime preferences apply the same way to a title just switched to Anime as to one that's
+been Anime all along.
+
+**[done 2026-07-14]** (design:
+`docs/superpowers/specs/2026-07-13-a4-anime-specials-preferences-design.md`, plan:
+`docs/superpowers/plans/2026-07-13-a4-anime-specials-preferences.md`). Shipped the Build list above,
+including the per-title preference tier later dropped in A4.5. Gate evidence at the time: a focused
+21-file `mix test` run passed 572 tests, the explicit Standard/A2/A3 regression run passed 110, and
+the full suite passed 1,691. Live Jellyfin/Plex dogfood and provider sign-off were explicitly
+deferred to A5.
+
+### A4.5 — Consistency cleanup (done 2026-07-14)
+
+A0–A4 were designed and built end-to-end by a different model as a trial run. A same-day audit found
+the result functionally correct — every gate above was green throughout — but substantially
+over-built for the problem and stylistically out of step with the rest of the app: a bespoke
+correction-workflow UI where the product otherwise uses one hold-and-retry idiom everywhere, a
+per-title preference tier nobody had exercised yet, and a row-versioning layer largely duplicating
+guards that were already there. A cleanup pass fixed a real bug and then simplified in place without
+touching the safety invariant: (1) fixed a parser bug where `SxxEyy-Ezz`/`SxxEyy-zz` batch-range
+shorthand silently dropped episodes; (2) deleted the one-shot `mix cinder.anime.probe` tool and its
+40k-line evidence dump (the A0 decision is recorded in the audit doc and git history), the
+never-shipped v1-snapshot back-compat branch, and a manual-classification setter with no caller; (3)
+replaced the A3 grab-local mapping-correction pipeline (a dedicated LiveView plus
+resume/promote/override machinery) with the app's standard idiom — a preflight failure holds the
+grab with a plain-English reason on `/activity`, "Retry import" re-runs preflight against current
+disk state after the operator fixes the files, and "Discard" reuses the existing cancel path; the
+safety invariant itself (ambiguous/duplicate/outside/unknown mappings never stage a file) is
+unchanged; (4) collapsed the 12-column per-title release-preference override tier to global-only
+settings, since nothing had exercised per-title yet — the frozen release-policy-snapshot flow is
+unchanged; (5) dropped the SQLite trigger-bumped `row_version` column: the audit found it was
+genuinely load-bearing at only two of its eight call sites (the two verification-hold guards), so
+those two were rewritten to compare `release_title` directly instead of removing the safety check
+outright; (6) made "Needs verification" render through the same `badge_spec` component everywhere
+(grabs and movies alike) instead of a hand-rolled span, with a consistent "Retry verification"
+action label; (7) reworked the series-detail anime UI down to two things an operator actually needs
+— a muted absolute-episode-number annotation and a plain "Story special"/"Recap" label on Season 0 —
+deleting the raw provenance/coordinate/precedence rendering and collapsing the alias list into the
+page's existing disclosure pattern; (8) extracted `Cinder.Catalog.ReleaseVerification` out of
+`catalog.ex` (which had grown past 3,100 lines) as a plain code-motion refactor, made the Identity
+alias/coordinate writers broadcast like every other writer, and made `ffprobe` operable — a
+`ffprobe_bin` setting, a `MediaInfo.health/0` callback, and a row in both `/status` service health
+and `/settings` Test connection. `mix test` green throughout (1,605 tests).
+
+### A5 — Live dogfood and sign-off
+
+**Goal:** prove A0–A4.5 against the versioned corpus *and* real Jellyfin/Plex libraries, not just
+mocks.
+
+**Build:**
+- Run the full A0 corpus again against current provider behavior.
+- Live single-episode, episode-range, full-season-batch, story-special, cross-season-pack, and
+  dual-audio-release imports into a real Jellyfin and a real Plex library.
+- Confirm every automatic mapping is right (zero wrong auto-imports) and every case the pipeline
+  can't handle stops safely and is documented, not silently mis-filed.
+
+**Done when:** the corpus fixtures still pass; a live single episode, a live range grab, a live
+season batch, a live story special, a live cross-season pack, and a live dual-audio release each land
+correctly in both Jellyfin and Plex; nothing was automatically mapped wrong; and the standard
+(non-anime) suite is still green.
+
+### A6 — Additional metadata provider (optional; only if A5 evidence demands it)
+
+A0 chose TMDB alone because no corpus title needed more. If A5's live run turns up a specific,
+evidenced case TMDB genuinely can't resolve (e.g. a scene-numbering disagreement TMDB has no
+coordinate for), add a focused behaviour for one additional provider — AniDB and TheXEM remain the
+candidates from the A0 design — to close *that* gap, not a general second-provider integration.
+Skip this phase entirely if A5 turns up nothing that needs it.
+
+**Done when (only if triggered):** a named, evidenced-in-A5 gap has a fixture that failed before and
+passes after the new provider is wired in, and every A0–A5 fixture plus the standard suite stays
+green.
+
+---
 
 One phase per session; each phase gets its own design/plan and commit boundary. Do not start a later
 phase until the current Done-when block is green.
