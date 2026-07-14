@@ -44,9 +44,11 @@ defmodule Cinder.Acquisition.AnimeParser do
     end
   end
 
+  # Range separators accept the ASCII hyphen plus the wave-dash variants (~ 〜 ～) used by
+  # CJK-origin uploaders, e.g. a Nyaa batch range written 总第67~77 (A5 dogfood F3, issue #106).
   defp standard_coordinates(title) do
     case Regex.run(
-           ~r/\bS(\d{1,3})E(\d{1,4})(?:\s*-\s*(?:S(\d{1,3})E(\d{1,4})|E?(\d{1,4})\b))?/iu,
+           ~r/\bS(\d{1,3})E(\d{1,4})(?:\s*[-~〜～]\s*(?:S(\d{1,3})E(\d{1,4})|E?(\d{1,4})\b))?/iu,
            title,
            capture: :all_but_first
          ) do
@@ -111,9 +113,12 @@ defmodule Cinder.Acquisition.AnimeParser do
     end
   end
 
+  # Also accepts the Chinese episode-counter tokens from the same F3 evidence title: an
+  # optional 总第/第 prefix and a 话/集 suffix (consumed explicitly — a CJK ideograph is a
+  # word char under /u, so a bare \b would never match after "77话").
   defp absolute_coordinates(remainder, context) do
     case Regex.run(
-           ~r/^\s*(?:[-–—._]\s*)?(\d{1,6})(?:\s*-\s*(\d{1,6}))?(?:v\d+)?(?:\b|$)/iu,
+           ~r/^\s*(?:[-–—._]\s*)?(?:总?第\s*)?(\d{1,6})(?:\s*[-~〜～]\s*(\d{1,6}))?(?:v\d+)?[话集]?(?:\b|$)/iu,
            remainder,
            capture: :all_but_first
          ) do
