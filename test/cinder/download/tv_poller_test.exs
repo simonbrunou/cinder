@@ -273,6 +273,16 @@ defmodule Cinder.Download.TvPollerTest do
 
     assert %Episode{grab_id: nil, search_attempts: 0} = Repo.get!(Episode, wanted.id)
     assert Agent.get(searches, & &1) == 0
+
+    # The hold is DB-visible (issue #107) — not just a log line.
+    assert Repo.get!(Series, series.id).anime_hold_reason == "subtitle_language_required"
+
+    # Preferences become satisfiable → the next sweep clears the hold and searches normally.
+    set_anime_defaults!(embedded_subtitle_mode: :prefer)
+    assert :ok = TvPoller.poll()
+
+    assert Repo.get!(Series, series.id).anime_hold_reason == nil
+    assert Agent.get(searches, & &1) > 0
   end
 
   test "restart reconciliation creates one snapshot grab with every reserved episode" do

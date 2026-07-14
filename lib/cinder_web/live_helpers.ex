@@ -32,14 +32,20 @@ defmodule CinderWeb.LiveHelpers do
 
   @doc """
   The status atom for a `<.status_badge kind={:movie}>` — `:verification_hold` when the movie
-  is parked mid post-download verification (`verification_hold_origin` set), the movie's own
-  pipeline `status` otherwise. Single source of truth for every movie-badge surface (dashboard,
-  library, my-requests, activity, the detail page) so a held movie reads "Needs verification"
-  everywhere instead of the bare "Import failed".
+  is parked mid post-download verification (`verification_hold_origin` set), `:anime_hold`
+  when a pre-download movie is held at search time on unsatisfiable Anime preferences
+  (`anime_hold_reason` set), the movie's own pipeline `status` otherwise. Single source of
+  truth for every movie-badge surface (dashboard, library, my-requests, activity, the detail
+  page) so a held movie reads "Needs verification"/"Needs preferences" everywhere instead of
+  the bare "Import failed"/"Searching".
   """
   def movie_badge_status(%{verification_hold_origin: origin})
       when origin in [:download, :upgrade],
       do: :verification_hold
+
+  def movie_badge_status(%{status: status, anime_hold_reason: reason})
+      when status in [:requested, :searching] and is_binary(reason),
+      do: :anime_hold
 
   def movie_badge_status(movie), do: movie.status
 

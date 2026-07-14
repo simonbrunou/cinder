@@ -274,6 +274,8 @@ defmodule Cinder.Download.TvPoller do
         search_anime_series(series, episodes)
 
       :standard ->
+        # A profile switched back to Standard must not keep a stale Anime hold marker.
+        Catalog.set_anime_hold(series, nil)
         search_standard_series(series, episodes)
     end
   end
@@ -314,9 +316,13 @@ defmodule Cinder.Download.TvPoller do
 
     case AnimePreferences.resolve(series, Settings.anime_defaults()) do
       {:ok, policy} ->
+        Catalog.set_anime_hold(series, nil)
         search_anime_with_policy(series, episodes, context, wanted_ids, policy)
 
-      {:error, _reason} ->
+      {:error, reason} ->
+        # DB-visible hold (surfaced on /activity), re-evaluated every sweep: the next
+        # tick with satisfiable preferences clears it and searches normally.
+        Catalog.set_anime_hold(series, reason)
         Logger.info("anime search held for series #{series.id}: invalid preferences")
         :ok
     end

@@ -126,6 +126,64 @@ defmodule Cinder.Catalog do
     series |> Series.profile_changeset(%{media_profile: profile}) |> Repo.update()
   end
 
+  @doc """
+  Sets the per-title Anime audio-mode override (`nil` = use the global
+  `anime_audio_mode` setting). Read by `AnimePreferences.resolve/2`, so it applies at
+  search time and is frozen into the release-policy snapshot at reservation exactly as
+  the global is. Broadcasts so open views refresh.
+  """
+  def set_anime_audio_mode(%Movie{} = movie, mode) do
+    with {:ok, updated} <-
+           movie |> Movie.profile_changeset(%{anime_audio_mode: mode}) |> Repo.update() do
+      broadcast({:movie_updated, updated})
+      {:ok, updated}
+    end
+  end
+
+  def set_anime_audio_mode(%Series{} = series, mode) do
+    with {:ok, updated} <-
+           series |> Series.profile_changeset(%{anime_audio_mode: mode}) |> Repo.update() do
+      broadcast_series(updated.id)
+      {:ok, updated}
+    end
+  end
+
+  @doc """
+  Marks a title held at search time because the Anime release preferences can't be
+  satisfied for it (`AnimePreferences.resolve/2` failed), or clears the hold (`nil`).
+  A non-status flag written directly (monitor-toggle precedent, not pipeline state);
+  every sweep re-writes it at the resolve site, so the marker can't stick stale.
+  A no-op when unchanged — the sweep runs every tick, don't broadcast equal values.
+  """
+  def set_anime_hold(title, reason) do
+    reason = reason && to_string(reason)
+
+    if title.anime_hold_reason == reason,
+      do: {:ok, title},
+      else: write_anime_hold(title, reason)
+  end
+
+  defp write_anime_hold(%Movie{} = movie, reason) do
+    with {:ok, updated} <-
+           movie |> Movie.anime_hold_changeset(%{anime_hold_reason: reason}) |> Repo.update() do
+      broadcast({:movie_updated, updated})
+      {:ok, updated}
+    end
+  end
+
+  defp write_anime_hold(%Series{} = series, reason) do
+    with {:ok, updated} <-
+           series |> Series.anime_hold_changeset(%{anime_hold_reason: reason}) |> Repo.update() do
+      broadcast_series(updated.id)
+      {:ok, updated}
+    end
+  end
+
+  @doc "Series currently held at search time on unsatisfiable Anime preferences (see `set_anime_hold/2`); surfaced on `/activity`."
+  def list_anime_held_series do
+    Repo.all(from s in Series, where: not is_nil(s.anime_hold_reason), order_by: s.title)
+  end
+
   @doc "Returns selected/effective profile policy and bounded suggestion evidence."
   def media_profile_summary(%Series{} = series) do
     extra_evidence =
