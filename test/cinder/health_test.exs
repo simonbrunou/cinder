@@ -82,4 +82,12 @@ defmodule Cinder.HealthTest do
     # let real requests through to the live OpenSubtitles.com API.
     assert {:error, :not_configured} = Cinder.Health.check_service(:subtitles)
   end
+
+  test "check_service(:media_info) is :not_configured when ffprobe verification is disabled" do
+    # Deliberately no config mutation (same reasoning as :subtitles above): config/test.exs sets
+    # `media_info: nil` for the whole suite, so this is already :not_configured. The
+    # "delegates to the configured impl's health/0" path is covered in ffprobe_test.exs
+    # (async: false), which already owns mutating :ffprobe_bin/:media_info safely.
+    assert {:error, :not_configured} = Cinder.Health.check_service(:media_info)
+  end
 end

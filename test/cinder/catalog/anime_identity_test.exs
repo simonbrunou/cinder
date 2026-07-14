@@ -82,6 +82,29 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
       assert Catalog.list_title_aliases(movie) == []
     end
 
+    test "a manual alias write broadcasts on its owner's topic so a second open tab sees it" do
+      movie = movie_fixture()
+      series = series_fixture()
+      movie_id = movie.id
+      series_id = series.id
+      Catalog.subscribe()
+      Catalog.subscribe_series()
+
+      assert {:ok, alias_record} = Catalog.save_manual_alias(movie, %{title: "Alias"})
+      assert_receive {:movie_updated, %{id: ^movie_id}}
+
+      assert {:ok, _} = Catalog.save_manual_alias(series, %{title: "Alias"})
+      assert_receive {:series_updated, ^series_id}
+
+      assert {:ok, _} =
+               Catalog.update_manual_alias(movie, alias_record.id, %{title: "Renamed"})
+
+      assert_receive {:movie_updated, %{id: ^movie_id}}
+
+      assert {:ok, _} = Catalog.delete_manual_alias(movie, alias_record.id)
+      assert_receive {:movie_updated, %{id: ^movie_id}}
+    end
+
     test "manual alias de-duplication uses the owner-specific partial index" do
       movie = movie_fixture()
       series = series_fixture()
@@ -122,6 +145,8 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
       season = season_fixture(series)
       first = episode_fixture(season, episode_number: 1)
       second = episode_fixture(season, episode_number: 2)
+      series_id = series.id
+      Catalog.subscribe_series()
 
       assert {:ok, coordinate} =
                Catalog.put_episode_coordinate(
@@ -138,6 +163,7 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
 
       assert Enum.map(coordinate.memberships, & &1.position) == [0, 1]
       assert Enum.map(coordinate.memberships, & &1.episode_id) == [second.id, first.id]
+      assert_receive {:series_updated, ^series_id}
 
       assert [listed] = Catalog.list_episode_coordinates(series)
       assert Enum.map(listed.memberships, & &1.episode_id) == [second.id, first.id]

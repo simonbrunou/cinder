@@ -13,6 +13,48 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
     end)
   end
 
+  @tag :tmp_dir
+  test "health/0 is :ok when the binary runs and exits zero", %{tmp_dir: tmp} do
+    path = Path.join(tmp, "ffprobe")
+    File.write!(path, "#!/bin/sh\nexit 0\n")
+    File.chmod!(path, 0o755)
+    Application.put_env(:cinder, :ffprobe_bin, path)
+
+    assert Ffprobe.health() == :ok
+  end
+
+  @tag :tmp_dir
+  test "health/0 surfaces a non-zero exit", %{tmp_dir: tmp} do
+    path = Path.join(tmp, "ffprobe")
+    File.write!(path, "#!/bin/sh\nprintf 'boom' >&2\nexit 3\n")
+    File.chmod!(path, 0o755)
+    Application.put_env(:cinder, :ffprobe_bin, path)
+
+    assert Ffprobe.health() == {:error, {:ffprobe_exit, 3, "boom"}}
+  end
+
+  test "health/0 surfaces a missing binary as an error instead of crashing" do
+    Application.put_env(:cinder, :ffprobe_bin, "definitely-not-a-real-binary")
+
+    assert {:error, %ErlangError{original: :enoent}} = Ffprobe.health()
+  end
+
+  @tag :tmp_dir
+  test "Health.check_service(:media_info) delegates to the configured impl's health/0", %{
+    tmp_dir: tmp
+  } do
+    path = Path.join(tmp, "ffprobe")
+    File.write!(path, "#!/bin/sh\nexit 0\n")
+    File.chmod!(path, 0o755)
+    Application.put_env(:cinder, :ffprobe_bin, path)
+
+    media_info = Application.get_env(:cinder, :media_info)
+    Application.put_env(:cinder, :media_info, Ffprobe)
+    on_exit(fn -> restore_bin(:media_info, media_info) end)
+
+    assert Cinder.Health.check_service(:media_info) == :ok
+  end
+
   test "parse buckets audio + subtitle streams by codec_type, dropping und/empty" do
     out = "video,\naudio,eng\naudio,fre\nsubtitle,eng\nsubtitle,und\naudio,\n"
     assert Ffprobe.parse(out) == %{audio: ["eng", "fre"], subtitles: ["eng"]}

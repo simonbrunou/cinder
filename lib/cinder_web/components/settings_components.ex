@@ -169,6 +169,26 @@ defmodule CinderWeb.SettingsComponents do
               )}
             </p>
           </div>
+
+          <div class="form-control pt-2">
+            <label class="label" for={Settings.ffprobe_bin_key()}>
+              <span class="label-text">{gettext("ffprobe binary")}</span>
+            </label>
+            <input
+              type="text"
+              id={Settings.ffprobe_bin_key()}
+              name={Settings.ffprobe_bin_key()}
+              value={@form.values[Settings.ffprobe_bin_key()]}
+              placeholder={@form.placeholders[Settings.ffprobe_bin_key()] || "ffprobe"}
+              autocomplete="off"
+              class="input w-full"
+            />
+            <p class="mt-1 text-xs opacity-70">
+              {gettext(
+                "Command name or path used to verify a download's audio/subtitle languages after import. Leave blank to use \"ffprobe\" from PATH."
+              )}
+            </p>
+          </div>
         </div>
 
         <div :if={group == :releases} class="space-y-3">
@@ -368,8 +388,11 @@ defmodule CinderWeb.SettingsComponents do
   def services_for(:subtitles), do: [{"subtitles", "OpenSubtitles"}]
 
   def services_for(:library) do
-    for %{kind: kind, label: label} <- Settings.library_kinds(),
-        do: {"#{kind}_library", SettingsLabels.t("#{label} library")}
+    for(
+      %{kind: kind, label: label} <- Settings.library_kinds(),
+      do: {"#{kind}_library", SettingsLabels.t("#{label} library")}
+    ) ++
+      [{"media_info", gettext("Media info (ffprobe)")}]
   end
 
   def services_for(_group), do: []
@@ -382,6 +405,7 @@ defmodule CinderWeb.SettingsComponents do
   def decode_service("usenet"), do: {:download, :usenet}
   def decode_service("discord"), do: :discord
   def decode_service("subtitles"), do: :subtitles
+  def decode_service("media_info"), do: :media_info
 
   # "movies_library"/"tv_library"/… → {:library, kind} for a known kind, else nil.
   def decode_service(service) do

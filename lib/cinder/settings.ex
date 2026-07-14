@@ -204,6 +204,7 @@ defmodule Cinder.Settings do
   @media_server_key "media_server_type"
   @media_server_options ["jellyfin", "plex"]
   @import_roots_key "import_roots"
+  @ffprobe_bin_key "ffprobe_bin"
 
   @anime_fields [
     %{key: "anime_audio_mode", type: :select, options: ~w(original dub dual any)},
@@ -292,6 +293,7 @@ defmodule Cinder.Settings do
   def media_server_key, do: @media_server_key
   def media_server_options, do: @media_server_options
   def import_roots_key, do: @import_roots_key
+  def ffprobe_bin_key, do: @ffprobe_bin_key
   def anime_fields, do: @anime_fields
 
   @doc "The library kinds with display labels, for the settings/setup UI (`[%{kind:, label:}]`)."
@@ -396,6 +398,7 @@ defmodule Cinder.Settings do
         end)
       end)
       |> Map.put(@import_roots_key, decoded_for(rows, @import_roots_key) || "")
+      |> Map.put(@ffprobe_bin_key, decoded_for(rows, @ffprobe_bin_key) || "")
       |> then(fn values ->
         Enum.reduce(@anime_fields, values, fn field, values ->
           Map.put(values, field.key, decoded_for(rows, field.key) || "")
@@ -427,7 +430,8 @@ defmodule Cinder.Settings do
 
     text_keys =
       for(f <- config_fields(), not f.secret, do: f.key) ++
-        flat_keys() ++ [@import_roots_key] ++ Enum.map(@anime_fields, & &1.key)
+        flat_keys() ++
+        [@import_roots_key, @ffprobe_bin_key] ++ Enum.map(@anime_fields, & &1.key)
 
     values =
       text_keys
@@ -475,12 +479,15 @@ defmodule Cinder.Settings do
   defp truthy?(value), do: value in [true, "true", "1", "on"]
 
   # Effective env value to show as a placeholder for each non-secret field with no DB row
-  # (config creds + the env-backed library_path roots; bands are DB-only, no env to show).
+  # (config creds + the env-backed library_path roots and ffprobe_bin; bands are DB-only, no
+  # env to show).
   defp placeholders(rows) do
     field_pairs = for f <- config_fields(), not f.secret, do: {f.key, effective_field_value(f)}
-    path_pairs = for k <- library_path_keys(), do: {k, effective_flat_value(k)}
 
-    (field_pairs ++ path_pairs)
+    flat_pairs =
+      for k <- library_path_keys() ++ [@ffprobe_bin_key], do: {k, effective_flat_value(k)}
+
+    (field_pairs ++ flat_pairs)
     |> Enum.reject(fn {key, value} -> is_nil(value) or not is_nil(decoded_for(rows, key)) end)
     |> Map.new()
   end
@@ -659,6 +666,7 @@ defmodule Cinder.Settings do
     apply_library_config(rows)
     apply_import_roots(rows)
     apply_move_on_import(rows)
+    apply_ffprobe_bin(rows)
     :ok
   rescue
     e ->
@@ -804,6 +812,17 @@ defmodule Cinder.Settings do
   # everywhere it's read (Application.get_env(:cinder, :move_on_import, false)).
   defp apply_move_on_import(rows) do
     Application.put_env(:cinder, :move_on_import, decoded_for(rows, "move_on_import") == "true")
+  end
+
+  # A flat string with an env bootstrap (`config :cinder, ffprobe_bin: "ffprobe"`), mirroring
+  # apply_kind_config/2's library_path handling: a DB value overlays the captured bootstrap, a
+  # cleared setting reverts to it.
+  defp apply_ffprobe_bin(rows) do
+    Application.put_env(
+      :cinder,
+      :ffprobe_bin,
+      decoded_for(rows, @ffprobe_bin_key) || base(:ffprobe_bin)
+    )
   end
 
   # base/1 defaults to [] for unset keys; a library path is a flat string, so coerce an unset
@@ -1003,6 +1022,7 @@ defmodule Cinder.Settings do
     config_plan = Enum.reduce(config_fields(), {%{}, []}, &plan_config(&1, params, &2))
     {puts, deletes} = Enum.reduce(flat_keys(), config_plan, &plan_flat(&1, params, &2))
     {puts, deletes} = plan_flat(@import_roots_key, params, {puts, deletes})
+    {puts, deletes} = plan_flat(@ffprobe_bin_key, params, {puts, deletes})
 
     {puts, deletes} =
       Enum.reduce(@anime_fields, {puts, deletes}, &plan_flat(&1.key, params, &2))

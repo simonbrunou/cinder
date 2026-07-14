@@ -46,12 +46,12 @@ msgstr "%{title} ajouté."
 msgid "%{title} is already requested."
 msgstr "%{title} est déjà demandé."
 
-#: lib/cinder_web/components/settings_components.ex:238
+#: lib/cinder_web/components/settings_components.ex:258
 #, elixir-autogen, elixir-format
 msgid "1080p, 720p"
 msgstr "1080p, 720p"
 
-#: lib/cinder_web/components/settings_components.ex:259
+#: lib/cinder_web/components/settings_components.ex:279
 #, elixir-autogen, elixir-format
 msgid ": a season pack of N episodes is allowed up to N× the max. Leave blank for no limit."
 msgstr " : un pack de saison de N épisodes est autorisé jusqu'à N× le maximum. Laisser vide pour aucune limite."
@@ -257,7 +257,7 @@ msgstr "Vérification des services…"
 msgid "Checking…"
 msgstr "Vérification…"
 
-#: lib/cinder_web/components/settings_components.ex:431
+#: lib/cinder_web/components/settings_components.ex:455
 #, elixir-autogen, elixir-format
 msgid "Clear saved value"
 msgstr "Effacer la valeur enregistrée"
@@ -658,7 +658,7 @@ msgstr "Déconnexion réussie."
 msgid "Manage your account email address and password settings"
 msgstr "Gérez l'adresse e-mail et le mot de passe de votre compte"
 
-#: lib/cinder_web/components/settings_components.ex:205
+#: lib/cinder_web/components/settings_components.ex:225
 #, elixir-autogen, elixir-format
 msgid "Max size (GB)"
 msgstr "Taille max (Go)"
@@ -668,7 +668,7 @@ msgstr "Taille max (Go)"
 msgid "Media server type"
 msgstr "Type de serveur multimédia"
 
-#: lib/cinder_web/components/settings_components.ex:179
+#: lib/cinder_web/components/settings_components.ex:199
 #, elixir-autogen, elixir-format
 msgid "Min size (GB)"
 msgstr "Taille min (Go)"
@@ -881,7 +881,7 @@ msgstr "Les demandes en attente apparaîtront ici pour approbation."
 msgid "Pipeline at a glance."
 msgstr "Le pipeline en un coup d'œil."
 
-#: lib/cinder_web/components/settings_components.ex:231
+#: lib/cinder_web/components/settings_components.ex:251
 #, elixir-autogen, elixir-format
 msgid "Preferred resolutions (comma-separated)"
 msgstr "Résolutions préférées (séparées par des virgules)"
@@ -1145,7 +1145,7 @@ msgstr "Paramètres enregistrés."
 msgid "Sign up"
 msgstr "S'inscrire"
 
-#: lib/cinder_web/components/settings_components.ex:259
+#: lib/cinder_web/components/settings_components.ex:279
 #, elixir-autogen, elixir-format
 msgid "Sizes are decimal GB (1 GB = 1,000,000,000 bytes). For TV they apply"
 msgstr "Les tailles sont en Go décimaux (1 Go = 1 000 000 000 octets). Pour la TV, elles s'appliquent"
@@ -1192,7 +1192,7 @@ msgstr "TV"
 msgid "TV wanted"
 msgstr "TV souhaités"
 
-#: lib/cinder_web/components/settings_components.ex:283
+#: lib/cinder_web/components/settings_components.ex:303
 #, elixir-autogen, elixir-format
 msgid "Test %{service}"
 msgstr "Tester %{service}"
@@ -1362,7 +1362,7 @@ msgstr "dès maintenant."
 msgid "of %{count} total"
 msgstr "sur %{count} au total"
 
-#: lib/cinder_web/components/settings_components.ex:259
+#: lib/cinder_web/components/settings_components.ex:279
 #, elixir-autogen, elixir-format
 msgid "per episode"
 msgstr "par épisode"
@@ -1372,12 +1372,12 @@ msgstr "par épisode"
 msgid "to your account now."
 msgstr "à votre compte dès maintenant."
 
-#: lib/cinder_web/components/settings_components.ex:507
+#: lib/cinder_web/components/settings_components.ex:531
 #, elixir-autogen, elixir-format
 msgid "•••• saved (leave blank to keep)"
 msgstr "•••• enregistré (laisser vide pour conserver)"
 
-#: lib/cinder_web/components/settings_components.ex:366
+#: lib/cinder_web/components/settings_components.ex:386
 #: lib/cinder_web/settings_labels.ex:26
 #, elixir-autogen, elixir-format
 msgid "Media server"
@@ -1394,7 +1394,7 @@ msgid "French"
 msgstr "Français"
 
 #: lib/cinder_web/components/core_components.ex:958
-#: lib/cinder_web/components/settings_components.ex:313
+#: lib/cinder_web/components/settings_components.ex:333
 #: lib/cinder_web/live/discover_live.ex:366
 #: lib/cinder_web/live/discover_live.ex:369
 #, elixir-autogen, elixir-format
@@ -1416,7 +1416,7 @@ msgstr "Originale (français)"
 msgid "Preferred language"
 msgstr "Langue préférée"
 
-#: lib/cinder_web/components/settings_components.ex:510
+#: lib/cinder_web/components/settings_components.ex:534
 #, elixir-autogen, elixir-format
 msgid "set via environment (leave blank to keep)"
 msgstr "défini via l'environnement (laisser vide pour conserver)"
@@ -1731,7 +1731,7 @@ msgstr "URL Plex"
 msgid "Plex token"
 msgstr "Jeton Plex"
 
-#: lib/cinder_web/components/settings_components.ex:245
+#: lib/cinder_web/components/settings_components.ex:265
 #, elixir-autogen, elixir-format
 msgid "Preferred sources (comma-separated)"
 msgstr "Sources préférées (séparées par des virgules)"
@@ -1811,7 +1811,7 @@ msgstr "Liste de configuration"
 msgid "Setup in progress. Try again shortly."
 msgstr "Configuration en cours. Réessayez sous peu."
 
-#: lib/cinder_web/components/settings_components.ex:262
+#: lib/cinder_web/components/settings_components.ex:282
 #, elixir-autogen, elixir-format
 msgid "Sources: remux, bluray, webrip, webdl, hdtv, dvd, cam. Leave blank to accept any; untagged releases are always kept. These are distinct; listing only bluray excludes remux, so add both to accept either."
 msgstr "Sources : remux, bluray, webrip, webdl, hdtv, dvd, cam. Laissez vide pour tout accepter ; les releases sans étiquette sont toujours conservées. Elles sont distinctes : n'indiquer que bluray exclut remux, ajoutez donc les deux pour accepter l'un ou l'autre."
@@ -1867,7 +1867,7 @@ msgstr "Voir les saisons"
 msgid "You need to log in again to perform sensitive actions on your account."
 msgstr "Vous devez vous reconnecter pour effectuer des actions sensibles sur votre compte."
 
-#: lib/cinder_web/components/settings_components.ex:252
+#: lib/cinder_web/components/settings_components.ex:272
 #, elixir-autogen, elixir-format
 msgid "bluray, webdl"
 msgstr "bluray, webdl"
@@ -2416,7 +2416,7 @@ msgid "Allowed download folders, separated by commas or new lines. The filesyste
 msgstr "Dossiers de téléchargement autorisés, séparés par des virgules ou des sauts de ligne. La racine du système de fichiers n'est pas autorisée."
 
 #: lib/cinder_web/components/settings_components.ex:101
-#: lib/cinder_web/components/settings_components.ex:479
+#: lib/cinder_web/components/settings_components.ex:503
 #, elixir-autogen, elixir-format
 msgid "Download import roots"
 msgstr "Racines d'import des téléchargements"
@@ -2436,17 +2436,17 @@ msgstr "S’inscrire"
 msgid "Setup"
 msgstr "Configuration"
 
-#: lib/cinder_web/components/settings_components.ex:496
+#: lib/cinder_web/components/settings_components.ex:520
 #, elixir-autogen, elixir-format
 msgid "%{kind}: Max size (GB)"
 msgstr "%{kind} : Taille maximale (Go)"
 
-#: lib/cinder_web/components/settings_components.ex:493
+#: lib/cinder_web/components/settings_components.ex:517
 #, elixir-autogen, elixir-format
 msgid "%{kind}: Min size (GB)"
 msgstr "%{kind} : Taille minimale (Go)"
 
-#: lib/cinder_web/components/settings_components.ex:476
+#: lib/cinder_web/components/settings_components.ex:500
 #, elixir-autogen, elixir-format
 msgid "Enter a positive number of GB, or leave blank for no limit."
 msgstr "Saisissez un nombre de Go positif, ou laissez vide pour ne pas limiter."
@@ -2456,7 +2456,7 @@ msgstr "Saisissez un nombre de Go positif, ou laissez vide pour ne pas limiter."
 msgid "Not saved. Check: %{fields}."
 msgstr "Paramètres non enregistrés. Vérifiez : %{fields}."
 
-#: lib/cinder_web/components/settings_components.ex:464
+#: lib/cinder_web/components/settings_components.ex:488
 #, elixir-autogen, elixir-format
 msgid "The filesystem root (/) is not allowed."
 msgstr "La racine du système de fichiers (/) n’est pas autorisée."
@@ -2679,107 +2679,107 @@ msgstr "Correspondance requise"
 msgid "The download could not be cancelled."
 msgstr "Le téléchargement n’a pas pu être annulé."
 
-#: lib/cinder_web/components/settings_components.ex:332
+#: lib/cinder_web/components/settings_components.ex:352
 #, elixir-autogen, elixir-format
 msgid "Allow"
 msgstr "Autoriser"
 
-#: lib/cinder_web/components/settings_components.ex:300
+#: lib/cinder_web/components/settings_components.ex:320
 #, elixir-autogen, elixir-format
 msgid "Anime releases"
 msgstr "Versions anime"
 
-#: lib/cinder_web/components/settings_components.ex:481
+#: lib/cinder_web/components/settings_components.ex:505
 #, elixir-autogen, elixir-format
 msgid "Anime: Audio mode"
 msgstr "Anime : Mode audio"
 
-#: lib/cinder_web/components/settings_components.ex:484
+#: lib/cinder_web/components/settings_components.ex:508
 #, elixir-autogen, elixir-format
 msgid "Anime: Embedded subtitles"
 msgstr "Anime : Sous-titres intégrés"
 
-#: lib/cinder_web/components/settings_components.ex:487
+#: lib/cinder_web/components/settings_components.ex:511
 #, elixir-autogen, elixir-format
 msgid "Anime: Preferred-group fallback delay"
 msgstr "Anime : Délai de repli des groupes préférés"
 
-#: lib/cinder_web/components/settings_components.ex:316
+#: lib/cinder_web/components/settings_components.ex:336
 #, elixir-autogen, elixir-format
 msgid "Any"
 msgstr "Indifférent"
 
-#: lib/cinder_web/components/settings_components.ex:310
+#: lib/cinder_web/components/settings_components.ex:330
 #, elixir-autogen, elixir-format
 msgid "Audio mode"
 msgstr "Mode audio"
 
-#: lib/cinder_web/components/settings_components.ex:347
+#: lib/cinder_web/components/settings_components.ex:367
 #, elixir-autogen, elixir-format
 msgid "Blocked groups"
 msgstr "Groupes bloqués"
 
-#: lib/cinder_web/components/settings_components.ex:473
+#: lib/cinder_web/components/settings_components.ex:497
 #, elixir-autogen, elixir-format
 msgid "Choose a valid audio mode."
 msgstr "Choisissez un mode audio valide."
 
-#: lib/cinder_web/components/settings_components.ex:470
+#: lib/cinder_web/components/settings_components.ex:494
 #, elixir-autogen, elixir-format
 msgid "Choose a valid mode and at least one subtitle language when required."
 msgstr "Choisissez un mode valide et au moins une langue lorsque les sous-titres intégrés sont obligatoires."
 
-#: lib/cinder_web/components/settings_components.ex:315
+#: lib/cinder_web/components/settings_components.ex:335
 #, elixir-autogen, elixir-format
 msgid "Dual audio"
 msgstr "Double audio"
 
-#: lib/cinder_web/components/settings_components.ex:314
+#: lib/cinder_web/components/settings_components.ex:334
 #, elixir-autogen, elixir-format
 msgid "Dub"
 msgstr "Doublage"
 
-#: lib/cinder_web/components/settings_components.ex:329
+#: lib/cinder_web/components/settings_components.ex:349
 #, elixir-autogen, elixir-format
 msgid "Embedded subtitles"
 msgstr "Sous-titres intégrés"
 
-#: lib/cinder_web/components/settings_components.ex:467
+#: lib/cinder_web/components/settings_components.ex:491
 #, elixir-autogen, elixir-format
 msgid "Enter a non-negative whole number of hours."
 msgstr "Saisissez un nombre entier d'heures supérieur ou égal à zéro."
 
-#: lib/cinder_web/components/settings_components.ex:333
+#: lib/cinder_web/components/settings_components.ex:353
 #, elixir-autogen, elixir-format
 msgid "Prefer embedded"
 msgstr "Préférer les sous-titres intégrés"
 
-#: lib/cinder_web/components/settings_components.ex:341
+#: lib/cinder_web/components/settings_components.ex:361
 #, elixir-autogen, elixir-format
 msgid "Preferred groups"
 msgstr "Groupes préférés"
 
-#: lib/cinder_web/components/settings_components.ex:356
+#: lib/cinder_web/components/settings_components.ex:376
 #, elixir-autogen, elixir-format
 msgid "Preferred-group fallback delay (hours)"
 msgstr "Délai de repli des groupes préférés (heures)"
 
-#: lib/cinder_web/components/settings_components.ex:334
+#: lib/cinder_web/components/settings_components.ex:354
 #, elixir-autogen, elixir-format
 msgid "Require embedded"
 msgstr "Exiger des sous-titres intégrés"
 
-#: lib/cinder_web/components/settings_components.ex:311
+#: lib/cinder_web/components/settings_components.ex:331
 #, elixir-autogen, elixir-format
 msgid "Use server default (Original)"
 msgstr "Utiliser la valeur par défaut du serveur (Original)"
 
-#: lib/cinder_web/components/settings_components.ex:330
+#: lib/cinder_web/components/settings_components.ex:350
 #, elixir-autogen, elixir-format
 msgid "Use server default (Prefer embedded)"
 msgstr "Utiliser la valeur par défaut du serveur (Préférer les sous-titres intégrés)"
 
-#: lib/cinder_web/components/settings_components.ex:320
+#: lib/cinder_web/components/settings_components.ex:340
 #, elixir-autogen, elixir-format
 msgid "Dual audio requires known original-language metadata and a dub target"
 msgstr "Le mode audio double nécessite la langue originale et une langue cible de doublage"
@@ -2906,3 +2906,18 @@ msgstr "fichier inconnu"
 #, elixir-autogen, elixir-format
 msgid "Extra titles tried when searching indexers, alongside the main title."
 msgstr "Titres supplémentaires essayés lors de la recherche sur les indexeurs, en plus du titre principal."
+
+#: lib/cinder_web/components/settings_components.ex:187
+#, elixir-autogen, elixir-format
+msgid "Command name or path used to verify a download's audio/subtitle languages after import. Leave blank to use \"ffprobe\" from PATH."
+msgstr "Nom de commande ou chemin utilisé pour vérifier les langues audio/sous-titres d'un téléchargement après l'import. Laisser vide pour utiliser « ffprobe » du PATH."
+
+#: lib/cinder_web/components/settings_components.ex:395
+#, elixir-autogen, elixir-format
+msgid "Media info (ffprobe)"
+msgstr "Infos média (ffprobe)"
+
+#: lib/cinder_web/components/settings_components.ex:175
+#, elixir-autogen, elixir-format
+msgid "ffprobe binary"
+msgstr "Binaire ffprobe"

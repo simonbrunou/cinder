@@ -19,6 +19,7 @@ defmodule Cinder.Catalog do
     Identity,
     MediaProfile,
     Movie,
+    ReleaseVerification,
     Season,
     Series
   }
@@ -545,12 +546,13 @@ defmodule Cinder.Catalog do
     end)
   end
 
-  defp publish_guarded_movie_transition({:ok, updated}) do
+  @doc false
+  def publish_guarded_movie_transition({:ok, updated}) do
     broadcast({:movie_updated, updated})
     {:ok, updated}
   end
 
-  defp publish_guarded_movie_transition({:error, reason}), do: {:error, reason}
+  def publish_guarded_movie_transition({:error, reason}), do: {:error, reason}
 
   @doc "Updates a downloading movie's progress snapshot without broadcasting equal values."
   def update_movie_download_metrics(%Movie{} = movie, attrs) do
@@ -610,7 +612,7 @@ defmodule Cinder.Catalog do
       when origin in [:download, :upgrade] do
     status = if origin == :download, do: :downloaded, else: :upgrading
 
-    transition_verification_hold(movie, %{
+    ReleaseVerification.transition_verification_hold(movie, %{
       status: status,
       import_attempts: 0,
       verification_hold_origin: nil
@@ -645,62 +647,7 @@ defmodule Cinder.Catalog do
   def retry_movie(%Movie{}), do: {:error, :not_retryable}
 
   @doc "Atomically parks an unverifiable Movie release without clearing its frozen ownership."
-  def hold_movie_verification(%Movie{status: :downloaded} = movie, :download, attempts),
-    do: do_hold_movie_verification(movie, :download, attempts)
-
-  def hold_movie_verification(%Movie{status: :upgrading} = movie, :upgrade, attempts),
-    do: do_hold_movie_verification(movie, :upgrade, attempts)
-
-  def hold_movie_verification(%Movie{}, _origin, _attempts), do: {:error, :stale_status}
-
-  defp do_hold_movie_verification(movie, origin, attempts) do
-    attrs = %{
-      status: :import_failed,
-      import_attempts: attempts,
-      verification_hold_origin: origin
-    }
-
-    changes = Movie.transition_changeset(movie, attrs).changes
-
-    result =
-      Repo.transaction(fn ->
-        case Repo.update_all(
-               from(m in Movie,
-                 where:
-                   m.id == ^movie.id and m.status == ^movie.status and
-                     m.release_title == ^movie.release_title
-               ),
-               set: Map.to_list(changes) ++ [updated_at: now()]
-             ) do
-          {1, _} -> Repo.get!(Movie, movie.id)
-          {0, _} -> Repo.rollback(:stale_status)
-        end
-      end)
-
-    publish_guarded_movie_transition(result)
-  end
-
-  defp transition_verification_hold(movie, attrs) do
-    changes = Movie.transition_changeset(movie, attrs).changes
-
-    result =
-      Repo.transaction(fn ->
-        case Repo.update_all(
-               from(m in Movie,
-                 where:
-                   m.id == ^movie.id and m.status == :import_failed and
-                     m.verification_hold_origin == ^movie.verification_hold_origin and
-                     m.release_title == ^movie.release_title
-               ),
-               set: Map.to_list(changes) ++ [updated_at: now()]
-             ) do
-          {1, _} -> Repo.get!(Movie, movie.id)
-          {0, _} -> Repo.rollback(:stale_status)
-        end
-      end)
-
-    publish_guarded_movie_transition(result)
-  end
+  defdelegate hold_movie_verification(movie, origin, attempts), to: ReleaseVerification
 
   @doc """
   Grabs a specific user-chosen `release` for `movie`. An `:available` movie enters `:upgrading`
@@ -924,7 +871,7 @@ defmodule Cinder.Catalog do
         %Movie{status: :import_failed, verification_hold_origin: :download} = movie,
         actor
       ),
-      do: clear_verification_hold(movie, actor, :cancelled, :cancel_movie)
+      do: ReleaseVerification.clear_verification_hold(movie, actor, :cancelled, :cancel_movie)
 
   def cancel_movie(%Movie{} = movie, actor) do
     if cancellable?(movie) do
@@ -953,52 +900,6 @@ defmodule Cinder.Catalog do
           Repo.rollback(changeset)
       end
     end)
-  end
-
-  defp clear_verification_hold(movie, actor, target_status, action) do
-    result =
-      Repo.transaction(fn ->
-        fresh = claim_verification_hold!(movie)
-        intent_ids = Download.fence_movie_cleanup(fresh)
-
-        attrs = %{
-          status: target_status,
-          download_id: nil,
-          download_protocol: nil,
-          release_title: nil,
-          release_policy_snapshot: nil,
-          verification_hold_origin: nil
-        }
-
-        attrs =
-          if movie.verification_hold_origin == :download,
-            do: Map.put(attrs, :file_path, nil),
-            else: attrs
-
-        updated = fresh |> Movie.transition_changeset(attrs) |> Repo.update!()
-        Audit.log_or_rollback(actor, action, updated, %{from: :import_failed})
-        {Repo.get!(Movie, updated.id), intent_ids}
-      end)
-
-    with {:ok, {updated, intent_ids}} <- result do
-      Download.cleanup_intents(intent_ids)
-      broadcast({:movie_updated, updated})
-      {:ok, updated}
-    end
-  end
-
-  defp claim_verification_hold!(movie) do
-    case Repo.update_all(
-           from(m in Movie,
-             where:
-               m.id == ^movie.id and m.status == :import_failed and
-                 m.verification_hold_origin == ^movie.verification_hold_origin
-           ),
-           set: [updated_at: now()]
-         ) do
-      {1, _} -> Repo.get!(Movie, movie.id)
-      {0, _} -> Repo.rollback(:stale_status)
-    end
   end
 
   @doc """
@@ -1046,7 +947,7 @@ defmodule Cinder.Catalog do
         %Movie{status: :import_failed, verification_hold_origin: :upgrade} = movie,
         actor
       ),
-      do: clear_verification_hold(movie, actor, :available, :abort_upgrade)
+      do: ReleaseVerification.clear_verification_hold(movie, actor, :available, :abort_upgrade)
 
   def abort_upgrade(%Movie{}, _actor), do: {:error, :not_upgrading}
 
@@ -1208,7 +1109,8 @@ defmodule Cinder.Catalog do
 
   defp apply_confirmed_profile(media, _profile), do: {:ok, media}
 
-  defp broadcast(message), do: Phoenix.PubSub.broadcast(Cinder.PubSub, @topic, message)
+  @doc false
+  def broadcast(message), do: Phoenix.PubSub.broadcast(Cinder.PubSub, @topic, message)
 
   @doc "Broadcasts `{:movie_deleted, id}` on the `\"movies\"` topic so open views drop the row."
   def broadcast_movie_deleted(id), do: broadcast({:movie_deleted, id})
@@ -1797,7 +1699,8 @@ defmodule Cinder.Catalog do
     end)
   end
 
-  defp now, do: DateTime.truncate(DateTime.utc_now(), :second)
+  @doc false
+  def now, do: DateTime.truncate(DateTime.utc_now(), :second)
 
   @doc """
   Creates a grab for `episode_ids` (a non-empty list of episodes in one series — a single
@@ -1898,18 +1801,7 @@ defmodule Cinder.Catalog do
   there is no separate retry budget for the hold itself, since re-entry only happens on this
   explicit operator action, never automatically.
   """
-  def retry_grab_mapping(%Grab{} = grab) do
-    case Repo.update_all(
-           from(g in Grab,
-             where: g.id == ^grab.id and g.mapping_status == :needs_mapping,
-             select: g
-           ),
-           set: [mapping_status: :resolved, download_attempts: 0, updated_at: now()]
-         ) do
-      {1, [retried]} -> broadcast_grab_and_ok(retried)
-      {0, _} -> {:error, :mapping_not_held}
-    end
-  end
+  defdelegate retry_grab_mapping(grab), to: ReleaseVerification
 
   defp broadcast_grab_series(grab) do
     # Post-commit side effect, best-effort: once the txn committed the grab is
@@ -2000,45 +1892,10 @@ defmodule Cinder.Catalog do
   end
 
   @doc "Atomically holds a downloaded resolved grab after its final verification attempt."
-  def hold_grab_verification(%Grab{} = grab) do
-    observed_attempts = grab.download_attempts || 0
-
-    case Repo.update_all(
-           from(g in Grab,
-             where:
-               g.id == ^grab.id and g.mapping_status == :resolved and
-                 g.download_attempts == ^observed_attempts and not is_nil(g.content_path),
-             select: g
-           ),
-           set: [
-             mapping_status: :verification_blocked,
-             download_attempts: observed_attempts + 1,
-             updated_at: now()
-           ]
-         ) do
-      {1, [held]} -> broadcast_grab_and_ok(held)
-      {0, _} -> {:error, :stale_grab}
-    end
-  end
+  defdelegate hold_grab_verification(grab), to: ReleaseVerification
 
   @doc "Atomically releases a verification hold and resets only its verification attempts."
-  def retry_grab_verification(%Grab{} = grab) do
-    case Repo.update_all(
-           from(g in Grab,
-             where: g.id == ^grab.id and g.mapping_status == :verification_blocked,
-             select: g
-           ),
-           set: [mapping_status: :resolved, download_attempts: 0, updated_at: now()]
-         ) do
-      {1, [retried]} -> broadcast_grab_and_ok(retried)
-      {0, _} -> {:error, :verification_not_held}
-    end
-  end
-
-  defp broadcast_grab_and_ok(grab) do
-    broadcast_series(series_id_for_grab(grab.id))
-    {:ok, grab}
-  end
+  defdelegate retry_grab_verification(grab), to: ReleaseVerification
 
   @doc """
   Deletes a grab; the `grab_id` FK (`on_delete: :nilify_all`) unlinks its episodes. Broadcasts
@@ -2178,7 +2035,8 @@ defmodule Cinder.Catalog do
     )
   end
 
-  defp episode_ids_for_grab(grab_id) do
+  @doc false
+  def episode_ids_for_grab(grab_id) do
     Repo.all(from e in Episode, where: e.grab_id == ^grab_id, select: e.id)
   end
 
@@ -2191,7 +2049,8 @@ defmodule Cinder.Catalog do
     intent_ids
   end
 
-  defp grab_cleanup_spec(grab, episode_ids) do
+  @doc false
+  def grab_cleanup_spec(grab, episode_ids) do
     %{
       remote_id: grab.download_id,
       protocol: grab.download_protocol,
@@ -2355,143 +2214,13 @@ defmodule Cinder.Catalog do
   Atomically rejects one confirmed movie release: exact-title blocklist, durable remote cleanup,
   and guarded requeue. Upgrade rejection keeps the live library file and imported quality.
   """
-  def reject_movie_release(%Movie{} = expected, evidence) do
-    result =
-      Repo.transaction(fn ->
-        {claimed, _} =
-          Repo.update_all(
-            from(m in Movie,
-              where:
-                m.id == ^expected.id and m.status == ^expected.status and
-                  m.status in [:downloaded, :upgrading] and
-                  m.release_title == ^expected.release_title and
-                  m.release_policy_snapshot == ^expected.release_policy_snapshot
-            ),
-            set: [updated_at: now()]
-          )
-
-        if claimed != 1, do: Repo.rollback(:stale_release)
-        fresh = Repo.get!(Movie, expected.id)
-
-        insert_blocked_release!(%{
-          movie_id: fresh.id,
-          release_title: fresh.release_title,
-          reason: policy_reason(evidence)
-        })
-
-        intent_ids = Download.fence_movie_cleanup(fresh)
-        target_status = if fresh.status == :upgrading, do: :available, else: :requested
-
-        attrs = %{
-          status: target_status,
-          download_id: nil,
-          download_protocol: nil,
-          release_title: nil,
-          release_policy_snapshot: nil
-        }
-
-        attrs = if fresh.status == :upgrading, do: attrs, else: Map.put(attrs, :file_path, nil)
-
-        updated =
-          fresh
-          |> Movie.transition_changeset(attrs)
-          |> Repo.update!()
-
-        {updated, intent_ids}
-      end)
-
-    with {:ok, {updated, intent_ids}} <- result do
-      Download.cleanup_intents(intent_ids)
-      broadcast({:movie_updated, updated})
-      {:ok, updated}
-    end
-  end
+  defdelegate reject_movie_release(expected, evidence), to: ReleaseVerification
 
   @doc """
   Atomically rejects one confirmed episodic release, guarding the resolved grab and its exact
   episode ownership before blocklisting, fencing cleanup, and deleting it.
   """
-  def reject_grab_release(%Grab{} = expected, evidence) do
-    expected_episode_ids = expected_grab_episode_ids(expected)
-
-    result =
-      Repo.transaction(fn ->
-        {claimed, _} =
-          Repo.update_all(
-            reject_grab_query(expected),
-            set: [updated_at: now()]
-          )
-
-        if claimed != 1, do: Repo.rollback(:stale_release)
-        fresh = Repo.get!(Grab, expected.id)
-        episode_ids = episode_ids_for_grab(fresh.id) |> Enum.sort()
-        series_ids = series_ids_for_episode_ids(episode_ids)
-
-        if stale_grab_ownership?(episode_ids, expected_episode_ids, series_ids),
-          do: Repo.rollback(:stale_release)
-
-        [series_id] = series_ids
-
-        insert_blocked_release!(%{
-          series_id: series_id,
-          release_title: fresh.release_title,
-          reason: policy_reason(evidence)
-        })
-
-        intent_ids =
-          Download.fence_episode_cleanup(episode_ids, [grab_cleanup_spec(fresh, episode_ids)])
-
-        deleted = Repo.delete!(fresh)
-        {deleted, intent_ids, series_id}
-      end)
-
-    with {:ok, {deleted, intent_ids, series_id}} <- result do
-      Download.cleanup_intents(intent_ids)
-      broadcast_series(series_id)
-      {:ok, deleted}
-    end
-  end
-
-  defp reject_grab_query(expected) do
-    from g in Grab,
-      where:
-        g.id == ^expected.id and g.mapping_status == ^expected.mapping_status and
-          g.mapping_status == :resolved and g.release_title == ^expected.release_title and
-          g.release_policy_snapshot == ^expected.release_policy_snapshot
-  end
-
-  defp stale_grab_ownership?(episode_ids, expected_episode_ids, series_ids),
-    do: episode_ids == [] or episode_ids != expected_episode_ids or length(series_ids) != 1
-
-  defp series_ids_for_episode_ids(episode_ids) do
-    Repo.all(
-      from e in Episode,
-        join: s in Season,
-        on: s.id == e.season_id,
-        where: e.id in ^episode_ids,
-        select: s.series_id,
-        distinct: true
-    )
-  end
-
-  defp expected_grab_episode_ids(%Grab{episodes: episodes}) when is_list(episodes),
-    do: episodes |> Enum.map(& &1.id) |> Enum.sort()
-
-  defp expected_grab_episode_ids(%Grab{
-         mapping_snapshot: %{"reserved_episode_ids" => episode_ids}
-       })
-       when is_list(episode_ids),
-       do: Enum.sort(episode_ids)
-
-  defp expected_grab_episode_ids(%Grab{}), do: :unknown
-
-  defp policy_reason(evidence), do: inspect({:release_policy_mismatch, evidence})
-
-  defp insert_blocked_release!(attrs) do
-    %BlockedRelease{}
-    |> BlockedRelease.changeset(attrs)
-    |> Repo.insert!()
-  end
+  defdelegate reject_grab_release(expected, evidence), to: ReleaseVerification
 
   @doc """
   Records `movie`'s current `release_title` as blocked for that movie, so release selection
@@ -3129,7 +2858,8 @@ defmodule Cinder.Catalog do
     :ok
   end
 
-  defp series_id_for_grab(grab_id) do
+  @doc false
+  def series_id_for_grab(grab_id) do
     Repo.one(
       from e in Episode,
         join: s in Season,
@@ -3150,9 +2880,10 @@ defmodule Cinder.Catalog do
   #
   # A nil series_id (e.g. a grab whose episodes were all unlinked) is a no-op, so callers
   # don't each need to guard it.
-  defp broadcast_series(nil), do: :ok
+  @doc false
+  def broadcast_series(nil), do: :ok
 
-  defp broadcast_series(series_id),
+  def broadcast_series(series_id),
     do: Phoenix.PubSub.broadcast(Cinder.PubSub, @series_topic, {:series_updated, series_id})
 
   @doc "Broadcasts `{:series_deleted, id}` on the `\"series\"` topic so open views drop the row."
