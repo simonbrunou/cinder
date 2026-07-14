@@ -64,8 +64,7 @@ defmodule Cinder.Download.ReleasePolicyCleanupTest do
     mutations = [
       status: [status: :requested],
       release_title: [release_title: "Changed.Release"],
-      policy_snapshot: [release_policy_snapshot: policy_snapshot("Changed.Release")],
-      version: [updated_at: DateTime.add(DateTime.utc_now(:second), 60)]
+      policy_snapshot: [release_policy_snapshot: policy_snapshot("Changed.Release")]
     ]
 
     for {case_name, updates} <- mutations do
@@ -78,53 +77,6 @@ defmodule Cinder.Download.ReleasePolicyCleanupTest do
       assert Repo.aggregate(BlockedRelease, :count, :id) == 0
       refute cleanup_pending_for?(movie.download_id)
     end
-  end
-
-  test "a same-second movie update invalidates the rejection claim" do
-    movie = policy_movie(:downloaded, "hash-same-second-movie")
-
-    Repo.update_all(from(m in Movie, where: m.id == ^movie.id),
-      set: [download_progress: 0.5, updated_at: movie.updated_at]
-    )
-
-    changed = Repo.get!(Movie, movie.id)
-    assert changed.updated_at == movie.updated_at
-    assert changed.row_version == movie.row_version + 1
-    stub_cleanup_failure()
-
-    assert {:error, :stale_release} = Catalog.reject_movie_release(movie, mismatch_evidence())
-    assert Repo.get!(Movie, movie.id).download_progress == 0.5
-    assert Repo.aggregate(BlockedRelease, :count, :id) == 0
-    refute cleanup_pending_for?(movie.download_id)
-  end
-
-  test "row versions advance for every movie and grab update without changing Standard behavior" do
-    movie = movie_fixture(%{media_profile: :standard}) |> Repo.reload!()
-    series = series_fixture(%{media_profile: :standard, monitor_strategy: :all})
-    episode = episode_fixture(season_fixture(series))
-    {:ok, grab} = Catalog.create_grab("hash-standard-token", :torrent, [episode.id])
-    grab = Repo.reload!(grab)
-
-    assert is_integer(Map.get(movie, :row_version))
-    assert is_integer(Map.get(grab, :row_version))
-
-    Repo.update_all(from(m in Movie, where: m.id == ^movie.id),
-      set: [download_progress: 0.25, updated_at: movie.updated_at]
-    )
-
-    Repo.update_all(from(g in Grab, where: g.id == ^grab.id),
-      set: [download_progress: 0.25, updated_at: grab.updated_at]
-    )
-
-    updated_movie = Repo.get!(Movie, movie.id)
-    updated_grab = Repo.get!(Grab, grab.id)
-
-    assert updated_movie.row_version == movie.row_version + 1
-    assert updated_grab.row_version == grab.row_version + 1
-    assert updated_movie.updated_at == movie.updated_at
-    assert updated_grab.updated_at == grab.updated_at
-    assert updated_movie.media_profile == :standard
-    assert Repo.reload!(episode).grab_id == grab.id
   end
 
   test "rejects exactly one resolved grab without touching counters or sibling ownership" do
@@ -193,26 +145,6 @@ defmodule Cinder.Download.ReleasePolicyCleanupTest do
     assert Repo.get!(Grab, grab.id)
     assert Repo.reload!(first).grab_id == grab.id
     assert Repo.reload!(second).grab_id == other_grab.id
-    assert Repo.aggregate(BlockedRelease, :count, :id) == 0
-    refute cleanup_pending_for?(grab.download_id)
-  end
-
-  test "same-second grab version changes roll back blocklist, cleanup fence, and delete" do
-    {_series, _season, [episode | _]} = episode_tree()
-    grab = policy_grab([episode], "hash-stale-version", "[Group] Show Version")
-
-    Repo.update_all(from(g in Grab, where: g.id == ^grab.id),
-      set: [download_progress: 0.5, updated_at: grab.updated_at]
-    )
-
-    changed = Repo.get!(Grab, grab.id)
-    assert changed.updated_at == grab.updated_at
-    assert changed.row_version == grab.row_version + 1
-    stub_cleanup_failure()
-
-    assert {:error, :stale_release} = Catalog.reject_grab_release(grab, mismatch_evidence())
-    assert Repo.get!(Grab, grab.id).download_progress == 0.5
-    assert Repo.reload!(episode).grab_id == grab.id
     assert Repo.aggregate(BlockedRelease, :count, :id) == 0
     refute cleanup_pending_for?(grab.download_id)
   end

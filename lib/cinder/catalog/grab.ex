@@ -28,7 +28,6 @@ defmodule Cinder.Catalog.Grab do
       default: :resolved
 
     field :mapping_issue, :map
-    field :row_version, :integer, default: 1
     has_many :episodes, Episode
 
     timestamps(type: :utc_datetime)

@@ -232,7 +232,6 @@ defmodule Cinder.Catalog.GrabMappingTest do
 
       assert retried.mapping_status == :resolved
       assert retried.download_attempts == 0
-      assert retried.row_version > grab.row_version
       assert_receive {:series_updated, ^series_id}
     end
 

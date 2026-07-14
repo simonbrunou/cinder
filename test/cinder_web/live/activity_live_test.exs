@@ -284,18 +284,14 @@ defmodule CinderWeb.ActivityLiveTest do
     grab = grab!() |> Repo.preload(:episodes)
     [episode] = grab.episodes
 
-    grab
-    |> Ecto.Changeset.change(%{
-      mapping_snapshot: %{"version" => 2, "reserved_episode_ids" => [episode.id]},
-      mapping_status: :needs_mapping,
-      mapping_issue: %{"version" => 1, "reason" => "unresolved_file"}
-    })
-    |> Repo.update!()
-
-    # Re-read: the schema's `row_version` trigger bumped the row on that update, and
-    # `retry_grab_mapping/1`'s compare-and-swap needs the current value, not the stale one
-    # `Repo.update!/1` returned.
-    held = Repo.get!(Grab, grab.id)
+    held =
+      grab
+      |> Ecto.Changeset.change(%{
+        mapping_snapshot: %{"version" => 2, "reserved_episode_ids" => [episode.id]},
+        mapping_status: :needs_mapping,
+        mapping_issue: %{"version" => 1, "reason" => "unresolved_file"}
+      })
+      |> Repo.update!()
 
     {:ok, view, _html} = live(conn, ~p"/activity")
     view |> element("#ask-cancel-mapping-grab-#{held.id}") |> render_click()

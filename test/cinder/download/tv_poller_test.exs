@@ -736,7 +736,6 @@ defmodule Cinder.Download.TvPollerTest do
     assert {:ok, retried} = Catalog.retry_grab_verification(held)
     assert retried.mapping_status == :resolved
     assert retried.download_attempts == 0
-    assert retried.row_version > held.row_version
     assert retried.content_path == held.content_path
     assert retried.download_id == held.download_id
     assert retried.mapping_snapshot == held.mapping_snapshot

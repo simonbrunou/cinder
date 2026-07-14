@@ -668,7 +668,7 @@ defmodule Cinder.Catalog do
                from(m in Movie,
                  where:
                    m.id == ^movie.id and m.status == ^movie.status and
-                     m.row_version == ^movie.row_version
+                     m.release_title == ^movie.release_title
                ),
                set: Map.to_list(changes) ++ [updated_at: now()]
              ) do
@@ -690,7 +690,7 @@ defmodule Cinder.Catalog do
                  where:
                    m.id == ^movie.id and m.status == :import_failed and
                      m.verification_hold_origin == ^movie.verification_hold_origin and
-                     m.row_version == ^movie.row_version
+                     m.release_title == ^movie.release_title
                ),
                set: Map.to_list(changes) ++ [updated_at: now()]
              ) do
@@ -992,8 +992,7 @@ defmodule Cinder.Catalog do
            from(m in Movie,
              where:
                m.id == ^movie.id and m.status == :import_failed and
-                 m.verification_hold_origin == ^movie.verification_hold_origin and
-                 m.row_version == ^movie.row_version
+                 m.verification_hold_origin == ^movie.verification_hold_origin
            ),
            set: [updated_at: now()]
          ) do
@@ -1883,7 +1882,6 @@ defmodule Cinder.Catalog do
   defp persist_mapping_result(grab, attrs) do
     case grab |> Grab.mapping_changeset(attrs) |> Repo.update() do
       {:ok, updated} ->
-        updated = reload_after_version_bump(updated)
         broadcast_grab_series(updated)
         {:ok, updated}
 
@@ -1903,9 +1901,7 @@ defmodule Cinder.Catalog do
   def retry_grab_mapping(%Grab{} = grab) do
     case Repo.update_all(
            from(g in Grab,
-             where:
-               g.id == ^grab.id and g.mapping_status == :needs_mapping and
-                 g.row_version == ^grab.row_version,
+             where: g.id == ^grab.id and g.mapping_status == :needs_mapping,
              select: g
            ),
            set: [mapping_status: :resolved, download_attempts: 0, updated_at: now()]
@@ -2011,8 +2007,7 @@ defmodule Cinder.Catalog do
            from(g in Grab,
              where:
                g.id == ^grab.id and g.mapping_status == :resolved and
-                 g.download_attempts == ^observed_attempts and
-                 g.row_version == ^grab.row_version and not is_nil(g.content_path),
+                 g.download_attempts == ^observed_attempts and not is_nil(g.content_path),
              select: g
            ),
            set: [
@@ -2030,9 +2025,7 @@ defmodule Cinder.Catalog do
   def retry_grab_verification(%Grab{} = grab) do
     case Repo.update_all(
            from(g in Grab,
-             where:
-               g.id == ^grab.id and g.mapping_status == :verification_blocked and
-                 g.row_version == ^grab.row_version,
+             where: g.id == ^grab.id and g.mapping_status == :verification_blocked,
              select: g
            ),
            set: [mapping_status: :resolved, download_attempts: 0, updated_at: now()]
@@ -2043,7 +2036,6 @@ defmodule Cinder.Catalog do
   end
 
   defp broadcast_grab_and_ok(grab) do
-    grab = reload_after_version_bump(grab)
     broadcast_series(series_id_for_grab(grab.id))
     {:ok, grab}
   end
@@ -2373,8 +2365,7 @@ defmodule Cinder.Catalog do
                 m.id == ^expected.id and m.status == ^expected.status and
                   m.status in [:downloaded, :upgrading] and
                   m.release_title == ^expected.release_title and
-                  m.release_policy_snapshot == ^expected.release_policy_snapshot and
-                  m.row_version == ^expected.row_version
+                  m.release_policy_snapshot == ^expected.release_policy_snapshot
             ),
             set: [updated_at: now()]
           )
@@ -2405,7 +2396,6 @@ defmodule Cinder.Catalog do
           fresh
           |> Movie.transition_changeset(attrs)
           |> Repo.update!()
-          |> reload_after_version_bump()
 
         {updated, intent_ids}
       end)
@@ -2467,8 +2457,7 @@ defmodule Cinder.Catalog do
       where:
         g.id == ^expected.id and g.mapping_status == ^expected.mapping_status and
           g.mapping_status == :resolved and g.release_title == ^expected.release_title and
-          g.release_policy_snapshot == ^expected.release_policy_snapshot and
-          g.row_version == ^expected.row_version
+          g.release_policy_snapshot == ^expected.release_policy_snapshot
   end
 
   defp stale_grab_ownership?(episode_ids, expected_episode_ids, series_ids),
@@ -2497,18 +2486,6 @@ defmodule Cinder.Catalog do
   defp expected_grab_episode_ids(%Grab{}), do: :unknown
 
   defp policy_reason(evidence), do: inspect({:release_policy_mismatch, evidence})
-
-  defp reload_after_version_bump(%Movie{} = movie) do
-    aliases_loaded? = Ecto.assoc_loaded?(movie.title_aliases)
-    movie = Repo.reload!(movie)
-    if aliases_loaded?, do: Repo.preload(movie, :title_aliases), else: movie
-  end
-
-  defp reload_after_version_bump(%Grab{} = grab) do
-    episodes_loaded? = Ecto.assoc_loaded?(grab.episodes)
-    grab = Repo.reload!(grab)
-    if episodes_loaded?, do: Repo.preload(grab, episodes: [season: :series]), else: grab
-  end
 
   defp insert_blocked_release!(attrs) do
     %BlockedRelease{}
