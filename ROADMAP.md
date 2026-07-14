@@ -991,8 +991,30 @@ mocks.
 
 **Done when:** the corpus fixtures still pass; a live single episode, a live range grab, a live
 season batch, a live story special, a live cross-season pack, and a live dual-audio release each land
-correctly in both Jellyfin and Plex; nothing was automatically mapped wrong; and the standard
+correctly in both Jellyfin and Plex (Jellyfin descoped 2026-07-14: not deployed in this household —
+Plex is the production media server); nothing was automatically mapped wrong; and the standard
 (non-anime) suite is still green.
+
+**[dogfood + corpus done 2026-07-14 — 2/6 cases landed cleanly, 4/6 safe-stopped with documented
+root causes; zero wrong auto-imports; Plex-only (no Jellyfin deployed, operator descope); corpus
+re-run pass vs A0 baseline; suite 1606 green]** (dogfood:
+`docs/audits/2026-07-14-a5-live-dogfood.md`; corpus re-run:
+`docs/audits/2026-07-14-a5-corpus-rerun.md`). Landed cleanly: a full-season Demon Slayer S1 batch
+(26 episodes, 40.04 GB, Plex `leafCount=26`) and a dual-audio Your Name import after correctly
+rejecting+blocklisting four wrong-audio "Dual Audio" releases first (6.24 GB, Plex `ratingKey`
+1637). Safe-stopped, each with a named root cause: a single-episode Bleach grab (zero standalone
+releases exist on any indexer — only oversized batches, correctly excluded by newly-configured size
+bands, F1); an episode-range Re:Zero grab (TMDB's tree diverges from scene numbering — interleaved
+shorts, no season 2 — the A6 trigger evidence, F2); a story-special substitution (the real Nyaa
+batch used a CJK wave-dash `~` range separator `AnimeParser` doesn't recognize, F3); and a
+cross-season Attack on Titan pack (both boundary episodes downloaded, then correctly held at
+`verification_blocked` on untagged audio rather than guessing, F5). Landing the four blocked cases
+is gated on ecosystem/provider gaps, not a cinder defect: no standalone releases exist for the
+Bleach coordinate, the Re:Zero TMDB tree divergence is the A6 trigger, the `~` parser gap needs a
+parser change, and the AoT files need either a re-tagged release or an operator override — none of
+these reopen A0–A4.5. Also surfaced: a global-only `anime_audio_mode` silently holds titles with no
+DB-visible marker when the configured mode can't be satisfied (F4, fixed for this instance by
+reverting to `:original`).
 
 ### A6 — Additional metadata provider (optional; only if A5 evidence demands it)
 
@@ -1001,6 +1023,10 @@ evidenced case TMDB genuinely can't resolve (e.g. a scene-numbering disagreement
 coordinate for), add a focused behaviour for one additional provider — AniDB and TheXEM remain the
 candidates from the A0 design — to close *that* gap, not a general second-provider integration.
 Skip this phase entirely if A5 turns up nothing that needs it.
+
+**Trigger evidence now exists:** A5's live Re:Zero episode-range case found TMDB id 65942's tree
+diverging from real-world scene numbering (interleaved Re:PETIT shorts, no season 2) — see F2 in
+`docs/audits/2026-07-14-a5-live-dogfood.md`.
 
 **Done when (only if triggered):** a named, evidenced-in-A5 gap has a fixture that failed before and
 passes after the new provider is wired in, and every A0–A5 fixture plus the standard suite stays
