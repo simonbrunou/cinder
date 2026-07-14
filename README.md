@@ -76,7 +76,7 @@ rest with a key derived from `SECRET_KEY_BASE`.
 | Download | qBittorrent URL / username / password, SABnzbd URL + API key, per-client enable toggles |
 | Media server | Jellyfin URL + API key **or** Plex URL + token + a per-library section (Movies, TV); media-server type |
 | Library paths | `movies_library_path` **and** `tv_library_path` — a separate import root per kind, both required |
-| Release size bands | Per-kind min/max size (decimal GB) + preferred-resolution list + preferred-source list (`remux, bluray, webrip, webdl, hdtv, dvd, cam`); for TV the band is per episode (a season pack of N is allowed N× the max) |
+| Release size bands | Per-kind min/max size (decimal GB) + preferred-resolution list + preferred-source list (`remux, bluray, webrip, webdl, hdtv, dvd, cam`); for TV the band is per episode (a season pack of N is allowed N× the max). Ships with defaults — movies 0.3–15 GB, TV 0.05–4 GB per episode; blank = default, an explicit `0` = no limit |
 | Subtitles | OpenSubtitles API key + username + password, LibreTranslate URL + API key (optional fallback translation), preferred subtitle languages (csv) — fetched automatically after each import and swept every 12 h; local/ID subtitle results stay provisional for later upgrades |
 | Notifications | Discord webhook URL — posts an embed on availability and failures; approvals stay in-app (unset ⇒ log-only) |
 | Behaviour toggles | `auto_approve_all` (trusted households: every request grabs immediately), `move_on_import` (move instead of hardlink), media-server type (Jellyfin/Plex) |
@@ -86,7 +86,7 @@ Each can be **bootstrapped** from an environment variable (`TMDB_API_TOKEN`, `PR
 `MOVIES_LIBRARY_PATH`, `TV_LIBRARY_PATH`, `MOVIES_PLEX_SECTION`, `TV_PLEX_SECTION`,
 `OPENSUBTITLES_API_KEY`, `LIBRETRANSLATE_URL`, `LIBRETRANSLATE_API_KEY`, `SUBTITLE_LANGUAGES`, …) for an unattended first boot, but the in-app
 value wins once set. The size bands and the Anime releases settings (including `ffprobe_bin`) have
-no env bootstrap — set them in `/settings`.
+no env bootstrap — the bands start at their shipped defaults; tune them in `/settings`.
 
 ## How it works
 

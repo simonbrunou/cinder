@@ -86,6 +86,69 @@ defmodule Cinder.Acquisition.AnimeParserTest do
              AnimeParser.parse("[Group] Show S01E01-1080p", context)
   end
 
+  test "parses a wave-dash absolute batch range (总第67~77-style) like its hyphen equivalent" do
+    context = %{kind: :series, titles: ["ワンピース"], year: 1999}
+    hyphen = AnimeParser.parse("[字幕组] ワンピース - 67-77 [1080p]", context)
+
+    expected = Enum.map(67..77, &Integer.to_string/1)
+    assert %{coordinates: [%{scheme: "absolute", values: ^expected}], role: :story} = hyphen
+
+    for separator <- ["~", "〜", "～"] do
+      assert AnimeParser.parse("[字幕组] ワンピース - 67#{separator}77 [1080p]", context) ==
+               hyphen,
+             "separator #{inspect(separator)}"
+    end
+  end
+
+  test "parses the verbatim F3 Chinese counter forms (总第67~77, 第67~77话) to the range" do
+    context = %{kind: :series, titles: ["ワンピース"], year: 1999}
+    expected = Enum.map(67..77, &Integer.to_string/1)
+
+    assert %{coordinates: [%{scheme: "absolute", values: ^expected}], role: :story} =
+             AnimeParser.parse("[字幕组] ワンピース 总第67~77", context)
+
+    assert %{coordinates: [%{scheme: "absolute", values: ^expected}], role: :story} =
+             AnimeParser.parse("[字幕组] ワンピース 第67~77话", context)
+  end
+
+  test "parses a plain 总第67 single-episode counter to a scalar absolute coordinate" do
+    context = %{kind: :series, titles: ["ワンピース"], year: 1999}
+
+    assert %{coordinates: [%{scheme: "absolute", values: ["67"]}], role: :story} =
+             AnimeParser.parse("[字幕组] ワンピース 总第67", context)
+  end
+
+  test "treats a descending wave-dash absolute range as unparseable, same as a hyphen" do
+    context = %{kind: :series, titles: ["ワンピース"], year: 1999}
+
+    assert %{coordinates: [], role: :unknown} =
+             AnimeParser.parse("[字幕组] ワンピース - 77~67 [1080p]", context)
+  end
+
+  test "expands a same-season wave-dash batch shorthand like its hyphen equivalent" do
+    context = %{kind: :series, titles: ["Show"], year: 2020}
+    hyphen = AnimeParser.parse("[Group] Show S01E01-E12 [1080p]", context)
+
+    for separator <- ["~", "〜", "～"] do
+      assert AnimeParser.parse("[Group] Show S01E01#{separator}E12 [1080p]", context) == hyphen
+      assert AnimeParser.parse("[Group] Show S01E01#{separator}12 [1080p]", context) == hyphen
+    end
+  end
+
+  test "treats a descending wave-dash same-season tail like a descending hyphen tail" do
+    context = %{kind: :series, titles: ["Show"], year: 2020}
+
+    assert %{coordinates: [%{scheme: "standard", values: ["S01E12"]}], role: :story} =
+             AnimeParser.parse("[Group] Show S01E12~E01 [1080p]", context)
+  end
+
+  test "does not read a wave-dash-glued resolution token as a same-season episode tail" do
+    context = %{kind: :series, titles: ["Show"], year: 2020}
+
+    assert %{coordinates: [%{scheme: "standard", values: ["S01E01"]}], role: :story} =
+             AnimeParser.parse("[Group] Show S01E01~1080p", context)
+  end
+
   defp atomize_kind(%{"kind" => kind} = context) do
     %{
       kind: if(kind == "movie", do: :movie, else: :series),

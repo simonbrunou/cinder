@@ -51,11 +51,6 @@ msgstr "%{title} est déjà demandé."
 msgid "1080p, 720p"
 msgstr "1080p, 720p"
 
-#: lib/cinder_web/components/settings_components.ex:279
-#, elixir-autogen, elixir-format
-msgid ": a season pack of N episodes is allowed up to N× the max. Leave blank for no limit."
-msgstr " : un pack de saison de N épisodes est autorisé jusqu'à N× le maximum. Laisser vide pour aucune limite."
-
 #: lib/cinder_web/live/user_live/settings.ex:127
 #, elixir-autogen, elixir-format
 msgid "A link to confirm your email change has been sent to the new address."
@@ -2447,11 +2442,6 @@ msgstr "%{kind} : Taille maximale (Go)"
 msgid "%{kind}: Min size (GB)"
 msgstr "%{kind} : Taille minimale (Go)"
 
-#: lib/cinder_web/components/settings_components.ex:500
-#, elixir-autogen, elixir-format
-msgid "Enter a positive number of GB, or leave blank for no limit."
-msgstr "Saisissez un nombre de Go positif, ou laissez vide pour ne pas limiter."
-
 #: lib/cinder_web/components/settings_components.ex:21
 #, elixir-autogen, elixir-format
 msgid "Not saved. Check: %{fields}."
@@ -2976,3 +2966,13 @@ msgstr "Ces séries sont ignorées par la recherche tant que leurs préférences
 #, elixir-autogen, elixir-format
 msgid "Use global audio mode"
 msgstr "Utiliser le mode audio global"
+
+#: lib/cinder_web/components/settings_components.ex:279
+#, elixir-autogen, elixir-format
+msgid ": a season pack of N episodes is allowed up to N× the max. Defaults: Movies 0.3–15 GB, TV 0.05–4 GB per episode. Leave blank for the default; enter 0 for no limit."
+msgstr " : un pack de saison de N épisodes est autorisé jusqu'à N× le max. Par défaut : Films 0,3–15 Go, TV 0,05–4 Go par épisode. Laissez vide pour la valeur par défaut ; saisissez 0 pour aucune limite."
+
+#: lib/cinder_web/components/settings_components.ex:500
+#, elixir-autogen, elixir-format
+msgid "Enter a number of GB (0 = no limit), or leave blank for the default."
+msgstr "Saisissez un nombre de Go (0 = aucune limite), ou laissez vide pour la valeur par défaut."

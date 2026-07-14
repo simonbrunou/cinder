@@ -277,7 +277,7 @@ defmodule CinderWeb.SettingsComponents do
           </div>
           <p class="mt-1 text-xs opacity-70">
             {gettext("Sizes are decimal GB (1 GB = 1,000,000,000 bytes). For TV they apply")} <strong>{gettext("per episode")}</strong>{gettext(
-              ": a season pack of N episodes is allowed up to N× the max. Leave blank for no limit."
+              ": a season pack of N episodes is allowed up to N× the max. Defaults: Movies 0.3–15 GB, TV 0.05–4 GB per episode. Leave blank for the default; enter 0 for no limit."
             )}
             {gettext(
               "Sources: remux, bluray, webrip, webdl, hdtv, dvd, cam. Leave blank to accept any; untagged releases are always kept. These are distinct; listing only bluray excludes remux, so add both to accept either."
@@ -497,7 +497,7 @@ defmodule CinderWeb.SettingsComponents do
     do: gettext("Choose a valid audio mode.")
 
   defp invalid_field_message(_key),
-    do: gettext("Enter a positive number of GB, or leave blank for no limit.")
+    do: gettext("Enter a number of GB (0 = no limit), or leave blank for the default.")
 
   defp invalid_field_label(key) when key == "import_roots",
     do: gettext("Download import roots")

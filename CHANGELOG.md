@@ -6,6 +6,14 @@ All notable changes to Cinder are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING (behavior):** release size bands now ship with defaults — movies 0.3–15 GB, TV
+  0.05–4 GB per wanted episode — instead of unbounded, so a fresh install can't legally match a
+  multi-hundred-GB batch archive for a single wanted episode (#108). An instance that ran with a
+  band left blank applies the defaults after upgrade: releases outside them stop matching. A blank
+  `/settings` field now means "use the default"; enter an explicit `0` to restore the old
+  unbounded behavior. Bands already set in `/settings` are unaffected.
+
 ### Added
 - **Anime-aware handling.** A per-title opt-in profile (`Auto`/`Standard`/`Anime` on movies and
   series — `Auto` stays `Standard` unless a title is explicitly confirmed, either directly or as a
