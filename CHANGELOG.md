@@ -7,6 +7,17 @@ All notable changes to Cinder are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Anime-aware handling.** A per-title opt-in profile (`Auto`/`Standard`/`Anime` on movies and
+  series — `Auto` stays `Standard` unless a title is explicitly confirmed, either directly or as a
+  requester's proposal an admin approves) makes release search alias- and absolute/scene-number-aware
+  (native/romaji/licensed titles; releases like `One Piece 1122v2` resolve without TMDB season math),
+  searches Season 0 specials only when they're explicitly classified story-special/recap and
+  monitored, holds an ambiguous downloaded batch as **Needs mapping** on `/activity` instead of
+  guessing (**Retry import** after fixing the files, or **Discard**), and enforces global Anime
+  audio/subtitle/release-group preferences (`/settings`) with a post-download `ffprobe` verification
+  that rejects and blocklists a release whose actual audio/subtitles provably violate them (`ffprobe`
+  availability now also shows up as a `/status` health check and a `/settings` Test connection, like
+  every other service).
 - **Subtitles.** Optional OpenSubtitles.com integration fetches `.srt` sidecars for imported
   movies and episodes in configured languages, at import time and via a 12h backfill sweep.
   Opt-in: set `Subtitle languages` + OpenSubtitles credentials in Settings. Best-effort — never
@@ -41,6 +52,16 @@ All notable changes to Cinder are documented here. The format follows
 ### Changed
 - `docker-compose.yml` binds `127.0.0.1:4000` by default — claim your admin before exposing the
   port (see the compose comments for LAN/proxy exposure).
+- **BREAKING (dogfood only — never released):** the anime per-title release-preference overrides
+  (audio mode, subtitle languages, embedded-subtitle mode, preferred/blocked groups, fallback delay
+  — added on movies/series earlier in this same development cycle) are dropped in favor of the
+  global `/settings` → Anime releases values only; anyone testing off `main` who had set per-title
+  values loses them. Nothing changes for a tagged release, since this tier never shipped in one.
+- The interim anime grab-mapping-correction page is removed; a `Needs mapping` hold now resolves
+  through the same `/activity` **Retry import** / **Discard** actions used everywhere else. The
+  underlying safety guarantee — an ambiguous batch never stages a file — is unchanged.
+- The one-shot `mix cinder.anime.probe` research tool used to make the A0 anime-provider decision
+  is removed; the decision itself is recorded in `docs/audits/2026-07-12-anime-provider-contracts.md`.
 
 ## [1.0.0] - 2026-07-03
 

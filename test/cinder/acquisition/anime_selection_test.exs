@@ -647,8 +647,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
         embedded_subtitle_mode: :allow,
         preferred_groups: [],
         blocked_groups: [],
-        group_fallback_delay: 0,
-        provenance: %{}
+        group_fallback_delay: 0
       },
       Map.new(overrides)
     )

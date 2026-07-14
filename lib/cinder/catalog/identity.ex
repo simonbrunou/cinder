@@ -3,6 +3,8 @@ defmodule Cinder.Catalog.Identity do
 
   import Ecto.Query
 
+  alias Cinder.Catalog
+
   alias Cinder.Catalog.{
     Episode,
     EpisodeCoordinate,
@@ -23,6 +25,7 @@ defmodule Cinder.Catalog.Identity do
     |> alias_struct()
     |> TitleAlias.changeset(manual_alias_attrs(attrs))
     |> Repo.insert()
+    |> broadcast_owner(owner)
   end
 
   def update_manual_alias(owner, id, attrs) do
@@ -31,6 +34,7 @@ defmodule Cinder.Catalog.Identity do
         alias_record
         |> TitleAlias.changeset(manual_alias_attrs(attrs))
         |> Repo.update()
+        |> broadcast_owner(owner)
 
       nil ->
         {:error, :not_manual_alias}
@@ -39,10 +43,26 @@ defmodule Cinder.Catalog.Identity do
 
   def delete_manual_alias(owner, id) do
     case Repo.one(from a in owner_aliases(owner), where: a.id == ^id and a.precedence == :manual) do
-      %TitleAlias{} = alias_record -> Repo.delete(alias_record)
+      %TitleAlias{} = alias_record -> alias_record |> Repo.delete() |> broadcast_owner(owner)
       nil -> {:error, :not_manual_alias}
     end
   end
+
+  # Post-commit, one broadcast per write (mirrors Catalog's own writers): a movie owner carries
+  # the full struct on the "movies" topic, a series owner just its id on the "series" topic — the
+  # same convention `Catalog.broadcast_series/1`'s callers already use. Skipped entirely on
+  # `{:error, _}` so a failed write never fires a stale broadcast.
+  defp broadcast_owner({:ok, _} = ok, %Movie{} = movie) do
+    Catalog.broadcast({:movie_updated, movie})
+    ok
+  end
+
+  defp broadcast_owner({:ok, _} = ok, %Series{id: id}) do
+    Catalog.broadcast_series(id)
+    ok
+  end
+
+  defp broadcast_owner({:error, _} = error, _owner), do: error
 
   def replace_provider_aliases(owner, source, namespace, precedence, aliases) do
     Repo.transaction(fn ->
@@ -78,10 +98,6 @@ defmodule Cinder.Catalog.Identity do
     )
   end
 
-  def put_coordinate(%Series{} = series, attrs, episode_ids) do
-    Repo.transaction(fn -> put_coordinate_or_rollback(series, attrs, episode_ids) end)
-  end
-
   def replace_provider_coordinates(%Series{} = series, source, namespace, coordinates) do
     Repo.transaction(fn ->
       Repo.delete_all(
@@ -102,16 +118,6 @@ defmodule Cinder.Catalog.Identity do
         put_coordinate_or_rollback(series, attrs, episode_ids)
       end)
     end)
-  end
-
-  def set_manual_classification(%Episode{} = episode, classification, label) do
-    episode
-    |> Episode.provider_classification_changeset(%{
-      classification: classification,
-      classification_source: "manual",
-      classification_label: label
-    })
-    |> Repo.update()
   end
 
   def put_provider_classifications(source, classifications) do

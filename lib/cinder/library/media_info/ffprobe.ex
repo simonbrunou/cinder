@@ -16,12 +16,38 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   @text_codecs ~w(subrip ass ssa mov_text text webvtt)
   @aliases for {iso1, codes} <- Parser.audio_codes(), code <- codes, into: %{}, do: {code, iso1}
   @stderr_env "CINDER_FFMPEG_STDERR"
+  @health_timeout 3_000
 
   @impl true
   def probe(path), do: run_probe(path, &parse/1)
 
   @impl true
   def probe_policy(path), do: run_probe(path, &parse_policy/1)
+
+  # `-version` is a cheap no-file call: proves the binary exists and runs, bounded to
+  # @health_timeout so a hung binary can't stall /status or "Test connection" (mirrors the
+  # ~3s bound every other service's health/0 uses). The missing-binary rescue runs INSIDE the
+  # task: Task.async links the caller to the task, so an uncaught raise there (e.g. `:enoent`)
+  # would crash the caller via the link's EXIT signal rather than return `{:error, _}`.
+  @impl true
+  def health do
+    task =
+      Task.async(fn ->
+        try do
+          System.cmd(bin(), ["-version"], stderr_to_stdout: true)
+        rescue
+          e -> {:error, e}
+        end
+      end)
+
+    case Task.yield(task, @health_timeout) || Task.shutdown(task, :brutal_kill) do
+      {:ok, {:error, _} = error} -> error
+      {:ok, {_out, 0}} -> :ok
+      {:ok, {out, code}} -> {:error, {:ffprobe_exit, code, String.trim(out)}}
+      {:exit, reason} -> {:error, {:ffprobe_exit, reason}}
+      nil -> {:error, :timeout}
+    end
+  end
 
   defp run_probe(path, parser) do
     case System.cmd(bin(), args(path), stderr_to_stdout: true) do

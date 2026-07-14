@@ -7,7 +7,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   import Cinder.CatalogFixtures
 
   alias Cinder.{Catalog, Repo}
-  alias Cinder.Catalog.{Grab, Series, TitleAlias}
+  alias Cinder.Catalog.{Grab, TitleAlias}
 
   setup :register_and_log_in_admin
   setup :set_mox_global
@@ -111,46 +111,6 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     :exit, _reason -> :ok
   end
 
-  defp anime_preferences_params(overrides \\ %{}) do
-    Map.merge(
-      %{
-        "audio_mode" => "dual",
-        "embedded_subtitle_mode" => "require",
-        "subtitle_languages_mode" => "override",
-        "subtitle_languages" => "fr",
-        "preferred_release_groups_mode" => "override",
-        "preferred_release_groups" => "SubsPlease, subsplease",
-        "blocked_release_groups_mode" => "override",
-        "blocked_release_groups" => "BadGroup",
-        "group_fallback_delay_mode" => "override",
-        "group_fallback_delay_hours" => "6"
-      },
-      overrides
-    )
-  end
-
-  defp put_nonempty_anime_defaults! do
-    anime = Application.fetch_env!(:cinder, :anime_preferences)
-    subtitles = Application.get_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, [])
-
-    Application.put_env(
-      :cinder,
-      :anime_preferences,
-      Keyword.merge(anime, preferred_groups: ["subsplease"], blocked_groups: ["badgroup"])
-    )
-
-    Application.put_env(
-      :cinder,
-      Cinder.Subtitles.Provider.OpenSubtitles,
-      Keyword.put(subtitles, :languages, "fr,en")
-    )
-
-    on_exit(fn ->
-      Application.put_env(:cinder, :anime_preferences, anime)
-      Application.put_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, subtitles)
-    end)
-  end
-
   test "admin changes a series profile and manages sourced aliases", %{conn: conn} do
     series = create_series(6_900)
 
@@ -206,179 +166,6 @@ defmodule CinderWeb.SeriesDetailLiveTest do
            )
   end
 
-  test "admin saves series Anime preferences and stored overrides stay dormant while Standard", %{
-    conn: conn
-  } do
-    series =
-      series_fixture(%{
-        media_profile: :anime,
-        original_language: "ja",
-        preferred_language: "french"
-      })
-
-    {:ok, view, _} = live_series(conn, series)
-    assert has_element?(view, "#anime-preferences-form")
-
-    view
-    |> form("#anime-preferences-form", anime_preferences: anime_preferences_params())
-    |> render_submit()
-
-    fresh = Repo.reload!(series)
-    assert fresh.audio_mode == :dual
-    assert fresh.embedded_subtitle_mode == :require
-    assert fresh.subtitle_languages == ["fr"]
-    assert fresh.preferred_release_groups == ["subsplease"]
-    assert fresh.blocked_release_groups == ["badgroup"]
-    assert fresh.group_fallback_delay == 21_600
-
-    view
-    |> form("#series-profile-form", %{"media_profile" => "standard"})
-    |> render_change()
-
-    refute has_element?(view, "#anime-preferences-form")
-
-    view
-    |> form("#series-profile-form", %{"media_profile" => "anime"})
-    |> render_change()
-
-    assert has_element?(
-             view,
-             "#anime_preferences_audio_mode option[value='dual'][selected]"
-           )
-
-    assert has_element?(
-             view,
-             "#anime_preferences_preferred_release_groups[value='subsplease']"
-           )
-
-    assert has_element?(view, "#anime_preferences_group_fallback_delay_hours[value='6']")
-  end
-
-  test "series Anime preference errors are inline, retain input, and persist nothing", %{
-    conn: conn
-  } do
-    series =
-      series_fixture(%{
-        media_profile: :anime,
-        original_language: "ja",
-        preferred_language: "original"
-      })
-
-    {:ok, view, _} = live_series(conn, series)
-
-    view
-    |> form(
-      "#anime-preferences-form",
-      anime_preferences: anime_preferences_params(%{"audio_mode" => "dual"})
-    )
-    |> render_submit()
-
-    assert has_element?(view, "#anime_preferences_audio_mode-error")
-    assert has_element?(view, "#anime_preferences_audio_mode option[value='dual'][selected]")
-
-    view
-    |> form(
-      "#anime-preferences-form",
-      anime_preferences:
-        anime_preferences_params(%{
-          "audio_mode" => "inherit",
-          "group_fallback_delay_hours" => "-1"
-        })
-    )
-    |> render_submit()
-
-    assert has_element?(view, "#anime_preferences_group_fallback_delay_hours-error")
-    assert has_element?(view, "#anime_preferences_group_fallback_delay_hours[value='-1']")
-
-    view
-    |> form(
-      "#anime-preferences-form",
-      anime_preferences:
-        anime_preferences_params(%{
-          "audio_mode" => "inherit",
-          "subtitle_languages" => ""
-        })
-    )
-    |> render_submit()
-
-    assert has_element?(view, "#anime_preferences_subtitle_languages-error")
-    assert has_element?(view, "#anime_preferences_subtitle_languages[value='']")
-
-    fresh = Repo.reload!(series)
-    assert fresh.audio_mode == nil
-    assert fresh.embedded_subtitle_mode == nil
-    assert fresh.subtitle_languages == nil
-    assert fresh.group_fallback_delay == nil
-  end
-
-  test "series list controls can return to inherited non-empty Anime defaults", %{conn: conn} do
-    put_nonempty_anime_defaults!()
-
-    series =
-      series_fixture(%{
-        media_profile: :anime,
-        original_language: "ja",
-        preferred_language: "french"
-      })
-      |> Series.anime_preferences_changeset(%{
-        subtitle_languages: ["en"],
-        preferred_release_groups: ["old"],
-        blocked_release_groups: ["old-blocked"]
-      })
-      |> Repo.update!()
-
-    {:ok, view, _} = live_series(conn, series)
-
-    view
-    |> form(
-      "#anime-preferences-form",
-      anime_preferences:
-        anime_preferences_params(%{
-          "audio_mode" => "inherit",
-          "embedded_subtitle_mode" => "inherit",
-          "subtitle_languages_mode" => "inherit",
-          "preferred_release_groups_mode" => "inherit",
-          "blocked_release_groups_mode" => "inherit",
-          "group_fallback_delay_mode" => "inherit"
-        })
-    )
-    |> render_submit()
-
-    fresh = Repo.reload!(series)
-    assert fresh.subtitle_languages == nil
-    assert fresh.preferred_release_groups == nil
-    assert fresh.blocked_release_groups == nil
-    html = render(view)
-    assert html =~ "fr, en"
-    assert html =~ "subsplease"
-    assert html =~ "badgroup"
-  end
-
-  test "series dual audio without original metadata is field-invalid with explanatory help", %{
-    conn: conn
-  } do
-    series =
-      series_fixture(%{
-        media_profile: :anime,
-        original_language: nil,
-        preferred_language: "french"
-      })
-
-    {:ok, view, _} = live_series(conn, series)
-
-    view
-    |> form(
-      "#anime-preferences-form",
-      anime_preferences: anime_preferences_params(%{"embedded_subtitle_mode" => "prefer"})
-    )
-    |> render_submit()
-
-    assert has_element?(view, "#anime_preferences_audio_mode-error")
-    assert has_element?(view, "#anime-dual-language-help")
-    assert render(view) =~ "Dual audio requires known original-language metadata and a dub target"
-    assert Repo.reload!(series).audio_mode == nil
-  end
-
   test "series identity events tolerate forged profiles and aliases", %{conn: conn} do
     series = create_series(6_901)
     other = series_fixture()
@@ -393,68 +180,93 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert Repo.reload(other_alias).title == "Other series"
   end
 
-  test "series episodes show sourced classification and ordered coordinates", %{conn: conn} do
-    series = series_fixture()
-    season = season_fixture(series, season_number: 1)
-    episode = episode_fixture(season, episode_number: 1)
-    earlier_member = episode_fixture(season, episode_number: 2)
-    {:ok, _} = Catalog.set_episode_classification(episode, :story_special, "OVA")
+  # A household admin needs the absolute number (it's how anime releases are named) and an
+  # actionable classification (a Special that is/isn't grabbable) — nothing else about how
+  # either was derived belongs on the row, even for a legacy row still carrying old provenance.
+  test "an Anime episode row shows the absolute number and classification, never provenance",
+       %{conn: conn} do
+    series = series_fixture(media_profile: :anime)
+    specials = season_fixture(series, season_number: 0)
 
-    {:ok, _} =
-      Catalog.put_episode_coordinate(
-        series,
-        %{
-          source: "tmdb",
-          scheme: "absolute",
-          namespace: "absolute-group",
-          canonical_value: "25",
-          precedence: :curated
-        },
-        [earlier_member.id, episode.id]
+    episode =
+      episode_fixture(specials,
+        episode_number: 1,
+        classification: :story_special,
+        classification_source: "manual",
+        classification_label: "OVA"
       )
 
-    {:ok, _} =
-      Catalog.put_episode_coordinate(
-        series,
-        %{
-          source: "manual",
-          scheme: "scene",
-          namespace: "manual",
-          canonical_value: "26",
-          precedence: :manual
-        },
-        [episode.id]
-      )
+    earlier_member = episode_fixture(specials, episode_number: 2)
+
+    episode_coordinate_fixture(
+      series,
+      %{
+        source: "tmdb",
+        scheme: "absolute",
+        namespace: "absolute-group",
+        canonical_value: "25",
+        precedence: :curated
+      },
+      [earlier_member.id, episode.id]
+    )
+
+    episode_coordinate_fixture(
+      series,
+      %{
+        source: "manual",
+        scheme: "scene",
+        namespace: "manual",
+        canonical_value: "26",
+        precedence: :manual
+      },
+      [episode.id]
+    )
 
     {:ok, view, _} = live_series(conn, series)
 
-    assert has_element?(view, "#episode-#{episode.id}", "S01E01")
+    row = view |> element("#episode-#{episode.id}") |> render()
 
-    assert has_element?(
-             view,
-             "#episode-#{episode.id} [data-coordinate='absolute:25']",
-             "Absolute 25"
-           )
+    assert row =~ "#25"
+    assert row =~ "Story special"
+    refute row =~ "26"
+    refute row =~ "OVA"
+    refute row =~ "manual"
+    refute row =~ "Source"
+  end
 
-    assert has_element?(view, "#episode-#{episode.id} [data-coordinate='scene:26']", "Scene 26")
+  test "the absolute-number annotation is withheld from a non-Anime-profiled series",
+       %{conn: conn} do
+    series = series_fixture(media_profile: :standard)
+    season = season_fixture(series, season_number: 1)
+    episode = episode_fixture(season, episode_number: 1)
 
-    assert has_element?(
-             view,
-             "#episode-#{episode.id} [data-classification='story_special']",
-             "Story special"
-           )
+    episode_coordinate_fixture(
+      series,
+      %{
+        source: "tmdb",
+        scheme: "absolute",
+        namespace: "absolute-group",
+        canonical_value: "25",
+        precedence: :curated
+      },
+      [episode.id]
+    )
 
-    assert has_element?(view, "#episode-#{episode.id}", "OVA")
+    {:ok, view, _} = live_series(conn, series)
 
-    coordinates =
-      view
-      |> element("#episode-#{episode.id}")
-      |> render()
-      |> LazyHTML.from_fragment()
-      |> LazyHTML.query("[data-coordinate]")
-      |> LazyHTML.attribute("data-coordinate")
+    refute has_element?(view, "#episode-#{episode.id}", "#25")
+  end
 
-    assert coordinates == ["scene:26", "absolute:25"]
+  # A classification annotation only ever changes behavior for a Season 0 special (regular
+  # episodes are never classified otherwise) — a regular Season 1 episode shows none of it.
+  test "a regular episode carries no classification annotation", %{conn: conn} do
+    series = series_fixture()
+    season = season_fixture(series, season_number: 1)
+    episode = episode_fixture(season, episode_number: 1)
+
+    {:ok, view, _} = live_series(conn, series)
+
+    refute has_element?(view, "#episode-#{episode.id}", "Regular")
   end
 
   test "renders the page under the shared header", %{conn: conn} do
@@ -464,7 +276,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     refute html =~ ~s(<h1 class="text-2xl font-semibold">)
   end
 
-  test "held grabs link to the shared mapping recovery route", %{conn: conn} do
+  test "held grabs show the Needs mapping badge and link to Activity", %{conn: conn} do
     series = create_series(798)
     episode = first_episode(series.id)
 
@@ -474,17 +286,19 @@ defmodule CinderWeb.SeriesDetailLiveTest do
         download_protocol: :torrent,
         mapping_snapshot: %{"version" => 2, "reserved_episode_ids" => [episode.id]},
         mapping_status: :needs_mapping,
-        automatic_mapping_decisions: %{"version" => 1, "files" => []}
+        mapping_issue: %{"version" => 1, "reason" => "unresolved_file"}
       })
 
     episode |> Ecto.Changeset.change(grab_id: grab.id) |> Repo.update!()
 
     {:ok, view, _html} = live_series(conn, series)
 
+    assert has_element?(view, "#series-mapping-grab-#{grab.id}", "Needs mapping")
+
     assert has_element?(
              view,
-             ~s|#series-mapping-grab-#{grab.id} a[href="/activity/grabs/#{grab.id}/mapping"]|,
-             "Review mapping"
+             ~s|#series-mapping-grab-#{grab.id} a[href="/activity"]|,
+             "View in Activity"
            )
   end
 

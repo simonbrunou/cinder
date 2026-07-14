@@ -2,19 +2,27 @@ defmodule Cinder.Catalog.AnimeCorpusA1Test do
   use ExUnit.Case, async: true
 
   alias Cinder.Catalog.AnimeResolver
-  alias Mix.Tasks.Cinder.Anime.Probe.Corpus
 
   @corpus "test/support/fixtures/anime/corpus-v1.json"
 
   setup_all do
     contracts =
       @corpus
-      |> Corpus.load!()
-      |> Map.fetch!(:behavior_contracts)
+      |> load_behavior_contracts!()
       |> Enum.filter(&(&1.phase == "A1"))
 
     assert length(contracts) == 4
     %{contracts: Map.new(contracts, &{&1.id, &1})}
+  end
+
+  defp load_behavior_contracts!(path) do
+    path
+    |> File.read!()
+    |> Jason.decode!()
+    |> Map.fetch!("behavior_contracts")
+    |> Enum.map(fn c ->
+      %{id: c["id"], phase: c["phase"], kind: c["kind"], input: c["input"], expect: c["expect"]}
+    end)
   end
 
   test "resolver contracts", %{contracts: contracts} do

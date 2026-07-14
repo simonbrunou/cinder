@@ -73,14 +73,16 @@ defmodule Cinder.CatalogRefreshTest do
       episode(sn, %{
         tmdb_episode_id: 90_010,
         episode_number: 1,
-        title: "NCOP"
+        title: "NCOP",
+        classification: :extra,
+        classification_source: "manual",
+        classification_label: "Local extra"
       })
 
     {:ok, manual_alias} = Catalog.save_manual_alias(s, %{title: "Local title"})
-    {:ok, _} = Catalog.set_episode_classification(ep, :extra, "Local extra")
 
-    {:ok, manual_coordinate} =
-      Catalog.put_episode_coordinate(
+    manual_coordinate =
+      episode_coordinate_fixture(
         s,
         %{
           source: "manual",

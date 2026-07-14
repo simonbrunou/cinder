@@ -121,8 +121,6 @@ defmodule Cinder.Download.Intent do
 
   def valid_mapping_snapshot?(_snapshot, _kind, _episode_ids), do: false
 
-  defp valid_snapshot_version?(%{"version" => 1}), do: true
-
   defp valid_snapshot_version?(%{
          "version" => 2,
          "parser_context" => %{"title" => title, "aliases" => aliases, "year" => year}

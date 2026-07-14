@@ -4,6 +4,7 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
   import Cinder.CatalogFixtures
 
   alias Cinder.Catalog
+  alias Cinder.Catalog.Identity
 
   describe "media profiles" do
     test "explicit profiles win and weak evidence only suggests anime" do
@@ -35,18 +36,17 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
       season = season_fixture(series)
       episode = episode_fixture(season)
 
-      assert {:ok, _} =
-               Catalog.put_episode_coordinate(
-                 series,
-                 %{
-                   source: "tmdb",
-                   scheme: "absolute",
-                   namespace: "group-1",
-                   canonical_value: "1",
-                   precedence: :inferred
-                 },
-                 [episode.id]
-               )
+      episode_coordinate_fixture(
+        series,
+        %{
+          source: "tmdb",
+          scheme: "absolute",
+          namespace: "group-1",
+          canonical_value: "1",
+          precedence: :inferred
+        },
+        [episode.id]
+      )
 
       assert Catalog.media_profile_summary(series) == %{
                selected: :auto,
@@ -82,6 +82,29 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
       assert Catalog.list_title_aliases(movie) == []
     end
 
+    test "a manual alias write broadcasts on its owner's topic so a second open tab sees it" do
+      movie = movie_fixture()
+      series = series_fixture()
+      movie_id = movie.id
+      series_id = series.id
+      Catalog.subscribe()
+      Catalog.subscribe_series()
+
+      assert {:ok, alias_record} = Catalog.save_manual_alias(movie, %{title: "Alias"})
+      assert_receive {:movie_updated, %{id: ^movie_id}}
+
+      assert {:ok, _} = Catalog.save_manual_alias(series, %{title: "Alias"})
+      assert_receive {:series_updated, ^series_id}
+
+      assert {:ok, _} =
+               Catalog.update_manual_alias(movie, alias_record.id, %{title: "Renamed"})
+
+      assert_receive {:movie_updated, %{id: ^movie_id}}
+
+      assert {:ok, _} = Catalog.delete_manual_alias(movie, alias_record.id)
+      assert_receive {:movie_updated, %{id: ^movie_id}}
+    end
+
     test "manual alias de-duplication uses the owner-specific partial index" do
       movie = movie_fixture()
       series = series_fixture()
@@ -95,63 +118,49 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
     end
   end
 
+  # Exercises put_coordinate_or_rollback/3 through its live caller (the TMDB refresh path goes
+  # Catalog.sync_absolute_coordinates → Identity.replace_provider_coordinates), the same direct
+  # Identity seam tv_poller_test uses for replace_provider_aliases.
   describe "episode identity" do
-    test "a coordinate cannot claim an episode from another series" do
+    test "a provider coordinate cannot claim an episode from another series" do
       a = series_fixture()
       b = series_fixture()
       episode = b |> season_fixture() |> episode_fixture()
 
       assert {:error, :episode_series_mismatch} =
-               Catalog.put_episode_coordinate(
-                 a,
+               Identity.replace_provider_coordinates(a, "tmdb", "group-1", [
                  %{
-                   source: "manual",
                    scheme: "absolute",
-                   namespace: "manual",
                    canonical_value: "12",
-                   precedence: :manual
-                 },
-                 [episode.id]
-               )
+                   precedence: :inferred,
+                   episode_ids: [episode.id]
+                 }
+               ])
 
       assert Catalog.list_episode_coordinates(a) == []
     end
 
-    test "one coordinate preserves membership order across two episodes" do
+    test "provider coordinates preserve caller-supplied membership order" do
       series = series_fixture()
       season = season_fixture(series)
       first = episode_fixture(season, episode_number: 1)
       second = episode_fixture(season, episode_number: 2)
 
-      assert {:ok, coordinate} =
-               Catalog.put_episode_coordinate(
-                 series,
+      assert {:ok, [coordinate]} =
+               Identity.replace_provider_coordinates(series, "tmdb", "group-1", [
                  %{
-                   source: "manual",
                    scheme: "combined",
-                   namespace: "manual",
                    canonical_value: "1-2",
-                   precedence: :manual
-                 },
-                 [second.id, first.id]
-               )
+                   precedence: :inferred,
+                   episode_ids: [second.id, first.id]
+                 }
+               ])
 
       assert Enum.map(coordinate.memberships, & &1.position) == [0, 1]
       assert Enum.map(coordinate.memberships, & &1.episode_id) == [second.id, first.id]
 
       assert [listed] = Catalog.list_episode_coordinates(series)
       assert Enum.map(listed.memberships, & &1.episode_id) == [second.id, first.id]
-    end
-
-    test "manual classification records ownership" do
-      episode = series_fixture() |> season_fixture() |> episode_fixture()
-
-      assert {:ok, classified} =
-               Catalog.set_episode_classification(episode, :story_special, "OVA")
-
-      assert classified.classification == :story_special
-      assert classified.classification_source == "manual"
-      assert classified.classification_label == "OVA"
     end
   end
 end

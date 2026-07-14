@@ -46,19 +46,39 @@ defmodule Cinder.Acquisition.AnimeParser do
 
   defp standard_coordinates(title) do
     case Regex.run(
-           ~r/\bS(\d{1,3})E(\d{1,4})(?:\s*-\s*S(\d{1,3})E(\d{1,4}))?/iu,
+           ~r/\bS(\d{1,3})E(\d{1,4})(?:\s*-\s*(?:S(\d{1,3})E(\d{1,4})|E?(\d{1,4})\b))?/iu,
            title,
            capture: :all_but_first
          ) do
-      [season, episode] ->
-        [coordinate("standard", [standard_value(season, episode)])]
+      [season, episode, "", "", tail_episode] ->
+        same_season_coordinates(season, episode, tail_episode)
 
       [season, episode, end_season, end_episode] ->
         values = [standard_value(season, episode), standard_value(end_season, end_episode)]
         [coordinate("standard", values)]
 
+      [season, episode] ->
+        [coordinate("standard", [standard_value(season, episode)])]
+
       _ ->
         nil
+    end
+  end
+
+  # Same-season shorthand tail ("-E12" or "-12"): expand to the full episode range when it's a
+  # sane ascending span, otherwise fall back to just the leading episode — a descending or
+  # oversized range is unparseable, not garbage to guess at (mirrors the standard parser's
+  # halt-and-keep-what-parsed-so-far behaviour for a bad tail token).
+  defp same_season_coordinates(season, start_episode, end_episode) do
+    start_number = String.to_integer(start_episode)
+    end_number = String.to_integer(end_episode)
+    width = end_number - start_number + 1
+
+    if end_number > start_number and width <= @max_range do
+      values = Enum.map(start_number..end_number, &standard_value(season, Integer.to_string(&1)))
+      [coordinate("standard", values)]
+    else
+      [coordinate("standard", [standard_value(season, start_episode)])]
     end
   end
 

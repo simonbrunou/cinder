@@ -58,6 +58,14 @@ defmodule Cinder.Download.PollerTest do
     movie_fixture(%{tmdb_id: tmdb_id, title: "M", status: :downloading, download_id: download_id})
   end
 
+  # Anime preferences are global-only (no per-title override) — a test needing a non-default
+  # policy overrides the global settings env for its duration and restores it on exit.
+  defp set_anime_defaults!(overrides) do
+    saved = Application.fetch_env!(:cinder, :anime_preferences)
+    Application.put_env(:cinder, :anime_preferences, Keyword.merge(saved, overrides))
+    on_exit(fn -> Application.put_env(:cinder, :anime_preferences, saved) end)
+  end
+
   defp upgrading_movie(tmdb_id, download_id) do
     movie_fixture(%{
       tmdb_id: tmdb_id,
@@ -1545,6 +1553,12 @@ defmodule Cinder.Download.PollerTest do
   end
 
   test "an Anime movie waits for its preferred group without client I/O or an attempt bump" do
+    set_anime_defaults!(
+      audio_mode: :any,
+      preferred_groups: ["subsplease"],
+      group_fallback_delay: 3_600
+    )
+
     movie =
       movie_fixture(%{
         title: "Inception",
@@ -1552,12 +1566,6 @@ defmodule Cinder.Download.PollerTest do
         imdb_id: "tt-anime-wait",
         media_profile: :anime
       })
-      |> Movie.anime_preferences_changeset(%{
-        audio_mode: :any,
-        preferred_release_groups: ["subsplease"],
-        group_fallback_delay: 3_600
-      })
-      |> Repo.update!()
 
     release = %{
       title: "[Other] Inception 2010 [1080p]",
@@ -1849,6 +1857,8 @@ defmodule Cinder.Download.PollerTest do
   end
 
   test "invalid Anime movie preferences hold without searching or consuming attempts" do
+    set_anime_defaults!(embedded_subtitle_mode: :require)
+
     movie =
       movie_fixture(%{
         title: "Invalid Anime",
@@ -1856,11 +1866,6 @@ defmodule Cinder.Download.PollerTest do
         imdb_id: "tt-anime-invalid",
         media_profile: :anime
       })
-      |> Movie.anime_preferences_changeset(%{
-        embedded_subtitle_mode: :require,
-        subtitle_languages: []
-      })
-      |> Repo.update!()
 
     searches = start_supervised!({Agent, fn -> 0 end})
 

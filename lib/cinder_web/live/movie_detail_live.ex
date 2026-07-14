@@ -10,10 +10,10 @@ defmodule CinderWeb.MovieDetailLive do
   """
   use CinderWeb, :live_view
 
-  import CinderWeb.LiveHelpers, only: [format_date_year: 1, humanize_bytes: 1, rating: 1]
+  import CinderWeb.LiveHelpers,
+    only: [format_date_year: 1, humanize_bytes: 1, rating: 1, movie_badge_status: 1]
 
-  alias Cinder.Acquisition.AnimePreferences
-  alias Cinder.{Catalog, Settings}
+  alias Cinder.Catalog
   alias Cinder.Catalog.Movie
 
   @parked [:no_match, :search_failed, :import_failed]
@@ -198,26 +198,6 @@ defmodule CinderWeb.MovieDetailLive do
 
       {:error, _} ->
         {:noreply, put_flash(socket, :error, gettext("Couldn't update the profile."))}
-    end
-  end
-
-  def handle_event(
-        "save_anime_preferences",
-        %{"anime_preferences" => params},
-        socket
-      )
-      when is_map(params) do
-    case Catalog.set_anime_preferences(socket.assigns.movie, params) do
-      {:ok, _updated} ->
-        {:noreply, assign_fresh(socket, socket.assigns.movie.id)}
-
-      {:error, %Ecto.Changeset{} = changeset} ->
-        {:noreply,
-         assign(
-           socket,
-           :anime_preferences_form,
-           anime_preferences_form_state(socket.assigns.movie, params, changeset)
-         )}
     end
   end
 
@@ -411,7 +391,7 @@ defmodule CinderWeb.MovieDetailLive do
             <:actions>
               <.status_badge
                 kind={:movie}
-                status={@movie.status}
+                status={movie_badge_status(@movie)}
                 progress={@movie.download_progress}
                 speed={@movie.download_speed}
                 eta={@movie.download_eta}
@@ -461,12 +441,6 @@ defmodule CinderWeb.MovieDetailLive do
           <.profile_summary id="movie-profile-summary" summary={@profile_summary} />
         </div>
       </div>
-
-      <.anime_preferences_form
-        :if={@profile_summary.effective == :anime or @profile_summary.selected == :anime}
-        form={@anime_preferences_form}
-        effective={@anime_policy}
-      />
 
       <section class="mt-6 max-w-3xl" aria-labelledby="movie-aliases-heading">
         <h2 id="movie-aliases-heading" class="mb-2 text-lg font-semibold">
@@ -583,7 +557,9 @@ defmodule CinderWeb.MovieDetailLive do
           phx-click="retry"
           phx-disable-with={gettext("Retrying…")}
         >
-          {gettext("Retry")}
+          {if movie_badge_status(@movie) == :verification_hold,
+            do: gettext("Retry verification"),
+            else: gettext("Retry")}
         </.button>
         <.button
           :if={
@@ -693,8 +669,6 @@ defmodule CinderWeb.MovieDetailLive do
 
     socket
     |> assign(
-      anime_policy: anime_policy(movie),
-      anime_preferences_form: anime_preferences_form_state(movie),
       profile_form: profile_form(movie),
       profile_summary: Catalog.media_profile_summary(movie),
       aliases_empty?: aliases == []
@@ -704,31 +678,6 @@ defmodule CinderWeb.MovieDetailLive do
 
   defp profile_form(movie),
     do: to_form(%{"media_profile" => Atom.to_string(movie.media_profile)})
-
-  defp anime_preferences_form_state(movie, params \\ %{}, changeset \\ nil) do
-    errors =
-      case changeset do
-        %Ecto.Changeset{} ->
-          Enum.map(changeset.errors, fn
-            {:group_fallback_delay, error} -> {:group_fallback_delay_hours, error}
-            error -> error
-          end)
-
-        nil ->
-          []
-      end
-
-    movie
-    |> AnimePreferences.form_state(params)
-    |> to_form(as: :anime_preferences, errors: errors, action: :validate)
-  end
-
-  defp anime_policy(movie) do
-    case AnimePreferences.resolve(movie, Settings.anime_defaults()) do
-      {:ok, policy} -> policy
-      {:error, _reason} -> nil
-    end
-  end
 
   defp alias_form(params \\ %{})
 

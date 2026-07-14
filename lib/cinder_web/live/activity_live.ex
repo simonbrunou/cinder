@@ -6,9 +6,11 @@ defmodule CinderWeb.ActivityLive do
   `/grabs` pages. Terminal-done movies (`:available`/`:cancelled`) drop off the pipeline —
   they live in `/library`; only in-flight or parked-needing-retry movies stay here.
   Delete routes through `Catalog.cancel_grab/1` (which also removes the tracked client
-  download, so the freed episodes' re-grab doesn't collide with it). Mapping holds use the
-  state-guarded `Catalog.cancel_mapping_grab/1`; verification holds reuse the regular durable
-  cancel path and add only a guarded retry. Live via the `movies` + `series` topics.
+  download, so the freed episodes' re-grab doesn't collide with it). A mapping hold shows its
+  reason inline and offers Retry import (`Catalog.retry_grab_mapping/1`, resolves next poller
+  tick) or Discard (the state-guarded `Catalog.cancel_mapping_grab/1`); verification holds reuse
+  the regular durable cancel path and add only a guarded retry. Live via the `movies` + `series`
+  topics.
   """
   use CinderWeb, :live_view
 
@@ -123,6 +125,22 @@ defmodule CinderWeb.ActivityLive do
      |> put_flash(level, msg)}
   end
 
+  def handle_event("retry_mapping", %{"id" => id}, socket) when is_binary(id) do
+    {level, msg} =
+      with {id, ""} <- Integer.parse(id),
+           %{} = grab <- Catalog.get_grab(id),
+           {:ok, _retried} <- Catalog.retry_grab_mapping(grab) do
+        {:info, gettext("Import will retry shortly.")}
+      else
+        _ -> {:error, gettext("The import could not be retried.")}
+      end
+
+    {:noreply,
+     socket
+     |> assign(grabs: Catalog.list_grabs())
+     |> put_flash(level, msg)}
+  end
+
   # Client-controlled payloads — ignore anything unmatched rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
@@ -131,8 +149,34 @@ defmodule CinderWeb.ActivityLive do
   defp series_title(%{episodes: [ep | _]}), do: ep.season.series.title
   defp series_title(_), do: gettext("Unknown series")
   defp grab_state(%{mapping_status: :needs_mapping}), do: :needs_mapping
+  defp grab_state(%{mapping_status: :verification_blocked}), do: :verification_blocked
   defp grab_state(%{content_path: nil}), do: :downloading
   defp grab_state(_), do: :downloaded
+
+  # Plain-English hold reason: which safety check failed, plus the offending file names or
+  # episode ids — reused straight off the persisted `mapping_issue` (no separate display model).
+  defp mapping_reason(%{"reason" => "unresolved_file", "relative_paths" => paths}),
+    do: gettext("Couldn't match to an episode: %{paths}", paths: path_list(paths))
+
+  defp mapping_reason(%{"reason" => "outside_authoritative_set", "relative_paths" => paths}),
+    do: gettext("Matched an episode outside this release: %{paths}", paths: path_list(paths))
+
+  defp mapping_reason(%{"reason" => "duplicate_episode_assignment", "relative_paths" => paths}),
+    do: gettext("More than one file matched the same episode: %{paths}", paths: path_list(paths))
+
+  defp mapping_reason(%{
+         "reason" => "missing_episode_assignment",
+         "candidate_episode_ids" => episode_ids
+       }),
+       do: gettext("No file found for episode id(s): %{ids}", ids: id_list(episode_ids))
+
+  defp mapping_reason(_issue), do: gettext("This release needs manual attention.")
+
+  defp path_list(paths) when is_list(paths) and paths != [], do: Enum.join(paths, ", ")
+  defp path_list(_paths), do: gettext("unknown file")
+
+  defp id_list(ids) when is_list(ids) and ids != [], do: Enum.join(ids, ", ")
+  defp id_list(_ids), do: gettext("unknown")
 
   @impl true
   def render(assigns) do
@@ -165,7 +209,7 @@ defmodule CinderWeb.ActivityLive do
             </.link>
             <.status_badge
               kind={:movie}
-              status={m.status}
+              status={movie_badge_status(m)}
               progress={m.download_progress}
               speed={m.download_speed}
               eta={m.download_eta}
@@ -195,19 +239,16 @@ defmodule CinderWeb.ActivityLive do
               />
               <span class="text-xs text-base-content/70">{g.download_protocol}</span>
               <span class="min-w-0 truncate text-xs text-base-content/70">{g.download_id}</span>
-              <span
-                :if={g.mapping_status == :verification_blocked}
-                class="badge badge-warning"
-              >
-                {gettext("Needs verification")}
-              </span>
-              <.link
+              <.button
                 :if={g.mapping_status == :needs_mapping}
-                navigate={~p"/activity/grabs/#{g.id}/mapping"}
-                class="link link-hover text-sm"
+                id={"retry-mapping-grab-#{g.id}"}
+                type="button"
+                size="xs"
+                phx-click="retry_mapping"
+                phx-value-id={g.id}
               >
-                {gettext("Review mapping")}
-              </.link>
+                {gettext("Retry import")}
+              </.button>
               <.button
                 :if={g.mapping_status == :needs_mapping}
                 id={"ask-cancel-mapping-grab-#{g.id}"}
@@ -218,7 +259,7 @@ defmodule CinderWeb.ActivityLive do
                 phx-click="ask_cancel_mapping"
                 phx-value-id={g.id}
               >
-                {gettext("Cancel download")}
+                {gettext("Discard")}
               </.button>
               <.button
                 :if={g.mapping_status == :verification_blocked}
@@ -249,17 +290,24 @@ defmodule CinderWeb.ActivityLive do
                   else: gettext("Delete")}
               </.button>
             </div>
+            <p
+              :if={g.mapping_status == :needs_mapping}
+              id={"grab-#{g.id}-mapping-reason"}
+              class="mt-2 text-sm text-base-content/70"
+            >
+              {mapping_reason(g.mapping_issue)}
+            </p>
             <.confirm_action
               :if={@confirming == "mapping:#{g.id}"}
               id={"confirm-cancel-mapping-grab-#{g.id}"}
               on_confirm="confirm_cancel_mapping"
               on_cancel="dismiss_confirm"
               value={g.id}
-              confirm_label={gettext("Cancel download")}
+              confirm_label={gettext("Discard")}
               variant="warning"
             >
               <:caveat>
-                {gettext("Cancel this download? Its episodes will return to the wanted queue.")}
+                {gettext("Discard this download? Its episodes will return to the wanted queue.")}
               </:caveat>
             </.confirm_action>
             <.confirm_action

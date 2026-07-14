@@ -44,4 +44,7 @@ defmodule Cinder.Library.MediaInfo do
 
   @callback extract_subtitle(path :: String.t(), index :: non_neg_integer()) ::
               {:ok, binary()} | {:error, term()}
+
+  @doc "Reachability check for `/status` and the settings \"Test connection\" button."
+  @callback health() :: :ok | {:error, term()}
 end

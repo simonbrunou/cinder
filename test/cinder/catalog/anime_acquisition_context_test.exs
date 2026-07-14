@@ -39,18 +39,17 @@ defmodule Cinder.Catalog.AnimeAcquisitionContextTest do
     assert {:ok, _alias_record} =
              Catalog.save_manual_alias(series, %{title: "ショー", kind: :native})
 
-    assert {:ok, _coordinate} =
-             Catalog.put_episode_coordinate(
-               series,
-               %{
-                 source: "manual",
-                 scheme: "absolute",
-                 namespace: "manual",
-                 canonical_value: "25",
-                 precedence: :manual
-               },
-               [second.id, first.id]
-             )
+    episode_coordinate_fixture(
+      series,
+      %{
+        source: "manual",
+        scheme: "absolute",
+        namespace: "manual",
+        canonical_value: "25",
+        precedence: :manual
+      },
+      [second.id, first.id]
+    )
 
     assert %{
              kind: :series,

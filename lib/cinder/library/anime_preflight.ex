@@ -4,16 +4,7 @@ defmodule Cinder.Library.AnimePreflight do
   alias Cinder.Acquisition.AnimeParser
   alias Cinder.Catalog.AnimeResolver
 
-  @empty_parsed %{coordinates: [], role: :unknown, group: nil}
-
-  def run(%{"version" => 1}, inventory, overrides, episodes) do
-    inventory
-    |> build_state(overrides, nil)
-    |> validate(authoritative_ids(episodes), fallback_reason: "legacy_snapshot")
-    |> result()
-  end
-
-  def run(%{"version" => 2} = snapshot, inventory, overrides, episodes) do
+  def run(%{"version" => 2} = snapshot, inventory, episodes) do
     context = snapshot["parser_context"]
 
     parser_context = %{
@@ -23,73 +14,15 @@ defmodule Cinder.Library.AnimePreflight do
     }
 
     inventory
-    |> build_state(overrides, {parser_context, snapshot["mappings"]})
+    |> build_state({parser_context, snapshot["mappings"]})
     |> validate(authoritative_ids(episodes))
     |> result()
   end
 
   defp authoritative_ids(episodes), do: MapSet.new(Enum.map(episodes, & &1.id))
 
-  defp build_state(inventory, overrides, parser) do
-    overrides_by_path = Enum.group_by(overrides, & &1["relative_path"])
-    inventory_by_path = Map.new(inventory, &{&1.relative_path, &1})
-
-    stale_paths =
-      overrides_by_path
-      |> Enum.filter(fn {path, entries} ->
-        length(entries) != 1 or
-          not override_matches?(hd(entries), Map.get(inventory_by_path, path))
-      end)
-      |> Enum.map(&elem(&1, 0))
-      |> Enum.sort()
-
-    stale_ids =
-      stale_paths
-      |> Enum.flat_map(fn path ->
-        overrides_by_path
-        |> Map.fetch!(path)
-        |> Enum.flat_map(&Map.get(&1, "episode_ids", []))
-      end)
-      |> Enum.uniq()
-      |> Enum.sort()
-
-    valid_overrides =
-      overrides_by_path
-      |> Map.drop(stale_paths)
-      |> Map.new(fn {path, [override]} -> {path, override} end)
-
-    files =
-      Enum.map(inventory, fn entry ->
-        case Map.fetch(valid_overrides, entry.relative_path) do
-          {:ok, override} -> manual_decision(entry, override)
-          :error -> automatic_decision(entry, parser)
-        end
-      end)
-
-    %{files: files, stale_paths: stale_paths, stale_ids: stale_ids}
-  end
-
-  defp override_matches?(_override, nil), do: false
-
-  defp override_matches?(override, %{identity: identity}) do
-    identity == %{
-      size: override["size"],
-      major_device: override["major_device"],
-      inode: override["inode"],
-      mtime: override["mtime"]
-    }
-  end
-
-  defp manual_decision(entry, %{"action" => "assign", "episode_ids" => episode_ids}) do
-    decision(entry, @empty_parsed, episode_ids, :manual, false, %{override: "assign"})
-  end
-
-  defp manual_decision(entry, %{"action" => "ignore"}) do
-    decision(entry, @empty_parsed, [], :manual, true, %{override: "ignore"})
-  end
-
-  defp automatic_decision(entry, nil) do
-    decision(entry, @empty_parsed, [], :automatic, false, %{resolution: :legacy_snapshot})
+  defp build_state(inventory, parser) do
+    %{files: Enum.map(inventory, &automatic_decision(&1, parser))}
   end
 
   defp automatic_decision(entry, {context, mappings}) do
@@ -196,23 +129,14 @@ defmodule Cinder.Library.AnimePreflight do
     }
   end
 
-  defp validate(state, authoritative, opts \\ [])
-
-  defp validate(%{stale_paths: [_ | _]} = state, _authoritative, _opts) do
-    {:error, state, issue("stale_override", state.stale_paths, state.stale_ids)}
-  end
-
-  defp validate(state, authoritative, opts) do
+  defp validate(state, authoritative) do
     unresolved = Enum.filter(state.files, &(&1.episode_ids == [] and not &1.ignored))
 
     cond do
       unresolved != [] ->
-        fallback_reason = Keyword.get(opts, :fallback_reason)
         paths = Enum.map(unresolved, & &1.relative_path) |> Enum.sort()
-        paths = if fallback_reason, do: Enum.take(paths, 1), else: paths
-        reason = fallback_reason || "unresolved_file"
         candidates = unresolved |> Enum.flat_map(&candidate_ids/1) |> Enum.uniq() |> Enum.sort()
-        {:error, state, issue(reason, paths, candidates)}
+        {:error, state, issue("unresolved_file", paths, candidates)}
 
       outside = outside_ids(state.files, authoritative) ->
         paths = paths_assigning(state.files, outside)

@@ -31,6 +31,19 @@ defmodule CinderWeb.LiveHelpers do
   end
 
   @doc """
+  The status atom for a `<.status_badge kind={:movie}>` — `:verification_hold` when the movie
+  is parked mid post-download verification (`verification_hold_origin` set), the movie's own
+  pipeline `status` otherwise. Single source of truth for every movie-badge surface (dashboard,
+  library, my-requests, activity, the detail page) so a held movie reads "Needs verification"
+  everywhere instead of the bare "Import failed".
+  """
+  def movie_badge_status(%{verification_hold_origin: origin})
+      when origin in [:download, :upgrade],
+      do: :verification_hold
+
+  def movie_badge_status(movie), do: movie.status
+
+  @doc """
   Whether a failed `Requests.create_request/2` changeset is the benign duplicate-pending
   case (the `requests_pending_unique` index; Ecto tags it `constraint: :unique`). Any
   other changeset failure is a real error, not a reassuring "already requested" toast.

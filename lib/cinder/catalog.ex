@@ -8,7 +8,7 @@ defmodule Cinder.Catalog do
   import Ecto.Query
   require Logger
 
-  alias Cinder.Acquisition.{AnimePreferences, Release}
+  alias Cinder.Acquisition.Release
   alias Cinder.Audit
 
   alias Cinder.Catalog.{
@@ -19,17 +19,17 @@ defmodule Cinder.Catalog do
     Identity,
     MediaProfile,
     Movie,
+    ReleaseVerification,
     Season,
     Series
   }
 
   alias Cinder.Download
-  alias Cinder.Download.{Intent, IntentEpisode}
+  alias Cinder.Download.Intent
   alias Cinder.Library
   alias Cinder.Library.ImportStage
   alias Cinder.Notifier
   alias Cinder.Repo
-  alias Cinder.Settings
 
   @topic "movies"
   @download_metric_fields [:download_progress, :download_speed, :download_eta]
@@ -126,72 +126,6 @@ defmodule Cinder.Catalog do
     series |> Series.profile_changeset(%{media_profile: profile}) |> Repo.update()
   end
 
-  @doc "Sets nullable per-title Anime release preferences for a movie or series."
-  def set_anime_preferences(%Movie{} = movie, params) do
-    persist_anime_preferences(
-      movie,
-      params,
-      &Movie.anime_preferences_changeset/2,
-      fn updated -> broadcast({:movie_updated, updated}) end
-    )
-  end
-
-  def set_anime_preferences(%Series{} = series, params) do
-    persist_anime_preferences(
-      series,
-      params,
-      &Series.anime_preferences_changeset/2,
-      fn updated -> broadcast_series(updated.id) end
-    )
-  end
-
-  defp persist_anime_preferences(title, params, changeset_fun, publish) do
-    case AnimePreferences.override_attrs(params) do
-      {:ok, attrs} ->
-        result =
-          Repo.transaction(
-            fn -> persist_anime_preferences_or_rollback(title, attrs, changeset_fun) end,
-            mode: :immediate
-          )
-
-        with {:ok, updated} <- result do
-          publish.(updated)
-          {:ok, updated}
-        end
-
-      {:error, reason} ->
-        changeset = changeset_fun.(title, %{})
-
-        {:error,
-         Ecto.Changeset.add_error(changeset, preference_error_field(reason), "is invalid")}
-    end
-  end
-
-  defp persist_anime_preferences_or_rollback(title, attrs, changeset_fun) do
-    current = Repo.get!(title.__struct__, title.id)
-    changeset = changeset_fun.(current, attrs)
-
-    with {:ok, changeset} <-
-           AnimePreferences.validate_effective(changeset, Settings.anime_defaults()),
-         {:ok, updated} <- Repo.update(changeset) do
-      updated
-    else
-      {:error, reason} -> Repo.rollback(reason)
-    end
-  end
-
-  defp preference_error_field(:invalid_audio_mode), do: :audio_mode
-  defp preference_error_field(:invalid_embedded_subtitle_mode), do: :embedded_subtitle_mode
-  defp preference_error_field(:invalid_subtitle_languages_mode), do: :subtitle_languages
-
-  defp preference_error_field(:invalid_preferred_release_groups_mode),
-    do: :preferred_release_groups
-
-  defp preference_error_field(:invalid_blocked_release_groups_mode),
-    do: :blocked_release_groups
-
-  defp preference_error_field(:invalid_group_fallback_delay), do: :group_fallback_delay
-
   @doc "Returns selected/effective profile policy and bounded suggestion evidence."
   def media_profile_summary(%Series{} = series) do
     extra_evidence =
@@ -239,11 +173,6 @@ defmodule Cinder.Catalog do
 
   @doc "Deletes an operator-owned alias belonging to the supplied owner."
   defdelegate delete_manual_alias(owner, alias_id), to: Identity
-
-  @doc "Stores one ordered coordinate after validating every episode belongs to the series."
-  defdelegate put_episode_coordinate(series, attrs, episode_ids),
-    to: Identity,
-    as: :put_coordinate
 
   @doc "Lists a series' coordinates with ordered episode memberships preloaded."
   defdelegate list_episode_coordinates(series), to: Identity, as: :list_coordinates
@@ -333,11 +262,6 @@ defmodule Cinder.Catalog do
   defp mapping_sort_key(mapping) do
     identity = mapping.identity
     {identity.source, identity.scheme, identity.namespace, identity.canonical_value}
-  end
-
-  @doc "Sets an explicit operator-owned episode classification."
-  def set_episode_classification(%Episode{} = episode, classification, label \\ nil) do
-    Identity.set_manual_classification(episode, classification, label)
   end
 
   @doc """
@@ -617,12 +541,13 @@ defmodule Cinder.Catalog do
     end)
   end
 
-  defp publish_guarded_movie_transition({:ok, updated}) do
+  @doc false
+  def publish_guarded_movie_transition({:ok, updated}) do
     broadcast({:movie_updated, updated})
     {:ok, updated}
   end
 
-  defp publish_guarded_movie_transition({:error, reason}), do: {:error, reason}
+  def publish_guarded_movie_transition({:error, reason}), do: {:error, reason}
 
   @doc "Updates a downloading movie's progress snapshot without broadcasting equal values."
   def update_movie_download_metrics(%Movie{} = movie, attrs) do
@@ -682,7 +607,7 @@ defmodule Cinder.Catalog do
       when origin in [:download, :upgrade] do
     status = if origin == :download, do: :downloaded, else: :upgrading
 
-    transition_verification_hold(movie, %{
+    ReleaseVerification.transition_verification_hold(movie, %{
       status: status,
       import_attempts: 0,
       verification_hold_origin: nil
@@ -717,62 +642,7 @@ defmodule Cinder.Catalog do
   def retry_movie(%Movie{}), do: {:error, :not_retryable}
 
   @doc "Atomically parks an unverifiable Movie release without clearing its frozen ownership."
-  def hold_movie_verification(%Movie{status: :downloaded} = movie, :download, attempts),
-    do: do_hold_movie_verification(movie, :download, attempts)
-
-  def hold_movie_verification(%Movie{status: :upgrading} = movie, :upgrade, attempts),
-    do: do_hold_movie_verification(movie, :upgrade, attempts)
-
-  def hold_movie_verification(%Movie{}, _origin, _attempts), do: {:error, :stale_status}
-
-  defp do_hold_movie_verification(movie, origin, attempts) do
-    attrs = %{
-      status: :import_failed,
-      import_attempts: attempts,
-      verification_hold_origin: origin
-    }
-
-    changes = Movie.transition_changeset(movie, attrs).changes
-
-    result =
-      Repo.transaction(fn ->
-        case Repo.update_all(
-               from(m in Movie,
-                 where:
-                   m.id == ^movie.id and m.status == ^movie.status and
-                     m.row_version == ^movie.row_version
-               ),
-               set: Map.to_list(changes) ++ [updated_at: now()]
-             ) do
-          {1, _} -> Repo.get!(Movie, movie.id)
-          {0, _} -> Repo.rollback(:stale_status)
-        end
-      end)
-
-    publish_guarded_movie_transition(result)
-  end
-
-  defp transition_verification_hold(movie, attrs) do
-    changes = Movie.transition_changeset(movie, attrs).changes
-
-    result =
-      Repo.transaction(fn ->
-        case Repo.update_all(
-               from(m in Movie,
-                 where:
-                   m.id == ^movie.id and m.status == :import_failed and
-                     m.verification_hold_origin == ^movie.verification_hold_origin and
-                     m.row_version == ^movie.row_version
-               ),
-               set: Map.to_list(changes) ++ [updated_at: now()]
-             ) do
-          {1, _} -> Repo.get!(Movie, movie.id)
-          {0, _} -> Repo.rollback(:stale_status)
-        end
-      end)
-
-    publish_guarded_movie_transition(result)
-  end
+  defdelegate hold_movie_verification(movie, origin, attempts), to: ReleaseVerification
 
   @doc """
   Grabs a specific user-chosen `release` for `movie`. An `:available` movie enters `:upgrading`
@@ -996,7 +866,7 @@ defmodule Cinder.Catalog do
         %Movie{status: :import_failed, verification_hold_origin: :download} = movie,
         actor
       ),
-      do: clear_verification_hold(movie, actor, :cancelled, :cancel_movie)
+      do: ReleaseVerification.clear_verification_hold(movie, actor, :cancelled, :cancel_movie)
 
   def cancel_movie(%Movie{} = movie, actor) do
     if cancellable?(movie) do
@@ -1025,53 +895,6 @@ defmodule Cinder.Catalog do
           Repo.rollback(changeset)
       end
     end)
-  end
-
-  defp clear_verification_hold(movie, actor, target_status, action) do
-    result =
-      Repo.transaction(fn ->
-        fresh = claim_verification_hold!(movie)
-        intent_ids = Download.fence_movie_cleanup(fresh)
-
-        attrs = %{
-          status: target_status,
-          download_id: nil,
-          download_protocol: nil,
-          release_title: nil,
-          release_policy_snapshot: nil,
-          verification_hold_origin: nil
-        }
-
-        attrs =
-          if movie.verification_hold_origin == :download,
-            do: Map.put(attrs, :file_path, nil),
-            else: attrs
-
-        updated = fresh |> Movie.transition_changeset(attrs) |> Repo.update!()
-        Audit.log_or_rollback(actor, action, updated, %{from: :import_failed})
-        {Repo.get!(Movie, updated.id), intent_ids}
-      end)
-
-    with {:ok, {updated, intent_ids}} <- result do
-      Download.cleanup_intents(intent_ids)
-      broadcast({:movie_updated, updated})
-      {:ok, updated}
-    end
-  end
-
-  defp claim_verification_hold!(movie) do
-    case Repo.update_all(
-           from(m in Movie,
-             where:
-               m.id == ^movie.id and m.status == :import_failed and
-                 m.verification_hold_origin == ^movie.verification_hold_origin and
-                 m.row_version == ^movie.row_version
-           ),
-           set: [updated_at: now()]
-         ) do
-      {1, _} -> Repo.get!(Movie, movie.id)
-      {0, _} -> Repo.rollback(:stale_status)
-    end
   end
 
   @doc """
@@ -1119,7 +942,7 @@ defmodule Cinder.Catalog do
         %Movie{status: :import_failed, verification_hold_origin: :upgrade} = movie,
         actor
       ),
-      do: clear_verification_hold(movie, actor, :available, :abort_upgrade)
+      do: ReleaseVerification.clear_verification_hold(movie, actor, :available, :abort_upgrade)
 
   def abort_upgrade(%Movie{}, _actor), do: {:error, :not_upgrading}
 
@@ -1281,7 +1104,8 @@ defmodule Cinder.Catalog do
 
   defp apply_confirmed_profile(media, _profile), do: {:ok, media}
 
-  defp broadcast(message), do: Phoenix.PubSub.broadcast(Cinder.PubSub, @topic, message)
+  @doc false
+  def broadcast(message), do: Phoenix.PubSub.broadcast(Cinder.PubSub, @topic, message)
 
   @doc "Broadcasts `{:movie_deleted, id}` on the `\"movies\"` topic so open views drop the row."
   def broadcast_movie_deleted(id), do: broadcast({:movie_deleted, id})
@@ -1870,7 +1694,8 @@ defmodule Cinder.Catalog do
     end)
   end
 
-  defp now, do: DateTime.truncate(DateTime.utc_now(), :second)
+  @doc false
+  def now, do: DateTime.truncate(DateTime.utc_now(), :second)
 
   @doc """
   Creates a grab for `episode_ids` (a non-empty list of episodes in one series — a single
@@ -1943,30 +1768,18 @@ defmodule Cinder.Catalog do
     end
   end
 
-  @doc "Persists anime mapping preflight evidence and broadcasts the series update."
-  def record_mapping_result(%Grab{} = grab, {:ok, %{decisions: decisions}}) do
-    persist_mapping_result(grab, %{
-      mapping_status: :resolved,
-      automatic_mapping_decisions: decisions,
-      mapping_issue: nil
-    })
+  @doc "Persists an anime mapping preflight outcome (resolved, or held with its reason) and broadcasts."
+  def record_mapping_result(%Grab{} = grab, {:ok, _preflight}) do
+    persist_mapping_result(grab, %{mapping_status: :resolved, mapping_issue: nil})
   end
 
-  def record_mapping_result(
-        %Grab{} = grab,
-        {:needs_mapping, %{decisions: decisions, issue: issue}}
-      ) do
-    persist_mapping_result(grab, %{
-      mapping_status: :needs_mapping,
-      automatic_mapping_decisions: decisions,
-      mapping_issue: issue
-    })
+  def record_mapping_result(%Grab{} = grab, {:needs_mapping, %{issue: issue}}) do
+    persist_mapping_result(grab, %{mapping_status: :needs_mapping, mapping_issue: issue})
   end
 
   defp persist_mapping_result(grab, attrs) do
     case grab |> Grab.mapping_changeset(attrs) |> Repo.update() do
       {:ok, updated} ->
-        updated = reload_after_version_bump(updated)
         broadcast_grab_series(updated)
         {:ok, updated}
 
@@ -1975,406 +1788,15 @@ defmodule Cinder.Catalog do
     end
   end
 
-  @doc "Atomically replaces a held anime grab's episode targets with identity-bound overrides."
-  def resume_grab_mapping(%Grab{id: grab_id}, attrs) when is_map(attrs) do
-    result =
-      Repo.transaction(fn ->
-        fresh = Repo.get(Grab, grab_id) |> preload_mapping_grab()
-
-        with {:ok, series_id} <- held_mapping_series_id(fresh),
-             {:ok, target_ids} <- normalize_episode_ids(attrs["target_episode_ids"], false),
-             {:ok, monitor_ids} <- normalize_episode_ids(attrs["monitor_episode_ids"], true),
-             :ok <- validate_monitor_ids(monitor_ids, target_ids),
-             {:ok, overrides} <-
-               identity_bound_overrides(
-                 fresh.automatic_mapping_decisions,
-                 attrs["files"],
-                 target_ids
-               ),
-             :ok <- validate_mapping_targets(fresh, series_id, target_ids, monitor_ids) do
-          replace_mapping_targets(fresh, target_ids, monitor_ids, overrides)
-        else
-          {:error, reason} -> Repo.rollback(reason)
-        end
-      end)
-
-    with {:ok, resumed} <- result do
-      broadcast_grab_series(resumed)
-      {:ok, resumed}
-    end
-  end
-
-  def resume_grab_mapping(%Grab{}, _attrs), do: {:error, :invalid_mapping_input}
-
-  @doc "Promotes one coordinate already present in a held grab's persisted parser decision."
-  def promote_grab_mapping(%Grab{id: grab_id}, attrs) when is_map(attrs) do
-    result =
-      Repo.transaction(fn -> promote_grab_mapping_or_rollback(grab_id, attrs) end,
-        mode: :immediate
-      )
-
-    with {:ok, {coordinate, series_id}} <- result do
-      broadcast_series(series_id)
-      {:ok, coordinate}
-    end
-  end
-
-  def promote_grab_mapping(%Grab{}, _attrs), do: {:error, :invalid_mapping_input}
-
-  defp promote_grab_mapping_or_rollback(grab_id, attrs) do
-    fresh = Repo.get(Grab, grab_id) |> preload_mapping_grab()
-
-    with {:ok, series_id} <- held_mapping_series_id(fresh),
-         {:ok, path, scheme, value, episode_ids} <- normalize_promotion(attrs),
-         :ok <- reusable_coordinate(fresh.automatic_mapping_decisions, path, scheme, value),
-         :ok <- validate_series_episode_ids(series_id, episode_ids),
-         %Series{} = series <- Repo.get(Series, series_id) do
-      {promote_episode_coordinate(series, scheme, value, episode_ids), series_id}
-    else
-      nil -> Repo.rollback(:stale_series)
-      {:error, reason} -> Repo.rollback(reason)
-    end
-  end
-
-  defp promote_episode_coordinate(series, scheme, value, episode_ids) do
-    case put_episode_coordinate(
-           series,
-           %{
-             source: "manual",
-             scheme: scheme,
-             namespace: "mapping-recovery",
-             canonical_value: value,
-             precedence: :manual
-           },
-           episode_ids
-         ) do
-      {:ok, coordinate} -> coordinate
-      {:error, reason} -> Repo.rollback(reason)
-    end
-  end
-
-  defp preload_mapping_grab(nil), do: nil
-  defp preload_mapping_grab(grab), do: Repo.preload(grab, episodes: [season: :series])
-
-  defp held_mapping_series_id(nil), do: {:error, :stale_grab}
-
-  defp held_mapping_series_id(%Grab{
-         mapping_status: :needs_mapping,
-         mapping_snapshot: %{"reserved_episode_ids" => reserved_ids},
-         automatic_mapping_decisions: %{"files" => files},
-         episodes: [_ | _] = episodes
-       })
-       when is_list(reserved_ids) and is_list(files) do
-    case episodes |> Enum.map(& &1.season.series_id) |> Enum.uniq() do
-      [series_id] -> {:ok, series_id}
-      _ -> {:error, :episode_series_mismatch}
-    end
-  end
-
-  defp held_mapping_series_id(%Grab{}), do: {:error, :mapping_not_held}
-
-  defp normalize_episode_ids(ids, allow_empty?) when is_list(ids) do
-    with {:ok, normalized} <- normalize_positive_ids(ids),
-         :ok <- reject_duplicate_ids(normalized),
-         :ok <- reject_empty_ids(normalized, allow_empty?) do
-      {:ok, normalized}
-    end
-  end
-
-  defp normalize_episode_ids(_ids, _allow_empty?), do: {:error, :invalid_episode_ids}
-
-  defp normalize_positive_ids(ids) do
-    Enum.reduce_while(ids, {:ok, []}, fn id, {:ok, normalized} ->
-      case normalize_positive_id(id) do
-        {:ok, value} -> {:cont, {:ok, [value | normalized]}}
-        :error -> {:halt, {:error, :invalid_episode_ids}}
-      end
-    end)
-    |> case do
-      {:ok, normalized} -> {:ok, Enum.reverse(normalized)}
-      error -> error
-    end
-  end
-
-  defp normalize_positive_id(id) when is_integer(id) and id > 0, do: {:ok, id}
-
-  defp normalize_positive_id(id) when is_binary(id) do
-    case Integer.parse(id) do
-      {value, ""} when value > 0 -> {:ok, value}
-      _ -> :error
-    end
-  end
-
-  defp normalize_positive_id(_id), do: :error
-
-  defp reject_duplicate_ids(ids) do
-    if length(Enum.uniq(ids)) == length(ids), do: :ok, else: {:error, :duplicate_episode_ids}
-  end
-
-  defp reject_empty_ids([], false), do: {:error, :empty_episode_ids}
-  defp reject_empty_ids(_ids, _allow_empty?), do: :ok
-
-  defp validate_monitor_ids(monitor_ids, target_ids) do
-    if MapSet.subset?(MapSet.new(monitor_ids), MapSet.new(target_ids)),
-      do: :ok,
-      else: {:error, :monitor_outside_target_set}
-  end
-
-  defp identity_bound_overrides(%{"files" => decisions}, files, target_ids)
-       when is_list(decisions) and is_list(files) and files != [] do
-    decision_paths = Enum.map(decisions, & &1["relative_path"])
-
-    if length(Enum.uniq(decision_paths)) == length(decision_paths) do
-      decisions_by_path = Map.new(decisions, &{&1["relative_path"], &1})
-      bind_mapping_files(files, decisions_by_path, MapSet.new(target_ids))
-    else
-      {:error, :invalid_mapping_decisions}
-    end
-  end
-
-  defp identity_bound_overrides(_decisions, _files, _target_ids),
-    do: {:error, :invalid_mapping_files}
-
-  defp bind_mapping_files(files, decisions_by_path, target_ids) do
-    files
-    |> Enum.reduce_while({:ok, [], MapSet.new(), MapSet.new()}, fn file,
-                                                                   {:ok, overrides, paths,
-                                                                    assigned_ids} ->
-      with {:ok, path, action, episode_ids} <- normalize_mapping_file(file, target_ids),
-           false <- MapSet.member?(paths, path),
-           %{} = decision <- Map.get(decisions_by_path, path),
-           true <- MapSet.disjoint?(assigned_ids, MapSet.new(episode_ids)),
-           {:ok, override} <- bind_file_identity(decision, path, action, episode_ids) do
-        {:cont,
-         {:ok, [override | overrides], MapSet.put(paths, path),
-          MapSet.union(assigned_ids, MapSet.new(episode_ids))}}
-      else
-        true -> {:halt, {:error, :duplicate_mapping_path}}
-        false -> {:halt, {:error, :duplicate_episode_ids}}
-        nil -> {:halt, {:error, :unknown_mapping_path}}
-        {:error, reason} -> {:halt, {:error, reason}}
-      end
-    end)
-    |> case do
-      {:ok, overrides, _paths, _assigned_ids} ->
-        {:ok, Enum.sort_by(overrides, & &1["relative_path"])}
-
-      error ->
-        error
-    end
-  end
-
-  defp normalize_mapping_file(
-         %{"relative_path" => path, "action" => "assign", "episode_ids" => episode_ids},
-         target_ids
-       )
-       when is_binary(path) and byte_size(path) > 0 do
-    with {:ok, episode_ids} <- normalize_episode_ids(episode_ids, false),
-         true <- MapSet.subset?(MapSet.new(episode_ids), target_ids) do
-      {:ok, path, "assign", episode_ids}
-    else
-      false -> {:error, :assignment_outside_target_set}
-      {:error, _reason} = error -> error
-    end
-  end
-
-  defp normalize_mapping_file(
-         %{"relative_path" => path, "action" => "ignore"} = file,
-         _target_ids
-       )
-       when is_binary(path) and byte_size(path) > 0 do
-    if Map.get(file, "episode_ids", []) in [nil, []],
-      do: {:ok, path, "ignore", []},
-      else: {:error, :invalid_mapping_action}
-  end
-
-  defp normalize_mapping_file(_file, _target_ids), do: {:error, :invalid_mapping_action}
-
-  defp bind_file_identity(decision, path, action, episode_ids) do
-    with ^path <- decision["relative_path"],
-         {:ok, size} <- Map.fetch(decision, "size"),
-         {:ok, major_device} <- Map.fetch(decision, "major_device"),
-         {:ok, inode} <- Map.fetch(decision, "inode"),
-         {:ok, mtime} <- Map.fetch(decision, "mtime") do
-      override = %{
-        "relative_path" => path,
-        "size" => size,
-        "major_device" => major_device,
-        "inode" => inode,
-        "mtime" => mtime,
-        "action" => action
-      }
-
-      if action == "assign",
-        do: {:ok, Map.put(override, "episode_ids", episode_ids)},
-        else: {:ok, override}
-    else
-      _ -> {:error, :invalid_mapping_decision}
-    end
-  end
-
-  defp validate_mapping_targets(grab, series_id, target_ids, monitor_ids) do
-    targets = mapping_targets(target_ids)
-
-    with :ok <- validate_target_count(targets, target_ids),
-         :ok <- validate_target_series(targets, series_id),
-         :ok <- validate_target_availability(targets),
-         :ok <- validate_target_grab_ownership(targets, grab.id),
-         :ok <- validate_target_intents(targets) do
-      validate_target_monitoring(targets, monitor_ids)
-    end
-  end
-
-  defp validate_target_count(targets, target_ids) do
-    if length(targets) == length(target_ids), do: :ok, else: {:error, :episode_not_found}
-  end
-
-  defp validate_target_series(targets, series_id) do
-    if Enum.all?(targets, &(&1.series_id == series_id)),
-      do: :ok,
-      else: {:error, :episode_series_mismatch}
-  end
-
-  defp validate_target_availability(targets) do
-    if Enum.all?(targets, &is_nil(&1.file_path)), do: :ok, else: {:error, :episode_available}
-  end
-
-  defp validate_target_grab_ownership(targets, grab_id) do
-    if Enum.all?(targets, &(is_nil(&1.grab_id) or &1.grab_id == grab_id)),
-      do: :ok,
-      else: {:error, :episode_owned_by_another_grab}
-  end
-
-  defp validate_target_intents(targets) do
-    if Enum.all?(targets, &is_nil(&1.intent_episode_id)),
-      do: :ok,
-      else: {:error, :episode_reserved_by_intent}
-  end
-
-  defp validate_target_monitoring(targets, monitor_ids) do
-    if Enum.all?(targets, &(&1.monitored or &1.id in monitor_ids)),
-      do: :ok,
-      else: {:error, :episode_unmonitored}
-  end
-
-  defp mapping_targets(target_ids) do
-    Repo.all(
-      from e in Episode,
-        join: season in assoc(e, :season),
-        left_join: reservation in IntentEpisode,
-        on: reservation.episode_id == e.id,
-        where: e.id in ^target_ids,
-        select: %{
-          id: e.id,
-          file_path: e.file_path,
-          grab_id: e.grab_id,
-          monitored: e.monitored,
-          series_id: season.series_id,
-          intent_episode_id: reservation.id
-        }
-    )
-  end
-
-  defp replace_mapping_targets(fresh, target_ids, monitor_ids, overrides) do
-    Repo.update_all(
-      from(e in Episode, where: e.grab_id == ^fresh.id and e.id not in ^target_ids),
-      set: [grab_id: nil, updated_at: now()]
-    )
-
-    Repo.update_all(
-      from(e in Episode, where: e.id in ^monitor_ids),
-      set: [monitored: true, updated_at: now()]
-    )
-
-    {linked, _rows} =
-      Repo.update_all(
-        from(e in Episode,
-          where:
-            e.id in ^target_ids and is_nil(e.file_path) and
-              (is_nil(e.grab_id) or e.grab_id == ^fresh.id) and e.monitored == true
-        ),
-        set: [grab_id: fresh.id, updated_at: now()]
-      )
-
-    if linked != length(target_ids), do: Repo.rollback(:episode_ownership_changed)
-
-    override_document = %{
-      "version" => 1,
-      "files" => overrides,
-      "original_episode_ids" => fresh.mapping_snapshot["reserved_episode_ids"],
-      "target_episode_ids" => target_ids,
-      "monitor_episode_ids" => monitor_ids
-    }
-
-    fresh
-    |> Grab.mapping_changeset(%{
-      mapping_status: :resolved,
-      manual_mapping_overrides: override_document,
-      mapping_issue: nil
-    })
-    |> Repo.update()
-    |> case do
-      {:ok, updated} -> updated
-      {:error, changeset} -> Repo.rollback(changeset)
-    end
-  end
-
-  defp normalize_promotion(%{
-         "relative_path" => path,
-         "scheme" => scheme,
-         "value" => value,
-         "episode_ids" => episode_ids
-       })
-       when is_binary(path) and byte_size(path) > 0 and is_binary(scheme) and
-              byte_size(scheme) > 0 and is_binary(value) and byte_size(value) > 0 do
-    with {:ok, episode_ids} <- normalize_episode_ids(episode_ids, false) do
-      {:ok, path, scheme, value, episode_ids}
-    end
-  end
-
-  defp normalize_promotion(_attrs), do: {:error, :invalid_mapping_promotion}
-
-  defp reusable_coordinate(%{"files" => files}, path, scheme, value) when is_list(files) do
-    files
-    |> Enum.filter(&(&1["relative_path"] == path))
-    |> reusable_decision_coordinate(scheme, value)
-  end
-
-  defp reusable_coordinate(_decisions, _path, _scheme, _value),
-    do: {:error, :coordinate_not_reusable}
-
-  defp reusable_decision_coordinate(
-         [%{"parsed" => %{"coordinates" => coordinates}}],
-         scheme,
-         value
-       )
-       when is_list(coordinates) do
-    if Enum.any?(coordinates, &coordinate_value?(&1, scheme, value)),
-      do: :ok,
-      else: {:error, :coordinate_not_reusable}
-  end
-
-  defp reusable_decision_coordinate(_matching, _scheme, _value),
-    do: {:error, :coordinate_not_reusable}
-
-  defp coordinate_value?(%{"scheme" => scheme, "values" => values}, scheme, value)
-       when is_list(values),
-       do: value in values
-
-  defp coordinate_value?(_coordinate, _scheme, _value), do: false
-
-  defp validate_series_episode_ids(series_id, episode_ids) do
-    count =
-      Repo.aggregate(
-        from(e in Episode,
-          join: season in assoc(e, :season),
-          where: e.id in ^episode_ids and season.series_id == ^series_id
-        ),
-        :count
-      )
-
-    if count == length(episode_ids), do: :ok, else: {:error, :episode_series_mismatch}
-  end
+  @doc """
+  Releases a mapping hold: the operator has fixed the files on disk (e.g. renamed them), so this
+  flips the grab back to `:resolved` (resetting `download_attempts`, mirroring
+  `retry_grab_verification/1`) and lets the TV poller's next import tick run a fresh preflight
+  over the current files. A preflight that fails again simply re-holds with an updated reason —
+  there is no separate retry budget for the hold itself, since re-entry only happens on this
+  explicit operator action, never automatically.
+  """
+  defdelegate retry_grab_mapping(grab), to: ReleaseVerification
 
   defp broadcast_grab_series(grab) do
     # Post-commit side effect, best-effort: once the txn committed the grab is
@@ -2465,49 +1887,10 @@ defmodule Cinder.Catalog do
   end
 
   @doc "Atomically holds a downloaded resolved grab after its final verification attempt."
-  def hold_grab_verification(%Grab{} = grab) do
-    observed_attempts = grab.download_attempts || 0
-
-    case Repo.update_all(
-           from(g in Grab,
-             where:
-               g.id == ^grab.id and g.mapping_status == :resolved and
-                 g.download_attempts == ^observed_attempts and
-                 g.row_version == ^grab.row_version and not is_nil(g.content_path),
-             select: g
-           ),
-           set: [
-             mapping_status: :verification_blocked,
-             download_attempts: observed_attempts + 1,
-             updated_at: now()
-           ]
-         ) do
-      {1, [held]} -> broadcast_grab_and_ok(held)
-      {0, _} -> {:error, :stale_grab}
-    end
-  end
+  defdelegate hold_grab_verification(grab), to: ReleaseVerification
 
   @doc "Atomically releases a verification hold and resets only its verification attempts."
-  def retry_grab_verification(%Grab{} = grab) do
-    case Repo.update_all(
-           from(g in Grab,
-             where:
-               g.id == ^grab.id and g.mapping_status == :verification_blocked and
-                 g.row_version == ^grab.row_version,
-             select: g
-           ),
-           set: [mapping_status: :resolved, download_attempts: 0, updated_at: now()]
-         ) do
-      {1, [retried]} -> broadcast_grab_and_ok(retried)
-      {0, _} -> {:error, :verification_not_held}
-    end
-  end
-
-  defp broadcast_grab_and_ok(grab) do
-    grab = reload_after_version_bump(grab)
-    broadcast_series(series_id_for_grab(grab.id))
-    {:ok, grab}
-  end
+  defdelegate retry_grab_verification(grab), to: ReleaseVerification
 
   @doc """
   Deletes a grab; the `grab_id` FK (`on_delete: :nilify_all`) unlinks its episodes. Broadcasts
@@ -2647,7 +2030,8 @@ defmodule Cinder.Catalog do
     )
   end
 
-  defp episode_ids_for_grab(grab_id) do
+  @doc false
+  def episode_ids_for_grab(grab_id) do
     Repo.all(from e in Episode, where: e.grab_id == ^grab_id, select: e.id)
   end
 
@@ -2660,7 +2044,8 @@ defmodule Cinder.Catalog do
     intent_ids
   end
 
-  defp grab_cleanup_spec(grab, episode_ids) do
+  @doc false
+  def grab_cleanup_spec(grab, episode_ids) do
     %{
       remote_id: grab.download_id,
       protocol: grab.download_protocol,
@@ -2824,158 +2209,13 @@ defmodule Cinder.Catalog do
   Atomically rejects one confirmed movie release: exact-title blocklist, durable remote cleanup,
   and guarded requeue. Upgrade rejection keeps the live library file and imported quality.
   """
-  def reject_movie_release(%Movie{} = expected, evidence) do
-    result =
-      Repo.transaction(fn ->
-        {claimed, _} =
-          Repo.update_all(
-            from(m in Movie,
-              where:
-                m.id == ^expected.id and m.status == ^expected.status and
-                  m.status in [:downloaded, :upgrading] and
-                  m.release_title == ^expected.release_title and
-                  m.release_policy_snapshot == ^expected.release_policy_snapshot and
-                  m.row_version == ^expected.row_version
-            ),
-            set: [updated_at: now()]
-          )
-
-        if claimed != 1, do: Repo.rollback(:stale_release)
-        fresh = Repo.get!(Movie, expected.id)
-
-        insert_blocked_release!(%{
-          movie_id: fresh.id,
-          release_title: fresh.release_title,
-          reason: policy_reason(evidence)
-        })
-
-        intent_ids = Download.fence_movie_cleanup(fresh)
-        target_status = if fresh.status == :upgrading, do: :available, else: :requested
-
-        attrs = %{
-          status: target_status,
-          download_id: nil,
-          download_protocol: nil,
-          release_title: nil,
-          release_policy_snapshot: nil
-        }
-
-        attrs = if fresh.status == :upgrading, do: attrs, else: Map.put(attrs, :file_path, nil)
-
-        updated =
-          fresh
-          |> Movie.transition_changeset(attrs)
-          |> Repo.update!()
-          |> reload_after_version_bump()
-
-        {updated, intent_ids}
-      end)
-
-    with {:ok, {updated, intent_ids}} <- result do
-      Download.cleanup_intents(intent_ids)
-      broadcast({:movie_updated, updated})
-      {:ok, updated}
-    end
-  end
+  defdelegate reject_movie_release(expected, evidence), to: ReleaseVerification
 
   @doc """
   Atomically rejects one confirmed episodic release, guarding the resolved grab and its exact
   episode ownership before blocklisting, fencing cleanup, and deleting it.
   """
-  def reject_grab_release(%Grab{} = expected, evidence) do
-    expected_episode_ids = expected_grab_episode_ids(expected)
-
-    result =
-      Repo.transaction(fn ->
-        {claimed, _} =
-          Repo.update_all(
-            reject_grab_query(expected),
-            set: [updated_at: now()]
-          )
-
-        if claimed != 1, do: Repo.rollback(:stale_release)
-        fresh = Repo.get!(Grab, expected.id)
-        episode_ids = episode_ids_for_grab(fresh.id) |> Enum.sort()
-        series_ids = series_ids_for_episode_ids(episode_ids)
-
-        if stale_grab_ownership?(episode_ids, expected_episode_ids, series_ids),
-          do: Repo.rollback(:stale_release)
-
-        [series_id] = series_ids
-
-        insert_blocked_release!(%{
-          series_id: series_id,
-          release_title: fresh.release_title,
-          reason: policy_reason(evidence)
-        })
-
-        intent_ids =
-          Download.fence_episode_cleanup(episode_ids, [grab_cleanup_spec(fresh, episode_ids)])
-
-        deleted = Repo.delete!(fresh)
-        {deleted, intent_ids, series_id}
-      end)
-
-    with {:ok, {deleted, intent_ids, series_id}} <- result do
-      Download.cleanup_intents(intent_ids)
-      broadcast_series(series_id)
-      {:ok, deleted}
-    end
-  end
-
-  defp reject_grab_query(expected) do
-    from g in Grab,
-      where:
-        g.id == ^expected.id and g.mapping_status == ^expected.mapping_status and
-          g.mapping_status == :resolved and g.release_title == ^expected.release_title and
-          g.release_policy_snapshot == ^expected.release_policy_snapshot and
-          g.row_version == ^expected.row_version
-  end
-
-  defp stale_grab_ownership?(episode_ids, expected_episode_ids, series_ids),
-    do: episode_ids == [] or episode_ids != expected_episode_ids or length(series_ids) != 1
-
-  defp series_ids_for_episode_ids(episode_ids) do
-    Repo.all(
-      from e in Episode,
-        join: s in Season,
-        on: s.id == e.season_id,
-        where: e.id in ^episode_ids,
-        select: s.series_id,
-        distinct: true
-    )
-  end
-
-  defp expected_grab_episode_ids(%Grab{episodes: episodes}) when is_list(episodes),
-    do: episodes |> Enum.map(& &1.id) |> Enum.sort()
-
-  defp expected_grab_episode_ids(%Grab{
-         mapping_snapshot: %{"reserved_episode_ids" => episode_ids}
-       })
-       when is_list(episode_ids),
-       do: Enum.sort(episode_ids)
-
-  defp expected_grab_episode_ids(%Grab{}), do: :unknown
-
-  defp policy_reason(evidence), do: inspect({:release_policy_mismatch, evidence})
-
-  defp reload_after_version_bump(%Movie{} = movie) do
-    aliases_loaded? = Ecto.assoc_loaded?(movie.title_aliases)
-    movie = Repo.reload!(movie)
-    if aliases_loaded?, do: Repo.preload(movie, :title_aliases), else: movie
-  end
-
-  defp reload_after_version_bump(%Grab{} = grab) do
-    episodes_loaded? = Ecto.assoc_loaded?(grab.episodes)
-    grab = Repo.reload!(grab)
-    if episodes_loaded?, do: Repo.preload(grab, episodes: [season: :series]), else: grab
-  end
-
-  defp insert_blocked_release!(attrs) do
-    %BlockedRelease{}
-    |> BlockedRelease.changeset(attrs)
-    |> Repo.insert!()
-  end
+  defdelegate reject_grab_release(expected, evidence), to: ReleaseVerification
 
   @doc """
   Records `movie`'s current `release_title` as blocked for that movie, so release selection
@@ -3146,17 +2386,6 @@ defmodule Cinder.Catalog do
   @doc "All grabs newest-first, with `episodes: [season: :series]` preloaded for the admin /grabs view."
   def list_grabs do
     Repo.all(from g in Grab, order_by: [desc: g.id], preload: [episodes: [season: :series]])
-  end
-
-  @doc "Fetches one mapping-held grab, with its series tree preloaded."
-  def get_mapping_grab(id) do
-    Repo.one(
-      from g in Grab,
-        where:
-          g.id == ^id and g.mapping_status == :needs_mapping and
-            not is_nil(g.mapping_snapshot),
-        preload: [episodes: [season: :series]]
-    )
   end
 
   @doc "Lists held mapping grabs for one series, oldest first, with their series tree preloaded."
@@ -3613,7 +2842,8 @@ defmodule Cinder.Catalog do
     :ok
   end
 
-  defp series_id_for_grab(grab_id) do
+  @doc false
+  def series_id_for_grab(grab_id) do
     Repo.one(
       from e in Episode,
         join: s in Season,
@@ -3634,9 +2864,10 @@ defmodule Cinder.Catalog do
   #
   # A nil series_id (e.g. a grab whose episodes were all unlinked) is a no-op, so callers
   # don't each need to guard it.
-  defp broadcast_series(nil), do: :ok
+  @doc false
+  def broadcast_series(nil), do: :ok
 
-  defp broadcast_series(series_id),
+  def broadcast_series(series_id),
     do: Phoenix.PubSub.broadcast(Cinder.PubSub, @series_topic, {:series_updated, series_id})
 
   @doc "Broadcasts `{:series_deleted, id}` on the `\"series\"` topic so open views drop the row."

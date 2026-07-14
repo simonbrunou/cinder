@@ -5,7 +5,16 @@ defmodule Cinder.CatalogFixtures do
   """
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Movie, Season, Series}
+
+  alias Cinder.Catalog.{
+    Episode,
+    EpisodeCoordinate,
+    EpisodeCoordinateMembership,
+    Movie,
+    Season,
+    Series
+  }
+
   alias Cinder.Repo
 
   @movie_pipeline_keys [
@@ -102,5 +111,28 @@ defmodule Cinder.CatalogFixtures do
         Map.new(attrs)
       )
     )
+  end
+
+  @doc """
+  Inserts an `EpisodeCoordinate` plus its ordered `EpisodeCoordinateMembership` rows for
+  `episode_ids`, direct-Repo — mirrors what `Cinder.Catalog.Identity.put_coordinate_or_rollback/3`
+  writes, minus the series-ownership validation and broadcast (a test seeding a coordinate needs
+  neither). Returns the coordinate with `memberships: [:episode]` preloaded.
+  """
+  def episode_coordinate_fixture(%Series{id: series_id}, attrs, episode_ids) do
+    coordinate =
+      %EpisodeCoordinate{series_id: series_id}
+      |> EpisodeCoordinate.changeset(Map.new(attrs))
+      |> Repo.insert!()
+
+    episode_ids
+    |> Enum.with_index()
+    |> Enum.each(fn {episode_id, position} ->
+      %EpisodeCoordinateMembership{episode_coordinate_id: coordinate.id, episode_id: episode_id}
+      |> EpisodeCoordinateMembership.changeset(%{position: position})
+      |> Repo.insert!()
+    end)
+
+    Repo.preload(coordinate, memberships: [:episode])
   end
 end

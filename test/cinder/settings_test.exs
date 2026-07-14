@@ -37,6 +37,7 @@ defmodule Cinder.SettingsTest do
     :tv_preferred_sources,
     :import_roots,
     :move_on_import,
+    :ffprobe_bin,
     :anime_preferences
   ]
 
@@ -149,6 +150,17 @@ defmodule Cinder.SettingsTest do
       Settings.save_form(%{"move_on_import" => "false"})
       assert Settings.form_state().values["move_on_import"] == false
       assert Application.get_env(:cinder, :move_on_import) == false
+    end
+
+    test "ffprobe_bin: unset ⇒ the \"ffprobe\" bootstrap; a saved value overlays; cleared reverts" do
+      Settings.load_into_env()
+      assert Application.get_env(:cinder, :ffprobe_bin) == "ffprobe"
+
+      Settings.put("ffprobe_bin", "/usr/local/bin/ffprobe")
+      assert Application.get_env(:cinder, :ffprobe_bin) == "/usr/local/bin/ffprobe"
+
+      Settings.delete("ffprobe_bin")
+      assert Application.get_env(:cinder, :ffprobe_bin) == "ffprobe"
     end
 
     test "an undecryptable secret is skipped (nil), never crashes load" do

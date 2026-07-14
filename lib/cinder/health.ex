@@ -15,18 +15,29 @@ defmodule Cinder.Health do
   """
   def check_all do
     [indexer_check()] ++
-      download_checks() ++ [media_server_check()] ++ library_checks() ++ subtitles_check()
+      download_checks() ++
+      [media_server_check()] ++ library_checks() ++ media_info_check() ++ subtitles_check()
   end
 
   @doc """
   Checks a single service against its currently-applied config, returning
   `:ok | {:error, term()}`. Used by the settings "Test connection" buttons.
-  `service` is `:tmdb | :indexer | :media_server | :discord | :subtitles | {:download, protocol}`.
+  `service` is `:tmdb | :indexer | :media_server | :discord | :subtitles | :media_info |
+  {:download, protocol}`.
   """
   def check_service(:tmdb), do: run(Application.fetch_env!(:cinder, :tmdb))
   def check_service(:indexer), do: run(Application.fetch_env!(:cinder, :indexer))
   def check_service(:media_server), do: run(Application.fetch_env!(:cinder, :media_server))
   def check_service(:discord), do: run(Cinder.Notifier.Discord)
+
+  # media_info is `nil` when explicitly disabled (`config :cinder, media_info: nil`) — not a
+  # broken install, so this reads the same as an opted-out feature (mirrors :subtitles below).
+  def check_service(:media_info) do
+    case Application.get_env(:cinder, :media_info) do
+      nil -> {:error, :not_configured}
+      mod -> run(mod)
+    end
+  end
 
   def check_service(:subtitles) do
     case Application.get_env(:cinder, Application.get_env(:cinder, :subtitles_provider), [])[
@@ -83,6 +94,15 @@ defmodule Cinder.Health do
     case check_service(:subtitles) do
       {:error, :not_configured} -> []
       status -> [%{label: "Subtitles (OpenSubtitles)", status: status}]
+    end
+  end
+
+  # media_info is enabled by default (ffprobe), but an operator can turn it off entirely — omit
+  # the row rather than show red noise on an install that deliberately disabled it.
+  defp media_info_check do
+    case check_service(:media_info) do
+      {:error, :not_configured} -> []
+      status -> [%{label: "Media info (ffprobe)", status: status}]
     end
   end
 

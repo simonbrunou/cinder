@@ -43,6 +43,22 @@ defmodule CinderWeb.LibraryLiveTest do
     assert has_element?(lv, "#movie-#{movie.id} button", "Cancel")
   end
 
+  test "a movie held mid-verification shows Needs verification, not bare Import failed", %{
+    conn: conn
+  } do
+    movie = movie_fixture(%{title: "Anime Movie", status: :import_failed})
+
+    {:ok, movie} =
+      Catalog.transition(movie, %{
+        status: :import_failed,
+        verification_hold_origin: :download
+      })
+
+    {:ok, lv, _html} = live(conn, ~p"/library")
+    assert has_element?(lv, "#movie-#{movie.id} span.badge-warning", "Needs verification")
+    refute has_element?(lv, "#movie-#{movie.id}", "Import failed")
+  end
+
   test "renders movie download progress", %{conn: conn} do
     movie = movie_fixture(%{status: :downloading})
 

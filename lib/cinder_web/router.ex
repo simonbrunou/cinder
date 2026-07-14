@@ -75,7 +75,6 @@ defmodule CinderWeb.Router do
       ] do
       live "/dashboard", DashboardLive
       live "/activity", ActivityLive
-      live "/activity/grabs/:id/mapping", GrabMappingLive
       live "/settings", SettingsLive
       live "/requests", RequestsLive
       live "/users", UsersLive

@@ -275,6 +275,72 @@ hdtv, dvd, cam`. Leave blank to accept any source. An untagged (parser-undetecte
 always kept; only a release whose detected source is recognized and *not* in your list is rejected.
 Within a resolution, earlier-listed sources rank higher.
 
+## Anime
+
+Anime is a **per-title opt-in profile** — `Auto`, `Standard`, or `Anime` — on any movie or series.
+`Auto` (the default) behaves exactly like `Standard` until a title is explicitly confirmed as
+Anime: set it directly from the movie/series detail page, or propose it when requesting a title and
+let an admin confirm it on approval. Nothing about where a file lands or how Jellyfin/Plex see it
+changes — only how Cinder searches for and verifies it.
+
+Once a title is Anime, release search understands native/romaji/licensed title aliases and
+absolute/scene episode numbering, so a release like `One Piece 1122v2` resolves to the right episode
+without any TMDB season/episode math. **Specials (Season 0) grab only when explicitly classified:**
+a story-special or recap episode that's also monitored is searched and grabbed like any other
+episode; an unclassified special or a pure extra never is.
+
+### "Needs mapping" (TV only)
+
+Cinder will not import a downloaded anime batch until every file in it is certainly mapped to one
+wanted episode. If a file is ambiguous, unidentifiable, a duplicate claim, or doesn't belong to what
+was actually grabbed, the *whole* download holds on `/activity` as **Needs mapping**, with the
+reason shown inline:
+
+- Fix the files on disk (rename an ambiguous file to the episode it actually is, remove a stray
+  extra, etc.), then click **Retry import** — Cinder re-runs the same exact-mapping check against
+  the current state of the files and imports if it now resolves cleanly.
+- Or click **Discard** to cancel the download; its episodes return to the wanted queue and search
+  again normally.
+
+The hold survives an app restart — nothing is auto-resolved or lost while you're away.
+
+### "Needs verification" (movies and TV)
+
+Separately from the name-based language filter (see "Audio-language verification" above), an Anime
+title's global preferences (below) can require a specific audio or embedded-subtitle mode. Cinder
+freezes that requirement into the grab when the release is chosen, then checks it against the
+actual file with `ffprobe` before staging:
+
+- A **confirmed violation** (the probed audio/subtitles provably don't match) is handled
+  automatically — the release is rejected and blocklisted and the movie/episode re-searches. No
+  action needed.
+- When Cinder **can't reach a verdict** (`ffprobe` isn't installed, the probe fails, or the file
+  isn't readable yet), it retries for a while and then holds the item as **Needs verification**
+  (the movie's detail page for a movie; `/activity` for a TV grab) rather than guessing either way.
+  Fix whatever blocked the probe — install/configure `ffprobe`, fix a file permission, wait for a
+  mount to come back — then click **Retry verification**.
+
+### Global Anime settings
+
+`/settings` → **Anime releases** sets, for every Anime title:
+
+- **Audio mode** — original / dub / dual audio / any.
+- **Embedded subtitles** — allow / prefer embedded / require embedded.
+- **Preferred groups** / **Blocked groups** — comma-separated release-group names.
+- **Preferred-group fallback delay** — hours to wait for a preferred group before falling back to
+  the next-best release (`0` disables waiting).
+
+There is no per-title override — every Anime title shares these settings.
+
+### `ffprobe`
+
+Both the audio/subtitle checks above and the pre-existing language check (see "Audio-language
+verification") need **`ffprobe`** (part of FFmpeg, shipped in the Docker image). Its binary
+name/path is the `ffprobe_bin` setting in `/settings` (default: `ffprobe` on `PATH`; no environment
+bootstrap — set it in `/settings`). Availability shows up as a **Media info (ffprobe)** row in
+`/status`/`/dashboard` service health and via **Test connection** in `/settings`. Without it, Cinder
+skips both checks and imports permissively — a missing probe never blocks an import.
+
 ## Library roots: movies vs TV
 
 Each library kind has its **own** import root — movies under `movies_library_path`, TV under
@@ -311,7 +377,9 @@ are pruned automatically.
   trackers are still v1.
 - **SABnzbd "Pause on Duplicates" must be OFF.** That mode re-keys the download id after an add, so
   Cinder loses track of the job and it parks.
-- **Specials (season 0) aren't grabbed** by the TV sweep yet.
+- **Specials (season 0) aren't grabbed** by the TV sweep for a `Standard`-profile series. An
+  `Anime`-profile series is the exception: a Season 0 episode grabs once it's explicitly classified
+  story-special/recap *and* monitored (see "Anime" above).
 - **Air-date eligibility is by UTC calendar day.** An episode becomes search-eligible when its TMDB
   air date is "today or earlier" in **UTC**, so far from UTC it can flip to wanted up to ~a day
   early or late. Harmless for a household (it just grabs a few hours off) — there's no per-timezone
