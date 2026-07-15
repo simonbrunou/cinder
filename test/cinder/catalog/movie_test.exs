@@ -36,6 +36,29 @@ defmodule Cinder.Catalog.MovieTest do
     assert cs.changes.imported_source == "bluray"
   end
 
+  test "transition_changeset/2 casts content_path" do
+    cs = Movie.transition_changeset(%Movie{}, %{status: :downloaded, content_path: "/dl/M.mkv"})
+    assert cs.changes.content_path == "/dl/M.mkv"
+  end
+
+  describe "download_source/1" do
+    test "reads content_path when set" do
+      movie = %Movie{content_path: "/downloads/M.mkv", file_path: "/lib/M.mkv"}
+      assert Movie.download_source(movie) == "/downloads/M.mkv"
+    end
+
+    test "falls back to file_path when content_path is nil (deploy-compat)" do
+      # A movie already :downloaded before content_path shipped has its pre-import path
+      # sitting in the old field with nothing yet written to the new one.
+      movie = %Movie{content_path: nil, file_path: "/downloads/M.mkv"}
+      assert Movie.download_source(movie) == "/downloads/M.mkv"
+    end
+
+    test "is nil when neither is set" do
+      assert Movie.download_source(%Movie{}) == nil
+    end
+  end
+
   describe "download metrics" do
     test "transition clears metrics when it leaves downloading" do
       movie = movie_fixture(%{status: :downloading})

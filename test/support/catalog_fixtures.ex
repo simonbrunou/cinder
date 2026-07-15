@@ -21,6 +21,7 @@ defmodule Cinder.CatalogFixtures do
     :status,
     :download_id,
     :file_path,
+    :content_path,
     :download_protocol,
     :release_title,
     :imported_resolution,

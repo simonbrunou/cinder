@@ -90,7 +90,7 @@ defmodule Cinder.Catalog.ReleaseVerification do
 
         attrs =
           if movie.verification_hold_origin == :download,
-            do: Map.put(attrs, :file_path, nil),
+            do: Map.merge(attrs, %{file_path: nil, content_path: nil}),
             else: attrs
 
         updated = fresh |> Movie.transition_changeset(attrs) |> Repo.update!()
@@ -203,7 +203,10 @@ defmodule Cinder.Catalog.ReleaseVerification do
           release_policy_snapshot: nil
         }
 
-        attrs = if fresh.status == :upgrading, do: attrs, else: Map.put(attrs, :file_path, nil)
+        attrs =
+          if fresh.status == :upgrading,
+            do: attrs,
+            else: Map.merge(attrs, %{file_path: nil, content_path: nil})
 
         updated =
           fresh

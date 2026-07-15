@@ -229,6 +229,32 @@ defmodule Cinder.Download.PollerTest do
     assert_receive {:movie_updated, %Movie{status: :available}}
   end
 
+  test "content_path (not file_path) is stamped at :downloaded, and import resolves from it" do
+    movie = downloading_movie(40, "hash-40")
+    Catalog.subscribe()
+    start_supervised!({Poller, interval: 60_000})
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-40" ->
+      {:ok, %{state: :completed, content_path: "/downloads/M.mkv"}}
+    end)
+
+    stub_import_ok()
+
+    assert :ok = Poller.poll()
+
+    # The :downloaded pass stamps content_path — file_path stays nil, it's the library field.
+    assert_receive {:movie_updated,
+                    %Movie{status: :downloaded, content_path: "/downloads/M.mkv", file_path: nil}}
+
+    # The import pass resolves its source from content_path alone (file_path was nil) and, on
+    # success, clears content_path while file_path becomes the library destination.
+    assert_receive {:movie_updated, %Movie{status: :available} = available}
+    assert available.content_path == nil
+    refute available.file_path == "/downloads/M.mkv"
+
+    assert %Movie{status: :available, content_path: nil} = Repo.get!(Movie, movie.id)
+  end
+
   test "routes status polling to the client matching the movie's download_protocol" do
     {:ok, movie} = Catalog.add_movie(%{tmdb_id: 20, title: "M"})
 
@@ -709,6 +735,20 @@ defmodule Cinder.Download.PollerTest do
     assert Path.basename(staged_path) =~ ".cinder-stage"
     assert %Movie{file_path: dest} = Repo.get!(Movie, movie.id)
     refute dest == "/downloads/Inception.2010.1080p.mkv"
+  end
+
+  test "a :downloaded movie with a legacy file_path and no content_path still imports (deploy-compat)" do
+    # A movie already :downloaded before content_path shipped has content_path: nil and its
+    # pre-import path still in file_path (the old dual-purpose field) — Movie.download_source/1
+    # is the read-side fallback that keeps a release restart able to import it.
+    movie = downloaded_movie(42, "/downloads/Inception.2010.1080p.mkv")
+    assert movie.content_path == nil
+    start_supervised!({Poller, interval: 60_000})
+    stub_import_ok()
+
+    assert :ok = Poller.poll()
+
+    assert %Movie{status: :available, content_path: nil} = Repo.get!(Movie, movie.id)
   end
 
   @tag :tmp_dir

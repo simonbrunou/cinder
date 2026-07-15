@@ -6,6 +6,10 @@ defmodule Cinder.Catalog.Movie do
   (`:searching → :downloading → :downloaded → :available`), parks it at
   `:no_match` when no release survives the scorer, or `:import_failed` when a
   completed download has no usable file to import.
+
+  `content_path` is the client-delivered download source, written at `:downloaded` and cleared
+  back to `nil` once imported; `file_path` is the library file, nil until import writes it. See
+  `download_source/1` for the read-side resolution (with a deploy-compat fallback).
   """
   use Ecto.Schema
 
@@ -43,6 +47,7 @@ defmodule Cinder.Catalog.Movie do
     field :download_speed, :integer
     field :download_eta, :integer
     field :file_path, :string
+    field :content_path, :string
     field :import_attempts, :integer, default: 0
     field :search_attempts, :integer, default: 0
     field :original_language, :string
@@ -66,6 +71,18 @@ defmodule Cinder.Catalog.Movie do
 
     timestamps(type: :utc_datetime)
   end
+
+  @doc """
+  The movie's current download source — the client-delivered path for the grab that's in flight
+  or just completed. Reads `content_path`, falling back to `file_path` only when `content_path`
+  is unset: a movie already `:downloaded` when the `content_path` column shipped has its
+  pre-import path sitting in the old field with nothing yet written to the new one. Once a movie
+  imports, `content_path` is cleared and `file_path` becomes the library file, so this fallback
+  only ever matters for that one deploy-transitional case.
+  """
+  @spec download_source(%__MODULE__{}) :: String.t() | nil
+  def download_source(%__MODULE__{content_path: path}) when path not in [nil, ""], do: path
+  def download_source(%__MODULE__{file_path: path}), do: path
 
   @doc "Changeset for the operator-owned media handling profile (+ its per-title audio-mode override; nil = use the global setting)."
   def profile_changeset(movie, attrs), do: cast(movie, attrs, [:media_profile, :anime_audio_mode])
@@ -118,6 +135,7 @@ defmodule Cinder.Catalog.Movie do
       :download_eta,
       :imdb_id,
       :file_path,
+      :content_path,
       :import_attempts,
       :search_attempts,
       :imported_resolution,
