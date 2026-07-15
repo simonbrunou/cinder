@@ -1792,6 +1792,46 @@ defmodule Cinder.Library do
     end
   end
 
+  @doc """
+  Deletes a completed download's source after a successful `move_on_import` — the whole
+  per-operation directory the client delivered (e.g. an unpacked SABnzbd job folder), or the lone
+  file when there's no wrapper directory. Called from `Cinder.Download.remove_after_import/3`,
+  which gates this on the `move_on_import` setting and the usenet protocol; this function is
+  authoritative regardless of whether the download client still tracks the job — a client whose
+  history already evicted the job silently no-ops on its own remove call, so filesystem cleanup
+  here can't depend on that history surviving (issue #115).
+
+  Idempotent: a `nil`/blank path or an already-missing entry is `:ok`. Contained strictly to the
+  **explicitly configured** import roots (`Settings.explicit_import_roots/0`) — never an inferred
+  one: `Settings.import_roots/0` (what import reads use) falls back to a guessed common ancestor
+  of the library paths when no `import_roots` setting is set, and that guess can be a whole
+  downloads-category directory (e.g. `/data` for `/data/movies` + `/data/tv`); authorizing `rm_rf`
+  against it on a misreported `content_path` would risk wiping every other in-flight download.
+  With only inferred/absent roots, deletion is skipped with `{:error, :import_roots_not_explicit}`
+  rather than guessing. An import root itself is rejected too (only entries strictly inside a
+  root are deletable, so a misreporting client can't wipe the whole downloads dir). A path outside
+  the roots, a root itself, a symlink anywhere in it, or an entry that is neither a regular file
+  nor a directory fails closed with `{:error, :unsafe_delete}`.
+  """
+  @spec delete_download_source(String.t() | nil) :: :ok | {:error, term()}
+  def delete_download_source(path) when path in [nil, ""], do: :ok
+
+  def delete_download_source(path) do
+    case Settings.explicit_import_roots() do
+      nil -> {:error, :import_roots_not_explicit}
+      roots -> do_delete_download_source(path, roots)
+    end
+  end
+
+  defp do_delete_download_source(path, roots) do
+    with :ok <- path_policy().deletable_source(path, roots, filesystem: fs()) do
+      case fs().rm_rf(Path.expand(path)) do
+        {:ok, _paths} -> :ok
+        {:error, reason, _path} -> {:error, reason}
+      end
+    end
+  end
+
   defp safe_directory?(dir) do
     match?(
       {:ok, _expanded},

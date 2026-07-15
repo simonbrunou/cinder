@@ -148,11 +148,23 @@ defmodule Cinder.Download.TvPoller do
     end
   end
 
+  # A provable policy violation (mismatch) is a discard, not a hold: the grab is blocklisted and
+  # deleted (Catalog.reject_grab_release), so its download-side source is no longer needed and is
+  # deleted the same way a successful import's is (issue #115's gap) — the verification-hold path
+  # (retry_or_hold_verification) never reaches here and must keep the files for operator inspection.
+  # download_id is nil here on purpose: reject_grab_release already fences + cleans up the
+  # client-tracked job, so passing the real id would remove it a second time.
   defp reject_release(grab, evidence) do
     case Catalog.reject_grab_release(grab, evidence) do
-      {:ok, _grab} -> :ok
-      {:error, :stale_release} -> :ok
-      {:error, reason} -> {:error, reason}
+      {:ok, _grab} ->
+        Download.remove_after_import(grab.download_protocol, nil, grab.content_path)
+        :ok
+
+      {:error, :stale_release} ->
+        :ok
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -198,7 +210,7 @@ defmodule Cinder.Download.TvPoller do
          ) do
       {:ok, _grab} ->
         commit_stages(staged)
-        Download.remove_after_import(grab.download_protocol, grab.download_id)
+        Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path)
 
       {:error, :stale_grab} ->
         rollback_stages(staged)

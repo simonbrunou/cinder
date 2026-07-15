@@ -15,6 +15,7 @@ defmodule Cinder.Test.PermissivePathPolicy do
   end
 
   def deletable_file(_path, _roots, _opts), do: :ok
+  def deletable_source(_path, _roots, _opts), do: :ok
 
   def walk(path, opts) do
     filesystem = Keyword.fetch!(opts, :filesystem)

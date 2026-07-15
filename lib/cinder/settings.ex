@@ -335,6 +335,18 @@ defmodule Cinder.Settings do
     end
   end
 
+  @doc """
+  The `import_roots` setting exactly as configured, or `nil` when unset — never the
+  common-ancestor guess `import_roots/0` falls back to for reads. `import_roots/0`'s inference
+  bakes the guessed root into the same `:cinder, :import_roots` env key it returns, so a reader
+  can't tell "an operator typed this" from "we guessed it." Deletion needs that distinction:
+  authorizing `rm_rf` against an inferred root (which can be a whole downloads-category
+  directory, e.g. `/data` for `/data/movies` + `/data/tv`) on a misreported `content_path` is
+  unsafe, so `Library.delete_download_source/1` requires an explicit root and never falls back.
+  """
+  @spec explicit_import_roots() :: [String.t()] | nil
+  def explicit_import_roots, do: Application.get_env(:cinder, :explicit_import_roots)
+
   @doc "Expanded library roots permitted as managed destinations."
   @spec library_roots() :: [String.t()]
   def library_roots do
@@ -672,11 +684,20 @@ defmodule Cinder.Settings do
   """
   def load_into_env do
     rows = rows_by_key()
+    # apply_explicit_import_roots writes the only fail-OPEN env key (:explicit_import_roots
+    # authorizes rm_rf), so it runs first — a partial load failure below can then only leave it
+    # in its just-written (correct) or boot-nil (fail-closed) state, never stale-authorized after
+    # a revoke.
+    apply_explicit_import_roots(rows)
     apply_config_fields(rows)
     apply_anime_config(rows)
     apply_media_server(rows)
     apply_download_clients(rows)
     apply_library_config(rows)
+    # apply_import_roots (the read-scope :import_roots key) must run here: its
+    # inferred_import_roots/0 fallback reads the :"#{kind}_library_path" env keys that
+    # apply_library_config just wrote above — position-enforced only, a future reorder must not
+    # move this ahead of apply_library_config.
     apply_import_roots(rows)
     apply_move_on_import(rows)
     apply_ffprobe_bin(rows)
@@ -789,14 +810,23 @@ defmodule Cinder.Settings do
     :ok
   end
 
-  defp apply_import_roots(rows) do
-    roots =
-      case decoded_for(rows, @import_roots_key) do
-        nil -> inferred_import_roots()
-        value -> parse_import_roots(value)
-      end
+  defp apply_explicit_import_roots(rows) do
+    Application.put_env(:cinder, :explicit_import_roots, explicit_roots_from(rows))
+  end
 
-    Application.put_env(:cinder, :import_roots, roots)
+  defp apply_import_roots(rows) do
+    Application.put_env(
+      :cinder,
+      :import_roots,
+      explicit_roots_from(rows) || inferred_import_roots()
+    )
+  end
+
+  defp explicit_roots_from(rows) do
+    case decoded_for(rows, @import_roots_key) do
+      nil -> nil
+      value -> parse_import_roots(value)
+    end
   end
 
   defp apply_kind_config(rows, kind) do

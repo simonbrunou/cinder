@@ -124,6 +124,45 @@ defmodule Cinder.Library.PathPolicyTest do
     assert {:error, :unsafe_delete} = PathPolicy.deletable_file(outside, [movie_root, tv_root])
   end
 
+  @tag :tmp_dir
+  test "deletable_source allows a regular file, a whole per-operation directory, or a missing path, but rejects symlinks and outside paths",
+       %{tmp_dir: tmp} do
+    downloads = Path.join(tmp, "downloads")
+    outside = Path.join(tmp, "cinder.db")
+    file = Path.join(downloads, "cinder-abc/movie.mkv")
+    dir = Path.join(downloads, "cinder-def")
+    missing = Path.join(downloads, "cinder-ghost")
+    link = Path.join(downloads, "cinder-abc/database.mkv")
+    File.mkdir_p!(Path.dirname(file))
+    File.mkdir_p!(dir)
+    File.write!(file, "video")
+    File.write!(outside, "database")
+    File.ln_s!(outside, link)
+
+    assert :ok = PathPolicy.deletable_source(file, [downloads])
+    assert :ok = PathPolicy.deletable_source(dir, [downloads])
+    assert :ok = PathPolicy.deletable_source(missing, [downloads])
+    assert {:error, :unsafe_delete} = PathPolicy.deletable_source(link, [downloads])
+    assert {:error, :unsafe_delete} = PathPolicy.deletable_source(outside, [downloads])
+  end
+
+  @tag :tmp_dir
+  test "deletable_source rejects the import root itself — a misreported content_path equal to the root must never rm_rf the whole downloads dir",
+       %{tmp_dir: tmp} do
+    downloads = Path.join(tmp, "downloads")
+    File.mkdir_p!(downloads)
+
+    assert {:error, :unsafe_delete} = PathPolicy.deletable_source(downloads, [downloads])
+    # Trailing-slash / unnormalized spellings of the same root are still the root.
+    assert {:error, :unsafe_delete} = PathPolicy.deletable_source(downloads <> "/", [downloads])
+    assert {:error, :unsafe_delete} = PathPolicy.deletable_source(downloads, [downloads <> "/"])
+
+    # Strictness only excludes the root itself, not its children.
+    child = Path.join(downloads, "cinder-abc")
+    File.mkdir_p!(child)
+    assert :ok = PathPolicy.deletable_source(child, [downloads])
+  end
+
   test "Library defaults to the real policy when no test override is configured" do
     saved = Application.get_env(:cinder, :path_policy)
     Application.delete_env(:cinder, :path_policy)
@@ -136,7 +175,14 @@ defmodule Cinder.Library.PathPolicyTest do
     setup do
       saved =
         Map.new(
-          [:filesystem, :path_policy, :movies_library_path, :tv_library_path, :import_roots],
+          [
+            :filesystem,
+            :path_policy,
+            :movies_library_path,
+            :tv_library_path,
+            :import_roots,
+            :explicit_import_roots
+          ],
           fn key ->
             {key, Application.get_env(:cinder, key)}
           end

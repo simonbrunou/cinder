@@ -19,6 +19,7 @@ defmodule Cinder.LibraryTest do
 
     defdelegate destination(path, root, opts), to: Cinder.Test.PermissivePathPolicy
     defdelegate deletable_file(path, roots, opts), to: Cinder.Test.PermissivePathPolicy
+    defdelegate deletable_source(path, roots, opts), to: Cinder.Test.PermissivePathPolicy
     defdelegate walk(path, opts), to: Cinder.Test.PermissivePathPolicy
   end
 
@@ -1363,6 +1364,100 @@ defmodule Cinder.LibraryTest do
       # no rmdir expectation -> verify_on_exit! fails if pruning is attempted.
 
       assert {:error, :eacces} = Cinder.Library.delete_file(path)
+    end
+  end
+
+  describe "delete_download_source/1 (issue #115)" do
+    setup do
+      saved_explicit_roots = Application.get_env(:cinder, :explicit_import_roots)
+      Application.put_env(:cinder, :explicit_import_roots, ["/downloads"])
+
+      on_exit(fn -> restore_env(:explicit_import_roots, saved_explicit_roots) end)
+
+      :ok
+    end
+
+    test "nil/blank path is a no-op (no filesystem calls)" do
+      assert :ok = Cinder.Library.delete_download_source(nil)
+      assert :ok = Cinder.Library.delete_download_source("")
+    end
+
+    test "deletes the whole per-operation directory via rm_rf" do
+      path = "/downloads/cinder-abc123"
+      expect(Cinder.Library.FilesystemMock, :rm_rf, fn ^path -> {:ok, [path]} end)
+
+      assert :ok = Cinder.Library.delete_download_source(path)
+    end
+
+    test "deletes a lone file when there's no wrapper directory" do
+      path = "/downloads/movie.mkv"
+      expect(Cinder.Library.FilesystemMock, :rm_rf, fn ^path -> {:ok, [path]} end)
+
+      assert :ok = Cinder.Library.delete_download_source(path)
+    end
+
+    test "a missing/already-gone path is idempotent (:ok)" do
+      path = "/downloads/cinder-gone"
+      expect(Cinder.Library.FilesystemMock, :rm_rf, fn ^path -> {:ok, []} end)
+
+      assert :ok = Cinder.Library.delete_download_source(path)
+    end
+
+    test "a real rm_rf error is surfaced" do
+      path = "/downloads/cinder-locked"
+      expect(Cinder.Library.FilesystemMock, :rm_rf, fn ^path -> {:error, :eacces, path} end)
+
+      assert {:error, :eacces} = Cinder.Library.delete_download_source(path)
+    end
+
+    test "with only inferred/absent import roots, deletion refuses (no rm_rf)" do
+      Application.delete_env(:cinder, :explicit_import_roots)
+
+      assert {:error, :import_roots_not_explicit} =
+               Cinder.Library.delete_download_source("/downloads/cinder-abc123")
+    end
+  end
+
+  describe "delete_download_source/1 through the real PathPolicy (issue #119 review)" do
+    setup do
+      saved_path_policy = Application.get_env(:cinder, :path_policy)
+      saved_explicit_roots = Application.get_env(:cinder, :explicit_import_roots)
+
+      Application.put_env(:cinder, :path_policy, Cinder.Library.PathPolicy)
+      Application.put_env(:cinder, :explicit_import_roots, ["/downloads"])
+
+      on_exit(fn ->
+        restore_env(:path_policy, saved_path_policy)
+        restore_env(:explicit_import_roots, saved_explicit_roots)
+      end)
+
+      :ok
+    end
+
+    test "an in-root source directory deletes" do
+      path = "/downloads/cinder-abc123"
+
+      stub(Cinder.Library.FilesystemMock, :lstat, fn
+        ^path -> {:ok, %File.Stat{type: :directory}}
+        _ancestor -> {:ok, %File.Stat{type: :directory}}
+      end)
+
+      expect(Cinder.Library.FilesystemMock, :rm_rf, fn ^path -> {:ok, [path]} end)
+
+      assert :ok = Cinder.Library.delete_download_source(path)
+    end
+
+    test "a path outside the configured root refuses (no rm_rf)" do
+      assert {:error, :unsafe_delete} =
+               Cinder.Library.delete_download_source("/etc/cinder-outside")
+    end
+
+    test "the import root itself refuses (no rm_rf)" do
+      stub(Cinder.Library.FilesystemMock, :lstat, fn _path ->
+        {:ok, %File.Stat{type: :directory}}
+      end)
+
+      assert {:error, :unsafe_delete} = Cinder.Library.delete_download_source("/downloads")
     end
   end
 
