@@ -667,6 +667,35 @@ defmodule Cinder.CatalogAdminTest do
       assert Repo.all(Grab) == []
     end
 
+    test "delete_series reaps an in-flight AND a downloaded-not-yet-imported grab, removing both" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      {series, season, ep} = series_tree()
+
+      ep2 =
+        Repo.insert!(%Episode{
+          season_id: season.id,
+          episode_number: 2,
+          monitored: true,
+          air_date: ~D[2001-01-08]
+        })
+
+      {:ok, _downloading} = Catalog.create_grab("HASH-INFLIGHT", :torrent, [ep.id])
+      {:ok, downloaded} = Catalog.create_grab("HASH-DONE", :usenet, [ep2.id])
+      {:ok, _} = Catalog.mark_grab_downloaded(downloaded, "/downloads/pack")
+
+      expect(Cinder.Download.ClientMock, :remove, fn "HASH-INFLIGHT", _opts -> :ok end)
+      expect(Cinder.Download.SabnzbdClientMock, :remove, fn "HASH-DONE", _opts -> :ok end)
+
+      sid = series.id
+      Catalog.subscribe_series()
+
+      assert {:ok, %Series{}} = Catalog.delete_series(series, actor)
+      assert_receive {:series_deleted, ^sid}
+
+      assert Repo.get(Series, sid) == nil
+      assert Repo.all(Grab) == []
+    end
+
     test "deleting an already-deleted series returns {:error, :stale_entry} (no raise)" do
       actor = Cinder.AccountsFixtures.admin_fixture()
       {series, _season, _ep} = series_tree()

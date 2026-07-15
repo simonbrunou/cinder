@@ -238,6 +238,89 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     end
   end
 
+  test "add/2 adopts an already-present torrent on a 409 duplicate response (magnet path)" do
+    stub_qbit(fn conn ->
+      case conn.request_path do
+        "/api/v2/torrents/add" ->
+          Plug.Conn.send_resp(conn, 409, "")
+
+        "/api/v2/torrents/info" ->
+          assert conn.params["hashes"] == "0123456789abcdef0123456789abcdef01234567"
+          Req.Test.json(conn, [%{"hash" => "0123456789abcdef0123456789abcdef01234567"}])
+
+        "/api/v2/torrents/addTags" ->
+          assert conn.params["hashes"] == "0123456789abcdef0123456789abcdef01234567"
+          assert conn.params["tags"] == "cinder-op-999"
+          Req.Test.text(conn, "Ok.")
+      end
+    end)
+
+    magnet = "magnet:?xt=urn:btih:#{@hash}&dn=Movie"
+
+    assert {:ok, "0123456789abcdef0123456789abcdef01234567"} =
+             QBittorrent.add(%{download_url: magnet}, operation_key: "op-999")
+  end
+
+  test "add/1 adopts an already-present torrent on 409 without an operation_key (no tag call)" do
+    stub_qbit(fn conn ->
+      case conn.request_path do
+        "/api/v2/torrents/add" ->
+          Plug.Conn.send_resp(conn, 409, "")
+
+        "/api/v2/torrents/info" ->
+          Req.Test.json(conn, [%{"hash" => "0123456789abcdef0123456789abcdef01234567"}])
+
+        "/api/v2/torrents/addTags" ->
+          flunk("must not tag without an operation_key")
+      end
+    end)
+
+    magnet = "magnet:?xt=urn:btih:#{@hash}&dn=Movie"
+
+    assert {:ok, "0123456789abcdef0123456789abcdef01234567"} =
+             QBittorrent.add(%{download_url: magnet})
+  end
+
+  test "add/1 parks (does not retry forever) when a 409 torrent can't be found by infohash" do
+    stub_qbit(fn conn ->
+      case conn.request_path do
+        "/api/v2/torrents/add" -> Plug.Conn.send_resp(conn, 409, "")
+        "/api/v2/torrents/info" -> Req.Test.json(conn, [])
+      end
+    end)
+
+    magnet = "magnet:?xt=urn:btih:#{@hash}&dn=Movie"
+    assert {:error, :add_rejected} = QBittorrent.add(%{download_url: magnet})
+  end
+
+  test "add/1 adopts an already-present .torrent-URL-fetched release on a 409" do
+    infoval = "d6:lengthi5e4:name5:M.mkv12:piece lengthi16384ee"
+    torrent_bytes = "d8:announce11:http://x/an4:info" <> infoval <> "e"
+    expected = :crypto.hash(:sha, infoval) |> Base.encode16(case: :lower)
+
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      case {conn.host, conn.request_path} do
+        {"tracker.test", _} ->
+          Req.Test.text(conn, torrent_bytes)
+
+        {_, "/api/v2/auth/login"} ->
+          conn
+          |> Plug.Conn.put_resp_header("set-cookie", "SID=testsid; path=/")
+          |> Req.Test.text("Ok.")
+
+        {_, "/api/v2/torrents/add"} ->
+          Plug.Conn.send_resp(conn, 409, "")
+
+        {_, "/api/v2/torrents/info"} ->
+          assert conn.params["hashes"] == expected
+          Req.Test.json(conn, [%{"hash" => expected}])
+      end
+    end)
+
+    assert {:ok, ^expected} =
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/123.torrent"})
+  end
+
   test "add/1 accepts a base32 magnet and returns its lowercase-hex infohash" do
     raw = :crypto.hash(:sha, "phase5")
     b32 = Base.encode32(raw, padding: false)
