@@ -55,6 +55,25 @@ defmodule Cinder.SettingsTest do
     :ok
   end
 
+  # `base/1` captures the bootstrap env into :persistent_term on first read
+  # (first-capture-wins). Several tests below force the no-prior-snapshot path by erasing
+  # that capture; erasing without restoring would leave it absent for the rest of the run,
+  # so a later test's `base/1` read could re-capture whatever the env happens to be at that
+  # point (already mutated by another test) as the permanent "bootstrap" value. Save the
+  # current entry and restore it on exit instead of re-erasing.
+  defp erase_base_snapshot(key) do
+    pt_key = {Cinder.Settings, :base, key}
+    prior = :persistent_term.get(pt_key, :__none__)
+    :persistent_term.erase(pt_key)
+
+    on_exit(fn ->
+      case prior do
+        :__none__ -> :persistent_term.erase(pt_key)
+        value -> :persistent_term.put(pt_key, value)
+      end
+    end)
+  end
+
   describe "storage" do
     test "import_roots parses newline/comma input, expands paths, and removes duplicates" do
       Settings.put("import_roots", " /srv/downloads, /srv/usenet\n/srv/downloads ")
@@ -470,8 +489,7 @@ defmodule Cinder.SettingsTest do
     test "media_server reverts to the bootstrap base after an explicit set is cleared" do
       # Erase the snapshot to simulate base not yet captured when the first explicit
       # resolution happens (the boot-with-persisted-row case the lazy capture got wrong).
-      :persistent_term.erase({Cinder.Settings, :base, :media_server})
-      on_exit(fn -> :persistent_term.erase({Cinder.Settings, :base, :media_server}) end)
+      erase_base_snapshot(:media_server)
 
       Settings.put("media_server_type", "plex")
       assert Application.fetch_env!(:cinder, :media_server) == Cinder.Library.MediaServer.Plex
@@ -506,8 +524,7 @@ defmodule Cinder.SettingsTest do
       # persistent_term, then put-then-delete: a lazy capture would snapshot the overlaid value
       # (during the delete) and revert there; eager capture snapshots the true bootstrap.
       bootstrap = Application.fetch_env!(:cinder, :tv_library_path)
-      :persistent_term.erase({Cinder.Settings, :base, :tv_library_path})
-      on_exit(fn -> :persistent_term.erase({Cinder.Settings, :base, :tv_library_path}) end)
+      erase_base_snapshot(:tv_library_path)
 
       Settings.put("tv_library_path", "/srv/media/tv")
       Settings.delete("tv_library_path")
@@ -538,15 +555,7 @@ defmodule Cinder.SettingsTest do
     test "size bands fall back to the config bootstrap defaults when no DB row exists" do
       # Simulate the shipped config.exs defaults (config/test.exs neutralizes them so the
       # suite's fixtures stay unbounded); module setup restores the env keys afterwards.
-      for key <- [:tv_min_size, :tv_max_size] do
-        :persistent_term.erase({Cinder.Settings, :base, key})
-      end
-
-      on_exit(fn ->
-        for key <- [:tv_min_size, :tv_max_size] do
-          :persistent_term.erase({Cinder.Settings, :base, key})
-        end
-      end)
+      Enum.each([:tv_min_size, :tv_max_size], &erase_base_snapshot/1)
 
       Application.put_env(:cinder, :tv_min_size, 50_000_000)
       Application.put_env(:cinder, :tv_max_size, 4_000_000_000)
@@ -558,8 +567,7 @@ defmodule Cinder.SettingsTest do
     end
 
     test "a saved band overrides the default, an explicit 0 opts out, clearing reverts to it" do
-      :persistent_term.erase({Cinder.Settings, :base, :movies_max_size})
-      on_exit(fn -> :persistent_term.erase({Cinder.Settings, :base, :movies_max_size}) end)
+      erase_base_snapshot(:movies_max_size)
       Application.put_env(:cinder, :movies_max_size, 15_000_000_000)
 
       # The DB row wins over the bootstrap default (base captured eagerly on this first load,
@@ -613,11 +621,10 @@ defmodule Cinder.SettingsTest do
       # Simulate MOVIES_LIBRARY_PATH absent: erase the captured base snapshot + the env, so base/1
       # falls back to its [] keyword-list default. The string key must coerce to nil.
       original = Application.get_env(:cinder, :movies_library_path)
-      :persistent_term.erase({Cinder.Settings, :base, :movies_library_path})
+      erase_base_snapshot(:movies_library_path)
       Application.delete_env(:cinder, :movies_library_path)
 
       on_exit(fn ->
-        :persistent_term.erase({Cinder.Settings, :base, :movies_library_path})
         if original, do: Application.put_env(:cinder, :movies_library_path, original)
       end)
 
@@ -629,11 +636,10 @@ defmodule Cinder.SettingsTest do
       # The strict TV root must coerce base/1's [] keyword default to nil, or build_episode_dest
       # would Path.join a list. Mirrors the library_path case.
       original = Application.get_env(:cinder, :tv_library_path)
-      :persistent_term.erase({Cinder.Settings, :base, :tv_library_path})
+      erase_base_snapshot(:tv_library_path)
       Application.delete_env(:cinder, :tv_library_path)
 
       on_exit(fn ->
-        :persistent_term.erase({Cinder.Settings, :base, :tv_library_path})
         if original, do: Application.put_env(:cinder, :tv_library_path, original)
       end)
 
