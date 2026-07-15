@@ -15,6 +15,7 @@ defmodule Cinder.Library.AnimePreflight do
 
     inventory
     |> build_state({parser_context, snapshot["mappings"]})
+    |> infer_lone_file(episodes)
     |> validate(authoritative_ids(episodes))
     |> result()
   end
@@ -24,6 +25,44 @@ defmodule Cinder.Library.AnimePreflight do
   defp build_state(inventory, parser) do
     %{files: Enum.map(inventory, &automatic_decision(&1, parser))}
   end
+
+  # Fully-determined single-file case: an obfuscated usenet post can't be parsed by filename, but
+  # if there's exactly one downloaded file and exactly one reserved episode, the release coordinate
+  # already resolved to that episode at grab time — infer the assignment instead of safe-stopping
+  # forever on an unparseable name. Multi-file inventories, multi-episode grabs, and ambiguous
+  # resolutions are untouched. `parsed: %{coordinates: []}` is required, not just the unmatched
+  # resolution: resolve/2 returns %{resolution: :unmatched} both for a name that parsed no
+  # coordinates at all AND for a name that parsed coordinates with no matching snapshot mapping —
+  # inference must fire only for the former, else a lone file that names a DIFFERENT episode than
+  # the one reserved gets force-assigned to it. `single_ep_fallback?/2` in library.ex is the
+  # standard-TV sibling; this is the stricter anime analogue — exactly one file (no largest-wins
+  # across several) and no sample/extra tolerance, per anime's never-guess invariant.
+  defp infer_lone_file(%{files: [file]} = state, [%{id: episode_id}]) do
+    case file do
+      %{
+        episode_ids: [],
+        ignored: false,
+        evidence: %{resolution: :unmatched},
+        parsed: %{coordinates: []}
+      } ->
+        %{
+          state
+          | files: [
+              %{
+                file
+                | episode_ids: [episode_id],
+                  source: :release_inference,
+                  evidence: %{resolution: :release_inference}
+              }
+            ]
+        }
+
+      _ ->
+        state
+    end
+  end
+
+  defp infer_lone_file(state, _episodes), do: state
 
   defp automatic_decision(entry, {context, mappings}) do
     parsed = AnimeParser.parse(Path.basename(entry.relative_path), context)

@@ -341,11 +341,10 @@
       "inventory": [{"relative_path": "Frieren Bonus.mkv", "size": 1018, "major_device": 1, "inode": 118, "mtime": 100}],
       "overrides": [],
       "expected": {
-        "status": "needs_mapping",
-        "reason": "unresolved_file",
-        "issue": {"version": 1, "reason": "unresolved_file", "relative_paths": ["Frieren Bonus.mkv"], "candidate_episode_ids": []},
+        "status": "resolved",
+        "assignments": {"Frieren Bonus.mkv": [101]},
         "decisions": {"version": 1, "files": [
-          {"relative_path": "Frieren Bonus.mkv", "size": 1018, "major_device": 1, "inode": 118, "mtime": 100, "parsed": {"coordinates": [], "role": "unknown", "group": null}, "episode_ids": [], "source": "automatic", "ignored": false, "evidence": {"resolution": "unmatched"}}
+          {"relative_path": "Frieren Bonus.mkv", "size": 1018, "major_device": 1, "inode": 118, "mtime": 100, "parsed": {"coordinates": [], "role": "unknown", "group": null}, "episode_ids": [101], "source": "release_inference", "ignored": false, "evidence": {"resolution": "release_inference"}}
         ]}
       }
     },

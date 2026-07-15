@@ -295,7 +295,9 @@ episode; an unclassified special or a pure extra never is.
 Cinder will not import a downloaded anime batch until every file in it is certainly mapped to one
 wanted episode. If a file is ambiguous, unidentifiable, a duplicate claim, or doesn't belong to what
 was actually grabbed, the *whole* download holds on `/activity` as **Needs mapping**, with the
-reason shown inline:
+reason shown inline. One narrow exception (issue #123): exactly one non-ignored video that parses
+no episode markers, for a grab that reserved exactly one episode, is inferred to be that episode
+instead of holding.
 
 - Fix the files on disk (rename an ambiguous file to the episode it actually is, remove a stray
   extra, etc.), then click **Retry import** — Cinder re-runs the same exact-mapping check against

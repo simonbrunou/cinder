@@ -784,7 +784,9 @@ happens while it's downloading.
 **Safety invariant, plainly:** Cinder will not file away a downloaded anime batch until it is certain
 which episode every video in it is. A file that's ambiguous, unidentifiable, a duplicate claim, or
 doesn't belong to what was actually grabbed stops the *whole* batch and waits for a human to look at
-it — it never guesses.
+it — it never guesses. (Post-A5, issue #123 sanctioned one narrow exception: exactly one non-ignored
+video that parses no episode markers, for a grab that reserved exactly one episode, is inferred to be
+that episode instead of holding; every other case still stops for a human.)
 
 This was the single largest feature program in the codebase to date — five phases, each sized **XL**.
 It was designed and built end-to-end by a different model as a trial run; a same-day audit
@@ -900,7 +902,9 @@ nothing is filed away until every video in the batch is certainly mapped to one 
 **Done when:** a season pack where every file cleanly maps to one wanted episode imports
 automatically; a batch with one duplicate-claimed file or one file the parser can't identify holds
 the *entire* grab as `Needs mapping` rather than importing the other 90%; and after an app restart,
-that held grab is still there with the same reason, not lost or auto-resolved.
+that held grab is still there with the same reason, not lost or auto-resolved. (Post-A5 carve-out,
+issue #123: a lone unparseable non-ignored file against a lone reserved episode is inferred instead
+of held.)
 
 **[done 2026-07-13]** (design:
 `docs/superpowers/specs/2026-07-13-a3-safe-import-mapping-recovery-design.md`, plan:

@@ -33,6 +33,12 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   @default_base_url "http://localhost:8080"
   @max_response_bytes 4 * 1024 * 1024
+  # SABnzbd truncates job names at `max_foldername_length` (default 246) BYTES from the tail,
+  # which would cut off the mandatory ".cinder-<key>" suffix find_by_operation_key/1 depends on.
+  # 200 protects against that DEFAULT only. An operator-lowered value <= 200 still truncates the
+  # tail, and that loss is unrecoverable: SABnzbd's queue/history search is a LIKE on the display
+  # name, so a name that lost the key tail is never even returned for client-side matching.
+  @max_nzbname_bytes 200
 
   def add(release), do: add(release, [])
 
@@ -42,16 +48,16 @@ defmodule Cinder.Download.Client.Sabnzbd do
     # Req's default :safe_transient policy would retry up to 3× on a transient failure, re-queuing
     # the same download. Disable retry on the add path only (status/health stay idempotent-retryable).
     with {:ok, _uri} <- validate_url(url, Map.get(release, :download_url_origin)) do
-      add_url(url, opts)
+      add_url(url, release, opts)
     end
   end
 
   def add(%{download_url: _}, _opts), do: {:error, :unsupported_download_url}
 
-  defp add_url(url, opts) do
+  defp add_url(url, release, opts) do
     params =
       case Keyword.get(opts, :operation_key) do
-        key when is_binary(key) -> [mode: "addurl", name: url, nzbname: "cinder-#{key}"]
+        key when is_binary(key) -> [mode: "addurl", name: url, nzbname: nzbname(release, key)]
         _ -> [mode: "addurl", name: url]
       end
 
@@ -66,9 +72,75 @@ defmodule Cinder.Download.Client.Sabnzbd do
     end
   end
 
+  # Name the job after the release title (with the operation key as a suffix) so
+  # SABnzbd's "deobfuscate final filenames" renames the video to a title-bearing
+  # name instead of the bare `cinder-<key>` job name, which would erase every
+  # episode marker the downstream parser depends on. The suffix stays mandatory:
+  # it's what makes the job findable via find_by_operation_key/1, and it keeps a
+  # legitimate re-grab of the same release from colliding on name alone.
+  defp nzbname(release, key) do
+    suffix = ".#{operation_name(key)}"
+
+    # Behaviour-typed keys could someday exceed @max_nzbname_bytes on their own; don't go negative.
+    budget = max(@max_nzbname_bytes - byte_size(suffix), 0)
+
+    case release |> Map.get(:title) |> sanitize_title() do
+      "" ->
+        operation_name(key)
+
+      title ->
+        # Pre-bound before the byte-trim loop: every grapheme is >= 1 byte, so slicing to
+        # `budget` graphemes upfront caps the loop below at `budget` iterations regardless of
+        # the (indexer-controlled) original title length — an unbounded 210KB CJK title took
+        # ~107s in that loop inside the poller GenServer without this.
+        trimmed_title =
+          title
+          |> String.slice(0, budget)
+          |> truncate_bytes(budget)
+          |> String.replace(~r/[.\s]+$/, "")
+
+        case trimmed_title do
+          # A leading-dot job name is a hidden dir to SABnzbd; reachable via a single
+          # >155-byte grapheme cluster that trims to nothing. Fall back to the bare key.
+          "" -> operation_name(key)
+          trimmed -> trimmed <> suffix
+        end
+    end
+  end
+
+  defp truncate_bytes("", _max_bytes), do: ""
+  defp truncate_bytes(title, max_bytes) when byte_size(title) <= max_bytes, do: title
+
+  defp truncate_bytes(title, max_bytes),
+    do: title |> String.slice(0..-2//1) |> truncate_bytes(max_bytes)
+
+  defp operation_name(key), do: "cinder-#{key}"
+
+  @hostile_chars ~r/[\/\\:*?"<>|\x00-\x1f\x7f.{}=]+/
+
+  # SABnzbd runs scan_password on the submitted nzbname BEFORE building the work name
+  # (nzb/object.py:243→250): a `password=` substring truncates the stored name right there, and
+  # an unanchored `{{` with a later `}}` truncates at the `{{` — neutralize `{`, `}`, `=` up
+  # front so neither token form can survive. SABnzbd also NFC-normalizes the name before its own
+  # byte-length truncation (filesystem.py:267→282), and NFC can EXPAND bytes (e.g. U+0958:
+  # 3→6 bytes), so our byte cap must count post-NFC bytes too — normalize first, same as SABnzbd.
+  defp sanitize_title(title) when is_binary(title) do
+    case :unicode.characters_to_nfc_binary(title) do
+      normalized when is_binary(normalized) ->
+        normalized
+        |> String.replace(@hostile_chars, ".")
+        |> String.replace(~r/^[.\s]+|[.\s]+$/, "")
+
+      _not_a_binary ->
+        ""
+    end
+  end
+
+  defp sanitize_title(_title), do: ""
+
   @impl true
   def find_by_operation_key(key) do
-    name = "cinder-#{key}"
+    name = operation_name(key)
 
     [
       named_slots("queue", name),
@@ -80,22 +152,42 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   defp named_slots(mode, name, extra \\ []) do
     case get([mode: mode, search: name] ++ extra) do
-      {:ok, %{status: 200, body: body}} -> {:ok, exact_named_slots(body, mode, name)}
+      {:ok, %{status: 200, body: body}} -> {:ok, matching_named_slots(body, mode, name)}
       other -> error(other)
     end
   end
 
-  defp exact_named_slots(body, mode, name) do
+  # Matches one of three real SABnzbd name shapes for our "<title>.cinder-<key>" job name,
+  # never a bare `contains?` on the key:
+  #   1. suffix — "<title>.cinder-<key>" (or, for a legacy in-flight job, exactly
+  #      "cinder-<key>");
+  #   2. `nzb_name` in history keeps the .nzb extension SABnzbd stored it with —
+  #      "<title>.cinder-<key>.nzb";
+  #   3. a failed URL-fetch job (urlgrabber.py fail_to_history) is renamed to
+  #      "<our nzbname> - <url>" — the key ends up mid-string, not at the tail. The
+  #      arm requires the " - http" URL tail so only that rename shape matches.
+  # An unanchored `contains?` on the bare key is deliberately rejected: a completed
+  # download's own output file (e.g. "Title.cinder-op-123.mkv") can re-enter the indexer
+  # as a future release's title, and a substring match would collide with that re-post.
+  defp matching_named_slots(body, mode, name) do
     case body do
       %{^mode => %{"slots" => slots}} when is_list(slots) ->
         Enum.filter(slots, fn slot ->
-          slot["filename"] == name or slot["name"] == name or slot["nzb_name"] == name
+          named?(slot["filename"], name) or named?(slot["name"], name) or
+            named?(slot["nzb_name"], name)
         end)
 
       _ ->
         []
     end
   end
+
+  defp named?(value, name) when is_binary(value) do
+    String.ends_with?(value, name) or String.ends_with?(value, name <> ".nzb") or
+      String.contains?(String.downcase(value, :ascii), String.downcase(name, :ascii) <> " - http")
+  end
+
+  defp named?(_value, _name), do: false
 
   defp unique_remote_id(results) do
     with {:ok, slots} <- collect_slots(results),

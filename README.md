@@ -115,9 +115,10 @@ stays `Standard` unless explicitly confirmed, either directly or as a requester'
 approves). An Anime title gets alias- and absolute/scene-number-aware release search (native,
 romaji, and licensed titles; releases like `One Piece 1122v2` resolve without TMDB season math) and
 searches Season 0 specials only when they're classified story-special/recap and monitored. A
-downloaded batch only imports once every file is certainly mapped to one episode — anything
-ambiguous holds the whole batch as **Needs mapping** on `/activity` for review (**Retry import**
-after fixing the files, or **Discard**). Global Anime preferences in `/settings` (audio mode,
+downloaded batch only imports once every file is certainly mapped to one episode (one narrow
+exception: a lone non-ignored file with no episode markers, against a lone reserved episode, is
+inferred rather than held) — anything ambiguous holds the whole batch as **Needs mapping** on
+`/activity` for review (**Retry import** after fixing the files, or **Discard**). Global Anime preferences in `/settings` (audio mode,
 subtitle mode, preferred/blocked release groups) apply to every Anime title, and — if `ffprobe` is
 available — a completed download's actual audio/subtitles are verified against them before import,
 rejecting and blocklisting a release that provably violates the policy. `ffprobe` is optional but
