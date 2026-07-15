@@ -273,6 +273,83 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitlesTest do
     end
   end
 
+  test "search/1 follows a same-origin redirect instead of failing (fixes #114)" do
+    for status <- [301, 302, 303, 307, 308] do
+      Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
+        case conn.request_path do
+          "/api/v1/subtitles" ->
+            conn
+            |> Plug.Conn.put_resp_header("location", "/api/v1/subtitles2")
+            |> Plug.Conn.send_resp(status, "")
+
+          "/api/v1/subtitles2" ->
+            assert Plug.Conn.get_req_header(conn, "api-key") == ["test-key"]
+
+            Req.Test.json(conn, %{
+              "data" => [
+                %{
+                  "attributes" => %{
+                    "language" => "en",
+                    "download_count" => 1,
+                    "files" => [%{"file_id" => 1}]
+                  }
+                }
+              ]
+            })
+        end
+      end)
+
+      assert {:ok, [%{file_id: 1}]} =
+               OpenSubtitles.search(%{imdb_id: "tt0111161", languages: ["en"]})
+    end
+  end
+
+  test "download/1 follows a same-origin redirect on /login and /download (fixes #114)" do
+    Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
+      case conn.request_path do
+        "/api/v1/login" ->
+          conn
+          |> Plug.Conn.put_resp_header("location", "/api/v1/login2")
+          |> Plug.Conn.send_resp(301, "")
+
+        "/api/v1/login2" ->
+          Req.Test.json(conn, %{"token" => "jwt-123"})
+
+        "/api/v1/download" ->
+          assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer jwt-123"]
+
+          conn
+          |> Plug.Conn.put_resp_header("location", "/api/v1/download2")
+          |> Plug.Conn.send_resp(307, "")
+
+        "/api/v1/download2" ->
+          assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer jwt-123"]
+          Req.Test.json(conn, %{"link" => "https://dl.opensubtitles.test/f/42.srt"})
+
+        "/f/42.srt" ->
+          Plug.Conn.send_resp(conn, 200, "SRT-BYTES")
+      end
+    end)
+
+    assert {:ok, "SRT-BYTES"} = OpenSubtitles.download(42)
+  end
+
+  test "search/1 fails cleanly (no infinite loop) when a same-origin redirect loop exceeds the hop cap" do
+    Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
+      next =
+        if conn.request_path == "/api/v1/subtitles",
+          do: "/api/v1/subtitles2",
+          else: "/api/v1/subtitles"
+
+      conn
+      |> Plug.Conn.put_resp_header("location", next)
+      |> Plug.Conn.send_resp(301, "")
+    end)
+
+    assert {:error, :too_many_redirects} =
+             OpenSubtitles.search(%{imdb_id: "tt0111161", languages: ["en"]})
+  end
+
   test "download/1 follows a validated subtitle redirect" do
     Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
       case conn.request_path do

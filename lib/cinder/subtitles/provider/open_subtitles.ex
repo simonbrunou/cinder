@@ -167,11 +167,41 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
     base =
       [method: method, url: base_url() <> path, headers: headers(auth)] ++ timeout
 
-    req_options()
-    |> Req.new()
-    |> Req.merge(base ++ opts)
-    |> Req.merge(auth: nil, redirect: false)
-    |> HTTPPolicy.bounded_request(@max_api_response_bytes)
+    request =
+      req_options()
+      |> Req.new()
+      |> Req.merge(base ++ opts)
+      |> Req.merge(auth: nil, redirect: false)
+
+    run_request(request, @max_redirects)
+  end
+
+  # The configured API host can answer with a 3xx (a stale/moved base URL, or a canonicalizing
+  # redirect on the host itself) — a Location-bearing redirect is a hop to follow, not a fetch
+  # failure, bounded exactly like the untrusted subtitle-link redirect below. Only a *same-origin*
+  # hop is followed: this request carries the Api-Key/Bearer token, and a cross-origin redirect is
+  # left alone (surfaces as the ordinary HTTP-status error below) so a spoofed/compromised
+  # redirect can't walk off with the credentials — see the "does not forward ... across redirects"
+  # tests.
+  defp run_request(request, redirects_left) do
+    case HTTPPolicy.bounded_request(request, @max_api_response_bytes) do
+      {:ok, %{status: status} = response} when status in [301, 302, 303, 307, 308] ->
+        follow_api_redirect(request, response, redirects_left)
+
+      result ->
+        result
+    end
+  end
+
+  defp follow_api_redirect(_request, _response, 0), do: {:error, :too_many_redirects}
+
+  defp follow_api_redirect(request, response, redirects_left) do
+    with [location | _] <- Req.Response.get_header(response, "location"),
+         {:ok, next_uri} <- HTTPPolicy.resolve_redirect(request.url, location, :same_origin) do
+      run_request(Req.merge(request, url: next_uri), redirects_left - 1)
+    else
+      _ -> {:ok, response}
+    end
   end
 
   defp fetch(link) do
