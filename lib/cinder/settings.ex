@@ -684,12 +684,16 @@ defmodule Cinder.Settings do
   """
   def load_into_env do
     rows = rows_by_key()
+    # apply_import_roots writes the only fail-OPEN env key (:explicit_import_roots authorizes
+    # rm_rf), so it runs first — a partial load failure below can then only leave it in its
+    # just-written (correct) or boot-nil (fail-closed) state, never stale-authorized after a
+    # revoke.
+    apply_import_roots(rows)
     apply_config_fields(rows)
     apply_anime_config(rows)
     apply_media_server(rows)
     apply_download_clients(rows)
     apply_library_config(rows)
-    apply_import_roots(rows)
     apply_move_on_import(rows)
     apply_ffprobe_bin(rows)
     :ok

@@ -144,6 +144,47 @@ defmodule Cinder.Download.MoveOnImportTest do
     episode_fixture(season, %{episode_number: ep_num})
   end
 
+  # A resolved anime-mapping grab, so TvPoller's import path runs the reject-on-mismatch
+  # branch (Library.stage_anime_episodes) instead of the standard-TV import. Mirrors
+  # tv_poller_test.exs's anime_standard_snapshot/downloaded_policy_grab pattern.
+  defp tv_policy_grab(episode, content_path, release_title) do
+    canonical_value =
+      "S01E#{episode.episode_number |> Integer.to_string() |> String.pad_leading(2, "0")}"
+
+    snapshot = %{
+      "version" => 2,
+      "parser_context" => %{"title" => "Show", "aliases" => [], "year" => 2008},
+      "mappings" => [
+        %{
+          "identity" => %{
+            "source" => "cinder",
+            "scheme" => "standard",
+            "namespace" => "canonical",
+            "canonical_value" => canonical_value
+          },
+          "precedence" => "manual",
+          "episode_ids" => [episode.id],
+          "evidence" => nil
+        }
+      ],
+      "reserved_episode_ids" => [episode.id]
+    }
+
+    grab =
+      Repo.insert!(%Grab{
+        download_id: "nzo-tv-reject",
+        download_protocol: :usenet,
+        release_title: release_title,
+        content_path: content_path,
+        mapping_snapshot: snapshot,
+        release_policy_snapshot: release_policy_snapshot(release_title),
+        mapping_status: :resolved
+      })
+
+    Repo.update_all(from(e in Episode, where: e.id == ^episode.id), set: [grab_id: grab.id])
+    grab
+  end
+
   describe "Download.remove_after_import/3 (the client-remove side)" do
     test "removes a usenet download with delete_files when the toggle is on" do
       enable()
@@ -490,6 +531,44 @@ defmodule Cinder.Download.MoveOnImportTest do
       assert_receive {:removed, "nzo-pack", [delete_files: true]}
       # The whole per-operation/unpack directory is deleted, not just the matched file inside it.
       assert_receive {:rm_rf, "/dl/pack"}
+    end
+
+    test "a provable policy mismatch is a discard: deletes its download-side source" do
+      enable()
+      enable_media_info()
+      {_series, season} = series_tree()
+      e1 = episode(season, 1)
+      source = "/dl/Show.S01E01.1080p.mkv"
+      grab = tv_policy_grab(e1, source, "[Group] Show S01E01 [1080p]")
+
+      stub(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
+
+      stub(Cinder.Library.FilesystemMock, :lstat, fn ^source ->
+        {:ok,
+         %File.Stat{
+           type: :regular,
+           size: 2_000_000_000,
+           major_device: 1,
+           inode: 116,
+           mtime: {{2026, 7, 13}, {12, 0, 0}}
+         }}
+      end)
+
+      expect(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source ->
+        {:ok, %{audio: ["ja"], subtitles: [], audio_unknown?: false, subtitle_unknown?: false}}
+      end)
+
+      echo_remove(Cinder.Download.SabnzbdClientMock)
+      echo_rm_rf()
+      start_supervised!({TvPoller, interval: 60_000})
+
+      assert :ok = TvPoller.poll()
+
+      refute Repo.get(Grab, grab.id)
+      assert Repo.reload!(e1).grab_id == nil
+
+      assert_receive {:rm_rf, ^source}
+      assert_receive {:removed, "nzo-tv-reject", [delete_files: true]}
     end
   end
 end

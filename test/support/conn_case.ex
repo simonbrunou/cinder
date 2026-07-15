@@ -95,6 +95,7 @@ defmodule CinderWeb.ConnCase do
     :download_clients,
     :anime_preferences,
     :import_roots,
+    :explicit_import_roots,
     :movies_library_path,
     :movies_min_size,
     :movies_max_size,

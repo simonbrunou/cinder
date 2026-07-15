@@ -175,7 +175,14 @@ defmodule Cinder.Library.PathPolicyTest do
     setup do
       saved =
         Map.new(
-          [:filesystem, :path_policy, :movies_library_path, :tv_library_path, :import_roots],
+          [
+            :filesystem,
+            :path_policy,
+            :movies_library_path,
+            :tv_library_path,
+            :import_roots,
+            :explicit_import_roots
+          ],
           fn key ->
             {key, Application.get_env(:cinder, key)}
           end
