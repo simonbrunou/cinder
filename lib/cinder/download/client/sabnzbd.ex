@@ -33,6 +33,10 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   @default_base_url "http://localhost:8080"
   @max_response_bytes 4 * 1024 * 1024
+  # SABnzbd truncates job names at `max_foldername_length` (default 246) BYTES from the tail,
+  # which would cut off the mandatory ".cinder-<key>" suffix find_by_operation_key/1 depends on.
+  # 200 keeps the full name comfortably under the default with room for a lower operator value.
+  @max_nzbname_bytes 200
 
   def add(release), do: add(release, [])
 
@@ -73,18 +77,35 @@ defmodule Cinder.Download.Client.Sabnzbd do
   # it's what makes the job findable via find_by_operation_key/1, and it keeps a
   # legitimate re-grab of the same release from colliding on name alone.
   defp nzbname(release, key) do
+    suffix = ".#{operation_name(key)}"
+
     case release |> Map.get(:title) |> sanitize_title() do
-      "" -> "cinder-#{key}"
-      title -> "#{title}.cinder-#{key}"
+      "" ->
+        operation_name(key)
+
+      title ->
+        trimmed =
+          title
+          |> truncate_bytes(@max_nzbname_bytes - byte_size(suffix))
+          |> String.replace(~r/[.\s]+$/, "")
+
+        trimmed <> suffix
     end
   end
 
-  @hostile_chars ~r/[\/\\:\*\?"<>\|\x00-\x1f\x7f]/
+  defp truncate_bytes("", _max_bytes), do: ""
+  defp truncate_bytes(title, max_bytes) when byte_size(title) <= max_bytes, do: title
+
+  defp truncate_bytes(title, max_bytes),
+    do: title |> String.slice(0..-2//1) |> truncate_bytes(max_bytes)
+
+  defp operation_name(key), do: "cinder-#{key}"
+
+  @hostile_chars ~r/[\/\\:*?"<>|\x00-\x1f\x7f.]+/
 
   defp sanitize_title(title) when is_binary(title) do
     title
     |> String.replace(@hostile_chars, ".")
-    |> String.replace(~r/\.{2,}/, ".")
     |> String.replace(~r/^[.\s]+|[.\s]+$/, "")
   end
 
@@ -92,7 +113,7 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   @impl true
   def find_by_operation_key(key) do
-    name = "cinder-#{key}"
+    name = operation_name(key)
 
     [
       named_slots("queue", name),
@@ -109,9 +130,9 @@ defmodule Cinder.Download.Client.Sabnzbd do
     end
   end
 
-  # Matches by substring (not equality): a job may be named "<title>.cinder-<key>"
+  # Matches by suffix (not equality): a job may be named "<title>.cinder-<key>"
   # (the deobfuscation-safe name) or, for a legacy in-flight job, exactly
-  # "cinder-<key>".
+  # "cinder-<key>" — both END with the operation-key needle.
   defp matching_named_slots(body, mode, name) do
     case body do
       %{^mode => %{"slots" => slots}} when is_list(slots) ->
@@ -125,7 +146,7 @@ defmodule Cinder.Download.Client.Sabnzbd do
     end
   end
 
-  defp named?(value, name) when is_binary(value), do: String.contains?(value, name)
+  defp named?(value, name) when is_binary(value), do: String.ends_with?(value, name)
   defp named?(_value, _name), do: false
 
   defp unique_remote_id(results) do

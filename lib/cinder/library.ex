@@ -1446,7 +1446,8 @@ defmodule Cinder.Library do
   end
 
   # Fall back to largest-wins only for a lone-episode grab whose files name NO specific episode
-  # (so we never mistake a clearly-numbered other episode for ours).
+  # (so we never mistake a clearly-numbered other episode for ours). See
+  # Cinder.Library.AnimePreflight.infer_lone_file/2 for anime's stricter analogue.
   defp single_ep_fallback?([_one], [_ | _] = videos),
     do: Enum.all?(videos, fn {p, _size} -> is_nil(Parser.parse(Path.basename(p)).episodes) end)
 

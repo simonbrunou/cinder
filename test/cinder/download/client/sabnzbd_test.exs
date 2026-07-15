@@ -87,6 +87,41 @@ defmodule Cinder.Download.Client.SabnzbdTest do
              )
   end
 
+  test "add/2 caps the nzbname at 200 bytes for a very long ASCII title" do
+    long_title = String.duplicate("A", 260)
+
+    stub(fn conn ->
+      nzbname = conn.params["nzbname"]
+      assert byte_size(nzbname) <= 200
+      assert String.ends_with?(nzbname, "cinder-op-123")
+      Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["nzo-123"]})
+    end)
+
+    assert {:ok, "nzo-123"} =
+             Sabnzbd.add(
+               %{download_url: "http://x/nzb", title: long_title},
+               operation_key: "op-123"
+             )
+  end
+
+  test "add/2 caps the nzbname at 200 bytes for a long multi-byte (CJK) title" do
+    long_title = String.duplicate("葬", 260)
+
+    stub(fn conn ->
+      nzbname = conn.params["nzbname"]
+      assert byte_size(nzbname) <= 200
+      assert String.ends_with?(nzbname, "cinder-op-123")
+      assert String.valid?(nzbname)
+      Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["nzo-123"]})
+    end)
+
+    assert {:ok, "nzo-123"} =
+             Sabnzbd.add(
+               %{download_url: "http://x/nzb", title: long_title},
+               operation_key: "op-123"
+             )
+  end
+
   test "find_by_operation_key/1 finds a legacy slot named exactly cinder-<key>" do
     stub(fn conn ->
       assert conn.params["search"] == "cinder-op-123"
@@ -134,6 +169,24 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     end)
 
     assert {:ok, "nzo-queue"} = Sabnzbd.find_by_operation_key("op-123")
+  end
+
+  test "find_by_operation_key/1 does not match a slot whose name merely starts with the key" do
+    stub(fn conn ->
+      case {conn.params["mode"], conn.params["archive"]} do
+        {"queue", _} ->
+          Req.Test.json(conn, %{
+            "queue" => %{
+              "slots" => [%{"filename" => "cinder-op-123-extra", "nzo_id" => "wrong"}]
+            }
+          })
+
+        {"history", _} ->
+          Req.Test.json(conn, %{"history" => %{"slots" => []}})
+      end
+    end)
+
+    assert :not_found = Sabnzbd.find_by_operation_key("op-123")
   end
 
   test "find_by_operation_key/1 searches normal history after a queue miss" do

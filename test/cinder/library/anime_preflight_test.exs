@@ -94,6 +94,27 @@ defmodule Cinder.Library.AnimePreflightTest do
       assert evidence == %{"resolution" => "release_inference"}
     end
 
+    test "a lone file whose name parses a coordinate that matches no mapping still needs mapping" do
+      fixture = %{
+        "snapshot_version" => 2,
+        "parser_context" => %{"title" => "Frieren", "aliases" => [], "year" => 2023},
+        "mappings" => [],
+        "inventory" => [
+          %{
+            "relative_path" => "Frieren - S01E03.mkv",
+            "size" => 1000,
+            "major_device" => 1,
+            "inode" => 200,
+            "mtime" => 100
+          }
+        ],
+        "episodes" => [%{"id" => 101, "season_number" => 1, "episode_number" => 1}]
+      }
+
+      assert {:needs_mapping, result} = run_fixture(fixture)
+      assert result.issue["reason"] == "unresolved_file"
+    end
+
     test "a second file in the inventory still needs mapping even with one reserved episode" do
       fixture = %{
         "snapshot_version" => 2,

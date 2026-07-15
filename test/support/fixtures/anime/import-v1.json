@@ -321,10 +321,11 @@
       "inventory": [{"relative_path": "Frieren - S01E03.mkv", "size": 1017, "major_device": 1, "inode": 117, "mtime": 100}],
       "overrides": [],
       "expected": {
-        "status": "resolved",
-        "assignments": {"Frieren - S01E03.mkv": [103]},
+        "status": "needs_mapping",
+        "reason": "unresolved_file",
+        "issue": {"version": 1, "reason": "unresolved_file", "relative_paths": ["Frieren - S01E03.mkv"], "candidate_episode_ids": []},
         "decisions": {"version": 1, "files": [
-          {"relative_path": "Frieren - S01E03.mkv", "size": 1017, "major_device": 1, "inode": 117, "mtime": 100, "parsed": {"coordinates": [{"scheme": "standard", "values": ["S01E03"]}], "role": "story", "group": null}, "episode_ids": [103], "source": "release_inference", "ignored": false, "evidence": {"resolution": "release_inference"}}
+          {"relative_path": "Frieren - S01E03.mkv", "size": 1017, "major_device": 1, "inode": 117, "mtime": 100, "parsed": {"coordinates": [{"scheme": "standard", "values": ["S01E03"]}], "role": "story", "group": null}, "episode_ids": [], "source": "automatic", "ignored": false, "evidence": {"resolution": "unmatched"}}
         ]}
       }
     },
