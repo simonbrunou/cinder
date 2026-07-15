@@ -364,12 +364,9 @@ defmodule Cinder.LibraryMediaInfoTest do
     await_subtitle_tasks()
   end
 
+  # The Fetcher processes casts one at a time in mailbox order, so a synchronous round-trip after
+  # dispatch only returns once every previously-enqueued fetch has finished.
   defp await_subtitle_tasks do
-    Cinder.Subtitles.TaskSupervisor
-    |> Task.Supervisor.children()
-    |> Enum.each(fn pid ->
-      ref = Process.monitor(pid)
-      assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 2_000
-    end)
+    :sys.get_state(Cinder.Subtitles.Fetcher)
   end
 end

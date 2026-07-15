@@ -17,9 +17,10 @@ defmodule Cinder.Application do
         {Phoenix.PubSub, name: Cinder.PubSub},
         # Owns cancellable outbound HTTP requests so wall-clock deadlines never link-crash callers.
         {Task.Supervisor, name: Cinder.HTTPPolicy.TaskSupervisor},
-        # Off-process, best-effort subtitle fetches dispatched from the import path — supervised so
-        # they don't run in (and can't stall) the poller tick. Always on; inert when subtitles off.
-        {Task.Supervisor, name: Cinder.Subtitles.TaskSupervisor},
+        # Off-tick, best-effort subtitle fetches dispatched from the import path — serialized through
+        # one process so a bulk import can't burst OpenSubtitles into rate-limiting it (issue #80).
+        # Always on; inert when subtitles off.
+        Cinder.Subtitles.Fetcher,
         # Vault before the loader (it decrypts secret settings); the loader applies the
         # DB settings overlay synchronously, before the Endpoint/poller consume config.
         Cinder.Vault,

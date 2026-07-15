@@ -11,7 +11,7 @@ defmodule Cinder.Subtitles do
   alias Cinder.Catalog.{Episode, Movie, Series}
   alias Cinder.Library.{PathPolicy, Sidecars}
   alias Cinder.Settings
-  alias Cinder.Subtitles.{Manifest, Moviehash, Srt}
+  alias Cinder.Subtitles.{Fetcher, Manifest, Moviehash, Srt}
 
   @doc "Subtitle-search criteria for a movie: imdb + tmdb id (the provider prefers imdb)."
   @spec movie_criteria(Movie.t()) :: map()
@@ -64,15 +64,16 @@ defmodule Cinder.Subtitles do
   def fetch_after_import(criteria_fun, video_path),
     do: fetch_after_import(criteria_fun, video_path, :movies, [])
 
-  @doc "Runs subtitle work off the import path and marks current release sidecars as Cinder-managed."
+  @doc """
+  Runs subtitle work off the import path and marks current release sidecars as Cinder-managed.
+  Enqueued on the single serializing `Cinder.Subtitles.Fetcher` — one fetch in flight at a time —
+  so a bulk import (a whole series added at once) can't burst OpenSubtitles into rate-limiting it
+  (issue #80).
+  """
   @spec fetch_after_import((-> map()), String.t(), :movies | :tv, [String.t()]) :: :ok
   def fetch_after_import(criteria_fun, video_path, kind, release_sidecar_languages)
       when is_function(criteria_fun, 0) do
-    Task.Supervisor.start_child(Cinder.Subtitles.TaskSupervisor, fn ->
-      safe_fetch(criteria_fun, video_path, kind, release_sidecar_languages)
-    end)
-
-    :ok
+    Fetcher.enqueue(criteria_fun, video_path, kind, release_sidecar_languages)
   end
 
   defp fetch_languages(criteria_base, languages, video_path, kind) do
@@ -506,7 +507,14 @@ defmodule Cinder.Subtitles do
     end
   end
 
-  defp safe_fetch(criteria_fun, video_path, kind, release_sidecar_languages) do
+  @doc """
+  Runs one import's subtitle fetch synchronously (the body the `Fetcher` executes per queued
+  unit). `criteria_fun` runs INSIDE this rescue/catch so a preload/criteria surprise or a
+  provider blow-up crashes nothing — it logs and the caller (the `Fetcher`) moves on to the next
+  queued fetch.
+  """
+  @spec fetch_now((-> map()), String.t(), :movies | :tv, [String.t()]) :: :ok | :quota_exceeded
+  def fetch_now(criteria_fun, video_path, kind, release_sidecar_languages) do
     mark_release_sidecars(video_path, release_sidecar_languages)
     fetch_missing(criteria_fun.(), video_path, kind)
   rescue
