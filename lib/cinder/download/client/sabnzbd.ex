@@ -184,7 +184,7 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   defp named?(value, name) when is_binary(value) do
     String.ends_with?(value, name) or String.ends_with?(value, name <> ".nzb") or
-      String.contains?(value, name <> " - http")
+      String.contains?(String.downcase(value, :ascii), String.downcase(name, :ascii) <> " - http")
   end
 
   defp named?(_value, _name), do: false

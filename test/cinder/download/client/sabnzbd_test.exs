@@ -255,7 +255,9 @@ defmodule Cinder.Download.Client.SabnzbdTest do
               "history" => %{
                 "slots" => [
                   %{
-                    "name" => "Title.cinder-op-123 - http://indexer/get/123",
+                    # Uppercase scheme: the URL validator downcases only for checking and
+                    # submits the original string, so SAB's fail-rename can carry "HTTP://".
+                    "name" => "Title.cinder-op-123 - HTTP://indexer/get/123",
                     "nzo_id" => "nzo-failed"
                   }
                 ]
