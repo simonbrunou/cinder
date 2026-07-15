@@ -933,7 +933,7 @@ defmodule CinderWeb.SeriesDetailLive do
                 >
                   {absolute_annotation(ep, @profile_summary)}
                 </span>
-                <span class="min-w-0 flex-1 break-words text-sm">{ep.title}</span>
+                <span class="min-w-0 flex-1 truncate text-sm" title={ep.title}>{ep.title}</span>
                 <span
                   :if={
                     ep.file_path &&
@@ -941,7 +941,7 @@ defmodule CinderWeb.SeriesDetailLive do
                         (ep.imported_embedded_subtitles || []) ++
                         (ep.imported_sidecar_subtitles || []) != []
                   }
-                  class="ml-2 inline-flex basis-full flex-wrap gap-1 align-middle sm:basis-auto"
+                  class="ml-2 inline-flex shrink-0 basis-full flex-wrap gap-1 align-middle sm:basis-auto"
                 >
                   <span
                     :for={l <- ep.imported_audio_languages || []}
