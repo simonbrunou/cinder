@@ -13,6 +13,12 @@ defmodule Cinder.Download.Client.QBittorrent do
   newer. Health checks and operation-key lookup reject older or malformed
   versions before relying on tag-filtered torrent listing.
 
+  WebAPI >= 2.11 (qBittorrent v5.x) answers `torrents/add` with 409 when the
+  infohash is already present in the session (e.g. a previous cinder lifecycle
+  grabbed the same release and it's still seeding). `add/2` treats that as
+  "already present," confirms it via `torrents/info`, and adopts it — returning
+  the hash as if the add had just succeeded — rather than retrying forever.
+
   Validated against a live qBittorrent only in Phase 5; the unit test is a shape
   sanity-check against `Req.Test`.
   """
@@ -38,19 +44,9 @@ defmodule Cinder.Download.Client.QBittorrent do
 
   @impl true
   def add(%{download_url: "magnet:" <> _ = magnet}, opts) do
-    with {:ok, hash} <- btih(magnet),
-         {:ok, %{status: 200, body: body}} <-
-           action(
-             method: :post,
-             url: "/api/v2/torrents/add",
-             form_multipart: [urls: magnet] ++ tag_part(opts)
-           ) do
-      # ponytail: magnet-only hash extraction; base32 btih and .torrent-URL→hash
-      # (info-by-name lookup) are Phase-5 live concerns.
-      if String.trim(body) == "Fails.", do: {:error, :add_rejected}, else: {:ok, hash}
-    else
+    case btih(magnet) do
+      {:ok, hash} -> add_magnet(magnet, hash, opts)
       :error -> {:error, :unsupported_download_url}
-      other -> error(other)
     end
   end
 
@@ -58,6 +54,25 @@ defmodule Cinder.Download.Client.QBittorrent do
   def add(%{download_url: "https://" <> _} = release, opts), do: add_torrent_url(release, opts)
 
   def add(%{download_url: _}, _opts), do: {:error, :unsupported_download_url}
+
+  defp add_magnet(magnet, hash, opts) do
+    case action(
+           method: :post,
+           url: "/api/v2/torrents/add",
+           form_multipart: [urls: magnet] ++ tag_part(opts)
+         ) do
+      {:ok, %{status: 200, body: body}} ->
+        # ponytail: magnet-only hash extraction; base32 btih and .torrent-URL→hash
+        # (info-by-name lookup) are Phase-5 live concerns.
+        if String.trim(body) == "Fails.", do: {:error, :add_rejected}, else: {:ok, hash}
+
+      {:ok, %{status: 409}} ->
+        adopt_existing(hash, opts)
+
+      other ->
+        error(other)
+    end
+  end
 
   # Fetch the .torrent, compute its infohash (so status/1 can poll it), then
   # upload the bytes to qBittorrent. decode_body: false keeps the bytes raw so
@@ -75,11 +90,66 @@ defmodule Cinder.Download.Client.QBittorrent do
   end
 
   defp add_torrent_bytes(bytes, opts) do
-    with {:ok, hash} <- Torrent.infohash(bytes),
-         {:ok, %{status: 200, body: body}} <- upload_torrent(bytes, opts) do
-      if String.trim(to_string(body)) == "Fails.", do: {:error, :add_rejected}, else: {:ok, hash}
-    else
-      other -> error(other)
+    case Torrent.infohash(bytes) do
+      {:ok, hash} -> upload_and_confirm(bytes, hash, opts)
+      {:error, _} = err -> err
+    end
+  end
+
+  defp upload_and_confirm(bytes, hash, opts) do
+    case upload_torrent(bytes, opts) do
+      {:ok, %{status: 200, body: body}} ->
+        if String.trim(to_string(body)) == "Fails.",
+          do: {:error, :add_rejected},
+          else: {:ok, hash}
+
+      {:ok, %{status: 409}} ->
+        adopt_existing(hash, opts)
+
+      other ->
+        error(other)
+    end
+  end
+
+  # WebAPI >= 2.11 (qBittorrent v5.x) answers torrents/add with 409 when the infohash is
+  # already present in the session — a previous cinder lifecycle grabbed this exact release
+  # and it's still there (completed/seeding). Treating that as a transient error retries the
+  # same add forever, deterministically re-hitting 409 every time. Reconcile by infohash
+  # instead: confirm it's really there, tag it (best-effort) so a tag-based lookup can find
+  # it too, then adopt it exactly as if the add had just succeeded — the normal
+  # completion→import flow takes over from the returned hash.
+  defp adopt_existing(hash, opts) do
+    case action(method: :get, url: "/api/v2/torrents/info", params: [hashes: hash]) do
+      {:ok, %{status: 200, body: [_torrent | _]}} ->
+        tag_existing(hash, opts)
+        {:ok, hash}
+
+      # 409 said "already present" but a lookup by that exact hash finds nothing — an
+      # inconsistency the client can't safely retry its way out of.
+      {:ok, %{status: 200, body: []}} ->
+        {:error, :add_rejected}
+
+      other ->
+        error(other)
+    end
+  end
+
+  # Best-effort: a failed retag doesn't block adoption, since the caller stores the
+  # returned hash as the remote id regardless — it only affects a future
+  # find_by_operation_key lookup, not this adoption.
+  defp tag_existing(hash, opts) do
+    case Keyword.get(opts, :operation_key) do
+      key when is_binary(key) ->
+        action(
+          method: :post,
+          url: "/api/v2/torrents/addTags",
+          form: [hashes: hash, tags: "cinder-#{key}"]
+        )
+
+        :ok
+
+      _ ->
+        :ok
     end
   end
 
