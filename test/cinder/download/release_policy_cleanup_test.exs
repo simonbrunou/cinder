@@ -26,6 +26,7 @@ defmodule Cinder.Download.ReleasePolicyCleanupTest do
              download_protocol: nil,
              release_title: nil,
              file_path: nil,
+             content_path: nil,
              release_policy_snapshot: nil,
              search_attempts: 4,
              import_attempts: 3
@@ -216,6 +217,10 @@ defmodule Cinder.Download.ReleasePolicyCleanupTest do
         do: "/library/Anime Movie.mkv",
         else: "/downloads/Anime Movie.mkv"
 
+    # A real :downloaded row has content_path set (the download source); an :upgrading row's
+    # content_path stays nil the whole time (see poller.ex's finish_upgrade).
+    content_path = if status == :downloaded, do: file_path, else: nil
+
     movie =
       movie_fixture(%{
         title: "Anime Movie",
@@ -224,6 +229,7 @@ defmodule Cinder.Download.ReleasePolicyCleanupTest do
         download_protocol: :torrent,
         release_title: "[Group] Anime Movie [1080p]",
         file_path: file_path,
+        content_path: content_path,
         imported_resolution: "720p",
         imported_size: 1_234,
         imported_audio_languages: ["ja"]

@@ -226,10 +226,11 @@ defmodule Cinder.Download.Poller do
             Notifier.notify({:movie_available, available})
             # After the DB commit (the file is recorded as imported): a best-effort, gated
             # remove of the source download. Failure is logged, never strands or re-imports.
-            # `movie` (not `available`) is the pre-transition struct, still carrying the download
-            # source: `available.content_path` is nil (cleared above), so even a future refactor
-            # that mistakenly read off the post-transition struct would no-op here rather than
-            # delete the just-imported library file.
+            # The source MUST be read off `movie` (the pre-transition struct), never `available`:
+            # `available.content_path` is nil (cleared above), so `Movie.download_source/1` would
+            # fall back to `file_path` — which on `available` IS the just-imported library file.
+            # Reading off the post-transition struct here would delete the library copy, not the
+            # download.
             Download.remove_after_import(
               movie.download_protocol,
               movie.download_id,
@@ -388,14 +389,14 @@ defmodule Cinder.Download.Poller do
   #
   # Unlike the fresh-grab path, the new download's source is never written onto the row as
   # `content_path` — only threaded as a local variable through this call chain (finish_upgrade →
-  # finish_upgrade_result → finalize_upgrade/reject_release). Deliberate: an :upgrading movie's
-  # `content_path` column stays nil the whole time (there is no :downloaded-equivalent status to
-  # persist it at without adding a write — and thus a new stale_status failure mode — at a point
-  # that today has none), so this local struct override still targets `file_path`, the field
-  # `Movie.download_source/1` falls back to when `content_path` is nil; it is never persisted.
+  # finish_upgrade_result → finalize_upgrade/reject_release). The override below routes that source
+  # through the model's primary field (`content_path`, per `Movie.download_source/1`) on this LOCAL
+  # struct only; the row's `content_path` column stays nil through :upgrading, deliberately (there is
+  # no :downloaded-equivalent status to persist it at without adding a write — and thus a new
+  # stale_status failure mode — at a point that today has none).
   defp finish_upgrade(movie, content_path),
     do:
-      %{movie | file_path: content_path}
+      %{movie | content_path: content_path}
       |> Library.stage_movie(replace: true)
       |> finish_upgrade_result(movie, content_path)
 

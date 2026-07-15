@@ -76,9 +76,10 @@ defmodule Cinder.Catalog.Movie do
   The movie's current download source — the client-delivered path for the grab that's in flight
   or just completed. Reads `content_path`, falling back to `file_path` only when `content_path`
   is unset: a movie already `:downloaded` when the `content_path` column shipped has its
-  pre-import path sitting in the old field with nothing yet written to the new one. Once a movie
-  imports, `content_path` is cleared and `file_path` becomes the library file, so this fallback
-  only ever matters for that one deploy-transitional case.
+  pre-import path sitting in the old field with nothing yet written to the new one. Every writer
+  (fresh grab and upgrade alike) now sets `content_path` directly, so the fallback is genuinely
+  deploy-compat only — it must NOT be removed while any row written before the `content_path`
+  column existed can still be sitting mid-pipeline at restart.
   """
   @spec download_source(%__MODULE__{}) :: String.t() | nil
   def download_source(%__MODULE__{content_path: path}) when path not in [nil, ""], do: path

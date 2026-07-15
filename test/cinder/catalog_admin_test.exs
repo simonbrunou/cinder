@@ -192,6 +192,7 @@ defmodule Cinder.CatalogAdminTest do
       assert cancelled.release_policy_snapshot == nil
       assert cancelled.verification_hold_origin == nil
       assert cancelled.file_path == nil
+      assert cancelled.content_path == nil
 
       assert Repo.get_by!(Cinder.Download.Intent,
                kind: :movie,
@@ -1006,6 +1007,10 @@ defmodule Cinder.CatalogAdminTest do
         do: "/library/Anime Movie.mkv",
         else: "/downloads/Anime Movie.mkv"
 
+    # A real :download-origin hold has content_path set (the download source); an :upgrade-origin
+    # hold's content_path stays nil the whole time (see poller.ex's finish_upgrade).
+    content_path = if origin == :download, do: file_path, else: nil
+
     movie =
       movie_fixture(%{
         title: "Anime Movie",
@@ -1014,6 +1019,7 @@ defmodule Cinder.CatalogAdminTest do
         download_protocol: :torrent,
         release_title: "[Group] Anime Movie",
         file_path: file_path,
+        content_path: content_path,
         imported_resolution: "720p",
         imported_size: 1_234
       })
