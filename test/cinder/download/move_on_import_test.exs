@@ -19,13 +19,26 @@ defmodule Cinder.Download.MoveOnImportTest do
   setup :set_mox_global
 
   # Default off; each test opts in. Restore the key so the overlay can't leak.
+  #
+  # explicit_import_roots is set here too: Library.delete_download_source/1 now requires an
+  # EXPLICITLY configured import root (Settings.explicit_import_roots/0), never an inferred one
+  # (issue #119 review) — this file's fixtures use both `/downloads` (movie) and `/dl` (TV) source
+  # roots, so both are listed.
   setup do
     saved = Application.get_env(:cinder, :move_on_import)
+    saved_roots = Application.get_env(:cinder, :explicit_import_roots)
+
+    Application.put_env(:cinder, :explicit_import_roots, ["/downloads", "/dl"])
 
     on_exit(fn ->
       case saved do
         nil -> Application.delete_env(:cinder, :move_on_import)
         v -> Application.put_env(:cinder, :move_on_import, v)
+      end
+
+      case saved_roots do
+        nil -> Application.delete_env(:cinder, :explicit_import_roots)
+        v -> Application.put_env(:cinder, :explicit_import_roots, v)
       end
     end)
 
@@ -77,6 +90,50 @@ defmodule Cinder.Download.MoveOnImportTest do
     stub_single_file_import()
   end
 
+  defp enable_media_info do
+    saved = Application.get_env(:cinder, :media_info)
+    Application.put_env(:cinder, :media_info, Cinder.Library.MediaInfoMock)
+
+    on_exit(fn ->
+      if saved,
+        do: Application.put_env(:cinder, :media_info, saved),
+        else: Application.delete_env(:cinder, :media_info)
+    end)
+  end
+
+  defp release_policy_snapshot(release_title) do
+    %{
+      "version" => 1,
+      "required_audio_languages" => ["ja", "fr"],
+      "required_embedded_subtitle_languages" => [],
+      "release_group" => "group",
+      "release_title" => release_title
+    }
+  end
+
+  # A :downloaded, usenet-protocol movie carrying a frozen release policy snapshot, so
+  # Library.stage_movie/1 runs the post-download MediaInfo verification.
+  defp usenet_policy_movie(tmdb_id, download_id, source) do
+    movie =
+      movie_fixture(%{
+        tmdb_id: tmdb_id,
+        title: "Anime Movie",
+        status: :downloaded,
+        download_id: download_id,
+        download_protocol: :usenet,
+        release_title: "[Group] Anime Movie [1080p]",
+        file_path: source
+      })
+
+    {:ok, movie} =
+      Catalog.transition(movie, %{
+        status: :downloaded,
+        release_policy_snapshot: release_policy_snapshot(movie.release_title)
+      })
+
+    movie
+  end
+
   defp series_tree do
     series = series_fixture(%{tvdb_id: 99, monitor_strategy: :all})
     season = season_fixture(series)
@@ -93,14 +150,14 @@ defmodule Cinder.Download.MoveOnImportTest do
       echo_remove(Cinder.Download.SabnzbdClientMock)
       stub_rm_rf()
 
-      assert :ok = Download.remove_after_import(:usenet, "nzo-x")
+      assert :ok = Download.remove_after_import(:usenet, "nzo-x", nil)
       assert_receive {:removed, "nzo-x", opts}
       assert opts[:delete_files] == true
     end
 
     test "is a no-op when the toggle is off" do
       echo_remove(Cinder.Download.SabnzbdClientMock)
-      assert :ok = Download.remove_after_import(:usenet, "nzo-x")
+      assert :ok = Download.remove_after_import(:usenet, "nzo-x", nil)
       refute_receive {:removed, _, _}
     end
 
@@ -109,8 +166,8 @@ defmodule Cinder.Download.MoveOnImportTest do
       echo_remove(Cinder.Download.SabnzbdClientMock)
       echo_remove(Cinder.Download.ClientMock)
 
-      assert :ok = Download.remove_after_import(:torrent, "hash-x")
-      assert :ok = Download.remove_after_import(nil, "x")
+      assert :ok = Download.remove_after_import(:torrent, "hash-x", nil)
+      assert :ok = Download.remove_after_import(nil, "x", nil)
       assert :ok = Download.remove_after_import(:usenet, nil, "/downloads/x")
       assert :ok = Download.remove_after_import(:usenet, "", "/downloads/x")
       refute_receive {:removed, _, _}
@@ -119,13 +176,13 @@ defmodule Cinder.Download.MoveOnImportTest do
     test "a raising client cannot unwind the caller; still returns :ok" do
       enable()
       stub(Cinder.Download.SabnzbdClientMock, :remove, fn _id, _opts -> raise "client down" end)
-      assert :ok = Download.remove_after_import(:usenet, "nzo-x")
+      assert :ok = Download.remove_after_import(:usenet, "nzo-x", nil)
     end
 
     test "a client {:error,_} is swallowed; returns :ok" do
       enable()
       stub(Cinder.Download.SabnzbdClientMock, :remove, fn _id, _opts -> {:error, :boom} end)
-      assert :ok = Download.remove_after_import(:usenet, "nzo-x")
+      assert :ok = Download.remove_after_import(:usenet, "nzo-x", nil)
     end
   end
 
@@ -209,6 +266,7 @@ defmodule Cinder.Download.MoveOnImportTest do
       assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
       # movie.file_path (pre-import content_path) is what gets deleted, never the imported dest.
       assert_receive {:rm_rf, "/downloads/M.mkv"}
+      refute_receive {:rm_rf, "/tmp/cinder-test-library/M {tmdb-11}/M {tmdb-11}.mkv"}
     end
 
     test "an already-gone download-side source doesn't fail the import; movie still :available" do
@@ -306,6 +364,54 @@ defmodule Cinder.Download.MoveOnImportTest do
       assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
       assert_receive {:rm_rf, "/downloads/cinder-up/Better.1080p.mkv"}
       refute_receive {:rm_rf, "/lib/M (2020)/M (2020).mkv"}
+    end
+  end
+
+  describe "movie poller reject path (issue #119 review — reject leaked the download source)" do
+    test "a provable policy mismatch is a discard: deletes its download-side source" do
+      enable()
+      enable_media_info()
+      source = "/downloads/cinder-reject/Anime.Movie.mkv"
+      movie = usenet_policy_movie(21, "nzo-reject", source)
+
+      expect(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
+
+      expect(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source ->
+        {:ok, %{audio: ["ja"], subtitles: [], audio_unknown?: false, subtitle_unknown?: false}}
+      end)
+
+      echo_remove(Cinder.Download.SabnzbdClientMock)
+      echo_rm_rf()
+      start_supervised!({Poller, interval: 60_000})
+
+      assert :ok = Poller.poll()
+
+      assert %Movie{status: :requested, download_id: nil, release_title: nil} =
+               Repo.get!(Movie, movie.id)
+
+      assert_receive {:rm_rf, ^source}
+      assert_receive {:removed, "nzo-reject", [delete_files: true]}
+    end
+
+    test "an unverdictable probe holds for verification and never deletes the source" do
+      enable()
+      enable_media_info()
+      source = "/downloads/cinder-hold/Anime.Movie.mkv"
+      movie = usenet_policy_movie(22, "nzo-hold", source)
+      {:ok, movie} = Catalog.transition(movie, %{status: :downloaded, import_attempts: 9})
+
+      expect(Cinder.Library.FilesystemMock, :dir?, fn ^source -> false end)
+      expect(Cinder.Library.MediaInfoMock, :probe_policy, fn ^source -> {:error, :timeout} end)
+
+      stub(Cinder.Library.FilesystemMock, :rm_rf, fn _path ->
+        flunk("rm_rf should not be called for a verification hold")
+      end)
+
+      start_supervised!({Poller, interval: 60_000})
+      assert :ok = Poller.poll()
+
+      assert %Movie{status: :import_failed, verification_hold_origin: :download} =
+               Repo.get!(Movie, movie.id)
     end
   end
 

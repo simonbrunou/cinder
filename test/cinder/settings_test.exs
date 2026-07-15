@@ -36,6 +36,7 @@ defmodule Cinder.SettingsTest do
     :tv_preferred_resolutions,
     :tv_preferred_sources,
     :import_roots,
+    :explicit_import_roots,
     :move_on_import,
     :ffprobe_bin,
     :anime_preferences
@@ -103,6 +104,20 @@ defmodule Cinder.SettingsTest do
       Application.put_env(:cinder, :tv_library_path, "/srv/media/tv")
       Application.delete_env(:cinder, :import_roots)
       assert Settings.import_roots() == []
+    end
+
+    test "explicit_import_roots is nil for an inferred/absent setting, set once configured" do
+      Application.delete_env(:cinder, :import_roots)
+      Settings.load_into_env()
+      assert Settings.explicit_import_roots() == nil
+
+      Settings.put("import_roots", "/srv/downloads")
+      assert Settings.explicit_import_roots() == ["/srv/downloads"]
+      # import_roots/0 (the read path) still returns the same explicit value here.
+      assert Settings.import_roots() == ["/srv/downloads"]
+
+      Settings.delete("import_roots")
+      assert Settings.explicit_import_roots() == nil
     end
 
     test "non-secret values are stored as plaintext and round-trip" do

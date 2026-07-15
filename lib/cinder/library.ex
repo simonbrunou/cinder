@@ -1802,19 +1802,23 @@ defmodule Cinder.Library do
   here can't depend on that history surviving (issue #115).
 
   Idempotent: a `nil`/blank path or an already-missing entry is `:ok`. Contained strictly to the
-  configured download import roots (`Settings.import_roots/0`) — the same boundary import reads
-  already enforce — so this can never reach outside the downloads area, and an import root itself
-  is rejected (only entries strictly inside a root are deletable, so a misreporting client can't
-  wipe the whole downloads dir). A path outside the roots, a root itself, a symlink anywhere in
-  it, or an entry that is neither a regular file nor a directory fails closed with
-  `{:error, :unsafe_delete}`.
+  **explicitly configured** import roots (`Settings.explicit_import_roots/0`) — never an inferred
+  one: `Settings.import_roots/0` (what import reads use) falls back to a guessed common ancestor
+  of the library paths when no `import_roots` setting is set, and that guess can be a whole
+  downloads-category directory (e.g. `/data` for `/data/movies` + `/data/tv`); authorizing `rm_rf`
+  against it on a misreported `content_path` would risk wiping every other in-flight download.
+  With only inferred/absent roots, deletion is skipped with `{:error, :import_roots_not_explicit}`
+  rather than guessing. An import root itself is rejected too (only entries strictly inside a
+  root are deletable, so a misreporting client can't wipe the whole downloads dir). A path outside
+  the roots, a root itself, a symlink anywhere in it, or an entry that is neither a regular file
+  nor a directory fails closed with `{:error, :unsafe_delete}`.
   """
   @spec delete_download_source(String.t() | nil) :: :ok | {:error, term()}
   def delete_download_source(path) when path in [nil, ""], do: :ok
 
   def delete_download_source(path) do
-    case Settings.import_roots() do
-      [] -> {:error, :download_roots_not_configured}
+    case Settings.explicit_import_roots() do
+      nil -> {:error, :import_roots_not_explicit}
       roots -> do_delete_download_source(path, roots)
     end
   end

@@ -860,7 +860,7 @@ defmodule Cinder.Download do
 
   A failure in either is logged, never propagated. Always `:ok`.
   """
-  def remove_after_import(protocol, download_id, content_path \\ nil) do
+  def remove_after_import(protocol, download_id, content_path) do
     move_on_import? = Application.get_env(:cinder, :move_on_import, false)
 
     if move_on_import? and protocol == :usenet do

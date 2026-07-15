@@ -89,19 +89,7 @@ defmodule Cinder.Library.PathPolicy do
   def deletable_file(path, roots), do: deletable_file(path, roots, filesystem: File)
 
   @doc false
-  def deletable_file(path, roots, opts) do
-    filesystem = Keyword.fetch!(opts, :filesystem)
-    expanded = Path.expand(path)
-
-    with true <- under_any_root?(expanded, roots),
-         :ok <- safe_components(expanded, filesystem, true),
-         result when result in [:ok, :missing] <-
-           existing_type_or_missing(expanded, filesystem, [:regular]) do
-      :ok
-    else
-      _ -> {:error, :unsafe_delete}
-    end
-  end
+  def deletable_file(path, roots, opts), do: deletable(path, roots, opts, [:regular], false)
 
   @doc """
   A download-side sibling of `deletable_file/3`: the same containment and symlink guard, but also
@@ -115,15 +103,23 @@ defmodule Cinder.Library.PathPolicy do
   def deletable_source(path, roots), do: deletable_source(path, roots, filesystem: File)
 
   @doc false
-  def deletable_source(path, roots, opts) do
+  def deletable_source(path, roots, opts),
+    do: deletable(path, roots, opts, [:regular, :directory], true)
+
+  # Shared by deletable_file/3 and deletable_source/3: same containment + no-symlink pipeline,
+  # differing only in the allowed leaf types and whether the root itself is rejected. Only
+  # deletable_source rejects the root (a directory there is rm_rf'd, so containment must be
+  # strict); deletable_file must NOT gain that check — a missing root still passes it via
+  # `existing_type_or_missing`'s `:missing` branch, an accepted pre-existing edge case.
+  defp deletable(path, roots, opts, allowed_types, reject_root?) do
     filesystem = Keyword.fetch!(opts, :filesystem)
     expanded = Path.expand(path)
 
     with true <- under_any_root?(expanded, roots),
-         false <- root_itself?(expanded, roots),
+         true <- not reject_root? or not root_itself?(expanded, roots),
          :ok <- safe_components(expanded, filesystem, true),
          result when result in [:ok, :missing] <-
-           existing_type_or_missing(expanded, filesystem, [:regular, :directory]) do
+           existing_type_or_missing(expanded, filesystem, allowed_types) do
       :ok
     else
       _ -> {:error, :unsafe_delete}

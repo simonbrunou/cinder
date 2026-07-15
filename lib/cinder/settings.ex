@@ -335,6 +335,18 @@ defmodule Cinder.Settings do
     end
   end
 
+  @doc """
+  The `import_roots` setting exactly as configured, or `nil` when unset — never the
+  common-ancestor guess `import_roots/0` falls back to for reads. `import_roots/0`'s inference
+  bakes the guessed root into the same `:cinder, :import_roots` env key it returns, so a reader
+  can't tell "an operator typed this" from "we guessed it." Deletion needs that distinction:
+  authorizing `rm_rf` against an inferred root (which can be a whole downloads-category
+  directory, e.g. `/data` for `/data/movies` + `/data/tv`) on a misreported `content_path` is
+  unsafe, so `Library.delete_download_source/1` requires an explicit root and never falls back.
+  """
+  @spec explicit_import_roots() :: [String.t()] | nil
+  def explicit_import_roots, do: Application.get_env(:cinder, :explicit_import_roots)
+
   @doc "Expanded library roots permitted as managed destinations."
   @spec library_roots() :: [String.t()]
   def library_roots do
@@ -790,13 +802,14 @@ defmodule Cinder.Settings do
   end
 
   defp apply_import_roots(rows) do
-    roots =
+    explicit =
       case decoded_for(rows, @import_roots_key) do
-        nil -> inferred_import_roots()
+        nil -> nil
         value -> parse_import_roots(value)
       end
 
-    Application.put_env(:cinder, :import_roots, roots)
+    Application.put_env(:cinder, :import_roots, explicit || inferred_import_roots())
+    Application.put_env(:cinder, :explicit_import_roots, explicit)
   end
 
   defp apply_kind_config(rows, kind) do
