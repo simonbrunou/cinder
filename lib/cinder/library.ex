@@ -1801,11 +1801,13 @@ defmodule Cinder.Library do
   history already evicted the job silently no-ops on its own remove call, so filesystem cleanup
   here can't depend on that history surviving (issue #115).
 
-  Idempotent: a `nil`/blank path or an already-missing entry is `:ok`. Contained to the configured
-  download import roots (`Settings.import_roots/0`) — the same boundary import reads already
-  enforce — so this can never reach outside the downloads area, and in particular never a library
-  path (a disjoint root set). A path outside the roots, a symlink anywhere in it, or an entry that
-  is neither a regular file nor a directory fails closed with `{:error, :unsafe_delete}`.
+  Idempotent: a `nil`/blank path or an already-missing entry is `:ok`. Contained strictly to the
+  configured download import roots (`Settings.import_roots/0`) — the same boundary import reads
+  already enforce — so this can never reach outside the downloads area, and an import root itself
+  is rejected (only entries strictly inside a root are deletable, so a misreporting client can't
+  wipe the whole downloads dir). A path outside the roots, a root itself, a symlink anywhere in
+  it, or an entry that is neither a regular file nor a directory fails closed with
+  `{:error, :unsafe_delete}`.
   """
   @spec delete_download_source(String.t() | nil) :: :ok | {:error, term()}
   def delete_download_source(path) when path in [nil, ""], do: :ok

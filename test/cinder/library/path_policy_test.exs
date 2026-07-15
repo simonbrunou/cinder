@@ -146,6 +146,23 @@ defmodule Cinder.Library.PathPolicyTest do
     assert {:error, :unsafe_delete} = PathPolicy.deletable_source(outside, [downloads])
   end
 
+  @tag :tmp_dir
+  test "deletable_source rejects the import root itself — a misreported content_path equal to the root must never rm_rf the whole downloads dir",
+       %{tmp_dir: tmp} do
+    downloads = Path.join(tmp, "downloads")
+    File.mkdir_p!(downloads)
+
+    assert {:error, :unsafe_delete} = PathPolicy.deletable_source(downloads, [downloads])
+    # Trailing-slash / unnormalized spellings of the same root are still the root.
+    assert {:error, :unsafe_delete} = PathPolicy.deletable_source(downloads <> "/", [downloads])
+    assert {:error, :unsafe_delete} = PathPolicy.deletable_source(downloads, [downloads <> "/"])
+
+    # Strictness only excludes the root itself, not its children.
+    child = Path.join(downloads, "cinder-abc")
+    File.mkdir_p!(child)
+    assert :ok = PathPolicy.deletable_source(child, [downloads])
+  end
+
   test "Library defaults to the real policy when no test override is configured" do
     saved = Application.get_env(:cinder, :path_policy)
     Application.delete_env(:cinder, :path_policy)

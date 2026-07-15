@@ -106,8 +106,10 @@ defmodule Cinder.Library.PathPolicy do
   @doc """
   A download-side sibling of `deletable_file/3`: the same containment and symlink guard, but also
   allows a directory — a completed download is often a whole per-operation folder, not a single
-  file (issue #115) — in addition to a regular file. Still fails closed on anything else and on a
-  symlink anywhere in the path.
+  file (issue #115) — in addition to a regular file. Because a directory here is `rm_rf`'d,
+  containment is strict: a path equal to an import root itself is rejected (deleting it would
+  wipe every other download), only entries strictly inside a root pass. Still fails closed on
+  anything else and on a symlink anywhere in the path.
   """
   @spec deletable_source(String.t(), [String.t()]) :: :ok | {:error, :unsafe_delete}
   def deletable_source(path, roots), do: deletable_source(path, roots, filesystem: File)
@@ -118,6 +120,7 @@ defmodule Cinder.Library.PathPolicy do
     expanded = Path.expand(path)
 
     with true <- under_any_root?(expanded, roots),
+         false <- root_itself?(expanded, roots),
          :ok <- safe_components(expanded, filesystem, true),
          result when result in [:ok, :missing] <-
            existing_type_or_missing(expanded, filesystem, [:regular, :directory]) do
@@ -126,6 +129,8 @@ defmodule Cinder.Library.PathPolicy do
       _ -> {:error, :unsafe_delete}
     end
   end
+
+  defp root_itself?(path, roots), do: Enum.any?(roots, &(Path.expand(&1) == path))
 
   @doc false
   @spec contained?(String.t(), String.t()) :: boolean()
