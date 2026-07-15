@@ -35,9 +35,9 @@ defmodule Cinder.Download.Client.Sabnzbd do
   @max_response_bytes 4 * 1024 * 1024
   # SABnzbd truncates job names at `max_foldername_length` (default 246) BYTES from the tail,
   # which would cut off the mandatory ".cinder-<key>" suffix find_by_operation_key/1 depends on.
-  # 200 protects against that DEFAULT; an operator-lowered value <= 200 can still truncate the
-  # tail — the nzb_name/failed-fetch matcher arms in matching_named_slots/3 are the recovery
-  # fallback there, not a guarantee this constant alone prevents it.
+  # 200 protects against that DEFAULT only. An operator-lowered value <= 200 still truncates the
+  # tail, and that loss is unrecoverable: SABnzbd's queue/history search is a LIKE on the display
+  # name, so a name that lost the key tail is never even returned for client-side matching.
   @max_nzbname_bytes 200
 
   def add(release), do: add(release, [])
@@ -164,7 +164,8 @@ defmodule Cinder.Download.Client.Sabnzbd do
   #   2. `nzb_name` in history keeps the .nzb extension SABnzbd stored it with —
   #      "<title>.cinder-<key>.nzb";
   #   3. a failed URL-fetch job (urlgrabber.py fail_to_history) is renamed to
-  #      "<our nzbname> - <url>" — the key ends up mid-string, not at the tail.
+  #      "<our nzbname> - <url>" — the key ends up mid-string, not at the tail. The
+  #      arm requires the " - http" URL tail so only that rename shape matches.
   # An unanchored `contains?` on the bare key is deliberately rejected: a completed
   # download's own output file (e.g. "Title.cinder-op-123.mkv") can re-enter the indexer
   # as a future release's title, and a substring match would collide with that re-post.
@@ -183,7 +184,7 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   defp named?(value, name) when is_binary(value) do
     String.ends_with?(value, name) or String.ends_with?(value, name <> ".nzb") or
-      String.contains?(value, name <> " - ")
+      String.contains?(value, name <> " - http")
   end
 
   defp named?(_value, _name), do: false
