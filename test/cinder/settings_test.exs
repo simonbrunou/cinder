@@ -120,6 +120,33 @@ defmodule Cinder.SettingsTest do
       assert Settings.explicit_import_roots() == nil
     end
 
+    test "import_roots infers the common root from DB-only-configured library paths on boot" do
+      # Regression: apply_import_roots's inferred_import_roots/0 fallback reads the
+      # :movies_library_path/:tv_library_path env keys that apply_library_config writes, so it
+      # must run AFTER apply_library_config in load_into_env/0. Clear the env keys (simulating a
+      # boot with no *_LIBRARY_PATH vars set) and insert the library paths directly as DB rows
+      # (bypassing put/0's auto-load, like the "DB overrides the env bootstrap on the boot path"
+      # test above) so load_into_env/0 has to derive :import_roots from the DB rows in a single
+      # pass, not from an already-overlaid env.
+      Application.delete_env(:cinder, :movies_library_path)
+      Application.delete_env(:cinder, :tv_library_path)
+      Application.delete_env(:cinder, :import_roots)
+      Application.delete_env(:cinder, :explicit_import_roots)
+
+      Repo.insert!(%Setting{
+        key: "movies_library_path",
+        value: "/srv/media/movies",
+        is_secret: false
+      })
+
+      Repo.insert!(%Setting{key: "tv_library_path", value: "/srv/media/tv", is_secret: false})
+
+      assert Settings.load_into_env() == :ok
+
+      assert Settings.import_roots() == ["/srv/media"]
+      assert Settings.explicit_import_roots() == nil
+    end
+
     test "non-secret values are stored as plaintext and round-trip" do
       Settings.put("prowlarr_url", "http://example:9696")
 

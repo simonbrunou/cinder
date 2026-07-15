@@ -684,16 +684,21 @@ defmodule Cinder.Settings do
   """
   def load_into_env do
     rows = rows_by_key()
-    # apply_import_roots writes the only fail-OPEN env key (:explicit_import_roots authorizes
-    # rm_rf), so it runs first — a partial load failure below can then only leave it in its
-    # just-written (correct) or boot-nil (fail-closed) state, never stale-authorized after a
-    # revoke.
-    apply_import_roots(rows)
+    # apply_explicit_import_roots writes the only fail-OPEN env key (:explicit_import_roots
+    # authorizes rm_rf), so it runs first — a partial load failure below can then only leave it
+    # in its just-written (correct) or boot-nil (fail-closed) state, never stale-authorized after
+    # a revoke.
+    apply_explicit_import_roots(rows)
     apply_config_fields(rows)
     apply_anime_config(rows)
     apply_media_server(rows)
     apply_download_clients(rows)
     apply_library_config(rows)
+    # apply_import_roots (the read-scope :import_roots key) must run here: its
+    # inferred_import_roots/0 fallback reads the :"#{kind}_library_path" env keys that
+    # apply_library_config just wrote above — position-enforced only, a future reorder must not
+    # move this ahead of apply_library_config.
+    apply_import_roots(rows)
     apply_move_on_import(rows)
     apply_ffprobe_bin(rows)
     :ok
@@ -805,15 +810,23 @@ defmodule Cinder.Settings do
     :ok
   end
 
-  defp apply_import_roots(rows) do
-    explicit =
-      case decoded_for(rows, @import_roots_key) do
-        nil -> nil
-        value -> parse_import_roots(value)
-      end
+  defp apply_explicit_import_roots(rows) do
+    Application.put_env(:cinder, :explicit_import_roots, explicit_roots_from(rows))
+  end
 
-    Application.put_env(:cinder, :import_roots, explicit || inferred_import_roots())
-    Application.put_env(:cinder, :explicit_import_roots, explicit)
+  defp apply_import_roots(rows) do
+    Application.put_env(
+      :cinder,
+      :import_roots,
+      explicit_roots_from(rows) || inferred_import_roots()
+    )
+  end
+
+  defp explicit_roots_from(rows) do
+    case decoded_for(rows, @import_roots_key) do
+      nil -> nil
+      value -> parse_import_roots(value)
+    end
   end
 
   defp apply_kind_config(rows, kind) do
