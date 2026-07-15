@@ -35,7 +35,9 @@ defmodule Cinder.Download.Client.Sabnzbd do
   @max_response_bytes 4 * 1024 * 1024
   # SABnzbd truncates job names at `max_foldername_length` (default 246) BYTES from the tail,
   # which would cut off the mandatory ".cinder-<key>" suffix find_by_operation_key/1 depends on.
-  # 200 keeps the full name comfortably under the default with room for a lower operator value.
+  # 200 protects against that DEFAULT; an operator-lowered value <= 200 can still truncate the
+  # tail — the nzb_name/failed-fetch matcher arms in matching_named_slots/3 are the recovery
+  # fallback there, not a guarantee this constant alone prevents it.
   @max_nzbname_bytes 200
 
   def add(release), do: add(release, [])
@@ -79,17 +81,30 @@ defmodule Cinder.Download.Client.Sabnzbd do
   defp nzbname(release, key) do
     suffix = ".#{operation_name(key)}"
 
+    # Behaviour-typed keys could someday exceed @max_nzbname_bytes on their own; don't go negative.
+    budget = max(@max_nzbname_bytes - byte_size(suffix), 0)
+
     case release |> Map.get(:title) |> sanitize_title() do
       "" ->
         operation_name(key)
 
       title ->
-        trimmed =
+        # Pre-bound before the byte-trim loop: every grapheme is >= 1 byte, so slicing to
+        # `budget` graphemes upfront caps the loop below at `budget` iterations regardless of
+        # the (indexer-controlled) original title length — an unbounded 210KB CJK title took
+        # ~107s in that loop inside the poller GenServer without this.
+        trimmed_title =
           title
-          |> truncate_bytes(@max_nzbname_bytes - byte_size(suffix))
+          |> String.slice(0, budget)
+          |> truncate_bytes(budget)
           |> String.replace(~r/[.\s]+$/, "")
 
-        trimmed <> suffix
+        case trimmed_title do
+          # A leading-dot job name is a hidden dir to SABnzbd; reachable via a single
+          # >155-byte grapheme cluster that trims to nothing. Fall back to the bare key.
+          "" -> operation_name(key)
+          trimmed -> trimmed <> suffix
+        end
     end
   end
 
@@ -101,12 +116,24 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   defp operation_name(key), do: "cinder-#{key}"
 
-  @hostile_chars ~r/[\/\\:*?"<>|\x00-\x1f\x7f.]+/
+  @hostile_chars ~r/[\/\\:*?"<>|\x00-\x1f\x7f.{}=]+/
 
+  # SABnzbd runs scan_password on the submitted nzbname BEFORE building the work name
+  # (nzb/object.py:243→250): a `password=` substring truncates the stored name right there, and
+  # an unanchored `{{` with a later `}}` truncates at the `{{` — neutralize `{`, `}`, `=` up
+  # front so neither token form can survive. SABnzbd also NFC-normalizes the name before its own
+  # byte-length truncation (filesystem.py:267→282), and NFC can EXPAND bytes (e.g. U+0958:
+  # 3→6 bytes), so our byte cap must count post-NFC bytes too — normalize first, same as SABnzbd.
   defp sanitize_title(title) when is_binary(title) do
-    title
-    |> String.replace(@hostile_chars, ".")
-    |> String.replace(~r/^[.\s]+|[.\s]+$/, "")
+    case :unicode.characters_to_nfc_binary(title) do
+      normalized when is_binary(normalized) ->
+        normalized
+        |> String.replace(@hostile_chars, ".")
+        |> String.replace(~r/^[.\s]+|[.\s]+$/, "")
+
+      _not_a_binary ->
+        ""
+    end
   end
 
   defp sanitize_title(_title), do: ""
@@ -130,9 +157,17 @@ defmodule Cinder.Download.Client.Sabnzbd do
     end
   end
 
-  # Matches by suffix (not equality): a job may be named "<title>.cinder-<key>"
-  # (the deobfuscation-safe name) or, for a legacy in-flight job, exactly
-  # "cinder-<key>" — both END with the operation-key needle.
+  # Matches one of three real SABnzbd name shapes for our "<title>.cinder-<key>" job name,
+  # never a bare `contains?` on the key:
+  #   1. suffix — "<title>.cinder-<key>" (or, for a legacy in-flight job, exactly
+  #      "cinder-<key>");
+  #   2. `nzb_name` in history keeps the .nzb extension SABnzbd stored it with —
+  #      "<title>.cinder-<key>.nzb";
+  #   3. a failed URL-fetch job (urlgrabber.py fail_to_history) is renamed to
+  #      "<our nzbname> - <url>" — the key ends up mid-string, not at the tail.
+  # An unanchored `contains?` on the bare key is deliberately rejected: a completed
+  # download's own output file (e.g. "Title.cinder-op-123.mkv") can re-enter the indexer
+  # as a future release's title, and a substring match would collide with that re-post.
   defp matching_named_slots(body, mode, name) do
     case body do
       %{^mode => %{"slots" => slots}} when is_list(slots) ->
@@ -146,7 +181,11 @@ defmodule Cinder.Download.Client.Sabnzbd do
     end
   end
 
-  defp named?(value, name) when is_binary(value), do: String.ends_with?(value, name)
+  defp named?(value, name) when is_binary(value) do
+    String.ends_with?(value, name) or String.ends_with?(value, name <> ".nzb") or
+      String.contains?(value, name <> " - ")
+  end
+
   defp named?(_value, _name), do: false
 
   defp unique_remote_id(results) do

@@ -92,7 +92,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
 
     stub(fn conn ->
       nzbname = conn.params["nzbname"]
-      assert byte_size(nzbname) <= 200
+      assert byte_size(nzbname) == 200
       assert String.ends_with?(nzbname, "cinder-op-123")
       Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["nzo-123"]})
     end)
@@ -230,13 +230,43 @@ defmodule Cinder.Download.Client.SabnzbdTest do
 
           Req.Test.json(conn, %{
             "history" => %{
-              "slots" => [%{"nzb_name" => "cinder-op-123", "nzo_id" => "nzo-archive"}]
+              "slots" => [
+                %{"nzb_name" => "Title.cinder-op-123.nzb", "nzo_id" => "nzo-archive"}
+              ]
             }
           })
       end
     end)
 
     assert {:ok, "nzo-archive"} = Sabnzbd.find_by_operation_key("op-123")
+  end
+
+  test "find_by_operation_key/1 matches a failed-URL-fetch job SABnzbd renamed with ' - <url>'" do
+    # urlgrabber.py's fail_to_history renames the job to "<our nzbname> - <url>", appended
+    # AFTER our suffix — the key ends up mid-string, not at the tail.
+    stub(fn conn ->
+      body =
+        case conn.params["mode"] do
+          "queue" ->
+            %{"queue" => %{"slots" => []}}
+
+          "history" ->
+            %{
+              "history" => %{
+                "slots" => [
+                  %{
+                    "name" => "Title.cinder-op-123 - http://indexer/get/123",
+                    "nzo_id" => "nzo-failed"
+                  }
+                ]
+              }
+            }
+        end
+
+      Req.Test.json(conn, body)
+    end)
+
+    assert {:ok, "nzo-failed"} = Sabnzbd.find_by_operation_key("op-123")
   end
 
   test "find_by_operation_key/1 rejects duplicate exact queue names" do
