@@ -67,6 +67,145 @@ defmodule Cinder.Library.AnimePreflightTest do
     refute json =~ fixture["absolute_download_root"]
   end
 
+  describe "lone-file release inference (issue #123)" do
+    test "an unparseable file resolves via release inference when exactly one episode is reserved" do
+      fixture = %{
+        "snapshot_version" => 2,
+        "parser_context" => %{"title" => "Frieren", "aliases" => [], "year" => 2023},
+        "mappings" => [],
+        "inventory" => [
+          %{
+            "relative_path" => "cinder-a1b2c3d4e5f6.mkv",
+            "size" => 1000,
+            "major_device" => 1,
+            "inode" => 200,
+            "mtime" => 100
+          }
+        ],
+        "episodes" => [%{"id" => 101, "season_number" => 1, "episode_number" => 1}]
+      }
+
+      assert {:ok, result} = run_fixture(fixture)
+      assert assignment_map(result.assignments) == %{"cinder-a1b2c3d4e5f6.mkv" => [101]}
+
+      assert [%{"source" => "release_inference", "evidence" => evidence}] =
+               result.decisions["files"]
+
+      assert evidence == %{"resolution" => "release_inference"}
+    end
+
+    test "a second file in the inventory still needs mapping even with one reserved episode" do
+      fixture = %{
+        "snapshot_version" => 2,
+        "parser_context" => %{"title" => "Frieren", "aliases" => [], "year" => 2023},
+        "mappings" => [
+          %{
+            "identity" => %{
+              "source" => "cinder",
+              "scheme" => "standard",
+              "namespace" => "canonical",
+              "canonical_value" => "S01E01"
+            },
+            "precedence" => "manual",
+            "episode_ids" => [101],
+            "evidence" => nil
+          }
+        ],
+        "inventory" => [
+          %{
+            "relative_path" => "Frieren - S01E01.mkv",
+            "size" => 1000,
+            "major_device" => 1,
+            "inode" => 200,
+            "mtime" => 100
+          },
+          %{
+            "relative_path" => "cinder-a1b2c3d4e5f6.mkv",
+            "size" => 1001,
+            "major_device" => 1,
+            "inode" => 201,
+            "mtime" => 100
+          }
+        ],
+        "episodes" => [%{"id" => 101, "season_number" => 1, "episode_number" => 1}]
+      }
+
+      assert {:needs_mapping, result} = run_fixture(fixture)
+      assert result.issue["reason"] == "unresolved_file"
+      assert result.issue["relative_paths"] == ["cinder-a1b2c3d4e5f6.mkv"]
+    end
+
+    test "a lone unparseable file with two reserved episodes still needs mapping" do
+      fixture = %{
+        "snapshot_version" => 2,
+        "parser_context" => %{"title" => "Frieren", "aliases" => [], "year" => 2023},
+        "mappings" => [],
+        "inventory" => [
+          %{
+            "relative_path" => "cinder-a1b2c3d4e5f6.mkv",
+            "size" => 1000,
+            "major_device" => 1,
+            "inode" => 200,
+            "mtime" => 100
+          }
+        ],
+        "episodes" => [
+          %{"id" => 101, "season_number" => 1, "episode_number" => 1},
+          %{"id" => 102, "season_number" => 1, "episode_number" => 2}
+        ]
+      }
+
+      assert {:needs_mapping, result} = run_fixture(fixture)
+      assert result.issue["reason"] == "unresolved_file"
+    end
+
+    test "a lone file with an ambiguous resolution still needs mapping" do
+      fixture = %{
+        "snapshot_version" => 2,
+        "parser_context" => %{"title" => "Frieren", "aliases" => [], "year" => 2023},
+        "mappings" => [
+          %{
+            "identity" => %{
+              "source" => "one",
+              "scheme" => "standard",
+              "namespace" => "canonical",
+              "canonical_value" => "S01E01"
+            },
+            "precedence" => "manual",
+            "episode_ids" => [101],
+            "evidence" => nil
+          },
+          %{
+            "identity" => %{
+              "source" => "two",
+              "scheme" => "standard",
+              "namespace" => "alt",
+              "canonical_value" => "S01E01"
+            },
+            "precedence" => "manual",
+            "episode_ids" => [102],
+            "evidence" => nil
+          }
+        ],
+        "inventory" => [
+          %{
+            "relative_path" => "Frieren - S01E01.mkv",
+            "size" => 1000,
+            "major_device" => 1,
+            "inode" => 200,
+            "mtime" => 100
+          }
+        ],
+        "episodes" => [%{"id" => 101, "season_number" => 1, "episode_number" => 1}]
+      }
+
+      assert {:needs_mapping, result} = run_fixture(fixture)
+      assert result.issue["reason"] == "unresolved_file"
+
+      assert [%{"evidence" => %{"resolution" => "ambiguous"}}] = result.decisions["files"]
+    end
+  end
+
   defp run_fixture(fixture) do
     snapshot = %{
       "version" => fixture["snapshot_version"],

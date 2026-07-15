@@ -42,16 +42,16 @@ defmodule Cinder.Download.Client.Sabnzbd do
     # Req's default :safe_transient policy would retry up to 3× on a transient failure, re-queuing
     # the same download. Disable retry on the add path only (status/health stay idempotent-retryable).
     with {:ok, _uri} <- validate_url(url, Map.get(release, :download_url_origin)) do
-      add_url(url, opts)
+      add_url(url, release, opts)
     end
   end
 
   def add(%{download_url: _}, _opts), do: {:error, :unsupported_download_url}
 
-  defp add_url(url, opts) do
+  defp add_url(url, release, opts) do
     params =
       case Keyword.get(opts, :operation_key) do
-        key when is_binary(key) -> [mode: "addurl", name: url, nzbname: "cinder-#{key}"]
+        key when is_binary(key) -> [mode: "addurl", name: url, nzbname: nzbname(release, key)]
         _ -> [mode: "addurl", name: url]
       end
 
@@ -65,6 +65,30 @@ defmodule Cinder.Download.Client.Sabnzbd do
       other -> error(other)
     end
   end
+
+  # Name the job after the release title (with the operation key as a suffix) so
+  # SABnzbd's "deobfuscate final filenames" renames the video to a title-bearing
+  # name instead of the bare `cinder-<key>` job name, which would erase every
+  # episode marker the downstream parser depends on. The suffix stays mandatory:
+  # it's what makes the job findable via find_by_operation_key/1, and it keeps a
+  # legitimate re-grab of the same release from colliding on name alone.
+  defp nzbname(release, key) do
+    case release |> Map.get(:title) |> sanitize_title() do
+      "" -> "cinder-#{key}"
+      title -> "#{title}.cinder-#{key}"
+    end
+  end
+
+  @hostile_chars ~r/[\/\\:\*\?"<>\|\x00-\x1f\x7f]/
+
+  defp sanitize_title(title) when is_binary(title) do
+    title
+    |> String.replace(@hostile_chars, ".")
+    |> String.replace(~r/\.{2,}/, ".")
+    |> String.replace(~r/^[.\s]+|[.\s]+$/, "")
+  end
+
+  defp sanitize_title(_title), do: ""
 
   @impl true
   def find_by_operation_key(key) do
@@ -80,22 +104,29 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   defp named_slots(mode, name, extra \\ []) do
     case get([mode: mode, search: name] ++ extra) do
-      {:ok, %{status: 200, body: body}} -> {:ok, exact_named_slots(body, mode, name)}
+      {:ok, %{status: 200, body: body}} -> {:ok, matching_named_slots(body, mode, name)}
       other -> error(other)
     end
   end
 
-  defp exact_named_slots(body, mode, name) do
+  # Matches by substring (not equality): a job may be named "<title>.cinder-<key>"
+  # (the deobfuscation-safe name) or, for a legacy in-flight job, exactly
+  # "cinder-<key>".
+  defp matching_named_slots(body, mode, name) do
     case body do
       %{^mode => %{"slots" => slots}} when is_list(slots) ->
         Enum.filter(slots, fn slot ->
-          slot["filename"] == name or slot["name"] == name or slot["nzb_name"] == name
+          named?(slot["filename"], name) or named?(slot["name"], name) or
+            named?(slot["nzb_name"], name)
         end)
 
       _ ->
         []
     end
   end
+
+  defp named?(value, name) when is_binary(value), do: String.contains?(value, name)
+  defp named?(_value, _name), do: false
 
   defp unique_remote_id(results) do
     with {:ok, slots} <- collect_slots(results),

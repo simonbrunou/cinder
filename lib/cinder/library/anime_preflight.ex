@@ -13,9 +13,12 @@ defmodule Cinder.Library.AnimePreflight do
       year: context["year"]
     }
 
+    authoritative = authoritative_ids(episodes)
+
     inventory
     |> build_state({parser_context, snapshot["mappings"]})
-    |> validate(authoritative_ids(episodes))
+    |> infer_lone_file(authoritative)
+    |> validate(authoritative)
     |> result()
   end
 
@@ -24,6 +27,33 @@ defmodule Cinder.Library.AnimePreflight do
   defp build_state(inventory, parser) do
     %{files: Enum.map(inventory, &automatic_decision(&1, parser))}
   end
+
+  # Fully-determined single-file case: an obfuscated usenet post can't be parsed by filename, but
+  # if there's exactly one downloaded file and exactly one reserved episode, the release coordinate
+  # already resolved to that episode at grab time — infer the assignment instead of safe-stopping
+  # forever on an unparseable name. Multi-file inventories, multi-episode grabs, and ambiguous
+  # resolutions are untouched.
+  defp infer_lone_file(%{files: [file]} = state, authoritative) do
+    case {MapSet.to_list(authoritative), file} do
+      {[episode_id], %{episode_ids: [], ignored: false, evidence: %{resolution: :unmatched}}} ->
+        %{
+          state
+          | files: [
+              %{
+                file
+                | episode_ids: [episode_id],
+                  source: :release_inference,
+                  evidence: %{resolution: :release_inference}
+              }
+            ]
+        }
+
+      _ ->
+        state
+    end
+  end
+
+  defp infer_lone_file(state, _authoritative), do: state
 
   defp automatic_decision(entry, {context, mappings}) do
     parsed = AnimeParser.parse(Path.basename(entry.relative_path), context)

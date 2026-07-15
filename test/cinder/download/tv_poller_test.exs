@@ -530,14 +530,27 @@ defmodule Cinder.Download.TvPollerTest do
   test "an operator rename resolves a held grab, and Retry import finishes it", %{tmp_dir: tmp} do
     %{downloads: downloads} = use_real_tv_library(tmp)
     {_series, season} = series_tree()
-    episode = episode(season, 1)
+    # Two reserved episodes (not one) so the lone-file release-inference fallback (issue #123)
+    # doesn't auto-resolve this on the first poll — it's this test's job to prove the manual
+    # rename + retry path still works for a batch it can't safely infer.
+    episode1 = episode(season, 1)
+    episode2 = episode(season, 2)
     release_dir = Path.join(downloads, "Show.Batch")
     File.mkdir_p!(release_dir)
     bad_path = Path.join(release_dir, "Show.mkv")
     good_path = Path.join(release_dir, "Show.S01E01.mkv")
     File.write!(bad_path, "content")
+    File.write!(Path.join(release_dir, "Show.S01E02.mkv"), "content")
 
-    grab = downloaded_snapshot_grab([episode], release_dir, anime_standard_snapshot(episode))
+    base_mappings = anime_standard_snapshot(episode1)["mappings"]
+    other_mappings = anime_standard_snapshot(episode2)["mappings"]
+
+    snapshot = %{
+      anime_standard_snapshot(episode1)
+      | "mappings" => base_mappings ++ other_mappings
+    }
+
+    grab = downloaded_snapshot_grab([episode1, episode2], release_dir, snapshot)
 
     start_supervised!({TvPoller, interval: 60_000})
     assert :ok = TvPoller.poll()
@@ -545,7 +558,7 @@ defmodule Cinder.Download.TvPollerTest do
     held = Repo.get!(Grab, grab.id)
     assert held.mapping_status == :needs_mapping
     assert held.mapping_issue["reason"] == "unresolved_file"
-    refute Repo.get!(Episode, episode.id).file_path
+    refute Repo.get!(Episode, episode1.id).file_path
     assert File.exists?(bad_path)
 
     # The operator fixes the release on disk, then asks for a retry.
@@ -558,7 +571,8 @@ defmodule Cinder.Download.TvPollerTest do
     assert :ok = TvPoller.poll()
 
     refute Repo.get(Grab, grab.id)
-    assert Repo.get!(Episode, episode.id).file_path =~ "S01E01"
+    assert Repo.get!(Episode, episode1.id).file_path =~ "S01E01"
+    assert Repo.get!(Episode, episode2.id).file_path =~ "S01E02"
   end
 
   test "a mapping retry with still-bad files re-holds with a fresh reason, no infinite loop" do

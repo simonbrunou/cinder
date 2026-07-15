@@ -37,7 +37,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
              Sabnzbd.add(%{download_url: "http://prowlarr/getnzb/1?apikey=k&id=9"})
   end
 
-  test "add/2 names the job with the operation key" do
+  test "add/2 names the job with the operation key when the release has no title" do
     stub(fn conn ->
       assert conn.params["mode"] == "addurl"
       assert conn.params["nzbname"] == "cinder-op-123"
@@ -48,7 +48,46 @@ defmodule Cinder.Download.Client.SabnzbdTest do
              Sabnzbd.add(%{download_url: "http://x/nzb"}, operation_key: "op-123")
   end
 
-  test "find_by_operation_key/1 finds an exact queue name" do
+  test "add/2 names the job after the release title, suffixed with the operation key" do
+    # SABnzbd's "deobfuscate final filenames" renames the video to the job name — a
+    # title-bearing name survives that, a bare cinder-<key> name would erase every
+    # episode marker the downstream parser needs.
+    stub(fn conn ->
+      assert conn.params["nzbname"] == "Cowboy.Bebop.S01E22.1080p.BluRay-Kitsune.cinder-op-123"
+      Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["nzo-123"]})
+    end)
+
+    assert {:ok, "nzo-123"} =
+             Sabnzbd.add(
+               %{download_url: "http://x/nzb", title: "Cowboy.Bebop.S01E22.1080p.BluRay-Kitsune"},
+               operation_key: "op-123"
+             )
+  end
+
+  test "add/2 falls back to the plain operation-key name when the title is empty" do
+    stub(fn conn ->
+      assert conn.params["nzbname"] == "cinder-op-123"
+      Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["nzo-123"]})
+    end)
+
+    assert {:ok, "nzo-123"} =
+             Sabnzbd.add(%{download_url: "http://x/nzb", title: ""}, operation_key: "op-123")
+  end
+
+  test "add/2 sanitizes filesystem-hostile characters out of the title" do
+    stub(fn conn ->
+      assert conn.params["nzbname"] == "A.B.C.D.cinder-op-123"
+      Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["nzo-123"]})
+    end)
+
+    assert {:ok, "nzo-123"} =
+             Sabnzbd.add(
+               %{download_url: "http://x/nzb", title: ~s(A/B\\C:D*?"<>|)},
+               operation_key: "op-123"
+             )
+  end
+
+  test "find_by_operation_key/1 finds a legacy slot named exactly cinder-<key>" do
     stub(fn conn ->
       assert conn.params["search"] == "cinder-op-123"
 
@@ -71,13 +110,39 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     assert {:ok, "nzo-queue"} = Sabnzbd.find_by_operation_key("op-123")
   end
 
-  test "find_by_operation_key/1 searches normal history after an exact queue miss" do
+  test "find_by_operation_key/1 finds a slot named with the title-suffixed format" do
+    stub(fn conn ->
+      body =
+        case conn.params["mode"] do
+          "queue" ->
+            %{
+              "queue" => %{
+                "slots" => [
+                  %{
+                    "filename" => "Cowboy.Bebop.S01E22.cinder-op-123",
+                    "nzo_id" => "nzo-queue"
+                  }
+                ]
+              }
+            }
+
+          "history" ->
+            %{"history" => %{"slots" => []}}
+        end
+
+      Req.Test.json(conn, body)
+    end)
+
+    assert {:ok, "nzo-queue"} = Sabnzbd.find_by_operation_key("op-123")
+  end
+
+  test "find_by_operation_key/1 searches normal history after a queue miss" do
     stub(fn conn ->
       case {conn.params["mode"], conn.params["archive"]} do
         {"queue", _} ->
           Req.Test.json(conn, %{
             "queue" => %{
-              "slots" => [%{"filename" => "cinder-op-123-extra", "nzo_id" => "wrong"}]
+              "slots" => [%{"filename" => "cinder-op-999", "nzo_id" => "wrong"}]
             }
           })
 
