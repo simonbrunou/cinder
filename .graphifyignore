@@ -1,0 +1,13 @@
+# Keep the knowledge graph scoped to Cinder's own code.
+# Elixir vendors dependency source into the repo dir — without these
+# excludes ~86% of graph nodes were deps/ internals (Phoenix, Ecto, …).
+deps
+_build
+# Compiled/vendored frontend assets (topbar, daisyUI bundles, build output)
+assets/vendor
+priv/static
+node_modules
+# Tooling output & caches
+graphify-out
+.elixir_ls
+cover
