@@ -42,7 +42,7 @@ defmodule Cinder.Download.Poller do
   defp advance_downloading do
     # :upgrading is swept alongside :downloading — an :available movie re-downloading a chosen
     # replacement. It dispatches to its OWN advance clause (never the :downloading one, which would
-    # overwrite the live file_path with the download path before the swap).
+    # wrongly reset status/import_attempts and stage the new file before the atomic swap).
     movies = Catalog.list_by_status(:downloading) ++ Catalog.list_by_status(:upgrading)
     for movie <- movies, do: isolate("movie #{movie.id}", fn -> advance(movie) end)
   end
@@ -115,8 +115,8 @@ defmodule Cinder.Download.Poller do
   end
 
   # An :upgrading movie re-downloads a user-chosen replacement while its file_path STILL points at
-  # the live library file. It must never reuse the clause below (which writes file_path: content_path
-  # on completion) — that would destroy the live pointer. Its own path swaps the file atomically.
+  # the live library file. It must never reuse the clause below (which stamps content_path and the
+  # :downloaded status on completion) — its own path swaps the file atomically instead.
   defp advance(%Movie{status: :upgrading} = movie), do: advance_upgrade(movie)
 
   defp advance(movie) do
@@ -135,7 +135,7 @@ defmodule Cinder.Download.Poller do
   defp advance_with(movie, client) do
     case client.status(movie.download_id) do
       {:ok, %{state: :completed, content_path: path}} when path not in [nil, ""] ->
-        Catalog.transition(movie, %{status: :downloaded, file_path: path, import_attempts: 0},
+        Catalog.transition(movie, %{status: :downloaded, content_path: path, import_attempts: 0},
           expect: movie.status
         )
 
@@ -195,20 +195,21 @@ defmodule Cinder.Download.Poller do
   defp import_one(movie), do: movie |> Library.stage_movie() |> import_one_result(movie)
 
   defp import_one_result({:error, {:release_policy_mismatch, evidence}}, movie),
-    do: reject_release(movie, evidence, movie.file_path)
+    do: reject_release(movie, evidence, Movie.download_source(movie))
 
   defp import_one_result(result, movie) do
     case result do
       {:ok, %{dest: dest, quality: q} = stage} ->
         # On the (rare) transition error, leave the movie :downloaded for next-tick
         # retry rather than raising — matching the poller's ignore-and-retry convention.
-        # file_path moves from the download source to the library destination (the imported
-        # hardlink) so delete_files unlinks the actual library file, not the download copy.
+        # file_path becomes the library destination (the imported hardlink) and content_path is
+        # cleared, so a later delete_files unlinks the actual library file, not the download copy.
         case Catalog.transition(
                movie,
                %{
                  status: :available,
                  file_path: dest,
+                 content_path: nil,
                  imported_resolution: q.resolution,
                  imported_size: q.size,
                  imported_language: q.language,
@@ -225,12 +226,15 @@ defmodule Cinder.Download.Poller do
             Notifier.notify({:movie_available, available})
             # After the DB commit (the file is recorded as imported): a best-effort, gated
             # remove of the source download. Failure is logged, never strands or re-imports.
-            # movie.file_path is still the pre-import download source here (the transition above
-            # wrote file_path: dest only onto `available`, not onto this local `movie`).
+            # The source MUST be read off `movie` (the pre-transition struct), never `available`:
+            # `available.content_path` is nil (cleared above), so `Movie.download_source/1` would
+            # fall back to `file_path` — which on `available` IS the just-imported library file.
+            # Reading off the post-transition struct here would delete the library copy, not the
+            # download.
             Download.remove_after_import(
               movie.download_protocol,
               movie.download_id,
-              movie.file_path
+              Movie.download_source(movie)
             )
 
           # Cancelled/deleted while the import unit was hardlinking: no row will ever
@@ -382,9 +386,17 @@ defmodule Cinder.Download.Poller do
   # library file is swapped (replace/2) and the movie returns :available carrying the new quality;
   # if the new dest filename differs (a different container) the old file is removed best-effort so
   # the library never holds two files. Any failure reverts to :available, live file intact.
+  #
+  # Unlike the fresh-grab path, the new download's source is never written onto the row as
+  # `content_path` — only threaded as a local variable through this call chain (finish_upgrade →
+  # finish_upgrade_result → finalize_upgrade/reject_release). The override below routes that source
+  # through the model's primary field (`content_path`, per `Movie.download_source/1`) on this LOCAL
+  # struct only; the row's `content_path` column stays nil through :upgrading, deliberately (there is
+  # no :downloaded-equivalent status to persist it at without adding a write — and thus a new
+  # stale_status failure mode — at a point that today has none).
   defp finish_upgrade(movie, content_path),
     do:
-      %{movie | file_path: content_path}
+      %{movie | content_path: content_path}
       |> Library.stage_movie(replace: true)
       |> finish_upgrade_result(movie, content_path)
 
@@ -456,10 +468,10 @@ defmodule Cinder.Download.Poller do
   # must keep the file for an operator to inspect — the download-side source is no longer needed
   # and is deleted the same way a successful import's is (issue #115's gap, mirrored here so a
   # rejected release doesn't leak its download either). `content_path` is the rejected download's
-  # source: pre-import `movie.file_path` for a fresh grab, the new download's path (not the old
-  # live library file) for an upgrade. download_id is nil here on purpose — the reject already
-  # fences + cleans up the client-tracked job via Catalog.reject_movie_release; passing the real id
-  # would remove it a second time.
+  # source: `Movie.download_source(movie)` (its own `content_path`, deploy-compat-falling-back to
+  # `file_path`) for a fresh grab, the new download's path (not the old live library file) for an
+  # upgrade. download_id is nil here on purpose — the reject already fences + cleans up the
+  # client-tracked job via Catalog.reject_movie_release; passing the real id would remove it twice.
   defp reject_release(movie, evidence, content_path) do
     case Catalog.reject_movie_release(movie, evidence) do
       {:ok, _movie} ->

@@ -439,7 +439,7 @@ defmodule Cinder.Catalog do
   `{:movie_updated, movie}` on the `"movies"` topic. This is the single
   choke-point for state changes — every transition broadcasts exactly once.
   `attrs` must set `:status`; it may also set `:download_id`, `:download_protocol`,
-  `:imdb_id`, `:file_path`, `:import_attempts`, and `:search_attempts`.
+  `:imdb_id`, `:file_path`, `:content_path`, `:import_attempts`, and `:search_attempts`.
   """
   def transition(movie, attrs, opts \\ [])
 
@@ -674,10 +674,10 @@ defmodule Cinder.Catalog do
 
   def retry_movie(%Movie{status: status} = movie) when status in @retryable do
     # Clear the stale download fields too: a re-queued movie has no download yet,
-    # so leaving an old download_id/protocol/file_path/release_title on a :requested
-    # row is misleading and a latent misroute if anything reads them before re-download.
-    # The blocklist row (keyed by movie_id) PERSISTS — clearing it would reintroduce the
-    # re-grab loop; release_title here is stale download state, not the blocklist.
+    # so leaving an old download_id/protocol/file_path/content_path/release_title on a
+    # :requested row is misleading and a latent misroute if anything reads them before
+    # re-download. The blocklist row (keyed by movie_id) PERSISTS — clearing it would
+    # reintroduce the re-grab loop; release_title here is stale download state, not the blocklist.
     # expect: — the caller's struct is a client-rendered snapshot; if the movie
     # already re-entered the pipeline (re-searched, downloading), the retry must
     # miss rather than yank an in-flight movie back and orphan its download.
@@ -691,7 +691,8 @@ defmodule Cinder.Catalog do
         download_protocol: nil,
         release_title: nil,
         release_policy_snapshot: nil,
-        file_path: nil
+        file_path: nil,
+        content_path: nil
       },
       expect: movie.status
     )

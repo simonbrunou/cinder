@@ -70,21 +70,25 @@ defmodule Cinder.Library do
   def import_movie(%Movie{} = movie), do: import_movie(movie, [])
 
   @spec import_movie(Movie.t(), keyword()) :: {:ok, String.t(), map()} | {:error, term()}
-  def import_movie(%Movie{file_path: path}, _opts) when path in [nil, ""],
-    do: {:error, :no_file_path}
-
   def import_movie(%Movie{} = movie, opts) do
+    case Movie.download_source(movie) do
+      path when path in [nil, ""] -> {:error, :no_file_path}
+      path -> do_import_movie(movie, path, opts)
+    end
+  end
+
+  defp do_import_movie(movie, path, opts) do
     replace? = Keyword.get(opts, :replace, false)
 
     with {:ok, root} <- root(:movies),
-         {:ok, source, folder?} <- resolve_source(movie.file_path),
+         {:ok, source, folder?} <- resolve_source(path),
          :ok <-
            verify_audio(
              source,
              Language.target(movie.preferred_language, movie.original_language)
            ),
          {:ok, %{size: size, inode: si, major_device: sdev}} <- fs().lstat(source),
-         parsed = Parser.parse(Path.basename(movie.file_path)),
+         parsed = Parser.parse(Path.basename(path)),
          new_q =
            new_quality(parsed, size)
            |> Map.merge(capture_media(source))
@@ -115,17 +119,21 @@ defmodule Cinder.Library do
           {:ok, %{dest: String.t(), rollback: map(), quality: map()}} | {:error, term()}
   def stage_movie(movie, opts \\ [])
 
-  def stage_movie(%Movie{file_path: path}, _opts) when path in [nil, ""],
-    do: {:error, :no_file_path}
-
   def stage_movie(%Movie{} = movie, opts) do
+    case Movie.download_source(movie) do
+      path when path in [nil, ""] -> {:error, :no_file_path}
+      path -> do_stage_movie(movie, path, opts)
+    end
+  end
+
+  defp do_stage_movie(movie, path, opts) do
     replace? = Keyword.get(opts, :replace, false)
 
     with {:ok, root} <- root(:movies),
-         {:ok, source, folder?} <- resolve_source(movie.file_path),
+         {:ok, source, folder?} <- resolve_source(path),
          {:ok, reports} <- verify_movie_policy(movie, source),
          {:ok, %{size: size, inode: si, major_device: sdev}} <- fs().lstat(source),
-         parsed = Parser.parse(Path.basename(movie.file_path)),
+         parsed = Parser.parse(Path.basename(path)),
          new_q =
            new_quality(parsed, size)
            |> Map.merge(cached_or_capture_media(source, reports))
