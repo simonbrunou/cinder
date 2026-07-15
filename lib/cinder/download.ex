@@ -13,7 +13,7 @@ defmodule Cinder.Download do
   import Ecto.Query
 
   require Logger
-  alias Cinder.{Acquisition, Catalog, Notifier, Repo, Settings, Vault}
+  alias Cinder.{Acquisition, Catalog, Library, Notifier, Repo, Settings, Vault}
   alias Cinder.Acquisition.{AnimePreferences, Release}
   alias Cinder.Catalog.{Grab, Movie}
   alias Cinder.Download.{Intent, IntentEpisode}
@@ -846,22 +846,59 @@ defmodule Cinder.Download do
   end
 
   @doc """
-  After a successful import, removes the source download when the `move_on_import`
-  setting is on. Usenet-only (an allowlist, so a nil/unknown protocol no-ops) and
-  only when a download id is tracked — torrents are never auto-removed so seeding
-  survives. Best-effort: a remove failure is logged, never propagated. Always `:ok`.
+  After a successful import, removes the source download when the `move_on_import` setting is
+  on. Usenet-only (an allowlist, so a nil/unknown protocol no-ops) — torrents are never
+  auto-removed so seeding survives. Two independent best-effort removals:
+
+  1. Asks the client to drop its tracked job (only when a `download_id` is present) — cleans up
+     history/queue metadata when the client still has it.
+  2. Deletes `content_path` directly via `Cinder.Library.delete_download_source/1` — the whole
+     per-operation directory or lone file the download client delivered. This is authoritative
+     regardless of whether the client's history entry still exists: a client (e.g. SABnzbd with a
+     short history retention) that has already evicted the job silently no-ops on its own remove,
+     so on-disk cleanup can't depend on that history surviving (issue #115).
+
+  A failure in either is logged, never propagated. Always `:ok`.
   """
-  def remove_after_import(protocol, download_id) do
+  def remove_after_import(protocol, download_id, content_path \\ nil) do
     move_on_import? = Application.get_env(:cinder, :move_on_import, false)
 
-    if move_on_import? and protocol == :usenet and download_id not in [nil, ""] do
-      case client_for(protocol) do
-        {:ok, client} -> best_effort_remove(client, download_id)
-        :error -> :ok
-      end
-    else
-      :ok
+    if move_on_import? and protocol == :usenet do
+      maybe_remove_client(protocol, download_id)
+      best_effort_delete_source(content_path)
     end
+
+    :ok
+  end
+
+  defp maybe_remove_client(_protocol, download_id) when download_id in [nil, ""], do: :ok
+
+  defp maybe_remove_client(protocol, download_id) do
+    case client_for(protocol) do
+      {:ok, client} -> best_effort_remove(client, download_id)
+      :error -> :ok
+    end
+  end
+
+  defp best_effort_delete_source(content_path) do
+    case Library.delete_download_source(content_path) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "download source delete failed for #{inspect(content_path)}: #{inspect(reason)}"
+        )
+
+        :ok
+    end
+  catch
+    kind, value ->
+      Logger.warning(
+        "download source delete raised for #{inspect(content_path)}: #{inspect({kind, value})}"
+      )
+
+      :ok
   end
 
   @doc """

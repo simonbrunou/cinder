@@ -1792,6 +1792,40 @@ defmodule Cinder.Library do
     end
   end
 
+  @doc """
+  Deletes a completed download's source after a successful `move_on_import` — the whole
+  per-operation directory the client delivered (e.g. an unpacked SABnzbd job folder), or the lone
+  file when there's no wrapper directory. Called from `Cinder.Download.remove_after_import/3`,
+  which gates this on the `move_on_import` setting and the usenet protocol; this function is
+  authoritative regardless of whether the download client still tracks the job — a client whose
+  history already evicted the job silently no-ops on its own remove call, so filesystem cleanup
+  here can't depend on that history surviving (issue #115).
+
+  Idempotent: a `nil`/blank path or an already-missing entry is `:ok`. Contained to the configured
+  download import roots (`Settings.import_roots/0`) — the same boundary import reads already
+  enforce — so this can never reach outside the downloads area, and in particular never a library
+  path (a disjoint root set). A path outside the roots, a symlink anywhere in it, or an entry that
+  is neither a regular file nor a directory fails closed with `{:error, :unsafe_delete}`.
+  """
+  @spec delete_download_source(String.t() | nil) :: :ok | {:error, term()}
+  def delete_download_source(path) when path in [nil, ""], do: :ok
+
+  def delete_download_source(path) do
+    case Settings.import_roots() do
+      [] -> {:error, :download_roots_not_configured}
+      roots -> do_delete_download_source(path, roots)
+    end
+  end
+
+  defp do_delete_download_source(path, roots) do
+    with :ok <- path_policy().deletable_source(path, roots, filesystem: fs()) do
+      case fs().rm_rf(Path.expand(path)) do
+        {:ok, _paths} -> :ok
+        {:error, reason, _path} -> {:error, reason}
+      end
+    end
+  end
+
   defp safe_directory?(dir) do
     match?(
       {:ok, _expanded},

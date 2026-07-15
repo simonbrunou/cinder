@@ -225,7 +225,13 @@ defmodule Cinder.Download.Poller do
             Notifier.notify({:movie_available, available})
             # After the DB commit (the file is recorded as imported): a best-effort, gated
             # remove of the source download. Failure is logged, never strands or re-imports.
-            Download.remove_after_import(movie.download_protocol, movie.download_id)
+            # movie.file_path is still the pre-import download source here (the transition above
+            # wrote file_path: dest only onto `available`, not onto this local `movie`).
+            Download.remove_after_import(
+              movie.download_protocol,
+              movie.download_id,
+              movie.file_path
+            )
 
           # Cancelled/deleted while the import unit was hardlinking: no row will ever
           # point at dest, so unlink it or the media server scans an orphaned file.
@@ -380,12 +386,16 @@ defmodule Cinder.Download.Poller do
     do:
       %{movie | file_path: content_path}
       |> Library.stage_movie(replace: true)
-      |> finish_upgrade_result(movie)
+      |> finish_upgrade_result(movie, content_path)
 
-  defp finish_upgrade_result({:error, {:release_policy_mismatch, evidence}}, movie),
-    do: reject_release(movie, evidence)
+  defp finish_upgrade_result(
+         {:error, {:release_policy_mismatch, evidence}},
+         movie,
+         _content_path
+       ),
+       do: reject_release(movie, evidence)
 
-  defp finish_upgrade_result(result, movie) do
+  defp finish_upgrade_result(result, movie, content_path) do
     case result do
       {:ok, %{dest: dest, quality: q} = stage} ->
         movie
@@ -407,7 +417,7 @@ defmodule Cinder.Download.Poller do
         |> case do
           {:ok, available} ->
             finish_stage(stage, :commit)
-            finalize_upgrade(movie, available, dest)
+            finalize_upgrade(movie, available, dest, content_path)
 
           {:error, :stale_status} ->
             compensate_aborted_upgrade(movie, stage)
@@ -464,10 +474,12 @@ defmodule Cinder.Download.Poller do
 
   # Post-commit side effects, all best-effort (none can unwind the committed upgrade): remove the
   # superseded file only when the dest path actually changed (a same-path replace already overwrote
-  # it), drop the source download, and notify.
-  defp finalize_upgrade(movie, available, dest) do
+  # it), drop the source download, and notify. content_path is the NEW download's source — movie
+  # (the original, pre-upgrade struct) keeps file_path pointing at the OLD live library file, so it
+  # must never stand in for the source here.
+  defp finalize_upgrade(movie, available, dest, content_path) do
     if dest != movie.file_path, do: best_effort_remove_old(movie.file_path)
-    Download.remove_after_import(movie.download_protocol, movie.download_id)
+    Download.remove_after_import(movie.download_protocol, movie.download_id, content_path)
     Notifier.notify({:movie_available, available})
   end
 

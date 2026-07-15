@@ -198,7 +198,7 @@ defmodule Cinder.Download.TvPoller do
          ) do
       {:ok, _grab} ->
         commit_stages(staged)
-        Download.remove_after_import(grab.download_protocol, grab.download_id)
+        Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path)
 
       {:error, :stale_grab} ->
         rollback_stages(staged)

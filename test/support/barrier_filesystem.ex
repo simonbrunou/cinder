@@ -89,6 +89,8 @@ defmodule Cinder.Test.BarrierFilesystem do
   @impl true
   defdelegate rmdir(path), to: Disk
   @impl true
+  defdelegate rm_rf(path), to: Disk
+  @impl true
   defdelegate read(path), to: Disk
 
   @impl true

@@ -95,7 +95,32 @@ defmodule Cinder.Library.PathPolicy do
 
     with true <- under_any_root?(expanded, roots),
          :ok <- safe_components(expanded, filesystem, true),
-         result when result in [:ok, :missing] <- regular_or_missing(expanded, filesystem) do
+         result when result in [:ok, :missing] <-
+           existing_type_or_missing(expanded, filesystem, [:regular]) do
+      :ok
+    else
+      _ -> {:error, :unsafe_delete}
+    end
+  end
+
+  @doc """
+  A download-side sibling of `deletable_file/3`: the same containment and symlink guard, but also
+  allows a directory — a completed download is often a whole per-operation folder, not a single
+  file (issue #115) — in addition to a regular file. Still fails closed on anything else and on a
+  symlink anywhere in the path.
+  """
+  @spec deletable_source(String.t(), [String.t()]) :: :ok | {:error, :unsafe_delete}
+  def deletable_source(path, roots), do: deletable_source(path, roots, filesystem: File)
+
+  @doc false
+  def deletable_source(path, roots, opts) do
+    filesystem = Keyword.fetch!(opts, :filesystem)
+    expanded = Path.expand(path)
+
+    with true <- under_any_root?(expanded, roots),
+         :ok <- safe_components(expanded, filesystem, true),
+         result when result in [:ok, :missing] <-
+           existing_type_or_missing(expanded, filesystem, [:regular, :directory]) do
       :ok
     else
       _ -> {:error, :unsafe_delete}
@@ -131,9 +156,9 @@ defmodule Cinder.Library.PathPolicy do
     end)
   end
 
-  defp regular_or_missing(path, filesystem) do
+  defp existing_type_or_missing(path, filesystem, allowed_types) do
     case filesystem.lstat(path) do
-      {:ok, %File.Stat{type: :regular}} -> :ok
+      {:ok, %File.Stat{type: type}} -> if type in allowed_types, do: :ok, else: :unsafe
       {:error, :enoent} -> :missing
       _ -> :unsafe
     end

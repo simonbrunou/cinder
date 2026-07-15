@@ -1366,6 +1366,41 @@ defmodule Cinder.LibraryTest do
     end
   end
 
+  describe "delete_download_source/1 (issue #115)" do
+    test "nil/blank path is a no-op (no filesystem calls)" do
+      assert :ok = Cinder.Library.delete_download_source(nil)
+      assert :ok = Cinder.Library.delete_download_source("")
+    end
+
+    test "deletes the whole per-operation directory via rm_rf" do
+      path = "/downloads/cinder-abc123"
+      expect(Cinder.Library.FilesystemMock, :rm_rf, fn ^path -> {:ok, [path]} end)
+
+      assert :ok = Cinder.Library.delete_download_source(path)
+    end
+
+    test "deletes a lone file when there's no wrapper directory" do
+      path = "/downloads/movie.mkv"
+      expect(Cinder.Library.FilesystemMock, :rm_rf, fn ^path -> {:ok, [path]} end)
+
+      assert :ok = Cinder.Library.delete_download_source(path)
+    end
+
+    test "a missing/already-gone path is idempotent (:ok)" do
+      path = "/downloads/cinder-gone"
+      expect(Cinder.Library.FilesystemMock, :rm_rf, fn ^path -> {:ok, []} end)
+
+      assert :ok = Cinder.Library.delete_download_source(path)
+    end
+
+    test "a real rm_rf error is surfaced" do
+      path = "/downloads/cinder-locked"
+      expect(Cinder.Library.FilesystemMock, :rm_rf, fn ^path -> {:error, :eacces, path} end)
+
+      assert {:error, :eacces} = Cinder.Library.delete_download_source(path)
+    end
+  end
+
   defp anime_fixture(id), do: Enum.find(@anime_cases, &(&1["id"] == id))
 
   defp normalize_fixture_mtimes(fixture) do
