@@ -958,14 +958,20 @@ defmodule CinderWeb.CoreComponents do
     ~H"""
     <select name="preferred_language" class={@class} aria-label={gettext("Audio")} {@rest}>
       <option value="original" selected={@value == "original"}>
-        {@original_label || gettext("Original")}
+        {@original_label || language_label("original")}
       </option>
-      <option value="french" selected={@value == "french"}>{gettext("French")}</option>
-      <option value="dual" selected={@value == "dual"}>{gettext("French + original")}</option>
-      <option value="any" selected={@value == "any"}>{gettext("Any language")}</option>
+      <option value="french" selected={@value == "french"}>{language_label("french")}</option>
+      <option value="dual" selected={@value == "dual"}>{language_label("dual")}</option>
+      <option value="any" selected={@value == "any"}>{language_label("any")}</option>
     </select>
     """
   end
+
+  @doc "Human label for a per-title Audio pick value; the labels shown by `language_select/1`."
+  def language_label("french"), do: gettext("French")
+  def language_label("dual"), do: gettext("French + original")
+  def language_label("any"), do: gettext("Any language")
+  def language_label(_original_or_other), do: gettext("Original")
 
   attr :name, :string, default: "proposed_media_profile"
   attr :value, :any, default: nil

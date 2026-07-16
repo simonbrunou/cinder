@@ -1227,8 +1227,14 @@ defmodule Cinder.Catalog do
   # Fill-if-default: an existing series whose language was never customized ("original") adopts the
   # requester's non-default pick; a series already customized to a non-default is left untouched
   # (first-customization-wins). A brand-new series already carries `preferred` from create_series.
-  defp apply_requester_language(%Series{preferred_language: "original"} = series, preferred)
-       when preferred != "original",
+  # Anime titles are exempt: the pick is that title's release policy (audio-mode derivation, see
+  # `Cinder.Acquisition.AnimePreferences`), not a discovery convenience, so only a deliberate
+  # detail-page edit may change it — never a requester's incidental pick on a season they add.
+  defp apply_requester_language(
+         %Series{preferred_language: "original", media_profile: profile} = series,
+         preferred
+       )
+       when preferred != "original" and profile != :anime,
        do: set_series_language(series, preferred)
 
   defp apply_requester_language(series, _preferred), do: {:ok, series}

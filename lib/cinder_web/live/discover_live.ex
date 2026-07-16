@@ -9,7 +9,10 @@ defmodule CinderWeb.DiscoverLive do
 
   import CinderWeb.LiveHelpers
 
+  alias Cinder.Acquisition.Language
   alias Cinder.Catalog
+
+  @picks Language.preferences()
 
   @impl true
   def mount(_params, _session, socket) do
@@ -97,7 +100,7 @@ defmodule CinderWeb.DiscoverLive do
   end
 
   # ponytail: only four valid values; default "original" on anything else (client-controlled).
-  defp normalize_language(lang) when lang in ["original", "french", "dual", "any"], do: lang
+  defp normalize_language(lang) when lang in @picks, do: lang
   defp normalize_language(_), do: "original"
 
   defp normalize_profile(nil), do: {:ok, nil}

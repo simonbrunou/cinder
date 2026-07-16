@@ -17,7 +17,6 @@ defmodule Cinder.Acquisition.AnimePreferencesTest do
     title = %Series{original_language: "ja", preferred_language: "original"}
 
     assert {:ok, policy} = AnimePreferences.resolve(title, @defaults)
-    assert policy.audio_mode == :original
     assert policy.required_audio_languages == ["ja"]
     assert policy.subtitle_languages == ["fr", "en"]
     assert policy.preferred_groups == ["subsplease"]
@@ -26,24 +25,24 @@ defmodule Cinder.Acquisition.AnimePreferencesTest do
     assert policy.group_fallback_delay == 86_400
   end
 
-  test "the Audio pick derives the audio mode and its hard requirement" do
+  test "the Audio pick derives the hard audio requirement" do
     base = %Series{original_language: "jpn"}
 
-    assert {:ok, %{audio_mode: :original, required_audio_languages: ["ja"]}} =
+    assert {:ok, %{required_audio_languages: ["ja"]}} =
              AnimePreferences.resolve(%{base | preferred_language: "original"}, @defaults)
 
-    assert {:ok, %{audio_mode: :dub, required_audio_languages: ["fr"]}} =
+    assert {:ok, %{required_audio_languages: ["fr"]}} =
              AnimePreferences.resolve(%{base | preferred_language: "french"}, @defaults)
 
-    assert {:ok, %{audio_mode: :dual, required_audio_languages: ["ja", "fr"]}} =
+    assert {:ok, %{required_audio_languages: ["ja", "fr"]}} =
              AnimePreferences.resolve(%{base | preferred_language: "dual"}, @defaults)
 
-    assert {:ok, %{audio_mode: :any, required_audio_languages: []}} =
+    assert {:ok, %{required_audio_languages: []}} =
              AnimePreferences.resolve(%{base | preferred_language: "any"}, @defaults)
   end
 
-  test "dub mode needs no original-language metadata — the dub target is fixed at fr" do
-    assert {:ok, %{audio_mode: :dub, required_audio_languages: ["fr"]}} =
+  test "the french pick needs no original-language metadata — the dub target is fixed at fr" do
+    assert {:ok, %{required_audio_languages: ["fr"]}} =
              AnimePreferences.resolve(
                %Series{original_language: nil, preferred_language: "french"},
                @defaults

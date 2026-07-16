@@ -13,10 +13,12 @@ defmodule CinderWeb.MovieDetailLive do
   import CinderWeb.LiveHelpers,
     only: [format_date_year: 1, humanize_bytes: 1, rating: 1, movie_badge_status: 1]
 
+  alias Cinder.Acquisition.Language
   alias Cinder.Catalog
   alias Cinder.Catalog.Movie
 
   @parked [:no_match, :search_failed, :import_failed]
+  @picks Language.preferences()
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
@@ -178,7 +180,7 @@ defmodule CinderWeb.MovieDetailLive do
     do: {:noreply, assign(socket, searching?: !socket.assigns.searching?)}
 
   def handle_event("set_movie_language", %{"preferred_language" => lang}, socket)
-      when lang in ["original", "french", "dual", "any"] do
+      when lang in @picks do
     # On success the {:movie_updated} broadcast reloads @movie; on error the dropdown visually
     # snaps back, so say why — mirrors set_series_language on /series/:id.
     case Catalog.set_movie_language(socket.assigns.movie, lang) do

@@ -3,24 +3,22 @@ defmodule Cinder.Acquisition.AnimePreferences do
   Resolves the global Anime release policy (from `Cinder.Settings.anime_defaults/0`)
   against a title's own audio-language metadata.
 
-  Audio mode has no global axis (superseding the #107 per-title override note): it's fully
-  determined by the title's single per-title Audio pick (`preferred_language`, see
-  `Cinder.Acquisition.Language`) — `"original"` → `:original`, `"french"` → `:dub` (dub target
-  fixed at `"fr"`), `"dual"` → `:dual` (the title's original language + `"fr"`), `"any"` →
-  `:any`. Beyond that the "policy" is just the global defaults (subtitles/groups/fallback
-  delay) plus that per-title hard-audio-requirement derivation.
+  Audio has no global axis (superseding the #107 per-title override note): the hard
+  `required_audio_languages` requirement is derived directly from the title's single
+  per-title Audio pick (`preferred_language`, see `Cinder.Acquisition.Language`) —
+  `"original"` requires the title's own original language, `"french"` requires the dub
+  target (`Language.dub_target/0`, fixed at `"fr"`), `"dual"` requires both, and `"any"`
+  requires nothing. Beyond that the "policy" is just the global defaults
+  (subtitles/groups/fallback delay) plus that per-title derivation.
   """
 
   alias Cinder.Acquisition.Language
 
   def resolve(title, defaults) do
-    audio_mode = audio_mode_for(title.preferred_language)
-
-    with {:ok, required_audio} <- required_audio(audio_mode, title),
+    with {:ok, required_audio} <- required_audio(title.preferred_language, title),
          :ok <- validate_embedded(defaults.embedded_subtitle_mode, defaults.subtitle_languages) do
       {:ok,
        %{
-         audio_mode: audio_mode,
          required_audio_languages: required_audio,
          subtitle_languages: defaults.subtitle_languages,
          embedded_subtitle_mode: defaults.embedded_subtitle_mode,
@@ -187,21 +185,17 @@ defmodule Cinder.Acquisition.AnimePreferences do
       end)
   end
 
-  defp audio_mode_for("french"), do: :dub
-  defp audio_mode_for("dual"), do: :dual
-  defp audio_mode_for("any"), do: :any
-  defp audio_mode_for(_original_or_unset), do: :original
+  defp required_audio("any", _title), do: {:ok, []}
+  defp required_audio("french", _title), do: {:ok, [Language.dub_target()]}
 
-  defp required_audio(:original, title), do: {:ok, original_languages(title)}
-  defp required_audio(:any, _title), do: {:ok, []}
-  defp required_audio(:dub, _title), do: {:ok, ["fr"]}
-
-  defp required_audio(:dual, title) do
+  defp required_audio("dual", title) do
     case original_languages(title) do
-      [original_language | _rest] -> {:ok, Enum.uniq([original_language, "fr"])}
+      [original_language | _rest] -> {:ok, Enum.uniq([original_language, Language.dub_target()])}
       [] -> {:error, :original_language_required}
     end
   end
+
+  defp required_audio(_original_or_unset, title), do: {:ok, original_languages(title)}
 
   defp original_languages(title) do
     title.original_language

@@ -641,7 +641,6 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
   defp policy(overrides) do
     Map.merge(
       %{
-        audio_mode: :any,
         required_audio_languages: [],
         subtitle_languages: [],
         embedded_subtitle_mode: :allow,

@@ -63,6 +63,11 @@ defmodule Cinder.Acquisition.Language do
   @doc "The valid `preferred_language` values (the per-title Audio picks)."
   def preferences, do: ["original", "french", "dual", "any"]
 
+  @dub_target "fr"
+
+  @doc "The audio-language code the `french`/`dual` picks target."
+  def dub_target, do: @dub_target
+
   @doc "Normalizes a language code or known parser tag to its ISO 639-1 code."
   def normalize(nil), do: nil
 
@@ -82,8 +87,7 @@ defmodule Cinder.Acquisition.Language do
   def strict?(_explicit), do: true
 
   @doc "Resolves a preference + the title's original language to a target code, or nil (filter off)."
-  def target("french", _original), do: "fr"
-  def target("dual", _original), do: "fr"
+  def target(pref, _original) when pref in ["french", "dual"], do: @dub_target
   def target("original", original), do: presence(original)
   def target(_other, _original), do: nil
 

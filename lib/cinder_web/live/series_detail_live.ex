@@ -10,8 +10,11 @@ defmodule CinderWeb.SeriesDetailLive do
 
   import CinderWeb.LiveHelpers, only: [format_date_year: 1, humanize_bytes: 1, rating: 1]
 
+  alias Cinder.Acquisition.Language
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Season, Series}
+
+  @picks Language.preferences()
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
@@ -225,7 +228,7 @@ defmodule CinderWeb.SeriesDetailLive do
   end
 
   def handle_event("set_series_language", %{"preferred_language" => lang}, socket)
-      when lang in ["original", "french", "dual", "any"] do
+      when lang in @picks do
     case Catalog.set_series_language(socket.assigns.series, lang) do
       {:ok, series} ->
         {:noreply, assign(socket, :series, series)}

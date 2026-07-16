@@ -416,6 +416,12 @@ defmodule Cinder.CatalogSeriesTest do
       {:ok, series} = Catalog.find_or_create_series_at_requested(1399, 2, "any")
       assert series.preferred_language == "french"
     end
+
+    test "an Anime series' Audio pick is release policy — a later requester pick never fills it" do
+      {:ok, _} = Catalog.find_or_create_series_at_requested(1399, 1, "original", :anime)
+      {:ok, series} = Catalog.find_or_create_series_at_requested(1399, 2, "french", :anime)
+      assert series.preferred_language == "original"
+    end
   end
 
   # Creates a series with one monitored, aired, file-less episode — i.e. a wanted episode.

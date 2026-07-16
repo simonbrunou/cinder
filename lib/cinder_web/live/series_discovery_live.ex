@@ -11,8 +11,11 @@ defmodule CinderWeb.SeriesDiscoveryLive do
 
   import CinderWeb.LiveHelpers
 
+  alias Cinder.Acquisition.Language
   alias Cinder.Catalog
   alias Cinder.Requests
+
+  @picks Language.preferences()
 
   @impl true
   def mount(%{"tmdb_id" => raw}, _session, socket) do
@@ -90,7 +93,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   end
 
   def handle_event("set_language", %{"preferred_language" => lang}, socket)
-      when lang in ["original", "french", "dual", "any"] do
+      when lang in @picks do
     {:noreply, assign(socket, :preferred_language, lang)}
   end
 
