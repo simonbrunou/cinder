@@ -255,43 +255,33 @@ defmodule Cinder.CatalogTest do
       {:ok, movie} = Catalog.find_or_create_at_requested(@attrs)
       assert_receive {:movie_created, ^movie}
     end
+  end
 
+  describe "apply_confirmed_media/3" do
     test "an existing :auto movie approved as Anime with a non-default pick adopts it (fill-if-default)" do
       {:ok, movie} = Catalog.add_movie(@attrs)
       assert movie.media_profile == :auto
       assert movie.preferred_language == "original"
 
-      attrs = Map.merge(@attrs, %{media_profile: :anime, preferred_language: "french"})
-      assert {:ok, updated} = Catalog.find_or_create_at_requested(attrs)
+      assert {:ok, updated} = Catalog.apply_confirmed_media(movie, :anime, "french")
       assert updated.media_profile == :anime
       assert updated.preferred_language == "french"
     end
 
     test "an already-Anime movie's Audio pick is release policy — a later request pick never fills it" do
       {:ok, movie} = Catalog.add_movie(@attrs)
-      {:ok, _movie} = Catalog.set_media_profile(movie, :anime)
+      {:ok, movie} = Catalog.set_media_profile(movie, :anime)
 
-      attrs = Map.merge(@attrs, %{media_profile: :anime, preferred_language: "french"})
-      assert {:ok, updated} = Catalog.find_or_create_at_requested(attrs)
+      assert {:ok, updated} = Catalog.apply_confirmed_media(movie, :anime, "french")
       assert updated.preferred_language == "original"
-    end
-
-    test "an existing standard movie fills the pick only if it was still default (fill-if-default)" do
-      {:ok, movie} = Catalog.add_movie(@attrs)
-      {:ok, _movie} = Catalog.set_media_profile(movie, :standard)
-
-      attrs = Map.merge(@attrs, %{media_profile: :standard, preferred_language: "french"})
-      assert {:ok, updated} = Catalog.find_or_create_at_requested(attrs)
-      assert updated.preferred_language == "french"
     end
 
     test "an existing standard movie already customized keeps its pick against a later request" do
       {:ok, movie} = Catalog.add_movie(@attrs)
       {:ok, movie} = Catalog.set_media_profile(movie, :standard)
-      {:ok, _movie} = Catalog.set_movie_language(movie, "any")
+      {:ok, movie} = Catalog.set_movie_language(movie, "any")
 
-      attrs = Map.merge(@attrs, %{media_profile: :standard, preferred_language: "french"})
-      assert {:ok, updated} = Catalog.find_or_create_at_requested(attrs)
+      assert {:ok, updated} = Catalog.apply_confirmed_media(movie, :standard, "french")
       assert updated.preferred_language == "any"
     end
   end

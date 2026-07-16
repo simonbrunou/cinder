@@ -116,6 +116,23 @@ defmodule Cinder.RequestsTest do
     assert Repo.reload!(explicit).media_profile == :standard
   end
 
+  test "approving a request for an existing PARKED movie is status-neutral: fills the pick, doesn't re-queue" do
+    user = user_fixture()
+    admin = admin_fixture()
+    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 603, title: "The Matrix"})
+    {:ok, movie} = Catalog.transition(movie, %{status: :no_match, search_attempts: 3})
+
+    attrs = Map.merge(@attrs, %{preferred_language: "french"})
+    {:ok, req} = Requests.create_request(user, attrs)
+    assert {:ok, _} = Requests.approve_request(req, admin, :standard)
+
+    updated = Repo.reload!(movie)
+    assert updated.status == :no_match
+    assert updated.search_attempts == 3
+    assert updated.preferred_language == "french"
+    assert updated.media_profile == :standard
+  end
+
   test "a racing deny wins after movie identity preparation and before any catalog write" do
     Mox.set_mox_global()
     parent = self()

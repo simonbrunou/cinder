@@ -121,13 +121,14 @@ defmodule Cinder.Requests do
       # prevents both the movie and its aliases from being written.
       with {:ok, approved} <-
              flip_pending(request, %{status: :approved, approved_by_id: admin.id}),
-           {:ok, _movie} <-
+           {:ok, movie} <-
              Catalog.find_or_create_at_requested(prepared.attrs, prepared.aliases) do
-        approved
+        {approved, movie}
       else
         {:error, reason} -> Repo.rollback(reason)
       end
     end)
+    |> finalize_movie_approval(prepared)
   end
 
   # The TMDB call runs while the request already reads :approved; a raise/exit here
@@ -329,7 +330,7 @@ defmodule Cinder.Requests do
 
   defp insert_approved_movie(user, attrs, approver_id, prepared) do
     Repo.transaction(fn ->
-      with {:ok, _movie} <-
+      with {:ok, movie} <-
              Catalog.find_or_create_at_requested(prepared.attrs, prepared.aliases),
            {:ok, request} <-
              %Request{}
@@ -341,12 +342,40 @@ defmodule Cinder.Requests do
                })
              )
              |> Repo.insert() do
-        request
+        {request, movie}
       else
         {:error, reason} -> Repo.rollback(reason)
       end
     end)
+    |> finalize_movie_approval(prepared)
   end
+
+  # Post-commit confirm+fill seam shared by both movie-approval transactions above: an approved
+  # request always resolves the movie's confirmed profile and language pick, whether the movie
+  # was just found-or-created inside the transaction or already existed. Runs AFTER the
+  # transaction commits — Catalog.apply_confirmed_media/3 must not run inside it (a fill/confirm
+  # failure must not roll back the already-committed movie/request write). Both fields stay
+  # detail-page-editable afterward, so a failure here only logs.
+  defp finalize_movie_approval({:ok, {approved, movie}}, prepared) do
+    case Catalog.apply_confirmed_media(
+           movie,
+           prepared.attrs.media_profile,
+           prepared.attrs.preferred_language
+         ) do
+      {:ok, _movie} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "apply_confirmed_media for movie #{movie.id} (request #{approved.id}) failed: " <>
+            inspect(reason)
+        )
+    end
+
+    {:ok, approved}
+  end
+
+  defp finalize_movie_approval({:error, _reason} = error, _prepared), do: error
 
   defp announce_approved(request) do
     broadcast({:request_approved, request})
