@@ -178,7 +178,7 @@ defmodule CinderWeb.MovieDetailLive do
     do: {:noreply, assign(socket, searching?: !socket.assigns.searching?)}
 
   def handle_event("set_movie_language", %{"preferred_language" => lang}, socket)
-      when lang in ["original", "french", "any"] do
+      when lang in ["original", "french", "dual", "any"] do
     # On success the {:movie_updated} broadcast reloads @movie; on error the dropdown visually
     # snaps back, so say why — mirrors set_series_language on /series/:id.
     case Catalog.set_movie_language(socket.assigns.movie, lang) do
@@ -198,19 +198,6 @@ defmodule CinderWeb.MovieDetailLive do
 
       {:error, _} ->
         {:noreply, put_flash(socket, :error, gettext("Couldn't update the profile."))}
-    end
-  end
-
-  def handle_event("set_anime_audio_mode", %{"anime_audio_mode" => mode}, socket)
-      when mode in ["", "original", "dub", "dual", "any"] do
-    value = if mode == "", do: nil, else: String.to_existing_atom(mode)
-
-    case Catalog.set_anime_audio_mode(socket.assigns.movie, value) do
-      {:ok, _} ->
-        {:noreply, assign_fresh(socket, socket.assigns.movie.id)}
-
-      {:error, _} ->
-        {:noreply, put_flash(socket, :error, gettext("Couldn't update the audio mode."))}
     end
   end
 
@@ -452,14 +439,6 @@ defmodule CinderWeb.MovieDetailLive do
             <.profile_select field={@profile_form[:media_profile]} />
           </.form>
           <.profile_summary id="movie-profile-summary" summary={@profile_summary} />
-          <form
-            :if={@profile_summary.effective == :anime}
-            id="movie-anime-audio-form"
-            phx-change="set_anime_audio_mode"
-            class="mt-2"
-          >
-            <.anime_audio_mode_select value={@movie.anime_audio_mode} />
-          </form>
         </div>
       </div>
 

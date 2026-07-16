@@ -80,7 +80,7 @@ rest with a key derived from `SECRET_KEY_BASE`.
 | Subtitles | OpenSubtitles API key + username + password, LibreTranslate URL + API key (optional fallback translation), preferred subtitle languages (csv) — fetched automatically after each import and swept every 12 h; local/ID subtitle results stay provisional for later upgrades |
 | Notifications | Discord webhook URL — posts an embed on availability and failures; approvals stay in-app (unset ⇒ log-only) |
 | Behaviour toggles | `auto_approve_all` (trusted households: every request grabs immediately), `move_on_import` (move instead of hardlink), media-server type (Jellyfin/Plex) |
-| Anime releases | Audio mode (original/dub/dual/any), embedded-subtitle mode (allow/prefer/require), preferred/blocked release-group lists, preferred-group fallback delay (hours) — global, applies to every title switched to the Anime profile; `ffprobe_bin` (the `ffprobe` binary path/name used for post-download verification) |
+| Anime releases | Embedded-subtitle mode (allow/prefer/require), preferred/blocked release-group lists, preferred-group fallback delay (hours) — global, applies to every title switched to the Anime profile (audio mode is per-title — see the Audio picker below); `ffprobe_bin` (the `ffprobe` binary path/name used for post-download verification) |
 
 Each can be **bootstrapped** from an environment variable (`TMDB_API_TOKEN`, `PROWLARR_URL`,
 `MOVIES_LIBRARY_PATH`, `TV_LIBRARY_PATH`, `MOVIES_PLEX_SECTION`, `TV_PLEX_SECTION`,
@@ -118,10 +118,12 @@ searches Season 0 specials only when they're classified story-special/recap and 
 downloaded batch only imports once every file is certainly mapped to one episode (one narrow
 exception: a lone non-ignored file with no episode markers, against a lone reserved episode, is
 inferred rather than held) — anything ambiguous holds the whole batch as **Needs mapping** on
-`/activity` for review (**Retry import** after fixing the files, or **Discard**). Global Anime preferences in `/settings` (audio mode,
-subtitle mode, preferred/blocked release groups) apply to every Anime title, and — if `ffprobe` is
-available — a completed download's actual audio/subtitles are verified against them before import,
-rejecting and blocklisting a release that provably violates the policy. `ffprobe` is optional but
+`/activity` for review (**Retry import** after fixing the files, or **Discard**). Each title's
+Audio pick (Original/French/French + original/Any — the same per-title picker movies and TV
+already have) doubles as its Anime audio mode; global Anime preferences in `/settings` (subtitle
+mode, preferred/blocked release groups) apply on top, and — if `ffprobe` is available — a
+completed download's actual audio/subtitles are verified against them before import, rejecting
+and blocklisting a release that provably violates the policy. `ffprobe` is optional but
 recommended; without it, Cinder skips that verification step and imports permissively.
 
 ## Screenshots

@@ -127,28 +127,6 @@ defmodule Cinder.Catalog do
   end
 
   @doc """
-  Sets the per-title Anime audio-mode override (`nil` = use the global
-  `anime_audio_mode` setting). Read by `AnimePreferences.resolve/2`, so it applies at
-  search time and is frozen into the release-policy snapshot at reservation exactly as
-  the global is. Broadcasts so open views refresh.
-  """
-  def set_anime_audio_mode(%Movie{} = movie, mode) do
-    with {:ok, updated} <-
-           movie |> Movie.profile_changeset(%{anime_audio_mode: mode}) |> Repo.update() do
-      broadcast({:movie_updated, updated})
-      {:ok, updated}
-    end
-  end
-
-  def set_anime_audio_mode(%Series{} = series, mode) do
-    with {:ok, updated} <-
-           series |> Series.profile_changeset(%{anime_audio_mode: mode}) |> Repo.update() do
-      broadcast_series(updated.id)
-      {:ok, updated}
-    end
-  end
-
-  @doc """
   Marks a title held at search time because the Anime release preferences can't be
   satisfied for it (`AnimePreferences.resolve/2` failed), or clears the hold (`nil`).
   A non-status flag written directly (monitor-toggle precedent, not pipeline state);

@@ -90,7 +90,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   end
 
   def handle_event("set_language", %{"preferred_language" => lang}, socket)
-      when lang in ["original", "french", "any"] do
+      when lang in ["original", "french", "dual", "any"] do
     {:noreply, assign(socket, :preferred_language, lang)}
   end
 

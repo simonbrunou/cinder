@@ -320,26 +320,6 @@ defmodule CinderWeb.SettingsComponents do
         {gettext("Anime releases")}
       </summary>
       <div class="collapse-content grid gap-4 md:grid-cols-2">
-        <div>
-          <.input
-            id="anime_audio_mode"
-            name="anime_audio_mode"
-            value={@form.values["anime_audio_mode"]}
-            errors={field_errors(@form, "anime_audio_mode")}
-            type="select"
-            label={gettext("Audio mode")}
-            prompt={gettext("Use server default (Original)")}
-            options={[
-              {gettext("Original"), "original"},
-              {gettext("Dub"), "dub"},
-              {gettext("Dual audio"), "dual"},
-              {gettext("Any"), "any"}
-            ]}
-          />
-          <p id="anime-dual-language-settings-help" class="text-xs text-base-content/60">
-            {gettext("Dual audio requires known original-language metadata and a dub target")}
-          </p>
-        </div>
         <.input
           id="anime_embedded_subtitle_mode"
           name="anime_embedded_subtitle_mode"
@@ -493,16 +473,11 @@ defmodule CinderWeb.SettingsComponents do
   defp invalid_field_message(key) when key == "anime_embedded_subtitle_mode",
     do: gettext("Choose a valid mode and at least one subtitle language when required.")
 
-  defp invalid_field_message(key) when key == "anime_audio_mode",
-    do: gettext("Choose a valid audio mode.")
-
   defp invalid_field_message(_key),
     do: gettext("Enter a number of GB (0 = no limit), or leave blank for the default.")
 
   defp invalid_field_label(key) when key == "import_roots",
     do: gettext("Download import roots")
-
-  defp invalid_field_label("anime_audio_mode"), do: gettext("Anime: Audio mode")
 
   defp invalid_field_label("anime_embedded_subtitle_mode"),
     do: gettext("Anime: Embedded subtitles")

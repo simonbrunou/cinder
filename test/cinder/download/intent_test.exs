@@ -121,7 +121,7 @@ defmodule Cinder.Download.IntentTest do
   end
 
   test "manual Anime movie and episode grabs freeze policy before reservation" do
-    set_anime_defaults!(audio_mode: :dual, embedded_subtitle_mode: :require)
+    set_anime_defaults!(embedded_subtitle_mode: :require)
     set_anime_subtitle_languages!("fr")
 
     movie =
@@ -129,7 +129,7 @@ defmodule Cinder.Download.IntentTest do
         status: :no_match,
         media_profile: :anime,
         original_language: "ja",
-        preferred_language: "french"
+        preferred_language: "dual"
       })
 
     movie_release =

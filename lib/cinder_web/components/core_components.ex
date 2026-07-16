@@ -938,11 +938,13 @@ defmodule CinderWeb.CoreComponents do
   def poster_url(path, size \\ "w342"), do: @image_base <> size <> path
 
   @doc """
-  The preferred-language `<select>` shared across the request/edit surfaces: three
-  options (Original / French / Any) with values `"original"` / `"french"` / `"any"`.
-  `value` is the currently-selected language (the matching option gets `selected`);
-  pass `original_label` to show a language-qualified label like "Original (English)".
-  The enclosing `<form>` carries the `phx-change`/`phx-submit` binding.
+  The per-title Audio `<select>` shared across the request/edit surfaces: four options
+  (Original / French / French + original / Any) with values `"original"` / `"french"` /
+  `"dual"` / `"any"`. For an Anime title this same pick also drives the Anime audio mode
+  (see `Cinder.Acquisition.AnimePreferences`). `value` is the currently-selected option
+  (the matching option gets `selected`); pass `original_label` to show a language-qualified
+  label like "Original (English)". The enclosing `<form>` carries the `phx-change`/`phx-submit`
+  binding.
 
       <.language_select value={@preferred_language} />
       <.language_select original_label={original_option_label(@original_language)} />
@@ -954,43 +956,13 @@ defmodule CinderWeb.CoreComponents do
 
   def language_select(assigns) do
     ~H"""
-    <select
-      name="preferred_language"
-      class={@class}
-      aria-label={gettext("Preferred language")}
-      {@rest}
-    >
+    <select name="preferred_language" class={@class} aria-label={gettext("Audio")} {@rest}>
       <option value="original" selected={@value == "original"}>
         {@original_label || gettext("Original")}
       </option>
       <option value="french" selected={@value == "french"}>{gettext("French")}</option>
+      <option value="dual" selected={@value == "dual"}>{gettext("French + original")}</option>
       <option value="any" selected={@value == "any"}>{gettext("Any language")}</option>
-    </select>
-    """
-  end
-
-  @doc """
-  The per-title Anime audio-mode override `<select>` shared by the movie/series detail
-  pages: "Use global" (empty value → `nil`, the default) or one of the global setting's
-  modes. `value` is the stored override as a string (`nil` when unset). The enclosing
-  `<form>` carries the `phx-change` binding.
-
-      <.anime_audio_mode_select value={@movie.anime_audio_mode} />
-  """
-  attr :value, :any, default: nil
-  attr :class, :any, default: "select select-sm w-full"
-  attr :rest, :global
-
-  def anime_audio_mode_select(assigns) do
-    assigns = assign(assigns, :value, assigns.value && to_string(assigns.value))
-
-    ~H"""
-    <select name="anime_audio_mode" class={@class} aria-label={gettext("Anime audio mode")} {@rest}>
-      <option value="" selected={@value in [nil, ""]}>{gettext("Use global audio mode")}</option>
-      <option value="original" selected={@value == "original"}>{gettext("Original")}</option>
-      <option value="dub" selected={@value == "dub"}>{gettext("Dub")}</option>
-      <option value="dual" selected={@value == "dual"}>{gettext("Dual audio")}</option>
-      <option value="any" selected={@value == "any"}>{gettext("Any")}</option>
     </select>
     """
   end

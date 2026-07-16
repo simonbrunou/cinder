@@ -314,21 +314,21 @@ defmodule CinderWeb.ActivityLiveTest do
     conn: conn
   } do
     series = series_fixture(%{title: "Re:Zero", year: 2016, media_profile: :anime})
-    {:ok, series} = Catalog.set_anime_hold(series, :dub_language_required)
+    {:ok, series} = Catalog.set_anime_hold(series, :original_language_required)
 
     movie = movie_fixture(%{title: "Your Name", status: :searching, media_profile: :anime})
-    {:ok, movie} = Catalog.set_anime_hold(movie, :dub_language_required)
+    {:ok, movie} = Catalog.set_anime_hold(movie, :original_language_required)
 
     {:ok, lv, html} = live(conn, ~p"/activity")
 
     # Held series get their own section (no movie row or grab exists to badge).
     assert html =~ "Held series"
     assert has_element?(lv, "#held-series-#{series.id} span.badge-warning", "Needs preferences")
-    assert has_element?(lv, "#held-series-#{series.id}-reason", "needs a dub language")
+    assert has_element?(lv, "#held-series-#{series.id}-reason", "original language")
 
     # A held movie reads "Needs preferences" in the pipeline (not a spinning "Searching").
     assert has_element?(lv, "#movie-#{movie.id} span.badge-warning", "Needs preferences")
-    assert has_element?(lv, "#movie-#{movie.id}-hold-reason", "needs a dub language")
+    assert has_element?(lv, "#movie-#{movie.id}-hold-reason", "original language")
 
     # The sweep clearing the hold (preferences became satisfiable) updates the page live.
     {:ok, _} = Catalog.set_anime_hold(series, nil)

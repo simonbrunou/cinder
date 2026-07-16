@@ -65,6 +65,14 @@ All notable changes to Cinder are documented here. The format follows
   — added on movies/series earlier in this same development cycle) are dropped in favor of the
   global `/settings` → Anime releases values only; anyone testing off `main` who had set per-title
   values loses them. Nothing changes for a tagged release, since this tier never shipped in one.
+- **BREAKING (dogfood only — never released):** the global `/settings` → Anime releases **Audio
+  mode** setting and the single-axis per-title `anime_audio_mode` override (added earlier in this
+  same cycle) are merged into the existing per-title **Audio** pick (`preferred_language`): the
+  values are now Original / French / French + original / Any, chosen once per movie/series with
+  no global fallback. On the standard (non-anime) path, French + original filters exactly like
+  French. The migration best-effort materializes each anime title's previously effective mode onto
+  its Audio pick (per-title override first, else the global setting, else unchanged); nothing
+  changes for a tagged release.
 - The interim anime grab-mapping-correction page is removed; a `Needs mapping` hold now resolves
   through the same `/activity` **Retry import** / **Discard** actions used everywhere else. The
   underlying safety guarantee — an ambiguous batch never stages a file — is unchanged.

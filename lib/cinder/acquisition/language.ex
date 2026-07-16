@@ -2,11 +2,14 @@ defmodule Cinder.Acquisition.Language do
   @moduledoc """
   Per-item preferred-language filtering for release selection.
 
-  A user picks `"original"` / `"french"` / `"any"` per movie/series. This resolves
-  the pick to a concrete target language code — using the title's TMDB
-  `original_language` for `"original"` — then keeps only releases whose parsed
-  `language` satisfies it: a `MULTI` release (multi-audio, includes the original),
-  an exact tag match, or — only when the target *is* English — an untagged release.
+  A user picks `"original"` / `"french"` / `"dual"` / `"any"` per movie/series (the single
+  per-title Audio pick — it also drives the Anime audio mode, see
+  `Cinder.Acquisition.AnimePreferences`). This resolves the pick to a concrete target language
+  code — using the title's TMDB `original_language` for `"original"`, and `"fr"` for `"dual"`
+  same as `"french"` (the stricter both-tracks guarantee is an Anime-only feature) — then keeps
+  only releases whose parsed `language` satisfies it: a `MULTI` release (multi-audio, includes
+  the original), an exact tag match, or — only when the target *is* English — an untagged
+  release.
 
   An untagged release means **English audio** by scene convention (a non-English
   track is tagged; English is the unmarked default), so it satisfies an English
@@ -57,8 +60,8 @@ defmodule Cinder.Acquisition.Language do
     end
   end
 
-  @doc "The valid `preferred_language` values (the per-title language picks)."
-  def preferences, do: ["original", "french", "any"]
+  @doc "The valid `preferred_language` values (the per-title Audio picks)."
+  def preferences, do: ["original", "french", "dual", "any"]
 
   @doc "Normalizes a language code or known parser tag to its ISO 639-1 code."
   def normalize(nil), do: nil
@@ -80,6 +83,7 @@ defmodule Cinder.Acquisition.Language do
 
   @doc "Resolves a preference + the title's original language to a target code, or nil (filter off)."
   def target("french", _original), do: "fr"
+  def target("dual", _original), do: "fr"
   def target("original", original), do: presence(original)
   def target(_other, _original), do: nil
 

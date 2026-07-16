@@ -96,8 +96,8 @@ defmodule CinderWeb.DiscoverLive do
      put_flash(socket, :error, gettext("Couldn't request %{title}. Try again.", title: title))}
   end
 
-  # ponytail: only three valid values; default "original" on anything else (client-controlled).
-  defp normalize_language(lang) when lang in ["original", "french", "any"], do: lang
+  # ponytail: only four valid values; default "original" on anything else (client-controlled).
+  defp normalize_language(lang) when lang in ["original", "french", "dual", "any"], do: lang
   defp normalize_language(_), do: "original"
 
   defp normalize_profile(nil), do: {:ok, nil}

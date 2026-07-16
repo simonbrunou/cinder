@@ -60,6 +60,17 @@ defmodule Cinder.Acquisition.LanguageTest do
     test "french always resolves to fr" do
       assert Language.target("french", "en") == "fr"
     end
+
+    test "dual resolves to fr, same as french (the standard path)" do
+      assert Language.target("dual", "en") == "fr"
+    end
+  end
+
+  describe "preferences/0 and strict?/1" do
+    test "dual is a valid pick and a strict (parking) preference" do
+      assert "dual" in Language.preferences()
+      assert Language.strict?("dual")
+    end
   end
 
   describe "filter/3" do
@@ -82,6 +93,13 @@ defmodule Cinder.Acquisition.LanguageTest do
       # A Hungarian dub and an untagged (English) release are both dropped for a French original.
       releases = [keep_fr, rel("HUNGARIAN"), rel(nil), keep_multi]
       assert Language.filter(releases, "original", "fr") == [keep_fr, keep_multi]
+    end
+
+    test "dual filter behaves exactly like french: keeps FRENCH + MULTI, drops the rest" do
+      keep_fr = rel("FRENCH")
+      keep_multi = rel("MULTI")
+      releases = [keep_fr, rel(nil), rel("GERMAN"), keep_multi]
+      assert Language.filter(releases, "dual", "en") == [keep_fr, keep_multi]
     end
   end
 

@@ -67,7 +67,6 @@ config :cinder, subtitles_provider: Cinder.Subtitles.Provider.OpenSubtitles
 config :cinder, subtitles_translator: Cinder.Subtitles.Translator.LibreTranslate
 
 config :cinder, :anime_preferences,
-  audio_mode: :original,
   embedded_subtitle_mode: :prefer,
   preferred_groups: [],
   blocked_groups: [],
