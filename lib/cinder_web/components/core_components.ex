@@ -973,6 +973,10 @@ defmodule CinderWeb.CoreComponents do
   def language_label("any"), do: gettext("Any language")
   def language_label(_original_or_other), do: gettext("Original")
 
+  @doc "Label for a non-default Audio pick, or `nil` for a plain \"original\" request (so a badge can hide itself)."
+  def audio_pick_label(pick) when pick in [nil, "original"], do: nil
+  def audio_pick_label(pick), do: language_label(pick)
+
   attr :name, :string, default: "proposed_media_profile"
   attr :value, :any, default: nil
   attr :include_auto, :boolean, default: true

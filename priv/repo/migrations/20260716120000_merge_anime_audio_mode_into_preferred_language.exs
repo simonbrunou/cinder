@@ -53,16 +53,21 @@ defmodule Cinder.Repo.Migrations.MergeAnimeAudioModeIntoPreferredLanguage do
     end
   end
 
-  # No data restore — the merged `preferred_language` value can't be split back into a global
-  # setting + a per-title override.
+  # Irreversible by design — no data restore. The merged `preferred_language` value can't be
+  # split back into a global setting + a per-title override, and the source data (the deleted
+  # `anime_audio_mode` settings row, plus each title's pre-merge `anime_audio_mode` column) is
+  # gone after `up` runs. Re-adding NULL `anime_audio_mode` columns here would silently invite a
+  # down→up re-run to re-materialize `global_audio_mode/0` (which can no longer return `nil` once
+  # the settings row is deleted) onto EVERY anime title as 'original', wiping any pick `up`
+  # materialized or an operator has since set.
   def down do
-    alter table(:movies) do
-      add :anime_audio_mode, :string
-    end
-
-    alter table(:series) do
-      add :anime_audio_mode, :string
-    end
+    raise Ecto.MigrationError,
+      message: """
+      This migration cannot be rolled back: `up` merged the per-title `anime_audio_mode` override
+      and the global anime Audio-mode setting into `preferred_language`, then deleted both the
+      `anime_audio_mode` columns and the `anime_audio_mode` settings row. That source data no
+      longer exists, so the merge can't be undone — restore from a pre-migration backup instead.
+      """
   end
 
   # The previously effective global mode, materialized for every no-override anime title: an

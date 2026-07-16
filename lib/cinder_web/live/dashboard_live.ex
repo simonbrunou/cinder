@@ -369,6 +369,12 @@ defmodule CinderWeb.DashboardLive do
                     <span :if={r.year} class="text-base-content/70">({r.year})</span>
                   </p>
                   <p class="truncate text-sm text-base-content/70">{r.user.email}</p>
+                  <p
+                    :if={audio_pick_label(r.preferred_language)}
+                    class="truncate text-sm text-base-content/70"
+                  >
+                    {gettext("Audio: %{pick}", pick: audio_pick_label(r.preferred_language))}
+                  </p>
                 </div>
                 <.status_badge kind={:request} status={r.status} />
               </div>

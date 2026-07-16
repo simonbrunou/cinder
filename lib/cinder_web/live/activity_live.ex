@@ -191,7 +191,8 @@ defmodule CinderWeb.ActivityLive do
   defp anime_hold_reason("original_language_required"),
     do:
       gettext(
-        "Dual audio needs this title's original language, which is unknown: on its detail page, choose an Audio pick other than \"French + original\", or fix the title's original-language metadata."
+        "Dual audio needs this title's original language, which is unknown: on its detail page, choose an Audio pick other than \"%{dual}\", or fix the title's original-language metadata.",
+        dual: language_label("dual")
       )
 
   defp anime_hold_reason("subtitle_language_required"),

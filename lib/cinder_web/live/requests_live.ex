@@ -219,10 +219,6 @@ defmodule CinderWeb.RequestsLive do
     if MapSet.member?(set, id), do: MapSet.delete(set, id), else: MapSet.put(set, id)
   end
 
-  # Non-default picks only, so a plain "original" request doesn't clutter every row.
-  defp audio_pick_label(pick) when pick in [nil, "original"], do: nil
-  defp audio_pick_label(pick), do: language_label(pick)
-
   defp approval_profiles(requests, current \\ %{}) do
     requests
     |> Enum.filter(&(&1.status == :pending))

@@ -1070,7 +1070,7 @@ defmodule Cinder.Catalog do
   """
   def find_or_create_at_requested(attrs, aliases \\ []) do
     case get_movie_by_tmdb_id(attrs.tmdb_id) do
-      %Movie{} = movie -> apply_confirmed_profile(movie, Map.get(attrs, :media_profile))
+      %Movie{} = movie -> apply_confirmed_movie(movie, attrs)
       nil -> do_insert_at_requested(attrs, aliases)
     end
   end
@@ -1129,9 +1129,22 @@ defmodule Cinder.Catalog do
       {:error, reason} ->
         # Lost the insert race (unique_constraint :tmdb_id) — the row now exists.
         case get_movie_by_tmdb_id(attrs.tmdb_id) do
-          %Movie{} = movie -> apply_confirmed_profile(movie, Map.get(attrs, :media_profile))
+          %Movie{} = movie -> apply_confirmed_movie(movie, attrs)
           nil -> {:error, reason}
         end
+    end
+  end
+
+  # Mirrors the series find_or_create_series_at_requested seam for an existing movie: confirm the
+  # profile, then fill-if-default the requester's language pick — guarded on the movie's
+  # PRE-REQUEST profile (captured before apply_confirmed_profile runs), so converting an existing
+  # movie to Anime also establishes its audio policy, while an already-Anime movie's pick is never
+  # mutated (see apply_requester_language/3).
+  defp apply_confirmed_movie(movie, attrs) do
+    pre_request_profile = movie.media_profile
+
+    with {:ok, movie} <- apply_confirmed_profile(movie, Map.get(attrs, :media_profile)) do
+      apply_requester_language(movie, Map.get(attrs, :preferred_language), pre_request_profile)
     end
   end
 
@@ -1199,8 +1212,9 @@ defmodule Cinder.Catalog do
   def find_or_create_series_at_requested(tmdb_id, season_number, preferred, media_profile)
       when media_profile in [:auto, :standard, :anime] do
     with {:ok, series} <- ensure_series(tmdb_id, preferred, media_profile),
+         pre_request_profile = series.media_profile,
          {:ok, series} <- apply_confirmed_profile(series, media_profile),
-         {:ok, series} <- apply_requester_language(series, preferred),
+         {:ok, series} <- apply_requester_language(series, preferred, pre_request_profile),
          %Season{} = season <- season_in(series, season_number),
          {:ok, _} <- set_season_monitored(season, true),
          {:ok, updated} <- mark_series_monitored(series) do
@@ -1224,20 +1238,34 @@ defmodule Cinder.Catalog do
         media_profile: media_profile
       )
 
-  # Fill-if-default: an existing series whose language was never customized ("original") adopts the
-  # requester's non-default pick; a series already customized to a non-default is left untouched
-  # (first-customization-wins). A brand-new series already carries `preferred` from create_series.
-  # Anime titles are exempt: the pick is that title's release policy (audio-mode derivation, see
+  # Fill-if-default: an existing movie/series whose language was never customized ("original")
+  # adopts the requester's non-default pick; a title already customized to a non-default is left
+  # untouched (first-customization-wins). A brand-new series already carries `preferred` from
+  # create_series.
+  #
+  # Guarded on the title's PRE-REQUEST profile (captured before `apply_confirmed_profile` ran),
+  # not its post-confirmation profile: the request that establishes Anime also establishes its
+  # audio policy (the pick), while a title that was ALREADY Anime before this request never has
+  # its pick mutated — that pick is that title's release policy (audio-mode derivation, see
   # `Cinder.Acquisition.AnimePreferences`), not a discovery convenience, so only a deliberate
-  # detail-page edit may change it — never a requester's incidental pick on a season they add.
+  # detail-page edit may change it once a title is Anime.
   defp apply_requester_language(
-         %Series{preferred_language: "original", media_profile: profile} = series,
-         preferred
+         %Series{preferred_language: "original"} = series,
+         preferred,
+         pre_request_profile
        )
-       when preferred != "original" and profile != :anime,
+       when preferred != "original" and pre_request_profile != :anime,
        do: set_series_language(series, preferred)
 
-  defp apply_requester_language(series, _preferred), do: {:ok, series}
+  defp apply_requester_language(
+         %Movie{preferred_language: "original"} = movie,
+         preferred,
+         pre_request_profile
+       )
+       when preferred not in [nil, "original"] and pre_request_profile != :anime,
+       do: set_movie_language(movie, preferred)
+
+  defp apply_requester_language(media, _preferred, _pre_request_profile), do: {:ok, media}
 
   defp season_in(series, season_number) do
     Repo.get_by(Season, series_id: series.id, season_number: season_number)

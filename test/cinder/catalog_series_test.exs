@@ -422,6 +422,16 @@ defmodule Cinder.CatalogSeriesTest do
       {:ok, series} = Catalog.find_or_create_series_at_requested(1399, 2, "french", :anime)
       assert series.preferred_language == "original"
     end
+
+    test "a request converting an :auto series to Anime also establishes its pick" do
+      {:ok, series} = Catalog.find_or_create_series_at_requested(1399, 1)
+      assert series.media_profile == :auto
+      assert series.preferred_language == "original"
+
+      {:ok, series} = Catalog.find_or_create_series_at_requested(1399, 2, "french", :anime)
+      assert series.media_profile == :anime
+      assert series.preferred_language == "french"
+    end
   end
 
   # Creates a series with one monitored, aired, file-less episode — i.e. a wanted episode.
