@@ -188,11 +188,20 @@ defmodule CinderWeb.UserLive.Settings do
   end
 
   def handle_event("unlink_plex", _params, socket) do
-    {:ok, user} = Accounts.unlink_plex_from_user(socket.assigns.current_scope.user)
+    case Accounts.unlink_plex_from_user(socket.assigns.current_scope.user) do
+      {:ok, user} ->
+        {:noreply,
+         socket
+         |> assign(:current_scope, %{socket.assigns.current_scope | user: user})
+         |> put_flash(:info, gettext("Your Plex account has been unlinked."))}
 
-    {:noreply,
-     socket
-     |> assign(:current_scope, %{socket.assigns.current_scope | user: user})
-     |> put_flash(:info, gettext("Your Plex account has been unlinked."))}
+      {:error, _changeset} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Could not unlink your Plex account. Please try again.")
+         )}
+    end
   end
 end

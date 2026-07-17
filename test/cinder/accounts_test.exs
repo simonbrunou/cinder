@@ -668,6 +668,22 @@ defmodule Cinder.AccountsTest do
       assert matched.id == user.id
     end
 
+    # A malformed plex.tv response with no integer id must fail closed, not fall through to
+    # Repo.get_by(User, plex_id: nil) (= `WHERE plex_id IS NULL`), which would match an
+    # arbitrary password-only user or raise MultipleResultsError.
+    test "rejects an account with a nil id without matching a null-plex_id user" do
+      existing = user_fixture()
+
+      assert {:error, :invalid_account} =
+               Accounts.login_or_register_plex_user(%{
+                 id: nil,
+                 email: "x@example.com",
+                 username: "x"
+               })
+
+      assert Repo.reload!(existing).plex_username == nil
+    end
+
     test "refreshes plex_username on a plex_id match if it changed" do
       user =
         user_fixture()

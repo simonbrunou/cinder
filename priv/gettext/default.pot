@@ -3009,3 +3009,8 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "Please re-enter your password before linking your Plex account."
 msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex:203
+#, elixir-autogen, elixir-format
+msgid "Could not unlink your Plex account. Please try again."
+msgstr ""

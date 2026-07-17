@@ -3009,3 +3009,8 @@ msgstr "Votre compte Plex est maintenant lié."
 #, elixir-autogen, elixir-format
 msgid "Please re-enter your password before linking your Plex account."
 msgstr "Veuillez ressaisir votre mot de passe avant de lier votre compte Plex."
+
+#: lib/cinder_web/live/user_live/settings.ex:203
+#, elixir-autogen, elixir-format
+msgid "Could not unlink your Plex account. Please try again."
+msgstr "Impossible de dissocier votre compte Plex. Veuillez réessayer."

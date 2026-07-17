@@ -82,12 +82,17 @@ defmodule Cinder.Accounts do
   A managed Plex Home account with no email can't be matched or created, so it's rejected with
   `{:error, :no_email}`.
   """
-  def login_or_register_plex_user(%{id: plex_id} = account) do
+  def login_or_register_plex_user(%{id: plex_id} = account) when is_integer(plex_id) do
     case Repo.get_by(User, plex_id: plex_id) do
       %User{} = user -> refresh_plex_username(user, account)
       nil -> create_plex_user(account)
     end
   end
+
+  # A missing/non-integer id (a malformed plex.tv response) must never fall through to
+  # Repo.get_by(User, plex_id: nil) — that compiles to `WHERE plex_id IS NULL` and would
+  # match an arbitrary password-only user (or raise MultipleResultsError). Fail closed.
+  def login_or_register_plex_user(_account), do: {:error, :invalid_account}
 
   defp refresh_plex_username(user, account) do
     user
