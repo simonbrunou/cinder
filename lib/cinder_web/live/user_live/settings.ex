@@ -88,9 +88,7 @@ defmodule CinderWeb.UserLive.Settings do
             <p class="mt-2">
               {gettext("Sign in faster next time by linking your Plex account.")}
             </p>
-            <.button href={~p"/auth/plex"} variant="neutral" class="mt-2">
-              {gettext("Link Plex account")}
-            </.button>
+            <.plex_button href={~p"/auth/plex"} label={gettext("Link Plex account")} class="mt-2" />
           <% end %>
         </div>
       <% end %>

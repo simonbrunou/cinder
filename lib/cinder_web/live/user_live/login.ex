@@ -59,9 +59,7 @@ defmodule CinderWeb.UserLive.Login do
 
         <%= if @plex_login_available? do %>
           <div class="divider">{gettext("or")}</div>
-          <.button href={~p"/auth/plex"} variant="neutral" class="w-full">
-            {gettext("Sign in with Plex")}
-          </.button>
+          <.plex_button href={~p"/auth/plex"} label={gettext("Sign in with Plex")} />
         <% end %>
       </div>
     </Layouts.app>
