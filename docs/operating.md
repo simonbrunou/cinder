@@ -176,7 +176,9 @@ override identity checks; the next poll performs the same fail-closed reconcilia
 ## Audio-language verification
 
 If you set a per-title language preference (other than *Any*), Cinder filters releases by the
-language tag in their name. As a backstop for releases whose name lies or omits the language, it also
+language tag in their name — *French + original* filters like *French* here; the stricter
+both-tracks requirement only applies on the Anime path (see below). As a backstop for releases
+whose name lies or omits the language, it also
 checks the **actual audio tracks** of a completed download before importing, using **`ffprobe`**
 (part of FFmpeg, shipped in the Docker image). This covers both **movies and TV**: a wrong-language
 movie parks at `:import_failed`; a wrong-language episode file in a season pack is skipped so that
@@ -310,9 +312,9 @@ The hold survives an app restart — nothing is auto-resolved or lost while you'
 ### "Needs verification" (movies and TV)
 
 Separately from the name-based language filter (see "Audio-language verification" above), an Anime
-title's global preferences (below) can require a specific audio or embedded-subtitle mode. Cinder
-freezes that requirement into the grab when the release is chosen, then checks it against the
-actual file with `ffprobe` before staging:
+title's Audio pick (per-title) and its global embedded-subtitle preference (below) can require a
+specific audio or embedded-subtitle mode. Cinder freezes that requirement into the grab when the
+release is chosen, then checks it against the actual file with `ffprobe` before staging:
 
 - A **confirmed violation** (the probed audio/subtitles provably don't match) is handled
   automatically — the release is rejected and blocklisted and the movie/episode re-searches. No
@@ -323,17 +325,25 @@ actual file with `ffprobe` before staging:
   Fix whatever blocked the probe — install/configure `ffprobe`, fix a file permission, wait for a
   mount to come back — then click **Retry verification**.
 
+### Audio mode (per-title)
+
+Every movie/series has one Audio pick (its `preferred_language`) — Original / French / French +
+original / Any, set from the movie/series detail page. For an Anime title this same pick doubles
+as the Anime audio mode: Original requires the title's own original-language audio, French
+requires a French dub, French + original requires both the dub and the original track, and Any
+requires nothing. There is no global default and no separate axis — it's the same picker used to
+filter releases on the standard (non-anime) path.
+
 ### Global Anime settings
 
 `/settings` → **Anime releases** sets, for every Anime title:
 
-- **Audio mode** — original / dub / dual audio / any.
 - **Embedded subtitles** — allow / prefer embedded / require embedded.
 - **Preferred groups** / **Blocked groups** — comma-separated release-group names.
 - **Preferred-group fallback delay** — hours to wait for a preferred group before falling back to
   the next-best release (`0` disables waiting).
 
-There is no per-title override — every Anime title shares these settings.
+There is no per-title override for these — every Anime title shares them.
 
 ### `ffprobe`
 

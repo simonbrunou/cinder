@@ -204,11 +204,7 @@ defmodule Cinder.Download.TvPollerTest do
   end
 
   test "Anime preferred-group waiting holds only uncovered IDs without consuming attempts" do
-    set_anime_defaults!(
-      audio_mode: :any,
-      preferred_groups: ["subsplease"],
-      group_fallback_delay: 3_600
-    )
+    set_anime_defaults!(preferred_groups: ["subsplease"], group_fallback_delay: 3_600)
 
     series = series_fixture(%{tvdb_id: 99, monitor_strategy: :all, media_profile: :anime})
 
@@ -310,7 +306,7 @@ defmodule Cinder.Download.TvPollerTest do
     frozen_policy = assignment.release.release_policy_snapshot
     assert intent.release_policy_snapshot == frozen_policy
 
-    set_anime_defaults!(audio_mode: :any, embedded_subtitle_mode: :require)
+    set_anime_defaults!(embedded_subtitle_mode: :require)
     set_anime_subtitle_languages!("fr")
 
     {:ok, current_policy} =

@@ -65,7 +65,6 @@ defmodule Cinder.Catalog.Movie do
     field :vote_average, :float
     field :release_date, :date
     field :media_profile, Ecto.Enum, values: [:auto, :standard, :anime], default: :auto
-    field :anime_audio_mode, Ecto.Enum, values: [:original, :dub, :dual, :any]
     field :anime_hold_reason, :string
     has_many :title_aliases, TitleAlias
 
@@ -85,8 +84,8 @@ defmodule Cinder.Catalog.Movie do
   def download_source(%__MODULE__{content_path: path}) when path not in [nil, ""], do: path
   def download_source(%__MODULE__{file_path: path}), do: path
 
-  @doc "Changeset for the operator-owned media handling profile (+ its per-title audio-mode override; nil = use the global setting)."
-  def profile_changeset(movie, attrs), do: cast(movie, attrs, [:media_profile, :anime_audio_mode])
+  @doc "Changeset for the operator-owned media handling profile."
+  def profile_changeset(movie, attrs), do: cast(movie, attrs, [:media_profile])
 
   @doc "Changeset for the sweep-owned search-time Anime preferences hold marker (see `Catalog.set_anime_hold/2`). Not pipeline status — separate from transition_changeset/2."
   def anime_hold_changeset(movie, attrs), do: cast(movie, attrs, [:anime_hold_reason])

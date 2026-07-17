@@ -207,7 +207,6 @@ defmodule Cinder.Settings do
   @ffprobe_bin_key "ffprobe_bin"
 
   @anime_fields [
-    %{key: "anime_audio_mode", type: :select, options: ~w(original dub dual any)},
     %{
       key: "anime_embedded_subtitle_mode",
       type: :select,
@@ -737,7 +736,6 @@ defmodule Cinder.Settings do
     base = base(:anime_preferences)
 
     config = [
-      audio_mode: anime_enum(rows, "anime_audio_mode", base[:audio_mode]),
       embedded_subtitle_mode:
         anime_enum(
           rows,

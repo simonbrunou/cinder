@@ -166,40 +166,22 @@ defmodule CinderWeb.SeriesDetailLiveTest do
            )
   end
 
-  test "the per-title Anime audio-mode override renders for Anime series and persists", %{
-    conn: conn
-  } do
-    standard = series_fixture(media_profile: :standard)
-    {:ok, view, _} = live_series(conn, standard)
-
-    # Only an effective-Anime title shows the override (it does nothing for Standard).
-    refute has_element?(view, "#series-anime-audio-form")
-
+  test "the Audio pick offers all four options and drives the Anime audio mode", %{conn: conn} do
     series = series_fixture(media_profile: :anime)
     {:ok, view, _} = live_series(conn, series)
 
     assert has_element?(
              view,
-             "#series-anime-audio-form option[value=''][selected]",
-             "Use global audio mode"
+             "#series-detail-language-form option[value='dual']",
+             "French + original"
            )
 
     view
-    |> form("#series-anime-audio-form", %{"anime_audio_mode" => "dual"})
+    |> form("#series-detail-language-form", %{"preferred_language" => "dual"})
     |> render_change()
 
-    assert Repo.reload(series).anime_audio_mode == :dual
-    assert has_element?(view, "#series-anime-audio-form option[value='dual'][selected]")
-
-    # A forged value falls through to the catch-all; "" (Use global) clears the override.
-    render_hook(view, "set_anime_audio_mode", %{"anime_audio_mode" => "forged"})
-    assert Repo.reload(series).anime_audio_mode == :dual
-
-    view
-    |> form("#series-anime-audio-form", %{"anime_audio_mode" => ""})
-    |> render_change()
-
-    assert Repo.reload(series).anime_audio_mode == nil
+    assert Repo.reload(series).preferred_language == "dual"
+    assert has_element?(view, "#series-detail-language-form option[value='dual'][selected]")
   end
 
   test "series identity events tolerate forged profiles and aliases", %{conn: conn} do

@@ -49,12 +49,13 @@ the current phase only.
   dev/test/runtime), so a web write racing the poller waits rather than erroring with "database
   busy" — but that only holds if writes don't sidestep the choke-point.
   - Movie **creation** is a separate insert: `Catalog.add_movie/1` and
-    `Catalog.find_or_create_at_requested/1` (the only path reachable from a user action, gated
-    by `Cinder.Requests`); the latter broadcasts `{:movie_created, movie}` so open `/` views
-    update. The **approval gate lives in the data model**: `Cinder.Requests.create_request/2` is
-    the only caller allowed to create a movie from a user action — a non-admin request never
-    writes a `:requested` row until an admin approves. `auto_approve_all` is a live-read DB
-    setting (`nil → false`), admin-written via `/settings`.
+    `Catalog.find_or_create_at_requested/2` (the only path reachable from a user action, gated
+    by `Cinder.Requests`); creation is announced post-commit by `Cinder.Requests`
+    (`{:movie_created, movie}`) so open `/` views update — the Catalog insert itself never
+    broadcasts mid-transaction. The **approval gate lives in the data model**:
+    `Cinder.Requests.create_request/2` is the only caller allowed to create a movie from a user
+    action — a non-admin request never writes a `:requested` row until an admin approves.
+    `auto_approve_all` is a live-read DB setting (`nil → false`), admin-written via `/settings`.
 
 ## Configuration: env vs in-app settings
 
@@ -121,8 +122,8 @@ multi-step work, write the plan first.
 - When you finish a turn, the hooks run compile/format/credo/test — read their output and fix
   what you broke before moving on.
 
-<!-- Dependency usage rules are auto-synced below this line by the `Codex` library
-     (`mix Codex.install`). Do not hand-edit inside its markers; put custom guidance above. -->
+<!-- Dependency usage rules are auto-synced below this line by the `claude` library
+     (`mix claude.install`). Do not hand-edit inside its markers; put custom guidance above. -->
 
 <!-- usage-rules-start -->
 <!-- usage-rules-header -->
@@ -173,16 +174,16 @@ _A dev tool for Elixir projects to gather LLM usage rules from dependencies_
 ## phoenix:phoenix usage
 [phoenix:phoenix usage rules](deps/phoenix/usage-rules/phoenix.md)
 <!-- phoenix:phoenix-end -->
-<!-- Codex-start -->
-## Codex usage
-_Batteries-included Codex integration for Elixir projects_
+<!-- claude-start -->
+## claude usage
+_Batteries-included Claude Code integration for Elixir projects_
 
-[Codex usage rules](deps/Codex/usage-rules.md)
-<!-- Codex-end -->
-<!-- Codex:subagents-start -->
-## Codex:subagents usage
-[Codex:subagents usage rules](deps/Codex/usage-rules/subagents.md)
-<!-- Codex:subagents-end -->
+[claude usage rules](deps/claude/usage-rules.md)
+<!-- claude-end -->
+<!-- claude:subagents-start -->
+## claude:subagents usage
+[claude:subagents usage rules](deps/claude/usage-rules/subagents.md)
+<!-- claude:subagents-end -->
 <!-- usage-rules-end -->
 
 ## graphify

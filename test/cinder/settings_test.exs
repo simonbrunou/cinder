@@ -348,7 +348,6 @@ defmodule Cinder.SettingsTest do
   describe "load_into_env/0 overlay" do
     test "anime defaults are typed and DB rows overlay then clear to the bootstrap" do
       assert Settings.anime_defaults() == %{
-               audio_mode: :original,
                subtitle_languages: [],
                embedded_subtitle_mode: :prefer,
                preferred_groups: [],
@@ -358,7 +357,6 @@ defmodule Cinder.SettingsTest do
 
       assert :ok =
                Settings.save_form(%{
-                 "anime_audio_mode" => "dual",
                  "anime_embedded_subtitle_mode" => "require",
                  "anime_preferred_groups" => " SubsPlease, Erai-Raws, subsplease ",
                  "anime_blocked_groups" => "BadGroup",
@@ -367,7 +365,6 @@ defmodule Cinder.SettingsTest do
                })
 
       assert Settings.anime_defaults() == %{
-               audio_mode: :dual,
                subtitle_languages: ["fr", "en"],
                embedded_subtitle_mode: :require,
                preferred_groups: ["subsplease", "erai-raws"],
@@ -381,7 +378,6 @@ defmodule Cinder.SettingsTest do
 
       assert :ok =
                Settings.save_form(%{
-                 "anime_audio_mode" => "",
                  "anime_embedded_subtitle_mode" => "",
                  "anime_preferred_groups" => "",
                  "anime_blocked_groups" => "",
@@ -390,7 +386,6 @@ defmodule Cinder.SettingsTest do
                })
 
       assert Settings.anime_defaults() == %{
-               audio_mode: :original,
                subtitle_languages: [],
                embedded_subtitle_mode: :prefer,
                preferred_groups: [],
@@ -666,7 +661,7 @@ defmodule Cinder.SettingsTest do
   describe "save_form/1" do
     test "invalid anime enums, delay, and required subtitles save nothing" do
       for params <- [
-            valid_anime_params(%{"anime_audio_mode" => "surround"}),
+            valid_anime_params(%{"anime_embedded_subtitle_mode" => "surround"}),
             valid_anime_params(%{"anime_group_fallback_delay" => "-1"}),
             valid_anime_params(%{
               "anime_embedded_subtitle_mode" => "require",
@@ -816,7 +811,6 @@ defmodule Cinder.SettingsTest do
   defp valid_anime_params(overrides) do
     Map.merge(
       %{
-        "anime_audio_mode" => "original",
         "anime_embedded_subtitle_mode" => "prefer",
         "anime_preferred_groups" => "SubsPlease",
         "anime_blocked_groups" => "BadGroup",

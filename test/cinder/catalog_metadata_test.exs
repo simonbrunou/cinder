@@ -46,7 +46,7 @@ defmodule Cinder.CatalogMetadataTest do
       assert prepared.attrs.media_profile == :anime
       assert prepared.attrs.preferred_language == "french"
 
-      assert {:ok, movie} =
+      assert {:ok, movie, :created} =
                Catalog.find_or_create_at_requested(prepared.attrs, prepared.aliases)
 
       assert movie.media_profile == :anime

@@ -320,6 +320,12 @@ defmodule CinderWeb.RequestsLive do
               </span>
               <span :if={r.year} class="opacity-70">({r.year})</span>
               <span class="block truncate text-sm opacity-70">{r.user.email}</span>
+              <span
+                :if={audio_pick_label(r.preferred_language)}
+                class="block truncate text-sm opacity-70"
+              >
+                {gettext("Audio: %{pick}", pick: audio_pick_label(r.preferred_language))}
+              </span>
             </div>
             <.status_badge kind={:request} status={r.status} />
             <form

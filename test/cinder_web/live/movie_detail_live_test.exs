@@ -138,40 +138,18 @@ defmodule CinderWeb.MovieDetailLiveTest do
     assert has_element?(view, "#movie-aliases-empty")
   end
 
-  test "the per-title Anime audio-mode override renders for Anime titles and persists", %{
-    conn: conn
-  } do
-    standard = movie_fixture(%{media_profile: :standard})
-    {:ok, view, _} = live_movie(conn, standard)
-
-    # Only an effective-Anime title shows the override (it does nothing for Standard).
-    refute has_element?(view, "#movie-anime-audio-form")
-
+  test "the Audio pick offers all four options and drives the Anime audio mode", %{conn: conn} do
     movie = movie_fixture(%{media_profile: :anime})
     {:ok, view, _} = live_movie(conn, movie)
 
-    assert has_element?(
-             view,
-             "#movie-anime-audio-form option[value=''][selected]",
-             "Use global audio mode"
-           )
+    assert has_element?(view, "#movie-language-form option[value='dual']", "French + original")
 
     view
-    |> form("#movie-anime-audio-form", %{"anime_audio_mode" => "original"})
+    |> form("#movie-language-form", %{"preferred_language" => "dual"})
     |> render_change()
 
-    assert Repo.reload(movie).anime_audio_mode == :original
-    assert has_element?(view, "#movie-anime-audio-form option[value='original'][selected]")
-
-    # A forged value falls through to the catch-all; "" (Use global) clears the override.
-    render_hook(view, "set_anime_audio_mode", %{"anime_audio_mode" => "forged"})
-    assert Repo.reload(movie).anime_audio_mode == :original
-
-    view
-    |> form("#movie-anime-audio-form", %{"anime_audio_mode" => ""})
-    |> render_change()
-
-    assert Repo.reload(movie).anime_audio_mode == nil
+    assert Repo.reload(movie).preferred_language == "dual"
+    assert has_element?(view, "#movie-language-form option[value='dual'][selected]")
   end
 
   test "movie profile and alias events reject forged values and provider aliases are read-only",
@@ -315,8 +293,9 @@ defmodule CinderWeb.MovieDetailLiveTest do
 
     stub_details(movie.tmdb_id)
 
-    {:ok, _lv, html} = live_movie(conn, movie)
-    assert html =~ "Audio"
+    {:ok, lv, html} = live_movie(conn, movie)
+    # Scoped to the imported-media-info row (`dt`), not the per-title Audio picker's aria-label.
+    assert has_element?(lv, "dt", "Audio")
     assert html =~ "en"
     assert html =~ "fr"
     assert html =~ "embedded"
@@ -335,9 +314,9 @@ defmodule CinderWeb.MovieDetailLiveTest do
 
     stub_details(movie.tmdb_id)
 
-    {:ok, _lv, html} = live_movie(conn, movie)
-    refute html =~ "Audio"
-    refute html =~ "Subtitles"
+    {:ok, lv, _html} = live_movie(conn, movie)
+    refute has_element?(lv, "dt", "Audio")
+    refute has_element?(lv, "dt", "Subtitles")
   end
 
   test "a non-integer id redirects to the library instead of crashing", %{conn: conn} do

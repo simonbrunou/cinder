@@ -1593,11 +1593,7 @@ defmodule Cinder.Download.PollerTest do
   end
 
   test "an Anime movie waits for its preferred group without client I/O or an attempt bump" do
-    set_anime_defaults!(
-      audio_mode: :any,
-      preferred_groups: ["subsplease"],
-      group_fallback_delay: 3_600
-    )
+    set_anime_defaults!(preferred_groups: ["subsplease"], group_fallback_delay: 3_600)
 
     movie =
       movie_fixture(%{
@@ -1936,45 +1932,42 @@ defmodule Cinder.Download.PollerTest do
     assert Agent.get(searches, & &1) > 0
   end
 
-  test "a per-title audio-mode override grabs (and is frozen into the snapshot) while the global mode is unsatisfiable" do
-    set_anime_defaults!(audio_mode: :dual)
-
+  test "a title's Audio pick shapes the frozen release-policy snapshot" do
     movie =
       movie_fixture(%{
         title: "Your Name",
         year: 2016,
-        imdb_id: "tt-anime-override",
+        imdb_id: "tt-anime-audio-pick",
         original_language: "ja",
+        preferred_language: "dual",
         media_profile: :anime
       })
-
-    # Global :dual + preferred_language "original" has no dub target (the dogfood-F4 hold);
-    # the single-axis per-title override makes this title grab under :original instead.
-    {:ok, _} = Catalog.set_anime_audio_mode(movie, :original)
 
     release = %{
       title: "[Group] Your Name 2016 [1080p]",
       size: 2_000_000_000,
-      download_url: "magnet:?override"
+      download_url: "magnet:?audio-pick"
     }
 
-    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt-anime-override" -> {:ok, [release]} end)
+    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt-anime-audio-pick" -> {:ok, [release]} end)
 
     stub(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _query, categories: [5070] ->
       {:ok, [release]}
     end)
 
-    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-anime-override"} end)
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+      {:ok, "hash-anime-audio-pick"}
+    end)
 
     start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
     assert :ok = Poller.poll()
 
-    # The frozen release-policy snapshot carries the override's requirement (original audio
-    # only), proving the override is read at snapshot-freeze time — not just at display time.
+    # The frozen release-policy snapshot carries the pick's requirement (dual: original + fr),
+    # proving the Audio pick is read at snapshot-freeze time — not just at display time.
     assert %Movie{
              status: :downloading,
              anime_hold_reason: nil,
-             release_policy_snapshot: %{"required_audio_languages" => ["ja"]}
+             release_policy_snapshot: %{"required_audio_languages" => ["ja", "fr"]}
            } = Repo.get!(Movie, movie.id)
   end
 

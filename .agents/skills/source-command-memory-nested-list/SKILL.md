@@ -13,9 +13,9 @@ Use this skill when the user asks to run the migrated source command `memory-nes
 
 I'll show you all configured nested memories and their corresponding AGENTS.md files.
 
-## Current Configuration in .Codex.exs
+## Current Configuration in .claude.exs
 
-! echo "=== Nested Memories Configuration ===" && grep -A20 "nested_memories:" .Codex.exs 2>/dev/null || echo "No nested memories configured"
+! echo "=== Nested Memories Configuration ===" && grep -A20 "nested_memories:" .claude.exs 2>/dev/null || echo "No nested memories configured"
 
 ## Generated AGENTS.md Files
 
@@ -34,7 +34,7 @@ I'll show you all configured nested memories and their corresponding AGENTS.md f
 Based on the scan above:
 - Nested memories help Codex understand directory-specific contexts
 - Each directory can have its own AGENTS.md with relevant usage rules
-- These are automatically synced when running `mix Codex.install`
+- These are automatically synced when running `mix claude.install`
 
 To manage nested memories:
 - Add new: `/memory/nested-add <directory> <rule1> [rule2...]`

@@ -59,15 +59,12 @@ defmodule CinderWeb.SettingsLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/settings")
 
     assert has_element?(lv, "#anime-settings > summary", "Anime releases")
-    assert has_element?(lv, "#anime_audio_mode option[value=original]")
-    assert has_element?(lv, "#anime-dual-language-settings-help")
     assert has_element?(lv, "#anime_embedded_subtitle_mode option[value=require]")
     assert has_element?(lv, ~s|#anime_group_fallback_delay[type="number"][min="0"]|)
 
     html =
       lv
       |> form("#settings-form", %{
-        "anime_audio_mode" => "dual",
         "anime_embedded_subtitle_mode" => "prefer",
         "anime_preferred_groups" => "SubsPlease",
         "anime_blocked_groups" => "BadGroup",
@@ -78,7 +75,6 @@ defmodule CinderWeb.SettingsLiveTest do
       })
       |> render_submit()
 
-    assert has_element?(lv, "#anime_audio_mode option[value=dual][selected]")
     assert has_element?(lv, "#anime_embedded_subtitle_mode option[value=prefer][selected]")
 
     assert has_element?(
@@ -95,7 +91,6 @@ defmodule CinderWeb.SettingsLiveTest do
     html =
       lv
       |> form("#settings-form", %{
-        "anime_audio_mode" => "dual",
         "anime_embedded_subtitle_mode" => "require",
         "anime_preferred_groups" => "SubsPlease, Erai-Raws",
         "anime_blocked_groups" => "BadGroup",
@@ -106,9 +101,7 @@ defmodule CinderWeb.SettingsLiveTest do
       |> render_submit()
 
     assert html =~ "Settings saved."
-    assert Settings.anime_defaults().audio_mode == :dual
     assert Settings.anime_defaults().group_fallback_delay == 43_200
-    assert has_element?(lv, "#anime_audio_mode option[value=dual][selected]")
     assert has_element?(lv, "#anime_group_fallback_delay[value='12']")
   end
 

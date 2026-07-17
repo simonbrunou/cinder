@@ -345,6 +345,17 @@ defmodule CinderWeb.DashboardLiveTest do
       {:ok, _lv, html} = live(conn, ~p"/dashboard")
       assert html =~ "Nothing to approve"
     end
+
+    test "the pending queue shows a non-default Audio pick, but not the default", %{conn: conn} do
+      requester = Cinder.AccountsFixtures.user_fixture()
+      pending_movie_request(requester, %{preferred_language: "dual"})
+      pending_movie_request(requester, %{preferred_language: "original"})
+
+      {:ok, _lv, html} = live(conn, ~p"/dashboard")
+
+      assert html =~ "Audio: French + original"
+      refute html =~ "Audio: Original"
+    end
   end
 
   test "non-admins are redirected away from /dashboard", %{conn: _conn} do

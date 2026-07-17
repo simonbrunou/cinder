@@ -188,16 +188,11 @@ defmodule CinderWeb.ActivityLive do
 
   # Plain-English search-time hold reason (`anime_hold_reason`, the AnimePreferences.resolve
   # error) naming the fix — cleared automatically by the next sweep once preferences resolve.
-  defp anime_hold_reason("dub_language_required"),
-    do:
-      gettext(
-        "The Anime audio mode needs a dub language: set this title's preferred language, or change the audio mode."
-      )
-
   defp anime_hold_reason("original_language_required"),
     do:
       gettext(
-        "Dual audio needs this title's original language, which is unknown: change the audio mode."
+        "Dual audio needs this title's original language, which is unknown: on its detail page, choose an Audio pick other than \"%{dual}\", or fix the title's original-language metadata.",
+        dual: language_label("dual")
       )
 
   defp anime_hold_reason("subtitle_language_required"),

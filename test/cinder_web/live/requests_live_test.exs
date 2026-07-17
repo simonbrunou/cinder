@@ -198,6 +198,30 @@ defmodule CinderWeb.RequestsLiveTest do
     assert html =~ "Season 2"
   end
 
+  test "the pending queue shows a non-default Audio pick, but not the default", %{conn: conn} do
+    user = user_fixture()
+
+    {:ok, _} =
+      Cinder.Requests.create_request(user, %{
+        target_type: "movie",
+        target_id: 10,
+        title: "Picked",
+        preferred_language: "dual"
+      })
+
+    {:ok, _} =
+      Cinder.Requests.create_request(user, %{
+        target_type: "movie",
+        target_id: 11,
+        title: "Defaulted",
+        preferred_language: "original"
+      })
+
+    {:ok, _lv, html} = live(conn, ~p"/requests")
+    assert html =~ "Audio: French + original"
+    refute html =~ "Audio: Original"
+  end
+
   test "the pending queue shows the poster", %{conn: conn} do
     user = user_fixture()
 

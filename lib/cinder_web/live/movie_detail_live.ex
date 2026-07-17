@@ -13,10 +13,12 @@ defmodule CinderWeb.MovieDetailLive do
   import CinderWeb.LiveHelpers,
     only: [format_date_year: 1, humanize_bytes: 1, rating: 1, movie_badge_status: 1]
 
+  alias Cinder.Acquisition.Language
   alias Cinder.Catalog
   alias Cinder.Catalog.Movie
 
   @parked [:no_match, :search_failed, :import_failed]
+  @picks Language.preferences()
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
@@ -178,7 +180,7 @@ defmodule CinderWeb.MovieDetailLive do
     do: {:noreply, assign(socket, searching?: !socket.assigns.searching?)}
 
   def handle_event("set_movie_language", %{"preferred_language" => lang}, socket)
-      when lang in ["original", "french", "any"] do
+      when lang in @picks do
     # On success the {:movie_updated} broadcast reloads @movie; on error the dropdown visually
     # snaps back, so say why — mirrors set_series_language on /series/:id.
     case Catalog.set_movie_language(socket.assigns.movie, lang) do
@@ -192,25 +194,14 @@ defmodule CinderWeb.MovieDetailLive do
 
   def handle_event("set_media_profile", %{"media_profile" => profile}, socket)
       when profile in ["auto", "standard", "anime"] do
+    # On success the {:movie_updated} broadcast reloads @movie — same idiom as
+    # set_movie_language above.
     case Catalog.set_media_profile(socket.assigns.movie, String.to_existing_atom(profile)) do
       {:ok, _} ->
-        {:noreply, assign_fresh(socket, socket.assigns.movie.id)}
+        {:noreply, socket}
 
       {:error, _} ->
         {:noreply, put_flash(socket, :error, gettext("Couldn't update the profile."))}
-    end
-  end
-
-  def handle_event("set_anime_audio_mode", %{"anime_audio_mode" => mode}, socket)
-      when mode in ["", "original", "dub", "dual", "any"] do
-    value = if mode == "", do: nil, else: String.to_existing_atom(mode)
-
-    case Catalog.set_anime_audio_mode(socket.assigns.movie, value) do
-      {:ok, _} ->
-        {:noreply, assign_fresh(socket, socket.assigns.movie.id)}
-
-      {:error, _} ->
-        {:noreply, put_flash(socket, :error, gettext("Couldn't update the audio mode."))}
     end
   end
 
@@ -452,14 +443,6 @@ defmodule CinderWeb.MovieDetailLive do
             <.profile_select field={@profile_form[:media_profile]} />
           </.form>
           <.profile_summary id="movie-profile-summary" summary={@profile_summary} />
-          <form
-            :if={@profile_summary.effective == :anime}
-            id="movie-anime-audio-form"
-            phx-change="set_anime_audio_mode"
-            class="mt-2"
-          >
-            <.anime_audio_mode_select value={@movie.anime_audio_mode} />
-          </form>
         </div>
       </div>
 

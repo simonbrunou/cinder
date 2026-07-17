@@ -116,6 +116,23 @@ defmodule Cinder.RequestsTest do
     assert Repo.reload!(explicit).media_profile == :standard
   end
 
+  test "approving a request for an existing PARKED movie is status-neutral: fills the pick, doesn't re-queue" do
+    user = user_fixture()
+    admin = admin_fixture()
+    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 603, title: "The Matrix"})
+    {:ok, movie} = Catalog.transition(movie, %{status: :no_match, search_attempts: 3})
+
+    attrs = Map.merge(@attrs, %{preferred_language: "french"})
+    {:ok, req} = Requests.create_request(user, attrs)
+    assert {:ok, _} = Requests.approve_request(req, admin, :standard)
+
+    updated = Repo.reload!(movie)
+    assert updated.status == :no_match
+    assert updated.search_attempts == 3
+    assert updated.preferred_language == "french"
+    assert updated.media_profile == :standard
+  end
+
   test "a racing deny wins after movie identity preparation and before any catalog write" do
     Mox.set_mox_global()
     parent = self()
@@ -175,12 +192,17 @@ defmodule Cinder.RequestsTest do
     user = user_fixture()
     admin = admin_fixture()
     {:ok, req} = Requests.create_request(user, @attrs)
+    Catalog.subscribe()
     assert {:ok, approved} = Requests.approve_request(req, admin, :standard)
     assert approved.status == :approved
     assert approved.approved_by_id == admin.id
 
     assert [%Movie{status: :requested, media_profile: :standard}] =
              Catalog.list_by_status(:requested)
+
+    # Post-commit announcement: the approval's find-or-create runs inside the approval
+    # transaction and never broadcasts itself (Cinder.Catalog.find_or_create_at_requested/2).
+    assert_receive {:movie_created, %Movie{tmdb_id: 603}}
   end
 
   test "approving an already-available movie does not reset it" do
@@ -189,9 +211,11 @@ defmodule Cinder.RequestsTest do
     {:ok, req} = Requests.create_request(user, @attrs)
     {:ok, movie} = Catalog.add_movie(%{tmdb_id: 603, title: "The Matrix"})
     {:ok, _} = Catalog.transition(movie, %{status: :available})
+    Catalog.subscribe()
     {:ok, _} = Requests.approve_request(req, admin, :standard)
     assert [%Movie{status: :available}] = Catalog.list_by_status(:available)
     assert Catalog.list_by_status(:requested) == []
+    refute_receive {:movie_created, _}
   end
 
   test "deny_request sets denied + reason" do

@@ -117,35 +117,30 @@ defmodule Cinder.Catalog do
     |> Repo.insert()
   end
 
-  @doc "Sets the operator-owned handling profile for a movie or series."
-  def set_media_profile(%Movie{} = movie, profile) do
-    movie |> Movie.profile_changeset(%{media_profile: profile}) |> Repo.update()
-  end
-
-  def set_media_profile(%Series{} = series, profile) do
-    series |> Series.profile_changeset(%{media_profile: profile}) |> Repo.update()
-  end
-
   @doc """
-  Sets the per-title Anime audio-mode override (`nil` = use the global
-  `anime_audio_mode` setting). Read by `AnimePreferences.resolve/2`, so it applies at
-  search time and is frozen into the release-policy snapshot at reservation exactly as
-  the global is. Broadcasts so open views refresh.
+  Sets the operator-owned handling profile for a movie or series and broadcasts the update.
+  Rescues a deleted-row race to `{:error, :stale_entry}` (mirrors write_movie_language/2) —
+  the approval path calls this post-commit, where a raise would escape an already-committed
+  approval.
   """
-  def set_anime_audio_mode(%Movie{} = movie, mode) do
+  def set_media_profile(%Movie{} = movie, profile) do
     with {:ok, updated} <-
-           movie |> Movie.profile_changeset(%{anime_audio_mode: mode}) |> Repo.update() do
+           movie |> Movie.profile_changeset(%{media_profile: profile}) |> Repo.update() do
       broadcast({:movie_updated, updated})
       {:ok, updated}
     end
+  rescue
+    Ecto.StaleEntryError -> {:error, :stale_entry}
   end
 
-  def set_anime_audio_mode(%Series{} = series, mode) do
+  def set_media_profile(%Series{} = series, profile) do
     with {:ok, updated} <-
-           series |> Series.profile_changeset(%{anime_audio_mode: mode}) |> Repo.update() do
+           series |> Series.profile_changeset(%{media_profile: profile}) |> Repo.update() do
       broadcast_series(updated.id)
       {:ok, updated}
     end
+  rescue
+    Ecto.StaleEntryError -> {:error, :stale_entry}
   end
 
   @doc """
@@ -812,6 +807,15 @@ defmodule Cinder.Catalog do
   # :import_failed means a release was found but couldn't be written — not a language issue.
   @language_retry_statuses [:no_match, :search_failed]
 
+  # Plain field write shared by set_movie_language/2 and the approval-fill
+  # (fill_movie_language/2, via apply_requester_language/3): language_changeset + Repo.update,
+  # no status/retry side effects.
+  defp write_movie_language(movie, language) do
+    movie |> Movie.language_changeset(%{preferred_language: language}) |> Repo.update()
+  rescue
+    Ecto.StaleEntryError -> {:error, :stale_entry}
+  end
+
   @doc """
   Sets a movie's preferred language. If the movie is parked because no release in
   the desired language was found, re-queues it so the poller re-searches. Otherwise
@@ -819,7 +823,7 @@ defmodule Cinder.Catalog do
   in-flight or available movies (no quality-upgrade re-grab in this slice).
   """
   def set_movie_language(%Movie{} = movie, language) do
-    case movie |> Movie.language_changeset(%{preferred_language: language}) |> Repo.update() do
+    case write_movie_language(movie, language) do
       {:ok, updated} ->
         if updated.status in @language_retry_statuses do
           retry_movie(updated)
@@ -831,8 +835,21 @@ defmodule Cinder.Catalog do
       {:error, _changeset} = error ->
         error
     end
-  rescue
-    Ecto.StaleEntryError -> {:error, :stale_entry}
+  end
+
+  # Status-neutral pick fill for request approval (apply_requester_language/3, via
+  # apply_confirmed_media/3): writes the field and broadcasts, WITHOUT set_movie_language/2's
+  # retry branch — approving a request for an existing PARKED movie must not silently re-queue
+  # it (round-3 finding 2).
+  defp fill_movie_language(movie, language) do
+    case write_movie_language(movie, language) do
+      {:ok, updated} ->
+        broadcast({:movie_updated, updated})
+        {:ok, updated}
+
+      {:error, _changeset} = error ->
+        error
+    end
   end
 
   @doc """
@@ -1083,16 +1100,27 @@ defmodule Cinder.Catalog do
   def get_movie_by_tmdb_id(tmdb_id), do: Repo.get_by(Movie, tmdb_id: tmdb_id)
 
   @doc """
-  Returns `{:ok, movie}` for the existing row (at its current status) if one already
-  exists for `attrs.tmdb_id`, or inserts a new movie at `:requested` and broadcasts
-  `{:movie_created, movie}` before returning `{:ok, movie}`.
+  Returns `{:ok, movie, :existing}` for the existing row (at its current status) if one
+  already exists for `attrs.tmdb_id`, or `{:ok, movie, :created}` after inserting a new
+  movie at `:requested`.
 
-  A lost insert race (unique_constraint on `:tmdb_id`) is handled by re-fetching
-  the winner and returning it, so callers always get `{:ok, movie}`.
+  No broadcast here — this may run inside a caller's transaction (a savepoint when joined
+  to one already open), so announcing creation is the caller's post-commit job
+  (`Cinder.Requests.finalize_movie_approval/2` broadcasts `{:movie_created, movie}` once
+  its transaction has committed, using the returned `:created` marker).
+
+  Confirm/fill (the requester's media-profile confirmation and language pick) is NOT applied
+  here — `Cinder.Requests` calls `apply_confirmed_media/3` itself, after its approval
+  transaction commits, so a fill/confirm failure can't roll back the atomic movie-creation +
+  request-approval write. A fresh insert already carries both fields straight from `attrs`
+  (`Movie.changeset/2` casts them), so nothing is lost for the create case.
+
+  A lost insert race (unique_constraint on `:tmdb_id`) is handled by re-fetching the
+  winner and returning it as `:existing`, so callers always get `{:ok, movie, marker}`.
   """
   def find_or_create_at_requested(attrs, aliases \\ []) do
     case get_movie_by_tmdb_id(attrs.tmdb_id) do
-      %Movie{} = movie -> apply_confirmed_profile(movie, Map.get(attrs, :media_profile))
+      %Movie{} = movie -> {:ok, movie, :existing}
       nil -> do_insert_at_requested(attrs, aliases)
     end
   end
@@ -1145,15 +1173,38 @@ defmodule Cinder.Catalog do
 
     case result do
       {:ok, movie} ->
-        broadcast({:movie_created, movie})
-        {:ok, movie}
+        {:ok, movie, :created}
 
       {:error, reason} ->
         # Lost the insert race (unique_constraint :tmdb_id) — the row now exists.
         case get_movie_by_tmdb_id(attrs.tmdb_id) do
-          %Movie{} = movie -> apply_confirmed_profile(movie, Map.get(attrs, :media_profile))
+          %Movie{} = movie -> {:ok, movie, :existing}
           nil -> {:error, reason}
         end
+    end
+  end
+
+  @doc """
+  Shared confirm+fill sequence for an EXISTING movie or series matched by a request approval:
+  fills the requester's language pick (if still default), then confirms the requester's
+  media-profile proposal (:auto → confirmed only). Order is fill-then-confirm, not the reverse:
+  a failed confirm after a successful fill just leaves a plain fill-if-default — benign, and
+  a retry (the series path's re-approval, or a movie detail-page edit) picks up where it left
+  off; confirm-then-fill would instead leave a committed profile flip with no clean retry
+  surface if the fill then failed.
+
+  Call this OUTSIDE any surrounding `Repo.transaction` — `Cinder.Requests` calls it after its
+  approval transaction commits, so a fill/confirm failure here can't roll back an already-
+  committed movie/request write. On the movie path a failure is logged (the request stays
+  approved; both fields remain detail-page-editable); on the series path the caller propagates
+  the error so the season approval reverts to pending (on the auto-approve path there is no
+  approval to revert — the request is simply never created).
+  """
+  def apply_confirmed_media(media, profile, preferred) do
+    pre_request_profile = media.media_profile
+
+    with {:ok, media} <- apply_requester_language(media, preferred, pre_request_profile) do
+      apply_confirmed_profile(media, profile)
     end
   end
 
@@ -1168,6 +1219,9 @@ defmodule Cinder.Catalog do
 
   @doc "Broadcasts `{:movie_deleted, id}` on the `\"movies\"` topic so open views drop the row."
   def broadcast_movie_deleted(id), do: broadcast({:movie_deleted, id})
+
+  @doc "Broadcasts `{:movie_created, movie}` on the `\"movies\"` topic — called by `Cinder.Requests` after its approval transaction commits (the Catalog insert itself never broadcasts, see `find_or_create_at_requested/2`)."
+  def broadcast_movie_created(%Movie{} = movie), do: broadcast({:movie_created, movie})
 
   ## TV series (M4a) — admin-only direct add; movie loop untouched.
   #
@@ -1221,8 +1275,7 @@ defmodule Cinder.Catalog do
   def find_or_create_series_at_requested(tmdb_id, season_number, preferred, media_profile)
       when media_profile in [:auto, :standard, :anime] do
     with {:ok, series} <- ensure_series(tmdb_id, preferred, media_profile),
-         {:ok, series} <- apply_confirmed_profile(series, media_profile),
-         {:ok, series} <- apply_requester_language(series, preferred),
+         {:ok, series} <- apply_confirmed_media(series, media_profile, preferred),
          %Season{} = season <- season_in(series, season_number),
          {:ok, _} <- set_season_monitored(season, true),
          {:ok, updated} <- mark_series_monitored(series) do
@@ -1246,14 +1299,44 @@ defmodule Cinder.Catalog do
         media_profile: media_profile
       )
 
-  # Fill-if-default: an existing series whose language was never customized ("original") adopts the
-  # requester's non-default pick; a series already customized to a non-default is left untouched
-  # (first-customization-wins). A brand-new series already carries `preferred` from create_series.
-  defp apply_requester_language(%Series{preferred_language: "original"} = series, preferred)
-       when preferred != "original",
+  # Fill-if-default: an existing movie/series whose language was never customized ("original")
+  # adopts the requester's non-default pick; a title already customized to a non-default is left
+  # untouched (first-customization-wins). A brand-new movie/series already carries `preferred`
+  # from its creation attrs/changeset.
+  #
+  # Guarded on the title's PRE-REQUEST profile (captured by apply_confirmed_media/3 before this
+  # or apply_confirmed_profile/2 runs), not its post-confirmation profile: the request that
+  # establishes Anime also establishes its audio policy (the pick), while a title that was
+  # ALREADY Anime before this request never has its pick mutated — that pick is that title's
+  # release policy (audio-mode derivation, see `Cinder.Acquisition.AnimePreferences`), not a
+  # discovery convenience, so only a deliberate detail-page edit may change it once a title is
+  # Anime.
+  #
+  # The movie clause fills through fill_movie_language/2 (status-neutral), not
+  # set_movie_language/2 — an approval fill must not re-queue a parked movie.
+  #
+  # One guard for both clauses — these drifted once (the series clause lacked the nil
+  # exclusion), so they are deliberately not hand-synced twins anymore.
+  defguardp fillable_pick(preferred, pre_request_profile)
+            when preferred not in [nil, "original"] and pre_request_profile != :anime
+
+  defp apply_requester_language(
+         %Series{preferred_language: "original"} = series,
+         preferred,
+         pre_request_profile
+       )
+       when fillable_pick(preferred, pre_request_profile),
        do: set_series_language(series, preferred)
 
-  defp apply_requester_language(series, _preferred), do: {:ok, series}
+  defp apply_requester_language(
+         %Movie{preferred_language: "original"} = movie,
+         preferred,
+         pre_request_profile
+       )
+       when fillable_pick(preferred, pre_request_profile),
+       do: fill_movie_language(movie, preferred)
+
+  defp apply_requester_language(media, _preferred, _pre_request_profile), do: {:ok, media}
 
   defp season_in(series, season_number) do
     Repo.get_by(Season, series_id: series.id, season_number: season_number)

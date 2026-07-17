@@ -10,8 +10,11 @@ defmodule CinderWeb.SeriesDetailLive do
 
   import CinderWeb.LiveHelpers, only: [format_date_year: 1, humanize_bytes: 1, rating: 1]
 
+  alias Cinder.Acquisition.Language
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Season, Series}
+
+  @picks Language.preferences()
 
   @impl true
   def mount(%{"id" => id}, _session, socket) do
@@ -225,7 +228,7 @@ defmodule CinderWeb.SeriesDetailLive do
   end
 
   def handle_event("set_series_language", %{"preferred_language" => lang}, socket)
-      when lang in ["original", "french", "any"] do
+      when lang in @picks do
     case Catalog.set_series_language(socket.assigns.series, lang) do
       {:ok, series} ->
         {:noreply, assign(socket, :series, series)}
@@ -238,25 +241,14 @@ defmodule CinderWeb.SeriesDetailLive do
 
   def handle_event("set_media_profile", %{"media_profile" => profile}, socket)
       when profile in ["auto", "standard", "anime"] do
+    # On success the self-received {:series_updated} broadcast reloads @series — no
+    # explicit reload needed.
     case Catalog.set_media_profile(socket.assigns.series, String.to_existing_atom(profile)) do
       {:ok, _} ->
-        {:noreply, reload(socket)}
+        {:noreply, socket}
 
       {:error, _} ->
         {:noreply, put_flash(socket, :error, gettext("Couldn't update the profile."))}
-    end
-  end
-
-  def handle_event("set_anime_audio_mode", %{"anime_audio_mode" => mode}, socket)
-      when mode in ["", "original", "dub", "dual", "any"] do
-    value = if mode == "", do: nil, else: String.to_existing_atom(mode)
-
-    case Catalog.set_anime_audio_mode(socket.assigns.series, value) do
-      {:ok, _} ->
-        {:noreply, reload(socket)}
-
-      {:error, _} ->
-        {:noreply, put_flash(socket, :error, gettext("Couldn't update the audio mode."))}
     end
   end
 
@@ -675,14 +667,6 @@ defmodule CinderWeb.SeriesDetailLive do
             <.profile_select field={@profile_form[:media_profile]} />
           </.form>
           <.profile_summary id="series-profile-summary" summary={@profile_summary} />
-          <form
-            :if={@profile_summary.effective == :anime}
-            id="series-anime-audio-form"
-            phx-change="set_anime_audio_mode"
-            class="mt-2"
-          >
-            <.anime_audio_mode_select value={@series.anime_audio_mode} />
-          </form>
         </div>
       </div>
 

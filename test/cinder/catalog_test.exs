@@ -237,7 +237,7 @@ defmodule Cinder.CatalogTest do
     @attrs %{tmdb_id: 603, title: "The Matrix", year: 1999, poster_path: "/p.jpg"}
 
     test "creates a movie at :requested when absent" do
-      assert {:ok, movie} = Catalog.find_or_create_at_requested(@attrs)
+      assert {:ok, movie, :created} = Catalog.find_or_create_at_requested(@attrs)
       assert movie.status == :requested
       assert movie.tmdb_id == 603
     end
@@ -245,15 +245,81 @@ defmodule Cinder.CatalogTest do
     test "reuses an existing movie without resetting its status" do
       {:ok, movie} = Catalog.add_movie(@attrs)
       {:ok, movie} = Catalog.transition(movie, %{status: :available})
-      assert {:ok, found} = Catalog.find_or_create_at_requested(@attrs)
+      assert {:ok, found, :existing} = Catalog.find_or_create_at_requested(@attrs)
       assert found.id == movie.id
       assert found.status == :available
     end
 
-    test "broadcasts {:movie_created, movie} on insert" do
+    test "does not broadcast — announcing creation is the caller's post-commit job" do
       Catalog.subscribe()
-      {:ok, movie} = Catalog.find_or_create_at_requested(@attrs)
-      assert_receive {:movie_created, ^movie}
+      {:ok, _movie, :created} = Catalog.find_or_create_at_requested(@attrs)
+      refute_receive {:movie_created, _}
+    end
+  end
+
+  describe "apply_confirmed_media/3" do
+    test "an existing :auto movie approved as Anime with a non-default pick adopts it (fill-if-default)" do
+      {:ok, movie} = Catalog.add_movie(@attrs)
+      assert movie.media_profile == :auto
+      assert movie.preferred_language == "original"
+
+      assert {:ok, updated} = Catalog.apply_confirmed_media(movie, :anime, "french")
+      assert updated.media_profile == :anime
+      assert updated.preferred_language == "french"
+    end
+
+    test "an already-Anime movie's Audio pick is release policy — a later request pick never fills it" do
+      {:ok, movie} = Catalog.add_movie(@attrs)
+      {:ok, movie} = Catalog.set_media_profile(movie, :anime)
+
+      assert {:ok, updated} = Catalog.apply_confirmed_media(movie, :anime, "french")
+      assert updated.preferred_language == "original"
+      assert Repo.reload!(movie).preferred_language == "original"
+    end
+
+    test "an existing :standard movie with a default pick adopts the requester's language (fill-if-default)" do
+      {:ok, movie} = Catalog.add_movie(@attrs)
+      {:ok, movie} = Catalog.set_media_profile(movie, :standard)
+      assert movie.preferred_language == "original"
+
+      assert {:ok, updated} = Catalog.apply_confirmed_media(movie, :standard, "french")
+      assert updated.preferred_language == "french"
+      assert Repo.reload!(movie).preferred_language == "french"
+    end
+
+    test "an existing standard movie already customized keeps its pick against a later request" do
+      {:ok, movie} = Catalog.add_movie(@attrs)
+      {:ok, movie} = Catalog.set_media_profile(movie, :standard)
+      {:ok, movie} = Catalog.set_movie_language(movie, "any")
+
+      assert {:ok, updated} = Catalog.apply_confirmed_media(movie, :standard, "french")
+      assert updated.preferred_language == "any"
+    end
+  end
+
+  describe "set_media_profile/2" do
+    test "broadcasts {:movie_updated, movie} on the movies topic" do
+      {:ok, movie} = Catalog.add_movie(@attrs)
+      Catalog.subscribe()
+
+      assert {:ok, updated} = Catalog.set_media_profile(movie, :standard)
+      assert_receive {:movie_updated, ^updated}
+    end
+
+    test "broadcasts {:series_updated, id} on the series topic" do
+      series = series_fixture()
+      Catalog.subscribe_series()
+
+      assert {:ok, _updated} = Catalog.set_media_profile(series, :anime)
+      series_id = series.id
+      assert_receive {:series_updated, ^series_id}
+    end
+
+    test "a movie deleted mid-action is rejected and returns :stale_entry" do
+      {:ok, movie} = Catalog.add_movie(@attrs)
+      Repo.delete!(movie)
+
+      assert Catalog.set_media_profile(movie, :standard) == {:error, :stale_entry}
     end
   end
 

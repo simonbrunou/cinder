@@ -121,13 +121,14 @@ defmodule Cinder.Requests do
       # prevents both the movie and its aliases from being written.
       with {:ok, approved} <-
              flip_pending(request, %{status: :approved, approved_by_id: admin.id}),
-           {:ok, _movie} <-
+           {:ok, movie, created} <-
              Catalog.find_or_create_at_requested(prepared.attrs, prepared.aliases) do
-        approved
+        {approved, movie, created}
       else
         {:error, reason} -> Repo.rollback(reason)
       end
     end)
+    |> finalize_movie_approval(prepared)
   end
 
   # The TMDB call runs while the request already reads :approved; a raise/exit here
@@ -329,9 +330,8 @@ defmodule Cinder.Requests do
 
   defp insert_approved_movie(user, attrs, approver_id, prepared) do
     Repo.transaction(fn ->
-      with {:ok, _movie} <-
-             Catalog.find_or_create_at_requested(prepared.attrs, prepared.aliases),
-           {:ok, request} <-
+      # Creation is announced post-commit, in finalize_movie_approval — nothing here broadcasts.
+      with {:ok, request} <-
              %Request{}
              |> Request.create_changeset(
                Map.merge(attrs, %{
@@ -340,12 +340,67 @@ defmodule Cinder.Requests do
                  approved_by_id: approver_id
                })
              )
-             |> Repo.insert() do
-        request
+             |> Repo.insert(),
+           {:ok, movie, created} <-
+             Catalog.find_or_create_at_requested(prepared.attrs, prepared.aliases) do
+        {request, movie, created}
       else
         {:error, reason} -> Repo.rollback(reason)
       end
     end)
+    |> finalize_movie_approval(prepared)
+  end
+
+  # Post-commit seam shared by both movie-approval transactions above. Runs AFTER the
+  # transaction commits — Catalog.apply_confirmed_media/3 must not run inside it (a fill/confirm
+  # failure must not roll back the already-committed movie/request write). Both fields stay
+  # detail-page-editable afterward, so a failure here only logs. Only the :existing clause
+  # confirms/fills; a :created movie needs neither.
+
+  # :created — a fresh insert already carries the requester's profile and pick
+  # (Movie.changeset casts both from the create attrs), so there is nothing to confirm or
+  # fill: just announce, post-commit. Residual (accepted): the payload is the txn struct, so
+  # a delete landing in the commit→broadcast gap would be announced after its own
+  # {:movie_deleted} and upserted back by open views until remount — a sub-ms window
+  # that would cost a reload per fresh approval to close.
+  defp finalize_movie_approval({:ok, {approved, movie, :created}}, _prepared) do
+    Catalog.broadcast_movie_created(movie)
+    {:ok, approved}
+  end
+
+  # :existing — re-read post-commit: the txn struct is a stale snapshot the moment it
+  # commits — an edit (or delete) landing before this reload wins over the requester's
+  # confirm+fill. An edit in the reload→update window can still lose (no optimistic lock);
+  # accepted at household scale.
+  defp finalize_movie_approval({:ok, {approved, movie, :existing}}, prepared) do
+    case Repo.reload(movie) do
+      nil ->
+        Logger.warning("movie #{movie.id} (request #{approved.id}) deleted before confirm+fill")
+
+      fresh ->
+        confirm_and_fill(fresh, approved, prepared)
+    end
+
+    {:ok, approved}
+  end
+
+  defp finalize_movie_approval({:error, _reason} = error, _prepared), do: error
+
+  defp confirm_and_fill(movie, approved, prepared) do
+    case Catalog.apply_confirmed_media(
+           movie,
+           prepared.attrs.media_profile,
+           prepared.attrs.preferred_language
+         ) do
+      {:ok, _movie} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "apply_confirmed_media for movie #{movie.id} (request #{approved.id}) failed: " <>
+            inspect(reason)
+        )
+    end
   end
 
   defp announce_approved(request) do
