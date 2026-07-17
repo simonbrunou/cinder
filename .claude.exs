@@ -136,7 +136,7 @@
 
       **The property:** a movie's `:status` may only be written via `Movie.transition_changeset/2` inside `Catalog.transition/2` (or `do_cancel_txn/2`, the audited variant), and an episode's derived-state fields (`file_path`, `grab_id`) only by `transition_episode/2` plus the grab-lifecycle/refresh writers listed below. Each such write emits **exactly one** broadcast (pattern: write in txn, broadcast once after commit). Every other Repo write (creation, deletion, monitor flags, language, grab lifecycle, counters, TMDB refresh) is a sanctioned direct write, **not** a transition.
 
-      **Strongest structural signal:** `lib/cinder/download/poller.ex`, `lib/cinder/download/tv_poller.ex`, `lib/cinder/library.ex`, `lib/cinder/acquisition.ex`, and `lib/cinder/library/*` **except `import_stage.ex`** contain **ZERO** `Repo` write calls today — all their state changes flow through `Catalog.transition` / `transition_episode` / grab-lifecycle fns. **ANY** `Repo.insert/update/delete/update_all/transaction` introduced in those files is a bypass, full stop. Two neighbors DO write, but only their **own** tables: `lib/cinder/download.ex` writes `intents` (the A2 grab-intent snapshot lifecycle) and `lib/cinder/library/import_stage.ex` writes `import_stages` (the A3 staging state machine, guarded `update_all` state moves) — a write in either file that touches the movies/episodes/grabs tables is still a bypass.
+      **Strongest structural signal:** `lib/cinder/download/poller.ex`, `lib/cinder/download/tv_poller.ex`, `lib/cinder/library.ex`, `lib/cinder/acquisition.ex`, and `lib/cinder/library/*` **except `import_stage.ex`** contain **ZERO** `Repo` write calls today — all their state changes flow through `Catalog.transition` / `transition_episode` / grab-lifecycle fns. **ANY** `Repo.insert/update/delete/update_all/transaction` introduced in those files is a bypass, full stop. Two neighbors DO write, but only their **own** tables: `lib/cinder/download.ex` writes the intent tables (`download_intents` + `download_intent_episodes`, the A2 grab-intent snapshot lifecycle) and `lib/cinder/library/import_stage.ex` writes `import_stages` (the A3 staging state machine, guarded `update_all` state moves) — a write in either file that touches the movies/episodes/grabs tables is still a bypass.
 
       **Key locations:** `catalog.ex` `transition/2` (~L439), `transition_episode/2` (~L1685), `do_cancel_txn/2` (~L959), `finish_grab/3` (~L2251, the single write-site for the episode `file_path` XOR `grab_id` invariant), `link_grab_episodes/3` (~L1970); `catalog/movie.ex` `transition_changeset/2` (~L124, the ONLY Movie changeset that casts `:status`; `changeset/2` L94 and `language_changeset/2` L117 deliberately do not).
 
@@ -185,7 +185,7 @@
       - Test-connection / any handler assigning entered secret form params back into the socket/health map (probes use SAVED config precisely to avoid this).
 
       **LEGITIMATE — do NOT flag:**
-      - Non-secret settings (`secret: false`) rendered plaintext by design: all service URLs (`prowlarr_url`, `qbittorrent_url`, `sabnzbd_url`, `jellyfin_url`, `plex_url`), `qbittorrent_username`, Plex section ids, library paths, size bands, preferred resolutions. These ARE in `values` and bound to input `value=` (e.g. settings_components.ex ~L76/L90/L142/L160) — correct.
+      - Non-secret settings (`secret: false`) rendered plaintext by design: all service URLs (`prowlarr_url`, `qbittorrent_url`, `sabnzbd_url`, `jellyfin_url`, `plex_url`), `qbittorrent_username`, Plex section ids, library paths, size bands, preferred resolutions. These ARE in `values` and bound to input `value=` (e.g. the `values`-map binding at settings_components.ex ~L142 and the text input in `setting_field/1` ~L412) — correct.
       - Placeholders showing the effective ENV value for a **non-secret** field with no DB row (secret env-seeding shows only the "set via environment" hint, never the value).
       - `secrets_set` / `secrets_from_env` exposing **boolean** membership — metadata for the masked placeholder, not the value.
       - Storing the row's `is_secret` boolean + base64 ciphertext in the DB — ciphertext at rest is the encryption, not a leak.
@@ -278,8 +278,8 @@
       (`acquisition/anime.ex` ~L744-771): strip the leading `[group]` tag, normalize
       (NFKC -> trim -> downcase), then a PREFIX match against the known title/aliases
       (longest-first) whose remainder must be empty or start with a separator + legal marker
-      (year, `SxxEyy`, `Exx`, absolute number/range with optional `v2`, `[`, or a
-      resolution/source token) — NOT a bare substring match; the movie kind additionally
+      (a 4-digit year-like token, `Sxx`/`SxxEyy`, `Exx`, absolute number/range with
+      optional `v2`, `[`, or a resolution/source token) — NOT a bare substring match; the movie kind additionally
       requires an exact-year hit (`exact_movie_year?/2`). `nfd/1` (`acquisition.ex` ~L358)
       must tolerate malformed UTF-8 (a garbled indexer title must not crash or stall the
       season). Language pool: soft Original/Any falls back to unfiltered; an explicit pick is

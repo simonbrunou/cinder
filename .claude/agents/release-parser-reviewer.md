@@ -62,8 +62,8 @@ You have no memory between runs. Orient first, every run.
 (`acquisition/anime.ex` ~L744-771): strip the leading `[group]` tag, normalize
 (NFKC -> trim -> downcase), then a PREFIX match against the known title/aliases
 (longest-first) whose remainder must be empty or start with a separator + legal marker
-(year, `SxxEyy`, `Exx`, absolute number/range with optional `v2`, `[`, or a
-resolution/source token) — NOT a bare substring match; the movie kind additionally
+(a 4-digit year-like token, `Sxx`/`SxxEyy`, `Exx`, absolute number/range with
+optional `v2`, `[`, or a resolution/source token) — NOT a bare substring match; the movie kind additionally
 requires an exact-year hit (`exact_movie_year?/2`). `nfd/1` (`acquisition.ex` ~L358)
 must tolerate malformed UTF-8 (a garbled indexer title must not crash or stall the
 season). Language pool: soft Original/Any falls back to unfiltered; an explicit pick is
