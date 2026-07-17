@@ -657,4 +657,144 @@ defmodule Cinder.AccountsTest do
       assert Repo.reload!(actor)
     end
   end
+
+  describe "login_or_register_plex_user/1" do
+    test "matches an existing user by plex_id and logs in" do
+      user = user_fixture() |> Ecto.Changeset.change(plex_id: 1001) |> Repo.update!()
+
+      assert {:ok, matched} =
+               Accounts.login_or_register_plex_user(%{id: 1001, email: nil, username: "someone"})
+
+      assert matched.id == user.id
+    end
+
+    test "refreshes plex_username on a plex_id match if it changed" do
+      user =
+        user_fixture()
+        |> Ecto.Changeset.change(plex_id: 1002, plex_username: "old-name")
+        |> Repo.update!()
+
+      assert {:ok, updated} =
+               Accounts.login_or_register_plex_user(%{id: 1002, email: nil, username: "new-name"})
+
+      assert updated.id == user.id
+      assert updated.plex_username == "new-name"
+    end
+
+    test "a second login by plex_id after account creation matches the same user" do
+      assert {:ok, created} =
+               Accounts.login_or_register_plex_user(%{
+                 id: 2001,
+                 email: "created-2001@example.com",
+                 username: "someone"
+               })
+
+      assert {:ok, again} =
+               Accounts.login_or_register_plex_user(%{id: 2001, email: nil, username: "someone"})
+
+      assert again.id == created.id
+    end
+
+    test "creates a new :user when no plex_id matches, even though another account exists" do
+      existing = user_fixture()
+
+      assert {:ok, created} =
+               Accounts.login_or_register_plex_user(%{
+                 id: 3001,
+                 email: "brandnew-3001@example.com",
+                 username: "the-newcomer"
+               })
+
+      assert created.id != existing.id
+      assert created.role == :user
+      assert created.plex_id == 3001
+      assert Repo.reload!(existing).plex_id == nil
+    end
+
+    # SECURITY regression (the exact hole this rework closes): a Plex account whose reported
+    # email happens to match an existing admin's, with no plex_id match, must NEVER be resolved
+    # to that admin's row — email is not proof of inbox ownership, and the only other gate is
+    # "has access to the configured Plex server" (any watch-only friend passes). Because
+    # users.email is uniquely indexed, the safe outcome is a rejected create (not a login and not
+    # a second row) — the admin row is left completely untouched either way.
+    test "an email collision with an existing admin, with no plex_id match, never resolves to that admin" do
+      admin = admin_fixture(email: "admin-collision@example.com")
+      count_before = Repo.aggregate(User, :count)
+
+      assert {:error, %Ecto.Changeset{}} =
+               Accounts.login_or_register_plex_user(%{
+                 id: 4444,
+                 email: "admin-collision@example.com",
+                 username: "attacker"
+               })
+
+      reloaded = Repo.reload!(admin)
+      assert reloaded.role == :admin
+      assert reloaded.plex_id == nil
+      assert Repo.aggregate(User, :count) == count_before
+    end
+
+    test "{:error, :no_email} for a Plex account with no email and no existing plex_id match" do
+      assert {:error, :no_email} =
+               Accounts.login_or_register_plex_user(%{id: 4001, email: nil, username: "no-email"})
+    end
+
+    test "creates a new :user-role account with no usable password when nothing matches" do
+      assert {:ok, created} =
+               Accounts.login_or_register_plex_user(%{
+                 id: 5001,
+                 email: "brandnew@example.com",
+                 username: "brand-new"
+               })
+
+      assert created.role == :user
+      assert created.request_quota == nil
+      assert created.plex_id == 5001
+      assert created.confirmed_at
+
+      refute Accounts.get_user_by_email_and_password("brandnew@example.com", "password1234")
+      refute Accounts.get_user_by_email_and_password("brandnew@example.com", "")
+    end
+  end
+
+  describe "link_plex_to_user/2" do
+    test "sets plex_id/username and preserves role (admin stays admin)" do
+      admin = admin_fixture()
+
+      assert {:ok, linked} =
+               Accounts.link_plex_to_user(admin, %{
+                 id: 7001,
+                 email: "x@example.com",
+                 username: "me"
+               })
+
+      assert linked.role == :admin
+      assert linked.plex_id == 7001
+      assert linked.plex_username == "me"
+    end
+
+    test "returns {:error, changeset} when that plex_id already belongs to another user" do
+      _taken = user_fixture() |> Ecto.Changeset.change(plex_id: 7002) |> Repo.update!()
+      user = user_fixture()
+
+      assert {:error, changeset} =
+               Accounts.link_plex_to_user(user, %{id: 7002, email: nil, username: "someone-else"})
+
+      assert %{plex_id: ["has already been taken"]} = errors_on(changeset)
+      refute Repo.reload!(user).plex_id
+    end
+  end
+
+  describe "unlink_plex_from_user/1" do
+    test "clears plex_id and plex_username" do
+      user =
+        user_fixture()
+        |> Ecto.Changeset.change(plex_id: 8001, plex_username: "linked-name")
+        |> Repo.update!()
+
+      assert {:ok, unlinked} = Accounts.unlink_plex_from_user(user)
+      assert unlinked.plex_id == nil
+      assert unlinked.plex_username == nil
+    end
+  end
 end

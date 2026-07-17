@@ -59,6 +59,15 @@ defmodule CinderWeb.UserLive.LoginTest do
     end
   end
 
+  describe "Sign in with Plex" do
+    test "renders a button pointing at /auth/plex when Plex is configured", %{conn: conn} do
+      {:ok, _lv, html} = live(conn, ~p"/users/log-in")
+
+      assert html =~ "Sign in with Plex"
+      assert html =~ ~s(href="/auth/plex")
+    end
+  end
+
   describe "re-authentication (sudo mode)" do
     setup %{conn: conn} do
       user = user_fixture()

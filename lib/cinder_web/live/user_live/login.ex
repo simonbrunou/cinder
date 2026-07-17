@@ -1,6 +1,8 @@
 defmodule CinderWeb.UserLive.Login do
   use CinderWeb, :live_view
 
+  alias Cinder.Accounts.PlexAuth
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -54,6 +56,13 @@ defmodule CinderWeb.UserLive.Login do
             {gettext("Log in only this time")}
           </.button>
         </.form>
+
+        <%= if @plex_login_available? do %>
+          <div class="divider">{gettext("or")}</div>
+          <.button href={~p"/auth/plex"} variant="neutral" class="w-full">
+            {gettext("Sign in with Plex")}
+          </.button>
+        <% end %>
       </div>
     </Layouts.app>
     """
@@ -67,7 +76,12 @@ defmodule CinderWeb.UserLive.Login do
 
     form = to_form(%{"email" => email}, as: "user")
 
-    {:ok, assign(socket, form: form, trigger_submit: false)}
+    {:ok,
+     assign(socket,
+       form: form,
+       trigger_submit: false,
+       plex_login_available?: PlexAuth.configured?()
+     )}
   end
 
   @impl true

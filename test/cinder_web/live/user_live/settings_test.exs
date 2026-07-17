@@ -209,4 +209,38 @@ defmodule CinderWeb.UserLive.SettingsTest do
       assert message == "You must log in to access this page."
     end
   end
+
+  describe "Plex account section" do
+    test "an unlinked user sees a Link Plex account link pointing at /auth/plex", %{conn: conn} do
+      {:ok, _lv, html} =
+        conn
+        |> log_in_user(user_fixture())
+        |> live(~p"/users/settings")
+
+      assert html =~ "Link Plex account"
+      assert html =~ ~s(href="/auth/plex")
+    end
+
+    test "a linked user sees the linked state and can unlink", %{conn: conn} do
+      user = user_fixture()
+
+      {:ok, user} =
+        Cinder.Accounts.link_plex_to_user(user, %{
+          id: 1234,
+          email: nil,
+          username: "plex-me"
+        })
+
+      {:ok, lv, html} = conn |> log_in_user(user) |> live(~p"/users/settings")
+
+      assert html =~ "Linked as plex-me"
+      refute html =~ "Link Plex account"
+
+      html = lv |> element("button", "Unlink") |> render_click()
+
+      assert html =~ "Link Plex account"
+      refute html =~ "Linked as plex-me"
+      assert Cinder.Repo.reload!(user).plex_id == nil
+    end
+  end
 end

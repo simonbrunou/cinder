@@ -15,6 +15,13 @@ All notable changes to Cinder are documented here. The format follows
   unbounded behavior. Bands already set in `/settings` are unaffected.
 
 ### Added
+- **Sign in with Plex.** A "Sign in with Plex" button on the log-in page (shown once Plex is
+  configured) authenticates via Plex's PIN flow; only accounts with access to the household's
+  configured Plex server (owner or shared user) may sign in. First login always creates a new
+  `:user`-role account — Plex's reported email is never used to look up or log into an existing
+  account (email isn't proof of inbox ownership, so that would let anyone with mere watch access
+  log in as whoever happens to share that email). To attach Plex to an existing account (e.g. an
+  admin's), link it from Account settings while logged in.
 - **Anime-aware handling.** A per-title opt-in profile (`Auto`/`Standard`/`Anime` on movies and
   series — `Auto` stays `Standard` unless a title is explicitly confirmed, either directly or as a
   requester's proposal an admin approves) makes release search alias- and absolute/scene-number-aware
