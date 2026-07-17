@@ -1100,9 +1100,14 @@ defmodule Cinder.Catalog do
   def get_movie_by_tmdb_id(tmdb_id), do: Repo.get_by(Movie, tmdb_id: tmdb_id)
 
   @doc """
-  Returns `{:ok, movie}` for the existing row (at its current status) if one already
-  exists for `attrs.tmdb_id`, or inserts a new movie at `:requested` and broadcasts
-  `{:movie_created, movie}` before returning `{:ok, movie}`.
+  Returns `{:ok, movie, :existing}` for the existing row (at its current status) if one
+  already exists for `attrs.tmdb_id`, or `{:ok, movie, :created}` after inserting a new
+  movie at `:requested`.
+
+  No broadcast here — this may run inside a caller's transaction (a savepoint when joined
+  to one already open), so announcing creation is the caller's post-commit job
+  (`Cinder.Requests.finalize_movie_approval/2` broadcasts `{:movie_created, movie}` once
+  its transaction has committed, using the returned `:created` marker).
 
   Confirm/fill (the requester's media-profile confirmation and language pick) is NOT applied
   here — `Cinder.Requests` calls `apply_confirmed_media/3` itself, after its approval
@@ -1110,12 +1115,12 @@ defmodule Cinder.Catalog do
   request-approval write. A fresh insert already carries both fields straight from `attrs`
   (`Movie.changeset/2` casts them), so nothing is lost for the create case.
 
-  A lost insert race (unique_constraint on `:tmdb_id`) is handled by re-fetching
-  the winner and returning it, so callers always get `{:ok, movie}`.
+  A lost insert race (unique_constraint on `:tmdb_id`) is handled by re-fetching the
+  winner and returning it as `:existing`, so callers always get `{:ok, movie, marker}`.
   """
   def find_or_create_at_requested(attrs, aliases \\ []) do
     case get_movie_by_tmdb_id(attrs.tmdb_id) do
-      %Movie{} = movie -> {:ok, movie}
+      %Movie{} = movie -> {:ok, movie, :existing}
       nil -> do_insert_at_requested(attrs, aliases)
     end
   end
@@ -1168,13 +1173,12 @@ defmodule Cinder.Catalog do
 
     case result do
       {:ok, movie} ->
-        broadcast({:movie_created, movie})
-        {:ok, movie}
+        {:ok, movie, :created}
 
       {:error, reason} ->
         # Lost the insert race (unique_constraint :tmdb_id) — the row now exists.
         case get_movie_by_tmdb_id(attrs.tmdb_id) do
-          %Movie{} = movie -> {:ok, movie}
+          %Movie{} = movie -> {:ok, movie, :existing}
           nil -> {:error, reason}
         end
     end
@@ -1193,7 +1197,8 @@ defmodule Cinder.Catalog do
   approval transaction commits, so a fill/confirm failure here can't roll back an already-
   committed movie/request write. On the movie path a failure is logged (the request stays
   approved; both fields remain detail-page-editable); on the series path the caller propagates
-  the error so the season approval reverts to pending.
+  the error so the season approval reverts to pending (on the auto-approve path there is no
+  approval to revert — the request is simply never created).
   """
   def apply_confirmed_media(media, profile, preferred) do
     pre_request_profile = media.media_profile
@@ -1306,12 +1311,18 @@ defmodule Cinder.Catalog do
   #
   # The movie clause fills through fill_movie_language/2 (status-neutral), not
   # set_movie_language/2 — an approval fill must not re-queue a parked movie.
+  #
+  # One guard for both clauses — these drifted once (the series clause lacked the nil
+  # exclusion), so they are deliberately not hand-synced twins anymore.
+  defguardp fillable_pick(preferred, pre_request_profile)
+            when preferred not in [nil, "original"] and pre_request_profile != :anime
+
   defp apply_requester_language(
          %Series{preferred_language: "original"} = series,
          preferred,
          pre_request_profile
        )
-       when preferred not in [nil, "original"] and pre_request_profile != :anime,
+       when fillable_pick(preferred, pre_request_profile),
        do: set_series_language(series, preferred)
 
   defp apply_requester_language(
@@ -1319,7 +1330,7 @@ defmodule Cinder.Catalog do
          preferred,
          pre_request_profile
        )
-       when preferred not in [nil, "original"] and pre_request_profile != :anime,
+       when fillable_pick(preferred, pre_request_profile),
        do: fill_movie_language(movie, preferred)
 
   defp apply_requester_language(media, _preferred, _pre_request_profile), do: {:ok, media}

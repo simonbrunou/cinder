@@ -192,12 +192,17 @@ defmodule Cinder.RequestsTest do
     user = user_fixture()
     admin = admin_fixture()
     {:ok, req} = Requests.create_request(user, @attrs)
+    Catalog.subscribe()
     assert {:ok, approved} = Requests.approve_request(req, admin, :standard)
     assert approved.status == :approved
     assert approved.approved_by_id == admin.id
 
     assert [%Movie{status: :requested, media_profile: :standard}] =
              Catalog.list_by_status(:requested)
+
+    # Post-commit announcement: the approval's find-or-create runs inside the approval
+    # transaction and never broadcasts itself (Cinder.Catalog.find_or_create_at_requested/2).
+    assert_receive {:movie_created, %Movie{tmdb_id: 603}}
   end
 
   test "approving an already-available movie does not reset it" do

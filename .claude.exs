@@ -62,7 +62,7 @@
       **The two-tier gate:**
       - `Cinder.Requests.create_request/2` (`requests.ex:~31`) branches on `user.role == :admin or Settings.auto_approve_all?()`. True → `create_approved/3` (creates the catalog row now). False → `create_pending/2` (inserts a `%Request{status: :pending}` and **nothing else**).
       - Sanctioned movie-row creators, reachable ONLY through `Requests`: `create_approved/3` (movie clause ~L168, wraps `Catalog.find_or_create_at_requested` + approved Request in one txn) and `approve_request/2` (movie clause ~L70, find-or-creates on admin approval; non-pending falls through to `{:error, :not_pending}`).
-      - The actual creator `Catalog.find_or_create_at_requested/1` (`catalog.ex:~373`; the insert and the `{:movie_created, movie}` broadcast live in its private `do_insert_at_requested/1` helper, ~L380) does no auth itself — its **callers** carry the gate.
+      - The actual creator `Catalog.find_or_create_at_requested/2` (`catalog.ex:~373`; the insert lives in its private `do_insert_at_requested/2` helper, ~L380 — it returns a `:created | :existing` marker and never broadcasts; `Cinder.Requests.finalize_movie_approval/2` announces `{:movie_created, movie}` post-commit) does no auth itself — its **callers** carry the gate.
       - `Catalog.add_to_watchlist/1` (`catalog.ex:~95`) is a raw ungated `:requested` insert with no non-admin-reachable caller today. A new such caller is the classic leak.
 
       **Key locations to read:** `discover_live.ex` `add/3` (~L82-100: builds `target_type: "movie"`, reads `user = socket.assigns.current_scope.user`, calls `Requests.create_request(user, attrs)` — never Catalog directly); `series_discovery_live.ex` `handle_event("request_season")` (~L40-111, routes through `create_request`); `requests.ex` `create_request/2`, `create_pending/2`, `over_quota?/1`, `create_approved/3`, `approve_request/2`; `catalog.ex` `find_or_create_at_requested/1`, `do_insert_at_requested/1`, `add_to_watchlist/1`; `settings.ex` `auto_approve_all?/0` (~L238: `get("auto_approve_all") == "true"`, nil → false); `settings_live.ex` auto_approve_all toggle (~L56-59, admin-only write).
@@ -149,7 +149,7 @@
       - A movie status transition added without `{:movie_updated, movie}` (or an episode pipeline write without `broadcast_series`) — breaks one-transition-one-broadcast that LiveViews rely on.
 
       **LEGITIMATE — do NOT flag (these are sanctioned direct writes in `catalog.ex`):**
-      - Movie creation inserts (no `:status` cast; schema defaults `:requested`): `add_to_watchlist/1` (~L95), `do_insert_at_requested/1` (~L380, broadcasts `{:movie_created}`).
+      - Movie creation inserts (no `:status` cast; schema defaults `:requested`): `add_to_watchlist/1` (~L95), `do_insert_at_requested/2` (~L380; no broadcast — `{:movie_created}` is announced post-commit by `Requests.finalize_movie_approval/2`).
       - `update_movie/2` (~L107, `Movie.changeset/2` — no `:status` cast).
       - Language: `set_movie_language/2` (~L183, `language_changeset`), `set_series_language/2` (~L205).
       - Cancel: `cancel_movie/2` + `do_cancel_txn/2` (~L256/271, `status: :cancelled` via `transition_changeset`, broadcast hoisted after the audited txn).

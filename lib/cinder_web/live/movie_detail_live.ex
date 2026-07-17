@@ -194,9 +194,11 @@ defmodule CinderWeb.MovieDetailLive do
 
   def handle_event("set_media_profile", %{"media_profile" => profile}, socket)
       when profile in ["auto", "standard", "anime"] do
+    # On success the {:movie_updated} broadcast reloads @movie — same idiom as
+    # set_movie_language above.
     case Catalog.set_media_profile(socket.assigns.movie, String.to_existing_atom(profile)) do
       {:ok, _} ->
-        {:noreply, assign_fresh(socket, socket.assigns.movie.id)}
+        {:noreply, socket}
 
       {:error, _} ->
         {:noreply, put_flash(socket, :error, gettext("Couldn't update the profile."))}

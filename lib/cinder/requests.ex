@@ -121,9 +121,9 @@ defmodule Cinder.Requests do
       # prevents both the movie and its aliases from being written.
       with {:ok, approved} <-
              flip_pending(request, %{status: :approved, approved_by_id: admin.id}),
-           {:ok, movie} <-
+           {:ok, movie, created} <-
              Catalog.find_or_create_at_requested(prepared.attrs, prepared.aliases) do
-        {approved, movie}
+        {approved, movie, created}
       else
         {:error, reason} -> Repo.rollback(reason)
       end
@@ -330,9 +330,8 @@ defmodule Cinder.Requests do
 
   defp insert_approved_movie(user, attrs, approver_id, prepared) do
     Repo.transaction(fn ->
-      # Movie write LAST: do_insert_at_requested broadcasts {:movie_created} while this
-      # outer txn is still open, so no later in-txn failure may roll back an
-      # already-broadcast movie (mirrors approve_prepared_movie's flip-first shape).
+      # Creation is announced post-commit, in finalize_movie_approval — not here (mirrors
+      # approve_prepared_movie's flip-first shape).
       with {:ok, request} <-
              %Request{}
              |> Request.create_changeset(
@@ -343,9 +342,9 @@ defmodule Cinder.Requests do
                })
              )
              |> Repo.insert(),
-           {:ok, movie} <-
+           {:ok, movie, created} <-
              Catalog.find_or_create_at_requested(prepared.attrs, prepared.aliases) do
-        {request, movie}
+        {request, movie, created}
       else
         {:error, reason} -> Repo.rollback(reason)
       end
@@ -360,10 +359,16 @@ defmodule Cinder.Requests do
   # failure must not roll back the already-committed movie/request write). Both fields stay
   # detail-page-editable afterward, so a failure here only logs.
   #
-  # Re-read post-commit: the txn struct is a stale snapshot the moment it commits — a
-  # concurrent detail-page edit (or delete) in the gap must win over the requester's
-  # confirm+fill, and the guards in apply_confirmed_media must see current state.
-  defp finalize_movie_approval({:ok, {approved, movie}}, prepared) do
+  # Creation is announced FIRST, before the reload below: find_or_create_at_requested/2 never
+  # broadcasts (it may run inside this now-committed transaction), so a subscriber that re-reads
+  # the DB on {:movie_created} must already find the row.
+  #
+  # Re-read post-commit: the txn struct is a stale snapshot the moment it commits — an edit (or
+  # delete) landing before this reload wins over the requester's confirm+fill. An edit in the
+  # reload→update window can still lose (no optimistic lock); accepted at household scale.
+  defp finalize_movie_approval({:ok, {approved, movie, created}}, prepared) do
+    if created == :created, do: Catalog.broadcast({:movie_created, movie})
+
     case Repo.reload(movie) do
       nil ->
         Logger.warning("movie #{movie.id} (request #{approved.id}) deleted before confirm+fill")

@@ -237,7 +237,7 @@ defmodule Cinder.CatalogTest do
     @attrs %{tmdb_id: 603, title: "The Matrix", year: 1999, poster_path: "/p.jpg"}
 
     test "creates a movie at :requested when absent" do
-      assert {:ok, movie} = Catalog.find_or_create_at_requested(@attrs)
+      assert {:ok, movie, :created} = Catalog.find_or_create_at_requested(@attrs)
       assert movie.status == :requested
       assert movie.tmdb_id == 603
     end
@@ -245,15 +245,15 @@ defmodule Cinder.CatalogTest do
     test "reuses an existing movie without resetting its status" do
       {:ok, movie} = Catalog.add_movie(@attrs)
       {:ok, movie} = Catalog.transition(movie, %{status: :available})
-      assert {:ok, found} = Catalog.find_or_create_at_requested(@attrs)
+      assert {:ok, found, :existing} = Catalog.find_or_create_at_requested(@attrs)
       assert found.id == movie.id
       assert found.status == :available
     end
 
-    test "broadcasts {:movie_created, movie} on insert" do
+    test "does not broadcast — announcing creation is the caller's post-commit job" do
       Catalog.subscribe()
-      {:ok, movie} = Catalog.find_or_create_at_requested(@attrs)
-      assert_receive {:movie_created, ^movie}
+      {:ok, _movie, :created} = Catalog.find_or_create_at_requested(@attrs)
+      refute_receive {:movie_created, _}
     end
   end
 
@@ -304,6 +304,22 @@ defmodule Cinder.CatalogTest do
 
       assert {:ok, updated} = Catalog.set_media_profile(movie, :standard)
       assert_receive {:movie_updated, ^updated}
+    end
+
+    test "broadcasts {:series_updated, id} on the series topic" do
+      series = series_fixture()
+      Catalog.subscribe_series()
+
+      assert {:ok, _updated} = Catalog.set_media_profile(series, :anime)
+      series_id = series.id
+      assert_receive {:series_updated, ^series_id}
+    end
+
+    test "a movie deleted mid-action is rejected and returns :stale_entry" do
+      {:ok, movie} = Catalog.add_movie(@attrs)
+      Repo.delete!(movie)
+
+      assert Catalog.set_media_profile(movie, :standard) == {:error, :stale_entry}
     end
   end
 
