@@ -22,6 +22,9 @@ defmodule Cinder.Repo.Migrations.MergeAnimeAudioModeIntoPreferredLanguage do
   def up do
     global = global_audio_mode()
 
+    # The whole migration runs in one transaction, and releases migrate at boot before the
+    # pollers start, so nothing races this pass — only a manual `mix ecto.migrate` against a
+    # RUNNING instance could hit SQLITE_BUSY, and busy_timeout (5000 ms) covers that.
     for table <- ["movies", "series"] do
       execute("""
       UPDATE #{table}

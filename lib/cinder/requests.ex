@@ -330,9 +330,10 @@ defmodule Cinder.Requests do
 
   defp insert_approved_movie(user, attrs, approver_id, prepared) do
     Repo.transaction(fn ->
-      with {:ok, movie} <-
-             Catalog.find_or_create_at_requested(prepared.attrs, prepared.aliases),
-           {:ok, request} <-
+      # Movie write LAST: do_insert_at_requested broadcasts {:movie_created} while this
+      # outer txn is still open, so no later in-txn failure may roll back an
+      # already-broadcast movie (mirrors approve_prepared_movie's flip-first shape).
+      with {:ok, request} <-
              %Request{}
              |> Request.create_changeset(
                Map.merge(attrs, %{
@@ -341,7 +342,9 @@ defmodule Cinder.Requests do
                  approved_by_id: approver_id
                })
              )
-             |> Repo.insert() do
+             |> Repo.insert(),
+           {:ok, movie} <-
+             Catalog.find_or_create_at_requested(prepared.attrs, prepared.aliases) do
         {request, movie}
       else
         {:error, reason} -> Repo.rollback(reason)
@@ -356,7 +359,25 @@ defmodule Cinder.Requests do
   # transaction commits — Catalog.apply_confirmed_media/3 must not run inside it (a fill/confirm
   # failure must not roll back the already-committed movie/request write). Both fields stay
   # detail-page-editable afterward, so a failure here only logs.
+  #
+  # Re-read post-commit: the txn struct is a stale snapshot the moment it commits — a
+  # concurrent detail-page edit (or delete) in the gap must win over the requester's
+  # confirm+fill, and the guards in apply_confirmed_media must see current state.
   defp finalize_movie_approval({:ok, {approved, movie}}, prepared) do
+    case Repo.reload(movie) do
+      nil ->
+        Logger.warning("movie #{movie.id} (request #{approved.id}) deleted before confirm+fill")
+
+      fresh ->
+        confirm_and_fill(fresh, approved, prepared)
+    end
+
+    {:ok, approved}
+  end
+
+  defp finalize_movie_approval({:error, _reason} = error, _prepared), do: error
+
+  defp confirm_and_fill(movie, approved, prepared) do
     case Catalog.apply_confirmed_media(
            movie,
            prepared.attrs.media_profile,
@@ -371,11 +392,7 @@ defmodule Cinder.Requests do
             inspect(reason)
         )
     end
-
-    {:ok, approved}
   end
-
-  defp finalize_movie_approval({:error, _reason} = error, _prepared), do: error
 
   defp announce_approved(request) do
     broadcast({:request_approved, request})

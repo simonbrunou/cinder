@@ -274,6 +274,17 @@ defmodule Cinder.CatalogTest do
 
       assert {:ok, updated} = Catalog.apply_confirmed_media(movie, :anime, "french")
       assert updated.preferred_language == "original"
+      assert Repo.reload!(movie).preferred_language == "original"
+    end
+
+    test "an existing :standard movie with a default pick adopts the requester's language (fill-if-default)" do
+      {:ok, movie} = Catalog.add_movie(@attrs)
+      {:ok, movie} = Catalog.set_media_profile(movie, :standard)
+      assert movie.preferred_language == "original"
+
+      assert {:ok, updated} = Catalog.apply_confirmed_media(movie, :standard, "french")
+      assert updated.preferred_language == "french"
+      assert Repo.reload!(movie).preferred_language == "french"
     end
 
     test "an existing standard movie already customized keeps its pick against a later request" do
@@ -283,6 +294,16 @@ defmodule Cinder.CatalogTest do
 
       assert {:ok, updated} = Catalog.apply_confirmed_media(movie, :standard, "french")
       assert updated.preferred_language == "any"
+    end
+  end
+
+  describe "set_media_profile/2" do
+    test "broadcasts {:movie_updated, movie} on the movies topic" do
+      {:ok, movie} = Catalog.add_movie(@attrs)
+      Catalog.subscribe()
+
+      assert {:ok, updated} = Catalog.set_media_profile(movie, :standard)
+      assert_receive {:movie_updated, ^updated}
     end
   end
 

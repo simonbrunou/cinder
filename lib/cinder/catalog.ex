@@ -117,13 +117,30 @@ defmodule Cinder.Catalog do
     |> Repo.insert()
   end
 
-  @doc "Sets the operator-owned handling profile for a movie or series."
+  @doc """
+  Sets the operator-owned handling profile for a movie or series and broadcasts the update.
+  Rescues a deleted-row race to `{:error, :stale_entry}` (mirrors write_movie_language/2) —
+  the approval path calls this post-commit, where a raise would escape an already-committed
+  approval.
+  """
   def set_media_profile(%Movie{} = movie, profile) do
-    movie |> Movie.profile_changeset(%{media_profile: profile}) |> Repo.update()
+    with {:ok, updated} <-
+           movie |> Movie.profile_changeset(%{media_profile: profile}) |> Repo.update() do
+      broadcast({:movie_updated, updated})
+      {:ok, updated}
+    end
+  rescue
+    Ecto.StaleEntryError -> {:error, :stale_entry}
   end
 
   def set_media_profile(%Series{} = series, profile) do
-    series |> Series.profile_changeset(%{media_profile: profile}) |> Repo.update()
+    with {:ok, updated} <-
+           series |> Series.profile_changeset(%{media_profile: profile}) |> Repo.update() do
+      broadcast_series(updated.id)
+      {:ok, updated}
+    end
+  rescue
+    Ecto.StaleEntryError -> {:error, :stale_entry}
   end
 
   @doc """
@@ -1168,13 +1185,15 @@ defmodule Cinder.Catalog do
   fills the requester's language pick (if still default), then confirms the requester's
   media-profile proposal (:auto → confirmed only). Order is fill-then-confirm, not the reverse:
   a failed confirm after a successful fill just leaves a plain fill-if-default — benign, and
-  re-approval retries the confirm cleanly; confirm-then-fill would instead leave a committed
-  profile flip with no clean retry surface if the fill then failed.
+  a retry (the series path's re-approval, or a movie detail-page edit) picks up where it left
+  off; confirm-then-fill would instead leave a committed profile flip with no clean retry
+  surface if the fill then failed.
 
   Call this OUTSIDE any surrounding `Repo.transaction` — `Cinder.Requests` calls it after its
   approval transaction commits, so a fill/confirm failure here can't roll back an already-
-  committed movie/request write. Both fields stay detail-page-editable afterward, so callers
-  should log a failure rather than propagate it as an approval failure.
+  committed movie/request write. On the movie path a failure is logged (the request stays
+  approved; both fields remain detail-page-editable); on the series path the caller propagates
+  the error so the season approval reverts to pending.
   """
   def apply_confirmed_media(media, profile, preferred) do
     pre_request_profile = media.media_profile
@@ -1292,7 +1311,7 @@ defmodule Cinder.Catalog do
          preferred,
          pre_request_profile
        )
-       when preferred != "original" and pre_request_profile != :anime,
+       when preferred not in [nil, "original"] and pre_request_profile != :anime,
        do: set_series_language(series, preferred)
 
   defp apply_requester_language(
