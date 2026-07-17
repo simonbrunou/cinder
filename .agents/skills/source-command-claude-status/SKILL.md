@@ -16,15 +16,15 @@ I'll check the status of Codex integration in your project.
 ## Installation Overview
 
 ! echo "=== Codex Installation Status ===" && \
-  if [ -f ".Codex.exs" ]; then \
-    echo "✓ Configuration file: .Codex.exs"; \
+  if [ -f ".claude.exs" ]; then \
+    echo "✓ Configuration file: .claude.exs"; \
   else \
-    echo "✗ No .Codex.exs configuration file"; \
+    echo "✗ No .claude.exs configuration file"; \
   fi && \
-  if [ -d ".Codex" ]; then \
-    echo "✓ Codex directory: .Codex/"; \
+  if [ -d ".claude" ]; then \
+    echo "✓ Codex directory: .claude/"; \
   else \
-    echo "✗ No .Codex directory"; \
+    echo "✗ No .claude directory"; \
   fi
 
 ## Configuration Details
@@ -32,10 +32,10 @@ I'll check the status of Codex integration in your project.
 ### Hooks Configuration
 
 ! echo -e "\n=== Hooks ===" && \
-  if [ -d ".Codex/hooks" ]; then \
-    echo "Installed hooks:" && ls .Codex/hooks/ | sed 's/^/  - /'; \
-    echo -e "\nConfigured in .Codex.exs:" && \
-    grep -A10 "hooks:" .Codex.exs 2>/dev/null | head -15; \
+  if [ -d ".claude/hooks" ]; then \
+    echo "Installed hooks:" && ls .claude/hooks/ | sed 's/^/  - /'; \
+    echo -e "\nConfigured in .claude.exs:" && \
+    grep -A10 "hooks:" .claude.exs 2>/dev/null | head -15; \
   else \
     echo "No hooks installed"; \
   fi
@@ -43,8 +43,8 @@ I'll check the status of Codex integration in your project.
 ### Subagents
 
 ! echo -e "\n=== Subagents ===" && \
-  if [ -d ".Codex/agents" ]; then \
-    echo "Installed subagents:" && ls .Codex/agents/*.md 2>/dev/null | xargs -I {} basename {} .md | sed 's/^/  - /'; \
+  if [ -d ".claude/agents" ]; then \
+    echo "Installed subagents:" && ls .claude/agents/*.md 2>/dev/null | xargs -I {} basename {} .md | sed 's/^/  - /'; \
   else \
     echo "No subagents installed"; \
   fi
@@ -52,7 +52,7 @@ I'll check the status of Codex integration in your project.
 ### Nested Memories
 
 ! echo -e "\n=== Nested Memories ===" && \
-  grep -A20 "nested_memories:" .Codex.exs 2>/dev/null || echo "No nested memories configured"
+  grep -A20 "nested_memories:" .claude.exs 2>/dev/null || echo "No nested memories configured"
 
 ! echo -e "\nGenerated AGENTS.md files:" && \
   find . -name "AGENTS.md" -not -path "./.git/*" -not -path "./_build/*" -not -path "./deps/*" 2>/dev/null | sed 's/^/  - /'
@@ -70,9 +70,9 @@ I'll check the status of Codex integration in your project.
 ### Settings
 
 ! echo -e "\n=== Local Settings ===" && \
-  if [ -f ".Codex/settings.json" ]; then \
+  if [ -f ".claude/settings.json" ]; then \
     echo "Settings file exists with configurations:" && \
-    cat .Codex/settings.json | grep -E '^\s*"[^"]+":' | sed 's/^/  /'; \
+    cat .claude/settings.json | grep -E '^\s*"[^"]+":' | sed 's/^/  /'; \
   else \
     echo "No local settings file"; \
   fi
@@ -90,12 +90,12 @@ I'll check the status of Codex integration in your project.
 
 Based on the status above:
 
-! if [ ! -f ".Codex.exs" ]; then \
-    echo "→ Run '/Codex/install' to set up Codex integration"; \
-  elif [ ! -d ".Codex/hooks" ]; then \
-    echo "→ Run 'mix Codex.install' to install configured components"; \
+! if [ ! -f ".claude.exs" ]; then \
+    echo "→ Run 'mix claude.install' to set up Codex integration"; \
+  elif [ ! -d ".claude/hooks" ]; then \
+    echo "→ Run 'mix claude.install' to install configured components"; \
   else \
-    echo "→ Run '/Codex/install --yes' to update installation"; \
+    echo "→ Run 'mix claude.install --yes' to update installation"; \
     echo "→ Run '/memory/nested-sync' to update nested memories"; \
     echo "→ Run '/hooks' to manage hooks"; \
   fi
@@ -104,14 +104,14 @@ Based on the status above:
 
 ! echo -e "\n=== Health Check ===" && \
   errors=0 && \
-  if [ -f ".Codex.exs" ]; then \
+  if [ -f ".claude.exs" ]; then \
     echo "✓ Configuration exists"; \
   else \
-    echo "⚠ Missing .Codex.exs" && errors=$((errors+1)); \
+    echo "⚠ Missing .claude.exs" && errors=$((errors+1)); \
   fi && \
-  if [ -d ".Codex/hooks" ] && [ -f ".Codex.exs" ]; then \
+  if [ -d ".claude/hooks" ] && [ -f ".claude.exs" ]; then \
     echo "✓ Hooks match configuration"; \
-  elif [ -f ".Codex.exs" ] && grep -q "hooks:" .Codex.exs; then \
+  elif [ -f ".claude.exs" ] && grep -q "hooks:" .claude.exs; then \
     echo "⚠ Hooks configured but not installed" && errors=$((errors+1)); \
   else \
     echo "✓ No hooks expected"; \
@@ -119,5 +119,5 @@ Based on the status above:
   if [ $errors -eq 0 ]; then \
     echo -e "\n✅ Codex installation is healthy"; \
   else \
-    echo -e "\n⚠ Found $errors issue(s) - run '/Codex/install' to fix"; \
+    echo -e "\n⚠ Found $errors issue(s) - run 'mix claude.install' to fix"; \
   fi
