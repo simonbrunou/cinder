@@ -149,5 +149,8 @@ defmodule CinderWeb.Router do
 
     post "/users/log-in", UserSessionController, :create
     delete "/users/log-out", UserSessionController, :delete
+
+    get "/auth/plex", PlexAuthController, :start
+    get "/auth/plex/callback", PlexAuthController, :callback
   end
 end

@@ -4,6 +4,7 @@ defmodule CinderWeb.UserLive.Settings do
   on_mount {CinderWeb.UserAuth, :require_sudo_mode}
 
   alias Cinder.Accounts
+  alias Cinder.Accounts.PlexAuth
 
   @impl true
   def render(assigns) do
@@ -65,6 +66,34 @@ defmodule CinderWeb.UserLive.Settings do
           {gettext("Save password")}
         </.button>
       </.form>
+
+      <%= if PlexAuth.configured?() do %>
+        <div class="divider" />
+
+        <div class="text-left">
+          <h3 class="text-lg font-semibold">{gettext("Plex account")}</h3>
+
+          <%= if @current_scope.user.plex_id do %>
+            <p class="mt-2">
+              <%= if @current_scope.user.plex_username do %>
+                {gettext("Linked as %{username}.", username: @current_scope.user.plex_username)}
+              <% else %>
+                {gettext("Linked.")}
+              <% end %>
+            </p>
+            <.button phx-click="unlink_plex" variant="neutral" class="mt-2">
+              {gettext("Unlink")}
+            </.button>
+          <% else %>
+            <p class="mt-2">
+              {gettext("Sign in faster next time by linking your Plex account.")}
+            </p>
+            <.button href={~p"/auth/plex"} variant="neutral" class="mt-2">
+              {gettext("Link Plex account")}
+            </.button>
+          <% end %>
+        </div>
+      <% end %>
     </Layouts.app>
     """
   end
@@ -155,6 +184,24 @@ defmodule CinderWeb.UserLive.Settings do
 
       changeset ->
         {:noreply, assign(socket, password_form: to_form(changeset, action: :insert))}
+    end
+  end
+
+  def handle_event("unlink_plex", _params, socket) do
+    case Accounts.unlink_plex_from_user(socket.assigns.current_scope.user) do
+      {:ok, user} ->
+        {:noreply,
+         socket
+         |> assign(:current_scope, %{socket.assigns.current_scope | user: user})
+         |> put_flash(:info, gettext("Your Plex account has been unlinked."))}
+
+      {:error, _changeset} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Could not unlink your Plex account. Please try again.")
+         )}
     end
   end
 end

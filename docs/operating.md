@@ -47,6 +47,15 @@ expected to terminate at a reverse proxy):
   `CINDER_BASIC_AUTH_PASSWORD` (environment, both required) to put HTTP Basic auth in front of the
   whole app — a stopgap while the instance has no admin yet (the boot log warns exactly then), or a
   second layer when you can't front Cinder with a proxy/VPN. Unset ⇒ no gate.
+- **Sign in with Plex:** once a Plex media server is configured (`PLEX_URL`/`PLEX_TOKEN` or the
+  `/settings` equivalents), the log-in page shows a "Sign in with Plex" button. Only Plex accounts
+  with access to that server (owner or a shared user) may sign in — anyone else is rejected. The
+  first successful Plex login always creates a new regular-user account — Plex's reported email is
+  never used to look up or log into an existing account, since email isn't proof of inbox
+  ownership and that would let anyone with mere watch access log in as whoever happens to share it.
+  A Plex Home managed account with no email can't sign in this way. To attach Plex to an existing
+  account (e.g. an admin who registered by password), log in normally and link it from Account
+  settings (`/users/settings`).
 
 ## Configuration: environment vs in-app
 

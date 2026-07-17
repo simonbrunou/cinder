@@ -47,6 +47,7 @@ config :cinder, Cinder.Repo,
 # Tests override these with Mox mocks (see config/test.exs).
 config :cinder, tmdb: Cinder.Catalog.TMDB.HTTP
 config :cinder, indexer: Cinder.Acquisition.Indexer.Prowlarr
+config :cinder, plex_auth: Cinder.Accounts.PlexAuth.HTTP
 
 config :cinder,
   download_clients: %{

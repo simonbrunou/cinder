@@ -10,6 +10,8 @@ defmodule Cinder.Accounts.User do
     field :authenticated_at, :utc_datetime, virtual: true
     field :role, Ecto.Enum, values: [:admin, :user], default: :user
     field :request_quota, :integer
+    field :plex_id, :integer
+    field :plex_username, :string
 
     timestamps(type: :utc_datetime)
   end
@@ -126,6 +128,13 @@ defmodule Cinder.Accounts.User do
     user
     |> cast(attrs, [:request_quota])
     |> validate_number(:request_quota, greater_than_or_equal_to: 0)
+  end
+
+  @doc "Links (or refreshes) a Plex account: `plex_id` + display-only `plex_username`."
+  def plex_changeset(user, attrs) do
+    user
+    |> cast(attrs, [:plex_id, :plex_username])
+    |> unique_constraint(:plex_id)
   end
 
   @doc """

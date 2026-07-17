@@ -65,6 +65,77 @@ defmodule Cinder.Accounts do
     end)
   end
 
+  @doc """
+  Resolves a Plex account (`%{id:, email:, username:}`, from `Cinder.Accounts.PlexAuth`) to a
+  Cinder user for the UNAUTHENTICATED "Sign in with Plex" flow: an existing `plex_id` match logs
+  in (refreshing `plex_username` if it changed); otherwise a new `:user`-role account is created,
+  auto-confirmed like `register_user/2` but never admin and never gated by the bootstrap token
+  (Plex sign-in is not a first-user path).
+
+  Plex's reported email is **never** used to look up an existing account here — plex.tv email
+  isn't proof of inbox ownership, so treating it as one would let any account with mere watch
+  access to the configured server log in as whoever happens to share that email (an
+  account-takeover path if that email belongs to an admin). To attach Plex to an existing
+  account, see `link_plex_to_user/2` (the authenticated `/users/settings` flow, run by the
+  account's own logged-in owner).
+
+  A managed Plex Home account with no email can't be matched or created, so it's rejected with
+  `{:error, :no_email}`.
+  """
+  def login_or_register_plex_user(%{id: plex_id} = account) when is_integer(plex_id) do
+    case Repo.get_by(User, plex_id: plex_id) do
+      %User{} = user -> refresh_plex_username(user, account)
+      nil -> create_plex_user(account)
+    end
+  end
+
+  # A missing/non-integer id (a malformed plex.tv response) must never fall through to
+  # Repo.get_by(User, plex_id: nil) — that compiles to `WHERE plex_id IS NULL` and would
+  # match an arbitrary password-only user (or raise MultipleResultsError). Fail closed.
+  def login_or_register_plex_user(_account), do: {:error, :invalid_account}
+
+  defp refresh_plex_username(user, account) do
+    user
+    |> User.plex_changeset(%{plex_username: Map.get(account, :username)})
+    |> Repo.update()
+  end
+
+  defp create_plex_user(%{email: email}) when email in [nil, ""], do: {:error, :no_email}
+
+  defp create_plex_user(account) do
+    password = :crypto.strong_rand_bytes(32) |> Base.encode64()
+
+    %User{}
+    |> User.registration_changeset(%{
+      email: account.email,
+      password: password,
+      password_confirmation: password
+    })
+    |> User.plex_changeset(%{plex_id: account.id, plex_username: Map.get(account, :username)})
+    |> Ecto.Changeset.put_change(:confirmed_at, DateTime.utc_now(:second))
+    |> Ecto.Changeset.put_change(:role, :user)
+    |> Repo.insert()
+  end
+
+  @doc """
+  Attaches a Plex identity to an ALREADY-authenticated user's own account — the `/users/settings`
+  link flow. Never logs anyone in (unlike `login_or_register_plex_user/1`).
+  `unique_constraint(:plex_id)` surfaces as `{:error, changeset}` when that Plex identity is
+  already linked to a different account.
+  """
+  def link_plex_to_user(%User{} = user, account) do
+    user
+    |> User.plex_changeset(%{plex_id: account.id, plex_username: Map.get(account, :username)})
+    |> Repo.update()
+  end
+
+  @doc "Detaches a user's Plex identity (clears `plex_id` and `plex_username`)."
+  def unlink_plex_from_user(%User{} = user) do
+    user
+    |> User.plex_changeset(%{plex_id: nil, plex_username: nil})
+    |> Repo.update()
+  end
+
   @doc "Checks the one-time first-user bootstrap credential in constant time."
   def valid_bootstrap_token?(submitted) when is_binary(submitted) do
     expected = Application.get_env(:cinder, :bootstrap_token)

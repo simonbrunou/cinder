@@ -37,6 +37,13 @@ media-server details, validating each before it lets you finish. Later household
 stays open and always creates a normal user. A fresh instance without a bootstrap token fails
 closed: it cannot create the first account.
 
+Once a media server is configured with `PLEX_URL`/`PLEX_TOKEN` (or the equivalent `/settings`
+fields), a **"Sign in with Plex"** button appears on the log-in page. Only Plex accounts with
+access to that server (owner or shared user) may sign in; the first Plex login always creates a
+new regular-user account — there is no automatic email-based login into an existing account. To
+attach Plex to an existing account (e.g. your admin), log in normally and link it from Account
+settings.
+
 > ⚠️ **Secure it before exposing it.** Keep the one-time bootstrap token private, and don't expose
 > port 4000 to an untrusted network — run Cinder behind a reverse proxy (with TLS) or a VPN. See
 > [`docs/operating.md`](docs/operating.md).
