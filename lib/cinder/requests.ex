@@ -351,18 +351,17 @@ defmodule Cinder.Requests do
     |> finalize_movie_approval(prepared)
   end
 
-  # Post-commit confirm+fill seam shared by both movie-approval transactions above: an approved
-  # request always resolves the movie's confirmed profile and language pick, whether the movie
-  # was just found-or-created inside the transaction or already existed. Runs AFTER the
+  # Post-commit seam shared by both movie-approval transactions above. Runs AFTER the
   # transaction commits — Catalog.apply_confirmed_media/3 must not run inside it (a fill/confirm
   # failure must not roll back the already-committed movie/request write). Both fields stay
-  # detail-page-editable afterward, so a failure here only logs.
+  # detail-page-editable afterward, so a failure here only logs. Only the :existing clause
+  # confirms/fills; a :created movie needs neither.
 
   # :created — a fresh insert already carries the requester's profile and pick
   # (Movie.changeset casts both from the create attrs), so there is nothing to confirm or
   # fill: just announce, post-commit. Residual (accepted): the payload is the txn struct, so
   # a delete landing in the commit→broadcast gap would be announced after its own
-  # {:movie_deleted} and upserted back by open views until the next event — a sub-ms window
+  # {:movie_deleted} and upserted back by open views until remount — a sub-ms window
   # that would cost a reload per fresh approval to close.
   defp finalize_movie_approval({:ok, {approved, movie, :created}}, _prepared) do
     Catalog.broadcast_movie_created(movie)

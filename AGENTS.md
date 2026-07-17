@@ -122,8 +122,8 @@ multi-step work, write the plan first.
 - When you finish a turn, the hooks run compile/format/credo/test — read their output and fix
   what you broke before moving on.
 
-<!-- Dependency usage rules are auto-synced below this line by the `Codex` library
-     (`mix Codex.install`). Do not hand-edit inside its markers; put custom guidance above. -->
+<!-- Dependency usage rules are auto-synced below this line by the `claude` library
+     (`mix claude.install`). Do not hand-edit inside its markers; put custom guidance above. -->
 
 <!-- usage-rules-start -->
 <!-- usage-rules-header -->
@@ -174,16 +174,16 @@ _A dev tool for Elixir projects to gather LLM usage rules from dependencies_
 ## phoenix:phoenix usage
 [phoenix:phoenix usage rules](deps/phoenix/usage-rules/phoenix.md)
 <!-- phoenix:phoenix-end -->
-<!-- Codex-start -->
-## Codex usage
-_Batteries-included Codex integration for Elixir projects_
+<!-- claude-start -->
+## claude usage
+_Batteries-included Claude Code integration for Elixir projects_
 
-[Codex usage rules](deps/Codex/usage-rules.md)
-<!-- Codex-end -->
-<!-- Codex:subagents-start -->
-## Codex:subagents usage
-[Codex:subagents usage rules](deps/Codex/usage-rules/subagents.md)
-<!-- Codex:subagents-end -->
+[claude usage rules](deps/claude/usage-rules.md)
+<!-- claude-end -->
+<!-- claude:subagents-start -->
+## claude:subagents usage
+[claude:subagents usage rules](deps/claude/usage-rules/subagents.md)
+<!-- claude:subagents-end -->
 <!-- usage-rules-end -->
 
 ## graphify
