@@ -1220,6 +1220,9 @@ defmodule Cinder.Catalog do
   @doc "Broadcasts `{:movie_deleted, id}` on the `\"movies\"` topic so open views drop the row."
   def broadcast_movie_deleted(id), do: broadcast({:movie_deleted, id})
 
+  @doc "Broadcasts `{:movie_created, movie}` on the `\"movies\"` topic — called by `Cinder.Requests` after its approval transaction commits (the Catalog insert itself never broadcasts, see `find_or_create_at_requested/2`)."
+  def broadcast_movie_created(%Movie{} = movie), do: broadcast({:movie_created, movie})
+
   ## TV series (M4a) — admin-only direct add; movie loop untouched.
   #
   # No PubSub topic yet: nothing subscribes until the M4b series-detail LiveView.

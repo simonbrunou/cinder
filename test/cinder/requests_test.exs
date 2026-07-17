@@ -211,9 +211,11 @@ defmodule Cinder.RequestsTest do
     {:ok, req} = Requests.create_request(user, @attrs)
     {:ok, movie} = Catalog.add_movie(%{tmdb_id: 603, title: "The Matrix"})
     {:ok, _} = Catalog.transition(movie, %{status: :available})
+    Catalog.subscribe()
     {:ok, _} = Requests.approve_request(req, admin, :standard)
     assert [%Movie{status: :available}] = Catalog.list_by_status(:available)
     assert Catalog.list_by_status(:requested) == []
+    refute_receive {:movie_created, _}
   end
 
   test "deny_request sets denied + reason" do
