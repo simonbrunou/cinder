@@ -316,19 +316,19 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
       preview = Catalog.preview_scene_mapping(detail, series)
 
       season2 = Enum.find(preview, &(&1.season_number == 2))
-      assert season2.alt_range == {1, 10}
+      assert season2.alt_numbers == Enum.to_list(1..10)
       assert season2.canonical_range == {29, 38}
       assert season2.count == 10
       assert season2.unmatched_count == 0
 
       season1 = Enum.find(preview, &(&1.season_number == 1))
-      assert season1.alt_range == {1, 28}
+      assert season1.alt_numbers == Enum.to_list(1..28)
       assert season1.canonical_range == {1, 28}
 
       specials = Enum.find(preview, &(&1.season_number == 0))
       assert specials.count == 0
       assert specials.unmatched_count == 26
-      assert specials.alt_range == nil
+      assert specials.alt_numbers == []
       assert specials.canonical_range == nil
     end
 
@@ -466,6 +466,54 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
 
       after_attempt = reloaded |> Catalog.list_episode_coordinates() |> scene_only()
       assert coordinate_fingerprints(after_attempt) == coordinate_fingerprints(before_attempt)
+    end
+
+    # R3 finding 3: same_group_resave_noop/2 must decide from a FRESH read of the series row, not
+    # the caller's (possibly stale) struct — otherwise a stale tab's genuine switch-back request
+    # silently reports a no-op "success" for a group that is no longer the persisted one.
+    test "a stale caller struct doesn't cause a false no-op for a group that is no longer current",
+         %{series: series, episodes: episodes, group_id: group_id} do
+      ep1 = hd(episodes)
+      ep2 = Enum.at(episodes, 1)
+      group_a = group_id
+      group_b = "group-b"
+
+      entry_for = fn tmdb_episode_id ->
+        %{
+          tmdb_episode_id: tmdb_episode_id,
+          group_name: "Season 1",
+          group_order: 1,
+          order: 0,
+          season_number: 1,
+          episode_number: 1
+        }
+      end
+
+      expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn ^group_a ->
+        {:ok,
+         %{id: group_a, type: 6, name: "Seasons", entries: [entry_for.(ep1.tmdb_episode_id)]}}
+      end)
+
+      assert {:ok, session_a} = Catalog.set_scene_numbering_group(series, group_a)
+      # `stale` still remembers group_a — the operator's tab hasn't refreshed since.
+      stale = session_a
+
+      expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn ^group_b ->
+        {:ok,
+         %{id: group_b, type: 6, name: "Seasons", entries: [entry_for.(ep2.tmdb_episode_id)]}}
+      end)
+
+      assert {:ok, _current} = Catalog.set_scene_numbering_group(session_a, group_b)
+
+      # The stale tab re-saves group_a (believing it's a harmless no-op) while TMDB blips. The
+      # persisted current group is actually group_b now — this must fail loud, not silently
+      # report success while leaving group_b in place.
+      expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn ^group_a -> {:error, :timeout} end)
+
+      assert {:error, :group_fetch_failed} = Catalog.set_scene_numbering_group(stale, group_a)
+
+      reloaded = Repo.reload!(series)
+      assert reloaded.scene_numbering_group_id == group_b
     end
 
     # Finding 5: `previous` must come from a fresh DB read, not the caller's in-memory struct —
@@ -689,10 +737,11 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
     # episode, so without a dedicated guard they'd both persist as "S01E01" for two different
     # episodes under one namespace. Both must be dropped instead, and surfaced in the preview's
     # unmatched count.
-    test "two subgroups colliding on the derived season/episode are both dropped, not silently guessed",
+    test "two subgroups colliding on the derived season/episode are both dropped, not silently guessed; a matched entry survives an unrelated unmatched entry sharing its code",
          %{series: series, episodes: episodes, group_id: group_id} do
       ep1 = hd(episodes)
       ep2 = Enum.at(episodes, 1)
+      ep3 = Enum.at(episodes, 2)
 
       detail = %{
         id: group_id,
@@ -714,6 +763,28 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
             order: 0,
             season_number: 1,
             episode_number: 1
+          },
+          # R3 finding 2: ep3 is a genuinely matched entry (Season 9, order 0 -> S09E01). An
+          # unrelated entry whose tmdb_episode_id ISN'T in the imported tree (never persists
+          # anything either way) coincidentally derives the same S09E01 via the order fallback
+          # (its name doesn't parse, so its season falls back to its group_order, 9). This must
+          # not drop ep3's legitimate match — only two or more MATCHED entries sharing a code is
+          # a real collision.
+          %{
+            tmdb_episode_id: ep3.tmdb_episode_id,
+            group_name: "Season 9",
+            group_order: 20,
+            order: 0,
+            season_number: 9,
+            episode_number: 1
+          },
+          %{
+            tmdb_episode_id: 999_999,
+            group_name: "Bonus Content",
+            group_order: 9,
+            order: 0,
+            season_number: 9,
+            episode_number: 1
           }
         ]
       }
@@ -723,12 +794,20 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
       assert {:ok, updated} = Catalog.set_scene_numbering_group(series, group_id)
 
       scene_coordinates = updated |> Catalog.list_episode_coordinates() |> scene_only()
-      assert scene_coordinates == []
+      refute Enum.any?(scene_coordinates, &(&1.canonical_value == "S01E01"))
+
+      survivor = Enum.find(scene_coordinates, &(&1.canonical_value == "S09E01"))
+      assert survivor
+      assert Enum.map(survivor.memberships, & &1.episode_id) == [ep3.id]
 
       preview = Catalog.preview_scene_mapping(detail, Catalog.get_series_with_tree(series.id))
       season1 = Enum.find(preview, &(&1.season_number == 1))
       assert season1.count == 0
       assert season1.unmatched_count == 2
+
+      season9 = Enum.find(preview, &(&1.season_number == 9))
+      assert season9.count == 1
+      assert season9.unmatched_count == 1
     end
 
     # Finding 7: the season-number-from-subgroup-order fallback is a convention, not an API

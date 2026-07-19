@@ -244,10 +244,10 @@ defmodule Cinder.Catalog do
   the picker's preview can never drift from what Save writes. `series` must carry its
   preloaded season/episode tree (`Catalog.get_series_with_tree/1`); entries are matched to
   Cinder episodes by `tmdb_episode_id`. Returns one entry per derived season, sorted by
-  season number, showing both sides of the mapping — the alternate S0xEyy range Save will
-  write (`alt_range`, plus the full sorted `alt_numbers` list so a caller can render a gappy,
-  non-contiguous season accurately instead of a fake smooth range) and the canonical episode
-  range it resolves to (`canonical_range`).
+  season number, showing both sides of the mapping — the full sorted `alt_numbers` list Save
+  will write as scene coordinates (a caller renders it as a single code, a contiguous range, or a
+  gap-safe listing, so a non-contiguous season is never shown as a fake smooth range) and the
+  canonical episode range it resolves to (`canonical_range`).
   `count` reflects only entries matched to a Cinder episode row; unmatched entries (e.g. a
   Specials subgroup outside the imported tree, or an episode a Story Arc-shaped group claims from
   more than one subgroup — see `derive_scene_entries/2`) are excluded from it and surfaced
@@ -265,14 +265,12 @@ defmodule Cinder.Catalog do
     |> Enum.map(fn {season_number, group_entries} ->
       {matched, unmatched} = Enum.split_with(group_entries, & &1.matched)
       representative = hd(group_entries)
-      alt_numbers = matched |> Enum.map(& &1.episode_number) |> Enum.sort()
 
       %{
         season_number: season_number,
         count: length(matched),
         unmatched_count: length(unmatched),
-        alt_range: minmax(alt_numbers),
-        alt_numbers: alt_numbers,
+        alt_numbers: matched |> Enum.map(& &1.episode_number) |> Enum.sort(),
         canonical_range: minmax(Enum.map(matched, & &1.matched.episode_number)),
         group_name: representative.group_name,
         season_source: representative.season_source
@@ -311,10 +309,11 @@ defmodule Cinder.Catalog do
   (a failed refresh fetch keeps whatever is already synced), there is nothing yet synced for a
   newly-chosen group, so committing the column on a failed fetch would silently strand it at zero
   coordinates while reporting success. The one exception is a re-save of the group that is
-  already `series`' persisted current group: nothing was going to change anyway, so a transient
+  already the series' persisted current group: nothing was going to change anyway, so a transient
   TMDB blip there is a logged no-op (`{:ok, series}`, existing coordinates untouched) rather than
-  an error — compared against the caller's own (possibly stale) struct, so a residual race with a
-  second writer that changed the group in between is acceptable here.
+  an error — decided from a fresh `Repo.get` of the series row, not the caller's (possibly stale)
+  `series` struct, so a stale tab attempting a genuine switch-back can't be mistaken for a no-op
+  once a second writer has actually moved the group on.
 
   `opts[:detail]` lets a caller reuse a TMDB episode-group detail it already fetched (e.g. the
   series-detail picker's own preview fetch), skipping a redundant round trip — but only when it
@@ -337,17 +336,24 @@ defmodule Cinder.Catalog do
 
   # A re-save of the group that is already this series' persisted current group hitting a
   # transient TMDB blip is a harmless no-op (nothing yet needed to change); a NEW/different
-  # group selection still fails loud via the fallback clause below.
-  defp same_group_resave_noop(%Series{scene_numbering_group_id: group_id} = series, group_id) do
-    Logger.warning(
-      "scene numbering: series #{series.id} re-save of already-current group " <>
-        "#{inspect(group_id)} failed to fetch, keeping existing coordinates (no-op)"
-    )
+  # group selection still fails loud via the fallback clause below. Decided from a fresh read of
+  # the series row, not the caller's `series` struct — a stale tab's struct can still show a group
+  # a second writer has since moved away from, and comparing against that stale value would
+  # falsely report "no-op success" for what is actually a genuine (failed) switch-back.
+  defp same_group_resave_noop(series, group_id) do
+    case Repo.get(Series, series.id) do
+      %Series{scene_numbering_group_id: ^group_id} ->
+        Logger.warning(
+          "scene numbering: series #{series.id} re-save of already-current group " <>
+            "#{inspect(group_id)} failed to fetch, keeping existing coordinates (no-op)"
+        )
 
-    {:ok, series}
+        {:ok, series}
+
+      _current_or_nil ->
+        {:error, :group_fetch_failed}
+    end
   end
-
-  defp same_group_resave_noop(_series, _group_id), do: {:error, :group_fetch_failed}
 
   defp resolve_scene_group_detail(nil, _opts), do: {:ok, nil}
 
@@ -381,7 +387,9 @@ defmodule Cinder.Catalog do
                |> Repo.update(),
              :ok <- clear_previous_scene_namespace(updated, previous, group_id),
              :ok <-
-               sync_scene_coordinates(updated, detail, episode_identity_lookup(updated.id)) do
+               sync_scene_coordinates(updated, detail, fn ->
+                 episode_identity_lookup(updated.id)
+               end) do
           updated
         else
           {:error, reason} -> Repo.rollback(reason)
@@ -1687,7 +1695,7 @@ defmodule Cinder.Catalog do
   # namespace. Skip and keep whatever the racing save already wrote — never guess.
   defp sync_scene_coordinates_if_current(series, identity, episode_lookup) do
     if series.scene_numbering_group_id == identity.scene_group_fetched_for do
-      sync_scene_coordinates(series, identity.scene_group_detail, episode_lookup)
+      sync_scene_coordinates(series, identity.scene_group_detail, fn -> episode_lookup end)
     else
       Logger.info(
         "scene numbering: series #{series.id} group changed from " <>
@@ -1703,23 +1711,22 @@ defmodule Cinder.Catalog do
   # sync_absolute_coordinates/3, sync_scene_coordinates/3, and sync_tmdb_classifications/2 — all
   # three run back-to-back inside sync_series_identity/3's one transaction, and nothing between
   # them changes an episode's tmdb_episode_id, so loading it once here and threading it down is
-  # simpler than each hand-writing the same query, and one less round trip too.
+  # simpler than each hand-writing the same query, and one less round trip too. Returns
+  # `%{tmdb_episode_id => episode_id}` directly — none of the three ever reads more than the
+  # Cinder episode id off it, unlike the preview path's `episode_lookup_from_tree/1`, which also
+  # needs season/episode numbers (`preview_scene_mapping/2`'s `canonical_range`) and so stays a
+  # richer shape built from the preloaded tree instead of a query.
   defp episode_identity_lookup(series_id) do
     Repo.all(
       from e in Episode,
         join: season in assoc(e, :season),
         where: season.series_id == ^series_id and not is_nil(e.tmdb_episode_id),
-        select: {e.tmdb_episode_id, e.id, season.season_number, e.episode_number}
+        select: {e.tmdb_episode_id, e.id}
     )
-    |> Map.new(fn {tmdb_episode_id, id, season_number, episode_number} ->
-      {tmdb_episode_id, %{id: id, season_number: season_number, episode_number: episode_number}}
-    end)
+    |> Map.new()
   end
 
   defp sync_absolute_coordinates(series, absolute_groups, episode_lookup) do
-    episode_ids =
-      Map.new(episode_lookup, fn {tmdb_episode_id, %{id: id}} -> {tmdb_episode_id, id} end)
-
     details_by_namespace = Map.new(absolute_groups, &{&1.id, &1})
 
     existing_namespaces =
@@ -1736,7 +1743,7 @@ defmodule Cinder.Catalog do
       coordinates =
         details_by_namespace
         |> Map.get(namespace)
-        |> absolute_coordinate_attrs(episode_ids)
+        |> absolute_coordinate_attrs(episode_lookup)
 
       case Identity.replace_provider_coordinates(
              series,
@@ -1780,18 +1787,25 @@ defmodule Cinder.Catalog do
   # live HTTP call, and running it under an open SQLite write transaction risks a concurrent
   # writer tripping the busy_timeout. `nil` means "not configured" or "the fetch failed" — a
   # failed fetch (already logged by the caller) keeps whatever scene rows are already synced,
-  # never strips them.
-  defp sync_scene_coordinates(%Series{scene_numbering_group_id: nil}, _detail, _episode_lookup),
-    do: :ok
+  # never strips them. `episode_lookup_fun` is a zero-arg thunk, not the lookup itself — the two
+  # nil short-circuits above mean the group is unconfigured or the fetch already failed, so the
+  # (join-backed) `episode_identity_lookup/1` query must never run in either case; it's only
+  # forced in the one clause that actually persists coordinates.
+  defp sync_scene_coordinates(
+         %Series{scene_numbering_group_id: nil},
+         _detail,
+         _episode_lookup_fun
+       ),
+       do: :ok
 
-  defp sync_scene_coordinates(%Series{}, nil, _episode_lookup), do: :ok
+  defp sync_scene_coordinates(%Series{}, nil, _episode_lookup_fun), do: :ok
 
   defp sync_scene_coordinates(
          %Series{scene_numbering_group_id: group_id} = series,
          detail,
-         episode_lookup
+         episode_lookup_fun
        ) do
-    coordinates = scene_coordinate_attrs(series, detail, episode_lookup)
+    coordinates = scene_coordinate_attrs(series, detail, episode_lookup_fun.())
 
     case Identity.replace_provider_coordinates(series, "tmdb", group_id, "scene", coordinates) do
       {:ok, _} -> :ok
@@ -1847,7 +1861,7 @@ defmodule Cinder.Catalog do
             scheme: "scene",
             canonical_value: Episode.code(season_number, episode_number),
             precedence: :inferred,
-            episode_ids: [matched.id]
+            episode_ids: [matched]
           }
         ]
     end)
@@ -1855,10 +1869,16 @@ defmodule Cinder.Catalog do
 
   # The per-entry derivation shared by scene_coordinate_attrs/3 (persists) and
   # preview_scene_mapping/2 (display-only), so the picker's preview can never drift from what
-  # Save actually writes. `episode_lookup` maps tmdb_episode_id => %{id:, season_number:,
-  # episode_number:} for the matched Cinder episode (built differently by each caller — a DB
-  # query in the write path, the caller's preloaded tree in the preview path — but shaped
-  # identically).
+  # Save actually writes. `matched` is opaque here — this function never reads its internals,
+  # only its truthiness and identity — so each caller's `episode_lookup` can (and does) carry a
+  # different shape for it: the write path's `episode_identity_lookup/1` maps
+  # tmdb_episode_id => episode_id directly (a bare id — see its own doc for why), while the
+  # preview path's `episode_lookup_from_tree/1` maps tmdb_episode_id => %{id:, season_number:,
+  # episode_number:} (`preview_scene_mapping/2`'s `canonical_range` needs the episode number). Each
+  # caller only ever destructures the shape it itself supplied
+  # (`scene_coordinate_attrs/3`'s `episode_ids: [matched]` vs. `preview_scene_mapping/2`'s
+  # `&1.matched.episode_number`), so the two lookups legitimately diverge rather than share one
+  # shape.
   #
   # Two kinds of ambiguity get the same never-guess treatment — drop every entry involved, never
   # pick one — and both fall into the unmatched/skipped side on both the write path and the
@@ -1893,8 +1913,13 @@ defmodule Cinder.Catalog do
       |> Enum.filter(fn {_id, count} -> count > 1 end)
       |> MapSet.new(fn {id, _count} -> id end)
 
+    # Only entries that actually matched a real Cinder episode can genuinely collide — an
+    # unmatched entry persists nothing anyway (it already falls into the plain "matches no
+    # episode row" skip below), so it must never poison a legitimately matched sibling merely by
+    # sharing its derived (season, episode) key.
     colliding_keys =
       mapped
+      |> Enum.filter(& &1.matched)
       |> Enum.group_by(&{&1.season_number, &1.episode_number}, & &1.tmdb_episode_id)
       |> Enum.filter(fn {_key, ids} -> ids |> Enum.uniq() |> length() > 1 end)
       |> MapSet.new(fn {key, _ids} -> key end)
@@ -1904,7 +1929,8 @@ defmodule Cinder.Catalog do
         MapSet.member?(duplicated_ids, entry.tmdb_episode_id) ->
           %{entry | matched: nil, ambiguous: :duplicate_tmdb_episode_id}
 
-        MapSet.member?(colliding_keys, {entry.season_number, entry.episode_number}) ->
+        entry.matched &&
+            MapSet.member?(colliding_keys, {entry.season_number, entry.episode_number}) ->
           %{entry | matched: nil, ambiguous: :season_episode_collision}
 
         true ->
@@ -1948,13 +1974,10 @@ defmodule Cinder.Catalog do
   defp parse_subgroup_season(_name), do: :error
 
   defp sync_tmdb_classifications(seasons, episode_lookup) do
-    episode_ids =
-      Map.new(episode_lookup, fn {tmdb_episode_id, %{id: id}} -> {tmdb_episode_id, id} end)
-
     classifications =
       for season <- seasons,
           episode <- season.episodes,
-          episode_id = episode_ids[episode.tmdb_episode_id],
+          episode_id = episode_lookup[episode.tmdb_episode_id],
           not is_nil(episode_id) do
         {classification, label} =
           Identity.classify_tmdb_episode(season.season_number, episode.title)

@@ -23,10 +23,20 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ -> {:ok, []} end)
 
     stub(Cinder.Catalog.TMDBMock, :get_episode_group, fn id ->
-      {:ok, %{id: id, type: 6, name: "Stub group", entries: []}}
+      {:ok, episode_group(id: id, name: "Stub group")}
     end)
 
     :ok
+  end
+
+  # A TMDB episode-group literal, list-shape (group_count/episode_count, no entries) and
+  # detail-shape (entries, no counts) alike — one builder, callers override what the test cares
+  # about instead of hand-writing the full map each time.
+  defp episode_group(attrs) do
+    Map.merge(
+      %{id: "group", type: 6, name: "Seasons", group_count: nil, episode_count: nil, entries: []},
+      Map.new(attrs)
+    )
   end
 
   defp base_series_info(tmdb_id) do
@@ -207,19 +217,17 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     series = series_fixture(media_profile: :anime, tvdb_id: 12_345)
 
     stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
-      {:ok, [%{id: "seasons-group", type: 6, name: "Seasons", group_count: 3, episode_count: 64}]}
+      {:ok, [episode_group(id: "seasons-group", group_count: 3, episode_count: 64)]}
     end)
 
     # expect(..., 1, ...) rather than stub: proves Save reuses the preview's already-fetched
     # detail (threaded through as opts[:detail]) instead of a second TMDB round trip.
     expect(Cinder.Catalog.TMDBMock, :get_episode_group, 1, fn "seasons-group" ->
       {:ok,
-       %{
+       episode_group(
          id: "seasons-group",
-         type: 6,
-         name: "Seasons",
          entries: [%{tmdb_episode_id: 1, group_name: "Season 2", group_order: 2, order: 0}]
-       }}
+       )}
     end)
 
     {:ok, view, _html} = live_series(conn, series)
@@ -249,7 +257,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     series = series_fixture(media_profile: :anime, tvdb_id: 12_345)
 
     stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
-      {:ok, [%{id: "g", type: 6, name: "Seasons", group_count: 1, episode_count: 2}]}
+      {:ok, [episode_group(id: "g", group_count: 1, episode_count: 2)]}
     end)
 
     {:ok, view, html} = live_series(conn, series)
@@ -310,7 +318,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
       send(test_pid, :episode_groups_fetch)
-      {:ok, [%{id: "g", type: 6, name: "Seasons", group_count: 1, episode_count: 1}]}
+      {:ok, [episode_group(id: "g", group_count: 1, episode_count: 1)]}
     end)
 
     view |> element("button", "Retry") |> render_click()
@@ -352,17 +360,15 @@ defmodule CinderWeb.SeriesDetailLiveTest do
       |> Repo.update!()
 
     stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
-      {:ok, [%{id: "seasons-group", type: 6, name: "Seasons", group_count: 1, episode_count: 1}]}
+      {:ok, [episode_group(id: "seasons-group", group_count: 1, episode_count: 1)]}
     end)
 
     stub(Cinder.Catalog.TMDBMock, :get_episode_group, fn "seasons-group" ->
       {:ok,
-       %{
+       episode_group(
          id: "seasons-group",
-         type: 6,
-         name: "Seasons",
          entries: [%{tmdb_episode_id: 900, group_name: "Season 3", group_order: 3, order: 0}]
-       }}
+       )}
     end)
 
     {:ok, view, _html} = live_series(conn, series)
@@ -380,8 +386,8 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
       {:ok,
        [
-         %{id: "group-a", type: 6, name: "Group A", group_count: 1, episode_count: 1},
-         %{id: "group-b", type: 6, name: "Group B", group_count: 1, episode_count: 1}
+         episode_group(id: "group-a", name: "Group A", group_count: 1, episode_count: 1),
+         episode_group(id: "group-b", name: "Group B", group_count: 1, episode_count: 1)
        ]}
     end)
 
@@ -391,21 +397,17 @@ defmodule CinderWeb.SeriesDetailLiveTest do
         Process.sleep(50)
 
         {:ok,
-         %{
+         episode_group(
            id: "group-a",
-           type: 6,
-           name: "Seasons",
            entries: [%{tmdb_episode_id: 501, group_name: "Season 1", group_order: 1, order: 0}]
-         }}
+         )}
 
       "group-b" ->
         {:ok,
-         %{
+         episode_group(
            id: "group-b",
-           type: 6,
-           name: "Seasons",
            entries: [%{tmdb_episode_id: 502, group_name: "Season 2", group_order: 2, order: 0}]
-         }}
+         )}
     end)
 
     {:ok, view, _html} = live_series(conn, series)
@@ -436,8 +438,8 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
       {:ok,
        [
-         %{id: "group-a", type: 6, name: "Group A", group_count: 1, episode_count: 1},
-         %{id: "group-b", type: 6, name: "Group B", group_count: 1, episode_count: 1}
+         episode_group(id: "group-a", name: "Group A", group_count: 1, episode_count: 1),
+         episode_group(id: "group-b", name: "Group B", group_count: 1, episode_count: 1)
        ]}
     end)
 
@@ -446,10 +448,10 @@ defmodule CinderWeb.SeriesDetailLiveTest do
         # Long enough that, uncanceled, it would still complete well after this test asserts.
         Process.sleep(50)
         send(test_pid, :group_a_fetch_completed)
-        {:ok, %{id: "group-a", type: 6, name: "Seasons", entries: []}}
+        {:ok, episode_group(id: "group-a")}
 
       "group-b" ->
-        {:ok, %{id: "group-b", type: 6, name: "Seasons", entries: []}}
+        {:ok, episode_group(id: "group-b")}
     end)
 
     {:ok, view, _html} = live_series(conn, series)
@@ -469,6 +471,18 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     # If group-a's fetch had merely been left running (only discarded on arrival), it would
     # have sent this well within the wait below.
     refute_receive :group_a_fetch_completed, 200
+
+    # R3 finding 4: clearing back to "None" must cancel an in-flight fetch too, not just picking
+    # a different group.
+    view
+    |> form("#series-scene-numbering-form", %{"group_id" => "group-a"})
+    |> render_change()
+
+    view
+    |> form("#series-scene-numbering-form", %{"group_id" => ""})
+    |> render_change()
+
+    refute_receive :group_a_fetch_completed, 200
   end
 
   # R2 finding 1(a): reload() fires on any {:series_updated} broadcast — another tab's monitor
@@ -481,17 +495,15 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     episode = episode_fixture(season)
 
     stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
-      {:ok, [%{id: "seasons-group", type: 6, name: "Seasons", group_count: 1, episode_count: 1}]}
+      {:ok, [episode_group(id: "seasons-group", group_count: 1, episode_count: 1)]}
     end)
 
     stub(Cinder.Catalog.TMDBMock, :get_episode_group, fn "seasons-group" ->
       {:ok,
-       %{
+       episode_group(
          id: "seasons-group",
-         type: 6,
-         name: "Seasons",
          entries: [%{tmdb_episode_id: 1, group_name: "Season 2", group_order: 2, order: 0}]
-       }}
+       )}
     end)
 
     {:ok, view, _html} = live_series(conn, series)
@@ -520,7 +532,9 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
   # R2 finding 1(b): the mirror case — a reload where the persisted group genuinely changed (a
   # second writer, not just any broadcast) must still reset the form to the new persisted value.
-  test "a reload where the persisted group genuinely changed resets the form",
+  # R3 finding 1: it must also drop the OLD group's preview, not keep rendering it under the
+  # newly-selected group.
+  test "a reload where the persisted group genuinely changed resets the form and clears the stale preview",
        %{conn: conn} do
     series =
       series_fixture(media_profile: :anime, tvdb_id: 12_345)
@@ -528,13 +542,22 @@ defmodule CinderWeb.SeriesDetailLiveTest do
       |> Repo.update!()
 
     stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
-      {:ok, [%{id: "group-a", type: 6, name: "Group A", group_count: 1, episode_count: 1}]}
+      {:ok, [episode_group(id: "group-a", name: "Group A", group_count: 1, episode_count: 1)]}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_group, fn "group-a" ->
+      {:ok,
+       episode_group(
+         id: "group-a",
+         entries: [%{tmdb_episode_id: 1, group_name: "Season 1", group_order: 1, order: 0}]
+       )}
     end)
 
     {:ok, view, _html} = live_series(conn, series)
     view |> element("summary", "Alternate numbering") |> render_click()
-    render_async(view)
 
+    # Auto-preview for the already-saved group fires once the list lands (FINDING 8).
+    assert render_async(view) =~ "Season 1"
     assert has_element?(view, "#series-scene-numbering-form option[value='group-a'][selected]")
 
     series
@@ -543,15 +566,16 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     Phoenix.PubSub.broadcast(Cinder.PubSub, "series", {:series_updated, series.id})
     :sys.get_state(view.pid)
-    render(view)
+    html = render(view)
 
     assert has_element?(view, "#series-scene-numbering-form option[value='group-b'][selected]")
     refute has_element?(view, "#series-scene-numbering-form option[value='group-a'][selected]")
+    refute html =~ "Season 1"
   end
 
-  # R2 finding 10: scene_alt_code must render a non-contiguous derived season (reachable from a
-  # Story Arc-shaped group whose subgroup entry orders skip a slot) as every actual episode
-  # number, never a fake smooth range that hides the gap.
+  # R2 finding 10: Episode.codes_label must render a non-contiguous derived season (reachable
+  # from a Story Arc-shaped group whose subgroup entry orders skip a slot) as every actual
+  # episode number, never a fake smooth range that hides the gap.
   test "a gappy derived season renders every episode number, not a fake smooth range",
        %{conn: conn} do
     series = series_fixture(media_profile: :anime, tvdb_id: 12_345)
@@ -561,12 +585,21 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     episode_fixture(season, episode_number: 3, tmdb_episode_id: 103)
 
     stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
-      {:ok, [%{id: "arcs-group", type: 5, name: "Story Arcs", group_count: 1, episode_count: 3}]}
+      {:ok,
+       [
+         episode_group(
+           id: "arcs-group",
+           type: 5,
+           name: "Story Arcs",
+           group_count: 1,
+           episode_count: 3
+         )
+       ]}
     end)
 
     stub(Cinder.Catalog.TMDBMock, :get_episode_group, fn "arcs-group" ->
       {:ok,
-       %{
+       episode_group(
          id: "arcs-group",
          type: 5,
          name: "Story Arcs",
@@ -576,7 +609,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
            # order: 3 (not 2) leaves a gap at alt episode 3 — the alt numbering is order + 1.
            %{tmdb_episode_id: 103, group_name: "Season 1", group_order: 1, order: 3}
          ]
-       }}
+       )}
     end)
 
     {:ok, view, _html} = live_series(conn, series)

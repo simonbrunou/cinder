@@ -130,6 +130,24 @@ defmodule Cinder.Catalog.Episode do
   @doc ~S(The "S01E02"-style code for a season/episode number pair.)
   def code(season_number, episode_number), do: "S#{pad(season_number)}E#{pad(episode_number)}"
 
+  @doc """
+  A gap-aware label for one or more episode numbers within a season: a single `code/2` for one
+  number, a collapsed `SxxEyy-Ezz` for a contiguous run, or every number listed (`SxxEyyEzz...`)
+  for a non-contiguous set. `numbers` must be sorted ascending. Shared by `Cinder.Library`'s
+  filename-building (contiguous range/gap rules must not silently diverge between the two).
+  """
+  def codes_label(season_number, [episode_number]), do: code(season_number, episode_number)
+
+  def codes_label(season_number, [first | _] = numbers) do
+    last = List.last(numbers)
+
+    if first + length(numbers) - 1 == last do
+      "#{code(season_number, first)}-E#{pad(last)}"
+    else
+      code(season_number, first) <> Enum.map_join(tl(numbers), "", &"E#{pad(&1)}")
+    end
+  end
+
   @doc ~S(Inverse of `code/2`: the season number from an "SxxEyy"-style code, or nil if it doesn't parse.)
   def season_from_code(value) do
     case Regex.run(~r/^S(\d+)E\d+$/, value) do

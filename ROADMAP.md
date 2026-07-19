@@ -1058,8 +1058,13 @@ queries; resolution bridges parsed `"standard"` values to persisted scene rows (
 `AnimePreflight` — found test-first, its matcher is independent); **import is untouched** (frozen
 snapshot; every hold path intact). All TMDB fetching happens before any `Repo.transaction` (M0
 invariant), mirroring `refresh_series/1`. The Done-when gate holds: the Frieren-shaped fixture
-yields `:no_match` before and selects/imports after; suite green (1732). Standard TV reuse of
-these coordinates is tracked in issue #132.
+yields `:no_match` before and selects/imports after. Three xhigh `/code-review` rounds on PR
+#133 (15 + 13 + 12 findings, severity declining each round) were fixed in-branch before merge —
+notably: fail-loud vs no-op save semantics on a TMDB fetch failure, scheme-scoped
+`Identity.replace_provider_coordinates/5`, both derived-coordinate collision directions dropped
+per the never-guess rule, race-free save/refresh via fresh in-transaction reads, and a picker
+that can never silently show "None" over a saved group. Suite green (1,760). Standard TV reuse
+of these coordinates is tracked in issue #132.
 
 ---
 

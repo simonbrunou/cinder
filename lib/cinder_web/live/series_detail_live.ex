@@ -354,7 +354,7 @@ defmodule CinderWeb.SeriesDetailLive do
       )
 
     case group_id do
-      "" -> {:noreply, socket}
+      "" -> {:noreply, cancel_async(socket, :preview_scene_group)}
       id -> {:noreply, start_scene_preview(socket, id)}
     end
   end
@@ -546,7 +546,10 @@ defmodule CinderWeb.SeriesDetailLive do
   # actually changed relative to what was last assigned (compared before `series` below
   # overwrites it); the very first mount has no prior series to compare against, so it always
   # resets there. A post-save reload is exactly such a genuine change, since Save just persisted
-  # the value the operator picked.
+  # the value the operator picked. When it does reset, `scene_preview`/`scene_detail` are cleared
+  # too — otherwise the breakdown panel would keep rendering the OLD group's mapping under the
+  # newly-selected group. Reopening the disclosure (or the next auto-preview once the group list
+  # is loaded) repopulates it; nothing here re-fetches eagerly.
   defp refresh_identity(socket, series) do
     aliases = Catalog.list_title_aliases(series)
     reset_scene? = scene_group_id_string(socket.assigns[:series]) != scene_group_id_string(series)
@@ -564,7 +567,9 @@ defmodule CinderWeb.SeriesDetailLive do
     if reset_scene? do
       assign(socket,
         scene_form: scene_form(series),
-        scene_selected_group_id: scene_group_id_string(series)
+        scene_selected_group_id: scene_group_id_string(series),
+        scene_preview: nil,
+        scene_detail: nil
       )
     else
       socket
@@ -728,7 +733,7 @@ defmodule CinderWeb.SeriesDetailLive do
     base =
       gettext("%{season} → %{alt} (episodes %{first}–%{last})",
         season: scene_season_label(entry),
-        alt: scene_alt_code(season, alt_numbers),
+        alt: Episode.codes_label(season, alt_numbers),
         first: first,
         last: last
       )
@@ -744,21 +749,6 @@ defmodule CinderWeb.SeriesDetailLive do
     do: gettext("%{season} (\"%{name}\")", season: season_label(season), name: name)
 
   defp scene_season_label(%{season_number: season}), do: season_label(season)
-
-  # Mirrors Library's episode_code/1 range-collapsing (single code / contiguous range / a
-  # gap-safe listing of every number) so a non-contiguous derived season (reachable from a
-  # Story Arc-shaped group) never gets mislabeled as a smooth range.
-  defp scene_alt_code(season, [episode_number]), do: Episode.code(season, episode_number)
-
-  defp scene_alt_code(season, [first | _] = numbers) do
-    last = List.last(numbers)
-
-    if first + length(numbers) - 1 == last do
-      "#{Episode.code(season, first)}–E#{Episode.pad(last)}"
-    else
-      Episode.code(season, first) <> Enum.map_join(tl(numbers), "", &"E#{Episode.pad(&1)}")
-    end
-  end
 
   defp scene_unmatched_note(unmatched) do
     ngettext(
