@@ -32,7 +32,9 @@ defmodule CinderWeb.SeriesDetailLive do
           confirm_opt: false,
           searching_season: nil,
           mapping_grabs: Catalog.list_mapping_grabs_for_series(series.id),
-          episode_groups: nil
+          episode_groups: nil,
+          numbering_panel_open?: false,
+          scene_saving_group_id: nil
         )
         |> refresh_identity(series)
 
@@ -360,27 +362,50 @@ defmodule CinderWeb.SeriesDetailLive do
   # TMDB calls run off-process via start_async, never inline (mirrors preview_scene_group
   # above) — set_scene_numbering_group/3 fetches the group detail live before it can write,
   # unless the last-landed preview already fetched this exact group (scene_detail), in which
-  # case that detail is threaded through to skip the redundant round trip.
+  # case that detail is threaded through to skip the redundant round trip. `scene_saving_group_id`
+  # is stamped synchronously so refresh_identity can recognize this group as "our own action" no
+  # matter which path notices it landed first — the {:series_updated} broadcast this save's own
+  # write triggers reaches this same process (and is handled) *before* the async task below
+  # delivers its own result, so both reload paths need the signal, not just this task's own
+  # landing. Cleared once this task's own result confirms the save is fully settled.
   def handle_event("save_scene_numbering_group", %{"group_id" => group_id}, socket) do
     series = socket.assigns.series
     opts = scene_save_opts(socket, group_id)
 
     {:noreply,
-     start_async(socket, :save_scene_numbering_group, fn ->
-       Catalog.set_scene_numbering_group(series, group_id, opts)
+     socket
+     |> assign(:scene_saving_group_id, group_id)
+     |> start_async(:save_scene_numbering_group, fn ->
+       {group_id, Catalog.set_scene_numbering_group(series, group_id, opts)}
      end)}
   end
 
   # Lazy-loaded on first open of the "Alternate numbering" disclosure (a non-anime series never
   # renders it, so it never fetches). The native <details> toggle and this phx-click fire
-  # together on BOTH open and close, so the guard only fetches the very first time
-  # (episode_groups still nil) — otherwise closing the panel after a failed load would refire a
-  # live TMDB call every close/reopen. Retry (below) is the only way back out of :error.
+  # together on BOTH open and close, so `numbering_panel_open?` is a plain toggle tracking which
+  # one just happened — refresh_identity reads it to gate its external-change auto-refetch on
+  # the panel actually being open (a closed panel shouldn't spend a live TMDB call on a preview
+  # nobody's looking at). Reopening after an external change landed while closed (group list
+  # already loaded, a group is saved, but the preview was cleared and never refetched) catches up
+  # here instead of leaving the panel permanently blank. Retry (below) is the only way back out
+  # of :error.
   def handle_event("load_episode_groups", _params, socket) do
-    if is_nil(socket.assigns.episode_groups) do
-      {:noreply, fetch_episode_groups(socket)}
-    else
-      {:noreply, socket}
+    open? = not socket.assigns.numbering_panel_open?
+    socket = assign(socket, :numbering_panel_open?, open?)
+
+    cond do
+      not open? ->
+        {:noreply, socket}
+
+      is_nil(socket.assigns.episode_groups) ->
+        {:noreply, fetch_episode_groups(socket)}
+
+      is_list(socket.assigns.episode_groups) and is_nil(socket.assigns.scene_preview) and
+          is_binary(socket.assigns.series.scene_numbering_group_id) ->
+        {:noreply, start_scene_preview(socket, socket.assigns.series.scene_numbering_group_id)}
+
+      true ->
+        {:noreply, socket}
     end
   end
 
@@ -468,27 +493,49 @@ defmodule CinderWeb.SeriesDetailLive do
   def handle_async(:preview_scene_group, {:exit, _reason}, socket),
     do: {:noreply, assign(socket, :scene_preview, :error)}
 
-  def handle_async(:save_scene_numbering_group, {:ok, {:ok, _series}}, socket) do
+  def handle_async(:save_scene_numbering_group, {:ok, {group_id, {:ok, _series}}}, socket) do
     {:noreply,
      socket
      |> put_flash(:info, gettext("Alternate numbering saved."))
-     |> reload()}
+     |> reload()
+     |> clear_scene_saving(group_id)}
   end
 
-  def handle_async(:save_scene_numbering_group, {:ok, {:error, :group_fetch_failed}}, socket) do
+  def handle_async(
+        :save_scene_numbering_group,
+        {:ok, {group_id, {:error, :group_fetch_failed}}},
+        socket
+      ) do
     {:noreply,
-     put_flash(
-       socket,
-       :error,
-       gettext("Couldn't reach TMDB. Nothing was saved. Try again.")
-     )}
+     socket
+     |> put_flash(:error, gettext("Couldn't reach TMDB. Nothing was saved. Try again."))
+     |> clear_scene_saving(group_id)}
   end
 
-  def handle_async(:save_scene_numbering_group, {:ok, {:error, _reason}}, socket),
-    do: {:noreply, put_flash(socket, :error, gettext("Couldn't save the alternate numbering."))}
+  def handle_async(:save_scene_numbering_group, {:ok, {group_id, {:error, _reason}}}, socket) do
+    {:noreply,
+     socket
+     |> put_flash(:error, gettext("Couldn't save the alternate numbering."))
+     |> clear_scene_saving(group_id)}
+  end
 
-  def handle_async(:save_scene_numbering_group, {:exit, _reason}, socket),
-    do: {:noreply, put_flash(socket, :error, gettext("Couldn't save the alternate numbering."))}
+  def handle_async(:save_scene_numbering_group, {:exit, _reason}, socket) do
+    {:noreply,
+     socket
+     |> put_flash(:error, gettext("Couldn't save the alternate numbering."))
+     |> assign(:scene_saving_group_id, nil)}
+  end
+
+  # Only clears the "own save in flight" signal if it still points at THIS save (a second Save
+  # clicked before the first's result lands would otherwise have its own tracking wiped by the
+  # earlier, now-stale one landing).
+  defp clear_scene_saving(socket, group_id) do
+    if socket.assigns.scene_saving_group_id == group_id do
+      assign(socket, :scene_saving_group_id, nil)
+    else
+      socket
+    end
+  end
 
   # The manual-search panel forwards a chosen release back here (it owns no Catalog writes). The
   # open panel's season is tracked in :searching_season; the grab covers that season's wanted set.
@@ -538,24 +585,36 @@ defmodule CinderWeb.SeriesDetailLive do
   end
 
   # Runs on every reload — any {:series_updated} broadcast (another tab's monitor toggle, the
-  # 12h refresher, our OWN successful Save) as well as the mount-time :enrich landing — so it
-  # must never discard an operator's in-progress, unsaved alternate-numbering selection while its
-  # preview is still on screen. `scene_form`/`scene_selected_group_id` are only reset when the
-  # persisted group actually changed relative to what was last assigned (compared before `series`
-  # below overwrites it); the very first mount has no prior series to compare against, so it
-  # always resets there.
+  # 12h refresher, our OWN successful Save's own write) as well as the mount-time :enrich landing
+  # — so it must never discard an operator's in-progress, unsaved alternate-numbering selection
+  # while its preview is still on screen. `scene_form`/`scene_selected_group_id` are only reset
+  # when the persisted group actually changed relative to what was last assigned (compared before
+  # `series` below overwrites it); the very first mount has no prior series to compare against, so
+  # it always resets there.
   #
-  # A changed persisted value splits two ways:
-  #   - it now matches `scene_selected_group_id` (what THIS session already picked and
-  #     previewed) — that's our own Save landing, so `scene_preview`/`scene_detail` are kept
-  #     exactly as they render right now.
-  #   - it doesn't — a genuine external change (another tab, the refresher) — so the stale
-  #     preview is cleared, and re-fetched immediately if the group list is already loaded
-  #     (otherwise the next open, or `load_episode_groups`' own auto-preview, repopulates it).
+  # `scene_saving_group_id` (stamped by the save handler, cleared once its own async result lands)
+  # is checked ahead of the operator's current selection: a Save's own write broadcasts
+  # {:series_updated} *before* its async task delivers its own result, so the broadcast-triggered
+  # reload gets here first — both paths need to recognize "this is our own save" the same way, not
+  # just the save's own handle_async. Falling back to the current selection when nothing is being
+  # saved keeps every other caller's behavior unchanged.
+  #
+  # A changed persisted value splits three ways:
+  #   - it matches our own-save/selection signal AND the operator's current selection — that's
+  #     our own action landing with nothing moved on since, so `scene_preview`/`scene_detail` are
+  #     kept exactly as they render right now.
+  #   - it matches our own-save signal but NOT the operator's current selection — our own Save
+  #     landed, but the operator has since picked something else; every scene assign is left
+  #     untouched rather than snapping the dropdown back to what was just saved.
+  #   - it matches neither — a genuine external change (another tab, the refresher) — so the
+  #     stale preview is cleared, and re-fetched immediately if the panel is open and the group
+  #     list is already loaded (otherwise the next open re-fetches it, see "load_episode_groups").
   defp refresh_identity(socket, series) do
     aliases = Catalog.list_title_aliases(series)
     old_group = scene_group_id_string(socket.assigns[:series])
     new_group = scene_group_id_string(series)
+    current_selection = socket.assigns[:scene_selected_group_id]
+    own_id = socket.assigns[:scene_saving_group_id] || current_selection
 
     socket =
       socket
@@ -571,23 +630,33 @@ defmodule CinderWeb.SeriesDetailLive do
       old_group == new_group ->
         socket
 
-      new_group == socket.assigns[:scene_selected_group_id] ->
+      new_group == own_id and new_group == current_selection ->
         assign(socket, scene_form: scene_form(series), scene_selected_group_id: new_group)
 
-      true ->
-        socket =
-          assign(socket,
-            scene_form: scene_form(series),
-            scene_selected_group_id: new_group,
-            scene_preview: nil,
-            scene_detail: nil
-          )
+      new_group == own_id ->
+        socket
 
-        if is_list(socket.assigns.episode_groups) and new_group != "" do
-          start_scene_preview(socket, new_group)
-        else
-          socket
-        end
+      true ->
+        apply_external_scene_change(socket, series, new_group)
+    end
+  end
+
+  # A genuine external change (another tab, the refresher): drop the stale preview and, if the
+  # panel is open with its group list already loaded, re-fetch the new one immediately.
+  defp apply_external_scene_change(socket, series, new_group) do
+    socket =
+      assign(socket,
+        scene_form: scene_form(series),
+        scene_selected_group_id: new_group,
+        scene_preview: nil,
+        scene_detail: nil
+      )
+
+    if socket.assigns.numbering_panel_open? and is_list(socket.assigns.episode_groups) and
+         new_group != "" do
+      start_scene_preview(socket, new_group)
+    else
+      socket
     end
   end
 

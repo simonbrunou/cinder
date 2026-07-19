@@ -86,6 +86,11 @@ defmodule Cinder.CatalogRefreshTest do
       nil
     )
 
+    # Safety net: if fun.() raises, the handler must still come off — :telemetry handlers are
+    # global/process-independent, so a leaked one would silently inspect every later query in
+    # the suite, same reasoning as CinderWeb.UserAuthTest's on_exit detach.
+    on_exit(fn -> :telemetry.detach(ref) end)
+
     result = fun.()
     :telemetry.detach(ref)
     {result, :counters.get(counter, 1)}
