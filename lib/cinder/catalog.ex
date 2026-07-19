@@ -30,6 +30,7 @@ defmodule Cinder.Catalog do
   alias Cinder.Library.ImportStage
   alias Cinder.Notifier
   alias Cinder.Repo
+  alias Cinder.Util
 
   @topic "movies"
   @download_metric_fields [:download_progress, :download_speed, :download_eta]
@@ -246,8 +247,12 @@ defmodule Cinder.Catalog do
   season number, showing both sides of the mapping — the alternate S0xEyy range Save will
   write (`alt_range`) and the canonical episode range it resolves to (`canonical_range`).
   `count` reflects only entries matched to a Cinder episode row; unmatched entries (e.g. a
-  Specials subgroup outside the imported tree) are excluded from it and surfaced separately
-  via `unmatched_count`.
+  Specials subgroup outside the imported tree, or an episode a Story Arc-shaped group claims from
+  more than one subgroup — see `derive_scene_entries/2`) are excluded from it and surfaced
+  separately via `unmatched_count`. `group_name` and `season_source` (`:name` | `:order`) expose
+  the raw subgroup name and whether its season number was parsed from that name or fell back to
+  subgroup order — a convention, not an API guarantee — so an order-derived season can be shown
+  next to its raw name and a wrong derivation is visible before it's ever saved.
   """
   def preview_scene_mapping(%{entries: entries}, %Series{seasons: seasons}) do
     episode_lookup = episode_lookup_from_tree(seasons)
@@ -257,13 +262,16 @@ defmodule Cinder.Catalog do
     |> Enum.group_by(& &1.season_number)
     |> Enum.map(fn {season_number, group_entries} ->
       {matched, unmatched} = Enum.split_with(group_entries, & &1.matched)
+      representative = hd(group_entries)
 
       %{
         season_number: season_number,
         count: length(matched),
         unmatched_count: length(unmatched),
         alt_range: minmax(Enum.map(matched, & &1.episode_number)),
-        canonical_range: minmax(Enum.map(matched, & &1.matched.episode_number))
+        canonical_range: minmax(Enum.map(matched, & &1.matched.episode_number)),
+        group_name: representative.group_name,
+        season_source: representative.season_source
       }
     end)
     |> Enum.sort_by(& &1.season_number)
@@ -290,28 +298,71 @@ defmodule Cinder.Catalog do
   Sets (or clears, via `nil`/`""`) the operator-chosen TMDB episode group used for
   alternate-season numbering, syncing scene coordinates immediately. Switching away from a
   previously-chosen group clears its non-manual scene rows first, so a stale namespace can't
-  linger once nothing points at it any more. The group detail is fetched from TMDB before any
-  transaction opens (see `sync_scene_coordinates/2`) — the DB write itself never waits on a
-  live HTTP call.
-  """
-  def set_scene_numbering_group(%Series{} = series, group_id) do
-    group_id = blank_to_nil(group_id)
-    previous = series.scene_numbering_group_id
-    detail = fetch_scene_group_detail(group_id)
+  linger once nothing points at it any more. The current group (`previous`) is re-read fresh from
+  the DB inside the transaction rather than trusted from the caller's (possibly stale) `series`
+  struct, so two racing saves can't leave an orphaned namespace behind.
 
+  A non-nil `group_id` whose TMDB detail can't be fetched returns `{:error, :group_fetch_failed}`
+  **before any transaction opens** — nothing is persisted. Unlike the refresh path's drift rule
+  (a failed refresh fetch keeps whatever is already synced), there is nothing yet synced for a
+  newly-chosen group, so committing the column on a failed fetch would silently strand it at zero
+  coordinates while reporting success.
+
+  `opts[:detail]` lets a caller reuse a TMDB episode-group detail it already fetched (e.g. the
+  series-detail picker's own preview fetch), skipping a redundant round trip — but only when it
+  was fetched for this same `group_id` (`detail.id == group_id`); otherwise it's ignored and the
+  detail is fetched fresh, same as the arity-2 call.
+  """
+  def set_scene_numbering_group(%Series{} = series, group_id, opts \\ []) do
+    group_id = Util.blank_to_nil(group_id)
+
+    with {:ok, detail} <- resolve_scene_group_detail(group_id, opts) do
+      series.id
+      |> save_scene_numbering_group(group_id, detail)
+      |> finish_scene_numbering_group()
+    end
+  end
+
+  defp resolve_scene_group_detail(nil, _opts), do: {:ok, nil}
+
+  defp resolve_scene_group_detail(group_id, opts) do
+    case Keyword.get(opts, :detail) do
+      %{id: ^group_id} = detail ->
+        {:ok, detail}
+
+      _stale_or_absent ->
+        case fetch_scene_group_detail(group_id) do
+          nil -> {:error, :group_fetch_failed}
+          detail -> {:ok, detail}
+        end
+    end
+  end
+
+  defp save_scene_numbering_group(series_id, group_id, detail) do
     Repo.transaction(fn ->
-      with {:ok, updated} <-
-             series
-             |> Series.scene_numbering_changeset(%{scene_numbering_group_id: group_id})
-             |> Repo.update(),
-           :ok <- clear_previous_scene_namespace(updated, previous, group_id),
-           :ok <- sync_scene_coordinates(updated, detail) do
-        updated
-      else
-        {:error, reason} -> Repo.rollback(reason)
-      end
+      save_current_scene_numbering_group(series_id, group_id, detail)
     end)
-    |> finish_scene_numbering_group()
+  end
+
+  defp save_current_scene_numbering_group(series_id, group_id, detail) do
+    case Repo.get(Series, series_id) do
+      %Series{} = current ->
+        previous = current.scene_numbering_group_id
+
+        with {:ok, updated} <-
+               current
+               |> Series.scene_numbering_changeset(%{scene_numbering_group_id: group_id})
+               |> Repo.update(),
+             :ok <- clear_previous_scene_namespace(updated, previous, group_id),
+             :ok <- sync_scene_coordinates(updated, detail) do
+          updated
+        else
+          {:error, reason} -> Repo.rollback(reason)
+        end
+
+      nil ->
+        Repo.rollback(:stale_series)
+    end
   end
 
   defp finish_scene_numbering_group({:ok, updated}) do
@@ -321,15 +372,12 @@ defmodule Cinder.Catalog do
 
   defp finish_scene_numbering_group({:error, reason}), do: {:error, reason}
 
-  defp blank_to_nil(value) when value in [nil, ""], do: nil
-  defp blank_to_nil(value), do: value
-
   defp clear_previous_scene_namespace(_series, previous, group_id)
        when previous in [nil] or previous == group_id,
        do: :ok
 
   defp clear_previous_scene_namespace(series, previous, _group_id) do
-    case Identity.replace_provider_coordinates(series, "tmdb", previous, []) do
+    case Identity.replace_provider_coordinates(series, "tmdb", previous, "scene", []) do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
     end
@@ -1538,7 +1586,9 @@ defmodule Cinder.Catalog do
   # brand-new series, or one with no alternate numbering configured). Its detail is fetched
   # here — alongside the rest of the identity data — so every TMDB call this function makes
   # happens before the caller's transaction opens (see `set_scene_numbering_group/2`'s own
-  # pre-transaction fetch for the interactive-save path).
+  # pre-transaction fetch for the interactive-save path). `scene_group_fetched_for` records which
+  # group id the detail belongs to, so the refresh transaction can tell whether a racing save
+  # changed the group in between (`sync_scene_coordinates_if_current/2`).
   defp fetch_series_identity(tmdb_id, scene_numbering_group_id) do
     with {:ok, aliases} <- tmdb().get_series_alternative_titles(tmdb_id),
          {:ok, groups} <- tmdb().get_episode_groups(tmdb_id),
@@ -1547,7 +1597,8 @@ defmodule Cinder.Catalog do
        %{
          aliases: aliases,
          absolute_groups: absolute_groups,
-         scene_group_detail: fetch_scene_group_detail(scene_numbering_group_id)
+         scene_group_detail: fetch_scene_group_detail(scene_numbering_group_id),
+         scene_group_fetched_for: scene_numbering_group_id
        }}
     end
   end
@@ -1590,8 +1641,28 @@ defmodule Cinder.Catalog do
              identity.aliases
            ),
          :ok <- sync_absolute_coordinates(series, identity.absolute_groups),
-         :ok <- sync_scene_coordinates(series, identity.scene_group_detail),
+         :ok <- sync_scene_coordinates_if_current(series, identity),
          {:ok, _} <- sync_tmdb_classifications(series, seasons) do
+      :ok
+    end
+  end
+
+  # `identity.scene_group_detail` was fetched for `identity.scene_group_fetched_for` — read
+  # before this refresh's transaction opened (TMDB is HTTP, never called inside a transaction).
+  # `series` here is the transaction's own fresh re-read, so if a racing save changed the group in
+  # between, the two ids differ: the detail belongs to a namespace `series` no longer points at,
+  # and syncing it now would write the OLD group's entries under the NEW (racing save's)
+  # namespace. Skip and keep whatever the racing save already wrote — never guess.
+  defp sync_scene_coordinates_if_current(series, identity) do
+    if series.scene_numbering_group_id == identity.scene_group_fetched_for do
+      sync_scene_coordinates(series, identity.scene_group_detail)
+    else
+      Logger.info(
+        "scene numbering: series #{series.id} group changed from " <>
+          "#{inspect(identity.scene_group_fetched_for)} to " <>
+          "#{inspect(series.scene_numbering_group_id)} mid-refresh, skipping scene sync"
+      )
+
       :ok
     end
   end
@@ -1624,7 +1695,13 @@ defmodule Cinder.Catalog do
         |> Map.get(namespace)
         |> absolute_coordinate_attrs(episode_ids)
 
-      case Identity.replace_provider_coordinates(series, "tmdb", namespace, coordinates) do
+      case Identity.replace_provider_coordinates(
+             series,
+             "tmdb",
+             namespace,
+             "absolute",
+             coordinates
+           ) do
         {:ok, _} -> {:cont, :ok}
         {:error, reason} -> {:halt, {:error, reason}}
       end
@@ -1678,7 +1755,7 @@ defmodule Cinder.Catalog do
 
     coordinates = scene_coordinate_attrs(series, detail, episode_lookup)
 
-    case Identity.replace_provider_coordinates(series, "tmdb", group_id, coordinates) do
+    case Identity.replace_provider_coordinates(series, "tmdb", group_id, "scene", coordinates) do
       {:ok, _} -> :ok
       {:error, reason} -> {:error, reason}
     end
@@ -1694,6 +1771,15 @@ defmodule Cinder.Catalog do
     group.entries
     |> derive_scene_entries(episode_lookup)
     |> Enum.flat_map(fn
+      %{matched: nil, ambiguous: true, tmdb_episode_id: tmdb_episode_id} ->
+        Logger.warning(
+          "scene numbering: series #{series.id} group #{group.id} entry " <>
+            "tmdb_episode_id=#{tmdb_episode_id} is claimed by more than one subgroup, " <>
+            "dropping rather than guessing"
+        )
+
+        []
+
       %{matched: nil, tmdb_episode_id: tmdb_episode_id} ->
         Logger.warning(
           "scene numbering: series #{series.id} group #{group.id} entry " <>
@@ -1720,25 +1806,54 @@ defmodule Cinder.Catalog do
   # episode_number:} for the matched Cinder episode (built differently by each caller — a DB
   # query in the write path, the caller's preloaded tree in the preview path — but shaped
   # identically).
+  #
+  # A Story Arc-shaped group (type 5) can legitimately place the same episode in two subgroups —
+  # two entries sharing one tmdb_episode_id, with two different derived season/episode numbers.
+  # There's no safe way to pick one, so an episode claimed by more than one entry has ALL of its
+  # entries dropped (`matched: nil, ambiguous: true`) rather than guessing; they fall into the
+  # unmatched/skipped side on both the write path and the preview.
   defp derive_scene_entries(entries, episode_lookup) do
-    Enum.map(entries, fn entry ->
-      %{
-        tmdb_episode_id: entry.tmdb_episode_id,
-        season_number: scene_season_number(entry),
-        episode_number: entry.order + 1,
-        matched: Map.get(episode_lookup, entry.tmdb_episode_id)
-      }
+    mapped =
+      Enum.map(entries, fn entry ->
+        {season_number, season_source} = scene_season_number(entry)
+
+        %{
+          tmdb_episode_id: entry.tmdb_episode_id,
+          season_number: season_number,
+          season_source: season_source,
+          group_name: entry.group_name,
+          episode_number: entry.order + 1,
+          matched: Map.get(episode_lookup, entry.tmdb_episode_id),
+          ambiguous: false
+        }
+      end)
+
+    duplicated_ids =
+      mapped
+      |> Enum.frequencies_by(& &1.tmdb_episode_id)
+      |> Enum.filter(fn {_id, count} -> count > 1 end)
+      |> MapSet.new(fn {id, _count} -> id end)
+
+    Enum.map(mapped, fn entry ->
+      if MapSet.member?(duplicated_ids, entry.tmdb_episode_id) do
+        %{entry | matched: nil, ambiguous: true}
+      else
+        entry
+      end
     end)
   end
 
   # The derived season for one flattened group entry: parse the subgroup's own name when it
   # says so unambiguously ("Season 2", "2nd Season", "Specials"), else fall back to the
   # subgroup's `order` (every probed group has Specials at order 0 and "Season N" at order N —
-  # see the A6 design doc's probe results). Consumed by derive_scene_entries/2.
+  # see the A6 design doc's probe results). Returns `{season_number, season_source}` —
+  # `season_source` (`:name` | `:order`) records which path won, so a UI can flag an
+  # order-derived season (a convention, not an API guarantee) by showing the raw subgroup name.
+  # Consumed by derive_scene_entries/2.
   defp scene_season_number(%{group_name: name, group_order: order}) do
     case parse_subgroup_season(name) do
-      {:ok, season} -> season
-      :error -> order
+      {:ok, season} -> {season, :name}
+      :error -> {order, :order}
     end
   end
 

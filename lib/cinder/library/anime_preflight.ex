@@ -155,17 +155,17 @@ defmodule Cinder.Library.AnimePreflight do
     )
   end
 
-  # A6: a parsed "standard" (SxxEyy) filename value also matches a persisted "scene"
-  # coordinate by exact value — mirrors `Cinder.Acquisition.Anime.mappings_for_value/3`'s
-  # bridge on the resolver/selection side. Without this, a downloaded batch named with the
-  # TVDB-shaped numbering the release was actually grabbed under (frozen into this snapshot's
-  # `mappings` at grab time) could never resolve at import, even though the search/selection
-  # side already matched it.
+  # The scheme-bridging rule itself lives once in `AnimeResolver.bridged_schemes/1` (shared with
+  # `Cinder.Acquisition.Anime.mappings_for_value/3` on the resolver/selection side). Without it,
+  # a downloaded batch named with the TVDB-shaped numbering the release was actually grabbed
+  # under (frozen into this snapshot's `mappings` at grab time) could never resolve at import,
+  # even though the search/selection side already matched it.
   defp matches_value?(mapping, "standard", value) do
     identity = mapping["identity"]
+    bridged = AnimeResolver.bridged_schemes("standard")
 
     (identity["scheme"] == "standard" and identity["canonical_value"] == value) or
-      (identity["scheme"] == "scene" and identity["canonical_value"] == value)
+      (identity["scheme"] in bridged and identity["canonical_value"] == value)
   end
 
   defp matches_value?(mapping, scheme, value) do

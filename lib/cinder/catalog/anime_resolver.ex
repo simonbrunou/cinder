@@ -3,6 +3,19 @@ defmodule Cinder.Catalog.AnimeResolver do
 
   @precedence %{inferred: 0, curated: 1, manual: 2}
 
+  @doc """
+  Persisted coordinate schemes bridged onto an exact-value match for a parsed `scheme`, on top
+  of the identical-scheme match every scheme already gets. Single source of truth for the A6
+  alternate-season-numbering bridge rule: a parsed "standard" (SxxEyy) release/file value also
+  matches a persisted "scene" coordinate (the alt-numbering TMDB group synced onto a series) by
+  exact value, so a TVDB-numbered release resolves even when TMDB's own tree numbers the show
+  differently. Consulted by both `Cinder.Acquisition.Anime` (search/selection) and
+  `Cinder.Library.AnimePreflight` (import) — each owns its own data-shape-specific match loop,
+  but the scheme list itself lives only here.
+  """
+  def bridged_schemes("standard"), do: ["scene"]
+  def bridged_schemes(_scheme), do: []
+
   def resolve(coordinates, mappings, opts \\ []) do
     matches =
       opts

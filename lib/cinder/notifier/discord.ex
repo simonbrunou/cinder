@@ -16,6 +16,7 @@ defmodule Cinder.Notifier.Discord do
   alias Cinder.Catalog.Episode
   alias Cinder.HTTPPolicy
   alias Cinder.Notifier.Log
+  alias Cinder.Util
   require Logger
 
   @green 0x2ECC71
@@ -151,13 +152,8 @@ defmodule Cinder.Notifier.Discord do
     :cinder
     |> Application.get_env(__MODULE__, [])
     |> Keyword.get(:webhook_url)
-    |> blank_to_nil()
+    |> Util.blank_to_nil()
   end
-
-  defp blank_to_nil(value) when is_binary(value),
-    do: if(String.trim(value) == "", do: nil, else: value)
-
-  defp blank_to_nil(_value), do: nil
 
   # Matches the repo's Req idiom (jellyfin.ex): a base req from config's req_options merged onto the
   # bounded defaults, then Req.post / Req.get with the full webhook url. req_options carries the

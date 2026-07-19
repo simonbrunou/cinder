@@ -2,7 +2,7 @@ defmodule Cinder.Acquisition.Anime do
   @moduledoc "Bounded anime-aware query planning and release aggregation."
 
   alias Cinder.Acquisition.{AnimeParser, AnimePreferences, Language, Release, Scorer}
-  alias Cinder.Catalog.AnimeResolver
+  alias Cinder.Catalog.{AnimeResolver, Episode}
 
   @anime_category 5070
   @max_aliases 7
@@ -262,13 +262,13 @@ defmodule Cinder.Acquisition.Anime do
     end
   end
 
-  # A parsed "standard" (SxxEyy) value also matches a persisted "scene" coordinate by exact
-  # value (A6: the alternate-season-numbering group synced onto the series, `scheme: "scene"`,
-  # `precedence: :inferred`) — this is what lets a TVDB-numbered release resolve when TMDB's own
-  # tree numbers the show differently. No new precedence handling is needed: the canonical
-  # mapping stays `:manual` and `AnimeResolver` already ranks `:manual` above `:inferred`, so a
-  # value both know still resolves canonically.
+  # The scheme-bridging rule itself (which persisted schemes a parsed "standard" value also
+  # matches) lives once in `AnimeResolver.bridged_schemes/1` — no new precedence handling is
+  # needed here: the canonical mapping stays `:manual` and `AnimeResolver` already ranks
+  # `:manual` above `:inferred`, so a value both know still resolves canonically.
   defp mappings_for_value(mappings, "standard", value) do
+    bridged = AnimeResolver.bridged_schemes("standard")
+
     Enum.filter(mappings, fn mapping ->
       mapping.identity ==
         %{
@@ -277,7 +277,7 @@ defmodule Cinder.Acquisition.Anime do
           namespace: "canonical",
           canonical_value: value
         } or
-        (Map.get(mapping.identity, :scheme) == "scene" and
+        (Map.get(mapping.identity, :scheme) in bridged and
            Map.get(mapping.identity, :canonical_value) == value)
     end)
   end
@@ -596,18 +596,11 @@ defmodule Cinder.Acquisition.Anime do
       mapping.identity.scheme == "scene" and
         not MapSet.disjoint?(MapSet.new(mapping.episode_ids), wanted)
     end)
-    |> Enum.map(&scene_season_from_code(&1.identity.canonical_value))
+    |> Enum.map(&Episode.season_from_code(&1.identity.canonical_value))
     |> Enum.reject(&is_nil/1)
     |> Enum.uniq()
     |> Enum.sort()
     |> Enum.take(@max_seasons)
-  end
-
-  defp scene_season_from_code(value) do
-    case Regex.run(~r/^S(\d+)E\d+$/, value) do
-      [_, season] -> String.to_integer(season)
-      _ -> nil
-    end
   end
 
   defp coordinate_queries(context, indexer, wanted_ids, seasons) do

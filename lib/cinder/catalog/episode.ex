@@ -130,6 +130,14 @@ defmodule Cinder.Catalog.Episode do
   @doc ~S(The "S01E02"-style code for a season/episode number pair.)
   def code(season_number, episode_number), do: "S#{pad(season_number)}E#{pad(episode_number)}"
 
+  @doc ~S(Inverse of `code/2`: the season number from an "SxxEyy"-style code, or nil if it doesn't parse.)
+  def season_from_code(value) do
+    case Regex.run(~r/^S(\d+)E\d+$/, value) do
+      [_, season] -> String.to_integer(season)
+      _ -> nil
+    end
+  end
+
   @doc "Two-digit minimum zero-padding, never truncated (numbers can exceed 99 on long-running shows)."
   def pad(n), do: n |> Integer.to_string() |> String.pad_leading(2, "0")
 end
