@@ -5,13 +5,14 @@ Phoenix/LiveView. This roadmap covers the **movies-only vertical slice**: reques
 find the best release → download it → import it into Jellyfin. TV, quality upgrades, and
 multi-user are deliberately out of scope until the slice is solid (see *Parked*, bottom).
 
-> **Status (2026-07-14):** the original slice and Part II form the current movies+TV product;
+> **Status (2026-07-19):** the original slice and Part II form the current movies+TV product;
 > remaining release sign-offs stay recorded in M8. **Part III — Anime-aware media handling**
 > (bottom) is the current feature program: a per-title opt-in profile that makes discovery,
 > release matching, numbering, specials, and audio/subtitle preferences anime-aware without a
-> third pipeline. A0–A4 are done; a same-day cleanup pass (**A4.5**) simplified the
-> implementation in place. **A5 (live dogfood + provider sign-off) is next.**
-> Phases 0–5 and Part II remain the build record.
+> third pipeline. A0–A5 are done (a same-day cleanup pass, **A4.5**, simplified the
+> implementation in place), and **A6 — alternate-season numbering — shipped 2026-07-19**,
+> closing the provider-numbering gap with TMDB's own episode groups rather than a second
+> metadata provider. Phases 0–5 and Part II remain the build record.
 
 ## How to run this with Claude Code
 
@@ -793,7 +794,8 @@ It was designed and built end-to-end by a different model as a trial run; a same
 (2026-07-14) found the result functionally sound (every gate below was green throughout) but
 substantially over-built for the problem and stylistically inconsistent with the rest of the app.
 **A4.5**, below, simplified the implementation in place without touching the safety invariant.
-**A5 (live dogfood + provider sign-off) is next.**
+A5's dogfood and corpus re-run signed off 2026-07-14, and **A6** closed the evidenced numbering
+gap TMDB-internally on 2026-07-19.
 
 ### A0 — Corpus and provider contracts (XL)
 
@@ -1035,6 +1037,29 @@ diverging from real-world scene numbering (interleaved Re:PETIT shorts, no seaso
 **Done when (only if triggered):** a named, evidenced-in-A5 gap has a fixture that failed before and
 passes after the new provider is wired in, and every A0–A5 fixture plus the standard suite stays
 green.
+
+**[done 2026-07-19 — realized TMDB-internally, no second provider]** (design:
+`docs/superpowers/specs/2026-07-17-a6-alt-season-numbering-design.md`). Triggered live a second
+time by **Frieren** (TMDB 209867): TMDB folds all 38 episodes into Season 1 (deliberate "TV Bible"
+policy), while the TVDB-indexed NZBGeek answers `{Season:2}` — the last 10 episodes were
+unfindable. A live TMDB API probe (2026-07-17, run by the operator) showed TMDB's own **episode
+groups** publish exactly the alternate split (Frieren's "Seasons" group: Specials/28/10, matching
+TVDB), and that **Re:Zero's F2 closes with the same mechanism** (all three of its type-6 groups
+model Season 2 as canonical S1E26..E50) — so AniDB/TheXEM stay parked unless a title with no
+usable TMDB group appears. Shipped: `series.scene_numbering_group_id` (nullable; nil = today's
+behavior) chosen by an **operator-only** "Alternate numbering" picker on the series detail page
+(never auto-picked, per A0) with a both-sides preview ("Season 2 → S02E01–E10 (episodes 29–38)",
+order-derived, unmatched entries counted separately — preview and persistence share one
+derivation); sync ingests the chosen group as `scheme: "scene"` coordinates through the existing
+`episode_coordinates` machinery (delete-non-manual-then-reinsert, so `:manual` corrections
+survive; fetch failure keeps last-synced rows — drift never strips search ability); search unions
+id-scoped alt-season queries (`{TvdbId}{Season:2}`) and activates the dormant `"scene"` coordinate
+queries; resolution bridges parsed `"standard"` values to persisted scene rows (same bridge in
+`AnimePreflight` — found test-first, its matcher is independent); **import is untouched** (frozen
+snapshot; every hold path intact). All TMDB fetching happens before any `Repo.transaction` (M0
+invariant), mirroring `refresh_series/1`. The Done-when gate holds: the Frieren-shaped fixture
+yields `:no_match` before and selects/imports after; suite green (1732). Standard TV reuse of
+these coordinates is tracked in issue #132.
 
 ---
 

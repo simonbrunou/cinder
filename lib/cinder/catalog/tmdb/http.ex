@@ -180,9 +180,16 @@ defmodule Cinder.Catalog.TMDB.HTTP do
 
   defp normalize_alternative_title(_title), do: {:error, :unexpected_response}
 
-  defp normalize_group(%{"id" => id, "type" => type, "name" => name})
+  defp normalize_group(%{"id" => id, "type" => type, "name" => name} = group)
        when is_binary(id) and is_integer(type) and is_binary(name) do
-    {:ok, %{id: id, type: type, name: name}}
+    {:ok,
+     %{
+       id: id,
+       type: type,
+       name: name,
+       group_count: Map.get(group, "group_count"),
+       episode_count: Map.get(group, "episode_count")
+     }}
   end
 
   defp normalize_group(_group), do: {:error, :unexpected_response}
@@ -206,9 +213,13 @@ defmodule Cinder.Catalog.TMDB.HTTP do
 
   defp normalize_group_detail(_body), do: {:error, :unexpected_response}
 
-  defp normalize_group_entries(%{"order" => group_order, "episodes" => episodes})
+  defp normalize_group_entries(%{"order" => group_order, "episodes" => episodes} = subgroup)
        when is_integer(group_order) and is_list(episodes) do
-    normalize_items(episodes, &normalize_group_entry(&1, group_order))
+    # "name" is the subgroup's own label ("Season 2", "Specials", …) — absent on the fixture
+    # payloads that only need absolute ordering, so it's read loosely (nil, not required) and
+    # only consumed by the scene-numbering derivation (`Catalog.sync_scene_coordinates/1`).
+    group_name = Map.get(subgroup, "name")
+    normalize_items(episodes, &normalize_group_entry(&1, group_name, group_order))
   end
 
   defp normalize_group_entries(_group), do: {:error, :unexpected_response}
@@ -220,6 +231,7 @@ defmodule Cinder.Catalog.TMDB.HTTP do
            "season_number" => season_number,
            "episode_number" => episode_number
          },
+         group_name,
          group_order
        )
        when is_integer(tmdb_episode_id) and is_integer(order) and is_integer(season_number) and
@@ -227,6 +239,7 @@ defmodule Cinder.Catalog.TMDB.HTTP do
     {:ok,
      %{
        tmdb_episode_id: tmdb_episode_id,
+       group_name: group_name,
        group_order: group_order,
        order: order,
        season_number: season_number,
@@ -234,7 +247,8 @@ defmodule Cinder.Catalog.TMDB.HTTP do
      }}
   end
 
-  defp normalize_group_entry(_episode, _group_order), do: {:error, :unexpected_response}
+  defp normalize_group_entry(_episode, _group_name, _group_order),
+    do: {:error, :unexpected_response}
 
   defp normalize(movie) do
     %{

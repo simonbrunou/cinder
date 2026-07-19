@@ -32,7 +32,9 @@ defmodule CinderWeb.SeriesDetailLive do
           alias_form: alias_form(),
           confirm_opt: false,
           searching_season: nil,
-          mapping_grabs: Catalog.list_mapping_grabs_for_series(series.id)
+          mapping_grabs: Catalog.list_mapping_grabs_for_series(series.id),
+          episode_groups: [],
+          scene_preview: nil
         )
         |> refresh_identity(series)
 
@@ -339,19 +341,84 @@ defmodule CinderWeb.SeriesDetailLive do
     end
   end
 
+  # A group selection change previews its derived mapping (no persistence); clearing back to
+  # "None" just resets the form and drops the preview.
+  def handle_event("preview_scene_group", %{"group_id" => group_id}, socket) do
+    socket = assign(socket, scene_form: to_form(%{"group_id" => group_id}), scene_preview: nil)
+
+    case group_id do
+      "" ->
+        {:noreply, socket}
+
+      id ->
+        {:noreply,
+         start_async(socket, :preview_scene_group, fn -> Catalog.get_episode_group(id) end)}
+    end
+  end
+
+  # TMDB calls run off-process via start_async, never inline (mirrors preview_scene_group
+  # above) — set_scene_numbering_group/2 fetches the group detail live before it can write.
+  def handle_event("save_scene_numbering_group", %{"group_id" => group_id}, socket) do
+    series = socket.assigns.series
+
+    {:noreply,
+     start_async(socket, :save_scene_numbering_group, fn ->
+       Catalog.set_scene_numbering_group(series, group_id)
+     end)}
+  end
+
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
-  # Refresh descriptive metadata off the render path whenever the detail page opens.
+  # Refresh descriptive metadata + the alternate-numbering group list off the render path
+  # whenever the detail page opens (house pattern from the M4b add flow — TMDB calls run
+  # off-process via start_async, never inline in mount/3).
   defp maybe_enrich(socket, %Series{} = series) do
-    if connected?(socket),
-      do: start_async(socket, :enrich, fn -> Catalog.enrich_series(series) end),
-      else: socket
+    if connected?(socket) do
+      socket
+      |> start_async(:enrich, fn -> Catalog.enrich_series(series) end)
+      |> start_async(:load_episode_groups, fn -> Catalog.list_episode_groups(series) end)
+    else
+      socket
+    end
   end
 
   # Metadata refresh landed — reload so the tree + the newly-written descriptive fields render.
   @impl true
   def handle_async(:enrich, {:ok, %Series{}}, socket), do: {:noreply, reload(socket)}
   def handle_async(:enrich, {:exit, _reason}, socket), do: {:noreply, socket}
+
+  def handle_async(:load_episode_groups, {:ok, {:ok, groups}}, socket),
+    do: {:noreply, assign(socket, :episode_groups, groups)}
+
+  def handle_async(:load_episode_groups, {:ok, {:error, _reason}}, socket),
+    do: {:noreply, assign(socket, :episode_groups, [])}
+
+  def handle_async(:load_episode_groups, {:exit, _reason}, socket),
+    do: {:noreply, assign(socket, :episode_groups, [])}
+
+  def handle_async(:preview_scene_group, {:ok, {:ok, detail}}, socket) do
+    preview = Catalog.preview_scene_mapping(detail, socket.assigns.series)
+    {:noreply, assign(socket, :scene_preview, preview)}
+  end
+
+  def handle_async(:preview_scene_group, {:ok, {:error, _reason}}, socket),
+    do: {:noreply, assign(socket, :scene_preview, :error)}
+
+  def handle_async(:preview_scene_group, {:exit, _reason}, socket),
+    do: {:noreply, assign(socket, :scene_preview, :error)}
+
+  def handle_async(:save_scene_numbering_group, {:ok, {:ok, _series}}, socket) do
+    {:noreply,
+     socket
+     |> put_flash(:info, gettext("Alternate numbering saved."))
+     |> reload()}
+  end
+
+  def handle_async(:save_scene_numbering_group, {:ok, {:error, _reason}}, socket),
+    do: {:noreply, put_flash(socket, :error, gettext("Couldn't save the alternate numbering."))}
+
+  def handle_async(:save_scene_numbering_group, {:exit, _reason}, socket),
+    do: {:noreply, put_flash(socket, :error, gettext("Couldn't save the alternate numbering."))}
 
   # The manual-search panel forwards a chosen release back here (it owns no Catalog writes). The
   # open panel's season is tracked in :searching_season; the grab covers that season's wanted set.
@@ -410,13 +477,17 @@ defmodule CinderWeb.SeriesDetailLive do
     |> assign(
       profile_form: profile_form(series),
       profile_summary: Catalog.media_profile_summary(series),
-      aliases_empty?: aliases == []
+      aliases_empty?: aliases == [],
+      scene_form: scene_form(series)
     )
     |> stream(:title_aliases, aliases, reset: true)
   end
 
   defp profile_form(series),
     do: to_form(%{"media_profile" => Atom.to_string(series.media_profile)})
+
+  defp scene_form(series),
+    do: to_form(%{"group_id" => series.scene_numbering_group_id || ""})
 
   defp alias_form(params \\ %{})
 
@@ -500,6 +571,68 @@ defmodule CinderWeb.SeriesDetailLive do
   end
 
   defp absolute_annotation(_episode, _profile), do: nil
+
+  defp scene_group_options(groups) do
+    Enum.map(groups, fn group ->
+      {"#{group.name} (#{episode_group_type_label(group.type)}, " <>
+         "#{group.group_count} groups, #{group.episode_count} episodes)", group.id}
+    end)
+  end
+
+  defp episode_group_type_label(2), do: gettext("Absolute")
+  defp episode_group_type_label(4), do: gettext("Digital")
+  defp episode_group_type_label(5), do: gettext("Story Arc")
+  defp episode_group_type_label(6), do: gettext("Seasons")
+  defp episode_group_type_label(7), do: gettext("TV")
+  defp episode_group_type_label(_type), do: gettext("Other")
+
+  # Two shapes: every entry unmatched (no alt/canonical range to show — just the count), or
+  # at least one matched entry (the alt SxxEyy range Save writes, alongside the canonical
+  # episode range it resolves to; an unmatched remainder gets an appended note).
+  defp scene_preview_label(%{season_number: season, count: 0, unmatched_count: unmatched}) do
+    ngettext(
+      "Season %{season} → %{count} entry doesn't match your episodes.",
+      "Season %{season} → %{count} entries don't match your episodes.",
+      unmatched,
+      season: season,
+      count: unmatched
+    )
+  end
+
+  defp scene_preview_label(%{
+         season_number: season,
+         unmatched_count: unmatched,
+         alt_range: {alt_first, alt_last},
+         canonical_range: {first, last}
+       }) do
+    base =
+      gettext("Season %{season} → %{alt} (episodes %{first}–%{last})",
+        season: season,
+        alt: scene_alt_code(season, alt_first, alt_last),
+        first: first,
+        last: last
+      )
+
+    if unmatched > 0 do
+      base <> " " <> scene_unmatched_note(unmatched)
+    else
+      base
+    end
+  end
+
+  defp scene_alt_code(season, first, first), do: Episode.code(season, first)
+
+  defp scene_alt_code(season, first, last),
+    do: "#{Episode.code(season, first)}–E#{Episode.pad(last)}"
+
+  defp scene_unmatched_note(unmatched) do
+    ngettext(
+      "%{count} entry doesn't match your episodes.",
+      "%{count} entries don't match your episodes.",
+      unmatched,
+      count: unmatched
+    )
+  end
 
   defp find_episode(series, id) do
     series.seasons |> Enum.flat_map(& &1.episodes) |> Enum.find(&(&1.id == id))
@@ -774,6 +907,46 @@ defmodule CinderWeb.SeriesDetailLive do
             </span>
           </div>
         </div>
+      </details>
+
+      <details :if={@profile_summary.effective == :anime} class="mb-6 max-w-3xl">
+        <summary class="cursor-pointer border-b border-base-300 pb-2 text-lg font-semibold">
+          {gettext("Alternate numbering")}
+        </summary>
+        <p class="mb-2 mt-2 text-sm text-base-content/70">
+          {gettext(
+            "Pick a TMDB episode group when indexers number this show differently than TMDB does (e.g. TMDB keeps one continuous season, but releases are split by another season count)."
+          )}
+        </p>
+        <.form
+          for={@scene_form}
+          id="series-scene-numbering-form"
+          phx-change="preview_scene_group"
+          phx-submit="save_scene_numbering_group"
+          class="flex flex-wrap items-end gap-2"
+        >
+          <.input
+            field={@scene_form[:group_id]}
+            type="select"
+            label={gettext("Episode group")}
+            options={scene_group_options(@episode_groups)}
+            prompt={gettext("None (default numbering)")}
+          />
+          <.button
+            type="submit"
+            variant="primary"
+            size="sm"
+            phx-disable-with={gettext("Saving…")}
+          >
+            {gettext("Save")}
+          </.button>
+        </.form>
+        <div :if={is_list(@scene_preview)} class="mt-2 text-sm text-base-content/70">
+          <p :for={entry <- @scene_preview}>{scene_preview_label(entry)}</p>
+        </div>
+        <p :if={@scene_preview == :error} class="mt-2 text-sm text-error">
+          {gettext("Couldn't load that group's mapping.")}
+        </p>
       </details>
 
       <.empty_state

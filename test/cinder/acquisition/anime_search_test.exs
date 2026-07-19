@@ -171,6 +171,39 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
     refute_received {:bounded_tv_query, ^expected_33}
   end
 
+  test "a persisted scene coordinate adds an id-scoped alt-season query alongside the TMDB season" do
+    episodes = for n <- 1..38, do: %{id: n, season_number: 1, episode_number: n}
+
+    scene_mappings =
+      for n <- 29..38 do
+        episode_number = n - 28
+        code = "S02E#{String.pad_leading(Integer.to_string(episode_number), 2, "0")}"
+        mapping("scene", code, [n])
+      end
+
+    context = %{
+      kind: :series,
+      title: "Frieren",
+      year: 2023,
+      tvdb_id: 209_867,
+      aliases: [],
+      episodes: episodes,
+      mappings: scene_mappings
+    }
+
+    expect(IndexerMock, :search_tv, 2, fn 209_867, "Frieren", season ->
+      send(self(), {:search_tv_season, season})
+      {:ok, []}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert {:ok, [], false} =
+             Anime.search_episodes(IndexerMock, context, Enum.to_list(29..38), [])
+
+    assert Enum.sort(receive_queries(:search_tv_season, 2)) == [1, 2]
+  end
+
   defp movie_context(aliases) do
     %{
       kind: :movie,

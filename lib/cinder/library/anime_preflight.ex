@@ -137,11 +137,7 @@ defmodule Cinder.Library.AnimePreflight do
   end
 
   defp resolve_value(scheme, value, parsed, mappings) do
-    matching =
-      Enum.filter(mappings, fn mapping ->
-        identity = mapping["identity"]
-        identity["scheme"] == scheme and identity["canonical_value"] == value
-      end)
+    matching = Enum.filter(mappings, &matches_value?(&1, scheme, value))
 
     resolver_mappings =
       Enum.map(matching, fn mapping ->
@@ -157,6 +153,24 @@ defmodule Cinder.Library.AnimePreflight do
       role: parsed.role,
       extra_evidence: parsed.role == :extra and %{parser: "anime_v1"}
     )
+  end
+
+  # A6: a parsed "standard" (SxxEyy) filename value also matches a persisted "scene"
+  # coordinate by exact value — mirrors `Cinder.Acquisition.Anime.mappings_for_value/3`'s
+  # bridge on the resolver/selection side. Without this, a downloaded batch named with the
+  # TVDB-shaped numbering the release was actually grabbed under (frozen into this snapshot's
+  # `mappings` at grab time) could never resolve at import, even though the search/selection
+  # side already matched it.
+  defp matches_value?(mapping, "standard", value) do
+    identity = mapping["identity"]
+
+    (identity["scheme"] == "standard" and identity["canonical_value"] == value) or
+      (identity["scheme"] == "scene" and identity["canonical_value"] == value)
+  end
+
+  defp matches_value?(mapping, scheme, value) do
+    identity = mapping["identity"]
+    identity["scheme"] == scheme and identity["canonical_value"] == value
   end
 
   defp atom_identity(identity) do

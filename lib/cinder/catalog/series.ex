@@ -33,6 +33,7 @@ defmodule Cinder.Catalog.Series do
     field :first_air_date, :date
     field :media_profile, Ecto.Enum, values: [:auto, :standard, :anime], default: :auto
     field :anime_hold_reason, :string
+    field :scene_numbering_group_id, :string
     has_many :seasons, Season
     has_many :title_aliases, TitleAlias
     has_many :episode_coordinates, EpisodeCoordinate
@@ -45,6 +46,15 @@ defmodule Cinder.Catalog.Series do
 
   @doc "Changeset for the sweep-owned search-time Anime preferences hold marker (see `Catalog.set_anime_hold/2`)."
   def anime_hold_changeset(series, attrs), do: cast(series, attrs, [:anime_hold_reason])
+
+  @doc """
+  Changeset for the operator-chosen TMDB episode group used for alternate-season numbering
+  (see `Catalog.set_scene_numbering_group/2`). Deliberately its own changeset, like
+  `anime_hold_changeset/2` — not part of `create_changeset/1`, `refresh_changeset/2`, or
+  `admin_changeset/2`, so neither a TMDB refresh nor an admin metadata edit can clobber it.
+  """
+  def scene_numbering_changeset(series, attrs),
+    do: cast(series, attrs, [:scene_numbering_group_id])
 
   @doc "The valid `monitor_strategy` values."
   def monitor_strategies, do: @monitor_strategies

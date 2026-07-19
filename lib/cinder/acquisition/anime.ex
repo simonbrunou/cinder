@@ -262,14 +262,23 @@ defmodule Cinder.Acquisition.Anime do
     end
   end
 
+  # A parsed "standard" (SxxEyy) value also matches a persisted "scene" coordinate by exact
+  # value (A6: the alternate-season-numbering group synced onto the series, `scheme: "scene"`,
+  # `precedence: :inferred`) — this is what lets a TVDB-numbered release resolve when TMDB's own
+  # tree numbers the show differently. No new precedence handling is needed: the canonical
+  # mapping stays `:manual` and `AnimeResolver` already ranks `:manual` above `:inferred`, so a
+  # value both know still resolves canonically.
   defp mappings_for_value(mappings, "standard", value) do
     Enum.filter(mappings, fn mapping ->
-      mapping.identity == %{
-        source: "cinder",
-        scheme: "standard",
-        namespace: "canonical",
-        canonical_value: value
-      }
+      mapping.identity ==
+        %{
+          source: "cinder",
+          scheme: "standard",
+          namespace: "canonical",
+          canonical_value: value
+        } or
+        (Map.get(mapping.identity, :scheme) == "scene" and
+           Map.get(mapping.identity, :canonical_value) == value)
     end)
   end
 
@@ -555,9 +564,10 @@ defmodule Cinder.Acquisition.Anime do
 
   defp episode_queries(context, indexer, wanted_ids) do
     seasons = wanted_seasons(context, wanted_ids)
+    alt_seasons = scene_seasons(context, wanted_ids) -- seasons
 
     id_queries =
-      Enum.map(seasons, fn season ->
+      Enum.map(seasons ++ alt_seasons, fn season ->
         origin = if is_nil(context.tvdb_id), do: :free_text, else: :id_scoped
 
         {origin, fn -> indexer.search_tv(context.tvdb_id, context.title, season) end}
@@ -569,6 +579,35 @@ defmodule Cinder.Acquisition.Anime do
       end)
 
     id_queries ++ title_queries ++ coordinate_queries(context, indexer, wanted_ids, seasons)
+  end
+
+  # A6: the distinct season numbers a persisted scene coordinate (A6 alternate-season
+  # numbering) claims for a still-wanted episode — e.g. Frieren's TMDB season 1 covers a
+  # TVDB-shaped season 2 for episodes 29-38. Added to the id-scoped `search_tv` queries
+  # (deduped against the TMDB-season list above) so a TVDB-indexed indexer's `{Season:2}`
+  # token search actually gets issued; the free-text coordinate query itself needs no change
+  # (`coordinate_queries/4` already iterates "scene" — it's `@queryable_schemes` — over the
+  # TMDB season list, which already covers these same episodes).
+  defp scene_seasons(context, wanted_ids) do
+    wanted = MapSet.new(wanted_ids)
+
+    context.mappings
+    |> Enum.filter(fn mapping ->
+      mapping.identity.scheme == "scene" and
+        not MapSet.disjoint?(MapSet.new(mapping.episode_ids), wanted)
+    end)
+    |> Enum.map(&scene_season_from_code(&1.identity.canonical_value))
+    |> Enum.reject(&is_nil/1)
+    |> Enum.uniq()
+    |> Enum.sort()
+    |> Enum.take(@max_seasons)
+  end
+
+  defp scene_season_from_code(value) do
+    case Regex.run(~r/^S(\d+)E\d+$/, value) do
+      [_, season] -> String.to_integer(season)
+      _ -> nil
+    end
   end
 
   defp coordinate_queries(context, indexer, wanted_ids, seasons) do

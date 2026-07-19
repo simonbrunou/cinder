@@ -198,6 +198,51 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert Repo.reload(other_alias).title == "Other series"
   end
 
+  test "picks an alternate-numbering group, previews it, and saves it", %{conn: conn} do
+    series = series_fixture(media_profile: :anime, tvdb_id: 12_345)
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
+      {:ok, [%{id: "seasons-group", type: 6, name: "Seasons", group_count: 3, episode_count: 64}]}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_group, fn "seasons-group" ->
+      {:ok,
+       %{
+         id: "seasons-group",
+         type: 6,
+         name: "Seasons",
+         entries: [
+           %{
+             tmdb_episode_id: 1,
+             group_name: "Season 2",
+             group_order: 2,
+             order: 0,
+             season_number: 1,
+             episode_number: 29
+           }
+         ]
+       }}
+    end)
+
+    {:ok, view, html} = live_series(conn, series)
+    assert html =~ "Seasons (Seasons, 3 groups, 64 episodes)"
+
+    view
+    |> form("#series-scene-numbering-form", %{"group_id" => "seasons-group"})
+    |> render_change()
+
+    assert render_async(view) =~ "Season 2"
+
+    view
+    |> form("#series-scene-numbering-form", %{"group_id" => "seasons-group"})
+    |> render_submit()
+
+    # The save runs off-process via start_async (mirrors the preview above); await it before
+    # reading the row back.
+    assert render_async(view) =~ "Alternate numbering saved."
+    assert Repo.reload(series).scene_numbering_group_id == "seasons-group"
+  end
+
   # A household admin needs the absolute number (it's how anime releases are named) and an
   # actionable classification (a Special that is/isn't grabbable) — nothing else about how
   # either was derived belongs on the row, even for a legacy row still carrying old provenance.
