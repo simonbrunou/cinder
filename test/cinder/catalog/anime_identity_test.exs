@@ -337,10 +337,8 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
       ep1 = hd(episodes)
 
       single_entry_detail = fn id ->
-        %{
+        episode_group(
           id: id,
-          type: 6,
-          name: "Seasons",
           entries: [
             %{
               tmdb_episode_id: ep1.tmdb_episode_id,
@@ -351,7 +349,7 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
               episode_number: 1
             }
           ]
-        }
+        )
       end
 
       expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn ^group_id ->
@@ -490,8 +488,7 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
       end
 
       expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn ^group_a ->
-        {:ok,
-         %{id: group_a, type: 6, name: "Seasons", entries: [entry_for.(ep1.tmdb_episode_id)]}}
+        {:ok, episode_group(id: group_a, entries: [entry_for.(ep1.tmdb_episode_id)])}
       end)
 
       assert {:ok, session_a} = Catalog.set_scene_numbering_group(series, group_a)
@@ -499,8 +496,7 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
       stale = session_a
 
       expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn ^group_b ->
-        {:ok,
-         %{id: group_b, type: 6, name: "Seasons", entries: [entry_for.(ep2.tmdb_episode_id)]}}
+        {:ok, episode_group(id: group_b, entries: [entry_for.(ep2.tmdb_episode_id)])}
       end)
 
       assert {:ok, _current} = Catalog.set_scene_numbering_group(session_a, group_b)
@@ -537,8 +533,7 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
       end
 
       expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn ^group_id ->
-        {:ok,
-         %{id: group_id, type: 6, name: "Seasons", entries: [entry_for.(ep1.tmdb_episode_id)]}}
+        {:ok, episode_group(id: group_id, entries: [entry_for.(ep1.tmdb_episode_id)])}
       end)
 
       assert {:ok, session_a} = Catalog.set_scene_numbering_group(series, group_id)
@@ -550,15 +545,13 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
       group_z = "group-z"
 
       expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn ^group_y ->
-        {:ok,
-         %{id: group_y, type: 6, name: "Seasons", entries: [entry_for.(ep2.tmdb_episode_id)]}}
+        {:ok, episode_group(id: group_y, entries: [entry_for.(ep2.tmdb_episode_id)])}
       end)
 
       assert {:ok, _session_a} = Catalog.set_scene_numbering_group(session_a, group_y)
 
       expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn ^group_z ->
-        {:ok,
-         %{id: group_z, type: 6, name: "Seasons", entries: [entry_for.(ep3.tmdb_episode_id)]}}
+        {:ok, episode_group(id: group_z, entries: [entry_for.(ep3.tmdb_episode_id)])}
       end)
 
       assert {:ok, final} = Catalog.set_scene_numbering_group(session_b, group_z)
@@ -586,7 +579,7 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
 
     test "set_scene_numbering_group/3 ignores a pre-fetched detail for a different group id and fetches fresh",
          %{series: series, group_id: group_id} do
-      mismatched_detail = %{id: "some-other-group", type: 6, name: "Seasons", entries: []}
+      mismatched_detail = episode_group(id: "some-other-group")
       fresh_detail = frieren_seasons_group_detail(group_id)
 
       expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn ^group_id -> {:ok, fresh_detail} end)
@@ -621,8 +614,7 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
       end
 
       expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn ^group_id ->
-        {:ok,
-         %{id: group_id, type: 6, name: "Seasons", entries: [entry_for.(ep1.tmdb_episode_id, 1)]}}
+        {:ok, episode_group(id: group_id, entries: [entry_for.(ep1.tmdb_episode_id, 1)])}
       end)
 
       assert {:ok, stale_series} = Catalog.set_scene_numbering_group(series, group_id)
@@ -631,13 +623,7 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
       # A racing save commits after `stale_series` was read, switching the series to
       # `other_group_id` with its own (unrelated) entry.
       expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn ^other_group_id ->
-        {:ok,
-         %{
-           id: other_group_id,
-           type: 6,
-           name: "Seasons",
-           entries: [entry_for.(ep2.tmdb_episode_id, 2)]
-         }}
+        {:ok, episode_group(id: other_group_id, entries: [entry_for.(ep2.tmdb_episode_id, 2)])}
       end)
 
       assert {:ok, current} = Catalog.set_scene_numbering_group(stale_series, other_group_id)
@@ -657,8 +643,7 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
       expect(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ -> {:ok, []} end)
 
       expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn ^group_id ->
-        {:ok,
-         %{id: group_id, type: 6, name: "Seasons", entries: [entry_for.(ep1.tmdb_episode_id, 1)]}}
+        {:ok, episode_group(id: group_id, entries: [entry_for.(ep1.tmdb_episode_id, 1)])}
       end)
 
       assert {:ok, _} = Catalog.refresh_series(stale_series)
@@ -678,37 +663,38 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
       ep1 = hd(episodes)
       ep2 = Enum.at(episodes, 1)
 
-      detail = %{
-        id: group_id,
-        type: 5,
-        name: "Story Arcs",
-        entries: [
-          %{
-            tmdb_episode_id: ep1.tmdb_episode_id,
-            group_name: "Arc A",
-            group_order: 0,
-            order: 0,
-            season_number: 1,
-            episode_number: 1
-          },
-          %{
-            tmdb_episode_id: ep1.tmdb_episode_id,
-            group_name: "Arc B",
-            group_order: 1,
-            order: 0,
-            season_number: 1,
-            episode_number: 1
-          },
-          %{
-            tmdb_episode_id: ep2.tmdb_episode_id,
-            group_name: "Arc A",
-            group_order: 0,
-            order: 1,
-            season_number: 1,
-            episode_number: 2
-          }
-        ]
-      }
+      detail =
+        episode_group(
+          id: group_id,
+          type: 5,
+          name: "Story Arcs",
+          entries: [
+            %{
+              tmdb_episode_id: ep1.tmdb_episode_id,
+              group_name: "Arc A",
+              group_order: 0,
+              order: 0,
+              season_number: 1,
+              episode_number: 1
+            },
+            %{
+              tmdb_episode_id: ep1.tmdb_episode_id,
+              group_name: "Arc B",
+              group_order: 1,
+              order: 0,
+              season_number: 1,
+              episode_number: 1
+            },
+            %{
+              tmdb_episode_id: ep2.tmdb_episode_id,
+              group_name: "Arc A",
+              group_order: 0,
+              order: 1,
+              season_number: 1,
+              episode_number: 2
+            }
+          ]
+        )
 
       expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn ^group_id -> {:ok, detail} end)
 
@@ -743,51 +729,52 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
       ep2 = Enum.at(episodes, 1)
       ep3 = Enum.at(episodes, 2)
 
-      detail = %{
-        id: group_id,
-        type: 5,
-        name: "Story Arcs",
-        entries: [
-          %{
-            tmdb_episode_id: ep1.tmdb_episode_id,
-            group_name: "Season 1",
-            group_order: 9,
-            order: 0,
-            season_number: 1,
-            episode_number: 1
-          },
-          %{
-            tmdb_episode_id: ep2.tmdb_episode_id,
-            group_name: "OVA Batch",
-            group_order: 1,
-            order: 0,
-            season_number: 1,
-            episode_number: 1
-          },
-          # R3 finding 2: ep3 is a genuinely matched entry (Season 9, order 0 -> S09E01). An
-          # unrelated entry whose tmdb_episode_id ISN'T in the imported tree (never persists
-          # anything either way) coincidentally derives the same S09E01 via the order fallback
-          # (its name doesn't parse, so its season falls back to its group_order, 9). This must
-          # not drop ep3's legitimate match — only two or more MATCHED entries sharing a code is
-          # a real collision.
-          %{
-            tmdb_episode_id: ep3.tmdb_episode_id,
-            group_name: "Season 9",
-            group_order: 20,
-            order: 0,
-            season_number: 9,
-            episode_number: 1
-          },
-          %{
-            tmdb_episode_id: 999_999,
-            group_name: "Bonus Content",
-            group_order: 9,
-            order: 0,
-            season_number: 9,
-            episode_number: 1
-          }
-        ]
-      }
+      detail =
+        episode_group(
+          id: group_id,
+          type: 5,
+          name: "Story Arcs",
+          entries: [
+            %{
+              tmdb_episode_id: ep1.tmdb_episode_id,
+              group_name: "Season 1",
+              group_order: 9,
+              order: 0,
+              season_number: 1,
+              episode_number: 1
+            },
+            %{
+              tmdb_episode_id: ep2.tmdb_episode_id,
+              group_name: "OVA Batch",
+              group_order: 1,
+              order: 0,
+              season_number: 1,
+              episode_number: 1
+            },
+            # R3 finding 2: ep3 is a genuinely matched entry (Season 9, order 0 -> S09E01). An
+            # unrelated entry whose tmdb_episode_id ISN'T in the imported tree (never persists
+            # anything either way) coincidentally derives the same S09E01 via the order fallback
+            # (its name doesn't parse, so its season falls back to its group_order, 9). This must
+            # not drop ep3's legitimate match — only two or more MATCHED entries sharing a code is
+            # a real collision.
+            %{
+              tmdb_episode_id: ep3.tmdb_episode_id,
+              group_name: "Season 9",
+              group_order: 20,
+              order: 0,
+              season_number: 9,
+              episode_number: 1
+            },
+            %{
+              tmdb_episode_id: 999_999,
+              group_name: "Bonus Content",
+              group_order: 9,
+              order: 0,
+              season_number: 9,
+              episode_number: 1
+            }
+          ]
+        )
 
       expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn ^group_id -> {:ok, detail} end)
 
@@ -810,34 +797,100 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
       assert season9.unmatched_count == 1
     end
 
+    # R4 finding 2: colliding_keys must be built from matched entries EXCLUDING those already
+    # doomed by the duplicate-id rule above — a duplicate is dropped regardless of what it
+    # derives, so it must never poison an unrelated, genuinely unique matched sibling merely by
+    # sharing its derived (season, episode) key.
+    test "a duplicated entry doesn't poison an unrelated matched sibling coincidentally sharing its derived key",
+         %{series: series, episodes: episodes, group_id: group_id} do
+      ep_x = hd(episodes)
+      ep_y = Enum.at(episodes, 1)
+
+      detail =
+        episode_group(
+          id: group_id,
+          type: 5,
+          name: "Story Arcs",
+          entries: [
+            # X in "Season 1" (order 0) -> S01E01.
+            %{
+              tmdb_episode_id: ep_x.tmdb_episode_id,
+              group_name: "Season 1",
+              group_order: 1,
+              order: 0,
+              season_number: 1,
+              episode_number: 1
+            },
+            # Y (a different, genuinely matched episode) in an unrelated "Bonus" subgroup whose
+            # name doesn't parse, so its season falls back to its own group_order (1) —
+            # coincidentally also deriving S01E01, with no relation to X.
+            %{
+              tmdb_episode_id: ep_y.tmdb_episode_id,
+              group_name: "Bonus",
+              group_order: 1,
+              order: 0,
+              season_number: 1,
+              episode_number: 1
+            },
+            # X again, in "Season 5" (order 0) -> S05E01: two different derived keys for the
+            # same tmdb_episode_id makes X a genuine duplicate, dropped regardless.
+            %{
+              tmdb_episode_id: ep_x.tmdb_episode_id,
+              group_name: "Season 5",
+              group_order: 5,
+              order: 0,
+              season_number: 5,
+              episode_number: 1
+            }
+          ]
+        )
+
+      expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn ^group_id -> {:ok, detail} end)
+
+      assert {:ok, updated} = Catalog.set_scene_numbering_group(series, group_id)
+
+      scene_coordinates = updated |> Catalog.list_episode_coordinates() |> scene_only()
+
+      # Y survives as the sole claimant of S01E01, with only its own membership.
+      survivor = Enum.find(scene_coordinates, &(&1.canonical_value == "S01E01"))
+      assert survivor
+      assert Enum.map(survivor.memberships, & &1.episode_id) == [ep_y.id]
+
+      # X is dropped from both its subgroups (the duplicate-id rule), never persisted anywhere.
+      refute Enum.any?(scene_coordinates, &(&1.canonical_value == "S05E01"))
+
+      refute Enum.any?(scene_coordinates, fn coordinate ->
+               Enum.any?(coordinate.memberships, &(&1.episode_id == ep_x.id))
+             end)
+    end
+
     # Finding 7: the season-number-from-subgroup-order fallback is a convention, not an API
     # guarantee — the preview must expose the raw subgroup name and whether the season came from
     # parsing that name or from the order fallback, so an unusual group is visibly flagged.
     test "preview exposes the raw subgroup name and whether its season came from the name or the order fallback",
          %{series: series, group_id: group_id} do
-      detail = %{
-        id: group_id,
-        type: 6,
-        name: "Seasons",
-        entries: [
-          %{
-            tmdb_episode_id: 1,
-            group_name: "Season 1",
-            group_order: 1,
-            order: 0,
-            season_number: 1,
-            episode_number: 1
-          },
-          %{
-            tmdb_episode_id: 2,
-            group_name: "OVA",
-            group_order: 2,
-            order: 0,
-            season_number: 1,
-            episode_number: 1
-          }
-        ]
-      }
+      detail =
+        episode_group(
+          id: group_id,
+          entries: [
+            %{
+              tmdb_episode_id: 1,
+              group_name: "Season 1",
+              group_order: 1,
+              order: 0,
+              season_number: 1,
+              episode_number: 1
+            },
+            %{
+              tmdb_episode_id: 2,
+              group_name: "OVA",
+              group_order: 2,
+              order: 0,
+              season_number: 1,
+              episode_number: 1
+            }
+          ]
+        )
 
       preview = Catalog.preview_scene_mapping(detail, Catalog.get_series_with_tree(series.id))
 
@@ -903,7 +956,7 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
         }
       end
 
-    %{id: group_id, type: 6, name: "Seasons", entries: specials ++ season1 ++ season2}
+    episode_group(id: group_id, entries: specials ++ season1 ++ season2)
   end
 
   defp minimal_series_info(series, tmdb_id) do

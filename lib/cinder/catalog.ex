@@ -284,12 +284,7 @@ defmodule Cinder.Catalog do
         episode <- season.episodes,
         not is_nil(episode.tmdb_episode_id),
         into: %{} do
-      {episode.tmdb_episode_id,
-       %{
-         id: episode.id,
-         season_number: season.season_number,
-         episode_number: episode.episode_number
-       }}
+      {episode.tmdb_episode_id, %{episode_number: episode.episode_number}}
     end
   end
 
@@ -1670,7 +1665,12 @@ defmodule Cinder.Catalog do
   end
 
   defp sync_series_identity(series, seasons, identity) do
-    episode_lookup = episode_identity_lookup(series.id)
+    episode_lookup =
+      if needs_episode_lookup?(seasons, identity) do
+        episode_identity_lookup(series.id)
+      else
+        %{}
+      end
 
     with {:ok, _} <-
            Identity.replace_provider_aliases(
@@ -1710,12 +1710,13 @@ defmodule Cinder.Catalog do
   # The "this series' episodes with a non-nil tmdb_episode_id" lookup shared by
   # sync_absolute_coordinates/3, sync_scene_coordinates/3, and sync_tmdb_classifications/2 — all
   # three run back-to-back inside sync_series_identity/3's one transaction, and nothing between
-  # them changes an episode's tmdb_episode_id, so loading it once here and threading it down is
+  # them changes an episode's tmdb_episode_id, so loading it once (only when
+  # needs_episode_lookup?/2 says at least one of the three needs it) and threading it down is
   # simpler than each hand-writing the same query, and one less round trip too. Returns
   # `%{tmdb_episode_id => episode_id}` directly — none of the three ever reads more than the
-  # Cinder episode id off it, unlike the preview path's `episode_lookup_from_tree/1`, which also
-  # needs season/episode numbers (`preview_scene_mapping/2`'s `canonical_range`) and so stays a
-  # richer shape built from the preloaded tree instead of a query.
+  # Cinder episode id off it, unlike the preview path's `episode_lookup_from_tree/1`, which stays
+  # a `%{tmdb_episode_id => %{episode_number:}}` shape instead: `preview_scene_mapping/2`'s
+  # `canonical_range` is the only reader of `matched`, and it only needs the episode number.
   defp episode_identity_lookup(series_id) do
     Repo.all(
       from e in Episode,
@@ -1724,6 +1725,16 @@ defmodule Cinder.Catalog do
         select: {e.tmdb_episode_id, e.id}
     )
     |> Map.new()
+  end
+
+  # Decides whether sync_series_identity/3's shared episode_identity_lookup/1 query is worth
+  # running at all: an absolute-numbering group to resolve, a scene group whose detail was
+  # fetched, or a season/episode tree with any TMDB-sourced episode to classify. A series with
+  # none of the three needs zero episode-lookup queries.
+  defp needs_episode_lookup?(seasons, identity) do
+    identity.absolute_groups != [] or
+      not is_nil(identity.scene_group_detail) or
+      Enum.any?(seasons, fn season -> Enum.any?(season.episodes, & &1.tmdb_episode_id) end)
   end
 
   defp sync_absolute_coordinates(series, absolute_groups, episode_lookup) do
@@ -1873,9 +1884,9 @@ defmodule Cinder.Catalog do
   # only its truthiness and identity — so each caller's `episode_lookup` can (and does) carry a
   # different shape for it: the write path's `episode_identity_lookup/1` maps
   # tmdb_episode_id => episode_id directly (a bare id — see its own doc for why), while the
-  # preview path's `episode_lookup_from_tree/1` maps tmdb_episode_id => %{id:, season_number:,
-  # episode_number:} (`preview_scene_mapping/2`'s `canonical_range` needs the episode number). Each
-  # caller only ever destructures the shape it itself supplied
+  # preview path's `episode_lookup_from_tree/1` maps tmdb_episode_id => %{episode_number:}
+  # (`preview_scene_mapping/2`'s `canonical_range` is the only reader of `matched`, and it only
+  # needs the episode number). Each caller only ever destructures the shape it itself supplied
   # (`scene_coordinate_attrs/3`'s `episode_ids: [matched]` vs. `preview_scene_mapping/2`'s
   # `&1.matched.episode_number`), so the two lookups legitimately diverge rather than share one
   # shape.
@@ -1913,13 +1924,14 @@ defmodule Cinder.Catalog do
       |> Enum.filter(fn {_id, count} -> count > 1 end)
       |> MapSet.new(fn {id, _count} -> id end)
 
-    # Only entries that actually matched a real Cinder episode can genuinely collide — an
-    # unmatched entry persists nothing anyway (it already falls into the plain "matches no
-    # episode row" skip below), so it must never poison a legitimately matched sibling merely by
-    # sharing its derived (season, episode) key.
+    # Only entries that actually matched a real Cinder episode, and aren't already doomed by the
+    # duplicate-id rule above, can genuinely collide — an unmatched entry persists nothing anyway
+    # (it already falls into the plain "matches no episode row" skip below), and a duplicate-id
+    # entry is dropped regardless of what it derives, so neither must poison a legitimately
+    # matched, non-duplicate sibling merely by sharing its derived (season, episode) key.
     colliding_keys =
       mapped
-      |> Enum.filter(& &1.matched)
+      |> Enum.filter(&(&1.matched && not MapSet.member?(duplicated_ids, &1.tmdb_episode_id)))
       |> Enum.group_by(&{&1.season_number, &1.episode_number}, & &1.tmdb_episode_id)
       |> Enum.filter(fn {_key, ids} -> ids |> Enum.uniq() |> length() > 1 end)
       |> MapSet.new(fn {key, _ids} -> key end)

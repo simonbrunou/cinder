@@ -32,9 +32,7 @@ defmodule CinderWeb.SeriesDetailLive do
           confirm_opt: false,
           searching_season: nil,
           mapping_grabs: Catalog.list_mapping_grabs_for_series(series.id),
-          episode_groups: nil,
-          scene_preview: nil,
-          scene_detail: nil
+          episode_groups: nil
         )
         |> refresh_identity(series)
 
@@ -540,19 +538,24 @@ defmodule CinderWeb.SeriesDetailLive do
   end
 
   # Runs on every reload — any {:series_updated} broadcast (another tab's monitor toggle, the
-  # 12h refresher) as well as the mount-time :enrich landing — so it must never discard an
-  # operator's in-progress, unsaved alternate-numbering selection while its preview is still on
-  # screen. `scene_form`/`scene_selected_group_id` are only reset when the persisted group
-  # actually changed relative to what was last assigned (compared before `series` below
-  # overwrites it); the very first mount has no prior series to compare against, so it always
-  # resets there. A post-save reload is exactly such a genuine change, since Save just persisted
-  # the value the operator picked. When it does reset, `scene_preview`/`scene_detail` are cleared
-  # too — otherwise the breakdown panel would keep rendering the OLD group's mapping under the
-  # newly-selected group. Reopening the disclosure (or the next auto-preview once the group list
-  # is loaded) repopulates it; nothing here re-fetches eagerly.
+  # 12h refresher, our OWN successful Save) as well as the mount-time :enrich landing — so it
+  # must never discard an operator's in-progress, unsaved alternate-numbering selection while its
+  # preview is still on screen. `scene_form`/`scene_selected_group_id` are only reset when the
+  # persisted group actually changed relative to what was last assigned (compared before `series`
+  # below overwrites it); the very first mount has no prior series to compare against, so it
+  # always resets there.
+  #
+  # A changed persisted value splits two ways:
+  #   - it now matches `scene_selected_group_id` (what THIS session already picked and
+  #     previewed) — that's our own Save landing, so `scene_preview`/`scene_detail` are kept
+  #     exactly as they render right now.
+  #   - it doesn't — a genuine external change (another tab, the refresher) — so the stale
+  #     preview is cleared, and re-fetched immediately if the group list is already loaded
+  #     (otherwise the next open, or `load_episode_groups`' own auto-preview, repopulates it).
   defp refresh_identity(socket, series) do
     aliases = Catalog.list_title_aliases(series)
-    reset_scene? = scene_group_id_string(socket.assigns[:series]) != scene_group_id_string(series)
+    old_group = scene_group_id_string(socket.assigns[:series])
+    new_group = scene_group_id_string(series)
 
     socket =
       socket
@@ -564,15 +567,27 @@ defmodule CinderWeb.SeriesDetailLive do
       )
       |> stream(:title_aliases, aliases, reset: true)
 
-    if reset_scene? do
-      assign(socket,
-        scene_form: scene_form(series),
-        scene_selected_group_id: scene_group_id_string(series),
-        scene_preview: nil,
-        scene_detail: nil
-      )
-    else
-      socket
+    cond do
+      old_group == new_group ->
+        socket
+
+      new_group == socket.assigns[:scene_selected_group_id] ->
+        assign(socket, scene_form: scene_form(series), scene_selected_group_id: new_group)
+
+      true ->
+        socket =
+          assign(socket,
+            scene_form: scene_form(series),
+            scene_selected_group_id: new_group,
+            scene_preview: nil,
+            scene_detail: nil
+          )
+
+        if is_list(socket.assigns.episode_groups) and new_group != "" do
+          start_scene_preview(socket, new_group)
+        else
+          socket
+        end
     end
   end
 

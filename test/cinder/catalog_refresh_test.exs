@@ -65,6 +65,32 @@ defmodule Cinder.CatalogRefreshTest do
     stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn ^tmdb_id -> {:ok, []} end)
   end
 
+  # Counts calls to sync_series_identity/3's shared episode_identity_lookup/1 query — its SQL
+  # (`SELECT e0."tmdb_episode_id", e0."id" FROM "episodes" ...`) is unique in the codebase, so
+  # matching on it distinguishes it from reconcile_tree's own (differently-shaped) episode
+  # queries, which always run regardless. Same `:telemetry.attach` idiom as
+  # `CinderWeb.UserAuthTest`.
+  defp count_episode_lookup_queries(fun) do
+    counter = :counters.new(1, [])
+    ref = make_ref()
+
+    :telemetry.attach(
+      ref,
+      [:cinder, :repo, :query],
+      fn _event, _measurements, metadata, _config ->
+        if is_binary(metadata.query) and
+             String.contains?(metadata.query, ~s(SELECT e0."tmdb_episode_id", e0."id")) do
+          :counters.add(counter, 1, 1)
+        end
+      end,
+      nil
+    )
+
+    result = fun.()
+    :telemetry.detach(ref)
+    {result, :counters.get(counter, 1)}
+  end
+
   test "provider refresh replaces only TMDB identity and preserves manual choices" do
     s = series(:all, %{tmdb_id: 9_001, media_profile: :anime})
     sn = season(s, 0)
@@ -154,12 +180,12 @@ defmodule Cinder.CatalogRefreshTest do
     ])
 
     expect(Cinder.Catalog.TMDBMock, :get_episode_groups, fn 9_004 ->
-      {:ok, [%{id: "mixed", type: 2, name: "Mixed"}]}
+      {:ok, [episode_group(id: "mixed", type: 2, name: "Mixed")]}
     end)
 
     expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn "mixed" ->
       {:ok,
-       %{
+       episode_group(
          id: "mixed",
          type: 2,
          name: "Mixed",
@@ -167,7 +193,7 @@ defmodule Cinder.CatalogRefreshTest do
            %{tmdb_episode_id: 90_040, group_order: 0, order: 0},
            %{tmdb_episode_id: 90_041, group_order: 0, order: 1}
          ]
-       }}
+       )}
     end)
 
     assert {:ok, _} = Catalog.refresh_series(s)
@@ -188,12 +214,12 @@ defmodule Cinder.CatalogRefreshTest do
     ])
 
     expect(Cinder.Catalog.TMDBMock, :get_episode_groups, fn 9_005 ->
-      {:ok, [%{id: "shared", type: 2, name: "Shared"}]}
+      {:ok, [episode_group(id: "shared", type: 2, name: "Shared")]}
     end)
 
     expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn "shared" ->
       {:ok,
-       %{
+       episode_group(
          id: "shared",
          type: 2,
          name: "Shared",
@@ -207,7 +233,7 @@ defmodule Cinder.CatalogRefreshTest do
              episode_number: 1
            }
          ]
-       }}
+       )}
     end)
 
     assert {:ok, _} = Catalog.refresh_series(s)
@@ -215,6 +241,25 @@ defmodule Cinder.CatalogRefreshTest do
     coordinates = Catalog.list_episode_coordinates(s)
     assert Enum.any?(coordinates, &(&1.scheme == "absolute" and &1.canonical_value == "1"))
     assert Enum.any?(coordinates, &(&1.scheme == "scene" and &1.canonical_value == "S01E01"))
+  end
+
+  # R4 finding 4: the shared episode-lookup query used to run unconditionally on every
+  # insert/refresh, even when none of its three consumers (absolute groups, a scene group,
+  # classifications) needed it.
+  test "the shared episode-lookup query runs zero times when nothing needs it, once when something does" do
+    empty = series(:all)
+    stub_tmdb(empty, [])
+
+    assert {{:ok, _}, 0} = count_episode_lookup_queries(fn -> Catalog.refresh_series(empty) end)
+
+    needs_it = series(:all)
+
+    stub_tmdb(needs_it, [
+      {1, [%{tmdb_episode_id: 90_900, episode_number: 1, title: "E1", air_date: @past}]}
+    ])
+
+    assert {{:ok, _}, 1} =
+             count_episode_lookup_queries(fn -> Catalog.refresh_series(needs_it) end)
   end
 
   test "an identity changeset failure rolls the refresh back and returns the error" do
@@ -245,12 +290,12 @@ defmodule Cinder.CatalogRefreshTest do
 
     expect(Cinder.Catalog.TMDBMock, :get_episode_groups, fn id ->
       assert id == series.tmdb_id
-      {:ok, [%{id: "absolute", type: 2, name: "Absolute"}]}
+      {:ok, [episode_group(id: "absolute", type: 2, name: "Absolute")]}
     end)
 
     expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn "absolute" ->
       {:ok,
-       %{
+       episode_group(
          id: "absolute",
          type: 2,
          name: "Absolute",
@@ -263,7 +308,7 @@ defmodule Cinder.CatalogRefreshTest do
              episode_number: 1
            }
          ]
-       }}
+       )}
     end)
   end
 

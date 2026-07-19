@@ -29,16 +29,6 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     :ok
   end
 
-  # A TMDB episode-group literal, list-shape (group_count/episode_count, no entries) and
-  # detail-shape (entries, no counts) alike — one builder, callers override what the test cares
-  # about instead of hand-writing the full map each time.
-  defp episode_group(attrs) do
-    Map.merge(
-      %{id: "group", type: 6, name: "Seasons", group_count: nil, episode_count: nil, entries: []},
-      Map.new(attrs)
-    )
-  end
-
   defp base_series_info(tmdb_id) do
     %{
       tmdb_id: tmdb_id,
@@ -246,8 +236,13 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     # The save runs off-process via start_async (mirrors the preview above); await it before
     # reading the row back.
-    assert render_async(view) =~ "Alternate numbering saved."
+    html = render_async(view)
+    assert html =~ "Alternate numbering saved."
     assert Repo.reload(series).scene_numbering_group_id == "seasons-group"
+
+    # R4 finding 1: the persisted value catching up with what THIS session already selected and
+    # previewed (i.e. our own Save) must not blank the just-previewed mapping.
+    assert html =~ "Season 2"
   end
 
   # FINDING 11: a non-anime page never renders the panel, so it never even has the chance to
@@ -534,7 +529,9 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   # second writer, not just any broadcast) must still reset the form to the new persisted value.
   # R3 finding 1: it must also drop the OLD group's preview, not keep rendering it under the
   # newly-selected group.
-  test "a reload where the persisted group genuinely changed resets the form and clears the stale preview",
+  # R4 finding 3: with the group list already loaded, the new group's preview must be re-fetched
+  # automatically rather than leaving the panel blank until manual re-selection.
+  test "a reload where the persisted group genuinely changed resets the form, clears the stale preview, and re-fetches the new one",
        %{conn: conn} do
     series =
       series_fixture(media_profile: :anime, tvdb_id: 12_345)
@@ -542,15 +539,27 @@ defmodule CinderWeb.SeriesDetailLiveTest do
       |> Repo.update!()
 
     stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
-      {:ok, [episode_group(id: "group-a", name: "Group A", group_count: 1, episode_count: 1)]}
+      {:ok,
+       [
+         episode_group(id: "group-a", name: "Group A", group_count: 1, episode_count: 1),
+         episode_group(id: "group-b", name: "Group B", group_count: 1, episode_count: 1)
+       ]}
     end)
 
-    stub(Cinder.Catalog.TMDBMock, :get_episode_group, fn "group-a" ->
-      {:ok,
-       episode_group(
-         id: "group-a",
-         entries: [%{tmdb_episode_id: 1, group_name: "Season 1", group_order: 1, order: 0}]
-       )}
+    stub(Cinder.Catalog.TMDBMock, :get_episode_group, fn
+      "group-a" ->
+        {:ok,
+         episode_group(
+           id: "group-a",
+           entries: [%{tmdb_episode_id: 1, group_name: "Season 1", group_order: 1, order: 0}]
+         )}
+
+      "group-b" ->
+        {:ok,
+         episode_group(
+           id: "group-b",
+           entries: [%{tmdb_episode_id: 1, group_name: "Season 5", group_order: 5, order: 0}]
+         )}
     end)
 
     {:ok, view, _html} = live_series(conn, series)
@@ -565,12 +574,12 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     |> Repo.update!()
 
     Phoenix.PubSub.broadcast(Cinder.PubSub, "series", {:series_updated, series.id})
-    :sys.get_state(view.pid)
-    html = render(view)
+    html = render_async(view)
 
     assert has_element?(view, "#series-scene-numbering-form option[value='group-b'][selected]")
     refute has_element?(view, "#series-scene-numbering-form option[value='group-a'][selected]")
     refute html =~ "Season 1"
+    assert html =~ "Season 5"
   end
 
   # R2 finding 10: Episode.codes_label must render a non-contiguous derived season (reachable
