@@ -98,13 +98,15 @@ defmodule Cinder.Catalog.Identity do
     )
   end
 
-  def replace_provider_coordinates(%Series{} = series, source, namespace, coordinates) do
+  # `scheme`-scoped: A6 lets two schemes ("absolute", "scene") share one namespace (a TMDB group
+  # id used both ways), so the delete must not wipe one scheme's rows when the other resyncs.
+  def replace_provider_coordinates(%Series{} = series, source, namespace, scheme, coordinates) do
     Repo.transaction(fn ->
       Repo.delete_all(
         from c in EpisodeCoordinate,
           where:
             c.series_id == ^series.id and c.source == ^source and
-              c.namespace == ^namespace and c.precedence != :manual
+              c.namespace == ^namespace and c.scheme == ^scheme and c.precedence != :manual
       )
 
       Enum.map(coordinates, fn coordinate ->

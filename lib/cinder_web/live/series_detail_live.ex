@@ -25,14 +25,16 @@ defmodule CinderWeb.SeriesDetailLive do
 
       socket =
         assign(socket,
-          series: series,
           editing?: false,
           confirming: nil,
           form: nil,
           alias_form: alias_form(),
           confirm_opt: false,
           searching_season: nil,
-          mapping_grabs: Catalog.list_mapping_grabs_for_series(series.id)
+          mapping_grabs: Catalog.list_mapping_grabs_for_series(series.id),
+          episode_groups: nil,
+          numbering_panel_open?: false,
+          scene_saving_group_id: nil
         )
         |> refresh_identity(series)
 
@@ -339,19 +341,201 @@ defmodule CinderWeb.SeriesDetailLive do
     end
   end
 
+  # A group selection change previews its derived mapping (no persistence); clearing back to
+  # "None" just resets the form and drops the preview. `scene_selected_group_id` is stamped on
+  # every change so a stale preview for a since-abandoned selection (switch to another group, or
+  # clear back to None, before the fetch lands) is recognizable and discarded in handle_async.
+  def handle_event("preview_scene_group", %{"group_id" => group_id}, socket) do
+    socket =
+      assign(socket,
+        scene_form: to_form(%{"group_id" => group_id}),
+        scene_preview: nil,
+        scene_selected_group_id: group_id
+      )
+
+    case group_id do
+      "" -> {:noreply, cancel_async(socket, :preview_scene_group)}
+      id -> {:noreply, start_scene_preview(socket, id)}
+    end
+  end
+
+  # TMDB calls run off-process via start_async, never inline (mirrors preview_scene_group
+  # above) — set_scene_numbering_group/3 fetches the group detail live before it can write,
+  # unless the last-landed preview already fetched this exact group (scene_detail), in which
+  # case that detail is threaded through to skip the redundant round trip. `scene_saving_group_id`
+  # is stamped synchronously so refresh_identity can recognize this group as "our own action" no
+  # matter which path notices it landed first — the {:series_updated} broadcast this save's own
+  # write triggers reaches this same process (and is handled) *before* the async task below
+  # delivers its own result, so both reload paths need the signal, not just this task's own
+  # landing. Cleared once this task's own result confirms the save is fully settled.
+  def handle_event("save_scene_numbering_group", %{"group_id" => group_id}, socket) do
+    series = socket.assigns.series
+    opts = scene_save_opts(socket, group_id)
+
+    {:noreply,
+     socket
+     |> assign(:scene_saving_group_id, group_id)
+     |> start_async(:save_scene_numbering_group, fn ->
+       {group_id, Catalog.set_scene_numbering_group(series, group_id, opts)}
+     end)}
+  end
+
+  # Lazy-loaded on first open of the "Alternate numbering" disclosure (a non-anime series never
+  # renders it, so it never fetches). The native <details> toggle and this phx-click fire
+  # together on BOTH open and close, so `numbering_panel_open?` is a plain toggle tracking which
+  # one just happened — refresh_identity reads it to gate its external-change auto-refetch on
+  # the panel actually being open (a closed panel shouldn't spend a live TMDB call on a preview
+  # nobody's looking at). Reopening after an external change landed while closed (group list
+  # already loaded, a group is saved, but the preview was cleared and never refetched) catches up
+  # here instead of leaving the panel permanently blank. Retry (below) is the only way back out
+  # of :error.
+  def handle_event("load_episode_groups", _params, socket) do
+    open? = not socket.assigns.numbering_panel_open?
+    socket = assign(socket, :numbering_panel_open?, open?)
+
+    cond do
+      not open? ->
+        {:noreply, socket}
+
+      is_nil(socket.assigns.episode_groups) ->
+        {:noreply, fetch_episode_groups(socket)}
+
+      is_list(socket.assigns.episode_groups) and is_nil(socket.assigns.scene_preview) and
+          is_binary(socket.assigns.series.scene_numbering_group_id) ->
+        {:noreply, start_scene_preview(socket, socket.assigns.series.scene_numbering_group_id)}
+
+      true ->
+        {:noreply, socket}
+    end
+  end
+
+  def handle_event("retry_episode_groups", _params, socket) do
+    {:noreply, fetch_episode_groups(socket)}
+  end
+
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
-  # Refresh descriptive metadata off the render path whenever the detail page opens.
+  # Refresh descriptive metadata off the render path whenever the detail page opens (house
+  # pattern from the M4b add flow — TMDB calls run off-process via start_async, never inline in
+  # mount/3). The episode-group list is fetched lazily instead (see "load_episode_groups" above).
   defp maybe_enrich(socket, %Series{} = series) do
-    if connected?(socket),
-      do: start_async(socket, :enrich, fn -> Catalog.enrich_series(series) end),
-      else: socket
+    if connected?(socket) do
+      start_async(socket, :enrich, fn -> Catalog.enrich_series(series) end)
+    else
+      socket
+    end
+  end
+
+  defp fetch_episode_groups(socket) do
+    series = socket.assigns.series
+    start_async(socket, :load_episode_groups, fn -> Catalog.list_episode_groups(series) end)
+  end
+
+  # Cancels any still-in-flight preview fetch before starting a new one (safe to call when
+  # nothing is running) — an operator picking a different group before the auto-fired preview
+  # for the saved one lands would otherwise leave that first TMDB round trip running for nothing
+  # (its result is already discarded by the group-id guard in handle_async, this just stops
+  # wasting the request).
+  defp start_scene_preview(socket, group_id) do
+    socket
+    |> cancel_async(:preview_scene_group)
+    |> start_async(:preview_scene_group, fn ->
+      {group_id, Catalog.get_episode_group(group_id)}
+    end)
+  end
+
+  defp scene_save_opts(socket, group_id) do
+    case socket.assigns.scene_detail do
+      {^group_id, detail} -> [detail: detail]
+      _ -> []
+    end
   end
 
   # Metadata refresh landed — reload so the tree + the newly-written descriptive fields render.
   @impl true
   def handle_async(:enrich, {:ok, %Series{}}, socket), do: {:noreply, reload(socket)}
   def handle_async(:enrich, {:exit, _reason}, socket), do: {:noreply, socket}
+
+  def handle_async(:load_episode_groups, {:ok, {:ok, groups}}, socket) do
+    socket = assign(socket, :episode_groups, groups)
+
+    # A series that already has a saved group shows the right selection but a blank preview
+    # until now — auto-fire it once the list (and thus the form) is ready to render.
+    case socket.assigns.series.scene_numbering_group_id do
+      nil -> {:noreply, socket}
+      group_id -> {:noreply, start_scene_preview(socket, group_id)}
+    end
+  end
+
+  def handle_async(:load_episode_groups, {:ok, {:error, _reason}}, socket),
+    do: {:noreply, assign(socket, :episode_groups, :error)}
+
+  def handle_async(:load_episode_groups, {:exit, _reason}, socket),
+    do: {:noreply, assign(socket, :episode_groups, :error)}
+
+  def handle_async(:preview_scene_group, {:ok, {group_id, result}}, socket) do
+    # Discard a stale result: the operator moved on to a different selection (or cleared to
+    # None) before this fetch landed.
+    if group_id == socket.assigns.scene_selected_group_id do
+      case result do
+        {:ok, detail} ->
+          preview = Catalog.preview_scene_mapping(detail, socket.assigns.series)
+          {:noreply, assign(socket, scene_preview: preview, scene_detail: {group_id, detail})}
+
+        {:error, _reason} ->
+          {:noreply, assign(socket, :scene_preview, :error)}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_async(:preview_scene_group, {:exit, _reason}, socket),
+    do: {:noreply, assign(socket, :scene_preview, :error)}
+
+  def handle_async(:save_scene_numbering_group, {:ok, {group_id, {:ok, _series}}}, socket) do
+    {:noreply,
+     socket
+     |> put_flash(:info, gettext("Alternate numbering saved."))
+     |> reload()
+     |> clear_scene_saving(group_id)}
+  end
+
+  def handle_async(
+        :save_scene_numbering_group,
+        {:ok, {group_id, {:error, :group_fetch_failed}}},
+        socket
+      ) do
+    {:noreply,
+     socket
+     |> put_flash(:error, gettext("Couldn't reach TMDB. Nothing was saved. Try again."))
+     |> clear_scene_saving(group_id)}
+  end
+
+  def handle_async(:save_scene_numbering_group, {:ok, {group_id, {:error, _reason}}}, socket) do
+    {:noreply,
+     socket
+     |> put_flash(:error, gettext("Couldn't save the alternate numbering."))
+     |> clear_scene_saving(group_id)}
+  end
+
+  def handle_async(:save_scene_numbering_group, {:exit, _reason}, socket) do
+    {:noreply,
+     socket
+     |> put_flash(:error, gettext("Couldn't save the alternate numbering."))
+     |> assign(:scene_saving_group_id, nil)}
+  end
+
+  # Only clears the "own save in flight" signal if it still points at THIS save (a second Save
+  # clicked before the first's result lands would otherwise have its own tracking wiped by the
+  # earlier, now-stale one landing).
+  defp clear_scene_saving(socket, group_id) do
+    if socket.assigns.scene_saving_group_id == group_id do
+      assign(socket, :scene_saving_group_id, nil)
+    else
+      socket
+    end
+  end
 
   # The manual-search panel forwards a chosen release back here (it owns no Catalog writes). The
   # open panel's season is tracked in :searching_season; the grab covers that season's wanted set.
@@ -395,28 +579,94 @@ defmodule CinderWeb.SeriesDetailLive do
 
       series ->
         socket
-        |> assign(
-          series: series,
-          mapping_grabs: Catalog.list_mapping_grabs_for_series(series.id)
-        )
+        |> assign(mapping_grabs: Catalog.list_mapping_grabs_for_series(series.id))
         |> refresh_identity(series)
     end
   end
 
+  # Runs on every reload — any {:series_updated} broadcast (another tab's monitor toggle, the
+  # 12h refresher, our OWN successful Save's own write) as well as the mount-time :enrich landing
+  # — so it must never discard an operator's in-progress, unsaved alternate-numbering selection
+  # while its preview is still on screen. `scene_form`/`scene_selected_group_id` are only reset
+  # when the persisted group actually changed relative to what was last assigned (compared before
+  # `series` below overwrites it); the very first mount has no prior series to compare against, so
+  # it always resets there.
+  #
+  # `scene_saving_group_id` (stamped by the save handler, cleared once its own async result lands)
+  # is checked ahead of the operator's current selection: a Save's own write broadcasts
+  # {:series_updated} *before* its async task delivers its own result, so the broadcast-triggered
+  # reload gets here first — both paths need to recognize "this is our own save" the same way, not
+  # just the save's own handle_async. Falling back to the current selection when nothing is being
+  # saved keeps every other caller's behavior unchanged.
+  #
+  # A changed persisted value splits three ways:
+  #   - it matches our own-save/selection signal AND the operator's current selection — that's
+  #     our own action landing with nothing moved on since, so `scene_preview`/`scene_detail` are
+  #     kept exactly as they render right now.
+  #   - it matches our own-save signal but NOT the operator's current selection — our own Save
+  #     landed, but the operator has since picked something else; every scene assign is left
+  #     untouched rather than snapping the dropdown back to what was just saved.
+  #   - it matches neither — a genuine external change (another tab, the refresher) — so the
+  #     stale preview is cleared, and re-fetched immediately if the panel is open and the group
+  #     list is already loaded (otherwise the next open re-fetches it, see "load_episode_groups").
   defp refresh_identity(socket, series) do
     aliases = Catalog.list_title_aliases(series)
+    old_group = scene_group_id_string(socket.assigns[:series])
+    new_group = scene_group_id_string(series)
+    current_selection = socket.assigns[:scene_selected_group_id]
+    own_id = socket.assigns[:scene_saving_group_id] || current_selection
 
-    socket
-    |> assign(
-      profile_form: profile_form(series),
-      profile_summary: Catalog.media_profile_summary(series),
-      aliases_empty?: aliases == []
-    )
-    |> stream(:title_aliases, aliases, reset: true)
+    socket =
+      socket
+      |> assign(
+        series: series,
+        profile_form: profile_form(series),
+        profile_summary: Catalog.media_profile_summary(series),
+        aliases_empty?: aliases == []
+      )
+      |> stream(:title_aliases, aliases, reset: true)
+
+    cond do
+      old_group == new_group ->
+        socket
+
+      new_group == own_id and new_group == current_selection ->
+        assign(socket, scene_form: scene_form(series), scene_selected_group_id: new_group)
+
+      new_group == own_id ->
+        socket
+
+      true ->
+        apply_external_scene_change(socket, series, new_group)
+    end
+  end
+
+  # A genuine external change (another tab, the refresher): drop the stale preview and, if the
+  # panel is open with its group list already loaded, re-fetch the new one immediately.
+  defp apply_external_scene_change(socket, series, new_group) do
+    socket =
+      assign(socket,
+        scene_form: scene_form(series),
+        scene_selected_group_id: new_group,
+        scene_preview: nil,
+        scene_detail: nil
+      )
+
+    if socket.assigns.numbering_panel_open? and is_list(socket.assigns.episode_groups) and
+         new_group != "" do
+      start_scene_preview(socket, new_group)
+    else
+      socket
+    end
   end
 
   defp profile_form(series),
     do: to_form(%{"media_profile" => Atom.to_string(series.media_profile)})
+
+  defp scene_form(series), do: to_form(%{"group_id" => scene_group_id_string(series)})
+
+  defp scene_group_id_string(nil), do: nil
+  defp scene_group_id_string(series), do: series.scene_numbering_group_id || ""
 
   defp alias_form(params \\ %{})
 
@@ -500,6 +750,98 @@ defmodule CinderWeb.SeriesDetailLive do
   end
 
   defp absolute_annotation(_episode, _profile), do: nil
+
+  # `saved_group_id` (the series' persisted scene_numbering_group_id) is appended as a synthetic
+  # option — labeled with the raw id and an "unavailable" hint — whenever the loaded list doesn't
+  # contain it, so the select never silently shows "None" while a group is actually saved (which
+  # would make an innocent Save wipe the working configuration).
+  defp scene_group_options(groups, saved_group_id) do
+    options = Enum.map(groups, &{scene_group_label(&1), &1.id})
+
+    if is_binary(saved_group_id) and
+         not Enum.any?(options, fn {_label, id} -> id == saved_group_id end) do
+      options ++ [{missing_scene_group_label(saved_group_id), saved_group_id}]
+    else
+      options
+    end
+  end
+
+  # group_count/episode_count are integer() | nil per the TMDB behaviour — only the parts TMDB
+  # actually returned show up in the parenthetical.
+  defp scene_group_label(group) do
+    parts = [episode_group_type_label(group.type) | scene_group_counts(group)]
+    "#{group.name} (#{Enum.join(parts, ", ")})"
+  end
+
+  defp scene_group_counts(group) do
+    [
+      group.group_count && "#{group.group_count} groups",
+      group.episode_count && "#{group.episode_count} episodes"
+    ]
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp missing_scene_group_label(group_id),
+    do: gettext("%{group_id} (unavailable on TMDB)", group_id: group_id)
+
+  defp episode_group_type_label(2), do: gettext("Absolute")
+  defp episode_group_type_label(4), do: gettext("Digital")
+  defp episode_group_type_label(5), do: gettext("Story Arc")
+  defp episode_group_type_label(6), do: gettext("Seasons")
+  defp episode_group_type_label(7), do: gettext("TV")
+  defp episode_group_type_label(_type), do: gettext("Other")
+
+  # Two shapes: every entry unmatched (no alt/canonical range to show — just the count), or
+  # at least one matched entry (the alt SxxEyy range Save writes, alongside the canonical
+  # episode range it resolves to; an unmatched remainder gets an appended note). Both carry
+  # `group_name`/`season_source` so an order-derived season (a convention, not an API guarantee)
+  # shows the raw subgroup name it was guessed from — the safety net before Save.
+  defp scene_preview_label(%{count: 0, unmatched_count: unmatched} = entry) do
+    ngettext(
+      "%{season} → %{count} entry doesn't match your episodes.",
+      "%{season} → %{count} entries don't match your episodes.",
+      unmatched,
+      season: scene_season_label(entry),
+      count: unmatched
+    )
+  end
+
+  defp scene_preview_label(
+         %{
+           season_number: season,
+           unmatched_count: unmatched,
+           alt_numbers: alt_numbers,
+           canonical_range: {first, last}
+         } = entry
+       ) do
+    base =
+      gettext("%{season} → %{alt} (episodes %{first}–%{last})",
+        season: scene_season_label(entry),
+        alt: Episode.codes_label(season, alt_numbers),
+        first: first,
+        last: last
+      )
+
+    if unmatched > 0 do
+      base <> " " <> scene_unmatched_note(unmatched)
+    else
+      base
+    end
+  end
+
+  defp scene_season_label(%{season_number: season, season_source: :order, group_name: name}),
+    do: gettext("%{season} (\"%{name}\")", season: season_label(season), name: name)
+
+  defp scene_season_label(%{season_number: season}), do: season_label(season)
+
+  defp scene_unmatched_note(unmatched) do
+    ngettext(
+      "%{count} entry doesn't match your episodes.",
+      "%{count} entries don't match your episodes.",
+      unmatched,
+      count: unmatched
+    )
+  end
 
   defp find_episode(series, id) do
     series.seasons |> Enum.flat_map(& &1.episodes) |> Enum.find(&(&1.id == id))
@@ -774,6 +1116,59 @@ defmodule CinderWeb.SeriesDetailLive do
             </span>
           </div>
         </div>
+      </details>
+
+      <details :if={@profile_summary.effective == :anime} class="mb-6 max-w-3xl">
+        <summary
+          class="cursor-pointer border-b border-base-300 pb-2 text-lg font-semibold"
+          phx-click="load_episode_groups"
+        >
+          {gettext("Alternate numbering")}
+        </summary>
+        <p class="mb-2 mt-2 text-sm text-base-content/70">
+          {gettext(
+            "Pick a TMDB episode group when indexers number this show differently than TMDB does (e.g. TMDB keeps one continuous season, but releases are split by another season count)."
+          )}
+        </p>
+        <p :if={is_nil(@episode_groups)} class="text-sm text-base-content/60">
+          {gettext("Loading episode groups…")}
+        </p>
+        <div :if={@episode_groups == :error} class="flex items-center gap-2">
+          <p class="text-sm text-error">{gettext("Couldn't load episode groups from TMDB.")}</p>
+          <.button type="button" variant="ghost" size="sm" phx-click="retry_episode_groups">
+            {gettext("Retry")}
+          </.button>
+        </div>
+        <.form
+          :if={is_list(@episode_groups)}
+          for={@scene_form}
+          id="series-scene-numbering-form"
+          phx-change="preview_scene_group"
+          phx-submit="save_scene_numbering_group"
+          class="flex flex-wrap items-end gap-2"
+        >
+          <.input
+            field={@scene_form[:group_id]}
+            type="select"
+            label={gettext("Episode group")}
+            options={scene_group_options(@episode_groups, @series.scene_numbering_group_id)}
+            prompt={gettext("None (default numbering)")}
+          />
+          <.button
+            type="submit"
+            variant="primary"
+            size="sm"
+            phx-disable-with={gettext("Saving…")}
+          >
+            {gettext("Save")}
+          </.button>
+        </.form>
+        <div :if={is_list(@scene_preview)} class="mt-2 text-sm text-base-content/70">
+          <p :for={entry <- @scene_preview}>{scene_preview_label(entry)}</p>
+        </div>
+        <p :if={@scene_preview == :error} class="mt-2 text-sm text-error">
+          {gettext("Couldn't load that group's mapping.")}
+        </p>
       </details>
 
       <.empty_state

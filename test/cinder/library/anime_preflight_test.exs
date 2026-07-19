@@ -1,6 +1,7 @@
 defmodule Cinder.Library.AnimePreflightTest do
   use ExUnit.Case, async: true
 
+  alias Cinder.Catalog.Episode
   alias Cinder.Library.AnimePreflight
 
   @fixture_path "test/support/fixtures/anime/import-v1.json"
@@ -229,6 +230,75 @@ defmodule Cinder.Library.AnimePreflightTest do
 
       assert [%{"evidence" => %{"resolution" => "ambiguous"}}] = result.decisions["files"]
     end
+  end
+
+  describe "alternate scene numbering (A6)" do
+    test "S02E01..E10 files map to episodes 29-38 via the frozen snapshot" do
+      fixture = frieren_scene_fixture(1..10)
+
+      assert {:ok, result} = run_fixture(fixture)
+
+      expected =
+        Map.new(1..10, fn n ->
+          {"Frieren - #{Episode.code(2, n)}.mkv", [n + 28]}
+        end)
+
+      assert assignment_map(result.assignments) == expected
+    end
+
+    test "one unmatched file among the batch still holds the whole grab" do
+      extra_file = %{
+        "relative_path" => "junk.mkv",
+        "size" => 1,
+        "major_device" => 1,
+        "inode" => 999,
+        "mtime" => 100
+      }
+
+      fixture =
+        Map.update!(frieren_scene_fixture(1..10), "inventory", &(&1 ++ [extra_file]))
+
+      assert {:needs_mapping, result} = run_fixture(fixture)
+      assert result.issue["reason"] == "unresolved_file"
+      assert result.issue["relative_paths"] == ["junk.mkv"]
+    end
+  end
+
+  # A batch of 10 files named with TVDB/scene-style "S02Enn" coordinates, resolvable only via a
+  # persisted `scheme: "scene"` mapping (source "tmdb", precedence :inferred) — the alternate
+  # numbering an operator-chosen TMDB episode group synced onto the series (A6). Cinder's own
+  # episodes 29-38 (TMDB season 1) are the reserved set.
+  defp frieren_scene_fixture(episode_range) do
+    %{
+      "snapshot_version" => 2,
+      "parser_context" => %{"title" => "Frieren", "aliases" => [], "year" => 2023},
+      "mappings" =>
+        for n <- episode_range do
+          %{
+            "identity" => %{
+              "source" => "tmdb",
+              "scheme" => "scene",
+              "namespace" => "seasons-group",
+              "canonical_value" => Episode.code(2, n)
+            },
+            "precedence" => "inferred",
+            "episode_ids" => [n + 28],
+            "evidence" => nil
+          }
+        end,
+      "inventory" =>
+        for n <- episode_range do
+          %{
+            "relative_path" => "Frieren - #{Episode.code(2, n)}.mkv",
+            "size" => 1000,
+            "major_device" => 1,
+            "inode" => 200 + n,
+            "mtime" => 100
+          }
+        end,
+      "episodes" =>
+        for(n <- 29..38, do: %{"id" => n, "season_number" => 1, "episode_number" => n})
+    }
   end
 
   defp run_fixture(fixture) do

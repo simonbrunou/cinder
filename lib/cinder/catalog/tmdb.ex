@@ -39,9 +39,19 @@ defmodule Cinder.Catalog.TMDB do
   @callback get_series_alternative_titles(tmdb_id :: integer()) ::
               {:ok, [map()]} | {:error, term()}
 
-  @doc "Lists a series' TMDB episode groups."
+  @doc "Lists a series' TMDB episode groups, with their group/episode counts for the alternate-numbering picker."
   @callback get_episode_groups(series_id :: integer()) ::
-              {:ok, [%{id: String.t(), type: integer(), name: String.t()}]} | {:error, term()}
+              {:ok,
+               [
+                 %{
+                   id: String.t(),
+                   type: integer(),
+                   name: String.t(),
+                   group_count: integer() | nil,
+                   episode_count: integer() | nil
+                 }
+               ]}
+              | {:error, term()}
 
   @doc "Fetches an episode group with its flattened, ordered episode coordinates."
   @callback get_episode_group(group_id :: String.t()) ::

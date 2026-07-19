@@ -22,6 +22,10 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     stub(Cinder.Catalog.TMDBMock, :get_series_alternative_titles, fn _ -> {:ok, []} end)
     stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ -> {:ok, []} end)
 
+    stub(Cinder.Catalog.TMDBMock, :get_episode_group, fn id ->
+      {:ok, episode_group(id: id, name: "Stub group")}
+    end)
+
     :ok
   end
 
@@ -196,6 +200,620 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     assert Repo.reload(series).media_profile == :auto
     assert Repo.reload(other_alias).title == "Other series"
+  end
+
+  test "picks an alternate-numbering group, previews it, and saves it without refetching",
+       %{conn: conn} do
+    series = series_fixture(media_profile: :anime, tvdb_id: 12_345)
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
+      {:ok, [episode_group(id: "seasons-group", group_count: 3, episode_count: 64)]}
+    end)
+
+    # expect(..., 1, ...) rather than stub: proves Save reuses the preview's already-fetched
+    # detail (threaded through as opts[:detail]) instead of a second TMDB round trip.
+    expect(Cinder.Catalog.TMDBMock, :get_episode_group, 1, fn "seasons-group" ->
+      {:ok,
+       episode_group(
+         id: "seasons-group",
+         entries: [%{tmdb_episode_id: 1, group_name: "Season 2", group_order: 2, order: 0}]
+       )}
+    end)
+
+    {:ok, view, _html} = live_series(conn, series)
+    view |> element("summary", "Alternate numbering") |> render_click()
+    assert render_async(view) =~ "Seasons (Seasons, 3 groups, 64 episodes)"
+
+    view
+    |> form("#series-scene-numbering-form", %{"group_id" => "seasons-group"})
+    |> render_change()
+
+    assert render_async(view) =~ "Season 2"
+
+    view
+    |> form("#series-scene-numbering-form", %{"group_id" => "seasons-group"})
+    |> render_submit()
+
+    # The save runs off-process via start_async (mirrors the preview above); await it before
+    # reading the row back.
+    html = render_async(view)
+    assert html =~ "Alternate numbering saved."
+    assert Repo.reload(series).scene_numbering_group_id == "seasons-group"
+
+    # R4 finding 1: the persisted value catching up with what THIS session already selected and
+    # previewed (i.e. our own Save) must not blank the just-previewed mapping.
+    assert html =~ "Season 2"
+  end
+
+  # R5 finding 2: refresh_identity's own-save-vs-external-change check compared the newly
+  # persisted group against the operator's CURRENT selection — if the operator reselects a
+  # different group while their own earlier Save is still in flight, that Save's own reload must
+  # not clobber the newer, unsaved selection.
+  test "an operator's later reselection survives their own earlier save landing",
+       %{conn: conn} do
+    series = series_fixture(media_profile: :anime, tvdb_id: 12_345)
+    test_pid = self()
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
+      {:ok,
+       [
+         episode_group(id: "group-b", name: "Group B", group_count: 1, episode_count: 1),
+         episode_group(id: "group-c", name: "Group C", group_count: 1, episode_count: 1)
+       ]}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_group, fn
+      "group-b" ->
+        # Blocks until released below, so the save's own group-detail fetch is still in flight
+        # when the operator reselects "group-c" below — mirrors a slow save racing a reselection.
+        send(test_pid, {:group_b_fetch_started, self()})
+
+        receive do
+          :continue -> :ok
+        end
+
+        {:ok,
+         episode_group(
+           id: "group-b",
+           entries: [%{tmdb_episode_id: 1, group_name: "Season 1", group_order: 1, order: 0}]
+         )}
+
+      "group-c" ->
+        {:ok,
+         episode_group(
+           id: "group-c",
+           entries: [%{tmdb_episode_id: 1, group_name: "Season 9", group_order: 9, order: 0}]
+         )}
+    end)
+
+    {:ok, view, _html} = live_series(conn, series)
+    view |> element("summary", "Alternate numbering") |> render_click()
+    render_async(view)
+
+    # Submit Save for "group-b" directly, with no prior selection/preview — so
+    # set_scene_numbering_group has no cached detail to reuse and fetches it fresh, which is the
+    # fetch this test gates.
+    view
+    |> form("#series-scene-numbering-form", %{"group_id" => "group-b"})
+    |> render_submit()
+
+    assert_receive {:group_b_fetch_started, blocked_pid}
+
+    # Before that save lands, the operator changes their mind and picks "group-c" instead.
+    view
+    |> form("#series-scene-numbering-form", %{"group_id" => "group-c"})
+    |> render_change()
+
+    send(blocked_pid, :continue)
+    html = render_async(view)
+
+    assert html =~ "Alternate numbering saved."
+    assert Repo.reload(series).scene_numbering_group_id == "group-b"
+
+    # The operator's in-progress "group-c" selection and its preview must win, not "group-b".
+    assert has_element?(view, "#series-scene-numbering-form option[value='group-c'][selected]")
+    assert html =~ "Season 9"
+    refute html =~ "Season 1"
+  end
+
+  # FINDING 11: a non-anime page never renders the panel, so it never even has the chance to
+  # fetch; an anime page defers the fetch until the operator actually opens it.
+  test "the episode-group list is lazily loaded only once the Alternate numbering panel opens",
+       %{conn: conn} do
+    series = series_fixture(media_profile: :anime, tvdb_id: 12_345)
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
+      {:ok, [episode_group(id: "g", group_count: 1, episode_count: 2)]}
+    end)
+
+    {:ok, view, html} = live_series(conn, series)
+    assert html =~ "Loading episode groups…"
+    refute html =~ "Seasons (Seasons"
+
+    view |> element("summary", "Alternate numbering") |> render_click()
+    assert render_async(view) =~ "Seasons (Seasons, 1 groups, 2 episodes)"
+  end
+
+  # FINDING 1(a): a failed load must never silently render the "None" prompt as selected while
+  # a group is actually saved — show an error + Retry instead of the select.
+  test "a failed episode-group load shows an error with Retry, not a silently-cleared select",
+       %{conn: conn} do
+    series =
+      series_fixture(media_profile: :anime, tvdb_id: 12_345)
+      |> Ecto.Changeset.change(scene_numbering_group_id: "seasons-group")
+      |> Repo.update!()
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ -> {:error, :timeout} end)
+
+    {:ok, view, _html} = live_series(conn, series)
+    view |> element("summary", "Alternate numbering") |> render_click()
+    render_async(view)
+
+    assert has_element?(view, "p", "Couldn't load episode groups from TMDB.")
+    assert has_element?(view, "button", "Retry")
+    refute has_element?(view, "#series-scene-numbering-form")
+  end
+
+  # R2 finding 5: the native <details> toggle and the summary's phx-click fire together on BOTH
+  # open and close — closing the panel after a failed load (without clicking Retry) must not
+  # refire the fetch, or every accidental close/reopen while TMDB is down issues its own call.
+  test "closing the panel after a failed load does not refetch; Retry still does",
+       %{conn: conn} do
+    series = series_fixture(media_profile: :anime, tvdb_id: 12_345)
+    test_pid = self()
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
+      send(test_pid, :episode_groups_fetch)
+      {:error, :timeout}
+    end)
+
+    {:ok, view, _html} = live_series(conn, series)
+    view |> element("summary", "Alternate numbering") |> render_click()
+    render_async(view)
+    assert_receive :episode_groups_fetch
+
+    assert has_element?(view, "p", "Couldn't load episode groups from TMDB.")
+
+    # Same event as the initial open (the server can't tell open from close) — must no-op now
+    # that episode_groups is :error.
+    view |> element("summary", "Alternate numbering") |> render_click()
+    render(view)
+    refute_receive :episode_groups_fetch, 100
+
+    assert has_element?(view, "p", "Couldn't load episode groups from TMDB.")
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
+      send(test_pid, :episode_groups_fetch)
+      {:ok, [episode_group(id: "g", group_count: 1, episode_count: 1)]}
+    end)
+
+    view |> element("button", "Retry") |> render_click()
+    assert_receive :episode_groups_fetch
+    assert render_async(view) =~ "Seasons (Seasons, 1 groups, 1 episodes)"
+  end
+
+  # FINDING 1(b): when the loaded list doesn't contain the saved id (a group deleted/renamed on
+  # TMDB), the select must not silently fall back to "None" — it gets a flagged synthetic option.
+  test "a saved group missing from the loaded list appears as a flagged synthetic option",
+       %{conn: conn} do
+    series =
+      series_fixture(media_profile: :anime, tvdb_id: 12_345)
+      |> Ecto.Changeset.change(scene_numbering_group_id: "vanished-group")
+      |> Repo.update!()
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :get_episode_group, fn _ -> {:error, :not_found} end)
+
+    {:ok, view, _html} = live_series(conn, series)
+    view |> element("summary", "Alternate numbering") |> render_click()
+    html = render_async(view)
+
+    assert html =~ "vanished-group (unavailable on TMDB)"
+
+    assert has_element?(
+             view,
+             "#series-scene-numbering-form option[value='vanished-group'][selected]"
+           )
+  end
+
+  # FINDING 8: a series that already has a saved group shows the right selection but a blank
+  # preview until this fires — auto-preview once the list (and thus the form) is ready.
+  test "auto-previews the saved group once the episode-group list finishes loading",
+       %{conn: conn} do
+    series =
+      series_fixture(media_profile: :anime, tvdb_id: 12_345)
+      |> Ecto.Changeset.change(scene_numbering_group_id: "seasons-group")
+      |> Repo.update!()
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
+      {:ok, [episode_group(id: "seasons-group", group_count: 1, episode_count: 1)]}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_group, fn "seasons-group" ->
+      {:ok,
+       episode_group(
+         id: "seasons-group",
+         entries: [%{tmdb_episode_id: 900, group_name: "Season 3", group_order: 3, order: 0}]
+       )}
+    end)
+
+    {:ok, view, _html} = live_series(conn, series)
+    view |> element("summary", "Alternate numbering") |> render_click()
+
+    assert render_async(view) =~ "Season 3"
+  end
+
+  # FINDING 9: a stale preview fetch (for a selection the operator has since moved on from) must
+  # never land and repopulate the preview.
+  test "a stale preview fetch is discarded once the operator has selected something else",
+       %{conn: conn} do
+    series = series_fixture(media_profile: :anime, tvdb_id: 12_345)
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
+      {:ok,
+       [
+         episode_group(id: "group-a", name: "Group A", group_count: 1, episode_count: 1),
+         episode_group(id: "group-b", name: "Group B", group_count: 1, episode_count: 1)
+       ]}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_group, fn
+      "group-a" ->
+        # Slow enough to guarantee it lands after group-b's fast, no-delay fetch below.
+        Process.sleep(50)
+
+        {:ok,
+         episode_group(
+           id: "group-a",
+           entries: [%{tmdb_episode_id: 501, group_name: "Season 1", group_order: 1, order: 0}]
+         )}
+
+      "group-b" ->
+        {:ok,
+         episode_group(
+           id: "group-b",
+           entries: [%{tmdb_episode_id: 502, group_name: "Season 2", group_order: 2, order: 0}]
+         )}
+    end)
+
+    {:ok, view, _html} = live_series(conn, series)
+    view |> element("summary", "Alternate numbering") |> render_click()
+    render_async(view)
+
+    view
+    |> form("#series-scene-numbering-form", %{"group_id" => "group-a"})
+    |> render_change()
+
+    view
+    |> form("#series-scene-numbering-form", %{"group_id" => "group-b"})
+    |> render_change()
+
+    html = render_async(view)
+    assert html =~ "Season 2"
+    refute html =~ "Season 1"
+  end
+
+  # R2 finding 6: a quick manual selection change must not just have its superseded result
+  # discarded on arrival (the belt) — the in-flight fetch itself is canceled (the suspender), so
+  # its TMDB round trip is never wasted in the first place.
+  test "picking a different group cancels the still-in-flight fetch for the previous selection",
+       %{conn: conn} do
+    series = series_fixture(media_profile: :anime, tvdb_id: 12_345)
+    test_pid = self()
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
+      {:ok,
+       [
+         episode_group(id: "group-a", name: "Group A", group_count: 1, episode_count: 1),
+         episode_group(id: "group-b", name: "Group B", group_count: 1, episode_count: 1)
+       ]}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_group, fn
+      "group-a" ->
+        # Long enough that, uncanceled, it would still complete well after this test asserts.
+        Process.sleep(50)
+        send(test_pid, :group_a_fetch_completed)
+        {:ok, episode_group(id: "group-a")}
+
+      "group-b" ->
+        {:ok, episode_group(id: "group-b")}
+    end)
+
+    {:ok, view, _html} = live_series(conn, series)
+    view |> element("summary", "Alternate numbering") |> render_click()
+    render_async(view)
+
+    view
+    |> form("#series-scene-numbering-form", %{"group_id" => "group-a"})
+    |> render_change()
+
+    view
+    |> form("#series-scene-numbering-form", %{"group_id" => "group-b"})
+    |> render_change()
+
+    render_async(view)
+
+    # If group-a's fetch had merely been left running (only discarded on arrival), it would
+    # have sent this well within the wait below.
+    refute_receive :group_a_fetch_completed, 200
+
+    # R3 finding 4: clearing back to "None" must cancel an in-flight fetch too, not just picking
+    # a different group.
+    view
+    |> form("#series-scene-numbering-form", %{"group_id" => "group-a"})
+    |> render_change()
+
+    view
+    |> form("#series-scene-numbering-form", %{"group_id" => ""})
+    |> render_change()
+
+    refute_receive :group_a_fetch_completed, 200
+  end
+
+  # R2 finding 1(a): reload() fires on any {:series_updated} broadcast — another tab's monitor
+  # toggle, the 12h refresher — and must not discard an operator's in-progress, unsaved
+  # alternate-numbering selection while its preview is still on screen.
+  test "a series_updated broadcast between selection and save leaves the selection and preview intact",
+       %{conn: conn} do
+    series = series_fixture(media_profile: :anime, tvdb_id: 12_345)
+    season = season_fixture(series)
+    episode = episode_fixture(season)
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
+      {:ok, [episode_group(id: "seasons-group", group_count: 1, episode_count: 1)]}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_group, fn "seasons-group" ->
+      {:ok,
+       episode_group(
+         id: "seasons-group",
+         entries: [%{tmdb_episode_id: 1, group_name: "Season 2", group_order: 2, order: 0}]
+       )}
+    end)
+
+    {:ok, view, _html} = live_series(conn, series)
+    view |> element("summary", "Alternate numbering") |> render_click()
+    render_async(view)
+
+    view
+    |> form("#series-scene-numbering-form", %{"group_id" => "seasons-group"})
+    |> render_change()
+
+    assert render_async(view) =~ "Season 2"
+
+    # Simulates another tab toggling a monitor flag (or the 12h refresher landing): broadcasts
+    # {:series_updated, series.id} without touching scene_numbering_group_id.
+    {:ok, _} = Catalog.set_episode_monitored(episode, false)
+    :sys.get_state(view.pid)
+
+    html = render(view)
+    assert html =~ "Season 2"
+
+    assert has_element?(
+             view,
+             "#series-scene-numbering-form option[value='seasons-group'][selected]"
+           )
+  end
+
+  # R2 finding 1(b): the mirror case — a reload where the persisted group genuinely changed (a
+  # second writer, not just any broadcast) must still reset the form to the new persisted value.
+  # R3 finding 1: it must also drop the OLD group's preview, not keep rendering it under the
+  # newly-selected group.
+  # R4 finding 3: with the group list already loaded, the new group's preview must be re-fetched
+  # automatically rather than leaving the panel blank until manual re-selection.
+  test "a reload where the persisted group genuinely changed resets the form, clears the stale preview, and re-fetches the new one",
+       %{conn: conn} do
+    series =
+      series_fixture(media_profile: :anime, tvdb_id: 12_345)
+      |> Ecto.Changeset.change(scene_numbering_group_id: "group-a")
+      |> Repo.update!()
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
+      {:ok,
+       [
+         episode_group(id: "group-a", name: "Group A", group_count: 1, episode_count: 1),
+         episode_group(id: "group-b", name: "Group B", group_count: 1, episode_count: 1)
+       ]}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_group, fn
+      "group-a" ->
+        {:ok,
+         episode_group(
+           id: "group-a",
+           entries: [%{tmdb_episode_id: 1, group_name: "Season 1", group_order: 1, order: 0}]
+         )}
+
+      "group-b" ->
+        {:ok,
+         episode_group(
+           id: "group-b",
+           entries: [%{tmdb_episode_id: 1, group_name: "Season 5", group_order: 5, order: 0}]
+         )}
+    end)
+
+    {:ok, view, _html} = live_series(conn, series)
+    view |> element("summary", "Alternate numbering") |> render_click()
+
+    # Auto-preview for the already-saved group fires once the list lands (FINDING 8).
+    assert render_async(view) =~ "Season 1"
+    assert has_element?(view, "#series-scene-numbering-form option[value='group-a'][selected]")
+
+    series
+    |> Ecto.Changeset.change(scene_numbering_group_id: "group-b")
+    |> Repo.update!()
+
+    Phoenix.PubSub.broadcast(Cinder.PubSub, "series", {:series_updated, series.id})
+    html = render_async(view)
+
+    assert has_element?(view, "#series-scene-numbering-form option[value='group-b'][selected]")
+    refute has_element?(view, "#series-scene-numbering-form option[value='group-a'][selected]")
+    refute html =~ "Season 1"
+    assert html =~ "Season 5"
+  end
+
+  # R5 finding 1: the auto-refetch above was gated on the group list merely having loaded once
+  # (true forever after), not on the panel actually being open — a closed panel shouldn't spend
+  # a live TMDB call on a preview nobody's looking at.
+  test "does not refetch a genuinely-changed group's preview while the panel is closed",
+       %{conn: conn} do
+    series =
+      series_fixture(media_profile: :anime, tvdb_id: 12_345)
+      |> Ecto.Changeset.change(scene_numbering_group_id: "group-a")
+      |> Repo.update!()
+
+    test_pid = self()
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
+      {:ok,
+       [
+         episode_group(id: "group-a", name: "Group A", group_count: 1, episode_count: 1),
+         episode_group(id: "group-b", name: "Group B", group_count: 1, episode_count: 1)
+       ]}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_group, fn id ->
+      send(test_pid, {:episode_group_fetch, id})
+
+      {:ok,
+       episode_group(
+         id: id,
+         entries: [%{tmdb_episode_id: 1, group_name: "Season 1", group_order: 1, order: 0}]
+       )}
+    end)
+
+    {:ok, view, _html} = live_series(conn, series)
+
+    # Open once: loads the list and auto-previews the already-saved group-a.
+    view |> element("summary", "Alternate numbering") |> render_click()
+    render_async(view)
+    assert_receive {:episode_group_fetch, "group-a"}
+
+    # Close it — the native <details> toggle and this phx-click fire together on both open and
+    # close, so the server can't otherwise tell them apart.
+    view |> element("summary", "Alternate numbering") |> render_click()
+    render(view)
+
+    # A second writer moves the persisted group on while the panel is closed.
+    series
+    |> Ecto.Changeset.change(scene_numbering_group_id: "group-b")
+    |> Repo.update!()
+
+    Phoenix.PubSub.broadcast(Cinder.PubSub, "series", {:series_updated, series.id})
+    :sys.get_state(view.pid)
+
+    refute_receive {:episode_group_fetch, "group-b"}, 100
+  end
+
+  # R5 finding 1 (reopen path): the round-4 guarantee that a genuine external change re-fetches
+  # its preview must still hold once the operator comes back to look — the closed panel skipping
+  # the fetch (above) must not mean it's skipped forever.
+  test "reopening the panel after a closed-panel external change fires the deferred preview",
+       %{conn: conn} do
+    series =
+      series_fixture(media_profile: :anime, tvdb_id: 12_345)
+      |> Ecto.Changeset.change(scene_numbering_group_id: "group-a")
+      |> Repo.update!()
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
+      {:ok,
+       [
+         episode_group(id: "group-a", name: "Group A", group_count: 1, episode_count: 1),
+         episode_group(id: "group-b", name: "Group B", group_count: 1, episode_count: 1)
+       ]}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_group, fn
+      "group-a" ->
+        {:ok,
+         episode_group(
+           id: "group-a",
+           entries: [%{tmdb_episode_id: 1, group_name: "Season 1", group_order: 1, order: 0}]
+         )}
+
+      "group-b" ->
+        {:ok,
+         episode_group(
+           id: "group-b",
+           entries: [%{tmdb_episode_id: 1, group_name: "Season 9", group_order: 9, order: 0}]
+         )}
+    end)
+
+    {:ok, view, _html} = live_series(conn, series)
+
+    view |> element("summary", "Alternate numbering") |> render_click()
+    assert render_async(view) =~ "Season 1"
+
+    # Close it.
+    view |> element("summary", "Alternate numbering") |> render_click()
+    render(view)
+
+    # External change lands while closed (the test above proves this doesn't fetch yet).
+    series
+    |> Ecto.Changeset.change(scene_numbering_group_id: "group-b")
+    |> Repo.update!()
+
+    Phoenix.PubSub.broadcast(Cinder.PubSub, "series", {:series_updated, series.id})
+    :sys.get_state(view.pid)
+
+    # Reopening must catch up: the group list is already loaded and a group is saved, so the
+    # preview fires now instead of the panel staying blank until a manual re-selection.
+    view |> element("summary", "Alternate numbering") |> render_click()
+    assert render_async(view) =~ "Season 9"
+  end
+
+  # R2 finding 10: Episode.codes_label must render a non-contiguous derived season (reachable
+  # from a Story Arc-shaped group whose subgroup entry orders skip a slot) as every actual
+  # episode number, never a fake smooth range that hides the gap.
+  test "a gappy derived season renders every episode number, not a fake smooth range",
+       %{conn: conn} do
+    series = series_fixture(media_profile: :anime, tvdb_id: 12_345)
+    season = season_fixture(series, season_number: 1)
+    episode_fixture(season, episode_number: 1, tmdb_episode_id: 101)
+    episode_fixture(season, episode_number: 2, tmdb_episode_id: 102)
+    episode_fixture(season, episode_number: 3, tmdb_episode_id: 103)
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
+      {:ok,
+       [
+         episode_group(
+           id: "arcs-group",
+           type: 5,
+           name: "Story Arcs",
+           group_count: 1,
+           episode_count: 3
+         )
+       ]}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_group, fn "arcs-group" ->
+      {:ok,
+       episode_group(
+         id: "arcs-group",
+         type: 5,
+         name: "Story Arcs",
+         entries: [
+           %{tmdb_episode_id: 101, group_name: "Season 1", group_order: 1, order: 0},
+           %{tmdb_episode_id: 102, group_name: "Season 1", group_order: 1, order: 1},
+           # order: 3 (not 2) leaves a gap at alt episode 3 — the alt numbering is order + 1.
+           %{tmdb_episode_id: 103, group_name: "Season 1", group_order: 1, order: 3}
+         ]
+       )}
+    end)
+
+    {:ok, view, _html} = live_series(conn, series)
+    view |> element("summary", "Alternate numbering") |> render_click()
+    render_async(view)
+
+    view
+    |> form("#series-scene-numbering-form", %{"group_id" => "arcs-group"})
+    |> render_change()
+
+    html = render_async(view)
+
+    assert html =~ "S01E01E02E04"
+    refute html =~ "S01E01–E04"
   end
 
   # A household admin needs the absolute number (it's how anime releases are named) and an

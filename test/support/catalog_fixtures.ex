@@ -136,4 +136,17 @@ defmodule Cinder.CatalogFixtures do
 
     Repo.preload(coordinate, memberships: [:episode])
   end
+
+  @doc """
+  A TMDB episode-group literal, list-shape (`group_count`/`episode_count`, no `entries`) and
+  detail-shape (`entries`, no counts) alike — one builder shared by every test hand-rolling
+  `get_episode_groups`/`get_episode_group` responses, instead of each file repeating the same
+  `%{id:, type:, name:, entries: [...]}` map. Callers override whatever the test cares about.
+  """
+  def episode_group(attrs) do
+    Map.merge(
+      %{id: "group", type: 6, name: "Seasons", group_count: nil, episode_count: nil, entries: []},
+      Map.new(attrs)
+    )
+  end
 end

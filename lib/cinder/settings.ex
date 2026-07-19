@@ -17,6 +17,7 @@ defmodule Cinder.Settings do
   alias Cinder.Acquisition.AnimePreferences
   alias Cinder.Repo
   alias Cinder.Settings.Setting
+  alias Cinder.Util
 
   # Static per-module config fields (service creds): {settings key, env target module + field,
   # secret?, group}. The complete set is `config_fields/0` = these ++ the per-kind Plex section
@@ -520,11 +521,11 @@ defmodule Cinder.Settings do
   defp library_path_keys, do: Enum.map(Cinder.Library.kinds(), &library_path_key/1)
 
   defp effective_field_value(%{module: module, field: field}) do
-    :cinder |> Application.get_env(module, []) |> Keyword.get(field) |> blank_to_nil()
+    :cinder |> Application.get_env(module, []) |> Keyword.get(field) |> Util.blank_to_nil()
   end
 
   defp effective_flat_value(key) do
-    :cinder |> Application.get_env(:"#{key}") |> blank_to_nil()
+    :cinder |> Application.get_env(:"#{key}") |> Util.blank_to_nil()
   end
 
   # --- writes ---
@@ -1016,16 +1017,10 @@ defmodule Cinder.Settings do
     end
   end
 
-  defp decode_setting(setting), do: setting |> decoded() |> unwrap() |> blank_to_nil()
+  defp decode_setting(setting), do: setting |> decoded() |> unwrap() |> Util.blank_to_nil()
 
   defp unwrap({:ok, value}), do: value
   defp unwrap(:error), do: nil
-
-  defp blank_to_nil(value) when is_binary(value) do
-    if String.trim(value) == "", do: nil, else: value
-  end
-
-  defp blank_to_nil(value), do: value
 
   defp decoded(%Setting{is_secret: false, value: value}), do: {:ok, value}
   defp decoded(%Setting{is_secret: true, value: nil}), do: {:ok, nil}

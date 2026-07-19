@@ -31,4 +31,16 @@ defmodule Cinder.Catalog.EpisodeTest do
     cs = Episode.transition_changeset(%Episode{}, %{imported_source: "webdl"})
     assert cs.changes.imported_source == "webdl"
   end
+
+  test "season_from_code/1 inverts code/2" do
+    assert Episode.season_from_code(Episode.code(3, 12)) == 3
+    assert Episode.season_from_code("S01E02") == 1
+    assert Episode.season_from_code("garbage") == nil
+  end
+
+  test "codes_label/2 collapses a single number, a contiguous run, or lists a gappy set" do
+    assert Episode.codes_label(1, [5]) == "S01E05"
+    assert Episode.codes_label(1, [5, 6, 7]) == "S01E05-E07"
+    assert Episode.codes_label(1, [5, 7, 9]) == "S01E05E07E09"
+  end
 end

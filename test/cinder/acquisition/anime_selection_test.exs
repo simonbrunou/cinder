@@ -129,6 +129,50 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     assert assignment.release.mapping_snapshot == snapshot
   end
 
+  test "a scene-numbered release resolves via a persisted scene coordinate, but not without it" do
+    context = %{
+      kind: :series,
+      title: "Frieren",
+      year: 2023,
+      tvdb_id: 209_867,
+      aliases: [],
+      episodes: [episode(29, 1, 29)],
+      mappings: [
+        mapping("cinder", "standard", "canonical", "S01E29", [29]),
+        mapping("tmdb", "scene", "seasons-group", "S02E01", [29], :inferred)
+      ]
+    }
+
+    release = Release.new(raw("[Group] Frieren S02E01 [1080p]", "scene-release"))
+
+    assert {:ok, %{assignments: [%{episode_ids: [29]}]}} =
+             Anime.select_episodes([release], context, [29], [])
+
+    context_without_group = %{context | mappings: Enum.take(context.mappings, 1)}
+
+    assert :no_match = Anime.select_episodes([release], context_without_group, [29], [])
+  end
+
+  test "a canonical standard mapping outranks a conflicting persisted scene mapping for the same value" do
+    context = %{
+      kind: :series,
+      title: "Show",
+      year: 2020,
+      tvdb_id: 99,
+      aliases: [],
+      episodes: [episode(5, 1, 5), episode(99, 9, 9)],
+      mappings: [
+        mapping("cinder", "standard", "canonical", "S01E05", [5]),
+        mapping("tmdb", "scene", "group", "S01E05", [99], :inferred)
+      ]
+    }
+
+    release = Release.new(raw("[Group] Show S01E05 [1080p]", "conflict"))
+
+    assert {:ok, %{assignments: [%{episode_ids: [5]}]}} =
+             Anime.select_episodes([release], context, [5], [])
+  end
+
   test "automatic episode selection freezes the exact hard policy used to select" do
     release = Release.new(raw("[SubsPlease] Show - 1 [1080p]", "anime-policy-episode"))
 

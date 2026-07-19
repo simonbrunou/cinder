@@ -229,12 +229,28 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
       assert conn.request_path == "/3/tv/37854/episode_groups"
 
       Req.Test.json(conn, %{
-        "results" => [%{"id" => "absolute-id", "type" => 2, "name" => "Absolute"}]
+        "results" => [
+          %{
+            "id" => "absolute-id",
+            "type" => 2,
+            "name" => "Absolute",
+            "group_count" => 3,
+            "episode_count" => 63
+          }
+        ]
       })
     end)
 
-    assert {:ok, [%{id: "absolute-id", type: 2, name: "Absolute"}]} =
-             HTTP.get_episode_groups(37_854)
+    assert {:ok,
+            [
+              %{
+                id: "absolute-id",
+                type: 2,
+                name: "Absolute",
+                group_count: 3,
+                episode_count: 63
+              }
+            ]} = HTTP.get_episode_groups(37_854)
 
     Req.Test.expect(Cinder.TMDBStub, fn conn ->
       assert conn.request_path == "/3/tv/episode_group/absolute-id"

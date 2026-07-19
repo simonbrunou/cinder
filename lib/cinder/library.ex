@@ -1595,18 +1595,8 @@ defmodule Cinder.Library do
     ])
   end
 
-  defp episode_code([%Episode{} = ep]),
-    do: Episode.code(ep.season.season_number, ep.episode_number)
-
-  defp episode_code([%Episode{} = first | rest]) do
-    last = List.last(rest)
-    first_code = Episode.code(first.season.season_number, first.episode_number)
-
-    if first.episode_number + length(rest) == last.episode_number do
-      "#{first_code}-E#{Episode.pad(last.episode_number)}"
-    else
-      first_code <> Enum.map_join(rest, "", &"E#{Episode.pad(&1.episode_number)}")
-    end
+  defp episode_code([%Episode{season: season} | _] = episodes) do
+    Episode.codes_label(season.season_number, Enum.map(episodes, & &1.episode_number))
   end
 
   defp log_unmatched([]), do: :ok

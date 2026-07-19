@@ -137,11 +137,7 @@ defmodule Cinder.Library.AnimePreflight do
   end
 
   defp resolve_value(scheme, value, parsed, mappings) do
-    matching =
-      Enum.filter(mappings, fn mapping ->
-        identity = mapping["identity"]
-        identity["scheme"] == scheme and identity["canonical_value"] == value
-      end)
+    matching = Enum.filter(mappings, &matches_value?(&1, scheme, value))
 
     resolver_mappings =
       Enum.map(matching, fn mapping ->
@@ -157,6 +153,18 @@ defmodule Cinder.Library.AnimePreflight do
       role: parsed.role,
       extra_evidence: parsed.role == :extra and %{parser: "anime_v1"}
     )
+  end
+
+  # The scheme-bridging rule itself lives once in `AnimeResolver.bridged_schemes/1` (shared with
+  # `Cinder.Acquisition.Anime.mappings_for_value/3` on the resolver/selection side). Without it,
+  # a downloaded batch named with the TVDB-shaped numbering the release was actually grabbed
+  # under (frozen into this snapshot's `mappings` at grab time) could never resolve at import,
+  # even though the search/selection side already matched it.
+  defp matches_value?(mapping, scheme, value) do
+    identity = mapping["identity"]
+    schemes = [scheme | AnimeResolver.bridged_schemes(scheme)]
+
+    identity["scheme"] in schemes and identity["canonical_value"] == value
   end
 
   defp atom_identity(identity) do
