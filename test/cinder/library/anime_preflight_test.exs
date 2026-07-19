@@ -1,6 +1,7 @@
 defmodule Cinder.Library.AnimePreflightTest do
   use ExUnit.Case, async: true
 
+  alias Cinder.Catalog.Episode
   alias Cinder.Library.AnimePreflight
 
   @fixture_path "test/support/fixtures/anime/import-v1.json"
@@ -239,7 +240,7 @@ defmodule Cinder.Library.AnimePreflightTest do
 
       expected =
         Map.new(1..10, fn n ->
-          {"Frieren - S02E#{pad(n)}.mkv", [n + 28]}
+          {"Frieren - #{Episode.code(2, n)}.mkv", [n + 28]}
         end)
 
       assert assignment_map(result.assignments) == expected
@@ -278,7 +279,7 @@ defmodule Cinder.Library.AnimePreflightTest do
               "source" => "tmdb",
               "scheme" => "scene",
               "namespace" => "seasons-group",
-              "canonical_value" => "S02E#{pad(n)}"
+              "canonical_value" => Episode.code(2, n)
             },
             "precedence" => "inferred",
             "episode_ids" => [n + 28],
@@ -288,7 +289,7 @@ defmodule Cinder.Library.AnimePreflightTest do
       "inventory" =>
         for n <- episode_range do
           %{
-            "relative_path" => "Frieren - S02E#{pad(n)}.mkv",
+            "relative_path" => "Frieren - #{Episode.code(2, n)}.mkv",
             "size" => 1000,
             "major_device" => 1,
             "inode" => 200 + n,
@@ -299,8 +300,6 @@ defmodule Cinder.Library.AnimePreflightTest do
         for(n <- 29..38, do: %{"id" => n, "season_number" => 1, "episode_number" => n})
     }
   end
-
-  defp pad(n), do: n |> Integer.to_string() |> String.pad_leading(2, "0")
 
   defp run_fixture(fixture) do
     snapshot = %{

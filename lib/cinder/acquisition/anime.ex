@@ -262,30 +262,16 @@ defmodule Cinder.Acquisition.Anime do
     end
   end
 
-  # The scheme-bridging rule itself (which persisted schemes a parsed "standard" value also
-  # matches) lives once in `AnimeResolver.bridged_schemes/1` — no new precedence handling is
-  # needed here: the canonical mapping stays `:manual` and `AnimeResolver` already ranks
-  # `:manual` above `:inferred`, so a value both know still resolves canonically.
-  defp mappings_for_value(mappings, "standard", value) do
-    bridged = AnimeResolver.bridged_schemes("standard")
-
-    Enum.filter(mappings, fn mapping ->
-      mapping.identity ==
-        %{
-          source: "cinder",
-          scheme: "standard",
-          namespace: "canonical",
-          canonical_value: value
-        } or
-        (Map.get(mapping.identity, :scheme) in bridged and
-           Map.get(mapping.identity, :canonical_value) == value)
-    end)
-  end
-
+  # The scheme-bridging rule itself (which persisted schemes a parsed value also matches) lives
+  # once in `AnimeResolver.bridged_schemes/1` — no new precedence handling is needed here: the
+  # canonical mapping stays `:manual` and `AnimeResolver` already ranks `:manual` above
+  # `:inferred`, so a value both know still resolves canonically.
   defp mappings_for_value(mappings, scheme, value) do
+    schemes = [scheme | AnimeResolver.bridged_schemes(scheme)]
+
     Enum.filter(
       mappings,
-      &(Map.get(&1.identity, :scheme) == scheme and
+      &(Map.get(&1.identity, :scheme) in schemes and
           Map.get(&1.identity, :canonical_value) == value)
     )
   end
@@ -590,10 +576,11 @@ defmodule Cinder.Acquisition.Anime do
   # TMDB season list, which already covers these same episodes).
   defp scene_seasons(context, wanted_ids) do
     wanted = MapSet.new(wanted_ids)
+    bridged = AnimeResolver.bridged_schemes("standard")
 
     context.mappings
     |> Enum.filter(fn mapping ->
-      mapping.identity.scheme == "scene" and
+      mapping.identity.scheme in bridged and
         not MapSet.disjoint?(MapSet.new(mapping.episode_ids), wanted)
     end)
     |> Enum.map(&Episode.season_from_code(&1.identity.canonical_value))

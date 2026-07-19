@@ -25,7 +25,6 @@ defmodule CinderWeb.SeriesDetailLive do
 
       socket =
         assign(socket,
-          series: series,
           editing?: false,
           confirming: nil,
           form: nil,
@@ -375,18 +374,20 @@ defmodule CinderWeb.SeriesDetailLive do
   end
 
   # Lazy-loaded on first open of the "Alternate numbering" disclosure (a non-anime series never
-  # renders it, so it never fetches). Also doubles as Retry after a failed load — closing and
-  # reopening the panel, or the Retry button, both re-fire this same event; the guard only skips
-  # the fetch once the list has actually landed.
+  # renders it, so it never fetches). The native <details> toggle and this phx-click fire
+  # together on BOTH open and close, so the guard only fetches the very first time
+  # (episode_groups still nil) — otherwise closing the panel after a failed load would refire a
+  # live TMDB call every close/reopen. Retry (below) is the only way back out of :error.
   def handle_event("load_episode_groups", _params, socket) do
-    if is_list(socket.assigns.episode_groups) do
-      {:noreply, socket}
+    if is_nil(socket.assigns.episode_groups) do
+      {:noreply, fetch_episode_groups(socket)}
     else
-      series = socket.assigns.series
-
-      {:noreply,
-       start_async(socket, :load_episode_groups, fn -> Catalog.list_episode_groups(series) end)}
+      {:noreply, socket}
     end
+  end
+
+  def handle_event("retry_episode_groups", _params, socket) do
+    {:noreply, fetch_episode_groups(socket)}
   end
 
   def handle_event(_event, _params, socket), do: {:noreply, socket}
@@ -402,8 +403,20 @@ defmodule CinderWeb.SeriesDetailLive do
     end
   end
 
+  defp fetch_episode_groups(socket) do
+    series = socket.assigns.series
+    start_async(socket, :load_episode_groups, fn -> Catalog.list_episode_groups(series) end)
+  end
+
+  # Cancels any still-in-flight preview fetch before starting a new one (safe to call when
+  # nothing is running) — an operator picking a different group before the auto-fired preview
+  # for the saved one lands would otherwise leave that first TMDB round trip running for nothing
+  # (its result is already discarded by the group-id guard in handle_async, this just stops
+  # wasting the request).
   defp start_scene_preview(socket, group_id) do
-    start_async(socket, :preview_scene_group, fn ->
+    socket
+    |> cancel_async(:preview_scene_group)
+    |> start_async(:preview_scene_group, fn ->
       {group_id, Catalog.get_episode_group(group_id)}
     end)
   end
@@ -521,26 +534,41 @@ defmodule CinderWeb.SeriesDetailLive do
 
       series ->
         socket
-        |> assign(
-          series: series,
-          mapping_grabs: Catalog.list_mapping_grabs_for_series(series.id)
-        )
+        |> assign(mapping_grabs: Catalog.list_mapping_grabs_for_series(series.id))
         |> refresh_identity(series)
     end
   end
 
+  # Runs on every reload — any {:series_updated} broadcast (another tab's monitor toggle, the
+  # 12h refresher) as well as the mount-time :enrich landing — so it must never discard an
+  # operator's in-progress, unsaved alternate-numbering selection while its preview is still on
+  # screen. `scene_form`/`scene_selected_group_id` are only reset when the persisted group
+  # actually changed relative to what was last assigned (compared before `series` below
+  # overwrites it); the very first mount has no prior series to compare against, so it always
+  # resets there. A post-save reload is exactly such a genuine change, since Save just persisted
+  # the value the operator picked.
   defp refresh_identity(socket, series) do
     aliases = Catalog.list_title_aliases(series)
+    reset_scene? = scene_group_id_string(socket.assigns[:series]) != scene_group_id_string(series)
 
-    socket
-    |> assign(
-      profile_form: profile_form(series),
-      profile_summary: Catalog.media_profile_summary(series),
-      aliases_empty?: aliases == [],
-      scene_form: scene_form(series),
-      scene_selected_group_id: scene_group_id_string(series)
-    )
-    |> stream(:title_aliases, aliases, reset: true)
+    socket =
+      socket
+      |> assign(
+        series: series,
+        profile_form: profile_form(series),
+        profile_summary: Catalog.media_profile_summary(series),
+        aliases_empty?: aliases == []
+      )
+      |> stream(:title_aliases, aliases, reset: true)
+
+    if reset_scene? do
+      assign(socket,
+        scene_form: scene_form(series),
+        scene_selected_group_id: scene_group_id_string(series)
+      )
+    else
+      socket
+    end
   end
 
   defp profile_form(series),
@@ -548,6 +576,7 @@ defmodule CinderWeb.SeriesDetailLive do
 
   defp scene_form(series), do: to_form(%{"group_id" => scene_group_id_string(series)})
 
+  defp scene_group_id_string(nil), do: nil
   defp scene_group_id_string(series), do: series.scene_numbering_group_id || ""
 
   defp alias_form(params \\ %{})
@@ -692,14 +721,14 @@ defmodule CinderWeb.SeriesDetailLive do
          %{
            season_number: season,
            unmatched_count: unmatched,
-           alt_range: {alt_first, alt_last},
+           alt_numbers: alt_numbers,
            canonical_range: {first, last}
          } = entry
        ) do
     base =
       gettext("%{season} → %{alt} (episodes %{first}–%{last})",
         season: scene_season_label(entry),
-        alt: scene_alt_code(season, alt_first, alt_last),
+        alt: scene_alt_code(season, alt_numbers),
         first: first,
         last: last
       )
@@ -716,10 +745,20 @@ defmodule CinderWeb.SeriesDetailLive do
 
   defp scene_season_label(%{season_number: season}), do: season_label(season)
 
-  defp scene_alt_code(season, first, first), do: Episode.code(season, first)
+  # Mirrors Library's episode_code/1 range-collapsing (single code / contiguous range / a
+  # gap-safe listing of every number) so a non-contiguous derived season (reachable from a
+  # Story Arc-shaped group) never gets mislabeled as a smooth range.
+  defp scene_alt_code(season, [episode_number]), do: Episode.code(season, episode_number)
 
-  defp scene_alt_code(season, first, last),
-    do: "#{Episode.code(season, first)}–E#{Episode.pad(last)}"
+  defp scene_alt_code(season, [first | _] = numbers) do
+    last = List.last(numbers)
+
+    if first + length(numbers) - 1 == last do
+      "#{Episode.code(season, first)}–E#{Episode.pad(last)}"
+    else
+      Episode.code(season, first) <> Enum.map_join(tl(numbers), "", &"E#{Episode.pad(&1)}")
+    end
+  end
 
   defp scene_unmatched_note(unmatched) do
     ngettext(
@@ -1022,7 +1061,7 @@ defmodule CinderWeb.SeriesDetailLive do
         </p>
         <div :if={@episode_groups == :error} class="flex items-center gap-2">
           <p class="text-sm text-error">{gettext("Couldn't load episode groups from TMDB.")}</p>
-          <.button type="button" variant="ghost" size="sm" phx-click="load_episode_groups">
+          <.button type="button" variant="ghost" size="sm" phx-click="retry_episode_groups">
             {gettext("Retry")}
           </.button>
         </div>

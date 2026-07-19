@@ -5,6 +5,7 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
 
   alias Cinder.Acquisition.Anime
   alias Cinder.Acquisition.IndexerMock
+  alias Cinder.Catalog.Episode
 
   setup :verify_on_exit!
 
@@ -177,7 +178,7 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
     scene_mappings =
       for n <- 29..38 do
         episode_number = n - 28
-        code = "S02E#{String.pad_leading(Integer.to_string(episode_number), 2, "0")}"
+        code = Episode.code(2, episode_number)
         mapping("scene", code, [n])
       end
 
@@ -239,7 +240,7 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
         id = season * 10
 
         [
-          mapping("standard", "S#{String.pad_leading(Integer.to_string(season), 2, "0")}E01", [id]),
+          mapping("standard", Episode.code(season, 1), [id]),
           mapping("absolute", Integer.to_string(season), [id]),
           mapping("scene", if(season == 1, do: coordinate_32, else: "scene-#{season}"), [id])
         ]

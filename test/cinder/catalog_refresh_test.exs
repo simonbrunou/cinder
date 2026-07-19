@@ -174,6 +174,49 @@ defmodule Cinder.CatalogRefreshTest do
     refute Enum.any?(Catalog.list_episode_coordinates(s), &(&1.source == "tmdb"))
   end
 
+  # R2 finding 7: when the operator's chosen scene group is also a type-2 Absolute group,
+  # fetch_series_identity must reuse the detail fetch_absolute_groups already made rather than
+  # fetching the identical group a second time — only one `get_episode_group` expectation is set
+  # up below, so a regression back to fetching it twice raises here.
+  test "refresh_series fetches a scene group that's also a type-2 absolute group only once" do
+    s = series(:all, %{tmdb_id: 9_005, scene_numbering_group_id: "shared"})
+    sn = season(s, 1)
+    episode(sn, %{tmdb_episode_id: 90_050, episode_number: 1})
+
+    stub_tmdb(s, [
+      {1, [%{tmdb_episode_id: 90_050, episode_number: 1, title: "Known", air_date: @past}]}
+    ])
+
+    expect(Cinder.Catalog.TMDBMock, :get_episode_groups, fn 9_005 ->
+      {:ok, [%{id: "shared", type: 2, name: "Shared"}]}
+    end)
+
+    expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn "shared" ->
+      {:ok,
+       %{
+         id: "shared",
+         type: 2,
+         name: "Shared",
+         entries: [
+           %{
+             tmdb_episode_id: 90_050,
+             group_name: "Season 1",
+             group_order: 1,
+             order: 0,
+             season_number: 1,
+             episode_number: 1
+           }
+         ]
+       }}
+    end)
+
+    assert {:ok, _} = Catalog.refresh_series(s)
+
+    coordinates = Catalog.list_episode_coordinates(s)
+    assert Enum.any?(coordinates, &(&1.scheme == "absolute" and &1.canonical_value == "1"))
+    assert Enum.any?(coordinates, &(&1.scheme == "scene" and &1.canonical_value == "S01E01"))
+  end
+
   test "an identity changeset failure rolls the refresh back and returns the error" do
     s = series(:all, %{tmdb_id: 9_003, title: "Original"})
     sn = season(s, 1)

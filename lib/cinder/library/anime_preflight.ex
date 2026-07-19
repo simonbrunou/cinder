@@ -160,17 +160,11 @@ defmodule Cinder.Library.AnimePreflight do
   # a downloaded batch named with the TVDB-shaped numbering the release was actually grabbed
   # under (frozen into this snapshot's `mappings` at grab time) could never resolve at import,
   # even though the search/selection side already matched it.
-  defp matches_value?(mapping, "standard", value) do
-    identity = mapping["identity"]
-    bridged = AnimeResolver.bridged_schemes("standard")
-
-    (identity["scheme"] == "standard" and identity["canonical_value"] == value) or
-      (identity["scheme"] in bridged and identity["canonical_value"] == value)
-  end
-
   defp matches_value?(mapping, scheme, value) do
     identity = mapping["identity"]
-    identity["scheme"] == scheme and identity["canonical_value"] == value
+    schemes = [scheme | AnimeResolver.bridged_schemes(scheme)]
+
+    identity["scheme"] in schemes and identity["canonical_value"] == value
   end
 
   defp atom_identity(identity) do

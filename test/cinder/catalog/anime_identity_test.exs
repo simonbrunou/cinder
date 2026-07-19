@@ -420,6 +420,54 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
       assert Catalog.list_episode_coordinates(reloaded) == []
     end
 
+    # R2 finding 3: the round-1 fail-loud fix overshot — re-saving the group that is ALREADY the
+    # persisted current group during a TMDB blip is a harmless no-op (nothing was going to
+    # change), not an error. Existing coordinates must survive untouched.
+    test "re-saving the already-current group during a TMDB blip is a logged no-op, coordinates intact",
+         %{series: series, group_id: group_id} do
+      detail = frieren_seasons_group_detail(group_id)
+
+      expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn ^group_id -> {:ok, detail} end)
+      assert {:ok, series} = Catalog.set_scene_numbering_group(series, group_id)
+      before_resave = series |> Catalog.list_episode_coordinates() |> scene_only()
+      assert before_resave != []
+
+      expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn ^group_id -> {:error, :timeout} end)
+
+      assert {:ok, resaved} = Catalog.set_scene_numbering_group(series, group_id)
+      assert resaved.scene_numbering_group_id == group_id
+
+      after_resave = resaved |> Catalog.list_episode_coordinates() |> scene_only()
+      assert coordinate_fingerprints(after_resave) == coordinate_fingerprints(before_resave)
+    end
+
+    # R2 finding 3: unlike a same-group re-save (above), choosing a NEW/different group still
+    # fails loud on a fetch failure — nothing is synced yet for it, and the currently-configured
+    # group's own coordinates must be left exactly as they were.
+    test "a fetch failure choosing a genuinely different group still fails loud and persists nothing",
+         %{series: series, group_id: group_id} do
+      detail = frieren_seasons_group_detail(group_id)
+
+      expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn ^group_id -> {:ok, detail} end)
+      assert {:ok, series} = Catalog.set_scene_numbering_group(series, group_id)
+      before_attempt = series |> Catalog.list_episode_coordinates() |> scene_only()
+
+      other_group_id = "other-group"
+
+      expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn ^other_group_id ->
+        {:error, :timeout}
+      end)
+
+      assert {:error, :group_fetch_failed} =
+               Catalog.set_scene_numbering_group(series, other_group_id)
+
+      reloaded = Repo.reload!(series)
+      assert reloaded.scene_numbering_group_id == group_id
+
+      after_attempt = reloaded |> Catalog.list_episode_coordinates() |> scene_only()
+      assert coordinate_fingerprints(after_attempt) == coordinate_fingerprints(before_attempt)
+    end
+
     # Finding 5: `previous` must come from a fresh DB read, not the caller's in-memory struct —
     # otherwise a second writer holding a stale struct clears a bygone namespace instead of the
     # one actually current, orphaning it.
@@ -632,6 +680,55 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
       # persisted (both read through derive_scene_entries/2).
       preview = Catalog.preview_scene_mapping(detail, Catalog.get_series_with_tree(series.id))
       assert Enum.sum(Enum.map(preview, & &1.unmatched_count)) >= 2
+    end
+
+    # R2 finding 2: the mirror case of the one above — two DIFFERENT tmdb_episode_ids (not the
+    # same one twice) deriving the identical (season_number, episode_number) pair, e.g. a
+    # name-parsed "Season 1" subgroup and an order-fallback subgroup both landing on season 1
+    # with overlapping entry orders. Both entries are individually valid matches to a real
+    # episode, so without a dedicated guard they'd both persist as "S01E01" for two different
+    # episodes under one namespace. Both must be dropped instead, and surfaced in the preview's
+    # unmatched count.
+    test "two subgroups colliding on the derived season/episode are both dropped, not silently guessed",
+         %{series: series, episodes: episodes, group_id: group_id} do
+      ep1 = hd(episodes)
+      ep2 = Enum.at(episodes, 1)
+
+      detail = %{
+        id: group_id,
+        type: 5,
+        name: "Story Arcs",
+        entries: [
+          %{
+            tmdb_episode_id: ep1.tmdb_episode_id,
+            group_name: "Season 1",
+            group_order: 9,
+            order: 0,
+            season_number: 1,
+            episode_number: 1
+          },
+          %{
+            tmdb_episode_id: ep2.tmdb_episode_id,
+            group_name: "OVA Batch",
+            group_order: 1,
+            order: 0,
+            season_number: 1,
+            episode_number: 1
+          }
+        ]
+      }
+
+      expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn ^group_id -> {:ok, detail} end)
+
+      assert {:ok, updated} = Catalog.set_scene_numbering_group(series, group_id)
+
+      scene_coordinates = updated |> Catalog.list_episode_coordinates() |> scene_only()
+      assert scene_coordinates == []
+
+      preview = Catalog.preview_scene_mapping(detail, Catalog.get_series_with_tree(series.id))
+      season1 = Enum.find(preview, &(&1.season_number == 1))
+      assert season1.count == 0
+      assert season1.unmatched_count == 2
     end
 
     # Finding 7: the season-number-from-subgroup-order fallback is a convention, not an API
