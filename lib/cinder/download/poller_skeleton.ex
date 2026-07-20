@@ -111,13 +111,20 @@ defmodule Cinder.Download.PollerSkeleton do
       # Per-unit isolation: an unexpected raise OR exit (e.g. a DBConnection checkout timeout under
       # two-poller write contention — not rescue-able) skips that one unit (leaving it for next-tick
       # retry) instead of crashing the whole tick.
+      # Full Exception.format (message + stacktrace) so an intermittent failure names its
+      # call site from a single occurrence (issue #139).
       defp isolate(label, fun) do
         fun.()
       rescue
-        e -> Logger.error("#{unquote(prefix)} skipped #{label}: #{Exception.message(e)}")
+        e ->
+          Logger.error(
+            "#{unquote(prefix)} skipped #{label}: #{Exception.format(:error, e, __STACKTRACE__)}"
+          )
       catch
         kind, value ->
-          Logger.error("#{unquote(prefix)} skipped #{label}: #{inspect({kind, value})}")
+          Logger.error(
+            "#{unquote(prefix)} skipped #{label}: #{Exception.format(kind, value, __STACKTRACE__)}"
+          )
       end
 
       defp schedule(interval), do: Process.send_after(self(), :poll, interval)
