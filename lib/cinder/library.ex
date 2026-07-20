@@ -880,8 +880,10 @@ defmodule Cinder.Library do
 
   # Probe the source's audio + embedded-subtitle languages for storage on the imported row. Empty
   # lists when media_info is disabled or the probe errors — never blocks the import. Runs on every
-  # import (folder or single-file); the release's sidecar languages are captured separately by
-  # maybe_link_sidecars/5 (a folder scan) only when a fresh file is actually placed.
+  # import (folder or single-file); the release's sidecar languages are captured separately —
+  # by maybe_link_sidecars/5 (a folder scan) when a fresh file is actually placed, or by
+  # adopt_quality/2 (a dest scan) when a never-imported record adopts an already-present file
+  # (issue #128).
   defp capture_media(source) do
     case media_info() do
       nil -> %{audio_languages: [], embedded_subtitles: []}
@@ -917,7 +919,8 @@ defmodule Cinder.Library do
   # languages — only when the file was actually placed (`placed?`, not a keep/idempotent no-op)
   # AND the download was a folder (`folder?`); a single-file download ships no sidecars. Best-effort
   # via Sidecars.link/2, which never raises. Otherwise the quality's `sidecar_subtitles` stays as it
-  # was (the fresh `[]` on new_q, or the stored value on the keep branch's old_quality).
+  # was: the stored value on the keep branch's old_quality, or on the adopt branch the dest-scanned
+  # value from adopt_quality/2 (issue #128) rather than new_q's fresh `[]`.
   defp maybe_link_sidecars(quality, true, true, source, dest),
     do: Map.put(quality, :sidecar_subtitles, Sidecars.link(source, dest))
 

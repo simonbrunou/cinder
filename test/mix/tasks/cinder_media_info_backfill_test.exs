@@ -117,4 +117,60 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
 
     assert movie.file_path |> Manifest.read() |> Manifest.managed?("fr")
   end
+
+  test "a re-run keeps a hash-verified manifest entry instead of downgrading it" do
+    movie = movie_fixture(%{status: :available, file_path: "/lib/V (2020)/V (2020).mkv"})
+    sidecar = "/lib/V (2020)/V (2020).fr.srt"
+    moviehash = "aaaabbbbccccdddd"
+
+    manifest_json =
+      Jason.encode!(%{
+        "video_moviehash" => moviehash,
+        "tracks" => %{"fr" => %{"origin" => "opensubtitles_hash"}}
+      })
+
+    # The sweeper already verified fr by hash; the moviehash_data stub means Backfill can't
+    # compute a current hash, so it must keep the entry rather than downgrade it (and rewrite
+    # video_moviehash) to release_sidecar.
+    fs =
+      start_supervised!(
+        {Agent,
+         fn ->
+           %{sidecar => "existing SRT", Manifest.path(movie.file_path) => manifest_json}
+         end}
+      )
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:ok, [{sidecar, 10}]} end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
+      if Agent.get(fs, &Map.has_key?(&1, path)), do: {:ok, %File.Stat{}}, else: {:error, :enoent}
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :read, fn path ->
+      case Agent.get(fs, &Map.get(&1, path)) do
+        content when is_binary(content) -> {:ok, content}
+        _ -> {:error, :enoent}
+      end
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :write, fn path, content ->
+      Agent.update(fs, &Map.put(&1, path, IO.iodata_to_binary(content)))
+      :ok
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :rename, fn source, dest ->
+      Agent.get_and_update(fs, fn files ->
+        {:ok, files |> Map.delete(source) |> Map.put(dest, Map.fetch!(files, source))}
+      end)
+    end)
+
+    assert movie.file_path |> Manifest.read() |> Manifest.stable?(moviehash, "fr")
+
+    Backfill.run()
+
+    state = Manifest.read(movie.file_path)
+    assert state.video_moviehash == moviehash
+    assert Manifest.stable?(state, moviehash, "fr")
+  end
 end

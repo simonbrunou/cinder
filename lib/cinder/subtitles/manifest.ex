@@ -69,7 +69,7 @@ defmodule Cinder.Subtitles.Manifest do
 
   @spec stable?(map(), String.t() | nil, String.t()) :: boolean()
   def stable?(state, moviehash, language) when is_binary(moviehash) do
-    state.video_moviehash == moviehash and origin(state, language) == "opensubtitles_hash"
+    state.video_moviehash == moviehash and verified?(state, language)
   end
 
   def stable?(_state, _moviehash, _language), do: false
@@ -80,6 +80,11 @@ defmodule Cinder.Subtitles.Manifest do
 
   @spec managed?(map(), String.t()) :: boolean()
   def managed?(state, language), do: origin(state, language) in @origins
+
+  # Hash-verified origin regardless of whether the stored moviehash still matches — callers that
+  # can't compute a current hash use this to avoid downgrading a verified entry they can't check.
+  @spec verified?(map(), String.t()) :: boolean()
+  def verified?(state, language), do: origin(state, language) == "opensubtitles_hash"
 
   defp decode(json, video_path) do
     with {:ok, %{"video_moviehash" => moviehash, "tracks" => tracks}}
