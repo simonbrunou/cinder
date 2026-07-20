@@ -6,6 +6,7 @@ defmodule Cinder.Download.Intent do
   import Ecto.Changeset
 
   alias Cinder.Acquisition.AnimePreferences
+  alias Cinder.Catalog.AnimeResolver
 
   schema "download_intents" do
     field :operation_key, :string
@@ -229,7 +230,8 @@ defmodule Cinder.Download.Intent do
        ) do
     with true <- valid_identity?(identity),
          {:ok, mapping} <- Map.fetch(mapping_index, identity) do
-      identity["scheme"] == scheme and identity["canonical_value"] == canonical_value and
+      identity["scheme"] in [scheme | AnimeResolver.bridged_schemes(scheme)] and
+        identity["canonical_value"] == canonical_value and
         mapping["precedence"] == precedence and mapping["episode_ids"] == episode_ids
     else
       _missing -> false

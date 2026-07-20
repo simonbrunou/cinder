@@ -387,6 +387,56 @@ defmodule Cinder.Download.IntentTest do
     assert Repo.aggregate(IntentEpisode, :count) == 0
   end
 
+  test "a scene-bridged assignment passes intent reservation and grabs" do
+    # Issue #134: an A6 alternate-numbering selection pairs a parsed "standard" selected value
+    # with a persisted "scene" mapping identity; the reservation contract must accept the same
+    # bridge the resolution side uses instead of rejecting the whole grab.
+    series =
+      series_fixture(%{
+        monitor_strategy: :all,
+        media_profile: :anime,
+        original_language: "ja",
+        preferred_language: "french"
+      })
+
+    season = season_fixture(series)
+    episode = episode_fixture(season, episode_number: 29)
+
+    episode_coordinate_fixture(
+      series,
+      %{
+        source: "tmdb",
+        scheme: "scene",
+        namespace: "seasons-group",
+        canonical_value: "S02E01",
+        precedence: :inferred
+      },
+      [episode.id]
+    )
+
+    context = Catalog.anime_series_acquisition_context(series)
+
+    candidate = %Release{
+      title: "[Group] #{series.title} S02E01 [1080p]",
+      size: 2_000_000_000,
+      download_url: "magnet:?xt=urn:btih:scene-bridged",
+      protocol: :torrent,
+      resolution: "1080p"
+    }
+
+    assert {:ok, %{assignments: [assignment]}} =
+             Anime.select_episodes([candidate], context, [episode.id], [])
+
+    assert Intent.valid_mapping_snapshot?(assignment.mapping_snapshot, :episode, [episode.id])
+
+    expect(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+      {:ok, "hash-scene-bridged"}
+    end)
+
+    assert {:ok, %Grab{} = grab} = Download.grab_episodes(assignment.release, [episode.id])
+    assert grab.mapping_snapshot == assignment.mapping_snapshot
+  end
+
   test "snapshot ownership conflict leaves the remote download fenced for cleanup" do
     fixture = anime_reservation_fixture()
     assert {:ok, intent} = reserve_anime_intent(fixture)
