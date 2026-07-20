@@ -399,6 +399,13 @@ are pruned automatically.
   trackers are still v1.
 - **SABnzbd "Pause on Duplicates" must be OFF.** That mode re-keys the download id after an add, so
   Cinder loses track of the job and it parks.
+- **SABnzbd job names are title-bearing, so its Smart Episode/Series duplicate detection can
+  misfire on a legitimate cinder re-grab.** A "Find a better match" upgrade, or a re-search after
+  a release was blocklisted, can look like a duplicate of an earlier job for the same title and
+  get paused or discarded by SABnzbd — a paused job parks with no hint why. Older, opaque
+  `cinder-<uuid>` job names could never dup-match on title, so this can newly appear after
+  upgrading. Turn off series duplicate detection (or scope it away from Cinder's SABnzbd
+  category) to avoid it.
 - **Specials (season 0) aren't grabbed** by the TV sweep for a `Standard`-profile series. An
   `Anime`-profile series is the exception: a Season 0 episode grabs once it's explicitly classified
   story-special/recap *and* monitored (see "Anime" above).
