@@ -191,14 +191,22 @@ defmodule Cinder.SubtitlesTest do
       assert_receive {:manifest_read_ready, first}, 1_000
       refute_receive {:manifest_read_ready, _second}, 200
 
+      # Each task reads the manifest twice inside its lock: the keep_verified? pre-check, then
+      # Manifest.put's own read. The second task's first read must still only happen after the
+      # first task released the lock — that's the serialization being proven.
       first_ref = Process.monitor(first)
       send(first, :continue_manifest_read)
+      assert_receive {:manifest_read_ready, ^first}, 1_000
+      send(first, :continue_manifest_read)
+
+      assert_receive {:DOWN, ^first_ref, :process, ^first, :normal}, 1_000
 
       assert_receive {:manifest_read_ready, second}, 1_000
       second_ref = Process.monitor(second)
       send(second, :continue_manifest_read)
+      assert_receive {:manifest_read_ready, ^second}, 1_000
+      send(second, :continue_manifest_read)
 
-      assert_receive {:DOWN, ^first_ref, :process, ^first, :normal}, 1_000
       assert_receive {:DOWN, ^second_ref, :process, ^second, :normal}, 1_000
 
       Agent.update(fs, &Map.delete(&1, :manifest_read_barrier))

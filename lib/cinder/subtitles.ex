@@ -524,9 +524,16 @@ defmodule Cinder.Subtitles do
       Logger.warning("subtitle fetch #{caught} for #{video_path}: #{inspect(value)}")
   end
 
-  defp mark_release_sidecars(_video_path, languages) when languages in [nil, []], do: :ok
+  @doc """
+  Marks each of `languages`' canonical sidecars for `video_path` as Cinder-managed in the
+  manifest (origin `"release_sidecar"`), recomputing the moviehash fresh from the file. Used both
+  on the normal import path (via `fetch_now/4`) and by `Cinder.Library.Backfill` to repair a row
+  whose sidecars were never registered (issue #128).
+  """
+  @spec mark_release_sidecars(String.t(), [String.t()] | nil) :: :ok
+  def mark_release_sidecars(_video_path, languages) when languages in [nil, []], do: :ok
 
-  defp mark_release_sidecars(video_path, languages) do
+  def mark_release_sidecars(video_path, languages) do
     moviehash = current_moviehash(video_path)
 
     Enum.each(Enum.uniq(languages), &mark_release_sidecar(video_path, moviehash, &1))
@@ -542,12 +549,32 @@ defmodule Cinder.Subtitles do
   end
 
   defp put_release_sidecar(video_path, moviehash, language, target) do
-    if sidecar_exists?(target) do
-      case Manifest.put(video_path, moviehash, language, "release_sidecar") do
+    state = Manifest.read(video_path)
+
+    if sidecar_exists?(target) and not keep_verified?(state, moviehash, language) do
+      case Manifest.put(
+             video_path,
+             moviehash || state.video_moviehash,
+             language,
+             "release_sidecar"
+           ) do
         :ok -> :ok
         other -> Logger.warning("subtitle manifest write failed for #{target}: #{inspect(other)}")
       end
     end
+  end
+
+  # A hash-verified (stable) entry is the sweeper's finished work; re-marking it as
+  # release-provided — and rewriting the manifest's video_moviehash wholesale — would downgrade
+  # it and force a redo, so Backfill re-runs and import re-marks skip it. An uncomputable current
+  # hash can't prove the file changed, so the entry is kept then too; a genuinely changed hash
+  # falls through and re-marks the sidecar as release-provided. The `moviehash ||
+  # state.video_moviehash` above is the same stance for the file-level hash: a sibling language's
+  # write with an uncomputable hash must not wipe the stored hash a verified language's
+  # stability rides on.
+  defp keep_verified?(state, moviehash, language) do
+    Manifest.verified?(state, language) and
+      (is_nil(moviehash) or Manifest.stable?(state, moviehash, language))
   end
 
   defp current_moviehash(video_path) do

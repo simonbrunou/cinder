@@ -1,9 +1,11 @@
 defmodule Cinder.Library.Backfill do
   @moduledoc """
-  One-time media-info backfill for media imported before the feature landed. Probes each
-  `:available` movie / filed episode and scans for present sidecars, writing the three
-  `imported_*` language lists. Idempotent. Cannot recover sidecars that pre-feature imports left
-  in the download folder (only the video was hardlinked then) — reports embedded tracks + whatever
+  One-time media-info backfill for media imported before the feature landed, and for a row whose
+  sidecars went unregistered because import adopted an already-present file (issue #128). Probes
+  each `:available` movie / filed episode and scans for present sidecars, writing the three
+  `imported_*` language lists and re-registering those sidecars in the subtitle manifest as
+  Cinder-managed. Idempotent. Cannot recover sidecars that pre-feature imports left in the
+  download folder (only the video was hardlinked then) — reports embedded tracks + whatever
   `.srt` currently sits next to the file.
   """
   require Logger
@@ -13,6 +15,7 @@ defmodule Cinder.Library.Backfill do
   alias Cinder.Catalog.{Episode, Movie}
   alias Cinder.Library.Sidecars
   alias Cinder.Repo
+  alias Cinder.Subtitles
 
   def run do
     movies = Repo.all(from m in Movie, where: m.status == :available and not is_nil(m.file_path))
@@ -36,8 +39,12 @@ defmodule Cinder.Library.Backfill do
       end
 
     case Catalog.set_media_info(record, info) do
-      {:ok, _} -> :ok
-      {:error, e} -> Logger.warning("backfill failed for #{record.file_path}: #{inspect(e)}")
+      {:ok, _} ->
+        Subtitles.mark_release_sidecars(record.file_path, info.sidecar_subtitles)
+        :ok
+
+      {:error, e} ->
+        Logger.warning("backfill failed for #{record.file_path}: #{inspect(e)}")
     end
   end
 

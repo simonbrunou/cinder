@@ -570,7 +570,10 @@ defmodule Cinder.LibraryTest do
   test "treats :eexist from ln as success when dest is the same file (idempotent re-run)" do
     movie = %Movie{title: "Heat", year: 1995, file_path: "/dl/Heat.mkv"}
 
-    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+    # Called once for the source (resolve_source) and once more for dest's sidecar scan — the
+    # movie has never been imported before (nil_q?), so adopting the already-present dest scans
+    # for sidecars same as a fresh placement would (issue #128).
+    expect(Cinder.Library.FilesystemMock, :dir?, 2, fn _ -> false end)
 
     # lstat source first (main with-chain); same inode → idempotent success, no rename/find_files.
     expect(Cinder.Library.FilesystemMock, :lstat, fn "/dl/Heat.mkv" ->
