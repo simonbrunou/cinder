@@ -932,6 +932,12 @@ defmodule Cinder.Download.TvPollerTest do
   end
 
   defp downloaded_snapshot_grab(episodes, content_path, snapshot) do
+    ids = Enum.map(episodes, & &1.id)
+
+    # Real v2 snapshots always carry the frozen reserved set (enforced at intent reservation);
+    # preflight fails closed without it, so the fixture mirrors the real shape.
+    snapshot = Map.put_new(snapshot, "reserved_episode_ids", ids)
+
     grab =
       Repo.insert!(%Grab{
         download_id: "anime-#{System.unique_integer([:positive])}",
@@ -940,7 +946,6 @@ defmodule Cinder.Download.TvPollerTest do
         mapping_snapshot: snapshot
       })
 
-    ids = Enum.map(episodes, & &1.id)
     Repo.update_all(from(e in Episode, where: e.id in ^ids), set: [grab_id: grab.id])
     grab
   end

@@ -232,6 +232,167 @@ defmodule Cinder.Library.AnimePreflightTest do
     end
   end
 
+  describe "snapshot-keyed lone-file inference (issue #126)" do
+    test "a snapshot reserving two episodes still holds when live episodes have shrunk to one" do
+      fixture = %{
+        "snapshot_version" => 2,
+        "parser_context" => %{"title" => "Frieren", "aliases" => [], "year" => 2023},
+        "mappings" => [],
+        "reserved_episode_ids" => [101, 102],
+        "inventory" => [
+          %{
+            "relative_path" => "cinder-a1b2c3d4e5f6.mkv",
+            "size" => 1000,
+            "major_device" => 1,
+            "inode" => 200,
+            "mtime" => 100
+          }
+        ],
+        "episodes" => [%{"id" => 101, "season_number" => 1, "episode_number" => 1}]
+      }
+
+      assert {:needs_mapping, result} = run_fixture(fixture)
+      assert result.issue["reason"] == "reserved_set_divergence"
+      assert result.issue["candidate_episode_ids"] == [102]
+    end
+
+    # PR #137 review: divergence must hold even when every remaining file maps cleanly — a
+    # shrunken live set plus an ignorable sample would otherwise import as a partial grab.
+    test "a cleanly-mapped file plus an ignored sample still holds when the reserved set diverged" do
+      fixture = %{
+        "snapshot_version" => 2,
+        "parser_context" => %{"title" => "Frieren", "aliases" => [], "year" => 2023},
+        "mappings" => [
+          %{
+            "identity" => %{
+              "source" => "cinder",
+              "scheme" => "standard",
+              "namespace" => "canonical",
+              "canonical_value" => "S01E01"
+            },
+            "precedence" => "manual",
+            "episode_ids" => [101],
+            "evidence" => nil
+          }
+        ],
+        "reserved_episode_ids" => [101, 102],
+        "inventory" => [
+          %{
+            "relative_path" => "Frieren - S01E01.mkv",
+            "size" => 1_400_000_000,
+            "major_device" => 1,
+            "inode" => 200,
+            "mtime" => 100
+          },
+          %{
+            "relative_path" => "sample.mkv",
+            "size" => 40 * 1024 * 1024,
+            "major_device" => 1,
+            "inode" => 201,
+            "mtime" => 100
+          }
+        ],
+        "episodes" => [%{"id" => 101, "season_number" => 1, "episode_number" => 1}]
+      }
+
+      assert {:needs_mapping, result} = run_fixture(fixture)
+      assert result.issue["reason"] == "reserved_set_divergence"
+      assert result.issue["candidate_episode_ids"] == [102]
+    end
+  end
+
+  describe "sample/preview file semantics (issue #125)" do
+    test "a lone small sample file is ignored and the batch holds for a missing assignment" do
+      fixture = %{
+        "snapshot_version" => 2,
+        "parser_context" => %{"title" => "Frieren", "aliases" => [], "year" => 2023},
+        "mappings" => [],
+        "inventory" => [
+          %{
+            "relative_path" => "sample.mkv",
+            "size" => 40 * 1024 * 1024,
+            "major_device" => 1,
+            "inode" => 200,
+            "mtime" => 100
+          }
+        ],
+        "episodes" => [%{"id" => 101, "season_number" => 1, "episode_number" => 1}]
+      }
+
+      assert {:needs_mapping, result} = run_fixture(fixture)
+      assert result.issue["reason"] == "missing_episode_assignment"
+      assert result.issue["candidate_episode_ids"] == [101]
+
+      assert [%{"ignored" => true, "evidence" => %{"resolution" => "sample_ignored"}}] =
+               result.decisions["files"]
+    end
+
+    test "a sample alongside a main file is ignored, letting lone-file inference import the main file" do
+      fixture = %{
+        "snapshot_version" => 2,
+        "parser_context" => %{"title" => "Frieren", "aliases" => [], "year" => 2023},
+        "mappings" => [],
+        "inventory" => [
+          %{
+            "relative_path" => "abc123.mkv",
+            "size" => 1_400_000_000,
+            "major_device" => 1,
+            "inode" => 200,
+            "mtime" => 100
+          },
+          %{
+            "relative_path" => "abc123.sample.mkv",
+            "size" => 40 * 1024 * 1024,
+            "major_device" => 1,
+            "inode" => 201,
+            "mtime" => 100
+          }
+        ],
+        "episodes" => [%{"id" => 101, "season_number" => 1, "episode_number" => 1}]
+      }
+
+      assert {:ok, result} = run_fixture(fixture)
+      assert assignment_map(result.assignments) == %{"abc123.mkv" => [101]}
+
+      decisions = Map.new(result.decisions["files"], &{&1["relative_path"], &1})
+      assert decisions["abc123.sample.mkv"]["ignored"] == true
+      assert decisions["abc123.mkv"]["source"] == "release_inference"
+    end
+
+    test "a full-size file with a sample token, and a word-internal match, are both left unresolved" do
+      fixture = %{
+        "snapshot_version" => 2,
+        "parser_context" => %{"title" => "Frieren", "aliases" => [], "year" => 2023},
+        "mappings" => [],
+        "inventory" => [
+          %{
+            "relative_path" => "Frieren.Sample.mkv",
+            "size" => 900_000_000,
+            "major_device" => 1,
+            "inode" => 200,
+            "mtime" => 100
+          },
+          %{
+            "relative_path" => "Frieren.Sampler.mkv",
+            "size" => 900_000_000,
+            "major_device" => 1,
+            "inode" => 201,
+            "mtime" => 100
+          }
+        ],
+        "episodes" => [%{"id" => 101, "season_number" => 1, "episode_number" => 1}]
+      }
+
+      assert {:needs_mapping, result} = run_fixture(fixture)
+      assert result.issue["reason"] == "unresolved_file"
+
+      assert result.issue["relative_paths"] ==
+               Enum.sort(["Frieren.Sample.mkv", "Frieren.Sampler.mkv"])
+
+      refute Enum.any?(result.decisions["files"], & &1["ignored"])
+    end
+  end
+
   describe "alternate scene numbering (A6)" do
     test "S02E01..E10 files map to episodes 29-38 via the frozen snapshot" do
       fixture = frieren_scene_fixture(1..10)
@@ -305,7 +466,9 @@ defmodule Cinder.Library.AnimePreflightTest do
     snapshot = %{
       "version" => fixture["snapshot_version"],
       "parser_context" => fixture["parser_context"],
-      "mappings" => fixture["mappings"]
+      "mappings" => fixture["mappings"],
+      "reserved_episode_ids" =>
+        fixture["reserved_episode_ids"] || Enum.map(fixture["episodes"], & &1["id"])
     }
 
     inventory =
