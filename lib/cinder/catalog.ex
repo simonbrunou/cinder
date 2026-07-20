@@ -600,9 +600,13 @@ defmodule Cinder.Catalog do
     Repo.all(from m in Movie, where: m.status == :available and not is_nil(m.file_path))
   end
 
-  @doc "Episodes with an imported file, season+series preloaded (subtitle-fetch candidates)."
+  @doc "Episodes with an imported file, season+series+scene-coordinates preloaded (subtitle-fetch candidates)."
   def list_episodes_with_file do
-    Repo.all(from e in Episode, where: not is_nil(e.file_path), preload: [season: :series])
+    Repo.all(
+      from e in Episode,
+        where: not is_nil(e.file_path),
+        preload: [:episode_coordinates, season: :series]
+    )
   end
 
   @doc """
@@ -2976,7 +2980,9 @@ defmodule Cinder.Catalog do
     Repo.all(
       from g in Grab,
         where: not is_nil(g.content_path) and g.mapping_status == :resolved,
-        preload: [episodes: [season: :series]]
+        # scene coordinates preloaded so the import-time subtitle fetch can query the provider
+        # with A6 scene numbering (issue #143).
+        preload: [episodes: [:episode_coordinates, season: :series]]
     )
   end
 

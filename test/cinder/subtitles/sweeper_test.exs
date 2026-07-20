@@ -8,6 +8,7 @@ defmodule Cinder.Subtitles.SweeperTest do
   import Mox
   import Cinder.CatalogFixtures
 
+  alias Cinder.Catalog.Identity
   alias Cinder.Subtitles.Sweeper
 
   setup :set_mox_from_context
@@ -134,5 +135,36 @@ defmodule Cinder.Subtitles.SweeperTest do
     {:ok, pid} = start_supervised({Sweeper, name: :sweeper_test})
     assert :ok = Sweeper.poll(pid)
     assert_receive {:subtitle_scan, :tv}
+  end
+
+  # Issue #143: an A6 episode-group series is scene-numbered on the provider (OpenSubtitles), so
+  # the subtitle search must query the scene {season, episode}, not TMDB's canonical number, or it
+  # silently misses everything. Frieren-shaped: TMDB S01E29 = scene S02E01.
+  test "episode sweep queries the provider with an episode's scene numbering when mapped" do
+    parent = self()
+    series = series_fixture(tmdb_id: 209_867)
+    season = season_fixture(series, %{season_number: 1})
+    episode = episode_fixture(season, %{episode_number: 29, file_path: "/lib/F/S01E29.mkv"})
+
+    {:ok, _} =
+      Identity.replace_provider_coordinates(series, "tmdb", "group-frieren", "scene", [
+        %{
+          scheme: "scene",
+          canonical_value: "S02E01",
+          precedence: :inferred,
+          episode_ids: [episode.id]
+        }
+      ])
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn _ -> {:error, :enoent} end)
+
+    expect(Cinder.Subtitles.ProviderMock, :search, fn criteria ->
+      send(parent, {:searched, criteria})
+      {:ok, []}
+    end)
+
+    {:ok, pid} = start_supervised({Sweeper, name: :sweeper_test})
+    assert :ok = Sweeper.poll(pid)
+    assert_receive {:searched, %{tmdb_id: 209_867, season: 2, episode: 1}}
   end
 end

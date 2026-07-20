@@ -18,13 +18,42 @@ defmodule Cinder.Subtitles do
   def movie_criteria(%Movie{imdb_id: imdb_id, tmdb_id: tmdb_id}),
     do: %{imdb_id: imdb_id, tmdb_id: tmdb_id}
 
-  @doc "Subtitle-search criteria for an episode: series tmdb id + season/episode numbers."
+  @doc """
+  Subtitle-search criteria for an episode: series tmdb id + season/episode numbers.
+
+  An A6 alternate-numbering (scene) coordinate mapping this episode overrides the canonical
+  TMDB season/episode: OpenSubtitles is scene-numbered like the release indexers, so an
+  episode-group series (e.g. Frieren's TMDB S01E29 = scene S02E01) would otherwise miss every
+  subtitle (issue #143). Requires `episode_coordinates` preloaded; an unloaded association falls
+  back to canonical numbering — the callers that actually search preload it.
+  """
   @spec episode_criteria(Episode.t()) :: map()
-  def episode_criteria(%Episode{
-        episode_number: number,
-        season: %{season_number: season, series: %Series{tmdb_id: tmdb_id}}
-      }),
-      do: %{tmdb_id: tmdb_id, season: season, episode: number}
+  def episode_criteria(
+        %Episode{
+          episode_number: number,
+          season: %{season_number: season, series: %Series{tmdb_id: tmdb_id}}
+        } = episode
+      ) do
+    {q_season, q_episode} = scene_numbering(episode) || {season, number}
+    %{tmdb_id: tmdb_id, season: q_season, episode: q_episode}
+  end
+
+  # The scene {season, episode} from the highest-precedence "scene" coordinate mapping this
+  # episode, or nil. Scene coordinates are 1:1 (one "SxxEyy" per episode); precedence ties are
+  # broken by taking the max (manual > curated > inferred), matching AnimeResolver.
+  @scene_precedence %{inferred: 0, curated: 1, manual: 2}
+
+  defp scene_numbering(%Episode{episode_coordinates: coordinates}) when is_list(coordinates) do
+    coordinates
+    |> Enum.filter(&(&1.scheme == "scene"))
+    |> Enum.max_by(&Map.fetch!(@scene_precedence, &1.precedence), fn -> nil end)
+    |> case do
+      nil -> nil
+      coordinate -> Episode.season_and_episode_from_code(coordinate.canonical_value)
+    end
+  end
+
+  defp scene_numbering(_episode), do: nil
 
   @doc "Configured subtitle languages (downcased). `[]` — feature off — when the setting is blank."
   @spec wanted_languages() :: [String.t()]
