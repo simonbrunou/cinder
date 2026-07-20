@@ -4,6 +4,12 @@ defmodule Cinder.Library.AnimePreflight do
   alias Cinder.Acquisition.AnimeParser
   alias Cinder.Catalog.AnimeResolver
 
+  # Conservative, never-guess sample/preview token (issue #125): word-boundary/dot/dash/
+  # underscore-delimited only — never a bare substring inside a word ("Sampler" is not a sample).
+  @sample_preview_token ~r/(?:^|[\s._\-\[\]()])(?:sample|preview)(?:$|[\s._\-\[\]()])/iu
+  @sample_max_bytes 100 * 1024 * 1024
+  @sample_max_ratio 0.10
+
   def run(%{"version" => 2} = snapshot, inventory, episodes) do
     context = snapshot["parser_context"]
 
@@ -15,7 +21,7 @@ defmodule Cinder.Library.AnimePreflight do
 
     inventory
     |> build_state({parser_context, snapshot["mappings"]})
-    |> infer_lone_file(episodes)
+    |> infer_lone_file(episodes, snapshot["reserved_episode_ids"])
     |> validate(authoritative_ids(episodes))
     |> result()
   end
@@ -23,60 +29,95 @@ defmodule Cinder.Library.AnimePreflight do
   defp authoritative_ids(episodes), do: MapSet.new(Enum.map(episodes, & &1.id))
 
   defp build_state(inventory, parser) do
-    %{files: Enum.map(inventory, &automatic_decision(&1, parser))}
+    largest_size = largest_video_size(inventory)
+    %{files: Enum.map(inventory, &automatic_decision(&1, parser, largest_size))}
   end
 
+  defp largest_video_size([]), do: 0
+  defp largest_video_size(inventory), do: inventory |> Enum.map(& &1.identity.size) |> Enum.max()
+
   # Fully-determined single-file case: an obfuscated usenet post can't be parsed by filename, but
-  # if there's exactly one downloaded file and exactly one reserved episode, the release coordinate
-  # already resolved to that episode at grab time — infer the assignment instead of safe-stopping
-  # forever on an unparseable name. Multi-file inventories, multi-episode grabs, and ambiguous
-  # resolutions are untouched. `parsed: %{coordinates: []}` is required, not just the unmatched
-  # resolution: resolve/2 returns %{resolution: :unmatched} both for a name that parsed no
-  # coordinates at all AND for a name that parsed coordinates with no matching snapshot mapping —
-  # inference must fire only for the former, else a lone file that names a DIFFERENT episode than
-  # the one reserved gets force-assigned to it. `single_ep_fallback?/2` in library.ex is the
-  # standard-TV sibling; this is the stricter anime analogue — exactly one file (no largest-wins
-  # across several) and no sample/extra tolerance, per anime's never-guess invariant.
-  defp infer_lone_file(%{files: [file]} = state, [%{id: episode_id}]) do
-    case file do
-      %{
-        episode_ids: [],
-        ignored: false,
-        evidence: %{resolution: :unmatched},
-        parsed: %{coordinates: []}
-      } ->
+  # if there's exactly one non-ignored downloaded file and exactly one reserved episode, the
+  # release coordinate already resolved to that episode at grab time — infer the assignment
+  # instead of safe-stopping forever on an unparseable name. The reserved set is read from the
+  # frozen snapshot, never the live `grab.episodes`, so a live episode count that only *looks*
+  # like one (e.g. a series-tree deletion or renumber cleanup shrinking a multi-episode grab down
+  # to a single surviving row) can't satisfy the premise a snapshot reserving more than one
+  # episode never actually established — the two sets must agree exactly, or this holds like
+  # anything else (issue #126). Multi-episode grabs and ambiguous resolutions are untouched.
+  # `parsed: %{coordinates: []}` is required, not just the unmatched resolution: resolve/2 returns
+  # %{resolution: :unmatched} both for a name that parsed no coordinates at all AND for a name
+  # that parsed coordinates with no matching snapshot mapping — inference must fire only for the
+  # former, else a lone file that names a DIFFERENT episode than the one reserved gets
+  # force-assigned to it. `single_ep_fallback?/2` in library.ex is the standard-TV sibling; this
+  # is the stricter anime analogue — exactly one non-ignored file (no largest-wins across
+  # several) and no tolerance beyond what's already excluded upstream (extras, ignorable
+  # samples/previews), per anime's never-guess invariant.
+  defp infer_lone_file(state, [%{id: episode_id}], [episode_id]) do
+    case non_ignored_files(state) do
+      [
         %{
-          state
-          | files: [
-              %{
-                file
-                | episode_ids: [episode_id],
-                  source: :release_inference,
-                  evidence: %{resolution: :release_inference}
-              }
-            ]
-        }
+          episode_ids: [],
+          evidence: %{resolution: :unmatched},
+          parsed: %{coordinates: []}
+        } = file
+      ] ->
+        replace_inferred(state, file, episode_id)
 
       _ ->
         state
     end
   end
 
-  defp infer_lone_file(state, _episodes), do: state
+  defp infer_lone_file(state, _episodes, _reserved_episode_ids), do: state
 
-  defp automatic_decision(entry, {context, mappings}) do
+  defp non_ignored_files(state), do: Enum.reject(state.files, & &1.ignored)
+
+  defp replace_inferred(state, file, episode_id) do
+    updated_files =
+      Enum.map(state.files, fn
+        %{relative_path: relative_path} = entry when relative_path == file.relative_path ->
+          %{
+            entry
+            | episode_ids: [episode_id],
+              source: :release_inference,
+              evidence: %{resolution: :release_inference}
+          }
+
+        entry ->
+          entry
+      end)
+
+    %{state | files: updated_files}
+  end
+
+  defp automatic_decision(entry, {context, mappings}, largest_size) do
     parsed = AnimeParser.parse(Path.basename(entry.relative_path), context)
 
-    case resolve(parsed, mappings) do
-      {:ok, episode_ids, evidence} ->
-        decision(entry, parsed, episode_ids, :automatic, false, evidence)
+    if sample_ignorable?(entry, largest_size) do
+      decision(entry, parsed, [], :automatic, true, %{resolution: :sample_ignored})
+    else
+      case resolve(parsed, mappings) do
+        {:ok, episode_ids, evidence} ->
+          decision(entry, parsed, episode_ids, :automatic, false, evidence)
 
-      {:ignore, evidence} ->
-        decision(entry, parsed, [], :automatic, true, evidence)
+        {:ignore, evidence} ->
+          decision(entry, parsed, [], :automatic, true, evidence)
 
-      {:unresolved, evidence} ->
-        decision(entry, parsed, [], :automatic, false, evidence)
+        {:unresolved, evidence} ->
+          decision(entry, parsed, [], :automatic, false, evidence)
+      end
     end
+  end
+
+  # Both the token and the size guard must hold. A full-size file that merely mentions "sample"
+  # in its name stays exactly as unresolved as before this existed — the rule only ever removes
+  # a file from consideration, never adds one.
+  defp sample_ignorable?(entry, largest_size) do
+    size = entry.identity.size
+
+    Regex.match?(@sample_preview_token, Path.basename(entry.relative_path)) and
+      (size <= @sample_max_bytes or size <= largest_size * @sample_max_ratio)
   end
 
   defp decision(entry, parsed, episode_ids, source, ignored, evidence) do
