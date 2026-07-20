@@ -178,6 +178,16 @@ defmodule CinderWeb.ActivityLive do
        }),
        do: gettext("No file found for episode id(s): %{ids}", ids: id_list(episode_ids))
 
+  defp mapping_reason(%{
+         "reason" => "reserved_set_divergence",
+         "candidate_episode_ids" => episode_ids
+       }),
+       do:
+         gettext(
+           "The library's episodes no longer match what this grab reserved; affected episode id(s): %{ids}",
+           ids: id_list(episode_ids)
+         )
+
   defp mapping_reason(_issue), do: gettext("This release needs manual attention.")
 
   defp path_list(paths) when is_list(paths) and paths != [], do: Enum.join(paths, ", ")

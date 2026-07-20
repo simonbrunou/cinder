@@ -252,8 +252,52 @@ defmodule Cinder.Library.AnimePreflightTest do
       }
 
       assert {:needs_mapping, result} = run_fixture(fixture)
-      assert result.issue["reason"] == "unresolved_file"
-      assert result.issue["relative_paths"] == ["cinder-a1b2c3d4e5f6.mkv"]
+      assert result.issue["reason"] == "reserved_set_divergence"
+      assert result.issue["candidate_episode_ids"] == [102]
+    end
+
+    # PR #137 review: divergence must hold even when every remaining file maps cleanly — a
+    # shrunken live set plus an ignorable sample would otherwise import as a partial grab.
+    test "a cleanly-mapped file plus an ignored sample still holds when the reserved set diverged" do
+      fixture = %{
+        "snapshot_version" => 2,
+        "parser_context" => %{"title" => "Frieren", "aliases" => [], "year" => 2023},
+        "mappings" => [
+          %{
+            "identity" => %{
+              "source" => "cinder",
+              "scheme" => "standard",
+              "namespace" => "canonical",
+              "canonical_value" => "S01E01"
+            },
+            "precedence" => "manual",
+            "episode_ids" => [101],
+            "evidence" => nil
+          }
+        ],
+        "reserved_episode_ids" => [101, 102],
+        "inventory" => [
+          %{
+            "relative_path" => "Frieren - S01E01.mkv",
+            "size" => 1_400_000_000,
+            "major_device" => 1,
+            "inode" => 200,
+            "mtime" => 100
+          },
+          %{
+            "relative_path" => "sample.mkv",
+            "size" => 40 * 1024 * 1024,
+            "major_device" => 1,
+            "inode" => 201,
+            "mtime" => 100
+          }
+        ],
+        "episodes" => [%{"id" => 101, "season_number" => 1, "episode_number" => 1}]
+      }
+
+      assert {:needs_mapping, result} = run_fixture(fixture)
+      assert result.issue["reason"] == "reserved_set_divergence"
+      assert result.issue["candidate_episode_ids"] == [102]
     end
   end
 

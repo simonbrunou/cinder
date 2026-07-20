@@ -22,7 +22,7 @@ defmodule Cinder.Library.AnimePreflight do
     inventory
     |> build_state({parser_context, snapshot["mappings"]})
     |> infer_lone_file(episodes, snapshot["reserved_episode_ids"])
-    |> validate(authoritative_ids(episodes))
+    |> validate(authoritative_ids(episodes), snapshot["reserved_episode_ids"])
     |> result()
   end
 
@@ -217,10 +217,25 @@ defmodule Cinder.Library.AnimePreflight do
     }
   end
 
-  defp validate(state, authoritative) do
+  # The frozen snapshot is the authority for what this grab reserved: if the live episode rows
+  # have diverged from it mid-flight (series-tree deletion cascade, renumber cleanup), the whole
+  # batch holds rather than importing the survivors — checking files only against the live set
+  # would quietly accept a partial grab whenever the shrink left exactly the files that still
+  # map (PR #137 review; generalizes issue #126 beyond the lone-file inference path).
+  defp validate(state, authoritative, reserved_episode_ids) do
+    reserved = MapSet.new(reserved_episode_ids || [])
     unresolved = Enum.filter(state.files, &(&1.episode_ids == [] and not &1.ignored))
 
     cond do
+      not MapSet.equal?(reserved, authoritative) ->
+        diverged =
+          reserved
+          |> MapSet.symmetric_difference(authoritative)
+          |> MapSet.to_list()
+          |> Enum.sort()
+
+        {:error, state, issue("reserved_set_divergence", [], diverged)}
+
       unresolved != [] ->
         paths = Enum.map(unresolved, & &1.relative_path) |> Enum.sort()
         candidates = unresolved |> Enum.flat_map(&candidate_ids/1) |> Enum.uniq() |> Enum.sort()
