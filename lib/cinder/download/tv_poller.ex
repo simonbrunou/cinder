@@ -394,8 +394,15 @@ defmodule Cinder.Download.TvPoller do
 
   defp grab_anime_assignment(%{release: release, episode_ids: episode_ids}) do
     case Download.grab_episodes(release, episode_ids) do
-      {:ok, _grab} -> episode_ids
-      _failure -> []
+      {:ok, _grab} ->
+        episode_ids
+
+      failure ->
+        Logger.warning(
+          "anime grab failed (#{HTTPPolicy.sanitize_log(release.title)}): #{HTTPPolicy.sanitize_log(failure)}"
+        )
+
+        []
     end
   end
 
