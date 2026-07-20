@@ -463,6 +463,20 @@ defmodule Cinder.Acquisition.ParserTest do
       assert base.season == suffixed.season
       assert base.episodes == suffixed.episodes
     end
+
+    test "the .cinder-<uuid> suffix doesn't shift the group (#140)" do
+      # The suffix's trailing hex chunk used to read as the release group: a groupless
+      # name gained a bogus group, and a real group was overwritten by the UUID chunk.
+      assert %{group: nil} =
+               Parser.parse(
+                 "The.Show.S01E05.1080p.WEB.h264.cinder-a1b2c3d4-e5f6-47a8-89b0-c1d2e3f4a5b6"
+               )
+
+      assert %{group: "GROUP"} =
+               Parser.parse(
+                 "The.Show.S01E05.1080p.WEB.h264-GROUP.cinder-a1b2c3d4-e5f6-47a8-89b0-c1d2e3f4a5b6"
+               )
+    end
   end
 
   defp subtitle_claim("present"), do: :present

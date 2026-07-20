@@ -246,6 +246,7 @@ defmodule Cinder.Acquisition.Parser do
   parser total.
   """
   def parse(name) when is_binary(name) do
+    name = strip_operation_suffix(name)
     {season, episodes} = season_episodes(name)
 
     %{
@@ -332,6 +333,13 @@ defmodule Cinder.Acquisition.Parser do
   # Remove subtitle-language markers ("FRENCH.SUBS", "ENG.SUBTITLES", "LATINO.SUBS") so they aren't
   # read as the audio language.
   defp strip_subtitles(name), do: Regex.replace(@subtitle, name, " ")
+
+  # SABnzbd's "deobfuscate final filenames" can carry our own ".cinder-<uuid>" operation suffix
+  # (Cinder.Download.Client.SABnzbd names the job "<title>.cinder-<key>", key = Ecto.UUID) onto the
+  # on-disk name. It's an internal artifact, never part of the release, so drop it before parsing —
+  # otherwise the UUID's trailing hex chunk reads as the release group (#140).
+  @operation_suffix ~r/\.cinder-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i
+  defp strip_operation_suffix(name), do: Regex.replace(@operation_suffix, name, "")
 
   defp declared_audio_languages(name), do: name |> audio_claim() |> elem(0)
   defp complete_audio_claim?(name), do: name |> audio_claim() |> elem(1)
