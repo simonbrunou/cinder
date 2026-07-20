@@ -121,6 +121,7 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
   test "a re-run keeps a hash-verified manifest entry instead of downgrading it" do
     movie = movie_fixture(%{status: :available, file_path: "/lib/V (2020)/V (2020).mkv"})
     sidecar = "/lib/V (2020)/V (2020).fr.srt"
+    en_sidecar = "/lib/V (2020)/V (2020).en.srt"
     moviehash = "aaaabbbbccccdddd"
 
     manifest_json =
@@ -130,18 +131,27 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
       })
 
     # The sweeper already verified fr by hash; the moviehash_data stub means Backfill can't
-    # compute a current hash, so it must keep the entry rather than downgrade it (and rewrite
-    # video_moviehash) to release_sidecar.
+    # compute a current hash, so it must keep the entry rather than downgrade it to
+    # release_sidecar. The unverified en sidecar found next to it registers normally — and that
+    # sibling write must preserve the stored video_moviehash fr's stability rides on, not wipe
+    # it with the uncomputable nil.
     fs =
       start_supervised!(
         {Agent,
          fn ->
-           %{sidecar => "existing SRT", Manifest.path(movie.file_path) => manifest_json}
+           %{
+             sidecar => "existing SRT",
+             en_sidecar => "existing EN SRT",
+             Manifest.path(movie.file_path) => manifest_json
+           }
          end}
       )
 
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
-    stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:ok, [{sidecar, 10}]} end)
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok, [{sidecar, 10}, {en_sidecar, 10}]}
+    end)
 
     stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
       if Agent.get(fs, &Map.has_key?(&1, path)), do: {:ok, %File.Stat{}}, else: {:error, :enoent}
@@ -172,5 +182,6 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
     state = Manifest.read(movie.file_path)
     assert state.video_moviehash == moviehash
     assert Manifest.stable?(state, moviehash, "fr")
+    assert state.tracks["en"] == %{origin: "release_sidecar"}
   end
 end
