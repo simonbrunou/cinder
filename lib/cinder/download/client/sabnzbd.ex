@@ -17,6 +17,14 @@ defmodule Cinder.Download.Client.Sabnzbd do
   NOTE: SABnzbd must have "Pause on Duplicates" disabled — that mode re-keys the
   `nzo_id` after `addurl`, so the stored id would never reappear.
 
+  NOTE: job names are now title-bearing (see `nzbname/2` below), which also exposes SABnzbd's
+  Smart Episode/Series duplicate detection: it can match a legitimate cinder re-grab — a "Find a
+  better match" upgrade, or a re-search after a release was blocklisted — against an earlier job
+  for the same title and pause or discard it. A paused job classifies `:error` here, so the item
+  just parks with no hint why. The old opaque `cinder-<uuid>` names could never dup-match on
+  title, so this can newly surface after upgrading; disable series duplicate detection (or scope
+  it away from Cinder's SABnzbd category) to avoid it.
+
   SABnzbd requires `apikey` in the query string. Redirects and redirect logging are disabled so
   that protocol-required secret is never replayed to another origin or written to Cinder's logs.
   `addurl` remains a deputy boundary: Cinder validates the initial provider URL, but SABnzbd then

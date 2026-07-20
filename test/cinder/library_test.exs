@@ -1043,6 +1043,22 @@ defmodule Cinder.LibraryTest do
       assert log =~ "import skipped 1 unmatched file(s): [\"/dl/sample.mkv\"]"
     end
 
+    test "a deobfuscated SABnzbd .cinder-<uuid> suffix still maps to the correct episode (issue #127)" do
+      # PR #124 renames the SABnzbd job (and the deobfuscated video) to
+      # "<title>.cinder-<uuid>"; the trailing UUID must not stop the SxxEyy match.
+      stub_dir([
+        {"/dl/Show.S01E05.1080p.WEB.h264.cinder-a1b2c3d4-e5f6-47a8-89b0-c1d2e3f4a5b6.mkv",
+         9 * @gb}
+      ])
+
+      stub_link_ok()
+
+      assert {:ok, [{9, dest, _quality}], []} = Library.import_episodes("/dl", [ep(9, 5)])
+
+      assert dest ==
+               "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E05.mkv"
+    end
+
     test "season pack: each file maps to its own episode and dest" do
       stub_dir([{"/dl/Show.S01E01.mkv", 3 * @gb}, {"/dl/Show.S01E02.mkv", 3 * @gb}])
       stub_link_ok()

@@ -149,6 +149,22 @@ defmodule Cinder.Acquisition.AnimeParserTest do
              AnimeParser.parse("[Group] Show S01E01~1080p", context)
   end
 
+  test "a deobfuscated SABnzbd .cinder-<uuid> suffix does not change parsed anime coordinates (issue #127)" do
+    # PR #124 renames the SABnzbd job (and the deobfuscated video) to
+    # "<title>.cinder-<uuid>"; an absolute-numbered release must resolve identically
+    # once that suffix is appended.
+    context = %{kind: :series, titles: ["One Piece"], year: 1999}
+    base = AnimeParser.parse("[Fansub] One Piece - 1122 [1080p]", context)
+
+    suffixed =
+      AnimeParser.parse(
+        "[Fansub] One Piece - 1122 [1080p].cinder-a1b2c3d4-e5f6-47a8-89b0-c1d2e3f4a5b6",
+        context
+      )
+
+    assert base == suffixed
+  end
+
   defp atomize_kind(%{"kind" => kind} = context) do
     %{
       kind: if(kind == "movie", do: :movie, else: :series),

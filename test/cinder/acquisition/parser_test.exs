@@ -449,6 +449,22 @@ defmodule Cinder.Acquisition.ParserTest do
     end
   end
 
+  describe "deobfuscated SABnzbd name (issue #127)" do
+    test "a deobfuscated usenet name keeps parsing: a .cinder-<uuid> suffix doesn't change season/episodes" do
+      # PR #124 renames the SABnzbd job (and the deobfuscated video) to
+      # "<title>.cinder-<uuid>" so the parser sees a title-bearing name. Pin that the
+      # trailing UUID suffix — hyphens included — never changes what season/episodes
+      # a downstream parser change would otherwise silently regress.
+      base = Parser.parse("The.Show.S01E05.1080p.WEB.h264")
+
+      suffixed =
+        Parser.parse("The.Show.S01E05.1080p.WEB.h264.cinder-a1b2c3d4-e5f6-47a8-89b0-c1d2e3f4a5b6")
+
+      assert base.season == suffixed.season
+      assert base.episodes == suffixed.episodes
+    end
+  end
+
   defp subtitle_claim("present"), do: :present
   defp subtitle_claim("absent"), do: :absent
   defp subtitle_claim("unknown"), do: :unknown
