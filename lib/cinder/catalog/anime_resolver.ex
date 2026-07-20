@@ -9,9 +9,9 @@ defmodule Cinder.Catalog.AnimeResolver do
   alternate-season-numbering bridge rule: a parsed "standard" (SxxEyy) release/file value also
   matches a persisted "scene" coordinate (the alt-numbering TMDB group synced onto a series) by
   exact value, so a TVDB-numbered release resolves even when TMDB's own tree numbers the show
-  differently. Consulted by both `Cinder.Acquisition.Anime` (search/selection) and
-  `Cinder.Library.AnimePreflight` (import) — each owns its own data-shape-specific match loop,
-  but the scheme list itself lives only here.
+  differently. Consulted by `Cinder.Acquisition.Anime` (search/selection),
+  `Cinder.Library.AnimePreflight` (import), and `Cinder.Download.Intent` (reservation) — each
+  owns its own data-shape-specific match loop, but the scheme list itself lives only here.
   """
   def bridged_schemes("standard"), do: ["scene"]
   def bridged_schemes(_scheme), do: []
