@@ -334,6 +334,43 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitlesTest do
     assert {:ok, "SRT-BYTES"} = OpenSubtitles.download(42)
   end
 
+  test "search/1 emits query params in alphabetical order (fixes #142)" do
+    Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
+      keys = conn.query_string |> URI.query_decoder() |> Enum.map(fn {k, _v} -> k end)
+      assert keys == Enum.sort(keys)
+      Req.Test.json(conn, %{"data" => []})
+    end)
+
+    assert {:ok, []} =
+             OpenSubtitles.search(%{
+               imdb_id: "tt0111161",
+               tmdb_id: 209_867,
+               season: 1,
+               episode: 29,
+               moviehash: "0123456789abcdef",
+               languages: ["fr"]
+             })
+  end
+
+  test "search/1 follows a canonicalizing 301 without re-appending params (fixes #142)" do
+    # The API 301s every first request to a canonical URL; it answers 200 only when the follow-up
+    # query is EXACTLY the canonical one — a client that re-appends its params never converges.
+    Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
+      case conn.query_string do
+        "canonical=1" ->
+          Req.Test.json(conn, %{"data" => [%{"attributes" => %{"files" => [%{"file_id" => 9}]}}]})
+
+        _ ->
+          conn
+          |> Plug.Conn.put_resp_header("location", "/api/v1/subtitles?canonical=1")
+          |> Plug.Conn.send_resp(301, "")
+      end
+    end)
+
+    assert {:ok, [%{file_id: 9}]} =
+             OpenSubtitles.search(%{imdb_id: "tt0111161", languages: ["en"]})
+  end
+
   test "search/1 fails cleanly (no infinite loop) when a same-origin redirect loop exceeds the hop cap" do
     Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
       next =

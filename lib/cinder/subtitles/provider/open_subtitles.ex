@@ -128,6 +128,9 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
       languages: criteria[:languages] |> List.wrap() |> Enum.join(",")
     ]
     |> Enum.reject(fn {_k, v} -> is_nil(v) or v == "" end)
+    # The API 301-canonicalizes non-alphabetical param order (issue #142); emitting sorted
+    # skips a redirect round-trip per search.
+    |> Enum.sort()
   end
 
   # OpenSubtitles wants the numeric imdb id (no "tt" prefix).
@@ -198,6 +201,9 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
   defp follow_api_redirect(request, response, redirects_left) do
     with [location | _] <- Req.Response.get_header(response, "location"),
          {:ok, next_uri} <- HTTPPolicy.resolve_redirect(request.url, location, :same_origin) do
+      # A Location URL is complete as-is: keeping the original `params:` option would re-append
+      # them onto it, turning a canonicalizing 301 into an infinite loop (issue #142).
+      request = Req.Request.delete_option(request, :params)
       run_request(Req.merge(request, url: next_uri), redirects_left - 1)
     else
       _ -> {:ok, response}
