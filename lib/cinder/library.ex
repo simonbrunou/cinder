@@ -1668,17 +1668,29 @@ defmodule Cinder.Library do
 
   # Match each imported {episode_id, dest, quality} back to its Episode (for the series tmdb_id +
   # season/episode numbers) and fetch a subtitle for it; an id absent from `episodes` is skipped.
+  # One fetch per physical file: a combined-episode file (S01E01-E02) maps every covered episode
+  # to the same dest, and concurrent fetches would race/overwrite the shared sidecar (issue #141)
+  # — the lowest-numbered covered episode names the provider query.
   defp fetch_episode_subtitles(imported, episodes) do
     by_id = Map.new(episodes, &{&1.id, &1})
 
-    for {ep_id, dest, quality} <- imported, ep = by_id[ep_id], not is_nil(ep) do
+    imported
+    |> Enum.filter(fn {ep_id, _dest, _quality} -> not is_nil(by_id[ep_id]) end)
+    |> Enum.group_by(fn {_ep_id, dest, _quality} -> dest end)
+    |> Enum.each(fn {dest, group} ->
+      {ep_id, _dest, quality} =
+        Enum.min_by(group, fn {ep_id, _dest, _quality} ->
+          ep = by_id[ep_id]
+          {ep.season.season_number, ep.episode_number}
+        end)
+
       fetch_subtitles(
-        fn -> Cinder.Subtitles.episode_criteria(ep) end,
+        fn -> Cinder.Subtitles.episode_criteria(by_id[ep_id]) end,
         dest,
         :tv,
         Map.get(quality, :sidecar_subtitles, [])
       )
-    end
+    end)
   end
 
   defp fetch_episode_subtitles_for_dest(episodes, dest, quality) do

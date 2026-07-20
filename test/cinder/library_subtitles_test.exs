@@ -188,6 +188,52 @@ defmodule Cinder.LibrarySubtitlesTest do
     assert log =~ "subtitle fetch for #{dest} (en) failed: :down"
   end
 
+  test "a combined-episode file dispatches ONE subtitle fetch for its shared sidecar (issue #141)" do
+    parent = self()
+    series = %Series{title: "Show", year: 2008, tmdb_id: 1}
+    season = %Season{season_number: 1, series: series}
+
+    episodes = [
+      %Episode{id: 7, episode_number: 1, season: season},
+      %Episode{id: 8, episode_number: 2, season: season}
+    ]
+
+    dest = "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E01-E02.mkv"
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn "/dl" -> true end)
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+
+    expect(Cinder.Library.FilesystemMock, :find_files, fn "/dl" ->
+      {:ok, [{"/dl/Show.S01E01-E02.1080p.mkv", 9 * @gb}]}
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn "/dl/Show.S01E01-E02.1080p.mkv" ->
+      {:ok, %File.Stat{size: 9 * @gb, inode: 1}}
+    end)
+
+    expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    expect(Cinder.Library.FilesystemMock, :ln, fn _src, ^dest -> :ok end)
+    expect(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
+
+    # Both episodes share one physical file, so exactly one fetch may target the shared
+    # sidecar path — a second one would race/overwrite it with the other part's subtitles.
+    stub(Cinder.Subtitles.ProviderMock, :search, fn criteria ->
+      send(parent, {:subtitle_search, criteria})
+      {:error, :down}
+    end)
+
+    capture_log(fn ->
+      assert {:ok, imported, []} = Library.import_episodes("/dl", episodes)
+
+      assert imported |> Enum.map(&{elem(&1, 0), elem(&1, 1)}) |> Enum.sort() ==
+               [{7, dest}, {8, dest}]
+
+      assert_receive {:subtitle_search, %{season: 1, episode: 1}}, 2_000
+      await_subtitle_tasks()
+      refute_received {:subtitle_search, _}
+    end)
+  end
+
   test "folder movie import passes linked sidecars to the movies subtitle task", %{
     subtitle_fs: fs
   } do
