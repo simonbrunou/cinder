@@ -524,9 +524,16 @@ defmodule Cinder.Subtitles do
       Logger.warning("subtitle fetch #{caught} for #{video_path}: #{inspect(value)}")
   end
 
-  defp mark_release_sidecars(_video_path, languages) when languages in [nil, []], do: :ok
+  @doc """
+  Marks each of `languages`' canonical sidecars for `video_path` as Cinder-managed in the
+  manifest (origin `"release_sidecar"`), recomputing the moviehash fresh from the file. Used both
+  on the normal import path (via `fetch_now/4`) and by `Cinder.Library.Backfill` to repair a row
+  whose sidecars were never registered (issue #128).
+  """
+  @spec mark_release_sidecars(String.t(), [String.t()] | nil) :: :ok
+  def mark_release_sidecars(_video_path, languages) when languages in [nil, []], do: :ok
 
-  defp mark_release_sidecars(video_path, languages) do
+  def mark_release_sidecars(video_path, languages) do
     moviehash = current_moviehash(video_path)
 
     Enum.each(Enum.uniq(languages), &mark_release_sidecar(video_path, moviehash, &1))

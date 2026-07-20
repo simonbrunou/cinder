@@ -257,9 +257,11 @@ defmodule Cinder.Library do
 
   # Same inode: the file is already in place (idempotent). Normally keep the recorded quality, but a
   # forced replace (e.g. manual re-import after a crash) must record the NEW quality. `placed?` is
-  # false either way — no fresh bytes landed, so sidecars are not re-linked.
-  defp do_resolve(_source, _dest, true, _upgrade, movie, new_q, replace?, _root),
-    do: {:ok, if(replace?, do: new_q, else: existing_quality(movie, new_q)), false}
+  # false either way — no fresh bytes landed, so maybe_link_sidecars never re-scans; a fresh
+  # (never-imported) record adopting an already-present file gets its sidecars scanned in
+  # existing_quality/3 instead (issue #128).
+  defp do_resolve(_source, dest, true, _upgrade, movie, new_q, replace?, _root),
+    do: {:ok, if(replace?, do: new_q, else: existing_quality(movie, new_q, dest)), false}
 
   defp do_resolve(source, dest, false, true, _movie, new_q, _replace?, root) do
     with :ok <- replace(source, dest, root), do: {:ok, new_q, true}
@@ -285,7 +287,7 @@ defmodule Cinder.Library do
         stage_new(source, dest, root, new_q)
 
       {:ok, %{inode: ^si, major_device: ^sdev}} ->
-        quality = existing_quality_for_stage(record, new_q, replace?)
+        quality = existing_quality_for_stage(record, new_q, replace?, dest)
         stage_noop(dest, root, quality)
 
       {:ok, stat} ->
@@ -305,8 +307,10 @@ defmodule Cinder.Library do
     end
   end
 
-  defp existing_quality_for_stage(_record, new_q, true), do: new_q
-  defp existing_quality_for_stage(record, new_q, false), do: existing_quality(record, new_q)
+  defp existing_quality_for_stage(_record, new_q, true, _dest), do: new_q
+
+  defp existing_quality_for_stage(record, new_q, false, dest),
+    do: existing_quality(record, new_q, dest)
 
   defp stage_new(source, dest, root, quality),
     do: prepare_durable_stage(source, dest, root, nil, nil, quality)
@@ -842,8 +846,18 @@ defmodule Cinder.Library do
 
   defp run_after_commit(_rollback, _dest, _quality), do: :ok
 
-  defp existing_quality(record, new_q) do
-    if nil_q?(record), do: new_q, else: old_quality(record)
+  # A never-before-imported record (nil_q?) whose computed dest already holds a file we're not
+  # overwriting is the delete-and-re-add case (issue #128): the pre-existing sidecars at dest are
+  # real, so scan them the same way a fresh placement's maybe_link_sidecars/5 would, instead of
+  # defaulting new_q's sidecar_subtitles to "[]" just because nothing was freshly linked. A record
+  # that's already been imported before keeps its stored quality untouched.
+  defp existing_quality(record, new_q, dest) do
+    if nil_q?(record), do: adopt_quality(new_q, dest), else: old_quality(record)
+  end
+
+  defp adopt_quality(new_q, dest) do
+    languages = dest |> Sidecars.files() |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
+    Map.put(new_q, :sidecar_subtitles, languages)
   end
 
   # Quality maps shared by movie + episode import (both carry the imported_* fields). Reads the
@@ -925,7 +939,7 @@ defmodule Cinder.Library do
   end
 
   defp keep(dest, movie, new_q) do
-    old_q = existing_quality(movie, new_q)
+    old_q = existing_quality(movie, new_q, dest)
 
     Logger.warning(
       "kept existing #{inspect(old_q.resolution)} file at #{dest}; new release not an upgrade"
