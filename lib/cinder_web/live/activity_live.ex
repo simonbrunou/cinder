@@ -38,6 +38,7 @@ defmodule CinderWeb.ActivityLive do
        movies: Enum.filter(Catalog.list_movies(), &in_pipeline?/1),
        grabs: Catalog.list_grabs(),
        held_series: Catalog.list_anime_held_series(),
+       jobs: Cinder.Jobs.statuses(),
        confirming: nil
      )}
   end
@@ -156,10 +157,44 @@ defmodule CinderWeb.ActivityLive do
 
   defp series_title(%{episodes: [ep | _]}), do: ep.season.series.title
   defp series_title(_), do: gettext("Unknown series")
-  defp grab_state(%{mapping_status: :needs_mapping}), do: :needs_mapping
-  defp grab_state(%{mapping_status: :verification_blocked}), do: :verification_blocked
-  defp grab_state(%{content_path: nil}), do: :downloading
-  defp grab_state(_), do: :downloaded
+
+  # A plain-English line under an in-flight/parked movie card: what phase it's in (with the search
+  # attempt count) or why it's stuck and what to do. Complements the badge, which names the state.
+  defp pipeline_hint(%{status: :searching, search_attempts: n}),
+    do: gettext("Searching indexers (attempt %{n})", n: n + 1)
+
+  defp pipeline_hint(%{status: :no_match}),
+    do: gettext("No release matched your size/quality rules yet. Open it to retry or adjust.")
+
+  defp pipeline_hint(%{status: :search_failed}),
+    do: gettext("The indexer couldn't be reached after repeated tries. Open it to retry.")
+
+  defp pipeline_hint(%{status: :import_failed}),
+    do: gettext("The download finished but couldn't be imported. Open it to retry.")
+
+  defp pipeline_hint(_movie), do: nil
+
+  # Human label for a background sweep module (Cinder.Jobs).
+  defp job_label(Cinder.Catalog.Refresher), do: gettext("Series metadata refresh")
+  defp job_label(Cinder.Subtitles.Sweeper), do: gettext("Subtitle backfill")
+  defp job_label(module), do: module |> Module.split() |> List.last()
+
+  # Coarse relative times for the slow sweeps (they run hours apart — minute precision is plenty).
+  defp last_run(nil), do: gettext("not yet")
+  defp last_run(at), do: gettext("%{ago} ago", ago: coarse(DateTime.diff(DateTime.utc_now(), at)))
+
+  defp next_run(nil, _interval), do: gettext("on schedule")
+
+  defp next_run(at, interval) do
+    case DateTime.diff(DateTime.add(at, interval, :millisecond), DateTime.utc_now()) do
+      secs when secs <= 0 -> gettext("due now")
+      secs -> gettext("in %{time}", time: coarse(secs))
+    end
+  end
+
+  defp coarse(secs) when secs < 3600, do: gettext("%{n}m", n: max(div(secs, 60), 1))
+  defp coarse(secs) when secs < 86_400, do: gettext("%{n}h", n: div(secs, 3600))
+  defp coarse(secs), do: gettext("%{n}d", n: div(secs, 86_400))
 
   # Plain-English hold reason: which safety check failed, plus the offending file names or
   # episode ids — reused straight off the persisted `mapping_issue` (no separate display model).
@@ -256,6 +291,13 @@ defmodule CinderWeb.ActivityLive do
               class="w-full text-sm text-base-content/70"
             >
               {anime_hold_reason(m.anime_hold_reason)}
+            </p>
+            <p
+              :if={movie_badge_status(m) != :anime_hold and pipeline_hint(m)}
+              id={"movie-#{m.id}-hint"}
+              class="w-full text-sm text-base-content/70"
+            >
+              {pipeline_hint(m)}
             </p>
           </li>
         </ul>
@@ -401,6 +443,32 @@ defmodule CinderWeb.ActivityLive do
                   else: gettext("Delete this download? Its episodes are unlinked.")}
               </:caveat>
             </.confirm_action>
+          </li>
+        </ul>
+      </section>
+
+      <section class="mt-10">
+        <h2 class="pb-3 text-lg font-semibold">{gettext("Background sweeps")}</h2>
+        <p class="pb-3 text-sm text-base-content/70">
+          {gettext(
+            "Periodic maintenance that runs on its own: refreshing series metadata and backfilling subtitles."
+          )}
+        </p>
+        <ul id="activity-jobs" class="space-y-2">
+          <li
+            :for={j <- @jobs}
+            id={"job-#{j.module |> Module.split() |> List.last()}"}
+            class="card bg-base-200 p-3 flex flex-row flex-wrap items-center gap-x-4 gap-y-1"
+          >
+            <span class="w-full font-medium sm:w-auto sm:min-w-0 sm:flex-1">
+              {job_label(j.module)}
+            </span>
+            <span class="text-sm text-base-content/70">
+              {gettext("Last run: %{when}", when: last_run(j.last_run_at))}
+            </span>
+            <span class="text-sm text-base-content/70">
+              {gettext("Next: %{when}", when: next_run(j.last_run_at, j.interval))}
+            </span>
           </li>
         </ul>
       </section>

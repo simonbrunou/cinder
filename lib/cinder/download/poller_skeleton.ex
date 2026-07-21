@@ -70,6 +70,19 @@ defmodule Cinder.Download.PollerSkeleton do
           @doc "Runs one pass synchronously (tests). The scheduled timer path is asynchronous."
           def poll(server \\ __MODULE__), do: GenServer.call(server, :poll, :infinity)
 
+          @doc """
+          Non-blocking last-run + schedule snapshot for the activity view. Reads
+          `:persistent_term` (never the busy worker process), so it returns instantly even mid-
+          sweep. `last_run_at` is `nil` until the first pass completes.
+          """
+          def status do
+            %{
+              module: __MODULE__,
+              last_run_at: :persistent_term.get({__MODULE__, :last_run}, nil),
+              interval: config_interval()
+            }
+          end
+
           @impl true
           def init(opts) do
             interval = Keyword.get(opts, :interval, config_interval())
@@ -78,15 +91,22 @@ defmodule Cinder.Download.PollerSkeleton do
 
           @impl true
           def handle_info(:poll, state) do
-            do_poll()
+            run()
             schedule(state.interval)
             {:noreply, state}
           end
 
           @impl true
           def handle_call(:poll, _from, state) do
-            do_poll()
+            run()
             {:reply, :ok, state}
+          end
+
+          # Stamp completion so `status/0` can show "last run" without calling the busy process.
+          defp run do
+            result = do_poll()
+            :persistent_term.put({__MODULE__, :last_run}, DateTime.utc_now())
+            result
           end
         end
       end

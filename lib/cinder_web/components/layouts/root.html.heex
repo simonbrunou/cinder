@@ -71,5 +71,10 @@
   </head>
   <body>
     {@inner_content}
+    <%!-- Ambient pipeline beacon (pill + toasts), admin-only. Sticky so it survives live nav;
+          its own process owns its subscriptions, independent of the page LiveViews. --%>
+    <%= if match?(%{user: %{role: :admin}}, assigns[:current_scope]) do %>
+      {live_render(@conn, CinderWeb.ActivityBeaconLive, id: "activity-beacon", sticky: true)}
+    <% end %>
   </body>
 </html>

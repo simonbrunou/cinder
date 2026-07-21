@@ -296,6 +296,14 @@ defmodule CinderWeb.UserAuth do
   # Assigns route metadata on initial mount and every live navigation so layouts can
   # highlight the active nav item and render a useful document title. Read-only: attaches
   # a `:handle_params` hook and never halts, so it does not affect authorization.
+  #
+  # A nested LiveView (nil `router`) — e.g. the sticky activity beacon rendered in the root
+  # layout — inherits this live_session's on_mount but has no router `handle_params` lifecycle
+  # to attach to (`attach_hook/:handle_params` raises on a router-less socket), so route
+  # metadata does not apply there. Skip it.
+  def on_mount(:current_path, _params, _session, %{router: nil} = socket),
+    do: {:cont, socket}
+
   def on_mount(:current_path, _params, _session, socket) do
     socket =
       Phoenix.LiveView.attach_hook(socket, :current_path, :handle_params, fn _params,
