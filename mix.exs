@@ -87,6 +87,7 @@ defmodule Cinder.MixProject do
       {:bandit, "~> 1.5"},
       {:cloak, "~> 1.1"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
+      {:mix_audit, "~> 2.1", only: [:dev, :test], runtime: false},
       {:mox, "~> 1.2", only: :test}
     ]
   end

@@ -54,7 +54,12 @@ jobs:
           elixir-version: "1.20"
 
       - run: mix deps.get
+      # hex.audit = retired packages; deps.audit (mix_audit) = CVEs vs the Elixir
+      # Security Advisory DB. Disjoint checks, keep both. deps.audit fails open if
+      # it can't reach github.com to sync advisories — fine on hosted runners.
       - run: mix hex.audit
+      - run: mix deps.compile mix_audit
+      - run: mix deps.audit
 
   container:
     runs-on: ubuntu-latest
