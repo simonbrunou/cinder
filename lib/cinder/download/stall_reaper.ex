@@ -2,7 +2,9 @@ defmodule Cinder.Download.StallReaper do
   @moduledoc """
   Detects a download that makes no forward progress for a configurable window (a dead torrent
   swarm, `metaDL` with 0 seeders, a frozen job) so the pollers can reap it — remove it from the
-  client, blocklist the release, and re-search a different one. **Opt-in, off by default.**
+  client, blocklist the release, and re-search a different one. **On by default** — the shipped
+  `config/config.exs` sets `enabled: true`; set `enabled: false` to disable. (`enabled?/0`'s own
+  fallback is `false`, so an install with no config block at all stays off — fail-safe.)
 
   Pure: no DB, no HTTP. The stall clock is *derived from the row's `updated_at`*, not a dedicated
   column. `Catalog.update_movie_download_metrics`/`update_grab_download_metrics` are change-gated —

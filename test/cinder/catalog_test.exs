@@ -595,6 +595,25 @@ defmodule Cinder.CatalogTest do
       assert Catalog.blocked_release_titles(movie) == ["Wrong.Lang.1080p"]
     end
 
+    test "retry_movie does not clear the :stalled blocklist when the guarded transition misses" do
+      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 8300, title: "M"})
+      {:ok, parked} = Catalog.transition(movie, %{status: :no_match})
+
+      Repo.insert!(%BlockedRelease{
+        movie_id: movie.id,
+        release_title: "Stalled.One.1080p",
+        reason: "stalled"
+      })
+
+      # The movie re-enters the pipeline concurrently (now :downloading in the DB)…
+      {:ok, _} = Catalog.transition(parked, %{status: :downloading, download_id: "h"})
+
+      # …so a retry on the stale :no_match snapshot misses and must NOT clear the blocklist
+      # (the clear runs only after the guarded transition commits).
+      assert {:error, :stale_status} = Catalog.retry_movie(parked)
+      assert Catalog.blocked_release_titles(movie) == ["Stalled.One.1080p"]
+    end
+
     test "reap_stalled_movie refuses a movie that is not :downloading" do
       assert {:error, :not_reapable} =
                Catalog.reap_stalled_movie(movie_fixture(%{status: :available}))

@@ -10,11 +10,17 @@ above. No material disagreement remains.
 
 **Issue:** #147. **Date:** 2026-07-21. **Size:** M.
 
-Opt-in, off by default. Detect a download that makes no forward progress for a
-configurable window (dead torrent swarm, `metaDL` with 0 seeders, frozen job),
-remove it from the client (with data), blocklist that release **recoverably**, and
-reset the item so the next tick re-searches and picks a *different* release
-(torrent **or** usenet).
+Configurable (a single `enabled` flag). Detect a download that makes no forward
+progress for a configurable window (dead torrent swarm, `metaDL` with 0 seeders,
+frozen job), remove it from the client (with data), blocklist that release
+**recoverably**, and reset the item so the next tick re-searches and picks a
+*different* release (torrent **or** usenet).
+
+> **Shipped default changed post-implementation:** the design below was written
+> "opt-in, off by default," and the code still defaults `enabled?/0` to `false`
+> when unconfigured. On an operator decision the shipped `config/config.exs` sets
+> `enabled: true`, so it is **on by default** in dev/prod; `config/test.exs`
+> neutralizes it for the suite. Set `enabled: false` to disable.
 
 Scope decided (issue Q&A): **both pollers** (movie `Poller` + TV `TvPoller`);
 stalled **`:upgrading`** movies are reaped via revert (keep the live file);
@@ -223,11 +229,14 @@ so it converges rather than thrashes):
   `search_attempts >= max_search_attempts` (tv_poller.ex:270) — so the bump does bound
   the episode loop, as well as feeding backoff.
 
-## Configuration (opt-in)
+## Configuration
+
+Shipped default (`config/config.exs`) — on by default per the operator decision above;
+`config/test.exs` overrides `enabled: false` for the suite:
 
 ```elixir
 config :cinder, Cinder.Download.StallReaper,
-  enabled: false,
+  enabled: true,
   stall_timeout: :timer.hours(2),
   no_seeders_timeout: :timer.minutes(30)
 ```

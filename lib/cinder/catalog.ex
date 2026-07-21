@@ -848,34 +848,38 @@ defmodule Cinder.Catalog do
   end
 
   def retry_movie(%Movie{status: status} = movie) when status in @retryable do
-    # A manual Retry clears only the movie's `:stalled` blocklist rows: a stall is a timeout, not a
-    # proven-bad release, so the operator gets to give it one fresh chance (still dead ⇒ the reaper
-    # re-reaps and re-blocks). The deterministic rows (:wrong_audio_language/:bad_torrent/…) still
-    # PERSIST — clearing those would reintroduce the re-grab loop.
-    clear_stalled_blocklist(movie: movie.id)
+    # Clear the stale download fields: a re-queued movie has no download yet, so leaving an old
+    # download_id/protocol/file_path/content_path/release_title on a :requested row is misleading
+    # and a latent misroute if anything reads them before re-download.
+    # expect: — the caller's struct is a client-rendered snapshot; if the movie already re-entered
+    # the pipeline (re-searched, downloading), the retry must miss rather than yank an in-flight
+    # movie back and orphan its download.
+    result =
+      transition(
+        movie,
+        %{
+          status: :requested,
+          search_attempts: 0,
+          import_attempts: 0,
+          download_id: nil,
+          download_protocol: nil,
+          release_title: nil,
+          release_policy_snapshot: nil,
+          file_path: nil,
+          content_path: nil
+        },
+        expect: movie.status
+      )
 
-    # Clear the stale download fields too: a re-queued movie has no download yet,
-    # so leaving an old download_id/protocol/file_path/content_path/release_title on a
-    # :requested row is misleading and a latent misroute if anything reads them before
-    # re-download.
-    # expect: — the caller's struct is a client-rendered snapshot; if the movie
-    # already re-entered the pipeline (re-searched, downloading), the retry must
-    # miss rather than yank an in-flight movie back and orphan its download.
-    transition(
-      movie,
-      %{
-        status: :requested,
-        search_attempts: 0,
-        import_attempts: 0,
-        download_id: nil,
-        download_protocol: nil,
-        release_title: nil,
-        release_policy_snapshot: nil,
-        file_path: nil,
-        content_path: nil
-      },
-      expect: movie.status
-    )
+    # Only after the re-queue commits: clear this movie's `:stalled` blocklist rows so the operator
+    # gets one fresh chance at a stall-reaped release (a stall is a timeout, not a proven-bad
+    # release; still dead ⇒ the reaper re-reaps and re-blocks). The deterministic rows
+    # (:wrong_audio_language/:bad_torrent/…) PERSIST — clearing those would reintroduce the re-grab
+    # loop. Post-commit so a `:stale_status` miss (the movie already left the parked state) leaves
+    # no side effect, matching `reap_stalled_movie/1` and `park/3`.
+    with {:ok, _requested} <- result, do: clear_stalled_blocklist(movie: movie.id)
+
+    result
   end
 
   def retry_movie(%Movie{}), do: {:error, :not_retryable}
