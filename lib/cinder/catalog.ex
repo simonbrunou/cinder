@@ -30,6 +30,7 @@ defmodule Cinder.Catalog do
   alias Cinder.Library.ImportStage
   alias Cinder.Notifier
   alias Cinder.Repo
+  alias Cinder.Requests
   alias Cinder.Util
 
   @topic "movies"
@@ -1304,6 +1305,11 @@ defmodule Cinder.Catalog do
     delete_files? = Keyword.get(opts, :delete_files, false)
 
     prepare = fn fresh ->
+      # Reap this title's approved request(s) in the same transaction — a movie gone but its
+      # :approved request left behind strands the requester on a stale "Approved" badge with the
+      # Add button suppressed. Pending/denied are deliberately left (see reap_approved_for_target/2).
+      Requests.reap_approved_for_target(["movie"], fresh.tmdb_id)
+
       include_remote? =
         cancellable?(fresh) or fresh.status == :upgrading or
           fresh.verification_hold_origin in [:download, :upgrade]
@@ -2726,6 +2732,10 @@ defmodule Cinder.Catalog do
   end
 
   defp prepare_series_cleanup(series) do
+    # Reap this title's approved series/season/episode requests in the same transaction (all carry
+    # the series' tmdb_id in target_id) — same rationale as the movie path in delete_movie/3.
+    Requests.reap_approved_for_target(["series", "season", "episode"], series.tmdb_id)
+
     episode_ids = episode_ids_for_series(series.id)
     grabs = grabs_for_series(series.id)
     specs = Enum.map(grabs, &grab_cleanup_spec(&1, episode_ids_for_grab(&1.id)))

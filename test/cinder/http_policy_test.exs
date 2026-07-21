@@ -377,9 +377,14 @@ defmodule Cinder.HTTPPolicyTest do
     test "isolates an unexpected request crash from the caller" do
       adapter = fn _request -> raise "adapter crashed" end
 
+      # Generous deadline on purpose: this asserts the crash PROPAGATES (isolation), not timeout
+      # behaviour, so the near-instant crash must win the race against the deadline even under a
+      # loaded suite. A tight bound (was 200ms) let the deadline occasionally fire first, returning
+      # {:error, :request_timeout} — the intermittent suite failure. Timeout timing is covered by the
+      # :request_timeout tests above, which correctly keep tight bounds.
       capture_log(fn ->
         assert {:error, {%RuntimeError{message: "adapter crashed"}, _stacktrace}} =
-                 HTTPPolicy.bounded_request(Req.new(adapter: adapter), 64, 200)
+                 HTTPPolicy.bounded_request(Req.new(adapter: adapter), 64, 5_000)
       end)
     end
   end
