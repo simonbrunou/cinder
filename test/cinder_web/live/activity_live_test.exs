@@ -76,6 +76,35 @@ defmodule CinderWeb.ActivityLiveTest do
     refute has_element?(lv, "#movie-#{movie.id}")
   end
 
+  test "a searching movie shows the attempt-count hint", %{conn: conn} do
+    movie =
+      %{title: "Dune", status: :searching}
+      |> movie_fixture()
+      |> Ecto.Changeset.change(search_attempts: 2)
+      |> Repo.update!()
+
+    {:ok, lv, _html} = live(conn, ~p"/activity")
+    assert has_element?(lv, "#movie-#{movie.id}-hint", "Searching indexers (attempt 3)")
+  end
+
+  test "a parked movie explains why it is stuck", %{conn: conn} do
+    movie = movie_fixture(%{title: "Solaris", status: :no_match})
+
+    {:ok, lv, _html} = live(conn, ~p"/activity")
+    assert has_element?(lv, "#movie-#{movie.id}-hint", "No release matched")
+  end
+
+  test "lists the background sweeps with their schedule", %{conn: conn} do
+    {:ok, lv, html} = live(conn, ~p"/activity")
+
+    assert html =~ "Background sweeps"
+    assert has_element?(lv, "#job-Refresher", "Series metadata refresh")
+    assert has_element?(lv, "#job-Sweeper", "Subtitle backfill")
+    # Each sweep shows a last-run/next-run line (its value depends on global run state).
+    assert has_element?(lv, "#job-Refresher", "Last run:")
+    assert has_element?(lv, "#job-Sweeper", "Next:")
+  end
+
   test "terminal-done movies are absent from the pipeline at mount", %{conn: conn} do
     available = movie_fixture(%{title: "Arrival", status: :available})
     pending = movie_fixture(%{title: "Tenet", status: :requested})

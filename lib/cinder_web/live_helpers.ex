@@ -50,6 +50,16 @@ defmodule CinderWeb.LiveHelpers do
   def movie_badge_status(movie), do: movie.status
 
   @doc """
+  The lifecycle atom for a `<.status_badge kind={:grab}>` from a grab row: a mapping or
+  verification hold when flagged, else `:downloading` (no delivered content yet) or
+  `:downloaded` (content in hand, waiting to import). Shared by `/activity` and the beacon.
+  """
+  def grab_state(%{mapping_status: :needs_mapping}), do: :needs_mapping
+  def grab_state(%{mapping_status: :verification_blocked}), do: :verification_blocked
+  def grab_state(%{content_path: nil}), do: :downloading
+  def grab_state(_), do: :downloaded
+
+  @doc """
   Whether a failed `Requests.create_request/2` changeset is the benign duplicate-pending
   case (the `requests_pending_unique` index; Ecto tags it `constraint: :unique`). Any
   other changeset failure is a real error, not a reassuring "already requested" toast.

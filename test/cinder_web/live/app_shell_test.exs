@@ -21,6 +21,11 @@ defmodule CinderWeb.AppShellTest do
       assert html =~ ~s(aria-current="page")
     end
 
+    test "mounts the sticky activity beacon", %{conn: conn} do
+      {:ok, _lv, html} = live(conn, ~p"/")
+      assert html =~ ~s(id="activity-beacon-toasts")
+    end
+
     test "ships no Phoenix-generator chrome and a Cinder title", %{conn: conn} do
       {:ok, _lv, html} = live(conn, ~p"/")
       refute html =~ "phoenixframework.org"
@@ -57,6 +62,11 @@ defmodule CinderWeb.AppShellTest do
       refute html =~ "Library"
       refute html =~ "Activity"
       refute html =~ "Settings"
+    end
+
+    test "non-admins do not get the admin activity beacon", %{conn: conn} do
+      {:ok, _lv, html} = live(conn, ~p"/")
+      refute html =~ ~s(id="activity-beacon-toasts")
     end
   end
 
