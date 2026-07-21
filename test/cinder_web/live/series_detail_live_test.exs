@@ -1041,6 +1041,8 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     {:ok, _lv, html} = live_series(conn, series)
     assert html =~ "Available"
     refute html =~ "Wanted"
+    # Season header carries an available count (1 of 2 episodes filed) alongside monitored.
+    assert html =~ "1/2 available"
   end
 
   test "shows subtitle badges on a filed episode with empty/untagged audio", %{conn: conn} do

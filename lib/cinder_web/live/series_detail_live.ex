@@ -1222,6 +1222,9 @@ defmodule CinderWeb.SeriesDetailLive do
               {gettext("%{n}/%{m} monitored",
                 n: monitored_count(season),
                 m: length(season.episodes)
+              )} · {gettext("%{n}/%{m} available",
+                n: available_count(season),
+                m: length(season.episodes)
               )}
             </span>
           </span>
@@ -1453,6 +1456,7 @@ defmodule CinderWeb.SeriesDetailLive do
   end
 
   defp monitored_count(season), do: Enum.count(season.episodes, & &1.monitored)
+  defp available_count(season), do: Enum.count(season.episodes, & &1.file_path)
 
   # "1080p · 2.1 GB" for a downloaded episode — drops whichever piece TMDB/import didn't capture.
   defp episode_file_info(ep) do
