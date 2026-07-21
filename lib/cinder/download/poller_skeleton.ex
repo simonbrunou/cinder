@@ -20,6 +20,10 @@ defmodule Cinder.Download.PollerSkeleton do
     `stateful: false`: a no-arg `do_poll/0` pass, no backoff, and an `:infinity`
     `poll/1` call timeout — a pass can issue many external calls (1 + N TMDB fetches,
     or a whole library of subtitle lookups) and exceed the default 5s call timeout.
+    This flavour also stamps its completion time into `:persistent_term` after each pass,
+    exposed non-blocking via `status/0` for the `/activity` sweeps view — the one piece of
+    state here that is not DB-derived (VM-global, so it survives a crash but is *not*
+    per-test isolated; a test that runs `poll/1` should erase `{module, :last_run}`).
 
         @default_interval :timer.hours(12)
         use Cinder.Download.PollerSkeleton, log_prefix: "refresher", stateful: false
