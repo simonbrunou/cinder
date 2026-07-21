@@ -438,6 +438,9 @@ defmodule Cinder.Download.Client.QBittorrent do
       progress: progress,
       speed: metric(torrent["dlspeed"]),
       eta: eta(torrent["eta"]),
+      # Connected seeds (`num_seeds`), not the tracker-scrape swarm total (`num_complete`, which is
+      # -1 until a scrape lands and so unusable for a metaDL torrent). 0 = a dead/metaDL swarm.
+      seeders: metric(torrent["num_seeds"]),
       content_path: torrent["content_path"]
     }
   end

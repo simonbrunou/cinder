@@ -143,6 +143,10 @@ config :cinder, Cinder.Accounts.PlexAuth.HTTP,
 # Poller tests start their own supervised instance.
 config :cinder, start_poller: false
 
+# Neutralize the (now on-by-default) stall reaper for the suite: reap tests enable it explicitly
+# with 0-window thresholds; every other poller test relies on it staying off.
+config :cinder, Cinder.Download.StallReaper, enabled: false
+
 # Enable /dev routes in tests so the authorization matrix can gate them.
 config :cinder, dev_routes: true
 

@@ -22,6 +22,7 @@ defmodule Cinder.Download.Poller do
   alias Cinder.Catalog
   alias Cinder.Catalog.Movie
   alias Cinder.Download
+  alias Cinder.Download.StallReaper
   alias Cinder.Library
   alias Cinder.Notifier
 
@@ -159,6 +160,8 @@ defmodule Cinder.Download.Poller do
           download_eta: Map.get(status, :eta)
         })
 
+        maybe_reap(movie, status)
+
       {:error, _reason} ->
         Catalog.update_movie_download_metrics(movie, %{
           download_progress: nil,
@@ -170,6 +173,25 @@ defmodule Cinder.Download.Poller do
       # must not count toward the bound).
       _ ->
         :ok
+    end
+  end
+
+  # ponytail: the stall clock is DERIVED from movie.updated_at. Catalog.update_movie_download_metrics
+  # is change-gated, so a stalled torrent (progress frozen, speed a hard 0, eta the infinity sentinel
+  # → nil) writes nothing and updated_at freezes at the stall onset. `movie` is the tick-start struct,
+  # so on the stall-start tick its updated_at is still recent (no premature reap); it only fires once
+  # the frozen value ages past the threshold. Correctness is coupled to Catalog's @download_metric_fields
+  # + the qBittorrent eta-sentinel normalization (see StallReaper's moduledoc + the freeze test).
+  defp maybe_reap(movie, status) do
+    if StallReaper.enabled?() and StallReaper.reap?(movie.updated_at, status, DateTime.utc_now()) do
+      case Catalog.reap_stalled_movie(movie) do
+        {:ok, _reaped} ->
+          Logger.warning("movie #{movie.id} reaped: stalled download removed; re-searching")
+
+        # Left :downloading mid-tick (user cancel/complete) — skip, re-derive next tick.
+        {:error, _reason} ->
+          :ok
+      end
     end
   end
 
@@ -369,6 +391,8 @@ defmodule Cinder.Download.Poller do
           download_eta: Map.get(status, :eta)
         })
 
+        maybe_reap_upgrade(movie, status)
+
       {:error, _reason} ->
         Catalog.update_movie_download_metrics(movie, %{
           download_progress: nil,
@@ -379,6 +403,23 @@ defmodule Cinder.Download.Poller do
       # Still stalled or in transit: wait, no write, live file untouched.
       _ ->
         :ok
+    end
+  end
+
+  # A stalled upgrade is reaped WITHOUT touching the live library file: reap_stalled_upgrade removes
+  # the stuck replacement download, blocklists it (:stalled), and reverts the movie to :available.
+  # Same updated_at-derived stall clock as maybe_reap/2.
+  defp maybe_reap_upgrade(movie, status) do
+    if StallReaper.enabled?() and StallReaper.reap?(movie.updated_at, status, DateTime.utc_now()) do
+      case Catalog.reap_stalled_upgrade(movie) do
+        {:ok, _reverted} ->
+          Logger.warning(
+            "movie #{movie.id} upgrade reaped: stalled replacement removed; reverted"
+          )
+
+        {:error, _reason} ->
+          :ok
+      end
     end
   end
 
