@@ -890,14 +890,18 @@ defmodule CinderWeb.SeriesDetailLive do
   defp episode_searchable?(episode, season, profile),
     do: Catalog.episode_searchable?(%{episode | season: season}, profile)
 
-  # The sweep hit its attempt cap and skips this episode — without a badge the row reads
-  # "still trying" forever. The Search button next to it zeroes the counter and re-queues.
-  # Delegates the park predicate to Catalog.episode_state/2 (the single derivation) so this
-  # badge can't drift from the calendar's; episode_searchable? adds the monitored/specials
-  # legs the state fn doesn't carry.
-  defp search_exhausted?(episode, season, profile) do
-    episode_searchable?(episode, season, profile) and
-      Catalog.episode_state(episode) == :search_parked
+  # The per-episode state badge, or nil for no badge (same derivation + component as /calendar).
+  # A file or active grab is real disk state, so :available/:downloading always show. The
+  # sweep-facing states only make sense for an episode the sweep acts on — an unmonitored
+  # back-catalog episode (e.g. a :future-strategy series) isn't "Wanted", so it gets no badge.
+  # :upcoming keys off `monitored` (unaired episodes are never episode_searchable?); :wanted and
+  # :search_parked reuse episode_searchable? so this can't drift from the calendar/sweep.
+  defp episode_badge_status(episode, season, profile) do
+    case Catalog.episode_state(episode) do
+      state when state in [:available, :downloading] -> state
+      :upcoming -> if episode.monitored, do: :upcoming
+      state -> if episode_searchable?(episode, season, profile), do: state
+    end
   end
 
   @impl true
@@ -1401,9 +1405,9 @@ defmodule CinderWeb.SeriesDetailLive do
                   {gettext("Delete file")}
                 </.button>
                 <.status_badge
-                  :if={search_exhausted?(ep, season, @profile_summary)}
+                  :if={episode_badge_status(ep, season, @profile_summary)}
                   kind={:episode}
-                  status={:search_parked}
+                  status={episode_badge_status(ep, season, @profile_summary)}
                 />
                 <.button
                   :if={episode_searchable?(ep, season, @profile_summary)}
