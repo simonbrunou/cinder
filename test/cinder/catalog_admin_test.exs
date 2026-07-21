@@ -8,6 +8,7 @@ defmodule Cinder.CatalogAdminTest do
 
   alias Cinder.Catalog
   alias Cinder.Catalog.{Movie, Series}
+  alias Cinder.Requests.Request
 
   import Cinder.CatalogFixtures
 
@@ -747,6 +748,96 @@ defmodule Cinder.CatalogAdminTest do
       })
 
       series
+    end
+  end
+
+  describe "delete reaps orphaned :approved requests" do
+    # A movie/series delete cascades every FK child, but `requests` is a polymorphic soft link
+    # (target_id = tmdb_id, no FK), so its :approved rows would orphan and strand the requester on
+    # a stale "Approved" badge. Catalog.delete_* reaps them in-transaction; pending/denied survive.
+    defp request!(attrs) do
+      user = attrs[:user] || Cinder.AccountsFixtures.user_fixture()
+
+      Repo.insert!(%Request{
+        user_id: user.id,
+        target_type: Map.fetch!(attrs, :target_type),
+        target_id: Map.fetch!(attrs, :target_id),
+        season_number: attrs[:season_number],
+        status: Map.get(attrs, :status, :approved),
+        title: "T"
+      })
+    end
+
+    test "delete_movie reaps the approved movie request, leaving pending, denied, and other titles" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      movie = movie_fixture()
+
+      approved = request!(%{target_type: "movie", target_id: movie.tmdb_id, status: :approved})
+      pending = request!(%{target_type: "movie", target_id: movie.tmdb_id, status: :pending})
+      denied = request!(%{target_type: "movie", target_id: movie.tmdb_id, status: :denied})
+      # A different title's approved request must not be reaped (target_id scoping).
+      other = request!(%{target_type: "movie", target_id: movie.tmdb_id + 1, status: :approved})
+
+      assert {:ok, _} = Catalog.delete_movie(movie, actor)
+
+      refute Repo.get(Request, approved.id)
+      assert Repo.get(Request, pending.id)
+      assert Repo.get(Request, denied.id)
+      assert Repo.get(Request, other.id)
+    end
+
+    test "delete_movie reaps every approved request for the title (N requesters)" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      movie = movie_fixture()
+      a = request!(%{target_type: "movie", target_id: movie.tmdb_id, status: :approved})
+      b = request!(%{target_type: "movie", target_id: movie.tmdb_id, status: :approved})
+
+      assert {:ok, _} = Catalog.delete_movie(movie, actor)
+      refute Repo.get(Request, a.id)
+      refute Repo.get(Request, b.id)
+    end
+
+    test "a pending request survives the delete and creates no :requested movie (approval gate)" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      movie = movie_fixture()
+      pending = request!(%{target_type: "movie", target_id: movie.tmdb_id, status: :pending})
+
+      assert {:ok, _} = Catalog.delete_movie(movie, actor)
+
+      # The un-adjudicated ask survives untouched...
+      assert Repo.get!(Request, pending.id).status == :pending
+      # ...and no movie exists for the title until an admin approves (the gate is intact).
+      assert Catalog.get_movie_by_tmdb_id(movie.tmdb_id) == nil
+    end
+
+    test "delete_series reaps approved series- AND season-scoped requests, leaving pending" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      series = series_fixture()
+
+      series_req =
+        request!(%{target_type: "series", target_id: series.tmdb_id, status: :approved})
+
+      season_req =
+        request!(%{
+          target_type: "season",
+          target_id: series.tmdb_id,
+          season_number: 1,
+          status: :approved
+        })
+
+      pending_season =
+        request!(%{
+          target_type: "season",
+          target_id: series.tmdb_id,
+          season_number: 2,
+          status: :pending
+        })
+
+      assert {:ok, _} = Catalog.delete_series(series, actor)
+
+      refute Repo.get(Request, series_req.id)
+      refute Repo.get(Request, season_req.id)
+      assert Repo.get(Request, pending_season.id)
     end
   end
 

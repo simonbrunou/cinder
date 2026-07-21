@@ -10,19 +10,17 @@ config :bcrypt_elixir, :log_rounds, 1
 # Run `mix help test` for more information.
 config :cinder, Cinder.Repo,
   database: Path.expand("../cinder_test.db", __DIR__),
-  # pool_size: 1 serializes Sandbox checkouts onto one connection — SQLite is a
-  # single writer, and busy_timeout can't rescue the deferred read-then-write
-  # snapshot conflicts the Sandbox wraps each test in (see repo_concurrency_test.exs).
-  # With >1 connection, concurrent async DB-writing tests race into "Database busy"
-  # intermittently; one connection makes the suite deterministic with no speed cost
-  # (the suite is I/O-light and still finishes ~1s).
+  # pool_size: 1 serializes Sandbox checkouts onto one connection — SQLite is a single writer, and
+  # busy_timeout can't rescue the deferred read-then-write snapshot conflicts the Sandbox wraps each
+  # test in (see repo_concurrency_test.exs). NOTE: `default_transaction_mode: :immediate`
+  # (config/config.exs) does NOT lift this — it governs explicit `Repo.transaction` calls, but the
+  # Sandbox's own per-test outer transaction is deferred, so a bare read-then-write in a test still
+  # snapshot-conflicts across connections. Measured: pool_size: 5 reintroduces ~26 "database busy"
+  # failures/run. One connection makes the suite deterministic with no real speed cost (async tests
+  # can't truly parallelize on one connection anyway).
   pool_size: 1,
-  # With one connection, async tests queue for it. The default queue_target (50ms)
-  # drops a checkout that waits longer than that under load — surfacing as an
-  # intermittent "connection not available and request was dropped from queue"
-  # on whatever test happened to contend (often unrelated, e.g. ErrorHTMLTest).
-  # No test holds the connection for seconds, so a generous target waits-not-drops
-  # with no happy-path cost.
+  # With one connection, async tests queue for it. A generous queue_target/queue_interval makes a
+  # checkout WAIT rather than drop at the 50ms default.
   queue_target: 5_000,
   queue_interval: 5_000,
   # journal_mode/busy_timeout/foreign_keys/default_transaction_mode are pinned in config/config.exs.

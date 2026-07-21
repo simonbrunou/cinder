@@ -298,6 +298,36 @@ defmodule Cinder.Requests do
     |> tap_ok(&broadcast({:request_deleted, &1}))
   end
 
+  @doc """
+  Deletes the `:approved` request row(s) for a catalog target being deleted, joining the
+  CALLER's transaction (invoked from `Catalog.delete_movie/3` and `delete_series/3` inside their
+  `delete_with_audit` transaction, so a crash can't half-reap). Returns the count deleted.
+
+  Reaps only `:approved` — the one status that records "a media row exists/existed for this",
+  which is exactly what goes stale when the media is deleted (a stranded requester behind an
+  "Approved" badge with the Add button suppressed). `:pending` (an un-adjudicated ask the deletion
+  does not answer — an admin can still approve it, re-creating the title) and `:denied` (a standing
+  decision, already re-requestable) are deliberately left untouched.
+
+  `target_types` scopes the polymorphic match: `["movie"]`, or `["series", "season", "episode"]`
+  for a series — season/episode requests carry the SERIES' tmdb_id in `target_id` (disambiguated
+  by `season_number`), so the whole tree is reaped. `tmdb_id` is the `target_id` to match.
+
+  No broadcast: the delete already announces `{:movie_deleted, id}`/`{:series_deleted, id}`; an open
+  `/requests` or `/my-requests` view refreshes on its next load. (ponytail: no live push wired for a
+  rare admin action; add one if a stale open queue ever bites.)
+  """
+  def reap_approved_for_target(target_types, tmdb_id) do
+    {count, _} =
+      Repo.delete_all(
+        from r in Request,
+          where:
+            r.target_type in ^target_types and r.target_id == ^tmdb_id and r.status == :approved
+      )
+
+    count
+  end
+
   # NOT transaction-wrapped: find_or_create_series_at_requested does TMDB I/O.
   defp create_approved(user, %{target_type: "season"} = attrs, approver_id) do
     with {:ok, _series} <-
