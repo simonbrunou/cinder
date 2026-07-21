@@ -87,12 +87,12 @@ config :cinder,
 # existing LiveView suite (which never marks setup complete) isn't redirected.
 config :cinder, :enforce_setup, true
 
-# Stalled-download reaper (issue #147): when enabled, the pollers reap a torrent stuck with no
-# forward progress (dead swarm / metaDL with 0 seeders) — remove it (with data), blocklist the
-# release recoverably, and re-search a different one. Off by default; torrent-only (usenet reports
-# no speed, so it is never reaped). Timeouts in ms.
+# Stalled-download reaper (issue #147): the pollers reap a torrent stuck with no forward progress
+# (dead swarm / metaDL with 0 seeders) — remove it (with data), blocklist the release recoverably,
+# and re-search a different one. Torrent-only (usenet reports no speed, so it is never reaped).
+# Timeouts in ms. Set `enabled: false` to turn it off. The suite neutralizes this in config/test.exs.
 config :cinder, Cinder.Download.StallReaper,
-  enabled: false,
+  enabled: true,
   stall_timeout: :timer.hours(2),
   no_seeders_timeout: :timer.minutes(30)
 
