@@ -1091,6 +1091,27 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert Enum.all?(eps, & &1.monitored)
   end
 
+  # Seasons render as native <details>; their open state used to live only in the browser DOM, so
+  # any {:series_updated} reload (the refresher, a grab landing, another tab's toggle) stripped the
+  # `open` attribute and snapped expanded seasons shut. The open set is now tracked server-side.
+  test "an expanded season stays open across a series_updated reload", %{conn: conn} do
+    series = create_series(704)
+    season = first_season(series.id)
+    episode = hd(season.episodes)
+
+    {:ok, lv, _html} = live_series(conn, series)
+    refute has_element?(lv, "details#season-#{season.id}[open]")
+
+    lv |> element("details#season-#{season.id} summary") |> render_click()
+    assert has_element?(lv, "details#season-#{season.id}[open]")
+
+    # A background monitor change broadcasts {:series_updated, series.id} and triggers reload().
+    {:ok, _} = Catalog.set_episode_monitored(episode, true)
+    :sys.get_state(lv.pid)
+
+    assert has_element?(lv, "details#season-#{season.id}[open]")
+  end
+
   test "a missing series redirects to Library (/library)", %{conn: conn} do
     assert {:error, {kind, %{to: "/library"}}} = live(conn, ~p"/series/999999")
     assert kind in [:redirect, :live_redirect]

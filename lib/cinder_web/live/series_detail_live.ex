@@ -34,7 +34,8 @@ defmodule CinderWeb.SeriesDetailLive do
           mapping_grabs: Catalog.list_mapping_grabs_for_series(series.id),
           episode_groups: nil,
           numbering_panel_open?: false,
-          scene_saving_group_id: nil
+          scene_saving_group_id: nil,
+          open_seasons: MapSet.new()
         )
         |> refresh_identity(series)
 
@@ -77,6 +78,28 @@ defmodule CinderWeb.SeriesDetailLive do
       end
     else
       _ -> {:noreply, socket}
+    end
+  end
+
+  # Seasons render as native <details>, whose open state lives only in the browser DOM. Any
+  # {:series_updated} reload (the 12h refresher, a grab landing, another tab's toggle) re-patches
+  # the seasons comprehension and strips the browser-set `open`, snapping expanded seasons shut.
+  # Tracking the open set here lets the render re-assert `open` on every patch so it survives.
+  # ponytail: the native toggle flips instantly on click and this records it a beat later; a
+  # background reload landing inside that click→server window could still flicker one season. A
+  # phx-hook mirroring the DOM `toggle` event would close that gap — add it only if seen.
+  def handle_event("toggle_season_open", %{"id" => id}, socket) do
+    case Integer.parse(id) do
+      {id, ""} ->
+        open = socket.assigns.open_seasons
+
+        open =
+          if MapSet.member?(open, id), do: MapSet.delete(open, id), else: MapSet.put(open, id)
+
+        {:noreply, assign(socket, open_seasons: open)}
+
+      _ ->
+        {:noreply, socket}
     end
   end
 
@@ -1178,8 +1201,17 @@ defmodule CinderWeb.SeriesDetailLive do
         message={gettext("TMDB returned no season data for this series.")}
       />
 
-      <details :for={season <- @series.seasons} class="mb-6">
-        <summary class="cursor-pointer border-b border-base-300 pb-2">
+      <details
+        :for={season <- @series.seasons}
+        id={"season-#{season.id}"}
+        open={MapSet.member?(@open_seasons, season.id)}
+        class="mb-6"
+      >
+        <summary
+          class="cursor-pointer border-b border-base-300 pb-2"
+          phx-click="toggle_season_open"
+          phx-value-id={season.id}
+        >
           <span class="text-lg font-semibold">
             {season_label(season.season_number)}
             <span class="ml-2 text-sm font-normal text-base-content/70">
