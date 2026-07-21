@@ -1006,6 +1006,43 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert html =~ "subtitle fr"
   end
 
+  test "shows an Available badge on a filed episode, no Wanted badge on an unmonitored one",
+       %{conn: conn} do
+    series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 8210, title: "S", year: 2010})
+
+    season =
+      Repo.insert!(%Cinder.Catalog.Season{
+        series_id: series.id,
+        season_number: 1,
+        monitored: true
+      })
+
+    # Available: has a file.
+    Repo.insert!(%Cinder.Catalog.Episode{
+      season_id: season.id,
+      tmdb_episode_id: 8211,
+      episode_number: 1,
+      title: "Ep1",
+      monitored: true,
+      air_date: ~D[2000-01-01],
+      file_path: "/tmp/cinder-test-tv-library/S (2010)/Season 01/S (2010) - S01E01.mkv"
+    })
+
+    # Unmonitored, aired, missing (e.g. :future-strategy back-catalog) — must NOT read "Wanted".
+    Repo.insert!(%Cinder.Catalog.Episode{
+      season_id: season.id,
+      tmdb_episode_id: 8212,
+      episode_number: 2,
+      title: "Ep2",
+      monitored: false,
+      air_date: ~D[2000-01-08]
+    })
+
+    {:ok, _lv, html} = live_series(conn, series)
+    assert html =~ "Available"
+    refute html =~ "Wanted"
+  end
+
   test "shows subtitle badges on a filed episode with empty/untagged audio", %{conn: conn} do
     series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 8204, title: "S", year: 2010})
 
