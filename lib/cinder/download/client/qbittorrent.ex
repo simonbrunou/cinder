@@ -64,7 +64,7 @@ defmodule Cinder.Download.Client.QBittorrent do
       {:ok, %{status: 200, body: body}} ->
         # ponytail: magnet-only hash extraction; base32 btih and .torrent-URL→hash
         # (info-by-name lookup) are Phase-5 live concerns.
-        if String.trim(body) == "Fails.", do: {:error, :add_rejected}, else: {:ok, hash}
+        if add_rejected?(body), do: {:error, :add_rejected}, else: {:ok, hash}
 
       {:ok, %{status: 409}} ->
         adopt_existing(hash, opts)
@@ -73,6 +73,14 @@ defmodule Cinder.Download.Client.QBittorrent do
         error(other)
     end
   end
+
+  # qBittorrent < 5.1 answers torrents/add with a plaintext body ("Ok."/"Fails.");
+  # 5.1+ (WebAPI 2.11.4+) answers with a decoded JSON map carrying per-torrent counts.
+  # Anything else (unexpected shape) is treated as "not rejected" — the add reached
+  # qBit with a 200, and status/1 will reconcile from the returned hash.
+  defp add_rejected?(body) when is_binary(body), do: String.trim(body) == "Fails."
+  defp add_rejected?(%{"failure_count" => n}) when is_integer(n), do: n > 0
+  defp add_rejected?(_body), do: false
 
   # Fetch the .torrent, compute its infohash (so status/1 can poll it), then
   # upload the bytes to qBittorrent. decode_body: false keeps the bytes raw so
@@ -99,9 +107,7 @@ defmodule Cinder.Download.Client.QBittorrent do
   defp upload_and_confirm(bytes, hash, opts) do
     case upload_torrent(bytes, opts) do
       {:ok, %{status: 200, body: body}} ->
-        if String.trim(to_string(body)) == "Fails.",
-          do: {:error, :add_rejected},
-          else: {:ok, hash}
+        if add_rejected?(body), do: {:error, :add_rejected}, else: {:ok, hash}
 
       {:ok, %{status: 409}} ->
         adopt_existing(hash, opts)
