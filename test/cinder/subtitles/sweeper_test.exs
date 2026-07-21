@@ -14,6 +14,13 @@ defmodule Cinder.Subtitles.SweeperTest do
   setup :set_mox_from_context
   setup :verify_on_exit!
 
+  # A poll stamps last-run into process-global :persistent_term (PollerSkeleton.status/0); erase it
+  # so a recorded run can't bleed into another suite that reads Cinder.Jobs.statuses/0.
+  setup do
+    on_exit(fn -> :persistent_term.erase({Sweeper, :last_run}) end)
+    :ok
+  end
+
   setup do
     saved = Application.get_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, [])
 

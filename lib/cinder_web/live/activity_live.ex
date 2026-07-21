@@ -13,7 +13,9 @@ defmodule CinderWeb.ActivityLive do
   unsatisfiable Anime preferences (`anime_hold_reason`) show a "Needs preferences" badge with
   the reason — movies in the pipeline list, series in their own section (a held series has no
   movie row or grab to hang the badge on); no action needed here, the sweep clears the hold
-  once preferences resolve. Live via the `movies` + `series` topics.
+  once preferences resolve. Live via the `movies` + `series` topics. The "Background sweeps"
+  section is the exception — a point-in-time snapshot read once at mount (its `last_run`/`next_run`
+  values go stale until the page is reloaded), since a 12h sweep is rarely caught mid-run.
   """
   use CinderWeb, :live_view
 
