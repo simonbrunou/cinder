@@ -28,6 +28,7 @@ defmodule Cinder.Download.TvPoller do
   alias Cinder.{Acquisition, Catalog, Download, Library, Notifier, Settings}
   alias Cinder.Acquisition.AnimePreferences
   alias Cinder.Catalog.Grab
+  alias Cinder.Download.StallReaper
   alias Cinder.HTTPPolicy
 
   @default_interval 5_000
@@ -89,6 +90,8 @@ defmodule Cinder.Download.TvPoller do
           download_eta: Map.get(status, :eta)
         })
 
+        maybe_reap(grab, status)
+
       {:error, _reason} ->
         Catalog.update_grab_download_metrics(grab, %{
           download_progress: nil,
@@ -98,6 +101,24 @@ defmodule Cinder.Download.TvPoller do
 
       _ ->
         :ok
+    end
+  end
+
+  # ponytail: the stall clock is DERIVED from grab.updated_at — Catalog.update_grab_download_metrics
+  # is change-gated, so a stalled grab (progress frozen, speed a hard 0, eta sentinel → nil) writes
+  # nothing and updated_at freezes at the stall onset. Same coupling to @download_metric_fields + the
+  # eta normalization as the movie poller (see StallReaper's moduledoc).
+  defp maybe_reap(grab, status) do
+    if StallReaper.enabled?() and StallReaper.reap?(grab.updated_at, status, DateTime.utc_now()) do
+      case Catalog.reap_stalled_grab(grab) do
+        {:ok, _reaped} ->
+          Logger.warning(
+            "tv grab #{grab.id} reaped: stalled download removed; episodes re-searching"
+          )
+
+        {:error, _reason} ->
+          :ok
+      end
     end
   end
 

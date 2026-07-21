@@ -139,21 +139,25 @@ but landing on `:requested` and fixing the two ordering traps the council found:
      writes a spurious permanent row.
    - `Notifier.notify({:movie_failed, updated, :stalled})` + broadcast.
 
-## Reap action (movie, `:upgrading`) — reuse `revert_upgrade`
+## Reap action (movie, `:upgrading`) — `Catalog.reap_stalled_upgrade/1` (mirrors `abort_upgrade`)
 
-A stalled upgrade keeps its live library file. Reap = `revert_upgrade(movie, :stalled)`.
-`revert_upgrade` already runs its guarded transition (`expect: movie.status`) and
-already blocklists **before** clearing `release_title`, reading the pre-clear struct —
-so the ordering is correct as-is. But it currently hardcodes
-`block_release(movie, :upgrade_failed)` (poller.ex:550); a stall must record reason
-**`:stalled`** (so the test asserts it and — though `revert_upgrade` lands on
-`:available`, which `retry_movie` does not un-block, the stored reason stays
-semantically correct; the live file is intact so this is acceptable). So this is a
-**reason-branch**, ~3 lines, not a 1-line guard-set addition:
-`if reason == :stalled, do: block_release(movie, :stalled)`, else the existing
-`@permanent_import_errors`/`@download_failure_errors`-gated `:upgrade_failed`. No reset
-to `:requested`; the live `file_path`/`imported_*` are untouched. Nothing to clear (no
-`stalled_since` column).
+**As built, this diverges from the spec's first draft.** The draft routed the upgrade
+reap through `revert_upgrade(movie, :stalled)`. But `revert_upgrade` only reverts state
+— it does **not** fence/remove the client download, so it would strand the stuck
+replacement torrent in the client, failing the issue's "remove it from the client"
+requirement for the upgrade case. The correct primitive is `abort_upgrade/2` (the user
+"cancel upgrade" path): it reverts to `:available` keeping the live file **and** fences
+the replacement download for removal.
+
+So the upgrade reap is a new `Catalog.reap_stalled_upgrade/1` mirroring `abort_upgrade`,
+but (a) **guarded** (`expect: :upgrading`) — it is a poller writer, not a user action —
+and (b) blocklisting `:stalled`. One transaction: guarded transition to `:available`
+clearing the replacement download fields (`file_path`/`imported_*` untouched) +
+`fence_movie_cleanup` on the pre-clear struct; post-commit `cleanup_intents` (removes the
+client job + intent), `block_release(movie, :stalled)`, broadcast, and
+`Notifier.notify({:movie_upgrade_failed, reverted, :stalled})`. `revert_upgrade` is left
+unchanged (it still handles the non-stall upgrade-failure paths). No `stalled_since`
+column to clear.
 
 ## Reap action (TV grab) — new one-transaction `Catalog.reap_stalled_grab/1`
 
@@ -241,7 +245,7 @@ pollers call.
 - `reap?(updated_at, status, now)` → boolean (the predicate above)
 
 The reap *actions* stay in the pollers (they differ per item) and call new
-`Catalog.reap_stalled_movie/1`, the extended `revert_upgrade/2`, and new
+`Catalog.reap_stalled_movie/1`, `Catalog.reap_stalled_upgrade/1`, and
 `Catalog.reap_stalled_grab/1`.
 
 ## Visibility

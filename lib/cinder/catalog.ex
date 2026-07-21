@@ -848,11 +848,16 @@ defmodule Cinder.Catalog do
   end
 
   def retry_movie(%Movie{status: status} = movie) when status in @retryable do
+    # A manual Retry clears only the movie's `:stalled` blocklist rows: a stall is a timeout, not a
+    # proven-bad release, so the operator gets to give it one fresh chance (still dead ⇒ the reaper
+    # re-reaps and re-blocks). The deterministic rows (:wrong_audio_language/:bad_torrent/…) still
+    # PERSIST — clearing those would reintroduce the re-grab loop.
+    clear_stalled_blocklist(movie: movie.id)
+
     # Clear the stale download fields too: a re-queued movie has no download yet,
     # so leaving an old download_id/protocol/file_path/content_path/release_title on a
     # :requested row is misleading and a latent misroute if anything reads them before
-    # re-download. The blocklist row (keyed by movie_id) PERSISTS — clearing it would
-    # reintroduce the re-grab loop; release_title here is stale download state, not the blocklist.
+    # re-download.
     # expect: — the caller's struct is a client-rendered snapshot; if the movie
     # already re-entered the pipeline (re-searched, downloading), the retry must
     # miss rather than yank an in-flight movie back and orphan its download.
@@ -874,6 +879,86 @@ defmodule Cinder.Catalog do
   end
 
   def retry_movie(%Movie{}), do: {:error, :not_retryable}
+
+  @doc """
+  Reaps a stalled `:downloading` movie (the stall reaper): one transaction guard-resets it to
+  `:requested` (clearing the dead download fields, bumping `search_attempts` for backoff) and fences
+  the client download for removal; after commit the client job + reserved intent are torn down, the
+  release is blocklisted `:stalled` (operator-recoverable via `retry_movie/1`), and the reset is
+  announced. Returns `{:error, :stale_status}` if the movie left `:downloading` mid-tick (the poller
+  ignores it and re-derives next tick). Mirrors the guarded-write + post-commit-publish pattern of
+  `account_active_movie_retry/1`; the fence reads the **pre-clear** struct (its `download_id`).
+  """
+  def reap_stalled_movie(%Movie{status: :downloading} = movie) do
+    result =
+      Repo.transaction(fn ->
+        case guarded_movie_transition(
+               movie,
+               %{
+                 status: :requested,
+                 search_attempts: (movie.search_attempts || 0) + 1,
+                 download_id: nil,
+                 download_protocol: nil,
+                 release_title: nil,
+                 release_policy_snapshot: nil,
+                 content_path: nil
+               },
+               :downloading
+             ) do
+          {:ok, requested} -> {requested, Download.fence_movie_cleanup(movie)}
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      end)
+
+    with {:ok, {requested, intent_ids}} <- result do
+      Download.cleanup_intents(intent_ids)
+      # `movie` (pre-clear) still carries release_title; `requested` has it nil. Post-commit so a
+      # stale_status rollback never writes a spurious permanent row.
+      block_release(movie, :stalled)
+      broadcast({:movie_updated, requested})
+      Notifier.notify({:movie_failed, requested, :stalled})
+      {:ok, requested}
+    end
+  end
+
+  def reap_stalled_movie(%Movie{}), do: {:error, :not_reapable}
+
+  @doc """
+  Reaps a stalled `:upgrading` movie (the stall reaper): reverts it to `:available` keeping the live
+  library file (`file_path`/`imported_*` untouched), fences the stuck replacement download for
+  removal, and blocklists the release `:stalled`. Mirrors `abort_upgrade/2` but guarded (a
+  concurrent completion/abort makes it a `{:error, :stale_status}` no-op) and blocklisting. Removes
+  the client job — unlike a plain revert, which would strand the dead replacement torrent.
+  """
+  def reap_stalled_upgrade(%Movie{status: :upgrading} = movie) do
+    result =
+      Repo.transaction(fn ->
+        case guarded_movie_transition(
+               movie,
+               %{
+                 status: :available,
+                 download_id: nil,
+                 download_protocol: nil,
+                 release_title: nil,
+                 release_policy_snapshot: nil
+               },
+               :upgrading
+             ) do
+          {:ok, reverted} -> {reverted, Download.fence_movie_cleanup(movie)}
+          {:error, reason} -> Repo.rollback(reason)
+        end
+      end)
+
+    with {:ok, {reverted, intent_ids}} <- result do
+      Download.cleanup_intents(intent_ids)
+      block_release(movie, :stalled)
+      broadcast({:movie_updated, reverted})
+      Notifier.notify({:movie_upgrade_failed, reverted, :stalled})
+      {:ok, reverted}
+    end
+  end
+
+  def reap_stalled_upgrade(%Movie{}), do: {:error, :not_reapable}
 
   @doc "Atomically parks an unverifiable Movie release without clearing its frozen ownership."
   defdelegate hold_movie_verification(movie, origin, attempts), to: ReleaseVerification
@@ -2807,6 +2892,43 @@ defmodule Cinder.Catalog do
   def park_grab(%Grab{} = grab), do: finish_grab(grab, [])
 
   @doc """
+  Reaps a stalled downloading grab (the stall reaper): one transaction blocklists its release
+  `:stalled`, bumps every linked episode's `search_attempts` (backoff), fences the client download
+  for removal, then deletes the grab; after commit the remote job + reserved intent are torn down
+  and the series is announced. The episodes re-enter the wanted sweep and re-search a *different*
+  release next tick (the blocklist skips the dead one). Ordering matters: the block and the bump
+  both read the grab's still-linked episodes, so the `Repo.delete` (which nilifies `grab_id`) runs
+  last. Mirrors `cancel_grab/2`'s fence teardown + `finish_grab/3`'s search_attempts bump.
+  """
+  def reap_stalled_grab(%Grab{} = grab) do
+    series_id = series_id_for_grab(grab.id)
+
+    result =
+      Repo.transaction(fn ->
+        episode_ids = episode_ids_for_grab(grab.id)
+        block_grab_release(grab, :stalled)
+
+        Repo.update_all(missing_episodes_query(grab.id, []),
+          inc: [search_attempts: 1],
+          set: [updated_at: now()]
+        )
+
+        intent_ids =
+          Download.fence_episode_cleanup(episode_ids, [grab_cleanup_spec(grab, episode_ids)])
+
+        {:ok, _deleted} = Repo.delete(grab, allow_stale: true)
+        intent_ids
+      end)
+
+    with {:ok, intent_ids} <- result do
+      Download.cleanup_intents(intent_ids)
+      broadcast_series(series_id)
+      Notifier.notify({:grab_failed, grab, :stalled})
+      {:ok, grab}
+    end
+  end
+
+  @doc """
   Atomically rejects one confirmed movie release: exact-title blocklist, durable remote cleanup,
   and guarded requeue. Upgrade rejection keeps the live library file and imported quality.
   """
@@ -2833,6 +2955,26 @@ defmodule Cinder.Catalog do
       insert_blocked_release(fn ->
         %{release_title: title, reason: to_string(reason), movie_id: movie_id}
       end)
+
+  @doc """
+  Deletes the `:stalled`-reason blocklist rows for a movie or series so a manual re-search can give
+  the reaped release a fresh chance. Scoped to `[movie: id]` or `[series: id]`; only `"stalled"`
+  rows are removed, so deterministic blocks (wrong-language, bad-torrent, …) still persist. A nil id
+  is a no-op. The series scope clears the whole series' `:stalled` rows (the table is series-keyed).
+  """
+  def clear_stalled_blocklist(movie: id) when is_integer(id) do
+    Repo.delete_all(from b in BlockedRelease, where: b.movie_id == ^id and b.reason == "stalled")
+
+    :ok
+  end
+
+  def clear_stalled_blocklist(series: id) when is_integer(id) do
+    Repo.delete_all(from b in BlockedRelease, where: b.series_id == ^id and b.reason == "stalled")
+
+    :ok
+  end
+
+  def clear_stalled_blocklist(_scope), do: :ok
 
   @doc """
   Records `grab`'s `release_title` as blocked for its series. Resolves the series from the grab's
@@ -3120,6 +3262,8 @@ defmodule Cinder.Catalog do
             :ok
 
           episode_searchable?(episode, media_profile_summary(episode.season.series)) ->
+            # Manual re-search: give any :stalled-reaped release for this series a fresh chance.
+            clear_stalled_blocklist(series: episode.season.series.id)
             transition_episode(episode, %{search_attempts: 0})
 
           true ->
@@ -3133,9 +3277,15 @@ defmodule Cinder.Catalog do
 
   @doc "Re-queues every still-wanted episode of one `season` (zeroes their `search_attempts`)."
   def search_season_now(%Season{id: season_id}) do
-    wanted_episodes()
-    |> Enum.filter(&(&1.season_id == season_id))
-    |> Enum.each(&transition_episode(&1, %{search_attempts: 0}))
+    episodes = wanted_episodes() |> Enum.filter(&(&1.season_id == season_id))
+
+    # Manual re-search: give any :stalled-reaped release for this series a fresh chance.
+    case episodes do
+      [%{season: %{series: %{id: series_id}}} | _] -> clear_stalled_blocklist(series: series_id)
+      _ -> :ok
+    end
+
+    Enum.each(episodes, &transition_episode(&1, %{search_attempts: 0}))
   end
 
   defp wanted_episodes_query do

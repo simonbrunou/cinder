@@ -162,6 +162,22 @@ defmodule Cinder.Download.Client.QBittorrentTest do
              QBittorrent.status("abc123")
   end
 
+  test "status/1 surfaces connected seeds from num_seeds" do
+    stub_qbit(fn conn ->
+      Req.Test.json(conn, [%{"state" => "downloading", "progress" => 0.0, "num_seeds" => 0}])
+    end)
+
+    assert {:ok, %{state: :downloading, seeders: 0}} = QBittorrent.status("abc123")
+  end
+
+  test "status/1 reports nil seeders when num_seeds is absent or negative" do
+    stub_qbit(fn conn ->
+      Req.Test.json(conn, [%{"state" => "downloading", "progress" => 0.5, "num_seeds" => -1}])
+    end)
+
+    assert {:ok, %{state: :downloading, seeders: nil}} = QBittorrent.status("abc123")
+  end
+
   test "status/1 omits qBittorrent's sentinel eta" do
     stub_qbit(fn conn ->
       Req.Test.json(conn, [

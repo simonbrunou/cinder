@@ -1709,4 +1709,76 @@ defmodule Cinder.Download.TvPollerTest do
     assert_receive {:notify, {:grab_failed, %Grab{id: gid}, :no_files_matched}}
     assert gid == grab.id
   end
+
+  describe "stall reaper" do
+    alias Cinder.Download.StallReaper
+
+    defp enable_reaper!(opts \\ []) do
+      saved = Application.get_env(:cinder, StallReaper)
+
+      Application.put_env(
+        :cinder,
+        StallReaper,
+        Keyword.merge([enabled: true, stall_timeout: 0, no_seeders_timeout: 0], opts)
+      )
+
+      on_exit(fn ->
+        if saved,
+          do: Application.put_env(:cinder, StallReaper, saved),
+          else: Application.delete_env(:cinder, StallReaper)
+      end)
+    end
+
+    test "reaps a stalled 0-seeder grab: removes it (with data), blocklists :stalled, re-searches" do
+      enable_reaper!()
+      {series, season} = series_tree()
+      e1 = episode(season, 3)
+
+      {:ok, grab} =
+        Catalog.create_grab("hash-tv-stall", :torrent, [e1.id], "Dead.Show.S01E03.1080p")
+
+      test_pid = self()
+      Cinder.TestNotifier.subscribe()
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-tv-stall" ->
+        {:ok, %{state: :downloading, progress: 0.0, speed: 0, seeders: 0}}
+      end)
+
+      stub(Cinder.Download.ClientMock, :remove, fn id, opts ->
+        send(test_pid, {:removed, id, opts})
+        :ok
+      end)
+
+      start_supervised!({TvPoller, interval: 60_000})
+      assert :ok = TvPoller.poll()
+
+      assert Repo.get(Grab, grab.id) == nil
+
+      reaped = Repo.get!(Episode, e1.id)
+      assert reaped.grab_id == nil
+      assert reaped.search_attempts == 1
+      assert Catalog.blocked_release_titles_for_series(series.id) == ["Dead.Show.S01E03.1080p"]
+
+      assert_receive {:removed, "hash-tv-stall", opts}
+      assert Keyword.get(opts, :delete_files) == true
+      assert_receive {:notify, {:grab_failed, %Grab{id: gid}, :stalled}}
+      assert gid == grab.id
+    end
+
+    test "does not reap a grab while the reaper is disabled (the default)" do
+      {_series, season} = series_tree()
+      e1 = episode(season, 3)
+      {:ok, grab} = Catalog.create_grab("hash-tv-off", :torrent, [e1.id], "R.S01E03")
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-tv-off" ->
+        {:ok, %{state: :downloading, progress: 0.0, speed: 0, seeders: 0}}
+      end)
+
+      start_supervised!({TvPoller, interval: 60_000})
+      assert :ok = TvPoller.poll()
+
+      assert %Grab{} = Repo.get(Grab, grab.id)
+      assert Repo.all(BlockedRelease) == []
+    end
+  end
 end

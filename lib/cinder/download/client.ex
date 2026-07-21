@@ -15,10 +15,11 @@ defmodule Cinder.Download.Client do
   @doc """
   Reports the status of a download by id. The `:ok` map carries at least
   `:state` (`:downloading | :completed | :error`), `:progress` (float), optional
-  per-download `:speed` (bytes per second or nil), and `:eta` (seconds or nil).
-  For a `:completed` download it also carries `:content_path` — the on-disk path
-  the importer hardlinks from; the poller will not advance a completed download
-  to `:downloaded` until `:content_path` is present.
+  per-download `:speed` (bytes per second or nil), `:eta` (seconds or nil), and
+  `:seeders` (connected seed count or nil — torrent clients only; usenet has no
+  seeds, so it is absent/nil there). For a `:completed` download it also carries
+  `:content_path` — the on-disk path the importer hardlinks from; the poller will
+  not advance a completed download to `:downloaded` until `:content_path` is present.
   """
   @callback status(id :: String.t()) :: {:ok, map()} | {:error, term()}
 

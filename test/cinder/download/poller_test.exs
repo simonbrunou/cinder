@@ -2658,4 +2658,206 @@ defmodule Cinder.Download.PollerTest do
       assert Catalog.blocked_release_titles(reloaded) == []
     end
   end
+
+  describe "stall reaper" do
+    alias Cinder.Download.StallReaper
+
+    # Immediate reap: 0-window thresholds so a just-created stalled download is past the bound.
+    defp enable_reaper!(opts \\ []) do
+      saved = Application.get_env(:cinder, StallReaper)
+
+      Application.put_env(
+        :cinder,
+        StallReaper,
+        Keyword.merge([enabled: true, stall_timeout: 0, no_seeders_timeout: 0], opts)
+      )
+
+      on_exit(fn ->
+        if saved,
+          do: Application.put_env(:cinder, StallReaper, saved),
+          else: Application.delete_env(:cinder, StallReaper)
+      end)
+    end
+
+    defp stalled_downloading_movie(tmdb_id, download_id, release_title) do
+      {:ok, movie} = Catalog.add_movie(%{tmdb_id: tmdb_id, title: "M"})
+
+      {:ok, movie} =
+        Catalog.transition(movie, %{
+          status: :downloading,
+          download_id: download_id,
+          download_protocol: :torrent,
+          release_title: release_title
+        })
+
+      movie
+    end
+
+    test "reaps a 0-seeder stalled torrent: removes it (with data), blocklists :stalled, re-requests" do
+      enable_reaper!()
+      movie = stalled_downloading_movie(70, "hash-stall", "Dead.Release.1080p")
+      test_pid = self()
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-stall" ->
+        {:ok, %{state: :downloading, progress: 0.0, speed: 0, seeders: 0}}
+      end)
+
+      stub(Cinder.Download.ClientMock, :remove, fn id, opts ->
+        send(test_pid, {:removed, id, opts})
+        :ok
+      end)
+
+      start_supervised!({Poller, interval: 60_000})
+      assert :ok = Poller.poll()
+
+      reaped = Repo.get!(Movie, movie.id)
+      assert reaped.status == :requested
+      assert reaped.download_id == nil
+      assert reaped.download_protocol == nil
+      assert reaped.release_title == nil
+      assert reaped.search_attempts == 1
+      assert Catalog.blocked_release_titles(reaped) == ["Dead.Release.1080p"]
+
+      assert_receive {:removed, "hash-stall", opts}
+      assert Keyword.get(opts, :delete_files) == true
+    end
+
+    test "does not reap while the reaper is disabled (the default)" do
+      movie = stalled_downloading_movie(71, "hash-off", "Some.Release.1080p")
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-off" ->
+        {:ok, %{state: :downloading, progress: 0.0, speed: 0, seeders: 0}}
+      end)
+
+      start_supervised!({Poller, interval: 60_000})
+      assert :ok = Poller.poll()
+
+      assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
+      assert Repo.all(Cinder.Catalog.BlockedRelease) == []
+    end
+
+    test "does not reap a seeded stall inside the (long) stall window" do
+      # 0 no-seeders window, but a 1h stall window and a seeded swarm: not yet reapable.
+      enable_reaper!(stall_timeout: :timer.hours(1))
+      movie = stalled_downloading_movie(72, "hash-seed", "Seeded.Release.1080p")
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-seed" ->
+        {:ok, %{state: :downloading, progress: 0.1, speed: 0, seeders: 8}}
+      end)
+
+      start_supervised!({Poller, interval: 60_000})
+      assert :ok = Poller.poll()
+
+      assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
+    end
+
+    test "reaps a stalled upgrade back to :available, keeping the live file and removing the download" do
+      enable_reaper!()
+      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 73, title: "M"})
+
+      {:ok, movie} =
+        Catalog.transition(movie, %{
+          status: :upgrading,
+          download_id: "hash-up",
+          download_protocol: :torrent,
+          release_title: "Dead.Upgrade.1080p",
+          file_path: "/lib/M (2020)/M (2020).mkv"
+        })
+
+      test_pid = self()
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-up" ->
+        {:ok, %{state: :downloading, progress: 0.0, speed: 0, seeders: 0}}
+      end)
+
+      stub(Cinder.Download.ClientMock, :remove, fn id, opts ->
+        send(test_pid, {:removed, id, opts})
+        :ok
+      end)
+
+      start_supervised!({Poller, interval: 60_000})
+      assert :ok = Poller.poll()
+
+      reverted = Repo.get!(Movie, movie.id)
+      assert reverted.status == :available
+      assert reverted.file_path == "/lib/M (2020)/M (2020).mkv"
+      assert reverted.download_id == nil
+      assert reverted.release_title == nil
+      assert Catalog.blocked_release_titles(reverted) == ["Dead.Upgrade.1080p"]
+      assert_receive {:removed, "hash-up", _opts}
+    end
+
+    test "acceptance (#147): reaps a dead release, then grabs a seeded replacement in one loop" do
+      enable_reaper!()
+      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 80, title: "Kizu", imdb_id: "tt147147"})
+
+      {:ok, movie} =
+        Catalog.transition(movie, %{
+          status: :downloading,
+          download_id: "hash-dead",
+          download_protocol: :torrent,
+          release_title: "Teke.Kizu.I.1080p-TEKE"
+        })
+
+      stub(Cinder.Download.ClientMock, :status, fn
+        "hash-dead" -> {:ok, %{state: :downloading, progress: 0.0, speed: 0, seeders: 0}}
+        "hash-good" -> {:ok, %{state: :downloading, progress: 0.2, speed: 500_000, seeders: 20}}
+      end)
+
+      stub(Cinder.Download.ClientMock, :remove, fn _id, _opts -> :ok end)
+
+      # Re-search returns the now-blocklisted dead release AND a seeded replacement; the scorer
+      # skips the blocklisted one and picks the replacement.
+      stub(Cinder.Acquisition.IndexerMock, :search, fn "tt147147" ->
+        {:ok,
+         [
+           %{
+             title: "Teke.Kizu.I.1080p-TEKE",
+             size: 8_000_000_000,
+             download_url: "magnet:?dead",
+             seeders: 0
+           },
+           %{
+             title: "Tsundere-Raws.Kizu.I.1080p",
+             size: 8_000_000_000,
+             download_url: "magnet:?good",
+             seeders: 20
+           }
+         ]}
+      end)
+
+      stub(Cinder.Download.ClientMock, :add, fn %{title: "Tsundere-Raws.Kizu.I.1080p"}, _opts ->
+        {:ok, "hash-good"}
+      end)
+
+      # search_retry_after: 0 lets the just-reaped :requested movie re-search in the same tick.
+      start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+      assert :ok = Poller.poll()
+
+      reloaded = Repo.get!(Movie, movie.id)
+      assert reloaded.status == :downloading
+      assert reloaded.download_id == "hash-good"
+      assert reloaded.release_title == "Tsundere-Raws.Kizu.I.1080p"
+      assert Catalog.blocked_release_titles(reloaded) == ["Teke.Kizu.I.1080p-TEKE"]
+    end
+
+    test "updated_at freezes across consecutive stalled ticks (the derivation's invariant)" do
+      # Reaper OFF: prove the stall clock — a stalled tick writes no metrics, so updated_at holds.
+      movie = stalled_downloading_movie(74, "hash-freeze", "Whatever.1080p")
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-freeze" ->
+        {:ok, %{state: :downloading, progress: 0.0, speed: 0, seeders: 5}}
+      end)
+
+      start_supervised!({Poller, interval: 60_000})
+
+      # Tick 1 writes the initial metrics (nil → 0.0/0/nil), bumping updated_at once.
+      assert :ok = Poller.poll()
+      first = Repo.get!(Movie, movie.id).updated_at
+
+      # Tick 2: identical metrics → no write → updated_at unchanged.
+      assert :ok = Poller.poll()
+      assert Repo.get!(Movie, movie.id).updated_at == first
+    end
+  end
 end

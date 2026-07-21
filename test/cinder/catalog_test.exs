@@ -574,4 +574,76 @@ defmodule Cinder.CatalogTest do
     Cinder.Download.ClientMock |> expect(:remove, fn "dl-4", _ -> :ok end)
     assert {:ok, _} = Catalog.delete_movie(movie, nil)
   end
+
+  describe "stall reaper — recoverability + guards" do
+    test "retry_movie clears the movie's :stalled blocklist rows but keeps deterministic ones" do
+      movie = movie_fixture(%{status: :no_match})
+
+      Repo.insert!(%BlockedRelease{
+        movie_id: movie.id,
+        release_title: "Stalled.One.1080p",
+        reason: "stalled"
+      })
+
+      Repo.insert!(%BlockedRelease{
+        movie_id: movie.id,
+        release_title: "Wrong.Lang.1080p",
+        reason: "wrong_audio_language"
+      })
+
+      assert {:ok, %Movie{status: :requested}} = Catalog.retry_movie(movie)
+      assert Catalog.blocked_release_titles(movie) == ["Wrong.Lang.1080p"]
+    end
+
+    test "reap_stalled_movie refuses a movie that is not :downloading" do
+      assert {:error, :not_reapable} =
+               Catalog.reap_stalled_movie(movie_fixture(%{status: :available}))
+    end
+
+    test "reap_stalled_upgrade refuses a movie that is not :upgrading" do
+      movie = movie_fixture(%{status: :downloading, download_id: "x"})
+      assert {:error, :not_reapable} = Catalog.reap_stalled_upgrade(movie)
+    end
+
+    test "search_episode_now clears the series' :stalled blocklist rows, keeps deterministic ones" do
+      series = series_fixture()
+      season = season_fixture(series)
+      ep = episode_fixture(season, %{episode_number: 3, air_date: ~D[2001-01-01]})
+      seed_series_blocklist(series.id)
+
+      Catalog.search_episode_now(ep)
+
+      assert Catalog.blocked_release_titles_for_series(series.id) == ["Bad.S01E03"]
+    end
+
+    test "search_season_now clears the series' :stalled blocklist rows, keeps deterministic ones" do
+      series = series_fixture()
+      season = season_fixture(series)
+      _ep = episode_fixture(season, %{episode_number: 3, air_date: ~D[2001-01-01]})
+      seed_series_blocklist(series.id)
+
+      Catalog.search_season_now(season)
+
+      assert Catalog.blocked_release_titles_for_series(series.id) == ["Bad.S01E03"]
+    end
+
+    test "clear_stalled_blocklist is a no-op for a nil id / unknown scope" do
+      assert :ok = Catalog.clear_stalled_blocklist(movie: nil)
+      assert :ok = Catalog.clear_stalled_blocklist(:whatever)
+    end
+
+    defp seed_series_blocklist(series_id) do
+      Repo.insert!(%BlockedRelease{
+        series_id: series_id,
+        release_title: "Stalled.S01E03",
+        reason: "stalled"
+      })
+
+      Repo.insert!(%BlockedRelease{
+        series_id: series_id,
+        release_title: "Bad.S01E03",
+        reason: "wrong_audio_language"
+      })
+    end
+  end
 end
