@@ -632,6 +632,20 @@ defmodule Cinder.CatalogTest do
       assert :ok = Catalog.clear_stalled_blocklist(:whatever)
     end
 
+    test "reap_stalled_grab is a race-safe no-op if the grab was already cancelled/deleted" do
+      series = series_fixture()
+      season = season_fixture(series)
+      ep = episode_fixture(season, %{episode_number: 3, air_date: ~D[2001-01-01]})
+      {:ok, grab} = Catalog.create_grab("h-race", :torrent, [ep.id], "Dead.S01E03")
+
+      # Simulate a concurrent user Discard/cancel: the grab row is gone before the reap runs.
+      Repo.delete!(Repo.get!(Grab, grab.id))
+
+      # The stale snapshot reaps to a clean no-op — no crash, no spurious/orphan blocklist row.
+      assert {:error, :stale_grab} = Catalog.reap_stalled_grab(grab)
+      assert Repo.all(BlockedRelease) == []
+    end
+
     defp seed_series_blocklist(series_id) do
       Repo.insert!(%BlockedRelease{
         series_id: series_id,

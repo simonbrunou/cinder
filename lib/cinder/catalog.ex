@@ -2896,35 +2896,53 @@ defmodule Cinder.Catalog do
   `:stalled`, bumps every linked episode's `search_attempts` (backoff), fences the client download
   for removal, then deletes the grab; after commit the remote job + reserved intent are torn down
   and the series is announced. The episodes re-enter the wanted sweep and re-search a *different*
-  release next tick (the blocklist skips the dead one). Ordering matters: the block and the bump
-  both read the grab's still-linked episodes, so the `Repo.delete` (which nilifies `grab_id`) runs
-  last. Mirrors `cancel_grab/2`'s fence teardown + `finish_grab/3`'s search_attempts bump.
+  release next tick (the blocklist skips the dead one).
+
+  Claims the grab with a compare-and-swap `update_all` **first** (like `cancel_grab/2`): the poller
+  reaps off a tick-start snapshot, so a concurrent user Discard/cancel can delete the same grab in
+  the `client.status/1` window. `{0, _}` ⇒ already gone ⇒ `{:error, :stale_grab}` no-op (no block,
+  no notify, no `hd([])` on nilified episode links). After a `{1, _}` claim the grab still exists,
+  so the block and the bump read its still-linked episodes before the `Repo.delete` (which nilifies
+  `grab_id`) runs last. Combines `cancel_grab/2`'s claim+fence teardown with `finish_grab/3`'s bump.
   """
   def reap_stalled_grab(%Grab{} = grab) do
     series_id = series_id_for_grab(grab.id)
 
     result =
       Repo.transaction(fn ->
-        episode_ids = episode_ids_for_grab(grab.id)
-        block_grab_release(grab, :stalled)
+        case Repo.update_all(cancel_grab_query(grab.id, :any_state), set: [updated_at: now()]) do
+          {0, _} ->
+            :already_gone
 
-        Repo.update_all(missing_episodes_query(grab.id, []),
-          inc: [search_attempts: 1],
-          set: [updated_at: now()]
-        )
+          {1, _} ->
+            episode_ids = episode_ids_for_grab(grab.id)
+            block_grab_release(grab, :stalled)
 
-        intent_ids =
-          Download.fence_episode_cleanup(episode_ids, [grab_cleanup_spec(grab, episode_ids)])
+            Repo.update_all(missing_episodes_query(grab.id, []),
+              inc: [search_attempts: 1],
+              set: [updated_at: now()]
+            )
 
-        {:ok, _deleted} = Repo.delete(grab, allow_stale: true)
-        intent_ids
+            intent_ids =
+              Download.fence_episode_cleanup(episode_ids, [grab_cleanup_spec(grab, episode_ids)])
+
+            {:ok, _deleted} = Repo.delete(grab, allow_stale: true)
+            {:reaped, intent_ids}
+        end
       end)
 
-    with {:ok, intent_ids} <- result do
-      Download.cleanup_intents(intent_ids)
-      broadcast_series(series_id)
-      Notifier.notify({:grab_failed, grab, :stalled})
-      {:ok, grab}
+    case result do
+      {:ok, {:reaped, intent_ids}} ->
+        Download.cleanup_intents(intent_ids)
+        broadcast_series(series_id)
+        Notifier.notify({:grab_failed, grab, :stalled})
+        {:ok, grab}
+
+      {:ok, :already_gone} ->
+        {:error, :stale_grab}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
