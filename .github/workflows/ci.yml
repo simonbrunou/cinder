@@ -58,7 +58,6 @@ jobs:
       # Security Advisory DB. Disjoint checks, keep both. deps.audit fails open if
       # it can't reach github.com to sync advisories — fine on hosted runners.
       - run: mix hex.audit
-      - run: mix deps.compile mix_audit
       - run: mix deps.audit
 
   container:
