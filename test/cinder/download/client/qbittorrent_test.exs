@@ -35,6 +35,39 @@ defmodule Cinder.Download.Client.QBittorrentTest do
              QBittorrent.add(%{download_url: magnet})
   end
 
+  test "add/1 accepts the qBittorrent 5.1+ JSON add-response and returns the hash" do
+    stub_qbit(fn conn ->
+      assert conn.request_path == "/api/v2/torrents/add"
+
+      Req.Test.json(conn, %{
+        "added_torrent_ids" => [@hash],
+        "success_count" => 1,
+        "failure_count" => 0,
+        "pending_count" => 0
+      })
+    end)
+
+    magnet = "magnet:?xt=urn:btih:#{@hash}&dn=Movie"
+
+    assert {:ok, "0123456789abcdef0123456789abcdef01234567"} =
+             QBittorrent.add(%{download_url: magnet})
+  end
+
+  test "add/1 rejects a qBittorrent 5.1+ JSON add-response with a failure count" do
+    stub_qbit(fn conn ->
+      Req.Test.json(conn, %{
+        "added_torrent_ids" => [],
+        "success_count" => 0,
+        "failure_count" => 1,
+        "pending_count" => 0
+      })
+    end)
+
+    magnet = "magnet:?xt=urn:btih:#{@hash}&dn=Movie"
+
+    assert {:error, :add_rejected} = QBittorrent.add(%{download_url: magnet})
+  end
+
   test "add/2 tags the torrent with the operation key" do
     stub_qbit(fn conn ->
       assert conn.request_path == "/api/v2/torrents/add"
