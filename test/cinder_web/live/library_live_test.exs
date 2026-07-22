@@ -309,9 +309,18 @@ defmodule CinderWeb.LibraryLiveTest do
       {:ok, movie} = Catalog.retry_movie(failed)
       assert movie.file_path == nil and movie.imported_size == 9_000_000
 
+      # Positive control: same size, same selector, file still on disk. Without it the refute
+      # below would also pass if the card vanished or the selector were simply wrong.
+      kept = available_movie!("/tmp/kept.mkv", %{title: "Kept", imported_size: 9_000_000})
+
       {:ok, lv, _html} = live(conn, ~p"/library?sort=size")
 
+      assert has_element?(lv, "#movie-#{kept.id} p", "8.6 MB")
+      assert has_element?(lv, "#movie-#{movie.id}")
       refute has_element?(lv, "#movie-#{movie.id} p", "8.6 MB")
+
+      # ...and it sorts as sizeless too, not just renders as one.
+      assert List.last(card_ids(render(lv), "#movies-list > div")) == "movie-#{movie.id}"
     end
 
     test "sorting on the Series tab keeps ?type=tv and totals each series' files", %{conn: conn} do
