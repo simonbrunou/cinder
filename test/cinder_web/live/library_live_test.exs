@@ -95,9 +95,67 @@ defmodule CinderWeb.LibraryLiveTest do
     assert Catalog.get_movie_by_id(movie.id) == nil
   end
 
+  test "the Series tab navigates to the TV list and hides movies", %{conn: conn} do
+    movie = movie_fixture(%{title: "Dune"})
+    s = series!(%{title: "Severance"})
+
+    {:ok, lv, html} = live(conn, ~p"/library")
+    assert html =~ ~s|id="movie-#{movie.id}"|
+    refute html =~ ~s|id="series-row-#{s.id}"|
+
+    # Click the real link rather than mounting ?type=tv directly, so the tab itself is covered.
+    {:ok, _tv_lv, tv_html} =
+      lv |> element("#library-tab-tv") |> render_click() |> follow_redirect(conn)
+
+    assert tv_html =~ ~s|id="series-row-#{s.id}"|
+    refute tv_html =~ ~s|id="movie-#{movie.id}"|
+  end
+
+  test "the filter narrows the grid and clearing it restores the full list", %{conn: conn} do
+    keep = movie_fixture(%{title: "Dune"})
+    drop = movie_fixture(%{title: "Arrival"})
+
+    {:ok, lv, _html} = live(conn, ~p"/library")
+
+    html = lv |> form("#library-filter-form", %{"filter" => "dUnE"}) |> render_change()
+    assert html =~ ~s|id="movie-#{keep.id}"|
+    refute html =~ ~s|id="movie-#{drop.id}"|
+
+    # @movies must stay canonical — filtering into the assign would lose this row for good.
+    html = lv |> form("#library-filter-form", %{"filter" => ""}) |> render_change()
+    assert html =~ ~s|id="movie-#{keep.id}"|
+    assert html =~ ~s|id="movie-#{drop.id}"|
+  end
+
+  test "a broadcast for a filtered-out movie does not resurrect it into the grid", %{conn: conn} do
+    keep = movie_fixture(%{title: "Dune"})
+    hidden = movie_fixture(%{title: "Arrival"})
+
+    {:ok, lv, _html} = live(conn, ~p"/library")
+    lv |> form("#library-filter-form", %{"filter" => "dune"}) |> render_change()
+
+    # upsert_by_id/2 prepends when absent: against a filtered assign this row would pop back in.
+    {:ok, _} = Catalog.transition(hidden, %{status: :cancelled})
+
+    html = render(lv)
+    assert html =~ ~s|id="movie-#{keep.id}"|
+    refute html =~ ~s|id="movie-#{hidden.id}"|
+  end
+
+  test "an unmatched filter shows the no-matches empty state", %{conn: conn} do
+    movie_fixture(%{title: "Dune"})
+    {:ok, lv, _html} = live(conn, ~p"/library")
+
+    html =
+      lv |> form("#library-filter-form", %{"filter" => "nothing-matches-this"}) |> render_change()
+
+    assert html =~ "No matches"
+    refute html =~ "No movies yet"
+  end
+
   test "lists series with a drill-down link, a status badge, and deletes one", %{conn: conn} do
     s = series!(%{title: "Severance"})
-    {:ok, lv, html} = live(conn, ~p"/library")
+    {:ok, lv, html} = live(conn, ~p"/library?type=tv")
     assert html =~ "Severance"
     assert has_element?(lv, ~s|#series-row-#{s.id} a[href="/series/#{s.id}"]|)
     # Parity with movie cards: a series card carries a monitored/unmonitored badge.
