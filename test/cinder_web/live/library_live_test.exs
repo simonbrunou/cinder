@@ -98,13 +98,15 @@ defmodule CinderWeb.LibraryLiveTest do
   test "the Series tab navigates to the TV list and hides movies", %{conn: conn} do
     movie = movie_fixture(%{title: "Dune"})
     s = series!(%{title: "Severance"})
+    series!(%{title: "Andor"})
 
     {:ok, lv, html} = live(conn, ~p"/library")
     assert html =~ ~s|id="movie-#{movie.id}"|
     refute html =~ ~s|id="series-row-#{s.id}"|
-    # Both counts stay live regardless of which tab is showing.
+    # The hidden tab's count must come from its own canonical list, not from @visible —
+    # unequal counts are what makes this fail if the template ever reads @visible.
     assert html =~ "Movies (1)"
-    assert html =~ "Series (1)"
+    assert html =~ "Series (2)"
 
     # Click the real link rather than mounting ?type=tv directly, so the tab itself is covered.
     {:ok, _tv_lv, tv_html} =

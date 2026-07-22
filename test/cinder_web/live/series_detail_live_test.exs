@@ -1185,12 +1185,12 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert has_element?(lv, "details#season-#{season.id}[open]")
   end
 
-  test "a missing series redirects to Library (/library)", %{conn: conn} do
+  test "a missing series redirects to the Library TV tab", %{conn: conn} do
     assert {:error, {kind, %{to: "/library?type=tv"}}} = live(conn, ~p"/series/999999")
     assert kind in [:redirect, :live_redirect]
   end
 
-  test "a non-integer id redirects to Library (/library)", %{conn: conn} do
+  test "a non-integer id redirects to the Library TV tab", %{conn: conn} do
     assert {:error, {kind, %{to: "/library?type=tv"}}} = live(conn, ~p"/series/not-a-number")
     assert kind in [:redirect, :live_redirect]
   end
@@ -1221,7 +1221,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     # ponytail: the admin-gate redirect goes to "/" (UserAuth), not "/library"
   end
 
-  test "redirects to Library (/library) when the open series is deleted", %{conn: conn} do
+  test "redirects to the Library TV tab when the open series is deleted", %{conn: conn} do
     series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 7001, title: "Detail Show"})
 
     {:ok, lv, _html} = live_series(conn, series)
@@ -1269,7 +1269,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert Repo.reload(ep).monitored == false
   end
 
-  test "admin deletes the series and is redirected to Library (/library)", %{conn: conn} do
+  test "admin deletes the series and is redirected to the Library TV tab", %{conn: conn} do
     series = create_series(712)
     {:ok, lv, _html} = live_series(conn, series)
 
