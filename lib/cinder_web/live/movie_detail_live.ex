@@ -434,7 +434,7 @@ defmodule CinderWeb.MovieDetailLive do
         </div>
       </div>
 
-      <div class="mt-4 grid max-w-2xl gap-3 sm:grid-cols-2">
+      <div class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <form id="movie-language-form" phx-change="set_movie_language">
           <.language_select value={@movie.preferred_language} />
         </form>
@@ -446,7 +446,7 @@ defmodule CinderWeb.MovieDetailLive do
         </div>
       </div>
 
-      <section class="mt-6 max-w-3xl" aria-labelledby="movie-aliases-heading">
+      <section class="mt-6" aria-labelledby="movie-aliases-heading">
         <h2 id="movie-aliases-heading" class="mb-2 text-lg font-semibold">
           {gettext("Title aliases")}
         </h2>

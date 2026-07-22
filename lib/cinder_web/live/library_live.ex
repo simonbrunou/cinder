@@ -243,7 +243,7 @@ defmodule CinderWeb.LibraryLive do
         <div
           :if={@visible != []}
           id="movies-list"
-          class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4"
+          class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-4"
         >
           <div
             :for={m <- @visible}
@@ -254,7 +254,7 @@ defmodule CinderWeb.LibraryLive do
                 {:movie, :cancel, to_string(m.id)},
                 {:movie, :delete, to_string(m.id)}
               ] &&
-                "col-span-2 sm:col-span-3 lg:col-span-4"
+                "col-span-2 sm:col-span-3 lg:col-span-4 2xl:col-span-5"
             ]}
           >
             <.link navigate={~p"/movies/#{m.id}"} class="block max-w-xs">
@@ -333,7 +333,7 @@ defmodule CinderWeb.LibraryLive do
         <div
           :if={@visible != []}
           id="series-list"
-          class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4"
+          class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-4"
         >
           <div
             :for={s <- @visible}
@@ -344,7 +344,7 @@ defmodule CinderWeb.LibraryLive do
                 {:series, :cancel, to_string(s.id)},
                 {:series, :delete, to_string(s.id)}
               ] &&
-                "col-span-2 sm:col-span-3 lg:col-span-4"
+                "col-span-2 sm:col-span-3 lg:col-span-4 2xl:col-span-5"
             ]}
           >
             <.link navigate={~p"/series/#{s.id}"} class="block max-w-xs">
