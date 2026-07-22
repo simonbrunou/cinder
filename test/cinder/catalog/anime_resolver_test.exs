@@ -103,4 +103,56 @@ defmodule Cinder.Catalog.AnimeResolverTest do
 
     assert :unmatched = AnimeResolver.resolve(["absolute:12"], mappings)
   end
+
+  describe "strip_shadowed_canonical/1 (issue #156)" do
+    test "an operator-reviewed scene coordinate drops the coincidental native canonical of a different episode" do
+      native = canonical([5])
+      scene = mapping("scene", "offset", "offset", :curated, [99])
+
+      assert AnimeResolver.strip_shadowed_canonical([native, scene]) == [scene]
+    end
+
+    test "an auto-derived (:inferred) scene coordinate leaves the native canonical in place" do
+      native = canonical([5])
+      scene = mapping("scene", "tmdb", "grp", :inferred, [99])
+
+      assert AnimeResolver.strip_shadowed_canonical([native, scene]) == [native, scene]
+    end
+
+    test "a scene coordinate pointing at the same episode leaves the native canonical" do
+      native = canonical([5])
+      scene = mapping("scene", "offset", "offset", :curated, [5])
+
+      assert AnimeResolver.strip_shadowed_canonical([native, scene]) == [native, scene]
+    end
+
+    test "only the auto native canonical is dropped, never a manual standard correction" do
+      manual_std = mapping("standard", "manual", "manual", :manual, [7])
+      scene = mapping("scene", "offset", "offset", :curated, [99])
+
+      assert AnimeResolver.strip_shadowed_canonical([manual_std, scene]) == [manual_std, scene]
+    end
+
+    test "two operator-reviewed scene coordinates for different episodes stay (resolver reports ambiguous)" do
+      native = canonical([5])
+      scene_a = mapping("scene", "offset", "offset", :curated, [99])
+      scene_b = mapping("scene", "tmdb", "grp", :curated, [42])
+
+      assert AnimeResolver.strip_shadowed_canonical([native, scene_a, scene_b]) == [
+               scene_a,
+               scene_b
+             ]
+    end
+  end
+
+  defp canonical(episode_ids),
+    do: mapping("standard", "cinder", "canonical", :manual, episode_ids)
+
+  defp mapping(scheme, source, namespace, precedence, episode_ids) do
+    %{
+      identity: %{source: source, scheme: scheme, namespace: namespace},
+      precedence: precedence,
+      episode_ids: episode_ids
+    }
+  end
 end

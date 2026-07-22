@@ -188,6 +188,40 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert has_element?(view, "#series-detail-language-form option[value='dual'][selected]")
   end
 
+  test "generates and saves season-offset scene coordinates from the detail page", %{conn: conn} do
+    series = series_fixture(media_profile: :anime, tvdb_id: 99)
+    s3 = season_fixture(series, %{season_number: 3})
+    for n <- 1..3, do: episode_fixture(s3, %{episode_number: n})
+
+    {:ok, view, _} = live_series(conn, series)
+
+    html =
+      view
+      |> form("#series-scene-offset-form", %{"from" => "3", "delta" => "1"})
+      |> render_change()
+
+    assert html =~ "TMDB S3"
+
+    view
+    |> form("#series-scene-offset-form", %{"from" => "3", "delta" => "1"})
+    |> render_submit()
+
+    values =
+      series
+      |> Catalog.list_episode_coordinates()
+      |> Enum.filter(&(&1.source == "offset" and &1.scheme == "scene"))
+      |> Enum.map(& &1.canonical_value)
+      |> Enum.sort()
+
+    assert values == ["S04E01", "S04E02", "S04E03"]
+  end
+
+  test "the season-offset form is hidden for a non-anime series", %{conn: conn} do
+    series = series_fixture(media_profile: :standard, tvdb_id: 99)
+    {:ok, view, _} = live_series(conn, series)
+    refute has_element?(view, "#series-scene-offset-form")
+  end
+
   test "series identity events tolerate forged profiles and aliases", %{conn: conn} do
     series = create_series(6_901)
     other = series_fixture()

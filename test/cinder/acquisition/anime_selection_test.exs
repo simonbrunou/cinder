@@ -173,6 +173,31 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
              Anime.select_episodes([release], context, [5], [])
   end
 
+  test "an operator-reviewed (:curated) scene coordinate wins over the coincidental native code of a different episode (issue #156)" do
+    # Monogatari-shaped: TMDB S04E05 is the real Hanamonogatari episode (id 405); the operator's
+    # season offset marks S04E05 as Second-Season episode 5 (a :curated scene coordinate, id 5).
+    # A [smol]-style S04E05 release must resolve to the Second-Season episode, not the native one.
+    context = %{
+      kind: :series,
+      title: "Monogatari",
+      year: 2013,
+      tvdb_id: 99,
+      aliases: [],
+      episodes: [episode(5, 3, 5), episode(405, 4, 5)],
+      mappings: [
+        mapping("cinder", "standard", "canonical", "S03E05", [5]),
+        mapping("cinder", "standard", "canonical", "S04E05", [405]),
+        mapping("offset", "scene", "offset", "S04E05", [5], :curated)
+      ]
+    }
+
+    release =
+      Release.new(raw("[smol] Monogatari Series Second Season S04E05 [1080p]", "issue-156"))
+
+    assert {:ok, %{assignments: [%{episode_ids: [5]}]}} =
+             Anime.select_episodes([release], context, [5], [])
+  end
+
   test "automatic episode selection freezes the exact hard policy used to select" do
     release = Release.new(raw("[SubsPlease] Show - 1 [1080p]", "anime-policy-episode"))
 
