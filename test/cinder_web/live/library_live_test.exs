@@ -102,6 +102,9 @@ defmodule CinderWeb.LibraryLiveTest do
     {:ok, lv, html} = live(conn, ~p"/library")
     assert html =~ ~s|id="movie-#{movie.id}"|
     refute html =~ ~s|id="series-row-#{s.id}"|
+    # Both counts stay live regardless of which tab is showing.
+    assert html =~ "Movies (1)"
+    assert html =~ "Series (1)"
 
     # Click the real link rather than mounting ?type=tv directly, so the tab itself is covered.
     {:ok, _tv_lv, tv_html} =
@@ -120,6 +123,8 @@ defmodule CinderWeb.LibraryLiveTest do
     html = lv |> form("#library-filter-form", %{"filter" => "dUnE"}) |> render_change()
     assert html =~ ~s|id="movie-#{keep.id}"|
     refute html =~ ~s|id="movie-#{drop.id}"|
+    # The tab count describes the library, not the filtered view — it must not track @visible.
+    assert html =~ "Movies (2)"
 
     # @movies must stay canonical — filtering into the assign would lose this row for good.
     html = lv |> form("#library-filter-form", %{"filter" => ""}) |> render_change()

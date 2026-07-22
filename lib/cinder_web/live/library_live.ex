@@ -120,9 +120,11 @@ defmodule CinderWeb.LibraryLive do
 
   # --- shared ---
   # Narrows the rendered grid only — never written back onto @movies/@series, which stay the
-  # authority for the PubSub handlers and the cancel/delete lookups.
+  # authority for the PubSub handlers and the cancel/delete lookups. Drops any open confirm:
+  # filtering its card away would otherwise strand the aria-live alert, to be re-announced when
+  # the filter clears.
   def handle_event("filter", %{"filter" => filter}, socket) when is_binary(filter),
-    do: {:noreply, assign(socket, filter: filter)}
+    do: {:noreply, assign(socket, filter: filter, confirming: nil, delete_files: false)}
 
   def handle_event("toggle_delete_files", _params, socket),
     do: {:noreply, assign(socket, delete_files: !socket.assigns.delete_files)}
@@ -217,7 +219,7 @@ defmodule CinderWeb.LibraryLive do
             the input to be inside a form" on a bare phx-change input, which LiveViewTest does
             not reproduce. No spinner here — unlike Discover's search there is no roundtrip. --%>
       <form id="library-filter-form" phx-change="filter" phx-submit="filter" class="mb-8">
-        <label for="library-filter" class="sr-only">{gettext("Filter by title…")}</label>
+        <label for="library-filter" class="sr-only">{gettext("Filter by title")}</label>
         <input
           type="search"
           id="library-filter"

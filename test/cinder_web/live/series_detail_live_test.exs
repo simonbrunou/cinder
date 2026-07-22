@@ -1186,12 +1186,12 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   end
 
   test "a missing series redirects to Library (/library)", %{conn: conn} do
-    assert {:error, {kind, %{to: "/library"}}} = live(conn, ~p"/series/999999")
+    assert {:error, {kind, %{to: "/library?type=tv"}}} = live(conn, ~p"/series/999999")
     assert kind in [:redirect, :live_redirect]
   end
 
   test "a non-integer id redirects to Library (/library)", %{conn: conn} do
-    assert {:error, {kind, %{to: "/library"}}} = live(conn, ~p"/series/not-a-number")
+    assert {:error, {kind, %{to: "/library?type=tv"}}} = live(conn, ~p"/series/not-a-number")
     assert kind in [:redirect, :live_redirect]
   end
 
@@ -1210,7 +1210,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     Repo.delete!(series)
     Phoenix.PubSub.broadcast(Cinder.PubSub, "series", {:series_updated, series.id})
 
-    assert_redirect(lv, "/library")
+    assert_redirect(lv, "/library?type=tv")
   end
 
   test "a non-admin cannot reach the detail page", %{conn: conn} do
@@ -1227,7 +1227,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     {:ok, lv, _html} = live_series(conn, series)
 
     Cinder.Catalog.broadcast_series_deleted(series.id)
-    assert_redirect(lv, ~p"/library")
+    assert_redirect(lv, ~p"/library?type=tv")
   end
 
   test "ignores a {:series_deleted, id} for a different series", %{conn: conn} do
@@ -1277,7 +1277,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     lv |> element(~s|button[phx-click="confirm_delete_series"]|) |> render_click()
 
     assert Repo.get(Cinder.Catalog.Series, series.id) == nil
-    assert_redirect(lv, "/library")
+    assert_redirect(lv, "/library?type=tv")
   end
 
   test "deleting an episode file unlinks it and clears file_path (stays monitored)", %{

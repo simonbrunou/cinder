@@ -47,7 +47,7 @@ defmodule CinderWeb.SeriesDetailLive do
         {:ok,
          socket
          |> put_flash(:error, gettext("Series not found."))
-         |> push_navigate(to: ~p"/library")}
+         |> push_navigate(to: ~p"/library?type=tv")}
     end
   end
 
@@ -173,7 +173,9 @@ defmodule CinderWeb.SeriesDetailLive do
          ) do
       {:ok, _} ->
         {:noreply,
-         socket |> put_flash(:info, gettext("Series deleted.")) |> push_navigate(to: ~p"/library")}
+         socket
+         |> put_flash(:info, gettext("Series deleted."))
+         |> push_navigate(to: ~p"/library?type=tv")}
 
       _ ->
         {:noreply,
@@ -629,7 +631,7 @@ defmodule CinderWeb.SeriesDetailLive do
       {:noreply,
        socket
        |> put_flash(:info, gettext("Series deleted."))
-       |> push_navigate(to: ~p"/library")}
+       |> push_navigate(to: ~p"/library?type=tv")}
     else
       {:noreply, socket}
     end
@@ -644,7 +646,7 @@ defmodule CinderWeb.SeriesDetailLive do
       nil ->
         socket
         |> put_flash(:error, gettext("Series not found."))
-        |> push_navigate(to: ~p"/library")
+        |> push_navigate(to: ~p"/library?type=tv")
 
       series ->
         socket
