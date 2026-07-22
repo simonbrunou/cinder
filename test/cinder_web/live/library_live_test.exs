@@ -267,18 +267,19 @@ defmodule CinderWeb.LibraryLiveTest do
                ["movie-#{alpha.id}", "movie-#{zulu.id}"]
     end
 
-    test "an accented title sorts with its unaccented neighbours, not after Z", %{conn: conn} do
-      amelie = movie_fixture(%{title: "Amélie"})
+    test "a leading accent sorts under its base letter, not after Z", %{conn: conn} do
+      # The accent has to be the character that DECIDES the comparison, or the test can't see
+      # folding at all: "Amélie" vs "Zulu" is settled at `a` < `z` and sorts identically folded
+      # or not. Only a leading accent discriminates — plain `String.downcase/1` leaves "é" at
+      # U+00E9, which is greater than every ASCII letter, so "Écran" lands after "Zulu"; NFD
+      # decomposes it to "e" + U+0301, so it sorts under E where a reader expects it.
+      ecran = movie_fixture(%{title: "Écran"})
       zulu = movie_fixture(%{title: "Zulu"})
 
       {:ok, lv, _html} = live(conn, ~p"/library?sort=title")
 
       assert card_ids(render(lv), "#movies-list > div") ==
-               ["movie-#{amelie.id}", "movie-#{zulu.id}"]
-
-      # Sanity: codepoint order without folding would put "Amélie" (é = U+00E9) after "Zulu".
-      refute card_ids(render(lv), "#movies-list > div") ==
-               ["movie-#{zulu.id}", "movie-#{amelie.id}"]
+               ["movie-#{ecran.id}", "movie-#{zulu.id}"]
     end
 
     test "Size puts the largest first, the never-imported last, and prints the bytes", %{
