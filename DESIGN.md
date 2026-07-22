@@ -159,7 +159,8 @@ Functional only; no bounce, no spring, no decorative motion.
   Settings, Users). Active item = `menu-active font-medium text-primary` + `aria-current="page"`.
   Footer pins the theme toggle + locale switcher (a `join` of `btn-xs` locale links), the current
   user's email (truncated), Account, and Log out.
-- **Content column:** `main#main`, `mx-auto w-full max-w-6xl`, `px-4 py-8 sm:px-6 lg:px-8`. A
+- **Content column:** `main#main`, `mx-auto w-full max-w-6xl 2xl:max-w-[110rem]`,
+  `px-4 py-8 sm:px-6 lg:px-8`. A
   `header#main` skip-to-content link precedes everything.
 - **Signed-out shell:** no drawer — a centered `max-w-md` column, vertically centered, with the
   wordmark on top and the locale switcher below (auth/setup pages).

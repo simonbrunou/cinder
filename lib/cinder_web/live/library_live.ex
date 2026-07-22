@@ -257,7 +257,7 @@ defmodule CinderWeb.LibraryLive do
                 "col-span-2 sm:col-span-3 lg:col-span-4"
             ]}
           >
-            <.link navigate={~p"/movies/#{m.id}"} class="block max-w-xs">
+            <.link navigate={~p"/movies/#{m.id}"} class="block">
               <.media_card poster_path={m.poster_path} title={m.title} year={m.year} type={:movie}>
                 <.status_badge
                   kind={:movie}
@@ -347,7 +347,7 @@ defmodule CinderWeb.LibraryLive do
                 "col-span-2 sm:col-span-3 lg:col-span-4"
             ]}
           >
-            <.link navigate={~p"/series/#{s.id}"} class="block max-w-xs">
+            <.link navigate={~p"/series/#{s.id}"} class="block">
               <.media_card poster_path={s.poster_path} title={s.title} year={s.year} type={:tv}>
                 <.status_badge
                   kind={:monitored}
