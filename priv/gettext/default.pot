@@ -56,7 +56,7 @@ msgstr ""
 msgid "A link to confirm your email change has been sent to the new address."
 msgstr ""
 
-#: lib/cinder_web/components/layouts.ex:158
+#: lib/cinder_web/components/layouts.ex:161
 #: lib/cinder_web/user_auth.ex:340
 #, elixir-autogen, elixir-format
 msgid "Account"
@@ -67,7 +67,7 @@ msgstr ""
 msgid "Account created."
 msgstr ""
 
-#: lib/cinder_web/components/layouts.ex:122
+#: lib/cinder_web/components/layouts.ex:125
 #: lib/cinder_web/live/activity_live.ex:259
 #: lib/cinder_web/user_auth.ex:328
 #, elixir-autogen, elixir-format
@@ -89,7 +89,7 @@ msgstr ""
 msgid "Adding…"
 msgstr ""
 
-#: lib/cinder_web/components/layouts.ex:101
+#: lib/cinder_web/components/layouts.ex:104
 #: lib/cinder_web/live/users_live.ex:301
 #, elixir-autogen, elixir-format
 msgid "Admin"
@@ -150,8 +150,8 @@ msgstr ""
 msgid "Approving…"
 msgstr ""
 
-#: lib/cinder_web/components/layouts.ex:250
-#: lib/cinder_web/components/layouts.ex:262
+#: lib/cinder_web/components/layouts.ex:253
+#: lib/cinder_web/components/layouts.ex:265
 #, elixir-autogen, elixir-format
 msgid "Attempting to reconnect"
 msgstr ""
@@ -168,7 +168,7 @@ msgstr ""
 msgid "Available"
 msgstr ""
 
-#: lib/cinder_web/components/layouts.ex:128
+#: lib/cinder_web/components/layouts.ex:131
 #: lib/cinder_web/user_auth.ex:333
 #, elixir-autogen, elixir-format
 msgid "Calendar"
@@ -257,7 +257,7 @@ msgstr ""
 msgid "Clear saved value"
 msgstr ""
 
-#: lib/cinder_web/components/layouts.ex:73
+#: lib/cinder_web/components/layouts.ex:76
 #, elixir-autogen, elixir-format
 msgid "Close menu"
 msgstr ""
@@ -376,7 +376,7 @@ msgstr ""
 msgid "Creating…"
 msgstr ""
 
-#: lib/cinder_web/components/layouts.ex:104
+#: lib/cinder_web/components/layouts.ex:107
 #: lib/cinder_web/live/dashboard_live.ex:255
 #: lib/cinder_web/live/settings_live.ex:93
 #: lib/cinder_web/user_auth.ex:327
@@ -482,7 +482,7 @@ msgstr ""
 msgid "Denying…"
 msgstr ""
 
-#: lib/cinder_web/components/layouts.ex:89
+#: lib/cinder_web/components/layouts.ex:92
 #: lib/cinder_web/live/discover_live.ex:246
 #: lib/cinder_web/live/series_discovery_live.ex:211
 #: lib/cinder_web/user_auth.ex:325
@@ -549,7 +549,7 @@ msgstr ""
 msgid "Episode file deleted."
 msgstr ""
 
-#: lib/cinder_web/components/layouts.ex:86
+#: lib/cinder_web/components/layouts.ex:89
 #, elixir-autogen, elixir-format
 msgid "Everyone"
 msgstr ""
@@ -599,13 +599,13 @@ msgstr ""
 msgid "Invalid email or password"
 msgstr ""
 
-#: lib/cinder_web/components/layouts.ex:278
+#: lib/cinder_web/components/layouts.ex:281
 #: lib/cinder_web/live/movie_detail_live.ex:619
 #, elixir-autogen, elixir-format
 msgid "Language"
 msgstr ""
 
-#: lib/cinder_web/components/layouts.ex:116
+#: lib/cinder_web/components/layouts.ex:119
 #: lib/cinder_web/live/library_live.ex:192
 #: lib/cinder_web/live/library_live.ex:199
 #: lib/cinder_web/live/movie_detail_live.ex:305
@@ -639,7 +639,7 @@ msgstr ""
 msgid "Log in only this time"
 msgstr ""
 
-#: lib/cinder_web/components/layouts.ex:164
+#: lib/cinder_web/components/layouts.ex:167
 #, elixir-autogen, elixir-format
 msgid "Log out"
 msgstr ""
@@ -735,7 +735,7 @@ msgstr ""
 msgid "Movies available"
 msgstr ""
 
-#: lib/cinder_web/components/layouts.ex:95
+#: lib/cinder_web/components/layouts.ex:98
 #: lib/cinder_web/live/my_requests_live.ex:57
 #: lib/cinder_web/user_auth.ex:326
 #, elixir-autogen, elixir-format
@@ -965,7 +965,7 @@ msgstr ""
 msgid "Requesting…"
 msgstr ""
 
-#: lib/cinder_web/components/layouts.ex:110
+#: lib/cinder_web/components/layouts.ex:113
 #: lib/cinder_web/live/requests_live.ex:269
 #: lib/cinder_web/live/settings_live.ex:110
 #: lib/cinder_web/user_auth.ex:330
@@ -1133,7 +1133,7 @@ msgstr ""
 msgid "Set up Cinder"
 msgstr ""
 
-#: lib/cinder_web/components/layouts.ex:134
+#: lib/cinder_web/components/layouts.ex:137
 #: lib/cinder_web/live/settings_live.ex:84
 #: lib/cinder_web/user_auth.ex:329
 #, elixir-autogen, elixir-format
@@ -1160,7 +1160,7 @@ msgstr ""
 msgid "Skip to content"
 msgstr ""
 
-#: lib/cinder_web/components/layouts.ex:257
+#: lib/cinder_web/components/layouts.ex:260
 #, elixir-autogen, elixir-format
 msgid "Something went wrong!"
 msgstr ""
@@ -1256,17 +1256,17 @@ msgstr ""
 msgid "Upcoming"
 msgstr ""
 
-#: lib/cinder_web/components/layouts.ex:341
+#: lib/cinder_web/components/layouts.ex:344
 #, elixir-autogen, elixir-format
 msgid "Use dark theme"
 msgstr ""
 
-#: lib/cinder_web/components/layouts.ex:328
+#: lib/cinder_web/components/layouts.ex:331
 #, elixir-autogen, elixir-format
 msgid "Use light theme"
 msgstr ""
 
-#: lib/cinder_web/components/layouts.ex:315
+#: lib/cinder_web/components/layouts.ex:318
 #, elixir-autogen, elixir-format
 msgid "Use system theme"
 msgstr ""
@@ -1286,7 +1286,7 @@ msgstr ""
 msgid "User deleted."
 msgstr ""
 
-#: lib/cinder_web/components/layouts.ex:140
+#: lib/cinder_web/components/layouts.ex:143
 #: lib/cinder_web/live/users_live.ex:274
 #: lib/cinder_web/user_auth.ex:331
 #, elixir-autogen, elixir-format
@@ -1303,7 +1303,7 @@ msgstr ""
 msgid "Wanted"
 msgstr ""
 
-#: lib/cinder_web/components/layouts.ex:245
+#: lib/cinder_web/components/layouts.ex:248
 #, elixir-autogen, elixir-format
 msgid "We can't find the internet"
 msgstr ""
@@ -1838,7 +1838,7 @@ msgstr ""
 msgid "TV library path"
 msgstr ""
 
-#: lib/cinder_web/components/layouts.ex:304
+#: lib/cinder_web/components/layouts.ex:307
 #, elixir-autogen, elixir-format
 msgid "Theme"
 msgstr ""
@@ -2424,7 +2424,7 @@ msgstr ""
 msgid "Download import roots"
 msgstr ""
 
-#: lib/cinder_web/components/layouts.ex:84
+#: lib/cinder_web/components/layouts.ex:87
 #, elixir-autogen, elixir-format
 msgid "Primary"
 msgstr ""

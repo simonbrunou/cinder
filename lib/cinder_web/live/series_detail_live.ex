@@ -1103,7 +1103,7 @@ defmodule CinderWeb.SeriesDetailLive do
         </div>
       </section>
 
-      <div class="mb-4 grid max-w-2xl gap-3 sm:grid-cols-2">
+      <div class="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <form id="series-detail-language-form" phx-change="set_series_language">
           <.language_select value={@series.preferred_language} />
         </form>
@@ -1115,11 +1115,11 @@ defmodule CinderWeb.SeriesDetailLive do
         </div>
       </div>
 
-      <details class="mb-6 max-w-3xl">
+      <details class="mb-6">
         <summary class="cursor-pointer border-b border-base-300 pb-2 text-lg font-semibold">
           {gettext("Title aliases")}
         </summary>
-        <p class="mb-2 mt-2 text-sm text-base-content/70">
+        <p class="mb-2 mt-2 max-w-prose text-sm text-base-content/70">
           {gettext("Extra titles tried when searching indexers, alongside the main title.")}
         </p>
         <p
@@ -1221,14 +1221,14 @@ defmodule CinderWeb.SeriesDetailLive do
         </div>
       </details>
 
-      <details :if={@profile_summary.effective == :anime} class="mb-6 max-w-3xl">
+      <details :if={@profile_summary.effective == :anime} class="mb-6">
         <summary
           class="cursor-pointer border-b border-base-300 pb-2 text-lg font-semibold"
           phx-click="load_episode_groups"
         >
           {gettext("Alternate numbering")}
         </summary>
-        <p class="mb-2 mt-2 text-sm text-base-content/70">
+        <p class="mb-2 mt-2 max-w-prose text-sm text-base-content/70">
           {gettext(
             "Pick a TMDB episode group when indexers number this show differently than TMDB does (e.g. TMDB keeps one continuous season, but releases are split by another season count)."
           )}
@@ -1274,11 +1274,11 @@ defmodule CinderWeb.SeriesDetailLive do
         </p>
       </details>
 
-      <details :if={@profile_summary.effective == :anime} class="mb-6 max-w-3xl">
+      <details :if={@profile_summary.effective == :anime} class="mb-6">
         <summary class="cursor-pointer border-b border-base-300 pb-2 text-lg font-semibold">
           {gettext("Season offset")}
         </summary>
-        <p class="mb-2 mt-2 text-sm text-base-content/70">
+        <p class="mb-2 mt-2 max-w-prose text-sm text-base-content/70">
           {gettext(
             "When releases number this show's seasons with a fixed shift from TMDB (e.g. an inserted season pushes later seasons up by one), generate the matching scene coordinates. Review any native collisions before saving — the alternate numbering wins over that native episode at search time."
           )}
