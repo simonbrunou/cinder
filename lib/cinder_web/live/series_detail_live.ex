@@ -47,7 +47,7 @@ defmodule CinderWeb.SeriesDetailLive do
         {:ok,
          socket
          |> put_flash(:error, gettext("Series not found."))
-         |> push_navigate(to: ~p"/library")}
+         |> push_navigate(to: ~p"/library?type=tv")}
     end
   end
 
@@ -173,7 +173,9 @@ defmodule CinderWeb.SeriesDetailLive do
          ) do
       {:ok, _} ->
         {:noreply,
-         socket |> put_flash(:info, gettext("Series deleted.")) |> push_navigate(to: ~p"/library")}
+         socket
+         |> put_flash(:info, gettext("Series deleted."))
+         |> push_navigate(to: ~p"/library?type=tv")}
 
       _ ->
         {:noreply,
@@ -629,7 +631,7 @@ defmodule CinderWeb.SeriesDetailLive do
       {:noreply,
        socket
        |> put_flash(:info, gettext("Series deleted."))
-       |> push_navigate(to: ~p"/library")}
+       |> push_navigate(to: ~p"/library?type=tv")}
     else
       {:noreply, socket}
     end
@@ -644,7 +646,7 @@ defmodule CinderWeb.SeriesDetailLive do
       nil ->
         socket
         |> put_flash(:error, gettext("Series not found."))
-        |> push_navigate(to: ~p"/library")
+        |> push_navigate(to: ~p"/library?type=tv")
 
       series ->
         socket
@@ -978,7 +980,11 @@ defmodule CinderWeb.SeriesDetailLive do
   def render(assigns) do
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
-      <.link navigate={~p"/library"} class="link link-hover mb-6 inline-flex items-center gap-1">
+      <%!-- Back to the tab this series lives on, not the default Movies tab. --%>
+      <.link
+        navigate={~p"/library?type=tv"}
+        class="link link-hover mb-6 inline-flex items-center gap-1"
+      >
         <.icon name="hero-arrow-left" class="size-3.5" />{gettext("Library")}
       </.link>
 

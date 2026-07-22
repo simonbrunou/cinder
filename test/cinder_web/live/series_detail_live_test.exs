@@ -1185,13 +1185,13 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert has_element?(lv, "details#season-#{season.id}[open]")
   end
 
-  test "a missing series redirects to Library (/library)", %{conn: conn} do
-    assert {:error, {kind, %{to: "/library"}}} = live(conn, ~p"/series/999999")
+  test "a missing series redirects to the Library TV tab", %{conn: conn} do
+    assert {:error, {kind, %{to: "/library?type=tv"}}} = live(conn, ~p"/series/999999")
     assert kind in [:redirect, :live_redirect]
   end
 
-  test "a non-integer id redirects to Library (/library)", %{conn: conn} do
-    assert {:error, {kind, %{to: "/library"}}} = live(conn, ~p"/series/not-a-number")
+  test "a non-integer id redirects to the Library TV tab", %{conn: conn} do
+    assert {:error, {kind, %{to: "/library?type=tv"}}} = live(conn, ~p"/series/not-a-number")
     assert kind in [:redirect, :live_redirect]
   end
 
@@ -1210,7 +1210,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     Repo.delete!(series)
     Phoenix.PubSub.broadcast(Cinder.PubSub, "series", {:series_updated, series.id})
 
-    assert_redirect(lv, "/library")
+    assert_redirect(lv, "/library?type=tv")
   end
 
   test "a non-admin cannot reach the detail page", %{conn: conn} do
@@ -1221,13 +1221,13 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     # ponytail: the admin-gate redirect goes to "/" (UserAuth), not "/library"
   end
 
-  test "redirects to Library (/library) when the open series is deleted", %{conn: conn} do
+  test "redirects to the Library TV tab when the open series is deleted", %{conn: conn} do
     series = Repo.insert!(%Cinder.Catalog.Series{tmdb_id: 7001, title: "Detail Show"})
 
     {:ok, lv, _html} = live_series(conn, series)
 
     Cinder.Catalog.broadcast_series_deleted(series.id)
-    assert_redirect(lv, ~p"/library")
+    assert_redirect(lv, ~p"/library?type=tv")
   end
 
   test "ignores a {:series_deleted, id} for a different series", %{conn: conn} do
@@ -1269,7 +1269,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert Repo.reload(ep).monitored == false
   end
 
-  test "admin deletes the series and is redirected to Library (/library)", %{conn: conn} do
+  test "admin deletes the series and is redirected to the Library TV tab", %{conn: conn} do
     series = create_series(712)
     {:ok, lv, _html} = live_series(conn, series)
 
@@ -1277,7 +1277,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     lv |> element(~s|button[phx-click="confirm_delete_series"]|) |> render_click()
 
     assert Repo.get(Cinder.Catalog.Series, series.id) == nil
-    assert_redirect(lv, "/library")
+    assert_redirect(lv, "/library?type=tv")
   end
 
   test "deleting an episode file unlinks it and clears file_path (stays monitored)", %{

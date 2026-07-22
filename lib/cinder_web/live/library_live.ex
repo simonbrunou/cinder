@@ -4,6 +4,13 @@ defmodule CinderWeb.LibraryLive do
   `/movies/:id` for edit and pipeline actions) and every added series (cancel / delete; drill into
   `/series/:id` for per-episode monitoring). Merges the old `/movies` page and the Discover
   "Added series" block.
+
+  One type at a time, picked by the `?type=` query param (`tv`, else movies) and read in
+  `mount/3` — the tab links are `navigate`, not `patch`, so switching scrolls back to the top
+  and drops the filter with the remount instead of needing reset code. A title filter narrows
+  the visible grid; `@movies`/`@series` stay canonical (the PubSub handlers, `find_movie/2` and
+  `run_series_op/3` all resolve against them) and filtering happens at render.
+
   Admin-gated by the `:admin` live_session; every mutation routes through the existing
   `Catalog` functions — no pipeline or gate change. Live via the `movies` + `series` topics.
   """
@@ -14,7 +21,7 @@ defmodule CinderWeb.LibraryLive do
   alias Cinder.Catalog
 
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(params, _session, socket) do
     if connected?(socket) do
       Catalog.subscribe()
       Catalog.subscribe_series()
@@ -24,6 +31,8 @@ defmodule CinderWeb.LibraryLive do
      assign(socket,
        movies: Catalog.list_movies(),
        series: Catalog.list_series(),
+       tab: if(params["type"] == "tv", do: :tv, else: :movies),
+       filter: "",
        confirming: nil,
        delete_files: false
      )}
@@ -110,6 +119,13 @@ defmodule CinderWeb.LibraryLive do
   end
 
   # --- shared ---
+  # Narrows the rendered grid only — never written back onto @movies/@series, which stay the
+  # authority for the PubSub handlers and the cancel/delete lookups. Drops any open confirm:
+  # filtering its card away would otherwise strand the aria-live alert, to be re-announced when
+  # the filter clears.
+  def handle_event("filter", %{"filter" => filter}, socket) when is_binary(filter),
+    do: {:noreply, assign(socket, filter: filter, confirming: nil, delete_files: false)}
+
   def handle_event("toggle_delete_files", _params, socket),
     do: {:noreply, assign(socket, delete_files: !socket.assigns.delete_files)}
 
@@ -139,6 +155,14 @@ defmodule CinderWeb.LibraryLive do
 
   defp find_movie(socket, id), do: find_by_id(socket.assigns.movies, to_string(id))
 
+  # Render-time narrowing of the active tab's list. Case-insensitive substring on the title.
+  defp visible(items, ""), do: items
+
+  defp visible(items, filter) do
+    needle = String.downcase(filter)
+    Enum.filter(items, &String.contains?(String.downcase(&1.title), needle))
+  end
+
   # /library is admin-gated by its route, so no in-handler role re-check (Discover needed
   # one because it lived on a non-admin route).
   defp run_series_op(socket, id, op, ok_msg, err_msg) do
@@ -159,6 +183,9 @@ defmodule CinderWeb.LibraryLive do
 
   @impl true
   def render(assigns) do
+    items = if assigns.tab == :tv, do: assigns.series, else: assigns.movies
+    assigns = assign(assigns, :visible, visible(items, assigns.filter))
+
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.header>
@@ -166,21 +193,60 @@ defmodule CinderWeb.LibraryLive do
         <:subtitle>{gettext("Manage movies and added series.")}</:subtitle>
       </.header>
 
-      <section>
-        <h2 class="pb-3 text-lg font-semibold">{gettext("Movies")}</h2>
+      <%!-- Navigation, not an ARIA tablist: these are links that change the URL, and the
+            roving-tabindex/arrow-key behaviour role="tab" promises has no JS behind it here.
+            aria-current matches the nav_item/locale_switcher pattern in layouts.ex. --%>
+      <nav class="tabs tabs-box mb-4" aria-label={gettext("Library")}>
+        <.link
+          id="library-tab-movies"
+          navigate={~p"/library"}
+          aria-current={@tab == :movies && "page"}
+          class={["tab min-h-11", @tab == :movies && "tab-active"]}
+        >
+          {gettext("Movies")} ({length(@movies)})
+        </.link>
+        <.link
+          id="library-tab-tv"
+          navigate={~p"/library?type=tv"}
+          aria-current={@tab == :tv && "page"}
+          class={["tab min-h-11", @tab == :tv && "tab-active"]}
+        >
+          {gettext("Series")} ({length(@series)})
+        </.link>
+      </nav>
+
+      <%!-- The input must live inside a form: LiveView's client throws "form events require
+            the input to be inside a form" on a bare phx-change input, which LiveViewTest does
+            not reproduce. No spinner here — unlike Discover's search there is no roundtrip. --%>
+      <form id="library-filter-form" phx-change="filter" phx-submit="filter" class="mb-8">
+        <label for="library-filter" class="sr-only">{gettext("Filter by title")}</label>
+        <input
+          type="search"
+          id="library-filter"
+          name="filter"
+          value={@filter}
+          phx-debounce="300"
+          autocomplete="off"
+          placeholder={gettext("Filter by title…")}
+          class="input input-lg w-full min-h-11"
+        />
+      </form>
+
+      <section :if={@tab == :movies}>
+        <h2 class="sr-only">{gettext("Movies")}</h2>
         <.empty_state
-          :if={@movies == []}
+          :if={@visible == []}
           icon="hero-film"
-          title={gettext("No movies yet")}
-          message={gettext("Requested movies appear here.")}
+          title={if @filter == "", do: gettext("No movies yet"), else: gettext("No matches")}
+          message={if @filter == "", do: gettext("Requested movies appear here."), else: nil}
         />
         <div
-          :if={@movies != []}
+          :if={@visible != []}
           id="movies-list"
           class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4"
         >
           <div
-            :for={m <- @movies}
+            :for={m <- @visible}
             id={"movie-#{m.id}"}
             class={[
               "space-y-2",
@@ -256,21 +322,21 @@ defmodule CinderWeb.LibraryLive do
         </div>
       </section>
 
-      <section class="mt-10">
-        <h2 class="pb-3 text-lg font-semibold">{gettext("Series")}</h2>
+      <section :if={@tab == :tv}>
+        <h2 class="sr-only">{gettext("Series")}</h2>
         <.empty_state
-          :if={@series == []}
+          :if={@visible == []}
           icon="hero-tv"
-          title={gettext("No series added yet")}
-          message={gettext("Add a show from Discover.")}
+          title={if @filter == "", do: gettext("No series added yet"), else: gettext("No matches")}
+          message={if @filter == "", do: gettext("Add a show from Discover."), else: nil}
         />
         <div
-          :if={@series != []}
+          :if={@visible != []}
           id="series-list"
           class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4"
         >
           <div
-            :for={s <- @series}
+            :for={s <- @visible}
             id={"series-row-#{s.id}"}
             class={[
               "space-y-2",
