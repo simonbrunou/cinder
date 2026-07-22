@@ -2345,6 +2345,81 @@ defmodule Cinder.Catalog do
   end
 
   @doc """
+  Re-applies a whole `monitor_strategy` (`:all` / `:future` / `:none`) across an already-added
+  series' season/episode tree, using the same `monitored?/3` rule `add_series` uses at create
+  time — so a title can be adopted with `:none` (catalogue + link on-disk files, grab nothing)
+  and later handed to Cinder with `:future`.
+
+  Updates the series, every season, and every episode in one transaction, then broadcasts
+  `{:series_updated, id}`. This is a **full reset** to the create-time rule (like a fresh
+  `add_series/2` with this strategy), not a merge: specials (non-`:regular` episodes) are set
+  unmonitored regardless of strategy, and any manual per-episode toggle is overwritten. That reset
+  is what makes `:none` actually stop the series — the leaf `episode.monitored` flag is what the TV
+  sweep reads (season/series `monitored` doesn't gate it). Returns `{:ok, series}`,
+  `{:error, :invalid_monitor_strategy}` for an unknown strategy, or `{:error, changeset}` on a
+  write failure.
+  """
+  def set_series_monitor_strategy(%Series{} = series, strategy) do
+    if strategy in Series.monitor_strategies() do
+      reapply_monitor_strategy(series, strategy)
+    else
+      {:error, :invalid_monitor_strategy}
+    end
+  end
+
+  defp reapply_monitor_strategy(series, strategy) do
+    tree_monitored = strategy != :none
+
+    result =
+      Repo.transaction(fn ->
+        case series
+             |> Ecto.Changeset.change(monitored: tree_monitored, monitor_strategy: strategy)
+             |> Repo.update() do
+          {:ok, series} ->
+            reapply_tree_monitoring(series, strategy, tree_monitored)
+            series
+
+          {:error, changeset} ->
+            Repo.rollback(changeset)
+        end
+      end)
+
+    with {:ok, series} <- result do
+      broadcast_series(series.id)
+      {:ok, series}
+    end
+  end
+
+  defp reapply_tree_monitoring(series, strategy, tree_monitored) do
+    today = Date.utc_today()
+    season_ids = Repo.all(from(s in Season, where: s.series_id == ^series.id, select: s.id))
+
+    Repo.update_all(from(s in Season, where: s.id in ^season_ids),
+      set: [monitored: tree_monitored, updated_at: now()]
+    )
+
+    # Episode monitored depends on per-row classification + air_date, so partition the ids by the
+    # shared monitored?/3 rule and bulk-write each group (≤2 update_alls) rather than re-encoding
+    # that rule in SQL — one source of truth with create_series.
+    from(e in Episode,
+      where: e.season_id in ^season_ids,
+      select: {e.id, e.classification, e.air_date}
+    )
+    |> Repo.all()
+    |> Enum.group_by(
+      fn {_id, classification, air_date} ->
+        classification == :regular and monitored?(strategy, air_date, today)
+      end,
+      fn {id, _classification, _air_date} -> id end
+    )
+    |> Enum.each(fn {monitored?, ids} ->
+      Repo.update_all(from(e in Episode, where: e.id in ^ids),
+        set: [monitored: monitored?, updated_at: now()]
+      )
+    end)
+  end
+
+  @doc """
   Single choke-point for episode **pipeline** writes (`file_path`, `grab_id`, attempt
   counters — no status enum; episode state is derived). On success broadcasts
   `{:series_updated, series_id}` on the `"series"` topic. `monitored` is NOT written here —
