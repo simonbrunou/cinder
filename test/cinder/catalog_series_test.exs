@@ -185,6 +185,41 @@ defmodule Cinder.CatalogSeriesTest do
       assert series.monitor_strategy == :future
       assert Enum.count(episodes(series.id), & &1.monitored) == 2
     end
+
+    test "set_series_monitor_strategy/2 re-applies a strategy over an already-added tree" do
+      stub_tmdb(80)
+      # Adopt with :none — nothing monitored (the library-migration entry point).
+      {:ok, series} = Catalog.add_series(80, monitor_strategy: :none)
+      refute series.monitored
+      assert Enum.all?(episodes(series.id), &(&1.monitored == false))
+
+      # Flip to :future — same distribution add_series(:future) produces (2 monitored:
+      # un-aired + undated; the aired regular and the special stay off), series + seasons on.
+      assert {:ok, series} = Catalog.set_series_monitor_strategy(series, :future)
+      assert series.monitor_strategy == :future
+      assert series.monitored
+      assert Enum.all?(loaded(series.id).seasons, & &1.monitored)
+      assert Enum.count(episodes(series.id), & &1.monitored) == 2
+      assert Repo.get_by!(Episode, tmdb_episode_id: 900).monitored == false
+
+      # Flip to :all — every regular monitored, specials still explicit-only.
+      assert {:ok, series} = Catalog.set_series_monitor_strategy(series, :all)
+      assert Enum.all?(episodes(series.id), &(&1.monitored == (&1.classification == :regular)))
+
+      # Flip back to :none — whole tree off again.
+      assert {:ok, series} = Catalog.set_series_monitor_strategy(series, :none)
+      refute series.monitored
+      refute Enum.any?(loaded(series.id).seasons, & &1.monitored)
+      assert Enum.all?(episodes(series.id), &(&1.monitored == false))
+    end
+
+    test "set_series_monitor_strategy/2 rejects an unknown strategy" do
+      stub_tmdb(81)
+      {:ok, series} = Catalog.add_series(81, monitor_strategy: :none)
+
+      assert {:error, :invalid_monitor_strategy} =
+               Catalog.set_series_monitor_strategy(series, :bogus)
+    end
   end
 
   describe "find-or-create + getters" do
