@@ -1105,7 +1105,12 @@ defmodule CinderWeb.SeriesDetailLive do
 
       <div class="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <form id="series-detail-language-form" phx-change="set_series_language">
-          <.language_select value={@series.preferred_language} />
+          <div class="fieldset mb-2">
+            <label>
+              <span class="label mb-1">{gettext("Audio")}</span>
+              <.language_select value={@series.preferred_language} />
+            </label>
+          </div>
         </form>
         <div>
           <.form for={@profile_form} id="series-profile-form" phx-change="set_media_profile">
