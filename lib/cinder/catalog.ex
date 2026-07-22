@@ -407,6 +407,120 @@ defmodule Cinder.Catalog do
     end
   end
 
+  @doc """
+  Pure preview of the scene coordinates a `(from, delta)` season offset would generate for `series`
+  (issue #156): every episode in a TMDB season `>= from` gets a scene code
+  `Episode.code(season_number + delta, episode_number)`. Shares its derivation with
+  `save_scene_offset_coordinates/3` (via `derive_offset/3`) so the preview can never differ from
+  what Save persists. Each returned row is one derived scene season (sorted), carrying the source
+  TMDB season, the episode-number range, the count, and `collisions` — derived codes that equal the
+  *native* code of a different episode in the series. Collisions are the case the operator must
+  consciously vet: the operator's alt numbering will win over that native episode at resolution
+  (`AnimeResolver.strip_shadowed_canonical/1`), so a native-numbered release of that episode would
+  be interpreted as the alt-numbered one. `series` must carry its preloaded season/episode tree
+  (`get_series_with_tree/1`). Returns `[]` for an invalid offset (`from < 1`, `delta == 0`,
+  non-integers).
+  """
+  def preview_scene_offset(%Series{seasons: seasons}, from, delta)
+      when is_integer(from) and is_integer(delta) and from >= 1 and delta != 0 do
+    episodes = tree_episodes(seasons)
+    native_owner = Map.new(episodes, &{Episode.code(&1.season_number, &1.episode_number), &1.id})
+
+    episodes
+    |> derive_offset(from, delta)
+    |> Enum.group_by(fn %{episode: e} -> e.season_number + delta end)
+    |> Enum.map(fn {scene_season, derived} ->
+      %{
+        tmdb_season: hd(derived).episode.season_number,
+        scene_season: scene_season,
+        count: length(derived),
+        episode_range: minmax(Enum.map(derived, & &1.episode.episode_number)),
+        collisions:
+          for(
+            %{episode: e, scene_code: code} <- derived,
+            owner = Map.get(native_owner, code),
+            not is_nil(owner) and owner != e.id,
+            do: code
+          )
+      }
+    end)
+    |> Enum.sort_by(& &1.scene_season)
+  end
+
+  def preview_scene_offset(_series, _from, _delta), do: []
+
+  @doc """
+  Persists the `(from, delta)` season-offset scene coordinates for `series` as **operator-reviewed**
+  (`:curated`) rows in the `"offset"` namespace, replacing any it previously wrote (a `:manual`
+  per-episode correction in that namespace survives). `from`/`delta` both `nil` clears them.
+  Broadcasts on the `"series"` topic. Returns `{:ok, series}`, `{:error, :invalid_offset}` for
+  `from < 1` / `delta == 0` / mixed nil, or `{:error, reason}` on a write failure. Loads episodes
+  itself. See `preview_scene_offset/3` for the derivation the operator reviews first.
+  """
+  def save_scene_offset_coordinates(%Series{} = series, from, delta) do
+    with {:ok, coords} <- offset_coords(series, from, delta),
+         {:ok, _} <-
+           Identity.replace_provider_coordinates(series, "offset", "offset", "scene", coords) do
+      broadcast_series(series.id)
+      {:ok, series}
+    end
+  end
+
+  defp offset_coords(_series, nil, nil), do: {:ok, []}
+
+  defp offset_coords(series, from, delta)
+       when is_integer(from) and is_integer(delta) and from >= 1 and delta != 0 do
+    coords =
+      series
+      |> offset_episodes()
+      |> derive_offset(from, delta)
+      |> Enum.map(fn %{episode: e, scene_code: code} ->
+        %{scheme: "scene", canonical_value: code, precedence: :curated, episode_ids: [e.id]}
+      end)
+      |> drop_offset_collisions()
+
+    {:ok, coords}
+  end
+
+  defp offset_coords(_series, _from, _delta), do: {:error, :invalid_offset}
+
+  # Eligible episodes: TMDB season >= from, and the shifted season stays >= 1 (never derive S00 or a
+  # negative season). Shared by preview (from the preloaded tree) and save (queried) so both derive
+  # the identical set.
+  defp derive_offset(episodes, from, delta) do
+    for e <- episodes,
+        e.season_number >= from,
+        e.season_number + delta >= 1,
+        do: %{episode: e, scene_code: Episode.code(e.season_number + delta, e.episode_number)}
+  end
+
+  defp tree_episodes(seasons) do
+    for season <- seasons,
+        episode <- season.episodes,
+        do: %{
+          id: episode.id,
+          season_number: season.season_number,
+          episode_number: episode.episode_number
+        }
+  end
+
+  defp offset_episodes(%Series{id: series_id}) do
+    Repo.all(
+      from e in Episode,
+        join: s in assoc(e, :season),
+        where: s.series_id == ^series_id,
+        select: %{id: e.id, season_number: s.season_number, episode_number: e.episode_number}
+    )
+  end
+
+  # Defensive only: a valid offset is a bijective season shift, so derived codes are unique. If
+  # duplicate (season, episode) rows ever produced a shared code, drop every colliding one rather
+  # than let one silently win (and to never trip the coordinate unique index).
+  defp drop_offset_collisions(coords) do
+    counts = Enum.frequencies_by(coords, & &1.canonical_value)
+    Enum.filter(coords, &(Map.fetch!(counts, &1.canonical_value) == 1))
+  end
+
   @doc "Builds the plain Catalog-owned identity context used for anime movie acquisition."
   def anime_movie_acquisition_context(%Movie{} = movie) do
     %{

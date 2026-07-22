@@ -37,6 +37,8 @@ defmodule Cinder.Download.TvPollerTest do
     episode_fixture(season, Map.merge(%{episode_number: ep_num}, Map.new(attrs)))
   end
 
+  defp pad2(n), do: n |> Integer.to_string() |> String.pad_leading(2, "0")
+
   # Anime preferences are global-only (no per-title override) — a test needing a non-default
   # policy overrides the global settings env for its duration and restores it on exit.
   defp set_anime_defaults!(overrides) do
@@ -245,6 +247,56 @@ defmodule Cinder.Download.TvPollerTest do
     assert Repo.get!(Episode, first.id).grab_id
     assert %Episode{grab_id: nil, search_attempts: 0} = Repo.get!(Episode, second.id)
     assert Agent.get(adds, & &1) == 1
+  end
+
+  test "an operator season offset makes Second-Season episodes grab, incl. a native-collision episode (issue #156)" do
+    series =
+      series_fixture(%{
+        tvdb_id: 99,
+        monitor_strategy: :all,
+        media_profile: :anime,
+        title: "Monogatari"
+      })
+
+    # Second Season = TMDB S3 (wanted); Hanamonogatari = TMDB S4 (present, not wanted) so its native
+    # S04E01..E05 codes collide with the offset-derived Second-Season S04 coords. Episodes 6..7 have
+    # no native S04 twin, exercising the non-collision path in the same poll.
+    s3 = season_fixture(series, %{season_number: 3})
+    s4 = season_fixture(series, %{season_number: 4})
+    second_season = for n <- 1..7, do: episode(s3, n)
+    for n <- 1..5, do: episode(s4, n, %{monitored: false})
+
+    {:ok, _} = Catalog.save_scene_offset_coordinates(series, 3, 1)
+
+    releases =
+      for n <- 1..7 do
+        %{
+          title: "[smol] Monogatari Series Second Season S04E#{pad2(n)} [1080p]",
+          size: 2_000_000_000,
+          download_url: "smol-#{n}"
+        }
+      end
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn
+      99, _title, 4 -> {:ok, releases}
+      99, _title, _season -> {:ok, []}
+    end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, categories: [5070] ->
+      {:ok, []}
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn release, _opts ->
+      {:ok, "grab-#{release.download_url}"}
+    end)
+
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+    assert :ok = TvPoller.poll()
+
+    for ep <- second_season do
+      assert %Episode{grab_id: grab_id, search_attempts: 0} = Repo.get!(Episode, ep.id)
+      assert grab_id, "expected Second-Season episode #{ep.episode_number} to grab"
+    end
   end
 
   test "invalid Anime series preferences hold the group without search or attempt bumps" do

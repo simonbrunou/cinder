@@ -35,6 +35,8 @@ defmodule CinderWeb.SeriesDetailLive do
           episode_groups: nil,
           numbering_panel_open?: false,
           scene_saving_group_id: nil,
+          offset_form: offset_form(),
+          offset_preview: nil,
           open_seasons: MapSet.new()
         )
         |> refresh_identity(series)
@@ -436,6 +438,50 @@ defmodule CinderWeb.SeriesDetailLive do
     {:noreply, fetch_episode_groups(socket)}
   end
 
+  # Offset generator (issue #156): the derivation is pure (no TMDB call), so the preview is computed
+  # in-process on every change and Save/Clear write immediately — no start_async needed. Non-numeric
+  # or partial input yields no preview and a save error, never a crash (house-style tolerance).
+  def handle_event("preview_scene_offset", %{"from" => from, "delta" => delta}, socket) do
+    {:noreply,
+     assign(socket,
+       offset_form: to_form(%{"from" => from, "delta" => delta}),
+       offset_preview: build_offset_preview(socket.assigns.series, from, delta)
+     )}
+  end
+
+  def handle_event("save_scene_offset", %{"from" => from, "delta" => delta}, socket) do
+    case Catalog.save_scene_offset_coordinates(
+           socket.assigns.series,
+           parse_offset_int(from),
+           parse_offset_int(delta)
+         ) do
+      {:ok, _series} ->
+        {:noreply, socket |> put_flash(:info, gettext("Season offset saved.")) |> reload()}
+
+      {:error, _reason} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Enter a starting season (1 or more) and a non-zero shift.")
+         )}
+    end
+  end
+
+  def handle_event("clear_scene_offset", _params, socket) do
+    case Catalog.save_scene_offset_coordinates(socket.assigns.series, nil, nil) do
+      {:ok, _series} ->
+        {:noreply,
+         socket
+         |> assign(offset_form: offset_form(), offset_preview: nil)
+         |> put_flash(:info, gettext("Season offset cleared."))
+         |> reload()}
+
+      {:error, _reason} ->
+        {:noreply, socket}
+    end
+  end
+
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   # Refresh descriptive metadata off the render path whenever the detail page opens (house
@@ -687,6 +733,30 @@ defmodule CinderWeb.SeriesDetailLive do
     do: to_form(%{"media_profile" => Atom.to_string(series.media_profile)})
 
   defp scene_form(series), do: to_form(%{"group_id" => scene_group_id_string(series)})
+
+  defp offset_form, do: to_form(%{"from" => "", "delta" => ""})
+
+  defp build_offset_preview(series, from, delta) do
+    case {parse_offset_int(from), parse_offset_int(delta)} do
+      {from, delta} when is_integer(from) and is_integer(delta) ->
+        Catalog.preview_scene_offset(series, from, delta)
+
+      _partial ->
+        nil
+    end
+  end
+
+  defp parse_offset_int(value) when is_binary(value) do
+    case Integer.parse(String.trim(value)) do
+      {int, ""} -> int
+      _not_an_int -> nil
+    end
+  end
+
+  defp parse_offset_int(_value), do: nil
+
+  defp episode_range_text({first, first}), do: "E#{first}"
+  defp episode_range_text({first, last}), do: "E#{first}–E#{last}"
 
   defp scene_group_id_string(nil), do: nil
   defp scene_group_id_string(series), do: series.scene_numbering_group_id || ""
@@ -1196,6 +1266,53 @@ defmodule CinderWeb.SeriesDetailLive do
         <p :if={@scene_preview == :error} class="mt-2 text-sm text-error">
           {gettext("Couldn't load that group's mapping.")}
         </p>
+      </details>
+
+      <details :if={@profile_summary.effective == :anime} class="mb-6 max-w-3xl">
+        <summary class="cursor-pointer border-b border-base-300 pb-2 text-lg font-semibold">
+          {gettext("Season offset")}
+        </summary>
+        <p class="mb-2 mt-2 text-sm text-base-content/70">
+          {gettext(
+            "When releases number this show's seasons with a fixed shift from TMDB (e.g. an inserted season pushes later seasons up by one), generate the matching scene coordinates. Review any native collisions before saving — the alternate numbering wins over that native episode at search time."
+          )}
+        </p>
+        <.form
+          for={@offset_form}
+          id="series-scene-offset-form"
+          phx-change="preview_scene_offset"
+          phx-submit="save_scene_offset"
+          class="flex flex-wrap items-end gap-2"
+        >
+          <.input
+            field={@offset_form[:from]}
+            type="number"
+            min="1"
+            label={gettext("From TMDB season")}
+          />
+          <.input field={@offset_form[:delta]} type="number" label={gettext("Season shift (±)")} />
+          <.button type="submit" variant="primary" size="sm" phx-disable-with={gettext("Saving…")}>
+            {gettext("Save")}
+          </.button>
+          <.button
+            type="button"
+            variant="ghost"
+            size="sm"
+            phx-click="clear_scene_offset"
+            aria-label={gettext("Clear season offset")}
+          >
+            {gettext("Clear")}
+          </.button>
+        </.form>
+        <div :if={is_list(@offset_preview) and @offset_preview != []} class="mt-2 text-sm">
+          <p :for={entry <- @offset_preview} class="text-base-content/70">
+            {gettext("TMDB S%{tmdb} → S%{scene}", tmdb: entry.tmdb_season, scene: entry.scene_season)}
+            <span :if={entry.episode_range}>{episode_range_text(entry.episode_range)}</span>
+            <span :if={entry.collisions != []} class="text-warning">
+              · {gettext("collides with native %{codes}", codes: Enum.join(entry.collisions, ", "))}
+            </span>
+          </p>
+        </div>
       </details>
 
       <.empty_state

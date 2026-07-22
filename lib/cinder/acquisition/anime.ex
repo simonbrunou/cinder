@@ -262,18 +262,20 @@ defmodule Cinder.Acquisition.Anime do
     end
   end
 
-  # The scheme-bridging rule itself (which persisted schemes a parsed value also matches) lives
-  # once in `AnimeResolver.bridged_schemes/1` — no new precedence handling is needed here: the
-  # canonical mapping stays `:manual` and `AnimeResolver` already ranks `:manual` above
-  # `:inferred`, so a value both know still resolves canonically.
+  # The scheme-bridging rule (which persisted schemes a parsed value also matches) lives once in
+  # `AnimeResolver.bridged_schemes/1`. `strip_shadowed_canonical/1` then lets an operator-reviewed
+  # scene coordinate win over the coincidental native code of a *different* episode that shares the
+  # same SxxEyy string (issue #156); an auto-derived `:inferred` scene coordinate leaves the native
+  # canonical in place, so ordinary resolution is unchanged.
   defp mappings_for_value(mappings, scheme, value) do
     schemes = [scheme | AnimeResolver.bridged_schemes(scheme)]
 
-    Enum.filter(
-      mappings,
+    mappings
+    |> Enum.filter(
       &(Map.get(&1.identity, :scheme) in schemes and
           Map.get(&1.identity, :canonical_value) == value)
     )
+    |> AnimeResolver.strip_shadowed_canonical()
   end
 
   defp resolver_mapping(mapping) do
