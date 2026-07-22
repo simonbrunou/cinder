@@ -679,4 +679,46 @@ defmodule Cinder.CatalogTest do
       })
     end
   end
+
+  describe "series_library_sizes/0" do
+    test "counts a multi-episode file once, not once per covered episode" do
+      series = series_fixture()
+      season = season_fixture(series)
+      shared = "/tv/Show (2008)/Season 01/Show (2008) - S01E01-E02.mkv"
+
+      # What Library.link_all/4 + update_imported_episode!/5 actually write for a double episode:
+      # one destination, referenced by both rows, each carrying the whole file's size.
+      for number <- [1, 2] do
+        episode_fixture(season, %{
+          episode_number: number,
+          file_path: shared,
+          imported_size: 4_000
+        })
+      end
+
+      episode_fixture(season, %{
+        episode_number: 3,
+        file_path: "/tv/Show (2008)/Season 01/Show (2008) - S01E03.mkv",
+        imported_size: 1_000
+      })
+
+      assert Catalog.series_library_sizes() == %{series.id => 5_000}
+    end
+
+    test "omits series with nothing imported, and rows with a path but no size" do
+      imported = series_fixture()
+      season = season_fixture(imported)
+      episode_fixture(season, %{file_path: "/tv/a.mkv", imported_size: 2_000})
+
+      # Monitored but never grabbed — absent from the map, not zero.
+      empty = series_fixture()
+      episode_fixture(season_fixture(empty))
+
+      # Pre-`imported_size` legacy row: a path with no size is excluded (documented lossiness).
+      legacy = series_fixture()
+      episode_fixture(season_fixture(legacy), %{file_path: "/tv/legacy.mkv"})
+
+      assert Catalog.series_library_sizes() == %{imported.id => 2_000}
+    end
+  end
 end

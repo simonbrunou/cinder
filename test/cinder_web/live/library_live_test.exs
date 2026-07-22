@@ -184,8 +184,8 @@ defmodule CinderWeb.LibraryLiveTest do
     assert redirected_to(get(conn, ~p"/movies")) == "/library"
   end
 
-  defp available_movie!(file_path) do
-    movie = movie_fixture(%{title: "M", year: 2010})
+  defp available_movie!(file_path, attrs \\ %{}) do
+    movie = movie_fixture(Map.merge(%{title: "M", year: 2010}, attrs))
 
     {:ok, movie} =
       movie
@@ -240,5 +240,138 @@ defmodule CinderWeb.LibraryLiveTest do
     series!(%{title: "Severance"})
     {:ok, _lv, html} = live(conn, ~p"/")
     refute html =~ "Added series"
+  end
+
+  describe "sorting" do
+    # Rendered order, which has no `has_element?` equivalent. Floki is not a dependency here;
+    # LazyHTML is (test-only), and it is what LiveViewTest itself parses with.
+    defp card_ids(html, selector) do
+      html |> LazyHTML.from_fragment() |> LazyHTML.query(selector) |> LazyHTML.attribute("id")
+    end
+
+    defp sort_by(lv, value),
+      do: lv |> form("#library-sort-form", %{"sort" => value}) |> render_change()
+
+    test "Title (A–Z) reorders the movie grid against the default newest-first", %{conn: conn} do
+      # Inserted so the default `desc: id` order (zulu, alpha) disagrees with alphabetical.
+      alpha = movie_fixture(%{title: "Alpha"})
+      zulu = movie_fixture(%{title: "Zulu"})
+
+      {:ok, lv, html} = live(conn, ~p"/library")
+      assert card_ids(html, "#movies-list > div") == ["movie-#{zulu.id}", "movie-#{alpha.id}"]
+
+      sort_by(lv, "title")
+      assert_patch(lv, ~p"/library?sort=title")
+
+      assert card_ids(render(lv), "#movies-list > div") ==
+               ["movie-#{alpha.id}", "movie-#{zulu.id}"]
+    end
+
+    test "an accented title sorts with its unaccented neighbours, not after Z", %{conn: conn} do
+      amelie = movie_fixture(%{title: "Amélie"})
+      zulu = movie_fixture(%{title: "Zulu"})
+
+      {:ok, lv, _html} = live(conn, ~p"/library?sort=title")
+
+      assert card_ids(render(lv), "#movies-list > div") ==
+               ["movie-#{amelie.id}", "movie-#{zulu.id}"]
+
+      # Sanity: codepoint order without folding would put "Amélie" (é = U+00E9) after "Zulu".
+      refute card_ids(render(lv), "#movies-list > div") ==
+               ["movie-#{zulu.id}", "movie-#{amelie.id}"]
+    end
+
+    test "Size puts the largest first, the never-imported last, and prints the bytes", %{
+      conn: conn
+    } do
+      small = available_movie!("/tmp/small.mkv", %{title: "Small", imported_size: 2_000_000})
+      never = movie_fixture(%{title: "Never"})
+      big = available_movie!("/tmp/big.mkv", %{title: "Big", imported_size: 9_000_000})
+
+      {:ok, lv, _html} = live(conn, ~p"/library")
+      sort_by(lv, "size")
+      assert_patch(lv, ~p"/library?sort=size")
+
+      html = render(lv)
+
+      assert card_ids(html, "#movies-list > div") ==
+               ["movie-#{big.id}", "movie-#{small.id}", "movie-#{never.id}"]
+
+      # Sorting by a number the grid never shows would be a half-feature.
+      assert has_element?(lv, "#movie-#{big.id} p", "8.6 MB")
+      refute has_element?(lv, "#movie-#{never.id} p")
+    end
+
+    test "a retried movie sorts and renders as sizeless once its file is gone", %{conn: conn} do
+      # retry_movie/1 clears file_path but leaves imported_size behind.
+      movie = available_movie!("/tmp/gone.mkv", %{title: "Gone", imported_size: 9_000_000})
+      {:ok, failed} = Catalog.transition(movie, %{status: :import_failed})
+      {:ok, movie} = Catalog.retry_movie(failed)
+      assert movie.file_path == nil and movie.imported_size == 9_000_000
+
+      # Positive control: same size, same selector, file still on disk. Without it the refute
+      # below would also pass if the card vanished or the selector were simply wrong.
+      kept = available_movie!("/tmp/kept.mkv", %{title: "Kept", imported_size: 9_000_000})
+
+      {:ok, lv, _html} = live(conn, ~p"/library?sort=size")
+
+      assert has_element?(lv, "#movie-#{kept.id} p", "8.6 MB")
+      assert has_element?(lv, "#movie-#{movie.id}")
+      refute has_element?(lv, "#movie-#{movie.id} p", "8.6 MB")
+
+      # ...and it sorts as sizeless too, not just renders as one.
+      assert List.last(card_ids(render(lv), "#movies-list > div")) == "movie-#{movie.id}"
+    end
+
+    test "sorting on the Series tab keeps ?type=tv and totals each series' files", %{conn: conn} do
+      small = series!(%{title: "Small Show"})
+      big = series!(%{title: "Big Show"})
+      seed_episode_file(small, "/tv/small.mkv", 2_000_000)
+      seed_episode_file(big, "/tv/big.mkv", 9_000_000)
+
+      {:ok, lv, _html} = live(conn, ~p"/library?type=tv")
+      sort_by(lv, "size")
+
+      # The patch must carry the tab: a reconnect remounts against this URL, and a bare
+      # ?sort=size would silently drop the operator back onto the Movies tab.
+      assert_patch(lv, ~p"/library?type=tv&sort=size")
+
+      assert card_ids(render(lv), "#series-list > div") ==
+               ["series-row-#{big.id}", "series-row-#{small.id}"]
+
+      assert has_element?(lv, "#series-row-#{big.id} p", "8.6 MB")
+    end
+
+    test "a series import refreshes the size readout live", %{conn: conn} do
+      series = series!(%{title: "Severance"})
+      {:ok, lv, _html} = live(conn, ~p"/library?type=tv")
+      refute has_element?(lv, "#series-row-#{series.id} p")
+
+      # Every episodes.imported_size writer broadcasts this; the size map has to refresh with the
+      # series list or it silently goes stale on the TV tab.
+      episode = seed_episode_file(series, "/tv/new.mkv", 9_000_000)
+      send(lv.pid, {:series_updated, series.id})
+
+      assert has_element?(lv, "#series-row-#{series.id} p", "8.6 MB")
+      assert episode.file_path == "/tv/new.mkv"
+    end
+
+    test "an unknown ?sort= falls back to the default instead of crashing", %{conn: conn} do
+      newest = movie_fixture(%{title: "Alpha"})
+
+      {:ok, lv, html} = live(conn, ~p"/library?sort=' OR 1=1--")
+      assert card_ids(html, "#movies-list > div") == ["movie-#{newest.id}"]
+
+      # Raw event rather than the form: `form/3` refuses a value the <select> doesn't offer, so
+      # only a direct payload exercises the handler's own allowlist — which is what a hand-rolled
+      # request would send. The value must never reach String.to_atom/1.
+      render_change(lv, "sort", %{"sort" => "not-a-sort"})
+      assert_patch(lv, ~p"/library?sort=added")
+    end
+
+    defp seed_episode_file(series, path, size) do
+      season = season_fixture(series)
+      episode_fixture(season, %{file_path: path, imported_size: size})
+    end
   end
 end
