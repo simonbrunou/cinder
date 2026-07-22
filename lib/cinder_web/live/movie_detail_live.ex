@@ -436,7 +436,12 @@ defmodule CinderWeb.MovieDetailLive do
 
       <div class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <form id="movie-language-form" phx-change="set_movie_language">
-          <.language_select value={@movie.preferred_language} />
+          <div class="fieldset mb-2">
+            <label>
+              <span class="label mb-1">{gettext("Audio")}</span>
+              <.language_select value={@movie.preferred_language} />
+            </label>
+          </div>
         </form>
         <div>
           <.form for={@profile_form} id="movie-profile-form" phx-change="set_media_profile">
