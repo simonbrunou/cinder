@@ -9,7 +9,16 @@ defmodule CinderWeb.LibraryLive do
   `mount/3` — the tab links are `navigate`, not `patch`, so switching scrolls back to the top
   and drops the filter with the remount instead of needing reset code. A title filter narrows
   the visible grid; `@movies`/`@series` stay canonical (the PubSub handlers, `find_movie/2` and
-  `run_series_op/3` all resolve against them) and filtering happens at render.
+  `run_series_op/3` all resolve against them) and filtering *and sorting* happen at render.
+
+  Sorting is deliberately not a query `order_by`: `upsert_by_id/2` mutates `@movies` in place on
+  every broadcast, so a database order would be a lie the first time an update changes a sorted
+  field. `?sort=` *is* in the URL even though the filter isn't — a reconnect is a fresh `mount/3`
+  against the client's current URL, so a plain assign would silently reset the sort on any network
+  blip. (The filter stays transient on purpose: unbounded free text, and a momentary
+  find-this-one-thing action rather than a presentation mode held across several actions.) The
+  patch uses `replace: true` so a run of select changes doesn't bury the previous page under
+  history entries — Back from `/movies/:id` still returns to the sorted list.
 
   Admin-gated by the `:admin` live_session; every mutation routes through the existing
   `Catalog` functions — no pipeline or gate change. Live via the `movies` + `series` topics.
@@ -28,15 +37,20 @@ defmodule CinderWeb.LibraryLive do
     end
 
     {:ok,
-     assign(socket,
+     socket
+     |> assign(
        movies: Catalog.list_movies(),
-       series: Catalog.list_series(),
        tab: if(params["type"] == "tv", do: :tv, else: :movies),
        filter: "",
        confirming: nil,
        delete_files: false
-     )}
+     )
+     |> assign_series()}
   end
+
+  @impl true
+  def handle_params(params, _uri, socket),
+    do: {:noreply, assign(socket, :sort, parse_sort(params["sort"]))}
 
   # --- movies ---
   @impl true
@@ -126,6 +140,16 @@ defmodule CinderWeb.LibraryLive do
   def handle_event("filter", %{"filter" => filter}, socket) when is_binary(filter),
     do: {:noreply, assign(socket, filter: filter, confirming: nil, delete_files: false)}
 
+  # Its own form and its own event on purpose: dropped into the filter form, the "filter" clause
+  # above still matches (extra map keys are allowed) and the sort change is swallowed silently.
+  def handle_event("sort", %{"sort" => value}, socket),
+    do:
+      {:noreply,
+       push_patch(socket,
+         to: library_path(socket.assigns.tab, parse_sort(value)),
+         replace: true
+       )}
+
   def handle_event("toggle_delete_files", _params, socket),
     do: {:noreply, assign(socket, delete_files: !socket.assigns.delete_files)}
 
@@ -145,15 +169,29 @@ defmodule CinderWeb.LibraryLive do
   def handle_info({:movie_deleted, id}, socket),
     do: {:noreply, assign(socket, movies: Enum.reject(socket.assigns.movies, &(&1.id == id)))}
 
-  def handle_info({:series_updated, _id}, socket),
-    do: {:noreply, assign(socket, series: Catalog.list_series())}
+  def handle_info({:series_updated, _id}, socket), do: {:noreply, assign_series(socket)}
 
-  def handle_info({:series_deleted, _id}, socket),
-    do: {:noreply, assign(socket, series: Catalog.list_series())}
+  def handle_info({:series_deleted, _id}, socket), do: {:noreply, assign_series(socket)}
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
   defp find_movie(socket, id), do: find_by_id(socket.assigns.movies, to_string(id))
+
+  # The series list and its size map always move together — every `episodes.imported_size` writer
+  # broadcasts `{:series_updated, _}` on the topic this view subscribes to, so refreshing one
+  # without the other is the only way they can drift.
+  #
+  # Gated on the tab because `item_size/2` never reads the map on the movies tab (a `Series` has
+  # no `imported_size` field of its own), and `@tab` is fixed for the view's lifetime — the tab
+  # links are `navigate`, i.e. a full remount. That keeps the aggregate off the default landing
+  # tab entirely. ponytail: the TV tab recomputes it per broadcast — measured ~2.6 ms at 5k
+  # episode rows, so the burst during a season-pack import is affordable; if it ever shows up,
+  # add a covering partial index on `episodes(season_id, file_path, imported_size)
+  # WHERE file_path IS NOT NULL`.
+  defp assign_series(socket) do
+    sizes = if socket.assigns.tab == :tv, do: Catalog.series_library_sizes(), else: %{}
+    assign(socket, series: Catalog.list_series(), series_sizes: sizes)
+  end
 
   # Render-time narrowing of the active tab's list. Case-insensitive substring on the title.
   defp visible(items, ""), do: items
@@ -162,6 +200,62 @@ defmodule CinderWeb.LibraryLive do
     needle = String.downcase(filter)
     Enum.filter(items, &String.contains?(String.downcase(&1.title), needle))
   end
+
+  # Render-time ordering of the active tab's list. `:added` is the list as loaded (`desc: id`),
+  # so the default costs nothing.
+  defp sort_items(items, :title, _sizes), do: Enum.sort_by(items, &{fold(&1.title), -&1.id})
+
+  defp sort_items(items, :size, sizes),
+    do: Enum.sort_by(items, &desc_key(item_size(&1, sizes), &1.id))
+
+  defp sort_items(items, :year, _sizes), do: Enum.sort_by(items, &desc_key(&1.year, &1.id))
+  defp sort_items(items, _added, _sizes), do: items
+
+  # Descending with nils last, newest id first on a tie: `false < true` in Elixir term order parks
+  # the nils at the end without a second pass.
+  defp desc_key(value, id), do: {is_nil(value), -(value || 0), -id}
+
+  # Bytes on disk. A movie carries its own size; a series' is summed per-file in SQL. The
+  # `file_path` guard keeps both tabs meaning the same thing — `Catalog.retry_movie/1` clears
+  # `file_path` but leaves `imported_size`, so a retried movie would otherwise sort by (and print)
+  # bytes it no longer has, while the series aggregate is already `file_path`-guarded.
+  defp item_size(%{file_path: nil}, _sizes), do: nil
+  defp item_size(%{imported_size: size}, _sizes), do: size
+  defp item_size(%{id: id}, sizes), do: sizes[id]
+
+  # Case- and accent-folded sort key, so "Amélie" lands next to "Amelie" instead of after "Zorro".
+  # Codepoint order, not locale collation — "Eclair" still sorts before "Éclair" rather than
+  # interleaving, which is fine at household scale. Total, like `Cinder.Acquisition.nfd/1`:
+  # `characters_to_nfd_binary/1` returns `{:error, _, _}` on malformed UTF-8, and a raise here
+  # would happen inside `render/1` and take the whole page down.
+  defp fold(title) do
+    case :unicode.characters_to_nfd_binary(title) do
+      binary when is_binary(binary) -> String.downcase(binary)
+      _ -> String.downcase(title)
+    end
+  end
+
+  # Allowlist, never `String.to_atom/1` on a client-supplied param. Unknown → the default.
+  defp parse_sort("title"), do: :title
+  defp parse_sort("size"), do: :size
+  defp parse_sort("year"), do: :year
+  defp parse_sort(_), do: :added
+
+  # A function, not a module attribute: the labels are translated at runtime, per locale.
+  defp sort_options do
+    [
+      {gettext("Recently added"), "added"},
+      {gettext("Title (A–Z)"), "title"},
+      {gettext("Size (largest first)"), "size"},
+      {gettext("Year (newest first)"), "year"}
+    ]
+  end
+
+  # One builder for the sort patch target *and* both tab hrefs, so they can't drift: a patch that
+  # dropped `type=tv` would leave the URL saying Movies while the TV tab renders, and the next
+  # reconnect — a fresh `mount/3` against that URL — would silently flip the operator's tab.
+  defp library_path(:tv, sort), do: ~p"/library?type=tv&sort=#{sort}"
+  defp library_path(:movies, sort), do: ~p"/library?sort=#{sort}"
 
   # /library is admin-gated by its route, so no in-handler role re-check (Discover needed
   # one because it lived on a non-admin route).
@@ -173,7 +267,8 @@ defmodule CinderWeb.LibraryLive do
       {:ok, _} ->
         {:noreply,
          socket
-         |> assign(confirming: nil, series: Catalog.list_series())
+         |> assign(confirming: nil)
+         |> assign_series()
          |> put_flash(:info, ok_msg)}
 
       _ ->
@@ -184,7 +279,13 @@ defmodule CinderWeb.LibraryLive do
   @impl true
   def render(assigns) do
     items = if assigns.tab == :tv, do: assigns.series, else: assigns.movies
-    assigns = assign(assigns, :visible, visible(items, assigns.filter))
+
+    assigns =
+      assign(
+        assigns,
+        :visible,
+        items |> visible(assigns.filter) |> sort_items(assigns.sort, assigns.series_sizes)
+      )
 
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
@@ -199,7 +300,7 @@ defmodule CinderWeb.LibraryLive do
       <nav class="tabs tabs-box mb-4" aria-label={gettext("Library")}>
         <.link
           id="library-tab-movies"
-          navigate={~p"/library"}
+          navigate={library_path(:movies, @sort)}
           aria-current={@tab == :movies && "page"}
           class={["tab min-h-11", @tab == :movies && "tab-active"]}
         >
@@ -207,7 +308,7 @@ defmodule CinderWeb.LibraryLive do
         </.link>
         <.link
           id="library-tab-tv"
-          navigate={~p"/library?type=tv"}
+          navigate={library_path(:tv, @sort)}
           aria-current={@tab == :tv && "page"}
           class={["tab min-h-11", @tab == :tv && "tab-active"]}
         >
@@ -218,19 +319,42 @@ defmodule CinderWeb.LibraryLive do
       <%!-- The input must live inside a form: LiveView's client throws "form events require
             the input to be inside a form" on a bare phx-change input, which LiveViewTest does
             not reproduce. No spinner here — unlike Discover's search there is no roundtrip. --%>
-      <form id="library-filter-form" phx-change="filter" phx-submit="filter" class="mb-8">
-        <label for="library-filter" class="sr-only">{gettext("Filter by title")}</label>
-        <input
-          type="search"
-          id="library-filter"
-          name="filter"
-          value={@filter}
-          phx-debounce="300"
-          autocomplete="off"
-          placeholder={gettext("Filter by title…")}
-          class="input input-lg w-full min-h-11"
-        />
-      </form>
+      <div class="mb-6 flex flex-col gap-2 sm:flex-row sm:items-start">
+        <%!-- The visible label is what keeps this input and the sort select on one baseline:
+              `.input type="select"` wraps in `div.fieldset` with a label span above the control,
+              so a bare sibling sits higher by exactly that label (cf. #166). --%>
+        <form id="library-filter-form" phx-change="filter" phx-submit="filter" class="grow">
+          <div class="fieldset mb-2">
+            <label for="library-filter">
+              <span class="label mb-1">{gettext("Filter by title")}</span>
+              <input
+                type="search"
+                id="library-filter"
+                name="filter"
+                value={@filter}
+                phx-debounce="300"
+                autocomplete="off"
+                placeholder={gettext("Filter by title…")}
+                class="input input-lg w-full min-h-11"
+              />
+            </label>
+          </div>
+        </form>
+
+        <%!-- Its own form, not a second field on the filter form: the filter handler would match
+              the combined params and swallow the sort change without a warning. --%>
+        <form id="library-sort-form" phx-change="sort" phx-submit="sort" class="sm:w-64">
+          <.input
+            id="library-sort"
+            name="sort"
+            type="select"
+            label={gettext("Sort by")}
+            value={to_string(@sort)}
+            options={sort_options()}
+            class="select select-lg w-full min-h-11"
+          />
+        </form>
+      </div>
 
       <section :if={@tab == :movies}>
         <h2 class="sr-only">{gettext("Movies")}</h2>
@@ -259,6 +383,12 @@ defmodule CinderWeb.LibraryLive do
           >
             <.link navigate={~p"/movies/#{m.id}"} class="block max-w-xs">
               <.media_card poster_path={m.poster_path} title={m.title} year={m.year} type={:movie}>
+                <p
+                  :if={humanize_bytes(item_size(m, @series_sizes))}
+                  class="text-xs tabular-nums text-base-content/60"
+                >
+                  {humanize_bytes(item_size(m, @series_sizes))}
+                </p>
                 <.status_badge
                   kind={:movie}
                   status={movie_badge_status(m)}
@@ -349,6 +479,12 @@ defmodule CinderWeb.LibraryLive do
           >
             <.link navigate={~p"/series/#{s.id}"} class="block max-w-xs">
               <.media_card poster_path={s.poster_path} title={s.title} year={s.year} type={:tv}>
+                <p
+                  :if={humanize_bytes(item_size(s, @series_sizes))}
+                  class="text-xs tabular-nums text-base-content/60"
+                >
+                  {humanize_bytes(item_size(s, @series_sizes))}
+                </p>
                 <.status_badge
                   kind={:monitored}
                   status={s.monitored}

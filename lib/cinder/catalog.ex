@@ -1745,6 +1745,37 @@ defmodule Cinder.Catalog do
   def count_series, do: Repo.aggregate(Series, :count)
 
   @doc """
+  Bytes on disk per series (`%{series_id => bytes}`), for the `/library` size sort and readout.
+  Series with nothing imported are absent from the map, not zero.
+
+  Deduplicates by `file_path` before summing: `Cinder.Library.link_all/4` gives one multi-episode
+  source **one** destination that every covered episode references, and `update_imported_episode!/5`
+  writes the full file size to each of those rows — so a bare `sum(imported_size)` double-counts a
+  double-episode file. (`clear_shared_file_paths/1` exists for the same reason on the delete side.)
+
+  Two known inexactnesses, recorded rather than fixed:
+
+    * `Cinder.Library.stage_anime_all/5` groups by `{source, season_number}` rather than by source
+      alone, so one physical file spanning two seasons gets two destinations and is counted twice.
+    * Episode rows written before the `imported_size` column existed carry a `file_path` with no
+      size and are excluded, so an old series can read smaller than a new one. The predicate stays
+      — without it the group-by emits NULL groups.
+  """
+  def series_library_sizes do
+    per_file =
+      from e in Episode,
+        join: s in Season,
+        on: s.id == e.season_id,
+        where: not is_nil(e.file_path) and not is_nil(e.imported_size),
+        group_by: [s.series_id, e.file_path],
+        select: %{series_id: s.series_id, bytes: max(e.imported_size)}
+
+    from(f in subquery(per_file), group_by: f.series_id, select: {f.series_id, sum(f.bytes)})
+    |> Repo.all()
+    |> Map.new()
+  end
+
+  @doc """
   Admin metadata edit for a series. Uses `Series.admin_changeset/2`, which excludes
   `monitor_strategy`/`monitored` so the edit never cascades a strategy change to existing
   seasons/episodes. Per-season/episode monitoring stays on `set_season_monitored/2` /
