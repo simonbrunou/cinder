@@ -727,4 +727,39 @@ defmodule Cinder.CatalogTest do
       assert Catalog.series_library_sizes() == %{imported.id => 2_000}
     end
   end
+
+  describe "localize/2" do
+    test "picks the localized title and overview when present" do
+      movie = %Movie{
+        title: "Inception",
+        overview: "A thief who steals corporate secrets.",
+        localizations: %{
+          "fr" => %{title: "Inception", overview: "Un voleur dérobe des secrets d'entreprise."}
+        }
+      }
+
+      localized = Catalog.localize(movie, "fr")
+      assert localized.title == "Inception"
+      assert localized.overview == "Un voleur dérobe des secrets d'entreprise."
+    end
+
+    test "falls back to canonical title and overview when the locale is missing" do
+      series = %Series{
+        title: "Breaking Bad",
+        overview: "A chemistry teacher turned meth cook.",
+        localizations: %{"es" => %{title: "Breaking Malo", overview: "Un profesor."}}
+      }
+
+      localized = Catalog.localize(series, "fr")
+      assert localized.title == "Breaking Bad"
+      assert localized.overview == "A chemistry teacher turned meth cook."
+    end
+
+    test "falls back to canonical values when localizations is empty" do
+      movie = %Movie{title: "Inception", overview: "A thief.", localizations: %{}}
+      localized = Catalog.localize(movie, "fr")
+      assert localized.title == "Inception"
+      assert localized.overview == "A thief."
+    end
+  end
 end

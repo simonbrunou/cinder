@@ -1,6 +1,7 @@
 defmodule Cinder.Catalog.TMDB.HTTPTest do
   use ExUnit.Case, async: true
 
+  alias Cinder.Catalog.Locale
   alias Cinder.Catalog.TMDB.HTTP
 
   test "search/1 normalizes TMDB results, tolerating missing year/poster" do
@@ -132,7 +133,7 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
   test "get_series/1 pulls tvdb_id from external_ids and lists season numbers" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       assert conn.request_path == "/3/tv/1396"
-      assert conn.params["append_to_response"] == "external_ids"
+      assert conn.params["append_to_response"] == "external_ids,translations"
 
       Req.Test.json(conn, %{
         "id" => 1396,
@@ -157,6 +158,44 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
             }} = HTTP.get_series(1396)
   end
 
+  test "get_series/1 parses translated titles from data.name" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      assert conn.request_path == "/3/tv/1396"
+      assert conn.params["append_to_response"] == "external_ids,translations"
+
+      Req.Test.json(conn, %{
+        "id" => 1396,
+        "name" => "Breaking Bad",
+        "first_air_date" => "2008-01-20",
+        "poster_path" => "/bb.jpg",
+        "original_language" => "en",
+        "external_ids" => %{"tvdb_id" => 81_189},
+        "seasons" => [%{"season_number" => 1}],
+        "translations" => %{
+          "translations" => [
+            %{
+              "iso_639_1" => "fr",
+              "data" => %{
+                "name" => "Breaking Bad",
+                "overview" => "Un professeur de chimie.",
+                "homepage" => ""
+              }
+            }
+          ]
+        }
+      })
+    end)
+
+    assert {:ok,
+            %{
+              tmdb_id: 1396,
+              title: "Breaking Bad",
+              localizations: %{
+                "fr" => %{title: "Breaking Bad", overview: "Un professeur de chimie."}
+              }
+            }} = HTTP.get_series(1396)
+  end
+
   test "get_series/1 tolerates a missing external_ids block" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       Req.Test.json(conn, %{
@@ -168,6 +207,47 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
     end)
 
     assert {:ok, %{tmdb_id: 7, tvdb_id: nil, seasons: []}} = HTTP.get_series(7)
+  end
+
+  test "get_movie/1 requests the current locale and parses translations" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      assert conn.request_path == "/3/movie/27205"
+      assert conn.params["append_to_response"] == "translations"
+      assert conn.params["language"] == "fr"
+
+      Req.Test.json(conn, %{
+        "id" => 27_205,
+        "title" => "Inception",
+        "release_date" => "2010-07-16",
+        "poster_path" => "/p.jpg",
+        "imdb_id" => "tt1375666",
+        "original_language" => "en",
+        "translations" => %{
+          "translations" => [
+            %{
+              "iso_639_1" => "fr",
+              "data" => %{"title" => "Inception", "overview" => "Un voleur.", "homepage" => ""}
+            },
+            %{
+              "iso_639_1" => "es",
+              "data" => %{"title" => "El origen", "overview" => "Un ladrón.", "homepage" => ""}
+            }
+          ]
+        }
+      })
+    end)
+
+    Locale.put("fr")
+
+    assert {:ok,
+            %{
+              tmdb_id: 27_205,
+              title: "Inception",
+              localizations: %{
+                "fr" => %{title: "Inception", overview: "Un voleur."},
+                "es" => %{title: "El origen", overview: "Un ladrón."}
+              }
+            }} = HTTP.get_movie(27_205)
   end
 
   test "get_season/2 normalizes episodes and maps an empty air_date to nil" do

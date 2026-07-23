@@ -23,9 +23,13 @@ defmodule CinderWeb.MovieDetailLive do
   @impl true
   def mount(%{"id" => id}, _session, socket) do
     # :id is client-controlled; a non-integer must not reach Repo.get (CastError).
+    locale = socket.assigns.locale
+
     with {id, ""} <- Integer.parse(id),
          %Movie{} = movie <- Catalog.get_movie_by_id(id) do
       if connected?(socket), do: Catalog.subscribe()
+
+      movie = Catalog.localize(movie, locale)
 
       {:ok,
        socket
@@ -667,9 +671,15 @@ defmodule CinderWeb.MovieDetailLive do
   # broadcast); re-reading pulls both the current status and the persisted metadata. A row deleted
   # mid-flight leaves the current assign in place (the `:movie_deleted` handler drives the redirect).
   defp assign_fresh(socket, id) do
+    locale = socket.assigns.locale
+
     case Catalog.get_movie_by_id(id) do
-      nil -> socket
-      movie -> socket |> assign(movie: movie) |> refresh_identity(movie)
+      nil ->
+        socket
+
+      movie ->
+        movie = Catalog.localize(movie, locale)
+        socket |> assign(movie: movie) |> refresh_identity(movie)
     end
   end
 

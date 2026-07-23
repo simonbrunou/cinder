@@ -31,8 +31,11 @@ defmodule CinderWeb.DiscoverLive do
 
   @impl true
   def handle_event("search", %{"query" => query}, socket) do
-    case Catalog.search_discover(query) do
+    locale = socket.assigns.locale
+
+    case Catalog.search_discover(query, locale: locale) do
       {:ok, results} ->
+        results = Enum.map(results, &Catalog.localize(&1, locale))
         {:noreply, assign(socket, query: query, results: results, search_error: false)}
 
       {:error, _reason} ->

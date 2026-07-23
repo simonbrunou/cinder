@@ -36,16 +36,18 @@ defmodule CinderWeb.LibraryLive do
       Catalog.subscribe_series()
     end
 
+    locale = socket.assigns.locale
+
     {:ok,
      socket
      |> assign(
-       movies: Catalog.list_movies(),
+       movies: Enum.map(Catalog.list_movies(), &Catalog.localize(&1, locale)),
        tab: if(params["type"] == "tv", do: :tv, else: :movies),
        filter: "",
        confirming: nil,
        delete_files: false
      )
-     |> assign_series()}
+     |> assign_series(locale)}
   end
 
   @impl true
@@ -67,7 +69,10 @@ defmodule CinderWeb.LibraryLive do
          {:ok, _} <- Catalog.cancel_movie(movie, actor) do
       {:noreply,
        socket
-       |> assign(confirming: nil, movies: Catalog.list_movies())
+       |> assign(
+         confirming: nil,
+         movies: Enum.map(Catalog.list_movies(), &Catalog.localize(&1, socket.assigns.locale))
+       )
        |> put_flash(:info, gettext("Movie cancelled."))}
     else
       {:error, :not_cancellable} ->
@@ -160,11 +165,15 @@ defmodule CinderWeb.LibraryLive do
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   @impl true
-  def handle_info({:movie_updated, movie}, socket),
-    do: {:noreply, assign(socket, movies: upsert_by_id(socket.assigns.movies, movie))}
+  def handle_info({:movie_updated, movie}, socket) do
+    movie = Catalog.localize(movie, socket.assigns.locale)
+    {:noreply, assign(socket, movies: upsert_by_id(socket.assigns.movies, movie))}
+  end
 
-  def handle_info({:movie_created, movie}, socket),
-    do: {:noreply, assign(socket, movies: upsert_by_id(socket.assigns.movies, movie))}
+  def handle_info({:movie_created, movie}, socket) do
+    movie = Catalog.localize(movie, socket.assigns.locale)
+    {:noreply, assign(socket, movies: upsert_by_id(socket.assigns.movies, movie))}
+  end
 
   def handle_info({:movie_deleted, id}, socket),
     do: {:noreply, assign(socket, movies: Enum.reject(socket.assigns.movies, &(&1.id == id)))}
@@ -188,9 +197,14 @@ defmodule CinderWeb.LibraryLive do
   # episode rows, so the burst during a season-pack import is affordable; if it ever shows up,
   # add a covering partial index on `episodes(season_id, file_path, imported_size)
   # WHERE file_path IS NOT NULL`.
-  defp assign_series(socket) do
+  defp assign_series(socket, locale \\ nil) do
+    locale = locale || socket.assigns.locale
     sizes = if socket.assigns.tab == :tv, do: Catalog.series_library_sizes(), else: %{}
-    assign(socket, series: Catalog.list_series(), series_sizes: sizes)
+
+    assign(socket,
+      series: Enum.map(Catalog.list_series(), &Catalog.localize(&1, locale)),
+      series_sizes: sizes
+    )
   end
 
   # Render-time narrowing of the active tab's list. Case-insensitive substring on the title.

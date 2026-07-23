@@ -20,8 +20,12 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   @impl true
   def mount(%{"tmdb_id" => raw}, _session, socket) do
     # The :tmdb_id param is client-controlled; a non-integer must not crash the page.
+    locale = socket.assigns.locale
+
     with {tmdb_id, ""} <- Integer.parse(raw),
-         {:ok, info} <- Catalog.tmdb_series(tmdb_id) do
+         {:ok, info} <- Catalog.tmdb_series(tmdb_id, locale: locale) do
+      info = Catalog.localize(info, locale)
+
       if connected?(socket) do
         Requests.subscribe()
         # Season availability derives from episode imports, which broadcast on "series".
