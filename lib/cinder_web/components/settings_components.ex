@@ -59,13 +59,13 @@ defmodule CinderWeb.SettingsComponents do
       open={group == @first_group or MapSet.member?(@invalid_groups, group)}
       phx-hook="DisclosureState"
       data-force-open={to_string(MapSet.member?(@invalid_groups, group))}
-      class="rounded-box bg-base-200"
+      class="collapse collapse-arrow rounded-box bg-base-200"
     >
-      <summary class="min-h-11 cursor-pointer px-4 py-3 text-lg font-semibold focus-visible:outline-2 focus-visible:outline-primary">
+      <summary class="collapse-title min-h-11 cursor-pointer text-lg font-semibold focus-visible:outline-2 focus-visible:outline-primary">
         {SettingsLabels.t(label)}
       </summary>
 
-      <div class="px-4 pb-4">
+      <div class="collapse-content">
         <div :if={group == :media_server} class="form-control mb-2">
           <label class="label" for="media_server_type">
             <span class="label-text">{gettext("Media server type")}</span>
@@ -316,7 +316,7 @@ defmodule CinderWeb.SettingsComponents do
       data-force-open={to_string(MapSet.member?(@invalid_groups, :anime))}
       class="collapse collapse-arrow rounded-box bg-base-200"
     >
-      <summary class="min-h-11 cursor-pointer px-4 py-3 text-lg font-semibold focus-visible:outline-2 focus-visible:outline-primary">
+      <summary class="collapse-title min-h-11 cursor-pointer text-lg font-semibold focus-visible:outline-2 focus-visible:outline-primary">
         {gettext("Anime releases")}
       </summary>
       <div class="collapse-content grid gap-4 md:grid-cols-2">
