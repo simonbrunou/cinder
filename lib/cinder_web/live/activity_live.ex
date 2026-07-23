@@ -154,7 +154,7 @@ defmodule CinderWeb.ActivityLive do
 
   def handle_event("retry", %{"id" => id}, socket) when is_binary(id) do
     socket =
-      with {id, ""} <- Integer.parse(id),
+      with {_id, ""} <- Integer.parse(id),
            %{} = movie <- find_by_id(socket.assigns.movies, id) do
         case Catalog.retry_movie(movie) do
           {:error, _} ->
