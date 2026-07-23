@@ -627,19 +627,6 @@ defmodule Cinder.Catalog do
     {identity.source, identity.scheme, identity.namespace, identity.canonical_value}
   end
 
-  @doc """
-  Admin metadata edit for a movie (title/year/poster/ids). Reuses `Movie.changeset/2`, which
-  does NOT cast `:status` — status changes go through `transition/2` (the choke-point). On success
-  broadcasts `{:movie_updated, movie}` (same helper `transition/2` uses) so other subscribed
-  sessions refresh. Returns `{:ok, movie}` or `{:error, changeset}`.
-  """
-  def update_movie(%Movie{} = movie, attrs) do
-    with {:ok, updated} <- movie |> Movie.changeset(attrs) |> Repo.update() do
-      broadcast({:movie_updated, updated})
-      {:ok, updated}
-    end
-  end
-
   @doc "Lists movies, newest first."
   def list_movies do
     Repo.all(from m in Movie, order_by: [desc: m.id])
@@ -1814,20 +1801,6 @@ defmodule Cinder.Catalog do
     from(f in subquery(per_file), group_by: f.series_id, select: {f.series_id, sum(f.bytes)})
     |> Repo.all()
     |> Map.new()
-  end
-
-  @doc """
-  Admin metadata edit for a series. Uses `Series.admin_changeset/2`, which excludes
-  `monitor_strategy`/`monitored` so the edit never cascades a strategy change to existing
-  seasons/episodes. Per-season/episode monitoring stays on `set_season_monitored/2` /
-  `set_episode_monitored/2`. On success broadcasts `{:series_updated, series.id}` so other
-  subscribed sessions refresh. Returns `{:ok, series}` or `{:error, changeset}`.
-  """
-  def update_series(%Series{} = series, attrs) do
-    with {:ok, updated} <- series |> Series.admin_changeset(attrs) |> Repo.update() do
-      broadcast_series(updated.id)
-      {:ok, updated}
-    end
   end
 
   defp create_series(tmdb_id, strategy, preferred, media_profile) do

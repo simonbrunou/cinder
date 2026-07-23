@@ -1242,20 +1242,6 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert render(lv) =~ "Stay Show"
   end
 
-  test "admin edits the series title", %{conn: conn} do
-    series = create_series(710)
-    {:ok, lv, _html} = live_series(conn, series)
-
-    lv |> element(~s|button[phx-click="edit_series"]|) |> render_click()
-
-    lv
-    |> form("#series-form", %{"series" => %{"title" => "Renamed", "year" => "2021"}})
-    |> render_submit()
-
-    assert Repo.get!(Cinder.Catalog.Series, series.id).title == "Renamed"
-    render(lv)
-  end
-
   test "admin cancels the series: grabs reaped, episodes unmonitored", %{conn: conn} do
     series = create_series(711)
     ep = first_episode(series.id)
