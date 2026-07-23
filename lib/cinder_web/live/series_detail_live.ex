@@ -26,9 +26,7 @@ defmodule CinderWeb.SeriesDetailLive do
 
       socket =
         assign(socket,
-          editing?: false,
           confirming: nil,
-          form: nil,
           alias_form: alias_form(),
           confirm_opt: false,
           searching_season: nil,
@@ -106,34 +104,11 @@ defmodule CinderWeb.SeriesDetailLive do
     end
   end
 
-  def handle_event("edit_series", _params, socket) do
-    form = to_form(Series.admin_changeset(socket.assigns.series, %{}))
-    {:noreply, assign(socket, editing?: true, confirming: nil, form: form)}
-  end
-
-  def handle_event("cancel_edit_series", _params, socket) do
-    {:noreply, assign(socket, editing?: false, form: nil)}
-  end
-
-  def handle_event("save_series", %{"series" => attrs}, socket) do
-    case Catalog.update_series(socket.assigns.series, attrs) do
-      {:ok, _} ->
-        {:noreply,
-         socket
-         |> assign(editing?: false, form: nil)
-         |> put_flash(:info, gettext("Series updated."))
-         |> reload()}
-
-      {:error, changeset} ->
-        {:noreply, assign(socket, form: to_form(changeset))}
-    end
-  end
-
   def handle_event("ask_cancel_series", _params, socket),
-    do: {:noreply, assign(socket, confirming: :cancel, editing?: false, confirm_opt: false)}
+    do: {:noreply, assign(socket, confirming: :cancel, confirm_opt: false)}
 
   def handle_event("ask_delete_series", _params, socket),
-    do: {:noreply, assign(socket, confirming: :delete, editing?: false, confirm_opt: false)}
+    do: {:noreply, assign(socket, confirming: :delete, confirm_opt: false)}
 
   def handle_event("ask_delete_episode_file", %{"id" => id}, socket),
     do: {:noreply, assign(socket, confirming: {:episode_file, id}, confirm_opt: false)}
@@ -990,9 +965,6 @@ defmodule CinderWeb.SeriesDetailLive do
       </.link>
 
       <div class="mb-4 flex flex-wrap items-center gap-2">
-        <.button type="button" variant="neutral" size="sm" phx-click="edit_series">
-          {gettext("Edit")}
-        </.button>
         <.button type="button" variant="warning" size="sm" phx-click="ask_cancel_series">
           {gettext("Cancel series")}
         </.button>
@@ -1000,23 +972,6 @@ defmodule CinderWeb.SeriesDetailLive do
           {gettext("Delete series")}
         </.button>
       </div>
-
-      <.form
-        :if={@editing?}
-        for={@form}
-        id="series-form"
-        phx-submit="save_series"
-        class="mb-6 flex flex-wrap items-end gap-2"
-      >
-        <.input field={@form[:title]} type="text" label={gettext("Title")} />
-        <.input field={@form[:year]} type="number" label={gettext("Year")} />
-        <.button variant="primary" size="sm" type="submit" phx-disable-with={gettext("Saving…")}>
-          {gettext("Save")}
-        </.button>
-        <.button variant="ghost" size="sm" type="button" phx-click="cancel_edit_series">
-          {gettext("Cancel")}
-        </.button>
-      </.form>
 
       <.confirm_action
         :if={@confirming == :cancel}

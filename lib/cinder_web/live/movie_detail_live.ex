@@ -2,7 +2,7 @@ defmodule CinderWeb.MovieDetailLive do
   @moduledoc """
   Admin movie console at `/movies/:id`: descriptive TMDB metadata (overview / runtime / genres /
   rating / release date — refreshed on each detail view via `Catalog.enrich_movie/1`, off-process
-  so it never blocks render), the downloaded-file panel, **and** management — edit / cancel / delete,
+  so it never blocks render), the downloaded-file panel, **and** management — cancel / delete,
   retry a parked movie, "Find a better match", cancel an in-flight upgrade, and set the preferred
   language. Mirrors the `/series/:id` console so movies and TV behave identically. Every write goes
   through an existing `Catalog` function; subscribes to the `movies` topic so a status change (its
@@ -38,9 +38,7 @@ defmodule CinderWeb.MovieDetailLive do
        socket
        |> assign(
          movie: movie,
-         editing?: false,
          confirming: nil,
-         form: nil,
          alias_form: alias_form(),
          delete_files: false,
          searching?: false
@@ -63,40 +61,13 @@ defmodule CinderWeb.MovieDetailLive do
       else: socket
   end
 
-  # --- edit ---
-  @impl true
-  def handle_event("edit", _params, socket) do
-    {:noreply,
-     assign(socket,
-       editing?: true,
-       confirming: nil,
-       form: to_form(Movie.changeset(socket.assigns.movie, %{}))
-     )}
-  end
-
-  def handle_event("cancel_edit", _params, socket),
-    do: {:noreply, assign(socket, editing?: false, form: nil)}
-
-  def handle_event("save", %{"movie" => attrs}, socket) do
-    case Catalog.update_movie(socket.assigns.movie, attrs) do
-      {:ok, _updated} ->
-        {:noreply,
-         socket
-         |> assign(editing?: false, form: nil)
-         |> assign_fresh(socket.assigns.movie.id)
-         |> put_flash(:info, gettext("Movie updated."))}
-
-      {:error, changeset} ->
-        {:noreply, assign(socket, form: to_form(changeset))}
-    end
-  end
-
   # --- cancel / delete ---
+  @impl true
   def handle_event("ask_cancel", _params, socket),
-    do: {:noreply, assign(socket, confirming: :cancel, editing?: false)}
+    do: {:noreply, assign(socket, confirming: :cancel)}
 
   def handle_event("ask_delete", _params, socket),
-    do: {:noreply, assign(socket, confirming: :delete, editing?: false, delete_files: false)}
+    do: {:noreply, assign(socket, confirming: :delete, delete_files: false)}
 
   def handle_event("toggle_delete_files", _params, socket),
     do: {:noreply, assign(socket, delete_files: !socket.assigns.delete_files)}
@@ -313,9 +284,6 @@ defmodule CinderWeb.MovieDetailLive do
       </.link>
 
       <div class="mb-4 flex flex-wrap items-center gap-2">
-        <.button type="button" variant="neutral" size="sm" phx-click="edit">
-          {gettext("Edit")}
-        </.button>
         <.button
           :if={Catalog.cancellable?(@movie)}
           type="button"
@@ -335,23 +303,6 @@ defmodule CinderWeb.MovieDetailLive do
           {gettext("Delete")}
         </.button>
       </div>
-
-      <.form
-        :if={@editing?}
-        for={@form}
-        id="movie-form"
-        phx-submit="save"
-        class="mb-6 flex flex-wrap items-end gap-2"
-      >
-        <.input field={@form[:title]} type="text" label={gettext("Title")} />
-        <.input field={@form[:year]} type="number" label={gettext("Year")} />
-        <.button variant="primary" size="sm" type="submit" phx-disable-with={gettext("Saving…")}>
-          {gettext("Save")}
-        </.button>
-        <.button variant="ghost" size="sm" type="button" phx-click="cancel_edit">
-          {gettext("Cancel edit")}
-        </.button>
-      </.form>
 
       <.confirm_action
         :if={@confirming == :cancel}

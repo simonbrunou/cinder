@@ -51,8 +51,8 @@ defmodule Cinder.Catalog.Series do
   @doc """
   Changeset for the operator-chosen TMDB episode group used for alternate-season numbering
   (see `Catalog.set_scene_numbering_group/2`). Deliberately its own changeset, like
-  `anime_hold_changeset/2` — not part of `create_changeset/1`, `refresh_changeset/2`, or
-  `admin_changeset/2`, so neither a TMDB refresh nor an admin metadata edit can clobber it.
+  `anime_hold_changeset/2` — not part of `create_changeset/1` or `refresh_changeset/2`, so
+  a TMDB refresh can't clobber it.
   """
   def scene_numbering_changeset(series, attrs),
     do: cast(series, attrs, [:scene_numbering_group_id])
@@ -121,18 +121,5 @@ defmodule Cinder.Catalog.Series do
     series
     |> cast(attrs, [:preferred_language])
     |> validate_inclusion(:preferred_language, Language.preferences())
-  end
-
-  @doc """
-  Changeset for the admin metadata edit (`Catalog.update_series/2`). Casts only the
-  descriptive fields — `monitor_strategy` and `monitored` are deliberately NOT castable so
-  an admin title/year edit never cascades a strategy change onto existing seasons/episodes
-  (the request flow sets `monitor_strategy: :none` while flipping per-season `monitored: true`;
-  casting strategy here would clobber that — `refresh_changeset/2` excludes it for the same reason).
-  """
-  def admin_changeset(series, attrs) do
-    series
-    |> cast(attrs, [:tvdb_id, :title, :year, :poster_path])
-    |> validate_required([:title])
   end
 end
