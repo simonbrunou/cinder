@@ -365,7 +365,6 @@ defmodule CinderWeb.LibraryLiveTest do
           imported_size: 9_000_000
         })
 
-      assert render(lv) =~ "8.6 MB"
       assert has_element?(lv, "#series-row-#{series.id} p", "8.6 MB")
     end
 
