@@ -11,7 +11,14 @@ defmodule CinderWeb.MovieDetailLive do
   use CinderWeb, :live_view
 
   import CinderWeb.LiveHelpers,
-    only: [format_date_year: 1, humanize_bytes: 1, rating: 1, movie_badge_status: 1]
+    only: [
+      format_date_year: 1,
+      humanize_bytes: 1,
+      rating: 1,
+      movie_badge_status: 1,
+      media_title: 2,
+      media_overview: 2
+    ]
 
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog
@@ -23,13 +30,9 @@ defmodule CinderWeb.MovieDetailLive do
   @impl true
   def mount(%{"id" => id}, _session, socket) do
     # :id is client-controlled; a non-integer must not reach Repo.get (CastError).
-    locale = socket.assigns.locale
-
     with {id, ""} <- Integer.parse(id),
          %Movie{} = movie <- Catalog.get_movie_by_id(id) do
       if connected?(socket), do: Catalog.subscribe()
-
-      movie = Catalog.localize(movie, locale)
 
       {:ok,
        socket
@@ -380,7 +383,7 @@ defmodule CinderWeb.MovieDetailLive do
         <img
           :if={@movie.poster_path}
           src={poster_url(@movie.poster_path)}
-          alt={@movie.title}
+          alt={media_title(@movie, @locale)}
           loading="lazy"
           decoding="async"
           class="aspect-[2/3] w-40 shrink-0 rounded object-cover"
@@ -394,7 +397,7 @@ defmodule CinderWeb.MovieDetailLive do
 
         <div class="min-w-0 flex-1">
           <.header>
-            {@movie.title}
+            {media_title(@movie, @locale)}
             <span :if={@movie.year} class="font-normal text-base-content/70">({@movie.year})</span>
             <:actions>
               <.status_badge
@@ -429,10 +432,10 @@ defmodule CinderWeb.MovieDetailLive do
             <span :for={g <- @movie.genres} class="badge badge-outline badge-sm">{g}</span>
           </div>
 
-          <p :if={@movie.overview} class="mt-4 max-w-prose text-sm leading-relaxed">
-            {@movie.overview}
+          <p :if={media_overview(@movie, @locale)} class="mt-4 max-w-prose text-sm leading-relaxed">
+            {media_overview(@movie, @locale)}
           </p>
-          <p :if={is_nil(@movie.overview)} class="mt-4 text-sm text-base-content/50">
+          <p :if={is_nil(media_overview(@movie, @locale))} class="mt-4 text-sm text-base-content/50">
             {gettext("No description available.")}
           </p>
         </div>
@@ -671,15 +674,9 @@ defmodule CinderWeb.MovieDetailLive do
   # broadcast); re-reading pulls both the current status and the persisted metadata. A row deleted
   # mid-flight leaves the current assign in place (the `:movie_deleted` handler drives the redirect).
   defp assign_fresh(socket, id) do
-    locale = socket.assigns.locale
-
     case Catalog.get_movie_by_id(id) do
-      nil ->
-        socket
-
-      movie ->
-        movie = Catalog.localize(movie, locale)
-        socket |> assign(movie: movie) |> refresh_identity(movie)
+      nil -> socket
+      movie -> socket |> assign(movie: movie) |> refresh_identity(movie)
     end
   end
 

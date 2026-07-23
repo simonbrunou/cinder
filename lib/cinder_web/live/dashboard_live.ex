@@ -148,12 +148,11 @@ defmodule CinderWeb.DashboardLive do
   # status count + a LIMIT-8 recent slice + a few COUNT(*)s) rather than loading whole tables
   # just to take their length — stays cheap as the catalog grows.
   defp load(socket) do
-    locale = socket.assigns.locale
     counts = Catalog.movie_status_counts()
 
     assign(socket,
       pending: Requests.list_pending(),
-      recent: Enum.map(Catalog.recent_movies(8), &Catalog.localize(&1, locale)),
+      recent: Catalog.recent_movies(8),
       stats: %{
         movies_total: counts |> Map.values() |> Enum.sum(),
         movies_available: Map.get(counts, :available, 0),
@@ -359,14 +358,14 @@ defmodule CinderWeb.DashboardLive do
                 <img
                   :if={r.poster_path}
                   src={poster_url(r.poster_path, "w92")}
-                  alt={r.title}
+                  alt={request_title(r, @locale)}
                   loading="lazy"
                   decoding="async"
                   class="w-12 rounded"
                 />
                 <div class="min-w-0 flex-1">
                   <p class="truncate font-medium">
-                    {request_title(r)}
+                    {request_title(r, @locale)}
                     <span :if={r.year} class="text-base-content/70">({r.year})</span>
                   </p>
                   <p class="truncate text-sm text-base-content/70">{r.user.email}</p>
@@ -387,7 +386,7 @@ defmodule CinderWeb.DashboardLive do
                 >
                   <input type="hidden" name="_id" value={r.id} />
                   <label for={"dashboard-approval-profile-#{r.id}"} class="sr-only">
-                    {gettext("Confirmed media profile for %{title}", title: r.title)}
+                    {gettext("Confirmed media profile for %{title}", title: request_title(r, @locale))}
                   </label>
                   <.media_profile_select
                     id={"dashboard-approval-profile-#{r.id}"}
@@ -489,7 +488,7 @@ defmodule CinderWeb.DashboardLive do
                     speed={m.download_speed}
                     eta={m.download_eta}
                   />
-                  <span class="truncate">{m.title}</span>
+                  <span class="truncate">{media_title(m, @locale)}</span>
                   <span :if={m.year} class="text-sm text-base-content/70">({m.year})</span>
                 </.link>
                 <time

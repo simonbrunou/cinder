@@ -8,12 +8,27 @@ defmodule CinderWeb.RequestsLiveTest do
   setup :set_mox_global
 
   setup do
+    titles = %{
+      1 => "Pend",
+      2 => "Den",
+      3 => "ToDelete",
+      4 => "Keep",
+      9 => "P",
+      10 => "Picked",
+      11 => "Defaulted",
+      603 => "The Matrix",
+      604 => "Akira",
+      605 => "Standard",
+      606 => "Anime",
+      27_205 => "Inception"
+    }
+
     stub(Cinder.Catalog.TMDBMock, :get_movie, fn id ->
       {:ok,
        %{
          tmdb_id: id,
          imdb_id: nil,
-         title: "Movie #{id}",
+         title: Map.get(titles, id, "Movie #{id}"),
          year: nil,
          poster_path: nil,
          original_language: "en"
@@ -21,6 +36,19 @@ defmodule CinderWeb.RequestsLiveTest do
     end)
 
     stub(Cinder.Catalog.TMDBMock, :get_movie_alternative_titles, fn _ -> {:ok, []} end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn id ->
+      {:ok,
+       %{
+         tmdb_id: id,
+         tvdb_id: nil,
+         title: "Breaking Bad",
+         year: 2008,
+         poster_path: nil,
+         seasons: []
+       }}
+    end)
+
     :ok
   end
 
@@ -342,5 +370,41 @@ defmodule CinderWeb.RequestsLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/requests")
     render_hook(lv, "delete", %{"id" => "999999"})
     assert render(lv) =~ "Requests"
+  end
+
+  test "FR session renders the fr request title; EN session shows canonical", %{conn: conn} do
+    user = user_fixture()
+
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn 9999 ->
+      {:ok,
+       %{
+         tmdb_id: 9999,
+         imdb_id: nil,
+         title: "Cloud Atlas",
+         year: nil,
+         poster_path: nil,
+         original_language: "en",
+         localizations: %{"fr" => %{"title" => "Atlas Nuageux"}}
+       }}
+    end)
+
+    {:ok, _req} =
+      Cinder.Requests.create_request(user, %{
+        target_type: "movie",
+        target_id: 9999,
+        title: "Cloud Atlas"
+      })
+
+    {:ok, _lv, fr_html} =
+      conn
+      |> Plug.Test.init_test_session(%{"locale" => "fr"})
+      |> live(~p"/requests")
+
+    assert fr_html =~ "Atlas Nuageux"
+    refute fr_html =~ "Cloud Atlas"
+
+    {:ok, _lv, en_html} = live(conn, ~p"/requests")
+    assert en_html =~ "Cloud Atlas"
+    refute en_html =~ "Atlas Nuageux"
   end
 end

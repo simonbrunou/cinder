@@ -6,7 +6,17 @@ All notable changes to Cinder are documented here. The format follows
 
 ## [Unreleased]
 
-### Changed
+### Fixed
+- **Media localization reworked** (follow-up to #172). French titles now pick the right regional
+  variant (fr-FR over fr-CA — "Sing" shows "Tous en scène", not "Chantez!") and no longer
+  flip-flop between views. The FR UI could silently corrupt canonical data: saving a movie/series
+  edit form wrote the French display title into the canonical column, and manual TV/anime search
+  queried the indexer with it — LiveView assigns now stay canonical and localization happens only
+  at render. Coverage completed: approval queue, my requests, calendar (incl. episode titles),
+  global toasts, and held-series ordering. Stored translations are trimmed to supported locales,
+  requests snapshot a canonical title + translations at creation, and the 12h refresher backfills
+  existing movies/series (first pass ~1 min after boot). Also restores the `mix.lock` heroicons
+  `depth: 1` option #172 dropped, which broke `mix` on fresh checkouts.
 - **BREAKING (behavior):** release size bands now ship with defaults — movies 0.3–15 GB, TV
   0.05–4 GB per wanted episode — instead of unbounded, so a fresh install can't legally match a
   multi-hundred-GB batch archive for a single wanted episode (#108). An instance that ran with a

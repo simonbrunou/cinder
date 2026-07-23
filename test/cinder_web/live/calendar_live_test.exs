@@ -95,4 +95,35 @@ defmodule CinderWeb.CalendarLiveTest do
     # still alive
     assert render(lv)
   end
+
+  test "FR session renders a localized episode and series title", %{conn: conn} do
+    {series, season} = tree()
+
+    series
+    |> Ecto.Changeset.change(localizations: %{"fr" => %{"title" => "Émission Calendrier"}})
+    |> Repo.update!()
+
+    Repo.insert!(%Episode{
+      season_id: season.id,
+      episode_number: 1,
+      title: "Coming Soon",
+      localizations: %{"fr" => %{"title" => "Bientôt Disponible"}},
+      monitored: true,
+      air_date: Date.add(Date.utc_today(), 5)
+    })
+
+    {:ok, _lv, fr_html} =
+      conn
+      |> Plug.Test.init_test_session(%{"locale" => "fr"})
+      |> live(~p"/calendar")
+
+    assert fr_html =~ "Émission Calendrier"
+    assert fr_html =~ "Bientôt Disponible"
+    refute fr_html =~ "Calendar Show"
+    refute fr_html =~ "Coming Soon"
+
+    {:ok, _lv, en_html} = live(conn, ~p"/calendar")
+    assert en_html =~ "Calendar Show"
+    assert en_html =~ "Coming Soon"
+  end
 end

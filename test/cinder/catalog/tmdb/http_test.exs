@@ -1,13 +1,13 @@
 defmodule Cinder.Catalog.TMDB.HTTPTest do
   use ExUnit.Case, async: true
 
-  alias Cinder.Catalog.Locale
   alias Cinder.Catalog.TMDB.HTTP
 
-  test "search/1 normalizes TMDB results, tolerating missing year/poster" do
+  test "search/2 sends the requested locale and normalizes TMDB results" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       assert conn.request_path == "/3/search/movie"
       assert conn.params["query"] == "inception"
+      assert conn.params["language"] == "fr-FR"
 
       Req.Test.json(conn, %{
         "results" => [
@@ -22,7 +22,7 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
       })
     end)
 
-    assert {:ok, results} = HTTP.search("inception")
+    assert {:ok, results} = HTTP.search("inception", "fr")
 
     # Search bodies omit genres/runtime (details-only), so those come back [] / nil; the
     # descriptive fields /search/movie does send (overview/vote_average/release_date) pass through.
@@ -56,20 +56,20 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
            ]
   end
 
-  test "search/1 returns an error tuple on a non-200 status" do
+  test "search/2 returns an error tuple on a non-200 status" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       conn |> Plug.Conn.put_status(401) |> Req.Test.json(%{"status_message" => "no"})
     end)
 
-    assert {:error, _} = HTTP.search("inception")
+    assert {:error, _} = HTTP.search("inception", "en")
   end
 
-  test "search/1 returns an error (not a raise) on a 200 lacking a results list" do
+  test "search/2 returns an error (not a raise) on a 200 lacking a results list" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       Req.Test.json(conn, %{"success" => false, "status_message" => "bad"})
     end)
 
-    assert {:error, :unexpected_response} = HTTP.search("inception")
+    assert {:error, :unexpected_response} = HTTP.search("inception", "en")
   end
 
   test "get_movie/1 returns an error on a 200 that isn't a movie body" do
@@ -83,6 +83,7 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
   test "get_movie/1 normalizes a single (unwrapped) movie body" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       assert conn.request_path == "/3/movie/27205"
+      refute Map.has_key?(conn.params, "language")
 
       Req.Test.json(conn, %{
         "id" => 27_205,
@@ -105,10 +106,11 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
             }} = HTTP.get_movie(27_205)
   end
 
-  test "search_tv/1 normalizes results (name->title, first_air_date->year)" do
+  test "search_tv/2 sends the requested locale and normalizes results" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       assert conn.request_path == "/3/search/tv"
       assert conn.params["query"] == "breaking"
+      assert conn.params["language"] == "fr-FR"
 
       Req.Test.json(conn, %{
         "results" => [
@@ -127,13 +129,14 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
             [
               %{tmdb_id: 1396, title: "Breaking Bad", year: 2008, poster_path: "/bb.jpg"},
               %{tmdb_id: 2, title: "TBA", year: nil, poster_path: nil}
-            ]} = HTTP.search_tv("breaking")
+            ]} = HTTP.search_tv("breaking", "fr")
   end
 
   test "get_series/1 pulls tvdb_id from external_ids and lists season numbers" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       assert conn.request_path == "/3/tv/1396"
       assert conn.params["append_to_response"] == "external_ids,translations"
+      refute Map.has_key?(conn.params, "language")
 
       Req.Test.json(conn, %{
         "id" => 1396,
@@ -191,7 +194,10 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
               tmdb_id: 1396,
               title: "Breaking Bad",
               localizations: %{
-                "fr" => %{title: "Breaking Bad", overview: "Un professeur de chimie."}
+                "fr" => %{
+                  "title" => "Breaking Bad",
+                  "overview" => "Un professeur de chimie."
+                }
               }
             }} = HTTP.get_series(1396)
   end
@@ -209,11 +215,11 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
     assert {:ok, %{tmdb_id: 7, tvdb_id: nil, seasons: []}} = HTTP.get_series(7)
   end
 
-  test "get_movie/1 requests the current locale and parses translations" do
+  test "get_movie/1 stays canonical, prefers the locale region, and trims translations" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       assert conn.request_path == "/3/movie/27205"
       assert conn.params["append_to_response"] == "translations"
-      assert conn.params["language"] == "fr"
+      refute Map.has_key?(conn.params, "language")
 
       Req.Test.json(conn, %{
         "id" => 27_205,
@@ -226,10 +232,17 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
           "translations" => [
             %{
               "iso_639_1" => "fr",
-              "data" => %{"title" => "Inception", "overview" => "Un voleur.", "homepage" => ""}
+              "iso_3166_1" => "CA",
+              "data" => %{"title" => "Chantez !", "overview" => "Version canadienne."}
+            },
+            %{
+              "iso_639_1" => "fr",
+              "iso_3166_1" => "FR",
+              "data" => %{"title" => "Tous en scène", "overview" => "Version française."}
             },
             %{
               "iso_639_1" => "es",
+              "iso_3166_1" => "ES",
               "data" => %{"title" => "El origen", "overview" => "Un ladrón.", "homepage" => ""}
             }
           ]
@@ -237,22 +250,23 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
       })
     end)
 
-    Locale.put("fr")
-
     assert {:ok,
             %{
               tmdb_id: 27_205,
               title: "Inception",
               localizations: %{
-                "fr" => %{title: "Inception", overview: "Un voleur."},
-                "es" => %{title: "El origen", overview: "Un ladrón."}
+                "fr" => %{
+                  "title" => "Tous en scène",
+                  "overview" => "Version française."
+                }
               }
             }} = HTTP.get_movie(27_205)
   end
 
-  test "get_season/2 normalizes episodes and maps an empty air_date to nil" do
+  test "get_season/3 sends the requested locale and normalizes episodes" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       assert conn.request_path == "/3/tv/1396/season/1"
+      assert conn.params["language"] == "fr-FR"
 
       Req.Test.json(conn, %{
         "season_number" => 1,
@@ -275,7 +289,7 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
                 },
                 %{tmdb_episode_id: 62_086, episode_number: 2, title: "TBA", air_date: nil}
               ]
-            }} = HTTP.get_season(1396, 1)
+            }} = HTTP.get_season(1396, 1, "fr")
   end
 
   test "normalizes movie and TV alternative titles" do
@@ -432,7 +446,7 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
     assert {:error, :unexpected_response} = HTTP.get_episode_group("absolute-id")
   end
 
-  test "search/1 does not forward bearer credentials across redirects" do
+  test "search/2 does not forward bearer credentials across redirects" do
     parent = self()
 
     for status <- [301, 302, 303, 307, 308] do
@@ -447,18 +461,18 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
         end
       end)
 
-      assert {:error, {:tmdb_status, ^status}} = HTTP.search("inception")
+      assert {:error, {:tmdb_status, ^status}} = HTTP.search("inception", "en")
       refute_received {:attacker_called, _}
     end
   end
 
-  test "search/1 rejects an oversized JSON response" do
+  test "search/2 rejects an oversized JSON response" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       conn
       |> Plug.Conn.put_resp_content_type("application/json")
       |> Plug.Conn.send_resp(200, ~s({"padding":"#{String.duplicate("x", 4 * 1024 * 1024)}"}))
     end)
 
-    assert {:error, :response_too_large} = HTTP.search("inception")
+    assert {:error, :response_too_large} = HTTP.search("inception", "en")
   end
 end

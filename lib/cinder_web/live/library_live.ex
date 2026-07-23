@@ -36,18 +36,16 @@ defmodule CinderWeb.LibraryLive do
       Catalog.subscribe_series()
     end
 
-    locale = socket.assigns.locale
-
     {:ok,
      socket
      |> assign(
-       movies: Enum.map(Catalog.list_movies(), &Catalog.localize(&1, locale)),
+       movies: Catalog.list_movies(),
        tab: if(params["type"] == "tv", do: :tv, else: :movies),
        filter: "",
        confirming: nil,
        delete_files: false
      )
-     |> assign_series(locale)}
+     |> assign_series()}
   end
 
   @impl true
@@ -69,10 +67,7 @@ defmodule CinderWeb.LibraryLive do
          {:ok, _} <- Catalog.cancel_movie(movie, actor) do
       {:noreply,
        socket
-       |> assign(
-         confirming: nil,
-         movies: Enum.map(Catalog.list_movies(), &Catalog.localize(&1, socket.assigns.locale))
-       )
+       |> assign(confirming: nil, movies: Catalog.list_movies())
        |> put_flash(:info, gettext("Movie cancelled."))}
     else
       {:error, :not_cancellable} ->
@@ -166,12 +161,10 @@ defmodule CinderWeb.LibraryLive do
 
   @impl true
   def handle_info({:movie_updated, movie}, socket) do
-    movie = Catalog.localize(movie, socket.assigns.locale)
     {:noreply, assign(socket, movies: upsert_by_id(socket.assigns.movies, movie))}
   end
 
   def handle_info({:movie_created, movie}, socket) do
-    movie = Catalog.localize(movie, socket.assigns.locale)
     {:noreply, assign(socket, movies: upsert_by_id(socket.assigns.movies, movie))}
   end
 
@@ -197,33 +190,32 @@ defmodule CinderWeb.LibraryLive do
   # episode rows, so the burst during a season-pack import is affordable; if it ever shows up,
   # add a covering partial index on `episodes(season_id, file_path, imported_size)
   # WHERE file_path IS NOT NULL`.
-  defp assign_series(socket, locale \\ nil) do
-    locale = locale || socket.assigns.locale
+  defp assign_series(socket) do
     sizes = if socket.assigns.tab == :tv, do: Catalog.series_library_sizes(), else: %{}
-
-    assign(socket,
-      series: Enum.map(Catalog.list_series(), &Catalog.localize(&1, locale)),
-      series_sizes: sizes
-    )
+    assign(socket, series: Catalog.list_series(), series_sizes: sizes)
   end
 
-  # Render-time narrowing of the active tab's list. Case-insensitive substring on the title.
-  defp visible(items, ""), do: items
+  # Render-time narrowing of the active tab's list. Case-insensitive substring on the
+  # LOCALIZED title, so filtering matches what's actually displayed.
+  defp visible(items, "", _locale), do: items
 
-  defp visible(items, filter) do
+  defp visible(items, filter, locale) do
     needle = String.downcase(filter)
-    Enum.filter(items, &String.contains?(String.downcase(&1.title), needle))
+    Enum.filter(items, &String.contains?(String.downcase(media_title(&1, locale)), needle))
   end
 
   # Render-time ordering of the active tab's list. `:added` is the list as loaded (`desc: id`),
-  # so the default costs nothing.
-  defp sort_items(items, :title, _sizes), do: Enum.sort_by(items, &{fold(&1.title), -&1.id})
+  # so the default costs nothing. `:title` folds the LOCALIZED title, matching what's displayed.
+  defp sort_items(items, :title, _sizes, locale),
+    do: Enum.sort_by(items, &{fold_title(media_title(&1, locale)), -&1.id})
 
-  defp sort_items(items, :size, sizes),
+  defp sort_items(items, :size, sizes, _locale),
     do: Enum.sort_by(items, &desc_key(item_size(&1, sizes), &1.id))
 
-  defp sort_items(items, :year, _sizes), do: Enum.sort_by(items, &desc_key(&1.year, &1.id))
-  defp sort_items(items, _added, _sizes), do: items
+  defp sort_items(items, :year, _sizes, _locale),
+    do: Enum.sort_by(items, &desc_key(&1.year, &1.id))
+
+  defp sort_items(items, _added, _sizes, _locale), do: items
 
   # Descending with nils last, newest id first on a tie: `false < true` in Elixir term order parks
   # the nils at the end without a second pass.
@@ -236,18 +228,6 @@ defmodule CinderWeb.LibraryLive do
   defp item_size(%{file_path: nil}, _sizes), do: nil
   defp item_size(%{imported_size: size}, _sizes), do: size
   defp item_size(%{id: id}, sizes), do: sizes[id]
-
-  # Case- and accent-folded sort key, so "Amélie" lands next to "Amelie" instead of after "Zorro".
-  # Codepoint order, not locale collation — "Eclair" still sorts before "Éclair" rather than
-  # interleaving, which is fine at household scale. Total, like `Cinder.Acquisition.nfd/1`:
-  # `characters_to_nfd_binary/1` returns `{:error, _, _}` on malformed UTF-8, and a raise here
-  # would happen inside `render/1` and take the whole page down.
-  defp fold(title) do
-    case :unicode.characters_to_nfd_binary(title) do
-      binary when is_binary(binary) -> String.downcase(binary)
-      _ -> String.downcase(title)
-    end
-  end
 
   # Allowlist, never `String.to_atom/1` on a client-supplied param. Unknown → the default.
   defp parse_sort("title"), do: :title
@@ -298,7 +278,9 @@ defmodule CinderWeb.LibraryLive do
       assign(
         assigns,
         :visible,
-        items |> visible(assigns.filter) |> sort_items(assigns.sort, assigns.series_sizes)
+        items
+        |> visible(assigns.filter, assigns.locale)
+        |> sort_items(assigns.sort, assigns.series_sizes, assigns.locale)
       )
 
     ~H"""
@@ -396,7 +378,12 @@ defmodule CinderWeb.LibraryLive do
             ]}
           >
             <.link navigate={~p"/movies/#{m.id}"} class="block max-w-xs">
-              <.media_card poster_path={m.poster_path} title={m.title} year={m.year} type={:movie}>
+              <.media_card
+                poster_path={m.poster_path}
+                title={media_title(m, @locale)}
+                year={m.year}
+                type={:movie}
+              >
                 <p
                   :if={humanize_bytes(item_size(m, @series_sizes))}
                   class="text-xs tabular-nums text-base-content/60"
@@ -493,7 +480,12 @@ defmodule CinderWeb.LibraryLive do
             ]}
           >
             <.link navigate={~p"/series/#{s.id}"} class="block max-w-xs">
-              <.media_card poster_path={s.poster_path} title={s.title} year={s.year} type={:tv}>
+              <.media_card
+                poster_path={s.poster_path}
+                title={media_title(s, @locale)}
+                year={s.year}
+                type={:tv}
+              >
                 <p
                   :if={humanize_bytes(item_size(s, @series_sizes))}
                   class="text-xs tabular-nums text-base-content/60"

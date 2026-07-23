@@ -34,6 +34,7 @@ defmodule Cinder.Download.PollerSkeleton do
   defmacro __using__(opts) do
     prefix = Keyword.fetch!(opts, :log_prefix)
     stateful = Keyword.get(opts, :stateful, true)
+    first_interval = Keyword.get(opts, :first_interval)
 
     lifecycle =
       if stateful do
@@ -128,7 +129,7 @@ defmodule Cinder.Download.PollerSkeleton do
 
       @impl true
       def handle_continue(:schedule, state) do
-        schedule(state.interval)
+        schedule(unquote(first_interval) || state.interval)
         {:noreply, state}
       end
 

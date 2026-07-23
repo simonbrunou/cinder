@@ -31,9 +31,32 @@ defmodule Cinder.Requests do
 
   def create_request(%User{} = user, attrs) do
     if valid_proposed_profile?(attrs) do
-      create_request_for(user, attrs, user.role == :admin or Settings.auto_approve_all?())
+      create_request_for(
+        user,
+        snapshot_request(attrs),
+        user.role == :admin or Settings.auto_approve_all?()
+      )
     else
       {:error, :invalid_media_profile}
+    end
+  end
+
+  defp snapshot_request(%{target_type: type, target_id: tmdb_id} = attrs) do
+    result =
+      case type do
+        "movie" -> Catalog.get_movie(tmdb_id)
+        type when type in ["series", "season"] -> Catalog.tmdb_series(tmdb_id)
+        _ -> {:error, :unsupported_target}
+      end
+
+    case result do
+      {:ok, info} ->
+        attrs
+        |> Map.put(:title, info.title)
+        |> Map.put(:localizations, Map.get(info, :localizations, %{}))
+
+      {:error, _} ->
+        Map.put(attrs, :localizations, %{})
     end
   end
 

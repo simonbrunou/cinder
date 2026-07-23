@@ -8,7 +8,8 @@ defmodule CinderWeb.SeriesDetailLive do
   """
   use CinderWeb, :live_view
 
-  import CinderWeb.LiveHelpers, only: [format_date_year: 1, humanize_bytes: 1, rating: 1]
+  import CinderWeb.LiveHelpers,
+    only: [format_date_year: 1, humanize_bytes: 1, rating: 1, media_title: 2, media_overview: 2]
 
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog
@@ -19,13 +20,9 @@ defmodule CinderWeb.SeriesDetailLive do
   @impl true
   def mount(%{"id" => id}, _session, socket) do
     # The :id param is client-controlled; a non-integer must not reach Repo.get (CastError).
-    locale = socket.assigns.locale
-
     with {id, ""} <- Integer.parse(id),
          %{} = series <- Catalog.get_series_with_tree(id) do
       if connected?(socket), do: Catalog.subscribe_series()
-
-      series = Catalog.localize(series, locale)
 
       socket =
         assign(socket,
@@ -646,8 +643,6 @@ defmodule CinderWeb.SeriesDetailLive do
   # Guard the series vanishing out from under an open page (no delete path today, but a
   # reload that assigned nil would nil-deref the next render): bounce back to the list.
   defp reload(socket) do
-    locale = socket.assigns.locale
-
     case Catalog.get_series_with_tree(socket.assigns.series.id) do
       nil ->
         socket
@@ -655,8 +650,6 @@ defmodule CinderWeb.SeriesDetailLive do
         |> push_navigate(to: ~p"/library?type=tv")
 
       series ->
-        series = Catalog.localize(series, locale)
-
         socket
         |> assign(mapping_grabs: Catalog.list_mapping_grabs_for_series(series.id))
         |> refresh_identity(series)
@@ -1056,14 +1049,14 @@ defmodule CinderWeb.SeriesDetailLive do
         <img
           :if={@series.poster_path}
           src={poster_url(@series.poster_path)}
-          alt={@series.title}
+          alt={media_title(@series, @locale)}
           loading="lazy"
           decoding="async"
           class="aspect-[2/3] w-40 shrink-0 rounded object-cover"
         />
         <div class="min-w-0 flex-1">
           <.header>
-            {@series.title}
+            {media_title(@series, @locale)}
             <span :if={@series.year} class="font-normal text-base-content/70">({@series.year})</span>
             <:actions>
               <.status_badge kind={:monitored} status={@series.monitored} />
@@ -1086,8 +1079,8 @@ defmodule CinderWeb.SeriesDetailLive do
             <span :for={g <- @series.genres} class="badge badge-outline badge-sm">{g}</span>
           </div>
 
-          <p :if={@series.overview} class="mt-3 max-w-prose text-sm leading-relaxed">
-            {@series.overview}
+          <p :if={media_overview(@series, @locale)} class="mt-3 max-w-prose text-sm leading-relaxed">
+            {media_overview(@series, @locale)}
           </p>
         </div>
       </div>
@@ -1487,7 +1480,9 @@ defmodule CinderWeb.SeriesDetailLive do
                 >
                   {absolute_annotation(ep, @profile_summary)}
                 </span>
-                <span class="min-w-0 flex-1 truncate text-sm" title={ep.title}>{ep.title}</span>
+                <span class="min-w-0 flex-1 truncate text-sm" title={media_title(ep, @locale)}>
+                  {media_title(ep, @locale)}
+                </span>
                 <span
                   :if={
                     ep.file_path &&

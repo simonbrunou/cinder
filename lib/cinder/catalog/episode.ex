@@ -17,6 +17,7 @@ defmodule Cinder.Catalog.Episode do
     field :tmdb_episode_id, :integer
     field :episode_number, :integer
     field :title, :string
+    field :localizations, :map, default: %{}
     field :air_date, :date
     field :monitored, :boolean, default: true
     field :file_path, :string
@@ -62,6 +63,7 @@ defmodule Cinder.Catalog.Episode do
       :tmdb_episode_id,
       :episode_number,
       :title,
+      :localizations,
       :air_date,
       :monitored,
       :classification,
@@ -116,6 +118,7 @@ defmodule Cinder.Catalog.Episode do
       :tmdb_episode_id,
       :episode_number,
       :title,
+      :localizations,
       :air_date,
       :monitored,
       :classification,

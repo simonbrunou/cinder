@@ -108,6 +108,27 @@ defmodule Cinder.CatalogMetadataTest do
       assert Catalog.enrich_movie(enriched) == enriched
     end
 
+    test "a partial localization entry merges field-wise, never clobbering stored fields" do
+      movie = movie_fixture()
+
+      {1, _} =
+        Repo.update_all(
+          from(m in Movie, where: m.id == ^movie.id),
+          set: [localizations: %{"fr" => %{"title" => "Ancien", "overview" => "Résumé"}}]
+        )
+
+      details =
+        @details
+        |> Map.put(:tmdb_id, movie.tmdb_id)
+        |> Map.put(:localizations, %{"fr" => %{"title" => "Nouveau", "overview" => nil}})
+
+      expect(Cinder.Catalog.TMDBMock, :get_movie, fn _ -> {:ok, details} end)
+
+      enriched = Catalog.enrich_movie(Repo.get!(Movie, movie.id))
+
+      assert enriched.localizations == %{"fr" => %{"title" => "Nouveau", "overview" => "Résumé"}}
+    end
+
     test "returns the row unchanged when TMDB errors, so the page still renders" do
       movie = movie_fixture()
       expect(Cinder.Catalog.TMDBMock, :get_movie, fn _ -> {:error, :timeout} end)

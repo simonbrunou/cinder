@@ -1604,12 +1604,16 @@ defmodule Cinder.Download.TvPollerTest do
        }}
     end)
 
-    stub(Cinder.Catalog.TMDBMock, :get_season, fn _, 1 ->
-      {:ok,
-       %{
-         season_number: 1,
-         episodes: [%{tmdb_episode_id: 700, episode_number: 1, title: "Aired", air_date: @past}]
-       }}
+    stub(Cinder.Catalog.TMDBMock, :get_season, fn
+      _, 1, "fr" ->
+        {:ok, %{season_number: 1, episodes: []}}
+
+      _, 1, "en" ->
+        {:ok,
+         %{
+           season_number: 1,
+           episodes: [%{tmdb_episode_id: 700, episode_number: 1, title: "Aired", air_date: @past}]
+         }}
     end)
 
     stub(Cinder.Catalog.TMDBMock, :get_series_alternative_titles, fn _ -> {:ok, []} end)

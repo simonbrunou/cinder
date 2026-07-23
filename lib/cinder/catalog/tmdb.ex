@@ -3,17 +3,19 @@ defmodule Cinder.Catalog.TMDB do
   Behaviour for TMDB discovery: search and fetch details for movies and TV.
 
   The concrete impl is resolved from config; tests use a Mox mock. Movie and TV
-  callbacks are kept distinct (no overloaded `search/1`).
+  callbacks are kept distinct (no overloaded `search/2`).
   """
 
   @doc "Movie search. Returns `%{tmdb_id, title, year, poster_path, imdb_id, original_language, overview, runtime, genres, vote_average, release_date}` per result (`imdb_id`/`runtime` are `nil` and `genres` is `[]` on search results — only `get_movie` details carry them; `original_language`/`overview`/`vote_average`/`release_date` are populated by `/search/movie`)."
-  @callback search(query :: String.t()) :: {:ok, [map()]} | {:error, term()}
+  @callback search(query :: String.t(), locale :: String.t()) ::
+              {:ok, [map()]} | {:error, term()}
 
   @doc "Single movie details. Returns `%{tmdb_id, title, year, poster_path, imdb_id, original_language, overview, runtime, genres, vote_average, release_date}` (`genres` is a list of names, `release_date` a `Date` or `nil`)."
   @callback get_movie(tmdb_id :: integer()) :: {:ok, map()} | {:error, term()}
 
   @doc "TV search. Returns normalized series maps (`%{tmdb_id, title, year, poster_path, original_language}`)."
-  @callback search_tv(query :: String.t()) :: {:ok, [map()]} | {:error, term()}
+  @callback search_tv(query :: String.t(), locale :: String.t()) ::
+              {:ok, [map()]} | {:error, term()}
 
   @doc """
   Series details + the list of season numbers. Returns
@@ -28,7 +30,11 @@ defmodule Cinder.Catalog.TMDB do
   `%{season_number, episodes: [%{tmdb_episode_id, episode_number, title, air_date}]}`
   (`air_date` is a `Date` or `nil`).
   """
-  @callback get_season(series_id :: integer(), season_number :: integer()) ::
+  @callback get_season(
+              series_id :: integer(),
+              season_number :: integer(),
+              locale :: String.t()
+            ) ::
               {:ok, map()} | {:error, term()}
 
   @doc "Alternative movie titles normalized as title, country code, and `:alternative` kind."

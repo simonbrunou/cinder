@@ -7,8 +7,11 @@ defmodule Cinder.Catalog.RefresherTest do
   @moduletag :capture_log
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Season, Series}
+  alias Cinder.Catalog.{Episode, Movie, Season, Series}
   alias Cinder.Catalog.Refresher
+  alias Cinder.Requests.Request
+
+  import Cinder.AccountsFixtures
 
   # The Refresher runs in its own process, so the mock must be global; shared Sandbox
   # (async: false) lets that process use the test-owned DB connection.
@@ -33,7 +36,14 @@ defmodule Cinder.Catalog.RefresherTest do
       Repo.insert!(%Series{tmdb_id: 8001, title: "M", monitored: true, monitor_strategy: :all})
 
     Repo.insert!(%Season{series_id: monitored.id, season_number: 1, monitored: true})
-    Repo.insert!(%Series{tmdb_id: 8002, title: "U", monitored: false, monitor_strategy: :none})
+
+    Repo.insert!(%Series{
+      tmdb_id: 8002,
+      title: "U",
+      monitored: false,
+      monitor_strategy: :none,
+      localizations: %{"fr" => %{"title" => "U"}}
+    })
 
     # Only 8001 is fetched; a stray get_series(8002) would fail verify_on_exit! (no expectation).
     expect(Cinder.Catalog.TMDBMock, :get_series, fn 8001 ->
@@ -49,7 +59,11 @@ defmodule Cinder.Catalog.RefresherTest do
        }}
     end)
 
-    expect(Cinder.Catalog.TMDBMock, :get_season, fn 8001, 1 ->
+    expect(Cinder.Catalog.TMDBMock, :get_season, fn 8001, 1, "en" ->
+      {:ok, %{season_number: 1, episodes: []}}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_season, fn 8001, 1, "fr" ->
       {:ok, %{season_number: 1, episodes: []}}
     end)
 
@@ -79,7 +93,7 @@ defmodule Cinder.Catalog.RefresherTest do
          }}
     end)
 
-    stub(Cinder.Catalog.TMDBMock, :get_season, fn 8102, 1 ->
+    stub(Cinder.Catalog.TMDBMock, :get_season, fn 8102, 1, _locale ->
       {:ok, %{season_number: 1, episodes: []}}
     end)
 
@@ -132,7 +146,7 @@ defmodule Cinder.Catalog.RefresherTest do
       end
     end)
 
-    stub(Cinder.Catalog.TMDBMock, :get_season, fn 8301, season_number ->
+    stub(Cinder.Catalog.TMDBMock, :get_season, fn 8301, season_number, locale ->
       {:ok,
        %{
          season_number: season_number,
@@ -140,7 +154,7 @@ defmodule Cinder.Catalog.RefresherTest do
            %{
              tmdb_episode_id: 83_000 + season_number,
              episode_number: 1,
-             title: "Episode",
+             title: if(locale == "en", do: "Episode", else: ""),
              air_date: ~D[2026-07-12]
            }
          ]
@@ -161,5 +175,48 @@ defmodule Cinder.Catalog.RefresherTest do
     season = Repo.get_by!(Season, series_id: series.id, season_number: 2)
     refute season.monitored
     refute Repo.get_by!(Episode, season_id: season.id, episode_number: 1).monitored
+  end
+
+  test "enriches empty movies, trims stored maps, and copies catalog localizations to requests" do
+    movie = Repo.insert!(%Movie{tmdb_id: 8401, title: "Movie", localizations: %{}})
+
+    series =
+      Repo.insert!(%Series{
+        tmdb_id: 8402,
+        title: "Series",
+        monitored: false,
+        monitor_strategy: :none,
+        localizations: %{
+          "fr" => %{"title" => "Série"},
+          "de" => %{"title" => "Serie"}
+        }
+      })
+
+    request =
+      Repo.insert!(%Request{
+        user_id: user_fixture().id,
+        target_type: "season",
+        target_id: series.tmdb_id,
+        season_number: 1,
+        title: series.title,
+        status: :pending,
+        localizations: %{}
+      })
+
+    expect(Cinder.Catalog.TMDBMock, :get_movie, fn 8401 ->
+      {:ok,
+       %{
+         tmdb_id: 8401,
+         title: "Movie",
+         localizations: %{"fr" => %{"title" => "Film"}}
+       }}
+    end)
+
+    start_supervised!({Refresher, interval: 60_000})
+    assert :ok = Refresher.poll()
+
+    assert Repo.reload!(movie).localizations == %{"fr" => %{"title" => "Film"}}
+    assert Repo.reload!(series).localizations == %{"fr" => %{"title" => "Série"}}
+    assert Repo.reload!(request).localizations == %{"fr" => %{"title" => "Série"}}
   end
 end

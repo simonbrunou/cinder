@@ -411,23 +411,27 @@ defmodule Cinder.CatalogTvPipelineTest do
          }}
       end)
 
-      stub(Cinder.Catalog.TMDBMock, :get_season, fn ^tmdb_id, 0 ->
-        refresh? = Agent.get_and_update(calls, &{&1 > 0, &1 + 1})
+      stub(Cinder.Catalog.TMDBMock, :get_season, fn
+        ^tmdb_id, 0, "fr" ->
+          {:ok, %{season_number: 0, episodes: []}}
 
-        episodes = [
-          %{tmdb_episode_id: 7001, episode_number: 1, title: "OVA", air_date: @past},
-          %{tmdb_episode_id: 7003, episode_number: 3, title: "NCOP", air_date: @past}
-        ]
+        ^tmdb_id, 0, "en" ->
+          refresh? = Agent.get_and_update(calls, &{&1 > 0, &1 + 1})
 
-        episodes =
-          if refresh? do
-            episodes ++
-              [%{tmdb_episode_id: 7002, episode_number: 2, title: "Recap", air_date: @past}]
-          else
-            episodes
-          end
+          episodes = [
+            %{tmdb_episode_id: 7001, episode_number: 1, title: "OVA", air_date: @past},
+            %{tmdb_episode_id: 7003, episode_number: 3, title: "NCOP", air_date: @past}
+          ]
 
-        {:ok, %{season_number: 0, episodes: episodes}}
+          episodes =
+            if refresh? do
+              episodes ++
+                [%{tmdb_episode_id: 7002, episode_number: 2, title: "Recap", air_date: @past}]
+            else
+              episodes
+            end
+
+          {:ok, %{season_number: 0, episodes: episodes}}
       end)
 
       stub(Cinder.Catalog.TMDBMock, :get_series_alternative_titles, fn ^tmdb_id -> {:ok, []} end)

@@ -15,6 +15,22 @@ defmodule Cinder.M3PipelineTest do
   @moduletag :capture_log
   setup :set_mox_global
 
+  setup do
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn id ->
+      {:ok,
+       %{
+         tmdb_id: id,
+         imdb_id: nil,
+         title: "Inception",
+         year: 2010,
+         poster_path: "/i.jpg",
+         original_language: "en"
+       }}
+    end)
+
+    :ok
+  end
+
   @attrs %{
     target_type: "movie",
     target_id: 3,
