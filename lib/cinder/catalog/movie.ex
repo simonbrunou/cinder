@@ -60,6 +60,7 @@ defmodule Cinder.Catalog.Movie do
     field :imported_embedded_subtitles, {:array, :string}
     field :imported_sidecar_subtitles, {:array, :string}
     field :overview, :string
+    field :localizations, :map, default: %{}
     field :runtime, :integer
     field :genres, {:array, :string}
     field :vote_average, :float
@@ -101,7 +102,8 @@ defmodule Cinder.Catalog.Movie do
       :poster_path,
       :original_language,
       :preferred_language,
-      :media_profile
+      :media_profile,
+      :localizations
     ])
     |> validate_required([:tmdb_id, :title])
     |> validate_inclusion(:preferred_language, Language.preferences())
@@ -110,7 +112,14 @@ defmodule Cinder.Catalog.Movie do
 
   @doc "Changeset for the TMDB metadata refresh (`Catalog.enrich_movie/1`). Descriptive, not pipeline state — separate from transition_changeset/2, so it never touches status/download fields."
   def metadata_changeset(movie, attrs) do
-    cast(movie, attrs, [:overview, :runtime, :genres, :vote_average, :release_date])
+    cast(movie, attrs, [
+      :overview,
+      :localizations,
+      :runtime,
+      :genres,
+      :vote_average,
+      :release_date
+    ])
   end
 
   @doc "Changeset for the in-app language edit (escape hatch). Not pipeline state — separate from transition_changeset/2."

@@ -9,6 +9,7 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   """
   @behaviour Cinder.Catalog.TMDB
 
+  alias Cinder.Catalog.Locale
   alias Cinder.HTTPPolicy
 
   @default_base_url "https://api.themoviedb.org"
@@ -30,7 +31,9 @@ defmodule Cinder.Catalog.TMDB.HTTP do
 
   @impl true
   def get_movie(tmdb_id) do
-    case request(url: "/3/movie/#{tmdb_id}") do
+    # append_to_response folds translations into the same request so we can store all
+    # localized titles + overviews for display regardless of the active locale.
+    case request(url: "/3/movie/#{tmdb_id}", params: [append_to_response: "translations"]) do
       {:ok, %{status: 200, body: %{"id" => _} = body}} -> {:ok, normalize(body)}
       {:ok, %{status: 200}} -> {:error, :unexpected_response}
       other -> error(other)
@@ -53,8 +56,11 @@ defmodule Cinder.Catalog.TMDB.HTTP do
 
   @impl true
   def get_series(tmdb_id) do
-    # append_to_response folds external_ids (tvdb_id) into the one details call.
-    case request(url: "/3/tv/#{tmdb_id}", params: [append_to_response: "external_ids"]) do
+    # append_to_response folds external_ids (tvdb_id) and translations into the one details call.
+    case request(
+           url: "/3/tv/#{tmdb_id}",
+           params: [append_to_response: "external_ids,translations"]
+         ) do
       {:ok, %{status: 200, body: %{"id" => _} = body}} -> {:ok, normalize_series(body)}
       {:ok, %{status: 200}} -> {:error, :unexpected_response}
       other -> error(other)
@@ -119,12 +125,18 @@ defmodule Cinder.Catalog.TMDB.HTTP do
 
     # retry: false — Req's default 3-retry backoff turns one hung/500ing TMDB call
     # into ~a minute; callers (search UI, poller, refresher) all prefer failing fast.
+    base_params = [language: Locale.get()]
+    opts_params = Keyword.get(opts, :params, [])
+    params = Keyword.merge(base_params, opts_params)
+    opts = Keyword.put(opts, :params, params)
+
     [
       base_url: Keyword.get(config, :base_url, @default_base_url),
       receive_timeout: 15_000,
       pool_timeout: 5_000,
       connect_options: [timeout: 5_000],
-      retry: false
+      retry: false,
+      params: params
     ]
     |> auth(Keyword.get(config, :token))
     |> Keyword.merge(opts)
@@ -251,7 +263,7 @@ defmodule Cinder.Catalog.TMDB.HTTP do
     do: {:error, :unexpected_response}
 
   defp normalize(movie) do
-    %{
+    base = %{
       tmdb_id: movie["id"],
       title: movie["title"],
       year: year_from(movie["release_date"]),
@@ -267,6 +279,8 @@ defmodule Cinder.Catalog.TMDB.HTTP do
       vote_average: movie["vote_average"],
       release_date: date_from(movie["release_date"])
     }
+
+    maybe_put_localizations(base, movie)
   end
 
   defp normalize_tv(series) do
@@ -284,7 +298,7 @@ defmodule Cinder.Catalog.TMDB.HTTP do
     # live under it, unlike movies where imdb_id is top-level.
     external = body["external_ids"] || %{}
 
-    %{
+    base = %{
       tmdb_id: body["id"],
       tvdb_id: external["tvdb_id"],
       title: body["name"],
@@ -297,7 +311,39 @@ defmodule Cinder.Catalog.TMDB.HTTP do
       first_air_date: date_from(body["first_air_date"]),
       seasons: for(s <- body["seasons"] || [], do: %{season_number: s["season_number"]})
     }
+
+    maybe_put_localizations(base, body)
   end
+
+  # Translations are only present on detail endpoints (get_movie / get_series) when
+  # append_to_response=translations is requested. Search results never carry them, so this
+  # stays a no-op there and the returned map does not gain an empty `localizations` key.
+  defp maybe_put_localizations(base, body) do
+    case localizations_from(body["translations"]) do
+      localizations when map_size(localizations) > 0 ->
+        Map.put(base, :localizations, localizations)
+
+      _ ->
+        base
+    end
+  end
+
+  defp localizations_from(%{"translations" => translations}) when is_list(translations) do
+    for t <- translations,
+        is_map(t),
+        lang = t["iso_639_1"],
+        is_binary(lang),
+        data = t["data"],
+        is_map(data),
+        title = data["title"],
+        overview = data["overview"],
+        title != "" or overview != "" do
+      {lang, %{title: title, overview: overview}}
+    end
+    |> Map.new()
+  end
+
+  defp localizations_from(_), do: %{}
 
   # TMDB genres are `[%{"id" => _, "name" => _}]` on the details endpoints; keep the names only.
   # Search endpoints send `genre_ids` (no names) — so a search body yields `[]` here.

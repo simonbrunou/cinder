@@ -148,11 +148,12 @@ defmodule CinderWeb.DashboardLive do
   # status count + a LIMIT-8 recent slice + a few COUNT(*)s) rather than loading whole tables
   # just to take their length — stays cheap as the catalog grows.
   defp load(socket) do
+    locale = socket.assigns.locale
     counts = Catalog.movie_status_counts()
 
     assign(socket,
       pending: Requests.list_pending(),
-      recent: Catalog.recent_movies(8),
+      recent: Enum.map(Catalog.recent_movies(8), &Catalog.localize(&1, locale)),
       stats: %{
         movies_total: counts |> Map.values() |> Enum.sum(),
         movies_available: Map.get(counts, :available, 0),

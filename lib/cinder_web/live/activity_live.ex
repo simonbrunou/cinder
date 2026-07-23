@@ -35,11 +35,13 @@ defmodule CinderWeb.ActivityLive do
       Catalog.subscribe_series()
     end
 
+    locale = socket.assigns.locale
+
     {:ok,
      assign(socket,
-       movies: Enum.filter(Catalog.list_movies(), &in_pipeline?/1),
-       grabs: Catalog.list_grabs(),
-       held_series: Catalog.list_anime_held_series(),
+       movies: localize_movies(Enum.filter(Catalog.list_movies(), &in_pipeline?/1), locale),
+       grabs: localize_grabs(Catalog.list_grabs(), locale),
+       held_series: localize_series(Catalog.list_anime_held_series(), locale),
        jobs: Cinder.Jobs.statuses(),
        confirming: nil
      )}
@@ -47,6 +49,8 @@ defmodule CinderWeb.ActivityLive do
 
   @impl true
   def handle_info({:movie_updated, movie}, socket) do
+    movie = Catalog.localize(movie, socket.assigns.locale)
+
     movies =
       if in_pipeline?(movie),
         do: upsert_by_id(socket.assigns.movies, movie),
@@ -55,20 +59,32 @@ defmodule CinderWeb.ActivityLive do
     {:noreply, assign(socket, movies: movies)}
   end
 
-  def handle_info({:movie_created, movie}, socket),
-    do: {:noreply, assign(socket, movies: upsert_by_id(socket.assigns.movies, movie))}
+  def handle_info({:movie_created, movie}, socket) do
+    movie = Catalog.localize(movie, socket.assigns.locale)
+    {:noreply, assign(socket, movies: upsert_by_id(socket.assigns.movies, movie))}
+  end
 
   def handle_info({:movie_deleted, id}, socket),
     do: {:noreply, assign(socket, movies: Enum.reject(socket.assigns.movies, &(&1.id == id)))}
 
   def handle_info({:series_updated, _id}, socket) do
+    locale = socket.assigns.locale
+
     {:noreply,
-     assign(socket, grabs: Catalog.list_grabs(), held_series: Catalog.list_anime_held_series())}
+     assign(socket,
+       grabs: localize_grabs(Catalog.list_grabs(), locale),
+       held_series: localize_series(Catalog.list_anime_held_series(), locale)
+     )}
   end
 
   def handle_info({:series_deleted, _id}, socket) do
+    locale = socket.assigns.locale
+
     {:noreply,
-     assign(socket, grabs: Catalog.list_grabs(), held_series: Catalog.list_anime_held_series())}
+     assign(socket,
+       grabs: localize_grabs(Catalog.list_grabs(), locale),
+       held_series: localize_series(Catalog.list_anime_held_series(), locale)
+     )}
   end
 
   def handle_info(_message, socket), do: {:noreply, socket}
@@ -101,7 +117,10 @@ defmodule CinderWeb.ActivityLive do
 
     {:noreply,
      socket
-     |> assign(confirming: nil, grabs: Catalog.list_grabs())
+     |> assign(
+       confirming: nil,
+       grabs: localize_grabs(Catalog.list_grabs(), socket.assigns.locale)
+     )
      |> put_flash(level, msg)}
   end
 
@@ -116,7 +135,10 @@ defmodule CinderWeb.ActivityLive do
 
     {:noreply,
      socket
-     |> assign(confirming: nil, grabs: Catalog.list_grabs())
+     |> assign(
+       confirming: nil,
+       grabs: localize_grabs(Catalog.list_grabs(), socket.assigns.locale)
+     )
      |> put_flash(level, msg)}
   end
 
@@ -132,7 +154,7 @@ defmodule CinderWeb.ActivityLive do
 
     {:noreply,
      socket
-     |> assign(grabs: Catalog.list_grabs())
+     |> assign(grabs: localize_grabs(Catalog.list_grabs(), socket.assigns.locale))
      |> put_flash(level, msg)}
   end
 
@@ -148,7 +170,7 @@ defmodule CinderWeb.ActivityLive do
 
     {:noreply,
      socket
-     |> assign(grabs: Catalog.list_grabs())
+     |> assign(grabs: localize_grabs(Catalog.list_grabs(), socket.assigns.locale))
      |> put_flash(level, msg)}
   end
 
@@ -177,6 +199,26 @@ defmodule CinderWeb.ActivityLive do
 
   defp series_title(%{episodes: [ep | _]}), do: ep.season.series.title
   defp series_title(_), do: gettext("Unknown series")
+
+  defp localize_movies(movies, locale) do
+    Enum.map(movies, &Catalog.localize(&1, locale))
+  end
+
+  defp localize_series(series, locale) do
+    Enum.map(series, &Catalog.localize(&1, locale))
+  end
+
+  defp localize_grabs(grabs, locale) do
+    Enum.map(grabs, fn grab ->
+      episodes =
+        Enum.map(grab.episodes, fn ep ->
+          season = %{ep.season | series: Catalog.localize(ep.season.series, locale)}
+          %{ep | season: season}
+        end)
+
+      %{grab | episodes: episodes}
+    end)
+  end
 
   # A plain-English line under an in-flight/parked movie card: what phase it's in (with the search
   # attempt count) or why it's stuck and what to do. Complements the badge, which names the state.

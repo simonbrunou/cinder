@@ -19,9 +19,13 @@ defmodule CinderWeb.SeriesDetailLive do
   @impl true
   def mount(%{"id" => id}, _session, socket) do
     # The :id param is client-controlled; a non-integer must not reach Repo.get (CastError).
+    locale = socket.assigns.locale
+
     with {id, ""} <- Integer.parse(id),
          %{} = series <- Catalog.get_series_with_tree(id) do
       if connected?(socket), do: Catalog.subscribe_series()
+
+      series = Catalog.localize(series, locale)
 
       socket =
         assign(socket,
@@ -642,6 +646,8 @@ defmodule CinderWeb.SeriesDetailLive do
   # Guard the series vanishing out from under an open page (no delete path today, but a
   # reload that assigned nil would nil-deref the next render): bounce back to the list.
   defp reload(socket) do
+    locale = socket.assigns.locale
+
     case Catalog.get_series_with_tree(socket.assigns.series.id) do
       nil ->
         socket
@@ -649,6 +655,8 @@ defmodule CinderWeb.SeriesDetailLive do
         |> push_navigate(to: ~p"/library?type=tv")
 
       series ->
+        series = Catalog.localize(series, locale)
+
         socket
         |> assign(mapping_grabs: Catalog.list_mapping_grabs_for_series(series.id))
         |> refresh_identity(series)
