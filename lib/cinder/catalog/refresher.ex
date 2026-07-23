@@ -16,8 +16,10 @@ defmodule Cinder.Catalog.Refresher do
   alias Cinder.Locales
   alias Cinder.Repo
   alias Cinder.Requests.Request
+  alias Cinder.Settings
 
   @default_interval :timer.hours(12)
+  @localization_resync_key "localization_resync_v1"
   use Cinder.Download.PollerSkeleton,
     log_prefix: "refresher",
     stateful: false,
@@ -30,8 +32,7 @@ defmodule Cinder.Catalog.Refresher do
 
     trim_localizations(Movie)
     trim_localizations(Series)
-    enrich_movies()
-    enrich_unmonitored_series()
+    enrich_localizations()
     copy_request_localizations()
 
     :ok
@@ -49,6 +50,34 @@ defmodule Cinder.Catalog.Refresher do
       |> Repo.update_all(set: [localizations: trimmed])
     end
   end
+
+  defp enrich_localizations do
+    if Settings.get(@localization_resync_key) == "true" do
+      enrich_movies()
+      enrich_unmonitored_series()
+    else
+      resync_localizations()
+      Settings.put(@localization_resync_key, "true")
+    end
+  end
+
+  defp resync_localizations do
+    records =
+      Repo.all(Movie) ++ Repo.all(from s in Series, where: not s.monitored)
+
+    records
+    |> Enum.with_index()
+    |> Enum.each(fn {record, index} ->
+      if index > 0, do: Process.sleep(250)
+      enrich_record(record)
+    end)
+  end
+
+  defp enrich_record(%Movie{} = movie),
+    do: isolate("movie #{movie.id}", fn -> Catalog.enrich_movie(movie) end)
+
+  defp enrich_record(%Series{} = series),
+    do: isolate("series metadata #{series.id}", fn -> Catalog.enrich_series(series) end)
 
   # Empty maps are deliberately retried every tick so transient TMDB/DB drift self-heals.
   defp enrich_movies do

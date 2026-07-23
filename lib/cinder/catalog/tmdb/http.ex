@@ -336,14 +336,13 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   defp localizations_from(%{"translations" => translations}) when is_list(translations) do
     for lang <- Locales.noncanonical(),
         candidates = Enum.filter(translations, &(is_map(&1) and &1["iso_639_1"] == lang)),
-        translation =
-          Enum.find(candidates, &(&1["iso_3166_1"] == @tmdb_regions[lang])) ||
-            List.first(candidates),
-        is_map(translation),
-        data = translation["data"],
-        is_map(data),
-        title = data["title"] || data["name"],
-        overview = data["overview"],
+        preferred = Enum.find(candidates, %{}, &(&1["iso_3166_1"] == @tmdb_regions[lang])),
+        # Bound as one tuple: a bare `title = ...` binding to nil would act as a comprehension
+        # FILTER and drop the language before the or-guard below could keep its other field.
+        {title, overview} = {
+          translation_field(preferred, candidates, ["title", "name"]),
+          translation_field(preferred, candidates, ["overview"])
+        },
         present?(title) or present?(overview) do
       {lang, %{"title" => title, "overview" => overview}}
     end
@@ -352,7 +351,18 @@ defmodule Cinder.Catalog.TMDB.HTTP do
 
   defp localizations_from(_), do: %{}
 
-  defp present?(value) when is_binary(value) and value != "", do: true
+  defp translation_field(preferred, candidates, keys) do
+    Enum.find_value([preferred | candidates], &translation_value(&1, keys))
+  end
+
+  defp translation_value(%{"data" => data}, keys) when is_map(data),
+    do: Enum.find_value(keys, &present_value(data[&1]))
+
+  defp translation_value(_, _), do: nil
+
+  defp present_value(value), do: if(present?(value), do: value)
+
+  defp present?(value) when is_binary(value), do: String.trim(value) != ""
   defp present?(_), do: false
 
   # TMDB genres are `[%{"id" => _, "name" => _}]` on the details endpoints; keep the names only.

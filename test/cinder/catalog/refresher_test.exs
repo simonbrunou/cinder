@@ -10,8 +10,11 @@ defmodule Cinder.Catalog.RefresherTest do
   alias Cinder.Catalog.{Episode, Movie, Season, Series}
   alias Cinder.Catalog.Refresher
   alias Cinder.Requests.Request
+  alias Cinder.Settings
 
   import Cinder.AccountsFixtures
+
+  @localization_resync_key "localization_resync_v1"
 
   # The Refresher runs in its own process, so the mock must be global; shared Sandbox
   # (async: false) lets that process use the test-owned DB connection.
@@ -28,6 +31,7 @@ defmodule Cinder.Catalog.RefresherTest do
   setup do
     stub(Cinder.Catalog.TMDBMock, :get_series_alternative_titles, fn _ -> {:ok, []} end)
     stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ -> {:ok, []} end)
+    Settings.put(@localization_resync_key, "true")
     :ok
   end
 
@@ -218,5 +222,62 @@ defmodule Cinder.Catalog.RefresherTest do
     assert Repo.reload!(movie).localizations == %{"fr" => %{"title" => "Film"}}
     assert Repo.reload!(series).localizations == %{"fr" => %{"title" => "Série"}}
     assert Repo.reload!(request).localizations == %{"fr" => %{"title" => "Série"}}
+  end
+
+  test "one-time localization resync re-enriches non-empty movies before setting its flag" do
+    Settings.delete(@localization_resync_key)
+
+    movie =
+      Repo.insert!(%Movie{
+        tmdb_id: 8501,
+        title: "Movie",
+        localizations: %{"fr" => %{"title" => "Mauvais titre"}}
+      })
+
+    expect(Cinder.Catalog.TMDBMock, :get_movie, fn 8501 ->
+      refute Settings.get(@localization_resync_key)
+
+      {:ok,
+       %{
+         tmdb_id: 8501,
+         title: "Movie",
+         localizations: %{"fr" => %{"title" => "Titre français"}}
+       }}
+    end)
+
+    start_supervised!({Refresher, interval: 60_000})
+    assert :ok = Refresher.poll()
+
+    assert Repo.reload!(movie).localizations == %{"fr" => %{"title" => "Titre français"}}
+    assert Settings.get(@localization_resync_key) == "true"
+
+    assert :ok = Refresher.poll()
+    assert Enum.count(Settings.all(), &(&1.key == @localization_resync_key)) == 1
+  end
+
+  test "completed localization resync skips non-empty maps but keeps empty-map retries" do
+    wrong =
+      Repo.insert!(%Movie{
+        tmdb_id: 8502,
+        title: "Wrong",
+        localizations: %{"fr" => %{"title" => "Mauvais titre"}}
+      })
+
+    empty = Repo.insert!(%Movie{tmdb_id: 8503, title: "Empty", localizations: %{}})
+
+    expect(Cinder.Catalog.TMDBMock, :get_movie, fn 8503 ->
+      {:ok,
+       %{
+         tmdb_id: 8503,
+         title: "Empty",
+         localizations: %{"fr" => %{"title" => "Titre français"}}
+       }}
+    end)
+
+    start_supervised!({Refresher, interval: 60_000})
+    assert :ok = Refresher.poll()
+
+    assert Repo.reload!(wrong).localizations == %{"fr" => %{"title" => "Mauvais titre"}}
+    assert Repo.reload!(empty).localizations == %{"fr" => %{"title" => "Titre français"}}
   end
 end
