@@ -263,6 +263,107 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
             }} = HTTP.get_movie(27_205)
   end
 
+  test "get_movie/1 coalesces translation fields independently across regions" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      translations =
+        case conn.request_path do
+          "/3/movie/1" ->
+            [
+              %{
+                "iso_639_1" => "fr",
+                "iso_3166_1" => "FR",
+                "data" => %{"title" => "", "overview" => "Résumé français."}
+              },
+              %{
+                "iso_639_1" => "fr",
+                "iso_3166_1" => "CA",
+                "data" => %{"title" => "Titre québécois", "overview" => ""}
+              }
+            ]
+
+          "/3/movie/2" ->
+            [
+              %{
+                "iso_639_1" => "fr",
+                "iso_3166_1" => "FR",
+                "data" => %{"title" => "Titre français", "overview" => nil}
+              },
+              %{
+                "iso_639_1" => "fr",
+                "iso_3166_1" => "CA",
+                "data" => %{"title" => nil, "overview" => "Résumé québécois."}
+              }
+            ]
+        end
+
+      Req.Test.json(conn, %{
+        "id" => conn.request_path |> String.split("/") |> List.last() |> String.to_integer(),
+        "title" => "Canonical",
+        "translations" => %{"translations" => translations}
+      })
+    end)
+
+    assert {:ok,
+            %{
+              localizations: %{
+                "fr" => %{
+                  "title" => "Titre québécois",
+                  "overview" => "Résumé français."
+                }
+              }
+            }} = HTTP.get_movie(1)
+
+    assert {:ok,
+            %{
+              localizations: %{
+                "fr" => %{
+                  "title" => "Titre français",
+                  "overview" => "Résumé québécois."
+                }
+              }
+            }} = HTTP.get_movie(2)
+  end
+
+  test "get_movie/1 keeps a locale when only one field resolves across all variants" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      translations =
+        case conn.request_path do
+          # title resolves nowhere; overview only on fr-CA
+          "/3/movie/3" ->
+            [
+              %{
+                "iso_639_1" => "fr",
+                "iso_3166_1" => "CA",
+                "data" => %{"title" => "", "overview" => "Résumé seul."}
+              }
+            ]
+
+          # overview resolves nowhere; title only on fr-FR
+          "/3/movie/4" ->
+            [
+              %{
+                "iso_639_1" => "fr",
+                "iso_3166_1" => "FR",
+                "data" => %{"title" => "Titre seul", "overview" => ""}
+              }
+            ]
+        end
+
+      Req.Test.json(conn, %{
+        "id" => conn.request_path |> String.split("/") |> List.last() |> String.to_integer(),
+        "title" => "Canonical",
+        "translations" => %{"translations" => translations}
+      })
+    end)
+
+    assert {:ok, %{localizations: %{"fr" => %{"overview" => "Résumé seul."} = entry}}} =
+             HTTP.get_movie(3)
+
+    assert entry["title"] in [nil, ""]
+
+    assert {:ok, %{localizations: %{"fr" => %{"title" => "Titre seul"}}}} = HTTP.get_movie(4)
+  end
+
   test "get_season/3 sends the requested locale and normalizes episodes" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       assert conn.request_path == "/3/tv/1396/season/1"
