@@ -288,11 +288,17 @@ defmodule CinderWeb.UsersLive do
           class="card bg-base-200 p-4 space-y-2"
         >
           <.input field={@create_form[:email]} type="email" label={gettext("Email")} />
-          <.input field={@create_form[:password]} type="password" label={gettext("Password")} />
+          <.input
+            field={@create_form[:password]}
+            type="password"
+            label={gettext("Password")}
+            autocomplete="new-password"
+          />
           <.input
             field={@create_form[:password_confirmation]}
             type="password"
             label={gettext("Confirm password")}
+            autocomplete="new-password"
           />
           <.input
             field={@create_form[:role]}
@@ -326,7 +332,7 @@ defmodule CinderWeb.UsersLive do
               size="sm"
               phx-click="toggle_role"
               phx-value-id={u.id}
-              phx-disable-with="…"
+              phx-disable-with={gettext("…")}
               aria-label={
                 gettext("Change role for %{email}, currently %{role}",
                   email: u.email,

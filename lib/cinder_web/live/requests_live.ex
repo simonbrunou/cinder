@@ -135,6 +135,20 @@ defmodule CinderWeb.RequestsLive do
     {:noreply, assign(socket, selected: toggle(socket.assigns.selected, id))}
   end
 
+  def handle_event("toggle_select_all", %{"checked" => "true"}, socket) do
+    selected =
+      socket.assigns.requests
+      |> Enum.filter(&(&1.status == :pending))
+      |> Enum.map(&to_string(&1.id))
+      |> MapSet.new()
+
+    {:noreply, assign(socket, selected: selected)}
+  end
+
+  def handle_event("toggle_select_all", _params, socket) do
+    {:noreply, assign(socket, selected: MapSet.new())}
+  end
+
   def handle_event("clear_selection", _params, socket) do
     {:noreply, assign(socket, selected: MapSet.new())}
   end
@@ -238,6 +252,16 @@ defmodule CinderWeb.RequestsLive do
     )
   end
 
+  defp all_pending_selected?(requests, selected) do
+    pending =
+      requests
+      |> Enum.filter(&(&1.status == :pending))
+      |> Enum.map(&to_string(&1.id))
+      |> MapSet.new()
+
+    MapSet.size(pending) > 0 and MapSet.equal?(selected, pending)
+  end
+
   # Apply `fun` to each request; tally {ok, failed}.
   defp bulk(reqs, fun) do
     Enum.reduce(reqs, {0, 0}, fn req, {ok, failed} ->
@@ -291,6 +315,17 @@ defmodule CinderWeb.RequestsLive do
         </.button>
       </div>
 
+      <div :if={@requests != []} class="mb-2 flex items-center gap-2">
+        <input
+          type="checkbox"
+          phx-click="toggle_select_all"
+          phx-value-checked={to_string(not all_pending_selected?(@requests, @selected))}
+          checked={all_pending_selected?(@requests, @selected)}
+          aria-label={gettext("Select all pending requests")}
+        />
+        <span class="text-sm">{gettext("Select all pending")}</span>
+      </div>
+
       <ul :if={@requests != []} class="space-y-3">
         <li
           :for={r <- @requests}
@@ -332,6 +367,7 @@ defmodule CinderWeb.RequestsLive do
               :if={r.status == :pending}
               id={"approval-profile-form-#{r.id}"}
               phx-change="set_approval_profile"
+              class="flex flex-wrap items-center gap-2"
             >
               <input type="hidden" name="_id" value={r.id} />
               <label for={"approval-profile-#{r.id}"} class="sr-only">
@@ -342,6 +378,7 @@ defmodule CinderWeb.RequestsLive do
                 name="profile"
                 value={@approval_profiles[to_string(r.id)]}
                 include_auto={false}
+                class="select select-sm w-full sm:w-auto"
               />
             </form>
             <.button

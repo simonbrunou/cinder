@@ -64,7 +64,6 @@ defmodule CinderWeb.CoreComponents do
     <div
       :if={msg = render_slot(@inner_block) || Phoenix.Flash.get(@flash, @kind)}
       id={@id}
-      phx-click={JS.push("lv:clear-flash", value: %{key: @kind}) |> hide("##{@id}")}
       role="alert"
       class="toast toast-top toast-end z-50"
       {@rest}
@@ -87,6 +86,7 @@ defmodule CinderWeb.CoreComponents do
           type="button"
           class="group flex min-h-6 min-w-6 items-center justify-center self-start cursor-pointer rounded focus-visible:outline-2 focus-visible:outline-current"
           aria-label={gettext("close")}
+          phx-click={JS.push("lv:clear-flash", value: %{key: @kind}) |> hide("##{@id}")}
         >
           <.icon
             name="hero-x-mark"
@@ -108,7 +108,8 @@ defmodule CinderWeb.CoreComponents do
       <.button navigate={~p"/"}>Home</.button>
   """
   attr :rest, :global,
-    include: ~w(href navigate patch method download name value disabled type form)
+    include:
+      ~w(href navigate patch method download name value disabled type form aria-label aria-describedby)
 
   attr :class, :any, default: nil, doc: "extra classes appended to the computed button classes"
   attr :variant, :string, default: "primary", values: ~w(primary neutral ghost danger warning)
@@ -352,8 +353,9 @@ defmodule CinderWeb.CoreComponents do
   attr :error_class, :any, default: nil, doc: "the input error class to use over defaults"
 
   attr :rest, :global,
-    include: ~w(accept autocomplete capture cols disabled form list max maxlength min minlength
-                multiple pattern placeholder readonly required rows size step)
+    include:
+      ~w(accept autocomplete capture cols disabled form list max maxlength min minlength
+                multiple pattern placeholder readonly required rows size step aria-label aria-describedby aria-labelledby)
 
   def input(%{field: %Phoenix.HTML.FormField{} = field} = assigns) do
     errors = if Phoenix.Component.used_input?(field), do: field.errors, else: []
@@ -655,6 +657,7 @@ defmodule CinderWeb.CoreComponents do
   attr :progress, :float, default: nil
   attr :speed, :integer, default: nil
   attr :eta, :integer, default: nil
+  attr :rest, :global
 
   def status_badge(assigns) do
     {label, color, icon} = badge_spec(assigns.kind, assigns.status)
@@ -668,7 +671,12 @@ defmodule CinderWeb.CoreComponents do
       )
 
     ~H"""
-    <div :if={operation_badge?(@kind, @status)} class={["min-w-32 space-y-1", @class]} role="status">
+    <div
+      :if={operation_badge?(@kind, @status)}
+      class={["min-w-32 space-y-1", @class]}
+      role="status"
+      {@rest}
+    >
       <div class="flex items-center gap-1 text-sm">
         <.icon name={@icon} class="size-4" />{@label}
       </div>
@@ -691,6 +699,7 @@ defmodule CinderWeb.CoreComponents do
       :if={!operation_badge?(@kind, @status)}
       class={["badge badge-sm gap-1 shrink-0", @color, @class]}
       title={@title}
+      {@rest}
     >
       <.icon name={@icon} class="size-3.5" />{@label}
     </span>
@@ -926,7 +935,8 @@ defmodule CinderWeb.CoreComponents do
         />
         <div
           :if={!@poster_path}
-          class="grid aspect-[2/3] w-full place-items-center bg-base-300 text-sm text-base-content/70"
+          class="grid aspect-[2/3] w-full place-items-center text-sm text-base-content/70"
+          style={poster_fallback_style(@title)}
         >
           {gettext("No poster")}
         </div>
@@ -952,6 +962,12 @@ defmodule CinderWeb.CoreComponents do
   defp type_icon(:tv), do: "hero-tv"
   defp type_label(:movie), do: gettext("Film")
   defp type_label(:tv), do: gettext("TV")
+
+  defp poster_fallback_style(title) do
+    hue = :erlang.phash2(title, 360_000) |> rem(360)
+    hue2 = rem(hue + 40, 360)
+    "background: linear-gradient(135deg, hsl(#{hue}, 55%, 30%), hsl(#{hue2}, 55%, 18%));"
+  end
 
   @doc """
   Builds a full TMDB image URL from a `poster_path` fragment (`/abc.jpg`). `size`

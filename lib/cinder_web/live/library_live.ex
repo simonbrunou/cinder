@@ -396,6 +396,7 @@ defmodule CinderWeb.LibraryLive do
                   speed={m.download_speed}
                   eta={m.download_eta}
                   class="h-auto break-words text-center"
+                  style="min-width: 0"
                 />
               </.media_card>
             </.link>
@@ -489,6 +490,7 @@ defmodule CinderWeb.LibraryLive do
                   kind={:monitored}
                   status={s.monitored}
                   class="h-auto break-words text-center"
+                  style="min-width: 0"
                 />
               </.media_card>
             </.link>

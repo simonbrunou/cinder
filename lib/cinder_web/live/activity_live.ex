@@ -152,6 +152,24 @@ defmodule CinderWeb.ActivityLive do
      |> put_flash(level, msg)}
   end
 
+  def handle_event("retry", %{"id" => id}, socket) when is_binary(id) do
+    socket =
+      with {_id, ""} <- Integer.parse(id),
+           %{} = movie <- find_by_id(socket.assigns.movies, id) do
+        case Catalog.retry_movie(movie) do
+          {:error, _} ->
+            put_flash(socket, :error, gettext("Couldn't retry: that movie has already moved on."))
+
+          _ ->
+            socket
+        end
+      else
+        _ -> put_flash(socket, :error, gettext("Couldn't retry that movie."))
+      end
+
+    {:noreply, socket}
+  end
+
   # Client-controlled payloads — ignore anything unmatched rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
@@ -301,6 +319,23 @@ defmodule CinderWeb.ActivityLive do
             >
               {pipeline_hint(m)}
             </p>
+            <.button
+              :if={
+                movie_badge_status(m) in [
+                  :no_match,
+                  :search_failed,
+                  :import_failed,
+                  :verification_hold
+                ]
+              }
+              id={"retry-movie-#{m.id}"}
+              size="sm"
+              phx-click="retry"
+              phx-value-id={m.id}
+              phx-disable-with={gettext("Retrying…")}
+            >
+              {gettext("Retry")}
+            </.button>
           </li>
         </ul>
       </section>

@@ -130,7 +130,7 @@ defmodule CinderWeb.SetupLive do
 
       <div class="mt-6 rounded-box border border-base-300 bg-base-200 p-4">
         <h2 class="mb-3 text-lg font-semibold">{gettext("Setup checklist")}</h2>
-        <ul class="space-y-2 text-sm">
+        <ul id="setup-checklist" class="space-y-2 text-sm">
           <.check_row
             :for={svc <- required_services()}
             label={service_label(svc)}
@@ -150,9 +150,17 @@ defmodule CinderWeb.SetupLive do
         disabled={not @can_finish}
         phx-disable-with={gettext("Finishing…")}
         class="mt-6"
+        aria-describedby="setup-finish-hint"
       >
         {gettext("Finish setup")}
       </.button>
+      <p
+        :if={not @can_finish}
+        id="setup-finish-hint"
+        class="mt-2 text-sm text-base-content/70"
+      >
+        {gettext("Finish unlocks once every required service is connected.")}
+      </p>
     </Layouts.app>
     """
   end
