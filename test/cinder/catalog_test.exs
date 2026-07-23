@@ -718,6 +718,12 @@ defmodule Cinder.CatalogTest do
       legacy = series_fixture()
       episode_fixture(season_fixture(legacy), %{file_path: "/tv/legacy.mkv"})
 
+      # The mirror case, which pins the `file_path` predicate independently: without it this row
+      # would be summed. Every other pathless fixture here is also sizeless, so the predicate
+      # would otherwise be carried entirely by its `imported_size` sibling.
+      sizeless_path = series_fixture()
+      episode_fixture(season_fixture(sizeless_path), %{imported_size: 8_000})
+
       assert Catalog.series_library_sizes() == %{imported.id => 2_000}
     end
   end

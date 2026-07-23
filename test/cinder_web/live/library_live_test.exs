@@ -267,18 +267,19 @@ defmodule CinderWeb.LibraryLiveTest do
                ["movie-#{alpha.id}", "movie-#{zulu.id}"]
     end
 
-    test "an accented title sorts with its unaccented neighbours, not after Z", %{conn: conn} do
-      amelie = movie_fixture(%{title: "Amélie"})
+    test "a leading accent sorts under its base letter, not after Z", %{conn: conn} do
+      # The accent has to be the character that DECIDES the comparison, or the test can't see
+      # folding at all: "Amélie" vs "Zulu" is settled at `a` < `z` and sorts identically folded
+      # or not. Only a leading accent discriminates — plain `String.downcase/1` leaves "é" at
+      # U+00E9, which is greater than every ASCII letter, so "Écran" lands after "Zulu"; NFD
+      # decomposes it to "e" + U+0301, so it sorts under E where a reader expects it.
+      ecran = movie_fixture(%{title: "Écran"})
       zulu = movie_fixture(%{title: "Zulu"})
 
       {:ok, lv, _html} = live(conn, ~p"/library?sort=title")
 
       assert card_ids(render(lv), "#movies-list > div") ==
-               ["movie-#{amelie.id}", "movie-#{zulu.id}"]
-
-      # Sanity: codepoint order without folding would put "Amélie" (é = U+00E9) after "Zulu".
-      refute card_ids(render(lv), "#movies-list > div") ==
-               ["movie-#{zulu.id}", "movie-#{amelie.id}"]
+               ["movie-#{ecran.id}", "movie-#{zulu.id}"]
     end
 
     test "Size puts the largest first, the never-imported last, and prints the bytes", %{
@@ -303,15 +304,17 @@ defmodule CinderWeb.LibraryLiveTest do
     end
 
     test "a retried movie sorts and renders as sizeless once its file is gone", %{conn: conn} do
+      # Positive control, created FIRST so it holds the lower id: same size, same selector, file
+      # still on disk. Without it the refute below would also pass if the card vanished or the
+      # selector were wrong — and without the id ordering, the sort assertion would pass on the
+      # `-id` tiebreak alone, since dropping the guard leaves both movies on an equal size.
+      kept = available_movie!("/tmp/kept.mkv", %{title: "Kept", imported_size: 9_000_000})
+
       # retry_movie/1 clears file_path but leaves imported_size behind.
       movie = available_movie!("/tmp/gone.mkv", %{title: "Gone", imported_size: 9_000_000})
       {:ok, failed} = Catalog.transition(movie, %{status: :import_failed})
       {:ok, movie} = Catalog.retry_movie(failed)
       assert movie.file_path == nil and movie.imported_size == 9_000_000
-
-      # Positive control: same size, same selector, file still on disk. Without it the refute
-      # below would also pass if the card vanished or the selector were simply wrong.
-      kept = available_movie!("/tmp/kept.mkv", %{title: "Kept", imported_size: 9_000_000})
 
       {:ok, lv, _html} = live(conn, ~p"/library?sort=size")
 
@@ -320,12 +323,15 @@ defmodule CinderWeb.LibraryLiveTest do
       refute has_element?(lv, "#movie-#{movie.id} p", "8.6 MB")
 
       # ...and it sorts as sizeless too, not just renders as one.
-      assert List.last(card_ids(render(lv), "#movies-list > div")) == "movie-#{movie.id}"
+      assert card_ids(render(lv), "#movies-list > div") ==
+               ["movie-#{kept.id}", "movie-#{movie.id}"]
     end
 
     test "sorting on the Series tab keeps ?type=tv and totals each series' files", %{conn: conn} do
-      small = series!(%{title: "Small Show"})
+      # Created biggest-first so the default `desc: id` order is the REVERSE of the expected
+      # size order — otherwise the assertion below passes without any sorting happening.
       big = series!(%{title: "Big Show"})
+      small = series!(%{title: "Small Show"})
       seed_episode_file(small, "/tv/small.mkv", 2_000_000)
       seed_episode_file(big, "/tv/big.mkv", 9_000_000)
 
@@ -344,16 +350,22 @@ defmodule CinderWeb.LibraryLiveTest do
 
     test "a series import refreshes the size readout live", %{conn: conn} do
       series = series!(%{title: "Severance"})
+      episode = episode_fixture(season_fixture(series))
+
       {:ok, lv, _html} = live(conn, ~p"/library?type=tv")
       refute has_element?(lv, "#series-row-#{series.id} p")
 
-      # Every episodes.imported_size writer broadcasts this; the size map has to refresh with the
-      # series list or it silently goes stale on the TV tab.
-      episode = seed_episode_file(series, "/tv/new.mkv", 9_000_000)
-      send(lv.pid, {:series_updated, series.id})
+      # Driven through the real writer, not a hand-sent message: transition_episode/2 is the
+      # episode pipeline choke-point and broadcasts {:series_updated, _} itself, so this covers
+      # the subscription in mount/3 as well as the handler. A `send(lv.pid, ...)` here would stay
+      # green even with Catalog.subscribe_series/0 deleted.
+      {:ok, _} =
+        Catalog.transition_episode(episode, %{
+          file_path: "/tv/new.mkv",
+          imported_size: 9_000_000
+        })
 
       assert has_element?(lv, "#series-row-#{series.id} p", "8.6 MB")
-      assert episode.file_path == "/tv/new.mkv"
     end
 
     test "an unknown ?sort= falls back to the default instead of crashing", %{conn: conn} do
