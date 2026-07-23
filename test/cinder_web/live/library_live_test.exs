@@ -350,16 +350,23 @@ defmodule CinderWeb.LibraryLiveTest do
 
     test "a series import refreshes the size readout live", %{conn: conn} do
       series = series!(%{title: "Severance"})
+      episode = episode_fixture(season_fixture(series))
+
       {:ok, lv, _html} = live(conn, ~p"/library?type=tv")
       refute has_element?(lv, "#series-row-#{series.id} p")
 
-      # Every episodes.imported_size writer broadcasts this; the size map has to refresh with the
-      # series list or it silently goes stale on the TV tab.
-      episode = seed_episode_file(series, "/tv/new.mkv", 9_000_000)
-      send(lv.pid, {:series_updated, series.id})
+      # Driven through the real writer, not a hand-sent message: transition_episode/2 is the
+      # episode pipeline choke-point and broadcasts {:series_updated, _} itself, so this covers
+      # the subscription in mount/3 as well as the handler. A `send(lv.pid, ...)` here would stay
+      # green even with Catalog.subscribe_series/0 deleted.
+      {:ok, _} =
+        Catalog.transition_episode(episode, %{
+          file_path: "/tv/new.mkv",
+          imported_size: 9_000_000
+        })
 
+      assert render(lv) =~ "8.6 MB"
       assert has_element?(lv, "#series-row-#{series.id} p", "8.6 MB")
-      assert episode.file_path == "/tv/new.mkv"
     end
 
     test "an unknown ?sort= falls back to the default instead of crashing", %{conn: conn} do
