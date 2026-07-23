@@ -722,7 +722,7 @@ defmodule Cinder.Catalog do
   `localizations` map captures every translated title/overview for display.
   """
   def enrich_movie(%Movie{} = movie, opts \\ []) do
-    with_locale([locale: "en"] ++ opts, fn ->
+    with_locale(opts ++ [locale: "en"], fn ->
       backfill_metadata(
         movie,
         &tmdb().get_movie(&1.tmdb_id),
@@ -741,7 +741,7 @@ defmodule Cinder.Catalog do
   `opts[:locale]` defaults to `"en"` for canonical stored metadata.
   """
   def enrich_series(%Series{} = series, opts \\ []) do
-    with_locale([locale: "en"] ++ opts, fn ->
+    with_locale(opts ++ [locale: "en"], fn ->
       backfill_metadata(
         series,
         &tmdb().get_series(&1.tmdb_id),

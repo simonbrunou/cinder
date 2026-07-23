@@ -335,15 +335,18 @@ defmodule Cinder.Catalog.TMDB.HTTP do
         is_binary(lang),
         data = t["data"],
         is_map(data),
-        title = data["title"],
+        title = data["title"] || data["name"],
         overview = data["overview"],
-        title != "" or overview != "" do
+        present?(title) or present?(overview) do
       {lang, %{title: title, overview: overview}}
     end
     |> Map.new()
   end
 
   defp localizations_from(_), do: %{}
+
+  defp present?(value) when is_binary(value) and value != "", do: true
+  defp present?(_), do: false
 
   # TMDB genres are `[%{"id" => _, "name" => _}]` on the details endpoints; keep the names only.
   # Search endpoints send `genre_ids` (no names) — so a search body yields `[]` here.

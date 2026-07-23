@@ -158,6 +158,44 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
             }} = HTTP.get_series(1396)
   end
 
+  test "get_series/1 parses translated titles from data.name" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      assert conn.request_path == "/3/tv/1396"
+      assert conn.params["append_to_response"] == "external_ids,translations"
+
+      Req.Test.json(conn, %{
+        "id" => 1396,
+        "name" => "Breaking Bad",
+        "first_air_date" => "2008-01-20",
+        "poster_path" => "/bb.jpg",
+        "original_language" => "en",
+        "external_ids" => %{"tvdb_id" => 81_189},
+        "seasons" => [%{"season_number" => 1}],
+        "translations" => %{
+          "translations" => [
+            %{
+              "iso_639_1" => "fr",
+              "data" => %{
+                "name" => "Breaking Bad",
+                "overview" => "Un professeur de chimie.",
+                "homepage" => ""
+              }
+            }
+          ]
+        }
+      })
+    end)
+
+    assert {:ok,
+            %{
+              tmdb_id: 1396,
+              title: "Breaking Bad",
+              localizations: %{
+                "fr" => %{title: "Breaking Bad", overview: "Un professeur de chimie."}
+              }
+            }} = HTTP.get_series(1396)
+  end
+
   test "get_series/1 tolerates a missing external_ids block" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       Req.Test.json(conn, %{
