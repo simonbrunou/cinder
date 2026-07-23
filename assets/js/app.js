@@ -92,6 +92,22 @@ liveSocket.connect()
 // >> liveSocket.disableLatencySim()
 window.liveSocket = liveSocket
 
+// "/" focuses the Discover search input unless the user is already typing in a field.
+window.addEventListener("keydown", e => {
+  if (
+    e.key !== "/" ||
+    ["INPUT", "TEXTAREA"].includes(e.target.tagName) ||
+    e.target.isContentEditable
+  )
+    return
+
+  const query = document.getElementById("query")
+  if (query) {
+    e.preventDefault()
+    query.focus()
+  }
+})
+
 // The lines below enable quality of life phoenix_live_reload
 // development features:
 //

@@ -25,7 +25,7 @@ defmodule CinderWeb.DiscoverLive do
 
     {:ok,
      socket
-     |> assign(query: "", results: [], search_error: false)
+     |> assign(query: "", results: [], search_error: false, filter: :all)
      |> assign_request_state()}
   end
 
@@ -55,6 +55,18 @@ defmodule CinderWeb.DiscoverLive do
     else
       _ -> {:noreply, socket}
     end
+  end
+
+  def handle_event("filter", %{"type" => type}, socket) do
+    filter =
+      case type do
+        "movie" -> :movie
+        "tv" -> :tv
+        "all" -> :all
+        _ -> socket.assigns.filter
+      end
+
+    {:noreply, assign(socket, filter: filter)}
   end
 
   # The event payload is client-controlled; ignore any malformed/forged frame.
@@ -240,6 +252,8 @@ defmodule CinderWeb.DiscoverLive do
 
   @impl true
   def render(assigns) do
+    assigns = assign(assigns, filtered_results: filter_results(assigns.results, assigns.filter))
+
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
       <.header>
@@ -269,11 +283,34 @@ defmodule CinderWeb.DiscoverLive do
         </span>
       </form>
 
-      <section :if={@results != []} class="mb-10">
+      <div
+        :if={@results != []}
+        class="mb-4 flex flex-wrap gap-2"
+        role="group"
+        aria-label={gettext("Filter by type")}
+      >
+        <.button
+          :for={
+            {label, value} <- [
+              {gettext("All"), :all},
+              {gettext("Movies"), :movie},
+              {gettext("TV"), :tv}
+            ]
+          }
+          phx-click="filter"
+          phx-value-type={value}
+          variant={if @filter == value, do: "primary", else: "ghost"}
+          size="sm"
+        >
+          {label}
+        </.button>
+      </div>
+
+      <section :if={@filtered_results != []} class="mb-10">
         <h2 class="sr-only">{gettext("Search results")}</h2>
         <div id="results" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
           <.media_card
-            :for={r <- @results}
+            :for={r <- @filtered_results}
             poster_path={r.poster_path}
             title={r.title}
             year={r.year}
@@ -296,7 +333,7 @@ defmodule CinderWeb.DiscoverLive do
       </section>
 
       <.empty_state
-        :if={@query != "" and @results == [] and not @search_error}
+        :if={@query != "" and @filtered_results == [] and not @search_error}
         icon="hero-magnifying-glass"
         title={gettext("No matches")}
         message={gettext("No movies or shows matched that search.")}
@@ -370,4 +407,7 @@ defmodule CinderWeb.DiscoverLive do
   defp original_option_label("en"), do: gettext("Original (English)")
   defp original_option_label("fr"), do: gettext("Original (French)")
   defp original_option_label(_), do: gettext("Original")
+
+  defp filter_results(results, :all), do: results
+  defp filter_results(results, type), do: Enum.filter(results, &(&1.type == type))
 end

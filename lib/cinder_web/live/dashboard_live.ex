@@ -382,7 +382,7 @@ defmodule CinderWeb.DashboardLive do
                 <form
                   id={"dashboard-approval-form-#{r.id}"}
                   phx-submit="approve"
-                  class="flex items-center gap-2"
+                  class="flex flex-wrap items-center gap-2"
                 >
                   <input type="hidden" name="_id" value={r.id} />
                   <label for={"dashboard-approval-profile-#{r.id}"} class="sr-only">
@@ -393,7 +393,7 @@ defmodule CinderWeb.DashboardLive do
                     name="profile"
                     value={r.proposed_media_profile || :standard}
                     include_auto={false}
-                    class="select select-sm w-auto"
+                    class="select select-sm w-full sm:w-auto"
                   />
                   <.button
                     type="submit"
@@ -477,15 +477,20 @@ defmodule CinderWeb.DashboardLive do
             />
             <ul :if={@recent != []} class="space-y-2">
               <li :for={m <- @recent} class="flex items-center gap-3">
-                <.status_badge
-                  kind={:movie}
-                  status={movie_badge_status(m)}
-                  progress={m.download_progress}
-                  speed={m.download_speed}
-                  eta={m.download_eta}
-                />
-                <span class="truncate">{m.title}</span>
-                <span :if={m.year} class="text-sm text-base-content/70">({m.year})</span>
+                <.link
+                  navigate={~p"/movies/#{m.id}"}
+                  class="min-w-0 flex-1 flex items-center gap-3"
+                >
+                  <.status_badge
+                    kind={:movie}
+                    status={movie_badge_status(m)}
+                    progress={m.download_progress}
+                    speed={m.download_speed}
+                    eta={m.download_eta}
+                  />
+                  <span class="truncate">{m.title}</span>
+                  <span :if={m.year} class="text-sm text-base-content/70">({m.year})</span>
+                </.link>
                 <time
                   datetime={DateTime.to_iso8601(m.updated_at)}
                   class="ml-auto whitespace-nowrap text-xs text-base-content/70"

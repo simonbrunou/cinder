@@ -54,18 +54,23 @@ defmodule CinderWeb.CalendarLive do
           :for={row <- @rows}
           class="card bg-base-200 p-3 flex flex-row flex-wrap items-center gap-x-3 gap-y-1"
         >
-          <time
-            datetime={Date.to_iso8601(row.ep.air_date)}
-            class="w-24 tabular-nums text-sm text-base-content/70"
+          <.link
+            navigate={~p"/series/#{row.ep.season.series.id}"}
+            class="min-w-0 flex-1 flex flex-row flex-wrap items-center gap-x-3 gap-y-1"
           >
-            {format_date(row.ep.air_date)}
-          </time>
-          <.status_badge kind={:episode} status={row.state} />
-          <span class="min-w-0 break-words font-medium">{row.ep.season.series.title}</span>
-          <span class="tabular-nums text-sm text-base-content/70">
-            {Episode.code(row.ep.season.season_number, row.ep.episode_number)}
-          </span>
-          <span class="min-w-0 flex-1 truncate text-base-content/70">{row.ep.title}</span>
+            <time
+              datetime={Date.to_iso8601(row.ep.air_date)}
+              class="w-24 tabular-nums text-sm text-base-content/70"
+            >
+              {format_date(row.ep.air_date)}
+            </time>
+            <.status_badge kind={:episode} status={row.state} />
+            <span class="min-w-0 break-words font-medium">{row.ep.season.series.title}</span>
+            <span class="tabular-nums text-sm text-base-content/70">
+              {Episode.code(row.ep.season.season_number, row.ep.episode_number)}
+            </span>
+            <span class="min-w-0 flex-1 truncate text-base-content/70">{row.ep.title}</span>
+          </.link>
         </li>
       </ul>
     </Layouts.app>
