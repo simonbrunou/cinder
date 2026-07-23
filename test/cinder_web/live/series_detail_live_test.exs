@@ -62,15 +62,19 @@ defmodule CinderWeb.SeriesDetailLiveTest do
        }}
     end)
 
-    stub(Cinder.Catalog.TMDBMock, :get_season, fn ^tmdb_id, 1 ->
-      {:ok,
-       %{
-         season_number: 1,
-         episodes: [
-           %{tmdb_episode_id: 1, episode_number: 1, title: "Pilot", air_date: ~D[2020-01-01]},
-           %{tmdb_episode_id: 2, episode_number: 2, title: "Two", air_date: ~D[2020-01-08]}
-         ]
-       }}
+    stub(Cinder.Catalog.TMDBMock, :get_season, fn
+      ^tmdb_id, 1, "fr" ->
+        {:ok, %{season_number: 1, episodes: []}}
+
+      ^tmdb_id, 1, "en" ->
+        {:ok,
+         %{
+           season_number: 1,
+           episodes: [
+             %{tmdb_episode_id: 1, episode_number: 1, title: "Pilot", air_date: ~D[2020-01-01]},
+             %{tmdb_episode_id: 2, episode_number: 2, title: "Two", air_date: ~D[2020-01-08]}
+           ]
+         }}
     end)
 
     {:ok, series} = Catalog.add_series(tmdb_id, monitor_strategy: :none)
@@ -1537,6 +1541,53 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert render(lv) =~ "Grabbing the selected release"
     assert [grab] = Repo.all(Cinder.Catalog.Grab)
     assert grab.download_id == "hash-new"
+  end
+
+  # Regression for the PR #172 corruption bug: rewriting `title` onto the `@series` assign
+  # meant a manual TV search under a non-canonical locale queried the indexer with the
+  # French display title instead of the real one. Assigns now stay canonical.
+  test "FR session: manual TV search sends the canonical series title to the indexer",
+       %{conn: conn} do
+    series =
+      Repo.insert!(%Cinder.Catalog.Series{
+        tmdb_id: 9002,
+        tvdb_id: 99,
+        title: "Test Show",
+        localizations: %{"fr" => %{"title" => "Émission Test"}}
+      })
+
+    season =
+      Repo.insert!(%Cinder.Catalog.Season{
+        series_id: series.id,
+        season_number: 1,
+        monitored: true
+      })
+
+    Repo.insert!(%Cinder.Catalog.Episode{
+      season_id: season.id,
+      tmdb_episode_id: 9101,
+      episode_number: 1,
+      title: "Pilot",
+      monitored: true,
+      air_date: Date.add(Date.utc_today(), -10)
+    })
+
+    test_pid = self()
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn tvdb_id, title, season_number ->
+      send(test_pid, {:search_tv, tvdb_id, title, season_number})
+      {:ok, []}
+    end)
+
+    {:ok, lv, _html} =
+      conn
+      |> Plug.Test.init_test_session(%{"locale" => "fr"})
+      |> live_series(series)
+
+    lv |> element("button[phx-click=tv_manual_search][phx-value-season='1']") |> render_click()
+    render_async(lv)
+
+    assert_received {:search_tv, 99, "Test Show", 1}
   end
 
   # Insert a series→season→episode tree with one still-wanted episode (monitored, no file,

@@ -15,6 +15,7 @@ defmodule Cinder.Requests.Request do
     field :target_id, :integer
     field :season_number, :integer
     field :title, :string
+    field :localizations, :map, default: %{}
     field :year, :integer
     field :poster_path, :string
     field :status, Ecto.Enum, values: @statuses, default: :pending
@@ -35,6 +36,7 @@ defmodule Cinder.Requests.Request do
       :target_id,
       :season_number,
       :title,
+      :localizations,
       :year,
       :poster_path,
       :status,

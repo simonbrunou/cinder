@@ -61,4 +61,22 @@ defmodule CinderWeb.ActivityBeaconLiveTest do
     html = render(view)
     assert length(String.split(html, "is now available")) == 2
   end
+
+  test "FR session: the available toast uses the localized title", %{conn: conn} do
+    {:ok, movie} =
+      Catalog.add_movie(%{
+        tmdb_id: 5,
+        title: "Arrival",
+        localizations: %{"fr" => %{"title" => "Premier Contact"}}
+      })
+
+    {:ok, view, _html} =
+      live_isolated(conn, CinderWeb.ActivityBeaconLive, session: %{"locale" => "fr"})
+
+    Catalog.broadcast({:movie_updated, %{movie | status: :available}})
+
+    html = render(view)
+    assert html =~ "Premier Contact"
+    refute html =~ "Arrival"
+  end
 end

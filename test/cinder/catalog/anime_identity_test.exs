@@ -286,7 +286,7 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
         {:ok, minimal_series_info(series, tmdb_id)}
       end)
 
-      expect(Cinder.Catalog.TMDBMock, :get_season, fn _tmdb_id, 1 ->
+      expect(Cinder.Catalog.TMDBMock, :get_season, 2, fn _tmdb_id, 1, _locale ->
         {:ok, minimal_season_info(episodes)}
       end)
 
@@ -387,7 +387,7 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
         {:ok, minimal_series_info(series, tmdb_id)}
       end)
 
-      expect(Cinder.Catalog.TMDBMock, :get_season, fn _tmdb_id, 1 ->
+      expect(Cinder.Catalog.TMDBMock, :get_season, 2, fn _tmdb_id, 1, _locale ->
         {:ok, minimal_season_info(episodes)}
       end)
 
@@ -635,7 +635,7 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
         {:ok, minimal_series_info(current, tmdb_id)}
       end)
 
-      expect(Cinder.Catalog.TMDBMock, :get_season, fn _tmdb_id, 1 ->
+      expect(Cinder.Catalog.TMDBMock, :get_season, 2, fn _tmdb_id, 1, _locale ->
         {:ok, minimal_season_info(episodes)}
       end)
 

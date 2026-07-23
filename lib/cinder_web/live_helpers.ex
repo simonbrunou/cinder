@@ -5,6 +5,33 @@ defmodule CinderWeb.LiveHelpers do
   """
   use Gettext, backend: CinderWeb.Gettext
 
+  alias Cinder.Catalog
+
+  @doc """
+  Render-time localized title for a movie/series/episode (or any map/struct carrying
+  `title` + `localizations`). LiveView assigns hold the canonical struct always —
+  locale only ever applies here, at render time.
+  """
+  def media_title(media, locale), do: Catalog.localized_title(media, locale)
+
+  @doc "Render-time localized overview, same rule as `media_title/2`."
+  def media_overview(media, locale), do: Catalog.localized_overview(media, locale)
+
+  @doc """
+  Case- and accent-folded sort key, so "Amélie" lands next to "Amelie" instead of after
+  "Zorro". Codepoint order, not locale collation — "Eclair" still sorts before "Éclair"
+  rather than interleaving, which is fine at household scale. Total, like
+  `Cinder.Acquisition.nfd/1`: `characters_to_nfd_binary/1` returns `{:error, _, _}` on
+  malformed UTF-8, and a raise here would happen inside `render/1` and take the whole
+  page down. Shared by `LibraryLive` (sort) and `ActivityLive` (held-series ordering).
+  """
+  def fold_title(title) do
+    case :unicode.characters_to_nfd_binary(title) do
+      binary when is_binary(binary) -> String.downcase(binary)
+      _ -> String.downcase(title)
+    end
+  end
+
   @doc """
   Finds an item in `collection` whose `id` stringifies to `id` (a client-supplied,
   string `phx-value`). The string compare is forged-id-safe: a non-numeric value
@@ -68,11 +95,20 @@ defmodule CinderWeb.LiveHelpers do
     Enum.any?(changeset.errors, fn {_field, {_msg, opts}} -> opts[:constraint] == :unique end)
   end
 
-  @doc ~S(The display title for a request row: "Title: Season N" for a season request, the bare title otherwise.)
-  def request_title(%{target_type: "season"} = r),
-    do: gettext("%{title}: Season %{number}", title: r.title, number: r.season_number)
+  @doc ~S"""
+  The render-time localized display title for a request row: "Title: Season N" for a
+  season request, the localized title otherwise. A request row carries its own
+  `localizations` copy, so this goes through `Catalog.localized_title/2` like any
+  other media.
+  """
+  def request_title(%{target_type: "season"} = r, locale),
+    do:
+      gettext("%{title}: Season %{number}",
+        title: Catalog.localized_title(r, locale),
+        number: r.season_number
+      )
 
-  def request_title(r), do: r.title
+  def request_title(r, locale), do: Catalog.localized_title(r, locale)
 
   @doc """
   Locale-aware short date ("Jun 3" / fr "3 juin"). Both the format string and the

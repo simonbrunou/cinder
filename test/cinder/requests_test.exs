@@ -41,6 +41,32 @@ defmodule Cinder.RequestsTest do
     assert Catalog.list_by_status(:requested) == []
   end
 
+  test "captures the canonical title and localizations before inserting" do
+    user = user_fixture()
+
+    expect(Cinder.Catalog.TMDBMock, :get_movie, fn 603 ->
+      {:ok,
+       %{
+         tmdb_id: 603,
+         title: "Canonical title",
+         localizations: %{"fr" => %{"title" => "Titre"}}
+       }}
+    end)
+
+    assert {:ok, request} = Requests.create_request(user, @attrs)
+    assert request.title == "Canonical title"
+    assert request.localizations == %{"fr" => %{"title" => "Titre"}}
+  end
+
+  test "keeps the incoming title and an empty map when the snapshot fetch fails" do
+    user = user_fixture()
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn 603 -> {:error, :timeout} end)
+
+    assert {:ok, request} = Requests.create_request(user, @attrs)
+    assert request.title == "The Matrix"
+    assert request.localizations == %{}
+  end
+
   test "a requester's anime proposal creates no movie until an admin confirms it" do
     user = user_fixture()
     admin = admin_fixture()
@@ -348,7 +374,7 @@ defmodule Cinder.RequestsTest do
     admin = admin_fixture()
     {:ok, req} = Requests.create_request(user, @attrs)
     {:ok, _} = Requests.approve_request(req, admin, :standard)
-    assert_receive {:notify, {:request_approved, %{title: "The Matrix"}}}
+    assert_receive {:notify, {:request_approved, %{title: "Movie 603"}}}
   end
 
   describe "season requests" do
@@ -365,12 +391,17 @@ defmodule Cinder.RequestsTest do
          }}
       end)
 
-      stub(Cinder.Catalog.TMDBMock, :get_season, fn 1399, n ->
+      stub(Cinder.Catalog.TMDBMock, :get_season, fn 1399, n, locale ->
         {:ok,
          %{
            season_number: n,
            episodes: [
-             %{tmdb_episode_id: n, episode_number: 1, title: "e", air_date: ~D[2011-01-01]}
+             %{
+               tmdb_episode_id: n,
+               episode_number: 1,
+               title: if(locale == "en", do: "e", else: ""),
+               air_date: ~D[2011-01-01]
+             }
            ]
          }}
       end)

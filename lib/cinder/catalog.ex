@@ -17,7 +17,6 @@ defmodule Cinder.Catalog do
     EpisodeCoordinate,
     Grab,
     Identity,
-    Locale,
     MediaProfile,
     Movie,
     ReleaseVerification,
@@ -29,6 +28,7 @@ defmodule Cinder.Catalog do
   alias Cinder.Download.Intent
   alias Cinder.Library
   alias Cinder.Library.ImportStage
+  alias Cinder.Locales
   alias Cinder.Notifier
   alias Cinder.Repo
   alias Cinder.Requests
@@ -40,22 +40,22 @@ defmodule Cinder.Catalog do
 
   @doc """
   Searches TMDB for `query`. A blank/whitespace query short-circuits to `{:ok, []}`
-  with no API call. `opts[:locale]` sets the requested TMDB language.
+  with no API call.
   """
-  def search_movies(query, opts \\ []) do
+  def search_movies(query, locale \\ Locales.canonical()) do
     if String.trim(query) == "" do
       {:ok, []}
     else
-      with_locale(opts ++ [locale: Locale.get()], fn -> tmdb().search(query) end)
+      tmdb().search(query, locale)
     end
   end
 
   @doc "TV-search variant of `search_movies/2`: blank query short-circuits to `{:ok, []}`."
-  def search_tv(query, opts \\ []) do
+  def search_tv(query, locale \\ Locales.canonical()) do
     if String.trim(query) == "" do
       {:ok, []}
     else
-      with_locale(opts ++ [locale: Locale.get()], fn -> tmdb().search_tv(query) end)
+      tmdb().search_tv(query, locale)
     end
   end
 
@@ -71,11 +71,11 @@ defmodule Cinder.Catalog do
   search style; household scale + 300ms debounce). Upgrade path if search latency
   bites: wrap each in Task.async/await_many to run them concurrently.
   """
-  def search_discover(query, opts \\ []) do
+  def search_discover(query, locale \\ Locales.canonical()) do
     if String.trim(query) == "" do
       {:ok, []}
     else
-      merge_discover(search_movies(query, opts), search_tv(query, opts))
+      merge_discover(search_movies(query, locale), search_tv(query, locale))
     end
   end
 
@@ -102,72 +102,31 @@ defmodule Cinder.Catalog do
     |> Enum.reject(&is_nil/1)
   end
 
-  @doc """
-  Fetches series details (including seasons list) from TMDB by tmdb_id.
-  `opts[:locale]` sets the requested TMDB language for the returned title/overview.
-  """
-  def tmdb_series(tmdb_id, opts \\ []),
-    do: with_locale(opts ++ [locale: Locale.get()], fn -> tmdb().get_series(tmdb_id) end)
+  @doc "Fetches series details (including seasons list) from TMDB by tmdb_id."
+  def tmdb_series(tmdb_id), do: tmdb().get_series(tmdb_id)
 
   # Resolve the impl at runtime. compile_env! would inline the mock module, which —
   # being defined at runtime by Mox in test_helper.exs — doesn't exist at compile time
   # and warns under --warnings-as-errors. fetch_env! still fails fast if unconfigured.
   defp tmdb, do: Application.fetch_env!(:cinder, :tmdb)
 
-  defp with_locale(opts, fun) do
-    locale = Keyword.get(opts, :locale) || Locale.get()
-    Locale.with_locale(locale, fun)
-  end
+  @doc "Returns the localized title for `media`, falling back to its canonical title."
+  def localized_title(media, locale), do: localized_field(media, locale, :title)
 
-  @doc """
-  Returns `media` with `title` and `overview` replaced by the localization for `locale`,
-  falling back to the canonical values when no localization exists.
-  """
-  def localize(nil, _locale), do: nil
+  @doc "Returns the localized overview for `media`, falling back to its canonical overview."
+  def localized_overview(media, locale), do: localized_field(media, locale, :overview)
 
-  def localize(%Movie{} = movie, locale),
-    do: %{
-      movie
-      | title: localized_title(movie, locale),
-        overview: localized_overview(movie, locale)
-    }
+  defp localized_field(nil, _locale, _field), do: nil
 
-  def localize(%Series{} = series, locale),
-    do: %{
-      series
-      | title: localized_title(series, locale),
-        overview: localized_overview(series, locale)
-    }
+  defp localized_field(%{} = media, locale, field) do
+    canonical = Map.get(media, field)
+    key = Atom.to_string(field)
 
-  def localize(%{} = map, locale) do
-    map
-    |> Map.put(:title, localized_title(map, locale))
-    |> Map.put(:overview, localized_overview(map, locale))
-  end
-
-  defp localized_title(%{localizations: localizations, title: title} = _media, locale)
-       when is_map(localizations) do
-    case localizations[locale] || localizations[to_string(locale)] do
-      %{"title" => t} when is_binary(t) and t != "" -> t
-      %{title: t} when is_binary(t) and t != "" -> t
-      _ -> title
+    case {locale == Locales.canonical(), Map.get(media, :localizations)} do
+      {false, %{^locale => %{^key => value}}} when is_binary(value) and value != "" -> value
+      _ -> canonical
     end
   end
-
-  defp localized_title(%{title: title}, _locale), do: title
-  defp localized_title(_, _locale), do: nil
-
-  defp localized_overview(%{localizations: localizations, overview: overview} = _media, locale)
-       when is_map(localizations) do
-    case localizations[locale] || localizations[to_string(locale)] do
-      %{"overview" => o} when is_binary(o) and o != "" -> o
-      %{overview: o} when is_binary(o) and o != "" -> o
-      _ -> overview
-    end
-  end
-
-  defp localized_overview(%{overview: overview}, _locale), do: overview
-  defp localized_overview(_, _locale), do: nil
 
   @doc """
   Persists a movie as `:requested`. Returns `{:ok, movie}` or
@@ -702,12 +661,8 @@ defmodule Cinder.Catalog do
   @doc "Subscribes the caller to movie state-change broadcasts (`{:movie_updated, movie}`)."
   def subscribe, do: Phoenix.PubSub.subscribe(Cinder.PubSub, @topic)
 
-  @doc """
-  Fetches full movie details from TMDB (the details endpoint carries `imdb_id`).
-  `opts[:locale]` defaults to `"en"` so the stored title/overview stay canonical.
-  """
-  def get_movie(tmdb_id, opts \\ []),
-    do: with_locale(opts ++ [locale: "en"], fn -> tmdb().get_movie(tmdb_id) end)
+  @doc "Fetches full movie details from TMDB (the details endpoint carries `imdb_id`)."
+  def get_movie(tmdb_id), do: tmdb().get_movie(tmdb_id)
 
   @doc "Fetches a movie by primary key, or `nil`."
   def get_movie_by_id(id), do: Repo.get(Movie, id)
@@ -718,19 +673,15 @@ defmodule Cinder.Catalog do
   detail page still renders. Descriptive, not pipeline state — writes via
   `Movie.metadata_changeset/2`, never `transition/2`.
 
-  `opts[:locale]` defaults to `"en"` so the stored metadata stays canonical while the
-  `localizations` map captures every translated title/overview for display.
   """
-  def enrich_movie(%Movie{} = movie, opts \\ []) do
-    with_locale(opts ++ [locale: "en"], fn ->
+  def enrich_movie(%Movie{} = movie),
+    do:
       backfill_metadata(
         movie,
         &tmdb().get_movie(&1.tmdb_id),
         &Movie.metadata_changeset/2,
         "movie"
       )
-    end)
-  end
 
   @doc """
   Refreshes a series' descriptive TMDB metadata (overview/genres/rating/first air date) with a
@@ -738,28 +689,44 @@ defmodule Cinder.Catalog do
   refreshed `%Series{}` (or the row unchanged, logged, on a TMDB error). No broadcast — the caller
   reloads its own tree.
 
-  `opts[:locale]` defaults to `"en"` for canonical stored metadata.
   """
-  def enrich_series(%Series{} = series, opts \\ []) do
-    with_locale(opts ++ [locale: "en"], fn ->
+  def enrich_series(%Series{} = series),
+    do:
       backfill_metadata(
         series,
         &tmdb().get_series(&1.tmdb_id),
         &Series.metadata_changeset/2,
         "series"
       )
-    end)
-  end
 
   # Shared descriptive-metadata refresh for a movie/series row. `fetch` and `changeset` are
   # the type's TMDB call + metadata changeset; `label` is for the log line. `updated_at` is
   # never written: this read-triggered refresh must not reorder the dashboard's Recent slice or
   # overwrite a concurrent pipeline transition's timestamp. On a TMDB error, log and return the
   # row unchanged so the page still renders.
+  # Field-wise, per-locale merge for localization maps: a locale absent from the incoming
+  # payload keeps its stored entry, and incoming blank/nil fields never clobber a stored value —
+  # a transient/partial TMDB payload can only add or refresh, never strip (stale beats gone for
+  # display-only data).
+  defp merge_localizations(stored, new) do
+    cleaned = for {locale, entry} <- new || %{}, into: %{}, do: {locale, drop_blank_fields(entry)}
+    Map.merge(stored || %{}, cleaned, fn _locale, old, incoming -> Map.merge(old, incoming) end)
+  end
+
+  defp drop_blank_fields(entry),
+    do: for({k, v} <- entry, is_binary(v) and v != "", into: %{}, do: {k, v})
+
+  defp merge_info_localizations(record, info) do
+    case Map.fetch(info, :localizations) do
+      {:ok, new} -> Map.put(info, :localizations, merge_localizations(record.localizations, new))
+      :error -> info
+    end
+  end
+
   defp backfill_metadata(record, fetch, changeset, label) do
     case fetch.(record) do
       {:ok, info} ->
-        changes = changeset.(record, info).changes
+        changes = changeset.(record, merge_info_localizations(record, info)).changes
 
         if changes != %{} do
           schema = record.__struct__
@@ -1588,7 +1555,7 @@ defmodule Cinder.Catalog do
   end
 
   @doc "Fetches requested-movie details and aliases before any Catalog write."
-  def prepare_requested_movie(attrs, opts \\ []) do
+  def prepare_requested_movie(attrs) do
     tmdb_id = Map.fetch!(attrs, :tmdb_id)
 
     case get_movie_by_tmdb_id(tmdb_id) do
@@ -1596,7 +1563,7 @@ defmodule Cinder.Catalog do
         {:ok, %{attrs: attrs, aliases: []}}
 
       nil ->
-        with {:ok, info} <- get_movie(tmdb_id, opts ++ [locale: "en"]),
+        with {:ok, info} <- get_movie(tmdb_id),
              {:ok, aliases} <- tmdb().get_movie_alternative_titles(info.tmdb_id) do
           create_attrs =
             info
@@ -1709,12 +1676,11 @@ defmodule Cinder.Catalog do
     # crash rather than return a clean error.
     preferred = Keyword.get(opts, :preferred_language, "original")
     media_profile = Keyword.get(opts, :media_profile, :auto)
-    locale = Keyword.get(opts, :locale, "en")
 
     if strategy in Series.monitor_strategies() do
       case get_series_by_tmdb_id(tmdb_id) do
         %Series{} = series -> {:ok, series}
-        nil -> create_series(tmdb_id, strategy, preferred, media_profile, locale)
+        nil -> create_series(tmdb_id, strategy, preferred, media_profile)
       end
     else
       {:error, :invalid_monitor_strategy}
@@ -1864,10 +1830,10 @@ defmodule Cinder.Catalog do
     end
   end
 
-  defp create_series(tmdb_id, strategy, preferred, media_profile, locale) do
-    with {:ok, info} <- with_locale([locale: locale], fn -> tmdb().get_series(tmdb_id) end),
-         {:ok, seasons} <-
-           with_locale([locale: locale], fn -> fetch_seasons(tmdb_id, info.seasons) end),
+  defp create_series(tmdb_id, strategy, preferred, media_profile) do
+    with {:ok, info} <- tmdb().get_series(tmdb_id),
+         {:ok, seasons} <- fetch_seasons(tmdb_id, info.seasons),
+         seasons = put_episode_localizations(tmdb_id, seasons),
          # A brand-new series has no scene_numbering_group_id yet (create_changeset doesn't
          # cast it), so there's nothing to pre-fetch here.
          {:ok, identity} <- fetch_series_identity(tmdb_id, nil) do
@@ -1913,16 +1879,67 @@ defmodule Cinder.Catalog do
 
   # Fetch each season's episodes, short-circuiting on the first TMDB error so a
   # partial tree is never persisted.
-  defp fetch_seasons(tmdb_id, season_stubs) do
+  defp fetch_seasons(tmdb_id, season_stubs, locale \\ Locales.canonical()) do
     result =
       Enum.reduce_while(season_stubs, {:ok, []}, fn %{season_number: n}, {:ok, acc} ->
-        case tmdb().get_season(tmdb_id, n) do
+        case tmdb().get_season(tmdb_id, n, locale) do
           {:ok, season} -> {:cont, {:ok, [season | acc]}}
           {:error, _} = err -> {:halt, err}
         end
       end)
 
     with {:ok, seasons} <- result, do: {:ok, Enum.reverse(seasons)}
+  end
+
+  defp put_episode_localizations(tmdb_id, seasons) do
+    titles =
+      Enum.reduce(Locales.noncanonical(), %{}, fn locale, acc ->
+        case fetch_seasons(tmdb_id, seasons, locale) do
+          {:ok, localized} ->
+            Map.put(acc, locale, episode_titles(localized))
+
+          {:error, reason} ->
+            Logger.warning(
+              "episode localizations: series #{tmdb_id} locale #{locale} failed: " <>
+                inspect(reason)
+            )
+
+            acc
+        end
+      end)
+
+    Enum.map(seasons, &put_season_localizations(&1, titles))
+  end
+
+  defp put_season_localizations(season, titles) do
+    episodes =
+      Enum.map(season.episodes, fn episode ->
+        Map.put(
+          episode,
+          :localizations,
+          episode_localizations(episode.tmdb_episode_id, titles)
+        )
+      end)
+
+    Map.put(season, :episodes, episodes)
+  end
+
+  defp episode_titles(seasons) do
+    for season <- seasons,
+        episode <- season.episodes,
+        is_binary(episode.title),
+        title = String.trim(episode.title),
+        title != "",
+        into: %{},
+        do: {episode.tmdb_episode_id, title}
+  end
+
+  defp episode_localizations(tmdb_episode_id, titles) do
+    for {locale, by_episode} <- titles,
+        title = Map.get(by_episode, tmdb_episode_id),
+        is_binary(title),
+        into: %{},
+        do: {locale, %{"title" => title}}
   end
 
   # `scene_numbering_group_id` is the series' operator-chosen scene group, or `nil` (a
@@ -2970,14 +2987,15 @@ defmodule Cinder.Catalog do
         # allow_stale: the TV poller may have finished/parked a grab between reads.
         for grab <- grabs, do: Repo.delete!(grab, allow_stale: true)
         intent_ids = Download.fence_episode_cleanup(episode_ids, specs)
-        Audit.log_or_rollback(actor, :cancel_series, series, %{title: series.title})
-        {series, intent_ids}
+        fresh = Repo.get!(Series, series.id)
+        Audit.log_or_rollback(actor, :cancel_series, fresh, %{title: fresh.title})
+        {fresh, intent_ids}
       end)
 
-    with {:ok, {_, intent_ids}} <- result do
+    with {:ok, {fresh, intent_ids}} <- result do
       Download.cleanup_intents(intent_ids)
-      broadcast_series(series.id)
-      {:ok, series}
+      broadcast_series(fresh.id)
+      {:ok, fresh}
     end
   end
 
@@ -3680,13 +3698,10 @@ defmodule Cinder.Catalog do
   Returns `{:ok, series}`, or `{:error, reason}` if a TMDB fetch fails (short-circuits before any
   write, mirroring `create_series/2`).
   """
-  def refresh_series(%Series{} = series, opts \\ []) do
-    locale = Keyword.get(opts, :locale, "en")
-
-    with {:ok, info} <-
-           with_locale([locale: locale], fn -> tmdb().get_series(series.tmdb_id) end),
-         {:ok, seasons} <-
-           with_locale([locale: locale], fn -> fetch_seasons(series.tmdb_id, info.seasons) end),
+  def refresh_series(%Series{} = series) do
+    with {:ok, info} <- tmdb().get_series(series.tmdb_id),
+         {:ok, seasons} <- fetch_seasons(series.tmdb_id, info.seasons),
+         seasons = put_episode_localizations(series.tmdb_id, seasons),
          {:ok, identity} <-
            fetch_series_identity(series.tmdb_id, series.scene_numbering_group_id) do
       Repo.transaction(fn -> refresh_current_series(series.id, info, seasons, identity) end)
@@ -3736,7 +3751,10 @@ defmodule Cinder.Catalog do
         # Descriptive backfill — Map.get (not dot) so a partial info map can't KeyError and abort
         # the whole tree reconcile. The real normalize_series always includes these.
         overview: Map.get(info, :overview),
-        localizations: Map.get(info, :localizations, %{}),
+        # Merge-over, not replace (see merge_localizations/2): a transient/partial translations
+        # payload must never strip last-synced localizations.
+        localizations:
+          merge_localizations(series.localizations, Map.get(info, :localizations, %{})),
         genres: Map.get(info, :genres),
         vote_average: Map.get(info, :vote_average),
         first_air_date: Map.get(info, :first_air_date)
@@ -3882,6 +3900,9 @@ defmodule Cinder.Catalog do
         season_id: season_id,
         episode_number: fe.episode_number,
         title: fe.title,
+        # Merge-over (see merge_localizations/2): a failed non-canonical season fetch yields %{}
+        # here, and replacing would erase the last-synced titles until the next successful refresh.
+        localizations: merge_localizations(parked_ep.localizations, fe.localizations),
         air_date: fe.air_date
       })
 
@@ -3914,6 +3935,7 @@ defmodule Cinder.Catalog do
       tmdb_episode_id: fe.tmdb_episode_id,
       episode_number: fe.episode_number,
       title: fe.title,
+      localizations: fe.localizations,
       air_date: fe.air_date,
       classification: classification,
       classification_source: "tmdb",

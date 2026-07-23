@@ -15,8 +15,8 @@ defmodule CinderWeb.DiscoverLiveTest do
 
   setup do
     # search_discover always hits both endpoints; default both to empty.
-    stub(Cinder.Catalog.TMDBMock, :search, fn _ -> {:ok, []} end)
-    stub(Cinder.Catalog.TMDBMock, :search_tv, fn _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :search, fn _, _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :search_tv, fn _, _ -> {:ok, []} end)
 
     stub(Cinder.Catalog.TMDBMock, :get_movie, fn id ->
       {:ok,
@@ -31,6 +31,18 @@ defmodule CinderWeb.DiscoverLiveTest do
     end)
 
     stub(Cinder.Catalog.TMDBMock, :get_movie_alternative_titles, fn _ -> {:ok, []} end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn id ->
+      {:ok,
+       %{
+         tmdb_id: id,
+         title: "Game of Thrones",
+         year: 2011,
+         poster_path: "/got.jpg",
+         seasons: []
+       }}
+    end)
+
     :ok
   end
 
@@ -44,10 +56,10 @@ defmodule CinderWeb.DiscoverLiveTest do
   @got %{tmdb_id: 1399, title: "Game of Thrones", year: 2011, poster_path: "/got.jpg"}
 
   defp stub_movies(results),
-    do: stub(Cinder.Catalog.TMDBMock, :search, fn _ -> {:ok, results} end)
+    do: stub(Cinder.Catalog.TMDBMock, :search, fn _, _ -> {:ok, results} end)
 
   defp stub_tv(results),
-    do: stub(Cinder.Catalog.TMDBMock, :search_tv, fn _ -> {:ok, results} end)
+    do: stub(Cinder.Catalog.TMDBMock, :search_tv, fn _, _ -> {:ok, results} end)
 
   test "first load shows an accessible search field", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/")
@@ -247,8 +259,8 @@ defmodule CinderWeb.DiscoverLiveTest do
   end
 
   test "a total TMDB failure flashes and shows 'Search failed', not 'No matches'", %{conn: conn} do
-    stub(Cinder.Catalog.TMDBMock, :search, fn _ -> {:error, :timeout} end)
-    stub(Cinder.Catalog.TMDBMock, :search_tv, fn _ -> {:error, :nxdomain} end)
+    stub(Cinder.Catalog.TMDBMock, :search, fn _, _ -> {:error, :timeout} end)
+    stub(Cinder.Catalog.TMDBMock, :search_tv, fn _, _ -> {:error, :nxdomain} end)
     {:ok, lv, _html} = live(conn, ~p"/")
 
     log =

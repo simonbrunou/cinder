@@ -30,6 +30,7 @@ defmodule Cinder.CatalogSeriesTest do
   # Variant of stub_tmdb/1 that stubs tmdb_id=42 and allows overriding original_language.
   defp stub_tmdb_series(opts) do
     ol = Keyword.get(opts, :original_language, nil)
+    french_title = Keyword.get(opts, :french_title, "")
 
     expect(Cinder.Catalog.TMDBMock, :get_series, fn 42 ->
       {:ok,
@@ -44,12 +45,22 @@ defmodule Cinder.CatalogSeriesTest do
        }}
     end)
 
-    expect(Cinder.Catalog.TMDBMock, :get_season, 1, fn 42, 1 ->
+    expect(Cinder.Catalog.TMDBMock, :get_season, 1, fn 42, 1, "en" ->
       {:ok,
        %{
          season_number: 1,
          episodes: [
            %{tmdb_episode_id: 101, episode_number: 1, title: "Ep1", air_date: @past}
+         ]
+       }}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_season, fn 42, 1, "fr" ->
+      {:ok,
+       %{
+         season_number: 1,
+         episodes: [
+           %{tmdb_episode_id: 101, episode_number: 1, title: french_title, air_date: @past}
          ]
        }}
     end)
@@ -68,7 +79,7 @@ defmodule Cinder.CatalogSeriesTest do
        }}
     end)
 
-    expect(Cinder.Catalog.TMDBMock, :get_season, 2, fn ^tmdb_id, n ->
+    expect(Cinder.Catalog.TMDBMock, :get_season, 2, fn ^tmdb_id, n, "en" ->
       episodes =
         case n do
           0 ->
@@ -84,7 +95,17 @@ defmodule Cinder.CatalogSeriesTest do
 
       {:ok, %{season_number: n, episodes: episodes}}
     end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_season, fn ^tmdb_id, n, "fr" ->
+      {:ok, %{season_number: n, episodes: blank_french_episodes(n)}}
+    end)
   end
+
+  defp blank_french_episodes(0),
+    do: [%{tmdb_episode_id: 900, episode_number: 1, title: "", air_date: @past}]
+
+  defp blank_french_episodes(1),
+    do: for(id <- 101..103, do: %{tmdb_episode_id: id, title: ""})
 
   defp loaded(series_id) do
     Series |> Repo.get!(series_id) |> Repo.preload(seasons: :episodes)
@@ -155,6 +176,26 @@ defmodule Cinder.CatalogSeriesTest do
       assert [%{title: "Test Alias", source: "tmdb"}] = Catalog.list_title_aliases(series)
       assert [%{canonical_value: "1"}] = Catalog.list_episode_coordinates(series)
       assert Repo.get_by!(Episode, tmdb_episode_id: 900).classification == :story_special
+    end
+
+    test "stores non-canonical episode titles" do
+      stub_tmdb_series(french_title: "Épisode un")
+
+      assert {:ok, series} = Catalog.add_series(42, monitor_strategy: :all)
+
+      assert %{localizations: %{"fr" => %{"title" => "Épisode un"}}} =
+               hd(episodes(series.id))
+    end
+
+    test "creates the canonical tree when a non-canonical season fetch fails" do
+      stub_tmdb_series([])
+
+      stub(Cinder.Catalog.TMDBMock, :get_season, fn 42, 1, "fr" ->
+        {:error, :timeout}
+      end)
+
+      assert {:ok, series} = Catalog.add_series(42, monitor_strategy: :all)
+      assert [%{title: "Ep1", localizations: %{}}] = episodes(series.id)
     end
   end
 
@@ -263,7 +304,7 @@ defmodule Cinder.CatalogSeriesTest do
          }}
       end)
 
-      expect(Cinder.Catalog.TMDBMock, :get_season, 2, fn 49, n ->
+      expect(Cinder.Catalog.TMDBMock, :get_season, 2, fn 49, n, "en" ->
         case n do
           1 ->
             {:ok,
@@ -297,7 +338,10 @@ defmodule Cinder.CatalogSeriesTest do
     end
 
     test "delegates a real query to the TMDB behaviour" do
-      expect(Cinder.Catalog.TMDBMock, :search_tv, fn "the wire" -> {:ok, [%{tmdb_id: 1}]} end)
+      expect(Cinder.Catalog.TMDBMock, :search_tv, fn "the wire", "en" ->
+        {:ok, [%{tmdb_id: 1}]}
+      end)
+
       assert {:ok, [%{tmdb_id: 1}]} = Catalog.search_tv("the wire")
     end
   end
@@ -400,7 +444,7 @@ defmodule Cinder.CatalogSeriesTest do
          }}
       end)
 
-      stub(Cinder.Catalog.TMDBMock, :get_season, fn 1399, n ->
+      stub(Cinder.Catalog.TMDBMock, :get_season, fn 1399, n, locale ->
         {:ok,
          %{
            season_number: n,
@@ -408,7 +452,7 @@ defmodule Cinder.CatalogSeriesTest do
              %{
                tmdb_episode_id: n * 10 + 1,
                episode_number: 1,
-               title: "e1",
+               title: if(locale == "en", do: "e1", else: ""),
                air_date: ~D[2011-01-01]
              }
            ]

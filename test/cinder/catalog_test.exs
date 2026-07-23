@@ -13,7 +13,7 @@ defmodule Cinder.CatalogTest do
   describe "search_movies/1" do
     test "delegates to the configured TMDB impl" do
       results = [%{tmdb_id: 27_205, title: "Inception", year: 2010, poster_path: "/p.jpg"}]
-      expect(Cinder.Catalog.TMDBMock, :search, fn "inception" -> {:ok, results} end)
+      expect(Cinder.Catalog.TMDBMock, :search, fn "inception", "en" -> {:ok, results} end)
 
       assert {:ok, ^results} = Catalog.search_movies("inception")
     end
@@ -25,7 +25,7 @@ defmodule Cinder.CatalogTest do
     end
 
     test "passes a TMDB error straight through" do
-      expect(Cinder.Catalog.TMDBMock, :search, fn _ -> {:error, :timeout} end)
+      expect(Cinder.Catalog.TMDBMock, :search, fn _, "en" -> {:error, :timeout} end)
 
       assert {:error, :timeout} = Catalog.search_movies("inception")
     end
@@ -728,38 +728,44 @@ defmodule Cinder.CatalogTest do
     end
   end
 
-  describe "localize/2" do
-    test "picks the localized title and overview when present" do
+  describe "localized_title/2 and localized_overview/2" do
+    test "the canonical locale always returns canonical fields" do
       movie = %Movie{
         title: "Inception",
         overview: "A thief who steals corporate secrets.",
         localizations: %{
-          "fr" => %{title: "Inception", overview: "Un voleur dérobe des secrets d'entreprise."}
+          "en" => %{"title" => "Wrong", "overview" => "Wrong"}
         }
       }
 
-      localized = Catalog.localize(movie, "fr")
-      assert localized.title == "Inception"
-      assert localized.overview == "Un voleur dérobe des secrets d'entreprise."
+      assert Catalog.localized_title(movie, "en") == "Inception"
+      assert Catalog.localized_overview(movie, "en") == "A thief who steals corporate secrets."
     end
 
-    test "falls back to canonical title and overview when the locale is missing" do
+    test "reads a noncanonical localization using string keys" do
       series = %Series{
         title: "Breaking Bad",
         overview: "A chemistry teacher turned meth cook.",
-        localizations: %{"es" => %{title: "Breaking Malo", overview: "Un profesor."}}
+        localizations: %{
+          "fr" => %{"title" => "Breaking Bad", "overview" => "Un professeur de chimie."}
+        }
       }
 
-      localized = Catalog.localize(series, "fr")
-      assert localized.title == "Breaking Bad"
-      assert localized.overview == "A chemistry teacher turned meth cook."
+      assert Catalog.localized_title(series, "fr") == "Breaking Bad"
+      assert Catalog.localized_overview(series, "fr") == "Un professeur de chimie."
     end
 
-    test "falls back to canonical values when localizations is empty" do
-      movie = %Movie{title: "Inception", overview: "A thief.", localizations: %{}}
-      localized = Catalog.localize(movie, "fr")
-      assert localized.title == "Inception"
-      assert localized.overview == "A thief."
+    test "falls back for blank or missing localizations and is nil-safe" do
+      movie = %Movie{
+        title: "Inception",
+        overview: "A thief.",
+        localizations: %{"fr" => %{"title" => "", "overview" => nil}}
+      }
+
+      assert Catalog.localized_title(movie, "fr") == "Inception"
+      assert Catalog.localized_overview(movie, "fr") == "A thief."
+      assert Catalog.localized_title(nil, "fr") == nil
+      assert Catalog.localized_overview(nil, "fr") == nil
     end
   end
 end

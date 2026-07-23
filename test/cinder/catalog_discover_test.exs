@@ -15,8 +15,8 @@ defmodule Cinder.CatalogDiscoverTest do
   end
 
   test "tags each result :movie/:tv and interleaves them" do
-    stub(Cinder.Catalog.TMDBMock, :search, fn _ -> {:ok, [@movie]} end)
-    stub(Cinder.Catalog.TMDBMock, :search_tv, fn _ -> {:ok, [@show]} end)
+    stub(Cinder.Catalog.TMDBMock, :search, fn _, "en" -> {:ok, [@movie]} end)
+    stub(Cinder.Catalog.TMDBMock, :search_tv, fn _, "en" -> {:ok, [@show]} end)
 
     assert {:ok, results} = Catalog.search_discover("x")
     assert Enum.map(results, & &1.type) == [:movie, :tv]
@@ -25,16 +25,16 @@ defmodule Cinder.CatalogDiscoverTest do
 
   @tag :capture_log
   test "one endpoint erroring still yields the other's results" do
-    stub(Cinder.Catalog.TMDBMock, :search, fn _ -> {:ok, [@movie]} end)
-    stub(Cinder.Catalog.TMDBMock, :search_tv, fn _ -> {:error, :timeout} end)
+    stub(Cinder.Catalog.TMDBMock, :search, fn _, "en" -> {:ok, [@movie]} end)
+    stub(Cinder.Catalog.TMDBMock, :search_tv, fn _, "en" -> {:error, :timeout} end)
 
     assert {:ok, [%{type: :movie, tmdb_id: 1}]} = Catalog.search_discover("x")
   end
 
   @tag :capture_log
   test "both endpoints erroring yields {:error, :search_failed}" do
-    stub(Cinder.Catalog.TMDBMock, :search, fn _ -> {:error, :timeout} end)
-    stub(Cinder.Catalog.TMDBMock, :search_tv, fn _ -> {:error, :nxdomain} end)
+    stub(Cinder.Catalog.TMDBMock, :search, fn _, "en" -> {:error, :timeout} end)
+    stub(Cinder.Catalog.TMDBMock, :search_tv, fn _, "en" -> {:error, :nxdomain} end)
 
     assert {:error, :search_failed} = Catalog.search_discover("x")
   end

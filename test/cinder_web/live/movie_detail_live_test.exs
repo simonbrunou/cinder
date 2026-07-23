@@ -399,6 +399,33 @@ defmodule CinderWeb.MovieDetailLiveTest do
     assert Catalog.get_movie_by_id(movie.id).title == "Dune: Part Two"
   end
 
+  # Regression for the PR #172 corruption bug: rewriting `title`/`overview` onto the
+  # `@movie` assign meant the edit form defaulted its title field to the FR display
+  # value, so an untouched-title save silently wrote the French title into the
+  # canonical column. Assigns now stay canonical; only render-time helpers localize.
+  test "FR session: saving the edit form without touching the title keeps it canonical",
+       %{conn: conn} do
+    movie =
+      movie_fixture(%{
+        title: "Inception",
+        year: 2010,
+        localizations: %{"fr" => %{"title" => "Origine"}}
+      })
+
+    {:ok, lv, _html} =
+      conn
+      |> Plug.Test.init_test_session(%{"locale" => "fr"})
+      |> live_movie(movie)
+
+    lv |> element("button[phx-click=edit]") |> render_click()
+
+    lv
+    |> form("#movie-form", movie: %{year: 2024})
+    |> render_submit()
+
+    assert Catalog.get_movie_by_id(movie.id).title == "Inception"
+  end
+
   test "cancels an active movie through the confirm step", %{conn: conn} do
     movie = movie_fixture(%{title: "Tenet"})
     {:ok, lv, _html} = live_movie(conn, movie)

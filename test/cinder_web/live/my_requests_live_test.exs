@@ -6,6 +6,12 @@ defmodule CinderWeb.MyRequestsLiveTest do
 
   alias Cinder.Requests
 
+  setup do
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn _ -> {:error, :unavailable} end)
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn _ -> {:error, :unavailable} end)
+    :ok
+  end
+
   test "shows the current user's requests with status, not other users'", %{conn: conn} do
     user = Cinder.AccountsFixtures.user_fixture()
     other = Cinder.AccountsFixtures.user_fixture()

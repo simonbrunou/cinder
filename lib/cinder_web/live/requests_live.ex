@@ -339,19 +339,21 @@ defmodule CinderWeb.RequestsLive do
               phx-click="toggle_select"
               phx-value-id={r.id}
               checked={MapSet.member?(@selected, to_string(r.id))}
-              aria-label={gettext("Select the request for %{title}", title: r.title)}
+              aria-label={
+                gettext("Select the request for %{title}", title: request_title(r, @locale))
+              }
             />
             <img
               :if={r.poster_path}
               src={poster_url(r.poster_path, "w92")}
-              alt={r.title}
+              alt={request_title(r, @locale)}
               loading="lazy"
               decoding="async"
               class="w-12 rounded"
             />
             <div class="min-w-0 flex-1">
               <span class="font-semibold">
-                {request_title(r)}
+                {request_title(r, @locale)}
               </span>
               <span :if={r.year} class="opacity-70">({r.year})</span>
               <span class="block truncate text-sm opacity-70">{r.user.email}</span>
@@ -371,7 +373,7 @@ defmodule CinderWeb.RequestsLive do
             >
               <input type="hidden" name="_id" value={r.id} />
               <label for={"approval-profile-#{r.id}"} class="sr-only">
-                {gettext("Confirmed media profile for %{title}", title: r.title)}
+                {gettext("Confirmed media profile for %{title}", title: request_title(r, @locale))}
               </label>
               <.media_profile_select
                 id={"approval-profile-#{r.id}"}

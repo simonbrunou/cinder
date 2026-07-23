@@ -6,7 +6,7 @@ defmodule CinderWeb.MyRequestsLive do
   """
   use CinderWeb, :live_view
 
-  import CinderWeb.LiveHelpers, only: [request_title: 1, movie_badge_status: 1]
+  import CinderWeb.LiveHelpers, only: [request_title: 2, movie_badge_status: 1]
 
   alias Cinder.{Catalog, Requests}
 
@@ -70,7 +70,7 @@ defmodule CinderWeb.MyRequestsLive do
           <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
             <% movie = @movies_by_tmdb[r.target_id] %>
             <span class="min-w-0 break-words font-semibold">
-              {request_title(r)}
+              {request_title(r, @locale)}
             </span>
             <span :if={r.year} class="text-base-content/70">({r.year})</span>
             <.status_badge kind={:request} status={effective_status(r, @available_seasons)} />

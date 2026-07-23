@@ -242,6 +242,26 @@ defmodule CinderWeb.LibraryLiveTest do
     refute html =~ "Added series"
   end
 
+  test "FR session shows the localized title; EN session shows canonical", %{conn: conn} do
+    _movie =
+      movie_fixture(%{
+        title: "Inception",
+        localizations: %{"fr" => %{"title" => "Origine"}}
+      })
+
+    {:ok, _lv, fr_html} =
+      conn
+      |> Plug.Test.init_test_session(%{"locale" => "fr"})
+      |> live(~p"/library")
+
+    assert fr_html =~ "Origine"
+    refute fr_html =~ "Inception"
+
+    {:ok, _lv, en_html} = live(conn, ~p"/library")
+    assert en_html =~ "Inception"
+    refute en_html =~ "Origine"
+  end
+
   describe "sorting" do
     # Rendered order, which has no `has_element?` equivalent. Floki is not a dependency here;
     # LazyHTML is (test-only), and it is what LiveViewTest itself parses with.

@@ -31,7 +31,7 @@ defmodule Cinder.CatalogRefreshTest do
 
   # Stub TMDB to return the given seasons. `specs` is [{season_number, [episode_map]}].
   # `info_overrides` lets a test override the get_series fields (e.g. tvdb_id/title/year).
-  defp stub_tmdb(series, specs, info_overrides \\ %{}) do
+  defp stub_tmdb(series, specs, info_overrides \\ %{}, localized_titles \\ %{}) do
     tmdb_id = series.tmdb_id
     season_numbers = for {n, _} <- specs, do: %{season_number: n}
 
@@ -57,12 +57,26 @@ defmodule Cinder.CatalogRefreshTest do
 
     by_number = Map.new(specs)
 
-    stub(Cinder.Catalog.TMDBMock, :get_season, fn ^tmdb_id, n ->
-      {:ok, %{season_number: n, episodes: Map.fetch!(by_number, n)}}
+    stub(Cinder.Catalog.TMDBMock, :get_season, fn ^tmdb_id, n, locale ->
+      season_response(n, Map.fetch!(by_number, n), locale, localized_titles)
     end)
 
     stub(Cinder.Catalog.TMDBMock, :get_series_alternative_titles, fn ^tmdb_id -> {:ok, []} end)
     stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn ^tmdb_id -> {:ok, []} end)
+  end
+
+  defp season_response(number, episodes, "en", _titles),
+    do: {:ok, %{season_number: number, episodes: episodes}}
+
+  defp season_response(_number, _episodes, "fr", :error), do: {:error, :timeout}
+
+  defp season_response(number, episodes, "fr", titles) do
+    localized =
+      Enum.map(episodes, fn episode ->
+        Map.put(episode, :title, Map.get(titles, episode.tmdb_episode_id, ""))
+      end)
+
+    {:ok, %{season_number: number, episodes: localized}}
   end
 
   # Counts calls to sync_series_identity/3's shared episode_identity_lookup/1 query — its SQL
@@ -355,7 +369,7 @@ defmodule Cinder.CatalogRefreshTest do
     assert is_nil(r.file_path)
   end
 
-  test "updates title/air_date in place but preserves file_path and monitored on a match" do
+  test "updates titles in place but preserves file_path and monitored on a match" do
     s = series(:all)
     sn = season(s, 1)
 
@@ -368,16 +382,103 @@ defmodule Cinder.CatalogRefreshTest do
         file_path: "/lib/x.mkv"
       })
 
-    stub_tmdb(s, [
-      {1, [%{tmdb_episode_id: 510, episode_number: 1, title: "New", air_date: ~D[2002-02-02]}]}
-    ])
+    stub_tmdb(
+      s,
+      [{1, [%{tmdb_episode_id: 510, episode_number: 1, title: "New", air_date: ~D[2002-02-02]}]}],
+      %{},
+      %{510 => "Nouveau"}
+    )
 
     assert {:ok, _} = Catalog.refresh_series(s)
     r = Repo.get!(Episode, ep.id)
     assert r.title == "New"
     assert r.air_date == ~D[2002-02-02]
+    assert r.localizations == %{"fr" => %{"title" => "Nouveau"}}
     assert r.file_path == "/lib/x.mkv"
     refute r.monitored
+  end
+
+  test "a non-canonical season failure does not abort the canonical refresh" do
+    s = series(:all)
+    sn = season(s, 1)
+    ep = episode(sn, %{tmdb_episode_id: 511, episode_number: 1, title: "Old"})
+
+    stub_tmdb(
+      s,
+      [{1, [%{tmdb_episode_id: 511, episode_number: 1, title: "New", air_date: @past}]}],
+      %{},
+      :error
+    )
+
+    assert {:ok, _} = Catalog.refresh_series(s)
+    assert %{title: "New", localizations: %{}} = Repo.get!(Episode, ep.id)
+  end
+
+  test "a non-canonical season failure preserves previously stored episode localizations" do
+    s = series(:all)
+    sn = season(s, 1)
+
+    ep =
+      episode(sn, %{
+        tmdb_episode_id: 512,
+        episode_number: 1,
+        title: "Old",
+        localizations: %{"fr" => %{"title" => "Ancien"}}
+      })
+
+    stub_tmdb(
+      s,
+      [{1, [%{tmdb_episode_id: 512, episode_number: 1, title: "New", air_date: @past}]}],
+      %{},
+      :error
+    )
+
+    assert {:ok, _} = Catalog.refresh_series(s)
+
+    assert %{title: "New", localizations: %{"fr" => %{"title" => "Ancien"}}} =
+             Repo.get!(Episode, ep.id)
+  end
+
+  test "an info payload without translations preserves the stored series localizations" do
+    s =
+      series(:all)
+      |> Ecto.Changeset.change(localizations: %{"fr" => %{"title" => "Ancienne"}})
+      |> Repo.update!()
+
+    season(s, 1)
+
+    stub_tmdb(
+      s,
+      [{1, [%{tmdb_episode_id: 513, episode_number: 1, title: "New", air_date: @past}]}],
+      %{},
+      %{}
+    )
+
+    assert {:ok, _} = Catalog.refresh_series(s)
+    assert Repo.get!(Series, s.id).localizations == %{"fr" => %{"title" => "Ancienne"}}
+  end
+
+  test "a partial locale entry merges field-wise instead of clobbering stored fields" do
+    s =
+      series(:all)
+      |> Ecto.Changeset.change(
+        localizations: %{"fr" => %{"title" => "Ancienne", "overview" => "Résumé"}}
+      )
+      |> Repo.update!()
+
+    season(s, 1)
+
+    stub_tmdb(
+      s,
+      [{1, [%{tmdb_episode_id: 514, episode_number: 1, title: "New", air_date: @past}]}],
+      %{localizations: %{"fr" => %{"title" => "Nouvelle", "overview" => nil}}},
+      %{}
+    )
+
+    assert {:ok, _} = Catalog.refresh_series(s)
+
+    assert Repo.get!(Series, s.id).localizations ==
+             %{"fr" => %{"title" => "Nouvelle", "overview" => "Résumé"}}
   end
 
   test "renumbers a matched episode in place (by tmdb_episode_id), no duplicate row" do

@@ -11,13 +11,13 @@ defmodule CinderWeb.Locale do
     * as a **Plug** in the `:browser` pipeline (HTTP requests, dead renders), and
     * as an **on_mount** hook in every `live_session` (the LiveView process).
 
-  `@locales` is the single source of truth for the supported set.
+  `Cinder.Locales` is the single source of truth for the supported set.
   """
 
   import Plug.Conn
 
-  @locales ~w(en fr)
-  @default "en"
+  @locales Cinder.Locales.supported()
+  @default Cinder.Locales.canonical()
 
   @doc "The supported locales, in display order."
   def locales, do: @locales

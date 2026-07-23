@@ -6,7 +6,7 @@ defmodule CinderWeb.CalendarLive do
   """
   use CinderWeb, :live_view
 
-  import CinderWeb.LiveHelpers, only: [format_date: 1]
+  import CinderWeb.LiveHelpers, only: [format_date: 1, media_title: 2]
 
   alias Cinder.Catalog
   alias Cinder.Catalog.Episode
@@ -65,11 +65,15 @@ defmodule CinderWeb.CalendarLive do
               {format_date(row.ep.air_date)}
             </time>
             <.status_badge kind={:episode} status={row.state} />
-            <span class="min-w-0 break-words font-medium">{row.ep.season.series.title}</span>
+            <span class="min-w-0 break-words font-medium">
+              {media_title(row.ep.season.series, @locale)}
+            </span>
             <span class="tabular-nums text-sm text-base-content/70">
               {Episode.code(row.ep.season.season_number, row.ep.episode_number)}
             </span>
-            <span class="min-w-0 flex-1 truncate text-base-content/70">{row.ep.title}</span>
+            <span class="min-w-0 flex-1 truncate text-base-content/70">
+              {media_title(row.ep, @locale)}
+            </span>
           </.link>
         </li>
       </ul>

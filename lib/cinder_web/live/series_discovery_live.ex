@@ -20,12 +20,8 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   @impl true
   def mount(%{"tmdb_id" => raw}, _session, socket) do
     # The :tmdb_id param is client-controlled; a non-integer must not crash the page.
-    locale = socket.assigns.locale
-
     with {tmdb_id, ""} <- Integer.parse(raw),
-         {:ok, info} <- Catalog.tmdb_series(tmdb_id, locale: locale) do
-      info = Catalog.localize(info, locale)
-
+         {:ok, info} <- Catalog.tmdb_series(tmdb_id) do
       if connected?(socket) do
         Requests.subscribe()
         # Season availability derives from episode imports, which broadcast on "series".
@@ -113,7 +109,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
 
   @impl true
   def handle_async({:request_season, season_number}, {:ok, result}, socket) do
-    info = socket.assigns.info
+    title = media_title(socket.assigns.info, socket.assigns.locale)
 
     case result do
       {:ok, %{status: :approved}} ->
@@ -122,7 +118,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
           :info,
           gettext("Season %{number} of %{title} added.",
             number: season_number,
-            title: info.title
+            title: title
           )
         )
         |> refresh_requests()
@@ -134,7 +130,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
           :info,
           gettext("Season %{number} of %{title} requested. Awaiting approval.",
             number: season_number,
-            title: info.title
+            title: title
           )
         )
         |> refresh_requests()
@@ -219,14 +215,14 @@ defmodule CinderWeb.SeriesDiscoveryLive do
         <img
           :if={@info.poster_path}
           src={poster_url(@info.poster_path)}
-          alt={@info.title}
+          alt={media_title(@info, @locale)}
           loading="lazy"
           decoding="async"
           class="aspect-[2/3] w-40 shrink-0 rounded object-cover"
         />
         <div class="min-w-0 flex-1">
           <.header>
-            {@info.title}
+            {media_title(@info, @locale)}
             <span :if={@info.year} class="font-normal text-base-content/70">({@info.year})</span>
           </.header>
         </div>

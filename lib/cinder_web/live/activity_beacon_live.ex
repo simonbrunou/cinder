@@ -16,6 +16,12 @@ defmodule CinderWeb.ActivityBeaconLive do
   """
   use CinderWeb, :live_view
 
+  # Mounted via `live_render` in root.html.heex, outside every router `live_session` — the
+  # on_mount hooks those attach (including locale) don't run here on their own, so wire it
+  # directly. The session it's rendered with already carries "locale" (the same conn session
+  # every live_session reads it from).
+  on_mount CinderWeb.Locale
+
   import CinderWeb.LiveHelpers
 
   alias Cinder.Catalog
@@ -99,11 +105,15 @@ defmodule CinderWeb.ActivityBeaconLive do
 
   defp count_in(map, states), do: Enum.count(map, fn {_id, s} -> s in states end)
 
-  defp maybe_toast_movie(socket, movie, :available),
-    do: toast(socket, :success, gettext("“%{title}” is now available.", title: movie.title))
+  defp maybe_toast_movie(socket, movie, :available) do
+    title = media_title(movie, socket.assigns.locale)
+    toast(socket, :success, gettext("“%{title}” is now available.", title: title))
+  end
 
-  defp maybe_toast_movie(socket, movie, status) when status in @attention_movie,
-    do: toast(socket, :warning, gettext("“%{title}” needs attention.", title: movie.title))
+  defp maybe_toast_movie(socket, movie, status) when status in @attention_movie do
+    title = media_title(movie, socket.assigns.locale)
+    toast(socket, :warning, gettext("“%{title}” needs attention.", title: title))
+  end
 
   defp maybe_toast_movie(socket, _movie, _status), do: socket
 

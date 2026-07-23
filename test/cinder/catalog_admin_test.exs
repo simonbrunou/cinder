@@ -588,14 +588,18 @@ defmodule Cinder.CatalogAdminTest do
       refute series.id in Enum.map(Catalog.wanted_episodes(), & &1.season.series_id)
     end
 
-    test "cancel_series writes an admin_audit row" do
+    test "cancel_series audits the fresh canonical series" do
       actor = Cinder.AccountsFixtures.admin_fixture()
       {series, _season, _ep} = series_tree()
-      assert {:ok, _} = Catalog.cancel_series(series, actor)
+      display_series = %{series | title: "Localized display title"}
+
+      assert {:ok, cancelled} = Catalog.cancel_series(display_series, actor)
       audit = Repo.one!(Cinder.Audit.AdminAudit)
       assert audit.action == "cancel_series"
       assert audit.entity_type == "Series"
       assert audit.entity_id == series.id
+      assert audit.detail["title"] == series.title
+      assert cancelled.title == series.title
     end
 
     test "cancel_series leaves an atomic post-state: episodes unmonitored, grab_id nil, no grabs" do

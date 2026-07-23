@@ -117,6 +117,31 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
     refute has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
   end
 
+  test "FR session renders the localized series title", %{conn: conn} do
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn 1400 ->
+      {:ok,
+       %{
+         tmdb_id: 1400,
+         tvdb_id: 2,
+         title: "The Wire",
+         year: 2002,
+         poster_path: nil,
+         localizations: %{"fr" => %{"title" => "Sur écoute"}},
+         seasons: [%{season_number: 1}]
+       }}
+    end)
+
+    conn =
+      conn
+      |> log_in_user(Cinder.AccountsFixtures.user_fixture())
+      |> Plug.Test.init_test_session(%{"locale" => "fr"})
+
+    {:ok, _lv, html} = live(conn, ~p"/series/tmdb/1400")
+
+    assert html =~ "Sur écoute"
+    refute html =~ "The Wire"
+  end
+
   # Bug C: a forged/absent season_number that is not in the show must be rejected.
   test "requesting a season not in the show is silently rejected", %{conn: conn} do
     user = Cinder.AccountsFixtures.user_fixture()

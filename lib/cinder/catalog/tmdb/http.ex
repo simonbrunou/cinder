@@ -9,15 +9,20 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   """
   @behaviour Cinder.Catalog.TMDB
 
-  alias Cinder.Catalog.Locale
   alias Cinder.HTTPPolicy
+  alias Cinder.Locales
 
   @default_base_url "https://api.themoviedb.org"
   @max_response_bytes 4 * 1024 * 1024
+  @tmdb_tags %{"en" => "en-US", "fr" => "fr-FR"}
+  @tmdb_regions %{"fr" => "FR", "en" => "US"}
 
   @impl true
-  def search(query) do
-    case request(url: "/3/search/movie", params: [query: query]) do
+  def search(query, locale) do
+    case request(
+           url: "/3/search/movie",
+           params: [query: query, language: Map.fetch!(@tmdb_tags, locale)]
+         ) do
       {:ok, %{status: 200, body: %{"results" => results}}} when is_list(results) ->
         {:ok, Enum.map(results, &normalize/1)}
 
@@ -31,8 +36,8 @@ defmodule Cinder.Catalog.TMDB.HTTP do
 
   @impl true
   def get_movie(tmdb_id) do
-    # append_to_response folds translations into the same request so we can store all
-    # localized titles + overviews for display regardless of the active locale.
+    # append_to_response folds translations into the same request so we can store
+    # supported localized titles + overviews for display regardless of the active locale.
     case request(url: "/3/movie/#{tmdb_id}", params: [append_to_response: "translations"]) do
       {:ok, %{status: 200, body: %{"id" => _} = body}} -> {:ok, normalize(body)}
       {:ok, %{status: 200}} -> {:error, :unexpected_response}
@@ -41,8 +46,11 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   end
 
   @impl true
-  def search_tv(query) do
-    case request(url: "/3/search/tv", params: [query: query]) do
+  def search_tv(query, locale) do
+    case request(
+           url: "/3/search/tv",
+           params: [query: query, language: Map.fetch!(@tmdb_tags, locale)]
+         ) do
       {:ok, %{status: 200, body: %{"results" => results}}} when is_list(results) ->
         {:ok, Enum.map(results, &normalize_tv/1)}
 
@@ -68,8 +76,11 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   end
 
   @impl true
-  def get_season(series_id, season_number) do
-    case request(url: "/3/tv/#{series_id}/season/#{season_number}") do
+  def get_season(series_id, season_number, locale) do
+    case request(
+           url: "/3/tv/#{series_id}/season/#{season_number}",
+           params: [language: Map.fetch!(@tmdb_tags, locale)]
+         ) do
       {:ok, %{status: 200, body: %{"episodes" => episodes} = body}} when is_list(episodes) ->
         {:ok, normalize_season(body)}
 
@@ -125,18 +136,12 @@ defmodule Cinder.Catalog.TMDB.HTTP do
 
     # retry: false — Req's default 3-retry backoff turns one hung/500ing TMDB call
     # into ~a minute; callers (search UI, poller, refresher) all prefer failing fast.
-    base_params = [language: Locale.get()]
-    opts_params = Keyword.get(opts, :params, [])
-    params = Keyword.merge(base_params, opts_params)
-    opts = Keyword.put(opts, :params, params)
-
     [
       base_url: Keyword.get(config, :base_url, @default_base_url),
       receive_timeout: 15_000,
       pool_timeout: 5_000,
       connect_options: [timeout: 5_000],
-      retry: false,
-      params: params
+      retry: false
     ]
     |> auth(Keyword.get(config, :token))
     |> Keyword.merge(opts)
@@ -329,16 +334,18 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   end
 
   defp localizations_from(%{"translations" => translations}) when is_list(translations) do
-    for t <- translations,
-        is_map(t),
-        lang = t["iso_639_1"],
-        is_binary(lang),
-        data = t["data"],
+    for lang <- Locales.noncanonical(),
+        candidates = Enum.filter(translations, &(is_map(&1) and &1["iso_639_1"] == lang)),
+        translation =
+          Enum.find(candidates, &(&1["iso_3166_1"] == @tmdb_regions[lang])) ||
+            List.first(candidates),
+        is_map(translation),
+        data = translation["data"],
         is_map(data),
         title = data["title"] || data["name"],
         overview = data["overview"],
         present?(title) or present?(overview) do
-      {lang, %{title: title, overview: overview}}
+      {lang, %{"title" => title, "overview" => overview}}
     end
     |> Map.new()
   end
