@@ -304,15 +304,17 @@ defmodule CinderWeb.LibraryLiveTest do
     end
 
     test "a retried movie sorts and renders as sizeless once its file is gone", %{conn: conn} do
+      # Positive control, created FIRST so it holds the lower id: same size, same selector, file
+      # still on disk. Without it the refute below would also pass if the card vanished or the
+      # selector were wrong — and without the id ordering, the sort assertion would pass on the
+      # `-id` tiebreak alone, since dropping the guard leaves both movies on an equal size.
+      kept = available_movie!("/tmp/kept.mkv", %{title: "Kept", imported_size: 9_000_000})
+
       # retry_movie/1 clears file_path but leaves imported_size behind.
       movie = available_movie!("/tmp/gone.mkv", %{title: "Gone", imported_size: 9_000_000})
       {:ok, failed} = Catalog.transition(movie, %{status: :import_failed})
       {:ok, movie} = Catalog.retry_movie(failed)
       assert movie.file_path == nil and movie.imported_size == 9_000_000
-
-      # Positive control: same size, same selector, file still on disk. Without it the refute
-      # below would also pass if the card vanished or the selector were simply wrong.
-      kept = available_movie!("/tmp/kept.mkv", %{title: "Kept", imported_size: 9_000_000})
 
       {:ok, lv, _html} = live(conn, ~p"/library?sort=size")
 
@@ -321,12 +323,15 @@ defmodule CinderWeb.LibraryLiveTest do
       refute has_element?(lv, "#movie-#{movie.id} p", "8.6 MB")
 
       # ...and it sorts as sizeless too, not just renders as one.
-      assert List.last(card_ids(render(lv), "#movies-list > div")) == "movie-#{movie.id}"
+      assert card_ids(render(lv), "#movies-list > div") ==
+               ["movie-#{kept.id}", "movie-#{movie.id}"]
     end
 
     test "sorting on the Series tab keeps ?type=tv and totals each series' files", %{conn: conn} do
-      small = series!(%{title: "Small Show"})
+      # Created biggest-first so the default `desc: id` order is the REVERSE of the expected
+      # size order — otherwise the assertion below passes without any sorting happening.
       big = series!(%{title: "Big Show"})
+      small = series!(%{title: "Small Show"})
       seed_episode_file(small, "/tv/small.mkv", 2_000_000)
       seed_episode_file(big, "/tv/big.mkv", 9_000_000)
 
