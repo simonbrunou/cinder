@@ -81,13 +81,26 @@ rest with a key derived from `SECRET_KEY_BASE`.
 | TMDB | API read token (v4 bearer) |
 | Indexer | Prowlarr URL + API key |
 | Download | qBittorrent URL / username / password, SABnzbd URL + API key, per-client enable toggles |
-| Media server | Jellyfin URL + API key **or** Plex URL + token + a per-library section (Movies, TV); media-server type |
+| Media server | Jellyfin URL + API key **or** Plex URL + token + a per-library section (Movies, TV); media-server type; an optional **web URL** per server (see below) |
 | Library paths | `movies_library_path` **and** `tv_library_path` — a separate import root per kind, both required |
 | Release size bands | Per-kind min/max size (decimal GB) + preferred-resolution list + preferred-source list (`remux, bluray, webrip, webdl, hdtv, dvd, cam`); for TV the band is per episode (a season pack of N is allowed N× the max). Ships with defaults — movies 0.3–15 GB, TV 0.05–4 GB per episode; blank = default, an explicit `0` = no limit |
 | Subtitles | OpenSubtitles API key + username + password, LibreTranslate URL + API key (optional fallback translation), preferred subtitle languages (csv) — fetched automatically after each import and swept every 12 h; local/ID subtitle results stay provisional for later upgrades |
-| Notifications | Discord webhook URL — posts an embed on availability and failures; approvals stay in-app (unset ⇒ log-only) |
+| Notifications | Discord webhook URL — posts an embed on availability and failures, on a request approval, and on the two things that need an admin: a new request awaiting approval and a new account awaiting activation (unset ⇒ log-only) |
 | Behaviour toggles | `auto_approve_all` (trusted households: every request grabs immediately), `move_on_import` (move instead of hardlink), media-server type (Jellyfin/Plex) |
 | Anime releases | Embedded-subtitle mode (allow/prefer/require), preferred/blocked release-group lists, preferred-group fallback delay (hours) — global, applies to every title switched to the Anime profile (audio mode is per-title — see the Audio picker below); `ffprobe_bin` (the `ffprobe` binary path/name used for post-download verification) |
+
+**Jellyfin/Plex web URL** is separate from the Jellyfin/Plex URL above on purpose. The latter is
+how the Cinder *server* reaches your media server, which in the compose deployment is a
+docker-internal address like `http://plex:32400` that a phone on your LAN cannot resolve. The web
+URL is what a household member's *browser* should open (`https://app.plex.tv`, or your own public
+Jellyfin address). Set it and an available title grows an **Open in Plex** / **Open in Jellyfin**
+button; leave it blank and no button is shown. Which one is used follows the configured
+media-server type, so a stale URL for the *other* server is never linked; with no type saved it
+falls back to whichever is uniquely set, and with both set it shows nothing rather than guess.
+
+The button opens the media server's front door, **not** the individual title — Cinder stores no
+Plex `ratingKey` / Jellyfin Item Id, so it can't deep-link to a specific movie, and the label says
+"Open in …" rather than "Watch" for exactly that reason.
 
 Each can be **bootstrapped** from an environment variable (`TMDB_API_TOKEN`, `PROWLARR_URL`,
 `MOVIES_LIBRARY_PATH`, `TV_LIBRARY_PATH`, `MOVIES_PLEX_SECTION`, `TV_PLEX_SECTION`,

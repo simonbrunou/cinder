@@ -4,6 +4,16 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="csrf-token" content={get_csrf_token()} />
+    <%!-- PWA install metadata, so the app can live on a phone home screen. Plain URLs, not ~p:
+          these live in static_paths/0, so ~p would rewrite them to the digested filename in
+          prod, and Plug.Static's :only list matches the first path segment exactly, so the
+          digested name would 404. Same reasoning as the font preloads below.
+          theme-color is a single static value: the theme is picked by the JS below writing
+          data-theme from localStorage, which a media-query'd theme-color cannot track. --%>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/images/icon-192.png" type="image/png" />
+    <link rel="apple-touch-icon" href="/images/apple-touch-icon.png" />
+    <meta name="theme-color" content="#0B0C10" />
     <.live_title default="Cinder" suffix=" · Cinder" phx-no-format>{assigns[:page_title]}</.live_title>
     <%!-- Preload the variable fonts the CSS @font-face pulls (same plain URL, no digest, so the
           preload matches the actual fetch) to cut FOUT / LCP. --%>

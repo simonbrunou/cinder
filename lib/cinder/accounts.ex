@@ -8,6 +8,7 @@ defmodule Cinder.Accounts do
 
   alias Cinder.Accounts.{User, UserNotifier, UserToken}
   alias Cinder.Audit
+  alias Cinder.Notifier
 
   @default_request_quota 10
 
@@ -73,7 +74,19 @@ defmodule Cinder.Accounts do
         {:error, changeset} -> Repo.rollback(changeset)
       end
     end)
+    |> announce_pending_user()
   end
+
+  # Post-commit (outside the transaction, per the house rule that a writer never announces
+  # mid-transaction), and only for a user who lands inactive: the admin-facing signal is
+  # "someone is waiting to be let in". `create_user/2` makes an already-active user, so it
+  # stays silent — the admin just created it themselves.
+  defp announce_pending_user({:ok, %User{active: false} = user} = result) do
+    Notifier.notify({:user_registered, user})
+    result
+  end
+
+  defp announce_pending_user(result), do: result
 
   @doc """
   Resolves a Plex account (`%{id:, email:, username:}`, from `Cinder.Accounts.PlexAuth`) to a
@@ -135,6 +148,7 @@ defmodule Cinder.Accounts do
     |> Ecto.Changeset.put_change(:active, false)
     |> Ecto.Changeset.put_change(:request_quota, @default_request_quota)
     |> Repo.insert()
+    |> announce_pending_user()
   end
 
   @doc """

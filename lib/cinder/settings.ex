@@ -131,6 +131,28 @@ defmodule Cinder.Settings do
       label: "Plex token",
       placeholder: ""
     },
+    # The *_url fields above are how the Cinder server reaches the media server, which in the
+    # documented compose deployment is a docker-internal address (see .env.example). These two
+    # are what a household member's browser should open instead, so they are a separate,
+    # operator-supplied value rather than something derivable from the ones above.
+    %{
+      key: "jellyfin_web_url",
+      module: Cinder.Library.MediaServer.Jellyfin,
+      field: :web_url,
+      secret: false,
+      group: :media_server,
+      label: "Jellyfin web URL",
+      placeholder: "https://jellyfin.example.com"
+    },
+    %{
+      key: "plex_web_url",
+      module: Cinder.Library.MediaServer.Plex,
+      field: :web_url,
+      secret: false,
+      group: :media_server,
+      label: "Plex web URL",
+      placeholder: "https://app.plex.tv"
+    },
     %{
       key: "discord_webhook_url",
       module: Cinder.Notifier.Discord,
@@ -325,6 +347,63 @@ defmodule Cinder.Settings do
 
   @doc "True once the first-run wizard has been completed."
   def setup_complete?, do: get("setup_complete") == "true"
+
+  @doc """
+  The browser-reachable media-server URL a household member should open, or `nil` when the
+  operator has not set one.
+
+  Resolved from the stored `media_server_type` — the same value that picks the impl in
+  `apply_media_server/1` — so a Plex instance never links at a leftover Jellyfin URL. When the
+  type has never been saved, this falls back to a *uniquely* configured web URL and otherwise
+  returns `nil`: with both set and no type, either answer is a guess, and sending someone to
+  the wrong server is worse than showing no link.
+
+  ponytail: this is the media server's front door, not a per-title deep link. A link straight
+  to the movie would need a Plex `ratingKey` / Jellyfin Item Id, which no column stores and
+  no `MediaServer` callback returns; adding one means a new behaviour callback plus a
+  title-matching heuristic. Callers must therefore label this "open the server", never
+  "play this title".
+  """
+  @spec media_server_web_link() :: {:plex | :jellyfin, String.t()} | nil
+  def media_server_web_link do
+    case get(@media_server_key) do
+      "plex" -> web_link_for(:plex)
+      "jellyfin" -> web_link_for(:jellyfin)
+      _ -> sole_configured_web_link()
+    end
+  end
+
+  defp web_link_for(server) do
+    module =
+      case server do
+        :plex -> Cinder.Library.MediaServer.Plex
+        :jellyfin -> Cinder.Library.MediaServer.Jellyfin
+      end
+
+    url =
+      :cinder
+      |> Application.get_env(module, [])
+      |> Keyword.get(:web_url)
+      |> Util.blank_to_nil()
+      |> absolute_http_url()
+
+    url && {server, url}
+  end
+
+  defp sole_configured_web_link do
+    case Enum.flat_map([:plex, :jellyfin], &List.wrap(web_link_for(&1))) do
+      [only] -> only
+      _ -> nil
+    end
+  end
+
+  # Rendering this straight into an href has two failure modes worth closing here rather than at
+  # the call site: a scheme-less "plex.example.com" is a *relative* link (it would resolve against
+  # the current page), and a "javascript:" value makes Phoenix's <.link> raise, taking the whole
+  # page down. Both are operator typos, so degrade to "no link" instead.
+  defp absolute_http_url("http://" <> rest) when rest != "", do: "http://" <> rest
+  defp absolute_http_url("https://" <> rest) when rest != "", do: "https://" <> rest
+  defp absolute_http_url(_), do: nil
 
   @doc "Expanded download roots permitted as import sources."
   @spec import_roots() :: [String.t()]
@@ -528,6 +607,17 @@ defmodule Cinder.Settings do
     :cinder |> Application.get_env(:"#{key}") |> Util.blank_to_nil()
   end
 
+  @topic "settings"
+
+  @doc """
+  Subscribes to `:settings_updated`, broadcast once after any settings write has been committed
+  and applied to the env.
+
+  Deliberately payload-free: subscribers re-read what they care about, so this never has to know
+  which keys any given page depends on.
+  """
+  def subscribe, do: Phoenix.PubSub.subscribe(Cinder.PubSub, @topic)
+
   # --- writes ---
 
   @doc "Upserts one setting (encrypting if the registry marks it secret) and re-applies env."
@@ -551,6 +641,9 @@ defmodule Cinder.Settings do
       end)
 
     load_into_env()
+    # After the commit AND after the env overlay, so a subscriber that re-reads on this message
+    # sees the new values rather than racing the apply.
+    Phoenix.PubSub.broadcast(Cinder.PubSub, @topic, :settings_updated)
     :ok
   end
 

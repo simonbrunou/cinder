@@ -21,6 +21,8 @@ defmodule Cinder.Notifier.Discord do
 
   @green 0x2ECC71
   @red 0xE74C3C
+  # Neither success nor failure: something is sitting in a queue waiting for an admin to act.
+  @blue 0x3498DB
   @image_base "https://image.tmdb.org/t/p/w342"
   @maintenance_names %{
     movie_pipeline: "Movie pipeline",
@@ -64,6 +66,36 @@ defmodule Cinder.Notifier.Discord do
   end
 
   # --- embeds (one per event; nil for anything unknown so notify/1 skips the post) ---
+
+  defp embed({:request_approved, request}),
+    do:
+      with_poster(
+        %{
+          title: "✅ Request approved",
+          description: "#{request_line(request)} — for #{requester(request)}",
+          color: @green
+        },
+        request.poster_path
+      )
+
+  defp embed({:request_created, request}),
+    do:
+      with_poster(
+        %{
+          title: "🙋 Request awaiting approval",
+          description: "#{request_line(request)} — from #{requester(request)}",
+          color: @blue
+        },
+        request.poster_path
+      )
+
+  defp embed({:user_registered, user}),
+    do: %{
+      title: "👤 Account awaiting activation",
+      description:
+        "#{display_email(user.email)} — approve on the Users page before they can request anything",
+      color: @blue
+    }
 
   defp embed({:movie_available, movie}),
     do:
@@ -129,6 +161,34 @@ defmodule Cinder.Notifier.Discord do
 
   defp title_year(%{title: title, year: year}) when not is_nil(year), do: "#{title} (#{year})"
   defp title_year(%{title: title}), do: title
+
+  # A season request's own :title column holds only the series name, so rendering it bare would
+  # read "Frieren (2023)" for a request that was actually for one season.
+  defp request_line(%{target_type: "season", season_number: number} = request)
+       when not is_nil(number),
+       do: "#{title_year(request)} — Season #{number}"
+
+  defp request_line(request), do: title_year(request)
+
+  # %Ecto.Association.NotLoaded{} does not match the first clause, so an un-preloaded :user
+  # degrades to the id rather than raising — and Cinder.Notifier.notify/1 swallows raises,
+  # which would turn a missing preload into a silently-missing Discord post.
+  defp requester(%{user: %{email: email}}), do: display_email(email)
+  defp requester(%{user_id: id}), do: "user ##{id}"
+
+  # An email address is attacker-chosen on a public registration route: `Accounts.User`'s format
+  # check (user.ex) only forbids `@ , ;` and whitespace, so brackets, parens and angle brackets
+  # are all registerable — and Discord renders embed text as markdown. Both `[x](url)` (masked
+  # link) and `<https://url>` (auto-link) would otherwise put an attacker-controlled link in the
+  # admin's channel.
+  #
+  # This is a whitelist, not an escape of known-bad characters: a blacklist has to enumerate
+  # every metacharacter the renderer honours, and missing one is a live vector. Dropping `:` and
+  # `/` in particular means no URL scheme can survive, so no renderer can be talked into making
+  # a link regardless of which syntax it supports. A real address is unaffected.
+  #
+  # Titles are not sanitized — those come from TMDB, not from a user.
+  defp display_email(email), do: String.replace(email, ~r/[^A-Za-z0-9._%+'@-]/, "")
 
   # A blank poster_path (nil or "") yields no thumbnail: an empty string would otherwise build a
   # bare base URL with no image path and render as a broken thumbnail in Discord.
