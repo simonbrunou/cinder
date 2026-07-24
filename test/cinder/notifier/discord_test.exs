@@ -220,13 +220,35 @@ defmodule Cinder.Notifier.DiscordTest do
     end
   end
 
-  # \b in the neutralising regex, so a real domain that merely starts with "here" is untouched.
-  test "a domain beginning with 'here' is not mangled" do
+  # No word boundary in the neutralising regex (Discord matches the substring, so "@everyone"
+  # inside "x@everyones.com" would still ping). A domain that merely starts with "here" therefore
+  # gains an invisible zero-width space; it must still READ correctly to the admin.
+  test "a domain beginning with 'here' still reads correctly" do
     expect_post()
     assert :ok = Discord.notify({:user_registered, %{id: 9, email: "kim@herefordshire.com"}})
 
     assert_receive {:posted, %{"embeds" => [embed]}}
-    assert embed["description"] =~ "kim@herefordshire.com"
+    assert String.replace(embed["description"], "​", "") =~ "kim@herefordshire.com"
+  end
+
+  # The boundary-less form is the point: a keyword followed by more word characters must not
+  # slip through, since Discord would resolve the substring.
+  test "a mention keyword followed by more characters is still neutralised" do
+    expect_post()
+    assert :ok = Discord.notify({:user_registered, %{id: 9, email: "x@everyones.com"}})
+
+    assert_receive {:posted, %{"embeds" => [embed]}}
+    refute embed["description"] =~ "@everyone"
+  end
+
+  # Belt and braces: even if some future embed carried an unsanitised string, Discord is told
+  # not to resolve mentions in this payload at all.
+  test "the payload disables mention parsing outright" do
+    expect_post()
+    assert :ok = Discord.notify({:movie_available, movie()})
+
+    assert_receive {:posted, payload}
+    assert payload["allowed_mentions"] == %{"parse" => []}
   end
 
   test "an ordinary address is left readable" do

@@ -192,11 +192,14 @@ defmodule Cinder.Notifier.Discord do
     email
     |> String.replace(~r/[^A-Za-z0-9._%+'@-]/, "")
     # "a@everyone" and "x@here" are registerable addresses whose every character survives the
-    # whitelist above. They are inert only because we post embeds, and Discord does not resolve
-    # mentions inside an embed — i.e. the safety lives in a remote service's rendering rules,
-    # not here. A zero-width space keeps it inert if this text ever moves into `content`.
-    # \b so a real domain like "herefordshire.com" is left alone.
-    |> String.replace(~r/@(everyone|here)\b/i, "@​\\1")
+    # whitelist above. A zero-width space keeps them inert even if this text ever moves into
+    # `content`, where Discord would otherwise resolve them.
+    #
+    # No word boundary, matching discord.py's and discord.js's canonical escapes: Discord matches
+    # the substring, so "@everyone" inside "x@everyones.com" would still ping. That does insert an
+    # invisible character into a domain like "herefordshire.com", which is well inside what this
+    # display path already does (it deletes characters outright) and renders identically.
+    |> String.replace(~r/@(everyone|here)/i, "@​\\1")
   end
 
   # A blank poster_path (nil or "") yields no thumbnail: an empty string would otherwise build a
@@ -237,7 +240,10 @@ defmodule Cinder.Notifier.Discord do
   end
 
   defp post(url, embed) do
-    request(:post, url, json: %{embeds: [embed]})
+    # allowed_mentions: no parse — Discord's own documented switch, so nothing in a payload can
+    # ping a user, role, or the channel regardless of what the text turns out to contain. The
+    # sanitizing in display_email/1 is the belt to this pair of braces.
+    request(:post, url, json: %{embeds: [embed], allowed_mentions: %{parse: []}})
     |> classify()
     |> log_if_error()
   end
