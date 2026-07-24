@@ -286,4 +286,14 @@ defmodule CinderWeb.SettingsLiveTest do
 
     assert Settings.auto_approve_all?() == true
   end
+
+  test "warns about auto-approval during public registration", %{conn: conn} do
+    {:ok, live_view, _html} = live(conn, ~p"/settings")
+
+    assert has_element?(
+             live_view,
+             "#auto-approve-public-warning[role='alert']",
+             "Keep it off while registration enrollment is public."
+           )
+  end
 end

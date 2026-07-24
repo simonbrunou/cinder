@@ -9,6 +9,14 @@ defmodule Cinder.Accounts do
   alias Cinder.Accounts.{User, UserNotifier, UserToken}
   alias Cinder.Audit
 
+  @default_request_quota 10
+
+  # Single sudo-mode window, used at every reauth checkpoint: the /users/settings mount, the
+  # email/password event rechecks, and Plex link/unlink. Previously the mount used 10 minutes
+  # while this default was 20 — finding 7 (2026-07-24 pre-public-exposure audit) unified them
+  # onto the shorter, more conservative window.
+  @sudo_window_minutes 10
+
   ## Database getters
 
   @doc """
@@ -45,18 +53,20 @@ defmodule Cinder.Accounts do
   """
   def register_user(attrs, submitted_bootstrap_token \\ nil) do
     Repo.transaction(fn ->
-      first_user? = Repo.aggregate(User, :count) == 0
+      bootstrap_admin? = count_admins() == 0
 
-      if first_user? and not valid_bootstrap_token?(submitted_bootstrap_token) do
+      if bootstrap_admin? and not valid_bootstrap_token?(submitted_bootstrap_token) do
         Repo.rollback(:invalid_bootstrap_token)
       end
 
-      role = if first_user?, do: :admin, else: :user
+      role = if bootstrap_admin?, do: :admin, else: :user
 
       %User{}
-      |> User.registration_changeset(attrs)
+      |> User.registration_changeset(attrs, validate_unique: false)
       |> Ecto.Changeset.put_change(:confirmed_at, DateTime.utc_now(:second))
       |> Ecto.Changeset.put_change(:role, role)
+      |> Ecto.Changeset.put_change(:active, bootstrap_admin?)
+      |> Ecto.Changeset.put_change(:request_quota, @default_request_quota)
       |> Repo.insert()
       |> case do
         {:ok, user} -> user
@@ -68,9 +78,9 @@ defmodule Cinder.Accounts do
   @doc """
   Resolves a Plex account (`%{id:, email:, username:}`, from `Cinder.Accounts.PlexAuth`) to a
   Cinder user for the UNAUTHENTICATED "Sign in with Plex" flow: an existing `plex_id` match logs
-  in (refreshing `plex_username` if it changed); otherwise a new `:user`-role account is created,
-  auto-confirmed like `register_user/2` but never admin and never gated by the bootstrap token
-  (Plex sign-in is not a first-user path).
+  in (refreshing `plex_username` if it changed); otherwise, once an admin exists, a pending
+  `:user`-role account is created and auto-confirmed like `register_user/2`. Plex sign-in never
+  creates the first account.
 
   Plex's reported email is **never** used to look up an existing account here — plex.tv email
   isn't proof of inbox ownership, so treating it as one would let any account with mere watch
@@ -103,6 +113,14 @@ defmodule Cinder.Accounts do
   defp create_plex_user(%{email: email}) when email in [nil, ""], do: {:error, :no_email}
 
   defp create_plex_user(account) do
+    if count_admins() == 0 do
+      {:error, :admin_required}
+    else
+      do_create_plex_user(account)
+    end
+  end
+
+  defp do_create_plex_user(account) do
     password = :crypto.strong_rand_bytes(32) |> Base.encode64()
 
     %User{}
@@ -114,6 +132,8 @@ defmodule Cinder.Accounts do
     |> User.plex_changeset(%{plex_id: account.id, plex_username: Map.get(account, :username)})
     |> Ecto.Changeset.put_change(:confirmed_at, DateTime.utc_now(:second))
     |> Ecto.Changeset.put_change(:role, :user)
+    |> Ecto.Changeset.put_change(:active, false)
+    |> Ecto.Changeset.put_change(:request_quota, @default_request_quota)
     |> Repo.insert()
   end
 
@@ -165,6 +185,7 @@ defmodule Cinder.Accounts do
       |> User.registration_changeset(attrs)
       |> Ecto.Changeset.put_change(:confirmed_at, DateTime.utc_now(:second))
       |> Ecto.Changeset.put_change(:role, role)
+      |> Ecto.Changeset.put_change(:active, true)
       |> Repo.insert()
       |> case do
         {:ok, user} -> user
@@ -203,6 +224,33 @@ defmodule Cinder.Accounts do
 
       delete_tokens(revoked_tokens)
       {updated, revoked_tokens}
+    end)
+    |> flatten_revocation_result()
+  end
+
+  @doc "Activates a pending account. The write and audit row commit together."
+  def activate_user(%User{} = actor, %User{} = target) do
+    admin_transaction(actor, fn actor ->
+      case Repo.get(User, target.id) do
+        %User{active: false} = pending ->
+          {:ok, updated} = pending |> Ecto.Changeset.change(active: true) |> Repo.update()
+          Audit.log_or_rollback(actor, "activate_user", updated, %{active: true})
+          updated
+
+        _ ->
+          Repo.rollback(:not_pending)
+      end
+    end)
+  end
+
+  @doc "Deletes a pending account through the audited, last-admin-safe user deletion path."
+  def delete_pending_user(%User{} = actor, %User{} = target) do
+    actor
+    |> admin_transaction(fn actor ->
+      case Repo.get(User, target.id) do
+        %User{active: false} = pending -> do_delete_user(actor, pending)
+        _ -> Repo.rollback(:not_pending)
+      end
     end)
     |> flatten_revocation_result()
   end
@@ -326,9 +374,11 @@ defmodule Cinder.Accounts do
   Checks whether the user is in sudo mode.
 
   The user is in sudo mode when the last authentication was done no further
-  than 20 minutes ago. The limit can be given as second argument in minutes.
+  than #{@sudo_window_minutes} minutes ago (the single sudo-mode window shared by every
+  reauth checkpoint — see `@sudo_window_minutes`). The limit can be given as second argument
+  in minutes.
   """
-  def sudo_mode?(user, minutes \\ -20)
+  def sudo_mode?(user, minutes \\ -@sudo_window_minutes)
 
   def sudo_mode?(%User{authenticated_at: ts}, minutes) when is_struct(ts, DateTime) do
     DateTime.after?(ts, DateTime.utc_now() |> DateTime.add(minutes, :minute))

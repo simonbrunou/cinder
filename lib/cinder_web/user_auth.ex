@@ -207,6 +207,9 @@ defmodule CinderWeb.UserAuth do
       on user_token.
       Redirects to login page if there's no logged user.
 
+    * `:require_active` - Redirects an authenticated, pending user to the
+      account approval page.
+
   ## Examples
 
   Use the `on_mount` lifecycle macro in LiveViews to mount or authenticate
@@ -244,10 +247,20 @@ defmodule CinderWeb.UserAuth do
     end
   end
 
+  def on_mount(:require_active, _params, session, socket) do
+    socket = mount_current_scope(socket, session)
+
+    if active?(socket.assigns[:current_scope]) do
+      {:cont, socket}
+    else
+      {:halt, Phoenix.LiveView.redirect(socket, to: ~p"/pending")}
+    end
+  end
+
   def on_mount(:require_sudo_mode, _params, session, socket) do
     socket = mount_current_scope(socket, session)
 
-    if Accounts.sudo_mode?(socket.assigns.current_scope.user, -10) do
+    if Accounts.sudo_mode?(socket.assigns.current_scope.user) do
       {:cont, socket}
     else
       socket =
@@ -334,6 +347,7 @@ defmodule CinderWeb.UserAuth do
   def page_title("/setup"), do: gettext("Setup")
   def page_title("/users/register"), do: gettext("Register")
   def page_title("/users/log-in"), do: gettext("Log in")
+  def page_title("/pending"), do: gettext("Pending approval")
   def page_title("/series/tmdb/" <> _id), do: gettext("Discover")
   def page_title("/movies/" <> _id), do: gettext("Library")
   def page_title("/series/" <> _id), do: gettext("Library")
@@ -396,4 +410,7 @@ defmodule CinderWeb.UserAuth do
 
   defp admin?(%Cinder.Accounts.Scope{user: %{role: :admin}}), do: true
   defp admin?(_), do: false
+
+  defp active?(%Cinder.Accounts.Scope{user: %{active: true}}), do: true
+  defp active?(_), do: false
 end

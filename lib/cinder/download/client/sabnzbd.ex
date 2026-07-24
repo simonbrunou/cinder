@@ -7,12 +7,15 @@ defmodule Cinder.Download.Client.Sabnzbd do
   `config :cinder, #{inspect(__MODULE__)}` at runtime. Auth is just the API key as
   a query param — no stateful login.
 
-  `add/1` uses `mode=addurl`: SABnzbd fetches the NZB itself (requires SABnzbd
-  ≥ 0.8.0, where `addurl` returns a usable `nzo_id`). The `nzo_id` is the
-  `download_id` the poller tracks; it lives in the **queue** while downloading and
-  moves to **history** for post-processing/completion, so `status/1` reads queue
-  first, then history — both scoped by `nzo_ids` so SABnzbd's default page limit
-  can't hide the job.
+  `add/1` fetches the release's NZB itself — bounded, redirect-revalidated, through
+  `Cinder.HTTPPolicy` (mirroring the qBittorrent `.torrent`-URL fetch) — and hands
+  SABnzbd the bytes via `mode=addfile`, rather than `mode=addurl` (which would have
+  SABnzbd resolve DNS and follow redirects for that URL itself, outside
+  `HTTPPolicy`'s SSRF checks entirely). The returned `nzo_id` is the `download_id`
+  the poller tracks; it lives in the **queue** while downloading and moves to
+  **history** for post-processing/completion, so `status/1` reads queue first, then
+  history — both scoped by `nzo_ids` so SABnzbd's default page limit can't hide the
+  job.
 
   NOTE: SABnzbd must have "Pause on Duplicates" disabled — that mode re-keys the
   `nzo_id` after `addurl`, so the stored id would never reappear.
@@ -27,10 +30,6 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   SABnzbd requires `apikey` in the query string. Redirects and redirect logging are disabled so
   that protocol-required secret is never replayed to another origin or written to Cinder's logs.
-  `addurl` remains a deputy boundary: Cinder validates the initial provider URL, but SABnzbd then
-  performs its own DNS resolution and redirects outside this policy. Isolate SABnzbd's network and
-  deny access to private control-plane/metadata destinations; migrating to `addfile` is a separate
-  compatibility change.
 
   Validated against a live SABnzbd only in Phase 5; the unit test is a shape
   sanity-check against `Req.Test`.
@@ -41,6 +40,10 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   @default_base_url "http://localhost:8080"
   @max_response_bytes 4 * 1024 * 1024
+  @max_redirects 5
+  # ponytail: a season-pack NZB is still just segment/message-id references (no payload data),
+  # so even a large batch stays well under this; raise it if a real one ever needs more.
+  @max_nzb_bytes 20 * 1024 * 1024
   # SABnzbd truncates job names at `max_foldername_length` (default 246) BYTES from the tail,
   # which would cut off the mandatory ".cinder-<key>" suffix find_by_operation_key/1 depends on.
   # 200 protects against that DEFAULT only. An operator-lowered value <= 200 still truncates the
@@ -52,24 +55,102 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   @impl true
   def add(%{download_url: url} = release, opts) when is_binary(url) do
-    # retry: false — `addurl` is side-effecting (SABnzbd queues the NZB), but it's a GET, which
-    # Req's default :safe_transient policy would retry up to 3× on a transient failure, re-queuing
-    # the same download. Disable retry on the add path only (status/health stay idempotent-retryable).
-    with {:ok, _uri} <- validate_url(url, Map.get(release, :download_url_origin)) do
-      add_url(url, release, opts)
+    source_origin = Map.get(release, :download_url_origin)
+
+    with {:ok, bytes} <- fetch_nzb(url, source_origin, @max_redirects) do
+      add_file(bytes, release, opts)
     end
   end
 
   def add(%{download_url: _}, _opts), do: {:error, :unsupported_download_url}
 
-  defp add_url(url, release, opts) do
+  # Fetch the NZB ourselves (bounded, redirect-revalidated) instead of handing SABnzbd the raw
+  # URL via `addurl` — mirrors `Cinder.Download.Client.QBittorrent`'s `.torrent`-URL fetch.
+  defp fetch_nzb(url, source_origin, hops) do
+    with {:ok, uri} <- validate_url(url, source_origin) do
+      trust =
+        if HTTPPolicy.same_origin?(uri, source_origin),
+          do: {:source, source_origin},
+          else: :untrusted
+
+      request_nzb(uri, trust, hops)
+    end
+  end
+
+  defp request_nzb(uri, trust, hops) do
+    request =
+      Req.new(
+        url: uri,
+        receive_timeout: 15_000,
+        pool_timeout: 5_000,
+        connect_options: [timeout: 5_000],
+        retry: false,
+        redirect: false,
+        plug: fetch_plug()
+      )
+
+    case HTTPPolicy.bounded_request(request, @max_nzb_bytes) do
+      {:ok, %{status: 200, body: bytes}} when is_binary(bytes) ->
+        {:ok, bytes}
+
+      {:ok, %{status: status} = resp} when status in [301, 302, 303, 307, 308] ->
+        case Req.Response.get_header(resp, "location") do
+          [location | _] -> follow_redirect(uri, location, trust, hops)
+          [] -> {:error, {:nzb_fetch_status, status}}
+        end
+
+      {:ok, %{status: status}} ->
+        {:error, {:nzb_fetch_status, status}}
+
+      other ->
+        error(other)
+    end
+  end
+
+  defp follow_redirect(_url, _location, _trust, 0), do: {:error, :too_many_redirects}
+
+  defp follow_redirect(url, location, trust, hops) do
+    case resolve_redirect(url, location, trust) do
+      {:ok, next, next_trust} -> request_nzb(next, next_trust, hops - 1)
+      {:error, :unsupported_scheme} -> {:error, :unsupported_download_url}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp resolve_redirect(current, location, {:source, source_origin}) do
+    case HTTPPolicy.resolve_redirect(current, location, :same_origin) do
+      {:ok, next} -> {:ok, next, {:source, source_origin}}
+      {:error, :cross_origin_redirect} -> resolve_untrusted_redirect(current, location)
+      error -> error
+    end
+  end
+
+  defp resolve_redirect(current, location, :untrusted),
+    do: resolve_untrusted_redirect(current, location)
+
+  defp resolve_untrusted_redirect(current, location) do
+    case Keyword.get(config(), :url_resolver) do
+      resolver when is_function(resolver, 1) ->
+        with {:ok, next} <- HTTPPolicy.resolve_redirect(current, location, resolver),
+             do: {:ok, next, :untrusted}
+
+      nil ->
+        with {:ok, next} <- HTTPPolicy.resolve_redirect(current, location, :untrusted),
+             do: {:ok, next, :untrusted}
+    end
+  end
+
+  # In prod, no plug (real HTTP). In test, config can inject a Req.Test plug.
+  defp fetch_plug, do: Keyword.get(config(), :fetch_plug)
+
+  defp add_file(bytes, release, opts) do
     params =
       case Keyword.get(opts, :operation_key) do
-        key when is_binary(key) -> [mode: "addurl", name: url, nzbname: nzbname(release, key)]
-        _ -> [mode: "addurl", name: url]
+        key when is_binary(key) -> [mode: "addfile", nzbname: nzbname(release, key)]
+        _ -> [mode: "addfile"]
       end
 
-    case get(params, retry: false) do
+    case post_file(bytes, params) do
       # A returned job id is success; key on it rather than the `status` field,
       # whose type varies across SABnzbd versions (boolean true vs 1).
       {:ok, %{status: 200, body: %{"nzo_ids" => [id | _]}}} -> {:ok, id}
@@ -78,6 +159,32 @@ defmodule Cinder.Download.Client.Sabnzbd do
       {:ok, %{status: 200}} -> {:error, :unexpected_response}
       other -> error(other)
     end
+  end
+
+  # POST (not GET) with a multipart body — SABnzbd's `addfile` API takes the NZB content itself
+  # under the `name` field (the same key `addurl` overloads to carry a URL string instead).
+  # retry: false — this is side-effecting (SABnzbd queues the job); Req's default :safe_transient
+  # policy would otherwise retry up to 3× on a transient failure, re-queuing the same download.
+  defp post_file(bytes, params) do
+    config = config()
+
+    [
+      base_url: Keyword.get(config, :base_url, @default_base_url),
+      receive_timeout: 15_000,
+      pool_timeout: 5_000,
+      connect_options: [timeout: 5_000],
+      retry: false
+    ]
+    |> Keyword.merge(Keyword.get(config, :req_options, []))
+    |> Keyword.put(:redirect, false)
+    |> Req.new()
+    |> Req.merge(
+      method: :post,
+      url: "/api",
+      params: query(config, params),
+      form_multipart: [name: {bytes, filename: "cinder.nzb", content_type: "application/x-nzb"}]
+    )
+    |> HTTPPolicy.bounded_request(@max_response_bytes)
   end
 
   # Name the job after the release title (with the operation key as a suffix) so

@@ -4,7 +4,21 @@ defmodule Cinder.HTTPPolicy do
 
   Configured service origins use `same_origin?/2` and the `:same_origin` redirect policy.
   Remote-supplied URLs use `validate_untrusted_url/2` and a resolver-backed redirect policy.
-  DNS validation rejects unsafe answer sets, but does not pin the transport to the checked answer.
+  `validate_untrusted_host/2` does the same address check for a non-HTTP endpoint (e.g. a
+  torrent tracker's `udp://` announce URL) that can't go through the HTTP-specific validator.
+
+  DNS validation rejects unsafe answer sets, but does not pin the transport to the checked
+  answer, so a rebinding DNS answer between this check and Finch/Mint's own (independent)
+  resolution at connect time is a residual TOCTOU window.
+  # ponytail: closing this needs pinning the outbound socket to the exact validated IP while
+  # keeping the original hostname for the Host header/SNI — Req 0.6.2 supports the mechanism
+  # (`connect_options: [hostname: original_host]` plus rewriting the request URL's host to the
+  # resolved IP; Mint dials the IP, `:hostname` overrides Host/SNI/cert-name checks). It isn't a
+  # small diff here: every caller in this codebase builds its request from a URL that `Req.Test`
+  # also dispatches on by host, so pinning to a raw IP would break every host-based
+  # cross-origin/redirect assertion in the download-client test suites, not just add a check.
+  # Ceiling: egress ACLs (deny loopback/RFC1918/link-local/cloud-metadata from Cinder's host) are
+  # the real mitigation and are already the top recommendation for this finding.
   """
 
   @max_log_bytes 500
@@ -32,6 +46,27 @@ defmodule Cinder.HTTPPolicy do
          {:ok, addresses} <- addresses(uri.host, resolver),
          :ok <- validate_addresses(addresses) do
       {:ok, uri}
+    end
+  end
+
+  @doc """
+  Validates a remote-supplied host against the same forbidden-address policy as
+  `validate_untrusted_url/2`, without requiring an HTTP(S) URL.
+
+  For endpoints embedded in torrent/magnet metadata (trackers, web seeds), which are
+  frequently non-HTTP (e.g. `udp://tracker.example:1337/announce`) and so can't be checked
+  through the HTTP-specific validator above.
+  """
+  @spec validate_untrusted_host(String.t(), resolver()) :: :ok | {:error, atom()}
+  def validate_untrusted_host(host, resolver \\ &resolve_host/1)
+      when is_binary(host) and is_function(resolver, 1) do
+    case normalize_host(host) do
+      "" ->
+        {:error, :missing_host}
+
+      normalized_host ->
+        with {:ok, addresses} <- addresses(normalized_host, resolver),
+             do: validate_addresses(addresses)
     end
   end
 

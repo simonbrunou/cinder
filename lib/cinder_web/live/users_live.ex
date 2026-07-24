@@ -16,13 +16,18 @@ defmodule CinderWeb.UsersLive do
     {:ok,
      socket
      |> assign(
-       users: Accounts.list_users(),
        creating: false,
        editing_email: nil,
        resetting_pw: nil,
        confirming_delete: nil
      )
+     |> assign_users()
      |> assign_create_form()}
+  end
+
+  defp assign_users(socket) do
+    {pending_users, users} = Enum.split_with(Accounts.list_users(), &(not &1.active))
+    assign(socket, users: users, pending_users: pending_users)
   end
 
   defp assign_create_form(socket, params \\ %{"role" => "user"}) do
@@ -55,7 +60,8 @@ defmodule CinderWeb.UsersLive do
       {:ok, _user} ->
         {:noreply,
          socket
-         |> assign(users: Accounts.list_users(), creating: false)
+         |> assign(creating: false)
+         |> assign_users()
          |> assign_create_form()
          |> put_flash(:info, gettext("User created."))}
 
@@ -67,6 +73,52 @@ defmodule CinderWeb.UsersLive do
     end
   end
 
+  def handle_event("approve", %{"id" => id}, socket) do
+    actor = socket.assigns.current_scope.user
+    user = find_user(id)
+
+    case user && Accounts.activate_user(actor, user) do
+      nil ->
+        {:noreply, socket}
+
+      {:ok, _user} ->
+        {:noreply,
+         socket
+         |> assign_users()
+         |> put_flash(:info, gettext("User approved."))}
+
+      {:error, :unauthorized} ->
+        unauthorized(socket)
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, gettext("Couldn't approve that account."))}
+    end
+  end
+
+  def handle_event("deny", %{"id" => id}, socket) do
+    actor = socket.assigns.current_scope.user
+    user = find_user(id)
+
+    case user && Accounts.delete_pending_user(actor, user) do
+      nil ->
+        {:noreply, socket}
+
+      {:ok, _, revoked_tokens} ->
+        UserAuth.disconnect_sessions(revoked_tokens)
+
+        {:noreply,
+         socket
+         |> assign_users()
+         |> put_flash(:info, gettext("Pending account denied."))}
+
+      {:error, :unauthorized} ->
+        unauthorized(socket)
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, gettext("Couldn't deny that account."))}
+    end
+  end
+
   @impl true
   def handle_event("set_quota", %{"_id" => id, "quota" => quota}, socket) do
     actor = socket.assigns.current_scope.user
@@ -75,7 +127,7 @@ defmodule CinderWeb.UsersLive do
          {:ok, _} <- Accounts.update_user_quota(actor, user, parse_quota(quota)) do
       {:noreply,
        socket
-       |> assign(users: Accounts.list_users())
+       |> assign_users()
        |> put_flash(:info, gettext("Quota updated."))}
     else
       nil ->
@@ -104,7 +156,8 @@ defmodule CinderWeb.UsersLive do
          {:ok, _} <- Accounts.admin_update_email(actor, user, %{email: email}) do
       {:noreply,
        socket
-       |> assign(users: Accounts.list_users(), editing_email: nil)
+       |> assign(editing_email: nil)
+       |> assign_users()
        |> put_flash(:info, gettext("Email updated."))}
     else
       nil ->
@@ -132,7 +185,7 @@ defmodule CinderWeb.UsersLive do
         case Accounts.update_user_role(actor, user, new_role) do
           {:ok, _, revoked_tokens} ->
             UserAuth.disconnect_sessions(revoked_tokens)
-            {:noreply, assign(socket, users: Accounts.list_users())}
+            {:noreply, assign_users(socket)}
 
           {:error, :unauthorized} ->
             unauthorized(socket)
@@ -203,7 +256,8 @@ defmodule CinderWeb.UsersLive do
 
         {:noreply,
          socket
-         |> assign(users: Accounts.list_users(), confirming_delete: nil)
+         |> assign(confirming_delete: nil)
+         |> assign_users()
          |> put_flash(:info, gettext("User deleted."))}
 
       {:error, :self_delete} ->
@@ -274,6 +328,46 @@ defmodule CinderWeb.UsersLive do
         {gettext("Users")}
         <:subtitle>{gettext("Roles and request quotas.")}</:subtitle>
       </.header>
+
+      <section
+        id="pending-approvals"
+        class="rounded-box border border-warning/40 bg-warning/10 p-4 mb-6"
+      >
+        <h2 class="text-lg font-semibold">{gettext("Pending approval")}</h2>
+        <p :if={@pending_users == []} class="mt-2 text-sm text-base-content/60">
+          {gettext("No accounts are waiting for approval.")}
+        </p>
+        <ul :if={@pending_users != []} class="mt-3 space-y-2">
+          <li
+            :for={user <- @pending_users}
+            id={"pending-user-#{user.id}"}
+            class="flex flex-wrap items-center gap-2 rounded-box bg-base-100 p-3"
+          >
+            <span class="min-w-0 flex-1 break-all font-semibold">{user.email}</span>
+            <.button
+              id={"approve-user-#{user.id}"}
+              variant="primary"
+              size="sm"
+              phx-click="approve"
+              phx-value-id={user.id}
+              phx-disable-with={gettext("Approving…")}
+            >
+              {gettext("Approve")}
+            </.button>
+            <.button
+              id={"deny-user-#{user.id}"}
+              variant="ghost"
+              size="sm"
+              class="text-error"
+              phx-click="deny"
+              phx-value-id={user.id}
+              phx-disable-with={gettext("Denying…")}
+            >
+              {gettext("Deny")}
+            </.button>
+          </li>
+        </ul>
+      </section>
 
       <div class="mb-6">
         <.button :if={!@creating} variant="primary" size="sm" phx-click="start_create">

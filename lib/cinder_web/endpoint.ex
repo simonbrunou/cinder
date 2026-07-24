@@ -13,16 +13,19 @@ defmodule CinderWeb.Endpoint do
 
   @doc false
   def session_options do
-    Keyword.put(
-      @base_session_options,
-      :signing_salt,
-      Application.fetch_env!(:cinder, :session_signing_salt)
-    )
+    @base_session_options
+    |> Keyword.put(:signing_salt, Application.fetch_env!(:cinder, :session_signing_salt))
+    # Mirrors the remember-me cookie: explicit rather than relying solely on
+    # `force_ssl` rewriting the scheme before this plug runs (finding 6).
+    |> Keyword.put(:secure, Application.get_env(:cinder, :secure_cookies, false))
   end
 
+  # :peer_data lets a LiveView (e.g. the registration throttle) read the raw
+  # connection peer via `get_connect_info/2` — see CinderWeb.Plugs.RemoteIp for why
+  # that's the transport peer, not the cloudflared-resolved client IP.
   socket "/live", Phoenix.LiveView.Socket,
-    websocket: [connect_info: [session: {__MODULE__, :session_options, []}]],
-    longpoll: [connect_info: [session: {__MODULE__, :session_options, []}]]
+    websocket: [connect_info: [:peer_data, session: {__MODULE__, :session_options, []}]],
+    longpoll: [connect_info: [:peer_data, session: {__MODULE__, :session_options, []}]]
 
   # Serve at "/" the static files from "priv/static" directory.
   #
@@ -67,6 +70,10 @@ defmodule CinderWeb.Endpoint do
   # (prod inits plugs at compile time). Trivial at household scale; memoize via
   # :persistent_term if it ever shows up in a profile.
   plug :session
+  # Must run before the router: resolves the real client IP behind cloudflared so
+  # every later remote_ip read (LoginRateLimiter, IpRateLimiter) keys on the visitor,
+  # not the tunnel hop. See CinderWeb.Plugs.RemoteIp for the trust model.
+  plug CinderWeb.Plugs.RemoteIp
   plug CinderWeb.Router
 
   defp session(conn, _opts) do

@@ -2,8 +2,24 @@ defmodule CinderWeb.UserLive.SettingsTest do
   use CinderWeb.ConnCase
 
   alias Cinder.Accounts
+  alias Cinder.Accounts.Scope
+  alias CinderWeb.UserLive.Settings
   import Phoenix.LiveViewTest
   import Cinder.AccountsFixtures
+
+  # The mount-time :require_sudo_mode gate and the per-event rechecks below share the same
+  # sudo window (finding 7), so a socket that got past mount can't naturally go stale before an
+  # event fires within a fast test process. Build the post-mount socket directly (as
+  # user_auth_test.exs already does for on_mount) with an already-stale `authenticated_at`, to
+  # exercise the event-level recheck in isolation.
+  defp stale_socket(user) do
+    stale_user = %{user | authenticated_at: DateTime.add(DateTime.utc_now(), -11, :minute)}
+
+    %Phoenix.LiveView.Socket{
+      endpoint: CinderWeb.Endpoint,
+      assigns: %{current_scope: Scope.for_user(stale_user), flash: %{}, __changed__: %{}}
+    }
+  end
 
   describe "Settings page" do
     test "renders settings page", %{conn: conn} do
@@ -241,6 +257,55 @@ defmodule CinderWeb.UserLive.SettingsTest do
       assert html =~ "Link Plex account"
       refute html =~ "Linked as plex-me"
       assert Cinder.Repo.reload!(user).plex_id == nil
+    end
+
+    test "unlink_plex requires fresh sudo: an expired session redirects to reauth without unlinking" do
+      user = user_fixture()
+
+      {:ok, user} =
+        Cinder.Accounts.link_plex_to_user(user, %{id: 1234, email: nil, username: "plex-me"})
+
+      assert {:noreply, socket} = Settings.handle_event("unlink_plex", %{}, stale_socket(user))
+
+      assert {:redirect, %{to: "/users/log-in"}} = socket.redirected
+      assert Phoenix.Flash.get(socket.assigns.flash, :error) =~ "re-authenticate"
+      assert Cinder.Repo.reload!(user).plex_id == 1234
+    end
+  end
+
+  describe "sudo-mode expiry on sensitive events (finding 7)" do
+    test "update_email redirects to reauth instead of crashing when sudo has expired" do
+      user = user_fixture()
+
+      assert {:noreply, socket} =
+               Settings.handle_event(
+                 "update_email",
+                 %{"user" => %{"email" => unique_user_email()}},
+                 stale_socket(user)
+               )
+
+      assert {:redirect, %{to: "/users/log-in"}} = socket.redirected
+      assert Phoenix.Flash.get(socket.assigns.flash, :error) =~ "re-authenticate"
+    end
+
+    test "update_password redirects to reauth instead of crashing when sudo has expired" do
+      user = user_fixture()
+      new_password = valid_user_password()
+
+      assert {:noreply, socket} =
+               Settings.handle_event(
+                 "update_password",
+                 %{
+                   "user" => %{
+                     "password" => new_password,
+                     "password_confirmation" => new_password
+                   }
+                 },
+                 stale_socket(user)
+               )
+
+      assert {:redirect, %{to: "/users/log-in"}} = socket.redirected
+      assert Phoenix.Flash.get(socket.assigns.flash, :error) =~ "re-authenticate"
     end
   end
 end

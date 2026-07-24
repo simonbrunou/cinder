@@ -143,6 +143,37 @@ defmodule Cinder.HTTPPolicyTest do
     end
   end
 
+  describe "validate_untrusted_host/2" do
+    test "rejects a forbidden literal address with no scheme involved" do
+      resolver = fn _host -> flunk("literal addresses must not use DNS") end
+
+      # No brackets: this takes a bare host, e.g. the un-bracketed form `URI.new/1` already
+      # produces for `http://[::1]`'s `.host`, not a URL's bracketed authority component.
+      for host <- ["127.0.0.1", "169.254.169.254", "10.0.0.1", "::1"] do
+        assert {:error, :forbidden_address} = HTTPPolicy.validate_untrusted_host(host, resolver),
+               host
+      end
+    end
+
+    test "rejects a DNS answer set if any address is forbidden" do
+      resolver = fn "tracker.example" -> {:ok, [@public_ipv4, {10, 0, 0, 1}]} end
+
+      assert {:error, :forbidden_address} =
+               HTTPPolicy.validate_untrusted_host("tracker.example", resolver)
+    end
+
+    test "accepts a safe hostname (e.g. a torrent tracker, no HTTP scheme required)" do
+      resolver = fn "tracker.example" -> {:ok, [@public_ipv4]} end
+
+      assert :ok = HTTPPolicy.validate_untrusted_host("tracker.example", resolver)
+    end
+
+    test "rejects an empty host" do
+      resolver = fn _host -> flunk("an empty host must not use DNS") end
+      assert {:error, :missing_host} = HTTPPolicy.validate_untrusted_host("", resolver)
+    end
+  end
+
   describe "validate_source_url/3" do
     test "allows a private URL only when it matches its recorded source origin" do
       resolver = fn _host -> flunk("the configured source origin must not use DNS validation") end

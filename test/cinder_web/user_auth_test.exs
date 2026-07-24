@@ -39,7 +39,8 @@ defmodule CinderWeb.UserAuthTest do
         "/users/settings" => "Account",
         "/users/settings/confirm-email/token" => "Account",
         "/users/register" => "Register",
-        "/users/log-in" => "Log in"
+        "/users/log-in" => "Log in",
+        "/pending" => "Pending approval"
       }
 
       assert Map.new(routes, fn {path, _title} -> {path, UserAuth.page_title(path)} end) == routes
@@ -359,6 +360,34 @@ defmodule CinderWeb.UserAuthTest do
 
       {:halt, updated_socket} = UserAuth.on_mount(:require_authenticated, %{}, session, socket)
       assert updated_socket.assigns.current_scope == nil
+    end
+  end
+
+  describe "on_mount :require_active" do
+    test "allows an active user", %{conn: conn, user: user} do
+      user_token = Accounts.generate_user_session_token(user)
+      session = conn |> put_session(:user_token, user_token) |> get_session()
+
+      assert {:cont, updated_socket} =
+               UserAuth.on_mount(:require_active, %{}, session, %LiveView.Socket{})
+
+      assert updated_socket.assigns.current_scope.user.active
+    end
+
+    test "redirects an inactive user to pending approval", %{conn: conn, user: user} do
+      inactive = user |> Ecto.Changeset.change(active: false) |> Cinder.Repo.update!()
+      user_token = Accounts.generate_user_session_token(inactive)
+      session = conn |> put_session(:user_token, user_token) |> get_session()
+
+      socket = %LiveView.Socket{
+        endpoint: CinderWeb.Endpoint,
+        assigns: %{__changed__: %{}, flash: %{}}
+      }
+
+      assert {:halt, updated_socket} =
+               UserAuth.on_mount(:require_active, %{}, session, socket)
+
+      assert updated_socket.redirected == {:redirect, %{status: 302, to: "/pending"}}
     end
   end
 

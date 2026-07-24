@@ -4,6 +4,8 @@ defmodule CinderWeb.UserLive.RegistrationTest do
   import Phoenix.LiveViewTest
   import Cinder.AccountsFixtures
 
+  alias Cinder.Accounts.IpRateLimiter
+
   describe "Registration page" do
     test "renders registration page with the first-user bootstrap field", %{conn: conn} do
       {:ok, lv, html} = live(conn, ~p"/users/register")
@@ -33,6 +35,33 @@ defmodule CinderWeb.UserLive.RegistrationTest do
 
       assert result =~ "Register"
       assert result =~ "must have the @ sign and no spaces"
+    end
+  end
+
+  describe "registration throttle" do
+    test "blocks repeated submissions from the same client", %{conn: conn} do
+      previous = Application.get_env(:cinder, :ip_rate_limiting)
+      Application.put_env(:cinder, :ip_rate_limiting, true)
+      IpRateLimiter.reset()
+
+      on_exit(fn ->
+        IpRateLimiter.reset()
+
+        if is_nil(previous),
+          do: Application.delete_env(:cinder, :ip_rate_limiting),
+          else: Application.put_env(:cinder, :ip_rate_limiting, previous)
+      end)
+
+      {:ok, lv, _html} = live(conn, ~p"/users/register")
+
+      # 10 submissions exhaust the per-IP :registration budget (register_attempt runs before
+      # register/3, so the outcome of each save doesn't matter — the counter still climbs).
+      for _ <- 1..10 do
+        render_hook(lv, "save", %{"user" => registration_params(unique_user_email())})
+      end
+
+      html = render_hook(lv, "save", %{"user" => registration_params(unique_user_email())})
+      assert html =~ "Too many attempts"
     end
   end
 
@@ -75,22 +104,26 @@ defmodule CinderWeb.UserLive.RegistrationTest do
           "user" => registration_params(email)
         })
 
-        assert %{role: :admin} = Cinder.Repo.get_by(Cinder.Accounts.User, email: email)
+        assert %{role: :admin, active: true} =
+                 Cinder.Repo.get_by(Cinder.Accounts.User, email: email)
       end)
     end
 
-    test "later self-registration stays open and creates a normal user", %{conn: conn} do
-      _existing = user_fixture()
+    test "later self-registration creates a pending user with the default quota", %{conn: conn} do
+      _admin = admin_fixture()
       {:ok, lv, _html} = live(conn, ~p"/users/register")
       refute has_element?(lv, "#bootstrap-token")
       email = unique_user_email()
 
       render_hook(lv, "save", %{"user" => registration_params(email)})
 
-      assert %{role: :user} = Cinder.Repo.get_by(Cinder.Accounts.User, email: email)
+      assert %{role: :user, active: false, request_quota: 10} =
+               Cinder.Repo.get_by(Cinder.Accounts.User, email: email)
     end
 
-    test "creates account and logs in", %{conn: conn} do
+    test "shows the generic confirmation without logging in", %{conn: conn} do
+      _admin = admin_fixture()
+      conn = init_test_session(conn, %{})
       {:ok, lv, _html} = live(conn, ~p"/users/register")
 
       email = unique_user_email()
@@ -98,17 +131,17 @@ defmodule CinderWeb.UserLive.RegistrationTest do
 
       form =
         form(lv, "#registration_form",
-          bootstrap_token: "test-bootstrap-token",
           user: %{email: email, password: password, password_confirmation: password}
         )
 
-      render_submit(form)
-      conn = follow_trigger_action(form, conn)
-      assert redirected_to(conn) == ~p"/"
-      assert get_session(conn, :user_token)
+      html = render_submit(form)
+      assert html =~ "If that address is new"
+      assert has_element?(lv, "#registration-confirmation")
+      refute get_session(conn, :user_token)
     end
 
-    test "renders errors for duplicated email", %{conn: conn} do
+    test "a duplicate email gets the same generic confirmation", %{conn: conn} do
+      _admin = admin_fixture()
       {:ok, lv, _html} = live(conn, ~p"/users/register")
 
       user = user_fixture(%{email: "test@email.com"})
@@ -116,11 +149,13 @@ defmodule CinderWeb.UserLive.RegistrationTest do
       result =
         lv
         |> form("#registration_form",
-          user: %{"email" => user.email, "password" => valid_user_password()}
+          user: registration_params(user.email)
         )
         |> render_submit()
 
-      assert result =~ "has already been taken"
+      assert result =~ "If that address is new"
+      refute result =~ "has already been taken"
+      assert has_element?(lv, "#registration-confirmation")
     end
   end
 

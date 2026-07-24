@@ -120,6 +120,15 @@ defmodule CinderWeb.SettingsLive do
               {gettext("Auto-approve all requests (skip the approval queue)")}
             </span>
           </label>
+          <p
+            id="auto-approve-public-warning"
+            role="alert"
+            class="alert alert-warning mt-3 text-sm"
+          >
+            {gettext(
+              "This also auto-approves requests from anyone who self-registers once their account is approved. Keep it off while registration enrollment is public."
+            )}
+          </p>
         </form>
       </div>
     </Layouts.app>

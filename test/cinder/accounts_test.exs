@@ -58,6 +58,8 @@ defmodule Cinder.AccountsTest do
       assert is_binary(user.hashed_password)
       assert is_nil(user.password)
       refute is_nil(user.confirmed_at)
+      assert user.active
+      assert user.request_quota == 10
     end
 
     test "first user becomes admin, subsequent users are :user" do
@@ -71,7 +73,29 @@ defmodule Cinder.AccountsTest do
         Accounts.register_user(%{email: unique_user_email(), password: valid_user_password()})
 
       assert first.role == :admin
+      assert first.active
       assert second.role == :user
+      refute second.active
+      assert second.request_quota == 10
+    end
+
+    test "a Plex :user row with zero admins does not block bootstrap admin creation" do
+      plex_user =
+        user_fixture()
+        |> Ecto.Changeset.change(plex_id: 1234)
+        |> Repo.update!()
+
+      assert Accounts.count_admins() == 0
+
+      assert {:ok, admin} =
+               Accounts.register_user(
+                 %{email: unique_user_email(), password: valid_user_password()},
+                 @bootstrap_token
+               )
+
+      assert admin.role == :admin
+      assert admin.active
+      assert Repo.reload!(plex_user).role == :user
     end
 
     test "ignores a role param (no privilege escalation)" do
@@ -103,17 +127,17 @@ defmodule Cinder.AccountsTest do
   end
 
   describe "sudo_mode?/2" do
-    test "validates the authenticated_at time" do
+    test "validates the authenticated_at time against the shared 10-minute default window" do
       now = DateTime.utc_now()
 
       assert Accounts.sudo_mode?(%User{authenticated_at: DateTime.utc_now()})
-      assert Accounts.sudo_mode?(%User{authenticated_at: DateTime.add(now, -19, :minute)})
-      refute Accounts.sudo_mode?(%User{authenticated_at: DateTime.add(now, -21, :minute)})
+      assert Accounts.sudo_mode?(%User{authenticated_at: DateTime.add(now, -9, :minute)})
+      refute Accounts.sudo_mode?(%User{authenticated_at: DateTime.add(now, -11, :minute)})
 
       # minute override
       refute Accounts.sudo_mode?(
-               %User{authenticated_at: DateTime.add(now, -11, :minute)},
-               -10
+               %User{authenticated_at: DateTime.add(now, -6, :minute)},
+               -5
              )
 
       # not authenticated
@@ -463,6 +487,39 @@ defmodule Cinder.AccountsTest do
     end
   end
 
+  describe "pending account moderation" do
+    test "activate_user/2 activates and audits a pending account" do
+      actor = admin_fixture()
+      pending = user_fixture() |> Ecto.Changeset.change(active: false) |> Repo.update!()
+
+      assert {:ok, %User{active: true}} = Accounts.activate_user(actor, pending)
+
+      audit = Repo.one!(from a in Cinder.Audit.AdminAudit, where: a.entity_id == ^pending.id)
+      assert audit.action == "activate_user"
+      assert audit.detail["active"] == true
+    end
+
+    test "delete_pending_user/2 deletes through the audited user-deletion path" do
+      actor = admin_fixture()
+      pending = user_fixture() |> Ecto.Changeset.change(active: false) |> Repo.update!()
+
+      assert {:ok, %User{id: id}, []} = Accounts.delete_pending_user(actor, pending)
+      refute Repo.get(User, id)
+
+      audit = Repo.one!(from a in Cinder.Audit.AdminAudit, where: a.entity_id == ^pending.id)
+      assert audit.action == "delete_user"
+    end
+
+    test "pending moderation refuses an active account" do
+      actor = admin_fixture()
+      user = user_fixture()
+
+      assert {:error, :not_pending} = Accounts.activate_user(actor, user)
+      assert {:error, :not_pending} = Accounts.delete_pending_user(actor, user)
+      assert Repo.reload!(user)
+    end
+  end
+
   describe "create_user/1" do
     test "creates a confirmed user with the default :user role" do
       actor = admin_fixture()
@@ -478,6 +535,7 @@ defmodule Cinder.AccountsTest do
       assert user.email == email
       assert user.role == :user
       assert user.confirmed_at
+      assert user.active
       assert is_binary(user.hashed_password)
     end
 
@@ -698,6 +756,8 @@ defmodule Cinder.AccountsTest do
     end
 
     test "a second login by plex_id after account creation matches the same user" do
+      _admin = admin_fixture()
+
       assert {:ok, created} =
                Accounts.login_or_register_plex_user(%{
                  id: 2001,
@@ -712,7 +772,7 @@ defmodule Cinder.AccountsTest do
     end
 
     test "creates a new :user when no plex_id matches, even though another account exists" do
-      existing = user_fixture()
+      existing = admin_fixture()
 
       assert {:ok, created} =
                Accounts.login_or_register_plex_user(%{
@@ -725,6 +785,17 @@ defmodule Cinder.AccountsTest do
       assert created.role == :user
       assert created.plex_id == 3001
       assert Repo.reload!(existing).plex_id == nil
+    end
+
+    test "refuses to create a new Plex user while no admin exists" do
+      assert {:error, :admin_required} =
+               Accounts.login_or_register_plex_user(%{
+                 id: 3002,
+                 email: "blocked-3002@example.com",
+                 username: "the-newcomer"
+               })
+
+      assert Repo.aggregate(User, :count) == 0
     end
 
     # SECURITY regression (the exact hole this rework closes): a Plex account whose reported
@@ -756,6 +827,8 @@ defmodule Cinder.AccountsTest do
     end
 
     test "creates a new :user-role account with no usable password when nothing matches" do
+      _admin = admin_fixture()
+
       assert {:ok, created} =
                Accounts.login_or_register_plex_user(%{
                  id: 5001,
@@ -764,7 +837,8 @@ defmodule Cinder.AccountsTest do
                })
 
       assert created.role == :user
-      assert created.request_quota == nil
+      refute created.active
+      assert created.request_quota == 10
       assert created.plex_id == 5001
       assert created.confirmed_at
 

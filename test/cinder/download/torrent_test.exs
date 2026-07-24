@@ -41,4 +41,64 @@ defmodule Cinder.Download.TorrentTest do
     # "d4:infol1:aee" — info value is bencode list, not a dict
     assert {:error, :bad_torrent} = Torrent.infohash("d4:infol1:aee")
   end
+
+  # Minimal bencode encoder for building metainfo fixtures without hand-counting byte lengths.
+  defp benc(s) when is_binary(s), do: "#{byte_size(s)}:#{s}"
+  defp benc(n) when is_integer(n), do: "i#{n}e"
+  defp benc(list) when is_list(list), do: "l" <> Enum.map_join(list, &benc/1) <> "e"
+
+  defp torrent_with(fields) do
+    info = %{"length" => 1, "name" => "x", "piece length" => 16_384}
+
+    body =
+      [{"info", info} | fields]
+      |> Enum.map_join(fn {k, v} -> benc(k) <> encode(v) end)
+
+    "d" <> body <> "e"
+  end
+
+  defp encode(%{} = map),
+    do: "d" <> Enum.map_join(map, fn {k, v} -> benc(k) <> encode(v) end) <> "e"
+
+  defp encode(v), do: benc(v)
+
+  describe "embedded_urls/1" do
+    test "extracts announce, announce-list, url-list, and httpseeds" do
+      bytes =
+        torrent_with([
+          {"announce", "http://tracker.a/ann"},
+          {"announce-list", [["http://tracker.b/ann"], ["http://tracker.c/ann"]]},
+          {"url-list", ["http://seed.a/files/"]},
+          {"httpseeds", ["http://seed.b/webseed/"]}
+        ])
+
+      urls = Torrent.embedded_urls(bytes)
+
+      for expected <- [
+            "http://tracker.a/ann",
+            "http://tracker.b/ann",
+            "http://tracker.c/ann",
+            "http://seed.a/files/",
+            "http://seed.b/webseed/"
+          ] do
+        assert expected in urls
+      end
+    end
+
+    test "accepts a bare-string url-list (a single web seed, not a list)" do
+      bytes = torrent_with([{"url-list", "http://seed.a/files/"}])
+      assert Torrent.embedded_urls(bytes) == ["http://seed.a/files/"]
+    end
+
+    test "returns [] when no tracker/web-seed fields are present" do
+      assert Torrent.embedded_urls(torrent_with([])) == []
+    end
+
+    test "returns [] rather than crashing on malformed metainfo" do
+      assert Torrent.embedded_urls("<html>nope</html>") == []
+      # announce is an integer, not a string — filtered out, not raised on.
+      assert Torrent.embedded_urls("d8:announcei5ee") == []
+      assert Torrent.embedded_urls("") == []
+    end
+  end
 end

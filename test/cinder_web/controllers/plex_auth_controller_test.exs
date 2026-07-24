@@ -76,6 +76,8 @@ defmodule CinderWeb.PlexAuthControllerTest do
 
   describe "GET /auth/plex/callback" do
     test "happy path ends logged in and redirected", %{conn: conn} do
+      _admin = admin_fixture()
+
       expect(Cinder.Accounts.PlexAuthMock, :check_pin, fn 99 -> {:ok, "plex-auth-token"} end)
 
       expect(Cinder.Accounts.PlexAuthMock, :account, fn "plex-auth-token" ->
@@ -93,7 +95,7 @@ defmodule CinderWeb.PlexAuthControllerTest do
 
       assert get_session(conn, :user_token)
       assert redirected_to(conn) == ~p"/"
-      assert Repo.get_by(User, email: "newplex@example.com")
+      assert %{active: false} = Repo.get_by(User, email: "newplex@example.com")
     end
 
     test "with {:error, :pending} shows a flash error and does not log in", %{conn: conn} do
