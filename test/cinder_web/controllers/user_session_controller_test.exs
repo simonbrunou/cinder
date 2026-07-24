@@ -3,13 +3,16 @@ defmodule CinderWeb.UserSessionControllerTest do
 
   import Cinder.AccountsFixtures
 
+  alias Cinder.Accounts.IpRateLimiter
+  alias Cinder.Accounts.LoginRateLimiter
+
   setup do
     %{user: user_fixture()}
   end
 
   describe "POST /users/log-in - email and password" do
     test "records all concurrent failures atomically" do
-      limiter = Cinder.Accounts.LoginRateLimiter
+      limiter = LoginRateLimiter
       ip = "203.0.113.9"
       email = "RACE@example.com"
       limiter.reset()
@@ -101,6 +104,65 @@ defmodule CinderWeb.UserSessionControllerTest do
       assert Enum.any?(get_resp_header(conn, "set-cookie"), fn header ->
                header =~ "_cinder_web_user_remember_me=" and header =~ "; secure"
              end)
+    end
+
+    test "sets Secure on the production-configured session cookie", %{conn: conn, user: user} do
+      previous = Application.get_env(:cinder, :secure_cookies)
+      Application.put_env(:cinder, :secure_cookies, true)
+
+      on_exit(fn ->
+        if is_nil(previous),
+          do: Application.delete_env(:cinder, :secure_cookies),
+          else: Application.put_env(:cinder, :secure_cookies, previous)
+      end)
+
+      user = set_password(user)
+
+      conn =
+        post(conn, ~p"/users/log-in", %{
+          "user" => %{"email" => user.email, "password" => valid_user_password()}
+        })
+
+      assert Enum.any?(get_resp_header(conn, "set-cookie"), fn header ->
+               header =~ "_cinder_key=" and header =~ "; secure"
+             end)
+    end
+
+    test "a per-IP floor blocks even a correct login after rotated-email attempts", %{
+      conn: conn,
+      user: user
+    } do
+      previous = Application.get_env(:cinder, :ip_rate_limiting)
+      Application.put_env(:cinder, :ip_rate_limiting, true)
+      IpRateLimiter.reset()
+      LoginRateLimiter.reset()
+
+      on_exit(fn ->
+        IpRateLimiter.reset()
+
+        if is_nil(previous),
+          do: Application.delete_env(:cinder, :ip_rate_limiting),
+          else: Application.put_env(:cinder, :ip_rate_limiting, previous)
+      end)
+
+      user = set_password(user)
+
+      # 10 failures across DISTINCT emails from the same IP: the {ip, email} limiter never
+      # trips (10 separate pairs, one attempt each), but the per-IP floor reaches its budget.
+      for i <- 1..10 do
+        post(conn, ~p"/users/log-in", %{
+          "user" => %{"email" => "rotate#{i}@example.com", "password" => "wrong_password"}
+        })
+      end
+
+      # The real user's CORRECT password is now refused — only the IP floor can explain this.
+      conn =
+        post(conn, ~p"/users/log-in", %{
+          "user" => %{"email" => user.email, "password" => valid_user_password()}
+        })
+
+      refute get_session(conn, :user_token)
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) == "Invalid email or password"
     end
 
     test "logs the user in with return to", %{conn: conn, user: user} do
@@ -198,6 +260,29 @@ defmodule CinderWeb.UserSessionControllerTest do
 
       assert get_session(conn, :user_token)
       assert redirected_to(conn) == ~p"/users/settings"
+    end
+
+    test "update-password redirects to reauth instead of crashing when sudo has expired", %{
+      conn: conn,
+      user: user
+    } do
+      user = set_password(user)
+
+      conn =
+        conn
+        |> log_in_user(user,
+          token_authenticated_at: DateTime.add(DateTime.utc_now(:second), -11, :minute)
+        )
+        |> post(~p"/users/update-password", %{
+          "user" => %{
+            "email" => user.email,
+            "password" => "brand new pass phrase!",
+            "password_confirmation" => "brand new pass phrase!"
+          }
+        })
+
+      assert redirected_to(conn) == ~p"/users/log-in"
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "re-authenticate"
     end
   end
 

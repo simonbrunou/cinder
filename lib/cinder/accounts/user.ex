@@ -9,6 +9,7 @@ defmodule Cinder.Accounts.User do
     field :confirmed_at, :utc_datetime
     field :authenticated_at, :utc_datetime, virtual: true
     field :role, Ecto.Enum, values: [:admin, :user], default: :user
+    field :active, :boolean, default: true
     field :request_quota, :integer
     field :plex_id, :integer
     field :plex_username, :string
@@ -55,10 +56,11 @@ defmodule Cinder.Accounts.User do
       )
       |> validate_length(:email, max: 160)
 
+    changeset = unique_constraint(changeset, :email)
+
     if Keyword.get(opts, :validate_unique, true) do
       changeset
       |> unsafe_validate_unique(:email, Cinder.Repo)
-      |> unique_constraint(:email)
       |> validate_email_changed()
     else
       changeset

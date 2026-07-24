@@ -23,23 +23,81 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     end)
   end
 
-  test "add/1 posts addurl and returns the nzo_id" do
+  # Since add/1 now fetches the NZB itself before calling SABnzbd, every add stub must answer
+  # both the (arbitrary-host) fetch request and the `/api` addfile call. This one differentiates
+  # by request_path, which is enough since none of these tests' fetch URLs share the api path.
+  defp stub_fetch_then_addfile(respond) do
     stub(fn conn ->
-      assert conn.request_path == "/api"
-      assert conn.params["mode"] == "addurl"
-      assert conn.params["name"] == "http://prowlarr/getnzb/1?apikey=k&id=9"
-      assert conn.params["apikey"] == "test-key"
-      assert conn.params["output"] == "json"
-      Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["SABnzbd_nzo_abc"]})
+      case conn.request_path do
+        "/api" ->
+          assert conn.params["mode"] == "addfile"
+          respond.(conn)
+
+        _ ->
+          Req.Test.text(conn, "nzb-bytes")
+      end
+    end)
+  end
+
+  test "add/1 fetches the NZB itself, then posts addfile, and returns the nzo_id" do
+    stub(fn conn ->
+      case conn.request_path do
+        "/getnzb/1" ->
+          assert conn.host == "prowlarr"
+          assert conn.query_string == "apikey=k&id=9"
+          Req.Test.text(conn, "nzb-bytes")
+
+        "/api" ->
+          assert conn.params["mode"] == "addfile"
+          assert conn.params["apikey"] == "test-key"
+          assert conn.params["output"] == "json"
+          {:ok, body, conn} = Plug.Conn.read_body(conn)
+          assert body =~ "nzb-bytes"
+          Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["SABnzbd_nzo_abc"]})
+      end
     end)
 
     assert {:ok, "SABnzbd_nzo_abc"} =
              Sabnzbd.add(%{download_url: "http://prowlarr/getnzb/1?apikey=k&id=9"})
   end
 
-  test "add/2 names the job with the operation key when the release has no title" do
+  test "add/1 never tells SABnzbd the URL — addfile carries file bytes, not the URL" do
     stub(fn conn ->
-      assert conn.params["mode"] == "addurl"
+      case conn.request_path do
+        "/getnzb/1" ->
+          Req.Test.text(conn, "nzb-bytes")
+
+        "/api" ->
+          # "name" is the addfile field for the uploaded content (an actual file, not a
+          # string) — SABnzbd never learns the URL, so it can't resolve/redirect it itself.
+          assert %Plug.Upload{} = conn.params["name"]
+          refute conn.query_string =~ "getnzb"
+          Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["nzo-1"]})
+      end
+    end)
+
+    assert {:ok, "nzo-1"} = Sabnzbd.add(%{download_url: "http://prowlarr/getnzb/1"})
+  end
+
+  test "add/1 rejects an SSRF redirect during the NZB fetch before ever contacting SABnzbd" do
+    stub(fn conn ->
+      case conn.request_path do
+        "/api" ->
+          flunk("SABnzbd must not be contacted when the fetch redirect is unsafe")
+
+        "/redirect" ->
+          conn
+          |> Plug.Conn.put_resp_header("location", "http://127.0.0.1/internal")
+          |> Plug.Conn.send_resp(302, "")
+      end
+    end)
+
+    assert {:error, :forbidden_address} =
+             Sabnzbd.add(%{download_url: "http://provider.test/redirect"})
+  end
+
+  test "add/2 names the job with the operation key when the release has no title" do
+    stub_fetch_then_addfile(fn conn ->
       assert conn.params["nzbname"] == "cinder-op-123"
       Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["nzo-123"]})
     end)
@@ -52,7 +110,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     # SABnzbd's "deobfuscate final filenames" renames the video to the job name — a
     # title-bearing name survives that, a bare cinder-<key> name would erase every
     # episode marker the downstream parser needs.
-    stub(fn conn ->
+    stub_fetch_then_addfile(fn conn ->
       assert conn.params["nzbname"] == "Cowboy.Bebop.S01E22.1080p.BluRay-Kitsune.cinder-op-123"
       Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["nzo-123"]})
     end)
@@ -65,7 +123,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
   end
 
   test "add/2 falls back to the plain operation-key name when the title is empty" do
-    stub(fn conn ->
+    stub_fetch_then_addfile(fn conn ->
       assert conn.params["nzbname"] == "cinder-op-123"
       Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["nzo-123"]})
     end)
@@ -75,7 +133,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
   end
 
   test "add/2 sanitizes filesystem-hostile characters out of the title" do
-    stub(fn conn ->
+    stub_fetch_then_addfile(fn conn ->
       assert conn.params["nzbname"] == "A.B.C.D.cinder-op-123"
       Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["nzo-123"]})
     end)
@@ -90,7 +148,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
   test "add/2 caps the nzbname at 200 bytes for a very long ASCII title" do
     long_title = String.duplicate("A", 260)
 
-    stub(fn conn ->
+    stub_fetch_then_addfile(fn conn ->
       nzbname = conn.params["nzbname"]
       assert byte_size(nzbname) == 200
       assert String.ends_with?(nzbname, "cinder-op-123")
@@ -107,7 +165,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
   test "add/2 caps the nzbname at 200 bytes for a long multi-byte (CJK) title" do
     long_title = String.duplicate("葬", 260)
 
-    stub(fn conn ->
+    stub_fetch_then_addfile(fn conn ->
       nzbname = conn.params["nzbname"]
       assert byte_size(nzbname) <= 200
       assert String.ends_with?(nzbname, "cinder-op-123")
@@ -338,13 +396,17 @@ defmodule Cinder.Download.Client.SabnzbdTest do
   end
 
   test "add/1 returns :add_rejected when SABnzbd creates no job (duplicate)" do
-    stub(fn conn -> Req.Test.json(conn, %{"status" => true, "nzo_ids" => []}) end)
+    stub_fetch_then_addfile(fn conn ->
+      Req.Test.json(conn, %{"status" => true, "nzo_ids" => []})
+    end)
 
     assert {:error, :add_rejected} = Sabnzbd.add(%{download_url: "http://x/nzb"})
   end
 
   test "add/1 returns :add_rejected when SABnzbd reports status false" do
-    stub(fn conn -> Req.Test.json(conn, %{"status" => false, "error" => "nope"}) end)
+    stub_fetch_then_addfile(fn conn ->
+      Req.Test.json(conn, %{"status" => false, "error" => "nope"})
+    end)
 
     assert {:error, :add_rejected} = Sabnzbd.add(%{download_url: "http://x/nzb"})
   end
@@ -354,14 +416,15 @@ defmodule Cinder.Download.Client.SabnzbdTest do
   end
 
   test "add/1 does not retry a transient failure (no duplicate downloads)" do
-    # Re-enable Req's default retry for this test; the add path must override it to false. Without
-    # the fix a 503 on the side-effecting `addurl` GET would be retried up to 3×, re-queuing it.
+    # Re-enable Req's default retry for this test; the addfile path must override it to false.
+    # Without the fix a 503 on the side-effecting POST would be retried up to 3×, re-queuing it.
     prev = Application.get_env(:cinder, Sabnzbd)
     on_exit(fn -> Application.put_env(:cinder, Sabnzbd, prev) end)
 
     Application.put_env(:cinder, Sabnzbd,
       base_url: "http://localhost:8080",
       api_key: "test-key",
+      fetch_plug: {Req.Test, Cinder.SabnzbdStub},
       url_resolver: fn _host -> {:ok, [{93, 184, 216, 34}]} end,
       req_options: [plug: {Req.Test, Cinder.SabnzbdStub}]
     )
@@ -369,8 +432,14 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     test_pid = self()
 
     stub(fn conn ->
-      send(test_pid, :add_called)
-      conn |> Plug.Conn.put_status(503) |> Req.Test.text("busy")
+      case conn.request_path do
+        "/api" ->
+          send(test_pid, :add_called)
+          conn |> Plug.Conn.put_status(503) |> Req.Test.text("busy")
+
+        _ ->
+          Req.Test.text(conn, "nzb-bytes")
+      end
     end)
 
     assert {:error, {:sabnzbd_status, 503}} = Sabnzbd.add(%{download_url: "http://x/nzb"})
@@ -382,7 +451,9 @@ defmodule Cinder.Download.Client.SabnzbdTest do
   test "add/1 succeeds on a non-empty nzo_ids regardless of the status field's type" do
     # Robust to SABnzbd version variance: a returned job id means success even if
     # `status` is reported as 1/absent rather than the boolean true.
-    stub(fn conn -> Req.Test.json(conn, %{"status" => 1, "nzo_ids" => ["SABnzbd_nzo_z"]}) end)
+    stub_fetch_then_addfile(fn conn ->
+      Req.Test.json(conn, %{"status" => 1, "nzo_ids" => ["SABnzbd_nzo_z"]})
+    end)
 
     assert {:ok, "SABnzbd_nzo_z"} = Sabnzbd.add(%{download_url: "http://x/nzb"})
   end
@@ -605,29 +676,36 @@ defmodule Cinder.Download.Client.SabnzbdTest do
   end
 
   test "add/1 does not forward the API query key across redirects" do
+    # SABnzbd's own /api response must never be auto-followed on a redirect (redirect: false):
+    # the apikey query param only ever appears on calls to SABnzbd's own base_url, so this
+    # exercises the addfile POST specifically, with the NZB fetch itself uninvolved.
     parent = self()
 
     for status <- [301, 302, 303, 307, 308] do
       stub(fn conn ->
-        if conn.host == "attacker.test" do
-          send(parent, {:attacker_called, conn.query_string})
-          Req.Test.json(conn, %{"nzo_ids" => ["bad"]})
-        else
-          conn
-          |> Plug.Conn.put_resp_header("location", "https://attacker.test/api")
-          |> Plug.Conn.send_resp(status, "")
+        case {conn.host, conn.request_path} do
+          {"attacker.test", _} ->
+            send(parent, {:attacker_called, conn.query_string})
+            Req.Test.json(conn, %{"nzo_ids" => ["bad"]})
+
+          {_, "/getnzb"} ->
+            Req.Test.text(conn, "nzb-bytes")
+
+          {_, "/api"} ->
+            conn
+            |> Plug.Conn.put_resp_header("location", "https://attacker.test/api")
+            |> Plug.Conn.send_resp(status, "")
         end
       end)
 
       log =
         capture_log(fn ->
           assert {:error, {:sabnzbd_status, ^status}} =
-                   Sabnzbd.add(%{download_url: "https://provider.test/file.nzb"})
+                   Sabnzbd.add(%{download_url: "https://provider.test/getnzb"})
         end)
 
       refute_received {:attacker_called, _}
       refute log =~ "test-key"
-      refute log =~ "provider.test"
     end
   end
 
@@ -640,8 +718,15 @@ defmodule Cinder.Download.Client.SabnzbdTest do
 
   test "add/1 delegates a private URL proven to share the configured indexer origin" do
     stub(fn conn ->
-      assert conn.params["name"] == "http://127.0.0.1:9696/getnzb/1"
-      Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["nzo-proxy"]})
+      case conn.request_path do
+        "/getnzb/1" ->
+          assert conn.host == "127.0.0.1"
+          Req.Test.text(conn, "nzb-bytes")
+
+        "/api" ->
+          assert conn.params["mode"] == "addfile"
+          Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["nzo-proxy"]})
+      end
     end)
 
     assert {:ok, "nzo-proxy"} =

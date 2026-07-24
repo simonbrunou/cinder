@@ -30,14 +30,19 @@ defmodule Cinder.Requests do
   end
 
   def create_request(%User{} = user, attrs) do
-    if valid_proposed_profile?(attrs) do
-      create_request_for(
-        user,
-        snapshot_request(attrs),
-        user.role == :admin or Settings.auto_approve_all?()
-      )
-    else
-      {:error, :invalid_media_profile}
+    cond do
+      not valid_proposed_profile?(attrs) ->
+        {:error, :invalid_media_profile}
+
+      user.role != :admin and over_quota?(user) ->
+        {:error, :quota_exceeded}
+
+      true ->
+        create_request_for(
+          user,
+          snapshot_request(attrs),
+          user.role == :admin or Settings.auto_approve_all?()
+        )
     end
   end
 
@@ -77,7 +82,7 @@ defmodule Cinder.Requests do
              %Request{}
              |> Request.create_changeset(Map.merge(attrs, %{user_id: user.id, status: :pending}))
              |> Repo.insert(),
-           false <- over_quota?(user) do
+           false <- pending_over_quota?(user) do
         request
       else
         true -> Repo.rollback(:quota_exceeded)
@@ -89,13 +94,23 @@ defmodule Cinder.Requests do
 
   defp over_quota?(%User{request_quota: nil}), do: false
 
-  # Counts AFTER the insert, so the just-inserted row is included — hence `>` not `>=`.
   defp over_quota?(%User{request_quota: quota, id: id}) do
-    pending =
-      Repo.aggregate(from(r in Request, where: r.user_id == ^id and r.status == :pending), :count)
-
-    pending > quota
+    pending_count(id) >= quota
   end
+
+  defp pending_over_quota?(%User{request_quota: nil}), do: false
+
+  # Counts AFTER the insert, so the just-inserted row is included — hence `>` not `>=`.
+  defp pending_over_quota?(%User{request_quota: quota, id: id}) do
+    pending_count(id) > quota
+  end
+
+  defp pending_count(user_id),
+    do:
+      Repo.aggregate(
+        from(r in Request, where: r.user_id == ^user_id and r.status == :pending),
+        :count
+      )
 
   def approve_request(
         %Request{status: :pending, target_type: "movie"} = request,

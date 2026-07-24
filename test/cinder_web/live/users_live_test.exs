@@ -3,6 +3,44 @@ defmodule CinderWeb.UsersLiveTest do
 
   import Phoenix.LiveViewTest
 
+  test "admin approves a pending account", %{conn: conn} do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+
+    pending =
+      Cinder.AccountsFixtures.user_fixture()
+      |> Ecto.Changeset.change(active: false)
+      |> Cinder.Repo.update!()
+
+    conn = log_in_user(conn, admin)
+
+    {:ok, live_view, _html} = live(conn, ~p"/users")
+    assert has_element?(live_view, "#pending-user-#{pending.id}")
+    refute has_element?(live_view, "#role-btn-#{pending.id}")
+
+    live_view |> element("#approve-user-#{pending.id}") |> render_click()
+
+    assert Cinder.Repo.get!(Cinder.Accounts.User, pending.id).active
+    refute has_element?(live_view, "#pending-user-#{pending.id}")
+    assert has_element?(live_view, "#role-btn-#{pending.id}")
+  end
+
+  test "admin denies a pending account", %{conn: conn} do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+
+    pending =
+      Cinder.AccountsFixtures.user_fixture()
+      |> Ecto.Changeset.change(active: false)
+      |> Cinder.Repo.update!()
+
+    conn = log_in_user(conn, admin)
+
+    {:ok, live_view, _html} = live(conn, ~p"/users")
+    live_view |> element("#deny-user-#{pending.id}") |> render_click()
+
+    refute Cinder.Repo.get(Cinder.Accounts.User, pending.id)
+    refute has_element?(live_view, "#pending-user-#{pending.id}")
+  end
+
   test "admin sets a user's quota", %{conn: conn} do
     admin = Cinder.AccountsFixtures.admin_fixture()
     user = Cinder.AccountsFixtures.user_fixture()
@@ -46,7 +84,7 @@ defmodule CinderWeb.UsersLiveTest do
     })
     |> render_submit()
 
-    assert Cinder.Repo.get_by(Cinder.Accounts.User, email: email)
+    assert %{active: true} = Cinder.Repo.get_by(Cinder.Accounts.User, email: email)
     assert render(lv) =~ email
   end
 
@@ -200,6 +238,8 @@ defmodule CinderWeb.UsersLiveTest do
         "user" => %{"email" => changed_email}
       }),
       render_hook(lv, "toggle_role", %{"id" => to_string(target.id)}),
+      render_hook(lv, "approve", %{"id" => to_string(target.id)}),
+      render_hook(lv, "deny", %{"id" => to_string(target.id)}),
       render_hook(lv, "reset_pw", %{
         "_id" => to_string(target.id),
         "user" => %{
@@ -267,6 +307,8 @@ defmodule CinderWeb.UsersLiveTest do
     # Every destructive / mutating handler, plus the start_* handlers that read the
     # raw id into an assign. A forged "abc" must never raise (String.to_integer would).
     render_hook(lv, "toggle_role", %{"id" => forged})
+    render_hook(lv, "approve", %{"id" => forged})
+    render_hook(lv, "deny", %{"id" => forged})
     render_hook(lv, "delete", %{"id" => forged})
     render_hook(lv, "start_edit_email", %{"id" => forged})
     render_hook(lv, "start_reset_pw", %{"id" => forged})
@@ -306,6 +348,8 @@ defmodule CinderWeb.UsersLiveTest do
     refute Cinder.Repo.get_by(Cinder.Accounts.User, email: user.email)
 
     render_hook(lv, "toggle_role", %{"id" => stale_id})
+    render_hook(lv, "approve", %{"id" => stale_id})
+    render_hook(lv, "deny", %{"id" => stale_id})
     render_hook(lv, "delete", %{"id" => stale_id})
     render_hook(lv, "start_edit_email", %{"id" => stale_id})
     render_hook(lv, "start_reset_pw", %{"id" => stale_id})

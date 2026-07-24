@@ -2,8 +2,13 @@ defmodule CinderWeb.UserSessionController do
   use CinderWeb, :controller
 
   alias Cinder.Accounts
+  alias Cinder.Accounts.IpRateLimiter
   alias Cinder.Accounts.LoginRateLimiter
   alias CinderWeb.UserAuth
+
+  # Bucket name for the IP-only floor below — kept distinct from :registration's bucket in
+  # the same shared IpRateLimiter table.
+  @ip_bucket :login
 
   def create(conn, params) do
     create(conn, params, gettext("Welcome back!"))
@@ -15,6 +20,14 @@ defmodule CinderWeb.UserSessionController do
     ip = ip_string(conn)
 
     cond do
+      # A per-IP floor beneath the {ip, email} limiter: rotating the email on every request
+      # evades that limiter (it's keyed on the pair), but not this one. Increment-and-check in
+      # one atomic step (not blocked? then register_attempt) so a concurrent burst can't sail
+      # past the gate before the counters land. Same generic response as bad credentials — no
+      # oracle either way — and it counts every attempt, so it bounds bcrypt cost per IP.
+      IpRateLimiter.check_and_register(@ip_bucket, ip) == :blocked ->
+        invalid_credentials(conn, email)
+
       # An exhausted {ip, email} pair gets the SAME generic response as bad credentials,
       # so the limiter can't be used as an enumeration or lockout oracle.
       LoginRateLimiter.blocked?(ip, email) ->
@@ -45,21 +58,31 @@ defmodule CinderWeb.UserSessionController do
 
   def update_password(conn, %{"user" => user_params} = params) do
     user = conn.assigns.current_scope.user
-    true = Accounts.sudo_mode?(user)
-    {:ok, {_user, expired_tokens}} = Accounts.update_user_password(user, user_params)
 
-    # disconnect all existing LiveViews with old sessions
-    UserAuth.disconnect_sessions(expired_tokens)
+    # Sudo recheck: this POST can arrive after the sudo window lapses (a stale settings tab, or a
+    # direct request), so redirect to reauth rather than crashing on a `true = ...` match (finding
+    # 7 — mirrors with_sudo_mode/2 in UserLive.Settings).
+    if Accounts.sudo_mode?(user) do
+      {:ok, {_user, expired_tokens}} = Accounts.update_user_password(user, user_params)
 
-    # This authenticated, sudo-gated path pipes into the rate-limited create/3 below AFTER
-    # committing the new password and expiring every session token — a blocked {ip, email}
-    # pair here would lock the user out of the password they just set. Clear it: the user
-    # has already proven possession of the account.
-    LoginRateLimiter.clear(ip_string(conn), user.email)
+      # disconnect all existing LiveViews with old sessions
+      UserAuth.disconnect_sessions(expired_tokens)
 
-    conn
-    |> put_session(:user_return_to, ~p"/users/settings")
-    |> create(params, gettext("Password updated successfully!"))
+      # This authenticated, sudo-gated path pipes into the rate-limited create/3 below AFTER
+      # committing the new password and expiring every session token — a blocked {ip, email}
+      # pair (or a blocked IP-only bucket) here would lock the user out of the password they
+      # just set. Clear both: the user has already proven possession of the account.
+      LoginRateLimiter.clear(ip_string(conn), user.email)
+      IpRateLimiter.clear(@ip_bucket, ip_string(conn))
+
+      conn
+      |> put_session(:user_return_to, ~p"/users/settings")
+      |> create(params, gettext("Password updated successfully!"))
+    else
+      conn
+      |> put_flash(:error, gettext("You must re-authenticate to access this page."))
+      |> redirect(to: ~p"/users/log-in")
+    end
   end
 
   def delete(conn, _params) do

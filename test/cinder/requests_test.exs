@@ -347,17 +347,29 @@ defmodule Cinder.RequestsTest do
     assert {:error, :quota_exceeded} = Requests.create_request(user, other)
   end
 
-  test "quota does not apply to admins or the auto_approve_all path" do
+  test "quota does not apply to admins" do
     admin = admin_fixture()
     {:ok, admin} = Cinder.Accounts.update_user_quota(admin, admin, 0)
     assert {:ok, %{status: :approved}} = Requests.create_request(admin, @attrs)
+  end
 
+  test "over-quota users are refused before snapshot even with auto_approve_all on" do
+    admin = admin_fixture()
     Cinder.Settings.put("auto_approve_all", "true")
     user = user_fixture()
     {:ok, user} = Cinder.Accounts.update_user_quota(admin, user, 0)
 
-    assert {:ok, %{status: :approved}} =
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn id ->
+      send(self(), {:snapshot_called, id})
+      {:error, :unexpected}
+    end)
+
+    assert {:error, :quota_exceeded} =
              Requests.create_request(user, Map.put(@attrs, :target_id, 605))
+
+    refute_received {:snapshot_called, 605}
+    assert Requests.list_for_user(user) == []
+    assert Catalog.get_movie_by_tmdb_id(605) == nil
   end
 
   test "nil quota is unlimited" do

@@ -68,7 +68,12 @@ config :cinder,
   subtitles_provider: Cinder.Subtitles.ProviderMock,
   subtitles_translator: Cinder.Subtitles.TranslatorMock,
   bootstrap_token: "test-bootstrap-token",
-  secure_cookies: false
+  secure_cookies: false,
+  # Off by default: every ConnCase/LiveViewTest request shares one test-harness peer
+  # address, so an always-on global IP bucket (Cinder.Accounts.IpRateLimiter) would let
+  # unrelated tests exhaust each other's budget. Tests for the limiter itself flip this on
+  # locally and restore it in on_exit.
+  ip_rate_limiting: false
 
 # Two client mocks so routing is testable by protocol: a torrent release must
 # reach ClientMock and a usenet release must reach SabnzbdClientMock.
@@ -97,6 +102,7 @@ config :cinder, Cinder.Download.Client.QBittorrent,
 config :cinder, Cinder.Download.Client.Sabnzbd,
   base_url: "http://localhost:8080",
   api_key: "test-key",
+  fetch_plug: {Req.Test, Cinder.SabnzbdStub},
   url_resolver: fn _host -> {:ok, [{93, 184, 216, 34}]} end,
   req_options: [plug: {Req.Test, Cinder.SabnzbdStub}, retry: false]
 

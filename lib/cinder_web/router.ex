@@ -11,6 +11,7 @@ defmodule CinderWeb.Router do
     plug :put_root_layout, html: {CinderWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
+    plug CinderWeb.ContentSecurityPolicy
     plug :fetch_current_scope_for_user
     # Optional HTTP Basic auth — defense-in-depth behind the Caddy + VPN edge.
     # Credentials are read from env at runtime; with either unset the plug is a
@@ -57,6 +58,7 @@ defmodule CinderWeb.Router do
       on_mount: [
         {CinderWeb.Locale, :default},
         {CinderWeb.UserAuth, :require_authenticated},
+        {CinderWeb.UserAuth, :require_active},
         {CinderWeb.UserAuth, :require_setup},
         {CinderWeb.UserAuth, :current_path}
       ] do
@@ -71,6 +73,7 @@ defmodule CinderWeb.Router do
       on_mount: [
         {CinderWeb.Locale, :default},
         {CinderWeb.UserAuth, :require_authenticated},
+        {CinderWeb.UserAuth, :require_active},
         {CinderWeb.UserAuth, :require_admin},
         {CinderWeb.UserAuth, :require_setup},
         {CinderWeb.UserAuth, :current_path}
@@ -147,6 +150,7 @@ defmodule CinderWeb.Router do
       ] do
       live "/users/register", UserLive.Registration, :new
       live "/users/log-in", UserLive.Login, :new
+      live "/pending", PendingApprovalLive
     end
 
     post "/users/log-in", UserSessionController, :create

@@ -582,6 +582,107 @@ defmodule Cinder.Download.Client.QBittorrentTest do
              QBittorrent.add(%{download_url: "http://127.0.0.1/private.torrent"})
   end
 
+  test "add/1 rejects a magnet whose tracker resolves to a forbidden address" do
+    stub_qbit(fn _conn -> flunk("qBittorrent must not be contacted with an unvetted tracker") end)
+
+    magnet =
+      "magnet:?xt=urn:btih:#{@hash}&dn=Movie&tr=" <> URI.encode_www_form("http://127.0.0.1/ann")
+
+    assert {:error, :forbidden_address} = QBittorrent.add(%{download_url: magnet})
+  end
+
+  test "add/1 rejects a magnet whose non-HTTP (udp) tracker resolves to a forbidden address" do
+    stub_qbit(fn _conn -> flunk("qBittorrent must not be contacted with an unvetted tracker") end)
+
+    tracker = URI.encode_www_form("udp://127.0.0.1:1337/announce")
+    magnet = "magnet:?xt=urn:btih:#{@hash}&dn=Movie&tr=#{tracker}"
+
+    assert {:error, :forbidden_address} = QBittorrent.add(%{download_url: magnet})
+  end
+
+  test "add/1 rejects a magnet whose web-seed (ws) resolves to a forbidden address" do
+    stub_qbit(fn _conn ->
+      flunk("qBittorrent must not be contacted with an unvetted web seed")
+    end)
+
+    magnet =
+      "magnet:?xt=urn:btih:#{@hash}&dn=Movie&ws=" <>
+        URI.encode_www_form("http://169.254.169.254/latest/meta-data/")
+
+    assert {:error, :forbidden_address} = QBittorrent.add(%{download_url: magnet})
+  end
+
+  test "add/1 rejects a magnet whose acceptable-source (as) resolves to a forbidden address" do
+    stub_qbit(fn _conn -> flunk("qBittorrent must not be contacted with an unvetted source") end)
+
+    magnet =
+      "magnet:?xt=urn:btih:#{@hash}&dn=Movie&as=" <>
+        URI.encode_www_form("http://10.0.0.5/file.iso")
+
+    assert {:error, :forbidden_address} = QBittorrent.add(%{download_url: magnet})
+  end
+
+  test "add/1 accepts a magnet whose trackers all resolve to safe addresses" do
+    stub_qbit(fn conn ->
+      assert conn.request_path == "/api/v2/torrents/add"
+      Req.Test.text(conn, "Ok.")
+    end)
+
+    tracker = URI.encode_www_form("udp://tracker.example:1337/announce")
+    magnet = "magnet:?xt=urn:btih:#{@hash}&dn=Movie&tr=#{tracker}"
+
+    assert {:ok, _hash} = QBittorrent.add(%{download_url: magnet})
+  end
+
+  test "add/1 rejects a .torrent whose announce endpoint resolves to a forbidden address" do
+    infoval = "d6:lengthi5e4:name5:M.mkv12:piece lengthi16384ee"
+
+    torrent_bytes =
+      "d8:announce20:http://127.0.0.1/ann4:info" <> infoval <> "e"
+
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      case {conn.host, conn.request_path} do
+        {"tracker.test", _} -> Req.Test.text(conn, torrent_bytes)
+        {_, "/api/v2/torrents/add"} -> flunk("qBittorrent must not receive an unvetted torrent")
+      end
+    end)
+
+    assert {:error, :forbidden_address} =
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/123.torrent"})
+  end
+
+  test "add/1 rejects a .torrent whose url-list web seed resolves to a forbidden address" do
+    infoval = "d6:lengthi5e4:name5:M.mkv12:piece lengthi16384ee"
+
+    torrent_bytes =
+      "d4:info" <>
+        infoval <>
+        "8:url-listl29:http://169.254.169.254/latestee"
+
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      case {conn.host, conn.request_path} do
+        {"tracker.test", _} -> Req.Test.text(conn, torrent_bytes)
+        {_, "/api/v2/torrents/add"} -> flunk("qBittorrent must not receive an unvetted torrent")
+      end
+    end)
+
+    assert {:error, :forbidden_address} =
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/123.torrent"})
+  end
+
+  test "add/1 uploads a .torrent whose embedded endpoints all resolve to safe addresses" do
+    infoval = "d6:lengthi5e4:name5:M.mkv12:piece lengthi16384ee"
+    expected = :crypto.hash(:sha, infoval) |> Base.encode16(case: :lower)
+
+    torrent_bytes =
+      "d8:announce20:http://tracker.b/ann4:info" <> infoval <> "e"
+
+    stub_torrent_flow(torrent_bytes)
+
+    assert {:ok, ^expected} =
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/123.torrent"})
+  end
+
   test "add/1 allows a private URL proven to share the configured indexer origin" do
     infoval = "d6:lengthi5e4:name5:M.mkv12:piece lengthi16384ee"
     torrent_bytes = "d8:announce11:http://x/an4:info" <> infoval <> "e"
