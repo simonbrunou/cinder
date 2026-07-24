@@ -207,6 +207,28 @@ defmodule Cinder.Notifier.DiscordTest do
     refute embed["description"] =~ "<"
   end
 
+  # "a@everyone" is a registerable address whose every character survives the whitelist. It is
+  # inert in an embed only because Discord does not resolve mentions there — this keeps it inert
+  # if the text is ever moved into `content`.
+  test "a mention-shaped address cannot become a channel ping" do
+    for {email, banned} <- [{"a@everyone", "@everyone"}, {"x@here", "@here"}] do
+      expect_post()
+      assert :ok = Discord.notify({:user_registered, %{id: 9, email: email}})
+
+      assert_receive {:posted, %{"embeds" => [embed]}}
+      refute embed["description"] =~ banned
+    end
+  end
+
+  # \b in the neutralising regex, so a real domain that merely starts with "here" is untouched.
+  test "a domain beginning with 'here' is not mangled" do
+    expect_post()
+    assert :ok = Discord.notify({:user_registered, %{id: 9, email: "kim@herefordshire.com"}})
+
+    assert_receive {:posted, %{"embeds" => [embed]}}
+    assert embed["description"] =~ "kim@herefordshire.com"
+  end
+
   test "an ordinary address is left readable" do
     expect_post()
     assert :ok = Discord.notify({:user_registered, %{id: 9, email: "kim.o'neil+tv@example.com"}})

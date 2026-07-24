@@ -188,7 +188,16 @@ defmodule Cinder.Notifier.Discord do
   # a link regardless of which syntax it supports. A real address is unaffected.
   #
   # Titles are not sanitized — those come from TMDB, not from a user.
-  defp display_email(email), do: String.replace(email, ~r/[^A-Za-z0-9._%+'@-]/, "")
+  defp display_email(email) do
+    email
+    |> String.replace(~r/[^A-Za-z0-9._%+'@-]/, "")
+    # "a@everyone" and "x@here" are registerable addresses whose every character survives the
+    # whitelist above. They are inert only because we post embeds, and Discord does not resolve
+    # mentions inside an embed — i.e. the safety lives in a remote service's rendering rules,
+    # not here. A zero-width space keeps it inert if this text ever moves into `content`.
+    # \b so a real domain like "herefordshire.com" is left alone.
+    |> String.replace(~r/@(everyone|here)\b/i, "@​\\1")
+  end
 
   # A blank poster_path (nil or "") yields no thumbnail: an empty string would otherwise build a
   # bare base URL with no image path and render as a broken thumbnail in Discord.

@@ -109,7 +109,7 @@ defmodule CinderWeb.CoreComponents do
   """
   attr :rest, :global,
     include:
-      ~w(href navigate patch method download name value disabled type form aria-label aria-describedby)
+      ~w(href navigate patch method download name value disabled type form aria-label aria-describedby target rel)
 
   attr :class, :any, default: nil, doc: "extra classes appended to the computed button classes"
   attr :variant, :string, default: "primary", values: ~w(primary neutral ghost danger warning)

@@ -207,18 +207,21 @@ defmodule CinderWeb.MovieDiscoveryLive do
                 Item Id), so a "Watch"-and-play-icon label would promise playback it can't
                 deliver. Only shown once the file is actually in the library, and only when an
                 operator has set a browser-reachable URL. --%>
-          <.link
+          <.button
             :if={@state == :available and @media_server_url}
             href={@media_server_url}
             target="_blank"
             rel="noopener"
-            class="btn btn-primary btn-sm mt-4"
+            variant="primary"
+            size="sm"
+            class="mt-4"
           >
             <.icon name="hero-arrow-top-right-on-square" class="size-4" />{gettext(
               "Open in %{server}",
               server: @media_server_name
             )}
-          </.link>
+            <span class="sr-only">{gettext("(opens in a new tab)")}</span>
+          </.button>
 
           <form
             :if={@state in [:none, :denied]}

@@ -136,9 +136,12 @@ defmodule CinderWeb.MovieDiscoveryLiveTest do
       put_media_server_web_url("https://plex.example.com")
       make_available(27_205)
 
-      {:ok, lv, _html} = live(conn, ~p"/movie/tmdb/27205")
+      {:ok, lv, html} = live(conn, ~p"/movie/tmdb/27205")
 
       assert has_element?(lv, ~s(a[href="https://plex.example.com"]), "Open in Plex")
+      # It leaves the app, so say so for anyone who can't see the new tab open.
+      assert html =~ "opens in a new tab"
+      assert html =~ ~s(rel="noopener")
     end
 
     # A movie nobody has yet is not watchable, however the media server is configured.

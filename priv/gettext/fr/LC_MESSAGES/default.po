@@ -70,7 +70,7 @@ msgid "Activity"
 msgstr "Activité"
 
 #: lib/cinder_web/components/discover_components.ex:82
-#: lib/cinder_web/live/movie_discovery_live.ex:239
+#: lib/cinder_web/live/movie_discovery_live.ex:242
 #, elixir-autogen, elixir-format
 msgid "Add"
 msgstr "Ajouter"
@@ -81,7 +81,7 @@ msgid "Add a show from Discover."
 msgstr "Ajoutez une série depuis Découvrir."
 
 #: lib/cinder_web/components/discover_components.ex:80
-#: lib/cinder_web/live/movie_discovery_live.ex:237
+#: lib/cinder_web/live/movie_discovery_live.ex:240
 #, elixir-autogen, elixir-format
 msgid "Adding…"
 msgstr "Ajout…"
@@ -1442,7 +1442,7 @@ msgid "Account settings"
 msgstr "Paramètres du compte"
 
 #: lib/cinder_web/components/discover_components.ex:79
-#: lib/cinder_web/live/movie_discovery_live.ex:236
+#: lib/cinder_web/live/movie_discovery_live.ex:239
 #, elixir-autogen, elixir-format
 msgid "Add %{title}"
 msgstr "Ajouter %{title}"
@@ -3572,7 +3572,12 @@ msgstr "URL web Jellyfin"
 msgid "Plex web URL"
 msgstr "URL web Plex"
 
-#: lib/cinder_web/live/movie_discovery_live.ex:217
+#: lib/cinder_web/live/movie_discovery_live.ex:219
 #, elixir-autogen, elixir-format
 msgid "Open in %{server}"
 msgstr "Ouvrir dans %{server}"
+
+#: lib/cinder_web/live/movie_discovery_live.ex:223
+#, elixir-autogen, elixir-format
+msgid "(opens in a new tab)"
+msgstr "(ouvre dans un nouvel onglet)"
