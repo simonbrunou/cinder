@@ -380,6 +380,28 @@ defmodule Cinder.RequestsTest do
              Requests.create_request(user, Map.put(@attrs, :target_id, 606))
   end
 
+  test "a pending request emits a notifier event attributed to the requester" do
+    Cinder.TestNotifier.subscribe()
+    user = user_fixture()
+    email = user.email
+
+    {:ok, _} = Requests.create_request(user, @attrs)
+
+    assert_receive {:notify, {:request_created, %{title: "Movie 603", user: %{email: ^email}}}}
+  end
+
+  # An admin's own request auto-approves, so it is not sitting in anyone's queue. Announcing it
+  # as "awaiting approval" would page the admin about their own click.
+  test "an auto-approved request announces the approval and not a pending request" do
+    Cinder.TestNotifier.subscribe()
+    admin = admin_fixture()
+
+    {:ok, _} = Requests.create_request(admin, @attrs)
+
+    assert_receive {:notify, {:request_approved, _}}
+    refute_receive {:notify, {:request_created, _}}
+  end
+
   test "approval emits a notifier event" do
     Cinder.TestNotifier.subscribe()
     user = user_fixture()

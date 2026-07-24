@@ -82,6 +82,15 @@ defmodule CinderWeb.DiscoverComponents do
         {gettext("Add")}
       </.button>
     </form>
+    <.button
+      navigate={~p"/movie/tmdb/#{@tmdb_id}"}
+      variant="ghost"
+      size="xs"
+      class="w-full"
+      aria-label={gettext("Details for %{title}", title: @title)}
+    >
+      {gettext("Details")}
+    </.button>
     """
   end
 
@@ -140,10 +149,17 @@ defmodule CinderWeb.DiscoverComponents do
     """
   end
 
-  defp original_option_label(nil), do: gettext("Original")
-  defp original_option_label("en"), do: gettext("Original (English)")
-  defp original_option_label("fr"), do: gettext("Original (French)")
-  defp original_option_label(_), do: gettext("Original")
+  @doc """
+  Label for the "original language" option of the audio picker.
+
+  Public so `MovieDiscoveryLive` names the language the same way the grid card does — the
+  detail page is where a user has the most context to choose audio, so it would be the worst
+  place to fall back to a bare "Original".
+  """
+  def original_option_label(nil), do: gettext("Original")
+  def original_option_label("en"), do: gettext("Original (English)")
+  def original_option_label("fr"), do: gettext("Original (French)")
+  def original_option_label(_), do: gettext("Original")
 
   @doc """
   Human label for a TMDB `known_for_department`/`department` value (the app is
@@ -165,10 +181,17 @@ defmodule CinderWeb.DiscoverComponents do
   def department_label("Lighting"), do: gettext("Lighting")
   def department_label(other), do: other
 
-  # Precedence: an available movie outranks a stale denied/approved request. An
-  # `:upgrading` movie still has a playable library file, so it reads as available
-  # (and must not re-show the Request affordance).
-  defp title_state(tmdb_id, request_status, movie_status) do
+  @doc """
+  Composite per-user state for a movie card.
+
+  Precedence: an available movie outranks a stale denied/approved request. An
+  `:upgrading` movie still has a playable library file, so it reads as available
+  (and must not re-show the Request affordance).
+
+  Public so `MovieDiscoveryLive` renders the same badge as the grid card from one
+  source of truth, rather than re-deriving the precedence.
+  """
+  def title_state(tmdb_id, request_status, movie_status) do
     cond do
       movie_status[tmdb_id] in [:available, :upgrading] -> :available
       request_status[tmdb_id] == :pending -> :pending

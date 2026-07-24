@@ -9,6 +9,12 @@ defmodule Cinder.Notifier.Log do
   def notify({:request_approved, request}),
     do: log("request approved: #{request.title} (user ##{request.user_id})")
 
+  def notify({:request_created, request}),
+    do: log("request pending approval: #{request.title} (user ##{request.user_id})")
+
+  def notify({:user_registered, user}),
+    do: log("user awaiting activation: #{user.email} (##{user.id})")
+
   def notify({:movie_available, movie}), do: log("movie available: #{movie.title}")
 
   def notify({:movie_failed, movie, reason}),

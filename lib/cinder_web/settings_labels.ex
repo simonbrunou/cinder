@@ -49,6 +49,8 @@ defmodule CinderWeb.SettingsLabels do
       gettext_noop("Jellyfin API key"),
       gettext_noop("Plex URL"),
       gettext_noop("Plex token"),
+      gettext_noop("Jellyfin web URL"),
+      gettext_noop("Plex web URL"),
       gettext_noop("Discord webhook URL"),
       gettext_noop("OpenSubtitles API key"),
       gettext_noop("OpenSubtitles username"),

@@ -820,4 +820,129 @@ defmodule Cinder.SettingsTest do
       overrides
     )
   end
+
+  describe "subscribe/0" do
+    # Open pages re-read config on this message; without it a settings change is invisible
+    # until the page happens to re-render for some other reason.
+    test "a write broadcasts once the env overlay has been applied" do
+      Settings.subscribe()
+      Settings.put("plex_web_url", "https://plex.broadcast")
+
+      assert_receive :settings_updated
+
+      # Applied before the broadcast, so a subscriber that re-reads sees the new value.
+      assert Application.get_env(:cinder, Cinder.Library.MediaServer.Plex)[:web_url] ==
+               "https://plex.broadcast"
+    end
+
+    test "a delete broadcasts too" do
+      Settings.put("plex_web_url", "https://plex.broadcast")
+      Settings.subscribe()
+      Settings.delete("plex_web_url")
+
+      assert_receive :settings_updated
+    end
+  end
+
+  describe "media_server_web_link/0" do
+    # Writes the type row directly rather than via Settings.put/2: put triggers
+    # load_into_env/0, which flips the global :media_server impl away from the Mox mock and
+    # leaks into every later test in the run. media_server_web_link/0 reads the row, not the
+    # impl, so the row alone is what this needs.
+    defp set_media_server_type(type) do
+      Repo.insert!(%Setting{key: "media_server_type", value: type, is_secret: false})
+    end
+
+    defp set_web_url(server, url) do
+      module =
+        case server do
+          :plex -> Cinder.Library.MediaServer.Plex
+          :jellyfin -> Cinder.Library.MediaServer.Jellyfin
+        end
+
+      config = Application.get_env(:cinder, module, [])
+      Application.put_env(:cinder, module, Keyword.put(config, :web_url, url))
+    end
+
+    setup do
+      # A leftover value on either module would mask the case under test.
+      set_web_url(:plex, nil)
+      set_web_url(:jellyfin, nil)
+      :ok
+    end
+
+    test "is nil when neither media server has one configured" do
+      refute Settings.media_server_web_link()
+    end
+
+    test "follows the configured media server type" do
+      set_web_url(:plex, "https://plex.test")
+      set_web_url(:jellyfin, "https://jellyfin.test")
+      set_media_server_type("plex")
+
+      assert Settings.media_server_web_link() == {:plex, "https://plex.test"}
+    end
+
+    test "follows the configured type when that type is Jellyfin" do
+      set_web_url(:plex, "https://plex.test")
+      set_web_url(:jellyfin, "https://jellyfin.test")
+      set_media_server_type("jellyfin")
+
+      assert Settings.media_server_web_link() == {:jellyfin, "https://jellyfin.test"}
+    end
+
+    # The whole point of reading the type: a Plex household with a stale Jellyfin URL still
+    # configured must not send people to a server that does not have the file.
+    test "never falls back to the other server's URL once a type is set" do
+      set_media_server_type("plex")
+      set_web_url(:jellyfin, "https://jellyfin.test")
+
+      refute Settings.media_server_web_link()
+    end
+
+    test "with no type saved, uses a uniquely configured URL" do
+      set_web_url(:jellyfin, "https://jellyfin.test")
+
+      assert Settings.media_server_web_link() == {:jellyfin, "https://jellyfin.test"}
+    end
+
+    # Either answer would be a guess, and the wrong one is worse than none.
+    test "with no type saved and both configured, refuses to guess" do
+      set_web_url(:plex, "https://plex.test")
+      set_web_url(:jellyfin, "https://jellyfin.test")
+
+      refute Settings.media_server_web_link()
+    end
+
+    # A scheme-less host would render as a RELATIVE href (resolving against the current page),
+    # and "javascript:" makes Phoenix's <.link> raise. Both are operator typos; no link beats a
+    # broken link or a crashed page.
+    test "ignores a value that is not an absolute http(s) URL" do
+      set_media_server_type("plex")
+
+      for bad <- [
+            "plex.example.com",
+            "javascript:alert(1)",
+            "/relative",
+            "ftp://x.test",
+            "http://",
+            ""
+          ] do
+        set_web_url(:plex, bad)
+
+        refute Settings.media_server_web_link(), "expected #{inspect(bad)} to be rejected"
+      end
+    end
+
+    # media_server_type is submitted with the form (plan/1 force-writes it, falling back to the
+    # default when absent), so a realistic save carries both fields.
+    test "a saved plex_web_url setting overlays onto Application env" do
+      Settings.save_form(%{
+        "media_server_type" => "plex",
+        "plex_web_url" => "https://plex.saved"
+      })
+
+      assert Settings.media_server_web_link() == {:plex, "https://plex.saved"}
+    end
+  end
 end

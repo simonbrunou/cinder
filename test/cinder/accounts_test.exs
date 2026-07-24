@@ -79,6 +79,24 @@ defmodule Cinder.AccountsTest do
       assert second.request_quota == 10
     end
 
+    test "a signup that lands inactive notifies, so the admin knows someone is waiting" do
+      Cinder.TestNotifier.subscribe()
+
+      {:ok, _admin} =
+        Accounts.register_user(
+          %{email: unique_user_email(), password: valid_user_password()},
+          @bootstrap_token
+        )
+
+      # The bootstrap admin is active immediately, so there is nobody to tell.
+      refute_receive {:notify, {:user_registered, _}}
+
+      email = unique_user_email()
+      {:ok, _} = Accounts.register_user(%{email: email, password: valid_user_password()})
+
+      assert_receive {:notify, {:user_registered, %{email: ^email, active: false}}}
+    end
+
     test "a Plex :user row with zero admins does not block bootstrap admin creation" do
       plex_user =
         user_fixture()

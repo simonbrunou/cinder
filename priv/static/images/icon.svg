@@ -1,0 +1,25 @@
+<!-- Source of truth for the PWA/app icons. The repo had no artwork (logo.svg was the stock
+     Phoenix bird), so this is drawn from the only existing identity: the CIN/DER wordmark's
+     ember accent on the dark theme's base-100.
+
+     Colors are the literal sRGB of the daisyUI dark-theme tokens in assets/css/app.css:
+       #0B0C10 = the base-100 token, oklch(15.5% 0.008 265)
+       #F38042 = the primary token,  oklch(72% 0.16 47)
+
+     The mark is pure geometry (an arc), not text, so rasterizing never depends on a font being
+     installed. It sits well inside the maskable safe area (outer radius 158 of 256, and the
+     spec's safe zone is 205), so one file serves both the plain and "maskable" manifest entries.
+
+     Regenerate the PNGs after editing:
+       rsvg-convert -w 192 -h 192 priv/static/images/icon.svg -o priv/static/images/icon-192.png
+       rsvg-convert -w 512 -h 512 priv/static/images/icon.svg -o priv/static/images/icon-512.png
+       rsvg-convert -w 180 -h 180 priv/static/images/icon.svg -o priv/static/images/apple-touch-icon.png
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" fill="#0B0C10"/>
+  <path d="M 339.6 156.4 A 130 130 0 1 0 339.6 355.6"
+        fill="none"
+        stroke="#F38042"
+        stroke-width="56"
+        stroke-linecap="round"/>
+</svg>

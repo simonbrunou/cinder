@@ -89,7 +89,14 @@ defmodule Cinder.Requests do
         {:error, changeset} -> Repo.rollback(changeset)
       end
     end)
-    |> tap_ok(&broadcast({:request_created, &1}))
+    |> tap_ok(fn request ->
+      broadcast({:request_created, request})
+      # Only this path notifies. The other two {:request_created, _} broadcasts (an approval
+      # revert and reopen_request/2) are admin-initiated, so telling the admin "someone is
+      # waiting" would just be echoing their own click back at them.
+      # `user` is already in scope, so attributing the event needs no preload.
+      Notifier.notify({:request_created, %{request | user: user}})
+    end)
   end
 
   defp over_quota?(%User{request_quota: nil}), do: false
@@ -471,7 +478,13 @@ defmodule Cinder.Requests do
     end
   end
 
+  # Repo.preload is a no-op on the two admin-approval paths (their caller's query already
+  # preloaded :user). The two auto-approve paths build the struct from a bare insert, so
+  # without this a notifier reading `request.user` would raise on %NotLoaded{} — and
+  # Notifier.notify/1 swallows raises, so Discord would silently never post for
+  # auto-approved requests while working fine for admin-approved ones.
   defp announce_approved(request) do
+    request = Repo.preload(request, :user)
     broadcast({:request_approved, request})
     Notifier.notify({:request_approved, request})
   end
