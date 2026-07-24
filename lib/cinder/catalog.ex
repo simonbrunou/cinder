@@ -37,6 +37,8 @@ defmodule Cinder.Catalog do
   @topic "movies"
   @download_metric_fields [:download_progress, :download_speed, :download_eta]
   @max_search_attempts 10
+  # Above the HTTP client's ~25s worst case of connect+pool+receive (see `search_discover/2`).
+  @discover_task_timeout 30_000
 
   @doc """
   Searches TMDB for `query`. A blank/whitespace query short-circuits to `{:ok, []}`
@@ -60,32 +62,91 @@ defmodule Cinder.Catalog do
   end
 
   @doc """
-  Combined Discover search: movies + TV for one query. Returns `{:ok, results}`
-  where each result is a normalized search map plus a `:type` key (`:movie | :tv`),
-  interleaved so both kinds surface near the top of the grid. A blank/whitespace
-  query short-circuits to `{:ok, []}` with no API call. If *both* endpoints error,
-  returns `{:error, :search_failed}`; if only one errors it is logged and its side
-  is omitted — partial results beat none for discovery.
+  Combined Discover search: movies + TV + people + collections for one query.
+  Returns `{:ok, results}` where each result is a normalized search map plus a
+  `:type` key (`:movie | :tv | :person | :collection`), round-robin interleaved
+  across all four kinds so no one dominates the top of the grid. A
+  blank/whitespace query short-circuits to `{:ok, []}` with no API call.
 
-  ponytail: runs the two searches sequentially (matches the existing synchronous
-  search style; household scale + 300ms debounce). Upgrade path if search latency
-  bites: wrap each in Task.async/await_many to run them concurrently.
+  The four searches run concurrently (`Task.async` + `Task.yield_many`, 30s
+  timeout — above the HTTP client's ~25s worst case of connect+pool+receive); a
+  side that times out, raises, or exits degrades to `{:error, reason}` like any
+  other failed side rather than crashing the caller: the task fun converts its
+  own raises/exits to error tuples (the tasks are linked, so an uncaught one
+  would kill the LiveView), and `Task.await_many` is avoided because it would
+  exit this process on a timeout instead of degrading.
+
+  If *both* movies and TV error, returns `{:error, :search_failed}` regardless of
+  the person/collection sides (the naive "all four must fail" rule would show a
+  misleading "No matches" when both primary sides are down); any other partial
+  failure is logged and its side is omitted — partial results beat none for
+  discovery.
   """
   def search_discover(query, locale \\ Locales.canonical()) do
     if String.trim(query) == "" do
       {:ok, []}
     else
-      merge_discover(search_movies(query, locale), search_tv(query, locale))
+      query
+      |> discover_tasks(locale)
+      |> await_discover_tasks()
+      |> merge_discover()
     end
   end
 
-  defp merge_discover({:error, _} = movies, {:error, _} = tv) do
+  defp discover_tasks(query, locale) do
+    [
+      movies: discover_task(fn -> search_movies(query, locale) end),
+      tv: discover_task(fn -> search_tv(query, locale) end),
+      persons: discover_task(fn -> search_person(query, locale) end),
+      collections: discover_task(fn -> search_collection(query, locale) end)
+    ]
+  end
+
+  # Task.async links the task to the caller (the LiveView): an uncaught raise or exit
+  # inside a side — a pool-checkout timeout under contention *exits* rather than
+  # returning an error tuple — would kill the page before yield_many could report it.
+  # Convert both into the side's normal {:error, _} contract instead.
+  defp discover_task(fun) do
+    Task.async(fn ->
+      try do
+        fun.()
+      rescue
+        e -> {:error, e}
+      catch
+        :exit, reason -> {:error, {:exit, reason}}
+      end
+    end)
+  end
+
+  defp await_discover_tasks(tasks) do
+    keys = Keyword.keys(tasks)
+    yielded = tasks |> Keyword.values() |> Task.yield_many(@discover_task_timeout)
+
+    results =
+      Enum.map(yielded, fn {task, result} ->
+        case result || Task.shutdown(task, :brutal_kill) do
+          {:ok, value} -> value
+          {:exit, reason} -> {:error, reason}
+          nil -> {:error, :timeout}
+        end
+      end)
+
+    keys |> Enum.zip(results) |> Map.new()
+  end
+
+  defp merge_discover(%{movies: {:error, _} = movies, tv: {:error, _} = tv}) do
     Logger.warning("Discover search failed entirely: movies=#{inspect(movies)} tv=#{inspect(tv)}")
     {:error, :search_failed}
   end
 
-  defp merge_discover(movies_res, tv_res) do
-    {:ok, interleave(tag(movies_res, :movie), tag(tv_res, :tv))}
+  defp merge_discover(%{movies: movies, tv: tv, persons: persons, collections: collections}) do
+    {:ok,
+     interleave([
+       tag(movies, :movie),
+       tag(tv, :tv),
+       tag(persons, :person),
+       tag(collections, :collection)
+     ])}
   end
 
   defp tag({:ok, list}, type), do: Enum.map(list, &Map.put(&1, :type, type))
@@ -95,12 +156,31 @@ defmodule Cinder.Catalog do
     []
   end
 
-  # Round-robin so a 2-col mobile grid shows both kinds near the top, then any tail.
-  defp interleave(a, b) do
-    0..max(length(a), length(b))
-    |> Enum.flat_map(fn i -> [Enum.at(a, i), Enum.at(b, i)] end)
+  # Round-robin across all of `lists` so a 2-col mobile grid shows every kind near the
+  # top, then any tail. Generalizes the old 2-list interleave to N lists.
+  defp interleave(lists) do
+    max_len = lists |> Enum.map(&length/1) |> Enum.max()
+
+    0..max_len
+    |> Enum.flat_map(fn i -> Enum.map(lists, &Enum.at(&1, i)) end)
     |> Enum.reject(&is_nil/1)
   end
+
+  @doc """
+  This week's trending movies + TV from TMDB, normalized like `search_discover/2`
+  results (each map carries `type: :movie | :tv`).
+  """
+  def trending(locale \\ Locales.canonical()), do: tmdb().trending(locale)
+
+  def search_person(query, locale \\ Locales.canonical()), do: tmdb().search_person(query, locale)
+
+  def search_collection(query, locale \\ Locales.canonical()),
+    do: tmdb().search_collection(query, locale)
+
+  def get_person(tmdb_id, locale \\ Locales.canonical()), do: tmdb().get_person(tmdb_id, locale)
+
+  def get_collection(tmdb_id, locale \\ Locales.canonical()),
+    do: tmdb().get_collection(tmdb_id, locale)
 
   @doc "Fetches series details (including seasons list) from TMDB by tmdb_id."
   def tmdb_series(tmdb_id), do: tmdb().get_series(tmdb_id)

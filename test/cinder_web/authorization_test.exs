@@ -1,7 +1,14 @@
 defmodule CinderWeb.AuthorizationTest do
   use CinderWeb.ConnCase, async: false
+  import Mox
   import Phoenix.LiveViewTest
   import Cinder.AccountsFixtures
+
+  # Mounting `/` fetches trending (async, private-mode Mox reaches it via $callers).
+  setup do
+    stub(Cinder.Catalog.TMDBMock, :trending, fn _ -> {:ok, []} end)
+    :ok
+  end
 
   for path <- ["/activity", "/settings", "/requests", "/users"] do
     test "anonymous is redirected from #{path}", %{conn: conn} do

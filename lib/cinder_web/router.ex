@@ -63,6 +63,8 @@ defmodule CinderWeb.Router do
       live "/", DiscoverLive
       live "/my-requests", MyRequestsLive
       live "/series/tmdb/:tmdb_id", SeriesDiscoveryLive
+      live "/person/tmdb/:tmdb_id", EntityDiscoveryLive, :person
+      live "/collection/tmdb/:tmdb_id", EntityDiscoveryLive, :collection
     end
 
     live_session :admin,

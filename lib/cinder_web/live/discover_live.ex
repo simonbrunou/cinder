@@ -7,10 +7,13 @@ defmodule CinderWeb.DiscoverLive do
   """
   use CinderWeb, :live_view
 
-  import CinderWeb.LiveHelpers
+  import CinderWeb.DiscoverComponents
+  import CinderWeb.RequestHelpers
 
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog
+
+  require Logger
 
   @picks Language.preferences()
 
@@ -23,10 +26,23 @@ defmodule CinderWeb.DiscoverLive do
       Cinder.Requests.subscribe()
     end
 
-    {:ok,
-     socket
-     |> assign(query: "", results: [], search_error: false, filter: :all)
-     |> assign_request_state()}
+    socket =
+      socket
+      |> assign(query: "", results: [], search_error: false, filter: :all, trending: [])
+      |> assign_request_state()
+
+    {:ok, maybe_load_trending(socket)}
+  end
+
+  # Trending fills the otherwise-empty landing grid; fetched off-process so a slow
+  # TMDB can't hold up mount, and only on the connected mount (one fetch, not two).
+  defp maybe_load_trending(socket) do
+    if connected?(socket) do
+      locale = socket.assigns.locale
+      start_async(socket, :trending, fn -> Catalog.trending(locale) end)
+    else
+      socket
+    end
   end
 
   @impl true
@@ -52,7 +68,10 @@ defmodule CinderWeb.DiscoverLive do
     with {id, ""} <- Integer.parse(tmdb_id),
          {:ok, profile} <- normalize_profile(params["proposed_media_profile"]),
          movie when not is_nil(movie) <-
-           Enum.find(socket.assigns.results, &(&1.type == :movie and &1.tmdb_id == id)) do
+           Enum.find(
+             socket.assigns.results ++ socket.assigns.trending,
+             &(&1.type == :movie and &1.tmdb_id == id)
+           ) do
       {:noreply, add(socket, movie, preferred, profile)}
     else
       _ -> {:noreply, socket}
@@ -64,6 +83,8 @@ defmodule CinderWeb.DiscoverLive do
       case type do
         "movie" -> :movie
         "tv" -> :tv
+        "person" -> :person
+        "collection" -> :collection
         "all" -> :all
         _ -> socket.assigns.filter
       end
@@ -104,6 +125,21 @@ defmodule CinderWeb.DiscoverLive do
   def handle_info(_message, socket), do: {:noreply, socket}
 
   @impl true
+  def handle_async(:trending, {:ok, {:ok, results}}, socket) do
+    {:noreply, assign(socket, trending: results)}
+  end
+
+  # Trending is decorative — on failure the page simply stays search-only, no flash.
+  def handle_async(:trending, {:ok, {:error, reason}}, socket) do
+    Logger.warning("Trending fetch failed: #{inspect(reason)}")
+    {:noreply, socket}
+  end
+
+  def handle_async(:trending, {:exit, reason}, socket) do
+    Logger.warning("Trending fetch crashed: #{inspect(reason)}")
+    {:noreply, socket}
+  end
+
   def handle_async({:add, _tmdb_id, title}, {:ok, result}, socket) do
     {:noreply, request_result(socket, title, result)}
   end
@@ -122,135 +158,6 @@ defmodule CinderWeb.DiscoverLive do
   defp normalize_profile("standard"), do: {:ok, :standard}
   defp normalize_profile("anime"), do: {:ok, :anime}
   defp normalize_profile(_), do: {:error, :invalid_media_profile}
-
-  defp add(socket, movie, preferred, profile) do
-    user = socket.assigns.current_scope.user
-
-    attrs = %{
-      target_type: "movie",
-      target_id: movie.tmdb_id,
-      title: movie.title,
-      year: movie.year,
-      poster_path: movie.poster_path,
-      original_language: movie.original_language,
-      preferred_language: preferred,
-      proposed_media_profile: profile
-    }
-
-    start_async(socket, {:add, movie.tmdb_id, movie.title}, fn ->
-      Cinder.Requests.create_request(user, attrs)
-    end)
-  end
-
-  defp request_result(socket, title, result) do
-    case result do
-      {:ok, %{status: :approved}} ->
-        socket
-        |> put_flash(:info, gettext("%{title} added.", title: title))
-        |> assign_request_state()
-
-      {:ok, %{status: :pending}} ->
-        socket
-        |> put_flash(
-          :info,
-          gettext("%{title} requested. Awaiting approval.", title: title)
-        )
-        |> assign_request_state()
-
-      {:error, :quota_exceeded} ->
-        put_flash(
-          socket,
-          :error,
-          gettext("You've reached your request limit. Wait for approvals to clear.")
-        )
-
-      {:error, %Ecto.Changeset{} = cs} ->
-        # Only a duplicate-pending unique-constraint is the benign "already requested" case;
-        # any other changeset failure is a real error, not a reassuring info toast.
-        if duplicate_request?(cs) do
-          put_flash(socket, :info, gettext("%{title} is already requested.", title: title))
-        else
-          put_flash(
-            socket,
-            :error,
-            gettext("Couldn't request %{title}. Try again.", title: title)
-          )
-        end
-
-      {:error, _} ->
-        put_flash(
-          socket,
-          :error,
-          gettext("Couldn't request %{title}. Try again.", title: title)
-        )
-    end
-  end
-
-  # The user's request status per target (latest wins) plus the global movie pipeline
-  # status per tmdb_id; together they drive the per-title movie badge.
-  defp assign_request_state(socket) do
-    user = socket.assigns.current_scope.user
-    requests = Cinder.Requests.list_for_user(user)
-    request_status = latest_status_by(requests, & &1.target_id)
-
-    # TV cards mirror the movie badge, but a series' state is per-season: key the newest season
-    # request by the series tmdb_id (a season request's target_id), and treat a series as
-    # available once any of its seasons has imported.
-    season_requests = Enum.filter(requests, &(&1.target_type == "season"))
-    series_request_status = latest_status_by(season_requests, & &1.target_id)
-
-    socket
-    |> assign(request_status: request_status, series_request_status: series_request_status)
-    |> assign_available_series()
-    |> assign_movie_status()
-  end
-
-  # Series-level availability for the TV badge: the tmdb_ids with ≥1 imported season. Cheap to
-  # recompute on its own so a `series`-topic event needn't rebuild the whole request state.
-  defp assign_available_series(socket) do
-    assign(socket,
-      available_series: MapSet.new(Catalog.available_season_keys(), fn {tid, _n} -> tid end)
-    )
-  end
-
-  # Read the full movie-status map fresh from the DB (authoritative) on the infrequent
-  # paths that call this — mount, add, request events — so a just-approved/created movie
-  # is reflected even though its `:movie_created` broadcast rides the movies topic with no
-  # cross-topic ordering guarantee vs the `:request_*` event.
-  defp assign_movie_status(socket) do
-    assign(socket, movie_status: Catalog.movie_status_map())
-  end
-
-  defp patch_movie_status(socket, movie) do
-    assign(socket,
-      movie_status: Map.put(socket.assigns.movie_status, movie.tmdb_id, movie.status)
-    )
-  end
-
-  # Precedence: an available movie outranks a stale denied/approved request. An
-  # `:upgrading` movie still has a playable library file, so it reads as available
-  # (and must not re-show the Request affordance).
-  defp title_state(tmdb_id, request_status, movie_status) do
-    cond do
-      movie_status[tmdb_id] in [:available, :upgrading] -> :available
-      request_status[tmdb_id] == :pending -> :pending
-      request_status[tmdb_id] == :approved -> :approved
-      request_status[tmdb_id] == :denied -> :denied
-      true -> :none
-    end
-  end
-
-  # Series-level composite for a TV card, same precedence as title_state/3 but sourced from the
-  # user's season requests (keyed by series tmdb_id) and season availability.
-  defp tv_title_state(tmdb_id, series_request_status, available_series) do
-    cond do
-      MapSet.member?(available_series, tmdb_id) -> :available
-      series_request_status[tmdb_id] == :pending -> :pending
-      series_request_status[tmdb_id] == :approved -> :approved
-      series_request_status[tmdb_id] == :denied -> :denied
-      true -> :none
-    end
-  end
 
   @impl true
   def render(assigns) do
@@ -296,7 +203,9 @@ defmodule CinderWeb.DiscoverLive do
             {label, value} <- [
               {gettext("All"), :all},
               {gettext("Movies"), :movie},
-              {gettext("TV"), :tv}
+              {gettext("TV"), :tv},
+              {gettext("People"), :person},
+              {gettext("Collections"), :collection}
             ]
           }
           phx-click="filter"
@@ -310,28 +219,29 @@ defmodule CinderWeb.DiscoverLive do
 
       <section :if={@filtered_results != []} class="mb-10">
         <h2 class="sr-only">{gettext("Search results")}</h2>
-        <div id="results" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-          <.media_card
-            :for={r <- @filtered_results}
-            poster_path={r.poster_path}
-            title={r.title}
-            year={r.year}
-            type={r.type}
-          >
-            <.result_action
-              :if={r.type == :movie}
-              state={title_state(r.tmdb_id, @request_status, @movie_status)}
-              tmdb_id={r.tmdb_id}
-              title={r.title}
-              original_language={r.original_language}
-            />
-            <.tv_result_action
-              :if={r.type == :tv}
-              state={tv_title_state(r.tmdb_id, @series_request_status, @available_series)}
-              tmdb_id={r.tmdb_id}
-            />
-          </.media_card>
-        </div>
+        <.media_grid
+          id="results"
+          results={@filtered_results}
+          request_status={@request_status}
+          movie_status={@movie_status}
+          series_request_status={@series_request_status}
+          available_series={@available_series}
+        />
+      </section>
+
+      <section :if={@query == "" and @trending != []} class="mb-10">
+        <h2 class="mb-4 flex items-center gap-2 text-lg font-semibold">
+          <.icon name="hero-arrow-trending-up" class="size-5 text-primary" />
+          {gettext("Trending this week")}
+        </h2>
+        <.media_grid
+          id="trending"
+          results={@trending}
+          request_status={@request_status}
+          movie_status={@movie_status}
+          series_request_status={@series_request_status}
+          available_series={@available_series}
+        />
       </section>
 
       <.empty_state
@@ -349,66 +259,6 @@ defmodule CinderWeb.DiscoverLive do
     </Layouts.app>
     """
   end
-
-  attr :state, :atom, required: true
-  attr :tmdb_id, :integer, required: true
-  attr :title, :string, required: true
-  attr :original_language, :string, default: nil
-
-  defp result_action(assigns) do
-    ~H"""
-    <.status_badge
-      :if={@state != :none}
-      kind={:request}
-      status={@state}
-      class="h-auto break-words text-center"
-    />
-    <form
-      :if={@state in [:none, :denied]}
-      id={"add-form-#{@tmdb_id}"}
-      phx-submit="add"
-      class="flex flex-col gap-1"
-    >
-      <input type="hidden" name="tmdb_id" value={@tmdb_id} />
-      <.language_select original_label={original_option_label(@original_language)} />
-      <.media_profile_select />
-      <.button
-        type="submit"
-        variant="primary"
-        size="sm"
-        class="w-full"
-        aria-label={gettext("Add %{title}", title: @title)}
-        phx-disable-with={gettext("Adding…")}
-      >
-        {gettext("Add")}
-      </.button>
-    </form>
-    """
-  end
-
-  attr :state, :atom, required: true
-  attr :tmdb_id, :integer, required: true
-
-  # TV cards keep the season-picker link always (a show can be re-browsed for more seasons); the
-  # badge is additive, unlike the movie card where an active state replaces the Add form.
-  defp tv_result_action(assigns) do
-    ~H"""
-    <.status_badge
-      :if={@state != :none}
-      kind={:request}
-      status={@state}
-      class="h-auto break-words text-center"
-    />
-    <.button navigate={~p"/series/tmdb/#{@tmdb_id}"} variant="primary" size="sm" class="w-full">
-      {gettext("View seasons")}<.icon name="hero-arrow-right" class="size-3.5" />
-    </.button>
-    """
-  end
-
-  defp original_option_label(nil), do: gettext("Original")
-  defp original_option_label("en"), do: gettext("Original (English)")
-  defp original_option_label("fr"), do: gettext("Original (French)")
-  defp original_option_label(_), do: gettext("Original")
 
   defp filter_results(results, :all), do: results
   defp filter_results(results, type), do: Enum.filter(results, &(&1.type == type))

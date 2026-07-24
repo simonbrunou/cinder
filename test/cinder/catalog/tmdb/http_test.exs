@@ -576,4 +576,342 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
 
     assert {:error, :response_too_large} = HTTP.search("inception", "en")
   end
+
+  test "trending/1 sends the locale, tags movie/TV results, and drops persons" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      assert conn.request_path == "/3/trending/all/week"
+      assert conn.params["language"] == "fr-FR"
+
+      Req.Test.json(conn, %{
+        "results" => [
+          %{
+            "media_type" => "movie",
+            "id" => 27_205,
+            "title" => "Inception",
+            "release_date" => "2010-07-16",
+            "poster_path" => "/p.jpg"
+          },
+          %{
+            "media_type" => "tv",
+            "id" => 1396,
+            "name" => "Breaking Bad",
+            "first_air_date" => "2008-01-20",
+            "poster_path" => "/bb.jpg"
+          },
+          %{"media_type" => "person", "id" => 500, "name" => "Somebody Famous"}
+        ]
+      })
+    end)
+
+    assert {:ok, [movie, tv]} = HTTP.trending("fr")
+
+    assert %{type: :movie, tmdb_id: 27_205, title: "Inception", year: 2010, poster_path: "/p.jpg"} =
+             movie
+
+    assert tv == %{
+             type: :tv,
+             tmdb_id: 1396,
+             title: "Breaking Bad",
+             year: 2008,
+             poster_path: "/bb.jpg",
+             original_language: nil
+           }
+  end
+
+  test "trending/1 returns an error tuple on a non-200 status" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      conn |> Plug.Conn.put_status(429) |> Req.Test.json(%{"status_message" => "slow down"})
+    end)
+
+    assert {:error, {:tmdb_status, 429}} = HTTP.trending("en")
+  end
+
+  test "trending/1 returns an error (not a raise) on a 200 lacking a results list" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      Req.Test.json(conn, %{"success" => false})
+    end)
+
+    assert {:error, :unexpected_response} = HTTP.trending("en")
+  end
+
+  test "search_person/2 sends the locale and normalizes person results" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      assert conn.request_path == "/3/search/person"
+      assert conn.params["query"] == "nolan"
+      assert conn.params["language"] == "fr-FR"
+
+      Req.Test.json(conn, %{
+        "results" => [
+          %{
+            "id" => 525,
+            "name" => "Christopher Nolan",
+            "profile_path" => "/nolan.jpg",
+            "known_for_department" => "Directing"
+          },
+          %{
+            "id" => 500,
+            "name" => "No Department",
+            "profile_path" => nil,
+            "known_for_department" => nil
+          }
+        ]
+      })
+    end)
+
+    assert {:ok,
+            [
+              %{
+                tmdb_id: 525,
+                title: "Christopher Nolan",
+                year: nil,
+                poster_path: "/nolan.jpg",
+                department: "Directing"
+              },
+              %{
+                tmdb_id: 500,
+                title: "No Department",
+                year: nil,
+                poster_path: nil,
+                department: nil
+              }
+            ]} = HTTP.search_person("nolan", "fr")
+  end
+
+  test "search_person/2 returns an error tuple on a non-200 status" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      conn |> Plug.Conn.put_status(503) |> Req.Test.json(%{"status_message" => "unavailable"})
+    end)
+
+    assert {:error, {:tmdb_status, 503}} = HTTP.search_person("nolan", "en")
+  end
+
+  test "search_person/2 returns an error on a 200 lacking a results list" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      Req.Test.json(conn, %{"results" => %{}})
+    end)
+
+    assert {:error, :unexpected_response} = HTTP.search_person("nolan", "en")
+  end
+
+  test "search_collection/2 sends the locale and normalizes collection results" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      assert conn.request_path == "/3/search/collection"
+      assert conn.params["query"] == "matrix"
+      assert conn.params["language"] == "fr-FR"
+
+      Req.Test.json(conn, %{
+        "results" => [
+          %{
+            "id" => 2344,
+            "name" => "The Matrix Collection",
+            "poster_path" => "/matrix.jpg"
+          }
+        ]
+      })
+    end)
+
+    assert {:ok,
+            [
+              %{
+                tmdb_id: 2344,
+                title: "The Matrix Collection",
+                year: nil,
+                poster_path: "/matrix.jpg"
+              }
+            ]} = HTTP.search_collection("matrix", "fr")
+  end
+
+  test "search_collection/2 returns an error tuple on a non-200 status" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      conn |> Plug.Conn.put_status(429) |> Req.Test.json(%{"status_message" => "slow down"})
+    end)
+
+    assert {:error, {:tmdb_status, 429}} = HTTP.search_collection("matrix", "en")
+  end
+
+  test "search_collection/2 returns an error on a 200 lacking a results list" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      Req.Test.json(conn, %{"success" => false})
+    end)
+
+    assert {:error, :unexpected_response} = HTTP.search_collection("matrix", "en")
+  end
+
+  test "get_person/2 sends the locale and normalizes, deduplicates, and caps credits" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      assert conn.request_path == "/3/person/525"
+      assert conn.params["append_to_response"] == "combined_credits"
+      assert conn.params["language"] == "fr-FR"
+
+      generated =
+        for id <- 10..69 do
+          %{
+            "media_type" => "movie",
+            "id" => id,
+            "title" => "Movie #{id}",
+            "release_date" => "2020-01-01",
+            "poster_path" => "/#{id}.jpg",
+            "popularity" => 100 - id
+          }
+        end
+
+      Req.Test.json(conn, %{
+        "id" => 525,
+        "name" => "Christopher Nolan",
+        "profile_path" => "/nolan.jpg",
+        "known_for_department" => "Directing",
+        "combined_credits" => %{
+          "cast" =>
+            [
+              %{
+                "media_type" => "movie",
+                "id" => 1,
+                "title" => "First Wins",
+                "release_date" => "2010-07-16",
+                "popularity" => 100
+              },
+              %{
+                "media_type" => "tv",
+                "id" => 1,
+                "name" => "Same ID, Different Type",
+                "first_air_date" => "2015-01-01",
+                "popularity" => 99
+              },
+              %{
+                "media_type" => "movie",
+                "id" => 2,
+                "title" => "Nil Popularity",
+                "popularity" => nil
+              },
+              %{"media_type" => "person", "id" => 3, "name" => "Dropped", "popularity" => 1_000},
+              %{"media_type" => "other", "id" => 4, "title" => "Dropped", "popularity" => 1_000}
+            ] ++ generated,
+          "crew" => [
+            %{
+              "media_type" => "movie",
+              "id" => 1,
+              "title" => "Duplicate Loses",
+              "popularity" => 1
+            },
+            %{
+              "media_type" => "tv",
+              "id" => 500,
+              "name" => "Crew Credit",
+              "first_air_date" => "2018-02-03",
+              "popularity" => 98
+            }
+          ]
+        }
+      })
+    end)
+
+    assert {:ok,
+            %{
+              tmdb_id: 525,
+              name: "Christopher Nolan",
+              profile_path: "/nolan.jpg",
+              department: "Directing",
+              credits: credits,
+              total_credits: 64
+            }} = HTTP.get_person(525, "fr")
+
+    assert length(credits) == 60
+
+    assert [
+             %{type: :movie, tmdb_id: 1, title: "First Wins", release_date: ~D[2010-07-16]},
+             %{type: :tv, tmdb_id: 1, title: "Same ID, Different Type", year: 2015},
+             %{type: :tv, tmdb_id: 500, title: "Crew Credit", year: 2018}
+             | _
+           ] = credits
+
+    refute Enum.any?(credits, &(&1.tmdb_id in [2, 3, 4]))
+    refute Enum.any?(credits, &(&1.title == "Duplicate Loses"))
+  end
+
+  test "get_person/2 returns an error tuple on a non-200 status" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      conn |> Plug.Conn.put_status(404) |> Req.Test.json(%{"status_message" => "not found"})
+    end)
+
+    assert {:error, {:tmdb_status, 404}} = HTTP.get_person(0, "en")
+  end
+
+  test "get_person/2 returns an error on a malformed 200 body" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      Req.Test.json(conn, %{"id" => 525, "combined_credits" => %{"cast" => []}})
+    end)
+
+    assert {:error, :unexpected_response} = HTTP.get_person(525, "en")
+  end
+
+  test "get_collection/2 sends the locale and normalizes parts in chronological order" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      assert conn.request_path == "/3/collection/2344"
+      assert conn.params["language"] == "fr-FR"
+
+      Req.Test.json(conn, %{
+        "id" => 2344,
+        "name" => "The Matrix Collection",
+        "poster_path" => "/matrix.jpg",
+        "parts" => [
+          %{
+            "id" => 3,
+            "title" => "Undated",
+            "release_date" => nil,
+            "poster_path" => "/undated.jpg"
+          },
+          %{
+            "id" => 2,
+            "title" => "January 2010",
+            "release_date" => "2010-01-05",
+            "poster_path" => "/2010.jpg"
+          },
+          %{
+            "id" => 1,
+            "title" => "December 2009",
+            "release_date" => "2009-12-31",
+            "poster_path" => "/2009.jpg"
+          }
+        ]
+      })
+    end)
+
+    assert {:ok,
+            %{
+              tmdb_id: 2344,
+              title: "The Matrix Collection",
+              poster_path: "/matrix.jpg",
+              parts: [
+                %{
+                  type: :movie,
+                  tmdb_id: 1,
+                  title: "December 2009",
+                  release_date: ~D[2009-12-31]
+                },
+                %{
+                  type: :movie,
+                  tmdb_id: 2,
+                  title: "January 2010",
+                  release_date: ~D[2010-01-05]
+                },
+                %{type: :movie, tmdb_id: 3, title: "Undated", release_date: nil}
+              ]
+            }} = HTTP.get_collection(2344, "fr")
+  end
+
+  test "get_collection/2 returns an error tuple on a non-200 status" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      conn |> Plug.Conn.put_status(500) |> Req.Test.json(%{"status_message" => "failed"})
+    end)
+
+    assert {:error, {:tmdb_status, 500}} = HTTP.get_collection(2344, "en")
+  end
+
+  test "get_collection/2 returns an error on a malformed 200 body" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      Req.Test.json(conn, %{"id" => 2344, "parts" => %{}})
+    end)
+
+    assert {:error, :unexpected_response} = HTTP.get_collection(2344, "en")
+  end
 end

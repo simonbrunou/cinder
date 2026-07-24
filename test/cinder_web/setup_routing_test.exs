@@ -4,9 +4,13 @@ defmodule CinderWeb.SetupRoutingTest do
 
   import Phoenix.LiveViewTest
 
+  import Mox
+
   setup do
     Application.put_env(:cinder, :enforce_setup, true)
     on_exit(fn -> Application.put_env(:cinder, :enforce_setup, false) end)
+    # Mounting `/` fetches trending (async, private-mode Mox reaches it via $callers).
+    stub(Cinder.Catalog.TMDBMock, :trending, fn _ -> {:ok, []} end)
     :ok
   end
 

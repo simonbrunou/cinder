@@ -1082,8 +1082,18 @@ better match" grabs a chosen release for an `:available` movie and atomically sw
 `:upgrading`) · per-tracker quirks and tracker RSS (v1.0 monitoring polls TMDB) ·
 OIDC / Jellyfin-Plex SSO · per-user permissions finer than
 `admin`/`user` · notification fan-out beyond the M3 `Notifier` seam (Discord/email/etc.) ·
-trending/discover landing pages beyond search · multi-node / hosted multi-tenant (precluded by
-the SQLite decision).
+multi-node / hosted multi-tenant (precluded by the SQLite decision).
+
+**[shipped 2026-07-23, un-parked on operator request] Discover landing + people/franchise
+search** — replaces the formerly parked "trending/discover landing pages beyond search". The
+empty `/` now shows a TMDB trending-this-week grid (same cards/request flow as search; a
+trending failure degrades to the old search-only page); one search returns movies + TV +
+people + collections, round-robin interleaved behind filter chips, with drill-in pages
+`/person/tmdb/:id` (combined credits, top-60 cap with a visible count) and
+`/collection/tmdb/:id` (chronological parts) on a single `EntityDiscoveryLive`. Four new
+TMDB callbacks (`search_person`/`search_collection`/`get_person`/`get_collection`); the four
+search sides run as crash-isolated concurrent tasks. Design:
+`docs/specs/2026-07-23-people-collections-discovery-design.md` (2-round council review).
 
 **[shipped post-0.7.0] Release blocklist** — remember a rejected/failed release (by parsed
 release title, scoped per movie/series) so a title whose only available release is wrong-language

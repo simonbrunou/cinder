@@ -14,6 +14,7 @@ defmodule Cinder.Catalog.TMDB.HTTP do
 
   @default_base_url "https://api.themoviedb.org"
   @max_response_bytes 4 * 1024 * 1024
+  @max_person_credits 60
   @tmdb_tags %{"en" => "en-US", "fr" => "fr-FR"}
   @tmdb_regions %{"fr" => "FR", "en" => "US"}
 
@@ -112,6 +113,109 @@ defmodule Cinder.Catalog.TMDB.HTTP do
     case request(url: "/3/tv/episode_group/#{group_id}") do
       {:ok, %{status: 200, body: body}} -> normalize_group_detail(body)
       other -> error(other)
+    end
+  end
+
+  @impl true
+  def trending(locale) do
+    case request(
+           url: "/3/trending/all/week",
+           params: [language: Map.fetch!(@tmdb_tags, locale)]
+         ) do
+      {:ok, %{status: 200, body: %{"results" => results}}} when is_list(results) ->
+        {:ok,
+         Enum.flat_map(results, fn
+           %{"media_type" => "movie"} = item -> [Map.put(normalize(item), :type, :movie)]
+           %{"media_type" => "tv"} = item -> [Map.put(normalize_tv(item), :type, :tv)]
+           _person -> []
+         end)}
+
+      {:ok, %{status: 200}} ->
+        {:error, :unexpected_response}
+
+      other ->
+        error(other)
+    end
+  end
+
+  @impl true
+  def search_person(query, locale) do
+    case request(
+           url: "/3/search/person",
+           params: [query: query, language: Map.fetch!(@tmdb_tags, locale)]
+         ) do
+      {:ok, %{status: 200, body: %{"results" => results}}} when is_list(results) ->
+        {:ok, Enum.map(results, &normalize_person/1)}
+
+      {:ok, %{status: 200}} ->
+        {:error, :unexpected_response}
+
+      other ->
+        error(other)
+    end
+  end
+
+  @impl true
+  def search_collection(query, locale) do
+    case request(
+           url: "/3/search/collection",
+           params: [query: query, language: Map.fetch!(@tmdb_tags, locale)]
+         ) do
+      {:ok, %{status: 200, body: %{"results" => results}}} when is_list(results) ->
+        {:ok, Enum.map(results, &normalize_collection/1)}
+
+      {:ok, %{status: 200}} ->
+        {:error, :unexpected_response}
+
+      other ->
+        error(other)
+    end
+  end
+
+  @impl true
+  def get_person(tmdb_id, locale) do
+    case request(
+           url: "/3/person/#{tmdb_id}",
+           params: [
+             append_to_response: "combined_credits",
+             language: Map.fetch!(@tmdb_tags, locale)
+           ]
+         ) do
+      {:ok,
+       %{
+         status: 200,
+         body:
+           %{
+             "id" => _,
+             "combined_credits" => %{"cast" => cast, "crew" => crew}
+           } = body
+       }}
+      when is_list(cast) and is_list(crew) ->
+        {:ok, normalize_person_details(body, cast ++ crew)}
+
+      {:ok, %{status: 200}} ->
+        {:error, :unexpected_response}
+
+      other ->
+        error(other)
+    end
+  end
+
+  @impl true
+  def get_collection(tmdb_id, locale) do
+    case request(
+           url: "/3/collection/#{tmdb_id}",
+           params: [language: Map.fetch!(@tmdb_tags, locale)]
+         ) do
+      {:ok, %{status: 200, body: %{"id" => _, "parts" => parts} = body}}
+      when is_list(parts) ->
+        {:ok, normalize_collection_details(body, parts)}
+
+      {:ok, %{status: 200}} ->
+        {:error, :unexpected_response}
+
+      other ->
+        error(other)
     end
   end
 
@@ -266,6 +370,62 @@ defmodule Cinder.Catalog.TMDB.HTTP do
 
   defp normalize_group_entry(_episode, _group_name, _group_order),
     do: {:error, :unexpected_response}
+
+  defp normalize_person(person) do
+    %{
+      tmdb_id: person["id"],
+      title: person["name"],
+      year: nil,
+      poster_path: person["profile_path"],
+      department: person["known_for_department"]
+    }
+  end
+
+  defp normalize_collection(collection) do
+    %{
+      tmdb_id: collection["id"],
+      title: collection["name"],
+      year: nil,
+      poster_path: collection["poster_path"]
+    }
+  end
+
+  defp normalize_person_details(body, entries) do
+    credits =
+      entries
+      |> Enum.filter(&(&1["media_type"] in ["movie", "tv"]))
+      |> Enum.sort_by(fn entry -> entry["popularity"] || 0 end, :desc)
+      |> Enum.uniq_by(&{&1["media_type"], &1["id"]})
+
+    %{
+      tmdb_id: body["id"],
+      name: body["name"],
+      profile_path: body["profile_path"],
+      department: body["known_for_department"],
+      credits: credits |> Enum.take(@max_person_credits) |> Enum.map(&normalize_credit/1),
+      total_credits: length(credits)
+    }
+  end
+
+  defp normalize_credit(%{"media_type" => "movie"} = entry),
+    do: entry |> normalize() |> Map.put(:type, :movie)
+
+  defp normalize_credit(%{"media_type" => "tv"} = entry),
+    do: entry |> normalize_tv() |> Map.put(:type, :tv)
+
+  defp normalize_collection_details(body, parts) do
+    parts =
+      parts
+      |> Enum.map(&(normalize(&1) |> Map.put(:type, :movie)))
+      |> Enum.sort_by(&(&1.release_date || ~D[9999-12-31]), Date)
+
+    %{
+      tmdb_id: body["id"],
+      title: body["name"],
+      poster_path: body["poster_path"],
+      parts: parts
+    }
+  end
 
   defp normalize(movie) do
     base = %{
