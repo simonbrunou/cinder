@@ -16,6 +16,8 @@ defmodule CinderWeb.LibraryLiveTest do
     # cancel_movie may remove an active download via the client; default to a no-op.
     stub(Cinder.Download.ClientMock, :remove, fn _id, _opts -> :ok end)
     stub(Cinder.Download.SabnzbdClientMock, :remove, fn _id, _opts -> :ok end)
+    # Mounting `/` (the redirect-target assertions) fetches trending; default it empty.
+    stub(Cinder.Catalog.TMDBMock, :trending, fn _ -> {:ok, []} end)
     :ok
   end
 

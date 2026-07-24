@@ -14,9 +14,13 @@ defmodule CinderWeb.DiscoverLiveTest do
   setup :set_mox_global
 
   setup do
-    # search_discover always hits both endpoints; default both to empty.
+    # search_discover always hits all four endpoints; default all to empty.
     stub(Cinder.Catalog.TMDBMock, :search, fn _, _ -> {:ok, []} end)
     stub(Cinder.Catalog.TMDBMock, :search_tv, fn _, _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :search_person, fn _, _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :search_collection, fn _, _ -> {:ok, []} end)
+    # mount always fetches trending (async); default it empty.
+    stub(Cinder.Catalog.TMDBMock, :trending, fn _ -> {:ok, []} end)
 
     stub(Cinder.Catalog.TMDBMock, :get_movie, fn id ->
       {:ok,
@@ -60,6 +64,84 @@ defmodule CinderWeb.DiscoverLiveTest do
 
   defp stub_tv(results),
     do: stub(Cinder.Catalog.TMDBMock, :search_tv, fn _, _ -> {:ok, results} end)
+
+  defp stub_trending(results),
+    do: stub(Cinder.Catalog.TMDBMock, :trending, fn _ -> {:ok, results} end)
+
+  defp stub_persons(results),
+    do: stub(Cinder.Catalog.TMDBMock, :search_person, fn _, _ -> {:ok, results} end)
+
+  defp stub_collections(results),
+    do: stub(Cinder.Catalog.TMDBMock, :search_collection, fn _, _ -> {:ok, results} end)
+
+  @nolan %{
+    tmdb_id: 500,
+    title: "Christopher Nolan",
+    year: nil,
+    poster_path: "/cn.jpg",
+    department: nil
+  }
+  @dark_knight_collection %{
+    tmdb_id: 10,
+    title: "The Dark Knight Collection",
+    year: nil,
+    poster_path: "/dkc.jpg"
+  }
+
+  test "an empty query shows the trending grid with the usual actions", %{conn: conn} do
+    stub_trending([Map.put(@inception, :type, :movie), Map.put(@got, :type, :tv)])
+    {:ok, lv, _html} = live(conn, ~p"/")
+
+    html = render_async(lv)
+
+    assert html =~ "Trending this week"
+    assert html =~ "Inception"
+    assert html =~ "Game of Thrones"
+    # Same affordances as search results: movie → inline Add, TV → season picker.
+    assert has_element?(lv, "#trending #add-form-27205")
+    assert has_element?(lv, ~s(#trending a[href="/series/tmdb/1399"]))
+  end
+
+  test "typing a query replaces trending; clearing it brings trending back", %{conn: conn} do
+    stub_trending([Map.put(@inception, :type, :movie)])
+    stub_movies([@inception])
+    {:ok, lv, _html} = live(conn, ~p"/")
+    render_async(lv)
+
+    html = lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
+    refute html =~ "Trending this week"
+    assert has_element?(lv, "#results")
+
+    html = lv |> form("#search-form", %{"query" => ""}) |> render_change()
+    assert html =~ "Trending this week"
+  end
+
+  test "a trending movie can be requested straight from the landing grid", %{conn: conn} do
+    stub_trending([Map.put(@inception, :type, :movie)])
+    {:ok, lv, _html} = live(conn, ~p"/")
+    render_async(lv)
+
+    lv |> form("#add-form-27205") |> render_submit()
+    render_async(lv)
+
+    assert [%Movie{tmdb_id: 27_205, status: :requested}] = Catalog.list_movies()
+    refute has_element?(lv, "#add-form-27205")
+  end
+
+  test "a trending failure leaves the page search-only", %{conn: conn} do
+    stub(Cinder.Catalog.TMDBMock, :trending, fn _ -> {:error, :tmdb_down} end)
+
+    log =
+      capture_log(fn ->
+        {:ok, lv, _html} = live(conn, ~p"/")
+        html = render_async(lv)
+
+        refute html =~ "Trending this week"
+        assert has_element?(lv, "input#query")
+      end)
+
+    assert log =~ "Trending fetch failed"
+  end
 
   test "first load shows an accessible search field", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/")
@@ -127,6 +209,51 @@ defmodule CinderWeb.DiscoverLiveTest do
     # movie → inline Add form; TV → season-picker link
     assert has_element?(lv, "#add-form-27205")
     assert has_element?(lv, ~s(#results a[href="/series/tmdb/1399"]))
+  end
+
+  test "a person result shows the department and links to the person's drill-in page", %{
+    conn: conn
+  } do
+    stub_persons([Map.put(@nolan, :department, "Directing")])
+    {:ok, lv, _html} = live(conn, ~p"/")
+
+    html = lv |> form("#search-form", %{"query" => "nolan"}) |> render_change()
+
+    assert html =~ "Christopher Nolan"
+    assert html =~ "Director"
+    assert html =~ "Person"
+    assert has_element?(lv, ~s(#results a[href="/person/tmdb/500"]))
+  end
+
+  test "a collection result links to the collection's drill-in page", %{conn: conn} do
+    stub_collections([@dark_knight_collection])
+    {:ok, lv, _html} = live(conn, ~p"/")
+
+    html = lv |> form("#search-form", %{"query" => "dark knight"}) |> render_change()
+
+    assert html =~ "The Dark Knight Collection"
+    assert html =~ "Collection"
+    assert has_element?(lv, ~s(#results a[href="/collection/tmdb/10"]))
+  end
+
+  test "the People and Collections filter chips isolate their own result type", %{conn: conn} do
+    stub_movies([@inception])
+    stub_tv([@got])
+    stub_persons([@nolan])
+    stub_collections([@dark_knight_collection])
+    {:ok, lv, _html} = live(conn, ~p"/")
+
+    lv |> form("#search-form", %{"query" => "x"}) |> render_change()
+
+    html = lv |> element(~s(button[phx-value-type="person"])) |> render_click()
+    assert html =~ "Christopher Nolan"
+    refute html =~ "Inception"
+    refute html =~ "Game of Thrones"
+    refute html =~ "The Dark Knight Collection"
+
+    html = lv |> element(~s(button[phx-value-type="collection"])) |> render_click()
+    assert html =~ "The Dark Knight Collection"
+    refute html =~ "Christopher Nolan"
   end
 
   test "admin add creates a :requested movie and flips the result card off Add", %{conn: conn} do

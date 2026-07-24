@@ -918,7 +918,7 @@ defmodule CinderWeb.CoreComponents do
   attr :poster_path, :string, default: nil
   attr :title, :string, required: true
   attr :year, :integer, default: nil
-  attr :type, :atom, default: nil, values: [nil, :movie, :tv]
+  attr :type, :atom, default: nil, values: [nil, :movie, :tv, :person, :collection]
   slot :inner_block
 
   def media_card(assigns) do
@@ -960,8 +960,12 @@ defmodule CinderWeb.CoreComponents do
 
   defp type_icon(:movie), do: "hero-film"
   defp type_icon(:tv), do: "hero-tv"
+  defp type_icon(:person), do: "hero-user"
+  defp type_icon(:collection), do: "hero-rectangle-stack"
   defp type_label(:movie), do: gettext("Film")
   defp type_label(:tv), do: gettext("TV")
+  defp type_label(:person), do: gettext("Person")
+  defp type_label(:collection), do: gettext("Collection")
 
   defp poster_fallback_style(title) do
     hue = :erlang.phash2(title, 360_000) |> rem(360)

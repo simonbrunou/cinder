@@ -1,7 +1,14 @@
 defmodule CinderWeb.AppShellTest do
   use CinderWeb.ConnCase, async: true
 
+  import Mox
   import Phoenix.LiveViewTest
+
+  # Mounting `/` fetches trending (async, private-mode Mox reaches it via $callers).
+  setup do
+    stub(Cinder.Catalog.TMDBMock, :trending, fn _ -> {:ok, []} end)
+    :ok
+  end
 
   describe "as an admin" do
     setup :register_and_log_in_admin

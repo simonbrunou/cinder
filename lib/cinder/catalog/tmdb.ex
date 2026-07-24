@@ -70,6 +70,45 @@ defmodule Cinder.Catalog.TMDB do
                }}
               | {:error, term()}
 
+  @doc """
+  This week's trending movies + TV, pre-mixed by TMDB. Each result is a
+  search-normalized map (movie or TV shape) plus a `:type` key (`:movie | :tv`);
+  person results are dropped.
+  """
+  @callback trending(locale :: String.t()) :: {:ok, [map()]} | {:error, term()}
+
+  @doc """
+  Person search. Returns
+  `%{tmdb_id, title, year: nil, poster_path, department}` per result (`title` is
+  the person's name and `poster_path` is their TMDB profile path).
+  """
+  @callback search_person(query :: String.t(), locale :: String.t()) ::
+              {:ok, [map()]} | {:error, term()}
+
+  @doc """
+  Collection search. Returns `%{tmdb_id, title, year: nil, poster_path}` per
+  result (`title` is the collection name).
+  """
+  @callback search_collection(query :: String.t(), locale :: String.t()) ::
+              {:ok, [map()]} | {:error, term()}
+
+  @doc """
+  Person details and their top movie/TV credits. Returns
+  `%{tmdb_id, name, profile_path, department, credits: [map()], total_credits}`.
+  Credits carry `type: :movie | :tv`; `total_credits` is counted before the
+  top-60 cap.
+  """
+  @callback get_person(tmdb_id :: integer(), locale :: String.t()) ::
+              {:ok, map()} | {:error, term()}
+
+  @doc """
+  Collection details. Returns
+  `%{tmdb_id, title, poster_path, parts: [map()]}` with chronologically sorted
+  movie parts carrying `type: :movie`.
+  """
+  @callback get_collection(tmdb_id :: integer(), locale :: String.t()) ::
+              {:ok, map()} | {:error, term()}
+
   @doc "Lightweight reachability/token check — `:ok` if TMDB answers, else `{:error, reason}`."
   @callback health() :: :ok | {:error, term()}
 end
