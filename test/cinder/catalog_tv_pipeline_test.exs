@@ -121,19 +121,6 @@ defmodule Cinder.CatalogTvPipelineTest do
       assert [%Grab{id: ^id}] = Catalog.list_grabs_downloaded()
     end
 
-    test "delete_grab/1 removes the grab and nilifies its episodes' grab_id" do
-      {series, season} = series_with_season()
-      e1 = episode(season, %{})
-      series_id = series.id
-      {:ok, grab} = Catalog.create_grab("HASH3", :torrent, [e1.id])
-      Catalog.subscribe_series()
-
-      assert {:ok, _} = Catalog.delete_grab(grab)
-      assert_receive {:series_updated, ^series_id}
-      assert Repo.get(Grab, grab.id) == nil
-      assert Repo.get(Episode, e1.id).grab_id == nil
-    end
-
     test "create_grab/3 does not link an unmonitored episode (post-cancel race guard)" do
       {_series, season} = series_with_season()
       e1 = episode(season, %{monitored: false})

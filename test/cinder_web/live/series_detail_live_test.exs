@@ -192,6 +192,24 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert has_element?(view, "#series-detail-language-form option[value='dual'][selected]")
   end
 
+  test "the Monitoring pick reapplies the strategy over the episode tree", %{conn: conn} do
+    series = series_fixture()
+    season = season_fixture(series, %{season_number: 1})
+    episode = episode_fixture(season, %{episode_number: 1, monitored: false})
+
+    {:ok, view, _} = live_series(conn, series)
+
+    view
+    |> form("#series-monitor-strategy-form", %{"monitor_strategy" => "all"})
+    |> render_change()
+
+    assert Repo.reload(series).monitor_strategy == :all
+    assert Repo.reload(episode).monitored
+
+    render_hook(view, "set_monitor_strategy", %{"monitor_strategy" => "forged"})
+    assert Repo.reload(series).monitor_strategy == :all
+  end
+
   test "generates and saves season-offset scene coordinates from the detail page", %{conn: conn} do
     series = series_fixture(media_profile: :anime, tvdb_id: 99)
     s3 = season_fixture(series, %{season_number: 3})
