@@ -257,6 +257,23 @@ defmodule CinderWeb.SeriesDetailLive do
     end
   end
 
+  def handle_event("set_monitor_strategy", %{"monitor_strategy" => strategy}, socket)
+      when strategy in ["all", "future", "none"] do
+    # Full tree reset (per-episode toggles overwritten, specials unmonitored) — see
+    # Catalog.set_series_monitor_strategy/2. On success the self-received
+    # {:series_updated} broadcast reloads @series with the updated tree.
+    case Catalog.set_series_monitor_strategy(
+           socket.assigns.series,
+           String.to_existing_atom(strategy)
+         ) do
+      {:ok, _} ->
+        {:noreply, socket}
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, gettext("Couldn't update monitoring."))}
+    end
+  end
+
   def handle_event("save_alias", %{"alias" => params}, socket) when is_map(params) do
     result =
       case params["id"] do
@@ -1074,6 +1091,31 @@ defmodule CinderWeb.SeriesDetailLive do
           </.form>
           <.profile_summary id="series-profile-summary" summary={@profile_summary} />
         </div>
+        <form id="series-monitor-strategy-form" phx-change="set_monitor_strategy">
+          <div class="fieldset mb-2">
+            <label>
+              <span class="label mb-1">{gettext("Monitoring")}</span>
+              <select
+                name="monitor_strategy"
+                class="select select-sm w-full"
+                aria-label={gettext("Monitoring")}
+              >
+                <option value="all" selected={@series.monitor_strategy == :all}>
+                  {gettext("All episodes")}
+                </option>
+                <option value="future" selected={@series.monitor_strategy == :future}>
+                  {gettext("Future episodes")}
+                </option>
+                <option value="none" selected={@series.monitor_strategy == :none}>
+                  {gettext("None")}
+                </option>
+              </select>
+            </label>
+          </div>
+          <p class="text-xs text-base-content/60">
+            {gettext("Reapplies the strategy to every episode, overwriting manual toggles.")}
+          </p>
+        </form>
       </div>
 
       <details class="mb-6">

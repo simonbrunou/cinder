@@ -2956,21 +2956,6 @@ defmodule Cinder.Catalog do
   defdelegate retry_grab_verification(grab), to: ReleaseVerification
 
   @doc """
-  Deletes a grab; the `grab_id` FK (`on_delete: :nilify_all`) unlinks its episodes. Broadcasts
-  `{:series_updated, series_id}` (captured before the delete, while the links still exist).
-  """
-  def delete_grab(%Grab{} = grab) do
-    series_id = series_id_for_grab(grab.id)
-
-    # allow_stale: the TV poller may finish/park the same grab concurrently with a
-    # user-initiated delete; an already-gone row is success for an idempotent delete.
-    with {:ok, grab} <- Repo.delete(grab, allow_stale: true) do
-      broadcast_series(series_id)
-      {:ok, grab}
-    end
-  end
-
-  @doc """
   Aborts one grab as a user action. Its delete and durable cleanup fence commit together; remote
   cleanup runs afterward and retries from the fence on failure. Its episodes then re-enter the
   wanted sweep and re-search cleanly.
