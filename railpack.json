@@ -6,6 +6,6 @@
   },
   "deploy": {
     "startCommand": "/app/_build/prod/rel/cinder/bin/server",
-    "aptPackages": ["ffmpeg"]
+    "aptPackages": ["ffmpeg", "curl"]
   }
 }
