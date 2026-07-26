@@ -1249,6 +1249,79 @@ defmodule Cinder.Download.TvPollerTest do
     assert grab.download_protocol == :torrent
   end
 
+  test "Standard search uses scene coordinates when the indexer answers only the alternate season" do
+    series =
+      series_fixture(%{
+        title: "Frieren",
+        tvdb_id: 209_867,
+        monitor_strategy: :all,
+        media_profile: :standard,
+        scene_numbering_group_id: "seasons-group"
+      })
+
+    season = season_fixture(series, %{season_number: 1})
+
+    episodes =
+      Map.new(1..38, fn number ->
+        episode = episode(season, number, %{monitored: number == 29})
+        {number, episode}
+      end)
+
+    coordinates =
+      Enum.map(1..38, fn number ->
+        {scene_season, scene_episode} = if number <= 28, do: {1, number}, else: {2, number - 28}
+
+        %{
+          scheme: "scene",
+          canonical_value: Episode.code(scene_season, scene_episode),
+          precedence: :inferred,
+          episode_ids: [Map.fetch!(episodes, number).id]
+        }
+      end)
+
+    assert {:ok, _coordinates} =
+             Identity.replace_provider_coordinates(
+               series,
+               "tmdb",
+               "seasons-group",
+               "scene",
+               coordinates
+             )
+
+    test_pid = self()
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 209_867, "Frieren", season_number ->
+      send(test_pid, {:searched_season, season_number})
+
+      if season_number == 2 do
+        {:ok,
+         [
+           %{
+             title: "Frieren.S02E01.1080p.WEB-DL-GRP",
+             size: 2_000_000_000,
+             download_url: "scene-release"
+           }
+         ]}
+      else
+        {:ok, []}
+      end
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+      {:ok, "hash-standard-scene"}
+    end)
+
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    assert :ok = TvPoller.poll()
+    assert_receive {:searched_season, 1}
+    assert_receive {:searched_season, 2}
+
+    wanted = Repo.get!(Episode, Map.fetch!(episodes, 29).id)
+    assert wanted.grab_id
+    assert Repo.get!(Grab, wanted.grab_id).download_id == "hash-standard-scene"
+  end
+
   test "searches an explicitly monitored Standard S00 special and grabs the matching release (Sonarr parity)" do
     {series, _season} = series_tree()
     specials = season_fixture(series, %{season_number: 0})

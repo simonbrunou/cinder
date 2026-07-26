@@ -238,14 +238,22 @@ defmodule Cinder.Acquisition.Anime do
 
   defp resolve_release(_release, _context, _wanted_ids), do: []
 
-  defp resolve_values([], _mappings, evidence), do: {:ok, Enum.reverse(evidence)}
-
-  defp resolve_values([{scheme, value} | rest], mappings, evidence) do
+  @doc """
+  Resolves one parsed episode coordinate through the same persisted-coordinate bridge used by
+  Anime selection. Standard TV uses this when a series has alternate-season scene coordinates.
+  """
+  def resolve_episode_coordinate(scheme, value, mappings) do
     matching = mappings_for_value(mappings, scheme, value)
     resolver_mappings = Enum.map(matching, &resolver_mapping/1)
     identities = Enum.map(matching, & &1.identity)
 
-    case AnimeResolver.resolve(identities, resolver_mappings) do
+    AnimeResolver.resolve(identities, resolver_mappings)
+  end
+
+  defp resolve_values([], _mappings, evidence), do: {:ok, Enum.reverse(evidence)}
+
+  defp resolve_values([{scheme, value} | rest], mappings, evidence) do
+    case resolve_episode_coordinate(scheme, value, mappings) do
       {:ok, episode_ids, resolver_evidence} ->
         value_evidence = %{
           scheme: scheme,
@@ -576,7 +584,8 @@ defmodule Cinder.Acquisition.Anime do
   # token search actually gets issued; the free-text coordinate query itself needs no change
   # (`coordinate_queries/4` already iterates "scene" — it's `@queryable_schemes` — over the
   # TMDB season list, which already covers these same episodes).
-  defp scene_seasons(context, wanted_ids) do
+  @doc "Returns the bounded scene-coordinate seasons covering the wanted episode IDs."
+  def scene_seasons(context, wanted_ids) do
     wanted = MapSet.new(wanted_ids)
     bridged = AnimeResolver.bridged_schemes("standard")
 

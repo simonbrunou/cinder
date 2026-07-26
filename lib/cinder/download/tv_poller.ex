@@ -26,8 +26,8 @@ defmodule Cinder.Download.TvPoller do
   require Logger
 
   alias Cinder.{Acquisition, Catalog, Download, Library, Notifier, Settings}
-  alias Cinder.Acquisition.AnimePreferences
-  alias Cinder.Catalog.Grab
+  alias Cinder.Acquisition.{Anime, AnimePreferences}
+  alias Cinder.Catalog.{Episode, Grab}
   alias Cinder.Download.StallReaper
   alias Cinder.HTTPPolicy
 
@@ -299,19 +299,31 @@ defmodule Cinder.Download.TvPoller do
   end
 
   defp search_standard_series(series, episodes) do
-    episodes
-    |> Enum.group_by(& &1.season.season_number)
+    context = Catalog.anime_series_acquisition_context(series)
+    groups = Enum.group_by(episodes, & &1.season.season_number)
+    native_seasons = MapSet.new(Map.keys(groups))
+
+    groups
     |> Enum.each(fn {season_number, group} ->
-      isolate("series #{series.id} s#{season_number}", fn -> search_standard_group(group) end)
+      isolate("series #{series.id} s#{season_number}", fn ->
+        search_standard_group(group, context, native_seasons)
+      end)
     end)
   end
 
-  defp search_standard_group(episodes) do
+  defp search_standard_group(episodes, context, native_seasons) do
     series = hd(episodes).season.series
     season_number = hd(episodes).season.season_number
     numbers = Enum.map(episodes, & &1.episode_number)
+    opts = search_opts(series)
+    numbering = alternate_numbering(context, episodes, native_seasons)
 
-    case Acquisition.best_releases(series, season_number, numbers, search_opts(series)) do
+    opts =
+      if map_size(numbering) == 0,
+        do: opts,
+        else: Keyword.put(opts, :alternate_numbering, numbering)
+
+    case Acquisition.best_releases(series, season_number, numbers, opts) do
       {:ok, assignments} ->
         grabbed = Enum.flat_map(assignments, &grab_assignment(&1, episodes))
         bump_not_grabbed(episodes, grabbed)
@@ -326,6 +338,40 @@ defmodule Cinder.Download.TvPoller do
 
         bump_not_grabbed(episodes, [])
     end
+  end
+
+  defp alternate_numbering(context, episodes, native_seasons) do
+    wanted_by_id = Map.new(episodes, &{&1.id, &1.episode_number})
+    wanted_ids = MapSet.new(Map.keys(wanted_by_id))
+    scene_seasons = MapSet.new(Anime.scene_seasons(context, Map.keys(wanted_by_id)))
+
+    context.mappings
+    |> Enum.filter(fn mapping ->
+      mapping.identity.scheme == "scene" and
+        not MapSet.disjoint?(MapSet.new(mapping.episode_ids), wanted_ids)
+    end)
+    |> Enum.map(& &1.identity.canonical_value)
+    |> Enum.uniq()
+    |> Enum.reduce(%{}, fn value, numbering ->
+      with {alternate_season, alternate_episode} <-
+             Episode.season_and_episode_from_code(value),
+           false <- MapSet.member?(native_seasons, alternate_season),
+           true <- MapSet.member?(scene_seasons, alternate_season),
+           {:ok, episode_ids, _evidence} <-
+             Anime.resolve_episode_coordinate("standard", value, context.mappings),
+           true <- MapSet.subset?(MapSet.new(episode_ids), wanted_ids) do
+        canonical_numbers = Enum.map(episode_ids, &Map.fetch!(wanted_by_id, &1))
+
+        Map.update(
+          numbering,
+          alternate_season,
+          %{alternate_episode => canonical_numbers},
+          &Map.put(&1, alternate_episode, canonical_numbers)
+        )
+      else
+        _unusable -> numbering
+      end
+    end)
   end
 
   defp search_anime_series(series, episodes) do
