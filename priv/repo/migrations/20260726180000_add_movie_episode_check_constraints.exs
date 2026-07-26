@@ -55,34 +55,47 @@ defmodule Cinder.Repo.Migrations.AddMovieEpisodeCheckConstraints do
 
   def down, do: rebuild_all(checked?: false)
 
+  # Everything MUST run on one pinned connection (`checkout/1`): with the DDL transaction
+  # disabled, each bare query would otherwise check out an arbitrary pool connection — the
+  # pragma lands on one connection, BEGIN on another (leaving `foreign_keys` ON where the
+  # DROP runs, resurrecting the cascade), and ROLLBACK on a third with no transaction at
+  # all (the exact failure the container CI caught with POOL_SIZE > 1).
   defp rebuild_all(checked?: checked?) do
-    query!("PRAGMA foreign_keys = OFF")
-    query!("BEGIN IMMEDIATE")
+    repo().checkout(fn ->
+      query!("PRAGMA foreign_keys = OFF")
+      query!("BEGIN IMMEDIATE")
 
-    try do
-      rebuild_table(
-        "movies",
-        @movies_columns,
-        movies_create_sql(checked?: checked?),
-        @movies_index_sqls
-      )
+      try do
+        rebuild_table(
+          "movies",
+          @movies_columns,
+          movies_create_sql(checked?: checked?),
+          @movies_index_sqls
+        )
 
-      rebuild_table(
-        "episodes",
-        @episodes_columns,
-        episodes_create_sql(checked?: checked?),
-        @episodes_index_sqls
-      )
+        rebuild_table(
+          "episodes",
+          @episodes_columns,
+          episodes_create_sql(checked?: checked?),
+          @episodes_index_sqls
+        )
 
-      verify_foreign_keys!()
-      query!("COMMIT")
-    rescue
-      exception ->
-        query!("ROLLBACK")
-        reraise exception, __STACKTRACE__
-    end
+        verify_foreign_keys!()
+        query!("COMMIT")
+      rescue
+        exception ->
+          # Best-effort: never let a failed ROLLBACK mask the original error.
+          try do
+            query!("ROLLBACK")
+          rescue
+            _rollback_failure -> :ok
+          end
 
-    query!("PRAGMA foreign_keys = ON")
+          reraise exception, __STACKTRACE__
+      end
+
+      query!("PRAGMA foreign_keys = ON")
+    end)
   end
 
   defp movies_create_sql(checked?: checked?) do
