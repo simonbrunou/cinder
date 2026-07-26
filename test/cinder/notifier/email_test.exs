@@ -301,6 +301,39 @@ defmodule Cinder.Notifier.EmailTest do
     end
   end
 
+  describe "account_activated" do
+    test "emails the activated user" do
+      configure_smtp!()
+      user = confirmed_user()
+
+      assert :ok = Email.notify({:account_activated, user})
+      assert_email_sent(to: user.email, subject: "Your Cinder account is now active")
+    end
+
+    test "skips a user who opted out (notify_email: false)" do
+      configure_smtp!()
+      user = confirmed_user(notify_email: false)
+
+      assert :ok = Email.notify({:account_activated, user})
+      refute_email_sent()
+    end
+
+    test "skips an unconfirmed address" do
+      configure_smtp!()
+      user = confirmed_user(confirmed_at: nil)
+
+      assert :ok = Email.notify({:account_activated, user})
+      refute_email_sent()
+    end
+
+    test "skips silently when SMTP is unconfigured" do
+      user = confirmed_user()
+
+      assert :ok = Email.notify({:account_activated, user})
+      refute_email_sent()
+    end
+  end
+
   describe "unrecognized events" do
     test "are ignored" do
       configure_smtp!()
