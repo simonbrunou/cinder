@@ -70,8 +70,9 @@ defmodule Cinder.Download.Client.QBittorrent do
            form_multipart: [urls: magnet] ++ tag_part(opts)
          ) do
       {:ok, %{status: 200, body: body}} ->
-        # ponytail: magnet-only hash extraction; base32 btih and .torrent-URL→hash
-        # (info-by-name lookup) are Phase-5 live concerns.
+        # `hash` was already extracted from the magnet's btih (hex or base32, see btih/1); a 200
+        # that isn't a rejection means qBittorrent accepted it, so hand back that hash for status/1
+        # to poll. (.torrent-URL adds compute their hash from the fetched bytes in add_torrent_url/2.)
         if add_rejected?(body), do: {:error, :add_rejected}, else: {:ok, hash}
 
       {:ok, %{status: 409}} ->
