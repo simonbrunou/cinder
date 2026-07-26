@@ -399,6 +399,9 @@ defmodule Cinder.CatalogAdminTest do
 
       assert {:ok, _} = Catalog.delete_movie(movie, nil, delete_files: true)
       refute Repo.get(Movie, movie.id)
+
+      audit = Repo.one!(Cinder.Audit.AdminAudit)
+      assert audit.detail["files_deleted"] == true
     end
 
     test "without delete_files the file is left on disk (no FS calls)" do
@@ -414,7 +417,7 @@ defmodule Cinder.CatalogAdminTest do
       refute Repo.get(Movie, movie.id)
     end
 
-    test "delete_files: true still deletes the row when the unlink fails (best-effort)" do
+    test "delete_files: true still deletes the row when the unlink fails, and the audit says so" do
       movie = movie_fixture(%{title: "Inception", year: 2010})
 
       {:ok, movie} =
@@ -430,7 +433,15 @@ defmodule Cinder.CatalogAdminTest do
         end)
 
       assert log =~ ~s(library file delete failed for "/tmp/locked.mkv": :eacces)
+      assert log =~ "file(s) left on disk"
       refute Repo.get(Movie, movie.id)
+
+      # The audit row must NOT lie: the row was deleted, but the file unlink failed, so
+      # files_deleted is false (not the caller's delete_files: true intent) and the leftover
+      # path is recorded.
+      audit = Repo.one!(Cinder.Audit.AdminAudit)
+      assert audit.detail["files_deleted"] == false
+      assert audit.detail["failed_unlinks"] == ["/tmp/locked.mkv: :eacces"]
     end
 
     test "delete_files: true with no file_path makes no FS call" do

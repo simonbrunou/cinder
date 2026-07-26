@@ -853,17 +853,88 @@ defmodule Cinder.Catalog do
     )
   end
 
+  # --- pipeline state matrix -----------------------------------------------------------------
+  #
+  # The legal from→to graph for movie pipeline transitions, inventoried from every real (lib/)
+  # caller of transition/2,3: Cinder.Download.start/1 (search → downloading/no_match/
+  # search_failed), Cinder.Download.Poller's advance/import/upgrade passes (downloading →
+  # downloaded/import_failed/requested, downloaded → available/import_failed, available ⇄
+  # upgrading), retry_movie/1 (a parked status → requested), and reconcile_movie/1's manual/
+  # restart-recovery re-grab (a parked status → downloading). A self-transition (status
+  # unchanged) is always legal — many writers re-affirm the current status while only touching a
+  # counter or download-metric field (retry_or_fail/2, update_movie_download_metrics/2).
+  #
+  # `:requested` is kept a permissive source for every other status: real callers only ever jump
+  # :requested → :searching/:downloading/:no_match/:search_failed (the last two via the
+  # pre-:searching :no_imdb_id/:tmdb_unavailable branches of Download.start/1) and :requested →
+  # :cancelled (transition/2's own documented contract — see catalog_test.exs "accepts :cancelled
+  # as a valid status"), but the test suite also uses the unguarded API as a one-hop fixture
+  # shortcut (test/support/catalog_fixtures.ex's movie_fixture/1) to seed a movie directly at
+  # :available/:downloaded/:upgrading/:import_failed without walking the whole pipeline.
+  # Allowing that here is a deliberate, flagged accommodation of test/fixture convenience, not a
+  # real pipeline edge.
+  #
+  # `:downloading`/`:downloaded` → `:cancelled`: real per `@cancellable_movie_statuses` (a
+  # `:downloading` or freshly-`:downloaded` movie can be cancelled) — production reaches it via
+  # `cancel_movie/2`'s own `do_cancel_txn/2` (see the bypass note below), but the pair itself is a
+  # genuine, intentional business rule, so it is listed here too rather than only tolerated.
+  #
+  # Bypasses NOT covered by this matrix (pre-existing, not introduced here): cancel_movie/1's
+  # do_cancel_txn/1, abort_upgrade/2, and Cinder.Catalog.ReleaseVerification's hold/reject/retry
+  # writers build `Movie.transition_changeset/2` directly and write via `Repo.update`/`update_all`
+  # without ever calling transition/2,3 — they already carry their own guard (a pattern-matched
+  # function head or a compare-and-swap on other fields), so they are unaffected by (and not
+  # gated by) this matrix.
+  @movie_transitions %{
+    searching: [:downloading, :no_match, :search_failed, :cancelled],
+    downloading: [:downloaded, :import_failed, :requested, :cancelled],
+    downloaded: [:available, :import_failed, :cancelled],
+    available: [:upgrading],
+    upgrading: [:available],
+    no_match: [:requested, :downloading],
+    search_failed: [:requested, :downloading],
+    import_failed: [:requested, :downloading],
+    cancelled: []
+  }
+
+  defp legal_movie_transition?(from, to) when from == to, do: true
+  defp legal_movie_transition?(:requested, _to), do: true
+  defp legal_movie_transition?(from, to), do: to in Map.get(@movie_transitions, from, [])
+
+  # Builds + matrix-checks the transition changeset without writing: {:ok, changeset} once the
+  # changeset is valid AND `from → to` is legal, else {:error, invalid_changeset} or
+  # {:error, {:illegal_transition, from, to}}. Shared by the unguarded and guarded write paths so
+  # neither can drift from the other's notion of "legal."
+  defp validate_movie_transition(movie, attrs, from) do
+    case Movie.transition_changeset(movie, attrs) do
+      %{valid?: false} = invalid -> {:error, invalid}
+      %{valid?: true} = changeset -> check_movie_transition(changeset, from)
+    end
+  end
+
+  defp check_movie_transition(changeset, from) do
+    to = Ecto.Changeset.get_field(changeset, :status)
+
+    if legal_movie_transition?(from, to),
+      do: {:ok, changeset},
+      else: {:error, {:illegal_transition, from, to}}
+  end
+
   @doc """
   Applies a pipeline state transition and, on success, broadcasts
   `{:movie_updated, movie}` on the `"movies"` topic. This is the single
   choke-point for state changes — every transition broadcasts exactly once.
   `attrs` must set `:status`; it may also set `:download_id`, `:download_protocol`,
   `:imdb_id`, `:file_path`, `:content_path`, `:import_attempts`, and `:search_attempts`.
+
+  Rejects an illegal from→to pair (per `@movie_transitions`) with
+  `{:error, {:illegal_transition, from, to}}` before writing.
   """
   def transition(movie, attrs, opts \\ [])
 
-  def transition(%Movie{} = movie, attrs, []) do
-    with {:ok, updated} <- movie |> Movie.transition_changeset(attrs) |> Repo.update() do
+  def transition(%Movie{status: from} = movie, attrs, []) do
+    with {:ok, changeset} <- validate_movie_transition(movie, attrs, from),
+         {:ok, updated} <- Repo.update(changeset) do
       broadcast({:movie_updated, updated})
       emit_transition(:movie, updated.status)
       {:ok, updated}
@@ -966,21 +1037,20 @@ defmodule Cinder.Catalog do
 
   # Transaction-safe state-change primitive: every guarded movie writer uses this exact changeset
   # and compare-and-swap update. It performs no publication, so callers publish only after their
-  # encompassing transaction commits.
+  # encompassing transaction commits. The matrix check runs on the caller-declared `expected`
+  # status (not a fresh read of `movie.status`, which may already be stale) — a pair the matrix
+  # rejects short-circuits before ever attempting the DB write; a pair the matrix allows still
+  # goes through the ordinary compare-and-swap, so a genuinely stale row (status moved on
+  # concurrently) keeps returning {:error, :stale_status} exactly as before.
   defp guarded_movie_transition(movie, attrs, expected) do
-    with %{valid?: true, changes: changes} <- Movie.transition_changeset(movie, attrs),
-         {1, [updated]} <-
-           Repo.update_all(
-             from(m in Movie,
-               where: m.id == ^movie.id and m.status == ^expected,
-               select: m
-             ),
-             set: Map.to_list(changes) ++ [updated_at: now()]
+    with {:ok, changeset} <- validate_movie_transition(movie, attrs, expected) do
+      case Repo.update_all(
+             from(m in Movie, where: m.id == ^movie.id and m.status == ^expected, select: m),
+             set: Map.to_list(changeset.changes) ++ [updated_at: now()]
            ) do
-      {:ok, updated}
-    else
-      {0, _} -> {:error, :stale_status}
-      %Ecto.Changeset{} = invalid -> {:error, invalid}
+        {1, [updated]} -> {:ok, updated}
+        {0, _} -> {:error, :stale_status}
+      end
     end
   end
 
@@ -1547,11 +1617,12 @@ defmodule Cinder.Catalog do
   @doc """
   Deletes a movie's DB row. An active row's tracked download is captured in a durable cleanup
   fence in the same transaction, then removed after commit. Broadcasts
-  `{:movie_deleted, id}` on the `"movies"` topic. The delete + audit row are written in one
-  transaction.
+  `{:movie_deleted, id}` on the `"movies"` topic.
 
   Pass `delete_files: true` in `opts` to also unlink the on-disk library file after the row is
   deleted (best-effort: a failed unlink is logged, not propagated). Default leaves files on disk.
+  The audit row is written last, after the unlink is attempted, so `files_deleted` records what
+  actually happened rather than the caller's intent — see `audit_deletion/5`.
   """
   def delete_movie(%Movie{} = movie, actor, opts \\ []) do
     delete_files? = Keyword.get(opts, :delete_files, false)
@@ -1569,18 +1640,25 @@ defmodule Cinder.Catalog do
       Download.fence_movie_cleanup(fresh, include_remote: include_remote?)
     end
 
-    with {:ok, {deleted, intent_ids}} <-
-           delete_with_audit(movie, actor, :delete_movie, delete_files?, prepare) do
+    with {:ok, {deleted, intent_ids}} <- delete_record(movie, prepare) do
       Download.cleanup_intents(intent_ids)
-      if delete_files?, do: best_effort_delete_file(movie.file_path)
+
+      unlinked =
+        if delete_files?,
+          do: [{deleted.file_path, best_effort_delete_file(deleted.file_path)}],
+          else: []
+
+      audit_deletion(actor, :delete_movie, deleted, delete_files?, unlinked)
       broadcast_movie_deleted(deleted.id)
       {:ok, deleted}
     end
   end
 
-  # Deletes a movie or series row and writes the audit entry in one transaction; a concurrent
-  # delete (Repo.delete/1 raises) becomes a clean {:error, :stale_entry}.
-  defp delete_with_audit(record, actor, action, delete_files?, prepare) do
+  # Deletes a movie or series row (no audit write here — the caller writes it post-commit, after
+  # any file unlink it performs, via audit_deletion/5, so the audit can record the true outcome
+  # rather than the caller's intent). A concurrent delete (Repo.delete/1 raises) becomes a clean
+  # {:error, :stale_entry}.
+  defp delete_record(record, prepare) do
     Repo.transaction(fn ->
       module = record.__struct__
 
@@ -1593,16 +1671,8 @@ defmodule Cinder.Catalog do
       prepared = prepare.(fresh)
 
       case Repo.delete(fresh) do
-        {:ok, deleted} ->
-          Audit.log_or_rollback(actor, action, deleted, %{
-            title: deleted.title,
-            files_deleted: delete_files?
-          })
-
-          {deleted, prepared}
-
-        {:error, changeset} ->
-          Repo.rollback(changeset)
+        {:ok, deleted} -> {deleted, prepared}
+        {:error, changeset} -> Repo.rollback(changeset)
       end
     end)
   rescue
@@ -1610,16 +1680,59 @@ defmodule Cinder.Catalog do
   end
 
   # Best-effort library-file unlink shared by the movie and series delete paths: a failed unlink is
-  # logged, never propagated, so it can't strand the row delete. Always returns :ok.
+  # logged, never propagated, so it can't strand the row delete — but (unlike before) the real
+  # :ok/{:error, reason} outcome is returned so audit_deletion/5 can record it truthfully instead
+  # of just echoing the caller's delete_files? intent.
   # ponytail: no nil clause here — Library.delete_file/1 already guards nil/"" and returns :ok.
   defp best_effort_delete_file(path) do
     case Library.delete_file(path) do
       :ok ->
         :ok
 
-      {:error, reason} ->
+      {:error, reason} = error ->
         Logger.warning("library file delete failed for #{inspect(path)}: #{inspect(reason)}")
+        error
+    end
+  end
+
+  # Writes the post-commit deletion audit row with the ACTUAL per-file unlink outcome: when
+  # delete_files? is false nothing was attempted, so `files_deleted` is trivially false (unchanged
+  # from before); when true, it's true only if every attempted unlink succeeded. A partial/total
+  # failure is recorded with the leftover paths+reasons and logged loudly — there is no
+  # outbox/retry here (household scale), so this log line + the audit detail are the only trace.
+  # Runs strictly after the deletion transaction commits and the unlinks are attempted, so a
+  # failure writing the audit row itself can only be logged, never rolled back into an
+  # already-committed delete.
+  defp audit_deletion(actor, action, deleted, delete_files?, unlink_results) do
+    detail = deletion_audit_detail(deleted, delete_files?, unlink_results)
+
+    case Audit.log(actor, action, deleted, detail) do
+      {:ok, _entry} ->
         :ok
+
+      {:error, changeset} ->
+        Logger.warning(
+          "#{action} audit row failed for #{inspect(deleted.__struct__)} #{deleted.id}: " <>
+            inspect(changeset.errors)
+        )
+    end
+  end
+
+  defp deletion_audit_detail(deleted, false, _unlink_results) do
+    %{title: deleted.title, files_deleted: false}
+  end
+
+  defp deletion_audit_detail(deleted, true, unlink_results) do
+    failed = for {path, {:error, reason}} <- unlink_results, do: "#{path}: #{inspect(reason)}"
+
+    if failed == [] do
+      %{title: deleted.title, files_deleted: true}
+    else
+      Logger.warning(
+        "#{inspect(deleted.__struct__)} #{deleted.id} delete: #{length(failed)} file(s) left on disk: #{inspect(failed)}"
+      )
+
+      %{title: deleted.title, files_deleted: false, failed_unlinks: failed}
     end
   end
 
@@ -3082,10 +3195,10 @@ defmodule Cinder.Catalog do
     paths = if delete_files?, do: episode_file_paths_for_series(series.id), else: []
     prepare = &prepare_series_cleanup/1
 
-    with {:ok, {deleted, intent_ids}} <-
-           delete_with_audit(series, actor, :delete_series, delete_files?, prepare) do
+    with {:ok, {deleted, intent_ids}} <- delete_record(series, prepare) do
       Download.cleanup_intents(intent_ids)
-      Enum.each(paths, &best_effort_delete_file/1)
+      unlinked = Enum.map(paths, &{&1, best_effort_delete_file(&1)})
+      audit_deletion(actor, :delete_series, deleted, delete_files?, unlinked)
       broadcast_series_deleted(deleted.id)
       {:ok, deleted}
     end

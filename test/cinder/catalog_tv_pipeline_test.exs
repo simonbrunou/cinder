@@ -85,6 +85,29 @@ defmodule Cinder.CatalogTvPipelineTest do
     end
   end
 
+  describe "episodes CHECK constraints (DB level)" do
+    test "a raw write setting both file_path and grab_id raises (bypasses the changeset guard)" do
+      {_series, season} = series_with_season()
+      ep = episode(season, %{})
+      grab = Repo.insert!(%Grab{download_id: "dl1", download_protocol: :torrent})
+
+      assert_raise Exqlite.Error, ~r/CHECK constraint failed/, fn ->
+        Repo.update_all(from(e in Episode, where: e.id == ^ep.id),
+          set: [file_path: "/x.mkv", grab_id: grab.id]
+        )
+      end
+    end
+
+    test "a raw write setting a negative search_attempts raises" do
+      {_series, season} = series_with_season()
+      ep = episode(season, %{})
+
+      assert_raise Exqlite.Error, ~r/CHECK constraint failed/, fn ->
+        Repo.update_all(from(e in Episode, where: e.id == ^ep.id), set: [search_attempts: -1])
+      end
+    end
+  end
+
   describe "grab lifecycle" do
     test "create_grab/3 links episodes, persists, and broadcasts" do
       {series, season} = series_with_season()

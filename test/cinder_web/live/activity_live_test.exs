@@ -72,6 +72,7 @@ defmodule CinderWeb.ActivityLiveTest do
     assert render(lv) =~ "progress-info"
 
     # Reaching a terminal-done state drops the row off the live pipeline (it's in /library now).
+    {:ok, movie} = Catalog.transition(movie, %{status: :downloaded})
     {:ok, _} = Catalog.transition(movie, %{status: :available})
     refute has_element?(lv, "#movie-#{movie.id}")
   end
