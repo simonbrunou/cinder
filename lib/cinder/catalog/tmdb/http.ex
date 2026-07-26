@@ -47,6 +47,32 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   end
 
   @impl true
+  def find_by_external_id(external_id, external_source)
+      when external_source in [:imdb_id, :tvdb_id] do
+    case request(
+           url: "/3/find/#{external_id}",
+           params: [external_source: Atom.to_string(external_source)]
+         ) do
+      {:ok,
+       %{
+         status: 200,
+         body: %{"movie_results" => movies, "tv_results" => series}
+       }}
+      when is_list(movies) and is_list(series) ->
+        {:ok, Enum.map(movies, &tag_movie/1) ++ Enum.map(series, &tag_series/1)}
+
+      {:ok, %{status: 200}} ->
+        {:error, :unexpected_response}
+
+      other ->
+        error(other)
+    end
+  end
+
+  def find_by_external_id(_external_id, _external_source),
+    do: {:error, :unsupported_external_source}
+
+  @impl true
   def search_tv(query, locale) do
     case request(
            url: "/3/search/tv",
@@ -300,6 +326,7 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   end
 
   defp tag_movie(movie), do: movie |> normalize() |> Map.put(:type, :movie)
+  defp tag_series(series), do: series |> normalize_tv() |> Map.put(:type, :tv)
 
   defp error({:ok, %{status: status}}), do: {:error, {:tmdb_status, status}}
   defp error({:error, reason}), do: {:error, reason}

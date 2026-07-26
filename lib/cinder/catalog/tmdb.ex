@@ -13,6 +13,16 @@ defmodule Cinder.Catalog.TMDB do
   @doc "Single movie details. Returns `%{tmdb_id, title, year, poster_path, imdb_id, original_language, overview, runtime, genres, vote_average, release_date}` (`genres` is a list of names, `release_date` a `Date` or `nil`)."
   @callback get_movie(tmdb_id :: integer()) :: {:ok, map()} | {:error, term()}
 
+  @doc """
+  Finds movie and TV matches for an IMDb or TVDB id. Returns search-normalized maps carrying
+  `type: :movie | :tv`; callers must reject zero or multiple matches for the requested type.
+  """
+  @callback find_by_external_id(
+              external_id :: integer() | String.t(),
+              external_source :: :imdb_id | :tvdb_id
+            ) ::
+              {:ok, [map()]} | {:error, term()}
+
   @doc "TV search. Returns normalized series maps (`%{tmdb_id, title, year, poster_path, original_language}`)."
   @callback search_tv(query :: String.t(), locale :: String.t()) ::
               {:ok, [map()]} | {:error, term()}

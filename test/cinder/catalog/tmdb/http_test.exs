@@ -106,6 +106,28 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
             }} = HTTP.get_movie(27_205)
   end
 
+  test "find_by_external_id/2 sends the source and normalizes movie and TV results" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      assert conn.request_path == "/3/find/tt0903747"
+      assert conn.params["external_source"] == "imdb_id"
+
+      Req.Test.json(conn, %{
+        "movie_results" => [
+          %{"id" => 10, "title" => "Movie", "release_date" => "2008-01-01"}
+        ],
+        "tv_results" => [
+          %{"id" => 20, "name" => "Series", "first_air_date" => "2008-01-20"}
+        ]
+      })
+    end)
+
+    assert {:ok,
+            [
+              %{type: :movie, tmdb_id: 10, title: "Movie", year: 2008},
+              %{type: :tv, tmdb_id: 20, title: "Series", year: 2008}
+            ]} = HTTP.find_by_external_id("tt0903747", :imdb_id)
+  end
+
   test "search_tv/2 sends the requested locale and normalizes results" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       assert conn.request_path == "/3/search/tv"

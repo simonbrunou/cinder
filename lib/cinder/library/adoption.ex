@@ -14,7 +14,7 @@ defmodule Cinder.Library.Adoption do
   alias Cinder.Locales
 
   @candidate_limit 5
-  @tmdb_tag ~r/^(.*?)\s*\{tmdb-(\d+)\}\s*$/iu
+  @provider_tag ~r/^(.*?)\s*\{((?:tmdb|tvdb)-\d+|imdb-tt\d+)\}\s*$/iu
   @title_year ~r/^(.*?)\s*\((\d{4})\)\s*$/u
 
   @doc "Returns adoption candidates for every unmanaged video in both library roots."
@@ -153,6 +153,7 @@ defmodule Cinder.Library.Adoption do
       title: parsed.title,
       year: parsed.year,
       tagged_tmdb_id: parsed.tmdb_id,
+      provider_tag: parsed.provider_tag,
       status: :unmatched,
       match: nil,
       candidates: [],
@@ -160,7 +161,7 @@ defmodule Cinder.Library.Adoption do
     }
   end
 
-  defp identify_movie(%{tagged_tmdb_id: tmdb_id} = candidate) when is_integer(tmdb_id) do
+  defp identify_movie(%{provider_tag: {:tmdb_id, tmdb_id}} = candidate) do
     match = %{
       tmdb_id: tmdb_id,
       title: candidate.title,
@@ -171,14 +172,37 @@ defmodule Cinder.Library.Adoption do
     %{candidate | status: :auto_matched, match: match}
   end
 
-  defp identify_movie(candidate) do
+  defp identify_movie(%{provider_tag: {source, _id} = tag} = candidate)
+       when source in [:imdb_id, :tvdb_id] do
+    case external_match(tag, :movie) do
+      {:ok, match} -> %{candidate | status: :auto_matched, match: match}
+      :unresolved -> identify_movie_by_title(candidate)
+    end
+  end
+
+  defp identify_movie(candidate), do: identify_movie_by_title(candidate)
+
+  defp identify_movie_by_title(candidate) do
     case Catalog.search_movies(candidate.title) do
       {:ok, results} -> put_search_match(candidate, results)
       {:error, reason} -> %{candidate | status: :unmatched, reason: {:tmdb_search_failed, reason}}
     end
   end
 
-  defp identify_series(%{tagged_tmdb_id: tmdb_id} = candidate) when is_integer(tmdb_id) do
+  defp identify_series(%{provider_tag: {:tmdb_id, tmdb_id}} = candidate),
+    do: identify_tagged_series(candidate, tmdb_id)
+
+  defp identify_series(%{provider_tag: {source, _id} = tag} = candidate)
+       when source in [:imdb_id, :tvdb_id] do
+    case external_match(tag, :tv) do
+      {:ok, %{tmdb_id: tmdb_id}} -> identify_tagged_series(candidate, tmdb_id)
+      :unresolved -> identify_series_by_title(candidate)
+    end
+  end
+
+  defp identify_series(candidate), do: identify_series_by_title(candidate)
+
+  defp identify_tagged_series(candidate, tmdb_id) do
     case fetch_series_tree(tmdb_id) do
       {:ok, info, episode_keys} ->
         candidate
@@ -190,13 +214,29 @@ defmodule Cinder.Library.Adoption do
     end
   end
 
-  defp identify_series(candidate) do
+  defp identify_series_by_title(candidate) do
     case Catalog.search_tv(candidate.title) do
       {:ok, results} ->
         identify_series(candidate, results)
 
       {:error, reason} ->
         %{candidate | status: :unmatched, reason: {:tmdb_search_failed, reason}}
+    end
+  end
+
+  defp external_match({source, external_id}, kind) do
+    case tmdb().find_by_external_id(external_id, source) do
+      {:ok, results} when is_list(results) ->
+        case Enum.filter(
+               results,
+               &match?(%{type: ^kind, tmdb_id: tmdb_id} when is_integer(tmdb_id), &1)
+             ) do
+          [match] -> {:ok, match}
+          _zero_or_many -> :unresolved
+        end
+
+      _error ->
+        :unresolved
     end
   end
 
@@ -268,20 +308,44 @@ defmodule Cinder.Library.Adoption do
   defp top_candidates(results), do: Enum.take(results, @candidate_limit)
 
   defp parse_directory(name) do
-    {base, tmdb_id} =
-      case Regex.run(@tmdb_tag, name, capture: :all_but_first) do
-        [base, id] -> {String.trim(base), parse_integer(id)}
-        _ -> {String.trim(name), nil}
-      end
+    {base, provider_tag} = parse_provider_tag(name)
 
     case Regex.run(@title_year, base, capture: :all_but_first) do
       [title, year] ->
-        %{title: String.trim(title), year: parse_integer(year), tmdb_id: tmdb_id}
+        %{
+          title: String.trim(title),
+          year: parse_integer(year),
+          tmdb_id: tagged_tmdb_id(provider_tag),
+          provider_tag: provider_tag
+        }
 
       _ ->
-        %{title: base, year: nil, tmdb_id: tmdb_id}
+        %{
+          title: base,
+          year: nil,
+          tmdb_id: tagged_tmdb_id(provider_tag),
+          provider_tag: provider_tag
+        }
     end
   end
+
+  defp parse_provider_tag(name) do
+    case Regex.run(@provider_tag, name, capture: :all_but_first) do
+      [base, tag] ->
+        [source, external_id] = tag |> String.downcase() |> String.split("-", parts: 2)
+        {String.trim(base), provider_tag(source, external_id)}
+
+      _ ->
+        {String.trim(name), nil}
+    end
+  end
+
+  defp provider_tag("tmdb", id), do: {:tmdb_id, parse_integer(id)}
+  defp provider_tag("tvdb", id), do: {:tvdb_id, parse_integer(id)}
+  defp provider_tag("imdb", id), do: {:imdb_id, id}
+
+  defp tagged_tmdb_id({:tmdb_id, id}), do: id
+  defp tagged_tmdb_id(_tag), do: nil
 
   defp parse_episode_file(path) do
     parsed = Parser.parse(Path.basename(path))
@@ -584,6 +648,7 @@ defmodule Cinder.Library.Adoption do
       title: Path.basename(root),
       year: nil,
       tagged_tmdb_id: nil,
+      provider_tag: nil,
       status: :unmatched,
       match: nil,
       candidates: [],
