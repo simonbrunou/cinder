@@ -208,8 +208,8 @@ defmodule CinderWeb.DiscoverComponents do
   def department_label("Lighting"), do: gettext("Lighting")
   def department_label(other), do: other
 
-  # Full map over Cinder.Catalog.Genres.list/0's fixed 19 names — an unmapped name passes
-  # through raw rather than crashing (defensive, though the list is closed).
+  # Full map over Cinder.Catalog.Genres.list/0 + tv_list/0's fixed names — an unmapped name
+  # passes through raw rather than crashing (defensive, though the lists are closed).
   defp genre_label("Action"), do: gettext("Action")
   defp genre_label("Adventure"), do: gettext("Adventure")
   defp genre_label("Animation"), do: gettext("Animation")
@@ -229,6 +229,15 @@ defmodule CinderWeb.DiscoverComponents do
   defp genre_label("Thriller"), do: gettext("Thriller")
   defp genre_label("War"), do: gettext("War")
   defp genre_label("Western"), do: gettext("Western")
+  # TV-only genres (Cinder.Catalog.Genres.tv_list/0) not present in the movie list.
+  defp genre_label("Action & Adventure"), do: gettext("Action & Adventure")
+  defp genre_label("Kids"), do: gettext("Kids")
+  defp genre_label("News"), do: gettext("News")
+  defp genre_label("Reality"), do: gettext("Reality")
+  defp genre_label("Sci-Fi & Fantasy"), do: gettext("Sci-Fi & Fantasy")
+  defp genre_label("Soap"), do: gettext("Soap")
+  defp genre_label("Talk"), do: gettext("Talk")
+  defp genre_label("War & Politics"), do: gettext("War & Politics")
   defp genre_label(other), do: other
 
   @doc """

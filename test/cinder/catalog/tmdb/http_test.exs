@@ -724,6 +724,74 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
     assert {:error, :unexpected_response} = HTTP.discover_movies(28, "en")
   end
 
+  test "popular_tv/1 sends the locale and tags results type: :tv" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      assert conn.request_path == "/3/tv/popular"
+      assert conn.params["language"] == "fr-FR"
+
+      Req.Test.json(conn, %{
+        "results" => [
+          %{
+            "id" => 1399,
+            "name" => "Game of Thrones",
+            "first_air_date" => "2011-04-17",
+            "poster_path" => "/got.jpg"
+          }
+        ]
+      })
+    end)
+
+    assert {:ok, [series]} = HTTP.popular_tv("fr")
+    assert %{type: :tv, tmdb_id: 1399, title: "Game of Thrones", year: 2011} = series
+  end
+
+  test "popular_tv/1 returns an error tuple on a non-200 status" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      conn |> Plug.Conn.put_status(500) |> Req.Test.json(%{"status_message" => "down"})
+    end)
+
+    assert {:error, {:tmdb_status, 500}} = HTTP.popular_tv("en")
+  end
+
+  test "top_rated_tv/1 sends the locale and tags results type: :tv" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      assert conn.request_path == "/3/tv/top_rated"
+      assert conn.params["language"] == "en-US"
+
+      Req.Test.json(conn, %{
+        "results" => [%{"id" => 1396, "name" => "Breaking Bad", "first_air_date" => "2008-01-20"}]
+      })
+    end)
+
+    assert {:ok, [%{type: :tv, tmdb_id: 1396, title: "Breaking Bad"}]} =
+             HTTP.top_rated_tv("en")
+  end
+
+  test "discover_tv/2 sends with_genres + the locale and tags results type: :tv" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      assert conn.request_path == "/3/discover/tv"
+      assert conn.params["with_genres"] == "10759"
+      assert conn.params["language"] == "en-US"
+
+      Req.Test.json(conn, %{
+        "results" => [
+          %{"id" => 1399, "name" => "Game of Thrones", "first_air_date" => "2011-04-17"}
+        ]
+      })
+    end)
+
+    assert {:ok, [%{type: :tv, tmdb_id: 1399, title: "Game of Thrones"}]} =
+             HTTP.discover_tv(10_759, "en")
+  end
+
+  test "discover_tv/2 returns an error on a 200 lacking a results list" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      Req.Test.json(conn, %{"success" => false})
+    end)
+
+    assert {:error, :unexpected_response} = HTTP.discover_tv(10_759, "en")
+  end
+
   test "search_person/2 sends the locale and normalizes person results" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       assert conn.request_path == "/3/search/person"

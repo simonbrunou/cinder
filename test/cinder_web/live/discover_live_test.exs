@@ -24,6 +24,8 @@ defmodule CinderWeb.DiscoverLiveTest do
     stub(Cinder.Catalog.TMDBMock, :popular_movies, fn _ -> {:ok, []} end)
     stub(Cinder.Catalog.TMDBMock, :top_rated_movies, fn _ -> {:ok, []} end)
     stub(Cinder.Catalog.TMDBMock, :now_playing_movies, fn _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :popular_tv, fn _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :top_rated_tv, fn _ -> {:ok, []} end)
 
     stub(Cinder.Catalog.TMDBMock, :get_movie, fn id ->
       {:ok,
@@ -79,6 +81,12 @@ defmodule CinderWeb.DiscoverLiveTest do
 
   defp stub_now_playing(results),
     do: stub(Cinder.Catalog.TMDBMock, :now_playing_movies, fn _ -> {:ok, results} end)
+
+  defp stub_popular_tv(results),
+    do: stub(Cinder.Catalog.TMDBMock, :popular_tv, fn _ -> {:ok, results} end)
+
+  defp stub_top_rated_tv(results),
+    do: stub(Cinder.Catalog.TMDBMock, :top_rated_tv, fn _ -> {:ok, results} end)
 
   defp stub_persons(results),
     do: stub(Cinder.Catalog.TMDBMock, :search_person, fn _, _ -> {:ok, results} end)
@@ -192,7 +200,7 @@ defmodule CinderWeb.DiscoverLiveTest do
 
   # TMDB's lists commonly overlap (a blockbuster is often trending AND popular); the same
   # movie must render exactly once so its Add form's id (keyed only by tmdb_id) never
-  # duplicates on the page — regression for `DiscoverLive.dedupe_movies/2`.
+  # duplicates on the page — regression for `DiscoverLive.dedupe/2`.
   test "a movie in both trending and popular renders once, kept in the earlier rail", %{
     conn: conn
   } do
@@ -222,6 +230,55 @@ defmodule CinderWeb.DiscoverLiveTest do
       end)
 
     assert log =~ "Popular movies fetch failed"
+  end
+
+  @severance %{tmdb_id: 95_396, title: "Severance", year: 2022, poster_path: "/sev.jpg"}
+
+  test "the Popular TV and Top rated TV rails render TV cards linking to the season picker", %{
+    conn: conn
+  } do
+    stub_popular_tv([Map.put(@got, :type, :tv)])
+    stub_top_rated_tv([Map.put(@severance, :type, :tv)])
+    {:ok, lv, _html} = live(conn, ~p"/")
+
+    html = render_async(lv)
+
+    assert html =~ "Popular TV"
+    assert html =~ "Top rated TV"
+    assert html =~ "Game of Thrones"
+    assert html =~ "Severance"
+    # TV cards carry the season-picker link, not an Add form — same affordance as trending TV.
+    assert has_element?(lv, ~s(#popular-tv a[href="/series/tmdb/1399"]))
+    assert has_element?(lv, ~s(#top-rated-tv a[href="/series/tmdb/95396"]))
+  end
+
+  test "a Popular TV failure leaves the other rails intact and the page still 200s", %{conn: conn} do
+    stub_trending([Map.put(@inception, :type, :movie)])
+    stub(Cinder.Catalog.TMDBMock, :popular_tv, fn _ -> {:error, :tmdb_down} end)
+
+    log =
+      capture_log(fn ->
+        {:ok, lv, _html} = live(conn, ~p"/")
+        html = render_async(lv)
+
+        assert html =~ "Trending this week"
+        refute html =~ "Popular TV"
+      end)
+
+    assert log =~ "Popular TV fetch failed"
+  end
+
+  # A show trending AND in the Popular TV rail renders once (kept in the earlier rail) — the
+  # {type, tmdb_id} dedupe covers TV too, not just movies.
+  test "a show in both trending and Popular TV renders once", %{conn: conn} do
+    stub_trending([Map.put(@got, :type, :tv)])
+    stub_popular_tv([Map.put(@got, :type, :tv)])
+    {:ok, lv, _html} = live(conn, ~p"/")
+
+    render_async(lv)
+
+    assert has_element?(lv, ~s(#trending a[href="/series/tmdb/1399"]))
+    refute has_element?(lv, ~s(#popular-tv a[href="/series/tmdb/1399"]))
   end
 
   test "first load shows an accessible search field", %{conn: conn} do
@@ -574,6 +631,36 @@ defmodule CinderWeb.DiscoverLiveTest do
     {:ok, lv, _html} = live(conn, ~p"/")
     render_async(lv)
     assert render_hook(lv, "select_genre", %{"id" => "999999"}) =~ "search-form"
+  end
+
+  test "switching the genre browser to TV loads a TV-genre grid of TV cards", %{conn: conn} do
+    stub(Cinder.Catalog.TMDBMock, :discover_tv, fn 10_759, _ ->
+      {:ok, [Map.put(@got, :type, :tv)]}
+    end)
+
+    {:ok, lv, _html} = live(conn, ~p"/")
+    render_async(lv)
+
+    lv |> element(~s(button[phx-click="genre_media_type"][phx-value-type="tv"])) |> render_click()
+    # The TV genre chips now render (Action & Adventure = 10759 is TV-only).
+    assert has_element?(lv, ~s(button[phx-value-id="10759"]))
+
+    html = lv |> element(~s(button[phx-value-id="10759"])) |> render_click()
+
+    assert html =~ "Game of Thrones"
+    assert has_element?(lv, ~s(#genre-results a[href="/series/tmdb/1399"]))
+    assert has_element?(lv, ~s(button[phx-value-id="10759"][aria-pressed="true"]))
+  end
+
+  # In TV mode a movie-only genre id (28 = Action, absent from the TV list) must not reach
+  # Catalog.tv_by_genre/2 — no :discover_tv stub is set, so a Mox call would raise.
+  test "a movie-only genre id is ignored while the genre browser is in TV mode", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/")
+    render_async(lv)
+
+    lv |> element(~s(button[phx-click="genre_media_type"][phx-value-type="tv"])) |> render_click()
+
+    assert render_hook(lv, "select_genre", %{"id" => "28"}) =~ "search-form"
   end
 
   test "the old /series route redirects to /", %{conn: conn} do
