@@ -176,6 +176,26 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
            }
   end
 
+  test "search_tv/3 queries season 0 sanely (a Standard series' explicitly monitored specials)" do
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      assert conn.params["query"] == "{TvdbId:1396}{Season:0}"
+      assert conn.params["type"] == "tvsearch"
+      Req.Test.json(conn, [])
+    end)
+
+    assert {:ok, []} = Prowlarr.search_tv(1396, "Breaking Bad", 0)
+  end
+
+  test "search_tv/3 falls back to a free-text season-0 query when tvdb_id is nil" do
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      assert conn.params["query"] == "Breaking Bad {Season:0}"
+      assert conn.params["type"] == "tvsearch"
+      Req.Test.json(conn, [])
+    end)
+
+    assert {:ok, []} = Prowlarr.search_tv(nil, "Breaking Bad", 0)
+  end
+
   test "search_tv/3 falls back to a free-text title query when tvdb_id is nil" do
     Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
       assert conn.params["query"] == "Breaking Bad {Season:2}"

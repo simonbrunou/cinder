@@ -3547,8 +3547,10 @@ defmodule Cinder.Catalog do
   flag (the cascade/add keep it the single source of truth).
 
   Regular episodes keep the existing positive season/episode-number gate. Explicitly monitored,
-  classified Anime story specials and recaps share the common missing/air-date predicates; extras
-  and Standard Season 00 rows remain excluded.
+  classified Anime story specials and recaps share the common missing/air-date predicates; an
+  unclassified Anime special or a pure `:extra` stays excluded. A Standard (non-Anime) Season 00
+  row shares the same common predicates with no classification gate — an operator who explicitly
+  monitors a Standard special wants it searched exactly like a regular episode.
   """
   def wanted_episodes do
     Repo.all(from e in wanted_episodes_query(), preload: [season: :series])
@@ -3682,9 +3684,19 @@ defmodule Cinder.Catalog do
       where:
         e.monitored == true and is_nil(e.file_path) and is_nil(e.grab_id) and
           not is_nil(e.air_date) and e.air_date <= ^today,
-      where:
-        (s.season_number > 0 and e.episode_number > 0) or
-          (series.media_profile == :anime and e.classification in [:story_special, :recap])
+      where: ^wanted_kind_dynamic()
+  end
+
+  # The season/classification half of `wanted_episodes_query/0`'s eligibility, split out as a
+  # `dynamic` so the caller's own complexity stays flat — shared verbatim by `upcoming_episodes/0`
+  # so the two can't drift.
+  defp wanted_kind_dynamic do
+    dynamic(
+      [e, s, series],
+      (s.season_number > 0 and e.episode_number > 0) or
+        (series.media_profile == :anime and e.classification in [:story_special, :recap]) or
+        (series.media_profile != :anime and s.season_number == 0)
+    )
   end
 
   @doc "Whether one preloaded episode shares the wanted query's current eligibility semantics."
@@ -3697,16 +3709,25 @@ defmodule Cinder.Catalog do
       episode.monitored and is_nil(episode.file_path) and is_nil(episode.grab_id) and
         not is_nil(episode.air_date) and Date.compare(episode.air_date, today) != :gt
 
+    common? and episode_kind_wanted?(episode, season, profile)
+  end
+
+  # The season/classification half of `episode_searchable?/3`'s eligibility, split out to keep
+  # the caller's own complexity flat. Mirrors `wanted_kind_dynamic/0`'s SQL predicate exactly.
+  defp episode_kind_wanted?(episode, season, profile) do
     regular? = season.season_number > 0 and episode.episode_number > 0
     special? = profile.effective == :anime and episode.classification in [:story_special, :recap]
+    standard_special? = profile.effective != :anime and season.season_number == 0
 
-    common? and (regular? or special?)
+    regular? or special? or standard_special?
   end
 
   @doc """
   Monitored, dated episodes in a calendar window (`today - 7 .. today + 90`), ordered by air date,
-  with `season: :series` preloaded for the calendar view. Excludes season 0 (specials, never
-  searched in M5) so the view's derived "wanted" badge stays honest.
+  with `season: :series` preloaded for the calendar view. A season 0 row is included only when
+  it's actually search-eligible — a Standard-profile explicit S00 monitor, or an Anime-classified
+  story special/recap — mirroring `wanted_episodes_query/0`, so the view's derived "wanted" badge
+  stays honest for every row, not just regular episodes.
   """
   def upcoming_episodes do
     today = Date.utc_today()
@@ -3716,9 +3737,11 @@ defmodule Cinder.Catalog do
     Repo.all(
       from e in Episode,
         join: s in assoc(e, :season),
+        join: series in assoc(s, :series),
         where:
-          s.season_number > 0 and e.monitored and not is_nil(e.air_date) and
-            e.air_date >= ^from_date and e.air_date <= ^to_date,
+          e.monitored and not is_nil(e.air_date) and e.air_date >= ^from_date and
+            e.air_date <= ^to_date,
+        where: ^wanted_kind_dynamic(),
         order_by: [asc: e.air_date],
         preload: [season: :series]
     )

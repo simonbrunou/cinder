@@ -357,7 +357,7 @@ defmodule Cinder.Download.Poller do
   # --- upgrade: re-download + atomic replace of an :available movie's file -----------------------
   #
   # An :upgrading movie keeps its live file_path the entire time; only the success transition
-  # (after Library.import_movie's atomic replace) rewrites it. Every failure reverts to :available
+  # (after Library.stage_movie's atomic replace) rewrites it. Every failure reverts to :available
   # with the live file untouched. Mirrors the :downloading advance bound (@max_attempts via
   # import_attempts) but reverts instead of parking — the movie already has a usable file.
 
