@@ -3,6 +3,7 @@ defmodule Cinder.Notifier.DiscordTest do
   use ExUnit.Case, async: false
   import ExUnit.CaptureLog
 
+  alias Cinder.Accounts.User
   alias Cinder.Notifier.Discord
 
   # Stub the webhook endpoint and forward the decoded POST body to the test process.
@@ -17,6 +18,20 @@ defmodule Cinder.Notifier.DiscordTest do
   end
 
   defp movie, do: %{title: "Dune", year: 2021, poster_path: "/dune.jpg"}
+
+  # A movie request whose requester has the given (attacker-controlled) Plex username. The email
+  # is set to prove it never reaches the payload — display_name/1 renders plex_username, not it.
+  defp request_with(plex_username) do
+    %{
+      title: "Arrival",
+      year: 2016,
+      poster_path: nil,
+      user_id: 3,
+      user: %User{id: 3, email: "kim@example.com", plex_username: plex_username},
+      target_type: "movie",
+      season_number: nil
+    }
+  end
 
   test "movie_available posts a green embed with poster thumbnail" do
     expect_post()
@@ -77,7 +92,7 @@ defmodule Cinder.Notifier.DiscordTest do
     assert embed["description"] == ":unknown_action"
   end
 
-  test "request_approved posts a green embed naming the requester" do
+  test "request_approved posts a green embed naming the requester (no email)" do
     expect_post()
 
     request = %{
@@ -85,7 +100,7 @@ defmodule Cinder.Notifier.DiscordTest do
       year: 2016,
       poster_path: "/arr.jpg",
       user_id: 3,
-      user: %{email: "kim@example.com"},
+      user: %User{id: 3, email: "kim@example.com", plex_username: "kimwatches"},
       target_type: "movie",
       season_number: nil
     }
@@ -94,7 +109,8 @@ defmodule Cinder.Notifier.DiscordTest do
 
     assert_receive {:posted, %{"embeds" => [embed]}}
     assert embed["title"] == "✅ Request approved"
-    assert embed["description"] == "Arrival (2016) — for kim@example.com"
+    assert embed["description"] == "Arrival (2016) — for kimwatches"
+    refute embed["description"] =~ "kim@example.com"
     assert embed["color"] == 0x2ECC71
     assert embed["thumbnail"]["url"] == "https://image.tmdb.org/t/p/w342/arr.jpg"
   end
@@ -129,7 +145,7 @@ defmodule Cinder.Notifier.DiscordTest do
       year: 2022,
       poster_path: nil,
       user_id: 3,
-      user: %{email: "kim@example.com"},
+      user: %User{id: 3, email: "kim@example.com", plex_username: "kimwatches"},
       target_type: "season",
       season_number: 2
     }
@@ -137,10 +153,11 @@ defmodule Cinder.Notifier.DiscordTest do
     assert :ok = Discord.notify({:request_approved, request})
 
     assert_receive {:posted, %{"embeds" => [embed]}}
-    assert embed["description"] == "Severance (2022) — Season 2 — for kim@example.com"
+    assert embed["description"] == "Severance (2022) — Season 2 — for kimwatches"
+    refute embed["description"] =~ "kim@example.com"
   end
 
-  test "request_created posts a blue awaiting-approval embed naming the requester" do
+  test "request_created posts a blue awaiting-approval embed naming the requester (no email)" do
     expect_post()
 
     request = %{
@@ -148,7 +165,7 @@ defmodule Cinder.Notifier.DiscordTest do
       year: 2016,
       poster_path: "/arr.jpg",
       user_id: 3,
-      user: %{email: "kim@example.com"},
+      user: %User{id: 3, email: "kim@example.com", plex_username: "kimwatches"},
       target_type: "movie",
       season_number: nil
     }
@@ -157,63 +174,56 @@ defmodule Cinder.Notifier.DiscordTest do
 
     assert_receive {:posted, %{"embeds" => [embed]}}
     assert embed["title"] == "🙋 Request awaiting approval"
-    assert embed["description"] == "Arrival (2016) — from kim@example.com"
+    assert embed["description"] == "Arrival (2016) — from kimwatches"
+    refute embed["description"] =~ "kim@example.com"
     assert embed["color"] == 0x3498DB
   end
 
-  # Registration is public and the email format check only forbids `@ , ;` and whitespace, so
-  # markdown metacharacters are registerable. Both of Discord's link syntaxes must die: the
-  # masked `[x](url)` form and the bare `<url>` auto-link form. Dropping `:` and `/` is what
-  # makes this hold for any syntax, rather than the ones we happened to think of.
-  test "an attacker-chosen email cannot put a link in the admin's channel" do
+  # A plex_username is externally sourced (from the linked Plex account) and Discord renders embed
+  # text as markdown, so both of Discord's link syntaxes must die: the masked `[x](url)` form and
+  # the bare `<url>` auto-link form. Dropping `:` and `/` is what makes this hold for any syntax,
+  # rather than the ones we happened to think of.
+  test "an attacker-chosen plex username cannot put a link in the admin's channel" do
     for evil <- [
-          "[click](https://evil.tld)x@a.tld",
-          "<https://evil.tld>x@a.tld",
-          "`x`@a.tld",
-          "**x**@a.tld"
+          "[click](https://evil.tld)x",
+          "<https://evil.tld>x",
+          "`x`",
+          "**x**"
         ] do
       expect_post()
-      assert :ok = Discord.notify({:user_registered, %{id: 9, email: evil}})
+      assert :ok = Discord.notify({:request_created, request_with(evil)})
 
       assert_receive {:posted, %{"embeds" => [embed]}}
-      description = embed["description"]
+      # Assert on the requester portion only — the title's "Arrival (2016)" has its own parens.
+      [_title, name] = String.split(embed["description"], " — from ", parts: 2)
 
-      refute description =~ "https://", "a URL scheme survived for #{inspect(evil)}"
+      refute name =~ "https://", "a URL scheme survived for #{inspect(evil)}"
 
       for char <- ["[", "]", "(", ")", "<", ">", "`", "*"] do
-        refute String.contains?(description, char),
+        refute String.contains?(name, char),
                "#{inspect(char)} survived for #{inspect(evil)}"
       end
     end
   end
 
-  test "the requester's email is sanitized in a request embed too" do
+  # The approval path sanitizes the requester's plex_username too (not only the created path).
+  test "the requester's plex username is sanitized in a request embed" do
     expect_post()
 
-    request = %{
-      title: "Arrival",
-      year: 2016,
-      poster_path: nil,
-      user_id: 3,
-      user: %{email: "<https://evil.tld>@a.tld"},
-      target_type: "movie",
-      season_number: nil
-    }
-
-    assert :ok = Discord.notify({:request_created, request})
+    assert :ok = Discord.notify({:request_approved, request_with("<https://evil.tld>x")})
 
     assert_receive {:posted, %{"embeds" => [embed]}}
     refute embed["description"] =~ "https://"
     refute embed["description"] =~ "<"
   end
 
-  # "a@everyone" is a registerable address whose every character survives the whitelist. It is
-  # inert in an embed only because Discord does not resolve mentions there — this keeps it inert
-  # if the text is ever moved into `content`.
-  test "a mention-shaped address cannot become a channel ping" do
-    for {email, banned} <- [{"a@everyone", "@everyone"}, {"x@here", "@here"}] do
+  # A plex_username like "@everyone" survives the whitelist. It is inert in an embed only because
+  # Discord does not resolve mentions there — the zero-width space keeps it inert if the text is
+  # ever moved into `content`.
+  test "a mention-shaped plex username cannot become a channel ping" do
+    for {username, banned} <- [{"@everyone", "@everyone"}, {"@here", "@here"}] do
       expect_post()
-      assert :ok = Discord.notify({:user_registered, %{id: 9, email: email}})
+      assert :ok = Discord.notify({:request_created, request_with(username)})
 
       assert_receive {:posted, %{"embeds" => [embed]}}
       refute embed["description"] =~ banned
@@ -221,21 +231,21 @@ defmodule Cinder.Notifier.DiscordTest do
   end
 
   # No word boundary in the neutralising regex (Discord matches the substring, so "@everyone"
-  # inside "x@everyones.com" would still ping). A domain that merely starts with "here" therefore
+  # inside "@everyones" would still ping). A username that merely starts with "@here" therefore
   # gains an invisible zero-width space; it must still READ correctly to the admin.
-  test "a domain beginning with 'here' still reads correctly" do
+  test "a plex username beginning with '@here' still reads correctly" do
     expect_post()
-    assert :ok = Discord.notify({:user_registered, %{id: 9, email: "kim@herefordshire.com"}})
+    assert :ok = Discord.notify({:request_created, request_with("@herefordshire")})
 
     assert_receive {:posted, %{"embeds" => [embed]}}
-    assert String.replace(embed["description"], "​", "") =~ "kim@herefordshire.com"
+    assert String.replace(embed["description"], "​", "") =~ "@herefordshire"
   end
 
   # The boundary-less form is the point: a keyword followed by more word characters must not
   # slip through, since Discord would resolve the substring.
   test "a mention keyword followed by more characters is still neutralised" do
     expect_post()
-    assert :ok = Discord.notify({:user_registered, %{id: 9, email: "x@everyones.com"}})
+    assert :ok = Discord.notify({:request_created, request_with("@everyones")})
 
     assert_receive {:posted, %{"embeds" => [embed]}}
     refute embed["description"] =~ "@everyone"
@@ -251,21 +261,26 @@ defmodule Cinder.Notifier.DiscordTest do
     assert payload["allowed_mentions"] == %{"parse" => []}
   end
 
-  test "an ordinary address is left readable" do
+  test "an ordinary plex username is left readable" do
     expect_post()
-    assert :ok = Discord.notify({:user_registered, %{id: 9, email: "kim.o'neil+tv@example.com"}})
+    assert :ok = Discord.notify({:request_created, request_with("kim.o'neil")})
 
     assert_receive {:posted, %{"embeds" => [embed]}}
-    assert embed["description"] =~ "kim.o'neil+tv@example.com"
+    assert embed["description"] =~ "kim.o'neil"
   end
 
-  test "user_registered posts a blue awaiting-activation embed with no thumbnail" do
+  test "user_registered posts a blue awaiting-activation embed (user id, no email) and no thumbnail" do
     expect_post()
-    assert :ok = Discord.notify({:user_registered, %{id: 9, email: "kim@example.com"}})
+
+    assert :ok =
+             Discord.notify(
+               {:user_registered, %User{id: 9, email: "kim@example.com", plex_username: nil}}
+             )
 
     assert_receive {:posted, %{"embeds" => [embed]}}
     assert embed["title"] == "👤 Account awaiting activation"
-    assert embed["description"] =~ "kim@example.com"
+    assert embed["description"] =~ "user #9"
+    refute embed["description"] =~ "kim@example.com"
     assert embed["color"] == 0x3498DB
     refute Map.has_key?(embed, "thumbnail")
   end
