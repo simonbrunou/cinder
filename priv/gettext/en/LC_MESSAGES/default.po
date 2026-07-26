@@ -51,7 +51,7 @@ msgstr ""
 msgid "1080p, 720p"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:210
+#: lib/cinder_web/live/user_live/settings.ex:230
 #, elixir-autogen, elixir-format
 msgid "A link to confirm your email change has been sent to the new address."
 msgstr ""
@@ -245,7 +245,7 @@ msgstr ""
 msgid "Checking…"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:455
+#: lib/cinder_web/components/settings_components.ex:471
 #, elixir-autogen, elixir-format
 msgid "Clear saved value"
 msgstr ""
@@ -525,12 +525,12 @@ msgstr ""
 msgid "Email"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:130
+#: lib/cinder_web/live/user_live/settings.ex:150
 #, elixir-autogen, elixir-format
 msgid "Email change link is invalid or it has expired."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:127
+#: lib/cinder_web/live/user_live/settings.ex:147
 #, elixir-autogen, elixir-format
 msgid "Email changed successfully."
 msgstr ""
@@ -1191,7 +1191,7 @@ msgstr ""
 msgid "TV wanted"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:313
+#: lib/cinder_web/components/settings_components.ex:329
 #, elixir-autogen, elixir-format
 msgid "Test %{service}"
 msgstr ""
@@ -1329,7 +1329,7 @@ msgid "You must log in to access this page."
 msgstr ""
 
 #: lib/cinder_web/controllers/user_session_controller.ex:83
-#: lib/cinder_web/live/user_live/settings.ex:277
+#: lib/cinder_web/live/user_live/settings.ex:317
 #: lib/cinder_web/user_auth.ex:280
 #, elixir-autogen, elixir-format
 msgid "You must re-authenticate to access this page."
@@ -1366,12 +1366,12 @@ msgstr ""
 msgid "to your account now."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:532
+#: lib/cinder_web/components/settings_components.ex:548
 #, elixir-autogen, elixir-format
 msgid "•••• saved (leave blank to keep)"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:376
+#: lib/cinder_web/components/settings_components.ex:392
 #: lib/cinder_web/settings_labels.ex:26
 #, elixir-autogen, elixir-format
 msgid "Media server"
@@ -1405,7 +1405,7 @@ msgstr ""
 msgid "Original (French)"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:535
+#: lib/cinder_web/components/settings_components.ex:551
 #, elixir-autogen, elixir-format
 msgid "set via environment (leave blank to keep)"
 msgstr ""
@@ -1704,12 +1704,12 @@ msgstr ""
 msgid "Password reset. The user's sessions were ended."
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:68
+#: lib/cinder_web/settings_labels.ex:73
 #, elixir-autogen, elixir-format
 msgid "Plex Movies library section (numeric id)"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:69
+#: lib/cinder_web/settings_labels.ex:74
 #, elixir-autogen, elixir-format
 msgid "Plex TV library section (numeric id)"
 msgstr ""
@@ -2196,22 +2196,22 @@ msgstr ""
 msgid "Notifications"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:60
+#: lib/cinder_web/settings_labels.ex:65
 #, elixir-autogen, elixir-format
 msgid "OpenSubtitles API key"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:62
+#: lib/cinder_web/settings_labels.ex:67
 #, elixir-autogen, elixir-format
 msgid "OpenSubtitles password"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:61
+#: lib/cinder_web/settings_labels.ex:66
 #, elixir-autogen, elixir-format
 msgid "OpenSubtitles username"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:63
+#: lib/cinder_web/settings_labels.ex:68
 #, elixir-autogen, elixir-format
 msgid "Subtitle languages (comma-separated, e.g. en,fr)"
 msgstr ""
@@ -2292,12 +2292,12 @@ msgstr ""
 msgid "Importing"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:65
+#: lib/cinder_web/settings_labels.ex:70
 #, elixir-autogen, elixir-format
 msgid "LibreTranslate API key"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:64
+#: lib/cinder_web/settings_labels.ex:69
 #, elixir-autogen, elixir-format
 msgid "LibreTranslate URL"
 msgstr ""
@@ -2419,7 +2419,7 @@ msgid "Allowed download folders, separated by commas or new lines. The filesyste
 msgstr ""
 
 #: lib/cinder_web/components/settings_components.ex:101
-#: lib/cinder_web/components/settings_components.ex:506
+#: lib/cinder_web/components/settings_components.ex:522
 #, elixir-autogen, elixir-format
 msgid "Download import roots"
 msgstr ""
@@ -2439,12 +2439,12 @@ msgstr ""
 msgid "Setup"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:521
+#: lib/cinder_web/components/settings_components.ex:537
 #, elixir-autogen, elixir-format
 msgid "%{kind}: Max size (GB)"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:518
+#: lib/cinder_web/components/settings_components.ex:534
 #, elixir-autogen, elixir-format
 msgid "%{kind}: Min size (GB)"
 msgstr ""
@@ -2454,7 +2454,7 @@ msgstr ""
 msgid "Not saved. Check: %{fields}."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:494
+#: lib/cinder_web/components/settings_components.ex:510
 #, elixir-autogen, elixir-format
 msgid "The filesystem root (/) is not allowed."
 msgstr ""
@@ -2677,67 +2677,67 @@ msgstr ""
 msgid "The download could not be cancelled."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:342
+#: lib/cinder_web/components/settings_components.ex:358
 #, elixir-autogen, elixir-format
 msgid "Allow"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:330
+#: lib/cinder_web/components/settings_components.ex:346
 #, elixir-autogen, elixir-format
 msgid "Anime releases"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:509
+#: lib/cinder_web/components/settings_components.ex:525
 #, elixir-autogen, elixir-format
 msgid "Anime: Embedded subtitles"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:512
+#: lib/cinder_web/components/settings_components.ex:528
 #, elixir-autogen, elixir-format
 msgid "Anime: Preferred-group fallback delay"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:357
+#: lib/cinder_web/components/settings_components.ex:373
 #, elixir-autogen, elixir-format
 msgid "Blocked groups"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:500
+#: lib/cinder_web/components/settings_components.ex:516
 #, elixir-autogen, elixir-format
 msgid "Choose a valid mode and at least one subtitle language when required."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:339
+#: lib/cinder_web/components/settings_components.ex:355
 #, elixir-autogen, elixir-format
 msgid "Embedded subtitles"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:497
+#: lib/cinder_web/components/settings_components.ex:513
 #, elixir-autogen, elixir-format
 msgid "Enter a non-negative whole number of hours."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:343
+#: lib/cinder_web/components/settings_components.ex:359
 #, elixir-autogen, elixir-format
 msgid "Prefer embedded"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:351
+#: lib/cinder_web/components/settings_components.ex:367
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Preferred groups"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:366
+#: lib/cinder_web/components/settings_components.ex:382
 #, elixir-autogen, elixir-format
 msgid "Preferred-group fallback delay (hours)"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:344
+#: lib/cinder_web/components/settings_components.ex:360
 #, elixir-autogen, elixir-format
 msgid "Require embedded"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:340
+#: lib/cinder_web/components/settings_components.ex:356
 #, elixir-autogen, elixir-format
 msgid "Use server default (Prefer embedded)"
 msgstr ""
@@ -2870,7 +2870,7 @@ msgstr ""
 msgid "Command name or path used to verify a download's audio/subtitle languages after import. Leave blank to use \"ffprobe\" from PATH."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:385
+#: lib/cinder_web/components/settings_components.ex:401
 #, elixir-autogen, elixir-format
 msgid "Media info (ffprobe)"
 msgstr ""
@@ -2910,7 +2910,7 @@ msgstr ""
 msgid ": a season pack of N episodes is allowed up to N× the max. Defaults: Movies 0.3–15 GB, TV 0.05–4 GB per episode. Leave blank for the default; enter 0 for no limit."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:503
+#: lib/cinder_web/components/settings_components.ex:519
 #, elixir-autogen, elixir-format
 msgid "Enter a number of GB (0 = no limit), or leave blank for the default."
 msgstr ""
@@ -2978,37 +2978,37 @@ msgstr ""
 msgid "Could not link your Plex account. Please try again."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:114
+#: lib/cinder_web/live/user_live/settings.ex:134
 #, elixir-autogen, elixir-format
 msgid "Link Plex account"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:102
+#: lib/cinder_web/live/user_live/settings.ex:122
 #, elixir-autogen, elixir-format
 msgid "Linked as %{username}."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:104
+#: lib/cinder_web/live/user_live/settings.ex:124
 #, elixir-autogen, elixir-format
 msgid "Linked."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:97
+#: lib/cinder_web/live/user_live/settings.ex:117
 #, elixir-autogen, elixir-format
 msgid "Plex account"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:112
+#: lib/cinder_web/live/user_live/settings.ex:132
 #, elixir-autogen, elixir-format
 msgid "Sign in faster next time by linking your Plex account."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:108
+#: lib/cinder_web/live/user_live/settings.ex:128
 #, elixir-autogen, elixir-format
 msgid "Unlink"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:253
+#: lib/cinder_web/live/user_live/settings.ex:293
 #, elixir-autogen, elixir-format
 msgid "Your Plex account has been unlinked."
 msgstr ""
@@ -3023,7 +3023,7 @@ msgstr ""
 msgid "Please re-enter your password before linking your Plex account."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:260
+#: lib/cinder_web/live/user_live/settings.ex:300
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Could not unlink your Plex account. Please try again."
 msgstr ""
@@ -3624,12 +3624,12 @@ msgstr ""
 msgid "Accounts"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:295
+#: lib/cinder_web/components/settings_components.ex:311
 #, elixir-autogen, elixir-format
 msgid "Applied to newly self-registered users. Enter a positive whole number; 0 or an invalid value means unlimited. Leave blank to restore the default of 10."
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:66
+#: lib/cinder_web/settings_labels.ex:71
 #, elixir-autogen, elixir-format
 msgid "Default request quota"
 msgstr ""
@@ -3639,7 +3639,7 @@ msgstr ""
 msgid "English"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:177
+#: lib/cinder_web/live/user_live/settings.ex:197
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Language updated."
 msgstr ""
@@ -3805,7 +3805,7 @@ msgstr ""
 msgid "Local path prefix is not an existing readable directory: %{path}"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:484
+#: lib/cinder_web/components/settings_components.ex:500
 #, elixir-autogen, elixir-format
 msgid "Path prefix as the download client reports it"
 msgstr ""
@@ -3820,7 +3820,7 @@ msgstr ""
 msgid "SABnzbd remote path prefix"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:487
+#: lib/cinder_web/components/settings_components.ex:503
 #, elixir-autogen, elixir-format
 msgid "The same directory as Cinder sees it"
 msgstr ""
@@ -3868,4 +3868,97 @@ msgstr ""
 #: lib/cinder_web/live/dashboard_live.ex:283
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Unavailable"
+msgstr ""
+
+#: lib/cinder/notifier/email.ex:97
+#: lib/cinder/notifier/email.ex:164
+#: lib/cinder/notifier/email.ex:171
+#, elixir-autogen, elixir-format, fuzzy
+msgid "%{title} Season %{season}"
+msgstr ""
+
+#: lib/cinder/notifier/email.ex:67
+#: lib/cinder/notifier/email.ex:90
+#, elixir-autogen, elixir-format
+msgid "%{title} is ready to watch"
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex:281
+#, elixir-autogen, elixir-format
+msgid "Could not update your notification preference."
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex:107
+#, elixir-autogen, elixir-format
+msgid "Email me when a request is approved or ready to watch"
+msgstr ""
+
+#: lib/cinder/notifier/email.ex:52
+#, elixir-autogen, elixir-format
+msgid "Good news — your request for %{title} was approved and will start downloading soon."
+msgstr ""
+
+#: lib/cinder_web/settings_labels.ex:64
+#, elixir-autogen, elixir-format
+msgid "SMTP from address"
+msgstr ""
+
+#: lib/cinder_web/settings_labels.ex:60
+#, elixir-autogen, elixir-format
+msgid "SMTP host"
+msgstr ""
+
+#: lib/cinder_web/settings_labels.ex:63
+#, elixir-autogen, elixir-format, fuzzy
+msgid "SMTP password"
+msgstr ""
+
+#: lib/cinder_web/settings_labels.ex:61
+#, elixir-autogen, elixir-format
+msgid "SMTP port"
+msgstr ""
+
+#: lib/cinder_web/settings_labels.ex:62
+#, elixir-autogen, elixir-format
+msgid "SMTP username"
+msgstr ""
+
+#: lib/cinder_web/components/settings_components.ex:299
+#, elixir-autogen, elixir-format
+msgid "SMTP: use implicit TLS/SSL (usually port 465; leave off for STARTTLS on 587)"
+msgstr ""
+
+#: lib/cinder/notifier/email.ex:99
+#, elixir-autogen, elixir-format
+msgid "We couldn't find %{title}"
+msgstr ""
+
+#: lib/cinder/notifier/email.ex:76
+#, elixir-autogen, elixir-format
+msgid "We couldn't get %{title}"
+msgstr ""
+
+#: lib/cinder/notifier/email.ex:100
+#, elixir-autogen, elixir-format
+msgid "We're sorry — we couldn't find a release for %{title} after several attempts. An admin may need to take a look."
+msgstr ""
+
+#: lib/cinder/notifier/email.ex:77
+#, elixir-autogen, elixir-format
+msgid "We're sorry — your request for %{title} could not be completed (%{reason}) and has been parked. An admin may need to take a look."
+msgstr ""
+
+#: lib/cinder/notifier/email.ex:68
+#, elixir-autogen, elixir-format
+msgid "Your request for %{title} is ready to watch."
+msgstr ""
+
+#: lib/cinder/notifier/email.ex:51
+#, elixir-autogen, elixir-format
+msgid "Your request for %{title} was approved"
+msgstr ""
+
+#: lib/cinder/notifier/email.ex:91
+#, elixir-autogen, elixir-format
+msgid "Your requested season is ready to watch: %{title}."
 msgstr ""
