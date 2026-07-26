@@ -20,6 +20,17 @@ services:
     image: ghcr.io/simonbrunou/cinder:latest
     build: .
     restart: unless-stopped
+    # Liveness probe. /healthz returns 503 when a background poller has wedged (its last successful
+    # tick is older than 3× its interval), else 200 — details in docs/operating.md. NOTE: `docker
+    # compose` only *marks* the container unhealthy on failure; it does NOT restart it (`restart:`
+    # reacts to the process exiting, not to health). To get a restart-on-unhealthy, add an autoheal
+    # sidecar (e.g. willfarrell/autoheal) or run under an orchestrator that acts on health.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:4000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
     ports:
       # Bound to localhost on purpose: claiming the first admin requires CINDER_BOOTSTRAP_TOKEN
       # below, but a fresh, unclaimed instance still shouldn't sit open on the whole network.
@@ -47,6 +58,14 @@ services:
       - cinder_data:/data              # SQLite DB + WAL (named volume; survives recreate)
       - ${MEDIA_ROOT:-./media}:/media  # library + downloads — see the hardlink note below
 
+# SSRF hardening (egress ACL): Cinder validates indexer-supplied URLs and magnet/tracker hosts
+# against loopback/RFC1918/link-local/cloud-metadata before fetching, but a DNS-rebinding answer
+# between that check and the actual connect is a residual gap (see lib/cinder/http_policy.ex). The
+# real mitigation is a network egress ACL that denies the container outbound access to internal
+# ranges — 127.0.0.0/8, 10/8, 172.16/12, 192.168/16, 169.254/16 (incl. 169.254.169.254 metadata).
+# Compose has no native egress filter; enforce it at the host firewall, a proxy, or the orchestrator
+# (e.g. a dedicated Docker network + iptables OUTPUT rules). See docs/operating.md.
+#
 # Everything else (TMDB / Prowlarr / qBittorrent / SABnzbd / Jellyfin / Plex) is set in the
 # first-run wizard, not here — Cinder reaches them by URL (e.g. http://prowlarr:9696 when they
 # share this compose network).

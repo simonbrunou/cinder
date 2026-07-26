@@ -47,6 +47,32 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   end
 
   @impl true
+  def find_by_external_id(external_id, external_source)
+      when external_source in [:imdb_id, :tvdb_id] do
+    case request(
+           url: "/3/find/#{external_id}",
+           params: [external_source: Atom.to_string(external_source)]
+         ) do
+      {:ok,
+       %{
+         status: 200,
+         body: %{"movie_results" => movies, "tv_results" => series}
+       }}
+      when is_list(movies) and is_list(series) ->
+        {:ok, Enum.map(movies, &tag_movie/1) ++ Enum.map(series, &tag_series/1)}
+
+      {:ok, %{status: 200}} ->
+        {:error, :unexpected_response}
+
+      other ->
+        error(other)
+    end
+  end
+
+  def find_by_external_id(_external_id, _external_source),
+    do: {:error, :unsupported_external_source}
+
+  @impl true
   def search_tv(query, locale) do
     case request(
            url: "/3/search/tv",
@@ -148,6 +174,12 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   def now_playing_movies(locale), do: movie_list("/3/movie/now_playing", locale)
 
   @impl true
+  def popular_tv(locale), do: tv_list("/3/tv/popular", locale)
+
+  @impl true
+  def top_rated_tv(locale), do: tv_list("/3/tv/top_rated", locale)
+
+  @impl true
   def discover_movies(genre_id, locale) do
     case request(
            url: "/3/discover/movie",
@@ -155,6 +187,23 @@ defmodule Cinder.Catalog.TMDB.HTTP do
          ) do
       {:ok, %{status: 200, body: %{"results" => results}}} when is_list(results) ->
         {:ok, Enum.map(results, &tag_movie/1)}
+
+      {:ok, %{status: 200}} ->
+        {:error, :unexpected_response}
+
+      other ->
+        error(other)
+    end
+  end
+
+  @impl true
+  def discover_tv(genre_id, locale) do
+    case request(
+           url: "/3/discover/tv",
+           params: [with_genres: genre_id, language: Map.fetch!(@tmdb_tags, locale)]
+         ) do
+      {:ok, %{status: 200, body: %{"results" => results}}} when is_list(results) ->
+        {:ok, Enum.map(results, &tag_tv/1)}
 
       {:ok, %{status: 200}} ->
         {:error, :unexpected_response}
@@ -299,7 +348,24 @@ defmodule Cinder.Catalog.TMDB.HTTP do
     end
   end
 
+  # TV twin of movie_list/2 — shared by popular_tv/top_rated_tv.
+  defp tv_list(path, locale) do
+    case request(url: path, params: [language: Map.fetch!(@tmdb_tags, locale)]) do
+      {:ok, %{status: 200, body: %{"results" => results}}} when is_list(results) ->
+        {:ok, Enum.map(results, &tag_tv/1)}
+
+      {:ok, %{status: 200}} ->
+        {:error, :unexpected_response}
+
+      other ->
+        error(other)
+    end
+  end
+
   defp tag_movie(movie), do: movie |> normalize() |> Map.put(:type, :movie)
+  defp tag_series(series), do: series |> normalize_tv() |> Map.put(:type, :tv)
+
+  defp tag_tv(series), do: series |> normalize_tv() |> Map.put(:type, :tv)
 
   defp error({:ok, %{status: status}}), do: {:error, {:tmdb_status, status}}
   defp error({:error, reason}), do: {:error, reason}

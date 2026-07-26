@@ -423,7 +423,10 @@ defmodule Cinder.HTTPPolicyTest do
         end)
 
       assert {:ok, %{status: 200}} = result
-      assert [{%{duration: duration}, %{host: "public.example", status: :ok}}] = events
+      # Scope to this request's own host: [:cinder, :http, :request] is a global telemetry event,
+      # so a concurrent async test's HTTP request would otherwise bleed into `events`.
+      own = Enum.filter(events, fn {_m, %{host: h}} -> h == "public.example" end)
+      assert [{%{duration: duration}, %{host: "public.example", status: :ok}}] = own
       assert is_integer(duration) and duration >= 0
     end
 
@@ -447,7 +450,9 @@ defmodule Cinder.HTTPPolicyTest do
         end)
 
       assert {:error, :response_too_large} = result
-      assert [{%{duration: _}, %{host: "public.example", status: :error}}] = events
+      # Scope to this request's own host (see the :ok case): the event name is global.
+      own = Enum.filter(events, fn {_m, %{host: h}} -> h == "public.example" end)
+      assert [{%{duration: _}, %{host: "public.example", status: :error}}] = own
     end
 
     test "isolates an unexpected request crash from the caller" do

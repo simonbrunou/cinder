@@ -65,6 +65,8 @@ defmodule Cinder.Acquisition.Scorer do
   stay wanted for the next search tick.
 
   Rules come from per-call `opts`, exactly like `select/2`.
+  `opts[:alternate_numbering]` may map alternate season/episode coordinates onto
+  canonical wanted episode numbers; only those mapped coordinates are eligible.
 
   `# ponytail:` greedy, not optimal set-cover. Optimal is NP-hard and pointless at
   household release-list sizes; upgrade only if release sets get pathological.
@@ -72,12 +74,19 @@ defmodule Cinder.Acquisition.Scorer do
   def select_for(releases, season, wanted_episodes, opts \\ []) do
     {min_size, max_size, preferred, sources, release_blocklist} = rules(opts)
     band = {min_size, max_size, preferred, sources}
+    alternate_numbering = Keyword.get(opts, :alternate_numbering, %{})
 
     releases
-    |> Enum.filter(&(&1.season == season))
+    |> Enum.filter(&(&1.season == season or Map.has_key?(alternate_numbering, &1.season)))
     |> Enum.reject(&title_blocked?(&1, release_blocklist))
     |> Enum.filter(&(allowed_resolution?(&1, preferred) and allowed_source?(&1, sources)))
-    |> cover(MapSet.new(wanted_episodes), [], band, &coverage/2, opts)
+    |> cover(
+      MapSet.new(wanted_episodes),
+      [],
+      band,
+      &alternate_coverage(&1, &2, season, alternate_numbering),
+      opts
+    )
   end
 
   @doc """
@@ -223,6 +232,27 @@ defmodule Cinder.Acquisition.Scorer do
   # episode list covers its intersection with what's still needed.
   defp coverage(%Release{episodes: nil}, needed), do: needed
   defp coverage(%Release{episodes: eps}, needed), do: MapSet.intersection(MapSet.new(eps), needed)
+
+  defp alternate_coverage(
+         %Release{season: release_season} = release,
+         needed,
+         native_season,
+         _numbering
+       )
+       when release_season == native_season,
+       do: coverage(release, needed)
+
+  defp alternate_coverage(%Release{season: season} = release, needed, _native, numbering) do
+    season_numbering = Map.fetch!(numbering, season)
+    episodes = release.episodes || Map.keys(season_numbering)
+
+    covered =
+      episodes
+      |> Enum.flat_map(&Map.get(season_numbering, &1, []))
+      |> MapSet.new()
+
+    MapSet.intersection(covered, needed)
+  end
 
   defp id_coverage(%Release{resolved_episode_ids: resolved_episode_ids}, needed) do
     ids = MapSet.new(resolved_episode_ids || [])

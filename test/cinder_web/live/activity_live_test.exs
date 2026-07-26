@@ -95,6 +95,24 @@ defmodule CinderWeb.ActivityLiveTest do
     assert has_element?(lv, "#movie-#{movie.id}-hint", "No release matched")
   end
 
+  test "a parked movie surfaces the download client's preserved failure reason", %{conn: conn} do
+    # The poller persists the client's reason (SABnzbd's paused state / fail_message) as
+    # failure_reason; /activity shows it verbatim instead of the generic import-failed hint.
+    movie =
+      %{title: "Akira", status: :import_failed}
+      |> movie_fixture()
+      |> Ecto.Changeset.change(failure_reason: "Unpacking failed, write error or disk full?")
+      |> Repo.update!()
+
+    {:ok, lv, _html} = live(conn, ~p"/activity")
+
+    assert has_element?(
+             lv,
+             "#movie-#{movie.id}-hint",
+             "Unpacking failed, write error or disk full?"
+           )
+  end
+
   test "lists the background sweeps with their schedule", %{conn: conn} do
     {:ok, lv, html} = live(conn, ~p"/activity")
 

@@ -20,6 +20,8 @@ defmodule Cinder.Download.Client do
   seeds, so it is absent/nil there). For a `:completed` download it also carries
   `:content_path` — the on-disk path the importer hardlinks from; the poller will
   not advance a completed download to `:downloaded` until `:content_path` is present.
+  An `:error` state may carry an optional human-facing `:reason` (a short string, e.g.
+  SABnzbd's paused state or `fail_message`) that the poller persists as the park reason.
   """
   @callback status(id :: String.t()) :: {:ok, map()} | {:error, term()}
 

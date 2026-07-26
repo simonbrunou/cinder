@@ -121,6 +121,15 @@ means your indexer/trackers can, in principle, make Cinder issue GET requests to
 addresses — the same posture as Radarr/Sonarr. You chose the indexer; point Cinder only at one
 you trust.
 
+Cinder rejects URLs and magnet/tracker hosts that resolve to loopback, RFC1918, link-local, or
+cloud-metadata addresses before fetching them. Because that pre-check resolves the host and the HTTP
+client then resolves again independently at connect time, a narrow DNS-rebinding window remains
+(documented in `lib/cinder/http_policy.ex`). The robust mitigation is a **network egress ACL** that
+denies the Cinder container outbound access to internal ranges — `127.0.0.0/8`, `10.0.0.0/8`,
+`172.16.0.0/12`, `192.168.0.0/16`, and `169.254.0.0/16` (which includes the `169.254.169.254`
+cloud-metadata endpoint). Enforce it at the host firewall, a filtering proxy, or your orchestrator's
+network policy; Docker Compose has no native egress filter.
+
 ## Hardlink, with an automatic safe-copy fallback
 
 On a completed download Cinder **hardlinks** the file into the library — instant, no copy, no extra
@@ -176,9 +185,10 @@ service credential**, and losing it (or rotating it) means re-entering every cre
 
 ### Database growth and reclaiming space
 
-`blocked_releases` only auto-prunes its `:stalled`-reason rows (on a manual retry) — every other
-reason (audio/subtitle verification rejections, admin actions, etc.) stays forever.
-`admin_audit` rows are pruned after 365 days. Over months or years of normal operation `cinder.db`
+`blocked_releases` rows age out after **180 days** via the daily janitor sweep (they accrue one row
+per distinct rejected release name — mostly audio/subtitle verification rejections — and are never
+re-blocked); `:stalled`-reason rows also clear earlier on a manual retry. `admin_audit` rows are
+pruned after 365 days. Over months or years of normal operation `cinder.db`
 grows accordingly, and SQLite doesn't shrink the file on its own as old rows are deleted — freed
 pages are just reused, not released back to the OS.
 
@@ -199,6 +209,21 @@ item's live pipeline state — a parked item (`:search_failed` / `:no_match` / `
 shows a **Retry** button there that resets it to `:requested` with attempt counters zeroed; the
 poller re-queues it on the next tick. (The old `/status` and `/grabs` URLs redirect to
 `/activity`.)
+
+### Liveness probe (`/healthz`)
+
+`GET /healthz` is an unauthenticated, dependency-free liveness endpoint (no DB call — it reads each
+poller's last-tick timestamp from memory, so it stays fast and truthful even under load). It returns
+**200 `ok`** when polling is disabled or every enabled background poller has ticked recently, and
+**503** with a short plain-text body naming the stale poller when one's last *successful* tick is
+older than **3× its interval** — i.e. a wedged or crash-looping pipeline the rest of the app can
+still look healthy around. A just-booted poller that hasn't ticked yet is not counted stale (200).
+
+The compose file wires this as the container `healthcheck`. **Caveat:** `docker compose` only *marks*
+the container `unhealthy` on repeated failures — it does **not** restart it (`restart:` reacts to the
+process exiting, not to a failing health probe). To actually restart on unhealthy, pair it with an
+autoheal sidecar (e.g. `willfarrell/autoheal`) or run under an orchestrator (Kubernetes, Swarm,
+Nomad) that acts on the reported health status.
 
 The media-server library scan after an import is **best-effort**: if the scan call fails (e.g. an
 endpoint/header mismatch on your Jellyfin/Plex version) the item still reaches `:available`, and
@@ -419,7 +444,7 @@ Both the audio/subtitle checks above and the pre-existing language check (see "A
 verification") need **`ffprobe`** (part of FFmpeg, shipped in the Docker image). Its binary
 name/path is the `ffprobe_bin` setting in `/settings` (default: `ffprobe` on `PATH`; no environment
 bootstrap — set it in `/settings`). Availability shows up as a **Media info (ffprobe)** row in
-`/status`/`/dashboard` service health and via **Test connection** in `/settings`. Without it, Cinder
+`/dashboard` service health and via **Test connection** in `/settings`. Without it, Cinder
 skips both checks and imports permissively — a missing probe never blocks an import.
 
 ## Library roots: movies vs TV
@@ -461,10 +486,16 @@ are pruned automatically.
 - **SABnzbd job names are title-bearing, so its Smart Episode/Series duplicate detection can
   misfire on a legitimate cinder re-grab.** A "Find a better match" upgrade, or a re-search after
   a release was blocklisted, can look like a duplicate of an earlier job for the same title and
-  get paused or discarded by SABnzbd — a paused job parks with no hint why. Older, opaque
-  `cinder-<uuid>` job names could never dup-match on title, so this can newly appear after
-  upgrading. Turn off series duplicate detection (or scope it away from Cinder's SABnzbd
-  category) to avoid it.
+  get paused or discarded by SABnzbd. Turn off series duplicate detection (or scope it away from
+  Cinder's SABnzbd category) to avoid it. When a SABnzbd job does park a title, Cinder now
+  preserves the client's own reason (paused / its `fail_message`) as the parked-item detail on
+  `/activity`, so the cause is visible instead of a bare "couldn't be imported."
+- **SABnzbd health warns on risky config.** The `/status` and `/settings` "Test connection" health
+  check reads SABnzbd's config and logs a warning (server logs) when it finds settings that wedge
+  Cinder's grabs: a `folder_max_length` below **200** (which truncates the mandatory
+  `.cinder-<key>` job-name suffix so SABnzbd can never find the job — keep it at the default 246 or
+  higher), or duplicate handling (**Pause on Duplicates** / **series duplicate detection**) left on
+  for Cinder's category. These are warnings only — the service still tests as reachable.
 - **Specials (season 0) aren't grabbed** by the TV sweep for a `Standard`-profile series. An
   `Anime`-profile series is the exception: a Season 0 episode grabs once it's explicitly classified
   story-special/recap *and* monitored (see "Anime" above).

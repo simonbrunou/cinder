@@ -13,6 +13,16 @@ defmodule Cinder.Catalog.TMDB do
   @doc "Single movie details. Returns `%{tmdb_id, title, year, poster_path, imdb_id, original_language, overview, runtime, genres, vote_average, release_date}` (`genres` is a list of names, `release_date` a `Date` or `nil`)."
   @callback get_movie(tmdb_id :: integer()) :: {:ok, map()} | {:error, term()}
 
+  @doc """
+  Finds movie and TV matches for an IMDb or TVDB id. Returns search-normalized maps carrying
+  `type: :movie | :tv`; callers must reject zero or multiple matches for the requested type.
+  """
+  @callback find_by_external_id(
+              external_id :: integer() | String.t(),
+              external_source :: :imdb_id | :tvdb_id
+            ) ::
+              {:ok, [map()]} | {:error, term()}
+
   @doc "TV search. Returns normalized series maps (`%{tmdb_id, title, year, poster_path, original_language}`)."
   @callback search_tv(query :: String.t(), locale :: String.t()) ::
               {:ok, [map()]} | {:error, term()}
@@ -90,10 +100,27 @@ defmodule Cinder.Catalog.TMDB do
   @callback now_playing_movies(locale :: String.t()) :: {:ok, [map()]} | {:error, term()}
 
   @doc """
+  Popular TV series (`/tv/popular`). Same normalized TV shape as `search_tv/2`
+  results (`%{tmdb_id, title, year, poster_path, original_language}`), each tagged
+  `type: :tv`.
+  """
+  @callback popular_tv(locale :: String.t()) :: {:ok, [map()]} | {:error, term()}
+
+  @doc "Top-rated TV series (`/tv/top_rated`). Same shape as `popular_tv/1`."
+  @callback top_rated_tv(locale :: String.t()) :: {:ok, [map()]} | {:error, term()}
+
+  @doc """
   Movies matching TMDB genre id `genre_id` (`/discover/movie?with_genres=`). Same
   shape as `popular_movies/1`.
   """
   @callback discover_movies(genre_id :: integer(), locale :: String.t()) ::
+              {:ok, [map()]} | {:error, term()}
+
+  @doc """
+  TV series matching TMDB TV genre id `genre_id` (`/discover/tv?with_genres=`).
+  Same shape as `popular_tv/1` (TMDB's TV genre list is distinct from its movie one).
+  """
+  @callback discover_tv(genre_id :: integer(), locale :: String.t()) ::
               {:ok, [map()]} | {:error, term()}
 
   @doc """

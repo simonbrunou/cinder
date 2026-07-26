@@ -89,9 +89,19 @@ defmodule Cinder.Acquisition do
   share the title as a prefix ("9-1-1" vs "9-1-1: Lone Star"), and it fails closed
   for titles that fold to nothing (non-Latin scripts) — all of those rely on the
   `tvdb_id`-based search (M6 reconciliation).
+
+  When `opts[:alternate_numbering]` is present, the mapped scene seasons are searched
+  additively and the same map is forwarded to `Scorer.select_for/4`.
   """
   def best_releases(series, season_number, wanted_numbers, opts \\ []) do
-    case indexer().search_tv(series.tvdb_id, series.title, season_number) do
+    alternate_seasons =
+      opts
+      |> Keyword.get(:alternate_numbering, %{})
+      |> Map.keys()
+      |> Enum.reject(&(&1 == season_number))
+      |> Enum.sort()
+
+    case search_tv_seasons(indexer(), series, [season_number | alternate_seasons]) do
       {:ok, raw_results} ->
         preferred = Keyword.get(opts, :preferred_language)
         original = Keyword.get(opts, :original_language)
@@ -113,6 +123,23 @@ defmodule Cinder.Acquisition do
 
       {:error, _reason} = error ->
         error
+    end
+  end
+
+  defp search_tv_seasons(indexer, series, [season_number]) do
+    indexer.search_tv(series.tvdb_id, series.title, season_number)
+  end
+
+  defp search_tv_seasons(indexer, series, season_numbers) do
+    Enum.reduce_while(season_numbers, {:ok, []}, fn season_number, {:ok, batches} ->
+      case indexer.search_tv(series.tvdb_id, series.title, season_number) do
+        {:ok, raw_results} -> {:cont, {:ok, [raw_results | batches]}}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, batches} -> {:ok, batches |> Enum.reverse() |> List.flatten()}
+      {:error, _reason} = error -> error
     end
   end
 

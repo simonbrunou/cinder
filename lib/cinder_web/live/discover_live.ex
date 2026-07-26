@@ -38,9 +38,11 @@ defmodule CinderWeb.DiscoverLive do
         popular: [],
         top_rated: [],
         now_playing: [],
-        genres: Genres.list(),
+        popular_tv: [],
+        top_rated_tv: [],
+        genre_media_type: :movie,
         selected_genre_id: nil,
-        genre_movies: []
+        genre_results: []
       )
       |> assign_request_state()
 
@@ -60,6 +62,8 @@ defmodule CinderWeb.DiscoverLive do
       |> start_async(:popular, fn -> Catalog.popular_movies(locale) end)
       |> start_async(:top_rated, fn -> Catalog.top_rated_movies(locale) end)
       |> start_async(:now_playing, fn -> Catalog.now_playing_movies(locale) end)
+      |> start_async(:popular_tv, fn -> Catalog.popular_tv(locale) end)
+      |> start_async(:top_rated_tv, fn -> Catalog.top_rated_tv(locale) end)
     else
       socket
     end
@@ -85,13 +89,23 @@ defmodule CinderWeb.DiscoverLive do
     # phx-value is client-controlled; tolerate non-numeric input and only match movies.
     preferred = normalize_language(params["preferred_language"])
 
+    # Search every movie-bearing source: a rail-only movie (deduped out of
+    # trending) must still be addable, not a silent no-op.
+    %{
+      results: results,
+      trending: trending,
+      popular: popular,
+      top_rated: top_rated,
+      now_playing: now_playing,
+      genre_results: genre_results
+    } = socket.assigns
+
+    candidates = results ++ trending ++ popular ++ top_rated ++ now_playing ++ genre_results
+
     with {id, ""} <- Integer.parse(tmdb_id),
          {:ok, profile} <- normalize_profile(params["proposed_media_profile"]),
          movie when not is_nil(movie) <-
-           Enum.find(
-             socket.assigns.results ++ socket.assigns.trending,
-             &(&1.type == :movie and &1.tmdb_id == id)
-           ) do
+           Enum.find(candidates, &(&1.type == :movie and &1.tmdb_id == id)) do
       {:noreply, add(socket, movie, preferred, profile)}
     else
       _ -> {:noreply, socket}
@@ -112,19 +126,30 @@ defmodule CinderWeb.DiscoverLive do
     {:noreply, assign(socket, filter: filter)}
   end
 
+  # Movies/TV toggle for the genre browser; switching media type clears the active
+  # selection + its grid (movie and TV genre ids are distinct lists).
+  def handle_event("genre_media_type", %{"type" => type}, socket) do
+    media_type = if type == "tv", do: :tv, else: :movie
+
+    {:noreply,
+     assign(socket, genre_media_type: media_type, selected_genre_id: nil, genre_results: [])}
+  end
+
   def handle_event("select_genre", %{"id" => id}, socket) when is_binary(id) do
     # phx-value is client-controlled; tolerate non-numeric/unknown ids instead of crashing
     # or spending a TMDB call on a forged genre id.
+    media_type = socket.assigns.genre_media_type
+
     with {genre_id, ""} <- Integer.parse(id),
-         true <- Genres.valid_id?(genre_id) do
-      case Catalog.movies_by_genre(genre_id, socket.assigns.locale) do
+         true <- genre_valid?(media_type, genre_id) do
+      case genre_fetch(media_type, genre_id, socket.assigns.locale) do
         {:ok, results} ->
-          {:noreply, assign(socket, selected_genre_id: genre_id, genre_movies: results)}
+          {:noreply, assign(socket, selected_genre_id: genre_id, genre_results: results)}
 
         {:error, _reason} ->
           {:noreply,
            socket
-           |> assign(selected_genre_id: genre_id, genre_movies: [])
+           |> assign(selected_genre_id: genre_id, genre_results: [])
            |> put_flash(:error, gettext("TMDB search failed. Try again."))}
       end
     else
@@ -189,6 +214,12 @@ defmodule CinderWeb.DiscoverLive do
   def handle_async(:now_playing, result, socket),
     do: handle_rail_async("Now playing", :now_playing, result, socket)
 
+  def handle_async(:popular_tv, result, socket),
+    do: handle_rail_async("Popular TV", :popular_tv, result, socket)
+
+  def handle_async(:top_rated_tv, result, socket),
+    do: handle_rail_async("Top rated TV", :top_rated_tv, result, socket)
+
   def handle_async({:add, _tmdb_id, title}, {:ok, result}, socket) do
     {:noreply, request_result(socket, title, result)}
   end
@@ -213,6 +244,17 @@ defmodule CinderWeb.DiscoverLive do
     {:noreply, socket}
   end
 
+  # Genre browsing dispatches on the media-type toggle: the movie and TV genre lists and their
+  # /discover endpoints are distinct, so validation and fetch pick the matching one.
+  defp genre_valid?(:tv, id), do: Genres.valid_tv_id?(id)
+  defp genre_valid?(_movie, id), do: Genres.valid_id?(id)
+
+  defp genre_fetch(:tv, id, locale), do: Catalog.tv_by_genre(id, locale)
+  defp genre_fetch(_movie, id, locale), do: Catalog.movies_by_genre(id, locale)
+
+  defp genre_list(:tv), do: Genres.tv_list()
+  defp genre_list(_movie), do: Genres.list()
+
   # ponytail: only four valid values; default "original" on anything else (client-controlled).
   defp normalize_language(lang) when lang in @picks, do: lang
   defp normalize_language(_), do: "original"
@@ -226,17 +268,23 @@ defmodule CinderWeb.DiscoverLive do
   @impl true
   def render(assigns) do
     # Several TMDB lists commonly overlap (a blockbuster is often trending AND popular AND
-    # top-rated); a movie already shown in an earlier rail is dropped from a later one so the
-    # same tmdb_id never renders twice at once — its Add form's id is keyed only by tmdb_id
-    # (`add-form-#{tmdb_id}`), so two simultaneous copies would be a duplicate-DOM-id bug, not
-    # just visual noise. TV cards have no id-bearing action (season-picker link only), so this
-    # only ever needs to drop movies.
-    popular = dedupe_movies(assigns.popular, assigns.trending)
-    top_rated = dedupe_movies(assigns.top_rated, assigns.trending ++ popular)
-    now_playing = dedupe_movies(assigns.now_playing, assigns.trending ++ popular ++ top_rated)
+    # top-rated); a title already shown in an earlier rail is dropped from a later one so the
+    # same tmdb_id never renders twice at once. A movie's Add form id is keyed only by tmdb_id
+    # (`add-form-#{tmdb_id}`), so two simultaneous movie copies would be a duplicate-DOM-id bug,
+    # not just visual noise; TV cards have no id-bearing action (season-picker link only), so for
+    # them it's purely visual. Dedupe keys on {type, tmdb_id} so a movie and a same-id show never
+    # collide across the mixed trending rail.
+    popular = dedupe(assigns.popular, assigns.trending)
+    top_rated = dedupe(assigns.top_rated, assigns.trending ++ popular)
+    now_playing = dedupe(assigns.now_playing, assigns.trending ++ popular ++ top_rated)
+    popular_tv = dedupe(assigns.popular_tv, assigns.trending)
+    top_rated_tv = dedupe(assigns.top_rated_tv, assigns.trending ++ popular_tv)
 
-    genre_movies =
-      dedupe_movies(assigns.genre_movies, assigns.trending ++ popular ++ top_rated ++ now_playing)
+    genre_results =
+      dedupe(
+        assigns.genre_results,
+        assigns.trending ++ popular ++ top_rated ++ now_playing ++ popular_tv ++ top_rated_tv
+      )
 
     assigns =
       assign(assigns,
@@ -244,7 +292,10 @@ defmodule CinderWeb.DiscoverLive do
         popular: popular,
         top_rated: top_rated,
         now_playing: now_playing,
-        genre_movies: genre_movies
+        popular_tv: popular_tv,
+        top_rated_tv: top_rated_tv,
+        genres: genre_list(assigns.genre_media_type),
+        genre_results: genre_results
       )
 
     ~H"""
@@ -373,16 +424,63 @@ defmodule CinderWeb.DiscoverLive do
         />
       </section>
 
+      <section :if={@query == "" and @popular_tv != []} class="mb-10">
+        <h2 class="mb-4 flex items-center gap-2 text-lg font-semibold">
+          <.icon name="hero-fire" class="size-5 text-primary" />
+          {gettext("Popular TV")}
+        </h2>
+        <.media_grid
+          id="popular-tv"
+          results={@popular_tv}
+          request_status={@request_status}
+          movie_status={@movie_status}
+          series_request_status={@series_request_status}
+          available_series={@available_series}
+        />
+      </section>
+
+      <section :if={@query == "" and @top_rated_tv != []} class="mb-10">
+        <h2 class="mb-4 flex items-center gap-2 text-lg font-semibold">
+          <.icon name="hero-star" class="size-5 text-primary" />
+          {gettext("Top rated TV")}
+        </h2>
+        <.media_grid
+          id="top-rated-tv"
+          results={@top_rated_tv}
+          request_status={@request_status}
+          movie_status={@movie_status}
+          series_request_status={@series_request_status}
+          available_series={@available_series}
+        />
+      </section>
+
       <section :if={@query == ""} class="mb-10">
         <h2 class="mb-4 flex items-center gap-2 text-lg font-semibold">
           <.icon name="hero-tag" class="size-5 text-primary" />
           {gettext("Browse by genre")}
         </h2>
+        <div
+          class="mb-4 flex flex-wrap gap-2"
+          role="group"
+          aria-label={gettext("Genre media type")}
+        >
+          <.button
+            :for={{label, value} <- [{gettext("Movies"), :movie}, {gettext("TV"), :tv}]}
+            type="button"
+            phx-click="genre_media_type"
+            phx-value-type={value}
+            variant={if @genre_media_type == value, do: "primary", else: "ghost"}
+            size="sm"
+            aria-pressed={to_string(@genre_media_type == value)}
+          >
+            {label}
+          </.button>
+        </div>
         <.genre_chips genres={@genres} selected_id={@selected_genre_id} />
         <.media_grid
-          :if={@genre_movies != []}
+          :if={@genre_results != []}
           id="genre-results"
-          results={@genre_movies}
+          results={@genre_results}
           request_status={@request_status}
           movie_status={@movie_status}
           series_request_status={@series_request_status}
@@ -409,8 +507,11 @@ defmodule CinderWeb.DiscoverLive do
   defp filter_results(results, :all), do: results
   defp filter_results(results, type), do: Enum.filter(results, &(&1.type == type))
 
-  defp dedupe_movies(results, shown) do
-    shown_ids = shown |> Enum.filter(&(&1.type == :movie)) |> MapSet.new(& &1.tmdb_id)
-    Enum.reject(results, &(&1.type == :movie and MapSet.member?(shown_ids, &1.tmdb_id)))
+  # Drop any result whose {type, tmdb_id} already appears in an earlier rail, so a title
+  # renders exactly once across the landing page (movies to avoid a duplicate Add-form id,
+  # TV/others to avoid visual repeats).
+  defp dedupe(results, shown) do
+    shown_keys = MapSet.new(shown, &{&1.type, &1.tmdb_id})
+    Enum.reject(results, &MapSet.member?(shown_keys, {&1.type, &1.tmdb_id}))
   end
 end

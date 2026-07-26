@@ -193,26 +193,17 @@ defmodule Cinder.Requests do
     end
   end
 
-  # NOT transaction-wrapped: find_or_create_series_at_requested does TMDB I/O. The flip
-  # runs FIRST (guarded on :pending) so a deny landing during the seconds-long TMDB call
-  # can't leave committed series content behind a denied request; a series-creation
-  # failure then compensates by putting the request back to :pending.
   def approve_request(
         %Request{status: :pending, target_type: "season"} = request,
         %User{} = admin,
         profile
       )
       when profile in [:standard, :anime] do
-    with {:ok, approved} <- flip_pending(request, %{status: :approved, approved_by_id: admin.id}) do
-      case create_series_safely(request, profile) do
-        {:ok, _series} ->
-          announce_approved(approved)
-          {:ok, approved}
+    preferred = request.preferred_language || "original"
 
-        {:error, reason} ->
-          revert_to_pending(approved)
-          {:error, reason}
-      end
+    with {:ok, prepared} <-
+           Catalog.prepare_requested_series(request.target_id, preferred, profile) do
+      approve_prepared_series(request, admin, prepared, preferred, profile)
     end
   end
 
@@ -237,29 +228,23 @@ defmodule Cinder.Requests do
     |> finalize_movie_approval(prepared)
   end
 
-  # The TMDB call runs while the request already reads :approved; a raise/exit here
-  # must reach the revert path (not strand the request approved with no series), so
-  # every failure mode is normalized to {:error, reason} — loudly: this rescue also
-  # swallows genuine bugs, and a silent one would be undebuggable. Known residual: a
-  # VM kill (deploy/OOM, or the admin closing the tab mid-bulk killing the linked
-  # start_async task) between the flip and the revert strands the request :approved
-  # with no series; recovery is delete + re-request (documented on delete_request/2).
-  defp create_series_safely(request, profile) do
-    Catalog.find_or_create_series_at_requested(
-      request.target_id,
-      request.season_number,
-      request.preferred_language || "original",
-      profile
-    )
-  rescue
-    e ->
-      Logger.warning("series creation for request #{request.id} raised: #{Exception.message(e)}")
-
-      {:error, e}
-  catch
-    kind, value ->
-      Logger.warning("series creation for request #{request.id} #{kind}: #{inspect(value)}")
-      {:error, {kind, value}}
+  defp approve_prepared_series(request, admin, prepared, preferred, profile) do
+    Repo.transaction(fn ->
+      with {:ok, approved} <-
+             flip_pending(request, %{status: :approved, approved_by_id: admin.id}),
+           {:ok, series} <-
+             Catalog.persist_requested_series(
+               prepared,
+               request.season_number,
+               preferred,
+               profile
+             ) do
+        {approved, series}
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> finalize_series_approval()
   end
 
   def deny_request(%Request{status: :pending} = request, %User{} = admin, reason) do
@@ -290,66 +275,6 @@ defmodule Cinder.Requests do
       %Ecto.Changeset{} = invalid -> {:error, invalid}
     end
   end
-
-  # Compensation for the season approve path: the series never materialized (e.g. TMDB
-  # down), so the approval must not stand. Guarded the same way — only undoes our own
-  # flip. The {:request_created, _} broadcast nudges open views to re-read: without it,
-  # a view mounted during the approved-then-reverted window would show :approved until
-  # the next unrelated request event.
-  defp revert_to_pending(%Request{} = request) do
-    reverted_to =
-      try do
-        Repo.update_all(
-          from(r in Request, where: r.id == ^request.id and r.status == :approved),
-          set: [status: :pending, approved_by_id: nil, updated_at: now()]
-        )
-
-        :pending
-      rescue
-        # ONLY the unique-index collision: the partial requests_pending_unique index
-        # covers :pending rows, so a duplicate pending request created while this one
-        # was briefly :approved makes the revert collide — fall back to :denied
-        # (never indexed, recoverable via Reopen) so the strand stays visible.
-        #
-        # Match on the MESSAGE, not the class: update_all bypasses Ecto's
-        # to_constraints, so a collision surfaces as a raw Exqlite.Error — the same
-        # class that also carries a transient SQLITE_BUSY or disk-I/O error. Rescuing
-        # the whole class would convert a retryable blip into a permanent :denied, so
-        # anything that isn't a UNIQUE violation re-raises and propagates.
-        e in [Ecto.ConstraintError, Exqlite.Error] ->
-          unless unique_collision?(e), do: reraise(e, __STACKTRACE__)
-
-          Logger.warning(
-            "revert_to_pending for request #{request.id} collided " <>
-              "(#{Exception.message(e)}); denying instead"
-          )
-
-          Repo.update_all(
-            from(r in Request, where: r.id == ^request.id and r.status == :approved),
-            set: [
-              status: :denied,
-              denial_reason: "Approval failed: the series could not be created.",
-              updated_at: now()
-            ]
-          )
-
-          :denied
-      end
-
-    # Broadcast OUTSIDE the rescued region — a broadcast failure after a successful
-    # revert must not re-run the fallback and deny an already-reverted request.
-    case reverted_to do
-      :pending ->
-        broadcast({:request_created, struct(request, status: :pending, approved_by_id: nil)})
-
-      :denied ->
-        broadcast({:request_denied, struct(request, status: :denied)})
-    end
-  end
-
-  # A UNIQUE-index violation (the only revert failure we down-convert to :denied),
-  # as opposed to a transient busy / disk-I/O Exqlite.Error that must propagate.
-  defp unique_collision?(e), do: Exception.message(e) =~ "UNIQUE constraint failed"
 
   defp now, do: NaiveDateTime.truncate(NaiveDateTime.utc_now(), :second)
 
@@ -460,23 +385,13 @@ defmodule Cinder.Requests do
     count
   end
 
-  # NOT transaction-wrapped: find_or_create_series_at_requested does TMDB I/O.
   defp create_approved(user, %{target_type: "season"} = attrs, approver_id) do
-    with {:ok, _series} <-
-           Catalog.find_or_create_series_at_requested(
-             attrs.target_id,
-             attrs[:season_number],
-             attrs[:preferred_language] || "original",
-             attrs[:proposed_media_profile] || :auto
-           ),
-         {:ok, request} <-
-           %Request{}
-           |> Request.create_changeset(
-             Map.merge(attrs, %{user_id: user.id, status: :approved, approved_by_id: approver_id})
-           )
-           |> Repo.insert() do
-      announce_approved(request)
-      {:ok, request}
+    preferred = attrs[:preferred_language] || "original"
+    profile = attrs[:proposed_media_profile] || :auto
+
+    with {:ok, prepared} <-
+           Catalog.prepare_requested_series(attrs.target_id, preferred, profile) do
+      insert_approved_series(user, attrs, approver_id, prepared, preferred, profile)
     end
   end
 
@@ -512,6 +427,41 @@ defmodule Cinder.Requests do
     end)
     |> finalize_movie_approval(prepared)
   end
+
+  defp insert_approved_series(user, attrs, approver_id, prepared, preferred, profile) do
+    Repo.transaction(fn ->
+      with {:ok, request} <-
+             %Request{}
+             |> Request.create_changeset(
+               Map.merge(attrs, %{
+                 user_id: user.id,
+                 status: :approved,
+                 approved_by_id: approver_id
+               })
+             )
+             |> Repo.insert(),
+           {:ok, series} <-
+             Catalog.persist_requested_series(
+               prepared,
+               attrs[:season_number],
+               preferred,
+               profile
+             ) do
+        {request, series}
+      else
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+    |> finalize_series_approval()
+  end
+
+  defp finalize_series_approval({:ok, {approved, series}}) do
+    Catalog.broadcast_series(series.id)
+    announce_approved(approved)
+    {:ok, approved}
+  end
+
+  defp finalize_series_approval({:error, _reason} = error), do: error
 
   # Post-commit seam shared by both movie-approval transactions above. Runs AFTER the
   # transaction commits — Catalog.apply_confirmed_media/3 must not run inside it (a fill/confirm

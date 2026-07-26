@@ -73,7 +73,10 @@ config :cinder,
   # address, so an always-on global IP bucket (Cinder.Accounts.IpRateLimiter) would let
   # unrelated tests exhaust each other's budget. Tests for the limiter itself flip this on
   # locally and restore it in on_exit.
-  ip_rate_limiting: false
+  ip_rate_limiting: false,
+  # Run notifier transports inline (not off-process) so capture_log / assert_email_sent
+  # see the delivery synchronously. Prod/dev default to :async.
+  notifier_dispatch: :sync
 
 # Two client mocks so routing is testable by protocol: a torrent release must
 # reach ClientMock and a usenet release must reach SabnzbdClientMock.

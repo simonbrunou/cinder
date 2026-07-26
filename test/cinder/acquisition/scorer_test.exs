@@ -186,6 +186,56 @@ defmodule Cinder.Acquisition.ScorerTest do
       assert Enum.map(chosen, fn {_r, cov} -> cov end) == [[1, 2, 3], [4]]
     end
 
+    test "an alternate bare-season pack covers every mapped episode in that season" do
+      pack = release(season: 2, episodes: nil, resolution: "1080p", size: 6 * @gb)
+      numbering = %{2 => %{1 => [29], 2 => [30], 3 => [31]}}
+
+      assert {:ok, [{^pack, [29, 30, 31]}]} =
+               Scorer.select_for([pack], 1, [29, 30, 31], alternate_numbering: numbering)
+    end
+
+    test "an alternate multi-episode range covers its mapped canonical episodes" do
+      range = release(season: 2, episodes: [1, 2, 3], resolution: "1080p", size: 6 * @gb)
+      numbering = %{2 => %{1 => [29], 2 => [30], 3 => [31]}}
+
+      assert {:ok, [{^range, [29, 30, 31]}]} =
+               Scorer.select_for([range], 1, [29, 30, 31], alternate_numbering: numbering)
+    end
+
+    test "an unmapped alternate episode contributes zero coverage" do
+      release = release(season: 2, episodes: [4], resolution: "1080p", size: 2 * @gb)
+      numbering = %{2 => %{1 => [29]}}
+
+      assert :no_match =
+               Scorer.select_for([release], 1, [29], alternate_numbering: numbering)
+    end
+
+    test "an empty or absent alternate map leaves native selection unchanged" do
+      native = release(season: 1, episodes: [1], resolution: "1080p", size: 2 * @gb)
+      other = release(season: 2, episodes: [1], resolution: "1080p", size: 2 * @gb)
+
+      assert Scorer.select_for([native, other], 1, [1]) ==
+               Scorer.select_for([native, other], 1, [1], alternate_numbering: %{})
+    end
+
+    test "the per-episode size band scales with alternate coverage" do
+      range = release(season: 2, episodes: [1, 2], resolution: "1080p", size: 9 * @gb)
+      single = release(season: 2, episodes: [1], resolution: "1080p", size: 9 * @gb)
+      numbering = %{2 => %{1 => [29], 2 => [30]}}
+
+      assert {:ok, [{^range, [29, 30]}]} =
+               Scorer.select_for([range], 1, [29, 30],
+                 alternate_numbering: numbering,
+                 max_size: 5 * @gb
+               )
+
+      assert :no_match =
+               Scorer.select_for([single], 1, [29],
+                 alternate_numbering: numbering,
+                 max_size: 5 * @gb
+               )
+    end
+
     test "release_blocklist drops a pack by title; the wanted set is covered from the rest" do
       pack =
         release(

@@ -399,6 +399,27 @@ defmodule Cinder.AcquisitionTest do
       assert chosen |> Enum.map(fn {_r, cov} -> cov end) |> Enum.sort() == [[1], [2]]
     end
 
+    test "unions canonical and alternate-season queries before scoring" do
+      test_pid = self()
+
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, 2, fn
+        123, "The Office", season_number ->
+          send(test_pid, {:searched_season, season_number})
+
+          if season_number == 2,
+            do: {:ok, [raw_tv("The.Office.S02E01.1080p.WEB-DL-GRP")]},
+            else: {:ok, []}
+      end)
+
+      assert {:ok, [{%Release{season: 2, episodes: [1]}, [29]}]} =
+               Acquisition.best_releases(series(), 1, [29],
+                 alternate_numbering: %{2 => %{1 => [29]}}
+               )
+
+      assert_received {:searched_season, 1}
+      assert_received {:searched_season, 2}
+    end
+
     test "rejects a same-season release of a different series on the free-text path" do
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
         {:ok, [raw_tv("Parks.and.Recreation.S01E01.1080p.WEB-DL-GRP")]}

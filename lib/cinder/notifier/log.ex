@@ -17,6 +17,11 @@ defmodule Cinder.Notifier.Log do
 
   def notify({:user_registered, _user}), do: log("user_registered")
 
+  def notify({:account_activated, %{id: id}}) when is_integer(id),
+    do: log("account activated: user ##{id}")
+
+  def notify({:account_activated, _user}), do: log("account activated")
+
   def notify({:movie_available, movie}), do: log("movie available: #{movie.title}")
 
   def notify({:movie_failed, movie, reason}),

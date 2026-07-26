@@ -158,25 +158,9 @@ defmodule Cinder.Catalog.SeriesCatalog do
   def set_series_language(%Series{} = series, language) do
     result =
       Repo.transaction(fn ->
-        case series
-             |> Series.language_changeset(%{preferred_language: language})
-             |> Repo.update() do
-          {:ok, updated} ->
-            from(e in Episode,
-              join: s in Season,
-              on: e.season_id == s.id,
-              where:
-                s.series_id == ^series.id and is_nil(e.file_path) and is_nil(e.grab_id) and
-                  e.search_attempts > 0
-            )
-            |> Repo.update_all(set: [search_attempts: 0])
-
-            updated
-
-          # The row update + the episode reset are one transaction (mirroring
-          # set_season_monitored/2): surface a write failure as {:error, changeset}, roll back.
-          {:error, changeset} ->
-            Repo.rollback(changeset)
+        case write_series_language(series, language) do
+          {:ok, updated} -> updated
+          {:error, reason} -> Repo.rollback(reason)
         end
       end)
 
@@ -186,6 +170,24 @@ defmodule Cinder.Catalog.SeriesCatalog do
     end
   rescue
     Ecto.StaleEntryError -> {:error, :stale_entry}
+  end
+
+  defp write_series_language(series, language) do
+    with {:ok, updated} <-
+           series
+           |> Series.language_changeset(%{preferred_language: language})
+           |> Repo.update() do
+      from(e in Episode,
+        join: s in Season,
+        on: e.season_id == s.id,
+        where:
+          s.series_id == ^series.id and is_nil(e.file_path) and is_nil(e.grab_id) and
+            e.search_attempts > 0
+      )
+      |> Repo.update_all(set: [search_attempts: 0])
+
+      {:ok, updated}
+    end
   end
 
   @doc "Fetches a series by TMDB id, or `nil`."
@@ -284,13 +286,14 @@ defmodule Cinder.Catalog.SeriesCatalog do
   end
 
   defp episode_file_paths_for_series(series_id) do
-    Repo.all(
-      from e in Episode,
-        join: s in Season,
-        on: s.id == e.season_id,
-        where: s.series_id == ^series_id and not is_nil(e.file_path),
-        select: e.file_path
+    from(e in Episode,
+      join: s in Season,
+      on: s.id == e.season_id,
+      where: s.series_id == ^series_id and not is_nil(e.file_path)
     )
+    |> Repo.all()
+    |> Enum.flat_map(&Episode.file_paths/1)
+    |> Enum.uniq()
   end
 
   defp episode_ids_for_series(series_id) do
@@ -394,7 +397,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
   on first create) and monitor **only** `season_number` (cascading to its episodes), leaving other
   seasons untouched. Sets `series.monitored: true`. Idempotent and additive across seasons.
 
-  Does TMDB I/O on first create, so it must NOT be called inside a `Repo.transaction`.
+  Fetches all provider data before opening its transaction, then broadcasts once after commit.
   Returns `{:ok, %Series{}}`, or `{:error, reason}` if the TMDB fetch fails or the season is absent.
   """
   def find_or_create_series_at_requested(
@@ -406,30 +409,104 @@ defmodule Cinder.Catalog.SeriesCatalog do
 
   def find_or_create_series_at_requested(tmdb_id, season_number, preferred, media_profile)
       when media_profile in [:auto, :standard, :anime] do
-    with {:ok, series} <- ensure_series(tmdb_id, preferred, media_profile),
-         {:ok, series} <- Cinder.Catalog.apply_confirmed_media(series, media_profile, preferred),
-         %Season{} = season <- season_in(series, season_number),
-         {:ok, _} <- set_season_monitored(season, true),
-         {:ok, updated} <- mark_series_monitored(series) do
+    with {:ok, prepared} <- prepare_requested_series(tmdb_id, preferred, media_profile),
+         {:ok, updated} <-
+           persist_requested_series_in_transaction(
+             prepared,
+             season_number,
+             preferred,
+             media_profile
+           ) do
+      Cinder.Catalog.broadcast_series(updated.id)
       {:ok, updated}
-    else
-      nil -> {:error, :season_not_found}
-      {:error, _} = err -> err
     end
   end
 
   def find_or_create_series_at_requested(_tmdb_id, _season_number, _preferred, _media_profile),
     do: {:error, :invalid_media_profile}
 
-  # Create with monitor_strategy: :none so NOTHING is monitored by default; the requested season
-  # is then flipped on explicitly. An existing series is returned as-is.
-  defp ensure_series(tmdb_id, preferred, media_profile),
-    do:
-      add_series(tmdb_id,
-        monitor_strategy: :none,
-        preferred_language: preferred,
-        media_profile: media_profile
-      )
+  @doc "Fetches every TMDB payload needed to persist a requested series, without writing."
+  def prepare_requested_series(tmdb_id, preferred, media_profile)
+      when media_profile in [:auto, :standard, :anime] do
+    case get_series_by_tmdb_id(tmdb_id) do
+      %Series{} -> {:ok, {:existing, tmdb_id}}
+      nil -> prepare_series(tmdb_id, :none, preferred, media_profile)
+    end
+  end
+
+  def prepare_requested_series(_tmdb_id, _preferred, _media_profile),
+    do: {:error, :invalid_media_profile}
+
+  # DB-only half of request approval: the caller owns the transaction and post-commit broadcast.
+  @doc false
+  def persist_requested_series(prepared, season_number, preferred, media_profile)
+      when media_profile in [:auto, :standard, :anime] do
+    with {:ok, series} <- ensure_prepared_series(prepared),
+         {:ok, series} <- apply_requested_media(series, media_profile, preferred),
+         %Season{} = season <- season_in(series, season_number),
+         {:ok, _season} <- write_season_monitored(season, true),
+         {:ok, updated} <- mark_series_monitored(series) do
+      {:ok, updated}
+    else
+      nil -> {:error, :season_not_found}
+      {:error, _} = error -> error
+    end
+  end
+
+  def persist_requested_series(_prepared, _season_number, _preferred, _media_profile),
+    do: {:error, :invalid_media_profile}
+
+  defp persist_requested_series_in_transaction(prepared, season_number, preferred, media_profile) do
+    Repo.transaction(fn ->
+      case persist_requested_series(prepared, season_number, preferred, media_profile) do
+        {:ok, series} -> series
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end)
+  end
+
+  defp ensure_prepared_series({:existing, tmdb_id}) do
+    case get_series_by_tmdb_id(tmdb_id) do
+      %Series{} = series -> {:ok, series}
+      nil -> {:error, :stale_series}
+    end
+  end
+
+  defp ensure_prepared_series({:new, tmdb_id, attrs, seasons, identity}) do
+    case get_series_by_tmdb_id(tmdb_id) do
+      %Series{} = series ->
+        {:ok, series}
+
+      nil ->
+        with {:ok, series} <- write_new_series(attrs, seasons, identity) do
+          {:ok, get_series_by_tmdb_id(tmdb_id) || series}
+        end
+    end
+  end
+
+  defp apply_requested_media(series, media_profile, preferred) do
+    pre_request_profile = series.media_profile
+
+    with {:ok, series} <- fill_requested_language(series, preferred, pre_request_profile) do
+      confirm_requested_profile(series, media_profile)
+    end
+  end
+
+  defp fill_requested_language(
+         %Series{preferred_language: "original"} = series,
+         preferred,
+         pre_request_profile
+       )
+       when preferred not in [nil, "original"] and pre_request_profile != :anime,
+       do: write_series_language(series, preferred)
+
+  defp fill_requested_language(series, _preferred, _pre_request_profile), do: {:ok, series}
+
+  defp confirm_requested_profile(%Series{media_profile: :auto} = series, profile)
+       when profile in [:standard, :anime],
+       do: series |> Series.profile_changeset(%{media_profile: profile}) |> Repo.update()
+
+  defp confirm_requested_profile(series, _profile), do: {:ok, series}
 
   defp season_in(series, season_number) do
     Repo.get_by(Season, series_id: series.id, season_number: season_number)
@@ -440,28 +517,30 @@ defmodule Cinder.Catalog.SeriesCatalog do
   end
 
   defp create_series(tmdb_id, strategy, preferred, media_profile) do
+    with {:ok, {:new, ^tmdb_id, attrs, seasons, identity}} <-
+           prepare_series(tmdb_id, strategy, preferred, media_profile) do
+      insert_series(tmdb_id, attrs, seasons, identity)
+    end
+  end
+
+  defp prepare_series(tmdb_id, strategy, preferred, media_profile) do
     with {:ok, info} <- tmdb().get_series(tmdb_id),
          {:ok, seasons} <- fetch_seasons(tmdb_id, info.seasons),
          seasons = put_episode_localizations(tmdb_id, seasons),
          # A brand-new series has no scene_numbering_group_id yet (create_changeset doesn't
          # cast it), so there's nothing to pre-fetch here.
          {:ok, identity} <- fetch_series_identity(tmdb_id, nil) do
-      insert_series(
-        tmdb_id,
-        series_attrs(info, seasons, strategy, preferred, media_profile),
-        seasons,
-        identity
-      )
+      {:ok,
+       {:new, tmdb_id, series_attrs(info, seasons, strategy, preferred, media_profile), seasons,
+        identity}}
     end
   end
 
   defp insert_series(tmdb_id, attrs, seasons, identity) do
     result =
       Repo.transaction(fn ->
-        with {:ok, series} <- attrs |> Series.create_changeset() |> Repo.insert(),
-             :ok <- sync_series_identity(series, seasons, identity) do
-          series
-        else
+        case write_new_series(attrs, seasons, identity) do
+          {:ok, series} -> series
           {:error, reason} -> Repo.rollback(reason)
         end
       end)
@@ -483,6 +562,13 @@ defmodule Cinder.Catalog.SeriesCatalog do
           %Series{} = series -> {:ok, series}
           nil -> {:error, reason}
         end
+    end
+  end
+
+  defp write_new_series(attrs, seasons, identity) do
+    with {:ok, series} <- attrs |> Series.create_changeset() |> Repo.insert(),
+         :ok <- sync_series_identity(series, seasons, identity) do
+      {:ok, series}
     end
   end
 
@@ -827,24 +913,26 @@ defmodule Cinder.Catalog.SeriesCatalog do
   def set_season_monitored(%Season{} = season, monitored?) do
     result =
       Repo.transaction(fn ->
-        case season |> Ecto.Changeset.change(monitored: monitored?) |> Repo.update() do
-          {:ok, season} ->
-            Repo.update_all(from(e in Episode, where: e.season_id == ^season.id),
-              set: [monitored: monitored?, updated_at: Cinder.Catalog.now()]
-            )
-
-            season
-
-          # Surface a write failure as {:error, changeset} (mirroring set_episode_monitored)
-          # rather than raising — the cascade is one transaction, so roll the whole thing back.
-          {:error, changeset} ->
-            Repo.rollback(changeset)
+        case write_season_monitored(season, monitored?) do
+          {:ok, updated} -> updated
+          {:error, reason} -> Repo.rollback(reason)
         end
       end)
 
     with {:ok, season} <- result do
       Cinder.Catalog.broadcast_series(season.series_id)
       {:ok, season}
+    end
+  end
+
+  defp write_season_monitored(season, monitored?) do
+    with {:ok, updated} <-
+           season |> Ecto.Changeset.change(monitored: monitored?) |> Repo.update() do
+      Repo.update_all(from(e in Episode, where: e.season_id == ^season.id),
+        set: [monitored: monitored?, updated_at: Cinder.Catalog.now()]
+      )
+
+      {:ok, updated}
     end
   end
 
@@ -943,19 +1031,32 @@ defmodule Cinder.Catalog.SeriesCatalog do
   def delete_episode_file(%Episode{} = episode, actor, opts) do
     unmonitor? = Keyword.get(opts, :unmonitor, false)
 
-    with :ok <- Cinder.Library.delete_file(episode.file_path),
-         {:ok, updated} <- do_delete_episode_file_txn(episode, actor, unmonitor?) do
+    with {:ok, file_paths} <- unlink_episode_files(episode),
+         {:ok, updated} <- do_delete_episode_file_txn(episode, actor, unmonitor?, file_paths) do
       Cinder.Catalog.broadcast_series(series_id_for_season(updated.season_id))
       {:ok, updated}
     end
   end
 
-  defp do_delete_episode_file_txn(episode, actor, unmonitor?) do
+  defp unlink_episode_files(episode) do
+    results =
+      Enum.map(Episode.file_paths(episode), fn path ->
+        {path, Cinder.Library.delete_file(path)}
+      end)
+
+    case Enum.find(results, fn {_path, result} -> result != :ok end) do
+      nil -> {:ok, Enum.map(results, &elem(&1, 0))}
+      {_path, {:error, reason}} -> {:error, reason}
+    end
+  end
+
+  defp do_delete_episode_file_txn(episode, actor, unmonitor?, file_paths) do
     Repo.transaction(fn ->
       changeset =
         episode
         |> Episode.transition_changeset(%{
           file_path: nil,
+          part_file_paths: [],
           # Zero the counter so a previously search-parked episode really is
           # re-grabbed next tick, as the docstring promises.
           search_attempts: 0,
@@ -974,6 +1075,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
           clear_shared_file_paths(episode.file_path)
 
           Cinder.Audit.log_or_rollback(actor, :delete_episode_file, updated, %{
+            file_paths: file_paths,
             unmonitored: unmonitor?
           })
 
@@ -991,6 +1093,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
     Repo.update_all(from(e in Episode, where: e.file_path == ^path),
       set: [
         file_path: nil,
+        part_file_paths: [],
         search_attempts: 0,
         imported_resolution: nil,
         imported_size: nil,
@@ -1029,27 +1132,42 @@ defmodule Cinder.Catalog.SeriesCatalog do
     episodes =
       Repo.all(from e in Episode, where: e.season_id == ^season.id and not is_nil(e.file_path))
 
-    results = Enum.map(episodes, fn ep -> {ep, Cinder.Library.delete_file(ep.file_path)} end)
-    cleared_ids = for {ep, :ok} <- results, do: ep.id
-    failed_count = Enum.count(results, fn {_ep, r} -> r != :ok end)
+    results =
+      Enum.map(episodes, fn episode ->
+        unlink_results =
+          Enum.map(Episode.file_paths(episode), fn path ->
+            {path, Cinder.Library.delete_file(path)}
+          end)
 
-    for {ep, {:error, reason}} <- results do
-      Logger.warning(
-        "library file delete failed for #{inspect(ep.file_path)}: #{inspect(reason)}"
-      )
+        {episode, unlink_results}
+      end)
+
+    for {_episode, unlink_results} <- results,
+        {path, {:error, reason}} <- unlink_results do
+      Logger.warning("library file delete failed for #{inspect(path)}: #{inspect(reason)}")
     end
 
-    with {:ok, _} <- do_delete_season_files_txn(season, actor, cleared_ids, unmonitor?) do
+    {cleared, failed} =
+      Enum.split_with(results, fn {_episode, unlink_results} ->
+        Enum.all?(unlink_results, fn {_path, result} -> result == :ok end)
+      end)
+
+    cleared_ids = Enum.map(cleared, fn {episode, _results} -> episode.id end)
+    file_paths = Enum.flat_map(results, fn {_episode, paths} -> Enum.map(paths, &elem(&1, 0)) end)
+
+    with {:ok, _} <-
+           do_delete_season_files_txn(season, actor, cleared_ids, file_paths, unmonitor?) do
       Cinder.Catalog.broadcast_series(season.series_id)
-      {:ok, length(cleared_ids), failed_count}
+      {:ok, length(cleared_ids), length(failed)}
     end
   end
 
-  defp do_delete_season_files_txn(season, actor, cleared_ids, unmonitor?) do
+  defp do_delete_season_files_txn(season, actor, cleared_ids, file_paths, unmonitor?) do
     Repo.transaction(fn ->
       sets =
         [
           file_path: nil,
+          part_file_paths: [],
           # Zero the counter so previously search-parked episodes really are
           # re-grabbed next tick, as the docstring promises.
           search_attempts: 0,
@@ -1067,6 +1185,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
 
       Cinder.Audit.log_or_rollback(actor, :delete_season_files, season, %{
         count: length(cleared_ids),
+        file_paths: file_paths,
         unmonitored: unmonitor?
       })
 

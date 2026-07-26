@@ -31,12 +31,27 @@ defmodule Cinder.Notifier.Email do
   require Logger
 
   @impl true
+  def notify({:account_activated, user}), do: notify_account_activated(user)
   def notify({:request_approved, request}), do: notify_request_approved(request)
   def notify({:movie_available, movie}), do: notify_movie(movie, :available)
   def notify({:movie_failed, movie, reason}), do: notify_movie(movie, {:failed, reason})
   def notify({:season_available, season}), do: notify_season(season)
   def notify({:episodes_search_exhausted, episodes}), do: notify_episodes_exhausted(episodes)
   def notify(_other), do: :ok
+
+  # A non-admin registers, lands inactive, and waits — this is the one message that tells them an
+  # admin let them in. Sent to the activated user themselves (not to requesters), in their locale,
+  # and only when they're email-eligible (opted in + confirmed address), via the shared send_to/2.
+  defp notify_account_activated(%User{} = user) do
+    send_to(user, fn ->
+      {gettext("Your Cinder account is now active"),
+       gettext(
+         "Good news — an admin activated your account. You can now sign in and start requesting."
+       )}
+    end)
+  end
+
+  defp notify_account_activated(_user), do: :ok
 
   # The requester's own instant auto-approve (they're an admin, or auto_approve_all applies
   # to their own submit) is redundant — no one else made a decision for them to be told

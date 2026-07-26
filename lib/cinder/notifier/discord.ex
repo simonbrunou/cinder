@@ -142,6 +142,9 @@ defmodule Cinder.Notifier.Discord do
       color: @red
     }
 
+  # `:account_activated` is deliberately absent: it's a per-user "you're in now" message (Email's
+  # job), not a household-channel signal — the admin already saw `:user_registered` and did the
+  # activating. Keeping it out of Discord also keeps requester PII off this admin channel (#184).
   defp embed(_other), do: nil
 
   # --- helpers ---

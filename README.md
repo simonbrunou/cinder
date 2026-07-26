@@ -146,11 +146,6 @@ completed download's actual audio/subtitles are verified against them before imp
 and blocklisting a release that provably violates the policy. `ffprobe` is optional but
 recommended; without it, Cinder skips that verification step and imports permissively.
 
-## Screenshots
-
-_TODO — captures of the discovery grid, the request/approval queue, and the `/status` dashboard
-will land here (`docs/images/`)._
-
 ## Development
 
 ```sh

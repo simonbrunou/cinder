@@ -149,6 +149,77 @@ defmodule Cinder.Library.AdoptionTest do
            ] = Adoption.scan()
   end
 
+  test "a tvdb-tagged series resolves and adopts through find without title search" do
+    path =
+      "/tmp/cinder-test-tv-library/Test Show (2001) {tvdb-999}/Test.Show.S01E01.mkv"
+
+    stub_roots([], [{path, 10}])
+
+    expect(Cinder.Catalog.TMDBMock, :find_by_external_id, fn 999, :tvdb_id ->
+      {:ok, [series_result(42, "Test Show", 2001) |> Map.put(:type, :tv)]}
+    end)
+
+    stub_series_create(42, 2)
+
+    assert [%{kind: :series, status: :auto_matched} = candidate] = Adoption.scan()
+    assert %{adopted: 1, skipped: 0} = Adoption.adopt([candidate])
+
+    series = Catalog.get_series_by_tmdb_id(42)
+    [season] = Catalog.get_series_with_tree(series.id).seasons
+
+    assert Enum.find(season.episodes, &(&1.episode_number == 1)).file_path == path
+  end
+
+  test "an imdb-tagged movie resolves and adopts through find without title search" do
+    path = "/tmp/cinder-test-library/Dune (2021) {imdb-tt1160419}/Dune.mkv"
+    stub_roots([{path, 10}], [])
+
+    expect(Cinder.Catalog.TMDBMock, :find_by_external_id, fn "tt1160419", :imdb_id ->
+      {:ok, [movie_result(10, "Dune", 2021) |> Map.put(:type, :movie)]}
+    end)
+
+    expect(Cinder.Catalog.TMDBMock, :get_movie, fn 10 ->
+      {:ok,
+       movie_result(10, "Dune", 2021)
+       |> Map.merge(%{imdb_id: "tt1160419", localizations: %{}})}
+    end)
+
+    assert [%{kind: :movie, status: :auto_matched} = candidate] = Adoption.scan()
+    assert %{adopted: 1, skipped: 0} = Adoption.adopt([candidate])
+    assert %Movie{status: :available, file_path: ^path} = Catalog.get_movie_by_tmdb_id(10)
+  end
+
+  test "unresolved or ambiguous external tags fall back to operator resolution" do
+    no_match =
+      "/tmp/cinder-test-library/No Match (2001) {imdb-tt0000001}/No.Match.mkv"
+
+    many_matches =
+      "/tmp/cinder-test-library/Many Matches (2001) {imdb-tt0000002}/Many.Matches.mkv"
+
+    stub_roots([{no_match, 10}, {many_matches, 10}], [])
+
+    expect(Cinder.Catalog.TMDBMock, :find_by_external_id, 2, fn
+      "tt0000001", :imdb_id ->
+        {:ok, []}
+
+      "tt0000002", :imdb_id ->
+        {:ok,
+         [
+           movie_result(20, "Many Matches", 2001) |> Map.put(:type, :movie),
+           movie_result(21, "Many Matches", 2001) |> Map.put(:type, :movie)
+         ]}
+    end)
+
+    expect(Cinder.Catalog.TMDBMock, :search, 2, fn
+      "No Match", "en" -> {:ok, [movie_result(10, "No Match", 2002)]}
+      "Many Matches", "en" -> {:ok, [movie_result(20, "Many Matches", 2002)]}
+    end)
+
+    candidates = Adoption.scan()
+    assert Enum.all?(candidates, &(&1.status == :ambiguous))
+    assert Enum.all?(candidates, &(&1.match == nil))
+  end
+
   test "adopt creates an available movie through Catalog.transition, broadcasts, and is idempotent" do
     path = "/tmp/cinder-test-library/Dune (2021)/Dune (2021).mkv"
 
@@ -229,8 +300,8 @@ defmodule Cinder.Library.AdoptionTest do
     end)
   end
 
-  defp stub_series_create(tmdb_id) do
-    expect(Cinder.Catalog.TMDBMock, :get_series, fn ^tmdb_id ->
+  defp stub_series_create(tmdb_id, calls \\ 1) do
+    expect(Cinder.Catalog.TMDBMock, :get_series, calls, fn ^tmdb_id ->
       {:ok,
        series_result(tmdb_id, "Test Show", 2001)
        |> Map.merge(%{tvdb_id: 999, seasons: [%{season_number: 1}]})}
@@ -244,7 +315,7 @@ defmodule Cinder.Library.AdoptionTest do
       ]
     }
 
-    expect(Cinder.Catalog.TMDBMock, :get_season, fn ^tmdb_id, 1, "en" ->
+    expect(Cinder.Catalog.TMDBMock, :get_season, calls, fn ^tmdb_id, 1, "en" ->
       {:ok, canonical}
     end)
 

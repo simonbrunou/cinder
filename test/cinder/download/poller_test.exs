@@ -465,6 +465,52 @@ defmodule Cinder.Download.PollerTest do
            } = Repo.get!(Movie, movie.id)
   end
 
+  test "a paused SABnzbd download parks with the client's reason as the failure detail" do
+    # SABnzbd carries an actionable :reason on its :error status; the poller persists it as
+    # failure_reason so /activity shows the real cause, not a bare "couldn't be imported."
+    movie =
+      movie_fixture(%{
+        tmdb_id: 88,
+        status: :downloading,
+        download_id: "hash-paused",
+        download_protocol: :torrent,
+        release_title: "Paused.Release.1080p"
+      })
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-paused" ->
+      {:ok, %{state: :error, reason: "Paused by the download client (duplicate detection)"}}
+    end)
+
+    start_supervised!({Poller, interval: 60_000})
+    Enum.each(1..10, fn _ -> Poller.poll() end)
+
+    parked = Repo.get!(Movie, movie.id)
+    assert parked.status == :import_failed
+    assert parked.failure_reason == "Paused by the download client (duplicate detection)"
+    # The download-side failure is blocklisted post-exhaustion, same as a bare :download_error.
+    assert Catalog.blocked_release_titles(parked) == ["Paused.Release.1080p"]
+  end
+
+  test "a plain download error parks with no failure detail (falls back to the generic hint)" do
+    movie =
+      movie_fixture(%{
+        tmdb_id: 89,
+        status: :downloading,
+        download_id: "hash-plain",
+        download_protocol: :torrent,
+        release_title: "Plain.Release.1080p"
+      })
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-plain" -> {:ok, %{state: :error}} end)
+
+    start_supervised!({Poller, interval: 60_000})
+    Enum.each(1..10, fn _ -> Poller.poll() end)
+
+    parked = Repo.get!(Movie, movie.id)
+    assert parked.status == :import_failed
+    assert parked.failure_reason == nil
+  end
+
   test "a retryable upgrade error clears an upgrading snapshot" do
     movie = upgrading_movie(9, "hash-9")
 
@@ -2864,6 +2910,33 @@ defmodule Cinder.Download.PollerTest do
       assert reloaded.download_id == "hash-good"
       assert reloaded.release_title == "Tsundere-Raws.Kizu.I.1080p"
       assert Catalog.blocked_release_titles(reloaded) == ["Teke.Kizu.I.1080p-TEKE"]
+    end
+
+    test "reaps a wedged usenet download (nil speed) once past the absolute cap" do
+      # The torrent-only seed window can't touch a nil-speed usenet job; the protocol-agnostic
+      # absolute cap does. cap: 0 so the freshly-stalled movie is immediately past it.
+      enable_reaper!(max_downloading_timeout: 0)
+      movie = stalled_downloading_movie(75, "nzo-wedged", "Wedged.Release.1080p")
+      test_pid = self()
+
+      stub(Cinder.Download.ClientMock, :status, fn "nzo-wedged" ->
+        {:ok, %{state: :downloading, progress: 0.5, speed: nil}}
+      end)
+
+      stub(Cinder.Download.ClientMock, :remove, fn id, opts ->
+        send(test_pid, {:removed, id, opts})
+        :ok
+      end)
+
+      start_supervised!({Poller, interval: 60_000})
+      assert :ok = Poller.poll()
+
+      reaped = Repo.get!(Movie, movie.id)
+      assert reaped.status == :requested
+      assert reaped.download_id == nil
+      assert reaped.search_attempts == 1
+      assert Catalog.blocked_release_titles(reaped) == ["Wedged.Release.1080p"]
+      assert_receive {:removed, "nzo-wedged", _opts}
     end
 
     test "updated_at freezes across consecutive stalled ticks (the derivation's invariant)" do

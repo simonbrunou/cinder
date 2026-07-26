@@ -65,8 +65,14 @@ defmodule Cinder.Catalog do
   defdelegate top_rated_movies(locale), to: Discovery
   defdelegate now_playing_movies(), to: Discovery
   defdelegate now_playing_movies(locale), to: Discovery
+  defdelegate popular_tv(), to: Discovery
+  defdelegate popular_tv(locale), to: Discovery
+  defdelegate top_rated_tv(), to: Discovery
+  defdelegate top_rated_tv(locale), to: Discovery
   defdelegate movies_by_genre(genre_id), to: Discovery
   defdelegate movies_by_genre(genre_id, locale), to: Discovery
+  defdelegate tv_by_genre(genre_id), to: Discovery
+  defdelegate tv_by_genre(genre_id, locale), to: Discovery
   defdelegate search_person(query), to: Discovery
   defdelegate search_person(query, locale), to: Discovery
   defdelegate search_collection(query), to: Discovery
@@ -328,6 +334,9 @@ defmodule Cinder.Catalog do
 
   @doc "Episodes with an imported file, season+series+scene-coordinates preloaded (subtitle-fetch candidates)."
   defdelegate list_episodes_with_file(), to: SeriesCatalog
+
+  @doc false
+  def get_episode_by_id(id), do: Repo.get(Episode, id)
 
   # --- pipeline state matrix -----------------------------------------------------------------
   #
@@ -1050,15 +1059,21 @@ defmodule Cinder.Catalog do
 
   defp deletion_audit_detail(deleted, true, unlink_results) do
     failed = for {path, {:error, reason}} <- unlink_results, do: "#{path}: #{inspect(reason)}"
+    file_paths = Enum.map(unlink_results, &elem(&1, 0))
 
     if failed == [] do
-      %{title: deleted.title, files_deleted: true}
+      %{title: deleted.title, files_deleted: true, file_paths: file_paths}
     else
       Logger.warning(
         "#{inspect(deleted.__struct__)} #{deleted.id} delete: #{length(failed)} file(s) left on disk: #{inspect(failed)}"
       )
 
-      %{title: deleted.title, files_deleted: false, failed_unlinks: failed}
+      %{
+        title: deleted.title,
+        files_deleted: false,
+        file_paths: file_paths,
+        failed_unlinks: failed
+      }
     end
   end
 
@@ -1152,20 +1167,18 @@ defmodule Cinder.Catalog do
   end
 
   @doc """
-  Shared confirm+fill sequence for an EXISTING movie or series matched by a request approval:
+  Shared confirm+fill sequence for an EXISTING movie or series:
   fills the requester's language pick (if still default), then confirms the requester's
   media-profile proposal (:auto → confirmed only). Order is fill-then-confirm, not the reverse:
   a failed confirm after a successful fill just leaves a plain fill-if-default — benign, and
-  a retry (the series path's re-approval, or a movie detail-page edit) picks up where it left
-  off; confirm-then-fill would instead leave a committed profile flip with no clean retry
-  surface if the fill then failed.
+  a retry picks up where it left off; confirm-then-fill would instead leave a committed profile
+  flip with no clean retry surface if the fill then failed.
 
   Call this OUTSIDE any surrounding `Repo.transaction` — `Cinder.Requests` calls it after its
   approval transaction commits, so a fill/confirm failure here can't roll back an already-
-  committed movie/request write. On the movie path a failure is logged (the request stays
-  approved; both fields remain detail-page-editable); on the series path the caller propagates
-  the error so the season approval reverts to pending (on the auto-approve path there is no
-  approval to revert — the request is simply never created).
+  committed movie/request write. Season approval instead uses
+  `Cinder.Catalog.SeriesCatalog.persist_requested_series/4` so request, profile/language,
+  and monitoring changes share one transaction without broadcasting mid-transaction.
   """
   def apply_confirmed_media(media, profile, preferred) do
     pre_request_profile = media.media_profile
@@ -1250,6 +1263,11 @@ defmodule Cinder.Catalog do
                 media_profile
               ),
               to: SeriesCatalog
+
+  defdelegate prepare_requested_series(tmdb_id, preferred, media_profile), to: SeriesCatalog
+
+  defdelegate persist_requested_series(prepared, season_number, preferred, media_profile),
+    to: SeriesCatalog
 
   @series_topic "series"
 
