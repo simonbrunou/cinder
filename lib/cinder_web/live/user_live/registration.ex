@@ -98,6 +98,11 @@ defmodule CinderWeb.UserLive.Registration do
             />
           </div>
 
+          <p class="mb-4 text-sm text-base-content/70">
+            {gettext(
+              "We store your email, hashed password, and request history; the instance operator is the data controller."
+            )}
+          </p>
           <.button phx-disable-with={gettext("Creating account…")} class="w-full">
             {gettext("Create an account")}
           </.button>

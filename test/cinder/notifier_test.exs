@@ -17,6 +17,20 @@ defmodule Cinder.NotifierTest do
     assert log =~ "The Matrix"
   end
 
+  test "Log impl sanitizes registration events" do
+    Logger.configure(level: :info)
+    on_exit(fn -> Logger.configure(level: :warning) end)
+    email = "kim@example.com"
+
+    log =
+      capture_log(fn ->
+        assert :ok = Notifier.Log.notify({:user_registered, %{id: 42, email: email}})
+      end)
+
+    assert log =~ "[notifier] user_registered user #42"
+    refute log =~ email
+  end
+
   test "Log impl formats maintenance outcomes" do
     Logger.configure(level: :info)
     on_exit(fn -> Logger.configure(level: :warning) end)
