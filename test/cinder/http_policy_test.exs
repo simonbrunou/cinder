@@ -417,7 +417,8 @@ defmodule Cinder.HTTPPolicyTest do
               url: "https://public.example/data",
               plug: {Req.Test, Cinder.HTTPPolicyTelemetryOkStub}
             ],
-            64
+            64,
+            5_000
           )
         end)
 
@@ -440,7 +441,8 @@ defmodule Cinder.HTTPPolicyTest do
               url: "https://public.example/data",
               plug: {Req.Test, Cinder.HTTPPolicyTelemetryErrorStub}
             ],
-            4
+            4,
+            5_000
           )
         end)
 
