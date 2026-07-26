@@ -11,23 +11,33 @@ defmodule Cinder.Download.StallReaper do
   when `progress`/`speed`/`eta` are all unchanged they write nothing, so `updated_at` freezes at the
   moment the download last made progress. Therefore `now - updated_at` is the stall duration.
 
-  `speed == 0` is a *hard numeric zero* (`=== 0`): SABnzbd reports `speed: nil`, so a usenet job is
-  never reaped — the reaper is torrent-only for free. Threshold is picked from the connected-seed
-  count: `0 → no_seeders_timeout` (a dead/`metaDL` swarm), anything else (including `nil`/unknown) →
-  the longer `stall_timeout`.
+  `speed == 0` is a *hard numeric zero* (`=== 0`): SABnzbd reports `speed: nil`, so the seed-window
+  reap is torrent-only for free. Threshold is picked from the connected-seed count: `0 →
+  no_seeders_timeout` (a dead/`metaDL` swarm), anything else (including `nil`/unknown) → the longer
+  `stall_timeout`.
+
+  On top of that seed-aware window sits a **protocol-agnostic absolute cap** (`max_downloading_timeout`,
+  default 24h): a download whose derived stall clock crosses it is reaped no matter its `speed` or
+  protocol. That's the safety net for a usenet job wedged at `:downloading` (SABnzbd "Pause on
+  Duplicates", missing-article limbo, an endless repair) that the torrent-only seed window can never
+  catch — it never errors, never advances, so without the cap it sits forever. The cap is generous on
+  purpose: a genuinely-progressing download keeps writing fresh metrics, so its `updated_at` never
+  ages anywhere near 24h; only a truly frozen one does.
 
   ## ponytail: the derivation rests on an emergent invariant
 
   At a true stall all three change-gated fields are byte-stable — `progress` frozen, `speed` a hard
-  `0`, and `eta` qBittorrent's `8_640_000` infinity sentinel that `QBittorrent.normalize/1` maps to
-  `nil`. If a future change adds a field to `Cinder.Catalog`'s `@download_metric_fields` that wobbles
-  at zero speed, or alters the eta normalization, `updated_at` stops freezing and the reaper silently
-  never fires. `Cinder.Download.PollerTest` locks this with a two-tick `updated_at`-freeze assertion.
+  `0` (or `nil` for usenet), and `eta` qBittorrent's `8_640_000` infinity sentinel that
+  `QBittorrent.normalize/1` maps to `nil`. If a future change adds a field to `Cinder.Catalog`'s
+  `@download_metric_fields` that wobbles while frozen, or alters the eta normalization, `updated_at`
+  stops freezing and *both* reap paths silently never fire. `Cinder.Download.PollerTest` locks this
+  with a two-tick `updated_at`-freeze assertion.
   """
 
-  # Both in milliseconds (matched to `DateTime.diff(_, _, :millisecond)`).
+  # All in milliseconds (matched to `DateTime.diff(_, _, :millisecond)`).
   @default_stall_timeout :timer.hours(2)
   @default_no_seeders_timeout :timer.minutes(30)
+  @default_max_downloading_timeout :timer.hours(24)
 
   @doc "Whether the reaper is enabled (`config :cinder, #{inspect(__MODULE__)}, enabled: true`)."
   def enabled?, do: Keyword.get(config(), :enabled, false)
@@ -39,15 +49,22 @@ defmodule Cinder.Download.StallReaper do
   def no_seeders_timeout,
     do: Keyword.get(config(), :no_seeders_timeout, @default_no_seeders_timeout)
 
+  @doc "Absolute, protocol-agnostic no-progress cap (ms) — reaps a wedged usenet/frozen job the seed window can't."
+  def max_downloading_timeout,
+    do: Keyword.get(config(), :max_downloading_timeout, @default_max_downloading_timeout)
+
   @doc """
   True when a download reported `status` (a `Client.status/1` map) has been stalled since
-  `updated_at` past its seed-dependent threshold. `speed` must be a hard `0` (torrents only —
-  usenet's `nil` speed is never reaped). `now`/`updated_at` are `DateTime`s (both schemas store
-  `:utc_datetime`).
+  `updated_at` past a reap threshold. Two ways to cross: a hard-`0` `speed` (torrents) past its
+  seed-dependent window, **or** — regardless of speed/protocol — past the absolute
+  `max_downloading_timeout`, which catches a usenet job (`speed: nil`) wedged at `:downloading`.
+  `now`/`updated_at` are `DateTime`s (both schemas store `:utc_datetime`).
   """
   def reap?(updated_at, status, now) do
-    Map.get(status, :speed) === 0 and
-      DateTime.diff(now, updated_at, :millisecond) >= threshold(Map.get(status, :seeders))
+    stalled_ms = DateTime.diff(now, updated_at, :millisecond)
+
+    (Map.get(status, :speed) === 0 and stalled_ms >= threshold(Map.get(status, :seeders))) or
+      stalled_ms >= max_downloading_timeout()
   end
 
   defp threshold(seeders) when seeders === 0, do: no_seeders_timeout()

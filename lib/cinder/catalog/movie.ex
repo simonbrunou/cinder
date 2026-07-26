@@ -67,6 +67,7 @@ defmodule Cinder.Catalog.Movie do
     field :release_date, :date
     field :media_profile, Ecto.Enum, values: [:auto, :standard, :anime], default: :auto
     field :anime_hold_reason, :string
+    field :failure_reason, :string
     has_many :title_aliases, TitleAlias
 
     timestamps(type: :utc_datetime)
@@ -153,9 +154,11 @@ defmodule Cinder.Catalog.Movie do
       :imported_source,
       :imported_audio_languages,
       :imported_embedded_subtitles,
-      :imported_sidecar_subtitles
+      :imported_sidecar_subtitles,
+      :failure_reason
     ])
     |> reset_download_metrics(movie.status)
+    |> clear_failure_reason()
     |> validate_required([:status])
     |> validate_number(:import_attempts, greater_than_or_equal_to: 0)
     |> validate_number(:search_attempts, greater_than_or_equal_to: 0)
@@ -172,6 +175,15 @@ defmodule Cinder.Catalog.Movie do
     else
       changeset
     end
+  end
+
+  # `failure_reason` only means anything for an :import_failed park (the poller writes the client's
+  # detail there); every transition OUT of that state (a retry to :requested, a successful
+  # :available) force-clears it, so no path can leave a stale reason on a live row.
+  defp clear_failure_reason(changeset) do
+    if get_field(changeset, :status) == :import_failed,
+      do: changeset,
+      else: force_change(changeset, :failure_reason, nil)
   end
 
   @doc "Changeset for the import-time media-info capture / backfill. Descriptive, not pipeline state — separate from transition_changeset/2, so it never touches status/file/download fields."

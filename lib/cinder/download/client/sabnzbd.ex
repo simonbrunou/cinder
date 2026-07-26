@@ -36,6 +36,8 @@ defmodule Cinder.Download.Client.Sabnzbd do
   """
   @behaviour Cinder.Download.Client
 
+  require Logger
+
   alias Cinder.Download.PathMapping
   alias Cinder.HTTPPolicy
 
@@ -349,10 +351,12 @@ defmodule Cinder.Download.Client.Sabnzbd do
   # A queued slot is normally in flight, but a Paused or Failed slot won't progress
   # on its own — report it as :error so the poller bounds it to :import_failed rather
   # than polling a stalled job forever (e.g. SABnzbd's "Pause on Duplicates" mode,
-  # which parks the job paused in the queue).
+  # which parks the job paused in the queue). `:reason` carries the actionable detail
+  # (paused vs failed) the poller persists as the park reason (see Client.status/1).
   defp classify_queue(%{"status" => status} = slot) when status in ["Paused", "Failed"],
     do: %{
       state: :error,
+      reason: queue_error_reason(status),
       progress: pct(slot["percentage"]),
       speed: nil,
       eta: eta(slot["timeleft"]),
@@ -360,6 +364,14 @@ defmodule Cinder.Download.Client.Sabnzbd do
     }
 
   defp classify_queue(slot), do: downloading(slot["percentage"], slot["timeleft"])
+
+  # Self-contained operator-facing diagnostics (provider text, like a history fail_message): the
+  # poller persists these as the movie's failure_reason, surfaced verbatim on /activity.
+  defp queue_error_reason("Paused"),
+    do:
+      "Paused by the download client (often duplicate detection); fix it in SABnzbd, then retry."
+
+  defp queue_error_reason(_status), do: "The download client reported the job failed."
 
   defp queue_slot(nzo_id) do
     case get(mode: "queue", nzo_ids: nzo_id) do
@@ -418,12 +430,30 @@ defmodule Cinder.Download.Client.Sabnzbd do
         )
     }
 
-  defp classify_history(%{"status" => "Failed"}),
-    do: %{state: :error, progress: 1.0, speed: nil, eta: nil, content_path: nil}
+  defp classify_history(%{"status" => "Failed"} = slot),
+    do: %{
+      state: :error,
+      reason: history_fail_reason(slot["fail_message"]),
+      progress: 1.0,
+      speed: nil,
+      eta: nil,
+      content_path: nil
+    }
 
   # Extracting / Repairing / Verifying / Moving / … — still in flight.
   defp classify_history(_slot),
     do: %{state: :downloading, progress: 1.0, speed: nil, eta: nil, content_path: nil}
+
+  # SABnzbd's own words for why the job failed (e.g. "Unpacking failed, write error or disk full?").
+  # Free text, surfaced to the operator verbatim; a generic line when SABnzbd gives no message.
+  defp history_fail_reason(msg) when is_binary(msg) do
+    case String.trim(msg) do
+      "" -> "The download client reported the job failed."
+      trimmed -> trimmed
+    end
+  end
+
+  defp history_fail_reason(_msg), do: "The download client reported the job failed."
 
   defp eta(timeleft) when is_binary(timeleft) do
     with [hours, minutes, seconds] <- String.split(String.trim(timeleft), ":"),
@@ -492,9 +522,17 @@ defmodule Cinder.Download.Client.Sabnzbd do
     probe = [retry: false, receive_timeout: 3_000, connect_options: [timeout: 3_000]]
 
     case get([mode: "queue"], probe) do
-      {:ok, %{status: 200, body: %{"status" => false}}} -> {:error, :bad_api_key}
-      {:ok, %{status: status}} when status in 200..299 -> mapping_health()
-      other -> error(other)
+      {:ok, %{status: 200, body: %{"status" => false}}} ->
+        {:error, :bad_api_key}
+
+      {:ok, %{status: status}} when status in 200..299 ->
+        # Best-effort: name (in the log) the config that silently wedges every grab. The health
+        # model has no warning tier, so a misconfig can't fail the probe — it logs and moves on.
+        warn_on_risky_config(probe)
+        mapping_health()
+
+      other ->
+        error(other)
     end
   end
 
@@ -504,6 +542,46 @@ defmodule Cinder.Download.Client.Sabnzbd do
       Application.get_env(:cinder, @local_path_prefix)
     )
   end
+
+  # SABnzbd config that breaks Cinder's grabs silently, surfaced as a log warning (there is no
+  # health-warning tier). Best-effort: any fetch/shape problem is skipped, never raised — a config
+  # read must not turn a reachable SABnzbd unhealthy. See docs/operating.md "Known limitations".
+  defp warn_on_risky_config(probe) do
+    case get([mode: "get_config", section: "misc"], probe) do
+      {:ok, %{status: 200, body: %{"config" => %{"misc" => misc}}}} when is_map(misc) ->
+        warn_short_foldername(misc["folder_max_length"])
+        warn_duplicate_handling("Pause on Duplicates", misc["no_dupes"])
+        warn_duplicate_handling("series duplicate detection", misc["no_series_dupes"])
+
+      _other ->
+        :ok
+    end
+  rescue
+    _ -> :ok
+  catch
+    _, _ -> :ok
+  end
+
+  defp warn_short_foldername(len) when is_integer(len) and len < @max_nzbname_bytes do
+    Logger.warning(
+      "SABnzbd folder_max_length is #{len} (< #{@max_nzbname_bytes}); it truncates Cinder's " <>
+        "\".cinder-<key>\" job-name suffix, wedging every grab (SABnzbd can't find the job). " <>
+        "Raise it to 246 (the default) or higher."
+    )
+  end
+
+  defp warn_short_foldername(_len), do: :ok
+
+  # SABnzbd duplicate handling: 0 = Off; anything else pauses/discards/tags. A non-Cinder value on
+  # Cinder's category can pause or drop a legitimate re-grab (an upgrade, a post-blocklist re-search).
+  defp warn_duplicate_handling(label, mode) when is_integer(mode) and mode != 0 do
+    Logger.warning(
+      "SABnzbd #{label} is on (=#{mode}); it can pause or discard a legitimate Cinder re-grab, " <>
+        "parking the title. Turn it off, or scope it away from Cinder's SABnzbd category."
+    )
+  end
+
+  defp warn_duplicate_handling(_label, _mode), do: :ok
 
   defp get(params, extra \\ []) do
     config = config()

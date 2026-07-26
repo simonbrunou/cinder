@@ -1950,6 +1950,37 @@ defmodule Cinder.Download.TvPollerTest do
       assert gid == grab.id
     end
 
+    test "reaps a wedged usenet grab (nil speed) once past the absolute cap" do
+      # The torrent-only seed window can't touch a nil-speed usenet grab; the protocol-agnostic
+      # absolute cap does. cap: 0 so the freshly-stalled grab is immediately past it.
+      enable_reaper!(max_downloading_timeout: 0)
+      {series, season} = series_tree()
+      e1 = episode(season, 3)
+
+      {:ok, grab} =
+        Catalog.create_grab("hash-tv-wedged", :torrent, [e1.id], "Wedged.Show.S01E03.1080p")
+
+      test_pid = self()
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-tv-wedged" ->
+        {:ok, %{state: :downloading, progress: 0.5, speed: nil}}
+      end)
+
+      stub(Cinder.Download.ClientMock, :remove, fn id, opts ->
+        send(test_pid, {:removed, id, opts})
+        :ok
+      end)
+
+      start_supervised!({TvPoller, interval: 60_000})
+      assert :ok = TvPoller.poll()
+
+      assert Repo.get(Grab, grab.id) == nil
+      reaped = Repo.get!(Episode, e1.id)
+      assert reaped.grab_id == nil
+      assert Catalog.blocked_release_titles_for_series(series.id) == ["Wedged.Show.S01E03.1080p"]
+      assert_receive {:removed, "hash-tv-wedged", _opts}
+    end
+
     test "does not reap a grab while the reaper is disabled (the default)" do
       {_series, season} = series_tree()
       e1 = episode(season, 3)
