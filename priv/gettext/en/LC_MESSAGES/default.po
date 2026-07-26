@@ -69,7 +69,7 @@ msgstr ""
 msgid "Activity"
 msgstr ""
 
-#: lib/cinder_web/components/discover_components.ex:82
+#: lib/cinder_web/components/discover_components.ex:109
 #: lib/cinder_web/live/movie_discovery_live.ex:242
 #, elixir-autogen, elixir-format
 msgid "Add"
@@ -80,7 +80,7 @@ msgstr ""
 msgid "Add a show from Discover."
 msgstr ""
 
-#: lib/cinder_web/components/discover_components.ex:80
+#: lib/cinder_web/components/discover_components.ex:107
 #: lib/cinder_web/live/movie_discovery_live.ex:240
 #, elixir-autogen, elixir-format
 msgid "Adding…"
@@ -478,7 +478,7 @@ msgid "Denying…"
 msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:92
-#: lib/cinder_web/live/discover_live.ex:169
+#: lib/cinder_web/live/discover_live.ex:253
 #: lib/cinder_web/live/entity_discovery_live.ex:130
 #: lib/cinder_web/live/entity_discovery_live.ex:178
 #: lib/cinder_web/live/movie_discovery_live.ex:148
@@ -715,7 +715,7 @@ msgstr ""
 msgid "Movie pipeline"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:205
+#: lib/cinder_web/live/discover_live.ex:289
 #: lib/cinder_web/live/library_live.ex:303
 #: lib/cinder_web/live/library_live.ex:356
 #: lib/cinder_web/settings_labels.ex:35
@@ -772,14 +772,14 @@ msgstr ""
 msgid "No match"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:250
+#: lib/cinder_web/live/discover_live.ex:396
 #: lib/cinder_web/live/library_live.ex:360
 #: lib/cinder_web/live/library_live.ex:462
 #, elixir-autogen, elixir-format
 msgid "No matches"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:251
+#: lib/cinder_web/live/discover_live.ex:397
 #, elixir-autogen, elixir-format
 msgid "No movies or shows matched that search."
 msgstr ""
@@ -1034,22 +1034,22 @@ msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:753
 #: lib/cinder_web/components/core_components.ex:794
-#: lib/cinder_web/live/discover_live.ex:256
+#: lib/cinder_web/live/discover_live.ex:402
 #, elixir-autogen, elixir-format
 msgid "Search failed"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:174
+#: lib/cinder_web/live/discover_live.ex:258
 #, elixir-autogen, elixir-format
 msgid "Search movies and TV"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:182
+#: lib/cinder_web/live/discover_live.ex:266
 #, elixir-autogen, elixir-format
 msgid "Search movies and TV…"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:221
+#: lib/cinder_web/live/discover_live.ex:305
 #, elixir-autogen, elixir-format
 msgid "Search results"
 msgstr ""
@@ -1157,7 +1157,7 @@ msgstr ""
 msgid "Specials"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:257
+#: lib/cinder_web/live/discover_live.ex:403
 #, elixir-autogen, elixir-format
 msgid "TMDB didn't respond. Try again."
 msgstr ""
@@ -1168,13 +1168,14 @@ msgstr ""
 msgid "TMDB returned no season data for this series."
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:60
+#: lib/cinder_web/live/discover_live.ex:80
+#: lib/cinder_web/live/discover_live.ex:128
 #, elixir-autogen, elixir-format
 msgid "TMDB search failed. Try again."
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:966
-#: lib/cinder_web/live/discover_live.ex:206
+#: lib/cinder_web/live/discover_live.ex:290
 #: lib/cinder_web/live/series_detail_live.ex:879
 #: lib/cinder_web/settings_labels.ex:36
 #, elixir-autogen, elixir-format
@@ -1383,18 +1384,18 @@ msgid "French"
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:1016
-#: lib/cinder_web/components/discover_components.ex:159
-#: lib/cinder_web/components/discover_components.ex:162
+#: lib/cinder_web/components/discover_components.ex:186
+#: lib/cinder_web/components/discover_components.ex:189
 #, elixir-autogen, elixir-format
 msgid "Original"
 msgstr ""
 
-#: lib/cinder_web/components/discover_components.ex:160
+#: lib/cinder_web/components/discover_components.ex:187
 #, elixir-autogen, elixir-format
 msgid "Original (English)"
 msgstr ""
 
-#: lib/cinder_web/components/discover_components.ex:161
+#: lib/cinder_web/components/discover_components.ex:188
 #, elixir-autogen, elixir-format
 msgid "Original (French)"
 msgstr ""
@@ -1441,7 +1442,7 @@ msgstr ""
 msgid "Account settings"
 msgstr ""
 
-#: lib/cinder_web/components/discover_components.ex:79
+#: lib/cinder_web/components/discover_components.ex:106
 #: lib/cinder_web/live/movie_discovery_live.ex:239
 #, elixir-autogen, elixir-format
 msgid "Add %{title}"
@@ -1525,7 +1526,7 @@ msgstr ""
 msgid "Couldn't reopen that request."
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:149
+#: lib/cinder_web/live/discover_live.ex:198
 #: lib/cinder_web/live/entity_discovery_live.ex:112
 #: lib/cinder_web/live/movie_discovery_live.ex:108
 #: lib/cinder_web/request_helpers.ex:73
@@ -1773,7 +1774,7 @@ msgstr ""
 msgid "Save password"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:170
+#: lib/cinder_web/live/discover_live.ex:254
 #, elixir-autogen, elixir-format
 msgid "Search movies and TV. Request what you want to watch."
 msgstr ""
@@ -1844,7 +1845,7 @@ msgstr ""
 msgid "View all"
 msgstr ""
 
-#: lib/cinder_web/components/discover_components.ex:111
+#: lib/cinder_web/components/discover_components.ex:138
 #, elixir-autogen, elixir-format
 msgid "View seasons"
 msgstr ""
@@ -3338,7 +3339,7 @@ msgstr ""
 msgid "Year (newest first)"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:204
+#: lib/cinder_web/live/discover_live.ex:288
 #, elixir-autogen, elixir-format, fuzzy
 msgid "All"
 msgstr ""
@@ -3348,7 +3349,7 @@ msgstr ""
 msgid "Couldn't retry that movie."
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:199
+#: lib/cinder_web/live/discover_live.ex:283
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Filter by type"
 msgstr ""
@@ -3373,22 +3374,22 @@ msgstr ""
 msgid "…"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:235
+#: lib/cinder_web/live/discover_live.ex:319
 #, elixir-autogen, elixir-format
 msgid "Trending this week"
 msgstr ""
 
-#: lib/cinder_web/components/discover_components.ex:170
+#: lib/cinder_web/components/discover_components.ex:197
 #, elixir-autogen, elixir-format
 msgid "Actor"
 msgstr ""
 
-#: lib/cinder_web/components/discover_components.ex:176
+#: lib/cinder_web/components/discover_components.ex:203
 #, elixir-autogen, elixir-format
 msgid "Art"
 msgstr ""
 
-#: lib/cinder_web/components/discover_components.ex:175
+#: lib/cinder_web/components/discover_components.ex:202
 #, elixir-autogen, elixir-format
 msgid "Camera"
 msgstr ""
@@ -3403,32 +3404,32 @@ msgstr ""
 msgid "Collection not found."
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:208
+#: lib/cinder_web/live/discover_live.ex:292
 #, elixir-autogen, elixir-format
 msgid "Collections"
 msgstr ""
 
-#: lib/cinder_web/components/discover_components.ex:178
+#: lib/cinder_web/components/discover_components.ex:205
 #, elixir-autogen, elixir-format
 msgid "Costume & Make-Up"
 msgstr ""
 
-#: lib/cinder_web/components/discover_components.ex:180
+#: lib/cinder_web/components/discover_components.ex:207
 #, elixir-autogen, elixir-format
 msgid "Crew"
 msgstr ""
 
-#: lib/cinder_web/components/discover_components.ex:171
+#: lib/cinder_web/components/discover_components.ex:198
 #, elixir-autogen, elixir-format
 msgid "Director"
 msgstr ""
 
-#: lib/cinder_web/components/discover_components.ex:177
+#: lib/cinder_web/components/discover_components.ex:204
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Editing"
 msgstr ""
 
-#: lib/cinder_web/components/discover_components.ex:181
+#: lib/cinder_web/components/discover_components.ex:208
 #, elixir-autogen, elixir-format
 msgid "Lighting"
 msgstr ""
@@ -3443,7 +3444,7 @@ msgstr ""
 msgid "No movies found"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:207
+#: lib/cinder_web/live/discover_live.ex:291
 #, elixir-autogen, elixir-format
 msgid "People"
 msgstr ""
@@ -3458,7 +3459,7 @@ msgstr ""
 msgid "Person not found."
 msgstr ""
 
-#: lib/cinder_web/components/discover_components.ex:173
+#: lib/cinder_web/components/discover_components.ex:200
 #, elixir-autogen, elixir-format
 msgid "Producer"
 msgstr ""
@@ -3468,7 +3469,7 @@ msgstr ""
 msgid "Showing top 60 of %{total}"
 msgstr ""
 
-#: lib/cinder_web/components/discover_components.ex:174
+#: lib/cinder_web/components/discover_components.ex:201
 #, elixir-autogen, elixir-format
 msgid "Sound"
 msgstr ""
@@ -3483,24 +3484,24 @@ msgstr ""
 msgid "TMDB returned no movies for this collection."
 msgstr ""
 
-#: lib/cinder_web/components/discover_components.ex:130
-#: lib/cinder_web/components/discover_components.ex:147
+#: lib/cinder_web/components/discover_components.ex:157
+#: lib/cinder_web/components/discover_components.ex:174
 #, elixir-autogen, elixir-format, fuzzy
 msgid "View"
 msgstr ""
 
-#: lib/cinder_web/components/discover_components.ex:179
+#: lib/cinder_web/components/discover_components.ex:206
 #, elixir-autogen, elixir-format
 msgid "Visual Effects"
 msgstr ""
 
-#: lib/cinder_web/components/discover_components.ex:172
+#: lib/cinder_web/components/discover_components.ex:199
 #, elixir-autogen, elixir-format
 msgid "Writer"
 msgstr ""
 
-#: lib/cinder_web/components/discover_components.ex:128
-#: lib/cinder_web/components/discover_components.ex:145
+#: lib/cinder_web/components/discover_components.ex:155
+#: lib/cinder_web/components/discover_components.ex:172
 #, elixir-autogen, elixir-format
 msgid "View %{title}"
 msgstr ""
@@ -3552,12 +3553,12 @@ msgstr ""
 msgid "Your account is awaiting administrator approval."
 msgstr ""
 
-#: lib/cinder_web/components/discover_components.ex:92
+#: lib/cinder_web/components/discover_components.ex:119
 #, elixir-autogen, elixir-format
 msgid "Details"
 msgstr ""
 
-#: lib/cinder_web/components/discover_components.ex:90
+#: lib/cinder_web/components/discover_components.ex:117
 #, elixir-autogen, elixir-format
 msgid "Details for %{title}"
 msgstr ""
@@ -3611,4 +3612,124 @@ msgstr ""
 #: lib/cinder_web/live/series_detail_live.ex:1116
 #, elixir-autogen, elixir-format
 msgid "Reapplies the strategy to every episode, overwriting manual toggles."
+msgstr ""
+
+#: lib/cinder_web/components/discover_components.ex:213
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Action"
+msgstr ""
+
+#: lib/cinder_web/components/discover_components.ex:214
+#, elixir-autogen, elixir-format
+msgid "Adventure"
+msgstr ""
+
+#: lib/cinder_web/components/discover_components.ex:215
+#, elixir-autogen, elixir-format
+msgid "Animation"
+msgstr ""
+
+#: lib/cinder_web/live/discover_live.ex:379
+#, elixir-autogen, elixir-format
+msgid "Browse by genre"
+msgstr ""
+
+#: lib/cinder_web/components/discover_components.ex:216
+#, elixir-autogen, elixir-format
+msgid "Comedy"
+msgstr ""
+
+#: lib/cinder_web/components/discover_components.ex:217
+#, elixir-autogen, elixir-format
+msgid "Crime"
+msgstr ""
+
+#: lib/cinder_web/components/discover_components.ex:218
+#, elixir-autogen, elixir-format
+msgid "Documentary"
+msgstr ""
+
+#: lib/cinder_web/components/discover_components.ex:219
+#, elixir-autogen, elixir-format
+msgid "Drama"
+msgstr ""
+
+#: lib/cinder_web/components/discover_components.ex:220
+#, elixir-autogen, elixir-format
+msgid "Family"
+msgstr ""
+
+#: lib/cinder_web/components/discover_components.ex:221
+#, elixir-autogen, elixir-format
+msgid "Fantasy"
+msgstr ""
+
+#: lib/cinder_web/components/discover_components.ex:63
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Filter by genre"
+msgstr ""
+
+#: lib/cinder_web/components/discover_components.ex:222
+#, elixir-autogen, elixir-format
+msgid "History"
+msgstr ""
+
+#: lib/cinder_web/components/discover_components.ex:223
+#, elixir-autogen, elixir-format
+msgid "Horror"
+msgstr ""
+
+#: lib/cinder_web/components/discover_components.ex:224
+#, elixir-autogen, elixir-format
+msgid "Music"
+msgstr ""
+
+#: lib/cinder_web/components/discover_components.ex:225
+#, elixir-autogen, elixir-format
+msgid "Mystery"
+msgstr ""
+
+#: lib/cinder_web/live/discover_live.ex:364
+#, elixir-autogen, elixir-format
+msgid "Now playing"
+msgstr ""
+
+#: lib/cinder_web/live/discover_live.ex:334
+#, elixir-autogen, elixir-format
+msgid "Popular movies"
+msgstr ""
+
+#: lib/cinder_web/components/discover_components.ex:226
+#, elixir-autogen, elixir-format
+msgid "Romance"
+msgstr ""
+
+#: lib/cinder_web/components/discover_components.ex:227
+#, elixir-autogen, elixir-format
+msgid "Science Fiction"
+msgstr ""
+
+#: lib/cinder_web/components/discover_components.ex:228
+#, elixir-autogen, elixir-format, fuzzy
+msgid "TV Movie"
+msgstr ""
+
+#: lib/cinder_web/components/discover_components.ex:229
+#, elixir-autogen, elixir-format
+msgid "Thriller"
+msgstr ""
+
+#: lib/cinder_web/live/discover_live.ex:349
+#, elixir-autogen, elixir-format
+msgid "Top rated movies"
+msgstr ""
+
+#: lib/cinder_web/components/discover_components.ex:230
+#, elixir-autogen, elixir-format
+msgid "War"
+msgstr ""
+
+#: lib/cinder_web/components/discover_components.ex:231
+#, elixir-autogen, elixir-format
+msgid "Western"
 msgstr ""

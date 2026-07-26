@@ -49,6 +49,33 @@ defmodule CinderWeb.DiscoverComponents do
     """
   end
 
+  @doc """
+  Genre filter chips for the discovery landing grid. `genres` is a list of
+  `{id, canonical English name}` pairs (`Cinder.Catalog.Genres.list/0`);
+  `selected_id` (nil when none is active) drives both the pressed visual state
+  and `aria-pressed` so the active chip is announced to assistive tech.
+  """
+  attr :genres, :list, required: true
+  attr :selected_id, :integer, default: nil
+
+  def genre_chips(assigns) do
+    ~H"""
+    <div class="mb-4 flex flex-wrap gap-2" role="group" aria-label={gettext("Filter by genre")}>
+      <.button
+        :for={{id, name} <- @genres}
+        type="button"
+        phx-click="select_genre"
+        phx-value-id={id}
+        variant={if @selected_id == id, do: "primary", else: "ghost"}
+        size="sm"
+        aria-pressed={to_string(@selected_id == id)}
+      >
+        {genre_label(name)}
+      </.button>
+    </div>
+    """
+  end
+
   attr :state, :atom, required: true
   attr :tmdb_id, :integer, required: true
   attr :title, :string, required: true
@@ -180,6 +207,29 @@ defmodule CinderWeb.DiscoverComponents do
   def department_label("Crew"), do: gettext("Crew")
   def department_label("Lighting"), do: gettext("Lighting")
   def department_label(other), do: other
+
+  # Full map over Cinder.Catalog.Genres.list/0's fixed 19 names — an unmapped name passes
+  # through raw rather than crashing (defensive, though the list is closed).
+  defp genre_label("Action"), do: gettext("Action")
+  defp genre_label("Adventure"), do: gettext("Adventure")
+  defp genre_label("Animation"), do: gettext("Animation")
+  defp genre_label("Comedy"), do: gettext("Comedy")
+  defp genre_label("Crime"), do: gettext("Crime")
+  defp genre_label("Documentary"), do: gettext("Documentary")
+  defp genre_label("Drama"), do: gettext("Drama")
+  defp genre_label("Family"), do: gettext("Family")
+  defp genre_label("Fantasy"), do: gettext("Fantasy")
+  defp genre_label("History"), do: gettext("History")
+  defp genre_label("Horror"), do: gettext("Horror")
+  defp genre_label("Music"), do: gettext("Music")
+  defp genre_label("Mystery"), do: gettext("Mystery")
+  defp genre_label("Romance"), do: gettext("Romance")
+  defp genre_label("Science Fiction"), do: gettext("Science Fiction")
+  defp genre_label("TV Movie"), do: gettext("TV Movie")
+  defp genre_label("Thriller"), do: gettext("Thriller")
+  defp genre_label("War"), do: gettext("War")
+  defp genre_label("Western"), do: gettext("Western")
+  defp genre_label(other), do: other
 
   @doc """
   Composite per-user state for a movie card.

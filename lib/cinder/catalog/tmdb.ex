@@ -78,6 +78,25 @@ defmodule Cinder.Catalog.TMDB do
   @callback trending(locale :: String.t()) :: {:ok, [map()]} | {:error, term()}
 
   @doc """
+  Popular movies (`/movie/popular`). Same normalized shape as `search/2`, each
+  tagged `type: :movie`.
+  """
+  @callback popular_movies(locale :: String.t()) :: {:ok, [map()]} | {:error, term()}
+
+  @doc "Top-rated movies (`/movie/top_rated`). Same shape as `popular_movies/1`."
+  @callback top_rated_movies(locale :: String.t()) :: {:ok, [map()]} | {:error, term()}
+
+  @doc "Movies currently in theaters (`/movie/now_playing`). Same shape as `popular_movies/1`."
+  @callback now_playing_movies(locale :: String.t()) :: {:ok, [map()]} | {:error, term()}
+
+  @doc """
+  Movies matching TMDB genre id `genre_id` (`/discover/movie?with_genres=`). Same
+  shape as `popular_movies/1`.
+  """
+  @callback discover_movies(genre_id :: integer(), locale :: String.t()) ::
+              {:ok, [map()]} | {:error, term()}
+
+  @doc """
   Person search. Returns
   `%{tmdb_id, title, year: nil, poster_path, department}` per result (`title` is
   the person's name and `poster_path` is their TMDB profile path).

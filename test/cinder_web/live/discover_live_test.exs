@@ -19,8 +19,11 @@ defmodule CinderWeb.DiscoverLiveTest do
     stub(Cinder.Catalog.TMDBMock, :search_tv, fn _, _ -> {:ok, []} end)
     stub(Cinder.Catalog.TMDBMock, :search_person, fn _, _ -> {:ok, []} end)
     stub(Cinder.Catalog.TMDBMock, :search_collection, fn _, _ -> {:ok, []} end)
-    # mount always fetches trending (async); default it empty.
+    # mount always fetches the landing rails (async); default them all empty.
     stub(Cinder.Catalog.TMDBMock, :trending, fn _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :popular_movies, fn _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :top_rated_movies, fn _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :now_playing_movies, fn _ -> {:ok, []} end)
 
     stub(Cinder.Catalog.TMDBMock, :get_movie, fn id ->
       {:ok,
@@ -67,6 +70,15 @@ defmodule CinderWeb.DiscoverLiveTest do
 
   defp stub_trending(results),
     do: stub(Cinder.Catalog.TMDBMock, :trending, fn _ -> {:ok, results} end)
+
+  defp stub_popular(results),
+    do: stub(Cinder.Catalog.TMDBMock, :popular_movies, fn _ -> {:ok, results} end)
+
+  defp stub_top_rated(results),
+    do: stub(Cinder.Catalog.TMDBMock, :top_rated_movies, fn _ -> {:ok, results} end)
+
+  defp stub_now_playing(results),
+    do: stub(Cinder.Catalog.TMDBMock, :now_playing_movies, fn _ -> {:ok, results} end)
 
   defp stub_persons(results),
     do: stub(Cinder.Catalog.TMDBMock, :search_person, fn _, _ -> {:ok, results} end)
@@ -141,6 +153,75 @@ defmodule CinderWeb.DiscoverLiveTest do
       end)
 
     assert log =~ "Trending fetch failed"
+  end
+
+  @popular_pick %{
+    tmdb_id: 100,
+    title: "Popular Pick",
+    year: 2020,
+    poster_path: "/pop.jpg",
+    original_language: "en",
+    type: :movie
+  }
+  @new_release %{
+    tmdb_id: 200,
+    title: "New Release",
+    year: 2026,
+    poster_path: "/np.jpg",
+    original_language: "en",
+    type: :movie
+  }
+
+  test "the popular/top-rated/now-playing rails render from mock data with the usual actions", %{
+    conn: conn
+  } do
+    stub_popular([@popular_pick])
+    stub_top_rated([Map.put(@got, :type, :tv)])
+    stub_now_playing([@new_release])
+    {:ok, lv, _html} = live(conn, ~p"/")
+
+    html = render_async(lv)
+
+    assert html =~ "Popular movies"
+    assert html =~ "Top rated movies"
+    assert html =~ "Now playing"
+    assert has_element?(lv, "#popular #add-form-100")
+    assert has_element?(lv, ~s(#top-rated a[href="/series/tmdb/1399"]))
+    assert has_element?(lv, "#now-playing #add-form-200")
+  end
+
+  # TMDB's lists commonly overlap (a blockbuster is often trending AND popular); the same
+  # movie must render exactly once so its Add form's id (keyed only by tmdb_id) never
+  # duplicates on the page — regression for `DiscoverLive.dedupe_movies/2`.
+  test "a movie in both trending and popular renders once, kept in the earlier rail", %{
+    conn: conn
+  } do
+    stub_trending([Map.put(@inception, :type, :movie)])
+    stub_popular([Map.put(@inception, :type, :movie)])
+    {:ok, lv, _html} = live(conn, ~p"/")
+
+    render_async(lv)
+
+    assert has_element?(lv, "#trending #add-form-27205")
+    refute has_element?(lv, "#popular #add-form-27205")
+  end
+
+  test "a popular-movies failure leaves the other rails intact and the page still 200s", %{
+    conn: conn
+  } do
+    stub_trending([Map.put(@inception, :type, :movie)])
+    stub(Cinder.Catalog.TMDBMock, :popular_movies, fn _ -> {:error, :tmdb_down} end)
+
+    log =
+      capture_log(fn ->
+        {:ok, lv, _html} = live(conn, ~p"/")
+        html = render_async(lv)
+
+        assert html =~ "Trending this week"
+        refute html =~ "Popular movies"
+      end)
+
+    assert log =~ "Popular movies fetch failed"
   end
 
   test "first load shows an accessible search field", %{conn: conn} do
@@ -446,6 +527,53 @@ defmodule CinderWeb.DiscoverLiveTest do
     render_hook(lv, "confirm_delete_series", %{"id" => to_string(series.id)})
 
     assert Cinder.Repo.get(Cinder.Catalog.Series, series.id) != nil
+  end
+
+  test "selecting a genre chip loads a genre-filtered grid and marks it pressed", %{conn: conn} do
+    stub(Cinder.Catalog.TMDBMock, :discover_movies, fn 28, _ ->
+      {:ok, [Map.put(@inception, :type, :movie)]}
+    end)
+
+    {:ok, lv, _html} = live(conn, ~p"/")
+    render_async(lv)
+
+    refute has_element?(lv, ~s(button[phx-value-id="28"][aria-pressed="true"]))
+
+    html = lv |> element(~s(button[phx-value-id="28"])) |> render_click()
+
+    assert html =~ "Inception"
+    assert has_element?(lv, ~s(button[phx-value-id="28"][aria-pressed="true"]))
+  end
+
+  test "a genre-fetch failure flashes but leaves the rest of the page intact", %{conn: conn} do
+    stub(Cinder.Catalog.TMDBMock, :discover_movies, fn 28, _ -> {:error, :timeout} end)
+    {:ok, lv, _html} = live(conn, ~p"/")
+    render_async(lv)
+
+    html = lv |> element(~s(button[phx-value-id="28"])) |> render_click()
+
+    assert html =~ "TMDB search failed"
+    assert has_element?(lv, "input#query")
+  end
+
+  test "a non-numeric genre id is ignored, not a crash", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/")
+    render_async(lv)
+    assert render_hook(lv, "select_genre", %{"id" => "not-a-number"}) =~ "search-form"
+  end
+
+  test "a malformed (non-binary) genre payload is ignored, not a crash", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/")
+    render_async(lv)
+    assert render_hook(lv, "select_genre", %{"id" => ["x"]}) =~ "search-form"
+  end
+
+  # A well-formed but unknown genre id (not in Cinder.Catalog.Genres.list/0) must not reach
+  # Catalog.movies_by_genre/2 — no stub is set for :discover_movies, so a Mox call would raise.
+  test "an unknown (but numeric) genre id is ignored, not a crash", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/")
+    render_async(lv)
+    assert render_hook(lv, "select_genre", %{"id" => "999999"}) =~ "search-form"
   end
 
   test "the old /series route redirects to /", %{conn: conn} do

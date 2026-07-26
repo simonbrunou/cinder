@@ -139,6 +139,32 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   end
 
   @impl true
+  def popular_movies(locale), do: movie_list("/3/movie/popular", locale)
+
+  @impl true
+  def top_rated_movies(locale), do: movie_list("/3/movie/top_rated", locale)
+
+  @impl true
+  def now_playing_movies(locale), do: movie_list("/3/movie/now_playing", locale)
+
+  @impl true
+  def discover_movies(genre_id, locale) do
+    case request(
+           url: "/3/discover/movie",
+           params: [with_genres: genre_id, language: Map.fetch!(@tmdb_tags, locale)]
+         ) do
+      {:ok, %{status: 200, body: %{"results" => results}}} when is_list(results) ->
+        {:ok, Enum.map(results, &tag_movie/1)}
+
+      {:ok, %{status: 200}} ->
+        {:error, :unexpected_response}
+
+      other ->
+        error(other)
+    end
+  end
+
+  @impl true
   def search_person(query, locale) do
     case request(
            url: "/3/search/person",
@@ -257,6 +283,23 @@ defmodule Cinder.Catalog.TMDB.HTTP do
 
   defp auth(opts, nil), do: opts
   defp auth(opts, token), do: Keyword.put(opts, :auth, {:bearer, token})
+
+  # Shared by popular_movies/top_rated_movies/now_playing_movies — same shape, only the path
+  # differs.
+  defp movie_list(path, locale) do
+    case request(url: path, params: [language: Map.fetch!(@tmdb_tags, locale)]) do
+      {:ok, %{status: 200, body: %{"results" => results}}} when is_list(results) ->
+        {:ok, Enum.map(results, &tag_movie/1)}
+
+      {:ok, %{status: 200}} ->
+        {:error, :unexpected_response}
+
+      other ->
+        error(other)
+    end
+  end
+
+  defp tag_movie(movie), do: movie |> normalize() |> Map.put(:type, :movie)
 
   defp error({:ok, %{status: status}}), do: {:error, {:tmdb_status, status}}
   defp error({:error, reason}), do: {:error, reason}
