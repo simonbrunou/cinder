@@ -153,8 +153,8 @@ defmodule Cinder.Download.Poller do
         # appears within a tick or two and the clause above fires).
         retry_or_fail(movie, :no_content_path, :import_attempts, :import_failed)
 
-      {:ok, %{state: :error}} ->
-        retry_or_fail(movie, :download_error, :import_attempts, :import_failed)
+      {:ok, %{state: :error} = status} ->
+        retry_or_fail(movie, download_error_reason(status), :import_attempts, :import_failed)
 
       {:error, :not_found} ->
         retry_or_fail(movie, :torrent_not_found, :import_attempts, :import_failed)
@@ -344,21 +344,30 @@ defmodule Cinder.Download.Poller do
 
   # A terminal failure park: transition once (the choke-point) then notify. Keeps
   # every "movie gave up" path emitting the same event with no per-site duplication.
+  # `reason` may carry a human detail (`{:download_error, "paused"}`); `reason_code/1` unwraps
+  # the classifying atom for telemetry/notify/blocklist, `reason_detail/1` persists the detail
+  # as `failure_reason` so /activity can show it (nil for parks with no detail — self-clearing).
   defp park(movie, status, reason, attrs \\ %{}) do
-    with {:ok, parked} <-
-           Catalog.transition(movie, Map.put(attrs, :status, status), expect: movie.status) do
-      :telemetry.execute([:cinder, :park], %{count: 1}, %{kind: :movie, reason: reason})
-      Notifier.notify({:movie_failed, parked, reason})
+    code = reason_code(reason)
+
+    attrs = attrs |> Map.put(:status, status) |> Map.put(:failure_reason, reason_detail(reason))
+
+    with {:ok, parked} <- Catalog.transition(movie, attrs, expect: movie.status) do
+      :telemetry.execute([:cinder, :park], %{count: 1}, %{kind: :movie, reason: code})
+      Notifier.notify({:movie_failed, parked, code})
 
       # Best-effort, AFTER the park commits (a side effect like the notify above): record the
       # failed release so the next search/Retry doesn't re-grab it. Only deterministic import
       # failures and exhausted download-side failures qualify; block_release is a nil-guarded
       # no-op for pre-grab parks (no release_title was ever written) and never raises.
-      if reason in @permanent_import_errors or reason in @download_failure_errors do
-        Catalog.block_release(parked, reason)
+      if code in @permanent_import_errors or code in @download_failure_errors do
+        Catalog.block_release(parked, code)
       end
     end
   end
+
+  defp reason_detail({_code, detail}), do: detail
+  defp reason_detail(_reason), do: nil
 
   defp hold_policy_verification(movie, origin, attempts, reason) do
     with {:ok, held} <- Catalog.hold_movie_verification(movie, origin, attempts) do

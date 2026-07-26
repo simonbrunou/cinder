@@ -82,8 +82,8 @@ defmodule Cinder.Download.TvPoller do
       {:ok, %{state: :completed}} ->
         retry_or_park(grab, :no_content_path)
 
-      {:ok, %{state: :error}} ->
-        retry_or_park(grab, :download_error)
+      {:ok, %{state: :error} = status} ->
+        retry_or_park(grab, download_error_reason(status))
 
       {:error, :not_found} ->
         retry_or_park(grab, :torrent_not_found)
@@ -469,12 +469,18 @@ defmodule Cinder.Download.TvPoller do
   # park/3. Both TV terminal-park sites (empty import, retry exhaustion) route through here so a
   # failed grab is never silent — symmetric with {:movie_failed, _, _}.
   defp park(grab, reason) do
+    # `reason` may carry a human detail (`{:download_error, "paused"}`) — it rode through the retry
+    # log so the operator sees it; the grab itself is transient (deleted here), so only the
+    # classifying `code` is used for the blocklist/notify (a per-episode reason field would be the
+    # only persistence surface, and that's out of scope for the transient grab model).
+    code = reason_code(reason)
+
     # Block BEFORE park_grab deletes the grab: block_grab_release resolves the series from the
     # grab's still-linked episodes (the grab_id FK nilifies them on delete). It is non-raising,
     # so it cannot abort the park (a raise here would re-park the grab every tick). :no_files_matched
     # is the deterministic empty-import; the download-side reasons only reach park post-exhaustion.
-    if reason == :no_files_matched or reason in @download_failure_errors do
-      Catalog.block_grab_release(grab, reason)
+    if code == :no_files_matched or code in @download_failure_errors do
+      Catalog.block_grab_release(grab, code)
     end
 
     # park_grab IS finish_grab(grab, []) — if the finalize transaction itself is what keeps
@@ -482,8 +488,8 @@ defmodule Cinder.Download.TvPoller do
     # the grab stays visible in /activity and the warning names why it won't finalize.
     case Catalog.park_grab(grab) do
       {:ok, _} ->
-        :telemetry.execute([:cinder, :park], %{count: 1}, %{kind: :episode, reason: reason})
-        Notifier.notify({:grab_failed, grab, reason})
+        :telemetry.execute([:cinder, :park], %{count: 1}, %{kind: :episode, reason: code})
+        Notifier.notify({:grab_failed, grab, code})
 
       {:error, park_error} ->
         Logger.warning(

@@ -266,7 +266,7 @@ defmodule CinderWeb.ActivityLive do
               id={"movie-#{m.id}-hint"}
               class="w-full text-sm text-base-content/70"
             >
-              {pipeline_hint(m)}
+              {m.failure_reason || pipeline_hint(m)}
             </p>
             <.button
               :if={

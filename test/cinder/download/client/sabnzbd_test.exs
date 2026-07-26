@@ -529,7 +529,9 @@ defmodule Cinder.Download.Client.SabnzbdTest do
       })
     end)
 
-    assert {:ok, %{state: :error}} = Sabnzbd.status("nzo-1")
+    # `:reason` carries the actionable detail the poller persists as the park reason.
+    assert {:ok, %{state: :error, reason: reason}} = Sabnzbd.status("nzo-1")
+    assert reason =~ "Paused by the download client"
   end
 
   test "status/1 reports a failed queue slot as :error" do
@@ -541,7 +543,8 @@ defmodule Cinder.Download.Client.SabnzbdTest do
       })
     end)
 
-    assert {:ok, %{state: :error}} = Sabnzbd.status("nzo-1")
+    assert {:ok, %{state: :error, reason: "The download client reported the job failed."}} =
+             Sabnzbd.status("nzo-1")
   end
 
   test "status/1 reports a completed download as :completed with the storage path" do
@@ -571,14 +574,23 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     assert {:ok, %{content_path: "/media/usenet/done/Movie"}} = Sabnzbd.status("nzo-1")
   end
 
-  test "status/1 reports a failed download as :error" do
+  test "status/1 reports a failed download as :error, carrying SABnzbd's fail_message" do
     stub_queue_then_history(%{
       "history" => %{
         "slots" => [%{"nzo_id" => "nzo-1", "status" => "Failed", "fail_message" => "boom"}]
       }
     })
 
-    assert {:ok, %{state: :error}} = Sabnzbd.status("nzo-1")
+    assert {:ok, %{state: :error, reason: "boom"}} = Sabnzbd.status("nzo-1")
+  end
+
+  test "status/1 falls back to a generic reason for a failed download with no fail_message" do
+    stub_queue_then_history(%{
+      "history" => %{"slots" => [%{"nzo_id" => "nzo-1", "status" => "Failed"}]}
+    })
+
+    assert {:ok, %{state: :error, reason: "The download client reported the job failed."}} =
+             Sabnzbd.status("nzo-1")
   end
 
   test "status/1 treats a post-processing history slot as still :downloading" do
@@ -598,12 +610,52 @@ defmodule Cinder.Download.Client.SabnzbdTest do
   test "health/0 pings an auth-checked mode with the api key and returns :ok on success" do
     stub(fn conn ->
       assert conn.request_path == "/api"
-      assert conn.params["mode"] == "queue"
       assert conn.params["apikey"] == "test-key"
-      Req.Test.json(conn, %{"queue" => %{"slots" => []}})
+
+      # A healthy probe also reads misc config (best-effort); a benign config logs nothing.
+      case conn.params["mode"] do
+        "queue" ->
+          Req.Test.json(conn, %{"queue" => %{"slots" => []}})
+
+        "get_config" ->
+          Req.Test.json(conn, %{"config" => %{"misc" => %{"folder_max_length" => 246}}})
+      end
     end)
 
     assert :ok = Sabnzbd.health()
+  end
+
+  test "health/0 warns (but stays :ok) on config that wedges Cinder's grabs" do
+    stub(fn conn ->
+      case conn.params["mode"] do
+        "queue" ->
+          Req.Test.json(conn, %{"queue" => %{"slots" => []}})
+
+        "get_config" ->
+          Req.Test.json(conn, %{
+            "config" => %{
+              "misc" => %{"folder_max_length" => 60, "no_dupes" => 0, "no_series_dupes" => 2}
+            }
+          })
+      end
+    end)
+
+    log = capture_log(fn -> assert :ok = Sabnzbd.health() end)
+    assert log =~ "folder_max_length is 60"
+    assert log =~ "series duplicate detection"
+    refute log =~ "Pause on Duplicates"
+  end
+
+  test "health/0 stays :ok when the config read fails or is shaped unexpectedly" do
+    stub(fn conn ->
+      case conn.params["mode"] do
+        "queue" -> Req.Test.json(conn, %{"queue" => %{"slots" => []}})
+        "get_config" -> conn |> Plug.Conn.put_status(500) |> Req.Test.text("boom")
+      end
+    end)
+
+    log = capture_log(fn -> assert :ok = Sabnzbd.health() end)
+    refute log =~ "folder_max_length"
   end
 
   test "health/0 rejects a configured mapping whose local prefix is missing" do
