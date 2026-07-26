@@ -11,6 +11,7 @@ defmodule Cinder.Notifier.Discord do
   `Application.get_env(:cinder, __MODULE__)[:webhook_url]`.
   """
   @behaviour Cinder.Notifier
+  alias Cinder.Accounts.User
   alias Cinder.Catalog.Episode
   alias Cinder.HTTPPolicy
   alias Cinder.Util
@@ -88,7 +89,7 @@ defmodule Cinder.Notifier.Discord do
     do: %{
       title: "👤 Account awaiting activation",
       description:
-        "#{display_email(user.email)} — approve on the Users page before they can request anything",
+        "#{display_name(user)} — approve on the Users page before they can request anything",
       color: @blue
     }
 
@@ -165,35 +166,42 @@ defmodule Cinder.Notifier.Discord do
 
   defp request_line(request), do: title_year(request)
 
-  # %Ecto.Association.NotLoaded{} does not match the first clause, so an un-preloaded :user
-  # degrades to the id rather than raising — and Cinder.Notifier.notify/1 swallows raises,
-  # which would turn a missing preload into a silently-missing Discord post.
-  defp requester(%{user: %{email: email}}), do: display_email(email)
+  # %Ecto.Association.NotLoaded{} does not match `%User{}`, so an un-preloaded :user degrades to
+  # the id rather than raising — and Cinder.Notifier.notify/1 swallows raises, which would turn a
+  # missing preload into a silently-missing Discord post.
+  defp requester(%{user: %User{} = user}), do: display_name(user)
   defp requester(%{user_id: id}), do: "user ##{id}"
 
-  # An email address is attacker-chosen on a public registration route: `Accounts.User`'s format
-  # check (user.ex) only forbids `@ , ;` and whitespace, so brackets, parens and angle brackets
-  # are all registerable — and Discord renders embed text as markdown. Both `[x](url)` (masked
-  # link) and `<https://url>` (auto-link) would otherwise put an attacker-controlled link in the
-  # admin's channel.
+  # A non-PII display identity: the linked Plex username if one is set, else an opaque `user #<id>`.
+  # The requester's email is deliberately never sent to Discord — it's a third-party processor and
+  # an in-app identifier is all the household channel needs (GDPR data minimisation).
+  defp display_name(%User{plex_username: username})
+       when is_binary(username) and username != "",
+       do: sanitize(username)
+
+  defp display_name(%User{id: id}), do: "user ##{id}"
+
+  # `plex_username` is externally sourced (whatever the linked Plex account reports), so it gets
+  # markdown/mention sanitizing: Discord renders embed text as markdown, and both `[x](url)`
+  # (masked link) and `<https://url>` (auto-link) would otherwise put an attacker-controlled link
+  # in the admin's channel.
   #
-  # This is a whitelist, not an escape of known-bad characters: a blacklist has to enumerate
-  # every metacharacter the renderer honours, and missing one is a live vector. Dropping `:` and
-  # `/` in particular means no URL scheme can survive, so no renderer can be talked into making
-  # a link regardless of which syntax it supports. A real address is unaffected.
+  # This is a whitelist, not an escape of known-bad characters: a blacklist has to enumerate every
+  # metacharacter the renderer honours, and missing one is a live vector. Dropping `:` and `/` in
+  # particular means no URL scheme can survive, so no renderer can be talked into making a link
+  # regardless of which syntax it supports. An ordinary username is unaffected.
   #
   # Titles are not sanitized — those come from TMDB, not from a user.
-  defp display_email(email) do
-    email
+  defp sanitize(text) do
+    text
     |> String.replace(~r/[^A-Za-z0-9._%+'@-]/, "")
-    # "a@everyone" and "x@here" are registerable addresses whose every character survives the
-    # whitelist above. A zero-width space keeps them inert even if this text ever moves into
-    # `content`, where Discord would otherwise resolve them.
+    # A username like "@everyone"/"@here" survives the whitelist above. A zero-width space keeps
+    # it inert even if this text ever moves into `content`, where Discord would otherwise resolve
+    # it.
     #
     # No word boundary, matching discord.py's and discord.js's canonical escapes: Discord matches
-    # the substring, so "@everyone" inside "x@everyones.com" would still ping. That does insert an
-    # invisible character into a domain like "herefordshire.com", which is well inside what this
-    # display path already does (it deletes characters outright) and renders identically.
+    # the substring, so "@everyone" inside "@everyones" would still ping. The zero-width space
+    # lands mid-word but renders identically.
     |> String.replace(~r/@(everyone|here)/i, "@​\\1")
   end
 
@@ -237,7 +245,7 @@ defmodule Cinder.Notifier.Discord do
   defp post(url, embed) do
     # allowed_mentions: no parse — Discord's own documented switch, so nothing in a payload can
     # ping a user, role, or the channel regardless of what the text turns out to contain. The
-    # sanitizing in display_email/1 is the belt to this pair of braces.
+    # sanitizing in sanitize/1 is the belt to this pair of braces.
     request(:post, url, json: %{embeds: [embed], allowed_mentions: %{parse: []}})
     |> classify()
     |> log_if_error()
