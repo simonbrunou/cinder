@@ -15,6 +15,13 @@ defmodule Cinder.M3PipelineTest do
   @moduletag :capture_log
   setup :set_mox_global
 
+  # A poll stamps last-run into process-global :persistent_term (PollerSkeleton's `status/0`,
+  # read by /healthz); erase it so a recorded run can't bleed into another test/suite.
+  setup do
+    on_exit(fn -> :persistent_term.erase({Poller, :last_run}) end)
+    :ok
+  end
+
   setup do
     stub(Cinder.Catalog.TMDBMock, :get_movie, fn id ->
       {:ok,
