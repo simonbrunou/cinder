@@ -61,24 +61,50 @@ defmodule Cinder.Download.StallReaperTest do
              )
     end
 
-    test "never reaps a usenet download (nil speed), regardless of age" do
-      ancient = DateTime.add(@now, -10, :day)
-      refute StallReaper.reap?(ancient, %{state: :downloading, speed: nil}, @now)
+    test "a usenet download (nil speed) is not seed-window-reaped inside the absolute cap" do
+      # nil speed never triggers the torrent-only seed window; 23h is still inside the 24h cap.
+      recent = DateTime.add(@now, -23, :hour)
+      refute StallReaper.reap?(recent, %{state: :downloading, speed: nil}, @now)
     end
 
-    test "never reaps a download that is still moving (speed > 0)" do
-      ancient = DateTime.add(@now, -10, :day)
+    test "reaps a usenet download (nil speed) once it crosses the absolute cap" do
+      # The wedged-SABnzbd case the torrent-only seed window can never catch: past 24h it reaps.
+      wedged = DateTime.add(@now, -25, :hour)
+      assert StallReaper.reap?(wedged, %{state: :downloading, speed: nil}, @now)
+    end
 
-      refute StallReaper.reap?(
-               ancient,
-               %{state: :downloading, speed: 1_500_000, seeders: 0},
-               @now
-             )
+    test "does not reap a recently-updated download regardless of speed" do
+      # The stall clock is derived from updated_at; a fresh one is never reaped, any speed.
+      fresh = DateTime.add(@now, -1, :minute)
+      refute StallReaper.reap?(fresh, %{state: :downloading, speed: 1_500_000, seeders: 0}, @now)
+      refute StallReaper.reap?(fresh, %{state: :downloading, speed: nil}, @now)
+    end
+
+    test "the absolute cap reaps regardless of reported speed" do
+      # A frozen job whose client still reports a stale non-zero speed is reaped past the cap —
+      # a genuinely progressing download keeps writing fresh metrics, so updated_at never ages
+      # this far in practice.
+      wedged = DateTime.add(@now, -25, :hour)
+      assert StallReaper.reap?(wedged, %{state: :downloading, speed: 1_500_000, seeders: 5}, @now)
     end
 
     test "tolerates a partial status map with no speed/seeders key" do
-      ancient = DateTime.add(@now, -10, :day)
-      refute StallReaper.reap?(ancient, %{state: :downloading}, @now)
+      recent = DateTime.add(@now, -1, :minute)
+      refute StallReaper.reap?(recent, %{state: :downloading}, @now)
+    end
+
+    test "a partial status map past the absolute cap still reaps" do
+      wedged = DateTime.add(@now, -25, :hour)
+      assert StallReaper.reap?(wedged, %{state: :downloading}, @now)
+    end
+
+    test "a shorter configured cap reaps a nil-speed download sooner" do
+      configure(enabled: true, max_downloading_timeout: :timer.hours(6))
+      six_h_one = DateTime.add(@now, -361, :minute)
+      assert StallReaper.reap?(six_h_one, %{state: :downloading, speed: nil}, @now)
+
+      inside = DateTime.add(@now, -359, :minute)
+      refute StallReaper.reap?(inside, %{state: :downloading, speed: nil}, @now)
     end
   end
 
@@ -88,13 +114,21 @@ defmodule Cinder.Download.StallReaperTest do
       refute StallReaper.enabled?()
       assert StallReaper.stall_timeout() == :timer.hours(2)
       assert StallReaper.no_seeders_timeout() == :timer.minutes(30)
+      assert StallReaper.max_downloading_timeout() == :timer.hours(24)
     end
 
     test "reads enabled + custom thresholds from config" do
-      configure(enabled: true, stall_timeout: 111, no_seeders_timeout: 22)
+      configure(
+        enabled: true,
+        stall_timeout: 111,
+        no_seeders_timeout: 22,
+        max_downloading_timeout: 33
+      )
+
       assert StallReaper.enabled?()
       assert StallReaper.stall_timeout() == 111
       assert StallReaper.no_seeders_timeout() == 22
+      assert StallReaper.max_downloading_timeout() == 33
     end
   end
 end
