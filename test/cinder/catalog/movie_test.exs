@@ -104,11 +104,18 @@ defmodule Cinder.Catalog.MovieTest do
     test "a new downloading or upgrading run clears old metrics" do
       metrics = %{download_progress: 0.42, download_speed: 1_500_000, download_eta: 90}
 
+      # {:downloading, :upgrading} isn't a real pipeline edge (a movie only ever reaches
+      # :upgrading from :available) — this exercises Movie.transition_changeset/2's metric-reset
+      # rule directly (any status change away from the exact prior in-flight status clears
+      # progress/speed/eta), not Catalog's pipeline-legality gate, so it bypasses
+      # Catalog.transition/2 the same way the casts-imported_source tests above do.
       for {from, to} <- [{:downloading, :upgrading}, {:upgrading, :downloading}] do
         movie = movie_fixture(%{status: from})
         assert {:ok, movie} = Catalog.update_movie_download_metrics(movie, metrics)
 
-        assert {:ok, updated} = Catalog.transition(movie, %{status: to})
+        changeset = Movie.transition_changeset(movie, %{status: to})
+        assert changeset.valid?
+        assert {:ok, updated} = Repo.update(changeset)
         assert %{download_progress: nil, download_speed: nil, download_eta: nil} = updated
       end
     end

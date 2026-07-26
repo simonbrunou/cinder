@@ -92,6 +92,52 @@ defmodule Cinder.CatalogTest do
                Catalog.transition(movie, %{status: :cancelled})
     end
 
+    test "transition/2 rejects an illegal from→to pair before writing" do
+      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 4246, title: "M"})
+      {:ok, available} = Catalog.transition(movie, %{status: :available})
+
+      # :available can only ever go to :upgrading — not straight back to :downloading.
+      assert {:error, {:illegal_transition, :available, :downloading}} =
+               Catalog.transition(available, %{status: :downloading, download_id: "h"})
+
+      # Rejected before writing: the row is untouched.
+      assert Repo.get!(Movie, movie.id).status == :available
+    end
+
+    test "transition/3 with expect: also rejects an illegal from→to pair before writing" do
+      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 4247, title: "M"})
+      {:ok, available} = Catalog.transition(movie, %{status: :available})
+
+      assert {:error, {:illegal_transition, :available, :downloading}} =
+               Catalog.transition(available, %{status: :downloading, download_id: "h"},
+                 expect: :available
+               )
+
+      assert Repo.get!(Movie, movie.id).status == :available
+    end
+
+    test "transition/2 rejects a negative search_attempts or import_attempts" do
+      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 4248, title: "M"})
+
+      assert {:error, changeset} =
+               Catalog.transition(movie, %{status: :searching, search_attempts: -1})
+
+      assert %{search_attempts: ["must be greater than or equal to 0"]} = errors_on(changeset)
+
+      assert {:error, changeset} =
+               Catalog.transition(movie, %{status: :downloaded, import_attempts: -1})
+
+      assert %{import_attempts: ["must be greater than or equal to 0"]} = errors_on(changeset)
+    end
+
+    test "a raw write setting a negative counter raises at the DB level (CHECK constraint)" do
+      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 4249, title: "M"})
+
+      assert_raise Exqlite.Error, ~r/CHECK constraint failed/, fn ->
+        Repo.update_all(from(m in Movie, where: m.id == ^movie.id), set: [search_attempts: -1])
+      end
+    end
+
     test "transition/3 with expect: writes only when the DB status still matches" do
       {:ok, movie} = Catalog.add_movie(%{tmdb_id: 4243, title: "M"})
       {:ok, searching} = Catalog.transition(movie, %{status: :searching})
@@ -134,8 +180,11 @@ defmodule Cinder.CatalogTest do
       assert_receive {:movie_updated, %Movie{id: ^id, status: :downloading}}
       refute_receive {:movie_updated, %Movie{id: ^id}}
 
+      # :no_match (not :downloaded) — the point is any legal-but-different target still misses
+      # the stale compare-and-swap; an illegal target would be rejected by the transition matrix
+      # before ever reaching that check, which isn't what this test is probing.
       assert {:error, :stale_status} =
-               Catalog.transition(searching, %{status: :downloaded}, expect: :searching)
+               Catalog.transition(searching, %{status: :no_match}, expect: :searching)
 
       refute_receive {:movie_updated, %Movie{id: ^id}}
       assert Repo.get!(Movie, id).status == :downloading
