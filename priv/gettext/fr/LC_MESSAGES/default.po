@@ -359,7 +359,7 @@ msgstr "Impossible de mettre à jour la saison."
 msgid "Create"
 msgstr "Créer"
 
-#: lib/cinder_web/live/user_live/registration.ex:102
+#: lib/cinder_web/live/user_live/registration.ex:107
 #, elixir-autogen, elixir-format
 msgid "Create an account"
 msgstr "Créer un compte"
@@ -1213,7 +1213,7 @@ msgstr "Ce film ne peut pas être annulé."
 msgid "Toggle navigation menu"
 msgstr "Basculer le menu de navigation"
 
-#: lib/cinder_web/live/user_live/registration.ex:134
+#: lib/cinder_web/live/user_live/registration.ex:139
 #, elixir-autogen, elixir-format
 msgid "Too many attempts. Try again in a minute."
 msgstr "Trop de tentatives. Réessayez dans une minute."
@@ -1547,7 +1547,7 @@ msgstr "Impossible de demander %{title}. Réessayez."
 msgid "Couldn't update email. Check the address."
 msgstr "Impossible de mettre à jour l'e-mail. Vérifiez l'adresse."
 
-#: lib/cinder_web/live/user_live/registration.ex:101
+#: lib/cinder_web/live/user_live/registration.ex:106
 #, elixir-autogen, elixir-format
 msgid "Creating account…"
 msgstr "Création du compte…"
@@ -2405,7 +2405,7 @@ msgstr "Exécution : %{action}"
 msgid "Bootstrap token"
 msgstr "Jeton d'initialisation"
 
-#: lib/cinder_web/live/user_live/registration.ex:168
+#: lib/cinder_web/live/user_live/registration.ex:173
 #, elixir-autogen, elixir-format
 msgid "Invalid bootstrap token."
 msgstr "Jeton d'initialisation invalide."
@@ -4226,3 +4226,8 @@ msgstr "Votre compte a été définitivement supprimé."
 #, elixir-autogen, elixir-format
 msgid "Your data"
 msgstr "Vos données"
+
+#: lib/cinder_web/live/user_live/registration.ex:102
+#, elixir-autogen, elixir-format
+msgid "We store your email, hashed password, and request history; the instance operator is the data controller."
+msgstr "Nous conservons votre adresse e-mail, votre mot de passe haché et votre historique de demandes ; l’opérateur de l’instance est le responsable du traitement."
