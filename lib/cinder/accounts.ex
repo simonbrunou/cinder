@@ -9,8 +9,7 @@ defmodule Cinder.Accounts do
   alias Cinder.Accounts.{User, UserNotifier, UserToken}
   alias Cinder.Audit
   alias Cinder.Notifier
-
-  @default_request_quota 10
+  alias Cinder.Settings
 
   # Single sudo-mode window, used at every reauth checkpoint: the /users/settings mount, the
   # email/password event rechecks, and Plex link/unlink. Previously the mount used 10 minutes
@@ -67,7 +66,7 @@ defmodule Cinder.Accounts do
       |> Ecto.Changeset.put_change(:confirmed_at, DateTime.utc_now(:second))
       |> Ecto.Changeset.put_change(:role, role)
       |> Ecto.Changeset.put_change(:active, bootstrap_admin?)
-      |> Ecto.Changeset.put_change(:request_quota, @default_request_quota)
+      |> put_default_request_quota(role)
       |> Repo.insert()
       |> case do
         {:ok, user} -> user
@@ -146,10 +145,15 @@ defmodule Cinder.Accounts do
     |> Ecto.Changeset.put_change(:confirmed_at, DateTime.utc_now(:second))
     |> Ecto.Changeset.put_change(:role, :user)
     |> Ecto.Changeset.put_change(:active, false)
-    |> Ecto.Changeset.put_change(:request_quota, @default_request_quota)
+    |> put_default_request_quota(:user)
     |> Repo.insert()
     |> announce_pending_user()
   end
+
+  defp put_default_request_quota(changeset, :admin), do: changeset
+
+  defp put_default_request_quota(changeset, :user),
+    do: Ecto.Changeset.put_change(changeset, :request_quota, Settings.default_request_quota())
 
   @doc """
   Attaches a Plex identity to an ALREADY-authenticated user's own account — the `/users/settings`
@@ -399,6 +403,16 @@ defmodule Cinder.Accounts do
   end
 
   def sudo_mode?(_user, _minutes), do: false
+
+  @doc "Returns a changeset for the user's display locale."
+  def change_user_locale(user, attrs \\ %{}), do: User.locale_changeset(user, attrs)
+
+  @doc "Updates the user's display locale."
+  def update_user_locale(user, attrs) do
+    user
+    |> User.locale_changeset(attrs)
+    |> Repo.update()
+  end
 
   @doc """
   Returns an `%Ecto.Changeset{}` for changing the user email.

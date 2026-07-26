@@ -39,7 +39,8 @@ defmodule Cinder.SettingsTest do
     :explicit_import_roots,
     :move_on_import,
     :ffprobe_bin,
-    :anime_preferences
+    :anime_preferences,
+    :default_request_quota
   ]
 
   setup do
@@ -545,6 +546,20 @@ defmodule Cinder.SettingsTest do
 
       Settings.put("tv_min_size", "-3")
       assert Application.get_env(:cinder, :tv_min_size) == nil
+    end
+
+    test "default request quota coerces positive integers and degrades unusable values to nil" do
+      Settings.put("default_request_quota", "6")
+      assert Settings.default_request_quota() == 6
+      refute Repo.get_by!(Setting, key: "default_request_quota").is_secret
+
+      for value <- ["", "invalid", "0", "-2"] do
+        Settings.put("default_request_quota", value)
+        assert Settings.default_request_quota() == nil
+      end
+
+      Settings.delete("default_request_quota")
+      assert Settings.default_request_quota() == 10
     end
 
     test "size bands fall back to the config bootstrap defaults when no DB row exists" do

@@ -103,7 +103,8 @@ defmodule CinderWeb.ConnCase do
     :tv_library_path,
     :tv_min_size,
     :tv_max_size,
-    :tv_preferred_resolutions
+    :tv_preferred_resolutions,
+    :default_request_quota
   ]
 
   @doc """

@@ -28,6 +28,7 @@ defmodule CinderWeb.SettingsLabels do
       gettext_noop("Release size bands"),
       gettext_noop("Subtitles"),
       gettext_noop("Notifications"),
+      gettext_noop("Accounts"),
       # download-client toggles — Settings.toggles/0
       gettext_noop("Enable qBittorrent (torrent)"),
       gettext_noop("Enable SABnzbd (usenet)"),
@@ -58,6 +59,7 @@ defmodule CinderWeb.SettingsLabels do
       gettext_noop("Subtitle languages (comma-separated, e.g. en,fr)"),
       gettext_noop("LibreTranslate URL"),
       gettext_noop("LibreTranslate API key"),
+      gettext_noop("Default request quota"),
       # generated per-kind Plex section labels — Settings.config_fields/0
       gettext_noop("Plex Movies library section (numeric id)"),
       gettext_noop("Plex TV library section (numeric id)")

@@ -159,6 +159,15 @@ defmodule CinderWeb.UserAuthTest do
       refute Accounts.get_user_by_session_token(user_token)
     end
 
+    test "preserves the selected locale", %{conn: conn} do
+      conn =
+        conn
+        |> put_session(:locale, "fr")
+        |> UserAuth.log_out_user()
+
+      assert get_session(conn, :locale) == "fr"
+    end
+
     test "broadcasts to the given live_socket_id", %{conn: conn} do
       live_socket_id = "users_sessions:abcdef-token"
       CinderWeb.Endpoint.subscribe(live_socket_id)

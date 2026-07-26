@@ -11,6 +11,7 @@ defmodule Cinder.Accounts.User do
     field :role, Ecto.Enum, values: [:admin, :user], default: :user
     field :active, :boolean, default: true
     field :request_quota, :integer
+    field :locale, :string
     field :plex_id, :integer
     field :plex_username, :string
 
@@ -130,6 +131,13 @@ defmodule Cinder.Accounts.User do
     user
     |> cast(attrs, [:request_quota])
     |> validate_number(:request_quota, greater_than_or_equal_to: 0)
+  end
+
+  @doc "Sets a supported display locale, or nil to use session/browser negotiation."
+  def locale_changeset(user, attrs) do
+    user
+    |> cast(attrs, [:locale])
+    |> validate_inclusion(:locale, Cinder.Locales.supported())
   end
 
   @doc "Links (or refreshes) a Plex account: `plex_id` + display-only `plex_username`."

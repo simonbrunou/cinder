@@ -53,6 +53,7 @@ defmodule CinderWeb.NoHardcodedStringsTest do
       (Enum.map(Settings.groups(), fn {_g, label} -> label end) ++
          Enum.map(Settings.toggles(), & &1.label) ++
          Enum.map(Settings.config_fields(), & &1.label) ++
+         Enum.map(Settings.global_fields(), & &1.label) ++
          Enum.map(Settings.library_kinds(), & &1.label) ++
          Enum.map(Settings.library_kinds(), &"#{&1.label} library"))
       |> MapSet.new()

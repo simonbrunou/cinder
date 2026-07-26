@@ -6,13 +6,13 @@ defmodule CinderWeb.Router do
   pipeline :browser do
     plug :accepts, ["html"]
     plug :fetch_session
-    plug CinderWeb.Locale
     plug :fetch_live_flash
     plug :put_root_layout, html: {CinderWeb.Layouts, :root}
     plug :protect_from_forgery
     plug :put_secure_browser_headers
     plug CinderWeb.ContentSecurityPolicy
     plug :fetch_current_scope_for_user
+    plug CinderWeb.Locale
     # Optional HTTP Basic auth — defense-in-depth behind the Caddy + VPN edge.
     # Credentials are read from env at runtime; with either unset the plug is a
     # no-op, so dev/test/local are unaffected until both are set.

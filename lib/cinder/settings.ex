@@ -228,6 +228,18 @@ defmodule Cinder.Settings do
   @media_server_options ["jellyfin", "plex"]
   @import_roots_key "import_roots"
   @ffprobe_bin_key "ffprobe_bin"
+  @default_request_quota_key "default_request_quota"
+
+  @global_fields [
+    %{
+      key: @default_request_quota_key,
+      secret: false,
+      group: :accounts,
+      label: "Default request quota",
+      placeholder: "10",
+      inputmode: "numeric"
+    }
+  ]
 
   @anime_fields [
     %{
@@ -260,7 +272,8 @@ defmodule Cinder.Settings do
     library: "Library paths",
     releases: "Release size bands",
     subtitles: "Subtitles",
-    notifications: "Notifications"
+    notifications: "Notifications",
+    accounts: "Accounts"
   ]
 
   # Only static fields can be secret (the generated Plex-section fields are not), so this stays
@@ -291,6 +304,12 @@ defmodule Cinder.Settings do
   @doc "Config fields in a given group."
   def config_fields(group), do: Enum.filter(config_fields(), &(&1.group == group))
 
+  @doc "Flat global settings fields."
+  def global_fields, do: @global_fields
+
+  @doc "Flat global settings fields in a given group."
+  def global_fields(group), do: Enum.filter(@global_fields, &(&1.group == group))
+
   # One Plex section field per library kind (`movies_plex_section` → Plex `:movies_section`, …),
   # so a server with separate Movies/Shows libraries refreshes the right one. Generated from
   # `Cinder.Library.kinds/0` so a new kind needs no entry here.
@@ -319,6 +338,13 @@ defmodule Cinder.Settings do
   def import_roots_key, do: @import_roots_key
   def ffprobe_bin_key, do: @ffprobe_bin_key
   def anime_fields, do: @anime_fields
+
+  @doc "Positive default quota for new users, or nil when the configured value is unusable."
+  def default_request_quota do
+    :cinder
+    |> Application.get_env(:default_request_quota)
+    |> positive_integer()
+  end
 
   @doc "The library kinds with display labels, for the settings/setup UI (`[%{kind:, label:}]`)."
   def library_kinds, do: Enum.map(Cinder.Library.kinds(), &%{kind: &1, label: kind_label(&1)})
@@ -475,7 +501,7 @@ defmodule Cinder.Settings do
     rows = rows_by_key()
 
     values =
-      for f <- config_fields(), not f.secret, into: %{} do
+      for f <- config_fields() ++ global_fields(), not f.secret, into: %{} do
         {f.key, decoded_for(rows, f.key) || ""}
       end
 
@@ -522,7 +548,7 @@ defmodule Cinder.Settings do
     state = form_state()
 
     text_keys =
-      for(f <- config_fields(), not f.secret, do: f.key) ++
+      for(f <- config_fields() ++ global_fields(), not f.secret, do: f.key) ++
         flat_keys() ++
         [@import_roots_key, @ffprobe_bin_key] ++ Enum.map(@anime_fields, & &1.key)
 
@@ -794,6 +820,7 @@ defmodule Cinder.Settings do
     apply_import_roots(rows)
     apply_move_on_import(rows)
     apply_ffprobe_bin(rows)
+    apply_default_request_quota(rows)
     :ok
   rescue
     e ->
@@ -960,6 +987,17 @@ defmodule Cinder.Settings do
     )
   end
 
+  defp apply_default_request_quota(rows) do
+    fallback = positive_integer(base(:default_request_quota))
+
+    quota =
+      if Map.has_key?(rows, @default_request_quota_key),
+        do: positive_integer(decoded_for(rows, @default_request_quota_key)),
+        else: fallback
+
+    Application.put_env(:cinder, :default_request_quota, quota)
+  end
+
   # base/1 defaults to [] for unset keys; a library path is a flat string, so coerce an unset
   # bootstrap (e.g. MOVIES_LIBRARY_PATH absent → []) to nil. Health then reports :not_configured
   # rather than crashing on a list-typed path.
@@ -1015,6 +1053,17 @@ defmodule Cinder.Settings do
       list -> list
     end
   end
+
+  defp positive_integer(value) when is_integer(value) and value > 0, do: value
+
+  defp positive_integer(value) when is_binary(value) do
+    case Integer.parse(String.trim(value)) do
+      {integer, ""} when integer > 0 -> integer
+      _ -> nil
+    end
+  end
+
+  defp positive_integer(_value), do: nil
 
   defp parse_import_roots(value) do
     roots = split_import_roots(value)
@@ -1169,7 +1218,9 @@ defmodule Cinder.Settings do
   end
 
   defp plan(params) do
-    config_plan = Enum.reduce(config_fields(), {%{}, []}, &plan_config(&1, params, &2))
+    config_plan =
+      Enum.reduce(config_fields() ++ global_fields(), {%{}, []}, &plan_config(&1, params, &2))
+
     {puts, deletes} = Enum.reduce(flat_keys(), config_plan, &plan_flat(&1, params, &2))
     {puts, deletes} = plan_flat(@import_roots_key, params, {puts, deletes})
     {puts, deletes} = plan_flat(@ffprobe_bin_key, params, {puts, deletes})

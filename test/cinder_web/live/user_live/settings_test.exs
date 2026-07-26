@@ -32,6 +32,21 @@ defmodule CinderWeb.UserLive.SettingsTest do
       assert html =~ "Save password"
     end
 
+    test "updates the user's language and applies it immediately", %{conn: conn} do
+      user = user_fixture()
+      conn = log_in_user(conn, user)
+      {:ok, lv, _html} = live(conn, ~p"/users/settings")
+
+      redirect =
+        lv
+        |> form("#locale_form", %{"user" => %{"locale" => "fr"}})
+        |> render_submit()
+
+      assert Cinder.Repo.reload!(user).locale == "fr"
+      {:ok, redirected_conn} = follow_redirect(redirect, conn, ~p"/users/settings")
+      assert redirected_conn.assigns.locale == "fr"
+    end
+
     test "redirects if user is not logged in", %{conn: conn} do
       assert {:error, redirect} = live(conn, ~p"/users/settings")
 

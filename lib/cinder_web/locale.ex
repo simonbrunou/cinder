@@ -2,8 +2,9 @@ defmodule CinderWeb.Locale do
   @moduledoc """
   Resolves and applies the active locale for English/French i18n.
 
-  Precedence: an explicit choice stored in the session (set by the language
-  switcher) → the browser's `Accept-Language` header → the default locale.
+  Precedence: an authenticated user's saved locale → an explicit choice stored
+  in the session (set by the language switcher) → the browser's
+  `Accept-Language` header → the default locale.
 
   Used two ways, because a LiveView process does not inherit the Plug's
   `Gettext.put_locale/2`:
@@ -32,7 +33,7 @@ defmodule CinderWeb.Locale do
 
   def call(conn, _opts) do
     stored = supported(get_session(conn, :locale))
-    locale = stored || header_locale(conn) || @default
+    locale = current_user_locale(conn) || stored || header_locale(conn) || @default
     Gettext.put_locale(CinderWeb.Gettext, locale)
 
     conn
@@ -48,13 +49,27 @@ defmodule CinderWeb.Locale do
 
   ## on_mount (LiveView)
 
-  # The Plug already stored a validated locale in the session on the initial HTTP
-  # request, so the socket just reads it back.
+  # LiveView runs in a separate process, so resolve the authenticated user's saved
+  # preference again; otherwise use the locale negotiated and stored by the Plug.
   def on_mount(:default, _params, session, socket) do
-    locale = supported(session["locale"]) || @default
+    locale = session_user_locale(session) || supported(session["locale"]) || @default
     Gettext.put_locale(CinderWeb.Gettext, locale)
     {:cont, Phoenix.Component.assign(socket, :locale, locale)}
   end
+
+  defp current_user_locale(%{assigns: %{current_scope: %{user: %{locale: locale}}}}),
+    do: supported(locale)
+
+  defp current_user_locale(_conn), do: nil
+
+  defp session_user_locale(%{"user_token" => token}) when is_binary(token) do
+    case Cinder.Accounts.get_user_by_session_token(token) do
+      {%{locale: locale}, _inserted_at} -> supported(locale)
+      nil -> nil
+    end
+  end
+
+  defp session_user_locale(_session), do: nil
 
   ## Accept-Language negotiation
 

@@ -17,6 +17,29 @@ defmodule CinderWeb.UserLive.Settings do
         </.header>
       </div>
 
+      <.form
+        for={@locale_form}
+        id="locale_form"
+        phx-submit="update_locale"
+        phx-change="validate_locale"
+      >
+        <.input
+          field={@locale_form[:locale]}
+          type="select"
+          label={gettext("Language")}
+          prompt={gettext("Use session or browser language")}
+          options={[
+            {gettext("English"), "en"},
+            {gettext("French"), "fr"}
+          ]}
+        />
+        <.button variant="primary" phx-disable-with={gettext("Saving…")}>
+          {gettext("Save language")}
+        </.button>
+      </.form>
+
+      <div class="divider" />
+
       <.form for={@email_form} id="email_form" phx-submit="update_email" phx-change="validate_email">
         <.input
           field={@email_form[:email]}
@@ -112,12 +135,14 @@ defmodule CinderWeb.UserLive.Settings do
 
   def mount(_params, _session, socket) do
     user = socket.assigns.current_scope.user
+    locale_changeset = Accounts.change_user_locale(user)
     email_changeset = Accounts.change_user_email(user, %{}, validate_unique: false)
     password_changeset = Accounts.change_user_password(user, %{}, hash_password: false)
 
     socket =
       socket
       |> assign(:current_email, user.email)
+      |> assign(:locale_form, to_form(locale_changeset))
       |> assign(:email_form, to_form(email_changeset))
       |> assign(:password_form, to_form(password_changeset))
       |> assign(:trigger_submit, false)
@@ -126,6 +151,37 @@ defmodule CinderWeb.UserLive.Settings do
   end
 
   @impl true
+  def handle_event("validate_locale", %{"user" => user_params}, socket) do
+    locale_form =
+      socket.assigns.current_scope.user
+      |> Accounts.change_user_locale(user_params)
+      |> Map.put(:action, :validate)
+      |> to_form()
+
+    {:noreply, assign(socket, locale_form: locale_form)}
+  end
+
+  def handle_event("update_locale", %{"user" => user_params}, socket) do
+    case Accounts.update_user_locale(socket.assigns.current_scope.user, user_params) do
+      {:ok, user} ->
+        locale = user.locale || socket.assigns.locale
+        Gettext.put_locale(CinderWeb.Gettext, locale)
+
+        {:noreply,
+         socket
+         |> assign(
+           current_scope: %{socket.assigns.current_scope | user: user},
+           locale: locale,
+           locale_form: to_form(Accounts.change_user_locale(user))
+         )
+         |> put_flash(:info, gettext("Language updated."))
+         |> redirect(to: ~p"/users/settings")}
+
+      {:error, changeset} ->
+        {:noreply, assign(socket, locale_form: to_form(changeset, action: :insert))}
+    end
+  end
+
   def handle_event("validate_email", params, socket) do
     %{"user" => user_params} = params
 

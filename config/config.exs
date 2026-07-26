@@ -83,6 +83,9 @@ config :cinder,
   tv_min_size: 50_000_000,
   tv_max_size: 4_000_000_000
 
+# Conservative quota for newly self-registered users; editable at /settings.
+config :cinder, default_request_quota: 10
+
 # First-run wizard gate: redirect to /setup until setup_complete. Off in test so the
 # existing LiveView suite (which never marks setup complete) isn't redirected.
 config :cinder, :enforce_setup, true
@@ -145,7 +148,7 @@ config :logger, :default_formatter,
 config :phoenix, :json_library, Jason
 
 # i18n: English + French. The active locale is resolved per request/socket by
-# CinderWeb.Locale (session → Accept-Language → default). `en` is the source
+# CinderWeb.Locale (authenticated user → session → Accept-Language → default). `en` is the source
 # language (msgids), so the default-locale test suite keeps asserting English
 # with no translation needed; French lives in priv/gettext/fr.
 config :gettext, :default_locale, "en"

@@ -285,7 +285,17 @@ defmodule CinderWeb.SettingsComponents do
           </p>
         </div>
 
-        <.setting_field :for={field <- Settings.config_fields(group)} field={field} form={@form} />
+        <.setting_field
+          :for={field <- Settings.config_fields(group) ++ Settings.global_fields(group)}
+          field={field}
+          form={@form}
+        />
+
+        <p :if={group == :accounts} class="mt-1 text-xs opacity-70">
+          {gettext(
+            "Applied to newly self-registered users. Enter a positive whole number; 0 or an invalid value means unlimited. Leave blank to restore the default of 10."
+          )}
+        </p>
 
         <div class="mt-3 flex flex-wrap items-center gap-3">
           <div
@@ -411,6 +421,7 @@ defmodule CinderWeb.SettingsComponents do
         name={@field.key}
         value={@form.values[@field.key]}
         placeholder={@form.placeholders[@field.key] || @field.placeholder}
+        inputmode={Map.get(@field, :inputmode)}
         autocomplete="off"
         class="input w-full"
       />

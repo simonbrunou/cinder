@@ -34,9 +34,24 @@ defmodule CinderWeb.SettingsLiveTest do
     assert html =~ "Library"
     assert html =~ ~s(name="movies_library_path")
     assert html =~ ~s(name="import_roots")
+    assert html =~ ~s(name="default_request_quota")
     # The remove-after-import toggle lives on /settings (Library section).
     assert html =~ ~s(name="move_on_import")
     assert html =~ "Save settings"
+  end
+
+  test "saves the default request quota as a non-secret numeric setting", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    lv
+    |> form("#settings-form", %{
+      "default_request_quota" => "7",
+      "media_server_type" => "jellyfin"
+    })
+    |> render_submit()
+
+    assert Settings.get("default_request_quota") == "7"
+    assert Settings.default_request_quota() == 7
   end
 
   test "renders stable keyboard-native group disclosures inside one form", %{conn: conn} do
