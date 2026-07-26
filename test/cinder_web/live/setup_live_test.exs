@@ -125,6 +125,21 @@ defmodule CinderWeb.SetupLiveTest do
     assert_push_event(lv, "focus-invalid", %{id: "movies_min_size"})
   end
 
+  test "the wizard surfaces optional notifications without gating Finish", %{conn: conn} do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    conn = log_in_user(conn, admin)
+
+    {:ok, lv, html} = live(conn, ~p"/setup")
+
+    # The SMTP + Discord fields are reachable in the wizard (reused SettingsComponents markup),
+    assert html =~ ~s(name="smtp_host")
+    assert html =~ ~s(name="discord_webhook_url")
+    # and a signpost makes the optional notifications step discoverable rather than silently off.
+    assert has_element?(lv, "#setup-notifications-note")
+    # It is not part of the required set — no notification service appears in the checklist.
+    refute has_element?(lv, "#setup-checklist", "Discord")
+  end
+
   test "non-admins cannot reach /setup", %{conn: conn} do
     user = Cinder.AccountsFixtures.user_fixture()
     conn = log_in_user(conn, user)
