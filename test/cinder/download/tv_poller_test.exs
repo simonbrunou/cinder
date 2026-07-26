@@ -25,6 +25,13 @@ defmodule Cinder.Download.TvPollerTest do
   # global. Shared Sandbox (async: false) lets those processes use the test-owned DB connection.
   setup :set_mox_global
 
+  # A poll stamps last-run into process-global :persistent_term (PollerSkeleton's `status/0`,
+  # read by /healthz); erase it so a recorded run can't bleed into another test/suite.
+  setup do
+    on_exit(fn -> :persistent_term.erase({TvPoller, :last_run}) end)
+    :ok
+  end
+
   @past ~D[2001-01-01]
 
   defp series_tree do

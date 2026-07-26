@@ -13,6 +13,19 @@ defmodule CinderWeb.DashboardLiveTest do
   setup :set_mox_global
   setup :verify_on_exit!
 
+  # Each worker's poll stamps last-run into process-global :persistent_term (PollerSkeleton's
+  # `status/0`); erase all four so a run triggered here can't bleed into another test/suite.
+  setup do
+    on_exit(fn ->
+      :persistent_term.erase({Cinder.Download.Poller, :last_run})
+      :persistent_term.erase({Cinder.Download.TvPoller, :last_run})
+      :persistent_term.erase({Cinder.Catalog.Refresher, :last_run})
+      :persistent_term.erase({Cinder.Subtitles.Sweeper, :last_run})
+    end)
+
+    :ok
+  end
+
   setup do
     # Dashboard runs Health.check_all/0 in a start_async task (separate process) → global mocks.
     stub(Cinder.Acquisition.IndexerMock, :health, fn -> :ok end)

@@ -33,7 +33,6 @@ defmodule Cinder.Download.TvPoller do
 
   @default_interval 5_000
   @search_retry_after 60
-  @max_attempts 10
 
   # Download-side failures that only reach park after exhausting @max_attempts retries
   # (advance_with/2) — symmetric with the movie poller's @download_failure_errors. Past
@@ -43,8 +42,14 @@ defmodule Cinder.Download.TvPoller do
   use Cinder.Download.PollerSkeleton, log_prefix: "tv poller"
 
   defp do_poll(state) do
-    Library.reconcile_stages()
-    Download.reconcile_pending_intents([:episode, :season_pack])
+    # Isolated like every per-unit pass below: a persistent raise here must not crash-loop the
+    # whole GenServer forever with nothing parked and no signal (issue: preamble reliability).
+    isolate("stage reconciliation", fn -> Library.reconcile_stages() end)
+
+    isolate("pending intent reconciliation", fn ->
+      Download.reconcile_pending_intents([:episode, :season_pack])
+    end)
+
     advance_grabs()
     import_grabs()
     search_wanted(state.search_retry_after)
@@ -159,7 +164,12 @@ defmodule Cinder.Download.TvPoller do
         :ok
 
       {:error, {:release_policy_mismatch, evidence}} ->
-        reject_release(preflight.grab, evidence)
+        reject_release(
+          preflight.grab,
+          evidence,
+          preflight.grab.content_path,
+          &Catalog.reject_grab_release/2
+        )
 
       {:error, {:release_policy_unavailable, reason}} ->
         retry_or_hold_verification(preflight.grab, reason)
@@ -175,19 +185,7 @@ defmodule Cinder.Download.TvPoller do
   # (retry_or_hold_verification) never reaches here and must keep the files for operator inspection.
   # download_id is nil here on purpose: reject_grab_release already fences + cleans up the
   # client-tracked job, so passing the real id would remove it a second time.
-  defp reject_release(grab, evidence) do
-    case Catalog.reject_grab_release(grab, evidence) do
-      {:ok, _grab} ->
-        Download.remove_after_import(grab.download_protocol, nil, grab.content_path)
-        :ok
-
-      {:error, :stale_release} ->
-        :ok
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
+  # `reject_release/4` (the shared movie/TV helper) lives in `Cinder.Download.PollerSkeleton`.
 
   defp import_standard_grab(grab) do
     case Library.stage_episodes(grab.content_path, grab.episodes) do
@@ -264,19 +262,6 @@ defmodule Cinder.Download.TvPoller do
     staged
     |> unique_stages()
     |> Enum.each(&finish_stage(&1, :rollback))
-  end
-
-  defp finish_stage(stage, action) do
-    result =
-      case action do
-        :commit -> Library.commit_stage(stage)
-        :rollback -> Library.rollback_stage(stage)
-      end
-
-    if match?({:error, _}, result),
-      do: Logger.warning("TV import stage cleanup remains pending")
-
-    result
   end
 
   defp unique_stages(staged),
