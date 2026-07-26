@@ -5,7 +5,8 @@ defmodule Cinder.HealthTest do
 
   setup :verify_on_exit!
 
-  test "check_all/0 returns labeled rows for indexer, download clients, media server, libraries" do
+  test "check_all/0 returns labeled rows for metadata, indexer, download clients, media server, libraries" do
+    stub(Cinder.Catalog.TMDBMock, :health, fn -> :ok end)
     stub(Cinder.Acquisition.IndexerMock, :health, fn -> :ok end)
     stub(Cinder.Download.ClientMock, :health, fn -> {:error, :econnrefused} end)
     stub(Cinder.Download.SabnzbdClientMock, :health, fn -> :ok end)
@@ -13,6 +14,7 @@ defmodule Cinder.HealthTest do
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
 
     assert [
+             %{label: "Metadata (TMDB)", status: :ok},
              %{label: "Indexer (IndexerMock)", status: :ok},
              %{label: "Download (torrent · ClientMock)", status: {:error, :econnrefused}},
              %{label: "Download (usenet · SabnzbdClientMock)", status: :ok},
@@ -23,6 +25,7 @@ defmodule Cinder.HealthTest do
   end
 
   test "check_all/0 turns a raising impl into an error row instead of crashing" do
+    stub(Cinder.Catalog.TMDBMock, :health, fn -> :ok end)
     stub(Cinder.Acquisition.IndexerMock, :health, fn -> raise "boom" end)
     stub(Cinder.Download.ClientMock, :health, fn -> :ok end)
     stub(Cinder.Download.SabnzbdClientMock, :health, fn -> :ok end)
@@ -35,6 +38,7 @@ defmodule Cinder.HealthTest do
   end
 
   test "check_all/0 turns an exiting impl into an error row instead of crashing the task" do
+    stub(Cinder.Catalog.TMDBMock, :health, fn -> :ok end)
     stub(Cinder.Acquisition.IndexerMock, :health, fn -> exit(:boom) end)
     stub(Cinder.Download.ClientMock, :health, fn -> :ok end)
     stub(Cinder.Download.SabnzbdClientMock, :health, fn -> :ok end)

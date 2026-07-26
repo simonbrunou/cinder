@@ -1,9 +1,9 @@
 defmodule Cinder.Health do
   @moduledoc """
   Reachability checks for the external services the pipeline depends on
-  (indexer, download client(s), media server). Each check resolves the configured
-  impl behind its behaviour and calls its `health/0`. The `/status` dashboard uses
-  this to surface an unwired/unreachable dependency instead of leaving it to stall
+  (metadata provider, indexer, download client(s), media server). Each check resolves the
+  configured impl behind its behaviour and calls its `health/0`. The `/dashboard` service-health
+  panel uses this to surface an unwired/unreachable dependency instead of leaving it to stall
   silently and only show up in the logs.
   """
   alias Cinder.Download
@@ -11,10 +11,10 @@ defmodule Cinder.Health do
   @doc """
   Checks every configured external service. Returns a list of
   `%{label: String.t(), status: :ok | {:error, term()}}`, ordered
-  indexer → download client(s) → media server.
+  metadata → indexer → download client(s) → media server.
   """
   def check_all do
-    [indexer_check()] ++
+    [tmdb_check(), indexer_check()] ++
       download_checks() ++
       [media_server_check()] ++ library_checks() ++ media_info_check() ++ subtitles_check()
   end
@@ -60,6 +60,13 @@ defmodule Cinder.Health do
       blank when blank in [nil, ""] -> {:error, :not_configured}
       path -> library_writable(path)
     end
+  end
+
+  # TMDB drives discovery, requests, and the monitored-series refresh; an expired token leaves
+  # those failing while the rest of the panel stays green — so it gets its own aggregate row.
+  defp tmdb_check do
+    mod = Application.fetch_env!(:cinder, :tmdb)
+    check("Metadata (TMDB)", mod)
   end
 
   defp indexer_check do

@@ -9,6 +9,7 @@ defmodule Cinder.Accounts.JanitorTest do
   alias Cinder.Accounts
   alias Cinder.Accounts.{Janitor, UserToken}
   alias Cinder.Audit.AdminAudit
+  alias Cinder.Catalog.BlockedRelease
 
   # A poll stamps last-run into process-global :persistent_term (PollerSkeleton.status/0); erase it
   # so a recorded run can't bleed into another suite that reads Cinder.Jobs.statuses/0.
@@ -48,6 +49,18 @@ defmodule Cinder.Accounts.JanitorTest do
 
     refute Repo.get(AdminAudit, stale.id)
     assert Repo.get(AdminAudit, recent.id)
+  end
+
+  test "sweeps blocked_releases older than the retention window; recent ones survive" do
+    stale = Repo.insert!(%BlockedRelease{release_title: "Old.Show.S01E01.1080p"})
+    backdate(stale, -200)
+    recent = Repo.insert!(%BlockedRelease{release_title: "Fresh.Show.S01E01.1080p"})
+
+    {:ok, pid} = start_supervised({Janitor, name: :janitor_blocked})
+    assert :ok = Janitor.poll(pid)
+
+    refute Repo.get(BlockedRelease, stale.id)
+    assert Repo.get(BlockedRelease, recent.id)
   end
 
   test "is supervised only when :start_poller is enabled" do

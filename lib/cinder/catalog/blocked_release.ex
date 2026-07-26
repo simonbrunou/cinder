@@ -3,8 +3,9 @@ defmodule Cinder.Catalog.BlockedRelease do
   A release that failed for a deterministic or download-exhausted reason, recorded
   per-item (`movie_id` for movies, `series_id` for TV) so release selection can skip
   it and stop the re-grab/re-download loop. Identity is the downcased `release_title`
-  string — the stable per-indexer release name. Permanent (no TTL): a blocked release
-  can't be re-grabbed, so it can't be re-blocked, so the table self-bounds.
+  string — the stable per-indexer release name. A blocked release can't be re-grabbed while
+  blocked, but distinct release names accrue over a title's life, so `Cinder.Accounts.Janitor`
+  ages rows out after its `@blocked_release_retention_days` window (default 180d).
   """
   use Ecto.Schema
 
