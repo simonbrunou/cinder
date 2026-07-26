@@ -343,6 +343,9 @@ defmodule CinderWeb.LibraryAdoptionLive do
                         id={"part-assignment-#{candidate.id}-#{file.id}"}
                         name={"adoption[parts][#{candidate.id}][#{file.id}]"}
                         class="select select-sm select-bordered"
+                        aria-label={
+                          gettext("Assign %{file} to an episode", file: Path.basename(file.path))
+                        }
                       >
                         <option value="">{gettext("Held")}</option>
                         <option

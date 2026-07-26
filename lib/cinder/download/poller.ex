@@ -366,7 +366,9 @@ defmodule Cinder.Download.Poller do
     end
   end
 
-  defp reason_detail({_code, detail}), do: detail
+  # Only binary details survive the :string cast in transition_changeset; a non-binary
+  # detail (e.g. {:prowlarr_status, 500}) would fail the cast and silently no-op the park.
+  defp reason_detail({_code, detail}) when is_binary(detail), do: detail
   defp reason_detail(_reason), do: nil
 
   defp hold_policy_verification(movie, origin, attempts, reason) do

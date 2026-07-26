@@ -427,7 +427,8 @@ defmodule Cinder.Library do
   retries). One best-effort scan fires when anything imported.
 
   Layout: `Show (Year)/Season NN/Show (Year) - SxxEyy.ext`. Files are matched by parsing `SxxEyy`
-  from each name and intersecting with the grab's episodes (a double-episode file maps to both).
+  from each name and intersecting with the grab's native episode numbers or exact persisted
+  `scene` coordinates (a double-episode file maps to both).
   For a single-episode grab whose files name no specific episode, the largest video is assigned
   to it — mirroring `import_movie`'s sample-skipping largest-wins, since the grab already names
   the one episode. Reuses `import_movie`'s place/scan/naming primitives.
@@ -766,10 +767,27 @@ defmodule Cinder.Library do
         parsed = Parser.parse(Path.basename(path)),
         not is_nil(parsed.episodes),
         ep <- episodes,
-        ep.season.season_number == parsed.season,
-        ep.episode_number in parsed.episodes,
+        episode_matches?(ep, parsed),
         do: {ep, path, size}
   end
+
+  defp episode_matches?(episode, parsed) do
+    (episode.season.season_number == parsed.season and
+       episode.episode_number in parsed.episodes) or scene_coordinate_matches?(episode, parsed)
+  end
+
+  defp scene_coordinate_matches?(%Episode{episode_coordinates: coordinates}, parsed)
+       when is_list(coordinates) do
+    Enum.any?(coordinates, fn coordinate ->
+      coordinate.scheme == "scene" and
+        Enum.any?(
+          parsed.episodes,
+          &(coordinate.canonical_value == Episode.code(parsed.season, &1))
+        )
+    end)
+  end
+
+  defp scene_coordinate_matches?(_episode, _parsed), do: false
 
   # One source per episode: when two files parse the same SxxEyy, keep the largest (path breaks
   # ties for a dest stable across retries) and let the losers fall through to `resolve` as

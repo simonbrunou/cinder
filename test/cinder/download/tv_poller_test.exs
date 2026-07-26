@@ -1249,7 +1249,21 @@ defmodule Cinder.Download.TvPollerTest do
     assert grab.download_protocol == :torrent
   end
 
-  test "Standard search uses scene coordinates when the indexer answers only the alternate season" do
+  @tag :tmp_dir
+  test "Standard alternate-season grab imports scene-named files into canonical episodes", %{
+    tmp_dir: tmp
+  } do
+    %{downloads: downloads} = use_real_tv_library(tmp)
+    release_dir = Path.join(downloads, "Frieren.S02")
+    File.mkdir_p!(release_dir)
+
+    for number <- 1..10 do
+      File.write!(
+        Path.join(release_dir, "Frieren.S02E#{pad2(number)}.1080p.mkv"),
+        "episode #{number}"
+      )
+    end
+
     series =
       series_fixture(%{
         title: "Frieren",
@@ -1263,7 +1277,7 @@ defmodule Cinder.Download.TvPollerTest do
 
     episodes =
       Map.new(1..38, fn number ->
-        episode = episode(season, number, %{monitored: number == 29})
+        episode = episode(season, number, %{monitored: number >= 29})
         {number, episode}
       end)
 
@@ -1297,8 +1311,8 @@ defmodule Cinder.Download.TvPollerTest do
         {:ok,
          [
            %{
-             title: "Frieren.S02E01.1080p.WEB-DL-GRP",
-             size: 2_000_000_000,
+             title: "Frieren.S02.1080p.WEB-DL-GRP",
+             size: 20_000_000_000,
              download_url: "scene-release"
            }
          ]}
@@ -1311,15 +1325,55 @@ defmodule Cinder.Download.TvPollerTest do
       {:ok, "hash-standard-scene"}
     end)
 
+    stub(Cinder.Download.ClientMock, :status, fn "hash-standard-scene" ->
+      {:ok, %{state: :completed, content_path: release_dir}}
+    end)
+
+    stub(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
+    Cinder.TestNotifier.subscribe()
     start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
 
     assert :ok = TvPoller.poll()
     assert_receive {:searched_season, 1}
     assert_receive {:searched_season, 2}
 
-    wanted = Repo.get!(Episode, Map.fetch!(episodes, 29).id)
-    assert wanted.grab_id
-    assert Repo.get!(Grab, wanted.grab_id).download_id == "hash-standard-scene"
+    assert %Grab{download_id: "hash-standard-scene"} = Repo.one!(Grab)
+    assert :ok = TvPoller.poll()
+
+    refute Repo.exists?(Grab)
+    assert Catalog.blocked_release_titles_for_series(series.id) == []
+    refute_receive {:notify, {:grab_failed, _, _}}
+
+    for number <- 29..38 do
+      imported = Repo.get!(Episode, Map.fetch!(episodes, number).id)
+
+      assert Path.basename(imported.file_path) ==
+               "Frieren (2008) {tmdb-#{series.tmdb_id}} - S01E#{pad2(number)}.mkv"
+    end
+  end
+
+  test "Standard alternate-season file without scene coordinates still parks and blocklists" do
+    {series, season} = series_tree()
+    episode = episode(season, 29)
+    title = "Show.S02E01.1080p.WEB-DL-GRP"
+
+    {:ok, grab} = Catalog.create_grab("hash-no-scene", :torrent, [episode.id], title)
+    {:ok, _} = Catalog.mark_grab_downloaded(grab, "/dl/pack")
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok, [{"/dl/pack/Show.S02E01.1080p.mkv", 3_000_000_000}]}
+    end)
+
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    refute Repo.get(Grab, grab.id)
+    parked = Repo.get!(Episode, episode.id)
+    assert parked.file_path == nil
+    assert parked.grab_id == nil
+    assert Catalog.blocked_release_titles_for_series(series.id) == [title]
   end
 
   test "searches an explicitly monitored Standard S00 special and grabs the matching release (Sonarr parity)" do

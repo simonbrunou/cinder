@@ -3978,7 +3978,7 @@ msgstr ""
 msgid "Adopt existing library"
 msgstr ""
 
-#: lib/cinder_web/live/library_adoption_live.ex:440
+#: lib/cinder_web/live/library_adoption_live.ex:443
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Adopt selected"
 msgstr ""
@@ -3988,12 +3988,12 @@ msgstr ""
 msgid "Adopted %{adopted}; skipped %{skipped}."
 msgstr ""
 
-#: lib/cinder_web/live/library_adoption_live.ex:442
+#: lib/cinder_web/live/library_adoption_live.ex:445
 #, elixir-autogen, elixir-format
 msgid "Adopting selected files…"
 msgstr ""
 
-#: lib/cinder_web/live/library_adoption_live.ex:440
+#: lib/cinder_web/live/library_adoption_live.ex:443
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Adopting…"
 msgstr ""
@@ -4013,7 +4013,7 @@ msgstr ""
 msgid "Back to library"
 msgstr ""
 
-#: lib/cinder_web/live/library_adoption_live.ex:368
+#: lib/cinder_web/live/library_adoption_live.ex:371
 #, elixir-autogen, elixir-format
 msgid "Choose one TMDB result, or leave the item unselected to skip it."
 msgstr ""
@@ -4033,8 +4033,8 @@ msgstr ""
 msgid "Exact title and year matches are selected by default."
 msgstr ""
 
-#: lib/cinder_web/live/library_adoption_live.ex:347
-#: lib/cinder_web/live/library_adoption_live.ex:413
+#: lib/cinder_web/live/library_adoption_live.ex:350
+#: lib/cinder_web/live/library_adoption_live.ex:416
 #, elixir-autogen, elixir-format
 msgid "Held"
 msgstr ""
@@ -4065,7 +4065,7 @@ msgid "Movie"
 msgstr ""
 
 #: lib/cinder_web/live/library_adoption_live.ex:341
-#: lib/cinder_web/live/library_adoption_live.ex:365
+#: lib/cinder_web/live/library_adoption_live.ex:368
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Needs confirmation"
 msgstr ""
@@ -4130,7 +4130,7 @@ msgstr ""
 msgid "Select at least one match to adopt."
 msgstr ""
 
-#: lib/cinder_web/live/library_adoption_live.ex:398
+#: lib/cinder_web/live/library_adoption_live.ex:401
 #, elixir-autogen, elixir-format
 msgid "TMDB %{id}"
 msgstr ""
@@ -4140,12 +4140,12 @@ msgstr ""
 msgid "TMDB episode details could not be loaded."
 msgstr ""
 
-#: lib/cinder_web/live/library_adoption_live.ex:383
+#: lib/cinder_web/live/library_adoption_live.ex:386
 #, elixir-autogen, elixir-format
 msgid "TMDB match for %{title}"
 msgstr ""
 
-#: lib/cinder_web/live/library_adoption_live.ex:403
+#: lib/cinder_web/live/library_adoption_live.ex:406
 #, elixir-autogen, elixir-format
 msgid "TMDB returned no candidates. This item will be skipped."
 msgstr ""
@@ -4160,7 +4160,7 @@ msgstr ""
 msgid "The parsed episode does not exist in TMDB."
 msgstr ""
 
-#: lib/cinder_web/live/library_adoption_live.ex:416
+#: lib/cinder_web/live/library_adoption_live.ex:419
 #, elixir-autogen, elixir-format
 msgid "These files cannot be adopted safely and will not be changed."
 msgstr ""
@@ -4299,4 +4299,9 @@ msgstr ""
 #: lib/cinder/notifier/email.ex:47
 #, elixir-autogen, elixir-format
 msgid "Your Cinder account is now active"
+msgstr ""
+
+#: lib/cinder_web/live/library_adoption_live.ex:347
+#, elixir-autogen, elixir-format
+msgid "Assign %{file} to an episode"
 msgstr ""
