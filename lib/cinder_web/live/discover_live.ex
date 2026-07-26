@@ -89,13 +89,23 @@ defmodule CinderWeb.DiscoverLive do
     # phx-value is client-controlled; tolerate non-numeric input and only match movies.
     preferred = normalize_language(params["preferred_language"])
 
+    # Search every movie-bearing source: a rail-only movie (deduped out of
+    # trending) must still be addable, not a silent no-op.
+    %{
+      results: results,
+      trending: trending,
+      popular: popular,
+      top_rated: top_rated,
+      now_playing: now_playing,
+      genre_results: genre_results
+    } = socket.assigns
+
+    candidates = results ++ trending ++ popular ++ top_rated ++ now_playing ++ genre_results
+
     with {id, ""} <- Integer.parse(tmdb_id),
          {:ok, profile} <- normalize_profile(params["proposed_media_profile"]),
          movie when not is_nil(movie) <-
-           Enum.find(
-             socket.assigns.results ++ socket.assigns.trending,
-             &(&1.type == :movie and &1.tmdb_id == id)
-           ) do
+           Enum.find(candidates, &(&1.type == :movie and &1.tmdb_id == id)) do
       {:noreply, add(socket, movie, preferred, profile)}
     else
       _ -> {:noreply, socket}

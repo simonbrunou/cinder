@@ -6,7 +6,41 @@ All notable changes to Cinder are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **TV parity on the landing page.** Popular TV and Top Rated TV rails join the movie rails on
+  `/`, and the genre browser gains a Movies/TV toggle backed by TMDB's distinct TV genre list —
+  same cards, badges, season-picker flow, and crash-isolated fetches as the existing rails.
+- **Account-activated notification.** Activating a pending account now emails the user (in their
+  locale) instead of silently flipping a flag only an open "pending approval" tab would notice.
+- **Adoption reads Sonarr/Radarr provider tags.** `{tvdb-N}` and `{imdb-tt…}` folder tags resolve
+  to TMDB via the find-by-external-id endpoint and adopt without title search; a tag that doesn't
+  resolve falls back to the existing operator-resolution flow, never a guess.
+- **TVDB-split episodes can be adopted (#159, adoption-scoped).** A combined TMDB episode can
+  absorb multiple on-disk part files, assigned explicitly by the operator from the adoption
+  screen; deletion, backfill, and re-scans account for the extra parts.
+- **Standard TV search understands alternate season numbering (#132).** When a series has
+  alternate-season coordinates (the anime A6 machinery), the standard path now derives
+  id-scoped alt-season queries and accepts releases matching them — TVDB-numbered indexers can
+  satisfy TMDB-combined shows.
+- **TMDB in the service-health panel**, and `/healthz` wired into the deploy path (compose
+  `healthcheck:` + operating docs).
+- **`blocked_releases` age-out.** The retention janitor now prunes blocklist rows older than
+  180 days; database growth no longer needs manual pruning.
+
 ### Fixed
+- **Season approval is crash-safe and atomic.** TMDB fetches complete before any transaction and
+  the request flip + series creation commit together — a crash mid-approval can no longer strand
+  an approved request with no series (or an orphan series with no request).
+- **Usenet downloads can't wedge forever.** A protocol-agnostic 24 h cap on time spent
+  `:downloading` parks + blocklists + re-searches a stalled job even when the client reports no
+  speed (SABnzbd); SABnzbd failure reasons are preserved verbatim on `/activity`, and its health
+  check warns on a truncating `folder_max_length` or a duplicate-handling policy that would
+  silently pause Cinder's own regrabs.
+- **Notification delivery is off the poller's critical path.** Transports run as bounded
+  supervised tasks with a per-delivery timeout — a slow SMTP relay can no longer stall a poller
+  tick (and `/healthz`) while keeping per-transport isolation.
+- **Rail-only movies can be requested.** The Add button on the Popular / Top Rated / Now Playing /
+  genre rails was a silent no-op for a movie appearing in no other section.
 - **Media localization reworked** (follow-up to #172). French titles now pick the right regional
   variant (fr-FR over fr-CA — "Sing" shows "Tous en scène", not "Chantez!") and no longer
   flip-flop between views. The FR UI could silently corrupt canonical data: saving a movie/series

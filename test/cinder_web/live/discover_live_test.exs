@@ -214,6 +214,20 @@ defmodule CinderWeb.DiscoverLiveTest do
     refute has_element?(lv, "#popular #add-form-27205")
   end
 
+  # Regression: the add handler used to search only results ++ trending, making the
+  # Add button on the popular/top-rated/now-playing/genre rails a silent no-op for a
+  # movie that appears nowhere else.
+  test "a rail-only movie can be requested from the popular rail", %{conn: conn} do
+    stub_popular([@popular_pick])
+    {:ok, lv, _html} = live(conn, ~p"/")
+    render_async(lv)
+
+    lv |> form("#add-form-100") |> render_submit()
+    render_async(lv)
+
+    assert [%Movie{tmdb_id: 100, status: :requested}] = Catalog.list_movies()
+  end
+
   test "a popular-movies failure leaves the other rails intact and the page still 200s", %{
     conn: conn
   } do
