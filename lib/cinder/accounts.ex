@@ -8,6 +8,7 @@ defmodule Cinder.Accounts do
 
   alias Cinder.Accounts.{User, UserNotifier, UserToken}
   alias Cinder.Audit
+  alias Cinder.Audit.AdminAudit
   alias Cinder.Notifier
   alias Cinder.Settings
 
@@ -318,7 +319,9 @@ defmodule Cinder.Accounts do
   defp do_admin_update_email(%User{} = actor, changeset) do
     case Repo.update(changeset) do
       {:ok, updated} ->
-        Audit.log_or_rollback(actor, "admin_update_email", updated, %{email: updated.email})
+        # GDPR Art.17: never persist the email value in the audit trail — `entity_id`
+        # already identifies whose address changed.
+        Audit.log_or_rollback(actor, "admin_update_email", updated, %{})
 
         updated
 
@@ -356,8 +359,8 @@ defmodule Cinder.Accounts do
   re-count). A zero admin count rolls back as `{:error, :last_admin}`; a
   self-delete rolls back as `{:error, :self_delete}`. The DB cascades the user's
   requests (`user_id :delete_all`) and nilifies any `approved_by_id` links.
-  Audited in the same transaction; the email is captured before the delete so
-  the audit `detail` can record it.
+  Audited in the same transaction (no email in the audit `detail` — GDPR Art.17;
+  see `do_delete_user/3`).
   """
   def delete_user(%User{} = actor, %User{} = target) do
     actor
@@ -365,8 +368,30 @@ defmodule Cinder.Accounts do
     |> flatten_revocation_result()
   end
 
-  defp do_delete_user(%User{} = actor, %User{} = target) do
-    email = target.email
+  @doc """
+  Self-service account deletion (GDPR Art.17): the caller deletes their OWN account after
+  confirming their current `password`. Refuses a wrong password (`{:error, :invalid_password}`,
+  no delete) and refuses to delete the last admin (`{:error, :last_admin}`), reusing the audited,
+  last-admin-safe `do_delete_user/3` path with the user as their own actor. The admin gate in
+  `admin_transaction` is deliberately bypassed here — a non-admin must be able to erase their own
+  account — and the `:self_delete` guard (which blocks an admin deleting themselves from the admin
+  UI) is disabled for this self-service path only. The DB cascade removes the user's session tokens
+  and requests; the returned revoked tokens let the caller disconnect open live views.
+  """
+  def delete_own_account(%User{} = user, password) when is_binary(password) do
+    if User.valid_password?(user, password) do
+      Repo.transaction(fn ->
+        do_delete_user(user, user, action: "delete_own_account", self_service: true)
+      end)
+      |> flatten_revocation_result()
+    else
+      {:error, :invalid_password}
+    end
+  end
+
+  defp do_delete_user(%User{} = actor, %User{} = target, opts \\ []) do
+    action = Keyword.get(opts, :action, "delete_user")
+    self_service? = Keyword.get(opts, :self_service, false)
     revoked_tokens = user_session_tokens(target)
     {:ok, _} = Repo.delete(target)
 
@@ -374,21 +399,66 @@ defmodule Cinder.Accounts do
       count_admins() == 0 ->
         Repo.rollback(:last_admin)
 
-      actor.id == target.id ->
+      not self_service? and actor.id == target.id ->
         Repo.rollback(:self_delete)
 
       true ->
-        Audit.log_or_rollback(actor, "delete_user", target, %{
-          email: email,
-          cascaded_requests: true
-        })
+        # GDPR Art.17: redact the erased address from any historical audit rows that target
+        # this user, then append the deletion record — which carries no email itself, since
+        # `entity_id` already identifies the subject.
+        scrub_audit_emails(target.id)
+
+        # A self-delete's only actor IS the just-deleted user, so record it with a nil actor
+        # (its actor_id would otherwise dangle against a deleted row) — the same end state
+        # actor_id nilifies to for any deleted actor.
+        audit_actor = if self_service?, do: nil, else: actor
+        Audit.log_or_rollback(audit_actor, action, target, %{cascaded_requests: true})
 
         {target, revoked_tokens}
     end
   end
 
+  # GDPR Art.17: strip the erased email value from `detail` of every append-only audit row that
+  # targets this user (entity_type "User" / entity_id), keeping the rows themselves for
+  # accountability but not the address.
+  defp scrub_audit_emails(user_id) do
+    AdminAudit
+    |> where([a], a.entity_type == "User" and a.entity_id == ^user_id)
+    |> Repo.all()
+    |> Enum.each(fn audit ->
+      if Map.has_key?(audit.detail, "email") do
+        audit
+        |> Ecto.Changeset.change(detail: Map.delete(audit.detail, "email"))
+        |> Repo.update!()
+      end
+    end)
+  end
+
   @doc "All users, ordered by id."
   def list_users, do: Repo.all(from u in User, order_by: [asc: u.id])
+
+  @doc """
+  Assembles the user's OWN account data for a GDPR Art.15/20 data export, as a JSON-ready map.
+  Includes only fields the user provided or that describe their account — never `hashed_password`
+  or any token. Datetimes are ISO-8601 strings.
+  """
+  def export_user_data(%User{} = user) do
+    %{
+      id: user.id,
+      email: user.email,
+      role: user.role,
+      locale: user.locale,
+      notify_email: user.notify_email,
+      plex_username: user.plex_username,
+      request_quota: user.request_quota,
+      active: user.active,
+      confirmed_at: iso(user.confirmed_at),
+      inserted_at: iso(user.inserted_at)
+    }
+  end
+
+  defp iso(nil), do: nil
+  defp iso(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
 
   @doc "Counts accounts awaiting admin approval (`active: false`)."
   def count_pending_accounts, do: Repo.aggregate(from(u in User, where: not u.active), :count)

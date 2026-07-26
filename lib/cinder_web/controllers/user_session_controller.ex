@@ -90,4 +90,48 @@ defmodule CinderWeb.UserSessionController do
     |> put_flash(:info, gettext("Logged out successfully."))
     |> UserAuth.log_out_user()
   end
+
+  # Self-service account deletion (GDPR Art.17). Sudo-rechecked like update_password/2 above —
+  # this POST can arrive after the sudo window lapses — then delegates to
+  # Accounts.delete_own_account/2, which re-verifies the password server-side and refuses the
+  # last admin. On success the session is cleared via log_out_user/1 (the DB tokens are already
+  # cascade-deleted).
+  def delete_account(conn, %{"delete_account" => %{"password" => password}}) do
+    user = conn.assigns.current_scope.user
+
+    if Accounts.sudo_mode?(user) do
+      case Accounts.delete_own_account(user, password) do
+        {:ok, _user, _revoked_tokens} ->
+          conn
+          |> put_flash(:info, gettext("Your account has been permanently deleted."))
+          |> UserAuth.log_out_user()
+
+        {:error, :invalid_password} ->
+          conn
+          |> put_flash(:error, gettext("The password you entered is incorrect."))
+          |> redirect(to: ~p"/users/settings")
+
+        {:error, :last_admin} ->
+          conn
+          |> put_flash(
+            :error,
+            gettext(
+              "You are the last admin. Grant another user admin before deleting your account."
+            )
+          )
+          |> redirect(to: ~p"/users/settings")
+      end
+    else
+      conn
+      |> put_flash(:error, gettext("You must re-authenticate to access this page."))
+      |> redirect(to: ~p"/users/log-in")
+    end
+  end
+
+  # A forged/malformed POST without the password field fails closed.
+  def delete_account(conn, _params) do
+    conn
+    |> put_flash(:error, gettext("The password you entered is incorrect."))
+    |> redirect(to: ~p"/users/settings")
+  end
 end

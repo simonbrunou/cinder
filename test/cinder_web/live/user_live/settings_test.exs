@@ -32,6 +32,19 @@ defmodule CinderWeb.UserLive.SettingsTest do
       assert html =~ "Save password"
     end
 
+    test "renders the data-export link and the delete-account danger zone", %{conn: conn} do
+      {:ok, _lv, html} =
+        conn
+        |> log_in_user(user_fixture())
+        |> live(~p"/users/settings")
+
+      assert html =~ "Download my data"
+      assert html =~ ~s(href="/users/export")
+      assert html =~ "Danger zone"
+      assert html =~ "Delete my account"
+      assert html =~ ~s(action="/users/delete-account")
+    end
+
     test "updates the user's language and applies it immediately", %{conn: conn} do
       user = user_fixture()
       conn = log_in_user(conn, user)
