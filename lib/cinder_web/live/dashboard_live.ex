@@ -10,7 +10,7 @@ defmodule CinderWeb.DashboardLive do
 
   import CinderWeb.LiveHelpers
 
-  alias Cinder.{Catalog, Health, Library, Notifier, Requests}
+  alias Cinder.{Accounts, Catalog, Health, Library, Notifier, Requests}
   alias Cinder.Catalog.Refresher
   alias Cinder.Download.{Poller, TvPoller}
   alias Cinder.Subtitles.Sweeper
@@ -26,6 +26,7 @@ defmodule CinderWeb.DashboardLive do
       Catalog.subscribe()
       Catalog.subscribe_series()
       Requests.subscribe()
+      Accounts.subscribe()
     end
 
     {:ok,
@@ -160,7 +161,8 @@ defmodule CinderWeb.DashboardLive do
         parked: Enum.sum(Enum.map(@parked, &Map.get(counts, &1, 0))),
         series_total: Catalog.count_series(),
         tv_wanted: Catalog.count_wanted_episodes(),
-        downloading: Catalog.count_grabs_downloading()
+        downloading: Catalog.count_grabs_downloading(),
+        pending_accounts: Accounts.count_pending_accounts()
       }
     )
   end
@@ -283,6 +285,13 @@ defmodule CinderWeb.DashboardLive do
           }
           icon="hero-inbox-arrow-down"
         />
+        <.link navigate={~p"/users"} class="contents">
+          <.stat_card
+            label={gettext("Pending accounts")}
+            value={@stats.pending_accounts}
+            icon="hero-user-plus"
+          />
+        </.link>
       </div>
 
       <section class="mt-8">

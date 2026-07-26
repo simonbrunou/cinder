@@ -578,6 +578,49 @@ defmodule Cinder.RequestsTest do
     end
   end
 
+  describe "cancel_own_request/2" do
+    test "the owner cancels their own pending request and it broadcasts request_deleted" do
+      user = user_fixture()
+      {:ok, req} = Requests.create_request(user, @attrs)
+
+      Requests.subscribe()
+      assert {:ok, cancelled} = Requests.cancel_own_request(req, user)
+      assert cancelled.id == req.id
+      assert Repo.get(Cinder.Requests.Request, req.id) == nil
+
+      req_id = req.id
+      assert_receive {:request_deleted, %Cinder.Requests.Request{id: ^req_id}}
+    end
+
+    test "a non-owner cannot cancel someone else's pending request" do
+      user = user_fixture()
+      other = user_fixture()
+      {:ok, req} = Requests.create_request(user, @attrs)
+
+      assert {:error, :not_pending} = Requests.cancel_own_request(req, other)
+      assert Repo.get(Cinder.Requests.Request, req.id)
+    end
+
+    test "the owner cannot cancel their own non-pending (already-approved) request" do
+      admin = admin_fixture()
+      {:ok, req} = Requests.create_request(admin, @attrs)
+      assert req.status == :approved
+
+      assert {:error, :not_pending} = Requests.cancel_own_request(req, admin)
+      assert Repo.get(Cinder.Requests.Request, req.id)
+    end
+
+    test "the owner cannot cancel their own denied request" do
+      user = user_fixture()
+      admin = admin_fixture()
+      {:ok, req} = Requests.create_request(user, @attrs)
+      {:ok, denied} = Requests.deny_request(req, admin, "no")
+
+      assert {:error, :not_pending} = Requests.cancel_own_request(denied, user)
+      assert Repo.get(Cinder.Requests.Request, req.id)
+    end
+  end
+
   test "approved movie request carries preferred_language and original_language onto the movie row" do
     admin = admin_fixture()
 
