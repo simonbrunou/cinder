@@ -53,67 +53,6 @@ defmodule Cinder.Library do
   @spec kinds() :: [atom()]
   def kinds, do: @kinds
 
-  @doc """
-  Hardlinks `movie`'s downloaded file into the library and triggers a scan.
-  Returns `{:ok, dest_path, quality}` or `{:error, reason}`. Idempotent: a dest
-  that already exists (`:eexist`) is treated as success when it is the same
-  hardlink (same inode). On a collision with a different file, the existing
-  release is kept or replaced based on an upgrade score comparison.
-  The scan is best-effort — once the file is hardlinked the import has
-  succeeded, so a failing scan is logged but does not turn into `{:error, _}`.
-
-  When a language is wanted and `:media_info` is configured, the file's actual audio tracks are
-  probed first: a confirmed mismatch returns `{:error, :wrong_audio_language}` so the wrong-language
-  file is never imported (the poller parks it). Missing/unverifiable audio data imports as before.
-  """
-  @spec import_movie(Movie.t()) :: {:ok, String.t(), map()} | {:error, term()}
-  def import_movie(%Movie{} = movie), do: import_movie(movie, [])
-
-  @spec import_movie(Movie.t(), keyword()) :: {:ok, String.t(), map()} | {:error, term()}
-  def import_movie(%Movie{} = movie, opts) do
-    case Movie.download_source(movie) do
-      path when path in [nil, ""] -> {:error, :no_file_path}
-      path -> do_import_movie(movie, path, opts)
-    end
-  end
-
-  defp do_import_movie(movie, path, opts) do
-    replace? = Keyword.get(opts, :replace, false)
-
-    with {:ok, root} <- root(:movies),
-         {:ok, source, folder?} <- resolve_source(path),
-         :ok <-
-           verify_audio(
-             source,
-             Language.target(movie.preferred_language, movie.original_language)
-           ),
-         {:ok, %{size: size, inode: si, major_device: sdev}} <- fs().lstat(source),
-         parsed = Parser.parse(Path.basename(path)),
-         new_q =
-           new_quality(parsed, size)
-           |> Map.merge(capture_media(source))
-           |> Map.put_new(:sidecar_subtitles, []),
-         dest = build_dest(movie, source, root),
-         {:ok, dest} <- safe_destination(dest, root),
-         :ok <- fs().mkdir_p(Path.dirname(dest)),
-         {:ok, quality, placed?} <-
-           place(source, dest, root, {si, sdev}, movie, new_q, replace?, fn ->
-             upgrade?(movie, new_q)
-           end) do
-      quality = maybe_link_sidecars(quality, placed?, folder?, source, dest)
-      refresh(:movies, dest)
-
-      fetch_subtitles(
-        fn -> Cinder.Subtitles.movie_criteria(movie) end,
-        dest,
-        :movies,
-        quality.sidecar_subtitles
-      )
-
-      {:ok, dest, quality}
-    end
-  end
-
   @doc "Stages a movie import with rollback material for a guarded Catalog transition."
   @spec stage_movie(Movie.t(), keyword()) ::
           {:ok, %{dest: String.t(), rollback: map(), quality: map()}} | {:error, term()}

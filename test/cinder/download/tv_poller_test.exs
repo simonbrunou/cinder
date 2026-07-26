@@ -1249,6 +1249,35 @@ defmodule Cinder.Download.TvPollerTest do
     assert grab.download_protocol == :torrent
   end
 
+  test "searches an explicitly monitored Standard S00 special and grabs the matching release (Sonarr parity)" do
+    {series, _season} = series_tree()
+    specials = season_fixture(series, %{season_number: 0})
+    e1 = episode(specials, 5)
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    # Confirms the season-0 group reaches the indexer with a sane {Season:0}-shaped query.
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 0 ->
+      {:ok,
+       [
+         %{
+           title: "Show.S00E05.1080p.WEB-DL-GRP",
+           size: 2_000_000_000,
+           download_url: "u",
+           seeders: 5
+         }
+       ]}
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-special"} end)
+
+    assert :ok = TvPoller.poll()
+
+    linked = Repo.get!(Episode, e1.id)
+    assert linked.grab_id
+    grab = Repo.get!(Grab, linked.grab_id)
+    assert grab.download_id == "hash-special"
+  end
+
   test "a definite add rejection releases the episode for the next search tick" do
     {_series, season} = series_tree()
     episode = episode(season, 1)
