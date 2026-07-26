@@ -262,10 +262,11 @@ defmodule Cinder.Accounts do
   end
 
   @doc """
-  Activates a pending account. The write and audit row commit together; the
-  `{:account_activated, user}` broadcast fires post-commit so `PendingApprovalLive` (the
-  waiting user's own tab) and `DashboardLive` (the pending-accounts count) never see it
-  before it's durable.
+  Activates a pending account. The write and audit row commit together; post-commit (never
+  mid-transaction) the `{:account_activated, user}` PubSub broadcast reaches an open tab
+  (`PendingApprovalLive`, `DashboardLive`'s pending count) and the matching `Notifier` event
+  tells the user out-of-band (an email) that they've been let in — mirroring
+  `announce_pending_user/1`.
   """
   def activate_user(%User{} = actor, %User{} = target) do
     actor
@@ -280,7 +281,10 @@ defmodule Cinder.Accounts do
           Repo.rollback(:not_pending)
       end
     end)
-    |> tap_ok(&broadcast({:account_activated, &1}))
+    |> tap_ok(fn user ->
+      broadcast({:account_activated, user})
+      Notifier.notify({:account_activated, user})
+    end)
   end
 
   @doc "Deletes a pending account through the audited, last-admin-safe user deletion path."

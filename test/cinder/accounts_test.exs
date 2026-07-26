@@ -587,6 +587,15 @@ defmodule Cinder.AccountsTest do
       assert audit.detail["active"] == true
     end
 
+    test "activate_user/2 emits an :account_activated notifier event post-commit" do
+      Cinder.TestNotifier.subscribe()
+      actor = admin_fixture()
+      pending = user_fixture() |> Ecto.Changeset.change(active: false) |> Repo.update!()
+
+      assert {:ok, %User{id: id, active: true}} = Accounts.activate_user(actor, pending)
+      assert_receive {:notify, {:account_activated, %User{id: ^id}}}
+    end
+
     test "delete_pending_user/2 deletes through the audited user-deletion path" do
       actor = admin_fixture()
       pending = user_fixture() |> Ecto.Changeset.change(active: false) |> Repo.update!()
