@@ -51,18 +51,25 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
 
     series = series_fixture()
     season = season_fixture(series)
+    primary = "/tv/S (2020)/Season 01/S (2020) - S01E15.mkv"
+    part = "/tv/S (2020)/Season 01/S (2020) - S01E16.mkv"
 
     episode =
-      episode_fixture(season, %{file_path: "/tv/S (2020)/Season 01/S (2020) - S01E01.mkv"})
+      episode_fixture(season, %{file_path: primary, part_file_paths: [part]})
 
-    stub(Cinder.Library.MediaInfoMock, :probe, fn _ ->
-      {:ok, %{audio: ["ja"], subtitles: ["en"]}}
+    expect(Cinder.Library.MediaInfoMock, :probe, 2, fn
+      ^primary -> {:ok, %{audio: ["ja"], subtitles: ["en"]}}
+      ^part -> {:ok, %{audio: ["en"], subtitles: ["fr"]}}
     end)
 
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
 
     stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
-      {:ok, [{"/tv/S (2020)/Season 01/S (2020) - S01E01.fr.srt", 10}]}
+      {:ok,
+       [
+         {"/tv/S (2020)/Season 01/S (2020) - S01E15.fr.srt", 10},
+         {"/tv/S (2020)/Season 01/S (2020) - S01E16.de.srt", 10}
+       ]}
     end)
 
     stub(Cinder.Library.FilesystemMock, :lstat, fn _ -> {:ok, %File.Stat{}} end)
@@ -73,9 +80,9 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
     Backfill.run()
 
     e = Repo.get!(Episode, episode.id)
-    assert e.imported_audio_languages == ["ja"]
-    assert e.imported_embedded_subtitles == ["en"]
-    assert e.imported_sidecar_subtitles == ["fr"]
+    assert e.imported_audio_languages == ["ja", "en"]
+    assert e.imported_embedded_subtitles == ["en", "fr"]
+    assert e.imported_sidecar_subtitles == ["fr", "de"]
   end
 
   test "re-registers an existing damaged row's sidecars as managed in the subtitle manifest (issue #128)" do

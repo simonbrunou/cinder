@@ -24,28 +24,46 @@ defmodule Cinder.Library.Backfill do
   end
 
   defp backfill_one(record) do
-    info = %{
-      sidecar_subtitles:
-        record.file_path |> Sidecars.files() |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
-    }
+    sidecars =
+      Enum.map(file_paths(record), fn path ->
+        {path, path |> Sidecars.files() |> Enum.map(&elem(&1, 1)) |> Enum.uniq()}
+      end)
 
     info =
-      case probe(record.file_path) do
-        {:ok, %{audio: a, subtitles: s}} ->
-          Map.merge(info, %{audio_languages: a, embedded_subtitles: s})
+      Enum.reduce(file_paths(record), empty_info(sidecars), fn path, info ->
+        case probe(path) do
+          {:ok, %{audio: audio, subtitles: subtitles}} ->
+            info
+            |> Map.update!(:audio_languages, &Enum.uniq(&1 ++ audio))
+            |> Map.update!(:embedded_subtitles, &Enum.uniq(&1 ++ subtitles))
 
-        _ ->
-          Map.merge(info, %{audio_languages: [], embedded_subtitles: []})
-      end
+          _ ->
+            info
+        end
+      end)
 
     case Catalog.set_media_info(record, info) do
       {:ok, _} ->
-        Subtitles.mark_release_sidecars(record.file_path, info.sidecar_subtitles)
+        Enum.each(sidecars, fn {path, languages} ->
+          Subtitles.mark_release_sidecars(path, languages)
+        end)
+
         :ok
 
       {:error, e} ->
         Logger.warning("backfill failed for #{record.file_path}: #{inspect(e)}")
     end
+  end
+
+  defp file_paths(%Episode{} = episode), do: Episode.file_paths(episode)
+  defp file_paths(%Movie{file_path: path}), do: [path]
+
+  defp empty_info(sidecars) do
+    %{
+      audio_languages: [],
+      embedded_subtitles: [],
+      sidecar_subtitles: sidecars |> Enum.flat_map(&elem(&1, 1)) |> Enum.uniq()
+    }
   end
 
   defp probe(path) do

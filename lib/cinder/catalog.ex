@@ -329,6 +329,9 @@ defmodule Cinder.Catalog do
   @doc "Episodes with an imported file, season+series+scene-coordinates preloaded (subtitle-fetch candidates)."
   defdelegate list_episodes_with_file(), to: SeriesCatalog
 
+  @doc false
+  def get_episode_by_id(id), do: Repo.get(Episode, id)
+
   # --- pipeline state matrix -----------------------------------------------------------------
   #
   # The legal from→to graph for movie pipeline transitions, inventoried from every real (lib/)
@@ -1050,15 +1053,21 @@ defmodule Cinder.Catalog do
 
   defp deletion_audit_detail(deleted, true, unlink_results) do
     failed = for {path, {:error, reason}} <- unlink_results, do: "#{path}: #{inspect(reason)}"
+    file_paths = Enum.map(unlink_results, &elem(&1, 0))
 
     if failed == [] do
-      %{title: deleted.title, files_deleted: true}
+      %{title: deleted.title, files_deleted: true, file_paths: file_paths}
     else
       Logger.warning(
         "#{inspect(deleted.__struct__)} #{deleted.id} delete: #{length(failed)} file(s) left on disk: #{inspect(failed)}"
       )
 
-      %{title: deleted.title, files_deleted: false, failed_unlinks: failed}
+      %{
+        title: deleted.title,
+        files_deleted: false,
+        file_paths: file_paths,
+        failed_unlinks: failed
+      }
     end
   end
 

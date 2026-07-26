@@ -137,7 +137,12 @@ defmodule Cinder.Library.Adoption do
   defp series_candidate({{directory, directory_name}, entries}) do
     paths = entries |> Enum.map(&elem(&1, 0)) |> Enum.sort()
     parsed = parse_directory(directory_name)
-    files = Enum.map(paths, &parse_episode_file/1)
+
+    files =
+      paths
+      |> Enum.map(&parse_episode_file/1)
+      |> Enum.with_index(1)
+      |> Enum.map(fn {file, id} -> Map.put(file, :id, id) end)
 
     parsed
     |> candidate_base(:series, directory, paths)
@@ -204,10 +209,10 @@ defmodule Cinder.Library.Adoption do
 
   defp identify_tagged_series(candidate, tmdb_id) do
     case fetch_series_tree(tmdb_id) do
-      {:ok, info, episode_keys} ->
+      {:ok, info, episode_options} ->
         candidate
         |> Map.put(:match, info)
-        |> put_episode_matches(episode_keys)
+        |> put_episode_matches(episode_options)
 
       {:error, reason} ->
         %{candidate | status: :unmatched, reason: {:tmdb_details_failed, reason}}
@@ -249,11 +254,11 @@ defmodule Cinder.Library.Adoption do
 
   defp put_series_match(candidate, match, results) do
     case fetch_series_tree(match.tmdb_id) do
-      {:ok, _info, episode_keys} ->
+      {:ok, _info, episode_options} ->
         candidate
         |> Map.put(:match, match)
         |> Map.put(:candidates, top_candidates(results))
-        |> put_episode_matches(episode_keys)
+        |> put_episode_matches(episode_options)
 
       {:error, reason} ->
         %{
@@ -357,6 +362,8 @@ defmodule Cinder.Library.Adoption do
         episode_numbers: parsed.episodes,
         status: :pending,
         mappings: [],
+        part_candidates: [],
+        part_of: nil,
         reason: nil
       }
     else
@@ -366,6 +373,8 @@ defmodule Cinder.Library.Adoption do
         episode_numbers: [],
         status: :unmatched,
         mappings: [],
+        part_candidates: [],
+        part_of: nil,
         reason: :episode_number_not_found
       }
     end
@@ -378,17 +387,27 @@ defmodule Cinder.Library.Adoption do
     end)
   end
 
-  defp put_episode_matches(candidate, episode_keys) do
-    files = resolve_episode_files(candidate.files, episode_keys)
+  defp put_episode_matches(candidate, episode_options) do
+    files = resolve_episode_files(candidate.files, episode_options)
 
-    if Enum.any?(files, &(&1.status == :matched)) do
-      %{candidate | status: :auto_matched, files: files}
-    else
-      %{candidate | status: :unmatched, files: files, reason: :no_matched_episodes}
+    cond do
+      Enum.any?(files, &(&1.status == :matched)) ->
+        %{candidate | status: :auto_matched, files: files}
+
+      Enum.any?(files, &(Map.get(&1, :part_candidates, []) != [])) ->
+        %{candidate | status: :auto_matched, files: files}
+
+      true ->
+        %{candidate | status: :unmatched, files: files, reason: :no_matched_episodes}
     end
   end
 
-  defp resolve_episode_files(files, episode_keys) do
+  defp resolve_episode_files(files, episode_options) do
+    episode_keys =
+      MapSet.new(episode_options, &{&1.season_number, &1.episode_number})
+
+    options_by_season = Enum.group_by(episode_options, & &1.season_number)
+
     Enum.map(files, fn
       %{status: :unmatched} = file ->
         file
@@ -407,11 +426,22 @@ defmodule Cinder.Library.Adoption do
         if missing == [] do
           %{file | status: :matched, mappings: mappings, reason: nil}
         else
-          %{file | status: :unmatched, mappings: [], reason: {:episode_not_found, missing}}
+          %{
+            file
+            | status: :unmatched,
+              mappings: [],
+              part_candidates: part_candidates(file, options_by_season),
+              reason: {:episode_not_found, missing}
+          }
         end
     end)
     |> demote_duplicate_claims()
   end
+
+  defp part_candidates(%{episode_numbers: [_], season_number: season}, options_by_season),
+    do: Map.get(options_by_season, season, [])
+
+  defp part_candidates(_file, _options_by_season), do: []
 
   # Two files claiming the same episode is exactly the ambiguity adoption must never
   # resolve by guessing (last-write-wins would silently pick one) — hold every claimant
@@ -452,13 +482,17 @@ defmodule Cinder.Library.Adoption do
   defp fetch_series_tree(tmdb_id) do
     with {:ok, info} <- tmdb().get_series(tmdb_id),
          {:ok, seasons} <- fetch_seasons(tmdb_id, info.seasons) do
-      keys =
+      episode_options =
         for season <- seasons,
-            episode <- season.episodes,
-            into: MapSet.new(),
-            do: {season.season_number, episode.episode_number}
+            episode <- season.episodes do
+          %{
+            season_number: season.season_number,
+            episode_number: episode.episode_number,
+            title: episode.title
+          }
+        end
 
-      {:ok, info, keys}
+      {:ok, info, episode_options}
     end
   end
 
@@ -528,7 +562,7 @@ defmodule Cinder.Library.Adoption do
     files =
       candidate
       |> Map.get(:files, [])
-      |> Enum.filter(&(&1.status in [:matched, :pending]))
+      |> Enum.filter(&(&1.status in [:matched, :pending, :part]))
       |> Enum.reject(&managed?(managed, &1.path))
 
     with true <- candidate.status in [:auto_matched, :ambiguous],
@@ -577,13 +611,36 @@ defmodule Cinder.Library.Adoption do
           into: %{},
           do: {{season.season_number, episode.episode_number}, episode}
 
+    {normal_files, part_files} = Enum.split_with(files, &(&1.status != :part))
+
+    {count, paths, written} =
+      Enum.reduce(normal_files, {0, [], MapSet.new()}, &adopt_episode_file(&1, episodes, &2))
+
     {count, paths, _written} =
-      Enum.reduce(files, {0, [], MapSet.new()}, &adopt_episode_file(&1, episodes, &2))
+      Enum.reduce(part_files, {count, paths, written}, &adopt_episode_file(&1, episodes, &2))
 
     {count, paths}
   end
 
   defp adopt_episode_files(_files, _missing_series), do: {0, []}
+
+  defp adopt_episode_file(
+         %{
+           status: :part,
+           part_of: %{season_number: season_number, episode_number: episode_number}
+         } = file,
+         episodes,
+         {count, paths, written}
+       ) do
+    episode = Map.get(episodes, {season_number, episode_number})
+
+    case write_episode_part(episode, file.path) do
+      :ok -> {count + 1, [file.path | paths], written}
+      :skipped -> {count, paths, written}
+    end
+  end
+
+  defp adopt_episode_file(%{status: :part}, _episodes, acc), do: acc
 
   defp adopt_episode_file(file, episodes, {count, paths, written}) do
     keys = Enum.map(file.episode_numbers, &{file.season_number, &1})
@@ -619,6 +676,30 @@ defmodule Cinder.Library.Adoption do
 
   defp write_episode_path(_episode, _path, count), do: count
 
+  defp write_episode_part(%Episode{id: id}, path) do
+    id
+    |> Catalog.get_episode_by_id()
+    |> append_episode_part(path)
+  end
+
+  defp write_episode_part(_episode, _path), do: :skipped
+
+  defp append_episode_part(%Episode{file_path: primary} = episode, path)
+       when primary not in [nil, ""] do
+    parts = episode.part_file_paths || []
+
+    if path in parts do
+      :skipped
+    else
+      case Catalog.transition_episode(episode, %{part_file_paths: parts ++ [path]}) do
+        {:ok, _episode} -> :ok
+        {:error, _reason} -> :skipped
+      end
+    end
+  end
+
+  defp append_episode_part(_episode, _path), do: :skipped
+
   defp maybe_add_path(paths, path, updates) when updates > 0, do: [path | paths]
   defp maybe_add_path(paths, _path, _updates), do: paths
 
@@ -628,7 +709,7 @@ defmodule Cinder.Library.Adoption do
 
   defp managed_paths do
     movie_paths = Catalog.list_movies() |> Enum.map(& &1.file_path)
-    episode_paths = Catalog.list_episodes_with_file() |> Enum.map(& &1.file_path)
+    episode_paths = Catalog.list_episodes_with_file() |> Enum.flat_map(&Episode.file_paths/1)
 
     (movie_paths ++ episode_paths)
     |> Enum.reject(&(&1 in [nil, ""]))

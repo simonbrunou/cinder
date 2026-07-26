@@ -797,7 +797,7 @@ defmodule Cinder.CatalogAdminTest do
   describe "delete_episode_file/3" do
     setup :verify_on_exit!
 
-    defp episode_with_file!(path) do
+    defp episode_with_file!(path, part_file_paths \\ []) do
       series =
         Repo.insert!(%Series{
           tmdb_id: System.unique_integer([:positive]),
@@ -812,7 +812,8 @@ defmodule Cinder.CatalogAdminTest do
           season_id: season.id,
           episode_number: 1,
           monitored: true,
-          file_path: path
+          file_path: path,
+          part_file_paths: part_file_paths
         })
 
       {series, ep}
@@ -826,6 +827,25 @@ defmodule Cinder.CatalogAdminTest do
       assert {:ok, updated} = Catalog.delete_episode_file(ep, nil)
       assert is_nil(updated.file_path)
       assert updated.monitored == true
+    end
+
+    test "unlinks every part file, clears all paths, and records them in the audit" do
+      paths = ["/tmp/ep.mkv", "/tmp/ep-part-2.mkv", "/tmp/ep-part-3.mkv"]
+      {_series, ep} = episode_with_file!(hd(paths), tl(paths))
+
+      expect(Cinder.Library.FilesystemMock, :rm, 3, fn path ->
+        assert path in paths
+        :ok
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+      assert {:ok, updated} = Catalog.delete_episode_file(ep, nil)
+      assert updated.file_path == nil
+      assert updated.part_file_paths == []
+
+      audit = Repo.one!(Cinder.Audit.AdminAudit)
+      assert audit.detail["file_paths"] == paths
     end
 
     test "clears every episode that shares the deleted multi-episode file" do

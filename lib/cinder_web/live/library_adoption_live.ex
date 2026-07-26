@@ -115,15 +115,25 @@ defmodule CinderWeb.LibraryAdoptionLive do
   defp confirmed_candidates(candidates, params) do
     selected = params |> Map.get("selected", []) |> List.wrap() |> parse_ids()
     chosen = Map.get(params, "chosen", %{})
+    parts = Map.get(params, "parts", %{})
 
-    Enum.flat_map(candidates, &confirm_candidate(&1, selected, chosen))
+    Enum.flat_map(candidates, &confirm_candidate(&1, selected, chosen, parts))
   end
 
-  defp confirm_candidate(%{status: :auto_matched, id: id} = candidate, selected, _chosen) do
-    if MapSet.member?(selected, id), do: [candidate], else: []
+  defp confirm_candidate(
+         %{status: :auto_matched, id: id} = candidate,
+         selected,
+         _chosen,
+         parts
+       ) do
+    if MapSet.member?(selected, id) do
+      [put_part_choices(candidate, candidate_choices(parts, id))]
+    else
+      []
+    end
   end
 
-  defp confirm_candidate(%{status: :ambiguous, id: id} = candidate, _selected, chosen)
+  defp confirm_candidate(%{status: :ambiguous, id: id} = candidate, _selected, chosen, _parts)
        when is_map(chosen) do
     case parse_id(Map.get(chosen, to_string(id))) do
       nil -> []
@@ -131,7 +141,33 @@ defmodule CinderWeb.LibraryAdoptionLive do
     end
   end
 
-  defp confirm_candidate(_candidate, _selected, _chosen), do: []
+  defp confirm_candidate(_candidate, _selected, _chosen, _parts), do: []
+
+  defp candidate_choices(parts, candidate_id) when is_map(parts) do
+    case Map.get(parts, to_string(candidate_id), %{}) do
+      choices when is_map(choices) -> choices
+      _ -> %{}
+    end
+  end
+
+  defp candidate_choices(_parts, _candidate_id), do: %{}
+
+  defp put_part_choices(candidate, choices) do
+    files =
+      Enum.map(Map.get(candidate, :files, []), fn file ->
+        target = parse_id(Map.get(choices, to_string(Map.get(file, :id))))
+
+        case Enum.find(Map.get(file, :part_candidates, []), &(&1.episode_number == target)) do
+          nil ->
+            file
+
+          part_of ->
+            %{file | status: :part, part_of: Map.take(part_of, [:season_number, :episode_number])}
+        end
+      end)
+
+    Map.put(candidate, :files, files)
+  end
 
   defp parse_ids(values) do
     values
@@ -169,6 +205,11 @@ defmodule CinderWeb.LibraryAdoptionLive do
        do: Episode.codes_label(season, episodes)
 
   defp file_label(_file), do: gettext("No episode number")
+
+  defp part_label(part) do
+    code = Episode.code(part.season_number, part.episode_number)
+    if part.title in [nil, ""], do: code, else: "#{code} · #{part.title}"
+  end
 
   defp reason_text({:episode_not_found, _missing}),
     do: gettext("The parsed episode does not exist in TMDB.")
@@ -282,13 +323,36 @@ defmodule CinderWeb.LibraryAdoptionLive do
                 </label>
 
                 <ul :if={candidate.kind == :series} class="space-y-1 text-sm">
-                  <li :for={file <- candidate.files} class="flex flex-wrap gap-x-2">
-                    <span class="font-mono">{Path.basename(file.path)}</span>
-                    <span class="text-base-content/60">{file_label(file)}</span>
-                    <span :if={file.status == :matched} class="text-success">{gettext("Matched")}</span>
-                    <span :if={file.status == :unmatched} class="text-warning">
-                      {gettext("Held: %{reason}", reason: reason_text(file.reason))}
-                    </span>
+                  <li :for={file <- candidate.files} class="space-y-1">
+                    <div class="flex flex-wrap gap-x-2">
+                      <span class="font-mono">{Path.basename(file.path)}</span>
+                      <span class="text-base-content/60">{file_label(file)}</span>
+                      <span :if={file.status == :matched} class="text-success">
+                        {gettext("Matched")}
+                      </span>
+                      <span :if={file.status == :unmatched} class="text-warning">
+                        {gettext("Held: %{reason}", reason: reason_text(file.reason))}
+                      </span>
+                    </div>
+                    <label
+                      :if={Map.get(file, :part_candidates, []) != []}
+                      class="flex flex-wrap items-center gap-2 text-sm"
+                    >
+                      <span>{gettext("Needs confirmation")}</span>
+                      <select
+                        id={"part-assignment-#{candidate.id}-#{file.id}"}
+                        name={"adoption[parts][#{candidate.id}][#{file.id}]"}
+                        class="select select-sm select-bordered"
+                      >
+                        <option value="">{gettext("Held")}</option>
+                        <option
+                          :for={part <- file.part_candidates}
+                          value={part.episode_number}
+                        >
+                          {part_label(part)}
+                        </option>
+                      </select>
+                    </label>
                   </li>
                 </ul>
               </div>

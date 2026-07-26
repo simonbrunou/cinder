@@ -21,6 +21,7 @@ defmodule Cinder.Catalog.Episode do
     field :air_date, :date
     field :monitored, :boolean, default: true
     field :file_path, :string
+    field :part_file_paths, {:array, :string}, default: []
     field :search_attempts, :integer, default: 0
     field :imported_resolution, :string
     field :imported_size, :integer
@@ -83,6 +84,7 @@ defmodule Cinder.Catalog.Episode do
     episode
     |> cast(attrs, [
       :file_path,
+      :part_file_paths,
       :grab_id,
       :search_attempts,
       :imported_resolution,
@@ -118,6 +120,13 @@ defmodule Cinder.Catalog.Episode do
       :imported_embedded_subtitles,
       :imported_sidecar_subtitles
     ])
+  end
+
+  @doc "All library files belonging to an episode, primary first."
+  def file_paths(%__MODULE__{file_path: primary, part_file_paths: parts}) do
+    [primary | parts || []]
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.uniq()
   end
 
   @doc """

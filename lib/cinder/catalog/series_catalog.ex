@@ -286,13 +286,14 @@ defmodule Cinder.Catalog.SeriesCatalog do
   end
 
   defp episode_file_paths_for_series(series_id) do
-    Repo.all(
-      from e in Episode,
-        join: s in Season,
-        on: s.id == e.season_id,
-        where: s.series_id == ^series_id and not is_nil(e.file_path),
-        select: e.file_path
+    from(e in Episode,
+      join: s in Season,
+      on: s.id == e.season_id,
+      where: s.series_id == ^series_id and not is_nil(e.file_path)
     )
+    |> Repo.all()
+    |> Enum.flat_map(&Episode.file_paths/1)
+    |> Enum.uniq()
   end
 
   defp episode_ids_for_series(series_id) do
@@ -1030,19 +1031,32 @@ defmodule Cinder.Catalog.SeriesCatalog do
   def delete_episode_file(%Episode{} = episode, actor, opts) do
     unmonitor? = Keyword.get(opts, :unmonitor, false)
 
-    with :ok <- Cinder.Library.delete_file(episode.file_path),
-         {:ok, updated} <- do_delete_episode_file_txn(episode, actor, unmonitor?) do
+    with {:ok, file_paths} <- unlink_episode_files(episode),
+         {:ok, updated} <- do_delete_episode_file_txn(episode, actor, unmonitor?, file_paths) do
       Cinder.Catalog.broadcast_series(series_id_for_season(updated.season_id))
       {:ok, updated}
     end
   end
 
-  defp do_delete_episode_file_txn(episode, actor, unmonitor?) do
+  defp unlink_episode_files(episode) do
+    results =
+      Enum.map(Episode.file_paths(episode), fn path ->
+        {path, Cinder.Library.delete_file(path)}
+      end)
+
+    case Enum.find(results, fn {_path, result} -> result != :ok end) do
+      nil -> {:ok, Enum.map(results, &elem(&1, 0))}
+      {_path, {:error, reason}} -> {:error, reason}
+    end
+  end
+
+  defp do_delete_episode_file_txn(episode, actor, unmonitor?, file_paths) do
     Repo.transaction(fn ->
       changeset =
         episode
         |> Episode.transition_changeset(%{
           file_path: nil,
+          part_file_paths: [],
           # Zero the counter so a previously search-parked episode really is
           # re-grabbed next tick, as the docstring promises.
           search_attempts: 0,
@@ -1061,6 +1075,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
           clear_shared_file_paths(episode.file_path)
 
           Cinder.Audit.log_or_rollback(actor, :delete_episode_file, updated, %{
+            file_paths: file_paths,
             unmonitored: unmonitor?
           })
 
@@ -1078,6 +1093,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
     Repo.update_all(from(e in Episode, where: e.file_path == ^path),
       set: [
         file_path: nil,
+        part_file_paths: [],
         search_attempts: 0,
         imported_resolution: nil,
         imported_size: nil,
@@ -1116,27 +1132,42 @@ defmodule Cinder.Catalog.SeriesCatalog do
     episodes =
       Repo.all(from e in Episode, where: e.season_id == ^season.id and not is_nil(e.file_path))
 
-    results = Enum.map(episodes, fn ep -> {ep, Cinder.Library.delete_file(ep.file_path)} end)
-    cleared_ids = for {ep, :ok} <- results, do: ep.id
-    failed_count = Enum.count(results, fn {_ep, r} -> r != :ok end)
+    results =
+      Enum.map(episodes, fn episode ->
+        unlink_results =
+          Enum.map(Episode.file_paths(episode), fn path ->
+            {path, Cinder.Library.delete_file(path)}
+          end)
 
-    for {ep, {:error, reason}} <- results do
-      Logger.warning(
-        "library file delete failed for #{inspect(ep.file_path)}: #{inspect(reason)}"
-      )
+        {episode, unlink_results}
+      end)
+
+    for {_episode, unlink_results} <- results,
+        {path, {:error, reason}} <- unlink_results do
+      Logger.warning("library file delete failed for #{inspect(path)}: #{inspect(reason)}")
     end
 
-    with {:ok, _} <- do_delete_season_files_txn(season, actor, cleared_ids, unmonitor?) do
+    {cleared, failed} =
+      Enum.split_with(results, fn {_episode, unlink_results} ->
+        Enum.all?(unlink_results, fn {_path, result} -> result == :ok end)
+      end)
+
+    cleared_ids = Enum.map(cleared, fn {episode, _results} -> episode.id end)
+    file_paths = Enum.flat_map(results, fn {_episode, paths} -> Enum.map(paths, &elem(&1, 0)) end)
+
+    with {:ok, _} <-
+           do_delete_season_files_txn(season, actor, cleared_ids, file_paths, unmonitor?) do
       Cinder.Catalog.broadcast_series(season.series_id)
-      {:ok, length(cleared_ids), failed_count}
+      {:ok, length(cleared_ids), length(failed)}
     end
   end
 
-  defp do_delete_season_files_txn(season, actor, cleared_ids, unmonitor?) do
+  defp do_delete_season_files_txn(season, actor, cleared_ids, file_paths, unmonitor?) do
     Repo.transaction(fn ->
       sets =
         [
           file_path: nil,
+          part_file_paths: [],
           # Zero the counter so previously search-parked episodes really are
           # re-grabbed next tick, as the docstring promises.
           search_attempts: 0,
@@ -1154,6 +1185,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
 
       Cinder.Audit.log_or_rollback(actor, :delete_season_files, season, %{
         count: length(cleared_ids),
+        file_paths: file_paths,
         unmonitored: unmonitor?
       })
 
