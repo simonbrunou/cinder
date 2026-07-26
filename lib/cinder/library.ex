@@ -763,17 +763,51 @@ defmodule Cinder.Library do
   # {episode, source_path, size} triples for files that name a specific episode in the grab. A
   # double-episode file yields two entries; `link_all/4` groups them back to one library file.
   defp match_episodes(videos, episodes) do
-    for {path, size} <- videos,
-        parsed = Parser.parse(Path.basename(path)),
-        not is_nil(parsed.episodes),
-        ep <- episodes,
-        episode_matches?(ep, parsed),
-        do: {ep, path, size}
+    matches =
+      for {path, size} <- videos,
+          parsed = Parser.parse(Path.basename(path)),
+          not is_nil(parsed.episodes),
+          ep <- episodes,
+          arm = match_arm(ep, parsed),
+          do: {ep, path, size, arm}
+
+    matches
+    |> Enum.group_by(fn {_ep, path, _size, _arm} -> path end)
+    |> Enum.flat_map(&single_arm_claims/1)
   end
 
-  defp episode_matches?(episode, parsed) do
-    (episode.season.season_number == parsed.season and
-       episode.episode_number in parsed.episodes) or scene_coordinate_matches?(episode, parsed)
+  # Never guess: a file claimed through both native and bridged (scene) numbering means an
+  # alternate-season value shadows another episode's native code inside this grab — ambiguous,
+  # so leave it unmatched (logged, parks) rather than file one source onto two episodes.
+  defp single_arm_claims({path, claims}) do
+    case claims |> Enum.map(fn {_ep, _p, _size, arm} -> arm end) |> Enum.uniq() do
+      [_one_arm] ->
+        Enum.map(claims, fn {ep, p, size, _arm} -> {ep, p, size} end)
+
+      _both ->
+        Logger.warning(
+          "import: #{Path.basename(path)} matches different episodes via native and " <>
+            "alternate numbering; leaving unmatched"
+        )
+
+        []
+    end
+  end
+
+  # An episode claims a parsed file through exactly one arm: its native TMDB numbering, or a
+  # persisted alternate-season ("scene") coordinate bridged at import. nil = no claim.
+  defp match_arm(episode, parsed) do
+    cond do
+      episode.season.season_number == parsed.season and
+          episode.episode_number in parsed.episodes ->
+        :native
+
+      scene_coordinate_matches?(episode, parsed) ->
+        :scene
+
+      true ->
+        nil
+    end
   end
 
   defp scene_coordinate_matches?(%Episode{episode_coordinates: coordinates}, parsed)

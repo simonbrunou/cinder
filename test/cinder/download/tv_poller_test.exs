@@ -1376,6 +1376,56 @@ defmodule Cinder.Download.TvPollerTest do
     assert Catalog.blocked_release_titles_for_series(series.id) == [title]
   end
 
+  # Never-guess: a scene coordinate that shadows another episode's native code inside one grab
+  # makes the file ambiguous — it must park, not be filed onto both episodes.
+  test "a file claimed via both native and alternate numbering parks instead of double-filing" do
+    series =
+      series_fixture(%{
+        title: "Shadow",
+        monitor_strategy: :all,
+        media_profile: :standard,
+        scene_numbering_group_id: "shadow-group"
+      })
+
+    season1 = season_fixture(series, %{season_number: 1})
+    season2 = season_fixture(series, %{season_number: 2})
+    bridged = episode(season1, 29)
+    native = episode(season2, 1)
+
+    assert {:ok, _} =
+             Identity.replace_provider_coordinates(series, "tmdb", "shadow-group", "scene", [
+               %{
+                 scheme: "scene",
+                 canonical_value: Episode.code(2, 1),
+                 precedence: :inferred,
+                 episode_ids: [bridged.id]
+               }
+             ])
+
+    title = "Shadow.S02E01.1080p.WEB-DL-GRP"
+    {:ok, grab} = Catalog.create_grab("hash-shadow", :torrent, [bridged.id, native.id], title)
+    {:ok, _} = Catalog.mark_grab_downloaded(grab, "/dl/pack")
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok, [{"/dl/pack/Shadow.S02E01.1080p.mkv", 3_000_000_000}]}
+    end)
+
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    refute Repo.get(Grab, grab.id)
+
+    for id <- [bridged.id, native.id] do
+      ep = Repo.get!(Episode, id)
+      assert ep.file_path == nil
+      assert ep.grab_id == nil
+    end
+
+    assert Catalog.blocked_release_titles_for_series(series.id) == [title]
+  end
+
   test "searches an explicitly monitored Standard S00 special and grabs the matching release (Sonarr parity)" do
     {series, _season} = series_tree()
     specials = season_fixture(series, %{season_number: 0})
