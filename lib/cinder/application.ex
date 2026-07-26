@@ -17,6 +17,9 @@ defmodule Cinder.Application do
         {Phoenix.PubSub, name: Cinder.PubSub},
         # Owns cancellable outbound HTTP requests so wall-clock deadlines never link-crash callers.
         {Task.Supervisor, name: Cinder.HTTPPolicy.TaskSupervisor},
+        # Owns notifier deliveries so a slow transport (e.g. SMTP) runs off the emitting pipeline's
+        # critical path instead of wedging a poller tick (Cinder.Notifier.Dispatcher).
+        {Task.Supervisor, name: Cinder.Notifier.TaskSupervisor},
         # Off-tick, best-effort subtitle fetches dispatched from the import path — serialized through
         # one process so a bulk import can't burst OpenSubtitles into rate-limiting it (issue #80).
         # Always on; inert when subtitles off.
