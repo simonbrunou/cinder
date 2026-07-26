@@ -78,6 +78,45 @@ defmodule Cinder.Library.AdoptionTest do
     refute Enum.any?(candidates, &(managed_tv in &1.paths))
   end
 
+  test "two files claiming the same episode are both held, never last-write-wins" do
+    dupe_a = "/tmp/cinder-test-tv-library/Test Show (2001)/Test.Show.S01E01.1080p.mkv"
+    dupe_b = "/tmp/cinder-test-tv-library/Test Show (2001)/Test.Show.S01E01.720p.mkv"
+    clean = "/tmp/cinder-test-tv-library/Test Show (2001)/Test.Show.S01E02.mkv"
+
+    stub_roots([], [{dupe_a, 10}, {dupe_b, 9}, {clean, 8}])
+
+    expect(Cinder.Catalog.TMDBMock, :search_tv, fn "Test Show", "en" ->
+      {:ok, [series_result(20, "Test Show", 2001)]}
+    end)
+
+    expect(Cinder.Catalog.TMDBMock, :get_series, fn 20 ->
+      {:ok,
+       series_result(20, "Test Show", 2001)
+       |> Map.merge(%{tvdb_id: 200, seasons: [%{season_number: 1}]})}
+    end)
+
+    expect(Cinder.Catalog.TMDBMock, :get_season, fn 20, 1, "en" ->
+      {:ok,
+       %{
+         season_number: 1,
+         episodes: [
+           %{tmdb_episode_id: 201, episode_number: 1, title: "One", air_date: ~D[2001-01-01]},
+           %{tmdb_episode_id: 202, episode_number: 2, title: "Two", air_date: ~D[2001-01-08]}
+         ]
+       }}
+    end)
+
+    assert [%{kind: :series, status: :auto_matched} = candidate] = Adoption.scan()
+
+    assert %{status: :matched} = Enum.find(candidate.files, &(&1.path == clean))
+
+    for path <- [dupe_a, dupe_b] do
+      assert %{status: :unmatched, reason: {:duplicate_episode_claim, [{1, 1}]}} =
+               Enum.find(candidate.files, &(&1.path == path)),
+             "expected #{path} to be held as a duplicate claim"
+    end
+  end
+
   test "a title or year near-miss is ambiguous" do
     path = "/tmp/cinder-test-library/Dune (2020)/Dune (2020).mkv"
     stub_roots([{path, 10}], [])

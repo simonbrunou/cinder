@@ -418,6 +418,24 @@ defmodule Cinder.CatalogTvPipelineTest do
       refute imported.id in wanted_ids()
     end
 
+    test "a Standard S00 episode numbered 0 is never wanted (unparseable, would search futilely)" do
+      series = series_fixture()
+      specials = season_fixture(series, %{season_number: 0})
+
+      zero = episode(specials, %{episode_number: 0, monitored: true})
+      regular_special = episode(specials, %{episode_number: 1, monitored: true})
+
+      refute zero.id in wanted_ids()
+      assert regular_special.id in wanted_ids()
+
+      profile = %{effective: :standard}
+      zero = Repo.preload(zero, :season)
+      regular_special = Repo.preload(regular_special, :season)
+
+      refute Catalog.episode_searchable?(zero, profile)
+      assert Catalog.episode_searchable?(regular_special, profile)
+    end
+
     test "new provider-classified specials default unmonitored and refresh preserves an operator toggle" do
       tmdb_id = System.unique_integer([:positive])
       calls = start_supervised!({Agent, fn -> 0 end})

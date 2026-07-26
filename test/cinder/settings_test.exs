@@ -740,14 +740,14 @@ defmodule Cinder.SettingsTest do
 
     test "smtp_ssl: unset ⇒ false; stored true overlays; cleared reverts to false" do
       Settings.load_into_env()
-      assert Application.get_env(:cinder, Cinder.Mailer)[:ssl] == "false"
+      assert Application.get_env(:cinder, Cinder.Mailer)[:ssl] == false
 
       Settings.save_form(%{"smtp_ssl" => "true", "media_server_type" => "jellyfin"})
-      assert Application.get_env(:cinder, Cinder.Mailer)[:ssl] == "true"
+      assert Application.get_env(:cinder, Cinder.Mailer)[:ssl] == true
       assert Settings.form_state().values["smtp_ssl"] == true
 
       Settings.save_form(%{"smtp_ssl" => "false", "media_server_type" => "jellyfin"})
-      assert Application.get_env(:cinder, Cinder.Mailer)[:ssl] == "false"
+      assert Application.get_env(:cinder, Cinder.Mailer)[:ssl] == false
       assert Settings.form_state().values["smtp_ssl"] == false
     end
   end

@@ -1239,7 +1239,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
       [e, s, series],
       (s.season_number > 0 and e.episode_number > 0) or
         (series.media_profile == :anime and e.classification in [:story_special, :recap]) or
-        (series.media_profile != :anime and s.season_number == 0)
+        (series.media_profile != :anime and s.season_number == 0 and e.episode_number > 0)
     )
   end
 
@@ -1261,7 +1261,9 @@ defmodule Cinder.Catalog.SeriesCatalog do
   defp episode_kind_wanted?(episode, season, profile) do
     regular? = season.season_number > 0 and episode.episode_number > 0
     special? = profile.effective == :anime and episode.classification in [:story_special, :recap]
-    standard_special? = profile.effective != :anime and season.season_number == 0
+
+    standard_special? =
+      profile.effective != :anime and season.season_number == 0 and episode.episode_number > 0
 
     regular? or special? or standard_special?
   end

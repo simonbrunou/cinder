@@ -5,18 +5,24 @@ defmodule Cinder.Repo.Migrations.AddMovieEpisodeCheckConstraints do
   # supported by ecto_sqlite3 either — see connection.ex's `column_change/2`), so a CHECK on an
   # already-existing column requires the full rebuild recipe from the SQLite docs ("Making Other
   # Kinds Of Table Schema Changes"): create the new table, copy the data across, drop the old
-  # table, rename the new one into place, then rebuild its indexes. Verified empirically (against
-  # a copy of the dev/test DB) that this works with `foreign_keys` enforcement left ON — dropping
-  # a *referenced* table doesn't itself trip FK enforcement (that only fires on
-  # insert/update/delete of the *referencing* row), so no pragma dance is needed; `PRAGMA
-  # foreign_key_check` after the rebuild is the belt-and-braces proof.
+  # table, rename the new one into place, then rebuild its indexes.
+  #
+  # CRITICAL: the rebuild MUST run with `PRAGMA foreign_keys = OFF`. With enforcement on,
+  # `DROP TABLE` performs an implicit `DELETE FROM` that FIRES `ON DELETE CASCADE` on every
+  # child table — here `title_aliases.movie_id`, `blocked_releases.movie_id`, and
+  # `episode_coordinate_memberships.episode_id` would be silently wiped on any populated DB
+  # (sqlite.org/lang_droptable.html; the docs' 12-step recipe requires the pragma for exactly
+  # this reason). The pragma is a no-op while a transaction is open, hence
+  # `@disable_ddl_transaction` + our own explicit BEGIN/COMMIT around the rebuild, with
+  # `PRAGMA foreign_key_check` inside the transaction as the integrity proof.
   #
   # This needs synchronous read-then-write (read the AUTOINCREMENT high-water mark, then use it in
   # a later statement in the same pass — see `rebuild_table/4`), which Ecto.Migration's queued
   # `execute/1` can't give an `up/0`/`down/0`-style migration (queued commands run only after the
   # callback returns), so — like `drop_episode_import_attempts.exs` — this runs raw DDL straight
-  # through the checked-out connection instead. Left wrapped in Ecto's default per-migration
-  # transaction (no `@disable_ddl_transaction`), so it's still all-or-nothing.
+  # through the checked-out connection instead.
+  @disable_ddl_transaction true
+  @disable_migration_lock true
 
   @movies_columns ~w(
     id tmdb_id title year poster_path status inserted_at updated_at imdb_id download_id
@@ -45,40 +51,38 @@ defmodule Cinder.Repo.Migrations.AddMovieEpisodeCheckConstraints do
 
   @movies_index_sqls [~s|CREATE UNIQUE INDEX "movies_tmdb_id_index" ON "movies" ("tmdb_id")|]
 
-  def up do
-    rebuild_table(
-      "movies",
-      @movies_columns,
-      movies_create_sql(checked?: true),
-      @movies_index_sqls
-    )
+  def up, do: rebuild_all(checked?: true)
 
-    rebuild_table(
-      "episodes",
-      @episodes_columns,
-      episodes_create_sql(checked?: true),
-      @episodes_index_sqls
-    )
+  def down, do: rebuild_all(checked?: false)
 
-    verify_foreign_keys!()
-  end
+  defp rebuild_all(checked?: checked?) do
+    query!("PRAGMA foreign_keys = OFF")
+    query!("BEGIN IMMEDIATE")
 
-  def down do
-    rebuild_table(
-      "movies",
-      @movies_columns,
-      movies_create_sql(checked?: false),
-      @movies_index_sqls
-    )
+    try do
+      rebuild_table(
+        "movies",
+        @movies_columns,
+        movies_create_sql(checked?: checked?),
+        @movies_index_sqls
+      )
 
-    rebuild_table(
-      "episodes",
-      @episodes_columns,
-      episodes_create_sql(checked?: false),
-      @episodes_index_sqls
-    )
+      rebuild_table(
+        "episodes",
+        @episodes_columns,
+        episodes_create_sql(checked?: checked?),
+        @episodes_index_sqls
+      )
 
-    verify_foreign_keys!()
+      verify_foreign_keys!()
+      query!("COMMIT")
+    rescue
+      exception ->
+        query!("ROLLBACK")
+        reraise exception, __STACKTRACE__
+    end
+
+    query!("PRAGMA foreign_keys = ON")
   end
 
   defp movies_create_sql(checked?: checked?) do

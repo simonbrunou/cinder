@@ -346,7 +346,44 @@ defmodule Cinder.Library.Adoption do
           %{file | status: :unmatched, mappings: [], reason: {:episode_not_found, missing}}
         end
     end)
+    |> demote_duplicate_claims()
   end
+
+  # Two files claiming the same episode is exactly the ambiguity adoption must never
+  # resolve by guessing (last-write-wins would silently pick one) — hold every claimant
+  # for the operator instead, mirroring the import pipeline's never-guess rule.
+  defp demote_duplicate_claims(files) do
+    duplicates =
+      files
+      |> Enum.filter(&(&1.status == :matched))
+      |> Enum.flat_map(fn file ->
+        Enum.map(file.mappings, &{&1.season_number, &1.episode_number})
+      end)
+      |> Enum.frequencies()
+      |> Enum.filter(fn {_key, claims} -> claims > 1 end)
+      |> MapSet.new(fn {key, _claims} -> key end)
+
+    if MapSet.size(duplicates) == 0 do
+      files
+    else
+      Enum.map(files, &demote_duplicate_file(&1, duplicates))
+    end
+  end
+
+  defp demote_duplicate_file(%{status: :matched} = file, duplicates) do
+    dupes =
+      file.mappings
+      |> Enum.map(&{&1.season_number, &1.episode_number})
+      |> Enum.filter(&MapSet.member?(duplicates, &1))
+
+    if dupes == [] do
+      file
+    else
+      %{file | status: :unmatched, mappings: [], reason: {:duplicate_episode_claim, dupes}}
+    end
+  end
+
+  defp demote_duplicate_file(file, _duplicates), do: file
 
   defp fetch_series_tree(tmdb_id) do
     with {:ok, info} <- tmdb().get_series(tmdb_id),
@@ -476,22 +513,28 @@ defmodule Cinder.Library.Adoption do
           into: %{},
           do: {{season.season_number, episode.episode_number}, episode}
 
-    Enum.reduce(files, {0, []}, &adopt_episode_file(&1, episodes, &2))
+    {count, paths, _written} =
+      Enum.reduce(files, {0, [], MapSet.new()}, &adopt_episode_file(&1, episodes, &2))
+
+    {count, paths}
   end
 
   defp adopt_episode_files(_files, _missing_series), do: {0, []}
 
-  defp adopt_episode_file(file, episodes, {count, paths}) do
-    mapped =
-      Enum.map(file.episode_numbers, &Map.get(episodes, {file.season_number, &1}))
+  defp adopt_episode_file(file, episodes, {count, paths, written}) do
+    keys = Enum.map(file.episode_numbers, &{file.season_number, &1})
+    mapped = Enum.map(keys, &Map.get(episodes, &1))
 
-    case adoptable_episode_file?(mapped, file.path) do
-      true ->
-        updates = Enum.reduce(mapped, 0, &write_episode_path(&1, file.path, &2))
-        {count + updates, maybe_add_path(paths, file.path, updates)}
+    # `written` re-guards within this run what demote_duplicate_claims/1 already holds at
+    # scan time: a key another file just claimed can never be silently overwritten.
+    if Enum.any?(keys, &MapSet.member?(written, &1)) or
+         not adoptable_episode_file?(mapped, file.path) do
+      {count, paths, written}
+    else
+      updates = Enum.reduce(mapped, 0, &write_episode_path(&1, file.path, &2))
 
-      false ->
-        {count, paths}
+      {count + updates, maybe_add_path(paths, file.path, updates),
+       MapSet.union(written, MapSet.new(keys))}
     end
   end
 

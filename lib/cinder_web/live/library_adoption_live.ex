@@ -173,6 +173,9 @@ defmodule CinderWeb.LibraryAdoptionLive do
   defp reason_text({:episode_not_found, _missing}),
     do: gettext("The parsed episode does not exist in TMDB.")
 
+  defp reason_text({:duplicate_episode_claim, _keys}),
+    do: gettext("Several files claim this episode; resolve the duplicates on disk first.")
+
   defp reason_text(:episode_number_not_found),
     do: gettext("No SxxEyy episode number was found.")
 

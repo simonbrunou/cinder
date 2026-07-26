@@ -27,6 +27,10 @@ defmodule CinderWeb.PendingApprovalLive do
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
+  # Client event frames are forgeable — ignore anything unrecognized rather than crash.
+  @impl true
+  def handle_event(_event, _params, socket), do: {:noreply, socket}
+
   defp maybe_subscribe(%{user: %{}}), do: Accounts.subscribe()
   defp maybe_subscribe(_scope), do: :ok
 

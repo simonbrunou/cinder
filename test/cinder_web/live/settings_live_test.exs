@@ -320,7 +320,7 @@ defmodule CinderWeb.SettingsLiveTest do
     assert Settings.get("smtp_host") == "smtp.example.com"
     assert Application.get_env(:cinder, Cinder.Mailer)[:relay] == "smtp.example.com"
     assert Application.get_env(:cinder, Cinder.Mailer)[:adapter] == Swoosh.Adapters.SMTP
-    assert Application.get_env(:cinder, Cinder.Mailer)[:ssl] == "true"
+    assert Application.get_env(:cinder, Cinder.Mailer)[:ssl] == true
 
     {:ok, _lv, html} = live(conn, ~p"/settings")
     refute html =~ "super-secret-password"

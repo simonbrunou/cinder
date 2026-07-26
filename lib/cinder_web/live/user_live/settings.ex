@@ -303,6 +303,9 @@ defmodule CinderWeb.UserLive.Settings do
     end)
   end
 
+  # Client event frames are forgeable — ignore anything unrecognized rather than crash.
+  def handle_event(_event, _params, socket), do: {:noreply, socket}
+
   # Per-event sudo recheck for the sensitive settings actions (email/password change, Plex
   # unlink). The mount-time :require_sudo_mode gate only covers the moment the socket connects;
   # a LiveView can stay open past the sudo window, so each sensitive event rechecks freshness

@@ -967,22 +967,46 @@ defmodule Cinder.Settings do
   defp apply_mailer(rows) do
     current = Application.get_env(:cinder, Cinder.Mailer, [])
     host = decoded_for(rows, @smtp_host_key)
+    smtp? = is_binary(host) and host != ""
 
     adapter =
-      if is_binary(host) and host != "" do
+      if smtp? do
         Swoosh.Adapters.SMTP
       else
         Keyword.get(base(Cinder.Mailer), :adapter)
       end
 
-    ssl = if decoded_for(rows, @smtp_ssl_key) == "true", do: "true", else: "false"
+    # :ssl must be a real boolean — gen_smtp pattern-matches `true` strictly, so the
+    # string "true" would silently disable implicit TLS.
+    ssl? = decoded_for(rows, @smtp_ssl_key) == "true"
 
     Application.put_env(
       :cinder,
       Cinder.Mailer,
-      Keyword.merge(current, adapter: adapter, ssl: ssl)
+      Keyword.merge(current, [adapter: adapter, ssl: ssl?] ++ mailer_tls_overlay(rows, host))
     )
   end
+
+  # gen_smtp's defaults are `tls: :if_available` (STARTTLS silently downgradable by a
+  # MITM stripping the advertisement) with no certificate verification. Credentials must
+  # never cross the wire in cleartext: with a password configured STARTTLS is mandatory,
+  # and whenever TLS engages the relay certificate is verified against the system store.
+  # A password-less LAN relay keeps opportunistic TLS so bare-postfix setups still work.
+  defp mailer_tls_overlay(rows, host) when is_binary(host) and host != "" do
+    tls = if decoded_for(rows, "smtp_password") in [nil, ""], do: :if_available, else: :always
+
+    [
+      tls: tls,
+      tls_options: [
+        verify: :verify_peer,
+        cacerts: :public_key.cacerts_get(),
+        server_name_indication: String.to_charlist(host),
+        depth: 3
+      ]
+    ]
+  end
+
+  defp mailer_tls_overlay(_rows, _host), do: []
 
   defp apply_anime_config(rows) do
     base = base(:anime_preferences)
