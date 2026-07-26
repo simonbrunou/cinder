@@ -18,6 +18,17 @@ defmodule Cinder.Download.MoveOnImportTest do
 
   setup :set_mox_global
 
+  # A poll stamps last-run into process-global :persistent_term (PollerSkeleton's `status/0`,
+  # read by /healthz); erase it so a recorded run can't bleed into another test/suite.
+  setup do
+    on_exit(fn ->
+      :persistent_term.erase({Poller, :last_run})
+      :persistent_term.erase({TvPoller, :last_run})
+    end)
+
+    :ok
+  end
+
   # Default off; each test opts in. Restore the key so the overlay can't leak.
   #
   # explicit_import_roots is set here too: Library.delete_download_source/1 now requires an

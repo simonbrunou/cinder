@@ -63,7 +63,7 @@ config :cinder, media_info: Cinder.Library.MediaInfo.Ffprobe
 config :cinder, ffprobe_bin: "ffprobe"
 # Default; setting PLEX_URL (see runtime.exs) switches this to Plex.
 config :cinder, media_server: Cinder.Library.MediaServer.Jellyfin
-config :cinder, notifier: Cinder.Notifier.Discord
+config :cinder, notifier: Cinder.Notifier.Dispatcher
 config :cinder, subtitles_provider: Cinder.Subtitles.Provider.OpenSubtitles
 config :cinder, subtitles_translator: Cinder.Subtitles.Translator.LibreTranslate
 
@@ -82,6 +82,9 @@ config :cinder,
   movies_max_size: 15_000_000_000,
   tv_min_size: 50_000_000,
   tv_max_size: 4_000_000_000
+
+# Conservative quota for newly self-registered users; editable at /settings.
+config :cinder, default_request_quota: 10
 
 # First-run wizard gate: redirect to /setup until setup_complete. Off in test so the
 # existing LiveView suite (which never marks setup complete) isn't redirected.
@@ -145,7 +148,7 @@ config :logger, :default_formatter,
 config :phoenix, :json_library, Jason
 
 # i18n: English + French. The active locale is resolved per request/socket by
-# CinderWeb.Locale (session → Accept-Language → default). `en` is the source
+# CinderWeb.Locale (authenticated user → session → Accept-Language → default). `en` is the source
 # language (msgids), so the default-locale test suite keeps asserting English
 # with no translation needed; French lives in priv/gettext/fr.
 config :gettext, :default_locale, "en"

@@ -16,8 +16,11 @@ defmodule CinderWeb.LibraryLiveTest do
     # cancel_movie may remove an active download via the client; default to a no-op.
     stub(Cinder.Download.ClientMock, :remove, fn _id, _opts -> :ok end)
     stub(Cinder.Download.SabnzbdClientMock, :remove, fn _id, _opts -> :ok end)
-    # Mounting `/` (the redirect-target assertions) fetches trending; default it empty.
+    # Mounting `/` (the redirect-target assertions) fetches the landing rails; default them empty.
     stub(Cinder.Catalog.TMDBMock, :trending, fn _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :popular_movies, fn _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :top_rated_movies, fn _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :now_playing_movies, fn _ -> {:ok, []} end)
     :ok
   end
 
@@ -332,9 +335,15 @@ defmodule CinderWeb.LibraryLiveTest do
       # `-id` tiebreak alone, since dropping the guard leaves both movies on an equal size.
       kept = available_movie!("/tmp/kept.mkv", %{title: "Kept", imported_size: 9_000_000})
 
-      # retry_movie/1 clears file_path but leaves imported_size behind.
+      # retry_movie/1 clears file_path but leaves imported_size behind. Parked directly via a raw
+      # changeset (like available_movie!/2 above) — :available -> :import_failed isn't a real
+      # pipeline edge (a live movie only reaches :import_failed via the verification-hold path,
+      # which carries its own origin-tagged guard), so this doesn't go through Catalog.transition.
       movie = available_movie!("/tmp/gone.mkv", %{title: "Gone", imported_size: 9_000_000})
-      {:ok, failed} = Catalog.transition(movie, %{status: :import_failed})
+
+      {:ok, failed} =
+        movie |> Ecto.Changeset.change(status: :import_failed) |> Cinder.Repo.update()
+
       {:ok, movie} = Catalog.retry_movie(failed)
       assert movie.file_path == nil and movie.imported_size == 9_000_000
 

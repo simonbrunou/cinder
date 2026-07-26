@@ -21,10 +21,15 @@ defmodule Cinder.SettingsTest do
     Cinder.Library.MediaServer.Jellyfin,
     Cinder.Library.MediaServer.Plex,
     Cinder.Notifier.Discord,
+    Cinder.Mailer,
     Cinder.Subtitles.Provider.OpenSubtitles,
     Cinder.Subtitles.Translator.LibreTranslate,
     :media_server,
     :download_clients,
+    :qbittorrent_remote_path_prefix,
+    :qbittorrent_local_path_prefix,
+    :sabnzbd_remote_path_prefix,
+    :sabnzbd_local_path_prefix,
     :movies_library_path,
     :movies_min_size,
     :movies_max_size,
@@ -39,7 +44,8 @@ defmodule Cinder.SettingsTest do
     :explicit_import_roots,
     :move_on_import,
     :ffprobe_bin,
-    :anime_preferences
+    :anime_preferences,
+    :default_request_quota
   ]
 
   setup do
@@ -175,6 +181,33 @@ defmodule Cinder.SettingsTest do
         Repo.query!("SELECT value FROM settings WHERE key = ?", ["prowlarr_url"])
 
       assert stored == "http://example:9696"
+    end
+
+    test "download-client path mappings round-trip as flat non-secret settings" do
+      mappings = %{
+        "qbittorrent_remote_path_prefix" => "/downloads",
+        "qbittorrent_local_path_prefix" => "/media/torrents",
+        "sabnzbd_remote_path_prefix" => "/data/complete",
+        "sabnzbd_local_path_prefix" => "/media/usenet"
+      }
+
+      assert :ok =
+               Settings.save_form(
+                 Map.merge(mappings, %{
+                   "media_server_type" => "jellyfin",
+                   "qbittorrent_enabled" => "true",
+                   "sabnzbd_enabled" => "true"
+                 })
+               )
+
+      form = Settings.form_state()
+
+      for {key, value} <- mappings do
+        assert Settings.get(key) == value
+        assert form.values[key] == value
+        refute Repo.get_by!(Setting, key: key).is_secret
+        assert Application.get_env(:cinder, String.to_existing_atom(key)) == value
+      end
     end
 
     test "secret values are ciphertext at rest but decrypt on read" do
@@ -547,6 +580,20 @@ defmodule Cinder.SettingsTest do
       assert Application.get_env(:cinder, :tv_min_size) == nil
     end
 
+    test "default request quota coerces positive integers and degrades unusable values to nil" do
+      Settings.put("default_request_quota", "6")
+      assert Settings.default_request_quota() == 6
+      refute Repo.get_by!(Setting, key: "default_request_quota").is_secret
+
+      for value <- ["", "invalid", "0", "-2"] do
+        Settings.put("default_request_quota", value)
+        assert Settings.default_request_quota() == nil
+      end
+
+      Settings.delete("default_request_quota")
+      assert Settings.default_request_quota() == 10
+    end
+
     test "size bands fall back to the config bootstrap defaults when no DB row exists" do
       # Simulate the shipped config.exs defaults (config/test.exs neutralizes them so the
       # suite's fixtures stay unbounded); module setup restores the env keys afterwards.
@@ -655,6 +702,53 @@ defmodule Cinder.SettingsTest do
       row = Cinder.Repo.get_by(Cinder.Settings.Setting, key: "discord_webhook_url")
       assert row.is_secret
       refute row.value == "https://discord.com/api/webhooks/1/abc"
+    end
+
+    test "SMTP fields overlay Cinder.Mailer; the password is encrypted at rest" do
+      :ok =
+        Settings.save_form(%{
+          "smtp_host" => "smtp.example.com",
+          "smtp_port" => "587",
+          "smtp_username" => "cinder",
+          "smtp_password" => "hunter2",
+          "smtp_from" => "cinder@example.com",
+          "media_server_type" => "jellyfin"
+        })
+
+      config = Application.get_env(:cinder, Cinder.Mailer)
+      assert config[:relay] == "smtp.example.com"
+      assert config[:port] == "587"
+      assert config[:username] == "cinder"
+      assert config[:password] == "hunter2"
+      assert config[:from] == "cinder@example.com"
+
+      row = Repo.get_by(Setting, key: "smtp_password")
+      assert row.is_secret
+      refute row.value == "hunter2"
+    end
+
+    test "the adapter switches to SMTP only once a host is saved; clearing it reverts" do
+      original = Application.get_env(:cinder, Cinder.Mailer)
+      bootstrap_adapter = original[:adapter]
+
+      Settings.put("smtp_host", "smtp.example.com")
+      assert Application.get_env(:cinder, Cinder.Mailer)[:adapter] == Swoosh.Adapters.SMTP
+
+      Settings.delete("smtp_host")
+      assert Application.get_env(:cinder, Cinder.Mailer)[:adapter] == bootstrap_adapter
+    end
+
+    test "smtp_ssl: unset ⇒ false; stored true overlays; cleared reverts to false" do
+      Settings.load_into_env()
+      assert Application.get_env(:cinder, Cinder.Mailer)[:ssl] == false
+
+      Settings.save_form(%{"smtp_ssl" => "true", "media_server_type" => "jellyfin"})
+      assert Application.get_env(:cinder, Cinder.Mailer)[:ssl] == true
+      assert Settings.form_state().values["smtp_ssl"] == true
+
+      Settings.save_form(%{"smtp_ssl" => "false", "media_server_type" => "jellyfin"})
+      assert Application.get_env(:cinder, Cinder.Mailer)[:ssl] == false
+      assert Settings.form_state().values["smtp_ssl"] == false
     end
   end
 

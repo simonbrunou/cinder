@@ -7,7 +7,6 @@ defmodule Cinder.Catalog.EpisodeTest do
     cs =
       Episode.transition_changeset(%Episode{}, %{
         file_path: "/library/x.mkv",
-        grab_id: 7,
         search_attempts: 2
       })
 
@@ -15,9 +14,31 @@ defmodule Cinder.Catalog.EpisodeTest do
 
     assert cs.changes == %{
              file_path: "/library/x.mkv",
-             grab_id: 7,
              search_attempts: 2
            }
+  end
+
+  test "transition_changeset/2 casts grab_id alone" do
+    cs = Episode.transition_changeset(%Episode{}, %{grab_id: 7})
+    assert cs.valid?
+    assert cs.changes == %{grab_id: 7}
+  end
+
+  test "transition_changeset/2 rejects setting file_path and grab_id together (never both)" do
+    cs =
+      Episode.transition_changeset(%Episode{}, %{
+        file_path: "/library/x.mkv",
+        grab_id: 7
+      })
+
+    refute cs.valid?
+    assert cs.errors[:grab_id] == {"cannot be set while file_path is also set", []}
+  end
+
+  test "transition_changeset/2 rejects a negative search_attempts" do
+    cs = Episode.transition_changeset(%Episode{}, %{search_attempts: -1})
+    refute cs.valid?
+    assert {"must be greater than or equal to %{number}", _} = cs.errors[:search_attempts]
   end
 
   test "transition_changeset/2 does not cast identity/monitoring fields" do

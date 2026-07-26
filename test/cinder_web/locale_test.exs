@@ -1,8 +1,11 @@
 defmodule CinderWeb.LocaleTest do
-  use CinderWeb.ConnCase, async: true
+  use CinderWeb.ConnCase, async: false
 
   import Phoenix.LiveViewTest
+  import Cinder.AccountsFixtures
 
+  alias Cinder.Accounts
+  alias Cinder.Accounts.Scope
   alias CinderWeb.Locale
 
   describe "Locale plug" do
@@ -15,6 +18,21 @@ defmodule CinderWeb.LocaleTest do
 
       assert conn.assigns.locale == "fr"
       assert Gettext.get_locale(CinderWeb.Gettext) == "fr"
+    end
+
+    test "authenticated user locale takes precedence over session and Accept-Language" do
+      user = user_fixture()
+      {:ok, user} = Accounts.update_user_locale(user, %{locale: "fr"})
+
+      conn =
+        build_conn()
+        |> Plug.Test.init_test_session(%{"locale" => "en"})
+        |> Plug.Conn.assign(:current_scope, Scope.for_user(user))
+        |> Plug.Conn.put_req_header("accept-language", "en-US,en;q=0.9")
+        |> Locale.call([])
+
+      assert conn.assigns.locale == "fr"
+      assert get_session(conn, :locale) == "fr"
     end
 
     test "negotiates Accept-Language when no session locale is stored" do
@@ -60,6 +78,18 @@ defmodule CinderWeb.LocaleTest do
       assert get_session(conn, :locale) == "fr"
     end
 
+    test "persists a supported locale to an authenticated user's account", %{conn: conn} do
+      user = user_fixture()
+
+      conn =
+        conn
+        |> log_in_user(user)
+        |> get(~p"/locale/fr")
+
+      assert get_session(conn, :locale) == "fr"
+      assert Cinder.Repo.reload!(user).locale == "fr"
+    end
+
     test "falls back to root for a protocol-relative referer (no open redirect / no 500)", %{
       conn: conn
     } do
@@ -81,6 +111,19 @@ defmodule CinderWeb.LocaleTest do
   end
 
   describe "rendering" do
+    test "uses the saved user locale for a LiveView even when the session differs", %{conn: conn} do
+      user = user_fixture()
+      {:ok, user} = Accounts.update_user_locale(user, %{locale: "fr"})
+
+      {:ok, live_view, _html} =
+        conn
+        |> log_in_user(user)
+        |> Plug.Conn.put_session(:locale, "en")
+        |> live(~p"/users/settings")
+
+      assert has_element?(live_view, ~s|a[href="/locale/fr"][aria-current="true"]|)
+    end
+
     test "renders the login page in French when the session locale is fr", %{conn: conn} do
       {:ok, _lv, html} =
         conn

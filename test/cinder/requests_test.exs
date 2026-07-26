@@ -578,6 +578,49 @@ defmodule Cinder.RequestsTest do
     end
   end
 
+  describe "cancel_own_request/2" do
+    test "the owner cancels their own pending request and it broadcasts request_deleted" do
+      user = user_fixture()
+      {:ok, req} = Requests.create_request(user, @attrs)
+
+      Requests.subscribe()
+      assert {:ok, cancelled} = Requests.cancel_own_request(req, user)
+      assert cancelled.id == req.id
+      assert Repo.get(Cinder.Requests.Request, req.id) == nil
+
+      req_id = req.id
+      assert_receive {:request_deleted, %Cinder.Requests.Request{id: ^req_id}}
+    end
+
+    test "a non-owner cannot cancel someone else's pending request" do
+      user = user_fixture()
+      other = user_fixture()
+      {:ok, req} = Requests.create_request(user, @attrs)
+
+      assert {:error, :not_pending} = Requests.cancel_own_request(req, other)
+      assert Repo.get(Cinder.Requests.Request, req.id)
+    end
+
+    test "the owner cannot cancel their own non-pending (already-approved) request" do
+      admin = admin_fixture()
+      {:ok, req} = Requests.create_request(admin, @attrs)
+      assert req.status == :approved
+
+      assert {:error, :not_pending} = Requests.cancel_own_request(req, admin)
+      assert Repo.get(Cinder.Requests.Request, req.id)
+    end
+
+    test "the owner cannot cancel their own denied request" do
+      user = user_fixture()
+      admin = admin_fixture()
+      {:ok, req} = Requests.create_request(user, @attrs)
+      {:ok, denied} = Requests.deny_request(req, admin, "no")
+
+      assert {:error, :not_pending} = Requests.cancel_own_request(denied, user)
+      assert Repo.get(Cinder.Requests.Request, req.id)
+    end
+  end
+
   test "approved movie request carries preferred_language and original_language onto the movie row" do
     admin = admin_fixture()
 
@@ -612,6 +655,94 @@ defmodule Cinder.RequestsTest do
     movie = Catalog.get_movie_by_tmdb_id(603)
     assert movie.preferred_language == "french"
     assert movie.original_language == "ja"
+  end
+
+  describe "approved_requesters_for_movie/1" do
+    test "returns every user with an approved request for that movie" do
+      alice = user_fixture()
+      bob = user_fixture()
+      admin = admin_fixture()
+
+      {:ok, req} = Requests.create_request(alice, @attrs)
+      assert {:ok, _} = Requests.approve_request(req, admin, :standard)
+      {:ok, req2} = Requests.create_request(bob, @attrs)
+      assert {:ok, _} = Requests.approve_request(req2, admin, :standard)
+
+      ids = Requests.approved_requesters_for_movie(603) |> Enum.map(& &1.id) |> Enum.sort()
+      assert ids == Enum.sort([alice.id, bob.id])
+    end
+
+    test "excludes a still-pending or denied requester" do
+      user = user_fixture()
+      admin = admin_fixture()
+      {:ok, req} = Requests.create_request(user, @attrs)
+      assert {:ok, _} = Requests.deny_request(req, admin, "no")
+
+      assert Requests.approved_requesters_for_movie(603) == []
+    end
+
+    test "returns [] for a tmdb_id with no requests" do
+      assert Requests.approved_requesters_for_movie(999_999) == []
+    end
+  end
+
+  describe "approved_requesters_for_season/2" do
+    setup do
+      stub(Cinder.Catalog.TMDBMock, :get_series, fn 1399 ->
+        {:ok,
+         %{
+           tmdb_id: 1399,
+           tvdb_id: 1,
+           title: "GoT",
+           year: 2011,
+           poster_path: nil,
+           seasons: [%{season_number: 1}, %{season_number: 2}]
+         }}
+      end)
+
+      stub(Cinder.Catalog.TMDBMock, :get_season, fn 1399, n, locale ->
+        {:ok,
+         %{
+           season_number: n,
+           episodes: [
+             %{
+               tmdb_episode_id: n,
+               episode_number: 1,
+               title: if(locale == "en", do: "e", else: ""),
+               air_date: ~D[2011-01-01]
+             }
+           ]
+         }}
+      end)
+
+      stub(Cinder.Catalog.TMDBMock, :get_series_alternative_titles, fn 1399 -> {:ok, []} end)
+      stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn 1399 -> {:ok, []} end)
+
+      :ok
+    end
+
+    defp season_request_attrs do
+      %{target_type: "season", target_id: 1399, season_number: 2, title: "GoT", year: 2011}
+    end
+
+    test "returns the requester once the season request is approved" do
+      user = user_fixture()
+      admin = admin_fixture()
+      {:ok, req} = Requests.create_request(user, season_request_attrs())
+      assert {:ok, _} = Requests.approve_request(req, admin, :standard)
+
+      assert [%{id: id}] = Requests.approved_requesters_for_season(1399, 2)
+      assert id == user.id
+    end
+
+    test "does not match a different season of the same series" do
+      user = user_fixture()
+      admin = admin_fixture()
+      {:ok, req} = Requests.create_request(user, season_request_attrs())
+      assert {:ok, _} = Requests.approve_request(req, admin, :standard)
+
+      assert Requests.approved_requesters_for_season(1399, 1) == []
+    end
   end
 
   describe "list_requests/0" do

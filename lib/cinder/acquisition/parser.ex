@@ -4,13 +4,18 @@ defmodule Cinder.Acquisition.Parser do
   TV `season`/`episodes`) from a release name. Pure and best-effort: an unrecognized
   field is `nil`.
 
-  TV fields (M5b): `season` is a `pos_integer | nil`; `episodes` is a `[pos_integer]`
+  TV fields (M5b): `season` is a `non_neg_integer | nil`; `episodes` is a `[pos_integer]`
   for a single ep / range / multi-ep, `nil` for a whole-season pack, and `nil` when
   the name has no episode token. A movie name parses to `season: nil, episodes: nil`.
-  Seasons are bounded to 1..99 — `S00` (specials), year-as-season (`S2009E12`), daily
-  dates (`2024.01.15`) and absolute/anime numbering park as `nil/nil` (M6 scope). A
-  name naming more than one season (`S01S02`, `S01-S03`) is rejected to `nil/nil`
-  rather than mis-read as a single season — that keeps M5c's pack import honest.
+  Seasons are bounded to 1..99 for a PACK form (`S01`, `Season 5`) — a bare `S00`/
+  `Season 0` still parks as `nil/nil`, because a specials-pack file→episode mapping is
+  exactly the ambiguity a bare-season guard exists for. An EPISODE-TAIL form (`SxxEyy`,
+  `1x02`, and their double/range variants) names one exact episode, so season is bounded
+  0..99 there — `S00E05` parses to season 0 (a Standard specials release). Year-as-season
+  (`S2009E12`), daily dates (`2024.01.15`) and absolute/anime numbering still park as
+  `nil/nil` (M6 scope). A name naming more than one season (`S01S02`, `S01-S03`) is
+  rejected to `nil/nil` rather than mis-read as a single season — that keeps M5c's pack
+  import honest.
 
   `size` is intentionally not parsed here — it comes from the indexer's reported
   byte count (see `Cinder.Acquisition`).
@@ -429,11 +434,11 @@ defmodule Cinder.Acquisition.Parser do
   end
 
   defp from_tail([_, season, tail]),
-    do: validate(String.to_integer(season), parse_tail(tail))
+    do: validate_episode(String.to_integer(season), parse_tail(tail))
 
   defp single([_, season, episode]) do
     ep = String.to_integer(episode)
-    if ep?(ep), do: validate(String.to_integer(season), [ep]), else: {nil, nil}
+    if ep?(ep), do: validate_episode(String.to_integer(season), [ep]), else: {nil, nil}
   end
 
   defp bare([_, season]), do: validate(String.to_integer(season), nil)
@@ -466,7 +471,17 @@ defmodule Cinder.Acquisition.Parser do
   # ("S01E01-1080p" → "108") can't be expanded into a giant episode range.
   defp ep?(n), do: n in 1..99
 
+  # Bound for a PACK form (@bare_season / @season_word): 1..99. A bare S00/Season 0 pack
+  # still parks — a specials-pack file→episode mapping is the mis-mapping trap the guard
+  # exists for; it gets no free pass just because the season number is 0. `episodes` is
+  # always `nil` here (a pack names no episode), so there's no empty-list case to guard.
   defp validate(season, _episodes) when season < 1 or season > 99, do: {nil, nil}
-  defp validate(_season, []), do: {nil, nil}
   defp validate(season, episodes), do: {season, episodes}
+
+  # Bound for an EPISODE-TAIL form (@season_episode / @alt_episode): 0..99. Unlike a bare
+  # pack, this form always names an exact episode number, so a Standard S00E05-shaped
+  # release is a real, unambiguous single-file grab — season 0 is meaningful here.
+  defp validate_episode(season, _episodes) when season < 0 or season > 99, do: {nil, nil}
+  defp validate_episode(_season, []), do: {nil, nil}
+  defp validate_episode(season, episodes), do: {season, episodes}
 end

@@ -836,6 +836,9 @@ defmodule CinderWeb.CoreComponents do
   def health_reason(:econnrefused), do: gettext("Connection refused")
   def health_reason(:closed), do: gettext("Connection closed")
 
+  def health_reason({:path_mapping_local_prefix_unreadable, path}),
+    do: gettext("Local path prefix is not an existing readable directory: %{path}", path: path)
+
   # Service impls emit namespaced status tuples ({:prowlarr_status, 401}, {:qbittorrent_status, n},
   # …) as well as the bare {:status, n}, so match any 2-tuple whose second element is an HTTP code.
   def health_reason({_tag, status}) when is_integer(status) and status in [401, 403],

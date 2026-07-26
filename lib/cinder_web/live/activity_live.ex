@@ -196,22 +196,6 @@ defmodule CinderWeb.ActivityLive do
   defp sort_held_series(series, locale),
     do: Enum.sort_by(series, &fold_title(media_title(&1, locale)))
 
-  # A plain-English line under an in-flight/parked movie card: what phase it's in (with the search
-  # attempt count) or why it's stuck and what to do. Complements the badge, which names the state.
-  defp pipeline_hint(%{status: :searching, search_attempts: n}),
-    do: gettext("Searching indexers (attempt %{n})", n: n + 1)
-
-  defp pipeline_hint(%{status: :no_match}),
-    do: gettext("No release matched your size/quality rules yet. Open it to retry or adjust.")
-
-  defp pipeline_hint(%{status: :search_failed}),
-    do: gettext("The indexer couldn't be reached after repeated tries. Open it to retry.")
-
-  defp pipeline_hint(%{status: :import_failed}),
-    do: gettext("The download finished but couldn't be imported. Open it to retry.")
-
-  defp pipeline_hint(_movie), do: nil
-
   # Human label for a background sweep module (Cinder.Jobs).
   defp job_label(Cinder.Catalog.Refresher), do: gettext("Series metadata refresh")
   defp job_label(Cinder.Subtitles.Sweeper), do: gettext("Subtitle backfill")
@@ -233,59 +217,6 @@ defmodule CinderWeb.ActivityLive do
   defp coarse(secs) when secs < 3600, do: gettext("%{n}m", n: max(div(secs, 60), 1))
   defp coarse(secs) when secs < 86_400, do: gettext("%{n}h", n: div(secs, 3600))
   defp coarse(secs), do: gettext("%{n}d", n: div(secs, 86_400))
-
-  # Plain-English hold reason: which safety check failed, plus the offending file names or
-  # episode ids — reused straight off the persisted `mapping_issue` (no separate display model).
-  defp mapping_reason(%{"reason" => "unresolved_file", "relative_paths" => paths}),
-    do: gettext("Couldn't match to an episode: %{paths}", paths: path_list(paths))
-
-  defp mapping_reason(%{"reason" => "outside_authoritative_set", "relative_paths" => paths}),
-    do: gettext("Matched an episode outside this release: %{paths}", paths: path_list(paths))
-
-  defp mapping_reason(%{"reason" => "duplicate_episode_assignment", "relative_paths" => paths}),
-    do: gettext("More than one file matched the same episode: %{paths}", paths: path_list(paths))
-
-  defp mapping_reason(%{
-         "reason" => "missing_episode_assignment",
-         "candidate_episode_ids" => episode_ids
-       }),
-       do: gettext("No file found for episode id(s): %{ids}", ids: id_list(episode_ids))
-
-  defp mapping_reason(%{
-         "reason" => "reserved_set_divergence",
-         "candidate_episode_ids" => episode_ids
-       }),
-       do:
-         gettext(
-           "The library's episodes no longer match what this grab reserved; affected episode id(s): %{ids}",
-           ids: id_list(episode_ids)
-         )
-
-  defp mapping_reason(_issue), do: gettext("This release needs manual attention.")
-
-  defp path_list(paths) when is_list(paths) and paths != [], do: Enum.join(paths, ", ")
-  defp path_list(_paths), do: gettext("unknown file")
-
-  defp id_list(ids) when is_list(ids) and ids != [], do: Enum.join(ids, ", ")
-  defp id_list(_ids), do: gettext("unknown")
-
-  # Plain-English search-time hold reason (`anime_hold_reason`, the AnimePreferences.resolve
-  # error) naming the fix — cleared automatically by the next sweep once preferences resolve.
-  defp anime_hold_reason("original_language_required"),
-    do:
-      gettext(
-        "Dual audio needs this title's original language, which is unknown: on its detail page, choose an Audio pick other than \"%{dual}\", or fix the title's original-language metadata.",
-        dual: language_label("dual")
-      )
-
-  defp anime_hold_reason("subtitle_language_required"),
-    do:
-      gettext(
-        "Requiring embedded subtitles needs subtitle languages: configure them in Settings."
-      )
-
-  defp anime_hold_reason(_reason),
-    do: gettext("The Anime release preferences can't be satisfied for this title.")
 
   @impl true
   def render(assigns) do

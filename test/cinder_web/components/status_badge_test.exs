@@ -95,6 +95,9 @@ defmodule CinderWeb.StatusBadgeTest do
     assert f.(:not_configured) == "Not configured"
     assert f.({:status, 401}) == "Authentication failed"
     assert f.(%CaseClauseError{term: nil}) == "Check failed"
+
+    assert f.({:path_mapping_local_prefix_unreadable, "/missing"}) ==
+             "Local path prefix is not an existing readable directory: /missing"
   end
 
   test "the :upgrading badge uses progress-info and the arrow-up-circle icon" do

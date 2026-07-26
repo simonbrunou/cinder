@@ -90,9 +90,14 @@ defmodule CinderWeb.ConnCase do
     Cinder.Download.Client.Sabnzbd,
     Cinder.Library.MediaServer.Jellyfin,
     Cinder.Library.MediaServer.Plex,
+    Cinder.Mailer,
     Cinder.Subtitles.Provider.OpenSubtitles,
     :media_server,
     :download_clients,
+    :qbittorrent_remote_path_prefix,
+    :qbittorrent_local_path_prefix,
+    :sabnzbd_remote_path_prefix,
+    :sabnzbd_local_path_prefix,
     :anime_preferences,
     :import_roots,
     :explicit_import_roots,
@@ -103,7 +108,8 @@ defmodule CinderWeb.ConnCase do
     :tv_library_path,
     :tv_min_size,
     :tv_max_size,
-    :tv_preferred_resolutions
+    :tv_preferred_resolutions,
+    :default_request_quota
   ]
 
   @doc """

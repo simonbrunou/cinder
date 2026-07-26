@@ -1,12 +1,22 @@
 defmodule Cinder.AccountsTest do
   use Cinder.DataCase
 
-  alias Cinder.Accounts
+  alias Cinder.{Accounts, Settings}
 
   import Cinder.AccountsFixtures
   alias Cinder.Accounts.{User, UserToken}
 
   @bootstrap_token "test-bootstrap-token"
+
+  setup do
+    default_request_quota = Application.get_env(:cinder, :default_request_quota)
+
+    on_exit(fn ->
+      Application.put_env(:cinder, :default_request_quota, default_request_quota)
+    end)
+
+    :ok
+  end
 
   describe "get_user_by_email_and_password/2" do
     test "does not return the user if the email does not exist" do
@@ -59,7 +69,7 @@ defmodule Cinder.AccountsTest do
       assert is_nil(user.password)
       refute is_nil(user.confirmed_at)
       assert user.active
-      assert user.request_quota == 10
+      assert user.request_quota == nil
     end
 
     test "first user becomes admin, subsequent users are :user" do
@@ -77,6 +87,40 @@ defmodule Cinder.AccountsTest do
       assert second.role == :user
       refute second.active
       assert second.request_quota == 10
+    end
+
+    test "uses the configured default quota only for self-registered users" do
+      Settings.put("default_request_quota", "4")
+
+      {:ok, admin} =
+        Accounts.register_user(
+          %{email: unique_user_email(), password: valid_user_password()},
+          @bootstrap_token
+        )
+
+      {:ok, user} =
+        Accounts.register_user(%{email: unique_user_email(), password: valid_user_password()})
+
+      assert admin.request_quota == nil
+      assert user.request_quota == 4
+    end
+
+    test "an unusable configured quota degrades to unlimited" do
+      {:ok, _admin} =
+        Accounts.register_user(
+          %{email: unique_user_email(), password: valid_user_password()},
+          @bootstrap_token
+        )
+
+      for value <- ["", "bad", "0", "-1"] do
+        Settings.put("default_request_quota", value)
+
+        assert {:ok, %{request_quota: nil}} =
+                 Accounts.register_user(%{
+                   email: unique_user_email(),
+                   password: valid_user_password()
+                 })
+      end
     end
 
     test "a signup that lands inactive notifies, so the admin knows someone is waiting" do
@@ -445,6 +489,32 @@ defmodule Cinder.AccountsTest do
     end
   end
 
+  describe "user locale" do
+    test "accepts supported locales and rejects unsupported values" do
+      user = user_fixture()
+
+      assert {:ok, %{locale: "fr"}} = Accounts.update_user_locale(user, %{locale: "fr"})
+
+      assert {:error, changeset} =
+               Accounts.update_user_locale(user, %{locale: "not-supported"})
+
+      assert "is invalid" in errors_on(changeset).locale
+    end
+  end
+
+  describe "user notify_email" do
+    test "defaults to true and can be toggled" do
+      user = user_fixture()
+      assert user.notify_email == true
+
+      assert {:ok, %{notify_email: false}} =
+               Accounts.update_user_notify_email(user, %{notify_email: false})
+
+      assert {:ok, %{notify_email: true}} =
+               Accounts.update_user_notify_email(user, %{notify_email: true})
+    end
+  end
+
   describe "count_admins/0" do
     test "counts only admins" do
       _user = user_fixture()
@@ -555,6 +625,7 @@ defmodule Cinder.AccountsTest do
       assert user.confirmed_at
       assert user.active
       assert is_binary(user.hashed_password)
+      assert user.request_quota == nil
     end
 
     test "creates an admin when role: :admin is given" do

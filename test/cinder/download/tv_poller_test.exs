@@ -25,6 +25,13 @@ defmodule Cinder.Download.TvPollerTest do
   # global. Shared Sandbox (async: false) lets those processes use the test-owned DB connection.
   setup :set_mox_global
 
+  # A poll stamps last-run into process-global :persistent_term (PollerSkeleton's `status/0`,
+  # read by /healthz); erase it so a recorded run can't bleed into another test/suite.
+  setup do
+    on_exit(fn -> :persistent_term.erase({TvPoller, :last_run}) end)
+    :ok
+  end
+
   @past ~D[2001-01-01]
 
   defp series_tree do
@@ -1242,6 +1249,35 @@ defmodule Cinder.Download.TvPollerTest do
     assert grab.download_protocol == :torrent
   end
 
+  test "searches an explicitly monitored Standard S00 special and grabs the matching release (Sonarr parity)" do
+    {series, _season} = series_tree()
+    specials = season_fixture(series, %{season_number: 0})
+    e1 = episode(specials, 5)
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    # Confirms the season-0 group reaches the indexer with a sane {Season:0}-shaped query.
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 0 ->
+      {:ok,
+       [
+         %{
+           title: "Show.S00E05.1080p.WEB-DL-GRP",
+           size: 2_000_000_000,
+           download_url: "u",
+           seeders: 5
+         }
+       ]}
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-special"} end)
+
+    assert :ok = TvPoller.poll()
+
+    linked = Repo.get!(Episode, e1.id)
+    assert linked.grab_id
+    grab = Repo.get!(Grab, linked.grab_id)
+    assert grab.download_id == "hash-special"
+  end
+
   test "a definite add rejection releases the episode for the next search tick" do
     {_series, season} = series_tree()
     episode = episode(season, 1)
@@ -1764,6 +1800,26 @@ defmodule Cinder.Download.TvPollerTest do
     assert :ok = TvPoller.poll()
     assert_receive {:notify, {:grab_failed, %Grab{id: gid}, :no_files_matched}}
     assert gid == grab.id
+  end
+
+  test "a parked grab emits [:cinder, :park] with kind: :episode and the park reason" do
+    {_series, season} = series_tree()
+    e1 = episode(season, 1)
+    {:ok, grab} = Catalog.create_grab("hash-p", :torrent, [e1.id])
+    {:ok, _} = Catalog.mark_grab_downloaded(grab, "/dl/pack2")
+    start_supervised!({TvPoller, interval: 60_000})
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok, [{"/dl/pack2/Show.S01E09.1080p.mkv", 3_000_000_000}]}
+    end)
+
+    {result, events} =
+      Cinder.TelemetryHelpers.capture([:cinder, :park], fn -> TvPoller.poll() end)
+
+    assert result == :ok
+    assert [{%{count: 1}, %{kind: :episode, reason: :no_files_matched}}] = events
   end
 
   describe "stall reaper" do

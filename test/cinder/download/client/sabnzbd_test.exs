@@ -7,6 +7,21 @@ defmodule Cinder.Download.Client.SabnzbdTest do
 
   defp stub(fun), do: Req.Test.stub(Cinder.SabnzbdStub, fun)
 
+  defp configure_path_mapping(remote, local) do
+    keys = [:sabnzbd_remote_path_prefix, :sabnzbd_local_path_prefix]
+    original = Map.new(keys, &{&1, Application.get_env(:cinder, &1)})
+
+    Application.put_env(:cinder, :sabnzbd_remote_path_prefix, remote)
+    Application.put_env(:cinder, :sabnzbd_local_path_prefix, local)
+
+    on_exit(fn ->
+      Enum.each(original, fn
+        {key, nil} -> Application.delete_env(:cinder, key)
+        {key, value} -> Application.put_env(:cinder, key, value)
+      end)
+    end)
+  end
+
   # status/1 hits queue first, then history. This stub answers an empty queue and
   # the given history body, asserting both calls scope by nzo_ids (without it,
   # SABnzbd's default page limit could hide the job and yield a false :not_found).
@@ -542,6 +557,20 @@ defmodule Cinder.Download.Client.SabnzbdTest do
              Sabnzbd.status("nzo-1")
   end
 
+  test "status/1 translates mapped storage at the adapter boundary" do
+    configure_path_mapping("/downloads/", "/media/usenet/")
+
+    stub_queue_then_history(%{
+      "history" => %{
+        "slots" => [
+          %{"nzo_id" => "nzo-1", "status" => "Completed", "storage" => "/downloads/done/Movie"}
+        ]
+      }
+    })
+
+    assert {:ok, %{content_path: "/media/usenet/done/Movie"}} = Sabnzbd.status("nzo-1")
+  end
+
   test "status/1 reports a failed download as :error" do
     stub_queue_then_history(%{
       "history" => %{
@@ -575,6 +604,16 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     end)
 
     assert :ok = Sabnzbd.health()
+  end
+
+  test "health/0 rejects a configured mapping whose local prefix is missing" do
+    missing =
+      Path.join(System.tmp_dir!(), "cinder-missing-#{System.unique_integer([:positive])}")
+
+    configure_path_mapping("/downloads", missing)
+    stub(fn conn -> Req.Test.json(conn, %{"queue" => %{"slots" => []}}) end)
+
+    assert {:error, {:path_mapping_local_prefix_unreadable, ^missing}} = Sabnzbd.health()
   end
 
   test "health/0 returns an error when SABnzbd rejects the api key (200 + status false)" do

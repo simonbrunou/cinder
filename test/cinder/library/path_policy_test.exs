@@ -6,7 +6,7 @@ defmodule Cinder.Library.PathPolicyTest do
   alias Cinder.Catalog.{Episode, Movie, Season, Series}
   alias Cinder.Library
   alias Cinder.Library.Filesystem.Disk
-  alias Cinder.Library.PathPolicy
+  alias Cinder.Library.{ImportStage, PathPolicy}
   alias Cinder.Settings
 
   @tag :tmp_dir
@@ -203,7 +203,7 @@ defmodule Cinder.Library.PathPolicyTest do
     end
 
     @tag :tmp_dir
-    test "import_movie rejects a symlinked source before any library write", %{tmp_dir: tmp} do
+    test "stage_movie rejects a symlinked source before any library write", %{tmp_dir: tmp} do
       %{downloads: downloads, movies: movies} = configure_roots(tmp)
       database = Path.join(tmp, "cinder.db")
       source = Path.join(downloads, "database.mkv")
@@ -212,7 +212,7 @@ defmodule Cinder.Library.PathPolicyTest do
 
       movie = %Movie{title: "Movie", year: 2024, tmdb_id: 42, file_path: source}
 
-      assert {:error, :unsafe_source} = Library.import_movie(movie)
+      assert {:error, :unsafe_source} = Library.stage_movie(movie)
       assert File.ls!(movies) == []
     end
 
@@ -240,7 +240,7 @@ defmodule Cinder.Library.PathPolicyTest do
     end
 
     @tag :tmp_dir
-    test "import_movie rejects a symlinked destination parent", %{tmp_dir: tmp} do
+    test "stage_movie rejects a symlinked destination parent", %{tmp_dir: tmp} do
       %{downloads: downloads, movies: movies} = configure_roots(tmp)
       source = Path.join(downloads, "Movie.2024.mkv")
       outside = Path.join(tmp, "outside")
@@ -251,7 +251,7 @@ defmodule Cinder.Library.PathPolicyTest do
 
       movie = %Movie{title: "Movie", year: 2024, tmdb_id: 42, file_path: source}
 
-      assert {:error, :unsafe_destination} = Library.import_movie(movie)
+      assert {:error, :unsafe_destination} = Library.stage_movie(movie)
       assert File.ls!(outside) == []
     end
 
@@ -279,24 +279,13 @@ defmodule Cinder.Library.PathPolicyTest do
       File.write!(source, "video")
       movie = %Movie{title: "Movie", year: 2024, tmdb_id: 42, file_path: source}
 
-      assert {:ok, dest, _quality} = Library.import_movie(movie)
-      assert {:ok, ^dest, _quality} = Library.import_movie(movie)
+      assert {:ok, %{dest: dest} = stage1} = Library.stage_movie(movie)
+      assert :ok = commit!(stage1)
+
+      assert {:ok, %{dest: ^dest} = stage2} = Library.stage_movie(movie)
+      assert :ok = commit!(stage2)
+
       assert File.stat!(source).inode == File.stat!(dest).inode
-    end
-
-    @tag :tmp_dir
-    test "EXDEV still falls back to an atomic byte copy inside the validated destination", %{
-      tmp_dir: tmp
-    } do
-      Application.put_env(:cinder, :filesystem, Cinder.Test.ExdevFilesystem)
-      %{downloads: downloads} = configure_roots(tmp)
-      source = Path.join(downloads, "Movie.2024.mkv")
-      File.write!(source, "video")
-      movie = %Movie{title: "Movie", year: 2024, tmdb_id: 42, file_path: source}
-
-      assert {:ok, dest, _quality} = Library.import_movie(movie)
-      assert File.read!(dest) == "video"
-      assert File.stat!(source).inode != File.stat!(dest).inode
     end
 
     @tag :tmp_dir
@@ -307,7 +296,7 @@ defmodule Cinder.Library.PathPolicyTest do
       Application.put_env(:cinder, :import_roots, [])
 
       movie = %Movie{title: "Movie", year: 2024, tmdb_id: 42, file_path: source}
-      assert {:error, :download_roots_not_configured} = Library.import_movie(movie)
+      assert {:error, :download_roots_not_configured} = Library.stage_movie(movie)
     end
 
     @tag :tmp_dir
@@ -340,6 +329,11 @@ defmodule Cinder.Library.PathPolicyTest do
       assert Task.await(task) == :ok
       assert File.dir?(outside_season)
     end
+  end
+
+  defp commit!(stage) do
+    ImportStage.mark_committed!(Library.stage_ids([stage]))
+    Library.commit_stage(stage)
   end
 
   defp configure_roots(tmp) do

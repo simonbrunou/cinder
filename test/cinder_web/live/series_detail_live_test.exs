@@ -1416,7 +1416,8 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     refute has_element?(lv, "button[phx-click=search_episode][phx-value-id='#{undated.id}']")
   end
 
-  test "Search is limited to monitored Anime story specials and recaps", %{conn: conn} do
+  test "Search is limited to monitored Anime story specials and recaps; a Standard S00 is unrestricted",
+       %{conn: conn} do
     anime =
       Repo.insert!(%Cinder.Catalog.Series{
         tmdb_id: 9302,
@@ -1477,17 +1478,31 @@ defmodule CinderWeb.SeriesDetailLiveTest do
         monitored: true
       })
 
+    # A Standard series never classifies episodes, so an explicitly monitored S00 row is
+    # searchable like a regular episode (Sonarr parity) regardless of `classification` —
+    # a stale/default `:regular` value here doesn't gate it the way Anime's does above.
     standard_story =
       wanted_ep(standard_specials, 1,
         air_date: Date.add(Date.utc_today(), -10),
         classification: :story_special
       )
 
+    standard_unmonitored =
+      wanted_ep(standard_specials, 2,
+        air_date: Date.add(Date.utc_today(), -10),
+        monitored: false
+      )
+
     {:ok, standard_lv, _html} = live_series(conn, standard)
+
+    assert has_element?(
+             standard_lv,
+             "button[phx-click=search_episode][phx-value-id='#{standard_story.id}']"
+           )
 
     refute has_element?(
              standard_lv,
-             "button[phx-click=search_episode][phx-value-id='#{standard_story.id}']"
+             "button[phx-click=search_episode][phx-value-id='#{standard_unmonitored.id}']"
            )
   end
 

@@ -9,8 +9,20 @@ defmodule Cinder.Accounts do
   alias Cinder.Accounts.{User, UserNotifier, UserToken}
   alias Cinder.Audit
   alias Cinder.Notifier
+  alias Cinder.Settings
 
-  @default_request_quota 10
+  @topic "accounts"
+
+  @doc """
+  Subscribes to the shared account-lifecycle topic: `{:user_registered, user}` (a new
+  account lands `active: false`, awaiting approval — via `register_user/2` or the Plex
+  sign-up path) and `{:account_activated, user}` (an admin let a pending account in).
+  Broad, like `Catalog`'s `"movies"`/`"series"` topics — a subscriber filters by id itself
+  (`PendingApprovalLive` cares only about its own user; `DashboardLive` just re-reads the
+  pending count on either event).
+  """
+  def subscribe, do: Phoenix.PubSub.subscribe(Cinder.PubSub, @topic)
+  defp broadcast(msg), do: Phoenix.PubSub.broadcast(Cinder.PubSub, @topic, msg)
 
   # Single sudo-mode window, used at every reauth checkpoint: the /users/settings mount, the
   # email/password event rechecks, and Plex link/unlink. Previously the mount used 10 minutes
@@ -67,7 +79,7 @@ defmodule Cinder.Accounts do
       |> Ecto.Changeset.put_change(:confirmed_at, DateTime.utc_now(:second))
       |> Ecto.Changeset.put_change(:role, role)
       |> Ecto.Changeset.put_change(:active, bootstrap_admin?)
-      |> Ecto.Changeset.put_change(:request_quota, @default_request_quota)
+      |> put_default_request_quota(role)
       |> Repo.insert()
       |> case do
         {:ok, user} -> user
@@ -82,6 +94,7 @@ defmodule Cinder.Accounts do
   # "someone is waiting to be let in". `create_user/2` makes an already-active user, so it
   # stays silent — the admin just created it themselves.
   defp announce_pending_user({:ok, %User{active: false} = user} = result) do
+    broadcast({:user_registered, user})
     Notifier.notify({:user_registered, user})
     result
   end
@@ -146,10 +159,15 @@ defmodule Cinder.Accounts do
     |> Ecto.Changeset.put_change(:confirmed_at, DateTime.utc_now(:second))
     |> Ecto.Changeset.put_change(:role, :user)
     |> Ecto.Changeset.put_change(:active, false)
-    |> Ecto.Changeset.put_change(:request_quota, @default_request_quota)
+    |> put_default_request_quota(:user)
     |> Repo.insert()
     |> announce_pending_user()
   end
+
+  defp put_default_request_quota(changeset, :admin), do: changeset
+
+  defp put_default_request_quota(changeset, :user),
+    do: Ecto.Changeset.put_change(changeset, :request_quota, Settings.default_request_quota())
 
   @doc """
   Attaches a Plex identity to an ALREADY-authenticated user's own account — the `/users/settings`
@@ -242,9 +260,15 @@ defmodule Cinder.Accounts do
     |> flatten_revocation_result()
   end
 
-  @doc "Activates a pending account. The write and audit row commit together."
+  @doc """
+  Activates a pending account. The write and audit row commit together; the
+  `{:account_activated, user}` broadcast fires post-commit so `PendingApprovalLive` (the
+  waiting user's own tab) and `DashboardLive` (the pending-accounts count) never see it
+  before it's durable.
+  """
   def activate_user(%User{} = actor, %User{} = target) do
-    admin_transaction(actor, fn actor ->
+    actor
+    |> admin_transaction(fn actor ->
       case Repo.get(User, target.id) do
         %User{active: false} = pending ->
           {:ok, updated} = pending |> Ecto.Changeset.change(active: true) |> Repo.update()
@@ -255,6 +279,7 @@ defmodule Cinder.Accounts do
           Repo.rollback(:not_pending)
       end
     end)
+    |> tap_ok(&broadcast({:account_activated, &1}))
   end
 
   @doc "Deletes a pending account through the audited, last-admin-safe user deletion path."
@@ -365,6 +390,9 @@ defmodule Cinder.Accounts do
   @doc "All users, ordered by id."
   def list_users, do: Repo.all(from u in User, order_by: [asc: u.id])
 
+  @doc "Counts accounts awaiting admin approval (`active: false`)."
+  def count_pending_accounts, do: Repo.aggregate(from(u in User, where: not u.active), :count)
+
   @doc """
   Updates a user's concurrent-pending request quota (nil = unlimited). Writes an audit row in
   the same transaction, like every other destructive admin action.
@@ -399,6 +427,23 @@ defmodule Cinder.Accounts do
   end
 
   def sudo_mode?(_user, _minutes), do: false
+
+  @doc "Returns a changeset for the user's display locale."
+  def change_user_locale(user, attrs \\ %{}), do: User.locale_changeset(user, attrs)
+
+  @doc "Updates the user's display locale."
+  def update_user_locale(user, attrs) do
+    user
+    |> User.locale_changeset(attrs)
+    |> Repo.update()
+  end
+
+  @doc "Updates the user's opt-in for request/availability email notifications."
+  def update_user_notify_email(user, attrs) do
+    user
+    |> User.notify_email_changeset(attrs)
+    |> Repo.update()
+  end
 
   @doc """
   Returns an `%Ecto.Changeset{}` for changing the user email.
@@ -577,4 +622,11 @@ defmodule Cinder.Accounts do
     Repo.delete_all(from t in UserToken, where: t.id in ^Enum.map(tokens, & &1.id))
     :ok
   end
+
+  defp tap_ok({:ok, value} = res, fun) do
+    fun.(value)
+    res
+  end
+
+  defp tap_ok(other, _fun), do: other
 end

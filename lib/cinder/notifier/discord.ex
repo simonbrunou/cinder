@@ -1,21 +1,18 @@
 defmodule Cinder.Notifier.Discord do
   @moduledoc """
-  Discord-webhook notifier. Delegates the log line to `Cinder.Notifier.Log`, then — when a
-  webhook URL is configured — posts embeds for availability and failures. Best-effort: a failed
-  post is logged and swallowed so a Discord outage never touches the pipeline, and the request
-  carries a bounded `receive_timeout` so a hung webhook can't stall synchronous poller call sites.
-  `Cinder.Notifier.notify/1` catches raises on top of this.
+  Discord-webhook notifier: when a webhook URL is configured, posts embeds for approvals,
+  availability, and failures. Best-effort: a failed post is logged and swallowed so a Discord
+  outage never touches the pipeline, and the request carries a bounded `receive_timeout` so a
+  hung webhook can't stall synchronous poller call sites. Registered alongside `Cinder.Notifier.Log`
+  and `Cinder.Notifier.Email` in `Cinder.Notifier.Dispatcher`, the configured `:cinder, :notifier`
+  default — `Cinder.Notifier.notify/1` catches raises on top of that.
 
   The webhook URL is a `Cinder.Settings` registry entry, overlaid onto
   `Application.get_env(:cinder, __MODULE__)[:webhook_url]`.
-
-  ponytail: single transport that also logs — not a multi-transport fan-out registry
-  (roadmap-parked). Upgrade path is a real dispatcher behind the same `notify/1` seam.
   """
   @behaviour Cinder.Notifier
   alias Cinder.Catalog.Episode
   alias Cinder.HTTPPolicy
-  alias Cinder.Notifier.Log
   alias Cinder.Util
   require Logger
 
@@ -43,8 +40,6 @@ defmodule Cinder.Notifier.Discord do
 
   @impl true
   def notify(event) do
-    Log.notify(event)
-
     with url when is_binary(url) <- webhook_url(),
          embed when is_map(embed) <- embed(event) do
       post(url, embed)

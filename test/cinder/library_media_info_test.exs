@@ -1,6 +1,7 @@
 defmodule Cinder.LibraryMediaInfoTest do
   # async: false — toggles the optional :media_info impl via Application env for this module only.
-  use ExUnit.Case, async: false
+  # DataCase (not bare ExUnit.Case): stage_movie now writes an ImportStage journal row.
+  use Cinder.DataCase, async: false
 
   import Mox
   import ExUnit.CaptureLog
@@ -8,6 +9,7 @@ defmodule Cinder.LibraryMediaInfoTest do
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog.{Episode, Movie, Season, Series}
   alias Cinder.Library
+  alias Cinder.Library.ImportStage
 
   @tv_lib "/tmp/cinder-test-tv-library"
 
@@ -43,35 +45,20 @@ defmodule Cinder.LibraryMediaInfoTest do
     assert Language.stream_status("fr", ["zzz"], false) == :unknown
   end
 
-  defp expect_single_file_import do
-    expect(Cinder.Library.FilesystemMock, :dir?, fn @source -> false end)
-
-    expect(Cinder.Library.FilesystemMock, :lstat, fn @source ->
-      {:ok, %File.Stat{size: 1, inode: 1}}
-    end)
-
-    expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    expect(Cinder.Library.FilesystemMock, :ln, fn @source, @dest -> :ok end)
-    expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+  defp commit!(stage) do
+    ImportStage.mark_committed!(Library.stage_ids([stage]))
+    Library.commit_stage(stage)
   end
 
   test "imports when the file's audio includes the wanted language (639-2 code match)" do
-    expect(Cinder.Library.FilesystemMock, :dir?, fn @source -> false end)
-
     # stub, not expect: capture_media/1 probes again after verify_audio, so probe runs twice.
     stub(Cinder.Library.MediaInfoMock, :probe, fn @source ->
       {:ok, %{audio: ["fra", "eng"], subtitles: []}}
     end)
 
-    expect(Cinder.Library.FilesystemMock, :lstat, fn @source ->
-      {:ok, %File.Stat{size: 1, inode: 1}}
-    end)
+    Cinder.LibraryStubs.stub_import_ok(1)
 
-    expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    expect(Cinder.Library.FilesystemMock, :ln, fn @source, @dest -> :ok end)
-    expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
-
-    assert {:ok, @dest, _quality} = Library.import_movie(french_movie())
+    assert {:ok, %{dest: @dest}} = Library.stage_movie(french_movie())
   end
 
   test "parks a confirmed wrong-language file without importing it" do
@@ -81,30 +68,29 @@ defmodule Cinder.LibraryMediaInfoTest do
       {:ok, %{audio: ["hun"], subtitles: []}}
     end)
 
-    # No mkdir_p/ln/scan — the import short-circuits before touching the filesystem.
+    # No lstat/mkdir_p/ln/scan — the stage short-circuits before touching the filesystem further.
 
-    assert {:error, :wrong_audio_language} = Library.import_movie(french_movie())
+    assert {:error, :wrong_audio_language} = Library.stage_movie(french_movie())
   end
 
   test "imports when the probe reports no usable language (can't verify, don't over-park)" do
-    expect(Cinder.Library.FilesystemMock, :dir?, fn @source -> false end)
-
     stub(Cinder.Library.MediaInfoMock, :probe, fn @source ->
       {:ok, %{audio: [], subtitles: []}}
     end)
 
-    expect_single_file_import_tail()
+    Cinder.LibraryStubs.stub_import_ok(1)
 
-    assert {:ok, @dest, _quality} = Library.import_movie(french_movie())
+    assert {:ok, %{dest: @dest}} = Library.stage_movie(french_movie())
   end
 
   test "imports when the probe errors (e.g. ffprobe not installed)" do
-    expect(Cinder.Library.FilesystemMock, :dir?, fn @source -> false end)
     stub(Cinder.Library.MediaInfoMock, :probe, fn @source -> {:error, :enoent} end)
-    expect_single_file_import_tail()
+    Cinder.LibraryStubs.stub_import_ok(1)
 
     log =
-      capture_log(fn -> assert {:ok, @dest, _quality} = Library.import_movie(french_movie()) end)
+      capture_log(fn ->
+        assert {:ok, %{dest: @dest}} = Library.stage_movie(french_movie())
+      end)
 
     assert log =~ "media-info audio check skipped for /dl/movie.mkv: :enoent"
     assert log =~ "media-info probe failed for /dl/movie.mkv: {:error, :enoent}"
@@ -116,57 +102,54 @@ defmodule Cinder.LibraryMediaInfoTest do
       {:ok, %{audio: ["eng"], subtitles: []}}
     end)
 
-    expect_single_file_import()
+    Cinder.LibraryStubs.stub_import_ok(1)
 
-    assert {:ok, @dest, _quality} =
-             Library.import_movie(%{french_movie() | preferred_language: "any"})
+    assert {:ok, %{dest: @dest}} =
+             Library.stage_movie(%{french_movie() | preferred_language: "any"})
   end
 
   test "imports for a language outside the registry (can't verify → don't false-park)" do
     # Croatian original_language ("hr") isn't in the registry, so the wanted set is unknown — the
     # correctly-Croatian file must import, not park.
     movie = %{french_movie() | original_language: "hr"}
-    expect(Cinder.Library.FilesystemMock, :dir?, fn @source -> false end)
 
     stub(Cinder.Library.MediaInfoMock, :probe, fn @source ->
       {:ok, %{audio: ["hrv"], subtitles: []}}
     end)
 
-    expect_single_file_import_tail()
+    Cinder.LibraryStubs.stub_import_ok(1)
 
-    assert {:ok, @dest, _quality} = Library.import_movie(movie)
+    assert {:ok, %{dest: @dest}} = Library.stage_movie(movie)
   end
 
   test "a 639-2 variant code (Norwegian 'nob') is accepted, not false-parked" do
     movie = %{french_movie() | original_language: "no"}
-    expect(Cinder.Library.FilesystemMock, :dir?, fn @source -> false end)
 
     stub(Cinder.Library.MediaInfoMock, :probe, fn @source ->
       {:ok, %{audio: ["nob"], subtitles: []}}
     end)
 
-    expect_single_file_import_tail()
+    Cinder.LibraryStubs.stub_import_ok(1)
 
-    assert {:ok, @dest, _quality} = Library.import_movie(movie)
+    assert {:ok, %{dest: @dest}} = Library.stage_movie(movie)
   end
 
   test "an unrecognised audio code can't confirm a mismatch → imports" do
     # Norwegian wanted, file tagged with a code we don't list → conservative: don't park.
     movie = %{french_movie() | original_language: "no"}
-    expect(Cinder.Library.FilesystemMock, :dir?, fn @source -> false end)
 
     stub(Cinder.Library.MediaInfoMock, :probe, fn @source ->
       {:ok, %{audio: ["zzz"], subtitles: []}}
     end)
 
-    expect_single_file_import_tail()
+    Cinder.LibraryStubs.stub_import_ok(1)
 
-    assert {:ok, @dest, _quality} = Library.import_movie(movie)
+    assert {:ok, %{dest: @dest}} = Library.stage_movie(movie)
   end
 
   @gb 1_000_000_000
 
-  test "import_movie captures audio + embedded + sidecar languages into the returned quality" do
+  test "stage_movie captures audio + embedded + sidecar languages into the returned quality" do
     # A *folder* download so the sidecar scan runs (sidecars ship inside a release folder).
     parent = self()
     folder = "/dl/M (2020)"
@@ -196,13 +179,25 @@ defmodule Cinder.LibraryMediaInfoTest do
     end)
 
     stub(Cinder.Library.FilesystemMock, :lstat, fn
-      ^source -> {:ok, %File.Stat{size: 5 * @gb, inode: 1}}
-      ^sidecar_dest -> {:error, :enoent}
+      ^source ->
+        {:ok, %File.Stat{size: 5 * @gb, inode: 1}}
+
+      ^sidecar_dest ->
+        {:error, :enoent}
+
+      ^dest ->
+        {:error, :enoent}
+
+      path ->
+        if String.contains?(path, ".cinder-stage-"),
+          do: {:ok, %File.Stat{size: 5 * @gb, inode: 2, major_device: 1}},
+          else: {:error, :enoent}
     end)
 
     stub(Cinder.Library.FilesystemMock, :moviehash_data, fn ^dest -> :too_small end)
 
     stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
 
     # Both the video and the sidecar hardlink go through ln; capture them to prove the sidecar linked.
     stub(Cinder.Library.FilesystemMock, :ln, fn s, d ->
@@ -212,26 +207,15 @@ defmodule Cinder.LibraryMediaInfoTest do
 
     stub(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
 
-    assert {:ok, ^dest, q} = Library.import_movie(movie)
+    assert {:ok, %{dest: ^dest, quality: q} = stage} = Library.stage_movie(movie)
+    assert :ok = commit!(stage)
+
     assert q.audio_languages == ["eng", "fre"]
     assert q.embedded_subtitles == ["eng"]
     assert q.sidecar_subtitles == ["fr"]
 
-    assert_received {:ln, ^source, ^dest}
     assert_received {:ln, ^srt, ^sidecar_dest}
     await_subtitle_tasks()
-  end
-
-  # The tail of a single-file import after resolve_source's dir? (which the probe tests set
-  # themselves so the probe expectation lands between dir? and mkdir_p).
-  defp expect_single_file_import_tail do
-    expect(Cinder.Library.FilesystemMock, :lstat, fn @source ->
-      {:ok, %File.Stat{size: 1, inode: 1}}
-    end)
-
-    expect(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
-    expect(Cinder.Library.FilesystemMock, :ln, fn @source, @dest -> :ok end)
-    expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
   end
 
   # A French series ('original') episode with its season/series preloaded (what the TvPoller passes).

@@ -13,6 +13,19 @@ defmodule CinderWeb.DashboardLiveTest do
   setup :set_mox_global
   setup :verify_on_exit!
 
+  # Each worker's poll stamps last-run into process-global :persistent_term (PollerSkeleton's
+  # `status/0`); erase all four so a run triggered here can't bleed into another test/suite.
+  setup do
+    on_exit(fn ->
+      :persistent_term.erase({Cinder.Download.Poller, :last_run})
+      :persistent_term.erase({Cinder.Download.TvPoller, :last_run})
+      :persistent_term.erase({Cinder.Catalog.Refresher, :last_run})
+      :persistent_term.erase({Cinder.Subtitles.Sweeper, :last_run})
+    end)
+
+    :ok
+  end
+
   setup do
     # Dashboard runs Health.check_all/0 in a start_async task (separate process) → global mocks.
     stub(Cinder.Acquisition.IndexerMock, :health, fn -> :ok end)
@@ -346,6 +359,39 @@ defmodule CinderWeb.DashboardLiveTest do
       assert html =~ "Nothing to approve"
     end
 
+    test "shows the pending accounts count linking to /users", %{conn: conn} do
+      Cinder.AccountsFixtures.user_fixture()
+      |> Ecto.Changeset.change(active: false)
+      |> Cinder.Repo.update!()
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      assert lv |> element("div.items-baseline", "Pending accounts") |> render() =~
+               ~r{tabular-nums">\s*1\s*</span>}
+
+      assert has_element?(lv, ~s|a[href="/users"]|, "Pending accounts")
+    end
+
+    test "the pending accounts count live-updates when an admin activates a waiting account", %{
+      conn: conn,
+      user: admin
+    } do
+      pending =
+        Cinder.AccountsFixtures.user_fixture()
+        |> Ecto.Changeset.change(active: false)
+        |> Cinder.Repo.update!()
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      assert lv |> element("div.items-baseline", "Pending accounts") |> render() =~
+               ~r{tabular-nums">\s*1\s*</span>}
+
+      {:ok, _} = Cinder.Accounts.activate_user(admin, pending)
+
+      assert lv |> element("div.items-baseline", "Pending accounts") |> render() =~
+               ~r{tabular-nums">\s*0\s*</span>}
+    end
+
     test "the pending queue shows a non-default Audio pick, but not the default", %{conn: conn} do
       requester = Cinder.AccountsFixtures.user_fixture()
       pending_movie_request(requester, %{preferred_language: "dual"})
@@ -355,6 +401,52 @@ defmodule CinderWeb.DashboardLiveTest do
 
       assert html =~ "Audio: French + original"
       refute html =~ "Audio: Original"
+    end
+  end
+
+  describe "disk space (as an admin)" do
+    setup :register_and_log_in_admin
+    setup :reset_cinder_env
+
+    test "shows free/total space for a configured, readable root", %{conn: conn} do
+      dir =
+        Path.join(
+          System.tmp_dir!(),
+          "cinder-dashboard-disk-#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+
+      Application.put_env(:cinder, :movies_library_path, dir)
+      Application.delete_env(:cinder, :tv_library_path)
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      # Disk stats resolve asynchronously (a slow/hung `df` must not block render).
+      assert render_async(lv) =~ "Disk space"
+      assert has_element?(lv, "#disk-movies", "free of")
+    end
+
+    test "degrades to an Unavailable row for a configured but unreadable root", %{conn: conn} do
+      path = "/nonexistent/cinder-dashboard-disk-#{System.unique_integer([:positive])}"
+      Application.put_env(:cinder, :movies_library_path, path)
+      Application.delete_env(:cinder, :tv_library_path)
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      render_async(lv)
+      assert has_element?(lv, "#disk-movies", "Unavailable")
+      refute has_element?(lv, "#disk-movies", "free of")
+    end
+
+    test "shows the empty state when no library path is configured", %{conn: conn} do
+      Application.delete_env(:cinder, :movies_library_path)
+      Application.delete_env(:cinder, :tv_library_path)
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      assert render_async(lv) =~ "No library paths configured"
     end
   end
 

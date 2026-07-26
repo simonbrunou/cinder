@@ -70,6 +70,42 @@ defmodule Cinder.CatalogTvPipelineTest do
       assert_receive {:series_updated, ^series_id}
       assert Repo.get(Episode, ep.id).file_path == "/library/x.mkv"
     end
+
+    test "emits [:cinder, :transition] with kind: :episode and the derived to-status" do
+      {_series, season} = series_with_season()
+      ep = episode(season, %{})
+
+      {result, events} =
+        Cinder.TelemetryHelpers.capture([:cinder, :transition], fn ->
+          Catalog.transition_episode(ep, %{file_path: "/library/x.mkv"})
+        end)
+
+      assert {:ok, _ep} = result
+      assert [{%{count: 1}, %{kind: :episode, to: :available}}] = events
+    end
+  end
+
+  describe "episodes CHECK constraints (DB level)" do
+    test "a raw write setting both file_path and grab_id raises (bypasses the changeset guard)" do
+      {_series, season} = series_with_season()
+      ep = episode(season, %{})
+      grab = Repo.insert!(%Grab{download_id: "dl1", download_protocol: :torrent})
+
+      assert_raise Exqlite.Error, ~r/CHECK constraint failed/, fn ->
+        Repo.update_all(from(e in Episode, where: e.id == ^ep.id),
+          set: [file_path: "/x.mkv", grab_id: grab.id]
+        )
+      end
+    end
+
+    test "a raw write setting a negative search_attempts raises" do
+      {_series, season} = series_with_season()
+      ep = episode(season, %{})
+
+      assert_raise Exqlite.Error, ~r/CHECK constraint failed/, fn ->
+        Repo.update_all(from(e in Episode, where: e.id == ^ep.id), set: [search_attempts: -1])
+      end
+    end
   end
 
   describe "grab lifecycle" do
@@ -336,7 +372,8 @@ defmodule Cinder.CatalogTvPipelineTest do
           where:
             (s.season_number > 0 and e.episode_number > 0) or
               (series.media_profile == :anime and
-                 e.classification in [:story_special, :recap]),
+                 e.classification in [:story_special, :recap]) or
+              (series.media_profile != :anime and s.season_number == 0),
           select: e.id
 
       {sql, params} = EctoSQL.to_sql(:all, Repo, q)
@@ -379,6 +416,24 @@ defmodule Cinder.CatalogTvPipelineTest do
       assert {:ok, _grab} = Catalog.create_grab("special-owned", :torrent, [owned.id])
       refute owned.id in wanted_ids()
       refute imported.id in wanted_ids()
+    end
+
+    test "a Standard S00 episode numbered 0 is never wanted (unparseable, would search futilely)" do
+      series = series_fixture()
+      specials = season_fixture(series, %{season_number: 0})
+
+      zero = episode(specials, %{episode_number: 0, monitored: true})
+      regular_special = episode(specials, %{episode_number: 1, monitored: true})
+
+      refute zero.id in wanted_ids()
+      assert regular_special.id in wanted_ids()
+
+      profile = %{effective: :standard}
+      zero = Repo.preload(zero, :season)
+      regular_special = Repo.preload(regular_special, :season)
+
+      refute Catalog.episode_searchable?(zero, profile)
+      assert Catalog.episode_searchable?(regular_special, profile)
     end
 
     test "new provider-classified specials default unmonitored and refresh preserves an operator toggle" do
@@ -493,40 +548,67 @@ defmodule Cinder.CatalogTvPipelineTest do
       assert ep.season.series.id == series.id
     end
 
-    test "keeps Standard season 0 excluded" do
+    test "an explicitly monitored Standard season 0 episode is wanted like a regular episode (Sonarr parity)" do
       {series, season} = series_with_season()
       regular = episode(season, %{air_date: @past, monitored: true})
       specials = Repo.insert!(%Season{series_id: series.id, season_number: 0, monitored: true})
 
-      special =
+      # Standard never classifies episodes, so classification doesn't gate this — only monitored.
+      monitored_special =
         episode(specials, %{
           air_date: @past,
           monitored: true,
           classification: :story_special
         })
 
+      unmonitored_special = episode(specials, %{air_date: @past, monitored: false})
+
       ids = Enum.map(Catalog.wanted_episodes(), & &1.id)
       assert regular.id in ids
-      refute special.id in ids
+      assert monitored_special.id in ids
+      refute unmonitored_special.id in ids
     end
   end
 
   describe "upcoming_episodes/0" do
-    test "returns monitored, dated, in-window, non-special episodes ordered by air_date" do
+    test "returns monitored, dated, in-window episodes ordered by air_date, including an eligible S00" do
       {series, season} = series_with_season()
       today = Date.utc_today()
       recent = episode(season, %{air_date: Date.add(today, -3), monitored: true})
       soon = episode(season, %{air_date: Date.add(today, 10), monitored: true})
 
-      # Excluded: before the window, after the window, undated, unmonitored, specials.
+      # Excluded: before the window, after the window, undated, unmonitored.
       episode(season, %{air_date: Date.add(today, -30), monitored: true})
       episode(season, %{air_date: Date.add(today, 200), monitored: true})
       episode(season, %{air_date: nil, monitored: true})
       episode(season, %{air_date: Date.add(today, 5), monitored: false})
-      specials = Repo.insert!(%Season{series_id: series.id, season_number: 0, monitored: true})
-      episode(specials, %{air_date: Date.add(today, 2), monitored: true})
 
-      assert Enum.map(Catalog.upcoming_episodes(), & &1.id) == [recent.id, soon.id]
+      specials = Repo.insert!(%Season{series_id: series.id, season_number: 0, monitored: true})
+      # An explicitly monitored Standard S00 row IS included (Sonarr parity)...
+      wanted_special = episode(specials, %{air_date: Date.add(today, 2), monitored: true})
+      # ...but an unmonitored one still isn't.
+      episode(specials, %{air_date: Date.add(today, 3), monitored: false})
+
+      assert Enum.map(Catalog.upcoming_episodes(), & &1.id) == [
+               recent.id,
+               wanted_special.id,
+               soon.id
+             ]
+    end
+
+    test "an Anime S00 row stays excluded unless classified as a story special or recap" do
+      series = series_fixture(%{media_profile: :anime})
+      season = season_fixture(series, %{season_number: 0})
+      today = Date.utc_today()
+
+      extra = episode(season, %{air_date: today, monitored: true, classification: :extra})
+
+      special =
+        episode(season, %{air_date: today, monitored: true, classification: :story_special})
+
+      ids = Enum.map(Catalog.upcoming_episodes(), & &1.id)
+      refute extra.id in ids
+      assert special.id in ids
     end
 
     test "preloads season and series" do

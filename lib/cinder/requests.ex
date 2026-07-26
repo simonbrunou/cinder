@@ -29,6 +29,41 @@ defmodule Cinder.Requests do
     Repo.all(from r in Request, where: r.user_id == ^id, order_by: [desc: r.id])
   end
 
+  @doc """
+  Users with an approved request for this movie (by `tmdb_id`) — every requester who
+  should hear when it becomes available or fails, not just the first. `Cinder.Notifier.Email`
+  uses this to fan a `:movie_available`/`:movie_failed` event out to each of them.
+  """
+  @spec approved_requesters_for_movie(integer()) :: [User.t()]
+  def approved_requesters_for_movie(tmdb_id) do
+    Repo.all(
+      from r in Request,
+        join: u in assoc(r, :user),
+        where: r.target_type == "movie" and r.target_id == ^tmdb_id and r.status == :approved,
+        distinct: true,
+        order_by: [asc: u.id],
+        select: u
+    )
+  end
+
+  @doc """
+  Users with an approved request for this season (by the series' `tmdb_id` + `season_number`)
+  — the season/TV analog of `approved_requesters_for_movie/1`.
+  """
+  @spec approved_requesters_for_season(integer(), integer()) :: [User.t()]
+  def approved_requesters_for_season(tmdb_id, season_number) do
+    Repo.all(
+      from r in Request,
+        join: u in assoc(r, :user),
+        where:
+          r.target_type == "season" and r.target_id == ^tmdb_id and
+            r.season_number == ^season_number and r.status == :approved,
+        distinct: true,
+        order_by: [asc: u.id],
+        select: u
+    )
+  end
+
   def create_request(%User{} = user, attrs) do
     cond do
       not valid_proposed_profile?(attrs) ->
@@ -340,6 +375,32 @@ defmodule Cinder.Requests do
           Repo.rollback(:not_found)
       end
     end)
+    |> tap_ok(&broadcast({:request_deleted, &1}))
+  end
+
+  @doc """
+  Cancels the CALLER's own request, but only while it is still `:pending` — the
+  self-service counterpart to the admin `delete_request/2`. Ownership and status are
+  BOTH enforced by the DELETE's WHERE clause in one atomic statement (no read-then-write
+  window a stale UI click could race), so a forged or stale `phx-value-id` can never
+  cancel someone else's request, nor one an admin already approved/denied out from under
+  the requester in the meantime. Both failure shapes collapse to the same
+  `{:error, :not_pending}` — a generic "not currently pending for you" reason, since
+  distinguishing "not yours" from "already decided" would leak whether the target row
+  exists at all. Not admin-audited: this is a requester acting on their own row, not a
+  destructive admin action.
+  """
+  def cancel_own_request(%Request{id: id}, %User{id: user_id}) do
+    Repo.delete_all(
+      from(r in Request,
+        where: r.id == ^id and r.user_id == ^user_id and r.status == :pending,
+        select: r
+      )
+    )
+    |> case do
+      {1, [fresh]} -> {:ok, fresh}
+      {0, _} -> {:error, :not_pending}
+    end
     |> tap_ok(&broadcast({:request_deleted, &1}))
   end
 

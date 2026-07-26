@@ -12,6 +12,7 @@ defmodule CinderWeb.DiscoverLive do
 
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog
+  alias Cinder.Catalog.Genres
 
   require Logger
 
@@ -28,18 +29,37 @@ defmodule CinderWeb.DiscoverLive do
 
     socket =
       socket
-      |> assign(query: "", results: [], search_error: false, filter: :all, trending: [])
+      |> assign(
+        query: "",
+        results: [],
+        search_error: false,
+        filter: :all,
+        trending: [],
+        popular: [],
+        top_rated: [],
+        now_playing: [],
+        genres: Genres.list(),
+        selected_genre_id: nil,
+        genre_movies: []
+      )
       |> assign_request_state()
 
-    {:ok, maybe_load_trending(socket)}
+    {:ok, maybe_load_rails(socket)}
   end
 
-  # Trending fills the otherwise-empty landing grid; fetched off-process so a slow
-  # TMDB can't hold up mount, and only on the connected mount (one fetch, not two).
-  defp maybe_load_trending(socket) do
+  # The landing rails (trending + popular/top-rated/now-playing) fill the otherwise-empty
+  # grid; each fetched off-process (its own start_async) so a slow TMDB can't hold up mount
+  # and one rail's failure can't block the others, only on the connected mount (one fetch
+  # each, not two).
+  defp maybe_load_rails(socket) do
     if connected?(socket) do
       locale = socket.assigns.locale
-      start_async(socket, :trending, fn -> Catalog.trending(locale) end)
+
+      socket
+      |> start_async(:trending, fn -> Catalog.trending(locale) end)
+      |> start_async(:popular, fn -> Catalog.popular_movies(locale) end)
+      |> start_async(:top_rated, fn -> Catalog.top_rated_movies(locale) end)
+      |> start_async(:now_playing, fn -> Catalog.now_playing_movies(locale) end)
     else
       socket
     end
@@ -92,6 +112,26 @@ defmodule CinderWeb.DiscoverLive do
     {:noreply, assign(socket, filter: filter)}
   end
 
+  def handle_event("select_genre", %{"id" => id}, socket) when is_binary(id) do
+    # phx-value is client-controlled; tolerate non-numeric/unknown ids instead of crashing
+    # or spending a TMDB call on a forged genre id.
+    with {genre_id, ""} <- Integer.parse(id),
+         true <- Genres.valid_id?(genre_id) do
+      case Catalog.movies_by_genre(genre_id, socket.assigns.locale) do
+        {:ok, results} ->
+          {:noreply, assign(socket, selected_genre_id: genre_id, genre_movies: results)}
+
+        {:error, _reason} ->
+          {:noreply,
+           socket
+           |> assign(selected_genre_id: genre_id, genre_movies: [])
+           |> put_flash(:error, gettext("TMDB search failed. Try again."))}
+      end
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
   # The event payload is client-controlled; ignore any malformed/forged frame.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
@@ -140,6 +180,15 @@ defmodule CinderWeb.DiscoverLive do
     {:noreply, socket}
   end
 
+  def handle_async(:popular, result, socket),
+    do: handle_rail_async("Popular movies", :popular, result, socket)
+
+  def handle_async(:top_rated, result, socket),
+    do: handle_rail_async("Top rated movies", :top_rated, result, socket)
+
+  def handle_async(:now_playing, result, socket),
+    do: handle_rail_async("Now playing", :now_playing, result, socket)
+
   def handle_async({:add, _tmdb_id, title}, {:ok, result}, socket) do
     {:noreply, request_result(socket, title, result)}
   end
@@ -147,6 +196,21 @@ defmodule CinderWeb.DiscoverLive do
   def handle_async({:add, _tmdb_id, title}, {:exit, _reason}, socket) do
     {:noreply,
      put_flash(socket, :error, gettext("Couldn't request %{title}. Try again.", title: title))}
+  end
+
+  # Shared by the popular/top-rated/now-playing rails — same decorative-failure shape as the
+  # :trending clauses above: log and leave the section unrendered, never break the page.
+  defp handle_rail_async(_label, key, {:ok, {:ok, results}}, socket),
+    do: {:noreply, assign(socket, key, results)}
+
+  defp handle_rail_async(label, _key, {:ok, {:error, reason}}, socket) do
+    Logger.warning("#{label} fetch failed: #{inspect(reason)}")
+    {:noreply, socket}
+  end
+
+  defp handle_rail_async(label, _key, {:exit, reason}, socket) do
+    Logger.warning("#{label} fetch crashed: #{inspect(reason)}")
+    {:noreply, socket}
   end
 
   # ponytail: only four valid values; default "original" on anything else (client-controlled).
@@ -161,7 +225,27 @@ defmodule CinderWeb.DiscoverLive do
 
   @impl true
   def render(assigns) do
-    assigns = assign(assigns, filtered_results: filter_results(assigns.results, assigns.filter))
+    # Several TMDB lists commonly overlap (a blockbuster is often trending AND popular AND
+    # top-rated); a movie already shown in an earlier rail is dropped from a later one so the
+    # same tmdb_id never renders twice at once — its Add form's id is keyed only by tmdb_id
+    # (`add-form-#{tmdb_id}`), so two simultaneous copies would be a duplicate-DOM-id bug, not
+    # just visual noise. TV cards have no id-bearing action (season-picker link only), so this
+    # only ever needs to drop movies.
+    popular = dedupe_movies(assigns.popular, assigns.trending)
+    top_rated = dedupe_movies(assigns.top_rated, assigns.trending ++ popular)
+    now_playing = dedupe_movies(assigns.now_playing, assigns.trending ++ popular ++ top_rated)
+
+    genre_movies =
+      dedupe_movies(assigns.genre_movies, assigns.trending ++ popular ++ top_rated ++ now_playing)
+
+    assigns =
+      assign(assigns,
+        filtered_results: filter_results(assigns.results, assigns.filter),
+        popular: popular,
+        top_rated: top_rated,
+        now_playing: now_playing,
+        genre_movies: genre_movies
+      )
 
     ~H"""
     <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
@@ -244,6 +328,68 @@ defmodule CinderWeb.DiscoverLive do
         />
       </section>
 
+      <section :if={@query == "" and @popular != []} class="mb-10">
+        <h2 class="mb-4 flex items-center gap-2 text-lg font-semibold">
+          <.icon name="hero-fire" class="size-5 text-primary" />
+          {gettext("Popular movies")}
+        </h2>
+        <.media_grid
+          id="popular"
+          results={@popular}
+          request_status={@request_status}
+          movie_status={@movie_status}
+          series_request_status={@series_request_status}
+          available_series={@available_series}
+        />
+      </section>
+
+      <section :if={@query == "" and @top_rated != []} class="mb-10">
+        <h2 class="mb-4 flex items-center gap-2 text-lg font-semibold">
+          <.icon name="hero-star" class="size-5 text-primary" />
+          {gettext("Top rated movies")}
+        </h2>
+        <.media_grid
+          id="top-rated"
+          results={@top_rated}
+          request_status={@request_status}
+          movie_status={@movie_status}
+          series_request_status={@series_request_status}
+          available_series={@available_series}
+        />
+      </section>
+
+      <section :if={@query == "" and @now_playing != []} class="mb-10">
+        <h2 class="mb-4 flex items-center gap-2 text-lg font-semibold">
+          <.icon name="hero-play-circle" class="size-5 text-primary" />
+          {gettext("Now playing")}
+        </h2>
+        <.media_grid
+          id="now-playing"
+          results={@now_playing}
+          request_status={@request_status}
+          movie_status={@movie_status}
+          series_request_status={@series_request_status}
+          available_series={@available_series}
+        />
+      </section>
+
+      <section :if={@query == ""} class="mb-10">
+        <h2 class="mb-4 flex items-center gap-2 text-lg font-semibold">
+          <.icon name="hero-tag" class="size-5 text-primary" />
+          {gettext("Browse by genre")}
+        </h2>
+        <.genre_chips genres={@genres} selected_id={@selected_genre_id} />
+        <.media_grid
+          :if={@genre_movies != []}
+          id="genre-results"
+          results={@genre_movies}
+          request_status={@request_status}
+          movie_status={@movie_status}
+          series_request_status={@series_request_status}
+          available_series={@available_series}
+        />
+      </section>
+
       <.empty_state
         :if={@query != "" and @filtered_results == [] and not @search_error}
         icon="hero-magnifying-glass"
@@ -262,4 +408,9 @@ defmodule CinderWeb.DiscoverLive do
 
   defp filter_results(results, :all), do: results
   defp filter_results(results, type), do: Enum.filter(results, &(&1.type == type))
+
+  defp dedupe_movies(results, shown) do
+    shown_ids = shown |> Enum.filter(&(&1.type == :movie)) |> MapSet.new(& &1.tmdb_id)
+    Enum.reject(results, &(&1.type == :movie and MapSet.member?(shown_ids, &1.tmdb_id)))
+  end
 end

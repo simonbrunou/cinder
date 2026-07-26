@@ -214,6 +214,19 @@ defmodule Cinder.Acquisition.ParserTest do
       assert %{season: nil, episodes: nil} =
                Parser.parse("Inception.2010.1080p.BluRay.x264-RARBG")
     end
+
+    test "an episode-tail S00Exx parses to season 0 (a Standard specials release)" do
+      assert %{season: 0, episodes: [1]} = Parser.parse("Show.S00E01.1080p")
+    end
+
+    test "the 0x05 alt form parses to season 0" do
+      assert %{season: 0, episodes: [5]} = Parser.parse("Show.Name.0x05.720p")
+    end
+
+    test "an S00 range/double-episode variant expands normally" do
+      assert %{season: 0, episodes: [1, 2, 3]} = Parser.parse("Show.S00E01-E03.1080p")
+      assert %{season: 0, episodes: [1, 2]} = Parser.parse("Show.S00E01E02.1080p")
+    end
   end
 
   describe "TV parsing guards (deferred or junk → nil/nil)" do
@@ -261,16 +274,21 @@ defmodule Cinder.Acquisition.ParserTest do
       assert %{season: 1, episodes: nil} = Parser.parse("Show.Season.1-1080p.WEB")
     end
 
-    test "S00 specials park (specials are M6 scope)" do
-      assert %{season: nil, episodes: nil} = Parser.parse("Show.S00E01.1080p")
-    end
-
     test "the 1x00 form parks rather than yielding episode 0" do
       assert %{season: nil, episodes: nil} = Parser.parse("Show.1x00.1080p")
     end
 
     test "year-as-season is not mistaken for a season" do
       assert %{season: nil, episodes: nil} = Parser.parse("Show.S2009E12.720p")
+    end
+
+    test "a bare S00 pack still parks (a specials-pack file→episode mapping stays a guard)" do
+      assert %{season: nil, episodes: nil} = Parser.parse("Show.S00.1080p.WEB-GRP")
+      assert %{season: nil, episodes: nil} = Parser.parse("Show.S00.COMPLETE.1080p")
+    end
+
+    test "the 'Season 0' word-form pack still parks" do
+      assert %{season: nil, episodes: nil} = Parser.parse("Show.Season.00.720p")
     end
   end
 

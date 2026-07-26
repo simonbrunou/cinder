@@ -163,6 +163,51 @@ defmodule Cinder.Settings do
       placeholder: "https://discord.com/api/webhooks/..."
     },
     %{
+      key: "smtp_host",
+      module: Cinder.Mailer,
+      field: :relay,
+      secret: false,
+      group: :notifications,
+      label: "SMTP host",
+      placeholder: "smtp.example.com"
+    },
+    %{
+      key: "smtp_port",
+      module: Cinder.Mailer,
+      field: :port,
+      secret: false,
+      group: :notifications,
+      label: "SMTP port",
+      placeholder: "587"
+    },
+    %{
+      key: "smtp_username",
+      module: Cinder.Mailer,
+      field: :username,
+      secret: false,
+      group: :notifications,
+      label: "SMTP username",
+      placeholder: ""
+    },
+    %{
+      key: "smtp_password",
+      module: Cinder.Mailer,
+      field: :password,
+      secret: true,
+      group: :notifications,
+      label: "SMTP password",
+      placeholder: ""
+    },
+    %{
+      key: "smtp_from",
+      module: Cinder.Mailer,
+      field: :from,
+      secret: false,
+      group: :notifications,
+      label: "SMTP from address",
+      placeholder: "cinder@example.com"
+    },
+    %{
       key: "opensubtitles_api_key",
       module: Cinder.Subtitles.Provider.OpenSubtitles,
       field: :api_key,
@@ -218,6 +263,41 @@ defmodule Cinder.Settings do
     }
   ]
 
+  @path_mapping_fields [
+    %{
+      key: "qbittorrent_remote_path_prefix",
+      env_key: :qbittorrent_remote_path_prefix,
+      secret: false,
+      label: "qBittorrent remote path prefix",
+      placeholder: "/downloads",
+      help: :remote
+    },
+    %{
+      key: "qbittorrent_local_path_prefix",
+      env_key: :qbittorrent_local_path_prefix,
+      secret: false,
+      label: "qBittorrent local path prefix",
+      placeholder: "/media/downloads",
+      help: :local
+    },
+    %{
+      key: "sabnzbd_remote_path_prefix",
+      env_key: :sabnzbd_remote_path_prefix,
+      secret: false,
+      label: "SABnzbd remote path prefix",
+      placeholder: "/downloads",
+      help: :remote
+    },
+    %{
+      key: "sabnzbd_local_path_prefix",
+      env_key: :sabnzbd_local_path_prefix,
+      secret: false,
+      label: "SABnzbd local path prefix",
+      placeholder: "/media/downloads",
+      help: :local
+    }
+  ]
+
   # Download-client enable toggles → the :cinder, :download_clients %{protocol => module} map.
   @toggles [
     %{key: "qbittorrent_enabled", protocol: :torrent, label: "Enable qBittorrent (torrent)"},
@@ -228,6 +308,20 @@ defmodule Cinder.Settings do
   @media_server_options ["jellyfin", "plex"]
   @import_roots_key "import_roots"
   @ffprobe_bin_key "ffprobe_bin"
+  @default_request_quota_key "default_request_quota"
+  @smtp_host_key "smtp_host"
+  @smtp_ssl_key "smtp_ssl"
+
+  @global_fields [
+    %{
+      key: @default_request_quota_key,
+      secret: false,
+      group: :accounts,
+      label: "Default request quota",
+      placeholder: "10",
+      inputmode: "numeric"
+    }
+  ]
 
   @anime_fields [
     %{
@@ -260,7 +354,8 @@ defmodule Cinder.Settings do
     library: "Library paths",
     releases: "Release size bands",
     subtitles: "Subtitles",
-    notifications: "Notifications"
+    notifications: "Notifications",
+    accounts: "Accounts"
   ]
 
   # Only static fields can be secret (the generated Plex-section fields are not), so this stays
@@ -291,6 +386,25 @@ defmodule Cinder.Settings do
   @doc "Config fields in a given group."
   def config_fields(group), do: Enum.filter(config_fields(), &(&1.group == group))
 
+  @doc "DB-only flat path mappings, applied to top-level `:cinder` env keys."
+  def path_mapping_fields, do: @path_mapping_fields
+
+  @doc "Download fields ordered client-by-client for the settings UI."
+  def download_fields do
+    fields = config_fields(:download) ++ path_mapping_fields()
+
+    for prefix <- ["qbittorrent", "sabnzbd"],
+        field <- fields,
+        String.starts_with?(field.key, prefix),
+        do: field
+  end
+
+  @doc "Flat global settings fields."
+  def global_fields, do: @global_fields
+
+  @doc "Flat global settings fields in a given group."
+  def global_fields(group), do: Enum.filter(@global_fields, &(&1.group == group))
+
   # One Plex section field per library kind (`movies_plex_section` → Plex `:movies_section`, …),
   # so a server with separate Movies/Shows libraries refreshes the right one. Generated from
   # `Cinder.Library.kinds/0` so a new kind needs no entry here.
@@ -318,16 +432,27 @@ defmodule Cinder.Settings do
   def media_server_options, do: @media_server_options
   def import_roots_key, do: @import_roots_key
   def ffprobe_bin_key, do: @ffprobe_bin_key
+  def smtp_ssl_key, do: @smtp_ssl_key
   def anime_fields, do: @anime_fields
+
+  @doc "Positive default quota for new users, or nil when the configured value is unusable."
+  def default_request_quota do
+    :cinder
+    |> Application.get_env(:default_request_quota)
+    |> positive_integer()
+  end
 
   @doc "The library kinds with display labels, for the settings/setup UI (`[%{kind:, label:}]`)."
   def library_kinds, do: Enum.map(Cinder.Library.kinds(), &%{kind: &1, label: kind_label(&1)})
 
-  @doc "Every flat `:cinder` env key overlaid per kind: the root path + the three band keys."
+  @doc "Every flat `:cinder` env key overlaid from the settings store."
   def flat_keys do
-    for kind <- Cinder.Library.kinds(), suffix <- ["library_path" | @band_suffixes] do
-      "#{kind}_#{suffix}"
-    end
+    library_keys =
+      for kind <- Cinder.Library.kinds(), suffix <- ["library_path" | @band_suffixes] do
+        "#{kind}_#{suffix}"
+      end
+
+    library_keys ++ Enum.map(@path_mapping_fields, & &1.key)
   end
 
   # Per-kind settings-key derivations for the UI (the form field `name`s).
@@ -475,7 +600,7 @@ defmodule Cinder.Settings do
     rows = rows_by_key()
 
     values =
-      for f <- config_fields(), not f.secret, into: %{} do
+      for f <- config_fields() ++ global_fields(), not f.secret, into: %{} do
         {f.key, decoded_for(rows, f.key) || ""}
       end
 
@@ -499,6 +624,7 @@ defmodule Cinder.Settings do
       end)
       |> Map.merge(toggle_values(rows))
       |> Map.put("move_on_import", decoded_for(rows, "move_on_import") == "true")
+      |> Map.put(@smtp_ssl_key, decoded_for(rows, @smtp_ssl_key) == "true")
 
     secrets_set =
       for f <- config_fields(),
@@ -522,7 +648,7 @@ defmodule Cinder.Settings do
     state = form_state()
 
     text_keys =
-      for(f <- config_fields(), not f.secret, do: f.key) ++
+      for(f <- config_fields() ++ global_fields(), not f.secret, do: f.key) ++
         flat_keys() ++
         [@import_roots_key, @ffprobe_bin_key] ++ Enum.map(@anime_fields, & &1.key)
 
@@ -560,7 +686,7 @@ defmodule Cinder.Settings do
   defp preserve_media_server(values, _params), do: values
 
   defp preserve_booleans(values, params) do
-    keys = Enum.map(@toggles, & &1.key) ++ ["move_on_import"]
+    keys = Enum.map(@toggles, & &1.key) ++ ["move_on_import", @smtp_ssl_key]
 
     Enum.reduce(keys, values, fn key, values ->
       if Map.has_key?(params, key),
@@ -783,10 +909,14 @@ defmodule Cinder.Settings do
     # a revoke.
     apply_explicit_import_roots(rows)
     apply_config_fields(rows)
+    # Reads the Cinder.Mailer keyword list apply_config_fields just wrote (relay/port/username/
+    # password/from), so it must run after — position-enforced like apply_import_roots below.
+    apply_mailer(rows)
     apply_anime_config(rows)
     apply_media_server(rows)
     apply_download_clients(rows)
     apply_library_config(rows)
+    apply_path_mapping_config(rows)
     # apply_import_roots (the read-scope :import_roots key) must run here: its
     # inferred_import_roots/0 fallback reads the :"#{kind}_library_path" env keys that
     # apply_library_config just wrote above — position-enforced only, a future reorder must not
@@ -794,6 +924,7 @@ defmodule Cinder.Settings do
     apply_import_roots(rows)
     apply_move_on_import(rows)
     apply_ffprobe_bin(rows)
+    apply_default_request_quota(rows)
     :ok
   rescue
     e ->
@@ -825,6 +956,57 @@ defmodule Cinder.Settings do
       Application.put_env(:cinder, module, Keyword.merge(base(module), db_values))
     end)
   end
+
+  # Layers :adapter and :ssl onto the Cinder.Mailer config apply_config_fields just wrote
+  # (relay/port/username/password/from, all plain config-field entries). The adapter only
+  # switches to SMTP once a host is actually configured — an unconfigured install keeps
+  # whatever the bootstrap shipped (Swoosh.Adapters.Local in dev, .Test in test), so a blank
+  # smtp_host can never crash the mailer on a missing :relay. Both Swoosh's SMTP adapter and
+  # the Local/Test adapters accept extra unknown keys, so :from (read by Cinder.Mailer.from/0,
+  # not the adapter itself) and a temporarily-stale :ssl on a non-SMTP adapter are harmless.
+  defp apply_mailer(rows) do
+    current = Application.get_env(:cinder, Cinder.Mailer, [])
+    host = decoded_for(rows, @smtp_host_key)
+    smtp? = is_binary(host) and host != ""
+
+    adapter =
+      if smtp? do
+        Swoosh.Adapters.SMTP
+      else
+        Keyword.get(base(Cinder.Mailer), :adapter)
+      end
+
+    # :ssl must be a real boolean — gen_smtp pattern-matches `true` strictly, so the
+    # string "true" would silently disable implicit TLS.
+    ssl? = decoded_for(rows, @smtp_ssl_key) == "true"
+
+    Application.put_env(
+      :cinder,
+      Cinder.Mailer,
+      Keyword.merge(current, [adapter: adapter, ssl: ssl?] ++ mailer_tls_overlay(rows, host))
+    )
+  end
+
+  # gen_smtp's defaults are `tls: :if_available` (STARTTLS silently downgradable by a
+  # MITM stripping the advertisement) with no certificate verification. Credentials must
+  # never cross the wire in cleartext: with a password configured STARTTLS is mandatory,
+  # and whenever TLS engages the relay certificate is verified against the system store.
+  # A password-less LAN relay keeps opportunistic TLS so bare-postfix setups still work.
+  defp mailer_tls_overlay(rows, host) when is_binary(host) and host != "" do
+    tls = if decoded_for(rows, "smtp_password") in [nil, ""], do: :if_available, else: :always
+
+    [
+      tls: tls,
+      tls_options: [
+        verify: :verify_peer,
+        cacerts: :public_key.cacerts_get(),
+        server_name_indication: String.to_charlist(host),
+        depth: 3
+      ]
+    ]
+  end
+
+  defp mailer_tls_overlay(_rows, _host), do: []
 
   defp apply_anime_config(rows) do
     base = base(:anime_preferences)
@@ -902,6 +1084,12 @@ defmodule Cinder.Settings do
     :ok
   end
 
+  defp apply_path_mapping_config(rows) do
+    Enum.each(@path_mapping_fields, fn field ->
+      Application.put_env(:cinder, field.env_key, decoded_for(rows, field.key))
+    end)
+  end
+
   defp apply_explicit_import_roots(rows) do
     Application.put_env(:cinder, :explicit_import_roots, explicit_roots_from(rows))
   end
@@ -960,6 +1148,17 @@ defmodule Cinder.Settings do
     )
   end
 
+  defp apply_default_request_quota(rows) do
+    fallback = positive_integer(base(:default_request_quota))
+
+    quota =
+      if Map.has_key?(rows, @default_request_quota_key),
+        do: positive_integer(decoded_for(rows, @default_request_quota_key)),
+        else: fallback
+
+    Application.put_env(:cinder, :default_request_quota, quota)
+  end
+
   # base/1 defaults to [] for unset keys; a library path is a flat string, so coerce an unset
   # bootstrap (e.g. MOVIES_LIBRARY_PATH absent → []) to nil. Health then reports :not_configured
   # rather than crashing on a list-typed path.
@@ -1015,6 +1214,17 @@ defmodule Cinder.Settings do
       list -> list
     end
   end
+
+  defp positive_integer(value) when is_integer(value) and value > 0, do: value
+
+  defp positive_integer(value) when is_binary(value) do
+    case Integer.parse(String.trim(value)) do
+      {integer, ""} when integer > 0 -> integer
+      _ -> nil
+    end
+  end
+
+  defp positive_integer(_value), do: nil
 
   defp parse_import_roots(value) do
     roots = split_import_roots(value)
@@ -1169,7 +1379,9 @@ defmodule Cinder.Settings do
   end
 
   defp plan(params) do
-    config_plan = Enum.reduce(config_fields(), {%{}, []}, &plan_config(&1, params, &2))
+    config_plan =
+      Enum.reduce(config_fields() ++ global_fields(), {%{}, []}, &plan_config(&1, params, &2))
+
     {puts, deletes} = Enum.reduce(flat_keys(), config_plan, &plan_flat(&1, params, &2))
     {puts, deletes} = plan_flat(@import_roots_key, params, {puts, deletes})
     {puts, deletes} = plan_flat(@ffprobe_bin_key, params, {puts, deletes})
@@ -1181,6 +1393,7 @@ defmodule Cinder.Settings do
       puts
       |> Map.put(@media_server_key, media_server_choice(params))
       |> Map.put("move_on_import", params["move_on_import"] || "false")
+      |> Map.put(@smtp_ssl_key, params[@smtp_ssl_key] || "false")
       |> then(fn p ->
         Enum.reduce(@toggles, p, fn t, acc -> Map.put(acc, t.key, params[t.key] || "false") end)
       end)

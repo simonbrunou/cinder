@@ -21,8 +21,8 @@ services:
     build: .
     restart: unless-stopped
     ports:
-      # Bound to localhost on purpose: the FIRST registered user becomes the admin, so a
-      # fresh instance must not be reachable by the whole network before you've claimed it.
+      # Bound to localhost on purpose: claiming the first admin requires CINDER_BOOTSTRAP_TOKEN
+      # below, but a fresh, unclaimed instance still shouldn't sit open on the whole network.
       # To serve the LAN, change to "4000:4000" (or front it with a reverse proxy) AFTER
       # creating your admin — and note prod redirects non-localhost HTTP to https://$PHX_HOST.
       - "127.0.0.1:4000:4000"

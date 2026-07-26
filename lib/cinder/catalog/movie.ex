@@ -157,6 +157,8 @@ defmodule Cinder.Catalog.Movie do
     ])
     |> reset_download_metrics(movie.status)
     |> validate_required([:status])
+    |> validate_number(:import_attempts, greater_than_or_equal_to: 0)
+    |> validate_number(:search_attempts, greater_than_or_equal_to: 0)
   end
 
   defp reset_download_metrics(changeset, previous_status) do

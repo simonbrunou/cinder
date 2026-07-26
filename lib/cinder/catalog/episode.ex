@@ -80,7 +80,8 @@ defmodule Cinder.Catalog.Episode do
   retry budget lives on the grab (`grab.download_attempts`), not the episode.
   """
   def transition_changeset(episode, attrs) do
-    cast(episode, attrs, [
+    episode
+    |> cast(attrs, [
       :file_path,
       :grab_id,
       :search_attempts,
@@ -92,6 +93,22 @@ defmodule Cinder.Catalog.Episode do
       :imported_embedded_subtitles,
       :imported_sidecar_subtitles
     ])
+    |> validate_number(:search_attempts, greater_than_or_equal_to: 0)
+    |> validate_not_both_file_and_grab()
+  end
+
+  # The derived-state invariant: an episode is either imported (file_path) or in flight
+  # (grab_id), never both — mirrors the DB CHECK constraint (see the migration) so a
+  # changeset write catches the same mistake before ever reaching SQLite.
+  defp validate_not_both_file_and_grab(changeset) do
+    file_path = get_field(changeset, :file_path)
+    grab_id = get_field(changeset, :grab_id)
+
+    if file_path not in [nil, ""] and not is_nil(grab_id) do
+      add_error(changeset, :grab_id, "cannot be set while file_path is also set")
+    else
+      changeset
+    end
   end
 
   @doc "Changeset for the import-time media-info capture / backfill. Descriptive, not pipeline state — separate from transition_changeset/2, so it never touches status/file/download fields."

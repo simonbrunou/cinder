@@ -9,6 +9,9 @@ The [`docker-compose.yml`](../docker-compose.yml) at the repo root is the suppor
 Copy `.env.example` to `.env`, set `SECRET_KEY_BASE` (`openssl rand -base64 48`), then
 `docker compose up -d`. The container migrates the database on boot and serves on port 4000.
 
+**Before upgrading** (`docker compose pull && docker compose up -d`), snapshot `/data` — see
+[Backups](#backups) below for the safe (non-`cp`) way to copy a live SQLite database.
+
 > **Upgrading from an early image:** the container owns its `/data` volume so a *fresh* `docker
 > compose up` can write the database. Docker only sets a named volume's ownership when it's first
 > created, so a `cinder_data` volume left root-owned by a pre-fix image keeps crash-looping after an
@@ -18,25 +21,42 @@ Copy `.env.example` to `.env`, set `SECRET_KEY_BASE` (`openssl rand -base64 48`)
 
 ## First run & security
 
-The first account created becomes the **admin**; the first-run wizard (`/setup`) then collects your
-service config and validates it. Registration stays **open** afterward — that's how other household
-members sign up to request media.
+Claiming the first account requires the one-time **`CINDER_BOOTSTRAP_TOKEN`** (set in
+`docker-compose.yml`/`.env`, `openssl rand -hex 32`): while no admin exists yet, registration only
+succeeds if the submitted bootstrap-token field matches it, and that registrant becomes the
+**admin**. A fresh instance with no token configured fails closed — it cannot create the first
+account at all, so an exposed, not-yet-claimed instance can't be taken over by a stranger who just
+finds it first. The first-run wizard (`/setup`) then collects your service config and validates it;
+remove the token from your deployment once the admin is claimed (it isn't needed again unless every
+admin account is later deleted).
 
-Because the first registrant is the admin and Cinder serves plain HTTP on `0.0.0.0:4000` (TLS is
-expected to terminate at a reverse proxy):
+Registration stays **open** after the admin exists — that's how other household members sign up —
+but a later self-registration is no longer trusted automatically: the account is created
+**inactive** and, after logging in, lands on a "pending approval" page rather than the app. An
+admin must **activate** it from `/users` before the new account can search, request, or do anything
+else (a configured notifier pings the admin when one is waiting). Self-registered accounts are still
+**auto-confirmed** (no email-confirmation step) even while inactive — confirmation and activation
+are separate gates.
 
-- **Create your admin immediately** after first boot. The first account to register *wins admin* —
-  an exposed, not-yet-claimed instance lets a stranger take it.
+Because the admin-claim step happens over plain HTTP on `0.0.0.0:4000` (TLS is expected to
+terminate at a reverse proxy):
+
+- **Keep the bootstrap token private and set it before first boot.** It's the only thing standing
+  between an exposed, unclaimed instance and a stranger claiming admin.
 - **Do not expose port 4000 to an untrusted network.** Run Cinder behind a reverse proxy (with TLS)
-  or a VPN — this is the real access control. Registration stays **open** after the admin exists
-  (that's how household members sign up), and **self-registered accounts are auto-confirmed**: they
-  can log in and submit requests immediately (no email confirmation step).
+  or a VPN — this is the real access control, since an unclaimed instance still accepts (bootstrap
+  gated) registration attempts and a claimed one still accepts (now inactive-pending) self-signups
+  from anyone who can reach it.
+- **Registration is rate-limited per source IP:** at most 10 registration attempts per minute per
+  IP (blocked attempts get a generic "too many attempts" flash). Behind a reverse proxy or tunnel
+  that doesn't forward the real client IP, every visitor shares one bucket — see the login-limiter
+  caveat below for the same effect.
 - **Login rate limiting:** password login is capped at 10 failures per `{ip, email}` per 15
   minutes (blocked attempts get the same generic error as bad credentials). Behind a reverse
   proxy every client shares the proxy's IP, so the cap is effectively per-email there — meaning
   anyone who can reach the login page can lock a known email's password login for a window
   (a targeted-lockout nuisance, accepted at household scale; an authenticated password change
-  always clears the block). Registration has no limiter.
+  always clears the block).
 - **Browsing over plain HTTP from another machine won't work.** In production Cinder redirects
   any non-`localhost` HTTP request to `https://$PHX_HOST`. The compose default binds
   `127.0.0.1:4000`, so the quickstart (browsing from the Docker host) just works — but the
@@ -110,9 +130,11 @@ fallback only matters when you can't:
   — otherwise the link **or copy** fails with a permission error and the item parks as
   `:import_failed`.
 
-> **Note:** this covers *local* filesystems the Cinder container can read. A remote or
-> container-mapped download path that Cinder can't `stat` (different host, unmounted volume) is a
-> separate, unaddressed gap — mount the download directory into Cinder's container.
+If qBittorrent or SABnzbd reports paths from a different host or container namespace, configure
+that client's remote and local path prefixes in `/settings`. For example, if the client reports
+`/downloads/Movie.mkv` but Cinder mounts the same directory at `/media/downloads`, map remote
+`/downloads` to local `/media/downloads`. The client health check verifies that the configured
+local prefix is an existing readable directory.
 
 ## Backups
 
@@ -131,6 +153,24 @@ running can capture a torn, inconsistent snapshot. Either:
 stored secrets is *derived from it*, so **a leaked `SECRET_KEY_BASE` compromises every stored
 service credential**, and losing it (or rotating it) means re-entering every credential in
 `/settings` after a restore.
+
+### Database growth and reclaiming space
+
+`blocked_releases` and `admin_audit` are effectively append-only tables: `admin_audit` has no
+delete path at all, and `blocked_releases` only auto-prunes its `:stalled`-reason rows (on a
+manual retry) — every other reason (audio/subtitle verification rejections, admin actions, etc.)
+stays forever. Over months or years of normal operation `cinder.db` grows accordingly, and SQLite
+doesn't shrink the file on its own as old rows elsewhere get deleted — freed pages are just reused,
+not released back to the OS.
+
+If the on-disk size becomes worth reclaiming, run an occasional `VACUUM` (rebuilds the file and
+frees unused pages) via the same `sqlite3 /data/cinder.db` access pattern used above, e.g.
+`sqlite3 /data/cinder.db "VACUUM;"`, or enable `PRAGMA auto_vacuum = INCREMENTAL` so it happens
+continuously (set it before any tables exist, or run one full `VACUUM` right after enabling it on
+an existing database, for the setting to take effect). Note that `VACUUM INTO` — the online-backup
+command a few lines up — copies the *entire* database, so its cost scales with total DB size, not
+with how much has changed since the last backup: expect that backup step to get slower as
+`cinder.db` grows.
 
 ## Health & retry
 

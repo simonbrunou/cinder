@@ -41,10 +41,12 @@ defmodule CinderWeb.UserAuth do
   @doc """
   Logs the user out.
 
-  It clears all session data for safety. See renew_session.
+  It clears authentication/session data while preserving a validated locale choice.
+  See renew_session.
   """
   def log_out_user(conn) do
     user_token = get_session(conn, :user_token)
+    locale = get_session(conn, :locale)
     user_token && Accounts.delete_user_session_token(user_token)
 
     if live_socket_id = get_session(conn, :live_socket_id) do
@@ -53,8 +55,16 @@ defmodule CinderWeb.UserAuth do
 
     conn
     |> renew_session(nil)
+    |> maybe_restore_locale(locale)
     |> delete_resp_cookie(@remember_me_cookie, remember_me_options())
     |> redirect(to: ~p"/")
+  end
+
+  defp maybe_restore_locale(conn, locale) do
+    case CinderWeb.Locale.supported(locale) do
+      nil -> conn
+      locale -> put_session(conn, :locale, locale)
+    end
   end
 
   @doc """

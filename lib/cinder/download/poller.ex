@@ -32,8 +32,14 @@ defmodule Cinder.Download.Poller do
   use Cinder.Download.PollerSkeleton, log_prefix: "poller"
 
   defp do_poll(state) do
-    Library.reconcile_stages()
-    Download.reconcile_pending_intents([:movie])
+    # Isolated like every per-unit pass below: a persistent raise here must not crash-loop the
+    # whole GenServer forever with nothing parked and no signal (issue: preamble reliability).
+    isolate("stage reconciliation", fn -> Library.reconcile_stages() end)
+
+    isolate("pending intent reconciliation", fn ->
+      Download.reconcile_pending_intents([:movie])
+    end)
+
     advance_downloading()
     import_downloaded()
     search_requested(state.search_retry_after)
@@ -212,12 +218,17 @@ defmodule Cinder.Download.Poller do
   # the "repeatedly-failing torrents/usenet" the blocklist is meant to bound. So a single network
   # blip can never block a good release; only post-exhaustion does park record it.
   @download_failure_errors [:download_error, :torrent_not_found, :no_content_path]
-  @max_attempts 10
 
   defp import_one(movie), do: movie |> Library.stage_movie() |> import_one_result(movie)
 
-  defp import_one_result({:error, {:release_policy_mismatch, evidence}}, movie),
-    do: reject_release(movie, evidence, Movie.download_source(movie))
+  defp import_one_result({:error, {:release_policy_mismatch, evidence}}, movie) do
+    reject_release(
+      movie,
+      evidence,
+      Movie.download_source(movie),
+      &Catalog.reject_movie_release/2
+    )
+  end
 
   defp import_one_result(result, movie) do
     case result do
@@ -336,6 +347,7 @@ defmodule Cinder.Download.Poller do
   defp park(movie, status, reason, attrs \\ %{}) do
     with {:ok, parked} <-
            Catalog.transition(movie, Map.put(attrs, :status, status), expect: movie.status) do
+      :telemetry.execute([:cinder, :park], %{count: 1}, %{kind: :movie, reason: reason})
       Notifier.notify({:movie_failed, parked, reason})
 
       # Best-effort, AFTER the park commits (a side effect like the notify above): record the
@@ -357,7 +369,7 @@ defmodule Cinder.Download.Poller do
   # --- upgrade: re-download + atomic replace of an :available movie's file -----------------------
   #
   # An :upgrading movie keeps its live file_path the entire time; only the success transition
-  # (after Library.import_movie's atomic replace) rewrites it. Every failure reverts to :available
+  # (after Library.stage_movie's atomic replace) rewrites it. Every failure reverts to :available
   # with the live file untouched. Mirrors the :downloading advance bound (@max_attempts via
   # import_attempts) but reverts instead of parking — the movie already has a usable file.
 
@@ -445,8 +457,9 @@ defmodule Cinder.Download.Poller do
          {:error, {:release_policy_mismatch, evidence}},
          movie,
          content_path
-       ),
-       do: reject_release(movie, evidence, content_path)
+       ) do
+    reject_release(movie, evidence, content_path, &Catalog.reject_movie_release/2)
+  end
 
   defp finish_upgrade_result(result, movie, content_path) do
     case result do
@@ -513,32 +526,7 @@ defmodule Cinder.Download.Poller do
   # `file_path`) for a fresh grab, the new download's path (not the old live library file) for an
   # upgrade. download_id is nil here on purpose — the reject already fences + cleans up the
   # client-tracked job via Catalog.reject_movie_release; passing the real id would remove it twice.
-  defp reject_release(movie, evidence, content_path) do
-    case Catalog.reject_movie_release(movie, evidence) do
-      {:ok, _movie} ->
-        Download.remove_after_import(movie.download_protocol, nil, content_path)
-        :ok
-
-      {:error, :stale_release} ->
-        :ok
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp finish_stage(stage, action) do
-    result =
-      case action do
-        :commit -> Library.commit_stage(stage)
-        :rollback -> Library.rollback_stage(stage)
-      end
-
-    if match?({:error, _}, result),
-      do: Logger.warning("movie import stage cleanup remains pending")
-
-    result
-  end
+  # `reject_release/4` (the shared movie/TV helper) lives in `Cinder.Download.PollerSkeleton`.
 
   # Post-commit side effects, all best-effort (none can unwind the committed upgrade): remove the
   # superseded file only when the dest path actually changed (a same-path replace already overwrote

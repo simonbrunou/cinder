@@ -36,4 +36,59 @@ defmodule Cinder.Download.PollerSkeletonTest do
     assert log =~ ":bail"
     assert log =~ "poller_skeleton_test.exs"
   end
+
+  # A `stateful: true` poller (`Cinder.Download.Poller`, `Cinder.Download.TvPoller`) — models the
+  # do_poll/1 shape both real pollers use: a preamble wrapped in isolate/2, then further work.
+  defmodule StatefulPreambleTestPoller do
+    @default_interval :timer.hours(1)
+    @search_retry_after 60
+    use Cinder.Download.PollerSkeleton, log_prefix: "stateful test poller"
+
+    # Exposes the private do_poll/1 for a synchronous, in-process call (mirrors
+    # TestPoller.isolate_raise/0 above) — no GenServer needed to exercise the preamble wrap.
+    def run_tick(state), do: do_poll(state)
+
+    defp do_poll(_state) do
+      isolate("preamble", fn -> raise "preamble boom" end)
+      Process.put(:tick_continued, true)
+      :ok
+    end
+  end
+
+  test "a preamble raise does not prevent the rest of the tick from running" do
+    Process.delete(:tick_continued)
+
+    log =
+      capture_log(fn ->
+        assert :ok = StatefulPreambleTestPoller.run_tick(%{search_retry_after: 60})
+      end)
+
+    assert log =~ "stateful test poller skipped preamble"
+    assert log =~ "preamble boom"
+    assert Process.get(:tick_continued) == true
+  end
+
+  test "a stateful poller stamps :persistent_term with its last successful tick" do
+    :persistent_term.erase({StatefulPreambleTestPoller, :last_run})
+    on_exit(fn -> :persistent_term.erase({StatefulPreambleTestPoller, :last_run}) end)
+
+    refute StatefulPreambleTestPoller.status().last_run_at
+
+    pid = start_supervised!({StatefulPreambleTestPoller, interval: :timer.hours(1)})
+    capture_log(fn -> assert :ok = StatefulPreambleTestPoller.poll(pid) end)
+
+    assert %DateTime{} = last_run_at = StatefulPreambleTestPoller.status().last_run_at
+    assert DateTime.diff(DateTime.utc_now(), last_run_at) < 5
+  end
+
+  test "poll/1 emits [:cinder, :poller, :tick] with the poller module and a duration" do
+    start_supervised!({TestPoller, interval: :timer.hours(1)})
+
+    {result, events} =
+      Cinder.TelemetryHelpers.capture([:cinder, :poller, :tick], fn -> TestPoller.poll() end)
+
+    assert result == :ok
+    assert [{%{duration: duration}, %{poller: TestPoller}}] = events
+    assert is_integer(duration) and duration >= 0
+  end
 end

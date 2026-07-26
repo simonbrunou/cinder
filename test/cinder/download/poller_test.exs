@@ -54,6 +54,17 @@ defmodule Cinder.Download.PollerTest do
   # the test-owned DB connection.
   setup :set_mox_global
 
+  # A poll stamps last-run into process-global :persistent_term (PollerSkeleton's `status/0`,
+  # read by /healthz); erase it so a recorded run can't bleed into another test/suite.
+  setup do
+    on_exit(fn ->
+      :persistent_term.erase({Poller, :last_run})
+      :persistent_term.erase({TvPoller, :last_run})
+    end)
+
+    :ok
+  end
+
   defp downloading_movie(tmdb_id, download_id) do
     movie_fixture(%{tmdb_id: tmdb_id, title: "M", status: :downloading, download_id: download_id})
   end
@@ -2065,6 +2076,20 @@ defmodule Cinder.Download.PollerTest do
     assert :ok = Poller.poll()
     assert %Movie{status: :no_match} = Repo.get!(Movie, miss.id)
     assert %Movie{status: :requested, search_attempts: 1} = Repo.get!(Movie, flaky.id)
+  end
+
+  test "a park emits [:cinder, :park] with kind: :movie and the park reason" do
+    {:ok, miss} = Catalog.add_movie(%{tmdb_id: 906, title: "M"})
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn 906 -> {:ok, %{imdb_id: nil}} end)
+
+    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+
+    {result, events} =
+      Cinder.TelemetryHelpers.capture([:cinder, :park], fn -> Poller.poll() end)
+
+    assert result == :ok
+    assert %Movie{status: :no_match} = Repo.get!(Movie, miss.id)
+    assert [{%{count: 1}, %{kind: :movie, reason: :no_imdb_id}}] = events
   end
 
   test "a persistently failing import is parked at :import_failed after max attempts" do
