@@ -31,14 +31,15 @@ defmodule Cinder.Notifier.DispatcherTest do
     # Not a keyword list: Discord.notify/1's Keyword.get raises a FunctionClauseError.
     # Proves isolate/2 catches it and Log (called first) still ran.
     Application.put_env(:cinder, Cinder.Notifier.Discord, :not_a_keyword_list)
+    email = "kim@example.com"
 
     log =
       capture_log(fn ->
-        assert :ok = Dispatcher.notify({:movie_available, movie()})
+        assert :ok = Dispatcher.notify({:user_registered, %{id: 9, email: email}})
       end)
 
-    assert log =~ "Cinder.Notifier.Discord notify failed"
+    assert log =~ "Cinder.Notifier.Discord notify failed for user_registered user #9"
     assert log =~ "[notifier]"
-    assert log =~ "Dune"
+    refute log =~ email
   end
 end

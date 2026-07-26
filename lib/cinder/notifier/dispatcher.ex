@@ -23,14 +23,26 @@ defmodule Cinder.Notifier.Dispatcher do
   defp isolate(transport, event) do
     transport.notify(event)
   rescue
-    e ->
-      Logger.warning(
-        "#{inspect(transport)} notify failed for #{inspect(event)}: #{Exception.message(e)}"
-      )
+    _e ->
+      Logger.warning("#{inspect(transport)} notify failed for #{event_summary(event)}")
   catch
-    kind, value ->
-      Logger.warning(
-        "#{inspect(transport)} notify #{kind} for #{inspect(event)}: #{inspect(value)}"
-      )
+    kind, _value ->
+      Logger.warning("#{inspect(transport)} notify #{kind} for #{event_summary(event)}")
   end
+
+  defp event_summary({type, payload, _reason}) when is_atom(type),
+    do: event_summary({type, payload})
+
+  defp event_summary({:user_registered, %{id: id}}) when is_integer(id),
+    do: "user_registered user ##{id}"
+
+  defp event_summary({type, %{id: id, user_id: user_id}})
+       when is_atom(type) and is_integer(id) and is_integer(user_id),
+       do: "#{type} ##{id} user ##{user_id}"
+
+  defp event_summary({type, %{id: id}}) when is_atom(type) and is_integer(id),
+    do: "#{type} ##{id}"
+
+  defp event_summary({type, _payload}) when is_atom(type), do: Atom.to_string(type)
+  defp event_summary(_event), do: "unknown_event"
 end

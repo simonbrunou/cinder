@@ -12,8 +12,10 @@ defmodule Cinder.Notifier.Log do
   def notify({:request_created, request}),
     do: log("request pending approval: #{request.title} (user ##{request.user_id})")
 
-  def notify({:user_registered, user}),
-    do: log("user awaiting activation: #{user.email} (##{user.id})")
+  def notify({:user_registered, %{id: id}}) when is_integer(id),
+    do: log("user_registered user ##{id}")
+
+  def notify({:user_registered, _user}), do: log("user_registered")
 
   def notify({:movie_available, movie}), do: log("movie available: #{movie.title}")
 

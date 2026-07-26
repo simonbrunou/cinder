@@ -77,6 +77,26 @@ terminate at a reverse proxy):
   account (e.g. an admin who registered by password), log in normally and link it from Account
   settings (`/users/settings`).
 
+## Privacy & GDPR
+
+The instance operator is the data controller. Cinder stores user emails, hashed passwords,
+locales, email-notification preferences (`notify_email`), and Plex identifiers/usernames
+(`plex_id`, `plex_username`); session and email-change tokens (including a `sent_to` copy of the
+email); requests attributed by `user_id`; and an append-only `admin_audit` trail containing actor
+ids only.
+
+When configured, the SMTP relay receives user email addresses and request titles, Discord receives
+request notifications without email addresses, and plex.tv handles the authentication round-trip
+without Cinder storing its token. TMDB and Prowlarr receive no user identity.
+
+Users can delete their own account, and admins can delete accounts from `/users`; deletion cascades
+tokens and requests, while audit rows retain only numeric ids and any email values are scrubbed.
+Users can also download their per-user JSON export from the settings page. A daily janitor prunes
+expired tokens and `admin_audit` rows older than 365 days.
+
+SQLite backups contain all of this data and must be protected and retired consistently with account
+erasure. The `smtp_username` setting is stored unencrypted in the settings table.
+
 ## Configuration: environment vs in-app
 
 Boot-only keys (`SECRET_KEY_BASE`, `DATABASE_PATH`, `PHX_*`, `PORT`, `POOL_SIZE`, `RELEASE_NAME`,
@@ -156,12 +176,11 @@ service credential**, and losing it (or rotating it) means re-entering every cre
 
 ### Database growth and reclaiming space
 
-`blocked_releases` and `admin_audit` are effectively append-only tables: `admin_audit` has no
-delete path at all, and `blocked_releases` only auto-prunes its `:stalled`-reason rows (on a
-manual retry) — every other reason (audio/subtitle verification rejections, admin actions, etc.)
-stays forever. Over months or years of normal operation `cinder.db` grows accordingly, and SQLite
-doesn't shrink the file on its own as old rows elsewhere get deleted — freed pages are just reused,
-not released back to the OS.
+`blocked_releases` only auto-prunes its `:stalled`-reason rows (on a manual retry) — every other
+reason (audio/subtitle verification rejections, admin actions, etc.) stays forever.
+`admin_audit` rows are pruned after 365 days. Over months or years of normal operation `cinder.db`
+grows accordingly, and SQLite doesn't shrink the file on its own as old rows are deleted — freed
+pages are just reused, not released back to the OS.
 
 If the on-disk size becomes worth reclaiming, run an occasional `VACUUM` (rebuilds the file and
 frees unused pages) via the same `sqlite3 /data/cinder.db` access pattern used above, e.g.

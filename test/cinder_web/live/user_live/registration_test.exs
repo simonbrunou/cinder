@@ -12,6 +12,7 @@ defmodule CinderWeb.UserLive.RegistrationTest do
 
       assert html =~ "Register"
       assert html =~ "Log in"
+      assert html =~ "instance operator is the data controller"
       assert has_element?(lv, "#bootstrap-token")
     end
 
