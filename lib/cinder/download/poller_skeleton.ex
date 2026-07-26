@@ -91,7 +91,7 @@ defmodule Cinder.Download.PollerSkeleton do
           # do_poll/1 is expected to isolate its own units (and preamble) so this only ever
           # sees a genuinely successful tick.
           defp run(state) do
-            result = do_poll(state)
+            result = emit_tick(fn -> do_poll(state) end)
             :persistent_term.put({__MODULE__, :last_run}, DateTime.utc_now())
             result
           end
@@ -179,7 +179,7 @@ defmodule Cinder.Download.PollerSkeleton do
 
           # Stamp completion so `status/0` can show "last run" without calling the busy process.
           defp run do
-            result = do_poll()
+            result = emit_tick(fn -> do_poll() end)
             :persistent_term.put({__MODULE__, :last_run}, DateTime.utc_now())
             result
           end
@@ -220,6 +220,22 @@ defmodule Cinder.Download.PollerSkeleton do
           Logger.error(
             "#{unquote(prefix)} skipped #{label}: #{Exception.format(kind, value, __STACKTRACE__)}"
           )
+      end
+
+      # `[:cinder, :poller, :tick]` fires once per tick (scheduled or the synchronous `poll/1`
+      # test path alike), timing the whole do_poll pass — never inside it, so instrumentation
+      # can't drift as either flavor's pass grows.
+      defp emit_tick(fun) do
+        started_at = System.monotonic_time()
+        result = fun.()
+
+        :telemetry.execute(
+          [:cinder, :poller, :tick],
+          %{duration: System.monotonic_time() - started_at},
+          %{poller: __MODULE__}
+        )
+
+        result
       end
 
       defp schedule(interval), do: Process.send_after(self(), :poll, interval)

@@ -347,6 +347,7 @@ defmodule Cinder.Download.Poller do
   defp park(movie, status, reason, attrs \\ %{}) do
     with {:ok, parked} <-
            Catalog.transition(movie, Map.put(attrs, :status, status), expect: movie.status) do
+      :telemetry.execute([:cinder, :park], %{count: 1}, %{kind: :movie, reason: reason})
       Notifier.notify({:movie_failed, parked, reason})
 
       # Best-effort, AFTER the park commits (a side effect like the notify above): record the

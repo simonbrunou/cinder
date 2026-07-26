@@ -405,6 +405,49 @@ defmodule Cinder.HTTPPolicyTest do
       refute_received _late_task_message
     end
 
+    test "emits [:cinder, :http, :request] with the host, duration, and :ok on success" do
+      Req.Test.stub(Cinder.HTTPPolicyTelemetryOkStub, fn conn ->
+        Req.Test.json(conn, %{ok: true})
+      end)
+
+      {result, events} =
+        Cinder.TelemetryHelpers.capture([:cinder, :http, :request], fn ->
+          HTTPPolicy.bounded_request(
+            [
+              url: "https://public.example/data",
+              plug: {Req.Test, Cinder.HTTPPolicyTelemetryOkStub}
+            ],
+            64
+          )
+        end)
+
+      assert {:ok, %{status: 200}} = result
+      assert [{%{duration: duration}, %{host: "public.example", status: :ok}}] = events
+      assert is_integer(duration) and duration >= 0
+    end
+
+    test "emits [:cinder, :http, :request] with :error on a bounded-request failure" do
+      Req.Test.stub(Cinder.HTTPPolicyTelemetryErrorStub, fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.send_resp(200, "{bad}")
+      end)
+
+      {result, events} =
+        Cinder.TelemetryHelpers.capture([:cinder, :http, :request], fn ->
+          HTTPPolicy.bounded_request(
+            [
+              url: "https://public.example/data",
+              plug: {Req.Test, Cinder.HTTPPolicyTelemetryErrorStub}
+            ],
+            4
+          )
+        end)
+
+      assert {:error, :response_too_large} = result
+      assert [{%{duration: _}, %{host: "public.example", status: :error}}] = events
+    end
+
     test "isolates an unexpected request crash from the caller" do
       adapter = fn _request -> raise "adapter crashed" end
 

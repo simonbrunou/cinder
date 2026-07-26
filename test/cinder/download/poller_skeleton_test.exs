@@ -80,4 +80,15 @@ defmodule Cinder.Download.PollerSkeletonTest do
     assert %DateTime{} = last_run_at = StatefulPreambleTestPoller.status().last_run_at
     assert DateTime.diff(DateTime.utc_now(), last_run_at) < 5
   end
+
+  test "poll/1 emits [:cinder, :poller, :tick] with the poller module and a duration" do
+    start_supervised!({TestPoller, interval: :timer.hours(1)})
+
+    {result, events} =
+      Cinder.TelemetryHelpers.capture([:cinder, :poller, :tick], fn -> TestPoller.poll() end)
+
+    assert result == :ok
+    assert [{%{duration: duration}, %{poller: TestPoller}}] = events
+    assert is_integer(duration) and duration >= 0
+  end
 end

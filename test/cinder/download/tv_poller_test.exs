@@ -1773,6 +1773,26 @@ defmodule Cinder.Download.TvPollerTest do
     assert gid == grab.id
   end
 
+  test "a parked grab emits [:cinder, :park] with kind: :episode and the park reason" do
+    {_series, season} = series_tree()
+    e1 = episode(season, 1)
+    {:ok, grab} = Catalog.create_grab("hash-p", :torrent, [e1.id])
+    {:ok, _} = Catalog.mark_grab_downloaded(grab, "/dl/pack2")
+    start_supervised!({TvPoller, interval: 60_000})
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok, [{"/dl/pack2/Show.S01E09.1080p.mkv", 3_000_000_000}]}
+    end)
+
+    {result, events} =
+      Cinder.TelemetryHelpers.capture([:cinder, :park], fn -> TvPoller.poll() end)
+
+    assert result == :ok
+    assert [{%{count: 1}, %{kind: :episode, reason: :no_files_matched}}] = events
+  end
+
   describe "stall reaper" do
     alias Cinder.Download.StallReaper
 

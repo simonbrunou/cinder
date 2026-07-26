@@ -865,6 +865,7 @@ defmodule Cinder.Catalog do
   def transition(%Movie{} = movie, attrs, []) do
     with {:ok, updated} <- movie |> Movie.transition_changeset(attrs) |> Repo.update() do
       broadcast({:movie_updated, updated})
+      emit_transition(:movie, updated.status)
       {:ok, updated}
     end
   end
@@ -1021,10 +1022,18 @@ defmodule Cinder.Catalog do
   @doc false
   def publish_guarded_movie_transition({:ok, updated}) do
     broadcast({:movie_updated, updated})
+    emit_transition(:movie, updated.status)
     {:ok, updated}
   end
 
   def publish_guarded_movie_transition({:error, reason}), do: {:error, reason}
+
+  # `[:cinder, :transition]` fires once per successful write at each of Catalog's two
+  # pipeline-state choke-points (`transition/2,3` above, `transition_episode/2` below) — never at
+  # a call site, so instrumentation can't drift from "every writer goes through Catalog".
+  defp emit_transition(kind, to_status) when kind in [:movie, :episode] do
+    :telemetry.execute([:cinder, :transition], %{count: 1}, %{kind: kind, to: to_status})
+  end
 
   @doc "Updates a downloading movie's progress snapshot without broadcasting equal values."
   def update_movie_download_metrics(%Movie{} = movie, attrs) do
@@ -2628,6 +2637,7 @@ defmodule Cinder.Catalog do
   def transition_episode(%Episode{} = episode, attrs) do
     with {:ok, updated} <- episode |> Episode.transition_changeset(attrs) |> Repo.update() do
       broadcast_series(series_id_for_season(updated.season_id))
+      emit_transition(:episode, episode_state(updated))
       {:ok, updated}
     end
   end

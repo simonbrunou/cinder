@@ -482,6 +482,7 @@ defmodule Cinder.Download.TvPoller do
     # the grab stays visible in /activity and the warning names why it won't finalize.
     case Catalog.park_grab(grab) do
       {:ok, _} ->
+        :telemetry.execute([:cinder, :park], %{count: 1}, %{kind: :episode, reason: reason})
         Notifier.notify({:grab_failed, grab, reason})
 
       {:error, park_error} ->

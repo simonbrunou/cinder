@@ -70,6 +70,19 @@ defmodule Cinder.CatalogTvPipelineTest do
       assert_receive {:series_updated, ^series_id}
       assert Repo.get(Episode, ep.id).file_path == "/library/x.mkv"
     end
+
+    test "emits [:cinder, :transition] with kind: :episode and the derived to-status" do
+      {_series, season} = series_with_season()
+      ep = episode(season, %{})
+
+      {result, events} =
+        Cinder.TelemetryHelpers.capture([:cinder, :transition], fn ->
+          Catalog.transition_episode(ep, %{file_path: "/library/x.mkv"})
+        end)
+
+      assert {:ok, _ep} = result
+      assert [{%{count: 1}, %{kind: :episode, to: :available}}] = events
+    end
   end
 
   describe "grab lifecycle" do

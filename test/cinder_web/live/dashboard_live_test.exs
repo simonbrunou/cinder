@@ -404,6 +404,52 @@ defmodule CinderWeb.DashboardLiveTest do
     end
   end
 
+  describe "disk space (as an admin)" do
+    setup :register_and_log_in_admin
+    setup :reset_cinder_env
+
+    test "shows free/total space for a configured, readable root", %{conn: conn} do
+      dir =
+        Path.join(
+          System.tmp_dir!(),
+          "cinder-dashboard-disk-#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(dir)
+      on_exit(fn -> File.rm_rf!(dir) end)
+
+      Application.put_env(:cinder, :movies_library_path, dir)
+      Application.delete_env(:cinder, :tv_library_path)
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      # Disk stats resolve asynchronously (a slow/hung `df` must not block render).
+      assert render_async(lv) =~ "Disk space"
+      assert has_element?(lv, "#disk-movies", "free of")
+    end
+
+    test "degrades to an Unavailable row for a configured but unreadable root", %{conn: conn} do
+      path = "/nonexistent/cinder-dashboard-disk-#{System.unique_integer([:positive])}"
+      Application.put_env(:cinder, :movies_library_path, path)
+      Application.delete_env(:cinder, :tv_library_path)
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      render_async(lv)
+      assert has_element?(lv, "#disk-movies", "Unavailable")
+      refute has_element?(lv, "#disk-movies", "free of")
+    end
+
+    test "shows the empty state when no library path is configured", %{conn: conn} do
+      Application.delete_env(:cinder, :movies_library_path)
+      Application.delete_env(:cinder, :tv_library_path)
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      assert render_async(lv) =~ "No library paths configured"
+    end
+  end
+
   test "non-admins are redirected away from /dashboard", %{conn: _conn} do
     conn = build_conn() |> log_in_user(Cinder.AccountsFixtures.user_fixture())
     assert {:error, {:redirect, %{to: "/"}}} = live(conn, ~p"/dashboard")

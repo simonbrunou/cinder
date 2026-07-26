@@ -9,11 +9,37 @@ defmodule CinderWeb.Telemetry do
   @impl true
   def init(_arg) do
     children = [
-      # Telemetry poller emits VM measurements every 10_000ms.
-      {:telemetry_poller, measurements: [], period: 10_000}
+      # Telemetry poller emits VM measurements (+ the disk gauge below) every 10_000ms.
+      {:telemetry_poller, measurements: periodic_measurements(), period: 10_000}
     ]
 
     Supervisor.init(children, strategy: :one_for_one)
+  end
+
+  @doc false
+  def periodic_measurements do
+    [
+      {__MODULE__, :dispatch_disk_measurements, []}
+    ]
+  end
+
+  @doc """
+  Emits `[:cinder, :disk]` for every configured library root (`Cinder.Disk.configured_roots/0`).
+  A root that can't be read (unmounted, permission denied) is skipped rather than crashing the
+  poller — the next tick tries again.
+  """
+  def dispatch_disk_measurements do
+    for {kind, path} <- Cinder.Disk.configured_roots() do
+      case Cinder.Disk.stats(path) do
+        {:ok, stats} ->
+          :telemetry.execute([:cinder, :disk], stats, %{root: kind, path: path})
+
+        {:error, _reason} ->
+          :ok
+      end
+    end
+
+    :ok
   end
 
   def metrics do
@@ -62,6 +88,40 @@ defmodule CinderWeb.Telemetry do
         unit: {:native, :millisecond},
         description:
           "The time the connection spent waiting before being checked out for the query"
+      ),
+
+      # Domain Metrics — the Catalog.transition/transition_episode choke-points, the shared
+      # poller skeleton's per-tick timing, each poller's terminal-park choke-point, and outbound
+      # HTTP through Cinder.HTTPPolicy.bounded_request/2,3.
+      counter("cinder.transition.count",
+        tags: [:kind, :to],
+        description: "Pipeline state transitions, by kind (movie/episode) and target status"
+      ),
+      summary("cinder.poller.tick.duration",
+        tags: [:poller],
+        unit: {:native, :millisecond},
+        description: "Time spent in one poller tick (do_poll/1 or do_poll/0)"
+      ),
+      counter("cinder.park.count",
+        tags: [:kind, :reason],
+        description: "Terminal parks, by kind (movie/episode) and reason"
+      ),
+      summary("cinder.http.request.duration",
+        tags: [:host, :status],
+        unit: {:native, :millisecond},
+        description: "Outbound HTTP via Cinder.HTTPPolicy.bounded_request/2,3"
+      ),
+
+      # Disk gauge — the last-known free/total bytes per configured library root.
+      last_value("cinder.disk.free_bytes",
+        tags: [:root],
+        unit: :byte,
+        description: "Free bytes on a configured library root"
+      ),
+      last_value("cinder.disk.total_bytes",
+        tags: [:root],
+        unit: :byte,
+        description: "Total bytes on a configured library root"
       ),
 
       # VM Metrics
