@@ -135,6 +135,49 @@ defmodule CinderWeb.UserLive.Settings do
           <% end %>
         </div>
       <% end %>
+
+      <div class="divider" />
+
+      <div class="text-left">
+        <h3 class="text-lg font-semibold">{gettext("Your data")}</h3>
+        <p class="mt-2">
+          {gettext("Download a copy of your account and request history as a JSON file.")}
+        </p>
+        <.button href={~p"/users/export"} download variant="neutral" class="mt-2">
+          {gettext("Download my data")}
+        </.button>
+      </div>
+
+      <div class="divider" />
+
+      <div class="text-left">
+        <h3 class="text-lg font-semibold text-error">{gettext("Danger zone")}</h3>
+        <p class="mt-2">
+          {gettext("Permanently delete your account and all of your requests. This cannot be undone.")}
+        </p>
+        <.form
+          for={@delete_form}
+          id="delete_account_form"
+          action={~p"/users/delete-account"}
+          method="post"
+          class="mt-2"
+        >
+          <.input
+            field={@delete_form[:password]}
+            type="password"
+            label={gettext("Confirm your current password")}
+            autocomplete="current-password"
+            spellcheck="false"
+            required
+          />
+          <.button
+            variant="danger"
+            data-confirm={gettext("Permanently delete your account? This cannot be undone.")}
+          >
+            {gettext("Delete my account")}
+          </.button>
+        </.form>
+      </div>
     </Layouts.app>
     """
   end
@@ -165,6 +208,7 @@ defmodule CinderWeb.UserLive.Settings do
       |> assign(:locale_form, to_form(locale_changeset))
       |> assign(:email_form, to_form(email_changeset))
       |> assign(:password_form, to_form(password_changeset))
+      |> assign(:delete_form, to_form(%{}, as: "delete_account"))
       |> assign(:trigger_submit, false)
 
     {:ok, socket}

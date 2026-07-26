@@ -286,6 +286,74 @@ defmodule CinderWeb.UserSessionControllerTest do
     end
   end
 
+  describe "POST /users/delete-account" do
+    test "deletes the caller's own account and logs them out", %{conn: conn} do
+      _admin = admin_fixture()
+      user = user_fixture() |> set_password()
+
+      conn =
+        conn
+        |> log_in_user(user)
+        |> post(~p"/users/delete-account", %{
+          "delete_account" => %{"password" => valid_user_password()}
+        })
+
+      assert redirected_to(conn) == ~p"/"
+      refute get_session(conn, :user_token)
+      assert Phoenix.Flash.get(conn.assigns.flash, :info) =~ "permanently deleted"
+      refute Cinder.Repo.get(Cinder.Accounts.User, user.id)
+    end
+
+    test "a wrong password does not delete the account", %{conn: conn} do
+      _admin = admin_fixture()
+      user = user_fixture() |> set_password()
+
+      conn =
+        conn
+        |> log_in_user(user)
+        |> post(~p"/users/delete-account", %{
+          "delete_account" => %{"password" => "wrong-password!!"}
+        })
+
+      assert redirected_to(conn) == ~p"/users/settings"
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "incorrect"
+      assert Cinder.Repo.get(Cinder.Accounts.User, user.id)
+    end
+
+    test "the last admin cannot self-delete", %{conn: conn} do
+      admin = admin_fixture() |> set_password()
+
+      conn =
+        conn
+        |> log_in_user(admin)
+        |> post(~p"/users/delete-account", %{
+          "delete_account" => %{"password" => valid_user_password()}
+        })
+
+      assert redirected_to(conn) == ~p"/users/settings"
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "last admin"
+      assert Cinder.Repo.get(Cinder.Accounts.User, admin.id)
+    end
+
+    test "redirects to reauth when sudo has expired", %{conn: conn} do
+      _admin = admin_fixture()
+      user = user_fixture() |> set_password()
+
+      conn =
+        conn
+        |> log_in_user(user,
+          token_authenticated_at: DateTime.add(DateTime.utc_now(:second), -11, :minute)
+        )
+        |> post(~p"/users/delete-account", %{
+          "delete_account" => %{"password" => valid_user_password()}
+        })
+
+      assert redirected_to(conn) == ~p"/users/log-in"
+      assert Phoenix.Flash.get(conn.assigns.flash, :error) =~ "re-authenticate"
+      assert Cinder.Repo.get(Cinder.Accounts.User, user.id)
+    end
+  end
+
   describe "DELETE /users/log-out" do
     test "logs the user out", %{conn: conn, user: user} do
       conn = conn |> log_in_user(user) |> delete(~p"/users/log-out")

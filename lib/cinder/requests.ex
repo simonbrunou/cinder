@@ -30,6 +30,32 @@ defmodule Cinder.Requests do
   end
 
   @doc """
+  The caller's OWN requests, projected to JSON-ready maps for a GDPR Art.15/20 data export.
+  Own data only — scoped by user id, like `list_for_user/1`. Datetimes are ISO-8601 strings.
+  """
+  def export_for_user(%User{} = user) do
+    user
+    |> list_for_user()
+    |> Enum.map(fn r ->
+      %{
+        status: r.status,
+        target_type: r.target_type,
+        target_id: r.target_id,
+        season_number: r.season_number,
+        title: r.title,
+        year: r.year,
+        denial_reason: r.denial_reason,
+        inserted_at: iso(r.inserted_at),
+        updated_at: iso(r.updated_at)
+      }
+    end)
+  end
+
+  defp iso(nil), do: nil
+  defp iso(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
+  defp iso(%NaiveDateTime{} = dt), do: NaiveDateTime.to_iso8601(dt)
+
+  @doc """
   Users with an approved request for this movie (by `tmdb_id`) — every requester who
   should hear when it becomes available or fails, not just the first. `Cinder.Notifier.Email`
   uses this to fan a `:movie_available`/`:movie_failed` event out to each of them.

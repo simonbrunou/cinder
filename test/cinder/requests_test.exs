@@ -411,6 +411,38 @@ defmodule Cinder.RequestsTest do
     assert_receive {:notify, {:request_approved, %{title: "Movie 603"}}}
   end
 
+  describe "export_for_user/1" do
+    test "projects only the caller's own requests to JSON-ready maps" do
+      user = user_fixture()
+      other = user_fixture()
+
+      Repo.insert!(%Cinder.Requests.Request{
+        user_id: user.id,
+        target_type: "movie",
+        target_id: 603,
+        title: "The Matrix",
+        year: 1999,
+        status: :denied,
+        denial_reason: "no thanks"
+      })
+
+      Repo.insert!(%Cinder.Requests.Request{
+        user_id: other.id,
+        target_type: "movie",
+        target_id: 999,
+        title: "Someone Else",
+        status: :pending
+      })
+
+      assert [row] = Requests.export_for_user(user)
+      assert row.target_id == 603
+      assert row.title == "The Matrix"
+      assert row.status == :denied
+      assert row.denial_reason == "no thanks"
+      assert is_binary(row.inserted_at)
+    end
+  end
+
   describe "season requests" do
     setup do
       stub(Cinder.Catalog.TMDBMock, :get_series, fn 1399 ->

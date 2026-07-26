@@ -681,7 +681,8 @@ defmodule Cinder.AccountsTest do
 
       audit = Repo.one!(from a in Cinder.Audit.AdminAudit, where: a.entity_id == ^target.id)
       assert audit.action == "admin_update_email"
-      assert audit.detail["email"] == new_email
+      # GDPR Art.17: the new address is never written into the audit detail.
+      refute Map.has_key?(audit.detail, "email")
     end
 
     test "rejects an invalid email" do
@@ -765,7 +766,8 @@ defmodule Cinder.AccountsTest do
       audit = Repo.one!(from a in Cinder.Audit.AdminAudit, where: a.entity_id == ^tid)
       assert audit.action == "delete_user"
       assert audit.entity_type == "User"
-      assert audit.detail["email"] == target.email
+      # GDPR Art.17: the erased address is never written into the audit detail.
+      refute Map.has_key?(audit.detail, "email")
       assert audit.detail["cascaded_requests"] == true
     end
 
@@ -802,6 +804,86 @@ defmodule Cinder.AccountsTest do
       _second = admin_fixture()
       assert {:error, :self_delete} = Accounts.delete_user(actor, actor)
       assert Repo.reload!(actor)
+    end
+
+    test "scrubs the email out of historical audit rows for the deleted user, keeping other keys" do
+      admin = admin_fixture()
+      target = user_fixture()
+
+      historical =
+        Repo.insert!(%Cinder.Audit.AdminAudit{
+          actor_id: admin.id,
+          action: "admin_update_email",
+          entity_type: "User",
+          entity_id: target.id,
+          detail: %{"email" => "old@example.com", "role" => "user"}
+        })
+
+      assert {:ok, _, _} = Accounts.delete_user(admin, target)
+
+      scrubbed = Repo.get!(Cinder.Audit.AdminAudit, historical.id)
+      # The row survives (append-only accountability); only the email value is redacted.
+      refute Map.has_key?(scrubbed.detail, "email")
+      assert scrubbed.detail["role"] == "user"
+    end
+  end
+
+  describe "delete_own_account/2" do
+    test "deletes the caller's own account with the correct password and revokes their tokens" do
+      _admin = admin_fixture()
+      user = user_fixture() |> set_password()
+      token = Accounts.generate_user_session_token(user)
+
+      assert {:ok, %User{id: id}, revoked_tokens} =
+               Accounts.delete_own_account(user, valid_user_password())
+
+      assert Enum.map(revoked_tokens, & &1.token) == [token]
+      refute Repo.get(User, id)
+      refute Repo.get_by(UserToken, user_id: id)
+    end
+
+    test "records a delete_own_account audit row with a nil actor" do
+      _admin = admin_fixture()
+      user = user_fixture() |> set_password()
+
+      assert {:ok, %User{id: id}, _} = Accounts.delete_own_account(user, valid_user_password())
+
+      audit = Repo.one!(from a in Cinder.Audit.AdminAudit, where: a.entity_id == ^id)
+      assert audit.action == "delete_own_account"
+      assert audit.entity_type == "User"
+      assert audit.actor_id == nil
+      refute Map.has_key?(audit.detail, "email")
+    end
+
+    test "a wrong password does not delete the account" do
+      _admin = admin_fixture()
+      user = user_fixture() |> set_password()
+
+      assert {:error, :invalid_password} =
+               Accounts.delete_own_account(user, "definitely-not-it!!")
+
+      assert Repo.reload!(user)
+    end
+
+    test "the last admin cannot self-delete even with the correct password" do
+      admin = admin_fixture() |> set_password()
+
+      assert {:error, :last_admin} = Accounts.delete_own_account(admin, valid_user_password())
+      assert Repo.reload!(admin)
+    end
+  end
+
+  describe "export_user_data/1" do
+    test "returns account fields and never the hashed_password or password" do
+      user = user_fixture() |> set_password()
+
+      data = Accounts.export_user_data(user)
+
+      assert data.id == user.id
+      assert data.email == user.email
+      assert data.role == :user
+      refute Map.has_key?(data, :hashed_password)
+      refute Map.has_key?(data, :password)
     end
   end
 

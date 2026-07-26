@@ -139,6 +139,8 @@ defmodule CinderWeb.Router do
     end
 
     post "/users/update-password", UserSessionController, :update_password
+    post "/users/delete-account", UserSessionController, :delete_account
+    get "/users/export", DataExportController, :export
   end
 
   scope "/", CinderWeb do
