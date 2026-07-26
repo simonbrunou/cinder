@@ -53,6 +53,10 @@ defmodule Cinder.Library do
   @spec kinds() :: [atom()]
   def kinds, do: @kinds
 
+  @doc "Whether `path` has a video extension supported by the library importer."
+  def video_file?(path),
+    do: String.downcase(Path.extname(path)) in @video_exts
+
   @doc "Stages a movie import with rollback material for a guarded Catalog transition."
   @spec stage_movie(Movie.t(), keyword()) ::
           {:ok, %{dest: String.t(), rollback: map(), quality: map()}} | {:error, term()}
@@ -1358,7 +1362,7 @@ defmodule Cinder.Library do
   end
 
   defp only_videos(files),
-    do: Enum.filter(files, fn {p, _size} -> String.downcase(Path.extname(p)) in @video_exts end)
+    do: Enum.filter(files, fn {path, _size} -> video_file?(path) end)
 
   # {episode, source_path, size} triples for files that name a specific episode in the grab. A
   # double-episode file yields two entries; `link_all/4` groups them back to one library file.
@@ -1658,7 +1662,7 @@ defmodule Cinder.Library do
   # so the choice — and therefore the dest — is stable across retries.
   defp pick_video(files) do
     files
-    |> Enum.filter(fn {p, _size} -> String.downcase(Path.extname(p)) in @video_exts end)
+    |> Enum.filter(fn {path, _size} -> video_file?(path) end)
     |> Enum.sort_by(fn {p, size} -> {-size, p} end)
     |> case do
       [{path, _size} | _] -> {:ok, path}

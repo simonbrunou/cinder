@@ -288,6 +288,11 @@ defmodule CinderWeb.LibraryLive do
       <.header>
         {gettext("Library")}
         <:subtitle>{gettext("Manage movies and added series.")}</:subtitle>
+        <:actions>
+          <.link id="adopt-library-link" navigate={~p"/library/adopt"} class="btn btn-primary">
+            {gettext("Adopt existing library")}
+          </.link>
+        </:actions>
       </.header>
 
       <%!-- Navigation, not an ARIA tablist: these are links that change the URL, and the
