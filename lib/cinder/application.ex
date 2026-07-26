@@ -88,13 +88,16 @@ defmodule Cinder.Application do
     System.get_env("RELEASE_NAME") == nil
   end
 
-  defp poller_child do
+  @doc false
+  # Public only so the `:start_poller` gate is directly assertable in a test; not part of the API.
+  def poller_child do
     if Application.get_env(:cinder, :start_poller, true) do
       [
         Cinder.Download.Poller,
         Cinder.Download.TvPoller,
         Cinder.Catalog.Refresher,
-        Cinder.Subtitles.Sweeper
+        Cinder.Subtitles.Sweeper,
+        Cinder.Accounts.Janitor
       ]
     else
       []

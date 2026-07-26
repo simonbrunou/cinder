@@ -20,6 +20,14 @@ defmodule Cinder.Accounts.UserToken do
   end
 
   @doc """
+  The longest validity window across all token contexts, in days. Retention pruning
+  (`Cinder.Accounts.Janitor`) deletes `users_tokens` rows older than this, so it never removes a
+  row any context might still accept. Derived from the per-context constants above — the single
+  source of truth for those windows.
+  """
+  def max_validity_in_days, do: max(@session_validity_in_days, @change_email_validity_in_days)
+
+  @doc """
   Generates a token that will be stored in a signed place,
   such as session or cookie. As they are signed, those
   tokens do not need to be hashed.
