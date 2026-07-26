@@ -36,4 +36,15 @@ defmodule Cinder.Download.PollerSkeletonTest do
     assert log =~ ":bail"
     assert log =~ "poller_skeleton_test.exs"
   end
+
+  test "poll/1 emits [:cinder, :poller, :tick] with the poller module and a duration" do
+    start_supervised!({TestPoller, interval: :timer.hours(1)})
+
+    {result, events} =
+      Cinder.TelemetryHelpers.capture([:cinder, :poller, :tick], fn -> TestPoller.poll() end)
+
+    assert result == :ok
+    assert [{%{duration: duration}, %{poller: TestPoller}}] = events
+    assert is_integer(duration) and duration >= 0
+  end
 end

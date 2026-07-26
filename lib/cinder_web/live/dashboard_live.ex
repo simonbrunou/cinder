@@ -1,16 +1,16 @@
 defmodule CinderWeb.DashboardLive do
   @moduledoc """
   Admin landing at `/dashboard`: pipeline stats at a glance, an inline pending-approval
-  queue (approve / deny), service health, and a compact recent-activity slice. Read-mostly;
-  approve/deny route through `Cinder.Requests` exactly as `/requests` does — no new gate.
-  Live via the `movies` + `series` + `requests` topics; health runs in a `start_async` task
-  so a slow service can't block render.
+  queue (approve / deny), service health, disk space, and a compact recent-activity slice.
+  Read-mostly; approve/deny route through `Cinder.Requests` exactly as `/requests` does — no
+  new gate. Live via the `movies` + `series` + `requests` topics; health and disk each run in
+  their own `start_async` task so a slow service (or a hung `df`) can't block render.
   """
   use CinderWeb, :live_view
 
   import CinderWeb.LiveHelpers
 
-  alias Cinder.{Catalog, Health, Library, Notifier, Requests}
+  alias Cinder.{Catalog, Disk, Health, Library, Notifier, Requests}
   alias Cinder.Catalog.Refresher
   alias Cinder.Download.{Poller, TvPoller}
   alias Cinder.Subtitles.Sweeper
@@ -32,13 +32,15 @@ defmodule CinderWeb.DashboardLive do
      socket
      |> assign(
        health: :loading,
+       disk: :loading,
        denying: nil,
        maintenance_actions: maintenance_actions(),
        running_maintenance: [],
        maintenance_results: %{}
      )
      |> load()
-     |> check_health()}
+     |> check_health()
+     |> check_disk()}
   end
 
   # Re-load on any pipeline/request change so stats, the queue, and recent activity stay live.
@@ -50,6 +52,14 @@ defmodule CinderWeb.DashboardLive do
   @impl true
   def handle_async(:health, {:ok, results}, socket),
     do: {:noreply, assign(socket, health: results)}
+
+  def handle_async(:disk, {:ok, results}, socket),
+    do: {:noreply, assign(socket, disk: results)}
+
+  def handle_async(:disk, {:exit, reason}, socket) do
+    Logger.warning("disk check failed: #{inspect(reason)}")
+    {:noreply, assign(socket, disk: :error)}
+  end
 
   def handle_async({:approve, _id}, {:ok, {:ok, _req}}, socket), do: {:noreply, socket}
 
@@ -171,6 +181,12 @@ defmodule CinderWeb.DashboardLive do
       else: socket
   end
 
+  defp check_disk(socket) do
+    if connected?(socket),
+      do: start_async(socket, :disk, &Disk.check_all/0),
+      else: socket
+  end
+
   defp maintenance_actions do
     [
       %{
@@ -246,6 +262,71 @@ defmodule CinderWeb.DashboardLive do
     </div>
     """
   end
+
+  # Below 10% free is flagged with the warning style — a full disk otherwise only shows up when
+  # an import already fails with :enospc.
+  @disk_warning_threshold 0.10
+
+  attr :kind, :atom, required: true
+  attr :status, :any, required: true
+
+  defp disk_card(assigns) do
+    ~H"""
+    <li
+      id={"disk-#{@kind}"}
+      class="flex items-center justify-between gap-3 rounded-box border border-base-300 bg-base-200/50 px-4 py-2.5"
+    >
+      <span class="font-medium">{disk_root_label(@kind)}</span>
+      <span :if={match?({:error, _}, @status)} class="text-xs text-error">
+        {gettext("Unavailable")}
+      </span>
+      <span
+        :if={match?({:ok, _}, @status)}
+        class={["text-sm", low_disk?(@status) && "font-medium text-warning"]}
+      >
+        {disk_summary(@status)}
+      </span>
+    </li>
+    """
+  end
+
+  defp disk_root_label(:movies), do: gettext("Movies")
+  defp disk_root_label(:tv), do: gettext("TV")
+  defp disk_root_label(kind), do: kind |> to_string() |> String.capitalize()
+
+  defp low_disk?({:ok, %{free_bytes: free, total_bytes: total}}) when total > 0,
+    do: free / total < @disk_warning_threshold
+
+  defp low_disk?(_status), do: false
+
+  defp disk_summary({:ok, %{free_bytes: free, total_bytes: total}}) do
+    gettext("%{free} free of %{total}",
+      free: humanize_disk_bytes(free),
+      total: humanize_disk_bytes(total)
+    )
+  end
+
+  # Disk sizes routinely reach into the TB range (unlike the movie/episode file sizes
+  # `CinderWeb.LiveHelpers.humanize_bytes/1` formats), so this stays a separate, dashboard-local
+  # helper rather than growing that one past its deliberate GB ceiling.
+  @tb 1_099_511_627_776
+  @gb 1_073_741_824
+  @mb 1_048_576
+  @kb 1_024
+
+  defp humanize_disk_bytes(bytes) when is_integer(bytes) and bytes >= @tb,
+    do: "#{Float.round(bytes / @tb, 1)} TB"
+
+  defp humanize_disk_bytes(bytes) when is_integer(bytes) and bytes >= @gb,
+    do: "#{Float.round(bytes / @gb, 1)} GB"
+
+  defp humanize_disk_bytes(bytes) when is_integer(bytes) and bytes >= @mb,
+    do: "#{Float.round(bytes / @mb, 1)} MB"
+
+  defp humanize_disk_bytes(bytes) when is_integer(bytes) and bytes >= @kb,
+    do: "#{Float.round(bytes / @kb, 1)} KB"
+
+  defp humanize_disk_bytes(bytes) when is_integer(bytes), do: "#{bytes} B"
 
   @impl true
   def render(assigns) do
@@ -456,6 +537,23 @@ defmodule CinderWeb.DashboardLive do
                 </div>
                 <.status_badge kind={:health} status={h.status} />
               </li>
+            </ul>
+          </section>
+
+          <section>
+            <h2 class="mb-3 text-lg font-semibold">{gettext("Disk space")}</h2>
+            <.spinner :if={@disk == :loading} label={gettext("Checking disk space…")} />
+            <p :if={@disk == :error} class="text-sm text-error">
+              {gettext("Couldn't check disk space.")}
+            </p>
+            <.empty_state
+              :if={@disk == []}
+              icon="hero-circle-stack"
+              title={gettext("No library paths configured")}
+              message={gettext("Set a library path in Settings to see free space here.")}
+            />
+            <ul :if={is_list(@disk) and @disk != []} id="dashboard-disk" class="space-y-2">
+              <.disk_card :for={d <- @disk} kind={d.kind} status={d.status} />
             </ul>
           </section>
 

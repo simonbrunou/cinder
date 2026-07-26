@@ -2067,6 +2067,20 @@ defmodule Cinder.Download.PollerTest do
     assert %Movie{status: :requested, search_attempts: 1} = Repo.get!(Movie, flaky.id)
   end
 
+  test "a park emits [:cinder, :park] with kind: :movie and the park reason" do
+    {:ok, miss} = Catalog.add_movie(%{tmdb_id: 906, title: "M"})
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn 906 -> {:ok, %{imdb_id: nil}} end)
+
+    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+
+    {result, events} =
+      Cinder.TelemetryHelpers.capture([:cinder, :park], fn -> Poller.poll() end)
+
+    assert result == :ok
+    assert %Movie{status: :no_match} = Repo.get!(Movie, miss.id)
+    assert [{%{count: 1}, %{kind: :movie, reason: :no_imdb_id}}] = events
+  end
+
   test "a persistently failing import is parked at :import_failed after max attempts" do
     movie = downloaded_movie(16, "/downloads/Inception.2010.1080p.mkv")
     start_supervised!({Poller, interval: 60_000})

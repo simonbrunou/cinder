@@ -138,6 +138,7 @@ defmodule Cinder.HTTPPolicy do
   def bounded_request(request, max_bytes, timeout_ms)
       when is_integer(max_bytes) and max_bytes > 0 and is_integer(timeout_ms) and timeout_ms > 0 do
     request = request_struct(request)
+    started_at = System.monotonic_time()
     gate = make_ref()
     owner = self()
 
@@ -148,16 +149,37 @@ defmodule Cinder.HTTPPolicy do
         end
       end)
 
-    case allow_req_test(request, owner, task.pid) do
-      :ok ->
-        send(task.pid, {gate, :run})
-        await_request(task, timeout_ms)
+    result =
+      case allow_req_test(request, owner, task.pid) do
+        :ok ->
+          send(task.pid, {gate, :run})
+          await_request(task, timeout_ms)
 
-      {:error, reason} ->
-        Task.shutdown(task, :brutal_kill)
-        {:error, reason}
-    end
+        {:error, reason} ->
+          Task.shutdown(task, :brutal_kill)
+          {:error, reason}
+      end
+
+    emit_http_telemetry(request, result, started_at)
+    result
   end
+
+  # `[:cinder, :http, :request]` fires once per `bounded_request/2,3` call, timing the whole
+  # gated Task round-trip — never at a caller, so every outbound service call (TMDB, Prowlarr,
+  # a download client) is covered without touching any of them.
+  defp emit_http_telemetry(request, result, started_at) do
+    :telemetry.execute(
+      [:cinder, :http, :request],
+      %{duration: System.monotonic_time() - started_at},
+      %{host: request_host(request), status: request_status(result)}
+    )
+  end
+
+  defp request_host(%Req.Request{url: %URI{host: host}}), do: host
+  defp request_host(_request), do: nil
+
+  defp request_status({:ok, _response}), do: :ok
+  defp request_status({:error, _reason}), do: :error
 
   defp run_bounded_request(request, max_bytes, timeout_ms) do
     started_at = System.monotonic_time(:millisecond)

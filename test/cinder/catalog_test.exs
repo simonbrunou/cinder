@@ -53,6 +53,31 @@ defmodule Cinder.CatalogTest do
       assert id == movie.id
     end
 
+    test "transition/2 emits [:cinder, :transition] with kind: :movie and the target status" do
+      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 4244, title: "M"})
+
+      {result, events} =
+        Cinder.TelemetryHelpers.capture([:cinder, :transition], fn ->
+          Catalog.transition(movie, %{status: :downloading, download_id: "h"})
+        end)
+
+      assert {:ok, %Movie{status: :downloading}} = result
+      assert [{%{count: 1}, %{kind: :movie, to: :downloading}}] = events
+    end
+
+    test "transition/3 with expect: emits [:cinder, :transition] on the guarded write path" do
+      {:ok, movie} = Catalog.add_movie(%{tmdb_id: 4245, title: "M"})
+      {:ok, searching} = Catalog.transition(movie, %{status: :searching})
+
+      {result, events} =
+        Cinder.TelemetryHelpers.capture([:cinder, :transition], fn ->
+          Catalog.transition(searching, %{status: :downloading}, expect: :searching)
+        end)
+
+      assert {:ok, %Movie{status: :downloading}} = result
+      assert [{%{count: 1}, %{kind: :movie, to: :downloading}}] = events
+    end
+
     test "transition/2 rejects an unknown status" do
       {:ok, movie} = Catalog.add_movie(%{tmdb_id: 2, title: "M"})
 
