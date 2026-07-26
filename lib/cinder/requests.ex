@@ -29,6 +29,41 @@ defmodule Cinder.Requests do
     Repo.all(from r in Request, where: r.user_id == ^id, order_by: [desc: r.id])
   end
 
+  @doc """
+  Users with an approved request for this movie (by `tmdb_id`) — every requester who
+  should hear when it becomes available or fails, not just the first. `Cinder.Notifier.Email`
+  uses this to fan a `:movie_available`/`:movie_failed` event out to each of them.
+  """
+  @spec approved_requesters_for_movie(integer()) :: [User.t()]
+  def approved_requesters_for_movie(tmdb_id) do
+    Repo.all(
+      from r in Request,
+        join: u in assoc(r, :user),
+        where: r.target_type == "movie" and r.target_id == ^tmdb_id and r.status == :approved,
+        distinct: true,
+        order_by: [asc: u.id],
+        select: u
+    )
+  end
+
+  @doc """
+  Users with an approved request for this season (by the series' `tmdb_id` + `season_number`)
+  — the season/TV analog of `approved_requesters_for_movie/1`.
+  """
+  @spec approved_requesters_for_season(integer(), integer()) :: [User.t()]
+  def approved_requesters_for_season(tmdb_id, season_number) do
+    Repo.all(
+      from r in Request,
+        join: u in assoc(r, :user),
+        where:
+          r.target_type == "season" and r.target_id == ^tmdb_id and
+            r.season_number == ^season_number and r.status == :approved,
+        distinct: true,
+        order_by: [asc: u.id],
+        select: u
+    )
+  end
+
   def create_request(%User{} = user, attrs) do
     cond do
       not valid_proposed_profile?(attrs) ->

@@ -90,6 +90,26 @@ defmodule CinderWeb.UserLive.Settings do
         </.button>
       </.form>
 
+      <div class="divider" />
+
+      <div class="text-left">
+        <form id="notify_email_form" phx-change="toggle_notify_email">
+          <label class="label cursor-pointer justify-start gap-2">
+            <input type="hidden" name="notify_email" value="false" />
+            <input
+              type="checkbox"
+              name="notify_email"
+              value="true"
+              checked={@current_scope.user.notify_email}
+              class="checkbox"
+            />
+            <span class="label-text">
+              {gettext("Email me when a request is approved or ready to watch")}
+            </span>
+          </label>
+        </form>
+      </div>
+
       <%= if PlexAuth.configured?() do %>
         <div class="divider" />
 
@@ -241,6 +261,26 @@ defmodule CinderWeb.UserLive.Settings do
           {:noreply, assign(socket, password_form: to_form(changeset, action: :insert))}
       end
     end)
+  end
+
+  # Low-stakes preference, unlike email/password/Plex-link — no sudo recheck, matching
+  # SettingsLive's own toggle_auto_approve.
+  def handle_event("toggle_notify_email", params, socket) do
+    user = socket.assigns.current_scope.user
+    notify_email = Map.get(params, "notify_email") == "true"
+
+    case Accounts.update_user_notify_email(user, %{notify_email: notify_email}) do
+      {:ok, updated} ->
+        {:noreply, assign(socket, current_scope: %{socket.assigns.current_scope | user: updated})}
+
+      {:error, _changeset} ->
+        {:noreply,
+         put_flash(
+           socket,
+           :error,
+           gettext("Could not update your notification preference.")
+         )}
+    end
   end
 
   def handle_event("unlink_plex", _params, socket) do

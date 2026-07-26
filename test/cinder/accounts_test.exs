@@ -502,6 +502,19 @@ defmodule Cinder.AccountsTest do
     end
   end
 
+  describe "user notify_email" do
+    test "defaults to true and can be toggled" do
+      user = user_fixture()
+      assert user.notify_email == true
+
+      assert {:ok, %{notify_email: false}} =
+               Accounts.update_user_notify_email(user, %{notify_email: false})
+
+      assert {:ok, %{notify_email: true}} =
+               Accounts.update_user_notify_email(user, %{notify_email: true})
+    end
+  end
+
   describe "count_admins/0" do
     test "counts only admins" do
       _user = user_fixture()

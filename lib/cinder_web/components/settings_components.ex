@@ -285,6 +285,22 @@ defmodule CinderWeb.SettingsComponents do
           </p>
         </div>
 
+        <div :if={group == :notifications} class="mb-3">
+          <label class="label cursor-pointer justify-start gap-2">
+            <input type="hidden" name={Settings.smtp_ssl_key()} value="false" />
+            <input
+              type="checkbox"
+              name={Settings.smtp_ssl_key()}
+              value="true"
+              checked={@form.values[Settings.smtp_ssl_key()]}
+              class="checkbox"
+            />
+            <span class="label-text">
+              {gettext("SMTP: use implicit TLS/SSL (usually port 465; leave off for STARTTLS on 587)")}
+            </span>
+          </label>
+        </div>
+
         <.setting_field
           :for={field <- fields_for(group)}
           field={field}

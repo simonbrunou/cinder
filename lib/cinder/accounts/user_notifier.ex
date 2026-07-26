@@ -10,7 +10,7 @@ defmodule Cinder.Accounts.UserNotifier do
     email =
       new()
       |> to(recipient)
-      |> from({"Cinder", "contact@example.com"})
+      |> from(Mailer.from())
       |> subject(subject)
       |> text_body(body)
 

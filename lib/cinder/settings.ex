@@ -163,6 +163,51 @@ defmodule Cinder.Settings do
       placeholder: "https://discord.com/api/webhooks/..."
     },
     %{
+      key: "smtp_host",
+      module: Cinder.Mailer,
+      field: :relay,
+      secret: false,
+      group: :notifications,
+      label: "SMTP host",
+      placeholder: "smtp.example.com"
+    },
+    %{
+      key: "smtp_port",
+      module: Cinder.Mailer,
+      field: :port,
+      secret: false,
+      group: :notifications,
+      label: "SMTP port",
+      placeholder: "587"
+    },
+    %{
+      key: "smtp_username",
+      module: Cinder.Mailer,
+      field: :username,
+      secret: false,
+      group: :notifications,
+      label: "SMTP username",
+      placeholder: ""
+    },
+    %{
+      key: "smtp_password",
+      module: Cinder.Mailer,
+      field: :password,
+      secret: true,
+      group: :notifications,
+      label: "SMTP password",
+      placeholder: ""
+    },
+    %{
+      key: "smtp_from",
+      module: Cinder.Mailer,
+      field: :from,
+      secret: false,
+      group: :notifications,
+      label: "SMTP from address",
+      placeholder: "cinder@example.com"
+    },
+    %{
       key: "opensubtitles_api_key",
       module: Cinder.Subtitles.Provider.OpenSubtitles,
       field: :api_key,
@@ -264,6 +309,8 @@ defmodule Cinder.Settings do
   @import_roots_key "import_roots"
   @ffprobe_bin_key "ffprobe_bin"
   @default_request_quota_key "default_request_quota"
+  @smtp_host_key "smtp_host"
+  @smtp_ssl_key "smtp_ssl"
 
   @global_fields [
     %{
@@ -385,6 +432,7 @@ defmodule Cinder.Settings do
   def media_server_options, do: @media_server_options
   def import_roots_key, do: @import_roots_key
   def ffprobe_bin_key, do: @ffprobe_bin_key
+  def smtp_ssl_key, do: @smtp_ssl_key
   def anime_fields, do: @anime_fields
 
   @doc "Positive default quota for new users, or nil when the configured value is unusable."
@@ -576,6 +624,7 @@ defmodule Cinder.Settings do
       end)
       |> Map.merge(toggle_values(rows))
       |> Map.put("move_on_import", decoded_for(rows, "move_on_import") == "true")
+      |> Map.put(@smtp_ssl_key, decoded_for(rows, @smtp_ssl_key) == "true")
 
     secrets_set =
       for f <- config_fields(),
@@ -637,7 +686,7 @@ defmodule Cinder.Settings do
   defp preserve_media_server(values, _params), do: values
 
   defp preserve_booleans(values, params) do
-    keys = Enum.map(@toggles, & &1.key) ++ ["move_on_import"]
+    keys = Enum.map(@toggles, & &1.key) ++ ["move_on_import", @smtp_ssl_key]
 
     Enum.reduce(keys, values, fn key, values ->
       if Map.has_key?(params, key),
@@ -860,6 +909,9 @@ defmodule Cinder.Settings do
     # a revoke.
     apply_explicit_import_roots(rows)
     apply_config_fields(rows)
+    # Reads the Cinder.Mailer keyword list apply_config_fields just wrote (relay/port/username/
+    # password/from), so it must run after — position-enforced like apply_import_roots below.
+    apply_mailer(rows)
     apply_anime_config(rows)
     apply_media_server(rows)
     apply_download_clients(rows)
@@ -903,6 +955,33 @@ defmodule Cinder.Settings do
       # default instead of stranding the last overlaid value.
       Application.put_env(:cinder, module, Keyword.merge(base(module), db_values))
     end)
+  end
+
+  # Layers :adapter and :ssl onto the Cinder.Mailer config apply_config_fields just wrote
+  # (relay/port/username/password/from, all plain config-field entries). The adapter only
+  # switches to SMTP once a host is actually configured — an unconfigured install keeps
+  # whatever the bootstrap shipped (Swoosh.Adapters.Local in dev, .Test in test), so a blank
+  # smtp_host can never crash the mailer on a missing :relay. Both Swoosh's SMTP adapter and
+  # the Local/Test adapters accept extra unknown keys, so :from (read by Cinder.Mailer.from/0,
+  # not the adapter itself) and a temporarily-stale :ssl on a non-SMTP adapter are harmless.
+  defp apply_mailer(rows) do
+    current = Application.get_env(:cinder, Cinder.Mailer, [])
+    host = decoded_for(rows, @smtp_host_key)
+
+    adapter =
+      if is_binary(host) and host != "" do
+        Swoosh.Adapters.SMTP
+      else
+        Keyword.get(base(Cinder.Mailer), :adapter)
+      end
+
+    ssl = if decoded_for(rows, @smtp_ssl_key) == "true", do: "true", else: "false"
+
+    Application.put_env(
+      :cinder,
+      Cinder.Mailer,
+      Keyword.merge(current, adapter: adapter, ssl: ssl)
+    )
   end
 
   defp apply_anime_config(rows) do
@@ -1290,6 +1369,7 @@ defmodule Cinder.Settings do
       puts
       |> Map.put(@media_server_key, media_server_choice(params))
       |> Map.put("move_on_import", params["move_on_import"] || "false")
+      |> Map.put(@smtp_ssl_key, params[@smtp_ssl_key] || "false")
       |> then(fn p ->
         Enum.reduce(@toggles, p, fn t, acc -> Map.put(acc, t.key, params[t.key] || "false") end)
       end)

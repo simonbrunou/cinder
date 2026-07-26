@@ -657,6 +657,94 @@ defmodule Cinder.RequestsTest do
     assert movie.original_language == "ja"
   end
 
+  describe "approved_requesters_for_movie/1" do
+    test "returns every user with an approved request for that movie" do
+      alice = user_fixture()
+      bob = user_fixture()
+      admin = admin_fixture()
+
+      {:ok, req} = Requests.create_request(alice, @attrs)
+      assert {:ok, _} = Requests.approve_request(req, admin, :standard)
+      {:ok, req2} = Requests.create_request(bob, @attrs)
+      assert {:ok, _} = Requests.approve_request(req2, admin, :standard)
+
+      ids = Requests.approved_requesters_for_movie(603) |> Enum.map(& &1.id) |> Enum.sort()
+      assert ids == Enum.sort([alice.id, bob.id])
+    end
+
+    test "excludes a still-pending or denied requester" do
+      user = user_fixture()
+      admin = admin_fixture()
+      {:ok, req} = Requests.create_request(user, @attrs)
+      assert {:ok, _} = Requests.deny_request(req, admin, "no")
+
+      assert Requests.approved_requesters_for_movie(603) == []
+    end
+
+    test "returns [] for a tmdb_id with no requests" do
+      assert Requests.approved_requesters_for_movie(999_999) == []
+    end
+  end
+
+  describe "approved_requesters_for_season/2" do
+    setup do
+      stub(Cinder.Catalog.TMDBMock, :get_series, fn 1399 ->
+        {:ok,
+         %{
+           tmdb_id: 1399,
+           tvdb_id: 1,
+           title: "GoT",
+           year: 2011,
+           poster_path: nil,
+           seasons: [%{season_number: 1}, %{season_number: 2}]
+         }}
+      end)
+
+      stub(Cinder.Catalog.TMDBMock, :get_season, fn 1399, n, locale ->
+        {:ok,
+         %{
+           season_number: n,
+           episodes: [
+             %{
+               tmdb_episode_id: n,
+               episode_number: 1,
+               title: if(locale == "en", do: "e", else: ""),
+               air_date: ~D[2011-01-01]
+             }
+           ]
+         }}
+      end)
+
+      stub(Cinder.Catalog.TMDBMock, :get_series_alternative_titles, fn 1399 -> {:ok, []} end)
+      stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn 1399 -> {:ok, []} end)
+
+      :ok
+    end
+
+    defp season_request_attrs do
+      %{target_type: "season", target_id: 1399, season_number: 2, title: "GoT", year: 2011}
+    end
+
+    test "returns the requester once the season request is approved" do
+      user = user_fixture()
+      admin = admin_fixture()
+      {:ok, req} = Requests.create_request(user, season_request_attrs())
+      assert {:ok, _} = Requests.approve_request(req, admin, :standard)
+
+      assert [%{id: id}] = Requests.approved_requesters_for_season(1399, 2)
+      assert id == user.id
+    end
+
+    test "does not match a different season of the same series" do
+      user = user_fixture()
+      admin = admin_fixture()
+      {:ok, req} = Requests.create_request(user, season_request_attrs())
+      assert {:ok, _} = Requests.approve_request(req, admin, :standard)
+
+      assert Requests.approved_requesters_for_season(1399, 1) == []
+    end
+  end
+
   describe "list_requests/0" do
     test "returns requests of every status, newest first, with :user preloaded" do
       user = user_fixture()

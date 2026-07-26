@@ -438,6 +438,13 @@ defmodule Cinder.Accounts do
     |> Repo.update()
   end
 
+  @doc "Updates the user's opt-in for request/availability email notifications."
+  def update_user_notify_email(user, attrs) do
+    user
+    |> User.notify_email_changeset(attrs)
+    |> Repo.update()
+  end
+
   @doc """
   Returns an `%Ecto.Changeset{}` for changing the user email.
 

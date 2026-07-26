@@ -47,6 +47,21 @@ defmodule CinderWeb.UserLive.SettingsTest do
       assert redirected_conn.assigns.locale == "fr"
     end
 
+    test "toggles the email-notification preference", %{conn: conn} do
+      user = user_fixture()
+      conn = log_in_user(conn, user)
+      {:ok, lv, _html} = live(conn, ~p"/users/settings")
+
+      assert has_element?(lv, ~s(input[name="notify_email"][checked]))
+
+      lv
+      |> element("form[phx-change=toggle_notify_email]")
+      |> render_change(%{"notify_email" => "false"})
+
+      refute has_element?(lv, ~s(input[name="notify_email"][checked]))
+      assert Cinder.Repo.reload!(user).notify_email == false
+    end
+
     test "redirects if user is not logged in", %{conn: conn} do
       assert {:error, redirect} = live(conn, ~p"/users/settings")
 
