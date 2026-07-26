@@ -504,11 +504,53 @@ defmodule Cinder.RequestsTest do
       refute Enum.find(tree.seasons, &(&1.season_number == 1)).monitored
     end
 
+    test "a crash during the approval TMDB fetch leaves the request pending" do
+      Mox.set_mox_global()
+      parent = self()
+      user = user_fixture()
+      admin = admin_fixture()
+      {:ok, request} = Requests.create_request(user, season_attrs())
+
+      stub(Cinder.Catalog.TMDBMock, :get_series, fn 1399 ->
+        send(parent, {:approval_fetch_started, self()})
+
+        receive do
+          :never -> {:error, :unreachable}
+        end
+      end)
+
+      pid =
+        spawn(fn ->
+          receive do
+            :go -> Requests.approve_request(request, admin, :standard)
+          end
+        end)
+
+      ref = Process.monitor(pid)
+      Sandbox.allow(Cinder.Repo, self(), pid)
+      send(pid, :go)
+      assert_receive {:approval_fetch_started, ^pid}
+
+      Process.exit(pid, :kill)
+      assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
+      assert Repo.reload!(request).status == :pending
+      assert Cinder.Catalog.get_series_by_tmdb_id(1399) == nil
+    end
+
     test "an admin's own season request auto-approves and creates the series immediately" do
       admin = admin_fixture()
       assert {:ok, req} = Requests.create_request(admin, season_attrs())
       assert req.status == :approved
       assert Cinder.Catalog.get_series_by_tmdb_id(1399).media_profile == :auto
+    end
+
+    test "auto-approval rolls back the series when the request insert fails" do
+      admin = admin_fixture()
+      attrs = Map.put(season_attrs(), :year, "not-a-year")
+
+      assert {:error, %Ecto.Changeset{}} = Requests.create_request(admin, attrs)
+      assert Requests.list_for_user(admin) == []
+      assert Cinder.Catalog.get_series_by_tmdb_id(1399) == nil
     end
 
     test "an admin's explicit Anime season proposal auto-approves as Anime" do
