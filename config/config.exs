@@ -63,7 +63,7 @@ config :cinder, media_info: Cinder.Library.MediaInfo.Ffprobe
 config :cinder, ffprobe_bin: "ffprobe"
 # Default; setting PLEX_URL (see runtime.exs) switches this to Plex.
 config :cinder, media_server: Cinder.Library.MediaServer.Jellyfin
-config :cinder, notifier: Cinder.Notifier.Discord
+config :cinder, notifier: Cinder.Notifier.Dispatcher
 config :cinder, subtitles_provider: Cinder.Subtitles.Provider.OpenSubtitles
 config :cinder, subtitles_translator: Cinder.Subtitles.Translator.LibreTranslate
 

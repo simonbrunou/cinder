@@ -3266,6 +3266,7 @@ defmodule Cinder.Catalog do
     from([_episode, season, series] in available_seasons_query(today),
       where: season.id in subquery(imported_season_ids),
       select: %{
+        tmdb_id: series.tmdb_id,
         title: series.title,
         season_number: season.season_number,
         poster_path: series.poster_path

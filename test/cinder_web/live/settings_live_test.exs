@@ -292,6 +292,35 @@ defmodule CinderWeb.SettingsLiveTest do
     assert Settings.get("tmdb_token") == nil
   end
 
+  test "saves SMTP settings and never echoes the password back", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    html =
+      lv
+      |> form("#settings-form", %{
+        "smtp_host" => "smtp.example.com",
+        "smtp_port" => "587",
+        "smtp_username" => "cinder",
+        "smtp_password" => "super-secret-password",
+        "smtp_from" => "cinder@example.com",
+        "smtp_ssl" => "true",
+        "media_server_type" => "jellyfin"
+      })
+      |> render_submit()
+
+    assert html =~ "Settings saved."
+    refute html =~ "super-secret-password"
+
+    assert Settings.get("smtp_host") == "smtp.example.com"
+    assert Application.get_env(:cinder, Cinder.Mailer)[:relay] == "smtp.example.com"
+    assert Application.get_env(:cinder, Cinder.Mailer)[:adapter] == Swoosh.Adapters.SMTP
+    assert Application.get_env(:cinder, Cinder.Mailer)[:ssl] == "true"
+
+    {:ok, _lv, html} = live(conn, ~p"/settings")
+    refute html =~ "super-secret-password"
+    assert html =~ "saved"
+  end
+
   test "toggling auto-approve persists", %{conn: conn} do
     {:ok, lv, _} = live(conn, ~p"/settings")
 

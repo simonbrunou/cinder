@@ -90,6 +90,7 @@ defmodule CinderWeb.ConnCase do
     Cinder.Download.Client.Sabnzbd,
     Cinder.Library.MediaServer.Jellyfin,
     Cinder.Library.MediaServer.Plex,
+    Cinder.Mailer,
     Cinder.Subtitles.Provider.OpenSubtitles,
     :media_server,
     :download_clients,

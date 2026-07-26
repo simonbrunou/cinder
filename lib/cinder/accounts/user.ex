@@ -12,6 +12,7 @@ defmodule Cinder.Accounts.User do
     field :active, :boolean, default: true
     field :request_quota, :integer
     field :locale, :string
+    field :notify_email, :boolean, default: true
     field :plex_id, :integer
     field :plex_username, :string
 
@@ -139,6 +140,9 @@ defmodule Cinder.Accounts.User do
     |> cast(attrs, [:locale])
     |> validate_inclusion(:locale, Cinder.Locales.supported())
   end
+
+  @doc "Sets the requester's opt-in for request/availability email notifications."
+  def notify_email_changeset(user, attrs), do: cast(user, attrs, [:notify_email])
 
   @doc "Links (or refreshes) a Plex account: `plex_id` + display-only `plex_username`."
   def plex_changeset(user, attrs) do

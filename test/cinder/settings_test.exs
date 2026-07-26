@@ -21,6 +21,7 @@ defmodule Cinder.SettingsTest do
     Cinder.Library.MediaServer.Jellyfin,
     Cinder.Library.MediaServer.Plex,
     Cinder.Notifier.Discord,
+    Cinder.Mailer,
     Cinder.Subtitles.Provider.OpenSubtitles,
     Cinder.Subtitles.Translator.LibreTranslate,
     :media_server,
@@ -670,6 +671,53 @@ defmodule Cinder.SettingsTest do
       row = Cinder.Repo.get_by(Cinder.Settings.Setting, key: "discord_webhook_url")
       assert row.is_secret
       refute row.value == "https://discord.com/api/webhooks/1/abc"
+    end
+
+    test "SMTP fields overlay Cinder.Mailer; the password is encrypted at rest" do
+      :ok =
+        Settings.save_form(%{
+          "smtp_host" => "smtp.example.com",
+          "smtp_port" => "587",
+          "smtp_username" => "cinder",
+          "smtp_password" => "hunter2",
+          "smtp_from" => "cinder@example.com",
+          "media_server_type" => "jellyfin"
+        })
+
+      config = Application.get_env(:cinder, Cinder.Mailer)
+      assert config[:relay] == "smtp.example.com"
+      assert config[:port] == "587"
+      assert config[:username] == "cinder"
+      assert config[:password] == "hunter2"
+      assert config[:from] == "cinder@example.com"
+
+      row = Repo.get_by(Setting, key: "smtp_password")
+      assert row.is_secret
+      refute row.value == "hunter2"
+    end
+
+    test "the adapter switches to SMTP only once a host is saved; clearing it reverts" do
+      original = Application.get_env(:cinder, Cinder.Mailer)
+      bootstrap_adapter = original[:adapter]
+
+      Settings.put("smtp_host", "smtp.example.com")
+      assert Application.get_env(:cinder, Cinder.Mailer)[:adapter] == Swoosh.Adapters.SMTP
+
+      Settings.delete("smtp_host")
+      assert Application.get_env(:cinder, Cinder.Mailer)[:adapter] == bootstrap_adapter
+    end
+
+    test "smtp_ssl: unset ⇒ false; stored true overlays; cleared reverts to false" do
+      Settings.load_into_env()
+      assert Application.get_env(:cinder, Cinder.Mailer)[:ssl] == "false"
+
+      Settings.save_form(%{"smtp_ssl" => "true", "media_server_type" => "jellyfin"})
+      assert Application.get_env(:cinder, Cinder.Mailer)[:ssl] == "true"
+      assert Settings.form_state().values["smtp_ssl"] == true
+
+      Settings.save_form(%{"smtp_ssl" => "false", "media_server_type" => "jellyfin"})
+      assert Application.get_env(:cinder, Cinder.Mailer)[:ssl] == "false"
+      assert Settings.form_state().values["smtp_ssl"] == false
     end
   end
 
