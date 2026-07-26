@@ -6,6 +6,21 @@ defmodule Cinder.Download.Client.QBittorrentTest do
   # 40 hex chars; the impl lowercases what it extracts.
   @hash "0123456789ABCDEF0123456789ABCDEF01234567"
 
+  defp configure_path_mapping(remote, local) do
+    keys = [:qbittorrent_remote_path_prefix, :qbittorrent_local_path_prefix]
+    original = Map.new(keys, &{&1, Application.get_env(:cinder, &1)})
+
+    Application.put_env(:cinder, :qbittorrent_remote_path_prefix, remote)
+    Application.put_env(:cinder, :qbittorrent_local_path_prefix, local)
+
+    on_exit(fn ->
+      Enum.each(original, fn
+        {key, nil} -> Application.delete_env(:cinder, key)
+        {key, value} -> Application.put_env(:cinder, key, value)
+      end)
+    end)
+  end
+
   # Serves the login round-trip (setting the SID cookie), then delegates the
   # action request to `action_fun`.
   defp stub_qbit(action_fun) do
@@ -255,6 +270,23 @@ defmodule Cinder.Download.Client.QBittorrentTest do
              QBittorrent.status("abc123")
   end
 
+  test "status/1 translates a mapped content_path at the adapter boundary" do
+    configure_path_mapping("/downloads/", "/media/torrents/")
+
+    stub_qbit(fn conn ->
+      Req.Test.json(conn, [
+        %{
+          "state" => "uploading",
+          "progress" => 1.0,
+          "content_path" => "/downloads/Movie/Movie.mkv"
+        }
+      ])
+    end)
+
+    assert {:ok, %{content_path: "/media/torrents/Movie/Movie.mkv"}} =
+             QBittorrent.status("abc123")
+  end
+
   test "status/1 classifies a relocating (moving) torrent as still downloading" do
     stub_qbit(fn conn ->
       Req.Test.json(conn, [%{"state" => "moving", "progress" => 1.0}])
@@ -271,6 +303,17 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     end)
 
     assert :ok = QBittorrent.health()
+  end
+
+  test "health/0 rejects a configured mapping whose local prefix is missing" do
+    missing =
+      Path.join(System.tmp_dir!(), "cinder-missing-#{System.unique_integer([:positive])}")
+
+    configure_path_mapping("/downloads", missing)
+    stub_qbit(fn conn -> Req.Test.text(conn, "2.8.5") end)
+
+    assert {:error, {:path_mapping_local_prefix_unreadable, ^missing}} =
+             QBittorrent.health()
   end
 
   test "health/0 returns an error when login fails" do

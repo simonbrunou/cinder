@@ -130,9 +130,11 @@ fallback only matters when you can't:
   — otherwise the link **or copy** fails with a permission error and the item parks as
   `:import_failed`.
 
-> **Note:** this covers *local* filesystems the Cinder container can read. A remote or
-> container-mapped download path that Cinder can't `stat` (different host, unmounted volume) is a
-> separate, unaddressed gap — mount the download directory into Cinder's container.
+If qBittorrent or SABnzbd reports paths from a different host or container namespace, configure
+that client's remote and local path prefixes in `/settings`. For example, if the client reports
+`/downloads/Movie.mkv` but Cinder mounts the same directory at `/media/downloads`, map remote
+`/downloads` to local `/media/downloads`. The client health check verifies that the configured
+local prefix is an existing readable directory.
 
 ## Backups
 

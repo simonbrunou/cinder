@@ -218,6 +218,41 @@ defmodule Cinder.Settings do
     }
   ]
 
+  @path_mapping_fields [
+    %{
+      key: "qbittorrent_remote_path_prefix",
+      env_key: :qbittorrent_remote_path_prefix,
+      secret: false,
+      label: "qBittorrent remote path prefix",
+      placeholder: "/downloads",
+      help: :remote
+    },
+    %{
+      key: "qbittorrent_local_path_prefix",
+      env_key: :qbittorrent_local_path_prefix,
+      secret: false,
+      label: "qBittorrent local path prefix",
+      placeholder: "/media/downloads",
+      help: :local
+    },
+    %{
+      key: "sabnzbd_remote_path_prefix",
+      env_key: :sabnzbd_remote_path_prefix,
+      secret: false,
+      label: "SABnzbd remote path prefix",
+      placeholder: "/downloads",
+      help: :remote
+    },
+    %{
+      key: "sabnzbd_local_path_prefix",
+      env_key: :sabnzbd_local_path_prefix,
+      secret: false,
+      label: "SABnzbd local path prefix",
+      placeholder: "/media/downloads",
+      help: :local
+    }
+  ]
+
   # Download-client enable toggles → the :cinder, :download_clients %{protocol => module} map.
   @toggles [
     %{key: "qbittorrent_enabled", protocol: :torrent, label: "Enable qBittorrent (torrent)"},
@@ -304,6 +339,19 @@ defmodule Cinder.Settings do
   @doc "Config fields in a given group."
   def config_fields(group), do: Enum.filter(config_fields(), &(&1.group == group))
 
+  @doc "DB-only flat path mappings, applied to top-level `:cinder` env keys."
+  def path_mapping_fields, do: @path_mapping_fields
+
+  @doc "Download fields ordered client-by-client for the settings UI."
+  def download_fields do
+    fields = config_fields(:download) ++ path_mapping_fields()
+
+    for prefix <- ["qbittorrent", "sabnzbd"],
+        field <- fields,
+        String.starts_with?(field.key, prefix),
+        do: field
+  end
+
   @doc "Flat global settings fields."
   def global_fields, do: @global_fields
 
@@ -349,11 +397,14 @@ defmodule Cinder.Settings do
   @doc "The library kinds with display labels, for the settings/setup UI (`[%{kind:, label:}]`)."
   def library_kinds, do: Enum.map(Cinder.Library.kinds(), &%{kind: &1, label: kind_label(&1)})
 
-  @doc "Every flat `:cinder` env key overlaid per kind: the root path + the three band keys."
+  @doc "Every flat `:cinder` env key overlaid from the settings store."
   def flat_keys do
-    for kind <- Cinder.Library.kinds(), suffix <- ["library_path" | @band_suffixes] do
-      "#{kind}_#{suffix}"
-    end
+    library_keys =
+      for kind <- Cinder.Library.kinds(), suffix <- ["library_path" | @band_suffixes] do
+        "#{kind}_#{suffix}"
+      end
+
+    library_keys ++ Enum.map(@path_mapping_fields, & &1.key)
   end
 
   # Per-kind settings-key derivations for the UI (the form field `name`s).
@@ -813,6 +864,7 @@ defmodule Cinder.Settings do
     apply_media_server(rows)
     apply_download_clients(rows)
     apply_library_config(rows)
+    apply_path_mapping_config(rows)
     # apply_import_roots (the read-scope :import_roots key) must run here: its
     # inferred_import_roots/0 fallback reads the :"#{kind}_library_path" env keys that
     # apply_library_config just wrote above — position-enforced only, a future reorder must not
@@ -927,6 +979,12 @@ defmodule Cinder.Settings do
   defp apply_library_config(rows) do
     for kind <- Cinder.Library.kinds(), do: apply_kind_config(rows, kind)
     :ok
+  end
+
+  defp apply_path_mapping_config(rows) do
+    Enum.each(@path_mapping_fields, fn field ->
+      Application.put_env(:cinder, field.env_key, decoded_for(rows, field.key))
+    end)
   end
 
   defp apply_explicit_import_roots(rows) do

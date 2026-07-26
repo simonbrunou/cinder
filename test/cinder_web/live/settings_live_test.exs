@@ -25,7 +25,7 @@ defmodule CinderWeb.SettingsLiveTest do
   setup :set_mox_global
 
   test "renders the grouped settings form", %{conn: conn} do
-    {:ok, _lv, html} = live(conn, ~p"/settings")
+    {:ok, lv, html} = live(conn, ~p"/settings")
 
     assert html =~ "Settings"
     assert html =~ "TMDB"
@@ -35,6 +35,12 @@ defmodule CinderWeb.SettingsLiveTest do
     assert html =~ ~s(name="movies_library_path")
     assert html =~ ~s(name="import_roots")
     assert html =~ ~s(name="default_request_quota")
+    assert has_element?(lv, "#qbittorrent_remote_path_prefix")
+    assert has_element?(lv, "#qbittorrent_local_path_prefix")
+    assert has_element?(lv, "#sabnzbd_remote_path_prefix")
+    assert has_element?(lv, "#sabnzbd_local_path_prefix")
+    assert has_element?(lv, "p", "Path prefix as the download client reports it")
+    assert has_element?(lv, "p", "The same directory as Cinder sees it")
     # The remove-after-import toggle lives on /settings (Library section).
     assert html =~ ~s(name="move_on_import")
     assert html =~ "Save settings"

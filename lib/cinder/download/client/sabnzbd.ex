@@ -36,6 +36,7 @@ defmodule Cinder.Download.Client.Sabnzbd do
   """
   @behaviour Cinder.Download.Client
 
+  alias Cinder.Download.PathMapping
   alias Cinder.HTTPPolicy
 
   @default_base_url "http://localhost:8080"
@@ -50,6 +51,8 @@ defmodule Cinder.Download.Client.Sabnzbd do
   # tail, and that loss is unrecoverable: SABnzbd's queue/history search is a LIKE on the display
   # name, so a name that lost the key tail is never even returned for client-side matching.
   @max_nzbname_bytes 200
+  @remote_path_prefix :sabnzbd_remote_path_prefix
+  @local_path_prefix :sabnzbd_local_path_prefix
 
   def add(release), do: add(release, [])
 
@@ -402,7 +405,18 @@ defmodule Cinder.Download.Client.Sabnzbd do
     }
 
   defp classify_history(%{"status" => "Completed"} = slot),
-    do: %{state: :completed, progress: 1.0, speed: nil, eta: nil, content_path: slot["storage"]}
+    do: %{
+      state: :completed,
+      progress: 1.0,
+      speed: nil,
+      eta: nil,
+      content_path:
+        PathMapping.translate(
+          slot["storage"],
+          Application.get_env(:cinder, @remote_path_prefix),
+          Application.get_env(:cinder, @local_path_prefix)
+        )
+    }
 
   defp classify_history(%{"status" => "Failed"}),
     do: %{state: :error, progress: 1.0, speed: nil, eta: nil, content_path: nil}
@@ -479,9 +493,16 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
     case get([mode: "queue"], probe) do
       {:ok, %{status: 200, body: %{"status" => false}}} -> {:error, :bad_api_key}
-      {:ok, %{status: status}} when status in 200..299 -> :ok
+      {:ok, %{status: status}} when status in 200..299 -> mapping_health()
       other -> error(other)
     end
+  end
+
+  defp mapping_health do
+    PathMapping.validate_local_prefix(
+      Application.get_env(:cinder, @remote_path_prefix),
+      Application.get_env(:cinder, @local_path_prefix)
+    )
   end
 
   defp get(params, extra \\ []) do

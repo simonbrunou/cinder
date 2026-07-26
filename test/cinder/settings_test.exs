@@ -25,6 +25,10 @@ defmodule Cinder.SettingsTest do
     Cinder.Subtitles.Translator.LibreTranslate,
     :media_server,
     :download_clients,
+    :qbittorrent_remote_path_prefix,
+    :qbittorrent_local_path_prefix,
+    :sabnzbd_remote_path_prefix,
+    :sabnzbd_local_path_prefix,
     :movies_library_path,
     :movies_min_size,
     :movies_max_size,
@@ -176,6 +180,33 @@ defmodule Cinder.SettingsTest do
         Repo.query!("SELECT value FROM settings WHERE key = ?", ["prowlarr_url"])
 
       assert stored == "http://example:9696"
+    end
+
+    test "download-client path mappings round-trip as flat non-secret settings" do
+      mappings = %{
+        "qbittorrent_remote_path_prefix" => "/downloads",
+        "qbittorrent_local_path_prefix" => "/media/torrents",
+        "sabnzbd_remote_path_prefix" => "/data/complete",
+        "sabnzbd_local_path_prefix" => "/media/usenet"
+      }
+
+      assert :ok =
+               Settings.save_form(
+                 Map.merge(mappings, %{
+                   "media_server_type" => "jellyfin",
+                   "qbittorrent_enabled" => "true",
+                   "sabnzbd_enabled" => "true"
+                 })
+               )
+
+      form = Settings.form_state()
+
+      for {key, value} <- mappings do
+        assert Settings.get(key) == value
+        assert form.values[key] == value
+        refute Repo.get_by!(Setting, key: key).is_secret
+        assert Application.get_env(:cinder, String.to_existing_atom(key)) == value
+      end
     end
 
     test "secret values are ciphertext at rest but decrypt on read" do

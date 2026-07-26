@@ -286,7 +286,7 @@ defmodule CinderWeb.SettingsComponents do
         </div>
 
         <.setting_field
-          :for={field <- Settings.config_fields(group) ++ Settings.global_fields(group)}
+          :for={field <- fields_for(group)}
           field={field}
           form={@form}
         />
@@ -387,6 +387,11 @@ defmodule CinderWeb.SettingsComponents do
 
   def services_for(_group), do: []
 
+  defp fields_for(:download), do: Settings.download_fields()
+
+  defp fields_for(group),
+    do: Settings.config_fields(group) ++ Settings.global_fields(group)
+
   # phx-value is client-controlled; only known services resolve to a check target.
   def decode_service("tmdb"), do: :tmdb
   def decode_service("indexer"), do: :indexer
@@ -425,6 +430,10 @@ defmodule CinderWeb.SettingsComponents do
         autocomplete="off"
         class="input w-full"
       />
+
+      <p :if={Map.has_key?(@field, :help)} class="mt-1 text-xs opacity-70">
+        {path_mapping_help(@field.help)}
+      </p>
 
       <div :if={@field.secret}>
         <input
@@ -470,6 +479,12 @@ defmodule CinderWeb.SettingsComponents do
   end
 
   defp invalid?(form, key), do: MapSet.member?(form.invalid_keys, key)
+
+  defp path_mapping_help(:remote),
+    do: gettext("Path prefix as the download client reports it")
+
+  defp path_mapping_help(:local),
+    do: gettext("The same directory as Cinder sees it")
 
   defp field_errors(form, key) do
     if invalid?(form, key), do: [invalid_field_message(key)], else: []

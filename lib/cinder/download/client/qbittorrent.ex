@@ -24,7 +24,7 @@ defmodule Cinder.Download.Client.QBittorrent do
   """
   @behaviour Cinder.Download.Client
 
-  alias Cinder.Download.Torrent
+  alias Cinder.Download.{PathMapping, Torrent}
   alias Cinder.HTTPPolicy
 
   @default_base_url "http://localhost:8080"
@@ -39,6 +39,8 @@ defmodule Cinder.Download.Client.QBittorrent do
   @max_torrent_bytes 10 * 1024 * 1024
   @max_response_bytes 4 * 1024 * 1024
   @minimum_webapi_version "2.8.3"
+  @remote_path_prefix :qbittorrent_remote_path_prefix
+  @local_path_prefix :qbittorrent_local_path_prefix
 
   def add(release), do: add(release, [])
 
@@ -353,8 +355,11 @@ defmodule Cinder.Download.Client.QBittorrent do
     probe = [receive_timeout: 3_000, connect_options: [timeout: 3_000]]
 
     case action([method: :get, url: "/api/v2/app/webapiVersion"], probe) do
-      {:ok, %{status: status, body: version}} when status in 200..299 -> validate_webapi(version)
-      other -> error(other)
+      {:ok, %{status: status, body: version}} when status in 200..299 ->
+        with :ok <- validate_webapi(version), do: mapping_health()
+
+      other ->
+        error(other)
     end
   end
 
@@ -500,8 +505,20 @@ defmodule Cinder.Download.Client.QBittorrent do
       # Connected seeds (`num_seeds`), not the tracker-scrape swarm total (`num_complete`, which is
       # -1 until a scrape lands and so unusable for a metaDL torrent). 0 = a dead/metaDL swarm.
       seeders: metric(torrent["num_seeds"]),
-      content_path: torrent["content_path"]
+      content_path:
+        PathMapping.translate(
+          torrent["content_path"],
+          Application.get_env(:cinder, @remote_path_prefix),
+          Application.get_env(:cinder, @local_path_prefix)
+        )
     }
+  end
+
+  defp mapping_health do
+    PathMapping.validate_local_prefix(
+      Application.get_env(:cinder, @remote_path_prefix),
+      Application.get_env(:cinder, @local_path_prefix)
+    )
   end
 
   defp metric(value) when is_integer(value) and value >= 0, do: value
