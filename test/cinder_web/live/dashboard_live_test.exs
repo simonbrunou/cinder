@@ -359,6 +359,39 @@ defmodule CinderWeb.DashboardLiveTest do
       assert html =~ "Nothing to approve"
     end
 
+    test "shows the pending accounts count linking to /users", %{conn: conn} do
+      Cinder.AccountsFixtures.user_fixture()
+      |> Ecto.Changeset.change(active: false)
+      |> Cinder.Repo.update!()
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      assert lv |> element("div.items-baseline", "Pending accounts") |> render() =~
+               ~r{tabular-nums">\s*1\s*</span>}
+
+      assert has_element?(lv, ~s|a[href="/users"]|, "Pending accounts")
+    end
+
+    test "the pending accounts count live-updates when an admin activates a waiting account", %{
+      conn: conn,
+      user: admin
+    } do
+      pending =
+        Cinder.AccountsFixtures.user_fixture()
+        |> Ecto.Changeset.change(active: false)
+        |> Cinder.Repo.update!()
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      assert lv |> element("div.items-baseline", "Pending accounts") |> render() =~
+               ~r{tabular-nums">\s*1\s*</span>}
+
+      {:ok, _} = Cinder.Accounts.activate_user(admin, pending)
+
+      assert lv |> element("div.items-baseline", "Pending accounts") |> render() =~
+               ~r{tabular-nums">\s*0\s*</span>}
+    end
+
     test "the pending queue shows a non-default Audio pick, but not the default", %{conn: conn} do
       requester = Cinder.AccountsFixtures.user_fixture()
       pending_movie_request(requester, %{preferred_language: "dual"})

@@ -5,6 +5,8 @@ defmodule CinderWeb.LiveHelpers do
   """
   use Gettext, backend: CinderWeb.Gettext
 
+  import CinderWeb.CoreComponents, only: [language_label: 1]
+
   alias Cinder.Catalog
 
   @doc """
@@ -109,6 +111,87 @@ defmodule CinderWeb.LiveHelpers do
       )
 
   def request_title(r, locale), do: Catalog.localized_title(r, locale)
+
+  @doc """
+  A plain-English line under an in-flight/parked movie card: what phase it's in (with the
+  search attempt count) or why it's stuck and what to do. Complements the badge, which
+  names the state. Shared by `/activity` (every parked movie) and `/my-requests` (a
+  requester's own movie rows).
+  """
+  def pipeline_hint(%{status: :searching, search_attempts: n}),
+    do: gettext("Searching indexers (attempt %{n})", n: n + 1)
+
+  def pipeline_hint(%{status: :no_match}),
+    do: gettext("No release matched your size/quality rules yet. Open it to retry or adjust.")
+
+  def pipeline_hint(%{status: :search_failed}),
+    do: gettext("The indexer couldn't be reached after repeated tries. Open it to retry.")
+
+  def pipeline_hint(%{status: :import_failed}),
+    do: gettext("The download finished but couldn't be imported. Open it to retry.")
+
+  def pipeline_hint(_movie), do: nil
+
+  @doc """
+  Plain-English hold reason: which safety check failed, plus the offending file names or
+  episode ids — reused straight off the persisted `mapping_issue` (no separate display
+  model). Grab-specific, so only `/activity` (the only surface rendering individual TV
+  grabs) calls this today.
+  """
+  def mapping_reason(%{"reason" => "unresolved_file", "relative_paths" => paths}),
+    do: gettext("Couldn't match to an episode: %{paths}", paths: path_list(paths))
+
+  def mapping_reason(%{"reason" => "outside_authoritative_set", "relative_paths" => paths}),
+    do: gettext("Matched an episode outside this release: %{paths}", paths: path_list(paths))
+
+  def mapping_reason(%{"reason" => "duplicate_episode_assignment", "relative_paths" => paths}),
+    do: gettext("More than one file matched the same episode: %{paths}", paths: path_list(paths))
+
+  def mapping_reason(%{
+        "reason" => "missing_episode_assignment",
+        "candidate_episode_ids" => episode_ids
+      }),
+      do: gettext("No file found for episode id(s): %{ids}", ids: id_list(episode_ids))
+
+  def mapping_reason(%{
+        "reason" => "reserved_set_divergence",
+        "candidate_episode_ids" => episode_ids
+      }),
+      do:
+        gettext(
+          "The library's episodes no longer match what this grab reserved; affected episode id(s): %{ids}",
+          ids: id_list(episode_ids)
+        )
+
+  def mapping_reason(_issue), do: gettext("This release needs manual attention.")
+
+  defp path_list(paths) when is_list(paths) and paths != [], do: Enum.join(paths, ", ")
+  defp path_list(_paths), do: gettext("unknown file")
+
+  defp id_list(ids) when is_list(ids) and ids != [], do: Enum.join(ids, ", ")
+  defp id_list(_ids), do: gettext("unknown")
+
+  @doc """
+  Plain-English search-time hold reason (`anime_hold_reason`, the AnimePreferences.resolve
+  error) naming the fix — cleared automatically by the next sweep once preferences resolve.
+  Shared by `/activity` (movies + held series) and `/my-requests` (a requester's own held
+  movie rows).
+  """
+  def anime_hold_reason("original_language_required"),
+    do:
+      gettext(
+        "Dual audio needs this title's original language, which is unknown: on its detail page, choose an Audio pick other than \"%{dual}\", or fix the title's original-language metadata.",
+        dual: language_label("dual")
+      )
+
+  def anime_hold_reason("subtitle_language_required"),
+    do:
+      gettext(
+        "Requiring embedded subtitles needs subtitle languages: configure them in Settings."
+      )
+
+  def anime_hold_reason(_reason),
+    do: gettext("The Anime release preferences can't be satisfied for this title.")
 
   @doc """
   Locale-aware short date ("Jun 3" / fr "3 juin"). Both the format string and the

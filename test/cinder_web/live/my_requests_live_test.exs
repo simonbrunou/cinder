@@ -170,4 +170,41 @@ defmodule CinderWeb.MyRequestsLiveTest do
     # still alive after reload
     assert render(lv)
   end
+
+  test "shows a plain-English hint for a parked movie", %{conn: conn} do
+    user = Cinder.AccountsFixtures.user_fixture()
+    tmdb_id = System.unique_integer([:positive])
+
+    {:ok, _} =
+      Requests.create_request(user, %{
+        target_type: "movie",
+        target_id: tmdb_id,
+        title: "Solaris",
+        year: 1972
+      })
+
+    {:ok, movie} = Cinder.Catalog.add_movie(%{tmdb_id: tmdb_id, title: "Solaris", year: 1972})
+    {:ok, _movie} = Cinder.Catalog.transition(movie, %{status: :no_match})
+
+    conn = log_in_user(conn, user)
+    {:ok, _lv, html} = live(conn, ~p"/my-requests")
+
+    assert html =~ "No release matched"
+  end
+
+  test "a requester can cancel their own pending request", %{conn: conn} do
+    user = Cinder.AccountsFixtures.user_fixture()
+
+    {:ok, req} =
+      Requests.create_request(user, %{target_type: "movie", target_id: 42, title: "Cancel me"})
+
+    conn = log_in_user(conn, user)
+    {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+    lv |> element("#cancel-request-#{req.id}") |> render_click()
+    lv |> element("#confirm-cancel-request-#{req.id} button", "Cancel request") |> render_click()
+
+    refute has_element?(lv, "#request-#{req.id}")
+    assert Cinder.Repo.get(Cinder.Requests.Request, req.id) == nil
+  end
 end

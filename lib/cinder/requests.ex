@@ -344,6 +344,32 @@ defmodule Cinder.Requests do
   end
 
   @doc """
+  Cancels the CALLER's own request, but only while it is still `:pending` — the
+  self-service counterpart to the admin `delete_request/2`. Ownership and status are
+  BOTH enforced by the DELETE's WHERE clause in one atomic statement (no read-then-write
+  window a stale UI click could race), so a forged or stale `phx-value-id` can never
+  cancel someone else's request, nor one an admin already approved/denied out from under
+  the requester in the meantime. Both failure shapes collapse to the same
+  `{:error, :not_pending}` — a generic "not currently pending for you" reason, since
+  distinguishing "not yours" from "already decided" would leak whether the target row
+  exists at all. Not admin-audited: this is a requester acting on their own row, not a
+  destructive admin action.
+  """
+  def cancel_own_request(%Request{id: id}, %User{id: user_id}) do
+    Repo.delete_all(
+      from(r in Request,
+        where: r.id == ^id and r.user_id == ^user_id and r.status == :pending,
+        select: r
+      )
+    )
+    |> case do
+      {1, [fresh]} -> {:ok, fresh}
+      {0, _} -> {:error, :not_pending}
+    end
+    |> tap_ok(&broadcast({:request_deleted, &1}))
+  end
+
+  @doc """
   Deletes the `:approved` request row(s) for a catalog target being deleted, joining the
   CALLER's transaction (invoked from `Catalog.delete_movie/3` and `delete_series/3` inside their
   `delete_with_audit` transaction, so a crash can't half-reap). Returns the count deleted.
