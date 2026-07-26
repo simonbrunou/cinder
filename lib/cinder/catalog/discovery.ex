@@ -160,11 +160,27 @@ defmodule Cinder.Catalog.Discovery do
   def now_playing_movies(locale \\ Locales.canonical()), do: tmdb().now_playing_movies(locale)
 
   @doc """
+  Popular TV series from TMDB (`/tv/popular`), normalized like `search_tv/2`
+  results (each carries `type: :tv`).
+  """
+  def popular_tv(locale \\ Locales.canonical()), do: tmdb().popular_tv(locale)
+
+  @doc "Top-rated TV series from TMDB (`/tv/top_rated`), same shape as `popular_tv/1`."
+  def top_rated_tv(locale \\ Locales.canonical()), do: tmdb().top_rated_tv(locale)
+
+  @doc """
   Movies matching TMDB genre id `genre_id` (`/discover/movie?with_genres=`), same
   shape as `popular_movies/1`.
   """
   def movies_by_genre(genre_id, locale \\ Locales.canonical()),
     do: tmdb().discover_movies(genre_id, locale)
+
+  @doc """
+  TV series matching TMDB TV genre id `genre_id` (`/discover/tv?with_genres=`),
+  same shape as `popular_tv/1`.
+  """
+  def tv_by_genre(genre_id, locale \\ Locales.canonical()),
+    do: tmdb().discover_tv(genre_id, locale)
 
   def search_person(query, locale \\ Locales.canonical()), do: tmdb().search_person(query, locale)
 

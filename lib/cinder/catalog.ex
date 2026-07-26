@@ -65,8 +65,14 @@ defmodule Cinder.Catalog do
   defdelegate top_rated_movies(locale), to: Discovery
   defdelegate now_playing_movies(), to: Discovery
   defdelegate now_playing_movies(locale), to: Discovery
+  defdelegate popular_tv(), to: Discovery
+  defdelegate popular_tv(locale), to: Discovery
+  defdelegate top_rated_tv(), to: Discovery
+  defdelegate top_rated_tv(locale), to: Discovery
   defdelegate movies_by_genre(genre_id), to: Discovery
   defdelegate movies_by_genre(genre_id, locale), to: Discovery
+  defdelegate tv_by_genre(genre_id), to: Discovery
+  defdelegate tv_by_genre(genre_id, locale), to: Discovery
   defdelegate search_person(query), to: Discovery
   defdelegate search_person(query, locale), to: Discovery
   defdelegate search_collection(query), to: Discovery
