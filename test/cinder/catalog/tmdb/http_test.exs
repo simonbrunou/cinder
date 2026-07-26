@@ -634,6 +634,96 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
     assert {:error, :unexpected_response} = HTTP.trending("en")
   end
 
+  test "popular_movies/1 sends the locale and tags results type: :movie" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      assert conn.request_path == "/3/movie/popular"
+      assert conn.params["language"] == "fr-FR"
+
+      Req.Test.json(conn, %{
+        "results" => [
+          %{
+            "id" => 27_205,
+            "title" => "Inception",
+            "release_date" => "2010-07-16",
+            "poster_path" => "/p.jpg"
+          }
+        ]
+      })
+    end)
+
+    assert {:ok, [movie]} = HTTP.popular_movies("fr")
+    assert %{type: :movie, tmdb_id: 27_205, title: "Inception", year: 2010} = movie
+  end
+
+  test "popular_movies/1 returns an error (not a raise) on a 200 lacking a results list" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      Req.Test.json(conn, %{"success" => false})
+    end)
+
+    assert {:error, :unexpected_response} = HTTP.popular_movies("en")
+  end
+
+  test "popular_movies/1 returns an error tuple on a non-200 status" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      conn |> Plug.Conn.put_status(500) |> Req.Test.json(%{"status_message" => "down"})
+    end)
+
+    assert {:error, {:tmdb_status, 500}} = HTTP.popular_movies("en")
+  end
+
+  test "top_rated_movies/1 sends the locale and tags results type: :movie" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      assert conn.request_path == "/3/movie/top_rated"
+      assert conn.params["language"] == "en-US"
+
+      Req.Test.json(conn, %{
+        "results" => [
+          %{"id" => 278, "title" => "The Shawshank Redemption", "release_date" => "1994-09-23"}
+        ]
+      })
+    end)
+
+    assert {:ok, [%{type: :movie, tmdb_id: 278, title: "The Shawshank Redemption"}]} =
+             HTTP.top_rated_movies("en")
+  end
+
+  test "now_playing_movies/1 sends the locale and tags results type: :movie" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      assert conn.request_path == "/3/movie/now_playing"
+      assert conn.params["language"] == "en-US"
+
+      Req.Test.json(conn, %{
+        "results" => [%{"id" => 1, "title" => "New Release", "release_date" => "2026-07-01"}]
+      })
+    end)
+
+    assert {:ok, [%{type: :movie, tmdb_id: 1, title: "New Release"}]} =
+             HTTP.now_playing_movies("en")
+  end
+
+  test "discover_movies/2 sends with_genres + the locale and tags results type: :movie" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      assert conn.request_path == "/3/discover/movie"
+      assert conn.params["with_genres"] == "28"
+      assert conn.params["language"] == "en-US"
+
+      Req.Test.json(conn, %{
+        "results" => [%{"id" => 603, "title" => "The Matrix", "release_date" => "1999-03-31"}]
+      })
+    end)
+
+    assert {:ok, [%{type: :movie, tmdb_id: 603, title: "The Matrix"}]} =
+             HTTP.discover_movies(28, "en")
+  end
+
+  test "discover_movies/2 returns an error on a 200 lacking a results list" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      Req.Test.json(conn, %{"success" => false})
+    end)
+
+    assert {:error, :unexpected_response} = HTTP.discover_movies(28, "en")
+  end
+
   test "search_person/2 sends the locale and normalizes person results" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       assert conn.request_path == "/3/search/person"

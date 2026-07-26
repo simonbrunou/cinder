@@ -25,6 +25,12 @@ All notable changes to Cinder are documented here. The format follows
   unbounded behavior. Bands already set in `/settings` are unaffected.
 
 ### Added
+- **More discovery rails + genre browsing.** The `/` landing page grows three more TMDB-backed
+  rails below Trending (Popular, Top Rated, Now Playing) and a row of genre filter chips that
+  loads a `/discover/movie`-filtered grid — same cards, badges, and Add flow as every other rail.
+  Each rail fetches concurrently and independently; one failing doesn't affect the others or break
+  the page. A movie appearing in more than one rail (TMDB's lists commonly overlap) renders once,
+  kept in the earliest rail it appears in.
 - **Sign in with Plex.** A "Sign in with Plex" button on the log-in page (shown once Plex is
   configured) authenticates via Plex's PIN flow; only accounts with access to the household's
   configured Plex server (owner or shared user) may sign in. First login always creates a new

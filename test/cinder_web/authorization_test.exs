@@ -4,9 +4,12 @@ defmodule CinderWeb.AuthorizationTest do
   import Phoenix.LiveViewTest
   import Cinder.AccountsFixtures
 
-  # Mounting `/` fetches trending (async, private-mode Mox reaches it via $callers).
+  # Mounting `/` fetches the landing rails (async, private-mode Mox reaches it via $callers).
   setup do
     stub(Cinder.Catalog.TMDBMock, :trending, fn _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :popular_movies, fn _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :top_rated_movies, fn _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :now_playing_movies, fn _ -> {:ok, []} end)
     :ok
   end
 

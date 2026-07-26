@@ -9,8 +9,11 @@ defmodule CinderWeb.SetupRoutingTest do
   setup do
     Application.put_env(:cinder, :enforce_setup, true)
     on_exit(fn -> Application.put_env(:cinder, :enforce_setup, false) end)
-    # Mounting `/` fetches trending (async, private-mode Mox reaches it via $callers).
+    # Mounting `/` fetches the landing rails (async, private-mode Mox reaches it via $callers).
     stub(Cinder.Catalog.TMDBMock, :trending, fn _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :popular_movies, fn _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :top_rated_movies, fn _ -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :now_playing_movies, fn _ -> {:ok, []} end)
     :ok
   end
 

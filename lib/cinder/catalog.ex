@@ -172,6 +172,28 @@ defmodule Cinder.Catalog do
   """
   def trending(locale \\ Locales.canonical()), do: tmdb().trending(locale)
 
+  @doc """
+  Popular movies from TMDB (`/movie/popular`), normalized like `search_movies/2`
+  results (each carries `type: :movie`).
+  """
+  def popular_movies(locale \\ Locales.canonical()), do: tmdb().popular_movies(locale)
+
+  @doc "Top-rated movies from TMDB (`/movie/top_rated`), same shape as `popular_movies/1`."
+  def top_rated_movies(locale \\ Locales.canonical()), do: tmdb().top_rated_movies(locale)
+
+  @doc """
+  Movies currently in theaters from TMDB (`/movie/now_playing`), same shape as
+  `popular_movies/1`.
+  """
+  def now_playing_movies(locale \\ Locales.canonical()), do: tmdb().now_playing_movies(locale)
+
+  @doc """
+  Movies matching TMDB genre id `genre_id` (`/discover/movie?with_genres=`), same
+  shape as `popular_movies/1`.
+  """
+  def movies_by_genre(genre_id, locale \\ Locales.canonical()),
+    do: tmdb().discover_movies(genre_id, locale)
+
   def search_person(query, locale \\ Locales.canonical()), do: tmdb().search_person(query, locale)
 
   def search_collection(query, locale \\ Locales.canonical()),
