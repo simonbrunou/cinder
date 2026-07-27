@@ -61,6 +61,9 @@ config :cinder,
   media_server: Cinder.Library.MediaServerMock,
   filesystem: Cinder.Library.FilesystemMock,
   path_policy: Cinder.Test.PermissivePathPolicy,
+  # Permissive free-disk prober: reports abundant space so the space guards never fire, keeping the
+  # suite off the real filesystem. Disk-guard tests override :disk_stats_stub for their duration.
+  disk_prober: Cinder.Test.StubDisk,
   # Disabled by default (overrides the prod Ffprobe impl) so the import suite never shells out;
   # the media_info tests opt in per-test via Application.put_env(MediaInfoMock).
   media_info: nil,

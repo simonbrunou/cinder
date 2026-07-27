@@ -805,7 +805,7 @@ defmodule Cinder.Download do
 
       case result do
         {:ok, release} ->
-          add_to_client(movie, release)
+          grab_if_space(movie, release)
 
         :no_match ->
           Catalog.transition(
@@ -968,6 +968,15 @@ defmodule Cinder.Download do
       {:ok, _} -> :no_imdb_id
       {:error, _} -> {:error, :tmdb_unavailable}
     end
+  end
+
+  # Pre-grab disk guard: don't hand a release to the client when no download root can hold it. The
+  # poller treats {:insufficient_disk_space, _} as a skip (no attempt burned, no park) — space may
+  # free up.
+  defp grab_if_space(movie, release) do
+    if Cinder.Disk.grab_space_available?(release.size),
+      do: add_to_client(movie, release),
+      else: {:error, {:insufficient_disk_space, release.size}}
   end
 
   defp add_to_client(movie, release) do

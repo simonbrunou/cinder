@@ -54,6 +54,18 @@ defmodule Cinder.Download.TvPollerTest do
     on_exit(fn -> Application.put_env(:cinder, :anime_preferences, saved) end)
   end
 
+  # Drives the free-disk prober (Cinder.Test.StubDisk) for a test's duration; restored on exit.
+  defp set_disk_stub!(result) do
+    saved = Application.get_env(:cinder, :disk_stats_stub)
+    Application.put_env(:cinder, :disk_stats_stub, result)
+
+    on_exit(fn ->
+      if is_nil(saved),
+        do: Application.delete_env(:cinder, :disk_stats_stub),
+        else: Application.put_env(:cinder, :disk_stats_stub, saved)
+    end)
+  end
+
   defp set_anime_subtitle_languages!(csv) do
     saved = Application.get_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, [])
 
@@ -254,6 +266,53 @@ defmodule Cinder.Download.TvPollerTest do
     assert Repo.get!(Episode, first.id).grab_id
     assert %Episode{grab_id: nil, search_attempts: 0} = Repo.get!(Episode, second.id)
     assert Agent.get(adds, & &1) == 1
+  end
+
+  test "search skips the grab (no attempt bump) when the download root can't hold the release" do
+    {_series, season} = series_tree()
+    ep = episode(season, 1)
+
+    set_disk_stub!({:ok, %{free_bytes: 1_000_000_000, total_bytes: 100_000_000_000}})
+
+    release = %{
+      title: "Show.S01E01.1080p.WEB.x264-GRP",
+      size: 8_000_000_000,
+      download_url: "big-one"
+    }
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 -> {:ok, [release]} end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, _opts ->
+      {:ok, [release]}
+    end)
+
+    # ClientMock.add is intentionally NOT stubbed — a disk-blocked grab must never reach the client.
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    log = capture_log(fn -> assert :ok = TvPoller.poll() end)
+
+    assert %Episode{grab_id: nil, search_attempts: 0} = Repo.get!(Episode, ep.id)
+    assert log =~ "insufficient free disk space"
+    assert Repo.aggregate(Grab, :count) == 0
+  end
+
+  test "import holds (no attempt bump, no park) when the tv library root is nearly full" do
+    {_series, season} = series_tree()
+    e1 = episode(season, 1)
+    {:ok, grab} = Catalog.create_grab("hash-full", :torrent, [e1.id])
+    {:ok, _} = Catalog.mark_grab_downloaded(grab, "/dl/pack")
+
+    set_disk_stub!({:ok, %{free_bytes: 500_000_000, total_bytes: 100_000_000_000}})
+
+    # No filesystem stubs: a held import must never reach Library.stage_episodes.
+    start_supervised!({TvPoller, interval: 60_000})
+
+    log = capture_log(fn -> assert :ok = TvPoller.poll() end)
+
+    assert %Grab{download_attempts: attempts} = Repo.get!(Grab, grab.id)
+    assert (attempts || 0) == 0
+    assert Repo.get!(Episode, e1.id).file_path == nil
+    assert log =~ "nearly full"
   end
 
   test "an operator season offset makes Second-Season episodes grab, incl. a native-collision episode (issue #156)" do

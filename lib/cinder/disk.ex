@@ -9,7 +9,20 @@ defmodule Cinder.Disk do
   works on both the Linux container and macOS dev.
   """
 
+  @behaviour Cinder.Disk.Prober
+
   @type stats :: %{free_bytes: non_neg_integer(), total_bytes: non_neg_integer()}
+
+  # Headroom that must stay free BEYOND the release itself before a poller hands it to a download
+  # client. A false "insufficient" would strand a title (its download never starts), so the guards
+  # fail OPEN on any uncertainty — an unknown release size, no configured root, or an unreadable
+  # `df` all allow the grab. They skip only on positive evidence that no download root can hold it.
+  @grab_margin_bytes 2 * 1024 * 1024 * 1024
+
+  # Minimum free space on a library root before an import stages into it. A same-filesystem hardlink
+  # costs ~nothing, but a cross-device import copies the whole file; a small fixed floor is a cheap
+  # proxy for "don't stage into a nearly-full disk" without probing device boundaries per import.
+  @import_floor_bytes 1 * 1024 * 1024 * 1024
 
   @doc """
   Reads free/total bytes for `path`. Returns `{:error, :enoent}` when `path` isn't a
@@ -28,6 +41,59 @@ defmodule Cinder.Disk do
   end
 
   defp default_runner(path), do: fn -> System.cmd("df", ["-kP", path], stderr_to_stdout: true) end
+
+  @doc """
+  Whether a download of `size_bytes` can be placed on a configured download root with
+  `@grab_margin_bytes` headroom to spare. Fails OPEN (returns `true`, allow the grab) for an
+  unknown size, when no download root is configured, or when a root's free space can't be read —
+  a probe glitch must never strand a title. Returns `false` only when every readable download
+  root positively lacks room.
+  """
+  @spec grab_space_available?(non_neg_integer() | nil) :: boolean()
+  def grab_space_available?(size_bytes) when is_integer(size_bytes) and size_bytes > 0 do
+    roots_admit?(Cinder.Settings.import_roots(), size_bytes + @grab_margin_bytes)
+  end
+
+  def grab_space_available?(_size_bytes), do: true
+
+  # Allow unless we have positive evidence NO readable root can hold `needed` — an unreadable root
+  # (a df error) is treated as "might have room" so a probe glitch never blocks.
+  defp roots_admit?([], _needed), do: true
+
+  defp roots_admit?(roots, needed) do
+    Enum.any?(roots, fn root ->
+      case prober().stats(root) do
+        {:ok, %{free_bytes: free}} -> free >= needed
+        {:error, _reason} -> true
+      end
+    end)
+  end
+
+  @doc """
+  Whether the `kind` (`:movies`/`:tv`) library root has at least `@import_floor_bytes` free before
+  an import stages into it. Fails OPEN (returns `true`) for an unconfigured root (the importer
+  already holds those) or an unreadable one (a probe glitch must not block a good import). Returns
+  `false` only on positive evidence the root is below the floor.
+  """
+  @spec import_space_available?(atom()) :: boolean()
+  def import_space_available?(kind) do
+    case Application.get_env(:cinder, :"#{kind}_library_path") do
+      path when is_binary(path) and path != "" ->
+        case prober().stats(path) do
+          {:ok, %{free_bytes: free}} -> free >= @import_floor_bytes
+          {:error, _reason} -> true
+        end
+
+      _unconfigured ->
+        true
+    end
+  end
+
+  @doc "Bytes as a rounded decimal-GB number, for human-facing log lines."
+  @spec human_gb(non_neg_integer()) :: float()
+  def human_gb(bytes) when is_integer(bytes), do: Float.round(bytes / 1_000_000_000, 1)
+
+  defp prober, do: Application.get_env(:cinder, :disk_prober, __MODULE__)
 
   @doc """
   The configured library roots as `{kind, path}` pairs (`Cinder.Library.kinds/0`), skipping
