@@ -229,6 +229,7 @@ defmodule Cinder.Download.TvPoller do
          ) do
       {:ok, _grab} ->
         commit_stages(staged)
+        remove_superseded_episode_files(grab.episodes)
         Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path)
 
       {:error, :stale_grab} ->
@@ -266,6 +267,32 @@ defmodule Cinder.Download.TvPoller do
 
   defp unique_stages(staged),
     do: staged |> Enum.map(&elem(&1, 1)) |> Enum.uniq_by(& &1.dest)
+
+  # The Catalog commit has moved every imported row to its verified new destination. Remove old
+  # primary/part files only now, and only when no episode still references them (a multi-episode
+  # file may also belong to an uncovered sibling).
+  defp remove_superseded_episode_files(episodes) do
+    referenced =
+      Catalog.list_episodes_with_file()
+      |> Enum.flat_map(&Episode.file_paths/1)
+      |> MapSet.new()
+
+    episodes
+    |> Enum.flat_map(&Episode.file_paths/1)
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(referenced, &1))
+    |> Enum.each(&best_effort_remove_old/1)
+  end
+
+  defp best_effort_remove_old(path) do
+    case Library.delete_file(path) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("tv upgrade: couldn't remove #{path}: #{inspect(reason)}")
+    end
+  end
 
   # --- search: wanted episodes -----------------------------------------------------------------
 

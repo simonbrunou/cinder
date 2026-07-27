@@ -1522,10 +1522,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert Repo.reload!(episode).search_attempts == 7
   end
 
-  # FIX 1: "Find a better match" is only offered for a season with wanted episodes. An empty
-  # indexer result then reads as "No releases found", and a fully-present season (TV replace is
-  # deferred) is never offered manual search at all.
-  test "Find a better match is offered only for a season with wanted episodes", %{conn: conn} do
+  test "Find a better match is offered for wanted and already-available seasons", %{conn: conn} do
     wanted = series_with_wanted_episode(search_attempts: 0)
     {:ok, lv, _html} = live_series(conn, wanted)
     assert has_element?(lv, "button[phx-click=tv_manual_search]")
@@ -1534,7 +1531,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
       series_with_episode_file_fixture("/tmp/cinder-test-tv-library/S (2010)/S01E01.mkv")
 
     {:ok, lv2, _html} = live_series(conn, present)
-    refute has_element?(lv2, "button[phx-click=tv_manual_search]")
+    assert has_element?(lv2, "button[phx-click=tv_manual_search]")
   end
 
   test "Find a better match opens the TV panel; grabbing creates a grab over the wanted episode",
@@ -1560,6 +1557,38 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert render(lv) =~ "Grabbing the selected release"
     assert [grab] = Repo.all(Cinder.Catalog.Grab)
     assert grab.download_id == "hash-new"
+  end
+
+  test "grabbing a better match keeps an available episode live under an upgrade grab", %{
+    conn: conn
+  } do
+    old_file = "/tmp/cinder-test-tv-library/S (2010)/S01E01.mkv"
+
+    %{series: series, season: season, episode: episode} =
+      series_with_episode_file_fixture(old_file)
+
+    episode |> Ecto.Changeset.change(monitored: false) |> Repo.update!()
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, "S", 1 ->
+      {:ok, [%{title: "S S01E01 1080p WEB-DL GRP", size: 2_000_000_000, download_url: "u"}]}
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-upgrade"} end)
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+
+    {:ok, lv, _html} = live_series(conn, series)
+    lv |> element("button", "Find a better match") |> render_click()
+    assert render_async(lv) =~ "S S01E01"
+    lv |> element("#ms-season-#{season.id} button", "Grab") |> render_click()
+    assert render(lv) =~ "Grabbing the selected release"
+
+    upgraded = Repo.reload!(episode)
+    assert upgraded.file_path == old_file
+    assert upgraded.grab_id
+    assert Catalog.episode_state(upgraded) == :available
+
+    assert %Cinder.Catalog.Grab{download_id: "hash-upgrade"} =
+             Repo.get!(Cinder.Catalog.Grab, upgraded.grab_id)
   end
 
   # Regression for the PR #172 corruption bug: rewriting `title` onto the `@series` assign

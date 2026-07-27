@@ -452,7 +452,7 @@ defmodule CinderWeb.SeriesDetailComponents do
               {gettext("Search all missing")}
             </.button>
             <.button
-              :if={season_wanted?(season, @profile_summary)}
+              :if={season_manual_searchable?(season, @profile_summary)}
               type="button"
               variant="ghost"
               size="sm"
@@ -766,11 +766,19 @@ defmodule CinderWeb.SeriesDetailComponents do
   # checker rejects it as dead code — a single clause is the equivalent, reachable shape.
   defp all_monitored?(%{episodes: eps}), do: Enum.all?(eps, & &1.monitored)
 
-  # A season has something the search sweep would actually pick up. Gates the per-season
-  # "Search all missing" and "Find a better match" controls; mirrors the per-episode "Search"
-  # button.
+  # A season has something the search sweep would actually pick up.
   defp season_wanted?(%{episodes: episodes} = season, profile),
     do: Enum.any?(episodes, &episode_searchable?(&1, season, profile))
+
+  # Manual search also covers available episodes (monitoring only gates the automatic sweep), but
+  # never an episode already owned by another grab.
+  defp season_manual_searchable?(%{episodes: episodes} = season, profile) do
+    Enum.any?(
+      episodes,
+      &((&1.file_path not in [nil, ""] and is_nil(&1.grab_id)) or
+          episode_searchable?(&1, season, profile))
+    )
+  end
 
   # Eligibility lives in Catalog so the sweep and detail actions cannot drift.
   # Episodes arrive nested under their season rather than with the back-reference

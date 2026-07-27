@@ -1361,6 +1361,7 @@ defmodule Cinder.Catalog do
   defdelegate list_mapping_grabs_for_series(series_id), to: Grabs
   defdelegate get_grab(id), to: Grabs
   defdelegate wanted_episodes(), to: SeriesCatalog
+  defdelegate manual_search_episodes(series_id, season_number), to: SeriesCatalog
   defdelegate count_wanted_episodes(), to: SeriesCatalog
   defdelegate available_season_keys(), to: SeriesCatalog
   defdelegate available_season_keys(tmdb_id), to: SeriesCatalog

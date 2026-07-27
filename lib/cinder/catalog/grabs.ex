@@ -50,10 +50,11 @@ defmodule Cinder.Catalog.Grabs do
 
   @doc """
   Grabs a user-chosen `release` for one `season_number` of `series`. Recomputes the season's
-  still-wanted episodes server-side (don't trust a stale panel snapshot) and creates the grab over
-  exactly the wanted episodes the release covers (`episodes: nil` = a whole-season pack covers them
-  all). `create_grab/5` itself skips any episode that already has a grab, so a concurrent sweep grab
-  can't be double-linked. `{:error, :nothing_wanted}` when the season has nothing to grab.
+  manually searchable episodes server-side (don't trust a stale panel snapshot) and creates the
+  grab over exactly the missing or available episodes the release covers (`episodes: nil` = a
+  whole-season pack covers them all). `create_grab/5` itself skips any episode that already has a
+  grab, so a concurrent sweep grab can't be double-linked. `{:error, :nothing_wanted}` when the
+  season has nothing to grab.
   """
   def manual_grab_tv(%Series{} = series, season_number, %Release{} = release) do
     case Cinder.Catalog.media_profile_summary(series).effective do
@@ -67,15 +68,16 @@ defmodule Cinder.Catalog.Grabs do
          season_number,
          %Release{} = release
        ) do
-    wanted_ids =
-      SeriesCatalog.wanted_episodes()
-      |> Enum.filter(
-        &(&1.season.series.id == series_id and &1.season.season_number == season_number)
-      )
+    candidate_ids =
+      SeriesCatalog.manual_search_episodes(series_id, season_number)
       |> Enum.map(& &1.id)
 
     with true <- safe_anime_mapping?(release),
-         true <- MapSet.subset?(MapSet.new(release.resolved_episode_ids), MapSet.new(wanted_ids)) do
+         true <-
+           MapSet.subset?(
+             MapSet.new(release.resolved_episode_ids),
+             MapSet.new(candidate_ids)
+           ) do
       case grab_and_create_grab(release, release.resolved_episode_ids) do
         {:error, :invalid_mapping_snapshot} -> {:error, :unsafe_anime_mapping}
         result -> result
@@ -101,14 +103,10 @@ defmodule Cinder.Catalog.Grabs do
        do: {:error, :unsafe_anime_mapping}
 
   defp manual_grab_standard_tv(%Series{id: series_id}, season_number, %Release{} = release) do
-    wanted =
-      SeriesCatalog.wanted_episodes()
-      |> Enum.filter(
-        &(&1.season.series.id == series_id and &1.season.season_number == season_number)
-      )
+    candidates = SeriesCatalog.manual_search_episodes(series_id, season_number)
 
-    covered = cover_numbers(release, Enum.map(wanted, & &1.episode_number))
-    episode_ids = wanted |> Enum.filter(&(&1.episode_number in covered)) |> Enum.map(& &1.id)
+    covered = cover_numbers(release, Enum.map(candidates, & &1.episode_number))
+    episode_ids = candidates |> Enum.filter(&(&1.episode_number in covered)) |> Enum.map(& &1.id)
 
     case episode_ids do
       [] -> {:error, :nothing_wanted}
@@ -121,7 +119,7 @@ defmodule Cinder.Catalog.Grabs do
   # (:no_episodes_linked) or the insert failed — best-effort remove the just-added download so it
   # isn't orphaned in the client, then surface the error.
   defp grab_and_create_grab(%Release{} = release, episode_ids) do
-    Download.grab_episodes(release, episode_ids)
+    Download.grab_episodes(release, episode_ids, operator_initiated: true)
   end
 
   # A whole-season pack (episodes: nil) covers every still-wanted number; an episode list covers its
@@ -175,6 +173,7 @@ defmodule Cinder.Catalog.Grabs do
   `opts` — `reset_attempts: true` zeroes the linked episodes' `search_attempts` in the same
   transaction (the manual-grab path uses it, mirroring `manual_grab_movie/2`): the user-chosen
   release gets a fresh search budget, and new grabs never carry a counter at/above the cap.
+  `allow_available: true` is reserved for the durable manual-upgrade path.
   """
   def create_grab(download_id, protocol, episode_ids, release_title \\ nil, opts \\ []) do
     result =
@@ -213,15 +212,7 @@ defmodule Cinder.Catalog.Grabs do
             {:error, changeset} -> Repo.rollback(changeset)
           end
 
-        {linked, _rows} =
-          Repo.update_all(
-            from(e in Episode,
-              where:
-                e.id in ^fresh.episode_ids and is_nil(e.grab_id) and is_nil(e.file_path) and
-                  e.monitored == true
-            ),
-            set: [grab_id: grab.id, updated_at: Cinder.Catalog.now()]
-          )
+        {linked, _rows} = link_intent_episodes(fresh, grab)
 
         if linked != length(fresh.episode_ids), do: Repo.rollback(:episode_ownership_changed)
 
@@ -233,6 +224,20 @@ defmodule Cinder.Catalog.Grabs do
       broadcast_grab_series(grab)
       {:ok, grab}
     end
+  end
+
+  defp link_intent_episodes(intent, grab) do
+    allow_available? = intent.release["operator_initiated"] == true
+
+    Repo.update_all(
+      from(e in Episode,
+        where:
+          e.id in ^intent.episode_ids and is_nil(e.grab_id) and
+            ((e.monitored == true and is_nil(e.file_path)) or
+               (^allow_available? and not is_nil(e.file_path)))
+      ),
+      set: [grab_id: grab.id, updated_at: Cinder.Catalog.now()]
+    )
   end
 
   @doc "Persists an anime mapping preflight outcome (resolved, or held with its reason) and broadcasts."
@@ -297,22 +302,23 @@ defmodule Cinder.Catalog.Grabs do
     # giving the user-chosen release a fresh budget — and keeping the counter from ever exceeding
     # the cap, which announce_search_exhausted's == max crossing check relies on.
     reset = if Keyword.get(opts, :reset_attempts, false), do: [search_attempts: 0], else: []
+    allow_available? = Keyword.get(opts, :allow_available, false)
     # Guard `is_nil(grab_id)`: never re-link an episode another grab already owns (defends against
-    # a same-tick double-link silently overwriting an earlier grab). Guard `monitored`: every
-    # caller sources episode_ids from wanted_episodes (monitored-only), but the poller's search
-    # pass holds that snapshot across seconds of indexer/client I/O — an admin cancel_series in
-    # that window unmonitors the episodes, and linking them anyway would resurrect the download
-    # the user just cancelled.
+    # a same-tick double-link silently overwriting an earlier grab). Missing episodes must remain
+    # monitored; an available episode may be manually upgraded even when monitoring is off.
     {linked, _} =
       Repo.update_all(
         from(e in Episode,
-          where: e.id in ^episode_ids and is_nil(e.grab_id) and e.monitored == true
+          where:
+            e.id in ^episode_ids and is_nil(e.grab_id) and
+              ((e.monitored == true and is_nil(e.file_path)) or
+                 (^allow_available? and not is_nil(e.file_path)))
         ),
         set: [grab_id: grab.id, updated_at: Cinder.Catalog.now()] ++ reset
       )
 
-    # Every requested episode was already grabbed (or unmonitored meanwhile): roll back so we
-    # don't leave an orphan grab (and so the caller doesn't start a download serving nothing).
+    # Every requested episode was already grabbed (or a missing episode was unmonitored meanwhile):
+    # roll back so we don't leave an orphan grab.
     if linked == 0, do: Repo.rollback(:no_episodes_linked), else: grab
   end
 
@@ -633,17 +639,16 @@ defmodule Cinder.Catalog.Grabs do
   def get_grab(id), do: Repo.get(Grab, id)
 
   @doc """
-  Finalizes a grab after import, in **one transaction**: sets `file_path` (and clears `grab_id`)
-  on each imported episode, bumps `search_attempts` on the grab's still-missing episodes, then
-  deletes the grab. `imported` is `[{episode_id, dest_path}]`. Broadcasts `{:series_updated, _}`
-  and announces any season the import completes.
+  Finalizes a grab after import, in **one transaction**: sets `file_path`, clears
+  `part_file_paths` and `grab_id` on each imported episode, bumps `search_attempts` on the grab's
+  non-imported episodes, then deletes the grab. `imported` is `[{episode_id, dest_path}]`.
+  Broadcasts `{:series_updated, _}` and announces any season the import completes.
 
   The search_attempts bump on the non-imported episodes makes a pack that never yields a wanted
   episode re-search with backoff and eventually search-park, rather than re-grabbing forever. It
   **must** run before the delete: the `grab_id` FK nilifies on delete, after which the predicate
   would match nothing. Each imported episode is written individually (a single `update_all set:`
-  could not give each its own dest); `n` is one season pack, so the per-row writes are cheap. The
-  `file_path` XOR `grab_id` invariant (derived state) is maintained here, the single write site.
+  could not give each its own dest); `n` is one season pack, so the per-row writes are cheap.
   """
   def finish_grab(%Grab{} = grab, imported \\ []), do: finish_grab(grab, imported, [])
 
@@ -690,10 +695,13 @@ defmodule Cinder.Catalog.Grabs do
   defp update_imported_episode!(grab_id, episode_id, dest, quality, timestamp) do
     query =
       from e in Episode,
-        where: e.id == ^episode_id and e.grab_id == ^grab_id and e.monitored == true
+        where:
+          e.id == ^episode_id and e.grab_id == ^grab_id and
+            (e.monitored == true or not is_nil(e.file_path))
 
     updates = [
       file_path: dest,
+      part_file_paths: [],
       grab_id: nil,
       imported_resolution: quality.resolution,
       imported_size: quality.size,

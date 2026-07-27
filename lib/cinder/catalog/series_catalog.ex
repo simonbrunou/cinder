@@ -1210,6 +1210,35 @@ defmodule Cinder.Catalog.SeriesCatalog do
     Repo.all(from e in wanted_episodes_query(), preload: [season: :series])
   end
 
+  @doc """
+  Episodes a season-level manual search may replace or fill: ungrabbed available episodes
+  (monitored or not) plus the normal wanted set. Unlike `wanted_episodes/0`, this is operator-only
+  input and is never consumed by the automatic sweep.
+  """
+  def manual_search_episodes(series_id, season_number) do
+    episodes =
+      Repo.all(
+        from e in Episode,
+          join: s in assoc(e, :season),
+          where:
+            s.series_id == ^series_id and s.season_number == ^season_number and is_nil(e.grab_id),
+          preload: [season: :series]
+      )
+
+    case episodes do
+      [%{season: %{series: series}} | _] ->
+        profile = Cinder.Catalog.media_profile_summary(series)
+
+        Enum.filter(
+          episodes,
+          &(&1.file_path not in [nil, ""] or episode_searchable?(&1, profile))
+        )
+
+      [] ->
+        []
+    end
+  end
+
   @doc "Count of wanted episodes (see `wanted_episodes/0`)."
   def count_wanted_episodes, do: Repo.aggregate(wanted_episodes_query(), :count)
 

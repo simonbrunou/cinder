@@ -1141,6 +1141,75 @@ defmodule Cinder.Download.TvPollerTest do
   end
 
   @tag :tmp_dir
+  test "an available episode upgrade atomically swaps bytes before deleting old primary/part files",
+       %{tmp_dir: tmp} do
+    %{downloads: downloads, tv: tv} = use_real_tv_library(tmp)
+    {series, season} = series_tree()
+
+    dest =
+      Path.join([
+        tv,
+        "Show (2008) {tmdb-#{series.tmdb_id}}",
+        "Season 01",
+        "Show (2008) {tmdb-#{series.tmdb_id}} - S01E01.mkv"
+      ])
+
+    part = Path.join(Path.dirname(dest), "Show (2008) - S01E01-part2.mkv")
+    source = Path.join(downloads, "Show.S01E01.720p.mkv")
+    File.mkdir_p!(Path.dirname(dest))
+    File.write!(dest, "original")
+    File.write!(part, "original-part")
+    File.write!(source, "candidate")
+
+    episode =
+      episode(season, 1, %{
+        monitored: false,
+        file_path: dest,
+        part_file_paths: [part],
+        imported_resolution: "2160p"
+      })
+
+    {:ok, grab} =
+      Catalog.create_grab("upgrade-grab", :torrent, [episode.id], "Show.S01E01.720p",
+        allow_available: true
+      )
+
+    assert %Episode{file_path: ^dest, grab_id: grab_id} = Repo.reload!(episode)
+    assert grab_id == grab.id
+    {:ok, _} = Catalog.mark_grab_downloaded(grab, source)
+
+    stub(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
+    start_supervised!({TvPoller, interval: 60_000})
+
+    Application.put_env(:cinder, :filesystem_barrier, %{
+      owner: self(),
+      operation: :ln,
+      contains: Path.basename(dest),
+      excludes: ".cinder-rollback",
+      once: true
+    })
+
+    poll = Task.async(fn -> TvPoller.poll() end)
+    assert_receive {:filesystem_barrier, pid, ref, :ln, ^dest}, 1_000
+
+    assert File.read!(dest) == "candidate"
+    assert File.exists?(part)
+    assert Enum.any?(File.ls!(Path.dirname(dest)), &String.starts_with?(&1, ".cinder-rollback-"))
+
+    send(pid, {ref, :continue})
+    assert :ok = Task.await(poll)
+
+    upgraded = Repo.reload!(episode)
+    assert upgraded.file_path == dest
+    assert upgraded.part_file_paths == []
+    assert upgraded.grab_id == nil
+    assert upgraded.imported_resolution == "720p"
+    assert File.read!(dest) == "candidate"
+    refute File.exists?(part)
+    refute Enum.any?(File.ls!(Path.dirname(dest)), &String.contains?(&1, ".cinder-"))
+  end
+
+  @tag :tmp_dir
   test "cancelling a grab after file staging rolls every destination back", %{tmp_dir: tmp} do
     %{downloads: downloads} = use_real_tv_library(tmp)
     {series, season} = series_tree()
@@ -1700,6 +1769,49 @@ defmodule Cinder.Download.TvPollerTest do
     parked = Repo.get!(Episode, e1.id)
     assert is_nil(parked.grab_id)
     assert parked.search_attempts >= 1
+  end
+
+  test "a failed upgrade download parks the grab but keeps the available episode and old files" do
+    {series, season} = series_tree()
+    old_file = "/tmp/cinder-test-tv-library/Show/old.mkv"
+    old_part = "/tmp/cinder-test-tv-library/Show/old-part.mkv"
+
+    episode =
+      episode(season, 1, %{file_path: old_file, part_file_paths: [old_part]})
+
+    {:ok, grab} =
+      Catalog.create_grab("hash-upgrade-fail", :torrent, [episode.id], "Bad.Show.S01E01",
+        allow_available: true
+      )
+
+    grab |> Ecto.Changeset.change(download_attempts: 9) |> Repo.update!()
+    start_supervised!({TvPoller, interval: 60_000})
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-upgrade-fail" ->
+      {:ok, %{state: :error}}
+    end)
+
+    assert :ok = TvPoller.poll()
+    refute Repo.get(Grab, grab.id)
+
+    available = Repo.reload!(episode)
+    assert available.file_path == old_file
+    assert available.part_file_paths == [old_part]
+    assert available.grab_id == nil
+    assert Catalog.episode_state(available) == :available
+    assert "Bad.Show.S01E01" in Catalog.blocked_release_titles_for_series(series.id)
+  end
+
+  test "the automatic sweep never creates an upgrade grab for an available episode" do
+    {_series, season} = series_tree()
+    episode = episode(season, 1, %{file_path: "/library/Show.S01E01.mkv"})
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    assert episode.id not in Enum.map(Catalog.wanted_episodes(), & &1.id)
+    assert :ok = TvPoller.poll()
+    assert Repo.reload!(episode).grab_id == nil
+    assert Repo.all(Grab) == []
+    assert Repo.all(Intent) == []
   end
 
   test "a wanted episode that never finds a release search-parks after max attempts" do
