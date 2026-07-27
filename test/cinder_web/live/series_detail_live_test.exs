@@ -1695,7 +1695,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     expect(Cinder.Download.ClientMock, :add, 0, fn _, _opts -> {:ok, "must-not-run"} end)
 
     {:ok, lv, _html} = live_series(conn, series)
-    lv |> element("button", "Find a better match") |> render_click()
+    lv |> element(~s(button[phx-value-season="1"]), "Find a better match") |> render_click()
     assert render_async(lv) =~ "conflicting episode numbering"
 
     lv |> element("#ms-season-#{season.id} button", "Grab") |> render_click()
