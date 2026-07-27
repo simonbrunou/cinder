@@ -166,14 +166,34 @@ defmodule CinderWeb.LibraryAdoptionLive do
 
   defp start_scan(%{assigns: %{mode: :filesystem}} = socket) do
     socket
+    |> reset_scan_results()
     |> assign(scanning?: true)
     |> start_async(:scan, &Adoption.scan/0)
   end
 
   defp start_scan(%{assigns: %{mode: {:migration, source}}} = socket) do
     socket
+    |> reset_scan_results()
     |> assign(scanning?: true)
     |> start_async(:scan, fn -> Adoption.preview_migration(source) end)
+  end
+
+  # The mode flips at click but results arrive async: clear the previous scan's buckets and
+  # streams BEFORE launching, so the summary/forms never render counts produced by a different
+  # mode than they're labeled with (and a failed scan leaves an empty state, not a stale one).
+  defp reset_scan_results(socket) do
+    socket
+    |> assign(
+      candidates: [],
+      counts: %{auto_matched: 0, ambiguous: 0, unmatched: 0, already_managed: 0},
+      form: to_form(%{}, as: :adoption),
+      scanned?: false
+    )
+    |> stream(:auto_candidates, [], reset: true)
+    |> stream(:ambiguous_candidates, [], reset: true)
+    |> stream(:unmatched_candidates, [], reset: true)
+    |> stream(:managed_candidates, [], reset: true)
+    |> stream(:migration_series_counts, [], reset: true)
   end
 
   defp put_candidates(socket, candidates) do

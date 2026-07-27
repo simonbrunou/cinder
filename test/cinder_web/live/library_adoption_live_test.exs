@@ -65,6 +65,56 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
     assert has_element?(view, "#no-unmanaged-files", "No unmanaged files found")
   end
 
+  # Regression: mode flips at click but results arrive async — switching scan modes must not
+  # render the new mode's summary/forms over the previous scan's buckets (or leave them stale
+  # after a failed preview).
+  test "switching to a migration preview clears the previous filesystem scan's buckets", %{
+    conn: conn
+  } do
+    path = "/tmp/cinder-test-library/Dune (2021)/Dune (2021).mkv"
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn
+      "/tmp/cinder-test-library" -> {:ok, [{path, 10}]}
+      "/tmp/cinder-test-tv-library" -> {:ok, []}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :search, fn "Dune", "en" ->
+      {:ok,
+       [%{tmdb_id: 10, title: "Dune", year: 2021, poster_path: nil, original_language: "en"}]}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn 10 ->
+      {:ok,
+       %{
+         tmdb_id: 10,
+         imdb_id: "tt1160419",
+         title: "Dune",
+         year: 2021,
+         poster_path: nil,
+         original_language: "en",
+         localizations: %{}
+       }}
+    end)
+
+    stub(Cinder.Library.RadarrMigrationSourceMock, :snapshot, fn ->
+      {:error, :not_configured}
+    end)
+
+    {:ok, view, _html} = live(conn, ~p"/library/adopt")
+    view |> element("#scan-library") |> render_click()
+    render_async(view)
+    assert has_element?(view, "#adoption-candidate-1")
+
+    # The Radarr preview fails (source not configured) — the old filesystem buckets must be
+    # gone, not relabeled as a Radarr preview.
+    view |> element("#scan-radarr") |> render_click()
+    render_async(view)
+
+    refute has_element?(view, "#adoption-candidate-1")
+    refute has_element?(view, "#adoption-form")
+    assert has_element?(view, "#flash-error")
+  end
+
   test "operator assigns a TVDB split file as a part of one combined TMDB episode", %{conn: conn} do
     primary =
       "/tmp/cinder-test-tv-library/The Office (2005)/The.Office.S04E15.mkv"
