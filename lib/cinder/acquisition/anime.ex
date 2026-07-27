@@ -23,7 +23,12 @@ defmodule Cinder.Acquisition.Anime do
         {:free_text, fn -> indexer.search_movie_query(query, categories: [@anime_category]) end}
       end)
 
-    run_queries([{:id_scoped, fn -> indexer.search(imdb_id) end} | free_text_queries], context)
+    # No IMDb id (issue #195): the free-text queries carry the search alone, and every result then
+    # faces the title guard `:id_scoped` results are exempt from.
+    id_queries =
+      if imdb_id, do: [{:id_scoped, fn -> indexer.search(imdb_id) end}], else: []
+
+    run_queries(id_queries ++ free_text_queries, context)
   end
 
   def search_episodes(_indexer, _context, [], _opts), do: {:ok, [], false}
@@ -696,6 +701,11 @@ defmodule Cinder.Acquisition.Anime do
     do: length(String.codepoints(value)) <= limit
 
   defp within_codepoint_limit?(_value, _limit), do: false
+
+  # Nothing left to ask (no IMDb id and every title over the codepoint limit). Return an empty
+  # pool rather than raising on `hd(failures)` — a raise here only gets logged by the poller's
+  # isolate, so it would re-run every tick with nothing parked.
+  defp run_queries([], _context), do: {:ok, [], false}
 
   defp run_queries(queries, context) do
     outcomes = Enum.map(queries, &run_query/1)

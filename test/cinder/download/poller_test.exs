@@ -2161,14 +2161,19 @@ defmodule Cinder.Download.PollerTest do
              Repo.get!(Movie, movie.id)
   end
 
-  test "genuinely-missing imdb parks :no_match; transient TMDB error retries" do
-    {:ok, miss} = Catalog.add_movie(%{tmdb_id: 904, title: "M"})
+  # Issue #195: TMDB genuinely publishes no IMDb id for some released titles. Parking those
+  # unsearched was permanent (a :no_match row is never swept again, and Retry re-ran the same
+  # nil-id lookup), so a missing id now degrades to a free-text search instead.
+  test "genuinely-missing imdb free-text searches, then parks :no_match; TMDB error retries" do
+    {:ok, miss} = Catalog.add_movie(%{tmdb_id: 904, title: "M", year: 2010})
     {:ok, flaky} = Catalog.add_movie(%{tmdb_id: 905, title: "N"})
 
     stub(Cinder.Catalog.TMDBMock, :get_movie, fn
       904 -> {:ok, %{imdb_id: nil}}
       905 -> {:error, {:tmdb_status, 503}}
     end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_movie_query, fn "M 2010", _opts -> {:ok, []} end)
 
     start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
 
@@ -2177,9 +2182,34 @@ defmodule Cinder.Download.PollerTest do
     assert %Movie{status: :requested, search_attempts: 1} = Repo.get!(Movie, flaky.id)
   end
 
+  test "a missing imdb grabs a free-text release the title+year guard accepts" do
+    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 907, title: "Inception", year: 2010})
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn 907 -> {:ok, %{imdb_id: nil}} end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_movie_query, fn "Inception 2010", _opts ->
+      {:ok,
+       [
+         %{title: "Interstellar.2014.1080p.BluRay.x264-GRP", size: 8_000_000_000, guid: "wrong"},
+         %{
+           title: "Inception.2010.1080p.BluRay.x264-GRP",
+           size: 8_000_000_000,
+           download_url: "magnet:?xt=urn:btih:inception"
+         }
+       ]}
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-907"} end)
+
+    start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
+
+    assert :ok = Poller.poll()
+
+    assert %Movie{status: :downloading, release_title: "Inception.2010.1080p.BluRay.x264-GRP"} =
+             Repo.get!(Movie, movie.id)
+  end
+
   test "a park emits [:cinder, :park] with kind: :movie and the park reason" do
-    {:ok, miss} = Catalog.add_movie(%{tmdb_id: 906, title: "M"})
-    stub(Cinder.Catalog.TMDBMock, :get_movie, fn 906 -> {:ok, %{imdb_id: nil}} end)
+    movie = movie_fixture(%{tmdb_id: 906, status: :downloaded})
 
     start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
 
@@ -2187,8 +2217,8 @@ defmodule Cinder.Download.PollerTest do
       Cinder.TelemetryHelpers.capture([:cinder, :park], fn -> Poller.poll() end)
 
     assert result == :ok
-    assert %Movie{status: :no_match} = Repo.get!(Movie, miss.id)
-    assert [{%{count: 1}, %{kind: :movie, reason: :no_imdb_id}}] = events
+    assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
+    assert [{%{count: 1}, %{kind: :movie, reason: :no_file_path}}] = events
   end
 
   test "a persistently failing import is parked at :import_failed after max attempts" do

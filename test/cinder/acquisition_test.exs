@@ -406,6 +406,70 @@ defmodule Cinder.AcquisitionTest do
     end
   end
 
+  # Issue #195 — the free-text fallback for a TMDB title with no IMDb id. Without the id token
+  # the title+year guard is the only thing pinning identity, so both halves are load-bearing.
+  describe "best_release_by_title/3" do
+    test "queries \"Title Year\" and selects a release the guard accepts" do
+      expect(Cinder.Acquisition.IndexerMock, :search_movie_query, fn "Dune 2021", [] ->
+        {:ok, [raw(title: "[TGx] Dune.2021.1080p.BluRay.x264-GRP")]}
+      end)
+
+      assert {:ok, %Release{title: "[TGx] Dune.2021.1080p.BluRay.x264-GRP"}} =
+               Acquisition.best_release_by_title("Dune", 2021)
+    end
+
+    # The title must be EVERYTHING before the year token — a run-anywhere match takes all three of
+    # these, and the biggest one would win the scoring.
+    test "rejects a remake, a longer title, and a title the needle only ends" do
+      expect(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _query, [] ->
+        {:ok,
+         [
+           raw(title: "Dune.1984.1080p.BluRay.x264-GRP"),
+           raw(title: "Dune.Drifter.2021.1080p.WEB-DL-GRP"),
+           raw(title: "Sand.Dune.2021.2160p.BluRay.x265-GRP")
+         ]}
+      end)
+
+      assert Acquisition.best_release_by_title("Dune", 2021) == :no_match
+    end
+
+    test "with no known year, still anchors the title against any year token" do
+      expect(Cinder.Acquisition.IndexerMock, :search_movie_query, fn "Dune", [] ->
+        {:ok,
+         [
+           raw(title: "Dune.Drifter.1080p.WEB-DL-GRP"),
+           raw(title: "Sand.Dune.2021.2160p.BluRay.x265-GRP"),
+           raw(title: "Dune.1984.1080p.BluRay.x264-GRP")
+         ]}
+      end)
+
+      assert {:ok, %Release{title: "Dune.1984.1080p.BluRay.x264-GRP"}} =
+               Acquisition.best_release_by_title("Dune", nil)
+    end
+
+    test "accepts a title that itself ends in a year" do
+      expect(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _query, [] ->
+        {:ok, [raw(title: "Blade.Runner.2049.2017.1080p.BluRay.x264-GRP")]}
+      end)
+
+      assert {:ok, %Release{}} = Acquisition.best_release_by_title("Blade Runner 2049", 2017)
+    end
+
+    test "drops a release naming no year at all when the movie's year is known" do
+      expect(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _query, [] ->
+        {:ok, [raw(title: "Dune.1080p.BluRay.x264-GRP")]}
+      end)
+
+      assert Acquisition.best_release_by_title("Dune", 2021) == :no_match
+    end
+
+    test "passes through an indexer error" do
+      expect(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _q, _o -> {:error, :down} end)
+
+      assert Acquisition.best_release_by_title("Dune", 2021) == {:error, :down}
+    end
+  end
+
   describe "list_releases_tv/3 alternate numbering" do
     test "unions and deduplicates scene and aired season searches with stable episode ids" do
       episodes = [

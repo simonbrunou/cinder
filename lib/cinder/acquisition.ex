@@ -60,6 +60,21 @@ defmodule Cinder.Acquisition do
     end
   end
 
+  @doc """
+  Free-text fallback for a movie TMDB publishes no IMDb id for (issue #195): a `"Title Year"`
+  `moviesearch` instead of the `{ImdbId:...}` token, then the same title guard the free-text TV
+  path uses plus a year-token check, re-establishing the identity the id token would have pinned.
+  Returns the same values as `best_release/2`.
+  """
+  def best_release_by_title(title, year, opts \\ []) do
+    with {:ok, releases} <- title_search(title, year) do
+      case movie_pool(releases, opts) do
+        :no_language_match -> :no_language_match
+        pool -> Scorer.select(pool, opts)
+      end
+    end
+  end
+
   @doc "Searches additive anime movie queries and selects through the standard hard rules."
   def best_anime_movie(imdb_id, context, opts \\ []) do
     with {:ok, releases, failed?} <- Anime.search_movie(indexer(), imdb_id, context, opts) do
@@ -166,6 +181,11 @@ defmodule Cinder.Acquisition do
       {:ok, raw} -> {:ok, annotate(Enum.map(raw, &Release.new/1), opts)}
       {:error, _} = error -> error
     end
+  end
+
+  @doc "Manual-search variant of `best_release_by_title/3`, listing every guarded candidate."
+  def list_releases_by_title(title, year, opts \\ []) do
+    with {:ok, releases} <- title_search(title, year), do: {:ok, annotate(releases, opts)}
   end
 
   @doc """
@@ -544,21 +564,72 @@ defmodule Cinder.Acquisition do
   # sharing the title as a leading run ("9-1-1" accepts "9-1-1.Lone.Star..."), a different
   # show carrying the title as one of its own tokens ("Reno.911" for series "9-1-1"), and
   # same-named variants.
-  defp filter_title(candidates, %{tvdb_id: nil, title: title}) do
-    case series_needle(title) do
+  defp filter_title(candidates, %{tvdb_id: nil, title: title}),
+    do: filter_by_title(candidates, title)
+
+  defp filter_title(candidates, _series), do: candidates
+
+  defp filter_by_title(candidates, title) do
+    case title_needle(title) do
       "" -> []
       needle -> Enum.filter(candidates, &token_run_match?(tokens(&1.title), needle))
     end
   end
 
-  defp filter_title(candidates, _series), do: candidates
+  # The free-text movie search an absent IMDb id degrades to. `{ImdbId:...}` pinned the identity
+  # for free; without it this guard is all there is.
+  defp title_search(title, year) do
+    query = [title, year] |> Enum.reject(&is_nil/1) |> Enum.join(" ")
+
+    case indexer().search_movie_query(query, []) do
+      {:ok, raw} ->
+        {:ok, raw |> Enum.map(&Release.new/1) |> filter_movie_title(title, year)}
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  # Scene movie names are `Title.Year.rest`, so with a known year BOTH ends of the title are
+  # pinnable and the guard demands exactly that: everything before the year token concatenates to
+  # the title, nothing more. The run-anywhere match `filter_title/2` uses is far too loose here —
+  # it accepts "Dune.Drifter.2021" AND "Sand.Dune.2021" for "Dune (2021)", and the scorer would
+  # then pick whichever is bigger. With no IMDb id to fall back on, over-strictness costs an honest
+  # :no_match while looseness imports the wrong film. A movie with no year (rare — TMDB nearly
+  # always has one) demands the same shape against ANY year rather than a known one; anchoring only
+  # the start would take "Dune.Drifter.1080p" for "Dune".
+  defp filter_movie_title(candidates, title, year) do
+    case title_needle(title) do
+      "" -> []
+      needle -> Enum.filter(candidates, &movie_title_match?(&1.title, needle, year))
+    end
+  end
+
+  # Every year token is tried, not just the first: "Blade.Runner.2049.2017" is the 2017 film, and
+  # its title happens to end in a year too.
+  defp movie_title_match?(release_title, needle, year) do
+    tokens = untagged_tokens(release_title)
+
+    tokens
+    |> Enum.with_index()
+    |> Enum.any?(fn {token, index} ->
+      year_token?(token, year) and tokens |> Enum.take(index) |> Enum.join() == needle
+    end)
+  end
+
+  defp year_token?(token, nil), do: Regex.match?(~r/^(?:19|20)\d{2}$/, token)
+  defp year_token?(token, year), do: token == Integer.to_string(year)
+
+  # Tag-prefixed names ("[TGx] Dune.2021...") are common and would otherwise fail the start anchor.
+  defp untagged_tokens(release_title),
+    do: release_title |> String.replace(~r/^\s*\[[^\]\r\n]+\]\s*/u, "") |> tokens()
 
   # Fail closed when tokenization ate most of the title: a non-Latin title ("Дом") folds to
   # nothing, "Дом 2" to a bare "2" — a remnant that would match almost anything and import the
   # wrong show. Both sides of the ratio start from the same fold/1 so an "&"→"and" expansion
   # can't inflate the needle past the check. Those series can't be safely matched by name; the
   # tvdb_id-scoped search (which skips this guard entirely) is the escape hatch.
-  defp series_needle(series_title) do
+  defp title_needle(series_title) do
     needle = series_title |> tokens() |> Enum.join()
 
     significant =

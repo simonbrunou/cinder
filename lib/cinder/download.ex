@@ -763,7 +763,6 @@ defmodule Cinder.Download do
   Return values:
   - `{:ok, %Movie{status: :downloading}}` — release found and handed to client.
   - `{:ok, %Movie{status: :no_match}}` — indexer returned results but none survived scoring.
-  - `{:error, :no_imdb_id}` — TMDB has no IMDb id for this movie; movie stays `:requested`.
   - `{:error, :tmdb_unavailable}` — transient TMDB error; movie stays `:requested`.
   - `{:error, reason}` — indexer or client error; movie left in `:searching`.
   """
@@ -798,9 +797,7 @@ defmodule Cinder.Download do
             anime_movie_result(movie, imdb_id, context, opts)
 
           :standard ->
-            # A profile switched back to Standard must not keep a stale Anime hold marker.
-            Catalog.set_anime_hold(movie, nil)
-            Acquisition.best_release(imdb_id, opts)
+            standard_movie_result(movie, imdb_id, opts)
         end
 
       case result do
@@ -825,9 +822,18 @@ defmodule Cinder.Download do
           err
       end
     else
-      :no_imdb_id -> {:error, :no_imdb_id}
       {:error, _} = err -> err
     end
+  end
+
+  # A profile switched back to Standard must not keep a stale Anime hold marker. A nil imdb_id
+  # (TMDB publishes none for this title) degrades to the guarded free-text search — see issue #195.
+  defp standard_movie_result(movie, imdb_id, opts) do
+    Catalog.set_anime_hold(movie, nil)
+
+    if imdb_id,
+      do: Acquisition.best_release(imdb_id, opts),
+      else: Acquisition.best_release_by_title(movie.title, movie.year, opts)
   end
 
   defp anime_movie_result(movie, imdb_id, context, opts) do
@@ -962,10 +968,12 @@ defmodule Cinder.Download do
     {:ok, imdb_id}
   end
 
+  # `{:ok, nil}` — TMDB genuinely publishes no IMDb id for this title (it happens; issue #195).
+  # The search degrades to free-text rather than parking, so the movie is at least looked for.
   defp ensure_imdb_id(%Movie{tmdb_id: tmdb_id}) do
     case Catalog.get_movie(tmdb_id) do
       {:ok, %{imdb_id: imdb_id}} when is_binary(imdb_id) and imdb_id != "" -> {:ok, imdb_id}
-      {:ok, _} -> :no_imdb_id
+      {:ok, _} -> {:ok, nil}
       {:error, _} -> {:error, :tmdb_unavailable}
     end
   end

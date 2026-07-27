@@ -108,9 +108,6 @@ defmodule Cinder.Download.Poller do
            ] ->
         :ok
 
-      {:error, :no_imdb_id} ->
-        write_back_search(movie, &park(&1, :no_match, :no_imdb_id))
-
       {:error, reason} when reason in @permanent_search_errors ->
         Logger.warning("movie #{movie.id} search failed permanently: #{inspect(reason)}")
         write_back_search(movie, &park(&1, :search_failed, reason))
