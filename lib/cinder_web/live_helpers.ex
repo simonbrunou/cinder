@@ -213,6 +213,39 @@ defmodule CinderWeb.LiveHelpers do
   def humanize_bytes(bytes) when is_integer(bytes) and bytes > 0, do: "#{bytes} B"
   def humanize_bytes(_), do: nil
 
+  @doc """
+  A localized "time ago" fragment for a past timestamp ("just now" / "3 minutes ago" /
+  "2 days ago"). Accepts a `NaiveDateTime` (Ecto `timestamps()` are UTC-naive) or a `DateTime`;
+  `now` is injectable for deterministic tests. Coarse minute/hour/day buckets — plenty for a
+  "requested N ago" line at household scale. `ngettext` gives each locale its own plural rule,
+  and a future timestamp (clock skew) clamps to "just now" rather than reading "-1 minutes ago".
+  """
+  def relative_time(datetime, now \\ DateTime.utc_now())
+
+  def relative_time(%NaiveDateTime{} = naive, now),
+    do: naive |> DateTime.from_naive!("Etc/UTC") |> relative_time(now)
+
+  def relative_time(%DateTime{} = datetime, now) do
+    seconds = max(DateTime.diff(now, datetime, :second), 0)
+
+    cond do
+      seconds < 60 ->
+        gettext("just now")
+
+      seconds < 3_600 ->
+        minutes = div(seconds, 60)
+        ngettext("%{count} minute ago", "%{count} minutes ago", minutes)
+
+      seconds < 86_400 ->
+        hours = div(seconds, 3_600)
+        ngettext("%{count} hour ago", "%{count} hours ago", hours)
+
+      true ->
+        days = div(seconds, 86_400)
+        ngettext("%{count} day ago", "%{count} days ago", days)
+    end
+  end
+
   @doc ~S|A one-decimal rating string ("8.4") for a TMDB vote average (an Ecto :float). Non-floats fall through to to_string/1 as a defensive fallback.|
   def rating(v) when is_float(v), do: :erlang.float_to_binary(v, decimals: 1)
   def rating(v), do: to_string(v)
