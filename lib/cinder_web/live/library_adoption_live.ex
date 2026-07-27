@@ -9,6 +9,13 @@ defmodule CinderWeb.LibraryAdoptionLive do
   alias Cinder.Catalog.Episode
   alias Cinder.Library.Adoption
 
+  # Migration buckets can hold thousands of rows; render a bounded page per bucket and keep the
+  # selection/decision state server-side (keyed by stable candidate id), independent of what the
+  # current window streams.
+  @page_size 50
+  @empty_buckets %{ready: [], needs_decision: [], blocked: [], already_managed: []}
+  @first_pages %{ready: 1, needs_decision: 1, blocked: 1, already_managed: 1}
+
   @impl true
   def mount(_params, _session, socket) do
     {:ok,
@@ -19,6 +26,11 @@ defmodule CinderWeb.LibraryAdoptionLive do
        form: to_form(%{}, as: :adoption),
        mode: :filesystem,
        migration_source: nil,
+       migration_buckets: @empty_buckets,
+       selected_ready: MapSet.new(),
+       decisions: %{},
+       pages: @first_pages,
+       undecided_skipped: 0,
        scanned?: false,
        scanning?: false,
        adopting?: false,
@@ -85,28 +97,96 @@ defmodule CinderWeb.LibraryAdoptionLive do
     end
   end
 
+  def handle_event("toggle_ready", %{"id" => raw}, socket) do
+    with id when not is_nil(id) <- parse_id(raw),
+         %{} = candidate <- Enum.find(current_page(socket, :ready), &(&1.id == id)) do
+      {:noreply,
+       socket
+       |> assign(selected_ready: toggle_member(socket.assigns.selected_ready, id))
+       |> stream_insert(:auto_candidates, candidate)}
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("select_all_ready", _params, socket) do
+    ready = socket.assigns.migration_buckets.ready
+
+    {:noreply,
+     socket
+     |> assign(selected_ready: MapSet.new(ready, & &1.id))
+     |> restream(:ready)}
+  end
+
+  def handle_event("deselect_all_ready", _params, socket) do
+    {:noreply, socket |> assign(selected_ready: MapSet.new()) |> restream(:ready)}
+  end
+
+  def handle_event("set_decision", %{"id" => raw, "choice" => choice}, socket)
+      when choice in ["fold", "part"] do
+    with id when not is_nil(id) <- parse_id(raw),
+         %{} = candidate <- Enum.find(current_page(socket, :needs_decision), &(&1.id == id)) do
+      {:noreply,
+       socket
+       |> assign(decisions: Map.put(socket.assigns.decisions, id, choice))
+       |> stream_insert(:ambiguous_candidates, candidate)}
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
+  # Bulk apply is an explicit operator action: it only fills items that have no decision yet, so a
+  # per-candidate choice set before or after survives untouched.
+  def handle_event("apply_all", %{"choice" => choice}, socket)
+      when choice in ["fold", "part"] do
+    decisions =
+      Enum.reduce(socket.assigns.migration_buckets.needs_decision, socket.assigns.decisions, fn
+        candidate, acc -> Map.put_new(acc, candidate.id, choice)
+      end)
+
+    {:noreply, socket |> assign(decisions: decisions) |> restream(:needs_decision)}
+  end
+
+  def handle_event("page", %{"bucket" => raw, "dir" => dir}, socket)
+      when dir in ["prev", "next"] do
+    case bucket_key(raw) do
+      nil ->
+        {:noreply, socket}
+
+      bucket ->
+        total = total_pages(length(Map.fetch!(socket.assigns.migration_buckets, bucket)))
+        step = if dir == "next", do: 1, else: -1
+        page = clamp(Map.fetch!(socket.assigns.pages, bucket) + step, 1, total)
+
+        {:noreply,
+         socket
+         |> assign(pages: Map.put(socket.assigns.pages, bucket, page))
+         |> restream(bucket)}
+    end
+  end
+
   def handle_event(
-        "adopt",
-        %{"adoption" => params},
-        %{
-          assigns: %{
-            adopting?: false,
-            mode: {:migration, source},
-            candidates: candidates
-          }
-        } = socket
+        "adopt_migration",
+        _params,
+        %{assigns: %{adopting?: false, mode: {:migration, source}} = assigns} = socket
+      ) do
+    commands =
+      confirmed_migration_commands(
+        assigns.migration_buckets,
+        assigns.selected_ready,
+        assigns.decisions
       )
-      when is_map(params) do
-    commands = confirmed_migration_commands(candidates, params)
 
     case commands do
       [] ->
         {:noreply, put_flash(socket, :error, gettext("Select at least one match to adopt."))}
 
       commands ->
+        undecided = undecided_count(assigns.migration_buckets.needs_decision, assigns.decisions)
+
         {:noreply,
          socket
-         |> assign(adopting?: true, adoption_failures: [])
+         |> assign(adopting?: true, adoption_failures: [], undecided_skipped: undecided)
          |> start_async(:adopt, fn -> Adoption.adopt_migration(source, commands) end)}
     end
   end
@@ -139,16 +219,10 @@ defmodule CinderWeb.LibraryAdoptionLive do
   end
 
   def handle_async(:adopt, {:ok, summary}, socket) do
-    message =
-      gettext("Adopted %{adopted}; skipped %{skipped}.",
-        adopted: summary.adopted,
-        skipped: summary.skipped
-      )
-
     {:noreply,
      socket
-     |> assign(adopting?: false, adoption_failures: summary.failures)
-     |> put_flash(:info, message)
+     |> assign(adopting?: false, adoption_failures: summary.failures, undecided_skipped: 0)
+     |> put_flash(:info, adopt_message(summary, socket.assigns.undecided_skipped))
      |> refresh_after_adopt(summary)}
   end
 
@@ -187,6 +261,11 @@ defmodule CinderWeb.LibraryAdoptionLive do
       candidates: [],
       counts: %{auto_matched: 0, ambiguous: 0, unmatched: 0, already_managed: 0},
       form: to_form(%{}, as: :adoption),
+      migration_buckets: @empty_buckets,
+      selected_ready: MapSet.new(),
+      decisions: %{},
+      pages: @first_pages,
+      undecided_skipped: 0,
       scanned?: false
     )
     |> stream(:auto_candidates, [], reset: true)
@@ -227,9 +306,23 @@ defmodule CinderWeb.LibraryAdoptionLive do
     blocked = Enum.filter(preview.candidates, &(&1.status == :blocked))
     managed = Enum.filter(preview.candidates, &(&1.status == :already_managed))
 
+    buckets = %{
+      ready: ready,
+      needs_decision: decision,
+      blocked: blocked,
+      already_managed: managed
+    }
+
     socket
     |> assign(
       candidates: preview.candidates,
+      migration_buckets: buckets,
+      # Ready items are pre-selected (the previous default); the operator prunes with the header
+      # controls. Decisions start empty — there is never a default fold/part.
+      selected_ready: MapSet.new(ready, & &1.id),
+      decisions: %{},
+      pages: @first_pages,
+      undecided_skipped: 0,
       counts: %{
         auto_matched: preview.counts.ready,
         ambiguous: preview.counts.needs_decision,
@@ -241,10 +334,10 @@ defmodule CinderWeb.LibraryAdoptionLive do
       scanned?: true,
       scanning?: false
     )
-    |> stream(:auto_candidates, ready, reset: true)
-    |> stream(:ambiguous_candidates, decision, reset: true)
-    |> stream(:unmatched_candidates, blocked, reset: true)
-    |> stream(:managed_candidates, managed, reset: true)
+    |> stream(:auto_candidates, page_slice(ready, 1), reset: true)
+    |> stream(:ambiguous_candidates, page_slice(decision, 1), reset: true)
+    |> stream(:unmatched_candidates, page_slice(blocked, 1), reset: true)
+    |> stream(:managed_candidates, page_slice(managed, 1), reset: true)
     |> stream(:migration_series_counts, preview.series_counts, reset: true)
   end
 
@@ -256,23 +349,79 @@ defmodule CinderWeb.LibraryAdoptionLive do
     Enum.flat_map(candidates, &confirm_candidate(&1, selected, chosen, parts))
   end
 
-  defp confirmed_migration_commands(candidates, params) do
-    selected = params |> Map.get("selected", []) |> List.wrap() |> parse_ids()
-    choices = Map.get(params, "choices", %{})
+  # Commands are derived entirely from server-held selection/decision state (never a client-posted
+  # list), so a windowed-away row that never rendered a checkbox is still honoured.
+  defp confirmed_migration_commands(buckets, selected_ready, decisions) do
+    ready_commands =
+      for candidate <- buckets.ready,
+          MapSet.member?(selected_ready, candidate.id),
+          do: %{key: candidate.key, candidate: candidate}
 
-    Enum.flat_map(candidates, fn
-      %{status: :ready, id: id, key: key} = candidate ->
-        if MapSet.member?(selected, id), do: [%{key: key, candidate: candidate}], else: []
+    decision_commands =
+      for candidate <- buckets.needs_decision,
+          choice = Map.get(decisions, candidate.id),
+          choice in ["fold", "part"],
+          do: migration_command(candidate.key, choice, candidate)
 
-      %{status: :needs_decision, id: id, key: key} = candidate when is_map(choices) ->
-        case Map.get(choices, to_string(id)) do
-          choice when choice in ["fold", "part"] -> [migration_command(key, choice, candidate)]
-          _choice -> []
-        end
+    ready_commands ++ decision_commands
+  end
 
-      _candidate ->
-        []
-    end)
+  defp undecided_count(needs_decision, decisions),
+    do: Enum.count(needs_decision, &(not Map.has_key?(decisions, &1.id)))
+
+  defp current_page(socket, bucket) do
+    page_slice(
+      Map.fetch!(socket.assigns.migration_buckets, bucket),
+      Map.fetch!(socket.assigns.pages, bucket)
+    )
+  end
+
+  defp restream(socket, bucket) do
+    list = Map.fetch!(socket.assigns.migration_buckets, bucket)
+    page = Map.fetch!(socket.assigns.pages, bucket)
+    stream(socket, stream_for(bucket), page_slice(list, page), reset: true)
+  end
+
+  defp page_slice(list, page), do: Enum.slice(list, (page - 1) * @page_size, @page_size)
+
+  defp total_pages(count) when count <= 0, do: 1
+  defp total_pages(count), do: ceil(count / @page_size)
+
+  defp clamp(value, min, max), do: value |> max(min) |> min(max)
+
+  defp toggle_member(set, id) do
+    if MapSet.member?(set, id), do: MapSet.delete(set, id), else: MapSet.put(set, id)
+  end
+
+  defp bucket_key("ready"), do: :ready
+  defp bucket_key("needs_decision"), do: :needs_decision
+  defp bucket_key("blocked"), do: :blocked
+  defp bucket_key("already_managed"), do: :already_managed
+  defp bucket_key(_other), do: nil
+
+  defp stream_for(:ready), do: :auto_candidates
+  defp stream_for(:needs_decision), do: :ambiguous_candidates
+  defp stream_for(:blocked), do: :unmatched_candidates
+  defp stream_for(:already_managed), do: :managed_candidates
+
+  defp adopt_message(summary, undecided) do
+    base =
+      gettext("Adopted %{adopted}; skipped %{skipped}.",
+        adopted: summary.adopted,
+        skipped: summary.skipped
+      )
+
+    if undecided > 0 do
+      base <>
+        " " <>
+        ngettext(
+          "%{count} item was skipped because it still needed a decision.",
+          "%{count} items were skipped because they still needed a decision.",
+          undecided
+        )
+    else
+      base
+    end
   end
 
   defp confirm_candidate(
@@ -449,6 +598,51 @@ defmodule CinderWeb.LibraryAdoptionLive do
 
   defp file_name(path) when is_binary(path), do: Path.basename(path)
   defp file_name(_path), do: gettext("No file")
+
+  attr :bucket, :atom, required: true
+  attr :page, :integer, required: true
+  attr :count, :integer, required: true
+  attr :label, :string, required: true
+
+  defp migration_pager(assigns) do
+    assigns = assign(assigns, :total, total_pages(assigns.count))
+
+    ~H"""
+    <nav
+      :if={@total > 1}
+      class="mt-3 flex items-center justify-center gap-3"
+      aria-label={gettext("%{label} pages", label: @label)}
+    >
+      <.button
+        type="button"
+        variant="neutral"
+        size="sm"
+        phx-click="page"
+        phx-value-bucket={@bucket}
+        phx-value-dir="prev"
+        disabled={@page <= 1}
+        aria-label={gettext("Previous page of %{label}", label: @label)}
+      >
+        {gettext("Previous")}
+      </.button>
+      <span class="text-sm text-base-content/70">
+        {gettext("Page %{page} of %{total}", page: @page, total: @total)}
+      </span>
+      <.button
+        type="button"
+        variant="neutral"
+        size="sm"
+        phx-click="page"
+        phx-value-bucket={@bucket}
+        phx-value-dir="next"
+        disabled={@page >= @total}
+        aria-label={gettext("Next page of %{label}", label: @label)}
+      >
+        {gettext("Next")}
+      </.button>
+    </nav>
+    """
+  end
 
   @impl true
   def render(assigns) do
@@ -752,17 +946,47 @@ defmodule CinderWeb.LibraryAdoptionLive do
         </div>
       </.form>
 
-      <.form
+      <div
         :if={match?({:migration, _source}, @mode) and Enum.sum(Map.values(@counts)) > 0}
-        for={@form}
-        id="migration-adoption-form"
-        phx-submit="adopt"
+        id="migration-adoption"
         class="space-y-8"
       >
         <section :if={@counts.auto_matched > 0} aria-labelledby="migration-ready-heading">
-          <h2 id="migration-ready-heading" class="mb-3 text-xl font-semibold">
-            {gettext("Ready")} ({@counts.auto_matched})
-          </h2>
+          <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <h2 id="migration-ready-heading" class="text-xl font-semibold">
+              {gettext("Ready")} ({@counts.auto_matched})
+            </h2>
+            <div class="flex flex-wrap items-center gap-3">
+              <span
+                id="migration-ready-selected-count"
+                class="text-sm text-base-content/70"
+                aria-live="polite"
+              >
+                {gettext("%{selected} of %{total} selected",
+                  selected: MapSet.size(@selected_ready),
+                  total: @counts.auto_matched
+                )}
+              </span>
+              <.button
+                type="button"
+                variant="neutral"
+                size="sm"
+                phx-click="select_all_ready"
+                aria-label={gettext("Select all ready items")}
+              >
+                {gettext("Select all")}
+              </.button>
+              <.button
+                type="button"
+                variant="neutral"
+                size="sm"
+                phx-click="deselect_all_ready"
+                aria-label={gettext("Deselect all ready items")}
+              >
+                {gettext("Deselect all")}
+              </.button>
+            </div>
+          </div>
           <p class="mb-3 text-sm text-base-content/70">
             {gettext("Provider identities and file paths have one safe catalog target.")}
           </p>
@@ -776,9 +1000,9 @@ defmodule CinderWeb.LibraryAdoptionLive do
                 <label class="flex min-h-11 cursor-pointer items-start gap-3">
                   <input
                     type="checkbox"
-                    name="adoption[selected][]"
-                    value={candidate.id}
-                    checked
+                    checked={MapSet.member?(@selected_ready, candidate.id)}
+                    phx-click="toggle_ready"
+                    phx-value-id={candidate.id}
                     class="checkbox checkbox-primary mt-0.5"
                     aria-label={gettext("Adopt %{title}", title: migration_title(candidate))}
                   />
@@ -792,12 +1016,53 @@ defmodule CinderWeb.LibraryAdoptionLive do
               </div>
             </article>
           </div>
+          <.migration_pager
+            bucket={:ready}
+            page={@pages.ready}
+            count={@counts.auto_matched}
+            label={gettext("Ready")}
+          />
         </section>
 
         <section :if={@counts.ambiguous > 0} aria-labelledby="migration-decision-heading">
-          <h2 id="migration-decision-heading" class="mb-3 text-xl font-semibold">
-            {gettext("Needs decision")} ({@counts.ambiguous})
-          </h2>
+          <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <h2 id="migration-decision-heading" class="text-xl font-semibold">
+              {gettext("Needs decision")} ({@counts.ambiguous})
+            </h2>
+            <div class="flex flex-wrap items-center gap-3">
+              <span
+                id="migration-decisions-pending"
+                class="text-sm text-base-content/70"
+                aria-live="polite"
+              >
+                {ngettext(
+                  "%{count} decision pending",
+                  "%{count} decisions pending",
+                  undecided_count(@migration_buckets.needs_decision, @decisions)
+                )}
+              </span>
+              <.button
+                type="button"
+                variant="neutral"
+                size="sm"
+                phx-click="apply_all"
+                phx-value-choice="fold"
+                aria-label={gettext("Apply Fold to all undecided items")}
+              >
+                {gettext("Apply Fold to all undecided")}
+              </.button>
+              <.button
+                type="button"
+                variant="neutral"
+                size="sm"
+                phx-click="apply_all"
+                phx-value-choice="part"
+                aria-label={gettext("Apply Part to all undecided items")}
+              >
+                {gettext("Apply Part to all undecided")}
+              </.button>
+            </div>
+          </div>
           <p class="mb-3 text-sm text-base-content/70">
             {gettext(
               "Sonarr split several TVDB episodes into files that map to one TMDB episode. Choose how to treat each extra file."
@@ -829,8 +1094,11 @@ defmodule CinderWeb.LibraryAdoptionLive do
                   <label class="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-base-300 px-3 py-2">
                     <input
                       type="radio"
-                      name={"adoption[choices][#{candidate.id}]"}
                       value="fold"
+                      checked={Map.get(@decisions, candidate.id) == "fold"}
+                      phx-click="set_decision"
+                      phx-value-id={candidate.id}
+                      phx-value-choice="fold"
                       class="radio radio-primary mt-0.5"
                     />
                     <span>
@@ -845,8 +1113,11 @@ defmodule CinderWeb.LibraryAdoptionLive do
                   <label class="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-base-300 px-3 py-2">
                     <input
                       type="radio"
-                      name={"adoption[choices][#{candidate.id}]"}
                       value="part"
+                      checked={Map.get(@decisions, candidate.id) == "part"}
+                      phx-click="set_decision"
+                      phx-value-id={candidate.id}
+                      phx-value-choice="part"
                       class="radio radio-primary mt-0.5"
                     />
                     <span>
@@ -860,6 +1131,12 @@ defmodule CinderWeb.LibraryAdoptionLive do
               </div>
             </article>
           </div>
+          <.migration_pager
+            bucket={:needs_decision}
+            page={@pages.needs_decision}
+            count={@counts.ambiguous}
+            label={gettext("Needs decision")}
+          />
         </section>
 
         <section :if={@counts.unmatched > 0} aria-labelledby="migration-blocked-heading">
@@ -884,6 +1161,12 @@ defmodule CinderWeb.LibraryAdoptionLive do
               </div>
             </article>
           </div>
+          <.migration_pager
+            bucket={:blocked}
+            page={@pages.blocked}
+            count={@counts.unmatched}
+            label={gettext("Blocked")}
+          />
         </section>
 
         <section
@@ -907,15 +1190,26 @@ defmodule CinderWeb.LibraryAdoptionLive do
               </div>
             </article>
           </div>
+          <.migration_pager
+            bucket={:already_managed}
+            page={@pages.already_managed}
+            count={@counts.already_managed}
+            label={gettext("Already managed")}
+          />
         </section>
 
         <div :if={@counts.auto_matched + @counts.ambiguous > 0} class="flex items-center gap-3">
-          <.button id="adopt-migration-selected" type="submit" disabled={@adopting? or @scanning?}>
+          <.button
+            id="adopt-migration-selected"
+            type="button"
+            phx-click="adopt_migration"
+            disabled={@adopting? or @scanning?}
+          >
             {if @adopting?, do: gettext("Adopting…"), else: gettext("Adopt selected")}
           </.button>
           <.spinner :if={@adopting?} label={gettext("Adopting selected files…")} />
         </div>
-      </.form>
+      </div>
     </Layouts.app>
     """
   end
