@@ -15,7 +15,7 @@ defmodule Cinder.Library do
 
   alias Cinder.Acquisition.{Language, Parser}
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Grab, Movie, Series}
+  alias Cinder.Catalog.{Episode, Grab, GrabFile, Movie, Series}
 
   alias Cinder.Library.{
     AnimePreflight,
@@ -498,6 +498,81 @@ defmodule Cinder.Library do
       {:ok, files} -> {:ok, Enum.reverse(files)}
       {:error, _reason} = error -> error
     end
+  end
+
+  @doc """
+  Stages one operator-selected residual video at a canonical episode part destination.
+
+  The inventoried device/inode/size must still match; a changed source fails before staging.
+  """
+  def stage_grab_file_part(
+        %Grab{content_path: content_path},
+        %GrabFile{} = file,
+        %Episode{file_path: primary} = episode
+      )
+      when is_binary(content_path) and content_path != "" and is_binary(primary) and primary != "" do
+    with {:ok, root} <- root(:tv),
+         {:ok, source, folder?} <- grab_file_source(content_path, file.relative_path),
+         {:ok, stat} <- fs().lstat(source),
+         :ok <- verify_grab_file_identity(file, stat),
+         dest = build_episode_part_dest(episode, source, root, file.id),
+         {:ok, stage} <-
+           stage_episode_file_at(
+             [episode],
+             source,
+             root,
+             folder?,
+             %{},
+             dest,
+             false,
+             fn _new_quality -> false end
+           ) do
+      if stage.placed? do
+        {:ok, Map.delete(stage, :placed?)}
+      else
+        rollback_stage(stage)
+        {:error, :part_destination_occupied}
+      end
+    end
+  end
+
+  def stage_grab_file_part(%Grab{}, %GrabFile{}, %Episode{}),
+    do: {:error, :primary_file_missing}
+
+  defp grab_file_source(content_path, relative_path) do
+    content_path = Path.expand(content_path)
+
+    if fs().dir?(content_path) do
+      grab_file_source_in_directory(content_path, relative_path)
+    else
+      grab_file_single_source(content_path, relative_path)
+    end
+  end
+
+  defp grab_file_source_in_directory(content_path, relative_path) do
+    source = Path.expand(relative_path, content_path)
+    relative = Path.relative_to(source, content_path)
+
+    if relative == ".." or String.starts_with?(relative, "../") do
+      {:error, :unsafe_source}
+    else
+      with {:ok, source} <- safe_source_file(source), do: {:ok, source, true}
+    end
+  end
+
+  defp grab_file_single_source(content_path, relative_path) do
+    if Path.basename(content_path) == relative_path do
+      with {:ok, source} <- safe_source_file(content_path), do: {:ok, source, false}
+    else
+      {:error, :inventory_changed}
+    end
+  end
+
+  defp verify_grab_file_identity(file, stat) do
+    if {file.device, file.inode, file.size} ==
+         {stat.major_device, stat.inode, stat.size},
+       do: :ok,
+       else: {:error, :inventory_changed}
   end
 
   defp inventory_grab_file(content_path, path, episodes) do
@@ -1007,6 +1082,31 @@ defmodule Cinder.Library do
     dest = build_episode_dest(episodes, source, root)
     replace? = Enum.any?(episodes, &(&1.file_path not in [nil, ""]))
 
+    case stage_episode_file_at(
+           episodes,
+           source,
+           root,
+           folder?,
+           reports,
+           dest,
+           replace?,
+           fn new_quality -> ep_upgrade?(ep, new_quality, target) end
+         ) do
+      {:ok, stage} -> {:ok, Map.delete(stage, :placed?)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp stage_episode_file_at(
+         [ep | _] = episodes,
+         source,
+         root,
+         folder?,
+         reports,
+         dest,
+         replace?,
+         upgrade_fun
+       ) do
     with {:ok, source} <- safe_source_file(source),
          {:ok, %{size: size, inode: si, major_device: sdev}} <- fs().lstat(source),
          parsed = Parser.parse(Path.basename(source)),
@@ -1017,15 +1117,23 @@ defmodule Cinder.Library do
          {:ok, dest} <- safe_destination(dest, root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
          {:ok, quality, rollback, placed?} <-
-           StageEngine.stage_place(source, dest, root, {si, sdev}, ep, new_q, replace?, fn ->
-             ep_upgrade?(ep, new_q, target)
-           end) do
+           StageEngine.stage_place(
+             source,
+             dest,
+             root,
+             {si, sdev},
+             ep,
+             new_q,
+             replace?,
+             fn -> upgrade_fun.(new_q) end
+           ) do
       quality = staged_sidecar_quality(quality, placed?, folder?, source)
 
       {:ok,
        %{
          dest: dest,
          quality: quality,
+         placed?: placed?,
          rollback:
            Map.merge(rollback, %{
              after_commit: {:episodes, episodes},
@@ -1056,6 +1164,12 @@ defmodule Cinder.Library do
       "Season #{Episode.pad(season.season_number)}",
       "#{show} - #{code}#{Path.extname(source)}"
     ])
+  end
+
+  defp build_episode_part_dest(episode, source, root, grab_file_id) do
+    base = build_episode_dest([episode], source, root)
+    extension = Path.extname(base)
+    "#{Path.rootname(base, extension)}-part-#{grab_file_id}#{extension}"
   end
 
   defp episode_code([%Episode{season: season} | _] = episodes) do

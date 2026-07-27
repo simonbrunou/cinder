@@ -87,6 +87,10 @@ defmodule Cinder.Catalog.Adoption do
 
   defp adopt_file(_action), do: {:error, :invalid_action}
 
+  @doc false
+  def adopt_episode_part(%Episode{} = episode, path),
+    do: adopt_file(%{episode: episode, type: :part, path: path})
+
   defp update_episode(episode, attrs) do
     episode
     |> Episode.transition_changeset(attrs)

@@ -22,6 +22,8 @@ defmodule CinderWeb.ActivityLive do
   import CinderWeb.LiveHelpers
 
   alias Cinder.Catalog
+  alias Cinder.Catalog.Episode
+  alias Cinder.Download.TvPoller
 
   # Terminal-done: imported (in the Library) or cancelled — no in-flight work left, so
   # showing them in a *live pipeline* is just noise. Parked failures (`:no_match` etc.)
@@ -35,10 +37,14 @@ defmodule CinderWeb.ActivityLive do
       Catalog.subscribe_series()
     end
 
+    grabs = Catalog.list_grabs()
+
     {:ok,
      assign(socket,
        movies: Enum.filter(Catalog.list_movies(), &in_pipeline?/1),
-       grabs: Catalog.list_grabs(),
+       grabs: grabs,
+       grab_file_forms: grab_file_forms(grabs),
+       grab_file_errors: %{},
        held_series: sort_held_series(Catalog.list_anime_held_series(), socket.assigns.locale),
        jobs: Cinder.Jobs.statuses(),
        confirming: nil
@@ -64,16 +70,18 @@ defmodule CinderWeb.ActivityLive do
 
   def handle_info({:series_updated, _id}, socket) do
     {:noreply,
-     assign(socket,
-       grabs: Catalog.list_grabs(),
+     socket
+     |> refresh_grabs()
+     |> assign(
        held_series: sort_held_series(Catalog.list_anime_held_series(), socket.assigns.locale)
      )}
   end
 
   def handle_info({:series_deleted, _id}, socket) do
     {:noreply,
-     assign(socket,
-       grabs: Catalog.list_grabs(),
+     socket
+     |> refresh_grabs()
+     |> assign(
        held_series: sort_held_series(Catalog.list_anime_held_series(), socket.assigns.locale)
      )}
   end
@@ -108,10 +116,8 @@ defmodule CinderWeb.ActivityLive do
 
     {:noreply,
      socket
-     |> assign(
-       confirming: nil,
-       grabs: Catalog.list_grabs()
-     )
+     |> assign(confirming: nil)
+     |> refresh_grabs()
      |> put_flash(level, msg)}
   end
 
@@ -126,10 +132,8 @@ defmodule CinderWeb.ActivityLive do
 
     {:noreply,
      socket
-     |> assign(
-       confirming: nil,
-       grabs: Catalog.list_grabs()
-     )
+     |> assign(confirming: nil)
+     |> refresh_grabs()
      |> put_flash(level, msg)}
   end
 
@@ -145,7 +149,7 @@ defmodule CinderWeb.ActivityLive do
 
     {:noreply,
      socket
-     |> assign(grabs: Catalog.list_grabs())
+     |> refresh_grabs()
      |> put_flash(level, msg)}
   end
 
@@ -161,7 +165,7 @@ defmodule CinderWeb.ActivityLive do
 
     {:noreply,
      socket
-     |> assign(grabs: Catalog.list_grabs())
+     |> refresh_grabs()
      |> put_flash(level, msg)}
   end
 
@@ -183,10 +187,139 @@ defmodule CinderWeb.ActivityLive do
     {:noreply, socket}
   end
 
+  def handle_event("resolve_grab_file", %{"resolution" => params}, socket)
+      when is_map(params) do
+    with {:ok, file_id} <- positive_id(params["grab_file_id"]),
+         {:ok, episode_id} <- positive_id(params["episode_id"]),
+         {:ok, decision} <- grab_file_decision(params["decision"]),
+         {:ok, _state, _file} <- TvPoller.resolve_grab_file(file_id, episode_id, decision) do
+      {:noreply,
+       socket
+       |> assign(grab_file_errors: Map.delete(socket.assigns.grab_file_errors, file_id))
+       |> refresh_grabs()
+       |> put_flash(:info, gettext("File decision saved."))}
+    else
+      {:error, reason} ->
+        {:noreply, put_grab_file_error(socket, params["grab_file_id"], reason)}
+    end
+  end
+
+  def handle_event("hold_grab_file", %{"id" => id}, socket) when is_binary(id) do
+    case positive_id(id) do
+      {:ok, file_id} ->
+        {:noreply,
+         socket
+         |> assign(grab_file_errors: Map.delete(socket.assigns.grab_file_errors, file_id))
+         |> put_flash(:info, gettext("Held. Source cleanup remains blocked."))}
+
+      {:error, _reason} ->
+        {:noreply, socket}
+    end
+  end
+
   # Client-controlled payloads — ignore anything unmatched rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   defp in_pipeline?(%{status: status}), do: status not in @pipeline_done
+
+  defp refresh_grabs(socket) do
+    grabs = Catalog.list_grabs()
+    unresolved_ids = for g <- grabs, f <- g.grab_files, is_nil(f.decision), do: f.id
+
+    assign(socket,
+      grabs: grabs,
+      grab_file_forms: grab_file_forms(grabs),
+      grab_file_errors: Map.take(socket.assigns.grab_file_errors, unresolved_ids)
+    )
+  end
+
+  defp grab_file_forms(grabs) do
+    for grab <- grabs,
+        file <- grab.grab_files,
+        is_nil(file.decision),
+        into: %{} do
+      params = %{"grab_file_id" => to_string(file.id), "episode_id" => ""}
+      {file.id, to_form(params, as: :resolution)}
+    end
+  end
+
+  defp positive_id(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {id, ""} when id > 0 -> {:ok, id}
+      _invalid -> {:error, :invalid_selection}
+    end
+  end
+
+  defp positive_id(_value), do: {:error, :invalid_selection}
+
+  defp grab_file_decision("fold"), do: {:ok, :fold}
+  defp grab_file_decision("part"), do: {:ok, :part}
+  defp grab_file_decision(_decision), do: {:error, :invalid_selection}
+
+  defp put_grab_file_error(socket, file_id, reason) do
+    case positive_id(file_id) do
+      {:ok, file_id} ->
+        assign(
+          socket,
+          grab_file_errors:
+            Map.put(socket.assigns.grab_file_errors, file_id, grab_file_error(reason))
+        )
+
+      {:error, _reason} ->
+        socket
+    end
+  end
+
+  defp grab_file_error(:invalid_selection),
+    do: gettext("Select a TMDB episode before choosing Fold or Keep as part.")
+
+  defp grab_file_error(:episode_not_in_grab),
+    do: gettext("That episode is no longer available for this download.")
+
+  defp grab_file_error(_reason),
+    do: gettext("The file could not be resolved and remains held.")
+
+  defp unresolved_grab_files(grab), do: Enum.filter(grab.grab_files, &is_nil(&1.decision))
+
+  defp episode_options(grab, locale) do
+    grab.episodes
+    |> Enum.sort_by(&{&1.season.season_number, &1.episode_number})
+    |> Enum.map(&{episode_option(&1, locale), &1.id})
+  end
+
+  defp episode_option(%Episode{} = episode, locale) do
+    code = Episode.code(episode.season.season_number, episode.episode_number)
+    title = Catalog.localized_title(episode, locale)
+
+    cond do
+      title not in [nil, ""] and is_integer(episode.tmdb_episode_id) ->
+        gettext("%{code}: %{title} (TMDB %{id})",
+          code: code,
+          title: title,
+          id: episode.tmdb_episode_id
+        )
+
+      title not in [nil, ""] ->
+        gettext("%{code}: %{title}", code: code, title: title)
+
+      is_integer(episode.tmdb_episode_id) ->
+        gettext("%{code} (TMDB %{id})", code: code, id: episode.tmdb_episode_id)
+
+      true ->
+        code
+    end
+  end
+
+  defp grab_file_evidence(%{source: source, scheme: scheme, canonical_value: value})
+       when is_binary(source) and is_binary(scheme) and is_binary(value),
+       do:
+         gettext("Provider coordinate: %{source} %{scheme} %{value}",
+           source: String.upcase(source),
+           scheme: scheme,
+           value: value
+         )
+
+  defp grab_file_evidence(_file), do: gettext("No provider coordinate was found.")
 
   defp series_title(%{episodes: [ep | _]}, locale), do: media_title(ep.season.series, locale)
   defp series_title(_grab, _locale), do: gettext("Unknown series")
@@ -410,6 +543,130 @@ defmodule CinderWeb.ActivityLive do
             >
               {grab_file_hold_reason(unresolved_grab_file_count(g))}
             </p>
+            <div
+              :for={f <- unresolved_grab_files(g)}
+              id={"grab-file-#{f.id}"}
+              class="mt-3 rounded-box border border-warning/30 bg-base-100 p-3"
+            >
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="min-w-0 flex-1 break-all font-mono text-sm">
+                  {f.relative_path}
+                </span>
+                <.status_badge kind={:grab} status={:needs_mapping} />
+              </div>
+              <p
+                id={"grab-file-#{f.id}-evidence"}
+                class="mt-1 text-sm text-base-content/70"
+              >
+                {grab_file_evidence(f)}
+              </p>
+              <.form
+                :if={g.episodes != []}
+                for={@grab_file_forms[f.id]}
+                id={"grab-file-#{f.id}-resolution-form"}
+                phx-submit="resolve_grab_file"
+                class="mt-3"
+              >
+                <.input
+                  field={@grab_file_forms[f.id][:grab_file_id]}
+                  type="hidden"
+                  id={"grab-file-#{f.id}-id"}
+                />
+                <.input
+                  field={@grab_file_forms[f.id][:episode_id]}
+                  type="select"
+                  id={"grab-file-#{f.id}-episode"}
+                  label={gettext("TMDB episode")}
+                  prompt={gettext("Select an episode")}
+                  options={episode_options(g, @locale)}
+                  required
+                  aria-label={gettext("TMDB episode for %{file}", file: f.relative_path)}
+                />
+                <div class="grid gap-2 sm:grid-cols-3">
+                  <div>
+                    <.button
+                      type="submit"
+                      name="resolution[decision]"
+                      value="fold"
+                      size="sm"
+                      aria-label={gettext("Fold %{file}", file: f.relative_path)}
+                      aria-describedby={"grab-file-#{f.id}-fold-copy"}
+                    >
+                      {gettext("Fold")}
+                    </.button>
+                    <p
+                      id={"grab-file-#{f.id}-fold-copy"}
+                      class="mt-1 text-xs text-base-content/70"
+                    >
+                      {gettext(
+                        "Bind its provider coordinate to the selected episode. This extra physical source will not be retained."
+                      )}
+                    </p>
+                  </div>
+                  <div>
+                    <.button
+                      type="submit"
+                      name="resolution[decision]"
+                      value="part"
+                      size="sm"
+                      aria-label={gettext("Keep %{file} as a part", file: f.relative_path)}
+                      aria-describedby={"grab-file-#{f.id}-part-copy"}
+                    >
+                      {gettext("Keep as part")}
+                    </.button>
+                    <p
+                      id={"grab-file-#{f.id}-part-copy"}
+                      class="mt-1 text-xs text-base-content/70"
+                    >
+                      {gettext("Stage it at a canonical -part path and retain it on the episode.")}
+                    </p>
+                  </div>
+                  <div>
+                    <.button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      phx-click="hold_grab_file"
+                      phx-value-id={f.id}
+                      aria-label={gettext("Hold %{file}", file: f.relative_path)}
+                      aria-describedby={"grab-file-#{f.id}-hold-copy"}
+                    >
+                      {gettext("Hold")}
+                    </.button>
+                    <p
+                      id={"grab-file-#{f.id}-hold-copy"}
+                      class="mt-1 text-xs text-base-content/70"
+                    >
+                      {gettext("Make no change; source cleanup stays blocked.")}
+                    </p>
+                  </div>
+                </div>
+              </.form>
+              <div :if={g.episodes == []} class="mt-3">
+                <p class="text-sm text-warning">
+                  {gettext("No eligible TMDB episode remains; keep this file held.")}
+                </p>
+                <.button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  class="mt-2"
+                  phx-click="hold_grab_file"
+                  phx-value-id={f.id}
+                  aria-label={gettext("Hold %{file}", file: f.relative_path)}
+                >
+                  {gettext("Hold")}
+                </.button>
+              </div>
+              <p
+                :if={@grab_file_errors[f.id]}
+                id={"grab-file-#{f.id}-error"}
+                class="mt-2 text-sm text-error"
+                role="alert"
+              >
+                {@grab_file_errors[f.id]}
+              </p>
+            </div>
             <.confirm_action
               :if={@confirming == "mapping:#{g.id}"}
               id={"confirm-cancel-mapping-grab-#{g.id}"}

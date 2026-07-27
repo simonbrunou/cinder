@@ -1388,8 +1388,7 @@ defmodule Cinder.Catalog do
   @doc false
   def now, do: DateTime.truncate(DateTime.utc_now(), :second)
 
-  ## Grab creation/mapping/commit/close/finish/park/reap, the release blocklist, and per-episode
-  ## search-attempt bookkeeping — carved out to `Cinder.Catalog.Grabs`.
+  ## Grab lifecycle and blocklist implementation lives in `Cinder.Catalog.Grabs`.
 
   defdelegate create_grab(download_id, protocol, episode_ids), to: Grabs
   defdelegate create_grab(download_id, protocol, episode_ids, release_title), to: Grabs
@@ -1469,6 +1468,7 @@ defmodule Cinder.Catalog do
   defdelegate commit_grab_imports(grab, imported, residuals), to: Grabs
   defdelegate commit_grab_imports(grab, imported, residuals, stage_ids), to: Grabs
   defdelegate close_grab(grab), to: Grabs
+  defdelegate decide_grab_file(file, episode, decision, stage), to: Grabs
   defdelegate park_grab(grab), to: Grabs
   defdelegate reap_stalled_grab(grab), to: Grabs
 
