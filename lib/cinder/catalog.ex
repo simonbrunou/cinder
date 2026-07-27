@@ -33,6 +33,7 @@ defmodule Cinder.Catalog do
     Season,
     Series,
     SeriesCatalog,
+    SeriesDeletion,
     SeriesRefresh
   }
 
@@ -1323,10 +1324,10 @@ defmodule Cinder.Catalog do
 
   defdelegate adopt_episode_files(actions), to: Cinder.Catalog.Adoption
 
-  defdelegate delete_episode_file(episode, actor), to: SeriesCatalog
-  defdelegate delete_episode_file(episode, actor, opts), to: SeriesCatalog
-  defdelegate delete_season_files(season, actor), to: SeriesCatalog
-  defdelegate delete_season_files(season, actor, opts), to: SeriesCatalog
+  defdelegate delete_episode_file(episode, actor), to: SeriesDeletion
+  defdelegate delete_episode_file(episode, actor, opts), to: SeriesDeletion
+  defdelegate delete_season_files(season, actor), to: SeriesDeletion
+  defdelegate delete_season_files(season, actor, opts), to: SeriesDeletion
 
   @doc false
   def now, do: DateTime.truncate(DateTime.utc_now(), :second)
@@ -1352,14 +1353,14 @@ defmodule Cinder.Catalog do
   unmonitors every season and episode so the TV poller's `wanted_episodes` does not re-grab.
   Broadcasts `{:series_updated, id}`. Audited.
   """
-  defdelegate cancel_series(series, actor), to: SeriesCatalog
+  defdelegate cancel_series(series, actor), to: SeriesDeletion
 
   @doc """
   Deletes a series and its tree. Broadcasts `{:series_deleted, id}`. Audited. Pass
   `delete_files: true` to also unlink every episode `file_path` after the cascade.
   """
-  defdelegate delete_series(series, actor), to: SeriesCatalog
-  defdelegate delete_series(series, actor, opts), to: SeriesCatalog
+  defdelegate delete_series(series, actor), to: SeriesDeletion
+  defdelegate delete_series(series, actor, opts), to: SeriesDeletion
 
   defdelegate episode_ids_for_grab(grab_id), to: Grabs
   defdelegate series_id_for_grab(grab_id), to: Grabs
