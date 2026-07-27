@@ -235,6 +235,14 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   end
 
   @impl true
+  def recommended_movies(tmdb_id, locale),
+    do: movie_list("/3/movie/#{tmdb_id}/recommendations", locale)
+
+  @impl true
+  def recommended_tv(tmdb_id, locale),
+    do: tv_list("/3/tv/#{tmdb_id}/recommendations", locale)
+
+  @impl true
   def search_person(query, locale) do
     case request(
            url: "/3/search/person",

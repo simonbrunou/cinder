@@ -127,6 +127,20 @@ defmodule Cinder.Catalog.TMDB do
               {:ok, [map()]} | {:error, term()}
 
   @doc """
+  Recommendations for a movie (`/movie/{id}/recommendations`), normalized like
+  `popular_movies/1` (each tagged `type: :movie`) — feeds the "More like this" rail.
+  """
+  @callback recommended_movies(tmdb_id :: integer(), locale :: String.t()) ::
+              {:ok, [map()]} | {:error, term()}
+
+  @doc """
+  Recommendations for a series (`/tv/{id}/recommendations`), same shape as
+  `popular_tv/1` (each tagged `type: :tv`) — feeds the "More like this" rail.
+  """
+  @callback recommended_tv(tmdb_id :: integer(), locale :: String.t()) ::
+              {:ok, [map()]} | {:error, term()}
+
+  @doc """
   Person search. Returns
   `%{tmdb_id, title, year: nil, poster_path, department}` per result (`title` is
   the person's name and `poster_path` is their TMDB profile path).

@@ -73,6 +73,10 @@ defmodule Cinder.Catalog do
   defdelegate movies_by_genre(genre_id, locale), to: Discovery
   defdelegate tv_by_genre(genre_id), to: Discovery
   defdelegate tv_by_genre(genre_id, locale), to: Discovery
+  defdelegate recommended_movies(tmdb_id), to: Discovery
+  defdelegate recommended_movies(tmdb_id, locale), to: Discovery
+  defdelegate recommended_tv(tmdb_id), to: Discovery
+  defdelegate recommended_tv(tmdb_id, locale), to: Discovery
   defdelegate search_person(query), to: Discovery
   defdelegate search_person(query, locale), to: Discovery
   defdelegate search_collection(query), to: Discovery
