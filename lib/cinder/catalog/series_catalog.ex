@@ -203,10 +203,11 @@ defmodule Cinder.Catalog.SeriesCatalog do
   Bytes on disk per series (`%{series_id => bytes}`), for the `/library` size sort and readout.
   Series with nothing imported are absent from the map, not zero.
 
-  Deduplicates by `file_path` before summing: `Cinder.Library.link_all/4` gives one multi-episode
-  source **one** destination that every covered episode references, and `update_imported_episode!/5`
-  writes the full file size to each of those rows — so a bare `sum(imported_size)` double-counts a
-  double-episode file. (`clear_shared_file_paths/1` exists for the same reason on the delete side.)
+  Deduplicates by the complete primary-plus-parts path bundle. `Cinder.Library.link_all/4` gives
+  one multi-episode source **one** destination that every covered episode references, and
+  `update_imported_episode!/5` writes the full imported size to each of those rows — so a bare
+  `sum(imported_size)` double-counts a double-episode file. A part-only bundle left by a partial
+  unlink still counts until its final path is removed.
 
   Two known inexactnesses, recorded rather than fixed:
 
@@ -221,8 +222,10 @@ defmodule Cinder.Catalog.SeriesCatalog do
       from e in Episode,
         join: s in Season,
         on: s.id == e.season_id,
-        where: not is_nil(e.file_path) and not is_nil(e.imported_size),
-        group_by: [s.series_id, e.file_path],
+        where:
+          not is_nil(e.imported_size) and
+            (not is_nil(e.file_path) or fragment("json_array_length(?) > 0", e.part_file_paths)),
+        group_by: [s.series_id, e.file_path, e.part_file_paths],
         select: %{series_id: s.series_id, bytes: max(e.imported_size)}
 
     from(f in subquery(per_file), group_by: f.series_id, select: {f.series_id, sum(f.bytes)})
@@ -1012,53 +1015,104 @@ defmodule Cinder.Catalog.SeriesCatalog do
   end
 
   @doc """
-  Deletes one episode's library file (Sonarr "delete episode file"): unlinks the file, then clears
-  `file_path` so the episode reverts to its derived missing state — left monitored (the poller
-  re-grabs next tick) unless `opts[:unmonitor]` also flips `monitored` off. A multi-episode file
-  is shared, so its other episode rows are cleared too. The DB write + audit run in one transaction
-  (mirroring `Cinder.Catalog.cancel_movie/2`); broadcasts `{:series_updated, series_id}` after
-  commit. Returns `{:error, :no_file}` when there is no file, or the unlink's `{:error, reason}`
-  (the DB is then untouched — the file is the whole point, so the error is surfaced, not best-effort).
-  Ordering caveat: the unlink runs before the DB txn, so a (rare) txn failure after a successful
-  unlink leaves `file_path` pointing at a now-deleted file (the episode reads falsely-available)
-  until re-deleted — recoverable because `rm` of a missing file is idempotent (`:enoent` → `:ok`).
+  Deletes one episode's primary and part library files (Sonarr "delete episode file"). Every unlink
+  is attempted. The following transaction removes only successfully unlinked paths from every
+  affected episode row and records the actual results in the audit; failed paths remain recorded.
+  When every path is gone, imported metadata is cleared and `opts[:unmonitor]` also flips
+  `monitored` off. A partial or total unlink failure is logged and returned as `{:error, reason}`
+  after the truthful DB/audit write. Broadcasts `{:series_updated, series_id}` after a DB change.
   """
   def delete_episode_file(episode, actor, opts \\ [])
 
-  def delete_episode_file(%Episode{file_path: p}, _actor, _opts) when p in [nil, ""],
-    do: {:error, :no_file}
-
   def delete_episode_file(%Episode{} = episode, actor, opts) do
-    unmonitor? = Keyword.get(opts, :unmonitor, false)
+    episode
+    |> Episode.file_paths()
+    |> delete_episode_paths(episode, actor, opts)
+  end
 
-    with {:ok, file_paths} <- unlink_episode_files(episode),
-         {:ok, updated} <- do_delete_episode_file_txn(episode, actor, unmonitor?, file_paths) do
-      Cinder.Catalog.broadcast_series(series_id_for_season(updated.season_id))
-      {:ok, updated}
+  defp delete_episode_paths([], _episode, _actor, _opts), do: {:error, :no_file}
+
+  defp delete_episode_paths(paths, episode, actor, opts) do
+    results = unlink_paths(paths)
+
+    with {:ok, {updated, changed?}} <-
+           do_delete_episode_file_txn(
+             episode,
+             actor,
+             Keyword.get(opts, :unmonitor, false),
+             results
+           ) do
+      if changed?, do: Cinder.Catalog.broadcast_series(series_id_for_season(updated.season_id))
+      episode_delete_result(updated, results)
     end
   end
 
-  defp unlink_episode_files(episode) do
-    results =
-      Enum.map(Episode.file_paths(episode), fn path ->
-        {path, Cinder.Library.delete_file(path)}
-      end)
+  defp do_delete_episode_file_txn(episode, actor, unmonitor?, results) do
+    Repo.transaction(fn ->
+      fresh = Repo.get(Episode, episode.id) || Repo.rollback(:stale_entry)
+      successful = successful_paths(results)
 
+      outcomes =
+        Repo.all(from e in Episode, where: e.season_id == ^fresh.season_id)
+        |> Enum.filter(&shares_path?(&1, results))
+        |> Enum.map(&reconcile_deleted_paths(&1, successful, unmonitor?))
+
+      updated = Repo.get!(Episode, fresh.id)
+
+      Audit.log_or_rollback(
+        actor,
+        :delete_episode_file,
+        updated,
+        unlink_audit_detail(results, %{
+          unmonitored: unmonitor? and Episode.file_paths(updated) == []
+        })
+      )
+
+      {updated, Enum.any?(outcomes, &(elem(&1, 1) != :unchanged))}
+    end)
+  rescue
+    Ecto.StaleEntryError -> {:error, :stale_entry}
+  end
+
+  defp episode_delete_result(updated, results) do
     case Enum.find(results, fn {_path, result} -> result != :ok end) do
-      nil -> {:ok, Enum.map(results, &elem(&1, 0))}
+      nil -> {:ok, updated}
       {_path, {:error, reason}} -> {:error, reason}
     end
   end
 
-  defp do_delete_episode_file_txn(episode, actor, unmonitor?, file_paths) do
-    Repo.transaction(fn ->
-      changeset =
-        episode
-        |> Episode.transition_changeset(%{
+  defp unlink_paths(paths) do
+    paths
+    |> Enum.uniq()
+    |> Enum.map(&{&1, Cinder.Catalog.best_effort_delete_file(&1)})
+  end
+
+  defp successful_paths(results) do
+    results
+    |> Enum.flat_map(fn
+      {path, :ok} -> [path]
+      {_path, {:error, _reason}} -> []
+    end)
+    |> MapSet.new()
+  end
+
+  defp shares_path?(episode, results) do
+    attempted = MapSet.new(results, &elem(&1, 0))
+    Enum.any?(Episode.file_paths(episode), &MapSet.member?(attempted, &1))
+  end
+
+  defp reconcile_deleted_paths(episode, successful, unmonitor?) do
+    primary = if MapSet.member?(successful, episode.file_path), do: nil, else: episode.file_path
+    parts = Enum.reject(episode.part_file_paths || [], &MapSet.member?(successful, &1))
+
+    cond do
+      primary == episode.file_path and parts == (episode.part_file_paths || []) ->
+        {episode, :unchanged}
+
+      primary in [nil, ""] and parts == [] ->
+        attrs = %{
           file_path: nil,
           part_file_paths: [],
-          # Zero the counter so a previously search-parked episode really is
-          # re-grabbed next tick, as the docstring promises.
           search_attempts: 0,
           imported_resolution: nil,
           imported_size: nil,
@@ -1067,44 +1121,35 @@ defmodule Cinder.Catalog.SeriesCatalog do
           imported_audio_languages: nil,
           imported_embedded_subtitles: nil,
           imported_sidecar_subtitles: nil
-        })
+        }
+
+        episode
+        |> Episode.transition_changeset(attrs)
         |> maybe_unmonitor(unmonitor?)
+        |> Repo.update!()
+        |> then(&{&1, :cleared})
 
-      case Repo.update(changeset) do
-        {:ok, updated} ->
-          clear_shared_file_paths(episode.file_path)
-
-          Cinder.Audit.log_or_rollback(actor, :delete_episode_file, updated, %{
-            file_paths: file_paths,
-            unmonitored: unmonitor?
-          })
-
-          updated
-
-        {:error, changeset} ->
-          Repo.rollback(changeset)
-      end
-    end)
-  rescue
-    Ecto.StaleEntryError -> {:error, :stale_entry}
+      true ->
+        episode
+        |> Episode.transition_changeset(%{file_path: primary, part_file_paths: parts})
+        |> Repo.update!()
+        |> then(&{&1, :partial})
+    end
   end
 
-  defp clear_shared_file_paths(path) do
-    Repo.update_all(from(e in Episode, where: e.file_path == ^path),
-      set: [
-        file_path: nil,
-        part_file_paths: [],
-        search_attempts: 0,
-        imported_resolution: nil,
-        imported_size: nil,
-        imported_language: nil,
-        imported_source: nil,
-        imported_audio_languages: nil,
-        imported_embedded_subtitles: nil,
-        imported_sidecar_subtitles: nil,
-        updated_at: Cinder.Catalog.now()
-      ]
-    )
+  defp unlink_audit_detail(results, detail) do
+    failed =
+      for {path, {:error, reason}} <- results,
+          do: "#{path}: #{inspect(reason)}"
+
+    detail =
+      Map.merge(detail, %{
+        file_paths: Enum.map(results, &elem(&1, 0)),
+        deleted_file_paths: for({path, :ok} <- results, do: path),
+        files_deleted: failed == []
+      })
+
+    if failed == [], do: detail, else: Map.put(detail, :failed_unlinks, failed)
   end
 
   defp maybe_unmonitor(changeset, true),
@@ -1113,83 +1158,57 @@ defmodule Cinder.Catalog.SeriesCatalog do
   defp maybe_unmonitor(changeset, false), do: changeset
 
   @doc """
-  Deletes every library file in a season (Sonarr per-season "delete episode files"): unlinks each
-  episode's file (best-effort, per file), then clears `file_path` — and `monitored` off on
-  `opts[:unmonitor]` — for the episodes whose file was actually removed, in ONE transaction + ONE
-  `{:series_updated, _}` broadcast (mirrors `set_season_monitored/2`). A per-file unlink failure is
-  logged and that episode keeps its `file_path` (so it isn't falsely marked missing). Returns
-  `{:ok, cleared_count, failed_count}` where `failed_count` is the number of episodes whose unlink
-  returned `{:error, _}` (callers should warn the user when `failed_count > 0`).
+  Deletes every library file in a season (Sonarr per-season "delete episode files"): every unique
+  primary/part path is attempted once, then one transaction removes only successful paths from the
+  affected episode rows and records the actual per-path outcome. Fully cleared episodes also drop
+  imported metadata and are unmonitored when `opts[:unmonitor]` is true; partial and fully failed
+  rows keep every path still known to exist. Returns `{:ok, cleared_count, failed_count}`, where
+  `failed_count` counts episodes with at least one failed unlink.
   """
   def delete_season_files(%Season{} = season, actor, opts \\ []) do
     unmonitor? = Keyword.get(opts, :unmonitor, false)
 
-    # Bulk path mirrors set_season_monitored/2: the txn writes file_path/monitored via update_all
-    # (NOT Episode.transition_changeset — file_path: nil has no validation to enforce), and the
-    # read-then-write window (episodes read, files unlinked, then update_all) is the same one
-    # set_season_monitored carries. Accepted at household scale (WAL + busy_timeout serializes the
-    # writes; worst case a just-imported file is re-cleared and the user re-deletes).
     episodes =
-      Repo.all(from e in Episode, where: e.season_id == ^season.id and not is_nil(e.file_path))
+      Repo.all(from e in Episode, where: e.season_id == ^season.id)
+      |> Enum.reject(&(Episode.file_paths(&1) == []))
 
-    results =
-      Enum.map(episodes, fn episode ->
-        unlink_results =
-          Enum.map(Episode.file_paths(episode), fn path ->
-            {path, Cinder.Library.delete_file(path)}
-          end)
+    results = episodes |> Enum.flat_map(&Episode.file_paths/1) |> unlink_paths()
+    failed_count = Enum.count(episodes, &episode_unlink_failed?(&1, results))
 
-        {episode, unlink_results}
-      end)
-
-    for {_episode, unlink_results} <- results,
-        {path, {:error, reason}} <- unlink_results do
-      Logger.warning("library file delete failed for #{inspect(path)}: #{inspect(reason)}")
-    end
-
-    {cleared, failed} =
-      Enum.split_with(results, fn {_episode, unlink_results} ->
-        Enum.all?(unlink_results, fn {_path, result} -> result == :ok end)
-      end)
-
-    cleared_ids = Enum.map(cleared, fn {episode, _results} -> episode.id end)
-    file_paths = Enum.flat_map(results, fn {_episode, paths} -> Enum.map(paths, &elem(&1, 0)) end)
-
-    with {:ok, _} <-
-           do_delete_season_files_txn(season, actor, cleared_ids, file_paths, unmonitor?) do
+    with {:ok, cleared_count} <-
+           do_delete_season_files_txn(season, actor, results, unmonitor?) do
       Cinder.Catalog.broadcast_series(season.series_id)
-      {:ok, length(cleared_ids), length(failed)}
+      {:ok, cleared_count, failed_count}
     end
   end
 
-  defp do_delete_season_files_txn(season, actor, cleared_ids, file_paths, unmonitor?) do
+  defp episode_unlink_failed?(episode, results) do
+    result_by_path = Map.new(results)
+    Enum.any?(Episode.file_paths(episode), &match?({:error, _}, result_by_path[&1]))
+  end
+
+  defp do_delete_season_files_txn(season, actor, results, unmonitor?) do
     Repo.transaction(fn ->
-      sets =
-        [
-          file_path: nil,
-          part_file_paths: [],
-          # Zero the counter so previously search-parked episodes really are
-          # re-grabbed next tick, as the docstring promises.
-          search_attempts: 0,
-          imported_resolution: nil,
-          imported_size: nil,
-          imported_language: nil,
-          imported_source: nil,
-          imported_audio_languages: nil,
-          imported_embedded_subtitles: nil,
-          imported_sidecar_subtitles: nil,
-          updated_at: Cinder.Catalog.now()
-        ] ++ if(unmonitor?, do: [monitored: false], else: [])
+      successful = successful_paths(results)
 
-      Repo.update_all(from(e in Episode, where: e.id in ^cleared_ids), set: sets)
+      outcomes =
+        Repo.all(from e in Episode, where: e.season_id == ^season.id)
+        |> Enum.filter(&shares_path?(&1, results))
+        |> Enum.map(&reconcile_deleted_paths(&1, successful, unmonitor?))
 
-      Cinder.Audit.log_or_rollback(actor, :delete_season_files, season, %{
-        count: length(cleared_ids),
-        file_paths: file_paths,
-        unmonitored: unmonitor?
-      })
+      cleared_count = Enum.count(outcomes, &(elem(&1, 1) == :cleared))
 
-      season
+      Audit.log_or_rollback(
+        actor,
+        :delete_season_files,
+        season,
+        unlink_audit_detail(results, %{
+          count: cleared_count,
+          unmonitored: unmonitor?
+        })
+      )
+
+      cleared_count
     end)
   end
 
