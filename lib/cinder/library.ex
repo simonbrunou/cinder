@@ -41,6 +41,7 @@ defmodule Cinder.Library do
   # wrong import. Every other errno (`:enoent`, `:enospc`, …) is a real failure and propagates.
   @copy_fallback_errnos [:exdev, :eperm, :eopnotsupp, :enotsup]
   @anime_identity_keys ~w(relative_path size major_device inode mtime)
+  @standard_tv_bridged_schemes ~w(scene aired)
 
   # The library kinds Cinder manages. The single source of truth — config keys
   # (`:"#{kind}_library_path"`, the per-kind Plex section, the size band), the
@@ -428,7 +429,8 @@ defmodule Cinder.Library do
 
   Layout: `Show (Year)/Season NN/Show (Year) - SxxEyy.ext`. Files are matched by parsing `SxxEyy`
   from each name and intersecting with the grab's native episode numbers or exact persisted
-  `scene` coordinates (a double-episode file maps to both).
+  `scene`/TVDB `aired` coordinates (a double-episode file maps to both). When an episode has both
+  alternate schemes, operator-selected `scene` wins over migration-inferred `aired`.
   For a single-episode grab whose files name no specific episode, the largest video is assigned
   to it — mirroring `import_movie`'s sample-skipping largest-wins, since the grab already names
   the one episode. Reuses `import_movie`'s place/scan/naming primitives.
@@ -893,6 +895,8 @@ defmodule Cinder.Library do
   # {episode, source_path, size} triples for files that name a specific episode in the grab. A
   # double-episode file yields two entries; `link_all/4` groups them back to one library file.
   defp match_episodes(videos, episodes) do
+    episodes = prefer_scene_coordinates(episodes)
+
     matches =
       for {path, size} <- videos,
           parsed = Parser.parse(Path.basename(path)),
@@ -906,8 +910,7 @@ defmodule Cinder.Library do
     |> Enum.flat_map(&single_arm_claims/1)
   end
 
-  # Never guess: a file claimed through both native and bridged (scene) numbering means an
-  # alternate-season value shadows another episode's native code inside this grab — ambiguous,
+  # Never guess: a file claimed through conflicting native/bridged numbering arms is ambiguous,
   # so leave it unmatched (logged, parks) rather than file one source onto two episodes.
   defp single_arm_claims({path, claims}) do
     case claims |> Enum.map(fn {_ep, _p, _size, arm} -> arm end) |> Enum.uniq() do
@@ -924,34 +927,50 @@ defmodule Cinder.Library do
     end
   end
 
-  # An episode claims a parsed file through exactly one arm: its native TMDB numbering, or a
-  # persisted alternate-season ("scene") coordinate bridged at import. nil = no claim.
+  # An episode claims a parsed file through exactly one arm: its native TMDB numbering, or one
+  # persisted alternate numbering scheme bridged at import. nil = no claim.
   defp match_arm(episode, parsed) do
     cond do
       episode.season.season_number == parsed.season and
           episode.episode_number in parsed.episodes ->
         :native
 
-      scene_coordinate_matches?(episode, parsed) ->
-        :scene
+      scheme = bridged_coordinate_scheme(episode, parsed) ->
+        {:bridged, scheme}
 
       true ->
         nil
     end
   end
 
-  defp scene_coordinate_matches?(%Episode{episode_coordinates: coordinates}, parsed)
+  defp bridged_coordinate_scheme(%Episode{episode_coordinates: coordinates}, parsed)
        when is_list(coordinates) do
-    Enum.any?(coordinates, fn coordinate ->
-      coordinate.scheme == "scene" and
-        Enum.any?(
-          parsed.episodes,
-          &(coordinate.canonical_value == Episode.code(parsed.season, &1))
-        )
+    Enum.find(@standard_tv_bridged_schemes, fn scheme ->
+      Enum.any?(coordinates, fn coordinate ->
+        coordinate.scheme == scheme and
+          Enum.any?(
+            parsed.episodes,
+            &(coordinate.canonical_value == Episode.code(parsed.season, &1))
+          )
+      end)
     end)
   end
 
-  defp scene_coordinate_matches?(_episode, _parsed), do: false
+  defp bridged_coordinate_scheme(_episode, _parsed), do: nil
+
+  defp prefer_scene_coordinates(episodes) do
+    Enum.map(episodes, fn
+      %Episode{episode_coordinates: coordinates} = episode when is_list(coordinates) ->
+        if Enum.any?(coordinates, &(&1.scheme == "scene")) do
+          %{episode | episode_coordinates: Enum.reject(coordinates, &(&1.scheme == "aired"))}
+        else
+          episode
+        end
+
+      episode ->
+        episode
+    end)
+  end
 
   # One source per episode: when two files parse the same SxxEyy, keep the largest (path breaks
   # ties for a dest stable across retries) and let the losers fall through to `resolve` as
