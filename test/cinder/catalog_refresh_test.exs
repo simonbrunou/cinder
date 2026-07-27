@@ -8,7 +8,7 @@ defmodule Cinder.CatalogRefreshTest do
   @moduletag :capture_log
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Season, Series}
+  alias Cinder.Catalog.{Episode, EpisodeCoordinateMembership, Season, Series}
 
   import Cinder.CatalogFixtures
 
@@ -531,19 +531,85 @@ defmodule Cinder.CatalogRefreshTest do
     assert Repo.get_by!(Episode, tmdb_episode_id: 550).season_id == s2.id
   end
 
-  test "leaves a row that vanished from TMDB untouched" do
+  test "deletes an unmanaged vanished episode and removes it from the wanted set" do
     s = series(:all)
     sn = season(s, 1)
-    keep = episode(sn, %{tmdb_episode_id: 560, episode_number: 1})
-    gone = episode(sn, %{tmdb_episode_id: 561, episode_number: 2, file_path: "/lib/gone.mkv"})
+    keep = episode(sn, %{tmdb_episode_id: 559, episode_number: 1})
+
+    gone =
+      episode(sn, %{
+        tmdb_episode_id: 560,
+        episode_number: 2,
+        monitored: true,
+        air_date: @past
+      })
+
+    coordinate =
+      episode_coordinate_fixture(
+        s,
+        %{
+          source: "tmdb",
+          scheme: "absolute",
+          namespace: "provider",
+          canonical_value: "2",
+          precedence: :curated
+        },
+        [gone.id]
+      )
+
+    membership_id = hd(coordinate.memberships).id
+    assert gone.id in Enum.map(Catalog.wanted_episodes(), & &1.id)
 
     stub_tmdb(s, [
-      {1, [%{tmdb_episode_id: 560, episode_number: 1, title: "Kept", air_date: @past}]}
+      {1, [%{tmdb_episode_id: 559, episode_number: 1, title: "Kept", air_date: @past}]}
+    ])
+
+    assert {:ok, _} = Catalog.refresh_series(s)
+    refute Repo.get(Episode, gone.id)
+    refute Repo.get(EpisodeCoordinateMembership, membership_id)
+    refute gone.id in Enum.map(Catalog.wanted_episodes(), & &1.id)
+    assert Repo.get!(Episode, keep.id).title == "Kept"
+  end
+
+  test "preserves a vanished row that owns a file" do
+    s = series(:all)
+    sn = season(s, 1)
+    keep = episode(sn, %{tmdb_episode_id: 561, episode_number: 1})
+    gone = episode(sn, %{tmdb_episode_id: 562, episode_number: 2, file_path: "/lib/gone.mkv"})
+
+    stub_tmdb(s, [
+      {1, [%{tmdb_episode_id: 561, episode_number: 1, title: "Kept", air_date: @past}]}
     ])
 
     assert {:ok, _} = Catalog.refresh_series(s)
     assert Repo.get!(Episode, gone.id).file_path == "/lib/gone.mkv"
     assert Repo.get!(Episode, keep.id).title == "Kept"
+  end
+
+  test "preserves a vanished row with a manual coordinate" do
+    s = series(:all)
+    sn = season(s, 1)
+    gone = episode(sn, %{tmdb_episode_id: 563, episode_number: 1})
+
+    coordinate =
+      episode_coordinate_fixture(
+        s,
+        %{
+          source: "manual",
+          scheme: "absolute",
+          namespace: "manual",
+          canonical_value: "99",
+          precedence: :manual
+        },
+        [gone.id]
+      )
+
+    membership_id = hd(coordinate.memberships).id
+    stub_tmdb(s, [{1, []}])
+
+    assert {:ok, _} = Catalog.refresh_series(s)
+    assert Repo.get!(Episode, gone.id)
+    assert Repo.get!(EpisodeCoordinateMembership, membership_id)
   end
 
   test "does NOT renumber an episode with an in-flight grab (would mislabel its files)" do
@@ -773,10 +839,10 @@ defmodule Cinder.CatalogRefreshTest do
     assert Repo.aggregate(from(e in Episode, where: e.season_id == ^s2.id), :count) == 1
   end
 
-  test "a finalize collision with a vanished row's slot restores the original number (never -id)" do
+  test "an unmanaged vanished row frees a matched episode's renumber target" do
     s = series(:all)
     sn = season(s, 1)
-    # A is renumbered into B's slot (2); B vanished from TMDB so its row still holds (sn, 2).
+    # A is renumbered into B's slot (2); B vanished from TMDB and carries no managed state.
     a = episode(sn, %{tmdb_episode_id: 1, episode_number: 1, monitored: true, air_date: @past})
     b = episode(sn, %{tmdb_episode_id: 2, episode_number: 2})
 
@@ -787,12 +853,29 @@ defmodule Cinder.CatalogRefreshTest do
     assert {:ok, _} = Catalog.refresh_series(s)
 
     ra = Repo.get!(Episode, a.id)
-    rb = Repo.get!(Episode, b.id)
-    # A can't take slot 2 (held by vanished B), so it is restored to its original 1 — NOT the
-    # negative park sentinel. B is left untouched.
-    assert ra.episode_number == 1
-    assert rb.episode_number == 2
-    # A stays a valid, grab-able wanted episode (positive number leaks nothing into the poller).
+    assert ra.episode_number == 2
+    refute Repo.get(Episode, b.id)
     assert a.id in Enum.map(Catalog.wanted_episodes(), & &1.id)
+  end
+
+  test "a preserved vanished blocker is logged once and the matched row is restored" do
+    s = series(:all)
+    sn = season(s, 1)
+    a = episode(sn, %{tmdb_episode_id: 3, episode_number: 1})
+    b = episode(sn, %{tmdb_episode_id: 4, episode_number: 2, file_path: "/lib/b.mkv"})
+
+    stub_tmdb(s, [
+      {1, [%{tmdb_episode_id: 3, episode_number: 2, title: "A", air_date: @past}]}
+    ])
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:ok, _} = Catalog.refresh_series(s)
+      end)
+
+    assert Repo.get!(Episode, a.id).episode_number == 1
+    assert Repo.get!(Episode, b.id).episode_number == 2
+    assert log =~ "series #{s.id}"
+    assert length(Regex.scan(~r/preserved episode #{b.id} blocks/, log)) == 1
   end
 end

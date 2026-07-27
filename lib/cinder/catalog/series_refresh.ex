@@ -10,7 +10,18 @@ defmodule Cinder.Catalog.SeriesRefresh do
   """
   require Logger
 
-  alias Cinder.Catalog.{Episode, Identity, Season, Series, SeriesCatalog}
+  alias Cinder.Catalog.{
+    Episode,
+    EpisodeCoordinate,
+    EpisodeCoordinateMembership,
+    GrabFile,
+    Identity,
+    Season,
+    Series,
+    SeriesCatalog
+  }
+
+  alias Cinder.Download.IntentEpisode
   alias Cinder.Repo
 
   import Ecto.Query
@@ -21,8 +32,8 @@ defmodule Cinder.Catalog.SeriesRefresh do
   `tmdb_episode_id` (series-wide, so a renumber that moves an episode across seasons is handled)
   and updated in place — preserving `monitored`, `file_path`, `grab_id`, and the attempt counters.
   Genuinely new regular episodes are inserted with `monitored` per the season flag; classified
-  specials start unmonitored. New seasons are inserted; rows that vanished from TMDB are left
-  untouched.
+  specials start unmonitored. New seasons are inserted; rows that vanished from TMDB are deleted
+  only when they carry no file, grab, import, or operator-owned identity state.
 
   Returns `{:ok, series}`, or `{:error, reason}` if a TMDB fetch fails (short-circuits before any
   write, mirroring `Cinder.Catalog.SeriesCatalog.create_series/4`).
@@ -131,16 +142,21 @@ defmodule Cinder.Catalog.SeriesRefresh do
         not is_nil(fe.tmdb_episode_id) and Map.has_key?(by_tmdb, fe.tmdb_episode_id)
       end)
 
+    fetched_tmdb_ids =
+      targets
+      |> Enum.map(fn {fe, _season} -> fe.tmdb_episode_id end)
+      |> MapSet.new()
+
     matched =
       Enum.map(matched, fn {fe, season} ->
-        {Map.fetch!(by_tmdb, fe.tmdb_episode_id), fe, season.id}
+        {Map.fetch!(by_tmdb, fe.tmdb_episode_id), fe, season}
       end)
 
     # Never renumber an episode with an in-flight grab: its release's files are matched + named by
     # the episode's CURRENT SxxEyy at import, so moving it mid-download would mislabel them (or
     # leave them unmatched). Leave it untouched (like a vanished row); the next refresh after the
     # grab finishes reconciles it.
-    matched = Enum.filter(matched, fn {existing, _fe, _season_id} -> is_nil(existing.grab_id) end)
+    matched = Enum.filter(matched, fn {existing, _fe, _season} -> is_nil(existing.grab_id) end)
 
     # PASS 1 — park each matched row's real slot with a unique non-colliding sentinel (-id) in its
     # current season (no season_id change here), so PASS 2 never collides matched-vs-matched. Carry
@@ -149,16 +165,21 @@ defmodule Cinder.Catalog.SeriesRefresh do
     # episode_number, leaving it stuck at the sentinel. Diffing against the (negative) parked number
     # always fires.
     parked =
-      Enum.map(matched, fn {existing, fe, season_id} ->
-        {park_episode(existing), existing, fe, season_id}
+      Enum.map(matched, fn {existing, fe, season} ->
+        {park_episode(existing), existing, fe, season}
       end)
+
+    # Stable-id matching is complete and every movable row is parked, so a cross-season or
+    # same-season move cannot be mistaken for a vanished episode. Retire only rows with no managed
+    # state before PASS 2, freeing their old slots for genuine renumber targets.
+    retire_vanished(by_tmdb, fetched_tmdb_ids)
 
     # PASS 2 — finalize each matched row to its final (season_id, episode_number). All matched slots
     # are now free, so matched-vs-matched never collides. The only residual is a target slot still
-    # held by a *vanished* row (left untouched); finalize_or_restore then puts the row back at its
-    # original positive slot rather than stranding it at the -id park sentinel.
-    Enum.each(parked, fn {parked_ep, original, fe, season_id} ->
-      finalize_or_restore(parked_ep, original, season_id, fe)
+    # held by a preserved vanished row; finalize_or_restore then puts the row back at its original
+    # positive slot rather than stranding it at the -id park sentinel.
+    Enum.each(parked, fn {parked_ep, original, fe, season} ->
+      finalize_or_restore(series, parked_ep, original, season, fe)
     end)
 
     # PASS 3 — insert new rows, after finalize so slots reflect final state. Use the season's
@@ -198,6 +219,48 @@ defmodule Cinder.Catalog.SeriesRefresh do
     )
   end
 
+  defp retire_vanished(by_tmdb, fetched_tmdb_ids) do
+    by_tmdb
+    |> Enum.reject(fn {tmdb_episode_id, _episode} ->
+      MapSet.member?(fetched_tmdb_ids, tmdb_episode_id)
+    end)
+    |> Enum.map(&elem(&1, 1))
+    |> retire_unmanaged()
+  end
+
+  defp retire_unmanaged([]), do: :ok
+
+  defp retire_unmanaged(vanished) do
+    ids = Enum.map(vanished, & &1.id)
+
+    protected_ids =
+      Repo.all(
+        from m in EpisodeCoordinateMembership,
+          join: c in EpisodeCoordinate,
+          on: c.id == m.episode_coordinate_id,
+          where: m.episode_id in ^ids and c.precedence == :manual,
+          select: m.episode_id
+      )
+      |> Kernel.++(
+        Repo.all(from f in GrabFile, where: f.episode_id in ^ids, select: f.episode_id)
+      )
+      |> Kernel.++(
+        Repo.all(from r in IntentEpisode, where: r.episode_id in ^ids, select: r.episode_id)
+      )
+      |> MapSet.new()
+
+    retired_ids =
+      for episode <- vanished,
+          Episode.file_paths(episode) == [],
+          is_nil(episode.grab_id),
+          episode.classification_source != "manual",
+          not MapSet.member?(protected_ids, episode.id),
+          do: episode.id
+
+    Repo.delete_all(from e in Episode, where: e.id in ^retired_ids)
+    :ok
+  end
+
   defp ensure_season(_series, existing, number) when is_map_key(existing, number),
     do: Map.fetch!(existing, number)
 
@@ -226,10 +289,10 @@ defmodule Cinder.Catalog.SeriesRefresh do
   # the two-pass can't resolve without touching vanished rows — restore the row to its original
   # positive slot rather than leaving it at the -id park sentinel, which would otherwise leak a
   # negative episode_number into wanted_episodes → the TV poller's search/import.
-  defp finalize_or_restore(parked_ep, original, season_id, fe) do
+  defp finalize_or_restore(series, parked_ep, original, season, fe) do
     changeset =
       Episode.refresh_changeset(parked_ep, %{
-        season_id: season_id,
+        season_id: season.id,
         episode_number: fe.episode_number,
         title: fe.title,
         # Merge-over (see Cinder.Catalog.merge_localizations/2): a failed non-canonical season
@@ -245,8 +308,16 @@ defmodule Cinder.Catalog.SeriesRefresh do
         :ok
 
       {:error, _} ->
+        blocker =
+          Repo.get_by(Episode,
+            season_id: season.id,
+            episode_number: fe.episode_number
+          )
+
         Logger.warning(
-          "refresh: episode #{original.id} target slot occupied by a vanished row; " <>
+          "refresh: series #{series.id} #{inspect(series.title)} preserved episode " <>
+            "#{blocker && blocker.id} blocks " <>
+            "#{Episode.code(season.season_number, fe.episode_number)} for episode #{original.id}; " <>
             "restoring to its original number #{original.episode_number} instead"
         )
 
