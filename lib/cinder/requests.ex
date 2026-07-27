@@ -26,6 +26,16 @@ defmodule Cinder.Requests do
     Repo.aggregate(from(r in Request, where: r.status == :pending), :count)
   end
 
+  @doc """
+  Announce that a user's requests vanished out-of-band — the FK cascade of a user deletion
+  removes them without any per-request event, which would leave the pending nav badge and the
+  approval queue stale. The rows are already gone, so there is no payload; subscribers re-read.
+  Post-commit only.
+  """
+  def announce_pruned_for_deleted_user do
+    broadcast({:request_deleted, nil})
+  end
+
   def list_requests do
     Repo.all(from r in Request, order_by: [desc: r.id], preload: [:user])
   end

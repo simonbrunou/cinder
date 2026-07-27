@@ -483,7 +483,7 @@ msgstr ""
 #: lib/cinder_web/live/entity_discovery_live.ex:135
 #: lib/cinder_web/live/entity_discovery_live.ex:188
 #: lib/cinder_web/live/movie_discovery_live.ex:153
-#: lib/cinder_web/live/series_discovery_live.ex:323
+#: lib/cinder_web/live/series_discovery_live.ex:336
 #: lib/cinder_web/user_auth.ex:375
 #: lib/cinder_web/user_auth.ex:388
 #, elixir-autogen, elixir-format
@@ -928,7 +928,7 @@ msgstr ""
 msgid "Remove download after a Usenet import"
 msgstr ""
 
-#: lib/cinder_web/live/series_discovery_live.ex:411
+#: lib/cinder_web/live/series_discovery_live.ex:424
 #, elixir-autogen, elixir-format
 msgid "Request"
 msgstr ""
@@ -958,8 +958,8 @@ msgstr ""
 msgid "Requested movies move through here."
 msgstr ""
 
-#: lib/cinder_web/live/series_discovery_live.ex:367
-#: lib/cinder_web/live/series_discovery_live.ex:407
+#: lib/cinder_web/live/series_discovery_live.ex:380
+#: lib/cinder_web/live/series_discovery_live.ex:420
 #, elixir-autogen, elixir-format
 msgid "Requesting…"
 msgstr ""
@@ -1170,7 +1170,7 @@ msgid "TMDB didn't respond. Try again."
 msgstr ""
 
 #: lib/cinder_web/live/series_detail_components.ex:381
-#: lib/cinder_web/live/series_discovery_live.ex:358
+#: lib/cinder_web/live/series_discovery_live.ex:371
 #, elixir-autogen, elixir-format
 msgid "TMDB returned no season data for this series."
 msgstr ""
@@ -2106,7 +2106,7 @@ msgstr ""
 msgid "May"
 msgstr ""
 
-#: lib/cinder_web/live/series_discovery_live.ex:355
+#: lib/cinder_web/live/series_discovery_live.ex:368
 #, elixir-autogen, elixir-format
 msgid "No requestable seasons"
 msgstr ""
@@ -2136,7 +2136,7 @@ msgstr ""
 msgid "That download is already gone."
 msgstr ""
 
-#: lib/cinder_web/live/series_discovery_live.ex:359
+#: lib/cinder_web/live/series_discovery_live.ex:372
 #, elixir-autogen, elixir-format
 msgid "This series only has specials, which can't be requested yet."
 msgstr ""
@@ -4348,11 +4348,6 @@ msgstr ""
 msgid "%{count} pending"
 msgstr ""
 
-#: lib/cinder_web/live/series_discovery_live.ex:236
-#, elixir-autogen, elixir-format
-msgid "Added %{count} season(s) of %{title}."
-msgstr ""
-
 #: lib/cinder_web/live/setup_live.ex:153
 #, elixir-autogen, elixir-format
 msgid "Approval, availability, and failure alerts stay off until you add an email (SMTP) or Discord webhook. Set those up in the Notifications section above now, or later in Settings — this step is optional and won't block Finish."
@@ -4383,24 +4378,14 @@ msgstr ""
 msgid "Request again"
 msgstr ""
 
-#: lib/cinder_web/live/series_discovery_live.ex:368
+#: lib/cinder_web/live/series_discovery_live.ex:381
 #, elixir-autogen, elixir-format
 msgid "Request all not-yet-requested seasons"
 msgstr ""
 
-#: lib/cinder_web/live/series_discovery_live.ex:372
+#: lib/cinder_web/live/series_discovery_live.ex:385
 #, elixir-autogen, elixir-format
 msgid "Request all seasons"
-msgstr ""
-
-#: lib/cinder_web/live/series_discovery_live.ex:240
-#, elixir-autogen, elixir-format
-msgid "Requested %{count} season(s) of %{title}. Awaiting approval."
-msgstr ""
-
-#: lib/cinder_web/live/series_discovery_live.ex:248
-#, elixir-autogen, elixir-format
-msgid "Stopped at your request limit; %{count} season(s) not submitted."
 msgstr ""
 
 #: lib/cinder/notifier/email.ex:101
@@ -4417,3 +4402,24 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "Your request for %{title} was declined"
 msgstr ""
+
+#: lib/cinder_web/live/series_discovery_live.ex:237
+#, elixir-autogen, elixir-format
+msgid "Added %{count} season of %{title}."
+msgid_plural "Added %{count} seasons of %{title}."
+msgstr[0] ""
+msgstr[1] ""
+
+#: lib/cinder_web/live/series_discovery_live.ex:247
+#, elixir-autogen, elixir-format
+msgid "Requested %{count} season of %{title}. Awaiting approval."
+msgid_plural "Requested %{count} seasons of %{title}. Awaiting approval."
+msgstr[0] ""
+msgstr[1] ""
+
+#: lib/cinder_web/live/series_discovery_live.ex:258
+#, elixir-autogen, elixir-format
+msgid "Stopped at your request limit; %{count} season not submitted."
+msgid_plural "Stopped at your request limit; %{count} seasons not submitted."
+msgstr[0] ""
+msgstr[1] ""

@@ -156,7 +156,7 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
     # Season 0 (Specials) is never fanned out.
     refute Enum.any?(requests, &(&1.season_number == 0))
 
-    assert html =~ "Requested 2 season(s)"
+    assert html =~ "Requested 2 seasons"
     # Every season now carries a badge, so the per-season and bulk buttons are gone.
     refute has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
     refute has_element?(lv, "button", "Request all seasons")
@@ -173,7 +173,7 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
 
     # Only the first season fit under the quota-of-1; the fan-out halted before the second.
     assert [%{season_number: 1, status: :pending}] = Cinder.Requests.list_for_user(user)
-    assert html =~ "Requested 1 season(s)"
+    assert html =~ "Requested 1 season of"
     assert html =~ "Stopped at your request limit"
   end
 

@@ -233,11 +233,21 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   # In one fan-out a user is either an auto-approver (all approved) or not (all pending); a
   # non-zero pending count means the plain "requested, awaiting approval" copy fits.
   defp fan_out_success_message(0, n, title),
-    do: gettext("Added %{count} season(s) of %{title}.", count: n, title: title)
+    do:
+      ngettext(
+        "Added %{count} season of %{title}.",
+        "Added %{count} seasons of %{title}.",
+        n,
+        count: n,
+        title: title
+      )
 
   defp fan_out_success_message(_pending, n, title),
     do:
-      gettext("Requested %{count} season(s) of %{title}. Awaiting approval.",
+      ngettext(
+        "Requested %{count} season of %{title}. Awaiting approval.",
+        "Requested %{count} seasons of %{title}. Awaiting approval.",
+        n,
         count: n,
         title: title
       )
@@ -245,7 +255,10 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   defp fan_out_tail(%{quota_stopped: true}, not_submitted),
     do:
       " " <>
-        gettext("Stopped at your request limit; %{count} season(s) not submitted.",
+        ngettext(
+          "Stopped at your request limit; %{count} season not submitted.",
+          "Stopped at your request limit; %{count} seasons not submitted.",
+          not_submitted,
           count: not_submitted
         )
 
