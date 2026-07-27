@@ -280,8 +280,8 @@ defmodule Cinder.Catalog do
   # counter or download-metric field (retry_or_fail/2, update_movie_download_metrics/2).
   #
   # `:requested` is kept a permissive source for every other status: real callers only ever jump
-  # :requested → :searching/:downloading/:no_match/:search_failed (the last two via the
-  # pre-:searching :no_imdb_id/:tmdb_unavailable branches of Download.start/1) and :requested →
+  # :requested → :searching/:downloading/:search_failed (the last via a poller write-back park when
+  # Download.start/1 failed before reaching :searching, e.g. :tmdb_unavailable) and :requested →
   # :cancelled (transition/2's own documented contract — see catalog_test.exs "accepts :cancelled
   # as a valid status"), but the test suite also uses the unguarded API as a one-hop fixture
   # shortcut (test/support/catalog_fixtures.ex's movie_fixture/1) to seed a movie directly at

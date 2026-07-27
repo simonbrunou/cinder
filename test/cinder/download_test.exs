@@ -255,12 +255,29 @@ defmodule Cinder.DownloadTest do
     assert {:ok, %Movie{status: :no_match}} = Download.start(movie)
   end
 
-  test "returns {:error, :no_imdb_id} and leaves the movie :requested when imdb is genuinely missing" do
-    movie = movie_fixture(%{imdb_id: nil})
+  # Issue #195: a genuinely id-less TMDB title used to park unsearched and permanently.
+  test "falls back to a free-text search when TMDB has no imdb id for the movie" do
+    movie = movie_fixture(%{imdb_id: nil, year: 2010})
     expect(Cinder.Catalog.TMDBMock, :get_movie, fn _ -> {:ok, %{imdb_id: nil}} end)
 
-    assert {:error, :no_imdb_id} = Download.start(movie)
-    assert %Movie{status: :requested} = Repo.get!(Movie, movie.id)
+    expect(Cinder.Acquisition.IndexerMock, :search_movie_query, fn "Inception 2010", [] ->
+      {:ok, [survivable_result()]}
+    end)
+
+    expect(Cinder.Download.ClientMock, :add, fn _, _opts -> {:ok, "hash-free-text"} end)
+
+    assert {:ok, %Movie{status: :downloading}} = Download.start(movie)
+  end
+
+  test "parks :no_match when the free-text fallback finds only another movie" do
+    movie = movie_fixture(%{imdb_id: nil, year: 2010})
+    expect(Cinder.Catalog.TMDBMock, :get_movie, fn _ -> {:ok, %{imdb_id: nil}} end)
+
+    expect(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _query, [] ->
+      {:ok, [%{survivable_result() | title: "Interstellar.2014.1080p.BluRay.x264-GRP"}]}
+    end)
+
+    assert {:ok, %Movie{status: :no_match}} = Download.start(movie)
   end
 
   test "returns {:error, :tmdb_unavailable} on a transient TMDB error, movie stays :requested" do

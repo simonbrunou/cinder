@@ -406,6 +406,95 @@ defmodule Cinder.AcquisitionTest do
     end
   end
 
+  # Issue #195 — the free-text fallback for a TMDB title with no IMDb id. Without the id token
+  # the title+year guard is the only thing pinning identity, so both halves are load-bearing.
+  describe "best_release_by_title/3" do
+    test "queries \"Title Year\" and selects a release the guard accepts" do
+      expect(Cinder.Acquisition.IndexerMock, :search_movie_query, fn "Dune 2021", [] ->
+        {:ok, [raw(title: "[TGx] Dune.2021.1080p.BluRay.x264-GRP")]}
+      end)
+
+      assert {:ok, %Release{title: "[TGx] Dune.2021.1080p.BluRay.x264-GRP"}} =
+               Acquisition.best_release_by_title("Dune", 2021)
+    end
+
+    # The title must be EVERYTHING before the year token — a run-anywhere match takes all three of
+    # these, and the biggest one would win the scoring.
+    test "rejects a remake, a longer title, and a title the needle only ends" do
+      expect(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _query, [] ->
+        {:ok,
+         [
+           raw(title: "Dune.1984.1080p.BluRay.x264-GRP"),
+           raw(title: "Dune.Drifter.2021.1080p.WEB-DL-GRP"),
+           raw(title: "Sand.Dune.2021.2160p.BluRay.x265-GRP")
+         ]}
+      end)
+
+      assert Acquisition.best_release_by_title("Dune", 2021) == :no_match
+    end
+
+    test "with no known year, anchors on the LAST year token only" do
+      expect(Cinder.Acquisition.IndexerMock, :search_movie_query, fn "Dune", [] ->
+        {:ok,
+         [
+           raw(title: "Dune.Drifter.1080p.WEB-DL-GRP"),
+           raw(title: "Sand.Dune.2021.2160p.BluRay.x265-GRP"),
+           raw(title: "Dune.1984.1080p.BluRay.x264-GRP")
+         ]}
+      end)
+
+      assert {:ok, %Release{title: "Dune.1984.1080p.BluRay.x264-GRP"}} =
+               Acquisition.best_release_by_title("Dune", nil)
+    end
+
+    # Anchoring on *any* year token would read the 2049 in this release's title as its year and
+    # hand the sequel over for plain "Blade Runner".
+    test "with no known year, a title ending in a year is not a match for its prefix" do
+      expect(Cinder.Acquisition.IndexerMock, :search_movie_query, 2, fn _query, [] ->
+        {:ok, [raw(title: "Blade.Runner.2049.2017.1080p.BluRay.x264-GRP")]}
+      end)
+
+      assert Acquisition.best_release_by_title("Blade Runner", nil) == :no_match
+      assert {:ok, %Release{}} = Acquisition.best_release_by_title("Blade Runner 2049", nil)
+    end
+
+    test "accepts a title that itself ends in a year" do
+      expect(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _query, [] ->
+        {:ok, [raw(title: "Blade.Runner.2049.2017.1080p.BluRay.x264-GRP")]}
+      end)
+
+      assert {:ok, %Release{}} = Acquisition.best_release_by_title("Blade Runner 2049", 2017)
+    end
+
+    test "drops a release naming no year at all when the movie's year is known" do
+      expect(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _query, [] ->
+        {:ok, [raw(title: "Dune.1080p.BluRay.x264-GRP")]}
+      end)
+
+      assert Acquisition.best_release_by_title("Dune", 2021) == :no_match
+    end
+
+    test "passes through an indexer error" do
+      expect(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _q, _o -> {:error, :down} end)
+
+      assert Acquisition.best_release_by_title("Dune", 2021) == {:error, :down}
+    end
+
+    # The guard is strict enough to fail closed on real conventions it can't parse (German scene
+    # puts the language before the year). Fine for automatic selection — but the manual panel is
+    # the operator's override, so it must keep listing them, exactly as `list_releases/2` does.
+    test "list_releases_by_title/3 still lists a release the guard rejects" do
+      expect(Cinder.Acquisition.IndexerMock, :search_movie_query, 2, fn _query, [] ->
+        {:ok, [raw(title: "Dune.German.2021.AC3.BDRiP.x264-GRP")]}
+      end)
+
+      assert :no_match = Acquisition.best_release_by_title("Dune", 2021, max_size: 20 * @gb)
+
+      assert {:ok, [{%Release{title: "Dune.German.2021.AC3.BDRiP.x264-GRP"}, _verdict}]} =
+               Acquisition.list_releases_by_title("Dune", 2021, max_size: 20 * @gb)
+    end
+  end
+
   describe "list_releases_tv/3 alternate numbering" do
     test "unions and deduplicates scene and aired season searches with stable episode ids" do
       episodes = [

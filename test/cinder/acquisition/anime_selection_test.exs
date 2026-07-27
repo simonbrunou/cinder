@@ -393,6 +393,19 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
              Acquisition.best_anime_movie("tt4425200", context, opts)
   end
 
+  # Issue #195: an Anime movie TMDB has no IMDb id for used to park before ever reaching its own
+  # free-text planner. The id-scoped query is now simply omitted; the title guard still applies.
+  test "an Anime movie with no imdb id searches free-text only" do
+    context = %{kind: :movie, title: "Suzume", year: 2022, aliases: []}
+
+    expect(IndexerMock, :search_movie_query, fn "Suzume 2022", categories: [5070] ->
+      {:ok, [raw("[Group] Suzume 2022 [1080p]", "no-imdb"), raw("[Group] Belle 2021", "other")]}
+    end)
+
+    assert {:ok, %Release{download_url: "no-imdb"}} =
+             Acquisition.best_anime_movie(nil, context, [])
+  end
+
   test "a complete contradictory audio claim is rejected while unknown evidence survives", %{
     preference_cases: cases
   } do

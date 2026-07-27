@@ -120,6 +120,10 @@ defmodule CinderWeb.ManualSearchComponent do
     end
   end
 
+  defp search(:standard, :movie, %{imdb_id: imdb_id} = target, _season, opts)
+       when imdb_id in [nil, ""],
+       do: Acquisition.list_releases_by_title(target.title, target.year, opts)
+
   defp search(:standard, :movie, target, _season, opts),
     do: Acquisition.list_releases(target.imdb_id, opts)
 
