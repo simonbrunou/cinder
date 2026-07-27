@@ -14,10 +14,12 @@ defmodule Cinder.Acquisition.Language do
   An untagged release means **English audio** by scene convention (a non-English
   track is tagged; English is the unmarked default), so it satisfies an English
   target and nothing else. That is the fix for the "untagged assumed to be the
-  original" bug — a foreign dub the parser couldn't tag, or a name with no tag, no
-  longer passes as a non-English title's "original". `"any"` / an unknown original
-  disables the filter. Filter-only: the scorer's ranking is untouched. The code↔tag
-  table is derived from `Cinder.Acquisition.Parser` so the two can never drift.
+  original" bug — a foreign dub the parser couldn't tag no longer *matches* a
+  non-English title's "original". The one relaxation (see `keep?/3`): the soft
+  `"original"` pick still *keeps* untagged releases in the pool, ranked below every
+  tagged match, because non-English scene groups routinely publish untagged
+  original-audio releases. `"any"` / an unknown original disables the filter. The
+  code↔tag table is derived from `Cinder.Acquisition.Parser` so the two can never drift.
   """
   alias Cinder.Acquisition.Parser
   alias Cinder.Acquisition.Release
@@ -56,9 +58,20 @@ defmodule Cinder.Acquisition.Language do
   def filter(releases, preferred, original) do
     case target(preferred, original) do
       nil -> releases
-      t -> Enum.filter(releases, &satisfies?(&1, t))
+      t -> Enum.filter(releases, &keep?(&1, t, strict?(preferred)))
     end
   end
+
+  # A non-English title's own scene groups routinely publish original-audio releases with a bare
+  # name and no language tag ("Guru.2025.1080p.WEB.H.264-FW" is French), so reading untagged as
+  # English strands those titles at :no_match even when a perfect candidate is on the indexer
+  # (issue #191). The soft "original" pick therefore keeps untagged releases; an explicit
+  # french/dual pick stays strict. Ranking makes this safe in practice: `Scorer.rank_key/2` sorts
+  # a tag-satisfying release ahead of an untagged one, so untagged only wins when nothing tagged
+  # survives the band — and the import-time MediaInfo check (`audio_satisfies?/2`, when ffprobe is
+  # configured) parks a provably wrong-language grab.
+  defp keep?(%Release{language: language}, _target, false) when language in [nil, ""], do: true
+  defp keep?(release, target, _strict), do: satisfies?(release, target)
 
   @doc "The valid `preferred_language` values (the per-title Audio picks)."
   def preferences, do: ["original", "french", "dual", "any"]

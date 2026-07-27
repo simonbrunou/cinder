@@ -87,12 +87,20 @@ defmodule Cinder.Acquisition.LanguageTest do
       assert Language.filter(releases, "french", "en") == [keep_fr, keep_multi]
     end
 
-    test "original pick on a non-English film keeps only its original-language tag + MULTI" do
+    test "original pick on a non-English film drops a wrong-language tag but keeps untagged" do
       keep_fr = rel("FRENCH")
       keep_multi = rel("MULTI")
-      # A Hungarian dub and an untagged (English) release are both dropped for a French original.
-      releases = [keep_fr, rel("HUNGARIAN"), rel(nil), keep_multi]
-      assert Language.filter(releases, "original", "fr") == [keep_fr, keep_multi]
+      # A Hungarian dub is a confirmed mismatch and dropped. An untagged release is kept: French
+      # scene groups routinely publish original-audio releases with a bare name (issue #191), and
+      # the scorer ranks it below every tagged match.
+      keep_untagged = rel(nil)
+      releases = [keep_fr, rel("HUNGARIAN"), keep_untagged, keep_multi]
+      assert Language.filter(releases, "original", "fr") == [keep_fr, keep_untagged, keep_multi]
+    end
+
+    test "an explicit french pick stays strict about untagged releases" do
+      keep_fr = rel("FRENCH")
+      assert Language.filter([keep_fr, rel(nil)], "french", "fr") == [keep_fr]
     end
 
     test "dual filter behaves exactly like french: keeps FRENCH + MULTI, drops the rest" do

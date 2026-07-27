@@ -314,9 +314,10 @@ defmodule Cinder.AcquisitionTest do
              )
   end
 
-  test "best_release: an untagged release is treated as English, not a non-English original" do
-    # No language token → English by scene convention → dropped for a French 'original' pick,
-    # so it can't masquerade as the French original and outscore the real French release.
+  test "best_release: an untagged release never outranks a confirmed original-language one" do
+    # No language token → not a confirmed match → ranked below the tagged FRENCH release, so it
+    # can't masquerade as the French original and outscore the real one (it is a bigger 1080p,
+    # which wins on every non-language axis).
     expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
       {:ok,
        [
@@ -328,6 +329,27 @@ defmodule Cinder.AcquisitionTest do
     assert {:ok, %Release{language: "FRENCH"}} =
              Acquisition.best_release("tt1",
                max_size: 20 * @gb,
+               preferred_language: "original",
+               original_language: "fr"
+             )
+  end
+
+  test "best_release: a non-English title grabs an untagged release when no tagged one fits" do
+    # Issue #191 ("Guru", original_language fr): French scene groups publish original-audio
+    # releases with a bare name. The tagged alternatives here are out of band (a 19 GB BluRay),
+    # so a strict untagged=English read left the movie at :no_match with a perfect candidate on
+    # the indexer.
+    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt1" ->
+      {:ok,
+       [
+         raw(title: "Guru.2025.FRENCH.1080p.BluRay.x264-GRP", size: 19 * @gb),
+         raw(title: "Guru.2025.1080p.WEB.H.264-FW", size: 8 * @gb)
+       ]}
+    end)
+
+    assert {:ok, %Release{group: "FW"}} =
+             Acquisition.best_release("tt1",
+               max_size: 12 * @gb,
                preferred_language: "original",
                original_language: "fr"
              )

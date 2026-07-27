@@ -623,15 +623,23 @@ defmodule Cinder.Catalog do
   end
 
   @doc """
-  Reaps a stalled `:downloading` movie (the stall reaper): one transaction guard-resets it to
+  Re-queues a `:downloading` movie whose download died: one transaction guard-resets it to
   `:requested` (clearing the dead download fields, bumping `search_attempts` for backoff) and fences
   the client download for removal; after commit the client job + reserved intent are torn down, the
-  release is blocklisted `:stalled` (operator-recoverable via `retry_movie/1`), and the reset is
-  announced. Returns `{:error, :stale_status}` if the movie left `:downloading` mid-tick (the poller
-  ignores it and re-derives next tick). Mirrors the guarded-write + post-commit-publish pattern of
-  `account_active_movie_retry/1`; the fence reads the **pre-clear** struct (its `download_id`).
+  release is blocklisted under `reason`, and the reset is announced. Returns `{:error, :stale_status}`
+  if the movie left `:downloading` mid-tick (the poller ignores it and re-derives next tick). Mirrors
+  the guarded-write + post-commit-publish pattern of `account_active_movie_retry/1`; the fence reads
+  the **pre-clear** struct (its `download_id`).
+
+  Two callers, both "this download is dead, try the next-best release": the stall reaper
+  (`:stalled` — a timeout, so `retry_movie/1` clears it) and the poller's terminal client-failure
+  path (`:download_error`/`:torrent_not_found` — the client positively reported the job dead, so the
+  row persists). The blocklist is what bounds the re-queue loop: each dead release shrinks the
+  candidate pool until `Download.start/1` parks `:no_match`.
   """
-  def reap_stalled_movie(%Movie{status: :downloading} = movie) do
+  def requeue_failed_movie(movie, reason \\ :stalled)
+
+  def requeue_failed_movie(%Movie{status: :downloading} = movie, reason) do
     result =
       Repo.transaction(fn ->
         case guarded_movie_transition(
@@ -656,14 +664,14 @@ defmodule Cinder.Catalog do
       Download.cleanup_intents(intent_ids)
       # `movie` (pre-clear) still carries release_title; `requested` has it nil. Post-commit so a
       # stale_status rollback never writes a spurious permanent row.
-      block_release(movie, :stalled)
+      block_release(movie, reason)
       broadcast({:movie_updated, requested})
-      Notifier.notify({:movie_failed, requested, :stalled})
+      Notifier.notify({:movie_failed, requested, reason})
       {:ok, requested}
     end
   end
 
-  def reap_stalled_movie(%Movie{}), do: {:error, :not_reapable}
+  def requeue_failed_movie(%Movie{}, _reason), do: {:error, :not_reapable}
 
   @doc """
   Reaps a stalled `:upgrading` movie (the stall reaper): reverts it to `:available` keeping the live
