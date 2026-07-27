@@ -505,6 +505,10 @@ defmodule CinderWeb.SeriesDetailLiveTest do
        %{conn: conn} do
     series = series_fixture(media_profile: :anime, tvdb_id: 12_345)
 
+    # A shared one-shot latch: group-a resolves only once group-b has, so the stale group-a
+    # result is guaranteed to land last — deterministic ordering without a real-time sleep.
+    group_b_done = :atomics.new(1, [])
+
     stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
       {:ok,
        [
@@ -515,8 +519,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     stub(Cinder.Catalog.TMDBMock, :get_episode_group, fn
       "group-a" ->
-        # Slow enough to guarantee it lands after group-b's fast, no-delay fetch below.
-        Process.sleep(50)
+        Cinder.PollerHelpers.poll_until(fn -> :atomics.get(group_b_done, 1) == 1 end)
 
         {:ok,
          episode_group(
@@ -525,11 +528,15 @@ defmodule CinderWeb.SeriesDetailLiveTest do
          )}
 
       "group-b" ->
-        {:ok,
-         episode_group(
-           id: "group-b",
-           entries: [%{tmdb_episode_id: 502, group_name: "Season 2", group_order: 2, order: 0}]
-         )}
+        result =
+          {:ok,
+           episode_group(
+             id: "group-b",
+             entries: [%{tmdb_episode_id: 502, group_name: "Season 2", group_order: 2, order: 0}]
+           )}
+
+        :atomics.put(group_b_done, 1, 1)
+        result
     end)
 
     {:ok, view, _html} = live_series(conn, series)
@@ -567,8 +574,15 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     stub(Cinder.Catalog.TMDBMock, :get_episode_group, fn
       "group-a" ->
-        # Long enough that, uncanceled, it would still complete well after this test asserts.
-        Process.sleep(50)
+        # Announce this fetch's task pid, then block until explicitly released. Cancellation kills
+        # the blocked task; a merely-discarded-on-arrival fetch would stay alive — which the
+        # aliveness poll below asserts against deterministically, no fixed sleep needed.
+        send(test_pid, {:group_a_running, self()})
+
+        receive do
+          :may_finish -> :ok
+        end
+
         send(test_pid, :group_a_fetch_completed)
         {:ok, episode_group(id: "group-a")}
 
@@ -584,14 +598,17 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     |> form("#series-scene-numbering-form", %{"group_id" => "group-a"})
     |> render_change()
 
+    assert_receive {:group_a_running, group_a_pid}, 1_000
+
     view
     |> form("#series-scene-numbering-form", %{"group_id" => "group-b"})
     |> render_change()
 
+    # The suspender: selecting another group cancels — kills — the still-in-flight group-a task.
+    Cinder.PollerHelpers.poll_until(fn -> not Process.alive?(group_a_pid) end)
+    # Releasing a dead task is a no-op; a still-alive (regressed) task would send and fail refute.
+    send(group_a_pid, :may_finish)
     render_async(view)
-
-    # If group-a's fetch had merely been left running (only discarded on arrival), it would
-    # have sent this well within the wait below.
     refute_receive :group_a_fetch_completed, 200
 
     # R3 finding 4: clearing back to "None" must cancel an in-flight fetch too, not just picking
@@ -600,10 +617,14 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     |> form("#series-scene-numbering-form", %{"group_id" => "group-a"})
     |> render_change()
 
+    assert_receive {:group_a_running, cleared_pid}, 1_000
+
     view
     |> form("#series-scene-numbering-form", %{"group_id" => ""})
     |> render_change()
 
+    Cinder.PollerHelpers.poll_until(fn -> not Process.alive?(cleared_pid) end)
+    send(cleared_pid, :may_finish)
     refute_receive :group_a_fetch_completed, 200
   end
 
