@@ -467,6 +467,30 @@ defmodule Cinder.Settings do
   @doc "All raw settings rows."
   def all, do: Repo.all(Setting)
 
+  @doc """
+  Keys of stored secret settings whose ciphertext cannot be decrypted under the current
+  `SECRET_KEY_BASE` — typically after a key rotation or a restore under a different key. Each names
+  a credential that is silently lost (skipped at load, so the app boots "healthy" while the
+  pipeline can't reach the service) until re-entered. `[]` when every secret decodes, or none are
+  stored. Never returns or logs the ciphertext itself.
+  """
+  @spec undecryptable_secret_keys() :: [String.t()]
+  def undecryptable_secret_keys do
+    for %Setting{is_secret: true} = row <- all(), not decryptable?(row), do: row.key
+  end
+
+  @doc """
+  The English label for a settings `key` (falls back to the key itself when unregistered).
+  Translate for display via `CinderWeb.SettingsLabels.t/1`.
+  """
+  @spec field_label(String.t()) :: String.t()
+  def field_label(key) do
+    case Enum.find(config_fields() ++ global_fields(), &(&1.key == key)) do
+      %{label: label} -> label
+      _ -> key
+    end
+  end
+
   @doc "Returns true if the auto-approve-all setting is explicitly enabled."
   def auto_approve_all?, do: get("auto_approve_all") == "true"
 
@@ -1329,19 +1353,34 @@ defmodule Cinder.Settings do
   defp decoded(%Setting{is_secret: true, value: nil}), do: {:ok, nil}
 
   defp decoded(%Setting{is_secret: true, value: value, key: key}) do
-    # The is_binary guard matters: Cloak's AES-GCM decrypt returns {:ok, :error} (not an
-    # error tuple, not a raise) when the GCM tag fails to authenticate — i.e. the value was
-    # encrypted under a different SECRET_KEY_BASE. Without the guard, :error would be poured
-    # into Application env as a credential. Here it falls to the skip-and-warn branch instead.
+    case decrypt_secret(value) do
+      {:ok, plaintext} -> {:ok, plaintext}
+      :error -> warn_undecryptable(key)
+    end
+  end
+
+  # Decrypts a secret's stored base64 ciphertext. Returns :error (never raises, never logs, never
+  # returns the ciphertext) when the value was encrypted under a different SECRET_KEY_BASE. The
+  # is_binary guard matters: Cloak's AES-GCM decrypt returns {:ok, :error} (not an error tuple, not
+  # a raise) when the GCM tag fails to authenticate — without the guard :error would be poured into
+  # Application env as a credential.
+  defp decrypt_secret(value) do
     with {:ok, ciphertext} <- Base.decode64(value),
          {:ok, plaintext} when is_binary(plaintext) <- Cinder.Vault.decrypt(ciphertext) do
       {:ok, plaintext}
     else
-      _ -> warn_undecryptable(key)
+      _ -> :error
     end
   rescue
-    _ -> warn_undecryptable(key)
+    _ -> :error
   end
+
+  # Whether a secret row decodes cleanly — a non-logging companion to decoded/1 so the /settings +
+  # service-health surfaces can count undecryptable secrets without re-logging on every render.
+  defp decryptable?(%Setting{is_secret: true, value: nil}), do: true
+
+  defp decryptable?(%Setting{is_secret: true, value: value}),
+    do: match?({:ok, _}, decrypt_secret(value))
 
   defp warn_undecryptable(key) do
     Logger.warning("Cinder.Settings: cannot decrypt #{key}; re-enter it in /settings")
