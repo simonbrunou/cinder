@@ -15,6 +15,7 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   @default_base_url "https://api.themoviedb.org"
   @max_response_bytes 4 * 1024 * 1024
   @max_person_credits 60
+  @max_cast 10
   @tmdb_tags %{"en" => "en-US", "fr" => "fr-FR"}
   @tmdb_regions %{"fr" => "FR", "en" => "US"}
 
@@ -37,12 +38,18 @@ defmodule Cinder.Catalog.TMDB.HTTP do
 
   @impl true
   def get_movie(tmdb_id) do
-    # append_to_response folds translations into the same request so we can store
-    # supported localized titles + overviews for display regardless of the active locale.
-    case request(url: "/3/movie/#{tmdb_id}", params: [append_to_response: "translations"]) do
-      {:ok, %{status: 200, body: %{"id" => _} = body}} -> {:ok, normalize(body)}
-      {:ok, %{status: 200}} -> {:error, :unexpected_response}
-      other -> error(other)
+    # append_to_response folds translations (localized titles/overviews for display) and credits
+    # (the detail-page cast strip) into the one request. `cast` + `collection` are render-only —
+    # never persisted (see put_cast/2, put_collection/2).
+    case request(url: "/3/movie/#{tmdb_id}", params: [append_to_response: "translations,credits"]) do
+      {:ok, %{status: 200, body: %{"id" => _} = body}} ->
+        {:ok, body |> normalize() |> put_cast(body) |> put_collection(body)}
+
+      {:ok, %{status: 200}} ->
+        {:error, :unexpected_response}
+
+      other ->
+        error(other)
     end
   end
 
@@ -99,14 +106,20 @@ defmodule Cinder.Catalog.TMDB.HTTP do
 
   @impl true
   def get_series(tmdb_id) do
-    # append_to_response folds external_ids (tvdb_id) and translations into the one details call.
+    # append_to_response folds external_ids (tvdb_id), translations, and credits (the detail-page
+    # cast strip) into the one details call. `cast` is render-only — never persisted.
     case request(
            url: "/3/tv/#{tmdb_id}",
-           params: [append_to_response: "external_ids,translations"]
+           params: [append_to_response: "external_ids,translations,credits"]
          ) do
-      {:ok, %{status: 200, body: %{"id" => _} = body}} -> {:ok, normalize_series(body)}
-      {:ok, %{status: 200}} -> {:error, :unexpected_response}
-      other -> error(other)
+      {:ok, %{status: 200, body: %{"id" => _} = body}} ->
+        {:ok, body |> normalize_series() |> put_cast(body)}
+
+      {:ok, %{status: 200}} ->
+        {:error, :unexpected_response}
+
+      other ->
+        error(other)
     end
   end
 
@@ -555,6 +568,44 @@ defmodule Cinder.Catalog.TMDB.HTTP do
       parts: parts
     }
   end
+
+  # Top-billed cast for the detail-page strip — render-only, never persisted. TMDB orders
+  # credits.cast by billing (`order`); sort defensively, drop malformed entries, cap at @max_cast.
+  # Absent when append_to_response=credits wasn't requested (search/find) or TMDB omits it.
+  defp put_cast(base, body), do: Map.put(base, :cast, cast_from(body["credits"]))
+
+  defp cast_from(%{"cast" => cast}) when is_list(cast) do
+    cast
+    |> Enum.sort_by(&(&1["order"] || 9_999))
+    |> Enum.flat_map(&normalize_cast_member/1)
+    |> Enum.take(@max_cast)
+  end
+
+  defp cast_from(_), do: []
+
+  defp normalize_cast_member(%{"id" => id, "name" => name} = member)
+       when is_integer(id) and is_binary(name) do
+    [
+      %{
+        tmdb_id: id,
+        name: name,
+        character: present_value(member["character"]),
+        profile_path: member["profile_path"]
+      }
+    ]
+  end
+
+  defp normalize_cast_member(_member), do: []
+
+  # "Part of <collection>" link target — movies only, render-only. nil when the movie belongs to
+  # no TMDB collection (belongs_to_collection is a top-level details field, no append needed).
+  defp put_collection(base, body),
+    do: Map.put(base, :collection, collection_from(body["belongs_to_collection"]))
+
+  defp collection_from(%{"id" => id, "name" => name}) when is_integer(id) and is_binary(name),
+    do: %{tmdb_id: id, title: name}
+
+  defp collection_from(_), do: nil
 
   defp normalize(movie) do
     base = %{
