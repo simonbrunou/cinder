@@ -218,17 +218,6 @@ defmodule Cinder.Download.Poller do
       movie.release_title in [nil, ""] ->
         park_unrequeueable(movie, reason, "no release to blocklist")
 
-      # A SECOND, independent bound, because the first one is best-effort by design:
-      # `block_release/2` swallows insert failures (it runs in the poller's isolated park path,
-      # where raising would re-fire every tick), so a row that never lands would silently un-bound
-      # the loop above. Unlike import_attempts, `search_attempts` is NOT reset when a :requested
-      # movie attaches a download — `Download.reconcile_movie/1` only zeroes it when attaching out
-      # of a parked status — so `requeue_failed_movie/2`'s per-requeue bump accumulates across
-      # cycles. Park at the same bound the search pass uses; a healthy movie never gets near it
-      # (a successful grab-and-import bumps it zero times).
-      (movie.search_attempts || 0) >= @max_attempts ->
-        park_unrequeueable(movie, reason, "re-queues exhausted after #{movie.search_attempts}")
-
       true ->
         requeue_failed(movie, reason)
     end
@@ -240,7 +229,25 @@ defmodule Cinder.Download.Poller do
   end
 
   defp requeue_failed(movie, reason) do
-    case Catalog.requeue_failed_movie(movie, reason_code(reason)) do
+    code = reason_code(reason)
+
+    # The blocklist row is what bounds this loop, and `block_release/2` is best-effort by design —
+    # it swallows insert failures because it runs in the poller's isolated park path, where raising
+    # would re-fire every tick. So write the row BEFORE the reset and confirm it landed: without it
+    # the movie would re-grab this same dead release every cycle forever. The check has to happen
+    # here rather than after, because the transition matrix has no edge out of `:requested` — once
+    # re-queued the movie can no longer be parked.
+    Catalog.block_release(movie, code)
+
+    if movie.release_title in Catalog.blocked_release_titles(movie) do
+      requeue_blocked(movie, reason, code)
+    else
+      park_unrequeueable(movie, reason, "release could not be blocklisted")
+    end
+  end
+
+  defp requeue_blocked(movie, reason, code) do
+    case Catalog.requeue_failed_movie(movie, code) do
       {:ok, _requeued} ->
         Logger.warning(
           "movie #{movie.id} download failed (#{inspect(reason)}); blocklisted, re-searching"
@@ -283,6 +290,10 @@ defmodule Cinder.Download.Poller do
          ) do
       case Catalog.requeue_failed_movie(movie, :stalled) do
         {:ok, _reaped} ->
+          # Best-effort and post-commit, off the pre-clear struct (the re-queued row has
+          # release_title nil): a stall is a timeout, not a proven-bad release, and retry_movie/1
+          # clears :stalled rows — so unlike the dead-download path this one doesn't gate on it.
+          Catalog.block_release(movie, :stalled)
           Logger.warning("movie #{movie.id} reaped: stalled download removed; re-searching")
 
         # Left :downloading mid-tick (user cancel/complete) — skip, re-derive next tick.

@@ -625,17 +625,22 @@ defmodule Cinder.Catalog do
   @doc """
   Re-queues a `:downloading` movie whose download died: one transaction guard-resets it to
   `:requested` (clearing the dead download fields, bumping `search_attempts` for backoff) and fences
-  the client download for removal; after commit the client job + reserved intent are torn down, the
-  release is blocklisted under `reason`, and the reset is announced. Returns `{:error, :stale_status}`
-  if the movie left `:downloading` mid-tick (the poller ignores it and re-derives next tick). Mirrors
-  the guarded-write + post-commit-publish pattern of `account_active_movie_retry/1`; the fence reads
-  the **pre-clear** struct (its `download_id`).
+  the client download for removal; after commit the client job + reserved intent are torn down and
+  the reset is announced under `reason`. Returns `{:error, :stale_status}` if the movie left
+  `:downloading` mid-tick (the poller ignores it and re-derives next tick). Mirrors the
+  guarded-write + post-commit-publish pattern of `account_active_movie_retry/1`; the fence reads the
+  **pre-clear** struct (its `download_id`).
 
-  Two callers, both "this download is dead, try the next-best release": the stall reaper
-  (`:stalled` — a timeout, so `retry_movie/1` clears it) and the poller's terminal client-failure
-  path (`:download_error`/`:torrent_not_found` — the client positively reported the job dead, so the
-  row persists). The blocklist is what bounds the re-queue loop: each dead release shrinks the
-  candidate pool until `Download.start/1` parks `:no_match`.
+  **The caller owns the blocklist**, and must write it off the pre-clear struct (`requested` has
+  `release_title` nil). That row is what bounds a re-queue loop — each dead release shrinks the
+  candidate pool until `Download.start/1` parks `:no_match` — but the two callers need opposite
+  handling of a write that fails, so neither policy belongs in here:
+
+    * the stall reaper blocks `:stalled` post-commit, best-effort (a stall is a timeout, not a
+      proven-bad release, and `retry_movie/1` clears those rows for a fresh chance);
+    * the poller's terminal client-failure path blocks `:download_error`/`:torrent_not_found`
+      **before** calling this and refuses to re-queue unless the row landed, because there the
+      loop has no other bound.
   """
   def requeue_failed_movie(movie, reason \\ :stalled)
 
@@ -662,9 +667,6 @@ defmodule Cinder.Catalog do
 
     with {:ok, {requested, intent_ids}} <- result do
       Download.cleanup_intents(intent_ids)
-      # `movie` (pre-clear) still carries release_title; `requested` has it nil. Post-commit so a
-      # stale_status rollback never writes a spurious permanent row.
-      block_release(movie, reason)
       broadcast({:movie_updated, requested})
       Notifier.notify({:movie_failed, requested, reason})
       {:ok, requested}
