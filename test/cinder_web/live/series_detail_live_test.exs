@@ -7,7 +7,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   import Cinder.CatalogFixtures
 
   alias Cinder.{Catalog, Repo}
-  alias Cinder.Catalog.{Grab, TitleAlias}
+  alias Cinder.Catalog.{Episode, Grab, Identity, TitleAlias}
 
   setup :register_and_log_in_admin
   setup :set_mox_global
@@ -1610,6 +1610,65 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     assert %Cinder.Catalog.Grab{download_id: "hash-upgrade"} =
              Repo.get!(Cinder.Catalog.Grab, upgraded.grab_id)
+  end
+
+  test "a conflicting alternate-numbering result refuses the manual grab with a clear error", %{
+    conn: conn
+  } do
+    series =
+      series_fixture(
+        title: "Test Show",
+        tvdb_id: 99,
+        media_profile: :standard,
+        monitor_strategy: :all
+      )
+
+    season = season_fixture(series, season_number: 1)
+    episode29 = episode_fixture(season, episode_number: 29)
+    episode30 = episode_fixture(season, episode_number: 30)
+
+    for {namespace, episode} <- [{"group-a", episode29}, {"group-b", episode30}] do
+      assert {:ok, _} =
+               Identity.replace_provider_coordinates(series, "tmdb", namespace, "scene", [
+                 %{
+                   scheme: "scene",
+                   canonical_value: Episode.code(2, 1),
+                   precedence: :inferred,
+                   episode_ids: [episode.id]
+                 }
+               ])
+    end
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Test Show", season_number ->
+      if season_number == 2 do
+        {:ok,
+         [
+           %{
+             title: "Test.Show.S02E01.1080p.WEB-DL-GRP",
+             size: 2_000_000_000,
+             download_url: "conflict"
+           }
+         ]}
+      else
+        {:ok, []}
+      end
+    end)
+
+    expect(Cinder.Download.ClientMock, :add, 0, fn _, _opts -> {:ok, "must-not-run"} end)
+
+    {:ok, lv, _html} = live_series(conn, series)
+    lv |> element("button", "Find a better match") |> render_click()
+    assert render_async(lv) =~ "conflicting episode numbering"
+
+    lv |> element("#ms-season-#{season.id} button", "Grab") |> render_click()
+
+    assert has_element?(
+             lv,
+             "#flash-error",
+             "This release's episode numbering is ambiguous. Nothing was grabbed."
+           )
+
+    refute Repo.exists?(Grab)
   end
 
   # Regression for the PR #172 corruption bug: rewriting `title` onto the `@series` assign

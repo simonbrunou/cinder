@@ -124,12 +124,23 @@ defmodule CinderWeb.ManualSearchComponent do
     do: Acquisition.list_releases(target.imdb_id, opts)
 
   defp search(:standard, :tv, target, season, opts) do
+    episodes = Catalog.manual_search_episodes(target.id, season)
+
+    numbering =
+      target
+      |> Catalog.anime_series_acquisition_context()
+      |> Acquisition.standard_tv_numbering(episodes, MapSet.new([season]))
+
     # Whole-season packs are verdict-banded per episode (k×band, like the sweep);
     # pass the season's wanted count so a pack isn't judged as one episode's size.
     Acquisition.list_releases_tv(
       target,
       season,
-      opts ++ [pack_episode_count: pack_count(target, season)]
+      opts ++
+        [
+          pack_episode_count: max(length(episodes), 1),
+          standard_numbering: numbering
+        ]
     )
   end
 
@@ -139,16 +150,6 @@ defmodule CinderWeb.ManualSearchComponent do
     |> Enum.map(fn episode ->
       episode.id
     end)
-  end
-
-  # A manual search can fill missing episodes and replace already-available ones.
-  # Judge a whole-season pack against every episode covered by that operator
-  # action so its size is not compared with a single episode's band.
-  defp pack_count(series, season_number) do
-    series.id
-    |> Catalog.manual_search_episodes(season_number)
-    |> length()
-    |> max(1)
   end
 
   # Mirror the auto-search scorer opts (size band, preferred resolutions/sources,
@@ -296,6 +297,9 @@ defmodule CinderWeb.ManualSearchComponent do
 
   defp verdict_reason({:rejected, :unsafe_anime_mapping}),
     do: gettext("stable episode mapping required")
+
+  defp verdict_reason({:rejected, :conflicting_standard_numbering}),
+    do: gettext("conflicting episode numbering")
 
   defp verdict_reason(_), do: ""
 end

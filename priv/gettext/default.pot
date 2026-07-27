@@ -1101,13 +1101,13 @@ msgstr ""
 
 #: lib/cinder_web/live/library_live.ex:130
 #: lib/cinder_web/live/series_detail_live.ex:150
-#: lib/cinder_web/live/series_detail_live.ex:623
+#: lib/cinder_web/live/series_detail_live.ex:631
 #, elixir-autogen, elixir-format
 msgid "Series deleted."
 msgstr ""
 
 #: lib/cinder_web/live/series_detail_live.ex:45
-#: lib/cinder_web/live/series_detail_live.ex:638
+#: lib/cinder_web/live/series_detail_live.ex:646
 #: lib/cinder_web/live/series_discovery_live.ex:61
 #, elixir-autogen, elixir-format
 msgid "Series not found."
@@ -1907,62 +1907,62 @@ msgstr ""
 msgid "Upgrading"
 msgstr ""
 
-#: lib/cinder_web/components/manual_search_component.ex:236
+#: lib/cinder_web/components/manual_search_component.ex:237
 #, elixir-autogen, elixir-format
 msgid "?"
 msgstr ""
 
-#: lib/cinder_web/components/manual_search_component.ex:224
+#: lib/cinder_web/components/manual_search_component.ex:225
 #, elixir-autogen, elixir-format
 msgid "Couldn't reach the indexer. Try again."
 msgstr ""
 
-#: lib/cinder_web/components/manual_search_component.ex:249
+#: lib/cinder_web/components/manual_search_component.ex:250
 #, elixir-autogen, elixir-format
 msgid "Grab"
 msgstr ""
 
-#: lib/cinder_web/components/manual_search_component.ex:227
+#: lib/cinder_web/components/manual_search_component.ex:228
 #, elixir-autogen, elixir-format
 msgid "No releases found."
 msgstr ""
 
-#: lib/cinder_web/components/manual_search_component.ex:261
+#: lib/cinder_web/components/manual_search_component.ex:262
 #, elixir-autogen, elixir-format
 msgid "Replace file"
 msgstr ""
 
-#: lib/cinder_web/components/manual_search_component.ex:264
+#: lib/cinder_web/components/manual_search_component.ex:265
 #, elixir-autogen, elixir-format
 msgid "Replace the current file for this movie with the selected release?"
 msgstr ""
 
-#: lib/cinder_web/components/manual_search_component.ex:221
+#: lib/cinder_web/components/manual_search_component.ex:222
 #, elixir-autogen, elixir-format
 msgid "Searching releases…"
 msgstr ""
 
-#: lib/cinder_web/components/manual_search_component.ex:281
+#: lib/cinder_web/components/manual_search_component.ex:282
 #, elixir-autogen, elixir-format
 msgid "blocklisted"
 msgstr ""
 
-#: lib/cinder_web/components/manual_search_component.ex:284
+#: lib/cinder_web/components/manual_search_component.ex:285
 #, elixir-autogen, elixir-format
 msgid "no client for protocol"
 msgstr ""
 
-#: lib/cinder_web/components/manual_search_component.ex:280
+#: lib/cinder_web/components/manual_search_component.ex:281
 #, elixir-autogen, elixir-format
 msgid "outside size band"
 msgstr ""
 
-#: lib/cinder_web/components/manual_search_component.ex:282
+#: lib/cinder_web/components/manual_search_component.ex:283
 #, elixir-autogen, elixir-format
 msgid "resolution not preferred"
 msgstr ""
 
-#: lib/cinder_web/components/manual_search_component.ex:283
+#: lib/cinder_web/components/manual_search_component.ex:284
 #, elixir-autogen, elixir-format
 msgid "source not preferred"
 msgstr ""
@@ -1973,7 +1973,7 @@ msgid "Cancel upgrade"
 msgstr ""
 
 #: lib/cinder_web/live/movie_detail_live.ex:276
-#: lib/cinder_web/live/series_detail_live.ex:609
+#: lib/cinder_web/live/series_detail_live.ex:617
 #, elixir-autogen, elixir-format
 msgid "Couldn't grab that release."
 msgstr ""
@@ -1985,7 +1985,7 @@ msgid "Find a better match"
 msgstr ""
 
 #: lib/cinder_web/live/movie_detail_live.ex:271
-#: lib/cinder_web/live/series_detail_live.ex:607
+#: lib/cinder_web/live/series_detail_live.ex:608
 #, elixir-autogen, elixir-format
 msgid "Grabbing the selected release…"
 msgstr ""
@@ -1995,7 +1995,7 @@ msgstr ""
 msgid "That movie can't be grabbed right now."
 msgstr ""
 
-#: lib/cinder_web/live/series_detail_live.ex:608
+#: lib/cinder_web/live/series_detail_live.ex:611
 #, elixir-autogen, elixir-format
 msgid "Nothing left to grab this season."
 msgstr ""
@@ -2025,7 +2025,7 @@ msgstr ""
 msgid "Searching for this episode…"
 msgstr ""
 
-#: lib/cinder_web/components/manual_search_component.ex:247
+#: lib/cinder_web/components/manual_search_component.ex:248
 #, elixir-autogen, elixir-format
 msgid "Grabbing…"
 msgstr ""
@@ -2755,32 +2755,32 @@ msgstr ""
 msgid "Use server default (Prefer embedded)"
 msgstr ""
 
-#: lib/cinder_web/components/manual_search_component.ex:292
+#: lib/cinder_web/components/manual_search_component.ex:293
 #, elixir-autogen, elixir-format
 msgid "awaiting preferred group"
 msgstr ""
 
-#: lib/cinder_web/components/manual_search_component.ex:285
+#: lib/cinder_web/components/manual_search_component.ex:286
 #, elixir-autogen, elixir-format
 msgid "blocked anime group"
 msgstr ""
 
-#: lib/cinder_web/components/manual_search_component.ex:286
+#: lib/cinder_web/components/manual_search_component.ex:287
 #, elixir-autogen, elixir-format
 msgid "contradictory audio"
 msgstr ""
 
-#: lib/cinder_web/components/manual_search_component.ex:289
+#: lib/cinder_web/components/manual_search_component.ex:290
 #, elixir-autogen, elixir-format
 msgid "contradictory subtitles"
 msgstr ""
 
-#: lib/cinder_web/components/manual_search_component.ex:295
+#: lib/cinder_web/components/manual_search_component.ex:296
 #, elixir-autogen, elixir-format
 msgid "publication time required"
 msgstr ""
 
-#: lib/cinder_web/components/manual_search_component.ex:298
+#: lib/cinder_web/components/manual_search_component.ex:299
 #, elixir-autogen, elixir-format
 msgid "stable episode mapping required"
 msgstr ""
@@ -4843,4 +4843,14 @@ msgstr ""
 #: lib/cinder_web/live_helpers.ex:233
 #, elixir-autogen, elixir-format
 msgid "just now"
+msgstr ""
+
+#: lib/cinder_web/components/manual_search_component.ex:302
+#, elixir-autogen, elixir-format
+msgid "conflicting episode numbering"
+msgstr ""
+
+#: lib/cinder_web/live/series_detail_live.ex:614
+#, elixir-autogen, elixir-format
+msgid "This release's episode numbering is ambiguous. Nothing was grabbed."
 msgstr ""

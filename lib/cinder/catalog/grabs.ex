@@ -115,16 +115,35 @@ defmodule Cinder.Catalog.Grabs do
        when not is_nil(snapshot),
        do: {:error, :unsafe_anime_mapping}
 
+  defp manual_grab_standard_tv(
+         _series,
+         _season_number,
+         %Release{resolution_evidence: :conflicting_standard_numbering}
+       ),
+       do: {:error, :conflicting_standard_numbering}
+
   defp manual_grab_standard_tv(%Series{id: series_id}, season_number, %Release{} = release) do
     candidates = SeriesCatalog.manual_search_episodes(series_id, season_number)
 
-    covered = cover_numbers(release, Enum.map(candidates, & &1.episode_number))
-    episode_ids = candidates |> Enum.filter(&(&1.episode_number in covered)) |> Enum.map(& &1.id)
-
-    case episode_ids do
-      [] -> {:error, :nothing_wanted}
-      ids -> grab_and_create_grab(release, ids)
+    case standard_manual_episode_ids(release, candidates) do
+      {:ok, []} -> {:error, :nothing_wanted}
+      {:ok, ids} -> grab_and_create_grab(release, ids)
+      :error -> {:error, :conflicting_standard_numbering}
     end
+  end
+
+  defp standard_manual_episode_ids(%Release{resolved_episode_ids: ids}, candidates)
+       when is_list(ids) and ids != [] do
+    candidate_ids = MapSet.new(candidates, & &1.id)
+
+    if Enum.uniq(ids) == ids and MapSet.subset?(MapSet.new(ids), candidate_ids),
+      do: {:ok, ids},
+      else: :error
+  end
+
+  defp standard_manual_episode_ids(%Release{} = release, candidates) do
+    covered = cover_numbers(release, Enum.map(candidates, & &1.episode_number))
+    {:ok, candidates |> Enum.filter(&(&1.episode_number in covered)) |> Enum.map(& &1.id)}
   end
 
   # Grabs the release (a client.add side-effect returning a download_id), then links the grab over

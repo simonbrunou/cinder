@@ -6,10 +6,16 @@ defmodule Cinder.Acquisition do
   resolved from config (`config :cinder, :indexer`) so tests use a Mox mock and
   never hit the network.
   """
+  require Logger
+
   alias Cinder.Acquisition.{Anime, AnimePreferences}
   alias Cinder.Acquisition.Language
   alias Cinder.Acquisition.Release
   alias Cinder.Acquisition.Scorer
+  alias Cinder.Catalog.{AnimeResolver, Episode}
+
+  @max_alternate_seasons 4
+  @standard_tv_bridged_schemes ~w(scene aired)
 
   @doc """
   Size-band scorer opts for a library `kind` (`:movies`/`:tv`), read from the settings-overlaid
@@ -162,12 +168,91 @@ defmodule Cinder.Acquisition do
     end
   end
 
-  @doc "TV variant of `list_releases/2`: searches one `season_number` of `series` and annotates."
+  @doc """
+  TV variant of `list_releases/2`. A `:standard_numbering` result from
+  `standard_tv_numbering/3` adds the same bounded alternate-season queries used by automatic
+  acquisition and freezes each bridged release's resolved Catalog episode ids.
+  """
   def list_releases_tv(series, season_number, opts \\ []) do
-    case indexer().search_tv(series.tvdb_id, series.title, season_number) do
-      {:ok, raw} -> {:ok, annotate(Enum.map(raw, &Release.new/1), opts)}
-      {:error, _} = error -> error
+    numbering = Keyword.get(opts, :standard_numbering)
+
+    alternate_seasons =
+      case numbering do
+        %{search_seasons: seasons} -> seasons
+        _none -> []
+      end
+
+    seasons = [season_number | Enum.reject(alternate_seasons, &(&1 == season_number))]
+
+    case search_tv_seasons(indexer(), series, seasons) do
+      {:ok, raw} ->
+        releases =
+          raw
+          |> Enum.map(&Release.new/1)
+          |> deduplicate_tv_releases()
+          |> Enum.map(&resolve_standard_manual_release(&1, season_number, numbering))
+
+        {:ok, annotate(releases, Keyword.delete(opts, :standard_numbering))}
+
+      {:error, _} = error ->
+        error
     end
+  end
+
+  @doc """
+  Derives the bounded scene/TVDB-aired bridge used by Standard TV acquisition.
+
+  `scorer` is the canonical-number map consumed by automatic selection. Manual search also uses
+  `search_seasons`, stable `episode_ids`, and `conflicts` so its later grab cannot reinterpret an
+  alternate-numbered release through native episode numbers.
+  """
+  def standard_tv_numbering(context, episodes, native_seasons) do
+    wanted_by_id = Map.new(episodes, &{&1.id, &1.episode_number})
+    wanted_ids = MapSet.new(Map.keys(wanted_by_id))
+    mappings = prefer_scene_mappings(context.mappings, wanted_ids)
+
+    relevant =
+      Enum.filter(mappings, fn mapping ->
+        mapping.identity.scheme in @standard_tv_bridged_schemes and
+          not MapSet.disjoint?(MapSet.new(mapping.episode_ids), wanted_ids)
+      end)
+
+    alternate_seasons =
+      relevant
+      |> Enum.map(&Episode.season_from_code(&1.identity.canonical_value))
+      |> Enum.reject(&is_nil/1)
+      |> Enum.uniq()
+      |> Enum.sort()
+      |> Enum.take(@max_alternate_seasons)
+
+    initial = %{
+      scorer: %{},
+      search_seasons: alternate_seasons,
+      episode_ids: %{},
+      conflicts: MapSet.new()
+    }
+
+    relevant
+    |> Enum.map(& &1.identity.canonical_value)
+    |> Enum.uniq()
+    |> Enum.reduce(initial, fn value, numbering ->
+      with {alternate_season, alternate_episode} <-
+             Episode.season_and_episode_from_code(value),
+           false <- MapSet.member?(native_seasons, alternate_season),
+           true <- alternate_season in alternate_seasons do
+        put_standard_resolution(
+          numbering,
+          value,
+          alternate_season,
+          alternate_episode,
+          resolve_standard_coordinate(value, mappings),
+          wanted_by_id,
+          wanted_ids
+        )
+      else
+        _unusable -> numbering
+      end
+    end)
   end
 
   @doc "Lists Anime movie releases with manual, overridable policy verdicts."
@@ -201,6 +286,9 @@ defmodule Cinder.Acquisition do
     cond do
       is_list(protocols) and not is_nil(release.protocol) and release.protocol not in protocols ->
         {:rejected, :wrong_protocol}
+
+      release.resolution_evidence == :conflicting_standard_numbering ->
+        {:rejected, :conflicting_standard_numbering}
 
       Keyword.get(opts, :manual_anime_tv, false) and not safe_anime_mapping?(release) ->
         {:rejected, :unsafe_anime_mapping}
@@ -255,6 +343,159 @@ defmodule Cinder.Acquisition do
        do: ids == reserved
 
   defp safe_anime_mapping?(_release), do: false
+
+  defp put_standard_resolution(
+         numbering,
+         value,
+         alternate_season,
+         alternate_episode,
+         {:ok, episode_ids, _evidence},
+         wanted_by_id,
+         wanted_ids
+       ) do
+    if MapSet.subset?(MapSet.new(episode_ids), wanted_ids) do
+      canonical_numbers = Enum.map(episode_ids, &Map.fetch!(wanted_by_id, &1))
+
+      numbering
+      |> put_in([:episode_ids, value], episode_ids)
+      |> update_in([:scorer], fn scorer ->
+        Map.update(
+          scorer,
+          alternate_season,
+          %{alternate_episode => canonical_numbers},
+          &Map.put(&1, alternate_episode, canonical_numbers)
+        )
+      end)
+    else
+      update_in(numbering.conflicts, &MapSet.put(&1, value))
+    end
+  end
+
+  defp put_standard_resolution(
+         numbering,
+         value,
+         _season,
+         _episode,
+         _unresolved,
+         _wanted_by_id,
+         _wanted_ids
+       ),
+       do: update_in(numbering.conflicts, &MapSet.put(&1, value))
+
+  defp prefer_scene_mappings(mappings, wanted_ids) do
+    scene_ids =
+      mappings
+      |> Enum.filter(&(&1.identity.scheme == "scene"))
+      |> Enum.flat_map(& &1.episode_ids)
+      |> MapSet.new()
+      |> MapSet.intersection(wanted_ids)
+
+    {mappings, dropped_ids} =
+      Enum.map_reduce(mappings, MapSet.new(), fn
+        %{identity: %{scheme: "aired"}} = mapping, dropped_ids ->
+          shadowed = MapSet.intersection(MapSet.new(mapping.episode_ids), scene_ids)
+
+          mapping = %{
+            mapping
+            | episode_ids: Enum.reject(mapping.episode_ids, &MapSet.member?(shadowed, &1))
+          }
+
+          {mapping, MapSet.union(dropped_ids, shadowed)}
+
+        mapping, dropped_ids ->
+          {mapping, dropped_ids}
+      end)
+
+    if MapSet.size(dropped_ids) > 0 do
+      Logger.warning(
+        "standard TV numbering: ignored TVDB aired coordinates for " <>
+          "#{MapSet.size(dropped_ids)} episode(s) because scene coordinates take precedence"
+      )
+    end
+
+    Enum.reject(mappings, &(&1.episode_ids == []))
+  end
+
+  defp resolve_standard_coordinate(value, mappings) do
+    matching =
+      mappings
+      |> Enum.filter(
+        &(Map.get(&1.identity, :scheme) in ["standard" | @standard_tv_bridged_schemes] and
+            Map.get(&1.identity, :canonical_value) == value)
+      )
+      |> AnimeResolver.strip_shadowed_canonical()
+
+    resolver_mappings =
+      Enum.map(matching, fn mapping ->
+        %{
+          coordinate: mapping.identity,
+          episode_ids: mapping.episode_ids,
+          precedence: mapping.precedence,
+          evidence: mapping.evidence
+        }
+      end)
+
+    AnimeResolver.resolve(Enum.map(matching, & &1.identity), resolver_mappings)
+  end
+
+  defp resolve_standard_manual_release(release, native_season, numbering)
+
+  defp resolve_standard_manual_release(
+         %Release{season: native_season} = release,
+         native_season,
+         _
+       ),
+       do: release
+
+  defp resolve_standard_manual_release(%Release{} = release, _native_season, %{
+         episode_ids: episode_ids,
+         conflicts: conflicts
+       }) do
+    values = standard_release_values(release, Map.keys(episode_ids) ++ MapSet.to_list(conflicts))
+
+    cond do
+      Enum.any?(values, &MapSet.member?(conflicts, &1)) ->
+        %{release | resolution_evidence: :conflicting_standard_numbering}
+
+      ids = values |> Enum.flat_map(&Map.get(episode_ids, &1, [])) |> ordered_uniq() ->
+        if ids == [], do: release, else: %{release | resolved_episode_ids: ids}
+    end
+  end
+
+  defp resolve_standard_manual_release(%Release{} = release, _native_season, _none), do: release
+
+  defp standard_release_values(%Release{season: season, episodes: nil}, known_values)
+       when is_integer(season) do
+    Enum.filter(known_values, &(Episode.season_from_code(&1) == season))
+  end
+
+  defp standard_release_values(%Release{season: season, episodes: episodes}, _known_values)
+       when is_integer(season) and is_list(episodes) do
+    Enum.map(episodes, &Episode.code(season, &1))
+  end
+
+  defp standard_release_values(_release, _known_values), do: []
+
+  defp deduplicate_tv_releases(releases) do
+    Enum.uniq_by(releases, fn
+      %Release{download_url: url, protocol: protocol} when is_binary(url) and url != "" ->
+        {protocol, url}
+
+      %Release{} = release ->
+        {release.protocol, release.title, release.size}
+    end)
+  end
+
+  defp ordered_uniq(values) do
+    {values, _seen} =
+      Enum.reduce(values, {[], MapSet.new()}, fn value, {values, seen} ->
+        if MapSet.member?(seen, value),
+          do: {values, seen},
+          else: {[value | values], MapSet.put(seen, value)}
+      end)
+
+    Enum.reverse(values)
+  end
 
   # Resolve the candidate pool a language preference scores against. An explicit-language pick
   # (french) with nothing satisfying it returns :no_language_match so the caller parks visibly;

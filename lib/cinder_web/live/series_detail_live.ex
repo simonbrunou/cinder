@@ -604,9 +604,17 @@ defmodule CinderWeb.SeriesDetailLive do
   def handle_info({:manual_grab, :tv, series, release}, socket) do
     {level, msg} =
       case Catalog.manual_grab_tv(series, socket.assigns.searching_season, release) do
-        {:ok, _grab} -> {:info, gettext("Grabbing the selected release…")}
-        {:error, :nothing_wanted} -> {:error, gettext("Nothing left to grab this season.")}
-        {:error, _} -> {:error, gettext("Couldn't grab that release.")}
+        {:ok, _grab} ->
+          {:info, gettext("Grabbing the selected release…")}
+
+        {:error, :nothing_wanted} ->
+          {:error, gettext("Nothing left to grab this season.")}
+
+        {:error, :conflicting_standard_numbering} ->
+          {:error, gettext("This release's episode numbering is ambiguous. Nothing was grabbed.")}
+
+        {:error, _} ->
+          {:error, gettext("Couldn't grab that release.")}
       end
 
     {:noreply, socket |> assign(searching_season: nil) |> put_flash(level, msg) |> reload()}

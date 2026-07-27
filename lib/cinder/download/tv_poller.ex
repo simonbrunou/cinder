@@ -28,14 +28,12 @@ defmodule Cinder.Download.TvPoller do
 
   alias Cinder.{Acquisition, Catalog, Disk, Download, Library, Notifier, Settings}
   alias Cinder.Acquisition.AnimePreferences
-  alias Cinder.Catalog.{AnimeResolver, Episode, Grab, Grabs}
+  alias Cinder.Catalog.{Episode, Grab, Grabs}
   alias Cinder.Download.StallReaper
   alias Cinder.HTTPPolicy
 
   @default_interval 5_000
   @search_retry_after 60
-  @max_alternate_seasons 4
-  @standard_tv_bridged_schemes ~w(scene aired)
 
   # Download-side failures that only reach park after exhausting @max_attempts retries
   # (advance_with/2) — symmetric with the movie poller's @download_failure_errors. Past
@@ -506,7 +504,7 @@ defmodule Cinder.Download.TvPoller do
     season_number = hd(episodes).season.season_number
     numbers = Enum.map(episodes, & &1.episode_number)
     opts = search_opts(series)
-    numbering = alternate_numbering(context, episodes, native_seasons)
+    numbering = Acquisition.standard_tv_numbering(context, episodes, native_seasons).scorer
 
     opts =
       if map_size(numbering) == 0,
@@ -528,109 +526,6 @@ defmodule Cinder.Download.TvPoller do
 
         bump_not_grabbed(episodes, [])
     end
-  end
-
-  defp alternate_numbering(context, episodes, native_seasons) do
-    wanted_by_id = Map.new(episodes, &{&1.id, &1.episode_number})
-    wanted_ids = MapSet.new(Map.keys(wanted_by_id))
-    mappings = prefer_scene_mappings(context.mappings, wanted_ids)
-
-    alternate_seasons =
-      mappings
-      |> Enum.filter(fn mapping ->
-        mapping.identity.scheme in @standard_tv_bridged_schemes and
-          not MapSet.disjoint?(MapSet.new(mapping.episode_ids), wanted_ids)
-      end)
-      |> Enum.map(&Episode.season_from_code(&1.identity.canonical_value))
-      |> Enum.reject(&is_nil/1)
-      |> Enum.uniq()
-      |> Enum.sort()
-      |> Enum.take(@max_alternate_seasons)
-      |> MapSet.new()
-
-    mappings
-    |> Enum.filter(fn mapping ->
-      mapping.identity.scheme in @standard_tv_bridged_schemes and
-        not MapSet.disjoint?(MapSet.new(mapping.episode_ids), wanted_ids)
-    end)
-    |> Enum.map(& &1.identity.canonical_value)
-    |> Enum.uniq()
-    |> Enum.reduce(%{}, fn value, numbering ->
-      with {alternate_season, alternate_episode} <-
-             Episode.season_and_episode_from_code(value),
-           false <- MapSet.member?(native_seasons, alternate_season),
-           true <- MapSet.member?(alternate_seasons, alternate_season),
-           {:ok, episode_ids, _evidence} <-
-             resolve_standard_coordinate(value, mappings),
-           true <- MapSet.subset?(MapSet.new(episode_ids), wanted_ids) do
-        canonical_numbers = Enum.map(episode_ids, &Map.fetch!(wanted_by_id, &1))
-
-        Map.update(
-          numbering,
-          alternate_season,
-          %{alternate_episode => canonical_numbers},
-          &Map.put(&1, alternate_episode, canonical_numbers)
-        )
-      else
-        _unusable -> numbering
-      end
-    end)
-  end
-
-  defp prefer_scene_mappings(mappings, wanted_ids) do
-    scene_ids =
-      mappings
-      |> Enum.filter(&(&1.identity.scheme == "scene"))
-      |> Enum.flat_map(& &1.episode_ids)
-      |> MapSet.new()
-      |> MapSet.intersection(wanted_ids)
-
-    {mappings, dropped_ids} =
-      Enum.map_reduce(mappings, MapSet.new(), fn
-        %{identity: %{scheme: "aired"}} = mapping, dropped_ids ->
-          shadowed = MapSet.intersection(MapSet.new(mapping.episode_ids), scene_ids)
-
-          mapping = %{
-            mapping
-            | episode_ids: Enum.reject(mapping.episode_ids, &MapSet.member?(shadowed, &1))
-          }
-
-          {mapping, MapSet.union(dropped_ids, shadowed)}
-
-        mapping, dropped_ids ->
-          {mapping, dropped_ids}
-      end)
-
-    if MapSet.size(dropped_ids) > 0 do
-      Logger.warning(
-        "standard TV numbering: ignored TVDB aired coordinates for " <>
-          "#{MapSet.size(dropped_ids)} episode(s) because scene coordinates take precedence"
-      )
-    end
-
-    Enum.reject(mappings, &(&1.episode_ids == []))
-  end
-
-  defp resolve_standard_coordinate(value, mappings) do
-    matching =
-      mappings
-      |> Enum.filter(
-        &(Map.get(&1.identity, :scheme) in ["standard" | @standard_tv_bridged_schemes] and
-            Map.get(&1.identity, :canonical_value) == value)
-      )
-      |> AnimeResolver.strip_shadowed_canonical()
-
-    resolver_mappings =
-      Enum.map(matching, fn mapping ->
-        %{
-          coordinate: mapping.identity,
-          episode_ids: mapping.episode_ids,
-          precedence: mapping.precedence,
-          evidence: mapping.evidence
-        }
-      end)
-
-    AnimeResolver.resolve(Enum.map(matching, & &1.identity), resolver_mappings)
   end
 
   defp search_anime_series(series, episodes) do
