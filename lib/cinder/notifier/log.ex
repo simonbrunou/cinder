@@ -12,6 +12,11 @@ defmodule Cinder.Notifier.Log do
   def notify({:request_created, request}),
     do: log("request pending approval: #{request.title} (user ##{request.user_id})")
 
+  # Ids + title only (title is TMDB metadata, not PII). The admin's free-text denial reason is
+  # deliberately NOT logged — it can carry anything an admin typed.
+  def notify({:request_denied, request, _reason}),
+    do: log("request denied: #{request.title} (user ##{request.user_id})")
+
   def notify({:user_registered, %{id: id}}) when is_integer(id),
     do: log("user_registered user ##{id}")
 

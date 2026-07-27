@@ -284,7 +284,12 @@ defmodule CinderWeb.LibraryLive do
       )
 
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
+    <Layouts.app
+      flash={@flash}
+      current_scope={@current_scope}
+      current_path={@current_path}
+      pending_count={@pending_count}
+    >
       <.header>
         {gettext("Library")}
         <:subtitle>{gettext("Manage movies and added series.")}</:subtitle>

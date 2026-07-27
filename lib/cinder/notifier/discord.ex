@@ -85,6 +85,20 @@ defmodule Cinder.Notifier.Discord do
         request.poster_path
       )
 
+  # Matches the request_approved/request_created shape (title + requester display name, never the
+  # email — #184), plus the admin's free-text reason when one was given. The admin channel already
+  # carries this requester content for the sibling request events, so a denial belongs here too.
+  defp embed({:request_denied, request, reason}),
+    do:
+      with_poster(
+        %{
+          title: "🚫 Request denied",
+          description: denied_line(request, reason),
+          color: @red
+        },
+        request.poster_path
+      )
+
   defp embed({:user_registered, user}),
     do: %{
       title: "👤 Account awaiting activation",
@@ -168,6 +182,15 @@ defmodule Cinder.Notifier.Discord do
        do: "#{title_year(request)} — Season #{number}"
 
   defp request_line(request), do: title_year(request)
+
+  defp denied_line(request, reason) do
+    base = "#{request_line(request)} — for #{requester(request)}"
+
+    case Util.blank_to_nil(reason) do
+      nil -> base
+      reason -> "#{base} (#{reason})"
+    end
+  end
 
   # %Ecto.Association.NotLoaded{} does not match `%User{}`, so an un-preloaded :user degrades to
   # the id rather than raising — and Cinder.Notifier.notify/1 swallows raises, which would turn a

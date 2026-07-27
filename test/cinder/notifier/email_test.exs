@@ -214,6 +214,86 @@ defmodule Cinder.Notifier.EmailTest do
     end
   end
 
+  describe "request_denied" do
+    test "emails the requester the reason in their locale" do
+      configure_smtp!()
+      user = confirmed_user()
+
+      request = %{
+        title: "Arrival",
+        year: 2016,
+        target_type: "movie",
+        season_number: nil,
+        user_id: user.id,
+        approved_by_id: nil,
+        user: user
+      }
+
+      assert :ok = Email.notify({:request_denied, request, "not for the household"})
+
+      assert_email_sent(
+        to: user.email,
+        subject: "Your request for Arrival (2016) was declined",
+        text_body: ~r/not for the household/
+      )
+    end
+
+    test "omits the reason line when no reason was given" do
+      configure_smtp!()
+      user = confirmed_user()
+
+      request = %{
+        title: "Arrival",
+        year: 2016,
+        target_type: "movie",
+        season_number: nil,
+        user_id: user.id,
+        approved_by_id: nil,
+        user: user
+      }
+
+      assert :ok = Email.notify({:request_denied, request, ""})
+
+      assert_receive {:email, email}
+      assert email.subject == "Your request for Arrival (2016) was declined"
+      refute email.text_body =~ "Reason:"
+    end
+
+    test "skips silently when SMTP is unconfigured" do
+      user = confirmed_user()
+
+      request = %{
+        title: "Arrival",
+        year: 2016,
+        target_type: "movie",
+        season_number: nil,
+        user_id: user.id,
+        approved_by_id: nil,
+        user: user
+      }
+
+      assert :ok = Email.notify({:request_denied, request, "no"})
+      refute_email_sent()
+    end
+
+    test "a malformed event with no loaded :user degrades to a no-op, never raises" do
+      configure_smtp!()
+
+      request = %{
+        title: "Arrival",
+        year: 2016,
+        target_type: "movie",
+        season_number: nil,
+        user_id: 1,
+        approved_by_id: nil,
+        user: %Ecto.Association.NotLoaded{}
+      }
+
+      assert :ok = Email.notify({:request_denied, request, "no"})
+      refute_email_sent()
+    end
+  end
+
   describe "movie_available / movie_failed" do
     test "emails every approved requester for that movie, including an admin" do
       configure_smtp!()

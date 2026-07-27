@@ -20,4 +20,16 @@ defmodule Cinder.Notifier.LogTest do
     assert log =~ "[notifier] account activated: user #7"
     refute log =~ "kim@example.com"
   end
+
+  test "request_denied logs the title and user id, never the free-text reason" do
+    request = %{title: "The Matrix", user_id: 7}
+
+    log =
+      capture_log(fn ->
+        assert :ok = Log.notify({:request_denied, request, "contains kim@example.com"})
+      end)
+
+    assert log =~ "[notifier] request denied: The Matrix (user #7)"
+    refute log =~ "kim@example.com"
+  end
 end

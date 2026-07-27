@@ -344,6 +344,33 @@ defmodule CinderWeb.UserAuth do
     {:cont, socket}
   end
 
+  # Feeds the admin nav badge (`Layouts.app`'s `pending_count` attr). Assigns the current count on
+  # every mount; for a connected admin it also subscribes to the requests topic and re-reads the
+  # count on each request event, so the badge updates live. Non-admins get `nil` (no badge). The
+  # hook returns `{:cont, _}` so pages that also handle these events (RequestsLive) still get them.
+  def on_mount(:pending_requests_badge, _params, _session, socket) do
+    socket =
+      if admin?(socket.assigns[:current_scope]) do
+        if Phoenix.LiveView.connected?(socket) do
+          Cinder.Requests.subscribe()
+
+          Phoenix.LiveView.attach_hook(
+            socket,
+            :pending_requests_badge,
+            :handle_info,
+            &pending_requests_badge_hook/2
+          )
+        else
+          socket
+        end
+        |> Phoenix.Component.assign(:pending_count, Cinder.Requests.count_pending())
+      else
+        Phoenix.Component.assign(socket, :pending_count, nil)
+      end
+
+    {:cont, socket}
+  end
+
   @doc "Returns the localized section title for a routed LiveView path."
   def page_title("/"), do: gettext("Discover")
   def page_title("/my-requests"), do: gettext("My requests")
@@ -420,6 +447,15 @@ defmodule CinderWeb.UserAuth do
 
   defp admin?(%Cinder.Accounts.Scope{user: %{role: :admin}}), do: true
   defp admin?(_), do: false
+
+  # A request event may have changed the pending count: re-read it into the assign the nav badge
+  # renders from. Any other message passes through untouched.
+  defp pending_requests_badge_hook({event, _payload}, socket)
+       when event in [:request_created, :request_approved, :request_denied, :request_deleted] do
+    {:cont, Phoenix.Component.assign(socket, :pending_count, Cinder.Requests.count_pending())}
+  end
+
+  defp pending_requests_badge_hook(_message, socket), do: {:cont, socket}
 
   defp active?(%Cinder.Accounts.Scope{user: %{active: true}}), do: true
   defp active?(_), do: false

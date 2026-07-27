@@ -85,6 +85,11 @@ defmodule CinderWeb.LibraryAdoptionLive do
      |> put_flash(:error, gettext("Adoption failed. Please try again."))}
   end
 
+  # Admin sockets are subscribed to the "requests" topic (nav-badge on_mount); ignore those
+  # broadcasts here — the on_mount hook already re-renders the badge.
+  @impl true
+  def handle_info(_message, socket), do: {:noreply, socket}
+
   defp start_scan(socket) do
     socket
     |> assign(scanning?: true)
@@ -256,7 +261,12 @@ defmodule CinderWeb.LibraryAdoptionLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
+    <Layouts.app
+      flash={@flash}
+      current_scope={@current_scope}
+      current_path={@current_path}
+      pending_count={@pending_count}
+    >
       <.header>
         {gettext("Adopt existing library")}
         <:subtitle>

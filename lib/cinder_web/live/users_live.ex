@@ -286,6 +286,11 @@ defmodule CinderWeb.UsersLive do
   # Client-controlled payloads — ignore anything unmatched rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
+  # Admin sockets are subscribed to the "requests" topic (nav-badge on_mount); those broadcasts
+  # aren't used here — the on_mount hook already re-renders the badge.
+  @impl true
+  def handle_info(_message, socket), do: {:noreply, socket}
+
   # Look the user up by string-comparing ids (mirroring the sibling admin views),
   # so a forged (non-numeric) phx-value id never hits String.to_integer/get_user!.
   # Sourced from a fresh list rather than the possibly-stale socket snapshot, so a
@@ -323,7 +328,12 @@ defmodule CinderWeb.UsersLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
+    <Layouts.app
+      flash={@flash}
+      current_scope={@current_scope}
+      current_path={@current_path}
+      pending_count={@pending_count}
+    >
       <.header>
         {gettext("Users")}
         <:subtitle>{gettext("Roles and request quotas.")}</:subtitle>
