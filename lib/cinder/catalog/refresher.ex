@@ -20,6 +20,7 @@ defmodule Cinder.Catalog.Refresher do
 
   @default_interval :timer.hours(12)
   @localization_resync_key "localization_resync_v1"
+  @localization_trim_key "localization_trim_v1"
   use Cinder.Download.PollerSkeleton,
     log_prefix: "refresher",
     stateful: false,
@@ -30,12 +31,33 @@ defmodule Cinder.Catalog.Refresher do
       isolate("series #{series.id}", fn -> refresh_one(series) end)
     end
 
-    trim_localizations(Movie)
-    trim_localizations(Series)
-    enrich_localizations()
-    copy_request_localizations()
+    # Localization catch-up. Each pass is wrapped in the same `isolate/2` as the per-series loop:
+    # trim/copy write through `Repo.update_all`, which skips `to_constraints` and so raises a RAW
+    # `Exqlite.Error` on a transient SQLite-busy — outside `isolate` one blip crashed the whole
+    # Refresher and re-ran the per-series TMDB sweep from the top. `trim_localizations_once` is the
+    # only genuinely one-time backfill (legacy bloated maps; new writes only ever store
+    # noncanonical locales — `TMDB.HTTP.localizations_from/1`) so it is gated by a done-flag and
+    # stops scanning once caught up. The empty-map enrich/copy passes stay (self-heal for a row
+    # created empty during a TMDB outage — see the refresher tests) but query only the still-empty
+    # rows instead of loading the whole table each tick.
+    isolate("trim localizations", &trim_localizations_once/0)
+    isolate("enrich localizations", &enrich_localizations/0)
+    isolate("copy request localizations", &copy_request_localizations/0)
 
     :ok
+  end
+
+  # Empty (or NULL) localizations map, matched in SQL — stored as JSON text, so an empty map is the
+  # literal "{}". Lets the enrich/copy passes scan only rows still needing a backfill.
+  defp empty_localizations,
+    do: dynamic([r], fragment("coalesce(?, '{}') = '{}'", r.localizations))
+
+  defp trim_localizations_once do
+    unless Settings.get(@localization_trim_key) == "true" do
+      trim_localizations(Movie)
+      trim_localizations(Series)
+      Settings.put(@localization_trim_key, "true")
+    end
   end
 
   defp trim_localizations(schema) do
@@ -79,11 +101,13 @@ defmodule Cinder.Catalog.Refresher do
   defp enrich_record(%Series{} = series),
     do: isolate("series metadata #{series.id}", fn -> Catalog.enrich_series(series) end)
 
-  # Empty maps are deliberately retried every tick so transient TMDB/DB drift self-heals.
+  # Empty maps are deliberately retried every tick so transient TMDB/DB drift self-heals — but
+  # only the still-empty rows are queried (not the whole table) so a caught-up instance does a
+  # cheap indexless-but-narrow scan returning nothing.
   defp enrich_movies do
     Movie
+    |> where(^empty_localizations())
     |> Repo.all()
-    |> Enum.filter(&(map_size(&1.localizations || %{}) == 0))
     |> Enum.with_index()
     |> Enum.each(fn {movie, index} ->
       if index > 0, do: Process.sleep(250)
@@ -92,16 +116,17 @@ defmodule Cinder.Catalog.Refresher do
   end
 
   defp enrich_unmonitored_series do
-    for series <- Repo.all(from s in Series, where: not s.monitored),
-        map_size(series.localizations || %{}) == 0 do
+    query = from(s in Series, where: not s.monitored) |> where(^empty_localizations())
+
+    for series <- Repo.all(query) do
       isolate("series metadata #{series.id}", fn -> Catalog.enrich_series(series) end)
     end
   end
 
   defp copy_request_localizations do
     Request
+    |> where(^empty_localizations())
     |> Repo.all()
-    |> Enum.filter(&(map_size(&1.localizations || %{}) == 0))
     |> Enum.each(fn request ->
       case catalog_localizations(request) do
         localizations when map_size(localizations) > 0 ->

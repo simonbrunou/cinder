@@ -16,7 +16,8 @@ defmodule Cinder.Health do
   def check_all do
     [tmdb_check(), indexer_check()] ++
       download_checks() ++
-      [media_server_check()] ++ library_checks() ++ media_info_check() ++ subtitles_check()
+      [media_server_check()] ++
+      library_checks() ++ media_info_check() ++ subtitles_check() ++ secrets_check()
   end
 
   @doc """
@@ -117,6 +118,21 @@ defmodule Cinder.Health do
     case check_service(:media_info) do
       {:error, :not_configured} -> []
       status -> [%{label: "Media info (ffprobe)", status: status}]
+    end
+  end
+
+  # A stored secret that can't be decrypted (SECRET_KEY_BASE changed) is skipped at load, so every
+  # service row above can read green while the pipeline is actually credential-less. Surface it as
+  # its own red row naming the count; omit the row entirely when every secret decodes. Reads the
+  # DB, so it goes through `safely/1` — a checkout failure (or anything else) degrades to "no
+  # finding" rather than taking the whole panel down.
+  defp secrets_check do
+    case safely(fn -> Cinder.Settings.undecryptable_secret_keys() end) do
+      keys when is_list(keys) and keys != [] ->
+        [%{label: "Stored credentials", status: {:error, {:undecryptable_secrets, length(keys)}}}]
+
+      _ ->
+        []
     end
   end
 

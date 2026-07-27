@@ -15,6 +15,7 @@ defmodule Cinder.Catalog.RefresherTest do
   import Cinder.AccountsFixtures
 
   @localization_resync_key "localization_resync_v1"
+  @localization_trim_key "localization_trim_v1"
 
   # The Refresher runs in its own process, so the mock must be global; shared Sandbox
   # (async: false) lets that process use the test-owned DB connection.
@@ -253,6 +254,77 @@ defmodule Cinder.Catalog.RefresherTest do
 
     assert :ok = Refresher.poll()
     assert Enum.count(Settings.all(), &(&1.key == @localization_resync_key)) == 1
+  end
+
+  test "a raising TMDB during a localization backfill does not abort the tick" do
+    # The shared setup marks the resync done, so enrich takes the cheap empty-map branch.
+    empty_movie = Repo.insert!(%Movie{tmdb_id: 8601, title: "Boom", localizations: %{}})
+
+    # A catalog movie whose translations a still-empty request should inherit. The copy pass runs
+    # AFTER enrich in the tick, so its success proves the raising enrich pass was isolated (each
+    # backfill pass is wrapped in isolate/2), not fatal to the whole tick.
+    Repo.insert!(%Movie{
+      tmdb_id: 8602,
+      title: "Src",
+      localizations: %{"fr" => %{"title" => "Fr"}}
+    })
+
+    request =
+      Repo.insert!(%Request{
+        user_id: user_fixture().id,
+        target_type: "movie",
+        target_id: 8602,
+        title: "Src",
+        status: :pending,
+        localizations: %{}
+      })
+
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn 8601 -> raise "boom" end)
+
+    start_supervised!({Refresher, interval: 60_000})
+    assert :ok = Refresher.poll()
+
+    # The enrich failure was contained: the movie is still empty.
+    assert Repo.reload!(empty_movie).localizations == %{}
+    # …and the tick continued to the copy pass.
+    assert Repo.reload!(request).localizations == %{"fr" => %{"title" => "Fr"}}
+  end
+
+  test "the legacy-map trim runs once and then stops re-trimming every tick" do
+    bloated =
+      Repo.insert!(%Series{
+        tmdb_id: 8701,
+        title: "T",
+        monitored: false,
+        monitor_strategy: :none,
+        localizations: %{"fr" => %{"title" => "Fr"}, "de" => %{"title" => "De"}}
+      })
+
+    refute Settings.get(@localization_trim_key)
+
+    start_supervised!({Refresher, interval: 60_000})
+    assert :ok = Refresher.poll()
+
+    # First tick trims the legacy bloat and records the done-flag.
+    assert Repo.reload!(bloated).localizations == %{"fr" => %{"title" => "Fr"}}
+    assert Settings.get(@localization_trim_key) == "true"
+
+    # A row that re-acquires a non-canonical locale after the flag is set is NOT re-trimmed — the
+    # pass is gated, no longer a full-table scan every tick. (New writes never store such a locale,
+    # so this can't happen in practice; the direct write here just proves the gate.) Reload first so
+    # the changeset diffs off the now-trimmed row and actually persists the re-bloat.
+    Repo.reload!(bloated)
+    |> Ecto.Changeset.change(
+      localizations: %{"fr" => %{"title" => "Fr"}, "de" => %{"title" => "De"}}
+    )
+    |> Repo.update!()
+
+    assert :ok = Refresher.poll()
+
+    assert Repo.reload!(bloated).localizations == %{
+             "fr" => %{"title" => "Fr"},
+             "de" => %{"title" => "De"}
+           }
   end
 
   test "completed localization resync skips non-empty maps but keeps empty-map retries" do

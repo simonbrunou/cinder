@@ -49,6 +49,27 @@ defmodule CinderWeb.SettingsLiveTest do
     assert html =~ "Save settings"
   end
 
+  test "warns loudly when a stored secret cannot be decrypted, naming the field", %{conn: conn} do
+    # No undecryptable secret yet → no alert.
+    {:ok, _lv, html} = live(conn, ~p"/settings")
+    refute html =~ "could not be decrypted"
+
+    # A secret encrypted under a different SECRET_KEY_BASE can't be decrypted (here: not even
+    # base64, the simplest undecryptable shape).
+    Cinder.Repo.insert!(%Cinder.Settings.Setting{
+      key: "tmdb_token",
+      value: "@@@not-base64@@@",
+      is_secret: true
+    })
+
+    {:ok, _lv, html} = live(conn, ~p"/settings")
+    assert html =~ "undecryptable-secrets-alert"
+    assert html =~ "could not be decrypted"
+    # Names the affected setting by its label, not the raw key — and never the ciphertext.
+    assert html =~ "TMDB API read token (v4 bearer)"
+    refute html =~ "@@@not-base64@@@"
+  end
+
   test "saves the default request quota as a non-secret numeric setting", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/settings")
 

@@ -1,13 +1,25 @@
 defmodule Cinder.Subtitles.Provider.OpenSubtitlesTest do
-  use ExUnit.Case, async: true
+  # async: false — the quota marker (below) is a VM-global :persistent_term that, unlike the token
+  # cache, is NOT self-healing: a marker set mid-test would make a concurrent test's download/search
+  # short-circuit to :quota_exceeded and fail. Only this module drives the real OpenSubtitles impl
+  # (everything else uses the mock provider), so serializing it removes the race entirely.
+  use ExUnit.Case, async: false
 
   alias Cinder.Subtitles.Provider.OpenSubtitles
 
   import Cinder.ConfigCase
 
+  @quota_key {OpenSubtitles, :quota_exhausted}
+
   setup do
-    # Isolate the token cache between tests (persistent_term is global).
-    on_exit(fn -> :persistent_term.erase({OpenSubtitles, :token}) end)
+    # Isolate the global :persistent_term state (token + quota marker) between tests.
+    :persistent_term.erase(@quota_key)
+
+    on_exit(fn ->
+      :persistent_term.erase({OpenSubtitles, :token})
+      :persistent_term.erase(@quota_key)
+    end)
+
     :ok
   end
 
@@ -130,6 +142,50 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitlesTest do
     end)
 
     assert {:error, :quota_exceeded} = OpenSubtitles.download(42)
+  end
+
+  test "download/1 remembers a spent quota and short-circuits later calls without any HTTP" do
+    {:ok, calls} = Agent.start_link(fn -> 0 end)
+
+    Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
+      Agent.update(calls, &(&1 + 1))
+
+      case conn.request_path do
+        "/api/v1/login" -> Req.Test.json(conn, %{"token" => "jwt-123"})
+        "/api/v1/download" -> Plug.Conn.send_resp(conn, 406, ~s({"message":"quota"}))
+      end
+    end)
+
+    # First call really hits the API (login + /download → 406) and records the quota marker.
+    assert {:error, :quota_exceeded} = OpenSubtitles.download(42)
+    calls_after_first = Agent.get(calls, & &1)
+    assert calls_after_first > 0
+    assert :persistent_term.get(@quota_key, nil) == Date.utc_today()
+
+    # A second call short-circuits: no login, no /download, no extra HTTP.
+    assert {:error, :quota_exceeded} = OpenSubtitles.download(99)
+    assert Agent.get(calls, & &1) == calls_after_first
+  end
+
+  test "download/1 forgets a quota marker from a previous UTC day and proceeds" do
+    :persistent_term.put(@quota_key, Date.add(Date.utc_today(), -1))
+
+    Req.Test.stub(Cinder.OpenSubtitlesStub, fn conn ->
+      case conn.request_path do
+        "/api/v1/login" ->
+          Req.Test.json(conn, %{"token" => "jwt-123"})
+
+        "/api/v1/download" ->
+          Req.Test.json(conn, %{"link" => "https://dl.opensubtitles.test/f/42.srt"})
+
+        "/f/42.srt" ->
+          Plug.Conn.send_resp(conn, 200, "SRT-BYTES")
+      end
+    end)
+
+    assert {:ok, "SRT-BYTES"} = OpenSubtitles.download(42)
+    # Rolled-over marker cleared, and the success leaves it clear.
+    assert :persistent_term.get(@quota_key, nil) == nil
   end
 
   test "health/0 logs in — validating api-key + username/password — and is :ok on a token" do

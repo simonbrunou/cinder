@@ -836,6 +836,16 @@ defmodule CinderWeb.CoreComponents do
   def health_reason(:econnrefused), do: gettext("Connection refused")
   def health_reason(:closed), do: gettext("Connection closed")
 
+  # Placed above the generic integer-tuple clauses below — `count` is an integer, so it would
+  # otherwise render as a bogus "HTTP <count>".
+  def health_reason({:undecryptable_secrets, count}) do
+    ngettext(
+      "1 stored secret can't be decrypted. The encryption key changed; re-enter it in Settings.",
+      "%{count} stored secrets can't be decrypted. The encryption key changed; re-enter them in Settings.",
+      count
+    )
+  end
+
   def health_reason({:path_mapping_local_prefix_unreadable, path}),
     do: gettext("Local path prefix is not an existing readable directory: %{path}", path: path)
 
