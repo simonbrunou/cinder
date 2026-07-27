@@ -56,6 +56,9 @@ config :cinder,
   }
 
 config :cinder, filesystem: Cinder.Library.Filesystem.Disk
+# Free-disk prober behind the pre-grab / pre-import space guards; the test config points this at a
+# permissive stub so the suite never shells out to `df`.
+config :cinder, disk_prober: Cinder.Disk
 # Import-time audio-language verification (needs `ffprobe`; the Docker image ships it). Enabled by
 # default; degrades to a no-op if ffprobe is absent. Set `media_info: nil` to disable.
 config :cinder, media_info: Cinder.Library.MediaInfo.Ffprobe

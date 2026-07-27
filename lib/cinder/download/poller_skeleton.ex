@@ -50,18 +50,25 @@ defmodule Cinder.Download.PollerSkeleton do
         quote do
           @max_attempts 10
 
+          # A per-tick condition (a full disk) warns at most once per this window instead of every
+          # tick. Deduped in the long-lived poller process dictionary (see warn_throttled/2).
+          @warn_throttle_ms :timer.minutes(10)
+
           @doc "Runs one poll pass synchronously. The scheduled timer path is asynchronous."
           def poll(server \\ __MODULE__), do: GenServer.call(server, :poll, :infinity)
 
           @doc """
-          Non-blocking last-successful-tick snapshot for `CinderWeb.HealthController`. Reads
-          `:persistent_term` (never the busy worker process), so it returns instantly even
-          mid-tick. `last_run_at` is `nil` until the first tick completes.
+          Non-blocking health snapshot for `CinderWeb.HealthController`. Reads `:persistent_term`
+          (never the busy worker process), so it returns instantly even mid-tick. `last_run_at` is
+          `nil` until the first tick completes; `started_at` is stamped in `init/1`, so a worker
+          that wedges or crash-loops before ever completing a tick still has a start time the
+          controller can bound against (rather than reporting healthy forever).
           """
           def status do
             %{
               module: __MODULE__,
               last_run_at: :persistent_term.get({__MODULE__, :last_run}, nil),
+              started_at: :persistent_term.get({__MODULE__, :started_at}, nil),
               interval: config_interval()
             }
           end
@@ -70,7 +77,26 @@ defmodule Cinder.Download.PollerSkeleton do
           def init(opts) do
             interval = Keyword.get(opts, :interval, config_interval())
             retry_after = Keyword.get(opts, :search_retry_after, @search_retry_after)
+            # Stamp the (re)start time so /healthz can catch a first tick that never completes. A
+            # supervisor restart re-runs init and re-stamps, giving each fresh worker its own
+            # first-tick grace window.
+            :persistent_term.put({__MODULE__, :started_at}, DateTime.utc_now())
             {:ok, %{interval: interval, search_retry_after: retry_after}, {:continue, :schedule}}
+          end
+
+          # Time-throttled Logger.warning keyed by an arbitrary term, deduped in the (long-lived)
+          # poller process dictionary so a per-tick condition warns at most once per
+          # @warn_throttle_ms instead of every tick. Resets on a crash/restart — fine for a warning.
+          defp warn_throttled(key, message) do
+            now = System.monotonic_time(:millisecond)
+            last = Process.get({:warn_throttled, key})
+
+            if is_nil(last) or now - last >= @warn_throttle_ms do
+              Process.put({:warn_throttled, key}, now)
+              Logger.warning(message)
+            end
+
+            :ok
           end
 
           @impl true

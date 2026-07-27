@@ -77,6 +77,19 @@ defmodule Cinder.Download.PollerTest do
     on_exit(fn -> Application.put_env(:cinder, :anime_preferences, saved) end)
   end
 
+  # Drives the free-disk prober (Cinder.Test.StubDisk) for a test's duration: `result` is a
+  # `{:ok, stats}` / `{:error, reason}` tuple returned for every path. Restored on exit.
+  defp set_disk_stub!(result) do
+    saved = Application.get_env(:cinder, :disk_stats_stub)
+    Application.put_env(:cinder, :disk_stats_stub, result)
+
+    on_exit(fn ->
+      if is_nil(saved),
+        do: Application.delete_env(:cinder, :disk_stats_stub),
+        else: Application.put_env(:cinder, :disk_stats_stub, saved)
+    end)
+  end
+
   defp upgrading_movie(tmdb_id, download_id) do
     movie_fixture(%{
       tmdb_id: tmdb_id,
@@ -597,6 +610,58 @@ defmodule Cinder.Download.PollerTest do
     assert {:ok, %Movie{status: :downloading, download_id: ^hash}} = Download.start(movie)
     assert :ok = Poller.poll()
     assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
+  end
+
+  test "search skips the grab (no park, no attempt bump) when the download root can't hold it" do
+    {:ok, movie} = Catalog.add_movie(%{tmdb_id: 77, title: "Big", imdb_id: "tt7777777"})
+
+    set_disk_stub!({:ok, %{free_bytes: 1_000_000_000, total_bytes: 100_000_000_000}})
+
+    stub(Cinder.Acquisition.IndexerMock, :search, fn "tt7777777" ->
+      {:ok,
+       [
+         %{
+           title: "Big.2020.1080p.BluRay.x264-GRP",
+           size: 8_000_000_000,
+           download_url: "magnet:?x",
+           seeders: 10
+         }
+       ]}
+    end)
+
+    # ClientMock.add is intentionally NOT stubbed — a disk-blocked grab must never reach the client
+    # (set_mox_global would raise on an unexpected call).
+    start_supervised!({Poller, interval: 60_000})
+
+    log = capture_log(fn -> assert :ok = Poller.poll() end)
+
+    movie = Repo.get!(Movie, movie.id)
+    assert movie.status in [:requested, :searching]
+    assert (movie.search_attempts || 0) == 0
+    assert log =~ "insufficient free disk space"
+    assert Repo.aggregate(Intent, :count) == 0
+  end
+
+  test "import holds (no park, no attempt bump) when the movies library root is nearly full" do
+    movie =
+      movie_fixture(%{
+        tmdb_id: 78,
+        title: "M",
+        status: :downloaded,
+        content_path: "/downloads/M.mkv",
+        download_id: "hash-hold"
+      })
+
+    set_disk_stub!({:ok, %{free_bytes: 500_000_000, total_bytes: 100_000_000_000}})
+
+    # No filesystem stubs: a held import must never reach Library.stage_movie.
+    start_supervised!({Poller, interval: 60_000})
+
+    log = capture_log(fn -> assert :ok = Poller.poll() end)
+
+    assert %Movie{status: :downloaded, import_attempts: attempts} = Repo.get!(Movie, movie.id)
+    assert (attempts || 0) == 0
+    assert log =~ "nearly full"
   end
 
   test "the poller recovers from a crash and still advances work (OTP payoff)" do

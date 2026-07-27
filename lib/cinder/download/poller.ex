@@ -77,17 +77,28 @@ defmodule Cinder.Download.Poller do
       {:ok, _movie} ->
         :ok
 
-      # The movie was cancelled/re-decided while this unit was in flight; the guarded
-      # transition skipped the write. Nothing to retry — the next tick re-derives.
-      {:error, :stale_status} ->
-        :ok
-
       {:error, :invalid_anime_preferences} ->
         Logger.info("movie #{movie.id} search held: invalid anime preferences")
         :ok
 
+      # Not enough free disk for this release. Skip the grab this tick without bumping
+      # search_attempts or parking — space may free up. The warning is throttled so a persistently
+      # full disk doesn't flood the log every 5s tick.
+      {:error, {:insufficient_disk_space, size}} ->
+        warn_throttled(
+          {:disk_grab, movie.id},
+          "movie #{movie.id} grab skipped: insufficient free disk space for release " <>
+            "(~#{Cinder.Disk.human_gb(size)} GB); will retry when space frees"
+        )
+
+        :ok
+
+      # Nothing to retry — skip; the next tick re-derives. :stale_status means the movie was
+      # cancelled/re-decided while this unit was in flight (the guarded transition skipped the
+      # write); the rest are in-flight intent states.
       {:error, reason}
       when reason in [
+             :stale_status,
              :intent_backoff,
              :cleanup_pending,
              :download_intent_busy,
@@ -219,7 +230,19 @@ defmodule Cinder.Download.Poller do
   # blip can never block a good release; only post-exhaustion does park record it.
   @download_failure_errors [:download_error, :torrent_not_found, :no_content_path]
 
-  defp import_one(movie), do: movie |> Library.stage_movie() |> import_one_result(movie)
+  defp import_one(movie) do
+    # Pre-import disk guard on the movies library root. Hold (no attempt bump, no park) on a full
+    # disk — the download is done and waiting, so don't burn the import budget on a fixable
+    # condition. Throttled so a persistently full disk doesn't flood the log.
+    if Cinder.Disk.import_space_available?(:movies) do
+      movie |> Library.stage_movie() |> import_one_result(movie)
+    else
+      warn_throttled(
+        {:disk_import, movie.id},
+        "movie #{movie.id} import held: movies library root is nearly full; will retry when space frees"
+      )
+    end
+  end
 
   defp import_one_result({:error, {:release_policy_mismatch, evidence}}, movie) do
     reject_release(
