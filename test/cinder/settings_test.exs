@@ -16,6 +16,8 @@ defmodule Cinder.SettingsTest do
   @env_keys [
     Cinder.Catalog.TMDB.HTTP,
     Cinder.Acquisition.Indexer.Prowlarr,
+    Cinder.Library.MigrationSource.Radarr,
+    Cinder.Library.MigrationSource.Sonarr,
     Cinder.Download.Client.QBittorrent,
     Cinder.Download.Client.Sabnzbd,
     Cinder.Library.MediaServer.Jellyfin,
@@ -210,6 +212,45 @@ defmodule Cinder.SettingsTest do
       end
     end
 
+    test "migration source settings overlay both clients and encrypt their API keys" do
+      assert :ok =
+               Settings.save_form(%{
+                 "radarr_url" => "http://radarr.internal:7878",
+                 "radarr_api_key" => "radarr-secret",
+                 "radarr_remote_path_prefix" => "/movies",
+                 "radarr_local_path_prefix" => "/media/movies",
+                 "sonarr_url" => "http://sonarr.internal:8989",
+                 "sonarr_api_key" => "sonarr-secret",
+                 "sonarr_remote_path_prefix" => "/tv",
+                 "sonarr_local_path_prefix" => "/media/tv",
+                 "media_server_type" => "jellyfin"
+               })
+
+      assert Application.get_env(:cinder, Cinder.Library.MigrationSource.Radarr)
+             |> Keyword.take([:base_url, :api_key, :remote_path_prefix, :local_path_prefix]) ==
+               [
+                 base_url: "http://radarr.internal:7878",
+                 api_key: "radarr-secret",
+                 remote_path_prefix: "/movies",
+                 local_path_prefix: "/media/movies"
+               ]
+
+      assert Application.get_env(:cinder, Cinder.Library.MigrationSource.Sonarr)
+             |> Keyword.take([:base_url, :api_key, :remote_path_prefix, :local_path_prefix]) ==
+               [
+                 base_url: "http://sonarr.internal:8989",
+                 api_key: "sonarr-secret",
+                 remote_path_prefix: "/tv",
+                 local_path_prefix: "/media/tv"
+               ]
+
+      for key <- ["radarr_api_key", "sonarr_api_key"] do
+        row = Repo.get_by!(Setting, key: key)
+        assert row.is_secret
+        refute row.value =~ "secret"
+      end
+    end
+
     test "secret values are ciphertext at rest but decrypt on read" do
       Settings.put("tmdb_token", "super-secret-token")
 
@@ -290,6 +331,71 @@ defmodule Cinder.SettingsTest do
 
       assert log =~ "cannot decrypt tmdb_token; re-enter it in /settings"
       assert Application.get_env(:cinder, Cinder.Catalog.TMDB.HTTP)[:token] != :error
+    end
+  end
+
+  describe "undecryptable_secret_keys/0" do
+    test "lists secret keys whose ciphertext fails to decrypt, excluding good secrets/plaintext" do
+      # A good (decodable) secret and a plaintext non-secret must NOT appear.
+      Settings.put("tmdb_token", "good-token")
+
+      Repo.insert!(%Setting{
+        key: "prowlarr_url",
+        value: "http://localhost:9696",
+        is_secret: false
+      })
+
+      # A wrong-key secret: encrypt, then corrupt the ciphertext so the GCM tag fails — exactly
+      # what a SECRET_KEY_BASE change produces.
+      Settings.put("prowlarr_api_key", "real-key")
+      corrupt_secret("prowlarr_api_key")
+
+      # A non-base64 secret is undecryptable too.
+      Repo.insert!(%Setting{key: "sabnzbd_api_key", value: "@@@not-base64@@@", is_secret: true})
+
+      keys = Settings.undecryptable_secret_keys()
+      assert Enum.sort(keys) == ["prowlarr_api_key", "sabnzbd_api_key"]
+      refute "tmdb_token" in keys
+      refute "prowlarr_url" in keys
+    end
+
+    test "is empty when every stored secret decodes" do
+      Settings.put("tmdb_token", "good-token")
+      assert Settings.undecryptable_secret_keys() == []
+    end
+
+    test "a cleared (nil-valued) secret is not undecryptable" do
+      Repo.insert!(%Setting{key: "tmdb_token", value: nil, is_secret: true})
+      assert Settings.undecryptable_secret_keys() == []
+    end
+
+    test "field_label/1 resolves a secret key to its label, else the key itself" do
+      assert Settings.field_label("prowlarr_api_key") == "Prowlarr API key"
+      assert Settings.field_label("unknown_key") == "unknown_key"
+    end
+
+    test "Health.check_all surfaces a failing 'Stored credentials' row naming the count" do
+      stub(Cinder.Catalog.TMDBMock, :health, fn -> :ok end)
+      stub(Cinder.Acquisition.IndexerMock, :health, fn -> :ok end)
+      stub(Cinder.Library.MediaServerMock, :health, fn -> :ok end)
+      stub(Cinder.Download.ClientMock, :health, fn -> :ok end)
+
+      Settings.put("tmdb_token", "real-token")
+      corrupt_secret("tmdb_token")
+
+      row = Enum.find(Health.check_all(), &(&1.label == "Stored credentials"))
+      assert row.status == {:error, {:undecryptable_secrets, 1}}
+    end
+
+    test "no 'Stored credentials' row when every secret decodes" do
+      stub(Cinder.Catalog.TMDBMock, :health, fn -> :ok end)
+      stub(Cinder.Acquisition.IndexerMock, :health, fn -> :ok end)
+      stub(Cinder.Library.MediaServerMock, :health, fn -> :ok end)
+      stub(Cinder.Download.ClientMock, :health, fn -> :ok end)
+
+      Settings.put("tmdb_token", "good-token")
+
+      refute Enum.any?(Health.check_all(), &(&1.label == "Stored credentials"))
     end
   end
 
@@ -890,6 +996,17 @@ defmodule Cinder.SettingsTest do
       assert Health.check_service(:media_server) == :ok
       assert Health.check_service({:download, :torrent}) == :ok
     end
+  end
+
+  # Encrypt-then-corrupt a stored secret so its GCM tag fails to authenticate — exactly what a
+  # SECRET_KEY_BASE change (or a restore under a different key) produces.
+  defp corrupt_secret(key) do
+    row = Repo.get_by!(Setting, key: key)
+    raw = Base.decode64!(row.value)
+    n = byte_size(raw) - 1
+    <<head::binary-size(^n), last>> = raw
+    corrupted = Base.encode64(head <> <<rem(last + 1, 256)>>)
+    row |> Ecto.Changeset.change(value: corrupted) |> Repo.update!()
   end
 
   defp inferred_import_roots do

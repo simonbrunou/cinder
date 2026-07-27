@@ -3,7 +3,7 @@ defmodule Cinder.Catalog.Adoption do
 
   import Ecto.Query
 
-  alias Cinder.Catalog.{Episode, Season, SeriesCatalog}
+  alias Cinder.Catalog.{Episode, Identity, Season, SeriesCatalog}
   alias Cinder.Repo
 
   @doc """
@@ -12,8 +12,16 @@ defmodule Cinder.Catalog.Adoption do
 
   Broadcasts and transition telemetry fire only after commit.
   """
-  def adopt_episode_files(actions) when is_list(actions) do
-    case Repo.transaction(fn -> reduce_adoptions(actions) end) do
+  def adopt_episode_files(actions) when is_list(actions),
+    do: adopt_episode_files(actions, [])
+
+  def adopt_episode_files(actions, coordinate_batches)
+      when is_list(actions) and is_list(coordinate_batches) do
+    case Repo.transaction(fn ->
+           {applied, updated} = reduce_adoptions(actions)
+           persist_coordinates(coordinate_batches)
+           {applied, updated}
+         end) do
       {:ok, {applied, updated}} ->
         publish(updated)
         {:ok, Enum.reverse(applied)}
@@ -25,6 +33,21 @@ defmodule Cinder.Catalog.Adoption do
 
   defp reduce_adoptions(actions),
     do: Enum.reduce_while(actions, {[], []}, &reduce_adoption/2)
+
+  defp persist_coordinates(coordinate_batches) do
+    Enum.each(coordinate_batches, fn batch ->
+      case Identity.replace_provider_coordinates(
+             batch.series,
+             batch.source,
+             batch.namespace,
+             batch.scheme,
+             batch.coordinates
+           ) do
+        {:ok, _coordinates} -> :ok
+        {:error, reason} -> Repo.rollback(%{reason: {:coordinate_write_failed, reason}})
+      end
+    end)
+  end
 
   defp reduce_adoption(action, {applied, updated}) do
     case adopt_file(action) do
@@ -63,6 +86,10 @@ defmodule Cinder.Catalog.Adoption do
   end
 
   defp adopt_file(_action), do: {:error, :invalid_action}
+
+  @doc false
+  def adopt_episode_part(%Episode{} = episode, path),
+    do: adopt_file(%{episode: episode, type: :part, path: path})
 
   defp update_episode(episode, attrs) do
     episode

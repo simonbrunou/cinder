@@ -2,6 +2,7 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
   use CinderWeb.ConnCase, async: false
   import Phoenix.LiveViewTest
   import Mox
+  import Cinder.CatalogFixtures
 
   setup :set_mox_global
 
@@ -27,6 +28,73 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
     {:ok, _lv, html} = live(conn, ~p"/series/tmdb/1399")
     assert html =~ "GoT"
     refute html =~ ~s(<h1 class="text-2xl font-semibold">)
+  end
+
+  test "renders series metadata (synopsis, genres, rating, air date) and a cast strip", %{
+    conn: conn
+  } do
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn 1399 ->
+      {:ok,
+       %{
+         tmdb_id: 1399,
+         tvdb_id: 1,
+         title: "GoT",
+         year: 2011,
+         poster_path: nil,
+         overview: "Nine noble families fight for control.",
+         genres: ["Drama", "Fantasy"],
+         vote_average: 8.4,
+         first_air_date: ~D[2011-04-17],
+         cast: [
+           %{tmdb_id: 22_970, name: "Peter Dinklage", character: "Tyrion", profile_path: "/p.jpg"}
+         ],
+         seasons: [%{season_number: 1}]
+       }}
+    end)
+
+    conn = log_in_user(conn, Cinder.AccountsFixtures.user_fixture())
+    {:ok, lv, html} = live(conn, ~p"/series/tmdb/1399")
+
+    assert html =~ "Nine noble families fight for control."
+    assert html =~ "Fantasy"
+    assert html =~ "8.4"
+    assert html =~ "2011"
+    assert html =~ "Peter Dinklage"
+    assert has_element?(lv, ~s(a[href="/person/tmdb/22970"]))
+  end
+
+  # The base stub omits overview/genres/cast — the page must render without them, not crash.
+  test "degrades gracefully when TMDB omits synopsis and cast", %{conn: conn} do
+    conn = log_in_user(conn, Cinder.AccountsFixtures.user_fixture())
+    {:ok, _lv, html} = live(conn, ~p"/series/tmdb/1399")
+
+    assert html =~ "No description available."
+    refute html =~ "Top cast"
+  end
+
+  test "shows Open in media server once a season is available and a web URL is set", %{conn: conn} do
+    put_media_server_web_url("https://plex.example.com")
+
+    # A season is "available" once it has an imported episode and no aired episode still missing.
+    series = series_fixture(%{tmdb_id: 1399})
+    season = season_fixture(series, %{season_number: 1})
+    _episode = episode_fixture(season, %{file_path: "/tv/got-s01e01.mkv"})
+
+    conn = log_in_user(conn, Cinder.AccountsFixtures.admin_fixture())
+    {:ok, lv, html} = live(conn, ~p"/series/tmdb/1399")
+
+    assert has_element?(lv, ~s(a[href="https://plex.example.com"]), "Open in Plex")
+    assert html =~ "opens in a new tab"
+  end
+
+  # No available season → no "Open" affordance, even with a URL configured.
+  test "hides Open in media server when no season is available", %{conn: conn} do
+    put_media_server_web_url("https://plex.example.com")
+
+    conn = log_in_user(conn, Cinder.AccountsFixtures.user_fixture())
+    {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
+
+    refute has_element?(lv, "a", "Open in Plex")
   end
 
   test "lists seasons from TMDB with Request buttons for a not-yet-added show", %{conn: conn} do
@@ -208,5 +276,22 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
     render_click(lv, "request_season", %{"season" => "99"})
 
     assert Cinder.Requests.list_for_user(user) == []
+  end
+
+  # Writes the media_server_type row directly (not via Settings.put/2, which would flip the global
+  # :media_server impl away from the Mox mock for the rest of the run) and sets a web URL on the
+  # Plex impl config; media_server_web_link/0 reads both.
+  defp put_media_server_web_url(url) do
+    module = Cinder.Library.MediaServer.Plex
+    previous = Application.get_env(:cinder, module, [])
+    on_exit(fn -> Application.put_env(:cinder, module, previous) end)
+
+    Cinder.Repo.insert!(%Cinder.Settings.Setting{
+      key: "media_server_type",
+      value: "plex",
+      is_secret: false
+    })
+
+    Application.put_env(:cinder, module, Keyword.put(previous, :web_url, url))
   end
 end

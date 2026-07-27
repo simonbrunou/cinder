@@ -388,6 +388,10 @@ defmodule CinderWeb.SettingsComponents do
 
   def services_for(:tmdb), do: [{"tmdb", "TMDB"}]
   def services_for(:indexer), do: [{"indexer", "Prowlarr"}]
+
+  def services_for(:migration),
+    do: [{"radarr", gettext("Radarr")}, {"sonarr", gettext("Sonarr")}]
+
   def services_for(:download), do: [{"torrent", "qBittorrent"}, {"usenet", "SABnzbd"}]
   def services_for(:media_server), do: [{"media_server", gettext("Media server")}]
   def services_for(:notifications), do: [{"discord", "Discord"}]
@@ -411,6 +415,8 @@ defmodule CinderWeb.SettingsComponents do
   # phx-value is client-controlled; only known services resolve to a check target.
   def decode_service("tmdb"), do: :tmdb
   def decode_service("indexer"), do: :indexer
+  def decode_service("radarr"), do: {:migration_source, :radarr}
+  def decode_service("sonarr"), do: {:migration_source, :sonarr}
   def decode_service("media_server"), do: :media_server
   def decode_service("torrent"), do: {:download, :torrent}
   def decode_service("usenet"), do: {:download, :usenet}

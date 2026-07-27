@@ -23,10 +23,10 @@ defmodule Cinder.Catalog do
   alias Cinder.Catalog.{
     Discovery,
     Episode,
-    EpisodeCoordinate,
+    EpisodeTransition,
     Grabs,
     Identity,
-    MediaProfile,
+    MediaProfiles,
     Movie,
     ReleaseVerification,
     SceneNumbering,
@@ -101,74 +101,16 @@ defmodule Cinder.Catalog do
   the approval path calls this post-commit, where a raise would escape an already-committed
   approval.
   """
-  def set_media_profile(%Movie{} = movie, profile) do
-    with {:ok, updated} <-
-           movie |> Movie.profile_changeset(%{media_profile: profile}) |> Repo.update() do
-      broadcast({:movie_updated, updated})
-      {:ok, updated}
-    end
-  rescue
-    Ecto.StaleEntryError -> {:error, :stale_entry}
-  end
+  defdelegate set_media_profile(title, profile), to: MediaProfiles
 
-  def set_media_profile(%Series{} = series, profile) do
-    with {:ok, updated} <-
-           series |> Series.profile_changeset(%{media_profile: profile}) |> Repo.update() do
-      broadcast_series(updated.id)
-      {:ok, updated}
-    end
-  rescue
-    Ecto.StaleEntryError -> {:error, :stale_entry}
-  end
-
-  @doc """
-  Marks a title held at search time because the Anime release preferences can't be
-  satisfied for it (`AnimePreferences.resolve/2` failed), or clears the hold (`nil`).
-  A non-status flag written directly (monitor-toggle precedent, not pipeline state);
-  every sweep re-writes it at the resolve site, so the marker can't stick stale.
-  A no-op when unchanged — the sweep runs every tick, don't broadcast equal values.
-  """
-  def set_anime_hold(title, reason) do
-    reason = reason && to_string(reason)
-
-    if title.anime_hold_reason == reason,
-      do: {:ok, title},
-      else: write_anime_hold(title, reason)
-  end
-
-  defp write_anime_hold(%Movie{} = movie, reason) do
-    with {:ok, updated} <-
-           movie |> Movie.anime_hold_changeset(%{anime_hold_reason: reason}) |> Repo.update() do
-      broadcast({:movie_updated, updated})
-      {:ok, updated}
-    end
-  end
-
-  defp write_anime_hold(%Series{} = series, reason) do
-    with {:ok, updated} <-
-           series |> Series.anime_hold_changeset(%{anime_hold_reason: reason}) |> Repo.update() do
-      broadcast_series(updated.id)
-      {:ok, updated}
-    end
-  end
+  @doc "Marks or clears the anime search-time hold; see `Cinder.Catalog.MediaProfiles`."
+  defdelegate set_anime_hold(title, reason), to: MediaProfiles
 
   @doc "Series currently held at search time on unsatisfiable Anime preferences (see `set_anime_hold/2`); surfaced on `/activity`."
   defdelegate list_anime_held_series(), to: SeriesCatalog
 
   @doc "Returns selected/effective profile policy and bounded suggestion evidence."
-  def media_profile_summary(%Series{} = series) do
-    extra_evidence =
-      if Repo.exists?(
-           from c in EpisodeCoordinate,
-             where: c.series_id == ^series.id and c.source == "tmdb" and c.scheme == "absolute"
-         ),
-         do: [:absolute_episode_group],
-         else: []
-
-    MediaProfile.summary(series, extra_evidence)
-  end
-
-  def media_profile_summary(%Movie{} = movie), do: MediaProfile.summary(movie)
+  defdelegate media_profile_summary(title), to: MediaProfiles
 
   @doc "Returns the one series owning every supplied episode ID."
   defdelegate get_single_series_for_episode_ids(episode_ids), to: SeriesCatalog
@@ -199,27 +141,10 @@ defmodule Cinder.Catalog do
   defdelegate save_scene_offset_coordinates(series, from, delta), to: SceneNumbering
 
   @doc "Builds the plain Catalog-owned identity context used for anime movie acquisition."
-  def anime_movie_acquisition_context(%Movie{} = movie) do
-    %{
-      kind: :movie,
-      title: movie.title,
-      year: movie.year,
-      aliases: acquisition_aliases(movie),
-      profile: media_profile_summary(movie)
-    }
-  end
+  defdelegate anime_movie_acquisition_context(movie), to: MediaProfiles
 
   @doc "Builds the plain Catalog-owned identity context used for anime series acquisition."
   defdelegate anime_series_acquisition_context(series), to: SeriesCatalog
-
-  # Duplicated in `Cinder.Catalog.SeriesCatalog` (used there by
-  # anime_series_acquisition_context/1) — tiny enough to keep as two independent copies rather
-  # than share a module for it.
-  defp acquisition_aliases(owner) do
-    owner
-    |> Identity.list_aliases()
-    |> Enum.map(&Map.take(&1, [:title, :kind, :precedence, :normalized_title]))
-  end
 
   @doc "Lists movies, newest first."
   def list_movies do
@@ -1340,17 +1265,41 @@ defmodule Cinder.Catalog do
   defdelegate set_series_monitor_strategy(series, strategy), to: SeriesCatalog
 
   @doc """
-  Single choke-point for episode **pipeline** writes (`file_path`, `grab_id`, attempt
-  counters — no status enum; episode state is derived). On success broadcasts
-  `{:series_updated, series_id}` on the `"series"` topic. `monitored` is NOT written here —
-  it is not pipeline state and keeps `set_episode_monitored/2`.
+  Single choke-point for episode **pipeline** writes (`file_path`, `grab_id`, attempt counters;
+  episode state is derived). On success broadcasts `{:series_updated, series_id}`. `monitored`
+  stays in `set_episode_monitored/2`. `expect:` is atomic; `publish: false` defers publication.
   """
-  def transition_episode(%Episode{} = episode, attrs) do
+  def transition_episode(episode, attrs, opts \\ [])
+
+  def transition_episode(%Episode{} = episode, attrs, []) do
     with {:ok, updated} <- episode |> Episode.transition_changeset(attrs) |> Repo.update() do
       broadcast_series(series_id_for_season(updated.season_id))
       emit_transition(:episode, SeriesCatalog.episode_state(updated))
       {:ok, updated}
     end
+  end
+
+  def transition_episode(%Episode{} = episode, attrs, opts) when is_list(opts) do
+    expected = opts |> Keyword.fetch!(:expect) |> Map.new()
+
+    with {:ok, updated} <- EpisodeTransition.guarded(episode, attrs, expected) do
+      if Keyword.get(opts, :publish, true) do
+        publish_episode_transition_batch([updated], series_id_for_season(updated.season_id))
+      end
+
+      {:ok, updated}
+    end
+  end
+
+  @doc false
+  def publish_episode_transition_batch(episodes, series_id) do
+    broadcast_series(series_id)
+
+    Enum.each(episodes, fn episode ->
+      emit_transition(:episode, SeriesCatalog.episode_state(episode))
+    end)
+
+    :ok
   end
 
   defdelegate adopt_episode_files(actions), to: Cinder.Catalog.Adoption
@@ -1363,8 +1312,7 @@ defmodule Cinder.Catalog do
   @doc false
   def now, do: DateTime.truncate(DateTime.utc_now(), :second)
 
-  ## Grab creation/mapping/finish/park/reap, the release blocklist, and per-episode
-  ## search-attempt bookkeeping — carved out to `Cinder.Catalog.Grabs`.
+  ## Grab lifecycle and blocklist implementation lives in `Cinder.Catalog.Grabs`.
 
   defdelegate create_grab(download_id, protocol, episode_ids), to: Grabs
   defdelegate create_grab(download_id, protocol, episode_ids, release_title), to: Grabs
@@ -1427,6 +1375,7 @@ defmodule Cinder.Catalog do
   defdelegate count_wanted_episodes(), to: SeriesCatalog
   defdelegate available_season_keys(), to: SeriesCatalog
   defdelegate available_season_keys(tmdb_id), to: SeriesCatalog
+  defdelegate season_progress_keys(), to: SeriesCatalog
   defdelegate count_wanted_episodes(series_id, season_number), to: SeriesCatalog
   defdelegate count_episodes(series_id, season_number), to: SeriesCatalog
   defdelegate max_search_attempts(), to: SeriesCatalog
@@ -1441,6 +1390,10 @@ defmodule Cinder.Catalog do
   defdelegate finish_grab(grab), to: Grabs
   defdelegate finish_grab(grab, imported), to: Grabs
   defdelegate finish_grab(grab, imported, stage_ids), to: Grabs
+  defdelegate commit_grab_imports(grab, imported, residuals), to: Grabs
+  defdelegate commit_grab_imports(grab, imported, residuals, stage_ids), to: Grabs
+  defdelegate close_grab(grab), to: Grabs
+  defdelegate decide_grab_file(file, episode, decision, stage), to: Grabs
   defdelegate park_grab(grab), to: Grabs
   defdelegate reap_stalled_grab(grab), to: Grabs
 

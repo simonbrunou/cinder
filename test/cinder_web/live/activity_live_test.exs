@@ -6,8 +6,9 @@ defmodule CinderWeb.ActivityLiveTest do
   import Mox
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Grab}
+  alias Cinder.Catalog.{Episode, Grab, GrabFile}
   alias Cinder.Download.Intent
+  alias Cinder.Library.ImportStage
   alias Cinder.Repo
 
   import Cinder.CatalogFixtures
@@ -194,6 +195,105 @@ defmodule CinderWeb.ActivityLiveTest do
     assert has_element?(view, "#retry-mapping-grab-#{held.id}", "Retry import")
     assert has_element?(view, "#ask-cancel-mapping-grab-#{held.id}", "Discard")
     refute has_element?(view, "#grab-#{held.id} button", "Delete")
+  end
+
+  test "a standard residual grab shows explicit Fold, Part, and Hold actions with no selection",
+       %{
+         conn: conn
+       } do
+    grab = grab!()
+    {:ok, grab} = Catalog.mark_grab_downloaded(grab, "/downloads/Severance")
+    episode = Repo.get_by!(Episode, grab_id: grab.id)
+
+    for {path, inode} <- [{"part-2.mkv", 11}, {"part-3.mkv", 12}] do
+      Repo.insert!(%GrabFile{
+        grab_id: grab.id,
+        relative_path: path,
+        size: 10,
+        device: 1,
+        inode: inode
+      })
+    end
+
+    {:ok, view, _html} = live(conn, ~p"/activity")
+
+    assert has_element?(view, "#grab-#{grab.id}", "Needs mapping")
+
+    assert has_element?(
+             view,
+             "#grab-#{grab.id}-file-reason",
+             "2 unmatched videos were kept in the download source for review."
+           )
+
+    refute has_element?(view, "#grab-#{grab.id}", "Retry import")
+    refute has_element?(view, "#grab-#{grab.id}", "Discard")
+
+    for file <- Repo.all(from f in GrabFile, where: f.grab_id == ^grab.id) do
+      assert has_element?(view, "#grab-file-#{file.id}", file.relative_path)
+      assert has_element?(view, "#grab-file-#{file.id} button[value=fold]", "Fold")
+      assert has_element?(view, "#grab-file-#{file.id} button[value=part]", "Keep as part")
+      assert has_element?(view, "#grab-file-#{file.id} button", "Hold")
+
+      refute has_element?(
+               view,
+               "#grab-file-#{file.id}-episode option[value=\"#{episode.id}\"][selected]"
+             )
+    end
+
+    first = Repo.one!(from f in GrabFile, where: f.grab_id == ^grab.id, order_by: f.id, limit: 1)
+    view |> element("#grab-file-#{first.id} button", "Hold") |> render_click()
+
+    assert Repo.get!(GrabFile, first.id).decision == nil
+    assert Repo.get(Grab, grab.id)
+    assert has_element?(view, "#grab-file-#{first.id}")
+  end
+
+  test "a Part staging failure stays on its row and leaves every write unresolved", %{conn: conn} do
+    grab = grab!()
+    {:ok, grab} = Catalog.mark_grab_downloaded(grab, "/downloads/Severance")
+    episode = Repo.get_by!(Episode, grab_id: grab.id)
+    {:ok, episode} = Catalog.transition_episode(episode, %{file_path: "/tv/Severance.S01E01.mkv"})
+
+    file =
+      Repo.insert!(%GrabFile{
+        grab_id: grab.id,
+        relative_path: "part-2.mkv",
+        size: 10,
+        device: 1,
+        inode: 11
+      })
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _path -> true end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn _path ->
+      {:ok, %File.Stat{size: 10, major_device: 1, inode: 11, type: :regular}}
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _path -> {:error, :eacces} end)
+
+    {:ok, view, _html} = live(conn, ~p"/activity")
+
+    view
+    |> element("#grab-file-#{file.id}-resolution-form")
+    |> render_submit(%{
+      "resolution" => %{
+        "grab_file_id" => to_string(file.id),
+        "episode_id" => to_string(episode.id),
+        "decision" => "part"
+      }
+    })
+
+    assert has_element?(
+             view,
+             "#grab-file-#{file.id}-error",
+             "The file could not be resolved and remains held."
+           )
+
+    assert %GrabFile{decision: nil, destination: nil, import_stage_id: nil} =
+             Repo.get!(GrabFile, file.id)
+
+    assert Repo.reload!(episode).part_file_paths == []
+    refute Repo.exists?(ImportStage)
   end
 
   test "Retry import releases a held grab back to resolved", %{conn: conn} do

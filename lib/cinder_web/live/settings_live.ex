@@ -15,6 +15,7 @@ defmodule CinderWeb.SettingsLive do
   import CinderWeb.SettingsComponents
 
   alias Cinder.{Health, Settings}
+  alias CinderWeb.SettingsLabels
 
   @impl true
   def mount(_params, _session, socket) do
@@ -23,6 +24,7 @@ defmodule CinderWeb.SettingsLive do
        form: Settings.form_state(),
        health: %{},
        form_revision: 0,
+       undecryptable_secrets: Settings.undecryptable_secret_keys(),
        auto_approve_all: Settings.auto_approve_all?()
      )}
   end
@@ -36,7 +38,8 @@ defmodule CinderWeb.SettingsLive do
          |> assign(
            form: Settings.form_state(),
            health: %{},
-           form_revision: socket.assigns.form_revision + 1
+           form_revision: socket.assigns.form_revision + 1,
+           undecryptable_secrets: Settings.undecryptable_secret_keys()
          )
          |> put_flash(:info, gettext("Settings saved."))}
 
@@ -102,6 +105,34 @@ defmodule CinderWeb.SettingsLive do
       <.link navigate={~p"/dashboard"} class="link link-hover mb-6 inline-flex items-center gap-1">
         <.icon name="hero-arrow-left" class="size-3.5" />{gettext("Dashboard")}
       </.link>
+
+      <div
+        :if={@undecryptable_secrets != []}
+        id="undecryptable-secrets-alert"
+        role="alert"
+        class="alert alert-error mb-6 items-start"
+      >
+        <.icon name="hero-exclamation-triangle" class="size-5 shrink-0" />
+        <div>
+          <p class="font-semibold">
+            {ngettext(
+              "1 stored secret could not be decrypted. The encryption key changed; re-enter it below.",
+              "%{count} stored secrets could not be decrypted. The encryption key changed; re-enter them below.",
+              length(@undecryptable_secrets)
+            )}
+          </p>
+          <p class="text-sm">
+            {gettext("Affected: %{fields}",
+              fields:
+                Enum.map_join(
+                  @undecryptable_secrets,
+                  ", ",
+                  &SettingsLabels.t(Settings.field_label(&1))
+                )
+            )}
+          </p>
+        </div>
+      </div>
 
       <form
         id="settings-form"

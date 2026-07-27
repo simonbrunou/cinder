@@ -106,10 +106,71 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
             }} = HTTP.get_movie(27_205)
   end
 
-  test "find_by_external_id/2 sends the source and normalizes movie and TV results" do
+  test "get_movie/1 appends credits + carries top-billed cast and the collection link" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
-      assert conn.request_path == "/3/find/tt0903747"
-      assert conn.params["external_source"] == "imdb_id"
+      assert conn.request_path == "/3/movie/27205"
+      assert conn.params["append_to_response"] == "translations,credits"
+
+      Req.Test.json(conn, %{
+        "id" => 27_205,
+        "title" => "Inception",
+        "release_date" => "2010-07-16",
+        "belongs_to_collection" => %{
+          "id" => 8945,
+          "name" => "The Dark Knight Collection",
+          "poster_path" => "/c.jpg"
+        },
+        "credits" => %{
+          "cast" => [
+            %{
+              "id" => 2,
+              "name" => "Second",
+              "character" => "B",
+              "order" => 1,
+              "profile_path" => "/2.jpg"
+            },
+            %{
+              "id" => 1,
+              "name" => "First",
+              "character" => "A",
+              "order" => 0,
+              "profile_path" => nil
+            },
+            # Malformed (no id) — dropped rather than crashing the strip.
+            %{"name" => "Nameless", "order" => 2}
+          ],
+          "crew" => [%{"id" => 9, "name" => "Director", "job" => "Director"}]
+        }
+      })
+    end)
+
+    assert {:ok,
+            %{
+              tmdb_id: 27_205,
+              collection: %{tmdb_id: 8945, title: "The Dark Knight Collection"},
+              cast: [
+                %{tmdb_id: 1, name: "First", character: "A", profile_path: nil},
+                %{tmdb_id: 2, name: "Second", character: "B", profile_path: "/2.jpg"}
+              ]
+            }} = HTTP.get_movie(27_205)
+  end
+
+  test "get_movie/1 degrades to empty cast and nil collection when TMDB omits them" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      Req.Test.json(conn, %{
+        "id" => 27_205,
+        "title" => "Inception",
+        "release_date" => "2010-07-16"
+      })
+    end)
+
+    assert {:ok, %{cast: [], collection: nil}} = HTTP.get_movie(27_205)
+  end
+
+  test "find_by_external_id/2 sends the source and retains movie, TV, and episode results" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      assert conn.request_path == "/3/find/500"
+      assert conn.params["external_source"] == "tvdb_id"
 
       Req.Test.json(conn, %{
         "movie_results" => [
@@ -117,6 +178,16 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
         ],
         "tv_results" => [
           %{"id" => 20, "name" => "Series", "first_air_date" => "2008-01-20"}
+        ],
+        "tv_episode_results" => [
+          %{
+            "id" => 30,
+            "show_id" => 20,
+            "season_number" => 4,
+            "episode_number" => 15,
+            "name" => "Episode",
+            "air_date" => "2008-04-10"
+          }
         ]
       })
     end)
@@ -124,8 +195,17 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
     assert {:ok,
             [
               %{type: :movie, tmdb_id: 10, title: "Movie", year: 2008},
-              %{type: :tv, tmdb_id: 20, title: "Series", year: 2008}
-            ]} = HTTP.find_by_external_id("tt0903747", :imdb_id)
+              %{type: :tv, tmdb_id: 20, title: "Series", year: 2008},
+              %{
+                type: :episode,
+                tmdb_episode_id: 30,
+                series_tmdb_id: 20,
+                season_number: 4,
+                episode_number: 15,
+                title: "Episode",
+                air_date: ~D[2008-04-10]
+              }
+            ]} = HTTP.find_by_external_id(500, :tvdb_id)
   end
 
   test "search_tv/2 sends the requested locale and normalizes results" do
@@ -157,7 +237,7 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
   test "get_series/1 pulls tvdb_id from external_ids and lists season numbers" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       assert conn.request_path == "/3/tv/1396"
-      assert conn.params["append_to_response"] == "external_ids,translations"
+      assert conn.params["append_to_response"] == "external_ids,translations,credits"
       refute Map.has_key?(conn.params, "language")
 
       Req.Test.json(conn, %{
@@ -186,7 +266,7 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
   test "get_series/1 parses translated titles from data.name" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       assert conn.request_path == "/3/tv/1396"
-      assert conn.params["append_to_response"] == "external_ids,translations"
+      assert conn.params["append_to_response"] == "external_ids,translations,credits"
 
       Req.Test.json(conn, %{
         "id" => 1396,
@@ -235,12 +315,38 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
     end)
 
     assert {:ok, %{tmdb_id: 7, tvdb_id: nil, seasons: []}} = HTTP.get_series(7)
+    # A series body without credits degrades to an empty cast rather than crashing.
+    assert {:ok, %{cast: []}} = HTTP.get_series(7)
+  end
+
+  test "get_series/1 appends credits + carries top-billed cast" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      assert conn.params["append_to_response"] == "external_ids,translations,credits"
+
+      Req.Test.json(conn, %{
+        "id" => 1396,
+        "name" => "Breaking Bad",
+        "first_air_date" => "2008-01-20",
+        "seasons" => [%{"season_number" => 1}],
+        "credits" => %{
+          "cast" => [
+            %{"id" => 4, "name" => "Walter", "character" => "Heisenberg", "order" => 0}
+          ]
+        }
+      })
+    end)
+
+    assert {:ok,
+            %{
+              tmdb_id: 1396,
+              cast: [%{tmdb_id: 4, name: "Walter", character: "Heisenberg", profile_path: nil}]
+            }} = HTTP.get_series(1396)
   end
 
   test "get_movie/1 stays canonical, prefers the locale region, and trims translations" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       assert conn.request_path == "/3/movie/27205"
-      assert conn.params["append_to_response"] == "translations"
+      assert conn.params["append_to_response"] == "translations,credits"
       refute Map.has_key?(conn.params, "language")
 
       Req.Test.json(conn, %{

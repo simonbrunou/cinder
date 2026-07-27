@@ -70,6 +70,14 @@ defmodule Cinder.HealthTest do
     assert Cinder.Health.check_service({:library, :tv}) == {:error, :eacces}
   end
 
+  test "check_service/1 probes each configured migration source" do
+    expect(Cinder.Library.RadarrMigrationSourceMock, :health, fn -> :ok end)
+    expect(Cinder.Library.SonarrMigrationSourceMock, :health, fn -> {:error, :down} end)
+
+    assert Cinder.Health.check_service({:migration_source, :radarr}) == :ok
+    assert Cinder.Health.check_service({:migration_source, :sonarr}) == {:error, :down}
+  end
+
   test "check_service(:discord) validates the webhook (GET) and returns :ok" do
     Req.Test.stub(Cinder.DiscordStub, fn conn -> Req.Test.json(conn, %{"id" => "1"}) end)
     assert :ok = Cinder.Health.check_service(:discord)

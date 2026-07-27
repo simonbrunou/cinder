@@ -29,6 +29,7 @@ defmodule CinderWeb.SettingsLiveTest do
 
     assert html =~ "Settings"
     assert html =~ "TMDB"
+    assert html =~ "Migration sources"
     assert html =~ "Download clients"
     assert html =~ "Media server"
     assert html =~ "Library"
@@ -38,12 +39,35 @@ defmodule CinderWeb.SettingsLiveTest do
     assert has_element?(lv, "#qbittorrent_remote_path_prefix")
     assert has_element?(lv, "#qbittorrent_local_path_prefix")
     assert has_element?(lv, "#sabnzbd_remote_path_prefix")
+    assert has_element?(lv, "#radarr_url")
+    assert has_element?(lv, "#sonarr_url")
     assert has_element?(lv, "#sabnzbd_local_path_prefix")
     assert has_element?(lv, "p", "Path prefix as the download client reports it")
     assert has_element?(lv, "p", "The same directory as Cinder sees it")
     # The remove-after-import toggle lives on /settings (Library section).
     assert html =~ ~s(name="move_on_import")
     assert html =~ "Save settings"
+  end
+
+  test "warns loudly when a stored secret cannot be decrypted, naming the field", %{conn: conn} do
+    # No undecryptable secret yet → no alert.
+    {:ok, _lv, html} = live(conn, ~p"/settings")
+    refute html =~ "could not be decrypted"
+
+    # A secret encrypted under a different SECRET_KEY_BASE can't be decrypted (here: not even
+    # base64, the simplest undecryptable shape).
+    Cinder.Repo.insert!(%Cinder.Settings.Setting{
+      key: "tmdb_token",
+      value: "@@@not-base64@@@",
+      is_secret: true
+    })
+
+    {:ok, _lv, html} = live(conn, ~p"/settings")
+    assert html =~ "undecryptable-secrets-alert"
+    assert html =~ "could not be decrypted"
+    # Names the affected setting by its label, not the raw key — and never the ciphertext.
+    assert html =~ "TMDB API read token (v4 bearer)"
+    refute html =~ "@@@not-base64@@@"
   end
 
   test "saves the default request quota as a non-secret numeric setting", %{conn: conn} do
@@ -162,6 +186,19 @@ defmodule CinderWeb.SettingsLiveTest do
     |> render_submit()
 
     assert has_element?(lv, ~s|#settings-form[data-form-revision="1"]|)
+  end
+
+  test "tests both saved migration-source connections", %{conn: conn} do
+    stub(Cinder.Library.RadarrMigrationSourceMock, :health, fn -> :ok end)
+    stub(Cinder.Library.SonarrMigrationSourceMock, :health, fn -> {:error, :down} end)
+
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    lv |> element("button", "Test Radarr") |> render_click()
+    lv |> element("button", "Test Sonarr") |> render_click()
+
+    assert has_element?(lv, "#settings-group-migration", "OK")
+    assert has_element?(lv, "#settings-group-migration", "Unreachable")
   end
 
   test "opens the group containing invalid fields", %{conn: conn} do

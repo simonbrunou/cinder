@@ -10,12 +10,14 @@ defmodule Cinder.Catalog.TMDB do
   @callback search(query :: String.t(), locale :: String.t()) ::
               {:ok, [map()]} | {:error, term()}
 
-  @doc "Single movie details. Returns `%{tmdb_id, title, year, poster_path, imdb_id, original_language, overview, runtime, genres, vote_average, release_date}` (`genres` is a list of names, `release_date` a `Date` or `nil`)."
+  @doc "Single movie details. Returns `%{tmdb_id, title, year, poster_path, imdb_id, original_language, overview, runtime, genres, vote_average, release_date, cast, collection}` (`genres` is a list of names, `release_date` a `Date` or `nil`; `cast` is top-billed `%{tmdb_id, name, character, profile_path}` and `collection` is `%{tmdb_id, title}` or `nil` — both render-only, never persisted)."
   @callback get_movie(tmdb_id :: integer()) :: {:ok, map()} | {:error, term()}
 
   @doc """
-  Finds movie and TV matches for an IMDb or TVDB id. Returns search-normalized maps carrying
-  `type: :movie | :tv`; callers must reject zero or multiple matches for the requested type.
+  Finds movie, TV-series, and TV-episode matches for an IMDb or TVDB id. Movie and series maps
+  are search-normalized and carry `type: :movie | :tv`; episode maps carry
+  `%{type: :episode, tmdb_episode_id, series_tmdb_id, season_number, episode_number, title,
+  air_date}`. Callers must reject zero or multiple matches for the requested type.
   """
   @callback find_by_external_id(
               external_id :: integer() | String.t(),
@@ -30,8 +32,9 @@ defmodule Cinder.Catalog.TMDB do
   @doc """
   Series details + the list of season numbers. Returns
   `%{tmdb_id, tvdb_id, title, year, poster_path, original_language, overview, genres,
-  vote_average, first_air_date, seasons: [%{season_number}]}`. `tvdb_id` is `nil` when TMDB
-  has no `external_ids` block; `genres` is a list of names, `first_air_date` a `Date` or `nil`.
+  vote_average, first_air_date, cast, seasons: [%{season_number}]}`. `tvdb_id` is `nil` when TMDB
+  has no `external_ids` block; `genres` is a list of names, `first_air_date` a `Date` or `nil`;
+  `cast` is top-billed `%{tmdb_id, name, character, profile_path}` (render-only, never persisted).
   """
   @callback get_series(tmdb_id :: integer()) :: {:ok, map()} | {:error, term()}
 

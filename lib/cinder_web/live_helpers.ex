@@ -86,7 +86,7 @@ defmodule CinderWeb.LiveHelpers do
   def grab_state(%{mapping_status: :needs_mapping}), do: :needs_mapping
   def grab_state(%{mapping_status: :verification_blocked}), do: :verification_blocked
   def grab_state(%{content_path: nil}), do: :downloading
-  def grab_state(_), do: :downloaded
+  def grab_state(grab), do: if(residual?(grab), do: :needs_mapping, else: :downloaded)
 
   @doc """
   Whether a failed `Requests.create_request/2` changeset is the benign duplicate-pending
@@ -213,6 +213,39 @@ defmodule CinderWeb.LiveHelpers do
   def humanize_bytes(bytes) when is_integer(bytes) and bytes > 0, do: "#{bytes} B"
   def humanize_bytes(_), do: nil
 
+  @doc """
+  A localized "time ago" fragment for a past timestamp ("just now" / "3 minutes ago" /
+  "2 days ago"). Accepts a `NaiveDateTime` (Ecto `timestamps()` are UTC-naive) or a `DateTime`;
+  `now` is injectable for deterministic tests. Coarse minute/hour/day buckets — plenty for a
+  "requested N ago" line at household scale. `ngettext` gives each locale its own plural rule,
+  and a future timestamp (clock skew) clamps to "just now" rather than reading "-1 minutes ago".
+  """
+  def relative_time(datetime, now \\ DateTime.utc_now())
+
+  def relative_time(%NaiveDateTime{} = naive, now),
+    do: naive |> DateTime.from_naive!("Etc/UTC") |> relative_time(now)
+
+  def relative_time(%DateTime{} = datetime, now) do
+    seconds = max(DateTime.diff(now, datetime, :second), 0)
+
+    cond do
+      seconds < 60 ->
+        gettext("just now")
+
+      seconds < 3_600 ->
+        minutes = div(seconds, 60)
+        ngettext("%{count} minute ago", "%{count} minutes ago", minutes)
+
+      seconds < 86_400 ->
+        hours = div(seconds, 3_600)
+        ngettext("%{count} hour ago", "%{count} hours ago", hours)
+
+      true ->
+        days = div(seconds, 86_400)
+        ngettext("%{count} day ago", "%{count} days ago", days)
+    end
+  end
+
   @doc ~S|A one-decimal rating string ("8.4") for a TMDB vote average (an Ecto :float). Non-floats fall through to to_string/1 as a defensive fallback.|
   def rating(v) when is_float(v), do: :erlang.float_to_binary(v, decimals: 1)
   def rating(v), do: to_string(v)
@@ -244,6 +277,23 @@ defmodule CinderWeb.LiveHelpers do
         gettext("Dec")
       ],
       n - 1
+    )
+  end
+
+  @doc "Number of standard-TV residual videos still awaiting an operator decision."
+  def unresolved_grab_file_count(%{grab_files: files}) when is_list(files),
+    do: Enum.count(files, &is_nil(&1.decision))
+
+  def unresolved_grab_file_count(_grab), do: 0
+
+  defp residual?(grab), do: unresolved_grab_file_count(grab) > 0
+
+  @doc "Plain-English standard-TV residual hold reason."
+  def grab_file_hold_reason(count) do
+    ngettext(
+      "%{count} unmatched video was kept in the download source for review.",
+      "%{count} unmatched videos were kept in the download source for review.",
+      count
     )
   end
 end

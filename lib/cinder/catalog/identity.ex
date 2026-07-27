@@ -109,7 +109,20 @@ defmodule Cinder.Catalog.Identity do
               c.namespace == ^namespace and c.scheme == ^scheme and c.precedence != :manual
       )
 
-      Enum.map(coordinates, fn coordinate ->
+      manual_values =
+        Repo.all(
+          from c in EpisodeCoordinate,
+            where:
+              c.series_id == ^series.id and c.source == ^source and
+                c.namespace == ^namespace and c.scheme == ^scheme and c.precedence == :manual,
+            select: c.canonical_value
+        )
+        |> MapSet.new()
+
+      # Never guess over an operator correction: the surviving manual identity wins.
+      coordinates
+      |> Enum.reject(&MapSet.member?(manual_values, Map.fetch!(&1, :canonical_value)))
+      |> Enum.map(fn coordinate ->
         {episode_ids, attrs} = Map.pop!(coordinate, :episode_ids)
 
         attrs =
@@ -119,6 +132,55 @@ defmodule Cinder.Catalog.Identity do
 
         put_coordinate_or_rollback(series, attrs, episode_ids)
       end)
+    end)
+  end
+
+  @doc """
+  Binds one provider coordinate to an operator-selected episode as a manual mapping.
+
+  An existing inferred/curated coordinate is promoted and rebound in place; manual precedence
+  keeps the operator's decision safe from later provider refreshes.
+  """
+  def bind_manual_coordinate(%Series{} = series, attrs, %Episode{} = episode) do
+    Repo.transaction(fn ->
+      unless Repo.exists?(
+               from e in Episode,
+                 join: season in assoc(e, :season),
+                 where: e.id == ^episode.id and season.series_id == ^series.id
+             ),
+             do: Repo.rollback(:episode_series_mismatch)
+
+      identity = Map.take(attrs, [:source, :scheme, :namespace, :canonical_value])
+
+      coordinate =
+        Repo.one(
+          from c in EpisodeCoordinate,
+            where:
+              c.series_id == ^series.id and c.source == ^identity.source and
+                c.scheme == ^identity.scheme and c.namespace == ^identity.namespace and
+                c.canonical_value == ^identity.canonical_value
+        )
+
+      coordinate =
+        if coordinate do
+          coordinate
+          |> EpisodeCoordinate.changeset(%{precedence: :manual})
+          |> update_or_rollback()
+        else
+          put_coordinate_or_rollback(
+            series,
+            Map.put(identity, :precedence, :manual),
+            [episode.id]
+          )
+        end
+
+      Repo.delete_all(
+        from m in EpisodeCoordinateMembership,
+          where: m.episode_coordinate_id == ^coordinate.id
+      )
+
+      put_membership_or_rollback(coordinate.id, episode.id, 0)
+      Repo.preload(coordinate, [memberships: [:episode]], force: true)
     end)
   end
 
@@ -183,15 +245,23 @@ defmodule Cinder.Catalog.Identity do
     episode_ids
     |> Enum.with_index()
     |> Enum.each(fn {episode_id, position} ->
-      %EpisodeCoordinateMembership{
-        episode_coordinate_id: coordinate.id,
-        episode_id: Map.fetch!(episodes_by_id, episode_id).id
-      }
-      |> EpisodeCoordinateMembership.changeset(%{position: position})
-      |> insert_or_rollback()
+      put_membership_or_rollback(
+        coordinate.id,
+        Map.fetch!(episodes_by_id, episode_id).id,
+        position
+      )
     end)
 
     Repo.preload(coordinate, memberships: [:episode])
+  end
+
+  defp put_membership_or_rollback(coordinate_id, episode_id, position) do
+    %EpisodeCoordinateMembership{
+      episode_coordinate_id: coordinate_id,
+      episode_id: episode_id
+    }
+    |> EpisodeCoordinateMembership.changeset(%{position: position})
+    |> insert_or_rollback()
   end
 
   defp owner_aliases(%Movie{id: id}), do: from(a in TitleAlias, where: a.movie_id == ^id)

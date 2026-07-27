@@ -1,8 +1,8 @@
 defmodule Cinder.Catalog.Grabs do
   @moduledoc """
   The TV grab lifecycle: reserving a release as a `%Grab{}` (manual or sweep-driven),
-  tracking it through download/import (create/mark/finish/park/reap), the release
-  blocklist, and per-episode search-attempt bookkeeping. Carved out of
+  tracking it through download/import (create/mark/commit/close/finish/park/reap), the
+  release blocklist, and per-episode search-attempt bookkeeping. Carved out of
   `Cinder.Catalog` as plain code motion — broadcast/PubSub behaviour is unchanged
   (delegated back to `Cinder.Catalog.broadcast_series/1`); every public function here
   is re-exported unchanged via `defdelegate` in `Cinder.Catalog`.
@@ -11,7 +11,20 @@ defmodule Cinder.Catalog.Grabs do
   require Logger
 
   alias Cinder.Acquisition.Release
-  alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Movie, ReleaseVerification, Season, Series}
+
+  alias Cinder.Catalog.{
+    Adoption,
+    BlockedRelease,
+    Episode,
+    Grab,
+    GrabFile,
+    Identity,
+    Movie,
+    ReleaseVerification,
+    Season,
+    Series
+  }
+
   alias Cinder.Catalog.SeriesCatalog
   alias Cinder.Download
   alias Cinder.Download.Intent
@@ -629,13 +642,17 @@ defmodule Cinder.Catalog.Grabs do
         where: not is_nil(g.content_path) and g.mapping_status == :resolved,
         # scene coordinates preloaded so the import-time subtitle fetch can query the provider
         # with A6 scene numbering (issue #143).
-        preload: [episodes: [:episode_coordinates, season: :series]]
+        preload: [:grab_files, episodes: [:episode_coordinates, season: :series]]
     )
   end
 
   @doc "All grabs newest-first, with `episodes: [season: :series]` preloaded for the admin /grabs view."
   def list_grabs do
-    Repo.all(from g in Grab, order_by: [desc: g.id], preload: [episodes: [season: :series]])
+    Repo.all(
+      from g in Grab,
+        order_by: [desc: g.id],
+        preload: [:grab_files, episodes: [season: :series]]
+    )
   end
 
   @doc "Lists held mapping grabs for one series, oldest first, with their series tree preloaded."
@@ -658,6 +675,363 @@ defmodule Cinder.Catalog.Grabs do
   already-imported torrent from the client (stopping seeding) for nothing.
   """
   def get_grab(id), do: Repo.get(Grab, id)
+
+  @doc """
+  Loads an unresolved residual file and one explicitly selected episode from its grab.
+
+  A decided row returns `:noop` before episode validation so resubmission stays idempotent.
+  """
+  def get_grab_file_resolution(file_id, episode_id) do
+    case Repo.get(GrabFile, file_id) do
+      nil ->
+        {:error, :grab_file_not_found}
+
+      %GrabFile{decision: decision} = file when not is_nil(decision) ->
+        {:ok, :noop, Repo.preload(file, :grab)}
+
+      %GrabFile{} = file ->
+        file = Repo.preload(file, :grab)
+
+        episode =
+          Repo.one(
+            from e in Episode,
+              join: season in assoc(e, :season),
+              where: e.id == ^episode_id and e.grab_id == ^file.grab_id,
+              preload: [season: :series]
+          )
+
+        if episode,
+          do: {:ok, :pending, file, episode},
+          else: {:error, :episode_not_in_grab}
+    end
+  end
+
+  @doc """
+  Commits the clean matches from one standard-TV staging pass and durably inventories every
+  unmatched video. A clean pass closes the grab in this transaction; a residual pass leaves the
+  grab and its unimported episodes intact for explicit per-file decisions.
+  """
+  def commit_grab_imports(%Grab{} = grab, imported, residuals, stage_ids \\ []) do
+    series_id = series_id_for_grab(grab.id)
+    imported_ids = imported |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
+    episodes = Map.new(grab.episodes, &{&1.id, &1})
+
+    result =
+      Repo.transaction(fn ->
+        claim_standard_grab!(grab)
+
+        if Repo.exists?(from f in GrabFile, where: f.grab_id == ^grab.id),
+          do: Repo.rollback(:grab_has_residual_files)
+
+        imported_episodes =
+          Enum.map(imported, fn {episode_id, dest, quality} ->
+            episode = Map.get(episodes, episode_id) || Repo.rollback(:stale_grab)
+            transition_imported_episode!(grab.id, episode, dest, quality, residuals != [])
+          end)
+
+        insert_grab_files(grab.id, residuals)
+        ImportStage.mark_committed!(stage_ids)
+
+        if residuals == [] do
+          missing = Enum.reject(grab.episodes, &(&1.id in imported_ids))
+          bumped = Enum.map(missing, &transition_missing_episode!(grab.id, &1))
+          completed = completed_seasons_for_imported_episodes(imported_ids)
+          Repo.delete!(grab)
+          {:closed, imported_episodes ++ bumped, Enum.map(bumped, & &1.id), completed}
+        else
+          completed = completed_seasons_for_imported_episodes(imported_ids)
+          {:open, imported_episodes, [], completed}
+        end
+      end)
+
+    publish_grab_import_result(result, grab, series_id)
+  rescue
+    Ecto.StaleEntryError -> {:error, :stale_grab}
+  end
+
+  @doc """
+  Closes a standard-TV grab only after every residual file has an explicit fold/part decision.
+  Imported episodes are released unchanged; genuinely missing episodes are released and backed off.
+  """
+  def close_grab(%Grab{} = grab) do
+    grab = Repo.preload(grab, :episodes, force: true)
+    series_id = series_id_for_grab(grab.id)
+
+    result =
+      Repo.transaction(fn ->
+        claim_standard_grab!(grab)
+
+        if Repo.exists?(from f in GrabFile, where: f.grab_id == ^grab.id and is_nil(f.decision)),
+          do: Repo.rollback(:unresolved_grab_files)
+
+        bumped_ids =
+          for %Episode{id: id, file_path: path} <- grab.episodes, path in [nil, ""], do: id
+
+        closed = Enum.map(grab.episodes, &transition_closed_episode!(grab.id, &1))
+        Repo.delete!(grab)
+        {:closed, closed, bumped_ids, []}
+      end)
+
+    publish_grab_import_result(result, grab, series_id)
+  rescue
+    Ecto.StaleEntryError -> {:error, :stale_grab}
+  end
+
+  defp claim_standard_grab!(grab) do
+    query =
+      from g in Grab,
+        where:
+          g.id == ^grab.id and is_nil(g.mapping_snapshot) and g.mapping_status == :resolved and
+            g.content_path == ^grab.content_path
+
+    case Repo.update_all(query, set: [updated_at: Cinder.Catalog.now()]) do
+      {1, _} -> :ok
+      {0, _} -> Repo.rollback(:stale_grab)
+    end
+  end
+
+  defp transition_imported_episode!(grab_id, episode, dest, quality, retain_grab?) do
+    if episode.monitored or not is_nil(episode.file_path) do
+      attrs = %{
+        file_path: dest,
+        part_file_paths: [],
+        grab_id: if(retain_grab?, do: grab_id),
+        imported_resolution: quality.resolution,
+        imported_size: quality.size,
+        imported_language: quality.language,
+        imported_source: quality.source,
+        imported_audio_languages: quality.audio_languages,
+        imported_embedded_subtitles: quality.embedded_subtitles,
+        imported_sidecar_subtitles: quality.sidecar_subtitles
+      }
+
+      expected = %{
+        grab_id: grab_id,
+        file_path: episode.file_path,
+        monitored: episode.monitored
+      }
+
+      case Cinder.Catalog.transition_episode(episode, attrs,
+             expect: expected,
+             publish: false
+           ) do
+        {:ok, updated} -> updated
+        {:error, _reason} -> Repo.rollback(:stale_grab)
+      end
+    else
+      Repo.rollback(:stale_grab)
+    end
+  end
+
+  defp transition_missing_episode!(grab_id, episode) do
+    attrs = %{grab_id: nil, search_attempts: episode.search_attempts + 1}
+
+    expected = %{
+      grab_id: grab_id,
+      file_path: episode.file_path,
+      monitored: episode.monitored,
+      search_attempts: episode.search_attempts
+    }
+
+    case Cinder.Catalog.transition_episode(episode, attrs,
+           expect: expected,
+           publish: false
+         ) do
+      {:ok, updated} -> updated
+      {:error, _reason} -> Repo.rollback(:stale_grab)
+    end
+  end
+
+  defp transition_closed_episode!(grab_id, %Episode{file_path: path} = episode)
+       when is_binary(path) and path != "" do
+    expected = %{
+      grab_id: grab_id,
+      file_path: episode.file_path,
+      part_file_paths: episode.part_file_paths,
+      monitored: episode.monitored
+    }
+
+    case Cinder.Catalog.transition_episode(episode, %{grab_id: nil},
+           expect: expected,
+           publish: false
+         ) do
+      {:ok, updated} -> updated
+      {:error, _reason} -> Repo.rollback(:stale_grab)
+    end
+  end
+
+  defp transition_closed_episode!(grab_id, episode),
+    do: transition_missing_episode!(grab_id, episode)
+
+  @doc """
+  Atomically records one Fold/Part decision. The guarded file claim makes a decided row a no-op;
+  coordinate, episode-part, and import-stage writes roll back together on any failure.
+  """
+  def decide_grab_file(file, episode, decision, stage \\ nil)
+
+  def decide_grab_file(%GrabFile{} = file, %Episode{} = episode, decision, stage)
+      when decision in [:fold, :part] do
+    result =
+      Repo.transaction(fn ->
+        attrs = decision_attrs(decision, episode.id, stage)
+
+        case Repo.update_all(
+               from(f in GrabFile,
+                 where: f.id == ^file.id and is_nil(f.decision),
+                 select: f
+               ),
+               set: Map.to_list(attrs) ++ [updated_at: Cinder.Catalog.now()]
+             ) do
+          {0, _} ->
+            existing_grab_file_decision(file.id)
+
+          {1, [decided]} ->
+            apply_grab_file_decision!(decided, episode.id, decision, stage)
+        end
+      end)
+
+    publish_grab_file_decision(result)
+  end
+
+  def decide_grab_file(%GrabFile{}, %Episode{}, _decision, _stage),
+    do: {:error, :invalid_grab_file_decision}
+
+  defp existing_grab_file_decision(file_id) do
+    case Repo.get(GrabFile, file_id) do
+      %GrabFile{} = decided -> {:noop, decided, nil}
+      nil -> Repo.rollback(:grab_file_not_found)
+    end
+  end
+
+  defp decision_attrs(:fold, episode_id, nil),
+    do: %{decision: :fold, episode_id: episode_id, destination: nil, import_stage_id: nil}
+
+  defp decision_attrs(:part, episode_id, %{dest: dest, rollback: %{stage_id: stage_id}})
+       when is_binary(dest) and is_integer(stage_id),
+       do: %{
+         decision: :part,
+         episode_id: episode_id,
+         destination: dest,
+         import_stage_id: stage_id
+       }
+
+  defp decision_attrs(_decision, _episode_id, _stage), do: Repo.rollback(:invalid_import_stage)
+
+  defp apply_grab_file_decision!(file, episode_id, decision, stage) do
+    grab = Repo.get(Grab, file.grab_id) || Repo.rollback(:stale_grab)
+    claim_standard_grab!(grab)
+
+    episode =
+      Repo.one(
+        from e in Episode,
+          join: season in assoc(e, :season),
+          where: e.id == ^episode_id and e.grab_id == ^file.grab_id,
+          preload: [season: :series]
+      ) || Repo.rollback(:episode_not_in_grab)
+
+    updated_episode =
+      case decision do
+        :fold ->
+          bind_grab_file_coordinate!(file, episode)
+          nil
+
+        :part ->
+          adopt_grab_file_part!(episode, stage.dest)
+      end
+
+    ImportStage.mark_committed!(stage_ids(stage))
+    {:decided, file, updated_episode, episode.season.series_id}
+  end
+
+  defp bind_grab_file_coordinate!(file, episode) do
+    case grab_file_coordinate(file) do
+      nil ->
+        :ok
+
+      attrs ->
+        case Identity.bind_manual_coordinate(episode.season.series, attrs, episode) do
+          {:ok, _coordinate} -> :ok
+          {:error, reason} -> Repo.rollback(reason)
+        end
+    end
+  end
+
+  @provider_fields [:source, :scheme, :namespace, :canonical_value]
+
+  defp grab_file_coordinate(file) do
+    values = Map.take(file, @provider_fields)
+
+    cond do
+      Enum.all?(@provider_fields, &(Map.get(values, &1) in [nil, ""])) ->
+        nil
+
+      Enum.all?(@provider_fields, fn field ->
+        value = Map.get(values, field)
+        is_binary(value) and value != ""
+      end) ->
+        values
+
+      true ->
+        Repo.rollback(:invalid_provider_evidence)
+    end
+  end
+
+  defp adopt_grab_file_part!(episode, destination) do
+    case Adoption.adopt_episode_part(episode, destination) do
+      {:ok, %Episode{} = updated} -> updated
+      {:ok, nil} -> episode
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
+
+  defp stage_ids(nil), do: []
+  defp stage_ids(%{rollback: %{stage_id: id}}), do: [id]
+
+  defp publish_grab_file_decision({:ok, {:noop, file, nil}}), do: {:ok, :noop, file}
+
+  defp publish_grab_file_decision({:ok, {:decided, file, updated_episode, series_id}}) do
+    if updated_episode,
+      do: Cinder.Catalog.publish_episode_transition_batch([updated_episode], series_id),
+      else: Cinder.Catalog.broadcast_series(series_id)
+
+    {:ok, :decided, file}
+  end
+
+  defp publish_grab_file_decision({:error, reason}), do: {:error, reason}
+
+  defp insert_grab_files(_grab_id, []), do: :ok
+
+  defp insert_grab_files(grab_id, residuals) do
+    timestamp = Cinder.Catalog.now()
+
+    rows =
+      Enum.map(residuals, fn residual ->
+        @provider_fields
+        |> Map.new(&{&1, Map.get(residual, &1)})
+        |> Map.merge(Map.take(residual, [:relative_path, :size, :device, :inode]))
+        |> Map.merge(%{
+          grab_id: grab_id,
+          inserted_at: timestamp,
+          updated_at: timestamp
+        })
+      end)
+
+    Repo.insert_all(GrabFile, rows, on_conflict: :nothing)
+    :ok
+  end
+
+  defp publish_grab_import_result(
+         {:ok, {state, episodes, bumped_ids, completed_seasons}},
+         grab,
+         series_id
+       ) do
+    Cinder.Catalog.publish_episode_transition_batch(episodes, series_id)
+    announce_search_exhausted(bumped_ids)
+    Enum.each(completed_seasons, &Notifier.notify({:season_available, &1}))
+    {:ok, state, grab}
+  end
+
+  defp publish_grab_import_result({:error, reason}, _grab, _series_id), do: {:error, reason}
 
   @doc """
   Finalizes a grab after import, in **one transaction**: sets `file_path`, clears

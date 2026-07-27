@@ -1300,6 +1300,35 @@ defmodule Cinder.Catalog.SeriesCatalog do
           ) == 0
   end
 
+  @doc """
+  Per-season progress keyed by `{series tmdb_id, season_number}`: how many episodes have a file
+  (`available`), the season's total episode count, and whether any episode is mid-download (an
+  active `grab_id`). Drives the requester-facing "X of Y episodes" indicator on `/my-requests`
+  while a season is still filling in — the partial-progress complement to the terminal
+  `available_season_keys/0`, which only reports fully-landed seasons. Season 0 (specials) is
+  excluded, matching `available_seasons_query/1`.
+  """
+  def season_progress_keys do
+    from(e in Episode,
+      join: s in assoc(e, :season),
+      join: sr in assoc(s, :series),
+      where: s.season_number > 0,
+      group_by: [sr.tmdb_id, s.season_number],
+      select: {
+        sr.tmdb_id,
+        s.season_number,
+        count(e.id),
+        filter(count(e.id), not is_nil(e.file_path)),
+        filter(count(e.id), not is_nil(e.grab_id))
+      }
+    )
+    |> Repo.all()
+    |> Map.new(fn {tmdb_id, season_number, total, available, downloading} ->
+      {{tmdb_id, season_number},
+       %{total: total, available: available, downloading: downloading > 0}}
+    end)
+  end
+
   @doc "Count of still-wanted episodes in one season of `series_id` (see `wanted_episodes/0`)."
   def count_wanted_episodes(series_id, season_number) do
     Repo.aggregate(

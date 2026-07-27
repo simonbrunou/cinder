@@ -440,13 +440,27 @@ defmodule CinderWeb.DashboardLiveTest do
       refute has_element?(lv, "#disk-movies", "free of")
     end
 
-    test "shows the empty state when no library path is configured", %{conn: conn} do
+    test "shows the no-library-path hint but still the Database row when none configured", %{
+      conn: conn
+    } do
       Application.delete_env(:cinder, :movies_library_path)
       Application.delete_env(:cinder, :tv_library_path)
 
       {:ok, lv, _html} = live(conn, ~p"/dashboard")
 
       assert render_async(lv) =~ "No library paths configured"
+      # The database volume is always monitored, so its row shows even with no library paths set.
+      assert has_element?(lv, "#disk-database", "Database")
+    end
+
+    test "always shows a Database row for the DB volume", %{conn: conn} do
+      Application.put_env(:cinder, :movies_library_path, System.tmp_dir!())
+      Application.delete_env(:cinder, :tv_library_path)
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      render_async(lv)
+      assert has_element?(lv, "#disk-database", "Database")
     end
   end
 

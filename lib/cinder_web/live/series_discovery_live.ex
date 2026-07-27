@@ -9,11 +9,13 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   """
   use CinderWeb, :live_view
 
+  import CinderWeb.DiscoverComponents
   import CinderWeb.LiveHelpers
 
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog
   alias Cinder.Requests
+  alias Cinder.Settings
 
   @picks Language.preferences()
 
@@ -26,6 +28,8 @@ defmodule CinderWeb.SeriesDiscoveryLive do
         Requests.subscribe()
         # Season availability derives from episode imports, which broadcast on "series".
         Catalog.subscribe_series()
+        # Keep the "Open in <media server>" link fresh if an admin changes the server type/URL.
+        Settings.subscribe()
       end
 
       user = socket.assigns.current_scope.user
@@ -40,6 +44,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
          proposed_media_profile: nil
        )
        |> assign(seasons: Enum.filter(info.seasons, &(&1.season_number != 0)))
+       |> assign_media_server()
        |> assign_requests_by_season(user, tmdb_id)}
     else
       # A TMDB outage is not "not found" — telling the user the series doesn't exist
@@ -275,7 +280,25 @@ defmodule CinderWeb.SeriesDiscoveryLive do
     {:noreply, refresh_requests(socket)}
   end
 
+  # An admin switching media-server type/URL must not leave an open page linking at the old one.
+  def handle_info(:settings_updated, socket) do
+    {:noreply, assign_media_server(socket)}
+  end
+
   def handle_info(_message, socket), do: {:noreply, socket}
+
+  # Re-read on mount and on every settings write, mirroring MovieDiscoveryLive: an admin fixing
+  # the media-server URL must not leave an already-open page pointing at the old server.
+  defp assign_media_server(socket) do
+    case Settings.media_server_web_link() do
+      {server, url} -> assign(socket, media_server_url: url, media_server_name: name(server))
+      nil -> assign(socket, media_server_url: nil, media_server_name: nil)
+    end
+  end
+
+  # Product names, deliberately not gettext'd.
+  defp name(:plex), do: "Plex"
+  defp name(:jellyfin), do: "Jellyfin"
 
   defp refresh_requests(socket) do
     assign_requests_by_season(socket, socket.assigns.current_user, socket.assigns.tmdb_id)
@@ -336,7 +359,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
         <.icon name="hero-arrow-left" class="size-3.5" />{gettext("Discover")}
       </.link>
 
-      <div class="mb-8 flex gap-4">
+      <div class="mb-8 flex flex-col gap-6 sm:flex-row">
         <img
           :if={@info.poster_path}
           src={poster_url(@info.poster_path)}
@@ -345,11 +368,60 @@ defmodule CinderWeb.SeriesDiscoveryLive do
           decoding="async"
           class="aspect-[2/3] w-40 shrink-0 rounded object-cover"
         />
+        <div
+          :if={!@info.poster_path}
+          class="grid aspect-[2/3] w-40 shrink-0 place-items-center rounded bg-base-300 text-sm text-base-content/70"
+        >
+          {gettext("No poster")}
+        </div>
+
         <div class="min-w-0 flex-1">
           <.header>
             {media_title(@info, @locale)}
             <span :if={@info.year} class="font-normal text-base-content/70">({@info.year})</span>
           </.header>
+
+          <div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-base-content/70">
+            <span :if={@info[:first_air_date]} class="inline-flex items-center gap-1">
+              <.icon name="hero-calendar" class="size-4" />{format_date_year(@info.first_air_date)}
+            </span>
+            <span
+              :if={is_number(@info[:vote_average]) and @info.vote_average > 0}
+              class="inline-flex items-center gap-1"
+            >
+              <.icon name="hero-star" class="size-4" />{rating(@info.vote_average)}
+            </span>
+          </div>
+
+          <div :if={@info[:genres] not in [nil, []]} class="mt-3 flex flex-wrap gap-1">
+            <span :for={g <- @info.genres} class="badge badge-outline badge-sm">{g}</span>
+          </div>
+
+          <p :if={media_overview(@info, @locale)} class="mt-4 max-w-prose text-sm leading-relaxed">
+            {media_overview(@info, @locale)}
+          </p>
+          <p :if={is_nil(media_overview(@info, @locale))} class="mt-4 text-sm text-base-content/50">
+            {gettext("No description available.")}
+          </p>
+
+          <%!-- Opens the media server's front door (Cinder stores no per-title id), only once at
+                least one season is in the library and an operator has set a browser URL — same
+                affordance as the movie detail page. --%>
+          <.button
+            :if={@media_server_url && MapSet.size(@available_seasons) > 0}
+            href={@media_server_url}
+            target="_blank"
+            rel="noopener"
+            variant="primary"
+            size="sm"
+            class="mt-4"
+          >
+            <.icon name="hero-arrow-top-right-on-square" class="size-4" />{gettext(
+              "Open in %{server}",
+              server: @media_server_name
+            )}
+            <span class="sr-only">{gettext("(opens in a new tab)")}</span>
+          </.button>
         </div>
       </div>
 
@@ -402,6 +474,8 @@ defmodule CinderWeb.SeriesDiscoveryLive do
           />
         </li>
       </ul>
+
+      <.cast_strip cast={@info[:cast] || []} />
     </Layouts.app>
     """
   end

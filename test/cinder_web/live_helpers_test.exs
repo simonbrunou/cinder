@@ -31,4 +31,22 @@ defmodule CinderWeb.LiveHelpersTest do
     assert format_date(~D[2026-06-03]) == "Jun 3"
     assert format_date_year(~D[2026-06-03]) == "Jun 3, 2026"
   end
+
+  describe "relative_time/2" do
+    @now ~U[2026-06-03 12:00:00Z]
+
+    test "buckets a past instant into just now / minutes / hours / days" do
+      assert relative_time(DateTime.add(@now, -10, :second), @now) == "just now"
+      assert relative_time(DateTime.add(@now, -60, :second), @now) == "1 minute ago"
+      assert relative_time(DateTime.add(@now, -5 * 60, :second), @now) == "5 minutes ago"
+      assert relative_time(DateTime.add(@now, -1 * 3600, :second), @now) == "1 hour ago"
+      assert relative_time(DateTime.add(@now, -3 * 86_400, :second), @now) == "3 days ago"
+    end
+
+    test "accepts a NaiveDateTime (Ecto timestamps) and clamps a future instant to just now" do
+      naive = NaiveDateTime.add(DateTime.to_naive(@now), -2 * 86_400, :second)
+      assert relative_time(naive, @now) == "2 days ago"
+      assert relative_time(DateTime.add(@now, 90, :second), @now) == "just now"
+    end
+  end
 end

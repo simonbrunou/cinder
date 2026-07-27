@@ -4,9 +4,10 @@ defmodule Cinder.Download.TvPoller do
 
   1. **advance** — checks in-flight grabs (`list_grabs_downloading`); a completed download with a
      `content_path` is marked downloaded, an anomalous/errored one is bounded-retried and parked.
-  2. **import** — imports downloaded grabs (`list_grabs_downloaded`) via `Library.import_episodes`,
-     mapping each file to its episode; on success the grab is finalized, on a transient FS error
-     it is bounded-retried, on a deterministic empty import it is parked (its episodes re-search).
+  2. **import** — stages downloaded grabs (`list_grabs_downloaded`), commits clean standard-TV
+     matches immediately, and durably holds unmatched videos on the grab for operator review.
+     A clean grab closes normally; transient FS errors are bounded-retried, and content with no
+     usable video is parked so its episodes re-search.
   3. **search** — sweeps `wanted_episodes`, skipping search-parked and backed-off episodes, then
      searches Standard series by season and Anime series by stable episode IDs.
 
@@ -27,7 +28,7 @@ defmodule Cinder.Download.TvPoller do
 
   alias Cinder.{Acquisition, Catalog, Disk, Download, Library, Notifier, Settings}
   alias Cinder.Acquisition.{Anime, AnimePreferences}
-  alias Cinder.Catalog.{Episode, Grab}
+  alias Cinder.Catalog.{Episode, Grab, Grabs}
   alias Cinder.Download.StallReaper
   alias Cinder.HTTPPolicy
 
@@ -142,6 +143,12 @@ defmodule Cinder.Download.TvPoller do
         do: isolate("grab #{grab.id}", fn -> import_grab(grab) end)
   end
 
+  defp import_grab(%Grab{mapping_snapshot: nil, grab_files: [_ | _]} = grab) do
+    if Enum.all?(grab.grab_files, & &1.decision),
+      do: finalize_residual_grab(grab),
+      else: :ok
+  end
+
   defp import_grab(%Grab{} = grab) do
     # Pre-import disk guard on the TV library root. Hold (no attempt bump, no park) on a full disk —
     # the download is done and waiting, so don't burn the retry budget on a fixable condition.
@@ -210,17 +217,8 @@ defmodule Cinder.Download.TvPoller do
 
   defp import_standard_grab(grab) do
     case Library.stage_episodes(grab.content_path, grab.episodes) do
-      {:ok, [], _unmatched} ->
-        # Deterministic: nothing in content_path mapped to a grab episode. Re-importing can't
-        # help, so park — the episodes re-search (bounded), rather than re-importing forever.
-        Logger.warning(
-          "tv grab #{grab.id} imported nothing from #{HTTPPolicy.sanitize_log(grab.content_path)}; parking"
-        )
-
-        park(grab, :no_files_matched)
-
-      {:ok, staged, _unmatched} ->
-        finalize_staged_grab(grab, staged)
+      {:ok, staged, unmatched} ->
+        finalize_standard_staging(grab, staged, unmatched)
 
       # A missing TV root is a config error, not a transient one: leave the grab downloaded
       # (no bump, no park) so the already-downloaded content imports as soon as tv_library_path
@@ -236,6 +234,148 @@ defmodule Cinder.Download.TvPoller do
       # unlike the movie poller there is no @permanent_*_errors set to classify here.
       {:error, reason} ->
         retry_or_park(grab, reason)
+    end
+  end
+
+  defp finalize_standard_staging(grab, [], _unmatched) do
+    # Deterministic: nothing in content_path mapped to a grab episode. Re-importing can't
+    # help, so park — the episodes re-search (bounded), rather than re-importing forever.
+    Logger.warning(
+      "tv grab #{grab.id} imported nothing from #{HTTPPolicy.sanitize_log(grab.content_path)}; parking"
+    )
+
+    park(grab, :no_files_matched)
+  end
+
+  defp finalize_standard_staging(grab, staged, unmatched) do
+    case inventory_standard_residuals(grab, unmatched) do
+      {:ok, residuals} ->
+        finalize_standard_grab(grab, staged, residuals)
+
+      {:error, reason} ->
+        rollback_stages(staged)
+        retry_or_park(grab, {:grab_file_inventory, reason})
+    end
+  end
+
+  defp inventory_standard_residuals(grab, unmatched) do
+    Library.inventory_grab_files(grab.content_path, unmatched, grab.episodes)
+  rescue
+    error -> {:error, Exception.message(error)}
+  catch
+    kind, value -> {:error, {kind, value}}
+  end
+
+  defp finalize_standard_grab(grab, staged, residuals) do
+    imported =
+      Enum.map(staged, fn {episode_id, stage} -> {episode_id, stage.dest, stage.quality} end)
+
+    case Catalog.commit_grab_imports(
+           grab,
+           imported,
+           residuals,
+           Library.stage_ids(Enum.map(staged, &elem(&1, 1)))
+         ) do
+      {:ok, :closed, _grab} ->
+        commit_stages(staged)
+        remove_superseded_episode_files(grab.episodes)
+        Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path)
+
+      {:ok, :open, _grab} ->
+        commit_stages(staged)
+        remove_superseded_episode_files(grab.episodes)
+
+      {:error, :stale_grab} ->
+        rollback_stages(staged)
+
+      {:error, reason} ->
+        rollback_stages(staged)
+        retry_or_park(grab, {:commit_grab_imports, reason})
+    end
+  end
+
+  @doc """
+  Applies one explicit residual-file decision and attempts the existing guarded close.
+
+  Part staging happens before the Catalog transaction; any rejected/racing decision rolls it
+  back. A committed decision is restart-safe because the next poll tick retries the close.
+  """
+  def resolve_grab_file(file_id, episode_id, decision)
+      when is_integer(file_id) and is_integer(episode_id) and decision in [:fold, :part] do
+    case Grabs.get_grab_file_resolution(file_id, episode_id) do
+      {:ok, :noop, file} ->
+        finalize_residual_grab(file.grab)
+        {:ok, :noop, file}
+
+      {:ok, :pending, file, episode} ->
+        apply_grab_file_decision(file, episode, decision)
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  def resolve_grab_file(_file_id, _episode_id, _decision),
+    do: {:error, :invalid_grab_file_decision}
+
+  defp apply_grab_file_decision(file, episode, :fold) do
+    case Catalog.decide_grab_file(file, episode, :fold, nil) do
+      {:ok, _state, _file} = result ->
+        finalize_residual_grab(file.grab)
+        result
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp apply_grab_file_decision(file, episode, :part) do
+    with {:ok, stage} <- Library.stage_grab_file_part(file.grab, file, episode) do
+      case Catalog.decide_grab_file(file, episode, :part, stage) do
+        {:ok, :decided, _file} = result ->
+          commit_part_stage(stage)
+          finalize_residual_grab(file.grab)
+          result
+
+        {:ok, :noop, _file} = result ->
+          Library.rollback_stage(stage)
+          finalize_residual_grab(file.grab)
+          result
+
+        {:error, _reason} = error ->
+          Library.rollback_stage(stage)
+          error
+      end
+    end
+  end
+
+  defp commit_part_stage(stage) do
+    case Library.commit_stage(stage) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning(
+          "tv residual part staged at #{stage.dest}; deferred stage cleanup failed: #{inspect(reason)}"
+        )
+    end
+  end
+
+  @doc false
+  def finalize_residual_grab(%Grab{} = grab) do
+    case Catalog.close_grab(grab) do
+      {:ok, :closed, _grab} ->
+        Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path)
+        {:ok, :closed}
+
+      {:error, :unresolved_grab_files} ->
+        {:ok, :open}
+
+      {:error, :stale_grab} ->
+        {:ok, :stale}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

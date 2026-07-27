@@ -3,7 +3,9 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
   OpenSubtitles.com REST API v1 client. `search/1` needs only the Api-Key; `download/1` needs a
   JWT from `/login`, cached in `:persistent_term` and re-fetched once on a 401. Downloads consume
   a daily quota (20/day free) — a `406` surfaces as `{:error, :quota_exceeded}` so the caller can
-  stop for the tick. `ponytail:` global token (single-instance app). `search/1` sends the imdb/tmdb
+  stop for the tick, and is remembered (per UTC day) so a spent quota short-circuits later
+  `download/1` calls before they log in and eat another 406. `ponytail:` global token
+  (single-instance app). `search/1` sends the imdb/tmdb
   id plus the file's `moviehash` when available; OpenSubtitles returns the id-matched candidates and
   flags the hash-synced ones via `moviehash_match` (it does not narrow the result set), which
   `Cinder.Subtitles` prefers.
@@ -14,6 +16,11 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
 
   @default_base "https://api.opensubtitles.com/api/v1"
   @token_key {__MODULE__, :token}
+  # ponytail: same global :persistent_term store as the token (single-instance app). Remembers the
+  # UTC day the daily download quota was hit (406) so a spent quota short-circuits `download/1`
+  # before it logs in and burns a 406 on every just-imported file. Auto-expires on the next UTC
+  # day; a successful download clears it early.
+  @quota_key {__MODULE__, :quota_exhausted}
 
   # Bounded so a hung/blackholed OpenSubtitles can't stall the (synchronous) import/sweep call
   # sites. health/0 gets the repo's 3s connect+receive probe convention (matches
@@ -69,25 +76,60 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
   # --- download with one re-login retry on 401 ---
 
   defp download(file_id, retried?) do
-    with {:ok, token} <- token(),
-         {:ok, %{status: 200, body: %{"link" => link}}} <-
-           request(:post, "/download", json: %{file_id: file_id}, auth: token),
-         {:ok, %{status: 200, body: body}} <- fetch(link) do
-      {:ok, body}
+    # Short-circuit once the daily quota is known-spent: no login, no /download, no 406 — the exact
+    # waste this guards. `search/1` is deliberately left alone so the quota-free local-fallback path
+    # (embedded-track extraction / translation) still runs when OpenSubtitles has no result.
+    if quota_exhausted?() do
+      {:error, :quota_exceeded}
     else
-      {:ok, %{status: 401}} when not retried? ->
-        :persistent_term.erase(@token_key)
-        download(file_id, true)
+      with {:ok, token} <- token(),
+           {:ok, %{status: 200, body: %{"link" => link}}} <-
+             request(:post, "/download", json: %{file_id: file_id}, auth: token),
+           {:ok, %{status: 200, body: body}} <- fetch(link) do
+        clear_quota()
+        {:ok, body}
+      else
+        {:ok, %{status: 401}} when not retried? ->
+          :persistent_term.erase(@token_key)
+          download(file_id, true)
 
-      {:ok, %{status: 406}} ->
-        {:error, :quota_exceeded}
+        {:ok, %{status: 406}} ->
+          mark_quota_exhausted()
+          {:error, :quota_exceeded}
 
-      {:ok, %{status: status}} ->
-        {:error, {:http, status}}
+        {:ok, %{status: status}} ->
+          {:error, {:http, status}}
 
-      {:error, reason} ->
-        {:error, reason}
+        {:error, reason} ->
+          {:error, reason}
+      end
     end
+  end
+
+  # --- daily-quota memory (see @quota_key) ---
+
+  defp quota_exhausted? do
+    case :persistent_term.get(@quota_key, nil) do
+      %Date{} = day ->
+        if day == Date.utc_today() do
+          true
+        else
+          # Day rolled over — the quota reset; forget the marker so downloads resume.
+          :persistent_term.erase(@quota_key)
+          false
+        end
+
+      _ ->
+        false
+    end
+  end
+
+  defp mark_quota_exhausted, do: :persistent_term.put(@quota_key, Date.utc_today())
+
+  # `:persistent_term.put/erase` triggers a global GC, so only erase when the marker is actually
+  # set — the cheap `get` keeps the common (quota-not-spent) success path free of that cost.
+  defp clear_quota do
+    if :persistent_term.get(@quota_key, nil), do: :persistent_term.erase(@quota_key)
   end
 
   # --- token cache ---

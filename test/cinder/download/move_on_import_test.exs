@@ -8,7 +8,7 @@ defmodule Cinder.Download.MoveOnImportTest do
   @moduletag :capture_log
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Grab, Movie}
+  alias Cinder.Catalog.{Episode, Grab, GrabFile, Movie}
   alias Cinder.Download
   alias Cinder.Download.{Poller, TvPoller}
   alias Cinder.Repo
@@ -542,6 +542,61 @@ defmodule Cinder.Download.MoveOnImportTest do
       assert_receive {:removed, "nzo-pack", [delete_files: true]}
       # The whole per-operation/unpack directory is deleted, not just the matched file inside it.
       assert_receive {:rm_rf, "/dl/pack"}
+    end
+
+    test "an unmatched video fences client and source removal across repeated ticks" do
+      enable()
+      {_series, season} = series_tree()
+      e1 = episode(season, 1)
+      e2 = episode(season, 2)
+      {:ok, grab} = Catalog.create_grab("nzo-split-pack", :usenet, [e1.id, e2.id])
+      {:ok, _} = Catalog.mark_grab_downloaded(grab, "/dl/split-pack")
+
+      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+      stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+        {:ok,
+         [
+           {"/dl/split-pack/Show.S01E01.1080p.mkv", 3_000_000_000},
+           {"/dl/split-pack/Show.S01E99.1080p.mkv", 1_000_000_000}
+         ]}
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
+        cond do
+          String.contains?(path, "/tmp/cinder-test-tv-library/") and
+              not String.contains?(path, ".cinder-stage-") ->
+            {:error, :enoent}
+
+          String.contains?(path, "S01E99") ->
+            {:ok, %File.Stat{size: 1_000_000_000, inode: 99, major_device: 7}}
+
+          true ->
+            {:ok, %File.Stat{size: 3_000_000_000, inode: 1, major_device: 7}}
+        end
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :rename, fn _src, _dest -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
+      stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
+      echo_remove(Cinder.Download.SabnzbdClientMock)
+      echo_rm_rf()
+
+      start_supervised!({TvPoller, interval: 60_000})
+      assert :ok = TvPoller.poll()
+
+      assert Repo.get!(Episode, e1.id).file_path =~ "S01E01"
+      assert Repo.get!(Episode, e2.id).grab_id == grab.id
+      assert Repo.aggregate(from(f in GrabFile, where: f.grab_id == ^grab.id), :count) == 1
+      refute_receive {:removed, "nzo-split-pack", _opts}
+      refute_receive {:rm_rf, "/dl/split-pack"}
+
+      assert :ok = TvPoller.poll()
+      assert Repo.aggregate(from(f in GrabFile, where: f.grab_id == ^grab.id), :count) == 1
+      refute_receive {:removed, "nzo-split-pack", _opts}
+      refute_receive {:rm_rf, "/dl/split-pack"}
     end
 
     test "a provable policy mismatch is a discard: deletes its download-side source" do

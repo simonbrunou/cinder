@@ -1,11 +1,13 @@
 defmodule CinderWeb.HealthController do
   @moduledoc """
-  Truthful liveness check, dependency-free and fast (no DB call — reads `:persistent_term` via
-  each poller's `status/0`). Returns 200 "ok" whenever polling is disabled (`:start_poller` off,
-  the default in test — a deploy where polling is intentionally off must never fail here) or
-  every enabled poller has ticked recently; otherwise 503 with a short plain-text reason naming
-  the stale poller, so an operator's health probe can actually catch a wedged/crash-looping
-  pipeline instead of always reporting "ok".
+  Truthful liveness check, no DB call and fast (reads `:persistent_term` via each poller's
+  `status/0`, plus one filesystem stat of the database volume). Returns 200 "ok" when every
+  enabled poller has ticked recently (or polling is disabled) AND the database volume has room;
+  otherwise 503 with a short plain-text reason. Two failure modes it catches that would otherwise
+  read "ok": a wedged/crash-looping poller, and a FULL database volume — when the volume holding
+  `cinder.db` + its `-wal` fills, every `Catalog.transition` write raises SQLITE_FULL, the
+  pollers' `isolate` swallows it, and their ticks keep completing, so the staleness check alone
+  would stay green while the pipeline is wedged.
   """
 
   use CinderWeb, :controller
@@ -19,14 +21,35 @@ defmodule CinderWeb.HealthController do
   # (crash-looping, or its process gone) still surfaces within a few intervals.
   @stale_multiplier 3
 
+  # Hard floor of free space on the database volume. Below it, SQLite writes are about to start
+  # failing with SQLITE_FULL, so report unhealthy. Fixed here (not a /settings field) so the probe
+  # never depends on the very DB it is guarding.
+  @db_floor_bytes 100 * 1024 * 1024
+
   def show(conn, _params) do
-    if Application.get_env(:cinder, :start_poller, true) do
-      case stale_reason() do
-        nil -> text(conn, "ok")
-        reason -> conn |> put_status(503) |> text(reason)
-      end
-    else
-      text(conn, "ok")
+    case unhealthy_reason() do
+      nil -> text(conn, "ok")
+      reason -> conn |> put_status(503) |> text(reason)
+    end
+  end
+
+  # Poller staleness is gated on `:start_poller` (a deploy with polling intentionally off must not
+  # fail on it); the database-volume floor runs regardless — a full DB volume wedges web writes too.
+  defp unhealthy_reason, do: poller_reason() || db_volume_reason()
+
+  defp poller_reason do
+    if Application.get_env(:cinder, :start_poller, true), do: stale_reason()
+  end
+
+  # Fail OPEN on any uncertainty (unknown path, unreadable `df`): only a positive low-space reading
+  # trips the check, so a probe glitch never flaps the container's health.
+  defp db_volume_reason do
+    case Cinder.Disk.db_free_bytes() do
+      {:ok, free} when free < @db_floor_bytes ->
+        "database volume low: #{free} bytes free (floor #{@db_floor_bytes})"
+
+      _ ->
+        nil
     end
   end
 

@@ -1,0 +1,303 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "unique",
+      "snapshot": {
+        "movies": [
+          {"provider_id": 1, "tmdb_id": 10, "imdb_id": "tt0000010", "file_id": 501},
+          {"provider_id": 2, "tmdb_id": null, "imdb_id": "tt0000020", "file_id": 502}
+        ],
+        "series": [
+          {"provider_id": 11, "tvdb_id": 100}
+        ],
+        "episodes": [
+          {
+            "provider_id": 21,
+            "series_id": 11,
+            "tvdb_id": 1001,
+            "season_number": 1,
+            "episode_number": 2,
+            "file_id": 601
+          }
+        ],
+        "files": [
+          {"provider_id": 501, "kind": "movie", "path": "/radarr/Movie One.mkv", "size": 1000},
+          {"provider_id": 502, "kind": "movie", "path": "/radarr/Movie Two.mkv", "size": 2000},
+          {"provider_id": 601, "kind": "episode", "path": "/sonarr/Show S01E02.mkv", "size": 3000}
+        ]
+      },
+      "lookups": [
+        {
+          "source": "imdb_id",
+          "external_id": "tt0000020",
+          "results": [{"type": "movie", "tmdb_id": 20}]
+        },
+        {
+          "source": "tvdb_id",
+          "external_id": 100,
+          "results": [{"type": "tv", "tmdb_id": 1000}]
+        },
+        {
+          "source": "tvdb_id",
+          "external_id": 1001,
+          "results": [
+            {
+              "type": "episode",
+              "tmdb_episode_id": 2001,
+              "series_tmdb_id": 1000,
+              "season_number": 1,
+              "episode_number": 2
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "movie_tmdb_ids": [10, 20],
+        "series_tmdb_ids": [1000],
+        "episode_tmdb_ids": [2001],
+        "coordinates": [
+          {
+            "tmdb_episode_id": 2001,
+            "source": "tvdb",
+            "scheme": "episode_id",
+            "namespace": "100",
+            "canonical_value": "1001"
+          },
+          {
+            "tmdb_episode_id": 2001,
+            "source": "tvdb",
+            "scheme": "aired",
+            "namespace": "100",
+            "canonical_value": "S01E02"
+          }
+        ],
+        "unresolved": []
+      }
+    },
+    {
+      "id": "n_to_one",
+      "snapshot": {
+        "movies": [],
+        "series": [
+          {"provider_id": 12, "tvdb_id": 200}
+        ],
+        "episodes": [
+          {
+            "provider_id": 22,
+            "series_id": 12,
+            "tvdb_id": 2001,
+            "season_number": 4,
+            "episode_number": 15,
+            "file_id": 602
+          },
+          {
+            "provider_id": 23,
+            "series_id": 12,
+            "tvdb_id": 2002,
+            "season_number": 4,
+            "episode_number": 16,
+            "file_id": 603
+          }
+        ],
+        "files": [
+          {"provider_id": 602, "kind": "episode", "path": "/sonarr/Show S04E15.mkv", "size": 4000},
+          {"provider_id": 603, "kind": "episode", "path": "/sonarr/Show S04E16.mkv", "size": 5000}
+        ]
+      },
+      "lookups": [
+        {
+          "source": "tvdb_id",
+          "external_id": 200,
+          "results": [{"type": "tv", "tmdb_id": 1100}]
+        },
+        {
+          "source": "tvdb_id",
+          "external_id": 2001,
+          "results": [
+            {
+              "type": "episode",
+              "tmdb_episode_id": 2100,
+              "series_tmdb_id": 1100,
+              "season_number": 4,
+              "episode_number": 15
+            }
+          ]
+        },
+        {
+          "source": "tvdb_id",
+          "external_id": 2002,
+          "results": [
+            {
+              "type": "episode",
+              "tmdb_episode_id": 2100,
+              "series_tmdb_id": 1100,
+              "season_number": 4,
+              "episode_number": 15
+            }
+          ]
+        }
+      ],
+      "expect": {
+        "movie_tmdb_ids": [],
+        "series_tmdb_ids": [1100],
+        "episode_tmdb_ids": [2100, 2100],
+        "coordinates": [
+          {
+            "tmdb_episode_id": 2100,
+            "source": "tvdb",
+            "scheme": "episode_id",
+            "namespace": "200",
+            "canonical_value": "2001"
+          },
+          {
+            "tmdb_episode_id": 2100,
+            "source": "tvdb",
+            "scheme": "aired",
+            "namespace": "200",
+            "canonical_value": "S04E15"
+          },
+          {
+            "tmdb_episode_id": 2100,
+            "source": "tvdb",
+            "scheme": "episode_id",
+            "namespace": "200",
+            "canonical_value": "2002"
+          },
+          {
+            "tmdb_episode_id": 2100,
+            "source": "tvdb",
+            "scheme": "aired",
+            "namespace": "200",
+            "canonical_value": "S04E16"
+          }
+        ],
+        "unresolved": []
+      }
+    },
+    {
+      "id": "zero_result",
+      "snapshot": {
+        "movies": [],
+        "series": [{"provider_id": 13, "tvdb_id": 300}],
+        "episodes": [
+          {
+            "provider_id": 24,
+            "series_id": 13,
+            "tvdb_id": 3001,
+            "season_number": 1,
+            "episode_number": 1,
+            "file_id": null
+          }
+        ],
+        "files": []
+      },
+      "lookups": [
+        {
+          "source": "tvdb_id",
+          "external_id": 300,
+          "results": [{"type": "tv", "tmdb_id": 1200}]
+        },
+        {"source": "tvdb_id", "external_id": 3001, "results": []}
+      ],
+      "expect": {
+        "movie_tmdb_ids": [],
+        "series_tmdb_ids": [1200],
+        "episode_tmdb_ids": [],
+        "coordinates": [],
+        "unresolved": [
+          {"kind": "episode", "provider_id": 24, "reason": "no_match"}
+        ]
+      }
+    },
+    {
+      "id": "multiple_results",
+      "snapshot": {
+        "movies": [],
+        "series": [{"provider_id": 14, "tvdb_id": 400}],
+        "episodes": [
+          {
+            "provider_id": 25,
+            "series_id": 14,
+            "tvdb_id": 4001,
+            "season_number": 2,
+            "episode_number": 1,
+            "file_id": null
+          }
+        ],
+        "files": []
+      },
+      "lookups": [
+        {
+          "source": "tvdb_id",
+          "external_id": 400,
+          "results": [{"type": "tv", "tmdb_id": 1300}]
+        },
+        {
+          "source": "tvdb_id",
+          "external_id": 4001,
+          "results": [
+            {"type": "episode", "tmdb_episode_id": 2300, "series_tmdb_id": 1300},
+            {"type": "episode", "tmdb_episode_id": 2301, "series_tmdb_id": 1300}
+          ]
+        }
+      ],
+      "expect": {
+        "movie_tmdb_ids": [],
+        "series_tmdb_ids": [1300],
+        "episode_tmdb_ids": [],
+        "coordinates": [],
+        "unresolved": [
+          {"kind": "episode", "provider_id": 25, "reason": "multiple_matches"}
+        ]
+      }
+    },
+    {
+      "id": "wrong_series",
+      "snapshot": {
+        "movies": [],
+        "series": [{"provider_id": 15, "tvdb_id": 500}],
+        "episodes": [
+          {
+            "provider_id": 26,
+            "series_id": 15,
+            "tvdb_id": 5001,
+            "season_number": 3,
+            "episode_number": 7,
+            "file_id": null
+          }
+        ],
+        "files": []
+      },
+      "lookups": [
+        {
+          "source": "tvdb_id",
+          "external_id": 500,
+          "results": [{"type": "tv", "tmdb_id": 1400}]
+        },
+        {
+          "source": "tvdb_id",
+          "external_id": 5001,
+          "results": [
+            {"type": "episode", "tmdb_episode_id": 2400, "series_tmdb_id": 9999}
+          ]
+        }
+      ],
+      "expect": {
+        "movie_tmdb_ids": [],
+        "series_tmdb_ids": [1400],
+        "episode_tmdb_ids": [],
+        "coordinates": [],
+        "unresolved": [
+          {
+            "kind": "episode",
+            "provider_id": 26,
+            "reason": "wrong_series",
+            "expected_series_tmdb_id": 1400,
+            "actual_series_tmdb_id": 9999
+          }
+        ]
+      }
+    }
+  ]
+}

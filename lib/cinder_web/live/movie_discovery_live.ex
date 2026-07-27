@@ -207,6 +207,8 @@ defmodule CinderWeb.MovieDiscoveryLive do
             {gettext("No description available.")}
           </p>
 
+          <.collection_link collection={@info[:collection]} />
+
           <%!-- Names the server and uses an external-link icon on purpose: this opens the media
                 server's front door, NOT this title (Cinder stores no Plex ratingKey / Jellyfin
                 Item Id), so a "Watch"-and-play-icon label would promise playback it can't
@@ -249,6 +251,8 @@ defmodule CinderWeb.MovieDiscoveryLive do
           </form>
         </div>
       </div>
+
+      <.cast_strip cast={@info[:cast] || []} />
     </Layouts.app>
     """
   end
