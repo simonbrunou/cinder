@@ -294,7 +294,15 @@ defmodule CinderWeb.DashboardLive do
 
   defp disk_root_label(:movies), do: gettext("Movies")
   defp disk_root_label(:tv), do: gettext("TV")
+  # :database (the DB-volume row) falls through to the capitalize fallback → "Database". Not a
+  # gettext msgid: adding one would need a POT extraction, deferred to the maintainer's central
+  # gettext.extract pass to avoid per-worktree line-ref drift.
   defp disk_root_label(kind), do: kind |> to_string() |> String.capitalize()
+
+  # The database volume is always monitored; the library roots may not be configured yet. Show
+  # the "set a library path" nudge only when no *library* root is present (the caller guards this
+  # with is_list/1), so the Database row still renders on a fresh install.
+  defp library_root?(disk), do: Enum.any?(disk, &(&1.kind != :database))
 
   defp low_disk?({:ok, %{free_bytes: free, total_bytes: total}}) when total > 0,
     do: free / total < @disk_warning_threshold
@@ -560,15 +568,17 @@ defmodule CinderWeb.DashboardLive do
             <p :if={@disk == :error} class="text-sm text-error">
               {gettext("Couldn't check disk space.")}
             </p>
-            <.empty_state
-              :if={@disk == []}
-              icon="hero-circle-stack"
-              title={gettext("No library paths configured")}
-              message={gettext("Set a library path in Settings to see free space here.")}
-            />
             <ul :if={is_list(@disk) and @disk != []} id="dashboard-disk" class="space-y-2">
               <.disk_card :for={d <- @disk} kind={d.kind} status={d.status} />
             </ul>
+            <p
+              :if={is_list(@disk) and not library_root?(@disk)}
+              class="mt-2 text-sm text-base-content/70"
+            >
+              {gettext("No library paths configured")} · {gettext(
+                "Set a library path in Settings to see free space here."
+              )}
+            </p>
           </section>
 
           <section>

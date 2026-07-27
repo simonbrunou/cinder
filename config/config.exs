@@ -35,13 +35,22 @@ config :cinder,
 #     so busy_timeout governs it. A deferred BEGIN (the exqlite default) can still raise
 #     SQLITE_BUSY_SNAPSHOT on a read-then-write txn, which busy_timeout cannot retry.
 #   - foreign_keys: :on → the admin-delete cascades stay enforced.
+#   - journal_size_limit: 64 MB → caps the on-disk `-wal` high-water mark. The exqlite adapter
+#     already sets `wal_autocheckpoint = 1000` (~4 MB) on every connection, so checkpoints DO run;
+#     but a PASSIVE autocheckpoint blocked by a long-lived reader lets `-wal` grow past that, and
+#     even a normal checkpoint only resets the write cursor — it never SHRINKS the file. SQLite's
+#     default limit is -1 (never truncate), so without this a briefly-bloated `-wal` stays at its
+#     peak size forever on the same volume as `cinder.db`. Pinning the limit truncates it back down
+#     at the next checkpoint. Autocheckpoint being on is why no scheduled `wal_checkpoint(TRUNCATE)`
+#     is needed.
 # Pinned (not left to ecto_sqlite3 defaults) so a dep-default change can't silently alter the
 # contract the locked "SQLite stays" decision rests on.
 config :cinder, Cinder.Repo,
   journal_mode: :wal,
   busy_timeout: 5_000,
   foreign_keys: :on,
-  default_transaction_mode: :immediate
+  default_transaction_mode: :immediate,
+  journal_size_limit: 64 * 1024 * 1024
 
 # External services resolve through behaviours; the concrete impl is config-selected.
 # Tests override these with Mox mocks (see config/test.exs).
