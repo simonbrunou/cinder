@@ -140,12 +140,19 @@ defmodule Cinder.Catalog.Grabs do
         {:error, :stale_grab}
       end
     else
+      now = Cinder.Catalog.now()
+
+      changes =
+        if progress_advanced?(grab.download_progress, Map.get(changes, :download_progress)),
+          do: Map.put(changes, :download_progress_at, now),
+          else: changes
+
       case Repo.update_all(
              from(g in Grab,
                where: g.id == ^grab.id and is_nil(g.content_path),
                select: g
              ),
-             set: Map.to_list(changes) ++ [updated_at: Cinder.Catalog.now()]
+             set: Map.to_list(changes) ++ [updated_at: now]
            ) do
         {1, [updated]} ->
           Cinder.Catalog.broadcast_series(series_id_for_grab(grab.id))
@@ -158,9 +165,24 @@ defmodule Cinder.Catalog.Grabs do
   end
 
   defp metric_changes(record, attrs) do
-    attrs = Map.take(attrs, @download_metric_fields)
-    if Map.take(record, @download_metric_fields) == attrs, do: %{}, else: attrs
+    attrs =
+      attrs
+      |> Map.take(@download_metric_fields)
+      |> keep_progress_high_water(record.download_progress)
+
+    Map.reject(attrs, fn {field, value} -> Map.get(record, field) == value end)
   end
+
+  defp keep_progress_high_water(%{download_progress: progress} = attrs, previous)
+       when is_number(progress) and (is_nil(previous) or progress >= previous),
+       do: attrs
+
+  defp keep_progress_high_water(attrs, _previous), do: Map.delete(attrs, :download_progress)
+
+  defp progress_advanced?(previous, current) when is_number(current),
+    do: current > (previous || 0)
+
+  defp progress_advanced?(_previous, _current), do: false
 
   @doc """
   Creates a grab for `episode_ids` (a non-empty list of episodes in one series — a single
@@ -353,7 +375,6 @@ defmodule Cinder.Catalog.Grabs do
     Repo.update_all(from(g in Grab, where: g.id == ^grab.id),
       inc: [download_attempts: 1],
       set: [
-        download_progress: nil,
         download_speed: nil,
         download_eta: nil,
         updated_at: Cinder.Catalog.now()

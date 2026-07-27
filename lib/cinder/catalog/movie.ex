@@ -46,6 +46,7 @@ defmodule Cinder.Catalog.Movie do
     field :download_progress, :float
     field :download_speed, :integer
     field :download_eta, :integer
+    field :download_progress_at, :utc_datetime
     field :file_path, :string
     field :content_path, :string
     field :import_attempts, :integer, default: 0
@@ -158,6 +159,7 @@ defmodule Cinder.Catalog.Movie do
       :failure_reason
     ])
     |> reset_download_metrics(movie.status)
+    |> advance_download_progress_at(movie)
     |> clear_failure_reason()
     |> validate_required([:status])
     |> validate_number(:import_attempts, greater_than_or_equal_to: 0)
@@ -176,6 +178,25 @@ defmodule Cinder.Catalog.Movie do
       changeset
     end
   end
+
+  @download_active_statuses [:downloading, :upgrading]
+
+  defp advance_download_progress_at(changeset, movie) do
+    status = get_field(changeset, :status)
+    progress = get_field(changeset, :download_progress)
+
+    if status in @download_active_statuses != movie.status in @download_active_statuses or
+         progress_advanced?(movie.download_progress, progress) do
+      force_change(changeset, :download_progress_at, DateTime.utc_now(:second))
+    else
+      changeset
+    end
+  end
+
+  defp progress_advanced?(previous, current) when is_number(current),
+    do: current > (previous || 0)
+
+  defp progress_advanced?(_previous, _current), do: false
 
   # `failure_reason` only means anything for an :import_failed park (the poller writes the client's
   # detail there); every transition OUT of that state (a retry to :requested, a successful

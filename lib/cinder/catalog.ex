@@ -605,9 +605,19 @@ defmodule Cinder.Catalog do
   defdelegate update_grab_download_metrics(grab, attrs), to: Grabs
 
   defp metric_changes(record, attrs) do
-    attrs = Map.take(attrs, @download_metric_fields)
-    if Map.take(record, @download_metric_fields) == attrs, do: %{}, else: attrs
+    attrs =
+      attrs
+      |> Map.take(@download_metric_fields)
+      |> keep_progress_high_water(record.download_progress)
+
+    Map.reject(attrs, fn {field, value} -> Map.get(record, field) == value end)
   end
+
+  defp keep_progress_high_water(%{download_progress: progress} = attrs, previous)
+       when is_number(progress) and (is_nil(previous) or progress >= previous),
+       do: attrs
+
+  defp keep_progress_high_water(attrs, _previous), do: Map.delete(attrs, :download_progress)
 
   # Parked terminal states a user can re-queue. An in-flight movie must never be
   # yanked back to :requested, so retry guards on status server-side (the /status

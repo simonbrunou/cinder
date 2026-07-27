@@ -225,7 +225,7 @@ defmodule Cinder.CatalogAdminTest do
       assert {:error, :stale_grab} = Catalog.update_grab_download_metrics(tracked, metrics)
     end
 
-    test "a grab retry clears metrics" do
+    test "a grab retry keeps the progress high-water and clears live estimates" do
       series = series_fixture()
       season = season_fixture(series)
       episode = episode_fixture(season)
@@ -240,7 +240,7 @@ defmodule Cinder.CatalogAdminTest do
 
       assert :ok = Catalog.increment_grab_attempts(tracked)
 
-      assert %{download_progress: nil, download_speed: nil, download_eta: nil} =
+      assert %{download_progress: 0.42, download_speed: nil, download_eta: nil} =
                Repo.get!(Cinder.Catalog.Grab, tracked.id)
     end
   end

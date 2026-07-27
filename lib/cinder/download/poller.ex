@@ -160,17 +160,10 @@ defmodule Cinder.Download.Poller do
         retry_or_fail(movie, :torrent_not_found, :import_attempts, :import_failed)
 
       {:ok, %{state: :downloading} = status} ->
-        Catalog.update_movie_download_metrics(movie, %{
-          download_progress: Map.get(status, :progress),
-          download_speed: Map.get(status, :speed),
-          download_eta: Map.get(status, :eta)
-        })
-
-        maybe_reap(movie, status)
+        track_and_reap(movie, status, &maybe_reap/3)
 
       {:error, _reason} ->
         Catalog.update_movie_download_metrics(movie, %{
-          download_progress: nil,
           download_speed: nil,
           download_eta: nil
         })
@@ -182,14 +175,17 @@ defmodule Cinder.Download.Poller do
     end
   end
 
-  # ponytail: the stall clock is DERIVED from movie.updated_at. Catalog.update_movie_download_metrics
-  # is change-gated, so a stalled torrent (progress frozen, speed a hard 0, eta the infinity sentinel
-  # → nil) writes nothing and updated_at freezes at the stall onset. `movie` is the tick-start struct,
-  # so on the stall-start tick its updated_at is still recent (no premature reap); it only fires once
-  # the frozen value ages past the threshold. Correctness is coupled to Catalog's @download_metric_fields
-  # + the qBittorrent eta-sentinel normalization (see StallReaper's moduledoc + the freeze test).
-  defp maybe_reap(movie, status) do
-    if StallReaper.enabled?() and StallReaper.reap?(movie.updated_at, status, DateTime.utc_now()) do
+  # ponytail: the torrent seed window deliberately keeps the tick-start `updated_at` derivation.
+  # The absolute cap uses the returned progress clock, so this tick's genuine progress prevents a
+  # false reap while speed/ETA-only writes cannot postpone it.
+  defp maybe_reap(movie, download_progress_at, status) do
+    if StallReaper.enabled?() and
+         StallReaper.reap?(
+           movie.updated_at,
+           download_progress_at,
+           status,
+           DateTime.utc_now()
+         ) do
       case Catalog.reap_stalled_movie(movie) do
         {:ok, _reaped} ->
           Logger.warning("movie #{movie.id} reaped: stalled download removed; re-searching")
@@ -333,7 +329,6 @@ defmodule Cinder.Download.Poller do
         %{
           attempts_field => attempts,
           status: movie.status,
-          download_progress: nil,
           download_speed: nil,
           download_eta: nil
         },
@@ -408,17 +403,10 @@ defmodule Cinder.Download.Poller do
         retry_or_revert(movie, :torrent_not_found)
 
       {:ok, %{state: :downloading} = status} ->
-        Catalog.update_movie_download_metrics(movie, %{
-          download_progress: Map.get(status, :progress),
-          download_speed: Map.get(status, :speed),
-          download_eta: Map.get(status, :eta)
-        })
-
-        maybe_reap_upgrade(movie, status)
+        track_and_reap(movie, status, &maybe_reap_upgrade/3)
 
       {:error, _reason} ->
         Catalog.update_movie_download_metrics(movie, %{
-          download_progress: nil,
           download_speed: nil,
           download_eta: nil
         })
@@ -431,9 +419,15 @@ defmodule Cinder.Download.Poller do
 
   # A stalled upgrade is reaped WITHOUT touching the live library file: reap_stalled_upgrade removes
   # the stuck replacement download, blocklists it (:stalled), and reverts the movie to :available.
-  # Same updated_at-derived stall clock as maybe_reap/2.
-  defp maybe_reap_upgrade(movie, status) do
-    if StallReaper.enabled?() and StallReaper.reap?(movie.updated_at, status, DateTime.utc_now()) do
+  # Same split activity/progress clocks as maybe_reap/3.
+  defp maybe_reap_upgrade(movie, download_progress_at, status) do
+    if StallReaper.enabled?() and
+         StallReaper.reap?(
+           movie.updated_at,
+           download_progress_at,
+           status,
+           DateTime.utc_now()
+         ) do
       case Catalog.reap_stalled_upgrade(movie) do
         {:ok, _reverted} ->
           Logger.warning(
@@ -443,6 +437,17 @@ defmodule Cinder.Download.Poller do
         {:error, _reason} ->
           :ok
       end
+    end
+  end
+
+  defp track_and_reap(movie, status, reap) do
+    case Catalog.update_movie_download_metrics(movie, %{
+           download_progress: Map.get(status, :progress),
+           download_speed: Map.get(status, :speed),
+           download_eta: Map.get(status, :eta)
+         }) do
+      {:ok, tracked} -> reap.(movie, tracked.download_progress_at, status)
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -572,7 +577,6 @@ defmodule Cinder.Download.Poller do
         %{
           import_attempts: attempts,
           status: :upgrading,
-          download_progress: nil,
           download_speed: nil,
           download_eta: nil
         },

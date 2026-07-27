@@ -89,17 +89,10 @@ defmodule Cinder.Download.TvPoller do
         retry_or_park(grab, :torrent_not_found)
 
       {:ok, %{state: :downloading} = status} ->
-        Catalog.update_grab_download_metrics(grab, %{
-          download_progress: Map.get(status, :progress),
-          download_speed: Map.get(status, :speed),
-          download_eta: Map.get(status, :eta)
-        })
-
-        maybe_reap(grab, status)
+        track_and_reap(grab, status)
 
       {:error, _reason} ->
         Catalog.update_grab_download_metrics(grab, %{
-          download_progress: nil,
           download_speed: nil,
           download_eta: nil
         })
@@ -109,12 +102,16 @@ defmodule Cinder.Download.TvPoller do
     end
   end
 
-  # ponytail: the stall clock is DERIVED from grab.updated_at — Catalog.update_grab_download_metrics
-  # is change-gated, so a stalled grab (progress frozen, speed a hard 0, eta sentinel → nil) writes
-  # nothing and updated_at freezes at the stall onset. Same coupling to @download_metric_fields + the
-  # eta normalization as the movie poller (see StallReaper's moduledoc).
-  defp maybe_reap(grab, status) do
-    if StallReaper.enabled?() and StallReaper.reap?(grab.updated_at, status, DateTime.utc_now()) do
+  # ponytail: keep the seed window on tick-start `updated_at`; use the returned monotonic progress
+  # clock for the absolute cap so speed/ETA churn cannot disguise a wedged ordinary or upgrade grab.
+  defp maybe_reap(grab, download_progress_at, status) do
+    if StallReaper.enabled?() and
+         StallReaper.reap?(
+           grab.updated_at,
+           download_progress_at,
+           status,
+           DateTime.utc_now()
+         ) do
       case Catalog.reap_stalled_grab(grab) do
         {:ok, _reaped} ->
           Logger.warning(
@@ -124,6 +121,17 @@ defmodule Cinder.Download.TvPoller do
         {:error, _reason} ->
           :ok
       end
+    end
+  end
+
+  defp track_and_reap(grab, status) do
+    case Catalog.update_grab_download_metrics(grab, %{
+           download_progress: Map.get(status, :progress),
+           download_speed: Map.get(status, :speed),
+           download_eta: Map.get(status, :eta)
+         }) do
+      {:ok, tracked} -> maybe_reap(grab, tracked.download_progress_at, status)
+      {:error, reason} -> {:error, reason}
     end
   end
 

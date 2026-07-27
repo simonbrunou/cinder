@@ -408,7 +408,7 @@ defmodule Cinder.Download.PollerTest do
            } = Repo.get!(Movie, movie.id)
   end
 
-  test "a transient client error clears a downloading snapshot" do
+  test "a transient client error keeps the progress high-water while clearing live estimates" do
     movie = downloading_movie(7, "hash-7")
     movie_id = movie.id
 
@@ -427,7 +427,7 @@ defmodule Cinder.Download.PollerTest do
 
     assert %Movie{
              status: :downloading,
-             download_progress: nil,
+             download_progress: 0.42,
              download_speed: nil,
              download_eta: nil
            } = Repo.get!(Movie, movie.id)
@@ -435,13 +435,13 @@ defmodule Cinder.Download.PollerTest do
     assert_receive {:movie_updated,
                     %Movie{
                       id: ^movie_id,
-                      download_progress: nil,
+                      download_progress: 0.42,
                       download_speed: nil,
                       download_eta: nil
                     }}
   end
 
-  test "a retryable download error clears a downloading snapshot" do
+  test "a retryable download error keeps the progress high-water" do
     movie = downloading_movie(8, "hash-8")
 
     assert {:ok, _movie} =
@@ -459,7 +459,7 @@ defmodule Cinder.Download.PollerTest do
     assert %Movie{
              status: :downloading,
              import_attempts: 1,
-             download_progress: nil,
+             download_progress: 0.42,
              download_speed: nil,
              download_eta: nil
            } = Repo.get!(Movie, movie.id)
@@ -511,7 +511,7 @@ defmodule Cinder.Download.PollerTest do
     assert parked.failure_reason == nil
   end
 
-  test "a retryable upgrade error clears an upgrading snapshot" do
+  test "a retryable upgrade error keeps the progress high-water" do
     movie = upgrading_movie(9, "hash-9")
 
     assert {:ok, _movie} =
@@ -529,7 +529,7 @@ defmodule Cinder.Download.PollerTest do
     assert %Movie{
              status: :upgrading,
              import_attempts: 1,
-             download_progress: nil,
+             download_progress: 0.42,
              download_speed: nil,
              download_eta: nil
            } = Repo.get!(Movie, movie.id)
@@ -2939,8 +2939,88 @@ defmodule Cinder.Download.PollerTest do
       assert_receive {:removed, "nzo-wedged", _opts}
     end
 
-    test "updated_at freezes across consecutive stalled ticks (the derivation's invariant)" do
-      # Reaper OFF: prove the stall clock — a stalled tick writes no metrics, so updated_at holds.
+    test "reaps at the absolute cap despite changing speed and ETA without progress" do
+      enable_reaper!(
+        stall_timeout: :timer.hours(2),
+        no_seeders_timeout: :timer.hours(2),
+        max_downloading_timeout: :timer.hours(24)
+      )
+
+      movie = stalled_downloading_movie(76, "hash-flapping", "Flapping.Release.1080p")
+
+      assert {:ok, tracked} =
+               Catalog.update_movie_download_metrics(movie, %{
+                 download_progress: 0.5,
+                 download_speed: 1_024,
+                 download_eta: 500
+               })
+
+      past = DateTime.add(Catalog.now(), -25, :hour)
+
+      Repo.update_all(from(m in Movie, where: m.id == ^movie.id),
+        set: [download_progress_at: past]
+      )
+
+      tracked = Repo.get!(Movie, tracked.id)
+
+      assert {:ok, jittered} =
+               Catalog.update_movie_download_metrics(tracked, %{
+                 download_progress: 0.5,
+                 download_speed: 2_048,
+                 download_eta: 400
+               })
+
+      assert jittered.download_progress_at == past
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-flapping" ->
+        {:ok, %{state: :downloading, progress: 0.5, speed: 3_072, eta: 300, seeders: 5}}
+      end)
+
+      stub(Cinder.Download.ClientMock, :remove, fn _id, _opts -> :ok end)
+
+      start_supervised!({Poller, interval: 60_000})
+      assert :ok = Poller.poll()
+
+      assert %Movie{status: :requested} = Repo.get!(Movie, movie.id)
+    end
+
+    test "genuine completion progress resets the absolute-cap clock before reaping" do
+      enable_reaper!(
+        stall_timeout: :timer.hours(2),
+        no_seeders_timeout: :timer.hours(2),
+        max_downloading_timeout: :timer.hours(1)
+      )
+
+      movie = stalled_downloading_movie(77, "hash-progressing", "Progressing.Release.1080p")
+
+      assert {:ok, tracked} =
+               Catalog.update_movie_download_metrics(movie, %{
+                 download_progress: 0.4,
+                 download_speed: 1_024,
+                 download_eta: 500
+               })
+
+      past = DateTime.add(Catalog.now(), -2, :hour)
+
+      Repo.update_all(from(m in Movie, where: m.id == ^movie.id),
+        set: [download_progress_at: past]
+      )
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-progressing" ->
+        {:ok, %{state: :downloading, progress: 0.41, speed: 2_048, eta: 400, seeders: 5}}
+      end)
+
+      start_supervised!({Poller, interval: 60_000})
+      assert :ok = Poller.poll()
+
+      progressed = Repo.get!(Movie, tracked.id)
+      assert progressed.status == :downloading
+      assert progressed.download_progress == 0.41
+      assert DateTime.after?(progressed.download_progress_at, past)
+    end
+
+    test "updated_at still freezes for the seed-window derivation" do
+      # Reaper OFF: the torrent-only short window keeps its existing derived activity clock.
       movie = stalled_downloading_movie(74, "hash-freeze", "Whatever.1080p")
 
       stub(Cinder.Download.ClientMock, :status, fn "hash-freeze" ->
