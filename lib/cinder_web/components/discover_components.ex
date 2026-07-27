@@ -49,6 +49,67 @@ defmodule CinderWeb.DiscoverComponents do
     """
   end
 
+  attr :cast, :list, required: true
+
+  @doc """
+  Compact top-billed cast strip for a detail page (movie or series): each member's photo + name
+  (+ character) linking to their `/person/tmdb/:id` page. Renders nothing when the list is empty,
+  so a title whose TMDB details omit credits simply shows no strip.
+  """
+  def cast_strip(assigns) do
+    ~H"""
+    <section :if={@cast != []} class="mt-8" aria-label={gettext("Top cast")}>
+      <h2 class="mb-3 text-sm font-semibold text-base-content/70">{gettext("Top cast")}</h2>
+      <ul class="flex gap-4 overflow-x-auto pb-2">
+        <li :for={person <- @cast} class="w-24 shrink-0">
+          <.link navigate={~p"/person/tmdb/#{person.tmdb_id}"} class="group block text-center">
+            <img
+              :if={person.profile_path}
+              src={poster_url(person.profile_path, "w185")}
+              alt={person.name}
+              loading="lazy"
+              decoding="async"
+              class="aspect-[2/3] w-full rounded object-cover"
+            />
+            <div
+              :if={!person.profile_path}
+              class="grid aspect-[2/3] w-full place-items-center rounded bg-base-300 text-base-content/40"
+              aria-hidden="true"
+            >
+              <.icon name="hero-user" class="size-8" />
+            </div>
+            <p class="mt-1 truncate text-xs font-medium group-hover:underline">{person.name}</p>
+            <p :if={person.character} class="truncate text-xs text-base-content/60">
+              {person.character}
+            </p>
+          </.link>
+        </li>
+      </ul>
+    </section>
+    """
+  end
+
+  attr :collection, :map, default: nil
+
+  @doc """
+  "Part of <collection>" link to a movie's `/collection/tmdb/:id` page. Renders nothing when the
+  movie belongs to no TMDB collection (`collection` is `nil`).
+  """
+  def collection_link(assigns) do
+    ~H"""
+    <div :if={@collection} class="mt-4">
+      <.link
+        navigate={~p"/collection/tmdb/#{@collection.tmdb_id}"}
+        class="link link-hover inline-flex items-center gap-1 text-sm"
+      >
+        <.icon name="hero-rectangle-stack" class="size-4" />{gettext("Part of %{name}",
+          name: @collection.title
+        )}
+      </.link>
+    </div>
+    """
+  end
+
   @doc """
   Genre filter chips for the discovery landing grid. `genres` is a list of
   `{id, canonical English name}` pairs (`Cinder.Catalog.Genres.list/0`);

@@ -49,6 +49,50 @@ defmodule CinderWeb.MovieDiscoveryLiveTest do
       assert html =~ "8.4"
     end
 
+    test "renders a cast strip linking to person pages and a collection link", %{conn: conn} do
+      stub(Cinder.Catalog.TMDBMock, :get_movie, fn id ->
+        {:ok,
+         %{
+           tmdb_id: id,
+           imdb_id: nil,
+           title: "Inception",
+           year: 2010,
+           poster_path: "/p.jpg",
+           original_language: "en",
+           overview: "A thief.",
+           runtime: 148,
+           genres: ["Action"],
+           vote_average: 8.4,
+           release_date: ~D[2010-07-16],
+           cast: [
+             %{
+               tmdb_id: 6193,
+               name: "Leonardo DiCaprio",
+               character: "Cobb",
+               profile_path: "/l.jpg"
+             }
+           ],
+           collection: %{tmdb_id: 8945, title: "The Inception Collection"}
+         }}
+      end)
+
+      {:ok, lv, html} = live(conn, ~p"/movie/tmdb/27205")
+
+      assert html =~ "Leonardo DiCaprio"
+      assert html =~ "Cobb"
+      assert has_element?(lv, ~s(a[href="/person/tmdb/6193"]))
+      assert has_element?(lv, ~s(a[href="/collection/tmdb/8945"]), "Part of")
+    end
+
+    # The Mox stub in setup returns no :cast / :collection keys — the page must render without
+    # them, not crash on a missing key.
+    test "degrades gracefully when TMDB omits cast and collection", %{conn: conn} do
+      {:ok, _lv, html} = live(conn, ~p"/movie/tmdb/27205")
+
+      refute html =~ "Top cast"
+      refute html =~ "Part of"
+    end
+
     test "a non-integer tmdb_id redirects to Discover instead of crashing", %{conn: conn} do
       assert {:error, {kind, %{to: "/"}}} = live(conn, ~p"/movie/tmdb/not-a-number")
       assert kind in [:redirect, :live_redirect]
