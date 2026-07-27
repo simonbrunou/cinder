@@ -19,6 +19,8 @@ defmodule CinderWeb.MovieDiscoveryLive do
   alias Cinder.Catalog
   alias Cinder.Settings
 
+  require Logger
+
   @picks Language.preferences()
 
   @impl true
@@ -37,9 +39,10 @@ defmodule CinderWeb.MovieDiscoveryLive do
 
       {:ok,
        socket
-       |> assign(tmdb_id: tmdb_id, info: info)
+       |> assign(tmdb_id: tmdb_id, info: info, recommendations: [])
        |> assign_media_server()
-       |> assign_request_state()}
+       |> assign_request_state()
+       |> maybe_load_recommendations()}
     else
       # A TMDB outage is not "not found" — telling the user the movie doesn't exist sends them
       # away from a page that loads fine once TMDB is back.
@@ -57,15 +60,28 @@ defmodule CinderWeb.MovieDiscoveryLive do
     end
   end
 
+  # The "More like this" rail is fetched off-process on the connected mount (one call, not two)
+  # so a slow TMDB can't hold up render; a failure leaves the page rail-less (see handle_async).
+  defp maybe_load_recommendations(socket) do
+    if connected?(socket) do
+      %{tmdb_id: tmdb_id, locale: locale} = socket.assigns
+      start_async(socket, :recommendations, fn -> Catalog.recommended_movies(tmdb_id, locale) end)
+    else
+      socket
+    end
+  end
+
   @impl true
   def handle_event("add", %{"tmdb_id" => tmdb_id} = params, socket) when is_binary(tmdb_id) do
-    # phx-value is client-controlled; tolerate non-numeric input and only accept this page's id.
+    # phx-value is client-controlled: tolerate non-numeric input and only accept the movie shown
+    # here or one from the "More like this" rail — never an arbitrary forged id.
     preferred = normalize_language(params["preferred_language"])
+    candidates = [socket.assigns.info | socket.assigns.recommendations]
 
     with {id, ""} <- Integer.parse(tmdb_id),
-         true <- id == socket.assigns.tmdb_id,
-         {:ok, profile} <- normalize_profile(params["proposed_media_profile"]) do
-      {:noreply, add(socket, socket.assigns.info, preferred, profile)}
+         {:ok, profile} <- normalize_profile(params["proposed_media_profile"]),
+         movie when not is_nil(movie) <- Enum.find(candidates, &(&1.tmdb_id == id)) do
+      {:noreply, add(socket, movie, preferred, profile)}
     else
       _ -> {:noreply, socket}
     end
@@ -99,6 +115,24 @@ defmodule CinderWeb.MovieDiscoveryLive do
   def handle_info(_message, socket), do: {:noreply, socket}
 
   @impl true
+  def handle_async(:recommendations, {:ok, {:ok, results}}, socket) do
+    # Drop this movie from its own recommendations (defensive — and its Add form id
+    # `add-form-#{tmdb_id}` would otherwise collide with the header's own).
+    results = Enum.reject(results, &(&1.tmdb_id == socket.assigns.tmdb_id))
+    {:noreply, assign(socket, :recommendations, results)}
+  end
+
+  # The rail is decorative — on failure the page simply stays rail-less, no flash.
+  def handle_async(:recommendations, {:ok, {:error, reason}}, socket) do
+    Logger.warning("Movie recommendations fetch failed: #{inspect(reason)}")
+    {:noreply, socket}
+  end
+
+  def handle_async(:recommendations, {:exit, reason}, socket) do
+    Logger.warning("Movie recommendations fetch crashed: #{inspect(reason)}")
+    {:noreply, socket}
+  end
+
   def handle_async({:add, _tmdb_id, title}, {:ok, result}, socket) do
     {:noreply, request_result(socket, title, result)}
   end
@@ -254,6 +288,15 @@ defmodule CinderWeb.MovieDiscoveryLive do
       </div>
 
       <.cast_strip cast={@info[:cast] || []} />
+
+      <.more_like_this
+        id="movie-recommendations"
+        results={@recommendations}
+        request_status={@request_status}
+        movie_status={@movie_status}
+        series_request_status={@series_request_status}
+        available_series={@available_series}
+      />
     </Layouts.app>
     """
   end

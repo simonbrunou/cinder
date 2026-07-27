@@ -110,6 +110,38 @@ defmodule CinderWeb.DiscoverComponents do
     """
   end
 
+  attr :id, :string, required: true
+  attr :results, :list, required: true
+  attr :request_status, :map, required: true
+  attr :movie_status, :map, required: true
+  attr :series_request_status, :map, required: true
+  attr :available_series, :any, required: true
+
+  @doc """
+  "More like this" recommendation rail for a detail page — the same `media_grid/1`
+  (cards, per-user badges, Add/View flow, unique DOM ids) as the discovery landing,
+  under a labelled heading. Renders nothing when `results` is empty, so a fetch
+  failure or a title TMDB has no recommendations for simply shows no rail.
+  """
+  def more_like_this(assigns) do
+    ~H"""
+    <section :if={@results != []} class="mt-10" aria-labelledby={"#{@id}-heading"}>
+      <h2 id={"#{@id}-heading"} class="mb-4 flex items-center gap-2 text-lg font-semibold">
+        <.icon name="hero-sparkles" class="size-5 text-primary" />
+        {gettext("More like this")}
+      </h2>
+      <.media_grid
+        id={@id}
+        results={@results}
+        request_status={@request_status}
+        movie_status={@movie_status}
+        series_request_status={@series_request_status}
+        available_series={@available_series}
+      />
+    </section>
+    """
+  end
+
   @doc """
   Genre filter chips for the discovery landing grid. `genres` is a list of
   `{id, canonical English name}` pairs (`Cinder.Catalog.Genres.list/0`);

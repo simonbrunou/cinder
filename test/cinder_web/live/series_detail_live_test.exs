@@ -1555,6 +1555,44 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert has_element?(lv2, "button[phx-click=tv_manual_search]")
   end
 
+  @header_find ~s(button[aria-label="Find a better match: expand the seasons you can search"])
+
+  test "a series-level Find a better match header reveals the searchable season", %{conn: conn} do
+    series = series_with_wanted_episode(search_attempts: 0)
+    season = first_season(series.id)
+    {:ok, lv, _html} = live_series(conn, series)
+
+    assert has_element?(lv, @header_find)
+    # Seasons render collapsed by default, so the per-season control is hidden until revealed.
+    refute has_element?(lv, ~s(details#season-#{season.id}[open]))
+
+    lv |> element(@header_find) |> render_click()
+
+    # The header shortcut expands the searchable season, surfacing its per-season control.
+    assert has_element?(lv, ~s(details#season-#{season.id}[open]))
+  end
+
+  test "the Find a better match header is hidden when nothing can be searched", %{conn: conn} do
+    # A :none-strategy tree has only un-monitored, file-less episodes — nothing manual-searchable.
+    series = create_series(4242)
+    {:ok, lv, _html} = live_series(conn, series)
+
+    refute has_element?(lv, @header_find)
+  end
+
+  test "the per-season Find a better match is promoted (season-scoped aria-label, not a bare ghost)",
+       %{conn: conn} do
+    series = series_with_wanted_episode(search_attempts: 0)
+    {:ok, lv, _html} = live_series(conn, series)
+
+    assert has_element?(
+             lv,
+             ~s(button[phx-click=tv_manual_search][aria-label="Find a better match in Season 1"])
+           )
+
+    refute has_element?(lv, ~s(button[phx-click=tv_manual_search].btn-ghost))
+  end
+
   test "Find a better match opens the TV panel; grabbing creates a grab over the wanted episode",
        %{conn: conn} do
     series = series_with_wanted_episode(search_attempts: 0)
@@ -1570,7 +1608,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     {:ok, lv, _html} = live_series(conn, series)
 
-    lv |> element("button", "Find a better match") |> render_click()
+    lv |> element("button[phx-click=tv_manual_search]", "Find a better match") |> render_click()
     assert render_async(lv) =~ "Test Show S01E01"
 
     lv |> element("#ms-season-#{season.id} button", "Grab") |> render_click()
@@ -1598,7 +1636,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
 
     {:ok, lv, _html} = live_series(conn, series)
-    lv |> element("button", "Find a better match") |> render_click()
+    lv |> element("button[phx-click=tv_manual_search]", "Find a better match") |> render_click()
     assert render_async(lv) =~ "S S01E01"
     lv |> element("#ms-season-#{season.id} button", "Grab") |> render_click()
     assert render(lv) =~ "Grabbing the selected release"
