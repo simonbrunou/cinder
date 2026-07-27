@@ -5,8 +5,9 @@ defmodule Cinder.Library.AdoptionTest do
   import Mox
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Movie, Series}
+  alias Cinder.Catalog.{Episode, Movie, Series}
   alias Cinder.Library.Adoption
+  alias Cinder.Repo
 
   setup :verify_on_exit!
 
@@ -220,7 +221,7 @@ defmodule Cinder.Library.AdoptionTest do
     assert Enum.all?(candidates, &(&1.match == nil))
   end
 
-  test "adopt creates an available movie through Catalog.transition, broadcasts, and is idempotent" do
+  test "adopt inserts a movie directly at available, never exposing it to the requested poller query" do
     path = "/tmp/cinder-test-library/Dune (2021)/Dune (2021).mkv"
 
     candidate = %{
@@ -238,9 +239,18 @@ defmodule Cinder.Library.AdoptionTest do
 
     :ok = Catalog.subscribe()
 
-    assert %{adopted: 1, skipped: 0} = Adoption.adopt([candidate])
-    assert_receive {:movie_created, %Movie{tmdb_id: 10}}
-    assert_receive {:movie_updated, %Movie{tmdb_id: 10, status: :available, file_path: ^path}}
+    {summary, transitions} =
+      Cinder.TelemetryHelpers.capture([:cinder, :transition], fn ->
+        Adoption.adopt([candidate])
+      end)
+
+    assert %{adopted: 1, skipped: 0, failures: []} = summary
+
+    assert_receive {:movie_created, %Movie{tmdb_id: 10, status: :available, file_path: ^path}}
+
+    refute_receive {:movie_updated, %Movie{tmdb_id: 10}}
+    assert transitions == []
+    assert Catalog.list_by_status(:requested) == []
 
     assert %Movie{status: :available, file_path: ^path} = Catalog.get_movie_by_tmdb_id(10)
     assert %{adopted: 0, skipped: 1} = Adoption.adopt([candidate])
@@ -291,6 +301,88 @@ defmodule Cinder.Library.AdoptionTest do
 
     assert %{adopted: 0, skipped: 1} = Adoption.adopt([candidate])
     assert Catalog.count_series() == 1
+  end
+
+  test "adopting files into an existing series preserves all monitoring choices" do
+    series =
+      series_fixture(%{
+        tmdb_id: 42,
+        monitored: true,
+        monitor_strategy: :all
+      })
+
+    season = season_fixture(series, %{monitored: true})
+    monitored = episode_fixture(season, %{episode_number: 1, monitored: true})
+    unmonitored = episode_fixture(season, %{episode_number: 2, monitored: false})
+    path = "/tmp/cinder-test-tv-library/Test Show (2001)/Test.Show.S01E01.mkv"
+
+    candidate = %{
+      kind: :series,
+      status: :auto_matched,
+      match: %{tmdb_id: 42},
+      files: [
+        %{
+          path: path,
+          season_number: 1,
+          episode_numbers: [1],
+          status: :matched
+        }
+      ]
+    }
+
+    assert %{adopted: 1, skipped: 0, failures: []} = Adoption.adopt([candidate])
+
+    assert %Series{monitored: true, monitor_strategy: :all} = Repo.reload!(series)
+    assert Repo.reload!(season).monitored
+    assert Repo.reload!(monitored).monitored
+    refute Repo.reload!(unmonitored).monitored
+    assert Repo.reload!(monitored).file_path == path
+  end
+
+  test "a failed episode write rolls back earlier files and is reported separately from skips" do
+    series = series_fixture(%{tmdb_id: 42, monitor_strategy: :all})
+    season = season_fixture(series)
+    first = episode_fixture(season, %{episode_number: 1})
+    second = episode_fixture(season, %{episode_number: 2})
+    first_path = "/tmp/cinder-test-tv-library/Test Show (2001)/Test.Show.S01E01.mkv"
+    failed_path = "/tmp/cinder-test-tv-library/Test Show (2001)/Test.Show.S01E02.part.mkv"
+
+    candidate = %{
+      kind: :series,
+      status: :auto_matched,
+      match: %{tmdb_id: 42},
+      files: [
+        %{
+          path: first_path,
+          season_number: 1,
+          episode_numbers: [1],
+          status: :matched
+        },
+        %{
+          path: failed_path,
+          status: :part,
+          part_of: %{season_number: 1, episode_number: 2}
+        }
+      ]
+    }
+
+    Catalog.subscribe_series()
+
+    assert %{
+             adopted: 0,
+             skipped: 0,
+             failures: [
+               %{
+                 episode_code: "S01E02",
+                 path: ^failed_path,
+                 reason: :primary_file_missing
+               }
+             ]
+           } = Adoption.adopt([candidate])
+
+    assert %Episode{file_path: nil} = Repo.reload!(first)
+    assert %Episode{file_path: nil, part_file_paths: []} = Repo.reload!(second)
+    refute_receive {:series_updated, _}
   end
 
   defp stub_roots(movie_files, tv_files) do

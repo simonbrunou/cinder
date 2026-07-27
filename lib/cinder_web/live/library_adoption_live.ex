@@ -19,7 +19,8 @@ defmodule CinderWeb.LibraryAdoptionLive do
        form: to_form(%{}, as: :adoption),
        scanned?: false,
        scanning?: false,
-       adopting?: false
+       adopting?: false,
+       adoption_failures: []
      )
      |> stream_configure(:auto_candidates, dom_id: &"adoption-candidate-#{&1.id}")
      |> stream_configure(:ambiguous_candidates, dom_id: &"adoption-candidate-#{&1.id}")
@@ -31,7 +32,7 @@ defmodule CinderWeb.LibraryAdoptionLive do
 
   @impl true
   def handle_event("scan", _params, %{assigns: %{scanning?: false, adopting?: false}} = socket),
-    do: {:noreply, start_scan(socket)}
+    do: {:noreply, socket |> assign(adoption_failures: []) |> start_scan()}
 
   def handle_event("adopt", %{"adoption" => params}, %{assigns: %{adopting?: false}} = socket)
       when is_map(params) do
@@ -44,7 +45,7 @@ defmodule CinderWeb.LibraryAdoptionLive do
       candidates ->
         {:noreply,
          socket
-         |> assign(adopting?: true)
+         |> assign(adopting?: true, adoption_failures: [])
          |> start_async(:adopt, fn -> Adoption.adopt(candidates) end)}
     end
   end
@@ -72,7 +73,7 @@ defmodule CinderWeb.LibraryAdoptionLive do
 
     {:noreply,
      socket
-     |> assign(adopting?: false)
+     |> assign(adopting?: false, adoption_failures: summary.failures)
      |> put_flash(:info, message)
      |> start_scan()}
   end
@@ -234,6 +235,24 @@ defmodule CinderWeb.LibraryAdoptionLive do
 
   defp reason_text(_reason), do: gettext("No safe match was found.")
 
+  defp adoption_failure_label(%{episode_code: code, path: path})
+       when is_binary(code) and is_binary(path),
+       do: "#{code} · #{Path.basename(path)}"
+
+  defp adoption_failure_label(%{path: path}) when is_binary(path), do: Path.basename(path)
+  defp adoption_failure_label(_failure), do: gettext("Unknown file")
+
+  defp adoption_failure_text(%{reason: :primary_file_missing}),
+    do: gettext("The episode has no primary file to attach this part to.")
+
+  defp adoption_failure_text(%{reason: :already_has_file}),
+    do: gettext("The episode already points to another file.")
+
+  defp adoption_failure_text(%{reason: :episode_not_found}),
+    do: gettext("The episode changed while adoption was running.")
+
+  defp adoption_failure_text(_failure), do: gettext("The catalog rejected this file.")
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -265,6 +284,24 @@ defmodule CinderWeb.LibraryAdoptionLive do
             "Scanning only reads your library. Nothing is changed until you adopt a confirmed match."
           )}
         </p>
+      </div>
+
+      <div
+        :if={@adoption_failures != []}
+        id="adoption-failures"
+        class="alert alert-error mb-6 items-start"
+        role="alert"
+      >
+        <.icon name="hero-exclamation-triangle" class="mt-0.5 size-5 shrink-0" />
+        <div>
+          <p class="font-semibold">{gettext("Some files could not be adopted")}</p>
+          <ul class="mt-1 list-disc space-y-1 pl-5 text-sm">
+            <li :for={failure <- @adoption_failures}>
+              <span class="font-mono">{adoption_failure_label(failure)}</span>
+              <span> — {adoption_failure_text(failure)}</span>
+            </li>
+          </ul>
+        </div>
       </div>
 
       <.empty_state

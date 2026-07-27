@@ -583,9 +583,9 @@ defmodule Cinder.Catalog do
 
   def publish_guarded_movie_transition({:error, reason}), do: {:error, reason}
 
-  # `[:cinder, :transition]` fires once per successful write at each of Catalog's two
-  # pipeline-state choke-points (`transition/2,3` above, `transition_episode/2` below) — never at
-  # a call site, so instrumentation can't drift from "every writer goes through Catalog".
+  # `[:cinder, :transition]` fires once per successful write at Catalog's pipeline-state
+  # choke-points (`transition/2,3`, `transition_episode/2`, and atomic episode adoption) — never
+  # at a call site, so instrumentation can't drift from "every writer goes through Catalog".
   defp emit_transition(kind, to_status) when kind in [:movie, :episode] do
     :telemetry.execute([:cinder, :transition], %{count: 1}, %{kind: kind, to: to_status})
   end
@@ -1106,6 +1106,24 @@ defmodule Cinder.Catalog do
     end
   end
 
+  @doc """
+  Adoption entry for movies: returns an existing row after transitioning it to `:available`, or
+  inserts a new row already at `:available` with `file_path` set.
+
+  A fresh row is never visible at `:requested`, so the movie poller cannot claim an on-disk file
+  for download between creation and adoption. No broadcast on the create path — the caller
+  announces `:created` after this insert commits, mirroring `find_or_create_at_requested/2`.
+  """
+  def find_or_create_at_available(attrs, file_path)
+      when is_binary(file_path) and file_path != "" do
+    case get_movie_by_tmdb_id(attrs.tmdb_id) do
+      %Movie{} = movie -> transition_existing_movie_to_available(movie, file_path)
+      nil -> do_insert_at_available(attrs, file_path)
+    end
+  end
+
+  def find_or_create_at_available(_attrs, _file_path), do: {:error, :invalid_file_path}
+
   @doc "Fetches requested-movie details and aliases before any Catalog write."
   def prepare_requested_movie(attrs) do
     tmdb_id = Map.fetch!(attrs, :tmdb_id)
@@ -1163,6 +1181,38 @@ defmodule Cinder.Catalog do
           %Movie{} = movie -> {:ok, movie, :existing}
           nil -> {:error, reason}
         end
+    end
+  end
+
+  defp do_insert_at_available(attrs, file_path) do
+    result =
+      %Movie{status: :available, file_path: file_path}
+      |> Movie.changeset(attrs)
+      |> Repo.insert()
+
+    case result do
+      {:ok, movie} ->
+        {:ok, movie, :created}
+
+      {:error, reason} ->
+        case get_movie_by_tmdb_id(attrs.tmdb_id) do
+          %Movie{} = movie -> transition_existing_movie_to_available(movie, file_path)
+          nil -> {:error, reason}
+        end
+    end
+  end
+
+  defp transition_existing_movie_to_available(
+         %Movie{file_path: existing_path},
+         _file_path
+       )
+       when existing_path not in [nil, ""],
+       do: {:error, :already_has_file}
+
+  defp transition_existing_movie_to_available(%Movie{} = movie, file_path) do
+    case transition(movie, %{status: :available, file_path: file_path}) do
+      {:ok, updated} -> {:ok, updated, :existing}
+      {:error, reason} -> {:error, reason}
     end
   end
 
@@ -1239,7 +1289,7 @@ defmodule Cinder.Catalog do
   @doc "Broadcasts `{:movie_deleted, id}` on the `\"movies\"` topic so open views drop the row."
   def broadcast_movie_deleted(id), do: broadcast({:movie_deleted, id})
 
-  @doc "Broadcasts `{:movie_created, movie}` on the `\"movies\"` topic — called by `Cinder.Requests` after its approval transaction commits (the Catalog insert itself never broadcasts, see `find_or_create_at_requested/2`)."
+  @doc "Broadcasts `{:movie_created, movie}` on the `\"movies\"` topic — called after a creation transaction commits (Catalog creation itself never broadcasts; see `find_or_create_at_requested/2` and `find_or_create_at_available/2`)."
   def broadcast_movie_created(%Movie{} = movie), do: broadcast({:movie_created, movie})
 
   ## TV series/season/episode CRUD, monitoring, refresh — carved out to
@@ -1292,6 +1342,8 @@ defmodule Cinder.Catalog do
       {:ok, updated}
     end
   end
+
+  defdelegate adopt_episode_files(actions), to: Cinder.Catalog.Adoption
 
   defdelegate delete_episode_file(episode, actor), to: SeriesCatalog
   defdelegate delete_episode_file(episode, actor, opts), to: SeriesCatalog
