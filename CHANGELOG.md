@@ -7,6 +7,37 @@ All notable changes to Cinder are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Radarr/Sonarr migration.** `/library/adopt` gains a migration-source mode: point Cinder at
+  a running Radarr/Sonarr (URL + API key in Settings, with test-connection probes and optional
+  path-prefix mapping) and adopt the whole library through a preview bucketed
+  ready / needs-decision / blocked / already-managed. Sonarr's per-episode TVDB identity is
+  persisted as provider coordinates (N-to-1 folds supported), and TVDB-split files require an
+  explicit Fold-or-Part choice — never a guessed adoption.
+- **Lossless season-pack import.** A standard pack with files that match no episode no longer
+  finalizes and deletes its source: matched episodes import immediately, residual files are
+  persisted (restart-safe) and fence source cleanup until the operator resolves each one on
+  `/activity` — Fold (bind the provider coordinate; extra source not retained), Keep as part
+  (staged to a part destination and tracked on the episode), or Hold.
+- **Richer detail pages.** Series pages show synopsis, genres, rating, first-air date, and an
+  "Open in Plex/Jellyfin" button; movie and series pages get a top-cast strip linking to the
+  person pages, and movies a "Part of collection" link.
+- **My Requests visibility.** Season requests show live "X of Y episodes" progress with a
+  Downloading state; Available rows open the media server; every row shows when it was
+  requested.
+- **Database-volume monitoring.** The disk card, telemetry, and `/healthz` now watch the volume
+  holding the SQLite database (503 below a hard floor) — a full app volume no longer wedges
+  silently; the WAL's on-disk size is capped via a pinned `journal_size_limit`.
+- **Key-rotation visibility.** Stored secrets that can no longer be decrypted (changed
+  `SECRET_KEY_BASE`, bad restore) surface as a loud `/settings` alert naming the affected
+  fields and a failing service-health row, instead of a log line and a silently dead pipeline.
+
+### Fixed
+- The 12h refresher no longer re-runs completed one-time localization backfills on every tick,
+  and a transient database error in one pass can no longer crash the whole refresh sweep.
+- OpenSubtitles quota exhaustion is remembered until the next UTC day — no more burned
+  authenticated calls after the daily limit.
+- `Cinder.Catalog` and `Cinder.Settings` were split below the 1,500-line cap
+  (`Catalog.MediaProfiles`, `Settings.Crypto` — pure code motion).
 - **TV "Find a better match" for imported episodes.** Manual search now works on fully or
   partially imported seasons; grabbing a release for episodes that already have files creates an
   upgrade grab and the import atomically swaps the old file(s) for the verified new one — a

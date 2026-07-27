@@ -16,6 +16,7 @@ defmodule Cinder.Settings do
 
   alias Cinder.Acquisition.AnimePreferences
   alias Cinder.Repo
+  alias Cinder.Settings.Crypto
   alias Cinder.Settings.Setting
   alias Cinder.Util
 
@@ -524,7 +525,7 @@ defmodule Cinder.Settings do
   """
   @spec undecryptable_secret_keys() :: [String.t()]
   def undecryptable_secret_keys do
-    for %Setting{is_secret: true} = row <- all(), not decryptable?(row), do: row.key
+    for %Setting{is_secret: true} = row <- all(), not Crypto.decryptable?(row), do: row.key
   end
 
   @doc """
@@ -1392,48 +1393,8 @@ defmodule Cinder.Settings do
     end
   end
 
-  defp decode_setting(setting), do: setting |> decoded() |> unwrap() |> Util.blank_to_nil()
-
-  defp unwrap({:ok, value}), do: value
-  defp unwrap(:error), do: nil
-
-  defp decoded(%Setting{is_secret: false, value: value}), do: {:ok, value}
-  defp decoded(%Setting{is_secret: true, value: nil}), do: {:ok, nil}
-
-  defp decoded(%Setting{is_secret: true, value: value, key: key}) do
-    case decrypt_secret(value) do
-      {:ok, plaintext} -> {:ok, plaintext}
-      :error -> warn_undecryptable(key)
-    end
-  end
-
-  # Decrypts a secret's stored base64 ciphertext. Returns :error (never raises, never logs, never
-  # returns the ciphertext) when the value was encrypted under a different SECRET_KEY_BASE. The
-  # is_binary guard matters: Cloak's AES-GCM decrypt returns {:ok, :error} (not an error tuple, not
-  # a raise) when the GCM tag fails to authenticate — without the guard :error would be poured into
-  # Application env as a credential.
-  defp decrypt_secret(value) do
-    with {:ok, ciphertext} <- Base.decode64(value),
-         {:ok, plaintext} when is_binary(plaintext) <- Cinder.Vault.decrypt(ciphertext) do
-      {:ok, plaintext}
-    else
-      _ -> :error
-    end
-  rescue
-    _ -> :error
-  end
-
-  # Whether a secret row decodes cleanly — a non-logging companion to decoded/1 so the /settings +
-  # service-health surfaces can count undecryptable secrets without re-logging on every render.
-  defp decryptable?(%Setting{is_secret: true, value: nil}), do: true
-
-  defp decryptable?(%Setting{is_secret: true, value: value}),
-    do: match?({:ok, _}, decrypt_secret(value))
-
-  defp warn_undecryptable(key) do
-    Logger.warning("Cinder.Settings: cannot decrypt #{key}; re-enter it in /settings")
-    :error
-  end
+  # Secret encode/decode lives in Cinder.Settings.Crypto (code motion, 1500-line cap).
+  defp decode_setting(setting), do: Crypto.decode_setting(setting)
 
   defp toggle_values(rows) do
     for t <- @toggles, into: %{} do
@@ -1451,7 +1412,7 @@ defmodule Cinder.Settings do
   defp secret?(key), do: MapSet.member?(@secret_keys, key)
 
   defp upsert(key, value) do
-    stored = if secret?(key), do: Base.encode64(Cinder.Vault.encrypt!(value)), else: value
+    stored = Crypto.store_value(secret?(key), value)
 
     (Repo.get_by(Setting, key: key) || %Setting{})
     |> Setting.changeset(%{key: key, value: stored, is_secret: secret?(key)})
