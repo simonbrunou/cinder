@@ -515,6 +515,9 @@ defmodule CinderWeb.LibraryAdoptionLive do
     if part.title in [nil, ""], do: code, else: "#{code} · #{part.title}"
   end
 
+  defp reason_text(:stale_candidate),
+    do: gettext("This item changed since the scan; run the preview again.")
+
   defp reason_text({:episode_not_found, _missing}),
     do: gettext("The parsed episode does not exist in TMDB.")
 
@@ -1095,6 +1098,7 @@ defmodule CinderWeb.LibraryAdoptionLive do
                   <label class="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-base-300 px-3 py-2">
                     <input
                       type="radio"
+                      name={"migration-choice-#{candidate.id}"}
                       value="fold"
                       checked={Map.get(@decisions, candidate.id) == "fold"}
                       phx-click="set_decision"
@@ -1114,6 +1118,7 @@ defmodule CinderWeb.LibraryAdoptionLive do
                   <label class="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-base-300 px-3 py-2">
                     <input
                       type="radio"
+                      name={"migration-choice-#{candidate.id}"}
                       value="part"
                       checked={Map.get(@decisions, candidate.id) == "part"}
                       phx-click="set_decision"

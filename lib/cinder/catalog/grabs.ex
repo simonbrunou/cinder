@@ -125,14 +125,18 @@ defmodule Cinder.Catalog.Grabs do
   defp manual_grab_standard_tv(%Series{id: series_id}, season_number, %Release{} = release) do
     candidates = SeriesCatalog.manual_search_episodes(series_id, season_number)
 
-    case standard_manual_episode_ids(release, candidates) do
+    case standard_manual_episode_ids(release, season_number, candidates) do
       {:ok, []} -> {:error, :nothing_wanted}
       {:ok, ids} -> grab_and_create_grab(release, ids)
       :error -> {:error, :conflicting_standard_numbering}
     end
   end
 
-  defp standard_manual_episode_ids(%Release{resolved_episode_ids: ids}, candidates)
+  defp standard_manual_episode_ids(
+         %Release{resolved_episode_ids: ids},
+         _season_number,
+         candidates
+       )
        when is_list(ids) and ids != [] do
     candidate_ids = MapSet.new(candidates, & &1.id)
 
@@ -141,7 +145,15 @@ defmodule Cinder.Catalog.Grabs do
       else: :error
   end
 
-  defp standard_manual_episode_ids(%Release{} = release, candidates) do
+  # An alternate-season release that reached here UNRESOLVED (no frozen episode ids — an unmapped
+  # value in a bridged season, an alt season past the cap, or a mapping outside the current
+  # candidates) must never fall through to the native intersection below: grabbing "S02E11" while
+  # browsing native season 1 would reserve native S01E11. Refuse instead (never-guess).
+  defp standard_manual_episode_ids(%Release{season: release_season}, season_number, _candidates)
+       when is_integer(release_season) and release_season != season_number,
+       do: :error
+
+  defp standard_manual_episode_ids(%Release{} = release, _season_number, candidates) do
     covered = cover_numbers(release, Enum.map(candidates, & &1.episode_number))
     {:ok, candidates |> Enum.filter(&(&1.episode_number in covered)) |> Enum.map(& &1.id)}
   end

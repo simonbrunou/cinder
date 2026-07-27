@@ -656,6 +656,26 @@ defmodule Cinder.CatalogSeriesTest do
                Catalog.manual_grab_tv(series, 1, release)
     end
 
+    # Review regression: an alt-season release that resolved to NO bridged mapping (unmapped
+    # value, capped season, mapping outside candidates) must refuse, not fall through to the
+    # native intersection — "S02E11" browsed from season 1 would reserve native S01E11.
+    test "refuses an UNRESOLVED alternate-season release instead of native intersection" do
+      series = series_with_wanted_episodes(season: 1, numbers: [1, 11])
+
+      release = %Release{
+        title: "Show.S02E11.1080p",
+        protocol: :torrent,
+        season: 2,
+        episodes: [11],
+        download_url: "unmapped-alt"
+      }
+
+      expect(Cinder.Download.ClientMock, :add, 0, fn _, _opts -> {:ok, "must-not-run"} end)
+
+      assert {:error, :conflicting_standard_numbering} =
+               Catalog.manual_grab_tv(series, 1, release)
+    end
+
     test "returns :nothing_wanted when the season has no manually searchable episodes" do
       series = series_with_unmonitored_missing_season(season: 1)
 
