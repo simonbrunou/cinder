@@ -24,6 +24,7 @@ defmodule Cinder.Catalog do
     Discovery,
     Episode,
     EpisodeCoordinate,
+    EpisodeTransition,
     Grabs,
     Identity,
     MediaProfile,
@@ -1340,17 +1341,41 @@ defmodule Cinder.Catalog do
   defdelegate set_series_monitor_strategy(series, strategy), to: SeriesCatalog
 
   @doc """
-  Single choke-point for episode **pipeline** writes (`file_path`, `grab_id`, attempt
-  counters — no status enum; episode state is derived). On success broadcasts
-  `{:series_updated, series_id}` on the `"series"` topic. `monitored` is NOT written here —
-  it is not pipeline state and keeps `set_episode_monitored/2`.
+  Single choke-point for episode **pipeline** writes (`file_path`, `grab_id`, attempt counters;
+  episode state is derived). On success broadcasts `{:series_updated, series_id}`. `monitored`
+  stays in `set_episode_monitored/2`. `expect:` is atomic; `publish: false` defers publication.
   """
-  def transition_episode(%Episode{} = episode, attrs) do
+  def transition_episode(episode, attrs, opts \\ [])
+
+  def transition_episode(%Episode{} = episode, attrs, []) do
     with {:ok, updated} <- episode |> Episode.transition_changeset(attrs) |> Repo.update() do
       broadcast_series(series_id_for_season(updated.season_id))
       emit_transition(:episode, SeriesCatalog.episode_state(updated))
       {:ok, updated}
     end
+  end
+
+  def transition_episode(%Episode{} = episode, attrs, opts) when is_list(opts) do
+    expected = opts |> Keyword.fetch!(:expect) |> Map.new()
+
+    with {:ok, updated} <- EpisodeTransition.guarded(episode, attrs, expected) do
+      if Keyword.get(opts, :publish, true) do
+        publish_episode_transition_batch([updated], series_id_for_season(updated.season_id))
+      end
+
+      {:ok, updated}
+    end
+  end
+
+  @doc false
+  def publish_episode_transition_batch(episodes, series_id) do
+    broadcast_series(series_id)
+
+    Enum.each(episodes, fn episode ->
+      emit_transition(:episode, SeriesCatalog.episode_state(episode))
+    end)
+
+    :ok
   end
 
   defdelegate adopt_episode_files(actions), to: Cinder.Catalog.Adoption
@@ -1363,7 +1388,7 @@ defmodule Cinder.Catalog do
   @doc false
   def now, do: DateTime.truncate(DateTime.utc_now(), :second)
 
-  ## Grab creation/mapping/finish/park/reap, the release blocklist, and per-episode
+  ## Grab creation/mapping/commit/close/finish/park/reap, the release blocklist, and per-episode
   ## search-attempt bookkeeping — carved out to `Cinder.Catalog.Grabs`.
 
   defdelegate create_grab(download_id, protocol, episode_ids), to: Grabs
@@ -1441,6 +1466,9 @@ defmodule Cinder.Catalog do
   defdelegate finish_grab(grab), to: Grabs
   defdelegate finish_grab(grab, imported), to: Grabs
   defdelegate finish_grab(grab, imported, stage_ids), to: Grabs
+  defdelegate commit_grab_imports(grab, imported, residuals), to: Grabs
+  defdelegate commit_grab_imports(grab, imported, residuals, stage_ids), to: Grabs
+  defdelegate close_grab(grab), to: Grabs
   defdelegate park_grab(grab), to: Grabs
   defdelegate reap_stalled_grab(grab), to: Grabs
 

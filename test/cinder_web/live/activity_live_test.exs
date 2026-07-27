@@ -6,7 +6,7 @@ defmodule CinderWeb.ActivityLiveTest do
   import Mox
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Grab}
+  alias Cinder.Catalog.{Episode, Grab, GrabFile}
   alias Cinder.Download.Intent
   alias Cinder.Repo
 
@@ -194,6 +194,37 @@ defmodule CinderWeb.ActivityLiveTest do
     assert has_element?(view, "#retry-mapping-grab-#{held.id}", "Retry import")
     assert has_element?(view, "#ask-cancel-mapping-grab-#{held.id}", "Discard")
     refute has_element?(view, "#grab-#{held.id} button", "Delete")
+  end
+
+  test "a standard residual grab shows the held badge and retained-video count without actions",
+       %{
+         conn: conn
+       } do
+    grab = grab!()
+    {:ok, grab} = Catalog.mark_grab_downloaded(grab, "/downloads/Severance")
+
+    for {path, inode} <- [{"part-2.mkv", 11}, {"part-3.mkv", 12}] do
+      Repo.insert!(%GrabFile{
+        grab_id: grab.id,
+        relative_path: path,
+        size: 10,
+        device: 1,
+        inode: inode
+      })
+    end
+
+    {:ok, view, _html} = live(conn, ~p"/activity")
+
+    assert has_element?(view, "#grab-#{grab.id}", "Needs mapping")
+
+    assert has_element?(
+             view,
+             "#grab-#{grab.id}-file-reason",
+             "2 unmatched videos were kept in the download source for review."
+           )
+
+    refute has_element?(view, "#grab-#{grab.id}", "Retry import")
+    refute has_element?(view, "#grab-#{grab.id}", "Discard")
   end
 
   test "Retry import releases a held grab back to resolved", %{conn: conn} do

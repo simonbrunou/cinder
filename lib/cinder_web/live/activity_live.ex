@@ -403,6 +403,13 @@ defmodule CinderWeb.ActivityLive do
             >
               {mapping_reason(g.mapping_issue)}
             </p>
+            <p
+              :if={unresolved_grab_file_count(g) > 0}
+              id={"grab-#{g.id}-file-reason"}
+              class="mt-2 text-sm text-base-content/70"
+            >
+              {grab_file_hold_reason(unresolved_grab_file_count(g))}
+            </p>
             <.confirm_action
               :if={@confirming == "mapping:#{g.id}"}
               id={"confirm-cancel-mapping-grab-#{g.id}"}

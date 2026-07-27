@@ -4,7 +4,7 @@ defmodule Cinder.CatalogTvPipelineTest do
   use Cinder.DataCase, async: false
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Grab, Season}
+  alias Cinder.Catalog.{Episode, Grab, GrabFile, Season}
   alias Ecto.Adapters.SQL, as: EctoSQL
 
   import Cinder.CatalogFixtures
@@ -83,6 +83,19 @@ defmodule Cinder.CatalogTvPipelineTest do
       assert {:ok, _ep} = result
       assert [{%{count: 1}, %{kind: :episode, to: :available}}] = events
     end
+
+    test "expect: rejects a stale derived-state write" do
+      {_series, season} = series_with_season()
+      ep = episode(season, %{})
+      {:ok, _grab} = Catalog.create_grab("guarded", :torrent, [ep.id])
+
+      assert {:error, :stale_episode} =
+               Catalog.transition_episode(ep, %{file_path: "/library/x.mkv"},
+                 expect: %{grab_id: nil}
+               )
+
+      assert Repo.get!(Episode, ep.id).file_path == nil
+    end
   end
 
   describe "episodes CHECK constraints (DB level)" do
@@ -127,6 +140,34 @@ defmodule Cinder.CatalogTvPipelineTest do
 
       assert Repo.get(Episode, e1.id).grab_id == grab.id
       assert Repo.get(Episode, e2.id).grab_id == grab.id
+    end
+
+    test "close_grab waits for every residual decision, then releases genuinely missing episodes" do
+      {_series, season} = series_with_season()
+      episode = episode(season, %{})
+      {:ok, grab} = Catalog.create_grab("residual", :usenet, [episode.id])
+      {:ok, grab} = Catalog.mark_grab_downloaded(grab, "/downloads/pack")
+
+      residual =
+        Repo.insert!(%GrabFile{
+          grab_id: grab.id,
+          relative_path: "Show.S01E99.mkv",
+          size: 10,
+          device: 1,
+          inode: 2
+        })
+
+      assert {:error, :unresolved_grab_files} = Catalog.close_grab(grab)
+      assert Repo.get!(Episode, episode.id).search_attempts == 0
+
+      residual |> Ecto.Changeset.change(decision: :fold) |> Repo.update!()
+
+      assert {:ok, :closed, _grab} = Catalog.close_grab(grab)
+      refute Repo.get(Grab, grab.id)
+
+      missing = Repo.get!(Episode, episode.id)
+      assert missing.grab_id == nil
+      assert missing.search_attempts == 1
     end
 
     test "create_grab/4 persists the release_title on the grab" do

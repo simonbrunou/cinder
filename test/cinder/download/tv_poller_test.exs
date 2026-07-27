@@ -10,7 +10,7 @@ defmodule Cinder.Download.TvPollerTest do
 
   alias Cinder.Acquisition.{Anime, AnimePreferences, Release}
   alias Cinder.Catalog
-  alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Identity, Season, Series}
+  alias Cinder.Catalog.{BlockedRelease, Episode, Grab, GrabFile, Identity, Season, Series}
   alias Cinder.Download
   alias Cinder.Download.Intent
   alias Cinder.Download.TvPoller
@@ -1204,6 +1204,65 @@ defmodule Cinder.Download.TvPollerTest do
   end
 
   @tag :tmp_dir
+  test "mixed Standard pack commits matches, holds residual identity, and survives a poller death",
+       %{tmp_dir: tmp} do
+    %{downloads: downloads, tv: tv} = use_real_tv_library(tmp)
+    release_dir = Path.join(downloads, "Show.S01")
+    File.mkdir_p!(release_dir)
+    matched_source = Path.join(release_dir, "Show.S01E01.1080p.mkv")
+    residual_source = Path.join(release_dir, "Show.S01E99.1080p.mkv")
+    File.write!(matched_source, "matched")
+    File.write!(residual_source, "split provider part")
+
+    {_series, season} = series_tree()
+    matched = episode(season, 1)
+    missing = episode(season, 2)
+    {:ok, grab} = Catalog.create_grab("mixed-pack", :usenet, [matched.id, missing.id])
+    {:ok, grab} = Catalog.mark_grab_downloaded(grab, release_dir)
+    parent = self()
+
+    stub(Cinder.Library.MediaServerMock, :scan, fn :tv ->
+      send(parent, :scan_started_after_catalog_commit)
+      Process.exit(self(), :kill)
+    end)
+
+    pid = start_supervised!({TvPoller, interval: 60_000})
+    catch_exit(TvPoller.poll(pid))
+    assert_receive :scan_started_after_catalog_commit
+    restarted = await_restart(TvPoller, pid)
+
+    imported = Repo.get!(Episode, matched.id)
+    assert imported.file_path
+    assert File.exists?(imported.file_path)
+
+    still_reserved = Repo.get!(Episode, missing.id)
+    assert still_reserved.grab_id == grab.id
+    assert still_reserved.search_attempts == 0
+
+    assert %GrabFile{
+             relative_path: "Show.S01E99.1080p.mkv",
+             source: "tvdb",
+             scheme: "aired",
+             namespace: "99",
+             canonical_value: "S01E99",
+             decision: nil
+           } = residual = Repo.get_by!(GrabFile, grab_id: grab.id)
+
+    stat = File.lstat!(residual_source)
+    assert residual.size == stat.size
+    assert residual.device == stat.major_device
+    assert residual.inode == stat.inode
+    assert File.dir?(release_dir)
+    assert {:error, :unresolved_grab_files} = Catalog.close_grab(grab)
+
+    imported_stat = File.lstat!(imported.file_path)
+    assert :ok = TvPoller.poll(restarted)
+    assert Repo.aggregate(from(f in GrabFile, where: f.grab_id == ^grab.id), :count) == 1
+    assert File.lstat!(imported.file_path).inode == imported_stat.inode
+    assert length(Path.wildcard(Path.join([tv, "**", "*.mkv"]))) == 1
+  end
+
+  @tag :tmp_dir
   test "an available episode upgrade atomically swaps bytes before deleting old primary/part files",
        %{tmp_dir: tmp} do
     %{downloads: downloads, tv: tv} = use_real_tv_library(tmp)
@@ -1330,7 +1389,7 @@ defmodule Cinder.Download.TvPollerTest do
     assert stale.grab_id == grab.id
   end
 
-  test "parks a downloaded grab whose content matches no episode; its episode re-searches" do
+  test "holds a downloaded video that matches no episode without bumping its episode" do
     {_series, season} = series_tree()
     e1 = episode(season, 1)
     {:ok, grab} = Catalog.create_grab("hash-u", :torrent, [e1.id])
@@ -1343,13 +1402,18 @@ defmodule Cinder.Download.TvPollerTest do
       {:ok, [{"/dl/pack/Show.S01E09.1080p.mkv", 3_000_000_000}]}
     end)
 
+    stub(Cinder.Library.FilesystemMock, :lstat, fn _path ->
+      {:ok, %File.Stat{size: 3_000_000_000, inode: 9, major_device: 1}}
+    end)
+
     assert :ok = TvPoller.poll()
 
-    assert Repo.get(Grab, grab.id) == nil
-    parked = Repo.get!(Episode, e1.id)
-    assert is_nil(parked.file_path)
-    assert is_nil(parked.grab_id)
-    assert parked.search_attempts >= 1
+    assert Repo.get(Grab, grab.id)
+    held = Repo.get!(Episode, e1.id)
+    assert is_nil(held.file_path)
+    assert held.grab_id == grab.id
+    assert held.search_attempts == 0
+    assert Repo.get_by!(GrabFile, grab_id: grab.id).canonical_value == "S01E09"
   end
 
   test "searches a wanted episode and grabs the matching release" do
@@ -1484,7 +1548,7 @@ defmodule Cinder.Download.TvPollerTest do
     end
   end
 
-  test "Standard alternate-season file without scene coordinates still parks and blocklists" do
+  test "Standard alternate-season file without scene coordinates is held with TVDB evidence" do
     {series, season} = series_tree()
     episode = episode(season, 29)
     title = "Show.S02E01.1080p.WEB-DL-GRP"
@@ -1498,22 +1562,28 @@ defmodule Cinder.Download.TvPollerTest do
       {:ok, [{"/dl/pack/Show.S02E01.1080p.mkv", 3_000_000_000}]}
     end)
 
+    stub(Cinder.Library.FilesystemMock, :lstat, fn _path ->
+      {:ok, %File.Stat{size: 3_000_000_000, inode: 21, major_device: 1}}
+    end)
+
     start_supervised!({TvPoller, interval: 60_000})
     assert :ok = TvPoller.poll()
 
-    refute Repo.get(Grab, grab.id)
-    parked = Repo.get!(Episode, episode.id)
-    assert parked.file_path == nil
-    assert parked.grab_id == nil
-    assert Catalog.blocked_release_titles_for_series(series.id) == [title]
+    assert Repo.get(Grab, grab.id)
+    held = Repo.get!(Episode, episode.id)
+    assert held.file_path == nil
+    assert held.grab_id == grab.id
+    assert Catalog.blocked_release_titles_for_series(series.id) == []
+    assert Repo.get_by!(GrabFile, grab_id: grab.id).canonical_value == "S02E01"
   end
 
   # Never-guess: a scene coordinate that shadows another episode's native code inside one grab
   # makes the file ambiguous — it must park, not be filed onto both episodes.
-  test "a file claimed via both native and alternate numbering parks instead of double-filing" do
+  test "a file claimed via both native and alternate numbering is held instead of double-filing" do
     series =
       series_fixture(%{
         title: "Shadow",
+        tvdb_id: 99,
         monitor_strategy: :all,
         media_profile: :standard,
         scene_numbering_group_id: "shadow-group"
@@ -1544,18 +1614,23 @@ defmodule Cinder.Download.TvPollerTest do
       {:ok, [{"/dl/pack/Shadow.S02E01.1080p.mkv", 3_000_000_000}]}
     end)
 
+    stub(Cinder.Library.FilesystemMock, :lstat, fn _path ->
+      {:ok, %File.Stat{size: 3_000_000_000, inode: 22, major_device: 1}}
+    end)
+
     start_supervised!({TvPoller, interval: 60_000})
     assert :ok = TvPoller.poll()
 
-    refute Repo.get(Grab, grab.id)
+    assert Repo.get(Grab, grab.id)
 
     for id <- [bridged.id, native.id] do
       ep = Repo.get!(Episode, id)
       assert ep.file_path == nil
-      assert ep.grab_id == nil
+      assert ep.grab_id == grab.id
     end
 
-    assert Catalog.blocked_release_titles_for_series(series.id) == [title]
+    assert Catalog.blocked_release_titles_for_series(series.id) == []
+    assert Repo.get_by!(GrabFile, grab_id: grab.id).canonical_value == "S02E01"
   end
 
   test "searches an explicitly monitored Standard S00 special and grabs the matching release (Sonarr parity)" do
@@ -2145,9 +2220,7 @@ defmodule Cinder.Download.TvPollerTest do
 
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
 
-    stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
-      {:ok, [{"/dl/pack/Show.S01E09.1080p.mkv", 3_000_000_000}]}
-    end)
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:ok, []} end)
 
     assert :ok = TvPoller.poll()
     assert_receive {:notify, {:grab_failed, %Grab{id: gid}, :no_files_matched}}
@@ -2163,9 +2236,7 @@ defmodule Cinder.Download.TvPollerTest do
 
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
 
-    stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
-      {:ok, [{"/dl/pack2/Show.S01E09.1080p.mkv", 3_000_000_000}]}
-    end)
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:ok, []} end)
 
     {result, events} =
       Cinder.TelemetryHelpers.capture([:cinder, :park], fn -> TvPoller.poll() end)

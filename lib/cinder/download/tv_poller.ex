@@ -4,9 +4,10 @@ defmodule Cinder.Download.TvPoller do
 
   1. **advance** — checks in-flight grabs (`list_grabs_downloading`); a completed download with a
      `content_path` is marked downloaded, an anomalous/errored one is bounded-retried and parked.
-  2. **import** — imports downloaded grabs (`list_grabs_downloaded`) via `Library.import_episodes`,
-     mapping each file to its episode; on success the grab is finalized, on a transient FS error
-     it is bounded-retried, on a deterministic empty import it is parked (its episodes re-search).
+  2. **import** — stages downloaded grabs (`list_grabs_downloaded`), commits clean standard-TV
+     matches immediately, and durably holds unmatched videos on the grab for operator review.
+     A clean grab closes normally; transient FS errors are bounded-retried, and content with no
+     usable video is parked so its episodes re-search.
   3. **search** — sweeps `wanted_episodes`, skipping search-parked and backed-off episodes, then
      searches Standard series by season and Anime series by stable episode IDs.
 
@@ -142,6 +143,8 @@ defmodule Cinder.Download.TvPoller do
         do: isolate("grab #{grab.id}", fn -> import_grab(grab) end)
   end
 
+  defp import_grab(%Grab{mapping_snapshot: nil, grab_files: [_ | _]}), do: :ok
+
   defp import_grab(%Grab{} = grab) do
     # Pre-import disk guard on the TV library root. Hold (no attempt bump, no park) on a full disk —
     # the download is done and waiting, so don't burn the retry budget on a fixable condition.
@@ -210,7 +213,7 @@ defmodule Cinder.Download.TvPoller do
 
   defp import_standard_grab(grab) do
     case Library.stage_episodes(grab.content_path, grab.episodes) do
-      {:ok, [], _unmatched} ->
+      {:ok, [], []} ->
         # Deterministic: nothing in content_path mapped to a grab episode. Re-importing can't
         # help, so park — the episodes re-search (bounded), rather than re-importing forever.
         Logger.warning(
@@ -219,8 +222,8 @@ defmodule Cinder.Download.TvPoller do
 
         park(grab, :no_files_matched)
 
-      {:ok, staged, _unmatched} ->
-        finalize_staged_grab(grab, staged)
+      {:ok, staged, unmatched} ->
+        finalize_standard_staging(grab, staged, unmatched)
 
       # A missing TV root is a config error, not a transient one: leave the grab downloaded
       # (no bump, no park) so the already-downloaded content imports as soon as tv_library_path
@@ -236,6 +239,53 @@ defmodule Cinder.Download.TvPoller do
       # unlike the movie poller there is no @permanent_*_errors set to classify here.
       {:error, reason} ->
         retry_or_park(grab, reason)
+    end
+  end
+
+  defp finalize_standard_staging(grab, staged, unmatched) do
+    case inventory_standard_residuals(grab, unmatched) do
+      {:ok, residuals} ->
+        finalize_standard_grab(grab, staged, residuals)
+
+      {:error, reason} ->
+        rollback_stages(staged)
+        retry_or_park(grab, {:grab_file_inventory, reason})
+    end
+  end
+
+  defp inventory_standard_residuals(grab, unmatched) do
+    Library.inventory_grab_files(grab.content_path, unmatched, grab.episodes)
+  rescue
+    error -> {:error, Exception.message(error)}
+  catch
+    kind, value -> {:error, {kind, value}}
+  end
+
+  defp finalize_standard_grab(grab, staged, residuals) do
+    imported =
+      Enum.map(staged, fn {episode_id, stage} -> {episode_id, stage.dest, stage.quality} end)
+
+    case Catalog.commit_grab_imports(
+           grab,
+           imported,
+           residuals,
+           Library.stage_ids(Enum.map(staged, &elem(&1, 1)))
+         ) do
+      {:ok, :closed, _grab} ->
+        commit_stages(staged)
+        remove_superseded_episode_files(grab.episodes)
+        Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path)
+
+      {:ok, :open, _grab} ->
+        commit_stages(staged)
+        remove_superseded_episode_files(grab.episodes)
+
+      {:error, :stale_grab} ->
+        rollback_stages(staged)
+
+      {:error, reason} ->
+        rollback_stages(staged)
+        retry_or_park(grab, {:commit_grab_imports, reason})
     end
   end
 

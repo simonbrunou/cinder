@@ -452,7 +452,7 @@ defmodule Cinder.Library do
     end
   end
 
-  @doc "Stages episode imports with rollback material for `Catalog.finish_grab/2`."
+  @doc "Stages standard-TV imports with rollback material for `Catalog.commit_grab_imports/3`."
   @spec stage_episodes(String.t() | nil, [Episode.t()]) ::
           {:ok, [{integer(), map()}], [String.t()]} | {:error, term()}
   def stage_episodes(content_path, _episodes) when content_path in [nil, ""],
@@ -482,6 +482,61 @@ defmodule Cinder.Library do
       end
     end
   end
+
+  @doc "Builds restart-safe rows for standard-TV video files that staging could not match."
+  @spec inventory_grab_files(String.t(), [String.t()], [Episode.t()]) ::
+          {:ok, [map()]} | {:error, term()}
+  def inventory_grab_files(content_path, paths, episodes) do
+    paths
+    |> Enum.reduce_while({:ok, []}, fn path, {:ok, files} ->
+      case inventory_grab_file(content_path, path, episodes) do
+        {:ok, file} -> {:cont, {:ok, [file | files]}}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, files} -> {:ok, Enum.reverse(files)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp inventory_grab_file(content_path, path, episodes) do
+    with {:ok, source} <- safe_source_file(path),
+         {:ok, stat} <- fs().lstat(source),
+         folder? = Path.expand(source) != Path.expand(content_path),
+         {:ok, relative_path} <- inventory_relative_path(source, content_path, folder?) do
+      {:ok,
+       %{
+         relative_path: relative_path,
+         size: stat.size,
+         device: stat.major_device,
+         inode: stat.inode
+       }
+       |> Map.merge(standard_provider_evidence(source, episodes))}
+    end
+  end
+
+  defp standard_provider_evidence(
+         path,
+         [%Episode{season: %{series: %Series{tvdb_id: tvdb_id}}} | _]
+       )
+       when is_integer(tvdb_id) do
+    case Parser.parse(Path.basename(path)) do
+      %{season: season, episodes: [episode]}
+      when is_integer(season) and is_integer(episode) ->
+        %{
+          source: "tvdb",
+          scheme: "aired",
+          namespace: Integer.to_string(tvdb_id),
+          canonical_value: Episode.code(season, episode)
+        }
+
+      _unidentified ->
+        %{}
+    end
+  end
+
+  defp standard_provider_evidence(_path, _episodes), do: %{}
 
   @doc "Inventories anime videos without exposing their absolute source paths."
   def inventory_anime_videos(content_path) do

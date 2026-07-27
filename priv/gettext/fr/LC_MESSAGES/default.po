@@ -379,7 +379,7 @@ msgid "Dashboard"
 msgstr "Tableau de bord"
 
 #: lib/cinder_web/live/activity_live.ex:396
-#: lib/cinder_web/live/activity_live.ex:428
+#: lib/cinder_web/live/activity_live.ex:435
 #: lib/cinder_web/live/library_live.ex:434
 #: lib/cinder_web/live/library_live.ex:456
 #: lib/cinder_web/live/library_live.ex:528
@@ -1571,7 +1571,7 @@ msgstr "Supprimer %{email} ? Ses demandes sont également supprimées."
 msgid "Delete the downloaded file for this episode? If it stays monitored it will be downloaded again. Stop monitoring it to keep it gone."
 msgstr "Supprimer le fichier téléchargé de cet épisode ? S'il reste suivi, il sera de nouveau téléchargé. Arrêtez le suivi pour qu'il le reste."
 
-#: lib/cinder_web/live/activity_live.ex:434
+#: lib/cinder_web/live/activity_live.ex:441
 #, elixir-autogen, elixir-format
 msgid "Delete this download? Its episodes are unlinked."
 msgstr "Supprimer ce téléchargement ? Ses épisodes sont dissociés."
@@ -2667,12 +2667,12 @@ msgid "Editing alias %{title}"
 msgstr "Modification de l’alias %{title}"
 
 #: lib/cinder_web/live/activity_live.ex:395
-#: lib/cinder_web/live/activity_live.ex:427
+#: lib/cinder_web/live/activity_live.ex:434
 #, elixir-autogen, elixir-format
 msgid "Cancel download"
 msgstr "Annuler le téléchargement"
 
-#: lib/cinder_web/live/activity_live.ex:433
+#: lib/cinder_web/live/activity_live.ex:440
 #, elixir-autogen, elixir-format
 msgid "Cancel this download? Its episodes will return to the wanted queue."
 msgstr "Annuler ce téléchargement ? Ses épisodes retourneront dans la file d’attente."
@@ -2811,12 +2811,12 @@ msgid "Couldn't match to an episode: %{paths}"
 msgstr "Impossible de faire correspondre à un épisode : %{paths}"
 
 #: lib/cinder_web/live/activity_live.ex:368
-#: lib/cinder_web/live/activity_live.ex:412
+#: lib/cinder_web/live/activity_live.ex:419
 #, elixir-autogen, elixir-format
 msgid "Discard"
 msgstr "Abandonner"
 
-#: lib/cinder_web/live/activity_live.ex:416
+#: lib/cinder_web/live/activity_live.ex:423
 #, elixir-autogen, elixir-format
 msgid "Discard this download? Its episodes will return to the wanted queue."
 msgstr "Abandonner ce téléchargement ? Ses épisodes retourneront dans la file d’attente."
@@ -3185,17 +3185,17 @@ msgstr "%{n} min"
 msgid "A download needs attention."
 msgstr "Un téléchargement requiert votre attention."
 
-#: lib/cinder_web/live/activity_live.ex:442
+#: lib/cinder_web/live/activity_live.ex:449
 #, elixir-autogen, elixir-format
 msgid "Background sweeps"
 msgstr "Tâches de fond"
 
-#: lib/cinder_web/live/activity_live.ex:458
+#: lib/cinder_web/live/activity_live.ex:465
 #, elixir-autogen, elixir-format
 msgid "Last run: %{when}"
 msgstr "Dernière exécution : %{when}"
 
-#: lib/cinder_web/live/activity_live.ex:461
+#: lib/cinder_web/live/activity_live.ex:468
 #, elixir-autogen, elixir-format
 msgid "Next: %{when}"
 msgstr "Prochaine : %{when}"
@@ -3205,7 +3205,7 @@ msgstr "Prochaine : %{when}"
 msgid "No release matched your size/quality rules yet. Open it to retry or adjust."
 msgstr "Aucune version ne correspond encore à vos règles de taille/qualité. Ouvrez sa page pour réessayer ou ajuster."
 
-#: lib/cinder_web/live/activity_live.ex:444
+#: lib/cinder_web/live/activity_live.ex:451
 #, elixir-autogen, elixir-format
 msgid "Periodic maintenance that runs on its own: refreshing series metadata and backfilling subtitles."
 msgstr "Maintenance périodique qui s'exécute d'elle-même : rafraîchissement des métadonnées de séries et récupération des sous-titres."
@@ -4423,3 +4423,14 @@ msgid "Stopped at your request limit; %{count} season not submitted."
 msgid_plural "Stopped at your request limit; %{count} seasons not submitted."
 msgstr[0] "Limite de demandes atteinte ; %{count} saison non soumise."
 msgstr[1] "Limite de demandes atteinte ; %{count} saisons non soumises."
+
+#: lib/cinder_web/live_helpers.ex:260
+#, elixir-autogen, elixir-format
+msgid "%{count} unmatched video was kept in the download source for review."
+msgid_plural "%{count} unmatched videos were kept in the download source for review."
+msgstr[0] ""
+"%{count} vidéo non appariée a été conservée dans le dossier source du "
+"téléchargement pour examen."
+msgstr[1] ""
+"%{count} vidéos non appariées ont été conservées dans le dossier source du "
+"téléchargement pour examen."

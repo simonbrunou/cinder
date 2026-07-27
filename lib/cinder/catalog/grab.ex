@@ -2,14 +2,14 @@ defmodule Cinder.Catalog.Grab do
   @moduledoc """
   An in-flight download serving one or more `Cinder.Catalog.Episode`s (a single episode or
   a season pack). `content_path` nil ⇒ still downloading; set ⇒ downloaded and ready to
-  import. Grabs are deleted once their episodes import or the operator cancels them; mapping and
-  verification holds stay durable until their guarded recovery action runs.
+  import. Clean grabs are deleted after import; standard-TV grabs with residual videos and Anime
+  mapping/verification holds stay durable until their guarded recovery action runs.
   """
   use Ecto.Schema
 
   import Ecto.Changeset
 
-  alias Cinder.Catalog.Episode
+  alias Cinder.Catalog.{Episode, GrabFile}
 
   schema "grabs" do
     field :download_id, :string
@@ -30,6 +30,7 @@ defmodule Cinder.Catalog.Grab do
 
     field :mapping_issue, :map
     has_many :episodes, Episode
+    has_many :grab_files, GrabFile
 
     timestamps(type: :utc_datetime)
   end

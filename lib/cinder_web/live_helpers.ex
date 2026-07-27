@@ -86,7 +86,7 @@ defmodule CinderWeb.LiveHelpers do
   def grab_state(%{mapping_status: :needs_mapping}), do: :needs_mapping
   def grab_state(%{mapping_status: :verification_blocked}), do: :verification_blocked
   def grab_state(%{content_path: nil}), do: :downloading
-  def grab_state(_), do: :downloaded
+  def grab_state(grab), do: if(residual?(grab), do: :needs_mapping, else: :downloaded)
 
   @doc """
   Whether a failed `Requests.create_request/2` changeset is the benign duplicate-pending
@@ -244,6 +244,23 @@ defmodule CinderWeb.LiveHelpers do
         gettext("Dec")
       ],
       n - 1
+    )
+  end
+
+  @doc "Number of standard-TV residual videos still awaiting an operator decision."
+  def unresolved_grab_file_count(%{grab_files: files}) when is_list(files),
+    do: Enum.count(files, &is_nil(&1.decision))
+
+  def unresolved_grab_file_count(_grab), do: 0
+
+  defp residual?(grab), do: unresolved_grab_file_count(grab) > 0
+
+  @doc "Plain-English standard-TV residual hold reason."
+  def grab_file_hold_reason(count) do
+    ngettext(
+      "%{count} unmatched video was kept in the download source for review.",
+      "%{count} unmatched videos were kept in the download source for review.",
+      count
     )
   end
 end
