@@ -205,30 +205,40 @@ defmodule Cinder.Download.Poller do
   defp fail_download(movie, reason) do
     attempts = (movie.import_attempts || 0) + 1
 
-    cond do
-      attempts < @download_error_attempts ->
-        retry_download(movie, reason, attempts)
-
-      # The blocklist row is the ONLY thing bounding the re-queue loop: each dead release shrinks
-      # the candidate pool until Download.start parks :no_match. `block_release/2` is a no-op with
-      # no release_title, so re-queueing without one would re-grab the same dead download every
-      # cycle forever. Download.attach_movie always stamps a release_title, so this should be
-      # unreachable — but the cost of being wrong is a hot loop, and the fallback is just the
-      # terminal park this path had before.
-      movie.release_title in [nil, ""] ->
-        Logger.warning(
-          "movie #{movie.id} download failed (#{inspect(reason)}) with no release to blocklist; parking"
-        )
-
-        park(movie, :import_failed, reason)
-
-      true ->
-        requeue_failed(movie, reason)
-    end
+    if attempts < @download_error_attempts,
+      do: retry_download(movie, reason, attempts),
+      else: requeue_failed(movie, reason)
   end
 
   defp requeue_failed(movie, reason) do
-    case Catalog.requeue_failed_movie(movie, reason_code(reason)) do
+    code = reason_code(reason)
+
+    # The blocklist row is what bounds this loop — each dead release shrinks the candidate pool
+    # until Download.start parks :no_match — and the writer is best-effort by design: it swallows
+    # insert failures because it runs in the poller's isolated park path, where raising would
+    # re-fire every tick. So write the row BEFORE the reset and only re-queue once it is confirmed
+    # present; otherwise this movie would re-grab the same dead release every cycle forever. The
+    # check has to happen here rather than after, because the transition matrix has no edge out of
+    # `:requested` — once re-queued the movie can no longer be parked.
+    #
+    # This also covers a movie with no release_title at all (nothing to block ⇒ nothing to bound
+    # the loop ⇒ :error). Download.attach_movie always stamps one, so that is belt-and-braces.
+    case Catalog.block_release_and_confirm(movie, code) do
+      :ok ->
+        requeue_blocked(movie, reason, code)
+
+      :error ->
+        Logger.warning(
+          "movie #{movie.id} download failed (#{inspect(reason)}); " <>
+            "release could not be blocklisted, so re-queueing would loop; parking"
+        )
+
+        park(movie, :import_failed, reason)
+    end
+  end
+
+  defp requeue_blocked(movie, reason, code) do
+    case Catalog.requeue_failed_movie(movie, code) do
       {:ok, _requeued} ->
         Logger.warning(
           "movie #{movie.id} download failed (#{inspect(reason)}); blocklisted, re-searching"
@@ -271,6 +281,10 @@ defmodule Cinder.Download.Poller do
          ) do
       case Catalog.requeue_failed_movie(movie, :stalled) do
         {:ok, _reaped} ->
+          # Best-effort and post-commit, off the pre-clear struct (the re-queued row has
+          # release_title nil): a stall is a timeout, not a proven-bad release, and retry_movie/1
+          # clears :stalled rows — so unlike the dead-download path this one doesn't gate on it.
+          Catalog.block_release(movie, :stalled)
           Logger.warning("movie #{movie.id} reaped: stalled download removed; re-searching")
 
         # Left :downloading mid-tick (user cancel/complete) — skip, re-derive next tick.

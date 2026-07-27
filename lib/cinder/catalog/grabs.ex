@@ -516,6 +516,24 @@ defmodule Cinder.Catalog.Grabs do
       end)
 
   @doc """
+  `block_release/2`, then confirms the row is readable back under the movie's exact
+  `release_title`: `:ok` if it landed, `:error` if it did not.
+
+  For the one caller that cannot proceed without the row —
+  `Cinder.Download.Poller.requeue_failed/2`, where the blocklist is the only bound on a re-queue
+  loop, so a missing row means re-grabbing the same dead release every cycle forever. Everyone
+  else calls `block_release/2` and ignores the outcome, which is the right default: it is
+  deliberately non-raising (see above), and for a park the blocklist is a nicety, not a bound.
+
+  A nil `release_title` is `:error` — nothing to block means nothing to bound the loop.
+  """
+  def block_release_and_confirm(%Movie{release_title: title} = movie, reason) do
+    block_release(movie, reason)
+
+    if not is_nil(title) and title in blocked_release_titles(movie), do: :ok, else: :error
+  end
+
+  @doc """
   Deletes the `:stalled`-reason blocklist rows for a movie or series so a manual re-search can give
   the reaped release a fresh chance. Scoped to `[movie: id]` or `[series: id]`; only `"stalled"`
   rows are removed, so deterministic blocks (wrong-language, bad-torrent, …) still persist. A nil id

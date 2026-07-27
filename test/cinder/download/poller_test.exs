@@ -2271,6 +2271,21 @@ defmodule Cinder.Download.PollerTest do
              Repo.get!(Movie, movie.id)
   end
 
+  test "a dead download re-queues only after its release is confirmed blocklisted" do
+    # The blocklist row is the loop's only bound and block_release/2 swallows insert failures, so
+    # the re-queue is gated on the row actually being there. Belt-and-braces on the happy path:
+    # the row exists AND the movie moved, in that order.
+    movie = downloading_movie(22, "hash-22", release_title: "Dead.Release.1080p-GRP")
+
+    start_supervised!({Poller, interval: 60_000})
+    stub(Cinder.Download.ClientMock, :status, fn "hash-22" -> {:ok, %{state: :error}} end)
+
+    Enum.each(1..3, fn _ -> Poller.poll() end)
+
+    assert Catalog.blocked_release_titles(movie) == ["Dead.Release.1080p-GRP"]
+    assert %Movie{status: :requested} = Repo.get!(Movie, movie.id)
+  end
+
   test "a dead download with no release to blocklist parks instead of re-queueing" do
     # The blocklist is the only bound on the re-queue loop, so a movie with nothing to block must
     # fall back to the terminal park — re-queueing it would re-grab the same dead download forever.

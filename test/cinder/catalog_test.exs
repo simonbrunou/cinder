@@ -536,6 +536,35 @@ defmodule Cinder.CatalogTest do
       assert Catalog.blocked_release_titles(movie) == ["Bad.Release.1080p"]
     end
 
+    # block_release_and_confirm/2 is what bounds Poller.requeue_failed/2's re-queue loop: the
+    # poller re-queues a dead download only on :ok, and parks on :error, because without the row
+    # it would re-grab the same dead release every cycle forever.
+    test "block_release_and_confirm/2 returns :ok once the row is readable back" do
+      movie = Repo.insert!(%Movie{tmdb_id: 9010, title: "M", release_title: "Rel.1080p-GRP"})
+
+      assert :ok = Catalog.block_release_and_confirm(movie, :download_error)
+      assert Catalog.blocked_release_titles(movie) == ["Rel.1080p-GRP"]
+    end
+
+    test "block_release_and_confirm/2 returns :error when the write is silently swallowed" do
+      # Same forced-FK-violation idiom as the non-raising test below: the insert raises, the
+      # writer catches and returns :ok, and nothing lands — exactly the case the poller must not
+      # re-queue on.
+      ghost = %Movie{id: 999_999, release_title: "Ghost.Release"}
+
+      assert capture_log(fn ->
+               assert :error = Catalog.block_release_and_confirm(ghost, :download_error)
+             end) =~ "block_release raised:"
+
+      assert Repo.all(BlockedRelease) == []
+    end
+
+    test "block_release_and_confirm/2 returns :error when there is no release to block" do
+      movie = Repo.insert!(%Movie{tmdb_id: 9011, title: "M", release_title: nil})
+
+      assert :error = Catalog.block_release_and_confirm(movie, :download_error)
+    end
+
     test "block_release/2 is a no-op on a nil release_title" do
       movie = Repo.insert!(%Movie{tmdb_id: 9002, title: "M", release_title: nil})
 
