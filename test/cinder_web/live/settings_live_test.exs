@@ -29,6 +29,7 @@ defmodule CinderWeb.SettingsLiveTest do
 
     assert html =~ "Settings"
     assert html =~ "TMDB"
+    assert html =~ "Migration sources"
     assert html =~ "Download clients"
     assert html =~ "Media server"
     assert html =~ "Library"
@@ -38,6 +39,8 @@ defmodule CinderWeb.SettingsLiveTest do
     assert has_element?(lv, "#qbittorrent_remote_path_prefix")
     assert has_element?(lv, "#qbittorrent_local_path_prefix")
     assert has_element?(lv, "#sabnzbd_remote_path_prefix")
+    assert has_element?(lv, "#radarr_url")
+    assert has_element?(lv, "#sonarr_url")
     assert has_element?(lv, "#sabnzbd_local_path_prefix")
     assert has_element?(lv, "p", "Path prefix as the download client reports it")
     assert has_element?(lv, "p", "The same directory as Cinder sees it")
@@ -162,6 +165,19 @@ defmodule CinderWeb.SettingsLiveTest do
     |> render_submit()
 
     assert has_element?(lv, ~s|#settings-form[data-form-revision="1"]|)
+  end
+
+  test "tests both saved migration-source connections", %{conn: conn} do
+    stub(Cinder.Library.RadarrMigrationSourceMock, :health, fn -> :ok end)
+    stub(Cinder.Library.SonarrMigrationSourceMock, :health, fn -> {:error, :down} end)
+
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    lv |> element("button", "Test Radarr") |> render_click()
+    lv |> element("button", "Test Sonarr") |> render_click()
+
+    assert has_element?(lv, "#settings-group-migration", "OK")
+    assert has_element?(lv, "#settings-group-migration", "Unreachable")
   end
 
   test "opens the group containing invalid fields", %{conn: conn} do

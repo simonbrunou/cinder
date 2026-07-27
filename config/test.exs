@@ -70,6 +70,10 @@ config :cinder,
   notifier: Cinder.TestNotifier,
   subtitles_provider: Cinder.Subtitles.ProviderMock,
   subtitles_translator: Cinder.Subtitles.TranslatorMock,
+  migration_sources: %{
+    radarr: Cinder.Library.RadarrMigrationSourceMock,
+    sonarr: Cinder.Library.SonarrMigrationSourceMock
+  },
   bootstrap_token: "test-bootstrap-token",
   secure_cookies: false,
   # Off by default: every ConnCase/LiveViewTest request shares one test-harness peer
@@ -96,6 +100,16 @@ config :cinder, Cinder.Acquisition.Indexer.Prowlarr,
   base_url: "http://prowlarr:9696",
   req_options: [plug: {Req.Test, Cinder.ProwlarrStub}, retry: false],
   api_key: "test-key"
+
+config :cinder, Cinder.Library.MigrationSource.Radarr,
+  base_url: "http://radarr:7878",
+  api_key: "test-key",
+  req_options: [plug: {Req.Test, Cinder.RadarrStub}, retry: false]
+
+config :cinder, Cinder.Library.MigrationSource.Sonarr,
+  base_url: "http://sonarr:8989",
+  api_key: "test-key",
+  req_options: [plug: {Req.Test, Cinder.SonarrStub}, retry: false]
 
 config :cinder, Cinder.Download.Client.QBittorrent,
   base_url: "http://localhost:8080",

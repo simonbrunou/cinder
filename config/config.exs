@@ -50,6 +50,12 @@ config :cinder, indexer: Cinder.Acquisition.Indexer.Prowlarr
 config :cinder, plex_auth: Cinder.Accounts.PlexAuth.HTTP
 
 config :cinder,
+  migration_sources: %{
+    radarr: Cinder.Library.MigrationSource.Radarr,
+    sonarr: Cinder.Library.MigrationSource.Sonarr
+  }
+
+config :cinder,
   download_clients: %{
     torrent: Cinder.Download.Client.QBittorrent,
     usenet: Cinder.Download.Client.Sabnzbd

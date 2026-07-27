@@ -45,4 +45,5 @@ defmodule Cinder.Library.MigrationSource do
         }
 
   @callback snapshot() :: {:ok, snapshot()} | {:error, term()}
+  @callback health() :: :ok | {:error, term()}
 end

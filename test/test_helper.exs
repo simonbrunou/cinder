@@ -11,6 +11,8 @@ Mox.defmock(Cinder.Download.ClientMock, for: Cinder.Download.Client)
 Mox.defmock(Cinder.Download.SabnzbdClientMock, for: Cinder.Download.Client)
 Mox.defmock(Cinder.Library.MediaServerMock, for: Cinder.Library.MediaServer)
 Mox.defmock(Cinder.Library.MigrationSourceMock, for: Cinder.Library.MigrationSource)
+Mox.defmock(Cinder.Library.RadarrMigrationSourceMock, for: Cinder.Library.MigrationSource)
+Mox.defmock(Cinder.Library.SonarrMigrationSourceMock, for: Cinder.Library.MigrationSource)
 Mox.defmock(Cinder.Accounts.PlexAuthMock, for: Cinder.Accounts.PlexAuth)
 Mox.defmock(Cinder.Library.FilesystemMock, for: Cinder.Library.Filesystem)
 # Import-time audio probe. Disabled in config/test.exs (`media_info: nil`, so the existing import

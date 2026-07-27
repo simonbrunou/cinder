@@ -27,6 +27,9 @@ defmodule Cinder.Library.Adoption do
     |> Enum.map(fn {candidate, id} -> Map.put(candidate, :id, id) end)
   end
 
+  defdelegate preview_migration(source), to: Cinder.Library.MigrationAdoption, as: :preview
+  defdelegate adopt_migration(source, commands), to: Cinder.Library.MigrationAdoption, as: :adopt
+
   @doc """
   Adopts confirmed candidates and returns
   `%{adopted: count, skipped: count, failures: [failure]}`.

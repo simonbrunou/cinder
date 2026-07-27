@@ -15,8 +15,10 @@ defmodule CinderWeb.LibraryAdoptionLive do
      socket
      |> assign(
        candidates: [],
-       counts: %{auto_matched: 0, ambiguous: 0, unmatched: 0},
+       counts: %{auto_matched: 0, ambiguous: 0, unmatched: 0, already_managed: 0},
        form: to_form(%{}, as: :adoption),
+       mode: :filesystem,
+       migration_source: nil,
        scanned?: false,
        scanning?: false,
        adopting?: false,
@@ -25,16 +27,49 @@ defmodule CinderWeb.LibraryAdoptionLive do
      |> stream_configure(:auto_candidates, dom_id: &"adoption-candidate-#{&1.id}")
      |> stream_configure(:ambiguous_candidates, dom_id: &"adoption-candidate-#{&1.id}")
      |> stream_configure(:unmatched_candidates, dom_id: &"adoption-candidate-#{&1.id}")
+     |> stream_configure(:managed_candidates, dom_id: &"adoption-candidate-#{&1.id}")
+     |> stream_configure(
+       :migration_series_counts,
+       dom_id: &"migration-series-#{&1.provider_id}"
+     )
      |> stream(:auto_candidates, [])
      |> stream(:ambiguous_candidates, [])
-     |> stream(:unmatched_candidates, [])}
+     |> stream(:unmatched_candidates, [])
+     |> stream(:managed_candidates, [])
+     |> stream(:migration_series_counts, [])}
   end
 
   @impl true
   def handle_event("scan", _params, %{assigns: %{scanning?: false, adopting?: false}} = socket),
-    do: {:noreply, socket |> assign(adoption_failures: []) |> start_scan()}
+    do:
+      {:noreply,
+       socket
+       |> assign(adoption_failures: [], mode: :filesystem, migration_source: nil)
+       |> start_scan()}
 
-  def handle_event("adopt", %{"adoption" => params}, %{assigns: %{adopting?: false}} = socket)
+  def handle_event(
+        "scan_migration",
+        %{"source" => source},
+        %{assigns: %{scanning?: false, adopting?: false}} = socket
+      )
+      when source in ["radarr", "sonarr"] do
+    source = String.to_existing_atom(source)
+
+    {:noreply,
+     socket
+     |> assign(
+       adoption_failures: [],
+       mode: {:migration, source},
+       migration_source: source
+     )
+     |> start_scan()}
+  end
+
+  def handle_event(
+        "adopt",
+        %{"adoption" => params},
+        %{assigns: %{adopting?: false, mode: :filesystem}} = socket
+      )
       when is_map(params) do
     confirmed = confirmed_candidates(socket.assigns.candidates, params)
 
@@ -50,12 +85,51 @@ defmodule CinderWeb.LibraryAdoptionLive do
     end
   end
 
+  def handle_event(
+        "adopt",
+        %{"adoption" => params},
+        %{
+          assigns: %{
+            adopting?: false,
+            mode: {:migration, source},
+            candidates: candidates
+          }
+        } = socket
+      )
+      when is_map(params) do
+    commands = confirmed_migration_commands(candidates, params)
+
+    case commands do
+      [] ->
+        {:noreply, put_flash(socket, :error, gettext("Select at least one match to adopt."))}
+
+      commands ->
+        {:noreply,
+         socket
+         |> assign(adopting?: true, adoption_failures: [])
+         |> start_async(:adopt, fn -> Adoption.adopt_migration(source, commands) end)}
+    end
+  end
+
   # Client-controlled events and malformed params are ignored rather than crashing the page.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   @impl true
   def handle_async(:scan, {:ok, candidates}, socket) when is_list(candidates),
     do: {:noreply, put_candidates(socket, candidates)}
+
+  def handle_async(:scan, {:ok, {:ok, preview}}, socket) when is_map(preview),
+    do: {:noreply, put_migration_preview(socket, preview)}
+
+  def handle_async(:scan, {:ok, {:error, _reason}}, socket) do
+    {:noreply,
+     socket
+     |> assign(scanning?: false)
+     |> put_flash(
+       :error,
+       gettext("Migration source scan failed. Check its settings and try again.")
+     )}
+  end
 
   def handle_async(:scan, {:exit, _reason}, socket) do
     {:noreply,
@@ -90,10 +164,16 @@ defmodule CinderWeb.LibraryAdoptionLive do
   @impl true
   def handle_info(_message, socket), do: {:noreply, socket}
 
-  defp start_scan(socket) do
+  defp start_scan(%{assigns: %{mode: :filesystem}} = socket) do
     socket
     |> assign(scanning?: true)
     |> start_async(:scan, &Adoption.scan/0)
+  end
+
+  defp start_scan(%{assigns: %{mode: {:migration, source}}} = socket) do
+    socket
+    |> assign(scanning?: true)
+    |> start_async(:scan, fn -> Adoption.preview_migration(source) end)
   end
 
   defp put_candidates(socket, candidates) do
@@ -107,7 +187,8 @@ defmodule CinderWeb.LibraryAdoptionLive do
       counts: %{
         auto_matched: length(auto),
         ambiguous: length(ambiguous),
-        unmatched: length(unmatched)
+        unmatched: length(unmatched),
+        already_managed: 0
       },
       form: to_form(%{}, as: :adoption),
       scanned?: true,
@@ -116,6 +197,35 @@ defmodule CinderWeb.LibraryAdoptionLive do
     |> stream(:auto_candidates, auto, reset: true)
     |> stream(:ambiguous_candidates, ambiguous, reset: true)
     |> stream(:unmatched_candidates, unmatched, reset: true)
+    |> stream(:managed_candidates, [], reset: true)
+    |> stream(:migration_series_counts, [], reset: true)
+  end
+
+  defp put_migration_preview(socket, preview) do
+    ready = Enum.filter(preview.candidates, &(&1.status == :ready))
+    decision = Enum.filter(preview.candidates, &(&1.status == :needs_decision))
+    blocked = Enum.filter(preview.candidates, &(&1.status == :blocked))
+    managed = Enum.filter(preview.candidates, &(&1.status == :already_managed))
+
+    socket
+    |> assign(
+      candidates: preview.candidates,
+      counts: %{
+        auto_matched: preview.counts.ready,
+        ambiguous: preview.counts.needs_decision,
+        unmatched: preview.counts.blocked,
+        already_managed: preview.counts.already_managed
+      },
+      form: to_form(%{}, as: :adoption),
+      migration_source: preview.source,
+      scanned?: true,
+      scanning?: false
+    )
+    |> stream(:auto_candidates, ready, reset: true)
+    |> stream(:ambiguous_candidates, decision, reset: true)
+    |> stream(:unmatched_candidates, blocked, reset: true)
+    |> stream(:managed_candidates, managed, reset: true)
+    |> stream(:migration_series_counts, preview.series_counts, reset: true)
   end
 
   defp confirmed_candidates(candidates, params) do
@@ -124,6 +234,25 @@ defmodule CinderWeb.LibraryAdoptionLive do
     parts = Map.get(params, "parts", %{})
 
     Enum.flat_map(candidates, &confirm_candidate(&1, selected, chosen, parts))
+  end
+
+  defp confirmed_migration_commands(candidates, params) do
+    selected = params |> Map.get("selected", []) |> List.wrap() |> parse_ids()
+    choices = Map.get(params, "choices", %{})
+
+    Enum.flat_map(candidates, fn
+      %{status: :ready, id: id, key: key} ->
+        if MapSet.member?(selected, id), do: [%{key: key}], else: []
+
+      %{status: :needs_decision, id: id, key: key} when is_map(choices) ->
+        case Map.get(choices, to_string(id)) do
+          choice when choice in ["fold", "part"] -> [%{key: key, choice: choice}]
+          _choice -> []
+        end
+
+      _candidate ->
+        []
+    end)
   end
 
   defp confirm_candidate(
@@ -238,6 +367,31 @@ defmodule CinderWeb.LibraryAdoptionLive do
   defp reason_text({:tmdb_details_failed, _reason}),
     do: gettext("TMDB episode details could not be loaded.")
 
+  defp reason_text(:file_missing), do: gettext("The source did not provide a usable file path.")
+  defp reason_text(:unlinked_file), do: gettext("The source file is not linked to a title.")
+  defp reason_text(:path_conflict), do: gettext("This path is already managed by another title.")
+
+  defp reason_text(:identity_conflict),
+    do: gettext("This title already manages a different file.")
+
+  defp reason_text(:series_unresolved), do: gettext("The source series could not be resolved.")
+  defp reason_text(:no_match), do: gettext("The provider identity returned no TMDB match.")
+
+  defp reason_text(:multiple_matches),
+    do: gettext("The provider identity returned several TMDB matches.")
+
+  defp reason_text({:wrong_series, _expected, _actual}),
+    do: gettext("The episode identity belongs to a different series.")
+
+  defp reason_text(:authoritative_primary_unresolved),
+    do: gettext("Cinder could not prove which file is the authoritative primary.")
+
+  defp reason_text(:complex_n_to_one),
+    do: gettext("This file split is too complex to adopt safely.")
+
+  defp reason_text(:catalog_episode_missing),
+    do: gettext("The matching episode is missing from Cinder's catalog.")
+
   defp reason_text(_reason), do: gettext("No safe match was found.")
 
   defp adoption_failure_label(%{episode_code: code, path: path})
@@ -257,6 +411,24 @@ defmodule CinderWeb.LibraryAdoptionLive do
     do: gettext("The episode changed while adoption was running.")
 
   defp adoption_failure_text(_failure), do: gettext("The catalog rejected this file.")
+
+  defp source_label(:radarr), do: gettext("Radarr")
+  defp source_label(:sonarr), do: gettext("Sonarr")
+
+  defp migration_title(candidate) do
+    case Map.get(candidate, :year) do
+      year when is_integer(year) -> "#{candidate.title} (#{year})"
+      _year -> candidate.title
+    end
+  end
+
+  defp migration_path(candidate) do
+    Map.get(candidate, :path) ||
+      get_in(candidate, [:primary_file, :path])
+  end
+
+  defp file_name(path) when is_binary(path), do: Path.basename(path)
+  defp file_name(_path), do: gettext("No file")
 
   @impl true
   def render(assigns) do
@@ -288,10 +460,38 @@ defmodule CinderWeb.LibraryAdoptionLive do
         >
           {if @scanning?, do: gettext("Scanning…"), else: gettext("Scan")}
         </.button>
-        <.spinner :if={@scanning?} label={gettext("Scanning library roots…")} />
+        <.button
+          id="scan-radarr"
+          type="button"
+          variant="neutral"
+          phx-click="scan_migration"
+          phx-value-source="radarr"
+          disabled={@scanning? or @adopting?}
+        >
+          {gettext("Preview Radarr")}
+        </.button>
+        <.button
+          id="scan-sonarr"
+          type="button"
+          variant="neutral"
+          phx-click="scan_migration"
+          phx-value-source="sonarr"
+          disabled={@scanning? or @adopting?}
+        >
+          {gettext("Preview Sonarr")}
+        </.button>
+        <.spinner
+          :if={@scanning?}
+          label={
+            if(@migration_source,
+              do: gettext("Loading migration snapshot…"),
+              else: gettext("Scanning library roots…")
+            )
+          }
+        />
         <p class="text-sm text-base-content/70">
           {gettext(
-            "Scanning only reads your library. Nothing is changed until you adopt a confirmed match."
+            "Scanning and migration previews are read-only. Nothing changes until you confirm adoption."
           )}
         </p>
       </div>
@@ -329,8 +529,47 @@ defmodule CinderWeb.LibraryAdoptionLive do
         />
       </div>
 
+      <section
+        :if={@scanned? and match?({:migration, _source}, @mode)}
+        id="migration-summary"
+        class="mb-6 rounded-box border border-base-300 bg-base-100 p-4"
+        aria-labelledby="migration-summary-heading"
+      >
+        <h2 id="migration-summary-heading" class="text-lg font-semibold">
+          {gettext("%{source} migration preview", source: source_label(@migration_source))}
+        </h2>
+        <p class="mt-1 text-sm text-base-content/70">
+          {gettext(
+            "Ready: %{ready} · Needs decision: %{decision} · Blocked: %{blocked} · Already managed: %{managed}",
+            ready: @counts.auto_matched,
+            decision: @counts.ambiguous,
+            blocked: @counts.unmatched,
+            managed: @counts.already_managed
+          )}
+        </p>
+        <ul
+          :if={@migration_source == :sonarr}
+          id="migration-series-counts"
+          phx-update="stream"
+          class="mt-3 space-y-1 text-sm"
+        >
+          <li :for={{dom_id, summary} <- @streams.migration_series_counts} id={dom_id}>
+            <span class="font-medium">{summary.title}</span>
+            <span class="text-base-content/70">
+              {gettext(
+                "Ready: %{ready}; Needs decision: %{decision}; Blocked: %{blocked}; Already managed: %{managed}",
+                ready: summary.counts.ready,
+                decision: summary.counts.needs_decision,
+                blocked: summary.counts.blocked,
+                managed: summary.counts.already_managed
+              )}
+            </span>
+          </li>
+        </ul>
+      </section>
+
       <.form
-        :if={Enum.sum(Map.values(@counts)) > 0}
+        :if={@mode == :filesystem and Enum.sum(Map.values(@counts)) > 0}
         for={@form}
         id="adoption-form"
         phx-submit="adopt"
@@ -487,6 +726,171 @@ defmodule CinderWeb.LibraryAdoptionLive do
 
         <div :if={@counts.auto_matched + @counts.ambiguous > 0} class="flex items-center gap-3">
           <.button id="adopt-selected" type="submit" disabled={@adopting? or @scanning?}>
+            {if @adopting?, do: gettext("Adopting…"), else: gettext("Adopt selected")}
+          </.button>
+          <.spinner :if={@adopting?} label={gettext("Adopting selected files…")} />
+        </div>
+      </.form>
+
+      <.form
+        :if={match?({:migration, _source}, @mode) and Enum.sum(Map.values(@counts)) > 0}
+        for={@form}
+        id="migration-adoption-form"
+        phx-submit="adopt"
+        class="space-y-8"
+      >
+        <section :if={@counts.auto_matched > 0} aria-labelledby="migration-ready-heading">
+          <h2 id="migration-ready-heading" class="mb-3 text-xl font-semibold">
+            {gettext("Ready")} ({@counts.auto_matched})
+          </h2>
+          <p class="mb-3 text-sm text-base-content/70">
+            {gettext("Provider identities and file paths have one safe catalog target.")}
+          </p>
+          <div id="migration-ready-candidates" phx-update="stream" class="space-y-3">
+            <article
+              :for={{dom_id, candidate} <- @streams.auto_candidates}
+              id={dom_id}
+              class="card border border-base-300 bg-base-100"
+            >
+              <div class="card-body gap-2 p-4">
+                <label class="flex min-h-11 cursor-pointer items-start gap-3">
+                  <input
+                    type="checkbox"
+                    name="adoption[selected][]"
+                    value={candidate.id}
+                    checked
+                    class="checkbox checkbox-primary mt-0.5"
+                    aria-label={gettext("Adopt %{title}", title: migration_title(candidate))}
+                  />
+                  <span class="min-w-0">
+                    <span class="block font-semibold">{migration_title(candidate)}</span>
+                    <span class="block truncate font-mono text-sm text-base-content/70">
+                      {file_name(migration_path(candidate))}
+                    </span>
+                  </span>
+                </label>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section :if={@counts.ambiguous > 0} aria-labelledby="migration-decision-heading">
+          <h2 id="migration-decision-heading" class="mb-3 text-xl font-semibold">
+            {gettext("Needs decision")} ({@counts.ambiguous})
+          </h2>
+          <p class="mb-3 text-sm text-base-content/70">
+            {gettext(
+              "Sonarr split several TVDB episodes into files that map to one TMDB episode. Choose how to treat each extra file."
+            )}
+          </p>
+          <div id="migration-decision-candidates" phx-update="stream" class="space-y-3">
+            <article
+              :for={{dom_id, candidate} <- @streams.ambiguous_candidates}
+              id={dom_id}
+              class="card border border-warning/40 bg-base-100"
+            >
+              <div class="card-body gap-3 p-4">
+                <div>
+                  <p class="font-semibold">{migration_title(candidate)}</p>
+                  <p class="font-mono text-sm text-base-content/70">
+                    {gettext("Primary: %{file}", file: file_name(candidate.primary_file.path))}
+                  </p>
+                  <p
+                    :for={file <- candidate.extra_files}
+                    class="font-mono text-sm text-base-content/70"
+                  >
+                    {gettext("Extra: %{file}", file: file_name(file.path))}
+                  </p>
+                </div>
+                <fieldset class="space-y-2">
+                  <legend class="sr-only">
+                    {gettext("Migration choice for %{title}", title: migration_title(candidate))}
+                  </legend>
+                  <label class="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-base-300 px-3 py-2">
+                    <input
+                      type="radio"
+                      name={"adoption[choices][#{candidate.id}]"}
+                      value="fold"
+                      class="radio radio-primary mt-0.5"
+                    />
+                    <span>
+                      <span class="block font-medium">{gettext("Fold")}</span>
+                      <span class="text-sm text-base-content/70">
+                        {gettext(
+                          "Adopt the authoritative primary, save both provider coordinates, and leave the extra file unmanaged."
+                        )}
+                      </span>
+                    </span>
+                  </label>
+                  <label class="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg border border-base-300 px-3 py-2">
+                    <input
+                      type="radio"
+                      name={"adoption[choices][#{candidate.id}]"}
+                      value="part"
+                      class="radio radio-primary mt-0.5"
+                    />
+                    <span>
+                      <span class="block font-medium">{gettext("Part")}</span>
+                      <span class="text-sm text-base-content/70">
+                        {gettext("Adopt the extra file as an explicit part of the primary episode.")}
+                      </span>
+                    </span>
+                  </label>
+                </fieldset>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section :if={@counts.unmatched > 0} aria-labelledby="migration-blocked-heading">
+          <h2 id="migration-blocked-heading" class="mb-3 text-xl font-semibold">
+            {gettext("Blocked")} ({@counts.unmatched})
+          </h2>
+          <p class="mb-3 text-sm text-base-content/70">
+            {gettext("These source records cannot be adopted safely and will not be changed.")}
+          </p>
+          <div id="migration-blocked-candidates" phx-update="stream" class="space-y-3">
+            <article
+              :for={{dom_id, candidate} <- @streams.unmatched_candidates}
+              id={dom_id}
+              class="card border border-error/30 bg-base-100"
+            >
+              <div class="card-body gap-2 p-4">
+                <p class="font-semibold">{migration_title(candidate)}</p>
+                <p class="font-mono text-sm text-base-content/70">
+                  {file_name(migration_path(candidate))}
+                </p>
+                <p class="text-sm text-error">{reason_text(candidate.reason)}</p>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section
+          :if={@counts.already_managed > 0}
+          aria-labelledby="migration-managed-heading"
+        >
+          <h2 id="migration-managed-heading" class="mb-3 text-xl font-semibold">
+            {gettext("Already managed")} ({@counts.already_managed})
+          </h2>
+          <div id="migration-managed-candidates" phx-update="stream" class="space-y-3">
+            <article
+              :for={{dom_id, candidate} <- @streams.managed_candidates}
+              id={dom_id}
+              class="card border border-success/30 bg-base-100"
+            >
+              <div class="card-body gap-1 p-4">
+                <p class="font-semibold">{migration_title(candidate)}</p>
+                <p class="font-mono text-sm text-base-content/70">
+                  {file_name(migration_path(candidate))}
+                </p>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <div :if={@counts.auto_matched + @counts.ambiguous > 0} class="flex items-center gap-3">
+          <.button id="adopt-migration-selected" type="submit" disabled={@adopting? or @scanning?}>
             {if @adopting?, do: gettext("Adopting…"), else: gettext("Adopt selected")}
           </.button>
           <.spinner :if={@adopting?} label={gettext("Adopting selected files…")} />

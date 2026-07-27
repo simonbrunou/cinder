@@ -19,6 +19,48 @@ defmodule Cinder.Settings do
   alias Cinder.Settings.Setting
   alias Cinder.Util
 
+  @migration_sources [
+    %{
+      key: "radarr",
+      name: "Radarr",
+      module: Cinder.Library.MigrationSource.Radarr,
+      port: 7878,
+      remote: "/movies",
+      local: "/media/movies"
+    },
+    %{
+      key: "sonarr",
+      name: "Sonarr",
+      module: Cinder.Library.MigrationSource.Sonarr,
+      port: 8989,
+      remote: "/tv",
+      local: "/media/tv"
+    }
+  ]
+
+  @migration_config_fields (for source <- @migration_sources,
+                                {suffix, field, label, secret, placeholder, help} <- [
+                                  {"url", :base_url, "URL", false,
+                                   "http://localhost:#{source.port}", nil},
+                                  {"api_key", :api_key, "API key", true, "", nil},
+                                  {"remote_path_prefix", :remote_path_prefix,
+                                   "remote path prefix", false, source.remote, :remote},
+                                  {"local_path_prefix", :local_path_prefix, "local path prefix",
+                                   false, source.local, :local}
+                                ] do
+                              config = %{
+                                key: "#{source.key}_#{suffix}",
+                                module: source.module,
+                                field: field,
+                                secret: secret,
+                                group: :migration,
+                                label: "#{source.name} #{label}",
+                                placeholder: placeholder
+                              }
+
+                              if help, do: Map.put(config, :help, help), else: config
+                            end)
+
   # Static per-module config fields (service creds): {settings key, env target module + field,
   # secret?, group}. The complete set is `config_fields/0` = these ++ the per-kind Plex section
   # fields generated from `Cinder.Library.kinds/0`.
@@ -349,6 +391,7 @@ defmodule Cinder.Settings do
   @groups [
     tmdb: "TMDB",
     indexer: "Indexer",
+    migration: "Migration sources",
     download: "Download clients",
     media_server: "Media server",
     library: "Library paths",
@@ -360,7 +403,12 @@ defmodule Cinder.Settings do
 
   # Only static fields can be secret (the generated Plex-section fields are not), so this stays
   # a compile-time set over @base_config_fields — no need to call config_fields/0 at module load.
-  @secret_keys for(f <- @base_config_fields, f.secret, into: MapSet.new(), do: f.key)
+  @secret_keys for(
+                 f <- @base_config_fields ++ @migration_config_fields,
+                 f.secret,
+                 into: MapSet.new(),
+                 do: f.key
+               )
 
   # --- boot loader: one-shot supervised child, runs synchronously before the poller ---
 
@@ -381,7 +429,7 @@ defmodule Cinder.Settings do
   def groups, do: @groups
 
   @doc "All config fields: the static service creds plus the per-kind Plex section fields."
-  def config_fields, do: @base_config_fields ++ plex_section_fields()
+  def config_fields, do: @base_config_fields ++ @migration_config_fields ++ plex_section_fields()
 
   @doc "Config fields in a given group."
   def config_fields(group), do: Enum.filter(config_fields(), &(&1.group == group))

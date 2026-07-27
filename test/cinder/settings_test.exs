@@ -16,6 +16,8 @@ defmodule Cinder.SettingsTest do
   @env_keys [
     Cinder.Catalog.TMDB.HTTP,
     Cinder.Acquisition.Indexer.Prowlarr,
+    Cinder.Library.MigrationSource.Radarr,
+    Cinder.Library.MigrationSource.Sonarr,
     Cinder.Download.Client.QBittorrent,
     Cinder.Download.Client.Sabnzbd,
     Cinder.Library.MediaServer.Jellyfin,
@@ -207,6 +209,45 @@ defmodule Cinder.SettingsTest do
         assert form.values[key] == value
         refute Repo.get_by!(Setting, key: key).is_secret
         assert Application.get_env(:cinder, String.to_existing_atom(key)) == value
+      end
+    end
+
+    test "migration source settings overlay both clients and encrypt their API keys" do
+      assert :ok =
+               Settings.save_form(%{
+                 "radarr_url" => "http://radarr.internal:7878",
+                 "radarr_api_key" => "radarr-secret",
+                 "radarr_remote_path_prefix" => "/movies",
+                 "radarr_local_path_prefix" => "/media/movies",
+                 "sonarr_url" => "http://sonarr.internal:8989",
+                 "sonarr_api_key" => "sonarr-secret",
+                 "sonarr_remote_path_prefix" => "/tv",
+                 "sonarr_local_path_prefix" => "/media/tv",
+                 "media_server_type" => "jellyfin"
+               })
+
+      assert Application.get_env(:cinder, Cinder.Library.MigrationSource.Radarr)
+             |> Keyword.take([:base_url, :api_key, :remote_path_prefix, :local_path_prefix]) ==
+               [
+                 base_url: "http://radarr.internal:7878",
+                 api_key: "radarr-secret",
+                 remote_path_prefix: "/movies",
+                 local_path_prefix: "/media/movies"
+               ]
+
+      assert Application.get_env(:cinder, Cinder.Library.MigrationSource.Sonarr)
+             |> Keyword.take([:base_url, :api_key, :remote_path_prefix, :local_path_prefix]) ==
+               [
+                 base_url: "http://sonarr.internal:8989",
+                 api_key: "sonarr-secret",
+                 remote_path_prefix: "/tv",
+                 local_path_prefix: "/media/tv"
+               ]
+
+      for key <- ["radarr_api_key", "sonarr_api_key"] do
+        row = Repo.get_by!(Setting, key: key)
+        assert row.is_secret
+        refute row.value =~ "secret"
       end
     end
 

@@ -30,6 +30,13 @@ defmodule Cinder.Health do
   def check_service(:media_server), do: run(Application.fetch_env!(:cinder, :media_server))
   def check_service(:discord), do: run(Cinder.Notifier.Discord)
 
+  def check_service({:migration_source, source}) when source in [:radarr, :sonarr] do
+    case Application.fetch_env!(:cinder, :migration_sources) do
+      %{^source => mod} -> run(mod)
+      _sources -> {:error, :not_configured}
+    end
+  end
+
   # media_info is `nil` when explicitly disabled (`config :cinder, media_info: nil`) — not a
   # broken install, so this reads the same as an opted-out feature (mirrors :subtitles below).
   def check_service(:media_info) do
