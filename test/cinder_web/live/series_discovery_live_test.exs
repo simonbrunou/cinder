@@ -20,6 +20,10 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
        }}
     end)
 
+    # The "More like this" rail fetches off-process on mount; default it empty so it stays absent
+    # unless a test opts in.
+    stub(Cinder.Catalog.TMDBMock, :recommended_tv, fn _id, _locale -> {:ok, []} end)
+
     :ok
   end
 
@@ -276,6 +280,49 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
     render_click(lv, "request_season", %{"season" => "99"})
 
     assert Cinder.Requests.list_for_user(user) == []
+  end
+
+  test "renders a More like this rail of recommended series linking to their season pickers", %{
+    conn: conn
+  } do
+    stub(Cinder.Catalog.TMDBMock, :recommended_tv, fn _id, _locale ->
+      {:ok,
+       [
+         %{
+           tmdb_id: 1396,
+           title: "Breaking Bad",
+           year: 2008,
+           poster_path: "/bb.jpg",
+           original_language: "en",
+           type: :tv
+         }
+       ]}
+    end)
+
+    conn = log_in_user(conn, Cinder.AccountsFixtures.user_fixture())
+    {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
+    html = render_async(lv)
+
+    assert html =~ "More like this"
+    assert html =~ "Breaking Bad"
+
+    assert has_element?(
+             lv,
+             ~s(#series-recommendations a[href="/series/tmdb/1396"]),
+             "View seasons"
+           )
+  end
+
+  # Decorative: a TMDB failure leaves the page without the rail, no error surfaced.
+  test "degrades to no rail when TMDB recommendations fail", %{conn: conn} do
+    stub(Cinder.Catalog.TMDBMock, :recommended_tv, fn _id, _locale -> {:error, :timeout} end)
+
+    conn = log_in_user(conn, Cinder.AccountsFixtures.user_fixture())
+    {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
+    html = render_async(lv)
+
+    refute html =~ "More like this"
+    refute has_element?(lv, "#series-recommendations")
   end
 
   # Writes the media_server_type row directly (not via Settings.put/2, which would flip the global

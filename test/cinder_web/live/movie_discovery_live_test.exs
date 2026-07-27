@@ -31,6 +31,9 @@ defmodule CinderWeb.MovieDiscoveryLiveTest do
     end)
 
     stub(Cinder.Catalog.TMDBMock, :get_movie_alternative_titles, fn _ -> {:ok, []} end)
+    # The "More like this" rail fetches off-process on mount; default it empty so it stays absent
+    # unless a test opts in.
+    stub(Cinder.Catalog.TMDBMock, :recommended_movies, fn _id, _locale -> {:ok, []} end)
 
     :ok
   end
@@ -153,6 +156,78 @@ defmodule CinderWeb.MovieDiscoveryLiveTest do
       render_async(lv)
 
       assert Requests.list_for_user(user) == []
+    end
+  end
+
+  describe "more like this rail" do
+    setup :register_and_log_in_user
+
+    defp recommend(movies) do
+      stub(Cinder.Catalog.TMDBMock, :recommended_movies, fn _id, _locale -> {:ok, movies} end)
+    end
+
+    defp inception_recommendation(tmdb_id) do
+      %{
+        tmdb_id: tmdb_id,
+        title: "Interstellar",
+        year: 2014,
+        poster_path: "/i.jpg",
+        original_language: "en",
+        type: :movie
+      }
+    end
+
+    test "renders a rail of recommended movies with an Add form and a Details link", %{conn: conn} do
+      recommend([inception_recommendation(157_336)])
+
+      {:ok, lv, _html} = live(conn, ~p"/movie/tmdb/27205")
+      html = render_async(lv)
+
+      assert html =~ "More like this"
+      assert html =~ "Interstellar"
+      assert has_element?(lv, "#movie-recommendations")
+      assert has_element?(lv, ~s(#movie-recommendations a[href="/movie/tmdb/157336"]), "Details")
+      assert has_element?(lv, "#movie-recommendations #add-form-157336")
+    end
+
+    # A rail movie is added through the SAME request/add flow as the page's own movie.
+    test "adding a recommended movie from the rail creates a pending request", %{
+      conn: conn,
+      user: user
+    } do
+      recommend([inception_recommendation(157_336)])
+
+      {:ok, lv, _html} = live(conn, ~p"/movie/tmdb/27205")
+      render_async(lv)
+
+      lv |> form("#add-form-157336") |> render_submit()
+      render_async(lv)
+
+      assert [%{target_type: "movie", target_id: 157_336, status: :pending}] =
+               Requests.list_for_user(user)
+    end
+
+    # Decorative: a TMDB failure leaves the page without the rail, no error surfaced.
+    test "degrades to no rail when TMDB recommendations fail", %{conn: conn} do
+      stub(Cinder.Catalog.TMDBMock, :recommended_movies, fn _id, _locale -> {:error, :timeout} end)
+
+      {:ok, lv, _html} = live(conn, ~p"/movie/tmdb/27205")
+      html = render_async(lv)
+
+      refute html =~ "More like this"
+      refute has_element?(lv, "#movie-recommendations")
+    end
+
+    # The current movie must never appear in its own rail (its Add-form id would collide).
+    test "drops the current movie from its own recommendations", %{conn: conn} do
+      recommend([inception_recommendation(27_205), inception_recommendation(157_336)])
+
+      {:ok, lv, _html} = live(conn, ~p"/movie/tmdb/27205")
+      render_async(lv)
+
+      # Exactly one #add-form-27205 (the page's own), none inside the rail.
+      refute has_element?(lv, "#movie-recommendations #add-form-27205")
+      assert has_element?(lv, "#movie-recommendations #add-form-157336")
     end
   end
 

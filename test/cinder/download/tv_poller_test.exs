@@ -1546,6 +1546,300 @@ defmodule Cinder.Download.TvPollerTest do
     end
   end
 
+  @tag :tmp_dir
+  test "migrated TVDB aired coordinates search and import alternate-season files", %{
+    tmp_dir: tmp
+  } do
+    %{downloads: downloads} = use_real_tv_library(tmp)
+    release_dir = Path.join(downloads, "Migrated.Show.S02")
+    File.mkdir_p!(release_dir)
+    File.write!(Path.join(release_dir, "Migrated.Show.S02E01.1080p.mkv"), "episode 29")
+    File.write!(Path.join(release_dir, "Migrated.Show.S02E02.1080p.mkv"), "episode 30")
+
+    series =
+      series_fixture(%{
+        title: "Migrated Show",
+        tvdb_id: 321,
+        monitor_strategy: :all,
+        media_profile: :standard
+      })
+
+    season = season_fixture(series, %{season_number: 1})
+    episode29 = episode(season, 29)
+    episode30 = episode(season, 30)
+
+    assert {:ok, _} =
+             Identity.replace_provider_coordinates(series, "tvdb", "321", "aired", [
+               %{
+                 scheme: "aired",
+                 canonical_value: Episode.code(2, 1),
+                 precedence: :inferred,
+                 episode_ids: [episode29.id]
+               },
+               %{
+                 scheme: "aired",
+                 canonical_value: Episode.code(2, 2),
+                 precedence: :inferred,
+                 episode_ids: [episode30.id]
+               }
+             ])
+
+    assert {:ok, _} =
+             Identity.replace_provider_coordinates(series, "tvdb", "321", "episode_id", [
+               %{
+                 scheme: "episode_id",
+                 canonical_value: "90029",
+                 precedence: :inferred,
+                 episode_ids: [episode29.id]
+               },
+               %{
+                 scheme: "episode_id",
+                 canonical_value: "90030",
+                 precedence: :inferred,
+                 episode_ids: [episode30.id]
+               }
+             ])
+
+    test_pid = self()
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 321, "Migrated Show", season_number ->
+      send(test_pid, {:searched_migrated_season, season_number})
+
+      if season_number == 2 do
+        {:ok,
+         [
+           %{
+             title: "Migrated.Show.S02.1080p.WEB-DL-GRP",
+             size: 6_000_000_000,
+             download_url: "migrated-release"
+           }
+         ]}
+      else
+        {:ok, []}
+      end
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn release, _opts ->
+      assert release.title == "Migrated.Show.S02.1080p.WEB-DL-GRP"
+      {:ok, "hash-standard-aired"}
+    end)
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-standard-aired" ->
+      {:ok, %{state: :completed, content_path: release_dir}}
+    end)
+
+    stub(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    assert :ok = TvPoller.poll()
+    assert_receive {:searched_migrated_season, 1}
+    assert_receive {:searched_migrated_season, 2}
+    refute_receive {:searched_migrated_season, _other}
+    assert %Grab{download_id: "hash-standard-aired"} = Repo.one!(Grab)
+
+    assert :ok = TvPoller.poll()
+    refute Repo.exists?(Grab)
+
+    assert Path.basename(Repo.get!(Episode, episode29.id).file_path) ==
+             "Migrated Show (2008) {tmdb-#{series.tmdb_id}} - S01E29.mkv"
+
+    assert Path.basename(Repo.get!(Episode, episode30.id).file_path) ==
+             "Migrated Show (2008) {tmdb-#{series.tmdb_id}} - S01E30.mkv"
+  end
+
+  @tag :tmp_dir
+  test "manual Standard search freezes scene and aired mappings through grab and import", %{
+    tmp_dir: tmp
+  } do
+    %{downloads: downloads} = use_real_tv_library(tmp)
+    scene_file = Path.join(downloads, "Manual.Bridge.S02E01.1080p.mkv")
+    aired_file = Path.join(downloads, "Manual.Bridge.S03E01.1080p.mkv")
+    File.write!(scene_file, "scene episode")
+    File.write!(aired_file, "aired episode")
+
+    series =
+      series_fixture(%{
+        title: "Manual Bridge",
+        tvdb_id: 777,
+        monitor_strategy: :all,
+        media_profile: :standard,
+        scene_numbering_group_id: "operator-group"
+      })
+
+    season = season_fixture(series, %{season_number: 1})
+    episode29 = episode(season, 29)
+    episode30 = episode(season, 30)
+
+    assert {:ok, _} =
+             Identity.replace_provider_coordinates(
+               series,
+               "tmdb",
+               "operator-group",
+               "scene",
+               [
+                 %{
+                   scheme: "scene",
+                   canonical_value: Episode.code(2, 1),
+                   precedence: :inferred,
+                   episode_ids: [episode29.id]
+                 }
+               ]
+             )
+
+    assert {:ok, _} =
+             Identity.replace_provider_coordinates(series, "tvdb", "777", "aired", [
+               %{
+                 scheme: "aired",
+                 canonical_value: Episode.code(3, 1),
+                 precedence: :inferred,
+                 episode_ids: [episode30.id]
+               }
+             ])
+
+    test_pid = self()
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 777, "Manual Bridge", season_number ->
+      send(test_pid, {:searched_manual_season, season_number})
+
+      case season_number do
+        1 -> {:ok, []}
+        2 -> {:ok, [raw_release("Manual.Bridge.S02E01.1080p.WEB-DL-GRP", "manual-scene")]}
+        3 -> {:ok, [raw_release("Manual.Bridge.S03E01.1080p.WEB-DL-GRP", "manual-aired")]}
+      end
+    end)
+
+    candidates = Catalog.manual_search_episodes(series.id, 1)
+
+    numbering =
+      series
+      |> Catalog.anime_series_acquisition_context()
+      |> Cinder.Acquisition.standard_tv_numbering(candidates, MapSet.new([1]))
+
+    assert {:ok, results} =
+             Cinder.Acquisition.list_releases_tv(series, 1, standard_numbering: numbering)
+
+    assert_receive {:searched_manual_season, 1}
+    assert_receive {:searched_manual_season, 2}
+    assert_receive {:searched_manual_season, 3}
+
+    releases = Map.new(results, fn {release, _verdict} -> {release.download_url, release} end)
+    assert releases["manual-scene"].resolved_episode_ids == [episode29.id]
+    assert releases["manual-aired"].resolved_episode_ids == [episode30.id]
+
+    stub(Cinder.Download.ClientMock, :add, fn release, _opts ->
+      {:ok, "hash-#{release.download_url}"}
+    end)
+
+    stub(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
+
+    for {key, episode, source} <- [
+          {"manual-scene", episode29, scene_file},
+          {"manual-aired", episode30, aired_file}
+        ] do
+      assert {:ok, grab} = Catalog.manual_grab_tv(series, 1, Map.fetch!(releases, key))
+      assert [linked] = grab |> Repo.preload(:episodes) |> Map.fetch!(:episodes)
+      assert linked.id == episode.id
+      assert {:ok, _} = Catalog.mark_grab_downloaded(grab, source)
+    end
+
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 86_400})
+    assert :ok = TvPoller.poll()
+
+    for episode <- [episode29, episode30] do
+      imported = Repo.get!(Episode, episode.id)
+
+      assert Path.basename(imported.file_path) ==
+               "Manual Bridge (2008) {tmdb-#{series.tmdb_id}} - S01E#{pad2(episode.episode_number)}.mkv"
+    end
+  end
+
+  test "scene coordinates outrank conflicting migrated aired coordinates" do
+    series =
+      series_fixture(%{
+        title: "Preferred Scene",
+        tvdb_id: 654,
+        monitor_strategy: :all,
+        media_profile: :standard,
+        scene_numbering_group_id: "operator-group"
+      })
+
+    season = season_fixture(series, %{season_number: 1})
+    episode = episode(season, 29)
+
+    assert {:ok, _} =
+             Identity.replace_provider_coordinates(
+               series,
+               "tmdb",
+               "operator-group",
+               "scene",
+               [
+                 %{
+                   scheme: "scene",
+                   canonical_value: Episode.code(2, 1),
+                   precedence: :inferred,
+                   episode_ids: [episode.id]
+                 }
+               ]
+             )
+
+    assert {:ok, _} =
+             Identity.replace_provider_coordinates(series, "tvdb", "654", "aired", [
+               %{
+                 scheme: "aired",
+                 canonical_value: Episode.code(3, 1),
+                 precedence: :inferred,
+                 episode_ids: [episode.id]
+               }
+             ])
+
+    test_pid = self()
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 654, "Preferred Scene", season_number ->
+      send(test_pid, {:searched_precedence_season, season_number})
+
+      if season_number == 2 do
+        {:ok,
+         [
+           %{
+             title: "Preferred.Scene.S02E01.1080p.WEB-DL-GRP",
+             size: 3_000_000_000,
+             download_url: "scene-precedence-release"
+           }
+         ]}
+      else
+        {:ok, []}
+      end
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn release, _opts ->
+      assert release.title == "Preferred.Scene.S02E01.1080p.WEB-DL-GRP"
+      {:ok, "hash-scene-precedence"}
+    end)
+
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    log = capture_log([level: :info], fn -> assert :ok = TvPoller.poll() end)
+
+    assert_receive {:searched_precedence_season, 1}
+    assert_receive {:searched_precedence_season, 2}
+    refute_receive {:searched_precedence_season, 3}
+    assert length(:binary.matches(log, "ignored TVDB aired coordinates")) == 1
+
+    grab = Repo.one!(Grab)
+    assert grab.download_id == "hash-scene-precedence"
+    assert {:ok, _} = Catalog.mark_grab_downloaded(grab, "/dl/pack")
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok, [{"/dl/pack/Preferred.Scene.S03E01.1080p.mkv", 3_000_000_000}]}
+    end)
+
+    assert :ok = TvPoller.poll()
+    refute Repo.get(Grab, grab.id)
+    assert Repo.get!(Episode, episode.id).file_path == nil
+  end
+
   test "Standard alternate-season file without scene coordinates is parked and blocklisted" do
     {series, season} = series_tree()
     episode = episode(season, 29)

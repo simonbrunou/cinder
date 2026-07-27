@@ -920,6 +920,44 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
     assert {:error, :unexpected_response} = HTTP.discover_tv(10_759, "en")
   end
 
+  test "recommended_movies/2 hits the movie recommendations path and tags results type: :movie" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      assert conn.request_path == "/3/movie/27205/recommendations"
+      assert conn.params["language"] == "fr-FR"
+
+      Req.Test.json(conn, %{
+        "results" => [
+          %{"id" => 157_336, "title" => "Interstellar", "release_date" => "2014-11-05"}
+        ]
+      })
+    end)
+
+    assert {:ok, [%{type: :movie, tmdb_id: 157_336, title: "Interstellar", year: 2014}]} =
+             HTTP.recommended_movies(27_205, "fr")
+  end
+
+  test "recommended_movies/2 returns an error tuple on a non-200 status" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      conn |> Plug.Conn.put_status(404) |> Req.Test.json(%{"status_message" => "not found"})
+    end)
+
+    assert {:error, {:tmdb_status, 404}} = HTTP.recommended_movies(27_205, "en")
+  end
+
+  test "recommended_tv/2 hits the tv recommendations path and tags results type: :tv" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      assert conn.request_path == "/3/tv/1399/recommendations"
+      assert conn.params["language"] == "en-US"
+
+      Req.Test.json(conn, %{
+        "results" => [%{"id" => 1396, "name" => "Breaking Bad", "first_air_date" => "2008-01-20"}]
+      })
+    end)
+
+    assert {:ok, [%{type: :tv, tmdb_id: 1396, title: "Breaking Bad"}]} =
+             HTTP.recommended_tv(1399, "en")
+  end
+
   test "search_person/2 sends the locale and normalizes person results" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       assert conn.request_path == "/3/search/person"

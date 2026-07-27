@@ -115,16 +115,47 @@ defmodule Cinder.Catalog.Grabs do
        when not is_nil(snapshot),
        do: {:error, :unsafe_anime_mapping}
 
+  defp manual_grab_standard_tv(
+         _series,
+         _season_number,
+         %Release{resolution_evidence: :conflicting_standard_numbering}
+       ),
+       do: {:error, :conflicting_standard_numbering}
+
   defp manual_grab_standard_tv(%Series{id: series_id}, season_number, %Release{} = release) do
     candidates = SeriesCatalog.manual_search_episodes(series_id, season_number)
 
-    covered = cover_numbers(release, Enum.map(candidates, & &1.episode_number))
-    episode_ids = candidates |> Enum.filter(&(&1.episode_number in covered)) |> Enum.map(& &1.id)
-
-    case episode_ids do
-      [] -> {:error, :nothing_wanted}
-      ids -> grab_and_create_grab(release, ids)
+    case standard_manual_episode_ids(release, season_number, candidates) do
+      {:ok, []} -> {:error, :nothing_wanted}
+      {:ok, ids} -> grab_and_create_grab(release, ids)
+      :error -> {:error, :conflicting_standard_numbering}
     end
+  end
+
+  defp standard_manual_episode_ids(
+         %Release{resolved_episode_ids: ids},
+         _season_number,
+         candidates
+       )
+       when is_list(ids) and ids != [] do
+    candidate_ids = MapSet.new(candidates, & &1.id)
+
+    if Enum.uniq(ids) == ids and MapSet.subset?(MapSet.new(ids), candidate_ids),
+      do: {:ok, ids},
+      else: :error
+  end
+
+  # An alternate-season release that reached here UNRESOLVED (no frozen episode ids — an unmapped
+  # value in a bridged season, an alt season past the cap, or a mapping outside the current
+  # candidates) must never fall through to the native intersection below: grabbing "S02E11" while
+  # browsing native season 1 would reserve native S01E11. Refuse instead (never-guess).
+  defp standard_manual_episode_ids(%Release{season: release_season}, season_number, _candidates)
+       when is_integer(release_season) and release_season != season_number,
+       do: :error
+
+  defp standard_manual_episode_ids(%Release{} = release, _season_number, candidates) do
+    covered = cover_numbers(release, Enum.map(candidates, & &1.episode_number))
+    {:ok, candidates |> Enum.filter(&(&1.episode_number in covered)) |> Enum.map(& &1.id)}
   end
 
   # Grabs the release (a client.add side-effect returning a download_id), then links the grab over
@@ -280,8 +311,17 @@ defmodule Cinder.Catalog.Grabs do
     persist_mapping_result(grab, %{mapping_status: :resolved, mapping_issue: nil})
   end
 
-  def record_mapping_result(%Grab{} = grab, {:needs_mapping, %{issue: issue}}) do
-    persist_mapping_result(grab, %{mapping_status: :needs_mapping, mapping_issue: issue})
+  def record_mapping_result(
+        %Grab{mapping_status: prior} = grab,
+        {:needs_mapping, %{issue: issue}}
+      ) do
+    with {:ok, held} <-
+           persist_mapping_result(grab, %{mapping_status: :needs_mapping, mapping_issue: issue}) do
+      # Emit only on a fresh hold (resolved → needs_mapping), never on a re-observation of a grab
+      # already held — the operator hears once per hold, not once per import tick.
+      if prior != :needs_mapping, do: Notifier.notify({:operator_hold, held, :needs_mapping})
+      {:ok, held}
+    end
   end
 
   defp persist_mapping_result(grab, attrs) do
@@ -630,6 +670,25 @@ defmodule Cinder.Catalog.Grabs do
   @doc "Count of grabs still downloading (no `content_path` yet)."
   def count_grabs_downloading,
     do: Repo.aggregate(from(g in Grab, where: is_nil(g.content_path)), :count)
+
+  @doc """
+  Count of grabs sitting in an operator-action hold: a mapping hold (`:needs_mapping`), a
+  verification hold (`:verification_blocked`), or a standard residual grab with at least one
+  undecided `grab_file` (the fold/part decisions `/activity` surfaces via `grab_state/1`'s
+  `residual?` branch). Mirrors the grab hold classes `CinderWeb.ActivityLive` renders actions
+  for, so the Activity nav badge and the page agree. Feeds `Catalog.count_operator_holds/0`.
+  """
+  def count_grab_holds do
+    from(g in Grab,
+      as: :grab,
+      where:
+        g.mapping_status in [:needs_mapping, :verification_blocked] or
+          exists(
+            from f in GrabFile, where: f.grab_id == parent_as(:grab).id and is_nil(f.decision)
+          )
+    )
+    |> Repo.aggregate(:count)
+  end
 
   @doc """
   Grabs downloaded and awaiting import (`content_path` set), with `episodes: [season: :series]`
@@ -1028,6 +1087,10 @@ defmodule Cinder.Catalog.Grabs do
     Cinder.Catalog.publish_episode_transition_batch(episodes, series_id)
     announce_search_exhausted(bumped_ids)
     Enum.each(completed_seasons, &Notifier.notify({:season_available, &1}))
+
+    # `:open` means residual files were just inventoried with no decision — a fresh operator hold
+    # (this commit runs once per grab, guarded against re-entry, so no per-tick re-emit).
+    if state == :open, do: Notifier.notify({:operator_hold, grab, :residual_files})
     {:ok, state, grab}
   end
 

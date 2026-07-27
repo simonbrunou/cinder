@@ -384,6 +384,104 @@ defmodule Cinder.AcquisitionTest do
     end
   end
 
+  describe "list_releases_tv/3 alternate numbering" do
+    test "unions and deduplicates scene and aired season searches with stable episode ids" do
+      episodes = [
+        %{id: 29, episode_number: 29},
+        %{id: 30, episode_number: 30}
+      ]
+
+      context = %{
+        mappings: [
+          %{
+            identity: %{
+              source: "tmdb",
+              scheme: "scene",
+              namespace: "operator-group",
+              canonical_value: "S02E01"
+            },
+            precedence: :inferred,
+            episode_ids: [29],
+            evidence: nil
+          },
+          %{
+            identity: %{
+              source: "tvdb",
+              scheme: "aired",
+              namespace: "123",
+              canonical_value: "S03E01"
+            },
+            precedence: :inferred,
+            episode_ids: [30],
+            evidence: nil
+          }
+        ]
+      }
+
+      numbering = Acquisition.standard_tv_numbering(context, episodes, MapSet.new([1]))
+      test_pid = self()
+
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, 3, fn 123, "The Office", season ->
+        send(test_pid, {:searched_manual_season, season})
+
+        case season do
+          1 -> {:ok, [raw_tv("The.Office.S02E01.1080p.WEB-DL-GRP", download_url: "scene")]}
+          2 -> {:ok, [raw_tv("The.Office.S02E01.1080p.WEB-DL-GRP", download_url: "scene")]}
+          3 -> {:ok, [raw_tv("The.Office.S03E01.1080p.WEB-DL-GRP", download_url: "aired")]}
+        end
+      end)
+
+      assert {:ok, results} =
+               Acquisition.list_releases_tv(series(), 1, standard_numbering: numbering)
+
+      assert [
+               {%Release{season: 2, resolved_episode_ids: [29]}, _},
+               {%Release{season: 3, resolved_episode_ids: [30]}, _}
+             ] = Enum.sort_by(results, fn {release, _verdict} -> release.season end)
+
+      assert_received {:searched_manual_season, 1}
+      assert_received {:searched_manual_season, 2}
+      assert_received {:searched_manual_season, 3}
+    end
+
+    test "marks an ambiguous bridged coordinate instead of choosing an episode" do
+      episodes = [%{id: 29, episode_number: 29}, %{id: 30, episode_number: 30}]
+
+      context = %{
+        mappings:
+          for id <- [29, 30] do
+            %{
+              identity: %{
+                source: "tmdb",
+                scheme: "scene",
+                namespace: "conflict",
+                canonical_value: "S02E01"
+              },
+              precedence: :inferred,
+              episode_ids: [id],
+              evidence: nil
+            }
+          end
+      }
+
+      numbering = Acquisition.standard_tv_numbering(context, episodes, MapSet.new([1]))
+
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, 2, fn 123, "The Office", season ->
+        if season == 2,
+          do: {:ok, [raw_tv("The.Office.S02E01.1080p.WEB-DL-GRP")]},
+          else: {:ok, []}
+      end)
+
+      assert {:ok,
+              [
+                {%Release{
+                   resolved_episode_ids: nil,
+                   resolution_evidence: :conflicting_standard_numbering
+                 }, {:rejected, :conflicting_standard_numbering}}
+              ]} = Acquisition.list_releases_tv(series(), 1, standard_numbering: numbering)
+    end
+  end
+
   describe "best_releases/4 (TV)" do
     test "composes search_tv, parse, title-match, and set-cover scoring (release ⇒ coverage)" do
       # Patterns confirm the series' tvdb_id, title, and season number are passed through.

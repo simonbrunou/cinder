@@ -371,6 +371,36 @@ defmodule CinderWeb.UserAuth do
     {:cont, socket}
   end
 
+  # Feeds the admin Activity nav badge (`Layouts.app`'s `holds_count` attr): the count of items
+  # needing an operator action (parked/held movies, grabs in a mapping/verification/residual hold).
+  # Assigns the count on every mount; for a connected admin it also subscribes to the `"movies"`
+  # and `"series"` topics those hold states broadcast on and re-reads the count on each event, so
+  # the badge updates live. Non-admins get `nil` (no badge). Returns `{:cont, _}` so pages that
+  # also handle these events still get them (they carry their own catch-all handle_info).
+  def on_mount(:operator_holds_badge, _params, _session, socket) do
+    socket =
+      if admin?(socket.assigns[:current_scope]) do
+        if Phoenix.LiveView.connected?(socket) do
+          Cinder.Catalog.subscribe()
+          Cinder.Catalog.subscribe_series()
+
+          Phoenix.LiveView.attach_hook(
+            socket,
+            :operator_holds_badge,
+            :handle_info,
+            &operator_holds_badge_hook/2
+          )
+        else
+          socket
+        end
+        |> Phoenix.Component.assign(:holds_count, Cinder.Catalog.count_operator_holds())
+      else
+        Phoenix.Component.assign(socket, :holds_count, nil)
+      end
+
+    {:cont, socket}
+  end
+
   @doc "Returns the localized section title for a routed LiveView path."
   def page_title("/"), do: gettext("Discover")
   def page_title("/my-requests"), do: gettext("My requests")
@@ -378,6 +408,7 @@ defmodule CinderWeb.UserAuth do
   def page_title("/activity"), do: gettext("Activity")
   def page_title("/settings"), do: gettext("Settings")
   def page_title("/requests"), do: gettext("Requests")
+  def page_title("/issues"), do: gettext("Reported issues")
   def page_title("/users"), do: gettext("Users")
   def page_title("/library"), do: gettext("Library")
   def page_title("/calendar"), do: gettext("Calendar")
@@ -456,6 +487,21 @@ defmodule CinderWeb.UserAuth do
   end
 
   defp pending_requests_badge_hook(_message, socket), do: {:cont, socket}
+
+  # A movie or series/grab event may have changed the operator-hold count: re-read it into the
+  # assign the Activity nav badge renders from. Any other message passes through untouched.
+  defp operator_holds_badge_hook({event, _payload}, socket)
+       when event in [
+              :movie_updated,
+              :movie_created,
+              :movie_deleted,
+              :series_updated,
+              :series_deleted
+            ] do
+    {:cont, Phoenix.Component.assign(socket, :holds_count, Cinder.Catalog.count_operator_holds())}
+  end
+
+  defp operator_holds_badge_hook(_message, socket), do: {:cont, socket}
 
   defp active?(%Cinder.Accounts.Scope{user: %{active: true}}), do: true
   defp active?(_), do: false

@@ -11,11 +11,14 @@ defmodule CinderWeb.SeriesDiscoveryLive do
 
   import CinderWeb.DiscoverComponents
   import CinderWeb.LiveHelpers
+  import CinderWeb.RequestHelpers, only: [assign_request_state: 1]
 
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog
   alias Cinder.Requests
   alias Cinder.Settings
+
+  require Logger
 
   @picks Language.preferences()
 
@@ -41,11 +44,14 @@ defmodule CinderWeb.SeriesDiscoveryLive do
          info: info,
          current_user: user,
          preferred_language: "original",
-         proposed_media_profile: nil
+         proposed_media_profile: nil,
+         recommendations: []
        )
        |> assign(seasons: Enum.filter(info.seasons, &(&1.season_number != 0)))
        |> assign_media_server()
-       |> assign_requests_by_season(user, tmdb_id)}
+       |> assign_requests_by_season(user, tmdb_id)
+       |> assign_request_state()
+       |> maybe_load_recommendations()}
     else
       # A TMDB outage is not "not found" — telling the user the series doesn't exist
       # sends them away from a title that loads fine once TMDB is back.
@@ -192,6 +198,23 @@ defmodule CinderWeb.SeriesDiscoveryLive do
     {:noreply, request_error(socket)}
   end
 
+  def handle_async(:recommendations, {:ok, {:ok, results}}, socket) do
+    # Drop this series from its own recommendations (defensive).
+    results = Enum.reject(results, &(&1.tmdb_id == socket.assigns.tmdb_id))
+    {:noreply, assign(socket, :recommendations, results)}
+  end
+
+  # The rail is decorative — on failure the page simply stays rail-less, no flash.
+  def handle_async(:recommendations, {:ok, {:error, reason}}, socket) do
+    Logger.warning("Series recommendations fetch failed: #{inspect(reason)}")
+    {:noreply, socket}
+  end
+
+  def handle_async(:recommendations, {:exit, reason}, socket) do
+    Logger.warning("Series recommendations fetch crashed: #{inspect(reason)}")
+    {:noreply, socket}
+  end
+
   defp request_error(socket),
     do: put_flash(socket, :error, gettext("Couldn't complete that request. Please try again."))
 
@@ -272,12 +295,14 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   @impl true
   def handle_info({event, _request}, socket)
       when event in [:request_created, :request_approved, :request_denied, :request_deleted] do
-    {:noreply, refresh_requests(socket)}
+    # refresh_requests drives the season list; assign_request_state keeps the "More like this"
+    # rail's per-title badges live too.
+    {:noreply, socket |> refresh_requests() |> assign_request_state()}
   end
 
   # Episode imports ride the "series" topic; a season completing flips its badge live.
   def handle_info({event, _id}, socket) when event in [:series_updated, :series_deleted] do
-    {:noreply, refresh_requests(socket)}
+    {:noreply, socket |> refresh_requests() |> assign_request_state()}
   end
 
   # An admin switching media-server type/URL must not leave an open page linking at the old one.
@@ -299,6 +324,17 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   # Product names, deliberately not gettext'd.
   defp name(:plex), do: "Plex"
   defp name(:jellyfin), do: "Jellyfin"
+
+  # The "More like this" rail is fetched off-process on the connected mount (one call, not two)
+  # so a slow TMDB can't hold up render; a failure leaves the page rail-less (see handle_async).
+  defp maybe_load_recommendations(socket) do
+    if connected?(socket) do
+      %{tmdb_id: tmdb_id, locale: locale} = socket.assigns
+      start_async(socket, :recommendations, fn -> Catalog.recommended_tv(tmdb_id, locale) end)
+    else
+      socket
+    end
+  end
 
   defp refresh_requests(socket) do
     assign_requests_by_season(socket, socket.assigns.current_user, socket.assigns.tmdb_id)
@@ -354,6 +390,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
       current_scope={@current_scope}
       current_path={@current_path}
       pending_count={@pending_count}
+      holds_count={@holds_count}
     >
       <.link navigate={~p"/"} class="link link-hover mb-6 inline-flex items-center gap-1">
         <.icon name="hero-arrow-left" class="size-3.5" />{gettext("Discover")}
@@ -476,6 +513,15 @@ defmodule CinderWeb.SeriesDiscoveryLive do
       </ul>
 
       <.cast_strip cast={@info[:cast] || []} />
+
+      <.more_like_this
+        id="series-recommendations"
+        results={@recommendations}
+        request_status={@request_status}
+        movie_status={@movie_status}
+        series_request_status={@series_request_status}
+        available_series={@available_series}
+      />
     </Layouts.app>
     """
   end

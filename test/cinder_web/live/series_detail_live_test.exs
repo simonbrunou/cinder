@@ -7,7 +7,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   import Cinder.CatalogFixtures
 
   alias Cinder.{Catalog, Repo}
-  alias Cinder.Catalog.{Grab, TitleAlias}
+  alias Cinder.Catalog.{Episode, Grab, Identity, TitleAlias}
 
   setup :register_and_log_in_admin
   setup :set_mox_global
@@ -1555,6 +1555,44 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert has_element?(lv2, "button[phx-click=tv_manual_search]")
   end
 
+  @header_find ~s(button[aria-label="Find a better match: expand the seasons you can search"])
+
+  test "a series-level Find a better match header reveals the searchable season", %{conn: conn} do
+    series = series_with_wanted_episode(search_attempts: 0)
+    season = first_season(series.id)
+    {:ok, lv, _html} = live_series(conn, series)
+
+    assert has_element?(lv, @header_find)
+    # Seasons render collapsed by default, so the per-season control is hidden until revealed.
+    refute has_element?(lv, ~s(details#season-#{season.id}[open]))
+
+    lv |> element(@header_find) |> render_click()
+
+    # The header shortcut expands the searchable season, surfacing its per-season control.
+    assert has_element?(lv, ~s(details#season-#{season.id}[open]))
+  end
+
+  test "the Find a better match header is hidden when nothing can be searched", %{conn: conn} do
+    # A :none-strategy tree has only un-monitored, file-less episodes — nothing manual-searchable.
+    series = create_series(4242)
+    {:ok, lv, _html} = live_series(conn, series)
+
+    refute has_element?(lv, @header_find)
+  end
+
+  test "the per-season Find a better match is promoted (season-scoped aria-label, not a bare ghost)",
+       %{conn: conn} do
+    series = series_with_wanted_episode(search_attempts: 0)
+    {:ok, lv, _html} = live_series(conn, series)
+
+    assert has_element?(
+             lv,
+             ~s(button[phx-click=tv_manual_search][aria-label="Find a better match in Season 1"])
+           )
+
+    refute has_element?(lv, ~s(button[phx-click=tv_manual_search].btn-ghost))
+  end
+
   test "Find a better match opens the TV panel; grabbing creates a grab over the wanted episode",
        %{conn: conn} do
     series = series_with_wanted_episode(search_attempts: 0)
@@ -1570,7 +1608,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     {:ok, lv, _html} = live_series(conn, series)
 
-    lv |> element("button", "Find a better match") |> render_click()
+    lv |> element("button[phx-click=tv_manual_search]", "Find a better match") |> render_click()
     assert render_async(lv) =~ "Test Show S01E01"
 
     lv |> element("#ms-season-#{season.id} button", "Grab") |> render_click()
@@ -1598,7 +1636,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
 
     {:ok, lv, _html} = live_series(conn, series)
-    lv |> element("button", "Find a better match") |> render_click()
+    lv |> element("button[phx-click=tv_manual_search]", "Find a better match") |> render_click()
     assert render_async(lv) =~ "S S01E01"
     lv |> element("#ms-season-#{season.id} button", "Grab") |> render_click()
     assert render(lv) =~ "Grabbing the selected release"
@@ -1610,6 +1648,65 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     assert %Cinder.Catalog.Grab{download_id: "hash-upgrade"} =
              Repo.get!(Cinder.Catalog.Grab, upgraded.grab_id)
+  end
+
+  test "a conflicting alternate-numbering result refuses the manual grab with a clear error", %{
+    conn: conn
+  } do
+    series =
+      series_fixture(
+        title: "Test Show",
+        tvdb_id: 99,
+        media_profile: :standard,
+        monitor_strategy: :all
+      )
+
+    season = season_fixture(series, season_number: 1)
+    episode29 = episode_fixture(season, episode_number: 29)
+    episode30 = episode_fixture(season, episode_number: 30)
+
+    for {namespace, episode} <- [{"group-a", episode29}, {"group-b", episode30}] do
+      assert {:ok, _} =
+               Identity.replace_provider_coordinates(series, "tmdb", namespace, "scene", [
+                 %{
+                   scheme: "scene",
+                   canonical_value: Episode.code(2, 1),
+                   precedence: :inferred,
+                   episode_ids: [episode.id]
+                 }
+               ])
+    end
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Test Show", season_number ->
+      if season_number == 2 do
+        {:ok,
+         [
+           %{
+             title: "Test.Show.S02E01.1080p.WEB-DL-GRP",
+             size: 2_000_000_000,
+             download_url: "conflict"
+           }
+         ]}
+      else
+        {:ok, []}
+      end
+    end)
+
+    expect(Cinder.Download.ClientMock, :add, 0, fn _, _opts -> {:ok, "must-not-run"} end)
+
+    {:ok, lv, _html} = live_series(conn, series)
+    lv |> element(~s(button[phx-value-season="1"]), "Find a better match") |> render_click()
+    assert render_async(lv) =~ "conflicting episode numbering"
+
+    lv |> element("#ms-season-#{season.id} button", "Grab") |> render_click()
+
+    assert has_element?(
+             lv,
+             "#flash-error",
+             "This release's episode numbering is ambiguous. Nothing was grabbed."
+           )
+
+    refute Repo.exists?(Grab)
   end
 
   # Regression for the PR #172 corruption bug: rewriting `title` onto the `@series` assign

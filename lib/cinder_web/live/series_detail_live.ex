@@ -11,6 +11,7 @@ defmodule CinderWeb.SeriesDetailLive do
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Season, Series}
+  alias CinderWeb.SeriesDetailComponents
 
   @picks Language.preferences()
 
@@ -99,6 +100,15 @@ defmodule CinderWeb.SeriesDetailLive do
       _ ->
         {:noreply, socket}
     end
+  end
+
+  # Series-level "Find a better match" shortcut (the header entry point): expand every season
+  # whose upgrade search would do something, so the otherwise-collapsed per-season controls become
+  # visible. Unions into the open set so a season the operator already opened stays open; the
+  # header button focuses the first such season client-side.
+  def handle_event("reveal_manual_search", _params, socket) do
+    open = MapSet.union(socket.assigns.open_seasons, searchable_season_ids(socket))
+    {:noreply, assign(socket, open_seasons: open)}
   end
 
   def handle_event("ask_cancel_series", _params, socket),
@@ -604,9 +614,17 @@ defmodule CinderWeb.SeriesDetailLive do
   def handle_info({:manual_grab, :tv, series, release}, socket) do
     {level, msg} =
       case Catalog.manual_grab_tv(series, socket.assigns.searching_season, release) do
-        {:ok, _grab} -> {:info, gettext("Grabbing the selected release…")}
-        {:error, :nothing_wanted} -> {:error, gettext("Nothing left to grab this season.")}
-        {:error, _} -> {:error, gettext("Couldn't grab that release.")}
+        {:ok, _grab} ->
+          {:info, gettext("Grabbing the selected release…")}
+
+        {:error, :nothing_wanted} ->
+          {:error, gettext("Nothing left to grab this season.")}
+
+        {:error, :conflicting_standard_numbering} ->
+          {:error, gettext("This release's episode numbering is ambiguous. Nothing was grabbed.")}
+
+        {:error, _} ->
+          {:error, gettext("Couldn't grab that release.")}
       end
 
     {:noreply, socket |> assign(searching_season: nil) |> put_flash(level, msg) |> reload()}
@@ -803,6 +821,17 @@ defmodule CinderWeb.SeriesDetailLive do
 
   defp find_season(series, id), do: Enum.find(series.seasons, &(&1.id == id))
 
+  # The seasons whose per-season "Find a better match" would render — shares the component's
+  # predicate so the header shortcut can never expand a season with nothing to search.
+  defp searchable_season_ids(socket) do
+    profile = socket.assigns.profile_summary
+
+    for season <- socket.assigns.series.seasons,
+        SeriesDetailComponents.season_manual_searchable?(season, profile),
+        into: MapSet.new(),
+        do: season.id
+  end
+
   # Duplicated in `CinderWeb.SeriesDetailComponents` (used there by the template's "Monitor
   # all"/"Unmonitor all" button) — tiny enough to keep as two independent copies.
   defp all_monitored?(%{episodes: []}), do: false
@@ -811,5 +840,5 @@ defmodule CinderWeb.SeriesDetailLive do
   # The template (labels, per-episode/season badge derivation) was carved out to
   # `CinderWeb.SeriesDetailComponents` as plain code motion once this file outgrew ~1,500 lines.
   @impl true
-  def render(assigns), do: CinderWeb.SeriesDetailComponents.render(assigns)
+  def render(assigns), do: SeriesDetailComponents.render(assigns)
 end

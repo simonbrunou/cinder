@@ -109,6 +109,37 @@ defmodule CinderWeb.AppShellTest do
     end
   end
 
+  describe "Activity nav badge (admin holds)" do
+    setup :register_and_log_in_admin
+
+    import Cinder.CatalogFixtures
+
+    test "shows the count of items needing an operator action", %{conn: conn} do
+      movie_fixture(status: :no_match)
+      movie_fixture(status: :import_failed)
+
+      {:ok, lv, _html} = live(conn, ~p"/calendar")
+
+      assert has_element?(lv, ~s(a[href="/activity"] .badge), "2")
+    end
+
+    test "renders no badge when nothing is held", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/calendar")
+      refute has_element?(lv, ~s(a[href="/activity"] .badge))
+    end
+
+    test "updates live when a movie parks into a hold", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/calendar")
+      refute has_element?(lv, ~s(a[href="/activity"] .badge))
+
+      # The transition to :no_match broadcasts {:movie_updated, _} on the "movies" topic the
+      # admin socket now subscribes to via :operator_holds_badge.
+      movie_fixture(status: :no_match)
+
+      assert has_element?(lv, ~s(a[href="/activity"] .badge), "1")
+    end
+  end
+
   describe "as a non-admin user" do
     setup :register_and_log_in_user
 

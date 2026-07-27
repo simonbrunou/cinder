@@ -34,6 +34,11 @@ defmodule CinderWeb.Layouts do
     doc:
       "requests awaiting approval, for the admin nav badge; assigned by :pending_requests_badge"
 
+  attr :holds_count, :integer,
+    default: nil,
+    doc:
+      "items needing an operator action, for the admin Activity nav badge; assigned by :operator_holds_badge"
+
   slot :inner_block, required: true
 
   def app(assigns) do
@@ -122,6 +127,12 @@ defmodule CinderWeb.Layouts do
                   badge={@pending_count}
                 />
                 <.nav_item
+                  navigate={~p"/issues"}
+                  label={gettext("Issues")}
+                  icon="hero-flag"
+                  current_path={@current_path}
+                />
+                <.nav_item
                   navigate={~p"/library"}
                   label={gettext("Library")}
                   icon="hero-rectangle-stack"
@@ -132,6 +143,8 @@ defmodule CinderWeb.Layouts do
                   label={gettext("Activity")}
                   icon="hero-bolt"
                   current_path={@current_path}
+                  badge={@holds_count}
+                  badge_label={gettext("%{count} need attention", count: @holds_count)}
                 />
                 <.nav_item
                   navigate={~p"/calendar"}
@@ -220,6 +233,10 @@ defmodule CinderWeb.Layouts do
     default: nil,
     doc: "optional count shown as a pill; nil/0 renders nothing"
 
+  attr :badge_label, :string,
+    default: nil,
+    doc: "accessible name for the badge; defaults to a pending-count label"
+
   defp nav_item(assigns) do
     active =
       assigns.current_path == assigns.navigate or
@@ -240,7 +257,7 @@ defmodule CinderWeb.Layouts do
         <span
           :if={is_integer(@badge) and @badge > 0}
           class="badge badge-sm badge-primary ml-auto"
-          aria-label={gettext("%{count} pending", count: @badge)}
+          aria-label={@badge_label || gettext("%{count} pending", count: @badge)}
         >
           {@badge}
         </span>

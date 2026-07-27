@@ -99,6 +99,15 @@ defmodule Cinder.Notifier.Discord do
         request.poster_path
       )
 
+  # Admin-channel awareness that a delivered title has a problem. Requester display name only
+  # (never the email — #184), category + title, and NEVER the free-text `detail` (user input).
+  defp embed({:issue_reported, report}),
+    do: %{
+      title: "⚠️ Issue reported",
+      description: "#{issue_line(report)} — from #{requester(report)}",
+      color: @blue
+    }
+
   defp embed({:user_registered, user}),
     do: %{
       title: "👤 Account awaiting activation",
@@ -133,6 +142,15 @@ defmodule Cinder.Notifier.Discord do
   defp embed({:grab_failed, grab, reason}),
     do: %{title: "TV grab ##{grab.id} failed", description: inspect(reason), color: @red}
 
+  # A newly created operator-action hold: something is queued waiting for an admin to act (@blue,
+  # neither success nor failure). No requester PII — a grab is operator-facing, identified by id.
+  defp embed({:operator_hold, %{id: id}, reason}),
+    do: %{
+      title: "⏸️ Download needs your attention",
+      description: "TV grab ##{id} #{hold_summary(reason)} — resolve it on /activity",
+      color: @blue
+    }
+
   defp embed({:episodes_search_exhausted, episodes}) do
     {summary, poster} = episodes_summary(episodes)
 
@@ -165,6 +183,11 @@ defmodule Cinder.Notifier.Discord do
 
   defp maintenance_name(key), do: Map.get(@maintenance_names, key, inspect(key))
 
+  defp hold_summary(:needs_mapping), do: "needs episode mapping"
+  defp hold_summary(:verification_blocked), do: "failed release verification"
+  defp hold_summary(:residual_files), do: "has files awaiting a fold/part decision"
+  defp hold_summary(other), do: "needs attention (#{inspect(other)})"
+
   defp failure_embed(title, movie, reason) do
     with_poster(
       %{title: title, description: "#{title_year(movie)} — #{inspect(reason)}", color: @red},
@@ -182,6 +205,22 @@ defmodule Cinder.Notifier.Discord do
        do: "#{title_year(request)} — Season #{number}"
 
   defp request_line(request), do: title_year(request)
+
+  # An issue report carries no `year`, so it renders its bare title + season + category (no
+  # `detail` — user free-text stays off the admin channel).
+  defp issue_line(%{target_type: "season", season_number: n, title: t, category: c})
+       when not is_nil(n),
+       do: "#{t} — Season #{n} · #{issue_category(c)}"
+
+  defp issue_line(%{title: t, category: c}), do: "#{t} · #{issue_category(c)}"
+
+  # Plain English, matching the other embed labels (the household channel is single-locale).
+  defp issue_category(:wrong_content), do: "Wrong content"
+  defp issue_category(:audio), do: "Audio"
+  defp issue_category(:subtitles), do: "Subtitles"
+  defp issue_category(:playback), do: "Playback"
+  defp issue_category(:other), do: "Other"
+  defp issue_category(other), do: to_string(other)
 
   defp denied_line(request, reason) do
     base = "#{request_line(request)} — for #{requester(request)}"

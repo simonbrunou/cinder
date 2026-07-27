@@ -387,6 +387,49 @@ defmodule CinderWeb.MyRequestsLiveTest do
     end
   end
 
+  describe "report an issue" do
+    setup %{conn: conn} do
+      user = Cinder.AccountsFixtures.user_fixture()
+      tmdb_id = System.unique_integer([:positive])
+
+      {:ok, _} =
+        Requests.create_request(user, %{target_type: "movie", target_id: tmdb_id, title: "Dune"})
+
+      {:ok, movie} = Cinder.Catalog.add_movie(%{tmdb_id: tmdb_id, title: "Dune"})
+      {:ok, _} = Cinder.Catalog.transition(movie, %{status: :available})
+
+      %{conn: log_in_user(conn, user), tmdb_id: tmdb_id}
+    end
+
+    test "an available row offers the action and files a report", %{conn: conn, tmdb_id: tmdb_id} do
+      {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+      request_id = report_request_id(lv)
+      assert has_element?(lv, "#report-issue-#{request_id}")
+
+      lv |> element("#report-issue-#{request_id}") |> render_click()
+
+      lv
+      |> form("#report-form-#{request_id}", %{"category" => "subtitles", "detail" => "no subs"})
+      |> render_submit()
+
+      assert render(lv) =~ "Your report was sent"
+      assert [report] = Cinder.Issues.list_open()
+      assert report.target_id == tmdb_id
+      assert report.category == :subtitles
+      assert report.detail == "no subs"
+
+      # Now that a report is open, the action is replaced by the "Reported" pill.
+      refute has_element?(lv, "#report-issue-#{request_id}")
+      assert render(lv) =~ "Reported"
+    end
+  end
+
+  defp report_request_id(lv) do
+    [_, id] = Regex.run(~r/report-issue-(\d+)/, render(lv))
+    id
+  end
+
   # Mirrors movie_discovery_live_test: writes the media_server_type row directly (Settings.put/2
   # would run load_into_env/0 and flip the global :media_server impl off the Mox mock for the
   # rest of the run). media_server_web_link/0 reads the row plus the impl's :web_url.

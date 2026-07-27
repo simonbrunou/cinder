@@ -610,6 +610,72 @@ defmodule Cinder.CatalogSeriesTest do
       assert [%{search_attempts: 0}] = grab.episodes
     end
 
+    test "uses a Standard manual result's stable bridged ids, including for upgrades" do
+      series = series_with_wanted_episodes(season: 1, numbers: [1, 29])
+      episodes = Catalog.manual_search_episodes(series.id, 1)
+      episode1 = Enum.find(episodes, &(&1.episode_number == 1))
+      episode29 = Enum.find(episodes, &(&1.episode_number == 29))
+
+      episode29
+      |> Ecto.Changeset.change(file_path: "/media/old-s01e29.mkv", monitored: false)
+      |> Repo.update!()
+
+      release = %Release{
+        title: "Show.S02E01.1080p",
+        protocol: :torrent,
+        season: 2,
+        episodes: [1],
+        download_url: "scene",
+        resolved_episode_ids: [episode29.id]
+      }
+
+      expect(Cinder.Download.ClientMock, :add, fn _, _opts -> {:ok, "alt-upgrade"} end)
+
+      assert {:ok, grab} = Catalog.manual_grab_tv(series, 1, release)
+      assert [linked] = grab |> Repo.preload(:episodes) |> Map.fetch!(:episodes)
+      assert linked.id == episode29.id
+      refute linked.id == episode1.id
+      assert linked.file_path == "/media/old-s01e29.mkv"
+    end
+
+    test "refuses a conflicting Standard manual mapping before download client I/O" do
+      series = series_with_wanted_episodes(season: 1, numbers: [1, 29])
+
+      release = %Release{
+        title: "Show.S02E01.1080p",
+        protocol: :torrent,
+        season: 2,
+        episodes: [1],
+        download_url: "conflict",
+        resolution_evidence: :conflicting_standard_numbering
+      }
+
+      expect(Cinder.Download.ClientMock, :add, 0, fn _, _opts -> {:ok, "must-not-run"} end)
+
+      assert {:error, :conflicting_standard_numbering} =
+               Catalog.manual_grab_tv(series, 1, release)
+    end
+
+    # Review regression: an alt-season release that resolved to NO bridged mapping (unmapped
+    # value, capped season, mapping outside candidates) must refuse, not fall through to the
+    # native intersection — "S02E11" browsed from season 1 would reserve native S01E11.
+    test "refuses an UNRESOLVED alternate-season release instead of native intersection" do
+      series = series_with_wanted_episodes(season: 1, numbers: [1, 11])
+
+      release = %Release{
+        title: "Show.S02E11.1080p",
+        protocol: :torrent,
+        season: 2,
+        episodes: [11],
+        download_url: "unmapped-alt"
+      }
+
+      expect(Cinder.Download.ClientMock, :add, 0, fn _, _opts -> {:ok, "must-not-run"} end)
+
+      assert {:error, :conflicting_standard_numbering} =
+               Catalog.manual_grab_tv(series, 1, release)
+    end
+
     test "returns :nothing_wanted when the season has no manually searchable episodes" do
       series = series_with_unmonitored_missing_season(season: 1)
 

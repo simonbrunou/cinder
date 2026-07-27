@@ -12,12 +12,16 @@ defmodule CinderWeb.MovieDiscoveryLive do
   use CinderWeb, :live_view
 
   import CinderWeb.DiscoverComponents
+  import CinderWeb.IssueComponents, only: [report_form: 1, report_status: 1]
   import CinderWeb.LiveHelpers
   import CinderWeb.RequestHelpers
 
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog
+  alias Cinder.Issues
   alias Cinder.Settings
+
+  require Logger
 
   @picks Language.preferences()
 
@@ -33,13 +37,17 @@ defmodule CinderWeb.MovieDiscoveryLive do
         Catalog.subscribe()
         Cinder.Requests.subscribe()
         Settings.subscribe()
+        # An admin resolving this user's report re-offers the "Report an issue" action live.
+        Issues.subscribe()
       end
 
       {:ok,
        socket
-       |> assign(tmdb_id: tmdb_id, info: info)
+       |> assign(tmdb_id: tmdb_id, info: info, recommendations: [], reporting: false)
        |> assign_media_server()
-       |> assign_request_state()}
+       |> assign_request_state()
+       |> assign_report_state()
+       |> maybe_load_recommendations()}
     else
       # A TMDB outage is not "not found" — telling the user the movie doesn't exist sends them
       # away from a page that loads fine once TMDB is back.
@@ -57,22 +65,85 @@ defmodule CinderWeb.MovieDiscoveryLive do
     end
   end
 
+  # The "More like this" rail is fetched off-process on the connected mount (one call, not two)
+  # so a slow TMDB can't hold up render; a failure leaves the page rail-less (see handle_async).
+  defp maybe_load_recommendations(socket) do
+    if connected?(socket) do
+      %{tmdb_id: tmdb_id, locale: locale} = socket.assigns
+      start_async(socket, :recommendations, fn -> Catalog.recommended_movies(tmdb_id, locale) end)
+    else
+      socket
+    end
+  end
+
   @impl true
   def handle_event("add", %{"tmdb_id" => tmdb_id} = params, socket) when is_binary(tmdb_id) do
-    # phx-value is client-controlled; tolerate non-numeric input and only accept this page's id.
+    # phx-value is client-controlled: tolerate non-numeric input and only accept the movie shown
+    # here or one from the "More like this" rail — never an arbitrary forged id.
     preferred = normalize_language(params["preferred_language"])
+    candidates = [socket.assigns.info | socket.assigns.recommendations]
 
     with {id, ""} <- Integer.parse(tmdb_id),
-         true <- id == socket.assigns.tmdb_id,
-         {:ok, profile} <- normalize_profile(params["proposed_media_profile"]) do
-      {:noreply, add(socket, socket.assigns.info, preferred, profile)}
+         {:ok, profile} <- normalize_profile(params["proposed_media_profile"]),
+         movie when not is_nil(movie) <- Enum.find(candidates, &(&1.tmdb_id == id)) do
+      {:noreply, add(socket, movie, preferred, profile)}
     else
       _ -> {:noreply, socket}
     end
   end
 
+  def handle_event("start_report", _params, socket),
+    do: {:noreply, assign(socket, reporting: true)}
+
+  def handle_event("cancel_report", _params, socket),
+    do: {:noreply, assign(socket, reporting: false)}
+
+  # Report a problem with this (available) movie. The target is the page's own tmdb_id, never a
+  # client value; only category + detail come from the form. Availability re-checked in the context.
+  def handle_event("report_issue", params, socket) do
+    user = socket.assigns.current_scope.user
+
+    attrs = %{
+      target_type: "movie",
+      target_id: socket.assigns.tmdb_id,
+      season_number: nil,
+      category: params["category"],
+      detail: params["detail"]
+    }
+
+    {:noreply,
+     socket
+     |> report_result(Issues.create_report(user, attrs))
+     |> assign(reporting: false)}
+  end
+
   # The event payload is client-controlled; ignore any malformed/forged frame.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  defp report_result(socket, {:ok, _report}),
+    do:
+      socket
+      |> assign_report_state()
+      |> put_flash(:info, gettext("Thanks! Your report was sent."))
+
+  defp report_result(socket, {:error, :too_many_open}),
+    do:
+      put_flash(
+        socket,
+        :error,
+        gettext("You have too many open reports. Please wait for an admin to review them.")
+      )
+
+  defp report_result(socket, {:error, :not_available}),
+    do: put_flash(socket, :error, gettext("You can only report an issue on an available title."))
+
+  defp report_result(socket, {:error, _reason}),
+    do: put_flash(socket, :error, gettext("Couldn't send that report. Please try again."))
+
+  defp assign_report_state(socket) do
+    user = socket.assigns.current_scope.user
+    assign(socket, open_report?: Issues.open_report?(user, "movie", socket.assigns.tmdb_id))
+  end
 
   @impl true
   def handle_info({:movie_updated, movie}, socket) do
@@ -92,6 +163,11 @@ defmodule CinderWeb.MovieDiscoveryLive do
     {:noreply, assign_request_state(socket)}
   end
 
+  def handle_info({event, _report}, socket)
+      when event in [:issue_reported, :issue_resolved, :issue_dismissed] do
+    {:noreply, assign_report_state(socket)}
+  end
+
   def handle_info(:settings_updated, socket) do
     {:noreply, assign_media_server(socket)}
   end
@@ -99,6 +175,24 @@ defmodule CinderWeb.MovieDiscoveryLive do
   def handle_info(_message, socket), do: {:noreply, socket}
 
   @impl true
+  def handle_async(:recommendations, {:ok, {:ok, results}}, socket) do
+    # Drop this movie from its own recommendations (defensive — and its Add form id
+    # `add-form-#{tmdb_id}` would otherwise collide with the header's own).
+    results = Enum.reject(results, &(&1.tmdb_id == socket.assigns.tmdb_id))
+    {:noreply, assign(socket, :recommendations, results)}
+  end
+
+  # The rail is decorative — on failure the page simply stays rail-less, no flash.
+  def handle_async(:recommendations, {:ok, {:error, reason}}, socket) do
+    Logger.warning("Movie recommendations fetch failed: #{inspect(reason)}")
+    {:noreply, socket}
+  end
+
+  def handle_async(:recommendations, {:exit, reason}, socket) do
+    Logger.warning("Movie recommendations fetch crashed: #{inspect(reason)}")
+    {:noreply, socket}
+  end
+
   def handle_async({:add, _tmdb_id, title}, {:ok, result}, socket) do
     {:noreply, request_result(socket, title, result)}
   end
@@ -148,6 +242,7 @@ defmodule CinderWeb.MovieDiscoveryLive do
       current_scope={@current_scope}
       current_path={@current_path}
       pending_count={@pending_count}
+      holds_count={@holds_count}
     >
       <.link navigate={~p"/"} class="link link-hover mb-6 inline-flex items-center gap-1">
         <.icon name="hero-arrow-left" class="size-3.5" />{gettext("Discover")}
@@ -230,6 +325,31 @@ defmodule CinderWeb.MovieDiscoveryLive do
             <span class="sr-only">{gettext("(opens in a new tab)")}</span>
           </.button>
 
+          <div :if={@state == :available} class="mt-4 flex flex-col gap-2">
+            <.report_status :if={@open_report?} status={:open} />
+            <.button
+              :if={not @open_report? and not @reporting}
+              id="report-issue"
+              variant="ghost"
+              size="sm"
+              class="self-start"
+              phx-click="start_report"
+              aria-label={
+                gettext("Report an issue with %{title}", title: media_title(@info, @locale))
+              }
+            >
+              <.icon name="hero-flag" class="size-4" />{gettext("Report an issue")}
+            </.button>
+            <.report_form
+              :if={@reporting}
+              id="report-form"
+              value={@tmdb_id}
+              on_submit="report_issue"
+              on_cancel="cancel_report"
+              class="max-w-md"
+            />
+          </div>
+
           <form
             :if={@state in [:none, :denied]}
             id={"add-form-#{@tmdb_id}"}
@@ -253,6 +373,15 @@ defmodule CinderWeb.MovieDiscoveryLive do
       </div>
 
       <.cast_strip cast={@info[:cast] || []} />
+
+      <.more_like_this
+        id="movie-recommendations"
+        results={@recommendations}
+        request_status={@request_status}
+        movie_status={@movie_status}
+        series_request_status={@series_request_status}
+        available_series={@available_series}
+      />
     </Layouts.app>
     """
   end

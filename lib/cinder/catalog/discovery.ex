@@ -182,6 +182,20 @@ defmodule Cinder.Catalog.Discovery do
   def tv_by_genre(genre_id, locale \\ Locales.canonical()),
     do: tmdb().discover_tv(genre_id, locale)
 
+  @doc """
+  Movie recommendations for `tmdb_id` (`/movie/{id}/recommendations`), same shape
+  as `popular_movies/1` — the "More like this" rail on a movie detail page.
+  """
+  def recommended_movies(tmdb_id, locale \\ Locales.canonical()),
+    do: tmdb().recommended_movies(tmdb_id, locale)
+
+  @doc """
+  Series recommendations for `tmdb_id` (`/tv/{id}/recommendations`), same shape as
+  `popular_tv/1` — the "More like this" rail on a series detail page.
+  """
+  def recommended_tv(tmdb_id, locale \\ Locales.canonical()),
+    do: tmdb().recommended_tv(tmdb_id, locale)
+
   def search_person(query, locale \\ Locales.canonical()), do: tmdb().search_person(query, locale)
 
   def search_collection(query, locale \\ Locales.canonical()),

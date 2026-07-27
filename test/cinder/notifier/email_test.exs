@@ -414,10 +414,78 @@ defmodule Cinder.Notifier.EmailTest do
     end
   end
 
+  describe "issue_resolved" do
+    defp issue_report(user, overrides \\ %{}) do
+      Map.merge(
+        %{title: "Dune", target_type: "movie", season_number: nil, user_id: user.id, user: user},
+        Map.new(overrides)
+      )
+    end
+
+    test "emails the reporter when their issue is resolved" do
+      configure_smtp!()
+      user = confirmed_user()
+
+      assert :ok = Email.notify({:issue_resolved, issue_report(user)})
+
+      assert_email_sent(
+        to: user.email,
+        subject: "The issue you reported for Dune is resolved"
+      )
+    end
+
+    test "names the season for a season report" do
+      configure_smtp!()
+      user = confirmed_user()
+
+      assert :ok =
+               Email.notify(
+                 {:issue_resolved, issue_report(user, %{target_type: "season", season_number: 2})}
+               )
+
+      assert_email_sent(
+        to: user.email,
+        subject: "The issue you reported for Dune Season 2 is resolved"
+      )
+    end
+
+    test "skips a reporter who opted out" do
+      configure_smtp!()
+      user = confirmed_user(notify_email: false)
+
+      assert :ok = Email.notify({:issue_resolved, issue_report(user)})
+      refute_email_sent()
+    end
+
+    test "skips silently when SMTP is unconfigured" do
+      user = confirmed_user()
+
+      assert :ok = Email.notify({:issue_resolved, issue_report(user)})
+      refute_email_sent()
+    end
+  end
+
   describe "unrecognized events" do
     test "are ignored" do
       configure_smtp!()
       assert :ok = Email.notify({:maintenance_completed, :scan_movies})
+      refute_email_sent()
+    end
+
+    test "issue_reported and issue_dismissed do not email the reporter" do
+      configure_smtp!()
+      user = confirmed_user()
+
+      report = %{
+        title: "Dune",
+        target_type: "movie",
+        season_number: nil,
+        user_id: user.id,
+        user: user
+      }
+
+      assert :ok = Email.notify({:issue_reported, report})
+      assert :ok = Email.notify({:issue_dismissed, report})
       refute_email_sent()
     end
   end

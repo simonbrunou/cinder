@@ -7,6 +7,36 @@ All notable changes to Cinder are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Requester "Report an issue."** An available title can be flagged (wrong content, audio,
+  subtitles, playback, other) from My Requests or the movie page; admins get a live `/issues`
+  queue with Resolve/Dismiss, a Discord heads-up, and the reporter is emailed in their locale
+  when it's resolved. Rate-bounded, GDPR-covered (cascade + export).
+- **Migration at real-instance scale.** Sonarr snapshots fetch with bounded concurrency, one
+  broken series becomes a blocked diagnostic row instead of failing the whole preview, planning
+  is single-pass, and confirming adopts with targeted revalidation instead of three full
+  re-fetches. The preview itself gains select-all/deselect-all, bulk Fold/Part application with
+  a pending counter, 50-row windowed buckets, and honest skipped-item reporting.
+- **Migrated TVDB numbering now works end-to-end.** The tvdb "aired" coordinates persisted by
+  migration drive standard TV search and import (operator-chosen scene groups outrank them),
+  and MANUAL search carries the same alternate-numbering mapping — a manual grab of an
+  alt-numbered release reserves the correct episodes or refuses with a clear error, never a
+  wrong-episode guess.
+- **"More like this"** recommendations on movie and series detail pages, and TV's
+  "Find a better match" is now findable — a series-level entry point plus promoted per-season
+  controls.
+- **Operator holds are visible.** A second admin nav badge counts items needing action on
+  Activity (agreeing exactly with what the page renders), and a `{:operator_hold, …}` notifier
+  event fires once per new hold (Log + Discord).
+
+### Fixed
+- **Vanished TMDB episodes are retired.** Refresh now deletes vanished rows that carry no
+  operator state, so phantom "wanted" episodes stop being searched forever and a freed slot
+  lets renumbering land the genuine episode correctly; anything with files, grabs, or manual
+  evidence is preserved exactly as before.
+- `Cinder.Settings` and `Cinder.Catalog.SeriesCatalog` were split (`Settings.Registry`,
+  `Catalog.SeriesDeletion` — pure code motion) well below the 1,500-line cap; the audit also
+  verified every `async: false` test designation is genuinely required under the pinned
+  single-connection pool.
 - **Radarr/Sonarr migration.** `/library/adopt` gains a migration-source mode: point Cinder at
   a running Radarr/Sonarr (URL + API key in Settings, with test-connection probes and optional
   path-prefix mapping) and adopt the whole library through a preview bucketed

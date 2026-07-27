@@ -27,6 +27,16 @@ defmodule Cinder.Notifier.Log do
 
   def notify({:account_activated, _user}), do: log("account activated")
 
+  # Ids + title + category only — the free-text `detail` is user input and never logged (no PII).
+  def notify({:issue_reported, report}),
+    do: log("issue reported: #{report.title} (#{report.category}, user ##{report.user_id})")
+
+  def notify({:issue_resolved, report}),
+    do: log("issue resolved: #{report.title} (user ##{report.user_id})")
+
+  def notify({:issue_dismissed, report}),
+    do: log("issue dismissed: #{report.title} (user ##{report.user_id})")
+
   def notify({:movie_available, movie}), do: log("movie available: #{movie.title}")
 
   def notify({:movie_failed, movie, reason}),
@@ -37,6 +47,11 @@ defmodule Cinder.Notifier.Log do
 
   def notify({:grab_failed, grab, reason}),
     do: log("tv grab failed: ##{grab.id} (#{inspect(reason)})")
+
+  # A newly created operator-action hold on a TV grab (mapping / verification / residual files):
+  # the download is waiting for a human on /activity. Logged so holds aren't silent.
+  def notify({:operator_hold, %{id: id}, reason}),
+    do: log("operator hold: tv grab ##{id} (#{reason})")
 
   def notify({:episodes_search_exhausted, episodes}),
     do: log("episode search exhausted: #{episodes_summary(episodes)}")

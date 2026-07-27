@@ -33,6 +33,7 @@ defmodule Cinder.Catalog do
     Season,
     Series,
     SeriesCatalog,
+    SeriesDeletion,
     SeriesRefresh
   }
 
@@ -73,6 +74,10 @@ defmodule Cinder.Catalog do
   defdelegate movies_by_genre(genre_id, locale), to: Discovery
   defdelegate tv_by_genre(genre_id), to: Discovery
   defdelegate tv_by_genre(genre_id, locale), to: Discovery
+  defdelegate recommended_movies(tmdb_id), to: Discovery
+  defdelegate recommended_movies(tmdb_id, locale), to: Discovery
+  defdelegate recommended_tv(tmdb_id), to: Discovery
+  defdelegate recommended_tv(tmdb_id, locale), to: Discovery
   defdelegate search_person(query), to: Discovery
   defdelegate search_person(query, locale), to: Discovery
   defdelegate search_collection(query), to: Discovery
@@ -601,6 +606,21 @@ defmodule Cinder.Catalog do
   end
 
   def retry_movie(%Movie{}), do: {:error, :not_retryable}
+
+  @doc """
+  Total items needing an operator action, for the admin Activity nav badge: parked/held movies
+  that show a Retry (`#{inspect(@retryable)}`) plus grabs in a mapping/verification/residual hold
+  (`Grabs.count_grab_holds/0`). Defined to match exactly what `CinderWeb.ActivityLive` renders
+  actions for, so the badge and the page agree; `0` means "no badge".
+
+  `@retryable` is the movie hold set on purpose: a movie verification hold parks at
+  `:import_failed` (with `verification_hold_origin`), already in this set, and `anime_hold`
+  movies (`:requested`/`:searching` + a hold reason) show no action, so they are excluded.
+  """
+  def count_operator_holds do
+    movie_holds = Repo.aggregate(from(m in Movie, where: m.status in @retryable), :count)
+    movie_holds + Grabs.count_grab_holds()
+  end
 
   @doc """
   Reaps a stalled `:downloading` movie (the stall reaper): one transaction guard-resets it to
@@ -1304,10 +1324,10 @@ defmodule Cinder.Catalog do
 
   defdelegate adopt_episode_files(actions), to: Cinder.Catalog.Adoption
 
-  defdelegate delete_episode_file(episode, actor), to: SeriesCatalog
-  defdelegate delete_episode_file(episode, actor, opts), to: SeriesCatalog
-  defdelegate delete_season_files(season, actor), to: SeriesCatalog
-  defdelegate delete_season_files(season, actor, opts), to: SeriesCatalog
+  defdelegate delete_episode_file(episode, actor), to: SeriesDeletion
+  defdelegate delete_episode_file(episode, actor, opts), to: SeriesDeletion
+  defdelegate delete_season_files(season, actor), to: SeriesDeletion
+  defdelegate delete_season_files(season, actor, opts), to: SeriesDeletion
 
   @doc false
   def now, do: DateTime.truncate(DateTime.utc_now(), :second)
@@ -1333,14 +1353,14 @@ defmodule Cinder.Catalog do
   unmonitors every season and episode so the TV poller's `wanted_episodes` does not re-grab.
   Broadcasts `{:series_updated, id}`. Audited.
   """
-  defdelegate cancel_series(series, actor), to: SeriesCatalog
+  defdelegate cancel_series(series, actor), to: SeriesDeletion
 
   @doc """
   Deletes a series and its tree. Broadcasts `{:series_deleted, id}`. Audited. Pass
   `delete_files: true` to also unlink every episode `file_path` after the cascade.
   """
-  defdelegate delete_series(series, actor), to: SeriesCatalog
-  defdelegate delete_series(series, actor, opts), to: SeriesCatalog
+  defdelegate delete_series(series, actor), to: SeriesDeletion
+  defdelegate delete_series(series, actor, opts), to: SeriesDeletion
 
   defdelegate episode_ids_for_grab(grab_id), to: Grabs
   defdelegate series_id_for_grab(grab_id), to: Grabs

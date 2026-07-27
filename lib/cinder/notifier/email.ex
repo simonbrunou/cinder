@@ -34,6 +34,7 @@ defmodule Cinder.Notifier.Email do
   def notify({:account_activated, user}), do: notify_account_activated(user)
   def notify({:request_approved, request}), do: notify_request_approved(request)
   def notify({:request_denied, request, reason}), do: notify_request_denied(request, reason)
+  def notify({:issue_resolved, report}), do: notify_issue_resolved(report)
   def notify({:movie_available, movie}), do: notify_movie(movie, :available)
   def notify({:movie_failed, movie, reason}), do: notify_movie(movie, {:failed, reason})
   def notify({:season_available, season}), do: notify_season(season)
@@ -88,6 +89,22 @@ defmodule Cinder.Notifier.Email do
   end
 
   defp notify_request_denied(_request, _reason), do: :ok
+
+  # The reporter filed a problem and walked away; this tells them an admin resolved it — in their
+  # locale. Mirrors notify_request_denied/2's defensive %User{}-or-no-op shape.
+  defp notify_issue_resolved(%{user: %User{} = user} = report) do
+    send_to(user, fn ->
+      title = issue_title(report)
+
+      {gettext("The issue you reported for %{title} is resolved", title: title),
+       gettext(
+         "Good news — the issue you reported for %{title} has been resolved. Please take another look.",
+         title: title
+       )}
+    end)
+  end
+
+  defp notify_issue_resolved(_report), do: :ok
 
   defp denied_body(title, reason) when is_binary(reason) and reason != "" do
     gettext(
@@ -211,4 +228,10 @@ defmodule Cinder.Notifier.Email do
        do: gettext("%{title} Season %{season}", title: title_year(request), season: number)
 
   defp request_title(request), do: title_year(request)
+
+  # An issue report snapshots only the title (no year); a season report names its season.
+  defp issue_title(%{target_type: "season", season_number: n, title: t}) when not is_nil(n),
+    do: gettext("%{title} Season %{season}", title: t, season: n)
+
+  defp issue_title(%{title: t}), do: t
 end
