@@ -1389,6 +1389,7 @@ defmodule Cinder.Catalog do
   defdelegate reject_grab_release(expected, evidence), to: Grabs
 
   defdelegate block_release(movie, reason), to: Grabs
+  defdelegate block_release_and_confirm(movie, reason), to: Grabs
   defdelegate clear_stalled_blocklist(scope), to: Grabs
   defdelegate block_grab_release(grab, reason), to: Grabs
   defdelegate blocked_release_titles(movie), to: Grabs
