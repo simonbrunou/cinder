@@ -1086,7 +1086,7 @@ msgstr "La saison %{number} est déjà demandée."
 msgid "Season %{number} of %{title} added."
 msgstr "Saison %{number} de %{title} ajoutée."
 
-#: lib/cinder_web/live/library_adoption_live.ex:336
+#: lib/cinder_web/live/library_adoption_live.ex:356
 #: lib/cinder_web/live/library_live.ex:321
 #: lib/cinder_web/live/library_live.ex:468
 #, elixir-autogen, elixir-format
@@ -3980,20 +3980,20 @@ msgstr "Votre demande pour %{title} a été approuvée"
 msgid "Your requested season is ready to watch: %{title}."
 msgstr "La saison que vous avez demandée est disponible : %{title}."
 
-#: lib/cinder_web/live/library_adoption_live.ex:599
-#: lib/cinder_web/live/library_adoption_live.ex:763
+#: lib/cinder_web/live/library_adoption_live.ex:619
+#: lib/cinder_web/live/library_adoption_live.ex:783
 #, elixir-autogen, elixir-format
 msgid "Adopt %{title}"
 msgstr "Adopter %{title}"
 
-#: lib/cinder_web/live/library_adoption_live.ex:443
+#: lib/cinder_web/live/library_adoption_live.ex:463
 #: lib/cinder_web/live/library_live.ex:298
 #, elixir-autogen, elixir-format
 msgid "Adopt existing library"
 msgstr "Adopter une bibliothèque existante"
 
-#: lib/cinder_web/live/library_adoption_live.ex:729
-#: lib/cinder_web/live/library_adoption_live.ex:894
+#: lib/cinder_web/live/library_adoption_live.ex:749
+#: lib/cinder_web/live/library_adoption_live.ex:914
 #, elixir-autogen, elixir-format
 msgid "Adopt selected"
 msgstr "Adopter la sélection"
@@ -4003,14 +4003,14 @@ msgstr "Adopter la sélection"
 msgid "Adopted %{adopted}; skipped %{skipped}."
 msgstr "%{adopted} élément(s) adopté(s) ; %{skipped} ignoré(s)."
 
-#: lib/cinder_web/live/library_adoption_live.ex:731
-#: lib/cinder_web/live/library_adoption_live.ex:896
+#: lib/cinder_web/live/library_adoption_live.ex:751
+#: lib/cinder_web/live/library_adoption_live.ex:916
 #, elixir-autogen, elixir-format
 msgid "Adopting selected files…"
 msgstr "Adoption des fichiers sélectionnés…"
 
-#: lib/cinder_web/live/library_adoption_live.ex:729
-#: lib/cinder_web/live/library_adoption_live.ex:894
+#: lib/cinder_web/live/library_adoption_live.ex:749
+#: lib/cinder_web/live/library_adoption_live.ex:914
 #, elixir-autogen, elixir-format
 msgid "Adopting…"
 msgstr "Adoption…"
@@ -4020,43 +4020,43 @@ msgstr "Adoption…"
 msgid "Adoption failed. Please try again."
 msgstr "L’adoption a échoué. Veuillez réessayer."
 
-#: lib/cinder_web/live/library_adoption_live.ex:580
+#: lib/cinder_web/live/library_adoption_live.ex:600
 #, elixir-autogen, elixir-format
 msgid "Auto-matched"
 msgstr "Correspondances automatiques"
 
-#: lib/cinder_web/live/library_adoption_live.ex:450
+#: lib/cinder_web/live/library_adoption_live.ex:470
 #, elixir-autogen, elixir-format
 msgid "Back to library"
 msgstr "Retour à la bibliothèque"
 
-#: lib/cinder_web/live/library_adoption_live.ex:657
+#: lib/cinder_web/live/library_adoption_live.ex:677
 #, elixir-autogen, elixir-format
 msgid "Choose one TMDB result, or leave the item unselected to skip it."
 msgstr "Choisissez un résultat TMDB ou ne sélectionnez rien pour ignorer cet élément."
 
-#: lib/cinder_web/live/library_adoption_live.ex:521
+#: lib/cinder_web/live/library_adoption_live.ex:541
 #, elixir-autogen, elixir-format
 msgid "Cinder will compare video files with the paths it already manages."
 msgstr "Cinder comparera les fichiers vidéo aux chemins qu’il gère déjà."
 
-#: lib/cinder_web/live/library_adoption_live.ex:528
+#: lib/cinder_web/live/library_adoption_live.ex:548
 #, elixir-autogen, elixir-format
 msgid "Every discovered video file is already managed by Cinder."
 msgstr "Tous les fichiers vidéo découverts sont déjà gérés par Cinder."
 
-#: lib/cinder_web/live/library_adoption_live.ex:583
+#: lib/cinder_web/live/library_adoption_live.ex:603
 #, elixir-autogen, elixir-format
 msgid "Exact title and year matches are selected by default."
 msgstr "Les correspondances exactes de titre et d’année sont sélectionnées par défaut."
 
-#: lib/cinder_web/live/library_adoption_live.ex:636
-#: lib/cinder_web/live/library_adoption_live.ex:702
+#: lib/cinder_web/live/library_adoption_live.ex:656
+#: lib/cinder_web/live/library_adoption_live.ex:722
 #, elixir-autogen, elixir-format
 msgid "Held"
 msgstr "En attente"
 
-#: lib/cinder_web/live/library_adoption_live.ex:620
+#: lib/cinder_web/live/library_adoption_live.ex:640
 #, elixir-autogen, elixir-format
 msgid "Held: %{reason}"
 msgstr "En attente : %{reason}"
@@ -4066,73 +4066,73 @@ msgstr "En attente : %{reason}"
 msgid "Library scan failed. Please try again."
 msgstr "L’analyse de la bibliothèque a échoué. Veuillez réessayer."
 
-#: lib/cinder_web/live/library_adoption_live.ex:617
+#: lib/cinder_web/live/library_adoption_live.ex:637
 #, elixir-autogen, elixir-format
 msgid "Matched"
 msgstr "Correspondance trouvée"
 
-#: lib/cinder_web/live/library_adoption_live.ex:604
+#: lib/cinder_web/live/library_adoption_live.ex:624
 #, elixir-autogen, elixir-format
 msgid "Matched to %{title}"
 msgstr "Correspond à %{title}"
 
-#: lib/cinder_web/live/library_adoption_live.ex:335
+#: lib/cinder_web/live/library_adoption_live.ex:355
 #, elixir-autogen, elixir-format
 msgid "Movie"
 msgstr "Film"
 
-#: lib/cinder_web/live/library_adoption_live.ex:627
-#: lib/cinder_web/live/library_adoption_live.ex:654
+#: lib/cinder_web/live/library_adoption_live.ex:647
+#: lib/cinder_web/live/library_adoption_live.ex:674
 #, elixir-autogen, elixir-format
 msgid "Needs confirmation"
 msgstr "Confirmation requise"
 
-#: lib/cinder_web/live/library_adoption_live.ex:356
+#: lib/cinder_web/live/library_adoption_live.ex:376
 #, elixir-autogen, elixir-format
 msgid "No SxxEyy episode number was found."
 msgstr "Aucun numéro d’épisode SxxEyy n’a été trouvé."
 
-#: lib/cinder_web/live/library_adoption_live.ex:342
+#: lib/cinder_web/live/library_adoption_live.ex:362
 #, elixir-autogen, elixir-format
 msgid "No episode number"
 msgstr "Aucun numéro d’épisode"
 
-#: lib/cinder_web/live/library_adoption_live.ex:395
+#: lib/cinder_web/live/library_adoption_live.ex:415
 #, elixir-autogen, elixir-format
 msgid "No safe match was found."
 msgstr "Aucune correspondance sûre n’a été trouvée."
 
-#: lib/cinder_web/live/library_adoption_live.ex:527
+#: lib/cinder_web/live/library_adoption_live.ex:547
 #, elixir-autogen, elixir-format
 msgid "No unmanaged files found"
 msgstr "Aucun fichier non géré trouvé"
 
-#: lib/cinder_web/live/library_adoption_live.ex:359
+#: lib/cinder_web/live/library_adoption_live.ex:379
 #, elixir-autogen, elixir-format
 msgid "None of the parsed episodes exist in TMDB."
 msgstr "Aucun des épisodes analysés n’existe dans TMDB."
 
-#: lib/cinder_web/live/library_adoption_live.ex:520
+#: lib/cinder_web/live/library_adoption_live.ex:540
 #, elixir-autogen, elixir-format
 msgid "Ready to scan"
 msgstr "Prêt pour l’analyse"
 
-#: lib/cinder_web/live/library_adoption_live.ex:461
+#: lib/cinder_web/live/library_adoption_live.ex:481
 #, elixir-autogen, elixir-format
 msgid "Scan"
 msgstr "Analyser"
 
-#: lib/cinder_web/live/library_adoption_live.ex:445
+#: lib/cinder_web/live/library_adoption_live.ex:465
 #, elixir-autogen, elixir-format
 msgid "Scan your movie and TV roots, confirm matches, and bring existing files under Cinder's management."
 msgstr "Analysez les racines de vos films et séries, confirmez les correspondances et confiez les fichiers existants à Cinder."
 
-#: lib/cinder_web/live/library_adoption_live.ex:488
+#: lib/cinder_web/live/library_adoption_live.ex:508
 #, elixir-autogen, elixir-format
 msgid "Scanning library roots…"
 msgstr "Analyse des racines de la bibliothèque…"
 
-#: lib/cinder_web/live/library_adoption_live.ex:461
+#: lib/cinder_web/live/library_adoption_live.ex:481
 #, elixir-autogen, elixir-format
 msgid "Scanning…"
 msgstr "Analyse…"
@@ -4143,47 +4143,47 @@ msgstr "Analyse…"
 msgid "Select at least one match to adopt."
 msgstr "Sélectionnez au moins une correspondance à adopter."
 
-#: lib/cinder_web/live/library_adoption_live.ex:687
+#: lib/cinder_web/live/library_adoption_live.ex:707
 #, elixir-autogen, elixir-format
 msgid "TMDB %{id}"
 msgstr "TMDB %{id}"
 
-#: lib/cinder_web/live/library_adoption_live.ex:368
+#: lib/cinder_web/live/library_adoption_live.ex:388
 #, elixir-autogen, elixir-format
 msgid "TMDB episode details could not be loaded."
 msgstr "Les détails des épisodes TMDB n’ont pas pu être chargés."
 
-#: lib/cinder_web/live/library_adoption_live.ex:672
+#: lib/cinder_web/live/library_adoption_live.ex:692
 #, elixir-autogen, elixir-format
 msgid "TMDB match for %{title}"
 msgstr "Correspondance TMDB pour %{title}"
 
-#: lib/cinder_web/live/library_adoption_live.ex:692
+#: lib/cinder_web/live/library_adoption_live.ex:712
 #, elixir-autogen, elixir-format
 msgid "TMDB returned no candidates. This item will be skipped."
 msgstr "TMDB n’a renvoyé aucun candidat. Cet élément sera ignoré."
 
-#: lib/cinder_web/live/library_adoption_live.ex:365
+#: lib/cinder_web/live/library_adoption_live.ex:385
 #, elixir-autogen, elixir-format
 msgid "TMDB search failed."
 msgstr "La recherche TMDB a échoué."
 
-#: lib/cinder_web/live/library_adoption_live.ex:350
+#: lib/cinder_web/live/library_adoption_live.ex:370
 #, elixir-autogen, elixir-format
 msgid "The parsed episode does not exist in TMDB."
 msgstr "L’épisode analysé n’existe pas dans TMDB."
 
-#: lib/cinder_web/live/library_adoption_live.ex:705
+#: lib/cinder_web/live/library_adoption_live.ex:725
 #, elixir-autogen, elixir-format
 msgid "These files cannot be adopted safely and will not be changed."
 msgstr "Ces fichiers ne peuvent pas être adoptés de manière sûre et ne seront pas modifiés."
 
-#: lib/cinder_web/live/library_adoption_live.ex:362
+#: lib/cinder_web/live/library_adoption_live.ex:382
 #, elixir-autogen, elixir-format
 msgid "This library root could not be scanned."
 msgstr "Cette racine de bibliothèque n’a pas pu être analysée."
 
-#: lib/cinder_web/live/library_adoption_live.ex:353
+#: lib/cinder_web/live/library_adoption_live.ex:373
 #, elixir-autogen, elixir-format
 msgid "Several files claim this episode; resolve the duplicates on disk first."
 msgstr "Plusieurs fichiers revendiquent cet épisode ; résolvez d'abord les doublons sur le disque."
@@ -4314,37 +4314,37 @@ msgstr "Guerre & Politique"
 msgid "Your Cinder account is now active"
 msgstr "Votre compte Cinder est maintenant actif"
 
-#: lib/cinder_web/live/library_adoption_live.ex:633
+#: lib/cinder_web/live/library_adoption_live.ex:653
 #, elixir-autogen, elixir-format
 msgid "Assign %{file} to an episode"
 msgstr "Attribuer %{file} à un épisode"
 
-#: lib/cinder_web/live/library_adoption_live.ex:507
+#: lib/cinder_web/live/library_adoption_live.ex:527
 #, elixir-autogen, elixir-format
 msgid "Some files could not be adopted"
 msgstr "Certains fichiers n’ont pas pu être adoptés"
 
-#: lib/cinder_web/live/library_adoption_live.ex:413
+#: lib/cinder_web/live/library_adoption_live.ex:433
 #, elixir-autogen, elixir-format
 msgid "The catalog rejected this file."
 msgstr "Le catalogue a refusé ce fichier."
 
-#: lib/cinder_web/live/library_adoption_live.ex:408
+#: lib/cinder_web/live/library_adoption_live.ex:428
 #, elixir-autogen, elixir-format
 msgid "The episode already points to another file."
 msgstr "L’épisode pointe déjà vers un autre fichier."
 
-#: lib/cinder_web/live/library_adoption_live.ex:411
+#: lib/cinder_web/live/library_adoption_live.ex:431
 #, elixir-autogen, elixir-format
 msgid "The episode changed while adoption was running."
 msgstr "L’épisode a été modifié pendant l’adoption."
 
-#: lib/cinder_web/live/library_adoption_live.ex:405
+#: lib/cinder_web/live/library_adoption_live.ex:425
 #, elixir-autogen, elixir-format
 msgid "The episode has no primary file to attach this part to."
 msgstr "L’épisode n’a pas de fichier principal auquel rattacher cette partie."
 
-#: lib/cinder_web/live/library_adoption_live.ex:402
+#: lib/cinder_web/live/library_adoption_live.ex:422
 #, elixir-autogen, elixir-format
 msgid "Unknown file"
 msgstr "Fichier inconnu"
@@ -4441,53 +4441,53 @@ msgstr[1] ""
 "%{count} vidéos non appariées ont été conservées dans le dossier source du "
 "téléchargement pour examen."
 
-#: lib/cinder_web/live/library_adoption_live.ex:539
+#: lib/cinder_web/live/library_adoption_live.ex:559
 #, elixir-autogen, elixir-format
 msgid "%{source} migration preview"
 msgstr "Aperçu de la migration %{source}"
 
-#: lib/cinder_web/live/library_adoption_live.ex:819
+#: lib/cinder_web/live/library_adoption_live.ex:839
 #, elixir-autogen, elixir-format
 msgid "Adopt the authoritative primary, save both provider coordinates, and leave the extra file unmanaged."
 msgstr "Adopter le fichier principal faisant autorité, enregistrer les deux coordonnées du fournisseur et laisser le fichier supplémentaire non géré."
 
-#: lib/cinder_web/live/library_adoption_live.ex:835
+#: lib/cinder_web/live/library_adoption_live.ex:855
 #, elixir-autogen, elixir-format
 msgid "Adopt the extra file as an explicit part of the primary episode."
 msgstr "Adopter le fichier supplémentaire comme partie explicite de l’épisode principal."
 
-#: lib/cinder_web/live/library_adoption_live.ex:874
+#: lib/cinder_web/live/library_adoption_live.ex:894
 #, elixir-autogen, elixir-format
 msgid "Already managed"
 msgstr "Déjà géré"
 
-#: lib/cinder_web/live/library_adoption_live.ex:847
+#: lib/cinder_web/live/library_adoption_live.ex:867
 #, elixir-autogen, elixir-format
 msgid "Blocked"
 msgstr "Bloqué"
 
-#: lib/cinder_web/live/library_adoption_live.ex:387
+#: lib/cinder_web/live/library_adoption_live.ex:407
 #, elixir-autogen, elixir-format
 msgid "Cinder could not prove which file is the authoritative primary."
 msgstr "Cinder n’a pas pu déterminer avec certitude quel fichier est le principal faisant autorité."
 
-#: lib/cinder_web/live/library_adoption_live.ex:802
+#: lib/cinder_web/live/library_adoption_live.ex:822
 #, elixir-autogen, elixir-format
 msgid "Extra: %{file}"
 msgstr "Supplémentaire : %{file}"
 
 #: lib/cinder_web/live/activity_live.ex:595
-#: lib/cinder_web/live/library_adoption_live.ex:817
+#: lib/cinder_web/live/library_adoption_live.ex:837
 #, elixir-autogen, elixir-format
 msgid "Fold"
 msgstr "Fusionner"
 
-#: lib/cinder_web/live/library_adoption_live.ex:487
+#: lib/cinder_web/live/library_adoption_live.ex:507
 #, elixir-autogen, elixir-format
 msgid "Loading migration snapshot…"
 msgstr "Chargement de l’instantané de migration…"
 
-#: lib/cinder_web/live/library_adoption_live.ex:807
+#: lib/cinder_web/live/library_adoption_live.ex:827
 #, elixir-autogen, elixir-format
 msgid "Migration choice for %{title}"
 msgstr "Choix de migration pour %{title}"
@@ -4502,43 +4502,43 @@ msgstr "Échec de l’analyse de la source de migration. Vérifiez ses paramètr
 msgid "Migration sources"
 msgstr "Sources de migration"
 
-#: lib/cinder_web/live/library_adoption_live.ex:779
+#: lib/cinder_web/live/library_adoption_live.ex:799
 #, elixir-autogen, elixir-format
 msgid "Needs decision"
 msgstr "Décision requise"
 
-#: lib/cinder_web/live/library_adoption_live.ex:431
+#: lib/cinder_web/live/library_adoption_live.ex:451
 #, elixir-autogen, elixir-format
 msgid "No file"
 msgstr "Aucun fichier"
 
-#: lib/cinder_web/live/library_adoption_live.ex:833
+#: lib/cinder_web/live/library_adoption_live.ex:853
 #, elixir-autogen, elixir-format
 msgid "Part"
 msgstr "Partie"
 
-#: lib/cinder_web/live/library_adoption_live.ex:471
+#: lib/cinder_web/live/library_adoption_live.ex:491
 #, elixir-autogen, elixir-format
 msgid "Preview Radarr"
 msgstr "Prévisualiser Radarr"
 
-#: lib/cinder_web/live/library_adoption_live.ex:481
+#: lib/cinder_web/live/library_adoption_live.ex:501
 #, elixir-autogen, elixir-format
 msgid "Preview Sonarr"
 msgstr "Prévisualiser Sonarr"
 
-#: lib/cinder_web/live/library_adoption_live.ex:796
+#: lib/cinder_web/live/library_adoption_live.ex:816
 #, elixir-autogen, elixir-format
 msgid "Primary: %{file}"
 msgstr "Principal : %{file}"
 
-#: lib/cinder_web/live/library_adoption_live.ex:747
+#: lib/cinder_web/live/library_adoption_live.ex:767
 #, elixir-autogen, elixir-format
 msgid "Provider identities and file paths have one safe catalog target."
 msgstr "Les identités du fournisseur et les chemins de fichiers ont une seule cible sûre dans le catalogue."
 
 #: lib/cinder_web/components/settings_components.ex:393
-#: lib/cinder_web/live/library_adoption_live.ex:415
+#: lib/cinder_web/live/library_adoption_live.ex:435
 #, elixir-autogen, elixir-format
 msgid "Radarr"
 msgstr "Radarr"
@@ -4563,23 +4563,23 @@ msgstr "Préfixe du chemin local Radarr"
 msgid "Radarr remote path prefix"
 msgstr "Préfixe du chemin distant Radarr"
 
-#: lib/cinder_web/live/library_adoption_live.ex:744
+#: lib/cinder_web/live/library_adoption_live.ex:764
 #, elixir-autogen, elixir-format
 msgid "Ready"
 msgstr "Prêt"
 
-#: lib/cinder_web/live/library_adoption_live.ex:542
+#: lib/cinder_web/live/library_adoption_live.ex:562
 #, elixir-autogen, elixir-format
 msgid "Ready: %{ready} · Needs decision: %{decision} · Blocked: %{blocked} · Already managed: %{managed}"
 msgstr "Prêts : %{ready} · Décision requise : %{decision} · Bloqués : %{blocked} · Déjà gérés : %{managed}"
 
-#: lib/cinder_web/live/library_adoption_live.ex:493
+#: lib/cinder_web/live/library_adoption_live.ex:513
 #, elixir-autogen, elixir-format
 msgid "Scanning and migration previews are read-only. Nothing changes until you confirm adoption."
 msgstr "L’analyse et les aperçus de migration sont en lecture seule. Rien ne change avant la confirmation de l’adoption."
 
 #: lib/cinder_web/components/settings_components.ex:393
-#: lib/cinder_web/live/library_adoption_live.ex:416
+#: lib/cinder_web/live/library_adoption_live.ex:436
 #, elixir-autogen, elixir-format
 msgid "Sonarr"
 msgstr "Sonarr"
@@ -4604,67 +4604,67 @@ msgstr "Préfixe du chemin local Sonarr"
 msgid "Sonarr remote path prefix"
 msgstr "Préfixe du chemin distant Sonarr"
 
-#: lib/cinder_web/live/library_adoption_live.ex:782
+#: lib/cinder_web/live/library_adoption_live.ex:802
 #, elixir-autogen, elixir-format
 msgid "Sonarr split several TVDB episodes into files that map to one TMDB episode. Choose how to treat each extra file."
 msgstr "Sonarr a réparti plusieurs épisodes TVDB dans des fichiers correspondant à un seul épisode TMDB. Choisissez comment traiter chaque fichier supplémentaire."
 
-#: lib/cinder_web/live/library_adoption_live.ex:384
+#: lib/cinder_web/live/library_adoption_live.ex:404
 #, elixir-autogen, elixir-format
 msgid "The episode identity belongs to a different series."
 msgstr "L’identité de l’épisode appartient à une autre série."
 
-#: lib/cinder_web/live/library_adoption_live.ex:393
+#: lib/cinder_web/live/library_adoption_live.ex:413
 #, elixir-autogen, elixir-format
 msgid "The matching episode is missing from Cinder's catalog."
 msgstr "L’épisode correspondant est absent du catalogue de Cinder."
 
-#: lib/cinder_web/live/library_adoption_live.ex:378
+#: lib/cinder_web/live/library_adoption_live.ex:398
 #, elixir-autogen, elixir-format
 msgid "The provider identity returned no TMDB match."
 msgstr "L’identité du fournisseur n’a renvoyé aucune correspondance TMDB."
 
-#: lib/cinder_web/live/library_adoption_live.ex:381
+#: lib/cinder_web/live/library_adoption_live.ex:401
 #, elixir-autogen, elixir-format
 msgid "The provider identity returned several TMDB matches."
 msgstr "L’identité du fournisseur a renvoyé plusieurs correspondances TMDB."
 
-#: lib/cinder_web/live/library_adoption_live.ex:370
+#: lib/cinder_web/live/library_adoption_live.ex:390
 #, elixir-autogen, elixir-format
 msgid "The source did not provide a usable file path."
 msgstr "La source n’a pas fourni de chemin de fichier utilisable."
 
-#: lib/cinder_web/live/library_adoption_live.ex:371
+#: lib/cinder_web/live/library_adoption_live.ex:391
 #, elixir-autogen, elixir-format
 msgid "The source file is not linked to a title."
 msgstr "Le fichier source n’est lié à aucun titre."
 
-#: lib/cinder_web/live/library_adoption_live.ex:377
+#: lib/cinder_web/live/library_adoption_live.ex:397
 #, elixir-autogen, elixir-format
 msgid "The source series could not be resolved."
 msgstr "La série source n’a pas pu être identifiée."
 
-#: lib/cinder_web/live/library_adoption_live.ex:850
+#: lib/cinder_web/live/library_adoption_live.ex:870
 #, elixir-autogen, elixir-format
 msgid "These source records cannot be adopted safely and will not be changed."
 msgstr "Ces enregistrements source ne peuvent pas être adoptés en toute sécurité et ne seront pas modifiés."
 
-#: lib/cinder_web/live/library_adoption_live.ex:390
+#: lib/cinder_web/live/library_adoption_live.ex:410
 #, elixir-autogen, elixir-format
 msgid "This file split is too complex to adopt safely."
 msgstr "Cette répartition de fichiers est trop complexe pour être adoptée en toute sécurité."
 
-#: lib/cinder_web/live/library_adoption_live.ex:372
+#: lib/cinder_web/live/library_adoption_live.ex:392
 #, elixir-autogen, elixir-format
 msgid "This path is already managed by another title."
 msgstr "Ce chemin est déjà géré par un autre titre."
 
-#: lib/cinder_web/live/library_adoption_live.ex:375
+#: lib/cinder_web/live/library_adoption_live.ex:395
 #, elixir-autogen, elixir-format
 msgid "This title already manages a different file."
 msgstr "Ce titre gère déjà un autre fichier."
 
-#: lib/cinder_web/live/library_adoption_live.ex:559
+#: lib/cinder_web/live/library_adoption_live.ex:579
 #, elixir-autogen, elixir-format
 msgid "Ready: %{ready}; Needs decision: %{decision}; Blocked: %{blocked}; Already managed: %{managed}"
 msgstr "Prêts : %{ready} ; Décision requise : %{decision} ; Bloqués : %{blocked} ; Déjà gérés : %{managed}"

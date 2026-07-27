@@ -109,7 +109,20 @@ defmodule Cinder.Catalog.Identity do
               c.namespace == ^namespace and c.scheme == ^scheme and c.precedence != :manual
       )
 
-      Enum.map(coordinates, fn coordinate ->
+      manual_values =
+        Repo.all(
+          from c in EpisodeCoordinate,
+            where:
+              c.series_id == ^series.id and c.source == ^source and
+                c.namespace == ^namespace and c.scheme == ^scheme and c.precedence == :manual,
+            select: c.canonical_value
+        )
+        |> MapSet.new()
+
+      # Never guess over an operator correction: the surviving manual identity wins.
+      coordinates
+      |> Enum.reject(&MapSet.member?(manual_values, Map.fetch!(&1, :canonical_value)))
+      |> Enum.map(fn coordinate ->
         {episode_ids, attrs} = Map.pop!(coordinate, :episode_ids)
 
         attrs =

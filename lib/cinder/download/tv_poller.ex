@@ -217,15 +217,6 @@ defmodule Cinder.Download.TvPoller do
 
   defp import_standard_grab(grab) do
     case Library.stage_episodes(grab.content_path, grab.episodes) do
-      {:ok, [], []} ->
-        # Deterministic: nothing in content_path mapped to a grab episode. Re-importing can't
-        # help, so park — the episodes re-search (bounded), rather than re-importing forever.
-        Logger.warning(
-          "tv grab #{grab.id} imported nothing from #{HTTPPolicy.sanitize_log(grab.content_path)}; parking"
-        )
-
-        park(grab, :no_files_matched)
-
       {:ok, staged, unmatched} ->
         finalize_standard_staging(grab, staged, unmatched)
 
@@ -244,6 +235,16 @@ defmodule Cinder.Download.TvPoller do
       {:error, reason} ->
         retry_or_park(grab, reason)
     end
+  end
+
+  defp finalize_standard_staging(grab, [], _unmatched) do
+    # Deterministic: nothing in content_path mapped to a grab episode. Re-importing can't
+    # help, so park — the episodes re-search (bounded), rather than re-importing forever.
+    Logger.warning(
+      "tv grab #{grab.id} imported nothing from #{HTTPPolicy.sanitize_log(grab.content_path)}; parking"
+    )
+
+    park(grab, :no_files_matched)
   end
 
   defp finalize_standard_staging(grab, staged, unmatched) do

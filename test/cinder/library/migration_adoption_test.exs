@@ -4,8 +4,10 @@ defmodule Cinder.Library.MigrationAdoptionTest do
   import Mox
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Identity, Movie}
+  alias Cinder.Catalog.Adoption, as: CatalogAdoption
+  alias Cinder.Catalog.{GrabFile, Identity, Movie}
   alias Cinder.Library.{Adoption, RadarrMigrationSourceMock, SonarrMigrationSourceMock}
+  alias Cinder.Repo
 
   @fixture_path "test/support/fixtures/migration-provider-identity-v1.json"
   @cases @fixture_path |> File.read!() |> Jason.decode!() |> Map.fetch!("cases")
@@ -76,6 +78,103 @@ defmodule Cinder.Library.MigrationAdoptionTest do
                  {"aired", "S04E16"}
                ])
     end
+  end
+
+  test "a Fold coordinate survives re-running the Sonarr migration adoption" do
+    snapshot = fixture_snapshot("n_to_one")
+    stub(SonarrMigrationSourceMock, :snapshot, fn -> {:ok, snapshot} end)
+    stub_n_to_one_tmdb()
+
+    assert {:ok, preview} = Adoption.preview_migration(:sonarr)
+    assert [%{key: key}] = preview.candidates
+
+    assert %{adopted: 1, skipped: 0, failures: []} =
+             Adoption.adopt_migration(:sonarr, [%{key: key, choice: :fold}])
+
+    series = Catalog.get_series_by_tmdb_id(1100)
+    [season] = Catalog.get_series_with_tree(series.id).seasons
+    [episode] = season.episodes
+
+    assert {:ok, grab} =
+             Catalog.create_grab(
+               "fold-before-remigrate",
+               :usenet,
+               [episode.id],
+               nil,
+               allow_available: true
+             )
+
+    assert {:ok, grab} = Catalog.mark_grab_downloaded(grab, "/sonarr/fold-pack")
+
+    file =
+      Repo.insert!(%GrabFile{
+        grab_id: grab.id,
+        relative_path: "Show.S04E16.mkv",
+        size: 5_000,
+        device: 1,
+        inode: 2,
+        source: "tvdb",
+        scheme: "aired",
+        namespace: "200",
+        canonical_value: "S04E16"
+      })
+
+    assert {:ok, :decided, _file} =
+             Catalog.decide_grab_file(file, Repo.reload!(episode), :fold, nil)
+
+    assert {:ok, :closed, _grab} = Catalog.close_grab(grab)
+
+    manual =
+      series
+      |> Identity.list_coordinates()
+      |> Enum.find(&(&1.scheme == "aired" and &1.canonical_value == "S04E16"))
+
+    assert manual.precedence == :manual
+    manual_id = manual.id
+    episode_id = episode.id
+
+    assert {:ok, [_action]} =
+             CatalogAdoption.adopt_episode_files(
+               [
+                 %{
+                   episode: Repo.reload!(episode),
+                   episode_code: "S04E15",
+                   path: "/sonarr/Show S04E15.mkv",
+                   type: :primary
+                 }
+               ],
+               [
+                 %{
+                   series: series,
+                   source: "tvdb",
+                   namespace: "200",
+                   scheme: "aired",
+                   coordinates: [
+                     %{
+                       scheme: "aired",
+                       canonical_value: "S04E15",
+                       precedence: :inferred,
+                       episode_ids: [episode.id]
+                     },
+                     %{
+                       scheme: "aired",
+                       canonical_value: "S04E16",
+                       precedence: :inferred,
+                       episode_ids: [episode.id]
+                     }
+                   ]
+                 }
+               ]
+             )
+
+    assert %{
+             id: ^manual_id,
+             precedence: :manual,
+             memberships: [%{episode_id: ^episode_id}]
+           } =
+             series
+             |> Identity.list_coordinates()
+             |> Enum.find(&(&1.scheme == "aired" and &1.canonical_value == "S04E16"))
   end
 
   test "zero-result and wrong-series fixture identities are blocked" do
