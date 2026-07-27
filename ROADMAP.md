@@ -14,6 +14,12 @@ multi-user are deliberately out of scope until the slice is solid (see *Parked*,
 > closing the provider-numbering gap with TMDB's own episode groups rather than a second
 > metadata provider. Phases 0–5 and Part II remain the build record.
 
+> **Reconciliation (2026-07-27):** `v1.0.0` was in fact tagged **2026-07-03** (`mix.exs` is at
+> `1.0.0`, and README's status reads "v1.0 — … live, and released"), so the M8 "live sign-offs +
+> the v1.0.0 tag remain" deferral below is **closed** — the release shipped. The homelab live
+> sign-offs are operator-run and recorded by the release itself; this file no longer carries them
+> as open. History below is left intact; this note supersedes the stale "remain" wording.
+
 ## How to run this with Claude Code
 
 - Do **one phase per session**. `/clear` between phases so context stays clean.
@@ -696,6 +702,11 @@ root is v1.0" comment; `CHANGELOG [Unreleased]` marks the config change **BREAKI
 version intentionally **not** bumped — the `v1.0.0` tag is the final live-sign-off step. `mix test`
 green (510). **Deferred (carry the Done-when):** live qBittorrent torrent sign-off, `/status` badge
 check, live TV season-pack smoke test, and cutting `v1.0.0`.
+
+**[reconciled 2026-07-27]** These deferrals are **closed**: `v1.0.0` was tagged **2026-07-03**
+(commit `be4700e`, `chore(release): v1.0.0`; `mix.exs` bumped to `1.0.0`, README status "v1.0 — …
+released"), so the release and its operator-run homelab live sign-offs shipped. The narrative above
+is the as-of-2026-06-23 build record and is left unedited; this note supersedes its "remain" wording.
 
 ## Release & dogfood checkpoints
 

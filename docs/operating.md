@@ -464,6 +464,26 @@ wrong library, and the first-run wizard won't finish until both roots validate w
 > client's completed dir for instant hardlinks; a root on a different filesystem still works via the
 > automatic copy fallback (see "Hardlink, with an automatic cross-filesystem copy fallback").
 
+## Adopting an existing library
+
+If you already have a Radarr/Sonarr/Plex-shaped library, **`/library` → "Adopt existing library"**
+(`/library/adopt`, admin-only) pulls those files into Cinder's catalog without re-downloading. It
+**scans the configured movie and TV roots**, matches each unmanaged video against TMDB, and files
+your confirmed matches — reading only the filesystem, TMDB, and catalog until you confirm.
+
+- **Nothing is auto-guessed.** Candidates land in three buckets: **auto-matched** (an unambiguous
+  hit — review, then adopt), **ambiguous** (pick the right TMDB title before adopting), and
+  **unmatched** (no confident match — left alone). A Sonarr/Radarr provider tag in the folder name
+  (`Show Name {tvdb-1234}`, `Movie (2019) {tmdb-56789}`, or `{imdb-tt0000000}`) is resolved directly;
+  otherwise adoption searches by title + year.
+- **Adoption records existing files in place** — it does not move, rename, or re-hardlink them, so
+  they must already sit under the movie/TV roots in the usual `Title (Year)/…` layout. Confirmed
+  paths are written through the same `Catalog` transition choke-points as the live pipeline.
+- **TVDB-split part files** (a season/episode file that TVDB numbers but TMDB folds into one episode —
+  e.g. a supersized episode or a two-part finale) surface as an **additional part** on the combined
+  TMDB episode rather than a new row, and are adopted only when you confirm them (see the 2026-07-27
+  addendum in `docs/specs/2026-07-22-159-tvdb-tmdb-cardinality-decision.md`).
+
 ## Deleting media
 
 The delete dialogs for movies and TV shows (`/library`) and for individual seasons and episodes
