@@ -22,6 +22,7 @@ defmodule CinderWeb.SeriesDetailComponents do
       current_scope={@current_scope}
       current_path={@current_path}
       pending_count={@pending_count}
+      holds_count={@holds_count}
     >
       <%!-- Back to the tab this series lives on, not the default Movies tab. --%>
       <.link

@@ -458,6 +458,7 @@ defmodule CinderWeb.LibraryAdoptionLive do
       current_scope={@current_scope}
       current_path={@current_path}
       pending_count={@pending_count}
+      holds_count={@holds_count}
     >
       <.header>
         {gettext("Adopt existing library")}

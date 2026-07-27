@@ -603,6 +603,21 @@ defmodule Cinder.Catalog do
   def retry_movie(%Movie{}), do: {:error, :not_retryable}
 
   @doc """
+  Total items needing an operator action, for the admin Activity nav badge: parked/held movies
+  that show a Retry (`#{inspect(@retryable)}`) plus grabs in a mapping/verification/residual hold
+  (`Grabs.count_grab_holds/0`). Defined to match exactly what `CinderWeb.ActivityLive` renders
+  actions for, so the badge and the page agree; `0` means "no badge".
+
+  `@retryable` is the movie hold set on purpose: a movie verification hold parks at
+  `:import_failed` (with `verification_hold_origin`), already in this set, and `anime_hold`
+  movies (`:requested`/`:searching` + a hold reason) show no action, so they are excluded.
+  """
+  def count_operator_holds do
+    movie_holds = Repo.aggregate(from(m in Movie, where: m.status in @retryable), :count)
+    movie_holds + Grabs.count_grab_holds()
+  end
+
+  @doc """
   Reaps a stalled `:downloading` movie (the stall reaper): one transaction guard-resets it to
   `:requested` (clearing the dead download fields, bumping `search_attempts` for backoff) and fences
   the client download for removal; after commit the client job + reserved intent are torn down, the
