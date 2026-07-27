@@ -7,6 +7,39 @@ All notable changes to Cinder are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **TV "Find a better match" for imported episodes.** Manual search now works on fully or
+  partially imported seasons; grabbing a release for episodes that already have files creates an
+  upgrade grab and the import atomically swaps the old file(s) for the verified new one — a
+  failed upgrade leaves the old file and availability untouched. Brings TV to parity with the
+  movie upgrade path.
+- **"Request all seasons."** One click fans out a request per remaining season through the
+  normal quota/approval path, reporting how many were submitted if the quota runs out mid-way.
+- **Denial notifications + "Request again."** Denying a request now notifies the requester
+  (email in their locale, Discord embed, log), and a denied row on My Requests offers a
+  one-click re-request. The admin nav shows a live pending-request count badge.
+- **Metrics in production.** LiveDashboard is mounted behind the admin gate (was dev-only), so
+  the poller/transition/HTTP telemetry finally has a viewer; "Metrics" appears in the admin nav.
+- **Minimum-free-disk guard.** Pollers skip a grab (without burning a search attempt) when the
+  release wouldn't fit with a safety margin, and imports hold below a floor — a full disk no
+  longer churns failed downloads. The first-run wizard now signposts the optional
+  notifications setup so alerts aren't silently off.
+
+### Fixed
+- **Adoption is atomic and monitoring-preserving.** An adopted movie commits directly at
+  available (no window a poller could race into a duplicate download), per-episode write
+  failures are surfaced instead of silently counted as skips, and adopting files for a series
+  you already monitor no longer resets its monitoring.
+- **Part-file deletion is failure-consistent** — successfully unlinked paths reach the database
+  even when a later path fails, the deletion audit stays truthful on partial failure, and size
+  displays include part files.
+- **Stall detection can't be strung along.** The 24 h downloading cap now keys on a dedicated
+  progress clock that only genuine byte progress advances — speed/ETA jitter or transient client
+  errors no longer postpone the reap. Upgrade grabs get the same protection.
+- **`/healthz` no longer reports healthy forever when a poller wedges before its first tick.**
+- **Registration throttling works behind cloudflared** — the limiter now keys on the resolved
+  client IP instead of the tunnel's transport peer, so one client can't exhaust the shared
+  bucket.
+- Boot-migration failures log the migration and error loudly before the crash propagates.
 - **TV parity on the landing page.** Popular TV and Top Rated TV rails join the movie rails on
   `/`, and the genre browser gains a Movies/TV toggle backed by TMDB's distinct TV genre list —
   same cards, badges, season-picker flow, and crash-isolated fetches as the existing rails.

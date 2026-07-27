@@ -152,6 +152,12 @@ defmodule CinderWeb.Layouts do
                   current_path={@current_path}
                   exact
                 />
+                <.nav_item
+                  navigate={~p"/admin/dashboard"}
+                  label={gettext("Metrics")}
+                  icon="hero-chart-bar"
+                  current_path={@current_path}
+                />
               <% end %>
             </ul>
             <div class="mt-auto flex flex-col gap-3 border-t border-base-300/60 pt-3">
