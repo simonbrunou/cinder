@@ -594,9 +594,8 @@ defmodule Cinder.Acquisition do
   # the title, nothing more. The run-anywhere match `filter_title/2` uses is far too loose here —
   # it accepts "Dune.Drifter.2021" AND "Sand.Dune.2021" for "Dune (2021)", and the scorer would
   # then pick whichever is bigger. With no IMDb id to fall back on, over-strictness costs an honest
-  # :no_match while looseness imports the wrong film. A movie with no year (rare — TMDB nearly
-  # always has one) demands the same shape against ANY year rather than a known one; anchoring only
-  # the start would take "Dune.Drifter.1080p" for "Dune".
+  # :no_match while looseness imports the wrong film — and the manual panel still lists what this
+  # drops. A movie with no year of its own gets the same shape, anchored per `anchor_indexes/2`.
   defp filter_movie_title(candidates, title, year) do
     case title_needle(title) do
       "" -> []
