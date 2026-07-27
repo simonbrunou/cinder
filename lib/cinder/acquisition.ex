@@ -68,7 +68,7 @@ defmodule Cinder.Acquisition do
   """
   def best_release_by_title(title, year, opts \\ []) do
     with {:ok, releases} <- title_search(title, year) do
-      case movie_pool(releases, opts) do
+      case releases |> filter_movie_title(title, year) |> movie_pool(opts) do
         :no_language_match -> :no_language_match
         pool -> Scorer.select(pool, opts)
       end
@@ -576,17 +576,16 @@ defmodule Cinder.Acquisition do
     end
   end
 
-  # The free-text movie search an absent IMDb id degrades to. `{ImdbId:...}` pinned the identity
-  # for free; without it this guard is all there is.
+  # The free-text movie search an absent IMDb id degrades to. Unguarded on purpose: automatic
+  # selection filters below, but the manual panel must keep listing everything (see
+  # `list_releases/2`) — the guard is deliberately strict, so a title convention it fails closed on
+  # is exactly when the operator needs to see and override the rows.
   defp title_search(title, year) do
     query = [title, year] |> Enum.reject(&is_nil/1) |> Enum.join(" ")
 
     case indexer().search_movie_query(query, []) do
-      {:ok, raw} ->
-        {:ok, raw |> Enum.map(&Release.new/1) |> filter_movie_title(title, year)}
-
-      {:error, _reason} = error ->
-        error
+      {:ok, raw} -> {:ok, Enum.map(raw, &Release.new/1)}
+      {:error, _reason} = error -> error
     end
   end
 
@@ -605,20 +604,29 @@ defmodule Cinder.Acquisition do
     end
   end
 
-  # Every year token is tried, not just the first: "Blade.Runner.2049.2017" is the 2017 film, and
-  # its title happens to end in a year too.
   defp movie_title_match?(release_title, needle, year) do
     tokens = untagged_tokens(release_title)
 
     tokens
-    |> Enum.with_index()
-    |> Enum.any?(fn {token, index} ->
-      year_token?(token, year) and tokens |> Enum.take(index) |> Enum.join() == needle
-    end)
+    |> anchor_indexes(year)
+    |> Enum.any?(&(tokens |> Enum.take(&1) |> Enum.join() == needle))
   end
 
-  defp year_token?(token, nil), do: Regex.match?(~r/^(?:19|20)\d{2}$/, token)
-  defp year_token?(token, year), do: token == Integer.to_string(year)
+  # Where the release year may sit. With a known year every occurrence is a candidate —
+  # "Blade.Runner.2049.2017" is the 2017 film whose title also ends in a year. With no year to
+  # match, only the LAST year-like token can be it: trying them all would take that same release
+  # for plain "Blade Runner" (anchoring on the 2049 in its title).
+  defp anchor_indexes(tokens, nil) do
+    case tokens |> Enum.reverse() |> Enum.find_index(&Regex.match?(~r/^(?:19|20)\d{2}$/, &1)) do
+      nil -> []
+      from_end -> [length(tokens) - from_end - 1]
+    end
+  end
+
+  defp anchor_indexes(tokens, year) do
+    target = Integer.to_string(year)
+    for {^target, index} <- Enum.with_index(tokens), do: index
+  end
 
   # Tag-prefixed names ("[TGx] Dune.2021...") are common and would otherwise fail the start anchor.
   defp untagged_tokens(release_title),

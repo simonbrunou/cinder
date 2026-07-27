@@ -2173,11 +2173,20 @@ defmodule Cinder.Download.PollerTest do
       905 -> {:error, {:tmdb_status, 503}}
     end)
 
-    stub(Cinder.Acquisition.IndexerMock, :search_movie_query, fn "M 2010", _opts -> {:ok, []} end)
+    # The park is only legitimate BECAUSE a search ran — assert the query itself, or this test
+    # passes just as well against the old short-circuit (this file has no verify_on_exit!, so an
+    # uninvoked expect() would go unnoticed).
+    test_pid = self()
+
+    stub(Cinder.Acquisition.IndexerMock, :search_movie_query, fn query, _opts ->
+      send(test_pid, {:searched, query})
+      {:ok, []}
+    end)
 
     start_supervised!({Poller, interval: 60_000, search_retry_after: 0})
 
     assert :ok = Poller.poll()
+    assert_received {:searched, "M 2010"}
     assert %Movie{status: :no_match} = Repo.get!(Movie, miss.id)
     assert %Movie{status: :requested, search_attempts: 1} = Repo.get!(Movie, flaky.id)
   end

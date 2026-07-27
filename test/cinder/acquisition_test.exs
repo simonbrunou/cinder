@@ -433,7 +433,7 @@ defmodule Cinder.AcquisitionTest do
       assert Acquisition.best_release_by_title("Dune", 2021) == :no_match
     end
 
-    test "with no known year, still anchors the title against any year token" do
+    test "with no known year, anchors on the LAST year token only" do
       expect(Cinder.Acquisition.IndexerMock, :search_movie_query, fn "Dune", [] ->
         {:ok,
          [
@@ -445,6 +445,17 @@ defmodule Cinder.AcquisitionTest do
 
       assert {:ok, %Release{title: "Dune.1984.1080p.BluRay.x264-GRP"}} =
                Acquisition.best_release_by_title("Dune", nil)
+    end
+
+    # Anchoring on *any* year token would read the 2049 in this release's title as its year and
+    # hand the sequel over for plain "Blade Runner".
+    test "with no known year, a title ending in a year is not a match for its prefix" do
+      expect(Cinder.Acquisition.IndexerMock, :search_movie_query, 2, fn _query, [] ->
+        {:ok, [raw(title: "Blade.Runner.2049.2017.1080p.BluRay.x264-GRP")]}
+      end)
+
+      assert Acquisition.best_release_by_title("Blade Runner", nil) == :no_match
+      assert {:ok, %Release{}} = Acquisition.best_release_by_title("Blade Runner 2049", nil)
     end
 
     test "accepts a title that itself ends in a year" do
@@ -467,6 +478,20 @@ defmodule Cinder.AcquisitionTest do
       expect(Cinder.Acquisition.IndexerMock, :search_movie_query, fn _q, _o -> {:error, :down} end)
 
       assert Acquisition.best_release_by_title("Dune", 2021) == {:error, :down}
+    end
+
+    # The guard is strict enough to fail closed on real conventions it can't parse (German scene
+    # puts the language before the year). Fine for automatic selection — but the manual panel is
+    # the operator's override, so it must keep listing them, exactly as `list_releases/2` does.
+    test "list_releases_by_title/3 still lists a release the guard rejects" do
+      expect(Cinder.Acquisition.IndexerMock, :search_movie_query, 2, fn _query, [] ->
+        {:ok, [raw(title: "Dune.German.2021.AC3.BDRiP.x264-GRP")]}
+      end)
+
+      assert :no_match = Acquisition.best_release_by_title("Dune", 2021, max_size: 20 * @gb)
+
+      assert {:ok, [{%Release{title: "Dune.German.2021.AC3.BDRiP.x264-GRP"}, _verdict}]} =
+               Acquisition.list_releases_by_title("Dune", 2021, max_size: 20 * @gb)
     end
   end
 
