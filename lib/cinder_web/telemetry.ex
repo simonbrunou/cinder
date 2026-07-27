@@ -24,12 +24,13 @@ defmodule CinderWeb.Telemetry do
   end
 
   @doc """
-  Emits `[:cinder, :disk]` for every configured library root (`Cinder.Disk.configured_roots/0`).
-  A root that can't be read (unmounted, permission denied) is skipped rather than crashing the
-  poller — the next tick tries again.
+  Emits `[:cinder, :disk]` for every monitored root (`Cinder.Disk.monitored_roots/0`: the library
+  roots plus the `:database` volume holding `cinder.db` + its `-wal`). A root that can't be read
+  (unmounted, permission denied) is skipped rather than crashing the poller — the next tick tries
+  again.
   """
   def dispatch_disk_measurements do
-    for {kind, path} <- Cinder.Disk.configured_roots() do
+    for {kind, path} <- Cinder.Disk.monitored_roots() do
       case Cinder.Disk.stats(path) do
         {:ok, stats} ->
           :telemetry.execute([:cinder, :disk], stats, %{root: kind, path: path})
@@ -112,16 +113,17 @@ defmodule CinderWeb.Telemetry do
         description: "Outbound HTTP via Cinder.HTTPPolicy.bounded_request/2,3"
       ),
 
-      # Disk gauge — the last-known free/total bytes per configured library root.
+      # Disk gauge — the last-known free/total bytes per monitored root (library roots + the
+      # `:database` volume).
       last_value("cinder.disk.free_bytes",
         tags: [:root],
         unit: :byte,
-        description: "Free bytes on a configured library root"
+        description: "Free bytes on a monitored root"
       ),
       last_value("cinder.disk.total_bytes",
         tags: [:root],
         unit: :byte,
-        description: "Total bytes on a configured library root"
+        description: "Total bytes on a monitored root"
       ),
 
       # VM Metrics

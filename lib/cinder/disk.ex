@@ -109,14 +109,61 @@ defmodule Cinder.Disk do
   end
 
   @doc """
-  Disk stats for every configured library root. One row per root:
-  `%{kind: atom(), path: String.t(), status: {:ok, stats()} | {:error, term()}}`.
+  Every filesystem the app watches for free space, as `{kind, path}` pairs: the configured
+  library roots (`configured_roots/0`) plus the volume holding the SQLite database (`:database`,
+  from `db_root/0`). The database volume is what fills silently — a full DB volume raises
+  SQLITE_FULL on every write while the pollers' `isolate` swallows it — so it is monitored
+  alongside the library roots the guards already watch.
+  """
+  @spec monitored_roots() :: [{atom(), String.t()}]
+  def monitored_roots do
+    case db_root() do
+      nil -> configured_roots()
+      path -> configured_roots() ++ [{:database, path}]
+    end
+  end
+
+  @doc """
+  The directory holding the SQLite database file (and its `-wal`/`-shm` siblings), derived from
+  the resolved Repo config exactly as the Repo opened it — `DATABASE_PATH` in prod, the dev/test
+  fallback otherwise. `nil` when no database path is configured.
+  """
+  @spec db_root() :: String.t() | nil
+  def db_root do
+    case Application.get_env(:cinder, Cinder.Repo)[:database] do
+      path when is_binary(path) and path != "" -> Path.dirname(path)
+      _ -> nil
+    end
+  end
+
+  @doc """
+  Free bytes on the database volume, read through the `:disk_prober` seam (so a fast health probe
+  never shells out under test). `{:error, reason}` when the path is unknown or unreadable — a
+  caller must fail OPEN on error, never treating a probe glitch as a low-space verdict.
+  """
+  @spec db_free_bytes() :: {:ok, non_neg_integer()} | {:error, term()}
+  def db_free_bytes do
+    case db_root() do
+      nil ->
+        {:error, :no_database_path}
+
+      root ->
+        case prober().stats(root) do
+          {:ok, %{free_bytes: free}} -> {:ok, free}
+          {:error, _reason} = error -> error
+        end
+    end
+  end
+
+  @doc """
+  Disk stats for every monitored root (`monitored_roots/0`: library roots + the database volume).
+  One row per root: `%{kind: atom(), path: String.t(), status: {:ok, stats()} | {:error, term()}}`.
   """
   @spec check_all() :: [
           %{kind: atom(), path: String.t(), status: {:ok, stats()} | {:error, term()}}
         ]
   def check_all do
-    for {kind, path} <- configured_roots() do
+    for {kind, path} <- monitored_roots() do
       %{kind: kind, path: path, status: stats(path)}
     end
   end

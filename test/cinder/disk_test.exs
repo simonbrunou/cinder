@@ -104,13 +104,14 @@ defmodule Cinder.DiskTest do
     end
 
     @tag :tmp_dir
-    test "check_all/0 reads stats for a configured root and reports the rest as unconfigured",
-         %{tmp_dir: tmp} do
+    test "check_all/0 reads stats for a configured root", %{tmp_dir: tmp} do
       Application.put_env(:cinder, :movies_library_path, tmp)
       Application.delete_env(:cinder, :tv_library_path)
 
-      assert [%{kind: :movies, path: ^tmp, status: {:ok, %{free_bytes: _, total_bytes: _}}}] =
-               Disk.check_all()
+      rows = Disk.check_all()
+
+      assert %{kind: :movies, path: ^tmp, status: {:ok, %{free_bytes: _, total_bytes: _}}} =
+               Enum.find(rows, &(&1.kind == :movies))
     end
 
     test "check_all/0 degrades gracefully for a configured but nonexistent root" do
@@ -118,7 +119,80 @@ defmodule Cinder.DiskTest do
       Application.put_env(:cinder, :movies_library_path, path)
       Application.delete_env(:cinder, :tv_library_path)
 
-      assert [%{kind: :movies, path: ^path, status: {:error, :enoent}}] = Disk.check_all()
+      rows = Disk.check_all()
+
+      assert %{kind: :movies, path: ^path, status: {:error, :enoent}} =
+               Enum.find(rows, &(&1.kind == :movies))
+    end
+
+    @tag :tmp_dir
+    test "check_all/0 always includes a :database row for the DB volume", %{tmp_dir: tmp} do
+      Application.put_env(:cinder, :movies_library_path, tmp)
+      Application.delete_env(:cinder, :tv_library_path)
+
+      assert %{kind: :database, path: db_path, status: {:ok, %{free_bytes: _}}} =
+               Enum.find(Disk.check_all(), &(&1.kind == :database))
+
+      assert db_path == Disk.db_root()
+    end
+  end
+
+  describe "db_root/0 and monitored_roots/0" do
+    setup do
+      saved = %{
+        movies_library_path: Application.get_env(:cinder, :movies_library_path),
+        tv_library_path: Application.get_env(:cinder, :tv_library_path)
+      }
+
+      on_exit(fn ->
+        Enum.each(saved, fn
+          {k, nil} -> Application.delete_env(:cinder, k)
+          {k, v} -> Application.put_env(:cinder, k, v)
+        end)
+      end)
+
+      :ok
+    end
+
+    test "db_root/0 is the directory holding the configured database file" do
+      db = Application.get_env(:cinder, Cinder.Repo)[:database]
+      assert Disk.db_root() == Path.dirname(db)
+    end
+
+    @tag :tmp_dir
+    test "monitored_roots/0 appends the database volume after the library roots", %{tmp_dir: tmp} do
+      Application.put_env(:cinder, :movies_library_path, tmp)
+      Application.delete_env(:cinder, :tv_library_path)
+
+      assert Disk.monitored_roots() == [{:movies, tmp}, {:database, Disk.db_root()}]
+    end
+
+    test "monitored_roots/0 is just the database volume when no library root is configured" do
+      Application.delete_env(:cinder, :movies_library_path)
+      Application.delete_env(:cinder, :tv_library_path)
+
+      assert Disk.monitored_roots() == [{:database, Disk.db_root()}]
+    end
+  end
+
+  # db_free_bytes/0 reads the DB volume through the :disk_prober seam (StubDisk in test), so it
+  # never shells out — this is what /healthz uses for its fast, DB-free floor check.
+  describe "db_free_bytes/0" do
+    setup :restore_disk_env
+
+    test "returns the free bytes reported by the prober for the DB volume" do
+      Application.put_env(
+        :cinder,
+        :disk_stats_stub,
+        {:ok, %{free_bytes: 42_000, total_bytes: 100_000}}
+      )
+
+      assert Disk.db_free_bytes() == {:ok, 42_000}
+    end
+
+    test "propagates a prober error so the caller fails open" do
+      Application.put_env(:cinder, :disk_stats_stub, {:error, :df_failed})
+      assert Disk.db_free_bytes() == {:error, :df_failed}
     end
   end
 
