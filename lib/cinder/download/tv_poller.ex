@@ -25,7 +25,7 @@ defmodule Cinder.Download.TvPoller do
   """
   require Logger
 
-  alias Cinder.{Acquisition, Catalog, Download, Library, Notifier, Settings}
+  alias Cinder.{Acquisition, Catalog, Disk, Download, Library, Notifier, Settings}
   alias Cinder.Acquisition.{Anime, AnimePreferences}
   alias Cinder.Catalog.{Episode, Grab}
   alias Cinder.Download.StallReaper
@@ -89,17 +89,10 @@ defmodule Cinder.Download.TvPoller do
         retry_or_park(grab, :torrent_not_found)
 
       {:ok, %{state: :downloading} = status} ->
-        Catalog.update_grab_download_metrics(grab, %{
-          download_progress: Map.get(status, :progress),
-          download_speed: Map.get(status, :speed),
-          download_eta: Map.get(status, :eta)
-        })
-
-        maybe_reap(grab, status)
+        track_and_reap(grab, status)
 
       {:error, _reason} ->
         Catalog.update_grab_download_metrics(grab, %{
-          download_progress: nil,
           download_speed: nil,
           download_eta: nil
         })
@@ -109,12 +102,16 @@ defmodule Cinder.Download.TvPoller do
     end
   end
 
-  # ponytail: the stall clock is DERIVED from grab.updated_at — Catalog.update_grab_download_metrics
-  # is change-gated, so a stalled grab (progress frozen, speed a hard 0, eta sentinel → nil) writes
-  # nothing and updated_at freezes at the stall onset. Same coupling to @download_metric_fields + the
-  # eta normalization as the movie poller (see StallReaper's moduledoc).
-  defp maybe_reap(grab, status) do
-    if StallReaper.enabled?() and StallReaper.reap?(grab.updated_at, status, DateTime.utc_now()) do
+  # ponytail: keep the seed window on tick-start `updated_at`; use the returned monotonic progress
+  # clock for the absolute cap so speed/ETA churn cannot disguise a wedged ordinary or upgrade grab.
+  defp maybe_reap(grab, download_progress_at, status) do
+    if StallReaper.enabled?() and
+         StallReaper.reap?(
+           grab.updated_at,
+           download_progress_at,
+           status,
+           DateTime.utc_now()
+         ) do
       case Catalog.reap_stalled_grab(grab) do
         {:ok, _reaped} ->
           Logger.warning(
@@ -127,6 +124,17 @@ defmodule Cinder.Download.TvPoller do
     end
   end
 
+  defp track_and_reap(grab, status) do
+    case Catalog.update_grab_download_metrics(grab, %{
+           download_progress: Map.get(status, :progress),
+           download_speed: Map.get(status, :speed),
+           download_eta: Map.get(status, :eta)
+         }) do
+      {:ok, tracked} -> maybe_reap(grab, tracked.download_progress_at, status)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   # --- import: downloaded grabs ----------------------------------------------------------------
 
   defp import_grabs do
@@ -134,9 +142,22 @@ defmodule Cinder.Download.TvPoller do
         do: isolate("grab #{grab.id}", fn -> import_grab(grab) end)
   end
 
-  defp import_grab(%Grab{mapping_snapshot: nil} = grab), do: import_standard_grab(grab)
-
   defp import_grab(%Grab{} = grab) do
+    # Pre-import disk guard on the TV library root. Hold (no attempt bump, no park) on a full disk —
+    # the download is done and waiting, so don't burn the retry budget on a fixable condition.
+    if Disk.import_space_available?(:tv) do
+      import_grab_content(grab)
+    else
+      warn_throttled(
+        {:disk_import, grab.id},
+        "tv grab #{grab.id} import held: tv library root is nearly full; will retry when space frees"
+      )
+    end
+  end
+
+  defp import_grab_content(%Grab{mapping_snapshot: nil} = grab), do: import_standard_grab(grab)
+
+  defp import_grab_content(%Grab{} = grab) do
     case Library.preflight_anime_grab(grab) do
       {:ok, preflight} ->
         import_preflighted_grab(preflight)
@@ -229,6 +250,7 @@ defmodule Cinder.Download.TvPoller do
          ) do
       {:ok, _grab} ->
         commit_stages(staged)
+        remove_superseded_episode_files(grab.episodes)
         Download.remove_after_import(grab.download_protocol, grab.download_id, grab.content_path)
 
       {:error, :stale_grab} ->
@@ -266,6 +288,32 @@ defmodule Cinder.Download.TvPoller do
 
   defp unique_stages(staged),
     do: staged |> Enum.map(&elem(&1, 1)) |> Enum.uniq_by(& &1.dest)
+
+  # The Catalog commit has moved every imported row to its verified new destination. Remove old
+  # primary/part files only now, and only when no episode still references them (a multi-episode
+  # file may also belong to an uncovered sibling).
+  defp remove_superseded_episode_files(episodes) do
+    referenced =
+      Catalog.list_episodes_with_file()
+      |> Enum.flat_map(&Episode.file_paths/1)
+      |> MapSet.new()
+
+    episodes
+    |> Enum.flat_map(&Episode.file_paths/1)
+    |> Enum.uniq()
+    |> Enum.reject(&MapSet.member?(referenced, &1))
+    |> Enum.each(&best_effort_remove_old/1)
+  end
+
+  defp best_effort_remove_old(path) do
+    case Library.delete_file(path) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("tv upgrade: couldn't remove #{path}: #{inspect(reason)}")
+    end
+  end
 
   # --- search: wanted episodes -----------------------------------------------------------------
 
@@ -431,30 +479,38 @@ defmodule Cinder.Download.TvPoller do
     episode_ids =
       episodes |> Enum.filter(&(&1.episode_number in covered_numbers)) |> Enum.map(& &1.id)
 
-    case Download.grab_episodes(release, episode_ids) do
-      {:ok, _grab} ->
-        episode_ids
-
-      other ->
-        Logger.warning(
-          "tv grab failed (#{HTTPPolicy.sanitize_log(release.title)}): #{HTTPPolicy.sanitize_log(other)}"
-        )
-
-        []
-    end
+    grab_release(release, episode_ids)
   end
 
   defp grab_anime_assignment(%{release: release, episode_ids: episode_ids}) do
-    case Download.grab_episodes(release, episode_ids) do
-      {:ok, _grab} ->
-        episode_ids
+    grab_release(release, episode_ids)
+  end
 
-      failure ->
-        Logger.warning(
-          "anime grab failed (#{HTTPPolicy.sanitize_log(release.title)}): #{HTTPPolicy.sanitize_log(failure)}"
-        )
+  # Add one chosen release to its client, guarded on free disk. Returns the episode ids the caller
+  # must NOT bump: those actually grabbed, and — on a disk skip — those held for next tick (space
+  # may free up, so a full disk never burns a search attempt or parks the title). A genuine grab
+  # failure returns `[]`, so those episodes back off normally.
+  defp grab_release(release, episode_ids) do
+    if Disk.grab_space_available?(release.size) do
+      case Download.grab_episodes(release, episode_ids) do
+        {:ok, _grab} ->
+          episode_ids
 
-        []
+        failure ->
+          Logger.warning(
+            "tv grab failed (#{HTTPPolicy.sanitize_log(release.title)}): #{HTTPPolicy.sanitize_log(failure)}"
+          )
+
+          []
+      end
+    else
+      warn_throttled(
+        {:disk_grab, release.title},
+        "tv grab skipped for #{HTTPPolicy.sanitize_log(release.title)}: insufficient free disk space " <>
+          "(~#{Disk.human_gb(release.size)} GB); will retry when space frees"
+      )
+
+      episode_ids
     end
   end
 

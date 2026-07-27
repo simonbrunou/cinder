@@ -60,8 +60,73 @@ defmodule CinderWeb.MyRequestsLive do
     {:noreply, assign(socket, confirming: nil)}
   end
 
+  # Re-submit a denied request through the normal gate (quota + approval intact). The TMDB
+  # lookup inside create_request runs off-process so a slow provider can't freeze the page.
+  def handle_event("request_again", %{"id" => id}, socket) do
+    socket =
+      case find_by_id(socket.assigns.requests, id) do
+        %{status: :denied} = request -> start_request_again(socket, request)
+        _ -> socket
+      end
+
+    {:noreply, socket}
+  end
+
   # Client-controlled payloads — ignore anything unmatched rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  @impl true
+  def handle_async({:request_again, title}, {:ok, result}, socket),
+    do: {:noreply, request_again_result(socket, title, result)}
+
+  def handle_async({:request_again, title}, {:exit, _reason}, socket),
+    do:
+      {:noreply,
+       put_flash(socket, :error, gettext("Couldn't request %{title}. Try again.", title: title))}
+
+  defp start_request_again(socket, request) do
+    user = socket.assigns.current_scope.user
+    attrs = request_again_attrs(request)
+    title = request_title(request, socket.assigns.locale)
+
+    start_async(socket, {:request_again, title}, fn ->
+      Requests.create_request(user, attrs)
+    end)
+  end
+
+  defp request_again_attrs(r) do
+    %{
+      target_type: r.target_type,
+      target_id: r.target_id,
+      season_number: r.season_number,
+      title: r.title,
+      year: r.year,
+      poster_path: r.poster_path,
+      original_language: r.original_language,
+      preferred_language: r.preferred_language,
+      proposed_media_profile: r.proposed_media_profile
+    }
+  end
+
+  defp request_again_result(socket, title, {:ok, %{status: :approved}}),
+    do: socket |> load() |> put_flash(:info, gettext("%{title} added.", title: title))
+
+  defp request_again_result(socket, title, {:ok, %{status: :pending}}),
+    do:
+      socket
+      |> load()
+      |> put_flash(:info, gettext("%{title} requested. Awaiting approval.", title: title))
+
+  defp request_again_result(socket, _title, {:error, :quota_exceeded}),
+    do:
+      put_flash(
+        socket,
+        :error,
+        gettext("You've reached your request limit. Wait for approvals to clear.")
+      )
+
+  defp request_again_result(socket, title, {:error, _reason}),
+    do: put_flash(socket, :error, gettext("Couldn't request %{title}. Try again.", title: title))
 
   defp load(socket) do
     user = socket.assigns.current_scope.user
@@ -85,7 +150,12 @@ defmodule CinderWeb.MyRequestsLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
+    <Layouts.app
+      flash={@flash}
+      current_scope={@current_scope}
+      current_path={@current_path}
+      pending_count={@pending_count}
+    >
       <.header>
         {gettext("My requests")}
         <:subtitle>{gettext("Track what you've asked for.")}</:subtitle>
@@ -126,6 +196,18 @@ defmodule CinderWeb.MyRequestsLive do
               phx-value-id={r.id}
             >
               {gettext("Cancel request")}
+            </.button>
+            <.button
+              :if={effective_status(r, @available_seasons) == :denied}
+              id={"request-again-#{r.id}"}
+              variant="ghost"
+              size="sm"
+              class="ml-auto"
+              phx-click="request_again"
+              phx-value-id={r.id}
+              aria-label={gettext("Request %{title} again", title: request_title(r, @locale))}
+            >
+              {gettext("Request again")}
             </.button>
           </div>
           <p

@@ -65,20 +65,8 @@ defmodule CinderWeb.SeriesDiscoveryLive do
          # against @seasons — the requestable set, excluding Specials — so a forged
          # event can't create a dangling, never-grabbable season-0 request.
          true <- Enum.any?(socket.assigns.seasons, &(&1.season_number == season_number)) do
-      info = socket.assigns.info
       user = socket.assigns.current_user
-
-      attrs = %{
-        target_type: "season",
-        target_id: socket.assigns.tmdb_id,
-        season_number: season_number,
-        title: info.title,
-        year: info.year,
-        poster_path: info.poster_path,
-        original_language: info[:original_language],
-        preferred_language: socket.assigns.preferred_language,
-        proposed_media_profile: socket.assigns.proposed_media_profile
-      }
+      attrs = season_attrs(socket, season_number)
 
       # An admin/auto-approve request runs the season approval inline — seconds of TMDB I/O
       # (1 + N season fetches) — so it must not run in the event handler: the whole LiveView
@@ -89,6 +77,25 @@ defmodule CinderWeb.SeriesDiscoveryLive do
        end)}
     else
       _ -> {:noreply, socket}
+    end
+  end
+
+  # Fan a single click out to one request per not-yet-requested season, reusing the same
+  # per-season `Requests.create_request` path (quota + approval gate intact) rather than a
+  # bulk-request model. The requestable set is derived server-side from validated assigns —
+  # nothing is taken from the event payload — so there is no forgeable season list to parse.
+  def handle_event("request_all_seasons", _params, socket) do
+    case requestable_season_numbers(socket.assigns) do
+      [] ->
+        {:noreply,
+         put_flash(socket, :info, gettext("Every season is already requested or available."))}
+
+      numbers ->
+        user = socket.assigns.current_user
+        attrs_list = Enum.map(numbers, &season_attrs(socket, &1))
+
+        {:noreply,
+         start_async(socket, :request_all_seasons, fn -> fan_out_seasons(user, attrs_list) end)}
     end
   end
 
@@ -167,8 +174,95 @@ defmodule CinderWeb.SeriesDiscoveryLive do
     {:noreply, request_error(socket)}
   end
 
+  def handle_async(:request_all_seasons, {:ok, summary}, socket) do
+    title = media_title(socket.assigns.info, socket.assigns.locale)
+
+    {:noreply,
+     socket
+     |> fan_out_flash(title, summary)
+     |> refresh_requests()}
+  end
+
+  def handle_async(:request_all_seasons, {:exit, _reason}, socket) do
+    {:noreply, request_error(socket)}
+  end
+
   defp request_error(socket),
     do: put_flash(socket, :error, gettext("Couldn't complete that request. Please try again."))
+
+  # Sequentially request each season, stopping the moment the per-user quota is hit — the
+  # remaining seasons are left un-submitted, and the count is reported to the user. A
+  # non-quota failure (e.g. a duplicate from a concurrent click) is counted and skipped.
+  defp fan_out_seasons(user, attrs_list) do
+    Enum.reduce_while(
+      attrs_list,
+      %{approved: 0, pending: 0, quota_stopped: false, total: length(attrs_list)},
+      fn attrs, acc ->
+        case Requests.create_request(user, attrs) do
+          {:ok, %{status: :approved}} -> {:cont, %{acc | approved: acc.approved + 1}}
+          {:ok, %{status: :pending}} -> {:cont, %{acc | pending: acc.pending + 1}}
+          {:error, :quota_exceeded} -> {:halt, %{acc | quota_stopped: true}}
+          {:error, _} -> {:cont, acc}
+        end
+      end
+    )
+  end
+
+  defp fan_out_flash(socket, title, %{approved: approved, pending: pending} = summary) do
+    submitted = approved + pending
+
+    cond do
+      submitted > 0 ->
+        base = fan_out_success_message(pending, submitted, title)
+        put_flash(socket, :info, base <> fan_out_tail(summary, summary.total - submitted))
+
+      # Nothing landed and the quota was the blocker — say so specifically.
+      summary.quota_stopped ->
+        put_flash(
+          socket,
+          :error,
+          gettext("You've reached your request limit. Wait for approvals to clear.")
+        )
+
+      # Nothing landed for some other reason (rare: e.g. all duplicated by a concurrent click).
+      true ->
+        request_error(socket)
+    end
+  end
+
+  # In one fan-out a user is either an auto-approver (all approved) or not (all pending); a
+  # non-zero pending count means the plain "requested, awaiting approval" copy fits.
+  defp fan_out_success_message(0, n, title),
+    do:
+      ngettext(
+        "Added %{count} season of %{title}.",
+        "Added %{count} seasons of %{title}.",
+        n,
+        count: n,
+        title: title
+      )
+
+  defp fan_out_success_message(_pending, n, title),
+    do:
+      ngettext(
+        "Requested %{count} season of %{title}. Awaiting approval.",
+        "Requested %{count} seasons of %{title}. Awaiting approval.",
+        n,
+        count: n,
+        title: title
+      )
+
+  defp fan_out_tail(%{quota_stopped: true}, not_submitted),
+    do:
+      " " <>
+        ngettext(
+          "Stopped at your request limit; %{count} season not submitted.",
+          "Stopped at your request limit; %{count} seasons not submitted.",
+          not_submitted,
+          count: not_submitted
+        )
+
+  defp fan_out_tail(_summary, _not_submitted), do: ""
 
   @impl true
   def handle_info({event, _request}, socket)
@@ -185,6 +279,32 @@ defmodule CinderWeb.SeriesDiscoveryLive do
 
   defp refresh_requests(socket) do
     assign_requests_by_season(socket, socket.assigns.current_user, socket.assigns.tmdb_id)
+  end
+
+  defp season_attrs(socket, season_number) do
+    info = socket.assigns.info
+
+    %{
+      target_type: "season",
+      target_id: socket.assigns.tmdb_id,
+      season_number: season_number,
+      title: info.title,
+      year: info.year,
+      poster_path: info.poster_path,
+      original_language: info[:original_language],
+      preferred_language: socket.assigns.preferred_language,
+      proposed_media_profile: socket.assigns.proposed_media_profile
+    }
+  end
+
+  # The seasons a bulk "Request all" should touch: exactly those still showing a per-season
+  # Request button (status nil or :denied), and not already available. Season 0 is already
+  # excluded from @seasons upstream.
+  defp requestable_season_numbers(assigns) do
+    for season <- assigns.seasons,
+        not MapSet.member?(assigns.available_seasons, season.season_number),
+        Map.get(assigns.requests_by_season, season.season_number) in [nil, :denied],
+        do: season.season_number
   end
 
   defp assign_requests_by_season(socket, user, tmdb_id) do
@@ -206,7 +326,12 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
+    <Layouts.app
+      flash={@flash}
+      current_scope={@current_scope}
+      current_path={@current_path}
+      pending_count={@pending_count}
+    >
       <.link navigate={~p"/"} class="link link-hover mb-6 inline-flex items-center gap-1">
         <.icon name="hero-arrow-left" class="size-3.5" />{gettext("Discover")}
       </.link>
@@ -247,6 +372,19 @@ defmodule CinderWeb.SeriesDiscoveryLive do
             else: gettext("This series only has specials, which can't be requested yet.")
         }
       />
+
+      <div :if={requestable_season_numbers(assigns) != []} class="mb-4 flex justify-end">
+        <.button
+          type="button"
+          phx-click="request_all_seasons"
+          phx-disable-with={gettext("Requesting…")}
+          aria-label={gettext("Request all not-yet-requested seasons")}
+          variant="primary"
+          size="sm"
+        >
+          {gettext("Request all seasons")}
+        </.button>
+      </div>
 
       <ul class="divide-y divide-base-200">
         <li

@@ -54,6 +54,18 @@ defmodule Cinder.Download.TvPollerTest do
     on_exit(fn -> Application.put_env(:cinder, :anime_preferences, saved) end)
   end
 
+  # Drives the free-disk prober (Cinder.Test.StubDisk) for a test's duration; restored on exit.
+  defp set_disk_stub!(result) do
+    saved = Application.get_env(:cinder, :disk_stats_stub)
+    Application.put_env(:cinder, :disk_stats_stub, result)
+
+    on_exit(fn ->
+      if is_nil(saved),
+        do: Application.delete_env(:cinder, :disk_stats_stub),
+        else: Application.put_env(:cinder, :disk_stats_stub, saved)
+    end)
+  end
+
   defp set_anime_subtitle_languages!(csv) do
     saved = Application.get_env(:cinder, Cinder.Subtitles.Provider.OpenSubtitles, [])
 
@@ -254,6 +266,53 @@ defmodule Cinder.Download.TvPollerTest do
     assert Repo.get!(Episode, first.id).grab_id
     assert %Episode{grab_id: nil, search_attempts: 0} = Repo.get!(Episode, second.id)
     assert Agent.get(adds, & &1) == 1
+  end
+
+  test "search skips the grab (no attempt bump) when the download root can't hold the release" do
+    {_series, season} = series_tree()
+    ep = episode(season, 1)
+
+    set_disk_stub!({:ok, %{free_bytes: 1_000_000_000, total_bytes: 100_000_000_000}})
+
+    release = %{
+      title: "Show.S01E01.1080p.WEB.x264-GRP",
+      size: 8_000_000_000,
+      download_url: "big-one"
+    }
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 -> {:ok, [release]} end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, _opts ->
+      {:ok, [release]}
+    end)
+
+    # ClientMock.add is intentionally NOT stubbed — a disk-blocked grab must never reach the client.
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    log = capture_log(fn -> assert :ok = TvPoller.poll() end)
+
+    assert %Episode{grab_id: nil, search_attempts: 0} = Repo.get!(Episode, ep.id)
+    assert log =~ "insufficient free disk space"
+    assert Repo.aggregate(Grab, :count) == 0
+  end
+
+  test "import holds (no attempt bump, no park) when the tv library root is nearly full" do
+    {_series, season} = series_tree()
+    e1 = episode(season, 1)
+    {:ok, grab} = Catalog.create_grab("hash-full", :torrent, [e1.id])
+    {:ok, _} = Catalog.mark_grab_downloaded(grab, "/dl/pack")
+
+    set_disk_stub!({:ok, %{free_bytes: 500_000_000, total_bytes: 100_000_000_000}})
+
+    # No filesystem stubs: a held import must never reach Library.stage_episodes.
+    start_supervised!({TvPoller, interval: 60_000})
+
+    log = capture_log(fn -> assert :ok = TvPoller.poll() end)
+
+    assert %Grab{download_attempts: attempts} = Repo.get!(Grab, grab.id)
+    assert (attempts || 0) == 0
+    assert Repo.get!(Episode, e1.id).file_path == nil
+    assert log =~ "nearly full"
   end
 
   test "an operator season offset makes Second-Season episodes grab, incl. a native-collision episode (issue #156)" do
@@ -1042,17 +1101,21 @@ defmodule Cinder.Download.TvPollerTest do
     assert %Grab{
              download_progress: 0.42,
              download_speed: nil,
-             download_eta: 90,
-             updated_at: updated_at
+             download_eta: 90
            } = Repo.get!(Grab, grab.id)
 
-    # Timestamps are second-precision, so make an unintended write observable.
-    Process.sleep(1_100)
+    # Force updated_at to a distinct sentinel so any rewrite by an equal poll is observable
+    # immediately — no waiting on the second-precision clock to tick past `updated_at`.
+    sentinel = ~U[2000-01-01 00:00:00Z]
+
+    {1, _} =
+      Repo.update_all(from(g in Grab, where: g.id == ^grab.id), set: [updated_at: sentinel])
+
     assert :ok = TvPoller.poll()
-    assert Repo.get!(Grab, grab.id).updated_at == updated_at
+    assert Repo.get!(Grab, grab.id).updated_at == sentinel
   end
 
-  test "clears a downloading grab snapshot after a transient client error" do
+  test "keeps a grab's progress high-water after a transient client error" do
     {_series, season} = series_tree()
     e1 = episode(season, 1)
     {:ok, grab} = Catalog.create_grab("hash-timeout", :torrent, [e1.id])
@@ -1071,7 +1134,7 @@ defmodule Cinder.Download.TvPollerTest do
 
     assert %Grab{
              download_attempts: 0,
-             download_progress: nil,
+             download_progress: 0.42,
              download_speed: nil,
              download_eta: nil
            } = Repo.get!(Grab, grab.id)
@@ -1138,6 +1201,75 @@ defmodule Cinder.Download.TvPollerTest do
     assert Repo.get(Grab, grab.id) == nil
     assert Repo.get!(Episode, e1.id).file_path =~ "S01E01"
     assert Repo.get!(Episode, e2.id).file_path =~ "S01E02"
+  end
+
+  @tag :tmp_dir
+  test "an available episode upgrade atomically swaps bytes before deleting old primary/part files",
+       %{tmp_dir: tmp} do
+    %{downloads: downloads, tv: tv} = use_real_tv_library(tmp)
+    {series, season} = series_tree()
+
+    dest =
+      Path.join([
+        tv,
+        "Show (2008) {tmdb-#{series.tmdb_id}}",
+        "Season 01",
+        "Show (2008) {tmdb-#{series.tmdb_id}} - S01E01.mkv"
+      ])
+
+    part = Path.join(Path.dirname(dest), "Show (2008) - S01E01-part2.mkv")
+    source = Path.join(downloads, "Show.S01E01.720p.mkv")
+    File.mkdir_p!(Path.dirname(dest))
+    File.write!(dest, "original")
+    File.write!(part, "original-part")
+    File.write!(source, "candidate")
+
+    episode =
+      episode(season, 1, %{
+        monitored: false,
+        file_path: dest,
+        part_file_paths: [part],
+        imported_resolution: "2160p"
+      })
+
+    {:ok, grab} =
+      Catalog.create_grab("upgrade-grab", :torrent, [episode.id], "Show.S01E01.720p",
+        allow_available: true
+      )
+
+    assert %Episode{file_path: ^dest, grab_id: grab_id} = Repo.reload!(episode)
+    assert grab_id == grab.id
+    {:ok, _} = Catalog.mark_grab_downloaded(grab, source)
+
+    stub(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
+    start_supervised!({TvPoller, interval: 60_000})
+
+    Application.put_env(:cinder, :filesystem_barrier, %{
+      owner: self(),
+      operation: :ln,
+      contains: Path.basename(dest),
+      excludes: ".cinder-rollback",
+      once: true
+    })
+
+    poll = Task.async(fn -> TvPoller.poll() end)
+    assert_receive {:filesystem_barrier, pid, ref, :ln, ^dest}, 1_000
+
+    assert File.read!(dest) == "candidate"
+    assert File.exists?(part)
+    assert Enum.any?(File.ls!(Path.dirname(dest)), &String.starts_with?(&1, ".cinder-rollback-"))
+
+    send(pid, {ref, :continue})
+    assert :ok = Task.await(poll)
+
+    upgraded = Repo.reload!(episode)
+    assert upgraded.file_path == dest
+    assert upgraded.part_file_paths == []
+    assert upgraded.grab_id == nil
+    assert upgraded.imported_resolution == "720p"
+    assert File.read!(dest) == "candidate"
+    refute File.exists?(part)
+    refute Enum.any?(File.ls!(Path.dirname(dest)), &String.contains?(&1, ".cinder-"))
   end
 
   @tag :tmp_dir
@@ -1702,6 +1834,49 @@ defmodule Cinder.Download.TvPollerTest do
     assert parked.search_attempts >= 1
   end
 
+  test "a failed upgrade download parks the grab but keeps the available episode and old files" do
+    {series, season} = series_tree()
+    old_file = "/tmp/cinder-test-tv-library/Show/old.mkv"
+    old_part = "/tmp/cinder-test-tv-library/Show/old-part.mkv"
+
+    episode =
+      episode(season, 1, %{file_path: old_file, part_file_paths: [old_part]})
+
+    {:ok, grab} =
+      Catalog.create_grab("hash-upgrade-fail", :torrent, [episode.id], "Bad.Show.S01E01",
+        allow_available: true
+      )
+
+    grab |> Ecto.Changeset.change(download_attempts: 9) |> Repo.update!()
+    start_supervised!({TvPoller, interval: 60_000})
+
+    stub(Cinder.Download.ClientMock, :status, fn "hash-upgrade-fail" ->
+      {:ok, %{state: :error}}
+    end)
+
+    assert :ok = TvPoller.poll()
+    refute Repo.get(Grab, grab.id)
+
+    available = Repo.reload!(episode)
+    assert available.file_path == old_file
+    assert available.part_file_paths == [old_part]
+    assert available.grab_id == nil
+    assert Catalog.episode_state(available) == :available
+    assert "Bad.Show.S01E01" in Catalog.blocked_release_titles_for_series(series.id)
+  end
+
+  test "the automatic sweep never creates an upgrade grab for an available episode" do
+    {_series, season} = series_tree()
+    episode = episode(season, 1, %{file_path: "/library/Show.S01E01.mkv"})
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    assert episode.id not in Enum.map(Catalog.wanted_episodes(), & &1.id)
+    assert :ok = TvPoller.poll()
+    assert Repo.reload!(episode).grab_id == nil
+    assert Repo.all(Grab) == []
+    assert Repo.all(Intent) == []
+  end
+
   test "a wanted episode that never finds a release search-parks after max attempts" do
     {_series, season} = series_tree()
     e1 = episode(season, 1)
@@ -2083,6 +2258,63 @@ defmodule Cinder.Download.TvPollerTest do
       assert reaped.grab_id == nil
       assert Catalog.blocked_release_titles_for_series(series.id) == ["Wedged.Show.S01E03.1080p"]
       assert_receive {:removed, "hash-tv-wedged", _opts}
+    end
+
+    test "the absolute cap also reaps an upgrade grab without touching its live episode file" do
+      enable_reaper!(
+        stall_timeout: :timer.hours(2),
+        no_seeders_timeout: :timer.hours(2),
+        max_downloading_timeout: :timer.hours(24)
+      )
+
+      {_series, season} = series_tree()
+      e1 = episode(season, 4, %{file_path: "/library/Show/Show.S01E04.mkv"})
+
+      {:ok, grab} =
+        Catalog.create_grab(
+          "hash-tv-upgrade-stall",
+          :torrent,
+          [e1.id],
+          "Wedged.Show.S01E04.Upgrade.1080p",
+          allow_available: true
+        )
+
+      assert {:ok, tracked} =
+               Catalog.update_grab_download_metrics(grab, %{
+                 download_progress: 0.5,
+                 download_speed: 1_024,
+                 download_eta: 500
+               })
+
+      past = DateTime.add(Catalog.now(), -25, :hour)
+      Repo.update_all(from(g in Grab, where: g.id == ^grab.id), set: [download_progress_at: past])
+      tracked = Repo.get!(Grab, tracked.id)
+
+      assert {:ok, jittered} =
+               Catalog.update_grab_download_metrics(tracked, %{
+                 download_progress: 0.5,
+                 download_speed: 2_048,
+                 download_eta: 400
+               })
+
+      assert jittered.download_progress_at == past
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-tv-upgrade-stall" ->
+        {:ok, %{state: :downloading, progress: 0.5, speed: 3_072, eta: 300, seeders: 5}}
+      end)
+
+      stub(Cinder.Download.ClientMock, :remove, fn _id, _opts -> :ok end)
+
+      start_supervised!({TvPoller, interval: 60_000})
+      assert :ok = TvPoller.poll()
+
+      assert Repo.get(Grab, grab.id) == nil
+
+      assert %Episode{
+               file_path: "/library/Show/Show.S01E04.mkv",
+               grab_id: nil,
+               search_attempts: 1
+             } = Repo.get!(Episode, e1.id)
     end
 
     test "does not reap a grab while the reaper is disabled (the default)" do

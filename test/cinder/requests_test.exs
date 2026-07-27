@@ -411,6 +411,19 @@ defmodule Cinder.RequestsTest do
     assert_receive {:notify, {:request_approved, %{title: "Movie 603"}}}
   end
 
+  test "denial emits a notifier event carrying the requester and reason" do
+    Cinder.TestNotifier.subscribe()
+    user = user_fixture()
+    email = user.email
+    admin = admin_fixture()
+    {:ok, req} = Requests.create_request(user, @attrs)
+    {:ok, _} = Requests.deny_request(req, admin, "not for the household")
+
+    assert_receive {:notify,
+                    {:request_denied, %{title: "Movie 603", user: %{email: ^email}},
+                     "not for the household"}}
+  end
+
   describe "export_for_user/1" do
     test "projects only the caller's own requests to JSON-ready maps" do
       user = user_fixture()

@@ -5,6 +5,7 @@ defmodule CinderWeb.UserLive.RegistrationTest do
   import Cinder.AccountsFixtures
 
   alias Cinder.Accounts.IpRateLimiter
+  alias CinderWeb.UserLive.Registration
 
   describe "Registration page" do
     test "renders registration page with the first-user bootstrap field", %{conn: conn} do
@@ -63,6 +64,52 @@ defmodule CinderWeb.UserLive.RegistrationTest do
 
       html = render_hook(lv, "save", %{"user" => registration_params(unique_user_email())})
       assert html =~ "Too many attempts"
+    end
+
+    test "two forwarded clients get separate buckets", %{conn: conn} do
+      previous = Application.get_env(:cinder, :ip_rate_limiting)
+      Application.put_env(:cinder, :ip_rate_limiting, true)
+      IpRateLimiter.reset()
+
+      on_exit(fn ->
+        IpRateLimiter.reset()
+
+        if is_nil(previous),
+          do: Application.delete_env(:cinder, :ip_rate_limiting),
+          else: Application.put_env(:cinder, :ip_rate_limiting, previous)
+      end)
+
+      # Behind cloudflared each client's cf-connecting-ip is resolved by the RemoteIp plug and
+      # threaded into the session, so its :registration bucket is its own. Client A exhausts it.
+      {:ok, lv_a, _html} =
+        conn
+        |> Plug.Conn.put_req_header("cf-connecting-ip", "203.0.113.1")
+        |> live(~p"/users/register")
+
+      for _ <- 1..10 do
+        render_hook(lv_a, "save", %{"user" => registration_params(unique_user_email())})
+      end
+
+      assert render_hook(lv_a, "save", %{"user" => registration_params(unique_user_email())}) =~
+               "Too many attempts"
+
+      # Client B is a different forwarded IP — a different bucket, so its first attempt is allowed.
+      {:ok, lv_b, _html} =
+        conn
+        |> Plug.Conn.put_req_header("cf-connecting-ip", "203.0.113.2")
+        |> live(~p"/users/register")
+
+      refute render_hook(lv_b, "save", %{"user" => registration_params(unique_user_email())}) =~
+               "Too many attempts"
+    end
+
+    test "resolve_client_ip prefers the session IP, falling back to the transport peer" do
+      assert Registration.resolve_client_ip(%{"client_ip" => "203.0.113.9"}, "10.0.0.1") ==
+               "203.0.113.9"
+
+      # Fallback when the session carries no resolved IP (absent or blank).
+      assert Registration.resolve_client_ip(%{}, "10.0.0.1") == "10.0.0.1"
+      assert Registration.resolve_client_ip(%{"client_ip" => ""}, "10.0.0.1") == "10.0.0.1"
     end
   end
 

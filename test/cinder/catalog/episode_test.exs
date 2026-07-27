@@ -24,15 +24,15 @@ defmodule Cinder.Catalog.EpisodeTest do
     assert cs.changes == %{grab_id: 7}
   end
 
-  test "transition_changeset/2 rejects setting file_path and grab_id together (never both)" do
+  test "transition_changeset/2 allows file_path and grab_id together for an upgrade" do
     cs =
       Episode.transition_changeset(%Episode{}, %{
         file_path: "/library/x.mkv",
         grab_id: 7
       })
 
-    refute cs.valid?
-    assert cs.errors[:grab_id] == {"cannot be set while file_path is also set", []}
+    assert cs.valid?
+    assert cs.changes == %{file_path: "/library/x.mkv", grab_id: 7}
   end
 
   test "transition_changeset/2 rejects a negative search_attempts" do

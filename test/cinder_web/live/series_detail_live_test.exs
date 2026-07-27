@@ -505,6 +505,10 @@ defmodule CinderWeb.SeriesDetailLiveTest do
        %{conn: conn} do
     series = series_fixture(media_profile: :anime, tvdb_id: 12_345)
 
+    # A shared one-shot latch: group-a resolves only once group-b has, so the stale group-a
+    # result is guaranteed to land last — deterministic ordering without a real-time sleep.
+    group_b_done = :atomics.new(1, [])
+
     stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
       {:ok,
        [
@@ -515,8 +519,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     stub(Cinder.Catalog.TMDBMock, :get_episode_group, fn
       "group-a" ->
-        # Slow enough to guarantee it lands after group-b's fast, no-delay fetch below.
-        Process.sleep(50)
+        Cinder.PollerHelpers.poll_until(fn -> :atomics.get(group_b_done, 1) == 1 end)
 
         {:ok,
          episode_group(
@@ -525,11 +528,15 @@ defmodule CinderWeb.SeriesDetailLiveTest do
          )}
 
       "group-b" ->
-        {:ok,
-         episode_group(
-           id: "group-b",
-           entries: [%{tmdb_episode_id: 502, group_name: "Season 2", group_order: 2, order: 0}]
-         )}
+        result =
+          {:ok,
+           episode_group(
+             id: "group-b",
+             entries: [%{tmdb_episode_id: 502, group_name: "Season 2", group_order: 2, order: 0}]
+           )}
+
+        :atomics.put(group_b_done, 1, 1)
+        result
     end)
 
     {:ok, view, _html} = live_series(conn, series)
@@ -567,8 +574,15 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
     stub(Cinder.Catalog.TMDBMock, :get_episode_group, fn
       "group-a" ->
-        # Long enough that, uncanceled, it would still complete well after this test asserts.
-        Process.sleep(50)
+        # Announce this fetch's task pid, then block until explicitly released. Cancellation kills
+        # the blocked task; a merely-discarded-on-arrival fetch would stay alive — which the
+        # aliveness poll below asserts against deterministically, no fixed sleep needed.
+        send(test_pid, {:group_a_running, self()})
+
+        receive do
+          :may_finish -> :ok
+        end
+
         send(test_pid, :group_a_fetch_completed)
         {:ok, episode_group(id: "group-a")}
 
@@ -584,14 +598,17 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     |> form("#series-scene-numbering-form", %{"group_id" => "group-a"})
     |> render_change()
 
+    assert_receive {:group_a_running, group_a_pid}, 1_000
+
     view
     |> form("#series-scene-numbering-form", %{"group_id" => "group-b"})
     |> render_change()
 
+    # The suspender: selecting another group cancels — kills — the still-in-flight group-a task.
+    Cinder.PollerHelpers.poll_until(fn -> not Process.alive?(group_a_pid) end)
+    # Releasing a dead task is a no-op; a still-alive (regressed) task would send and fail refute.
+    send(group_a_pid, :may_finish)
     render_async(view)
-
-    # If group-a's fetch had merely been left running (only discarded on arrival), it would
-    # have sent this well within the wait below.
     refute_receive :group_a_fetch_completed, 200
 
     # R3 finding 4: clearing back to "None" must cancel an in-flight fetch too, not just picking
@@ -600,10 +617,14 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     |> form("#series-scene-numbering-form", %{"group_id" => "group-a"})
     |> render_change()
 
+    assert_receive {:group_a_running, cleared_pid}, 1_000
+
     view
     |> form("#series-scene-numbering-form", %{"group_id" => ""})
     |> render_change()
 
+    Cinder.PollerHelpers.poll_until(fn -> not Process.alive?(cleared_pid) end)
+    send(cleared_pid, :may_finish)
     refute_receive :group_a_fetch_completed, 200
   end
 
@@ -1522,10 +1543,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert Repo.reload!(episode).search_attempts == 7
   end
 
-  # FIX 1: "Find a better match" is only offered for a season with wanted episodes. An empty
-  # indexer result then reads as "No releases found", and a fully-present season (TV replace is
-  # deferred) is never offered manual search at all.
-  test "Find a better match is offered only for a season with wanted episodes", %{conn: conn} do
+  test "Find a better match is offered for wanted and already-available seasons", %{conn: conn} do
     wanted = series_with_wanted_episode(search_attempts: 0)
     {:ok, lv, _html} = live_series(conn, wanted)
     assert has_element?(lv, "button[phx-click=tv_manual_search]")
@@ -1534,7 +1552,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
       series_with_episode_file_fixture("/tmp/cinder-test-tv-library/S (2010)/S01E01.mkv")
 
     {:ok, lv2, _html} = live_series(conn, present)
-    refute has_element?(lv2, "button[phx-click=tv_manual_search]")
+    assert has_element?(lv2, "button[phx-click=tv_manual_search]")
   end
 
   test "Find a better match opens the TV panel; grabbing creates a grab over the wanted episode",
@@ -1560,6 +1578,38 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert render(lv) =~ "Grabbing the selected release"
     assert [grab] = Repo.all(Cinder.Catalog.Grab)
     assert grab.download_id == "hash-new"
+  end
+
+  test "grabbing a better match keeps an available episode live under an upgrade grab", %{
+    conn: conn
+  } do
+    old_file = "/tmp/cinder-test-tv-library/S (2010)/S01E01.mkv"
+
+    %{series: series, season: season, episode: episode} =
+      series_with_episode_file_fixture(old_file)
+
+    episode |> Ecto.Changeset.change(monitored: false) |> Repo.update!()
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, "S", 1 ->
+      {:ok, [%{title: "S S01E01 1080p WEB-DL GRP", size: 2_000_000_000, download_url: "u"}]}
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-upgrade"} end)
+    stub(Cinder.Download.ClientMock, :find_by_operation_key, fn _key -> :not_found end)
+
+    {:ok, lv, _html} = live_series(conn, series)
+    lv |> element("button", "Find a better match") |> render_click()
+    assert render_async(lv) =~ "S S01E01"
+    lv |> element("#ms-season-#{season.id} button", "Grab") |> render_click()
+    assert render(lv) =~ "Grabbing the selected release"
+
+    upgraded = Repo.reload!(episode)
+    assert upgraded.file_path == old_file
+    assert upgraded.grab_id
+    assert Catalog.episode_state(upgraded) == :available
+
+    assert %Cinder.Catalog.Grab{download_id: "hash-upgrade"} =
+             Repo.get!(Cinder.Catalog.Grab, upgraded.grab_id)
   end
 
   # Regression for the PR #172 corruption bug: rewriting `title` onto the `@series` assign

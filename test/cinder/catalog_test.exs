@@ -779,6 +779,18 @@ defmodule Cinder.CatalogTest do
       assert Catalog.series_library_sizes() == %{series.id => 5_000}
     end
 
+    test "counts a surviving part when the primary path has been cleared" do
+      series = series_fixture()
+
+      episode_fixture(season_fixture(series), %{
+        file_path: nil,
+        part_file_paths: ["/tv/Show (2008)/Season 01/Show (2008) - S01E01-part-2.mkv"],
+        imported_size: 4_000
+      })
+
+      assert Catalog.series_library_sizes() == %{series.id => 4_000}
+    end
+
     test "omits series with nothing imported, and rows with a path but no size" do
       imported = series_fixture()
       season = season_fixture(imported)

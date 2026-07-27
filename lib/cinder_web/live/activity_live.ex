@@ -221,7 +221,12 @@ defmodule CinderWeb.ActivityLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
+    <Layouts.app
+      flash={@flash}
+      current_scope={@current_scope}
+      current_path={@current_path}
+      pending_count={@pending_count}
+    >
       <.header>
         {gettext("Activity")}
         <:subtitle>{gettext("Live pipeline and in-flight downloads.")}</:subtitle>

@@ -84,3 +84,29 @@ When #158 is built, include:
 
 #158 (adoption — owner of the fix), #132 (wire standard TV to `episode_coordinates`), #133/#157 (A6
 anime alt-season coordinates — the 1↔1 mechanism this reuses), #88 (the 1-file→N-episodes transpose).
+
+## Addendum (2026-07-27) — what #158/#187 actually shipped
+
+_Council review: n/a — this addendum records already-merged code (a documentation reconciliation),
+not a new design decision._
+
+
+Decision #2 above ("Reject a stacked part-files schema … Never introduce N files per episode row")
+was **superseded for the adoption path** by the #158 work merged in `bb14021` ("Ten-point
+improvement program II", #187, commit *"feat(adoption): combined TMDB episodes absorb TVDB-split part
+files (#159)"*). Rather than the keep-largest-fold / hold that this record proposed, adoption now
+**absorbs** a TVDB-split source file onto the combined TMDB episode as an additional part:
+
+- `episodes.part_file_paths` (`{:array, :string}`, additive migration
+  `20260726211432_add_part_file_paths_to_episodes.exs`); `Episode.file_paths/1` returns the primary
+  path plus the parts.
+- In `Cinder.Library.Adoption`, a season/episode file that matches no existing episode is surfaced as
+  a **`:part`** candidate and appended via `write_episode_part/2` — operator-confirmed, never
+  auto-guessed.
+
+So the shipped model keeps **one episode row** (the combined TMDB episode stays the catalog artifact,
+consistent with the *spirit* of decision #2) but that row may now reference **multiple physical part
+files** — the literal "never N files per episode row" wording no longer holds. The **live import
+pipeline is unchanged** (adoption still bypasses `stage_episodes`, per the investigation above), and
+this is adoption-only. Decisions #1 and #3 stand; the "known limitations" about the live standard
+pack path remain open (#132/#158). History above is left intact.

@@ -370,6 +370,7 @@ defmodule Cinder.Accounts do
     actor
     |> admin_transaction(fn actor -> do_delete_user(actor, target) end)
     |> flatten_revocation_result()
+    |> announce_requests_pruned()
   end
 
   @doc """
@@ -388,10 +389,20 @@ defmodule Cinder.Accounts do
         do_delete_user(user, user, action: "delete_own_account", self_service: true)
       end)
       |> flatten_revocation_result()
+      |> announce_requests_pruned()
     else
       {:error, :invalid_password}
     end
   end
+
+  # The delete's FK cascade removes the user's requests without any "requests"-topic event,
+  # which would leave the pending nav badge and approval queue stale. Post-commit only.
+  defp announce_requests_pruned({:ok, _, _} = result) do
+    Cinder.Requests.announce_pruned_for_deleted_user()
+    result
+  end
+
+  defp announce_requests_pruned(result), do: result
 
   defp do_delete_user(%User{} = actor, %User{} = target, opts \\ []) do
     action = Keyword.get(opts, :action, "delete_user")

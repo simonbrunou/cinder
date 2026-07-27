@@ -142,6 +142,62 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
     refute html =~ "The Wire"
   end
 
+  test "Request all seasons fans out one request per not-yet-requested season", %{conn: conn} do
+    user = Cinder.AccountsFixtures.user_fixture()
+    conn = log_in_user(conn, user)
+    {:ok, lv, _} = live(conn, ~p"/series/tmdb/1399")
+
+    lv |> element("button", "Request all seasons") |> render_click()
+    html = render_async(lv)
+
+    requests = Cinder.Requests.list_for_user(user)
+    assert Enum.map(requests, & &1.season_number) |> Enum.sort() == [1, 2]
+    assert Enum.all?(requests, &(&1.status == :pending))
+    # Season 0 (Specials) is never fanned out.
+    refute Enum.any?(requests, &(&1.season_number == 0))
+
+    assert html =~ "Requested 2 seasons"
+    # Every season now carries a badge, so the per-season and bulk buttons are gone.
+    refute has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
+    refute has_element?(lv, "button", "Request all seasons")
+  end
+
+  test "Request all seasons stops at the quota and reports how many were submitted", %{conn: conn} do
+    user = Cinder.AccountsFixtures.user_fixture()
+    {:ok, user} = user |> Ecto.Changeset.change(request_quota: 1) |> Cinder.Repo.update()
+    conn = log_in_user(conn, user)
+    {:ok, lv, _} = live(conn, ~p"/series/tmdb/1399")
+
+    lv |> element("button", "Request all seasons") |> render_click()
+    html = render_async(lv)
+
+    # Only the first season fit under the quota-of-1; the fan-out halted before the second.
+    assert [%{season_number: 1, status: :pending}] = Cinder.Requests.list_for_user(user)
+    assert html =~ "Requested 1 season of"
+    assert html =~ "Stopped at your request limit"
+  end
+
+  test "Request all seasons is hidden when every season is requested or available", %{conn: conn} do
+    user = Cinder.AccountsFixtures.user_fixture()
+
+    for season <- [1, 2] do
+      {:ok, _} =
+        Cinder.Requests.create_request(user, %{
+          target_type: "season",
+          target_id: 1399,
+          season_number: season,
+          title: "GoT",
+          year: 2011,
+          poster_path: nil
+        })
+    end
+
+    conn = log_in_user(conn, user)
+    {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
+
+    refute has_element?(lv, "button", "Request all seasons")
+  end
+
   # Bug C: a forged/absent season_number that is not in the show must be rejected.
   test "requesting a season not in the show is silently rejected", %{conn: conn} do
     user = Cinder.AccountsFixtures.user_fixture()

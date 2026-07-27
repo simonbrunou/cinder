@@ -5,8 +5,8 @@ defmodule CinderWeb.ManualSearchComponent do
   (overriding the band/blocklist for selection). Grabs are forwarded to the parent LiveView, which
   owns the Catalog writes, via `send(self(), {:manual_grab, mode, target, release})`. For an
   `:available` movie target a "Replace current file?" confirm gates the grab. An empty result
-  shows "No releases found." (the parent only offers manual search for seasons with wanted
-  episodes, so a fully-present season never opens the panel).
+  shows "No releases found." TV season searches include wanted and already-available episodes,
+  so fully imported seasons can open the panel for an operator-chosen upgrade.
 
   Required assigns: `id`, `mode` (`:movie | :tv`), `target` (the `%Movie{}` or `%Series{}`), plus
   `season_number` for `:tv`. A `results:` assign (a list of `{release, verdict}` tuples) is
@@ -114,7 +114,7 @@ defmodule CinderWeb.ManualSearchComponent do
     with {:ok, policy} <- AnimePreferences.resolve(target, Settings.anime_defaults()) do
       Acquisition.list_anime_episode_releases(
         Catalog.anime_series_acquisition_context(target),
-        wanted_ids(target, season),
+        manual_episode_ids(target, season),
         opts ++ AnimePreferences.selection_opts(policy)
       )
     end
@@ -133,22 +133,22 @@ defmodule CinderWeb.ManualSearchComponent do
     )
   end
 
-  defp wanted_ids(series, season_number) do
-    Catalog.wanted_episodes()
-    |> Enum.filter(
-      &(&1.season.series.id == series.id and &1.season.season_number == season_number)
-    )
-    |> Enum.map(& &1.id)
+  defp manual_episode_ids(series, season_number) do
+    series.id
+    |> Catalog.manual_search_episodes(season_number)
+    |> Enum.map(fn episode ->
+      episode.id
+    end)
   end
 
-  # A COMPLETE season (the manual re-grab / better-release case) has zero wanted episodes;
-  # fall back to its total count — 1× would re-create the "pack judged as one episode's
-  # size" verdict bug for exactly that search.
+  # A manual search can fill missing episodes and replace already-available ones.
+  # Judge a whole-season pack against every episode covered by that operator
+  # action so its size is not compared with a single episode's band.
   defp pack_count(series, season_number) do
-    case Catalog.count_wanted_episodes(series.id, season_number) do
-      0 -> max(Catalog.count_episodes(series.id, season_number), 1)
-      n -> n
-    end
+    series.id
+    |> Catalog.manual_search_episodes(season_number)
+    |> length()
+    |> max(1)
   end
 
   # Mirror the auto-search scorer opts (size band, preferred resolutions/sources,

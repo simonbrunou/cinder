@@ -157,6 +157,30 @@ defmodule Cinder.Notifier.DiscordTest do
     refute embed["description"] =~ "kim@example.com"
   end
 
+  test "request_denied posts a red embed naming the requester and reason (no email)" do
+    expect_post()
+
+    assert :ok =
+             Discord.notify(
+               {:request_denied, request_with("kimwatches"), "not for the household"}
+             )
+
+    assert_receive {:posted, %{"embeds" => [embed]}}
+    assert embed["title"] == "🚫 Request denied"
+    assert embed["description"] == "Arrival (2016) — for kimwatches (not for the household)"
+    refute embed["description"] =~ "kim@example.com"
+    assert embed["color"] == 0xE74C3C
+  end
+
+  test "request_denied omits the parenthetical when no reason was given" do
+    expect_post()
+
+    assert :ok = Discord.notify({:request_denied, request_with("kimwatches"), ""})
+
+    assert_receive {:posted, %{"embeds" => [embed]}}
+    assert embed["description"] == "Arrival (2016) — for kimwatches"
+  end
+
   test "request_created posts a blue awaiting-approval embed naming the requester (no email)" do
     expect_post()
 

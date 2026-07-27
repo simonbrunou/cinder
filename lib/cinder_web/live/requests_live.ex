@@ -288,7 +288,12 @@ defmodule CinderWeb.RequestsLive do
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
+    <Layouts.app
+      flash={@flash}
+      current_scope={@current_scope}
+      current_path={@current_path}
+      pending_count={@pending_count}
+    >
       <.header>
         {gettext("Requests")}
         <:subtitle>{gettext("Approve, deny, or delete catalog requests.")}</:subtitle>

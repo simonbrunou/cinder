@@ -12,16 +12,20 @@ defmodule CinderWeb.HealthControllerStaleTest do
   setup do
     original_start_poller = Application.get_env(:cinder, :start_poller, true)
     Application.put_env(:cinder, :start_poller, true)
-    :persistent_term.erase({Poller, :last_run})
-    :persistent_term.erase({TvPoller, :last_run})
+    erase_stamps()
 
     on_exit(fn ->
       Application.put_env(:cinder, :start_poller, original_start_poller)
-      :persistent_term.erase({Poller, :last_run})
-      :persistent_term.erase({TvPoller, :last_run})
+      erase_stamps()
     end)
 
     :ok
+  end
+
+  defp erase_stamps do
+    for module <- [Poller, TvPoller], key <- [:last_run, :started_at] do
+      :persistent_term.erase({module, key})
+    end
   end
 
   test "returns 200 when every enabled poller has ticked recently", %{conn: conn} do
@@ -33,10 +37,38 @@ defmodule CinderWeb.HealthControllerStaleTest do
     assert response(conn, 200) == "ok"
   end
 
-  test "returns 200 when a poller has never ticked yet (fresh boot)", %{conn: conn} do
+  test "returns 200 when a poller started recently but hasn't completed its first tick", %{
+    conn: conn
+  } do
+    now = DateTime.utc_now()
+    :persistent_term.put({Poller, :started_at}, now)
+    :persistent_term.put({TvPoller, :started_at}, now)
+
     conn = get(conn, ~p"/healthz")
 
     assert response(conn, 200) == "ok"
+  end
+
+  test "returns 200 before a poller has recorded a start time", %{conn: conn} do
+    conn = get(conn, ~p"/healthz")
+
+    assert response(conn, 200) == "ok"
+  end
+
+  # This is the first-tick blind spot: a worker that started but never completed a tick within the
+  # grace window must report unhealthy, not "ok forever".
+  test "returns 503 when a poller never completes its first tick within the grace window", %{
+    conn: conn
+  } do
+    :persistent_term.put({Poller, :started_at}, DateTime.add(DateTime.utc_now(), -1_000, :second))
+    :persistent_term.put({TvPoller, :started_at}, DateTime.utc_now())
+    :persistent_term.put({TvPoller, :last_run}, DateTime.utc_now())
+
+    conn = get(conn, ~p"/healthz")
+
+    body = response(conn, 503)
+    assert body =~ "Poller"
+    assert body =~ "no tick since start"
   end
 
   test "returns 503 naming the poller whose last tick is stale", %{conn: conn} do
@@ -49,6 +81,7 @@ defmodule CinderWeb.HealthControllerStaleTest do
     body = response(conn, 503)
     assert body =~ "Poller"
     assert body =~ "stale"
+    assert body =~ "last tick"
   end
 
   test "a stale poller is still 200 when polling is disabled", %{conn: conn} do

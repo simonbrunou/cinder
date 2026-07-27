@@ -144,6 +144,18 @@ defmodule CinderWeb.SetupLive do
         </ul>
       </div>
 
+      <div
+        id="setup-notifications-note"
+        class="mt-6 rounded-box border border-info/40 bg-info/10 p-4 text-sm"
+      >
+        <h2 class="mb-1 font-semibold">{gettext("Notifications (optional)")}</h2>
+        <p class="text-base-content/80">
+          {gettext(
+            "Approval, availability, and failure alerts stay off until you add an email (SMTP) or Discord webhook. Set those up in the Notifications section above now, or later in Settings — this step is optional and won't block Finish."
+          )}
+        </p>
+      </div>
+
       <.button
         id="finish-setup"
         phx-click="finish"

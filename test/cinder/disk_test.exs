@@ -121,4 +121,121 @@ defmodule Cinder.DiskTest do
       assert [%{kind: :movies, path: ^path, status: {:error, :enoent}}] = Disk.check_all()
     end
   end
+
+  # The guards read free space through the :disk_prober seam (Cinder.Test.StubDisk in test), driven
+  # per-case by :disk_stats_stub — so these never shell out to `df`.
+  describe "grab_space_available?/1" do
+    setup :restore_disk_env
+
+    @eight_gb 8_000_000_000
+
+    test "true for an unknown release size (nothing to guard)" do
+      Application.put_env(:cinder, :disk_stats_stub, {:ok, %{free_bytes: 0, total_bytes: 100}})
+      assert Disk.grab_space_available?(nil)
+      assert Disk.grab_space_available?(0)
+    end
+
+    test "true when no download root is configured (fails open)" do
+      Application.put_env(:cinder, :import_roots, [])
+      Application.put_env(:cinder, :disk_stats_stub, {:ok, %{free_bytes: 0, total_bytes: 100}})
+      assert Disk.grab_space_available?(@eight_gb)
+    end
+
+    test "true when a root has room for the release plus the margin" do
+      Application.put_env(:cinder, :import_roots, ["/downloads"])
+
+      Application.put_env(
+        :cinder,
+        :disk_stats_stub,
+        {:ok, %{free_bytes: 100_000_000_000, total_bytes: 200_000_000_000}}
+      )
+
+      assert Disk.grab_space_available?(@eight_gb)
+    end
+
+    test "false when every readable root positively lacks room" do
+      Application.put_env(:cinder, :import_roots, ["/downloads"])
+
+      Application.put_env(
+        :cinder,
+        :disk_stats_stub,
+        {:ok, %{free_bytes: 1_000_000_000, total_bytes: 100_000_000_000}}
+      )
+
+      refute Disk.grab_space_available?(@eight_gb)
+    end
+
+    test "true when a root's free space can't be read (fails open)" do
+      Application.put_env(:cinder, :import_roots, ["/downloads"])
+      Application.put_env(:cinder, :disk_stats_stub, {:error, :df_failed})
+      assert Disk.grab_space_available?(@eight_gb)
+    end
+
+    test "true when at least one of several roots has room" do
+      Application.put_env(:cinder, :import_roots, ["/full", "/empty"])
+
+      Application.put_env(:cinder, :disk_stats_stub, fn
+        "/full" -> {:ok, %{free_bytes: 1_000_000_000, total_bytes: 100_000_000_000}}
+        "/empty" -> {:ok, %{free_bytes: 100_000_000_000, total_bytes: 200_000_000_000}}
+      end)
+
+      assert Disk.grab_space_available?(@eight_gb)
+    end
+  end
+
+  describe "import_space_available?/1" do
+    setup :restore_disk_env
+
+    test "true when the kind's library root is unconfigured (the importer already holds)" do
+      Application.delete_env(:cinder, :movies_library_path)
+      assert Disk.import_space_available?(:movies)
+    end
+
+    test "false when the configured library root is below the floor" do
+      Application.put_env(:cinder, :movies_library_path, "/library")
+
+      Application.put_env(
+        :cinder,
+        :disk_stats_stub,
+        {:ok, %{free_bytes: 500_000_000, total_bytes: 100_000_000_000}}
+      )
+
+      refute Disk.import_space_available?(:movies)
+    end
+
+    test "true when the configured library root has ample free space" do
+      Application.put_env(:cinder, :tv_library_path, "/tv")
+
+      Application.put_env(
+        :cinder,
+        :disk_stats_stub,
+        {:ok, %{free_bytes: 50_000_000_000, total_bytes: 100_000_000_000}}
+      )
+
+      assert Disk.import_space_available?(:tv)
+    end
+
+    test "true when the root's free space can't be read (fails open)" do
+      Application.put_env(:cinder, :movies_library_path, "/library")
+      Application.put_env(:cinder, :disk_stats_stub, {:error, :enoent})
+      assert Disk.import_space_available?(:movies)
+    end
+  end
+
+  defp restore_disk_env(_context) do
+    saved =
+      Map.new(
+        [:import_roots, :movies_library_path, :tv_library_path, :disk_stats_stub],
+        &{&1, Application.get_env(:cinder, &1)}
+      )
+
+    on_exit(fn ->
+      Enum.each(saved, fn
+        {k, nil} -> Application.delete_env(:cinder, k)
+        {k, v} -> Application.put_env(:cinder, k, v)
+      end)
+    end)
+
+    :ok
+  end
 end

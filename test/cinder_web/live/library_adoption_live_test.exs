@@ -119,6 +119,7 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
     |> render_submit()
 
     render_async(view)
+    render_async(view)
 
     series = Catalog.get_series_by_tmdb_id(2316)
     [season] = Catalog.get_series_with_tree(series.id).seasons
@@ -126,6 +127,68 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
     assert episode.file_path == primary
     assert episode.part_file_paths == [part]
     assert has_element?(view, "#no-unmanaged-files", "No unmanaged files found")
+  end
+
+  test "an episode adoption failure remains visible with its file after the transaction rolls back",
+       %{conn: conn} do
+    part =
+      "/tmp/cinder-test-tv-library/The Office (2005)/The.Office.S04E16.mkv"
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn
+      "/tmp/cinder-test-library" -> {:ok, []}
+      "/tmp/cinder-test-tv-library" -> {:ok, [{part, 10}]}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :search_tv, fn "The Office", "en" ->
+      {:ok, [series_result()]}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn 2316 ->
+      {:ok, Map.put(series_result(), :seasons, [%{season_number: 4}])}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_season, fn 2316, 4, _locale ->
+      {:ok,
+       %{
+         season_number: 4,
+         episodes: [
+           %{
+             tmdb_episode_id: 40_415,
+             episode_number: 15,
+             title: "Night Out",
+             air_date: ~D[2008-04-24]
+           }
+         ]
+       }}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_series_alternative_titles, fn 2316 -> {:ok, []} end)
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn 2316 -> {:ok, []} end)
+
+    {:ok, view, _html} = live(conn, ~p"/library/adopt")
+    view |> element("#scan-library") |> render_click()
+    render_async(view)
+
+    assert has_element?(view, "#part-assignment-1-1 option[value='15']")
+
+    view
+    |> form("#adoption-form", %{
+      "adoption" => %{
+        "selected" => ["1"],
+        "parts" => %{"1" => %{"1" => "15"}}
+      }
+    })
+    |> render_submit()
+
+    render_async(view)
+
+    assert has_element?(view, "#adoption-failures", "S04E15")
+    assert has_element?(view, "#adoption-failures", "The.Office.S04E16.mkv")
+
+    series = Catalog.get_series_by_tmdb_id(2316)
+    [season] = Catalog.get_series_with_tree(series.id).seasons
+    [episode] = season.episodes
+    assert episode.file_path == nil
   end
 
   test "the library page links to adoption", %{conn: conn} do

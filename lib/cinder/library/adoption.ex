@@ -9,7 +9,7 @@ defmodule Cinder.Library.Adoption do
 
   alias Cinder.Acquisition.Parser
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Movie, Series}
+  alias Cinder.Catalog.{Episode, Series}
   alias Cinder.Library
   alias Cinder.Locales
 
@@ -28,31 +28,39 @@ defmodule Cinder.Library.Adoption do
   end
 
   @doc """
-  Adopts confirmed candidates and returns `%{adopted: count, skipped: count}`.
+  Adopts confirmed candidates and returns
+  `%{adopted: count, skipped: count, failures: [failure]}`.
 
   Ambiguous candidates must carry `:chosen_tmdb_id`. Already-managed paths and
-  candidates without an actionable file are skipped.
+  candidates without an actionable file are skipped. Catalog write failures are
+  reported separately with their episode and path.
   """
   def adopt(candidates) when is_list(candidates) do
     {summary, _managed} =
-      Enum.reduce(candidates, {%{adopted: 0, skipped: 0}, managed_paths()}, fn candidate,
-                                                                               {summary, managed} ->
-        case adopt_candidate(candidate, managed) do
-          {:adopted, paths} ->
-            {
-              Map.update!(summary, :adopted, &(&1 + 1)),
-              Enum.reduce(paths, managed, &MapSet.put(&2, normalize_path(&1)))
-            }
+      Enum.reduce(
+        candidates,
+        {%{adopted: 0, skipped: 0, failures: []}, managed_paths()},
+        fn candidate, {summary, managed} ->
+          case adopt_candidate(candidate, managed) do
+            {:adopted, paths} ->
+              {
+                Map.update!(summary, :adopted, &(&1 + 1)),
+                Enum.reduce(paths, managed, &MapSet.put(&2, normalize_path(&1)))
+              }
 
-          :skipped ->
-            {Map.update!(summary, :skipped, &(&1 + 1)), managed}
+            {:failed, failures} ->
+              {Map.update!(summary, :failures, &(&1 ++ failures)), managed}
+
+            :skipped ->
+              {Map.update!(summary, :skipped, &(&1 + 1)), managed}
+          end
         end
-      end)
+      )
 
     summary
   end
 
-  def adopt(_candidates), do: %{adopted: 0, skipped: 0}
+  def adopt(_candidates), do: %{adopted: 0, skipped: 0, failures: []}
 
   defp scan_movies(managed) do
     case root_files(:movies) do
@@ -519,41 +527,26 @@ defmodule Cinder.Library.Adoption do
          path when is_binary(path) <- Map.get(candidate, :path),
          false <- managed?(managed, path),
          {:ok, details} <- Catalog.get_movie(tmdb_id),
-         {:ok, movie, created?} <- movie_for_adoption(details),
-         :ok <- announce_movie_creation(movie, created?),
-         {:ok, _movie} <- Catalog.transition(movie, %{status: :available, file_path: path}) do
+         {:ok, movie, created} <-
+           Catalog.find_or_create_at_available(movie_attrs(details), path),
+         :ok <- announce_movie_creation(movie, created == :created) do
       {:adopted, [path]}
     else
       _ -> :skipped
     end
   end
 
-  defp movie_for_adoption(details) do
-    case Catalog.get_movie_by_tmdb_id(details.tmdb_id) do
-      %Movie{file_path: path} when path not in [nil, ""] ->
-        {:error, :already_has_file}
-
-      %Movie{} = movie ->
-        {:ok, movie, false}
-
-      nil ->
-        attrs =
-          Map.take(details, [
-            :tmdb_id,
-            :imdb_id,
-            :title,
-            :year,
-            :poster_path,
-            :original_language,
-            :localizations
-          ])
-
-        case Catalog.add_movie(attrs) do
-          {:ok, movie} -> {:ok, movie, true}
-          {:error, reason} -> {:error, reason}
-        end
-    end
-  end
+  defp movie_attrs(details),
+    do:
+      Map.take(details, [
+        :tmdb_id,
+        :imdb_id,
+        :title,
+        :year,
+        :poster_path,
+        :original_language,
+        :localizations
+      ])
 
   defp announce_movie_creation(movie, true), do: Catalog.broadcast_movie_created(movie)
   defp announce_movie_creation(_movie, false), do: :ok
@@ -577,32 +570,28 @@ defmodule Cinder.Library.Adoption do
   defp do_adopt_series(files, tmdb_id) do
     existing? = match?(%Series{}, Catalog.get_series_by_tmdb_id(tmdb_id))
 
-    with {:ok, series} <- Catalog.add_series(tmdb_id, monitor_strategy: :none),
-         {:ok, strategy_changed?} <- ensure_unmonitored(series) do
-      announce_series_creation(series, existing?)
-      {count, paths} = adopt_episode_files(files, Catalog.get_series_with_tree(series.id))
-      finish_series_adoption(existing?, strategy_changed?, count, paths)
-    else
+    case Catalog.add_series(tmdb_id, monitor_strategy: :none) do
+      {:ok, series} -> finish_series_adoption(files, series, existing?)
       {:error, _reason} -> :skipped
+    end
+  end
+
+  defp finish_series_adoption(files, series, existing?) do
+    case adopt_episode_files(files, Catalog.get_series_with_tree(series.id)) do
+      {:ok, []} ->
+        :skipped
+
+      {:ok, paths} ->
+        announce_series_creation(series, existing?)
+        {:adopted, paths}
+
+      {:error, failures} ->
+        {:failed, failures}
     end
   end
 
   defp announce_series_creation(_series, true), do: :ok
   defp announce_series_creation(series, false), do: Catalog.broadcast_series(series.id)
-
-  defp finish_series_adoption(false, _strategy_changed?, _count, paths), do: {:adopted, paths}
-  defp finish_series_adoption(true, true, _count, paths), do: {:adopted, paths}
-  defp finish_series_adoption(true, false, count, paths) when count > 0, do: {:adopted, paths}
-  defp finish_series_adoption(true, false, 0, _paths), do: :skipped
-
-  defp ensure_unmonitored(%Series{monitor_strategy: :none, monitored: false}), do: {:ok, false}
-
-  defp ensure_unmonitored(series) do
-    case Catalog.set_series_monitor_strategy(series, :none) do
-      {:ok, _series} -> {:ok, true}
-      {:error, reason} -> {:error, reason}
-    end
-  end
 
   defp adopt_episode_files(files, %Series{} = series) do
     episodes =
@@ -613,36 +602,40 @@ defmodule Cinder.Library.Adoption do
 
     {normal_files, part_files} = Enum.split_with(files, &(&1.status != :part))
 
-    {count, paths, written} =
-      Enum.reduce(normal_files, {0, [], MapSet.new()}, &adopt_episode_file(&1, episodes, &2))
+    {primary_actions, _written} =
+      Enum.reduce(normal_files, {[], MapSet.new()}, &plan_episode_file(&1, episodes, &2))
 
-    {count, paths, _written} =
-      Enum.reduce(part_files, {count, paths, written}, &adopt_episode_file(&1, episodes, &2))
+    part_actions = Enum.reduce(part_files, [], &plan_episode_part(&1, episodes, &2))
+    actions = Enum.reverse(primary_actions) ++ Enum.reverse(part_actions)
 
-    {count, paths}
+    case Catalog.adopt_episode_files(actions) do
+      {:ok, applied} -> {:ok, applied |> Enum.map(& &1.path) |> Enum.uniq()}
+      {:error, failures} -> {:error, failures}
+    end
   end
 
-  defp adopt_episode_files(_files, _missing_series), do: {0, []}
+  defp adopt_episode_files(_files, _missing_series), do: {:ok, []}
 
-  defp adopt_episode_file(
+  defp plan_episode_part(
          %{
            status: :part,
            part_of: %{season_number: season_number, episode_number: episode_number}
          } = file,
          episodes,
-         {count, paths, written}
+         actions
        ) do
-    episode = Map.get(episodes, {season_number, episode_number})
+    case Map.get(episodes, {season_number, episode_number}) do
+      %Episode{} = episode ->
+        [episode_action(episode, file.path, season_number, episode_number, :part) | actions]
 
-    case write_episode_part(episode, file.path) do
-      :ok -> {count + 1, [file.path | paths], written}
-      :skipped -> {count, paths, written}
+      _ ->
+        actions
     end
   end
 
-  defp adopt_episode_file(%{status: :part}, _episodes, acc), do: acc
+  defp plan_episode_part(%{status: :part}, _episodes, actions), do: actions
 
-  defp adopt_episode_file(file, episodes, {count, paths, written}) do
+  defp plan_episode_file(file, episodes, {actions, written}) do
     keys = Enum.map(file.episode_numbers, &{file.season_number, &1})
     mapped = Enum.map(keys, &Map.get(episodes, &1))
 
@@ -650,12 +643,29 @@ defmodule Cinder.Library.Adoption do
     # scan time: a key another file just claimed can never be silently overwritten.
     if Enum.any?(keys, &MapSet.member?(written, &1)) or
          not adoptable_episode_file?(mapped, file.path) do
-      {count, paths, written}
+      {actions, written}
     else
-      updates = Enum.reduce(mapped, 0, &write_episode_path(&1, file.path, &2))
+      actions =
+        mapped
+        |> Enum.zip(keys)
+        |> Enum.reduce(actions, fn
+          {%Episode{file_path: nil} = episode, {season_number, episode_number}}, acc ->
+            [
+              episode_action(
+                episode,
+                file.path,
+                season_number,
+                episode_number,
+                :primary
+              )
+              | acc
+            ]
 
-      {count + updates, maybe_add_path(paths, file.path, updates),
-       MapSet.union(written, MapSet.new(keys))}
+          {_already_adopted, _key}, acc ->
+            acc
+        end)
+
+      {actions, MapSet.union(written, MapSet.new(keys))}
     end
   end
 
@@ -667,41 +677,14 @@ defmodule Cinder.Library.Adoption do
     end)
   end
 
-  defp write_episode_path(%Episode{file_path: nil} = episode, path, count) do
-    case Catalog.transition_episode(episode, %{file_path: path}) do
-      {:ok, _episode} -> count + 1
-      {:error, _reason} -> count
-    end
+  defp episode_action(episode, path, season_number, episode_number, type) do
+    %{
+      episode: episode,
+      episode_code: Episode.code(season_number, episode_number),
+      path: path,
+      type: type
+    }
   end
-
-  defp write_episode_path(_episode, _path, count), do: count
-
-  defp write_episode_part(%Episode{id: id}, path) do
-    id
-    |> Catalog.get_episode_by_id()
-    |> append_episode_part(path)
-  end
-
-  defp write_episode_part(_episode, _path), do: :skipped
-
-  defp append_episode_part(%Episode{file_path: primary} = episode, path)
-       when primary not in [nil, ""] do
-    parts = episode.part_file_paths || []
-
-    if path in parts do
-      :skipped
-    else
-      case Catalog.transition_episode(episode, %{part_file_paths: parts ++ [path]}) do
-        {:ok, _episode} -> :ok
-        {:error, _reason} -> :skipped
-      end
-    end
-  end
-
-  defp append_episode_part(_episode, _path), do: :skipped
-
-  defp maybe_add_path(paths, path, updates) when updates > 0, do: [path | paths]
-  defp maybe_add_path(paths, _path, _updates), do: paths
 
   defp chosen_tmdb_id(%{chosen_tmdb_id: id}), do: parse_integer(id)
   defp chosen_tmdb_id(%{match: %{tmdb_id: id}}), do: parse_integer(id)

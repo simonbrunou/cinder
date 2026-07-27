@@ -101,6 +101,43 @@ defmodule Cinder.Catalog.MovieTest do
       refute_receive {:movie_updated, _}
     end
 
+    test "only forward completion progress advances the dedicated clock" do
+      movie = movie_fixture(%{status: :downloading})
+
+      assert {:ok, movie} =
+               Catalog.update_movie_download_metrics(movie, %{
+                 download_progress: 0.42,
+                 download_speed: 1_500_000,
+                 download_eta: 90
+               })
+
+      past = DateTime.add(Catalog.now(), -25, :hour)
+
+      Repo.update_all(from(m in Movie, where: m.id == ^movie.id),
+        set: [download_progress_at: past]
+      )
+
+      movie = Repo.get!(Movie, movie.id)
+
+      assert {:ok, jittered} =
+               Catalog.update_movie_download_metrics(movie, %{
+                 download_progress: 0.42,
+                 download_speed: 1_024,
+                 download_eta: 500
+               })
+
+      assert jittered.download_progress_at == past
+
+      assert {:ok, progressed} =
+               Catalog.update_movie_download_metrics(jittered, %{
+                 download_progress: 0.43,
+                 download_speed: 1_024,
+                 download_eta: 490
+               })
+
+      assert DateTime.after?(progressed.download_progress_at, past)
+    end
+
     test "a new downloading or upgrading run clears old metrics" do
       metrics = %{download_progress: 0.42, download_speed: 1_500_000, download_eta: 90}
 

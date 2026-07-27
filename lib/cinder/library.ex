@@ -950,6 +950,7 @@ defmodule Cinder.Library do
 
   defp stage_episode_file([ep | _] = episodes, source, root, target, folder?, reports) do
     dest = build_episode_dest(episodes, source, root)
+    replace? = Enum.any?(episodes, &(&1.file_path not in [nil, ""]))
 
     with {:ok, source} <- safe_source_file(source),
          {:ok, %{size: size, inode: si, major_device: sdev}} <- fs().lstat(source),
@@ -961,7 +962,7 @@ defmodule Cinder.Library do
          {:ok, dest} <- safe_destination(dest, root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
          {:ok, quality, rollback, placed?} <-
-           StageEngine.stage_place(source, dest, root, {si, sdev}, ep, new_q, false, fn ->
+           StageEngine.stage_place(source, dest, root, {si, sdev}, ep, new_q, replace?, fn ->
              ep_upgrade?(ep, new_q, target)
            end) do
       quality = staged_sidecar_quality(quality, placed?, folder?, source)

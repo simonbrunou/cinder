@@ -70,11 +70,21 @@ defmodule Cinder.Download.PollerSkeletonTest do
 
   test "a stateful poller stamps :persistent_term with its last successful tick" do
     :persistent_term.erase({StatefulPreambleTestPoller, :last_run})
-    on_exit(fn -> :persistent_term.erase({StatefulPreambleTestPoller, :last_run}) end)
+    :persistent_term.erase({StatefulPreambleTestPoller, :started_at})
+
+    on_exit(fn ->
+      :persistent_term.erase({StatefulPreambleTestPoller, :last_run})
+      :persistent_term.erase({StatefulPreambleTestPoller, :started_at})
+    end)
 
     refute StatefulPreambleTestPoller.status().last_run_at
+    refute StatefulPreambleTestPoller.status().started_at
 
     pid = start_supervised!({StatefulPreambleTestPoller, interval: :timer.hours(1)})
+
+    # init/1 stamps started_at (the /healthz first-tick guard reads it) before any tick completes.
+    assert %DateTime{} = StatefulPreambleTestPoller.status().started_at
+
     capture_log(fn -> assert :ok = StatefulPreambleTestPoller.poll(pid) end)
 
     assert %DateTime{} = last_run_at = StatefulPreambleTestPoller.status().last_run_at

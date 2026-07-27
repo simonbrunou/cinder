@@ -780,6 +780,25 @@ defmodule Cinder.AccountsTest do
       assert audit.detail["cascaded_requests"] == true
     end
 
+    # The FK cascade removes the user's requests without per-request events; the pending nav
+    # badge and approval queue re-read on this announce — regression for the stale-badge bug.
+    test "announces on the requests topic so the pending badge re-reads" do
+      actor = admin_fixture()
+      target = user_fixture()
+
+      Repo.insert!(%Cinder.Requests.Request{
+        user_id: target.id,
+        target_id: 603,
+        target_type: "movie",
+        title: "The Matrix",
+        status: :pending
+      })
+
+      Cinder.Requests.subscribe()
+      assert {:ok, _, _} = Accounts.delete_user(actor, target)
+      assert_receive {:request_deleted, nil}
+    end
+
     test "nilifies approved_by_id on requests the deleted user approved" do
       actor = admin_fixture()
       approver = admin_fixture()

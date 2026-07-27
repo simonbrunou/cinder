@@ -60,7 +60,8 @@ defmodule CinderWeb.Router do
         {CinderWeb.UserAuth, :require_authenticated},
         {CinderWeb.UserAuth, :require_active},
         {CinderWeb.UserAuth, :require_setup},
-        {CinderWeb.UserAuth, :current_path}
+        {CinderWeb.UserAuth, :current_path},
+        {CinderWeb.UserAuth, :pending_requests_badge}
       ] do
       live "/", DiscoverLive
       live "/my-requests", MyRequestsLive
@@ -77,7 +78,8 @@ defmodule CinderWeb.Router do
         {CinderWeb.UserAuth, :require_active},
         {CinderWeb.UserAuth, :require_admin},
         {CinderWeb.UserAuth, :require_setup},
-        {CinderWeb.UserAuth, :current_path}
+        {CinderWeb.UserAuth, :current_path},
+        {CinderWeb.UserAuth, :pending_requests_badge}
       ] do
       live "/dashboard", DashboardLive
       live "/activity", ActivityLive
@@ -110,15 +112,29 @@ defmodule CinderWeb.Router do
     get "/movies", RedirectController, :to_library
   end
 
-  # Enable LiveDashboard and Swoosh mailbox preview in development.
-  # Gated to authenticated admins only — /dev tooling must not be public.
-  if Application.compile_env(:cinder, :dev_routes) do
-    import Phoenix.LiveDashboard.Router
+  # LiveDashboard — admin-only in EVERY environment. The domain telemetry in
+  # CinderWeb.Telemetry.metrics/0 is only observable through it, and prod compiles no /dev
+  # routes, so without this route every `:telemetry.execute` in prod fires into the void. The
+  # pipeline plugs gate the dead render; the `on_mount` hooks gate the LiveView socket (a bare
+  # pipeline only gates the initial HTTP request, not the live connection).
+  import Phoenix.LiveDashboard.Router
 
+  scope "/admin" do
+    pipe_through [:browser, :require_authenticated_user, :require_admin]
+
+    live_dashboard "/dashboard",
+      metrics: CinderWeb.Telemetry,
+      on_mount: [
+        {CinderWeb.UserAuth, :require_authenticated},
+        {CinderWeb.UserAuth, :require_admin}
+      ]
+  end
+
+  # Swoosh mailbox preview stays dev-only (no outbound mail to inspect in prod), same admin gate.
+  if Application.compile_env(:cinder, :dev_routes) do
     scope "/dev" do
       pipe_through [:browser, :require_authenticated_user, :require_admin]
 
-      live_dashboard "/dashboard", metrics: CinderWeb.Telemetry
       forward "/mailbox", Plug.Swoosh.MailboxPreview
     end
   end
@@ -147,6 +163,10 @@ defmodule CinderWeb.Router do
     pipe_through [:browser]
 
     live_session :current_user,
+      # session MFA threads the cloudflared-resolved client IP (from the endpoint's RemoteIp
+      # plug) into the session so UserLive.Registration can key its throttle on the real
+      # visitor rather than the shared tunnel peer.
+      session: {CinderWeb.Plugs.RemoteIp, :session_client_ip, []},
       on_mount: [
         {CinderWeb.Locale, :default},
         {CinderWeb.UserAuth, :mount_current_scope},

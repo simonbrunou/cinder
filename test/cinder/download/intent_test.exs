@@ -1339,6 +1339,21 @@ defmodule Cinder.Download.IntentTest do
     refute Repo.get(Intent, intent.id)
   end
 
+  test "a sweep-style intent cannot become an upgrade after its episode gains a file" do
+    series = series_fixture(%{monitor_strategy: :all})
+    episode = episode_fixture(season_fixture(series))
+    {:ok, intent} = reserve_episode_intent([episode.id], release("Show.Auto"))
+
+    assert {:ok, available} =
+             Catalog.transition_episode(episode, %{file_path: "/library/Show.S01E01.mkv"})
+
+    assert Catalog.episode_state(available) == :available
+    assert {:error, :stale_target} = Download.submit_intent(intent)
+    assert Repo.all(Grab) == []
+    refute Repo.get(Intent, intent.id)
+    assert Repo.reload!(episode).grab_id == nil
+  end
+
   defp reserve_movie_intent(movie_id, chosen \\ release("Movie")) do
     Download.reserve_intent(%{
       kind: :movie,

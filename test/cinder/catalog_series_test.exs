@@ -524,12 +524,12 @@ defmodule Cinder.CatalogSeriesTest do
     series
   end
 
-  # Creates a series whose season has all episodes with files — nothing wanted.
-  defp series_with_available_season(opts) do
+  # Creates a series whose season has no episodes eligible for a manual grab.
+  defp series_with_unmonitored_missing_season(opts) do
     season_num = Keyword.get(opts, :season, 1)
     series = series_fixture(%{monitor_strategy: :all})
     season = season_fixture(series, %{season_number: season_num})
-    episode_fixture(season, %{episode_number: 1, file_path: "/media/ep1.mkv"})
+    episode_fixture(season, %{episode_number: 1, monitored: false})
     series
   end
 
@@ -610,8 +610,8 @@ defmodule Cinder.CatalogSeriesTest do
       assert [%{search_attempts: 0}] = grab.episodes
     end
 
-    test "returns :nothing_wanted when the season has no wanted episodes" do
-      series = series_with_available_season(season: 1)
+    test "returns :nothing_wanted when the season has no manually searchable episodes" do
+      series = series_with_unmonitored_missing_season(season: 1)
 
       release = %Cinder.Acquisition.Release{
         title: "S01",

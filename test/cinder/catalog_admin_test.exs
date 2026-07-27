@@ -225,7 +225,7 @@ defmodule Cinder.CatalogAdminTest do
       assert {:error, :stale_grab} = Catalog.update_grab_download_metrics(tracked, metrics)
     end
 
-    test "a grab retry clears metrics" do
+    test "a grab retry keeps the progress high-water and clears live estimates" do
       series = series_fixture()
       season = season_fixture(series)
       episode = episode_fixture(season)
@@ -240,7 +240,7 @@ defmodule Cinder.CatalogAdminTest do
 
       assert :ok = Catalog.increment_grab_attempts(tracked)
 
-      assert %{download_progress: nil, download_speed: nil, download_eta: nil} =
+      assert %{download_progress: 0.42, download_speed: nil, download_eta: nil} =
                Repo.get!(Cinder.Catalog.Grab, tracked.id)
     end
   end
@@ -848,6 +848,35 @@ defmodule Cinder.CatalogAdminTest do
       assert audit.detail["file_paths"] == paths
     end
 
+    test "a later part failure records successful unlinks and keeps only the failed path" do
+      paths = ["/tmp/ep.mkv", "/tmp/ep-part-2.mkv", "/tmp/ep-part-3.mkv"]
+      {_series, ep} = episode_with_file!(hd(paths), tl(paths))
+
+      expect(Cinder.Library.FilesystemMock, :rm, 3, fn
+        "/tmp/ep.mkv" -> :ok
+        "/tmp/ep-part-2.mkv" -> :ok
+        "/tmp/ep-part-3.mkv" -> {:error, :eacces}
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+      log =
+        capture_log(fn ->
+          assert {:error, :eacces} = Catalog.delete_episode_file(ep, nil)
+        end)
+
+      assert log =~ ~s(library file delete failed for "/tmp/ep-part-3.mkv": :eacces)
+
+      updated = Repo.get!(Cinder.Catalog.Episode, ep.id)
+      assert updated.file_path == nil
+      assert updated.part_file_paths == ["/tmp/ep-part-3.mkv"]
+
+      audit = Repo.one!(Cinder.Audit.AdminAudit)
+      assert audit.detail["files_deleted"] == false
+      assert audit.detail["deleted_file_paths"] == Enum.take(paths, 2)
+      assert audit.detail["failed_unlinks"] == ["/tmp/ep-part-3.mkv: :eacces"]
+    end
+
     test "clears every episode that shares the deleted multi-episode file" do
       {_series, ep} = episode_with_file!("/tmp/S01E01-E02.mkv")
 
@@ -993,6 +1022,39 @@ defmodule Cinder.CatalogAdminTest do
       assert log =~ ~s(library file delete failed for "/tmp/bad.mkv": :eacces)
       assert is_nil(Repo.get(Cinder.Catalog.Episode, e1.id).file_path)
       assert Repo.get(Cinder.Catalog.Episode, e2.id).file_path == "/tmp/bad.mkv"
+    end
+
+    test "mixed part results clear successful paths without hiding the failed part" do
+      {_series, season, [partial, cleared]} =
+        season_with_files!(["/tmp/e1.mkv", "/tmp/e2.mkv"])
+
+      part_paths = ["/tmp/e1-part-2.mkv", "/tmp/e1-part-3.mkv"]
+      partial = partial |> Ecto.Changeset.change(part_file_paths: part_paths) |> Repo.update!()
+
+      expect(Cinder.Library.FilesystemMock, :rm, 4, fn
+        "/tmp/e1.mkv" -> :ok
+        "/tmp/e1-part-2.mkv" -> :ok
+        "/tmp/e1-part-3.mkv" -> {:error, :eacces}
+        "/tmp/e2.mkv" -> :ok
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+      log =
+        capture_log(fn ->
+          assert {:ok, 1, 1} = Catalog.delete_season_files(season, nil)
+        end)
+
+      assert log =~ ~s(library file delete failed for "/tmp/e1-part-3.mkv": :eacces)
+
+      partial = Repo.reload!(partial)
+      assert partial.file_path == nil
+      assert partial.part_file_paths == ["/tmp/e1-part-3.mkv"]
+      assert Repo.reload!(cleared).file_path == nil
+
+      audit = Repo.one!(Cinder.Audit.AdminAudit)
+      assert audit.detail["files_deleted"] == false
+      assert audit.detail["failed_unlinks"] == ["/tmp/e1-part-3.mkv: :eacces"]
     end
 
     test "all unlinks fail returns {:ok, 0, 1} and leaves file_path untouched" do

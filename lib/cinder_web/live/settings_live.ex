@@ -76,10 +76,20 @@ defmodule CinderWeb.SettingsLive do
   # crash the LiveView (and lose unsaved form input). House rule; see sibling views.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
+  # Admin sockets are subscribed to the "requests" topic (nav-badge on_mount); ignore those
+  # broadcasts here — the on_mount hook already re-renders the badge.
+  @impl true
+  def handle_info(_message, socket), do: {:noreply, socket}
+
   @impl true
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
+    <Layouts.app
+      flash={@flash}
+      current_scope={@current_scope}
+      current_path={@current_path}
+      pending_count={@pending_count}
+    >
       <.header>
         {gettext("Settings")}
         <:subtitle>

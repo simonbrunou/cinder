@@ -20,6 +20,7 @@ defmodule Cinder.Catalog.Grab do
     field :download_progress, :float
     field :download_speed, :integer
     field :download_eta, :integer
+    field :download_progress_at, :utc_datetime
     field :mapping_snapshot, :map
     field :release_policy_snapshot, :map
 
@@ -46,8 +47,26 @@ defmodule Cinder.Catalog.Grab do
       :download_speed,
       :download_eta
     ])
+    |> advance_download_progress_at(grab)
     |> validate_required([:download_id, :download_protocol])
   end
+
+  defp advance_download_progress_at(changeset, %__MODULE__{} = grab) do
+    progress = get_field(changeset, :download_progress)
+    content_path = get_field(changeset, :content_path)
+
+    if is_nil(grab.id) or is_nil(content_path) != is_nil(grab.content_path) or
+         progress_advanced?(grab.download_progress, progress) do
+      force_change(changeset, :download_progress_at, DateTime.utc_now(:second))
+    else
+      changeset
+    end
+  end
+
+  defp progress_advanced?(previous, current) when is_number(current),
+    do: current > (previous || 0)
+
+  defp progress_advanced?(_previous, _current), do: false
 
   @doc false
   def reservation_changeset(%__MODULE__{id: nil} = grab, attrs) do

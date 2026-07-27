@@ -125,7 +125,12 @@ defmodule CinderWeb.EntityDiscoveryLive do
   @impl true
   def render(%{live_action: :person} = assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
+    <Layouts.app
+      flash={@flash}
+      current_scope={@current_scope}
+      current_path={@current_path}
+      pending_count={@pending_count}
+    >
       <.link navigate={~p"/"} class="link link-hover mb-6 inline-flex items-center gap-1">
         <.icon name="hero-arrow-left" class="size-3.5" />{gettext("Discover")}
       </.link>
@@ -173,7 +178,12 @@ defmodule CinderWeb.EntityDiscoveryLive do
 
   def render(%{live_action: :collection} = assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
+    <Layouts.app
+      flash={@flash}
+      current_scope={@current_scope}
+      current_path={@current_path}
+      pending_count={@pending_count}
+    >
       <.link navigate={~p"/"} class="link link-hover mb-6 inline-flex items-center gap-1">
         <.icon name="hero-arrow-left" class="size-3.5" />{gettext("Discover")}
       </.link>

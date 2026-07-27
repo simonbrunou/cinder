@@ -21,6 +21,21 @@ defmodule Cinder.Requests do
     )
   end
 
+  @doc "Count of requests awaiting admin approval — a light query behind the admin nav badge."
+  def count_pending do
+    Repo.aggregate(from(r in Request, where: r.status == :pending), :count)
+  end
+
+  @doc """
+  Announce that a user's requests vanished out-of-band — the FK cascade of a user deletion
+  removes them without any per-request event, which would leave the pending nav badge and the
+  approval queue stale. The rows are already gone, so there is no payload; subscribers re-read.
+  Post-commit only.
+  """
+  def announce_pruned_for_deleted_user do
+    broadcast({:request_deleted, nil})
+  end
+
   def list_requests do
     Repo.all(from r in Request, order_by: [desc: r.id], preload: [:user])
   end
@@ -250,7 +265,7 @@ defmodule Cinder.Requests do
   def deny_request(%Request{status: :pending} = request, %User{} = admin, reason) do
     request
     |> flip_pending(%{status: :denied, denial_reason: reason, approved_by_id: admin.id})
-    |> tap_ok(&broadcast({:request_denied, &1}))
+    |> tap_ok(&announce_denied(&1, reason))
   end
 
   def deny_request(%Request{}, _admin, _reason), do: {:error, :not_pending}
@@ -524,6 +539,15 @@ defmodule Cinder.Requests do
     request = Repo.preload(request, :user)
     broadcast({:request_approved, request})
     Notifier.notify({:request_approved, request})
+  end
+
+  # Mirrors announce_approved/1: preload :user (a no-op on the admin approval-queue path, which
+  # already preloaded it) so the Email transport can address the requester, then broadcast for
+  # open views and emit the out-of-band notifier event carrying the admin's free-text reason.
+  defp announce_denied(request, reason) do
+    request = Repo.preload(request, :user)
+    broadcast({:request_denied, request})
+    Notifier.notify({:request_denied, request, reason})
   end
 
   # Accepts a %Request{} or a plain attrs map — Map.get works on both.

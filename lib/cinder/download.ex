@@ -60,6 +60,17 @@ defmodule Cinder.Download do
          mapping_snapshot,
          release_policy_snapshot
        ) do
+    release_attrs = %{
+      "title" => release.title,
+      "download_url_ciphertext" => url |> Vault.encrypt!() |> Base.encode64(),
+      "download_url_origin" => release.download_url_origin
+    }
+
+    release_attrs =
+      if Map.get(attrs, :operator_initiated, false),
+        do: Map.put(release_attrs, "operator_initiated", true),
+        else: release_attrs
+
     intent_attrs = %{
       operation_key: Ecto.UUID.generate(),
       kind: Map.fetch!(attrs, :kind),
@@ -68,11 +79,7 @@ defmodule Cinder.Download do
       protocol: Map.fetch!(attrs, :protocol),
       mapping_snapshot: mapping_snapshot,
       release_policy_snapshot: release_policy_snapshot,
-      release: %{
-        "title" => release.title,
-        "download_url_ciphertext" => url |> Vault.encrypt!() |> Base.encode64(),
-        "download_url_origin" => release.download_url_origin
-      },
+      release: release_attrs,
       status: :reserved
     }
 
@@ -137,31 +144,35 @@ defmodule Cinder.Download do
   end
 
   @doc "Durably submits a TV release and creates its guarded episode grab."
-  def grab_episodes(%Release{} = release, episode_ids) when episode_ids != [] do
+  def grab_episodes(release, episode_ids, opts \\ [])
+
+  def grab_episodes(%Release{} = release, episode_ids, opts)
+      when episode_ids != [] and is_list(opts) do
     with {:ok, series} <- Catalog.get_single_series_for_episode_ids(episode_ids) do
-      grab_validated_episodes(release, episode_ids, series)
+      grab_validated_episodes(release, episode_ids, series, opts)
     end
   end
 
-  defp grab_validated_episodes(release, episode_ids, series) do
+  defp grab_validated_episodes(release, episode_ids, series, opts) do
     case overlapping_episode_intent(episode_ids) do
-      nil -> reserve_episode_intent(release, episode_ids, series)
+      nil -> reserve_episode_intent(release, episode_ids, series, opts)
       %Intent{status: :cleanup_pending} -> {:error, :download_intent_busy}
-      intent -> reconcile_matching_intent(intent, release, episode_ids)
+      intent -> reconcile_matching_intent(intent, release, episode_ids, opts)
     end
   end
 
-  defp reserve_episode_intent(release, episode_ids, series) do
+  defp reserve_episode_intent(release, episode_ids, series, opts) do
     with {:ok, marked} <- ensure_policy_marker(release, series) do
       kind = if length(episode_ids) == 1, do: :episode, else: :season_pack
-      reserve_and_reconcile(kind, hd(episode_ids), episode_ids, marked)
+      reserve_and_reconcile(kind, hd(episode_ids), episode_ids, marked, opts)
     end
   end
 
-  defp reconcile_matching_intent(intent, release, episode_ids) do
-    if same_release?(intent, release) and same_episode_assignment?(intent, episode_ids),
-      do: reconcile_intent(intent),
-      else: {:error, :download_intent_busy}
+  defp reconcile_matching_intent(intent, release, episode_ids, opts \\ []) do
+    if same_release?(intent, release) and same_episode_assignment?(intent, episode_ids) and
+         operator_initiated?(intent) == Keyword.get(opts, :operator_initiated, false),
+       do: reconcile_intent(intent),
+       else: {:error, :download_intent_busy}
   end
 
   defp same_release?(intent, release) do
@@ -172,7 +183,7 @@ defmodule Cinder.Download do
   defp same_episode_assignment?(%Intent{kind: :movie}, []), do: true
   defp same_episode_assignment?(intent, ids), do: Enum.sort(intent.episode_ids) == Enum.sort(ids)
 
-  defp reserve_and_reconcile(kind, target_id, episode_ids, release) do
+  defp reserve_and_reconcile(kind, target_id, episode_ids, release, opts \\ []) do
     with {:ok, intent} <-
            reserve_intent(%{
              kind: kind,
@@ -181,7 +192,8 @@ defmodule Cinder.Download do
              protocol: release.protocol,
              release: release,
              mapping_snapshot: release.mapping_snapshot,
-             release_policy_snapshot: release.release_policy_snapshot
+             release_policy_snapshot: release.release_policy_snapshot,
+             operator_initiated: Keyword.get(opts, :operator_initiated, false)
            }) do
       reconcile_intent(intent)
     end
@@ -628,12 +640,20 @@ defmodule Cinder.Download do
     end
   end
 
-  defp submission_target_active?(%Intent{episode_ids: episode_ids}) do
+  defp submission_target_active?(%Intent{episode_ids: episode_ids} = intent) do
+    allow_available? = operator_initiated?(intent)
+
     Repo.exists?(
       from e in Cinder.Catalog.Episode,
-        where: e.id in ^episode_ids and e.monitored == true and is_nil(e.grab_id)
+        where:
+          e.id in ^episode_ids and is_nil(e.grab_id) and
+            ((e.monitored == true and is_nil(e.file_path)) or
+               (^allow_available? and not is_nil(e.file_path)))
     )
   end
+
+  defp operator_initiated?(%Intent{release: release}),
+    do: is_map(release) and release["operator_initiated"] == true
 
   defp reconcile_movie(%Intent{remote_id: remote_id, target_id: movie_id} = intent) do
     case Repo.get(Movie, movie_id) do
@@ -688,7 +708,8 @@ defmodule Cinder.Download do
               intent.protocol,
               intent.episode_ids,
               intent.release["title"],
-              reset_attempts: true
+              reset_attempts: true,
+              allow_available: operator_initiated?(intent)
             )
           else
             Catalog.create_grab_from_intent(intent)
@@ -784,7 +805,7 @@ defmodule Cinder.Download do
 
       case result do
         {:ok, release} ->
-          add_to_client(movie, release)
+          grab_if_space(movie, release)
 
         :no_match ->
           Catalog.transition(
@@ -947,6 +968,15 @@ defmodule Cinder.Download do
       {:ok, _} -> :no_imdb_id
       {:error, _} -> {:error, :tmdb_unavailable}
     end
+  end
+
+  # Pre-grab disk guard: don't hand a release to the client when no download root can hold it. The
+  # poller treats {:insufficient_disk_space, _} as a skip (no attempt burned, no park) — space may
+  # free up.
+  defp grab_if_space(movie, release) do
+    if Cinder.Disk.grab_space_available?(release.size),
+      do: add_to_client(movie, release),
+      else: {:error, {:insufficient_disk_space, release.size}}
   end
 
   defp add_to_client(movie, release) do

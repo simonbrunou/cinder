@@ -13,6 +13,17 @@ defmodule CinderWeb.AppShellTest do
     :ok
   end
 
+  defp pending_request!(user, target_id) do
+    {:ok, req} =
+      Cinder.Requests.create_request(user, %{
+        target_type: "movie",
+        target_id: target_id,
+        title: "Movie #{target_id}"
+      })
+
+    req
+  end
+
   describe "as an admin" do
     setup :register_and_log_in_admin
 
@@ -57,6 +68,44 @@ defmodule CinderWeb.AppShellTest do
       assert length(Regex.scan(~r/<nav[^>]+aria-label="Primary"/, html)) == 1
       assert has_element?(lv, ~s(nav[aria-label="Primary"] a[href="/users/settings"]), "Account")
       assert has_element?(lv, ~s(nav[aria-label="Primary"] a[href="/users/log-out"]), "Log out")
+    end
+  end
+
+  describe "Requests nav badge (admin)" do
+    setup :register_and_log_in_admin
+
+    setup do
+      # A pending request is created through the gate, which looks the title up via TMDB; an
+      # unavailable lookup still inserts the pending row (title from the attrs).
+      stub(Cinder.Catalog.TMDBMock, :get_movie, fn _ -> {:error, :unavailable} end)
+      :ok
+    end
+
+    test "shows the pending count on the Requests link", %{conn: conn} do
+      requester = Cinder.AccountsFixtures.user_fixture()
+      pending_request!(requester, 1)
+      pending_request!(requester, 2)
+
+      {:ok, lv, _html} = live(conn, ~p"/calendar")
+
+      assert has_element?(lv, ~s(a[href="/requests"] .badge), "2")
+    end
+
+    test "renders no badge when nothing is pending", %{conn: conn} do
+      {:ok, lv, _html} = live(conn, ~p"/calendar")
+      refute has_element?(lv, ~s(a[href="/requests"] .badge))
+    end
+
+    test "updates live when a new request arrives", %{conn: conn} do
+      requester = Cinder.AccountsFixtures.user_fixture()
+
+      {:ok, lv, _html} = live(conn, ~p"/calendar")
+      refute has_element?(lv, ~s(a[href="/requests"] .badge))
+
+      # Broadcasts {:request_created, _} on the "requests" topic the admin socket subscribes to.
+      pending_request!(requester, 3)
+
+      assert has_element?(lv, ~s(a[href="/requests"] .badge), "1")
     end
   end
 
