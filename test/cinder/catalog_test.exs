@@ -536,6 +536,19 @@ defmodule Cinder.CatalogTest do
       assert Catalog.blocked_release_titles(movie) == ["Bad.Release.1080p"]
     end
 
+    test "a blocked title round-trips VERBATIM, so a landed-row check can't false-negative" do
+      # Load-bearing for Poller.requeue_failed/2, which gates the dead-download re-queue on
+      # `movie.release_title in blocked_release_titles(movie)` — the loop's only bound. If a
+      # writer or reader ever normalized case (the BlockedRelease moduledoc wrongly claims
+      # identity is "the downcased release_title"; matching is downcased in Scorer, not here),
+      # that check would stop matching and park every movie it should have re-queued.
+      title = "MiXeD.Case.Release.1080p-GRP"
+      movie = Repo.insert!(%Movie{tmdb_id: 9010, title: "M", release_title: title})
+
+      assert :ok = Catalog.block_release(movie, :download_error)
+      assert movie.release_title in Catalog.blocked_release_titles(movie)
+    end
+
     test "block_release/2 is a no-op on a nil release_title" do
       movie = Repo.insert!(%Movie{tmdb_id: 9002, title: "M", release_title: nil})
 
