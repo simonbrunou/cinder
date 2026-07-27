@@ -65,8 +65,15 @@ defmodule Cinder.Download.PollerTest do
     :ok
   end
 
-  defp downloading_movie(tmdb_id, download_id) do
-    movie_fixture(%{tmdb_id: tmdb_id, title: "M", status: :downloading, download_id: download_id})
+  defp downloading_movie(tmdb_id, download_id, extra \\ []) do
+    movie_fixture(
+      Enum.into(extra, %{
+        tmdb_id: tmdb_id,
+        title: "M",
+        status: :downloading,
+        download_id: download_id
+      })
+    )
   end
 
   # Anime preferences are global-only (no per-title override) — a test needing a non-default
@@ -342,15 +349,16 @@ defmodule Cinder.Download.PollerTest do
     stub(Cinder.Download.ClientMock, :status, fn "hash-30" ->
       n = Agent.get_and_update(counter, &{&1, &1 + 1})
 
-      if n < 3,
+      # Two blips only: a third would exhaust the client-failure tolerance and re-queue.
+      if n < 2,
         do: {:ok, %{state: :error}},
         else: {:ok, %{state: :completed, content_path: "/downloads/M.mkv"}}
     end)
 
     stub_import_ok()
 
-    # Three download blips bump import_attempts while the movie stays :downloading.
-    Enum.each(1..3, fn _ -> Poller.poll() end)
+    # Download blips bump import_attempts while the movie stays :downloading.
+    Enum.each(1..2, fn _ -> Poller.poll() end)
     downloading = Repo.get!(Movie, movie.id)
     assert downloading.status == :downloading
     assert downloading.import_attempts > 0
@@ -478,9 +486,11 @@ defmodule Cinder.Download.PollerTest do
            } = Repo.get!(Movie, movie.id)
   end
 
-  test "a paused SABnzbd download parks with the client's reason as the failure detail" do
-    # SABnzbd carries an actionable :reason on its :error status; the poller persists it as
-    # failure_reason so /activity shows the real cause, not a bare "couldn't be imported."
+  test "a paused SABnzbd download blocklists that release and re-queues for the next-best" do
+    # SABnzbd carries an actionable :reason on its :error status; it reaches the log and the
+    # notifier's reason code while the movie itself goes back to :requested for another try.
+    Cinder.TestNotifier.subscribe()
+
     movie =
       movie_fixture(%{
         tmdb_id: 88,
@@ -495,33 +505,11 @@ defmodule Cinder.Download.PollerTest do
     end)
 
     start_supervised!({Poller, interval: 60_000})
-    Enum.each(1..10, fn _ -> Poller.poll() end)
+    Enum.each(1..3, fn _ -> Poller.poll() end)
 
-    parked = Repo.get!(Movie, movie.id)
-    assert parked.status == :import_failed
-    assert parked.failure_reason == "Paused by the download client (duplicate detection)"
-    # The download-side failure is blocklisted post-exhaustion, same as a bare :download_error.
-    assert Catalog.blocked_release_titles(parked) == ["Paused.Release.1080p"]
-  end
-
-  test "a plain download error parks with no failure detail (falls back to the generic hint)" do
-    movie =
-      movie_fixture(%{
-        tmdb_id: 89,
-        status: :downloading,
-        download_id: "hash-plain",
-        download_protocol: :torrent,
-        release_title: "Plain.Release.1080p"
-      })
-
-    stub(Cinder.Download.ClientMock, :status, fn "hash-plain" -> {:ok, %{state: :error}} end)
-
-    start_supervised!({Poller, interval: 60_000})
-    Enum.each(1..10, fn _ -> Poller.poll() end)
-
-    parked = Repo.get!(Movie, movie.id)
-    assert parked.status == :import_failed
-    assert parked.failure_reason == nil
+    assert %Movie{status: :requested} = Repo.get!(Movie, movie.id)
+    assert Catalog.blocked_release_titles(movie) == ["Paused.Release.1080p"]
+    assert_receive {:notify, {:movie_failed, %Movie{status: :requested}, :download_error}}
   end
 
   test "a retryable upgrade error keeps the progress high-water" do
@@ -2264,34 +2252,57 @@ defmodule Cinder.Download.PollerTest do
     assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
   end
 
-  test "a qBittorrent :error state parks :import_failed after max attempts (not before)" do
-    movie = downloading_movie(18, "hash-18")
+  test "a qBittorrent :error state re-queues to :requested after the flake tolerance (not before)" do
+    movie = downloading_movie(18, "hash-18", release_title: "Dead.Release.1080p-GRP")
     start_supervised!({Poller, interval: 60_000})
 
     stub(Cinder.Download.ClientMock, :status, fn "hash-18" ->
       {:ok, %{state: :error}}
     end)
 
-    Enum.each(1..9, fn _ -> Poller.poll() end)
+    Enum.each(1..2, fn _ -> Poller.poll() end)
     assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
 
     assert :ok = Poller.poll()
+
+    # Re-queued, not parked: the dead download's fields are cleared so the next search tick
+    # grabs the next-best release without a human pressing Retry (issue #192).
+    assert %Movie{status: :requested, download_id: nil, release_title: nil} =
+             Repo.get!(Movie, movie.id)
+  end
+
+  test "a dead download with no release to blocklist parks instead of re-queueing" do
+    # The blocklist is the only bound on the re-queue loop, so a movie with nothing to block must
+    # fall back to the terminal park — re-queueing it would re-grab the same dead download forever.
+    movie =
+      movie_fixture(%{
+        tmdb_id: 20,
+        status: :downloading,
+        download_id: "hash-20",
+        download_protocol: :torrent,
+        release_title: nil
+      })
+
+    start_supervised!({Poller, interval: 60_000})
+    stub(Cinder.Download.ClientMock, :status, fn "hash-20" -> {:ok, %{state: :error}} end)
+
+    Enum.each(1..3, fn _ -> Poller.poll() end)
     assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
   end
 
-  test "a torrent not found in qBittorrent parks :import_failed after max attempts (not before)" do
-    movie = downloading_movie(19, "hash-19")
+  test "a torrent not found in qBittorrent re-queues to :requested after the flake tolerance" do
+    movie = downloading_movie(19, "hash-19", release_title: "Missing.Release.1080p-GRP")
     start_supervised!({Poller, interval: 60_000})
 
     stub(Cinder.Download.ClientMock, :status, fn "hash-19" ->
       {:error, :not_found}
     end)
 
-    Enum.each(1..9, fn _ -> Poller.poll() end)
+    Enum.each(1..2, fn _ -> Poller.poll() end)
     assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
 
     assert :ok = Poller.poll()
-    assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
+    assert %Movie{status: :requested} = Repo.get!(Movie, movie.id)
   end
 
   test "a movie reaching :available emits the available notifier event" do
@@ -2317,7 +2328,7 @@ defmodule Cinder.Download.PollerTest do
   end
 
   describe "release blocklist capture" do
-    test "a download-side failure that exhausts retries blocks the release; not re-grabbed" do
+    test "a download-side failure blocks the release and re-queues instead of parking" do
       movie =
         movie_fixture(%{
           tmdb_id: 50,
@@ -2330,17 +2341,24 @@ defmodule Cinder.Download.PollerTest do
       start_supervised!({Poller, interval: 60_000})
       stub(Cinder.Download.ClientMock, :status, fn "hash-50" -> {:ok, %{state: :error}} end)
 
-      # Pre-exhaustion polls don't block; the release is only recorded once retries are spent.
-      Enum.each(1..9, fn _ -> Poller.poll() end)
+      # Pre-tolerance polls don't block; the release is only recorded once the flake window is out.
+      Enum.each(1..2, fn _ -> Poller.poll() end)
       assert Catalog.blocked_release_titles(movie) == []
 
       assert :ok = Poller.poll()
-      assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
+      assert %Movie{status: :requested} = Repo.get!(Movie, movie.id)
       assert Catalog.blocked_release_titles(movie) == ["Bad.Release.1080p-GRP"]
 
-      # Re-queue (retry nils release_title, keeps the blocklist row) and re-search: the only
-      # available release is the blocked one, so it parks at :no_match instead of re-grabbing.
-      {:ok, requeued} = Catalog.retry_movie(Repo.get!(Movie, movie.id))
+      # The blocklist row is what bounds the re-queue loop: a re-search that finds only the
+      # blocked release parks :no_match rather than re-grabbing it forever. (Asserted on a fresh
+      # movie because the just-requeued one is still waiting out its fenced intent's backoff.)
+      fresh =
+        movie_fixture(%{tmdb_id: 51, imdb_id: "tt50", status: :requested, release_title: nil})
+
+      Catalog.block_release(
+        %{Repo.get!(Movie, fresh.id) | release_title: "Bad.Release.1080p-GRP"},
+        :download_error
+      )
 
       expect(Cinder.Acquisition.IndexerMock, :search, fn _ ->
         {:ok,
@@ -2354,7 +2372,7 @@ defmodule Cinder.Download.PollerTest do
          ]}
       end)
 
-      assert {:ok, %Movie{status: :no_match}} = Download.start(requeued)
+      assert {:ok, %Movie{status: :no_match}} = Download.start(fresh)
     end
 
     test "a permanent import failure (:no_file_path) blocks the release" do

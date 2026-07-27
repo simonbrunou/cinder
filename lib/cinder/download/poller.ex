@@ -3,7 +3,9 @@ defmodule Cinder.Download.Poller do
   Polls the pipeline on each tick:
 
   1. **advance_downloading** — checks in-flight downloads; `:downloading` →
-     `:downloaded` (or `:import_failed` if the torrent completes with no path).
+     `:downloaded` (or `:import_failed` if the torrent completes with no path). A
+     client-reported dead download re-queues to `:requested` with the release
+     blocklisted, so the next tick grabs the next-best (`fail_download/2`).
   2. **import_downloaded** — imports `:downloaded` movies into the library →
      `:available` (or `:import_failed` for a release with no usable file).
   3. **search_requested** — sweeps `:requested` and `:searching` movies through
@@ -165,10 +167,10 @@ defmodule Cinder.Download.Poller do
         retry_or_fail(movie, :no_content_path, :import_attempts, :import_failed)
 
       {:ok, %{state: :error} = status} ->
-        retry_or_fail(movie, download_error_reason(status), :import_attempts, :import_failed)
+        fail_download(movie, download_error_reason(status))
 
       {:error, :not_found} ->
-        retry_or_fail(movie, :torrent_not_found, :import_attempts, :import_failed)
+        fail_download(movie, :torrent_not_found)
 
       {:ok, %{state: :downloading} = status} ->
         track_and_reap(movie, status, &maybe_reap/3)
@@ -186,6 +188,76 @@ defmodule Cinder.Download.Poller do
     end
   end
 
+  # A client-reported failure is terminal for THAT download — no number of status re-polls revives
+  # an aborted NZB or a job the client no longer knows about. The old path burned all 10
+  # import_attempts against the dead download in ~50s and parked :import_failed, so a fully
+  # mechanical recovery needed a human to press Retry. Spend a few ticks first (a client-API blip
+  # reads the same as a dead job), then re-queue instead: blocklist the release and reset to
+  # :requested so the next tick grabs the next-best.
+  #
+  # The counter is `import_attempts`, the SHARED download-phase failure budget — the
+  # :no_content_path branch above bumps the same field while the movie is also :downloading. So it
+  # counts ticks spent failing in the download phase, not three of *this* reason: a download that
+  # already failed twice to yield a path and now reports :error re-queues on the first tick. That's
+  # the right call (it has been going wrong a while), just not a per-reason tolerance.
+  @download_error_attempts 3
+
+  defp fail_download(movie, reason) do
+    attempts = (movie.import_attempts || 0) + 1
+
+    cond do
+      attempts < @download_error_attempts ->
+        retry_download(movie, reason, attempts)
+
+      # The blocklist row is the ONLY thing bounding the re-queue loop: each dead release shrinks
+      # the candidate pool until Download.start parks :no_match. `block_release/2` is a no-op with
+      # no release_title, so re-queueing without one would re-grab the same dead download every
+      # cycle forever. Download.attach_movie always stamps a release_title, so this should be
+      # unreachable — but the cost of being wrong is a hot loop, and the fallback is just the
+      # terminal park this path had before.
+      movie.release_title in [nil, ""] ->
+        Logger.warning(
+          "movie #{movie.id} download failed (#{inspect(reason)}) with no release to blocklist; parking"
+        )
+
+        park(movie, :import_failed, reason)
+
+      true ->
+        requeue_failed(movie, reason)
+    end
+  end
+
+  defp requeue_failed(movie, reason) do
+    case Catalog.requeue_failed_movie(movie, reason_code(reason)) do
+      {:ok, _requeued} ->
+        Logger.warning(
+          "movie #{movie.id} download failed (#{inspect(reason)}); blocklisted, re-searching"
+        )
+
+      # Left :downloading mid-tick (user cancel/complete) — re-derive next tick.
+      {:error, _reason} ->
+        :ok
+    end
+  end
+
+  defp retry_download(movie, reason, attempts) do
+    Logger.info(
+      "movie #{movie.id} download error #{attempts}/#{@download_error_attempts} " <>
+        "(#{inspect(reason)}); will re-check"
+    )
+
+    Catalog.transition(
+      movie,
+      %{
+        import_attempts: attempts,
+        status: movie.status,
+        download_speed: nil,
+        download_eta: nil
+      },
+      expect: movie.status
+    )
+  end
+
   # ponytail: the torrent seed window deliberately keeps the tick-start `updated_at` derivation.
   # The absolute cap uses the returned progress clock, so this tick's genuine progress prevents a
   # false reap while speed/ETA-only writes cannot postpone it.
@@ -197,7 +269,7 @@ defmodule Cinder.Download.Poller do
            status,
            DateTime.utc_now()
          ) do
-      case Catalog.reap_stalled_movie(movie) do
+      case Catalog.requeue_failed_movie(movie, :stalled) do
         {:ok, _reaped} ->
           Logger.warning("movie #{movie.id} reaped: stalled download removed; re-searching")
 
@@ -220,10 +292,13 @@ defmodule Cinder.Download.Poller do
   # is manual so that can't loop on its own.
   @permanent_import_errors [:no_file_path, :no_video_file, :wrong_audio_language]
 
-  # Download-side failures that only reach park AFTER exhausting @max_attempts retries (see
-  # advance_with/2): a reason that has burned 10 retries is, by definition, not transient — it's
-  # the "repeatedly-failing torrents/usenet" the blocklist is meant to bound. So a single network
-  # blip can never block a good release; only post-exhaustion does park record it.
+  # Download-side failures whose terminal handling blocklists the release. Each only gets here
+  # after a retry bound, so a single network blip can never block a good release. On the fresh-grab
+  # side only :no_content_path still reaches `park/3` (via `retry_or_fail`'s exhaustion) — the two
+  # client-reported ones are handled by `fail_download/2`, which blocklists and re-queues rather
+  # than parking. They stay listed because the *upgrade* path consults this same set from
+  # `revert_upgrade/2` (reached via `retry_or_revert/2`, a different function) to decide whether a
+  # reverted upgrade's replacement release is worth blocking.
   @download_failure_errors [:download_error, :torrent_not_found, :no_content_path]
 
   defp import_one(movie) do

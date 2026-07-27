@@ -688,9 +688,9 @@ defmodule Cinder.CatalogTest do
       assert Catalog.blocked_release_titles(movie) == ["Stalled.One.1080p"]
     end
 
-    test "reap_stalled_movie refuses a movie that is not :downloading" do
+    test "requeue_failed_movie refuses a movie that is not :downloading" do
       assert {:error, :not_reapable} =
-               Catalog.reap_stalled_movie(movie_fixture(%{status: :available}))
+               Catalog.requeue_failed_movie(movie_fixture(%{status: :available}))
     end
 
     test "reap_stalled_upgrade refuses a movie that is not :upgrading" do

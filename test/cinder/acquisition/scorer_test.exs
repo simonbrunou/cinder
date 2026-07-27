@@ -21,6 +21,47 @@ defmodule Cinder.Acquisition.ScorerTest do
                Scorer.select(releases, min_size: 1 * @gb, max_size: 20 * @gb)
     end
 
+    test "a tag-satisfying release outranks an untagged one the language filter merely kept" do
+      # Both survive Language.filter for a soft "original" pick on a French title. The untagged
+      # one is the better release on every other axis, so only the language rank keeps the
+      # confirmed-French pick ahead of it (issue #191's safety net).
+      tagged = release(title: "T", language: "FRENCH", resolution: "720p", size: 4 * @gb)
+      untagged = release(title: "U", language: nil, resolution: "1080p", size: 9 * @gb)
+      opts = [max_size: 20 * @gb, preferred_language: "original", original_language: "fr"]
+
+      assert {:ok, %Release{title: "T"}} = Scorer.select([untagged, tagged], opts)
+
+      # With nothing tagged in the pool the untagged release still wins — it is ranked down,
+      # not rejected, so a French title with only untagged candidates still grabs.
+      assert {:ok, %Release{title: "U"}} = Scorer.select([untagged], opts)
+    end
+
+    test "the language rank is a no-op under an anime policy" do
+      # The anime pools never run Language.filter, so ranking on the parsed name here would demote
+      # the untagged releases that make up most of an anime pool and let a bare MULTI token beat
+      # resolution. Same fixtures as above, but Japanese-original with a policy set: resolution
+      # decides again.
+      tagged = release(title: "T", language: "MULTI", resolution: "720p", size: 4 * @gb)
+      untagged = release(title: "U", language: nil, resolution: "1080p", size: 9 * @gb)
+
+      # A neutral policy: every anime_rank_key term ties, so language_rank alone would decide.
+      policy = %{
+        preferred_groups: [],
+        required_audio_languages: [],
+        embedded_subtitle_mode: :allow,
+        subtitle_languages: []
+      }
+
+      opts = [
+        max_size: 20 * @gb,
+        preferred_language: "original",
+        original_language: "ja",
+        anime_policy: policy
+      ]
+
+      assert {:ok, %Release{title: "U"}} = Scorer.select([untagged, tagged], opts)
+    end
+
     test "all-too-large: every release exceeds max_size -> :no_match" do
       releases = [
         release(resolution: "1080p", group: "A", size: 30 * @gb),

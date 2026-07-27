@@ -62,6 +62,16 @@ All notable changes to Cinder are documented here. The format follows
   fields and a failing service-health row, instead of a log line and a silently dead pipeline.
 
 ### Fixed
+- **A dead download re-searches instead of parking.** When the download client reports a grab as
+  terminally failed (an aborted NZB, a torrent it no longer knows about), Cinder now blocklists
+  that release and goes straight back to searching for the next-best one, rather than re-polling
+  the corpse ten times and parking for a human to press Retry. Bounded by the blocklist: once
+  every candidate is used up the movie parks at "no match" as before.
+- **Non-English titles no longer miss untagged releases.** A French (or any non-English) film set
+  to its original audio now considers releases with no language tag — French scene groups
+  routinely publish original-audio releases with a bare name — instead of parking at "no match"
+  with a perfect candidate on the indexer. A properly tagged release still always wins, and the
+  import-time audio check still rejects a confirmed wrong-language file.
 - The 12h refresher no longer re-runs completed one-time localization backfills on every tick,
   and a transient database error in one pass can no longer crash the whole refresh sweep.
 - OpenSubtitles quota exhaustion is remembered until the next UTC day — no more burned

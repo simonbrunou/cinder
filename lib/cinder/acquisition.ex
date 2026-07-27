@@ -502,8 +502,8 @@ defmodule Cinder.Acquisition do
   # a soft Original/Any pick falls back to the unfiltered candidates. The parser tags `language`
   # from the whole release name, so a title-word collision (e.g. "The Italian Job" → ITALIAN)
   # must not strand a title under the default — hence Original/Any is soft, an explicit pick strict.
-  defp language_pool(candidates, preferred, original) do
-    case Language.filter(candidates, preferred, original) do
+  defp language_pool(candidates, preferred, original, filter_opts \\ []) do
+    case Language.filter(candidates, preferred, original, filter_opts) do
       [] when candidates != [] ->
         if Language.strict?(preferred), do: :no_language_match, else: candidates
 
@@ -512,11 +512,15 @@ defmodule Cinder.Acquisition do
     end
   end
 
+  # `keep_untagged: true` is movie-only on purpose: this pool feeds `Scorer.select/2`, where
+  # `rank_key/2` IS the sort key, so an untagged release can only win when nothing tagged survives
+  # the band. The TV/anime pools feed the set-cover selectors, which sort by coverage first and
+  # would let an untagged pack beat confirmed-original singles — see `Language.keep?/3`.
   defp movie_pool(releases, opts) do
     candidates = filter_protocols(releases, Keyword.get(opts, :protocols))
     preferred = Keyword.get(opts, :preferred_language)
     original = Keyword.get(opts, :original_language)
-    language_pool(candidates, preferred, original)
+    language_pool(candidates, preferred, original, keep_untagged: true)
   end
 
   defp anime_movie_pool(releases, opts) do
