@@ -17,399 +17,18 @@ defmodule Cinder.Settings do
   alias Cinder.Acquisition.AnimePreferences
   alias Cinder.Repo
   alias Cinder.Settings.Crypto
+  alias Cinder.Settings.Registry
   alias Cinder.Settings.Setting
   alias Cinder.Util
-
-  @migration_sources [
-    %{
-      key: "radarr",
-      name: "Radarr",
-      module: Cinder.Library.MigrationSource.Radarr,
-      port: 7878,
-      remote: "/movies",
-      local: "/media/movies"
-    },
-    %{
-      key: "sonarr",
-      name: "Sonarr",
-      module: Cinder.Library.MigrationSource.Sonarr,
-      port: 8989,
-      remote: "/tv",
-      local: "/media/tv"
-    }
-  ]
-
-  @migration_config_fields (for source <- @migration_sources,
-                                {suffix, field, label, secret, placeholder, help} <- [
-                                  {"url", :base_url, "URL", false,
-                                   "http://localhost:#{source.port}", nil},
-                                  {"api_key", :api_key, "API key", true, "", nil},
-                                  {"remote_path_prefix", :remote_path_prefix,
-                                   "remote path prefix", false, source.remote, :remote},
-                                  {"local_path_prefix", :local_path_prefix, "local path prefix",
-                                   false, source.local, :local}
-                                ] do
-                              config = %{
-                                key: "#{source.key}_#{suffix}",
-                                module: source.module,
-                                field: field,
-                                secret: secret,
-                                group: :migration,
-                                label: "#{source.name} #{label}",
-                                placeholder: placeholder
-                              }
-
-                              if help, do: Map.put(config, :help, help), else: config
-                            end)
-
-  # Static per-module config fields (service creds): {settings key, env target module + field,
-  # secret?, group}. The complete set is `config_fields/0` = these ++ the per-kind Plex section
-  # fields generated from `Cinder.Library.kinds/0`.
-  @base_config_fields [
-    %{
-      key: "tmdb_token",
-      module: Cinder.Catalog.TMDB.HTTP,
-      field: :token,
-      secret: true,
-      group: :tmdb,
-      label: "TMDB API read token (v4 bearer)",
-      placeholder: ""
-    },
-    %{
-      key: "prowlarr_url",
-      module: Cinder.Acquisition.Indexer.Prowlarr,
-      field: :base_url,
-      secret: false,
-      group: :indexer,
-      label: "Prowlarr URL",
-      placeholder: "http://localhost:9696"
-    },
-    %{
-      key: "prowlarr_api_key",
-      module: Cinder.Acquisition.Indexer.Prowlarr,
-      field: :api_key,
-      secret: true,
-      group: :indexer,
-      label: "Prowlarr API key",
-      placeholder: ""
-    },
-    %{
-      key: "qbittorrent_url",
-      module: Cinder.Download.Client.QBittorrent,
-      field: :base_url,
-      secret: false,
-      group: :download,
-      label: "qBittorrent URL",
-      placeholder: "http://localhost:8080"
-    },
-    %{
-      key: "qbittorrent_username",
-      module: Cinder.Download.Client.QBittorrent,
-      field: :username,
-      secret: false,
-      group: :download,
-      label: "qBittorrent username",
-      placeholder: ""
-    },
-    %{
-      key: "qbittorrent_password",
-      module: Cinder.Download.Client.QBittorrent,
-      field: :password,
-      secret: true,
-      group: :download,
-      label: "qBittorrent password",
-      placeholder: ""
-    },
-    %{
-      key: "sabnzbd_url",
-      module: Cinder.Download.Client.Sabnzbd,
-      field: :base_url,
-      secret: false,
-      group: :download,
-      label: "SABnzbd URL",
-      placeholder: "http://localhost:8080"
-    },
-    %{
-      key: "sabnzbd_api_key",
-      module: Cinder.Download.Client.Sabnzbd,
-      field: :api_key,
-      secret: true,
-      group: :download,
-      label: "SABnzbd API key",
-      placeholder: ""
-    },
-    %{
-      key: "jellyfin_url",
-      module: Cinder.Library.MediaServer.Jellyfin,
-      field: :url,
-      secret: false,
-      group: :media_server,
-      label: "Jellyfin URL",
-      placeholder: "http://localhost:8096"
-    },
-    %{
-      key: "jellyfin_api_key",
-      module: Cinder.Library.MediaServer.Jellyfin,
-      field: :api_key,
-      secret: true,
-      group: :media_server,
-      label: "Jellyfin API key",
-      placeholder: ""
-    },
-    %{
-      key: "plex_url",
-      module: Cinder.Library.MediaServer.Plex,
-      field: :url,
-      secret: false,
-      group: :media_server,
-      label: "Plex URL",
-      placeholder: "http://localhost:32400"
-    },
-    %{
-      key: "plex_token",
-      module: Cinder.Library.MediaServer.Plex,
-      field: :token,
-      secret: true,
-      group: :media_server,
-      label: "Plex token",
-      placeholder: ""
-    },
-    # The *_url fields above are how the Cinder server reaches the media server, which in the
-    # documented compose deployment is a docker-internal address (see .env.example). These two
-    # are what a household member's browser should open instead, so they are a separate,
-    # operator-supplied value rather than something derivable from the ones above.
-    %{
-      key: "jellyfin_web_url",
-      module: Cinder.Library.MediaServer.Jellyfin,
-      field: :web_url,
-      secret: false,
-      group: :media_server,
-      label: "Jellyfin web URL",
-      placeholder: "https://jellyfin.example.com"
-    },
-    %{
-      key: "plex_web_url",
-      module: Cinder.Library.MediaServer.Plex,
-      field: :web_url,
-      secret: false,
-      group: :media_server,
-      label: "Plex web URL",
-      placeholder: "https://app.plex.tv"
-    },
-    %{
-      key: "discord_webhook_url",
-      module: Cinder.Notifier.Discord,
-      field: :webhook_url,
-      secret: true,
-      group: :notifications,
-      label: "Discord webhook URL",
-      placeholder: "https://discord.com/api/webhooks/..."
-    },
-    %{
-      key: "smtp_host",
-      module: Cinder.Mailer,
-      field: :relay,
-      secret: false,
-      group: :notifications,
-      label: "SMTP host",
-      placeholder: "smtp.example.com"
-    },
-    %{
-      key: "smtp_port",
-      module: Cinder.Mailer,
-      field: :port,
-      secret: false,
-      group: :notifications,
-      label: "SMTP port",
-      placeholder: "587"
-    },
-    %{
-      key: "smtp_username",
-      module: Cinder.Mailer,
-      field: :username,
-      secret: false,
-      group: :notifications,
-      label: "SMTP username",
-      placeholder: ""
-    },
-    %{
-      key: "smtp_password",
-      module: Cinder.Mailer,
-      field: :password,
-      secret: true,
-      group: :notifications,
-      label: "SMTP password",
-      placeholder: ""
-    },
-    %{
-      key: "smtp_from",
-      module: Cinder.Mailer,
-      field: :from,
-      secret: false,
-      group: :notifications,
-      label: "SMTP from address",
-      placeholder: "cinder@example.com"
-    },
-    %{
-      key: "opensubtitles_api_key",
-      module: Cinder.Subtitles.Provider.OpenSubtitles,
-      field: :api_key,
-      secret: true,
-      group: :subtitles,
-      label: "OpenSubtitles API key",
-      placeholder: ""
-    },
-    %{
-      key: "opensubtitles_username",
-      module: Cinder.Subtitles.Provider.OpenSubtitles,
-      field: :username,
-      secret: true,
-      group: :subtitles,
-      label: "OpenSubtitles username",
-      placeholder: ""
-    },
-    %{
-      key: "opensubtitles_password",
-      module: Cinder.Subtitles.Provider.OpenSubtitles,
-      field: :password,
-      secret: true,
-      group: :subtitles,
-      label: "OpenSubtitles password",
-      placeholder: ""
-    },
-    %{
-      key: "subtitle_languages",
-      module: Cinder.Subtitles.Provider.OpenSubtitles,
-      field: :languages,
-      secret: false,
-      group: :subtitles,
-      label: "Subtitle languages (comma-separated, e.g. en,fr)",
-      placeholder: "en,fr"
-    },
-    %{
-      key: "libretranslate_url",
-      module: Cinder.Subtitles.Translator.LibreTranslate,
-      field: :base_url,
-      secret: false,
-      group: :subtitles,
-      label: "LibreTranslate URL",
-      placeholder: "http://localhost:5000"
-    },
-    %{
-      key: "libretranslate_api_key",
-      module: Cinder.Subtitles.Translator.LibreTranslate,
-      field: :api_key,
-      secret: true,
-      group: :subtitles,
-      label: "LibreTranslate API key",
-      placeholder: ""
-    }
-  ]
-
-  @path_mapping_fields [
-    %{
-      key: "qbittorrent_remote_path_prefix",
-      env_key: :qbittorrent_remote_path_prefix,
-      secret: false,
-      label: "qBittorrent remote path prefix",
-      placeholder: "/downloads",
-      help: :remote
-    },
-    %{
-      key: "qbittorrent_local_path_prefix",
-      env_key: :qbittorrent_local_path_prefix,
-      secret: false,
-      label: "qBittorrent local path prefix",
-      placeholder: "/media/downloads",
-      help: :local
-    },
-    %{
-      key: "sabnzbd_remote_path_prefix",
-      env_key: :sabnzbd_remote_path_prefix,
-      secret: false,
-      label: "SABnzbd remote path prefix",
-      placeholder: "/downloads",
-      help: :remote
-    },
-    %{
-      key: "sabnzbd_local_path_prefix",
-      env_key: :sabnzbd_local_path_prefix,
-      secret: false,
-      label: "SABnzbd local path prefix",
-      placeholder: "/media/downloads",
-      help: :local
-    }
-  ]
-
-  # Download-client enable toggles → the :cinder, :download_clients %{protocol => module} map.
-  @toggles [
-    %{key: "qbittorrent_enabled", protocol: :torrent, label: "Enable qBittorrent (torrent)"},
-    %{key: "sabnzbd_enabled", protocol: :usenet, label: "Enable SABnzbd (usenet)"}
-  ]
 
   @media_server_key "media_server_type"
   @media_server_options ["jellyfin", "plex"]
   @import_roots_key "import_roots"
   @ffprobe_bin_key "ffprobe_bin"
-  @default_request_quota_key "default_request_quota"
   @smtp_host_key "smtp_host"
   @smtp_ssl_key "smtp_ssl"
 
-  @global_fields [
-    %{
-      key: @default_request_quota_key,
-      secret: false,
-      group: :accounts,
-      label: "Default request quota",
-      placeholder: "10",
-      inputmode: "numeric"
-    }
-  ]
-
-  @anime_fields [
-    %{
-      key: "anime_embedded_subtitle_mode",
-      type: :select,
-      options: ~w(allow prefer require)
-    },
-    %{key: "anime_preferred_groups", type: :csv},
-    %{key: "anime_blocked_groups", type: :csv},
-    %{key: "anime_group_fallback_delay", type: :hours}
-  ]
-
-  # Display labels for the library kinds. `Cinder.Library.kinds/0` stays a pure context list;
-  # the UI labels live here alongside the other settings-group labels.
-  @kind_labels %{movies: "Movies", tv: "TV"}
-
-  # The band suffixes each kind owns. min/max_size have a config.exs bootstrap (the shipped
-  # default bands; a stored 0 opts out to unbounded); the resolution/source lists stay DB-only
-  # (unset ⇒ scorer default). The root path (`#{kind}_library_path`) is the fourth flat key and
-  # DOES have an env bootstrap.
-  @band_suffixes ["min_size", "max_size", "preferred_resolutions", "preferred_sources"]
-
   @bytes_per_gb 1_000_000_000
-
-  @groups [
-    tmdb: "TMDB",
-    indexer: "Indexer",
-    migration: "Migration sources",
-    download: "Download clients",
-    media_server: "Media server",
-    library: "Library paths",
-    releases: "Release size bands",
-    subtitles: "Subtitles",
-    notifications: "Notifications",
-    accounts: "Accounts"
-  ]
-
-  # Only static fields can be secret (the generated Plex-section fields are not), so this stays
-  # a compile-time set over @base_config_fields — no need to call config_fields/0 at module load.
-  @secret_keys for(
-                 f <- @base_config_fields ++ @migration_config_fields,
-                 f.secret,
-                 into: MapSet.new(),
-                 do: f.key
-               )
 
   # --- boot loader: one-shot supervised child, runs synchronously before the poller ---
 
@@ -424,65 +43,32 @@ defmodule Cinder.Settings do
     :ignore
   end
 
-  # --- registry accessors (for the LiveView) ---
+  # --- registry accessors: the field/group/toggle definitions live in
+  # `Cinder.Settings.Registry`; re-exported here unchanged so the LiveView,
+  # `CinderWeb.SettingsLabels`, and the tests keep the same `Cinder.Settings.*` API. ---
 
-  @doc "Display groups in render order, as `{group_atom, label}`."
-  def groups, do: @groups
-
-  @doc "All config fields: the static service creds plus the per-kind Plex section fields."
-  def config_fields, do: @base_config_fields ++ @migration_config_fields ++ plex_section_fields()
-
-  @doc "Config fields in a given group."
-  def config_fields(group), do: Enum.filter(config_fields(), &(&1.group == group))
-
-  @doc "DB-only flat path mappings, applied to top-level `:cinder` env keys."
-  def path_mapping_fields, do: @path_mapping_fields
-
-  @doc "Download fields ordered client-by-client for the settings UI."
-  def download_fields do
-    fields = config_fields(:download) ++ path_mapping_fields()
-
-    for prefix <- ["qbittorrent", "sabnzbd"],
-        field <- fields,
-        String.starts_with?(field.key, prefix),
-        do: field
-  end
-
-  @doc "Flat global settings fields."
-  def global_fields, do: @global_fields
-
-  @doc "Flat global settings fields in a given group."
-  def global_fields(group), do: Enum.filter(@global_fields, &(&1.group == group))
-
-  # One Plex section field per library kind (`movies_plex_section` → Plex `:movies_section`, …),
-  # so a server with separate Movies/Shows libraries refreshes the right one. Generated from
-  # `Cinder.Library.kinds/0` so a new kind needs no entry here.
-  defp plex_section_fields do
-    for kind <- Cinder.Library.kinds() do
-      %{
-        key: "#{kind}_plex_section",
-        module: Cinder.Library.MediaServer.Plex,
-        field: :"#{kind}_section",
-        secret: false,
-        group: :media_server,
-        label: "Plex #{kind_label(kind)} library section (numeric id)",
-        placeholder: ""
-      }
-    end
-  end
-
-  defp kind_label(kind),
-    do: Map.get(@kind_labels, kind, kind |> to_string() |> String.capitalize())
-
-  @doc "The download-client enable toggles."
-  def toggles, do: @toggles
+  defdelegate groups(), to: Registry
+  defdelegate config_fields(), to: Registry
+  defdelegate config_fields(group), to: Registry
+  defdelegate path_mapping_fields(), to: Registry
+  defdelegate download_fields(), to: Registry
+  defdelegate global_fields(), to: Registry
+  defdelegate global_fields(group), to: Registry
+  defdelegate toggles(), to: Registry
+  defdelegate anime_fields(), to: Registry
+  defdelegate library_kinds(), to: Registry
+  defdelegate flat_keys(), to: Registry
+  defdelegate library_path_key(kind), to: Registry
+  defdelegate min_size_key(kind), to: Registry
+  defdelegate max_size_key(kind), to: Registry
+  defdelegate preferred_resolutions_key(kind), to: Registry
+  defdelegate preferred_sources_key(kind), to: Registry
 
   def media_server_key, do: @media_server_key
   def media_server_options, do: @media_server_options
   def import_roots_key, do: @import_roots_key
   def ffprobe_bin_key, do: @ffprobe_bin_key
   def smtp_ssl_key, do: @smtp_ssl_key
-  def anime_fields, do: @anime_fields
 
   @doc "Positive default quota for new users, or nil when the configured value is unusable."
   def default_request_quota do
@@ -490,26 +76,6 @@ defmodule Cinder.Settings do
     |> Application.get_env(:default_request_quota)
     |> positive_integer()
   end
-
-  @doc "The library kinds with display labels, for the settings/setup UI (`[%{kind:, label:}]`)."
-  def library_kinds, do: Enum.map(Cinder.Library.kinds(), &%{kind: &1, label: kind_label(&1)})
-
-  @doc "Every flat `:cinder` env key overlaid from the settings store."
-  def flat_keys do
-    library_keys =
-      for kind <- Cinder.Library.kinds(), suffix <- ["library_path" | @band_suffixes] do
-        "#{kind}_#{suffix}"
-      end
-
-    library_keys ++ Enum.map(@path_mapping_fields, & &1.key)
-  end
-
-  # Per-kind settings-key derivations for the UI (the form field `name`s).
-  def library_path_key(kind), do: "#{kind}_library_path"
-  def min_size_key(kind), do: "#{kind}_min_size"
-  def max_size_key(kind), do: "#{kind}_max_size"
-  def preferred_resolutions_key(kind), do: "#{kind}_preferred_resolutions"
-  def preferred_sources_key(kind), do: "#{kind}_preferred_sources"
 
   # --- reads ---
 
@@ -691,7 +257,7 @@ defmodule Cinder.Settings do
       |> Map.put(@import_roots_key, decoded_for(rows, @import_roots_key) || "")
       |> Map.put(@ffprobe_bin_key, decoded_for(rows, @ffprobe_bin_key) || "")
       |> then(fn values ->
-        Enum.reduce(@anime_fields, values, fn field, values ->
+        Enum.reduce(anime_fields(), values, fn field, values ->
           Map.put(values, field.key, decoded_for(rows, field.key) || "")
         end)
       end)
@@ -723,7 +289,7 @@ defmodule Cinder.Settings do
     text_keys =
       for(f <- config_fields() ++ global_fields(), not f.secret, do: f.key) ++
         flat_keys() ++
-        [@import_roots_key, @ffprobe_bin_key] ++ Enum.map(@anime_fields, & &1.key)
+        [@import_roots_key, @ffprobe_bin_key] ++ Enum.map(anime_fields(), & &1.key)
 
     values =
       text_keys
@@ -759,7 +325,7 @@ defmodule Cinder.Settings do
   defp preserve_media_server(values, _params), do: values
 
   defp preserve_booleans(values, params) do
-    keys = Enum.map(@toggles, & &1.key) ++ ["move_on_import", @smtp_ssl_key]
+    keys = Enum.map(toggles(), & &1.key) ++ ["move_on_import", @smtp_ssl_key]
 
     Enum.reduce(keys, values, fn key, values ->
       if Map.has_key?(params, key),
@@ -900,7 +466,7 @@ defmodule Cinder.Settings do
 
   defp invalid_anime_values(params) do
     enum_keys =
-      for %{key: key, type: :select, options: options} <- @anime_fields,
+      for %{key: key, type: :select, options: options} <- anime_fields(),
           Map.has_key?(params, key),
           value = String.trim(params[key] || ""),
           value != "",
@@ -1102,7 +668,7 @@ defmodule Cinder.Settings do
 
   defp anime_enum(rows, key, fallback) do
     value = decoded_for(rows, key)
-    field = Enum.find(@anime_fields, &(&1.key == key))
+    field = Enum.find(anime_fields(), &(&1.key == key))
 
     if value in field.options, do: String.to_existing_atom(value), else: fallback
   end
@@ -1158,7 +724,7 @@ defmodule Cinder.Settings do
   end
 
   defp apply_path_mapping_config(rows) do
-    Enum.each(@path_mapping_fields, fn field ->
+    Enum.each(path_mapping_fields(), fn field ->
       Application.put_env(:cinder, field.env_key, decoded_for(rows, field.key))
     end)
   end
@@ -1225,8 +791,8 @@ defmodule Cinder.Settings do
     fallback = positive_integer(base(:default_request_quota))
 
     quota =
-      if Map.has_key?(rows, @default_request_quota_key),
-        do: positive_integer(decoded_for(rows, @default_request_quota_key)),
+      if Map.has_key?(rows, Registry.default_request_quota_key()),
+        do: positive_integer(decoded_for(rows, Registry.default_request_quota_key())),
         else: fallback
 
     Application.put_env(:cinder, :default_request_quota, quota)
@@ -1350,8 +916,8 @@ defmodule Cinder.Settings do
     base_map = base(:download_clients)
 
     map =
-      if Enum.any?(@toggles, fn t -> Map.has_key?(rows, t.key) end) do
-        for t <- @toggles,
+      if Enum.any?(toggles(), fn t -> Map.has_key?(rows, t.key) end) do
+        for t <- toggles(),
             enabled?(decoded_for(rows, t.key)),
             Map.has_key?(base_map, t.protocol),
             into: %{} do
@@ -1397,7 +963,7 @@ defmodule Cinder.Settings do
   defp decode_setting(setting), do: Crypto.decode_setting(setting)
 
   defp toggle_values(rows) do
-    for t <- @toggles, into: %{} do
+    for t <- toggles(), into: %{} do
       {t.key, enabled?(decoded_for(rows, t.key))}
     end
   end
@@ -1409,7 +975,7 @@ defmodule Cinder.Settings do
     if System.get_env("PLEX_URL"), do: "plex", else: "jellyfin"
   end
 
-  defp secret?(key), do: MapSet.member?(@secret_keys, key)
+  defp secret?(key), do: MapSet.member?(Registry.secret_keys(), key)
 
   defp upsert(key, value) do
     stored = Crypto.store_value(secret?(key), value)
@@ -1435,7 +1001,7 @@ defmodule Cinder.Settings do
     {puts, deletes} = plan_flat(@ffprobe_bin_key, params, {puts, deletes})
 
     {puts, deletes} =
-      Enum.reduce(@anime_fields, {puts, deletes}, &plan_flat(&1.key, params, &2))
+      Enum.reduce(anime_fields(), {puts, deletes}, &plan_flat(&1.key, params, &2))
 
     puts =
       puts
@@ -1443,7 +1009,7 @@ defmodule Cinder.Settings do
       |> Map.put("move_on_import", params["move_on_import"] || "false")
       |> Map.put(@smtp_ssl_key, params[@smtp_ssl_key] || "false")
       |> then(fn p ->
-        Enum.reduce(@toggles, p, fn t, acc -> Map.put(acc, t.key, params[t.key] || "false") end)
+        Enum.reduce(toggles(), p, fn t, acc -> Map.put(acc, t.key, params[t.key] || "false") end)
       end)
 
     {puts, deletes}
