@@ -19,7 +19,9 @@ defmodule CinderWeb.MyRequestsLive do
       find_by_id: 2
     ]
 
-  alias Cinder.{Catalog, Requests, Settings}
+  import CinderWeb.IssueComponents, only: [report_form: 1, report_status: 1]
+
+  alias Cinder.{Catalog, Issues, Requests, Settings}
 
   @impl true
   def mount(_params, _session, socket) do
@@ -28,9 +30,11 @@ defmodule CinderWeb.MyRequestsLive do
       Catalog.subscribe()
       # Season availability derives from episode imports, which broadcast on "series".
       Catalog.subscribe_series()
+      # An admin resolving/dismissing a report updates its status here live.
+      Issues.subscribe()
     end
 
-    {:ok, socket |> assign(confirming: nil) |> load()}
+    {:ok, socket |> assign(confirming: nil, reporting: nil) |> load()}
   end
 
   @impl true
@@ -73,8 +77,59 @@ defmodule CinderWeb.MyRequestsLive do
     {:noreply, socket}
   end
 
+  def handle_event("start_report", %{"id" => id}, socket),
+    do: {:noreply, assign(socket, reporting: id)}
+
+  def handle_event("cancel_report", _params, socket),
+    do: {:noreply, assign(socket, reporting: nil)}
+
+  # File a problem report against one of the caller's own available titles. The target is taken
+  # from the server-side request row (never a client-supplied target); only the category + detail
+  # come from the form. Availability is re-checked in Issues.create_report/2.
+  def handle_event("report_issue", %{"_id" => id} = params, socket) do
+    user = socket.assigns.current_scope.user
+
+    socket =
+      case find_by_id(socket.assigns.requests, id) do
+        nil ->
+          socket
+
+        request ->
+          report_result(socket, Issues.create_report(user, report_attrs(request, params)))
+      end
+
+    {:noreply, assign(socket, reporting: nil)}
+  end
+
   # Client-controlled payloads — ignore anything unmatched rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  defp report_attrs(request, params) do
+    %{
+      target_type: request.target_type,
+      target_id: request.target_id,
+      season_number: request.season_number,
+      category: params["category"],
+      detail: params["detail"]
+    }
+  end
+
+  defp report_result(socket, {:ok, _report}),
+    do: socket |> load() |> put_flash(:info, gettext("Thanks! Your report was sent."))
+
+  defp report_result(socket, {:error, :too_many_open}),
+    do:
+      put_flash(
+        socket,
+        :error,
+        gettext("You have too many open reports. Please wait for an admin to review them.")
+      )
+
+  defp report_result(socket, {:error, :not_available}),
+    do: put_flash(socket, :error, gettext("You can only report an issue on an available title."))
+
+  defp report_result(socket, {:error, _reason}),
+    do: put_flash(socket, :error, gettext("Couldn't send that report. Please try again."))
 
   @impl true
   def handle_async({:request_again, title}, {:ok, result}, socket),
@@ -137,10 +192,22 @@ defmodule CinderWeb.MyRequestsLive do
       requests: Requests.list_for_user(user),
       movies_by_tmdb: Map.new(Catalog.list_movies(), &{&1.tmdb_id, &1}),
       available_seasons: Catalog.available_season_keys(),
-      season_progress: Catalog.season_progress_keys()
+      season_progress: Catalog.season_progress_keys(),
+      latest_report_by_target: latest_reports(user)
     )
     |> assign_media_server()
   end
+
+  # The caller's newest report per target (`list_for_user` is desc by id, so the first seen per
+  # key is the latest) — drives the per-row "Reported/Resolved/Dismissed" pill and whether the
+  # "Report an issue" affordance is still offered.
+  defp latest_reports(user) do
+    user
+    |> Issues.list_for_user()
+    |> Enum.reduce(%{}, fn report, acc -> Map.put_new(acc, report_key(report), report) end)
+  end
+
+  defp report_key(%{target_type: type, target_id: id, season_number: n}), do: {type, id, n}
 
   # Re-read the media-server front door on every reload (mount + each broadcast), not just at
   # mount, so an admin switching the server type or fixing a typo'd web URL can't leave an open
@@ -231,11 +298,14 @@ defmodule CinderWeb.MyRequestsLive do
             <% movie_row? = r.target_type == "movie" and not is_nil(movie) %>
             <% season_progress = season_progress(r, @season_progress) %>
             <% available? = row_available?(r, movie, @available_seasons) %>
+            <% report = @latest_report_by_target[report_key(r)] %>
+            <% open_report? = match?(%{status: :open}, report) %>
             <span class="min-w-0 break-words font-semibold">
               {request_title(r, @locale)}
             </span>
             <span :if={r.year} class="text-base-content/70">({r.year})</span>
             <.status_badge kind={:request} status={effective_status(r, @available_seasons)} />
+            <.report_status :if={report} status={report.status} />
             <.status_badge
               :if={movie_row?}
               kind={:movie}
@@ -333,6 +403,28 @@ defmodule CinderWeb.MyRequestsLive do
               {gettext("Cancel this request? You can request it again later.")}
             </:caveat>
           </.confirm_action>
+
+          <.button
+            :if={available? and not open_report? and @reporting != to_string(r.id)}
+            id={"report-issue-#{r.id}"}
+            variant="ghost"
+            size="sm"
+            class="mt-2"
+            phx-click="start_report"
+            phx-value-id={r.id}
+            aria-label={gettext("Report an issue with %{title}", title: request_title(r, @locale))}
+          >
+            <.icon name="hero-flag" class="size-4" />{gettext("Report an issue")}
+          </.button>
+
+          <.report_form
+            :if={@reporting == to_string(r.id)}
+            id={"report-form-#{r.id}"}
+            value={r.id}
+            on_submit="report_issue"
+            on_cancel="cancel_report"
+            class="mt-2 max-w-md"
+          />
         </li>
       </ul>
     </Layouts.app>

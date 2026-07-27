@@ -2,6 +2,8 @@ defmodule CinderWeb.DataExportControllerTest do
   use CinderWeb.ConnCase
 
   import Cinder.AccountsFixtures
+  import Cinder.CatalogFixtures
+  alias Cinder.Issues
   alias Cinder.Repo
   alias Cinder.Requests.Request
 
@@ -68,6 +70,36 @@ defmodule CinderWeb.DataExportControllerTest do
       decoded = Jason.decode!(conn.resp_body)
 
       assert Enum.map(decoded["requests"], & &1["title"]) == ["Mine"]
+    end
+
+    test "includes the user's issue reports, scoped to the session user", %{conn: conn} do
+      user = user_fixture() |> set_password()
+      other = user_fixture()
+      mine = movie_fixture(%{status: :available, title: "Mine"})
+      theirs = movie_fixture(%{status: :available, title: "Theirs"})
+
+      {:ok, _} =
+        Issues.create_report(user, %{
+          target_type: "movie",
+          target_id: mine.tmdb_id,
+          category: "audio",
+          detail: "no sound"
+        })
+
+      {:ok, _} =
+        Issues.create_report(other, %{
+          target_type: "movie",
+          target_id: theirs.tmdb_id,
+          category: "playback"
+        })
+
+      conn = conn |> log_in_user(user) |> get(~p"/users/export")
+      decoded = Jason.decode!(conn.resp_body)
+
+      assert [report] = decoded["issue_reports"]
+      assert report["title"] == "Mine"
+      assert report["category"] == "audio"
+      assert report["status"] == "open"
     end
 
     test "requires authentication", %{conn: conn} do

@@ -1,12 +1,13 @@
 defmodule CinderWeb.DataExportController do
   @moduledoc """
-  GDPR Art.15/20 data export: streams the authenticated user's OWN account data and requests as a
-  downloadable JSON attachment. Strictly scoped to the session user (no id param), and never
-  includes secrets (`hashed_password`, tokens).
+  GDPR Art.15/20 data export: streams the authenticated user's OWN account data, requests, and
+  issue reports as a downloadable JSON attachment. Strictly scoped to the session user (no id
+  param), and never includes secrets (`hashed_password`, tokens).
   """
   use CinderWeb, :controller
 
   alias Cinder.Accounts
+  alias Cinder.Issues
   alias Cinder.Requests
 
   def export(conn, _params) do
@@ -15,7 +16,8 @@ defmodule CinderWeb.DataExportController do
     payload = %{
       exported_at: DateTime.to_iso8601(DateTime.utc_now()),
       account: Accounts.export_user_data(user),
-      requests: Requests.export_for_user(user)
+      requests: Requests.export_for_user(user),
+      issue_reports: Issues.export_for_user(user)
     }
 
     conn
