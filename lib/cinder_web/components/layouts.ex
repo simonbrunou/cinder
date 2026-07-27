@@ -127,6 +127,12 @@ defmodule CinderWeb.Layouts do
                   badge={@pending_count}
                 />
                 <.nav_item
+                  navigate={~p"/issues"}
+                  label={gettext("Issues")}
+                  icon="hero-flag"
+                  current_path={@current_path}
+                />
+                <.nav_item
                   navigate={~p"/library"}
                   label={gettext("Library")}
                   icon="hero-rectangle-stack"

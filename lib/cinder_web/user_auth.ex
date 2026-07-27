@@ -408,6 +408,7 @@ defmodule CinderWeb.UserAuth do
   def page_title("/activity"), do: gettext("Activity")
   def page_title("/settings"), do: gettext("Settings")
   def page_title("/requests"), do: gettext("Requests")
+  def page_title("/issues"), do: gettext("Reported issues")
   def page_title("/users"), do: gettext("Users")
   def page_title("/library"), do: gettext("Library")
   def page_title("/calendar"), do: gettext("Calendar")

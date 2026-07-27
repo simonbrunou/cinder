@@ -12,11 +12,13 @@ defmodule CinderWeb.MovieDiscoveryLive do
   use CinderWeb, :live_view
 
   import CinderWeb.DiscoverComponents
+  import CinderWeb.IssueComponents, only: [report_form: 1, report_status: 1]
   import CinderWeb.LiveHelpers
   import CinderWeb.RequestHelpers
 
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog
+  alias Cinder.Issues
   alias Cinder.Settings
 
   require Logger
@@ -35,13 +37,16 @@ defmodule CinderWeb.MovieDiscoveryLive do
         Catalog.subscribe()
         Cinder.Requests.subscribe()
         Settings.subscribe()
+        # An admin resolving this user's report re-offers the "Report an issue" action live.
+        Issues.subscribe()
       end
 
       {:ok,
        socket
-       |> assign(tmdb_id: tmdb_id, info: info, recommendations: [])
+       |> assign(tmdb_id: tmdb_id, info: info, recommendations: [], reporting: false)
        |> assign_media_server()
        |> assign_request_state()
+       |> assign_report_state()
        |> maybe_load_recommendations()}
     else
       # A TMDB outage is not "not found" — telling the user the movie doesn't exist sends them
@@ -87,8 +92,58 @@ defmodule CinderWeb.MovieDiscoveryLive do
     end
   end
 
+  def handle_event("start_report", _params, socket),
+    do: {:noreply, assign(socket, reporting: true)}
+
+  def handle_event("cancel_report", _params, socket),
+    do: {:noreply, assign(socket, reporting: false)}
+
+  # Report a problem with this (available) movie. The target is the page's own tmdb_id, never a
+  # client value; only category + detail come from the form. Availability re-checked in the context.
+  def handle_event("report_issue", params, socket) do
+    user = socket.assigns.current_scope.user
+
+    attrs = %{
+      target_type: "movie",
+      target_id: socket.assigns.tmdb_id,
+      season_number: nil,
+      category: params["category"],
+      detail: params["detail"]
+    }
+
+    {:noreply,
+     socket
+     |> report_result(Issues.create_report(user, attrs))
+     |> assign(reporting: false)}
+  end
+
   # The event payload is client-controlled; ignore any malformed/forged frame.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  defp report_result(socket, {:ok, _report}),
+    do:
+      socket
+      |> assign_report_state()
+      |> put_flash(:info, gettext("Thanks! Your report was sent."))
+
+  defp report_result(socket, {:error, :too_many_open}),
+    do:
+      put_flash(
+        socket,
+        :error,
+        gettext("You have too many open reports. Please wait for an admin to review them.")
+      )
+
+  defp report_result(socket, {:error, :not_available}),
+    do: put_flash(socket, :error, gettext("You can only report an issue on an available title."))
+
+  defp report_result(socket, {:error, _reason}),
+    do: put_flash(socket, :error, gettext("Couldn't send that report. Please try again."))
+
+  defp assign_report_state(socket) do
+    user = socket.assigns.current_scope.user
+    assign(socket, open_report?: Issues.open_report?(user, "movie", socket.assigns.tmdb_id))
+  end
 
   @impl true
   def handle_info({:movie_updated, movie}, socket) do
@@ -106,6 +161,11 @@ defmodule CinderWeb.MovieDiscoveryLive do
   def handle_info({event, _request}, socket)
       when event in [:request_created, :request_approved, :request_denied, :request_deleted] do
     {:noreply, assign_request_state(socket)}
+  end
+
+  def handle_info({event, _report}, socket)
+      when event in [:issue_reported, :issue_resolved, :issue_dismissed] do
+    {:noreply, assign_report_state(socket)}
   end
 
   def handle_info(:settings_updated, socket) do
@@ -264,6 +324,31 @@ defmodule CinderWeb.MovieDiscoveryLive do
             )}
             <span class="sr-only">{gettext("(opens in a new tab)")}</span>
           </.button>
+
+          <div :if={@state == :available} class="mt-4 flex flex-col gap-2">
+            <.report_status :if={@open_report?} status={:open} />
+            <.button
+              :if={not @open_report? and not @reporting}
+              id="report-issue"
+              variant="ghost"
+              size="sm"
+              class="self-start"
+              phx-click="start_report"
+              aria-label={
+                gettext("Report an issue with %{title}", title: media_title(@info, @locale))
+              }
+            >
+              <.icon name="hero-flag" class="size-4" />{gettext("Report an issue")}
+            </.button>
+            <.report_form
+              :if={@reporting}
+              id="report-form"
+              value={@tmdb_id}
+              on_submit="report_issue"
+              on_cancel="cancel_report"
+              class="max-w-md"
+            />
+          </div>
 
           <form
             :if={@state in [:none, :denied]}
