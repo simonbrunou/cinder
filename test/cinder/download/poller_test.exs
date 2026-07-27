@@ -2271,6 +2271,28 @@ defmodule Cinder.Download.PollerTest do
              Repo.get!(Movie, movie.id)
   end
 
+  test "a dead download parks once re-queues are exhausted, even with a release to blocklist" do
+    # The blocklist is best-effort (block_release swallows insert failures), so search_attempts —
+    # which survives a :requested -> :downloading attach and is bumped per re-queue — is the hard
+    # bound. At the cap the movie parks instead of grabbing another release.
+    movie =
+      movie_fixture(%{
+        tmdb_id: 21,
+        status: :downloading,
+        download_id: "hash-21",
+        download_protocol: :torrent,
+        release_title: "Dead.Release.1080p-GRP"
+      })
+
+    {:ok, movie} = Catalog.transition(movie, %{status: :downloading, search_attempts: 10})
+
+    start_supervised!({Poller, interval: 60_000})
+    stub(Cinder.Download.ClientMock, :status, fn "hash-21" -> {:ok, %{state: :error}} end)
+
+    Enum.each(1..3, fn _ -> Poller.poll() end)
+    assert %Movie{status: :import_failed} = Repo.get!(Movie, movie.id)
+  end
+
   test "a dead download with no release to blocklist parks instead of re-queueing" do
     # The blocklist is the only bound on the re-queue loop, so a movie with nothing to block must
     # fall back to the terminal park — re-queueing it would re-grab the same dead download forever.

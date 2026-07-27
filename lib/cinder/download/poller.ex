@@ -209,22 +209,34 @@ defmodule Cinder.Download.Poller do
       attempts < @download_error_attempts ->
         retry_download(movie, reason, attempts)
 
-      # The blocklist row is the ONLY thing bounding the re-queue loop: each dead release shrinks
-      # the candidate pool until Download.start parks :no_match. `block_release/2` is a no-op with
-      # no release_title, so re-queueing without one would re-grab the same dead download every
-      # cycle forever. Download.attach_movie always stamps a release_title, so this should be
-      # unreachable — but the cost of being wrong is a hot loop, and the fallback is just the
-      # terminal park this path had before.
+      # The INTENDED bound: each dead release is blocklisted, shrinking the candidate pool until
+      # Download.start parks :no_match. `block_release/2` is a no-op with no release_title, so
+      # re-queueing without one would re-grab the same dead download every cycle forever.
+      # Download.attach_movie always stamps a release_title, so this should be unreachable — but
+      # the cost of being wrong is a hot loop, and the fallback is the terminal park this path
+      # had before.
       movie.release_title in [nil, ""] ->
-        Logger.warning(
-          "movie #{movie.id} download failed (#{inspect(reason)}) with no release to blocklist; parking"
-        )
+        park_unrequeueable(movie, reason, "no release to blocklist")
 
-        park(movie, :import_failed, reason)
+      # A SECOND, independent bound, because the first one is best-effort by design:
+      # `block_release/2` swallows insert failures (it runs in the poller's isolated park path,
+      # where raising would re-fire every tick), so a row that never lands would silently un-bound
+      # the loop above. Unlike import_attempts, `search_attempts` is NOT reset when a :requested
+      # movie attaches a download — `Download.reconcile_movie/1` only zeroes it when attaching out
+      # of a parked status — so `requeue_failed_movie/2`'s per-requeue bump accumulates across
+      # cycles. Park at the same bound the search pass uses; a healthy movie never gets near it
+      # (a successful grab-and-import bumps it zero times).
+      (movie.search_attempts || 0) >= @max_attempts ->
+        park_unrequeueable(movie, reason, "re-queues exhausted after #{movie.search_attempts}")
 
       true ->
         requeue_failed(movie, reason)
     end
+  end
+
+  defp park_unrequeueable(movie, reason, why) do
+    Logger.warning("movie #{movie.id} download failed (#{inspect(reason)}); #{why}; parking")
+    park(movie, :import_failed, reason)
   end
 
   defp requeue_failed(movie, reason) do
