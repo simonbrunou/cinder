@@ -164,10 +164,14 @@ defmodule Cinder.Acquisition.Scorer do
   The ascending sort key `select/2` ranks by (language → resolution → source → larger size). Best
   sorts first.
 
-  The language rank exists for the untagged releases `Cinder.Acquisition.Language.filter/3` keeps
-  for a soft `"original"` pick: a release whose tag actually satisfies the target outranks one that
+  The language rank exists for the untagged releases `Cinder.Acquisition.Language.filter/4` keeps
+  under `keep_untagged: true`: a release whose tag actually satisfies the target outranks one that
   merely wasn't ruled out, so untagged only wins when nothing tagged survived the band. It is a
   no-op whenever the language filter is off or every candidate satisfies the target.
+
+  That "only wins when nothing tagged survived" guarantee holds for `select/2`, where this IS the
+  sort key. `cover/6`'s `take_best/7` sorts by coverage FIRST, so the term is only a tiebreak
+  there — which is exactly why `keep_untagged` is opt-in and only the movie pool passes it.
 
   It is skipped entirely under an `:anime_policy`. The anime pools deliberately never run
   `Language.filter/3` (`Cinder.Acquisition.Anime.language_pool/2` and `anime_movie_pool/2` return

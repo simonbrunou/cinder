@@ -540,6 +540,28 @@ defmodule Cinder.AcquisitionTest do
       assert_received {:searched_season, 2}
     end
 
+    test "keeps the TV language gate strict about untagged releases" do
+      # The #191 relaxation is movie-only. Set-cover sorts by coverage BEFORE the scorer's
+      # language rank, so an untagged season pack would beat the confirmed-FRENCH singles it
+      # covers and the ranking safety net would never engage. Untagged stays filtered out here.
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
+        {:ok,
+         [
+           raw_tv("The.Office.S01.1080p.WEB-DL.x264-FW"),
+           raw_tv("The.Office.S01E01.FRENCH.1080p.WEB-DL-GRP"),
+           raw_tv("The.Office.S01E02.FRENCH.1080p.WEB-DL-GRP")
+         ]}
+      end)
+
+      assert {:ok, chosen} =
+               Acquisition.best_releases(series(), 1, [1, 2],
+                 preferred_language: "original",
+                 original_language: "fr"
+               )
+
+      assert chosen |> Enum.map(fn {r, _cov} -> r.language end) == ["FRENCH", "FRENCH"]
+    end
+
     test "rejects a same-season release of a different series on the free-text path" do
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
         {:ok, [raw_tv("Parks.and.Recreation.S01E01.1080p.WEB-DL-GRP")]}

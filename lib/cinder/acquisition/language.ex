@@ -15,9 +15,10 @@ defmodule Cinder.Acquisition.Language do
   track is tagged; English is the unmarked default), so it satisfies an English
   target and nothing else. That is the fix for the "untagged assumed to be the
   original" bug — a foreign dub the parser couldn't tag no longer *matches* a
-  non-English title's "original". The one relaxation (see `keep?/3`): the soft
-  `"original"` pick still *keeps* untagged releases in the pool, ranked below every
-  tagged match, because non-English scene groups routinely publish untagged
+  non-English title's "original". The one relaxation (see `keep?/3`, opt-in via
+  `filter/4`'s `:keep_untagged`): a soft `"original"` pick on a single-selection
+  path still *keeps* untagged releases in the pool, ranked below every tagged
+  match, because non-English scene groups routinely publish untagged
   original-audio releases. `"any"` / an unknown original disables the filter. The
   code↔tag table is derived from `Cinder.Acquisition.Parser` so the two can never drift.
   """
@@ -54,24 +55,35 @@ defmodule Cinder.Acquisition.Language do
   @doc """
   Keeps only releases satisfying the resolved target. Returns the list unchanged
   when the filter is inactive (`"any"`, or `"original"` with a blank/nil original).
+
+  `opts[:keep_untagged]` (default `false`) additionally keeps untagged releases for the soft
+  `"original"` pick — see `keep?/3`. It is opt-in because it is only safe for a caller that
+  ranks the survivors, so pass it ONLY from a single-selection path.
   """
-  def filter(releases, preferred, original) do
+  def filter(releases, preferred, original, opts \\ []) do
     case target(preferred, original) do
       nil -> releases
-      t -> Enum.filter(releases, &keep?(&1, t, strict?(preferred)))
+      t -> Enum.filter(releases, &keep?(&1, t, keep_untagged?(preferred, opts)))
     end
   end
+
+  defp keep_untagged?(preferred, opts),
+    do: not strict?(preferred) and Keyword.get(opts, :keep_untagged, false)
 
   # A non-English title's own scene groups routinely publish original-audio releases with a bare
   # name and no language tag ("Guru.2025.1080p.WEB.H.264-FW" is French), so reading untagged as
   # English strands those titles at :no_match even when a perfect candidate is on the indexer
-  # (issue #191). The soft "original" pick therefore keeps untagged releases; an explicit
-  # french/dual pick stays strict. Ranking makes this safe in practice: `Scorer.rank_key/2` sorts
-  # a tag-satisfying release ahead of an untagged one, so untagged only wins when nothing tagged
-  # survives the band — and the import-time MediaInfo check (`audio_satisfies?/2`, when ffprobe is
-  # configured) parks a provably wrong-language grab.
-  defp keep?(%Release{language: language}, _target, false) when language in [nil, ""], do: true
-  defp keep?(release, target, _strict), do: satisfies?(release, target)
+  # (issue #191). An explicit french/dual pick stays strict regardless.
+  #
+  # What makes the relaxation safe is RANKING, not the filter: `Scorer.rank_key/2` sorts a
+  # tag-satisfying release ahead of an untagged one, so untagged wins only when nothing tagged
+  # survived the band (and the import-time MediaInfo check parks a provably wrong-language grab
+  # when ffprobe is configured). That only holds where `rank_key/2` actually decides — i.e.
+  # `Scorer.select/2`. The set-cover paths (`select_for/4`, `select_for_ids/3`) sort by coverage
+  # FIRST, so there an untagged season pack would beat confirmed-original per-episode releases
+  # and the net would never engage. Hence opt-in, and only the movie pool opts in.
+  defp keep?(%Release{language: language}, _target, true) when language in [nil, ""], do: true
+  defp keep?(release, target, _keep_untagged), do: satisfies?(release, target)
 
   @doc "The valid `preferred_language` values (the per-title Audio picks)."
   def preferences, do: ["original", "french", "dual", "any"]
