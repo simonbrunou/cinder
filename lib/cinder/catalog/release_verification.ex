@@ -11,6 +11,7 @@ defmodule Cinder.Catalog.ReleaseVerification do
   alias Cinder.Catalog
   alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Movie, Season}
   alias Cinder.Download
+  alias Cinder.Notifier
   alias Cinder.Repo
 
   @doc false
@@ -137,8 +138,14 @@ defmodule Cinder.Catalog.ReleaseVerification do
              updated_at: Catalog.now()
            ]
          ) do
-      {1, [held]} -> broadcast_grab_and_ok(held)
-      {0, _} -> {:error, :stale_grab}
+      {1, [held]} ->
+        # Guarded on `mapping_status == :resolved`, so this fires once per hold (resolved →
+        # verification_blocked), never on a re-observation of an already-held grab.
+        Notifier.notify({:operator_hold, held, :verification_blocked})
+        broadcast_grab_and_ok(held)
+
+      {0, _} ->
+        {:error, :stale_grab}
     end
   end
 

@@ -61,7 +61,8 @@ defmodule CinderWeb.Router do
         {CinderWeb.UserAuth, :require_active},
         {CinderWeb.UserAuth, :require_setup},
         {CinderWeb.UserAuth, :current_path},
-        {CinderWeb.UserAuth, :pending_requests_badge}
+        {CinderWeb.UserAuth, :pending_requests_badge},
+        {CinderWeb.UserAuth, :operator_holds_badge}
       ] do
       live "/", DiscoverLive
       live "/my-requests", MyRequestsLive
@@ -79,7 +80,8 @@ defmodule CinderWeb.Router do
         {CinderWeb.UserAuth, :require_admin},
         {CinderWeb.UserAuth, :require_setup},
         {CinderWeb.UserAuth, :current_path},
-        {CinderWeb.UserAuth, :pending_requests_badge}
+        {CinderWeb.UserAuth, :pending_requests_badge},
+        {CinderWeb.UserAuth, :operator_holds_badge}
       ] do
       live "/dashboard", DashboardLive
       live "/activity", ActivityLive

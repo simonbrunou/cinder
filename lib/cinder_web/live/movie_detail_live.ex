@@ -283,6 +283,7 @@ defmodule CinderWeb.MovieDetailLive do
       current_scope={@current_scope}
       current_path={@current_path}
       pending_count={@pending_count}
+      holds_count={@holds_count}
     >
       <.link navigate={~p"/library"} class="link link-hover mb-6 inline-flex items-center gap-1">
         <.icon name="hero-arrow-left" class="size-3.5" />{gettext("Library")}

@@ -133,6 +133,15 @@ defmodule Cinder.Notifier.Discord do
   defp embed({:grab_failed, grab, reason}),
     do: %{title: "TV grab ##{grab.id} failed", description: inspect(reason), color: @red}
 
+  # A newly created operator-action hold: something is queued waiting for an admin to act (@blue,
+  # neither success nor failure). No requester PII — a grab is operator-facing, identified by id.
+  defp embed({:operator_hold, %{id: id}, reason}),
+    do: %{
+      title: "⏸️ Download needs your attention",
+      description: "TV grab ##{id} #{hold_summary(reason)} — resolve it on /activity",
+      color: @blue
+    }
+
   defp embed({:episodes_search_exhausted, episodes}) do
     {summary, poster} = episodes_summary(episodes)
 
@@ -164,6 +173,11 @@ defmodule Cinder.Notifier.Discord do
   # --- helpers ---
 
   defp maintenance_name(key), do: Map.get(@maintenance_names, key, inspect(key))
+
+  defp hold_summary(:needs_mapping), do: "needs episode mapping"
+  defp hold_summary(:verification_blocked), do: "failed release verification"
+  defp hold_summary(:residual_files), do: "has files awaiting a fold/part decision"
+  defp hold_summary(other), do: "needs attention (#{inspect(other)})"
 
   defp failure_embed(title, movie, reason) do
     with_poster(

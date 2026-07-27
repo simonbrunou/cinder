@@ -299,8 +299,17 @@ defmodule Cinder.Catalog.Grabs do
     persist_mapping_result(grab, %{mapping_status: :resolved, mapping_issue: nil})
   end
 
-  def record_mapping_result(%Grab{} = grab, {:needs_mapping, %{issue: issue}}) do
-    persist_mapping_result(grab, %{mapping_status: :needs_mapping, mapping_issue: issue})
+  def record_mapping_result(
+        %Grab{mapping_status: prior} = grab,
+        {:needs_mapping, %{issue: issue}}
+      ) do
+    with {:ok, held} <-
+           persist_mapping_result(grab, %{mapping_status: :needs_mapping, mapping_issue: issue}) do
+      # Emit only on a fresh hold (resolved → needs_mapping), never on a re-observation of a grab
+      # already held — the operator hears once per hold, not once per import tick.
+      if prior != :needs_mapping, do: Notifier.notify({:operator_hold, held, :needs_mapping})
+      {:ok, held}
+    end
   end
 
   defp persist_mapping_result(grab, attrs) do
@@ -649,6 +658,25 @@ defmodule Cinder.Catalog.Grabs do
   @doc "Count of grabs still downloading (no `content_path` yet)."
   def count_grabs_downloading,
     do: Repo.aggregate(from(g in Grab, where: is_nil(g.content_path)), :count)
+
+  @doc """
+  Count of grabs sitting in an operator-action hold: a mapping hold (`:needs_mapping`), a
+  verification hold (`:verification_blocked`), or a standard residual grab with at least one
+  undecided `grab_file` (the fold/part decisions `/activity` surfaces via `grab_state/1`'s
+  `residual?` branch). Mirrors the grab hold classes `CinderWeb.ActivityLive` renders actions
+  for, so the Activity nav badge and the page agree. Feeds `Catalog.count_operator_holds/0`.
+  """
+  def count_grab_holds do
+    from(g in Grab,
+      as: :grab,
+      where:
+        g.mapping_status in [:needs_mapping, :verification_blocked] or
+          exists(
+            from f in GrabFile, where: f.grab_id == parent_as(:grab).id and is_nil(f.decision)
+          )
+    )
+    |> Repo.aggregate(:count)
+  end
 
   @doc """
   Grabs downloaded and awaiting import (`content_path` set), with `episodes: [season: :series]`
@@ -1047,6 +1075,10 @@ defmodule Cinder.Catalog.Grabs do
     Cinder.Catalog.publish_episode_transition_batch(episodes, series_id)
     announce_search_exhausted(bumped_ids)
     Enum.each(completed_seasons, &Notifier.notify({:season_available, &1}))
+
+    # `:open` means residual files were just inventoried with no decision — a fresh operator hold
+    # (this commit runs once per grab, guarded against re-entry, so no per-tick re-emit).
+    if state == :open, do: Notifier.notify({:operator_hold, grab, :residual_files})
     {:ok, state, grab}
   end
 

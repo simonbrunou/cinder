@@ -38,6 +38,11 @@ defmodule Cinder.Notifier.Log do
   def notify({:grab_failed, grab, reason}),
     do: log("tv grab failed: ##{grab.id} (#{inspect(reason)})")
 
+  # A newly created operator-action hold on a TV grab (mapping / verification / residual files):
+  # the download is waiting for a human on /activity. Logged so holds aren't silent.
+  def notify({:operator_hold, %{id: id}, reason}),
+    do: log("operator hold: tv grab ##{id} (#{reason})")
+
   def notify({:episodes_search_exhausted, episodes}),
     do: log("episode search exhausted: #{episodes_summary(episodes)}")
 
