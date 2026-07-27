@@ -37,11 +37,19 @@ defmodule Cinder.Library.MigrationSource do
           required(:size) => non_neg_integer()
         }
 
+  @type diagnostic :: %{
+          required(:kind) => :series,
+          required(:provider_id) => provider_id() | nil,
+          required(:title) => String.t(),
+          required(:reason) => term()
+        }
+
   @type snapshot :: %{
           required(:movies) => [movie()],
           required(:series) => [series()],
           required(:episodes) => [episode()],
-          required(:files) => [file()]
+          required(:files) => [file()],
+          optional(:diagnostics) => [diagnostic()]
         }
 
   @callback snapshot() :: {:ok, snapshot()} | {:error, term()}

@@ -184,7 +184,7 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
   } do
     path = "/radarr/Dune (2021)/Dune.mkv"
 
-    stub(Cinder.Library.RadarrMigrationSourceMock, :snapshot, fn ->
+    expect(Cinder.Library.RadarrMigrationSourceMock, :snapshot, fn ->
       {:ok,
        %{
          movies: [
@@ -195,6 +195,8 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
          files: [%{provider_id: 501, kind: :movie, path: path, size: 10}]
        }}
     end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn ^path -> {:ok, %File.Stat{}} end)
 
     stub(Cinder.Catalog.TMDBMock, :get_movie, fn 10 ->
       {:ok,

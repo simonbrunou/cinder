@@ -11,6 +11,8 @@ defmodule Cinder.Library.MigrationSource.Sonarr do
   alias Cinder.HTTPPolicy
 
   @max_response_bytes 8 * 1024 * 1024
+  @series_concurrency 4
+  @series_timeout 35_000
 
   @impl true
   def snapshot do
@@ -24,7 +26,8 @@ defmodule Cinder.Library.MigrationSource.Sonarr do
          movies: [],
          series: normalized.series,
          episodes: normalized.episodes,
-         files: normalized.files
+         files: normalized.files,
+         diagnostics: normalized.diagnostics
        }}
     else
       {:ok, %{status: 200}} -> {:error, :unexpected_response}
@@ -51,34 +54,87 @@ defmodule Cinder.Library.MigrationSource.Sonarr do
   end
 
   defp normalize_series(series, config) do
-    Enum.reduce_while(series, {:ok, %{series: [], episodes: [], files: []}}, fn raw, {:ok, acc} ->
-      case normalize_one_series(raw, config) do
-        {:ok, normalized} ->
-          {:cont,
-           {:ok,
-            %{
-              series: [normalized.series | acc.series],
-              episodes: Enum.reverse(normalized.episodes, acc.episodes),
-              files: Enum.reverse(normalized.files, acc.files)
-            }}}
+    indexed = Enum.with_index(series, 1)
+    owner = self()
 
-        {:error, _reason} = error ->
-          {:halt, error}
-      end
-    end)
-    |> case do
-      {:ok, normalized} ->
-        {:ok,
-         %{
-           series: Enum.reverse(normalized.series),
-           episodes: Enum.reverse(normalized.episodes),
-           files: normalized.files |> Enum.reverse() |> Enum.uniq_by(& &1.provider_id)
-         }}
+    results =
+      Task.async_stream(
+        indexed,
+        fn {raw, _index} ->
+          with :ok <- allow_req_test(config, owner) do
+            normalize_one_series(raw, config)
+          end
+        end,
+        max_concurrency: @series_concurrency,
+        timeout: @series_timeout,
+        on_timeout: :kill_task,
+        ordered: true
+      )
 
-      error ->
-        error
+    normalized =
+      indexed
+      |> Enum.zip(results)
+      |> Enum.reduce(%{series: [], episodes: [], files: [], diagnostics: []}, &collect_series/2)
+
+    {:ok,
+     %{
+       series: Enum.reverse(normalized.series),
+       episodes: Enum.reverse(normalized.episodes),
+       files: normalized.files |> Enum.reverse() |> Enum.uniq_by(& &1.provider_id),
+       diagnostics: Enum.reverse(normalized.diagnostics)
+     }}
+  end
+
+  defp allow_req_test(config, owner) do
+    case get_in(config, [:req_options, :plug]) do
+      {Req.Test, name} ->
+        case Req.Test.allow(name, owner, self()) do
+          :ok -> :ok
+          {:error, %{reason: :cant_allow_in_shared_mode}} -> :ok
+          {:error, reason} -> {:error, reason}
+        end
+
+      _plug ->
+        :ok
     end
   end
+
+  defp collect_series({_source, {:ok, {:ok, item}}}, acc) do
+    %{
+      acc
+      | series: [item.series | acc.series],
+        episodes: Enum.reverse(item.episodes, acc.episodes),
+        files: Enum.reverse(item.files, acc.files)
+    }
+  end
+
+  defp collect_series({{raw, index}, {:ok, {:error, reason}}}, acc),
+    do: add_diagnostic(acc, raw, index, reason)
+
+  defp collect_series({{raw, index}, {:exit, reason}}, acc),
+    do: add_diagnostic(acc, raw, index, reason)
+
+  defp add_diagnostic(acc, raw, index, reason) do
+    diagnostic = %{
+      kind: :series,
+      provider_id: positive_integer(raw["id"]),
+      title: series_name(raw, index),
+      reason: {:series_snapshot_failed, diagnostic_reason(reason)}
+    }
+
+    %{acc | diagnostics: [diagnostic | acc.diagnostics]}
+  end
+
+  defp series_name(raw, index) do
+    nonblank(raw["title"]) || nonblank(raw["sortTitle"]) ||
+      case positive_integer(raw["id"]) do
+        nil -> "Series #{index}"
+        id -> "Series #{id}"
+      end
+  end
+
+  defp diagnostic_reason(%Req.TransportError{reason: reason}), do: reason
+  defp diagnostic_reason(reason), do: reason
 
   defp normalize_one_series(%{"id" => provider_id} = raw, config)
        when is_integer(provider_id) and provider_id > 0 do

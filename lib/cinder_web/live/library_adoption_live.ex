@@ -149,7 +149,7 @@ defmodule CinderWeb.LibraryAdoptionLive do
      socket
      |> assign(adopting?: false, adoption_failures: summary.failures)
      |> put_flash(:info, message)
-     |> start_scan()}
+     |> refresh_after_adopt(summary)}
   end
 
   def handle_async(:adopt, {:exit, _reason}, socket) do
@@ -261,12 +261,12 @@ defmodule CinderWeb.LibraryAdoptionLive do
     choices = Map.get(params, "choices", %{})
 
     Enum.flat_map(candidates, fn
-      %{status: :ready, id: id, key: key} ->
-        if MapSet.member?(selected, id), do: [%{key: key}], else: []
+      %{status: :ready, id: id, key: key} = candidate ->
+        if MapSet.member?(selected, id), do: [%{key: key, candidate: candidate}], else: []
 
-      %{status: :needs_decision, id: id, key: key} when is_map(choices) ->
+      %{status: :needs_decision, id: id, key: key} = candidate when is_map(choices) ->
         case Map.get(choices, to_string(id)) do
-          choice when choice in ["fold", "part"] -> [%{key: key, choice: choice}]
+          choice when choice in ["fold", "part"] -> [migration_command(key, choice, candidate)]
           _choice -> []
         end
 
@@ -918,5 +918,60 @@ defmodule CinderWeb.LibraryAdoptionLive do
       </.form>
     </Layouts.app>
     """
+  end
+
+  defp migration_command(key, choice, candidate),
+    do: %{key: key, choice: choice, candidate: candidate}
+
+  defp refresh_after_adopt(%{assigns: %{mode: :filesystem}} = socket, _summary),
+    do: start_scan(socket)
+
+  defp refresh_after_adopt(
+         %{assigns: %{mode: {:migration, source}}} = socket,
+         summary
+       ) do
+    adopted = MapSet.new(Map.get(summary, :adopted_keys, []))
+    stale = MapSet.new(Map.get(summary, :stale_keys, []))
+
+    candidates =
+      Enum.map(socket.assigns.candidates, fn candidate ->
+        cond do
+          MapSet.member?(adopted, candidate.key) ->
+            %{candidate | status: :already_managed, reason: nil}
+
+          MapSet.member?(stale, candidate.key) ->
+            %{candidate | status: :blocked, reason: :stale_candidate}
+
+          true ->
+            candidate
+        end
+      end)
+
+    put_migration_preview(socket, %{
+      source: source,
+      candidates: candidates,
+      counts: migration_counts(candidates),
+      series_counts: migration_series_counts(candidates)
+    })
+  end
+
+  defp migration_counts(candidates) do
+    Map.new([:ready, :needs_decision, :blocked, :already_managed], fn status ->
+      {status, Enum.count(candidates, &(&1.status == status))}
+    end)
+  end
+
+  defp migration_series_counts(candidates) do
+    candidates
+    |> Enum.filter(&is_integer(Map.get(&1, :series_provider_id)))
+    |> Enum.group_by(& &1.series_provider_id)
+    |> Enum.map(fn {provider_id, grouped} ->
+      %{
+        provider_id: provider_id,
+        title: grouped |> hd() |> Map.get(:title),
+        counts: migration_counts(grouped)
+      }
+    end)
+    |> Enum.sort_by(&{&1.title, &1.provider_id})
   end
 end
