@@ -14,8 +14,10 @@ defmodule Cinder.Catalog.TMDB do
   @callback get_movie(tmdb_id :: integer()) :: {:ok, map()} | {:error, term()}
 
   @doc """
-  Finds movie and TV matches for an IMDb or TVDB id. Returns search-normalized maps carrying
-  `type: :movie | :tv`; callers must reject zero or multiple matches for the requested type.
+  Finds movie, TV-series, and TV-episode matches for an IMDb or TVDB id. Movie and series maps
+  are search-normalized and carry `type: :movie | :tv`; episode maps carry
+  `%{type: :episode, tmdb_episode_id, series_tmdb_id, season_number, episode_number, title,
+  air_date}`. Callers must reject zero or multiple matches for the requested type.
   """
   @callback find_by_external_id(
               external_id :: integer() | String.t(),

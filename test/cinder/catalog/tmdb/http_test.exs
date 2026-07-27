@@ -106,10 +106,10 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
             }} = HTTP.get_movie(27_205)
   end
 
-  test "find_by_external_id/2 sends the source and normalizes movie and TV results" do
+  test "find_by_external_id/2 sends the source and retains movie, TV, and episode results" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
-      assert conn.request_path == "/3/find/tt0903747"
-      assert conn.params["external_source"] == "imdb_id"
+      assert conn.request_path == "/3/find/500"
+      assert conn.params["external_source"] == "tvdb_id"
 
       Req.Test.json(conn, %{
         "movie_results" => [
@@ -117,6 +117,16 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
         ],
         "tv_results" => [
           %{"id" => 20, "name" => "Series", "first_air_date" => "2008-01-20"}
+        ],
+        "tv_episode_results" => [
+          %{
+            "id" => 30,
+            "show_id" => 20,
+            "season_number" => 4,
+            "episode_number" => 15,
+            "name" => "Episode",
+            "air_date" => "2008-04-10"
+          }
         ]
       })
     end)
@@ -124,8 +134,17 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
     assert {:ok,
             [
               %{type: :movie, tmdb_id: 10, title: "Movie", year: 2008},
-              %{type: :tv, tmdb_id: 20, title: "Series", year: 2008}
-            ]} = HTTP.find_by_external_id("tt0903747", :imdb_id)
+              %{type: :tv, tmdb_id: 20, title: "Series", year: 2008},
+              %{
+                type: :episode,
+                tmdb_episode_id: 30,
+                series_tmdb_id: 20,
+                season_number: 4,
+                episode_number: 15,
+                title: "Episode",
+                air_date: ~D[2008-04-10]
+              }
+            ]} = HTTP.find_by_external_id(500, :tvdb_id)
   end
 
   test "search_tv/2 sends the requested locale and normalizes results" do

@@ -56,10 +56,18 @@ defmodule Cinder.Catalog.TMDB.HTTP do
       {:ok,
        %{
          status: 200,
-         body: %{"movie_results" => movies, "tv_results" => series}
+         body: %{"movie_results" => movies, "tv_results" => series} = body
        }}
       when is_list(movies) and is_list(series) ->
-        {:ok, Enum.map(movies, &tag_movie/1) ++ Enum.map(series, &tag_series/1)}
+        case Map.get(body, "tv_episode_results", []) do
+          episodes when is_list(episodes) ->
+            {:ok,
+             Enum.map(movies, &tag_movie/1) ++
+               Enum.map(series, &tag_series/1) ++ Enum.map(episodes, &tag_episode/1)}
+
+          _not_a_list ->
+            {:error, :unexpected_response}
+        end
 
       {:ok, %{status: 200}} ->
         {:error, :unexpected_response}
@@ -364,6 +372,18 @@ defmodule Cinder.Catalog.TMDB.HTTP do
 
   defp tag_movie(movie), do: movie |> normalize() |> Map.put(:type, :movie)
   defp tag_series(series), do: series |> normalize_tv() |> Map.put(:type, :tv)
+
+  defp tag_episode(episode) do
+    %{
+      type: :episode,
+      tmdb_episode_id: episode["id"],
+      series_tmdb_id: episode["show_id"],
+      season_number: episode["season_number"],
+      episode_number: episode["episode_number"],
+      title: episode["name"],
+      air_date: date_from(episode["air_date"])
+    }
+  end
 
   defp tag_tv(series), do: series |> normalize_tv() |> Map.put(:type, :tv)
 
