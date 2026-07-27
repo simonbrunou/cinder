@@ -5,6 +5,8 @@ defmodule Cinder.Application do
 
   use Application
 
+  require Logger
+
   @impl true
   def start(_type, _args) do
     children =
@@ -12,7 +14,9 @@ defmodule Cinder.Application do
         CinderWeb.Telemetry,
         Cinder.Repo,
         {Ecto.Migrator,
-         repos: Application.fetch_env!(:cinder, :ecto_repos), skip: skip_migrations?()},
+         repos: Application.fetch_env!(:cinder, :ecto_repos),
+         skip: skip_migrations?(),
+         migrator: &run_migrations/3},
         {DNSCluster, query: Application.get_env(:cinder, :dns_cluster_query) || :ignore},
         {Phoenix.PubSub, name: Cinder.PubSub},
         # Owns cancellable outbound HTTP requests so wall-clock deadlines never link-crash callers.
@@ -89,6 +93,23 @@ defmodule Cinder.Application do
   defp skip_migrations? do
     # By default, sqlite migrations are run when using a release
     System.get_env("RELEASE_NAME") == nil
+  end
+
+  # The default `Ecto.Migrator` supervised migrator; wrapped so a boot-migration failure is logged
+  # loudly — naming the repo and the full exception + stacktrace (which names the failing migration
+  # module) — BEFORE it propagates. Without this the raise crash-loops the supervisor with the real
+  # cause buried under application-controller shutdown noise. The error is re-raised, never
+  # swallowed: a bad migration must still stop the boot.
+  defp run_migrations(repo, direction, opts) do
+    Ecto.Migrator.run(repo, direction, opts)
+  rescue
+    error ->
+      Logger.critical(
+        "Cinder boot migration failed for #{inspect(repo)}: " <>
+          Exception.format(:error, error, __STACKTRACE__)
+      )
+
+      reraise error, __STACKTRACE__
   end
 
   @doc false

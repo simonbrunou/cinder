@@ -55,7 +55,9 @@ defmodule CinderWeb.AuthorizationTest do
     assert {:ok, _lv, _html} = live(conn, ~p"/")
   end
 
-  for path <- ["/dev/dashboard", "/dev/mailbox"] do
+  # /admin/dashboard (LiveDashboard, admin-only in every env) and /dev/mailbox (dev-only) share
+  # the same [:browser, :require_authenticated_user, :require_admin] gate.
+  for path <- ["/admin/dashboard", "/dev/mailbox"] do
     test "anonymous gets 302 on #{path}", %{conn: conn} do
       assert redirected_to(get(conn, unquote(path))) =~ "/users/log-in"
     end
@@ -70,7 +72,8 @@ defmodule CinderWeb.AuthorizationTest do
       conn = get(conn, unquote(path))
       location = conn |> Plug.Conn.get_resp_header("location") |> List.first()
 
-      assert conn.status == 200 or (location && String.starts_with?(location, "/dev")),
+      # LiveDashboard's root redirects to its own /home page; the mailbox renders 200.
+      assert conn.status == 200 or (location && String.starts_with?(location, unquote(path))),
              "admin should reach #{unquote(path)} (got #{conn.status} -> #{inspect(location)})"
     end
   end

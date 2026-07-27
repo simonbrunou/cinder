@@ -46,6 +46,20 @@ defmodule CinderWeb.Plugs.RemoteIp do
     end
   end
 
+  @doc """
+  Route `:session` MFA: stashes the resolved client IP into the session under `"client_ip"`.
+
+  `conn.remote_ip` here is already cloudflared-resolved — this plug runs before the router in
+  `CinderWeb.Endpoint`. A LiveView that has no `conn` (e.g. the registration throttle) can then
+  key its per-IP bucket on the real visitor read from the session, instead of the shared
+  transport peer it would otherwise get from `get_connect_info(socket, :peer_data)`. Wired onto
+  the `:current_user` live_session in `CinderWeb.Router`.
+  """
+  @spec session_client_ip(Plug.Conn.t()) :: %{String.t() => String.t()}
+  def session_client_ip(%Plug.Conn{remote_ip: remote_ip}) do
+    %{"client_ip" => remote_ip |> :inet.ntoa() |> to_string()}
+  end
+
   # Loopback, RFC1918 private, and link-local — the shapes a host-networked or
   # Docker-networked cloudflared peer can take. Deliberately narrower than
   # `Cinder.HTTPPolicy`'s SSRF forbidden-address list: this only needs to recognize "this is

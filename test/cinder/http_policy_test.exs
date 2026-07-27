@@ -381,7 +381,16 @@ defmodule Cinder.HTTPPolicyTest do
 
       Req.Test.stub(Cinder.HTTPPolicyBlockedStub, fn conn ->
         send(parent, {:request_started, self()})
-        Process.sleep(500)
+        # Block until the wall-clock deadline cancels (kills) this request task — the behavior
+        # under test — instead of sleeping a fixed span tuned above the deadline. The generous
+        # `after` is only a safety valve so a regressed deadline fails within seconds rather than
+        # hanging the suite; on the happy path the task is killed long before it elapses.
+        receive do
+          :never -> :ok
+        after
+          5_000 -> :ok
+        end
+
         Req.Test.text(conn, "late-secret")
       end)
 

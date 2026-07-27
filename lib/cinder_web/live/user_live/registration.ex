@@ -2,24 +2,24 @@ defmodule CinderWeb.UserLive.Registration do
   use CinderWeb, :live_view
 
   # Registration has no natural per-account key (no account exists yet) to throttle on, so
-  # this LiveView keys Cinder.Accounts.IpRateLimiter's :registration bucket off the raw
-  # connection peer (`get_connect_info(socket, :peer_data)`), the one signal a LiveView can
-  # read without a router change (see file scope note below).
+  # this LiveView keys Cinder.Accounts.IpRateLimiter's :registration bucket off the client
+  # IP — and behind cloudflared that has to be the REAL visitor, not the shared tunnel hop.
   #
-  # ponytail: this is the raw TRANSPORT peer, not a cloudflared-resolved client IP — Plug's
-  # `get_peer_data/1` always reads the adapter/transport layer directly, never
-  # `conn.remote_ip`, and Phoenix.Socket.Transport's `connect_info` has no key for an
+  # The `:current_user` live_session in router.ex carries a `:session` MFA
+  # (`CinderWeb.Plugs.RemoteIp.session_client_ip/1`) that stashes the cloudflared-resolved
+  # `conn.remote_ip` — the endpoint's RemoteIp plug runs before the router — into the session
+  # under `"client_ip"`. `mount/3` reads it there, so the bucket keys per visitor even when
+  # every visitor shares one transport peer (the tunnel's own hop).
+  #
+  # peer_data is the FALLBACK for when the session carries no resolved IP: a LiveView
+  # otherwise can't see the resolved address. `get_connect_info(socket, :peer_data)` reads the
+  # raw TRANSPORT peer, and Phoenix.Socket.Transport's `connect_info` has no key for an
   # arbitrary request header (only :peer_data, :x_headers ("x-" prefix only — doesn't match
-  # `cf-connecting-ip`), :trace_context_headers, :uri, :user_agent). Threading the real
-  # per-visitor IP in here would need a custom `:session` function on this LiveView's route
-  # in router.ex, which is out of scope for this fix (owned by a concurrent change).
-  #
-  # Net effect behind cloudflared: every visitor's peer is the same tunnel hop, so this
-  # bucket collapses from "10/min per visitor" to "10/min total" — still a real cap on
-  # worst-case bcrypt CPU cost (this fix's actual goal), just not per-visitor fairness. The
-  # Cloudflare edge Managed Challenge / Rate Limit rule on /users/register (pre-exposure
-  # security audit, finding 2, ops-level) is the per-visitor backstop. Off the tunnel
-  # (direct/LAN access), peer_data IS the real client IP and this throttle is fully precise.
+  # `cf-connecting-ip`), :trace_context_headers, :uri, :user_agent), so the plug-set session
+  # is the only way to thread the real IP in. Off the tunnel (direct/LAN) peer_data is itself
+  # the real client IP, so the throttle is precise on either path. The Cloudflare edge Managed
+  # Challenge / Rate Limit rule on /users/register (pre-exposure security audit, finding 2)
+  # remains the ops-level per-visitor backstop.
   @ip_bucket :registration
 
   alias Cinder.Accounts
@@ -118,7 +118,7 @@ defmodule CinderWeb.UserLive.Registration do
     {:ok, redirect(socket, to: CinderWeb.UserAuth.signed_in_path(socket))}
   end
 
-  def mount(_params, _session, socket) do
+  def mount(_params, session, socket) do
     changeset = User.registration_changeset(%User{}, %{}, validate_unique: false)
 
     {:ok,
@@ -126,7 +126,7 @@ defmodule CinderWeb.UserLive.Registration do
      |> assign(
        submitted: false,
        bootstrap_required: Accounts.count_admins() == 0,
-       client_ip: client_ip(socket)
+       client_ip: resolve_client_ip(session, peer_ip(socket))
      )
      |> assign_form(changeset), temporary_assigns: [form: nil]}
   end
@@ -175,9 +175,16 @@ defmodule CinderWeb.UserLive.Registration do
     end
   end
 
-  # See the module-level ponytail note: this is the raw connection peer, degrading to one
-  # shared value per bucket behind a reverse proxy/tunnel that doesn't terminate at us.
-  defp client_ip(socket) do
+  @doc """
+  Picks the resolved client IP threaded through the session (see the module note), falling back
+  to the raw transport peer when the session carries none. Public only so the fallback branch is
+  directly assertable in a test.
+  """
+  def resolve_client_ip(%{"client_ip" => ip}, _fallback) when is_binary(ip) and ip != "", do: ip
+  def resolve_client_ip(_session, fallback), do: fallback
+
+  # The raw connection peer — the tunnel hop behind cloudflared, the real client IP off it.
+  defp peer_ip(socket) do
     case get_connect_info(socket, :peer_data) do
       %{address: address} -> address |> :inet.ntoa() |> to_string()
       _ -> "unknown"

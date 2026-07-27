@@ -1101,14 +1101,18 @@ defmodule Cinder.Download.TvPollerTest do
     assert %Grab{
              download_progress: 0.42,
              download_speed: nil,
-             download_eta: 90,
-             updated_at: updated_at
+             download_eta: 90
            } = Repo.get!(Grab, grab.id)
 
-    # Timestamps are second-precision, so make an unintended write observable.
-    Process.sleep(1_100)
+    # Force updated_at to a distinct sentinel so any rewrite by an equal poll is observable
+    # immediately — no waiting on the second-precision clock to tick past `updated_at`.
+    sentinel = ~U[2000-01-01 00:00:00Z]
+
+    {1, _} =
+      Repo.update_all(from(g in Grab, where: g.id == ^grab.id), set: [updated_at: sentinel])
+
     assert :ok = TvPoller.poll()
-    assert Repo.get!(Grab, grab.id).updated_at == updated_at
+    assert Repo.get!(Grab, grab.id).updated_at == sentinel
   end
 
   test "keeps a grab's progress high-water after a transient client error" do
