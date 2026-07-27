@@ -16,6 +16,15 @@ defmodule CinderWeb.SeriesDetailComponents do
   alias Cinder.Catalog.Episode
 
   def render(assigns) do
+    # The first season with a manual-searchable set drives the series-level "Find a better match"
+    # header entry point (visible without expanding a season) — nil hides it and its focus target.
+    assigns =
+      assign(
+        assigns,
+        :manual_search_season,
+        Enum.find(assigns.series.seasons, &season_manual_searchable?(&1, assigns.profile_summary))
+      )
+
     ~H"""
     <Layouts.app
       flash={@flash}
@@ -37,6 +46,22 @@ defmodule CinderWeb.SeriesDetailComponents do
         </.button>
         <.button type="button" variant="danger" size="sm" phx-click="ask_delete_series">
           {gettext("Delete series")}
+        </.button>
+        <%!-- Series-level shortcut to the per-season upgrade search — the movie page exposes
+              "Find a better match" as a top-level button, but on TV it otherwise only lives
+              inside a collapsed season. Expands the searchable seasons and focuses the first. --%>
+        <.button
+          :if={@manual_search_season}
+          type="button"
+          variant="neutral"
+          size="sm"
+          phx-click={
+            JS.push("reveal_manual_search")
+            |> JS.focus(to: "#season-summary-#{@manual_search_season.id}")
+          }
+          aria-label={gettext("Find a better match: expand the seasons you can search")}
+        >
+          {gettext("Find a better match")}
         </.button>
       </div>
 
@@ -388,6 +413,7 @@ defmodule CinderWeb.SeriesDetailComponents do
         class="mb-6"
       >
         <summary
+          id={"season-summary-#{season.id}"}
           class="cursor-pointer border-b border-base-300 pb-2"
           phx-click="toggle_season_open"
           phx-value-id={season.id}
@@ -459,10 +485,15 @@ defmodule CinderWeb.SeriesDetailComponents do
             <.button
               :if={season_manual_searchable?(season, @profile_summary)}
               type="button"
-              variant="ghost"
+              variant="neutral"
               size="sm"
               phx-click="tv_manual_search"
               phx-value-season={season.season_number}
+              aria-label={
+                gettext("Find a better match in %{season}",
+                  season: season_label(season.season_number)
+                )
+              }
             >
               {gettext("Find a better match")}
             </.button>
@@ -775,9 +806,15 @@ defmodule CinderWeb.SeriesDetailComponents do
   defp season_wanted?(%{episodes: episodes} = season, profile),
     do: Enum.any?(episodes, &episode_searchable?(&1, season, profile))
 
-  # Manual search also covers available episodes (monitoring only gates the automatic sweep), but
-  # never an episode already owned by another grab.
-  defp season_manual_searchable?(%{episodes: episodes} = season, profile) do
+  @doc """
+  Whether a season has any episode the manual "Find a better match" search would act on: an
+  already-downloaded episode not currently owned by a grab (upgrade candidate) or a
+  sweep-searchable one. Public so `SeriesDetailLive`'s reveal handler shares this exact test.
+
+  Manual search also covers available episodes (monitoring only gates the automatic sweep), but
+  never an episode already owned by another grab.
+  """
+  def season_manual_searchable?(%{episodes: episodes} = season, profile) do
     Enum.any?(
       episodes,
       &((&1.file_path not in [nil, ""] and is_nil(&1.grab_id)) or
