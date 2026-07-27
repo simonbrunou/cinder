@@ -1451,6 +1451,7 @@ defmodule Cinder.Catalog do
   defdelegate count_wanted_episodes(), to: SeriesCatalog
   defdelegate available_season_keys(), to: SeriesCatalog
   defdelegate available_season_keys(tmdb_id), to: SeriesCatalog
+  defdelegate season_progress_keys(), to: SeriesCatalog
   defdelegate count_wanted_episodes(series_id, season_number), to: SeriesCatalog
   defdelegate count_episodes(series_id, season_number), to: SeriesCatalog
   defdelegate max_search_attempts(), to: SeriesCatalog

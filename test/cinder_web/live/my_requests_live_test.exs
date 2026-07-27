@@ -243,4 +243,164 @@ defmodule CinderWeb.MyRequestsLiveTest do
 
     refute has_element?(lv, "#request-again-#{req.id}")
   end
+
+  test "every request row shows a relative requested-time line", %{conn: conn} do
+    user = Cinder.AccountsFixtures.user_fixture()
+
+    {:ok, _} =
+      Requests.create_request(user, %{target_type: "movie", target_id: 55, title: "Freshly"})
+
+    conn = log_in_user(conn, user)
+    {:ok, _lv, html} = live(conn, ~p"/my-requests")
+
+    # Just created, so the coarse bucket reads "just now".
+    assert html =~ "Requested just now"
+  end
+
+  describe "season pipeline progress" do
+    test "shows episode progress and a downloading badge while a season is still filling",
+         %{conn: conn} do
+      user = Cinder.AccountsFixtures.user_fixture()
+
+      series = Cinder.CatalogFixtures.series_fixture(%{title: "Prog Show"})
+      season = Cinder.CatalogFixtures.season_fixture(series, %{season_number: 2})
+
+      Cinder.CatalogFixtures.episode_fixture(season, %{
+        episode_number: 1,
+        file_path: "/lib/Prog Show/Season 02/s02e01.mkv"
+      })
+
+      downloading = Cinder.CatalogFixtures.episode_fixture(season, %{episode_number: 2})
+      Cinder.CatalogFixtures.episode_fixture(season, %{episode_number: 3})
+
+      # An active grab on episode 2 → the season reads as downloading.
+      {:ok, _grab} = Cinder.Catalog.create_grab("season-dl", :torrent, [downloading.id])
+
+      {:ok, req} =
+        Requests.create_request(user, %{
+          target_type: "season",
+          target_id: series.tmdb_id,
+          season_number: 2,
+          title: "Prog Show",
+          year: 2008
+        })
+
+      conn = log_in_user(conn, user)
+      {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+      assert has_element?(
+               lv,
+               "#request-#{req.id}-season-progress",
+               "1 of 3 episodes available"
+             )
+
+      assert has_element?(lv, "#request-#{req.id} .badge", "Downloading")
+    end
+
+    test "no progress line for a season with no episodes yet (still pending approval)",
+         %{conn: conn} do
+      user = Cinder.AccountsFixtures.user_fixture()
+
+      {:ok, req} =
+        Requests.create_request(user, %{
+          target_type: "season",
+          target_id: 4242,
+          season_number: 1,
+          title: "Not Yet",
+          year: 2024
+        })
+
+      conn = log_in_user(conn, user)
+      {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+      refute has_element?(lv, "#request-#{req.id}-season-progress")
+    end
+  end
+
+  describe "Open in media server on an available row" do
+    test "an available movie row links to the media server", %{conn: conn} do
+      put_media_server_web_url("https://plex.example.com")
+      user = Cinder.AccountsFixtures.user_fixture()
+      tmdb_id = System.unique_integer([:positive])
+
+      {:ok, _} =
+        Requests.create_request(user, %{
+          target_type: "movie",
+          target_id: tmdb_id,
+          title: "Watchable",
+          year: 2020
+        })
+
+      {:ok, movie} = Cinder.Catalog.add_movie(%{tmdb_id: tmdb_id, title: "Watchable", year: 2020})
+      {:ok, _} = Cinder.Catalog.transition(movie, %{status: :available})
+
+      conn = log_in_user(conn, user)
+      {:ok, lv, html} = live(conn, ~p"/my-requests")
+
+      assert has_element?(lv, ~s(a[href="https://plex.example.com"]), "Open in Plex")
+      assert html =~ "opens in a new tab"
+      assert html =~ ~s(rel="noopener")
+    end
+
+    test "an available season row links to the media server", %{conn: conn} do
+      put_media_server_web_url("https://plex.example.com")
+      user = Cinder.AccountsFixtures.user_fixture()
+
+      series = Cinder.CatalogFixtures.series_fixture(%{title: "Done Show"})
+      season = Cinder.CatalogFixtures.season_fixture(series, %{season_number: 1})
+
+      Cinder.CatalogFixtures.episode_fixture(season, %{
+        episode_number: 1,
+        file_path: "/lib/Done Show/Season 01/s01e01.mkv"
+      })
+
+      {:ok, _} =
+        Requests.create_request(user, %{
+          target_type: "season",
+          target_id: series.tmdb_id,
+          season_number: 1,
+          title: "Done Show",
+          year: 2008
+        })
+
+      conn = log_in_user(conn, user)
+      {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+      assert has_element?(lv, ".badge", "Available")
+      assert has_element?(lv, ~s(a[href="https://plex.example.com"]), "Open in Plex")
+    end
+
+    test "no media-server link when no web URL is configured", %{conn: conn} do
+      user = Cinder.AccountsFixtures.user_fixture()
+      tmdb_id = System.unique_integer([:positive])
+
+      {:ok, _} =
+        Requests.create_request(user, %{target_type: "movie", target_id: tmdb_id, title: "NoLink"})
+
+      {:ok, movie} = Cinder.Catalog.add_movie(%{tmdb_id: tmdb_id, title: "NoLink"})
+      {:ok, _} = Cinder.Catalog.transition(movie, %{status: :available})
+
+      conn = log_in_user(conn, user)
+      {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+      refute has_element?(lv, "a", "Open in")
+    end
+  end
+
+  # Mirrors movie_discovery_live_test: writes the media_server_type row directly (Settings.put/2
+  # would run load_into_env/0 and flip the global :media_server impl off the Mox mock for the
+  # rest of the run). media_server_web_link/0 reads the row plus the impl's :web_url.
+  defp put_media_server_web_url(url) do
+    module = Cinder.Library.MediaServer.Plex
+    previous = Application.get_env(:cinder, module, [])
+    on_exit(fn -> Application.put_env(:cinder, module, previous) end)
+
+    Cinder.Repo.insert!(%Cinder.Settings.Setting{
+      key: "media_server_type",
+      value: "plex",
+      is_secret: false
+    })
+
+    Application.put_env(:cinder, module, Keyword.put(previous, :web_url, url))
+  end
 end

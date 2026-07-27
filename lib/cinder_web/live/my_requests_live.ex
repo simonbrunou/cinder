@@ -15,10 +15,11 @@ defmodule CinderWeb.MyRequestsLive do
       movie_badge_status: 1,
       pipeline_hint: 1,
       anime_hold_reason: 1,
+      relative_time: 1,
       find_by_id: 2
     ]
 
-  alias Cinder.{Catalog, Requests}
+  alias Cinder.{Catalog, Requests, Settings}
 
   @impl true
   def mount(_params, _session, socket) do
@@ -131,10 +132,65 @@ defmodule CinderWeb.MyRequestsLive do
   defp load(socket) do
     user = socket.assigns.current_scope.user
 
-    assign(socket,
+    socket
+    |> assign(
       requests: Requests.list_for_user(user),
       movies_by_tmdb: Map.new(Catalog.list_movies(), &{&1.tmdb_id, &1}),
-      available_seasons: Catalog.available_season_keys()
+      available_seasons: Catalog.available_season_keys(),
+      season_progress: Catalog.season_progress_keys()
+    )
+    |> assign_media_server()
+  end
+
+  # Re-read the media-server front door on every reload (mount + each broadcast), not just at
+  # mount, so an admin switching the server type or fixing a typo'd web URL can't leave an open
+  # page linking at the old server — the wrong-server case `media_server_web_link/0` guards.
+  defp assign_media_server(socket) do
+    case Settings.media_server_web_link() do
+      {server, url} ->
+        assign(socket, media_server_url: url, media_server_name: server_name(server))
+
+      nil ->
+        assign(socket, media_server_url: nil, media_server_name: nil)
+    end
+  end
+
+  # Product names, deliberately not gettext'd.
+  defp server_name(:plex), do: "Plex"
+  defp server_name(:jellyfin), do: "Jellyfin"
+
+  defp season_row?(%{target_type: "season"}), do: true
+  defp season_row?(_), do: false
+
+  # Progress for a season request row, keyed by `{series tmdb_id, season_number}`; nil for a
+  # movie row or a season with no episodes yet (still pending an admin's approval).
+  defp season_progress(%{target_type: "season", target_id: t, season_number: n}, progress),
+    do: Map.get(progress, {t, n})
+
+  defp season_progress(_r, _progress), do: nil
+
+  # Whether the whole row's content has landed — a fully-available season, or an available movie.
+  defp row_available?(%{target_type: "season"} = r, _movie, available_seasons),
+    do: effective_status(r, available_seasons) == :available
+
+  defp row_available?(_r, movie, _available_seasons),
+    do: not is_nil(movie) and movie_badge_status(movie) == :available
+
+  defp season_downloading?(%{downloading: true}), do: true
+  defp season_downloading?(_), do: false
+
+  defp season_incomplete?(%{total: total, available: available})
+       when total > 0 and available < total,
+       do: true
+
+  defp season_incomplete?(_), do: false
+
+  defp season_progress_hint(%{total: total, available: available}) do
+    ngettext(
+      "%{available} of %{count} episode available",
+      "%{available} of %{count} episodes available",
+      total,
+      available: available
     )
   end
 
@@ -173,6 +229,8 @@ defmodule CinderWeb.MyRequestsLive do
           <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
             <% movie = @movies_by_tmdb[r.target_id] %>
             <% movie_row? = r.target_type == "movie" and not is_nil(movie) %>
+            <% season_progress = season_progress(r, @season_progress) %>
+            <% available? = row_available?(r, movie, @available_seasons) %>
             <span class="min-w-0 break-words font-semibold">
               {request_title(r, @locale)}
             </span>
@@ -186,6 +244,26 @@ defmodule CinderWeb.MyRequestsLive do
               speed={movie.download_speed}
               eta={movie.download_eta}
             />
+            <.status_badge
+              :if={season_row?(r) and not available? and season_downloading?(season_progress)}
+              kind={:episode}
+              status={:downloading}
+            />
+            <.button
+              :if={available? and @media_server_url}
+              href={@media_server_url}
+              target="_blank"
+              rel="noopener"
+              variant="primary"
+              size="sm"
+              class="ml-auto"
+            >
+              <.icon name="hero-arrow-top-right-on-square" class="size-4" />{gettext(
+                "Open in %{server}",
+                server: @media_server_name
+              )}
+              <span class="sr-only">{gettext("(opens in a new tab)")}</span>
+            </.button>
             <.button
               :if={r.status == :pending and @confirming != to_string(r.id)}
               id={"cancel-request-#{r.id}"}
@@ -230,6 +308,16 @@ defmodule CinderWeb.MyRequestsLive do
             class="mt-1 text-sm text-base-content/70"
           >
             {pipeline_hint(movie)}
+          </p>
+          <p
+            :if={season_incomplete?(season_progress)}
+            id={"request-#{r.id}-season-progress"}
+            class="mt-1 text-sm text-base-content/70"
+          >
+            {season_progress_hint(season_progress)}
+          </p>
+          <p class="mt-1 text-xs text-base-content/60">
+            {gettext("Requested %{time_ago}", time_ago: relative_time(r.inserted_at))}
           </p>
           <.confirm_action
             :if={@confirming == to_string(r.id)}
