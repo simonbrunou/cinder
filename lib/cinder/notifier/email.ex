@@ -33,6 +33,7 @@ defmodule Cinder.Notifier.Email do
   @impl true
   def notify({:account_activated, user}), do: notify_account_activated(user)
   def notify({:request_approved, request}), do: notify_request_approved(request)
+  def notify({:request_denied, request, reason}), do: notify_request_denied(request, reason)
   def notify({:movie_available, movie}), do: notify_movie(movie, :available)
   def notify({:movie_failed, movie, reason}), do: notify_movie(movie, {:failed, reason})
   def notify({:season_available, season}), do: notify_season(season)
@@ -74,6 +75,30 @@ defmodule Cinder.Notifier.Email do
   # %Ecto.Association.NotLoaded{} (a malformed caller) degrades to a no-op, not a raise —
   # matching Discord's own defensive fallback for the same field.
   defp notify_request_approved(_request), do: :ok
+
+  # The requester submitted and walked away; this is the message that tells them an admin
+  # declined it — in their locale, with the admin's free-text reason when one was given.
+  defp notify_request_denied(%{user: %User{} = user} = request, reason) do
+    send_to(user, fn ->
+      title = request_title(request)
+
+      {gettext("Your request for %{title} was declined", title: title),
+       denied_body(title, reason)}
+    end)
+  end
+
+  defp notify_request_denied(_request, _reason), do: :ok
+
+  defp denied_body(title, reason) when is_binary(reason) and reason != "" do
+    gettext(
+      "We're sorry — your request for %{title} was declined. Reason: %{reason}",
+      title: title,
+      reason: reason
+    )
+  end
+
+  defp denied_body(title, _reason),
+    do: gettext("We're sorry — your request for %{title} was declined.", title: title)
 
   defp notify_movie(movie, :available) do
     each_requester(Requests.approved_requesters_for_movie(movie.tmdb_id), fn ->

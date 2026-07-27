@@ -28,6 +28,12 @@ defmodule CinderWeb.Layouts do
   attr :flash, :map, required: true, doc: "the map of flash messages"
   attr :current_scope, :map, default: nil, doc: "the current scope (may carry a nil user)"
   attr :current_path, :string, default: nil, doc: "the active request path, for nav highlighting"
+
+  attr :pending_count, :integer,
+    default: nil,
+    doc:
+      "requests awaiting approval, for the admin nav badge; assigned by :pending_requests_badge"
+
   slot :inner_block, required: true
 
   def app(assigns) do
@@ -113,6 +119,7 @@ defmodule CinderWeb.Layouts do
                   label={gettext("Requests")}
                   icon="hero-inbox-arrow-down"
                   current_path={@current_path}
+                  badge={@pending_count}
                 />
                 <.nav_item
                   navigate={~p"/library"}
@@ -203,6 +210,10 @@ defmodule CinderWeb.Layouts do
     default: false,
     doc: "match the path exactly — for an entry whose sub-paths belong to another page"
 
+  attr :badge, :integer,
+    default: nil,
+    doc: "optional count shown as a pill; nil/0 renders nothing"
+
   defp nav_item(assigns) do
     active =
       assigns.current_path == assigns.navigate or
@@ -220,6 +231,13 @@ defmodule CinderWeb.Layouts do
       >
         <.icon name={@icon} class="size-5 opacity-80" />
         {@label}
+        <span
+          :if={is_integer(@badge) and @badge > 0}
+          class="badge badge-sm badge-primary ml-auto"
+          aria-label={gettext("%{count} pending", count: @badge)}
+        >
+          {@badge}
+        </span>
       </.link>
     </li>
     """

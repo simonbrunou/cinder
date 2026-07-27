@@ -299,7 +299,12 @@ defmodule CinderWeb.DiscoverLive do
       )
 
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
+    <Layouts.app
+      flash={@flash}
+      current_scope={@current_scope}
+      current_path={@current_path}
+      pending_count={@pending_count}
+    >
       <.header>
         {gettext("Discover")}
         <:subtitle>{gettext("Search movies and TV. Request what you want to watch.")}</:subtitle>

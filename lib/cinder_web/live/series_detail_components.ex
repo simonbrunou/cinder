@@ -17,7 +17,12 @@ defmodule CinderWeb.SeriesDetailComponents do
 
   def render(assigns) do
     ~H"""
-    <Layouts.app flash={@flash} current_scope={@current_scope} current_path={@current_path}>
+    <Layouts.app
+      flash={@flash}
+      current_scope={@current_scope}
+      current_path={@current_path}
+      pending_count={@pending_count}
+    >
       <%!-- Back to the tab this series lives on, not the default Movies tab. --%>
       <.link
         navigate={~p"/library?type=tv"}

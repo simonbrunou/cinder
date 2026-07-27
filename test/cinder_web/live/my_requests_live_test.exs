@@ -207,4 +207,40 @@ defmodule CinderWeb.MyRequestsLiveTest do
     refute has_element?(lv, "#request-#{req.id}")
     assert Cinder.Repo.get(Cinder.Requests.Request, req.id) == nil
   end
+
+  test "a denied request offers Request again, which re-submits through the gate", %{conn: conn} do
+    user = Cinder.AccountsFixtures.user_fixture()
+    admin = Cinder.AccountsFixtures.admin_fixture()
+
+    {:ok, req} =
+      Requests.create_request(user, %{target_type: "movie", target_id: 77, title: "Try again"})
+
+    {:ok, _} = Requests.deny_request(req, admin, "not now")
+
+    conn = log_in_user(conn, user)
+    {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+    assert has_element?(lv, "#request-again-#{req.id}")
+
+    lv |> element("#request-again-#{req.id}") |> render_click()
+    render_async(lv)
+
+    # The denied row stays (its partial index slot is free), and a fresh pending request for the
+    # same target now exists — the quota + approval gate ran, not a status flip.
+    requests = Requests.list_for_user(user)
+    assert Enum.any?(requests, &(&1.status == :pending and &1.target_id == 77))
+    assert Enum.any?(requests, &(&1.id == req.id and &1.status == :denied))
+  end
+
+  test "a pending request offers no Request again action", %{conn: conn} do
+    user = Cinder.AccountsFixtures.user_fixture()
+
+    {:ok, req} =
+      Requests.create_request(user, %{target_type: "movie", target_id: 88, title: "Pending"})
+
+    conn = log_in_user(conn, user)
+    {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+    refute has_element?(lv, "#request-again-#{req.id}")
+  end
 end
