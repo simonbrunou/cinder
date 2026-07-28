@@ -3,12 +3,18 @@
 ## What this is
 
 Cinder is a single-household, self-hosted replacement for the Sonarr / Radarr / Seerr loop:
-request a movie → find the best release → download it → import it into Jellyfin. It is built on
-Phoenix/LiveView. The current target is the **movies-only vertical slice**; TV, quality
-upgrades, and multi-user are out of scope until that slice is solid.
+request a movie or TV series → find the best release → download it → import it into
+Jellyfin/Plex. Built on Phoenix/LiveView.
 
-The authoritative build plan is **@ROADMAP.md**. Read it at the start of every session and work
-the current phase only.
+**Status: released — v1.0.0 (2026-07-03).** Movies, TV (series/season/episode, season packs,
+calendar), multi-user with a request→approval gate, and an opt-in per-title anime handling
+profile are all shipped. Work is now incremental — issues, fixes, one-off features. There is no
+"current phase."
+
+`ROADMAP.md` is the **build record** (Phases 0–5, M0–M8, A0–A6), not a live plan — read it only
+when you need the history behind a decision. It is deliberately *not* `@`-imported; don't
+re-add the `@`. Per-feature design and plan docs live under `docs/specs/`, `docs/plans/`,
+`docs/audits/`, and `docs/superpowers/`.
 
 ## Stack
 
@@ -35,7 +41,7 @@ the current phase only.
   (release search/scoring), `Cinder.Download` (client + poller), `Cinder.Library` (import).
 - **External services are reached only through behaviours**: `Cinder.Catalog.TMDB`,
   `Cinder.Acquisition.Indexer`, `Cinder.Download.Client`, `Cinder.Library.MediaServer`. Never
-  call TMDB / Prowlarr / qBittorrent / Jellyfin directly from a context.
+  call TMDB / Prowlarr / qBittorrent / SABnzbd / Jellyfin / Plex directly from a context.
 - The concrete impl is resolved from config at runtime (`Application.fetch_env!/2`, not
   `compile_env!` — the Mox mock is defined at runtime, so compile-time resolution breaks
   `--warnings-as-errors`); `config/test.exs` points each at its Mox mock. **Tests never hit the
@@ -44,8 +50,14 @@ the current phase only.
   `imdb_id` through for exactly this.
 - Background work (download polling, import) runs under the supervision tree, not in the request
   path. Crash-recovery is a feature: prove it with a test.
-- **Every writer goes through `Catalog.transition`.** It's the single state-change choke-point
-  (one broadcast per transition). SQLite is pinned to WAL + `busy_timeout: 5000` (config across
+- **Status and derived-state writes go through the Catalog choke-points.** A movie's `:status`
+  is written only by `Catalog.transition/2` (or `do_cancel_txn/2`); an episode's `file_path` /
+  `grab_id` only by `transition_episode/2` and the grab-lifecycle writers. Each emits exactly
+  one broadcast, *after* commit. This is **not** "no direct `Repo` writes" — creation, deletion,
+  monitor flags, language, counters, and the TMDB refresh are sanctioned direct writes inside
+  `Catalog`. What *is* absolute: `lib/cinder/download/*`, `lib/cinder/library/*` (except
+  `import_stage.ex`), and `acquisition.ex` contain zero `Repo` writes — keep it that way.
+  SQLite is pinned to WAL + `busy_timeout: 5000` (config across
   dev/test/runtime), so a web write racing the poller waits rather than erroring with "database
   busy" — but that only holds if writes don't sidestep the choke-point.
   - Movie **creation** is a separate insert: `Catalog.add_movie/1` and
@@ -62,15 +74,16 @@ the current phase only.
 Two tiers. **Boot-only keys stay environment variables** (needed before the DB/settings store is
 up, or fixed per deployment): `SECRET_KEY_BASE`, `DATABASE_PATH`, `PHX_HOST` / `PHX_SERVER` /
 `PORT`, `POOL_SIZE`, `RELEASE_NAME`, `DNS_CLUSTER_QUERY`. Everything else — external-service URLs,
-API keys, the media-server choice — lives in the **`Cinder.Settings` store** (M1: DB-backed,
+API keys, the media-server choice — lives in the **`Cinder.Settings` store** (DB-backed,
 editable in `/settings`, overlaid on env-as-bootstrap). Don't add new service env vars; add a
 registry entry in `Cinder.Settings` instead. A registry-driven loader `Application.put_env`s the
 stored values onto a one-time bootstrap snapshot at boot (a one-shot supervised child, after
 PubSub/before the poller) and on every save, so DB overrides env, a cleared setting reverts, and
 the contexts read the same keys unchanged. Secrets are Cloak-encrypted at rest (secret rows only;
 key derived from `SECRET_KEY_BASE`) and never echoed back to the form. `/settings` is admin-gated
-by `:admin_auth` (Basic-auth, no-op until set) until M2 lands real accounts — run M1 instances
-behind that gate or a reverse-proxy/VPN.
+by real accounts (`UserAuth` `:require_admin`, inside the `:admin` live_session). The optional
+HTTP Basic edge (`:admin_auth`, a no-op unless both env vars are set) remains only as
+defense-in-depth for an instance exposed beyond a reverse proxy / VPN.
 
 Signing salts (session + LiveView) are **derived from `secret_key_base` at runtime** in
 `config/runtime.exs` — nothing crypto-related is committed. `signing_salt` is a salt, not a
@@ -78,10 +91,10 @@ secret; the secret is `secret_key_base`.
 
 ## Workflow
 
-- One phase per session. Do not start a later phase until the current phase's "Done when" block
-  passes. Commit at every phase boundary.
-- Start non-trivial phases in plan mode; lay out the plan, get agreement, then execute.
-- A phase's "Done when" block can be handed to `/goal` for an autonomous run.
+- One unit of work per session (an issue, a fix, a feature). `/clear` between them.
+- Start non-trivial work in plan mode; lay out the plan, get agreement, then execute.
+- Define "done when" up front as something `mix test` can decide, then loop until it's green.
+- Work on a branch and open a PR — `main` is PR-merged, never committed to directly.
 
 ## How to work in this codebase (behavioral principles)
 
@@ -118,7 +131,7 @@ multi-step work, write the plan first.
 
 - Keep sessions bounded. If a debugging loop has run long and is going in circles, stop,
   summarize what's been tried and what's left, and start fresh rather than spiraling.
-- `/clear` between phases so stale context doesn't leak across them.
+- `/clear` between units of work so stale context doesn't leak across them.
 - When you finish a turn, the hooks run compile/format/credo/test — read their output and fix
   what you broke before moving on.
 
@@ -190,7 +203,10 @@ _Batteries-included Claude Code integration for Elixir projects_
 
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
 
+`graphify-out/` is gitignored — regenerate with `graphify update .` if it's missing.
+
 Rules:
-- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- For questions about **project source** (`lib/`, `test/`), run `graphify query "<question>"` first when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- It does **not** apply to `deps/`, `_build/`, `config/`, `mix.exs`, or tooling/config files — the graph has nothing to say about those, so just grep/read them directly. The `graphify-nudge` PreToolUse hook (user-level, `~/.claude/hooks/graphify-nudge.py`) encodes exactly this scoping; if it nudges where it shouldn't, fix the hook's `EXCLUDE` list rather than working around it.
 - Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
