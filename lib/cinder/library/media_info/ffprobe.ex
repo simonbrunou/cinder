@@ -2,9 +2,10 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   @moduledoc """
   `Cinder.Library.MediaInfo` via the `ffprobe` CLI (FFmpeg). Reads every stream's `codec_type`,
   `default` disposition and `language` tag in one call, buckets audio vs subtitle streams, and
-  drops untagged/`und` streams. Audio comes back **default-disposition track first** — see
-  `audio_langs/1`.
-  Returns `{:ok, %{audio: codes, subtitles: codes}}` or `{:error, reason}` when `ffprobe`
+  drops untagged/`und` streams. `default_audio` reports the default-disposition audio track's
+  language separately — see `default_audio/1`.
+  Returns `{:ok, %{audio: codes, subtitles: codes, default_audio: code | nil}}` or
+  `{:error, reason}` when `ffprobe`
   is missing or exits non-zero — the importer treats an error (or empty lists) as "can't verify"
   and imports anyway, so a host without `ffprobe` degrades rather than blocking imports.
 
@@ -113,8 +114,9 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
     rows = parse_rows(out)
 
     %{
-      audio: Enum.uniq(for(lang <- audio_langs(rows), lang != nil, do: lang)),
-      subtitles: Enum.uniq(for({"subtitle", _default?, lang} <- rows, lang != nil, do: lang))
+      audio: Enum.uniq(for({"audio", _default?, lang} <- rows, lang != nil, do: lang)),
+      subtitles: Enum.uniq(for({"subtitle", _default?, lang} <- rows, lang != nil, do: lang)),
+      default_audio: default_audio(rows)
     }
   end
 
@@ -123,31 +125,29 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
     rows = parse_rows(out)
 
     %{
-      audio: Enum.uniq(for(lang <- audio_langs(rows), is_binary(lang), do: lang)),
+      audio: Enum.uniq(for({"audio", _default?, lang} <- rows, is_binary(lang), do: lang)),
       subtitles: Enum.uniq(for({"subtitle", _default?, lang} <- rows, is_binary(lang), do: lang)),
       audio_unknown?: Enum.any?(rows, &match?({"audio", _default?, nil}, &1)),
-      subtitle_unknown?: Enum.any?(rows, &match?({"subtitle", _default?, nil}, &1))
+      subtitle_unknown?: Enum.any?(rows, &match?({"subtitle", _default?, nil}, &1)),
+      default_audio: default_audio(rows)
     }
   end
 
-  # Audio languages with the default-disposition track first, then stream order (issue #197).
-  # A MULTi release with the dub flagged default plays as the dub even though the original track
-  # is right there, and nothing downstream reads more than the set of languages — so the head of
-  # this list is the best available answer to "what plays", which the movie page's hint reads.
-  # It is only the *proven* default when the file flags one AND that track has a language tag: a
-  # file flagging nothing keeps stream order, and an untagged (`und`) default is dropped by
-  # normalize/1 before it gets here, leaving the next track at the head. Hence the hint says
-  # "leading", not "default" — see `Cinder.Acquisition.Language.leading_audio_mismatch?/2`.
-  # ponytail: head-of-list rather than a dedicated column — rows imported before this change hold
-  # plain stream order, which the operator measured as the same track 10/10 times (issue #197);
-  # re-run `mix cinder.media_info.backfill` to make them exact. Add a column if that stops holding.
-  defp audio_langs(rows) do
-    {default, rest} =
-      rows
-      |> Enum.filter(&match?({"audio", _default?, _lang}, &1))
-      |> Enum.split_with(fn {_type, default?, _lang} -> default? end)
-
-    Enum.map(default ++ rest, fn {_type, _default?, lang} -> lang end)
+  # The language of the default-disposition audio track: what a player actually starts on, and the
+  # one fact `:audio` cannot express — a MULTi release with the dub flagged default is, as a set of
+  # languages, identical to one with the original flagged default (issue #197).
+  #
+  # nil when nothing is flagged default OR the flagged track carries no language tag. Both are
+  # genuinely "not established", and the caller must not warn on either: an untagged default may
+  # well BE the wanted language, so reporting the first tagged track as what plays would state the
+  # opposite of the fact. Kept out of `:audio` deliberately — an `und` entry there would trip
+  # `Language.audio_satisfies?/2`'s unrecognised-code escape and silently disable wrong-language
+  # parks for the whole file.
+  defp default_audio(rows) do
+    Enum.find_value(rows, fn
+      {"audio", true, lang} -> lang
+      _ -> nil
+    end)
   end
 
   @doc false

@@ -24,7 +24,8 @@ defmodule Cinder.Library.MediaInfo do
           required(:audio) => [String.t()],
           required(:subtitles) => [String.t()],
           required(:audio_unknown?) => boolean(),
-          required(:subtitle_unknown?) => boolean()
+          required(:subtitle_unknown?) => boolean(),
+          optional(:default_audio) => String.t() | nil
         }
 
   @doc """
@@ -33,14 +34,21 @@ defmodule Cinder.Library.MediaInfo do
   `{:error, reason}` if the probe can't run. The importer treats an error as "can't verify" and
   imports anyway; the audio park check reads `.audio` and parks only on a *positive* mismatch.
 
-  `.audio` is ordered **default-disposition track first** when the file flags one and that track
-  carries a language tag; otherwise it stays in stream order. So its head is the track a player is
-  most likely to start on, not a proven default — which is why
-  `Cinder.Acquisition.Language.leading_audio_mismatch?/2` reads it as *leading*, not *default*
-  (issue #197).
+  `.default_audio` is the language of the default-disposition audio track — what a player actually
+  starts on, which `.audio` cannot express (issue #197). It is `nil` when nothing is flagged default
+  or the flagged track is untagged; both mean "not established", and callers must not warn on
+  either. See `Cinder.Acquisition.Language.default_audio_mismatch?/3`.
   """
+  # `default_audio` is `optional` so an existing Mox stub returning only audio/subtitles stays
+  # valid; every read goes through `Map.get(report, :default_audio)`.
   @callback probe(path :: String.t()) ::
-              {:ok, %{audio: [String.t()], subtitles: [String.t()]}} | {:error, term()}
+              {:ok,
+               %{
+                 required(:audio) => [String.t()],
+                 required(:subtitles) => [String.t()],
+                 optional(:default_audio) => String.t() | nil
+               }}
+              | {:error, term()}
 
   @doc "Probes streams while preserving whether audio or subtitle language tags are unknown."
   @callback probe_policy(path :: String.t()) :: {:ok, probe_report()} | {:error, term()}

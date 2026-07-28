@@ -1,6 +1,7 @@
 defmodule Cinder.Library.MediaInfo.FfprobeTest do
   use ExUnit.Case, async: false
 
+  alias Cinder.Acquisition.Language
   alias Cinder.Library.{MediaInfo.Ffprobe, PolicyVerifier}
 
   setup do
@@ -57,35 +58,49 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
 
   test "parse buckets audio + subtitle streams by codec_type, dropping und/empty" do
     out = "video,0,\naudio,1,eng\naudio,0,fre\nsubtitle,0,eng\nsubtitle,0,und\naudio,0,\n"
-    assert Ffprobe.parse(out) == %{audio: ["eng", "fre"], subtitles: ["eng"]}
+    assert %{audio: ["eng", "fre"], subtitles: ["eng"], default_audio: "eng"} = Ffprobe.parse(out)
   end
 
   test "parse dedups repeated audio/subtitle languages, preserving first-seen order" do
     out = "audio,1,eng\naudio,0,eng\naudio,0,fre\nsubtitle,0,eng\nsubtitle,0,eng\n"
-    assert Ffprobe.parse(out) == %{audio: ["eng", "fre"], subtitles: ["eng"]}
+    assert %{audio: ["eng", "fre"], subtitles: ["eng"]} = Ffprobe.parse(out)
   end
 
-  # Issue #197: a MULTi file with the dub flagged default plays as the dub. Downstream reads the
-  # head of :audio as "what plays", so the default track has to sort first regardless of index.
-  test "parse puts the default-disposition audio track first, keeping stream order otherwise" do
+  # Issue #197: a MULTi file with the dub flagged default plays as the dub, and as a *set* of
+  # languages it is identical to one with the original flagged default. Hence a separate field.
+  test "parse reports the default-disposition audio track's language, leaving :audio in stream order" do
     out = "video,0,\naudio,0,fre\naudio,1,tur\naudio,0,eng\n"
-    assert Ffprobe.parse(out) == %{audio: ["tur", "fre", "eng"], subtitles: []}
 
-    assert %{audio: ["tur", "fre", "eng"]} = Ffprobe.parse_policy(out)
+    assert Ffprobe.parse(out) == %{
+             audio: ["fre", "tur", "eng"],
+             subtitles: [],
+             default_audio: "tur"
+           }
+
+    assert %{audio: ["fre", "tur", "eng"], default_audio: "tur"} = Ffprobe.parse_policy(out)
   end
 
-  # The two cases where the head is NOT a proven default track, which is why the movie-page hint
-  # phrases it as the *leading* track. Both must still be plain stream order, not a guess.
-  test "parse keeps stream order when no audio track carries the default disposition" do
+  # The two cases where the default track's language is NOT established. Both must report nil: the
+  # hint may not infer what plays from the other tracks' order.
+  test "parse reports no default language when no audio track carries the disposition" do
     out = "audio,0,fre\naudio,0,eng\n"
-    assert Ffprobe.parse(out) == %{audio: ["fre", "eng"], subtitles: []}
+    assert Ffprobe.parse(out) == %{audio: ["fre", "eng"], subtitles: [], default_audio: nil}
   end
 
-  test "parse drops an untagged default track rather than promoting it, leaving stream order" do
+  test "parse reports no default language when the default track is untagged" do
     out = "video,0,\naudio,1,und\naudio,0,fre\naudio,0,eng\n"
-    assert Ffprobe.parse(out) == %{audio: ["fre", "eng"], subtitles: []}
+    assert Ffprobe.parse(out) == %{audio: ["fre", "eng"], subtitles: [], default_audio: nil}
 
-    assert %{audio: ["fre", "eng"], audio_unknown?: true} = Ffprobe.parse_policy(out)
+    assert %{audio: ["fre", "eng"], audio_unknown?: true, default_audio: nil} =
+             Ffprobe.parse_policy(out)
+  end
+
+  # An `und` entry in :audio would trip Language.audio_satisfies?/2's unrecognised-code escape and
+  # silently disable wrong-language parks for the whole file, so it stays out.
+  test "an untagged default track never leaks into :audio" do
+    out = "audio,1,und\naudio,0,tur\n"
+    assert %{audio: ["tur"]} = Ffprobe.parse(out)
+    refute Language.audio_satisfies?("en", ["tur"])
   end
 
   # Real ffprobe omits the trailing field entirely for a stream with no language tag rather than
@@ -95,7 +110,7 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
   # silently read as a disposition flag if args/1 and parse_row/1 ever drift.
   test "parse handles the two-field row real ffprobe emits for an untagged stream" do
     out = "video,0\naudio,1\naudio,0,eng\n"
-    assert Ffprobe.parse(out) == %{audio: ["eng"], subtitles: []}
+    assert Ffprobe.parse(out) == %{audio: ["eng"], subtitles: [], default_audio: nil}
 
     assert %{audio: ["eng"], audio_unknown?: true, subtitle_unknown?: false} =
              Ffprobe.parse_policy(out)
@@ -125,10 +140,11 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
              audio: ["eng"],
              subtitles: ["fre"],
              audio_unknown?: true,
-             subtitle_unknown?: true
+             subtitle_unknown?: true,
+             default_audio: "eng"
            }
 
-    assert Ffprobe.parse(out) == %{audio: ["eng"], subtitles: ["fre"]}
+    assert %{audio: ["eng"], subtitles: ["fre"]} = Ffprobe.parse(out)
   end
 
   @tag :tmp_dir
@@ -144,7 +160,8 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
                 audio: ["jpn"],
                 subtitles: ["fre"],
                 audio_unknown?: true,
-                subtitle_unknown?: false
+                subtitle_unknown?: false,
+                default_audio: "jpn"
               }}
   end
 

@@ -29,6 +29,7 @@ defmodule Cinder.CatalogFixtures do
     :imported_language,
     :imported_source,
     :imported_audio_languages,
+    :imported_default_audio_language,
     :imported_embedded_subtitles,
     :imported_sidecar_subtitles
   ]
