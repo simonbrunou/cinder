@@ -29,6 +29,12 @@ All notable changes to Cinder are documented here. The format follows
   event fires once per new hold (Log + Discord).
 
 ### Fixed
+- **A Hindi subtitle can now be named.** `hi` is ISO-639-1 Hindi as well as the hearing-impaired
+  flag, and it was stripped as a flag before the language was read — so `Movie (2024).hi.srt`, the
+  very convention Cinder writes, resolved to `und`, and Hindi had no other ISO-639-1 spelling to
+  fall back on. `hi` is now read as the language when the name carries no other one, and stays a
+  flag when it does (`Movie.fr.hi.srt` is still French, hearing-impaired). Sidecars are renamed
+  from one decision, so a Hindi file no longer lands as `Movie.hi.hi.srt`.
 - **A movie whose wanted language isn't the default audio track is now flagged.** The import check
   only asked whether the language was *present*, so a MULTi release with a dub flagged default
   passed while playing in the dub (41 of 87 multi-audio movies on the maintainer's instance). The

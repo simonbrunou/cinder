@@ -15,23 +15,51 @@ defmodule Cinder.Library.Sidecars do
   @flags ~w(forced sdh cc hi)
   @video_exts ~w(.mkv .mp4 .avi .m4v .mov .wmv .ts)
 
+  # `hi` is both the hearing-impaired flag and ISO-639-1 Hindi. Read it as a flag when the name
+  # carries another language, and as the language when it carries none — otherwise `Movie.hi.srt`
+  # is unnameable, since Hindi has no other ISO-639-1 spelling (issue #201). `sdh` is the
+  # unambiguous hearing-impaired token and stays a flag always, so preferring the language reading
+  # in the conflict loses nothing.
+  @ambiguous_flags ~w(hi)
+
   # iso-alias -> iso1 (e.g. "fra"/"fre"/"fr" -> "fr"), plus full-word names.
   @aliases for {iso1, codes} <- Parser.audio_codes(), code <- codes, into: %{}, do: {code, iso1}
   @names for {iso1, tag} <- Parser.language_tags(), into: %{}, do: {String.downcase(tag), iso1}
 
   @doc "ISO code from a sidecar filename; flags stripped; unknown/absent -> \"und\"."
-  def language(filename) do
+  def language(filename), do: filename |> classify() |> elem(0)
+
+  # One decision for both readings, so a `hi` consumed as the language can't ALSO be re-emitted as
+  # a flag by link/2 — which would name a Hindi sidecar `<stem>.hi.hi.srt`.
+  defp classify(filename) do
     tokens =
       filename
       |> Path.basename()
       |> Path.rootname()
       |> String.split(".")
       |> Enum.map(&String.downcase/1)
-      |> Enum.reject(&(&1 in @flags))
 
-    case List.last(tokens) do
-      nil -> "und"
-      tok -> @aliases[tok] || @names[tok] || "und"
+    flags = Enum.filter(tokens, &(&1 in @flags))
+
+    case resolve(tokens, @flags) do
+      nil -> ambiguous_reading(tokens, flags)
+      language -> {language, flags}
+    end
+  end
+
+  # Nothing resolved with every flag stripped, so retry letting the ambiguous ones be languages.
+  # Only reachable when the last non-flag token is itself `hi`, i.e. exactly the shadowed case.
+  defp ambiguous_reading(tokens, flags) do
+    case resolve(tokens, @flags -- @ambiguous_flags) do
+      nil -> {"und", flags}
+      language -> {language, flags -- @ambiguous_flags}
+    end
+  end
+
+  defp resolve(tokens, strip) do
+    case tokens |> Enum.reject(&(&1 in strip)) |> List.last() do
+      nil -> nil
+      token -> @aliases[token] || @names[token]
     end
   end
 
@@ -85,14 +113,7 @@ defmodule Cinder.Library.Sidecars do
     "#{dest_stem}.#{lang}#{flag}#{String.downcase(Path.extname(src_path))}"
   end
 
-  defp flags_of(path) do
-    path
-    |> Path.basename()
-    |> Path.rootname()
-    |> String.split(".")
-    |> Enum.map(&String.downcase/1)
-    |> Enum.filter(&(&1 in @flags))
-  end
+  defp flags_of(path), do: path |> classify() |> elem(1)
 
   defp do_link(src, dest) do
     with {:ok, src} <-

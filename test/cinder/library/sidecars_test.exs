@@ -14,6 +14,19 @@ defmodule Cinder.Library.SidecarsTest do
     assert Sidecars.language("subs.srt") == "und"
     assert Sidecars.language("Movie (2020).forced.srt") == "und"
     assert Sidecars.language("The.Italian.Job.2003.srt") == "und"
+    assert Sidecars.language("Movie (2020).sdh.srt") == "und"
+  end
+
+  # Issue #201: `hi` is ISO-639-1 Hindi as well as the hearing-impaired flag. Stripping it
+  # unconditionally left `Movie.hi.srt` — the exact convention this module writes — unable to
+  # express Hindi at all, and undetectable afterwards since the result was a plain "und".
+  test "language/1 reads a lone hi as Hindi but keeps it a flag beside a real language" do
+    assert Sidecars.language("Movie (2020).hi.srt") == "hi"
+    assert Sidecars.language("Movie (2020).hin.srt") == "hi"
+    assert Sidecars.language("Movie (2020).hi.forced.srt") == "hi"
+
+    assert Sidecars.language("Movie (2020).fr.hi.srt") == "fr"
+    assert Sidecars.language("Movie (2020).hi.fr.srt") == "fr"
   end
 
   test "files/1 returns stem-matching sidecars with languages" do
@@ -113,6 +126,29 @@ defmodule Cinder.Library.SidecarsTest do
     expect(FilesystemMock, :ln, fn ^sub2_src, ^sub2_dest -> :ok end)
 
     assert Sidecars.link(src, dest) == ["en"]
+  end
+
+  # Issue #201: `hi` read as the language must not also be re-emitted as a flag, or the Hindi
+  # sidecar lands as `Movie (2020).hi.hi.srt`. The French-HI file beside it still keeps its flag.
+  test "link/2 doesn't duplicate hi when it was consumed as the language" do
+    dir = "/dl/Movie (2020)"
+    src = "#{dir}/Movie (2020).mkv"
+    dest = "/lib/Movie (2020)/Movie (2020).mkv"
+    hindi_src = "#{dir}/Movie (2020).hi.srt"
+    hindi_dest = "/lib/Movie (2020)/Movie (2020).hi.srt"
+    french_hi_src = "#{dir}/Movie (2020).fr.hi.srt"
+    french_hi_dest = "/lib/Movie (2020)/Movie (2020).fr.hi.srt"
+
+    expect(FilesystemMock, :dir?, fn ^dir -> true end)
+
+    expect(FilesystemMock, :find_files, fn ^dir ->
+      {:ok, [{src, 900}, {hindi_src, 10}, {french_hi_src, 10}]}
+    end)
+
+    expect(FilesystemMock, :ln, fn ^hindi_src, ^hindi_dest -> :ok end)
+    expect(FilesystemMock, :ln, fn ^french_hi_src, ^french_hi_dest -> :ok end)
+
+    assert Sidecars.link(src, dest) == ["hi", "fr"]
   end
 
   describe "real path-policy sinks" do
