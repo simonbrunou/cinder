@@ -1,5 +1,20 @@
 # Cinder — Build Roadmap
 
+> ## ⚠️ This is a build **record**, not a live plan.
+>
+> Every phase below (0–5, M0–M8, A0–A6) is **shipped**. v1.0.0 was tagged 2026-07-03; work since
+> is incremental — issues, fixes, one-off features. **There is no "current phase."**
+>
+> Everything below is preserved as-written for the history and rationale behind past decisions.
+> That means it contains statements that were true when written and are not true now — most
+> notably the "movies-only slice / TV and multi-user out of scope" framing directly below, the
+> "Part III is the current feature program" status note, and the *How to run this with Claude
+> Code* section's "one phase per session" workflow (which also references `/goal`, a command that
+> no longer exists). **`CLAUDE.md` supersedes all of it** — read that for how to work here today.
+>
+> Don't `@`-import this file; at 1,100+ lines it costs ~14k tokens a session for history you
+> rarely need. Read it on demand.
+
 A single-household, self-hosted replacement for the Sonarr/Radarr/Seerr loop, built on
 Phoenix/LiveView. This roadmap covers the **movies-only vertical slice**: request a movie →
 find the best release → download it → import it into Jellyfin. TV, quality upgrades, and
