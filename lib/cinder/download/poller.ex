@@ -353,6 +353,7 @@ defmodule Cinder.Download.Poller do
                  imported_language: q.language,
                  imported_source: q.source,
                  imported_audio_languages: q.audio_languages,
+                 imported_default_audio_language: q.default_audio_language,
                  imported_embedded_subtitles: q.embedded_subtitles,
                  imported_sidecar_subtitles: q.sidecar_subtitles
                },
@@ -599,6 +600,7 @@ defmodule Cinder.Download.Poller do
             imported_language: q.language,
             imported_source: q.source,
             imported_audio_languages: q.audio_languages,
+            imported_default_audio_language: q.default_audio_language,
             imported_embedded_subtitles: q.embedded_subtitles,
             imported_sidecar_subtitles: q.sidecar_subtitles
           },

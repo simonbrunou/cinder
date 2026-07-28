@@ -32,10 +32,13 @@ defmodule Cinder.Library.Backfill do
     info =
       Enum.reduce(file_paths(record), empty_info(sidecars), fn path, info ->
         case probe(path) do
-          {:ok, %{audio: audio, subtitles: subtitles}} ->
+          {:ok, %{audio: audio, subtitles: subtitles} = report} ->
             info
             |> Map.update!(:audio_languages, &Enum.uniq(&1 ++ audio))
             |> Map.update!(:embedded_subtitles, &Enum.uniq(&1 ++ subtitles))
+            # First file wins: an Episode record spans several files, and only Movie (one file)
+            # actually persists this. nil stays nil, so an unestablished default never warns.
+            |> Map.update!(:default_audio_language, &(&1 || Map.get(report, :default_audio)))
 
           _ ->
             info
@@ -62,6 +65,7 @@ defmodule Cinder.Library.Backfill do
     %{
       audio_languages: [],
       embedded_subtitles: [],
+      default_audio_language: nil,
       sidecar_subtitles: sidecars |> Enum.flat_map(&elem(&1, 1)) |> Enum.uniq()
     }
   end

@@ -794,6 +794,7 @@ defmodule Cinder.Catalog do
   defp media_info_attrs(info) do
     %{
       imported_audio_languages: Map.get(info, :audio_languages, []),
+      imported_default_audio_language: Map.get(info, :default_audio_language),
       imported_embedded_subtitles: Map.get(info, :embedded_subtitles, []),
       imported_sidecar_subtitles: Map.get(info, :sidecar_subtitles, [])
     }

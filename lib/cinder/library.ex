@@ -203,7 +203,9 @@ defmodule Cinder.Library do
       source: record.imported_source,
       audio_languages: record.imported_audio_languages,
       embedded_subtitles: record.imported_embedded_subtitles,
-      sidecar_subtitles: record.imported_sidecar_subtitles
+      sidecar_subtitles: record.imported_sidecar_subtitles,
+      # Map.get: only Movie has this column; old_quality/1 also serves Episode.
+      default_audio_language: Map.get(record, :imported_default_audio_language)
     }
   end
 
@@ -219,7 +221,7 @@ defmodule Cinder.Library do
   # (issue #128).
   defp capture_media(source) do
     case media_info() do
-      nil -> %{audio_languages: [], embedded_subtitles: []}
+      nil -> empty_media()
       impl -> probe_media(impl, source)
     end
   end
@@ -231,20 +233,29 @@ defmodule Cinder.Library do
     end
   end
 
-  defp captured_media(%{audio: audio, subtitles: subtitles}),
-    do: %{audio_languages: audio, embedded_subtitles: subtitles}
+  # Map.get: `default_audio` is an optional key on the behaviour, so a Mox stub returning only
+  # audio/subtitles stays valid (issue #197).
+  defp captured_media(%{audio: audio, subtitles: subtitles} = report),
+    do: %{
+      audio_languages: audio,
+      embedded_subtitles: subtitles,
+      default_audio_language: Map.get(report, :default_audio)
+    }
+
+  defp empty_media,
+    do: %{audio_languages: [], embedded_subtitles: [], default_audio_language: nil}
 
   defp probe_media(impl, source) do
     case impl.probe(source) do
-      {:ok, %{audio: audio, subtitles: subtitles}} ->
-        %{audio_languages: audio, embedded_subtitles: subtitles}
+      {:ok, %{audio: _, subtitles: _} = report} ->
+        captured_media(report)
 
       other ->
         # Degrading to empty metadata is deliberate — but a broken/missing ffprobe must be
         # diagnosable: silently-empty fields read as "the file has no tags", not "the probe
         # is broken" (media_info is on by default, and there is no health row for it).
         Logger.warning("media-info probe failed for #{source}: #{inspect(other)}")
-        %{audio_languages: [], embedded_subtitles: []}
+        empty_media()
     end
   end
 

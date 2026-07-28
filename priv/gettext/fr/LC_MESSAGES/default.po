@@ -5156,8 +5156,7 @@ msgstr "Cet élément a changé depuis l'analyse ; relancez l'aperçu."
 
 #: lib/cinder_web/live/movie_detail_live.ex:619
 #, elixir-autogen, elixir-format
-msgid "Leading audio track is %{language}, not the language you asked for. Both are in the file, but many players will start in %{language}."
+msgid "Plays as %{language} by default: the language you asked for is in the file, but it isn't the default audio track."
 msgstr ""
-"La première piste audio est en %{language}, pas dans la langue demandée. Les "
-"deux sont dans le fichier, mais beaucoup de lecteurs démarreront en "
-"%{language}."
+"Lecture en %{language} par défaut : la langue demandée est bien dans le "
+"fichier, mais ce n'est pas la piste audio par défaut."

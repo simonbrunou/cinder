@@ -175,7 +175,7 @@ defmodule Cinder.LibraryMediaInfoTest do
     end)
 
     stub(Cinder.Library.MediaInfoMock, :probe, fn ^source ->
-      {:ok, %{audio: ["eng", "fre"], subtitles: ["eng"]}}
+      {:ok, %{audio: ["eng", "fre"], subtitles: ["eng"], default_audio: "fre"}}
     end)
 
     stub(Cinder.Library.FilesystemMock, :lstat, fn
@@ -213,6 +213,10 @@ defmodule Cinder.LibraryMediaInfoTest do
     assert q.audio_languages == ["eng", "fre"]
     assert q.embedded_subtitles == ["eng"]
     assert q.sidecar_subtitles == ["fr"]
+
+    # Issue #197: the probe -> quality -> column chain. nil renders identically to "no default
+    # established", so a value dropped anywhere along here would never fail a UI test.
+    assert q.default_audio_language == "fre"
 
     assert_received {:ln, ^srt, ^sidecar_dest}
     await_subtitle_tasks()

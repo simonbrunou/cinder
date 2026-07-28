@@ -153,34 +153,33 @@ defmodule Cinder.Acquisition.Language do
   end
 
   @doc """
-  Whether a file satisfies `target` on paper but *leads* with another language: `file_langs` holds
-  the target somewhere, yet its head is a recognised other language. That is the
+  Whether a file satisfies `target` on paper but *plays* in another language: `file_langs` holds the
+  target somewhere, yet `default_audio` — the language of the default-disposition track, which is
+  what a player starts on — is a recognised other language. That is the
   MULTi-with-the-dub-flagged-default case `audio_satisfies?/2` can't see, since the wanted track
   really is in the file (issue #197).
 
-  Deliberately says *leading*, not *default*. `Cinder.Library.MediaInfo` sorts the
-  default-disposition track to the head, but the head is only provably the default track when the
-  file flags one AND that track carries a language tag — a file that flags nothing, an untagged
-  (`und`) default that gets dropped, or a row written before that ordering landed all leave plain
-  stream order here. Leading-track-is-wrong is what the evidence supports in every one of those
-  cases; callers must not phrase it as a proven default.
+  `default_audio` must be the *proven* default, and `nil` when it isn't established: nothing flagged
+  default, the flagged track untagged, or a row imported before the column existed. All three return
+  false. Inferring it from track order instead would state the opposite of the fact for an untagged
+  default — that track may well BE the wanted language, and naming the first tagged track as what
+  plays would send the operator looking for a problem that isn't there.
 
-  Conservative about the *head* exactly like `audio_satisfies?/2`: a nil/unknown target, an
-  unrecognised head code, or a single-language file is never a mismatch. Advisory only — this
-  never parks an import.
+  Conservative about the default track exactly like `audio_satisfies?/2`: a nil/unknown target or an
+  unrecognised code is never a mismatch. Advisory only — this never parks an import.
 
   The *presence* half is strict, and deliberately NOT `audio_satisfies?/2`: that predicate is also
   satisfied by any track carrying a code outside the registry, a relaxation that exists so an
   unrecognised tag can't cause a false park. Inherited here it would let this fire on a file
   holding no target track at all (`["fre", "hrv"]` against `"en"` — Croatian isn't in the 39-language
-  registry), and the hint's copy asserts the wanted track *is* in the file. That is the worse
-  situation reported as the milder one, so presence must be positively established.
+  registry), and the copy asserts the wanted track *is* in the file. That is the worse situation
+  reported as the milder one, so presence must be positively established.
   """
-  def leading_audio_mismatch?(target, [first | rest] = file_langs) when rest != [] do
-    target_present?(target, file_langs) and not audio_satisfies?(target, [first])
-  end
+  def default_audio_mismatch?(_target, nil, _file_langs), do: false
 
-  def leading_audio_mismatch?(_target, _file_langs), do: false
+  def default_audio_mismatch?(target, default_audio, file_langs) when is_binary(default_audio) do
+    target_present?(target, file_langs) and not audio_satisfies?(target, [default_audio])
+  end
 
   defp target_present?(target, file_langs) do
     case Map.get(@audio_codes, target) do

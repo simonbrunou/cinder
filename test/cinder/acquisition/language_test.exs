@@ -119,44 +119,50 @@ defmodule Cinder.Acquisition.LanguageTest do
     end
   end
 
-  describe "leading_audio_mismatch?/2" do
-    test "flags a file whose target track is present but not the leading one (issue #197)" do
-      assert Language.leading_audio_mismatch?("en", ["tur", "eng"])
-      assert Language.leading_audio_mismatch?("en", ["fre", "eng"])
-      assert Language.leading_audio_mismatch?("ja", ["eng", "jpn"])
+  describe "default_audio_mismatch?/3" do
+    test "flags a file whose target track is present but isn't the default one (issue #197)" do
+      assert Language.default_audio_mismatch?("en", "tur", ["tur", "eng"])
+      assert Language.default_audio_mismatch?("en", "fre", ["fre", "eng"])
+      assert Language.default_audio_mismatch?("ja", "eng", ["eng", "jpn"])
     end
 
-    test "stays quiet when the leading track already is the target" do
-      refute Language.leading_audio_mismatch?("en", ["eng", "fre"])
-      refute Language.leading_audio_mismatch?("en", ["eng"])
+    test "stays quiet when the default track already is the target" do
+      refute Language.default_audio_mismatch?("en", "eng", ["eng", "fre"])
+      refute Language.default_audio_mismatch?("en", "eng", ["eng"])
     end
 
-    test "stays quiet without a target, without evidence, or on an unrecognised head code" do
-      refute Language.leading_audio_mismatch?(nil, ["fre", "eng"])
-      refute Language.leading_audio_mismatch?("en", [])
-      refute Language.leading_audio_mismatch?("en", nil)
-      refute Language.leading_audio_mismatch?("en", ["zzz", "eng"])
+    # The whole point of the column: an untagged default track may well BE the wanted language, so
+    # nothing may be inferred from the other tracks' order.
+    test "stays quiet when the default track's language was never established" do
+      refute Language.default_audio_mismatch?("en", nil, ["fre", "eng"])
+      refute Language.default_audio_mismatch?("en", nil, ["tur", "eng"])
+    end
+
+    test "stays quiet without a target, without evidence, or on an unrecognised default code" do
+      refute Language.default_audio_mismatch?(nil, "fre", ["fre", "eng"])
+      refute Language.default_audio_mismatch?("en", "fre", [])
+      refute Language.default_audio_mismatch?("en", "zzz", ["zzz", "eng"])
     end
 
     test "a file missing the target entirely is audio_satisfies?/2's park, not this hint" do
-      refute Language.leading_audio_mismatch?("en", ["tur", "fre"])
+      refute Language.default_audio_mismatch?("en", "tur", ["tur", "fre"])
       refute Language.audio_satisfies?("en", ["tur", "fre"])
     end
 
     # audio_satisfies?/2 is lenient about codes outside the 39-language registry so an unrecognised
-    # tag can't cause a false park. That relaxation must NOT reach the presence half: the hint's
-    # copy asserts the wanted track is in the file, and here it isn't.
-    test "an unrecognised second code does not stand in for the target being present" do
-      refute Language.leading_audio_mismatch?("en", ["fre", "hrv"])
-      refute Language.leading_audio_mismatch?("en", ["fre", "zzz"])
-      refute Language.leading_audio_mismatch?("fr", ["eng", "cat"])
+    # tag can't cause a false park. That relaxation must NOT reach the presence half: the copy
+    # asserts the wanted track is in the file, and here it isn't.
+    test "an unrecognised extra code does not stand in for the target being present" do
+      refute Language.default_audio_mismatch?("en", "fre", ["fre", "hrv"])
+      refute Language.default_audio_mismatch?("en", "fre", ["fre", "zzz"])
+      refute Language.default_audio_mismatch?("fr", "eng", ["eng", "cat"])
 
       # ...even though the lenient park check still passes them, by design.
       assert Language.audio_satisfies?("en", ["fre", "hrv"])
     end
 
     test "an unrecognised code alongside a real target track still flags" do
-      assert Language.leading_audio_mismatch?("en", ["fre", "hrv", "eng"])
+      assert Language.default_audio_mismatch?("en", "fre", ["fre", "hrv", "eng"])
     end
   end
 

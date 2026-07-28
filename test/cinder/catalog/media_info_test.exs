@@ -21,6 +21,32 @@ defmodule Cinder.Catalog.MediaInfoTest do
     assert Catalog.get_movie_by_id(updated.id).imported_sidecar_subtitles == ["fr"]
   end
 
+  # Pins the write path for issue #197's column, not just the ffprobe layer that produces it: the
+  # hint is silent on nil, so a value silently dropped between probe and column looks identical to
+  # "no default established" and would never fail a UI test.
+  test "set_media_info persists the default audio language on a movie, nil when unestablished" do
+    movie = movie_fixture(%{status: :available, file_path: "/lib/M (2020)/M (2020).mkv"})
+
+    {:ok, updated} =
+      Catalog.set_media_info(movie, %{
+        audio_languages: ["tur", "en"],
+        default_audio_language: "tur",
+        embedded_subtitles: [],
+        sidecar_subtitles: []
+      })
+
+    assert updated.imported_default_audio_language == "tur"
+
+    {:ok, cleared} =
+      Catalog.set_media_info(updated, %{
+        audio_languages: ["fre", "en"],
+        embedded_subtitles: [],
+        sidecar_subtitles: []
+      })
+
+    assert is_nil(cleared.imported_default_audio_language)
+  end
+
   test "set_media_info persists on an episode" do
     series = series_fixture()
     season = season_fixture(series)

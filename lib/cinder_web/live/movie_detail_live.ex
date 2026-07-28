@@ -615,10 +615,10 @@ defmodule CinderWeb.MovieDetailLive do
               </dd>
             </div>
           </dl>
-          <p :if={leading_audio_mismatch?(@movie)} class="mt-3 text-xs text-warning">
+          <p :if={default_audio_mismatch?(@movie)} class="mt-3 text-xs text-warning">
             {gettext(
-              "Leading audio track is %{language}, not the language you asked for. Both are in the file, but many players will start in %{language}.",
-              language: hd(@movie.imported_audio_languages)
+              "Plays as %{language} by default: the language you asked for is in the file, but it isn't the default audio track.",
+              language: @movie.imported_default_audio_language
             )}
           </p>
           <div :if={@movie.release_title} class="mt-3 border-t border-base-300 pt-3">
@@ -725,13 +725,15 @@ defmodule CinderWeb.MovieDetailLive do
 
   defp has_file?(%Movie{file_path: fp}), do: is_binary(fp) and fp != ""
 
-  # The wanted language is in the file, but the leading audio track isn't it (issue #197). Advisory:
-  # the file is otherwise correct and re-grabbing likely lands the same release. The copy says
-  # "leading", not "default", because the head is only provably the default-disposition track for a
-  # file that flags one with a language tag — see `Language.leading_audio_mismatch?/2`.
-  defp leading_audio_mismatch?(%Movie{} = movie) do
-    movie.preferred_language
-    |> Language.target(movie.original_language)
-    |> Language.leading_audio_mismatch?(movie.imported_audio_languages || [])
+  # The wanted language is in the file, but the default audio track isn't it (issue #197). Advisory:
+  # the file is otherwise correct and re-grabbing likely lands the same release. Silent unless the
+  # default track's language was actually established at import — see
+  # `Language.default_audio_mismatch?/3`.
+  defp default_audio_mismatch?(%Movie{} = movie) do
+    Language.default_audio_mismatch?(
+      Language.target(movie.preferred_language, movie.original_language),
+      movie.imported_default_audio_language,
+      movie.imported_audio_languages || []
+    )
   end
 end
