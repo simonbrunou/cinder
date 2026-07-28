@@ -2181,7 +2181,7 @@ msgstr ""
 msgid "No description available."
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:619
+#: lib/cinder_web/live/movie_detail_live.ex:625
 #, elixir-autogen, elixir-format
 msgid "Release"
 msgstr ""
@@ -2529,8 +2529,8 @@ msgstr ""
 msgid "Alias title"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:704
-#: lib/cinder_web/live/movie_detail_live.ex:712
+#: lib/cinder_web/live/movie_detail_live.ex:710
+#: lib/cinder_web/live/movie_detail_live.ex:718
 #: lib/cinder_web/live/series_detail_components.ex:673
 #: lib/cinder_web/live/series_detail_components.ex:681
 #, elixir-autogen, elixir-format
@@ -2583,16 +2583,16 @@ msgstr ""
 msgid "Language (optional)"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:707
-#: lib/cinder_web/live/movie_detail_live.ex:715
+#: lib/cinder_web/live/movie_detail_live.ex:713
+#: lib/cinder_web/live/movie_detail_live.ex:721
 #: lib/cinder_web/live/series_detail_components.ex:676
 #: lib/cinder_web/live/series_detail_components.ex:684
 #, elixir-autogen, elixir-format
 msgid "Licensed"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:705
-#: lib/cinder_web/live/movie_detail_live.ex:713
+#: lib/cinder_web/live/movie_detail_live.ex:711
+#: lib/cinder_web/live/movie_detail_live.ex:719
 #: lib/cinder_web/live/series_detail_components.ex:674
 #: lib/cinder_web/live/series_detail_components.ex:682
 #, elixir-autogen, elixir-format
@@ -2615,8 +2615,8 @@ msgstr ""
 msgid "Regular"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:706
-#: lib/cinder_web/live/movie_detail_live.ex:714
+#: lib/cinder_web/live/movie_detail_live.ex:712
+#: lib/cinder_web/live/movie_detail_live.ex:720
 #: lib/cinder_web/live/series_detail_components.ex:675
 #: lib/cinder_web/live/series_detail_components.ex:683
 #, elixir-autogen, elixir-format
@@ -2629,8 +2629,8 @@ msgstr ""
 msgid "Save alias"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:708
-#: lib/cinder_web/live/movie_detail_live.ex:716
+#: lib/cinder_web/live/movie_detail_live.ex:714
+#: lib/cinder_web/live/movie_detail_live.ex:722
 #: lib/cinder_web/live/series_detail_components.ex:677
 #: lib/cinder_web/live/series_detail_components.ex:685
 #, elixir-autogen, elixir-format
@@ -5148,4 +5148,9 @@ msgstr ""
 #: lib/cinder_web/live/library_adoption_live.ex:519
 #, elixir-autogen, elixir-format
 msgid "This item changed since the scan; run the preview again."
+msgstr ""
+
+#: lib/cinder_web/live/movie_detail_live.ex:619
+#, elixir-autogen, elixir-format
+msgid "Leading audio track is %{language}, not the language you asked for. Both are in the file, but many players will start in %{language}."
 msgstr ""

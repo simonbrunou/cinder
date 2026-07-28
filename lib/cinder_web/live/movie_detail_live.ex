@@ -615,6 +615,12 @@ defmodule CinderWeb.MovieDetailLive do
               </dd>
             </div>
           </dl>
+          <p :if={leading_audio_mismatch?(@movie)} class="mt-3 text-xs text-warning">
+            {gettext(
+              "Leading audio track is %{language}, not the language you asked for. Both are in the file, but many players will start in %{language}.",
+              language: hd(@movie.imported_audio_languages)
+            )}
+          </p>
           <div :if={@movie.release_title} class="mt-3 border-t border-base-300 pt-3">
             <dt class="text-sm text-base-content/60">{gettext("Release")}</dt>
             <dd class="break-all font-mono text-xs">{@movie.release_title}</dd>
@@ -718,4 +724,14 @@ defmodule CinderWeb.MovieDetailLive do
   defp parked?(status), do: status in @parked
 
   defp has_file?(%Movie{file_path: fp}), do: is_binary(fp) and fp != ""
+
+  # The wanted language is in the file, but the leading audio track isn't it (issue #197). Advisory:
+  # the file is otherwise correct and re-grabbing likely lands the same release. The copy says
+  # "leading", not "default", because the head is only provably the default-disposition track for a
+  # file that flags one with a language tag — see `Language.leading_audio_mismatch?/2`.
+  defp leading_audio_mismatch?(%Movie{} = movie) do
+    movie.preferred_language
+    |> Language.target(movie.original_language)
+    |> Language.leading_audio_mismatch?(movie.imported_audio_languages || [])
+  end
 end

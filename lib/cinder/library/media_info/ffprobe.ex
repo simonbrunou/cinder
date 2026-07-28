@@ -1,8 +1,10 @@
 defmodule Cinder.Library.MediaInfo.Ffprobe do
   @moduledoc """
-  `Cinder.Library.MediaInfo` via the `ffprobe` CLI (FFmpeg). Reads every stream's `codec_type`
-  and `language` tag in one call, buckets audio vs subtitle streams, and drops untagged/`und`
-  streams. Returns `{:ok, %{audio: codes, subtitles: codes}}` or `{:error, reason}` when `ffprobe`
+  `Cinder.Library.MediaInfo` via the `ffprobe` CLI (FFmpeg). Reads every stream's `codec_type`,
+  `default` disposition and `language` tag in one call, buckets audio vs subtitle streams, and
+  drops untagged/`und` streams. Audio comes back **default-disposition track first** — see
+  `audio_langs/1`.
+  Returns `{:ok, %{audio: codes, subtitles: codes}}` or `{:error, reason}` when `ffprobe`
   is missing or exits non-zero — the importer treats an error (or empty lists) as "can't verify"
   and imports anyway, so a host without `ffprobe` degrades rather than blocking imports.
 
@@ -99,17 +101,20 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
     e -> {:error, e}
   end
 
-  # One line per stream: "codec_type,language" (language empty when the stream has no tag).
+  # One line per stream: "codec_type,default,language" — `default` is the disposition flag (1/0),
+  # `language` empty (or the field absent) when the stream has no tag.
   defp args(path),
-    do: ~w(-v error -show_entries stream=codec_type:stream_tags=language -of csv=p=0) ++ [path]
+    do: ~w(-v error
+        -show_entries stream=codec_type:stream_disposition=default:stream_tags=language
+        -of csv=p=0) ++ [path]
 
   @doc false
   def parse(out) do
     rows = parse_rows(out)
 
     %{
-      audio: Enum.uniq(for({"audio", lang} <- rows, lang != nil, do: lang)),
-      subtitles: Enum.uniq(for({"subtitle", lang} <- rows, lang != nil, do: lang))
+      audio: Enum.uniq(for(lang <- audio_langs(rows), lang != nil, do: lang)),
+      subtitles: Enum.uniq(for({"subtitle", _default?, lang} <- rows, lang != nil, do: lang))
     }
   end
 
@@ -118,11 +123,31 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
     rows = parse_rows(out)
 
     %{
-      audio: Enum.uniq(for({"audio", lang} <- rows, is_binary(lang), do: lang)),
-      subtitles: Enum.uniq(for({"subtitle", lang} <- rows, is_binary(lang), do: lang)),
-      audio_unknown?: Enum.any?(rows, &match?({"audio", nil}, &1)),
-      subtitle_unknown?: Enum.any?(rows, &match?({"subtitle", nil}, &1))
+      audio: Enum.uniq(for(lang <- audio_langs(rows), is_binary(lang), do: lang)),
+      subtitles: Enum.uniq(for({"subtitle", _default?, lang} <- rows, is_binary(lang), do: lang)),
+      audio_unknown?: Enum.any?(rows, &match?({"audio", _default?, nil}, &1)),
+      subtitle_unknown?: Enum.any?(rows, &match?({"subtitle", _default?, nil}, &1))
     }
+  end
+
+  # Audio languages with the default-disposition track first, then stream order (issue #197).
+  # A MULTi release with the dub flagged default plays as the dub even though the original track
+  # is right there, and nothing downstream reads more than the set of languages — so the head of
+  # this list is the best available answer to "what plays", which the movie page's hint reads.
+  # It is only the *proven* default when the file flags one AND that track has a language tag: a
+  # file flagging nothing keeps stream order, and an untagged (`und`) default is dropped by
+  # normalize/1 before it gets here, leaving the next track at the head. Hence the hint says
+  # "leading", not "default" — see `Cinder.Acquisition.Language.leading_audio_mismatch?/2`.
+  # ponytail: head-of-list rather than a dedicated column — rows imported before this change hold
+  # plain stream order, which the operator measured as the same track 10/10 times (issue #197);
+  # re-run `mix cinder.media_info.backfill` to make them exact. Add a column if that stops holding.
+  defp audio_langs(rows) do
+    {default, rest} =
+      rows
+      |> Enum.filter(&match?({"audio", _default?, _lang}, &1))
+      |> Enum.split_with(fn {_type, default?, _lang} -> default? end)
+
+    Enum.map(default ++ rest, fn {_type, _default?, lang} -> lang end)
   end
 
   @doc false
@@ -141,7 +166,8 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
 
   def parse_subtitle_tracks(_), do: []
 
-  # "audio,eng" -> {"audio", "eng"}; "video," / "audio,und" -> {_, nil} (dropped downstream).
+  # "audio,1,eng" -> {"audio", true, "eng"}; "video,0" / "audio,0,und" -> {_, _, nil}
+  # (dropped downstream).
   defp parse_rows(out) do
     out
     |> String.split(["\r\n", "\n"], trim: true)
@@ -149,11 +175,14 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   end
 
   defp parse_row(line) do
-    case String.split(line, ",", parts: 2) do
-      [type, lang] -> {String.trim(type), normalize(lang)}
-      [type] -> {String.trim(type), nil}
+    case String.split(line, ",", parts: 3) do
+      [type, default, lang] -> {String.trim(type), default?(default), normalize(lang)}
+      [type, default] -> {String.trim(type), default?(default), nil}
+      [type] -> {String.trim(type), false, nil}
     end
   end
+
+  defp default?(flag), do: String.trim(flag) == "1"
 
   defp normalize(lang) do
     code = lang |> String.trim() |> String.downcase()

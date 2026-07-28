@@ -302,6 +302,45 @@ defmodule CinderWeb.MovieDetailLiveTest do
     assert html =~ "sidecar"
   end
 
+  test "warns when the wanted audio is in the file but isn't the leading track", %{conn: conn} do
+    movie =
+      movie_fixture(%{
+        status: :available,
+        file_path: "/l/M/M.mkv",
+        preferred_language: "original",
+        original_language: "en",
+        # Default-disposition track first (issue #197): English is there, Turkish leads.
+        imported_audio_languages: ["tur", "eng"]
+      })
+
+    stub_details(movie.tmdb_id)
+
+    {:ok, lv, html} = live_movie(conn, movie)
+    assert has_element?(lv, "dt", "Audio")
+    assert html =~ "Leading audio track is tur"
+
+    # The head is only provably the default track when the file flagged one AND tagged it, which
+    # isn't knowable from the stored list (pre-backfill rows hold plain stream order). The copy
+    # must not claim a default it can't establish.
+    refute html =~ "by default"
+  end
+
+  test "stays quiet when the leading audio track already is the wanted one", %{conn: conn} do
+    movie =
+      movie_fixture(%{
+        status: :available,
+        file_path: "/l/M/M.mkv",
+        preferred_language: "original",
+        original_language: "en",
+        imported_audio_languages: ["eng", "tur"]
+      })
+
+    stub_details(movie.tmdb_id)
+
+    {:ok, _lv, html} = live_movie(conn, movie)
+    refute html =~ "Leading audio track"
+  end
+
   test "hides the Audio/Subtitles rows when the language lists are empty or nil", %{conn: conn} do
     movie =
       movie_fixture(%{

@@ -56,17 +56,70 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
   end
 
   test "parse buckets audio + subtitle streams by codec_type, dropping und/empty" do
-    out = "video,\naudio,eng\naudio,fre\nsubtitle,eng\nsubtitle,und\naudio,\n"
+    out = "video,0,\naudio,1,eng\naudio,0,fre\nsubtitle,0,eng\nsubtitle,0,und\naudio,0,\n"
     assert Ffprobe.parse(out) == %{audio: ["eng", "fre"], subtitles: ["eng"]}
   end
 
   test "parse dedups repeated audio/subtitle languages, preserving first-seen order" do
-    out = "audio,eng\naudio,eng\naudio,fre\nsubtitle,eng\nsubtitle,eng\n"
+    out = "audio,1,eng\naudio,0,eng\naudio,0,fre\nsubtitle,0,eng\nsubtitle,0,eng\n"
     assert Ffprobe.parse(out) == %{audio: ["eng", "fre"], subtitles: ["eng"]}
   end
 
+  # Issue #197: a MULTi file with the dub flagged default plays as the dub. Downstream reads the
+  # head of :audio as "what plays", so the default track has to sort first regardless of index.
+  test "parse puts the default-disposition audio track first, keeping stream order otherwise" do
+    out = "video,0,\naudio,0,fre\naudio,1,tur\naudio,0,eng\n"
+    assert Ffprobe.parse(out) == %{audio: ["tur", "fre", "eng"], subtitles: []}
+
+    assert %{audio: ["tur", "fre", "eng"]} = Ffprobe.parse_policy(out)
+  end
+
+  # The two cases where the head is NOT a proven default track, which is why the movie-page hint
+  # phrases it as the *leading* track. Both must still be plain stream order, not a guess.
+  test "parse keeps stream order when no audio track carries the default disposition" do
+    out = "audio,0,fre\naudio,0,eng\n"
+    assert Ffprobe.parse(out) == %{audio: ["fre", "eng"], subtitles: []}
+  end
+
+  test "parse drops an untagged default track rather than promoting it, leaving stream order" do
+    out = "video,0,\naudio,1,und\naudio,0,fre\naudio,0,eng\n"
+    assert Ffprobe.parse(out) == %{audio: ["fre", "eng"], subtitles: []}
+
+    assert %{audio: ["fre", "eng"], audio_unknown?: true} = Ffprobe.parse_policy(out)
+  end
+
+  # Real ffprobe omits the trailing field entirely for a stream with no language tag rather than
+  # emitting an empty one, so the two-field row is the shape production actually hits — verified
+  # against ffprobe 8.1.2 on a Matroska file whose default audio track carries only a title.
+  # Without this, parse_row/1's [type, default] clause is unexercised, and a language could be
+  # silently read as a disposition flag if args/1 and parse_row/1 ever drift.
+  test "parse handles the two-field row real ffprobe emits for an untagged stream" do
+    out = "video,0\naudio,1\naudio,0,eng\n"
+    assert Ffprobe.parse(out) == %{audio: ["eng"], subtitles: []}
+
+    assert %{audio: ["eng"], audio_unknown?: true, subtitle_unknown?: false} =
+             Ffprobe.parse_policy(out)
+  end
+
+  @tag :tmp_dir
+  test "probe asks ffprobe for the default disposition, not just codec_type + language", %{
+    tmp_dir: tmp
+  } do
+    argv = Path.join(tmp, "argv")
+    path = Path.join(tmp, "ffprobe")
+    File.write!(path, "#!/bin/sh\nprintf '%s\\n' \"$@\" > #{argv}\n")
+    File.chmod!(path, 0o755)
+    Application.put_env(:cinder, :ffprobe_bin, path)
+
+    assert {:ok, _} = Ffprobe.probe("/media/m.mkv")
+
+    # Pins the arity contract parse_row/1's three-field split depends on.
+    assert File.read!(argv) =~
+             "stream=codec_type:stream_disposition=default:stream_tags=language"
+  end
+
   test "parse_policy preserves whether audio and subtitle streams have unknown tags" do
-    out = "video,\naudio,eng\naudio,und\nsubtitle,fre\nsubtitle,\n"
+    out = "video,0,\naudio,1,eng\naudio,0,und\nsubtitle,0,fre\nsubtitle,0,\n"
 
     assert Ffprobe.parse_policy(out) == %{
              audio: ["eng"],
@@ -81,7 +134,7 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
   @tag :tmp_dir
   test "probe_policy returns the detailed report from one ffprobe invocation", %{tmp_dir: tmp} do
     path = Path.join(tmp, "ffprobe")
-    File.write!(path, "#!/bin/sh\nprintf 'audio,jpn\\naudio,und\\nsubtitle,fre\\n'\n")
+    File.write!(path, "#!/bin/sh\nprintf 'audio,1,jpn\\naudio,0,und\\nsubtitle,0,fre\\n'\n")
     File.chmod!(path, 0o755)
     Application.put_env(:cinder, :ffprobe_bin, path)
 
