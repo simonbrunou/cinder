@@ -143,11 +143,15 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   # opposite of the fact. Kept out of `:audio` deliberately — an `und` entry there would trip
   # `Language.audio_satisfies?/2`'s unrecognised-code escape and silently disable wrong-language
   # parks for the whole file.
+  # Enum.find, not find_value: find_value skips a nil result and keeps scanning, so a mux with two
+  # default-flagged audio streams whose first is untagged would report the SECOND one's language —
+  # reintroducing the exact false claim this field exists to prevent. First flagged track wins
+  # (that's what a player takes), and its tag is used verbatim, nil included.
   defp default_audio(rows) do
-    Enum.find_value(rows, fn
-      {"audio", true, lang} -> lang
-      _ -> nil
-    end)
+    case Enum.find(rows, &match?({"audio", true, _lang}, &1)) do
+      {_type, _default?, lang} -> lang
+      nil -> nil
+    end
   end
 
   @doc false

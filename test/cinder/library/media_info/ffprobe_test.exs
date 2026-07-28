@@ -95,6 +95,14 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
              Ffprobe.parse_policy(out)
   end
 
+  # A malformed mux can flag two audio tracks default. The first one wins (that's what a player
+  # takes) and its tag is used verbatim — scanning past an untagged one to the next flagged track
+  # would name a language the player never starts on, which is the whole bug this field replaced.
+  test "parse takes the first default-flagged audio track even when it is untagged" do
+    assert %{default_audio: nil} = Ffprobe.parse("audio,1,und\naudio,1,eng\n")
+    assert %{default_audio: "fre"} = Ffprobe.parse("audio,1,fre\naudio,1,eng\n")
+  end
+
   # An `und` entry in :audio would trip Language.audio_satisfies?/2's unrecognised-code escape and
   # silently disable wrong-language parks for the whole file, so it stays out.
   test "an untagged default track never leaks into :audio" do
