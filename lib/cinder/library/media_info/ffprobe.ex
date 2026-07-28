@@ -2,12 +2,13 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   @moduledoc """
   `Cinder.Library.MediaInfo` via the `ffprobe` CLI (FFmpeg). Reads every stream's `codec_type`,
   `default` disposition and `language` tag in one call, buckets audio vs subtitle streams, and
-  drops untagged/`und` streams. `default_audio` reports the default-disposition audio track's
-  language separately — see `default_audio/1`.
+  drops untagged/`und` streams. `default_audio` reports the first default-flagged audio track's
+  language separately, `nil` when nothing is flagged or the flagged track is untagged (issue #197).
+
   Returns `{:ok, %{audio: codes, subtitles: codes, default_audio: code | nil}}` or
-  `{:error, reason}` when `ffprobe`
-  is missing or exits non-zero — the importer treats an error (or empty lists) as "can't verify"
-  and imports anyway, so a host without `ffprobe` degrades rather than blocking imports.
+  `{:error, reason}` when `ffprobe` is missing or exits non-zero — the importer treats an error
+  (or empty lists) as "can't verify" and imports anyway, so a host without `ffprobe` degrades
+  rather than blocking imports.
 
   The binary is `ffprobe` on `PATH` by default; override with `config :cinder, :ffprobe_bin`.
   """
