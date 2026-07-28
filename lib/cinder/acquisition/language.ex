@@ -153,6 +153,28 @@ defmodule Cinder.Acquisition.Language do
   end
 
   @doc """
+  Whether a file satisfies `target` on paper but *leads* with another language: `file_langs` holds
+  the target somewhere, yet its head is a recognised other language. That is the
+  MULTi-with-the-dub-flagged-default case `audio_satisfies?/2` can't see, since the wanted track
+  really is in the file (issue #197).
+
+  Deliberately says *leading*, not *default*. `Cinder.Library.MediaInfo` sorts the
+  default-disposition track to the head, but the head is only provably the default track when the
+  file flags one AND that track carries a language tag — a file that flags nothing, an untagged
+  (`und`) default that gets dropped, or a row written before that ordering landed all leave plain
+  stream order here. Leading-track-is-wrong is what the evidence supports in every one of those
+  cases; callers must not phrase it as a proven default.
+
+  Same conservatism as `audio_satisfies?/2`: a nil/unknown target, an unrecognised head code, or a
+  single-language file is never a mismatch. Advisory only — this never parks an import.
+  """
+  def leading_audio_mismatch?(target, [first | rest]) when rest != [] do
+    audio_satisfies?(target, [first | rest]) and not audio_satisfies?(target, [first])
+  end
+
+  def leading_audio_mismatch?(_target, _file_langs), do: false
+
+  @doc """
   Classifies whether tagged streams satisfy a required language without collapsing incomplete
   evidence into a match or mismatch.
   """

@@ -593,6 +593,12 @@ defmodule CinderWeb.MovieDetailLive do
               <dd class="flex flex-wrap gap-1 font-medium">
                 <span :for={l <- @movie.imported_audio_languages} class="badge badge-ghost badge-xs">{l}</span>
               </dd>
+              <dd :if={leading_audio_mismatch?(@movie)} class="mt-1 text-xs text-warning">
+                {gettext(
+                  "Leading audio track is %{language}, not the language you asked for. Both are in the file, but many players will start in %{language}.",
+                  language: hd(@movie.imported_audio_languages)
+                )}
+              </dd>
             </div>
             <div :if={
               @movie.imported_embedded_subtitles not in [nil, []] or
@@ -718,4 +724,14 @@ defmodule CinderWeb.MovieDetailLive do
   defp parked?(status), do: status in @parked
 
   defp has_file?(%Movie{file_path: fp}), do: is_binary(fp) and fp != ""
+
+  # The wanted language is in the file, but the leading audio track isn't it (issue #197). Advisory:
+  # the file is otherwise correct and re-grabbing likely lands the same release. The copy says
+  # "leading", not "default", because the head is only provably the default-disposition track for a
+  # file that flags one with a language tag — see `Language.leading_audio_mismatch?/2`.
+  defp leading_audio_mismatch?(%Movie{} = movie) do
+    movie.preferred_language
+    |> Language.target(movie.original_language)
+    |> Language.leading_audio_mismatch?(movie.imported_audio_languages || [])
+  end
 end

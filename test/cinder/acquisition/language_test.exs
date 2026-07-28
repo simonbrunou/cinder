@@ -119,6 +119,31 @@ defmodule Cinder.Acquisition.LanguageTest do
     end
   end
 
+  describe "leading_audio_mismatch?/2" do
+    test "flags a file whose target track is present but not the leading one (issue #197)" do
+      assert Language.leading_audio_mismatch?("en", ["tur", "eng"])
+      assert Language.leading_audio_mismatch?("en", ["fre", "eng"])
+      assert Language.leading_audio_mismatch?("ja", ["eng", "jpn"])
+    end
+
+    test "stays quiet when the leading track already is the target" do
+      refute Language.leading_audio_mismatch?("en", ["eng", "fre"])
+      refute Language.leading_audio_mismatch?("en", ["eng"])
+    end
+
+    test "stays quiet without a target, without evidence, or on an unrecognised head code" do
+      refute Language.leading_audio_mismatch?(nil, ["fre", "eng"])
+      refute Language.leading_audio_mismatch?("en", [])
+      refute Language.leading_audio_mismatch?("en", nil)
+      refute Language.leading_audio_mismatch?("en", ["zzz", "eng"])
+    end
+
+    test "a file missing the target entirely is audio_satisfies?/2's park, not this hint" do
+      refute Language.leading_audio_mismatch?("en", ["tur", "fre"])
+      refute Language.audio_satisfies?("en", ["tur", "fre"])
+    end
+  end
+
   describe "stream_status/3" do
     test "an exact normalized code satisfies even when it has no registered aliases" do
       assert Language.stream_status("is", ["is"], false) == :satisfied
