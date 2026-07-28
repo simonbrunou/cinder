@@ -52,16 +52,19 @@ re-add the `@`. Per-feature design and plan docs live under `docs/specs/`, `docs
   path. Crash-recovery is a feature: prove it with a test.
 - **Status and derived-state writes go through the Catalog choke-points.** A movie's `:status`
   and an episode's derived state (`file_path` / `part_file_paths` / `grab_id`) are written only
-  inside `Cinder.Catalog` — principally `Catalog.transition/3` (its `expect:` form is the
-  race-safe poller write) and `transition_episode/2`, plus audited siblings that each own one
+  inside `Cinder.Catalog` and its submodules under `lib/cinder/catalog/` — principally
+  `Catalog.transition/3` (its `expect:` form is the race-safe poller write) and
+  `transition_episode/3`, plus audited siblings that each own one
   lifecycle (grabs, upgrades, release verification, adoption, deletion, TMDB refresh). Each
   emits one broadcast, *after* commit. This is **not** "no direct `Repo` writes" — creation,
   deletion, monitor flags, language, counters and the refresh are all sanctioned direct writes.
   **Don't reconstruct the full set of write sites from memory, or from this file — it is long,
   it moves with every Catalog split, and it has been documented wrong here before.** Derive it:
-  `rg -l 'Repo\.(insert|update|delete|update_all)' lib/cinder/catalog/`.
+  `rg -l 'Repo\.(insert|update|delete|update_all)' lib/cinder/catalog.ex lib/cinder/catalog/`
+  (naming `catalog.ex` explicitly matters — the choke-points themselves live there, so a
+  directory-only search reports that they don't write).
   The callers stay clean: `lib/cinder/download/*`, `acquisition.ex` and `lib/cinder/library/*`
-  (bar `import_stage.ex` and `migration_adoption.ex`) hold no `Repo` mutations of their own —
+  (bar `import_stage.ex`, which owns `import_stages`) hold no `Repo` *mutations* of their own —
   keep it that way; `download.ex` itself writes, but only its own `download_intents` tables.
   SQLite is pinned to WAL + `busy_timeout: 5000` (config across
   dev/test/runtime), so a web write racing the poller waits rather than erroring with "database
