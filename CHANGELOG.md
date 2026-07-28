@@ -29,6 +29,19 @@ All notable changes to Cinder are documented here. The format follows
   event fires once per new hold (Log + Discord).
 
 ### Fixed
+- **A movie whose wanted language isn't the default audio track is now flagged.** The import check
+  only asked whether the language was *present*, so a MULTi release with a dub flagged default
+  passed while playing in the dub (41 of 87 multi-audio movies on the maintainer's instance). The
+  ffprobe call now also reads the default disposition and stores the default track's language on
+  the movie, and the movie page warns when the wanted language is in the file but isn't that track.
+  Advisory only — nothing parks, and the file is otherwise correct.
+
+  It stays silent unless the evidence is unambiguous: nothing flagged default, an untagged default
+  track, or several flagged tracks (Matroska's FlagDefault means "eligible for automatic
+  selection", so the player picks by viewer preference) all count as *not established*.
+
+  **Operator action:** existing rows have no stored default track, so the warning can't fire for
+  them. Run `mix cinder.media_info.backfill` to re-probe already-imported media.
 - **Vanished TMDB episodes are retired.** Refresh now deletes vanished rows that carry no
   operator state, so phantom "wanted" episodes stop being searched forever and a freed slot
   lets renumbering land the genuine episode correctly; anything with files, grabs, or manual

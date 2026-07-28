@@ -154,16 +154,18 @@ defmodule Cinder.Acquisition.Language do
 
   @doc """
   Whether a file satisfies `target` on paper but *plays* in another language: `file_langs` holds the
-  target somewhere, yet `default_audio` — the language of the default-disposition track, which is
-  what a player starts on — is a recognised other language. That is the
+  target somewhere, yet `default_audio` — the language of the default track, which is what a
+  player selects absent a viewer preference — is a recognised other language. That is the
   MULTi-with-the-dub-flagged-default case `audio_satisfies?/2` can't see, since the wanted track
   really is in the file (issue #197).
 
   `default_audio` must be the *proven* default, and `nil` when it isn't established: nothing flagged
-  default, the flagged track untagged, or a row imported before the column existed. All three return
-  false. Inferring it from track order instead would state the opposite of the fact for an untagged
-  default — that track may well BE the wanted language, and naming the first tagged track as what
-  plays would send the operator looking for a problem that isn't there.
+  default, the lone flagged track untagged, flagged tracks that *disagree* (FlagDefault means
+  "eligible for automatic selection" — the player picks among them by viewer preference, so a file
+  offering both fre and eng is correct), or a row imported before the column existed. All of those
+  return false. Inferring from track order instead would state the opposite of the fact — naming a
+  track as what plays when another equally-eligible one holds the wanted language sends the operator
+  looking for a problem that isn't there.
 
   Conservative about the default track exactly like `audio_satisfies?/2`: a nil/unknown target or an
   unrecognised code is never a mismatch. Advisory only — this never parks an import.
