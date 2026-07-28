@@ -34,10 +34,12 @@ defmodule Cinder.Library.MediaInfo do
   `{:error, reason}` if the probe can't run. The importer treats an error as "can't verify" and
   imports anyway; the audio park check reads `.audio` and parks only on a *positive* mismatch.
 
-  `.default_audio` is the language of the default-disposition audio track — what a player actually
-  starts on, which `.audio` cannot express (issue #197). It is `nil` when nothing is flagged default
-  or the flagged track is untagged; both mean "not established", and callers must not warn on
-  either. See `Cinder.Acquisition.Language.default_audio_mismatch?/3`.
+  `.default_audio` is the language of the default audio track — what a player actually starts on,
+  which `.audio` cannot express (issue #197). It is `nil` unless *exactly one* audio track is
+  flagged default and it carries a language tag: nothing flagged, a lone untagged flagged track,
+  and several flagged tracks (FlagDefault means "eligible for automatic selection", so the player
+  picks by viewer preference) all mean "not established", and callers must not warn on any of them.
+  See `Cinder.Acquisition.Language.default_audio_mismatch?/3`.
   """
   # `default_audio` is `optional` so an existing Mox stub returning only audio/subtitles stays
   # valid; every read goes through `Map.get(report, :default_audio)`.

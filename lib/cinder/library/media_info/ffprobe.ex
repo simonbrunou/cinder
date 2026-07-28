@@ -2,8 +2,9 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   @moduledoc """
   `Cinder.Library.MediaInfo` via the `ffprobe` CLI (FFmpeg). Reads every stream's `codec_type`,
   `default` disposition and `language` tag in one call, buckets audio vs subtitle streams, and
-  drops untagged/`und` streams. `default_audio` reports the first default-flagged audio track's
-  language separately, `nil` when nothing is flagged or the flagged track is untagged (issue #197).
+  drops untagged/`und` streams. `default_audio` reports, separately, the language of the one
+  default-flagged audio track — `nil` unless exactly one is flagged and it carries a tag, since
+  Matroska's FlagDefault means "eligible for automatic selection", not "this one plays" (issue #197).
 
   Returns `{:ok, %{audio: codes, subtitles: codes, default_audio: code | nil}}` or
   `{:error, reason}` when `ffprobe` is missing or exits non-zero — the importer treats an error
@@ -138,20 +139,24 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   # one fact `:audio` cannot express — a MULTi release with the dub flagged default is, as a set of
   # languages, identical to one with the original flagged default (issue #197).
   #
-  # nil when nothing is flagged default OR the flagged track carries no language tag. Both are
-  # genuinely "not established", and the caller must not warn on either: an untagged default may
-  # well BE the wanted language, so reporting the first tagged track as what plays would state the
-  # opposite of the fact. Kept out of `:audio` deliberately — an `und` entry there would trip
+  # Established ONLY by exactly one default-flagged audio track carrying a language tag. Everything
+  # else is nil, and the caller must not warn on nil:
+  #
+  #   * nothing flagged — no evidence at all;
+  #   * the lone flagged track untagged — it may well BE the wanted language, so naming any other
+  #     track as what plays would state the opposite of the fact;
+  #   * SEVERAL flagged — Matroska's FlagDefault marks a track "eligible for automatic selection",
+  #     not "this one plays". When more than one audio track carries it, the player chooses among
+  #     them by the viewer's own language preference, so a file flagging both fre and eng is
+  #     correct and must not be warned about. Stream order is no proxy for that choice.
+  #
+  # Kept out of `:audio` deliberately — an `und` entry there would trip
   # `Language.audio_satisfies?/2`'s unrecognised-code escape and silently disable wrong-language
   # parks for the whole file.
-  # Enum.find, not find_value: find_value skips a nil result and keeps scanning, so a mux with two
-  # default-flagged audio streams whose first is untagged would report the SECOND one's language —
-  # reintroducing the exact false claim this field exists to prevent. First flagged track wins
-  # (that's what a player takes), and its tag is used verbatim, nil included.
   defp default_audio(rows) do
-    case Enum.find(rows, &match?({"audio", true, _lang}, &1)) do
-      {_type, _default?, lang} -> lang
-      nil -> nil
+    case for {"audio", true, lang} <- rows, do: lang do
+      [lang] -> lang
+      _none_or_several -> nil
     end
   end
 
