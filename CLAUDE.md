@@ -51,12 +51,18 @@ re-add the `@`. Per-feature design and plan docs live under `docs/specs/`, `docs
 - Background work (download polling, import) runs under the supervision tree, not in the request
   path. Crash-recovery is a feature: prove it with a test.
 - **Status and derived-state writes go through the Catalog choke-points.** A movie's `:status`
-  is written only by `Catalog.transition/2` (or `do_cancel_txn/2`); an episode's `file_path` /
-  `grab_id` only by `transition_episode/2` and the grab-lifecycle writers. Each emits exactly
-  one broadcast, *after* commit. This is **not** "no direct `Repo` writes" — creation, deletion,
-  monitor flags, language, counters, and the TMDB refresh are sanctioned direct writes inside
-  `Catalog`. What *is* absolute: `lib/cinder/download/*`, `lib/cinder/library/*` (except
-  `import_stage.ex`), and `acquisition.ex` contain zero `Repo` writes — keep it that way.
+  and an episode's derived state (`file_path` / `part_file_paths` / `grab_id`) are written only
+  inside `Cinder.Catalog` — principally `Catalog.transition/3` (its `expect:` form is the
+  race-safe poller write) and `transition_episode/2`, plus audited siblings that each own one
+  lifecycle (grabs, upgrades, release verification, adoption, deletion, TMDB refresh). Each
+  emits one broadcast, *after* commit. This is **not** "no direct `Repo` writes" — creation,
+  deletion, monitor flags, language, counters and the refresh are all sanctioned direct writes.
+  **Don't reconstruct the full set of write sites from memory, or from this file — it is long,
+  it moves with every Catalog split, and it has been documented wrong here before.** Derive it:
+  `rg -l 'Repo\.(insert|update|delete|update_all)' lib/cinder/catalog/`.
+  The callers stay clean: `lib/cinder/download/*`, `acquisition.ex` and `lib/cinder/library/*`
+  (bar `import_stage.ex` and `migration_adoption.ex`) hold no `Repo` mutations of their own —
+  keep it that way; `download.ex` itself writes, but only its own `download_intents` tables.
   SQLite is pinned to WAL + `busy_timeout: 5000` (config across
   dev/test/runtime), so a web write racing the poller waits rather than erroring with "database
   busy" — but that only holds if writes don't sidestep the choke-point.
@@ -81,9 +87,10 @@ stored values onto a one-time bootstrap snapshot at boot (a one-shot supervised 
 PubSub/before the poller) and on every save, so DB overrides env, a cleared setting reverts, and
 the contexts read the same keys unchanged. Secrets are Cloak-encrypted at rest (secret rows only;
 key derived from `SECRET_KEY_BASE`) and never echoed back to the form. `/settings` is admin-gated
-by real accounts (`UserAuth` `:require_admin`, inside the `:admin` live_session). The optional
-HTTP Basic edge (`:admin_auth`, a no-op unless both env vars are set) remains only as
-defense-in-depth for an instance exposed beyond a reverse proxy / VPN.
+by real accounts (`UserAuth` `:require_admin`, inside the `:admin` live_session). Separately, an
+optional HTTP Basic gate (`plug :basic_auth` in the `:browser` pipeline, `router.ex`) fronts
+*every* browser route as a defense-in-depth edge: a no-op when both `CINDER_BASIC_AUTH_USER` and
+`CINDER_BASIC_AUTH_PASSWORD` are unset, and fail-closed (it raises) if exactly one is set.
 
 Signing salts (session + LiveView) are **derived from `secret_key_base` at runtime** in
 `config/runtime.exs` — nothing crypto-related is committed. `signing_salt` is a salt, not a
@@ -94,7 +101,8 @@ secret; the secret is `secret_key_base`.
 - One unit of work per session (an issue, a fix, a feature). `/clear` between them.
 - Start non-trivial work in plan mode; lay out the plan, get agreement, then execute.
 - Define "done when" up front as something `mix test` can decide, then loop until it's green.
-- Work on a branch and open a PR — `main` is PR-merged, never committed to directly.
+- Feature work goes on a branch and through a PR; `main` is PR-merged. (Chores like flake bumps
+  have landed directly — acceptable, but default to the PR.)
 
 ## How to work in this codebase (behavioral principles)
 
