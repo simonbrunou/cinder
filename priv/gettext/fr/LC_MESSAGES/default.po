@@ -2231,7 +2231,7 @@ msgstr "Nom d'utilisateur OpenSubtitles"
 msgid "Subtitle languages (comma-separated, e.g. en,fr)"
 msgstr "Langues des sous-titres (séparées par des virgules, ex. en,fr)"
 
-#: lib/cinder_web/live/movie_detail_live.ex:607
+#: lib/cinder_web/live/movie_detail_live.ex:601
 #: lib/cinder_web/settings_labels.ex:30
 #, elixir-autogen, elixir-format
 msgid "Subtitles"
@@ -2250,12 +2250,12 @@ msgstr "Audio"
 msgid "audio %{lang}"
 msgstr "audio %{lang}"
 
-#: lib/cinder_web/live/movie_detail_live.ex:613
+#: lib/cinder_web/live/movie_detail_live.ex:607
 #, elixir-autogen, elixir-format
 msgid "embedded"
 msgstr "intégré"
 
-#: lib/cinder_web/live/movie_detail_live.ex:619
+#: lib/cinder_web/live/movie_detail_live.ex:613
 #, elixir-autogen, elixir-format
 msgid "sidecar"
 msgstr "externe"
@@ -5154,7 +5154,7 @@ msgstr "Vous avez trop de signalements ouverts. Veuillez attendre qu'un administ
 msgid "This item changed since the scan; run the preview again."
 msgstr "Cet élément a changé depuis l'analyse ; relancez l'aperçu."
 
-#: lib/cinder_web/live/movie_detail_live.ex:597
+#: lib/cinder_web/live/movie_detail_live.ex:619
 #, elixir-autogen, elixir-format
 msgid "Leading audio track is %{language}, not the language you asked for. Both are in the file, but many players will start in %{language}."
 msgstr ""

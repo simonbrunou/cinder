@@ -142,6 +142,22 @@ defmodule Cinder.Acquisition.LanguageTest do
       refute Language.leading_audio_mismatch?("en", ["tur", "fre"])
       refute Language.audio_satisfies?("en", ["tur", "fre"])
     end
+
+    # audio_satisfies?/2 is lenient about codes outside the 39-language registry so an unrecognised
+    # tag can't cause a false park. That relaxation must NOT reach the presence half: the hint's
+    # copy asserts the wanted track is in the file, and here it isn't.
+    test "an unrecognised second code does not stand in for the target being present" do
+      refute Language.leading_audio_mismatch?("en", ["fre", "hrv"])
+      refute Language.leading_audio_mismatch?("en", ["fre", "zzz"])
+      refute Language.leading_audio_mismatch?("fr", ["eng", "cat"])
+
+      # ...even though the lenient park check still passes them, by design.
+      assert Language.audio_satisfies?("en", ["fre", "hrv"])
+    end
+
+    test "an unrecognised code alongside a real target track still flags" do
+      assert Language.leading_audio_mismatch?("en", ["fre", "hrv", "eng"])
+    end
   end
 
   describe "stream_status/3" do

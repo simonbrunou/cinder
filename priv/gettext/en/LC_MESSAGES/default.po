@@ -2231,7 +2231,7 @@ msgstr ""
 msgid "Subtitle languages (comma-separated, e.g. en,fr)"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:607
+#: lib/cinder_web/live/movie_detail_live.ex:601
 #: lib/cinder_web/settings_labels.ex:30
 #, elixir-autogen, elixir-format
 msgid "Subtitles"
@@ -2250,12 +2250,12 @@ msgstr ""
 msgid "audio %{lang}"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:613
+#: lib/cinder_web/live/movie_detail_live.ex:607
 #, elixir-autogen, elixir-format
 msgid "embedded"
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:619
+#: lib/cinder_web/live/movie_detail_live.ex:613
 #, elixir-autogen, elixir-format
 msgid "sidecar"
 msgstr ""
@@ -5150,7 +5150,7 @@ msgstr ""
 msgid "This item changed since the scan; run the preview again."
 msgstr ""
 
-#: lib/cinder_web/live/movie_detail_live.ex:597
+#: lib/cinder_web/live/movie_detail_live.ex:619
 #, elixir-autogen, elixir-format
 msgid "Leading audio track is %{language}, not the language you asked for. Both are in the file, but many players will start in %{language}."
 msgstr ""

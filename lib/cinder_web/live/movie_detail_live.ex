@@ -593,12 +593,6 @@ defmodule CinderWeb.MovieDetailLive do
               <dd class="flex flex-wrap gap-1 font-medium">
                 <span :for={l <- @movie.imported_audio_languages} class="badge badge-ghost badge-xs">{l}</span>
               </dd>
-              <dd :if={leading_audio_mismatch?(@movie)} class="mt-1 text-xs text-warning">
-                {gettext(
-                  "Leading audio track is %{language}, not the language you asked for. Both are in the file, but many players will start in %{language}.",
-                  language: hd(@movie.imported_audio_languages)
-                )}
-              </dd>
             </div>
             <div :if={
               @movie.imported_embedded_subtitles not in [nil, []] or
@@ -621,6 +615,12 @@ defmodule CinderWeb.MovieDetailLive do
               </dd>
             </div>
           </dl>
+          <p :if={leading_audio_mismatch?(@movie)} class="mt-3 text-xs text-warning">
+            {gettext(
+              "Leading audio track is %{language}, not the language you asked for. Both are in the file, but many players will start in %{language}.",
+              language: hd(@movie.imported_audio_languages)
+            )}
+          </p>
           <div :if={@movie.release_title} class="mt-3 border-t border-base-300 pt-3">
             <dt class="text-sm text-base-content/60">{gettext("Release")}</dt>
             <dd class="break-all font-mono text-xs">{@movie.release_title}</dd>

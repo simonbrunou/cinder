@@ -165,14 +165,29 @@ defmodule Cinder.Acquisition.Language do
   stream order here. Leading-track-is-wrong is what the evidence supports in every one of those
   cases; callers must not phrase it as a proven default.
 
-  Same conservatism as `audio_satisfies?/2`: a nil/unknown target, an unrecognised head code, or a
-  single-language file is never a mismatch. Advisory only — this never parks an import.
+  Conservative about the *head* exactly like `audio_satisfies?/2`: a nil/unknown target, an
+  unrecognised head code, or a single-language file is never a mismatch. Advisory only — this
+  never parks an import.
+
+  The *presence* half is strict, and deliberately NOT `audio_satisfies?/2`: that predicate is also
+  satisfied by any track carrying a code outside the registry, a relaxation that exists so an
+  unrecognised tag can't cause a false park. Inherited here it would let this fire on a file
+  holding no target track at all (`["fre", "hrv"]` against `"en"` — Croatian isn't in the 39-language
+  registry), and the hint's copy asserts the wanted track *is* in the file. That is the worse
+  situation reported as the milder one, so presence must be positively established.
   """
-  def leading_audio_mismatch?(target, [first | rest]) when rest != [] do
-    audio_satisfies?(target, [first | rest]) and not audio_satisfies?(target, [first])
+  def leading_audio_mismatch?(target, [first | rest] = file_langs) when rest != [] do
+    target_present?(target, file_langs) and not audio_satisfies?(target, [first])
   end
 
   def leading_audio_mismatch?(_target, _file_langs), do: false
+
+  defp target_present?(target, file_langs) do
+    case Map.get(@audio_codes, target) do
+      nil -> false
+      accepted -> Enum.any?(file_langs, &(String.downcase(&1) in accepted))
+    end
+  end
 
   @doc """
   Classifies whether tagged streams satisfy a required language without collapsing incomplete
