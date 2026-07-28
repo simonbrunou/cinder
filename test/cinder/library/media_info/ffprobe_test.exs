@@ -80,8 +80,8 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
     assert %{audio: ["fre", "tur", "eng"], default_audio: "tur"} = Ffprobe.parse_policy(out)
   end
 
-  # The two cases where the default track's language is NOT established. Both must report nil: the
-  # hint may not infer what plays from the other tracks' order.
+  # The three cases where the default track's language is NOT established — no flag, an untagged
+  # flag, and flags that disagree. All must report nil rather than infer one.
   test "parse reports no default language when no audio track carries the disposition" do
     out = "audio,0,fre\naudio,0,eng\n"
     assert Ffprobe.parse(out) == %{audio: ["fre", "eng"], subtitles: [], default_audio: nil}
@@ -99,12 +99,22 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
   # several flagged the player picks by the viewer's language preference, so a file offering both
   # fre and eng is correct and naming either as what plays would be a false warning. Stream order
   # is no proxy for that choice.
-  test "parse establishes no default language when several audio tracks are flagged" do
+  test "parse establishes no default language when the flagged tracks disagree" do
     assert %{default_audio: nil} = Ffprobe.parse("audio,1,fre\naudio,1,eng\n")
     assert %{default_audio: nil} = Ffprobe.parse("audio,1,und\naudio,1,eng\n")
 
     # ...but exactly one flagged track still establishes it — issue #197's own shape.
     assert %{default_audio: "tur"} = Ffprobe.parse("audio,1,tur\naudio,0,eng\n")
+  end
+
+  # Several flagged tracks that AGREE are unambiguous, and this is the common MULTi shape (one dub
+  # in 5.1 + the same dub in 2.0, both flagged, original unflagged). Deciding "several" on track
+  # count rather than distinct languages would silence issue #197's own failure mode.
+  test "parse establishes the default language when every flagged track agrees" do
+    assert %{default_audio: "fre"} = Ffprobe.parse("audio,1,fre\naudio,1,fre\naudio,0,eng\n")
+
+    # Two untagged flags still establish nothing.
+    assert %{default_audio: nil} = Ffprobe.parse("audio,1,und\naudio,1,und\naudio,0,eng\n")
   end
 
   # An `und` entry in :audio would trip Language.audio_satisfies?/2's unrecognised-code escape and
