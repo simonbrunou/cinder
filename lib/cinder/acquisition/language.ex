@@ -162,10 +162,10 @@ defmodule Cinder.Acquisition.Language do
   `default_audio` must be the *proven* default, and `nil` when it isn't established: nothing flagged
   default, the lone flagged track untagged, flagged tracks that *disagree* (FlagDefault means
   "eligible for automatic selection" — the player picks among them by viewer preference, so a file
-  offering both fre and eng is correct), or a row imported before the column existed. All of those return false.
-  Inferring from track order instead would state the opposite of the fact — naming a track as what
-  plays when another equally-eligible one holds the wanted language sends the operator looking for a
-  problem that isn't there.
+  offering both fre and eng is correct), or a row imported before the column existed. All of those
+  return false. Inferring from track order instead would state the opposite of the fact — naming a
+  track as what plays when another equally-eligible one holds the wanted language sends the operator
+  looking for a problem that isn't there.
 
   Conservative about the default track exactly like `audio_satisfies?/2`: a nil/unknown target or an
   unrecognised code is never a mismatch. Advisory only — this never parks an import.
