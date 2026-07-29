@@ -274,6 +274,88 @@ defmodule CinderWeb.ManualSearchComponentTest do
     refute html =~ "Doesn&#39;t match this title&#39;s audio pick"
   end
 
+  # A row the sweep drops BEFORE the language pool gets no language verdict either way: it is not
+  # a survivor for the fallback decision, and it is not a rejection the sweep makes. The strict
+  # pick here keeps the badges on, so a neutral row is the change and not the fallback.
+  test "a release with no client for its protocol isn't accused of a language mismatch" do
+    html =
+      render_panel(%{
+        mode: :movie,
+        target: %Movie{
+          id: 1,
+          status: :requested,
+          imdb_id: "tt1",
+          title: "M",
+          preferred_language: "french",
+          original_language: "en"
+        },
+        results: [
+          {%Release{title: "M.2021.FRENCH", protocol: :torrent, language: "FRENCH"}, :ok},
+          {%Release{title: "M.2021.GERMAN", protocol: :usenet, language: "GERMAN"},
+           {:rejected, :wrong_protocol}}
+        ]
+      })
+
+    assert html =~ "Matches this title&#39;s audio pick"
+    refute html =~ "badge-warning"
+    refute html =~ "Doesn&#39;t match this title&#39;s audio pick"
+  end
+
+  # Same for the other pre-language drop: a nil-`tvdb_id` series is title-guarded, and the panel
+  # lists what that guard rejects. "Darkwing" is not the series "Dark" — the sweep never scores it,
+  # so the panel says nothing about its audio.
+  test "a title-guarded TV release isn't accused of a language mismatch" do
+    html =
+      render_panel(%{
+        mode: :tv,
+        target: %Series{
+          id: 1,
+          tvdb_id: nil,
+          title: "Dark",
+          preferred_language: "original",
+          original_language: "de"
+        },
+        season_number: 1,
+        results: [
+          {%Release{title: "Dark.S01.GERMAN", protocol: :torrent, language: "GERMAN"}, :ok},
+          {%Release{title: "Darkwing.Duck.S01.ENGLISH", protocol: :torrent, language: "ENGLISH"},
+           :ok}
+        ]
+      })
+
+    assert html =~ "Matches this title&#39;s audio pick"
+    refute html =~ "badge-warning"
+    refute html =~ "Doesn&#39;t match this title&#39;s audio pick"
+  end
+
+  # …but a MATCH is a fact about the release's own tag, not a claim about what the sweep would do,
+  # so it survives on a row the sweep never scores. Withholding it would go silent precisely where
+  # the panel is the only surface left: this row is unplayable as configured, and the operator
+  # switching clients wants to know it is the French one.
+  test "an unscored release that satisfies the pick still says so" do
+    html =
+      render_panel(%{
+        mode: :movie,
+        target: %Movie{
+          id: 1,
+          status: :requested,
+          imdb_id: "tt1",
+          title: "M",
+          preferred_language: "french",
+          original_language: "en"
+        },
+        results: [
+          {%Release{title: "M.2021.ENGLISH", protocol: :torrent, language: "ENGLISH"}, :ok},
+          {%Release{title: "M.2021.FRENCH", protocol: :usenet, language: "FRENCH"},
+           {:rejected, :wrong_protocol}}
+        ]
+      })
+
+    # Only the unplayable FRENCH row can carry it — ENGLISH can't satisfy a french pick.
+    assert html =~ "Matches this title&#39;s audio pick"
+    assert html =~ "Doesn&#39;t match this title&#39;s audio pick"
+  end
+
   # A STRICT pick has no such fallback — it parks — so it flags every row even when none survive.
   test "a strict pick that drops everything still flags every row" do
     html =

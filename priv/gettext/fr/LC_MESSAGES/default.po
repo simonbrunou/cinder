@@ -1943,27 +1943,27 @@ msgstr "Remplacer le fichier actuel de ce film par la version sélectionnée ?"
 msgid "Searching releases…"
 msgstr "Recherche de versions…"
 
-#: lib/cinder_web/components/manual_search_component.ex:431
+#: lib/cinder_web/components/manual_search_component.ex:437
 #, elixir-autogen, elixir-format
 msgid "blocklisted"
 msgstr "sur liste de blocage"
 
-#: lib/cinder_web/components/manual_search_component.ex:434
+#: lib/cinder_web/components/manual_search_component.ex:440
 #, elixir-autogen, elixir-format
 msgid "no client for protocol"
 msgstr "aucun client pour ce protocole"
 
-#: lib/cinder_web/components/manual_search_component.ex:430
+#: lib/cinder_web/components/manual_search_component.ex:436
 #, elixir-autogen, elixir-format
 msgid "outside size band"
 msgstr "hors de la plage de taille"
 
-#: lib/cinder_web/components/manual_search_component.ex:432
+#: lib/cinder_web/components/manual_search_component.ex:438
 #, elixir-autogen, elixir-format
 msgid "resolution not preferred"
 msgstr "résolution non préférée"
 
-#: lib/cinder_web/components/manual_search_component.ex:433
+#: lib/cinder_web/components/manual_search_component.ex:439
 #, elixir-autogen, elixir-format
 msgid "source not preferred"
 msgstr "source non préférée"
@@ -2757,32 +2757,32 @@ msgstr "Exiger des sous-titres intégrés"
 msgid "Use server default (Prefer embedded)"
 msgstr "Utiliser la valeur par défaut du serveur (Préférer les sous-titres intégrés)"
 
-#: lib/cinder_web/components/manual_search_component.ex:442
+#: lib/cinder_web/components/manual_search_component.ex:448
 #, elixir-autogen, elixir-format
 msgid "awaiting preferred group"
 msgstr "en attente du groupe préféré"
 
-#: lib/cinder_web/components/manual_search_component.ex:435
+#: lib/cinder_web/components/manual_search_component.ex:441
 #, elixir-autogen, elixir-format
 msgid "blocked anime group"
 msgstr "groupe anime bloqué"
 
-#: lib/cinder_web/components/manual_search_component.ex:436
+#: lib/cinder_web/components/manual_search_component.ex:442
 #, elixir-autogen, elixir-format
 msgid "contradictory audio"
 msgstr "audio contradictoire"
 
-#: lib/cinder_web/components/manual_search_component.ex:439
+#: lib/cinder_web/components/manual_search_component.ex:445
 #, elixir-autogen, elixir-format
 msgid "contradictory subtitles"
 msgstr "sous-titres contradictoires"
 
-#: lib/cinder_web/components/manual_search_component.ex:445
+#: lib/cinder_web/components/manual_search_component.ex:451
 #, elixir-autogen, elixir-format
 msgid "publication time required"
 msgstr "heure de publication requise"
 
-#: lib/cinder_web/components/manual_search_component.ex:448
+#: lib/cinder_web/components/manual_search_component.ex:454
 #, elixir-autogen, elixir-format
 msgid "stable episode mapping required"
 msgstr "correspondance stable des épisodes requise"
@@ -4857,7 +4857,7 @@ msgstr "Têtes d'affiche"
 msgid "just now"
 msgstr "à l'instant"
 
-#: lib/cinder_web/components/manual_search_component.ex:451
+#: lib/cinder_web/components/manual_search_component.ex:457
 #, elixir-autogen, elixir-format
 msgid "conflicting episode numbering"
 msgstr "numérotation des épisodes conflictuelle"
@@ -5161,12 +5161,12 @@ msgstr ""
 "Lecture en %{language} par défaut : la langue demandée est bien dans le "
 "fichier, mais ce n'est pas la piste audio par défaut."
 
-#: lib/cinder_web/components/manual_search_component.ex:418
+#: lib/cinder_web/components/manual_search_component.ex:424
 #, elixir-autogen, elixir-format
 msgid "Doesn't match this title's audio pick"
 msgstr "Ne correspond pas à la langue audio choisie pour ce titre"
 
-#: lib/cinder_web/components/manual_search_component.ex:413
+#: lib/cinder_web/components/manual_search_component.ex:419
 #, elixir-autogen, elixir-format
 msgid "Matches this title's audio pick"
 msgstr "Correspond à la langue audio choisie pour ce titre"
@@ -5176,7 +5176,7 @@ msgstr "Correspond à la langue audio choisie pour ce titre"
 msgid "untagged"
 msgstr "sans étiquette"
 
-#: lib/cinder_web/components/manual_search_component.ex:416
+#: lib/cinder_web/components/manual_search_component.ex:422
 #, elixir-autogen, elixir-format
 msgid "Untagged: assumed to be the original audio, ranked below a tagged match"
 msgstr ""
