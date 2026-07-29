@@ -13,8 +13,9 @@ defmodule CinderWeb.ManualSearchComponent do
   reject on language is badged `warning` (icon + `sr-only` text, not colour alone) and ranked
   below one that satisfies the pick, but never hidden: the panel is the override surface. Flagging
   asks `Cinder.Acquisition.Language.filter/4` — the sweep's own pool function — rather than
-  comparing tags itself, and only a row the sweep actually scores on language carries a verdict at
-  all; see `language_states/4`.
+  comparing tags itself, and only a row the sweep actually reaches a language verdict on can be
+  flagged at all. A tag that satisfies the pick is the release's own fact and is stated either
+  way; see `language_states/4`.
 
   Required assigns: `id`, `mode` (`:movie | :tv`), `target` (the `%Movie{}` or `%Series{}`), plus
   `season_number` for `:tv`. A `results:` assign (a list of `{release, verdict}` tuples) is
