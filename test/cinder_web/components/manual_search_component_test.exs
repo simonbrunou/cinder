@@ -105,12 +105,66 @@ defmodule CinderWeb.ManualSearchComponentTest do
         ]
       })
 
-    # The untagged row is English by scene convention, so it fails a french pick and says so;
-    # before this it rendered no badge at all and read as "no opinion".
+    # The untagged row is English by scene convention, so it fails a STRICT french pick (which
+    # `Language.keep?/3` really does drop) and says so; before this it rendered no badge at all
+    # and read as "no opinion".
     assert html =~ "untagged"
     assert html =~ "badge-warning"
     assert html =~ "Doesn&#39;t match this title&#39;s audio pick"
     assert html =~ "Matches this title&#39;s audio pick"
+    # Not colour alone: the mismatch carries an icon and screen-reader text (WCAG 1.4.1).
+    assert html =~ "hero-exclamation-triangle-mini"
+    assert html =~ "sr-only"
+  end
+
+  # The gap between "the tag doesn't equal the target" and "the sweep would reject it": under a
+  # SOFT "original" pick `movie_pool/2` passes `keep_untagged: true` and `Language.keep?/3` KEEPS
+  # untagged releases (issue #191 — non-English groups publish original audio with a bare name).
+  # Badging those a mismatch would accuse the rows the sweep is built to accept.
+  test "an untagged release under a soft original pick is not accused of mismatching" do
+    html =
+      render_panel(%{
+        mode: :movie,
+        target: %Movie{
+          id: 1,
+          status: :requested,
+          imdb_id: "tt1",
+          title: "Guru",
+          preferred_language: "original",
+          original_language: "fr"
+        },
+        results: [{%Release{title: "Guru.2025.1080p.WEB.H264-FW", protocol: :torrent}, :ok}]
+      })
+
+    assert html =~ "untagged"
+    refute html =~ "badge-warning"
+    refute html =~ "Doesn&#39;t match"
+    assert html =~ "assumed to be the original audio"
+  end
+
+  # `Language.target/2` hands back an original language with no entry in the parser's tag registry
+  # unmapped, so `satisfies_lang?/2` can never be true for it. Flagging every row would out-claim
+  # the sweep, which falls back to the unfiltered candidates and ties on rank.
+  test "an original language outside the tag registry flags nothing" do
+    html =
+      render_panel(%{
+        mode: :movie,
+        target: %Movie{
+          id: 1,
+          status: :requested,
+          imdb_id: "tt1",
+          title: "Hérbergið",
+          preferred_language: "original",
+          original_language: "is"
+        },
+        results: [
+          {%Release{title: "Tagged", protocol: :torrent, language: "FRENCH"}, :ok},
+          {%Release{title: "Bare", protocol: :torrent}, :ok}
+        ]
+      })
+
+    refute html =~ "badge-warning"
+    refute html =~ "audio pick"
   end
 
   test "the audio-pick badge stays neutral when no pick is in force" do
@@ -280,7 +334,7 @@ defmodule CinderWeb.ManualSearchComponentTest do
     assert updated.assigns.state == :loading
     assert updated.assigns.results == []
     assert updated.assigns.confirming == nil
-    assert updated.assigns.language_target == "ja"
+    assert updated.assigns.audio_pick == {false, "ja"}
 
     # "french" and "dual" resolve to the same target, so swapping between them re-ranks nothing
     # and the loaded results stand.
@@ -291,7 +345,7 @@ defmodule CinderWeb.ManualSearchComponentTest do
              )
 
     assert held.assigns.state == :loaded
-    assert held.assigns.language_target == "fr"
+    assert held.assigns.audio_pick == {true, "fr"}
   end
 
   # FIX 1: an empty TV indexer result is "no releases found", not "season complete". The component
