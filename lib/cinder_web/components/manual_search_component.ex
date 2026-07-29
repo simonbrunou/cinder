@@ -13,8 +13,9 @@ defmodule CinderWeb.ManualSearchComponent do
   reject on language is badged `warning` (icon + `sr-only` text, not colour alone) and ranked
   below one that satisfies the pick, but never hidden: the panel is the override surface. Flagging
   asks `Cinder.Acquisition.Language.filter/4` — the sweep's own pool function — rather than
-  comparing tags itself, and only a row the sweep actually scores on language carries a verdict at
-  all; see `language_states/4`.
+  comparing tags itself, and only a row the sweep actually reaches a language verdict on can be
+  flagged at all. A tag that satisfies the pick is the release's own fact and is stated either
+  way; see `language_states/4`.
 
   Required assigns: `id`, `mode` (`:movie | :tv`), `target` (the `%Movie{}` or `%Series{}`), plus
   `season_number` for `:tv`. A `results:` assign (a list of `{release, verdict}` tuples) is
@@ -357,20 +358,22 @@ defmodule CinderWeb.ManualSearchComponent do
   #               Kept, but `rank_key/2` ranks it below any tagged match — so does the badge.
   #   :mismatch — the pool drops it.
   #
-  # All neutral when the filter is off, when the sweep never scores the row at all (below), and
-  # when a SOFT pick would drop everything: there `language_pool/4` falls back to the unfiltered
-  # candidates, so the sweep has no opinion and neither should the panel. A strict pick has no such
-  # fallback — it parks — so it always flags. nil = don't flag at all; `{scored, pick}` = flag, and
-  # `scored` is the panel's reconstruction of the sweep's candidate pool. The two must stay
-  # distinguishable: a STRICT pick that keeps nothing flags every scored row (the sweep parks),
-  # while a soft one that keeps nothing flags none (the sweep falls back).
+  # `scored` is exactly the rows the sweep reaches one of those three verdicts on, and only they
+  # carry an `:assumed`/`:mismatch` — the pool-derived pair. It is empty when a SOFT pick would drop
+  # everything: `language_pool/4` then falls back to the unfiltered candidates, so the sweep never
+  # judges anything on language and the panel says so by making no pool claim at all. A strict pick
+  # has no such fallback — it parks — so its `scored` stands and it flags. `:match` is not in this
+  # ballot: it is the release's own tag against the pick, so it is stated wherever it is true, and
+  # only a nil target (no pick in force) silences the badge outright.
   defp language_states(_results, _mode, nil = _target, _title), do: nil
 
   defp language_states(results, mode, _target, title) do
     pick = {title.preferred_language, title.original_language, keep_untagged?(mode, title)}
     scored = MapSet.new(scored_by_sweep(results, mode, title))
 
-    if sweep_would_fall_back?(scored, pick, title), do: nil, else: {scored, pick}
+    if sweep_would_fall_back?(scored, pick, title),
+      do: {MapSet.new(), pick},
+      else: {scored, pick}
   end
 
   # The rows automatic selection actually reaches a language decision on, which is narrower than
@@ -403,10 +406,11 @@ defmodule CinderWeb.ManualSearchComponent do
   defp language_state(_release, _target, nil), do: nil
 
   # Only the POOL-derived verdicts are the sweep's to make, so only those are withheld from a row
-  # it never scores. `:match` is a tag-vs-pick fact about the release itself and survives: the row
-  # is still grabbable, still the one an operator overriding the guard would pick, and the panel
-  # would otherwise go silent exactly where it is the only surface left — a title that folds to an
-  # empty needle guards every row away, and a strict pick then parks the sweep entirely.
+  # it never scores — and, via an empty `scored`, from every row when the sweep falls back.
+  # `:match` is a tag-vs-pick fact about the release itself and survives both: the row is still
+  # grabbable, still the one an operator overriding the guard would pick, and the panel would
+  # otherwise go silent exactly where it is the only surface left — a title that folds to an empty
+  # needle guards every row away, and a strict pick then parks the sweep entirely.
   defp language_state(release, target, {scored, pick}) do
     cond do
       Language.satisfies_lang?(release.language, target) -> :match
