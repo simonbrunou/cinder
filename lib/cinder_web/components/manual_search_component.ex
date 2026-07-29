@@ -12,9 +12,9 @@ defmodule CinderWeb.ManualSearchComponent do
   convention and is precisely the row an audio pick decides. A release the sweep would actually
   reject on language is badged `warning` (icon + `sr-only` text, not colour alone) and ranked
   below one that satisfies the pick, but never hidden: the panel is the override surface. Flagging
-  deliberately mirrors what the sweep does rather than a bare tag comparison — see
-  `language_state/2` for the untagged-under-a-soft-pick case, and `audio_pick/2` for the three
-  cases where it stays silent.
+  asks `Cinder.Acquisition.Language.filter/4` — the sweep's own pool function — rather than
+  comparing tags itself, so a badge cannot claim something automatic selection wouldn't do; see
+  `language_states/4`.
 
   Required assigns: `id`, `mode` (`:movie | :tv`), `target` (the `%Movie{}` or `%Series{}`), plus
   `season_number` for `:tv`. A `results:` assign (a list of `{release, verdict}` tuples) is
@@ -34,7 +34,7 @@ defmodule CinderWeb.ManualSearchComponent do
       socket
       |> assign(assigns)
       |> assign(:search_context, search_context)
-      |> assign(:audio_pick, context_audio_pick(search_context))
+      |> assign(:audio_target, context_audio_target(search_context))
       |> assign_new(:confirming, fn -> nil end)
       |> maybe_cancel_stale_search(context_changed?)
 
@@ -76,37 +76,25 @@ defmodule CinderWeb.ManualSearchComponent do
         else: nil
 
     {assigns.mode, target.__struct__, target.id, assigns[:season_number], profile, policy,
-     audio_pick(profile, target)}
+     audio_target(profile, target)}
   end
 
-  # What rows are flagged and ranked against: `{strict?, target}`, or nil for no flagging at all.
+  # The resolved audio target, or nil when the language filter is off entirely (anime — which
+  # resolves audio through `AnimePreferences`, its own `:contradictory_audio` verdict, and never
+  # name-tag filters; "any"; "original" on a title with no TMDB original language).
   #
   # Held RESOLVED so both inputs — the pick and, for "original", the title's TMDB
   # `original_language` — sit behind one context element: a metadata refresh that moves the target
-  # restarts the search instead of leaving the old ordering under freshly flipped badges. Carrying
-  # `strict?/1` rather than the raw pick keeps "french" ⇄ "dual" (same target, same strictness) a
-  # no-op instead of a needless re-query.
-  #
-  # nil in three cases, each one where flagging would out-claim the sweep:
-  #   - anime, which resolves audio through `AnimePreferences` (its own `:contradictory_audio`
-  #     verdict, and it deliberately never name-tag filters) — `policy` already carries the pick;
-  #   - "any", or "original" on a title with no TMDB original language — the filter is off;
-  #   - an original language outside the parser's tag registry (Icelandic, Catalan, Tagalog…).
-  #     `Language.target/2` hands those back unmapped, so `satisfies_lang?/2` can never be true and
-  #     EVERY row would badge as a mismatch — while `language_pool/4` falls back to the unfiltered
-  #     candidates and `rank_key/2` ties, i.e. the sweep has no opinion whatsoever.
-  # The badge itself still renders in all three; only the flagging goes quiet.
-  defp audio_pick(:anime, _target), do: nil
+  # restarts the search rather than leaving the old ordering behind. It is exactly what
+  # `Scorer.rank_key/2` ranks on, so this element changes iff the ordering would, and no more:
+  # "french" ⇄ "dual" resolve alike and stay a no-op, and switching "original" ⇄ "french" on a
+  # French title doesn't re-query either (same rank, and the badges recompute from `@target`).
+  defp audio_target(:anime, _target), do: nil
 
-  defp audio_pick(_profile, target) do
-    resolved = Language.target(target.preferred_language, target.original_language)
+  defp audio_target(_profile, target),
+    do: Language.target(target.preferred_language, target.original_language)
 
-    if Language.known?(resolved),
-      do: {Language.strict?(target.preferred_language), resolved},
-      else: nil
-  end
-
-  defp context_audio_pick(search_context), do: elem(search_context, 6)
+  defp context_audio_target(search_context), do: elem(search_context, 6)
 
   defp search_context_changed?(socket, current) do
     previous = socket.assigns[:search_context] || previous_search_context(socket.assigns)
@@ -268,6 +256,13 @@ defmodule CinderWeb.ManualSearchComponent do
 
   @impl true
   def render(assigns) do
+    assigns =
+      assign(
+        assigns,
+        :language_kept,
+        language_states(assigns.results, assigns.mode, assigns.audio_target, assigns.target)
+      )
+
     ~H"""
     <div id={@id} class="card bg-base-200 mt-2 p-3">
       <div :if={@state == :loading} class="flex items-center gap-2 text-sm">
@@ -287,7 +282,10 @@ defmodule CinderWeb.ManualSearchComponent do
         >
           <span class="min-w-0 flex-1 truncate" title={release.title}>{release.title}</span>
           <span class="badge badge-xs">{release.resolution || gettext("?")}</span>
-          <.language_badge language={release.language} pick={@audio_pick} />
+          <.language_badge
+            language={release.language}
+            state={language_state(release, @audio_target, @language_kept)}
+          />
           <span :if={verdict != :ok} class="text-xs text-warning">{verdict_reason(verdict)}</span>
           <.button
             :if={grabbable?(verdict)}
@@ -322,11 +320,10 @@ defmodule CinderWeb.ManualSearchComponent do
   end
 
   attr :language, :string, default: nil
-  attr :pick, :any, default: nil
+  attr :state, :atom, default: nil
 
   defp language_badge(assigns) do
-    state = language_state(assigns.language, assigns.pick)
-    assigns = assign(assigns, state: state, explanation: language_explanation(state))
+    assigns = assign(assigns, :explanation, language_explanation(assigns.state))
 
     ~H"""
     <span
@@ -348,19 +345,50 @@ defmodule CinderWeb.ManualSearchComponent do
   defp release_language_label(language) when language in [nil, ""], do: gettext("untagged")
   defp release_language_label(language), do: language
 
-  # How the sweep would actually treat this row, which is not the same question as "does the tag
-  # equal the target". `:assumed` is the gap between the two: under a SOFT pick the movie pool
-  # passes `keep_untagged: true`, and `Language.keep?/3` deliberately KEEPS untagged releases —
-  # non-English scene groups routinely publish original audio with a bare name (issue #191). Badging
-  # those a mismatch would accuse, on the override surface, the very rows the sweep is built to
-  # accept. They are still ranked below any tagged match; that demotion is `keep_untagged`'s whole
-  # contract and `rank_key/2` already applies it.
-  defp language_state(_language, nil), do: nil
+  # How the sweep would actually treat each row — which is NOT "does the tag equal the target".
+  # Re-deriving that rule is how this badge got it wrong twice (`keep_untagged` is movie-only; an
+  # original language outside the parser's tag registry still lets MULTI through), so don't:
+  # `Language.filter/4` IS what `Acquisition.language_pool/4` runs, so ask it, one row at a time.
+  #
+  #   :match    — satisfies the target outright.
+  #   :assumed  — kept by the pool but not by its tag: the `keep_untagged: true` relaxation, which
+  #               `movie_pool/2` opts into and the TV/anime pools deliberately do not, because
+  #               non-English groups routinely publish original audio with a bare name (#191).
+  #               Kept, but `rank_key/2` ranks it below any tagged match — so does the badge.
+  #   :mismatch — the pool drops it.
+  #
+  # All neutral when the filter is off, and when a SOFT pick would drop everything: there
+  # `language_pool/4` falls back to the unfiltered candidates, so the sweep has no opinion and
+  # neither should the panel. A strict pick has no such fallback — it parks — so it always flags.
+  # nil = don't flag at all; a MapSet = flag, and these are the rows the pool keeps. The two must
+  # stay distinguishable: a STRICT pick that keeps nothing flags every row (the sweep parks), while
+  # a soft one that keeps nothing flags none (the sweep falls back).
+  defp language_states(_results, _mode, nil = _target, _title), do: nil
 
-  defp language_state(language, {strict?, target}) do
+  defp language_states(results, mode, _target, title) do
+    pick = {title.preferred_language, title.original_language, keep_untagged?(mode, title)}
+
+    kept =
+      for {release, _verdict} <- results, kept?(release, pick), into: MapSet.new(), do: release
+
+    if MapSet.size(kept) == 0 and not Language.strict?(title.preferred_language),
+      do: nil,
+      else: kept
+  end
+
+  # `keep_untagged: true` is safe only where `rank_key/2` is the deciding sort — the movie path.
+  defp keep_untagged?(mode, title),
+    do: mode == :movie and not Language.strict?(title.preferred_language)
+
+  defp kept?(release, {preferred, original, keep_untagged?}),
+    do: Language.filter([release], preferred, original, keep_untagged: keep_untagged?) != []
+
+  defp language_state(_release, _target, nil), do: nil
+
+  defp language_state(release, target, kept) do
     cond do
-      Language.satisfies_lang?(language, target) -> :match
-      language in [nil, ""] and not strict? -> :assumed
+      Language.satisfies_lang?(release.language, target) -> :match
+      MapSet.member?(kept, release) -> :assumed
       true -> :mismatch
     end
   end

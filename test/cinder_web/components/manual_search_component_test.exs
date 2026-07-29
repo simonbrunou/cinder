@@ -142,10 +142,81 @@ defmodule CinderWeb.ManualSearchComponentTest do
     assert html =~ "assumed to be the original audio"
   end
 
-  # `Language.target/2` hands back an original language with no entry in the parser's tag registry
-  # unmapped, so `satisfies_lang?/2` can never be true for it. Flagging every row would out-claim
-  # the sweep, which falls back to the unfiltered candidates and ties on rank.
-  test "an original language outside the tag registry flags nothing" do
+  # `keep_untagged: true` is movie-only (`movie_pool/2`); the TV pool drops untagged rows, so the
+  # same release that reads ":assumed" on a movie must read as a mismatch on a season panel.
+  test "an untagged release on a TV season panel is a mismatch, not an assumption" do
+    html =
+      render_panel(%{
+        mode: :tv,
+        target: %Series{
+          id: 1,
+          title: "Série",
+          preferred_language: "original",
+          original_language: "fr"
+        },
+        season_number: 1,
+        results: [
+          {%Release{title: "Serie.S01.FRENCH", protocol: :torrent, language: "FRENCH"}, :ok},
+          {%Release{title: "Serie.S01.1080p", protocol: :torrent}, :ok}
+        ]
+      })
+
+    assert html =~ "badge-warning"
+    assert html =~ "Doesn&#39;t match this title&#39;s audio pick"
+    refute html =~ "assumed to be the original audio"
+  end
+
+  # An original language with no entry in the parser's tag registry ("is") is still satisfied by
+  # MULTI, so the pool is non-empty and the sweep genuinely rejects the FRENCH row — the panel has
+  # to say so. Mirroring `Language.filter/4` gets this right without a special case.
+  test "an unmapped original language still flags what the pool actually drops" do
+    html =
+      render_panel(%{
+        mode: :tv,
+        target: %Series{
+          id: 1,
+          title: "Hérbergið",
+          preferred_language: "original",
+          original_language: "is"
+        },
+        season_number: 1,
+        results: [
+          {%Release{title: "Multi", protocol: :torrent, language: "MULTI"}, :ok},
+          {%Release{title: "Wrong", protocol: :torrent, language: "FRENCH"}, :ok}
+        ]
+      })
+
+    assert html =~ "badge-warning"
+    assert html =~ "Doesn&#39;t match this title&#39;s audio pick"
+    assert html =~ "Matches this title&#39;s audio pick"
+  end
+
+  # …but when a SOFT pick would drop the whole list, `language_pool/4` falls back to the unfiltered
+  # candidates, so the sweep has no opinion and neither should the panel. A uniform warning on
+  # every row carries no information and asserts a rejection that never happens.
+  test "a soft pick that would drop everything flags nothing" do
+    html =
+      render_panel(%{
+        mode: :tv,
+        target: %Series{
+          id: 1,
+          title: "Hérbergið",
+          preferred_language: "original",
+          original_language: "is"
+        },
+        season_number: 1,
+        results: [
+          {%Release{title: "One", protocol: :torrent, language: "FRENCH"}, :ok},
+          {%Release{title: "Two", protocol: :torrent, language: "GERMAN"}, :ok}
+        ]
+      })
+
+    refute html =~ "badge-warning"
+    refute html =~ "audio pick"
+  end
+
+  # A STRICT pick has no such fallback — it parks — so it flags every row even when none survive.
+  test "a strict pick that drops everything still flags every row" do
     html =
       render_panel(%{
         mode: :movie,
@@ -153,18 +224,15 @@ defmodule CinderWeb.ManualSearchComponentTest do
           id: 1,
           status: :requested,
           imdb_id: "tt1",
-          title: "Hérbergið",
-          preferred_language: "original",
-          original_language: "is"
+          title: "M",
+          preferred_language: "french",
+          original_language: "en"
         },
-        results: [
-          {%Release{title: "Tagged", protocol: :torrent, language: "FRENCH"}, :ok},
-          {%Release{title: "Bare", protocol: :torrent}, :ok}
-        ]
+        results: [{%Release{title: "Only.English", protocol: :torrent, language: "ENGLISH"}, :ok}]
       })
 
-    refute html =~ "badge-warning"
-    refute html =~ "audio pick"
+    assert html =~ "badge-warning"
+    assert html =~ "Doesn&#39;t match this title&#39;s audio pick"
   end
 
   test "the audio-pick badge stays neutral when no pick is in force" do
@@ -334,7 +402,7 @@ defmodule CinderWeb.ManualSearchComponentTest do
     assert updated.assigns.state == :loading
     assert updated.assigns.results == []
     assert updated.assigns.confirming == nil
-    assert updated.assigns.audio_pick == {false, "ja"}
+    assert updated.assigns.audio_target == "ja"
 
     # "french" and "dual" resolve to the same target, so swapping between them re-ranks nothing
     # and the loaded results stand.
@@ -345,7 +413,7 @@ defmodule CinderWeb.ManualSearchComponentTest do
              )
 
     assert held.assigns.state == :loaded
-    assert held.assigns.audio_pick == {true, "fr"}
+    assert held.assigns.audio_target == "fr"
   end
 
   # FIX 1: an empty TV indexer result is "no releases found", not "season complete". The component
