@@ -215,6 +215,34 @@ defmodule CinderWeb.ManualSearchComponentTest do
     refute html =~ "audio pick"
   end
 
+  # The sweep filters protocols BEFORE the language pool, so a release with no configured client
+  # is not a survivor for fallback purposes — counting it would suppress the fallback and accuse
+  # every grabbable row of a mismatch the sweep never makes.
+  test "a release with no client for its protocol doesn't suppress the soft-pick fallback" do
+    html =
+      render_panel(%{
+        mode: :movie,
+        target: %Movie{
+          id: 1,
+          status: :requested,
+          imdb_id: "tt1",
+          title: "Guru",
+          preferred_language: "original",
+          original_language: "fr"
+        },
+        results: [
+          {%Release{title: "Le.Film.FRENCH", protocol: :usenet, language: "FRENCH"},
+           {:rejected, :wrong_protocol}},
+          {%Release{title: "The.Film.ENGLISH", protocol: :torrent, language: "ENGLISH"}, :ok}
+        ]
+      })
+
+    # The only pool-satisfying row is unplayable, so the sweep falls back to the unfiltered
+    # candidates and grabs the English one. The panel must not badge it a mismatch.
+    refute html =~ "badge-warning"
+    refute html =~ "Doesn&#39;t match this title&#39;s audio pick"
+  end
+
   # A STRICT pick has no such fallback — it parks — so it flags every row even when none survive.
   test "a strict pick that drops everything still flags every row" do
     html =

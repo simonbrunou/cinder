@@ -371,9 +371,24 @@ defmodule CinderWeb.ManualSearchComponent do
     kept =
       for {release, _verdict} <- results, kept?(release, pick), into: MapSet.new(), do: release
 
-    if MapSet.size(kept) == 0 and not Language.strict?(title.preferred_language),
-      do: nil,
-      else: kept
+    if sweep_would_fall_back?(results, kept, title), do: nil, else: kept
+  end
+
+  # Whether the SWEEP falls back — so decide it over what the sweep actually sees. Both
+  # `movie_pool/2` and `best_releases/4` run `filter_protocols` BEFORE `language_pool/4`, while the
+  # panel deliberately lists releases with no configured client. Counting one of those as a
+  # survivor would suppress the fallback and turn every grabbable row into an accusation the sweep
+  # never makes. (Residual: the sweep also title-guards the free-text movie and nil-`tvdb_id` TV
+  # searches, which the panel lists unguarded on purpose and no verdict marks — so a list whose
+  # only survivor is title-guarded away can still over-claim. Narrower, and not worth a verdict
+  # channel of its own.)
+  defp sweep_would_fall_back?(results, kept, title) do
+    survivor? =
+      Enum.any?(results, fn {release, verdict} ->
+        verdict != {:rejected, :wrong_protocol} and MapSet.member?(kept, release)
+      end)
+
+    not survivor? and not Language.strict?(title.preferred_language)
   end
 
   # `keep_untagged: true` is safe only where `rank_key/2` is the deciding sort — the movie path.
