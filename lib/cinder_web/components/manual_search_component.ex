@@ -13,8 +13,8 @@ defmodule CinderWeb.ManualSearchComponent do
   reject on language is badged `warning` (icon + `sr-only` text, not colour alone) and ranked
   below one that satisfies the pick, but never hidden: the panel is the override surface. Flagging
   asks `Cinder.Acquisition.Language.filter/4` — the sweep's own pool function — rather than
-  comparing tags itself, so a badge cannot claim something automatic selection wouldn't do; see
-  `language_states/4`.
+  comparing tags itself, and only a row the sweep actually scores on language carries a verdict at
+  all; see `language_states/4`.
 
   Required assigns: `id`, `mode` (`:movie | :tv`), `target` (the `%Movie{}` or `%Series{}`), plus
   `season_number` for `:tv`. A `results:` assign (a list of `{release, verdict}` tuples) is
@@ -259,7 +259,7 @@ defmodule CinderWeb.ManualSearchComponent do
     assigns =
       assign(
         assigns,
-        :language_kept,
+        :language_scope,
         language_states(assigns.results, assigns.mode, assigns.audio_target, assigns.target)
       )
 
@@ -284,7 +284,7 @@ defmodule CinderWeb.ManualSearchComponent do
           <span class="badge badge-xs">{release.resolution || gettext("?")}</span>
           <.language_badge
             language={release.language}
-            state={language_state(release, @audio_target, @language_kept)}
+            state={language_state(release, @audio_target, @language_scope)}
           />
           <span :if={verdict != :ok} class="text-xs text-warning">{verdict_reason(verdict)}</span>
           <.button
@@ -357,40 +357,40 @@ defmodule CinderWeb.ManualSearchComponent do
   #               Kept, but `rank_key/2` ranks it below any tagged match — so does the badge.
   #   :mismatch — the pool drops it.
   #
-  # All neutral when the filter is off, and when a SOFT pick would drop everything: there
-  # `language_pool/4` falls back to the unfiltered candidates, so the sweep has no opinion and
-  # neither should the panel. A strict pick has no such fallback — it parks — so it always flags.
-  # nil = don't flag at all; a MapSet = flag, and these are the rows the pool keeps. The two must
-  # stay distinguishable: a STRICT pick that keeps nothing flags every row (the sweep parks), while
-  # a soft one that keeps nothing flags none (the sweep falls back).
+  # All neutral when the filter is off, when the sweep never scores the row at all (below), and
+  # when a SOFT pick would drop everything: there `language_pool/4` falls back to the unfiltered
+  # candidates, so the sweep has no opinion and neither should the panel. A strict pick has no such
+  # fallback — it parks — so it always flags. nil = don't flag at all; `{scored, pick}` = flag, and
+  # `scored` is the panel's reconstruction of the sweep's candidate pool. The two must stay
+  # distinguishable: a STRICT pick that keeps nothing flags every scored row (the sweep parks),
+  # while a soft one that keeps nothing flags none (the sweep falls back).
   defp language_states(_results, _mode, nil = _target, _title), do: nil
 
   defp language_states(results, mode, _target, title) do
     pick = {title.preferred_language, title.original_language, keep_untagged?(mode, title)}
+    scored = MapSet.new(scored_by_sweep(results, mode, title))
 
-    kept =
-      for {release, _verdict} <- results, kept?(release, pick), into: MapSet.new(), do: release
-
-    if sweep_would_fall_back?(results, kept, mode, title), do: nil, else: kept
+    if sweep_would_fall_back?(scored, pick, title), do: nil, else: {scored, pick}
   end
 
-  # Whether the SWEEP falls back — so decide it over what the sweep actually sees, which is
-  # narrower than what the panel lists twice over. Both `movie_pool/2` and `best_releases/4` run
+  # The rows automatic selection actually reaches a language decision on, which is narrower than
+  # what the panel lists twice over. Both `movie_pool/2` and `best_releases/4` run
   # `filter_protocols` BEFORE `language_pool/4`, and the free-text movie / nil-`tvdb_id` TV
   # searches also title-guard; the panel deliberately lists releases with no configured client and
-  # never title-guards, because those are exactly the rows an operator opens it to override.
-  # Counting one of them as a pool survivor would suppress the fallback and turn every other row
-  # into an accusation the sweep never makes. The guard comes from `Acquisition.title_guard/3` for
-  # the same reason the language rule comes from `Language.filter/4`: re-deriving it here drifts.
-  defp sweep_would_fall_back?(results, kept, mode, title) do
-    survivor? =
-      results
-      |> Enum.reject(fn {_release, verdict} -> verdict == {:rejected, :wrong_protocol} end)
-      |> Enum.map(fn {release, _verdict} -> release end)
-      |> Acquisition.title_guard(mode, title)
-      |> Enum.any?(&MapSet.member?(kept, &1))
+  # never title-guards, because those are exactly the rows an operator opens it to override. They
+  # are still not rows the sweep judges on language: counting one as a pool survivor would suppress
+  # the fallback and turn every other row into an accusation the sweep never makes, and badging one
+  # itself states an outcome that is never reached. The guard comes from `Acquisition.title_guard/3`
+  # for the same reason the language rule comes from `Language.filter/4`: re-deriving it drifts.
+  defp scored_by_sweep(results, mode, title) do
+    results
+    |> Enum.reject(fn {_release, verdict} -> verdict == {:rejected, :wrong_protocol} end)
+    |> Enum.map(fn {release, _verdict} -> release end)
+    |> Acquisition.title_guard(mode, title)
+  end
 
-    not survivor? and not Language.strict?(title.preferred_language)
+  defp sweep_would_fall_back?(scored, pick, title) do
+    not Enum.any?(scored, &kept?(&1, pick)) and not Language.strict?(title.preferred_language)
   end
 
   # `keep_untagged: true` is safe only where `rank_key/2` is the deciding sort — the movie path.
@@ -402,10 +402,11 @@ defmodule CinderWeb.ManualSearchComponent do
 
   defp language_state(_release, _target, nil), do: nil
 
-  defp language_state(release, target, kept) do
+  defp language_state(release, target, {scored, pick}) do
     cond do
+      not MapSet.member?(scored, release) -> nil
       Language.satisfies_lang?(release.language, target) -> :match
-      MapSet.member?(kept, release) -> :assumed
+      kept?(release, pick) -> :assumed
       true -> :mismatch
     end
   end
