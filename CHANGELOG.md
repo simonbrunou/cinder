@@ -29,6 +29,14 @@ All notable changes to Cinder are documented here. The format follows
   event fires once per new hold (Log + Discord).
 
 ### Fixed
+- **"Find a better match" now answers the language question it was silent on.** Every row carries
+  a language badge — untagged included, which means English by scene convention and so is exactly
+  the row an audio pick decides; previously untagged rows rendered no badge at all and read as "no
+  opinion". A release the automatic search would actually reject on language is badged as such
+  (icon and screen-reader text, not colour alone) and ranked below one that satisfies the pick,
+  never hidden: the panel is the override surface. The panel had mirrored the
+  sweep's size band, resolutions, sources and blocklist but *not* the audio pick, so a release the
+  automatic search would rank last sorted as high as one it would pick.
 - **A Hindi subtitle can now be named.** `hi` is ISO-639-1 Hindi as well as the hearing-impaired
   flag, and it was stripped as a flag before the language was read — so `Movie (2024).hi.srt`, the
   very convention Cinder writes, resolved to `und`, and Hindi had no other ISO-639-1 spelling to

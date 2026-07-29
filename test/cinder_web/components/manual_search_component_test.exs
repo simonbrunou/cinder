@@ -82,6 +82,206 @@ defmodule CinderWeb.ManualSearchComponentTest do
     assert html =~ "outside size band"
   end
 
+  test "every row badges its language against the title's audio pick, untagged included" do
+    html =
+      render_panel(%{
+        mode: :movie,
+        target: %Movie{
+          id: 1,
+          status: :requested,
+          imdb_id: "tt1",
+          title: "M",
+          preferred_language: "french",
+          original_language: "en"
+        },
+        results: [
+          {%Release{
+             title: "Le film",
+             resolution: "1080p",
+             protocol: :torrent,
+             language: "FRENCH"
+           }, :ok},
+          {%Release{title: "The film", resolution: "1080p", protocol: :torrent}, :ok}
+        ]
+      })
+
+    # The untagged row is English by scene convention, so it fails a STRICT french pick (which
+    # `Language.keep?/3` really does drop) and says so; before this it rendered no badge at all
+    # and read as "no opinion".
+    assert html =~ "untagged"
+    assert html =~ "badge-warning"
+    assert html =~ "Doesn&#39;t match this title&#39;s audio pick"
+    assert html =~ "Matches this title&#39;s audio pick"
+    # Not colour alone: the mismatch carries an icon and screen-reader text (WCAG 1.4.1).
+    assert html =~ "hero-exclamation-triangle-mini"
+    assert html =~ "sr-only"
+  end
+
+  # The gap between "the tag doesn't equal the target" and "the sweep would reject it": under a
+  # SOFT "original" pick `movie_pool/2` passes `keep_untagged: true` and `Language.keep?/3` KEEPS
+  # untagged releases (issue #191 — non-English groups publish original audio with a bare name).
+  # Badging those a mismatch would accuse the rows the sweep is built to accept.
+  test "an untagged release under a soft original pick is not accused of mismatching" do
+    html =
+      render_panel(%{
+        mode: :movie,
+        target: %Movie{
+          id: 1,
+          status: :requested,
+          imdb_id: "tt1",
+          title: "Guru",
+          preferred_language: "original",
+          original_language: "fr"
+        },
+        results: [{%Release{title: "Guru.2025.1080p.WEB.H264-FW", protocol: :torrent}, :ok}]
+      })
+
+    assert html =~ "untagged"
+    refute html =~ "badge-warning"
+    refute html =~ "Doesn&#39;t match"
+    assert html =~ "assumed to be the original audio"
+  end
+
+  # `keep_untagged: true` is movie-only (`movie_pool/2`); the TV pool drops untagged rows, so the
+  # same release that reads ":assumed" on a movie must read as a mismatch on a season panel.
+  test "an untagged release on a TV season panel is a mismatch, not an assumption" do
+    html =
+      render_panel(%{
+        mode: :tv,
+        target: %Series{
+          id: 1,
+          title: "Série",
+          preferred_language: "original",
+          original_language: "fr"
+        },
+        season_number: 1,
+        results: [
+          {%Release{title: "Serie.S01.FRENCH", protocol: :torrent, language: "FRENCH"}, :ok},
+          {%Release{title: "Serie.S01.1080p", protocol: :torrent}, :ok}
+        ]
+      })
+
+    assert html =~ "badge-warning"
+    assert html =~ "Doesn&#39;t match this title&#39;s audio pick"
+    refute html =~ "assumed to be the original audio"
+  end
+
+  # An original language with no entry in the parser's tag registry ("is") is still satisfied by
+  # MULTI, so the pool is non-empty and the sweep genuinely rejects the FRENCH row — the panel has
+  # to say so. Mirroring `Language.filter/4` gets this right without a special case.
+  test "an unmapped original language still flags what the pool actually drops" do
+    html =
+      render_panel(%{
+        mode: :tv,
+        target: %Series{
+          id: 1,
+          title: "Hérbergið",
+          preferred_language: "original",
+          original_language: "is"
+        },
+        season_number: 1,
+        results: [
+          {%Release{title: "Multi", protocol: :torrent, language: "MULTI"}, :ok},
+          {%Release{title: "Wrong", protocol: :torrent, language: "FRENCH"}, :ok}
+        ]
+      })
+
+    assert html =~ "badge-warning"
+    assert html =~ "Doesn&#39;t match this title&#39;s audio pick"
+    assert html =~ "Matches this title&#39;s audio pick"
+  end
+
+  # …but when a SOFT pick would drop the whole list, `language_pool/4` falls back to the unfiltered
+  # candidates, so the sweep has no opinion and neither should the panel. A uniform warning on
+  # every row carries no information and asserts a rejection that never happens.
+  test "a soft pick that would drop everything flags nothing" do
+    html =
+      render_panel(%{
+        mode: :tv,
+        target: %Series{
+          id: 1,
+          title: "Hérbergið",
+          preferred_language: "original",
+          original_language: "is"
+        },
+        season_number: 1,
+        results: [
+          {%Release{title: "One", protocol: :torrent, language: "FRENCH"}, :ok},
+          {%Release{title: "Two", protocol: :torrent, language: "GERMAN"}, :ok}
+        ]
+      })
+
+    refute html =~ "badge-warning"
+    refute html =~ "audio pick"
+  end
+
+  # The sweep filters protocols BEFORE the language pool, so a release with no configured client
+  # is not a survivor for fallback purposes — counting it would suppress the fallback and accuse
+  # every grabbable row of a mismatch the sweep never makes.
+  test "a release with no client for its protocol doesn't suppress the soft-pick fallback" do
+    html =
+      render_panel(%{
+        mode: :movie,
+        target: %Movie{
+          id: 1,
+          status: :requested,
+          imdb_id: "tt1",
+          title: "Guru",
+          preferred_language: "original",
+          original_language: "fr"
+        },
+        results: [
+          {%Release{title: "Le.Film.FRENCH", protocol: :usenet, language: "FRENCH"},
+           {:rejected, :wrong_protocol}},
+          {%Release{title: "The.Film.ENGLISH", protocol: :torrent, language: "ENGLISH"}, :ok}
+        ]
+      })
+
+    # The only pool-satisfying row is unplayable, so the sweep falls back to the unfiltered
+    # candidates and grabs the English one. The panel must not badge it a mismatch.
+    refute html =~ "badge-warning"
+    refute html =~ "Doesn&#39;t match this title&#39;s audio pick"
+  end
+
+  # A STRICT pick has no such fallback — it parks — so it flags every row even when none survive.
+  test "a strict pick that drops everything still flags every row" do
+    html =
+      render_panel(%{
+        mode: :movie,
+        target: %Movie{
+          id: 1,
+          status: :requested,
+          imdb_id: "tt1",
+          title: "M",
+          preferred_language: "french",
+          original_language: "en"
+        },
+        results: [{%Release{title: "Only.English", protocol: :torrent, language: "ENGLISH"}, :ok}]
+      })
+
+    assert html =~ "badge-warning"
+    assert html =~ "Doesn&#39;t match this title&#39;s audio pick"
+  end
+
+  test "the audio-pick badge stays neutral when no pick is in force" do
+    html =
+      render_panel(%{
+        mode: :movie,
+        target: %Movie{
+          id: 1,
+          status: :requested,
+          imdb_id: "tt1",
+          title: "M",
+          preferred_language: "any"
+        },
+        results: [{%Release{title: "Whatever", resolution: "1080p", protocol: :torrent}, :ok}]
+      })
+
+    assert html =~ "untagged"
+    refute html =~ "badge-warning"
+    refute html =~ "audio pick"
+  end
+
   test "a non-available movie grabs directly (phx-click=grab)" do
     html =
       render_panel(%{
@@ -189,6 +389,59 @@ defmodule CinderWeb.ManualSearchComponentTest do
     assert updated.assigns.state == :loading
     assert updated.assigns.results == []
     assert updated.assigns.confirming == nil
+  end
+
+  # A TMDB refresh can move `original_language` under an unchanged "original" pick, which moves the
+  # audio target the results were ranked against. The context holds the RESOLVED target so that
+  # restarts the search — otherwise the badges flip and the stale ordering stays.
+  test "a metadata refresh that moves the resolved audio target restarts the search" do
+    movie = fn pick, original ->
+      %Movie{
+        id: 1,
+        status: :requested,
+        imdb_id: "tt1",
+        title: "M",
+        preferred_language: pick,
+        original_language: original
+      }
+    end
+
+    loaded = fn target ->
+      %Socket{
+        assigns: %{
+          __changed__: %{},
+          id: "ms",
+          mode: :movie,
+          target: target,
+          state: :loaded,
+          results: [{%Release{title: "Ranked for the old target", protocol: :torrent}, :ok}],
+          confirming: "0"
+        }
+      }
+    end
+
+    assigns = fn target -> %{id: "ms", mode: :movie, target: target} end
+
+    refreshed = movie.("original", "ja")
+
+    assert {:ok, updated} =
+             ManualSearchComponent.update(assigns.(refreshed), loaded.(movie.("original", "en")))
+
+    assert updated.assigns.state == :loading
+    assert updated.assigns.results == []
+    assert updated.assigns.confirming == nil
+    assert updated.assigns.audio_target == "ja"
+
+    # "french" and "dual" resolve to the same target, so swapping between them re-ranks nothing
+    # and the loaded results stand.
+    assert {:ok, held} =
+             ManualSearchComponent.update(
+               assigns.(movie.("dual", "en")),
+               loaded.(movie.("french", "en"))
+             )
+
+    assert held.assigns.state == :loaded
+    assert held.assigns.audio_target == "fr"
   end
 
   # FIX 1: an empty TV indexer result is "no releases found", not "season complete". The component
