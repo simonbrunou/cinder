@@ -402,10 +402,15 @@ defmodule CinderWeb.ManualSearchComponent do
 
   defp language_state(_release, _target, nil), do: nil
 
+  # Only the POOL-derived verdicts are the sweep's to make, so only those are withheld from a row
+  # it never scores. `:match` is a tag-vs-pick fact about the release itself and survives: the row
+  # is still grabbable, still the one an operator overriding the guard would pick, and the panel
+  # would otherwise go silent exactly where it is the only surface left — a title that folds to an
+  # empty needle guards every row away, and a strict pick then parks the sweep entirely.
   defp language_state(release, target, {scored, pick}) do
     cond do
-      not MapSet.member?(scored, release) -> nil
       Language.satisfies_lang?(release.language, target) -> :match
+      not MapSet.member?(scored, release) -> nil
       kept?(release, pick) -> :assumed
       true -> :mismatch
     end
