@@ -243,6 +243,9 @@ defmodule CinderWeb.ManualSearchComponentTest do
     # candidates and grabs the English one. The panel must not badge it a mismatch.
     refute html =~ "badge-warning"
     refute html =~ "Doesn&#39;t match this title&#39;s audio pick"
+
+    # The fallback withdraws the sweep's pool verdicts, not the fact that the French row is French.
+    assert html =~ "Matches this title&#39;s audio pick"
   end
 
   # Same shape, other guard: the free-text movie search (no IMDb id) and the nil-`tvdb_id` TV
@@ -272,6 +275,8 @@ defmodule CinderWeb.ManualSearchComponentTest do
     # back to the unfiltered candidates. The panel must not badge the English one a mismatch.
     refute html =~ "badge-warning"
     refute html =~ "Doesn&#39;t match this title&#39;s audio pick"
+    # …and the guarded-away row is still, factually, the French one.
+    assert html =~ "Matches this title&#39;s audio pick"
   end
 
   # A row the sweep drops BEFORE the language pool gets no language verdict either way: it is not
