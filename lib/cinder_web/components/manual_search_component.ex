@@ -371,22 +371,24 @@ defmodule CinderWeb.ManualSearchComponent do
     kept =
       for {release, _verdict} <- results, kept?(release, pick), into: MapSet.new(), do: release
 
-    if sweep_would_fall_back?(results, kept, title), do: nil, else: kept
+    if sweep_would_fall_back?(results, kept, mode, title), do: nil, else: kept
   end
 
-  # Whether the SWEEP falls back — so decide it over what the sweep actually sees. Both
-  # `movie_pool/2` and `best_releases/4` run `filter_protocols` BEFORE `language_pool/4`, while the
-  # panel deliberately lists releases with no configured client. Counting one of those as a
-  # survivor would suppress the fallback and turn every grabbable row into an accusation the sweep
-  # never makes. (Residual: the sweep also title-guards the free-text movie and nil-`tvdb_id` TV
-  # searches, which the panel lists unguarded on purpose and no verdict marks — so a list whose
-  # only survivor is title-guarded away can still over-claim. Narrower, and not worth a verdict
-  # channel of its own.)
-  defp sweep_would_fall_back?(results, kept, title) do
+  # Whether the SWEEP falls back — so decide it over what the sweep actually sees, which is
+  # narrower than what the panel lists twice over. Both `movie_pool/2` and `best_releases/4` run
+  # `filter_protocols` BEFORE `language_pool/4`, and the free-text movie / nil-`tvdb_id` TV
+  # searches also title-guard; the panel deliberately lists releases with no configured client and
+  # never title-guards, because those are exactly the rows an operator opens it to override.
+  # Counting one of them as a pool survivor would suppress the fallback and turn every other row
+  # into an accusation the sweep never makes. The guard comes from `Acquisition.title_guard/3` for
+  # the same reason the language rule comes from `Language.filter/4`: re-deriving it here drifts.
+  defp sweep_would_fall_back?(results, kept, mode, title) do
     survivor? =
-      Enum.any?(results, fn {release, verdict} ->
-        verdict != {:rejected, :wrong_protocol} and MapSet.member?(kept, release)
-      end)
+      results
+      |> Enum.reject(fn {_release, verdict} -> verdict == {:rejected, :wrong_protocol} end)
+      |> Enum.map(fn {release, _verdict} -> release end)
+      |> Acquisition.title_guard(mode, title)
+      |> Enum.any?(&MapSet.member?(kept, &1))
 
     not survivor? and not Language.strict?(title.preferred_language)
   end
