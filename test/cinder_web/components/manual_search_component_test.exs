@@ -175,6 +175,7 @@ defmodule CinderWeb.ManualSearchComponentTest do
         mode: :tv,
         target: %Series{
           id: 1,
+          tvdb_id: 42,
           title: "Hérbergið",
           preferred_language: "original",
           original_language: "is"
@@ -200,6 +201,7 @@ defmodule CinderWeb.ManualSearchComponentTest do
         mode: :tv,
         target: %Series{
           id: 1,
+          tvdb_id: 42,
           title: "Hérbergið",
           preferred_language: "original",
           original_language: "is"
@@ -239,6 +241,35 @@ defmodule CinderWeb.ManualSearchComponentTest do
 
     # The only pool-satisfying row is unplayable, so the sweep falls back to the unfiltered
     # candidates and grabs the English one. The panel must not badge it a mismatch.
+    refute html =~ "badge-warning"
+    refute html =~ "Doesn&#39;t match this title&#39;s audio pick"
+  end
+
+  # Same shape, other guard: the free-text movie search (no IMDb id) and the nil-`tvdb_id` TV
+  # search title-guard before the language pool, while the panel lists those rows unguarded on
+  # purpose. A survivor the guard would drop is not a survivor.
+  test "a title-guarded release doesn't suppress the soft-pick fallback" do
+    html =
+      render_panel(%{
+        mode: :movie,
+        target: %Movie{
+          id: 1,
+          status: :requested,
+          imdb_id: nil,
+          title: "Guru",
+          year: 2021,
+          preferred_language: "original",
+          original_language: "fr"
+        },
+        results: [
+          {%Release{title: "Le.Guru.Sequel.2021.FRENCH", protocol: :torrent, language: "FRENCH"},
+           :ok},
+          {%Release{title: "Guru.2021.ENGLISH", protocol: :torrent, language: "ENGLISH"}, :ok}
+        ]
+      })
+
+    # The only pool-satisfying row is a different film, so the sweep's pool is empty and it falls
+    # back to the unfiltered candidates. The panel must not badge the English one a mismatch.
     refute html =~ "badge-warning"
     refute html =~ "Doesn&#39;t match this title&#39;s audio pick"
   end

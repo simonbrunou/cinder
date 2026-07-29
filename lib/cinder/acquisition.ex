@@ -189,6 +189,19 @@ defmodule Cinder.Acquisition do
   end
 
   @doc """
+  The releases automatic selection's title guard would keep for `target` — all of them when no
+  guard applies, an id-scoped search being identity-scoped already. The manual panel lists
+  guarded-away rows on purpose, so it needs this to tell a candidate-pool survivor from a row the
+  sweep never sees; re-deriving the guard there would drift from these clauses.
+  """
+  def title_guard(releases, :movie, %{imdb_id: imdb_id, title: title, year: year})
+      when imdb_id in [nil, ""],
+      do: filter_movie_title(releases, title, year)
+
+  def title_guard(releases, :tv, series), do: filter_title(releases, series)
+  def title_guard(releases, _mode, _target), do: releases
+
+  @doc """
   TV variant of `list_releases/2`. A `:standard_numbering` result from
   `standard_tv_numbering/3` adds the same bounded alternate-season queries used by automatic
   acquisition and freezes each bridged release's resolved Catalog episode ids.
