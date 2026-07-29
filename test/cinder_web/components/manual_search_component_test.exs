@@ -82,6 +82,56 @@ defmodule CinderWeb.ManualSearchComponentTest do
     assert html =~ "outside size band"
   end
 
+  test "every row badges its language against the title's audio pick, untagged included" do
+    html =
+      render_panel(%{
+        mode: :movie,
+        target: %Movie{
+          id: 1,
+          status: :requested,
+          imdb_id: "tt1",
+          title: "M",
+          preferred_language: "french",
+          original_language: "en"
+        },
+        results: [
+          {%Release{
+             title: "Le film",
+             resolution: "1080p",
+             protocol: :torrent,
+             language: "FRENCH"
+           }, :ok},
+          {%Release{title: "The film", resolution: "1080p", protocol: :torrent}, :ok}
+        ]
+      })
+
+    # The untagged row is English by scene convention, so it fails a french pick and says so;
+    # before this it rendered no badge at all and read as "no opinion".
+    assert html =~ "untagged"
+    assert html =~ "badge-warning"
+    assert html =~ "Doesn&#39;t match this title&#39;s audio pick"
+    assert html =~ "Matches this title&#39;s audio pick"
+  end
+
+  test "the audio-pick badge stays neutral when no pick is in force" do
+    html =
+      render_panel(%{
+        mode: :movie,
+        target: %Movie{
+          id: 1,
+          status: :requested,
+          imdb_id: "tt1",
+          title: "M",
+          preferred_language: "any"
+        },
+        results: [{%Release{title: "Whatever", resolution: "1080p", protocol: :torrent}, :ok}]
+      })
+
+    assert html =~ "untagged"
+    refute html =~ "badge-warning"
+    refute html =~ "audio pick"
+  end
+
   test "a non-available movie grabs directly (phx-click=grab)" do
     html =
       render_panel(%{
@@ -189,6 +239,59 @@ defmodule CinderWeb.ManualSearchComponentTest do
     assert updated.assigns.state == :loading
     assert updated.assigns.results == []
     assert updated.assigns.confirming == nil
+  end
+
+  # A TMDB refresh can move `original_language` under an unchanged "original" pick, which moves the
+  # audio target the results were ranked against. The context holds the RESOLVED target so that
+  # restarts the search — otherwise the badges flip and the stale ordering stays.
+  test "a metadata refresh that moves the resolved audio target restarts the search" do
+    movie = fn pick, original ->
+      %Movie{
+        id: 1,
+        status: :requested,
+        imdb_id: "tt1",
+        title: "M",
+        preferred_language: pick,
+        original_language: original
+      }
+    end
+
+    loaded = fn target ->
+      %Socket{
+        assigns: %{
+          __changed__: %{},
+          id: "ms",
+          mode: :movie,
+          target: target,
+          state: :loaded,
+          results: [{%Release{title: "Ranked for the old target", protocol: :torrent}, :ok}],
+          confirming: "0"
+        }
+      }
+    end
+
+    assigns = fn target -> %{id: "ms", mode: :movie, target: target} end
+
+    refreshed = movie.("original", "ja")
+
+    assert {:ok, updated} =
+             ManualSearchComponent.update(assigns.(refreshed), loaded.(movie.("original", "en")))
+
+    assert updated.assigns.state == :loading
+    assert updated.assigns.results == []
+    assert updated.assigns.confirming == nil
+    assert updated.assigns.language_target == "ja"
+
+    # "french" and "dual" resolve to the same target, so swapping between them re-ranks nothing
+    # and the loaded results stand.
+    assert {:ok, held} =
+             ManualSearchComponent.update(
+               assigns.(movie.("dual", "en")),
+               loaded.(movie.("french", "en"))
+             )
+
+    assert held.assigns.state == :loaded
+    assert held.assigns.language_target == "fr"
   end
 
   # FIX 1: an empty TV indexer result is "no releases found", not "season complete". The component

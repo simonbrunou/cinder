@@ -8,6 +8,11 @@ defmodule CinderWeb.ManualSearchComponent do
   shows "No releases found." TV season searches include wanted and already-available episodes,
   so fully imported seasons can open the panel for an operator-chosen upgrade.
 
+  Every row carries a language badge — untagged included, since untagged means English by scene
+  convention and is precisely the row an audio pick decides. A release that doesn't satisfy the
+  title's current pick is badged `warning` and ranked below one that does, but never hidden:
+  the panel is the override surface.
+
   Required assigns: `id`, `mode` (`:movie | :tv`), `target` (the `%Movie{}` or `%Series{}`), plus
   `season_number` for `:tv`. A `results:` assign (a list of `{release, verdict}` tuples) is
   consumed directly and skips the async fetch — useful for tests.
@@ -15,7 +20,7 @@ defmodule CinderWeb.ManualSearchComponent do
   use CinderWeb, :live_component
 
   alias Cinder.{Acquisition, Catalog, Download, Settings}
-  alias Cinder.Acquisition.AnimePreferences
+  alias Cinder.Acquisition.{AnimePreferences, Language}
 
   @impl true
   def update(assigns, socket) do
@@ -26,6 +31,7 @@ defmodule CinderWeb.ManualSearchComponent do
       socket
       |> assign(assigns)
       |> assign(:search_context, search_context)
+      |> assign(:language_target, context_language_target(search_context))
       |> assign_new(:confirming, fn -> nil end)
       |> maybe_cancel_stale_search(context_changed?)
 
@@ -66,8 +72,23 @@ defmodule CinderWeb.ManualSearchComponent do
         do: AnimePreferences.resolve(target, Settings.anime_defaults()),
         else: nil
 
-    {assigns.mode, target.__struct__, target.id, assigns[:season_number], profile, policy}
+    {assigns.mode, target.__struct__, target.id, assigns[:season_number], profile, policy,
+     language_target(profile, target)}
   end
+
+  # The audio target rows are flagged and ranked against. Held RESOLVED so both of its inputs —
+  # the pick and, for "original", the title's TMDB `original_language` — sit behind one context
+  # element: a metadata refresh that moves the target restarts the search instead of leaving the
+  # old ordering under freshly flipped badges. Anime resolves audio through `AnimePreferences`
+  # (its own `:contradictory_audio` verdict, and it deliberately never name-tag filters), so nil
+  # turns flagging off there — the `policy` element already carries the pick for it. The badge
+  # renders either way.
+  defp language_target(:anime, _target), do: nil
+
+  defp language_target(_profile, target),
+    do: Language.target(target.preferred_language, target.original_language)
+
+  defp context_language_target(search_context), do: elem(search_context, 6)
 
   defp search_context_changed?(socket, current) do
     previous = socket.assigns[:search_context] || previous_search_context(socket.assigns)
@@ -157,21 +178,30 @@ defmodule CinderWeb.ManualSearchComponent do
   end
 
   # Mirror the auto-search scorer opts (size band, preferred resolutions/sources,
-  # release blocklist) so the panel's verdicts match what the sweep would pick —
-  # without them a release the poller rejects as out-of-band shows as acceptable.
+  # release blocklist, audio pick) so the panel's verdicts and ordering match what the sweep
+  # would pick — without them a release the poller rejects as out-of-band shows as acceptable,
+  # and one that doesn't satisfy the title's audio pick sorts as high as one that does.
+  # The audio pick only RANKS here (`Scorer.rank_key/2`); it never drops a row — the panel is the
+  # override surface, and a no-op under an `:anime_policy` by design.
   defp search_opts(:movie, movie) do
     [
       protocols: Download.available_protocols(),
       release_blocklist: Catalog.blocked_release_titles(movie)
-    ] ++ Acquisition.band_opts(:movies)
+    ] ++ language_opts(movie) ++ Acquisition.band_opts(:movies)
   end
 
   defp search_opts(:tv, series) do
     [
       protocols: Download.available_protocols(),
       release_blocklist: Catalog.blocked_release_titles_for_series(series.id)
-    ] ++ Acquisition.band_opts(:tv)
+    ] ++ language_opts(series) ++ Acquisition.band_opts(:tv)
   end
+
+  defp language_opts(target),
+    do: [
+      preferred_language: target.preferred_language,
+      original_language: target.original_language
+    ]
 
   @impl true
   def handle_async(:search, {:ok, {:ok, results}}, socket),
@@ -239,7 +269,12 @@ defmodule CinderWeb.ManualSearchComponent do
         >
           <span class="min-w-0 flex-1 truncate" title={release.title}>{release.title}</span>
           <span class="badge badge-xs">{release.resolution || gettext("?")}</span>
-          <span :if={release.language} class="badge badge-ghost badge-xs">{release.language}</span>
+          <span
+            class={["badge badge-xs", language_badge_class(release.language, @language_target)]}
+            title={language_badge_title(release.language, @language_target)}
+          >
+            {release_language_label(release.language)}
+          </span>
           <span :if={verdict != :ok} class="text-xs text-warning">{verdict_reason(verdict)}</span>
           <.button
             :if={grabbable?(verdict)}
@@ -271,6 +306,24 @@ defmodule CinderWeb.ManualSearchComponent do
       </.confirm_action>
     </div>
     """
+  end
+
+  # An untagged release is English audio by scene convention (see `Cinder.Acquisition.Language`),
+  # so "no badge" was never "no information" — it is exactly the row an audio pick decides. Say it.
+  defp release_language_label(language) when language in [nil, ""], do: gettext("untagged")
+  defp release_language_label(language), do: language
+
+  defp language_badge_class(_language, nil), do: "badge-ghost"
+
+  defp language_badge_class(language, target),
+    do: if(Language.satisfies_lang?(language, target), do: "badge-ghost", else: "badge-warning")
+
+  defp language_badge_title(_language, nil), do: nil
+
+  defp language_badge_title(language, target) do
+    if Language.satisfies_lang?(language, target),
+      do: gettext("Matches this title's audio pick"),
+      else: gettext("Doesn't match this title's audio pick")
   end
 
   # An :available movie grab routes through the replace-confirm; everything else grabs directly.
