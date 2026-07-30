@@ -846,18 +846,14 @@ defmodule Cinder.Catalog.Grabs do
 
   defp transition_imported_episode!(grab_id, episode, dest, quality, retain_grab?) do
     if episode.monitored or not is_nil(episode.file_path) do
-      attrs = %{
-        file_path: dest,
-        part_file_paths: [],
-        grab_id: if(retain_grab?, do: grab_id),
-        imported_resolution: quality.resolution,
-        imported_size: quality.size,
-        imported_language: quality.language,
-        imported_source: quality.source,
-        imported_audio_languages: quality.audio_languages,
-        imported_embedded_subtitles: quality.embedded_subtitles,
-        imported_sidecar_subtitles: quality.sidecar_subtitles
-      }
+      attrs =
+        Map.new(
+          [
+            file_path: dest,
+            part_file_paths: [],
+            grab_id: if(retain_grab?, do: grab_id)
+          ] ++ imported_attrs(quality)
+        )
 
       expected = %{
         grab_id: grab_id,
@@ -1152,24 +1148,26 @@ defmodule Cinder.Catalog.Grabs do
           e.id == ^episode_id and e.grab_id == ^grab_id and
             (e.monitored == true or not is_nil(e.file_path))
 
-    updates = [
-      file_path: dest,
-      part_file_paths: [],
-      grab_id: nil,
+    updates =
+      [file_path: dest, part_file_paths: [], grab_id: nil] ++
+        imported_attrs(quality) ++ [updated_at: timestamp]
+
+    case Repo.update_all(query, set: updates) do
+      {1, _} -> :ok
+      {0, _} -> Repo.rollback(:stale_grab)
+    end
+  end
+
+  defp imported_attrs(quality) do
+    [
       imported_resolution: quality.resolution,
       imported_size: quality.size,
       imported_language: quality.language,
       imported_source: quality.source,
       imported_audio_languages: quality.audio_languages,
       imported_embedded_subtitles: quality.embedded_subtitles,
-      imported_sidecar_subtitles: quality.sidecar_subtitles,
-      updated_at: timestamp
+      imported_sidecar_subtitles: quality.sidecar_subtitles
     ]
-
-    case Repo.update_all(query, set: updates) do
-      {1, _} -> :ok
-      {0, _} -> Repo.rollback(:stale_grab)
-    end
   end
 
   # The grab's episodes that did not import. Branch on the empty case so we never interpolate
