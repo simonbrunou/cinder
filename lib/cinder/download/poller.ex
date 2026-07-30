@@ -344,19 +344,10 @@ defmodule Cinder.Download.Poller do
         # cleared, so a later delete_files unlinks the actual library file, not the download copy.
         case Catalog.transition(
                movie,
-               %{
-                 status: :available,
-                 file_path: dest,
-                 content_path: nil,
-                 imported_resolution: q.resolution,
-                 imported_size: q.size,
-                 imported_language: q.language,
-                 imported_source: q.source,
-                 imported_audio_languages: q.audio_languages,
-                 imported_default_audio_language: q.default_audio_language,
-                 imported_embedded_subtitles: q.embedded_subtitles,
-                 imported_sidecar_subtitles: q.sidecar_subtitles
-               },
+               Map.merge(
+                 %{status: :available, file_path: dest, content_path: nil},
+                 imported_attrs(q)
+               ),
                expect: movie.status,
                import_stage_ids: Library.stage_ids([stage])
              ) do
@@ -408,6 +399,19 @@ defmodule Cinder.Download.Poller do
         # the movie without classifying, blocklisting, or cleaning up a possibly valid release.
         retry_or_fail(movie, reason, :import_attempts, :import_failed)
     end
+  end
+
+  defp imported_attrs(q) do
+    %{
+      imported_resolution: q.resolution,
+      imported_size: q.size,
+      imported_language: q.language,
+      imported_source: q.source,
+      imported_audio_languages: q.audio_languages,
+      imported_default_audio_language: q.default_audio_language,
+      imported_embedded_subtitles: q.embedded_subtitles,
+      imported_sidecar_subtitles: q.sidecar_subtitles
+    }
   end
 
   # Bounded retry: keep the movie where it is and try again next tick, but after
@@ -592,18 +596,7 @@ defmodule Cinder.Download.Poller do
       {:ok, %{dest: dest, quality: q} = stage} ->
         movie
         |> Catalog.transition(
-          %{
-            status: :available,
-            file_path: dest,
-            imported_resolution: q.resolution,
-            imported_size: q.size,
-            imported_language: q.language,
-            imported_source: q.source,
-            imported_audio_languages: q.audio_languages,
-            imported_default_audio_language: q.default_audio_language,
-            imported_embedded_subtitles: q.embedded_subtitles,
-            imported_sidecar_subtitles: q.sidecar_subtitles
-          },
+          Map.merge(%{status: :available, file_path: dest}, imported_attrs(q)),
           expect: movie.status,
           import_stage_ids: Library.stage_ids([stage])
         )
