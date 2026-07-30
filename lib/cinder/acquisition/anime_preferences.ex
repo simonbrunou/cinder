@@ -13,6 +13,7 @@ defmodule Cinder.Acquisition.AnimePreferences do
   """
 
   alias Cinder.Acquisition.Language
+  alias Cinder.Util
 
   def resolve(title, defaults) do
     with {:ok, required_audio} <- required_audio(title.preferred_language, title),
@@ -56,7 +57,7 @@ defmodule Cinder.Acquisition.AnimePreferences do
         "release_title" => snapshot_title
       } ->
         map_size(snapshot) == 5 and snapshot_title == release_title and
-          nonblank_string?(snapshot_title) and normalized_languages?(required_audio) and
+          Util.present?(snapshot_title) and normalized_languages?(required_audio) and
           normalized_languages?(required_subtitles) and
           normalized_optional_group?(release_group)
 
@@ -135,7 +136,7 @@ defmodule Cinder.Acquisition.AnimePreferences do
   def normalize_group(group), do: group |> String.trim() |> String.downcase()
 
   defp normalized_languages?(languages) when is_list(languages) do
-    Enum.all?(languages, &nonblank_string?/1) and normalize_languages(languages) == languages
+    Enum.all?(languages, &Util.present?/1) and normalize_languages(languages) == languages
   end
 
   defp normalized_languages?(_languages), do: false
@@ -143,10 +144,8 @@ defmodule Cinder.Acquisition.AnimePreferences do
   defp normalized_optional_group?(nil), do: true
 
   defp normalized_optional_group?(group) do
-    nonblank_string?(group) and normalize_group(group) == group
+    Util.present?(group) and normalize_group(group) == group
   end
-
-  defp nonblank_string?(value), do: is_binary(value) and String.trim(value) != ""
 
   defp group_blocked?(group, blocked), do: normalize_group(group) in blocked
 

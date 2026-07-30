@@ -490,7 +490,7 @@ defmodule Cinder.Acquisition do
       Enum.any?(values, &MapSet.member?(conflicts, &1)) ->
         %{release | resolution_evidence: :conflicting_standard_numbering}
 
-      ids = values |> Enum.flat_map(&Map.get(episode_ids, &1, [])) |> ordered_uniq() ->
+      ids = values |> Enum.flat_map(&Map.get(episode_ids, &1, [])) |> Enum.uniq() ->
         if ids == [], do: release, else: %{release | resolved_episode_ids: ids}
     end
   end
@@ -517,17 +517,6 @@ defmodule Cinder.Acquisition do
       %Release{} = release ->
         {release.protocol, release.title, release.size}
     end)
-  end
-
-  defp ordered_uniq(values) do
-    {values, _seen} =
-      Enum.reduce(values, {[], MapSet.new()}, fn value, {values, seen} ->
-        if MapSet.member?(seen, value),
-          do: {values, seen},
-          else: {[value | values], MapSet.put(seen, value)}
-      end)
-
-    Enum.reverse(values)
   end
 
   # Resolve the candidate pool a language preference scores against. An explicit-language pick

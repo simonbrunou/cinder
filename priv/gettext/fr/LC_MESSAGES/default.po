@@ -4891,7 +4891,7 @@ msgstr "Pages de %{label}"
 msgid "%{selected} of %{total} selected"
 msgstr "%{selected} sur %{total} sélectionné(s)"
 
-#: lib/cinder_web/live/issues_live.ex:66
+#: lib/cinder_web/live/issues_live.ex:67
 #, elixir-autogen, elixir-format
 msgid "%{title} (Season %{season})"
 msgstr "%{title} (Saison %{season})"
@@ -4927,7 +4927,7 @@ msgstr "Problème audio"
 msgid "Couldn't send that report. Please try again."
 msgstr "Impossible d'envoyer ce signalement. Veuillez réessayer."
 
-#: lib/cinder_web/live/issues_live.ex:57
+#: lib/cinder_web/live/issues_live.ex:58
 #, elixir-autogen, elixir-format
 msgid "Couldn't update that report. Please try again."
 msgstr "Impossible de mettre à jour ce signalement. Veuillez réessayer."
@@ -4942,7 +4942,7 @@ msgstr "Tout désélectionner"
 msgid "Deselect all ready items"
 msgstr "Désélectionner tous les éléments prêts"
 
-#: lib/cinder_web/live/issues_live.ex:115
+#: lib/cinder_web/live/issues_live.ex:116
 #, elixir-autogen, elixir-format
 msgid "Dismiss"
 msgstr "Rejeter"
@@ -4992,7 +4992,7 @@ msgstr "Suivant"
 msgid "Next page of %{label}"
 msgstr "Page suivante de %{label}"
 
-#: lib/cinder_web/live/issues_live.ex:125
+#: lib/cinder_web/live/issues_live.ex:126
 #, elixir-autogen, elixir-format
 msgid "No open issues"
 msgstr "Aucun problème ouvert"
@@ -5017,7 +5017,7 @@ msgstr "Précédent"
 msgid "Previous page of %{label}"
 msgstr "Page précédente de %{label}"
 
-#: lib/cinder_web/live/issues_live.ex:82
+#: lib/cinder_web/live/issues_live.ex:83
 #, elixir-autogen, elixir-format
 msgid "Problems requesters flagged on available titles."
 msgstr "Problèmes signalés par les demandeurs sur des titres disponibles."
@@ -5034,12 +5034,12 @@ msgstr "Signaler un problème"
 msgid "Report an issue with %{title}"
 msgstr "Signaler un problème avec %{title}"
 
-#: lib/cinder_web/live/issues_live.ex:62
+#: lib/cinder_web/live/issues_live.ex:63
 #, elixir-autogen, elixir-format
 msgid "Report dismissed."
 msgstr "Signalement rejeté."
 
-#: lib/cinder_web/live/issues_live.ex:61
+#: lib/cinder_web/live/issues_live.ex:62
 #, elixir-autogen, elixir-format
 msgid "Report resolved."
 msgstr "Signalement résolu."
@@ -5049,23 +5049,23 @@ msgstr "Signalement résolu."
 msgid "Reported"
 msgstr "Signalé"
 
-#: lib/cinder_web/live/issues_live.ex:96
+#: lib/cinder_web/live/issues_live.ex:97
 #, elixir-autogen, elixir-format
 msgid "Reported %{time_ago}"
 msgstr "Signalé %{time_ago}"
 
-#: lib/cinder_web/live/issues_live.ex:81
+#: lib/cinder_web/live/issues_live.ex:82
 #: lib/cinder_web/user_auth.ex:411
 #, elixir-autogen, elixir-format
 msgid "Reported issues"
 msgstr "Problèmes signalés"
 
-#: lib/cinder_web/live/issues_live.ex:126
+#: lib/cinder_web/live/issues_live.ex:127
 #, elixir-autogen, elixir-format
 msgid "Reports requesters file on available titles will appear here."
 msgstr "Les signalements des demandeurs sur des titres disponibles apparaîtront ici."
 
-#: lib/cinder_web/live/issues_live.ex:107
+#: lib/cinder_web/live/issues_live.ex:108
 #, elixir-autogen, elixir-format
 msgid "Resolve"
 msgstr "Résoudre"
@@ -5075,7 +5075,7 @@ msgstr "Résoudre"
 msgid "Resolved"
 msgstr "Résolu"
 
-#: lib/cinder_web/live/issues_live.ex:105
+#: lib/cinder_web/live/issues_live.ex:106
 #, elixir-autogen, elixir-format
 msgid "Resolving…"
 msgstr "Résolution…"
@@ -5116,7 +5116,7 @@ msgstr "Problème de sous-titres"
 msgid "Thanks! Your report was sent."
 msgstr "Merci ! Votre signalement a été envoyé."
 
-#: lib/cinder_web/live/issues_live.ex:54
+#: lib/cinder_web/live/issues_live.ex:55
 #, elixir-autogen, elixir-format
 msgid "That report was already handled."
 msgstr "Ce signalement a déjà été traité."

@@ -7,6 +7,7 @@ defmodule Cinder.Download.Intent do
 
   alias Cinder.Acquisition.AnimePreferences
   alias Cinder.Catalog.AnimeResolver
+  alias Cinder.Util
 
   schema "download_intents" do
     field :operation_key, :string
@@ -126,8 +127,8 @@ defmodule Cinder.Download.Intent do
          "version" => 2,
          "parser_context" => %{"title" => title, "aliases" => aliases, "year" => year}
        }) do
-    nonempty_string?(title) and is_list(aliases) and length(aliases) <= 7 and
-      Enum.all?(aliases, &nonempty_string?/1) and (is_nil(year) or is_integer(year))
+    Util.present?(title) and is_list(aliases) and length(aliases) <= 7 and
+      Enum.all?(aliases, &Util.present?/1) and (is_nil(year) or is_integer(year))
   end
 
   defp valid_snapshot_version?(_snapshot), do: false
@@ -139,8 +140,8 @@ defmodule Cinder.Download.Intent do
   defp valid_release?(_release), do: false
 
   defp valid_coordinate?(%{"scheme" => scheme, "values" => values}) do
-    nonempty_string?(scheme) and is_list(values) and values != [] and
-      Enum.all?(values, &nonempty_string?/1)
+    Util.present?(scheme) and is_list(values) and values != [] and
+      Enum.all?(values, &Util.present?/1)
   end
 
   defp valid_coordinate?(_coordinate), do: false
@@ -172,7 +173,7 @@ defmodule Cinder.Download.Intent do
          "namespace" => namespace,
          "canonical_value" => canonical_value
        }) do
-    Enum.all?([source, scheme, namespace, canonical_value], &nonempty_string?/1)
+    Enum.all?([source, scheme, namespace, canonical_value], &Util.present?/1)
   end
 
   defp valid_identity?(_identity), do: false
@@ -187,7 +188,7 @@ defmodule Cinder.Download.Intent do
     episode_ids == reserved_ids and
       Enum.all?(values, &valid_selected_value?(&1, mapping_index)) and
       coordinate_pairs(release["coordinates"]) == selected_pairs(values) and
-      ordered_uniq(Enum.flat_map(values, & &1["episode_ids"])) == episode_ids
+      Enum.uniq(Enum.flat_map(values, & &1["episode_ids"])) == episode_ids
   end
 
   defp valid_selected_resolution?(_selected, _release, _mapping_index, _reserved_ids),
@@ -203,7 +204,7 @@ defmodule Cinder.Download.Intent do
          },
          mapping_index
        ) do
-    nonempty_string?(scheme) and nonempty_string?(canonical_value) and
+    Util.present?(scheme) and Util.present?(canonical_value) and
       valid_episode_ids?(episode_ids) and valid_precedence?(precedence) and
       is_list(identities) and identities != [] and Enum.uniq(identities) == identities and
       Enum.all?(identities, fn identity ->
@@ -263,20 +264,4 @@ defmodule Cinder.Download.Intent do
   end
 
   defp valid_precedence?(precedence), do: precedence in ["manual", "curated", "inferred"]
-
-  defp nonempty_string?(value),
-    do: is_binary(value) and String.trim(value) != ""
-
-  defp ordered_uniq(values) do
-    {ordered, _seen} =
-      Enum.reduce(values, {[], MapSet.new()}, fn value, {ordered, seen} ->
-        if MapSet.member?(seen, value) do
-          {ordered, seen}
-        else
-          {[value | ordered], MapSet.put(seen, value)}
-        end
-      end)
-
-    Enum.reverse(ordered)
-  end
 end

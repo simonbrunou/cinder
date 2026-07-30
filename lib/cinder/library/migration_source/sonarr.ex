@@ -9,6 +9,7 @@ defmodule Cinder.Library.MigrationSource.Sonarr do
 
   alias Cinder.Download.PathMapping
   alias Cinder.HTTPPolicy
+  alias Cinder.Util
 
   @max_response_bytes 8 * 1024 * 1024
   @series_concurrency 4
@@ -117,7 +118,7 @@ defmodule Cinder.Library.MigrationSource.Sonarr do
   defp add_diagnostic(acc, raw, index, reason) do
     diagnostic = %{
       kind: :series,
-      provider_id: positive_integer(raw["id"]),
+      provider_id: Util.positive_integer(raw["id"]),
       title: series_name(raw, index),
       reason: {:series_snapshot_failed, diagnostic_reason(reason)}
     }
@@ -126,8 +127,8 @@ defmodule Cinder.Library.MigrationSource.Sonarr do
   end
 
   defp series_name(raw, index) do
-    nonblank(raw["title"]) || nonblank(raw["sortTitle"]) ||
-      case positive_integer(raw["id"]) do
+    Util.trim_to_nil(raw["title"]) || Util.trim_to_nil(raw["sortTitle"]) ||
+      case Util.positive_integer(raw["id"]) do
         nil -> "Series #{index}"
         id -> "Series #{id}"
       end
@@ -147,7 +148,7 @@ defmodule Cinder.Library.MigrationSource.Sonarr do
          {:ok, files} <- episode_files(episodes, normalized_episodes, raw, config) do
       {:ok,
        %{
-         series: %{provider_id: provider_id, tvdb_id: positive_integer(raw["tvdbId"])},
+         series: %{provider_id: provider_id, tvdb_id: Util.positive_integer(raw["tvdbId"])},
          episodes: normalized_episodes,
          files: files
        }}
@@ -173,10 +174,10 @@ defmodule Cinder.Library.MigrationSource.Sonarr do
         episode = %{
           provider_id: provider_id,
           series_id: series_id,
-          tvdb_id: positive_integer(raw["tvdbId"]),
+          tvdb_id: Util.positive_integer(raw["tvdbId"]),
           season_number: season_number,
           episode_number: episode_number,
-          file_id: positive_integer(raw["episodeFileId"])
+          file_id: Util.positive_integer(raw["episodeFileId"])
         }
 
         {:cont, {:ok, [episode | acc]}}
@@ -230,7 +231,7 @@ defmodule Cinder.Library.MigrationSource.Sonarr do
 
   defp normalize_files(files, series, config) do
     Map.new(files, fn file ->
-      id = positive_integer(file["id"])
+      id = Util.positive_integer(file["id"])
       {id, normalize_file(file, series, id, config)}
     end)
     |> Map.reject(fn {id, file} -> is_nil(id) or is_nil(file) end)
@@ -253,8 +254,8 @@ defmodule Cinder.Library.MigrationSource.Sonarr do
   defp normalize_file(_file, _series, _id, _config), do: nil
 
   defp file_path(file, series) do
-    nonblank(file["path"]) ||
-      join_path(nonblank(series["path"]), nonblank(file["relativePath"]))
+    Util.trim_to_nil(file["path"]) ||
+      join_path(Util.trim_to_nil(series["path"]), Util.trim_to_nil(file["relativePath"]))
   end
 
   defp join_path(root, relative) when is_binary(root) and is_binary(relative),
@@ -276,7 +277,7 @@ defmodule Cinder.Library.MigrationSource.Sonarr do
   defp configured do
     config = Application.get_env(:cinder, __MODULE__, [])
 
-    if nonblank(config[:base_url]) && nonblank(config[:api_key]),
+    if Util.trim_to_nil(config[:base_url]) && Util.trim_to_nil(config[:api_key]),
       do: {:ok, config},
       else: {:error, :not_configured}
   end
@@ -296,16 +297,4 @@ defmodule Cinder.Library.MigrationSource.Sonarr do
     |> Req.new()
     |> HTTPPolicy.bounded_request(@max_response_bytes)
   end
-
-  defp positive_integer(value) when is_integer(value) and value > 0, do: value
-  defp positive_integer(_value), do: nil
-
-  defp nonblank(value) when is_binary(value) do
-    case String.trim(value) do
-      "" -> nil
-      trimmed -> trimmed
-    end
-  end
-
-  defp nonblank(_value), do: nil
 end

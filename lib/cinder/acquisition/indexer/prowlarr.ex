@@ -17,6 +17,7 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   @behaviour Cinder.Acquisition.Indexer
 
   alias Cinder.HTTPPolicy
+  alias Cinder.Util
 
   @default_base_url "http://localhost:9696"
   @max_response_bytes 4 * 1024 * 1024
@@ -108,9 +109,9 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
     do: Keyword.put(params, :categories, Enum.join(categories, ","))
 
   defp normalize(result) when is_map(result) do
-    with title when is_binary(title) <- nonblank(result["title"]),
+    with title when is_binary(title) <- Util.blank_to_nil(result["title"]),
          download_url when is_binary(download_url) <-
-           nonblank(result["downloadUrl"]) || nonblank(result["magnetUrl"]) do
+           Util.blank_to_nil(result["downloadUrl"]) || Util.blank_to_nil(result["magnetUrl"]) do
       [
         %{
           title: title,
@@ -129,12 +130,6 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   end
 
   defp normalize(_result), do: []
-
-  defp nonblank(value) when is_binary(value) do
-    if String.trim(value) == "", do: nil, else: value
-  end
-
-  defp nonblank(_value), do: nil
 
   defp integer_or_nil(value) when is_integer(value), do: value
   defp integer_or_nil(_value), do: nil
