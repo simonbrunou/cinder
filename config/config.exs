@@ -64,7 +64,16 @@ config :cinder, disk_prober: Cinder.Disk
 # os_mon backs Cinder.Disk via :disksup only; memsup/cpu_sup would just add port noise.
 # disksup_posix_only makes disksup run plain `df -k -P` — without it the Linux flavor runs
 # `df -lk` (local filesystems only), which zeroes out an NFS/SMB-mounted library root.
-config :os_mon, start_memsup: false, start_cpu_sup: false, disksup_posix_only: true
+# The daily check interval (minutes; default 30 min) minimizes disksup's periodic full-host
+# scan, whose disk_almost_full alarms nothing consumes and which can wedge disksup for good
+# on a hung network mount (#223). Upgrade path if that ever bites: a scoped `df <path>`
+# with a kill-timeout behind Cinder.Disk.Prober.
+config :os_mon,
+  start_memsup: false,
+  start_cpu_sup: false,
+  disksup_posix_only: true,
+  disk_space_check_interval: 1440
+
 # Import-time audio-language verification (needs `ffprobe`; the Docker image ships it). Enabled by
 # default; degrades to a no-op if ffprobe is absent. Set `media_info: nil` to disable.
 config :cinder, media_info: Cinder.Library.MediaInfo.Ffprobe
