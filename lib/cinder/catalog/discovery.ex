@@ -142,69 +142,64 @@ defmodule Cinder.Catalog.Discovery do
   This week's trending movies + TV from TMDB, normalized like `search_discover/2`
   results (each map carries `type: :movie | :tv`).
   """
-  def trending(locale \\ Locales.canonical()), do: tmdb().trending(locale)
+  def trending(locale), do: tmdb().trending(locale)
 
   @doc """
   Popular movies from TMDB (`/movie/popular`), normalized like `search_movies/2`
   results (each carries `type: :movie`).
   """
-  def popular_movies(locale \\ Locales.canonical()), do: tmdb().popular_movies(locale)
+  def popular_movies(locale), do: tmdb().popular_movies(locale)
 
   @doc "Top-rated movies from TMDB (`/movie/top_rated`), same shape as `popular_movies/1`."
-  def top_rated_movies(locale \\ Locales.canonical()), do: tmdb().top_rated_movies(locale)
+  def top_rated_movies(locale), do: tmdb().top_rated_movies(locale)
 
   @doc """
   Movies currently in theaters from TMDB (`/movie/now_playing`), same shape as
   `popular_movies/1`.
   """
-  def now_playing_movies(locale \\ Locales.canonical()), do: tmdb().now_playing_movies(locale)
+  def now_playing_movies(locale), do: tmdb().now_playing_movies(locale)
 
   @doc """
   Popular TV series from TMDB (`/tv/popular`), normalized like `search_tv/2`
   results (each carries `type: :tv`).
   """
-  def popular_tv(locale \\ Locales.canonical()), do: tmdb().popular_tv(locale)
+  def popular_tv(locale), do: tmdb().popular_tv(locale)
 
   @doc "Top-rated TV series from TMDB (`/tv/top_rated`), same shape as `popular_tv/1`."
-  def top_rated_tv(locale \\ Locales.canonical()), do: tmdb().top_rated_tv(locale)
+  def top_rated_tv(locale), do: tmdb().top_rated_tv(locale)
 
   @doc """
   Movies matching TMDB genre id `genre_id` (`/discover/movie?with_genres=`), same
   shape as `popular_movies/1`.
   """
-  def movies_by_genre(genre_id, locale \\ Locales.canonical()),
-    do: tmdb().discover_movies(genre_id, locale)
+  def movies_by_genre(genre_id, locale), do: tmdb().discover_movies(genre_id, locale)
 
   @doc """
   TV series matching TMDB TV genre id `genre_id` (`/discover/tv?with_genres=`),
   same shape as `popular_tv/1`.
   """
-  def tv_by_genre(genre_id, locale \\ Locales.canonical()),
-    do: tmdb().discover_tv(genre_id, locale)
+  def tv_by_genre(genre_id, locale), do: tmdb().discover_tv(genre_id, locale)
 
   @doc """
   Movie recommendations for `tmdb_id` (`/movie/{id}/recommendations`), same shape
   as `popular_movies/1` — the "More like this" rail on a movie detail page.
   """
-  def recommended_movies(tmdb_id, locale \\ Locales.canonical()),
-    do: tmdb().recommended_movies(tmdb_id, locale)
+  def recommended_movies(tmdb_id, locale), do: tmdb().recommended_movies(tmdb_id, locale)
 
   @doc """
   Series recommendations for `tmdb_id` (`/tv/{id}/recommendations`), same shape as
   `popular_tv/1` — the "More like this" rail on a series detail page.
   """
-  def recommended_tv(tmdb_id, locale \\ Locales.canonical()),
-    do: tmdb().recommended_tv(tmdb_id, locale)
+  def recommended_tv(tmdb_id, locale), do: tmdb().recommended_tv(tmdb_id, locale)
 
   def search_person(query, locale \\ Locales.canonical()), do: tmdb().search_person(query, locale)
 
   def search_collection(query, locale \\ Locales.canonical()),
     do: tmdb().search_collection(query, locale)
 
-  def get_person(tmdb_id, locale \\ Locales.canonical()), do: tmdb().get_person(tmdb_id, locale)
+  def get_person(tmdb_id, locale), do: tmdb().get_person(tmdb_id, locale)
 
-  def get_collection(tmdb_id, locale \\ Locales.canonical()),
-    do: tmdb().get_collection(tmdb_id, locale)
+  def get_collection(tmdb_id, locale), do: tmdb().get_collection(tmdb_id, locale)
 
   @doc "Fetches series details (including seasons list) from TMDB by tmdb_id."
   def tmdb_series(tmdb_id), do: tmdb().get_series(tmdb_id)

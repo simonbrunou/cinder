@@ -20,7 +20,6 @@ defmodule Cinder.Catalog.Grabs do
     GrabFile,
     Identity,
     Movie,
-    ReleaseVerification,
     Season,
     Series
   }
@@ -335,16 +334,6 @@ defmodule Cinder.Catalog.Grabs do
     end
   end
 
-  @doc """
-  Releases a mapping hold: the operator has fixed the files on disk (e.g. renamed them), so this
-  flips the grab back to `:resolved` (resetting `download_attempts`, mirroring
-  `retry_grab_verification/1`) and lets the TV poller's next import tick run a fresh preflight
-  over the current files. A preflight that fails again simply re-holds with an updated reason —
-  there is no separate retry budget for the hold itself, since re-entry only happens on this
-  explicit operator action, never automatically.
-  """
-  defdelegate retry_grab_mapping(grab), to: ReleaseVerification
-
   defp broadcast_grab_series(grab) do
     # Post-commit side effect, best-effort: once the txn committed the grab is
     # real, and a blip here (a pool-checkout timeout on the series lookup) must
@@ -438,12 +427,6 @@ defmodule Cinder.Catalog.Grabs do
     :ok
   end
 
-  @doc "Atomically holds a downloaded resolved grab after its final verification attempt."
-  defdelegate hold_grab_verification(grab), to: ReleaseVerification
-
-  @doc "Atomically releases a verification hold and resets only its verification attempts."
-  defdelegate retry_grab_verification(grab), to: ReleaseVerification
-
   @doc """
   Aborts one grab as a user action. Its delete and durable cleanup fence commit together; remote
   cleanup runs afterward and retries from the fence on failure. Its episodes then re-enter the
@@ -492,12 +475,6 @@ defmodule Cinder.Catalog.Grabs do
 
   defp cancel_grab_query(id, :needs_mapping),
     do: from(g in Grab, where: g.id == ^id and g.mapping_status == :needs_mapping)
-
-  @doc """
-  Atomically rejects one confirmed episodic release, guarding the resolved grab and its exact
-  episode ownership before blocklisting, fencing cleanup, and deleting it.
-  """
-  defdelegate reject_grab_release(expected, evidence), to: ReleaseVerification
 
   @doc """
   Records `movie`'s current `release_title` as blocked for that movie, so release selection
