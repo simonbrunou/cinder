@@ -17,13 +17,9 @@ defmodule Cinder.Test.PermissivePathPolicy do
   def deletable_file(_path, _roots, _opts), do: :ok
   def deletable_source(_path, _roots, _opts), do: :ok
 
+  # Mirrors the real walk's shape: a directory lists its files, anything else is :enotdir.
   def walk(path, opts) do
     filesystem = Keyword.fetch!(opts, :filesystem)
-
-    if Keyword.get(opts, :source, false) do
-      if filesystem.dir?(path), do: filesystem.find_files(path), else: {:error, :enotdir}
-    else
-      filesystem.find_files(path)
-    end
+    if filesystem.dir?(path), do: filesystem.find_files(path), else: {:error, :enotdir}
   end
 end

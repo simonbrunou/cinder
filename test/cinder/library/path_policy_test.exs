@@ -9,6 +9,19 @@ defmodule Cinder.Library.PathPolicyTest do
   alias Cinder.Library.{ImportStage, PathPolicy}
   alias Cinder.Settings
 
+  # A synthetic filesystem with one directory holding more entries than the 100k
+  # traversal cap, so the entry limit trips without creating 100k real files.
+  defmodule EndlessFilesystem do
+    @moduledoc false
+
+    def lstat(path) do
+      type = if String.ends_with?(path, ".mkv"), do: :regular, else: :directory
+      {:ok, %File.Stat{type: type, size: 1, major_device: 0, inode: :erlang.phash2(path)}}
+    end
+
+    def ls(_dir), do: {:ok, Enum.map(1..100_001, &"file-#{&1}.mkv")}
+  end
+
   @tag :tmp_dir
   test "source_file accepts regular files and hardlinks inside an import root", %{tmp_dir: tmp} do
     root = Path.join(tmp, "downloads")
@@ -18,8 +31,8 @@ defmodule Cinder.Library.PathPolicyTest do
     File.write!(nested, "video")
     File.ln!(nested, hardlink)
 
-    assert {:ok, ^nested} = PathPolicy.source_file(nested, [root], [".mkv"])
-    assert {:ok, ^hardlink} = PathPolicy.source_file(hardlink, [root], [".mkv"])
+    assert {:ok, ^nested} = PathPolicy.source_file(nested, [root], [".mkv"], filesystem: File)
+    assert {:ok, ^hardlink} = PathPolicy.source_file(hardlink, [root], [".mkv"], filesystem: File)
   end
 
   @tag :tmp_dir
@@ -44,9 +57,14 @@ defmodule Cinder.Library.PathPolicyTest do
     File.ln_s!(database, leaf_link)
     File.ln_s!(outside, escaped)
 
-    assert {:error, :unsafe_source} = PathPolicy.source_file(leaf_link, [root], [".mkv"])
-    assert {:error, :unsafe_source} = PathPolicy.source_file(escaped_file, [root], [".mkv"])
-    assert {:error, :unsafe_source} = PathPolicy.source_file(sibling_file, [root], [".mkv"])
+    assert {:error, :unsafe_source} =
+             PathPolicy.source_file(leaf_link, [root], [".mkv"], filesystem: File)
+
+    assert {:error, :unsafe_source} =
+             PathPolicy.source_file(escaped_file, [root], [".mkv"], filesystem: File)
+
+    assert {:error, :unsafe_source} =
+             PathPolicy.source_file(sibling_file, [root], [".mkv"], filesystem: File)
   end
 
   @tag :tmp_dir
@@ -77,12 +95,15 @@ defmodule Cinder.Library.PathPolicyTest do
 
   @tag :tmp_dir
   test "walk enforces depth and entry limits", %{tmp_dir: tmp} do
+    # 65 nested directories — one past the 64-deep traversal cap.
     root = Path.join(tmp, "downloads")
-    File.mkdir_p!(Path.join(root, "one/two"))
-    File.write!(Path.join(root, "one/two/feature.mkv"), "video")
+    deep = Enum.reduce(1..65, root, fn _level, acc -> Path.join(acc, "d") end)
+    File.mkdir_p!(deep)
 
-    assert {:error, :traversal_limit} = PathPolicy.walk(root, max_depth: 1)
-    assert {:error, :traversal_limit} = PathPolicy.walk(root, max_entries: 1)
+    assert {:error, :traversal_limit} = PathPolicy.walk(root)
+
+    assert {:error, :traversal_limit} =
+             PathPolicy.walk("/downloads", filesystem: EndlessFilesystem)
   end
 
   @tag :tmp_dir
@@ -99,9 +120,11 @@ defmodule Cinder.Library.PathPolicyTest do
     escaped = Path.join(root, "escaped/Movie.mkv")
     sibling_path = Path.join(sibling, "Movie.mkv")
 
-    assert {:ok, ^safe} = PathPolicy.destination(safe, root)
-    assert {:error, :unsafe_destination} = PathPolicy.destination(escaped, root)
-    assert {:error, :unsafe_destination} = PathPolicy.destination(sibling_path, root)
+    assert {:ok, ^safe} = PathPolicy.destination(safe, root, filesystem: File)
+    assert {:error, :unsafe_destination} = PathPolicy.destination(escaped, root, filesystem: File)
+
+    assert {:error, :unsafe_destination} =
+             PathPolicy.destination(sibling_path, root, filesystem: File)
   end
 
   @tag :tmp_dir
@@ -119,9 +142,13 @@ defmodule Cinder.Library.PathPolicyTest do
     File.write!(outside, "database")
     File.ln_s!(outside, link)
 
-    assert :ok = PathPolicy.deletable_file(movie, [movie_root, tv_root])
-    assert {:error, :unsafe_delete} = PathPolicy.deletable_file(link, [movie_root, tv_root])
-    assert {:error, :unsafe_delete} = PathPolicy.deletable_file(outside, [movie_root, tv_root])
+    assert :ok = PathPolicy.deletable_file(movie, [movie_root, tv_root], filesystem: File)
+
+    assert {:error, :unsafe_delete} =
+             PathPolicy.deletable_file(link, [movie_root, tv_root], filesystem: File)
+
+    assert {:error, :unsafe_delete} =
+             PathPolicy.deletable_file(outside, [movie_root, tv_root], filesystem: File)
   end
 
   @tag :tmp_dir
@@ -139,11 +166,15 @@ defmodule Cinder.Library.PathPolicyTest do
     File.write!(outside, "database")
     File.ln_s!(outside, link)
 
-    assert :ok = PathPolicy.deletable_source(file, [downloads])
-    assert :ok = PathPolicy.deletable_source(dir, [downloads])
-    assert :ok = PathPolicy.deletable_source(missing, [downloads])
-    assert {:error, :unsafe_delete} = PathPolicy.deletable_source(link, [downloads])
-    assert {:error, :unsafe_delete} = PathPolicy.deletable_source(outside, [downloads])
+    assert :ok = PathPolicy.deletable_source(file, [downloads], filesystem: File)
+    assert :ok = PathPolicy.deletable_source(dir, [downloads], filesystem: File)
+    assert :ok = PathPolicy.deletable_source(missing, [downloads], filesystem: File)
+
+    assert {:error, :unsafe_delete} =
+             PathPolicy.deletable_source(link, [downloads], filesystem: File)
+
+    assert {:error, :unsafe_delete} =
+             PathPolicy.deletable_source(outside, [downloads], filesystem: File)
   end
 
   @tag :tmp_dir
@@ -152,15 +183,20 @@ defmodule Cinder.Library.PathPolicyTest do
     downloads = Path.join(tmp, "downloads")
     File.mkdir_p!(downloads)
 
-    assert {:error, :unsafe_delete} = PathPolicy.deletable_source(downloads, [downloads])
+    assert {:error, :unsafe_delete} =
+             PathPolicy.deletable_source(downloads, [downloads], filesystem: File)
+
     # Trailing-slash / unnormalized spellings of the same root are still the root.
-    assert {:error, :unsafe_delete} = PathPolicy.deletable_source(downloads <> "/", [downloads])
-    assert {:error, :unsafe_delete} = PathPolicy.deletable_source(downloads, [downloads <> "/"])
+    assert {:error, :unsafe_delete} =
+             PathPolicy.deletable_source(downloads <> "/", [downloads], filesystem: File)
+
+    assert {:error, :unsafe_delete} =
+             PathPolicy.deletable_source(downloads, [downloads <> "/"], filesystem: File)
 
     # Strictness only excludes the root itself, not its children.
     child = Path.join(downloads, "cinder-abc")
     File.mkdir_p!(child)
-    assert :ok = PathPolicy.deletable_source(child, [downloads])
+    assert :ok = PathPolicy.deletable_source(child, [downloads], filesystem: File)
   end
 
   test "Library defaults to the real policy when no test override is configured" do

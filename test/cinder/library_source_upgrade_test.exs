@@ -45,6 +45,9 @@ defmodule Cinder.LibrarySourceUpgradeTest do
 
     expect(Cinder.Library.FilesystemMock, :dir?, fn "/dl/grab" -> true end)
 
+    # sweep_temps' walk checks the dest dir is a directory before listing it.
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _dir -> true end)
+
     # The sidecar scan after the replaced file re-checks the source dir; fall through to "not a dir".
     stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
 
