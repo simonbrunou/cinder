@@ -17,7 +17,6 @@ defmodule Cinder.Application do
          repos: Application.fetch_env!(:cinder, :ecto_repos),
          skip: skip_migrations?(),
          migrator: &run_migrations/3},
-        {DNSCluster, query: Application.get_env(:cinder, :dns_cluster_query) || :ignore},
         {Phoenix.PubSub, name: Cinder.PubSub},
         # Owns cancellable outbound HTTP requests so wall-clock deadlines never link-crash callers.
         {Task.Supervisor, name: Cinder.HTTPPolicy.TaskSupervisor},
