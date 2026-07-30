@@ -18,27 +18,19 @@ re-add the `@`. Per-feature design and plan docs live under `docs/specs/`, `docs
 
 ## Stack
 
-- Elixir / Phoenix 1.8, LiveView (HEEx).
 - Ecto with `ecto_sqlite3` (single-household scale; not Postgres on purpose).
-- HTTP via `Req`.
 - UI via Tailwind + daisyUI (Phoenix 1.8 default). No React; shadcn does not apply here.
-- Tests via ExUnit + `Mox`. Static checks via `credo`.
 - Tidewave MCP is available in dev — prefer it (`project_eval`, `get_ecto_schemas`,
   `execute_sql_query`, `get_logs`) over guessing about the running app.
-- Licensed **GPL-3.0** (see `LICENSE`).
 
 ## Commands
 
 - `mix test` — the project alias; runs `compile --warnings-as-errors`,
   `format --check-formatted`, `credo --strict`, then the suite. This is the source of truth for
   "is it green." Every "Done when" block in the roadmap checks against it.
-- `mix phx.server` — run the app (dev).
-- `mix format` — format before committing.
 
 ## Architecture & conventions
 
-- Four contexts mirror the pipeline: `Cinder.Catalog` (discovery), `Cinder.Acquisition`
-  (release search/scoring), `Cinder.Download` (client + poller), `Cinder.Library` (import).
 - **External services are reached only through behaviours**: `Cinder.Catalog.TMDB`,
   `Cinder.Acquisition.Indexer`, `Cinder.Download.Client`, `Cinder.Library.MediaServer`. Never
   call TMDB / Prowlarr / qBittorrent / SABnzbd / Jellyfin / Plex directly from a context.
