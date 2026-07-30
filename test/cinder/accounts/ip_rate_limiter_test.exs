@@ -22,13 +22,11 @@ defmodule Cinder.Accounts.IpRateLimiterTest do
     :ok
   end
 
-  test "not blocked under the limit, blocked at the limit" do
-    refute IpRateLimiter.blocked?(:login, @ip)
+  test ":ok under the limit, :blocked past it" do
+    # @limit is 10 — the budget admits 10 attempts; the 11th is refused.
+    for _ <- 1..10, do: assert(IpRateLimiter.check_and_register(:login, @ip) == :ok)
 
-    # @limit is 10 — the 10th attempt trips the bucket.
-    for _ <- 1..10, do: IpRateLimiter.register_attempt(:login, @ip)
-
-    assert IpRateLimiter.blocked?(:login, @ip)
+    assert IpRateLimiter.check_and_register(:login, @ip) == :blocked
   end
 
   test "check_and_register is atomic under a concurrent burst (no bypass)" do
@@ -60,32 +58,44 @@ defmodule Cinder.Accounts.IpRateLimiterTest do
   end
 
   test "buckets are independent for the same IP" do
-    for _ <- 1..10, do: IpRateLimiter.register_attempt(:login, @ip)
+    exhaust(:login, @ip)
 
-    assert IpRateLimiter.blocked?(:login, @ip)
-    refute IpRateLimiter.blocked?(:registration, @ip)
+    assert IpRateLimiter.check_and_register(:login, @ip) == :blocked
+    assert IpRateLimiter.check_and_register(:registration, @ip) == :ok
   end
 
   test "different IPs have independent budgets" do
-    for _ <- 1..10, do: IpRateLimiter.register_attempt(:login, @ip)
+    exhaust(:login, @ip)
 
-    assert IpRateLimiter.blocked?(:login, @ip)
-    refute IpRateLimiter.blocked?(:login, "198.51.100.1")
+    assert IpRateLimiter.check_and_register(:login, @ip) == :blocked
+    assert IpRateLimiter.check_and_register(:login, "198.51.100.1") == :ok
   end
 
   test "clear/2 releases the bucket" do
-    for _ <- 1..10, do: IpRateLimiter.register_attempt(:login, @ip)
-    assert IpRateLimiter.blocked?(:login, @ip)
+    exhaust(:login, @ip)
+    assert IpRateLimiter.check_and_register(:login, @ip) == :blocked
 
     IpRateLimiter.clear(:login, @ip)
-    refute IpRateLimiter.blocked?(:login, @ip)
+    assert IpRateLimiter.check_and_register(:login, @ip) == :ok
   end
 
-  test "disabled flag makes it a no-op that never blocks" do
+  test "disabled flag makes the IP-only buckets a no-op that never blocks" do
     Application.put_env(:cinder, :ip_rate_limiting, false)
 
-    for _ <- 1..50, do: IpRateLimiter.register_attempt(:login, @ip)
+    for _ <- 1..50, do: assert(IpRateLimiter.check_and_register(:login, @ip) == :ok)
+  end
 
-    refute IpRateLimiter.blocked?(:login, @ip)
+  test "the :login_pair bucket ignores the disabled flag (per-bucket default: always on)" do
+    Application.put_env(:cinder, :ip_rate_limiting, false)
+    pair = {@ip, "victim@example.com"}
+
+    for _ <- 1..10, do: assert(IpRateLimiter.check_and_register(:login_pair, pair) == :ok)
+
+    assert IpRateLimiter.check_and_register(:login_pair, pair) == :blocked
+  end
+
+  # Fills the bucket's whole budget so the next attempt is the over-budget one.
+  defp exhaust(bucket, id) do
+    for _ <- 1..10, do: IpRateLimiter.check_and_register(bucket, id)
   end
 end

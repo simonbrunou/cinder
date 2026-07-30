@@ -79,7 +79,8 @@ config :cinder,
   # Off by default: every ConnCase/LiveViewTest request shares one test-harness peer
   # address, so an always-on global IP bucket (Cinder.Accounts.IpRateLimiter) would let
   # unrelated tests exhaust each other's budget. Tests for the limiter itself flip this on
-  # locally and restore it in on_exit.
+  # locally and restore it in on_exit. The {ip, email} :login_pair bucket ignores the flag
+  # (its keys carry the email, so tests never collide).
   ip_rate_limiting: false,
   # Run notifier transports inline (not off-process) so capture_log / assert_email_sent
   # see the delivery synchronously. Prod/dev default to :async.

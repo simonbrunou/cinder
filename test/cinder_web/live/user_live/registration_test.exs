@@ -56,8 +56,8 @@ defmodule CinderWeb.UserLive.RegistrationTest do
 
       {:ok, lv, _html} = live(conn, ~p"/users/register")
 
-      # 10 submissions exhaust the per-IP :registration budget (register_attempt runs before
-      # register/3, so the outcome of each save doesn't matter — the counter still climbs).
+      # 10 submissions exhaust the per-IP :registration budget (check_and_register runs
+      # before register/3, so the outcome of each save doesn't matter — the counter climbs).
       for _ <- 1..10 do
         render_hook(lv, "save", %{"user" => registration_params(unique_user_email())})
       end
