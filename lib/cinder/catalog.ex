@@ -58,33 +58,17 @@ defmodule Cinder.Catalog do
   defdelegate search_tv(query, locale), to: Discovery
   defdelegate search_discover(query), to: Discovery
   defdelegate search_discover(query, locale), to: Discovery
-  defdelegate trending(), to: Discovery
   defdelegate trending(locale), to: Discovery
-  defdelegate popular_movies(), to: Discovery
   defdelegate popular_movies(locale), to: Discovery
-  defdelegate top_rated_movies(), to: Discovery
   defdelegate top_rated_movies(locale), to: Discovery
-  defdelegate now_playing_movies(), to: Discovery
   defdelegate now_playing_movies(locale), to: Discovery
-  defdelegate popular_tv(), to: Discovery
   defdelegate popular_tv(locale), to: Discovery
-  defdelegate top_rated_tv(), to: Discovery
   defdelegate top_rated_tv(locale), to: Discovery
-  defdelegate movies_by_genre(genre_id), to: Discovery
   defdelegate movies_by_genre(genre_id, locale), to: Discovery
-  defdelegate tv_by_genre(genre_id), to: Discovery
   defdelegate tv_by_genre(genre_id, locale), to: Discovery
-  defdelegate recommended_movies(tmdb_id), to: Discovery
   defdelegate recommended_movies(tmdb_id, locale), to: Discovery
-  defdelegate recommended_tv(tmdb_id), to: Discovery
   defdelegate recommended_tv(tmdb_id, locale), to: Discovery
-  defdelegate search_person(query), to: Discovery
-  defdelegate search_person(query, locale), to: Discovery
-  defdelegate search_collection(query), to: Discovery
-  defdelegate search_collection(query, locale), to: Discovery
-  defdelegate get_person(tmdb_id), to: Discovery
   defdelegate get_person(tmdb_id, locale), to: Discovery
-  defdelegate get_collection(tmdb_id), to: Discovery
   defdelegate get_collection(tmdb_id, locale), to: Discovery
   defdelegate tmdb_series(tmdb_id), to: Discovery
   defdelegate localized_title(media, locale), to: Discovery
@@ -264,9 +248,6 @@ defmodule Cinder.Catalog do
 
   @doc "Episodes with an imported file, season+series+scene-coordinates preloaded (subtitle-fetch candidates)."
   defdelegate list_episodes_with_file(), to: SeriesCatalog
-
-  @doc false
-  def get_episode_by_id(id), do: Repo.get(Episode, id)
 
   # --- pipeline state matrix -----------------------------------------------------------------
   #
@@ -1350,11 +1331,26 @@ defmodule Cinder.Catalog do
   defdelegate create_grab(download_id, protocol, episode_ids, release_title, opts), to: Grabs
   defdelegate create_grab_from_intent(intent), to: Grabs
   defdelegate record_mapping_result(grab, preflight_result), to: Grabs
-  defdelegate retry_grab_mapping(grab), to: Grabs
+
+  @doc """
+  Releases a mapping hold: the operator has fixed the files on disk (e.g. renamed them), so this
+  flips the grab back to `:resolved` (resetting `download_attempts`, mirroring
+  `retry_grab_verification/1`) and lets the TV poller's next import tick run a fresh preflight
+  over the current files. A preflight that fails again simply re-holds with an updated reason —
+  there is no separate retry budget for the hold itself, since re-entry only happens on this
+  explicit operator action, never automatically.
+  """
+  defdelegate retry_grab_mapping(grab), to: ReleaseVerification
+
   defdelegate mark_grab_downloaded(grab, content_path), to: Grabs
   defdelegate increment_grab_attempts(grab), to: Grabs
-  defdelegate hold_grab_verification(grab), to: Grabs
-  defdelegate retry_grab_verification(grab), to: Grabs
+
+  @doc "Atomically holds a downloaded resolved grab after its final verification attempt."
+  defdelegate hold_grab_verification(grab), to: ReleaseVerification
+
+  @doc "Atomically releases a verification hold and resets only its verification attempts."
+  defdelegate retry_grab_verification(grab), to: ReleaseVerification
+
   defdelegate cancel_grab(grab), to: Grabs
   defdelegate cancel_mapping_grab(grab), to: Grabs
 
@@ -1387,7 +1383,7 @@ defmodule Cinder.Catalog do
   Atomically rejects one confirmed episodic release, guarding the resolved grab and its exact
   episode ownership before blocklisting, fencing cleanup, and deleting it.
   """
-  defdelegate reject_grab_release(expected, evidence), to: Grabs
+  defdelegate reject_grab_release(expected, evidence), to: ReleaseVerification
 
   defdelegate block_release(movie, reason), to: Grabs
   defdelegate block_release_and_confirm(movie, reason), to: Grabs
@@ -1416,7 +1412,6 @@ defmodule Cinder.Catalog do
   defdelegate search_episode_now(episode), to: SeriesCatalog
   defdelegate search_season_now(season), to: SeriesCatalog
   defdelegate episode_searchable?(episode, profile), to: SeriesCatalog
-  defdelegate episode_searchable?(episode, profile, today), to: SeriesCatalog
   defdelegate upcoming_episodes(), to: SeriesCatalog
   defdelegate refresh_series(series), to: SeriesRefresh
   defdelegate finish_grab(grab), to: Grabs
