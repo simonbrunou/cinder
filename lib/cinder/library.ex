@@ -1467,7 +1467,7 @@ defmodule Cinder.Library do
   defp safe_walk(path) do
     case Settings.import_roots() do
       [] -> {:error, :download_roots_not_configured}
-      roots -> path_policy().walk(path, roots: roots, filesystem: fs(), source: true)
+      roots -> path_policy().walk(path, roots: roots, filesystem: fs())
     end
   end
 

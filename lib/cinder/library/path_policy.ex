@@ -9,12 +9,8 @@ defmodule Cinder.Library.PathPolicy do
   @max_depth 64
   @max_entries 100_000
 
-  @spec source_file(String.t(), [String.t()], [String.t()]) ::
+  @spec source_file(String.t(), [String.t()], [String.t()], keyword()) ::
           {:ok, String.t()} | {:error, :unsafe_source}
-  def source_file(path, roots, extensions),
-    do: source_file(path, roots, extensions, filesystem: File)
-
-  @doc false
   def source_file(path, roots, extensions, opts) do
     filesystem = Keyword.fetch!(opts, :filesystem)
     expanded = Path.expand(path)
@@ -30,11 +26,8 @@ defmodule Cinder.Library.PathPolicy do
     end
   end
 
-  @spec destination(String.t(), String.t() | [String.t()]) ::
+  @spec destination(String.t(), String.t() | [String.t()], keyword()) ::
           {:ok, String.t()} | {:error, :unsafe_destination}
-  def destination(path, root), do: destination(path, root, filesystem: File)
-
-  @doc false
   def destination(path, roots, opts) when is_list(roots) do
     Enum.find_value(roots, {:error, :unsafe_destination}, fn root ->
       case destination(path, root, opts) do
@@ -62,8 +55,6 @@ defmodule Cinder.Library.PathPolicy do
   def walk(root, opts \\ []) do
     filesystem = Keyword.get(opts, :filesystem, File)
     roots = Keyword.get(opts, :roots)
-    max_depth = Keyword.get(opts, :max_depth, @max_depth)
-    max_entries = Keyword.get(opts, :max_entries, @max_entries)
     root = Path.expand(root)
 
     with true <- is_nil(roots) or under_any_root?(root, roots),
@@ -72,7 +63,7 @@ defmodule Cinder.Library.PathPolicy do
          {:ok, {files, _visited, _count}} <-
            walk_dir(
              root,
-             {filesystem, max_depth, max_entries},
+             {filesystem, @max_depth, @max_entries},
              0,
              {[], MapSet.new([identity(stat)]), 0}
            ) do
@@ -85,10 +76,7 @@ defmodule Cinder.Library.PathPolicy do
     end
   end
 
-  @spec deletable_file(String.t(), [String.t()]) :: :ok | {:error, :unsafe_delete}
-  def deletable_file(path, roots), do: deletable_file(path, roots, filesystem: File)
-
-  @doc false
+  @spec deletable_file(String.t(), [String.t()], keyword()) :: :ok | {:error, :unsafe_delete}
   def deletable_file(path, roots, opts), do: deletable(path, roots, opts, [:regular], false)
 
   @doc """
@@ -99,10 +87,7 @@ defmodule Cinder.Library.PathPolicy do
   wipe every other download), only entries strictly inside a root pass. Still fails closed on
   anything else and on a symlink anywhere in the path.
   """
-  @spec deletable_source(String.t(), [String.t()]) :: :ok | {:error, :unsafe_delete}
-  def deletable_source(path, roots), do: deletable_source(path, roots, filesystem: File)
-
-  @doc false
+  @spec deletable_source(String.t(), [String.t()], keyword()) :: :ok | {:error, :unsafe_delete}
   def deletable_source(path, roots, opts),
     do: deletable(path, roots, opts, [:regular, :directory], true)
 
