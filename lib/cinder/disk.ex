@@ -3,10 +3,9 @@ defmodule Cinder.Disk do
   Free/total disk-space gauge for a filesystem path. Backs the periodic `[:cinder, :disk]`
   telemetry measurement (`CinderWeb.Telemetry`) and the `/dashboard` disk cards.
 
-  Shells out to `df -kP <path>` rather than adding a library dependency for something this
-  small: `-P` (POSIX output format) guarantees one line per filesystem with no line-wrapping
-  on a long device name, and `-k` fixes the block size to 1024 bytes, so the same parsing
-  works on both the Linux container and macOS dev.
+  Reads `:disksup.get_disk_info/1` (OTP `os_mon`, listed in `extra_applications`) rather than
+  shelling out and parsing `df` by hand. `:disksup` reports KiB — the same 1024-byte units the
+  previous `df -kP` parser read — so callers see identical byte values.
   """
 
   @behaviour Cinder.Disk.Prober
@@ -26,21 +25,32 @@ defmodule Cinder.Disk do
 
   @doc """
   Reads free/total bytes for `path`. Returns `{:error, :enoent}` when `path` isn't a
-  directory, `{:error, reason}` when `df` fails or its output can't be parsed, and never
-  raises. `runner` (default: a real `df` invocation) is an injection seam for tests — an
-  arity-0 function returning the `{output, exit_status}` pair `System.cmd/3` would.
+  directory, `{:error, :unreadable}` when `:disksup` can't read the disk, and never raises.
   """
-  @spec stats(String.t(), (-> {String.t(), non_neg_integer()}) | nil) ::
-          {:ok, stats()} | {:error, term()}
-  def stats(path, runner \\ nil) when is_binary(path) do
+  @spec stats(String.t()) :: {:ok, stats()} | {:error, term()}
+  def stats(path) when is_binary(path) do
     if File.dir?(path) do
-      (runner || default_runner(path)) |> safe_run() |> parse()
+      disk_info(path)
     else
       {:error, :enoent}
     end
   end
 
-  defp default_runner(path), do: fn -> System.cmd("df", ["-kP", path], stderr_to_stdout: true) end
+  # `:disksup.get_disk_info/1` reports `[{id, total_kib, available_kib, capacity}]` in KiB —
+  # the same 1024-byte blocks the old `df -kP` parser read. A path it can't read (or an
+  # os_mon that isn't running) comes back zeroed rather than as an error, so an all-zero row
+  # maps to `{:error, :unreadable}` — the space guards fail open on any error.
+  defp disk_info(path) do
+    case :disksup.get_disk_info(String.to_charlist(path)) do
+      [{_id, total_kib, avail_kib, _capacity}] when total_kib > 0 ->
+        {:ok, %{free_bytes: avail_kib * 1024, total_bytes: total_kib * 1024}}
+
+      _zeroed_or_unexpected ->
+        {:error, :unreadable}
+    end
+  catch
+    kind, reason -> {:error, {kind, reason}}
+  end
 
   @doc """
   Whether a download of `size_bytes` can be placed on a configured download root with
@@ -138,7 +148,7 @@ defmodule Cinder.Disk do
 
   @doc """
   Free bytes on the database volume, read through the `:disk_prober` seam (so a fast health probe
-  never shells out under test). `{:error, reason}` when the path is unknown or unreadable — a
+  never touches the real disks under test). `{:error, reason}` when the path is unknown or unreadable — a
   caller must fail OPEN on error, never treating a probe glitch as a low-space verdict.
   """
   @spec db_free_bytes() :: {:ok, non_neg_integer()} | {:error, term()}
@@ -165,41 +175,6 @@ defmodule Cinder.Disk do
   def check_all do
     for {kind, path} <- monitored_roots() do
       %{kind: kind, path: path, status: stats(path)}
-    end
-  end
-
-  defp safe_run(runner) do
-    runner.()
-  rescue
-    e -> {:error, e}
-  catch
-    kind, reason -> {:error, {kind, reason}}
-  end
-
-  defp parse({:error, _} = error), do: error
-  defp parse({_output, status}) when status != 0, do: {:error, :df_failed}
-
-  defp parse({output, 0}) do
-    output
-    |> String.split("\n", trim: true)
-    |> case do
-      [_header, data | _rest] -> parse_line(data)
-      _ -> {:error, :unparsable}
-    end
-  end
-
-  defp parse_line(line) do
-    case String.split(line) do
-      [_filesystem, total_kb, _used_kb, avail_kb | _rest] ->
-        with {total, ""} <- Integer.parse(total_kb),
-             {avail, ""} <- Integer.parse(avail_kb) do
-          {:ok, %{free_bytes: avail * 1024, total_bytes: total * 1024}}
-        else
-          _ -> {:error, :unparsable}
-        end
-
-      _ ->
-        {:error, :unparsable}
     end
   end
 end
