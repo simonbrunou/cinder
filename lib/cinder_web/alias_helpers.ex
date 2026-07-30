@@ -2,11 +2,13 @@ defmodule CinderWeb.AliasHelpers do
   @moduledoc """
   The manual title-alias CRUD shared verbatim by the movie and series detail
   LiveViews (#211): the `save_alias` / `edit_alias` / `cancel_alias_edit` /
-  `delete_alias` event bodies plus the alias form and kind-label plumbing.
-  Every function takes the owning struct (`%Movie{}` or `%Series{}`); the
-  event helpers return the `{:noreply, socket}` the view's `handle_event/3`
-  hands back unchanged. `refresh` is the view's own `refresh_identity/2`, so
-  a successful write re-renders through the view's normal reload path.
+  `delete_alias` event bodies plus the alias form and kind-label plumbing
+  (the kind options/labels are also imported by `SeriesDetailComponents`).
+  `save_alias` / `edit_alias` / `delete_alias` take the owning struct
+  (`%Movie{}` or `%Series{}`); each event helper returns the
+  `{:noreply, socket}` the view's `handle_event/3` hands back unchanged.
+  `refresh` is the view's own `refresh_identity/2`, so a successful write
+  re-renders through the view's normal reload path.
   """
   use Gettext, backend: CinderWeb.Gettext
 

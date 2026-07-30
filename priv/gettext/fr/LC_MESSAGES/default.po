@@ -2529,13 +2529,13 @@ msgstr "Type d’alias"
 msgid "Alias title"
 msgstr "Titre de l’alias"
 
-#: lib/cinder_web/alias_helpers.ex:91
-#: lib/cinder_web/alias_helpers.ex:99
+#: lib/cinder_web/alias_helpers.ex:93
+#: lib/cinder_web/alias_helpers.ex:101
 #, elixir-autogen, elixir-format
 msgid "Alternative"
 msgstr "Alternatif"
 
-#: lib/cinder_web/alias_helpers.ex:36
+#: lib/cinder_web/alias_helpers.ex:38
 #, elixir-autogen, elixir-format
 msgid "Couldn't save the alias."
 msgstr "Impossible d’enregistrer l’alias."
@@ -2580,14 +2580,14 @@ msgstr "animation japonaise"
 msgid "Language (optional)"
 msgstr "Langue (facultatif)"
 
-#: lib/cinder_web/alias_helpers.ex:94
-#: lib/cinder_web/alias_helpers.ex:102
+#: lib/cinder_web/alias_helpers.ex:96
+#: lib/cinder_web/alias_helpers.ex:104
 #, elixir-autogen, elixir-format
 msgid "Licensed"
 msgstr "Sous licence"
 
-#: lib/cinder_web/alias_helpers.ex:92
-#: lib/cinder_web/alias_helpers.ex:100
+#: lib/cinder_web/alias_helpers.ex:94
+#: lib/cinder_web/alias_helpers.ex:102
 #, elixir-autogen, elixir-format
 msgid "Native"
 msgstr "Natif"
@@ -2608,8 +2608,8 @@ msgstr "Récapitulatif"
 msgid "Regular"
 msgstr "Standard"
 
-#: lib/cinder_web/alias_helpers.ex:93
-#: lib/cinder_web/alias_helpers.ex:101
+#: lib/cinder_web/alias_helpers.ex:95
+#: lib/cinder_web/alias_helpers.ex:103
 #, elixir-autogen, elixir-format
 msgid "Romaji"
 msgstr "Rōmaji"
@@ -2620,8 +2620,8 @@ msgstr "Rōmaji"
 msgid "Save alias"
 msgstr "Enregistrer l’alias"
 
-#: lib/cinder_web/alias_helpers.ex:95
-#: lib/cinder_web/alias_helpers.ex:103
+#: lib/cinder_web/alias_helpers.ex:97
+#: lib/cinder_web/alias_helpers.ex:105
 #, elixir-autogen, elixir-format
 msgid "Scene"
 msgstr "Scène"
