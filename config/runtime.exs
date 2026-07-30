@@ -186,8 +186,6 @@ if config_env() == :prod do
   # secret_key_base + signing salts are resolved above for every environment.
   host = System.get_env("PHX_HOST") || "localhost"
 
-  config :cinder, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
-
   config :cinder, CinderWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
     http: [
