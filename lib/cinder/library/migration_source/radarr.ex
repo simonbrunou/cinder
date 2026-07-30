@@ -9,6 +9,7 @@ defmodule Cinder.Library.MigrationSource.Radarr do
 
   alias Cinder.Download.PathMapping
   alias Cinder.HTTPPolicy
+  alias Cinder.Util
 
   @max_response_bytes 8 * 1024 * 1024
 
@@ -73,12 +74,12 @@ defmodule Cinder.Library.MigrationSource.Radarr do
   defp normalize_movie(%{"id" => provider_id} = raw, config)
        when is_integer(provider_id) and provider_id > 0 do
     movie_file = Map.get(raw, "movieFile")
-    file_id = positive_integer(raw["movieFileId"]) || nested_id(movie_file)
+    file_id = Util.positive_integer(raw["movieFileId"]) || nested_id(movie_file)
 
     movie = %{
       provider_id: provider_id,
-      tmdb_id: positive_integer(raw["tmdbId"]),
-      imdb_id: nonblank(raw["imdbId"]),
+      tmdb_id: Util.positive_integer(raw["tmdbId"]),
+      imdb_id: Util.trim_to_nil(raw["imdbId"]),
       file_id: file_id
     }
 
@@ -105,8 +106,8 @@ defmodule Cinder.Library.MigrationSource.Radarr do
   defp normalize_file(_file, _movie, _file_id, _config), do: nil
 
   defp file_path(file, movie) do
-    nonblank(file["path"]) ||
-      join_path(nonblank(movie["path"]), nonblank(file["relativePath"]))
+    Util.trim_to_nil(file["path"]) ||
+      join_path(Util.trim_to_nil(movie["path"]), Util.trim_to_nil(file["relativePath"]))
   end
 
   defp join_path(root, relative) when is_binary(root) and is_binary(relative),
@@ -114,7 +115,7 @@ defmodule Cinder.Library.MigrationSource.Radarr do
 
   defp join_path(_root, _relative), do: nil
 
-  defp nested_id(%{"id" => id}), do: positive_integer(id)
+  defp nested_id(%{"id" => id}), do: Util.positive_integer(id)
   defp nested_id(_file), do: nil
 
   defp translate(path, config) do
@@ -131,7 +132,7 @@ defmodule Cinder.Library.MigrationSource.Radarr do
   defp configured do
     config = Application.get_env(:cinder, __MODULE__, [])
 
-    if nonblank(config[:base_url]) && nonblank(config[:api_key]),
+    if Util.trim_to_nil(config[:base_url]) && Util.trim_to_nil(config[:api_key]),
       do: {:ok, config},
       else: {:error, :not_configured}
   end
@@ -151,16 +152,4 @@ defmodule Cinder.Library.MigrationSource.Radarr do
     |> Req.new()
     |> HTTPPolicy.bounded_request(@max_response_bytes)
   end
-
-  defp positive_integer(value) when is_integer(value) and value > 0, do: value
-  defp positive_integer(_value), do: nil
-
-  defp nonblank(value) when is_binary(value) do
-    case String.trim(value) do
-      "" -> nil
-      trimmed -> trimmed
-    end
-  end
-
-  defp nonblank(_value), do: nil
 end

@@ -222,7 +222,7 @@ defmodule Cinder.Acquisition.Anime do
 
     case resolve_values(values, context.mappings, []) do
       {:ok, evidence} ->
-        episode_ids = evidence |> Enum.flat_map(& &1.episode_ids) |> ordered_uniq()
+        episode_ids = evidence |> Enum.flat_map(& &1.episode_ids) |> Enum.uniq()
 
         if MapSet.subset?(MapSet.new(episode_ids), MapSet.new(wanted_ids)) do
           [
@@ -298,17 +298,6 @@ defmodule Cinder.Acquisition.Anime do
       precedence: mapping.precedence,
       evidence: mapping.evidence
     }
-  end
-
-  defp ordered_uniq(values) do
-    {values, _seen} =
-      Enum.reduce(values, {[], MapSet.new()}, fn value, {ordered, seen} ->
-        if MapSet.member?(seen, value),
-          do: {ordered, seen},
-          else: {ordered ++ [value], MapSet.put(seen, value)}
-      end)
-
-    values
   end
 
   defp select_immediately([], _context, _wanted_ids, _opts), do: :no_match

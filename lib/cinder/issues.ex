@@ -17,6 +17,7 @@ defmodule Cinder.Issues do
   alias Cinder.Issues.IssueReport
   alias Cinder.Notifier
   alias Cinder.Repo
+  alias Cinder.Util
 
   @topic "issues"
 
@@ -81,7 +82,7 @@ defmodule Cinder.Issues do
     })
     |> then(&IssueReport.create_changeset(%IssueReport{}, &1))
     |> Repo.insert()
-    |> tap_ok(fn report ->
+    |> Util.tap_ok(fn report ->
       # `user` is already in scope, so attributing the event needs no preload.
       report = %{report | user: user}
       broadcast({:issue_reported, report})
@@ -174,11 +175,4 @@ defmodule Cinder.Issues do
   defp iso(nil), do: nil
   defp iso(%DateTime{} = dt), do: DateTime.to_iso8601(dt)
   defp iso(%NaiveDateTime{} = dt), do: NaiveDateTime.to_iso8601(dt)
-
-  defp tap_ok({:ok, value} = res, fun) do
-    fun.(value)
-    res
-  end
-
-  defp tap_ok(other, _fun), do: other
 end

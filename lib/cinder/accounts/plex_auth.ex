@@ -6,6 +6,8 @@ defmodule Cinder.Accounts.PlexAuth do
   `Cinder.Accounts.PlexAuth.HTTP`.
   """
 
+  alias Cinder.Util
+
   @callback create_pin() :: {:ok, %{id: integer(), code: String.t()}} | {:error, term()}
   @callback check_pin(integer()) :: {:ok, String.t()} | {:error, :pending | term()}
   @callback account(String.t()) ::
@@ -17,10 +19,8 @@ defmodule Cinder.Accounts.PlexAuth do
   @doc "True when a Plex media server is configured (non-blank `:url` and `:token`)."
   def configured? do
     config = Application.get_env(:cinder, Cinder.Library.MediaServer.Plex, [])
-    present?(config[:url]) and present?(config[:token])
+    Util.present?(config[:url]) and Util.present?(config[:token])
   end
-
-  defp present?(value), do: is_binary(value) and String.trim(value) != ""
 
   @doc "Builds the `app.plex.tv/auth#?...` URL the browser is redirected to to link a PIN."
   def auth_url(code, forward_url) do

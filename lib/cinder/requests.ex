@@ -9,6 +9,7 @@ defmodule Cinder.Requests do
   alias Cinder.Repo
   alias Cinder.Requests.Request
   alias Cinder.Settings
+  alias Cinder.Util
 
   @topic "requests"
 
@@ -165,7 +166,7 @@ defmodule Cinder.Requests do
         {:error, changeset} -> Repo.rollback(changeset)
       end
     end)
-    |> tap_ok(fn request ->
+    |> Util.tap_ok(fn request ->
       broadcast({:request_created, request})
       # Only this path notifies. The other two {:request_created, _} broadcasts (an approval
       # revert and reopen_request/2) are admin-initiated, so telling the admin "someone is
@@ -204,7 +205,7 @@ defmodule Cinder.Requests do
     with {:ok, prepared} <-
            Catalog.prepare_requested_movie(movie_attrs(request, media_profile: profile)) do
       approve_prepared_movie(request, admin, prepared)
-      |> tap_ok(&announce_approved/1)
+      |> Util.tap_ok(&announce_approved/1)
     end
   end
 
@@ -265,7 +266,7 @@ defmodule Cinder.Requests do
   def deny_request(%Request{status: :pending} = request, %User{} = admin, reason) do
     request
     |> flip_pending(%{status: :denied, denial_reason: reason, approved_by_id: admin.id})
-    |> tap_ok(&announce_denied(&1, reason))
+    |> Util.tap_ok(&announce_denied(&1, reason))
   end
 
   def deny_request(%Request{}, _admin, _reason), do: {:error, :not_pending}
@@ -304,7 +305,7 @@ defmodule Cinder.Requests do
     request
     |> Request.status_changeset(%{status: :pending, denial_reason: nil, approved_by_id: nil})
     |> Repo.update()
-    |> tap_ok(&broadcast({:request_created, &1}))
+    |> Util.tap_ok(&broadcast({:request_created, &1}))
   end
 
   def reopen_request(%Request{}, _admin), do: {:error, :not_denied}
@@ -341,7 +342,7 @@ defmodule Cinder.Requests do
           Repo.rollback(:not_found)
       end
     end)
-    |> tap_ok(&broadcast({:request_deleted, &1}))
+    |> Util.tap_ok(&broadcast({:request_deleted, &1}))
   end
 
   @doc """
@@ -367,7 +368,7 @@ defmodule Cinder.Requests do
       {1, [fresh]} -> {:ok, fresh}
       {0, _} -> {:error, :not_pending}
     end
-    |> tap_ok(&broadcast({:request_deleted, &1}))
+    |> Util.tap_ok(&broadcast({:request_deleted, &1}))
   end
 
   @doc """
@@ -416,7 +417,7 @@ defmodule Cinder.Requests do
     with {:ok, prepared} <-
            Catalog.prepare_requested_movie(movie_attrs(attrs, media_profile: profile)) do
       insert_approved_movie(user, attrs, approver_id, prepared)
-      |> tap_ok(&announce_approved/1)
+      |> Util.tap_ok(&announce_approved/1)
     end
   end
 
@@ -572,11 +573,4 @@ defmodule Cinder.Requests do
       :anime
     ]
   end
-
-  defp tap_ok({:ok, value} = res, fun) do
-    fun.(value)
-    res
-  end
-
-  defp tap_ok(other, _fun), do: other
 end

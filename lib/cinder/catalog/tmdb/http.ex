@@ -11,6 +11,7 @@ defmodule Cinder.Catalog.TMDB.HTTP do
 
   alias Cinder.HTTPPolicy
   alias Cinder.Locales
+  alias Cinder.Util
 
   @default_base_url "https://api.themoviedb.org"
   @max_response_bytes 4 * 1024 * 1024
@@ -691,7 +692,7 @@ defmodule Cinder.Catalog.TMDB.HTTP do
           translation_field(preferred, candidates, ["title", "name"]),
           translation_field(preferred, candidates, ["overview"])
         },
-        present?(title) or present?(overview) do
+        Util.present?(title) or Util.present?(overview) do
       {lang, %{"title" => title, "overview" => overview}}
     end
     |> Map.new()
@@ -708,10 +709,7 @@ defmodule Cinder.Catalog.TMDB.HTTP do
 
   defp translation_value(_, _), do: nil
 
-  defp present_value(value), do: if(present?(value), do: value)
-
-  defp present?(value) when is_binary(value), do: String.trim(value) != ""
-  defp present?(_), do: false
+  defp present_value(value), do: if(Util.present?(value), do: value)
 
   # TMDB genres are `[%{"id" => _, "name" => _}]` on the details endpoints; keep the names only.
   # Search endpoints send `genre_ids` (no names) — so a search body yields `[]` here.

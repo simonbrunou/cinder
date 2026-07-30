@@ -11,6 +11,7 @@ defmodule Cinder.Accounts do
   alias Cinder.Audit.AdminAudit
   alias Cinder.Notifier
   alias Cinder.Settings
+  alias Cinder.Util
 
   @topic "accounts"
 
@@ -281,7 +282,7 @@ defmodule Cinder.Accounts do
           Repo.rollback(:not_pending)
       end
     end)
-    |> tap_ok(fn user ->
+    |> Util.tap_ok(fn user ->
       broadcast({:account_activated, user})
       Notifier.notify({:account_activated, user})
     end)
@@ -707,11 +708,4 @@ defmodule Cinder.Accounts do
     Repo.delete_all(from t in UserToken, where: t.id in ^Enum.map(tokens, & &1.id))
     :ok
   end
-
-  defp tap_ok({:ok, value} = res, fun) do
-    fun.(value)
-    res
-  end
-
-  defp tap_ok(other, _fun), do: other
 end

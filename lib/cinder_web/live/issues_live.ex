@@ -10,6 +10,7 @@ defmodule CinderWeb.IssuesLive do
   import CinderWeb.LiveHelpers, only: [find_by_id: 2, relative_time: 1]
 
   alias Cinder.Issues
+  alias Cinder.Util
 
   @impl true
   def mount(_params, _session, socket) do
@@ -89,7 +90,7 @@ defmodule CinderWeb.IssuesLive do
               <span class="font-semibold break-words">{report_title(r)}</span>
               <span class="block truncate text-sm opacity-70">{r.user.email}</span>
               <span class="mt-1 badge badge-sm badge-outline">{category_label(r.category)}</span>
-              <p :if={present?(r.detail)} class="mt-2 max-w-prose text-sm break-words">
+              <p :if={Util.present?(r.detail)} class="mt-2 max-w-prose text-sm break-words">
                 {r.detail}
               </p>
               <p class="mt-1 text-xs text-base-content/60">
@@ -128,6 +129,4 @@ defmodule CinderWeb.IssuesLive do
     </Layouts.app>
     """
   end
-
-  defp present?(value), do: is_binary(value) and String.trim(value) != ""
 end
