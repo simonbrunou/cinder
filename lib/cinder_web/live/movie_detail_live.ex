@@ -10,6 +10,9 @@ defmodule CinderWeb.MovieDetailLive do
   """
   use CinderWeb, :live_view
 
+  import CinderWeb.AliasHelpers,
+    only: [alias_form: 0, alias_kind_options: 0, alias_kind_label: 1]
+
   import CinderWeb.LiveHelpers,
     only: [
       format_date_year: 1,
@@ -23,6 +26,7 @@ defmodule CinderWeb.MovieDetailLive do
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog
   alias Cinder.Catalog.Movie
+  alias CinderWeb.AliasHelpers
 
   @parked [:no_match, :search_failed, :import_failed]
   @picks Language.preferences()
@@ -184,53 +188,17 @@ defmodule CinderWeb.MovieDetailLive do
   end
 
   def handle_event("save_alias", %{"alias" => params}, socket) when is_map(params) do
-    result =
-      case params["id"] do
-        id when id in [nil, ""] -> Catalog.save_manual_alias(socket.assigns.movie, params)
-        id -> update_current_alias(socket.assigns.movie, parse_alias_id(id), params)
-      end
-
-    case result do
-      {:ok, _} ->
-        {:noreply,
-         socket
-         |> assign(:alias_form, alias_form())
-         |> refresh_identity(socket.assigns.movie)}
-
-      {:error, %Ecto.Changeset{}} ->
-        {:noreply,
-         socket
-         |> assign(:alias_form, alias_form(params))
-         |> put_flash(:error, gettext("Couldn't save the alias."))}
-
-      _ ->
-        {:noreply, socket}
-    end
+    AliasHelpers.save_alias(socket, socket.assigns.movie, params, &refresh_identity/2)
   end
 
-  def handle_event("edit_alias", %{"id" => id}, socket) do
-    with id when not is_nil(id) <- parse_alias_id(id),
-         alias_record when not is_nil(alias_record) <-
-           current_manual_alias(socket.assigns.movie, id) do
-      {:noreply, assign(socket, :alias_form, alias_form(alias_record))}
-    else
-      _ -> {:noreply, socket}
-    end
-  end
+  def handle_event("edit_alias", %{"id" => id}, socket),
+    do: AliasHelpers.edit_alias(socket, socket.assigns.movie, id)
 
   def handle_event("cancel_alias_edit", _params, socket),
-    do: {:noreply, assign(socket, :alias_form, alias_form())}
+    do: AliasHelpers.cancel_alias_edit(socket)
 
-  def handle_event("delete_alias", %{"id" => id}, socket) do
-    with id when not is_nil(id) <- parse_alias_id(id),
-         alias_record when not is_nil(alias_record) <-
-           current_manual_alias(socket.assigns.movie, id),
-         {:ok, _} <- Catalog.delete_manual_alias(socket.assigns.movie, alias_record.id) do
-      {:noreply, refresh_identity(socket, socket.assigns.movie)}
-    else
-      _ -> {:noreply, socket}
-    end
-  end
+  def handle_event("delete_alias", %{"id" => id}, socket),
+    do: AliasHelpers.delete_alias(socket, socket.assigns.movie, id, &refresh_identity/2)
 
   # Client-controlled payloads — ignore anything unmatched rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
@@ -657,69 +625,6 @@ defmodule CinderWeb.MovieDetailLive do
 
   defp profile_form(movie),
     do: to_form(%{"media_profile" => Atom.to_string(movie.media_profile)})
-
-  defp alias_form(params \\ %{})
-
-  defp alias_form(%Cinder.Catalog.TitleAlias{} = alias_record) do
-    alias_form(%{
-      "id" => alias_record.id,
-      "title" => alias_record.title,
-      "kind" => alias_record.kind,
-      "country_code" => alias_record.country_code,
-      "language_code" => alias_record.language_code
-    })
-  end
-
-  defp alias_form(params) do
-    defaults = %{
-      "id" => "",
-      "title" => "",
-      "kind" => "alternative",
-      "country_code" => "",
-      "language_code" => ""
-    }
-
-    params = Map.new(params, fn {key, value} -> {to_string(key), value} end)
-    to_form(Map.merge(defaults, params), as: :alias)
-  end
-
-  defp update_current_alias(movie, id, params) do
-    case current_manual_alias(movie, id) do
-      nil -> {:error, :not_manual_alias}
-      alias_record -> Catalog.update_manual_alias(movie, alias_record.id, params)
-    end
-  end
-
-  defp current_manual_alias(movie, id) do
-    Enum.find(Catalog.list_title_aliases(movie), &(&1.id == id and &1.precedence == :manual))
-  end
-
-  defp parse_alias_id(id) when is_integer(id), do: id
-
-  defp parse_alias_id(id) when is_binary(id) do
-    case Integer.parse(id) do
-      {id, ""} -> id
-      _ -> nil
-    end
-  end
-
-  defp parse_alias_id(_id), do: nil
-
-  defp alias_kind_options do
-    [
-      {gettext("Alternative"), "alternative"},
-      {gettext("Native"), "native"},
-      {gettext("Romaji"), "romaji"},
-      {gettext("Licensed"), "licensed"},
-      {gettext("Scene"), "scene"}
-    ]
-  end
-
-  defp alias_kind_label(:alternative), do: gettext("Alternative")
-  defp alias_kind_label(:native), do: gettext("Native")
-  defp alias_kind_label(:romaji), do: gettext("Romaji")
-  defp alias_kind_label(:licensed), do: gettext("Licensed")
-  defp alias_kind_label(:scene), do: gettext("Scene")
 
   defp parked?(status), do: status in @parked
 
