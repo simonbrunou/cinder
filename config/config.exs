@@ -7,22 +7,8 @@
 # General application configuration
 import Config
 
-config :cinder, :scopes,
-  user: [
-    default: true,
-    module: Cinder.Accounts.Scope,
-    assign_key: :current_scope,
-    access_path: [:user, :id],
-    schema_key: :user_id,
-    schema_type: :id,
-    schema_table: :users,
-    test_data_fixture: Cinder.AccountsFixtures,
-    test_setup_helper: :register_and_log_in_user
-  ]
-
 config :cinder,
   ecto_repos: [Cinder.Repo],
-  generators: [timestamp_type: :utc_datetime],
   bootstrap_token: nil,
   secure_cookies: false
 
@@ -163,9 +149,6 @@ config :logger, :default_formatter,
   metadata: [:request_id]
 
 config :phoenix, :filter_parameters, ["password", "email", "token"]
-
-# Use Jason for JSON parsing in Phoenix
-config :phoenix, :json_library, Jason
 
 # i18n: English + French. The active locale is resolved per request/socket by
 # CinderWeb.Locale (authenticated user → session → Accept-Language → default). `en` is the source

@@ -497,15 +497,11 @@ defmodule Cinder.Subtitles do
   defp best(results, language) do
     candidates =
       Enum.filter(results, fn result ->
-        case Map.get(result, :language) do
-          candidate_language when is_binary(candidate_language) ->
-            String.downcase(candidate_language) == language and
-              not Map.get(result, :hearing_impaired, false) and
-              not Map.get(result, :ai_translated, false) and not is_nil(Map.get(result, :file_id))
+        candidate_language = Map.get(result, :language)
 
-          _ ->
-            false
-        end
+        is_binary(candidate_language) and String.downcase(candidate_language) == language and
+          not Map.get(result, :hearing_impaired, false) and
+          not Map.get(result, :ai_translated, false) and not is_nil(Map.get(result, :file_id))
       end)
 
     case Enum.filter(candidates, &Map.get(&1, :moviehash_match, false)) do
