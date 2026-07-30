@@ -94,6 +94,8 @@ secret; the secret is `secret_key_base`.
 ## Workflow
 
 - One unit of work per session (an issue, a fix, a feature). `/clear` between them.
+- Audits and open-ended reviews deliver **GitHub issues**, not inline fixes. Each fix then gets
+  its own scoped session and PR. No "find and fix everything" rounds in one session.
 - Start non-trivial work in plan mode; lay out the plan, get agreement, then execute.
 - Define "done when" up front as something `mix test` can decide, then loop until it's green.
 - Feature work goes on a branch and through a PR; `main` is PR-merged. (Chores like flake bumps

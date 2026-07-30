@@ -7,8 +7,6 @@
       {"credo --strict", blocking?: false},
       {"test", blocking?: false}
     ],
-    post_tool_use: [:compile, :format],
-    pre_tool_use: [:compile, :format, :unused_deps],
     subagent_stop: [:compile, :format]
   },
   mcp_servers: [:tidewave],
