@@ -8,9 +8,12 @@ defmodule CinderWeb.SeriesDetailLive do
   """
   use CinderWeb, :live_view
 
+  import CinderWeb.AliasHelpers, only: [alias_form: 0]
+
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Season, Series}
+  alias CinderWeb.AliasHelpers
   alias CinderWeb.SeriesDetailComponents
 
   @picks Language.preferences()
@@ -282,53 +285,17 @@ defmodule CinderWeb.SeriesDetailLive do
   end
 
   def handle_event("save_alias", %{"alias" => params}, socket) when is_map(params) do
-    result =
-      case params["id"] do
-        id when id in [nil, ""] -> Catalog.save_manual_alias(socket.assigns.series, params)
-        id -> update_current_alias(socket.assigns.series, parse_alias_id(id), params)
-      end
-
-    case result do
-      {:ok, _} ->
-        {:noreply,
-         socket
-         |> assign(:alias_form, alias_form())
-         |> refresh_identity(socket.assigns.series)}
-
-      {:error, %Ecto.Changeset{}} ->
-        {:noreply,
-         socket
-         |> assign(:alias_form, alias_form(params))
-         |> put_flash(:error, gettext("Couldn't save the alias."))}
-
-      _ ->
-        {:noreply, socket}
-    end
+    AliasHelpers.save_alias(socket, socket.assigns.series, params, &refresh_identity/2)
   end
 
-  def handle_event("edit_alias", %{"id" => id}, socket) do
-    with id when not is_nil(id) <- parse_alias_id(id),
-         alias_record when not is_nil(alias_record) <-
-           current_manual_alias(socket.assigns.series, id) do
-      {:noreply, assign(socket, :alias_form, alias_form(alias_record))}
-    else
-      _ -> {:noreply, socket}
-    end
-  end
+  def handle_event("edit_alias", %{"id" => id}, socket),
+    do: AliasHelpers.edit_alias(socket, socket.assigns.series, id)
 
   def handle_event("cancel_alias_edit", _params, socket),
-    do: {:noreply, assign(socket, :alias_form, alias_form())}
+    do: AliasHelpers.cancel_alias_edit(socket)
 
-  def handle_event("delete_alias", %{"id" => id}, socket) do
-    with id when not is_nil(id) <- parse_alias_id(id),
-         alias_record when not is_nil(alias_record) <-
-           current_manual_alias(socket.assigns.series, id),
-         {:ok, _} <- Catalog.delete_manual_alias(socket.assigns.series, alias_record.id) do
-      {:noreply, refresh_identity(socket, socket.assigns.series)}
-    else
-      _ -> {:noreply, socket}
-    end
-  end
+  def handle_event("delete_alias", %{"id" => id}, socket),
+    do: AliasHelpers.delete_alias(socket, socket.assigns.series, id, &refresh_identity/2)
 
   def handle_event("search_episode", %{"id" => id}, socket) do
     with {id, ""} <- Integer.parse(id),
@@ -767,53 +734,6 @@ defmodule CinderWeb.SeriesDetailLive do
 
   defp scene_group_id_string(nil), do: nil
   defp scene_group_id_string(series), do: series.scene_numbering_group_id || ""
-
-  defp alias_form(params \\ %{})
-
-  defp alias_form(%Cinder.Catalog.TitleAlias{} = alias_record) do
-    alias_form(%{
-      "id" => alias_record.id,
-      "title" => alias_record.title,
-      "kind" => alias_record.kind,
-      "country_code" => alias_record.country_code,
-      "language_code" => alias_record.language_code
-    })
-  end
-
-  defp alias_form(params) do
-    defaults = %{
-      "id" => "",
-      "title" => "",
-      "kind" => "alternative",
-      "country_code" => "",
-      "language_code" => ""
-    }
-
-    params = Map.new(params, fn {key, value} -> {to_string(key), value} end)
-    to_form(Map.merge(defaults, params), as: :alias)
-  end
-
-  defp update_current_alias(series, id, params) do
-    case current_manual_alias(series, id) do
-      nil -> {:error, :not_manual_alias}
-      alias_record -> Catalog.update_manual_alias(series, alias_record.id, params)
-    end
-  end
-
-  defp current_manual_alias(series, id) do
-    Enum.find(Catalog.list_title_aliases(series), &(&1.id == id and &1.precedence == :manual))
-  end
-
-  defp parse_alias_id(id) when is_integer(id), do: id
-
-  defp parse_alias_id(id) when is_binary(id) do
-    case Integer.parse(id) do
-      {id, ""} -> id
-      _ -> nil
-    end
-  end
-
-  defp parse_alias_id(_id), do: nil
 
   defp find_episode(series, id) do
     series.seasons |> Enum.flat_map(& &1.episodes) |> Enum.find(&(&1.id == id))

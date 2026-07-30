@@ -9,6 +9,8 @@ defmodule CinderWeb.SeriesDetailComponents do
   """
   use CinderWeb, :html
 
+  import CinderWeb.AliasHelpers, only: [alias_kind_options: 0, alias_kind_label: 1]
+
   import CinderWeb.LiveHelpers,
     only: [format_date_year: 1, humanize_bytes: 1, rating: 1, media_title: 2, media_overview: 2]
 
@@ -667,22 +669,6 @@ defmodule CinderWeb.SeriesDetailComponents do
 
   defp episode_range_text({first, first}), do: "E#{first}"
   defp episode_range_text({first, last}), do: "E#{first}–E#{last}"
-
-  defp alias_kind_options do
-    [
-      {gettext("Alternative"), "alternative"},
-      {gettext("Native"), "native"},
-      {gettext("Romaji"), "romaji"},
-      {gettext("Licensed"), "licensed"},
-      {gettext("Scene"), "scene"}
-    ]
-  end
-
-  defp alias_kind_label(:alternative), do: gettext("Alternative")
-  defp alias_kind_label(:native), do: gettext("Native")
-  defp alias_kind_label(:romaji), do: gettext("Romaji")
-  defp alias_kind_label(:licensed), do: gettext("Licensed")
-  defp alias_kind_label(:scene), do: gettext("Scene")
 
   defp classification_label(:regular), do: gettext("Regular")
   defp classification_label(:story_special), do: gettext("Story special")
