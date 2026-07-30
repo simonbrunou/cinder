@@ -31,10 +31,8 @@ defmodule Cinder.Application do
         # DB settings overlay synchronously, before the Endpoint/poller consume config.
         Cinder.Vault,
         Cinder.Settings,
-        # Owns the login-attempt ETS table; must be up before the Endpoint serves logins.
-        Cinder.Accounts.LoginRateLimiter,
-        # Owns the IP-only throttle table (registration + a login floor beneath the
-        # {ip, email} limiter); same "before the Endpoint" requirement.
+        # Owns the auth rate-limit ETS table (the {ip, email} login guard plus the IP-only
+        # registration and login floors); must be up before the Endpoint serves logins.
         Cinder.Accounts.IpRateLimiter,
         CinderWeb.Endpoint
       ] ++ poller_child()

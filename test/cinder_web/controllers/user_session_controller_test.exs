@@ -4,18 +4,15 @@ defmodule CinderWeb.UserSessionControllerTest do
   import Cinder.AccountsFixtures
 
   alias Cinder.Accounts.IpRateLimiter
-  alias Cinder.Accounts.LoginRateLimiter
 
   setup do
     %{user: user_fixture()}
   end
 
   describe "POST /users/log-in - email and password" do
-    test "records all concurrent failures atomically" do
-      limiter = LoginRateLimiter
-      ip = "203.0.113.9"
-      email = "RACE@example.com"
-      limiter.reset()
+    test "counts all concurrent pair attempts atomically" do
+      pair = {"203.0.113.9", "race@example.com"}
+      IpRateLimiter.reset()
       parent = self()
 
       runner =
@@ -24,22 +21,24 @@ defmodule CinderWeb.UserSessionControllerTest do
           |> Task.async_stream(
             fn _ ->
               send(parent, {:ready, self()})
-              receive do: (:go -> limiter.register_failure(ip, email))
+              receive do: (:go -> IpRateLimiter.check_and_register(:login_pair, pair))
             end,
             max_concurrency: 100,
             ordered: false
           )
-          |> Stream.run()
+          |> Enum.map(fn {:ok, verdict} -> verdict end)
         end)
 
       tasks = for _ <- 1..100, do: receive(do: ({:ready, pid} -> pid))
       Enum.each(tasks, &send(&1, :go))
-      Task.await(runner)
+      results = Task.await(runner)
 
-      assert [{{^ip, "race@example.com"}, 100, _started}] =
-               :ets.lookup(:cinder_login_attempts, {ip, "race@example.com"})
+      assert [{{:login_pair, ^pair}, 100, _started}] =
+               :ets.lookup(:cinder_ip_attempts, {:login_pair, pair})
 
-      assert limiter.blocked?(ip, email)
+      # Exactly the budget succeeds; a non-atomic check-then-register would let more through.
+      assert Enum.count(results, &(&1 == :ok)) == 10
+      assert Enum.count(results, &(&1 == :blocked)) == 90
     end
 
     test "logs the user in", %{conn: conn, user: user} do
@@ -135,7 +134,6 @@ defmodule CinderWeb.UserSessionControllerTest do
       previous = Application.get_env(:cinder, :ip_rate_limiting)
       Application.put_env(:cinder, :ip_rate_limiting, true)
       IpRateLimiter.reset()
-      LoginRateLimiter.reset()
 
       on_exit(fn ->
         IpRateLimiter.reset()
@@ -198,9 +196,11 @@ defmodule CinderWeb.UserSessionControllerTest do
     } do
       user = set_password(user)
 
+      # Case-rotating the email must not evade the pair guard — the key downcases, so all
+      # 10 failures land in the same bucket as the correct-case login below.
       for _ <- 1..10 do
         post(conn, ~p"/users/log-in", %{
-          "user" => %{"email" => user.email, "password" => "wrong_password"}
+          "user" => %{"email" => String.upcase(user.email), "password" => "wrong_password"}
         })
       end
 

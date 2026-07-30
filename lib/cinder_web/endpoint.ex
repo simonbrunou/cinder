@@ -71,8 +71,8 @@ defmodule CinderWeb.Endpoint do
   # :persistent_term if it ever shows up in a profile.
   plug :session
   # Must run before the router: resolves the real client IP behind cloudflared so
-  # every later remote_ip read (LoginRateLimiter, IpRateLimiter) keys on the visitor,
-  # not the tunnel hop. See CinderWeb.Plugs.RemoteIp for the trust model.
+  # every later remote_ip read (IpRateLimiter) keys on the visitor, not the tunnel
+  # hop. See CinderWeb.Plugs.RemoteIp for the trust model.
   plug CinderWeb.Plugs.RemoteIp
   plug CinderWeb.Router
 

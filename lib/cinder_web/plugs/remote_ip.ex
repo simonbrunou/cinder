@@ -3,8 +3,7 @@ defmodule CinderWeb.Plugs.RemoteIp do
   Resolves the real client IP from Cloudflare's `cf-connecting-ip` header and rewrites
   `conn.remote_ip` to it, BEFORE the router/controllers ever read it. Behind cloudflared,
   every visitor's raw TCP peer is the tunnel's own hop — without this, IP-keyed logic
-  (`Cinder.Accounts.LoginRateLimiter`, `Cinder.Accounts.IpRateLimiter`) collapses to a single
-  shared key for the whole internet.
+  (`Cinder.Accounts.IpRateLimiter`) collapses to a single shared key for the whole internet.
 
   ## Trust model
 

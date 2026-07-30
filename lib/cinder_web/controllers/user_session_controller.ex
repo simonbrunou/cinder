@@ -3,12 +3,12 @@ defmodule CinderWeb.UserSessionController do
 
   alias Cinder.Accounts
   alias Cinder.Accounts.IpRateLimiter
-  alias Cinder.Accounts.LoginRateLimiter
   alias CinderWeb.UserAuth
 
-  # Bucket name for the IP-only floor below — kept distinct from :registration's bucket in
-  # the same shared IpRateLimiter table.
+  # Buckets in the shared IpRateLimiter table: the IP-only floor below (kept distinct from
+  # :registration's bucket) and the {ip, email} brute-force guard.
   @ip_bucket :login
+  @pair_bucket :login_pair
 
   def create(conn, params) do
     create(conn, params, gettext("Welcome back!"))
@@ -22,29 +22,35 @@ defmodule CinderWeb.UserSessionController do
     cond do
       # A per-IP floor beneath the {ip, email} limiter: rotating the email on every request
       # evades that limiter (it's keyed on the pair), but not this one. Increment-and-check in
-      # one atomic step (not blocked? then register_attempt) so a concurrent burst can't sail
+      # one atomic step (not a blocked?-then-register pair) so a concurrent burst can't sail
       # past the gate before the counters land. Same generic response as bad credentials — no
       # oracle either way — and it counts every attempt, so it bounds bcrypt cost per IP.
       IpRateLimiter.check_and_register(@ip_bucket, ip) == :blocked ->
         invalid_credentials(conn, email)
 
       # An exhausted {ip, email} pair gets the SAME generic response as bad credentials,
-      # so the limiter can't be used as an enumeration or lockout oracle.
-      LoginRateLimiter.blocked?(ip, email) ->
+      # so the limiter can't be used as an enumeration or lockout oracle. Counting every
+      # attempt (not just failures) changes nothing observable: a successful login clears
+      # the pair right below, and the fixed window never extends on increment.
+      IpRateLimiter.check_and_register(@pair_bucket, pair_key(ip, email)) == :blocked ->
         invalid_credentials(conn, email)
 
       user = Accounts.get_user_by_email_and_password(email, password) ->
-        LoginRateLimiter.clear(ip, email)
+        IpRateLimiter.clear(@pair_bucket, pair_key(ip, email))
 
         conn
         |> put_flash(:info, info)
         |> UserAuth.log_in_user(user, user_params)
 
       true ->
-        LoginRateLimiter.register_failure(ip, email)
+        # The failed attempt was already counted by check_and_register at the gate above.
         invalid_credentials(conn, email)
     end
   end
+
+  # The pair guard keys case-insensitively — an attacker case-rotating the email must land
+  # in the same bucket.
+  defp pair_key(ip, email), do: {ip, String.downcase(email)}
 
   defp invalid_credentials(conn, email) do
     # In order to prevent user enumeration attacks, don't disclose whether the email is registered.
@@ -72,7 +78,7 @@ defmodule CinderWeb.UserSessionController do
       # committing the new password and expiring every session token — a blocked {ip, email}
       # pair (or a blocked IP-only bucket) here would lock the user out of the password they
       # just set. Clear both: the user has already proven possession of the account.
-      LoginRateLimiter.clear(ip_string(conn), user.email)
+      IpRateLimiter.clear(@pair_bucket, pair_key(ip_string(conn), user.email))
       IpRateLimiter.clear(@ip_bucket, ip_string(conn))
 
       conn
