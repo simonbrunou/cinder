@@ -44,12 +44,4 @@ defmodule Cinder.Issues.IssueReport do
     |> validate_inclusion(:target_type, @target_types)
     |> validate_length(:detail, max: @max_detail)
   end
-
-  @doc "Admin resolve/dismiss: flips status and records the acting admin as resolver."
-  def resolution_changeset(report, attrs) do
-    report
-    |> cast(attrs, [:status, :resolver_id])
-    |> validate_required([:status])
-    |> validate_inclusion(:status, [:resolved, :dismissed])
-  end
 end
