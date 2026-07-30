@@ -1,7 +1,7 @@
 defmodule Cinder.Test.StubDisk do
   @moduledoc """
   Permissive `Cinder.Disk.Prober` for the suite: reports abundant free space by default, so the
-  free-disk guards never fire and no test shells out to `df`. A disk-guard test drives specific
+  free-disk guards never fire and no test probes a real disk. A disk-guard test drives specific
   outcomes by setting `:disk_stats_stub` (async: false, restore in on_exit):
 
     * a `{:ok, stats}` / `{:error, reason}` tuple returned for every path, or

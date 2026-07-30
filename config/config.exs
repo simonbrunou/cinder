@@ -58,8 +58,13 @@ config :cinder,
 
 config :cinder, filesystem: Cinder.Library.Filesystem.Disk
 # Free-disk prober behind the pre-grab / pre-import space guards; the test config points this at a
-# permissive stub so the suite never shells out to `df`.
+# permissive stub so the suite never probes the real disks.
 config :cinder, disk_prober: Cinder.Disk
+
+# os_mon backs Cinder.Disk via :disksup only; memsup/cpu_sup would just add port noise.
+# disksup_posix_only makes disksup run plain `df -k -P` — without it the Linux flavor runs
+# `df -lk` (local filesystems only), which zeroes out an NFS/SMB-mounted library root.
+config :os_mon, start_memsup: false, start_cpu_sup: false, disksup_posix_only: true
 # Import-time audio-language verification (needs `ffprobe`; the Docker image ships it). Enabled by
 # default; degrades to a no-op if ffprobe is absent. Set `media_info: nil` to disable.
 config :cinder, media_info: Cinder.Library.MediaInfo.Ffprobe

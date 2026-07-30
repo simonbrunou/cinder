@@ -36,7 +36,7 @@ defmodule Cinder.MixProject do
   def application do
     [
       mod: {Cinder.Application, []},
-      extra_applications: [:logger, :runtime_tools]
+      extra_applications: [:logger, :runtime_tools, :os_mon]
     ]
   end
 
