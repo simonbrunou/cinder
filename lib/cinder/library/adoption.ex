@@ -65,6 +65,104 @@ defmodule Cinder.Library.Adoption do
 
   def adopt(_candidates), do: %{adopted: 0, skipped: 0, failures: []}
 
+  @doc """
+  Filters filesystem-scan candidates down to the operator-confirmed ones.
+
+  `params` is the adoption form's payload: `"selected"` lists auto-matched
+  candidate ids to adopt, `"chosen"` maps ambiguous candidate ids to a picked
+  TMDB id, and `"parts"` maps candidate ids to per-file part assignments.
+  Auto-matched candidates are kept only when selected (with any part choices
+  applied to their files); ambiguous candidates only when a TMDB result was
+  chosen (recorded as `:chosen_tmdb_id`). Everything else is dropped.
+  """
+  def confirmed_candidates(candidates, params) do
+    selected = params |> Map.get("selected", []) |> List.wrap() |> parse_ids()
+    chosen = Map.get(params, "chosen", %{})
+    parts = Map.get(params, "parts", %{})
+
+    Enum.flat_map(candidates, &confirm_candidate(&1, selected, chosen, parts))
+  end
+
+  @doc """
+  Builds migration adoption commands entirely from server-held
+  selection/decision state (never a client-posted list), so a windowed-away
+  row that never rendered a checkbox is still honoured.
+
+  Selected ready candidates become `%{key: key, candidate: candidate}`;
+  needs-decision candidates with a `"fold"`/`"part"` choice become
+  `%{key: key, choice: choice, candidate: candidate}`. Undecided candidates
+  produce no command.
+  """
+  def confirmed_migration_commands(buckets, selected_ready, decisions) do
+    ready_commands =
+      for candidate <- buckets.ready,
+          MapSet.member?(selected_ready, candidate.id),
+          do: %{key: candidate.key, candidate: candidate}
+
+    decision_commands =
+      for candidate <- buckets.needs_decision,
+          choice = Map.get(decisions, candidate.id),
+          choice in ["fold", "part"],
+          do: %{key: candidate.key, choice: choice, candidate: candidate}
+
+    ready_commands ++ decision_commands
+  end
+
+  @doc "Counts needs-decision candidates that still have no fold/part choice."
+  def undecided_count(needs_decision, decisions),
+    do: Enum.count(needs_decision, &(not Map.has_key?(decisions, &1.id)))
+
+  defp confirm_candidate(%{status: :auto_matched, id: id} = candidate, selected, _chosen, parts) do
+    if MapSet.member?(selected, id) do
+      [put_part_choices(candidate, candidate_choices(parts, id))]
+    else
+      []
+    end
+  end
+
+  defp confirm_candidate(%{status: :ambiguous, id: id} = candidate, _selected, chosen, _parts)
+       when is_map(chosen) do
+    case parse_integer(Map.get(chosen, to_string(id))) do
+      nil -> []
+      tmdb_id -> [Map.put(candidate, :chosen_tmdb_id, tmdb_id)]
+    end
+  end
+
+  defp confirm_candidate(_candidate, _selected, _chosen, _parts), do: []
+
+  defp candidate_choices(parts, candidate_id) when is_map(parts) do
+    case Map.get(parts, to_string(candidate_id), %{}) do
+      choices when is_map(choices) -> choices
+      _ -> %{}
+    end
+  end
+
+  defp candidate_choices(_parts, _candidate_id), do: %{}
+
+  defp put_part_choices(candidate, choices) do
+    files =
+      Enum.map(Map.get(candidate, :files, []), fn file ->
+        target = parse_integer(Map.get(choices, to_string(Map.get(file, :id))))
+
+        case Enum.find(Map.get(file, :part_candidates, []), &(&1.episode_number == target)) do
+          nil ->
+            file
+
+          part_of ->
+            %{file | status: :part, part_of: Map.take(part_of, [:season_number, :episode_number])}
+        end
+      end)
+
+    Map.put(candidate, :files, files)
+  end
+
+  defp parse_ids(values) do
+    values
+    |> Enum.map(&parse_integer/1)
+    |> Enum.reject(&is_nil/1)
+    |> MapSet.new()
+  end
+
   defp scan_movies(managed) do
     case root_files(:movies) do
       {:ok, root, files} ->
