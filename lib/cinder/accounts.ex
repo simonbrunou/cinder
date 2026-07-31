@@ -191,6 +191,117 @@ defmodule Cinder.Accounts do
     |> Repo.update()
   end
 
+  @doc """
+  Resolves a Jellyfin account (`%{id:, name:}`, from `Cinder.Accounts.JellyfinAuth`) to a Cinder
+  user for the UNAUTHENTICATED "Sign in with Jellyfin" flow — the mirror of
+  `login_or_register_plex_user/1`: an existing `jellyfin_user_id` match logs in (refreshing
+  `jellyfin_username` if it changed); otherwise, once an admin exists, a pending `:user`-role
+  account is created and auto-confirmed. Jellyfin sign-in never creates the first account and
+  never mints an admin.
+
+  An existing account is **never** looked up by email — same reason as the Plex path: an
+  identity the household's media server vouches for is not proof of inbox ownership, so
+  matching on email would let any Jellyfin viewer log in as whoever shares that address.
+  Attaching Jellyfin to an existing account is the explicit, authenticated `/users/settings`
+  action, `link_jellyfin_to_user/2`.
+
+  Jellyfin's API exposes no email address at all, so a created account gets a synthetic,
+  deliberately undeliverable and randomized one (`@jellyfin.invalid`, the RFC 2606 reserved
+  TLD) with `notify_email: false`; the owner can set a real address from `/users/settings`.
+  Should one ever collide with an account that already exists, the unique index rejects the
+  insert — a rejected create, never a login.
+  """
+  def login_or_register_jellyfin_user(%{id: id} = account) when is_binary(id) and id != "" do
+    case Repo.get_by(User, jellyfin_user_id: id) do
+      %User{} = user -> refresh_jellyfin_username(user, account)
+      nil -> create_jellyfin_user(account)
+    end
+  end
+
+  # A missing/blank id (a malformed Jellyfin response) must never fall through to
+  # Repo.get_by(User, jellyfin_user_id: nil) — that compiles to `WHERE jellyfin_user_id IS NULL`
+  # and would match an arbitrary password-only user. Fail closed.
+  def login_or_register_jellyfin_user(_account), do: {:error, :invalid_account}
+
+  defp refresh_jellyfin_username(user, account) do
+    user
+    |> User.jellyfin_changeset(%{jellyfin_username: Map.get(account, :name)})
+    |> Repo.update()
+  end
+
+  defp create_jellyfin_user(account) do
+    if count_admins() == 0 do
+      {:error, :admin_required}
+    else
+      do_create_jellyfin_user(account)
+    end
+  end
+
+  defp do_create_jellyfin_user(account) do
+    password = :crypto.strong_rand_bytes(32) |> Base.encode64()
+
+    %User{}
+    |> User.registration_changeset(%{
+      email: jellyfin_email(account),
+      password: password,
+      password_confirmation: password
+    })
+    |> User.jellyfin_changeset(%{
+      jellyfin_user_id: account.id,
+      jellyfin_username: Map.get(account, :name)
+    })
+    |> Ecto.Changeset.put_change(:confirmed_at, DateTime.utc_now(:second))
+    |> Ecto.Changeset.put_change(:role, :user)
+    |> Ecto.Changeset.put_change(:active, false)
+    # The synthetic address below cannot receive mail, so the notification opt-in starts off.
+    |> Ecto.Changeset.put_change(:notify_email, false)
+    |> put_default_request_quota(:user)
+    |> Repo.insert()
+    |> announce_pending_user()
+  end
+
+  # users.email is required and unique but Jellyfin has no email field, so mint a placeholder.
+  # The display name is only a readable prefix (it's what an admin sees in the pending-approval
+  # list); a RANDOM suffix is what makes the address unique and unguessable. Anything derivable
+  # — the name, or the Jellyfin id, which `GET /Users/Public` hands out unauthenticated — is a
+  # denial-of-onboarding: self-registration is open, so an attacker could pre-register the
+  # address and permanently block that Jellyfin user's first sign-in. Nothing ever recomputes
+  # this address (the account is matched by `jellyfin_user_id`), so it need not be derivable.
+  defp jellyfin_email(account) do
+    case account |> Map.get(:name) |> sanitize_email_local() do
+      "" -> "jellyfin-#{email_suffix()}@jellyfin.invalid"
+      name -> "#{name}-#{email_suffix()}@jellyfin.invalid"
+    end
+  end
+
+  defp sanitize_email_local(value),
+    do: value |> to_string() |> String.downcase() |> String.replace(~r/[^a-z0-9._-]/, "")
+
+  defp email_suffix,
+    do: 6 |> :crypto.strong_rand_bytes() |> Base.encode32(padding: false) |> String.downcase()
+
+  @doc """
+  Attaches a Jellyfin identity to an ALREADY-authenticated user's own account — the
+  `/users/settings` link flow. Never logs anyone in (unlike
+  `login_or_register_jellyfin_user/1`). `unique_constraint(:jellyfin_user_id)` surfaces as
+  `{:error, changeset}` when that Jellyfin identity is already linked to a different account.
+  """
+  def link_jellyfin_to_user(%User{} = user, account) do
+    user
+    |> User.jellyfin_changeset(%{
+      jellyfin_user_id: account.id,
+      jellyfin_username: Map.get(account, :name)
+    })
+    |> Repo.update()
+  end
+
+  @doc "Detaches a user's Jellyfin identity (clears `jellyfin_user_id`/`jellyfin_username`)."
+  def unlink_jellyfin_from_user(%User{} = user) do
+    user
+    |> User.jellyfin_changeset(%{jellyfin_user_id: nil, jellyfin_username: nil})
+    |> Repo.update()
+  end
+
   @doc "Checks the one-time first-user bootstrap credential in constant time."
   def valid_bootstrap_token?(submitted) when is_binary(submitted) do
     expected = Application.get_env(:cinder, :bootstrap_token)
@@ -547,6 +658,7 @@ defmodule Cinder.Accounts do
       locale: user.locale,
       notify_email: user.notify_email,
       plex_username: user.plex_username,
+      jellyfin_username: user.jellyfin_username,
       request_quota: user.request_quota,
       active: user.active,
       confirmed_at: iso(user.confirmed_at),

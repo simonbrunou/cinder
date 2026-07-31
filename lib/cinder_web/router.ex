@@ -206,5 +206,7 @@ defmodule CinderWeb.Router do
 
     get "/auth/plex", PlexAuthController, :start
     get "/auth/plex/callback", PlexAuthController, :callback
+
+    post "/auth/jellyfin", JellyfinAuthController, :create
   end
 end

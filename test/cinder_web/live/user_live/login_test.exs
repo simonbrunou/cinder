@@ -3,6 +3,7 @@ defmodule CinderWeb.UserLive.LoginTest do
 
   import Phoenix.LiveViewTest
   import Cinder.AccountsFixtures
+  import Cinder.ConfigCase
 
   describe "login page" do
     test "renders login page", %{conn: conn} do
@@ -65,6 +66,45 @@ defmodule CinderWeb.UserLive.LoginTest do
 
       assert html =~ "Sign in with Plex"
       assert html =~ ~s(href="/auth/plex")
+    end
+  end
+
+  describe "Sign in with Jellyfin" do
+    test "renders a credential form posting to /auth/jellyfin when Jellyfin is configured", %{
+      conn: conn
+    } do
+      {:ok, _lv, html} = live(conn, ~p"/users/log-in")
+
+      assert html =~ "Sign in with Jellyfin"
+      assert html =~ ~s(action="/auth/jellyfin")
+    end
+
+    test "is hidden when no Jellyfin server is configured", %{conn: conn} do
+      put_config(Cinder.Library.MediaServer.Jellyfin, url: nil)
+
+      {:ok, _lv, html} = live(conn, ~p"/users/log-in")
+
+      refute html =~ "Sign in with Jellyfin"
+    end
+
+    test "submitting valid credentials signs in against the configured server", %{conn: conn} do
+      _admin = admin_fixture()
+
+      Mox.expect(Cinder.Accounts.JellyfinAuthMock, :authenticate, fn "viewer", "s3cret" ->
+        {:ok, %{id: "jf-login-1", name: "viewer"}}
+      end)
+
+      {:ok, lv, _html} = live(conn, ~p"/users/log-in")
+
+      conn =
+        lv
+        |> form("#login_form_jellyfin", jellyfin: %{username: "viewer", password: "s3cret"})
+        |> submit_form(conn)
+
+      assert redirected_to(conn) == ~p"/"
+
+      assert Cinder.Repo.get_by!(Cinder.Accounts.User, jellyfin_user_id: "jf-login-1").role ==
+               :user
     end
   end
 
