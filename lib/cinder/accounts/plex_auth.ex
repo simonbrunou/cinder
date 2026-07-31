@@ -4,6 +4,10 @@ defmodule Cinder.Accounts.PlexAuth do
   PIN, poll it for a linked auth token, fetch the signed-in Plex account, and
   check which servers that account can reach. Real impl:
   `Cinder.Accounts.PlexAuth.HTTP`.
+
+  `watchlist/1` rides along here because it is the same plex.tv account API and the
+  same per-user token — the watchlist lives on the Plex ACCOUNT, not on the household's
+  server, so the media-server behaviour is the wrong seam for it.
   """
 
   alias Cinder.Util
@@ -15,6 +19,25 @@ defmodule Cinder.Accounts.PlexAuth do
               | {:error, term()}
   @callback server_ids(String.t()) :: {:ok, [String.t()]} | {:error, term()}
   @callback server_machine_id() :: {:ok, String.t()} | {:error, term()}
+
+  @typedoc """
+  One entry off a Plex account's watchlist, already resolved to a TMDB id (entries plex.tv
+  cannot map to one are dropped by the impl — there is nothing Cinder could request).
+  `type` is plex.tv's own discriminator, `"movie"` or `"show"`.
+  """
+  @type watchlist_entry :: %{
+          tmdb_id: integer(),
+          type: String.t(),
+          title: String.t() | nil,
+          year: integer() | nil
+        }
+
+  @doc """
+  The watchlist of the account owning `token`. `{:error, :unauthorized}` specifically means
+  plex.tv rejected the token (expired/revoked) — the caller uses it to switch that one user's
+  sync off rather than retrying forever.
+  """
+  @callback watchlist(String.t()) :: {:ok, [watchlist_entry()]} | {:error, :unauthorized | term()}
 
   @doc "True when a Plex media server is configured (non-blank `:url` and `:token`)."
   def configured? do

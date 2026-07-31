@@ -7,6 +7,14 @@ All notable changes to Cinder are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Opt-in Plex watchlist sync.** A Plex-linked user can switch on "Request titles I add to my
+  Plex watchlist" in Account settings; a background sweep turns each new movie on their watchlist
+  into a request *by that user* about every 15 minutes, so the approval gate and their quota
+  apply exactly as if they had clicked Add. Off by default and per user, never a household-wide
+  switch. Shows are skipped (Cinder requests TV per season), removing a title does nothing, a
+  title is requested at most once even after it is deleted, and a rejected Plex token disables
+  sync for that one user. The auth token is encrypted at rest; markers are GDPR-covered
+  (cascade + export).
 - **Requester "Report an issue."** An available title can be flagged (wrong content, audio,
   subtitles, playback, other) from My Requests or the movie page; admins get a live `/issues`
   queue with Resolve/Dismiss, a Discord heads-up, and the reporter is emailed in their locale

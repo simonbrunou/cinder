@@ -184,11 +184,75 @@ defmodule Cinder.Accounts do
     |> Repo.update()
   end
 
-  @doc "Detaches a user's Plex identity (clears `plex_id` and `plex_username`)."
+  @doc """
+  Detaches a user's Plex identity (clears `plex_id` and `plex_username`). Also drops the stored
+  auth token and switches watchlist sync off: without a Plex link there is no watchlist to read,
+  and a token nobody can use should not be kept.
+  """
   def unlink_plex_from_user(%User{} = user) do
     user
     |> User.plex_changeset(%{plex_id: nil, plex_username: nil})
+    |> Ecto.Changeset.change(plex_token: nil, plex_watchlist_sync: false)
     |> Repo.update()
+  end
+
+  @doc """
+  Stores the plex.tv auth token the sign-in/link flow just obtained, encrypted at rest with the
+  same `Cinder.Vault` the settings secrets use. It is a credential: it is never logged, rendered
+  or included in the data export, and it only leaves the DB through `plex_token/1`.
+  """
+  def store_plex_token(%User{} = user, token) when is_binary(token) and token != "" do
+    user
+    |> Ecto.Changeset.change(plex_token: Base.encode64(Cinder.Vault.encrypt!(token)))
+    |> Repo.update()
+  end
+
+  @doc """
+  The user's decrypted plex.tv token, or `nil` when there is none or it was encrypted under a
+  different `SECRET_KEY_BASE`. Never raises and never returns the ciphertext — the `is_binary`
+  guard matters, since Cloak's AES-GCM decrypt answers `{:ok, :error}` (not an error tuple) when
+  the tag fails to authenticate.
+  """
+  def plex_token(%User{plex_token: nil}), do: nil
+
+  def plex_token(%User{plex_token: stored}) do
+    with {:ok, ciphertext} <- Base.decode64(stored),
+         {:ok, token} when is_binary(token) <- Cinder.Vault.decrypt(ciphertext) do
+      token
+    else
+      _ -> nil
+    end
+  rescue
+    _ -> nil
+  end
+
+  @doc "Sets the caller's own opt-in for Plex watchlist sync (off by default)."
+  def update_user_plex_watchlist_sync(%User{} = user, attrs) do
+    user
+    |> User.plex_sync_changeset(attrs)
+    |> Repo.update()
+  end
+
+  @doc """
+  Switches Plex watchlist sync off for ONE user and clears the dead token — the
+  expired/revoked-token path in `Cinder.Requests.WatchlistSync`. Nobody else's sync is touched.
+  """
+  def disable_plex_watchlist_sync(%User{} = user) do
+    user
+    |> Ecto.Changeset.change(plex_watchlist_sync: false, plex_token: nil)
+    |> Repo.update()
+  end
+
+  @doc """
+  Users whose Plex watchlist can actually be synced: opted in, still active, and holding a
+  stored token. Read once per tick by `Cinder.Requests.WatchlistSync`.
+  """
+  def list_plex_watchlist_users do
+    Repo.all(
+      from u in User,
+        where: u.plex_watchlist_sync and u.active and not is_nil(u.plex_token),
+        order_by: [asc: u.id]
+    )
   end
 
   @doc """

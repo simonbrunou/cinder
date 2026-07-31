@@ -21,6 +21,13 @@ defmodule CinderWeb.UserLive.SettingsTest do
     }
   end
 
+  defp linked_user_with_token do
+    user = user_fixture()
+    {:ok, user} = Accounts.link_plex_to_user(user, %{id: 4321, email: nil, username: "plex-me"})
+    {:ok, user} = Accounts.store_plex_token(user, "plex-token")
+    user
+  end
+
   describe "Settings page" do
     test "renders settings page", %{conn: conn} do
       {:ok, _lv, html} =
@@ -313,6 +320,48 @@ defmodule CinderWeb.UserLive.SettingsTest do
       assert {:redirect, %{to: "/users/log-in"}} = socket.redirected
       assert Phoenix.Flash.get(socket.assigns.flash, :error) =~ "re-authenticate"
       assert Cinder.Repo.reload!(user).plex_id == 1234
+    end
+  end
+
+  describe "Plex watchlist sync opt-in" do
+    test "is off by default and can be turned on and off from the account page", %{conn: conn} do
+      user = linked_user_with_token()
+      {:ok, lv, _html} = conn |> log_in_user(user) |> live(~p"/users/settings")
+
+      refute user.plex_watchlist_sync
+      refute has_element?(lv, ~s(input[name="plex_watchlist_sync"][checked]))
+
+      lv
+      |> element("form[phx-change=toggle_plex_watchlist]")
+      |> render_change(%{"plex_watchlist_sync" => "true"})
+
+      assert has_element?(lv, ~s(input[name="plex_watchlist_sync"][checked]))
+      assert Cinder.Repo.reload!(user).plex_watchlist_sync
+
+      lv
+      |> element("form[phx-change=toggle_plex_watchlist]")
+      |> render_change(%{"plex_watchlist_sync" => "false"})
+
+      refute Cinder.Repo.reload!(user).plex_watchlist_sync
+    end
+
+    test "a linked user with no stored token is told to link again", %{conn: conn} do
+      user = user_fixture()
+      {:ok, user} = Accounts.link_plex_to_user(user, %{id: 4322, email: nil, username: "plex-me"})
+
+      {:ok, lv, html} = conn |> log_in_user(user) |> live(~p"/users/settings")
+
+      refute has_element?(lv, ~s(form[phx-change=toggle_plex_watchlist]))
+      assert html =~ "Link your Plex account again"
+      # The hint must come with the affordance: /auth/plex is reachable from nowhere else
+      # a logged-in user can get to, and re-linking is what stores the token.
+      assert has_element?(lv, ~s(a[href="/auth/plex"]), "Relink Plex account")
+    end
+
+    test "the toggle is not offered to a user with no Plex link at all", %{conn: conn} do
+      {:ok, lv, _html} = conn |> log_in_user(user_fixture()) |> live(~p"/users/settings")
+
+      refute has_element?(lv, ~s(form[phx-change=toggle_plex_watchlist]))
     end
   end
 

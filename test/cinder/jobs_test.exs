@@ -17,6 +17,7 @@ defmodule Cinder.JobsTest do
 
     assert Cinder.Catalog.Refresher in modules
     assert Cinder.Subtitles.Sweeper in modules
+    assert Cinder.Requests.WatchlistSync in modules
     assert Enum.all?(statuses, &is_integer(&1.interval))
   end
 

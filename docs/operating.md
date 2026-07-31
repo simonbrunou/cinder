@@ -76,6 +76,16 @@ terminate at a reverse proxy):
   A Plex Home managed account with no email can't sign in this way. To attach Plex to an existing
   account (e.g. an admin who registered by password), log in normally and link it from Account
   settings (`/users/settings`).
+- **Plex watchlist sync (opt-in, per user):** a Plex-linked user can switch on "Request titles I
+  add to my Plex watchlist" in Account settings (`/users/settings`); it is off by default and only
+  that account's owner can turn it on — there is no household-wide switch. A background sweep
+  checks each opted-in user's Plex watchlist about every 15 minutes and turns each new movie on it
+  into a request **by that user**, so the approval gate and their request quota apply exactly as if
+  they had clicked Add. Watchlisted shows are skipped (Cinder requests TV per season, and a
+  watchlist entry names none). Removing a title from the watchlist does nothing: nothing is
+  un-requested or deleted. Sync needs the Plex auth token from sign-in, stored encrypted at rest
+  alongside the settings secrets; if Plex later rejects it, sync switches itself off for that user
+  alone and they can re-link to resume.
 - **Sign in with Jellyfin:** once a Jellyfin server is configured (`JELLYFIN_URL` or the
   `/settings` equivalent), the log-in page shows a "Sign in with Jellyfin" username/password form,
   checked against that server's own `Users/AuthenticateByName` — so only accounts the server

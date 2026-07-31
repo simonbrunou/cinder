@@ -15,6 +15,10 @@ defmodule Cinder.Accounts.User do
     field :notify_email, :boolean, default: true
     field :plex_id, :integer
     field :plex_username, :string
+    # Cloak-encrypted (base64 ciphertext) plex.tv auth token. Read only through
+    # `Cinder.Accounts.plex_token/1`; never logged, rendered or exported.
+    field :plex_token, :string, redact: true
+    field :plex_watchlist_sync, :boolean, default: false
     field :jellyfin_user_id, :string
     field :jellyfin_username, :string
 
@@ -145,6 +149,12 @@ defmodule Cinder.Accounts.User do
 
   @doc "Sets the requester's opt-in for request/availability email notifications."
   def notify_email_changeset(user, attrs), do: cast(user, attrs, [:notify_email])
+
+  @doc """
+  Sets the user's own opt-in for Plex watchlist sync. Casts the flag only — `plex_token` is
+  never mass-assignable, it is written internally from the sign-in flow.
+  """
+  def plex_sync_changeset(user, attrs), do: cast(user, attrs, [:plex_watchlist_sync])
 
   @doc "Links (or refreshes) a Plex account: `plex_id` + display-only `plex_username`."
   def plex_changeset(user, attrs) do

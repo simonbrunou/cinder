@@ -115,6 +115,71 @@ defmodule Cinder.Accounts.PlexAuth.HTTPTest do
     assert {:error, :not_configured} = HTTP.server_machine_id()
   end
 
+  test "watchlist/1 hits the discover host with the token and maps entries to TMDB ids" do
+    Req.Test.stub(Cinder.PlexTvStub, fn conn ->
+      assert conn.host == "discover.provider.plex.tv"
+      assert conn.request_path == "/library/sections/watchlist/all"
+      assert Plug.Conn.get_req_header(conn, "x-plex-token") == ["user-token"]
+      assert conn.query_string =~ "includeGuids=1"
+
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Req.Test.json(%{
+        "MediaContainer" => %{
+          "Metadata" => [
+            %{
+              "type" => "movie",
+              "title" => "Inception",
+              "year" => 2010,
+              "Guid" => [%{"id" => "imdb://tt1375666"}, %{"id" => "tmdb://27205"}]
+            },
+            %{
+              "type" => "show",
+              "title" => "Some Show",
+              "year" => 2011,
+              "Guid" => [%{"id" => "tmdb://1399"}]
+            },
+            # No resolvable TMDB id: nothing Cinder could request, so it is dropped.
+            %{"type" => "movie", "title" => "Obscure", "Guid" => [%{"id" => "imdb://tt9"}]}
+          ]
+        }
+      })
+    end)
+
+    assert {:ok, entries} = HTTP.watchlist("user-token")
+
+    assert entries == [
+             %{tmdb_id: 27_205, type: "movie", title: "Inception", year: 2010},
+             %{tmdb_id: 1399, type: "show", title: "Some Show", year: 2011}
+           ]
+  end
+
+  test "watchlist/1 returns an empty list for a watchlist with no Metadata" do
+    Req.Test.stub(Cinder.PlexTvStub, fn conn ->
+      conn
+      |> Plug.Conn.put_resp_content_type("application/json")
+      |> Req.Test.json(%{"MediaContainer" => %{"size" => 0}})
+    end)
+
+    assert {:ok, []} = HTTP.watchlist("user-token")
+  end
+
+  test "watchlist/1 reports a rejected token as :unauthorized, distinctly from other failures" do
+    Req.Test.stub(Cinder.PlexTvStub, fn conn ->
+      Plug.Conn.send_resp(conn, 401, "")
+    end)
+
+    assert {:error, :unauthorized} = HTTP.watchlist("stale-token")
+  end
+
+  test "watchlist/1 reports a server-side failure as a plain status error" do
+    Req.Test.stub(Cinder.PlexTvStub, fn conn ->
+      Plug.Conn.send_resp(conn, 503, "")
+    end)
+
+    assert {:error, {:plex_tv_status, 503}} = HTTP.watchlist("user-token")
+  end
+
   test "client_identifier/0 generates once and returns the same value on the second call" do
     first = PlexAuth.client_identifier()
     second = PlexAuth.client_identifier()

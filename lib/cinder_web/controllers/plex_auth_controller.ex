@@ -15,6 +15,11 @@ defmodule CinderWeb.PlexAuthController do
   authenticated but stale session (e.g. a stolen session/remember-me cookie) can't graft an
   attacker's Plex identity onto the victim's account as a backdoor. `:login` never needs it.
 
+  Both intents then stash the plex.tv auth token on that user's row via
+  `Accounts.store_plex_token/2` — Cloak-encrypted at rest, never logged or rendered — so the
+  opt-in Plex watchlist sync (`Cinder.Requests.WatchlistSync`) has a credential to read that
+  account's watchlist with. Storing it is not opting in; the toggle lives in `/users/settings`.
+
   Every failure path is a generic flash + redirect — never leaking plex.tv or internal error
   detail — to `/users/log-in` for `:login`, `/users/settings` for `:link`.
   """
@@ -86,6 +91,7 @@ defmodule CinderWeb.PlexAuthController do
     with {:ok, account} <- PlexAuth.impl().account(token),
          :ok <- authorize_server_access(token),
          {:ok, user} <- Accounts.login_or_register_plex_user(account) do
+      Accounts.store_plex_token(user, token)
       CinderWeb.UserAuth.log_in_user(conn, user)
     else
       {:error, :no_email} ->
@@ -117,7 +123,9 @@ defmodule CinderWeb.PlexAuthController do
   defp link_account(conn, token, user) do
     with {:ok, account} <- PlexAuth.impl().account(token),
          :ok <- authorize_server_access(token),
-         {:ok, _user} <- Accounts.link_plex_to_user(user, account) do
+         {:ok, linked} <- Accounts.link_plex_to_user(user, account) do
+      Accounts.store_plex_token(linked, token)
+
       conn
       |> put_flash(:info, gettext("Your Plex account is now linked."))
       |> redirect(to: ~p"/users/settings")
