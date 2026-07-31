@@ -1,6 +1,7 @@
 defmodule CinderWeb.UserLive.Login do
   use CinderWeb, :live_view
 
+  alias Cinder.Accounts.JellyfinAuth
   alias Cinder.Accounts.PlexAuth
 
   @impl true
@@ -57,9 +58,40 @@ defmodule CinderWeb.UserLive.Login do
           </.button>
         </.form>
 
-        <%= if @plex_login_available? do %>
+        <%= if @plex_login_available? or @jellyfin_login_available? do %>
           <div class="divider">{gettext("or")}</div>
+        <% end %>
+
+        <%= if @plex_login_available? do %>
           <.plex_button href={~p"/auth/plex"} label={gettext("Sign in with Plex")} />
+        <% end %>
+
+        <%= if @jellyfin_login_available? do %>
+          <.form
+            :let={jf}
+            for={@jellyfin_form}
+            id="login_form_jellyfin"
+            action={~p"/auth/jellyfin"}
+            method="post"
+            class="mt-4"
+          >
+            <.input
+              field={jf[:username]}
+              type="text"
+              label={gettext("Jellyfin username")}
+              autocomplete="username"
+              spellcheck="false"
+              required
+            />
+            <.input
+              field={jf[:password]}
+              type="password"
+              label={gettext("Jellyfin password")}
+              autocomplete="current-password"
+              spellcheck="false"
+            />
+            <.button class="w-full">{gettext("Sign in with Jellyfin")}</.button>
+          </.form>
         <% end %>
       </div>
     </Layouts.app>
@@ -77,8 +109,10 @@ defmodule CinderWeb.UserLive.Login do
     {:ok,
      assign(socket,
        form: form,
+       jellyfin_form: to_form(%{}, as: "jellyfin"),
        trigger_submit: false,
-       plex_login_available?: PlexAuth.configured?()
+       plex_login_available?: PlexAuth.configured?(),
+       jellyfin_login_available?: JellyfinAuth.configured?()
      )}
   end
 

@@ -4,6 +4,7 @@ defmodule CinderWeb.UserLive.Settings do
   on_mount {CinderWeb.UserAuth, :require_sudo_mode}
 
   alias Cinder.Accounts
+  alias Cinder.Accounts.JellyfinAuth
   alias Cinder.Accounts.PlexAuth
 
   @impl true
@@ -136,6 +137,56 @@ defmodule CinderWeb.UserLive.Settings do
         </div>
       <% end %>
 
+      <%= if JellyfinAuth.configured?() do %>
+        <div class="divider" />
+
+        <div class="text-left">
+          <h3 class="text-lg font-semibold">{gettext("Jellyfin account")}</h3>
+
+          <%= if @current_scope.user.jellyfin_user_id do %>
+            <p class="mt-2">
+              <%= if @current_scope.user.jellyfin_username do %>
+                {gettext("Linked as %{username}.", username: @current_scope.user.jellyfin_username)}
+              <% else %>
+                {gettext("Linked.")}
+              <% end %>
+            </p>
+            <.button phx-click="unlink_jellyfin" variant="neutral" class="mt-2">
+              {gettext("Unlink")}
+            </.button>
+          <% else %>
+            <p class="mt-2">
+              {gettext("Sign in faster next time by linking your Jellyfin account.")}
+            </p>
+            <.form
+              :let={jf}
+              for={@jellyfin_form}
+              id="link_jellyfin_form"
+              action={~p"/auth/jellyfin"}
+              method="post"
+              class="mt-2"
+            >
+              <.input
+                field={jf[:username]}
+                type="text"
+                label={gettext("Jellyfin username")}
+                autocomplete="off"
+                spellcheck="false"
+                required
+              />
+              <.input
+                field={jf[:password]}
+                type="password"
+                label={gettext("Jellyfin password")}
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <.button variant="primary">{gettext("Link Jellyfin account")}</.button>
+            </.form>
+          <% end %>
+        </div>
+      <% end %>
+
       <div class="divider" />
 
       <div class="text-left">
@@ -209,6 +260,7 @@ defmodule CinderWeb.UserLive.Settings do
       |> assign(:email_form, to_form(email_changeset))
       |> assign(:password_form, to_form(password_changeset))
       |> assign(:delete_form, to_form(%{}, as: "delete_account"))
+      |> assign(:jellyfin_form, to_form(%{}, as: "jellyfin"))
       |> assign(:trigger_submit, false)
 
     {:ok, socket}
@@ -342,6 +394,26 @@ defmodule CinderWeb.UserLive.Settings do
              socket,
              :error,
              gettext("Could not unlink your Plex account. Please try again.")
+           )}
+      end
+    end)
+  end
+
+  def handle_event("unlink_jellyfin", _params, socket) do
+    with_sudo_mode(socket, fn ->
+      case Accounts.unlink_jellyfin_from_user(socket.assigns.current_scope.user) do
+        {:ok, user} ->
+          {:noreply,
+           socket
+           |> assign(:current_scope, %{socket.assigns.current_scope | user: user})
+           |> put_flash(:info, gettext("Your Jellyfin account has been unlinked."))}
+
+        {:error, _changeset} ->
+          {:noreply,
+           put_flash(
+             socket,
+             :error,
+             gettext("Could not unlink your Jellyfin account. Please try again.")
            )}
       end
     end)

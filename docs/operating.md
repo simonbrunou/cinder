@@ -76,6 +76,16 @@ terminate at a reverse proxy):
   A Plex Home managed account with no email can't sign in this way. To attach Plex to an existing
   account (e.g. an admin who registered by password), log in normally and link it from Account
   settings (`/users/settings`).
+- **Sign in with Jellyfin:** once a Jellyfin server is configured (`JELLYFIN_URL` or the
+  `/settings` equivalent), the log-in page shows a "Sign in with Jellyfin" username/password form,
+  checked against that server's own `Users/AuthenticateByName` — so only accounts the server
+  already knows can sign in, and no API key is needed for it. The same rules as Plex apply: the
+  first successful Jellyfin login always creates a new regular-user account (role `:user`, awaiting
+  admin approval), never an email-based login into an existing one, and attaching Jellyfin to an
+  existing account is an explicit action from Account settings. Jellyfin exposes no email address,
+  so a created account gets a placeholder `…@jellyfin.invalid` one with email notifications off
+  until its owner sets a real address. Attempts are rate-limited exactly like password login. Emby
+  serves the same endpoint and should work if you point `JELLYFIN_URL` at one — untested.
 
 ## Privacy & GDPR
 

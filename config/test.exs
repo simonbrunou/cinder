@@ -58,6 +58,7 @@ config :cinder,
   tmdb: Cinder.Catalog.TMDBMock,
   indexer: Cinder.Acquisition.IndexerMock,
   plex_auth: Cinder.Accounts.PlexAuthMock,
+  jellyfin_auth: Cinder.Accounts.JellyfinAuthMock,
   media_server: Cinder.Library.MediaServerMock,
   filesystem: Cinder.Library.FilesystemMock,
   path_policy: Cinder.Test.PermissivePathPolicy,
@@ -169,6 +170,9 @@ config :cinder, Cinder.Library.MediaServer.Plex,
 
 config :cinder, Cinder.Accounts.PlexAuth.HTTP,
   req_options: [plug: {Req.Test, Cinder.PlexTvStub}, retry: false]
+
+config :cinder, Cinder.Accounts.JellyfinAuth.HTTP,
+  req_options: [plug: {Req.Test, Cinder.JellyfinAuthStub}, retry: false]
 
 # The app-level poller must not run during the suite (it would race Mox/Sandbox).
 # Poller tests start their own supervised instance.

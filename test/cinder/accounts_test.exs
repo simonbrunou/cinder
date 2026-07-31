@@ -1222,4 +1222,131 @@ defmodule Cinder.AccountsTest do
       assert unlinked.plex_username == nil
     end
   end
+
+  describe "login_or_register_jellyfin_user/1" do
+    test "matches an existing user by jellyfin_user_id and logs in" do
+      user =
+        user_fixture() |> Ecto.Changeset.change(jellyfin_user_id: "jf-1001") |> Repo.update!()
+
+      assert {:ok, matched} =
+               Accounts.login_or_register_jellyfin_user(%{id: "jf-1001", name: "someone"})
+
+      assert matched.id == user.id
+    end
+
+    # A malformed response with no id must fail closed, not fall through to
+    # Repo.get_by(User, jellyfin_user_id: nil) (= `WHERE jellyfin_user_id IS NULL`), which would
+    # match an arbitrary password-only user or raise MultipleResultsError.
+    test "rejects an account with a nil id without matching a null-jellyfin_user_id user" do
+      existing = user_fixture()
+
+      assert {:error, :invalid_account} =
+               Accounts.login_or_register_jellyfin_user(%{id: nil, name: "x"})
+
+      assert Repo.reload!(existing).jellyfin_username == nil
+    end
+
+    test "refreshes jellyfin_username on an id match if it changed" do
+      user =
+        user_fixture()
+        |> Ecto.Changeset.change(jellyfin_user_id: "jf-1002", jellyfin_username: "old-name")
+        |> Repo.update!()
+
+      assert {:ok, updated} =
+               Accounts.login_or_register_jellyfin_user(%{id: "jf-1002", name: "new-name"})
+
+      assert updated.id == user.id
+      assert updated.jellyfin_username == "new-name"
+    end
+
+    test "creates a new pending :user with a synthetic address and no usable password" do
+      _admin = admin_fixture()
+
+      assert {:ok, created} =
+               Accounts.login_or_register_jellyfin_user(%{id: "jf-2001", name: "Brand.New"})
+
+      assert created.role == :user
+      refute created.active
+      refute created.notify_email
+      assert created.request_quota == 10
+      assert created.confirmed_at
+      assert created.jellyfin_user_id == "jf-2001"
+      assert created.email == "brand.new@jellyfin.invalid"
+
+      refute Accounts.get_user_by_email_and_password(created.email, "password1234")
+      refute Accounts.get_user_by_email_and_password(created.email, "")
+    end
+
+    test "falls back to the opaque id when the Jellyfin name sanitizes away" do
+      _admin = admin_fixture()
+
+      assert {:ok, created} =
+               Accounts.login_or_register_jellyfin_user(%{id: "jf-2002", name: "王"})
+
+      assert created.email == "jellyfin-jf-2002@jellyfin.invalid"
+    end
+
+    test "refuses to create a new Jellyfin user while no admin exists" do
+      assert {:error, :admin_required} =
+               Accounts.login_or_register_jellyfin_user(%{id: "jf-3002", name: "the-newcomer"})
+
+      assert Repo.aggregate(User, :count) == 0
+    end
+
+    # SECURITY: the first Jellyfin login always creates a NEW regular user. Cinder never looks an
+    # existing account up by email here — an identity the media server vouches for is not proof
+    # of inbox ownership, so matching on email would be an account-takeover path. A collision on
+    # the synthetic address is therefore a rejected create, never a login: the existing row is
+    # left completely untouched.
+    test "an email collision with an existing admin never resolves to that admin" do
+      admin = admin_fixture(email: "attacker@jellyfin.invalid")
+      count_before = Repo.aggregate(User, :count)
+
+      assert {:error, %Ecto.Changeset{}} =
+               Accounts.login_or_register_jellyfin_user(%{id: "jf-4444", name: "attacker"})
+
+      reloaded = Repo.reload!(admin)
+      assert reloaded.role == :admin
+      assert reloaded.jellyfin_user_id == nil
+      assert Repo.aggregate(User, :count) == count_before
+    end
+  end
+
+  describe "link_jellyfin_to_user/2" do
+    test "sets jellyfin_user_id/username and preserves role (admin stays admin)" do
+      admin = admin_fixture()
+
+      assert {:ok, linked} = Accounts.link_jellyfin_to_user(admin, %{id: "jf-7001", name: "me"})
+
+      assert linked.role == :admin
+      assert linked.jellyfin_user_id == "jf-7001"
+      assert linked.jellyfin_username == "me"
+    end
+
+    test "returns {:error, changeset} when that identity already belongs to another user" do
+      _taken =
+        user_fixture() |> Ecto.Changeset.change(jellyfin_user_id: "jf-7002") |> Repo.update!()
+
+      user = user_fixture()
+
+      assert {:error, changeset} =
+               Accounts.link_jellyfin_to_user(user, %{id: "jf-7002", name: "someone-else"})
+
+      assert %{jellyfin_user_id: ["has already been taken"]} = errors_on(changeset)
+      refute Repo.reload!(user).jellyfin_user_id
+    end
+  end
+
+  describe "unlink_jellyfin_from_user/1" do
+    test "clears jellyfin_user_id and jellyfin_username" do
+      user =
+        user_fixture()
+        |> Ecto.Changeset.change(jellyfin_user_id: "jf-8001", jellyfin_username: "linked-name")
+        |> Repo.update!()
+
+      assert {:ok, unlinked} = Accounts.unlink_jellyfin_from_user(user)
+      assert unlinked.jellyfin_user_id == nil
+      assert unlinked.jellyfin_username == nil
+    end
+  end
 end
