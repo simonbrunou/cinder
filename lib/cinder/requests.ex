@@ -45,8 +45,9 @@ defmodule Cinder.Requests do
   A page of the request queue projected to JSON-ready maps for the read-only `/api/v1` scope,
   newest first. Datetimes are ISO-8601 strings, like `export_for_user/1`.
 
-  Deliberately omits the requester and the admin's `denial_reason`: `/api/v1` is session-less,
-  so it may carry nothing a non-admin couldn't already see in the UI. `limit`/`offset` are
+  Deliberately omits the requester and the admin's `denial_reason`, so a session-less caller
+  gets no personal data. It is NOT scoped by status or user: this is the whole admin queue, which
+  is why `CinderWeb.ApiController` documents the key as an admin credential. `limit`/`offset` are
   clamped by the caller.
   """
   @spec list_for_api(pos_integer(), non_neg_integer()) :: [map()]

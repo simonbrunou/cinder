@@ -190,7 +190,7 @@ defmodule CinderWeb.SettingsLive do
         <h2 class="text-lg font-semibold mb-3">{gettext("API access")}</h2>
         <p class="text-sm opacity-70">
           {gettext(
-            "A read-only JSON API for dashboard widgets and bots. One key for the whole household, stored hashed, so it can be shown only once. Generating a new key revokes the previous one."
+            "A read-only JSON API for dashboard widgets and bots. One key for the whole household, stored hashed, so it can be shown only once. Generating a new key revokes the previous one. Anyone holding the key can read the request queue, so treat it as an admin credential."
           )}
         </p>
         <ul class="text-sm mt-2 font-mono">
@@ -223,12 +223,32 @@ defmodule CinderWeb.SettingsLive do
         </p>
 
         <div class="mt-3 flex flex-wrap gap-2">
-          <.button type="button" phx-click="generate_api_key">
+          <%!-- Both controls are destructive once a key exists (regenerating revokes the old
+          one just as surely as Revoke does), so both are gated then. A first-time Generate has
+          nothing to lose and stays one click. --%>
+          <.button
+            type="button"
+            phx-click="generate_api_key"
+            data-confirm={
+              @api_key_set &&
+                gettext("Regenerate the API key? The current key stops working immediately.")
+            }
+          >
             {if @api_key_set,
               do: gettext("Regenerate API key"),
               else: gettext("Generate API key")}
           </.button>
-          <.button :if={@api_key_set} type="button" variant="ghost" phx-click="revoke_api_key">
+          <.button
+            :if={@api_key_set}
+            type="button"
+            variant="danger"
+            phx-click="revoke_api_key"
+            data-confirm={
+              gettext(
+                "Revoke the API key? Every dashboard widget and bot using it stops working immediately."
+              )
+            }
+          >
             {gettext("Revoke API key")}
           </.button>
         </div>

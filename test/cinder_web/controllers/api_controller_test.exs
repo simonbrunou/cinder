@@ -131,7 +131,11 @@ defmodule CinderWeb.ApiControllerTest do
             {"limit=0&offset=-5", 1, 0},
             {"limit=9999", 100, 0},
             {"limit=abc&offset=%20", 50, 0},
-            {"limit[]=2", 50, 0}
+            {"limit[]=2", 50, 0},
+            # Past exqlite's int64 bind: unclamped this raised, so a valid key turned a typo
+            # into a 500 plus a stack trace in the log.
+            {"offset=9223372036854775808", 50, 1_000_000},
+            {"offset=99999999999999999999999999", 50, 1_000_000}
           ] do
         body = conn |> authed(key) |> get("/api/v1/requests?" <> query) |> json_response(200)
         assert %{"limit" => ^limit, "offset" => ^offset} = body
