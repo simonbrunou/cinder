@@ -15,6 +15,19 @@ defmodule Cinder.CatalogPipelineStatusTest do
     end
   end
 
+  describe "parked_statuses/0" do
+    test "returns exactly the parked failure statuses" do
+      assert Catalog.parked_statuses() == @parked
+    end
+
+    test "is the set retry_movie/1 accepts (Retry shows exactly where it can succeed)" do
+      for status <- Ecto.Enum.values(Movie, :status) -- @parked do
+        assert Catalog.retry_movie(%Movie{id: 0, status: status}) == {:error, :not_retryable},
+               "expected #{inspect(status)} to be rejected by retry_movie/1"
+      end
+    end
+  end
+
   describe "in_pipeline?/1" do
     test "true for every active status" do
       for status <- @active do

@@ -397,15 +397,11 @@ defmodule CinderWeb.ActivityLive do
             >
               {m.failure_reason || pipeline_hint(m)}
             </p>
+            <%!-- Retry shows exactly where retry_movie/1 can succeed: a verification hold
+            parks at :import_failed (in the set), an anime hold rides :requested/:searching
+            (out of it, no action to offer) — see Catalog.parked_statuses/0. --%>
             <.button
-              :if={
-                movie_badge_status(m) in [
-                  :no_match,
-                  :search_failed,
-                  :import_failed,
-                  :verification_hold
-                ]
-              }
+              :if={m.status in Catalog.parked_statuses()}
               id={"retry-movie-#{m.id}"}
               size="sm"
               phx-click="retry"
