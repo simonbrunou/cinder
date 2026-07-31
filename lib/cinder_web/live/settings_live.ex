@@ -14,7 +14,7 @@ defmodule CinderWeb.SettingsLive do
 
   import CinderWeb.SettingsComponents
 
-  alias Cinder.{Health, Settings}
+  alias Cinder.{ApiKey, Health, Settings}
   alias CinderWeb.SettingsLabels
 
   @impl true
@@ -25,7 +25,11 @@ defmodule CinderWeb.SettingsLive do
        health: %{},
        form_revision: 0,
        undecryptable_secrets: Settings.undecryptable_secret_keys(),
-       auto_approve_all: Settings.auto_approve_all?()
+       auto_approve_all: Settings.auto_approve_all?(),
+       api_key_set: ApiKey.configured?(),
+       # The plaintext key, held for this render only. It is never stored (only its hash is),
+       # so once this socket state is replaced it is gone for good.
+       new_api_key: nil
      )}
   end
 
@@ -73,6 +77,14 @@ defmodule CinderWeb.SettingsLive do
     on = Map.get(params, "auto_approve_all") == "on"
     Settings.put("auto_approve_all", to_string(on))
     {:noreply, assign(socket, auto_approve_all: on)}
+  end
+
+  def handle_event("generate_api_key", _params, socket),
+    do: {:noreply, assign(socket, api_key_set: true, new_api_key: ApiKey.generate())}
+
+  def handle_event("revoke_api_key", _params, socket) do
+    ApiKey.revoke()
+    {:noreply, assign(socket, api_key_set: false, new_api_key: nil)}
   end
 
   # Event payloads are client-controlled — ignore a forged/unmatched frame rather than
@@ -172,6 +184,54 @@ defmodule CinderWeb.SettingsLive do
             )}
           </p>
         </form>
+      </div>
+
+      <div class="rounded-box bg-base-200 p-4 mt-8">
+        <h2 class="text-lg font-semibold mb-3">{gettext("API access")}</h2>
+        <p class="text-sm opacity-70">
+          {gettext(
+            "A read-only JSON API for dashboard widgets and bots. One key for the whole household, stored hashed, so it can be shown only once. Generating a new key revokes the previous one."
+          )}
+        </p>
+        <ul class="text-sm mt-2 font-mono">
+          <li>{"GET /api/v1/status"}</li>
+          <li>{"GET /api/v1/requests"}</li>
+        </ul>
+        <p class="text-sm mt-2">
+          {gettext("Send the key in the %{header} request header.", header: "x-api-key")}
+        </p>
+        <p class="text-sm opacity-70">
+          {gettext(
+            "These routes also sit behind the optional HTTP Basic gate, so if you enabled it, API clients must send those credentials too."
+          )}
+        </p>
+
+        <div
+          :if={@new_api_key}
+          id="new-api-key"
+          role="alert"
+          class="alert alert-success mt-3 items-start"
+        >
+          <div class="min-w-0">
+            <p class="font-semibold">{gettext("Copy this key now. It will not be shown again.")}</p>
+            <code class="break-all text-sm">{@new_api_key}</code>
+          </div>
+        </div>
+
+        <p :if={not @api_key_set} class="text-sm mt-3">
+          {gettext("No key is set, so the API rejects every request.")}
+        </p>
+
+        <div class="mt-3 flex flex-wrap gap-2">
+          <.button type="button" phx-click="generate_api_key">
+            {if @api_key_set,
+              do: gettext("Regenerate API key"),
+              else: gettext("Generate API key")}
+          </.button>
+          <.button :if={@api_key_set} type="button" variant="ghost" phx-click="revoke_api_key">
+            {gettext("Revoke API key")}
+          </.button>
+        </div>
       </div>
     </Layouts.app>
     """

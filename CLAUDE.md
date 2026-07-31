@@ -83,9 +83,12 @@ PubSub/before the poller) and on every save, so DB overrides env, a cleared sett
 the contexts read the same keys unchanged. Secrets are Cloak-encrypted at rest (secret rows only;
 key derived from `SECRET_KEY_BASE`) and never echoed back to the form. `/settings` is admin-gated
 by real accounts (`UserAuth` `:require_admin`, inside the `:admin` live_session). Separately, an
-optional HTTP Basic gate (`plug :basic_auth` in the `:browser` pipeline, `router.ex`) fronts
-*every* browser route as a defense-in-depth edge: a no-op when both `CINDER_BASIC_AUTH_USER` and
-`CINDER_BASIC_AUTH_PASSWORD` are unset, and fail-closed (it raises) if exactly one is set.
+optional HTTP Basic gate (`plug :basic_auth` in the `:browser` **and `:api`** pipelines,
+`router.ex`) fronts *every* browser route and the `/api/v1` scope as a defense-in-depth edge: a
+no-op when both `CINDER_BASIC_AUTH_USER` and `CINDER_BASIC_AUTH_PASSWORD` are unset, and
+fail-closed (it raises) if exactly one is set. The read-only `/api/v1` scope adds its own gate on
+top: `CinderWeb.Plugs.ApiAuth` + the SHA-256-hashed household key in `Cinder.ApiKey` (a raw
+non-registry settings key, generated and shown once in `/settings`).
 
 Signing salts (session + LiveView) are **derived from `secret_key_base` at runtime** in
 `config/runtime.exs` — nothing crypto-related is committed. `signing_salt` is a salt, not a

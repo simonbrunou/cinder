@@ -41,6 +41,37 @@ defmodule Cinder.Requests do
     Repo.all(from r in Request, order_by: [desc: r.id], preload: [:user])
   end
 
+  @doc """
+  A page of the request queue projected to JSON-ready maps for the read-only `/api/v1` scope,
+  newest first. Datetimes are ISO-8601 strings, like `export_for_user/1`.
+
+  Deliberately omits the requester and the admin's `denial_reason`: `/api/v1` is session-less,
+  so it may carry nothing a non-admin couldn't already see in the UI. `limit`/`offset` are
+  clamped by the caller.
+  """
+  @spec list_for_api(pos_integer(), non_neg_integer()) :: [map()]
+  def list_for_api(limit, offset) do
+    Request
+    |> from(order_by: [desc: :id], limit: ^limit, offset: ^offset)
+    |> Repo.all()
+    |> Enum.map(fn r ->
+      %{
+        id: r.id,
+        status: r.status,
+        target_type: r.target_type,
+        target_id: r.target_id,
+        season_number: r.season_number,
+        title: r.title,
+        year: r.year,
+        requested_at: iso(r.inserted_at)
+      }
+    end)
+  end
+
+  @doc "Total number of requests of any status — the page envelope for `list_for_api/2`."
+  @spec count_requests() :: non_neg_integer()
+  def count_requests, do: Repo.aggregate(Request, :count)
+
   def list_for_user(%User{id: id}) do
     Repo.all(from r in Request, where: r.user_id == ^id, order_by: [desc: r.id])
   end
