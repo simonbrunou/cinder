@@ -116,6 +116,27 @@ defmodule Cinder.Requests.WatchlistSyncTest do
     assert [_only_one] = Requests.list_for_user(user)
   end
 
+  # Catalog.delete_movie/3 deliberately reaps the title's :approved request in the same
+  # transaction, so a request row alone can't carry "already synced" — without the durable
+  # marker the sweep would treat a still-watchlisted deleted movie as new and silently
+  # re-download it, every 15 minutes, forever.
+  test "a movie the admin deleted is not re-requested while it stays on the watchlist" do
+    admin = opted_in_user(admin_fixture())
+
+    expect(PlexAuthMock, :watchlist, 2, fn _token -> {:ok, [entry(603)]} end)
+
+    sync!()
+    assert %Movie{} = movie = Repo.get_by(Movie, tmdb_id: 603)
+    assert {:ok, %Movie{}} = Cinder.Catalog.delete_movie(movie, admin)
+    # The reap really did remove the request row this dedupe used to rely on.
+    assert Requests.list_for_user(admin) == []
+
+    sync!()
+
+    assert Repo.get_by(Movie, tmdb_id: 603) == nil
+    assert Requests.list_for_user(admin) == []
+  end
+
   test "an entry the admin already denied is not re-requested on the next poll" do
     user = opted_in_user(user_fixture())
     admin = admin_fixture()
