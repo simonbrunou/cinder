@@ -1271,19 +1271,37 @@ defmodule Cinder.AccountsTest do
       assert created.request_quota == 10
       assert created.confirmed_at
       assert created.jellyfin_user_id == "jf-2001"
-      assert created.email == "brand.new@jellyfin.invalid"
+      assert created.email == "brand.new-jf-2001@jellyfin.invalid"
 
       refute Accounts.get_user_by_email_and_password(created.email, "password1234")
       refute Accounts.get_user_by_email_and_password(created.email, "")
     end
 
-    test "falls back to the opaque id when the Jellyfin name sanitizes away" do
+    test "falls back to the opaque id alone when the Jellyfin name sanitizes away" do
       _admin = admin_fixture()
 
       assert {:ok, created} =
                Accounts.login_or_register_jellyfin_user(%{id: "jf-2002", name: "王"})
 
       assert created.email == "jellyfin-jf-2002@jellyfin.invalid"
+    end
+
+    # SECURITY: the synthetic address must not be derivable from the display name alone.
+    # Self-registration is open, so a guessable address would let anyone pre-register it and
+    # permanently block that Jellyfin user's first sign-in. Two accounts sharing a display name
+    # must also not collide with each other.
+    test "the synthetic address is keyed on the opaque id, so identical display names differ" do
+      _admin = admin_fixture()
+
+      assert {:ok, first} =
+               Accounts.login_or_register_jellyfin_user(%{id: "jf-2003", name: "alice"})
+
+      assert {:ok, second} =
+               Accounts.login_or_register_jellyfin_user(%{id: "jf-2004", name: "Alice"})
+
+      assert first.email != second.email
+      assert first.email =~ "jf-2003"
+      assert second.email =~ "jf-2004"
     end
 
     test "refuses to create a new Jellyfin user while no admin exists" do
@@ -1299,7 +1317,7 @@ defmodule Cinder.AccountsTest do
     # the synthetic address is therefore a rejected create, never a login: the existing row is
     # left completely untouched.
     test "an email collision with an existing admin never resolves to that admin" do
-      admin = admin_fixture(email: "attacker@jellyfin.invalid")
+      admin = admin_fixture(email: "attacker-jf-4444@jellyfin.invalid")
       count_before = Repo.aggregate(User, :count)
 
       assert {:error, %Ecto.Changeset{}} =

@@ -206,10 +206,10 @@ defmodule Cinder.Accounts do
   action, `link_jellyfin_to_user/2`.
 
   Jellyfin's API exposes no email address at all, so a created account gets a synthetic,
-  deliberately undeliverable one derived from the Jellyfin username (`@jellyfin.invalid`, the
-  RFC 2606 reserved TLD) with `notify_email: false`; the owner can set a real address from
-  `/users/settings`. If that synthetic address collides with an account that already exists,
-  the unique index rejects the insert — a rejected create, never a login.
+  deliberately undeliverable one (`@jellyfin.invalid`, the RFC 2606 reserved TLD) with
+  `notify_email: false`; the owner can set a real address from `/users/settings`. If that
+  synthetic address collides with an account that already exists, the unique index rejects the
+  insert — a rejected create, never a login.
   """
   def login_or_register_jellyfin_user(%{id: id} = account) when is_binary(id) and id != "" do
     case Repo.get_by(User, jellyfin_user_id: id) do
@@ -260,19 +260,21 @@ defmodule Cinder.Accounts do
     |> announce_pending_user()
   end
 
-  # users.email is required and unique but Jellyfin has no email field, so derive a stable
-  # placeholder from the (server-unique) Jellyfin username, falling back to the opaque user id
-  # when the name sanitizes away to nothing.
+  # users.email is required and unique but Jellyfin has no email field, so mint a placeholder.
+  # The display name is only a readable prefix (it's what an admin sees in the pending-approval
+  # list); the OPAQUE Jellyfin id is what makes the address unique and unguessable. Deriving it
+  # from the name alone would be a denial-of-onboarding: self-registration is open, so anyone
+  # could pre-register `<name>@jellyfin.invalid` and permanently block that Jellyfin user's
+  # first sign-in — and two names that sanitize alike would collide with each other.
   defp jellyfin_email(%{id: id} = account) do
-    local =
-      account
-      |> Map.get(:name)
-      |> to_string()
-      |> String.downcase()
-      |> String.replace(~r/[^a-z0-9._-]/, "")
-
-    if local == "", do: "jellyfin-#{id}@jellyfin.invalid", else: "#{local}@jellyfin.invalid"
+    case account |> Map.get(:name) |> sanitize_email_local() do
+      "" -> "jellyfin-#{sanitize_email_local(id)}@jellyfin.invalid"
+      name -> "#{name}-#{sanitize_email_local(id)}@jellyfin.invalid"
+    end
   end
+
+  defp sanitize_email_local(value),
+    do: value |> to_string() |> String.downcase() |> String.replace(~r/[^a-z0-9._-]/, "")
 
   @doc """
   Attaches a Jellyfin identity to an ALREADY-authenticated user's own account — the

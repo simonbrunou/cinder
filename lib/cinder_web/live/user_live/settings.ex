@@ -180,6 +180,7 @@ defmodule CinderWeb.UserLive.Settings do
                 label={gettext("Jellyfin password")}
                 autocomplete="off"
                 spellcheck="false"
+                required
               />
               <.button variant="primary">{gettext("Link Jellyfin account")}</.button>
             </.form>

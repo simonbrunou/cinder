@@ -107,8 +107,10 @@ defmodule CinderWeb.JellyfinAuthController do
   end
 
   # Case-insensitive, like the password login's pair key — case-rotating the username must land
-  # in the same bucket.
-  defp pair_key(conn, username), do: {ip_string(conn), String.downcase(username)}
+  # in the same bucket. Namespaced because `:login_pair` is shared with password login, which
+  # keys on `{ip, email}`: without the prefix, a successful Jellyfin sign-in would clear (and so
+  # reset) the password-login budget of any Cinder account whose email equals that username.
+  defp pair_key(conn, username), do: {ip_string(conn), "jellyfin:" <> String.downcase(username)}
 
   defp ip_string(conn), do: conn.remote_ip |> :inet.ntoa() |> to_string()
 

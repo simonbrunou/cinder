@@ -79,7 +79,7 @@ defmodule CinderWeb.UserLive.Login do
               field={jf[:username]}
               type="text"
               label={gettext("Jellyfin username")}
-              autocomplete="username"
+              autocomplete="off"
               spellcheck="false"
               required
             />
@@ -87,8 +87,9 @@ defmodule CinderWeb.UserLive.Login do
               field={jf[:password]}
               type="password"
               label={gettext("Jellyfin password")}
-              autocomplete="current-password"
+              autocomplete="off"
               spellcheck="false"
+              required
             />
             <.button class="w-full">{gettext("Sign in with Jellyfin")}</.button>
           </.form>

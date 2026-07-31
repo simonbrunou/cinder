@@ -115,6 +115,30 @@ defmodule Cinder.Notifier.DiscordTest do
     assert embed["thumbnail"]["url"] == "https://image.tmdb.org/t/p/w342/arr.jpg"
   end
 
+  test "request_approved names a Jellyfin-linked requester by their Jellyfin username" do
+    expect_post()
+
+    request = %{
+      title: "Arrival",
+      year: 2016,
+      poster_path: nil,
+      user_id: 4,
+      user: %User{
+        id: 4,
+        email: "kim-jf-9@jellyfin.invalid",
+        jellyfin_username: "kimjellies"
+      },
+      target_type: "movie",
+      season_number: nil
+    }
+
+    assert :ok = Discord.notify({:request_approved, request})
+
+    assert_receive {:posted, %{"embeds" => [embed]}}
+    assert embed["description"] == "Arrival (2016) — for kimjellies"
+    refute embed["description"] =~ "jellyfin.invalid"
+  end
+
   # The auto-approve paths hand the notifier a struct built from a bare insert, so :user is
   # %NotLoaded{}. That must degrade to the id, not raise — Cinder.Notifier.notify/1 swallows
   # raises, so a raise here would read as "Discord silently stopped working".

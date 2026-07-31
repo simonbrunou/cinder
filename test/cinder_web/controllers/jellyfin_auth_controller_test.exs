@@ -38,7 +38,7 @@ defmodule CinderWeb.JellyfinAuthControllerTest do
       assert created.role == :user
       refute created.active
       assert created.jellyfin_username == "viewer"
-      assert created.email == "viewer@jellyfin.invalid"
+      assert created.email == "viewer-jf-1@jellyfin.invalid"
     end
 
     test "a second sign-in matches the same account by jellyfin_user_id", %{conn: conn} do
@@ -101,7 +101,7 @@ defmodule CinderWeb.JellyfinAuthControllerTest do
     test "a synthetic-email collision with an existing admin is rejected, not a takeover", %{
       conn: conn
     } do
-      admin = admin_fixture(email: "collide@jellyfin.invalid")
+      admin = admin_fixture(email: "collide-jf-4@jellyfin.invalid")
       count_before = Repo.aggregate(User, :count)
 
       expect(Cinder.Accounts.JellyfinAuthMock, :authenticate, fn _u, _p ->
@@ -155,6 +155,29 @@ defmodule CinderWeb.JellyfinAuthControllerTest do
 
       assert Phoenix.Flash.get(conn.assigns.flash, :error)
       assert redirected_to(conn) == ~p"/users/log-in"
+    end
+
+    # SECURITY: `:login_pair` is shared with password login, which keys on {ip, email}. Without
+    # the "jellyfin:" namespace, a successful sign-in here would CLEAR the password-login budget
+    # of any account whose email equals the Jellyfin username — handing an attacker a budget
+    # reset between guesses.
+    test "a Jellyfin sign-in never resets the password-login budget of a matching email", %{
+      conn: conn
+    } do
+      _admin = admin_fixture()
+      victim_key = {"127.0.0.1", "victim@example.com"}
+
+      for _ <- 1..11, do: IpRateLimiter.check_and_register(:login_pair, victim_key)
+      assert IpRateLimiter.check_and_register(:login_pair, victim_key) == :blocked
+
+      expect(Cinder.Accounts.JellyfinAuthMock, :authenticate, fn _u, _p ->
+        {:ok, %{id: "jf-5", name: "victim"}}
+      end)
+
+      conn = post(conn, ~p"/auth/jellyfin", credentials("victim@example.com", "s3cret"))
+
+      assert get_session(conn, :user_token)
+      assert IpRateLimiter.check_and_register(:login_pair, victim_key) == :blocked
     end
   end
 
