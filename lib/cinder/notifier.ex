@@ -1,7 +1,8 @@
 defmodule Cinder.Notifier do
   @moduledoc """
   Out-of-band notification seam. `notify/1` dispatches a typed event to the configured impl
-  (default `Cinder.Notifier.Dispatcher`, which fans out to `Log`, `Discord`, and `Email`). A
+  (default `Cinder.Notifier.Dispatcher`, which fans out to `Log`, `Discord`, `Email`, and the
+  generic `Webhook`). A
   side-effect that must never break the pipeline: a raising/exiting impl is caught, logged, and
   swallowed — the Dispatcher isolates each transport from the others the same way, so one
   transport failing can't skip its siblings.
