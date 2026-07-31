@@ -9,6 +9,7 @@ defmodule Cinder.Accounts do
   alias Cinder.Accounts.{User, UserNotifier, UserToken}
   alias Cinder.Audit
   alias Cinder.Audit.AdminAudit
+  alias Cinder.Library.MediaServer
   alias Cinder.Notifier
   alias Cinder.Settings
   alias Cinder.Util
@@ -227,6 +228,86 @@ defmodule Cinder.Accounts do
       end
     end)
   end
+
+  @doc """
+  The configured media server's own user accounts — the candidate list the `/users` import
+  offers. Reached only through the `Cinder.Library.MediaServer` behaviour, like every other
+  external service.
+  """
+  def list_media_server_users, do: MediaServer.impl().list_users()
+
+  @doc """
+  Admin-imports media-server accounts (`list_media_server_users/0` entries) as
+  local `:user`-role accounts — never admins — in one audited transaction, and returns
+  `{:ok, created_users}`.
+
+  An entry that can't (or shouldn't) become an account is **skipped**, never an error, so
+  re-running the import is a no-op:
+
+    * no email — a Cinder account is keyed by its email, and Jellyfin reports none unless the
+      username already is an address;
+    * that email already belongs to an account (including a still-pending or deactivated one,
+      which is therefore never resurrected);
+    * that Plex id is already linked to an account — the case an email check misses, because
+      the user signed in with Plex under a different address.
+
+  Imported accounts carry **no password**: they can only be entered through the media-server
+  sign-in path (the imported `plex_id` is what makes "Sign in with Plex" resolve to this
+  account rather than create a second one) or after an admin sets a password on `/users`.
+  They land `active: true` — selecting someone for import IS the admin approval, and routing
+  them back through the pending queue would defeat the point of a bulk import.
+  """
+  def import_media_server_users(%User{} = actor, entries) when is_list(entries) do
+    admin_transaction(actor, fn actor ->
+      Enum.flat_map(entries, fn entry -> import_media_server_user(actor, entry) end)
+    end)
+  end
+
+  defp import_media_server_user(actor, %{email: email} = entry)
+       when is_binary(email) and email != "" do
+    if already_imported?(entry) do
+      []
+    else
+      case create_imported_user(entry) do
+        {:ok, user} ->
+          Audit.log_or_rollback(actor, "import_media_server_user", user, %{})
+          [user]
+
+        {:error, changeset} ->
+          Repo.rollback(changeset)
+      end
+    end
+  end
+
+  defp import_media_server_user(_actor, _entry), do: []
+
+  defp already_imported?(%{email: email} = entry) do
+    Repo.exists?(from u in User, where: u.email == ^email) or plex_id_taken?(entry)
+  end
+
+  # Plex account ids are integers and have a `users.plex_id` column; Jellyfin ids are string
+  # GUIDs with nowhere to be stored (there is no Jellyfin sign-in), so those dedupe on email
+  # alone. Same split decides whether the created account gets linked, below.
+  defp plex_id_taken?(%{id: id}) when is_integer(id),
+    do: Repo.exists?(from u in User, where: u.plex_id == ^id)
+
+  defp plex_id_taken?(_entry), do: false
+
+  defp create_imported_user(entry) do
+    %User{}
+    |> User.email_changeset(%{email: entry.email}, validate_unique: false)
+    |> put_plex_link(entry)
+    |> Ecto.Changeset.put_change(:confirmed_at, DateTime.utc_now(:second))
+    |> Ecto.Changeset.put_change(:role, :user)
+    |> Ecto.Changeset.put_change(:active, true)
+    |> put_default_request_quota(:user)
+    |> Repo.insert()
+  end
+
+  defp put_plex_link(changeset, %{id: id} = entry) when is_integer(id),
+    do: User.plex_changeset(changeset, %{plex_id: id, plex_username: Map.get(entry, :username)})
+
+  defp put_plex_link(changeset, _entry), do: changeset
 
   @doc "Reloads an actor and authorizes their current persisted admin role."
   def fetch_current_admin(%User{id: id}) do
