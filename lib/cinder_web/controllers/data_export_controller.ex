@@ -1,8 +1,9 @@
 defmodule CinderWeb.DataExportController do
   @moduledoc """
   GDPR Art.15/20 data export: streams the authenticated user's OWN account data, requests,
-  issue reports and Plex watchlist sync markers as a downloadable JSON attachment. Strictly scoped to the session user (no id
-  param), and never includes secrets (`hashed_password`, tokens).
+  issue reports and Plex watchlist sync markers as a downloadable JSON attachment. Strictly
+  scoped to the session user (no id param), and never includes secrets (`hashed_password`,
+  tokens).
   """
   use CinderWeb, :controller
 
