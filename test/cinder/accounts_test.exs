@@ -1271,26 +1271,24 @@ defmodule Cinder.AccountsTest do
       assert created.request_quota == 10
       assert created.confirmed_at
       assert created.jellyfin_user_id == "jf-2001"
-      assert created.email == "brand.new-jf-2001@jellyfin.invalid"
+      assert created.email =~ ~r/^brand\.new-[a-z0-9]+@jellyfin\.invalid$/
 
       refute Accounts.get_user_by_email_and_password(created.email, "password1234")
       refute Accounts.get_user_by_email_and_password(created.email, "")
     end
 
-    test "falls back to the opaque id alone when the Jellyfin name sanitizes away" do
+    test "drops the readable prefix when the Jellyfin name sanitizes away" do
       _admin = admin_fixture()
 
       assert {:ok, created} =
                Accounts.login_or_register_jellyfin_user(%{id: "jf-2002", name: "王"})
 
-      assert created.email == "jellyfin-jf-2002@jellyfin.invalid"
+      assert created.email =~ ~r/^jellyfin-[a-z0-9]+@jellyfin\.invalid$/
     end
 
-    # SECURITY: the synthetic address must not be derivable from the display name alone.
-    # Self-registration is open, so a guessable address would let anyone pre-register it and
-    # permanently block that Jellyfin user's first sign-in. Two accounts sharing a display name
-    # must also not collide with each other.
-    test "the synthetic address is keyed on the opaque id, so identical display names differ" do
+    # SECURITY: the synthetic address must not be derivable from anything an attacker can see.
+    # Two accounts sharing a display name must not collide with each other either.
+    test "the synthetic address is randomized, so identical display names never collide" do
       _admin = admin_fixture()
 
       assert {:ok, first} =
@@ -1300,8 +1298,8 @@ defmodule Cinder.AccountsTest do
                Accounts.login_or_register_jellyfin_user(%{id: "jf-2004", name: "Alice"})
 
       assert first.email != second.email
-      assert first.email =~ "jf-2003"
-      assert second.email =~ "jf-2004"
+      assert first.email =~ ~r/^alice-[a-z0-9]+@jellyfin\.invalid$/
+      assert second.email =~ ~r/^alice-[a-z0-9]+@jellyfin\.invalid$/
     end
 
     test "refuses to create a new Jellyfin user while no admin exists" do
@@ -1313,20 +1311,22 @@ defmodule Cinder.AccountsTest do
 
     # SECURITY: the first Jellyfin login always creates a NEW regular user. Cinder never looks an
     # existing account up by email here — an identity the media server vouches for is not proof
-    # of inbox ownership, so matching on email would be an account-takeover path. A collision on
-    # the synthetic address is therefore a rejected create, never a login: the existing row is
-    # left completely untouched.
-    test "an email collision with an existing admin never resolves to that admin" do
-      admin = admin_fixture(email: "attacker-jf-4444@jellyfin.invalid")
-      count_before = Repo.aggregate(User, :count)
+    # of inbox ownership, so matching on email would be an account-takeover path. An account
+    # already holding the name-derived address must neither be resolved to nor block the create:
+    # self-registration is open, so a squatter could otherwise deny a Jellyfin user onboarding.
+    test "an account squatting the name-derived address neither logs in nor blocks the create" do
+      admin = admin_fixture(email: "attacker@jellyfin.invalid")
 
-      assert {:error, %Ecto.Changeset{}} =
+      assert {:ok, created} =
                Accounts.login_or_register_jellyfin_user(%{id: "jf-4444", name: "attacker"})
+
+      assert created.id != admin.id
+      assert created.role == :user
+      assert created.email != admin.email
 
       reloaded = Repo.reload!(admin)
       assert reloaded.role == :admin
       assert reloaded.jellyfin_user_id == nil
-      assert Repo.aggregate(User, :count) == count_before
     end
   end
 

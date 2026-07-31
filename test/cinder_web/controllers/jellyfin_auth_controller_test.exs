@@ -38,7 +38,7 @@ defmodule CinderWeb.JellyfinAuthControllerTest do
       assert created.role == :user
       refute created.active
       assert created.jellyfin_username == "viewer"
-      assert created.email == "viewer-jf-1@jellyfin.invalid"
+      assert created.email =~ ~r/^viewer-[a-z0-9]+@jellyfin\.invalid$/
     end
 
     test "a second sign-in matches the same account by jellyfin_user_id", %{conn: conn} do
@@ -96,13 +96,12 @@ defmodule CinderWeb.JellyfinAuthControllerTest do
       assert reloaded.jellyfin_user_id == nil
     end
 
-    # SECURITY: even a direct collision on the synthetic address is a rejected create, never a
-    # login as the colliding account.
-    test "a synthetic-email collision with an existing admin is rejected, not a takeover", %{
-      conn: conn
-    } do
-      admin = admin_fixture(email: "collide-jf-4@jellyfin.invalid")
-      count_before = Repo.aggregate(User, :count)
+    # SECURITY: self-registration is open, so an address derivable from the Jellyfin display name
+    # would let anyone squat it and permanently deny that user their first sign-in. The synthetic
+    # address is randomized, so the squatter neither blocks the create nor gets logged into.
+    test "an account squatting the name-derived address neither blocks sign-in nor is logged into",
+         %{conn: conn} do
+      admin = admin_fixture(email: "collide@jellyfin.invalid")
 
       expect(Cinder.Accounts.JellyfinAuthMock, :authenticate, fn _u, _p ->
         {:ok, %{id: "jf-4", name: "collide"}}
@@ -110,14 +109,15 @@ defmodule CinderWeb.JellyfinAuthControllerTest do
 
       conn = post(conn, ~p"/auth/jellyfin", credentials("collide", "s3cret"))
 
-      refute get_session(conn, :user_token)
-      assert Phoenix.Flash.get(conn.assigns.flash, :error)
-      assert redirected_to(conn) == ~p"/users/log-in"
+      assert get_session(conn, :user_token)
+
+      created = Repo.get_by!(User, jellyfin_user_id: "jf-4")
+      assert created.id != admin.id
+      assert created.role == :user
 
       reloaded = Repo.reload!(admin)
       assert reloaded.role == :admin
       assert reloaded.jellyfin_user_id == nil
-      assert Repo.aggregate(User, :count) == count_before
     end
 
     test "with no Jellyfin server configured, redirects with an error and makes no call", %{

@@ -107,10 +107,12 @@ defmodule CinderWeb.JellyfinAuthController do
   end
 
   # Case-insensitive, like the password login's pair key — case-rotating the username must land
-  # in the same bucket. Namespaced because `:login_pair` is shared with password login, which
-  # keys on `{ip, email}`: without the prefix, a successful Jellyfin sign-in would clear (and so
-  # reset) the password-login budget of any Cinder account whose email equals that username.
-  defp pair_key(conn, username), do: {ip_string(conn), "jellyfin:" <> String.downcase(username)}
+  # in the same bucket. `:login_pair` is shared with password login, which keys on
+  # `{ip, downcased_email}`, so clearing one budget must never clear the other's. The namespace
+  # is a TUPLE, not a `"jellyfin:" <> …` string: an email may legally contain `:`, so a string
+  # prefix leaves `jellyfin:someone@example.com` registerable and the two keyspaces still
+  # overlapping. An ETS key is any Erlang term, and `{:jellyfin, _}` can never equal a binary.
+  defp pair_key(conn, username), do: {ip_string(conn), {:jellyfin, String.downcase(username)}}
 
   defp ip_string(conn), do: conn.remote_ip |> :inet.ntoa() |> to_string()
 
