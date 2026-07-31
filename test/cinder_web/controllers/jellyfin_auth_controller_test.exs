@@ -38,7 +38,7 @@ defmodule CinderWeb.JellyfinAuthControllerTest do
       assert created.role == :user
       refute created.active
       assert created.jellyfin_username == "viewer"
-      assert created.email =~ ~r/^viewer-[a-z0-9]+@jellyfin\.invalid$/
+      assert created.email =~ ~r/^viewer-[a-z2-7]{10}@jellyfin\.invalid$/
     end
 
     test "a second sign-in matches the same account by jellyfin_user_id", %{conn: conn} do
@@ -109,11 +109,15 @@ defmodule CinderWeb.JellyfinAuthControllerTest do
 
       conn = post(conn, ~p"/auth/jellyfin", credentials("collide", "s3cret"))
 
-      assert get_session(conn, :user_token)
-
       created = Repo.get_by!(User, jellyfin_user_id: "jf-4")
       assert created.id != admin.id
       assert created.role == :user
+
+      # The session belongs to the NEW account, not the squatter whose address it collided with.
+      {session_user, _inserted_at} =
+        conn |> get_session(:user_token) |> Cinder.Accounts.get_user_by_session_token()
+
+      assert session_user.id == created.id
 
       reloaded = Repo.reload!(admin)
       assert reloaded.role == :admin
@@ -158,9 +162,9 @@ defmodule CinderWeb.JellyfinAuthControllerTest do
     end
 
     # SECURITY: `:login_pair` is shared with password login, which keys on {ip, email}. Without
-    # the "jellyfin:" namespace, a successful sign-in here would CLEAR the password-login budget
-    # of any account whose email equals the Jellyfin username — handing an attacker a budget
-    # reset between guesses.
+    # the `{:jellyfin, _}` namespace, a successful sign-in here would CLEAR the password-login
+    # budget of any account whose email equals the Jellyfin username — handing an attacker a
+    # budget reset between guesses.
     test "a Jellyfin sign-in never resets the password-login budget of a matching email", %{
       conn: conn
     } do
@@ -178,6 +182,29 @@ defmodule CinderWeb.JellyfinAuthControllerTest do
 
       assert get_session(conn, :user_token)
       assert IpRateLimiter.check_and_register(:login_pair, victim_key) == :blocked
+    end
+
+    # ...and the reverse direction, which is why the namespace is a TUPLE and not a
+    # `"jellyfin:" <> …` string prefix: `:` is legal in an email local part, so a string prefix
+    # leaves `jellyfin:victim@example.com` a registerable Cinder address whose password login
+    # would clear the Jellyfin budget for username `victim@example.com` on every success.
+    test "a password login by a `jellyfin:`-shaped email cannot reset the Jellyfin budget", %{
+      conn: conn
+    } do
+      expect(Cinder.Accounts.JellyfinAuthMock, :authenticate, 10, fn _u, _p ->
+        {:error, :invalid_credentials}
+      end)
+
+      for _ <- 1..10, do: post(conn, ~p"/auth/jellyfin", credentials("victim@example.com", "x"))
+
+      # Exactly what UserSessionController.create/3 does when that squatted email logs in.
+      IpRateLimiter.clear(:login_pair, {"127.0.0.1", "jellyfin:victim@example.com"})
+
+      # Still blocked: the 11th attempt never reaches the mock (verify_on_exit! would fail).
+      conn = post(conn, ~p"/auth/jellyfin", credentials("victim@example.com", "x"))
+
+      assert Phoenix.Flash.get(conn.assigns.flash, :error)
+      assert redirected_to(conn) == ~p"/users/log-in"
     end
   end
 

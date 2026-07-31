@@ -1271,7 +1271,7 @@ defmodule Cinder.AccountsTest do
       assert created.request_quota == 10
       assert created.confirmed_at
       assert created.jellyfin_user_id == "jf-2001"
-      assert created.email =~ ~r/^brand\.new-[a-z0-9]+@jellyfin\.invalid$/
+      assert created.email =~ ~r/^brand\.new-[a-z2-7]{10}@jellyfin\.invalid$/
 
       refute Accounts.get_user_by_email_and_password(created.email, "password1234")
       refute Accounts.get_user_by_email_and_password(created.email, "")
@@ -1283,7 +1283,7 @@ defmodule Cinder.AccountsTest do
       assert {:ok, created} =
                Accounts.login_or_register_jellyfin_user(%{id: "jf-2002", name: "王"})
 
-      assert created.email =~ ~r/^jellyfin-[a-z0-9]+@jellyfin\.invalid$/
+      assert created.email =~ ~r/^jellyfin-[a-z2-7]{10}@jellyfin\.invalid$/
     end
 
     # SECURITY: the synthetic address must not be derivable from anything an attacker can see.
@@ -1298,8 +1298,8 @@ defmodule Cinder.AccountsTest do
                Accounts.login_or_register_jellyfin_user(%{id: "jf-2004", name: "Alice"})
 
       assert first.email != second.email
-      assert first.email =~ ~r/^alice-[a-z0-9]+@jellyfin\.invalid$/
-      assert second.email =~ ~r/^alice-[a-z0-9]+@jellyfin\.invalid$/
+      assert first.email =~ ~r/^alice-[a-z2-7]{10}@jellyfin\.invalid$/
+      assert second.email =~ ~r/^alice-[a-z2-7]{10}@jellyfin\.invalid$/
     end
 
     test "refuses to create a new Jellyfin user while no admin exists" do
