@@ -105,7 +105,7 @@ defmodule CinderWeb.ApiControllerTest do
       assert is_binary(newest["requested_at"])
       assert oldest["title"] == "Heat"
 
-      # Nothing a non-admin couldn't already see: no requester, no admin prose.
+      # No personal data: no requester, no admin prose.
       refute Map.has_key?(newest, "user_id")
       refute Map.has_key?(newest, "denial_reason")
       refute conn.resp_body =~ user.email
