@@ -79,14 +79,26 @@ defmodule CinderWeb.LiveHelpers do
   def movie_badge_status(movie), do: movie.status
 
   @doc """
-  The lifecycle atom for a `<.status_badge kind={:grab}>` from a grab row: a mapping or
-  verification hold when flagged, else `:downloading` (no delivered content yet) or
-  `:downloaded` (content in hand, waiting to import). Shared by `/activity` and the beacon.
+  The lifecycle atom for a `<.status_badge kind={:grab}>` from a grab row: the badge for the
+  grab's `Catalog.grab_hold/1` class (a residual-files hold wears the `:needs_mapping` badge),
+  else `:downloading` (no delivered content yet) or `:downloaded` (content in hand, waiting to
+  import). The hold classification itself lives in the Catalog — this only picks badges.
+  Shared by `/activity` and the beacon.
   """
-  def grab_state(%{mapping_status: :needs_mapping}), do: :needs_mapping
-  def grab_state(%{mapping_status: :verification_blocked}), do: :verification_blocked
-  def grab_state(%{content_path: nil}), do: :downloading
-  def grab_state(grab), do: if(residual?(grab), do: :needs_mapping, else: :downloaded)
+  def grab_state(%{content_path: nil} = grab) do
+    case Catalog.grab_hold(grab) do
+      hold when hold in [:needs_mapping, :verification_blocked] -> hold
+      _residual_or_none -> :downloading
+    end
+  end
+
+  def grab_state(grab) do
+    case Catalog.grab_hold(grab) do
+      nil -> :downloaded
+      :residual_files -> :needs_mapping
+      hold -> hold
+    end
+  end
 
   @doc """
   Whether a failed `Requests.create_request/2` changeset is the benign duplicate-pending
@@ -279,14 +291,6 @@ defmodule CinderWeb.LiveHelpers do
       n - 1
     )
   end
-
-  @doc "Number of standard-TV residual videos still awaiting an operator decision."
-  def unresolved_grab_file_count(%{grab_files: files}) when is_list(files),
-    do: Enum.count(files, &is_nil(&1.decision))
-
-  def unresolved_grab_file_count(_grab), do: 0
-
-  defp residual?(grab), do: unresolved_grab_file_count(grab) > 0
 
   @doc "Plain-English standard-TV residual hold reason."
   def grab_file_hold_reason(count) do

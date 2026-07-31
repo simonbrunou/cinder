@@ -2,7 +2,7 @@ defmodule Cinder.Catalog.OperatorHoldsTest do
   use Cinder.DataCase, async: false
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Grab, GrabFile, Movie}
+  alias Cinder.Catalog.{Grab, GrabFile, Grabs, Movie}
   alias Cinder.Repo
   alias Cinder.TestNotifier
 
@@ -78,6 +78,98 @@ defmodule Cinder.Catalog.OperatorHoldsTest do
       })
 
       assert Catalog.count_operator_holds() == 4
+    end
+  end
+
+  describe "grab_hold/1 — the per-grab hold classification /activity renders from" do
+    test "classifies each hold class, nil when no operator action is needed" do
+      assert Catalog.grab_hold(%Grab{mapping_status: :needs_mapping}) == :needs_mapping
+
+      assert Catalog.grab_hold(%Grab{mapping_status: :verification_blocked}) ==
+               :verification_blocked
+
+      residual = %Grab{mapping_status: :resolved, grab_files: [%GrabFile{decision: nil}]}
+      assert Catalog.grab_hold(residual) == :residual_files
+
+      decided = %Grab{mapping_status: :resolved, grab_files: [%GrabFile{decision: :fold}]}
+      assert Catalog.grab_hold(decided) == nil
+      assert Catalog.grab_hold(%Grab{mapping_status: :resolved, grab_files: []}) == nil
+    end
+
+    test "a flagged mapping_status wins over residual files — one class per grab" do
+      held = %Grab{mapping_status: :needs_mapping, grab_files: [%GrabFile{decision: nil}]}
+      assert Catalog.grab_hold(held) == :needs_mapping
+    end
+
+    test "an unloaded grab_files association classifies as no residual hold" do
+      assert Catalog.grab_hold(%Grab{mapping_status: :resolved}) == nil
+      assert Catalog.unresolved_grab_files(%Grab{mapping_status: :resolved}) == []
+    end
+
+    test "unresolved_grab_files/1 keeps only the undecided residual videos" do
+      undecided = %GrabFile{decision: nil}
+
+      grab = %Grab{
+        grab_files: [undecided, %GrabFile{decision: :fold}, %GrabFile{decision: :part}]
+      }
+
+      assert Catalog.unresolved_grab_files(grab) == [undecided]
+    end
+
+    test "count_grab_holds/0 agrees with classifying the listed grabs" do
+      # One fixture per hold class, plus two non-holds (a clean downloading grab and a
+      # residual grab whose files are all decided) — the SQL count is grab_hold/1 in query
+      # form, so it must equal classifying what list_grabs/0 returns.
+      Repo.insert!(%Grab{
+        download_id: "nm",
+        download_protocol: :torrent,
+        mapping_status: :needs_mapping
+      })
+
+      Repo.insert!(%Grab{
+        download_id: "vb",
+        download_protocol: :torrent,
+        mapping_status: :verification_blocked
+      })
+
+      residual = Repo.insert!(%Grab{download_id: "res", download_protocol: :usenet})
+
+      Repo.insert!(%GrabFile{
+        grab_id: residual.id,
+        relative_path: "x.mkv",
+        size: 1,
+        device: 1,
+        inode: 1
+      })
+
+      Repo.insert!(%Grab{
+        download_id: "clean",
+        download_protocol: :torrent,
+        mapping_status: :resolved
+      })
+
+      decided = Repo.insert!(%Grab{download_id: "decided", download_protocol: :usenet})
+
+      Repo.insert!(%GrabFile{
+        grab_id: decided.id,
+        relative_path: "y.mkv",
+        size: 1,
+        device: 2,
+        inode: 3,
+        decision: :fold
+      })
+
+      grabs = Catalog.list_grabs()
+
+      assert Map.new(grabs, &{&1.download_id, Catalog.grab_hold(&1)}) == %{
+               "nm" => :needs_mapping,
+               "vb" => :verification_blocked,
+               "res" => :residual_files,
+               "clean" => nil,
+               "decided" => nil
+             }
+
+      assert Grabs.count_grab_holds() == Enum.count(grabs, &(Catalog.grab_hold(&1) != nil))
     end
   end
 
