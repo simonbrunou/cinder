@@ -270,6 +270,15 @@ defmodule Cinder.Catalog do
   def pipeline_statuses, do: @pipeline_statuses
 
   @doc """
+  The statuses parked on a failure that needs a user retry. Disjoint from
+  `pipeline_statuses/0`; together with the terminal-done pair (`:available` /
+  `:cancelled`) the three sets cover the status enum exactly. This is also the set
+  `retry_movie/1` accepts, so a view gating a Retry control on membership here offers
+  it exactly where the action can succeed.
+  """
+  def parked_statuses, do: @parked_statuses
+
+  @doc """
   True while a movie still belongs on live pipeline surfaces: in an active status
   (`pipeline_statuses/0`) or parked on a failure that needs a retry. False once
   terminal-done — `:available` (it lives in the library) or `:cancelled`.
@@ -558,10 +567,12 @@ defmodule Cinder.Catalog do
 
   defp keep_progress_high_water(attrs, _previous), do: Map.delete(attrs, :download_progress)
 
-  # Parked terminal states a user can re-queue. An in-flight movie must never be
-  # yanked back to :requested, so retry guards on status server-side (the /status
-  # button is a client-sent event — don't trust it to only fire for parked rows).
-  @retryable [:no_match, :search_failed, :import_failed]
+  # Parked terminal states a user can re-queue — the same set `parked_statuses/0`
+  # exposes (retryable *is* the parked classification; tying them keeps that true).
+  # An in-flight movie must never be yanked back to :requested, so retry guards on
+  # status server-side (the /status button is a client-sent event — don't trust it
+  # to only fire for parked rows).
+  @retryable @parked_statuses
 
   @doc """
   Re-queues a parked movie: resets it to `:requested` and zeroes the attempt

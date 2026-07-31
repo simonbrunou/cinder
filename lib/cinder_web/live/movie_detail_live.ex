@@ -28,7 +28,6 @@ defmodule CinderWeb.MovieDetailLive do
   alias Cinder.Catalog.Movie
   alias CinderWeb.AliasHelpers
 
-  @parked [:no_match, :search_failed, :import_failed]
   @picks Language.preferences()
 
   @impl true
@@ -626,7 +625,7 @@ defmodule CinderWeb.MovieDetailLive do
   defp profile_form(movie),
     do: to_form(%{"media_profile" => Atom.to_string(movie.media_profile)})
 
-  defp parked?(status), do: status in @parked
+  defp parked?(status), do: status in Catalog.parked_statuses()
 
   defp has_file?(%Movie{file_path: fp}), do: is_binary(fp) and fp != ""
 

@@ -29,8 +29,11 @@ defmodule CinderWeb.ActivityBeaconLive do
   @toast_ttl :timer.seconds(6)
 
   # movie_badge_status/1 and grab_state/1 values, split into "in flight" vs "needs a human".
-  @active_movie [:requested, :searching, :downloading, :downloaded, :upgrading]
-  @attention_movie [:no_match, :search_failed, :import_failed, :verification_hold, :anime_hold]
+  # The movie split comes from the Catalog classification (pipeline/parked); the two extra
+  # attention states are movie_badge_status/1's derived holds — view vocabulary a raw status
+  # never carries. A held movie's badge leaves the active set (:anime_hold replaces
+  # :requested/:searching), so counting badges against Catalog.pipeline_statuses/0 is exact.
+  @movie_hold_badges [:verification_hold, :anime_hold]
   @active_grab [:downloading, :downloaded]
   @attention_grab [:needs_mapping, :verification_blocked]
 
@@ -97,25 +100,31 @@ defmodule CinderWeb.ActivityBeaconLive do
   defp recount(socket) do
     %{movies: movies, grabs: grabs, held: held} = socket.assigns
 
-    active = count_in(movies, @active_movie) + count_in(grabs, @active_grab)
-    attention = count_in(movies, @attention_movie) + count_in(grabs, @attention_grab) + held
+    active = count_in(movies, Catalog.pipeline_statuses()) + count_in(grabs, @active_grab)
+
+    attention =
+      count_in(movies, attention_movie_statuses()) + count_in(grabs, @attention_grab) + held
 
     assign(socket, active: active, attention: attention)
   end
 
   defp count_in(map, states), do: Enum.count(map, fn {_id, s} -> s in states end)
 
+  defp attention_movie_statuses, do: Catalog.parked_statuses() ++ @movie_hold_badges
+
   defp maybe_toast_movie(socket, movie, :available) do
     title = media_title(movie, socket.assigns.locale)
     toast(socket, :success, gettext("“%{title}” is now available.", title: title))
   end
 
-  defp maybe_toast_movie(socket, movie, status) when status in @attention_movie do
-    title = media_title(movie, socket.assigns.locale)
-    toast(socket, :warning, gettext("“%{title}” needs attention.", title: title))
+  defp maybe_toast_movie(socket, movie, status) do
+    if status in attention_movie_statuses() do
+      title = media_title(movie, socket.assigns.locale)
+      toast(socket, :warning, gettext("“%{title}” needs attention.", title: title))
+    else
+      socket
+    end
   end
-
-  defp maybe_toast_movie(socket, _movie, _status), do: socket
 
   # A grab that just entered a hold state it wasn't in before — one toast per newly-held grab.
   defp toast_new_grab_attention(socket, grabs) do
