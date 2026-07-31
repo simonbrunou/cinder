@@ -666,12 +666,41 @@ defmodule Cinder.Catalog.Grabs do
   def count_grabs_downloading,
     do: Repo.aggregate(from(g in Grab, where: is_nil(g.content_path)), :count)
 
+  # --- grab hold classification --------------------------------------------------------------
+  #
+  # The one definition of "this grab needs an operator": `grab_hold/1` is the per-grab
+  # authority, `count_grab_holds/0` is the same predicate in query form for the nav badge, and
+  # `CinderWeb.ActivityLive` renders whatever `grab_hold/1` / `unresolved_grab_files/1` say
+  # instead of re-deriving the classes — the view and the count once each kept their own copy,
+  # synced by hand. `operator_holds_test.exs` pins the SQL count to classifying `list_grabs/0`.
+
   @doc """
-  Count of grabs sitting in an operator-action hold: a mapping hold (`:needs_mapping`), a
-  verification hold (`:verification_blocked`), or a standard residual grab with at least one
-  undecided `grab_file` (the fold/part decisions `/activity` surfaces via `grab_state/1`'s
-  `residual?` branch). Mirrors the grab hold classes `CinderWeb.ActivityLive` renders actions
-  for, so the Activity nav badge and the page agree. Feeds `Catalog.count_operator_holds/0`.
+  The undecided residual videos of a standard-TV grab: inventoried at import time with no
+  fold/part decision yet. A non-empty result is what makes a `:residual_files` hold
+  (`grab_hold/1`), and these are exactly the rows `/activity` renders resolution actions
+  for. Tolerates an unloaded `grab_files` association (classifies as none).
+  """
+  def unresolved_grab_files(%{grab_files: files}) when is_list(files),
+    do: Enum.filter(files, &is_nil(&1.decision))
+
+  def unresolved_grab_files(_grab), do: []
+
+  @doc """
+  Which operator-action hold a grab sits in, or `nil` when it needs no operator: a mapping
+  hold (`:needs_mapping`), a verification hold (`:verification_blocked`), or a standard
+  residual grab with at least one undecided `grab_file` (`:residual_files`) — the same
+  reason atoms `{:operator_hold, grab, reason}` notifies with. A flagged `mapping_status`
+  wins over residual files, so a grab in two classes classifies once.
+  """
+  def grab_hold(%{mapping_status: :needs_mapping}), do: :needs_mapping
+  def grab_hold(%{mapping_status: :verification_blocked}), do: :verification_blocked
+  def grab_hold(grab), do: if(unresolved_grab_files(grab) == [], do: nil, else: :residual_files)
+
+  @doc """
+  Count of grabs sitting in an operator-action hold — `grab_hold/1` in query form (a grab
+  counts iff it classifies non-nil), kept SQL-side so the nav badge doesn't load every grab
+  with its files on each mount. Feeds `Catalog.count_operator_holds/0`;
+  `operator_holds_test.exs` asserts it agrees with classifying the listed grabs.
   """
   def count_grab_holds do
     from(g in Grab,

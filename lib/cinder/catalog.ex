@@ -618,9 +618,10 @@ defmodule Cinder.Catalog do
 
   @doc """
   Total items needing an operator action, for the admin Activity nav badge: parked/held movies
-  that show a Retry (`#{inspect(@retryable)}`) plus grabs in a mapping/verification/residual hold
-  (`Grabs.count_grab_holds/0`). Defined to match exactly what `CinderWeb.ActivityLive` renders
-  actions for, so the badge and the page agree; `0` means "no badge".
+  that show a Retry (`#{inspect(@retryable)}`) plus grabs classified into a hold by
+  `grab_hold/1` (`Grabs.count_grab_holds/0`, that classification in query form).
+  `CinderWeb.ActivityLive` renders actions from the same classification, so the badge and the
+  page agree; `0` means "no badge".
 
   `@retryable` is the movie hold set on purpose: a movie verification hold parks at
   `:import_failed` (with `verification_hold_origin`), already in this set, and `anime_hold`
@@ -1424,6 +1425,8 @@ defmodule Cinder.Catalog do
   defdelegate count_grabs_downloading(), to: Grabs
   defdelegate list_grabs_downloaded(), to: Grabs
   defdelegate list_grabs(), to: Grabs
+  defdelegate unresolved_grab_files(grab), to: Grabs
+  defdelegate grab_hold(grab), to: Grabs
   defdelegate list_mapping_grabs_for_series(series_id), to: Grabs
   defdelegate get_grab(id), to: Grabs
   defdelegate wanted_episodes(), to: SeriesCatalog

@@ -217,7 +217,7 @@ defmodule CinderWeb.ActivityLive do
 
   defp refresh_grabs(socket) do
     grabs = Catalog.list_grabs()
-    unresolved_ids = for g <- grabs, f <- g.grab_files, is_nil(f.decision), do: f.id
+    unresolved_ids = for g <- grabs, f <- Catalog.unresolved_grab_files(g), do: f.id
 
     assign(socket,
       grabs: grabs,
@@ -228,8 +228,7 @@ defmodule CinderWeb.ActivityLive do
 
   defp grab_file_forms(grabs) do
     for grab <- grabs,
-        file <- grab.grab_files,
-        is_nil(file.decision),
+        file <- Catalog.unresolved_grab_files(grab),
         into: %{} do
       params = %{"grab_file_id" => to_string(file.id), "episode_id" => ""}
       {file.id, to_form(params, as: :resolution)}
@@ -271,8 +270,6 @@ defmodule CinderWeb.ActivityLive do
 
   defp grab_file_error(_reason),
     do: gettext("The file could not be resolved and remains held.")
-
-  defp unresolved_grab_files(grab), do: Enum.filter(grab.grab_files, &is_nil(&1.decision))
 
   defp episode_options(grab, locale) do
     grab.episodes
@@ -531,14 +528,14 @@ defmodule CinderWeb.ActivityLive do
               {mapping_reason(g.mapping_issue)}
             </p>
             <p
-              :if={unresolved_grab_file_count(g) > 0}
+              :if={Catalog.unresolved_grab_files(g) != []}
               id={"grab-#{g.id}-file-reason"}
               class="mt-2 text-sm text-base-content/70"
             >
-              {grab_file_hold_reason(unresolved_grab_file_count(g))}
+              {grab_file_hold_reason(length(Catalog.unresolved_grab_files(g)))}
             </p>
             <div
-              :for={f <- unresolved_grab_files(g)}
+              :for={f <- Catalog.unresolved_grab_files(g)}
               id={"grab-file-#{f.id}"}
               class="mt-3 rounded-box border border-warning/30 bg-base-100 p-3"
             >
