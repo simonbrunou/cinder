@@ -19,6 +19,20 @@ defmodule CinderWeb.Router do
     plug :basic_auth
   end
 
+  # Read-only JSON for dashboard widgets and bots. No session, no CSRF, no LiveView — a machine
+  # caller has no cookie to protect and nothing here mutates. It still carries `:basic_auth`:
+  # an operator who fronts Cinder with HTTP Basic expects that edge to cover every route, and a
+  # reverse-proxy config written on that assumption would otherwise leave /api uncovered. The
+  # cost is that an API client must send both headers when Basic is enabled, which is stated in
+  # the /settings copy next to the key.
+  pipeline :api do
+    plug :basic_auth
+    plug CinderWeb.Plugs.ApiAuth
+    # After the gates on purpose: an unauthenticated caller gets a flat 401 and never reaches
+    # content negotiation (whose 406 renders an error view).
+    plug :accepts, ["json"]
+  end
+
   defp basic_auth(conn, _opts) do
     user = present(System.get_env("CINDER_BASIC_AUTH_USER"))
     pass = present(System.get_env("CINDER_BASIC_AUTH_PASSWORD"))
@@ -47,6 +61,13 @@ defmodule CinderWeb.Router do
 
   scope "/", CinderWeb do
     get "/healthz", HealthController, :show
+  end
+
+  scope "/api/v1", CinderWeb do
+    pipe_through :api
+
+    get "/status", ApiController, :status
+    get "/requests", ApiController, :requests
   end
 
   scope "/", CinderWeb do

@@ -413,4 +413,33 @@ defmodule CinderWeb.SettingsLiveTest do
              "Keep it off while registration enrollment is public."
            )
   end
+
+  test "generating an API key shows it exactly once and never echoes it back", %{conn: conn} do
+    {:ok, lv, html} = live(conn, ~p"/settings")
+
+    assert html =~ "Generate API key"
+    refute has_element?(lv, "#new-api-key")
+
+    html = lv |> element("button", "Generate API key") |> render_click()
+
+    assert html =~ "Copy this key now."
+    assert [_, key] = Regex.run(~r|<code[^>]*>([A-Za-z0-9_-]{40,})</code>|, html)
+    assert Cinder.ApiKey.valid?(key)
+
+    # Re-mounting must not disclose it again: only the hash was persisted.
+    {:ok, lv, html} = live(conn, ~p"/settings")
+    refute html =~ key
+    refute has_element?(lv, "#new-api-key")
+    assert html =~ "Regenerate API key"
+  end
+
+  test "revoking an API key clears it", %{conn: conn} do
+    Cinder.ApiKey.generate()
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    lv |> element("button", "Revoke API key") |> render_click()
+
+    refute Cinder.ApiKey.configured?()
+    refute has_element?(lv, "button", "Revoke API key")
+  end
 end
