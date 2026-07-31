@@ -43,6 +43,24 @@ defmodule Cinder.Notifier.DispatcherTest do
     refute log =~ email
   end
 
+  test "a raising webhook transport is isolated — the rest still run" do
+    original = Application.get_env(:cinder, Cinder.Notifier.Webhook)
+    on_exit(fn -> Application.put_env(:cinder, Cinder.Notifier.Webhook, original) end)
+
+    # Same shape as the Discord case above: Webhook.notify/1's Keyword.get raises, proving the
+    # fourth transport inherits isolate/2 rather than skipping Log/Discord/Email.
+    Application.put_env(:cinder, Cinder.Notifier.Webhook, :not_a_keyword_list)
+
+    log =
+      capture_log(fn ->
+        assert :ok = Dispatcher.notify({:movie_available, movie()})
+      end)
+
+    assert log =~ "Cinder.Notifier.Webhook notify failed for movie_available"
+    assert log =~ "[notifier]"
+    assert log =~ "Dune"
+  end
+
   describe "async dispatch (the prod/dev default)" do
     setup do
       Application.put_env(:cinder, :notifier_dispatch, :async)

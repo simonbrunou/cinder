@@ -364,6 +364,36 @@ defmodule CinderWeb.SettingsLiveTest do
     assert html =~ "saved"
   end
 
+  test "saves the generic webhook and never echoes its auth header back", %{conn: conn} do
+    {:ok, lv, html} = live(conn, ~p"/settings")
+
+    assert html =~ ~s(name="webhook_url")
+    assert html =~ ~s(name="webhook_auth_header")
+
+    html =
+      lv
+      |> form("#settings-form", %{
+        "webhook_url" => "https://ntfy.example.com/cinder",
+        "webhook_auth_header" => "Bearer must-never-echo",
+        "media_server_type" => "jellyfin"
+      })
+      |> render_submit()
+
+    assert html =~ "Settings saved."
+    refute html =~ "must-never-echo"
+
+    assert Settings.get("webhook_url") == "https://ntfy.example.com/cinder"
+
+    assert Application.get_env(:cinder, Cinder.Notifier.Webhook)[:url] ==
+             "https://ntfy.example.com/cinder"
+
+    assert Application.get_env(:cinder, Cinder.Notifier.Webhook)[:auth_header] ==
+             "Bearer must-never-echo"
+
+    {:ok, _lv, html} = live(conn, ~p"/settings")
+    refute html =~ "must-never-echo"
+  end
+
   test "toggling auto-approve persists", %{conn: conn} do
     {:ok, lv, _} = live(conn, ~p"/settings")
 
@@ -382,5 +412,34 @@ defmodule CinderWeb.SettingsLiveTest do
              "#auto-approve-public-warning[role='alert']",
              "Keep it off while registration enrollment is public."
            )
+  end
+
+  test "generating an API key shows it exactly once and never echoes it back", %{conn: conn} do
+    {:ok, lv, html} = live(conn, ~p"/settings")
+
+    assert html =~ "Generate API key"
+    refute has_element?(lv, "#new-api-key")
+
+    html = lv |> element("button", "Generate API key") |> render_click()
+
+    assert html =~ "Copy this key now."
+    assert [_, key] = Regex.run(~r|<code[^>]*>([A-Za-z0-9_-]{40,})</code>|, html)
+    assert Cinder.ApiKey.valid?(key)
+
+    # Re-mounting must not disclose it again: only the hash was persisted.
+    {:ok, lv, html} = live(conn, ~p"/settings")
+    refute html =~ key
+    refute has_element?(lv, "#new-api-key")
+    assert html =~ "Regenerate API key"
+  end
+
+  test "revoking an API key clears it", %{conn: conn} do
+    Cinder.ApiKey.generate()
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    lv |> element("button", "Revoke API key") |> render_click()
+
+    refute Cinder.ApiKey.configured?()
+    refute has_element?(lv, "button", "Revoke API key")
   end
 end

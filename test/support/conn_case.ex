@@ -91,6 +91,7 @@ defmodule CinderWeb.ConnCase do
     Cinder.Library.MediaServer.Jellyfin,
     Cinder.Library.MediaServer.Plex,
     Cinder.Mailer,
+    Cinder.Notifier.Webhook,
     Cinder.Subtitles.Provider.OpenSubtitles,
     :media_server,
     :download_clients,

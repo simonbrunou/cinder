@@ -196,6 +196,26 @@ defmodule Cinder.Settings.Registry do
       label: "Discord webhook URL",
       placeholder: "https://discord.com/api/webhooks/..."
     },
+    # Generic JSON webhook (ntfy/Gotify/Apprise/n8n/...): a URL anyone may see and an optional
+    # header value that carries the endpoint's token, hence secret.
+    %{
+      key: "webhook_url",
+      module: Cinder.Notifier.Webhook,
+      field: :url,
+      secret: false,
+      group: :notifications,
+      label: "Webhook URL",
+      placeholder: "https://ntfy.example.com/cinder"
+    },
+    %{
+      key: "webhook_auth_header",
+      module: Cinder.Notifier.Webhook,
+      field: :auth_header,
+      secret: true,
+      group: :notifications,
+      label: "Webhook Authorization header",
+      placeholder: ""
+    },
     %{
       key: "smtp_host",
       module: Cinder.Mailer,

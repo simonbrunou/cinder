@@ -156,7 +156,7 @@ msgstr ""
 msgid "Attempting to reconnect"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:162
+#: lib/cinder_web/live/settings_live.ex:174
 #, elixir-autogen, elixir-format
 msgid "Auto-approve all requests (skip the approval queue)"
 msgstr ""
@@ -373,7 +373,7 @@ msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:118
 #: lib/cinder_web/live/dashboard_live.ex:349
-#: lib/cinder_web/live/settings_live.ex:107
+#: lib/cinder_web/live/settings_live.ex:119
 #: lib/cinder_web/user_auth.ex:407
 #, elixir-autogen, elixir-format
 msgid "Dashboard"
@@ -552,7 +552,7 @@ msgstr ""
 msgid "Everyone"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:100
+#: lib/cinder_web/live/settings_live.ex:112
 #, elixir-autogen, elixir-format
 msgid "External services. Stored in the database; secrets encrypted at rest. Save before testing."
 msgstr ""
@@ -968,7 +968,7 @@ msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:124
 #: lib/cinder_web/live/requests_live.ex:299
-#: lib/cinder_web/live/settings_live.ex:152
+#: lib/cinder_web/live/settings_live.ex:164
 #: lib/cinder_web/user_auth.ex:410
 #, elixir-autogen, elixir-format
 msgid "Requests"
@@ -1024,14 +1024,14 @@ msgstr ""
 msgid "Save email"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:147
+#: lib/cinder_web/live/settings_live.ex:159
 #, elixir-autogen, elixir-format
 msgid "Save settings"
 msgstr ""
 
 #: lib/cinder_web/live/series_detail_components.ex:345
 #: lib/cinder_web/live/series_detail_components.ex:381
-#: lib/cinder_web/live/settings_live.ex:146
+#: lib/cinder_web/live/settings_live.ex:158
 #: lib/cinder_web/live/user_live/settings.ex:36
 #: lib/cinder_web/live/user_live/settings.ex:88
 #: lib/cinder_web/live/users_live.ex:475
@@ -1130,13 +1130,13 @@ msgid "Set up Cinder"
 msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:157
-#: lib/cinder_web/live/settings_live.ex:98
+#: lib/cinder_web/live/settings_live.ex:110
 #: lib/cinder_web/user_auth.ex:409
 #, elixir-autogen, elixir-format
 msgid "Settings"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:44
+#: lib/cinder_web/live/settings_live.ex:48
 #, elixir-autogen, elixir-format
 msgid "Settings saved."
 msgstr ""
@@ -1717,12 +1717,12 @@ msgstr ""
 msgid "Password reset. The user's sessions were ended."
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:82
+#: lib/cinder_web/settings_labels.ex:84
 #, elixir-autogen, elixir-format
 msgid "Plex Movies library section (numeric id)"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:83
+#: lib/cinder_web/settings_labels.ex:85
 #, elixir-autogen, elixir-format
 msgid "Plex TV library section (numeric id)"
 msgstr ""
@@ -2211,22 +2211,22 @@ msgstr ""
 msgid "Notifications"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:74
+#: lib/cinder_web/settings_labels.ex:76
 #, elixir-autogen, elixir-format
 msgid "OpenSubtitles API key"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:76
+#: lib/cinder_web/settings_labels.ex:78
 #, elixir-autogen, elixir-format
 msgid "OpenSubtitles password"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:75
+#: lib/cinder_web/settings_labels.ex:77
 #, elixir-autogen, elixir-format
 msgid "OpenSubtitles username"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:77
+#: lib/cinder_web/settings_labels.ex:79
 #, elixir-autogen, elixir-format
 msgid "Subtitle languages (comma-separated, e.g. en,fr)"
 msgstr ""
@@ -2307,12 +2307,12 @@ msgstr ""
 msgid "Importing"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:79
+#: lib/cinder_web/settings_labels.ex:81
 #, elixir-autogen, elixir-format
 msgid "LibreTranslate API key"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:78
+#: lib/cinder_web/settings_labels.ex:80
 #, elixir-autogen, elixir-format
 msgid "LibreTranslate URL"
 msgstr ""
@@ -3543,7 +3543,7 @@ msgstr ""
 msgid "Pending approval"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:170
+#: lib/cinder_web/live/settings_live.ex:182
 #, elixir-autogen, elixir-format
 msgid "This also auto-approves requests from anyone who self-registers once their account is approved. Keep it off while registration enrollment is public."
 msgstr ""
@@ -3633,7 +3633,7 @@ msgstr ""
 msgid "Applied to newly self-registered users. Enter a positive whole number; 0 or an invalid value means unlimited. Leave blank to restore the default of 10."
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:80
+#: lib/cinder_web/settings_labels.ex:82
 #, elixir-autogen, elixir-format
 msgid "Default request quota"
 msgstr ""
@@ -3903,27 +3903,27 @@ msgstr ""
 msgid "Good news — your request for %{title} was approved and will start downloading soon."
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:73
+#: lib/cinder_web/settings_labels.ex:75
 #, elixir-autogen, elixir-format
 msgid "SMTP from address"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:69
+#: lib/cinder_web/settings_labels.ex:71
 #, elixir-autogen, elixir-format
 msgid "SMTP host"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:72
+#: lib/cinder_web/settings_labels.ex:74
 #, elixir-autogen, elixir-format
 msgid "SMTP password"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:70
+#: lib/cinder_web/settings_labels.ex:72
 #, elixir-autogen, elixir-format
 msgid "SMTP port"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:71
+#: lib/cinder_web/settings_labels.ex:73
 #, elixir-autogen, elixir-format
 msgid "SMTP username"
 msgstr ""
@@ -4804,14 +4804,14 @@ msgid_plural "%{count} stored secrets can't be decrypted. The encryption key cha
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/cinder_web/live/settings_live.ex:119
+#: lib/cinder_web/live/settings_live.ex:131
 #, elixir-autogen, elixir-format
 msgid "1 stored secret could not be decrypted. The encryption key changed; re-enter it below."
 msgid_plural "%{count} stored secrets could not be decrypted. The encryption key changed; re-enter them below."
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/cinder_web/live/settings_live.ex:126
+#: lib/cinder_web/live/settings_live.ex:138
 #, elixir-autogen, elixir-format
 msgid "Affected: %{fields}"
 msgstr ""
@@ -5159,6 +5159,71 @@ msgstr ""
 msgid "Untagged: assumed to be the original audio, ranked below a tagged match"
 msgstr ""
 
+#: lib/cinder_web/settings_labels.ex:70
+#, elixir-autogen, elixir-format
+msgid "Webhook Authorization header"
+msgstr ""
+
+#: lib/cinder_web/settings_labels.ex:69
+#, elixir-autogen, elixir-format
+msgid "Webhook URL"
+msgstr ""
+
+#: lib/cinder_web/live/settings_live.ex:192
+#, elixir-autogen, elixir-format
+msgid "A read-only JSON API for dashboard widgets and bots. One key for the whole household, stored hashed, so it can be shown only once. Generating a new key revokes the previous one. Anyone holding the key can read the request queue, so treat it as an admin credential."
+msgstr ""
+
+#: lib/cinder_web/live/settings_live.ex:190
+#, elixir-autogen, elixir-format
+msgid "API access"
+msgstr ""
+
+#: lib/cinder_web/live/settings_live.ex:216
+#, elixir-autogen, elixir-format
+msgid "Copy this key now. It will not be shown again."
+msgstr ""
+
+#: lib/cinder_web/live/settings_live.ex:239
+#, elixir-autogen, elixir-format
+msgid "Generate API key"
+msgstr ""
+
+#: lib/cinder_web/live/settings_live.ex:222
+#, elixir-autogen, elixir-format
+msgid "No key is set, so the API rejects every request."
+msgstr ""
+
+#: lib/cinder_web/live/settings_live.ex:238
+#, elixir-autogen, elixir-format
+msgid "Regenerate API key"
+msgstr ""
+
+#: lib/cinder_web/live/settings_live.ex:234
+#, elixir-autogen, elixir-format
+msgid "Regenerate the API key? The current key stops working immediately."
+msgstr ""
+
+#: lib/cinder_web/live/settings_live.ex:252
+#, elixir-autogen, elixir-format
+msgid "Revoke API key"
+msgstr ""
+
+#: lib/cinder_web/live/settings_live.ex:247
+#, elixir-autogen, elixir-format
+msgid "Revoke the API key? Every dashboard widget and bot using it stops working immediately."
+msgstr ""
+
+#: lib/cinder_web/live/settings_live.ex:201
+#, elixir-autogen, elixir-format
+msgid "Send the key in the %{header} request header."
+msgstr ""
+
+#: lib/cinder_web/live/settings_live.ex:204
+#, elixir-autogen, elixir-format
+msgid "These routes also sit behind the optional HTTP Basic gate, so if you enabled it, API clients must send those credentials too."
+msgstr ""
+
 #: lib/cinder_web/live/user_live/settings.ex:370
 #, elixir-autogen, elixir-format
 msgid "Could not update your Plex watchlist preference."
@@ -5169,16 +5234,6 @@ msgstr ""
 msgid "Link your Plex account again to sync your Plex watchlist."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/settings.ex:139
-#, elixir-autogen, elixir-format
-msgid "Request titles I add to my Plex watchlist"
-msgstr ""
-
-#: lib/cinder_web/live/user_live/settings.ex:149
-#, elixir-autogen, elixir-format
-msgid "Relink Plex account"
-msgstr ""
-
 #: lib/cinder_web/live/activity_live.ex:696
 #, elixir-autogen, elixir-format
 msgid "Periodic maintenance that runs on its own: refreshing series metadata, backfilling subtitles, and syncing Plex watchlists."
@@ -5187,4 +5242,14 @@ msgstr ""
 #: lib/cinder_web/live/activity_live.ex:325
 #, elixir-autogen, elixir-format
 msgid "Plex watchlist sync"
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex:149
+#, elixir-autogen, elixir-format
+msgid "Relink Plex account"
+msgstr ""
+
+#: lib/cinder_web/live/user_live/settings.ex:139
+#, elixir-autogen, elixir-format
+msgid "Request titles I add to my Plex watchlist"
 msgstr ""
