@@ -18,7 +18,6 @@ defmodule CinderWeb.DashboardLive do
   require Logger
 
   @parked [:no_match, :search_failed, :import_failed]
-  @pipeline [:requested, :searching, :downloading, :downloaded, :upgrading]
 
   @impl true
   def mount(_params, _session, socket) do
@@ -167,7 +166,7 @@ defmodule CinderWeb.DashboardLive do
       stats: %{
         movies_total: counts |> Map.values() |> Enum.sum(),
         movies_available: Map.get(counts, :available, 0),
-        in_pipeline: Enum.sum(Enum.map(@pipeline, &Map.get(counts, &1, 0))),
+        in_pipeline: Enum.sum(Enum.map(Catalog.pipeline_statuses(), &Map.get(counts, &1, 0))),
         parked: Enum.sum(Enum.map(@parked, &Map.get(counts, &1, 0))),
         series_total: Catalog.count_series(),
         tv_wanted: Catalog.count_wanted_episodes(),
