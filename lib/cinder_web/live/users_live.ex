@@ -94,25 +94,18 @@ defmodule CinderWeb.UsersLive do
   end
 
   # The checkboxes carry ids only: the entries themselves come from the list this view
-  # fetched, so a forged id imports nothing and a forged email is impossible.
+  # fetched, so a forged id imports nothing and a forged email is impossible. The payload is
+  # a client-supplied query string, so `import[a]=1` arrives as a MAP — keep only the binaries
+  # rather than to_string/1 them, which would raise on a map and take the LiveView down.
   def handle_event("import", params, socket) do
     actor = socket.assigns.current_scope.user
-    selected = params |> Map.get("import", []) |> List.wrap() |> Enum.map(&to_string/1)
+    selected = for value <- List.wrap(Map.get(params, "import", [])), is_binary(value), do: value
     entries = Enum.filter(socket.assigns.import_users || [], &(to_string(&1.id) in selected))
 
-    case Accounts.import_media_server_users(actor, entries) do
-      {:ok, created} ->
-        {:noreply,
-         socket
-         |> assign(import_users: nil)
-         |> assign_users()
-         |> put_flash(:info, import_message(length(created)))}
-
-      {:error, :unauthorized} ->
-        unauthorized(socket)
-
-      {:error, _} ->
-        {:noreply, put_flash(socket, :error, gettext("Couldn't import those accounts."))}
+    if entries == [] do
+      {:noreply, put_flash(socket, :error, gettext("Select at least one account to import."))}
+    else
+      import_selected(socket, actor, entries)
     end
   end
 
@@ -358,6 +351,24 @@ defmodule CinderWeb.UsersLive do
   defp role_atom("admin"), do: :admin
   defp role_atom(_), do: :user
 
+  defp import_selected(socket, actor, entries) do
+    case Accounts.import_media_server_users(actor, entries) do
+      {:ok, created} ->
+        {:noreply,
+         socket
+         |> assign(import_users: nil)
+         |> assign_users()
+         |> put_flash(:info, import_message(length(created)))}
+
+      {:error, :unauthorized} ->
+        unauthorized(socket)
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, gettext("Couldn't import those accounts."))}
+    end
+  end
+
+  # Only reachable for a non-empty selection: an empty one is refused before the import runs.
   defp import_message(0), do: gettext("Nothing to import: those accounts already exist.")
 
   defp import_message(count),

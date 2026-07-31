@@ -486,6 +486,35 @@ defmodule CinderWeb.UsersLiveTest do
       assert render(lv) =~ "You don&#39;t have access to that page."
     end
 
+    test "submitting with nothing ticked says so instead of claiming they exist", %{conn: conn} do
+      admin = Cinder.AccountsFixtures.admin_fixture()
+      stub_media_server_users()
+      conn = log_in_user(conn, admin)
+
+      {:ok, lv, _html} = live(conn, ~p"/users")
+      lv |> element("#load-import-btn") |> render_click()
+
+      assert lv |> form("#import-users-form") |> render_submit() =~ "Select at least one account"
+      refute user_by_email("kim@example.com")
+    end
+
+    # The payload is a client-supplied query string: `import[a]=1` decodes to a MAP, not a list.
+    test "a forged, map-shaped selection imports nothing and keeps the view alive", %{conn: conn} do
+      admin = Cinder.AccountsFixtures.admin_fixture()
+      stub_media_server_users()
+      conn = log_in_user(conn, admin)
+
+      {:ok, lv, _html} = live(conn, ~p"/users")
+      lv |> element("#load-import-btn") |> render_click()
+
+      render_hook(lv, "import", %{"import" => %{"a" => "5001"}})
+      render_hook(lv, "import", %{"import" => [%{"a" => "5001"}, 5001]})
+      render_hook(lv, "import", %{})
+
+      refute user_by_email("kim@example.com")
+      assert Process.alive?(lv.pid)
+    end
+
     test "a media server that can't be read surfaces an error, not a crash", %{conn: conn} do
       admin = Cinder.AccountsFixtures.admin_fixture()
 
