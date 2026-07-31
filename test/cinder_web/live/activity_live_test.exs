@@ -120,9 +120,9 @@ defmodule CinderWeb.ActivityLiveTest do
     assert html =~ "Background sweeps"
     assert has_element?(lv, "#job-Refresher", "Series metadata refresh")
     assert has_element?(lv, "#job-Sweeper", "Subtitle backfill")
-    # A registered sweep needs a translated label — without one it renders its raw module name.
+    # A registered sweep needs a translated label. Verified to fail (on this assertion) when the
+    # job_label/1 clause is removed, i.e. when the raw module name renders instead.
     assert has_element?(lv, "#job-WatchlistSync", "Plex watchlist sync")
-    refute html =~ "WatchlistSync<"
     # Each sweep shows a last-run/next-run line (its value depends on global run state).
     assert has_element?(lv, "#job-Refresher", "Last run:")
     assert has_element?(lv, "#job-Sweeper", "Next:")
