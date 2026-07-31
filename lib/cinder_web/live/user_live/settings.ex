@@ -144,6 +144,11 @@ defmodule CinderWeb.UserLive.Settings do
               <p class="mt-2 text-sm opacity-70">
                 {gettext("Link your Plex account again to sync your Plex watchlist.")}
               </p>
+              <.plex_button
+                href={~p"/auth/plex"}
+                label={gettext("Relink Plex account")}
+                class="mt-2"
+              />
             <% end %>
 
             <.button phx-click="unlink_plex" variant="neutral" class="mt-2">

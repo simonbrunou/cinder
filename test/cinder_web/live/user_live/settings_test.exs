@@ -353,6 +353,9 @@ defmodule CinderWeb.UserLive.SettingsTest do
 
       refute has_element?(lv, ~s(form[phx-change=toggle_plex_watchlist]))
       assert html =~ "Link your Plex account again"
+      # The hint must come with the affordance: /auth/plex is reachable from nowhere else
+      # a logged-in user can get to, and re-linking is what stores the token.
+      assert has_element?(lv, ~s(a[href="/auth/plex"]), "Relink Plex account")
     end
 
     test "the toggle is not offered to a user with no Plex link at all", %{conn: conn} do
