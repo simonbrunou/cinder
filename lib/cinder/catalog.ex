@@ -249,6 +249,34 @@ defmodule Cinder.Catalog do
   @doc "Episodes with an imported file, season+series+scene-coordinates preloaded (subtitle-fetch candidates)."
   defdelegate list_episodes_with_file(), to: SeriesCatalog
 
+  # --- pipeline status classification --------------------------------------------------------
+  #
+  # The complete split of `Cinder.Catalog.Movie`'s status enum, owned here next to the
+  # transition matrix so views never re-derive it (each once kept its own copy, in opposite
+  # encodings, and the two drifted independently):
+  #   active — in-flight pipeline work:         @pipeline_statuses
+  #   parked — failed, awaiting a user retry:   @parked_statuses
+  #   done   — terminal, nothing left to do:    :available, :cancelled
+  # `catalog_pipeline_status_test.exs` asserts the three sets cover the enum exactly, so a
+  # status added to `Movie` fails the suite until it is classified here.
+  @pipeline_statuses [:requested, :searching, :downloading, :downloaded, :upgrading]
+  @parked_statuses [:no_match, :search_failed, :import_failed]
+
+  @doc """
+  The statuses with active in-flight pipeline work, in pipeline order. Excludes both the
+  parked failures (`#{inspect(@parked_statuses)}`) and the terminal-done pair
+  (`:available` / `:cancelled`).
+  """
+  def pipeline_statuses, do: @pipeline_statuses
+
+  @doc """
+  True while a movie still belongs on live pipeline surfaces: in an active status
+  (`pipeline_statuses/0`) or parked on a failure that needs a retry. False once
+  terminal-done — `:available` (it lives in the library) or `:cancelled`.
+  """
+  def in_pipeline?(%{status: status}),
+    do: status in @pipeline_statuses or status in @parked_statuses
+
   # --- pipeline state matrix -----------------------------------------------------------------
   #
   # The legal from→to graph for movie pipeline transitions, inventoried from every real (lib/)
