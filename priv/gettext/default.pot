@@ -1717,12 +1717,12 @@ msgstr ""
 msgid "Password reset. The user's sessions were ended."
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:82
+#: lib/cinder_web/settings_labels.ex:84
 #, elixir-autogen, elixir-format
 msgid "Plex Movies library section (numeric id)"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:83
+#: lib/cinder_web/settings_labels.ex:85
 #, elixir-autogen, elixir-format
 msgid "Plex TV library section (numeric id)"
 msgstr ""
@@ -2211,22 +2211,22 @@ msgstr ""
 msgid "Notifications"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:74
+#: lib/cinder_web/settings_labels.ex:76
 #, elixir-autogen, elixir-format
 msgid "OpenSubtitles API key"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:76
+#: lib/cinder_web/settings_labels.ex:78
 #, elixir-autogen, elixir-format
 msgid "OpenSubtitles password"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:75
+#: lib/cinder_web/settings_labels.ex:77
 #, elixir-autogen, elixir-format
 msgid "OpenSubtitles username"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:77
+#: lib/cinder_web/settings_labels.ex:79
 #, elixir-autogen, elixir-format
 msgid "Subtitle languages (comma-separated, e.g. en,fr)"
 msgstr ""
@@ -2307,12 +2307,12 @@ msgstr ""
 msgid "Importing"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:79
+#: lib/cinder_web/settings_labels.ex:81
 #, elixir-autogen, elixir-format
 msgid "LibreTranslate API key"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:78
+#: lib/cinder_web/settings_labels.ex:80
 #, elixir-autogen, elixir-format
 msgid "LibreTranslate URL"
 msgstr ""
@@ -3638,7 +3638,7 @@ msgstr ""
 msgid "Applied to newly self-registered users. Enter a positive whole number; 0 or an invalid value means unlimited. Leave blank to restore the default of 10."
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:80
+#: lib/cinder_web/settings_labels.ex:82
 #, elixir-autogen, elixir-format
 msgid "Default request quota"
 msgstr ""
@@ -3908,27 +3908,27 @@ msgstr ""
 msgid "Good news — your request for %{title} was approved and will start downloading soon."
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:73
+#: lib/cinder_web/settings_labels.ex:75
 #, elixir-autogen, elixir-format
 msgid "SMTP from address"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:69
+#: lib/cinder_web/settings_labels.ex:71
 #, elixir-autogen, elixir-format
 msgid "SMTP host"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:72
+#: lib/cinder_web/settings_labels.ex:74
 #, elixir-autogen, elixir-format
 msgid "SMTP password"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:70
+#: lib/cinder_web/settings_labels.ex:72
 #, elixir-autogen, elixir-format
 msgid "SMTP port"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:71
+#: lib/cinder_web/settings_labels.ex:73
 #, elixir-autogen, elixir-format
 msgid "SMTP username"
 msgstr ""
@@ -5162,4 +5162,14 @@ msgstr ""
 #: lib/cinder_web/components/manual_search_component.ex:426
 #, elixir-autogen, elixir-format
 msgid "Untagged: assumed to be the original audio, ranked below a tagged match"
+msgstr ""
+
+#: lib/cinder_web/settings_labels.ex:70
+#, elixir-autogen, elixir-format
+msgid "Webhook Authorization header"
+msgstr ""
+
+#: lib/cinder_web/settings_labels.ex:69
+#, elixir-autogen, elixir-format
+msgid "Webhook URL"
 msgstr ""

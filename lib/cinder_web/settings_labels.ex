@@ -66,6 +66,8 @@ defmodule CinderWeb.SettingsLabels do
       gettext_noop("Jellyfin web URL"),
       gettext_noop("Plex web URL"),
       gettext_noop("Discord webhook URL"),
+      gettext_noop("Webhook URL"),
+      gettext_noop("Webhook Authorization header"),
       gettext_noop("SMTP host"),
       gettext_noop("SMTP port"),
       gettext_noop("SMTP username"),

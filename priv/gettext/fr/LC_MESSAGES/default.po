@@ -1717,12 +1717,12 @@ msgstr "Aucune modification."
 msgid "Password reset. The user's sessions were ended."
 msgstr "Mot de passe réinitialisé. Les sessions de l'utilisateur ont été terminées."
 
-#: lib/cinder_web/settings_labels.ex:82
+#: lib/cinder_web/settings_labels.ex:84
 #, elixir-autogen, elixir-format
 msgid "Plex Movies library section (numeric id)"
 msgstr "Section de bibliothèque Films Plex (id numérique)"
 
-#: lib/cinder_web/settings_labels.ex:83
+#: lib/cinder_web/settings_labels.ex:85
 #, elixir-autogen, elixir-format
 msgid "Plex TV library section (numeric id)"
 msgstr "Section de bibliothèque TV Plex (id numérique)"
@@ -2211,22 +2211,22 @@ msgstr "URL du webhook Discord"
 msgid "Notifications"
 msgstr "Notifications"
 
-#: lib/cinder_web/settings_labels.ex:74
+#: lib/cinder_web/settings_labels.ex:76
 #, elixir-autogen, elixir-format
 msgid "OpenSubtitles API key"
 msgstr "Clé API OpenSubtitles"
 
-#: lib/cinder_web/settings_labels.ex:76
+#: lib/cinder_web/settings_labels.ex:78
 #, elixir-autogen, elixir-format
 msgid "OpenSubtitles password"
 msgstr "Mot de passe OpenSubtitles"
 
-#: lib/cinder_web/settings_labels.ex:75
+#: lib/cinder_web/settings_labels.ex:77
 #, elixir-autogen, elixir-format
 msgid "OpenSubtitles username"
 msgstr "Nom d'utilisateur OpenSubtitles"
 
-#: lib/cinder_web/settings_labels.ex:77
+#: lib/cinder_web/settings_labels.ex:79
 #, elixir-autogen, elixir-format
 msgid "Subtitle languages (comma-separated, e.g. en,fr)"
 msgstr "Langues des sous-titres (séparées par des virgules, ex. en,fr)"
@@ -2307,12 +2307,12 @@ msgstr "%{speed} MB/s"
 msgid "Importing"
 msgstr "Importation en cours"
 
-#: lib/cinder_web/settings_labels.ex:79
+#: lib/cinder_web/settings_labels.ex:81
 #, elixir-autogen, elixir-format
 msgid "LibreTranslate API key"
 msgstr "Clé API LibreTranslate"
 
-#: lib/cinder_web/settings_labels.ex:78
+#: lib/cinder_web/settings_labels.ex:80
 #, elixir-autogen, elixir-format
 msgid "LibreTranslate URL"
 msgstr "URL LibreTranslate"
@@ -3638,7 +3638,7 @@ msgstr "Comptes"
 msgid "Applied to newly self-registered users. Enter a positive whole number; 0 or an invalid value means unlimited. Leave blank to restore the default of 10."
 msgstr "Appliqué aux utilisateurs nouvellement inscrits. Saisissez un entier positif ; 0 ou une valeur invalide signifie aucune limite. Laissez vide pour rétablir la valeur par défaut de 10."
 
-#: lib/cinder_web/settings_labels.ex:80
+#: lib/cinder_web/settings_labels.ex:82
 #, elixir-autogen, elixir-format
 msgid "Default request quota"
 msgstr "Quota de demandes par défaut"
@@ -3908,27 +3908,27 @@ msgstr "M'envoyer un e-mail quand une demande est approuvée ou disponible"
 msgid "Good news — your request for %{title} was approved and will start downloading soon."
 msgstr "Bonne nouvelle — votre demande pour %{title} a été approuvée et le téléchargement va bientôt commencer."
 
-#: lib/cinder_web/settings_labels.ex:73
+#: lib/cinder_web/settings_labels.ex:75
 #, elixir-autogen, elixir-format
 msgid "SMTP from address"
 msgstr "Adresse d'expédition SMTP"
 
-#: lib/cinder_web/settings_labels.ex:69
+#: lib/cinder_web/settings_labels.ex:71
 #, elixir-autogen, elixir-format
 msgid "SMTP host"
 msgstr "Hôte SMTP"
 
-#: lib/cinder_web/settings_labels.ex:72
+#: lib/cinder_web/settings_labels.ex:74
 #, elixir-autogen, elixir-format
 msgid "SMTP password"
 msgstr "Mot de passe SMTP"
 
-#: lib/cinder_web/settings_labels.ex:70
+#: lib/cinder_web/settings_labels.ex:72
 #, elixir-autogen, elixir-format
 msgid "SMTP port"
 msgstr "Port SMTP"
 
-#: lib/cinder_web/settings_labels.ex:71
+#: lib/cinder_web/settings_labels.ex:73
 #, elixir-autogen, elixir-format
 msgid "SMTP username"
 msgstr "Nom d'utilisateur SMTP"
@@ -5171,3 +5171,13 @@ msgid "Untagged: assumed to be the original audio, ranked below a tagged match"
 msgstr ""
 "Sans étiquette : présumée être l'audio d'origine, classée après une release "
 "étiquetée."
+
+#: lib/cinder_web/settings_labels.ex:70
+#, elixir-autogen, elixir-format
+msgid "Webhook Authorization header"
+msgstr "En-tête Authorization du webhook"
+
+#: lib/cinder_web/settings_labels.ex:69
+#, elixir-autogen, elixir-format
+msgid "Webhook URL"
+msgstr "URL du webhook"

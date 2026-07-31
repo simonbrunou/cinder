@@ -133,6 +133,12 @@ config :cinder, Cinder.Notifier.Discord,
   webhook_url: "https://discord.test/hook",
   req_options: [plug: {Req.Test, Cinder.DiscordStub}, retry: false]
 
+# Generic webhook notifier: no URL, so the transport is a no-op for the rest of the suite (the
+# dispatcher runs inline here). Its own tests set a URL per-test; the stub plug is configured up
+# front so one that does can still never reach the network.
+config :cinder, Cinder.Notifier.Webhook,
+  req_options: [plug: {Req.Test, Cinder.WebhookStub}, retry: false]
+
 # Blank by default (feature off): fetch_missing/2 makes zero provider/filesystem calls when
 # wanted_languages/0 is [], so the existing async import suite's precise Mox expectations are
 # unaffected. Tests exercising subtitles opt in per-test (subtitles_test.exs, library_subtitles_test.exs).
