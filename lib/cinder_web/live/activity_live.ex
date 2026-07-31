@@ -25,11 +25,6 @@ defmodule CinderWeb.ActivityLive do
   alias Cinder.Catalog.Episode
   alias Cinder.Download.TvPoller
 
-  # Terminal-done: imported (in the Library) or cancelled — no in-flight work left, so
-  # showing them in a *live pipeline* is just noise. Parked failures (`:no_match` etc.)
-  # stay, since they need a Retry.
-  @pipeline_done [:available, :cancelled]
-
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket) do
@@ -41,7 +36,7 @@ defmodule CinderWeb.ActivityLive do
 
     {:ok,
      assign(socket,
-       movies: Enum.filter(Catalog.list_movies(), &in_pipeline?/1),
+       movies: Enum.filter(Catalog.list_movies(), &Catalog.in_pipeline?/1),
        grabs: grabs,
        grab_file_forms: grab_file_forms(grabs),
        grab_file_errors: %{},
@@ -54,7 +49,7 @@ defmodule CinderWeb.ActivityLive do
   @impl true
   def handle_info({:movie_updated, movie}, socket) do
     movies =
-      if in_pipeline?(movie),
+      if Catalog.in_pipeline?(movie),
         do: upsert_by_id(socket.assigns.movies, movie),
         else: Enum.reject(socket.assigns.movies, &(&1.id == movie.id))
 
@@ -219,8 +214,6 @@ defmodule CinderWeb.ActivityLive do
 
   # Client-controlled payloads — ignore anything unmatched rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
-
-  defp in_pipeline?(%{status: status}), do: status not in @pipeline_done
 
   defp refresh_grabs(socket) do
     grabs = Catalog.list_grabs()
