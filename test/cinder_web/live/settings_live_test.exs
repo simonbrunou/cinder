@@ -364,6 +364,36 @@ defmodule CinderWeb.SettingsLiveTest do
     assert html =~ "saved"
   end
 
+  test "saves the generic webhook and never echoes its auth header back", %{conn: conn} do
+    {:ok, lv, html} = live(conn, ~p"/settings")
+
+    assert html =~ ~s(name="webhook_url")
+    assert html =~ ~s(name="webhook_auth_header")
+
+    html =
+      lv
+      |> form("#settings-form", %{
+        "webhook_url" => "https://ntfy.example.com/cinder",
+        "webhook_auth_header" => "Bearer must-never-echo",
+        "media_server_type" => "jellyfin"
+      })
+      |> render_submit()
+
+    assert html =~ "Settings saved."
+    refute html =~ "must-never-echo"
+
+    assert Settings.get("webhook_url") == "https://ntfy.example.com/cinder"
+
+    assert Application.get_env(:cinder, Cinder.Notifier.Webhook)[:url] ==
+             "https://ntfy.example.com/cinder"
+
+    assert Application.get_env(:cinder, Cinder.Notifier.Webhook)[:auth_header] ==
+             "Bearer must-never-echo"
+
+    {:ok, _lv, html} = live(conn, ~p"/settings")
+    refute html =~ "must-never-echo"
+  end
+
   test "toggling auto-approve persists", %{conn: conn} do
     {:ok, lv, _} = live(conn, ~p"/settings")
 

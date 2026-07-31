@@ -23,6 +23,7 @@ defmodule Cinder.SettingsTest do
     Cinder.Library.MediaServer.Jellyfin,
     Cinder.Library.MediaServer.Plex,
     Cinder.Notifier.Discord,
+    Cinder.Notifier.Webhook,
     Cinder.Mailer,
     Cinder.Subtitles.Provider.OpenSubtitles,
     Cinder.Subtitles.Translator.LibreTranslate,
@@ -808,6 +809,21 @@ defmodule Cinder.SettingsTest do
       row = Cinder.Repo.get_by(Cinder.Settings.Setting, key: "discord_webhook_url")
       assert row.is_secret
       refute row.value == "https://discord.com/api/webhooks/1/abc"
+    end
+
+    test "the generic webhook overlays :cinder Webhook config; only the header is encrypted" do
+      :ok = Settings.put("webhook_url", "https://ntfy.example.com/cinder")
+      :ok = Settings.put("webhook_auth_header", "Bearer tk_abc")
+
+      config = Application.get_env(:cinder, Cinder.Notifier.Webhook)
+      assert config[:url] == "https://ntfy.example.com/cinder"
+      assert config[:auth_header] == "Bearer tk_abc"
+
+      # The URL is operator-visible config; the header value carries the endpoint's token.
+      refute Cinder.Repo.get_by(Setting, key: "webhook_url").is_secret
+      header_row = Cinder.Repo.get_by(Setting, key: "webhook_auth_header")
+      assert header_row.is_secret
+      refute header_row.value == "Bearer tk_abc"
     end
 
     test "SMTP fields overlay Cinder.Mailer; the password is encrypted at rest" do

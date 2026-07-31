@@ -1,7 +1,8 @@
 defmodule Cinder.Notifier.Dispatcher do
   @moduledoc """
   The configured `:cinder, :notifier` default: fans one event out to every transport —
-  `Log` (always), `Discord` (webhook, best-effort), `Email` (per-requester, best-effort)
+  `Log` (always), `Discord` (webhook, best-effort), `Email` (per-requester, best-effort),
+  `Webhook` (generic JSON POST, best-effort)
   — each isolated so one transport's failure can't skip another's. `Cinder.Notifier.notify/1`
   also catches on top of this; that outer rescue is the last resort, this is what stops a
   single misbehaving transport from silently skipping its siblings before it's ever reached.
@@ -15,11 +16,11 @@ defmodule Cinder.Notifier.Dispatcher do
   """
   @behaviour Cinder.Notifier
 
-  alias Cinder.Notifier.{Discord, Email, Log}
+  alias Cinder.Notifier.{Discord, Email, Log, Webhook}
 
   require Logger
 
-  @transports [Log, Discord, Email]
+  @transports [Log, Discord, Email, Webhook]
   @task_supervisor Cinder.Notifier.TaskSupervisor
   # Belt to each transport's own bound (Discord's 3s HTTP timeout, the mailer's SMTP timeout): a
   # genuinely wedged delivery is killed rather than piling zombie tasks under the supervisor.
