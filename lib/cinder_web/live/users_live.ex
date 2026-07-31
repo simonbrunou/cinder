@@ -97,7 +97,9 @@ defmodule CinderWeb.UsersLive do
   # fetched, so a forged id imports nothing and a forged email is impossible. The payload is
   # a client-supplied query string, so `import[a]=1` arrives as a MAP — keep only the binaries
   # rather than to_string/1 them, which would raise on a map and take the LiveView down.
-  def handle_event("import", params, socket) do
+  # `%{} = params` matters: only a form payload is guaranteed to be a map, so a forged frame
+  # carrying a bare list falls through to the catch-all no-op instead of raising BadMapError.
+  def handle_event("import", %{} = params, socket) do
     actor = socket.assigns.current_scope.user
     selected = for value <- List.wrap(Map.get(params, "import", [])), is_binary(value), do: value
     entries = Enum.filter(socket.assigns.import_users || [], &(to_string(&1.id) in selected))

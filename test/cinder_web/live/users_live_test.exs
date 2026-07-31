@@ -510,6 +510,8 @@ defmodule CinderWeb.UsersLiveTest do
       render_hook(lv, "import", %{"import" => %{"a" => "5001"}})
       render_hook(lv, "import", %{"import" => [%{"a" => "5001"}, 5001]})
       render_hook(lv, "import", %{})
+      # Only a form payload is guaranteed to be a map; a forged frame can send a bare list.
+      render_hook(lv, "import", ["5001"])
 
       refute user_by_email("kim@example.com")
       assert Process.alive?(lv.pid)
