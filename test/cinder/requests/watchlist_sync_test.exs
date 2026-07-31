@@ -138,6 +138,36 @@ defmodule Cinder.Requests.WatchlistSyncTest do
     assert Requests.list_for_user(admin) == []
   end
 
+  # The same delete-resurrection bug, but reached by the OTHER dedupe branch: a title the user
+  # asked for manually is skipped by the sweep, so it must still pick up a durable marker — else
+  # the reap on delete leaves neither a request row nor a marker and it comes back.
+  test "a manually requested title the admin then deleted is not re-requested either" do
+    admin = opted_in_user(admin_fixture())
+
+    # Requested by hand first, exactly as clicking Add does. The sweep never created this.
+    assert {:ok, _} =
+             Requests.create_request(admin, %{
+               target_type: "movie",
+               target_id: 603,
+               title: "Movie 603"
+             })
+
+    expect(PlexAuthMock, :watchlist, 2, fn _token -> {:ok, [entry(603)]} end)
+
+    sync!()
+    # One request, not two: the manual one still dedupes the entry.
+    assert [_only_one] = Requests.list_for_user(admin)
+
+    assert %Movie{} = movie = Repo.get_by(Movie, tmdb_id: 603)
+    assert {:ok, %Movie{}} = Cinder.Catalog.delete_movie(movie, admin)
+    assert Requests.list_for_user(admin) == []
+
+    sync!()
+
+    assert Repo.get_by(Movie, tmdb_id: 603) == nil
+    assert Requests.list_for_user(admin) == []
+  end
+
   test "an entry the admin already denied is not re-requested on the next poll" do
     user = opted_in_user(user_fixture())
     admin = admin_fixture()
@@ -269,6 +299,23 @@ defmodule Cinder.Requests.WatchlistSyncTest do
 
     assert {:error, %Ecto.Changeset{}} = Repo.insert(changeset.())
     assert Repo.aggregate(SyncedWatchlistEntry, :count) == 1
+  end
+
+  test "a user's sync markers are in their own GDPR export, and only their own" do
+    user = opted_in_user(user_fixture())
+    other = opted_in_user(user_fixture())
+
+    stub(PlexAuthMock, :watchlist, fn token ->
+      if token == "plex-token-#{user.id}",
+        do: {:ok, [entry(603)]},
+        else: {:ok, [entry(604)]}
+    end)
+
+    sync!()
+
+    assert [%{tmdb_id: 603, synced_at: synced_at}] = WatchlistSync.export_for_user(user)
+    assert {:ok, _, _} = DateTime.from_iso8601(synced_at <> "Z")
+    assert [%{tmdb_id: 604}] = WatchlistSync.export_for_user(other)
   end
 
   test "unlinking Plex clears the token and switches sync off" do

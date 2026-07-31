@@ -6,6 +6,7 @@ defmodule CinderWeb.DataExportControllerTest do
   alias Cinder.Issues
   alias Cinder.Repo
   alias Cinder.Requests.Request
+  alias Cinder.Requests.SyncedWatchlistEntry
 
   describe "GET /users/export" do
     test "downloads the current user's data as a JSON attachment without secrets", %{conn: conn} do
@@ -100,6 +101,26 @@ defmodule CinderWeb.DataExportControllerTest do
       assert report["title"] == "Mine"
       assert report["category"] == "audio"
       assert report["status"] == "open"
+    end
+
+    test "includes the caller's own Plex watchlist sync markers, and only theirs", %{conn: conn} do
+      user = user_fixture()
+      other = user_fixture()
+
+      for {u, tmdb_id} <- [{user, 603}, {other, 604}] do
+        Repo.insert!(
+          SyncedWatchlistEntry.changeset(%SyncedWatchlistEntry{}, %{
+            user_id: u.id,
+            tmdb_id: tmdb_id
+          })
+        )
+      end
+
+      conn = conn |> log_in_user(user) |> get(~p"/users/export")
+      decoded = Jason.decode!(conn.resp_body)
+
+      assert [entry] = decoded["plex_watchlist_syncs"]
+      assert entry["tmdb_id"] == 603
     end
 
     test "requires authentication", %{conn: conn} do

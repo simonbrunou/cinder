@@ -15,12 +15,13 @@ defmodule Cinder.Requests.WatchlistSync do
   Only `movie` entries sync. Cinder requests TV per season and a watchlisted show names no
   season, so there is nothing unambiguous to create from one — shows are skipped.
 
-  Dedupe is a per-user `synced_watchlist_entries` marker (this module owns that table), unioned
-  with the user's existing movie request rows so a title they already asked for manually isn't
-  asked for twice. A request row alone would not be enough: `Catalog.delete_movie/3` reaps the
-  title's `:approved` request in the same transaction, so a deleted-but-still-watchlisted movie
-  would look new to the next tick and be silently re-requested (and, for an admin or under
-  `auto_approve_all`, re-downloaded). The marker outlives that reap, so a deletion sticks.
+  Dedupe is a per-user `synced_watchlist_entries` marker (this module owns that table), and the
+  marker set alone decides what is skipped. An entry the user had already requested by hand is
+  *adopted* — marked, not re-requested — so every entry ends its first tick marked either way.
+  A request row can't carry this itself: `Catalog.delete_movie/3` reaps the title's `:approved`
+  request in the same transaction, so a deleted-but-still-watchlisted movie would look new to the
+  next tick and be silently re-requested (and, for an admin or under `auto_approve_all`,
+  re-downloaded). The marker outlives that reap, so a deletion sticks — by either route.
   Removing a title from the watchlist does nothing at all: no un-requesting, no deletion.
 
   A token plex.tv rejects (expired or revoked) switches sync off for that ONE user and clears the
@@ -35,12 +36,28 @@ defmodule Cinder.Requests.WatchlistSync do
 
   alias Cinder.Accounts
   alias Cinder.Accounts.PlexAuth
+  alias Cinder.Accounts.User
   alias Cinder.Repo
   alias Cinder.Requests
   alias Cinder.Requests.SyncedWatchlistEntry
 
   @default_interval :timer.minutes(15)
   use Cinder.Download.PollerSkeleton, log_prefix: "watchlist sync", stateful: false
+
+  @doc """
+  The caller's OWN watchlist sync markers, projected to JSON-ready maps for a GDPR Art.15/20
+  data export. Own data only, scoped by user id — these record which titles this user had on
+  their Plex watchlist, so they belong in the export beside their requests.
+  """
+  def export_for_user(%User{id: id}) do
+    Repo.all(
+      from e in SyncedWatchlistEntry,
+        where: e.user_id == ^id,
+        order_by: [asc: e.tmdb_id],
+        select: %{tmdb_id: e.tmdb_id, synced_at: e.inserted_at}
+    )
+    |> Enum.map(&%{&1 | synced_at: NaiveDateTime.to_iso8601(&1.synced_at)})
+  end
 
   defp do_poll do
     for user <- Accounts.list_plex_watchlist_users() do
@@ -77,25 +94,31 @@ defmodule Cinder.Requests.WatchlistSync do
     Accounts.disable_plex_watchlist_sync(user)
   end
 
+  # The marker set alone decides what is skipped, so every entry ends a tick marked — including
+  # one this user had already requested by hand, which the sweep adopts rather than re-requesting.
+  # Marking only what the sweep itself created would leave manually-requested titles with no
+  # durable record, and `delete_movie/3`'s reap of the request row would resurrect them.
   defp request_new(user, entries) do
-    seen = already_seen(user)
+    marked = synced_tmdb_ids(user)
+    requested = requested_tmdb_ids(user)
 
     for %{type: "movie", tmdb_id: tmdb_id} = entry <- entries,
-        not MapSet.member?(seen, tmdb_id) do
-      request_one(user, entry)
+        not MapSet.member?(marked, tmdb_id) do
+      if MapSet.member?(requested, tmdb_id),
+        do: mark_synced(user, tmdb_id),
+        else: request_one(user, entry)
     end
 
     :ok
   end
 
-  # The durable markers, plus the movie requests this user already has by any route — the latter
-  # so a title they asked for manually before opting in isn't asked for a second time.
-  defp already_seen(user) do
+  # The movie requests this user already has by any route, so a title they asked for manually
+  # isn't asked for a second time.
+  defp requested_tmdb_ids(user) do
     user
     |> Requests.list_for_user()
     |> Enum.filter(&(&1.target_type == "movie"))
     |> MapSet.new(& &1.target_id)
-    |> MapSet.union(synced_tmdb_ids(user))
   end
 
   defp synced_tmdb_ids(user) do
@@ -104,8 +127,10 @@ defmodule Cinder.Requests.WatchlistSync do
     |> MapSet.new()
   end
 
-  # Idempotent by the unique index: two ticks racing the same entry leave one marker, and a
-  # marker that somehow fails to write only costs a retry next tick, never a crash.
+  # Idempotent by the unique index: two ticks racing the same entry leave one marker. A marker
+  # that fails to write only costs a retry next tick. `Repo.insert` can still RAISE rather than
+  # return `{:error, _}` (a busy DB or an FK violation skips `to_constraints`); `isolate/2` catches
+  # that and the remaining entries for this user retry on the next tick.
   defp mark_synced(user, tmdb_id) do
     %SyncedWatchlistEntry{}
     |> SyncedWatchlistEntry.changeset(%{user_id: user.id, tmdb_id: tmdb_id})

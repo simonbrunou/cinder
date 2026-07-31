@@ -322,6 +322,7 @@ defmodule CinderWeb.ActivityLive do
   # Human label for a background sweep module (Cinder.Jobs).
   defp job_label(Cinder.Catalog.Refresher), do: gettext("Series metadata refresh")
   defp job_label(Cinder.Subtitles.Sweeper), do: gettext("Subtitle backfill")
+  defp job_label(Cinder.Requests.WatchlistSync), do: gettext("Plex watchlist sync")
   defp job_label(module), do: module |> Module.split() |> List.last()
 
   # Coarse relative times for the slow sweeps (they run hours apart — minute precision is plenty).
@@ -693,7 +694,7 @@ defmodule CinderWeb.ActivityLive do
         <h2 class="pb-3 text-lg font-semibold">{gettext("Background sweeps")}</h2>
         <p class="pb-3 text-sm text-base-content/70">
           {gettext(
-            "Periodic maintenance that runs on its own: refreshing series metadata and backfilling subtitles."
+            "Periodic maintenance that runs on its own: refreshing series metadata, backfilling subtitles, and syncing Plex watchlists."
           )}
         </p>
         <ul id="activity-jobs" class="space-y-2">
