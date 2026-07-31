@@ -2,7 +2,8 @@ defmodule Cinder.Library.MediaServer.Plex do
   @moduledoc """
   Real `Cinder.Library.MediaServer` impl, backed by `Req`, against Plex's HTTP
   API. `scan/1` refreshes one library section
-  (`GET /library/sections/{section}/refresh`).
+  (`GET /library/sections/{section}/refresh`); `list_users/0` reads the shared-user list
+  from plex.tv (`GET /api/v2/friends`) with the same token.
 
   Reads `url`, `token`, optional `req_options`, and a **per-kind** section id
   (`:movies_section`, `:tv_section`, …) from
@@ -16,6 +17,7 @@ defmodule Cinder.Library.MediaServer.Plex do
   alias Cinder.HTTPPolicy
 
   @max_response_bytes 4 * 1024 * 1024
+  @plex_tv_url "https://plex.tv"
 
   @impl true
   # ponytail: refreshes one section; loop `/library/sections` if you ever need all.
@@ -46,6 +48,51 @@ defmodule Cinder.Library.MediaServer.Plex do
       _ -> check_all_sections(config)
     end
   end
+
+  @impl true
+  # The shared-user list comes from plex.tv, not the local server: the server's own
+  # `/accounts` reports an id and a display name but NO email, and a Cinder account is keyed
+  # by email. `/api/v2/friends` is the same list Plex's "Manage users" shows, read with the
+  # configured server token (the owner's X-Plex-Token). Unvalidated against a live Plex.
+  def list_users do
+    config = Application.get_env(:cinder, __MODULE__, [])
+
+    case Keyword.get(config, :token) do
+      token when token in [nil, ""] ->
+        {:error, :not_configured}
+
+      _ ->
+        config
+        |> request(:get, "/api/v2/friends",
+          base_url: @plex_tv_url,
+          headers: [{"accept", "application/json"}]
+        )
+        |> users()
+    end
+  end
+
+  # Entries without an integer id can't be linked back to a Plex account, so they're dropped
+  # rather than imported as an unlinkable local account.
+  defp users({:ok, %{status: status, body: body}}) when status in 200..299 and is_list(body) do
+    {:ok,
+     for %{"id" => id} = friend <- body, is_integer(id) do
+       %{
+         id: id,
+         email: presence(friend["email"]),
+         username: presence(friend["username"]) || presence(friend["title"])
+       }
+     end}
+  end
+
+  defp users({:ok, %{status: status}}) when status in 200..299, do: {:error, :unexpected_response}
+  defp users({:ok, %{status: status}}), do: {:error, {:plex_status, status}}
+  defp users({:error, reason}), do: {:error, reason}
+
+  defp presence(value) when is_binary(value) do
+    if String.trim(value) == "", do: nil, else: value
+  end
+
+  defp presence(_), do: nil
 
   defp check_all_sections(config) do
     Enum.reduce_while(Cinder.Library.kinds(), :ok, fn kind, :ok ->

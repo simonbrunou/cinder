@@ -21,6 +21,46 @@ defmodule Cinder.Library.MediaServer.JellyfinTest do
     assert :ok = Jellyfin.scan(:movies)
   end
 
+  test "list_users/0 reads /Users, taking an address-shaped name as the email" do
+    Req.Test.stub(Cinder.JellyfinStub, fn conn ->
+      assert conn.method == "GET"
+      assert conn.request_path == "/Users"
+      assert Plug.Conn.get_req_header(conn, "x-emby-token") == ["test-key"]
+
+      Req.Test.json(conn, [
+        %{"Id" => "abc123", "Name" => "kim@example.com"},
+        %{"Id" => "def456", "Name" => "sam"},
+        %{"Id" => "ghi789", "Name" => "Kim @ Home"}
+      ])
+    end)
+
+    assert {:ok, users} = Jellyfin.list_users()
+
+    assert users == [
+             %{id: "abc123", email: "kim@example.com", username: "kim@example.com"},
+             %{id: "def456", email: nil, username: "sam"},
+             %{id: "ghi789", email: nil, username: "Kim @ Home"}
+           ]
+  end
+
+  test "list_users/0 surfaces a non-2xx status as an error" do
+    Req.Test.stub(Cinder.JellyfinStub, fn conn ->
+      conn |> Plug.Conn.put_status(401) |> Req.Test.text("Unauthorized")
+    end)
+
+    assert {:error, {:jellyfin_status, 401}} = Jellyfin.list_users()
+  end
+
+  test "list_users/0 returns :not_configured without hitting Jellyfin when the url is blank" do
+    put_config(url: "")
+
+    Req.Test.stub(Cinder.JellyfinStub, fn _conn ->
+      raise "should not call an unconfigured server"
+    end)
+
+    assert {:error, :not_configured} = Jellyfin.list_users()
+  end
+
   test "scan/1 surfaces a non-2xx status as an error" do
     Req.Test.stub(Cinder.JellyfinStub, fn conn ->
       conn |> Plug.Conn.put_status(401) |> Req.Test.text("Unauthorized")

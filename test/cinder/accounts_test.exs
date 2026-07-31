@@ -1074,6 +1074,142 @@ defmodule Cinder.AccountsTest do
     end
   end
 
+  describe "import_media_server_users/2" do
+    defp plex_entry(id, email, username \\ nil) do
+      %{id: id, email: email, username: username || "user#{id}"}
+    end
+
+    test "creates one passwordless, Plex-linked :user account per entry" do
+      actor = admin_fixture()
+      email = unique_user_email()
+
+      assert {:ok, [%User{} = imported]} =
+               Accounts.import_media_server_users(actor, [plex_entry(4001, email, "kim")])
+
+      assert imported.email == email
+      assert imported.role == :user
+      assert imported.confirmed_at
+      assert imported.active
+      assert imported.plex_id == 4001
+      assert imported.plex_username == "kim"
+      # No password at all: the account is only reachable through the media-server sign-in
+      # path (which resolves on plex_id) or an admin password reset.
+      assert imported.hashed_password == nil
+      refute Accounts.get_user_by_email_and_password(email, valid_user_password())
+    end
+
+    test "never creates an admin, even alongside an admin-shaped entry" do
+      actor = admin_fixture()
+
+      assert {:ok, imported} =
+               Accounts.import_media_server_users(actor, [
+                 Map.put(plex_entry(4010, unique_user_email()), :role, :admin)
+               ])
+
+      assert Enum.all?(imported, &(&1.role == :user))
+    end
+
+    test "re-running the import creates nothing new" do
+      actor = admin_fixture()
+      entries = [plex_entry(4002, unique_user_email()), plex_entry(4003, unique_user_email())]
+
+      assert {:ok, [_, _]} = Accounts.import_media_server_users(actor, entries)
+      before = Repo.aggregate(User, :count)
+
+      assert {:ok, []} = Accounts.import_media_server_users(actor, entries)
+      assert Repo.aggregate(User, :count) == before
+    end
+
+    test "skips an entry whose email already belongs to a still-pending account" do
+      actor = admin_fixture()
+
+      pending =
+        user_fixture() |> Ecto.Changeset.change(active: false) |> Repo.update!()
+
+      assert {:ok, []} =
+               Accounts.import_media_server_users(actor, [plex_entry(4004, pending.email)])
+
+      # Not resurrected: the pending account keeps its own state and stays unlinked.
+      reloaded = Repo.reload!(pending)
+      refute reloaded.active
+      refute reloaded.plex_id
+    end
+
+    test "skips an entry whose plex_id is already linked under a different email" do
+      actor = admin_fixture()
+
+      _linked =
+        user_fixture() |> Ecto.Changeset.change(plex_id: 4005) |> Repo.update!()
+
+      assert {:ok, []} =
+               Accounts.import_media_server_users(actor, [
+                 plex_entry(4005, unique_user_email())
+               ])
+    end
+
+    test "skips a duplicate email inside one payload" do
+      actor = admin_fixture()
+      email = unique_user_email()
+
+      assert {:ok, [imported]} =
+               Accounts.import_media_server_users(actor, [
+                 plex_entry(4006, email),
+                 plex_entry(4007, email)
+               ])
+
+      assert imported.plex_id == 4006
+    end
+
+    test "skips an entry the media server reports without an email" do
+      actor = admin_fixture()
+
+      assert {:ok, []} =
+               Accounts.import_media_server_users(actor, [plex_entry(4008, nil, "no-email")])
+    end
+
+    test "imports a Jellyfin-shaped (string id) entry without linking Plex" do
+      actor = admin_fixture()
+      email = unique_user_email()
+
+      assert {:ok, [imported]} =
+               Accounts.import_media_server_users(actor, [
+                 %{id: "b7a1-guid", email: email, username: email}
+               ])
+
+      assert imported.email == email
+      assert imported.plex_id == nil
+      assert imported.plex_username == nil
+    end
+
+    test "audits every created account" do
+      actor = admin_fixture()
+      Repo.delete_all(Cinder.Audit.AdminAudit)
+
+      assert {:ok, [imported]} =
+               Accounts.import_media_server_users(actor, [
+                 plex_entry(4009, unique_user_email())
+               ])
+
+      audit = Repo.one!(from a in Cinder.Audit.AdminAudit, where: a.entity_id == ^imported.id)
+      assert audit.action == "import_media_server_user"
+      assert audit.entity_type == "User"
+      assert audit.actor_id == actor.id
+      refute Map.has_key?(audit.detail, "email")
+    end
+
+    test "refuses a non-admin actor and writes nothing" do
+      actor = user_fixture()
+      before = Repo.aggregate(User, :count)
+
+      assert {:error, :unauthorized} =
+               Accounts.import_media_server_users(actor, [
+                 plex_entry(4011, unique_user_email())
+               ])
+
+      assert Repo.aggregate(User, :count) == before
+    end
+  end
+
   describe "unlink_plex_from_user/1" do
     test "clears plex_id and plex_username" do
       user =

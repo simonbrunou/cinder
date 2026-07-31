@@ -3,6 +3,10 @@ defmodule CinderWeb.UsersLive do
   Admin user list with per-user request quota, mounted at `/users`. Quota is the
   concurrent-pending limit enforced in `Cinder.Requests.create_request/2`
   (blank = unlimited). Admin-gated by the `:admin` live_session.
+
+  Also hosts the media-server user import: fetch the configured server's account list
+  (`Cinder.Accounts.list_media_server_users/0`), tick the ones to onboard, and create a
+  passwordless `:user` account each (`Cinder.Accounts.import_media_server_users/2`).
   """
   use CinderWeb, :live_view
 
@@ -19,7 +23,8 @@ defmodule CinderWeb.UsersLive do
        creating: false,
        editing_email: nil,
        resetting_pw: nil,
-       confirming_delete: nil
+       confirming_delete: nil,
+       import_users: nil
      )
      |> assign_users()
      |> assign_create_form()}
@@ -70,6 +75,44 @@ defmodule CinderWeb.UsersLive do
 
       {:error, %Ecto.Changeset{} = changeset} ->
         {:noreply, assign(socket, :create_form, to_form(changeset, as: :user))}
+    end
+  end
+
+  def handle_event("load_import", _params, socket) do
+    case Accounts.list_media_server_users() do
+      {:ok, media_server_users} ->
+        {:noreply, assign(socket, import_users: media_server_users)}
+
+      {:error, _reason} ->
+        {:noreply,
+         put_flash(socket, :error, gettext("Couldn't read the media server's user list."))}
+    end
+  end
+
+  def handle_event("cancel_import", _params, socket) do
+    {:noreply, assign(socket, import_users: nil)}
+  end
+
+  # The checkboxes carry ids only: the entries themselves come from the list this view
+  # fetched, so a forged id imports nothing and a forged email is impossible.
+  def handle_event("import", params, socket) do
+    actor = socket.assigns.current_scope.user
+    selected = params |> Map.get("import", []) |> List.wrap() |> Enum.map(&to_string/1)
+    entries = Enum.filter(socket.assigns.import_users || [], &(to_string(&1.id) in selected))
+
+    case Accounts.import_media_server_users(actor, entries) do
+      {:ok, created} ->
+        {:noreply,
+         socket
+         |> assign(import_users: nil)
+         |> assign_users()
+         |> put_flash(:info, import_message(length(created)))}
+
+      {:error, :unauthorized} ->
+        unauthorized(socket)
+
+      {:error, _} ->
+        {:noreply, put_flash(socket, :error, gettext("Couldn't import those accounts."))}
     end
   end
 
@@ -315,6 +358,11 @@ defmodule CinderWeb.UsersLive do
   defp role_atom("admin"), do: :admin
   defp role_atom(_), do: :user
 
+  defp import_message(0), do: gettext("Nothing to import: those accounts already exist.")
+
+  defp import_message(count),
+    do: ngettext("Imported %{count} account.", "Imported %{count} accounts.", count)
+
   # "" → nil (unlimited); a non-numeric value → -1 so the changeset rejects it.
   defp parse_quota(""), do: nil
 
@@ -378,6 +426,60 @@ defmodule CinderWeb.UsersLive do
             </.button>
           </li>
         </ul>
+      </section>
+
+      <section id="import-users" class="mb-6">
+        <.button
+          :if={is_nil(@import_users)}
+          id="load-import-btn"
+          variant="neutral"
+          size="sm"
+          phx-click="load_import"
+          phx-disable-with={gettext("Loading…")}
+        >
+          {gettext("Import from media server")}
+        </.button>
+        <form
+          :if={@import_users}
+          id="import-users-form"
+          phx-submit="import"
+          class="card bg-base-200 p-4 space-y-2"
+        >
+          <h2 class="font-semibold">{gettext("Import from media server")}</h2>
+          <p class="text-sm text-base-content/60">
+            {gettext(
+              "Imported accounts have no password: they sign in through the media server, or you set one here."
+            )}
+          </p>
+          <p :if={@import_users == []} class="text-sm text-base-content/60">
+            {gettext("The media server reported no users.")}
+          </p>
+          <ul class="space-y-1">
+            <li :for={u <- @import_users} id={"import-user-#{u.id}"}>
+              <label :if={u.email} class="flex flex-wrap items-center gap-2">
+                <input type="checkbox" name="import[]" value={u.id} class="checkbox checkbox-sm" />
+                <span class="break-all font-medium">{u.email}</span>
+                <span :if={u.username} class="text-sm text-base-content/60">{u.username}</span>
+              </label>
+              <span :if={is_nil(u.email)} class="text-sm text-base-content/50">
+                {gettext("%{name}: no email on the media server", name: u.username || u.id)}
+              </span>
+            </li>
+          </ul>
+          <div class="flex gap-2">
+            <.button
+              variant="primary"
+              size="sm"
+              type="submit"
+              phx-disable-with={gettext("Importing…")}
+            >
+              {gettext("Import selected")}
+            </.button>
+            <.button variant="ghost" size="sm" type="button" phx-click="cancel_import">
+              {gettext("Cancel")}
+            </.button>
+          </div>
+        </form>
       </section>
 
       <div class="mb-6">
