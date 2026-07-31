@@ -43,6 +43,7 @@ config :cinder, Cinder.Repo,
 config :cinder, tmdb: Cinder.Catalog.TMDB.HTTP
 config :cinder, indexer: Cinder.Acquisition.Indexer.Prowlarr
 config :cinder, plex_auth: Cinder.Accounts.PlexAuth.HTTP
+config :cinder, jellyfin_auth: Cinder.Accounts.JellyfinAuth.HTTP
 
 config :cinder,
   migration_sources: %{

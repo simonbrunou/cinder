@@ -237,16 +237,21 @@ defmodule Cinder.Notifier.Discord do
   defp requester(%{user: %User{} = user}), do: display_name(user)
   defp requester(%{user_id: id}), do: "user ##{id}"
 
-  # A non-PII display identity: the linked Plex username if one is set, else an opaque `user #<id>`.
-  # The requester's email is deliberately never sent to Discord — it's a third-party processor and
-  # an in-app identifier is all the household channel needs (GDPR data minimisation).
+  # A non-PII display identity: the linked Plex or Jellyfin username if one is set, else an opaque
+  # `user #<id>`. The requester's email is deliberately never sent to Discord — it's a third-party
+  # processor and an in-app identifier is all the household channel needs (GDPR data minimisation).
+  # A Jellyfin-created account's email is a synthetic `@jellyfin.invalid` placeholder anyway.
   defp display_name(%User{plex_username: username})
+       when is_binary(username) and username != "",
+       do: sanitize(username)
+
+  defp display_name(%User{jellyfin_username: username})
        when is_binary(username) and username != "",
        do: sanitize(username)
 
   defp display_name(%User{id: id}), do: "user ##{id}"
 
-  # `plex_username` is externally sourced (whatever the linked Plex account reports), so it gets
+  # The linked username is externally sourced (whatever the linked account reports), so it gets
   # markdown/mention sanitizing: Discord renders embed text as markdown, and both `[x](url)`
   # (masked link) and `<https://url>` (auto-link) would otherwise put an attacker-controlled link
   # in the admin's channel.

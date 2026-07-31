@@ -19,6 +19,8 @@ defmodule Cinder.Accounts.User do
     # `Cinder.Accounts.plex_token/1`; never logged, rendered or exported.
     field :plex_token, :string, redact: true
     field :plex_watchlist_sync, :boolean, default: false
+    field :jellyfin_user_id, :string
+    field :jellyfin_username, :string
 
     timestamps(type: :utc_datetime)
   end
@@ -159,6 +161,16 @@ defmodule Cinder.Accounts.User do
     user
     |> cast(attrs, [:plex_id, :plex_username])
     |> unique_constraint(:plex_id)
+  end
+
+  @doc """
+  Links (or refreshes) a Jellyfin account: `jellyfin_user_id` + display-only
+  `jellyfin_username`. Mirrors `plex_changeset/2`.
+  """
+  def jellyfin_changeset(user, attrs) do
+    user
+    |> cast(attrs, [:jellyfin_user_id, :jellyfin_username])
+    |> unique_constraint(:jellyfin_user_id)
   end
 
   @doc """

@@ -44,6 +44,15 @@ new regular-user account — there is no automatic email-based login into an exi
 attach Plex to an existing account (e.g. your admin), log in normally and link it from Account
 settings.
 
+Jellyfin works the same way: configure `JELLYFIN_URL` (or the `/settings` field) and a **"Sign in
+with Jellyfin"** username/password form appears on the log-in page, checked against your own
+server's `Users/AuthenticateByName` — so only accounts that server already knows can sign in. The
+same rule holds: the first Jellyfin login always creates a new regular-user account, never an
+email-based login into an existing one, and linking Jellyfin to an existing account is an explicit
+action from Account settings. Jellyfin exposes no email address, so a created account gets a
+placeholder one you can change from Account settings. Emby speaks the same endpoint and should
+work if you point the URL at one; it is untested.
+
 > ⚠️ **Secure it before exposing it.** Keep the one-time bootstrap token private, and don't expose
 > port 4000 to an untrusted network — run Cinder behind a reverse proxy (with TLS) or a VPN. See
 > [`docs/operating.md`](docs/operating.md).

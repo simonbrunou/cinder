@@ -21,6 +21,43 @@ defmodule Cinder.Library.MediaServer.PlexTest do
     assert :ok = Plex.scan(:movies)
   end
 
+  test "list_users/0 reads plex.tv's shared-user list with the server token" do
+    Req.Test.stub(Cinder.PlexStub, fn conn ->
+      assert conn.method == "GET"
+      assert conn.host == "plex.tv"
+      assert conn.request_path == "/api/v2/friends"
+      assert Plug.Conn.get_req_header(conn, "x-plex-token") == ["test-key"]
+
+      Req.Test.json(conn, [
+        %{"id" => 9001, "username" => "kim", "email" => "kim@example.com"},
+        %{"id" => 9002, "title" => "Sam", "email" => ""},
+        %{"uuid" => "no-id", "email" => "ghost@example.com"}
+      ])
+    end)
+
+    assert {:ok, users} = Plex.list_users()
+
+    assert users == [
+             %{id: 9001, email: "kim@example.com", username: "kim"},
+             %{id: 9002, email: nil, username: "Sam"}
+           ]
+  end
+
+  test "list_users/0 surfaces a non-2xx status as an error" do
+    Req.Test.stub(Cinder.PlexStub, fn conn ->
+      conn |> Plug.Conn.put_status(401) |> Req.Test.text("Unauthorized")
+    end)
+
+    assert {:error, {:plex_status, 401}} = Plex.list_users()
+  end
+
+  test "list_users/0 returns :not_configured without hitting plex.tv when the token is blank" do
+    put_config(token: "")
+    Req.Test.stub(Cinder.PlexStub, fn _conn -> raise "should not call plex.tv with no token" end)
+
+    assert {:error, :not_configured} = Plex.list_users()
+  end
+
   test "scan/1 surfaces a non-2xx status as an error" do
     Req.Test.stub(Cinder.PlexStub, fn conn ->
       conn |> Plug.Conn.put_status(401) |> Req.Test.text("Unauthorized")

@@ -362,6 +362,64 @@ defmodule CinderWeb.UserLive.SettingsTest do
       {:ok, lv, _html} = conn |> log_in_user(user_fixture()) |> live(~p"/users/settings")
 
       refute has_element?(lv, ~s(form[phx-change=toggle_plex_watchlist]))
+  describe "Jellyfin account section" do
+    test "an unlinked user sees a credential form posting to /auth/jellyfin", %{conn: conn} do
+      {:ok, _lv, html} =
+        conn
+        |> log_in_user(user_fixture())
+        |> live(~p"/users/settings")
+
+      assert html =~ "Link Jellyfin account"
+      assert html =~ ~s(action="/auth/jellyfin")
+    end
+
+    test "submitting the form links the current user's own account", %{conn: conn} do
+      user = user_fixture()
+
+      Mox.expect(Cinder.Accounts.JellyfinAuthMock, :authenticate, fn "jf-me", "s3cret" ->
+        {:ok, %{id: "jf-settings-1", name: "jf-me"}}
+      end)
+
+      conn = log_in_user(conn, user)
+      {:ok, lv, _html} = live(conn, ~p"/users/settings")
+
+      conn =
+        lv
+        |> form("#link_jellyfin_form", jellyfin: %{username: "jf-me", password: "s3cret"})
+        |> submit_form(conn)
+
+      assert redirected_to(conn) == ~p"/users/settings"
+      assert Cinder.Repo.reload!(user).jellyfin_user_id == "jf-settings-1"
+    end
+
+    test "a linked user sees the linked state and can unlink", %{conn: conn} do
+      user = user_fixture()
+
+      {:ok, user} = Cinder.Accounts.link_jellyfin_to_user(user, %{id: "jf-9", name: "jelly-me"})
+
+      {:ok, lv, html} = conn |> log_in_user(user) |> live(~p"/users/settings")
+
+      assert html =~ "Linked as jelly-me"
+      refute html =~ "Link Jellyfin account"
+
+      html = lv |> element("button", "Unlink") |> render_click()
+
+      assert html =~ "Link Jellyfin account"
+      refute html =~ "Linked as jelly-me"
+      assert Cinder.Repo.reload!(user).jellyfin_user_id == nil
+    end
+
+    test "unlink_jellyfin requires fresh sudo: an expired session does not unlink" do
+      user = user_fixture()
+
+      {:ok, user} = Cinder.Accounts.link_jellyfin_to_user(user, %{id: "jf-10", name: "jelly-me"})
+
+      assert {:noreply, socket} =
+               Settings.handle_event("unlink_jellyfin", %{}, stale_socket(user))
+
+      assert {:redirect, %{to: "/users/log-in"}} = socket.redirected
+      assert Phoenix.Flash.get(socket.assigns.flash, :error) =~ "re-authenticate"
+      assert Cinder.Repo.reload!(user).jellyfin_user_id == "jf-10"
     end
   end
 

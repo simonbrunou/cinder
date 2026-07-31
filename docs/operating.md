@@ -86,6 +86,16 @@ terminate at a reverse proxy):
   un-requested or deleted. Sync needs the Plex auth token from sign-in, stored encrypted at rest
   alongside the settings secrets; if Plex later rejects it, sync switches itself off for that user
   alone and they can re-link to resume.
+- **Sign in with Jellyfin:** once a Jellyfin server is configured (`JELLYFIN_URL` or the
+  `/settings` equivalent), the log-in page shows a "Sign in with Jellyfin" username/password form,
+  checked against that server's own `Users/AuthenticateByName` — so only accounts the server
+  already knows can sign in, and no API key is needed for it. The same rules as Plex apply: the
+  first successful Jellyfin login always creates a new regular-user account (role `:user`, awaiting
+  admin approval), never an email-based login into an existing one, and attaching Jellyfin to an
+  existing account is an explicit action from Account settings. Jellyfin exposes no email address,
+  so a created account gets a placeholder `…@jellyfin.invalid` one with email notifications off
+  until its owner sets a real address. Attempts are rate-limited exactly like password login. Emby
+  serves the same endpoint and should work if you point `JELLYFIN_URL` at one — untested.
 
 ## Privacy & GDPR
 

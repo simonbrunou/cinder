@@ -372,6 +372,179 @@ defmodule CinderWeb.UsersLiveTest do
     assert Process.alive?(lv.pid)
   end
 
+  describe "media-server user import" do
+    # The LiveView runs in its own process, so the media-server mock must be global.
+    setup do
+      Mox.set_mox_global()
+      :ok
+    end
+
+    test "admin imports the selected users from the configured media server", %{conn: conn} do
+      admin = Cinder.AccountsFixtures.admin_fixture()
+      stub_media_server_users()
+      conn = log_in_user(conn, admin)
+
+      {:ok, lv, _html} = live(conn, ~p"/users")
+      lv |> element("#load-import-btn") |> render_click()
+
+      html = render(lv)
+      assert html =~ "kim@example.com"
+      assert html =~ "sam@example.com"
+      # An account the media server reports without an email can't be imported.
+      assert html =~ "no email on the media server"
+
+      lv |> form("#import-users-form", %{"import" => ["5001"]}) |> render_submit()
+
+      assert %Cinder.Accounts.User{} = kim = user_by_email("kim@example.com")
+      assert kim.role == :user
+      assert kim.plex_id == 5001
+      # Only the ticked account was created.
+      refute user_by_email("sam@example.com")
+      assert render(lv) =~ "Imported 1 account."
+    end
+
+    test "an imported user can't log in until they come through the media server", %{conn: conn} do
+      admin = Cinder.AccountsFixtures.admin_fixture()
+      stub_media_server_users()
+      conn = log_in_user(conn, admin)
+
+      {:ok, lv, _html} = live(conn, ~p"/users")
+      lv |> element("#load-import-btn") |> render_click()
+      lv |> form("#import-users-form", %{"import" => ["5001"]}) |> render_submit()
+
+      # No password exists, so no password logs them in...
+      refute Cinder.Accounts.get_user_by_email_and_password(
+               "kim@example.com",
+               Cinder.AccountsFixtures.valid_user_password()
+             )
+
+      # ...but the imported plex_id resolves the media-server sign-in to THIS account
+      # rather than creating a second one.
+      assert {:ok, signed_in} =
+               Cinder.Accounts.login_or_register_plex_user(%{
+                 id: 5001,
+                 email: "kim@example.com",
+                 username: "kim"
+               })
+
+      assert signed_in.id == user_by_email("kim@example.com").id
+    end
+
+    test "re-running the import creates nothing new", %{conn: conn} do
+      admin = Cinder.AccountsFixtures.admin_fixture()
+      stub_media_server_users()
+      conn = log_in_user(conn, admin)
+
+      {:ok, lv, _html} = live(conn, ~p"/users")
+      lv |> element("#load-import-btn") |> render_click()
+      lv |> form("#import-users-form", %{"import" => ["5001", "5002"]}) |> render_submit()
+
+      count = Cinder.Repo.aggregate(Cinder.Accounts.User, :count)
+
+      lv |> element("#load-import-btn") |> render_click()
+      lv |> form("#import-users-form", %{"import" => ["5001", "5002"]}) |> render_submit()
+
+      assert Cinder.Repo.aggregate(Cinder.Accounts.User, :count) == count
+      assert render(lv) =~ "already exist"
+    end
+
+    test "every import is audited", %{conn: conn} do
+      admin = Cinder.AccountsFixtures.admin_fixture()
+      stub_media_server_users()
+      conn = log_in_user(conn, admin)
+
+      {:ok, lv, _html} = live(conn, ~p"/users")
+      lv |> element("#load-import-btn") |> render_click()
+      lv |> form("#import-users-form", %{"import" => ["5001"]}) |> render_submit()
+
+      imported = user_by_email("kim@example.com")
+
+      audit =
+        Cinder.Repo.get_by!(Cinder.Audit.AdminAudit,
+          entity_type: "User",
+          entity_id: imported.id
+        )
+
+      assert audit.action == "import_media_server_user"
+      assert audit.actor_id == admin.id
+    end
+
+    test "an admin demoted mid-session can't import", %{conn: conn} do
+      admin = Cinder.AccountsFixtures.admin_fixture()
+      other_admin = Cinder.AccountsFixtures.admin_fixture()
+      stub_media_server_users()
+      conn = log_in_user(conn, admin)
+
+      {:ok, lv, _html} = live(conn, ~p"/users")
+      lv |> element("#load-import-btn") |> render_click()
+
+      demote(other_admin, admin)
+
+      lv |> form("#import-users-form", %{"import" => ["5001"]}) |> render_submit()
+
+      refute user_by_email("kim@example.com")
+      assert render(lv) =~ "You don&#39;t have access to that page."
+    end
+
+    test "submitting with nothing ticked says so instead of claiming they exist", %{conn: conn} do
+      admin = Cinder.AccountsFixtures.admin_fixture()
+      stub_media_server_users()
+      conn = log_in_user(conn, admin)
+
+      {:ok, lv, _html} = live(conn, ~p"/users")
+      lv |> element("#load-import-btn") |> render_click()
+
+      assert lv |> form("#import-users-form") |> render_submit() =~ "Select at least one account"
+      refute user_by_email("kim@example.com")
+    end
+
+    # The payload is a client-supplied query string: `import[a]=1` decodes to a MAP, not a list.
+    test "a forged, map-shaped selection imports nothing and keeps the view alive", %{conn: conn} do
+      admin = Cinder.AccountsFixtures.admin_fixture()
+      stub_media_server_users()
+      conn = log_in_user(conn, admin)
+
+      {:ok, lv, _html} = live(conn, ~p"/users")
+      lv |> element("#load-import-btn") |> render_click()
+
+      render_hook(lv, "import", %{"import" => %{"a" => "5001"}})
+      render_hook(lv, "import", %{"import" => [%{"a" => "5001"}, 5001]})
+      render_hook(lv, "import", %{})
+      # Only a form payload is guaranteed to be a map; a forged frame can send a bare list.
+      render_hook(lv, "import", ["5001"])
+
+      refute user_by_email("kim@example.com")
+      assert Process.alive?(lv.pid)
+    end
+
+    test "a media server that can't be read surfaces an error, not a crash", %{conn: conn} do
+      admin = Cinder.AccountsFixtures.admin_fixture()
+
+      Mox.stub(Cinder.Library.MediaServerMock, :list_users, fn -> {:error, :timeout} end)
+
+      conn = log_in_user(conn, admin)
+      {:ok, lv, _html} = live(conn, ~p"/users")
+
+      assert lv |> element("#load-import-btn") |> render_click() =~
+               "Couldn&#39;t read the media server"
+
+      refute has_element?(lv, "#import-users-form")
+    end
+
+    defp stub_media_server_users do
+      Mox.stub(Cinder.Library.MediaServerMock, :list_users, fn ->
+        {:ok,
+         [
+           %{id: 5001, email: "kim@example.com", username: "kim"},
+           %{id: 5002, email: "sam@example.com", username: "sam"},
+           %{id: 5003, email: nil, username: "managed-kid"}
+         ]}
+      end)
+    end
+
+    defp user_by_email(email), do: Cinder.Repo.get_by(Cinder.Accounts.User, email: email)
+  end
+
   test "a non-admin cannot reach /users", %{conn: conn} do
     user = Cinder.AccountsFixtures.user_fixture()
     conn = log_in_user(conn, user)
