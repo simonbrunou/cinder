@@ -253,6 +253,9 @@ defmodule Cinder.Accounts do
         where: u.plex_watchlist_sync and u.active and not is_nil(u.plex_token),
         order_by: [asc: u.id]
     )
+  end
+
+  @doc """
   Resolves a Jellyfin account (`%{id:, name:}`, from `Cinder.Accounts.JellyfinAuth`) to a Cinder
   user for the UNAUTHENTICATED "Sign in with Jellyfin" flow — the mirror of
   `login_or_register_plex_user/1`: an existing `jellyfin_user_id` match logs in (refreshing

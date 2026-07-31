@@ -362,6 +362,9 @@ defmodule CinderWeb.UserLive.SettingsTest do
       {:ok, lv, _html} = conn |> log_in_user(user_fixture()) |> live(~p"/users/settings")
 
       refute has_element?(lv, ~s(form[phx-change=toggle_plex_watchlist]))
+    end
+  end
+
   describe "Jellyfin account section" do
     test "an unlinked user sees a credential form posting to /auth/jellyfin", %{conn: conn} do
       {:ok, _lv, html} =

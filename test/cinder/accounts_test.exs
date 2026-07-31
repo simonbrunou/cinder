@@ -1301,6 +1301,9 @@ defmodule Cinder.AccountsTest do
 
       assert updated.plex_watchlist_sync
       assert updated.plex_token == nil
+    end
+  end
+
   describe "login_or_register_jellyfin_user/1" do
     test "matches an existing user by jellyfin_user_id and logs in" do
       user =
