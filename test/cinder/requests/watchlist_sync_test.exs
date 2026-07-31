@@ -11,6 +11,7 @@ defmodule Cinder.Requests.WatchlistSyncTest do
   alias Cinder.Catalog.Movie
   alias Cinder.Requests
   alias Cinder.Requests.Request
+  alias Cinder.Requests.SyncedWatchlistEntry
   alias Cinder.Requests.WatchlistSync
 
   setup :set_mox_from_context
@@ -245,6 +246,29 @@ defmodule Cinder.Requests.WatchlistSyncTest do
     ExUnit.CaptureLog.capture_log(fn -> sync!() end)
 
     refute Repo.get!(Accounts.User, user.id).plex_watchlist_sync
+  end
+
+  # The sweep's marker write relies on both halves of this: the unique index makes a racing
+  # second tick a no-op rather than a duplicate, and `unique_constraint/2` must name that index
+  # exactly as exqlite reports it or a collision would RAISE inside the tick instead of
+  # returning a changeset (the same trap requests_pending_unique documents).
+  test "a marker is unique per user and tmdb_id, and re-inserting it is a no-op" do
+    user = user_fixture()
+
+    changeset = fn ->
+      SyncedWatchlistEntry.changeset(%SyncedWatchlistEntry{}, %{user_id: user.id, tmdb_id: 7})
+    end
+
+    assert {:ok, _} = Repo.insert(changeset.())
+
+    assert {:ok, _} =
+             Repo.insert(changeset.(),
+               on_conflict: :nothing,
+               conflict_target: [:user_id, :tmdb_id]
+             )
+
+    assert {:error, %Ecto.Changeset{}} = Repo.insert(changeset.())
+    assert Repo.aggregate(SyncedWatchlistEntry, :count) == 1
   end
 
   test "unlinking Plex clears the token and switches sync off" do
