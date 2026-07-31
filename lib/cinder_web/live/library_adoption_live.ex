@@ -83,7 +83,7 @@ defmodule CinderWeb.LibraryAdoptionLive do
         %{assigns: %{adopting?: false, mode: :filesystem}} = socket
       )
       when is_map(params) do
-    confirmed = confirmed_candidates(socket.assigns.candidates, params)
+    confirmed = Adoption.confirmed_candidates(socket.assigns.candidates, params)
 
     case confirmed do
       [] ->
@@ -171,7 +171,7 @@ defmodule CinderWeb.LibraryAdoptionLive do
         %{assigns: %{adopting?: false, mode: {:migration, source}} = assigns} = socket
       ) do
     commands =
-      confirmed_migration_commands(
+      Adoption.confirmed_migration_commands(
         assigns.migration_buckets,
         assigns.selected_ready,
         assigns.decisions
@@ -182,7 +182,8 @@ defmodule CinderWeb.LibraryAdoptionLive do
         {:noreply, put_flash(socket, :error, gettext("Select at least one match to adopt."))}
 
       commands ->
-        undecided = undecided_count(assigns.migration_buckets.needs_decision, assigns.decisions)
+        undecided =
+          Adoption.undecided_count(assigns.migration_buckets.needs_decision, assigns.decisions)
 
         {:noreply,
          socket
@@ -341,34 +342,6 @@ defmodule CinderWeb.LibraryAdoptionLive do
     |> stream(:migration_series_counts, preview.series_counts, reset: true)
   end
 
-  defp confirmed_candidates(candidates, params) do
-    selected = params |> Map.get("selected", []) |> List.wrap() |> parse_ids()
-    chosen = Map.get(params, "chosen", %{})
-    parts = Map.get(params, "parts", %{})
-
-    Enum.flat_map(candidates, &confirm_candidate(&1, selected, chosen, parts))
-  end
-
-  # Commands are derived entirely from server-held selection/decision state (never a client-posted
-  # list), so a windowed-away row that never rendered a checkbox is still honoured.
-  defp confirmed_migration_commands(buckets, selected_ready, decisions) do
-    ready_commands =
-      for candidate <- buckets.ready,
-          MapSet.member?(selected_ready, candidate.id),
-          do: %{key: candidate.key, candidate: candidate}
-
-    decision_commands =
-      for candidate <- buckets.needs_decision,
-          choice = Map.get(decisions, candidate.id),
-          choice in ["fold", "part"],
-          do: migration_command(candidate.key, choice, candidate)
-
-    ready_commands ++ decision_commands
-  end
-
-  defp undecided_count(needs_decision, decisions),
-    do: Enum.count(needs_decision, &(not Map.has_key?(decisions, &1.id)))
-
   defp current_page(socket, bucket) do
     page_slice(
       Map.fetch!(socket.assigns.migration_buckets, bucket),
@@ -422,62 +395,6 @@ defmodule CinderWeb.LibraryAdoptionLive do
     else
       base
     end
-  end
-
-  defp confirm_candidate(
-         %{status: :auto_matched, id: id} = candidate,
-         selected,
-         _chosen,
-         parts
-       ) do
-    if MapSet.member?(selected, id) do
-      [put_part_choices(candidate, candidate_choices(parts, id))]
-    else
-      []
-    end
-  end
-
-  defp confirm_candidate(%{status: :ambiguous, id: id} = candidate, _selected, chosen, _parts)
-       when is_map(chosen) do
-    case parse_id(Map.get(chosen, to_string(id))) do
-      nil -> []
-      tmdb_id -> [Map.put(candidate, :chosen_tmdb_id, tmdb_id)]
-    end
-  end
-
-  defp confirm_candidate(_candidate, _selected, _chosen, _parts), do: []
-
-  defp candidate_choices(parts, candidate_id) when is_map(parts) do
-    case Map.get(parts, to_string(candidate_id), %{}) do
-      choices when is_map(choices) -> choices
-      _ -> %{}
-    end
-  end
-
-  defp candidate_choices(_parts, _candidate_id), do: %{}
-
-  defp put_part_choices(candidate, choices) do
-    files =
-      Enum.map(Map.get(candidate, :files, []), fn file ->
-        target = parse_id(Map.get(choices, to_string(Map.get(file, :id))))
-
-        case Enum.find(Map.get(file, :part_candidates, []), &(&1.episode_number == target)) do
-          nil ->
-            file
-
-          part_of ->
-            %{file | status: :part, part_of: Map.take(part_of, [:season_number, :episode_number])}
-        end
-      end)
-
-    Map.put(candidate, :files, files)
-  end
-
-  defp parse_ids(values) do
-    values
-    |> Enum.map(&parse_id/1)
-    |> Enum.reject(&is_nil/1)
-    |> MapSet.new()
   end
 
   defp parse_id(value) when is_integer(value), do: value
@@ -1042,7 +959,7 @@ defmodule CinderWeb.LibraryAdoptionLive do
                 {ngettext(
                   "%{count} decision pending",
                   "%{count} decisions pending",
-                  undecided_count(@migration_buckets.needs_decision, @decisions)
+                  Adoption.undecided_count(@migration_buckets.needs_decision, @decisions)
                 )}
               </span>
               <.button
@@ -1219,9 +1136,6 @@ defmodule CinderWeb.LibraryAdoptionLive do
     </Layouts.app>
     """
   end
-
-  defp migration_command(key, choice, candidate),
-    do: %{key: key, choice: choice, candidate: candidate}
 
   defp refresh_after_adopt(%{assigns: %{mode: :filesystem}} = socket, _summary),
     do: start_scan(socket)
