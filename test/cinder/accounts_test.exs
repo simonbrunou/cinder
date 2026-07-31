@@ -1086,4 +1086,85 @@ defmodule Cinder.AccountsTest do
       assert unlinked.plex_username == nil
     end
   end
+
+  describe "store_plex_token/2 and plex_token/1" do
+    test "the token is encrypted at rest and never stored in the clear" do
+      user = user_fixture()
+      assert {:ok, stored} = Accounts.store_plex_token(user, "super-secret-plex-token")
+
+      # Read the raw column, bypassing the schema, to prove what actually landed on disk.
+      {:ok, %{rows: [[raw]]}} =
+        Repo.query("SELECT plex_token FROM users WHERE id = ?", [user.id])
+
+      assert is_binary(raw)
+      refute raw =~ "super-secret-plex-token"
+      assert {:ok, ciphertext} = Base.decode64(raw)
+      assert {:ok, "super-secret-plex-token"} = Cinder.Vault.decrypt(ciphertext)
+
+      assert Accounts.plex_token(stored) == "super-secret-plex-token"
+    end
+
+    test "the token is redacted from inspect output" do
+      user = user_fixture()
+      assert {:ok, stored} = Accounts.store_plex_token(user, "super-secret-plex-token")
+
+      refute inspect(stored) =~ stored.plex_token
+    end
+
+    test "a token encrypted under another key decodes to nil, never to the ciphertext" do
+      user =
+        user_fixture()
+        |> Ecto.Changeset.change(plex_token: Base.encode64("not-our-ciphertext"))
+        |> Repo.update!()
+
+      assert Accounts.plex_token(user) == nil
+    end
+
+    test "no stored token decodes to nil" do
+      assert Accounts.plex_token(user_fixture()) == nil
+    end
+
+    test "the token never reaches the user data export" do
+      user = user_fixture()
+      {:ok, stored} = Accounts.store_plex_token(user, "super-secret-plex-token")
+
+      refute stored |> Accounts.export_user_data() |> Map.has_key?(:plex_token)
+    end
+  end
+
+  describe "Plex watchlist sync opt-in" do
+    test "is off by default and only lists opted-in, active, token-holding users" do
+      user = user_fixture()
+      refute user.plex_watchlist_sync
+      assert Accounts.list_plex_watchlist_users() == []
+
+      {:ok, user} = Accounts.update_user_plex_watchlist_sync(user, %{plex_watchlist_sync: true})
+      # Opted in but with no stored token: nothing to authenticate with, so not listed.
+      assert Accounts.list_plex_watchlist_users() == []
+
+      {:ok, user} = Accounts.store_plex_token(user, "tok")
+      assert [%{id: id}] = Accounts.list_plex_watchlist_users()
+      assert id == user.id
+
+      {:ok, user} = user |> Ecto.Changeset.change(active: false) |> Repo.update()
+      assert Accounts.list_plex_watchlist_users() == []
+
+      {:ok, user} = user |> Ecto.Changeset.change(active: true) |> Repo.update()
+      {:ok, _user} = Accounts.disable_plex_watchlist_sync(user)
+      assert Accounts.list_plex_watchlist_users() == []
+    end
+
+    test "the opt-in changeset cannot be used to mass-assign a token" do
+      user = user_fixture()
+
+      {:ok, updated} =
+        Accounts.update_user_plex_watchlist_sync(user, %{
+          "plex_watchlist_sync" => true,
+          "plex_token" => "injected"
+        })
+
+      assert updated.plex_watchlist_sync
+      assert updated.plex_token == nil
+    end
+  end
 end

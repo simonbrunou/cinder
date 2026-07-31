@@ -4,7 +4,8 @@ defmodule Cinder.Accounts.PlexAuth.HTTP do
   PIN-based OAuth API: create/check a PIN (`/api/v2/pins`), fetch the signed-in
   account (`/api/v2/user`), and list the servers it can reach (`/api/v2/resources`).
   `server_machine_id/0` instead hits the configured local Plex server's
-  unauthenticated `/identity`.
+  unauthenticated `/identity`, and `watchlist/1` hits the account-level discover
+  host (`https://discover.provider.plex.tv`).
 
   Reads `req_options` from `config :cinder, #{inspect(__MODULE__)}`; the local
   server's `url` comes from `config :cinder, Cinder.Library.MediaServer.Plex` (the
@@ -17,6 +18,11 @@ defmodule Cinder.Accounts.PlexAuth.HTTP do
 
   @max_response_bytes 4 * 1024 * 1024
   @base_url "https://plex.tv"
+  # The watchlist is account state, served by plex.tv's discover host rather than the
+  # /api/v2 surface the sign-in calls use.
+  @discover_base_url "https://discover.provider.plex.tv"
+  # One page is the whole watchlist for a household; plex.tv caps the page size anyway.
+  @watchlist_page_size 500
 
   @impl true
   def create_pin do
@@ -82,6 +88,67 @@ defmodule Cinder.Accounts.PlexAuth.HTTP do
     end
   end
 
+  @impl true
+  def watchlist(token) do
+    req(@discover_base_url)
+    |> Req.merge(
+      method: :get,
+      url: "/library/sections/watchlist/all",
+      headers: [{"x-plex-token", token}],
+      params: [
+        includeGuids: 1,
+        "X-Plex-Container-Start": 0,
+        "X-Plex-Container-Size": @watchlist_page_size
+      ]
+    )
+    |> HTTPPolicy.bounded_request(@max_response_bytes)
+    |> watchlist_result()
+    |> case do
+      {:ok, %{"MediaContainer" => %{} = container}} -> {:ok, watchlist_entries(container)}
+      {:ok, _other} -> {:error, :unexpected_response}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  # A rejected token is its own outcome, not just another failed status: the caller parks that
+  # user's sync on it instead of retrying every tick.
+  defp watchlist_result({:ok, %{status: status}}) when status in [401, 403],
+    do: {:error, :unauthorized}
+
+  defp watchlist_result(response), do: result(response)
+
+  # An empty watchlist comes back as a MediaContainer with no Metadata key at all.
+  defp watchlist_entries(%{"Metadata" => metadata}) when is_list(metadata),
+    do: Enum.flat_map(metadata, &watchlist_entry/1)
+
+  defp watchlist_entries(_container), do: []
+
+  # Drop anything plex.tv can't map to a TMDB id: there is nothing Cinder could request from it.
+  defp watchlist_entry(%{"type" => type} = item) when is_binary(type) do
+    case tmdb_id(item) do
+      nil -> []
+      id -> [%{tmdb_id: id, type: type, title: item["title"], year: item["year"]}]
+    end
+  end
+
+  defp watchlist_entry(_item), do: []
+
+  defp tmdb_id(%{"Guid" => guids}) when is_list(guids) do
+    Enum.find_value(guids, fn
+      %{"id" => "tmdb://" <> id} -> positive_integer(id)
+      _ -> nil
+    end)
+  end
+
+  defp tmdb_id(_item), do: nil
+
+  defp positive_integer(value) do
+    case Integer.parse(value) do
+      {id, ""} when id > 0 -> id
+      _ -> nil
+    end
+  end
+
   defp server_client_ids(resources) do
     for %{"provides" => provides, "clientIdentifier" => id} <- resources,
         is_binary(provides) and String.contains?(provides, "server"),
@@ -111,11 +178,11 @@ defmodule Cinder.Accounts.PlexAuth.HTTP do
     end
   end
 
-  defp req do
+  defp req(base_url \\ @base_url) do
     config = Application.get_env(:cinder, __MODULE__, [])
 
     [
-      base_url: @base_url,
+      base_url: base_url,
       receive_timeout: 15_000,
       pool_timeout: 5_000,
       connect_options: [timeout: 5_000],

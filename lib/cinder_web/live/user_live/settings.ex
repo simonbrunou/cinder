@@ -124,6 +124,28 @@ defmodule CinderWeb.UserLive.Settings do
                 {gettext("Linked.")}
               <% end %>
             </p>
+            <%= if @current_scope.user.plex_token do %>
+              <form id="plex_watchlist_form" phx-change="toggle_plex_watchlist" class="mt-2">
+                <label class="label cursor-pointer justify-start gap-2">
+                  <input type="hidden" name="plex_watchlist_sync" value="false" />
+                  <input
+                    type="checkbox"
+                    name="plex_watchlist_sync"
+                    value="true"
+                    checked={@current_scope.user.plex_watchlist_sync}
+                    class="checkbox"
+                  />
+                  <span class="label-text">
+                    {gettext("Request titles I add to my Plex watchlist")}
+                  </span>
+                </label>
+              </form>
+            <% else %>
+              <p class="mt-2 text-sm opacity-70">
+                {gettext("Link your Plex account again to sync your Plex watchlist.")}
+              </p>
+            <% end %>
+
             <.button phx-click="unlink_plex" variant="neutral" class="mt-2">
               {gettext("Unlink")}
             </.button>
@@ -324,6 +346,23 @@ defmodule CinderWeb.UserLive.Settings do
            :error,
            gettext("Could not update your notification preference.")
          )}
+    end
+  end
+
+  # Same low-stakes-preference treatment as toggle_notify_email: no sudo recheck. It only decides
+  # whether the user's OWN watchlist is read on their OWN behalf, and every entry it creates still
+  # goes through the approval gate and their quota.
+  def handle_event("toggle_plex_watchlist", params, socket) do
+    user = socket.assigns.current_scope.user
+    sync? = Map.get(params, "plex_watchlist_sync") == "true"
+
+    case Accounts.update_user_plex_watchlist_sync(user, %{plex_watchlist_sync: sync?}) do
+      {:ok, updated} ->
+        {:noreply, assign(socket, current_scope: %{socket.assigns.current_scope | user: updated})}
+
+      {:error, _changeset} ->
+        {:noreply,
+         put_flash(socket, :error, gettext("Could not update your Plex watchlist preference."))}
     end
   end
 

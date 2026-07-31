@@ -95,7 +95,12 @@ defmodule CinderWeb.PlexAuthControllerTest do
 
       assert get_session(conn, :user_token)
       assert redirected_to(conn) == ~p"/"
-      assert %{active: false} = Repo.get_by(User, email: "newplex@example.com")
+      assert %{active: false} = user = Repo.get_by(User, email: "newplex@example.com")
+
+      # The token is kept (encrypted) so the opt-in watchlist sync has a credential to use;
+      # keeping it is not opting in.
+      assert Cinder.Accounts.plex_token(user) == "plex-auth-token"
+      refute user.plex_watchlist_sync
     end
 
     test "with {:error, :pending} shows a flash error and does not log in", %{conn: conn} do
@@ -178,7 +183,10 @@ defmodule CinderWeb.PlexAuthControllerTest do
       assert redirected_to(conn) == ~p"/users/settings"
       assert Phoenix.Flash.get(conn.assigns.flash, :info) =~ "linked"
       assert Repo.aggregate(User, :count) == count_before
-      assert Repo.reload!(user).plex_id == 9001
+      linked = Repo.reload!(user)
+      assert linked.plex_id == 9001
+      assert Cinder.Accounts.plex_token(linked) == "link-token"
+      refute linked.plex_watchlist_sync
     end
 
     test "SECURITY: with :link intent but a non-sudo-fresh session, does not link and shows a re-auth error",
