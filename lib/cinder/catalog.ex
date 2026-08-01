@@ -1452,6 +1452,7 @@ defmodule Cinder.Catalog do
   defdelegate episode_state(episode), to: SeriesCatalog
   defdelegate episode_state(episode, today), to: SeriesCatalog
   defdelegate search_episode_now(episode), to: SeriesCatalog
+  defdelegate rehunt_parked_episodes(cutoff), to: SeriesCatalog
   defdelegate search_season_now(season), to: SeriesCatalog
   defdelegate episode_searchable?(episode, profile), to: SeriesCatalog
   defdelegate upcoming_episodes(), to: SeriesCatalog

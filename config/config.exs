@@ -118,6 +118,9 @@ config :cinder, Cinder.Download.StallReaper,
   stall_timeout: :timer.hours(2),
   no_seeders_timeout: :timer.minutes(30)
 
+# Re-queues parked titles so a request with no release yet keeps getting hunted.
+config :cinder, Cinder.Catalog.Rehunter, enabled: true, rehunt_after: :timer.hours(24)
+
 # Configure the endpoint
 config :cinder, CinderWeb.Endpoint,
   url: [host: "localhost"],

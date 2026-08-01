@@ -1042,6 +1042,40 @@ defmodule Cinder.Catalog.SeriesCatalog do
   end
 
   @doc """
+  Re-queues every search-parked episode whose row has been untouched since `cutoff`, by zeroing
+  its `search_attempts` — the automatic counterpart to `search_episode_now/1`, driven by
+  `Cinder.Catalog.Rehunter`. Eligibility reuses `wanted_episodes_query/0` verbatim, so the set can
+  never drift from what the TV sweep actually searches.
+
+  One `update_all` (no join — the ids are selected first, since SQLite can't UPDATE ... FROM), then
+  one `{:series_updated, id}` broadcast per affected series so open views re-render the state
+  change from `:search_parked` back to `:wanted`. `updated_at` is deliberately left alone, matching
+  `set_series_language/2`'s reset: the sweep's own attempt bump is what re-establishes the backoff
+  clock. Returns the number of episodes re-queued.
+  """
+  def rehunt_parked_episodes(%DateTime{} = cutoff) do
+    parked =
+      Repo.all(
+        from([e, s] in wanted_episodes_query(),
+          where: e.search_attempts >= @max_search_attempts and e.updated_at < ^cutoff,
+          select: {e.id, s.series_id}
+        )
+      )
+
+    case Enum.unzip(parked) do
+      {[], _} ->
+        0
+
+      {ids, series_ids} ->
+        {count, _} =
+          Repo.update_all(from(e in Episode, where: e.id in ^ids), set: [search_attempts: 0])
+
+        series_ids |> Enum.uniq() |> Enum.each(&Cinder.Catalog.broadcast_series/1)
+        count
+    end
+  end
+
+  @doc """
   Re-queues a single searchable `episode` for the TV sweep by zeroing its `search_attempts`
   (clearing any backoff/attempt-cap park). The episode is re-read with its series profile before
   writing so a stale LiveView click cannot requeue an episode that is no longer eligible. Already
