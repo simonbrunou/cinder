@@ -625,44 +625,58 @@ defmodule Cinder.Download.Client.QBittorrentTest do
              QBittorrent.add(%{download_url: "http://127.0.0.1/private.torrent"})
   end
 
-  test "add/1 rejects a magnet whose tracker resolves to a forbidden address" do
-    stub_qbit(fn _conn -> flunk("qBittorrent must not be contacted with an unvetted tracker") end)
+  test "add/1 strips a magnet tracker that resolves to a forbidden address" do
+    stub_qbit(fn conn ->
+      assert conn.request_path == "/api/v2/torrents/add"
+      refute conn.params["urls"] =~ "127.0.0.1"
+      assert conn.params["urls"] =~ "tracker.example"
+      Req.Test.text(conn, "Ok.")
+    end)
 
-    magnet =
-      "magnet:?xt=urn:btih:#{@hash}&dn=Movie&tr=" <> URI.encode_www_form("http://127.0.0.1/ann")
+    bad = URI.encode_www_form("http://127.0.0.1/ann")
+    good = URI.encode_www_form("udp://tracker.example:1337/announce")
+    magnet = "magnet:?xt=urn:btih:#{@hash}&dn=Movie&tr=#{bad}&tr=#{good}"
 
-    assert {:error, :forbidden_address} = QBittorrent.add(%{download_url: magnet})
+    assert {:ok, _hash} = QBittorrent.add(%{download_url: magnet})
   end
 
-  test "add/1 rejects a magnet whose non-HTTP (udp) tracker resolves to a forbidden address" do
-    stub_qbit(fn _conn -> flunk("qBittorrent must not be contacted with an unvetted tracker") end)
+  test "add/1 strips a forbidden non-HTTP (udp) magnet tracker, keeping the xt" do
+    stub_qbit(fn conn ->
+      refute conn.params["urls"] =~ "127.0.0.1"
+      assert conn.params["urls"] =~ @hash
+      Req.Test.text(conn, "Ok.")
+    end)
 
     tracker = URI.encode_www_form("udp://127.0.0.1:1337/announce")
     magnet = "magnet:?xt=urn:btih:#{@hash}&dn=Movie&tr=#{tracker}"
 
-    assert {:error, :forbidden_address} = QBittorrent.add(%{download_url: magnet})
+    assert {:ok, _hash} = QBittorrent.add(%{download_url: magnet})
   end
 
-  test "add/1 rejects a magnet whose web-seed (ws) resolves to a forbidden address" do
-    stub_qbit(fn _conn ->
-      flunk("qBittorrent must not be contacted with an unvetted web seed")
+  test "add/1 strips a magnet web-seed (ws) that resolves to a forbidden address" do
+    stub_qbit(fn conn ->
+      refute conn.params["urls"] =~ "169.254.169.254"
+      Req.Test.text(conn, "Ok.")
     end)
 
     magnet =
       "magnet:?xt=urn:btih:#{@hash}&dn=Movie&ws=" <>
         URI.encode_www_form("http://169.254.169.254/latest/meta-data/")
 
-    assert {:error, :forbidden_address} = QBittorrent.add(%{download_url: magnet})
+    assert {:ok, _hash} = QBittorrent.add(%{download_url: magnet})
   end
 
-  test "add/1 rejects a magnet whose acceptable-source (as) resolves to a forbidden address" do
-    stub_qbit(fn _conn -> flunk("qBittorrent must not be contacted with an unvetted source") end)
+  test "add/1 strips a magnet acceptable-source (as) that resolves to a forbidden address" do
+    stub_qbit(fn conn ->
+      refute conn.params["urls"] =~ "10.0.0.5"
+      Req.Test.text(conn, "Ok.")
+    end)
 
     magnet =
       "magnet:?xt=urn:btih:#{@hash}&dn=Movie&as=" <>
         URI.encode_www_form("http://10.0.0.5/file.iso")
 
-    assert {:error, :forbidden_address} = QBittorrent.add(%{download_url: magnet})
+    assert {:ok, _hash} = QBittorrent.add(%{download_url: magnet})
   end
 
   test "add/1 accepts a magnet whose trackers all resolve to safe addresses" do
@@ -677,12 +691,14 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     assert {:ok, _hash} = QBittorrent.add(%{download_url: magnet})
   end
 
-  test "add/1 accepts a magnet despite an unresolvable (NXDOMAIN) tracker" do
+  test "add/1 strips an unresolvable (NXDOMAIN) tracker and keeps the live one" do
     # Public magnets routinely carry long-dead trackers; qBittorrent can't dial a name
-    # that doesn't resolve, so NXDOMAIN must not reject the add. A forbidden-resolving
-    # endpoint still does (the tests above).
+    # that doesn't resolve, so NXDOMAIN must not brick the add — the dead endpoint is
+    # dropped and the rest of the magnet goes through.
     stub_qbit(fn conn ->
       assert conn.request_path == "/api/v2/torrents/add"
+      refute conn.params["urls"] =~ "retired.tracker.invalid"
+      assert conn.params["urls"] =~ "tracker.example"
       Req.Test.text(conn, "Ok.")
     end)
 
@@ -693,25 +709,37 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     assert {:ok, _hash} = QBittorrent.add(%{download_url: magnet})
   end
 
-  test "add/1 rejects a .torrent whose announce endpoint resolves to a forbidden address" do
+  test "add/1 strips a .torrent announce that resolves to a forbidden address" do
     infoval = "d6:lengthi5e4:name5:M.mkv12:piece lengthi16384ee"
+    expected = :crypto.hash(:sha, infoval) |> Base.encode16(case: :lower)
 
     torrent_bytes =
       "d8:announce20:http://127.0.0.1/ann4:info" <> infoval <> "e"
 
     Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
       case {conn.host, conn.request_path} do
-        {"tracker.test", _} -> Req.Test.text(conn, torrent_bytes)
-        {_, "/api/v2/torrents/add"} -> flunk("qBittorrent must not receive an unvetted torrent")
+        {"tracker.test", _} ->
+          Req.Test.text(conn, torrent_bytes)
+
+        {_, "/api/v2/auth/login"} ->
+          conn
+          |> Plug.Conn.put_resp_header("set-cookie", "SID=testsid; path=/")
+          |> Req.Test.text("Ok.")
+
+        {_, "/api/v2/torrents/add"} ->
+          %Plug.Upload{path: path} = conn.params["torrents"]
+          assert File.read!(path) == "d4:info" <> infoval <> "e"
+          Req.Test.text(conn, "Ok.")
       end
     end)
 
-    assert {:error, :forbidden_address} =
+    assert {:ok, ^expected} =
              QBittorrent.add(%{download_url: "https://tracker.test/dl/123.torrent"})
   end
 
-  test "add/1 rejects a .torrent whose url-list web seed resolves to a forbidden address" do
+  test "add/1 strips a .torrent url-list web seed that resolves to a forbidden address" do
     infoval = "d6:lengthi5e4:name5:M.mkv12:piece lengthi16384ee"
+    expected = :crypto.hash(:sha, infoval) |> Base.encode16(case: :lower)
 
     torrent_bytes =
       "d4:info" <>
@@ -720,12 +748,22 @@ defmodule Cinder.Download.Client.QBittorrentTest do
 
     Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
       case {conn.host, conn.request_path} do
-        {"tracker.test", _} -> Req.Test.text(conn, torrent_bytes)
-        {_, "/api/v2/torrents/add"} -> flunk("qBittorrent must not receive an unvetted torrent")
+        {"tracker.test", _} ->
+          Req.Test.text(conn, torrent_bytes)
+
+        {_, "/api/v2/auth/login"} ->
+          conn
+          |> Plug.Conn.put_resp_header("set-cookie", "SID=testsid; path=/")
+          |> Req.Test.text("Ok.")
+
+        {_, "/api/v2/torrents/add"} ->
+          %Plug.Upload{path: path} = conn.params["torrents"]
+          assert File.read!(path) == "d4:info" <> infoval <> "e"
+          Req.Test.text(conn, "Ok.")
       end
     end)
 
-    assert {:error, :forbidden_address} =
+    assert {:ok, ^expected} =
              QBittorrent.add(%{download_url: "https://tracker.test/dl/123.torrent"})
   end
 

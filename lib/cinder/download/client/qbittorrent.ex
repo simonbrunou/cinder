@@ -58,10 +58,36 @@ defmodule Cinder.Download.Client.QBittorrent do
   def add(%{download_url: _}, _opts), do: {:error, :unsupported_download_url}
 
   defp add_magnet(magnet, hash, opts) do
-    with :ok <- magnet |> magnet_endpoints() |> validate_endpoints() do
-      post_magnet(magnet, hash, opts)
+    post_magnet(sanitize_magnet(magnet), hash, opts)
+  end
+
+  # Public releases routinely embed dead (NXDOMAIN) and parked-to-loopback tracker
+  # hostnames; rejecting the whole add on one poisoned endpoint bricks most real-world
+  # magnets/.torrents. Instead every endpoint qBittorrent would dial on Cinder's behalf
+  # is vetted individually and the failures are REMOVED before hand-off — qBittorrent
+  # never sees a forbidden endpoint at all, which is strictly stronger containment than
+  # the old reject-the-add stance (a poisoned endpoint in an otherwise-good release now
+  # yields the release without the poison, not a dead grab).
+  defp sanitize_magnet(magnet) do
+    case URI.new(magnet) do
+      {:ok, %URI{query: query} = uri} when is_binary(query) ->
+        clean =
+          query
+          |> URI.query_decoder()
+          |> Enum.filter(fn
+            {key, url} when key in ~w(tr ws as xs) -> keep_endpoint?(url)
+            _pair -> true
+          end)
+          |> URI.encode_query()
+
+        URI.to_string(%{uri | query: clean})
+
+      _no_query ->
+        magnet
     end
   end
+
+  defp keep_endpoint?(url), do: validate_embedded_url(url) == :ok
 
   defp post_magnet(magnet, hash, opts) do
     case action(
@@ -86,42 +112,6 @@ defmodule Cinder.Download.Client.QBittorrent do
   # A magnet's URL-bearing params are endpoints qBittorrent dials that Cinder never requests
   # itself, so they'd otherwise bypass HTTPPolicy entirely: `tr` (trackers), `ws` (web seeds,
   # BEP 19), and `as`/`xs` (acceptable/exact HTTP sources). `dn`/`xt`/`kt` carry no fetchable URL.
-  defp magnet_endpoints(magnet) do
-    case URI.new(magnet) do
-      {:ok, %URI{query: query}} when is_binary(query) ->
-        query
-        |> URI.query_decoder()
-        |> Enum.filter(fn {key, _} -> key in ~w(tr ws as xs) end)
-        |> Enum.map(&elem(&1, 1))
-
-      _ ->
-        []
-    end
-  end
-
-  # Rejects a magnet/.torrent whose embedded tracker or web-seed endpoints resolve to a
-  # forbidden/internal address, before qBittorrent ever dials them on Cinder's behalf.
-  defp validate_endpoints(urls) do
-    Enum.reduce_while(urls, :ok, fn url, :ok ->
-      case validate_embedded_url(url) do
-        :ok ->
-          {:cont, :ok}
-
-        # NXDOMAIN is benign, same reasoning as the no-parseable-host clause below:
-        # qBittorrent can't dial a name that doesn't resolve, and public magnets/.torrents
-        # routinely carry long-dead trackers — failing closed here bricked every 1337x add.
-        # (A name that resolves to a forbidden address only later is the rebinding TOCTOU
-        # every resolution-time check shares; unresolvable-now is no worse than public-now.
-        # Endpoints that DO resolve to forbidden addresses still reject the whole add.)
-        {:error, :dns_resolution_failed} ->
-          {:cont, :ok}
-
-        {:error, _} = error ->
-          {:halt, error}
-      end
-    end)
-  end
-
   # Trackers/web-seeds are frequently non-HTTP (`udp://…`), so this checks the address only
   # (`HTTPPolicy.validate_untrusted_host/2`), not the full HTTP-specific URL policy.
   defp validate_embedded_url(url) when is_binary(url) do
@@ -167,8 +157,8 @@ defmodule Cinder.Download.Client.QBittorrent do
 
   defp add_torrent_bytes(bytes, opts) do
     with {:ok, hash} <- Torrent.infohash(bytes),
-         :ok <- bytes |> Torrent.embedded_urls() |> validate_endpoints() do
-      upload_and_confirm(bytes, hash, opts)
+         {:ok, clean} <- Torrent.sanitize_embedded_urls(bytes, &keep_endpoint?/1) do
+      upload_and_confirm(clean, hash, opts)
     end
   end
 

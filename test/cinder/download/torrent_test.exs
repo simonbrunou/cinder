@@ -101,4 +101,38 @@ defmodule Cinder.Download.TorrentTest do
       assert Torrent.embedded_urls("") == []
     end
   end
+
+  describe "sanitize_embedded_urls/2" do
+    test "drops rejected URLs, emptied tiers, and emptied fields; the infohash survives" do
+      bytes =
+        torrent_with([
+          {"announce", "http://bad.example/ann"},
+          {"announce-list",
+           [["http://bad.example/ann", "http://good.example/ann"], ["http://bad.example/2"]]},
+          {"url-list", ["http://bad.example/seed"]}
+        ])
+
+      {:ok, original_hash} = Torrent.infohash(bytes)
+      keep? = fn url -> not String.contains?(url, "bad.example") end
+
+      assert {:ok, clean} = Torrent.sanitize_embedded_urls(bytes, keep?)
+      assert Torrent.embedded_urls(clean) == ["http://good.example/ann"]
+      assert Torrent.infohash(clean) == {:ok, original_hash}
+    end
+
+    test "an all-approved torrent round-trips byte-identically" do
+      bytes =
+        torrent_with([
+          {"announce", "http://tracker.a/ann"},
+          {"url-list", "http://seed.a/files/"}
+        ])
+
+      assert {:ok, ^bytes} = Torrent.sanitize_embedded_urls(bytes, fn _url -> true end)
+    end
+
+    test "errors on non-torrent input rather than crashing" do
+      assert {:error, :bad_torrent} =
+               Torrent.sanitize_embedded_urls("<html>nope</html>", fn _url -> true end)
+    end
+  end
 end
