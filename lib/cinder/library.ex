@@ -13,6 +13,7 @@ defmodule Cinder.Library do
 
   require Logger
 
+  alias Cinder.Acquisition
   alias Cinder.Acquisition.{Language, Parser}
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Grab, GrabFile, Movie, Series}
@@ -902,23 +903,15 @@ defmodule Cinder.Library do
   # `match_arm/2` compares season and episode numbers only — it never looks at the show name — so
   # another series' episode bundled into this release ("Totally.Different.Show.S01E05.mkv" in a
   # pack whose S01E05 we hold) is claimed by OUR episode and would be discarded without the
-  # operator ever seeing it. A discard must not be a guess, so anchor it to the name: the file's
-  # tokens have to START with the series' tokens. Loose enough to keep #251's benefit
-  # ("The.Office.US.S01E05" still reads as "The Office"), strict enough that a foreign show whose
-  # title merely CONTAINS ours does not. Fails closed twice over — a title that folds to no tokens
-  # never drops, and anything rejected stays a residual, which is the safe direction.
+  # operator ever seeing it (#262). A discard is unrecoverable, so it must not be a guess.
   #
-  # Shares the acquisition title guard's known blind spot (`Cinder.Acquisition.title_guard/3`): a
-  # spinoff that has our title as a prefix ("9-1-1: Lone Star" under "9-1-1") still matches.
-  defp names_series?(path, %{title: title}) do
-    case name_tokens(title) do
-      [] -> false
-      series -> path |> Path.basename() |> name_tokens() |> List.starts_with?(series)
-    end
-  end
-
-  defp name_tokens(name),
-    do: name |> to_string() |> String.downcase() |> String.split(~r/[^\p{L}\p{N}]+/u, trim: true)
+  # `Acquisition.names_title?/2` rather than a fold written here: matching a scene name to a series
+  # title is exactly the problem the search guard already solved, down to "S.W.A.T." <=> "SWAT" and
+  # "Law & Order" <=> "Law.and.Order". A second implementation would quietly disagree with the
+  # guard that accepted this release in the first place, and every disagreement re-opens the
+  # operator hold #251 removed. Whatever it rejects stays a residual — the recoverable direction.
+  defp names_series?(path, %{title: title}),
+    do: Acquisition.names_title?(Path.basename(path), title)
 
   defp log_already_held(dropped, kept) do
     Logger.info(

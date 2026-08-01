@@ -658,6 +658,50 @@ defmodule Cinder.Acquisition do
   # wrong show. Both sides of the ratio start from the same fold/1 so an "&"→"and" expansion
   # can't inflate the needle past the check. Those series can't be safely matched by name; the
   # tvdb_id-scoped search (which skips this guard entirely) is the escape hatch.
+  @doc """
+  Whether `name` — a release name or a file name — **leads with** `title`: the folded title has to
+  be spelled by `name`'s tokens starting at the first one, and the token after it has to open a
+  release tag (a season/episode marker or a year) rather than continue a show's name.
+
+  Stricter than `title_guard/3`'s `token_run_match?/2`, which is boundary-anchored but free-floating
+  and accepts a leading run without caring what follows. The import calls this to decide whether a
+  file it is about to **discard** really belongs to the series (`Cinder.Library`'s residual drop,
+  #262), and a discard is unrecoverable, so it must not be a guess. The extra anchoring closes two
+  of `filter_title/2`'s documented ceilings: a spinoff extending the title ("9-1-1: Lone Star"
+  under "9-1-1", "Law & Order: SVU" under "Law & Order") is rejected here, and a title appearing as
+  some other show's inner token was never reachable from index 0.
+
+  Shares the same fold, so everything `filter_title/2` is built to accept still matches:
+  "S.W.A.T." ⇔ "SWAT", "Grey's" ⇔ "Greys", "Law & Order" ⇔ "Law.and.Order", "Pokémon" ⇔ "Pokemon".
+  A title that folds to too little to be safe (`title_needle/1` returning "") matches nothing —
+  fail-closed, same escape hatch as the search guard.
+  """
+  @spec names_title?(String.t() | nil, String.t() | nil) :: boolean()
+  def names_title?(name, title) do
+    case title_needle(title) do
+      "" -> false
+      needle -> name |> tokens() |> consume_leading(needle) |> release_tag_next?()
+    end
+  end
+
+  # {:ok, tokens_after_the_title} once the needle is exactly spelled, :error otherwise.
+  defp consume_leading(_tokens, ""), do: :error
+  defp consume_leading([], _needle), do: :error
+
+  defp consume_leading([token | rest], needle) do
+    case String.replace_prefix(needle, token, "") do
+      ^needle -> :error
+      "" -> {:ok, rest}
+      remaining -> consume_leading(rest, remaining)
+    end
+  end
+
+  defp release_tag_next?(:error), do: false
+  defp release_tag_next?({:ok, []}), do: false
+
+  defp release_tag_next?({:ok, [next | _]}),
+    do: Regex.match?(~r/^(?:s\d{1,3}(?:e\d+)?|e\d+|(?:19|20)\d{2})$/, next)
+
   defp title_needle(series_title) do
     needle = series_title |> tokens() |> Enum.join()
 

@@ -84,18 +84,44 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
   end
 
   @tag :tmp_dir
-  test "our own episodes are still dropped when the release names the show differently", %{
-    tmp_dir: tmp
-  } do
-    # The guard is a prefix match, not equality: a pack naming the show "Show.US" still reads as
-    # ours, so #251's whole point (no eight-click hold) survives a scene rename.
+  test "a name that merely EXTENDS ours is a decision, not a discard", %{tmp_dir: tmp} do
+    # "Show.US" is a different show, the same way "Law & Order: SVU" is not "Law & Order". An
+    # unrecognised token between the title and the release tags means we can't be sure, and an
+    # operator hold is recoverable where a deleted file is not.
     %{grab: grab} = partial_season_pack(tmp, ["Show.US.S01E05.1080p.WEB-DL.mkv"])
 
     start_supervised!({TvPoller, interval: 60_000})
     assert :ok = TvPoller.poll()
 
-    refute Repo.get(Grab, grab.id)
-    assert Repo.all(GrabFile) == []
+    grab = Repo.get!(Grab, grab.id) |> Repo.preload(:grab_files)
+    assert Enum.map(grab.grab_files, & &1.relative_path) == ["Show.US.S01E05.1080p.WEB-DL.mkv"]
+  end
+
+  # The whole point of going through `Acquisition.names_title?/2` instead of a local fold: these
+  # are the shapes a hand-rolled downcase-and-split gets wrong, and getting them wrong puts every
+  # already-held file of such a series back into the operator hold #251 removed.
+  for {title, file} <- [
+        {"Grey's Anatomy", "Greys.Anatomy.S01E05.1080p.WEB-DL.mkv"},
+        {"Law & Order", "Law.and.Order.S01E05.1080p.WEB-DL.mkv"},
+        {"S.W.A.T.", "SWAT.S01E05.1080p.WEB-DL.mkv"},
+        {"Pokémon", "Pokemon.S01E05.1080p.WEB-DL.mkv"},
+        {"Show", "Show.2008.S01E05.1080p.WEB-DL.mkv"}
+      ] do
+    @tag :tmp_dir
+    @series_title title
+    @scene_file file
+    test "#{title} still recognises #{file} as its own", %{tmp_dir: tmp} do
+      # Only the two wanted episodes get standalone files (they import through the title-blind
+      # claiming pass), so the file under test is the sole candidate residual: it survives as a
+      # `grab_file` if the fold fails to recognise it, and vanishes if it works.
+      %{grab: grab} = partial_season_pack(tmp, [@scene_file], title: @series_title, pack: [9, 10])
+
+      start_supervised!({TvPoller, interval: 60_000})
+      assert :ok = TvPoller.poll()
+
+      assert Repo.all(GrabFile) == []
+      refute Repo.get(Grab, grab.id)
+    end
   end
 
   @tag :tmp_dir
@@ -147,13 +173,12 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
   defp partial_season_pack(tmp, extra_files, opts \\ []) do
     packed = Keyword.get(opts, :pack, Enum.to_list(1..10))
     linked = Keyword.get(opts, :link, [9, 10])
+    title = Keyword.get(opts, :title, "Show")
 
     %{downloads: downloads, tv: tv} = real_tv_library(tmp)
 
     release_dir = Path.join(downloads, "Show.S01.1080p.WEB-DL-GRP")
     File.mkdir_p!(release_dir)
-    library = Path.join([tv, "Show (2008) {tmdb-7788}", "Season 01"])
-    File.mkdir_p!(library)
 
     for number <- packed do
       File.write!(
@@ -164,12 +189,16 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
 
     Enum.each(extra_files, &File.write!(Path.join(release_dir, &1), "extra"))
 
-    series = series_fixture(%{tmdb_id: 7788, tvdb_id: 7788, title: "Show", year: 2008})
+    series = series_fixture(%{tmdb_id: 7788, tvdb_id: 7788, title: title, year: 2008})
     season = season_fixture(series)
+
+    show = "#{library_title(title)} (2008) {tmdb-7788}"
+    library = Path.join([tv, show, "Season 01"])
+    File.mkdir_p!(library)
 
     held =
       for number <- 1..8 do
-        path = Path.join(library, "Show (2008) {tmdb-7788} - S01E#{pad(number)}.mkv")
+        path = Path.join(library, "#{show} - S01E#{pad(number)}.mkv")
         File.write!(path, "held-#{number}")
 
         episode_fixture(season, %{
@@ -196,6 +225,13 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
 
     %{grab: grab, wanted: to_link, held: held, unlinked: List.first(unlinked)}
   end
+
+  # Mirrors Cinder.Library.Naming's folder name for the titles these tests use.
+  defp library_title(title),
+    do:
+      title
+      |> String.replace(["/", "\\", ":", "*", "?", "\"", "<", ">", "|"], "")
+      |> String.trim()
 
   defp pad(number), do: number |> Integer.to_string() |> String.pad_leading(2, "0")
 
