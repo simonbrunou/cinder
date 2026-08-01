@@ -23,6 +23,7 @@ defmodule Cinder.Library do
     Naming,
     PathPolicy,
     PolicyVerifier,
+    PostImport,
     Sidecars,
     StageEngine,
     Upgrade
@@ -162,7 +163,7 @@ defmodule Cinder.Library do
   defp run_after_commit(%{after_commit: {:movie, movie}}, dest, quality) do
     refresh(:movies, dest)
 
-    fetch_subtitles(
+    PostImport.fetch_subtitles(
       fn -> Cinder.Subtitles.movie_criteria(movie) end,
       dest,
       :movies,
@@ -172,7 +173,7 @@ defmodule Cinder.Library do
 
   defp run_after_commit(%{after_commit: {:episodes, episodes}}, dest, quality) do
     refresh(:tv, dest)
-    fetch_episode_subtitles_for_dest(episodes, dest, quality)
+    PostImport.fetch_episode_subtitles_for_dest(episodes, dest, quality)
   end
 
   defp run_after_commit(_rollback, _dest, _quality), do: :ok
@@ -843,7 +844,7 @@ defmodule Cinder.Library do
         {:ok, imported} ->
           log_unmatched(unmatched)
           refresh(:tv, content_path)
-          fetch_episode_subtitles(imported, episodes)
+          PostImport.fetch_episode_subtitles(imported, episodes)
           {:ok, imported, unmatched}
 
         {:error, _reason} = err ->
@@ -863,13 +864,15 @@ defmodule Cinder.Library do
   # an episode we don't hold, naming nothing, or naming another series stays a residual.
   defp drop_already_held(result, _videos, []), do: result
 
-  defp drop_already_held({to_import, unmatched}, videos, already_held) do
+  defp drop_already_held({to_import, unmatched}, videos, [held | _] = already_held) do
+    series = held.season.series
+
     claimed =
       videos
       |> Enum.filter(fn {path, _size} -> path in unmatched end)
       |> match_episodes(already_held)
       |> Enum.group_by(fn {_ep, path, _size} -> path end, fn {ep, _path, _size} -> ep end)
-      |> Enum.filter(fn {path, claiming} -> fully_held?(path, claiming) end)
+      |> Enum.filter(fn {path, claiming} -> fully_held?(path, claiming, series) end)
       |> MapSet.new(fn {path, _claiming} -> path end)
 
     case Enum.split_with(unmatched, &MapSet.member?(claimed, &1)) do
@@ -886,12 +889,36 @@ defmodule Cinder.Library do
   # value. `episode_coordinate_memberships` is many-to-many by schema, so a writer binding several
   # would inflate the count past `named`; revisit here if that changes. An unparseable name is not
   # droppable — unreachable (a claim required a parse) but the wrong default to leave lying around.
-  defp fully_held?(path, claiming) do
+  defp fully_held?(path, claiming, series) do
     case Parser.parse(Path.basename(path)).episodes do
-      nil -> false
-      named -> length(Enum.uniq_by(claiming, & &1.id)) >= length(named)
+      nil ->
+        false
+
+      named ->
+        names_series?(path, series) and length(Enum.uniq_by(claiming, & &1.id)) >= length(named)
     end
   end
+
+  # `match_arm/2` compares season and episode numbers only — it never looks at the show name — so
+  # another series' episode bundled into this release ("Totally.Different.Show.S01E05.mkv" in a
+  # pack whose S01E05 we hold) is claimed by OUR episode and would be discarded without the
+  # operator ever seeing it. A discard must not be a guess, so anchor it to the name: the file's
+  # tokens have to START with the series' tokens. Loose enough to keep #251's benefit
+  # ("The.Office.US.S01E05" still reads as "The Office"), strict enough that a foreign show whose
+  # title merely CONTAINS ours does not. Fails closed twice over — a title that folds to no tokens
+  # never drops, and anything rejected stays a residual, which is the safe direction.
+  #
+  # Shares the acquisition title guard's known blind spot (`Cinder.Acquisition.title_guard/3`): a
+  # spinoff that has our title as a prefix ("9-1-1: Lone Star" under "9-1-1") still matches.
+  defp names_series?(path, %{title: title}) do
+    case name_tokens(title) do
+      [] -> false
+      series -> path |> Path.basename() |> name_tokens() |> List.starts_with?(series)
+    end
+  end
+
+  defp name_tokens(name),
+    do: name |> to_string() |> String.downcase() |> String.split(~r/[^\p{L}\p{N}]+/u, trim: true)
 
   defp log_already_held(dropped, kept) do
     Logger.info(
@@ -1346,80 +1373,11 @@ defmodule Cinder.Library do
     :ok
   end
 
-  # Best-effort: the file is already hardlinked into the library, so a failed scan —
-  # an {:error, _} return OR a raise/exit from a misconfigured impl (e.g. a bad URL
-  # deep in the HTTP stack) — must not strand a correctly-imported movie at
-  # :import_failed. The media server picks it up on its next periodic scan. Log and
-  # report the import as done.
   @doc "Requests a library scan and returns the configured media server's result."
-  @spec scan(:movies | :tv) :: :ok | {:error, term()}
-  def scan(kind), do: media_server().scan(kind)
+  defdelegate scan(kind), to: Cinder.Library.PostImport
 
   @doc false
-  @spec refresh(:movies | :tv, String.t()) :: :ok
-  def refresh(kind, dest) do
-    case scan(kind) do
-      {:error, reason} -> log_scan_failure(dest, reason)
-      _ -> :ok
-    end
-  rescue
-    e -> log_scan_failure(dest, e)
-  catch
-    caught, value -> log_scan_failure(dest, {caught, value})
-  end
-
-  defp log_scan_failure(dest, reason) do
-    Logger.warning("media-server scan failed after importing #{dest}: #{inspect(reason)}")
-  end
-
-  # Dispatches the subtitle fetch on a supervised Task (fetch_after_import/4) so a slow OpenSubtitles
-  # round-trip can't stall the import poller tick; the fetch's own errors are handled inside the task.
-  # The dispatch is still wrapped best-effort — exactly like scan/2 — so even a supervisor hiccup
-  # can't turn a correctly-placed file into :import_failed. `criteria_fun` is a thunk so it's built
-  # inside the isolated task, not in the caller's argument.
-  defp fetch_subtitles(criteria_fun, dest, kind, release_sidecar_languages)
-       when is_function(criteria_fun, 0) do
-    Cinder.Subtitles.fetch_after_import(criteria_fun, dest, kind, release_sidecar_languages)
-  rescue
-    e -> Logger.warning("subtitle fetch dispatch failed after importing #{dest}: #{inspect(e)}")
-  catch
-    kind, value ->
-      Logger.warning(
-        "subtitle fetch dispatch failed after importing #{dest}: #{inspect({kind, value})}"
-      )
-  end
-
-  # Match each imported {episode_id, dest, quality} back to its Episode (for the series tmdb_id +
-  # season/episode numbers) and fetch a subtitle for it; an id absent from `episodes` is skipped.
-  # One fetch per physical file: a combined-episode file (S01E01-E02) maps every covered episode
-  # to the same dest, and concurrent fetches would race/overwrite the shared sidecar (issue #141)
-  # — the lowest-numbered covered episode names the provider query.
-  defp fetch_episode_subtitles(imported, episodes) do
-    by_id = Map.new(episodes, &{&1.id, &1})
-
-    imported
-    |> Enum.filter(fn {ep_id, _dest, _quality} -> not is_nil(by_id[ep_id]) end)
-    |> Enum.group_by(fn {_ep_id, dest, _quality} -> dest end)
-    |> Enum.each(fn {dest, group} ->
-      {ep_id, _dest, quality} =
-        Enum.min_by(group, fn {ep_id, _dest, _quality} ->
-          ep = by_id[ep_id]
-          {ep.season.season_number, ep.episode_number}
-        end)
-
-      fetch_subtitles(
-        fn -> Cinder.Subtitles.episode_criteria(by_id[ep_id]) end,
-        dest,
-        :tv,
-        Map.get(quality, :sidecar_subtitles, [])
-      )
-    end)
-  end
-
-  defp fetch_episode_subtitles_for_dest(episodes, dest, quality) do
-    imported = Enum.map(episodes, &{&1.id, dest, quality})
-    fetch_episode_subtitles(imported, episodes)
-  end
+  defdelegate refresh(kind, dest), to: Cinder.Library.PostImport
 
   # content_path is a file for single-file torrents, a folder for multi-file ones. Returns the
   # picked video plus whether the download was a folder (`folder?` gates sidecar linking).
@@ -1479,7 +1437,6 @@ defmodule Cinder.Library do
   end
 
   defp fs, do: Application.fetch_env!(:cinder, :filesystem)
-  defp media_server, do: Application.fetch_env!(:cinder, :media_server)
 
   @doc false
   def path_policy, do: Application.get_env(:cinder, :path_policy, PathPolicy)

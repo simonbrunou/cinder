@@ -62,6 +62,43 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
   end
 
   @tag :tmp_dir
+  test "another series' episode is never dropped, even when our numbering claims it", %{
+    tmp_dir: tmp
+  } do
+    # `match_arm/2` compares season and episode numbers only — never the show name. A foreign
+    # S01E05 bundled into this pack is therefore claimed by the S01E05 we hold, and without a name
+    # check it would be discarded with the download, unseen.
+    %{grab: grab} =
+      partial_season_pack(tmp, ["Totally.Different.Show.S01E05.1080p.WEB-DL.mkv"])
+
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    grab = Repo.get!(Grab, grab.id) |> Repo.preload(:grab_files)
+
+    assert Enum.map(grab.grab_files, & &1.relative_path) == [
+             "Totally.Different.Show.S01E05.1080p.WEB-DL.mkv"
+           ]
+
+    assert Grabs.grab_hold(grab) == :residual_files
+  end
+
+  @tag :tmp_dir
+  test "our own episodes are still dropped when the release names the show differently", %{
+    tmp_dir: tmp
+  } do
+    # The guard is a prefix match, not equality: a pack naming the show "Show.US" still reads as
+    # ours, so #251's whole point (no eight-click hold) survives a scene rename.
+    %{grab: grab} = partial_season_pack(tmp, ["Show.US.S01E05.1080p.WEB-DL.mkv"])
+
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    refute Repo.get(Grab, grab.id)
+    assert Repo.all(GrabFile) == []
+  end
+
+  @tag :tmp_dir
   test "a two-parter spanning a held and a wanted episode stays a decision", %{tmp_dir: tmp} do
     # E08 is in the library, E09 is not, so `Show.S01E08E09.mkv` names one episode we hold and one
     # we don't. It loses `dedupe_per_episode/1` to the pack's own bigger S01E09 file, so nothing is
