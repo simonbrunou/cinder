@@ -584,6 +584,8 @@ defmodule Cinder.Acquisition do
 
   defp reject_year_conflicts(candidates, _series), do: candidates
 
+  defp year_conflict?(_release_title, year) when not is_integer(year), do: false
+
   defp year_conflict?(release_title, year) do
     case Regex.scan(~r/\b(?:19|20)\d{2}\b/, release_title) do
       [] -> false
@@ -659,9 +661,10 @@ defmodule Cinder.Acquisition do
   # can't inflate the needle past the check. Those series can't be safely matched by name; the
   # tvdb_id-scoped search (which skips this guard entirely) is the escape hatch.
   @doc """
-  Whether `name` — a release name or a file name — **leads with** `title`: the folded title has to
-  be spelled by `name`'s tokens starting at the first one, and the token after it has to open a
-  release tag (a season/episode marker or a year) rather than continue a show's name.
+  Whether `name` — a release name or a file name — **leads with** `target`'s title: the folded
+  title has to be spelled by `name`'s tokens starting at the first one, and the token after it has
+  to open a release tag (a season/episode marker, or a year consistent with `target.year`) rather
+  than continue a show's name.
 
   Stricter than `title_guard/3`'s `token_run_match?/2`, which is boundary-anchored but free-floating
   and accepts a leading run without caring what follows. The import calls this to decide whether a
@@ -676,11 +679,12 @@ defmodule Cinder.Acquisition do
   A title that folds to too little to be safe (`title_needle/1` returning "") matches nothing —
   fail-closed, same escape hatch as the search guard.
   """
-  @spec names_title?(String.t() | nil, String.t() | nil) :: boolean()
-  def names_title?(name, title) do
+  @spec names_title?(String.t() | nil, %{title: String.t() | nil, year: integer() | nil}) ::
+          boolean()
+  def names_title?(name, %{title: title} = target) do
     case title_needle(title) do
       "" -> false
-      needle -> name |> tokens() |> consume_leading(needle) |> release_tag_next?()
+      needle -> name |> tokens() |> consume_leading(needle) |> release_tag_next?(target)
     end
   end
 
@@ -696,11 +700,32 @@ defmodule Cinder.Acquisition do
     end
   end
 
-  defp release_tag_next?(:error), do: false
-  defp release_tag_next?({:ok, []}), do: false
+  # The episode-marker spellings `Parser.parse/1` itself claims, so a file the import matched is
+  # always confirmable here: `S01`, `S01E05`, the GLUED multi-episode `S01E05E06` (its hyphenated
+  # twin `S01E05-E06` already splits into two tokens), a bare `E05`, and the `1x05` cross form.
+  # Anything narrower re-opens the operator hold #251 removed for exactly the combined-episode
+  # files `fully_held?/3` exists to count.
+  @episode_marker ~r/^(?:s\d{1,3}(?:e\d+)*|(?:e\d+)+|\d{1,2}x\d{1,2})$/
+  @year_marker ~r/^(?:19|20)\d{2}$/
 
-  defp release_tag_next?({:ok, [next | _]}),
-    do: Regex.match?(~r/^(?:s\d{1,3}(?:e\d+)?|e\d+|(?:19|20)\d{2})$/, next)
+  defp release_tag_next?(:error, _target), do: false
+  defp release_tag_next?({:ok, []}, _target), do: false
+
+  defp release_tag_next?({:ok, [next | _]}, target) do
+    cond do
+      Regex.match?(@episode_marker, next) ->
+        true
+
+      # A year token is a release tag only if it is OUR year. Same discriminator (and the same
+      # ±1 tolerance) `reject_year_conflicts/2` uses for "Charmed (2018)" against the 1998 series
+      # — without it, `The.Office.2005.S01E05` would be discarded under a different The Office.
+      Regex.match?(@year_marker, next) ->
+        not year_conflict?(next, Map.get(target, :year))
+
+      true ->
+        false
+    end
+  end
 
   defp title_needle(series_title) do
     needle = series_title |> tokens() |> Enum.join()

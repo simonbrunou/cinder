@@ -97,15 +97,32 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
     assert Enum.map(grab.grab_files, & &1.relative_path) == ["Show.US.S01E05.1080p.WEB-DL.mkv"]
   end
 
+  @tag :tmp_dir
+  test "a same-titled show from another year is a decision, not a discard", %{tmp_dir: tmp} do
+    # A year token only reads as OUR release tag when it is our year — the same discriminator
+    # `reject_year_conflicts/2` uses for "Charmed (2018)" against the 1998 series.
+    %{grab: grab} = partial_season_pack(tmp, ["Show.1999.S01E05.1080p.WEB-DL.mkv"])
+
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    grab = Repo.get!(Grab, grab.id) |> Repo.preload(:grab_files)
+    assert Enum.map(grab.grab_files, & &1.relative_path) == ["Show.1999.S01E05.1080p.WEB-DL.mkv"]
+  end
+
   # The whole point of going through `Acquisition.names_title?/2` instead of a local fold: these
   # are the shapes a hand-rolled downcase-and-split gets wrong, and getting them wrong puts every
-  # already-held file of such a series back into the operator hold #251 removed.
+  # already-held file of such a series back into the operator hold #251 removed. The glued
+  # multi-episode and `1x05` forms are here for the same reason — `Parser.parse/1` claims them, so
+  # the guard has to confirm them or the hold re-opens for exactly the combined-episode files.
   for {title, file} <- [
         {"Grey's Anatomy", "Greys.Anatomy.S01E05.1080p.WEB-DL.mkv"},
         {"Law & Order", "Law.and.Order.S01E05.1080p.WEB-DL.mkv"},
         {"S.W.A.T.", "SWAT.S01E05.1080p.WEB-DL.mkv"},
         {"Pokémon", "Pokemon.S01E05.1080p.WEB-DL.mkv"},
-        {"Show", "Show.2008.S01E05.1080p.WEB-DL.mkv"}
+        {"Show", "Show.2008.S01E05.1080p.WEB-DL.mkv"},
+        {"Show", "Show.S01E05E06.1080p.WEB-DL.mkv"},
+        {"Show", "Show.1x05.1080p.WEB-DL.mkv"}
       ] do
     @tag :tmp_dir
     @series_title title

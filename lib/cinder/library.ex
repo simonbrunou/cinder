@@ -910,8 +910,8 @@ defmodule Cinder.Library do
   # "Law & Order" <=> "Law.and.Order". A second implementation would quietly disagree with the
   # guard that accepted this release in the first place, and every disagreement re-opens the
   # operator hold #251 removed. Whatever it rejects stays a residual — the recoverable direction.
-  defp names_series?(path, %{title: title}),
-    do: Acquisition.names_title?(Path.basename(path), title)
+  defp names_series?(path, series),
+    do: Acquisition.names_title?(Path.basename(path), series)
 
   defp log_already_held(dropped, kept) do
     Logger.info(
