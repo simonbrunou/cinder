@@ -118,6 +118,7 @@ defmodule Cinder.Application do
         Cinder.Download.TvPoller,
         Cinder.Catalog.Refresher,
         Cinder.Catalog.Rehunter,
+        Cinder.Download.Cleaner,
         Cinder.Subtitles.Sweeper,
         Cinder.Requests.WatchlistSync,
         Cinder.Accounts.Janitor

@@ -800,4 +800,40 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     assert {:error, :forbidden_address} =
              QBittorrent.add(%{download_url: "https://tracker.test/start.torrent"})
   end
+
+  test "list_managed/0 reports only cinder-tagged torrents, with their state" do
+    stub_qbit(fn conn ->
+      assert conn.request_path == "/api/v2/torrents/info"
+      # No tag filter: qBittorrent can't filter on a tag *prefix*, so the whole list comes back.
+      refute conn.params["tag"]
+
+      Req.Test.json(conn, [
+        %{"hash" => "aaa", "tags" => "cinder-op-1", "state" => "downloading", "progress" => 0.3},
+        %{
+          "hash" => "bbb",
+          "tags" => "other, cinder-op-2",
+          "state" => "uploading",
+          "progress" => 1.0
+        },
+        %{"hash" => "ccc", "tags" => "cinder-op-3", "state" => "error", "progress" => 0.5},
+        # The household's own torrent — never Cinder's business.
+        %{"hash" => "ddd", "tags" => "manual", "state" => "downloading", "progress" => 0.1},
+        %{"hash" => "eee", "tags" => "", "state" => "downloading", "progress" => 0.1}
+      ])
+    end)
+
+    assert {:ok, entries} = QBittorrent.list_managed()
+
+    assert entries == [
+             %{id: "aaa", operation_key: "op-1", state: :downloading},
+             %{id: "bbb", operation_key: "op-2", state: :completed},
+             %{id: "ccc", operation_key: "op-3", state: :error}
+           ]
+  end
+
+  test "list_managed/0 surfaces a transport failure rather than reporting an empty client" do
+    stub_qbit(fn conn -> Plug.Conn.send_resp(conn, 500, "boom") end)
+
+    assert {:error, _reason} = QBittorrent.list_managed()
+  end
 end

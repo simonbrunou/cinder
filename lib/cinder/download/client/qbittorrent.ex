@@ -312,6 +312,50 @@ defmodule Cinder.Download.Client.QBittorrent do
 
   defp tagged?(_torrent, _wanted), do: false
 
+  @impl true
+  def list_managed do
+    # No `tag:` filter and so no @minimum_webapi_version gate: qBittorrent can't filter on a tag
+    # *prefix*, so the whole list comes back and the `cinder-` tag is matched here. Untagged
+    # torrents (the household's own) are dropped, never reported.
+    case action(method: :get, url: "/api/v2/torrents/info") do
+      {:ok, %{status: 200, body: torrents}} when is_list(torrents) ->
+        {:ok, Enum.flat_map(torrents, &managed_entry/1)}
+
+      {:ok, %{status: 200}} ->
+        {:error, :unexpected_response}
+
+      other ->
+        error(other)
+    end
+  end
+
+  defp managed_entry(%{"hash" => hash} = torrent) when is_binary(hash) do
+    case cinder_tag_key(torrent) do
+      nil ->
+        []
+
+      key ->
+        progress = torrent["progress"] || 0.0
+        [%{id: hash, operation_key: key, state: classify(torrent["state"], progress)}]
+    end
+  end
+
+  defp managed_entry(_torrent), do: []
+
+  # The `cinder-<key>` tag `add/2` stamps on everything Cinder submits — the marker that makes a
+  # client entry ours. Matched on the same comma-split as `tagged?/2` so the two can't drift.
+  defp cinder_tag_key(%{"tags" => tags}) when is_binary(tags) do
+    tags
+    |> String.split(",")
+    |> Enum.map(&String.trim/1)
+    |> Enum.find_value(fn
+      "cinder-" <> key when key != "" -> key
+      _tag -> nil
+    end)
+  end
+
+  defp cinder_tag_key(_torrent), do: nil
+
   defp operation_hash([]), do: :not_found
   defp operation_hash([%{"hash" => hash}]) when is_binary(hash), do: {:ok, hash}
   defp operation_hash([_ | _]), do: {:error, :ambiguous_operation_key}

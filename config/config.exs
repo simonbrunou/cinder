@@ -121,6 +121,9 @@ config :cinder, Cinder.Download.StallReaper,
 # Re-queues parked titles so a request with no release yet keeps getting hunted.
 config :cinder, Cinder.Catalog.Rehunter, enabled: true, rehunt_after: :timer.hours(24)
 
+# Reaps Cinder-submitted downloads nothing owns any more (never completed ones — seeding survives).
+config :cinder, Cinder.Download.Cleaner, enabled: true
+
 # Configure the endpoint
 config :cinder, CinderWeb.Endpoint,
   url: [host: "localhost"],

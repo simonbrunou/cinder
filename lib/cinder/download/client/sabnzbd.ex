@@ -309,6 +309,64 @@ defmodule Cinder.Download.Client.Sabnzbd do
 
   defp named?(_value, _name), do: false
 
+  # The operation key is an `Ecto.UUID` (`Cinder.Download.reserve_intent/1`), and `add/2` puts it at
+  # the tail of the job name. Anchoring on that exact shape — UUID, end of string, optional `.nzb`
+  # like history keeps — is what stops the collision the module warns about above: a completed
+  # download's own output file ("Title.cinder-<uuid>.mkv") re-entering the indexer as a future
+  # release title would match an unanchored scan, and the caller would treat someone else's job as
+  # Cinder's. The " - http" failed-URL-fetch rename is deliberately NOT recognized here: not
+  # claiming a job is always the safe direction for a caller that removes what it finds.
+  @operation_key_pattern ~r/cinder-([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})(?:\.nzb)?$/
+
+  @impl true
+  def list_managed do
+    with {:ok, queued} <- managed_slots("queue", &classify_queue/1),
+         {:ok, historic} <- managed_slots("history", &classify_history/1) do
+      {:ok, queued ++ historic}
+    end
+  end
+
+  defp managed_slots(mode, classify) do
+    case get(mode: mode, search: "cinder-") do
+      {:ok, %{status: 200, body: body}} ->
+        {:ok, body |> all_slots(mode) |> Enum.flat_map(&managed_entry(&1, classify))}
+
+      other ->
+        error(other)
+    end
+  end
+
+  # Mirrors find_slot/3's tolerance: a 200 with missing/malformed slots means "nothing here",
+  # not an error — a sweep must not be stranded by an empty queue.
+  defp all_slots(%{} = body, mode) do
+    case body do
+      %{^mode => %{"slots" => slots}} when is_list(slots) -> slots
+      _ -> []
+    end
+  end
+
+  defp all_slots(_body, _mode), do: []
+
+  defp managed_entry(slot, classify) do
+    with {:ok, id} <- remote_id(slot),
+         key when is_binary(key) <- slot_operation_key(slot) do
+      [%{id: id, operation_key: key, state: classify.(slot).state}]
+    else
+      _ -> []
+    end
+  end
+
+  defp slot_operation_key(slot) do
+    [slot["filename"], slot["name"], slot["nzb_name"]]
+    |> Enum.filter(&is_binary/1)
+    |> Enum.find_value(fn value ->
+      case Regex.run(@operation_key_pattern, value) do
+        [_match, key] -> String.downcase(key)
+        nil -> nil
+      end
+    end)
+  end
+
   defp unique_remote_id(results) do
     with {:ok, slots} <- collect_slots(results),
          {:ok, ids} <- collect_remote_ids(slots) do
