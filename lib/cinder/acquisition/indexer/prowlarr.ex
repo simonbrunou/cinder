@@ -84,9 +84,12 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
 
     # retry: false — the pollers carry their own bounded-retry budget; Req's default
     # 3-retry backoff on top of it only stretches a tick against a failing indexer.
+    # 90s receive_timeout: a search fanning out to a scraper indexer behind FlareSolverr
+    # takes 20-60s (a Cloudflare solve alone budgets 60s), and 15s silently starved the
+    # title-query half of search_tv/3's union down to usenet-only results.
     [
       base_url: Keyword.get(config, :base_url, @default_base_url),
-      receive_timeout: 15_000,
+      receive_timeout: 90_000,
       pool_timeout: 5_000,
       connect_options: [timeout: 5_000],
       retry: false
