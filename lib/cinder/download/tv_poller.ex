@@ -76,7 +76,7 @@ defmodule Cinder.Download.TvPoller do
   defp advance_with(grab, client) do
     case client.status(grab.download_id) do
       {:ok, %{state: :completed, content_path: path}} when path not in [nil, ""] ->
-        Catalog.mark_grab_downloaded(grab, path)
+        vetted(grab, client, fn -> Catalog.mark_grab_downloaded(grab, path) end)
 
       # Completed but no usable path / errored / vanished: anomalous, so bound it rather than
       # re-polling forever. A still-downloading or transient client error just waits (no bump).
@@ -90,7 +90,7 @@ defmodule Cinder.Download.TvPoller do
         retry_or_park(grab, :torrent_not_found)
 
       {:ok, %{state: :downloading} = status} ->
-        vet_and_track(grab, client, status)
+        vetted(grab, client, fn -> track_and_reap(grab, status) end)
 
       {:error, _reason} ->
         Catalog.update_grab_download_metrics(grab, %{
@@ -103,18 +103,22 @@ defmodule Cinder.Download.TvPoller do
     end
   end
 
+  # Gates BOTH in-flight states, not just :downloading — a fake payload is small enough to COMPLETE
+  # inside a single tick, so vetting only the downloading branch would miss exactly the case the
+  # check exists for and hand the payload to the importer.
+  #
   # Deterministic: a fake's file list won't improve, so a blocked verdict skips retry_or_park's
   # attempt budget and parks on the first sighting. The download is removed first — the park
   # deletes the grab and takes `download_id` with it — so the payload stops arriving; if the park
   # then fails, the next tick sees `:not_found` and parks through the bounded path instead.
-  defp vet_and_track(grab, client, status) do
+  defp vetted(grab, client, continue) do
     case ContentPolicy.vet(client, grab.download_id) do
       {:blocked, detail} ->
         Download.best_effort_remove(client, grab.download_id)
         park(grab, {:blocked_content, detail})
 
       :ok ->
-        track_and_reap(grab, status)
+        continue.()
     end
   end
 

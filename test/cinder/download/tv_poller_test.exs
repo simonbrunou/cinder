@@ -2738,6 +2738,34 @@ defmodule Cinder.Download.TvPollerTest do
       assert_receive {:notify, {:grab_failed, %Grab{}, :blocked_content}}
     end
 
+    # As on the movie side: a fake is small enough to be :completed by the first tick, so the
+    # :completed branch has to vet too or the payload reaches the importer.
+    test "a fake caught only once COMPLETED is still rejected, never imported", ctx do
+      test_pid = self()
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-tv-fake" ->
+        {:ok, %{state: :completed, content_path: "/dl/Show.S01E04"}}
+      end)
+
+      expect(Cinder.Download.ClientMock, :files, fn "hash-tv-fake" ->
+        {:ok, ["Show.S01E04/Show.S01E04.mkv.lnk"]}
+      end)
+
+      stub(Cinder.Download.ClientMock, :remove, fn id, _opts ->
+        send(test_pid, {:removed, id})
+        :ok
+      end)
+
+      # No filesystem stubs: reaching the importer at all would raise UnexpectedCall.
+      start_supervised!({TvPoller, interval: 60_000})
+      assert :ok = TvPoller.poll()
+
+      refute Repo.get(Grab, ctx.grab.id)
+      assert Repo.get!(Episode, ctx.episode.id).file_path == nil
+      assert Catalog.blocked_release_titles_for_series(ctx.series.id) == ["Show.S01E04-FAKE"]
+      assert_receive {:removed, "hash-tv-fake"}
+    end
+
     test "an ordinary release is tracked as usual", ctx do
       expect(Cinder.Download.ClientMock, :files, fn "hash-tv-fake" ->
         {:ok, ["Show.S01E04/Show.S01E04.mkv"]}

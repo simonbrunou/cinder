@@ -152,9 +152,13 @@ defmodule Cinder.Download.Poller do
   defp advance_with(movie, client) do
     case client.status(movie.download_id) do
       {:ok, %{state: :completed, content_path: path}} when path not in [nil, ""] ->
-        Catalog.transition(movie, %{status: :downloaded, content_path: path, import_attempts: 0},
-          expect: movie.status
-        )
+        vetted(movie, client, fn ->
+          Catalog.transition(
+            movie,
+            %{status: :downloaded, content_path: path, import_attempts: 0},
+            expect: movie.status
+          )
+        end)
 
       {:ok, %{state: :completed}} ->
         # Completed but no usable content_path. A genuinely-slow download is
@@ -170,7 +174,7 @@ defmodule Cinder.Download.Poller do
         fail_download(movie, :torrent_not_found)
 
       {:ok, %{state: :downloading} = status} ->
-        vet_and_track(movie, client, status)
+        vetted(movie, client, fn -> track_and_reap(movie, status, &maybe_reap/3) end)
 
       {:error, _reason} ->
         Catalog.update_movie_download_metrics(movie, %{
@@ -185,13 +189,17 @@ defmodule Cinder.Download.Poller do
     end
   end
 
-  # A fake's file list won't improve, so a blocked verdict skips fail_download/2's 3-tick tolerance
-  # (which exists for client-API blips) and re-queues on the first sighting: blocklist the release,
-  # and the next tick grabs the next-best candidate.
-  defp vet_and_track(movie, client, status) do
+  # Gates BOTH in-flight states, not just :downloading. A fake payload is small — a 1 MB .lnk
+  # often completes inside a single 5s tick — so vetting only the :downloading branch would miss
+  # exactly the case the check exists for and hand the payload to the importer.
+  #
+  # A blocked verdict is deterministic (the file list won't improve), so it skips fail_download/2's
+  # 3-tick tolerance — which exists for client-API blips — and re-queues on the first sighting:
+  # blocklist the release, and the next tick grabs the next-best candidate.
+  defp vetted(movie, client, continue) do
     case ContentPolicy.vet(client, movie.download_id) do
       {:blocked, detail} -> requeue_failed(movie, {:blocked_content, detail})
-      :ok -> track_and_reap(movie, status, &maybe_reap/3)
+      :ok -> continue.()
     end
   end
 
@@ -515,7 +523,7 @@ defmodule Cinder.Download.Poller do
   defp advance_upgrade_with(movie, client) do
     case client.status(movie.download_id) do
       {:ok, %{state: :completed, content_path: path}} when path not in [nil, ""] ->
-        finish_upgrade(movie, path)
+        vetted_upgrade(movie, client, fn -> finish_upgrade(movie, path) end)
 
       {:ok, %{state: :completed}} ->
         retry_or_revert(movie, :no_content_path)
@@ -527,7 +535,9 @@ defmodule Cinder.Download.Poller do
         retry_or_revert(movie, :torrent_not_found)
 
       {:ok, %{state: :downloading} = status} ->
-        track_and_reap(movie, status, &maybe_reap_upgrade/3)
+        vetted_upgrade(movie, client, fn ->
+          track_and_reap(movie, status, &maybe_reap_upgrade/3)
+        end)
 
       {:error, _reason} ->
         Catalog.update_movie_download_metrics(movie, %{
@@ -538,6 +548,23 @@ defmodule Cinder.Download.Poller do
       # Still stalled or in transit: wait, no write, live file untouched.
       _ ->
         :ok
+    end
+  end
+
+  # The upgrade path needs its own vetting: a replacement download is chosen the same way a fresh
+  # one is, so it can be a fake the same way — and here the stakes are higher, because the movie
+  # already HAS a good file. Blocked reverts immediately (no retry budget; the file list is
+  # deterministic), taking the live library file with it untouched, and drops the fake from the
+  # client first so its payload stops arriving.
+  defp vetted_upgrade(movie, client, continue) do
+    case ContentPolicy.vet(client, movie.download_id) do
+      {:blocked, detail} ->
+        Logger.warning("movie #{movie.id} upgrade rejected: #{detail}")
+        Download.best_effort_remove(client, movie.download_id)
+        revert_upgrade(movie, :blocked_content)
+
+      :ok ->
+        continue.()
     end
   end
 
@@ -704,8 +731,11 @@ defmodule Cinder.Download.Poller do
   # upgrade's download fields. Blocklist only genuine release failures (mirrors park/3) so a config
   # glitch (:no_client) doesn't blocklist a good release.
   defp revert_upgrade(movie, reason) do
-    if reason in @permanent_import_errors or reason in @download_failure_errors,
-      do: Catalog.block_release(movie, :upgrade_failed)
+    # :blocked_content joins the two deterministic sets: a proven-fake replacement must be blocked,
+    # or the next upgrade hunt (or manual search) re-picks the very same release.
+    if reason == :blocked_content or reason in @permanent_import_errors or
+         reason in @download_failure_errors,
+       do: Catalog.block_release(movie, :upgrade_failed)
 
     with {:ok, reverted} <-
            Catalog.transition(

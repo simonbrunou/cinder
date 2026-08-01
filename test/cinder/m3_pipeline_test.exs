@@ -19,7 +19,7 @@ defmodule Cinder.M3PipelineTest do
   # read by /healthz); erase it so a recorded run can't bleed into another test/suite.
   setup do
     on_exit(fn -> :persistent_term.erase({Poller, :last_run}) end)
-    :ok
+    Cinder.PollerHelpers.stub_clean_content()
   end
 
   setup do

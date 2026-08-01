@@ -26,7 +26,7 @@ defmodule Cinder.Download.MoveOnImportTest do
       :persistent_term.erase({TvPoller, :last_run})
     end)
 
-    :ok
+    Cinder.PollerHelpers.stub_clean_content()
   end
 
   # Default off; each test opts in. Restore the key so the overlay can't leak.
