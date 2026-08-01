@@ -584,8 +584,6 @@ defmodule Cinder.Acquisition do
 
   defp reject_year_conflicts(candidates, _series), do: candidates
 
-  defp year_conflict?(_release_title, year) when not is_integer(year), do: false
-
   defp year_conflict?(release_title, year) do
     case Regex.scan(~r/\b(?:19|20)\d{2}\b/, release_title) do
       [] -> false
