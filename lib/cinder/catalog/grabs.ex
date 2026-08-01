@@ -242,6 +242,8 @@ defmodule Cinder.Catalog.Grabs do
   transaction (the manual-grab path uses it, mirroring `manual_grab_movie/2`): the user-chosen
   release gets a fresh search budget, and new grabs never carry a counter at/above the cap.
   `allow_available: true` is reserved for the durable manual-upgrade path.
+  `arbitrate_at_import: true` marks the grab so the import, not the grab, decides each episode's
+  swap — the unattended upgrade sweep sets it; the manual path leaves it off and forces (#250).
   """
   def create_grab(download_id, protocol, episode_ids, release_title \\ nil, opts \\ []) do
     result =
@@ -352,7 +354,7 @@ defmodule Cinder.Catalog.Grabs do
   end
 
   defp insert_and_link_grab(download_id, protocol, episode_ids, release_title, opts) do
-    case %Grab{}
+    case %Grab{arbitrate_at_import: Keyword.get(opts, :arbitrate_at_import, false)}
          |> Grab.changeset(%{
            download_id: download_id,
            download_protocol: protocol,

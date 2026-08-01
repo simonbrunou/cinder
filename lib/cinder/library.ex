@@ -463,13 +463,24 @@ defmodule Cinder.Library do
     end
   end
 
-  @doc "Stages standard-TV imports with rollback material for `Catalog.commit_grab_imports/3`."
-  @spec stage_episodes(String.t() | nil, [Episode.t()]) ::
+  @doc """
+  Stages standard-TV imports with rollback material for `Catalog.commit_grab_imports/3`.
+
+  `arbitrate: true` (the unattended upgrade sweep, `Grab.arbitrate_at_import`) makes THIS import
+  the arbiter of every swap: an episode that already holds a file keeps it unless the incoming
+  release beats it. The default forces the swap, which is what the manual path wants — the
+  operator picked that release, possibly for something the ranking can't see (#250).
+  """
+  @spec stage_episodes(String.t() | nil, [Episode.t()], keyword()) ::
           {:ok, [{integer(), map()}], [String.t()]} | {:error, term()}
-  def stage_episodes(content_path, _episodes) when content_path in [nil, ""],
+  def stage_episodes(content_path, episodes, opts \\ [])
+
+  def stage_episodes(content_path, _episodes, _opts) when content_path in [nil, ""],
     do: {:error, :no_content_path}
 
-  def stage_episodes(content_path, episodes) do
+  def stage_episodes(content_path, episodes, opts) do
+    collision = if Keyword.get(opts, :arbitrate, false), do: :arbitrate, else: :force
+
     with {:ok, root} <- root(:tv),
          {:ok, videos, folder?} <- video_files(content_path) do
       {to_import, unmatched} =
@@ -479,7 +490,7 @@ defmodule Cinder.Library do
         |> resolve(videos, episodes)
         |> reject_wrong_audio(episodes)
 
-      case stage_all(to_import, root, episode_target(episodes), folder?) do
+      case stage_all(to_import, root, episode_target(episodes), folder?, collision) do
         {:ok, []} ->
           log_unmatched(unmatched)
           {:ok, [], unmatched}
@@ -535,7 +546,7 @@ defmodule Cinder.Library do
              folder?,
              %{},
              dest,
-             false,
+             :adopt,
              fn _new_quality -> false end
            ) do
       if stage.placed? do
@@ -1042,13 +1053,13 @@ defmodule Cinder.Library do
     end)
   end
 
-  defp stage_all(to_import, root, target, folder?) do
+  defp stage_all(to_import, root, target, folder?, collision) do
     to_import
     |> Enum.group_by(fn {_ep, source} -> source end, fn {ep, _source} -> ep end)
     |> Enum.reduce_while({:ok, []}, fn {source, episodes}, {:ok, acc} ->
       episodes = Enum.sort_by(episodes, & &1.episode_number)
 
-      case stage_episode_file(episodes, source, root, target, folder?) do
+      case stage_episode_file(episodes, source, root, target, folder?, %{}, collision) do
         {:ok, stage} ->
           imported = Enum.map(episodes, &{&1.id, stage})
           {:cont, {:ok, Enum.reverse(imported, acc)}}
@@ -1070,7 +1081,7 @@ defmodule Cinder.Library do
     |> Enum.reduce_while({:ok, []}, fn {{source, _season}, episodes}, {:ok, acc} ->
       episodes = Enum.sort_by(episodes, & &1.episode_number)
 
-      case stage_episode_file(episodes, source, root, target, folder?, reports) do
+      case stage_episode_file(episodes, source, root, target, folder?, reports, :force) do
         {:ok, stage} ->
           rows = Enum.map(episodes, &{&1.id, stage})
           {:cont, {:ok, Enum.reverse(rows, acc)}}
@@ -1102,13 +1113,13 @@ defmodule Cinder.Library do
     end
   end
 
-  defp stage_episode_file([_ep | _] = episodes, source, root, target, folder?) do
-    stage_episode_file(episodes, source, root, target, folder?, %{})
-  end
-
-  defp stage_episode_file([ep | _] = episodes, source, root, target, folder?, reports) do
+  defp stage_episode_file([ep | _] = episodes, source, root, target, folder?, reports, collision) do
     dest = build_episode_dest(episodes, source, root)
-    replace? = Enum.any?(episodes, &(&1.file_path not in [nil, ""]))
+
+    collision =
+      if collision == :force and Enum.all?(episodes, &(&1.file_path in [nil, ""])),
+        do: :adopt,
+        else: collision
 
     case stage_episode_file_at(
            episodes,
@@ -1117,7 +1128,7 @@ defmodule Cinder.Library do
            folder?,
            reports,
            dest,
-           replace?,
+           collision,
            fn new_quality -> ep_upgrade?(ep, new_quality, target) end
          ) do
       {:ok, stage} -> {:ok, Map.delete(stage, :placed?)}
@@ -1125,6 +1136,10 @@ defmodule Cinder.Library do
     end
   end
 
+  # `collision` decides what happens when the episode already holds a file:
+  #   :force     — swap it, no questions (the manual path, and anime).
+  #   :arbitrate — swap only if this release beats what's held (the unattended sweep, #250).
+  #   :adopt     — nothing is held; StageEngine's own gate settles an on-disk collision.
   defp stage_episode_file_at(
          [ep | _] = episodes,
          source,
@@ -1132,7 +1147,7 @@ defmodule Cinder.Library do
          folder?,
          reports,
          dest,
-         replace?,
+         collision,
          upgrade_fun
        ) do
     with {:ok, source} <- safe_source_file(source),
@@ -1142,6 +1157,7 @@ defmodule Cinder.Library do
            new_quality(parsed, size)
            |> Map.merge(cached_or_capture_media(source, reports))
            |> Map.put_new(:sidecar_subtitles, []),
+         dest = arbitrated_dest(collision, episodes, dest, new_q, upgrade_fun),
          {:ok, dest} <- safe_destination(dest, root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
          {:ok, quality, rollback, placed?} <-
@@ -1152,7 +1168,7 @@ defmodule Cinder.Library do
              {si, sdev},
              ep,
              new_q,
-             replace?,
+             collision == :force,
              fn -> upgrade_fun.(new_q) end
            ) do
       quality = staged_sidecar_quality(quality, placed?, folder?, source)
@@ -1171,6 +1187,23 @@ defmodule Cinder.Library do
        }}
     end
   end
+
+  # An arbitrated release that loses to the file an episode already holds must be re-pointed at
+  # that file, because `dest` carries the SOURCE's extension: an .mp4 that doesn't beat an
+  # episode's .mkv lands at a path that does not exist yet, so StageEngine's collision gate never
+  # runs, the worse file is placed, and `remove_superseded_episode_files/1` then deletes the
+  # better one. Pointed at the held file, StageEngine takes its noop branch instead: the episode
+  # keeps exactly the path and quality it had, and still counts as imported so
+  # `commit_grab_imports/4` releases it rather than bumping it as missing.
+  # `upgrade_fun` runs twice on this path (here, then again inside StageEngine) — it is a pure
+  # comparison of two quality maps, so the second call is cheaper than threading the answer.
+  defp arbitrated_dest(:arbitrate, episodes, dest, new_q, upgrade_fun) do
+    held = Enum.find_value(episodes, fn ep -> ep.file_path not in [nil, ""] && ep.file_path end)
+
+    if held && not upgrade_fun.(new_q), do: held, else: dest
+  end
+
+  defp arbitrated_dest(_collision, _episodes, dest, _new_q, _upgrade_fun), do: dest
 
   defp ep_upgrade?(ep, new_q, target) do
     Upgrade.better?(
@@ -1343,117 +1376,11 @@ defmodule Cinder.Library do
   # tmdb-id folder, same as an all-illegal title.
   defp reject_dot_only(name), do: if(name =~ ~r/\A\.+\z/, do: "", else: name)
 
-  @doc """
-  Deletes one imported library file and prunes the folders it leaves empty.
+  @doc "Deletes one imported library file and prunes the folders it leaves empty."
+  defdelegate delete_file(path), to: Cinder.Library.Deletion
 
-  Idempotent: a `nil`/blank path or an already-missing file is `:ok`. After unlinking, empty
-  parent directories are removed walking up, stopping at (never removing) the configured library
-  root — so a `Title (Year)/` or `Season NN/`→show folder disappears when it empties, but the root
-  and any non-empty or out-of-library directory are untouched. A real unlink error (e.g. `:eacces`)
-  is surfaced and nothing is pruned. Hardlink note: this frees disk space only once the download
-  client also drops its copy. Paths outside the configured roots, symlink leaves, and paths with
-  symlinked components fail closed with `{:error, :unsafe_delete}` before unlinking.
-  """
-  @spec delete_file(String.t() | nil) :: :ok | {:error, term()}
-  def delete_file(path) when path in [nil, ""], do: :ok
-
-  def delete_file(path) do
-    roots = library_roots()
-
-    with :ok <- path_policy().deletable_file(path, roots, filesystem: fs()) do
-      do_delete_file(path)
-    end
-  end
-
-  defp do_delete_file(path) do
-    expanded = Path.expand(path)
-
-    case fs().rm(expanded) do
-      :ok -> prune_empty_dirs(Path.dirname(expanded))
-      {:error, :enoent} -> prune_empty_dirs(Path.dirname(expanded))
-      {:error, _reason} = err -> err
-    end
-  end
-
-  # Remove `dir` if it is empty and strictly inside a library root, then recurse to its parent.
-  # `fs().rmdir/1` only removes an empty dir, so a non-empty parent returns an error and halts the
-  # walk. Always returns :ok — pruning is best-effort cleanup, never the operation's success signal.
-  defp prune_empty_dirs(dir) do
-    if prunable?(dir) and safe_directory?(dir) do
-      case fs().rmdir(dir) do
-        :ok -> prune_empty_dirs(Path.dirname(dir))
-        {:error, _reason} -> :ok
-      end
-    else
-      :ok
-    end
-  end
-
-  # Prunable only when `dir` sits strictly inside a configured library root (never the root itself,
-  # never a path outside any root) — so a misconfigured/old file_path can never rmdir outside the
-  # library or delete a root. Split into a flat helper to keep credo Refactor.Nesting happy.
-  defp prunable?(dir) do
-    expanded = Path.expand(dir)
-    Enum.any?(@kinds, &prunable_under_kind?(expanded, &1))
-  end
-
-  defp prunable_under_kind?(expanded, kind) do
-    case root(kind) do
-      {:ok, r} ->
-        r = Path.expand(r)
-        expanded != r and String.starts_with?(expanded <> "/", r <> "/")
-
-      _ ->
-        false
-    end
-  end
-
-  @doc """
-  Deletes a completed download's source after a successful `move_on_import` — the whole
-  per-operation directory the client delivered (e.g. an unpacked SABnzbd job folder), or the lone
-  file when there's no wrapper directory. Called from `Cinder.Download.remove_after_import/3`,
-  which gates this on the `move_on_import` setting and the usenet protocol; this function is
-  authoritative regardless of whether the download client still tracks the job — a client whose
-  history already evicted the job silently no-ops on its own remove call, so filesystem cleanup
-  here can't depend on that history surviving (issue #115).
-
-  Idempotent: a `nil`/blank path or an already-missing entry is `:ok`. Contained strictly to the
-  **explicitly configured** import roots (`Settings.explicit_import_roots/0`) — never an inferred
-  one: `Settings.import_roots/0` (what import reads use) falls back to a guessed common ancestor
-  of the library paths when no `import_roots` setting is set, and that guess can be a whole
-  downloads-category directory (e.g. `/data` for `/data/movies` + `/data/tv`); authorizing `rm_rf`
-  against it on a misreported `content_path` would risk wiping every other in-flight download.
-  With only inferred/absent roots, deletion is skipped with `{:error, :import_roots_not_explicit}`
-  rather than guessing. An import root itself is rejected too (only entries strictly inside a
-  root are deletable, so a misreporting client can't wipe the whole downloads dir). A path outside
-  the roots, a root itself, a symlink anywhere in it, or an entry that is neither a regular file
-  nor a directory fails closed with `{:error, :unsafe_delete}`.
-  """
-  @spec delete_download_source(String.t() | nil) :: :ok | {:error, term()}
-  def delete_download_source(path) when path in [nil, ""], do: :ok
-
-  def delete_download_source(path) do
-    case Settings.explicit_import_roots() do
-      nil -> {:error, :import_roots_not_explicit}
-      roots -> do_delete_download_source(path, roots)
-    end
-  end
-
-  defp do_delete_download_source(path, roots) do
-    with :ok <- path_policy().deletable_source(path, roots, filesystem: fs()) do
-      case fs().rm_rf(Path.expand(path)) do
-        {:ok, _paths} -> :ok
-        {:error, reason, _path} -> {:error, reason}
-      end
-    end
-  end
-
-  defp safe_directory?(dir) do
-    match?(
-      {:ok, _expanded},
-      path_policy().destination(dir, library_roots(), filesystem: fs())
-    )
-  end
+  @doc "Deletes a completed download's source directory after a successful `move_on_import`."
+  defdelegate delete_download_source(path), to: Cinder.Library.Deletion
 
   defp safe_source_file(path) do
     case Settings.import_roots() do
@@ -1476,8 +1403,6 @@ defmodule Cinder.Library do
     with :ok <- path_policy().deletable_file(path, roots, filesystem: fs()),
          do: fs().rm(path)
   end
-
-  defp library_roots, do: Settings.library_roots()
 
   defp fs, do: Application.fetch_env!(:cinder, :filesystem)
   defp media_server, do: Application.fetch_env!(:cinder, :media_server)
