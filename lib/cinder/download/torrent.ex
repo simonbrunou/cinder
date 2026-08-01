@@ -61,6 +61,89 @@ defmodule Cinder.Download.Torrent do
     ]
   end
 
+  @url_fields ~w(announce announce-list url-list httpseeds)
+
+  @doc """
+  Rewrites the `.torrent`'s endpoint fields (`announce`, `announce-list`, `url-list`,
+  `httpseeds`), keeping only URLs `keep?.(url)` approves; a field left empty is omitted.
+  Every other top-level value — the `info` dict above all — is spliced through
+  byte-verbatim, so the v1 infohash is unchanged. Returns `{:ok, bytes}` or
+  `{:error, :bad_torrent}`.
+  """
+  @spec sanitize_embedded_urls(binary, (String.t() -> boolean)) ::
+          {:ok, binary} | {:error, :bad_torrent}
+  def sanitize_embedded_urls(<<?d, _::binary>> = bin, keep?) do
+    {:ok, IO.iodata_to_binary(rebuild_dict(bin, 1, keep?, ["d"]))}
+  rescue
+    # Same rationale as infohash/1: never raise on attacker-controlled bytes.
+    _ -> {:error, :bad_torrent}
+  end
+
+  def sanitize_embedded_urls(_bin, _keep?), do: {:error, :bad_torrent}
+
+  defp rebuild_dict(bin, off, keep?, acc) do
+    case :binary.at(bin, off) do
+      ?e ->
+        Enum.reverse(["e" | acc])
+
+      _ ->
+        {klen, kstart} = str_len(bin, off, 0)
+        key = binary_part(bin, kstart, klen)
+        vstart = kstart + klen
+        vend = skip(bin, vstart)
+        rebuild_dict(bin, vend, keep?, rebuild_pair(bin, key, off, vstart, vend, keep?, acc))
+    end
+  end
+
+  # One key/value pair's contribution to the rebuilt dict: url fields re-encode filtered
+  # (or vanish), everything else splices through byte-verbatim.
+  defp rebuild_pair(bin, key, _off, vstart, _vend, keep?, acc) when key in @url_fields do
+    {value, _next} = decode(bin, vstart)
+
+    case filter_url_field(key, value, keep?) do
+      :drop -> acc
+      {:keep, kept} -> [encode(kept), encode(key) | acc]
+    end
+  end
+
+  defp rebuild_pair(bin, _key, off, _vstart, vend, _keep?, acc),
+    do: [binary_part(bin, off, vend - off) | acc]
+
+  # announce (and url-list's legacy single-string form): one URL, kept or dropped whole.
+  defp filter_url_field(_key, url, keep?) when is_binary(url),
+    do: if(keep?.(url), do: {:keep, url}, else: :drop)
+
+  # announce-list is a list of tiers (lists of URLs); empty tiers vanish with their URLs.
+  defp filter_url_field("announce-list", tiers, keep?) when is_list(tiers) do
+    kept =
+      tiers
+      |> Enum.map(fn
+        tier when is_list(tier) -> Enum.filter(tier, &(is_binary(&1) and keep?.(&1)))
+        _other -> []
+      end)
+      |> Enum.reject(&(&1 == []))
+
+    if kept == [], do: :drop, else: {:keep, kept}
+  end
+
+  # url-list / httpseeds: flat lists of URLs.
+  defp filter_url_field(_key, urls, keep?) when is_list(urls) do
+    kept = Enum.filter(urls, &(is_binary(&1) and keep?.(&1)))
+    if kept == [], do: :drop, else: {:keep, kept}
+  end
+
+  # A malformed endpoint field (wrong bencode type) carries nothing vettable — drop it.
+  defp filter_url_field(_key, _value, _keep?), do: :drop
+
+  defp encode(value) when is_binary(value),
+    do: [Integer.to_string(byte_size(value)), ":", value]
+
+  defp encode(value) when is_integer(value), do: ["i", Integer.to_string(value), "e"]
+  defp encode(values) when is_list(values), do: ["l", Enum.map(values, &encode/1), "e"]
+
+  defp encode(%{} = dict),
+    do: ["d", dict |> Enum.sort() |> Enum.map(fn {k, v} -> [encode(k), encode(v)] end), "e"]
+
   # A generic bencode decoder (distinct from the byte-span walker below, which only ever
   # needs to locate — not decode — the `info` value). Recursion depth tracks bencode nesting
   # depth, same ceiling as `skip_container/2` below; both rely on the caller bounding total
