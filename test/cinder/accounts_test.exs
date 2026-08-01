@@ -1167,7 +1167,7 @@ defmodule Cinder.AccountsTest do
                Accounts.import_media_server_users(actor, [plex_entry(4008, nil, "no-email")])
     end
 
-    test "imports a Jellyfin-shaped (string id) entry without linking Plex" do
+    test "imports a Jellyfin-shaped (string id) entry, linking Jellyfin and not Plex" do
       actor = admin_fixture()
       email = unique_user_email()
 
@@ -1177,8 +1177,85 @@ defmodule Cinder.AccountsTest do
                ])
 
       assert imported.email == email
+      assert imported.jellyfin_user_id == "b7a1-guid"
+      assert imported.jellyfin_username == email
       assert imported.plex_id == nil
       assert imported.plex_username == nil
+      # A real address the server reported: notifications keep the schema default.
+      assert imported.notify_email
+    end
+
+    test "imports an email-less Jellyfin entry under a synthetic, unguessable address" do
+      actor = admin_fixture()
+
+      assert {:ok, [imported]} =
+               Accounts.import_media_server_users(actor, [
+                 %{id: "jf-import-1", email: nil, username: "Kim Nguyen"}
+               ])
+
+      assert imported.jellyfin_user_id == "jf-import-1"
+      assert imported.jellyfin_username == "Kim Nguyen"
+      assert imported.active
+      # Undeliverable, so notifications start off — the owner sets a real address later.
+      refute imported.notify_email
+      assert [_local, "jellyfin.invalid"] = String.split(imported.email, "@")
+      assert String.starts_with?(imported.email, "kimnguyen-")
+    end
+
+    test "synthesizes an address no public Jellyfin data predicts" do
+      actor = admin_fixture()
+
+      assert {:ok, [a, b]} =
+               Accounts.import_media_server_users(actor, [
+                 %{id: "jf-import-2", email: nil, username: "same"},
+                 %{id: "jf-import-3", email: nil, username: "same"}
+               ])
+
+      # Identical names and public (unauthenticated `GET /Users/Public`) ids, distinct
+      # addresses: the suffix is random, so neither can be pre-registered to block onboarding.
+      refute a.email == b.email
+    end
+
+    test "a later Jellyfin sign-in resolves to the imported account rather than a second one" do
+      actor = admin_fixture()
+
+      assert {:ok, [imported]} =
+               Accounts.import_media_server_users(actor, [
+                 %{id: "jf-import-4", email: nil, username: "returning"}
+               ])
+
+      before = Repo.aggregate(User, :count)
+
+      assert {:ok, signed_in} =
+               Accounts.login_or_register_jellyfin_user(%{id: "jf-import-4", name: "returning"})
+
+      assert signed_in.id == imported.id
+      assert Repo.aggregate(User, :count) == before
+    end
+
+    test "re-importing an email-less Jellyfin entry creates nothing new" do
+      actor = admin_fixture()
+      entries = [%{id: "jf-import-5", email: nil, username: "twice"}]
+
+      assert {:ok, [_]} = Accounts.import_media_server_users(actor, entries)
+      before = Repo.aggregate(User, :count)
+
+      # The synthetic address is random and never recomputed, so only the id dedupes this.
+      assert {:ok, []} = Accounts.import_media_server_users(actor, entries)
+      assert Repo.aggregate(User, :count) == before
+    end
+
+    test "skips an entry whose jellyfin_user_id is already linked under another address" do
+      actor = admin_fixture()
+
+      user_fixture()
+      |> Ecto.Changeset.change(jellyfin_user_id: "jf-import-6")
+      |> Repo.update!()
+
+      assert {:ok, []} =
+               Accounts.import_media_server_users(actor, [
+                 %{id: "jf-import-6", email: unique_user_email(), username: "dupe"}
+               ])
     end
 
     test "audits every created account" do

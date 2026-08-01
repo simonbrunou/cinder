@@ -306,7 +306,7 @@ defmodule Cinder.Accounts do
 
     %User{}
     |> User.registration_changeset(%{
-      email: jellyfin_email(account),
+      email: jellyfin_email(Map.get(account, :name)),
       password: password,
       password_confirmation: password
     })
@@ -331,10 +331,11 @@ defmodule Cinder.Accounts do
   # denial-of-onboarding: self-registration is open, so an attacker could pre-register the
   # address and permanently block that Jellyfin user's first sign-in. Nothing ever recomputes
   # this address (the account is matched by `jellyfin_user_id`), so it need not be derivable.
-  defp jellyfin_email(account) do
-    case account |> Map.get(:name) |> sanitize_email_local() do
+  # Shared with the admin import, which faces the same missing-email problem.
+  defp jellyfin_email(name) do
+    case sanitize_email_local(name) do
       "" -> "jellyfin-#{email_suffix()}@jellyfin.invalid"
-      name -> "#{name}-#{email_suffix()}@jellyfin.invalid"
+      local -> "#{local}-#{email_suffix()}@jellyfin.invalid"
     end
   end
 
@@ -419,18 +420,23 @@ defmodule Cinder.Accounts do
   An entry that can't (or shouldn't) become an account is **skipped**, never an error, so
   re-running the import is a no-op:
 
-    * no email — a Cinder account is keyed by its email, and Jellyfin reports none unless the
-      username already is an address;
+    * no email *and* no Jellyfin id — a Cinder account is keyed by its email, and Plex reports
+      one, so a Plex entry missing it is an unknown address rather than an absent one. Jellyfin
+      exposes no email field at all, so those get the same synthetic, randomized
+      `@jellyfin.invalid` address `login_or_register_jellyfin_user/1` mints, with
+      `notify_email: false`;
     * that email already belongs to an account (including a still-pending or deactivated one,
       which is therefore never resurrected);
-    * that Plex id is already linked to an account — the case an email check misses, because
-      the user signed in with Plex under a different address.
+    * that Plex id or Jellyfin id is already linked to an account — the case an email check
+      misses, because the user signed in with the media server under a different address, and
+      the only thing that makes a re-import of a synthetic-address Jellyfin account a no-op.
 
   Imported accounts carry **no password**: they can only be entered through the media-server
-  sign-in path (the imported `plex_id` is what makes "Sign in with Plex" resolve to this
-  account rather than create a second one) or after an admin sets a password on `/users`.
-  They land `active: true` — selecting someone for import IS the admin approval, and routing
-  them back through the pending queue would defeat the point of a bulk import.
+  sign-in path (the imported `plex_id` / `jellyfin_user_id` is what makes "Sign in with Plex" /
+  "Sign in with Jellyfin" resolve to this account rather than create a second one) or after an
+  admin sets a password on `/users`. They land `active: true` — selecting someone for import IS
+  the admin approval, and routing them back through the pending queue would defeat the point of
+  a bulk import.
   """
   def import_media_server_users(%User{} = actor, entries) when is_list(entries) do
     admin_transaction(actor, fn actor ->
@@ -438,11 +444,19 @@ defmodule Cinder.Accounts do
     end)
   end
 
-  defp import_media_server_user(actor, %{email: email} = entry)
-       when is_binary(email) and email != "" do
-    if already_imported?(entry) do
-      []
-    else
+  @doc """
+  Whether a `Cinder.Library.MediaServer.user/0` entry can become an account at all — the
+  predicate the `/users` import list renders with, so the checkboxes it offers and the entries
+  `import_media_server_users/2` acts on can't disagree.
+  """
+  def importable_media_server_user?(%{email: email}) when is_binary(email) and email != "",
+    do: true
+
+  def importable_media_server_user?(%{id: id}), do: jellyfin_id?(id)
+  def importable_media_server_user?(_entry), do: false
+
+  defp import_media_server_user(actor, entry) do
+    if importable_media_server_user?(entry) and not already_imported?(entry) do
       case create_imported_user(entry) do
         {:ok, user} ->
           Audit.log_or_rollback(actor, "import_media_server_user", user, %{})
@@ -451,38 +465,71 @@ defmodule Cinder.Accounts do
         {:error, changeset} ->
           Repo.rollback(changeset)
       end
+    else
+      []
     end
   end
 
-  defp import_media_server_user(_actor, _entry), do: []
-
-  defp already_imported?(%{email: email} = entry) do
-    Repo.exists?(from u in User, where: u.email == ^email) or plex_id_taken?(entry)
+  defp already_imported?(entry) do
+    email_taken?(entry) or plex_id_taken?(entry) or jellyfin_id_taken?(entry)
   end
 
-  # Plex account ids are integers and have a `users.plex_id` column; Jellyfin ids are string
-  # GUIDs with nowhere to be stored (there is no Jellyfin sign-in), so those dedupe on email
-  # alone. Same split decides whether the created account gets linked, below.
+  defp email_taken?(%{email: email}) when is_binary(email) and email != "",
+    do: Repo.exists?(from u in User, where: u.email == ^email)
+
+  defp email_taken?(_entry), do: false
+
+  # Plex account ids are integers and live in `users.plex_id`; Jellyfin ids are string GUIDs in
+  # `users.jellyfin_user_id`. The same split decides which identity the created account gets
+  # linked to, below. Checking the id is what makes a re-import a no-op for a Jellyfin account
+  # whose address was synthesized — that address is random, so it never matches twice.
   defp plex_id_taken?(%{id: id}) when is_integer(id),
     do: Repo.exists?(from u in User, where: u.plex_id == ^id)
 
   defp plex_id_taken?(_entry), do: false
 
+  defp jellyfin_id_taken?(%{id: id}) do
+    jellyfin_id?(id) and Repo.exists?(from u in User, where: u.jellyfin_user_id == ^id)
+  end
+
+  defp jellyfin_id_taken?(_entry), do: false
+
+  defp jellyfin_id?(id), do: is_binary(id) and id != ""
+
   defp create_imported_user(entry) do
+    email = import_email(entry)
+
     %User{}
-    |> User.email_changeset(%{email: entry.email}, validate_unique: false)
-    |> put_plex_link(entry)
+    |> User.email_changeset(%{email: email}, validate_unique: false)
+    |> put_media_server_link(entry)
     |> Ecto.Changeset.put_change(:confirmed_at, DateTime.utc_now(:second))
     |> Ecto.Changeset.put_change(:role, :user)
     |> Ecto.Changeset.put_change(:active, true)
+    # A synthesized address can't receive mail, so the notification opt-in starts off — same
+    # as a Jellyfin sign-in. A real address the server reported keeps the schema default.
+    |> Ecto.Changeset.put_change(:notify_email, entry[:email] == email)
     |> put_default_request_quota(:user)
     |> Repo.insert()
   end
 
-  defp put_plex_link(changeset, %{id: id} = entry) when is_integer(id),
+  defp import_email(%{email: email}) when is_binary(email) and email != "", do: email
+  defp import_email(entry), do: jellyfin_email(Map.get(entry, :username))
+
+  defp put_media_server_link(changeset, %{id: id} = entry) when is_integer(id),
     do: User.plex_changeset(changeset, %{plex_id: id, plex_username: Map.get(entry, :username)})
 
-  defp put_plex_link(changeset, _entry), do: changeset
+  defp put_media_server_link(changeset, %{id: id} = entry) do
+    if jellyfin_id?(id) do
+      User.jellyfin_changeset(changeset, %{
+        jellyfin_user_id: id,
+        jellyfin_username: Map.get(entry, :username)
+      })
+    else
+      changeset
+    end
+  end
+
+  defp put_media_server_link(changeset, _entry), do: changeset
 
   @doc "Reloads an actor and authorizes their current persisted admin role."
   def fetch_current_admin(%User{id: id}) do

@@ -390,8 +390,11 @@ defmodule CinderWeb.UsersLiveTest do
       html = render(lv)
       assert html =~ "kim@example.com"
       assert html =~ "sam@example.com"
-      # An account the media server reports without an email can't be imported.
-      assert html =~ "no email on the media server"
+      # A Plex account reported without an email can't be imported: Plex has an email field,
+      # so a missing one means unknown. Assert the *name-prefixed* copy — the importable
+      # branch's note shares the leading words, so the bare phrase wouldn't tell them apart.
+      assert html =~ "managed-kid: no email on the media server"
+      refute has_element?(lv, "#import-users-form input[value='5003']")
 
       lv |> form("#import-users-form", %{"import" => ["5001"]}) |> render_submit()
 
@@ -401,6 +404,28 @@ defmodule CinderWeb.UsersLiveTest do
       # Only the ticked account was created.
       refute user_by_email("sam@example.com")
       assert render(lv) =~ "Imported 1 account."
+    end
+
+    test "admin imports an email-less Jellyfin account under a placeholder", %{conn: conn} do
+      admin = Cinder.AccountsFixtures.admin_fixture()
+      stub_media_server_users()
+      conn = log_in_user(conn, admin)
+
+      {:ok, lv, _html} = live(conn, ~p"/users")
+      lv |> element("#load-import-btn") |> render_click()
+
+      # Jellyfin exposes no email, so the entry is offered anyway, flagged as placeholder-bound.
+      assert render(lv) =~ "no email on the media server: a placeholder is generated"
+      assert has_element?(lv, "#import-users-form input[value='jf-5004']")
+
+      lv |> form("#import-users-form", %{"import" => ["jf-5004"]}) |> render_submit()
+
+      imported = Cinder.Repo.get_by(Cinder.Accounts.User, jellyfin_user_id: "jf-5004")
+
+      assert %Cinder.Accounts.User{} = imported
+      assert imported.jellyfin_username == "jellyfin-viewer"
+      assert String.ends_with?(imported.email, "@jellyfin.invalid")
+      refute imported.notify_email
     end
 
     test "an imported user can't log in until they come through the media server", %{conn: conn} do
@@ -537,7 +562,9 @@ defmodule CinderWeb.UsersLiveTest do
          [
            %{id: 5001, email: "kim@example.com", username: "kim"},
            %{id: 5002, email: "sam@example.com", username: "sam"},
-           %{id: 5003, email: nil, username: "managed-kid"}
+           %{id: 5003, email: nil, username: "managed-kid"},
+           # Jellyfin's shape: a string id and never an email (#244).
+           %{id: "jf-5004", email: nil, username: "jellyfin-viewer"}
          ]}
       end)
     end

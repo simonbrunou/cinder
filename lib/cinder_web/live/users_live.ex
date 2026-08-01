@@ -469,12 +469,23 @@ defmodule CinderWeb.UsersLive do
           </p>
           <ul class="space-y-1">
             <li :for={u <- @import_users} id={"import-user-#{u.id}"}>
-              <label :if={u.email} class="flex flex-wrap items-center gap-2">
+              <label
+                :if={Accounts.importable_media_server_user?(u)}
+                class="flex flex-wrap items-center gap-2"
+              >
                 <input type="checkbox" name="import[]" value={u.id} class="checkbox checkbox-sm" />
-                <span class="break-all font-medium">{u.email}</span>
-                <span :if={u.username} class="text-sm text-base-content/60">{u.username}</span>
+                <span class="break-all font-medium">{u.email || u.username || u.id}</span>
+                <span :if={u.email && u.username} class="text-sm text-base-content/60">
+                  {u.username}
+                </span>
+                <span :if={is_nil(u.email)} class="text-sm text-base-content/60">
+                  {gettext("no email on the media server: a placeholder is generated")}
+                </span>
               </label>
-              <span :if={is_nil(u.email)} class="text-sm text-base-content/50">
+              <span
+                :if={not Accounts.importable_media_server_user?(u)}
+                class="text-sm text-base-content/50"
+              >
                 {gettext("%{name}: no email on the media server", name: u.username || u.id)}
               </span>
             </li>
