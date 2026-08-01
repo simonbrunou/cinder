@@ -313,6 +313,25 @@ defmodule Cinder.Download.Client.QBittorrent do
   defp tagged?(_torrent, _wanted), do: false
 
   @impl true
+  def files(hash) do
+    case action(method: :get, url: "/api/v2/torrents/files", params: [hash: hash]) do
+      {:ok, %{status: 200, body: files}} when is_list(files) ->
+        {:ok, for(%{"name" => name} <- files, is_binary(name), do: name)}
+
+      # 404 = qBittorrent does not know this hash (or has no metadata for it yet). Per the
+      # Client.files/1 contract that is "no opinion", not a failure the caller should act on.
+      {:ok, %{status: 404}} ->
+        {:ok, []}
+
+      {:ok, %{status: 200}} ->
+        {:error, :unexpected_response}
+
+      other ->
+        error(other)
+    end
+  end
+
+  @impl true
   def list_managed do
     # No `tag:` filter and so no @minimum_webapi_version gate: qBittorrent can't filter on a tag
     # *prefix*, so the whole list comes back and the `cinder-` tag is matched here. Untagged

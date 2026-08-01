@@ -319,6 +319,22 @@ defmodule Cinder.Download.Client.Sabnzbd do
   @operation_key_pattern ~r/cinder-([0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})(?:\.nzb)?$/
 
   @impl true
+  def files(nzo_id) do
+    case get(mode: "get_files", value: nzo_id) do
+      {:ok, %{status: 200, body: %{"files" => files}}} when is_list(files) ->
+        {:ok, for(file <- files, is_binary(file["filename"]), do: file["filename"])}
+
+      # A job SABnzbd has no file list for (still fetching, already in history) answers without a
+      # `files` key. Per the Client.files/1 contract that is "no opinion", not a failure.
+      {:ok, %{status: 200}} ->
+        {:ok, []}
+
+      other ->
+        error(other)
+    end
+  end
+
+  @impl true
   def list_managed do
     with {:ok, queued} <- managed_slots("queue", &classify_queue/1),
          {:ok, historic} <- managed_slots("history", &classify_history/1) do

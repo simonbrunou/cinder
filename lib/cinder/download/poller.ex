@@ -24,7 +24,7 @@ defmodule Cinder.Download.Poller do
   alias Cinder.Catalog
   alias Cinder.Catalog.Movie
   alias Cinder.Download
-  alias Cinder.Download.StallReaper
+  alias Cinder.Download.{ContentPolicy, StallReaper}
   alias Cinder.Library
   alias Cinder.Notifier
 
@@ -170,7 +170,7 @@ defmodule Cinder.Download.Poller do
         fail_download(movie, :torrent_not_found)
 
       {:ok, %{state: :downloading} = status} ->
-        track_and_reap(movie, status, &maybe_reap/3)
+        vet_and_track(movie, client, status)
 
       {:error, _reason} ->
         Catalog.update_movie_download_metrics(movie, %{
@@ -182,6 +182,16 @@ defmodule Cinder.Download.Poller do
       # must not count toward the bound).
       _ ->
         :ok
+    end
+  end
+
+  # A fake's file list won't improve, so a blocked verdict skips fail_download/2's 3-tick tolerance
+  # (which exists for client-API blips) and re-queues on the first sighting: blocklist the release,
+  # and the next tick grabs the next-best candidate.
+  defp vet_and_track(movie, client, status) do
+    case ContentPolicy.vet(client, movie.download_id) do
+      {:blocked, detail} -> requeue_failed(movie, {:blocked_content, detail})
+      :ok -> track_and_reap(movie, status, &maybe_reap/3)
     end
   end
 

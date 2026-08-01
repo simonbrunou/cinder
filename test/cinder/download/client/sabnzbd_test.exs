@@ -839,6 +839,29 @@ defmodule Cinder.Download.Client.SabnzbdTest do
 
   @key "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
 
+  test "files/1 returns the job's file names" do
+    stub(fn conn ->
+      assert conn.params["mode"] == "get_files"
+      assert conn.params["value"] == "nzo-1"
+
+      Req.Test.json(conn, %{
+        "files" => [
+          %{"filename" => "Movie.mkv", "bytes" => 1},
+          %{"filename" => "Movie.nfo", "bytes" => 2},
+          %{"bytes" => 3}
+        ]
+      })
+    end)
+
+    assert {:ok, ["Movie.mkv", "Movie.nfo"]} = Sabnzbd.files("nzo-1")
+  end
+
+  test "files/1 treats a job with no file list as no opinion, not a failure" do
+    stub(fn conn -> Req.Test.json(conn, %{"error" => "no such job"}) end)
+
+    assert {:ok, []} = Sabnzbd.files("nzo-gone")
+  end
+
   test "list_managed/0 reports cinder-named queue and history jobs with their state" do
     stub(fn conn ->
       assert conn.params["search"] == "cinder-"

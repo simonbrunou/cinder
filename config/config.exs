@@ -124,6 +124,9 @@ config :cinder, Cinder.Catalog.Rehunter, enabled: true, rehunt_after: :timer.hou
 # Reaps Cinder-submitted downloads nothing owns any more (never completed ones — seeding survives).
 config :cinder, Cinder.Download.Cleaner, enabled: true
 
+# Rejects a download whose file list marks it as a fake (a .lnk/.exe payload, not a movie).
+config :cinder, Cinder.Download.ContentPolicy, enabled: true
+
 # Configure the endpoint
 config :cinder, CinderWeb.Endpoint,
   url: [host: "localhost"],

@@ -801,6 +801,27 @@ defmodule Cinder.Download.Client.QBittorrentTest do
              QBittorrent.add(%{download_url: "https://tracker.test/start.torrent"})
   end
 
+  test "files/1 returns the torrent's file names" do
+    stub_qbit(fn conn ->
+      assert conn.request_path == "/api/v2/torrents/files"
+      assert conn.params["hash"] == "abc123"
+
+      Req.Test.json(conn, [
+        %{"name" => "Movie/Movie.mkv", "size" => 1},
+        %{"name" => "Movie/Movie.srt", "size" => 2},
+        %{"size" => 3}
+      ])
+    end)
+
+    assert {:ok, ["Movie/Movie.mkv", "Movie/Movie.srt"]} = QBittorrent.files("abc123")
+  end
+
+  test "files/1 treats an unknown hash as no opinion, not a failure" do
+    stub_qbit(fn conn -> Plug.Conn.send_resp(conn, 404, "Torrent hash was not found") end)
+
+    assert {:ok, []} = QBittorrent.files("gone")
+  end
+
   test "list_managed/0 reports only cinder-tagged torrents, with their state" do
     stub_qbit(fn conn ->
       assert conn.request_path == "/api/v2/torrents/info"

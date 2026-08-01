@@ -29,6 +29,16 @@ defmodule Cinder.Download.Client do
   @callback health() :: :ok | {:error, term()}
 
   @doc """
+  Lists the file names a download will deliver, for `Cinder.Download.ContentPolicy` to vet.
+  Names may be relative paths (`"Folder/file.mkv"`); only the extension is inspected.
+
+  Best-effort by contract: a client that cannot answer yet (a torrent still fetching metadata,
+  a usenet job before its file list is known) returns `{:ok, []}`, and callers treat any
+  `{:error, _}` as "no opinion" rather than as a reason to fail the download.
+  """
+  @callback files(id :: String.t()) :: {:ok, [String.t()]} | {:error, term()}
+
+  @doc """
   Lists **only the downloads Cinder itself submitted** — the ones carrying its
   `cinder-<operation_key>` marker (a qBittorrent tag, a SABnzbd job-name suffix).
   A household's hand-added downloads are never reported, so a caller sweeping this
