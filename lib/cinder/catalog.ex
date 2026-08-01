@@ -248,6 +248,7 @@ defmodule Cinder.Catalog do
 
   @doc "Episodes with an imported file, season+series+scene-coordinates preloaded (subtitle-fetch candidates)."
   defdelegate list_episodes_with_file(), to: SeriesCatalog
+  defdelegate list_episodes_with_file(series_id), to: SeriesCatalog
 
   # --- pipeline status classification --------------------------------------------------------
   #

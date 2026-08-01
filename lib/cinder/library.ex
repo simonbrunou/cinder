@@ -20,6 +20,7 @@ defmodule Cinder.Library do
   alias Cinder.Library.{
     AnimePreflight,
     ImportStage,
+    Naming,
     PathPolicy,
     PolicyVerifier,
     Sidecars,
@@ -30,7 +31,6 @@ defmodule Cinder.Library do
   alias Cinder.Settings
 
   @video_exts ~w(.mkv .mp4 .avi .m4v .mov .wmv .ts)
-  @illegal ~r/[\/\\:*?"<>|]/
 
   # link(2) errnos that mean "this dest can't be hardlinked to" — fall back to an atomic byte copy
   # rather than parking. `:exdev` = source and dest on different mounts. `:eperm`/`:eopnotsupp`/
@@ -82,7 +82,7 @@ defmodule Cinder.Library do
            new_quality(parsed, size)
            |> Map.merge(cached_or_capture_media(source, reports))
            |> Map.put_new(:sidecar_subtitles, []),
-         dest = build_dest(movie, source, root),
+         dest = Naming.movie_dest(movie, source, root),
          {:ok, dest} <- safe_destination(dest, root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
          {:ok, quality, rollback, placed?} <-
@@ -470,6 +470,10 @@ defmodule Cinder.Library do
   the arbiter of every swap: an episode that already holds a file keeps it unless the incoming
   release beats it. The default forces the swap, which is what the manual path wants — the
   operator picked that release, possibly for something the ranking can't see (#250).
+
+  `already_held:` is the series' episodes that already have a file. A video claimed by one of
+  them is dropped rather than reported unmatched, so a pack grabbed for the *wanted* half of a
+  season doesn't turn the other half's files into operator decisions (#251).
   """
   @spec stage_episodes(String.t() | nil, [Episode.t()], keyword()) ::
           {:ok, [{integer(), map()}], [String.t()]} | {:error, term()}
@@ -489,6 +493,7 @@ defmodule Cinder.Library do
         |> dedupe_per_episode()
         |> resolve(videos, episodes)
         |> reject_wrong_audio(episodes)
+        |> drop_already_held(videos, Keyword.get(opts, :already_held, []))
 
       case stage_all(to_import, root, episode_target(episodes), folder?, collision) do
         {:ok, []} ->
@@ -537,7 +542,7 @@ defmodule Cinder.Library do
          {:ok, source, folder?} <- grab_file_source(content_path, file.relative_path),
          {:ok, stat} <- fs().lstat(source),
          :ok <- verify_grab_file_identity(file, stat),
-         dest = build_episode_part_dest(episode, source, root, file.id),
+         dest = Naming.episode_part_dest(episode, source, root, file.id),
          {:ok, stage} <-
            stage_episode_file_at(
              [episode],
@@ -851,6 +856,35 @@ defmodule Cinder.Library do
   # confirmed different language from the series' wanted language into `unmatched` (logged, not
   # imported) so its episode re-searches next tick, instead of importing the wrong language. Skipped
   # when no language is wanted (`target` nil) or the probe is disabled (`media_info` unset).
+  # A season pack grabbed for the WANTED half of a season also delivers the half we already hold.
+  # Those files claim no linked episode, so they used to land in `grab_files` as undecided
+  # residuals: an operator hold, one click per file, for episodes we already have (#251). The
+  # residual UI exists for files we can't identify — these we can, so drop them. Anything naming
+  # an episode we don't hold, naming nothing, or naming another series stays a residual.
+  defp drop_already_held(result, _videos, []), do: result
+
+  defp drop_already_held({to_import, unmatched}, videos, already_held) do
+    claimed =
+      videos
+      |> Enum.filter(fn {path, _size} -> path in unmatched end)
+      |> match_episodes(already_held)
+      |> MapSet.new(fn {_ep, path, _size} -> path end)
+
+    case Enum.split_with(unmatched, &MapSet.member?(claimed, &1)) do
+      {[], ^unmatched} -> {to_import, unmatched}
+      {dropped, kept} -> {to_import, log_already_held(dropped, kept)}
+    end
+  end
+
+  defp log_already_held(dropped, kept) do
+    Logger.info(
+      "import: dropped #{length(dropped)} file(s) for episodes already in the library: " <>
+        inspect(Enum.map(dropped, &Path.basename/1))
+    )
+
+    kept
+  end
+
   defp reject_wrong_audio({to_import, unmatched} = result, episodes) do
     impl = media_info()
     target = episode_target(episodes)
@@ -1183,7 +1217,7 @@ defmodule Cinder.Library do
   end
 
   defp place_episode_file([ep | _] = episodes, source, root, target, folder?) do
-    dest = build_episode_dest(episodes, source, root)
+    dest = Naming.episode_dest(episodes, source, root)
 
     with {:ok, source} <- safe_source_file(source),
          {:ok, %{size: size, inode: si, major_device: sdev}} <- fs().lstat(source),
@@ -1203,7 +1237,7 @@ defmodule Cinder.Library do
   end
 
   defp stage_episode_file([ep | _] = episodes, source, root, target, folder?, reports, collision) do
-    dest = build_episode_dest(episodes, source, root)
+    dest = Naming.episode_dest(episodes, source, root)
 
     collision =
       if collision == :force and Enum.all?(episodes, &(&1.file_path in [nil, ""])),
@@ -1286,28 +1320,6 @@ defmodule Cinder.Library do
       preferred_resolutions(:tv),
       preferred_sources(:tv)
     )
-  end
-
-  defp build_episode_dest([%Episode{season: season} | _] = episodes, source, root) do
-    show = library_name(sanitize(season.series.title), season.series.year, season.series.tmdb_id)
-    code = episode_code(episodes)
-
-    Path.join([
-      root,
-      show,
-      "Season #{Episode.pad(season.season_number)}",
-      "#{show} - #{code}#{Path.extname(source)}"
-    ])
-  end
-
-  defp build_episode_part_dest(episode, source, root, grab_file_id) do
-    base = build_episode_dest([episode], source, root)
-    extension = Path.extname(base)
-    "#{Path.rootname(base, extension)}-part-#{grab_file_id}#{extension}"
-  end
-
-  defp episode_code([%Episode{season: season} | _] = episodes) do
-    Episode.codes_label(season.season_number, Enum.map(episodes, & &1.episode_number))
   end
 
   defp log_unmatched([]), do: :ok
@@ -1420,34 +1432,6 @@ defmodule Cinder.Library do
       [] -> {:error, :no_video_file}
     end
   end
-
-  defp build_dest(%Movie{title: title, year: year, tmdb_id: tmdb_id}, source, root) do
-    name = library_name(sanitize(title), year, tmdb_id)
-    Path.join([root, name, name <> Path.extname(source)])
-  end
-
-  # Plex's scheme is `Title (Year) {tmdb-<id>}`; with no year (a TMDB entry lacking a
-  # release date) fall back to `Title {tmdb-<id>}`, and if the title sanitizes to
-  # nothing (all-illegal characters) fall back to a bare tmdb id so the file lands in
-  # its own folder rather than the library root.
-  defp library_name("", _year, tmdb_id), do: "tmdb-#{tmdb_id}"
-  defp library_name(title, nil, tmdb_id), do: "#{title} {tmdb-#{tmdb_id}}"
-  defp library_name(title, year, tmdb_id), do: "#{title} (#{year}) {tmdb-#{tmdb_id}}"
-
-  # Strip filesystem-illegal characters, then trim surrounding whitespace so a
-  # title that is blank after sanitizing collapses to "" and hits the tmdb-id
-  # fallback rather than producing a whitespace-named folder.
-  defp sanitize(title) do
-    title
-    |> String.replace(@illegal, "")
-    |> String.trim()
-    |> reject_dot_only()
-  end
-
-  # A name that is only dots (".", "..", …) would become a path segment that escapes the library
-  # root (`Path.join([root, "..", …])`). Collapse it to "" so library_name falls back to the
-  # tmdb-id folder, same as an all-illegal title.
-  defp reject_dot_only(name), do: if(name =~ ~r/\A\.+\z/, do: "", else: name)
 
   @doc "Deletes one imported library file and prunes the folders it leaves empty."
   defdelegate delete_file(path), to: Cinder.Library.Deletion

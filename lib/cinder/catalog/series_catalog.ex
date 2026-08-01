@@ -148,6 +148,21 @@ defmodule Cinder.Catalog.SeriesCatalog do
   end
 
   @doc """
+  The same list narrowed to one series — what a standard-TV import matches its *unclaimed* videos
+  against, to tell a season pack's already-held episodes from genuinely unknown extras (#251).
+  Scoping to the series matters: `match_arm/2` compares season and episode numbers only, so an
+  unscoped list would let one show's "S01E05" claim another's.
+  """
+  def list_episodes_with_file(series_id) do
+    Repo.all(
+      from e in Episode,
+        join: s in assoc(e, :season),
+        where: s.series_id == ^series_id and not is_nil(e.file_path),
+        preload: [:episode_coordinates, season: :series]
+    )
+  end
+
+  @doc """
   Sets a series' preferred language and zeroes `search_attempts` on its still-wanted
   episodes (no file, no grab) so a previously language-stranded season re-enters the
   search sweep. Available / in-flight episodes are untouched.
