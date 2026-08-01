@@ -878,16 +878,19 @@ defmodule Cinder.Library do
     end
   end
 
-  # Every episode the file NAMES has to be one we hold, not just one of them. An `S01E08E09` where
-  # E08 is in the library and E09 is still wanted is E09's only candidate — dropping it discards
-  # that file with the download (`move_on_import`) and burns a bounded re-search. Counted rather
-  # than compared number-by-number, because a claim can come through a bridged/scene arm whose
-  # episode_number deliberately differs from the parsed one; `single_arm_claims/1` has already
-  # guaranteed one arm per path, so the counts are commensurable.
+  # Every episode the file NAMES has to be one we hold, not just one of them: an `S01E08E09` whose
+  # E09 is still wanted is E09's only candidate, and dropping it deletes that file with the
+  # download (`move_on_import`). Counted, not compared number-by-number, because a bridged/scene
+  # claim's episode_number deliberately differs from the parsed one — sound because
+  # `single_arm_claims/1` left one arm and every coordinate writer binds ONE episode per canonical
+  # value. `episode_coordinate_memberships` is many-to-many by schema, so a writer binding several
+  # would inflate the count past `named`; revisit here if that changes. An unparseable name is not
+  # droppable — unreachable (a claim required a parse) but the wrong default to leave lying around.
   defp fully_held?(path, claiming) do
-    named = Parser.parse(Path.basename(path)).episodes || []
-
-    length(Enum.uniq_by(claiming, & &1.id)) >= length(named)
+    case Parser.parse(Path.basename(path)).episodes do
+      nil -> false
+      named -> length(Enum.uniq_by(claiming, & &1.id)) >= length(named)
+    end
   end
 
   defp log_already_held(dropped, kept) do
