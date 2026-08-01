@@ -61,6 +61,25 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
     assert Grabs.grab_hold(grab) == :residual_files
   end
 
+  @tag :tmp_dir
+  test "a two-parter spanning a held and a wanted episode stays a decision", %{tmp_dir: tmp} do
+    # E08 is in the library, E09 is not. `Show.S01E08E09.mkv` is E09's only candidate file, so
+    # dropping it would discard E09's content with the download and burn a bounded re-search.
+    %{grab: grab, held: held} = partial_season_pack(tmp, ["Show.S01E08E09.1080p.WEB-DL.mkv"])
+
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    grab = Repo.get!(Grab, grab.id) |> Repo.preload(:grab_files)
+
+    assert Enum.map(grab.grab_files, & &1.relative_path) == ["Show.S01E08E09.1080p.WEB-DL.mkv"]
+    assert Grabs.grab_hold(grab) == :residual_files
+
+    # E08 is untouched either way — the file was never a candidate to replace it.
+    e08 = Enum.find(held, &(&1.episode_number == 8))
+    assert Repo.get!(Episode, e08.id).file_path == e08.file_path
+  end
+
   # A 10-episode season: E01–E08 already in the library, E09–E10 wanted. The pack ships all ten.
   defp partial_season_pack(tmp, extra_files) do
     %{downloads: downloads, tv: tv} = real_tv_library(tmp)

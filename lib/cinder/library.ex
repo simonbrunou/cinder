@@ -868,12 +868,26 @@ defmodule Cinder.Library do
       videos
       |> Enum.filter(fn {path, _size} -> path in unmatched end)
       |> match_episodes(already_held)
-      |> MapSet.new(fn {_ep, path, _size} -> path end)
+      |> Enum.group_by(fn {_ep, path, _size} -> path end, fn {ep, _path, _size} -> ep end)
+      |> Enum.filter(fn {path, claiming} -> fully_held?(path, claiming) end)
+      |> MapSet.new(fn {path, _claiming} -> path end)
 
     case Enum.split_with(unmatched, &MapSet.member?(claimed, &1)) do
       {[], ^unmatched} -> {to_import, unmatched}
       {dropped, kept} -> {to_import, log_already_held(dropped, kept)}
     end
+  end
+
+  # Every episode the file NAMES has to be one we hold, not just one of them. An `S01E08E09` where
+  # E08 is in the library and E09 is still wanted is E09's only candidate — dropping it discards
+  # that file with the download (`move_on_import`) and burns a bounded re-search. Counted rather
+  # than compared number-by-number, because a claim can come through a bridged/scene arm whose
+  # episode_number deliberately differs from the parsed one; `single_arm_claims/1` has already
+  # guaranteed one arm per path, so the counts are commensurable.
+  defp fully_held?(path, claiming) do
+    named = Parser.parse(Path.basename(path)).episodes || []
+
+    length(Enum.uniq_by(claiming, & &1.id)) >= length(named)
   end
 
   defp log_already_held(dropped, kept) do
