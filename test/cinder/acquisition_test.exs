@@ -698,6 +698,31 @@ defmodule Cinder.AcquisitionTest do
                Acquisition.best_releases(series(tvdb_id: nil, title: "24"), 1, [5])
     end
 
+    test "a year-conflicting same-name release is rejected even on the id-scoped path" do
+      # search_tv/3 unions in a free-text title query (so scraper indexers contribute),
+      # which can surface a same-named different show: "Charmed (2018)" packs for the
+      # year-1998 series. A conflicting year token rejects; a matching, ±1, or absent
+      # year passes.
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn 123, "Charmed", 1 ->
+        {:ok,
+         [
+           raw_tv("Charmed.2018.S01E01.1080p.WEB-DL-GRP"),
+           raw_tv("Charmed.1998.S01E01.1080p.WEB-DL-GRP"),
+           raw_tv("Charmed.S01E02.1080p.WEB-DL-GRP"),
+           raw_tv("Charmed.1997.S01E03.1080p.WEB-DL-GRP")
+         ]}
+      end)
+
+      assert {:ok, chosen} =
+               Acquisition.best_releases(series(title: "Charmed", year: 1998), 1, [1, 2, 3])
+
+      assert chosen |> Enum.map(fn {r, _cov} -> r.title end) |> Enum.sort() == [
+               "Charmed.1997.S01E03.1080p.WEB-DL-GRP",
+               "Charmed.1998.S01E01.1080p.WEB-DL-GRP",
+               "Charmed.S01E02.1080p.WEB-DL-GRP"
+             ]
+    end
+
     test "a franchise-prefixed release name still matches (series '1883' in 'Yellowstone.1883')" do
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
         {:ok, [raw_tv("Yellowstone.1883.S01E01.1080p.WEB-DL-GRP")]}
