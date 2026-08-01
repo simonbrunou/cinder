@@ -291,14 +291,12 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       end
     end
 
-    # The divisor has to be what the RELEASE carries, not what the sweep asked about. With a season
-    # longer than the batch those differ: Scorer.coverage/2 intersects the pack with the 10 episodes
-    # this pass examined, so dividing by that inflates the pack's per-episode size and it reads as
-    # an upgrade — grabbed, declined per-file at import, re-grabbed every sweep forever.
-    test "a season longer than the batch still divides by the whole season", ctx do
-      put_env(UpgradeHunter, enabled: true, batch: 10)
-
-      for n <- 2..22 do
+    # The divisor has to be what the RELEASE carries, not what the sweep asked about. Only the ten
+    # episodes we hold are asked about, so Scorer.coverage/2 intersects the pack down to ten;
+    # dividing by that inflates the pack's per-episode size and it reads as an upgrade — grabbed,
+    # declined per-file at import, re-grabbed every sweep forever.
+    test "a partially imported season still divides by the whole season", ctx do
+      for n <- 2..10 do
         episode_fixture(ctx.season, %{
           episode_number: n,
           file_path: "/lib/Show/S01E#{n}.mkv",
@@ -307,9 +305,12 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
         })
       end
 
+      # The rest of the season is still missing: 22 episodes exist, 10 have files.
+      for n <- 11..22, do: episode_fixture(ctx.season, %{episode_number: n})
+
       stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", 1 ->
         # 22 GB over the real 22-episode season = 1 GB/episode: a tie, not an upgrade. Divided by
-        # the 10 the batch happened to ask about it would look like 2.2 GB/episode.
+        # the 10 we hold it would look like 2.2 GB/episode.
         {:ok, [release("Show.S01.720p.WEBDL-GRP", %{size: 22_000_000_000})]}
       end)
 
@@ -320,15 +321,22 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       refute_grabbed()
     end
 
-    test "a genuinely better season pack is still grabbed", ctx do
-      for n <- 2..10 do
-        episode_fixture(ctx.season, %{
-          episode_number: n,
-          file_path: "/lib/Show/S01E#{n}.mkv",
-          imported_resolution: "720p",
-          imported_size: 1_000_000_000
-        })
-      end
+    test "a genuinely better season pack is still grabbed, linking every episode it covers",
+         ctx do
+      # batch: 1 so the season arrives as a slice and hunt_season/1's widening is what puts the
+      # other nine episodes in the ask — with the default batch of 10 the season fits in one batch
+      # and this would pass with the widening reverted.
+      put_env(UpgradeHunter, enabled: true, batch: 1)
+
+      imported =
+        for n <- 2..10 do
+          episode_fixture(ctx.season, %{
+            episode_number: n,
+            file_path: "/lib/Show/S01E#{n}.mkv",
+            imported_resolution: "720p",
+            imported_size: 1_000_000_000
+          })
+        end
 
       stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", 1 ->
         {:ok, [release("Show.S01.1080p.BluRay-GRP", %{size: 30_000_000_000})]}
@@ -338,7 +346,179 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
 
       poll()
 
+      # Every episode the pack covers is linked, so no delivered file arrives unclaimed at import
+      # and the grab can close without an operator residual decision (#247).
+      grab_ids = for ep <- [ctx.episode | imported], do: Repo.get!(Episode, ep.id).grab_id
+      assert Enum.all?(grab_ids, &is_integer/1)
+      assert Enum.uniq(grab_ids) == [hd(grab_ids)]
+    end
+
+    # A pack that improves only part of the season is left alone: linking just the improved
+    # episodes strands the rest of its files in operator holds, and linking them all would replace
+    # good files with worse ones (an upgrade grab imports by forced replace).
+    test "skips a pack that does not improve every episode it covers", ctx do
+      # E01 is 720p (upgradable); the rest of the season is already 1080p at a bigger size.
+      kept =
+        for n <- 2..10 do
+          episode_fixture(ctx.season, %{
+            episode_number: n,
+            file_path: "/lib/Show/S01E#{n}.mkv",
+            imported_resolution: "1080p",
+            imported_source: "BLURAY",
+            imported_size: 4_000_000_000
+          })
+        end
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", 1 ->
+        # 1080p WEB-DL at 2 GB/episode: better than E01's 720p, worse than the other nine.
+        {:ok, [release("Show.S01.1080p.WEBDL-GRP", %{size: 20_000_000_000})]}
+      end)
+
+      watch_grabs()
+
+      poll()
+
+      refute_grabbed()
+
+      for ep <- [ctx.episode | kept] do
+        assert Repo.get!(Episode, ep.id).grab_id == nil
+      end
+    end
+
+    # Same hold, other cause: a pack for a season we only partly hold delivers files for the
+    # episodes we don't (missing, unmonitored, already grabbing) and nothing can claim them (#247).
+    test "skips a better pack when part of the season is not ours to claim", ctx do
+      for n <- 2..9 do
+        episode_fixture(ctx.season, %{
+          episode_number: n,
+          file_path: "/lib/Show/S01E#{n}.mkv",
+          imported_resolution: "720p",
+          imported_size: 1_000_000_000
+        })
+      end
+
+      # E10 exists and airs in the pack, but has no file of ours to link it to.
+      episode_fixture(ctx.season, %{episode_number: 10})
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", 1 ->
+        # A real upgrade for all nine we hold — still declined: its tenth file has no claimant.
+        {:ok, [release("Show.S01.1080p.BluRay-GRP", %{size: 30_000_000_000})]}
+      end)
+
+      watch_grabs()
+
+      poll()
+
+      refute_grabbed()
+      assert Repo.get!(Episode, ctx.episode.id).grab_id == nil
+    end
+
+    # Declining the unclaimable pack must not take the season's other offers down with it: the
+    # greedy cover hands the whole wanted set to the pack and never scores the singles behind it,
+    # so the claim rule has to filter candidates BEFORE selection (`full_claim_only`). Judging the
+    # winner afterwards left the season permanently unupgradable — same pool, same decline, every
+    # pass.
+    test "still takes the per-episode release the unclaimable pack was hiding", ctx do
+      for n <- 2..9 do
+        episode_fixture(ctx.season, %{
+          episode_number: n,
+          file_path: "/lib/Show/S01E#{n}.mkv",
+          imported_resolution: "720p",
+          imported_size: 1_000_000_000
+        })
+      end
+
+      # E10 airs in the pack but we hold no file for it, so the pack is unclaimable.
+      episode_fixture(ctx.season, %{episode_number: 10})
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", 1 ->
+        {:ok,
+         [
+           release("Show.S01.1080p.BluRay-GRP", %{size: 30_000_000_000}),
+           release("Show.S01E01.1080p.BluRay-GRP", %{size: 4_000_000_000})
+         ]}
+      end)
+
+      test_pid = self()
+
+      stub(Cinder.Download.ClientMock, :add, fn rel, _opts ->
+        send(test_pid, {:grabbed, rel.title})
+        {:ok, "single-upgrade"}
+      end)
+
+      poll()
+
+      assert_received {:grabbed, "Show.S01E01.1080p.BluRay-GRP"}
       assert Repo.get!(Episode, ctx.episode.id).grab_id
+    end
+
+    # Same rule one round later: the cover's second pick must not be handed a truncated assignment
+    # either, or the release delivers a file for an episode the earlier pick already owns and it
+    # arrives at import unclaimed.
+    test "does not grab a release an earlier pick truncated", ctx do
+      for n <- 2..3 do
+        episode_fixture(ctx.season, %{
+          episode_number: n,
+          file_path: "/lib/Show/S01E#{n}.mkv",
+          imported_resolution: "720p",
+          imported_size: 1_000_000_000
+        })
+      end
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", 1 ->
+        {:ok,
+         [
+           release("Show.S01E01E02.1080p.BluRay-GRP", %{size: 8_000_000_000}),
+           release("Show.S01E02E03.1080p.BluRay-GRP", %{size: 8_000_000_000})
+         ]}
+      end)
+
+      test_pid = self()
+
+      stub(Cinder.Download.ClientMock, :add, fn rel, _opts ->
+        send(test_pid, {:grabbed, rel.title})
+        {:ok, "pair-upgrade"}
+      end)
+
+      poll()
+
+      assert_received {:grabbed, "Show.S01E01E02.1080p.BluRay-GRP"}
+      refute_received {:grabbed, "Show.S01E02E03.1080p.BluRay-GRP"}
+
+      # E03 keeps waiting rather than being served by a release that also delivers E02.
+      [_e1, _e2, e3] = Repo.all(from e in Episode, order_by: e.episode_number)
+      assert e3.grab_id == nil
+    end
+
+    # The batch is a slice of the library, not of a season, so the season arrives partial. Both
+    # held episodes must still be asked about and linked, or the pack's file for the one left out
+    # lands unclaimed at import as a residual hold (#247).
+    test "widens a batch-sliced season back to every episode it holds", ctx do
+      put_env(UpgradeHunter, enabled: true, batch: 1)
+
+      second =
+        episode_fixture(ctx.season, %{
+          episode_number: 2,
+          file_path: "/lib/Show/S01E02.mkv",
+          imported_resolution: "720p",
+          imported_size: 1_000_000_000
+        })
+
+      test_pid = self()
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", 1 ->
+        send(test_pid, :searched)
+        {:ok, [release("Show.S01.1080p.BluRay-GRP", %{size: 8_000_000_000})]}
+      end)
+
+      stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "pack-upgrade"} end)
+
+      poll()
+
+      assert_received :searched
+      assert Repo.get!(Episode, ctx.episode.id).grab_id
+      assert Repo.get!(Episode, second.id).grab_id == Repo.get!(Episode, ctx.episode.id).grab_id
+      assert %DateTime{} = Repo.get!(Episode, second.id).upgrade_checked_at
     end
 
     test "skips an anime-profile series", ctx do

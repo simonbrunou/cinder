@@ -215,6 +215,60 @@ defmodule Cinder.Acquisition.ScorerTest do
       assert chosen |> Enum.map(fn {_r, cov} -> cov end) |> Enum.sort() == [[1], [2]]
     end
 
+    # full_claim_only is the upgrade sweep's rule: it can only take a release whose every file it
+    # can link to an episode it holds. It must filter candidates, not judge the winner — the cover
+    # is greedy, so a pack takes the whole wanted set and the singles behind it are never scored.
+    test "full_claim_only drops a pack carrying more than the want, falling back to singles" do
+      releases = [
+        release(season: 1, episodes: nil, resolution: "1080p", size: 6 * @gb),
+        release(season: 1, episodes: [1], resolution: "1080p", size: 2 * @gb)
+      ]
+
+      # 10 episodes in the season, 2 wanted: the pack carries 8 files nothing can claim.
+      assert {:ok, [{%Release{episodes: [1]}, [1]}]} =
+               Scorer.select_for(releases, 1, [1, 2],
+                 full_claim_only: true,
+                 pack_episode_count: 10
+               )
+
+      # Same pack, same call, once the want IS the whole season.
+      assert {:ok, [{%Release{episodes: nil}, [1, 2]}]} =
+               Scorer.select_for(releases, 1, [1, 2],
+                 full_claim_only: true,
+                 pack_episode_count: 2
+               )
+    end
+
+    # The rule has to be re-checked against the SHRINKING needed set: an up-front filter passes a
+    # release that overlaps a later pick, and the cover then truncates its assignment — which is
+    # the unclaimed-file case all over again.
+    test "full_claim_only drops a release an earlier pick would truncate" do
+      releases = [
+        release(season: 1, episodes: [1, 2], resolution: "1080p", size: 4 * @gb),
+        release(season: 1, episodes: [2, 3], resolution: "1080p", size: 4 * @gb)
+      ]
+
+      assert {:ok, [{%Release{episodes: [1, 2]}, [1, 2]}]} =
+               Scorer.select_for(releases, 1, [1, 2, 3],
+                 full_claim_only: true,
+                 pack_episode_count: 3
+               )
+
+      # Off, the second release is still taken for the one episode left of it.
+      assert {:ok, [_first, {%Release{episodes: [2, 3]}, [3]}]} =
+               Scorer.select_for(releases, 1, [1, 2, 3])
+    end
+
+    test "full_claim_only drops a multi-episode release naming an episode outside the want" do
+      releases = [release(season: 1, episodes: [1, 2], resolution: "1080p", size: 4 * @gb)]
+
+      assert :no_match =
+               Scorer.select_for(releases, 1, [1], full_claim_only: true, pack_episode_count: 10)
+
+      # Off (every other caller), the same release still covers what it can.
+      assert {:ok, [{%Release{episodes: [1, 2]}, [1]}]} = Scorer.select_for(releases, 1, [1])
+    end
+
     test "a range and a single greedily cover a multi-episode want with disjoint coverage" do
       releases = [
         release(season: 1, episodes: [1, 2, 3], resolution: "1080p", size: 6 * @gb),

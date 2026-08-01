@@ -64,9 +64,11 @@ defmodule Cinder.Catalog.Grabs do
   Grabs a user-chosen `release` for one `season_number` of `series`. Recomputes the season's
   manually searchable episodes server-side (don't trust a stale panel snapshot) and creates the
   grab over exactly the missing or available episodes the release covers (`episodes: nil` = a
-  whole-season pack covers them all). `create_grab/5` itself skips any episode that already has a
-  grab, so a concurrent sweep grab can't be double-linked. `{:error, :nothing_wanted}` when the
-  season has nothing to grab.
+  whole-season pack covers them all). `create_grab/5` never links an episode that already has a
+  grab, and rolls the whole thing back if any of them was taken meanwhile, so a concurrent sweep
+  grab can't be double-linked; `Download.reconcile_episodes/1` flattens that rollback to
+  `{:error, :no_episodes_linked}` on this path. `{:error, :nothing_wanted}` when the season has
+  nothing to grab.
   """
   def manual_grab_tv(%Series{} = series, season_number, %Release{} = release) do
     case Cinder.Catalog.media_profile_summary(series).effective do
@@ -159,8 +161,9 @@ defmodule Cinder.Catalog.Grabs do
 
   # Grabs the release (a client.add side-effect returning a download_id), then links the grab over
   # `episode_ids`. If create_grab/5 rolls back — a concurrent sweep grabbed the episodes first
-  # (:no_episodes_linked) or the insert failed — best-effort remove the just-added download so it
-  # isn't orphaned in the client, then surface the error.
+  # (:no_episodes_linked, or :episode_ownership_changed for some of them) or the insert failed —
+  # best-effort remove the just-added download so it isn't orphaned in the client, then surface the
+  # error.
   defp grab_and_create_grab(%Release{} = release, episode_ids) do
     Download.grab_episodes(release, episode_ids, operator_initiated: true)
   end
@@ -361,6 +364,10 @@ defmodule Cinder.Catalog.Grabs do
     end
   end
 
+  # No episodes to link is a rollback, not a vacuous success — `linked == length(episode_ids)`
+  # below is satisfied by 0 == 0, and would leave an orphan grab owning nothing.
+  defp link_grab_episodes(_grab, [], _opts), do: Repo.rollback(:no_episodes_linked)
+
   defp link_grab_episodes(grab, episode_ids, opts) do
     # reset_attempts: the manual-grab path zeroes search_attempts (mirroring manual_grab_movie),
     # giving the user-chosen release a fresh budget — and keeping the counter from ever exceeding
@@ -381,10 +388,18 @@ defmodule Cinder.Catalog.Grabs do
         set: [grab_id: grab.id, updated_at: Cinder.Catalog.now()] ++ reset
       )
 
-    # Every requested episode was already grabbed (or a missing episode was unmonitored meanwhile):
-    # roll back so we don't leave an orphan grab.
-    if linked == 0, do: Repo.rollback(:no_episodes_linked), else: grab
+    # All or nothing, as `create_grab_from_intent/1` already does for the anime path. A partial link
+    # used to be tolerated, and it silently manufactured operator work: the release still downloads
+    # in full, so every episode that slipped away between the search and this write arrives at
+    # import with no owner and becomes an undecided `grab_file` — a residual hold keeping the grab
+    # open (#247). Rolling back gets the just-added download removed
+    # (`Download.cleanup_failed_ownership/2`) and the next sweep re-searches for what is still
+    # wanted.
+    if linked == length(episode_ids), do: grab, else: Repo.rollback(link_failure(linked))
   end
+
+  defp link_failure(0), do: :no_episodes_linked
+  defp link_failure(_partial), do: :episode_ownership_changed
 
   @doc """
   Marks a grab downloaded (records `content_path`, the at-rest path to import) and broadcasts.
