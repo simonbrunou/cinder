@@ -1053,21 +1053,28 @@ defmodule Cinder.Library do
     end)
   end
 
+  # `keeps` (held path => its noop stage) is threaded across every group on purpose: two episodes
+  # sharing one `file_path` can decline in one group (a combined incoming file) or in two (the
+  # pack ships them separately), and `import_stages.dest` is globally unique either way.
   defp stage_all(to_import, root, target, folder?, collision) do
     to_import
     |> Enum.group_by(fn {_ep, source} -> source end, fn {ep, _source} -> ep end)
-    |> Enum.reduce_while({:ok, []}, fn {source, episodes}, {:ok, acc} ->
+    |> Enum.reduce_while({:ok, [], %{}}, fn {source, episodes}, {:ok, acc, keeps} ->
       episodes = Enum.sort_by(episodes, & &1.episode_number)
 
-      case stage_group(episodes, source, root, target, folder?, collision) do
-        {:ok, imported} ->
-          {:cont, {:ok, Enum.reverse(imported, acc)}}
+      case stage_group(episodes, source, root, target, folder?, collision, keeps) do
+        {:ok, imported, keeps} ->
+          {:cont, {:ok, Enum.reverse(imported, acc), keeps}}
 
         {:error, _} = error ->
           acc |> Enum.map(&elem(&1, 1)) |> Enum.uniq_by(& &1.dest) |> Enum.each(&rollback_stage/1)
           {:halt, error}
       end
     end)
+    |> case do
+      {:ok, imported, _keeps} -> {:ok, imported}
+      {:error, _reason} = error -> error
+    end
   end
 
   # A staged file is indivisible — one source can cover several episodes (an S01E01E02 file), and
@@ -1076,13 +1083,13 @@ defmodule Cinder.Library do
   # the gate would consult only the group's first episode, and a decline would re-point every row
   # in the group at that one episode's file — leaving the others' files unreferenced for
   # `remove_superseded_episode_files/1` to delete.
-  defp stage_group(episodes, source, root, target, folder?, :arbitrate) do
+  defp stage_group(episodes, source, root, target, folder?, :arbitrate, keeps) do
     case arbitration_quality(source) do
       {:ok, new_q} ->
         if Enum.all?(episodes, &ep_upgrade?(&1, new_q, target)) do
-          stage_group(episodes, source, root, target, folder?, :adopt)
+          stage_group(episodes, source, root, target, folder?, :adopt, keeps)
         else
-          keep_held_files(episodes, source, root)
+          keep_held_files(episodes, source, root, keeps)
         end
 
       {:error, _reason} = error ->
@@ -1090,9 +1097,9 @@ defmodule Cinder.Library do
     end
   end
 
-  defp stage_group(episodes, source, root, target, folder?, collision) do
+  defp stage_group(episodes, source, root, target, folder?, collision, keeps) do
     case stage_episode_file(episodes, source, root, target, folder?, %{}, collision) do
-      {:ok, stage} -> {:ok, Enum.map(episodes, &{&1.id, stage})}
+      {:ok, stage} -> {:ok, Enum.map(episodes, &{&1.id, stage}), keeps}
       {:error, _reason} = error -> error
     end
   end
@@ -1111,37 +1118,46 @@ defmodule Cinder.Library do
   # `commit_grab_imports/4` would bump it as missing. An episode in the group holding nothing gets
   # nothing: the file is one unit and we just declined it, so that episode stays wanted and
   # re-searches.
-  defp keep_held_files(episodes, source, root) do
+  # One stage per distinct HELD PATH across the whole import, never one per episode:
+  # `import_stages.dest` is globally unique and two episodes legitimately share a `file_path` —
+  # that is exactly what a previously imported double-episode file leaves behind. A stage each
+  # would collide on the second insert, fail the whole grab, and leave the first one's `:prepared`
+  # row holding that dest until its handoff deadline, so retries inside that window would fail
+  # identically. The stage fans back out to every episode on that path, as `stage_group/7` already
+  # does for placements.
+  defp keep_held_files(episodes, source, root, keeps) do
     held = Enum.filter(episodes, &(&1.file_path not in [nil, ""]))
 
-    # One stage per distinct HELD PATH, not per episode: `import_stages.dest` is globally unique
-    # and two episodes legitimately share a `file_path` — that is exactly what a previously
-    # imported double-episode file leaves behind. A stage each would collide on the second insert,
-    # fail the whole grab, and leave the first one's `:prepared` row holding that dest until its
-    # handoff deadline, so the retries inside that window would fail identically. The shared stage
-    # fans back out to every episode on that path, as `stage_group/6` already does for placements.
     held
     |> Enum.uniq_by(& &1.file_path)
-    |> Enum.reduce_while({:ok, []}, fn ep, {:ok, acc} ->
-      case keep_held_file(ep, source, root) do
-        {:ok, stage} ->
-          {:cont, {:ok, for(e <- held, e.file_path == ep.file_path, do: {e.id, stage}) ++ acc}}
-
-        {:error, _reason} = error ->
-          # Release the dests this group already claimed, or the retry collides with itself.
-          acc |> Enum.map(&elem(&1, 1)) |> Enum.uniq_by(& &1.dest) |> Enum.each(&rollback_stage/1)
-          {:halt, error}
-      end
-    end)
+    |> Enum.reduce_while({:ok, [], keeps}, &keep_held_file(&1, &2, held, source, root))
   end
 
-  # `placed?` survives here (the other stage builders strip it): it is what tells
-  # `commit_grab_imports/4` this episode's file did not change, so its part files must be carried
-  # through rather than cleared.
-  defp keep_held_file(ep, source, root) do
-    decline = fn _new_quality -> false end
+  defp keep_held_file(ep, {:ok, acc, keeps}, held, source, root) do
+    case keep_stage(ep, source, root, keeps) do
+      {:ok, stage} ->
+        rows = for e <- held, e.file_path == ep.file_path, do: {e.id, stage}
+        {:cont, {:ok, rows ++ acc, Map.put(keeps, ep.file_path, stage)}}
 
-    stage_episode_file_at([ep], source, root, false, %{}, ep.file_path, :adopt, decline)
+      {:error, _reason} = error ->
+        # Release the dests this group already claimed, or the retry collides with itself.
+        acc |> Enum.map(&elem(&1, 1)) |> Enum.uniq_by(& &1.dest) |> Enum.each(&rollback_stage/1)
+        {:halt, error}
+    end
+  end
+
+  # `placed?` survives on these stages (the other builders strip it): it is what tells
+  # `commit_grab_imports/4` the episode's file did not change, so its part files must be carried
+  # through rather than cleared.
+  defp keep_stage(ep, source, root, keeps) do
+    case Map.fetch(keeps, ep.file_path) do
+      {:ok, stage} ->
+        {:ok, stage}
+
+      :error ->
+        decline = fn _new_quality -> false end
+        stage_episode_file_at([ep], source, root, false, %{}, ep.file_path, :adopt, decline)
+    end
   end
 
   defp stage_anime_all(to_import, root, target, folder?, reports) do

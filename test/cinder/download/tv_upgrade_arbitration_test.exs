@@ -125,50 +125,57 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
     assert Catalog.count_operator_holds() == 0
   end
 
-  @tag :tmp_dir
-  test "a decline for two episodes sharing one held file stages that file once", %{tmp_dir: tmp} do
-    %{downloads: downloads, tv: tv} = real_tv_library(tmp)
+  # `import_stages.dest` is globally unique and two episodes legitimately share one `file_path` —
+  # what a previously imported double-episode file leaves behind. A stage each would collide. The
+  # two cases differ by whether the decline happens in one staging group or two.
+  for {label, incoming} <- [
+        {"one combined incoming file", ["Show.S01E07E08.720p.WEB-DL.mkv"]},
+        {"two separate incoming files",
+         ["Show.S01E07.720p.WEB-DL.mkv", "Show.S01E08.720p.WEB-DL.mkv"]}
+      ] do
+    @tag :tmp_dir
+    @incoming incoming
+    test "a decline against one shared held file stages it once (#{label})", %{tmp_dir: tmp} do
+      %{downloads: downloads, tv: tv} = real_tv_library(tmp)
 
-    release_dir = Path.join(downloads, "Show.S01E07E08.720p.WEB-DL-GRP")
-    File.mkdir_p!(release_dir)
-    File.write!(Path.join(release_dir, "Show.S01E07E08.720p.WEB-DL.mkv"), "incoming")
+      release_dir = Path.join(downloads, "Show.S01.720p.WEB-DL-GRP")
+      File.mkdir_p!(release_dir)
+      Enum.each(@incoming, &File.write!(Path.join(release_dir, &1), "incoming"))
 
-    library = Path.join([tv, "Show (2008) {tmdb-4244}", "Season 01"])
-    File.mkdir_p!(library)
+      library = Path.join([tv, "Show (2008) {tmdb-4244}", "Season 01"])
+      File.mkdir_p!(library)
 
-    series = series_fixture(%{tmdb_id: 4244, title: "Show", year: 2008, monitor_strategy: :all})
-    season = season_fixture(series)
+      series = series_fixture(%{tmdb_id: 4244, title: "Show", year: 2008, monitor_strategy: :all})
+      season = season_fixture(series)
 
-    # Both episodes already share ONE file — what a previously imported double-episode file
-    # leaves behind. `import_stages.dest` is globally unique, so a stage each would collide.
-    held = Path.join(library, "Show (2008) {tmdb-4244} - S01E07-E08.mkv")
-    File.write!(held, "held-both")
+      held = Path.join(library, "Show (2008) {tmdb-4244} - S01E07-E08.mkv")
+      File.write!(held, "held-both")
 
-    episodes =
+      episodes =
+        for number <- [7, 8] do
+          episode_fixture(season, %{
+            episode_number: number,
+            file_path: held,
+            imported_resolution: "1080p",
+            imported_source: "BLURAY",
+            imported_size: 9_000_000_000
+          })
+        end
+
+      {:ok, grab} = arbitrated_grab(episodes, release_dir)
+
+      start_supervised!({TvPoller, interval: 60_000})
+      assert :ok = TvPoller.poll()
+
       for number <- [7, 8] do
-        episode_fixture(season, %{
-          episode_number: number,
-          file_path: held,
-          imported_resolution: "1080p",
-          imported_source: "BLURAY",
-          imported_size: 9_000_000_000
-        })
+        assert reload(episodes, number).file_path == held
       end
 
-    {:ok, grab} = arbitrated_grab(episodes, release_dir)
-
-    start_supervised!({TvPoller, interval: 60_000})
-    assert :ok = TvPoller.poll()
-
-    for number <- [7, 8] do
-      episode = reload(episodes, number)
-      assert episode.file_path == held
+      assert File.read!(held) == "held-both"
+      # Imported, not parked: a dest collision would have failed the grab and retried it.
+      refute Repo.get(Grab, grab.id)
+      assert Catalog.count_operator_holds() == 0
     end
-
-    assert File.read!(held) == "held-both"
-    # Imported, not parked: a collision here would have failed the grab and retried it.
-    refute Repo.get(Grab, grab.id)
-    assert Catalog.count_operator_holds() == 0
   end
 
   # E01/E03 are 480p and the pack beats them; E02/E04 are 1080p BluRay at 9 GB and it does not.
