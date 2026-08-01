@@ -185,7 +185,8 @@ defmodule Cinder.Catalog.UpgradeHunter do
            opts
          ) do
       {:ok, assignments} ->
-        Enum.each(assignments, &maybe_grab_episodes(&1, episodes, target))
+        season_size = max(Catalog.count_episodes(series.id, season_number), 1)
+        Enum.each(assignments, &maybe_grab_episodes(&1, episodes, target, season_size))
 
       _no_match_or_error ->
         :ok
@@ -195,16 +196,12 @@ defmodule Cinder.Catalog.UpgradeHunter do
   # An assignment covers a set of episode NUMBERS; only upgrade the ones this release actually
   # improves, so a season pack that beats two of five episodes doesn't drag the other three
   # through a pointless replace.
-  defp maybe_grab_episodes({release, covered_numbers}, episodes, target) do
-    # `covers` scales the pack's size down to per-episode before the comparison — without it every
-    # same-resolution season pack outranks a single imported file on size and re-downloads forever.
-    covers = max(length(covered_numbers), 1)
-
+  defp maybe_grab_episodes({release, covered_numbers}, episodes, target, season_size) do
     upgradable =
       Enum.filter(
         episodes,
         &(&1.episode_number in covered_numbers and
-            Upgrade.candidate?(&1, release, :tv, target, covers))
+            Upgrade.candidate?(&1, release, :tv, target, carries(release, season_size)))
       )
 
     cond do
@@ -220,6 +217,15 @@ defmodule Cinder.Catalog.UpgradeHunter do
         grab_episode_upgrade(release, Enum.map(upgradable, & &1.id))
     end
   end
+
+  # How many episodes the release actually CARRIES — the divisor that scales a pack's size down to
+  # per-episode before it is compared against one imported file. Deliberately NOT the assignment's
+  # covered numbers: `Scorer.coverage/2` intersects the release with what this sweep asked about,
+  # so a 22-episode pack examined via a 10-item batch would report 10 (or 1), inflate its
+  # per-episode size, and read as an upgrade again — the forever-re-download loop. A whole-season
+  # pack (`episodes: nil`) carries the season.
+  defp carries(%{episodes: [_ | _] = episodes}, _season_size), do: length(episodes)
+  defp carries(_release, season_size), do: season_size
 
   # operator_initiated: true is what lets the intent target episodes that already have a file —
   # the same flag the manual season search uses (`Cinder.Catalog.Grabs`).

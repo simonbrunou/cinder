@@ -40,6 +40,33 @@ defmodule Cinder.Download.ContentPolicyTest do
                ])
     end
 
+    # Seeing through an ADS suffix must not cost colon-titled releases their extension — reading
+    # "Re:Zero ....mkv" as extension-less would stop it counting as media and blocklist it.
+    test "a colon in the title neither hides a payload nor disqualifies the media" do
+      assert :ok =
+               ContentPolicy.check([
+                 "[SubsPlease] Re:Zero S02E01 (1080p).mkv",
+                 "RARBG_DO_NOT_MIRROR.exe"
+               ])
+
+      assert :ok = ContentPolicy.check(["Movie: The Sequel (2024) 1080p BluRay.mkv", "RARBG.com"])
+
+      assert {:blocked, _} =
+               ContentPolicy.check(["Watch full movie in HD: click here.lnk", "readme.txt"])
+
+      assert {:blocked, _} = ContentPolicy.check(["free movie: setup.exe", "info.nfo"])
+    end
+
+    test "passes a VIDEO_TS DVD rip, whose only content type is .vob/.ifo" do
+      assert :ok =
+               ContentPolicy.check([
+                 "VIDEO_TS/VTS_01_1.VOB",
+                 "VIDEO_TS/VIDEO_TS.IFO",
+                 "VIDEO_TS/VIDEO_TS.BUP",
+                 "RARBG.com"
+               ])
+    end
+
     test "passes an archive-packed release carrying a blocked companion" do
       assert :ok =
                ContentPolicy.check([

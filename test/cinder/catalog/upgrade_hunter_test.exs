@@ -61,6 +61,22 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
     )
   end
 
+  # Every "nothing was grabbed" assertion has to go through this pair rather than leaving `add`
+  # unstubbed (or stubbing it with `flunk`). The sweep wraps each unit in `isolate/2`, which
+  # swallows ANY raise — so a test that relies on an unstubbed mock blowing up passes whether the
+  # sweep declined the release or grabbed it and crashed. A succeeding stub that reports itself is
+  # the only way to tell those apart.
+  defp watch_grabs do
+    test_pid = self()
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+      send(test_pid, :grab_attempted)
+      {:ok, "unexpected-#{System.unique_integer([:positive])}"}
+    end)
+  end
+
+  defp refute_grabbed, do: refute_received(:grab_attempted)
+
   describe "movies" do
     test "grabs a better release and moves the movie to :upgrading, live file intact" do
       movie = library_movie()
@@ -78,6 +94,7 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
 
     test "leaves the movie alone when nothing on offer beats the file it has" do
       movie = library_movie()
+      watch_grabs()
       # Same resolution, smaller — a sideways move at best.
       indexer_offers("tt1375666", [
         release("Inception.2010.720p.WEBDL-GRP", %{size: 2_000_000_000})
@@ -85,6 +102,7 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
 
       poll()
 
+      refute_grabbed()
       assert %Movie{status: :available, download_id: nil} = Repo.get!(Movie, movie.id)
     end
 
@@ -144,8 +162,12 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       requested = movie_fixture(%{tmdb_id: 201, status: :requested})
       downloading = movie_fixture(%{tmdb_id: 202, status: :downloading, download_id: "x"})
 
+      watch_grabs()
+
       # No indexer stub: neither may be searched.
       poll()
+
+      refute_grabbed()
 
       assert Repo.get!(Movie, requested.id).status == :requested
       assert Repo.get!(Movie, downloading.id).status == :downloading
@@ -153,9 +175,12 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
 
     test "an indexer failure leaves the movie alone but still counts as checked" do
       movie = library_movie()
+      watch_grabs()
       stub(Cinder.Acquisition.IndexerMock, :search, fn _ -> {:error, :timeout} end)
 
       poll()
+
+      refute_grabbed()
 
       assert %Movie{status: :available} = Repo.get!(Movie, movie.id)
       assert %DateTime{} = Repo.get!(Movie, movie.id).upgrade_checked_at
@@ -164,9 +189,12 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
     test "does nothing at all when disabled" do
       put_env(UpgradeHunter, enabled: false)
       movie = library_movie()
+      watch_grabs()
 
       # No indexer stub: a disabled hunter must not search.
       poll()
+
+      refute_grabbed()
 
       assert Repo.get!(Movie, movie.id).upgrade_checked_at == nil
     end
@@ -204,12 +232,15 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
     end
 
     test "leaves an episode alone when the offer is not better", ctx do
+      watch_grabs()
+
       stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", 1 ->
         {:ok, [release("Show.S01E01.720p.WEBDL-GRP", %{size: 500_000_000})]}
       end)
 
       poll()
 
+      refute_grabbed()
       assert Repo.get!(Episode, ctx.episode.id).grab_id == nil
     end
 
@@ -229,15 +260,56 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
     # Without per-episode size scaling, a season pack's whole size beats one imported file on
     # better?/5's size tiebreak, so EVERY same-resolution pack reads as an upgrade — it downloads,
     # the import declines it per-file, nothing is blocklisted, and it re-downloads every sweep.
-    test "a same-resolution season pack is not an upgrade for one imported episode", ctx do
+    #
+    # The season needs REAL length: with a single episode the divisor is 1, `per_episode/2` is a
+    # no-op, and the test would pass with the fix reverted.
+    test "a same-resolution season pack is not an upgrade for its episodes", ctx do
+      imported =
+        for n <- 2..10 do
+          episode_fixture(ctx.season, %{
+            episode_number: n,
+            file_path: "/lib/Show/S01E#{n}.mkv",
+            imported_resolution: "720p",
+            imported_size: 1_000_000_000
+          })
+        end
+
       stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", 1 ->
-        # 10 GB across a 10-episode season = 1 GB/episode, exactly what is already imported.
+        # 10 GB across the 10-episode season = 1 GB/episode: exactly what is already imported,
+        # so this is a sideways move, not an upgrade.
         {:ok, [release("Show.S01.720p.WEBDL-GRP", %{size: 10_000_000_000})]}
       end)
 
+      watch_grabs()
+
       poll()
 
-      assert Repo.get!(Episode, ctx.episode.id).grab_id == nil
+      refute_grabbed()
+
+      for ep <- [ctx.episode | imported] do
+        assert Repo.get!(Episode, ep.id).grab_id == nil
+      end
+    end
+
+    test "a genuinely better season pack is still grabbed", ctx do
+      for n <- 2..10 do
+        episode_fixture(ctx.season, %{
+          episode_number: n,
+          file_path: "/lib/Show/S01E#{n}.mkv",
+          imported_resolution: "720p",
+          imported_size: 1_000_000_000
+        })
+      end
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", 1 ->
+        {:ok, [release("Show.S01.1080p.BluRay-GRP", %{size: 30_000_000_000})]}
+      end)
+
+      stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "pack-upgrade"} end)
+
+      poll()
+
+      assert Repo.get!(Episode, ctx.episode.id).grab_id
     end
 
     test "skips an anime-profile series", ctx do
@@ -245,9 +317,12 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
         set: [media_profile: :anime]
       )
 
+      watch_grabs()
+
       # No indexer stub: the anime path is not reused here (see the module's Scope section).
       poll()
 
+      refute_grabbed()
       assert Repo.get!(Episode, ctx.episode.id).grab_id == nil
     end
   end

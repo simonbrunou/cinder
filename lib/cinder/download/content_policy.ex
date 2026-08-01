@@ -43,9 +43,12 @@ defmodule Cinder.Download.ContentPolicy do
   # Anything that could plausibly BE the media: playable containers, plus the archive/parity set a
   # release arrives in before unpacking. One of these present means the download has real content
   # and the blocked file is a companion, not the payload.
+  # .vob/.ifo/.bup are a VIDEO_TS DVD rip's ONLY content type — and the trackers still carrying
+  # DVD rips are exactly the ones that ship `.com`/`.exe` filler, so omitting them blocklists a
+  # whole class of legitimate release.
   @default_media_extensions ~w(
     .mkv .mp4 .avi .m4v .mov .wmv .ts .m2ts .mpg .mpeg .webm .flv .ogm .iso .img
-    .rar .zip .7z .par2 .tar .gz .001
+    .vob .ifo .bup .rar .zip .7z .par2 .tar .gz .001
   )
 
   @doc "Whether the content check runs (`config :cinder, #{inspect(__MODULE__)}, enabled: true`)."
@@ -68,30 +71,35 @@ defmodule Cinder.Download.ContentPolicy do
   park/re-queue reason. An empty list (a torrent that has not fetched metadata yet) is `:ok`.
   """
   def check(filenames) when is_list(filenames) do
-    extensions = for name <- filenames, is_binary(name), do: {name, extension(name)}
+    entries = for name <- filenames, is_binary(name), do: {name, extensions(name)}
 
-    with {name, _ext} <- Enum.find(extensions, &(elem(&1, 1) in blocked_extensions())),
-         false <- Enum.any?(extensions, &(elem(&1, 1) in media_extensions())) do
+    with {name, _exts} <- Enum.find(entries, &tagged?(&1, blocked_extensions())),
+         false <- Enum.any?(entries, &tagged?(&1, media_extensions())) do
       {:blocked, detail(name)}
     else
       _has_real_content_or_nothing_blocked -> :ok
     end
   end
 
-  # Normalized, because a bare `Path.extname/1` match is defeated by one appended byte:
-  # `evil.exe.` reads as `"."`, `evil.exe ` as `".exe "`, `evil.exe:$DATA` as `".exe:$DATA"`.
-  # All three still name an executable to the household member who opens the download share —
-  # Windows canonicalization drops trailing dots and spaces, and `f.exe:$DATA` IS `f.exe` (an
-  # alternate data stream) — so the check has to see through them or it is evaded for free.
-  defp extension(name) do
-    name
-    |> Path.basename()
-    # An alternate-data-stream suffix is everything from the first `:`.
-    |> String.split(":", parts: 2)
-    |> hd()
-    |> String.replace(~r/[\s.]+$/u, "")
-    |> Path.extname()
-    |> String.downcase()
+  defp tagged?({_name, exts}, set), do: Enum.any?(exts, &(&1 in set))
+
+  # A bare `Path.extname/1` match is defeated by one appended byte: `evil.exe.` reads as `"."`,
+  # `evil.exe ` as `".exe "`, `evil.exe:$DATA` as `".exe:$DATA"`. All three still name an
+  # executable to the household member who opens the download share (Windows canonicalization
+  # drops trailing dots and spaces, and `f.exe:$DATA` IS `f.exe` — an alternate data stream).
+  #
+  # But stripping at the colon UNCONDITIONALLY is worse than the hole it closes: plenty of real
+  # releases are colon-titled ("[SubsPlease] Re:Zero ... .mkv", "Movie: The Sequel ... .mkv"), and
+  # reading those as extension-less means they aren't recognized as media — so the release gets
+  # blocklisted, which is the false positive this whole rule exists to avoid. Both readings count
+  # instead: a file is blocked if EITHER is blocked, and is media if EITHER is media.
+  defp extensions(name) do
+    base = Path.basename(name)
+    Enum.uniq([normalize(base), base |> String.split(":", parts: 2) |> hd() |> normalize()])
+  end
+
+  defp normalize(value) do
+    value |> String.replace(~r/[\s.]+$/u, "") |> Path.extname() |> String.downcase()
   end
 
   # The name is remote, attacker-chosen and unbounded, and this string is both logged and
