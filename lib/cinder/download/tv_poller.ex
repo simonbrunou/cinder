@@ -236,7 +236,8 @@ defmodule Cinder.Download.TvPoller do
 
   defp import_standard_grab(grab) do
     case Library.stage_episodes(grab.content_path, grab.episodes,
-           arbitrate: grab.arbitrate_at_import
+           arbitrate: grab.arbitrate_at_import,
+           already_held: already_held_episodes(grab)
          ) do
       {:ok, staged, unmatched} ->
         finalize_standard_staging(grab, staged, unmatched)
@@ -255,6 +256,23 @@ defmodule Cinder.Download.TvPoller do
       # unlike the movie poller there is no @permanent_*_errors set to classify here.
       {:error, reason} ->
         retry_or_park(grab, reason)
+    end
+  end
+
+  # This grab's own series, so a pack's files for episodes we already hold are recognised instead
+  # of inventoried as operator decisions (#251). The grab's own episodes are excluded: an upgrade
+  # grab links episodes that DO have a file, and they must stay claimable by the staging pass.
+  defp already_held_episodes(grab) do
+    case grab.episodes do
+      [%{season: %{series_id: series_id}} | _] ->
+        linked = MapSet.new(grab.episodes, & &1.id)
+
+        series_id
+        |> Catalog.list_episodes_with_file()
+        |> Enum.reject(&MapSet.member?(linked, &1.id))
+
+      _no_episodes ->
+        []
     end
   end
 
