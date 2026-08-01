@@ -144,22 +144,27 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
     assert result.published_at == nil
   end
 
-  test "search_tv/3 queries tvsearch by TVDB id + season and normalizes results" do
+  test "search_tv/3 queries tvsearch by TVDB id + title + season and normalizes results" do
     Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
       assert conn.request_path == "/api/v1/search"
-      assert conn.params["query"] == "{TvdbId:1396}{Season:1}"
       assert conn.params["type"] == "tvsearch"
       assert Plug.Conn.get_req_header(conn, "x-api-key") == ["test-key"]
 
-      Req.Test.json(conn, [
-        %{
-          "title" => "Breaking.Bad.S01E01.1080p.BluRay.x264-GRP",
-          "size" => 2_000_000_000,
-          "downloadUrl" => "http://prowlarr:9696/file/1",
-          "seeders" => 30,
-          "protocol" => "torrent"
-        }
-      ])
+      case conn.params["query"] do
+        "{TvdbId:1396}{Season:1}" ->
+          Req.Test.json(conn, [
+            %{
+              "title" => "Breaking.Bad.S01E01.1080p.BluRay.x264-GRP",
+              "size" => 2_000_000_000,
+              "downloadUrl" => "http://prowlarr:9696/file/1",
+              "seeders" => 30,
+              "protocol" => "torrent"
+            }
+          ])
+
+        "Breaking Bad {Season:1}" ->
+          Req.Test.json(conn, [])
+      end
     end)
 
     assert {:ok, [result]} = Prowlarr.search_tv(1396, "Breaking Bad", 1)
@@ -176,9 +181,45 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
            }
   end
 
+  test "search_tv/3 unions the id and title queries, deduped by download_url" do
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      case conn.params["query"] do
+        "{TvdbId:1396}{Season:1}" ->
+          Req.Test.json(conn, [
+            %{"title" => "BB.S01.From.Id", "downloadUrl" => "http://prowlarr:9696/file/1"}
+          ])
+
+        "Breaking Bad {Season:1}" ->
+          Req.Test.json(conn, [
+            %{"title" => "BB.S01.Duplicate", "downloadUrl" => "http://prowlarr:9696/file/1"},
+            %{"title" => "BB.S01.Scraper.Only", "downloadUrl" => "http://prowlarr:9696/file/2"}
+          ])
+      end
+    end)
+
+    assert {:ok, results} = Prowlarr.search_tv(1396, "Breaking Bad", 1)
+    assert Enum.map(results, & &1.title) == ["BB.S01.From.Id", "BB.S01.Scraper.Only"]
+  end
+
+  test "search_tv/3 keeps one side's results when the other query fails" do
+    Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
+      case conn.params["query"] do
+        "{TvdbId:1396}{Season:1}" ->
+          conn |> Plug.Conn.put_status(500) |> Req.Test.json(%{"error" => "boom"})
+
+        "Breaking Bad {Season:1}" ->
+          Req.Test.json(conn, [
+            %{"title" => "BB.S01.Scraper.Only", "downloadUrl" => "http://prowlarr:9696/file/2"}
+          ])
+      end
+    end)
+
+    assert {:ok, [%{title: "BB.S01.Scraper.Only"}]} = Prowlarr.search_tv(1396, "Breaking Bad", 1)
+  end
+
   test "search_tv/3 queries season 0 sanely (a Standard series' explicitly monitored specials)" do
     Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
-      assert conn.params["query"] == "{TvdbId:1396}{Season:0}"
+      assert conn.params["query"] in ["{TvdbId:1396}{Season:0}", "Breaking Bad {Season:0}"]
       assert conn.params["type"] == "tvsearch"
       Req.Test.json(conn, [])
     end)

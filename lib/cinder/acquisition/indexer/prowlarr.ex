@@ -10,9 +10,9 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   falls back to a magnet link when no torrent-file URL is present; `protocol` is
   `:usenet` for Usenet results, `:torrent` otherwise.
 
-  `search_tv/3` is the TV sibling: `type=tvsearch` with a `{TvdbId:...}{Season:...}`
-  token (or a free-text title + `{Season:...}` when no TVDB id), reusing the same
-  normalization.
+  `search_tv/3` is the TV sibling: `type=tvsearch`, unioning a `{TvdbId:...}{Season:...}`
+  token query with a free-text title + `{Season:...}` query (see `search_tv/3` for why
+  the id query alone is not enough), reusing the same normalization.
   """
   @behaviour Cinder.Acquisition.Indexer
 
@@ -28,8 +28,29 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
   end
 
   @impl true
+  def search_tv(nil, title, season) do
+    search_query(tv_query(nil, title, season), "tvsearch", [])
+  end
+
+  # Text-scraper indexers (1337x & co.) return nothing for a {TvdbId:...} token —
+  # Prowlarr does no id→title resolution for them — so the id query alone hides every
+  # release they carry. Union both shapes (id results first, deduped by download_url);
+  # one side failing degrades to the other so a flaky scraper can't sink the search.
   def search_tv(tvdb_id, title, season) do
-    search_query(tv_query(tvdb_id, title, season), "tvsearch", [])
+    case {search_query(tv_query(tvdb_id, title, season), "tvsearch", []),
+          search_query(tv_query(nil, title, season), "tvsearch", [])} do
+      {{:ok, by_id}, {:ok, by_title}} ->
+        {:ok, Enum.uniq_by(by_id ++ by_title, & &1.download_url)}
+
+      {{:ok, by_id}, _error} ->
+        {:ok, by_id}
+
+      {_error, {:ok, by_title}} ->
+        {:ok, by_title}
+
+      {error, _error} ->
+        error
+    end
   end
 
   @impl true
