@@ -208,9 +208,9 @@ defmodule Cinder.Catalog.UpgradeHunter do
         original_language: series.original_language,
         release_blocklist: Catalog.blocked_release_titles_for_series(series.id),
         # Every file we can't link to an episode we hold becomes an operator residual decision at
-        # import (#247), so releases carrying one are dropped from the candidate pool — before the
-        # greedy cover, or an unclaimable season pack would swallow the whole wanted set and hide
-        # the per-episode releases behind it.
+        # import (#247), so a release carrying one scores zero inside the cover and the releases
+        # behind it are picked instead (`Scorer.claimable_coverage/5` — judging the winner after
+        # the fact would throw away the whole season's upgrades).
         full_claim_only: true,
         pack_episode_count: season_size
       ] ++ Acquisition.band_opts(:tv)
