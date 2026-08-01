@@ -70,6 +70,8 @@ defmodule Cinder.Catalog.Movie do
     field :media_profile, Ecto.Enum, values: [:auto, :standard, :anime], default: :auto
     field :anime_hold_reason, :string
     field :failure_reason, :string
+    # Rotation clock for Cinder.Catalog.UpgradeHunter; nil = never checked (sorts first).
+    field :upgrade_checked_at, :utc_datetime
     has_many :title_aliases, TitleAlias
 
     timestamps(type: :utc_datetime)

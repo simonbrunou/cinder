@@ -127,6 +127,10 @@ config :cinder, Cinder.Download.Cleaner, enabled: true
 # Rejects a download whose file list marks it as a fake (a .lnk/.exe payload, not a movie).
 config :cinder, Cinder.Download.ContentPolicy, enabled: true
 
+# Re-searches library items for a better release. OFF by default: it replaces library files, so
+# it is opt-in rather than something an upgrade starts doing to an existing library.
+config :cinder, Cinder.Catalog.UpgradeHunter, enabled: false
+
 # Configure the endpoint
 config :cinder, CinderWeb.Endpoint,
   url: [host: "localhost"],

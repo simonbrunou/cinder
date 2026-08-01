@@ -297,11 +297,9 @@ defmodule Cinder.Library do
     {:ok, old_q, false}
   end
 
-  defp preferred_resolutions(kind),
-    do: Application.get_env(:cinder, :"#{kind}_preferred_resolutions")
-
-  defp preferred_sources(kind),
-    do: Application.get_env(:cinder, :"#{kind}_preferred_sources")
+  # Both reads live in Upgrade, which also ranks against them — one definition, no drift.
+  defp preferred_resolutions(kind), do: Upgrade.preferred_resolutions(kind)
+  defp preferred_sources(kind), do: Upgrade.preferred_sources(kind)
 
   # Atomic replace of an existing dest with source's content: sweep stale temps (a host crash between
   # link/copy and rename can leak one), link-or-copy source -> unique temp in the dest dir, then rename

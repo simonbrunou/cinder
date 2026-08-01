@@ -782,25 +782,7 @@ defmodule Cinder.Download do
            Catalog.transition(movie, %{status: :searching, imdb_id: imdb_id},
              expect: movie.status
            ) do
-      opts =
-        [
-          protocols: available_protocols(),
-          preferred_language: movie.preferred_language,
-          original_language: movie.original_language,
-          release_blocklist: Catalog.blocked_release_titles(movie)
-        ] ++ Acquisition.band_opts(:movies)
-
-      result =
-        case Catalog.media_profile_summary(movie).effective do
-          :anime ->
-            context = Catalog.anime_movie_acquisition_context(movie)
-            anime_movie_result(movie, imdb_id, context, opts)
-
-          :standard ->
-            standard_movie_result(movie, imdb_id, opts)
-        end
-
-      case result do
+      case search_movie(movie, imdb_id) do
         {:ok, release} ->
           grab_if_space(movie, release)
 
@@ -827,6 +809,37 @@ defmodule Cinder.Download do
   end
 
   # A profile switched back to Standard must not keep a stale Anime hold marker. A nil imdb_id
+  @doc """
+  The best release currently on offer for `movie` under the household's policy — the *search* half
+  of `start/1`, with no status transition and no grab.
+
+  `Cinder.Catalog.UpgradeHunter` needs exactly this: an `:available` movie must stay `:available`
+  (its `file_path` points at the live library file) while it asks whether anything better exists.
+  Returns what the underlying search returns — `{:ok, %Release{}}`, `:no_match`,
+  `:no_language_match`, `{:waiting_for_preferred_group, _}` or `{:error, reason}`.
+  """
+  def best_release_for(%Movie{} = movie) do
+    with {:ok, imdb_id} <- ensure_imdb_id(movie), do: search_movie(movie, imdb_id)
+  end
+
+  defp search_movie(movie, imdb_id) do
+    opts =
+      [
+        protocols: available_protocols(),
+        preferred_language: movie.preferred_language,
+        original_language: movie.original_language,
+        release_blocklist: Catalog.blocked_release_titles(movie)
+      ] ++ Acquisition.band_opts(:movies)
+
+    case Catalog.media_profile_summary(movie).effective do
+      :anime ->
+        anime_movie_result(movie, imdb_id, Catalog.anime_movie_acquisition_context(movie), opts)
+
+      :standard ->
+        standard_movie_result(movie, imdb_id, opts)
+    end
+  end
+
   # (TMDB publishes none for this title) degrades to the guarded free-text search — see issue #195.
   defp standard_movie_result(movie, imdb_id, opts) do
     Catalog.set_anime_hold(movie, nil)

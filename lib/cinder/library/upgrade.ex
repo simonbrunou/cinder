@@ -6,7 +6,46 @@ defmodule Cinder.Library.Upgrade do
   describing a release/library file. Name-parsed; resolution/source are often nil (rank last); size
   is a weak proxy. `preferred_sources` defaults to `[]` (no source preference ⇒ source ties).
   """
-  alias Cinder.Acquisition.{Language, Scorer}
+  alias Cinder.Acquisition.{Language, Release, Scorer}
+
+  @doc """
+  Whether `release` *promises* a better file than `record` (a `Movie` or an `Episode`) already
+  holds, for library `kind` (`:movies` / `:tv`) with language `target` — `better?/5` over the two
+  sides a caller would otherwise have to assemble itself. `Cinder.Catalog.UpgradeHunter` asks this
+  *before* downloading, so a sideways or worse release costs nothing.
+
+  Name-parsed and therefore advisory: a `%Release{}` carries what the indexer's title implied, not
+  what the file turns out to be. The **import stays the arbiter** — it re-runs `better?/5` against
+  the real file and keeps the existing one if the promise didn't hold — so a mis-parsed name can
+  never replace a good file with a worse one.
+  """
+  def candidate?(record, %Release{} = release, kind, target) do
+    better?(
+      %{
+        resolution: release.resolution,
+        source: release.source,
+        size: release.size,
+        language: release.language
+      },
+      %{
+        resolution: record.imported_resolution,
+        source: record.imported_source,
+        size: record.imported_size,
+        language: record.imported_language
+      },
+      target,
+      preferred_resolutions(kind),
+      preferred_sources(kind)
+    )
+  end
+
+  @doc "The household's preferred resolutions for library `kind`, best first (`nil` when unset)."
+  def preferred_resolutions(kind),
+    do: Application.get_env(:cinder, :"#{kind}_preferred_resolutions")
+
+  @doc "The household's preferred sources for library `kind`, best first (`nil` when unset)."
+  def preferred_sources(kind),
+    do: Application.get_env(:cinder, :"#{kind}_preferred_sources")
 
   @spec better?(map(), map(), String.t() | nil, [String.t()] | nil, [String.t()] | nil) ::
           boolean()
