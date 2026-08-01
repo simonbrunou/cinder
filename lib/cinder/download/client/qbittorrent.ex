@@ -230,10 +230,12 @@ defmodule Cinder.Download.Client.QBittorrent do
   end
 
   defp request_torrent(uri, trust, hops) do
+    # 90s, not the 15s the API calls use: this fetch rides Prowlarr proxying a scraper
+    # site, and a FlareSolverr Cloudflare solve alone budgets 60s (its maxTimeout).
     request =
       Req.new(
         url: uri,
-        receive_timeout: 15_000,
+        receive_timeout: 90_000,
         pool_timeout: 5_000,
         connect_options: [timeout: 5_000],
         retry: false,

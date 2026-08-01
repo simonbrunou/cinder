@@ -566,10 +566,30 @@ defmodule Cinder.Acquisition do
   # sharing the title as a leading run ("9-1-1" accepts "9-1-1.Lone.Star..."), a different
   # show carrying the title as one of its own tokens ("Reno.911" for series "9-1-1"), and
   # same-named variants.
-  defp filter_title(candidates, %{tvdb_id: nil, title: title}),
-    do: filter_by_title(candidates, title)
+  defp filter_title(candidates, %{tvdb_id: nil, title: title} = series),
+    do: candidates |> filter_by_title(title) |> reject_year_conflicts(series)
 
-  defp filter_title(candidates, _series), do: candidates
+  defp filter_title(candidates, series), do: reject_year_conflicts(candidates, series)
+
+  # The tvdb_id-scoped query used to guarantee same-show results, but search_tv/3 now
+  # unions in a free-text title query (so scraper indexers contribute — see
+  # Indexer.Prowlarr), which can surface a same-named different show: "Charmed (2018)"
+  # packs for the year-1998 series. An explicit year token is the one discriminator
+  # scene names reliably carry, so a candidate is dropped only when every year in its
+  # title is more than a year off the series year (±1 absorbs premiere-date wobble
+  # between TMDB and scene naming). Yearless titles pass — same loose-on-purpose
+  # trade-off as filter_by_title/2, and the manual panel still lists what this drops.
+  defp reject_year_conflicts(candidates, %{year: year}) when is_integer(year),
+    do: Enum.reject(candidates, &year_conflict?(&1.title, year))
+
+  defp reject_year_conflicts(candidates, _series), do: candidates
+
+  defp year_conflict?(release_title, year) do
+    case Regex.scan(~r/\b(?:19|20)\d{2}\b/, release_title) do
+      [] -> false
+      matches -> Enum.all?(matches, fn [y] -> abs(String.to_integer(y) - year) > 1 end)
+    end
+  end
 
   defp filter_by_title(candidates, title) do
     case title_needle(title) do
