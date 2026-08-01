@@ -80,6 +80,7 @@ defmodule Cinder.Acquisition.Scorer do
     |> Enum.filter(&(&1.season == season or Map.has_key?(alternate_numbering, &1.season)))
     |> Enum.reject(&title_blocked?(&1, release_blocklist))
     |> Enum.filter(&(allowed_resolution?(&1, preferred) and allowed_source?(&1, sources)))
+    |> Enum.reject(&unclaimable?(&1, MapSet.new(wanted_episodes), opts))
     |> cover(
       MapSet.new(wanted_episodes),
       [],
@@ -144,6 +145,26 @@ defmodule Cinder.Acquisition.Scorer do
         :ok
     end
   end
+
+  # `full_claim_only: true` drops any release carrying an episode the caller can't claim, BEFORE
+  # the cover runs — it has to be a candidate filter, not a verdict on the winner. `cover/6` is
+  # greedy and destructive: a season pack takes the whole wanted set and the singles behind it are
+  # never scored, so declining the pack afterwards discards the season's upgrades entirely, every
+  # pass. Only `Cinder.Catalog.UpgradeHunter` passes it: every file it can't link to an episode it
+  # holds arrives at import as an operator residual decision (#247), whereas the normal sweep is
+  # happy to take a pack for a subset of a season and let the extras be residuals.
+  #
+  # A whole-season pack carries the season (`pack_episode_count`, the same opt `verdict/2` bands
+  # packs with); anything else carries the episodes it names.
+  defp unclaimable?(release, wanted, opts) do
+    Keyword.get(opts, :full_claim_only, false) and not claims_all?(release, wanted, opts)
+  end
+
+  defp claims_all?(%Release{episodes: eps}, wanted, _opts) when is_list(eps) and eps != [],
+    do: MapSet.subset?(MapSet.new(eps), wanted)
+
+  defp claims_all?(%Release{}, wanted, opts),
+    do: MapSet.size(wanted) == Keyword.get(opts, :pack_episode_count)
 
   defp episodes_multiplier(%Release{episodes: eps}, _opts) when is_list(eps) and eps != [],
     do: length(eps)

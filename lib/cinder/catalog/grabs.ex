@@ -65,9 +65,10 @@ defmodule Cinder.Catalog.Grabs do
   manually searchable episodes server-side (don't trust a stale panel snapshot) and creates the
   grab over exactly the missing or available episodes the release covers (`episodes: nil` = a
   whole-season pack covers them all). `create_grab/5` never links an episode that already has a
-  grab, and rolls the whole thing back if any of them was taken meanwhile
-  (`{:error, :episode_ownership_changed}`), so a concurrent sweep grab can't be double-linked.
-  `{:error, :nothing_wanted}` when the season has nothing to grab.
+  grab, and rolls the whole thing back if any of them was taken meanwhile, so a concurrent sweep
+  grab can't be double-linked; `Download.reconcile_episodes/1` flattens that rollback to
+  `{:error, :no_episodes_linked}` on this path. `{:error, :nothing_wanted}` when the season has
+  nothing to grab.
   """
   def manual_grab_tv(%Series{} = series, season_number, %Release{} = release) do
     case Cinder.Catalog.media_profile_summary(series).effective do
@@ -391,8 +392,9 @@ defmodule Cinder.Catalog.Grabs do
     # used to be tolerated, and it silently manufactured operator work: the release still downloads
     # in full, so every episode that slipped away between the search and this write arrives at
     # import with no owner and becomes an undecided `grab_file` — a residual hold keeping the grab
-    # open (#247). Rolling back removes the just-added download (see `grab_and_track/2`) and the
-    # next sweep re-searches for whatever is still wanted.
+    # open (#247). Rolling back gets the just-added download removed
+    # (`Download.cleanup_failed_ownership/2`) and the next sweep re-searches for what is still
+    # wanted.
     if linked == length(episode_ids), do: grab, else: Repo.rollback(link_failure(linked))
   end
 

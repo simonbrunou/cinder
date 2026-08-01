@@ -199,13 +199,20 @@ defmodule Cinder.Catalog.UpgradeHunter do
   defp search_season(series, episodes) do
     season_number = hd(episodes).season.season_number
     target = Language.target(series.preferred_language, series.original_language)
+    season_size = max(Catalog.count_episodes(series.id, season_number), 1)
 
     opts =
       [
         protocols: Download.available_protocols(),
         preferred_language: series.preferred_language,
         original_language: series.original_language,
-        release_blocklist: Catalog.blocked_release_titles_for_series(series.id)
+        release_blocklist: Catalog.blocked_release_titles_for_series(series.id),
+        # Every file we can't link to an episode we hold becomes an operator residual decision at
+        # import (#247), so releases carrying one are dropped from the candidate pool — before the
+        # greedy cover, or an unclaimable season pack would swallow the whole wanted set and hide
+        # the per-episode releases behind it.
+        full_claim_only: true,
+        pack_episode_count: season_size
       ] ++ Acquisition.band_opts(:tv)
 
     case Acquisition.best_releases(
@@ -215,7 +222,6 @@ defmodule Cinder.Catalog.UpgradeHunter do
            opts
          ) do
       {:ok, assignments} ->
-        season_size = max(Catalog.count_episodes(series.id, season_number), 1)
         Enum.each(assignments, &maybe_grab_episodes(&1, episodes, target, season_size))
 
       _no_match_or_error ->
@@ -223,24 +229,20 @@ defmodule Cinder.Catalog.UpgradeHunter do
     end
   end
 
-  # An assignment covers a set of episode NUMBERS. Take a release only when we claim EVERY file it
-  # carries and it improves EVERY one — all-or-nothing, because both of the softer options end
-  # badly: an unclaimed delivered file arrives at import with no linked episode and becomes an
-  # undecided `grab_file`, an operator residual hold that keeps the grab open (#247); and claiming
-  # an episode this release doesn't improve replaces a good file with a worse one (an upgrade grab
-  # imports by forced replace — see the moduledoc).
+  # An assignment covers a set of episode NUMBERS — every one of them ours to claim, since
+  # `full_claim_only` already dropped the releases carrying anything else. Take it only if it
+  # improves EVERY covered episode: claiming one it doesn't improve would replace a good file with
+  # a worse one, because an upgrade grab imports by forced replace (see the moduledoc).
   #
-  # `carries/2` is the same over-estimate used for per-episode sizing, so "claim every file" also
-  # rules out a season pack for a season we only partly hold — a missing episode, an unmonitored
-  # one, one already being grabbed. The cost is packs left untaken (a pack beating 8 of 10, a
-  # still-airing season); they come back next rotation, and nothing manufactures a decision for a
-  # human in a sweep that is supposed to run unattended.
+  # A pack that beats 8 of a season's 10 episodes is therefore left, and left for good while the
+  # season stays mixed — not deferred to the next rotation. The alternative is manufacturing two
+  # residual decisions for a human, in a sweep meant to run unattended, or downgrading two files.
   defp maybe_grab_episodes({release, covered_numbers}, episodes, target, season_size) do
     covered = Enum.filter(episodes, &(&1.episode_number in covered_numbers))
     carries = carries(release, season_size)
 
     cond do
-      length(covered) != carries or
+      covered == [] or
           not Enum.all?(covered, &Upgrade.candidate?(&1, release, :tv, target, carries)) ->
         :ok
 

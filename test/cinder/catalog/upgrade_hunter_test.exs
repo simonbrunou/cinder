@@ -323,6 +323,11 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
 
     test "a genuinely better season pack is still grabbed, linking every episode it covers",
          ctx do
+      # batch: 1 so the season arrives as a slice and hunt_season/1's widening is what puts the
+      # other nine episodes in the ask — with the default batch of 10 the season fits in one batch
+      # and this would pass with the widening reverted.
+      put_env(UpgradeHunter, enabled: true, batch: 1)
+
       imported =
         for n <- 2..10 do
           episode_fixture(ctx.season, %{
@@ -406,6 +411,45 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
 
       refute_grabbed()
       assert Repo.get!(Episode, ctx.episode.id).grab_id == nil
+    end
+
+    # Declining the unclaimable pack must not take the season's other offers down with it: the
+    # greedy cover hands the whole wanted set to the pack and never scores the singles behind it,
+    # so the claim rule has to filter candidates BEFORE selection (`full_claim_only`). Judging the
+    # winner afterwards left the season permanently unupgradable — same pool, same decline, every
+    # pass.
+    test "still takes the per-episode release the unclaimable pack was hiding", ctx do
+      for n <- 2..9 do
+        episode_fixture(ctx.season, %{
+          episode_number: n,
+          file_path: "/lib/Show/S01E#{n}.mkv",
+          imported_resolution: "720p",
+          imported_size: 1_000_000_000
+        })
+      end
+
+      # E10 airs in the pack but we hold no file for it, so the pack is unclaimable.
+      episode_fixture(ctx.season, %{episode_number: 10})
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", 1 ->
+        {:ok,
+         [
+           release("Show.S01.1080p.BluRay-GRP", %{size: 30_000_000_000}),
+           release("Show.S01E01.1080p.BluRay-GRP", %{size: 4_000_000_000})
+         ]}
+      end)
+
+      test_pid = self()
+
+      stub(Cinder.Download.ClientMock, :add, fn rel, _opts ->
+        send(test_pid, {:grabbed, rel.title})
+        {:ok, "single-upgrade"}
+      end)
+
+      poll()
+
+      assert_received {:grabbed, "Show.S01E01.1080p.BluRay-GRP"}
+      assert Repo.get!(Episode, ctx.episode.id).grab_id
     end
 
     # The batch is a slice of the library, not of a season, so the season arrives partial. Both
