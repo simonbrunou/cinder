@@ -125,6 +125,52 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
     assert Catalog.count_operator_holds() == 0
   end
 
+  @tag :tmp_dir
+  test "a decline for two episodes sharing one held file stages that file once", %{tmp_dir: tmp} do
+    %{downloads: downloads, tv: tv} = real_tv_library(tmp)
+
+    release_dir = Path.join(downloads, "Show.S01E07E08.720p.WEB-DL-GRP")
+    File.mkdir_p!(release_dir)
+    File.write!(Path.join(release_dir, "Show.S01E07E08.720p.WEB-DL.mkv"), "incoming")
+
+    library = Path.join([tv, "Show (2008) {tmdb-4244}", "Season 01"])
+    File.mkdir_p!(library)
+
+    series = series_fixture(%{tmdb_id: 4244, title: "Show", year: 2008, monitor_strategy: :all})
+    season = season_fixture(series)
+
+    # Both episodes already share ONE file — what a previously imported double-episode file
+    # leaves behind. `import_stages.dest` is globally unique, so a stage each would collide.
+    held = Path.join(library, "Show (2008) {tmdb-4244} - S01E07-E08.mkv")
+    File.write!(held, "held-both")
+
+    episodes =
+      for number <- [7, 8] do
+        episode_fixture(season, %{
+          episode_number: number,
+          file_path: held,
+          imported_resolution: "1080p",
+          imported_source: "BLURAY",
+          imported_size: 9_000_000_000
+        })
+      end
+
+    {:ok, grab} = arbitrated_grab(episodes, release_dir)
+
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    for number <- [7, 8] do
+      episode = reload(episodes, number)
+      assert episode.file_path == held
+    end
+
+    assert File.read!(held) == "held-both"
+    # Imported, not parked: a collision here would have failed the grab and retried it.
+    refute Repo.get(Grab, grab.id)
+    assert Catalog.count_operator_holds() == 0
+  end
+
   # E01/E03 are 480p and the pack beats them; E02/E04 are 1080p BluRay at 9 GB and it does not.
   # E02's incoming file is .mp4 so its destination differs from the .mkv already held.
   defp partly_better_pack(tmp) do

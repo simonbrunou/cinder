@@ -1112,26 +1112,36 @@ defmodule Cinder.Library do
   # nothing: the file is one unit and we just declined it, so that episode stays wanted and
   # re-searches.
   defp keep_held_files(episodes, source, root) do
-    episodes
-    |> Enum.filter(&(&1.file_path not in [nil, ""]))
+    held = Enum.filter(episodes, &(&1.file_path not in [nil, ""]))
+
+    # One stage per distinct HELD PATH, not per episode: `import_stages.dest` is globally unique
+    # and two episodes legitimately share a `file_path` — that is exactly what a previously
+    # imported double-episode file leaves behind. A stage each would collide on the second insert,
+    # fail the whole grab, and leave the first one's `:prepared` row holding that dest until its
+    # handoff deadline, so the retries inside that window would fail identically. The shared stage
+    # fans back out to every episode on that path, as `stage_group/6` already does for placements.
+    held
+    |> Enum.uniq_by(& &1.file_path)
     |> Enum.reduce_while({:ok, []}, fn ep, {:ok, acc} ->
       case keep_held_file(ep, source, root) do
-        {:ok, row} -> {:cont, {:ok, [row | acc]}}
-        {:error, _reason} = error -> {:halt, error}
+        {:ok, stage} ->
+          {:cont, {:ok, for(e <- held, e.file_path == ep.file_path, do: {e.id, stage}) ++ acc}}
+
+        {:error, _reason} = error ->
+          # Release the dests this group already claimed, or the retry collides with itself.
+          acc |> Enum.map(&elem(&1, 1)) |> Enum.uniq_by(& &1.dest) |> Enum.each(&rollback_stage/1)
+          {:halt, error}
       end
     end)
   end
 
+  # `placed?` survives here (the other stage builders strip it): it is what tells
+  # `commit_grab_imports/4` this episode's file did not change, so its part files must be carried
+  # through rather than cleared.
   defp keep_held_file(ep, source, root) do
     decline = fn _new_quality -> false end
 
-    case stage_episode_file_at([ep], source, root, false, %{}, ep.file_path, :adopt, decline) do
-      # `placed?` survives here (the other stage builders strip it): it is what tells
-      # `commit_grab_imports/4` this episode's file did not change, so its part files must be
-      # carried through rather than cleared.
-      {:ok, stage} -> {:ok, {ep.id, stage}}
-      {:error, _reason} = error -> error
-    end
+    stage_episode_file_at([ep], source, root, false, %{}, ep.file_path, :adopt, decline)
   end
 
   defp stage_anime_all(to_import, root, target, folder?, reports) do
