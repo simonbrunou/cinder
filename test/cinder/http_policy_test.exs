@@ -372,8 +372,10 @@ defmodule Cinder.HTTPPolicyTest do
         acc
       end
 
+      # 500ms, not 50: the assertion is "completes *within* the deadline", and a 5ms sleep plus
+      # scheduling overhead on a loaded runner blew a 50ms budget about 1 run in 15 (#246).
       assert {:ok, %{body: "firstsecond"}} =
-               HTTPPolicy.bounded_request(Req.new(adapter: adapter), 64, 50)
+               HTTPPolicy.bounded_request(Req.new(adapter: adapter), 64, 500)
     end
 
     test "cancels a request blocked before headers at the wall-clock deadline" do
