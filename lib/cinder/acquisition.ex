@@ -658,6 +658,78 @@ defmodule Cinder.Acquisition do
   # wrong show. Both sides of the ratio start from the same fold/1 so an "&"→"and" expansion
   # can't inflate the needle past the check. Those series can't be safely matched by name; the
   # tvdb_id-scoped search (which skips this guard entirely) is the escape hatch.
+  @doc """
+  Whether `name` — a release name or a file name — **leads with** `target`'s title: the folded
+  title has to be spelled by `name`'s tokens starting at the first one, and the token after it has
+  to open a release tag (a season/episode marker, or a year consistent with `target.year`) rather
+  than continue a show's name.
+
+  Stricter than `title_guard/3`'s `token_run_match?/2`, which is boundary-anchored but free-floating
+  and accepts a leading run without caring what follows. The import calls this to decide whether a
+  file it is about to **discard** really belongs to the series (`Cinder.Library`'s residual drop,
+  #262), and a discard is unrecoverable, so it must not be a guess. The extra anchoring closes two
+  of `filter_title/2`'s documented ceilings: a spinoff extending the title ("9-1-1: Lone Star"
+  under "9-1-1", "Law & Order: SVU" under "Law & Order") is rejected here, and a title appearing as
+  some other show's inner token was never reachable from index 0.
+
+  Shares the same fold, so everything `filter_title/2` is built to accept still matches:
+  "S.W.A.T." ⇔ "SWAT", "Grey's" ⇔ "Greys", "Law & Order" ⇔ "Law.and.Order", "Pokémon" ⇔ "Pokemon".
+  A title that folds to too little to be safe (`title_needle/1` returning "") matches nothing —
+  fail-closed, same escape hatch as the search guard.
+  """
+  @spec names_title?(String.t() | nil, %{title: String.t() | nil, year: integer() | nil}) ::
+          boolean()
+  def names_title?(name, %{title: title} = target) do
+    case title_needle(title) do
+      "" -> false
+      needle -> name |> tokens() |> consume_leading(needle) |> release_tag_next?(target)
+    end
+  end
+
+  # {:ok, tokens_after_the_title} once the needle is exactly spelled, :error otherwise.
+  defp consume_leading(_tokens, ""), do: :error
+  defp consume_leading([], _needle), do: :error
+
+  defp consume_leading([token | rest], needle) do
+    case String.replace_prefix(needle, token, "") do
+      ^needle -> :error
+      "" -> {:ok, rest}
+      remaining -> consume_leading(rest, remaining)
+    end
+  end
+
+  # The episode-marker spellings `Parser.parse/1` itself claims, so a file the import matched is
+  # always confirmable here: `S01`, `S01E05`, the GLUED multi-episode `S01E05E06` (its hyphenated
+  # twin `S01E05-E06` already splits into two tokens), a bare `E05`, and the `1x05` cross form.
+  # Anything narrower re-opens the operator hold #251 removed for exactly the combined-episode
+  # files `fully_held?/3` exists to count.
+  @episode_marker ~r/^(?:s\d{1,3}(?:e\d+)*|(?:e\d+)+|\d{1,2}x\d{1,2})$/
+  @year_marker ~r/^(?:19|20)\d{2}$/
+
+  defp release_tag_next?(:error, _target), do: false
+  defp release_tag_next?({:ok, []}, _target), do: false
+
+  defp release_tag_next?({:ok, [next | _]}, target) do
+    cond do
+      Regex.match?(@episode_marker, next) ->
+        true
+
+      # A year token is a release tag only if it is OUR year — the same discriminator, and the
+      # same ±1 tolerance, `reject_year_conflicts/2` uses for "Charmed (2018)" against the 1998
+      # series; without it `The.Office.2005.S01E05` is discarded under a different The Office.
+      #
+      # An unknown series year rejects rather than accepting, which is where this DIVERGES from
+      # `reject_year_conflicts/2`. That clause fails open because filtering a search too hard
+      # strands a season at :no_match — annoying, recoverable. Here the same "no opinion" would
+      # authorise deleting a file we cannot place. Same missing datum, opposite safe direction.
+      Regex.match?(@year_marker, next) ->
+        is_integer(Map.get(target, :year)) and not year_conflict?(next, target.year)
+
+      true ->
+        false
+    end
+  end
+
   defp title_needle(series_title) do
     needle = series_title |> tokens() |> Enum.join()
 

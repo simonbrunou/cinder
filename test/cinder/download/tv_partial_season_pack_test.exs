@@ -62,6 +62,100 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
   end
 
   @tag :tmp_dir
+  test "another series' episode is never dropped, even when our numbering claims it", %{
+    tmp_dir: tmp
+  } do
+    # `match_arm/2` compares season and episode numbers only — never the show name. A foreign
+    # S01E05 bundled into this pack is therefore claimed by the S01E05 we hold, and without a name
+    # check it would be discarded with the download, unseen.
+    %{grab: grab} =
+      partial_season_pack(tmp, ["Totally.Different.Show.S01E05.1080p.WEB-DL.mkv"])
+
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    grab = Repo.get!(Grab, grab.id) |> Repo.preload(:grab_files)
+
+    assert Enum.map(grab.grab_files, & &1.relative_path) == [
+             "Totally.Different.Show.S01E05.1080p.WEB-DL.mkv"
+           ]
+
+    assert Grabs.grab_hold(grab) == :residual_files
+  end
+
+  @tag :tmp_dir
+  test "a name that merely EXTENDS ours is a decision, not a discard", %{tmp_dir: tmp} do
+    # "Show.US" is a different show, the same way "Law & Order: SVU" is not "Law & Order". An
+    # unrecognised token between the title and the release tags means we can't be sure, and an
+    # operator hold is recoverable where a deleted file is not.
+    %{grab: grab} = partial_season_pack(tmp, ["Show.US.S01E05.1080p.WEB-DL.mkv"])
+
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    grab = Repo.get!(Grab, grab.id) |> Repo.preload(:grab_files)
+    assert Enum.map(grab.grab_files, & &1.relative_path) == ["Show.US.S01E05.1080p.WEB-DL.mkv"]
+  end
+
+  @tag :tmp_dir
+  test "a year token on a series with no year is a decision, not a discard", %{tmp_dir: tmp} do
+    # With no year on the series row there is nothing to check the token against. The search guard
+    # fails OPEN on that (over-filtering strands a season at :no_match), but here the same absent
+    # datum would authorise deleting a file we can't place — so this one fails closed.
+    %{grab: grab} = partial_season_pack(tmp, ["Show.1999.S01E05.1080p.WEB-DL.mkv"], year: nil)
+
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    grab = Repo.get!(Grab, grab.id) |> Repo.preload(:grab_files)
+    assert Enum.map(grab.grab_files, & &1.relative_path) == ["Show.1999.S01E05.1080p.WEB-DL.mkv"]
+  end
+
+  @tag :tmp_dir
+  test "a same-titled show from another year is a decision, not a discard", %{tmp_dir: tmp} do
+    # A year token only reads as OUR release tag when it is our year — the same discriminator
+    # `reject_year_conflicts/2` uses for "Charmed (2018)" against the 1998 series.
+    %{grab: grab} = partial_season_pack(tmp, ["Show.1999.S01E05.1080p.WEB-DL.mkv"])
+
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    grab = Repo.get!(Grab, grab.id) |> Repo.preload(:grab_files)
+    assert Enum.map(grab.grab_files, & &1.relative_path) == ["Show.1999.S01E05.1080p.WEB-DL.mkv"]
+  end
+
+  # The whole point of going through `Acquisition.names_title?/2` instead of a local fold: these
+  # are the shapes a hand-rolled downcase-and-split gets wrong, and getting them wrong puts every
+  # already-held file of such a series back into the operator hold #251 removed. The glued
+  # multi-episode and `1x05` forms are here for the same reason — `Parser.parse/1` claims them, so
+  # the guard has to confirm them or the hold re-opens for exactly the combined-episode files.
+  for {title, file} <- [
+        {"Grey's Anatomy", "Greys.Anatomy.S01E05.1080p.WEB-DL.mkv"},
+        {"Law & Order", "Law.and.Order.S01E05.1080p.WEB-DL.mkv"},
+        {"S.W.A.T.", "SWAT.S01E05.1080p.WEB-DL.mkv"},
+        {"Pokémon", "Pokemon.S01E05.1080p.WEB-DL.mkv"},
+        {"Show", "Show.2008.S01E05.1080p.WEB-DL.mkv"},
+        {"Show", "Show.S01E05E06.1080p.WEB-DL.mkv"},
+        {"Show", "Show.1x05.1080p.WEB-DL.mkv"}
+      ] do
+    @tag :tmp_dir
+    @series_title title
+    @scene_file file
+    test "#{title} still recognises #{file} as its own", %{tmp_dir: tmp} do
+      # Only the two wanted episodes get standalone files (they import through the title-blind
+      # claiming pass), so the file under test is the sole candidate residual: it survives as a
+      # `grab_file` if the fold fails to recognise it, and vanishes if it works.
+      %{grab: grab} = partial_season_pack(tmp, [@scene_file], title: @series_title, pack: [9, 10])
+
+      start_supervised!({TvPoller, interval: 60_000})
+      assert :ok = TvPoller.poll()
+
+      assert Repo.all(GrabFile) == []
+      refute Repo.get(Grab, grab.id)
+    end
+  end
+
+  @tag :tmp_dir
   test "a two-parter spanning a held and a wanted episode stays a decision", %{tmp_dir: tmp} do
     # E08 is in the library, E09 is not, so `Show.S01E08E09.mkv` names one episode we hold and one
     # we don't. It loses `dedupe_per_episode/1` to the pack's own bigger S01E09 file, so nothing is
@@ -110,13 +204,13 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
   defp partial_season_pack(tmp, extra_files, opts \\ []) do
     packed = Keyword.get(opts, :pack, Enum.to_list(1..10))
     linked = Keyword.get(opts, :link, [9, 10])
+    title = Keyword.get(opts, :title, "Show")
+    year = Keyword.get(opts, :year, 2008)
 
     %{downloads: downloads, tv: tv} = real_tv_library(tmp)
 
     release_dir = Path.join(downloads, "Show.S01.1080p.WEB-DL-GRP")
     File.mkdir_p!(release_dir)
-    library = Path.join([tv, "Show (2008) {tmdb-7788}", "Season 01"])
-    File.mkdir_p!(library)
 
     for number <- packed do
       File.write!(
@@ -127,12 +221,16 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
 
     Enum.each(extra_files, &File.write!(Path.join(release_dir, &1), "extra"))
 
-    series = series_fixture(%{tmdb_id: 7788, tvdb_id: 7788, title: "Show", year: 2008})
+    series = series_fixture(%{tmdb_id: 7788, tvdb_id: 7788, title: title, year: year})
     season = season_fixture(series)
+
+    show = library_folder(library_title(title), year)
+    library = Path.join([tv, show, "Season 01"])
+    File.mkdir_p!(library)
 
     held =
       for number <- 1..8 do
-        path = Path.join(library, "Show (2008) {tmdb-7788} - S01E#{pad(number)}.mkv")
+        path = Path.join(library, "#{show} - S01E#{pad(number)}.mkv")
         File.write!(path, "held-#{number}")
 
         episode_fixture(season, %{
@@ -159,6 +257,17 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
 
     %{grab: grab, wanted: to_link, held: held, unlinked: List.first(unlinked)}
   end
+
+  # Mirrors Cinder.Library.Naming's folder name for the titles these tests use.
+  defp library_title(title),
+    do:
+      title
+      |> String.replace(["/", "\\", ":", "*", "?", "\"", "<", ">", "|"], "")
+      |> String.trim()
+
+  # Mirrors Cinder.Library.Naming: no year folds to the bare `Title {tmdb-id}` form.
+  defp library_folder(title, nil), do: "#{title} {tmdb-7788}"
+  defp library_folder(title, year), do: "#{title} (#{year}) {tmdb-7788}"
 
   defp pad(number), do: number |> Integer.to_string() |> String.pad_leading(2, "0")
 
