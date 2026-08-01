@@ -716,11 +716,16 @@ defmodule Cinder.Acquisition do
       Regex.match?(@episode_marker, next) ->
         true
 
-      # A year token is a release tag only if it is OUR year. Same discriminator (and the same
-      # ±1 tolerance) `reject_year_conflicts/2` uses for "Charmed (2018)" against the 1998 series
-      # — without it, `The.Office.2005.S01E05` would be discarded under a different The Office.
+      # A year token is a release tag only if it is OUR year — the same discriminator, and the
+      # same ±1 tolerance, `reject_year_conflicts/2` uses for "Charmed (2018)" against the 1998
+      # series; without it `The.Office.2005.S01E05` is discarded under a different The Office.
+      #
+      # An unknown series year rejects rather than accepting, which is where this DIVERGES from
+      # `reject_year_conflicts/2`. That clause fails open because filtering a search too hard
+      # strands a season at :no_match — annoying, recoverable. Here the same "no opinion" would
+      # authorise deleting a file we cannot place. Same missing datum, opposite safe direction.
       Regex.match?(@year_marker, next) ->
-        not year_conflict?(next, Map.get(target, :year))
+        is_integer(Map.get(target, :year)) and not year_conflict?(next, target.year)
 
       true ->
         false

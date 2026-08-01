@@ -98,6 +98,20 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
   end
 
   @tag :tmp_dir
+  test "a year token on a series with no year is a decision, not a discard", %{tmp_dir: tmp} do
+    # With no year on the series row there is nothing to check the token against. The search guard
+    # fails OPEN on that (over-filtering strands a season at :no_match), but here the same absent
+    # datum would authorise deleting a file we can't place — so this one fails closed.
+    %{grab: grab} = partial_season_pack(tmp, ["Show.1999.S01E05.1080p.WEB-DL.mkv"], year: nil)
+
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    grab = Repo.get!(Grab, grab.id) |> Repo.preload(:grab_files)
+    assert Enum.map(grab.grab_files, & &1.relative_path) == ["Show.1999.S01E05.1080p.WEB-DL.mkv"]
+  end
+
+  @tag :tmp_dir
   test "a same-titled show from another year is a decision, not a discard", %{tmp_dir: tmp} do
     # A year token only reads as OUR release tag when it is our year — the same discriminator
     # `reject_year_conflicts/2` uses for "Charmed (2018)" against the 1998 series.
@@ -191,6 +205,7 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
     packed = Keyword.get(opts, :pack, Enum.to_list(1..10))
     linked = Keyword.get(opts, :link, [9, 10])
     title = Keyword.get(opts, :title, "Show")
+    year = Keyword.get(opts, :year, 2008)
 
     %{downloads: downloads, tv: tv} = real_tv_library(tmp)
 
@@ -206,10 +221,10 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
 
     Enum.each(extra_files, &File.write!(Path.join(release_dir, &1), "extra"))
 
-    series = series_fixture(%{tmdb_id: 7788, tvdb_id: 7788, title: title, year: 2008})
+    series = series_fixture(%{tmdb_id: 7788, tvdb_id: 7788, title: title, year: year})
     season = season_fixture(series)
 
-    show = "#{library_title(title)} (2008) {tmdb-7788}"
+    show = library_folder(library_title(title), year)
     library = Path.join([tv, show, "Season 01"])
     File.mkdir_p!(library)
 
@@ -249,6 +264,10 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
       title
       |> String.replace(["/", "\\", ":", "*", "?", "\"", "<", ">", "|"], "")
       |> String.trim()
+
+  # Mirrors Cinder.Library.Naming: no year folds to the bare `Title {tmdb-id}` form.
+  defp library_folder(title, nil), do: "#{title} {tmdb-7788}"
+  defp library_folder(title, year), do: "#{title} (#{year}) {tmdb-7788}"
 
   defp pad(number), do: number |> Integer.to_string() |> String.pad_leading(2, "0")
 
