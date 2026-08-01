@@ -104,8 +104,20 @@ defmodule Cinder.Download.Client.QBittorrent do
   defp validate_endpoints(urls) do
     Enum.reduce_while(urls, :ok, fn url, :ok ->
       case validate_embedded_url(url) do
-        :ok -> {:cont, :ok}
-        {:error, _} = error -> {:halt, error}
+        :ok ->
+          {:cont, :ok}
+
+        # NXDOMAIN is benign, same reasoning as the no-parseable-host clause below:
+        # qBittorrent can't dial a name that doesn't resolve, and public magnets/.torrents
+        # routinely carry long-dead trackers — failing closed here bricked every 1337x add.
+        # (A name that resolves to a forbidden address only later is the rebinding TOCTOU
+        # every resolution-time check shares; unresolvable-now is no worse than public-now.
+        # Endpoints that DO resolve to forbidden addresses still reject the whole add.)
+        {:error, :dns_resolution_failed} ->
+          {:cont, :ok}
+
+        {:error, _} = error ->
+          {:halt, error}
       end
     end)
   end

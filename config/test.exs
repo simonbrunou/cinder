@@ -118,7 +118,12 @@ config :cinder, Cinder.Download.Client.QBittorrent,
   username: "test",
   password: "test",
   fetch_plug: {Req.Test, Cinder.QBittorrentStub},
-  url_resolver: fn _host -> {:ok, [{93, 184, 216, 34}]} end,
+  # RFC 2606 reserved TLD stands in for NXDOMAIN (dead-tracker tests); all else resolves public.
+  url_resolver: fn host ->
+    if String.ends_with?(host, ".invalid"),
+      do: {:error, :nxdomain},
+      else: {:ok, [{93, 184, 216, 34}]}
+  end,
   req_options: [plug: {Req.Test, Cinder.QBittorrentStub}, retry: false]
 
 config :cinder, Cinder.Download.Client.Sabnzbd,
