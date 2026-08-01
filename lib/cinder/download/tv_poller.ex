@@ -235,7 +235,9 @@ defmodule Cinder.Download.TvPoller do
   # `reject_release/4` (the shared movie/TV helper) lives in `Cinder.Download.PollerSkeleton`.
 
   defp import_standard_grab(grab) do
-    case Library.stage_episodes(grab.content_path, grab.episodes) do
+    case Library.stage_episodes(grab.content_path, grab.episodes,
+           arbitrate: grab.arbitrate_at_import
+         ) do
       {:ok, staged, unmatched} ->
         finalize_standard_staging(grab, staged, unmatched)
 
@@ -286,8 +288,12 @@ defmodule Cinder.Download.TvPoller do
   end
 
   defp finalize_standard_grab(grab, staged, residuals) do
+    # `placed?` is absent on every stage but the arbitrated keep (#250), which is the one case
+    # where the episode's file did not change and its part files must survive the commit.
     imported =
-      Enum.map(staged, fn {episode_id, stage} -> {episode_id, stage.dest, stage.quality} end)
+      Enum.map(staged, fn {episode_id, stage} ->
+        {episode_id, stage.dest, stage.quality, Map.get(stage, :placed?, true)}
+      end)
 
     case Catalog.commit_grab_imports(
            grab,

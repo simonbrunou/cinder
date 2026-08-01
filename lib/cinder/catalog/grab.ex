@@ -29,6 +29,12 @@ defmodule Cinder.Catalog.Grab do
       default: :resolved
 
     field :mapping_issue, :map
+
+    # Set by the unattended upgrade sweep: this grab's swaps are decided at import, per episode,
+    # against what each one already holds. False (the manual path, and every grab predating #250)
+    # forces the swap — the operator picked that release, possibly for something ranking can't see.
+    field :arbitrate_at_import, :boolean, default: false
+
     has_many :episodes, Episode
     has_many :grab_files, GrabFile
 

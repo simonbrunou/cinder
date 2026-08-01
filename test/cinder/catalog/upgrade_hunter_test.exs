@@ -353,9 +353,10 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       assert Enum.uniq(grab_ids) == [hd(grab_ids)]
     end
 
-    # A pack that improves only part of the season is left alone: linking just the improved
-    # episodes strands the rest of its files in operator holds, and linking them all would replace
-    # good files with worse ones (an upgrade grab imports by forced replace).
+    # A pack that improves only part of the season is left alone. #250 removed the data-loss
+    # reason (the import now declines per episode), but not the loop reason: `candidate?/5`
+    # compares against a per-episode MEAN, so every below-mean episode reads as improvable by the
+    # pack that produced it. See the guard's comment and issue #257.
     test "skips a pack that does not improve every episode it covers", ctx do
       # E01 is 720p (upgradable); the rest of the season is already 1080p at a bigger size.
       kept =

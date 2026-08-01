@@ -20,11 +20,18 @@ defmodule Cinder.Catalog.UpgradeHunter do
 
   One gate before anything is downloaded: `Cinder.Library.Upgrade.candidate?/5` compares the
   *parsed* release against the imported file, so a sideways or worse release is dropped without
-  being downloaded. That gate is the **only** one: an upgrade grab imports by forced replace
-  (`Library.stage_movie(replace: true)`; `replace?` in `Library.stage_episode_file/6` for any
-  episode that already has a file), which bypasses the import's own keep-vs-replace check. The
-  operator chose the release on the manual path, so forcing it is right there — but it means this
-  sweep must never link a release to something it hasn't decided is an upgrade.
+  being downloaded.
+
+  For **movies** that gate is the only one: a movie upgrade grab imports by forced replace
+  (`Library.stage_movie(replace: true)`), which bypasses the import's own keep-vs-replace check,
+  so the sweep must never link a movie release it hasn't decided is an upgrade.
+
+  For **episodes** there is a second gate. Every grab this sweep opens is marked
+  `arbitrate_at_import` (#250), so `Library.stage_episodes/3` re-runs the comparison per episode
+  against the file that episode actually holds — a release that loses is not placed and the
+  episode keeps what it had. That is what lets a season pack beating 8 of 10 episodes be taken at
+  all: the other two simply keep their files. The manual path stays a forced replace, because
+  there the operator chose the release, possibly for something the ranking can't see.
 
   ## ponytail: no resolution cutoff
 
@@ -231,12 +238,15 @@ defmodule Cinder.Catalog.UpgradeHunter do
 
   # An assignment covers a set of episode NUMBERS — every one of them ours to claim, since
   # `full_claim_only` already dropped the releases carrying anything else. Take it only if it
-  # improves EVERY covered episode: claiming one it doesn't improve would replace a good file with
-  # a worse one, because an upgrade grab imports by forced replace (see the moduledoc).
+  # improves EVERY covered episode.
   #
-  # A pack that beats 8 of a season's 10 episodes is therefore left, and left for good while the
-  # season stays mixed — not deferred to the next rotation. The alternative is manufacturing two
-  # residual decisions for a human, in a sweep meant to run unattended, or downgrading two files.
+  # #250 made the import decline per episode, so a partial pack is no longer *unsafe* — but this
+  # guard stays, for a second reason it also happens to serve: `Upgrade.candidate?/5` scales a
+  # pack's size to a per-episode MEAN, while each episode records its own file's actual size. Any
+  # episode below that mean therefore reads as improvable at equal resolution/source/language,
+  # including from the very pack that produced it. `Enum.all?` is what makes that self-comparison
+  # settle; relaxing it to `any?` would re-grab and re-download the same pack every rotation for
+  # an import that then changes nothing. Relaxing it needs that loop closed first — issue #257.
   defp maybe_grab_episodes({release, covered_numbers}, episodes, target, season_size) do
     covered = Enum.filter(episodes, &(&1.episode_number in covered_numbers))
     carries = carries(release, season_size)
@@ -266,9 +276,14 @@ defmodule Cinder.Catalog.UpgradeHunter do
   defp carries(_release, season_size), do: season_size
 
   # operator_initiated: true is what lets the intent target episodes that already have a file —
-  # the same flag the manual season search uses (`Cinder.Catalog.Grabs`).
+  # the same flag the manual season search uses (`Cinder.Catalog.Grabs`). arbitrate_at_import is
+  # what distinguishes the two: this sweep picks unattended, so the import re-checks each episode
+  # against what it already holds and keeps the ones this release doesn't beat (#250).
   defp grab_episode_upgrade(release, episode_ids) do
-    case Download.grab_episodes(release, episode_ids, operator_initiated: true) do
+    case Download.grab_episodes(release, episode_ids,
+           operator_initiated: true,
+           arbitrate_at_import: true
+         ) do
       {:ok, _grab} ->
         Logger.info(
           "upgrade hunter: upgrading #{length(episode_ids)} episode(s) to #{HTTPPolicy.sanitize_log(release.title)}"

@@ -71,6 +71,14 @@ defmodule Cinder.Download do
         do: Map.put(release_attrs, "operator_initiated", true),
         else: release_attrs
 
+    # Same shape as operator_initiated, and deliberately a SECOND flag: both the manual season
+    # search and the upgrade sweep set operator_initiated (it is what lets an intent target
+    # episodes that already have a file), so it cannot tell attended from unattended (#250).
+    release_attrs =
+      if Map.get(attrs, :arbitrate_at_import, false),
+        do: Map.put(release_attrs, "arbitrate_at_import", true),
+        else: release_attrs
+
     intent_attrs = %{
       operation_key: Ecto.UUID.generate(),
       kind: Map.fetch!(attrs, :kind),
@@ -170,7 +178,8 @@ defmodule Cinder.Download do
 
   defp reconcile_matching_intent(intent, release, episode_ids, opts \\ []) do
     if same_release?(intent, release) and same_episode_assignment?(intent, episode_ids) and
-         operator_initiated?(intent) == Keyword.get(opts, :operator_initiated, false),
+         operator_initiated?(intent) == Keyword.get(opts, :operator_initiated, false) and
+         arbitrate_at_import?(intent) == Keyword.get(opts, :arbitrate_at_import, false),
        do: reconcile_intent(intent),
        else: {:error, :download_intent_busy}
   end
@@ -193,7 +202,8 @@ defmodule Cinder.Download do
              release: release,
              mapping_snapshot: release.mapping_snapshot,
              release_policy_snapshot: release.release_policy_snapshot,
-             operator_initiated: Keyword.get(opts, :operator_initiated, false)
+             operator_initiated: Keyword.get(opts, :operator_initiated, false),
+             arbitrate_at_import: Keyword.get(opts, :arbitrate_at_import, false)
            }) do
       reconcile_intent(intent)
     end
@@ -655,6 +665,9 @@ defmodule Cinder.Download do
   defp operator_initiated?(%Intent{release: release}),
     do: is_map(release) and release["operator_initiated"] == true
 
+  defp arbitrate_at_import?(%Intent{release: release}),
+    do: is_map(release) and release["arbitrate_at_import"] == true
+
   defp reconcile_movie(%Intent{remote_id: remote_id, target_id: movie_id} = intent) do
     case Repo.get(Movie, movie_id) do
       %Movie{download_id: ^remote_id} = movie ->
@@ -709,7 +722,8 @@ defmodule Cinder.Download do
               intent.episode_ids,
               intent.release["title"],
               reset_attempts: true,
-              allow_available: operator_initiated?(intent)
+              allow_available: operator_initiated?(intent),
+              arbitrate_at_import: arbitrate_at_import?(intent)
             )
           else
             Catalog.create_grab_from_intent(intent)
