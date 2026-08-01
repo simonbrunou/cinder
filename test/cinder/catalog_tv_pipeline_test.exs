@@ -224,16 +224,26 @@ defmodule Cinder.CatalogTvPipelineTest do
       assert Repo.all(Grab) |> length() == 1
     end
 
-    test "create_grab/3 links only the free episodes when some are already grabbed" do
+    test "create_grab/3 rolls back on an empty episode list (no orphan grab)" do
+      assert {:error, :no_episodes_linked} = Catalog.create_grab("H0", :torrent, [])
+      assert Repo.all(Grab) == []
+    end
+
+    test "create_grab/3 rolls back when only some of the episodes are still free" do
       {_series, season} = series_with_season()
       taken = episode(season, %{})
       free = episode(season, %{})
-      {:ok, _first} = Catalog.create_grab("H1", :torrent, [taken.id])
+      {:ok, first} = Catalog.create_grab("H1", :torrent, [taken.id])
 
-      # A partial set (one free, one taken) still succeeds, linking just the free episode.
-      assert {:ok, second} = Catalog.create_grab("H2", :torrent, [taken.id, free.id])
-      assert Repo.get(Episode, free.id).grab_id == second.id
-      refute Repo.get(Episode, taken.id).grab_id == second.id
+      # A partial set used to succeed, linking just the free episode — but the release downloads in
+      # full either way, so `taken`'s file would arrive with no owner and become an undecided
+      # grab_file: an operator residual hold (#247). All or nothing; the sweep re-searches.
+      assert {:error, :episode_ownership_changed} =
+               Catalog.create_grab("H2", :torrent, [taken.id, free.id])
+
+      assert Repo.get(Episode, free.id).grab_id == nil
+      assert Repo.get(Episode, taken.id).grab_id == first.id
+      assert Repo.all(Grab) |> length() == 1
     end
   end
 

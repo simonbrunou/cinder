@@ -20,9 +20,11 @@ defmodule Cinder.Catalog.UpgradeHunter do
 
   One gate before anything is downloaded: `Cinder.Library.Upgrade.candidate?/5` compares the
   *parsed* release against the imported file, so a sideways or worse release is dropped without
-  being downloaded. It is advisory, and that is fine — the **import stays the arbiter**. It re-runs
-  the same comparison against the real file and keeps the existing one if the promise didn't hold,
-  so a mis-parsed release name can never leave the library worse off than it started.
+  being downloaded. That gate is the **only** one: an upgrade grab imports by forced replace
+  (`Library.stage_movie(replace: true)`; `replace?` in `Library.stage_episode_file/6` for any
+  episode that already has a file), which bypasses the import's own keep-vs-replace check. The
+  operator chose the release on the manual path, so forcing it is right there — but it means this
+  sweep must never link a release to something it hasn't decided is an upgrade.
 
   ## ponytail: no resolution cutoff
 
@@ -140,8 +142,7 @@ defmodule Cinder.Catalog.UpgradeHunter do
   defp hunt_episodes do
     episodes =
       Repo.all(
-        from e in Episode,
-          where: e.monitored == true and not is_nil(e.file_path) and is_nil(e.grab_id),
+        from e in holdings(),
           order_by: [asc_nulls_first: e.upgrade_checked_at],
           limit: ^batch_size(),
           preload: [season: :series]
@@ -150,19 +151,48 @@ defmodule Cinder.Catalog.UpgradeHunter do
     stamp(Episode, Enum.map(episodes, & &1.id))
 
     episodes
-    |> Enum.group_by(&{&1.season.series.id, &1.season.season_number})
-    |> Enum.each(fn {{series_id, season_number}, group} ->
-      isolate("series #{series_id} s#{season_number}", fn -> hunt_season(group) end)
+    |> Enum.uniq_by(& &1.season_id)
+    |> Enum.each(fn episode ->
+      isolate(
+        "series #{episode.season.series.id} s#{episode.season.season_number}",
+        fn -> hunt_season(episode.season_id) end
+      )
     end)
   end
 
-  defp hunt_season([%Episode{season: %{series: series}} | _] = episodes) do
-    if Catalog.media_profile_summary(series).effective == :anime do
-      # See "Scope" above — not a silent skip, so an operator wondering why their anime library
-      # never upgrades finds the reason in the log.
-      Logger.debug("upgrade hunter: skipping anime series #{series.id} (unsupported)")
-    else
-      search_season(series, episodes)
+  # Episodes this sweep can act on: monitored, a file to improve on, no grab already in flight.
+  defp holdings do
+    from e in Episode,
+      where: e.monitored == true and not is_nil(e.file_path) and is_nil(e.grab_id)
+  end
+
+  # The batch is a slice of the whole LIBRARY, so a season almost always arrives partial. Widen it
+  # back to every episode of the season we hold before searching: a season pack delivers the whole
+  # season no matter how few episodes we asked about, and every delivered file no episode claims
+  # becomes an operator residual hold (#247).
+  defp hunt_season(season_id) do
+    episodes =
+      Repo.all(
+        from e in holdings(),
+          where: e.season_id == ^season_id,
+          order_by: e.episode_number,
+          preload: [season: :series]
+      )
+
+    case episodes do
+      [%Episode{season: %{series: series}} | _] ->
+        stamp(Episode, Enum.map(episodes, & &1.id))
+
+        if Catalog.media_profile_summary(series).effective == :anime do
+          # See "Scope" above — not a silent skip, so an operator wondering why their anime library
+          # never upgrades finds the reason in the log.
+          Logger.debug("upgrade hunter: skipping anime series #{series.id} (unsupported)")
+        else
+          search_season(series, episodes)
+        end
+
+      [] ->
+        :ok
     end
   end
 
@@ -193,19 +223,25 @@ defmodule Cinder.Catalog.UpgradeHunter do
     end
   end
 
-  # An assignment covers a set of episode NUMBERS; only upgrade the ones this release actually
-  # improves, so a season pack that beats two of five episodes doesn't drag the other three
-  # through a pointless replace.
+  # An assignment covers a set of episode NUMBERS. Take a release only when we claim EVERY file it
+  # carries and it improves EVERY one — all-or-nothing, because both of the softer options end
+  # badly: an unclaimed delivered file arrives at import with no linked episode and becomes an
+  # undecided `grab_file`, an operator residual hold that keeps the grab open (#247); and claiming
+  # an episode this release doesn't improve replaces a good file with a worse one (an upgrade grab
+  # imports by forced replace — see the moduledoc).
+  #
+  # `carries/2` is the same over-estimate used for per-episode sizing, so "claim every file" also
+  # rules out a season pack for a season we only partly hold — a missing episode, an unmonitored
+  # one, one already being grabbed. The cost is packs left untaken (a pack beating 8 of 10, a
+  # still-airing season); they come back next rotation, and nothing manufactures a decision for a
+  # human in a sweep that is supposed to run unattended.
   defp maybe_grab_episodes({release, covered_numbers}, episodes, target, season_size) do
-    upgradable =
-      Enum.filter(
-        episodes,
-        &(&1.episode_number in covered_numbers and
-            Upgrade.candidate?(&1, release, :tv, target, carries(release, season_size)))
-      )
+    covered = Enum.filter(episodes, &(&1.episode_number in covered_numbers))
+    carries = carries(release, season_size)
 
     cond do
-      upgradable == [] ->
+      length(covered) != carries or
+          not Enum.all?(covered, &Upgrade.candidate?(&1, release, :tv, target, carries)) ->
         :ok
 
       not Disk.grab_space_available?(release.size) ->
@@ -214,7 +250,7 @@ defmodule Cinder.Catalog.UpgradeHunter do
         )
 
       true ->
-        grab_episode_upgrade(release, Enum.map(upgradable, & &1.id))
+        grab_episode_upgrade(release, Enum.map(covered, & &1.id))
     end
   end
 
