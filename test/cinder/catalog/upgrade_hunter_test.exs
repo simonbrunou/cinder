@@ -291,6 +291,35 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       end
     end
 
+    # The divisor has to be what the RELEASE carries, not what the sweep asked about. With a season
+    # longer than the batch those differ: Scorer.coverage/2 intersects the pack with the 10 episodes
+    # this pass examined, so dividing by that inflates the pack's per-episode size and it reads as
+    # an upgrade — grabbed, declined per-file at import, re-grabbed every sweep forever.
+    test "a season longer than the batch still divides by the whole season", ctx do
+      put_env(UpgradeHunter, enabled: true, batch: 10)
+
+      for n <- 2..22 do
+        episode_fixture(ctx.season, %{
+          episode_number: n,
+          file_path: "/lib/Show/S01E#{n}.mkv",
+          imported_resolution: "720p",
+          imported_size: 1_000_000_000
+        })
+      end
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", 1 ->
+        # 22 GB over the real 22-episode season = 1 GB/episode: a tie, not an upgrade. Divided by
+        # the 10 the batch happened to ask about it would look like 2.2 GB/episode.
+        {:ok, [release("Show.S01.720p.WEBDL-GRP", %{size: 22_000_000_000})]}
+      end)
+
+      watch_grabs()
+
+      poll()
+
+      refute_grabbed()
+    end
+
     test "a genuinely better season pack is still grabbed", ctx do
       for n <- 2..10 do
         episode_fixture(ctx.season, %{
