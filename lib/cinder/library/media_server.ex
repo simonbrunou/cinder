@@ -15,11 +15,12 @@ defmodule Cinder.Library.MediaServer do
   @typedoc """
   One media-server account, as read by `c:list_users/0`.
 
-  `id` is the server's own account id: an **integer** for Plex (which Cinder stores as
-  `users.plex_id`, so an imported account resolves on "Sign in with Plex") and a **string**
-  GUID for Jellyfin (no column yet — there is no Jellyfin sign-in). `email` is `nil` when the
-  server reports none; such an account can't be imported, since a Cinder account is keyed by
-  its email.
+  `id` is the server's own account id: an **integer** for Plex (stored as `users.plex_id`) and
+  a **string** GUID for Jellyfin (stored as `users.jellyfin_user_id`), so either way an
+  imported account resolves on the matching media-server sign-in rather than creating a second
+  one. `email` is `nil` when the server reports none: a Plex entry like that isn't importable
+  (Plex has an email field, so a missing one means unknown), while Jellyfin exposes no email at
+  all and the import synthesizes one — see `Cinder.Accounts.import_media_server_users/2`.
   """
   @type user :: %{
           id: integer() | String.t(),
