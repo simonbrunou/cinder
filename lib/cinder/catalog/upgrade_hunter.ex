@@ -18,18 +18,21 @@ defmodule Cinder.Catalog.UpgradeHunter do
   first) and stamps them **before** searching, so a large library rotates steadily and a title
   that raises can't wedge the batch or re-run every tick.
 
-  Two gates before anything is downloaded:
+  One gate before anything is downloaded: `Cinder.Library.Upgrade.candidate?/5` compares the
+  *parsed* release against the imported file, so a sideways or worse release is dropped without
+  being downloaded. It is advisory, and that is fine — the **import stays the arbiter**. It re-runs
+  the same comparison against the real file and keeps the existing one if the promise didn't hold,
+  so a mis-parsed release name can never leave the library worse off than it started.
 
-  1. **The cutoff.** An item already at the top of the household's preferred-resolution list has
-     nothing better to find, so it doesn't cost an indexer call. That reuses
-     `Cinder.Library.preferred_resolutions/1` — there is deliberately no separate "cutoff"
-     setting to keep in sync with the list that already expresses the same preference.
-  2. **The promise.** `Cinder.Library.upgrade_candidate?/4` compares the *parsed* release against
-     the imported file, so a sideways or worse release is dropped without downloading it.
+  ## ponytail: no resolution cutoff
 
-  Both are advisory, and that is fine: the **import stays the arbiter**. It re-runs the same
-  comparison against the real file and keeps the existing one if the promise didn't hold, so a
-  mis-parsed release name can never leave the library worse off than it started.
+  An earlier cut skipped the search entirely for items already at the top of the preferred-
+  resolution list, to save an indexer call. That was wrong: `better?/5` ranks **language first**,
+  then source, then resolution — so a 1080p file with the wrong audio language, or from the
+  least-preferred source, would have been permanently unreachable. Exactly what a soft
+  Original/Any grab or a later language change leaves behind. `candidate?/5` already returns false
+  when nothing is better, so the cutoff bought one saved search per item per rotation and cost
+  two of the three ranking keys. Deleted rather than taught about all three.
 
   ## Scope
 
@@ -48,6 +51,7 @@ defmodule Cinder.Catalog.UpgradeHunter do
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Movie}
   alias Cinder.{Disk, Download, Repo}
+  alias Cinder.HTTPPolicy
   alias Cinder.Library.Upgrade
 
   @default_interval :timer.hours(12)
@@ -86,7 +90,7 @@ defmodule Cinder.Catalog.UpgradeHunter do
 
     stamp(Movie, Enum.map(movies, & &1.id))
 
-    for movie <- movies, not at_cutoff?(movie, :movies) do
+    for movie <- movies do
       isolate("movie #{movie.id}", fn -> hunt_movie(movie) end)
     end
   end
@@ -119,7 +123,9 @@ defmodule Cinder.Catalog.UpgradeHunter do
         # file until the replacement is imported and swapped atomically.
         case Download.grab_movie(movie, release) do
           {:ok, _movie} ->
-            Logger.info("upgrade hunter: upgrading movie #{movie.id} to #{release.title}")
+            Logger.info(
+              "upgrade hunter: upgrading movie #{movie.id} to #{HTTPPolicy.sanitize_log(release.title)}"
+            )
 
           {:error, reason} ->
             Logger.info(
@@ -144,7 +150,6 @@ defmodule Cinder.Catalog.UpgradeHunter do
     stamp(Episode, Enum.map(episodes, & &1.id))
 
     episodes
-    |> Enum.reject(&at_cutoff?(&1, :tv))
     |> Enum.group_by(&{&1.season.series.id, &1.season.season_number})
     |> Enum.each(fn {{series_id, season_number}, group} ->
       isolate("series #{series_id} s#{season_number}", fn -> hunt_season(group) end)
@@ -191,11 +196,15 @@ defmodule Cinder.Catalog.UpgradeHunter do
   # improves, so a season pack that beats two of five episodes doesn't drag the other three
   # through a pointless replace.
   defp maybe_grab_episodes({release, covered_numbers}, episodes, target) do
+    # `covers` scales the pack's size down to per-episode before the comparison — without it every
+    # same-resolution season pack outranks a single imported file on size and re-downloads forever.
+    covers = max(length(covered_numbers), 1)
+
     upgradable =
       Enum.filter(
         episodes,
         &(&1.episode_number in covered_numbers and
-            Upgrade.candidate?(&1, release, :tv, target))
+            Upgrade.candidate?(&1, release, :tv, target, covers))
       )
 
     cond do
@@ -203,7 +212,9 @@ defmodule Cinder.Catalog.UpgradeHunter do
         :ok
 
       not Disk.grab_space_available?(release.size) ->
-        Logger.info("upgrade hunter: not enough space for #{release.title}")
+        Logger.info(
+          "upgrade hunter: not enough space for #{HTTPPolicy.sanitize_log(release.title)}"
+        )
 
       true ->
         grab_episode_upgrade(release, Enum.map(upgradable, & &1.id))
@@ -216,7 +227,7 @@ defmodule Cinder.Catalog.UpgradeHunter do
     case Download.grab_episodes(release, episode_ids, operator_initiated: true) do
       {:ok, _grab} ->
         Logger.info(
-          "upgrade hunter: upgrading #{length(episode_ids)} episode(s) to #{release.title}"
+          "upgrade hunter: upgrading #{length(episode_ids)} episode(s) to #{HTTPPolicy.sanitize_log(release.title)}"
         )
 
       {:error, reason} ->
@@ -225,15 +236,6 @@ defmodule Cinder.Catalog.UpgradeHunter do
   end
 
   # --- shared ------------------------------------------------------------------------------------
-
-  # At the top of the preferred list there is nothing better to look for. An unset list (or an
-  # item with no recorded resolution) means no cutoff — search it.
-  defp at_cutoff?(record, kind) do
-    case Upgrade.preferred_resolutions(kind) do
-      [best | _] -> record.imported_resolution == best
-      _unset -> false
-    end
-  end
 
   # Stamped BEFORE the search, so the rotation advances even for an item whose search raises —
   # otherwise one bad title would head the nulls-first ordering forever and the sweep would

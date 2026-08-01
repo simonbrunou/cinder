@@ -13,48 +13,93 @@ defmodule Cinder.Download.ContentPolicy do
   `Cinder.Download.Client.files/1` and hands it to `check/1`. A client that cannot answer yields
   `:ok`: a check that could not run must never be the thing that kills a download.
 
-  ## ponytail: extension blocklist only
+  ## Why the payload must be the *whole* download
 
-  There is no "the release contains no video file" rule, tempting as it is. Legitimate usenet and
-  scene releases ship as `.rar`/`.par2` sets and only become video after unpacking, so that rule
-  would delete good downloads — and a false positive here costs real data, which is exactly where
-  laziness stops. Extensions that are never part of a media release are unambiguous; that is the
-  whole test. Override the list per install with
-  `config :cinder, #{inspect(__MODULE__)}, blocked_extensions: ~w(.lnk ...)`.
+  A blocked extension alone is not enough to condemn a release, because plenty of legitimate ones
+  carry one: RARBG-lineage torrents ship a 0-byte `RARBG_DO_NOT_MIRROR.exe` next to the video, and
+  that is a large share of public-tracker content. Blocking on presence would re-queue and
+  blocklist every such candidate with no retry budget until the title hit `:no_match` — the check
+  would cost the household its library rather than protect it.
+
+  So a download is blocked only when it carries a blocked extension **and** nothing that could be
+  the actual media: no video file, and no archive either (legitimate usenet and scene releases ship
+  as `.rar`/`.par2` sets and only become video after unpacking). A fake carries a `.lnk` and a
+  `readme.txt` and nothing else, which is exactly what this catches.
+
+  Override either list per install with
+  `config :cinder, #{inspect(__MODULE__)}, blocked_extensions: ~w(.lnk ...), media_extensions: ~w(.mkv ...)`.
 
   **On by default** — the shipped `config/config.exs` sets `enabled: true`. (`enabled?/0`'s own
   fallback is `false`, so an install with no config block at all stays off — fail-safe, mirroring
   `Cinder.Download.StallReaper`.)
   """
 
+  alias Cinder.HTTPPolicy
+
   # Executables and shortcuts. Deliberately excludes archive formats a real release uses
   # (.rar/.zip/.7z/.par2) — `.zipx` is here because no media release ships one.
   @default_blocked_extensions ~w(.lnk .exe .bat .cmd .com .scr .pif .msi .vbs .js .ps1 .zipx)
 
+  # Anything that could plausibly BE the media: playable containers, plus the archive/parity set a
+  # release arrives in before unpacking. One of these present means the download has real content
+  # and the blocked file is a companion, not the payload.
+  @default_media_extensions ~w(
+    .mkv .mp4 .avi .m4v .mov .wmv .ts .m2ts .mpg .mpeg .webm .flv .ogm .iso .img
+    .rar .zip .7z .par2 .tar .gz .001
+  )
+
   @doc "Whether the content check runs (`config :cinder, #{inspect(__MODULE__)}, enabled: true`)."
   def enabled?, do: Keyword.get(config(), :enabled, false)
 
-  @doc "The extensions that mark a download as a fake, lowercase and dot-prefixed."
+  @doc """
+  The extensions that mark a download as a fake, dot-prefixed. Downcased on read so an operator
+  who configures `.EXE` doesn't get a silently dead entry.
+  """
   def blocked_extensions,
-    do: Keyword.get(config(), :blocked_extensions, @default_blocked_extensions)
+    do: config() |> Keyword.get(:blocked_extensions, @default_blocked_extensions) |> downcase()
+
+  @doc "The extensions that mean a download carries real content, dot-prefixed."
+  def media_extensions,
+    do: config() |> Keyword.get(:media_extensions, @default_media_extensions) |> downcase()
 
   @doc """
-  `{:blocked, detail}` when any name in `filenames` carries a blocked extension, else `:ok`.
-  `detail` names the offending file for the operator-facing park/re-queue reason. An empty list
-  (a torrent that has not fetched metadata yet) is `:ok`.
+  `{:blocked, detail}` when `filenames` carries a blocked extension **and** nothing that could be
+  the actual media, else `:ok`. `detail` names the offending file for the operator-facing
+  park/re-queue reason. An empty list (a torrent that has not fetched metadata yet) is `:ok`.
   """
   def check(filenames) when is_list(filenames) do
-    blocked = blocked_extensions()
+    extensions = for name <- filenames, is_binary(name), do: {name, extension(name)}
 
-    Enum.find_value(filenames, :ok, fn
-      name when is_binary(name) ->
-        if String.downcase(Path.extname(name)) in blocked,
-          do: {:blocked, "download contains #{Path.basename(name)}"}
-
-      _name ->
-        nil
-    end)
+    with {name, _ext} <- Enum.find(extensions, &(elem(&1, 1) in blocked_extensions())),
+         false <- Enum.any?(extensions, &(elem(&1, 1) in media_extensions())) do
+      {:blocked, detail(name)}
+    else
+      _has_real_content_or_nothing_blocked -> :ok
+    end
   end
+
+  # Normalized, because a bare `Path.extname/1` match is defeated by one appended byte:
+  # `evil.exe.` reads as `"."`, `evil.exe ` as `".exe "`, `evil.exe:$DATA` as `".exe:$DATA"`.
+  # All three still name an executable to the household member who opens the download share —
+  # Windows canonicalization drops trailing dots and spaces, and `f.exe:$DATA` IS `f.exe` (an
+  # alternate data stream) — so the check has to see through them or it is evaded for free.
+  defp extension(name) do
+    name
+    |> Path.basename()
+    # An alternate-data-stream suffix is everything from the first `:`.
+    |> String.split(":", parts: 2)
+    |> hd()
+    |> String.replace(~r/[\s.]+$/u, "")
+    |> Path.extname()
+    |> String.downcase()
+  end
+
+  # The name is remote, attacker-chosen and unbounded, and this string is both logged and
+  # persisted as the park reason — so it goes through the same sanitizer (CRLF stripped,
+  # truncated) that every other remote string in the pollers already uses.
+  defp detail(name), do: "download contains #{HTTPPolicy.sanitize_log(Path.basename(name))}"
+
+  defp downcase(extensions), do: Enum.map(extensions, &String.downcase/1)
 
   @doc """
   `check/1` over the file list `client` reports for `download_id` — what both pollers call on an

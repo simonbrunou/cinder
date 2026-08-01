@@ -808,7 +808,6 @@ defmodule Cinder.Download do
     end
   end
 
-  # A profile switched back to Standard must not keep a stale Anime hold marker. A nil imdb_id
   @doc """
   The best release currently on offer for `movie` under the household's policy — the *search* half
   of `start/1`, with no status transition and no grab.
@@ -840,6 +839,7 @@ defmodule Cinder.Download do
     end
   end
 
+  # A profile switched back to Standard must not keep a stale Anime hold marker. A nil imdb_id
   # (TMDB publishes none for this title) degrades to the guarded free-text search — see issue #195.
   defp standard_movie_result(movie, imdb_id, opts) do
     Catalog.set_anime_hold(movie, nil)

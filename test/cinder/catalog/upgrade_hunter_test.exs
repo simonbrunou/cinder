@@ -88,12 +88,25 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       assert %Movie{status: :available, download_id: nil} = Repo.get!(Movie, movie.id)
     end
 
-    test "does not even search a movie already at the preferred-resolution cutoff" do
+    # There is deliberately no resolution cutoff: better?/5 ranks language FIRST, so a file at the
+    # top resolution with the wrong audio language is still upgradable and must still be searched.
+    test "still searches a top-resolution movie whose language is wrong" do
       put_env(:movies_preferred_resolutions, ["1080p", "720p"])
-      library_movie(%{imported_resolution: "1080p"})
 
-      # No indexer stub at all: reaching the search would raise UnexpectedCall.
+      movie =
+        library_movie(%{
+          imported_resolution: "1080p",
+          imported_language: "en",
+          preferred_language: "french",
+          original_language: "en"
+        })
+
+      indexer_offers("tt1375666", [release("Inception.2010.1080p.BluRay.FRENCH-GRP")])
+      stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "lang-upgrade"} end)
+
       poll()
+
+      assert %Movie{status: :upgrading} = Repo.get!(Movie, movie.id)
     end
 
     test "stamps every examined movie so the rotation advances" do
@@ -211,6 +224,20 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
 
       assert Repo.get!(Episode, wanted.id).upgrade_checked_at == nil
       assert %DateTime{} = Repo.get!(Episode, ctx.episode.id).upgrade_checked_at
+    end
+
+    # Without per-episode size scaling, a season pack's whole size beats one imported file on
+    # better?/5's size tiebreak, so EVERY same-resolution pack reads as an upgrade — it downloads,
+    # the import declines it per-file, nothing is blocklisted, and it re-downloads every sweep.
+    test "a same-resolution season pack is not an upgrade for one imported episode", ctx do
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", 1 ->
+        # 10 GB across a 10-episode season = 1 GB/episode, exactly what is already imported.
+        {:ok, [release("Show.S01.720p.WEBDL-GRP", %{size: 10_000_000_000})]}
+      end)
+
+      poll()
+
+      assert Repo.get!(Episode, ctx.episode.id).grab_id == nil
     end
 
     test "skips an anime-profile series", ctx do

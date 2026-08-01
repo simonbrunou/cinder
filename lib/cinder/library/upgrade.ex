@@ -14,17 +14,25 @@ defmodule Cinder.Library.Upgrade do
   sides a caller would otherwise have to assemble itself. `Cinder.Catalog.UpgradeHunter` asks this
   *before* downloading, so a sideways or worse release costs nothing.
 
+  `covers` is how many episodes the release carries (1 for a movie or a single episode). The
+  release's size is divided by it, because `record`'s `imported_size` is **one file** while a
+  season pack's size is the whole pack: compared raw, size is `better?/5`'s last tiebreak and
+  larger wins, so *every* same-resolution pack would read as an upgrade, download, be declined
+  per-file at import, and be re-downloaded on every sweep forever. Same scaling convention as
+  `Cinder.Acquisition.Scorer`'s `scale_band/2`.
+
   Name-parsed and therefore advisory: a `%Release{}` carries what the indexer's title implied, not
   what the file turns out to be. The **import stays the arbiter** — it re-runs `better?/5` against
   the real file and keeps the existing one if the promise didn't hold — so a mis-parsed name can
   never replace a good file with a worse one.
   """
-  def candidate?(record, %Release{} = release, kind, target) do
+  def candidate?(record, %Release{} = release, kind, target, covers \\ 1)
+      when is_integer(covers) and covers > 0 do
     better?(
       %{
         resolution: release.resolution,
         source: release.source,
-        size: release.size,
+        size: per_episode(release.size, covers),
         language: release.language
       },
       %{
@@ -38,6 +46,9 @@ defmodule Cinder.Library.Upgrade do
       preferred_sources(kind)
     )
   end
+
+  defp per_episode(nil, _covers), do: nil
+  defp per_episode(size, covers), do: div(size, covers)
 
   @doc "The household's preferred resolutions for library `kind`, best first (`nil` when unset)."
   def preferred_resolutions(kind),
