@@ -29,7 +29,7 @@ defmodule Cinder.Download.TvPollerTest do
   # read by /healthz); erase it so a recorded run can't bleed into another test/suite.
   setup do
     on_exit(fn -> :persistent_term.erase({TvPoller, :last_run}) end)
-    :ok
+    stub_clean_content()
   end
 
   @past ~D[2001-01-01]
@@ -2695,6 +2695,86 @@ defmodule Cinder.Download.TvPollerTest do
       assert :ok = TvPoller.poll()
 
       assert %Grab{} = Repo.get(Grab, grab.id)
+      assert Repo.all(BlockedRelease) == []
+    end
+  end
+
+  describe "content policy" do
+    setup do
+      {series, season} = series_tree()
+      e1 = episode(season, 4)
+      {:ok, grab} = Catalog.create_grab("hash-tv-fake", :torrent, [e1.id], "Show.S01E04-FAKE")
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-tv-fake" ->
+        {:ok, %{state: :downloading, progress: 0.7, speed: 900_000, seeders: 12}}
+      end)
+
+      %{series: series, episode: e1, grab: grab}
+    end
+
+    test "a fake payload parks on the FIRST tick: removed, blocklisted, episodes re-search",
+         ctx do
+      test_pid = self()
+      Cinder.TestNotifier.subscribe()
+
+      expect(Cinder.Download.ClientMock, :files, fn "hash-tv-fake" ->
+        {:ok, ["Show.S01E04/Show.S01E04.mkv.lnk"]}
+      end)
+
+      stub(Cinder.Download.ClientMock, :remove, fn id, opts ->
+        send(test_pid, {:removed, id, opts})
+        :ok
+      end)
+
+      start_supervised!({TvPoller, interval: 60_000})
+      assert :ok = TvPoller.poll()
+
+      # Parked without spending the attempt budget — nothing about the file list will change.
+      refute Repo.get(Grab, ctx.grab.id)
+      assert Repo.get!(Episode, ctx.episode.id).grab_id == nil
+      assert Catalog.blocked_release_titles_for_series(ctx.series.id) == ["Show.S01E04-FAKE"]
+
+      assert_receive {:removed, "hash-tv-fake", _opts}
+      assert_receive {:notify, {:grab_failed, %Grab{}, :blocked_content}}
+    end
+
+    # As on the movie side: a fake is small enough to be :completed by the first tick, so the
+    # :completed branch has to vet too or the payload reaches the importer.
+    test "a fake caught only once COMPLETED is still rejected, never imported", ctx do
+      test_pid = self()
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-tv-fake" ->
+        {:ok, %{state: :completed, content_path: "/dl/Show.S01E04"}}
+      end)
+
+      expect(Cinder.Download.ClientMock, :files, fn "hash-tv-fake" ->
+        {:ok, ["Show.S01E04/Show.S01E04.mkv.lnk"]}
+      end)
+
+      stub(Cinder.Download.ClientMock, :remove, fn id, _opts ->
+        send(test_pid, {:removed, id})
+        :ok
+      end)
+
+      # No filesystem stubs: reaching the importer at all would raise UnexpectedCall.
+      start_supervised!({TvPoller, interval: 60_000})
+      assert :ok = TvPoller.poll()
+
+      refute Repo.get(Grab, ctx.grab.id)
+      assert Repo.get!(Episode, ctx.episode.id).file_path == nil
+      assert Catalog.blocked_release_titles_for_series(ctx.series.id) == ["Show.S01E04-FAKE"]
+      assert_receive {:removed, "hash-tv-fake"}
+    end
+
+    test "an ordinary release is tracked as usual", ctx do
+      expect(Cinder.Download.ClientMock, :files, fn "hash-tv-fake" ->
+        {:ok, ["Show.S01E04/Show.S01E04.mkv"]}
+      end)
+
+      start_supervised!({TvPoller, interval: 60_000})
+      assert :ok = TvPoller.poll()
+
+      assert %Grab{download_progress: 0.7} = Repo.get!(Grab, ctx.grab.id)
       assert Repo.all(BlockedRelease) == []
     end
   end

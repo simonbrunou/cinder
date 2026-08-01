@@ -29,6 +29,30 @@ defmodule Cinder.Download.Client do
   @callback health() :: :ok | {:error, term()}
 
   @doc """
+  Lists the file names a download will deliver, for `Cinder.Download.ContentPolicy` to vet.
+  Names may be relative paths (`"Folder/file.mkv"`); only the extension is inspected.
+
+  Best-effort by contract: a client that cannot answer yet (a torrent still fetching metadata,
+  a usenet job before its file list is known) returns `{:ok, []}`, and callers treat any
+  `{:error, _}` as "no opinion" rather than as a reason to fail the download.
+  """
+  @callback files(id :: String.t()) :: {:ok, [String.t()]} | {:error, term()}
+
+  @doc """
+  Lists **only the downloads Cinder itself submitted** — the ones carrying its
+  `cinder-<operation_key>` marker (a qBittorrent tag, a SABnzbd job-name suffix).
+  A household's hand-added downloads are never reported, so a caller sweeping this
+  list can't act on something it doesn't own.
+
+  Each entry is `%{id:, operation_key:, state:}`, where `:state` uses the same
+  `:downloading | :completed | :error` vocabulary as `status/1`. An entry whose
+  marker can't be parsed back to a key is omitted rather than reported keyless.
+  """
+  @callback list_managed() ::
+              {:ok, [%{id: String.t(), operation_key: String.t(), state: atom()}]}
+              | {:error, term()}
+
+  @doc """
   Removes a tracked download by `id` (qBittorrent infohash / SABnzbd nzo_id, as
   passed to `status/1`). **Idempotent: an unknown/missing id returns `:ok`** (the
   download may have auto-removed on completion). `opts` carries `delete_files:`

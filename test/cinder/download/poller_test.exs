@@ -62,7 +62,7 @@ defmodule Cinder.Download.PollerTest do
       :persistent_term.erase({TvPoller, :last_run})
     end)
 
-    :ok
+    stub_clean_content()
   end
 
   defp downloading_movie(tmdb_id, download_id, extra \\ []) do
@@ -3173,6 +3173,120 @@ defmodule Cinder.Download.PollerTest do
       # Tick 2: identical metrics → no write → updated_at unchanged.
       assert :ok = Poller.poll()
       assert Repo.get!(Movie, movie.id).updated_at == first
+    end
+  end
+
+  describe "content policy" do
+    setup do
+      movie = downloading_movie(90, "hash-fake", release_title: "Movie.2024.1080p-FAKE")
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-fake" ->
+        {:ok, %{state: :downloading, progress: 0.9, speed: 500_000, seeders: 40}}
+      end)
+
+      %{movie: movie}
+    end
+
+    test "a fake payload re-queues on the FIRST tick, blocklisted", %{movie: movie} do
+      expect(Cinder.Download.ClientMock, :files, fn "hash-fake" ->
+        {:ok, ["Movie.2024.1080p/Movie.2024.1080p.mkv.lnk", "Movie.2024.1080p/readme.txt"]}
+      end)
+
+      start_supervised!({Poller, interval: 60_000})
+      assert :ok = Poller.poll()
+
+      # :requested, not a bounded retry — the file list won't improve, so there is nothing to wait
+      # for. import_attempts stays 0: this never entered fail_download/2's tolerance.
+      assert %Movie{status: :requested, import_attempts: 0, download_id: nil} =
+               Repo.get!(Movie, movie.id)
+
+      assert [%{release_title: "Movie.2024.1080p-FAKE", reason: "blocked_content"}] =
+               Repo.all(Cinder.Catalog.BlockedRelease)
+    end
+
+    test "an ordinary release is tracked as usual", %{movie: movie} do
+      expect(Cinder.Download.ClientMock, :files, fn "hash-fake" ->
+        {:ok, ["Movie.2024.1080p/Movie.2024.1080p.mkv"]}
+      end)
+
+      start_supervised!({Poller, interval: 60_000})
+      assert :ok = Poller.poll()
+
+      assert %Movie{status: :downloading, download_progress: 0.9} = Repo.get!(Movie, movie.id)
+      assert Repo.all(Cinder.Catalog.BlockedRelease) == []
+    end
+
+    # The regression that matters most: a fake payload is ~1 MB, so it is routinely :completed by
+    # the time the first tick looks at it. Vetting only the :downloading branch would let exactly
+    # the case this check exists for walk straight into the importer.
+    test "a fake caught only once COMPLETED is still rejected, never imported", %{movie: movie} do
+      stub(Cinder.Download.ClientMock, :status, fn "hash-fake" ->
+        {:ok, %{state: :completed, content_path: "/downloads/Movie.2024.1080p"}}
+      end)
+
+      expect(Cinder.Download.ClientMock, :files, fn "hash-fake" ->
+        {:ok, ["Movie.2024.1080p/Movie.2024.1080p.mkv.lnk"]}
+      end)
+
+      # No import stubs: reaching the importer at all would raise UnexpectedCall.
+      start_supervised!({Poller, interval: 60_000})
+      assert :ok = Poller.poll()
+
+      assert %Movie{status: :requested, content_path: nil} = Repo.get!(Movie, movie.id)
+
+      assert [%{release_title: "Movie.2024.1080p-FAKE", reason: "blocked_content"}] =
+               Repo.all(Cinder.Catalog.BlockedRelease)
+    end
+
+    test "a fake replacement reverts an upgrade, live library file untouched" do
+      movie =
+        movie_fixture(%{
+          tmdb_id: 91,
+          title: "M",
+          status: :upgrading,
+          download_id: "hash-upgrade-fake",
+          release_title: "M.2024.2160p-FAKE",
+          file_path: "/lib/M/M.mkv"
+        })
+
+      test_pid = self()
+
+      stub(Cinder.Download.ClientMock, :status, fn "hash-upgrade-fake" ->
+        {:ok, %{state: :completed, content_path: "/downloads/M.2024.2160p"}}
+      end)
+
+      expect(Cinder.Download.ClientMock, :files, fn "hash-upgrade-fake" ->
+        {:ok, ["M.2024.2160p/M.2024.2160p.mkv.exe"]}
+      end)
+
+      stub(Cinder.Download.ClientMock, :remove, fn id, _opts ->
+        send(test_pid, {:removed, id})
+        :ok
+      end)
+
+      start_supervised!({Poller, interval: 60_000})
+      assert :ok = Poller.poll()
+
+      # Reverted to :available with the ORIGINAL file still in place — an upgrade that turns out
+      # to be a fake must never cost the household the file it already had.
+      assert %Movie{status: :available, file_path: "/lib/M/M.mkv", download_id: nil} =
+               Repo.get!(Movie, movie.id)
+
+      assert_receive {:removed, "hash-upgrade-fake"}
+
+      # Blocklisted, or the next upgrade hunt re-picks the very same fake.
+      assert [%{release_title: "M.2024.2160p-FAKE", reason: "upgrade_failed"}] =
+               Repo.all(Cinder.Catalog.BlockedRelease)
+    end
+
+    test "a client that cannot list files leaves the download alone", %{movie: movie} do
+      expect(Cinder.Download.ClientMock, :files, fn "hash-fake" -> {:error, :econnrefused} end)
+
+      start_supervised!({Poller, interval: 60_000})
+      assert :ok = Poller.poll()
+
+      assert %Movie{status: :downloading} = Repo.get!(Movie, movie.id)
+      assert Repo.all(Cinder.Catalog.BlockedRelease) == []
     end
   end
 end

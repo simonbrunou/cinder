@@ -29,7 +29,7 @@ defmodule Cinder.Download.TvPoller do
   alias Cinder.{Acquisition, Catalog, Disk, Download, Library, Notifier, Settings}
   alias Cinder.Acquisition.AnimePreferences
   alias Cinder.Catalog.{Episode, Grab, Grabs}
-  alias Cinder.Download.StallReaper
+  alias Cinder.Download.{ContentPolicy, StallReaper}
   alias Cinder.HTTPPolicy
 
   @default_interval 5_000
@@ -76,7 +76,7 @@ defmodule Cinder.Download.TvPoller do
   defp advance_with(grab, client) do
     case client.status(grab.download_id) do
       {:ok, %{state: :completed, content_path: path}} when path not in [nil, ""] ->
-        Catalog.mark_grab_downloaded(grab, path)
+        vetted(grab, client, fn -> Catalog.mark_grab_downloaded(grab, path) end)
 
       # Completed but no usable path / errored / vanished: anomalous, so bound it rather than
       # re-polling forever. A still-downloading or transient client error just waits (no bump).
@@ -90,7 +90,7 @@ defmodule Cinder.Download.TvPoller do
         retry_or_park(grab, :torrent_not_found)
 
       {:ok, %{state: :downloading} = status} ->
-        track_and_reap(grab, status)
+        vetted(grab, client, fn -> track_and_reap(grab, status) end)
 
       {:error, _reason} ->
         Catalog.update_grab_download_metrics(grab, %{
@@ -100,6 +100,25 @@ defmodule Cinder.Download.TvPoller do
 
       _ ->
         :ok
+    end
+  end
+
+  # Gates BOTH in-flight states, not just :downloading — a fake payload is small enough to COMPLETE
+  # inside a single tick, so vetting only the downloading branch would miss exactly the case the
+  # check exists for and hand the payload to the importer.
+  #
+  # Deterministic: a fake's file list won't improve, so a blocked verdict skips retry_or_park's
+  # attempt budget and parks on the first sighting. The download is removed first — the park
+  # deletes the grab and takes `download_id` with it — so the payload stops arriving; if the park
+  # then fails, the next tick sees `:not_found` and parks through the bounded path instead.
+  defp vetted(grab, client, continue) do
+    case ContentPolicy.vet(client, grab.download_id) do
+      {:blocked, detail} ->
+        Download.best_effort_remove(client, grab.download_id)
+        park(grab, {:blocked_content, detail})
+
+      :ok ->
+        continue.()
     end
   end
 
@@ -686,8 +705,9 @@ defmodule Cinder.Download.TvPoller do
     # Block BEFORE park_grab deletes the grab: block_grab_release resolves the series from the
     # grab's still-linked episodes (the grab_id FK nilifies them on delete). It is non-raising,
     # so it cannot abort the park (a raise here would re-park the grab every tick). :no_files_matched
-    # is the deterministic empty-import; the download-side reasons only reach park post-exhaustion.
-    if code == :no_files_matched or code in @download_failure_errors do
+    # is the deterministic empty-import; :blocked_content is the deterministic fake-content check
+    # (both park on first sighting); the download-side reasons only reach park post-exhaustion.
+    if code in [:no_files_matched, :blocked_content] or code in @download_failure_errors do
       Catalog.block_grab_release(grab, code)
     end
 

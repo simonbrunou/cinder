@@ -836,4 +836,112 @@ defmodule Cinder.Download.Client.SabnzbdTest do
 
     assert {:error, :response_too_large} = Sabnzbd.status("nzo-1")
   end
+
+  @key "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+
+  test "files/1 returns the job's file names" do
+    stub(fn conn ->
+      assert conn.params["mode"] == "get_files"
+      assert conn.params["value"] == "nzo-1"
+
+      Req.Test.json(conn, %{
+        "files" => [
+          %{"filename" => "Movie.mkv", "bytes" => 1},
+          %{"filename" => "Movie.nfo", "bytes" => 2},
+          %{"bytes" => 3}
+        ]
+      })
+    end)
+
+    assert {:ok, ["Movie.mkv", "Movie.nfo"]} = Sabnzbd.files("nzo-1")
+  end
+
+  test "files/1 treats a job with no file list as no opinion, not a failure" do
+    stub(fn conn -> Req.Test.json(conn, %{"error" => "no such job"}) end)
+
+    assert {:ok, []} = Sabnzbd.files("nzo-gone")
+  end
+
+  test "list_managed/0 reports cinder-named queue and history jobs with their state" do
+    stub(fn conn ->
+      assert conn.params["search"] == "cinder-"
+
+      body =
+        case conn.params["mode"] do
+          "queue" ->
+            %{
+              "queue" => %{
+                "slots" => [
+                  %{
+                    "filename" => "Movie.cinder-#{@key}",
+                    "nzo_id" => "nzo-q",
+                    "status" => "Downloading"
+                  },
+                  # The household's own job — no cinder marker, so not ours.
+                  %{
+                    "filename" => "Some.Other.Job",
+                    "nzo_id" => "nzo-mine",
+                    "status" => "Downloading"
+                  }
+                ]
+              }
+            }
+
+          "history" ->
+            %{
+              "history" => %{
+                "slots" => [
+                  %{
+                    "name" => "Show.cinder-#{@key}.nzb",
+                    "nzo_id" => "nzo-h",
+                    "status" => "Failed"
+                  }
+                ]
+              }
+            }
+        end
+
+      Req.Test.json(conn, body)
+    end)
+
+    assert {:ok, entries} = Sabnzbd.list_managed()
+
+    assert entries == [
+             %{id: "nzo-q", operation_key: @key, state: :downloading},
+             %{id: "nzo-h", operation_key: @key, state: :error}
+           ]
+  end
+
+  # The collision the module's find_by_operation_key/1 comment warns about: a completed download's
+  # own output file re-entering the indexer as a future release title. The key is mid-string there,
+  # not at the tail, so it must not be claimed — a caller that removes what it finds would
+  # otherwise reap someone else's job.
+  test "list_managed/0 does not claim a job whose name merely contains a key mid-string" do
+    stub(fn conn ->
+      body =
+        case conn.params["mode"] do
+          "queue" ->
+            %{
+              "queue" => %{
+                "slots" => [
+                  %{"filename" => "Movie.cinder-#{@key}.mkv", "nzo_id" => "nzo-repost"}
+                ]
+              }
+            }
+
+          "history" ->
+            %{"history" => %{"slots" => []}}
+        end
+
+      Req.Test.json(conn, body)
+    end)
+
+    assert {:ok, []} = Sabnzbd.list_managed()
+  end
+
+  test "list_managed/0 tolerates a 200 with no slots" do
+    stub(fn conn -> Req.Test.json(conn, %{}) end)
+
+    assert {:ok, []} = Sabnzbd.list_managed()
+  end
 end

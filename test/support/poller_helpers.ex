@@ -4,6 +4,20 @@ defmodule Cinder.PollerHelpers do
   """
 
   @doc """
+  Stubs both download clients' `files/1` with an empty (clean) list.
+
+  Every in-flight download is content-vetted by `Cinder.Download.ContentPolicy`, which is on by
+  default — so without this, any test that advances a `:downloading` unit hits an unstubbed mock.
+  A `Mox.stub` is not verified and `expect` overrides it, so the fake-content tests still assert
+  their own file lists; this only spares every *other* poller test from describing one.
+  """
+  def stub_clean_content do
+    Mox.stub(Cinder.Download.ClientMock, :files, fn _id -> {:ok, []} end)
+    Mox.stub(Cinder.Download.SabnzbdClientMock, :files, fn _id -> {:ok, []} end)
+    :ok
+  end
+
+  @doc """
   Blocks until the named GenServer is back up under a pid different from
   `old_pid` (i.e. the supervisor has restarted it), returning the new pid.
   """

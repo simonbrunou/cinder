@@ -37,6 +37,8 @@ defmodule Cinder.Catalog.Episode do
 
     field :classification_source, :string, default: "legacy"
     field :classification_label, :string
+    # Rotation clock for Cinder.Catalog.UpgradeHunter; nil = never checked (sorts first).
+    field :upgrade_checked_at, :utc_datetime
     belongs_to :season, Season
     belongs_to :grab, Grab
 

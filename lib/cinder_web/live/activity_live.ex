@@ -321,6 +321,9 @@ defmodule CinderWeb.ActivityLive do
 
   # Human label for a background sweep module (Cinder.Jobs).
   defp job_label(Cinder.Catalog.Refresher), do: gettext("Series metadata refresh")
+  defp job_label(Cinder.Catalog.Rehunter), do: gettext("Parked title rehunt")
+  defp job_label(Cinder.Catalog.UpgradeHunter), do: gettext("Quality upgrade hunt")
+  defp job_label(Cinder.Download.Cleaner), do: gettext("Orphaned download cleanup")
   defp job_label(Cinder.Subtitles.Sweeper), do: gettext("Subtitle backfill")
   defp job_label(Cinder.Requests.WatchlistSync), do: gettext("Plex watchlist sync")
   defp job_label(module), do: module |> Module.split() |> List.last()

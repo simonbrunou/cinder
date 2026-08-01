@@ -118,6 +118,19 @@ config :cinder, Cinder.Download.StallReaper,
   stall_timeout: :timer.hours(2),
   no_seeders_timeout: :timer.minutes(30)
 
+# Re-queues parked titles so a request with no release yet keeps getting hunted.
+config :cinder, Cinder.Catalog.Rehunter, enabled: true, rehunt_after: :timer.hours(24)
+
+# Reaps Cinder-submitted downloads nothing owns any more (never completed ones — seeding survives).
+config :cinder, Cinder.Download.Cleaner, enabled: true
+
+# Rejects a download whose file list marks it as a fake (a .lnk/.exe payload, not a movie).
+config :cinder, Cinder.Download.ContentPolicy, enabled: true
+
+# Re-searches library items for a better release. OFF by default: it replaces library files, so
+# it is opt-in rather than something an upgrade starts doing to an existing library.
+config :cinder, Cinder.Catalog.UpgradeHunter, enabled: false
+
 # Configure the endpoint
 config :cinder, CinderWeb.Endpoint,
   url: [host: "localhost"],
