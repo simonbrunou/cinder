@@ -80,12 +80,11 @@ defmodule Cinder.Acquisition.Scorer do
     |> Enum.filter(&(&1.season == season or Map.has_key?(alternate_numbering, &1.season)))
     |> Enum.reject(&title_blocked?(&1, release_blocklist))
     |> Enum.filter(&(allowed_resolution?(&1, preferred) and allowed_source?(&1, sources)))
-    |> Enum.reject(&unclaimable?(&1, MapSet.new(wanted_episodes), opts))
     |> cover(
       MapSet.new(wanted_episodes),
       [],
       band,
-      &alternate_coverage(&1, &2, season, alternate_numbering),
+      &claimable_coverage(&1, &2, season, alternate_numbering, opts),
       opts
     )
   end
@@ -146,16 +145,29 @@ defmodule Cinder.Acquisition.Scorer do
     end
   end
 
-  # `full_claim_only: true` drops any release carrying an episode the caller can't claim, BEFORE
-  # the cover runs — it has to be a candidate filter, not a verdict on the winner. `cover/6` is
-  # greedy and destructive: a season pack takes the whole wanted set and the singles behind it are
-  # never scored, so declining the pack afterwards discards the season's upgrades entirely, every
-  # pass. Only `Cinder.Catalog.UpgradeHunter` passes it: every file it can't link to an episode it
-  # holds arrives at import as an operator residual decision (#247), whereas the normal sweep is
-  # happy to take a pack for a subset of a season and let the extras be residuals.
+  # `full_claim_only: true` scores a release only while it can claim EVERY episode it carries — the
+  # same non-truncating rule `id_coverage/2` applies to stable ids. Only
+  # `Cinder.Catalog.UpgradeHunter` passes it: a delivered file it can't link to an episode it holds
+  # arrives at import as an operator residual decision (#247), whereas the normal sweep is happy to
+  # take a pack for a subset of a season and let the extras be residuals.
+  #
+  # It belongs HERE, inside the coverage function, for two separate reasons. Rejecting the winner
+  # after the fact is useless: `cover/6` is greedy and destructive, so an unclaimable season pack
+  # takes the whole wanted set and the singles behind it are never scored — declining it afterwards
+  # discards that season's upgrades every pass. And filtering candidates once against the INITIAL
+  # want is not enough either: `needed` shrinks with each pick, so a release that overlaps an
+  # earlier pick (or that only fits the band at the smaller k) would still be handed a truncated
+  # assignment, and its unclaimed files land back in an operator hold. Zero coverage drops it from
+  # the round without consuming anything.
   #
   # A whole-season pack carries the season (`pack_episode_count`, the same opt `verdict/2` bands
   # packs with); anything else carries the episodes it names.
+  defp claimable_coverage(release, needed, season, alternate_numbering, opts) do
+    if unclaimable?(release, needed, opts),
+      do: MapSet.new(),
+      else: alternate_coverage(release, needed, season, alternate_numbering)
+  end
+
   defp unclaimable?(release, wanted, opts) do
     Keyword.get(opts, :full_claim_only, false) and not claims_all?(release, wanted, opts)
   end

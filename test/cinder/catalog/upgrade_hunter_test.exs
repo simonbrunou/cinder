@@ -452,6 +452,44 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       assert Repo.get!(Episode, ctx.episode.id).grab_id
     end
 
+    # Same rule one round later: the cover's second pick must not be handed a truncated assignment
+    # either, or the release delivers a file for an episode the earlier pick already owns and it
+    # arrives at import unclaimed.
+    test "does not grab a release an earlier pick truncated", ctx do
+      for n <- 2..3 do
+        episode_fixture(ctx.season, %{
+          episode_number: n,
+          file_path: "/lib/Show/S01E#{n}.mkv",
+          imported_resolution: "720p",
+          imported_size: 1_000_000_000
+        })
+      end
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", 1 ->
+        {:ok,
+         [
+           release("Show.S01E01E02.1080p.BluRay-GRP", %{size: 8_000_000_000}),
+           release("Show.S01E02E03.1080p.BluRay-GRP", %{size: 8_000_000_000})
+         ]}
+      end)
+
+      test_pid = self()
+
+      stub(Cinder.Download.ClientMock, :add, fn rel, _opts ->
+        send(test_pid, {:grabbed, rel.title})
+        {:ok, "pair-upgrade"}
+      end)
+
+      poll()
+
+      assert_received {:grabbed, "Show.S01E01E02.1080p.BluRay-GRP"}
+      refute_received {:grabbed, "Show.S01E02E03.1080p.BluRay-GRP"}
+
+      # E03 keeps waiting rather than being served by a release that also delivers E02.
+      [_e1, _e2, e3] = Repo.all(from e in Episode, order_by: e.episode_number)
+      assert e3.grab_id == nil
+    end
+
     # The batch is a slice of the library, not of a season, so the season arrives partial. Both
     # held episodes must still be asked about and linked, or the pack's file for the one left out
     # lands unclaimed at import as a residual hold (#247).

@@ -239,6 +239,26 @@ defmodule Cinder.Acquisition.ScorerTest do
                )
     end
 
+    # The rule has to be re-checked against the SHRINKING needed set: an up-front filter passes a
+    # release that overlaps a later pick, and the cover then truncates its assignment — which is
+    # the unclaimed-file case all over again.
+    test "full_claim_only drops a release an earlier pick would truncate" do
+      releases = [
+        release(season: 1, episodes: [1, 2], resolution: "1080p", size: 4 * @gb),
+        release(season: 1, episodes: [2, 3], resolution: "1080p", size: 4 * @gb)
+      ]
+
+      assert {:ok, [{%Release{episodes: [1, 2]}, [1, 2]}]} =
+               Scorer.select_for(releases, 1, [1, 2, 3],
+                 full_claim_only: true,
+                 pack_episode_count: 3
+               )
+
+      # Off, the second release is still taken for the one episode left of it.
+      assert {:ok, [_first, {%Release{episodes: [2, 3]}, [3]}]} =
+               Scorer.select_for(releases, 1, [1, 2, 3])
+    end
+
     test "full_claim_only drops a multi-episode release naming an episode outside the want" do
       releases = [release(season: 1, episodes: [1, 2], resolution: "1080p", size: 4 * @gb)]
 
