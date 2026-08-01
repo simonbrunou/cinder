@@ -677,6 +677,22 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     assert {:ok, _hash} = QBittorrent.add(%{download_url: magnet})
   end
 
+  test "add/1 accepts a magnet despite an unresolvable (NXDOMAIN) tracker" do
+    # Public magnets routinely carry long-dead trackers; qBittorrent can't dial a name
+    # that doesn't resolve, so NXDOMAIN must not reject the add. A forbidden-resolving
+    # endpoint still does (the tests above).
+    stub_qbit(fn conn ->
+      assert conn.request_path == "/api/v2/torrents/add"
+      Req.Test.text(conn, "Ok.")
+    end)
+
+    dead = URI.encode_www_form("udp://retired.tracker.invalid:1337/announce")
+    live = URI.encode_www_form("udp://tracker.example:1337/announce")
+    magnet = "magnet:?xt=urn:btih:#{@hash}&dn=Movie&tr=#{dead}&tr=#{live}"
+
+    assert {:ok, _hash} = QBittorrent.add(%{download_url: magnet})
+  end
+
   test "add/1 rejects a .torrent whose announce endpoint resolves to a forbidden address" do
     infoval = "d6:lengthi5e4:name5:M.mkv12:piece lengthi16384ee"
 
