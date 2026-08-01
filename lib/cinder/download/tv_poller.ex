@@ -288,8 +288,12 @@ defmodule Cinder.Download.TvPoller do
   end
 
   defp finalize_standard_grab(grab, staged, residuals) do
+    # `placed?` is absent on every stage but the arbitrated keep (#250), which is the one case
+    # where the episode's file did not change and its part files must survive the commit.
     imported =
-      Enum.map(staged, fn {episode_id, stage} -> {episode_id, stage.dest, stage.quality} end)
+      Enum.map(staged, fn {episode_id, stage} ->
+        {episode_id, stage.dest, stage.quality, Map.get(stage, :placed?, true)}
+      end)
 
     case Catalog.commit_grab_imports(
            grab,

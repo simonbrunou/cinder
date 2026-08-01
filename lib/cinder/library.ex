@@ -1059,9 +1059,8 @@ defmodule Cinder.Library do
     |> Enum.reduce_while({:ok, []}, fn {source, episodes}, {:ok, acc} ->
       episodes = Enum.sort_by(episodes, & &1.episode_number)
 
-      case stage_episode_file(episodes, source, root, target, folder?, %{}, collision) do
-        {:ok, stage} ->
-          imported = Enum.map(episodes, &{&1.id, stage})
+      case stage_group(episodes, source, root, target, folder?, collision) do
+        {:ok, imported} ->
           {:cont, {:ok, Enum.reverse(imported, acc)}}
 
         {:error, _} = error ->
@@ -1069,6 +1068,70 @@ defmodule Cinder.Library do
           {:halt, error}
       end
     end)
+  end
+
+  # A staged file is indivisible — one source can cover several episodes (an S01E01E02 file), and
+  # it replaces every episode it covers or none of them. So the arbitrated decision is taken here,
+  # for the WHOLE group, before anything is staged. Deciding per stage would be wrong twice over:
+  # the gate would consult only the group's first episode, and a decline would re-point every row
+  # in the group at that one episode's file — leaving the others' files unreferenced for
+  # `remove_superseded_episode_files/1` to delete.
+  defp stage_group(episodes, source, root, target, folder?, :arbitrate) do
+    case arbitration_quality(source) do
+      {:ok, new_q} ->
+        if Enum.all?(episodes, &ep_upgrade?(&1, new_q, target)) do
+          stage_group(episodes, source, root, target, folder?, :adopt)
+        else
+          keep_held_files(episodes, source, root)
+        end
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  defp stage_group(episodes, source, root, target, folder?, collision) do
+    case stage_episode_file(episodes, source, root, target, folder?, %{}, collision) do
+      {:ok, stage} -> {:ok, Enum.map(episodes, &{&1.id, stage})}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  # Only the four fields `Upgrade.better?/5` ranks on, so this skips the media-info probe
+  # `stage_episode_file_at/8` runs — audio and subtitle languages never enter the comparison.
+  defp arbitration_quality(source) do
+    with {:ok, source} <- safe_source_file(source),
+         {:ok, %{size: size}} <- fs().lstat(source) do
+      {:ok, new_quality(Parser.parse(Path.basename(source)), size)}
+    end
+  end
+
+  # The declined group: every episode that holds a file gets a noop stage pinned to THAT file, so
+  # it keeps its own path and recorded quality and still counts as imported — otherwise
+  # `commit_grab_imports/4` would bump it as missing. An episode in the group holding nothing gets
+  # nothing: the file is one unit and we just declined it, so that episode stays wanted and
+  # re-searches.
+  defp keep_held_files(episodes, source, root) do
+    episodes
+    |> Enum.filter(&(&1.file_path not in [nil, ""]))
+    |> Enum.reduce_while({:ok, []}, fn ep, {:ok, acc} ->
+      case keep_held_file(ep, source, root) do
+        {:ok, row} -> {:cont, {:ok, [row | acc]}}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp keep_held_file(ep, source, root) do
+    decline = fn _new_quality -> false end
+
+    case stage_episode_file_at([ep], source, root, false, %{}, ep.file_path, :adopt, decline) do
+      # `placed?` survives here (the other stage builders strip it): it is what tells
+      # `commit_grab_imports/4` this episode's file did not change, so its part files must be
+      # carried through rather than cleared.
+      {:ok, stage} -> {:ok, {ep.id, stage}}
+      {:error, _reason} = error -> error
+    end
   end
 
   defp stage_anime_all(to_import, root, target, folder?, reports) do
@@ -1136,10 +1199,12 @@ defmodule Cinder.Library do
     end
   end
 
-  # `collision` decides what happens when the episode already holds a file:
-  #   :force     — swap it, no questions (the manual path, and anime).
-  #   :arbitrate — swap only if this release beats what's held (the unattended sweep, #250).
-  #   :adopt     — nothing is held; StageEngine's own gate settles an on-disk collision.
+  # `collision` decides what happens when a file already sits at `dest`. Only `:force` (the manual
+  # path, and anime) and `:adopt` reach here — `:arbitrate` is settled a level up, in
+  # `stage_group/6`, because the choice belongs to the whole group and not to one stage.
+  #   :force — swap it, no questions.
+  #   :adopt — leave StageEngine's own gate to settle it (nothing is held, or the group already
+  #            decided and passed a `upgrade_fun` that says so).
   defp stage_episode_file_at(
          [ep | _] = episodes,
          source,
@@ -1157,7 +1222,6 @@ defmodule Cinder.Library do
            new_quality(parsed, size)
            |> Map.merge(cached_or_capture_media(source, reports))
            |> Map.put_new(:sidecar_subtitles, []),
-         dest = arbitrated_dest(collision, episodes, dest, new_q, upgrade_fun),
          {:ok, dest} <- safe_destination(dest, root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
          {:ok, quality, rollback, placed?} <-
@@ -1187,23 +1251,6 @@ defmodule Cinder.Library do
        }}
     end
   end
-
-  # An arbitrated release that loses to the file an episode already holds must be re-pointed at
-  # that file, because `dest` carries the SOURCE's extension: an .mp4 that doesn't beat an
-  # episode's .mkv lands at a path that does not exist yet, so StageEngine's collision gate never
-  # runs, the worse file is placed, and `remove_superseded_episode_files/1` then deletes the
-  # better one. Pointed at the held file, StageEngine takes its noop branch instead: the episode
-  # keeps exactly the path and quality it had, and still counts as imported so
-  # `commit_grab_imports/4` releases it rather than bumping it as missing.
-  # `upgrade_fun` runs twice on this path (here, then again inside StageEngine) — it is a pure
-  # comparison of two quality maps, so the second call is cheaper than threading the answer.
-  defp arbitrated_dest(:arbitrate, episodes, dest, new_q, upgrade_fun) do
-    held = Enum.find_value(episodes, fn ep -> ep.file_path not in [nil, ""] && ep.file_path end)
-
-    if held && not upgrade_fun.(new_q), do: held, else: dest
-  end
-
-  defp arbitrated_dest(_collision, _episodes, dest, _new_q, _upgrade_fun), do: dest
 
   defp ep_upgrade?(ep, new_q, target) do
     Upgrade.better?(

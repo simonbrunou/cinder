@@ -77,6 +77,54 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
     assert episode.imported_resolution == "720p"
   end
 
+  @tag :tmp_dir
+  test "a declined double-episode file leaves each episode on its own file", %{tmp_dir: tmp} do
+    %{downloads: downloads, tv: tv} = real_tv_library(tmp)
+
+    release_dir = Path.join(downloads, "Show.S01E05E06.720p.WEB-DL-GRP")
+    File.mkdir_p!(release_dir)
+    File.write!(Path.join(release_dir, "Show.S01E05E06.720p.WEB-DL.mkv"), "combined")
+
+    library = Path.join([tv, "Show (2008) {tmdb-4243}", "Season 01"])
+    File.mkdir_p!(library)
+
+    series = series_fixture(%{tmdb_id: 4243, title: "Show", year: 2008, monitor_strategy: :all})
+    season = season_fixture(series)
+
+    # Two 1080p BluRay episodes held as SEPARATE files. The incoming file covers both and beats
+    # neither: collapsing them onto one path would strand the other's file for deletion.
+    episodes =
+      for number <- [5, 6] do
+        held = Path.join(library, "Show (2008) {tmdb-4243} - S01E0#{number}.mkv")
+        File.write!(held, "held-#{number}")
+
+        episode_fixture(season, %{
+          episode_number: number,
+          file_path: held,
+          imported_resolution: "1080p",
+          imported_source: "BLURAY",
+          imported_size: 9_000_000_000
+        })
+      end
+
+    {:ok, grab} = arbitrated_grab(episodes, release_dir)
+
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    for number <- [5, 6] do
+      episode = reload(episodes, number)
+
+      assert episode.file_path ==
+               Path.join(library, "Show (2008) {tmdb-4243} - S01E0#{number}.mkv")
+
+      assert File.read!(episode.file_path) == "held-#{number}"
+    end
+
+    refute Repo.get(Grab, grab.id)
+    assert Catalog.count_operator_holds() == 0
+  end
+
   # E01/E03 are 480p and the pack beats them; E02/E04 are 1080p BluRay at 9 GB and it does not.
   # E02's incoming file is .mp4 so its destination differs from the .mkv already held.
   defp partly_better_pack(tmp) do

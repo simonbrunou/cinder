@@ -824,9 +824,18 @@ defmodule Cinder.Catalog.Grabs do
           do: Repo.rollback(:grab_has_residual_files)
 
         imported_episodes =
-          Enum.map(imported, fn {episode_id, dest, quality} ->
+          Enum.map(imported, fn entry ->
+            {episode_id, dest, quality, placed?} = normalize_imported(entry)
             episode = Map.get(episodes, episode_id) || Repo.rollback(:stale_grab)
-            transition_imported_episode!(grab.id, episode, dest, quality, residuals != [])
+
+            transition_imported_episode!(
+              grab.id,
+              episode,
+              dest,
+              quality,
+              residuals != [],
+              placed?
+            )
           end)
 
         insert_grab_files(grab.id, residuals)
@@ -877,6 +886,10 @@ defmodule Cinder.Catalog.Grabs do
     Ecto.StaleEntryError -> {:error, :stale_grab}
   end
 
+  # A 3-tuple is a placement, the shape every caller used before #250 added the keep case.
+  defp normalize_imported({episode_id, dest, quality}), do: {episode_id, dest, quality, true}
+  defp normalize_imported({_id, _dest, _quality, _placed?} = entry), do: entry
+
   defp claim_standard_grab!(grab) do
     query =
       from g in Grab,
@@ -890,13 +903,17 @@ defmodule Cinder.Catalog.Grabs do
     end
   end
 
-  defp transition_imported_episode!(grab_id, episode, dest, quality, retain_grab?) do
+  # `placed?` false is the arbitrated keep (#250): nothing was written, the episode is committed
+  # only to release its grab_id. Parts belong to the primary they were folded onto, so a NEW
+  # primary drops them — but here the primary is unchanged, and clearing them would orphan the
+  # row's parts and hand them to `remove_superseded_episode_files/1` to delete off disk.
+  defp transition_imported_episode!(grab_id, episode, dest, quality, retain_grab?, placed?) do
     if episode.monitored or not is_nil(episode.file_path) do
       attrs =
         Map.new(
           [
             file_path: dest,
-            part_file_paths: [],
+            part_file_paths: if(placed?, do: [], else: episode.part_file_paths),
             grab_id: if(retain_grab?, do: grab_id)
           ] ++ imported_attrs(quality)
         )

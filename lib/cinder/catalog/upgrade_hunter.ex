@@ -237,21 +237,23 @@ defmodule Cinder.Catalog.UpgradeHunter do
   end
 
   # An assignment covers a set of episode NUMBERS — every one of them ours to claim, since
-  # `full_claim_only` already dropped the releases carrying anything else. Take it if it improves
-  # ANY covered episode: the grab is marked `arbitrate_at_import`, so the import re-runs the same
-  # comparison per episode and keeps the file every episode this release doesn't beat (#250).
+  # `full_claim_only` already dropped the releases carrying anything else. Take it only if it
+  # improves EVERY covered episode.
   #
-  # This used to demand EVERY covered episode improve, because an upgrade grab imported by forced
-  # replace and claiming one it didn't improve would have swapped a good file for a worse one. A
-  # pack beating 8 of a season's 10 was left untaken, and left for good while the season stayed
-  # mixed. With the import arbitrating, that pack is now taken and lands 8 upgrades.
+  # #250 made the import decline per episode, so a partial pack is no longer *unsafe* — but this
+  # guard stays, for a second reason it also happens to serve: `Upgrade.candidate?/5` scales a
+  # pack's size to a per-episode MEAN, while each episode records its own file's actual size. Any
+  # episode below that mean therefore reads as improvable at equal resolution/source/language,
+  # including from the very pack that produced it. `Enum.all?` is what makes that self-comparison
+  # settle; relaxing it to `any?` would re-grab and re-download the same pack every rotation for
+  # an import that then changes nothing. Relaxing it needs that loop closed first — issue #257.
   defp maybe_grab_episodes({release, covered_numbers}, episodes, target, season_size) do
     covered = Enum.filter(episodes, &(&1.episode_number in covered_numbers))
     carries = carries(release, season_size)
 
     cond do
       covered == [] or
-          not Enum.any?(covered, &Upgrade.candidate?(&1, release, :tv, target, carries)) ->
+          not Enum.all?(covered, &Upgrade.candidate?(&1, release, :tv, target, carries)) ->
         :ok
 
       not Disk.grab_space_available?(release.size) ->

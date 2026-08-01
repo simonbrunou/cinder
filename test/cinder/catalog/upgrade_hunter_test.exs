@@ -77,8 +77,6 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
 
   defp refute_grabbed, do: refute_received(:grab_attempted)
 
-  defp assert_grabbed, do: assert_received(:grab_attempted)
-
   describe "movies" do
     test "grabs a better release and moves the movie to :upgrading, live file intact" do
       movie = library_movie()
@@ -355,10 +353,11 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       assert Enum.uniq(grab_ids) == [hd(grab_ids)]
     end
 
-    # #248 left this pack alone, because linking an episode it didn't improve meant replacing a
-    # good file with a worse one. #250 marks the grab `arbitrate_at_import`, so the import decides
-    # per episode — the pack is taken for its 8 upgrades and the rest keep their files.
-    test "takes a pack that improves only part of the season, arbitrating at import", ctx do
+    # A pack that improves only part of the season is left alone. #250 removed the data-loss
+    # reason (the import now declines per episode), but not the loop reason: `candidate?/5`
+    # compares against a per-episode MEAN, so every below-mean episode reads as improvable by the
+    # pack that produced it. See the guard's comment and issue #257.
+    test "skips a pack that does not improve every episode it covers", ctx do
       # E01 is 720p (upgradable); the rest of the season is already 1080p at a bigger size.
       kept =
         for n <- 2..10 do
@@ -380,14 +379,11 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
 
       poll()
 
-      assert_grabbed()
+      refute_grabbed()
 
-      # Every covered episode is linked — including the nine the pack doesn't improve, whose files
-      # the import keeps. The grab carries the marker that makes that safe.
-      grab_ids = for ep <- [ctx.episode | kept], do: Repo.get!(Episode, ep.id).grab_id
-      assert Enum.all?(grab_ids, &is_integer/1)
-      assert Enum.uniq(grab_ids) == [hd(grab_ids)]
-      assert Repo.get!(Cinder.Catalog.Grab, hd(grab_ids)).arbitrate_at_import
+      for ep <- [ctx.episode | kept] do
+        assert Repo.get!(Episode, ep.id).grab_id == nil
+      end
     end
 
     # Same hold, other cause: a pack for a season we only partly hold delivers files for the
