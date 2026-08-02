@@ -96,6 +96,13 @@ terminate at a reverse proxy):
   so a created account gets a placeholder `…@jellyfin.invalid` one with email notifications off
   until its owner sets a real address. Attempts are rate-limited exactly like password login. Emby
   serves the same endpoint and should work if you point `JELLYFIN_URL` at one — untested.
+  One wrinkle for early installs: an account imported from Jellyfin before Cinder started recording
+  the Jellyfin id at import time carries no id, so its owner's first "Sign in with Jellyfin" creates
+  a *second*, pending account instead of logging them in, and re-running the import will not repair
+  it. The address Jellyfin reports is derived from a display name, which is not proof of inbox
+  ownership, so Cinder will not link the two for you. Repair it by hand from `/users`: **Reset
+  password** on the original account, let its owner sign in with that password and link Jellyfin
+  from Account settings, then deny the duplicate.
 
 ## Privacy & GDPR
 

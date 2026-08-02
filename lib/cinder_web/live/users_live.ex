@@ -439,6 +439,11 @@ defmodule CinderWeb.UsersLive do
             </.button>
           </li>
         </ul>
+        <p :if={@pending_users != []} class="mt-3 text-sm text-base-content/60">
+          {gettext(
+            "Seeing a second account for someone who already has one? Their original was never linked to the media server: use Reset password on it below, then have them link their media server account from Account settings."
+          )}
+        </p>
       </section>
 
       <section id="import-users" class="mb-6">
