@@ -36,10 +36,8 @@ current scope.
 ### Agent config sync
 
 Subagent prompts are authored once in `.claude.exs`; `mix claude.install` regenerates
-`.claude/agents/*.md` from it. The `.codex/agents/*.toml` files are **hand-synced mirrors** of
-those generated `.md` files (same body, with "CLAUDE.md" swapped to "AGENTS.md") — after editing a
-prompt in `.claude.exs` and regenerating, re-apply the same change to the matching `.toml`.
-`AGENTS.md` likewise mirrors `CLAUDE.md` by hand for non-Claude agents. Note: `mix claude.install`
+`.claude/agents/*.md` from it. `AGENTS.md` mirrors `CLAUDE.md` by hand for non-Claude agents
+(Codex reads it from the repo root; there is no in-repo Codex config). Note: `mix claude.install`
 rewrites `.claude/settings.json` and strips hook entries it doesn't own (e.g. the graphify
 PreToolUse hooks) — restore them (`git checkout .claude/settings.json`) after running it.
 
