@@ -1103,13 +1103,13 @@ msgstr ""
 
 #: lib/cinder_web/live/library_live.ex:130
 #: lib/cinder_web/live/series_detail_live.ex:163
-#: lib/cinder_web/live/series_detail_live.ex:608
+#: lib/cinder_web/live/series_detail_live.ex:609
 #, elixir-autogen, elixir-format
 msgid "Series deleted."
 msgstr ""
 
 #: lib/cinder_web/live/series_detail_live.ex:49
-#: lib/cinder_web/live/series_detail_live.ex:623
+#: lib/cinder_web/live/series_detail_live.ex:624
 #: lib/cinder_web/live/series_discovery_live.ex:67
 #, elixir-autogen, elixir-format
 msgid "Series not found."
@@ -1976,7 +1976,7 @@ msgid "Cancel upgrade"
 msgstr ""
 
 #: lib/cinder_web/live/movie_detail_live.ex:243
-#: lib/cinder_web/live/series_detail_live.ex:594
+#: lib/cinder_web/live/series_detail_live.ex:595
 #, elixir-autogen, elixir-format
 msgid "Couldn't grab that release."
 msgstr ""
@@ -1989,7 +1989,7 @@ msgid "Find a better match"
 msgstr ""
 
 #: lib/cinder_web/live/movie_detail_live.ex:238
-#: lib/cinder_web/live/series_detail_live.ex:585
+#: lib/cinder_web/live/series_detail_live.ex:586
 #, elixir-autogen, elixir-format
 msgid "Grabbing the selected release…"
 msgstr ""
@@ -1999,7 +1999,7 @@ msgstr ""
 msgid "That movie can't be grabbed right now."
 msgstr ""
 
-#: lib/cinder_web/live/series_detail_live.ex:588
+#: lib/cinder_web/live/series_detail_live.ex:589
 #, elixir-autogen, elixir-format
 msgid "Nothing left to grab this season."
 msgstr ""
@@ -3051,7 +3051,7 @@ msgstr ""
 msgid "Alternate numbering"
 msgstr ""
 
-#: lib/cinder_web/live/series_detail_live.ex:537
+#: lib/cinder_web/live/series_detail_live.ex:538
 #, elixir-autogen, elixir-format
 msgid "Alternate numbering saved."
 msgstr ""
@@ -3061,8 +3061,8 @@ msgstr ""
 msgid "Couldn't load that group's mapping."
 msgstr ""
 
-#: lib/cinder_web/live/series_detail_live.ex:556
-#: lib/cinder_web/live/series_detail_live.ex:563
+#: lib/cinder_web/live/series_detail_live.ex:557
+#: lib/cinder_web/live/series_detail_live.ex:564
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Couldn't save the alternate numbering."
 msgstr ""
@@ -3141,7 +3141,7 @@ msgstr ""
 msgid "Loading episode groups…"
 msgstr ""
 
-#: lib/cinder_web/live/series_detail_live.ex:549
+#: lib/cinder_web/live/series_detail_live.ex:550
 #, elixir-autogen, elixir-format
 msgid "Couldn't reach TMDB. Nothing was saved. Try again."
 msgstr ""
@@ -3273,7 +3273,7 @@ msgstr ""
 msgid "Clear season offset"
 msgstr ""
 
-#: lib/cinder_web/live/series_detail_live.ex:435
+#: lib/cinder_web/live/series_detail_live.ex:436
 #, elixir-autogen, elixir-format
 msgid "Enter a starting season (1 or more) and a non-zero shift."
 msgstr ""
@@ -3288,12 +3288,12 @@ msgstr ""
 msgid "Season offset"
 msgstr ""
 
-#: lib/cinder_web/live/series_detail_live.ex:446
+#: lib/cinder_web/live/series_detail_live.ex:447
 #, elixir-autogen, elixir-format
 msgid "Season offset cleared."
 msgstr ""
 
-#: lib/cinder_web/live/series_detail_live.ex:428
+#: lib/cinder_web/live/series_detail_live.ex:429
 #, elixir-autogen, elixir-format
 msgid "Season offset saved."
 msgstr ""
@@ -4847,7 +4847,7 @@ msgstr ""
 msgid "conflicting episode numbering"
 msgstr ""
 
-#: lib/cinder_web/live/series_detail_live.ex:591
+#: lib/cinder_web/live/series_detail_live.ex:592
 #, elixir-autogen, elixir-format
 msgid "This release's episode numbering is ambiguous. Nothing was grabbed."
 msgstr ""

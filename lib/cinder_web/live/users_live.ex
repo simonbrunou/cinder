@@ -47,11 +47,11 @@ defmodule CinderWeb.UsersLive do
     {:noreply, assign(socket, creating: false)}
   end
 
-  def handle_event("validate_create", %{"user" => params}, socket) do
+  def handle_event("validate_create", %{"user" => params}, socket) when is_map(params) do
     {:noreply, assign_create_form(socket, params)}
   end
 
-  def handle_event("create", %{"user" => params}, socket) do
+  def handle_event("create", %{"user" => params}, socket) when is_map(params) do
     actor = socket.assigns.current_scope.user
 
     attrs = %{
@@ -245,7 +245,7 @@ defmodule CinderWeb.UsersLive do
     {:noreply, assign(socket, resetting_pw: nil)}
   end
 
-  def handle_event("reset_pw", %{"_id" => id, "user" => params}, socket) do
+  def handle_event("reset_pw", %{"_id" => id, "user" => params}, socket) when is_map(params) do
     actor = socket.assigns.current_scope.user
 
     attrs = %{

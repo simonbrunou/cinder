@@ -339,7 +339,8 @@ defmodule CinderWeb.SeriesDetailLive do
   # "None" just resets the form and drops the preview. `scene_selected_group_id` is stamped on
   # every change so a stale preview for a since-abandoned selection (switch to another group, or
   # clear back to None, before the fetch lands) is recognizable and discarded in handle_async.
-  def handle_event("preview_scene_group", %{"group_id" => group_id}, socket) do
+  def handle_event("preview_scene_group", %{"group_id" => group_id}, socket)
+      when is_binary(group_id) do
     socket =
       assign(socket,
         scene_form: to_form(%{"group_id" => group_id}),

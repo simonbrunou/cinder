@@ -350,8 +350,17 @@ defmodule CinderWeb.UsersLiveTest do
       assert render_hook(lv, "set_quota", %{"_id" => to_string(user.id), "quota" => forged})
     end
 
+    # Same class one clause away: these three reach into the nested payload with Access, which
+    # raises on a list or a string after the clause has already matched.
+    for forged <- [["x"], "x", 7] do
+      assert render_hook(lv, "validate_create", %{"user" => forged})
+      assert render_hook(lv, "create", %{"user" => forged})
+      assert render_hook(lv, "reset_pw", %{"_id" => to_string(user.id), "user" => forged})
+    end
+
     assert Process.alive?(lv.pid)
     assert Cinder.Repo.get!(Cinder.Accounts.User, user.id).request_quota == quota_before
+    assert Cinder.Repo.get!(Cinder.Accounts.User, user.id).email == user.email
   end
 
   test "acting on a since-deleted user id no-ops without raising", %{conn: conn} do
