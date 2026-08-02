@@ -38,6 +38,13 @@ defmodule Cinder.Catalog.Grabs do
   # manual_grab_movie/2's guard needs it here too).
   @retryable [:no_match, :search_failed, :import_failed]
 
+  # #274. A blocklist reason that bounds the UPGRADE sweep alone. Every other reason means "this
+  # release is bad for this title"; this one means only "it did not beat what we already hold", so
+  # it must stay invisible to the wanted-episode sweep and the manual panel — see
+  # `blocked_release_titles_for_series/2`.
+  @no_upgrade_reason "no_upgrade"
+  @upgrade_only_reasons [@no_upgrade_reason]
+
   @doc """
   Grabs a specific user-chosen `release` for `movie`. An `:available` movie enters `:upgrading`
   (its library `file_path` and `imported_*` are preserved — the poller's upgrade clause swaps the
@@ -589,12 +596,26 @@ defmodule Cinder.Catalog.Grabs do
     do:
       Repo.all(from b in BlockedRelease, where: b.movie_id == ^movie_id, select: b.release_title)
 
-  @doc "Release titles blocked for the series `series_id`."
-  def blocked_release_titles_for_series(series_id),
-    do:
-      Repo.all(
-        from b in BlockedRelease, where: b.series_id == ^series_id, select: b.release_title
-      )
+  @doc """
+  Release titles blocked for the series `series_id`.
+
+  Upgrade-only reasons (`#{inspect(@upgrade_only_reasons)}`) are **excluded** unless the caller
+  names one in `:include_reasons`. Such a row is not "this release is bad": it is the season's
+  best pack, recorded only because the import arbitrated it down to nothing placed. Hiding it
+  from the wanted-episode sweep or the manual panel would strand that pack for the janitor's
+  whole retention window — wrong the moment an episode of the season is deleted, lost or
+  re-monitored. `Cinder.Catalog.UpgradeHunter` is the only caller that should include it.
+  """
+  def blocked_release_titles_for_series(series_id, opts \\ []) do
+    included = opts |> Keyword.get(:include_reasons, []) |> Enum.map(&to_string/1)
+
+    Repo.all(
+      from b in BlockedRelease,
+        where: b.series_id == ^series_id,
+        where: is_nil(b.reason) or b.reason not in ^(@upgrade_only_reasons -- included),
+        select: b.release_title
+    )
+  end
 
   @doc """
   Bumps `search_attempts` (and `updated_at`, for the poller's search backoff) on the given
@@ -827,6 +848,9 @@ defmodule Cinder.Catalog.Grabs do
   grab and its unimported episodes intact for explicit per-file decisions.
   """
   def commit_grab_imports(%Grab{} = grab, imported, residuals, stage_ids \\ []) do
+    # Resolved BEFORE the transaction on purpose: it walks the grab's episode links, and
+    # `transition_imported_episode!` clears `grab_id` on every imported episode below — so a lazy
+    # lookup inside would find nothing and `bound_unplaced_release/3` would silently skip (#274).
     series_id = series_id_for_grab(grab.id)
     imported_ids = imported |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
     episodes = Map.new(grab.episodes, &{&1.id, &1})
@@ -855,6 +879,7 @@ defmodule Cinder.Catalog.Grabs do
 
         insert_grab_files(grab.id, residuals)
         ImportStage.mark_committed!(stage_ids)
+        bound_unplaced_release(grab, series_id, imported)
 
         if residuals == [] do
           missing = Enum.reject(grab.episodes, &(&1.id in imported_ids))
@@ -904,6 +929,27 @@ defmodule Cinder.Catalog.Grabs do
   # A 3-tuple is a placement, the shape every caller used before #250 added the keep case.
   defp normalize_imported({episode_id, dest, quality}), do: {episode_id, dest, quality, true}
   defp normalize_imported({_id, _dest, _quality, _placed?} = entry), do: entry
+
+  # #274: an import where every entry is a #250 arbitrated keep placed NOTHING, and that outcome
+  # is otherwise indistinguishable from a real import — the grab closes, no episode is missing, so
+  # nothing bounds the sweep that grabbed it. It can disagree with the import forever:
+  # `Upgrade.candidate?/4` judges the RELEASE TITLE while the import re-reads the FILE that
+  # release produced, and `Library.new_quality/3` backfills only nil fields from the title
+  # (deliberately), so an episode whose own token is worse than the pack's title stays "improvable"
+  # by it on every rotation. Recording the title under a reason only the upgrade sweep reads bounds
+  # that loop and leaves the pack grabbable everywhere else (`blocked_release_titles_for_series/2`).
+  defp bound_unplaced_release(%Grab{release_title: title}, series_id, imported)
+       when is_binary(title) and is_integer(series_id) do
+    if imported != [] and Enum.all?(imported, &(elem(normalize_imported(&1), 3) == false)) do
+      insert_blocked_release(fn ->
+        %{release_title: title, reason: @no_upgrade_reason, series_id: series_id}
+      end)
+    end
+
+    :ok
+  end
+
+  defp bound_unplaced_release(_grab, _series_id, _imported), do: :ok
 
   defp claim_standard_grab!(grab) do
     query =

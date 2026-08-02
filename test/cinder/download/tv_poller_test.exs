@@ -2151,6 +2151,52 @@ defmodule Cinder.Download.TvPollerTest do
     assert titles == ["Show.S01E01.1080p.WEB-GRP", "Show.S01E02.1080p.WEB-GRP"]
   end
 
+  # #274: a `"no_upgrade"` row bounds the UPGRADE sweep only. It says "this release does not beat
+  # the files we already hold" — nothing about whether it is a good release for an episode holding
+  # nothing, which is exactly the state these two are in. Hiding the season's best pack from the
+  # wanted search for the janitor's whole retention window would be a real regression.
+  test "a no_upgrade block does not hide the pack from the wanted-episode search" do
+    {series, season} = series_tree()
+    e1 = episode(season, 1)
+    e2 = episode(season, 2)
+
+    Repo.insert!(%BlockedRelease{
+      release_title: "Show.S01.1080p.WEB-GRP",
+      reason: "no_upgrade",
+      series_id: series.id
+    })
+
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok,
+       [
+         %{
+           title: "Show.S01.1080p.WEB-GRP",
+           size: 4_000_000_000,
+           download_url: "pack",
+           seeders: 9
+         },
+         %{
+           title: "Show.S01E01.1080p.WEB-GRP",
+           size: 2_000_000_000,
+           download_url: "e1",
+           seeders: 5
+         }
+       ]}
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn release, _opts -> {:ok, release.title} end)
+
+    assert :ok = TvPoller.poll()
+
+    assert Repo.get!(Episode, e1.id).grab_id
+    assert Repo.get!(Episode, e2.id).grab_id
+
+    # The pack still wins the cover, exactly as it would with no row at all.
+    assert Repo.all(Grab) |> Enum.map(& &1.release_title) == ["Show.S01.1080p.WEB-GRP"]
+  end
+
   test "recovers from a crash and still advances + imports, with no double-grab (OTP payoff)" do
     {_series, season} = series_tree()
     e1 = episode(season, 3)
