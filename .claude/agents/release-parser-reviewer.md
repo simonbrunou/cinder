@@ -1,6 +1,6 @@
 ---
 name: release-parser-reviewer
-description: Use PROACTIVELY when a change touches the release-name parsing / scoring / acquisition / import subsystem (Cinder.Acquisition.{Parser,Scorer,Release}, Cinder.Acquisition, Cinder.Library import_movie/import_episodes). This is Cinder's highest-bug-density area — messy real-world release names, season-pack vs episode selection, and file->episode mapping. Read-only. Reports high-confidence regressions in parsing precedence, scorer nil-safety/band logic, the title-match guard, and import file-mapping/graceful-park, with file:line + a concrete fix. Silent on correct code and on security/role-gating (that is approval-gate-reviewer's job).
+description: Use PROACTIVELY when a change touches the release-name parsing / scoring / acquisition / import subsystem (Cinder.Acquisition.{Parser,Scorer,Release}, Cinder.Acquisition, Cinder.Library stage_movie/stage_episodes/import_episodes/commit_stage). This is Cinder's highest-bug-density area — messy real-world release names, season-pack vs episode selection, and file->episode mapping. Read-only. Reports high-confidence regressions in parsing precedence, scorer nil-safety/band logic, the title-match guard, and import file-mapping/graceful-park, with file:line + a concrete fix. Silent on correct code and on security/role-gating (that is approval-gate-reviewer's job).
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -25,7 +25,9 @@ You have no memory between runs. Orient first, every run.
    - `lib/cinder/acquisition/scorer.ex` — `select/2` (movie) + `select_for/4` (TV set-cover).
    - `lib/cinder/acquisition.ex` — `best_release/2`, `best_releases/4`, `search`/`search_tv`,
      the title-match guard, the language pool, `band_opts/1`.
-   - `lib/cinder/library.ex` — `import_movie/1`, `import_episodes/2` (file->episode mapping).
+   - `lib/cinder/library.ex` — `stage_movie/1,2` + `commit_stage/1` (the movie path; there is
+     no `import_movie/1` any more), `stage_episodes/3` (the TV path the poller uses) and
+     `import_episodes/2` (the same file->episode mapping, direct).
    - Fixtures: `test/cinder/acquisition/parser_test.exs`, `scorer_test.exs`,
      `test/cinder/library_test.exs`.
 
@@ -59,12 +61,12 @@ You have no memory between runs. Orient first, every run.
   coverage-primary sort key.
 
 **Acquisition** — the title guard is `known_title_match?/2` / `free_text_match?/2`
-(`acquisition/anime.ex` ~L744-771): strip the leading `[group]` tag, normalize
+(`acquisition/anime.ex`): strip the leading `[group]` tag, normalize
 (NFKC -> trim -> downcase), then a PREFIX match against the known title/aliases
 (longest-first) whose remainder must be empty or start with a separator + legal marker
 (a 4-digit year-like token, `Sxx`/`SxxEyy`, `Exx`, absolute number/range with
 optional `v2`, `[`, or a resolution/source token) — NOT a bare substring match; the movie kind additionally
-requires an exact-year hit (`exact_movie_year?/2`). `nfd/1` (`acquisition.ex` ~L358)
+requires an exact-year hit (`exact_movie_year?/2`). `nfd/1` (`acquisition.ex`)
 must tolerate malformed UTF-8 (a garbled indexer title must not crash or stall the
 season). Language pool: soft Original/Any falls back to unfiltered; an explicit pick is
 strict (parks on no match). `band_opts/1` returns only non-nil keys so it can't clobber
