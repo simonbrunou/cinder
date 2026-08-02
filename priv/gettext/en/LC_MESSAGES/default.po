@@ -5434,7 +5434,7 @@ msgstr ""
 msgid "Seeing a second account for someone who already has one? Their original was never linked to the media server: use Reset password on it below, then have them link their media server account from Account settings."
 msgstr ""
 
-#: lib/cinder_web/live_helpers.ex:323
+#: lib/cinder_web/live_helpers.ex:324
 #, elixir-autogen, elixir-format
 msgid "Discard %{count} unmatched video? It is not kept and cannot be recovered here."
 msgid_plural "Discard all %{count} unmatched videos? They are not kept and cannot be recovered here."
