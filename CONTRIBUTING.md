@@ -36,12 +36,12 @@ current scope.
 ### Agent config sync
 
 Subagent prompts are authored once in `.claude.exs`; `mix claude.install` regenerates
-`.claude/agents/*.md` from it. The `.codex/agents/*.toml` files are **hand-synced mirrors** of
-those generated `.md` files (same body, with "CLAUDE.md" swapped to "AGENTS.md") — after editing a
-prompt in `.claude.exs` and regenerating, re-apply the same change to the matching `.toml`.
-`AGENTS.md` likewise mirrors `CLAUDE.md` by hand for non-Claude agents. Note: `mix claude.install`
-rewrites `.claude/settings.json` and strips hook entries it doesn't own (e.g. the graphify
-PreToolUse hooks) — restore them (`git checkout .claude/settings.json`) after running it.
+`.claude/agents/*.md` from it, and rewrites `.claude/settings.json` — that file is purely
+lib-generated now, so let it (the graphify hooks it used to strip live at user level in
+`~/.claude/hooks/`). `AGENTS.md` mirrors `CLAUDE.md` by hand for non-Claude agents; Codex reads
+it from the repo root. The only in-repo Codex config is `.codex/config.toml`, two lines pointing
+at this project's dev Tidewave MCP — everything else that lived under `.codex/` was a hand-kept
+mirror of `.claude/` and has been deleted rather than re-synced.
 
 ## Branches & PRs
 
