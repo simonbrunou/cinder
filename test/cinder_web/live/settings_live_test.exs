@@ -442,4 +442,19 @@ defmodule CinderWeb.SettingsLiveTest do
     refute Cinder.ApiKey.configured?()
     refute has_element?(lv, "button", "Revoke API key")
   end
+
+  # Both handlers took a bare `params` and indexed straight into it — `save_form/1` via `Access`
+  # (ArgumentError), `toggle_auto_approve` via `Map.get/2` (BadMapError). A forged frame carrying
+  # a list matched the clause, so the module catch-all could not ignore it, and the admin lost the
+  # LiveView (and any unsaved form input) to a reconnect.
+  test "a forged non-map payload is ignored rather than crashing the view", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+    auto_approve_before = Settings.auto_approve_all?()
+
+    assert render_hook(lv, "save", ["forged"])
+    assert render_hook(lv, "toggle_auto_approve", ["forged"])
+
+    assert Process.alive?(lv.pid)
+    assert Settings.auto_approve_all?() == auto_approve_before
+  end
 end

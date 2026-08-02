@@ -48,6 +48,25 @@ defmodule CinderWeb.LibraryLiveTest do
     assert has_element?(lv, "#movie-#{movie.id} button", "Cancel")
   end
 
+  # The clause has already matched by the time the body runs, so the module catch-all cannot
+  # help: `find_movie/2` used to `to_string/1` the CLIENT value, which raises
+  # Protocol.UndefinedError on a forged map and takes /library down with the tab.
+  test "a forged id on a movie confirm event is ignored rather than crashing the view", %{
+    conn: conn
+  } do
+    movie = movie_fixture(%{title: "Dune", year: 2021})
+    {:ok, lv, _html} = live(conn, ~p"/library")
+
+    for event <- ~w(confirm_cancel_movie confirm_delete_movie),
+        forged <- [%{"forged" => true}, 7] do
+      assert render_click(lv, event, %{"id" => forged})
+    end
+
+    assert Process.alive?(lv.pid)
+    assert render(lv) =~ "Dune"
+    assert Repo.get(Cinder.Catalog.Movie, movie.id)
+  end
+
   test "a movie held mid-verification shows Needs verification, not bare Import failed", %{
     conn: conn
   } do

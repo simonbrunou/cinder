@@ -335,6 +335,25 @@ defmodule CinderWeb.UsersLiveTest do
     assert reloaded.request_quota == quota_before
   end
 
+  # A forged id above resolves to nil and short-circuits. A forged *quota* is worse: the `_id` is
+  # real, so `parse_quota/1` runs — and `Integer.parse/1` is `when is_binary`, so a plain integer
+  # raises there just as a map does, after the clause has matched and past the catch-all.
+  test "a forged non-binary quota is rejected rather than crashing the LiveView", %{conn: conn} do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    user = Cinder.AccountsFixtures.user_fixture()
+    conn = log_in_user(conn, admin)
+
+    {:ok, lv, _html} = live(conn, ~p"/users")
+    quota_before = Cinder.Repo.get!(Cinder.Accounts.User, user.id).request_quota
+
+    for forged <- [%{"forged" => true}, 7] do
+      assert render_hook(lv, "set_quota", %{"_id" => to_string(user.id), "quota" => forged})
+    end
+
+    assert Process.alive?(lv.pid)
+    assert Cinder.Repo.get!(Cinder.Accounts.User, user.id).request_quota == quota_before
+  end
+
   test "acting on a since-deleted user id no-ops without raising", %{conn: conn} do
     admin = Cinder.AccountsFixtures.admin_fixture()
     user = Cinder.AccountsFixtures.user_fixture()

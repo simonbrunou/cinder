@@ -70,7 +70,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
   end
 
   @impl true
-  def handle_event("request_season", %{"season" => raw}, socket) do
+  def handle_event("request_season", %{"season" => raw}, socket) when is_binary(raw) do
     with {season_number, ""} <- Integer.parse(raw),
          # Reject a season not in the show (prevents orphan-series rows). Validated
          # against @seasons — the requestable set, excluding Specials — so a forged

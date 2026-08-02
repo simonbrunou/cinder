@@ -379,12 +379,17 @@ defmodule CinderWeb.UsersLive do
   # "" → nil (unlimited); a non-numeric value → -1 so the changeset rejects it.
   defp parse_quota(""), do: nil
 
-  defp parse_quota(value) do
+  defp parse_quota(value) when is_binary(value) do
     case Integer.parse(value) do
       {n, ""} -> n
       _ -> -1
     end
   end
+
+  # A forged frame can carry a non-binary "quota" (`Integer.parse/1` is itself `when is_binary`,
+  # so it would raise here, past the point where a valid `_id` has already resolved). Same -1 as
+  # any other unusable value: the changeset rejects it and the admin gets the error flash.
+  defp parse_quota(_value), do: -1
 
   @impl true
   def render(assigns) do

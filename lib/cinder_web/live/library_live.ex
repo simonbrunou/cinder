@@ -60,7 +60,7 @@ defmodule CinderWeb.LibraryLive do
   def handle_event("ask_delete_movie", %{"id" => id}, socket),
     do: {:noreply, assign(socket, confirming: {:movie, :delete, id}, delete_files: false)}
 
-  def handle_event("confirm_cancel_movie", %{"id" => id}, socket) do
+  def handle_event("confirm_cancel_movie", %{"id" => id}, socket) when is_binary(id) do
     actor = socket.assigns.current_scope.user
 
     with movie when not is_nil(movie) <- find_movie(socket, id),
@@ -84,7 +84,7 @@ defmodule CinderWeb.LibraryLive do
     end
   end
 
-  def handle_event("confirm_delete_movie", %{"id" => id}, socket) do
+  def handle_event("confirm_delete_movie", %{"id" => id}, socket) when is_binary(id) do
     actor = socket.assigns.current_scope.user
 
     with movie when not is_nil(movie) <- find_movie(socket, id),
@@ -177,7 +177,11 @@ defmodule CinderWeb.LibraryLive do
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
-  defp find_movie(socket, id), do: find_by_id(socket.assigns.movies, to_string(id))
+  # `id` straight through, like `run_series_op/5` — `find_by_id/2` already does the `to_string/1`
+  # on its own side. A `to_string/1` here would be applied to the CLIENT value, and a forged
+  # `phx-value-id` carrying a map raises Protocol.UndefinedError. Its callers are guarded
+  # `is_binary(id)` besides, so the conversion had nothing left to do.
+  defp find_movie(socket, id), do: find_by_id(socket.assigns.movies, id)
 
   # The series list and its size map always move together — every `episodes.imported_size` writer
   # broadcasts `{:series_updated, _}` on the topic this view subscribes to, so refreshing one
