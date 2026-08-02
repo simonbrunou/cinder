@@ -274,7 +274,13 @@ defmodule CinderWeb.ActivityLiveTest do
 
     {:ok, view, _html} = live(conn, ~p"/activity")
 
+    # Discard is irreversible, so the first click only asks — nothing is decided yet.
     view |> element("#grab-file-#{first.id} button", "Discard") |> render_click()
+
+    assert has_element?(view, "#confirm-discard-grab-file-#{first.id}")
+    assert %GrabFile{decision: nil} = Repo.get!(GrabFile, first.id)
+
+    view |> element("#confirm-discard-grab-file-#{first.id} button", "Discard") |> render_click()
 
     assert %GrabFile{decision: :discard, episode_id: nil, destination: nil, import_stage_id: nil} =
              Repo.get!(GrabFile, first.id)
@@ -285,6 +291,14 @@ defmodule CinderWeb.ActivityLiveTest do
     assert has_element?(view, "#grab-#{grab.id}-file-reason")
 
     view |> element("#discard-grab-files-#{grab.id}") |> render_click()
+
+    # Same for the bulk action: asking leaves every remaining row undecided.
+    assert has_element?(view, "#confirm-discard-grab-files-#{grab.id}")
+    assert Repo.exists?(from f in GrabFile, where: f.grab_id == ^grab.id and is_nil(f.decision))
+
+    view
+    |> element("#confirm-discard-grab-files-#{grab.id} button", "Discard all")
+    |> render_click()
 
     # close_grab/1 rolls back while any row is still undecided, so a deleted grab is proof the
     # bulk click decided every remaining file — their rows cascade away with it.

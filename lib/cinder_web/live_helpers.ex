@@ -300,4 +300,13 @@ defmodule CinderWeb.LiveHelpers do
       count
     )
   end
+
+  @doc "Confirmation caveat for discarding every unresolved file of one download."
+  def discard_all_caveat(count) do
+    ngettext(
+      "Discard %{count} unmatched video? It is not kept and cannot be recovered here.",
+      "Discard all %{count} unmatched videos? They are not kept and cannot be recovered here.",
+      count
+    )
+  end
 end
