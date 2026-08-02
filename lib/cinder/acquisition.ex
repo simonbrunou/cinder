@@ -650,8 +650,10 @@ defmodule Cinder.Acquisition do
   end
 
   # Tag-prefixed names ("[TGx] Dune.2021...") are common and would otherwise fail the start anchor.
-  defp untagged_tokens(release_title),
-    do: release_title |> String.replace(~r/^\s*\[[^\]\r\n]+\]\s*/u, "") |> tokens()
+  defp untagged_tokens(release_title), do: release_title |> untag() |> tokens()
+
+  defp untag(nil), do: nil
+  defp untag(release_title), do: String.replace(release_title, ~r/^\s*\[[^\]\r\n]+\]\s*/u, "")
 
   # Fail closed when tokenization ate most of the title: a non-Latin title ("Дом") folds to
   # nothing, "Дом 2" to a bare "2" — a remnant that would match almost anything and import the
@@ -679,12 +681,63 @@ defmodule Cinder.Acquisition do
   """
   @spec names_title?(String.t() | nil, %{title: String.t() | nil, year: integer() | nil}) ::
           boolean()
-  def names_title?(name, %{title: title} = target) do
+  def names_title?(name, target), do: name |> tokens() |> leads_with_title?(target)
+
+  @doc """
+  Whether `name` — a file inside the pack `release_title` names — **leads with a prefix of that
+  pack's own name**, followed by the same release tag `names_title?/2` demands.
+
+  Every legitimate sibling file in a pack repeats the pack's leading token run; the foreign file
+  #262 is about repeats none of it. Anchoring on the pack instead of on the series title is what
+  lets an already-held file drop when it spells a qualifier the TMDB title lacks
+  ("Shameless.US.S01E05.mkv" under series "Shameless"), carries a site prefix the pack carries too
+  ("www.tracker.org - Show.S01E05.mkv"), or names no title at all ("S01E05.mkv" — the empty
+  prefix, where the episode marker itself has to lead). All three are #265.
+
+  Prefix, not equality, because the pack name keeps going after the title ("Show.S01.1080p...")
+  and the file stops at its own release tag. The tag check is what keeps that honest: a token run
+  the pack merely continues ("Show.US..." under a pack named "Show.S01...") is not followed by a
+  tag and is rejected, exactly as it is today.
+
+  `nil` — a grab with no recorded release title — matches nothing; the caller falls back to
+  `names_title?/2`, which it also ORs with, so a pack named by an AKA its files don't share stays
+  confirmable by the series title.
+  """
+  @spec names_release?(String.t() | nil, String.t() | nil, %{
+          title: String.t() | nil,
+          year: integer() | nil
+        }) :: boolean()
+  def names_release?(_name, nil, _target), do: false
+
+  def names_release?(name, release_title, target) do
+    untagged = untag(name)
+    file = tokens(untagged)
+    packed = release_title |> untagged_tokens() |> Enum.scan(&(&2 <> &1))
+    prefixes = if titleless?(untagged, file), do: ["" | packed], else: packed
+
+    Enum.any?(prefixes, &(file |> consume_prefix(&1) |> release_tag_next?(target)))
+  end
+
+  # Whether the name spells no title before its first token — checked on the string rather than on
+  # the tokens because `tokens/1` strips non-Latin scripts, so "Дом.S01E05.mkv" tokenizes exactly
+  # like a title-less "S01E05.mkv". Those series are the ones `title_needle/1` refuses to match by
+  # name at all, and the empty prefix must not be the back door into discarding their files.
+  defp titleless?(_untagged, []), do: false
+
+  defp titleless?(untagged, [first | _]),
+    do: untagged |> String.trim_leading() |> String.downcase() |> String.starts_with?(first)
+
+  defp leads_with_title?(tokens, %{title: title} = target) do
     case title_needle(title) do
       "" -> false
-      needle -> name |> tokens() |> consume_leading(needle) |> release_tag_next?(target)
+      needle -> tokens |> consume_leading(needle) |> release_tag_next?(target)
     end
   end
+
+  # The empty prefix is the title-less file: there is nothing to spell, so the first token has to
+  # BE the release tag.
+  defp consume_prefix(tokens, ""), do: {:ok, tokens}
+  defp consume_prefix(tokens, needle), do: consume_leading(tokens, needle)
 
   # {:ok, tokens_after_the_title} once the needle is exactly spelled, :error otherwise.
   defp consume_leading(_tokens, ""), do: :error
