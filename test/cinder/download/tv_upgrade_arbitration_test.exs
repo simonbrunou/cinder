@@ -319,6 +319,133 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
     end
   end
 
+  # #257: the sweep gates on `Enum.any?`, so ONE improvable episode carries the whole pack. This is
+  # the route that closed the first attempt (PR #285), end to end. `Library.new_quality/3` backfills
+  # only NIL fields — deliberately, so a genuinely mixed pack keeps a member's worse token — which
+  # leaves an episode holding a token WORSE than the pack's own title readable as improvable by that
+  # title forever, while the import re-parses the file and declines. Under `all?` the season's other
+  # episodes vetoed the grab and the loop was unreachable; under `any?` that one episode takes it.
+  # #274 BOUNDS the loop rather than removing it: the pack is downloaded and discarded exactly once.
+  describe "an `any?` pack whose import then places nothing" do
+    @tag :tmp_dir
+    test "is grabbed once, and the next rotation does not grab it again", %{tmp_dir: tmp} do
+      title = "Show.S01.1080p.WEBDL-GRP"
+
+      %{series: series, release_dir: release_dir, episodes: episodes} = mixed_season(tmp, title)
+
+      [worse | rest] = episodes
+      offered = release(title, 2_000_000_000)
+
+      # The premise, asserted rather than assumed: E01 IS improvable by this release and the other
+      # three are NOT, so `Enum.all?` refuses the pack and only `Enum.any?` can take it.
+      assert Upgrade.candidate?(worse, offered, :tv, nil)
+      refute Enum.any?(rest, &Upgrade.candidate?(&1, offered, :tv, nil))
+
+      offer_to_upgrade_sweep(4249, title)
+      watch_grabs()
+      start_upgrade_sweep()
+
+      assert :ok = UpgradeHunter.poll()
+      assert_received :grab_attempted
+
+      # Every covered episode is linked, or the pack's files for the rest land at import with no
+      # claimant and become operator residuals (#247).
+      grab = Grab |> Repo.one!() |> Repo.preload(:episodes)
+      assert Enum.sort(Enum.map(grab.episodes, & &1.id)) == Enum.sort(Enum.map(episodes, & &1.id))
+
+      {:ok, grab} = Catalog.mark_grab_downloaded(grab, release_dir)
+      start_supervised!({TvPoller, interval: 60_000})
+      assert :ok = TvPoller.poll()
+
+      # The import placed NOTHING. E01's incoming file carries its own `720p`, so the backfill can't
+      # lift it and it ties the file already held; E02-E04's terse files inherit the title's
+      # 1080p/webdl and then lose on size to the 9 GB each episode already holds.
+      for episode <- episodes do
+        reloaded = Repo.get!(Episode, episode.id)
+
+        assert reloaded.file_path == episode.file_path
+        assert File.read!(reloaded.file_path) == "held-#{episode.episode_number}"
+        assert reloaded.imported_resolution == episode.imported_resolution
+        assert reloaded.imported_size == episode.imported_size
+        assert reloaded.grab_id == nil
+        # Every episode came back as an arbitrated KEEP, not as one the pack failed to deliver:
+        # `transition_missing_episode!` would have bumped this, and a missing episode would make
+        # "the import placed nothing" true for the wrong reason.
+        assert reloaded.search_attempts == 0
+      end
+
+      refute Repo.get(Grab, grab.id)
+      assert Repo.all(GrabFile) == []
+      assert Catalog.count_operator_holds() == 0
+
+      # #274's bound fired, and only this sweep can see the row.
+      assert Catalog.blocked_release_titles_for_series(series.id, include_reasons: [:no_upgrade]) ==
+               [title]
+
+      assert Catalog.blocked_release_titles_for_series(series.id) == []
+
+      # Bounded, not eliminated: the sweep still reads the release as an upgrade for E01 — the
+      # disagreement with the import is stable in both directions — and passes on it anyway.
+      assert Upgrade.candidate?(Repo.get!(Episode, worse.id), offered, :tv, nil)
+
+      assert :ok = UpgradeHunter.poll()
+      refute_received :grab_attempted
+
+      # Control, so the refute above can only pass for the right reason: drop the bound and the
+      # very next rotation grabs it again.
+      Repo.delete_all(BlockedRelease)
+      assert :ok = UpgradeHunter.poll()
+
+      assert_received :grab_attempted
+    end
+  end
+
+  # A season the pack ties or loses to everywhere except E01, whose recorded 720p is worse than the
+  # pack's own 1080p title. E01's file names its resolution so the import re-reads 720p; the rest
+  # are terse and inherit 1080p/webdl from the title, then lose on size.
+  defp mixed_season(tmp, title) do
+    %{downloads: downloads, tv: tv} = real_tv_library(tmp)
+
+    release_dir = Path.join(downloads, title)
+    File.mkdir_p!(release_dir)
+    library = Path.join([tv, "Show (2008) {tmdb-4249}", "Season 01"])
+    File.mkdir_p!(library)
+
+    series =
+      series_fixture(%{
+        tmdb_id: 4249,
+        tvdb_id: 4249,
+        title: "Show",
+        year: 2008,
+        monitor_strategy: :all
+      })
+
+    season = season_fixture(series)
+
+    episodes =
+      for {number, resolution, size, incoming} <- [
+            {1, "720p", 1_000_000_000, "Show.S01E01.720p.WEBDL.mkv"},
+            {2, "1080p", 9_000_000_000, "Show.S01E02.mkv"},
+            {3, "1080p", 9_000_000_000, "Show.S01E03.mkv"},
+            {4, "1080p", 9_000_000_000, "Show.S01E04.mkv"}
+          ] do
+        File.write!(Path.join(release_dir, incoming), "incoming-#{number}")
+
+        held = Path.join(library, "Show (2008) {tmdb-4249} - S01E0#{number}.mkv")
+        File.write!(held, "held-#{number}")
+
+        episode_fixture(season, %{
+          episode_number: number,
+          file_path: held,
+          imported_resolution: resolution,
+          imported_source: "WEBDL",
+          imported_size: size
+        })
+      end
+
+    %{series: series, release_dir: release_dir, episodes: episodes}
+  end
+
   defp offer_to_upgrade_sweep(tvdb_id, title) do
     stub(Cinder.Acquisition.IndexerMock, :search_tv, fn ^tvdb_id, "Show", 1 ->
       {:ok, [%{title: title, size: 2_000_000_000, download_url: "magnet:?x", seeders: 40}]}

@@ -27,10 +27,11 @@ defmodule Cinder.Catalog.UpgradeHunter do
   so the sweep must never link a movie release it hasn't decided is an upgrade.
 
   For **episodes** there is a second gate. Every grab this sweep opens is marked
-  `arbitrate_at_import` (#250), so `Library.stage_episodes/3` re-runs the comparison per episode
-  against the file that episode actually holds — a release that loses is not placed and the
-  episode keeps what it had. That is what lets a season pack beating 8 of 10 episodes be taken at
-  all: the other two simply keep their files. The manual path stays a forced replace, because
+  `arbitrate_at_import` (#250), so `Library.stage_episodes/3` re-runs the comparison per *source
+  file group* — a staged file is indivisible, so it replaces every episode it covers or none —
+  against the files those episodes actually hold. A group that loses is not placed and its
+  episodes keep what they had. That is what lets a season pack beating 8 of 10 episodes be taken
+  at all: the other two simply keep their files. The manual path stays a forced replace, because
   there the operator chose the release, possibly for something the ranking can't see.
 
   ## ponytail: no resolution cutoff
@@ -242,17 +243,32 @@ defmodule Cinder.Catalog.UpgradeHunter do
   end
 
   # An assignment covers a set of episode NUMBERS — every one of them ours to claim, since
-  # `full_claim_only` already dropped the releases carrying anything else. Take it only if it
-  # improves EVERY covered episode.
+  # `full_claim_only` already dropped the releases carrying anything else. Take it if it improves
+  # ANY covered episode: the import arbitrates per source-file group (`Library.stage_group/7`), so
+  # the groups this release doesn't beat keep their files and the ones it does get the new one.
+  # `Enum.all?` cost the whole pack whenever one episode of the season was already good enough —
+  # #257.
   #
-  # #250 made the import decline per episode, so a partial pack is no longer *unsafe*: the episodes
-  # it doesn't beat simply keep their files. The guard stays regardless — taking a whole pack for
-  # the subset it improves is its own trade, tracked as #257.
+  # `any?` re-opens a re-download loop that `all?` incidentally suppressed, so it ships only
+  # because all three of its routes are now closed or bounded:
+  #
+  #   * quality tokens — #277: `Library.new_quality/3` backfills a terse inner file's nil
+  #     resolution/source/language from the release title, so a pack no longer out-ranks the very
+  #     file it produced on a nil that sorts last;
+  #   * size — #278/#283: `Upgrade.candidate?/4` weighs no size at all, so a multi-file container
+  #     can't out-weigh the one file `lstat`ed out of it;
+  #   * a worse-token file — still live, and deliberately: `new_quality/3` backfills only NIL
+  #     fields, because a genuinely mixed pack must keep a member's worse token. So an episode
+  #     holding `720p` inside a `1080p`-titled pack reads as improvable by that title forever while
+  #     the import re-parses the file and declines. #274 BOUNDS it rather than removing it — a grab
+  #     that commits having placed nothing writes a `no_upgrade` `BlockedRelease` row, which only
+  #     this sweep's `release_blocklist` reads. One pack is downloaded and discarded, once; the
+  #     rotation after that passes on it.
   defp maybe_grab_episodes({release, covered_numbers}, episodes, target) do
     covered = Enum.filter(episodes, &(&1.episode_number in covered_numbers))
 
     cond do
-      covered == [] or not Enum.all?(covered, &Upgrade.candidate?(&1, release, :tv, target)) ->
+      covered == [] or not Enum.any?(covered, &Upgrade.candidate?(&1, release, :tv, target)) ->
         :ok
 
       not Disk.grab_space_available?(release.size) ->
