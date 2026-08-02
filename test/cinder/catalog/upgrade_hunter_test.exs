@@ -536,4 +536,47 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       assert Repo.get!(Episode, ctx.episode.id).grab_id == nil
     end
   end
+
+  # The `Enum.all?` in `maybe_grab_episodes/4` is what stops a pack out-ranking the files it
+  # itself delivered, and this is the case that proves it — the one #257 asked to relax.
+  # Deliberately its own series and season: the "episodes" describe seeds a 720p E01, and a
+  # genuine resolution winner anywhere in the covered set would make this pass under `any?` too.
+  describe "a pack that only beats its own per-episode mean" do
+    test "is not grabbed when the season's real sizes straddle that mean" do
+      series = series_fixture(%{tvdb_id: 909, title: "Straddle", monitor_strategy: :all})
+      season = season_fixture(series)
+
+      # 9 GB of season already imported, split 6 + 1 + 2, every file tying the offer below on
+      # resolution, source and language. The offer is the same 9 GB over the same 3 episodes, so
+      # `candidate?/5`'s per-episode mean is 3 GB: above E02 and E03, below E01. Nothing here is
+      # a quality win in either direction — only the mean-vs-real-size artefact separates them,
+      # which is why `all?` refuses and `any?` would not. (The sibling pack tests all use one
+      # uniform size equal to the mean, where the two spellings are indistinguishable.)
+      episodes =
+        for {number, size} <- [{1, 6_000_000_000}, {2, 1_000_000_000}, {3, 2_000_000_000}] do
+          episode_fixture(season, %{
+            episode_number: number,
+            file_path: "/lib/Straddle/S01E0#{number}.mkv",
+            imported_resolution: "1080p",
+            imported_source: "webdl",
+            imported_size: size
+          })
+        end
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 909, "Straddle", 1 ->
+        {:ok, [release("Straddle.S01.1080p.WEBDL-GRP", %{size: 9_000_000_000})]}
+      end)
+
+      watch_grabs()
+
+      poll()
+
+      # Taking this would re-download 9 GB for an import that declines all three episodes, and
+      # the next rotation would offer it again — unbounded, since a declined arbitration still
+      # stages held files, so no blocklist entry and no search_attempts bump ever lands.
+      refute_grabbed()
+
+      for ep <- episodes, do: assert(Repo.get!(Episode, ep.id).grab_id == nil)
+    end
+  end
 end
