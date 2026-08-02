@@ -64,7 +64,7 @@ msgid "Account"
 msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:143
-#: lib/cinder_web/live/activity_live.ex:359
+#: lib/cinder_web/live/activity_live.ex:402
 #: lib/cinder_web/user_auth.ex:408
 #, elixir-autogen, elixir-format
 msgid "Activity"
@@ -380,8 +380,8 @@ msgstr ""
 msgid "Dashboard"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:520
-#: lib/cinder_web/live/activity_live.ex:683
+#: lib/cinder_web/live/activity_live.ex:563
+#: lib/cinder_web/live/activity_live.ex:771
 #: lib/cinder_web/live/library_live.ex:435
 #: lib/cinder_web/live/library_live.ex:457
 #: lib/cinder_web/live/library_live.ex:529
@@ -457,7 +457,7 @@ msgstr ""
 msgid "Deleted %{count} file(s)."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:516
+#: lib/cinder_web/live/activity_live.ex:559
 #, elixir-autogen, elixir-format
 msgid "Deleting…"
 msgstr ""
@@ -504,7 +504,7 @@ msgstr ""
 msgid "Downloading"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:452
+#: lib/cinder_web/live/activity_live.ex:495
 #, elixir-autogen, elixir-format
 msgid "Downloads"
 msgstr ""
@@ -588,7 +588,7 @@ msgstr ""
 msgid "In pipeline"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:457
+#: lib/cinder_web/live/activity_live.ex:500
 #, elixir-autogen, elixir-format
 msgid "In-flight TV downloads show here."
 msgstr ""
@@ -617,7 +617,7 @@ msgstr ""
 msgid "Library"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:360
+#: lib/cinder_web/live/activity_live.ex:403
 #, elixir-autogen, elixir-format
 msgid "Live pipeline and in-flight downloads."
 msgstr ""
@@ -713,7 +713,7 @@ msgstr ""
 msgid "Movie deleted."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:364
+#: lib/cinder_web/live/activity_live.ex:407
 #: lib/cinder_web/live/dashboard_live.ex:194
 #, elixir-autogen, elixir-format
 msgid "Movie pipeline"
@@ -758,7 +758,7 @@ msgstr ""
 msgid "New user"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:456
+#: lib/cinder_web/live/activity_live.ex:499
 #, elixir-autogen, elixir-format
 msgid "No active downloads"
 msgstr ""
@@ -790,7 +790,7 @@ msgstr ""
 msgid "No movies or shows matched that search."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:368
+#: lib/cinder_web/live/activity_live.ex:411
 #: lib/cinder_web/live/library_live.ex:371
 #, elixir-autogen, elixir-format
 msgid "No movies yet"
@@ -956,7 +956,7 @@ msgstr ""
 msgid "Requested movies appear here."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:369
+#: lib/cinder_web/live/activity_live.ex:412
 #, elixir-autogen, elixir-format
 msgid "Requested movies move through here."
 msgstr ""
@@ -985,14 +985,14 @@ msgstr ""
 msgid "Resetting…"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:415
+#: lib/cinder_web/live/activity_live.ex:458
 #: lib/cinder_web/live/movie_detail_live.ex:502
 #: lib/cinder_web/live/series_detail_components.ex:323
 #, elixir-autogen, elixir-format
 msgid "Retry"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:413
+#: lib/cinder_web/live/activity_live.ex:456
 #: lib/cinder_web/live/movie_detail_live.ex:498
 #, elixir-autogen, elixir-format
 msgid "Retrying…"
@@ -1574,7 +1574,7 @@ msgstr ""
 msgid "Delete the downloaded file for this episode? If it stays monitored it will be downloaded again. Stop monitoring it to keep it gone."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:689
+#: lib/cinder_web/live/activity_live.ex:777
 #, elixir-autogen, elixir-format
 msgid "Delete this download? Its episodes are unlinked."
 msgstr ""
@@ -1855,7 +1855,7 @@ msgstr ""
 msgid "Timed out"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:315
+#: lib/cinder_web/live/activity_live.ex:358
 #, elixir-autogen, elixir-format
 msgid "Unknown series"
 msgstr ""
@@ -2394,7 +2394,7 @@ msgstr ""
 msgid "Running…"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:327
+#: lib/cinder_web/live/activity_live.ex:370
 #: lib/cinder_web/live/dashboard_live.ex:212
 #, elixir-autogen, elixir-format
 msgid "Subtitle backfill"
@@ -2661,13 +2661,13 @@ msgstr ""
 msgid "Editing alias %{title}"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:519
-#: lib/cinder_web/live/activity_live.ex:682
+#: lib/cinder_web/live/activity_live.ex:562
+#: lib/cinder_web/live/activity_live.ex:770
 #, elixir-autogen, elixir-format
 msgid "Cancel download"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:688
+#: lib/cinder_web/live/activity_live.ex:776
 #, elixir-autogen, elixir-format
 msgid "Cancel this download? Its episodes will return to the wanted queue."
 msgstr ""
@@ -2784,7 +2784,7 @@ msgstr ""
 msgid "Needs verification"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:502
+#: lib/cinder_web/live/activity_live.ex:545
 #: lib/cinder_web/live/movie_detail_live.ex:501
 #, elixir-autogen, elixir-format
 msgid "Retry verification"
@@ -2805,13 +2805,15 @@ msgstr ""
 msgid "Couldn't match to an episode: %{paths}"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:492
-#: lib/cinder_web/live/activity_live.ex:667
+#: lib/cinder_web/live/activity_live.ex:535
+#: lib/cinder_web/live/activity_live.ex:681
+#: lib/cinder_web/live/activity_live.ex:726
+#: lib/cinder_web/live/activity_live.ex:755
 #, elixir-autogen, elixir-format
 msgid "Discard"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:671
+#: lib/cinder_web/live/activity_live.ex:759
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Discard this download? Its episodes will return to the wanted queue."
 msgstr ""
@@ -2836,7 +2838,7 @@ msgstr ""
 msgid "No file found for episode id(s): %{ids}"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:480
+#: lib/cinder_web/live/activity_live.ex:523
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Retry import"
 msgstr ""
@@ -2886,7 +2888,7 @@ msgstr ""
 msgid "ffprobe binary"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:422
+#: lib/cinder_web/live/activity_live.ex:465
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Held series"
 msgstr ""
@@ -2906,7 +2908,7 @@ msgstr ""
 msgid "The Anime release preferences can't be satisfied for this title."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:424
+#: lib/cinder_web/live/activity_live.ex:467
 #, elixir-autogen, elixir-format
 msgid "These series are skipped by the search sweep until their Anime preferences can be satisfied; the hold clears automatically once they can."
 msgstr ""
@@ -3147,7 +3149,7 @@ msgstr ""
 msgid "The library's episodes no longer match what this grab reserved; affected episode id(s): %{ids}"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:333
+#: lib/cinder_web/live/activity_live.ex:376
 #, elixir-autogen, elixir-format
 msgid "%{ago} ago"
 msgstr ""
@@ -3164,17 +3166,17 @@ msgstr ""
 msgid "%{count} need attention"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:346
+#: lib/cinder_web/live/activity_live.ex:389
 #, elixir-autogen, elixir-format
 msgid "%{n}d"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:345
+#: lib/cinder_web/live/activity_live.ex:388
 #, elixir-autogen, elixir-format
 msgid "%{n}h"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:344
+#: lib/cinder_web/live/activity_live.ex:387
 #, elixir-autogen, elixir-format, fuzzy
 msgid "%{n}m"
 msgstr ""
@@ -3184,17 +3186,17 @@ msgstr ""
 msgid "A download needs attention."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:697
+#: lib/cinder_web/live/activity_live.ex:785
 #, elixir-autogen, elixir-format
 msgid "Background sweeps"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:713
+#: lib/cinder_web/live/activity_live.ex:801
 #, elixir-autogen, elixir-format
 msgid "Last run: %{when}"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:716
+#: lib/cinder_web/live/activity_live.ex:804
 #, elixir-autogen, elixir-format
 msgid "Next: %{when}"
 msgstr ""
@@ -3209,7 +3211,7 @@ msgstr ""
 msgid "Pipeline: %{summary}"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:323
+#: lib/cinder_web/live/activity_live.ex:366
 #, elixir-autogen, elixir-format
 msgid "Series metadata refresh"
 msgstr ""
@@ -3224,22 +3226,22 @@ msgstr ""
 msgid "The indexer couldn't be reached after repeated tries. Open it to retry."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:339
+#: lib/cinder_web/live/activity_live.ex:382
 #, elixir-autogen, elixir-format
 msgid "due now"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:340
+#: lib/cinder_web/live/activity_live.ex:383
 #, elixir-autogen, elixir-format
 msgid "in %{time}"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:332
+#: lib/cinder_web/live/activity_live.ex:375
 #, elixir-autogen, elixir-format
 msgid "not yet"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:335
+#: lib/cinder_web/live/activity_live.ex:378
 #, elixir-autogen, elixir-format
 msgid "on schedule"
 msgstr ""
@@ -4467,7 +4469,7 @@ msgstr ""
 msgid "Extra: %{file}"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:586
+#: lib/cinder_web/live/activity_live.ex:642
 #: lib/cinder_web/live/library_adoption_live.ex:1027
 #, elixir-autogen, elixir-format
 msgid "Fold"
@@ -4662,114 +4664,110 @@ msgstr ""
 msgid "Ready: %{ready}; Needs decision: %{decision}; Blocked: %{blocked}; Already managed: %{managed}"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:296
+#: lib/cinder_web/live/activity_live.ex:339
 #, elixir-autogen, elixir-format
 msgid "%{code} (TMDB %{id})"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:592
+#: lib/cinder_web/live/activity_live.ex:648
 #, elixir-autogen, elixir-format
 msgid "Bind its provider coordinate to the selected episode. This extra physical source will not be retained."
 msgstr ""
 
 #: lib/cinder_web/live/activity_live.ex:195
+#: lib/cinder_web/live/activity_live.ex:257
 #, elixir-autogen, elixir-format
 msgid "File decision saved."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:583
+#: lib/cinder_web/live/activity_live.ex:639
 #, elixir-autogen, elixir-format
 msgid "Fold %{file}"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:208
+#: lib/cinder_web/live/activity_live.ex:225
 #, elixir-autogen, elixir-format
 msgid "Held. Source cleanup remains blocked."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:625
-#: lib/cinder_web/live/activity_live.ex:649
+#: lib/cinder_web/live/activity_live.ex:702
+#: lib/cinder_web/live/activity_live.ex:736
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Hold"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:622
-#: lib/cinder_web/live/activity_live.ex:647
+#: lib/cinder_web/live/activity_live.ex:699
+#: lib/cinder_web/live/activity_live.ex:734
 #, elixir-autogen, elixir-format
 msgid "Hold %{file}"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:603
+#: lib/cinder_web/live/activity_live.ex:659
 #, elixir-autogen, elixir-format
 msgid "Keep %{file} as a part"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:606
+#: lib/cinder_web/live/activity_live.ex:662
 #, elixir-autogen, elixir-format
 msgid "Keep as part"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:631
+#: lib/cinder_web/live/activity_live.ex:708
 #, elixir-autogen, elixir-format
 msgid "Make no change; source cleanup stays blocked."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:638
-#, elixir-autogen, elixir-format
-msgid "No eligible TMDB episode remains; keep this file held."
-msgstr ""
-
-#: lib/cinder_web/live/activity_live.ex:312
+#: lib/cinder_web/live/activity_live.ex:355
 #, elixir-autogen, elixir-format
 msgid "No provider coordinate was found."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:306
+#: lib/cinder_web/live/activity_live.ex:349
 #, elixir-autogen, elixir-format
 msgid "Provider coordinate: %{source} %{scheme} %{value}"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:266
+#: lib/cinder_web/live/activity_live.ex:309
 #, elixir-autogen, elixir-format
 msgid "Select a TMDB episode before choosing Fold or Keep as part."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:571
+#: lib/cinder_web/live/activity_live.ex:627
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Select an episode"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:612
+#: lib/cinder_web/live/activity_live.ex:668
 #, elixir-autogen, elixir-format
 msgid "Stage it at a canonical -part path and retain it on the episode."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:570
+#: lib/cinder_web/live/activity_live.ex:626
 #, elixir-autogen, elixir-format
 msgid "TMDB episode"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:574
+#: lib/cinder_web/live/activity_live.ex:630
 #, elixir-autogen, elixir-format
 msgid "TMDB episode for %{file}"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:269
+#: lib/cinder_web/live/activity_live.ex:312
 #, elixir-autogen, elixir-format
 msgid "That episode is no longer available for this download."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:272
+#: lib/cinder_web/live/activity_live.ex:315
 #, elixir-autogen, elixir-format
 msgid "The file could not be resolved and remains held."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:293
+#: lib/cinder_web/live/activity_live.ex:336
 #, elixir-autogen, elixir-format, fuzzy
 msgid "%{code}: %{title}"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:286
+#: lib/cinder_web/live/activity_live.ex:329
 #, elixir-autogen, elixir-format, fuzzy
 msgid "%{code}: %{title} (TMDB %{id})"
 msgstr ""
@@ -5367,12 +5365,12 @@ msgstr ""
 msgid "Link your Plex account again to sync your Plex watchlist."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:699
+#: lib/cinder_web/live/activity_live.ex:787
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Periodic maintenance that runs on its own: refreshing series metadata, backfilling subtitles, and syncing Plex watchlists."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:328
+#: lib/cinder_web/live/activity_live.ex:371
 #, elixir-autogen, elixir-format
 msgid "Plex watchlist sync"
 msgstr ""
@@ -5387,17 +5385,17 @@ msgstr ""
 msgid "Request titles I add to my Plex watchlist"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:324
+#: lib/cinder_web/live/activity_live.ex:367
 #, elixir-autogen, elixir-format
 msgid "Parked title rehunt"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:326
+#: lib/cinder_web/live/activity_live.ex:369
 #, elixir-autogen, elixir-format
 msgid "Orphaned download cleanup"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:325
+#: lib/cinder_web/live/activity_live.ex:368
 #, elixir-autogen, elixir-format
 msgid "Quality upgrade hunt"
 msgstr ""
@@ -5405,4 +5403,30 @@ msgstr ""
 #: lib/cinder_web/live/users_live.ex:482
 #, elixir-autogen, elixir-format, fuzzy
 msgid "no email on the media server: a placeholder is generated"
+msgstr ""
+
+#: lib/cinder_web/live/activity_live.ex:678
+#: lib/cinder_web/live/activity_live.ex:724
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Discard %{file}"
+msgstr ""
+
+#: lib/cinder_web/live/activity_live.ex:591
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Discard all"
+msgstr ""
+
+#: lib/cinder_web/live/activity_live.ex:589
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Discarding…"
+msgstr ""
+
+#: lib/cinder_web/live/activity_live.ex:687
+#, elixir-autogen, elixir-format
+msgid "It belongs to no episode of this download. Nothing is bound and nothing is kept."
+msgstr ""
+
+#: lib/cinder_web/live/activity_live.ex:715
+#, elixir-autogen, elixir-format, fuzzy
+msgid "No eligible TMDB episode remains; discard this file or keep it held."
 msgstr ""

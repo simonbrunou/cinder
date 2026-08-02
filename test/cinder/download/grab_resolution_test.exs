@@ -49,6 +49,37 @@ defmodule Cinder.Download.GrabResolutionTest do
   end
 
   @tag :tmp_dir
+  test "Discard decides a residual belonging to no episode of the grab and binds nothing", %{
+    tmp_dir: tmp
+  } do
+    %{grab: grab, episode: episode, files: [first, second], release_dir: release_dir, tv: tv} =
+      mixed_grab(tmp, ["Show.S01E98.mkv", "Show.S01E99.mkv"])
+
+    assert {:ok, :decided, _file} = TvPoller.discard_grab_file(first.id)
+
+    assert %GrabFile{decision: :discard, episode_id: nil, destination: nil, import_stage_id: nil} =
+             Repo.get!(GrabFile, first.id)
+
+    # One decision is not enough — the grab and its download source stay put.
+    assert Repo.get(Grab, grab.id)
+    assert File.exists?(release_dir)
+    assert {:ok, :noop, _file} = TvPoller.discard_grab_file(first.id)
+
+    assert {:ok, :decided, _file} = TvPoller.discard_grab_file(second.id)
+    refute Repo.get(Grab, grab.id)
+    refute File.exists?(release_dir)
+
+    # No coordinate bound, no part retained, nothing extra placed in the library.
+    assert Repo.reload!(episode).part_file_paths == []
+
+    assert episode.season.series
+           |> Identity.list_coordinates()
+           |> Enum.filter(&(&1.canonical_value in ["S01E98", "S01E99"])) == []
+
+    assert length(Path.wildcard(Path.join([tv, "**", "*.mkv"]))) == 1
+  end
+
+  @tag :tmp_dir
   test "Hold mutates nothing and keeps cleanup fenced", %{tmp_dir: tmp} do
     %{grab: grab, files: [file], release_dir: release_dir} =
       mixed_grab(tmp, ["Show.S01E99.mkv"])

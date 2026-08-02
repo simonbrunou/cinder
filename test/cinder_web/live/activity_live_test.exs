@@ -229,13 +229,15 @@ defmodule CinderWeb.ActivityLiveTest do
            )
 
     refute has_element?(view, "#grab-#{grab.id}", "Retry import")
-    refute has_element?(view, "#grab-#{grab.id}", "Discard")
+    refute has_element?(view, "#retry-mapping-grab-#{grab.id}")
+    refute has_element?(view, "#ask-cancel-mapping-grab-#{grab.id}")
 
     for file <- Repo.all(from f in GrabFile, where: f.grab_id == ^grab.id) do
       assert has_element?(view, "#grab-file-#{file.id}", file.relative_path)
       assert has_element?(view, "#grab-file-#{file.id} button[value=fold]", "Fold")
       assert has_element?(view, "#grab-file-#{file.id} button[value=part]", "Keep as part")
       assert has_element?(view, "#grab-file-#{file.id} button", "Hold")
+      assert has_element?(view, "#grab-file-#{file.id} button", "Discard")
 
       refute has_element?(
                view,
@@ -249,6 +251,50 @@ defmodule CinderWeb.ActivityLiveTest do
     assert Repo.get!(GrabFile, first.id).decision == nil
     assert Repo.get(Grab, grab.id)
     assert has_element?(view, "#grab-file-#{first.id}")
+  end
+
+  test "Discard resolves one residual file and Discard all decides the rest, closing the grab", %{
+    conn: conn
+  } do
+    grab = grab!()
+    {:ok, grab} = Catalog.mark_grab_downloaded(grab, "/downloads/Severance")
+    episode = Repo.get_by!(Episode, grab_id: grab.id)
+
+    for {path, inode} <- [{"part-2.mkv", 11}, {"part-3.mkv", 12}, {"part-4.mkv", 13}] do
+      Repo.insert!(%GrabFile{
+        grab_id: grab.id,
+        relative_path: path,
+        size: 10,
+        device: 1,
+        inode: inode
+      })
+    end
+
+    first = Repo.one!(from f in GrabFile, where: f.grab_id == ^grab.id, order_by: f.id, limit: 1)
+
+    {:ok, view, _html} = live(conn, ~p"/activity")
+
+    view |> element("#grab-file-#{first.id} button", "Discard") |> render_click()
+
+    assert %GrabFile{decision: :discard, episode_id: nil, destination: nil, import_stage_id: nil} =
+             Repo.get!(GrabFile, first.id)
+
+    # One decision short of a close: the grab, its hold row, and the other files remain.
+    assert Repo.get(Grab, grab.id)
+    refute has_element?(view, "#grab-file-#{first.id}")
+    assert has_element?(view, "#grab-#{grab.id}-file-reason")
+
+    view |> element("#discard-grab-files-#{grab.id}") |> render_click()
+
+    # close_grab/1 rolls back while any row is still undecided, so a deleted grab is proof the
+    # bulk click decided every remaining file — their rows cascade away with it.
+    refute Repo.get(Grab, grab.id)
+    refute Repo.exists?(from f in GrabFile, where: f.grab_id == ^grab.id)
+    refute has_element?(view, "#grab-#{grab.id}")
+
+    # Nothing was bound to the grab's own episode along the way.
+    assert %Episode{file_path: nil, part_file_paths: []} = Repo.reload!(episode)
+    refute Repo.exists?(ImportStage)
   end
 
   test "a Part staging failure stays on its row and leaves every write unresolved", %{conn: conn} do

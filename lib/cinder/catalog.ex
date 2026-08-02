@@ -1465,6 +1465,7 @@ defmodule Cinder.Catalog do
   defdelegate commit_grab_imports(grab, imported, residuals, stage_ids), to: Grabs
   defdelegate close_grab(grab), to: Grabs
   defdelegate decide_grab_file(file, episode, decision, stage), to: Grabs
+  defdelegate discard_grab_file(file), to: Grabs
   defdelegate park_grab(grab), to: Grabs
   defdelegate reap_stalled_grab(grab), to: Grabs
 

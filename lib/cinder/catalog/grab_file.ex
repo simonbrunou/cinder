@@ -21,7 +21,10 @@ defmodule Cinder.Catalog.GrabFile do
     field :scheme, :string
     field :namespace, :string
     field :canonical_value, :string
-    field :decision, Ecto.Enum, values: [:fold, :part]
+    # :fold and :part both bind the file to an episode of THIS grab. :discard is the file-only
+    # decision for a video that belongs to no such episode (a pack's extras for episodes we
+    # already hold): it resolves the row so the grab can close, and binds nothing (#266).
+    field :decision, Ecto.Enum, values: [:fold, :part, :discard]
     field :destination, :string
     belongs_to :grab, Grab
     belongs_to :episode, Episode

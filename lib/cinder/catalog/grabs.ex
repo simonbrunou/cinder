@@ -807,6 +807,21 @@ defmodule Cinder.Catalog.Grabs do
   end
 
   @doc """
+  Loads an unresolved residual file for a decision that names no episode (Discard).
+
+  The file-only sibling of `get_grab_file_resolution/2`: there is no episode to validate, so a
+  file whose content belongs to an episode outside this grab is still loadable. A decided row
+  returns `:noop` so resubmission stays idempotent.
+  """
+  def get_grab_file(file_id) do
+    case Repo.get(GrabFile, file_id) do
+      nil -> {:error, :grab_file_not_found}
+      %GrabFile{decision: nil} = file -> {:ok, :pending, Repo.preload(file, :grab)}
+      %GrabFile{} = file -> {:ok, :noop, Repo.preload(file, :grab)}
+    end
+  end
+
+  @doc """
   Commits the clean matches from one standard-TV staging pass and durably inventories every
   unmatched video. A clean pass closes the grab in this transaction; a residual pass leaves the
   grab and its unimported episodes intact for explicit per-file decisions.
@@ -1008,6 +1023,39 @@ defmodule Cinder.Catalog.Grabs do
 
   def decide_grab_file(%GrabFile{}, %Episode{}, _decision, _stage),
     do: {:error, :invalid_grab_file_decision}
+
+  @doc """
+  Atomically records one Discard decision — the file-only path.
+
+  `decide_grab_file/4` needs an `%Episode{}` of this grab, because both its decisions bind the
+  file to one: Fold writes the file's provider coordinate onto that episode, Part stages its
+  bytes at that episode's `-part` path. A residual whose content belongs to an episode *outside*
+  the grab has no such episode, so there is no truthful argument to pass. Discard takes none: it
+  claims the row the same guarded way (a decided row is a no-op), writes nothing but the
+  decision, and derives its single post-commit broadcast from the grab rather than the episode.
+  """
+  def discard_grab_file(%GrabFile{} = file) do
+    result =
+      Repo.transaction(fn ->
+        case Repo.update_all(
+               from(f in GrabFile,
+                 where: f.id == ^file.id and is_nil(f.decision),
+                 select: f
+               ),
+               set: [decision: :discard, updated_at: Cinder.Catalog.now()]
+             ) do
+          {0, _} ->
+            existing_grab_file_decision(file.id)
+
+          {1, [decided]} ->
+            grab = Repo.get(Grab, decided.grab_id) || Repo.rollback(:stale_grab)
+            claim_standard_grab!(grab)
+            {:decided, decided, nil, series_id_for_grab(grab.id)}
+        end
+      end)
+
+    publish_grab_file_decision(result)
+  end
 
   defp existing_grab_file_decision(file_id) do
     case Repo.get(GrabFile, file_id) do

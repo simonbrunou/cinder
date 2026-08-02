@@ -361,6 +361,34 @@ defmodule Cinder.Download.TvPoller do
   def resolve_grab_file(_file_id, _episode_id, _decision),
     do: {:error, :invalid_grab_file_decision}
 
+  @doc """
+  Discards one residual file and attempts the existing guarded close.
+
+  The file-only counterpart of `resolve_grab_file/3`: no episode is named, so nothing is staged
+  before the Catalog transaction and nothing needs rolling back after it. Restart-safe the same
+  way — a committed decision is closed by the next poll tick.
+  """
+  def discard_grab_file(file_id) when is_integer(file_id) do
+    case Grabs.get_grab_file(file_id) do
+      {:ok, :noop, file} ->
+        finalize_residual_grab(file.grab)
+        {:ok, :noop, file}
+
+      {:ok, :pending, file} ->
+        case Catalog.discard_grab_file(file) do
+          {:ok, _state, _file} = result ->
+            finalize_residual_grab(file.grab)
+            result
+
+          {:error, _reason} = error ->
+            error
+        end
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
   defp apply_grab_file_decision(file, episode, :fold) do
     case Catalog.decide_grab_file(file, episode, :fold, nil) do
       {:ok, _state, _file} = result ->
