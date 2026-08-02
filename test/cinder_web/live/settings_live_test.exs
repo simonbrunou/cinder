@@ -6,6 +6,7 @@ defmodule CinderWeb.SettingsLiveTest do
   import Phoenix.LiveViewTest
   import Mox
 
+  alias Cinder.Catalog.UpgradeHunter
   alias Cinder.Settings
 
   setup :register_and_log_in_admin
@@ -402,6 +403,25 @@ defmodule CinderWeb.SettingsLiveTest do
     |> render_change(%{"auto_approve_all" => "on"})
 
     assert Settings.auto_approve_all?() == true
+  end
+
+  test "toggling the quality upgrade sweep applies without a restart", %{conn: conn} do
+    # Shipped default (config.exs): off.
+    refute UpgradeHunter.enabled?()
+
+    {:ok, lv, _} = live(conn, ~p"/settings")
+
+    lv
+    |> element("form[phx-change=toggle_upgrade_hunt]")
+    |> render_change(%{"upgrade_hunt_enabled" => "on"})
+
+    assert UpgradeHunter.enabled?()
+
+    # Unticking it: the browser sends a change frame with the checkbox absent entirely. Driven
+    # off the view rather than the element so the now-checked DOM value isn't merged back in.
+    render_change(lv, "toggle_upgrade_hunt", %{})
+
+    refute UpgradeHunter.enabled?()
   end
 
   test "warns about auto-approval during public registration", %{conn: conn} do

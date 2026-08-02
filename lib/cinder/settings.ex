@@ -562,6 +562,7 @@ defmodule Cinder.Settings do
     # move this ahead of apply_library_config.
     apply_import_roots(rows)
     apply_move_on_import(rows)
+    apply_upgrade_hunt(rows)
     apply_ffprobe_bin(rows)
     apply_default_request_quota(rows)
     :ok
@@ -774,6 +775,27 @@ defmodule Cinder.Settings do
   # everywhere it's read (Application.get_env(:cinder, :move_on_import, false)).
   defp apply_move_on_import(rows) do
     Application.put_env(:cinder, :move_on_import, decoded_for(rows, "move_on_import") == "true")
+  end
+
+  # The quality-upgrade sweep's on/off switch. A standalone boolean like move_on_import above, but
+  # module-scoped: it overlays `:enabled` onto the captured `config.exs` bootstrap for
+  # `Cinder.Catalog.UpgradeHunter`, which is where `UpgradeHunter.enabled?/0` already reads — so the
+  # sweep needs no change and any sibling key in that block (interval, batch) survives the overlay.
+  # It is not a `config_fields/0` entry: those are text-valued (a stored "false" would land in the
+  # env as the truthy STRING "false"), and not a `toggles/0` entry: those are download-client
+  # protocol switches that default to ON and only feed the `:download_clients` map. An unset/cleared
+  # row leaves the bootstrap untouched, so it reverts to the shipped `enabled: false`.
+  defp apply_upgrade_hunt(rows) do
+    module = Cinder.Catalog.UpgradeHunter
+    base = base(module)
+
+    config =
+      case decoded_for(rows, "upgrade_hunt_enabled") do
+        nil -> base
+        value -> Keyword.put(base, :enabled, value == "true")
+      end
+
+    Application.put_env(:cinder, module, config)
   end
 
   # A flat string with an env bootstrap (`config :cinder, ffprobe_bin: "ffprobe"`), mirroring

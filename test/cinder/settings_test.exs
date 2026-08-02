@@ -5,6 +5,7 @@ defmodule Cinder.SettingsTest do
   import Mox
   import ExUnit.CaptureLog
 
+  alias Cinder.Catalog.UpgradeHunter
   alias Cinder.Health
   alias Cinder.Settings
   alias Cinder.Settings.Setting
@@ -27,6 +28,7 @@ defmodule Cinder.SettingsTest do
     Cinder.Mailer,
     Cinder.Subtitles.Provider.OpenSubtitles,
     Cinder.Subtitles.Translator.LibreTranslate,
+    Cinder.Catalog.UpgradeHunter,
     :media_server,
     :download_clients,
     :qbittorrent_remote_path_prefix,
@@ -286,6 +288,29 @@ defmodule Cinder.SettingsTest do
       Settings.save_form(%{"move_on_import" => "false"})
       assert Settings.form_state().values["move_on_import"] == false
       assert Application.get_env(:cinder, :move_on_import) == false
+    end
+
+    test "upgrade_hunt_enabled: the sweep follows the stored setting with no restart" do
+      # The switch has to reach Cinder.Catalog.UpgradeHunter's own config block, since that is
+      # where enabled?/0 reads — a setting that lands anywhere else would leave the sweep off.
+      Settings.load_into_env()
+      refute UpgradeHunter.enabled?()
+
+      Settings.put("upgrade_hunt_enabled", "true")
+      assert UpgradeHunter.enabled?()
+
+      Settings.put("upgrade_hunt_enabled", "false")
+      refute UpgradeHunter.enabled?()
+    end
+
+    test "upgrade_hunt_enabled: cleared reverts to the config.exs default, not the last value" do
+      Settings.put("upgrade_hunt_enabled", "true")
+      assert UpgradeHunter.enabled?()
+
+      Settings.delete("upgrade_hunt_enabled")
+      refute UpgradeHunter.enabled?()
+      # The rest of the module's config block survives the overlay.
+      assert UpgradeHunter.batch_size() == 10
     end
 
     test "ffprobe_bin: unset ⇒ the \"ffprobe\" bootstrap; a saved value overlays; cleared reverts" do

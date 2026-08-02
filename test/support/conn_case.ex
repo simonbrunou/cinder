@@ -93,6 +93,7 @@ defmodule CinderWeb.ConnCase do
     Cinder.Mailer,
     Cinder.Notifier.Webhook,
     Cinder.Subtitles.Provider.OpenSubtitles,
+    Cinder.Catalog.UpgradeHunter,
     :media_server,
     :download_clients,
     :qbittorrent_remote_path_prefix,
