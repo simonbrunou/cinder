@@ -8,7 +8,9 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
 
   @moduletag :capture_log
 
+  alias Cinder.Acquisition.Release
   alias Cinder.Catalog.{Episode, Movie, UpgradeHunter}
+  alias Cinder.Library.Upgrade
 
   import Cinder.CatalogFixtures
 
@@ -319,10 +321,10 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       assert Enum.uniq(grab_ids) == [hd(grab_ids)]
     end
 
-    # A pack that improves only part of the season is left alone: #250 removed the data-loss reason
-    # (the import now declines per episode), but taking a whole pack for the subset it improves is
-    # its own trade. See the guard's comment and issue #257.
-    test "skips a pack that does not improve every episode it covers", ctx do
+    # #257, the win: one improvable episode is enough to take the pack. `Enum.all?` meant a season
+    # where nine of ten files were already good enough left the tenth permanently unserved by any
+    # pack. The import arbitrates per source-file group (#250), so the nine keep their files.
+    test "grabs a pack that improves only part of the season it covers", ctx do
       # E01 is 720p (upgradable); the rest of the season is already 1080p at a bigger size.
       kept =
         for n <- 2..10 do
@@ -335,20 +337,27 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
           })
         end
 
+      offered = release("Show.S01.1080p.WEBDL-GRP", %{size: 20_000_000_000})
+
       stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", 1 ->
-        # 1080p WEB-DL at 2 GB/episode: better than E01's 720p, worse than the other nine.
-        {:ok, [release("Show.S01.1080p.WEBDL-GRP", %{size: 20_000_000_000})]}
+        # 1080p WEB-DL at 2 GB/episode: better than E01's 720p, a sideways move for the other nine.
+        {:ok, [offered]}
       end)
 
-      watch_grabs()
+      stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "partial-upgrade"} end)
 
       poll()
 
-      refute_grabbed()
+      # Not vacuous: the nine are genuinely NOT improvable by this release, so only `any?` can
+      # explain the grab — and every covered episode is still linked, or the pack's files for the
+      # nine land unclaimed at import (#247).
+      parsed = Release.new(offered)
+      refute Enum.any?(kept, &Upgrade.candidate?(&1, parsed, :tv, nil))
+      assert Upgrade.candidate?(ctx.episode, parsed, :tv, nil)
 
-      for ep <- [ctx.episode | kept] do
-        assert Repo.get!(Episode, ep.id).grab_id == nil
-      end
+      grab_ids = for ep <- [ctx.episode | kept], do: Repo.get!(Episode, ep.id).grab_id
+      assert Enum.all?(grab_ids, &is_integer/1)
+      assert Enum.uniq(grab_ids) == [hd(grab_ids)]
     end
 
     # Same hold, other cause: a pack for a season we only partly hold delivers files for the
