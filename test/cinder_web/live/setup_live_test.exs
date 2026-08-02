@@ -140,6 +140,28 @@ defmodule CinderWeb.SetupLiveTest do
     refute has_element?(lv, "#setup-checklist", "Discord")
   end
 
+  # `validate` is the other caller of Settings.save_form/1, which reaches into the payload's
+  # VALUES — String.trim/1 and String.split/2 both raise on a non-binary, past the point where
+  # the clause matched and so past the catch-all. First-run-only, but same admin threat model.
+  test "a forged validate payload is ignored rather than crashing the wizard", %{conn: conn} do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    conn = log_in_user(conn, admin)
+
+    {:ok, lv, _html} = live(conn, ~p"/setup")
+    prowlarr_before = Cinder.Settings.get("prowlarr_url")
+
+    assert render_hook(lv, "validate", ["forged"])
+
+    for forged <- [%{"forged" => true}, ["x"], 7] do
+      assert render_hook(lv, "validate", %{"tv_max_size" => forged})
+      assert render_hook(lv, "validate", %{"import_roots" => forged})
+      assert render_hook(lv, "validate", %{"prowlarr_url" => forged})
+    end
+
+    assert Process.alive?(lv.pid)
+    assert Cinder.Settings.get("prowlarr_url") == prowlarr_before
+  end
+
   test "non-admins cannot reach /setup", %{conn: conn} do
     user = Cinder.AccountsFixtures.user_fixture()
     conn = log_in_user(conn, user)

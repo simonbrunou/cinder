@@ -8,6 +8,8 @@ defmodule CinderWeb.SetupLive do
   """
   use CinderWeb, :live_view
 
+  import CinderWeb.LiveHelpers
+
   import CinderWeb.SettingsComponents
 
   alias Cinder.{Health, Settings}
@@ -37,27 +39,11 @@ defmodule CinderWeb.SetupLive do
     end
   end
 
+  # Same guard, same reason, as `CinderWeb.SettingsLive`'s "save" — this is the other caller of
+  # `Settings.save_form/1`, and it reaches into the payload's values.
   @impl true
   def handle_event("validate", params, socket) do
-    case Settings.save_form(params) do
-      :ok ->
-        health = Map.new(required_services() ++ @download_services, &{&1, check(&1)})
-
-        {:noreply,
-         assign(socket,
-           form: Settings.form_state(),
-           health: health,
-           form_revision: socket.assigns.form_revision + 1,
-           can_finish: all_green?(health)
-         )}
-
-      {:error, invalid_keys} ->
-        {:noreply,
-         socket
-         |> assign(form: Settings.form_state(params, invalid_keys))
-         |> push_event("focus-invalid", %{id: List.first(invalid_keys)})
-         |> put_flash(:error, invalid_band_message(invalid_keys))}
-    end
+    if settings_params?(params), do: validate_settings(params, socket), else: {:noreply, socket}
   end
 
   def handle_event("finish", _params, socket) do
@@ -83,6 +69,28 @@ defmodule CinderWeb.SetupLive do
   end
 
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  defp validate_settings(params, socket) do
+    case Settings.save_form(params) do
+      :ok ->
+        health = Map.new(required_services() ++ @download_services, &{&1, check(&1)})
+
+        {:noreply,
+         assign(socket,
+           form: Settings.form_state(),
+           health: health,
+           form_revision: socket.assigns.form_revision + 1,
+           can_finish: all_green?(health)
+         )}
+
+      {:error, invalid_keys} ->
+        {:noreply,
+         socket
+         |> assign(form: Settings.form_state(params, invalid_keys))
+         |> push_event("focus-invalid", %{id: List.first(invalid_keys)})
+         |> put_flash(:error, invalid_band_message(invalid_keys))}
+    end
+  end
 
   defp check(svc), do: Health.check_service(decode_service(svc))
 

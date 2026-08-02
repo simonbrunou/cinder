@@ -13,6 +13,7 @@ defmodule CinderWeb.SettingsLive do
   use CinderWeb, :live_view
 
   import CinderWeb.SettingsComponents
+  import CinderWeb.LiveHelpers
 
   alias Cinder.{ApiKey, Health, Settings}
   alias CinderWeb.SettingsLabels
@@ -33,31 +34,14 @@ defmodule CinderWeb.SettingsLive do
      )}
   end
 
-  # `%{} = params`: only a real form payload is guaranteed to be a map, and `save_form/1` reaches
-  # into it with `Access` — a forged frame carrying a bare list or a string would raise
-  # ArgumentError and take the LiveView (and any unsaved input) down. Same guard, same reason, as
-  # `CinderWeb.UsersLive`'s "import".
+  # A map container is not enough: `save_form/1` raises on a non-binary VALUE too. Drop the frame
+  # whole rather than filter it — `plan/1` reads an absent key as an unchecked box
+  # (`params[key] || "false"`), so discarding one bad value would turn a crash into a stealth
+  # write. This form is submit-only; a `phx-change` here would ship `_target` as a LIST and every
+  # change frame would be silently dropped.
   @impl true
-  def handle_event("save", %{} = params, socket) do
-    case Settings.save_form(params) do
-      :ok ->
-        {:noreply,
-         socket
-         |> assign(
-           form: Settings.form_state(),
-           health: %{},
-           form_revision: socket.assigns.form_revision + 1,
-           undecryptable_secrets: Settings.undecryptable_secret_keys()
-         )
-         |> put_flash(:info, gettext("Settings saved."))}
-
-      {:error, invalid_keys} ->
-        {:noreply,
-         socket
-         |> assign(form: Settings.form_state(params, invalid_keys))
-         |> push_event("focus-invalid", %{id: List.first(invalid_keys)})
-         |> put_flash(:error, invalid_band_message(invalid_keys))}
-    end
+  def handle_event("save", params, socket) do
+    if settings_params?(params), do: save_settings(params, socket), else: {:noreply, socket}
   end
 
   # Probes the saved config synchronously (each impl health/0 has a ~3s timeout).
@@ -96,6 +80,28 @@ defmodule CinderWeb.SettingsLive do
   # Event payloads are client-controlled — ignore a forged/unmatched frame rather than
   # crash the LiveView (and lose unsaved form input). House rule; see sibling views.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  defp save_settings(params, socket) do
+    case Settings.save_form(params) do
+      :ok ->
+        {:noreply,
+         socket
+         |> assign(
+           form: Settings.form_state(),
+           health: %{},
+           form_revision: socket.assigns.form_revision + 1,
+           undecryptable_secrets: Settings.undecryptable_secret_keys()
+         )
+         |> put_flash(:info, gettext("Settings saved."))}
+
+      {:error, invalid_keys} ->
+        {:noreply,
+         socket
+         |> assign(form: Settings.form_state(params, invalid_keys))
+         |> push_event("focus-invalid", %{id: List.first(invalid_keys)})
+         |> put_flash(:error, invalid_band_message(invalid_keys))}
+    end
+  end
 
   # Admin sockets are subscribed to the "requests" topic (nav-badge on_mount); ignore those
   # broadcasts here — the on_mount hook already re-renders the badge.

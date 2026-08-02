@@ -301,6 +301,24 @@ defmodule CinderWeb.LiveHelpers do
     )
   end
 
+  @doc """
+  True when a settings-form payload is shaped the way a real submit is.
+
+  `Cinder.Settings.save_form/1` reaches into the payload's **values** all over: `String.trim/1` in
+  `invalid_band_values/1`, `invalid_anime_values/1` and `plan_config/3`, `String.split/2` in
+  `invalid_import_roots/1`. Each raises on a non-binary, past the point where the `handle_event`
+  clause has matched and so past the module's catch-all. Treat the list as illustrative, not
+  exhaustive — the point is that no value reaching `save_form/1` may be anything but a string. The settings and setup forms are flat, submit-only and carry no
+  multi-value input, so every legitimate value is a string.
+
+  Note this says nothing about *which* keys are present: an all-binary payload that merely omits a
+  toggle still reads as unchecked to `plan/1`. This is only about not crashing.
+  """
+  def settings_params?(params) when is_map(params),
+    do: Enum.all?(params, fn {_key, value} -> is_binary(value) end)
+
+  def settings_params?(_params), do: false
+
   @doc "Confirmation caveat for discarding every unresolved file of one download."
   def discard_all_caveat(count) do
     ngettext(
