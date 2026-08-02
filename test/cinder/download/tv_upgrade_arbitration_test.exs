@@ -433,10 +433,17 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
           imported_size: 9_000_000_000
         })
 
-      {:ok, _grab} = arbitrated_grab([adopted, vetoing], release_dir, title)
+      {:ok, grab} = arbitrated_grab([adopted, vetoing], release_dir, title)
 
       start_supervised!({TvPoller, interval: 60_000})
       assert :ok = TvPoller.poll()
+
+      # Imported, not parked. `poll/0` runs the import inside `isolate/2`, which swallows a raise
+      # and still returns `:ok` — and every assertion below is an "unchanged" one, so without this
+      # anchor an import that stopped reaching `keep_held_files/5` would leave the fixture's own
+      # state in place and pass.
+      refute Repo.get(Grab, grab.id)
+      assert Catalog.count_operator_holds() == 0
 
       kept = Repo.get!(Episode, adopted.id)
 
