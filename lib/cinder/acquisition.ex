@@ -97,7 +97,8 @@ defmodule Cinder.Acquisition do
 
   `opts[:protocols]` drops releases on any other protocol before scoring (same
   graceful-degradation guard as `best_release/2`); `opts` is otherwise forwarded
-  to the scorer.
+  to the scorer. `opts[:season_episode_count]` (the season's real episode count) enables the
+  last-resort pack retry described in `pack_band_retry/4`.
 
   Returns `{:ok, [{%Release{}, [number]}]}`, `:no_match`, or `{:error, term}`.
 
@@ -140,10 +141,37 @@ defmodule Cinder.Acquisition do
             pool -> pool
           end
 
-        Scorer.select_for(cover_set, season_number, wanted_numbers, opts)
+        case Scorer.select_for(cover_set, season_number, wanted_numbers, opts) do
+          :no_match -> pack_band_retry(cover_set, season_number, wanted_numbers, opts)
+          selections -> selections
+        end
 
       {:error, _reason} = error ->
         error
+    end
+  end
+
+  # Last resort for #268: nothing survived the per-still-wanted-episode band, so re-run the cover
+  # once with whole-season packs banded against `opts[:season_episode_count]` — the episodes the
+  # pack CONTAINS. A 22-episode season with 4 episodes left wanted budgeted a pack at 4×the band,
+  # so the fewer episodes remained, the harsher the effective per-episode cap.
+  #
+  # It has to be a retry, not a wider first pass: `Scorer.cover/6` sorts candidates by coverage
+  # before rank, so a whole-season pack that fits the band beats every single-episode release
+  # behind it. Widening up front would trade four 1 GB singles for one 19.7 GB pack on an
+  # unattended sweep; running it only after a clean `:no_match` can add a match, never replace one.
+  defp pack_band_retry(candidates, season_number, wanted_numbers, opts) do
+    case Keyword.get(opts, :season_episode_count) do
+      nil ->
+        :no_match
+
+      count ->
+        Scorer.select_for(
+          candidates,
+          season_number,
+          wanted_numbers,
+          Keyword.put(opts, :pack_episode_count, count)
+        )
     end
   end
 

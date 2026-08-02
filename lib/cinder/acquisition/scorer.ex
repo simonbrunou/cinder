@@ -59,6 +59,9 @@ defmodule Cinder.Acquisition.Scorer do
   `select/2`) are rejected. The size band is **per-episode**: a
   release covering `k` still-wanted episodes must satisfy `k*min_size ≤ size ≤
   k*max_size` (so a season pack is judged against the episodes it actually supplies).
+  `opts[:pack_episode_count]` raises that multiplier for a whole-season pack to the episodes it
+  *contains* — it can only widen, never narrow, and `Cinder.Acquisition.best_releases/4` supplies
+  it only on a last-resort retry (see there for why not on the first pass).
   Selection is greedy set-cover — repeatedly take the release covering the most
   still-needed episodes (ties by resolution preference, then larger size) — which
   handles packs, ranges, and singles uniformly. Partial coverage is fine: the rest
@@ -268,9 +271,11 @@ defmodule Cinder.Acquisition.Scorer do
         |> Enum.map(fn release -> {release, coverage_fun.(release, needed)} end)
         |> Enum.reject(fn {release, cov} ->
           # Per-episode band: a release covering k still-wanted episodes is judged
-          # against k×the band (a pack is allowed proportionally more size).
+          # against k×the band (a pack is allowed proportionally more size), but never
+          # against less than the episodes it CARRIES when the caller says how many.
           k = MapSet.size(cov)
-          k == 0 or not within_band?(release, scale(min_size, k), scale(max_size, k))
+          banded = max(k, carried(release, opts))
+          k == 0 or not within_band?(release, scale(min_size, banded), scale(max_size, banded))
         end)
       end
 
@@ -350,6 +355,17 @@ defmodule Cinder.Acquisition.Scorer do
 
   defp scale(nil, _k), do: nil
   defp scale(size, k), do: k * size
+
+  # The episodes a release CARRIES, for a caller that opted into `pack_episode_count`: a bare-season
+  # pack carries the whole season, everything else is banded by its coverage alone. Defaults to 0
+  # (not 1, unlike `episodes_multiplier/2`) so it can only ever RAISE the multiplier in `cover/6` —
+  # a caller that doesn't opt in is untouched, and one that does can only gain matches, never lose
+  # a small pack to a newly-scaled `min_size` (#268). The count is a proxy: an ongoing season's
+  # unaired rows inflate it, and a half-season pack ("S05A") parses as a pack of that season.
+  defp carried(%Release{episodes: nil, season: season}, opts) when not is_nil(season),
+    do: Keyword.get(opts, :pack_episode_count) || 0
+
+  defp carried(_release, _opts), do: 0
 
   @doc "Index of a resolution string in the preference list (lower = better); nil/unlisted sorts last."
   def resolution_rank(resolution, preferred) when is_binary(resolution) or is_nil(resolution),

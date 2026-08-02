@@ -651,6 +651,46 @@ defmodule Cinder.AcquisitionTest do
       assert chosen |> Enum.map(fn {r, _cov} -> r.language end) == ["FRENCH", "FRENCH"]
     end
 
+    # #268: 4 of 22 episodes wanted banded a 19.7 GB season pack at 4×4 GB and parked the tail.
+    # One `expect` (not two) also pins that the retry re-scores the SAME candidates rather than
+    # searching the indexer again.
+    test "retries a whole-season pack against the season's episode count when nothing else fits" do
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn 123, "The Office", 3 ->
+        {:ok, [raw_tv("The.Office.S03.1080p.BluRay.x265-GRP", size: 197 * div(@gb, 10))]}
+      end)
+
+      assert {:ok, [{%Release{episodes: nil}, [19, 20, 21, 22]}]} =
+               Acquisition.best_releases(series(), 3, [19, 20, 21, 22],
+                 max_size: 4 * @gb,
+                 season_episode_count: 22
+               )
+    end
+
+    # The reason the widened band is a retry and not the first pass: `Scorer.cover/6` sorts by
+    # coverage before rank, so a pack that fits takes the whole want and the singles behind it are
+    # never scored. Running it only after a clean :no_match keeps four 1 GB grabs from collapsing
+    # into one 19.7 GB grab on an unattended sweep.
+    test "viable singles still win over a fat pack — the widened band never runs" do
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, 3 ->
+        {:ok,
+         [
+           raw_tv("The.Office.S03.1080p.BluRay.x265-GRP", size: 197 * div(@gb, 10))
+           | Enum.map(19..22, fn n ->
+               raw_tv("The.Office.S03E#{n}.1080p.WEB-DL-GRP", size: 1 * @gb)
+             end)
+         ]}
+      end)
+
+      assert {:ok, chosen} =
+               Acquisition.best_releases(series(), 3, [19, 20, 21, 22],
+                 max_size: 4 * @gb,
+                 season_episode_count: 22
+               )
+
+      assert chosen |> Enum.map(fn {_r, cov} -> cov end) |> Enum.sort() ==
+               [[19], [20], [21], [22]]
+    end
+
     test "rejects a same-season release of a different series on the free-text path" do
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
         {:ok, [raw_tv("Parks.and.Recreation.S01E01.1080p.WEB-DL-GRP")]}
