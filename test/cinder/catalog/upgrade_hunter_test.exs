@@ -319,11 +319,11 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       assert Enum.uniq(grab_ids) == [hd(grab_ids)]
     end
 
-    # A pack that improves only part of the season is left alone: #250 removed the data-loss reason
-    # (the import now declines per episode), but taking a whole pack for the subset it improves is
-    # its own trade. See the guard's comment and issue #257.
-    test "skips a pack that does not improve every episode it covers", ctx do
-      # E01 is 720p (upgradable); the rest of the season is already 1080p at a bigger size.
+    # The relaxation of #257: one covered episode improved is enough. Demanding all ten left a
+    # season mixed forever, and #250 removed the reason to demand them — the import arbitrates per
+    # episode, so the nine this pack ties with keep the files they have.
+    test "grabs a pack that improves some, not all, of the episodes it covers", ctx do
+      # E01 is 720p (upgradable); the rest of the season is already 1080p.
       kept =
         for n <- 2..10 do
           episode_fixture(ctx.season, %{
@@ -336,19 +336,20 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
         end
 
       stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", 1 ->
-        # 1080p WEB-DL at 2 GB/episode: better than E01's 720p, worse than the other nine.
+        # 1080p WEB-DL: a resolution win over E01 alone. For the other nine it ties — same
+        # resolution, no source preference configured, and `candidate?/4` doesn't weigh size.
         {:ok, [release("Show.S01.1080p.WEBDL-GRP", %{size: 20_000_000_000})]}
       end)
 
-      watch_grabs()
+      stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "partial-pack"} end)
 
       poll()
 
-      refute_grabbed()
-
-      for ep <- [ctx.episode | kept] do
-        assert Repo.get!(Episode, ep.id).grab_id == nil
-      end
+      # Every covered episode is linked, as for any pack grab (#247) — claiming the nine is what
+      # `arbitrate_at_import` makes harmless, not what the sweep judged an upgrade.
+      grab_ids = for ep <- [ctx.episode | kept], do: Repo.get!(Episode, ep.id).grab_id
+      assert Enum.all?(grab_ids, &is_integer/1)
+      assert Enum.uniq(grab_ids) == [hd(grab_ids)]
     end
 
     # Same hold, other cause: a pack for a season we only partly hold delivers files for the
@@ -506,6 +507,10 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
   # file, so a pack out-weighs every file it itself delivered. Deliberately its own series and
   # season: the "episodes" describe seeds a 720p E01, and a genuine resolution winner anywhere in
   # the covered set would hide the size question entirely.
+  #
+  # This is the whole of what stops the re-download loop now that #257 relaxed the guard to `any?`:
+  # `all?` used to settle it incidentally (some file always sat at or above the per-episode mean),
+  # so with `any?` the only thing left saying no is that size never enters `candidate?/4`.
   describe "a pack whose only claim over its own output is size" do
     test "is not grabbed, whatever the season's real sizes are" do
       series = series_fixture(%{tvdb_id: 909, title: "Straddle", monitor_strategy: :all})
@@ -513,8 +518,8 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
 
       # 9 GB of season already imported, split 6 + 1 + 2, every file tying the offer below on
       # resolution, source and language. The offer is the same 9 GB — bigger than any one file it
-      # holds, and bigger than the 3 GB mean too. Nothing here is a quality win in either
-      # direction, so nothing may be grabbed.
+      # holds. Sizes straddle deliberately: no episode may be improvable, not merely "not all of
+      # them". Nothing here is a quality win in either direction, so nothing may be grabbed.
       episodes =
         for {number, size} <- [{1, 6_000_000_000}, {2, 1_000_000_000}, {3, 2_000_000_000}] do
           episode_fixture(season, %{

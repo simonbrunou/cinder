@@ -238,17 +238,22 @@ defmodule Cinder.Catalog.UpgradeHunter do
   end
 
   # An assignment covers a set of episode NUMBERS — every one of them ours to claim, since
-  # `full_claim_only` already dropped the releases carrying anything else. Take it only if it
-  # improves EVERY covered episode.
+  # `full_claim_only` already dropped the releases carrying anything else. Take it if it improves
+  # ANY covered episode: a pack that beats 8 of a season's 10 is worth having, and demanding all 10
+  # left such a season mixed forever (#257).
   #
-  # #250 made the import decline per episode, so a partial pack is no longer *unsafe*: the episodes
-  # it doesn't beat simply keep their files. The guard stays regardless — taking a whole pack for
-  # the subset it improves is its own trade, tracked as #257.
+  # Claiming the other two is safe: the grab is `arbitrate_at_import`, so the import re-runs the
+  # comparison per episode against the real file and declines the ones this release doesn't beat
+  # (#250) — a claimed episode can never have a good file swapped for a worse one.
+  #
+  # And `any?` cannot make a pack its own upgrade: size is out of the pre-download gate (#278) and
+  # a terse inner file's nil tokens are backfilled from the release title at import (#277), so a
+  # release that ties on language/resolution/source is no covered episode's candidate.
   defp maybe_grab_episodes({release, covered_numbers}, episodes, target) do
     covered = Enum.filter(episodes, &(&1.episode_number in covered_numbers))
 
     cond do
-      covered == [] or not Enum.all?(covered, &Upgrade.candidate?(&1, release, :tv, target)) ->
+      covered == [] or not Enum.any?(covered, &Upgrade.candidate?(&1, release, :tv, target)) ->
         :ok
 
       not Disk.grab_space_available?(release.size) ->
