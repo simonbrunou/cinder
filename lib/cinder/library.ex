@@ -1167,7 +1167,7 @@ defmodule Cinder.Library do
         if Enum.all?(episodes, &ep_upgrade?(&1, new_q, target)) do
           stage_group(episodes, source, root, target, download, :adopt, keeps)
         else
-          keep_held_files(episodes, source, root, download.release_title, keeps)
+          keep_held_files(episodes, source, root, download, keeps)
         end
 
       {:error, _reason} = error ->
@@ -1203,16 +1203,16 @@ defmodule Cinder.Library do
   # row holding that dest until its handoff deadline, so retries inside that window would fail
   # identically. The stage fans back out to every episode on that path, as `stage_group/7` already
   # does for placements.
-  defp keep_held_files(episodes, source, root, title, keeps) do
+  defp keep_held_files(episodes, source, root, download, keeps) do
     held = Enum.filter(episodes, &(&1.file_path not in [nil, ""]))
 
     held
     |> Enum.uniq_by(& &1.file_path)
-    |> Enum.reduce_while({:ok, [], keeps}, &keep_held_file(&1, &2, held, source, root, title))
+    |> Enum.reduce_while({:ok, [], keeps}, &keep_held_file(&1, &2, held, source, root, download))
   end
 
-  defp keep_held_file(ep, {:ok, acc, keeps}, held, source, root, title) do
-    case keep_stage(ep, source, root, title, keeps) do
+  defp keep_held_file(ep, {:ok, acc, keeps}, held, source, root, download) do
+    case keep_stage(ep, source, root, download, keeps) do
       {:ok, stage} ->
         rows = for e <- held, e.file_path == ep.file_path, do: {e.id, stage}
         {:cont, {:ok, rows ++ acc, Map.put(keeps, ep.file_path, stage)}}
@@ -1232,23 +1232,39 @@ defmodule Cinder.Library do
   # by a sibling episode (#289). Quality stays the record's own unless we truly placed, or
   # `existing_quality/3`'s `nil_q?` arm stamps the declined file's parse — title backfill and
   # probed track languages — onto a kept file (#128, #275).
-  defp keep_stage(ep, source, root, title, keeps) do
+  defp keep_stage(ep, source, root, download, keeps) do
     case Map.fetch(keeps, ep.file_path) do
       {:ok, stage} -> {:ok, stage}
-      :error -> fresh_keep_stage(ep, source, root, title)
+      :error -> fresh_keep_stage(ep, source, root, download)
     end
   end
 
-  defp fresh_keep_stage(ep, source, root, title) do
+  # `folder?` is pinned false in the context rather than taken from the download: it gates
+  # `maybe_commit_sidecars/2`, and hardlinking the DECLINED release's subtitles next to the file
+  # the episode KEPT is the same lie as recording its quality. The fall-through placement is the
+  # one case where they do belong at `dest` — the file there IS the release's — so it gets the
+  # real `folder?` back afterwards, once `placed?` has told us which of the two happened (#291).
+  defp fresh_keep_stage(ep, source, root, download) do
     decline = fn _new_quality -> false end
-    held = download_context(false, %{}, title)
+    held = download_context(false, %{}, download.release_title)
 
     with {:ok, stage} <-
            stage_episode_file_at([ep], source, root, held, ep.file_path, :adopt, decline) do
-      quality = if stage.placed?, do: stage.quality, else: old_quality(ep)
-      {:ok, %{stage | placed?: false, quality: quality}}
+      {:ok, declined_stage(stage, ep, download.folder?)}
     end
   end
+
+  defp declined_stage(%{placed?: true} = stage, _ep, folder?) do
+    %{
+      stage
+      | placed?: false,
+        quality: staged_sidecar_quality(stage.quality, true, folder?, stage.rollback.source),
+        rollback: %{stage.rollback | folder?: folder?}
+    }
+  end
+
+  defp declined_stage(stage, ep, _folder?),
+    do: %{stage | placed?: false, quality: old_quality(ep)}
 
   defp stage_anime_all(to_import, root, target, download) do
     to_import

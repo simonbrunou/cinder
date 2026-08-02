@@ -469,6 +469,69 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
     end
   end
 
+  # #291: `folder?` gates sidecar linking, and the keep path hardcodes it false — right for a keep
+  # (the declined release's subtitles must not be hardlinked next to the file the episode KEPT),
+  # wrong for the fall-through, where the file at dest IS the release's and its subtitles belong
+  # with it. Getting this from `placed?` after staging is the only way to tell the two apart.
+  describe "sidecars on a declined keep" do
+    @tag :tmp_dir
+    test "the fall-through placement takes the release's subtitles", %{tmp_dir: tmp} do
+      title = "Show.S01.1080p.WEBDL-GRP"
+
+      pack =
+        terse_pack(
+          tmp,
+          4253,
+          title,
+          "S01E01.mkv",
+          %{imported_resolution: "1080p", imported_source: "WEBDL", imported_size: 9_000_000_000},
+          %{tvdb_id: 4253}
+        )
+
+      File.write!(Path.join(pack.release_dir, "S01E01.fre.srt"), "1\n")
+      File.rm!(pack.episode.file_path)
+
+      imported = import_pack(pack, title)
+
+      # The download is removed after import, so a subtitle not linked here is gone for good.
+      assert imported.imported_sidecar_subtitles == ["fr"]
+      assert File.exists?(Path.rootname(imported.file_path) <> ".fr.srt")
+    end
+
+    @tag :tmp_dir
+    test "a keep whose file is still there takes none of them", %{tmp_dir: tmp} do
+      title = "Show.S01.1080p.WEBDL-GRP"
+
+      pack =
+        terse_pack(
+          tmp,
+          4254,
+          title,
+          "S01E01.mkv",
+          %{
+            imported_resolution: "1080p",
+            imported_source: "WEBDL",
+            imported_size: 9_000_000_000,
+            imported_sidecar_subtitles: ["en"]
+          },
+          %{tvdb_id: 4254}
+        )
+
+      File.write!(Path.join(pack.release_dir, "S01E01.fre.srt"), "1\n")
+
+      imported = import_pack(pack, title)
+
+      # Positive anchor: the import ran and declined, so the assertions below are not vacuous.
+      assert Catalog.blocked_release_titles_for_series(pack.series.id,
+               include_reasons: [:no_upgrade]
+             ) == [title]
+
+      assert File.read!(imported.file_path) == "held-1"
+      assert imported.imported_sidecar_subtitles == ["en"]
+      refute File.exists?(Path.rootname(imported.file_path) <> ".fr.srt")
+    end
+  end
+
   # #257: the sweep gates on `Enum.any?`, so ONE improvable episode carries the whole pack. This is
   # the route that closed the first attempt (PR #285), end to end. `Library.new_quality/3` backfills
   # only NIL fields — deliberately, so a genuinely mixed pack keeps a member's worse token — which
