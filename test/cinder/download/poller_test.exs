@@ -12,7 +12,7 @@ defmodule Cinder.Download.PollerTest do
   alias Cinder.{Catalog, Download}
   alias Cinder.Catalog.Movie
   alias Cinder.Download.{Intent, Poller, TvPoller}
-  alias Cinder.Library.ImportStage
+  alias Cinder.Library.{ImportStage, Upgrade}
   alias Cinder.Repo
 
   import Cinder.CatalogFixtures
@@ -2906,6 +2906,115 @@ defmodule Cinder.Download.PollerTest do
       assert reloaded.download_id == nil
       assert reloaded.download_protocol == nil
       assert Catalog.blocked_release_titles(reloaded) == []
+    end
+
+    # #278: the indexer prices the whole CONTAINER (video + sample + nfo), the import records the
+    # ONE video file it kept. Weighed against each other, a multi-file release beats the very file
+    # it produced at identical quality — the sweep re-grabs it, re-downloads it, replaces the file
+    # with an identical one, and does it again next rotation.
+    @tag :tmp_dir
+    test "a movie imported from a multi-file release is not re-offered that release",
+         %{tmp_dir: tmp} do
+      %{downloads: downloads, movies: movies} = use_real_library(tmp)
+
+      title = "M.2020.1080p.BluRay-GRP"
+      folder = Path.join(downloads, title)
+      File.mkdir_p!(folder)
+      File.write!(Path.join(folder, "#{title}.mkv"), String.duplicate("v", 4_000))
+      File.write!(Path.join(folder, "sample.mkv"), String.duplicate("s", 500))
+      File.write!(Path.join(folder, "release.nfo"), "nfo")
+      container_size = 4_000 + 500 + 3
+
+      dest = Path.join([movies, "M (2020) {tmdb-10278}", "M (2020) {tmdb-10278}.mkv"])
+      File.mkdir_p!(Path.dirname(dest))
+      File.write!(dest, "original")
+
+      movie =
+        movie_fixture(%{
+          tmdb_id: 10_278,
+          title: "M",
+          year: 2020,
+          status: :upgrading,
+          download_id: "dl-278",
+          download_protocol: :torrent,
+          release_title: title,
+          file_path: dest,
+          imported_resolution: "720p",
+          imported_source: "webdl",
+          imported_size: 8
+        })
+
+      start_supervised!({Poller, interval: 60_000})
+
+      stub(Cinder.Download.ClientMock, :status, fn "dl-278" ->
+        {:ok, %{state: :completed, content_path: folder}}
+      end)
+
+      stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
+
+      assert :ok = Poller.poll()
+
+      imported = Repo.get!(Movie, movie.id)
+      assert imported.status == :available
+      assert imported.imported_resolution == "1080p"
+      # What was recorded is the one video file, not the container the indexer priced.
+      assert imported.imported_size == 4_000
+
+      # The next rotation offers the same release straight back. Same resolution, same source, same
+      # language — it only "weighs" more because its size counts the sample and the nfo.
+      refute Upgrade.candidate?(
+               imported,
+               Release.new(%{title: title, size: container_size}),
+               :movies,
+               nil
+             )
+    end
+
+    # The other side of #278: at IMPORT both sizes are `lstat` results on real files, so they are
+    # commensurable and size must keep deciding. Removing it here (rather than only from the
+    # pre-download gate) would leave a same-resolution/same-source replacement undecidable.
+    @tag :tmp_dir
+    test "the import arbiter still decides on size: the bigger of two real files wins",
+         %{tmp_dir: tmp} do
+      %{downloads: downloads, movies: movies} = use_real_library(tmp)
+
+      source = Path.join(downloads, "M.2020.1080p.WEBDL-GRP.mkv")
+      File.write!(source, String.duplicate("n", 9_000))
+
+      dest = Path.join([movies, "M (2020) {tmdb-10279}", "M (2020) {tmdb-10279}.mkv"])
+      File.mkdir_p!(Path.dirname(dest))
+      File.write!(dest, String.duplicate("o", 1_000))
+
+      movie =
+        movie_fixture(%{
+          tmdb_id: 10_279,
+          title: "M",
+          year: 2020,
+          status: :downloading,
+          download_id: "dl-279",
+          download_protocol: :torrent,
+          release_title: "M.2020.1080p.WEBDL-GRP",
+          file_path: dest,
+          imported_resolution: "1080p",
+          imported_source: "webdl",
+          imported_size: 1_000
+        })
+
+      start_supervised!({Poller, interval: 60_000})
+
+      stub(Cinder.Download.ClientMock, :status, fn "dl-279" ->
+        {:ok, %{state: :completed, content_path: source}}
+      end)
+
+      stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
+
+      assert :ok = Poller.poll()
+
+      imported = Repo.get!(Movie, movie.id)
+      assert imported.status == :available
+      assert imported.file_path == dest
+      assert imported.imported_size == 9_000
+      assert File.read!(dest) == String.duplicate("n", 9_000)
     end
   end
 

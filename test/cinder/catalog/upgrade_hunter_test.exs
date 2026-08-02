@@ -257,12 +257,8 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       assert %DateTime{} = Repo.get!(Episode, ctx.episode.id).upgrade_checked_at
     end
 
-    # Without per-episode size scaling, a season pack's whole size beats one imported file on
-    # better?/5's size tiebreak, so EVERY same-resolution pack reads as an upgrade — it downloads,
-    # the import declines it per-file, nothing is blocklisted, and it re-downloads every sweep.
-    #
-    # The season needs REAL length: with a single episode the divisor is 1, `per_episode/2` is a
-    # no-op, and the test would pass with the fix reverted.
+    # A pack that ties on resolution, source and language is not an upgrade for any of the
+    # episodes it covers, however big the pack is: `candidate?/4` doesn't weigh size (#278).
     test "a same-resolution season pack is not an upgrade for its episodes", ctx do
       imported =
         for n <- 2..10 do
@@ -289,36 +285,6 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       for ep <- [ctx.episode | imported] do
         assert Repo.get!(Episode, ep.id).grab_id == nil
       end
-    end
-
-    # The divisor has to be what the RELEASE carries, not what the sweep asked about. Only the ten
-    # episodes we hold are asked about, so Scorer.coverage/2 intersects the pack down to ten;
-    # dividing by that inflates the pack's per-episode size and it reads as an upgrade — grabbed,
-    # declined per-file at import, re-grabbed every sweep forever.
-    test "a partially imported season still divides by the whole season", ctx do
-      for n <- 2..10 do
-        episode_fixture(ctx.season, %{
-          episode_number: n,
-          file_path: "/lib/Show/S01E#{n}.mkv",
-          imported_resolution: "720p",
-          imported_size: 1_000_000_000
-        })
-      end
-
-      # The rest of the season is still missing: 22 episodes exist, 10 have files.
-      for n <- 11..22, do: episode_fixture(ctx.season, %{episode_number: n})
-
-      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", 1 ->
-        # 22 GB over the real 22-episode season = 1 GB/episode: a tie, not an upgrade. Divided by
-        # the 10 we hold it would look like 2.2 GB/episode.
-        {:ok, [release("Show.S01.720p.WEBDL-GRP", %{size: 22_000_000_000})]}
-      end)
-
-      watch_grabs()
-
-      poll()
-
-      refute_grabbed()
     end
 
     test "a genuinely better season pack is still grabbed, linking every episode it covers",
@@ -353,10 +319,9 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       assert Enum.uniq(grab_ids) == [hd(grab_ids)]
     end
 
-    # A pack that improves only part of the season is left alone. #250 removed the data-loss
-    # reason (the import now declines per episode), but not the loop reason: `candidate?/5`
-    # compares against a per-episode MEAN, so every below-mean episode reads as improvable by the
-    # pack that produced it. See the guard's comment and issue #257.
+    # A pack that improves only part of the season is left alone: #250 removed the data-loss reason
+    # (the import now declines per episode), but taking a whole pack for the subset it improves is
+    # its own trade. See the guard's comment and issue #257.
     test "skips a pack that does not improve every episode it covers", ctx do
       # E01 is 720p (upgradable); the rest of the season is already 1080p at a bigger size.
       kept =
@@ -537,21 +502,19 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
     end
   end
 
-  # The `Enum.all?` in `maybe_grab_episodes/4` is what stops a pack out-ranking the files it
-  # itself delivered, and this is the case that proves it — the one #257 asked to relax.
-  # Deliberately its own series and season: the "episodes" describe seeds a 720p E01, and a
-  # genuine resolution winner anywhere in the covered set would make this pass under `any?` too.
-  describe "a pack that only beats its own per-episode mean" do
-    test "is not grabbed when the season's real sizes straddle that mean" do
+  # #278 on the TV side: the pack's advertised size is the whole container, each episode's is one
+  # file, so a pack out-weighs every file it itself delivered. Deliberately its own series and
+  # season: the "episodes" describe seeds a 720p E01, and a genuine resolution winner anywhere in
+  # the covered set would hide the size question entirely.
+  describe "a pack whose only claim over its own output is size" do
+    test "is not grabbed, whatever the season's real sizes are" do
       series = series_fixture(%{tvdb_id: 909, title: "Straddle", monitor_strategy: :all})
       season = season_fixture(series)
 
       # 9 GB of season already imported, split 6 + 1 + 2, every file tying the offer below on
-      # resolution, source and language. The offer is the same 9 GB over the same 3 episodes, so
-      # `candidate?/5`'s per-episode mean is 3 GB: above E02 and E03, below E01. Nothing here is
-      # a quality win in either direction — only the mean-vs-real-size artefact separates them,
-      # which is why `all?` refuses and `any?` would not. (The sibling pack tests all use one
-      # uniform size equal to the mean, where the two spellings are indistinguishable.)
+      # resolution, source and language. The offer is the same 9 GB — bigger than any one file it
+      # holds, and bigger than the 3 GB mean too. Nothing here is a quality win in either
+      # direction, so nothing may be grabbed.
       episodes =
         for {number, size} <- [{1, 6_000_000_000}, {2, 1_000_000_000}, {3, 2_000_000_000}] do
           episode_fixture(season, %{
