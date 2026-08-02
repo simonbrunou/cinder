@@ -457,6 +457,7 @@ defmodule CinderWeb.SettingsLiveTest do
     # A map container is not enough: save_form/1 reaches into the VALUES with String.trim/1 and
     # String.split/2, which raise on a non-binary just as Access does on a non-map.
     tv_max_before = Settings.get("tv_max_size")
+    qbit_before = Settings.get("qbittorrent_enabled")
 
     for forged <- [%{"forged" => true}, ["x"], 7] do
       assert render_hook(lv, "save", %{"tv_max_size" => forged})
@@ -466,5 +467,8 @@ defmodule CinderWeb.SettingsLiveTest do
     assert Process.alive?(lv.pid)
     assert Settings.auto_approve_all?() == auto_approve_before
     assert Settings.get("tv_max_size") == tv_max_before
+    # The frame is dropped whole, not filtered: plan/1 reads an absent key as an unchecked box,
+    # so a filtering implementation would have switched this toggle off instead of crashing.
+    assert Settings.get("qbittorrent_enabled") == qbit_before
   end
 end

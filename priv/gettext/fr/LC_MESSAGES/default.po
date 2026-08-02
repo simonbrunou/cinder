@@ -156,7 +156,7 @@ msgstr "Approbation…"
 msgid "Attempting to reconnect"
 msgstr "Tentative de reconnexion"
 
-#: lib/cinder_web/live/settings_live.ex:190
+#: lib/cinder_web/live/settings_live.ex:186
 #, elixir-autogen, elixir-format
 msgid "Auto-approve all requests (skip the approval queue)"
 msgstr "Approuver automatiquement toutes les demandes (ignorer la file d'approbation)"
@@ -374,7 +374,7 @@ msgstr "Création…"
 
 #: lib/cinder_web/components/layouts.ex:118
 #: lib/cinder_web/live/dashboard_live.ex:349
-#: lib/cinder_web/live/settings_live.ex:135
+#: lib/cinder_web/live/settings_live.ex:131
 #: lib/cinder_web/user_auth.ex:407
 #, elixir-autogen, elixir-format
 msgid "Dashboard"
@@ -553,7 +553,7 @@ msgstr "Fichier de l'épisode supprimé."
 msgid "Everyone"
 msgstr "Tout le monde"
 
-#: lib/cinder_web/live/settings_live.ex:128
+#: lib/cinder_web/live/settings_live.ex:124
 #, elixir-autogen, elixir-format
 msgid "External services. Stored in the database; secrets encrypted at rest. Save before testing."
 msgstr "Services externes. Stockés dans la base de données ; secrets chiffrés au repos. Enregistrez avant de tester."
@@ -563,12 +563,12 @@ msgstr "Services externes. Stockés dans la base de données ; secrets chiffrés
 msgid "Film"
 msgstr "Film"
 
-#: lib/cinder_web/live/setup_live.ex:167
+#: lib/cinder_web/live/setup_live.ex:175
 #, elixir-autogen, elixir-format
 msgid "Finish setup"
 msgstr "Terminer la configuration"
 
-#: lib/cinder_web/live/setup_live.ex:163
+#: lib/cinder_web/live/setup_live.ex:171
 #, elixir-autogen, elixir-format
 msgid "Finishing…"
 msgstr "Finalisation…"
@@ -969,7 +969,7 @@ msgstr "Demande…"
 
 #: lib/cinder_web/components/layouts.ex:124
 #: lib/cinder_web/live/requests_live.ex:299
-#: lib/cinder_web/live/settings_live.ex:180
+#: lib/cinder_web/live/settings_live.ex:176
 #: lib/cinder_web/user_auth.ex:410
 #, elixir-autogen, elixir-format
 msgid "Requests"
@@ -1015,7 +1015,7 @@ msgstr "Rôles et quotas de demandes."
 msgid "Save"
 msgstr "Enregistrer"
 
-#: lib/cinder_web/live/setup_live.ex:127
+#: lib/cinder_web/live/setup_live.ex:135
 #, elixir-autogen, elixir-format
 msgid "Save & validate"
 msgstr "Enregistrer et valider"
@@ -1025,14 +1025,14 @@ msgstr "Enregistrer et valider"
 msgid "Save email"
 msgstr "Enregistrer l'e-mail"
 
-#: lib/cinder_web/live/settings_live.ex:175
+#: lib/cinder_web/live/settings_live.ex:171
 #, elixir-autogen, elixir-format
 msgid "Save settings"
 msgstr "Enregistrer les paramètres"
 
 #: lib/cinder_web/live/series_detail_components.ex:345
 #: lib/cinder_web/live/series_detail_components.ex:381
-#: lib/cinder_web/live/settings_live.ex:174
+#: lib/cinder_web/live/settings_live.ex:170
 #: lib/cinder_web/live/user_live/settings.ex:37
 #: lib/cinder_web/live/user_live/settings.ex:89
 #: lib/cinder_web/live/users_live.ex:611
@@ -1125,19 +1125,19 @@ msgstr "État des services"
 msgid "Set password"
 msgstr "Définir le mot de passe"
 
-#: lib/cinder_web/live/setup_live.ex:99
+#: lib/cinder_web/live/setup_live.ex:107
 #, elixir-autogen, elixir-format
 msgid "Set up Cinder"
 msgstr "Configurer Cinder"
 
 #: lib/cinder_web/components/layouts.ex:157
-#: lib/cinder_web/live/settings_live.ex:126
+#: lib/cinder_web/live/settings_live.ex:122
 #: lib/cinder_web/user_auth.ex:409
 #, elixir-autogen, elixir-format
 msgid "Settings"
 msgstr "Paramètres"
 
-#: lib/cinder_web/live/settings_live.ex:99
+#: lib/cinder_web/live/settings_live.ex:95
 #, elixir-autogen, elixir-format
 msgid "Settings saved."
 msgstr "Paramètres enregistrés."
@@ -1293,7 +1293,7 @@ msgstr "Utilisateur supprimé."
 msgid "Users"
 msgstr "Utilisateurs"
 
-#: lib/cinder_web/live/setup_live.ex:125
+#: lib/cinder_web/live/setup_live.ex:133
 #, elixir-autogen, elixir-format
 msgid "Validating…"
 msgstr "Validation…"
@@ -1444,7 +1444,7 @@ msgstr "%{title} demandé. En attente d'approbation."
 msgid "%{title}: Season %{number}"
 msgstr "%{title} : Saison %{number}"
 
-#: lib/cinder_web/live/setup_live.ex:140
+#: lib/cinder_web/live/setup_live.ex:148
 #, elixir-autogen, elixir-format
 msgid "A download client (torrent or usenet)"
 msgstr "Un client de téléchargement (torrent ou usenet)"
@@ -1628,7 +1628,7 @@ msgstr "Activer SABnzbd (usenet)"
 msgid "Enable qBittorrent (torrent)"
 msgstr "Activer qBittorrent (torrent)"
 
-#: lib/cinder_web/live/setup_live.ex:101
+#: lib/cinder_web/live/setup_live.ex:109
 #, elixir-autogen, elixir-format
 msgid "Enter and validate your services. Finish unlocks once every required service is connected."
 msgstr "Saisissez et validez vos services. Terminer se débloque une fois tous les services requis connectés."
@@ -1653,7 +1653,7 @@ msgstr "Hôte injoignable"
 msgid "Indexer"
 msgstr "Indexeur"
 
-#: lib/cinder_web/live/setup_live.ex:227
+#: lib/cinder_web/live/setup_live.ex:235
 #, elixir-autogen, elixir-format
 msgid "Indexer (Prowlarr)"
 msgstr "Indexeur (Prowlarr)"
@@ -1679,7 +1679,7 @@ msgstr "Chemins des bibliothèques"
 msgid "Loading…"
 msgstr "Chargement…"
 
-#: lib/cinder_web/live/setup_live.ex:228
+#: lib/cinder_web/live/setup_live.ex:236
 #, elixir-autogen, elixir-format
 msgid "Media server (Jellyfin/Plex)"
 msgstr "Serveur multimédia (Jellyfin/Plex)"
@@ -1689,7 +1689,7 @@ msgstr "Serveur multimédia (Jellyfin/Plex)"
 msgid "Movies library"
 msgstr "Bibliothèque de films"
 
-#: lib/cinder_web/live/setup_live.ex:229
+#: lib/cinder_web/live/setup_live.ex:237
 #, elixir-autogen, elixir-format
 msgid "Movies library path"
 msgstr "Chemin de la bibliothèque de films"
@@ -1809,7 +1809,7 @@ msgstr "Saison %{number} de %{title} demandée. En attente d'approbation."
 msgid "Select the request for %{title}"
 msgstr "Sélectionner la demande pour %{title}"
 
-#: lib/cinder_web/live/setup_live.ex:132
+#: lib/cinder_web/live/setup_live.ex:140
 #, elixir-autogen, elixir-format
 msgid "Setup checklist"
 msgstr "Liste de configuration"
@@ -1824,7 +1824,7 @@ msgstr "Configuration en cours. Réessayez sous peu."
 msgid "Sources: remux, bluray, webrip, webdl, hdtv, dvd, cam. Leave blank to accept any; untagged releases are always kept. These are distinct; listing only bluray excludes remux, so add both to accept either."
 msgstr "Sources : remux, bluray, webrip, webdl, hdtv, dvd, cam. Laissez vide pour tout accepter ; les releases sans étiquette sont toujours conservées. Elles sont distinctes : n'indiquer que bluray exclut remux, ajoutez donc les deux pour accepter l'un ou l'autre."
 
-#: lib/cinder_web/live/setup_live.ex:226
+#: lib/cinder_web/live/setup_live.ex:234
 #: lib/cinder_web/settings_labels.ex:23
 #, elixir-autogen, elixir-format
 msgid "TMDB"
@@ -1840,7 +1840,7 @@ msgstr "Jeton de lecture API TMDB (bearer v4)"
 msgid "TV library"
 msgstr "Bibliothèque TV"
 
-#: lib/cinder_web/live/setup_live.ex:230
+#: lib/cinder_web/live/setup_live.ex:238
 #, elixir-autogen, elixir-format
 msgid "TV library path"
 msgstr "Chemin de la bibliothèque TV"
@@ -1880,12 +1880,12 @@ msgstr "Vous devez vous reconnecter pour effectuer des actions sensibles sur vot
 msgid "bluray, webdl"
 msgstr "bluray, webdl"
 
-#: lib/cinder_web/live/setup_live.ex:142
+#: lib/cinder_web/live/setup_live.ex:150
 #, elixir-autogen, elixir-format
 msgid "connect at least one"
 msgstr "connectez-en au moins un"
 
-#: lib/cinder_web/live/setup_live.ex:196
+#: lib/cinder_web/live/setup_live.ex:204
 #, elixir-autogen, elixir-format
 msgid "not checked yet"
 msgstr "pas encore vérifié"
@@ -3368,7 +3368,7 @@ msgstr "Impossible de réessayer ce film."
 msgid "Filter by type"
 msgstr "Filtrer par type"
 
-#: lib/cinder_web/live/setup_live.ex:174
+#: lib/cinder_web/live/setup_live.ex:182
 #, elixir-autogen, elixir-format
 msgid "Finish unlocks once every required service is connected."
 msgstr "Terminer est déverrouillé une fois chaque service requis connecté."
@@ -3552,7 +3552,7 @@ msgstr "Compte en attente refusé."
 msgid "Pending approval"
 msgstr "En attente d'approbation"
 
-#: lib/cinder_web/live/settings_live.ex:198
+#: lib/cinder_web/live/settings_live.ex:194
 #, elixir-autogen, elixir-format
 msgid "This also auto-approves requests from anyone who self-registers once their account is approved. Keep it off while registration enrollment is public."
 msgstr "Cela approuve aussi automatiquement les demandes de toute personne qui s'inscrit elle-même une fois son compte approuvé. Laissez cette option désactivée tant que les inscriptions sont publiques."
@@ -4351,7 +4351,7 @@ msgstr "Fichier inconnu"
 msgid "%{count} pending"
 msgstr "%{count} en attente"
 
-#: lib/cinder_web/live/setup_live.ex:153
+#: lib/cinder_web/live/setup_live.ex:161
 #, elixir-autogen, elixir-format
 msgid "Approval, availability, and failure alerts stay off until you add an email (SMTP) or Discord webhook. Set those up in the Notifications section above now, or later in Settings — this step is optional and won't block Finish."
 msgstr "Les alertes d'approbation, de disponibilité et d'échec restent désactivées tant qu'aucun e-mail (SMTP) ou webhook Discord n'est configuré. Configurez-les dès maintenant dans la section Notifications ci-dessus, ou plus tard dans Paramètres — cette étape est facultative et ne bloque pas la fin de l'installation."
@@ -4366,7 +4366,7 @@ msgstr "Toutes les saisons sont déjà demandées ou disponibles."
 msgid "Metrics"
 msgstr "Métriques"
 
-#: lib/cinder_web/live/setup_live.ex:151
+#: lib/cinder_web/live/setup_live.ex:159
 #, elixir-autogen, elixir-format
 msgid "Notifications (optional)"
 msgstr "Notifications (facultatif)"
@@ -4813,14 +4813,14 @@ msgid_plural "%{count} stored secrets can't be decrypted. The encryption key cha
 msgstr[0] "1 secret enregistré ne peut pas être déchiffré. La clé de chiffrement a changé ; ressaisissez-le dans Paramètres."
 msgstr[1] "%{count} secrets enregistrés ne peuvent pas être déchiffrés. La clé de chiffrement a changé ; ressaisissez-les dans Paramètres."
 
-#: lib/cinder_web/live/settings_live.ex:147
+#: lib/cinder_web/live/settings_live.ex:143
 #, elixir-autogen, elixir-format
 msgid "1 stored secret could not be decrypted. The encryption key changed; re-enter it below."
 msgid_plural "%{count} stored secrets could not be decrypted. The encryption key changed; re-enter them below."
 msgstr[0] "1 secret enregistré n'a pas pu être déchiffré. La clé de chiffrement a changé ; ressaisissez-le ci-dessous."
 msgstr[1] "%{count} secrets enregistrés n'ont pas pu être déchiffrés. La clé de chiffrement a changé ; ressaisissez-les ci-dessous."
 
-#: lib/cinder_web/live/settings_live.ex:154
+#: lib/cinder_web/live/settings_live.ex:150
 #, elixir-autogen, elixir-format
 msgid "Affected: %{fields}"
 msgstr "Concernés : %{fields}"
@@ -5182,57 +5182,57 @@ msgstr "En-tête Authorization du webhook"
 msgid "Webhook URL"
 msgstr "URL du webhook"
 
-#: lib/cinder_web/live/settings_live.ex:208
+#: lib/cinder_web/live/settings_live.ex:204
 #, elixir-autogen, elixir-format
 msgid "A read-only JSON API for dashboard widgets and bots. One key for the whole household, stored hashed, so it can be shown only once. Generating a new key revokes the previous one. Anyone holding the key can read the request queue, so treat it as an admin credential."
 msgstr "Une API JSON en lecture seule pour les widgets de tableau de bord et les bots. Une seule clé pour tout le foyer, stockée sous forme de hachage : elle ne peut donc être affichée qu'une seule fois. Générer une nouvelle clé révoque la précédente. Toute personne détenant la clé peut lire la file des demandes : traitez-la comme un identifiant d'administration."
 
-#: lib/cinder_web/live/settings_live.ex:206
+#: lib/cinder_web/live/settings_live.ex:202
 #, elixir-autogen, elixir-format
 msgid "API access"
 msgstr "Accès API"
 
-#: lib/cinder_web/live/settings_live.ex:232
+#: lib/cinder_web/live/settings_live.ex:228
 #, elixir-autogen, elixir-format
 msgid "Copy this key now. It will not be shown again."
 msgstr "Copiez cette clé maintenant. Elle ne sera plus affichée."
 
-#: lib/cinder_web/live/settings_live.ex:255
+#: lib/cinder_web/live/settings_live.ex:251
 #, elixir-autogen, elixir-format
 msgid "Generate API key"
 msgstr "Générer une clé API"
 
-#: lib/cinder_web/live/settings_live.ex:238
+#: lib/cinder_web/live/settings_live.ex:234
 #, elixir-autogen, elixir-format
 msgid "No key is set, so the API rejects every request."
 msgstr "Aucune clé n'est définie, l'API rejette donc toutes les requêtes."
 
-#: lib/cinder_web/live/settings_live.ex:254
+#: lib/cinder_web/live/settings_live.ex:250
 #, elixir-autogen, elixir-format
 msgid "Regenerate API key"
 msgstr "Régénérer la clé API"
 
-#: lib/cinder_web/live/settings_live.ex:250
+#: lib/cinder_web/live/settings_live.ex:246
 #, elixir-autogen, elixir-format
 msgid "Regenerate the API key? The current key stops working immediately."
 msgstr "Régénérer la clé API ? La clé actuelle cesse immédiatement de fonctionner."
 
-#: lib/cinder_web/live/settings_live.ex:268
+#: lib/cinder_web/live/settings_live.ex:264
 #, elixir-autogen, elixir-format
 msgid "Revoke API key"
 msgstr "Révoquer la clé API"
 
-#: lib/cinder_web/live/settings_live.ex:263
+#: lib/cinder_web/live/settings_live.ex:259
 #, elixir-autogen, elixir-format
 msgid "Revoke the API key? Every dashboard widget and bot using it stops working immediately."
 msgstr "Révoquer la clé API ? Tous les widgets de tableau de bord et bots qui l'utilisent cessent immédiatement de fonctionner."
 
-#: lib/cinder_web/live/settings_live.ex:217
+#: lib/cinder_web/live/settings_live.ex:213
 #, elixir-autogen, elixir-format
 msgid "Send the key in the %{header} request header."
 msgstr "Envoyez la clé dans l'en-tête de requête %{header}."
 
-#: lib/cinder_web/live/settings_live.ex:220
+#: lib/cinder_web/live/settings_live.ex:216
 #, elixir-autogen, elixir-format
 msgid "These routes also sit behind the optional HTTP Basic gate, so if you enabled it, API clients must send those credentials too."
 msgstr "Ces routes sont également protégées par le filtre HTTP Basic optionnel : si vous l'avez activé, les clients de l'API doivent aussi envoyer ces identifiants."
@@ -5442,7 +5442,7 @@ msgstr "Aucun épisode TMDB admissible ne reste ; abandonnez ce fichier ou conse
 msgid "Seeing a second account for someone who already has one? Their original was never linked to the media server: use Reset password on it below, then have them link their media server account from Account settings."
 msgstr "Un deuxième compte apparaît pour une personne qui en a déjà un ? Son compte d'origine n'a jamais été lié au serveur multimédia : utilisez Réinitialiser le mot de passe ci-dessous, puis demandez-lui de lier son compte du serveur multimédia depuis les Paramètres du compte."
 
-#: lib/cinder_web/live_helpers.ex:306
+#: lib/cinder_web/live_helpers.ex:323
 #, elixir-autogen, elixir-format
 msgid "Discard %{count} unmatched video? It is not kept and cannot be recovered here."
 msgid_plural "Discard all %{count} unmatched videos? They are not kept and cannot be recovered here."

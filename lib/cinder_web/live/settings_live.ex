@@ -13,6 +13,7 @@ defmodule CinderWeb.SettingsLive do
   use CinderWeb, :live_view
 
   import CinderWeb.SettingsComponents
+  import CinderWeb.LiveHelpers
 
   alias Cinder.{ApiKey, Health, Settings}
   alias CinderWeb.SettingsLabels
@@ -33,19 +34,14 @@ defmodule CinderWeb.SettingsLive do
      )}
   end
 
-  # `%{} = params` vouches for the container only — `save_form/1` also reaches into the VALUES
-  # (`String.trim/1`, `String.split/2`), which raise on a non-binary. The settings form is flat and
-  # has no multi-value input, so every legitimate value is a string; anything else is forged, and
-  # the whole frame is dropped rather than filtered. Filtering would be worse than useless here:
-  # `plan/1` reads an absent key as an unchecked box (`params[key] || "false"`), so discarding one
-  # bad value would let a forged frame silently switch toggles off.
+  # A map container is not enough: `save_form/1` raises on a non-binary VALUE too. Drop the frame
+  # whole rather than filter it — `plan/1` reads an absent key as an unchecked box
+  # (`params[key] || "false"`), so discarding one bad value would turn a crash into a stealth
+  # write. This form is submit-only; a `phx-change` here would ship `_target` as a LIST and every
+  # change frame would be silently dropped.
   @impl true
-  def handle_event("save", %{} = params, socket) do
-    if Enum.any?(params, fn {_key, value} -> not is_binary(value) end) do
-      {:noreply, socket}
-    else
-      save_settings(params, socket)
-    end
+  def handle_event("save", params, socket) do
+    if settings_params?(params), do: save_settings(params, socket), else: {:noreply, socket}
   end
 
   # Probes the saved config synchronously (each impl health/0 has a ~3s timeout).
