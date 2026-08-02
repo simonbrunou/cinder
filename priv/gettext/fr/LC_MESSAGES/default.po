@@ -88,7 +88,7 @@ msgid "Adding…"
 msgstr "Ajout…"
 
 #: lib/cinder_web/components/layouts.ex:115
-#: lib/cinder_web/live/users_live.ex:538
+#: lib/cinder_web/live/users_live.ex:543
 #, elixir-autogen, elixir-format
 msgid "Admin"
 msgstr "Admin"
@@ -192,10 +192,10 @@ msgstr "Impossible de rétrograder le dernier administrateur."
 #: lib/cinder_web/live/movie_detail_live.ex:267
 #: lib/cinder_web/live/movie_detail_live.ex:429
 #: lib/cinder_web/live/series_detail_components.ex:246
-#: lib/cinder_web/live/users_live.ex:503
-#: lib/cinder_web/live/users_live.ex:550
-#: lib/cinder_web/live/users_live.ex:626
-#: lib/cinder_web/live/users_live.ex:697
+#: lib/cinder_web/live/users_live.ex:508
+#: lib/cinder_web/live/users_live.ex:555
+#: lib/cinder_web/live/users_live.ex:631
+#: lib/cinder_web/live/users_live.ex:702
 #, elixir-autogen, elixir-format
 msgid "Cancel"
 msgstr "Annuler"
@@ -259,7 +259,7 @@ msgid "Close menu"
 msgstr "Fermer le menu"
 
 #: lib/cinder_web/components/core_components.ex:284
-#: lib/cinder_web/live/users_live.ex:684
+#: lib/cinder_web/live/users_live.ex:689
 #, elixir-autogen, elixir-format
 msgid "Confirm"
 msgstr "Confirmer"
@@ -271,13 +271,13 @@ msgid "Confirm deny"
 msgstr "Confirmer le refus"
 
 #: lib/cinder_web/live/user_live/settings.ex:85
-#: lib/cinder_web/live/users_live.ex:685
+#: lib/cinder_web/live/users_live.ex:690
 #, elixir-autogen, elixir-format
 msgid "Confirm new password"
 msgstr "Confirmer le nouveau mot de passe"
 
 #: lib/cinder_web/live/user_live/registration.ex:83
-#: lib/cinder_web/live/users_live.ex:531
+#: lib/cinder_web/live/users_live.ex:536
 #, elixir-autogen, elixir-format
 msgid "Confirm password"
 msgstr "Confirmer le mot de passe"
@@ -357,7 +357,7 @@ msgstr "Impossible de mettre à jour l'épisode."
 msgid "Couldn't update the season."
 msgstr "Impossible de mettre à jour la saison."
 
-#: lib/cinder_web/live/users_live.ex:547
+#: lib/cinder_web/live/users_live.ex:552
 #, elixir-autogen, elixir-format
 msgid "Create"
 msgstr "Créer"
@@ -367,7 +367,7 @@ msgstr "Créer"
 msgid "Create an account"
 msgstr "Créer un compte"
 
-#: lib/cinder_web/live/users_live.ex:545
+#: lib/cinder_web/live/users_live.ex:550
 #, elixir-autogen, elixir-format
 msgid "Creating…"
 msgstr "Création…"
@@ -392,8 +392,8 @@ msgstr "Tableau de bord"
 #: lib/cinder_web/live/requests_live.ex:437
 #: lib/cinder_web/live/series_detail_components.ex:90
 #: lib/cinder_web/live/series_detail_components.ex:298
-#: lib/cinder_web/live/users_live.ex:648
-#: lib/cinder_web/live/users_live.ex:657
+#: lib/cinder_web/live/users_live.ex:653
+#: lib/cinder_web/live/users_live.ex:662
 #, elixir-autogen, elixir-format
 msgid "Delete"
 msgstr "Supprimer"
@@ -515,7 +515,7 @@ msgstr "Téléchargements"
 msgid "Edit"
 msgstr "Modifier"
 
-#: lib/cinder_web/live/users_live.ex:583
+#: lib/cinder_web/live/users_live.ex:588
 #, elixir-autogen, elixir-format
 msgid "Edit email"
 msgstr "Modifier l'e-mail"
@@ -523,7 +523,7 @@ msgstr "Modifier l'e-mail"
 #: lib/cinder_web/live/user_live/login.ex:41
 #: lib/cinder_web/live/user_live/registration.ex:67
 #: lib/cinder_web/live/user_live/settings.ex:48
-#: lib/cinder_web/live/users_live.ex:521
+#: lib/cinder_web/live/users_live.ex:526
 #, elixir-autogen, elixir-format
 msgid "Email"
 msgstr "E-mail"
@@ -742,8 +742,8 @@ msgid "My requests"
 msgstr "Mes demandes"
 
 #: lib/cinder_web/live/user_live/settings.ex:77
-#: lib/cinder_web/live/users_live.ex:676
-#: lib/cinder_web/live/users_live.ex:677
+#: lib/cinder_web/live/users_live.ex:681
+#: lib/cinder_web/live/users_live.ex:682
 #, elixir-autogen, elixir-format
 msgid "New password"
 msgstr "Nouveau mot de passe"
@@ -753,7 +753,7 @@ msgstr "Nouveau mot de passe"
 msgid "New requests appear here."
 msgstr "Les nouvelles demandes apparaissent ici."
 
-#: lib/cinder_web/live/users_live.ex:511
+#: lib/cinder_web/live/users_live.ex:516
 #, elixir-autogen, elixir-format
 msgid "New user"
 msgstr "Nouvel utilisateur"
@@ -846,7 +846,7 @@ msgstr "Ouvrir le menu"
 
 #: lib/cinder_web/live/user_live/login.ex:49
 #: lib/cinder_web/live/user_live/registration.ex:76
-#: lib/cinder_web/live/users_live.ex:525
+#: lib/cinder_web/live/users_live.ex:530
 #, elixir-autogen, elixir-format
 msgid "Password"
 msgstr "Mot de passe"
@@ -886,7 +886,7 @@ msgstr "Le pipeline en un coup d'œil."
 msgid "Preferred resolutions (comma-separated)"
 msgstr "Résolutions préférées (séparées par des virgules)"
 
-#: lib/cinder_web/live/users_live.ex:591
+#: lib/cinder_web/live/users_live.ex:596
 #, elixir-autogen, elixir-format
 msgid "Quota"
 msgstr "Quota"
@@ -975,12 +975,12 @@ msgstr "Demande…"
 msgid "Requests"
 msgstr "Demandes"
 
-#: lib/cinder_web/live/users_live.ex:637
+#: lib/cinder_web/live/users_live.ex:642
 #, elixir-autogen, elixir-format
 msgid "Reset password"
 msgstr "Réinitialiser le mot de passe"
 
-#: lib/cinder_web/live/users_live.ex:692
+#: lib/cinder_web/live/users_live.ex:697
 #, elixir-autogen, elixir-format
 msgid "Resetting…"
 msgstr "Réinitialisation…"
@@ -998,7 +998,7 @@ msgstr "Réessayer"
 msgid "Retrying…"
 msgstr "Nouvelle tentative…"
 
-#: lib/cinder_web/live/users_live.ex:537
+#: lib/cinder_web/live/users_live.ex:542
 #, elixir-autogen, elixir-format
 msgid "Role"
 msgstr "Rôle"
@@ -1010,7 +1010,7 @@ msgstr "Rôles et quotas de demandes."
 
 #: lib/cinder_web/live/series_detail_components.ex:347
 #: lib/cinder_web/live/series_detail_components.ex:382
-#: lib/cinder_web/live/users_live.ex:601
+#: lib/cinder_web/live/users_live.ex:606
 #, elixir-autogen, elixir-format
 msgid "Save"
 msgstr "Enregistrer"
@@ -1020,7 +1020,7 @@ msgstr "Enregistrer"
 msgid "Save & validate"
 msgstr "Enregistrer et valider"
 
-#: lib/cinder_web/live/users_live.ex:623
+#: lib/cinder_web/live/users_live.ex:628
 #, elixir-autogen, elixir-format
 msgid "Save email"
 msgstr "Enregistrer l'e-mail"
@@ -1035,8 +1035,8 @@ msgstr "Enregistrer les paramètres"
 #: lib/cinder_web/live/settings_live.ex:158
 #: lib/cinder_web/live/user_live/settings.ex:37
 #: lib/cinder_web/live/user_live/settings.ex:89
-#: lib/cinder_web/live/users_live.ex:601
-#: lib/cinder_web/live/users_live.ex:622
+#: lib/cinder_web/live/users_live.ex:606
+#: lib/cinder_web/live/users_live.ex:627
 #, elixir-autogen, elixir-format
 msgid "Saving…"
 msgstr "Enregistrement…"
@@ -1120,7 +1120,7 @@ msgstr "Série introuvable."
 msgid "Service health"
 msgstr "État des services"
 
-#: lib/cinder_web/live/users_live.ex:694
+#: lib/cinder_web/live/users_live.ex:699
 #, elixir-autogen, elixir-format
 msgid "Set password"
 msgstr "Définir le mot de passe"
@@ -1271,7 +1271,7 @@ msgstr "Utiliser le thème clair"
 msgid "Use system theme"
 msgstr "Utiliser le thème du système"
 
-#: lib/cinder_web/live/users_live.ex:538
+#: lib/cinder_web/live/users_live.ex:543
 #, elixir-autogen, elixir-format
 msgid "User"
 msgstr "Utilisateur"
@@ -1497,7 +1497,7 @@ msgstr "Échec de l'approbation groupée. Veuillez réessayer."
 msgid "Change email"
 msgstr "Changer l'e-mail"
 
-#: lib/cinder_web/live/users_live.ex:568
+#: lib/cinder_web/live/users_live.ex:573
 #, elixir-autogen, elixir-format
 msgid "Change role for %{email}, currently %{role}"
 msgstr "Changer le rôle de %{email}, actuellement %{role}"
@@ -1564,7 +1564,7 @@ msgstr "Impossible de mettre à jour l'e-mail. Vérifiez l'adresse."
 msgid "Creating account…"
 msgstr "Création du compte…"
 
-#: lib/cinder_web/live/users_live.ex:660
+#: lib/cinder_web/live/users_live.ex:665
 #, elixir-autogen, elixir-format
 msgid "Delete %{email}? Their requests are deleted too."
 msgstr "Supprimer %{email} ? Ses demandes sont également supprimées."
@@ -1674,7 +1674,7 @@ msgid "Library paths"
 msgstr "Chemins des bibliothèques"
 
 #: lib/cinder_web/components/core_components.ex:542
-#: lib/cinder_web/live/users_live.ex:451
+#: lib/cinder_web/live/users_live.ex:456
 #, elixir-autogen, elixir-format
 msgid "Loading…"
 msgstr "Chargement…"
@@ -1694,7 +1694,7 @@ msgstr "Bibliothèque de films"
 msgid "Movies library path"
 msgstr "Chemin de la bibliothèque de films"
 
-#: lib/cinder_web/live/users_live.ex:619
+#: lib/cinder_web/live/users_live.ex:624
 #, elixir-autogen, elixir-format
 msgid "New email"
 msgstr "Nouvelle adresse e-mail"
@@ -3381,7 +3381,7 @@ msgstr "Tout sélectionner"
 msgid "Select all pending requests"
 msgstr "Sélectionner toutes les demandes en attente"
 
-#: lib/cinder_web/live/users_live.ex:566
+#: lib/cinder_web/live/users_live.ex:571
 #, elixir-autogen, elixir-format
 msgid "…"
 msgstr "…"
@@ -5235,7 +5235,7 @@ msgstr "Envoyez la clé dans l'en-tête de requête %{header}."
 msgid "These routes also sit behind the optional HTTP Basic gate, so if you enabled it, API clients must send those credentials too."
 msgstr "Ces routes sont également protégées par le filtre HTTP Basic optionnel : si vous l'avez activé, les clients de l'API doivent aussi envoyer ces identifiants."
 
-#: lib/cinder_web/live/users_live.ex:489
+#: lib/cinder_web/live/users_live.ex:494
 #, elixir-autogen, elixir-format
 msgid "%{name}: no email on the media server"
 msgstr "%{name} : aucune adresse e-mail sur le serveur multimédia"
@@ -5250,13 +5250,13 @@ msgstr "Impossible d'importer ces comptes."
 msgid "Couldn't read the media server's user list."
 msgstr "Impossible de lire la liste des utilisateurs du serveur multimédia."
 
-#: lib/cinder_web/live/users_live.ex:453
-#: lib/cinder_web/live/users_live.ex:461
+#: lib/cinder_web/live/users_live.ex:458
+#: lib/cinder_web/live/users_live.ex:466
 #, elixir-autogen, elixir-format
 msgid "Import from media server"
 msgstr "Importer depuis le serveur multimédia"
 
-#: lib/cinder_web/live/users_live.ex:500
+#: lib/cinder_web/live/users_live.ex:505
 #, elixir-autogen, elixir-format
 msgid "Import selected"
 msgstr "Importer la sélection"
@@ -5268,12 +5268,12 @@ msgid_plural "Imported %{count} accounts."
 msgstr[0] "%{count} compte importé."
 msgstr[1] "%{count} comptes importés."
 
-#: lib/cinder_web/live/users_live.ex:463
+#: lib/cinder_web/live/users_live.ex:468
 #, elixir-autogen, elixir-format
 msgid "Imported accounts have no password: they sign in through the media server, or you set one here."
 msgstr "Les comptes importés n'ont pas de mot de passe : leurs titulaires se connectent via le serveur multimédia, ou vous en définissez un ici."
 
-#: lib/cinder_web/live/users_live.ex:498
+#: lib/cinder_web/live/users_live.ex:503
 #, elixir-autogen, elixir-format
 msgid "Importing…"
 msgstr "Importation…"
@@ -5288,7 +5288,7 @@ msgstr "Rien à importer : ces comptes existent déjà."
 msgid "Select at least one account to import."
 msgstr "Sélectionnez au moins un compte à importer."
 
-#: lib/cinder_web/live/users_live.ex:468
+#: lib/cinder_web/live/users_live.ex:473
 #, elixir-autogen, elixir-format
 msgid "The media server reported no users."
 msgstr "Le serveur multimédia n'a signalé aucun utilisateur."
@@ -5408,7 +5408,7 @@ msgstr "Nettoyage des téléchargements orphelins"
 msgid "Quality upgrade hunt"
 msgstr "Recherche d'améliorations de qualité"
 
-#: lib/cinder_web/live/users_live.ex:482
+#: lib/cinder_web/live/users_live.ex:487
 #, elixir-autogen, elixir-format
 msgid "no email on the media server: a placeholder is generated"
 msgstr "aucune adresse e-mail sur le serveur multimédia : une adresse temporaire sera générée"
@@ -5438,3 +5438,8 @@ msgstr "Il n’appartient à aucun épisode de ce téléchargement. Rien n’est
 #, elixir-autogen, elixir-format
 msgid "No eligible TMDB episode remains; discard this file or keep it held."
 msgstr "Aucun épisode TMDB admissible ne reste ; abandonnez ce fichier ou conservez-le en attente."
+
+#: lib/cinder_web/live/users_live.ex:443
+#, elixir-autogen, elixir-format
+msgid "Seeing a second account for someone who already has one? Their original was never linked to the media server: use Reset password on it below, then have them link their media server account from Account settings."
+msgstr "Un deuxième compte apparaît pour une personne qui en a déjà un ? Son compte d'origine n'a jamais été lié au serveur multimédia : utilisez Réinitialiser le mot de passe ci-dessous, puis demandez-lui de lier son compte du serveur multimédia depuis les Paramètres du compte."
