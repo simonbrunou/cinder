@@ -342,9 +342,13 @@ defmodule CinderWeb.ActivityLiveTest do
       assert render_click(view, event, %{"id" => 7})
     end
 
-    # Still alive, still rendering the grab, and nothing was decided.
+    # Still alive, no confirmation opened on a forged key, and nothing decided at all.
     assert has_element?(view, "#grab-#{grab.id}")
-    assert Repo.exists?(from f in GrabFile, where: f.grab_id == ^grab.id and is_nil(f.decision))
+    refute has_element?(view, "#confirm-cancel-mapping-grab-#{grab.id}")
+
+    refute Repo.exists?(
+             from f in GrabFile, where: f.grab_id == ^grab.id and not is_nil(f.decision)
+           )
   end
 
   test "cancelling a Discard confirmation decides nothing", %{conn: conn} do
