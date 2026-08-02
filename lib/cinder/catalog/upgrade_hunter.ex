@@ -9,8 +9,10 @@ defmodule Cinder.Catalog.UpgradeHunter do
   search. This sweep asks the question on a timer.
 
   **Off by default.** It re-downloads and replaces library files, which is not something to start
-  doing to someone's library because they upgraded Cinder — turn it on with
-  `config :cinder, #{inspect(__MODULE__)}, enabled: true`.
+  doing to someone's library because they upgraded Cinder — turn it on under "Library upgrades" in
+  `/settings`, which overlays `enabled:` onto this module's config with no restart
+  (`Cinder.Settings.load_into_env/0`). `config :cinder, #{inspect(__MODULE__)}, enabled: true`
+  still sets the boot default an unset/cleared setting reverts to.
 
   ## How a candidate is chosen
 
@@ -73,7 +75,7 @@ defmodule Cinder.Catalog.UpgradeHunter do
     stateful: false,
     first_interval: :timer.minutes(10)
 
-  @doc "Whether upgrade hunting runs (`config :cinder, #{inspect(__MODULE__)}, enabled: true`)."
+  @doc "Whether upgrade hunting runs (the `/settings` switch, over the `config.exs` default)."
   def enabled?, do: Keyword.get(config(), :enabled, false)
 
   @doc "How many library items one pass examines."

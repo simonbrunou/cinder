@@ -3,7 +3,8 @@ defmodule CinderWeb.SettingsLive do
   In-app configuration for external services, mounted at `/settings`. Values persist
   to the DB (secrets encrypted) and overlay the app env on save. Admin-gated by the
   `:admin` live_session (`CinderWeb.UserAuth.require_admin`); also hosts the
-  `auto_approve_all` toggle.
+  `auto_approve_all` toggle and the quality-upgrade sweep's on/off switch (both
+  save on change, outside the main form).
 
   Secret inputs are never pre-filled — they render empty so a value can't be echoed
   back to the client, even on a re-render. Leave a secret blank to keep it; tick its
@@ -16,6 +17,7 @@ defmodule CinderWeb.SettingsLive do
   import CinderWeb.LiveHelpers
 
   alias Cinder.{ApiKey, Health, Settings}
+  alias Cinder.Catalog.UpgradeHunter
   alias CinderWeb.SettingsLabels
 
   @impl true
@@ -27,6 +29,7 @@ defmodule CinderWeb.SettingsLive do
        form_revision: 0,
        undecryptable_secrets: Settings.undecryptable_secret_keys(),
        auto_approve_all: Settings.auto_approve_all?(),
+       upgrade_hunt: UpgradeHunter.enabled?(),
        api_key_set: ApiKey.configured?(),
        # The plaintext key, held for this render only. It is never stored (only its hash is),
        # so once this socket state is replaced it is gone for good.
@@ -67,6 +70,14 @@ defmodule CinderWeb.SettingsLive do
     on = Map.get(params, "auto_approve_all") == "on"
     Settings.put("auto_approve_all", to_string(on))
     {:noreply, assign(socket, auto_approve_all: on)}
+  end
+
+  # Same `%{} = params` guard as toggle_auto_approve. The assign re-reads the domain predicate
+  # rather than the checkbox, so it reflects what the sweep will actually do once the overlay ran.
+  def handle_event("toggle_upgrade_hunt", %{} = params, socket) do
+    on = Map.get(params, "upgrade_hunt_enabled") == "on"
+    Settings.put("upgrade_hunt_enabled", to_string(on))
+    {:noreply, assign(socket, upgrade_hunt: UpgradeHunter.enabled?())}
   end
 
   def handle_event("generate_api_key", _params, socket),
@@ -193,6 +204,28 @@ defmodule CinderWeb.SettingsLive do
           >
             {gettext(
               "This also auto-approves requests from anyone who self-registers once their account is approved. Keep it off while registration enrollment is public."
+            )}
+          </p>
+        </form>
+      </div>
+
+      <div class="rounded-box bg-base-200 p-4 mt-8">
+        <h2 class="text-lg font-semibold mb-3">{gettext("Library upgrades")}</h2>
+        <form id="upgrade-hunt-form" phx-change="toggle_upgrade_hunt">
+          <label class="label cursor-pointer justify-start gap-2">
+            <input
+              type="checkbox"
+              name="upgrade_hunt_enabled"
+              class="toggle shrink-0"
+              checked={@upgrade_hunt}
+            />
+            <span class="label-text">
+              {gettext("Look for better releases of titles already in the library")}
+            </span>
+          </label>
+          <p class="text-sm opacity-70 mt-3">
+            {gettext(
+              "A periodic sweep re-searches the library and, when it finds a better release, downloads it and replaces the file you have. Off by default."
             )}
           </p>
         </form>

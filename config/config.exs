@@ -128,7 +128,9 @@ config :cinder, Cinder.Download.Cleaner, enabled: true
 config :cinder, Cinder.Download.ContentPolicy, enabled: true
 
 # Re-searches library items for a better release. OFF by default: it replaces library files, so
-# it is opt-in rather than something an upgrade starts doing to an existing library.
+# it is opt-in rather than something an upgrade starts doing to an existing library. This is the
+# boot default only: the operator switch is "Library upgrades" in /settings, which overlays
+# :enabled here at runtime (and reverts to this value when cleared).
 config :cinder, Cinder.Catalog.UpgradeHunter, enabled: false
 
 # Configure the endpoint

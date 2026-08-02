@@ -129,6 +129,23 @@ defmodule CinderWeb.ActivityLiveTest do
     assert has_element?(lv, "#job-Sweeper", "Next:")
   end
 
+  test "the upgrade hunt shows its off state instead of a schedule", %{conn: conn} do
+    # Shipped default (config.exs): the sweep is off, so it must not advertise a next run.
+    {:ok, lv, _html} = live(conn, ~p"/activity")
+
+    assert has_element?(lv, "#job-UpgradeHunter", "Turn it on in Settings.")
+    refute has_element?(lv, "#job-UpgradeHunter", "Next:")
+
+    saved = Application.get_env(:cinder, Cinder.Catalog.UpgradeHunter)
+    on_exit(fn -> Application.put_env(:cinder, Cinder.Catalog.UpgradeHunter, saved) end)
+    Application.put_env(:cinder, Cinder.Catalog.UpgradeHunter, enabled: true)
+
+    {:ok, lv, _html} = live(conn, ~p"/activity")
+
+    assert has_element?(lv, "#job-UpgradeHunter", "Next:")
+    refute has_element?(lv, "#job-UpgradeHunter", "Turn it on in Settings.")
+  end
+
   test "terminal-done movies are absent from the pipeline at mount", %{conn: conn} do
     available = movie_fixture(%{title: "Arrival", status: :available})
     pending = movie_fixture(%{title: "Tenet", status: :requested})

@@ -23,6 +23,7 @@ defmodule CinderWeb.ActivityLive do
 
   alias Cinder.Catalog
   alias Cinder.Catalog.Episode
+  alias Cinder.Catalog.UpgradeHunter
   alias Cinder.Download.TvPoller
 
   @impl true
@@ -396,6 +397,11 @@ defmodule CinderWeb.ActivityLive do
   defp job_label(Cinder.Subtitles.Sweeper), do: gettext("Subtitle backfill")
   defp job_label(Cinder.Requests.WatchlistSync), do: gettext("Plex watchlist sync")
   defp job_label(module), do: module |> Module.split() |> List.last()
+
+  # A sweep with an operator switch reports it, so a disabled one can't advertise a schedule it
+  # will never run on. Only the upgrade hunt is switchable from /settings; the rest always run.
+  defp job_enabled?(UpgradeHunter), do: UpgradeHunter.enabled?()
+  defp job_enabled?(_module), do: true
 
   # Coarse relative times for the slow sweeps (they run hours apart — minute precision is plenty).
   defp last_run(nil), do: gettext("not yet")
@@ -853,9 +859,11 @@ defmodule CinderWeb.ActivityLive do
               {job_label(j.module)}
             </span>
             <span class="text-sm text-base-content/70">
-              {gettext("Last run: %{when}", when: last_run(j.last_run_at))}
+              {if job_enabled?(j.module),
+                do: gettext("Last run: %{when}", when: last_run(j.last_run_at)),
+                else: gettext("Off. Turn it on in Settings.")}
             </span>
-            <span class="text-sm text-base-content/70">
+            <span :if={job_enabled?(j.module)} class="text-sm text-base-content/70">
               {gettext("Next: %{when}", when: next_run(j.last_run_at, j.interval))}
             </span>
           </li>
