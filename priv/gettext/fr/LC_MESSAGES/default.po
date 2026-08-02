@@ -156,7 +156,7 @@ msgstr "Approbation…"
 msgid "Attempting to reconnect"
 msgstr "Tentative de reconnexion"
 
-#: lib/cinder_web/live/settings_live.ex:180
+#: lib/cinder_web/live/settings_live.ex:190
 #, elixir-autogen, elixir-format
 msgid "Auto-approve all requests (skip the approval queue)"
 msgstr "Approuver automatiquement toutes les demandes (ignorer la file d'approbation)"
@@ -374,7 +374,7 @@ msgstr "Création…"
 
 #: lib/cinder_web/components/layouts.ex:118
 #: lib/cinder_web/live/dashboard_live.ex:349
-#: lib/cinder_web/live/settings_live.ex:125
+#: lib/cinder_web/live/settings_live.ex:135
 #: lib/cinder_web/user_auth.ex:407
 #, elixir-autogen, elixir-format
 msgid "Dashboard"
@@ -553,7 +553,7 @@ msgstr "Fichier de l'épisode supprimé."
 msgid "Everyone"
 msgstr "Tout le monde"
 
-#: lib/cinder_web/live/settings_live.ex:118
+#: lib/cinder_web/live/settings_live.ex:128
 #, elixir-autogen, elixir-format
 msgid "External services. Stored in the database; secrets encrypted at rest. Save before testing."
 msgstr "Services externes. Stockés dans la base de données ; secrets chiffrés au repos. Enregistrez avant de tester."
@@ -969,7 +969,7 @@ msgstr "Demande…"
 
 #: lib/cinder_web/components/layouts.ex:124
 #: lib/cinder_web/live/requests_live.ex:299
-#: lib/cinder_web/live/settings_live.ex:170
+#: lib/cinder_web/live/settings_live.ex:180
 #: lib/cinder_web/user_auth.ex:410
 #, elixir-autogen, elixir-format
 msgid "Requests"
@@ -1025,14 +1025,14 @@ msgstr "Enregistrer et valider"
 msgid "Save email"
 msgstr "Enregistrer l'e-mail"
 
-#: lib/cinder_web/live/settings_live.ex:165
+#: lib/cinder_web/live/settings_live.ex:175
 #, elixir-autogen, elixir-format
 msgid "Save settings"
 msgstr "Enregistrer les paramètres"
 
 #: lib/cinder_web/live/series_detail_components.ex:345
 #: lib/cinder_web/live/series_detail_components.ex:381
-#: lib/cinder_web/live/settings_live.ex:164
+#: lib/cinder_web/live/settings_live.ex:174
 #: lib/cinder_web/live/user_live/settings.ex:37
 #: lib/cinder_web/live/user_live/settings.ex:89
 #: lib/cinder_web/live/users_live.ex:611
@@ -1131,13 +1131,13 @@ msgid "Set up Cinder"
 msgstr "Configurer Cinder"
 
 #: lib/cinder_web/components/layouts.ex:157
-#: lib/cinder_web/live/settings_live.ex:116
+#: lib/cinder_web/live/settings_live.ex:126
 #: lib/cinder_web/user_auth.ex:409
 #, elixir-autogen, elixir-format
 msgid "Settings"
 msgstr "Paramètres"
 
-#: lib/cinder_web/live/settings_live.ex:52
+#: lib/cinder_web/live/settings_live.ex:99
 #, elixir-autogen, elixir-format
 msgid "Settings saved."
 msgstr "Paramètres enregistrés."
@@ -3552,7 +3552,7 @@ msgstr "Compte en attente refusé."
 msgid "Pending approval"
 msgstr "En attente d'approbation"
 
-#: lib/cinder_web/live/settings_live.ex:188
+#: lib/cinder_web/live/settings_live.ex:198
 #, elixir-autogen, elixir-format
 msgid "This also auto-approves requests from anyone who self-registers once their account is approved. Keep it off while registration enrollment is public."
 msgstr "Cela approuve aussi automatiquement les demandes de toute personne qui s'inscrit elle-même une fois son compte approuvé. Laissez cette option désactivée tant que les inscriptions sont publiques."
@@ -4813,14 +4813,14 @@ msgid_plural "%{count} stored secrets can't be decrypted. The encryption key cha
 msgstr[0] "1 secret enregistré ne peut pas être déchiffré. La clé de chiffrement a changé ; ressaisissez-le dans Paramètres."
 msgstr[1] "%{count} secrets enregistrés ne peuvent pas être déchiffrés. La clé de chiffrement a changé ; ressaisissez-les dans Paramètres."
 
-#: lib/cinder_web/live/settings_live.ex:137
+#: lib/cinder_web/live/settings_live.ex:147
 #, elixir-autogen, elixir-format
 msgid "1 stored secret could not be decrypted. The encryption key changed; re-enter it below."
 msgid_plural "%{count} stored secrets could not be decrypted. The encryption key changed; re-enter them below."
 msgstr[0] "1 secret enregistré n'a pas pu être déchiffré. La clé de chiffrement a changé ; ressaisissez-le ci-dessous."
 msgstr[1] "%{count} secrets enregistrés n'ont pas pu être déchiffrés. La clé de chiffrement a changé ; ressaisissez-les ci-dessous."
 
-#: lib/cinder_web/live/settings_live.ex:144
+#: lib/cinder_web/live/settings_live.ex:154
 #, elixir-autogen, elixir-format
 msgid "Affected: %{fields}"
 msgstr "Concernés : %{fields}"
@@ -5182,57 +5182,57 @@ msgstr "En-tête Authorization du webhook"
 msgid "Webhook URL"
 msgstr "URL du webhook"
 
-#: lib/cinder_web/live/settings_live.ex:198
+#: lib/cinder_web/live/settings_live.ex:208
 #, elixir-autogen, elixir-format
 msgid "A read-only JSON API for dashboard widgets and bots. One key for the whole household, stored hashed, so it can be shown only once. Generating a new key revokes the previous one. Anyone holding the key can read the request queue, so treat it as an admin credential."
 msgstr "Une API JSON en lecture seule pour les widgets de tableau de bord et les bots. Une seule clé pour tout le foyer, stockée sous forme de hachage : elle ne peut donc être affichée qu'une seule fois. Générer une nouvelle clé révoque la précédente. Toute personne détenant la clé peut lire la file des demandes : traitez-la comme un identifiant d'administration."
 
-#: lib/cinder_web/live/settings_live.ex:196
+#: lib/cinder_web/live/settings_live.ex:206
 #, elixir-autogen, elixir-format
 msgid "API access"
 msgstr "Accès API"
 
-#: lib/cinder_web/live/settings_live.ex:222
+#: lib/cinder_web/live/settings_live.ex:232
 #, elixir-autogen, elixir-format
 msgid "Copy this key now. It will not be shown again."
 msgstr "Copiez cette clé maintenant. Elle ne sera plus affichée."
 
-#: lib/cinder_web/live/settings_live.ex:245
+#: lib/cinder_web/live/settings_live.ex:255
 #, elixir-autogen, elixir-format
 msgid "Generate API key"
 msgstr "Générer une clé API"
 
-#: lib/cinder_web/live/settings_live.ex:228
+#: lib/cinder_web/live/settings_live.ex:238
 #, elixir-autogen, elixir-format
 msgid "No key is set, so the API rejects every request."
 msgstr "Aucune clé n'est définie, l'API rejette donc toutes les requêtes."
 
-#: lib/cinder_web/live/settings_live.ex:244
+#: lib/cinder_web/live/settings_live.ex:254
 #, elixir-autogen, elixir-format
 msgid "Regenerate API key"
 msgstr "Régénérer la clé API"
 
-#: lib/cinder_web/live/settings_live.ex:240
+#: lib/cinder_web/live/settings_live.ex:250
 #, elixir-autogen, elixir-format
 msgid "Regenerate the API key? The current key stops working immediately."
 msgstr "Régénérer la clé API ? La clé actuelle cesse immédiatement de fonctionner."
 
-#: lib/cinder_web/live/settings_live.ex:258
+#: lib/cinder_web/live/settings_live.ex:268
 #, elixir-autogen, elixir-format
 msgid "Revoke API key"
 msgstr "Révoquer la clé API"
 
-#: lib/cinder_web/live/settings_live.ex:253
+#: lib/cinder_web/live/settings_live.ex:263
 #, elixir-autogen, elixir-format
 msgid "Revoke the API key? Every dashboard widget and bot using it stops working immediately."
 msgstr "Révoquer la clé API ? Tous les widgets de tableau de bord et bots qui l'utilisent cessent immédiatement de fonctionner."
 
-#: lib/cinder_web/live/settings_live.ex:207
+#: lib/cinder_web/live/settings_live.ex:217
 #, elixir-autogen, elixir-format
 msgid "Send the key in the %{header} request header."
 msgstr "Envoyez la clé dans l'en-tête de requête %{header}."
 
-#: lib/cinder_web/live/settings_live.ex:210
+#: lib/cinder_web/live/settings_live.ex:220
 #, elixir-autogen, elixir-format
 msgid "These routes also sit behind the optional HTTP Basic gate, so if you enabled it, API clients must send those credentials too."
 msgstr "Ces routes sont également protégées par le filtre HTTP Basic optionnel : si vous l'avez activé, les clients de l'API doivent aussi envoyer ces identifiants."

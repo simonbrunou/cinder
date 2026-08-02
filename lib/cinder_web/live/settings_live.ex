@@ -33,30 +33,18 @@ defmodule CinderWeb.SettingsLive do
      )}
   end
 
-  # `%{} = params`: only a real form payload is guaranteed to be a map, and `save_form/1` reaches
-  # into it with `Access` — a forged frame carrying a bare list or a string would raise
-  # ArgumentError and take the LiveView (and any unsaved input) down. Same guard, same reason, as
-  # `CinderWeb.UsersLive`'s "import".
+  # `%{} = params` vouches for the container only — `save_form/1` also reaches into the VALUES
+  # (`String.trim/1`, `String.split/2`), which raise on a non-binary. The settings form is flat and
+  # has no multi-value input, so every legitimate value is a string; anything else is forged, and
+  # the whole frame is dropped rather than filtered. Filtering would be worse than useless here:
+  # `plan/1` reads an absent key as an unchecked box (`params[key] || "false"`), so discarding one
+  # bad value would let a forged frame silently switch toggles off.
   @impl true
   def handle_event("save", %{} = params, socket) do
-    case Settings.save_form(params) do
-      :ok ->
-        {:noreply,
-         socket
-         |> assign(
-           form: Settings.form_state(),
-           health: %{},
-           form_revision: socket.assigns.form_revision + 1,
-           undecryptable_secrets: Settings.undecryptable_secret_keys()
-         )
-         |> put_flash(:info, gettext("Settings saved."))}
-
-      {:error, invalid_keys} ->
-        {:noreply,
-         socket
-         |> assign(form: Settings.form_state(params, invalid_keys))
-         |> push_event("focus-invalid", %{id: List.first(invalid_keys)})
-         |> put_flash(:error, invalid_band_message(invalid_keys))}
+    if Enum.any?(params, fn {_key, value} -> not is_binary(value) end) do
+      {:noreply, socket}
+    else
+      save_settings(params, socket)
     end
   end
 
@@ -96,6 +84,28 @@ defmodule CinderWeb.SettingsLive do
   # Event payloads are client-controlled — ignore a forged/unmatched frame rather than
   # crash the LiveView (and lose unsaved form input). House rule; see sibling views.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  defp save_settings(params, socket) do
+    case Settings.save_form(params) do
+      :ok ->
+        {:noreply,
+         socket
+         |> assign(
+           form: Settings.form_state(),
+           health: %{},
+           form_revision: socket.assigns.form_revision + 1,
+           undecryptable_secrets: Settings.undecryptable_secret_keys()
+         )
+         |> put_flash(:info, gettext("Settings saved."))}
+
+      {:error, invalid_keys} ->
+        {:noreply,
+         socket
+         |> assign(form: Settings.form_state(params, invalid_keys))
+         |> push_event("focus-invalid", %{id: List.first(invalid_keys)})
+         |> put_flash(:error, invalid_band_message(invalid_keys))}
+    end
+  end
 
   # Admin sockets are subscribed to the "requests" topic (nav-badge on_mount); ignore those
   # broadcasts here — the on_mount hook already re-renders the badge.

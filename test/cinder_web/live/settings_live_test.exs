@@ -454,7 +454,17 @@ defmodule CinderWeb.SettingsLiveTest do
     assert render_hook(lv, "save", ["forged"])
     assert render_hook(lv, "toggle_auto_approve", ["forged"])
 
+    # A map container is not enough: save_form/1 reaches into the VALUES with String.trim/1 and
+    # String.split/2, which raise on a non-binary just as Access does on a non-map.
+    tv_max_before = Settings.get("tv_max_size")
+
+    for forged <- [%{"forged" => true}, ["x"], 7] do
+      assert render_hook(lv, "save", %{"tv_max_size" => forged})
+      assert render_hook(lv, "save", %{"import_roots" => forged})
+    end
+
     assert Process.alive?(lv.pid)
     assert Settings.auto_approve_all?() == auto_approve_before
+    assert Settings.get("tv_max_size") == tv_max_before
   end
 end
