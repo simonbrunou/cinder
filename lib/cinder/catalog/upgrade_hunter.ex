@@ -36,9 +36,10 @@ defmodule Cinder.Catalog.UpgradeHunter do
   ## ponytail: no resolution cutoff
 
   An earlier cut skipped the search entirely for items already at the top of the preferred-
-  resolution list, to save an indexer call. That was wrong: `better?/5` ranks **language first**,
-  then source, then resolution — so a 1080p file with the wrong audio language, or from the
-  least-preferred source, would have been permanently unreachable. Exactly what a soft
+  resolution list, to save an indexer call. That was wrong: language is decided **before** quality
+  at all (`language_decides?/3`), and within quality `rank/4` orders resolution, then source — so a
+  1080p file with the wrong audio language, or from the least-preferred source, would have been
+  permanently unreachable. Exactly what a soft
   Original/Any grab or a later language change leaves behind. `candidate?/4` already returns false
   when nothing is better, so the cutoff bought one saved search per item per rotation and cost
   two of the three ranking keys. Deleted rather than taught about all three.
