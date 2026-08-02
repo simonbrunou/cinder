@@ -245,8 +245,14 @@ defmodule Cinder.Catalog.UpgradeHunter do
   # pack's size to a per-episode MEAN, while each episode records its own file's actual size. Any
   # episode below that mean therefore reads as improvable at equal resolution/source/language,
   # including from the very pack that produced it. `Enum.all?` is what makes that self-comparison
-  # settle; relaxing it to `any?` would re-grab and re-download the same pack every rotation for
-  # an import that then changes nothing. Relaxing it needs that loop closed first — issue #257.
+  # settle; under `Enum.any?` the same pack is re-grabbed and re-downloaded every rotation for an
+  # import that then changes nothing — and nothing bounds that loop, because a declined
+  # arbitration still stages the held files, so the grab finishes "imported" and neither the
+  # blocklist nor `search_attempts` ever moves.
+  #
+  # #257 asked for `any?` and was declined on exactly that: relaxing this needs the loop bounded
+  # first, not a looser guard. Pinned by "a pack that only beats its own per-episode mean" in
+  # `upgrade_hunter_test.exs`, which fails the moment this reads `any?`.
   defp maybe_grab_episodes({release, covered_numbers}, episodes, target, season_size) do
     covered = Enum.filter(episodes, &(&1.episode_number in covered_numbers))
     carries = carries(release, season_size)
