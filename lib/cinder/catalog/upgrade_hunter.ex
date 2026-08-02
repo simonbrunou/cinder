@@ -214,7 +214,11 @@ defmodule Cinder.Catalog.UpgradeHunter do
         protocols: Download.available_protocols(),
         preferred_language: series.preferred_language,
         original_language: series.original_language,
-        release_blocklist: Catalog.blocked_release_titles_for_series(series.id),
+        # The only consumer that includes `"no_upgrade"`: a release this sweep grabbed and the
+        # import then arbitrated down to nothing placed would otherwise be re-offered every
+        # rotation (#274). The wanted-episode sweep and the manual panel still see it.
+        release_blocklist:
+          Catalog.blocked_release_titles_for_series(series.id, include_reasons: [:no_upgrade]),
         # Every file we can't link to an episode we hold becomes an operator residual decision at
         # import (#247), so a release carrying one scores zero inside the cover and the releases
         # behind it are picked instead (`Scorer.claimable_coverage/5` — judging the winner after

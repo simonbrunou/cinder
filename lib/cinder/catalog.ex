@@ -1432,6 +1432,7 @@ defmodule Cinder.Catalog do
   defdelegate block_grab_release(grab, reason), to: Grabs
   defdelegate blocked_release_titles(movie), to: Grabs
   defdelegate blocked_release_titles_for_series(series_id), to: Grabs
+  defdelegate blocked_release_titles_for_series(series_id, opts), to: Grabs
   defdelegate increment_search_attempts(episode_ids), to: Grabs
   defdelegate list_grabs_downloading(), to: Grabs
   defdelegate count_grabs_downloading(), to: Grabs

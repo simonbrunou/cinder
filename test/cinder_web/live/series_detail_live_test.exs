@@ -7,7 +7,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
   import Cinder.CatalogFixtures
 
   alias Cinder.{Catalog, Repo}
-  alias Cinder.Catalog.{Episode, Grab, Identity, TitleAlias}
+  alias Cinder.Catalog.{BlockedRelease, Episode, Grab, Identity, TitleAlias}
 
   setup :register_and_log_in_admin
   setup :set_mox_global
@@ -1675,6 +1675,33 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert render(lv) =~ "Grabbing the selected release"
     assert [grab] = Repo.all(Cinder.Catalog.Grab)
     assert grab.download_id == "hash-new"
+  end
+
+  # #274: the panel reads the same series-scoped blocklist as the sweeps. A `"no_upgrade"` row says
+  # only "this release does not beat the file we already hold" — it bounds the upgrade sweep and
+  # nothing else, so the panel must neither label it blocklisted nor withhold the Grab button.
+  test "a no_upgrade block is not surfaced as blocklisted in the manual panel", %{conn: conn} do
+    series = series_with_wanted_episode(search_attempts: 0)
+    season = first_season(series.id)
+    title = "Test Show S01E01 1080p WEB-DL GRP"
+
+    Repo.insert!(%BlockedRelease{
+      release_title: title,
+      reason: "no_upgrade",
+      series_id: series.id
+    })
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Test Show", 1 ->
+      {:ok, [%{title: title, size: 2_000_000_000, download_url: "u"}]}
+    end)
+
+    {:ok, lv, _html} = live_series(conn, series)
+    lv |> element("button[phx-click=tv_manual_search]", "Find a better match") |> render_click()
+
+    html = render_async(lv)
+    assert html =~ "Test Show S01E01"
+    refute html =~ "blocklisted"
+    assert has_element?(lv, "#ms-season-#{season.id} button", "Grab")
   end
 
   test "grabbing a better match keeps an available episode live under an upgrade grab", %{

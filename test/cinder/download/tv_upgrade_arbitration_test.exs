@@ -15,7 +15,7 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
 
   alias Cinder.Acquisition.{Language, Release}
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Grab, GrabFile}
+  alias Cinder.Catalog.{BlockedRelease, Episode, Grab, GrabFile, UpgradeHunter}
   alias Cinder.Download.TvPoller
   alias Cinder.Library.Upgrade
   alias Cinder.Repo
@@ -266,6 +266,91 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
     end
   end
 
+  # #274: an upgrade grab the import arbitrates down to NOTHING placed is otherwise
+  # indistinguishable from a real import — the grab closes clean, no episode is missing, so nothing
+  # bounds the sweep that opened it and it re-offers the same release every rotation, forever.
+  describe "an upgrade grab that places nothing" do
+    @tag :tmp_dir
+    test "is bounded, and the next rotation stops offering that release", %{tmp_dir: tmp} do
+      title = "Show.S01.1080p.WEBDL-GRP"
+
+      pack =
+        terse_pack(
+          tmp,
+          4248,
+          title,
+          # The pack's own file carries `720p`, and `Library.new_quality/3` backfills only NIL
+          # fields from the release title (deliberately — a mixed pack must keep a member's worse
+          # token), so the import re-reads 720p and declines. The sweep, judging the 1080p TITLE,
+          # disagrees. That disagreement is stable in both directions: the loop #257 is blocked on.
+          "Show.S01E01.720p.WEBDL.mkv",
+          %{imported_resolution: "720p", imported_source: "WEBDL", imported_size: 1_000_000_000},
+          %{tvdb_id: 4248}
+        )
+
+      imported = import_pack(pack, title)
+
+      # Nothing moved: path, bytes and recorded quality all survive the "import".
+      assert imported.file_path == Path.join(pack.library, "Show (2008) {tmdb-4248} - S01E01.mkv")
+      assert File.read!(imported.file_path) == "held-1"
+      assert imported.imported_resolution == "720p"
+      # And the sweep still reads that very release as an upgrade — nothing here is vacuous.
+      assert Upgrade.candidate?(imported, release(title, 2_000_000_000), :tv, nil)
+
+      assert Catalog.blocked_release_titles_for_series(pack.series.id,
+               include_reasons: [:no_upgrade]
+             ) == [title]
+
+      # Next rotation, same release on offer: the sweep passes on it.
+      offer_to_upgrade_sweep(4248, title)
+      watch_grabs()
+      start_upgrade_sweep()
+      assert :ok = UpgradeHunter.poll()
+
+      refute_received :grab_attempted
+      assert Repo.get!(Episode, imported.id).grab_id == nil
+
+      # Control, so this test can only pass for the right reason: drop the bound and the very next
+      # rotation grabs it again.
+      Repo.delete_all(BlockedRelease)
+      assert :ok = UpgradeHunter.poll()
+
+      assert_received :grab_attempted
+    end
+  end
+
+  defp offer_to_upgrade_sweep(tvdb_id, title) do
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn ^tvdb_id, "Show", 1 ->
+      {:ok, [%{title: title, size: 2_000_000_000, download_url: "magnet:?x", seeders: 40}]}
+    end)
+  end
+
+  # The sweep swallows any raise inside `isolate/2`, so "nothing was grabbed" has to be a stub that
+  # reports itself rather than an unstubbed mock (mirrors UpgradeHunterTest.watch_grabs/0).
+  defp watch_grabs do
+    test_pid = self()
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+      send(test_pid, :grab_attempted)
+      {:ok, "sweep-#{System.unique_integer([:positive])}"}
+    end)
+  end
+
+  defp start_upgrade_sweep do
+    saved = Application.get_env(:cinder, UpgradeHunter)
+    Application.put_env(:cinder, UpgradeHunter, enabled: true)
+
+    on_exit(fn ->
+      :persistent_term.erase({UpgradeHunter, :last_run})
+
+      if is_nil(saved),
+        do: Application.delete_env(:cinder, UpgradeHunter),
+        else: Application.put_env(:cinder, UpgradeHunter, saved)
+    end)
+
+    start_supervised!({UpgradeHunter, interval: 60_000})
+  end
+
   defp terse_pack(tmp, tmdb_id, title, inner_file, episode_attrs, series_attrs \\ %{}) do
     %{downloads: downloads, tv: tv} = real_tv_library(tmp)
 
@@ -292,7 +377,7 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
       |> season_fixture()
       |> episode_fixture(Map.merge(%{episode_number: 1, file_path: held}, episode_attrs))
 
-    %{release_dir: release_dir, library: library, episode: episode}
+    %{release_dir: release_dir, library: library, series: series, episode: episode}
   end
 
   defp import_pack(%{episode: episode, release_dir: release_dir}, title) do
