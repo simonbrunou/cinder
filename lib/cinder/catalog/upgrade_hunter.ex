@@ -18,7 +18,7 @@ defmodule Cinder.Catalog.UpgradeHunter do
   first) and stamps them **before** searching, so a large library rotates steadily and a title
   that raises can't wedge the batch or re-run every tick.
 
-  One gate before anything is downloaded: `Cinder.Library.Upgrade.candidate?/5` compares the
+  One gate before anything is downloaded: `Cinder.Library.Upgrade.candidate?/4` compares the
   *parsed* release against the imported file, so a sideways or worse release is dropped without
   being downloaded.
 
@@ -36,10 +36,11 @@ defmodule Cinder.Catalog.UpgradeHunter do
   ## ponytail: no resolution cutoff
 
   An earlier cut skipped the search entirely for items already at the top of the preferred-
-  resolution list, to save an indexer call. That was wrong: `better?/5` ranks **language first**,
-  then source, then resolution — so a 1080p file with the wrong audio language, or from the
-  least-preferred source, would have been permanently unreachable. Exactly what a soft
-  Original/Any grab or a later language change leaves behind. `candidate?/5` already returns false
+  resolution list, to save an indexer call. That was wrong: language is decided **before** quality
+  at all (`language_decides?/3`), and within quality `rank/4` orders resolution, then source — so a
+  1080p file with the wrong audio language, or from the least-preferred source, would have been
+  permanently unreachable. Exactly what a soft
+  Original/Any grab or a later language change leaves behind. `candidate?/4` already returns false
   when nothing is better, so the cutoff bought one saved search per item per rotation and cost
   two of the three ranking keys. Deleted rather than taught about all three.
 
@@ -229,7 +230,7 @@ defmodule Cinder.Catalog.UpgradeHunter do
            opts
          ) do
       {:ok, assignments} ->
-        Enum.each(assignments, &maybe_grab_episodes(&1, episodes, target, season_size))
+        Enum.each(assignments, &maybe_grab_episodes(&1, episodes, target))
 
       _no_match_or_error ->
         :ok
@@ -240,26 +241,14 @@ defmodule Cinder.Catalog.UpgradeHunter do
   # `full_claim_only` already dropped the releases carrying anything else. Take it only if it
   # improves EVERY covered episode.
   #
-  # #250 made the import decline per episode, so a partial pack is no longer *unsafe* — but this
-  # guard stays, for a second reason it also happens to serve: `Upgrade.candidate?/5` scales a
-  # pack's size to a per-episode MEAN, while each episode records its own file's actual size. Any
-  # episode below that mean therefore reads as improvable at equal resolution/source/language,
-  # including from the very pack that produced it. `Enum.all?` is what makes that self-comparison
-  # settle; under `Enum.any?` the same pack is re-grabbed and re-downloaded every rotation for an
-  # import that then changes nothing — and nothing bounds that loop, because a declined
-  # arbitration still stages the held files, so the grab finishes "imported" and neither the
-  # blocklist nor `search_attempts` ever moves.
-  #
-  # #257 asked for `any?` and was declined on exactly that: relaxing this needs the loop bounded
-  # first, not a looser guard. Pinned by "a pack that only beats its own per-episode mean" in
-  # `upgrade_hunter_test.exs`, which fails the moment this reads `any?`.
-  defp maybe_grab_episodes({release, covered_numbers}, episodes, target, season_size) do
+  # #250 made the import decline per episode, so a partial pack is no longer *unsafe*: the episodes
+  # it doesn't beat simply keep their files. The guard stays regardless — taking a whole pack for
+  # the subset it improves is its own trade, tracked as #257.
+  defp maybe_grab_episodes({release, covered_numbers}, episodes, target) do
     covered = Enum.filter(episodes, &(&1.episode_number in covered_numbers))
-    carries = carries(release, season_size)
 
     cond do
-      covered == [] or
-          not Enum.all?(covered, &Upgrade.candidate?(&1, release, :tv, target, carries)) ->
+      covered == [] or not Enum.all?(covered, &Upgrade.candidate?(&1, release, :tv, target)) ->
         :ok
 
       not Disk.grab_space_available?(release.size) ->
@@ -271,15 +260,6 @@ defmodule Cinder.Catalog.UpgradeHunter do
         grab_episode_upgrade(release, Enum.map(covered, & &1.id))
     end
   end
-
-  # How many episodes the release actually CARRIES — the divisor that scales a pack's size down to
-  # per-episode before it is compared against one imported file. Deliberately NOT the assignment's
-  # covered numbers: `Scorer.coverage/2` intersects the release with what this sweep asked about,
-  # so a 22-episode pack examined via a 10-item batch would report 10 (or 1), inflate its
-  # per-episode size, and read as an upgrade again — the forever-re-download loop. A whole-season
-  # pack (`episodes: nil`) carries the season.
-  defp carries(%{episodes: [_ | _] = episodes}, _season_size), do: length(episodes)
-  defp carries(_release, season_size), do: season_size
 
   # operator_initiated: true is what lets the intent target episodes that already have a file —
   # the same flag the manual season search uses (`Cinder.Catalog.Grabs`). arbitrate_at_import is
