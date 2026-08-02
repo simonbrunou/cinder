@@ -318,6 +318,35 @@ defmodule CinderWeb.ActivityLiveTest do
     refute Repo.exists?(ImportStage)
   end
 
+  test "a forged id on any confirm-key event is ignored rather than crashing the view", %{
+    conn: conn
+  } do
+    grab = grab!()
+    {:ok, _grab} = Catalog.mark_grab_downloaded(grab, "/downloads/Severance")
+
+    Repo.insert!(%GrabFile{
+      grab_id: grab.id,
+      relative_path: "part-2.mkv",
+      size: 10,
+      device: 1,
+      inode: 11
+    })
+
+    {:ok, view, _html} = live(conn, ~p"/activity")
+
+    # Every handler that builds a `confirming` key by interpolation must reject a non-binary id.
+    # Without the guard the interpolation raises inside the clause body, and the catch-all can't
+    # help because the clause has already matched — the LiveView dies and the tab reconnects.
+    for event <- ~w(ask_cancel_mapping ask_discard_file ask_discard_files) do
+      assert render_click(view, event, %{"id" => %{"forged" => true}})
+      assert render_click(view, event, %{"id" => 7})
+    end
+
+    # Still alive, still rendering the grab, and nothing was decided.
+    assert has_element?(view, "#grab-#{grab.id}")
+    assert Repo.exists?(from f in GrabFile, where: f.grab_id == ^grab.id and is_nil(f.decision))
+  end
+
   test "cancelling a Discard confirmation decides nothing", %{conn: conn} do
     grab = grab!()
     {:ok, grab} = Catalog.mark_grab_downloaded(grab, "/downloads/Severance")

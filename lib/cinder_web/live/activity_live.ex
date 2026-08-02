@@ -87,7 +87,7 @@ defmodule CinderWeb.ActivityLive do
   def handle_event("ask_delete", %{"id" => id}, socket),
     do: {:noreply, assign(socket, confirming: id)}
 
-  def handle_event("ask_cancel_mapping", %{"id" => id}, socket),
+  def handle_event("ask_cancel_mapping", %{"id" => id}, socket) when is_binary(id),
     do: {:noreply, assign(socket, confirming: "mapping:#{id}")}
 
   def handle_event("dismiss_confirm", _params, socket),
