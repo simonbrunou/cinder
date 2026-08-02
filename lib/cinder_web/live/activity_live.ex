@@ -199,21 +199,32 @@ defmodule CinderWeb.ActivityLive do
     end
   end
 
-  def handle_event("discard_grab_file", %{"id" => id}, socket) when is_binary(id) do
+  # Discard is irreversible — the row can only be decided once, and once the last file is
+  # decided the grab closes, deletes its files rows and lets source cleanup remove the payload.
+  # So it asks first, like every other destructive action here.
+  def handle_event("ask_discard_file", %{"id" => id}, socket) when is_binary(id),
+    do: {:noreply, assign(socket, confirming: "file:#{id}")}
+
+  def handle_event("ask_discard_files", %{"id" => id}, socket) when is_binary(id),
+    do: {:noreply, assign(socket, confirming: "files:#{id}")}
+
+  def handle_event("confirm_discard_file", %{"id" => id}, socket) when is_binary(id) do
+    socket = assign(socket, confirming: nil)
+
     case positive_id(id) do
       {:ok, file_id} -> {:noreply, discard_grab_files(socket, [file_id])}
       {:error, _reason} -> {:noreply, socket}
     end
   end
 
-  def handle_event("discard_grab_files", %{"id" => id}, socket) when is_binary(id) do
+  def handle_event("confirm_discard_files", %{"id" => id}, socket) when is_binary(id) do
     file_ids =
       case find_by_id(socket.assigns.grabs, id) do
         nil -> []
         grab -> Enum.map(Catalog.unresolved_grab_files(grab), & &1.id)
       end
 
-    {:noreply, discard_grab_files(socket, file_ids)}
+    {:noreply, socket |> assign(confirming: nil) |> discard_grab_files(file_ids)}
   end
 
   def handle_event("hold_grab_file", %{"id" => id}, socket) when is_binary(id) do
@@ -235,15 +246,18 @@ defmodule CinderWeb.ActivityLive do
   # Bulk Discard is per-file on purpose: each id is re-read and claimed inside the Catalog, so a
   # stale snapshot id is an idempotent no-op rather than a failure, and the guarded close is
   # attempted after every decision — it only lands once the last undecided file is gone.
+  #
+  # A confirmation sits open for as long as the operator takes, so by the time it fires the rows
+  # may already be decided (:noop) or gone. Report on what actually landed, not on the absence of
+  # errors: claiming "saved" for a click that decided nothing is how an operator comes to believe
+  # a residual hold was cleared when it wasn't.
   defp discard_grab_files(socket, file_ids) do
+    results = Enum.map(file_ids, &{&1, TvPoller.discard_grab_file(&1)})
+
     errors =
-      file_ids
-      |> Enum.map(&{&1, TvPoller.discard_grab_file(&1)})
-      |> Enum.flat_map(fn
-        {_file_id, {:ok, _state, _file}} -> []
-        {file_id, {:error, reason}} -> [{file_id, grab_file_error(reason)}]
-      end)
-      |> Map.new()
+      for {file_id, {:error, reason}} <- results,
+          into: %{},
+          do: {file_id, grab_file_error(reason)}
 
     socket =
       socket
@@ -253,9 +267,21 @@ defmodule CinderWeb.ActivityLive do
       )
       |> refresh_grabs()
 
-    if errors == %{},
-      do: put_flash(socket, :info, gettext("File decision saved.")),
-      else: socket
+    cond do
+      Enum.any?(results, &match?({_, {:ok, :decided, _}}, &1)) ->
+        put_flash(socket, :info, gettext("File decision saved."))
+
+      errors == %{} ->
+        put_flash(socket, :error, gettext("Those files were already decided."))
+
+      # The rows are gone, so refresh_grabs/1 has just pruned their inline errors — say it here or
+      # the click reports nothing at all.
+      Enum.all?(results, &match?({_, {:error, :grab_file_not_found}}, &1)) ->
+        put_flash(socket, :error, gettext("That download is already gone."))
+
+      true ->
+        socket
+    end
   end
 
   defp refresh_grabs(socket) do
@@ -584,12 +610,25 @@ defmodule CinderWeb.ActivityLive do
               variant="ghost"
               size="xs"
               class="mt-2"
-              phx-click="discard_grab_files"
+              phx-click="ask_discard_files"
               phx-value-id={g.id}
-              phx-disable-with={gettext("Discarding…")}
             >
               {gettext("Discard all")}
             </.button>
+            <.confirm_action
+              :if={@confirming == "files:#{g.id}" and Catalog.unresolved_grab_files(g) != []}
+              id={"confirm-discard-grab-files-#{g.id}"}
+              class="mt-2"
+              on_confirm="confirm_discard_files"
+              on_cancel="dismiss_confirm"
+              value={g.id}
+              confirm_label={gettext("Discard all")}
+              variant="warning"
+            >
+              <:caveat>
+                {discard_all_caveat(length(Catalog.unresolved_grab_files(g)))}
+              </:caveat>
+            </.confirm_action>
             <div
               :for={f <- Catalog.unresolved_grab_files(g)}
               id={"grab-file-#{f.id}"}
@@ -673,7 +712,7 @@ defmodule CinderWeb.ActivityLive do
                       type="button"
                       variant="ghost"
                       size="sm"
-                      phx-click="discard_grab_file"
+                      phx-click="ask_discard_file"
                       phx-value-id={f.id}
                       aria-label={gettext("Discard %{file}", file: f.relative_path)}
                       aria-describedby={"grab-file-#{f.id}-discard-copy"}
@@ -719,7 +758,7 @@ defmodule CinderWeb.ActivityLive do
                     type="button"
                     variant="ghost"
                     size="sm"
-                    phx-click="discard_grab_file"
+                    phx-click="ask_discard_file"
                     phx-value-id={f.id}
                     aria-label={gettext("Discard %{file}", file: f.relative_path)}
                   >
@@ -745,6 +784,22 @@ defmodule CinderWeb.ActivityLive do
               >
                 {@grab_file_errors[f.id]}
               </p>
+              <.confirm_action
+                :if={@confirming == "file:#{f.id}"}
+                id={"confirm-discard-grab-file-#{f.id}"}
+                class="mt-3"
+                on_confirm="confirm_discard_file"
+                on_cancel="dismiss_confirm"
+                value={f.id}
+                confirm_label={gettext("Discard")}
+                variant="warning"
+              >
+                <:caveat>
+                  {gettext("Discard %{file}? It is not kept and cannot be recovered here.",
+                    file: f.relative_path
+                  )}
+                </:caveat>
+              </.confirm_action>
             </div>
             <.confirm_action
               :if={@confirming == "mapping:#{g.id}"}
