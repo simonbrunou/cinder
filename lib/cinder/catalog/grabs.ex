@@ -848,6 +848,9 @@ defmodule Cinder.Catalog.Grabs do
   grab and its unimported episodes intact for explicit per-file decisions.
   """
   def commit_grab_imports(%Grab{} = grab, imported, residuals, stage_ids \\ []) do
+    # Resolved BEFORE the transaction on purpose: it walks the grab's episode links, and
+    # `transition_imported_episode!` clears `grab_id` on every imported episode below — so a lazy
+    # lookup inside would find nothing and `bound_unplaced_release/3` would silently skip (#274).
     series_id = series_id_for_grab(grab.id)
     imported_ids = imported |> Enum.map(&elem(&1, 0)) |> Enum.uniq()
     episodes = Map.new(grab.episodes, &{&1.id, &1})
