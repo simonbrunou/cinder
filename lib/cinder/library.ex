@@ -43,7 +43,6 @@ defmodule Cinder.Library do
   # same way (`cp` can't open the dest) and the item still parks — a wasted copy attempt, not a
   # wrong import. Every other errno (`:enoent`, `:enospc`, …) is a real failure and propagates.
   @copy_fallback_errnos [:exdev, :eperm, :eopnotsupp, :enotsup]
-  @anime_identity_keys ~w(relative_path size major_device inode mtime)
   @standard_tv_bridged_schemes ~w(scene aired)
 
   # The library kinds Cinder manages. The single source of truth — config keys
@@ -704,11 +703,11 @@ defmodule Cinder.Library do
   @doc "Stages persisted anime assignments after revalidating the download inventory."
   def stage_anime_episodes(%Grab{} = grab, preflight) do
     with {:ok, current} <- inventory_anime_videos(grab.content_path),
-         :ok <- same_inventory(current.files, preflight.decisions),
-         :ok <- same_container_kind(current.folder?, preflight.folder?),
+         :ok <- AnimeInventory.same_inventory(current.files, preflight.decisions),
+         :ok <- AnimeInventory.same_container_kind(current.folder?, preflight.folder?),
          {:ok, root} <- root(:tv),
          {:ok, to_import} <-
-           anime_import_pairs(grab, preflight.assignments, current.folder?),
+           AnimeInventory.import_pairs(grab, preflight.assignments, current.folder?),
          {:ok, reports} <- verify_grab_policy(grab, to_import) do
       stage_anime_all(
         to_import,
@@ -727,90 +726,6 @@ defmodule Cinder.Library do
 
   defp attach_preflight_grab({:needs_mapping, preflight}, grab, _folder?),
     do: {:needs_mapping, Map.put(preflight, :grab, grab)}
-
-  defp same_container_kind(container?, container?), do: :ok
-  defp same_container_kind(_current, _persisted), do: {:error, :inventory_changed}
-
-  defp same_inventory(current, %{"files" => persisted}) when is_list(persisted) do
-    current =
-      Enum.map(current, fn %{relative_path: relative_path, identity: identity} ->
-        identity
-        |> Map.new(fn {key, value} -> {Atom.to_string(key), value} end)
-        |> Map.put("relative_path", relative_path)
-      end)
-
-    persisted = Enum.map(persisted, &Map.take(&1, @anime_identity_keys))
-
-    if sort_inventory(current) == sort_inventory(persisted),
-      do: :ok,
-      else: {:error, :inventory_changed}
-  end
-
-  defp same_inventory(_current, _persisted), do: {:error, :inventory_changed}
-
-  defp sort_inventory(files), do: Enum.sort_by(files, & &1["relative_path"])
-
-  defp anime_import_pairs(%Grab{} = grab, assignments, folder?) do
-    episodes = Map.new(grab.episodes, &{&1.id, &1})
-
-    assignments
-    |> Enum.reduce_while({:ok, []}, fn assignment, {:ok, acc} ->
-      case anime_assignment_pairs(grab.content_path, folder?, assignment, episodes) do
-        {:ok, pairs} -> {:cont, {:ok, Enum.reverse(pairs, acc)}}
-        {:error, _reason} = error -> {:halt, error}
-      end
-    end)
-    |> case do
-      {:ok, pairs} -> {:ok, Enum.reverse(pairs)}
-      {:error, _reason} = error -> error
-    end
-  end
-
-  defp anime_assignment_pairs(
-         content_path,
-         folder?,
-         %{relative_path: relative_path, episode_ids: episode_ids},
-         episodes
-       ) do
-    with {:ok, source} <- anime_assignment_source(content_path, relative_path, folder?),
-         {:ok, assigned} <- assigned_episodes(episode_ids, episodes) do
-      {:ok, Enum.map(assigned, &{&1, source})}
-    end
-  end
-
-  defp anime_assignment_pairs(_content_path, _folder?, _assignment, _episodes),
-    do: {:error, :invalid_anime_assignment}
-
-  defp anime_assignment_source(content_path, relative_path, true),
-    do: content_path |> Path.join(relative_path) |> revalidate_anime_source()
-
-  defp anime_assignment_source(content_path, relative_path, false) do
-    if relative_path == Path.basename(content_path),
-      do: revalidate_anime_source(content_path),
-      else: {:error, :invalid_anime_assignment}
-  end
-
-  defp revalidate_anime_source(path) do
-    case safe_source_file(path) do
-      {:ok, _source} = ok -> ok
-      {:error, :download_roots_not_configured} = error -> error
-      {:error, _reason} -> {:error, :inventory_changed}
-    end
-  end
-
-  defp assigned_episodes(ids, episodes) do
-    ids
-    |> Enum.reduce_while({:ok, []}, fn id, {:ok, acc} ->
-      case Map.fetch(episodes, id) do
-        {:ok, episode} -> {:cont, {:ok, [episode | acc]}}
-        :error -> {:halt, {:error, :invalid_anime_assignment}}
-      end
-    end)
-    |> case do
-      {:ok, assigned} -> {:ok, Enum.reverse(assigned)}
-      {:error, _reason} = error -> error
-    end
-  end
 
   defp verify_grab_policy(%Grab{release_policy_snapshot: snapshot}, to_import)
        when is_map(snapshot) do
