@@ -575,7 +575,16 @@ defmodule Cinder.Download.TvPoller do
     series = hd(episodes).season.series
     season_number = hd(episodes).season.season_number
     numbers = Enum.map(episodes, & &1.episode_number)
-    opts = search_opts(series)
+
+    # The season's real episode count, not the still-wanted count: `Acquisition.best_releases/4`
+    # bands a whole-season pack against it as a last resort when nothing else fits (#268).
+    opts =
+      Keyword.put(
+        search_opts(series),
+        :season_episode_count,
+        Catalog.count_episodes(series.id, season_number)
+      )
+
     numbering = Acquisition.standard_tv_numbering(context, episodes, native_seasons).scorer
 
     opts =

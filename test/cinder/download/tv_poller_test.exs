@@ -2477,6 +2477,35 @@ defmodule Cinder.Download.TvPollerTest do
     assert e1.search_attempts == 1
   end
 
+  # #268 (Charmed S03): the sweep must band a season pack by the episodes it CONTAINS, not the
+  # handful still wanted. This proves the poller supplies that count — the scorer's fallback is
+  # inert without it, so the pack would be :out_of_band and the tail would park.
+  test "grabs a season pack banded by the season's episode count when only the tail is wanted" do
+    {series, season} = series_tree()
+    Enum.each(1..18, &episode(season, &1, %{file_path: "/tv/Show - S01E#{pad2(&1)}.mkv"}))
+    wanted = Enum.map(19..22, &episode(season, &1))
+
+    # 4 GB/episode: the 4 wanted episodes budget 16 GB, but the 22-episode pack is 19.7 GB
+    # (~0.9 GB/episode) — in band only once the pack's own episode count sizes it.
+    Application.put_env(:cinder, :tv_max_size, 4_000_000_000)
+    on_exit(fn -> Application.delete_env(:cinder, :tv_max_size) end)
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:ok,
+       [%{title: "Show.S01.1080p.BluRay.x265-GRP", size: 19_700_000_000, download_url: "pack"}]}
+    end)
+
+    stub(Cinder.Download.ClientMock, :add, fn _release, _opts -> {:ok, "hash-pack"} end)
+
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+    assert :ok = TvPoller.poll()
+
+    assert Catalog.count_episodes(series.id, 1) == 22
+    grab_ids = Enum.map(wanted, &Repo.get!(Episode, &1.id).grab_id)
+    assert [grab_id] = Enum.uniq(grab_ids)
+    assert Repo.get!(Grab, grab_id).download_id == "hash-pack"
+  end
+
   test "a successful import emits the season-available notifier event" do
     Cinder.TestNotifier.subscribe()
     {_series, season} = series_tree()

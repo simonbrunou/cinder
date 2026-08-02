@@ -378,6 +378,51 @@ defmodule Cinder.Acquisition.ScorerTest do
       assert :no_match = Scorer.select_for([single], 1, [1], max_size: 5 * @gb)
     end
 
+    # #268 (Charmed S03): 4 of 22 episodes still wanted budgeted the pack at 4×4 GB = 16 GB and
+    # rejected a 19.7 GB pack that is ~0.9 GB/episode — the fewer episodes remained, the harsher
+    # the effective per-episode cap. `pack_episode_count` bands it by what it CONTAINS instead.
+    test "pack_episode_count bands a whole-season pack by the episodes it contains" do
+      pack = release(season: 3, episodes: nil, resolution: "1080p", size: 197 * div(@gb, 10))
+      wanted = [19, 20, 21, 22]
+
+      assert {:ok, [{%Release{episodes: nil}, ^wanted}]} =
+               Scorer.select_for([pack], 3, wanted, max_size: 4 * @gb, pack_episode_count: 22)
+
+      # Without the opt the band is 4 wanted × 4 GB = 16 GB and the same pack is out of band.
+      assert :no_match = Scorer.select_for([pack], 3, wanted, max_size: 4 * @gb)
+    end
+
+    # The guard for the two-pass shape in `Acquisition.best_releases/4`: `cover/6` sorts by
+    # coverage BEFORE rank, so a widened pack outranks every single behind it. Widening on the
+    # first pass would trade four 1 GB singles for one 19.7 GB pack, which is why the widened
+    # band only ever runs after a clean :no_match.
+    test "a widened pack would outrank the singles it covers (why the widening is last-resort)" do
+      pack =
+        release(
+          title: "pack",
+          season: 3,
+          episodes: nil,
+          resolution: "1080p",
+          size: 197 * div(@gb, 10)
+        )
+
+      singles =
+        Enum.map(19..22, fn n ->
+          release(title: "e#{n}", season: 3, episodes: [n], resolution: "1080p", size: 1 * @gb)
+        end)
+
+      wanted = [19, 20, 21, 22]
+      opts = [max_size: 4 * @gb]
+
+      # First pass (no pack_episode_count): the pack is out of band, so the singles are chosen.
+      assert {:ok, chosen} = Scorer.select_for([pack | singles], 3, wanted, opts)
+      assert chosen |> Enum.map(fn {r, _cov} -> r.title end) |> Enum.sort() == ~w(e19 e20 e21 e22)
+
+      # Same pool with the widened band: the pack takes the whole want in one greedy step.
+      assert {:ok, [{%Release{title: "pack"}, ^wanted}]} =
+               Scorer.select_for([pack | singles], 3, wanted, opts ++ [pack_episode_count: 22])
+    end
+
     test "releases for another season (and movies) are ignored" do
       releases = [
         release(season: 2, episodes: [1], resolution: "1080p", size: 2 * @gb),
