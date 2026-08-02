@@ -319,6 +319,156 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
     end
   end
 
+  # #289: `keep_stage/5` pins a declined episode's stage to the file it already holds — but if that
+  # file has vanished off disk, `StageEngine.stage_place_locked/8` takes its `:enoent` branch and
+  # lands the DECLINED file there, reporting `placed?: true`. Placing it is the right outcome (the
+  # episode holds nothing and nothing in `lib/` clears a stale `file_path`, so refusing would
+  # strand it) — calling it a PLACEMENT is not.
+  describe "a declined keep whose held file has vanished" do
+    @tag :tmp_dir
+    test "records backfilled quality, keeps its parts, and still bounds the release", %{
+      tmp_dir: tmp
+    } do
+      title = "Show.S01.1080p.WEBDL-GRP"
+
+      part =
+        Path.join([
+          tmp,
+          "tv",
+          "Show (2008) {tmdb-4251}",
+          "Season 01",
+          "Show (2008) {tmdb-4251} - S01E01-part2.mkv"
+        ])
+
+      pack =
+        terse_pack(
+          tmp,
+          4251,
+          title,
+          "S01E01.mkv",
+          %{
+            imported_resolution: "1080p",
+            imported_source: "WEBDL",
+            imported_size: 9_000_000_000,
+            part_file_paths: [part]
+          },
+          %{tvdb_id: 4251}
+        )
+
+      File.write!(part, "held-part")
+
+      # The precondition: the held primary is gone, but the row still points at it.
+      File.rm!(pack.episode.file_path)
+
+      imported = import_pack(pack, title)
+
+      # We do take the free file rather than strand the episode.
+      assert File.read!(imported.file_path) == "incoming"
+
+      # ...but the record describes it as the RELEASE does, not as a terse `S01E01.mkv` does.
+      # Nil ranks last in `Scorer.resolution_rank/2`, so nils here read as improvable by almost
+      # every release in the indexer, forever, at one wasted download each (#275/#277).
+      assert imported.imported_resolution == "1080p"
+      assert imported.imported_source == "webdl"
+
+      # The parts belong to the primary that vanished, not to this grab. Reporting a placement
+      # cleared them, and `remove_superseded_episode_files/1` then DELETED them off disk.
+      assert imported.part_file_paths == [part]
+      assert File.exists?(part)
+
+      # And the rotation still bounds: this import upgraded nothing, so #274's row must be written.
+      # The record's own backfill cannot substitute for it — the sweep's `Enum.any?` gate is driven
+      # by whichever sibling episode is still improvable, which the backfill never touches.
+      assert Catalog.blocked_release_titles_for_series(pack.series.id,
+               include_reasons: [:no_upgrade]
+             ) == [title]
+    end
+
+    # The guard on the above: threading the release title into the keep stage puts a description of
+    # the DECLINED file within reach of `existing_quality/3`'s `nil_q?` arm, which writes it onto an
+    # episode that kept its own file. An adopted episode (`Catalog.Adoption` writes `file_path` and
+    # nothing else) is exactly that shape, and a 1080p household would then read this 480p rip as
+    # un-upgradable by anything — strictly worse than the nils it replaces.
+    @tag :tmp_dir
+    test "a kept sibling's record is left alone, title backfill and all", %{tmp_dir: tmp} do
+      %{downloads: downloads, tv: tv} = real_tv_library(tmp)
+
+      title = "Show.S01E05E06.1080p.BluRay-GRP"
+      release_dir = Path.join(downloads, title)
+      File.mkdir_p!(release_dir)
+      File.write!(Path.join(release_dir, "Show.S01E05E06.1080p.BluRay.mkv"), "combined")
+
+      library = Path.join([tv, "Show (2008) {tmdb-4252}", "Season 01"])
+      File.mkdir_p!(library)
+
+      series = series_fixture(%{tmdb_id: 4252, title: "Show", year: 2008, monitor_strategy: :all})
+      season = season_fixture(series)
+
+      adopted_path = Path.join(library, "Show (2008) {tmdb-4252} - S01E05.mkv")
+      File.write!(adopted_path, "adopted-480p-rip")
+
+      # E05 is adopted: it holds a file but has never been quality-recorded, so `nil_q?` is true.
+      # Its media lists ARE populated — `adopt_quality/2` replaces them wholesale, so they are the
+      # part of the record the four ranked fields alone would not protect.
+      adopted =
+        episode_fixture(season, %{
+          episode_number: 5,
+          file_path: adopted_path,
+          imported_audio_languages: ["jpn"],
+          imported_embedded_subtitles: ["jpn", "eng"],
+          imported_sidecar_subtitles: ["eng"]
+        })
+
+      # E06 vetoes the group, which is the only way a nil_q? episode ever reaches the keep path:
+      # `nil_q?` implies `nil_baseline?`, so on its own it would always upgrade.
+      held_06 = Path.join(library, "Show (2008) {tmdb-4252} - S01E06.mkv")
+      File.write!(held_06, "held-6")
+
+      vetoing =
+        episode_fixture(season, %{
+          episode_number: 6,
+          file_path: held_06,
+          imported_resolution: "1080p",
+          imported_source: "BLURAY",
+          imported_size: 9_000_000_000
+        })
+
+      {:ok, grab} = arbitrated_grab([adopted, vetoing], release_dir, title)
+
+      start_supervised!({TvPoller, interval: 60_000})
+      assert :ok = TvPoller.poll()
+
+      # Imported, not parked. `poll/0` runs the import inside `isolate/2`, which swallows a raise
+      # and still returns `:ok` — and every assertion below is an "unchanged" one, so without this
+      # anchor an import that stopped reaching `keep_held_files/5` would leave the fixture's own
+      # state in place and pass.
+      refute Repo.get(Grab, grab.id)
+      assert Catalog.count_operator_holds() == 0
+
+      kept = Repo.get!(Episode, adopted.id)
+
+      # It kept its own file, so nothing in this import ever looked at that file. "Unknown" is the
+      # only honest record; the declined pack's 1080p/bluray would be a lie that sticks.
+      assert File.read!(kept.file_path) == "adopted-480p-rip"
+
+      assert %{
+               resolution: kept.imported_resolution,
+               source: kept.imported_source,
+               language: kept.imported_language,
+               audio: kept.imported_audio_languages,
+               embedded: kept.imported_embedded_subtitles,
+               sidecars: kept.imported_sidecar_subtitles
+             } == %{
+               resolution: nil,
+               source: nil,
+               language: nil,
+               audio: ["jpn"],
+               embedded: ["jpn", "eng"],
+               sidecars: ["eng"]
+             }
+    end
+  end
+
   # #257: the sweep gates on `Enum.any?`, so ONE improvable episode carries the whole pack. This is
   # the route that closed the first attempt (PR #285), end to end. `Library.new_quality/3` backfills
   # only NIL fields — deliberately, so a genuinely mixed pack keeps a member's worse token — which
@@ -571,18 +721,18 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
   defp incoming(number) when number in [1, 3], do: "1080p"
   defp incoming(_number), do: "720p"
 
-  defp arbitrated_grab(episodes, release_dir),
-    do: downloaded_grab(episodes, release_dir, arbitrate_at_import: true)
+  defp arbitrated_grab(episodes, release_dir, title \\ "Show.S01.1080p.WEB-DL-GRP"),
+    do: downloaded_grab(episodes, release_dir, [arbitrate_at_import: true], title)
 
   defp manual_grab(episodes, release_dir), do: downloaded_grab(episodes, release_dir, [])
 
-  defp downloaded_grab(episodes, release_dir, opts) do
+  defp downloaded_grab(episodes, release_dir, opts, title \\ "Show.S01.1080p.WEB-DL-GRP") do
     {:ok, grab} =
       Catalog.create_grab(
         "arb-#{System.unique_integer([:positive])}",
         :usenet,
         Enum.map(episodes, & &1.id),
-        "Show.S01.1080p.WEB-DL-GRP",
+        title,
         [allow_available: true] ++ opts
       )
 
