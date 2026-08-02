@@ -199,6 +199,23 @@ defmodule CinderWeb.ActivityLive do
     end
   end
 
+  def handle_event("discard_grab_file", %{"id" => id}, socket) when is_binary(id) do
+    case positive_id(id) do
+      {:ok, file_id} -> {:noreply, discard_grab_files(socket, [file_id])}
+      {:error, _reason} -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("discard_grab_files", %{"id" => id}, socket) when is_binary(id) do
+    file_ids =
+      case find_by_id(socket.assigns.grabs, id) do
+        nil -> []
+        grab -> Enum.map(Catalog.unresolved_grab_files(grab), & &1.id)
+      end
+
+    {:noreply, discard_grab_files(socket, file_ids)}
+  end
+
   def handle_event("hold_grab_file", %{"id" => id}, socket) when is_binary(id) do
     case positive_id(id) do
       {:ok, file_id} ->
@@ -214,6 +231,32 @@ defmodule CinderWeb.ActivityLive do
 
   # Client-controlled payloads — ignore anything unmatched rather than crash.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  # Bulk Discard is per-file on purpose: each id is re-read and claimed inside the Catalog, so a
+  # stale snapshot id is an idempotent no-op rather than a failure, and the guarded close is
+  # attempted after every decision — it only lands once the last undecided file is gone.
+  defp discard_grab_files(socket, file_ids) do
+    errors =
+      file_ids
+      |> Enum.map(&{&1, TvPoller.discard_grab_file(&1)})
+      |> Enum.flat_map(fn
+        {_file_id, {:ok, _state, _file}} -> []
+        {file_id, {:error, reason}} -> [{file_id, grab_file_error(reason)}]
+      end)
+      |> Map.new()
+
+    socket =
+      socket
+      |> assign(
+        grab_file_errors:
+          socket.assigns.grab_file_errors |> Map.drop(file_ids) |> Map.merge(errors)
+      )
+      |> refresh_grabs()
+
+    if errors == %{},
+      do: put_flash(socket, :info, gettext("File decision saved.")),
+      else: socket
+  end
 
   defp refresh_grabs(socket) do
     grabs = Catalog.list_grabs()
@@ -534,6 +577,19 @@ defmodule CinderWeb.ActivityLive do
             >
               {grab_file_hold_reason(length(Catalog.unresolved_grab_files(g)))}
             </p>
+            <.button
+              :if={Catalog.unresolved_grab_files(g) != []}
+              id={"discard-grab-files-#{g.id}"}
+              type="button"
+              variant="ghost"
+              size="xs"
+              class="mt-2"
+              phx-click="discard_grab_files"
+              phx-value-id={g.id}
+              phx-disable-with={gettext("Discarding…")}
+            >
+              {gettext("Discard all")}
+            </.button>
             <div
               :for={f <- Catalog.unresolved_grab_files(g)}
               id={"grab-file-#{f.id}"}
@@ -573,7 +629,7 @@ defmodule CinderWeb.ActivityLive do
                   required
                   aria-label={gettext("TMDB episode for %{file}", file: f.relative_path)}
                 />
-                <div class="grid gap-2 sm:grid-cols-3">
+                <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                   <div>
                     <.button
                       type="submit"
@@ -617,6 +673,27 @@ defmodule CinderWeb.ActivityLive do
                       type="button"
                       variant="ghost"
                       size="sm"
+                      phx-click="discard_grab_file"
+                      phx-value-id={f.id}
+                      aria-label={gettext("Discard %{file}", file: f.relative_path)}
+                      aria-describedby={"grab-file-#{f.id}-discard-copy"}
+                    >
+                      {gettext("Discard")}
+                    </.button>
+                    <p
+                      id={"grab-file-#{f.id}-discard-copy"}
+                      class="mt-1 text-xs text-base-content/70"
+                    >
+                      {gettext(
+                        "It belongs to no episode of this download. Nothing is bound and nothing is kept."
+                      )}
+                    </p>
+                  </div>
+                  <div>
+                    <.button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
                       phx-click="hold_grab_file"
                       phx-value-id={f.id}
                       aria-label={gettext("Hold %{file}", file: f.relative_path)}
@@ -635,19 +712,30 @@ defmodule CinderWeb.ActivityLive do
               </.form>
               <div :if={g.episodes == []} class="mt-3">
                 <p class="text-sm text-warning">
-                  {gettext("No eligible TMDB episode remains; keep this file held.")}
+                  {gettext("No eligible TMDB episode remains; discard this file or keep it held.")}
                 </p>
-                <.button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  class="mt-2"
-                  phx-click="hold_grab_file"
-                  phx-value-id={f.id}
-                  aria-label={gettext("Hold %{file}", file: f.relative_path)}
-                >
-                  {gettext("Hold")}
-                </.button>
+                <div class="mt-2 flex flex-wrap gap-2">
+                  <.button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    phx-click="discard_grab_file"
+                    phx-value-id={f.id}
+                    aria-label={gettext("Discard %{file}", file: f.relative_path)}
+                  >
+                    {gettext("Discard")}
+                  </.button>
+                  <.button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    phx-click="hold_grab_file"
+                    phx-value-id={f.id}
+                    aria-label={gettext("Hold %{file}", file: f.relative_path)}
+                  >
+                    {gettext("Hold")}
+                  </.button>
+                </div>
               </div>
               <p
                 :if={@grab_file_errors[f.id]}
