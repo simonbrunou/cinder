@@ -81,7 +81,7 @@ defmodule Cinder.Library do
          {:ok, %{size: size, inode: si, major_device: sdev}} <- fs().lstat(source),
          parsed = Parser.parse(Path.basename(path)),
          new_q =
-           new_quality(parsed, size)
+           new_quality(parsed, size, movie.release_title)
            |> Map.merge(cached_or_capture_media(source, reports))
            |> Map.put_new(:sidecar_subtitles, []),
          dest = Naming.movie_dest(movie, source, root),
@@ -211,8 +211,34 @@ defmodule Cinder.Library do
     }
   end
 
-  defp new_quality(parsed, size) do
-    %{resolution: parsed.resolution, source: parsed.source, size: size, language: parsed.language}
+  # What a staged file inherits from the download it arrived in, threaded as one value because the
+  # three travel together the whole way down: `folder?` gates sidecar linking, `reports` is the
+  # media-probe cache (anime preflight), and `release_title` is the grab's release name, whose
+  # parsed tokens backfill what a terse inner file name omits (see `new_quality/3`).
+  defp download_context(folder?, reports, release_title),
+    do: %{folder?: folder?, reports: reports, release_title: release_title}
+
+  # The recorded quality is what every later upgrade comparison ranks the record on, so it must be
+  # at least as informed as the RELEASE TITLE the sweep decided from — otherwise a terse inner file
+  # name (`S03E01.mkv` inside `Show.S03.1080p.BluRay-GRP`) records nils, nils rank last, and the
+  # release keeps out-ranking the very file it produced, re-downloading forever (#275). Release and
+  # record are parsed by the same `Parser`, so after the backfill a release provably cannot beat
+  # its own output on resolution, source or language.
+  #
+  # Field by field, never wholesale: the file's own name always wins where it says something, so a
+  # `720p` file inside a `1080p` pack still records 720p and stays a legitimate upgrade target.
+  # `size` is never backfilled — the release's size is the whole container (extras, subs, samples),
+  # the file's is the file.
+  defp new_quality(parsed, size, release_title \\ nil) do
+    # Parser.parse/1 is total: a nil title yields an all-nil parse, i.e. no backfill.
+    release = Parser.parse(release_title)
+
+    %{
+      resolution: parsed.resolution || release.resolution,
+      source: parsed.source || release.source,
+      size: size,
+      language: parsed.language || release.language
+    }
   end
 
   # Probe the source's audio + embedded-subtitle languages for storage on the imported row. Empty
@@ -502,7 +528,9 @@ defmodule Cinder.Library do
         |> reject_wrong_audio(episodes)
         |> drop_already_held(videos, already_held, release_title)
 
-      case stage_all(to_import, root, episode_target(episodes), folder?, collision) do
+      download = download_context(folder?, %{}, release_title)
+
+      case stage_all(to_import, root, episode_target(episodes), download, collision) do
         {:ok, []} ->
           log_unmatched(unmatched)
           {:ok, [], unmatched}
@@ -555,8 +583,7 @@ defmodule Cinder.Library do
              [episode],
              source,
              root,
-             folder?,
-             %{},
+             download_context(folder?, %{}, nil),
              dest,
              :adopt,
              fn _new_quality -> false end
@@ -682,7 +709,12 @@ defmodule Cinder.Library do
          {:ok, to_import} <-
            anime_import_pairs(grab, preflight.assignments, current.folder?),
          {:ok, reports} <- verify_grab_policy(grab, to_import) do
-      stage_anime_all(to_import, root, episode_target(grab.episodes), current.folder?, reports)
+      stage_anime_all(
+        to_import,
+        root,
+        episode_target(grab.episodes),
+        download_context(current.folder?, reports, grab.release_title)
+      )
     else
       {:error, :inventory_changed} -> {:restart_preflight, :inventory_changed}
       {:error, _reason} = error -> error
@@ -1145,13 +1177,13 @@ defmodule Cinder.Library do
   # `keeps` (held path => its noop stage) is threaded across every group on purpose: two episodes
   # sharing one `file_path` can decline in one group (a combined incoming file) or in two (the
   # pack ships them separately), and `import_stages.dest` is globally unique either way.
-  defp stage_all(to_import, root, target, folder?, collision) do
+  defp stage_all(to_import, root, target, download, collision) do
     to_import
     |> Enum.group_by(fn {_ep, source} -> source end, fn {ep, _source} -> ep end)
     |> Enum.reduce_while({:ok, [], %{}}, fn {source, episodes}, {:ok, acc, keeps} ->
       episodes = Enum.sort_by(episodes, & &1.episode_number)
 
-      case stage_group(episodes, source, root, target, folder?, collision, keeps) do
+      case stage_group(episodes, source, root, target, download, collision, keeps) do
         {:ok, imported, keeps} ->
           {:cont, {:ok, Enum.reverse(imported, acc), keeps}}
 
@@ -1172,11 +1204,11 @@ defmodule Cinder.Library do
   # the gate would consult only the group's first episode, and a decline would re-point every row
   # in the group at that one episode's file — leaving the others' files unreferenced for
   # `remove_superseded_episode_files/1` to delete.
-  defp stage_group(episodes, source, root, target, folder?, :arbitrate, keeps) do
-    case arbitration_quality(source) do
+  defp stage_group(episodes, source, root, target, download, :arbitrate, keeps) do
+    case arbitration_quality(source, download.release_title) do
       {:ok, new_q} ->
         if Enum.all?(episodes, &ep_upgrade?(&1, new_q, target)) do
-          stage_group(episodes, source, root, target, folder?, :adopt, keeps)
+          stage_group(episodes, source, root, target, download, :adopt, keeps)
         else
           keep_held_files(episodes, source, root, keeps)
         end
@@ -1186,19 +1218,19 @@ defmodule Cinder.Library do
     end
   end
 
-  defp stage_group(episodes, source, root, target, folder?, collision, keeps) do
-    case stage_episode_file(episodes, source, root, target, folder?, %{}, collision) do
+  defp stage_group(episodes, source, root, target, download, collision, keeps) do
+    case stage_episode_file(episodes, source, root, target, download, collision) do
       {:ok, stage} -> {:ok, Enum.map(episodes, &{&1.id, stage}), keeps}
       {:error, _reason} = error -> error
     end
   end
 
   # Only the four fields `Upgrade.better?/5` ranks on, so this skips the media-info probe
-  # `stage_episode_file_at/8` runs — audio and subtitle languages never enter the comparison.
-  defp arbitration_quality(source) do
+  # `stage_episode_file_at/7` runs — audio and subtitle languages never enter the comparison.
+  defp arbitration_quality(source, release_title) do
     with {:ok, source} <- safe_source_file(source),
          {:ok, %{size: size}} <- fs().lstat(source) do
-      {:ok, new_quality(Parser.parse(Path.basename(source)), size)}
+      {:ok, new_quality(Parser.parse(Path.basename(source)), size, release_title)}
     end
   end
 
@@ -1245,11 +1277,12 @@ defmodule Cinder.Library do
 
       :error ->
         decline = fn _new_quality -> false end
-        stage_episode_file_at([ep], source, root, false, %{}, ep.file_path, :adopt, decline)
+        held = download_context(false, %{}, nil)
+        stage_episode_file_at([ep], source, root, held, ep.file_path, :adopt, decline)
     end
   end
 
-  defp stage_anime_all(to_import, root, target, folder?, reports) do
+  defp stage_anime_all(to_import, root, target, download) do
     to_import
     |> Enum.group_by(
       fn {episode, source} -> {source, episode.season.season_number} end,
@@ -1259,7 +1292,7 @@ defmodule Cinder.Library do
     |> Enum.reduce_while({:ok, []}, fn {{source, _season}, episodes}, {:ok, acc} ->
       episodes = Enum.sort_by(episodes, & &1.episode_number)
 
-      case stage_episode_file(episodes, source, root, target, folder?, reports, :force) do
+      case stage_episode_file(episodes, source, root, target, download, :force) do
         {:ok, stage} ->
           rows = Enum.map(episodes, &{&1.id, stage})
           {:cont, {:ok, Enum.reverse(rows, acc)}}
@@ -1291,7 +1324,7 @@ defmodule Cinder.Library do
     end
   end
 
-  defp stage_episode_file([ep | _] = episodes, source, root, target, folder?, reports, collision) do
+  defp stage_episode_file([ep | _] = episodes, source, root, target, download, collision) do
     dest = Naming.episode_dest(episodes, source, root)
 
     collision =
@@ -1303,8 +1336,7 @@ defmodule Cinder.Library do
            episodes,
            source,
            root,
-           folder?,
-           reports,
+           download,
            dest,
            collision,
            fn new_quality -> ep_upgrade?(ep, new_quality, target) end
@@ -1324,8 +1356,7 @@ defmodule Cinder.Library do
          [ep | _] = episodes,
          source,
          root,
-         folder?,
-         reports,
+         download,
          dest,
          collision,
          upgrade_fun
@@ -1334,8 +1365,8 @@ defmodule Cinder.Library do
          {:ok, %{size: size, inode: si, major_device: sdev}} <- fs().lstat(source),
          parsed = Parser.parse(Path.basename(source)),
          new_q =
-           new_quality(parsed, size)
-           |> Map.merge(cached_or_capture_media(source, reports))
+           new_quality(parsed, size, download.release_title)
+           |> Map.merge(cached_or_capture_media(source, download.reports))
            |> Map.put_new(:sidecar_subtitles, []),
          {:ok, dest} <- safe_destination(dest, root),
          :ok <- fs().mkdir_p(Path.dirname(dest)),
@@ -1350,7 +1381,7 @@ defmodule Cinder.Library do
              collision == :force,
              fn -> upgrade_fun.(new_q) end
            ) do
-      quality = staged_sidecar_quality(quality, placed?, folder?, source)
+      quality = staged_sidecar_quality(quality, placed?, download.folder?, source)
 
       {:ok,
        %{
@@ -1360,7 +1391,7 @@ defmodule Cinder.Library do
          rollback:
            Map.merge(rollback, %{
              after_commit: {:episodes, episodes},
-             folder?: folder?,
+             folder?: download.folder?,
              source: source
            })
        }}

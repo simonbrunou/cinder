@@ -2587,6 +2587,48 @@ defmodule Cinder.Download.PollerTest do
       assert_receive {:rm, "/lib/M (2020)/M (2020).mkv"}
     end
 
+    test "a terse single-file download records the release title's quality (#275)" do
+      movie =
+        movie_fixture(%{
+          tmdb_id: 71,
+          status: :upgrading,
+          download_id: "dl-terse",
+          download_protocol: :torrent,
+          release_title: "Better.1080p.BluRay-GRP",
+          file_path: "/lib/M (2020)/M (2020).mkv",
+          imported_resolution: "720p"
+        })
+
+      start_supervised!({Poller, interval: 60_000})
+
+      # A single-file download whose content path IS the file, and whose name carries none of the
+      # release's tokens. Recording that parse verbatim left `imported_resolution` nil, which ranks
+      # LAST — so the very release this file came from out-ranked it on every later sweep (#275).
+      expect(Cinder.Download.ClientMock, :status, fn "dl-terse" ->
+        {:ok, %{state: :completed, content_path: "/dl/video.mkv"}}
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+
+      stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
+        if String.contains?(path, [".cinder-rollback-", ".cinder-stage-"]),
+          do: {:error, :enoent},
+          else: {:ok, %File.Stat{size: 1, inode: 1}}
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _ -> :ok end)
+      stub(Cinder.Library.FilesystemMock, :ln, fn _src, _dest -> {:error, :eexist} end)
+      stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
+      stub(Cinder.Library.MediaServerMock, :scan, fn _kind -> :ok end)
+
+      assert :ok = Poller.poll()
+
+      reloaded = Repo.get!(Movie, movie.id)
+      assert reloaded.status == :available
+      assert reloaded.imported_resolution == "1080p"
+      assert reloaded.imported_source == "bluray"
+    end
+
     @tag :tmp_dir
     test "a stale same-path upgrade restores the original bytes", %{tmp_dir: tmp} do
       %{downloads: downloads, movies: movies} = use_real_library(tmp)

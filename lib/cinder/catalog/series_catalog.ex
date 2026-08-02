@@ -223,7 +223,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
 
   Two known inexactnesses, recorded rather than fixed:
 
-    * `Cinder.Library.stage_anime_all/5` groups by `{source, season_number}` rather than by source
+    * `Cinder.Library.stage_anime_all/4` groups by `{source, season_number}` rather than by source
       alone, so one physical file spanning two seasons gets two destinations and is counted twice.
     * Episode rows written before the `imported_size` column existed carry a `file_path` with no
       size and are excluded, so an old series can read smaller than a new one. The predicate stays

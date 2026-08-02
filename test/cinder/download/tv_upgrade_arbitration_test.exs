@@ -13,9 +13,11 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
   import Mox
   import Cinder.CatalogFixtures
 
+  alias Cinder.Acquisition.{Language, Release}
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Grab, GrabFile}
   alias Cinder.Download.TvPoller
+  alias Cinder.Library.Upgrade
   alias Cinder.Repo
 
   setup :set_mox_global
@@ -177,6 +179,142 @@ defmodule Cinder.Download.TvUpgradeArbitrationTest do
       assert Catalog.count_operator_holds() == 0
     end
   end
+
+  # #275: the sweep decides from the RELEASE TITLE's parsed quality but the import used to record
+  # only the inner FILE NAME's. A terse pack member records nils, nils rank last, and the release
+  # out-ranks the very file it produced on every rotation — an unbounded re-download.
+  describe "a terse pack member inherits the release title's quality" do
+    @tag :tmp_dir
+    test "resolution and source are backfilled and the release stops out-ranking its own output",
+         %{tmp_dir: tmp} do
+      title = "Show.S01.1080p.BluRay-KONTRAST"
+
+      pack =
+        terse_pack(tmp, 4245, title, "S01E01.mkv", %{
+          imported_resolution: "480p",
+          imported_source: "WEBDL",
+          imported_size: 700_000_000
+        })
+
+      imported = import_pack(pack, title)
+
+      assert imported.file_path == Path.join(pack.library, "Show (2008) {tmdb-4245} - S01E01.mkv")
+      assert File.read!(imported.file_path) == "incoming"
+      assert imported.imported_resolution == "1080p"
+      assert imported.imported_source == "bluray"
+
+      # Same parser on both sides, so the release it came from can no longer read as an upgrade.
+      refute Upgrade.candidate?(imported, release(title, imported.imported_size), :tv, nil)
+    end
+
+    @tag :tmp_dir
+    test "the language token is backfilled, so a non-English household stops re-grabbing", %{
+      tmp_dir: tmp
+    } do
+      title = "Show.S01.1080p.MULTi.BluRay-KONTRAST"
+      target = Language.target("french", "en")
+
+      pack =
+        terse_pack(
+          tmp,
+          4246,
+          title,
+          "S01E01.mkv",
+          %{
+            imported_resolution: "480p",
+            imported_source: "WEBDL",
+            imported_size: 700_000_000
+          },
+          %{preferred_language: "french"}
+        )
+
+      imported = import_pack(pack, title)
+
+      assert imported.imported_language == "MULTI"
+
+      # `Upgrade.better?/5` asks the language question BEFORE any quality comparison, and
+      # `satisfies_lang?(nil, "fr")` is false — a nil recorded language read as :upgrade
+      # unconditionally, every rotation, whatever the resolution or size said.
+      refute Upgrade.candidate?(imported, release(title, imported.imported_size), :tv, target)
+    end
+
+    @tag :tmp_dir
+    test "a token the file itself carries wins over the release's", %{tmp_dir: tmp} do
+      title = "Show.S01.1080p.BluRay-KONTRAST"
+
+      pack =
+        terse_pack(tmp, 4247, title, "S01E01.720p.mkv", %{
+          imported_resolution: "480p",
+          imported_source: "WEBDL",
+          imported_size: 700_000_000
+        })
+
+      imported = import_pack(pack, title)
+
+      # The file says 720p inside a pack titled 1080p: the file's own signal wins, and the release
+      # only fills the source, which the file name omits. A genuinely mixed pack therefore leaves
+      # this episode a legitimate upgrade target.
+      assert imported.imported_resolution == "720p"
+      assert imported.imported_source == "bluray"
+
+      assert Upgrade.candidate?(
+               imported,
+               release("Show.S01E01.1080p.BluRay-OTHER", imported.imported_size),
+               :tv,
+               nil
+             )
+    end
+  end
+
+  defp terse_pack(tmp, tmdb_id, title, inner_file, episode_attrs, series_attrs \\ %{}) do
+    %{downloads: downloads, tv: tv} = real_tv_library(tmp)
+
+    release_dir = Path.join(downloads, title)
+    File.mkdir_p!(release_dir)
+    File.write!(Path.join(release_dir, inner_file), "incoming")
+
+    library = Path.join([tv, "Show (2008) {tmdb-#{tmdb_id}}", "Season 01"])
+    File.mkdir_p!(library)
+
+    series =
+      series_fixture(
+        Map.merge(
+          %{tmdb_id: tmdb_id, title: "Show", year: 2008, monitor_strategy: :all},
+          series_attrs
+        )
+      )
+
+    held = Path.join(library, "Show (2008) {tmdb-#{tmdb_id}} - S01E01.mkv")
+    File.write!(held, "held-1")
+
+    episode =
+      series
+      |> season_fixture()
+      |> episode_fixture(Map.merge(%{episode_number: 1, file_path: held}, episode_attrs))
+
+    %{release_dir: release_dir, library: library, episode: episode}
+  end
+
+  defp import_pack(%{episode: episode, release_dir: release_dir}, title) do
+    {:ok, grab} =
+      Catalog.create_grab(
+        "arb-#{System.unique_integer([:positive])}",
+        :usenet,
+        [episode.id],
+        title,
+        allow_available: true,
+        arbitrate_at_import: true
+      )
+
+    {:ok, _grab} = Catalog.mark_grab_downloaded(grab, release_dir)
+
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    Repo.get!(Episode, episode.id)
+  end
+
+  defp release(title, size), do: Release.new(%{title: title, size: size})
 
   # E01/E03 are 480p and the pack beats them; E02/E04 are 1080p BluRay at 9 GB and it does not.
   # E02's incoming file is .mp4 so its destination differs from the .mkv already held.
