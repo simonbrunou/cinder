@@ -237,7 +237,8 @@ defmodule Cinder.Download.TvPoller do
   defp import_standard_grab(grab) do
     case Library.stage_episodes(grab.content_path, grab.episodes,
            arbitrate: grab.arbitrate_at_import,
-           already_held: already_held_episodes(grab)
+           already_held: already_held_episodes(grab),
+           release_title: grab.release_title
          ) do
       {:ok, staged, unmatched} ->
         finalize_standard_staging(grab, staged, unmatched)

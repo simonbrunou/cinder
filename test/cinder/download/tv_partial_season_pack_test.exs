@@ -155,6 +155,62 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
     end
   end
 
+  # #265: the SERIES title is anchored at token zero of the file name, so these ordinary pack
+  # layouts confirmed nothing and every already-held file in them stayed an operator hold —
+  # deterministically, for the life of such a series. The grab's own release title supplies the
+  # title the file omits or qualifies, and each of these files repeats it.
+  for {shape, release, title, file} <- [
+        {"a qualifier the TMDB title lacks", "Shameless.US", "Shameless",
+         "Shameless.US.S01E05.1080p.WEB-DL.mkv"},
+        {"a site prefix the pack carries too", "www.tracker.org - Show", "Show",
+         "www.tracker.org - Show.S01E05.1080p.WEB-DL.mkv"},
+        {"a group tag the pack does not carry", "Show", "Show",
+         "[TGx] Show.S01E05.1080p.WEB-DL.mkv"},
+        {"no title at all", "Show", "Show", "S01E05.mkv"}
+      ] do
+    @tag :tmp_dir
+    @release release
+    @series_title title
+    @scene_file file
+    test "a pack file with #{shape} is still recognised as ours", %{tmp_dir: tmp} do
+      %{grab: grab} =
+        partial_season_pack(tmp, [@scene_file],
+          title: @series_title,
+          release: @release,
+          pack: [9, 10]
+        )
+
+      start_supervised!({TvPoller, interval: 60_000})
+      assert :ok = TvPoller.poll()
+
+      assert Repo.all(GrabFile) == []
+      refute Repo.get(Grab, grab.id)
+    end
+  end
+
+  @tag :tmp_dir
+  test "another series' episode survives the pack-name check too", %{tmp_dir: tmp} do
+    # The counterpart of the four above: the pack name is what confirms a file now, and a foreign
+    # episode repeats none of it. Same discard-is-unrecoverable rule as #262, one layer down.
+    %{grab: grab} =
+      partial_season_pack(tmp, ["Totally.Different.Show.S01E05.1080p.WEB-DL.mkv"],
+        title: "Shameless",
+        release: "Shameless.US",
+        pack: [9, 10]
+      )
+
+    start_supervised!({TvPoller, interval: 60_000})
+    assert :ok = TvPoller.poll()
+
+    grab = Repo.get!(Grab, grab.id) |> Repo.preload(:grab_files)
+
+    assert Enum.map(grab.grab_files, & &1.relative_path) == [
+             "Totally.Different.Show.S01E05.1080p.WEB-DL.mkv"
+           ]
+
+    assert Grabs.grab_hold(grab) == :residual_files
+  end
+
   @tag :tmp_dir
   test "a two-parter spanning a held and a wanted episode stays a decision", %{tmp_dir: tmp} do
     # E08 is in the library, E09 is not, so `Show.S01E08E09.mkv` names one episode we hold and one
@@ -200,21 +256,25 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
 
   # A 10-episode season: E01–E08 already in the library, E09–E10 wanted. `pack:` is which episodes
   # get a standalone file in the release, `link:` which the grab claims (the sweep links only what
-  # it searched for — that is what leaves the rest unclaimed at import).
+  # it searched for — that is what leaves the rest unclaimed at import). `release:` is the pack's
+  # own name before its tags: it names the folder, the grab's `release_title` and the standalone
+  # files, the way a real pack repeats itself.
   defp partial_season_pack(tmp, extra_files, opts \\ []) do
     packed = Keyword.get(opts, :pack, Enum.to_list(1..10))
     linked = Keyword.get(opts, :link, [9, 10])
     title = Keyword.get(opts, :title, "Show")
     year = Keyword.get(opts, :year, 2008)
+    release = Keyword.get(opts, :release, "Show")
+    release_title = "#{release}.S01.1080p.WEB-DL-GRP"
 
     %{downloads: downloads, tv: tv} = real_tv_library(tmp)
 
-    release_dir = Path.join(downloads, "Show.S01.1080p.WEB-DL-GRP")
+    release_dir = Path.join(downloads, release_title)
     File.mkdir_p!(release_dir)
 
     for number <- packed do
       File.write!(
-        Path.join(release_dir, "Show.S01E#{pad(number)}.1080p.WEB-DL.mkv"),
+        Path.join(release_dir, "#{release}.S01E#{pad(number)}.1080p.WEB-DL.mkv"),
         "release-#{number}"
       )
     end
@@ -250,7 +310,7 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
         "partial-#{System.unique_integer([:positive])}",
         :usenet,
         Enum.map(to_link, & &1.id),
-        "Show.S01.1080p.WEB-DL-GRP"
+        release_title
       )
 
     {:ok, grab} = Catalog.mark_grab_downloaded(grab, release_dir)

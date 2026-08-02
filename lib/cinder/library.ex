@@ -476,6 +476,9 @@ defmodule Cinder.Library do
   `already_held:` is the series' episodes that already have a file. A video claimed by one of
   them is dropped rather than reported unmatched, so a pack grabbed for the *wanted* half of a
   season doesn't turn the other half's files into operator decisions (#251).
+
+  `release_title:` is the grab's release name, which is what confirms such a file really belongs
+  to this pack (`names_series?/3`, #265).
   """
   @spec stage_episodes(String.t() | nil, [Episode.t()], keyword()) ::
           {:ok, [{integer(), map()}], [String.t()]} | {:error, term()}
@@ -486,6 +489,8 @@ defmodule Cinder.Library do
 
   def stage_episodes(content_path, episodes, opts) do
     collision = if Keyword.get(opts, :arbitrate, false), do: :arbitrate, else: :force
+    already_held = Keyword.get(opts, :already_held, [])
+    release_title = Keyword.get(opts, :release_title)
 
     with {:ok, root} <- root(:tv),
          {:ok, videos, folder?} <- video_files(content_path) do
@@ -495,7 +500,7 @@ defmodule Cinder.Library do
         |> dedupe_per_episode()
         |> resolve(videos, episodes)
         |> reject_wrong_audio(episodes)
-        |> drop_already_held(videos, Keyword.get(opts, :already_held, []))
+        |> drop_already_held(videos, already_held, release_title)
 
       case stage_all(to_import, root, episode_target(episodes), folder?, collision) do
         {:ok, []} ->
@@ -863,9 +868,9 @@ defmodule Cinder.Library do
   # residuals: an operator hold, one click per file, for episodes we already have (#251). The
   # residual UI exists for files we can't identify — these we can, so drop them. Anything naming
   # an episode we don't hold, naming nothing, or naming another series stays a residual.
-  defp drop_already_held(result, _videos, []), do: result
+  defp drop_already_held(result, _videos, [], _release_title), do: result
 
-  defp drop_already_held({to_import, unmatched}, videos, [held | _] = already_held) do
+  defp drop_already_held({to_import, unmatched}, videos, [held | _] = already_held, release_title) do
     series = held.season.series
 
     claimed =
@@ -873,7 +878,9 @@ defmodule Cinder.Library do
       |> Enum.filter(fn {path, _size} -> path in unmatched end)
       |> match_episodes(already_held)
       |> Enum.group_by(fn {_ep, path, _size} -> path end, fn {ep, _path, _size} -> ep end)
-      |> Enum.filter(fn {path, claiming} -> fully_held?(path, claiming, series) end)
+      |> Enum.filter(fn {path, claiming} ->
+        fully_held?(path, claiming, series, release_title)
+      end)
       |> MapSet.new(fn {path, _claiming} -> path end)
 
     case Enum.split_with(unmatched, &MapSet.member?(claimed, &1)) do
@@ -890,13 +897,14 @@ defmodule Cinder.Library do
   # value. `episode_coordinate_memberships` is many-to-many by schema, so a writer binding several
   # would inflate the count past `named`; revisit here if that changes. An unparseable name is not
   # droppable — unreachable (a claim required a parse) but the wrong default to leave lying around.
-  defp fully_held?(path, claiming, series) do
+  defp fully_held?(path, claiming, series, release_title) do
     case Parser.parse(Path.basename(path)).episodes do
       nil ->
         false
 
       named ->
-        names_series?(path, series) and length(Enum.uniq_by(claiming, & &1.id)) >= length(named)
+        names_series?(path, series, release_title) and
+          length(Enum.uniq_by(claiming, & &1.id)) >= length(named)
     end
   end
 
@@ -910,8 +918,18 @@ defmodule Cinder.Library do
   # "Law & Order" <=> "Law.and.Order". A second implementation would quietly disagree with the
   # guard that accepted this release in the first place, and every disagreement re-opens the
   # operator hold #251 removed. Whatever it rejects stays a residual — the recoverable direction.
-  defp names_series?(path, series),
-    do: Acquisition.names_title?(Path.basename(path), series)
+  #
+  # The series title alone is anchored at token zero, so three ordinary pack layouts never confirm
+  # and every one of their files stays an operator hold: a qualifier TMDB lacks
+  # ("Shameless.US.S01E05.mkv"), a site/group prefix, and a title-less inner file (#265). The
+  # grab's own release title is what supplies the title those files omit or qualify —
+  # `names_release?/3` — and the two are ORed: either name confirming the file is enough.
+  defp names_series?(path, series, release_title) do
+    base = Path.basename(path)
+
+    Acquisition.names_title?(base, series) or
+      Acquisition.names_release?(base, release_title, series)
+  end
 
   defp log_already_held(dropped, kept) do
     Logger.info(
