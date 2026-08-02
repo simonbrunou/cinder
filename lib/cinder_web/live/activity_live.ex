@@ -202,10 +202,10 @@ defmodule CinderWeb.ActivityLive do
   # Discard is irreversible — the row can only be decided once, and once the last file is
   # decided the grab closes, deletes its files rows and lets source cleanup remove the payload.
   # So it asks first, like every other destructive action here.
-  def handle_event("ask_discard_file", %{"id" => id}, socket),
+  def handle_event("ask_discard_file", %{"id" => id}, socket) when is_binary(id),
     do: {:noreply, assign(socket, confirming: "file:#{id}")}
 
-  def handle_event("ask_discard_files", %{"id" => id}, socket),
+  def handle_event("ask_discard_files", %{"id" => id}, socket) when is_binary(id),
     do: {:noreply, assign(socket, confirming: "files:#{id}")}
 
   def handle_event("confirm_discard_file", %{"id" => id}, socket) when is_binary(id) do
@@ -218,13 +218,26 @@ defmodule CinderWeb.ActivityLive do
   end
 
   def handle_event("confirm_discard_files", %{"id" => id}, socket) when is_binary(id) do
-    file_ids =
-      case find_by_id(socket.assigns.grabs, id) do
-        nil -> []
-        grab -> Enum.map(Catalog.unresolved_grab_files(grab), & &1.id)
-      end
+    socket = assign(socket, confirming: nil)
 
-    {:noreply, socket |> assign(confirming: nil) |> discard_grab_files(file_ids)}
+    # The confirm sits open for as long as the operator takes, so the grab may be gone or already
+    # fully decided by then. Say so — discarding nothing must not report a discard.
+    case find_by_id(socket.assigns.grabs, id) do
+      nil ->
+        {:noreply, put_flash(socket, :error, gettext("That download is already gone."))}
+
+      grab ->
+        case Enum.map(Catalog.unresolved_grab_files(grab), & &1.id) do
+          [] ->
+            {:noreply,
+             socket
+             |> refresh_grabs()
+             |> put_flash(:error, gettext("Those files were already decided."))}
+
+          file_ids ->
+            {:noreply, discard_grab_files(socket, file_ids)}
+        end
+    end
   end
 
   def handle_event("hold_grab_file", %{"id" => id}, socket) when is_binary(id) do
@@ -601,7 +614,7 @@ defmodule CinderWeb.ActivityLive do
               {gettext("Discard all")}
             </.button>
             <.confirm_action
-              :if={@confirming == "files:#{g.id}"}
+              :if={@confirming == "files:#{g.id}" and Catalog.unresolved_grab_files(g) != []}
               id={"confirm-discard-grab-files-#{g.id}"}
               class="mt-2"
               on_confirm="confirm_discard_files"

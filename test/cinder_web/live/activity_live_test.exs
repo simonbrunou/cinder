@@ -292,9 +292,15 @@ defmodule CinderWeb.ActivityLiveTest do
 
     view |> element("#discard-grab-files-#{grab.id}") |> render_click()
 
-    # Same for the bulk action: asking leaves every remaining row undecided.
+    # Same for the bulk action: asking leaves every remaining row undecided — all of them, not
+    # just one, or a bulk ask that decided some would slip through.
     assert has_element?(view, "#confirm-discard-grab-files-#{grab.id}")
-    assert Repo.exists?(from f in GrabFile, where: f.grab_id == ^grab.id and is_nil(f.decision))
+
+    assert 2 ==
+             Repo.aggregate(
+               from(f in GrabFile, where: f.grab_id == ^grab.id and is_nil(f.decision)),
+               :count
+             )
 
     view
     |> element("#confirm-discard-grab-files-#{grab.id} button", "Discard all")
@@ -309,6 +315,95 @@ defmodule CinderWeb.ActivityLiveTest do
     # Nothing was bound to the grab's own episode along the way.
     assert %Episode{file_path: nil, part_file_paths: []} = Repo.reload!(episode)
     refute Repo.exists?(ImportStage)
+  end
+
+  test "cancelling a Discard confirmation decides nothing", %{conn: conn} do
+    grab = grab!()
+    {:ok, grab} = Catalog.mark_grab_downloaded(grab, "/downloads/Severance")
+
+    file =
+      Repo.insert!(%GrabFile{
+        grab_id: grab.id,
+        relative_path: "part-2.mkv",
+        size: 10,
+        device: 1,
+        inode: 11
+      })
+
+    {:ok, view, _html} = live(conn, ~p"/activity")
+
+    view |> element("#grab-file-#{file.id} button", "Discard") |> render_click()
+    assert has_element?(view, "#confirm-discard-grab-file-#{file.id}")
+
+    view |> element("#confirm-discard-grab-file-#{file.id} button", "Cancel") |> render_click()
+
+    refute has_element?(view, "#confirm-discard-grab-file-#{file.id}")
+    assert %GrabFile{decision: nil} = Repo.get!(GrabFile, file.id)
+    assert Repo.get(Grab, grab.id)
+  end
+
+  test "the no-eligible-episode fallback also asks before discarding", %{conn: conn} do
+    grab = grab!()
+    {:ok, grab} = Catalog.mark_grab_downloaded(grab, "/downloads/Severance")
+
+    file =
+      Repo.insert!(%GrabFile{
+        grab_id: grab.id,
+        relative_path: "part-2.mkv",
+        size: 10,
+        device: 1,
+        inode: 11
+      })
+
+    # With no episode left to fold onto, this branch renders its own Discard button.
+    Repo.delete_all(from e in Episode, where: e.grab_id == ^grab.id)
+
+    {:ok, view, _html} = live(conn, ~p"/activity")
+
+    assert render(view) =~ "No eligible TMDB episode remains"
+
+    view |> element("#grab-file-#{file.id} button", "Discard") |> render_click()
+
+    assert has_element?(view, "#confirm-discard-grab-file-#{file.id}")
+    assert %GrabFile{decision: nil} = Repo.get!(GrabFile, file.id)
+
+    view |> element("#confirm-discard-grab-file-#{file.id} button", "Discard") |> render_click()
+
+    # It was the grab's only file, so deciding it closes the grab and cascades the row away —
+    # close_grab/1 rolls back while anything is still undecided, so this is proof it was decided.
+    refute Repo.get(Grab, grab.id)
+    refute Repo.get(GrabFile, file.id)
+  end
+
+  test "a Discard all confirmation left open past the grab's close decides nothing", %{conn: conn} do
+    grab = grab!()
+    {:ok, grab} = Catalog.mark_grab_downloaded(grab, "/downloads/Severance")
+
+    Repo.insert!(%GrabFile{
+      grab_id: grab.id,
+      relative_path: "part-2.mkv",
+      size: 10,
+      device: 1,
+      inode: 11
+    })
+
+    {:ok, view, _html} = live(conn, ~p"/activity")
+
+    view |> element("#discard-grab-files-#{grab.id}") |> render_click()
+    assert has_element?(view, "#confirm-discard-grab-files-#{grab.id}")
+
+    # The confirm stays open for as long as the operator takes; meanwhile the grab goes away.
+    # The view still holds the pre-delete snapshot, so it is the emptied file list — not a nil
+    # grab — that the handler meets. It must survive that and leave the page consistent.
+    Repo.delete!(Repo.get!(Grab, grab.id))
+
+    html =
+      view
+      |> element("#confirm-discard-grab-files-#{grab.id} button", "Discard all")
+      |> render_click()
+
+    assert html =~ "No active downloads"
+    refute has_element?(view, "#confirm-discard-grab-files-#{grab.id}")
   end
 
   test "a Part staging failure stays on its row and leaves every write unresolved", %{conn: conn} do
