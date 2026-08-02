@@ -40,15 +40,16 @@ No memory between runs. Orient first.
   `Repo.transaction`. Writers live in contexts, not LiveViews — flag a LiveView doing its own
   `Repo` write or broadcast.
 
-**Badges:** state renders via `status_badge(kind, status)` (kinds
-`:movie | :request | :episode | :grab | :health`) backed by the `badge_spec` lookup. A new
+**Badges:** state renders via `<.status_badge kind={..} status={..}>` (the `kind` attr's
+`values:` list is `:movie | :series | :request | :episode | :grab | :health | :monitored` —
+re-read it, it grows) backed by the `badge_spec` lookup. A new
 status value must be added to `badge_spec` (else it hits the fallback). The discovery composite
 badge ranks Available over a stale Denied — preserve that.
 
 **Accessibility (M4b house style):**
 - Every icon-only control (toggle, delete, recheck, theme) needs an `aria-label` (gettext).
   Episode monitor toggles and the per-season bulk control both carry per-item labels.
-- The per-season bulk control is a BUTTON ("Monitor all/none" with an N/M count), NOT a
+- The per-season bulk control is a BUTTON ("Monitor all" / "Unmonitor all"), NOT a
   tri-state checkbox (`season.monitored` is a plain bool; HTML `indeterminate` is JS-only).
   Don't reintroduce a tri-state checkbox.
 - Form fields use `<label>` / `label-text`; changeset errors show inline via `translate_error/1`.
@@ -58,8 +59,10 @@ badge ranks Available over a stale Denied — preserve that.
   CastError escape; the failure path flashes + navigates away.
 - A catch-all `handle_event(_event, _params, socket)` must exist (phx-value is client-forged).
 
-**daisyUI / consistency:** buttons `btn` + variant/size (`btn-primary|ghost|error`,
-`btn-sm|xs`); badges `badge badge-<color>`; cards `card bg-base-200 shadow-sm`; semantic base
+**daisyUI / consistency:** buttons go through `<.button variant={..} size={..}>`, whose
+declared values are `primary|neutral|ghost|danger|warning` and `xs|sm|md` (it computes the
+`btn ...` classes itself — flag a raw `class="btn btn-error"` where the component would do);
+badges `badge badge-<color>`; cards `card bg-base-200 shadow-sm`; semantic base
 colors (`base-100/200/300`, `text-base-content`, `/60` for secondary). Icons are heroicons by
 name. Flag ad-hoc hex colors or one-off class soup where a shared component/util already exists.
 
