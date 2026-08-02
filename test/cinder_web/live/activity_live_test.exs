@@ -8,6 +8,7 @@ defmodule CinderWeb.ActivityLiveTest do
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Grab, GrabFile}
   alias Cinder.Download.Intent
+  alias Cinder.Download.TvPoller
   alias Cinder.Library.ImportStage
   alias Cinder.Repo
 
@@ -375,35 +376,40 @@ defmodule CinderWeb.ActivityLiveTest do
     refute Repo.get(GrabFile, file.id)
   end
 
-  test "a Discard all confirmation left open past the grab's close decides nothing", %{conn: conn} do
+  test "a Discard confirmation whose row was decided meanwhile does not report a discard", %{
+    conn: conn
+  } do
     grab = grab!()
     {:ok, grab} = Catalog.mark_grab_downloaded(grab, "/downloads/Severance")
 
-    Repo.insert!(%GrabFile{
-      grab_id: grab.id,
-      relative_path: "part-2.mkv",
-      size: 10,
-      device: 1,
-      inode: 11
-    })
+    for {path, inode} <- [{"part-2.mkv", 11}, {"part-3.mkv", 12}] do
+      Repo.insert!(%GrabFile{
+        grab_id: grab.id,
+        relative_path: path,
+        size: 10,
+        device: 1,
+        inode: inode
+      })
+    end
+
+    first = Repo.one!(from f in GrabFile, where: f.grab_id == ^grab.id, order_by: f.id, limit: 1)
 
     {:ok, view, _html} = live(conn, ~p"/activity")
 
-    view |> element("#discard-grab-files-#{grab.id}") |> render_click()
-    assert has_element?(view, "#confirm-discard-grab-files-#{grab.id}")
+    view |> element("#grab-file-#{first.id} button", "Discard") |> render_click()
+    assert has_element?(view, "#confirm-discard-grab-file-#{first.id}")
 
-    # The confirm stays open for as long as the operator takes; meanwhile the grab goes away.
-    # The view still holds the pre-delete snapshot, so it is the emptied file list — not a nil
-    # grab — that the handler meets. It must survive that and leave the page consistent.
-    Repo.delete!(Repo.get!(Grab, grab.id))
+    # The confirmation sits open while the row is decided out from under it — another operator,
+    # or the poller. The grab survives (a sibling file is still undecided), so the LiveView's
+    # snapshot still offers this id and the handler really does dispatch on a decided row.
+    assert {:ok, :decided, _} = TvPoller.discard_grab_file(first.id)
 
-    html =
-      view
-      |> element("#confirm-discard-grab-files-#{grab.id} button", "Discard all")
-      |> render_click()
+    html = render_click(view, "confirm_discard_file", %{"id" => to_string(first.id)})
 
-    assert html =~ "No active downloads"
-    refute has_element?(view, "#confirm-discard-grab-files-#{grab.id}")
+    # It decided nothing, so it must not say it saved a decision.
+    refute html =~ "File decision saved."
+    assert html =~ "already decided"
+    assert Repo.get(Grab, grab.id)
   end
 
   test "a Part staging failure stays on its row and leaves every write unresolved", %{conn: conn} do
