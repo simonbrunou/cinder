@@ -258,6 +258,29 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert Repo.reload(other_alias).title == "Other series"
   end
 
+  # `preview_scene_group` doesn't parse its value, it stores it into a form — so a forged map
+  # survives the handler and only raises at RENDER, when options_for_select html-escapes it.
+  # The panel has to be open for that to be reachable, which is why this can't live with the
+  # other forged-payload assertions.
+  test "a forged group_id does not crash the open alternate-numbering panel", %{conn: conn} do
+    series = series_fixture(media_profile: :anime, tvdb_id: 12_346)
+
+    stub(Cinder.Catalog.TMDBMock, :get_episode_groups, fn _ ->
+      {:ok, [episode_group(id: "seasons-group", group_count: 3, episode_count: 64)]}
+    end)
+
+    {:ok, view, _html} = live_series(conn, series)
+    view |> element("summary", "Alternate numbering") |> render_click()
+    assert render_async(view) =~ "Seasons (Seasons, 3 groups, 64 episodes)"
+
+    for forged <- [%{"forged" => true}, 7] do
+      assert render_click(view, "preview_scene_group", %{"group_id" => forged})
+    end
+
+    assert Process.alive?(view.pid)
+    assert render(view) =~ "Seasons (Seasons, 3 groups, 64 episodes)"
+  end
+
   test "picks an alternate-numbering group, previews it, and saves it without refetching",
        %{conn: conn} do
     series = series_fixture(media_profile: :anime, tvdb_id: 12_345)
@@ -1243,6 +1266,42 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     {:ok, lv, _html} = live_series(conn, series)
     render_hook(lv, "toggle_episode", %{"id" => "not-an-int"})
     assert render(lv) =~ "Test Show"
+  end
+
+  # "not-an-int" above is still a binary. These clauses parse the id inside the body, and
+  # `Integer.parse/1` is itself `when is_binary` — so a plain integer raises just as a map does,
+  # and the module catch-all cannot help once the clause has matched.
+  test "a forged non-binary id on any id-carrying event is ignored rather than crashing the view",
+       %{conn: conn} do
+    series = create_series(7_310)
+    season = first_season(series.id)
+    episode = first_episode(series.id)
+
+    {:ok, lv, _html} = live_series(conn, series)
+
+    events = [
+      "toggle_episode",
+      "toggle_season",
+      "toggle_season_open",
+      "confirm_delete_episode_file",
+      "confirm_delete_season_files",
+      "search_episode",
+      "search_season"
+    ]
+
+    for event <- events, forged <- [%{"forged" => true}, 7] do
+      assert render_click(lv, event, %{"id" => forged})
+    end
+
+    # `tv_manual_search` carries "season" rather than "id", same shape.
+    for forged <- [%{"forged" => true}, 7] do
+      assert render_click(lv, "tv_manual_search", %{"season" => forged})
+    end
+
+    assert Process.alive?(lv.pid)
+    assert render(lv) =~ "Test Show"
+    refute Repo.reload!(episode).monitored
+    refute Repo.reload!(season).monitored
   end
 
   test "a series that vanishes out-of-band redirects on the next reload", %{conn: conn} do

@@ -52,7 +52,7 @@ defmodule CinderWeb.SeriesDetailLive do
   end
 
   @impl true
-  def handle_event("toggle_episode", %{"id" => id}, socket) do
+  def handle_event("toggle_episode", %{"id" => id}, socket) when is_binary(id) do
     with {id, ""} <- Integer.parse(id),
          %Episode{} = ep <- find_episode(socket.assigns.series, id) do
       case Catalog.set_episode_monitored(ep, !ep.monitored) do
@@ -67,7 +67,7 @@ defmodule CinderWeb.SeriesDetailLive do
     end
   end
 
-  def handle_event("toggle_season", %{"id" => id}, socket) do
+  def handle_event("toggle_season", %{"id" => id}, socket) when is_binary(id) do
     with {id, ""} <- Integer.parse(id),
          %Season{} = season <- find_season(socket.assigns.series, id) do
       # Bulk action: if every episode is already monitored, turn the season off; else on.
@@ -90,7 +90,7 @@ defmodule CinderWeb.SeriesDetailLive do
   # ponytail: the native toggle flips instantly on click and this records it a beat later; a
   # background reload landing inside that click→server window could still flicker one season. A
   # phx-hook mirroring the DOM `toggle` event would close that gap — add it only if seen.
-  def handle_event("toggle_season_open", %{"id" => id}, socket) do
+  def handle_event("toggle_season_open", %{"id" => id}, socket) when is_binary(id) do
     case Integer.parse(id) do
       {id, ""} ->
         open = socket.assigns.open_seasons
@@ -171,7 +171,7 @@ defmodule CinderWeb.SeriesDetailLive do
     end
   end
 
-  def handle_event("confirm_delete_episode_file", %{"id" => id}, socket) do
+  def handle_event("confirm_delete_episode_file", %{"id" => id}, socket) when is_binary(id) do
     actor = socket.assigns.current_scope.user
 
     with {id, ""} <- Integer.parse(id),
@@ -197,7 +197,7 @@ defmodule CinderWeb.SeriesDetailLive do
     end
   end
 
-  def handle_event("confirm_delete_season_files", %{"id" => id}, socket) do
+  def handle_event("confirm_delete_season_files", %{"id" => id}, socket) when is_binary(id) do
     actor = socket.assigns.current_scope.user
 
     with {id, ""} <- Integer.parse(id),
@@ -297,7 +297,7 @@ defmodule CinderWeb.SeriesDetailLive do
   def handle_event("delete_alias", %{"id" => id}, socket),
     do: AliasHelpers.delete_alias(socket, socket.assigns.series, id, &refresh_identity/2)
 
-  def handle_event("search_episode", %{"id" => id}, socket) do
+  def handle_event("search_episode", %{"id" => id}, socket) when is_binary(id) do
     with {id, ""} <- Integer.parse(id),
          %Episode{} = ep <- find_episode(socket.assigns.series, id) do
       # Don't flash "Searching…" for a search that was never queued.
@@ -313,7 +313,7 @@ defmodule CinderWeb.SeriesDetailLive do
     end
   end
 
-  def handle_event("search_season", %{"id" => id}, socket) do
+  def handle_event("search_season", %{"id" => id}, socket) when is_binary(id) do
     with {id, ""} <- Integer.parse(id),
          %Season{} = season <- find_season(socket.assigns.series, id) do
       Catalog.search_season_now(season)
@@ -324,7 +324,7 @@ defmodule CinderWeb.SeriesDetailLive do
   end
 
   # Toggle the manual-search panel for a season (re-clicking the open season closes it).
-  def handle_event("tv_manual_search", %{"season" => n}, socket) do
+  def handle_event("tv_manual_search", %{"season" => n}, socket) when is_binary(n) do
     case Integer.parse(n) do
       {season, ""} ->
         open = if socket.assigns.searching_season == season, do: nil, else: season
@@ -339,7 +339,8 @@ defmodule CinderWeb.SeriesDetailLive do
   # "None" just resets the form and drops the preview. `scene_selected_group_id` is stamped on
   # every change so a stale preview for a since-abandoned selection (switch to another group, or
   # clear back to None, before the fetch lands) is recognizable and discarded in handle_async.
-  def handle_event("preview_scene_group", %{"group_id" => group_id}, socket) do
+  def handle_event("preview_scene_group", %{"group_id" => group_id}, socket)
+      when is_binary(group_id) do
     socket =
       assign(socket,
         scene_form: to_form(%{"group_id" => group_id}),

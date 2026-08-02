@@ -282,6 +282,23 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
     assert Cinder.Requests.list_for_user(user) == []
   end
 
+  # "99" above is still a binary and reaches the in-show check. A NON-binary never gets that far:
+  # `Integer.parse/1` is itself `when is_binary`, so it raises inside the clause body — past the
+  # point where the module catch-all could ignore the frame — and the LiveView dies.
+  test "a forged non-binary season is ignored rather than crashing the view", %{conn: conn} do
+    user = Cinder.AccountsFixtures.user_fixture()
+    conn = log_in_user(conn, user)
+    {:ok, lv, _} = live(conn, ~p"/series/tmdb/1399")
+
+    # Season 1 *is* in the stub, so only the guard can stop these — not the in-show check.
+    for forged <- [%{"forged" => true}, 1] do
+      assert render_click(lv, "request_season", %{"season" => forged})
+    end
+
+    assert Process.alive?(lv.pid)
+    assert Cinder.Requests.list_for_user(user) == []
+  end
+
   test "renders a More like this rail of recommended series linking to their season pickers", %{
     conn: conn
   } do

@@ -33,8 +33,12 @@ defmodule CinderWeb.SettingsLive do
      )}
   end
 
+  # `%{} = params`: only a real form payload is guaranteed to be a map, and `save_form/1` reaches
+  # into it with `Access` — a forged frame carrying a bare list or a string would raise
+  # ArgumentError and take the LiveView (and any unsaved input) down. Same guard, same reason, as
+  # `CinderWeb.UsersLive`'s "import".
   @impl true
-  def handle_event("save", params, socket) do
+  def handle_event("save", %{} = params, socket) do
     case Settings.save_form(params) do
       :ok ->
         {:noreply,
@@ -72,8 +76,10 @@ defmodule CinderWeb.SettingsLive do
     end
   end
 
+  # `%{} = params` for the same reason as "save" above: `Map.get/2` raises BadMapError on a
+  # forged non-map payload.
   @impl true
-  def handle_event("toggle_auto_approve", params, socket) do
+  def handle_event("toggle_auto_approve", %{} = params, socket) do
     on = Map.get(params, "auto_approve_all") == "on"
     Settings.put("auto_approve_all", to_string(on))
     {:noreply, assign(socket, auto_approve_all: on)}
