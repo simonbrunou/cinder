@@ -58,14 +58,14 @@ msgid "A link to confirm your email change has been sent to the new address."
 msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:187
-#: lib/cinder_web/user_auth.ex:422
+#: lib/cinder_web/user_auth.ex:431
 #, elixir-autogen, elixir-format
 msgid "Account"
 msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:143
 #: lib/cinder_web/live/activity_live.ex:434
-#: lib/cinder_web/user_auth.ex:408
+#: lib/cinder_web/user_auth.ex:417
 #, elixir-autogen, elixir-format
 msgid "Activity"
 msgstr ""
@@ -169,7 +169,7 @@ msgid "Available"
 msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:151
-#: lib/cinder_web/user_auth.ex:414
+#: lib/cinder_web/user_auth.ex:423
 #, elixir-autogen, elixir-format
 msgid "Calendar"
 msgstr ""
@@ -375,7 +375,7 @@ msgstr ""
 #: lib/cinder_web/components/layouts.ex:118
 #: lib/cinder_web/live/dashboard_live.ex:349
 #: lib/cinder_web/live/settings_live.ex:142
-#: lib/cinder_web/user_auth.ex:407
+#: lib/cinder_web/user_auth.ex:416
 #, elixir-autogen, elixir-format
 msgid "Dashboard"
 msgstr ""
@@ -486,8 +486,8 @@ msgstr ""
 #: lib/cinder_web/live/entity_discovery_live.ex:190
 #: lib/cinder_web/live/movie_discovery_live.ex:248
 #: lib/cinder_web/live/series_discovery_live.ex:396
-#: lib/cinder_web/user_auth.ex:405
-#: lib/cinder_web/user_auth.ex:419
+#: lib/cinder_web/user_auth.ex:414
+#: lib/cinder_web/user_auth.ex:428
 #, elixir-autogen, elixir-format
 msgid "Discover"
 msgstr ""
@@ -610,9 +610,9 @@ msgstr ""
 #: lib/cinder_web/live/library_live.ex:311
 #: lib/cinder_web/live/movie_detail_live.ex:256
 #: lib/cinder_web/live/series_detail_components.ex:43
-#: lib/cinder_web/user_auth.ex:413
-#: lib/cinder_web/user_auth.ex:420
-#: lib/cinder_web/user_auth.ex:421
+#: lib/cinder_web/user_auth.ex:422
+#: lib/cinder_web/user_auth.ex:429
+#: lib/cinder_web/user_auth.ex:430
 #, elixir-autogen, elixir-format
 msgid "Library"
 msgstr ""
@@ -624,7 +624,7 @@ msgstr ""
 
 #: lib/cinder_web/live/user_live/login.ex:14
 #: lib/cinder_web/live/user_live/registration.ex:50
-#: lib/cinder_web/user_auth.ex:417
+#: lib/cinder_web/user_auth.ex:426
 #, elixir-autogen, elixir-format
 msgid "Log in"
 msgstr ""
@@ -736,7 +736,7 @@ msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:109
 #: lib/cinder_web/live/my_requests_live.ex:284
-#: lib/cinder_web/user_auth.ex:406
+#: lib/cinder_web/user_auth.ex:415
 #, elixir-autogen, elixir-format
 msgid "My requests"
 msgstr ""
@@ -970,7 +970,7 @@ msgstr ""
 #: lib/cinder_web/components/layouts.ex:124
 #: lib/cinder_web/live/requests_live.ex:299
 #: lib/cinder_web/live/settings_live.ex:187
-#: lib/cinder_web/user_auth.ex:410
+#: lib/cinder_web/user_auth.ex:419
 #, elixir-autogen, elixir-format
 msgid "Requests"
 msgstr ""
@@ -1132,7 +1132,7 @@ msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:157
 #: lib/cinder_web/live/settings_live.ex:133
-#: lib/cinder_web/user_auth.ex:409
+#: lib/cinder_web/user_auth.ex:418
 #, elixir-autogen, elixir-format
 msgid "Settings"
 msgstr ""
@@ -1288,7 +1288,7 @@ msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:163
 #: lib/cinder_web/live/users_live.ex:405
-#: lib/cinder_web/user_auth.ex:412
+#: lib/cinder_web/user_auth.ex:421
 #, elixir-autogen, elixir-format
 msgid "Users"
 msgstr ""
@@ -1324,14 +1324,14 @@ msgid "You can't delete your own account."
 msgstr ""
 
 #: lib/cinder_web/live/users_live.ex:346
-#: lib/cinder_web/user_auth.ex:294
-#: lib/cinder_web/user_auth.ex:473
+#: lib/cinder_web/user_auth.ex:303
+#: lib/cinder_web/user_auth.ex:482
 #, elixir-autogen, elixir-format
 msgid "You don't have access to that page."
 msgstr ""
 
-#: lib/cinder_web/user_auth.ex:253
-#: lib/cinder_web/user_auth.ex:452
+#: lib/cinder_web/user_auth.ex:262
+#: lib/cinder_web/user_auth.ex:461
 #, elixir-autogen, elixir-format
 msgid "You must log in to access this page."
 msgstr ""
@@ -1339,7 +1339,7 @@ msgstr ""
 #: lib/cinder_web/controllers/user_session_controller.ex:89
 #: lib/cinder_web/controllers/user_session_controller.ex:132
 #: lib/cinder_web/live/user_live/settings.ex:481
-#: lib/cinder_web/user_auth.ex:280
+#: lib/cinder_web/user_auth.ex:289
 #, elixir-autogen, elixir-format
 msgid "You must re-authenticate to access this page."
 msgstr ""
@@ -1814,7 +1814,7 @@ msgstr ""
 msgid "Setup checklist"
 msgstr ""
 
-#: lib/cinder_web/user_auth.ex:312
+#: lib/cinder_web/user_auth.ex:321
 #, elixir-autogen, elixir-format
 msgid "Setup in progress. Try again shortly."
 msgstr ""
@@ -2447,12 +2447,12 @@ msgstr ""
 msgid "Primary"
 msgstr ""
 
-#: lib/cinder_web/user_auth.ex:416
+#: lib/cinder_web/user_auth.ex:425
 #, elixir-autogen, elixir-format
 msgid "Register"
 msgstr ""
 
-#: lib/cinder_web/user_auth.ex:415
+#: lib/cinder_web/user_auth.ex:424
 #, elixir-autogen, elixir-format
 msgid "Setup"
 msgstr ""
@@ -3547,7 +3547,7 @@ msgstr ""
 
 #: lib/cinder_web/live/pending_approval_live.ex:43
 #: lib/cinder_web/live/users_live.ex:413
-#: lib/cinder_web/user_auth.ex:418
+#: lib/cinder_web/user_auth.ex:427
 #, elixir-autogen, elixir-format
 msgid "Pending approval"
 msgstr ""
@@ -5040,7 +5040,7 @@ msgid "Reported %{time_ago}"
 msgstr ""
 
 #: lib/cinder_web/live/issues_live.ex:82
-#: lib/cinder_web/user_auth.ex:411
+#: lib/cinder_web/user_auth.ex:420
 #, elixir-autogen, elixir-format
 msgid "Reported issues"
 msgstr ""
