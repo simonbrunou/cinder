@@ -1058,9 +1058,21 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
     assert {:ok, [%{tmdb_id: 1}]} = HTTP.trending("en")
   end
 
-  test "adult-flagged entries are dropped from person credits and collection parts" do
+  test "adult-flagged entries are dropped from person credits, collection parts and the cast strip" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       case conn.request_path do
+        "/3/movie/7" ->
+          Req.Test.json(conn, %{
+            "id" => 7,
+            "title" => "Drive",
+            "credits" => %{
+              "cast" => [
+                %{"id" => 1, "name" => "Ryan", "order" => 0, "adult" => false},
+                %{"id" => 2, "name" => "Someone Else", "order" => 1, "adult" => true}
+              ]
+            }
+          })
+
         "/3/person/1" ->
           Req.Test.json(conn, %{
             "id" => 1,
@@ -1088,6 +1100,7 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
 
     assert {:ok, %{credits: [%{tmdb_id: 1}], total_credits: 1}} = HTTP.get_person(1, "en")
     assert {:ok, %{parts: [%{tmdb_id: 1}]}} = HTTP.get_collection(9, "en")
+    assert {:ok, %{cast: [%{tmdb_id: 1}]}} = HTTP.get_movie(7)
   end
 
   test "search_collection/2 returns an error tuple on a non-200 status" do

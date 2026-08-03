@@ -598,6 +598,7 @@ defmodule Cinder.Catalog.TMDB.HTTP do
 
   defp cast_from(%{"cast" => cast}) when is_list(cast) do
     cast
+    |> Enum.reject(& &1["adult"])
     |> Enum.sort_by(&(&1["order"] || 9_999))
     |> Enum.flat_map(&normalize_cast_member/1)
     |> Enum.take(@max_cast)
