@@ -447,13 +447,13 @@ defmodule CinderWeb.SettingsComponents do
   defp setup_section_description(:indexer),
     do:
       gettext(
-        "Prowlarr connects Cinder to your indexers and finds releases. Add your indexers in Prowlarr first, then copy its URL and API key."
+        "Prowlarr connects Cinder to your indexers and finds releases. Add your indexers there first, then copy its URL and the API key from Settings > General."
       )
 
   defp setup_section_description(:migration),
     do:
       gettext(
-        "Already use Radarr or Sonarr? Add them here only if you want Cinder to use their library data when adopting existing media. Otherwise leave this optional section blank."
+        "Already use Radarr or Sonarr? Add them here only if you want Cinder to use their library data when adopting existing media. In each app, find the API key under Settings > General. Otherwise leave this optional section blank."
       )
 
   defp setup_section_description(:download),
@@ -465,7 +465,7 @@ defmodule CinderWeb.SettingsComponents do
   defp setup_section_description(:media_server),
     do:
       gettext(
-        "Choose Jellyfin or Plex. Cinder triggers a library scan after import. Use the server URL Cinder can reach; the web URL is what household browsers open."
+        "Choose Jellyfin or Plex. Cinder triggers a library scan after import. In Jellyfin, create a key under Dashboard > Advanced > API Keys; for Plex, use the token guide below. Use the server URL Cinder can reach; the web URL is what household browsers open."
       )
 
   defp setup_section_description(:library),
@@ -505,7 +505,7 @@ defmodule CinderWeb.SettingsComponents do
     ]
 
   defp setup_section_resources(:indexer),
-    do: [{gettext("Get Prowlarr"), "https://prowlarr.com/"}]
+    do: [{gettext("Prowlarr settings guide"), "https://wiki.servarr.com/prowlarr/settings"}]
 
   defp setup_section_resources(:migration),
     do: [
@@ -522,12 +522,15 @@ defmodule CinderWeb.SettingsComponents do
   defp setup_section_resources(:media_server),
     do: [
       {gettext("Get Jellyfin"), "https://jellyfin.org/"},
-      {gettext("Get Plex"), "https://www.plex.tv/"}
+      {gettext("Get Plex Media Server"), "https://www.plex.tv/media-server-downloads/"},
+      {gettext("Plex token guide"),
+       "https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/"}
     ]
 
   defp setup_section_resources(:subtitles),
     do: [
-      {gettext("OpenSubtitles"), "https://www.opensubtitles.com/"},
+      {gettext("OpenSubtitles API key guide"),
+       "https://opensubtitles.stoplight.io/docs/opensubtitles-api/e3750fd63a100-getting-started"},
       {gettext("LibreTranslate"), "https://github.com/LibreTranslate/LibreTranslate"}
     ]
 

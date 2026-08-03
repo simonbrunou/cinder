@@ -101,10 +101,11 @@ defmodule CinderWeb.SetupLiveTest do
 
     for {group, url} <- [
           {"tmdb", "https://developer.themoviedb.org/docs/authentication-application"},
-          {"indexer", "https://prowlarr.com/"},
+          {"indexer", "https://wiki.servarr.com/prowlarr/settings"},
           {"download", "https://www.qbittorrent.org/"},
-          {"media_server", "https://jellyfin.org/"},
-          {"subtitles", "https://www.opensubtitles.com/"},
+          {"media_server", "https://www.plex.tv/media-server-downloads/"},
+          {"subtitles",
+           "https://opensubtitles.stoplight.io/docs/opensubtitles-api/e3750fd63a100-getting-started"},
           {"notifications", "https://docs.discord.com/developers/resources/webhook"}
         ] do
       assert has_element?(
@@ -112,6 +113,11 @@ defmodule CinderWeb.SetupLiveTest do
                "#settings-group-#{group} .setup-section-help a[href=\"#{url}\"][target=_blank][rel=\"noopener noreferrer\"]"
              )
     end
+
+    assert has_element?(
+             lv,
+             "#settings-group-media_server .setup-section-help a[href=\"https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/\"]"
+           )
   end
 
   test "a service that fails keeps Finish disabled", %{conn: conn} do
