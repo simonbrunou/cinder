@@ -367,9 +367,15 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   # ponytail: catches only what TMDB actually flags; entries contributors left `adult: false`
   # still come through, and TMDB has no fix for those (themoviedb.org/talk/687a42f8ac0991943b16951b).
   defp drop_adult({:ok, %{body: %{"results" => results}} = response}) when is_list(results),
-    do: {:ok, put_in(response.body["results"], Enum.reject(results, & &1["adult"]))}
+    do: {:ok, put_in(response.body["results"], Enum.reject(results, &adult?/1))}
 
   defp drop_adult(result), do: result
+
+  # Matched, not indexed: `results` also carries episode_groups/alternative_titles, whose
+  # malformed entries must still reach their normalizer's {:error, :unexpected_response}
+  # rather than raise out of `request/1` on an Access lookup.
+  defp adult?(%{"adult" => true}), do: true
+  defp adult?(_entry), do: false
 
   defp auth(opts, nil), do: opts
   defp auth(opts, token), do: Keyword.put(opts, :auth, {:bearer, token})
@@ -556,7 +562,7 @@ defmodule Cinder.Catalog.TMDB.HTTP do
     credits =
       entries
       |> Enum.filter(&(&1["media_type"] in ["movie", "tv"]))
-      |> Enum.reject(& &1["adult"])
+      |> Enum.reject(&adult?/1)
       |> Enum.sort_by(fn entry -> entry["popularity"] || 0 end, :desc)
       |> Enum.uniq_by(&{&1["media_type"], &1["id"]})
 
@@ -579,7 +585,7 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   defp normalize_collection_details(body, parts) do
     parts =
       parts
-      |> Enum.reject(& &1["adult"])
+      |> Enum.reject(&adult?/1)
       |> Enum.map(&(normalize(&1) |> Map.put(:type, :movie)))
       |> Enum.sort_by(&(&1.release_date || ~D[9999-12-31]), Date)
 
@@ -599,7 +605,7 @@ defmodule Cinder.Catalog.TMDB.HTTP do
 
   defp cast_from(%{"cast" => cast}) when is_list(cast) do
     cast
-    |> Enum.reject(& &1["adult"])
+    |> Enum.reject(&adult?/1)
     |> Enum.sort_by(&(&1["order"] || 9_999))
     |> Enum.flat_map(&normalize_cast_member/1)
     |> Enum.take(@max_cast)
