@@ -358,7 +358,18 @@ defmodule Cinder.Catalog.TMDB.HTTP do
     |> Keyword.put(:redirect, false)
     |> Req.new()
     |> HTTPPolicy.bounded_request(@max_response_bytes)
+    |> drop_adult()
   end
+
+  # TMDB flags porn with `adult: true`. Dropped here rather than at the nine list call sites
+  # because trending/popular/discover/recommendations take no `include_adult` param at all —
+  # only the /search/* endpoints do (and default it to false).
+  # ponytail: catches only what TMDB actually flags; entries contributors left `adult: false`
+  # still come through, and TMDB has no fix for those (themoviedb.org/talk/687a42f8ac0991943b16951b).
+  defp drop_adult({:ok, %{body: %{"results" => results}} = response}) when is_list(results),
+    do: {:ok, put_in(response.body["results"], Enum.reject(results, & &1["adult"]))}
+
+  defp drop_adult(result), do: result
 
   defp auth(opts, nil), do: opts
   defp auth(opts, token), do: Keyword.put(opts, :auth, {:bearer, token})
@@ -545,6 +556,7 @@ defmodule Cinder.Catalog.TMDB.HTTP do
     credits =
       entries
       |> Enum.filter(&(&1["media_type"] in ["movie", "tv"]))
+      |> Enum.reject(& &1["adult"])
       |> Enum.sort_by(fn entry -> entry["popularity"] || 0 end, :desc)
       |> Enum.uniq_by(&{&1["media_type"], &1["id"]})
 
@@ -567,6 +579,7 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   defp normalize_collection_details(body, parts) do
     parts =
       parts
+      |> Enum.reject(& &1["adult"])
       |> Enum.map(&(normalize(&1) |> Map.put(:type, :movie)))
       |> Enum.sort_by(&(&1.release_date || ~D[9999-12-31]), Date)
 
