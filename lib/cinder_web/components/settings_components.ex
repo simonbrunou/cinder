@@ -43,6 +43,7 @@ defmodule CinderWeb.SettingsComponents do
   # so it isn't offered before the operator has validated a real import (spec: settings-only).
   attr :show_move_on_import, :boolean, default: true
   attr :show_anime, :boolean, default: true
+  attr :show_setup_guidance, :boolean, default: false
 
   def service_fields(assigns) do
     [{first_group, _label} | _groups] = Settings.groups()
@@ -59,13 +60,29 @@ defmodule CinderWeb.SettingsComponents do
       open={group == @first_group or MapSet.member?(@invalid_groups, group)}
       phx-hook="DisclosureState"
       data-force-open={to_string(MapSet.member?(@invalid_groups, group))}
+      data-setup-step={@show_setup_guidance && setup_step(group)}
+      data-setup-optional={@show_setup_guidance && to_string(is_nil(setup_step(group)))}
       class="collapse collapse-arrow rounded-box bg-base-200"
     >
-      <summary class="collapse-title min-h-11 cursor-pointer text-lg font-semibold focus-visible:outline-2 focus-visible:outline-primary">
-        {SettingsLabels.t(label)}
+      <summary class="collapse-title flex min-h-11 cursor-pointer items-center gap-2 text-lg font-semibold focus-visible:outline-2 focus-visible:outline-primary">
+        <span
+          :if={@show_setup_guidance && setup_step(group)}
+          class="badge badge-primary badge-sm font-bold"
+        >
+          {setup_step(group)}
+        </span>
+        <span>{SettingsLabels.t(label)}</span>
+        <span
+          :if={@show_setup_guidance && is_nil(setup_step(group))}
+          class="badge badge-ghost badge-sm font-normal"
+        >
+          {gettext("Optional")}
+        </span>
       </summary>
 
       <div class="collapse-content">
+        <.setup_section_help :if={@show_setup_guidance} group={group} />
+
         <div :if={group == :media_server} class="form-control mb-2">
           <label class="label" for="media_server_type">
             <span class="label-text">{gettext("Media server type")}</span>
@@ -385,6 +402,141 @@ defmodule CinderWeb.SettingsComponents do
     </details>
     """
   end
+
+  attr :group, :atom, required: true
+
+  defp setup_section_help(assigns) do
+    assigns =
+      assigns
+      |> assign(:description, setup_section_description(assigns.group))
+      |> assign(:resources, setup_section_resources(assigns.group))
+
+    ~H"""
+    <div class="setup-section-help mb-4 rounded-box border border-info/30 bg-info/10 p-3 text-sm">
+      <p class="text-base-content/80">{@description}</p>
+      <div :if={@resources != []} class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
+        <span class="font-medium">{gettext("Resources:")}</span>
+        <a
+          :for={{label, url} <- @resources}
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label={gettext("%{label} (opens in a new tab)", label: label)}
+          class="link link-primary inline-flex min-h-11 items-center gap-1 py-2"
+        >
+          {label}<.icon name="hero-arrow-top-right-on-square" class="size-3.5" />
+        </a>
+      </div>
+    </div>
+    """
+  end
+
+  defp setup_step(:tmdb), do: 1
+  defp setup_step(:indexer), do: 2
+  defp setup_step(:download), do: 3
+  defp setup_step(:media_server), do: 4
+  defp setup_step(:library), do: 5
+  defp setup_step(_group), do: nil
+
+  defp setup_section_description(:tmdb),
+    do:
+      gettext(
+        "The Movie Database provides movie and TV metadata, artwork, and episode details. Create a free API read access token and paste it below."
+      )
+
+  defp setup_section_description(:indexer),
+    do:
+      gettext(
+        "Prowlarr connects Cinder to your indexers and finds releases. Add your indexers in Prowlarr first, then copy its URL and API key."
+      )
+
+  defp setup_section_description(:migration),
+    do:
+      gettext(
+        "Already use Radarr or Sonarr? Add them here only if you want Cinder to use their library data when adopting existing media. Otherwise leave this optional section blank."
+      )
+
+  defp setup_section_description(:download),
+    do:
+      gettext(
+        "Choose at least one download client. qBittorrent handles torrents and SABnzbd handles Usenet; Cinder sends releases to enabled clients and tracks them through import."
+      )
+
+  defp setup_section_description(:media_server),
+    do:
+      gettext(
+        "Choose Jellyfin or Plex. Cinder triggers a library scan after import. Use the server URL Cinder can reach; the web URL is what household browsers open."
+      )
+
+  defp setup_section_description(:library),
+    do:
+      gettext(
+        "Tell Cinder which download folders it may import from and where your movie and TV libraries live. Cinder hardlinks downloaded files into those library folders so Jellyfin or Plex can find them."
+      )
+
+  defp setup_section_description(:releases),
+    do:
+      gettext(
+        "These optional limits and preferences filter and rank releases. The defaults work for most homes; leave fields blank unless you want to tune quality or disk usage."
+      )
+
+  defp setup_section_description(:subtitles),
+    do:
+      gettext(
+        "Optional. Connect OpenSubtitles to download missing subtitles; LibreTranslate can translate them when configured."
+      )
+
+  defp setup_section_description(:notifications),
+    do:
+      gettext(
+        "Optional. Send approval, availability, and failure alerts through Discord, a generic webhook, or email (SMTP). You can configure this later."
+      )
+
+  defp setup_section_description(:accounts),
+    do:
+      gettext(
+        "Optional. Set the default request quota for newly registered users. Leave it blank to use Cinder's default."
+      )
+
+  defp setup_section_resources(:tmdb),
+    do: [
+      {gettext("TMDB token guide"),
+       "https://developer.themoviedb.org/docs/authentication-application"}
+    ]
+
+  defp setup_section_resources(:indexer),
+    do: [{gettext("Get Prowlarr"), "https://prowlarr.com/"}]
+
+  defp setup_section_resources(:migration),
+    do: [
+      {gettext("Radarr documentation"), "https://wiki.servarr.com/radarr"},
+      {gettext("Sonarr documentation"), "https://wiki.servarr.com/sonarr"}
+    ]
+
+  defp setup_section_resources(:download),
+    do: [
+      {gettext("Get qBittorrent"), "https://www.qbittorrent.org/"},
+      {gettext("Get SABnzbd"), "https://sabnzbd.org/"}
+    ]
+
+  defp setup_section_resources(:media_server),
+    do: [
+      {gettext("Get Jellyfin"), "https://jellyfin.org/"},
+      {gettext("Get Plex"), "https://www.plex.tv/"}
+    ]
+
+  defp setup_section_resources(:subtitles),
+    do: [
+      {gettext("OpenSubtitles"), "https://www.opensubtitles.com/"},
+      {gettext("LibreTranslate"), "https://github.com/LibreTranslate/LibreTranslate"}
+    ]
+
+  defp setup_section_resources(:notifications),
+    do: [
+      {gettext("Discord webhook guide"), "https://docs.discord.com/developers/resources/webhook"}
+    ]
+
+  defp setup_section_resources(_group), do: []
 
   def services_for(:tmdb), do: [{"tmdb", "TMDB"}]
   def services_for(:indexer), do: [{"indexer", "Prowlarr"}]

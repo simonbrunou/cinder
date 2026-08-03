@@ -99,6 +99,32 @@ defmodule CinderWeb.SetupLive do
       Enum.any?(@download_services, &(health[&1] == :ok))
   end
 
+  defp setup_steps do
+    [
+      %{number: 1, label: gettext("TMDB"), detail: gettext("Add your metadata token.")},
+      %{
+        number: 2,
+        label: gettext("Indexer"),
+        detail: gettext("Connect Prowlarr and its indexers.")
+      },
+      %{
+        number: 3,
+        label: gettext("Download clients"),
+        detail: gettext("Enable qBittorrent or SABnzbd.")
+      },
+      %{
+        number: 4,
+        label: gettext("Media server"),
+        detail: gettext("Connect Jellyfin or Plex.")
+      },
+      %{
+        number: 5,
+        label: gettext("Library paths"),
+        detail: gettext("Choose download and library folders.")
+      }
+    ]
+  end
+
   @impl true
   def render(assigns) do
     ~H"""
@@ -112,6 +138,36 @@ defmodule CinderWeb.SetupLive do
         </:subtitle>
       </.header>
 
+      <section
+        id="setup-required-steps"
+        aria-labelledby="setup-required-steps-title"
+        class="mb-8 rounded-box border border-primary/30 bg-primary/10 p-4 sm:p-5"
+      >
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="badge badge-primary">{gettext("Start here")}</span>
+          <h2 id="setup-required-steps-title" class="text-lg font-semibold">
+            {gettext("Complete these five required steps in order")}
+          </h2>
+        </div>
+        <p class="mt-1 text-sm text-base-content/70">
+          {gettext("The numbered sections are required. Everything marked Optional can wait.")}
+        </p>
+        <ol class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <li
+            :for={step <- setup_steps()}
+            id={"setup-step-#{step.number}"}
+            class="rounded-box border border-base-300 bg-base-100 p-3"
+          >
+            <div class="flex items-center gap-2 font-semibold">
+              <span class="badge badge-primary badge-sm font-bold">{step.number}</span>
+              <span>{step.label}</span>
+              <span :if={step.number == 1} class="sr-only">{gettext("Start here")}</span>
+            </div>
+            <p class="mt-1 text-xs text-base-content/70">{step.detail}</p>
+          </li>
+        </ol>
+      </section>
+
       <form
         id="setup-form"
         phx-submit="validate"
@@ -124,6 +180,7 @@ defmodule CinderWeb.SetupLive do
             health={@health}
             show_move_on_import={false}
             show_anime={false}
+            show_setup_guidance={true}
           />
         </div>
         <.button
