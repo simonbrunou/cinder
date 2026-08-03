@@ -592,7 +592,8 @@ defmodule Cinder.Catalog.TMDB.HTTP do
   end
 
   # Top-billed cast for the detail-page strip — render-only, never persisted. TMDB orders
-  # credits.cast by billing (`order`); sort defensively, drop malformed entries, cap at @max_cast.
+  # credits.cast by billing (`order`); drop adult-flagged people (the flag here is the person's,
+  # not the title's) and malformed entries, sort defensively, cap at @max_cast.
   # Absent when append_to_response=credits wasn't requested (search/find) or TMDB omits it.
   defp put_cast(base, body), do: Map.put(base, :cast, cast_from(body["credits"]))
 
