@@ -98,7 +98,7 @@ msgstr ""
 msgid "After a Usenet import, delete the original from the download client. Ensure your library is a separate folder from your downloads. Torrents are never auto-removed (seeding survives)."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/registration.ex:45
+#: lib/cinder_web/live/user_live/registration.ex:55
 #, elixir-autogen, elixir-format
 msgid "Already registered?"
 msgstr ""
@@ -276,7 +276,7 @@ msgstr ""
 msgid "Confirm new password"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/registration.ex:83
+#: lib/cinder_web/live/user_live/registration.ex:93
 #: lib/cinder_web/live/users_live.ex:541
 #, elixir-autogen, elixir-format
 msgid "Confirm password"
@@ -362,7 +362,7 @@ msgstr ""
 msgid "Create"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/registration.ex:107
+#: lib/cinder_web/live/user_live/registration.ex:117
 #, elixir-autogen, elixir-format
 msgid "Create an account"
 msgstr ""
@@ -521,7 +521,7 @@ msgid "Edit email"
 msgstr ""
 
 #: lib/cinder_web/live/user_live/login.ex:41
-#: lib/cinder_web/live/user_live/registration.ex:67
+#: lib/cinder_web/live/user_live/registration.ex:77
 #: lib/cinder_web/live/user_live/settings.ex:48
 #: lib/cinder_web/live/users_live.ex:531
 #, elixir-autogen, elixir-format
@@ -623,7 +623,8 @@ msgid "Live pipeline and in-flight downloads."
 msgstr ""
 
 #: lib/cinder_web/live/user_live/login.ex:14
-#: lib/cinder_web/live/user_live/registration.ex:50
+#: lib/cinder_web/live/user_live/registration.ex:42
+#: lib/cinder_web/live/user_live/registration.ex:60
 #: lib/cinder_web/user_auth.ex:426
 #, elixir-autogen, elixir-format
 msgid "Log in"
@@ -845,7 +846,7 @@ msgid "Open menu"
 msgstr ""
 
 #: lib/cinder_web/live/user_live/login.ex:49
-#: lib/cinder_web/live/user_live/registration.ex:76
+#: lib/cinder_web/live/user_live/registration.ex:86
 #: lib/cinder_web/live/users_live.ex:535
 #, elixir-autogen, elixir-format
 msgid "Password"
@@ -921,7 +922,7 @@ msgstr ""
 msgid "Recheck service health"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/registration.ex:43
+#: lib/cinder_web/live/user_live/registration.ex:53
 #, elixir-autogen, elixir-format
 msgid "Register for an account"
 msgstr ""
@@ -1220,7 +1221,7 @@ msgstr ""
 msgid "Toggle navigation menu"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/registration.ex:139
+#: lib/cinder_web/live/user_live/registration.ex:150
 #, elixir-autogen, elixir-format
 msgid "Too many attempts. Try again in a minute."
 msgstr ""
@@ -1372,7 +1373,7 @@ msgstr ""
 msgid "per episode"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/registration.ex:52
+#: lib/cinder_web/live/user_live/registration.ex:62
 #, elixir-autogen, elixir-format
 msgid "to your account now."
 msgstr ""
@@ -1559,7 +1560,7 @@ msgstr ""
 msgid "Couldn't update email. Check the address."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/registration.ex:106
+#: lib/cinder_web/live/user_live/registration.ex:116
 #, elixir-autogen, elixir-format
 msgid "Creating account…"
 msgstr ""
@@ -2416,12 +2417,12 @@ msgstr ""
 msgid "Running %{action}"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/registration.ex:89
+#: lib/cinder_web/live/user_live/registration.ex:99
 #, elixir-autogen, elixir-format
 msgid "Bootstrap token"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/registration.ex:173
+#: lib/cinder_web/live/user_live/registration.ex:187
 #, elixir-autogen, elixir-format
 msgid "Invalid bootstrap token."
 msgstr ""
@@ -3530,7 +3531,7 @@ msgstr ""
 msgid "Couldn't deny that account."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/registration.ex:37
+#: lib/cinder_web/live/user_live/registration.ex:47
 #, elixir-autogen, elixir-format
 msgid "If that address is new, an administrator will review your request shortly."
 msgstr ""
@@ -4241,7 +4242,7 @@ msgstr ""
 msgid "Your data"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/registration.ex:102
+#: lib/cinder_web/live/user_live/registration.ex:112
 #, elixir-autogen, elixir-format
 msgid "We store your email, hashed password, and request history; the instance operator is the data controller."
 msgstr ""
@@ -5469,4 +5470,14 @@ msgstr ""
 #: lib/cinder_web/live/activity_live.ex:864
 #, elixir-autogen, elixir-format
 msgid "Off. Turn it on in Settings."
+msgstr ""
+
+#: lib/cinder_web/live/user_live/registration.ex:37
+#, elixir-autogen, elixir-format
+msgid "Your admin account is ready."
+msgstr ""
+
+#: lib/cinder_web/live/user_live/registration.ex:44
+#, elixir-autogen, elixir-format
+msgid "to continue."
 msgstr ""

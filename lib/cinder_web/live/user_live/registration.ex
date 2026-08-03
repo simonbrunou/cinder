@@ -33,7 +33,17 @@ defmodule CinderWeb.UserLive.Registration do
       <div class="mx-auto max-w-sm">
         <div :if={@submitted} id="registration-confirmation" class="alert alert-info">
           <.icon name="hero-information-circle" class="size-5 shrink-0" />
-          <span>
+          <span :if={@bootstrap_admin}>
+            {gettext("Your admin account is ready.")}
+            <.link
+              navigate={~p"/users/log-in"}
+              class="font-semibold text-primary hover:underline focus-visible:underline"
+            >
+              {gettext("Log in")}
+            </.link>
+            {gettext("to continue.")}
+          </span>
+          <span :if={!@bootstrap_admin}>
             {gettext("If that address is new, an administrator will review your request shortly.")}
           </span>
         </div>
@@ -125,6 +135,7 @@ defmodule CinderWeb.UserLive.Registration do
      socket
      |> assign(
        submitted: false,
+       bootstrap_admin: false,
        bootstrap_required: Accounts.count_admins() == 0,
        client_ip: resolve_client_ip(session, peer_ip(socket))
      )
@@ -155,12 +166,15 @@ defmodule CinderWeb.UserLive.Registration do
 
   defp register(socket, user_params, bootstrap_token) do
     case Accounts.register_user(user_params, bootstrap_token) do
+      {:ok, %User{active: true} = _user} ->
+        confirm_registration(socket, bootstrap_admin: true)
+
       {:ok, _user} ->
-        confirm_registration(socket)
+        confirm_registration(socket, bootstrap_admin: false)
 
       {:error, %Ecto.Changeset{} = changeset} ->
         if email_collision?(changeset) do
-          confirm_registration(socket)
+          confirm_registration(socket, bootstrap_admin: false)
         else
           {:noreply, assign_form(socket, changeset)}
         end
@@ -196,7 +210,10 @@ defmodule CinderWeb.UserLive.Registration do
     assign(socket, form: form)
   end
 
-  defp confirm_registration(socket), do: {:noreply, assign(socket, submitted: true)}
+  defp confirm_registration(socket, opts) do
+    {:noreply,
+     assign(socket, submitted: true, bootstrap_admin: Keyword.get(opts, :bootstrap_admin, false))}
+  end
 
   defp email_collision?(%Ecto.Changeset{errors: errors}) do
     Enum.any?(errors, fn
