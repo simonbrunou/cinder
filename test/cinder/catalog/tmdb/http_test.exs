@@ -647,6 +647,14 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
     assert {:error, :unexpected_response} = HTTP.get_series_alternative_titles(37_854)
   end
 
+  test "a non-map entry under results still parks instead of raising past the adult filter" do
+    Req.Test.expect(Cinder.TMDBStub, fn conn ->
+      Req.Test.json(conn, %{"results" => ["not-a-group"]})
+    end)
+
+    assert {:error, :unexpected_response} = HTTP.get_episode_groups(37_854)
+  end
+
   test "episode groups reject malformed retained fields" do
     Req.Test.expect(Cinder.TMDBStub, fn conn ->
       Req.Test.json(conn, %{
