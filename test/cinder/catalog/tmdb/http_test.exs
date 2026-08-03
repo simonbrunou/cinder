@@ -1045,6 +1045,64 @@ defmodule Cinder.Catalog.TMDB.HTTPTest do
             ]} = HTTP.search_collection("matrix", "fr")
   end
 
+  test "adult-flagged entries are dropped from every list response" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      Req.Test.json(conn, %{
+        "results" => [
+          %{"id" => 1, "media_type" => "movie", "title" => "Drive", "adult" => false},
+          %{"id" => 2, "media_type" => "movie", "title" => "Drive Me XXX", "adult" => true}
+        ]
+      })
+    end)
+
+    assert {:ok, [%{tmdb_id: 1}]} = HTTP.trending("en")
+  end
+
+  test "adult-flagged entries are dropped from person credits, collection parts and the cast strip" do
+    Req.Test.stub(Cinder.TMDBStub, fn conn ->
+      case conn.request_path do
+        "/3/movie/7" ->
+          Req.Test.json(conn, %{
+            "id" => 7,
+            "title" => "Drive",
+            "credits" => %{
+              "cast" => [
+                %{"id" => 1, "name" => "Ryan", "order" => 0, "adult" => false},
+                %{"id" => 2, "name" => "Someone Else", "order" => 1, "adult" => true}
+              ]
+            }
+          })
+
+        "/3/person/1" ->
+          Req.Test.json(conn, %{
+            "id" => 1,
+            "name" => "Someone",
+            "combined_credits" => %{
+              "cast" => [
+                %{"id" => 1, "media_type" => "movie", "title" => "Drive", "adult" => false},
+                %{"id" => 2, "media_type" => "movie", "title" => "Drive Me XXX", "adult" => true}
+              ],
+              "crew" => []
+            }
+          })
+
+        "/3/collection/9" ->
+          Req.Test.json(conn, %{
+            "id" => 9,
+            "name" => "Drive Collection",
+            "parts" => [
+              %{"id" => 1, "title" => "Drive", "adult" => false},
+              %{"id" => 2, "title" => "Drive Me XXX", "adult" => true}
+            ]
+          })
+      end
+    end)
+
+    assert {:ok, %{credits: [%{tmdb_id: 1}], total_credits: 1}} = HTTP.get_person(1, "en")
+    assert {:ok, %{parts: [%{tmdb_id: 1}]}} = HTTP.get_collection(9, "en")
+    assert {:ok, %{cast: [%{tmdb_id: 1}]}} = HTTP.get_movie(7)
+  end
+
   test "search_collection/2 returns an error tuple on a non-200 status" do
     Req.Test.stub(Cinder.TMDBStub, fn conn ->
       conn |> Plug.Conn.put_status(429) |> Req.Test.json(%{"status_message" => "slow down"})
