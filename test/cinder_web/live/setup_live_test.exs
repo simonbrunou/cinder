@@ -53,6 +53,73 @@ defmodule CinderWeb.SetupLiveTest do
     assert html =~ ~s(name="movies_library_path")
   end
 
+  test "the wizard gives required sections an ordered path from a clear starting point", %{
+    conn: conn
+  } do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    conn = log_in_user(conn, admin)
+
+    {:ok, lv, _html} = live(conn, ~p"/setup")
+
+    assert has_element?(
+             lv,
+             "#setup-required-steps",
+             "Complete these five required steps in order"
+           )
+
+    assert has_element?(lv, "#setup-step-1", "Start here")
+
+    for {step, group, label} <- [
+          {1, "tmdb", "TMDB"},
+          {2, "indexer", "Indexer"},
+          {3, "download", "Download clients"},
+          {4, "media_server", "Media server"},
+          {5, "library", "Library paths"}
+        ] do
+      assert has_element?(lv, "#setup-step-#{step}", label)
+      assert has_element?(lv, "#settings-group-#{group}[data-setup-step=\"#{step}\"]")
+    end
+
+    for group <- ~w(migration releases subtitles notifications accounts) do
+      assert has_element?(lv, "#settings-group-#{group}[data-setup-optional=true]", "Optional")
+    end
+  end
+
+  test "every setup section explains its purpose and credential sources are linked", %{conn: conn} do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    conn = log_in_user(conn, admin)
+
+    {:ok, lv, _html} = live(conn, ~p"/setup")
+
+    for {group, _label} <- Cinder.Settings.groups() do
+      assert has_element?(lv, "#settings-group-#{group} .setup-section-help")
+    end
+
+    assert has_element?(lv, "#settings-group-tmdb .setup-section-help", "movie and TV metadata")
+    assert has_element?(lv, "#settings-group-indexer .setup-section-help", "finds releases")
+    assert has_element?(lv, "#settings-group-library .setup-section-help", "hardlinks")
+
+    for {group, url} <- [
+          {"tmdb", "https://developer.themoviedb.org/docs/authentication-application"},
+          {"indexer", "https://wiki.servarr.com/prowlarr/settings"},
+          {"download", "https://www.qbittorrent.org/"},
+          {"media_server", "https://www.plex.tv/media-server-downloads/"},
+          {"subtitles",
+           "https://opensubtitles.stoplight.io/docs/opensubtitles-api/e3750fd63a100-getting-started"},
+          {"notifications", "https://docs.discord.com/developers/resources/webhook"}
+        ] do
+      assert has_element?(
+               lv,
+               "#settings-group-#{group} .setup-section-help a[href=\"#{url}\"][target=_blank][rel=\"noopener noreferrer\"]"
+             )
+    end
+
+    assert has_element?(
+             lv,
+             "#settings-group-media_server .setup-section-help a[href=\"https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/\"]"
+           )
+  end
+
   test "a service that fails keeps Finish disabled", %{conn: conn} do
     admin = Cinder.AccountsFixtures.admin_fixture()
     conn = log_in_user(conn, admin)
