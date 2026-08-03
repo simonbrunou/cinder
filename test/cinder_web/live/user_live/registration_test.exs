@@ -147,13 +147,33 @@ defmodule CinderWeb.UserLive.RegistrationTest do
         {:ok, lv, _html} = live(conn, ~p"/users/register")
         email = unique_user_email()
 
-        render_hook(lv, "save", %{
-          "bootstrap_token" => "correct-token",
-          "user" => registration_params(email)
-        })
+        html =
+          render_hook(lv, "save", %{
+            "bootstrap_token" => "correct-token",
+            "user" => registration_params(email)
+          })
 
         assert %{role: :admin, active: true} =
                  Cinder.Repo.get_by(Cinder.Accounts.User, email: email)
+
+        assert html =~ "Your admin account is ready."
+        assert has_element?(lv, "#registration-confirmation a[href='/users/log-in']")
+      end)
+    end
+
+    test "shows the admin confirmation with a login link on the bootstrap path", %{conn: conn} do
+      with_bootstrap_token("correct-token", fn ->
+        {:ok, lv, _html} = live(conn, ~p"/users/register")
+
+        html =
+          render_hook(lv, "save", %{
+            "bootstrap_token" => "correct-token",
+            "user" => registration_params(unique_user_email())
+          })
+
+        assert html =~ "Your admin account is ready."
+        assert html =~ "Log in"
+        refute html =~ "an administrator will review"
       end)
     end
 
