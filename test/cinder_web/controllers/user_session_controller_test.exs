@@ -180,6 +180,30 @@ defmodule CinderWeb.UserSessionControllerTest do
       assert Phoenix.Flash.get(conn.assigns.flash, :info) =~ "Welcome back!"
     end
 
+    test "preserves a session locale chosen before login across the session renewal", %{
+      conn: conn,
+      user: user
+    } do
+      user = set_password(user)
+
+      conn =
+        conn
+        |> init_test_session(locale: "fr")
+        |> put_req_header("accept-language", "en-US,en;q=0.9")
+        |> post(~p"/users/log-in", %{
+          "user" => %{
+            "email" => user.email,
+            "password" => valid_user_password()
+          }
+        })
+
+      assert get_session(conn, :user_token)
+      # The session is renewed (fixation protection), but the locale the visitor
+      # picked on the login page must survive — otherwise the post-login redirect
+      # re-negotiates from Accept-Language and the language flips back.
+      assert get_session(conn, :locale) == "fr"
+    end
+
     test "redirects to login page with invalid credentials", %{conn: conn, user: user} do
       conn =
         post(conn, ~p"/users/log-in?mode=password", %{

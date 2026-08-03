@@ -60,6 +60,11 @@ defmodule CinderWeb.UserAuth do
     |> redirect(to: ~p"/")
   end
 
+  # renew_session clears the session (fixation protection), but a display-locale
+  # choice (set via /locale/:locale) is not security-sensitive and must survive
+  # the renewal — on login, otherwise the post-login redirect re-negotiates from
+  # Accept-Language and the language flips back; on logout, so a visitor who
+  # switched keeps their choice after logging out.
   defp maybe_restore_locale(conn, locale) do
     case CinderWeb.Locale.supported(locale) do
       nil -> conn
@@ -107,10 +112,12 @@ defmodule CinderWeb.UserAuth do
       case Accounts.replace_user_session_token(user, old_token) do
         {:ok, new_token, old_tokens} ->
           remember_me = get_session(conn, :user_remember_me)
+          locale = get_session(conn, :locale)
 
           conn =
             conn
             |> renew_session(user)
+            |> maybe_restore_locale(locale)
             |> put_token_in_session(new_token)
             |> maybe_write_remember_me_cookie(new_token, %{}, remember_me)
 
@@ -141,9 +148,11 @@ defmodule CinderWeb.UserAuth do
   defp create_or_extend_session(conn, user, params) do
     token = Accounts.generate_user_session_token(user)
     remember_me = get_session(conn, :user_remember_me)
+    locale = get_session(conn, :locale)
 
     conn
     |> renew_session(user)
+    |> maybe_restore_locale(locale)
     |> put_token_in_session(token)
     |> maybe_write_remember_me_cookie(token, params, remember_me)
   end
