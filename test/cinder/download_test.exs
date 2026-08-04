@@ -94,6 +94,59 @@ defmodule Cinder.DownloadTest do
              Download.start(movie)
   end
 
+  test "Auto Japanese animation falls back to Anime search after Standard finds no match" do
+    movie =
+      movie_fixture(%{
+        imdb_id: "tt-anime-auto",
+        title: "Your Name",
+        year: 2016,
+        original_language: "ja",
+        media_profile: :auto
+      })
+
+    movie = movie |> Movie.metadata_changeset(%{genres: ["Animation"]}) |> Repo.update!()
+
+    expect(Cinder.Acquisition.IndexerMock, :search, 2, fn "tt-anime-auto" -> {:ok, []} end)
+
+    expect(Cinder.Acquisition.IndexerMock, :search_movie_query, fn
+      "Your Name 2016", categories: [5070] ->
+        {:ok,
+         [
+           %{
+             title: "[Group] Your Name (2016) [1080p]",
+             size: 8_000_000_000,
+             download_url: "magnet:?xt=urn:btih:auto-anime",
+             protocol: :torrent
+           }
+         ]}
+    end)
+
+    expect(Cinder.Download.ClientMock, :add, fn release, _opts ->
+      assert release.title == "[Group] Your Name (2016) [1080p]"
+      {:ok, "auto-anime-hash"}
+    end)
+
+    assert {:ok, %Movie{status: :downloading, download_id: "auto-anime-hash"}} =
+             Download.start(movie)
+
+    assert %Movie{release_policy_snapshot: %{"version" => 1}} = Repo.get!(Movie, movie.id)
+  end
+
+  test "explicit Standard Japanese animation does not use the Anime fallback" do
+    movie =
+      movie_fixture(%{
+        imdb_id: "tt-anime-standard",
+        original_language: "ja",
+        media_profile: :standard
+      })
+
+    movie = movie |> Movie.metadata_changeset(%{genres: ["Animation"]}) |> Repo.update!()
+    deny(Cinder.Acquisition.IndexerMock, :search_movie_query, 2)
+    expect(Cinder.Acquisition.IndexerMock, :search, fn "tt-anime-standard" -> {:ok, []} end)
+
+    assert {:ok, %Movie{status: :no_match}} = Download.start(movie)
+  end
+
   test "preferred-group waiting is pure and does not increment movie attempts" do
     movie = movie_fixture(%{search_attempts: 0})
     now = ~U[2026-07-13 12:00:00Z]

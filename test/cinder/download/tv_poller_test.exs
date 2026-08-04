@@ -1443,6 +1443,72 @@ defmodule Cinder.Download.TvPollerTest do
     assert grab.download_protocol == :torrent
   end
 
+  test "Auto Japanese animation falls back to Anime search when Standard grabs nothing" do
+    series =
+      series_fixture(%{
+        tvdb_id: 99,
+        monitor_strategy: :all,
+        media_profile: :auto,
+        original_language: "ja"
+      })
+
+    series = series |> Series.metadata_changeset(%{genres: ["Animation"]}) |> Repo.update!()
+
+    wanted = episode(season_fixture(series), 1)
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 -> {:ok, []} end)
+
+    expect(Cinder.Acquisition.IndexerMock, :search_tv_query, 2, fn
+      "Show", categories: [5070] ->
+        {:ok,
+         [
+           %{
+             title: "[Group] Show S01E01 [1080p]",
+             size: 2_000_000_000,
+             download_url: "auto-anime-tv",
+             seeders: 5
+           }
+         ]}
+
+      "Show S01E01", categories: [5070] ->
+        {:ok, []}
+    end)
+
+    expect(Cinder.Download.ClientMock, :add, fn release, _opts ->
+      assert release.title == "[Group] Show S01E01 [1080p]"
+      {:ok, "auto-anime-tv-hash"}
+    end)
+
+    assert :ok = TvPoller.poll()
+    assert %Episode{grab_id: grab_id, search_attempts: 0} = Repo.get!(Episode, wanted.id)
+    assert grab_id
+    assert %Grab{release_policy_snapshot: %{"version" => 1}} = Repo.get!(Grab, grab_id)
+  end
+
+  test "Auto Japanese animation does not fall back when Standard search errors" do
+    series =
+      series_fixture(%{
+        tvdb_id: 99,
+        monitor_strategy: :all,
+        media_profile: :auto,
+        original_language: "ja"
+      })
+
+    series = series |> Series.metadata_changeset(%{genres: ["Animation"]}) |> Repo.update!()
+    wanted = episode(season_fixture(series), 1)
+    start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
+
+    expect(Cinder.Acquisition.IndexerMock, :search_tv, fn 99, "Show", 1 ->
+      {:error, :timeout}
+    end)
+
+    deny(Cinder.Acquisition.IndexerMock, :search_tv_query, 2)
+
+    assert :ok = TvPoller.poll()
+    assert %Episode{grab_id: nil, search_attempts: 1} = Repo.get!(Episode, wanted.id)
+  end
+
   @tag :tmp_dir
   test "Standard alternate-season grab imports scene-named files into canonical episodes", %{
     tmp_dir: tmp

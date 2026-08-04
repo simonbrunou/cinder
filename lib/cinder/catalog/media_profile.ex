@@ -22,6 +22,16 @@ defmodule Cinder.Catalog.MediaProfile do
     }
   end
 
+  @doc "Whether an Auto title may retry once through Anime after Standard finds nothing."
+  def auto_anime_fallback?(%{
+        selected: :auto,
+        effective: :standard,
+        evidence: evidence
+      }),
+      do: :japanese_animation in evidence
+
+  def auto_anime_fallback?(_summary), do: false
+
   defp weak_evidence(record, extra_evidence) do
     japanese_animation =
       if record.original_language == "ja" and "Animation" in (record.genres || []),
