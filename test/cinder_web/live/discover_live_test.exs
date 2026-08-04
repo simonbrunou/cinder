@@ -577,6 +577,38 @@ defmodule CinderWeb.DiscoverLiveTest do
            )
   end
 
+  test "an environment-bootstrap token keeps the transient failure treatment", %{conn: conn} do
+    Application.put_env(:cinder, Cinder.Catalog.TMDB.HTTP, token: "bootstrap-token")
+    assert Settings.get("tmdb_token") == nil
+
+    stub(Cinder.Catalog.TMDBMock, :search, fn _, _ -> {:error, :timeout} end)
+    stub(Cinder.Catalog.TMDBMock, :search_tv, fn _, _ -> {:error, :nxdomain} end)
+    {:ok, lv, _html} = live(conn, ~p"/")
+
+    capture_log(fn ->
+      lv |> form("#search-form", %{"query" => "boom"}) |> render_change()
+    end)
+
+    assert has_element?(lv, "p", "TMDB didn't respond. Try again.")
+    assert has_element?(lv, "#flash-error", "TMDB search failed. Try again.")
+    refute has_element?(lv, "#configure-tmdb-link")
+  end
+
+  test "a whitespace-only effective token is treated as unconfigured", %{conn: conn} do
+    Application.put_env(:cinder, Cinder.Catalog.TMDB.HTTP, token: " \t ")
+
+    stub(Cinder.Catalog.TMDBMock, :search, fn _, _ -> {:error, :unauthorized} end)
+    stub(Cinder.Catalog.TMDBMock, :search_tv, fn _, _ -> {:error, :unauthorized} end)
+    {:ok, lv, _html} = live(conn, ~p"/")
+
+    capture_log(fn ->
+      lv |> form("#search-form", %{"query" => "boom"}) |> render_change()
+    end)
+
+    assert has_element?(lv, "#configure-tmdb-link[href='/setup']")
+    assert has_element?(lv, "#flash-error", "TMDB isn't configured yet.")
+  end
+
   test "a configured TMDB failure keeps the transient error and not 'No matches'", %{conn: conn} do
     Settings.put("tmdb_token", "configured-token")
     stub(Cinder.Catalog.TMDBMock, :search, fn _, _ -> {:error, :timeout} end)
@@ -592,6 +624,7 @@ defmodule CinderWeb.DiscoverLiveTest do
       end)
 
     assert has_element?(lv, "p", "TMDB didn't respond. Try again.")
+    assert has_element?(lv, "#flash-error", "TMDB search failed. Try again.")
     refute has_element?(lv, "#configure-tmdb-link")
     assert log =~ "Discover search failed entirely:"
     assert log =~ "movies={:error, :timeout} tv={:error, :nxdomain}"
