@@ -357,7 +357,7 @@ msgstr ""
 msgid "Create"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/registration.ex:117
+#: lib/cinder_web/live/user_live/registration.ex:123
 #, elixir-autogen, elixir-format
 msgid "Create an account"
 msgstr ""
@@ -476,7 +476,7 @@ msgid "Denying…"
 msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:103
-#: lib/cinder_web/live/discover_live.ex:310
+#: lib/cinder_web/live/discover_live.ex:336
 #: lib/cinder_web/live/entity_discovery_live.ex:136
 #: lib/cinder_web/live/entity_discovery_live.ex:190
 #: lib/cinder_web/live/movie_discovery_live.ex:248
@@ -711,8 +711,8 @@ msgid "Movie pipeline"
 msgstr ""
 
 #: lib/cinder_web/live/dashboard_live.ex:292
-#: lib/cinder_web/live/discover_live.ex:346
-#: lib/cinder_web/live/discover_live.ex:474
+#: lib/cinder_web/live/discover_live.ex:372
+#: lib/cinder_web/live/discover_live.ex:500
 #: lib/cinder_web/live/library_live.ex:318
 #: lib/cinder_web/live/library_live.ex:371
 #: lib/cinder_web/settings_labels.ex:37
@@ -769,14 +769,14 @@ msgstr ""
 msgid "No match"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:500
+#: lib/cinder_web/live/discover_live.ex:526
 #: lib/cinder_web/live/library_live.ex:375
 #: lib/cinder_web/live/library_live.ex:477
 #, elixir-autogen, elixir-format
 msgid "No matches"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:501
+#: lib/cinder_web/live/discover_live.ex:527
 #, elixir-autogen, elixir-format
 msgid "No movies or shows matched that search."
 msgstr ""
@@ -1034,22 +1034,23 @@ msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:753
 #: lib/cinder_web/components/core_components.ex:794
-#: lib/cinder_web/live/discover_live.ex:506
+#: lib/cinder_web/live/discover_live.ex:532
+#: lib/cinder_web/live/discover_live.ex:538
 #, elixir-autogen, elixir-format
 msgid "Search failed"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:315
+#: lib/cinder_web/live/discover_live.ex:341
 #, elixir-autogen, elixir-format
 msgid "Search movies and TV"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:323
+#: lib/cinder_web/live/discover_live.ex:349
 #, elixir-autogen, elixir-format
 msgid "Search movies and TV…"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:362
+#: lib/cinder_web/live/discover_live.ex:388
 #, elixir-autogen, elixir-format
 msgid "Search results"
 msgstr ""
@@ -1158,7 +1159,7 @@ msgstr ""
 msgid "Specials"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:507
+#: lib/cinder_web/live/discover_live.ex:533
 #, elixir-autogen, elixir-format
 msgid "TMDB didn't respond. Try again."
 msgstr ""
@@ -1169,16 +1170,16 @@ msgstr ""
 msgid "TMDB returned no season data for this series."
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:84
-#: lib/cinder_web/live/discover_live.ex:153
+#: lib/cinder_web/live/discover_live.ex:158
+#: lib/cinder_web/live/discover_live.ex:172
 #, elixir-autogen, elixir-format
 msgid "TMDB search failed. Try again."
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:979
 #: lib/cinder_web/live/dashboard_live.ex:293
-#: lib/cinder_web/live/discover_live.ex:347
-#: lib/cinder_web/live/discover_live.ex:474
+#: lib/cinder_web/live/discover_live.ex:373
+#: lib/cinder_web/live/discover_live.ex:500
 #: lib/cinder_web/live/series_detail_components.ex:730
 #: lib/cinder_web/settings_labels.ex:38
 #, elixir-autogen, elixir-format
@@ -1211,7 +1212,7 @@ msgstr ""
 msgid "Toggle navigation menu"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/registration.ex:150
+#: lib/cinder_web/live/user_live/registration.ex:156
 #, elixir-autogen, elixir-format
 msgid "Too many attempts. Try again in a minute."
 msgstr ""
@@ -1530,7 +1531,7 @@ msgstr ""
 msgid "Couldn't reopen that request."
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:229
+#: lib/cinder_web/live/discover_live.ex:255
 #: lib/cinder_web/live/entity_discovery_live.ex:112
 #: lib/cinder_web/live/movie_discovery_live.ex:202
 #: lib/cinder_web/live/my_requests_live.ex:141
@@ -1546,7 +1547,7 @@ msgstr ""
 msgid "Couldn't update email. Check the address."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/registration.ex:116
+#: lib/cinder_web/live/user_live/registration.ex:122
 #, elixir-autogen, elixir-format
 msgid "Creating account…"
 msgstr ""
@@ -1784,7 +1785,7 @@ msgstr ""
 msgid "Save password"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:311
+#: lib/cinder_web/live/discover_live.ex:337
 #, elixir-autogen, elixir-format
 msgid "Search movies and TV. Request what you want to watch."
 msgstr ""
@@ -2386,7 +2387,7 @@ msgstr ""
 msgid "Bootstrap token"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/registration.ex:187
+#: lib/cinder_web/live/user_live/registration.ex:193
 #, elixir-autogen, elixir-format
 msgid "Invalid bootstrap token."
 msgstr ""
@@ -3292,7 +3293,7 @@ msgstr ""
 msgid "Year (newest first)"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:345
+#: lib/cinder_web/live/discover_live.ex:371
 #, elixir-autogen, elixir-format
 msgid "All"
 msgstr ""
@@ -3302,7 +3303,7 @@ msgstr ""
 msgid "Couldn't retry that movie."
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:340
+#: lib/cinder_web/live/discover_live.ex:366
 #, elixir-autogen, elixir-format
 msgid "Filter by type"
 msgstr ""
@@ -3327,7 +3328,7 @@ msgstr ""
 msgid "…"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:376
+#: lib/cinder_web/live/discover_live.ex:402
 #, elixir-autogen, elixir-format
 msgid "Trending this week"
 msgstr ""
@@ -3357,7 +3358,7 @@ msgstr ""
 msgid "Collection not found."
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:349
+#: lib/cinder_web/live/discover_live.ex:375
 #, elixir-autogen, elixir-format
 msgid "Collections"
 msgstr ""
@@ -3397,7 +3398,7 @@ msgstr ""
 msgid "No movies found"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:348
+#: lib/cinder_web/live/discover_live.ex:374
 #, elixir-autogen, elixir-format
 msgid "People"
 msgstr ""
@@ -3621,7 +3622,7 @@ msgstr ""
 msgid "Animation"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:466
+#: lib/cinder_web/live/discover_live.ex:492
 #, elixir-autogen, elixir-format
 msgid "Browse by genre"
 msgstr ""
@@ -3697,7 +3698,7 @@ msgstr ""
 msgid "Mystery"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:421
+#: lib/cinder_web/live/discover_live.ex:447
 #, elixir-autogen, elixir-format
 msgid "Now playing"
 msgstr ""
@@ -3707,7 +3708,7 @@ msgstr ""
 msgid "Pending accounts"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:391
+#: lib/cinder_web/live/discover_live.ex:417
 #, elixir-autogen, elixir-format
 msgid "Popular movies"
 msgstr ""
@@ -3737,7 +3738,7 @@ msgstr ""
 msgid "Thriller"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:406
+#: lib/cinder_web/live/discover_live.ex:432
 #, elixir-autogen, elixir-format
 msgid "Top rated movies"
 msgstr ""
@@ -4180,7 +4181,7 @@ msgstr ""
 msgid "Your data"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/registration.ex:112
+#: lib/cinder_web/live/user_live/registration.ex:118
 #, elixir-autogen, elixir-format
 msgid "We store your email, hashed password, and request history; the instance operator is the data controller."
 msgstr ""
@@ -4190,7 +4191,7 @@ msgstr ""
 msgid "Action & Adventure"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:471
+#: lib/cinder_web/live/discover_live.ex:497
 #, elixir-autogen, elixir-format
 msgid "Genre media type"
 msgstr ""
@@ -4210,7 +4211,7 @@ msgstr ""
 msgid "News"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:436
+#: lib/cinder_web/live/discover_live.ex:462
 #, elixir-autogen, elixir-format
 msgid "Popular TV"
 msgstr ""
@@ -4235,7 +4236,7 @@ msgstr ""
 msgid "Talk"
 msgstr ""
 
-#: lib/cinder_web/live/discover_live.ex:451
+#: lib/cinder_web/live/discover_live.ex:477
 #, elixir-autogen, elixir-format
 msgid "Top rated TV"
 msgstr ""
@@ -5651,4 +5652,25 @@ msgstr ""
 #: lib/cinder_web/components/settings_components.ex:195
 #, elixir-autogen, elixir-format
 msgid "ffprobe media analysis tool"
+msgstr ""
+
+#: lib/cinder_web/live/discover_live.ex:549
+#, elixir-autogen, elixir-format
+msgid "Add your API key in Settings →"
+msgstr ""
+
+#: lib/cinder_web/live/discover_live.ex:548
+#, elixir-autogen, elixir-format
+msgid "Add your API key in Setup →"
+msgstr ""
+
+#: lib/cinder_web/live/discover_live.ex:178
+#: lib/cinder_web/live/discover_live.ex:539
+#, elixir-autogen, elixir-format
+msgid "TMDB isn't configured yet."
+msgstr ""
+
+#: lib/cinder_web/live/user_live/registration.ex:111
+#, elixir-autogen, elixir-format
+msgid "The installer set this one-time password using CINDER_BOOTSTRAP_TOKEN. It is only required to create the first admin account."
 msgstr ""

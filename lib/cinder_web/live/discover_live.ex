@@ -13,6 +13,7 @@ defmodule CinderWeb.DiscoverLive do
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog
   alias Cinder.Catalog.Genres
+  alias Cinder.Settings
 
   require Logger
 
@@ -32,7 +33,8 @@ defmodule CinderWeb.DiscoverLive do
       |> assign(
         query: "",
         results: [],
-        search_error: false,
+        search_error: nil,
+        tmdb_config_path: nil,
         filter: :all,
         trending: [],
         popular: [],
@@ -75,13 +77,16 @@ defmodule CinderWeb.DiscoverLive do
 
     case Catalog.search_discover(query, locale) do
       {:ok, results} ->
-        {:noreply, assign(socket, query: query, results: results, search_error: false)}
+        {:noreply,
+         assign(socket,
+           query: query,
+           results: results,
+           search_error: nil,
+           tmdb_config_path: nil
+         )}
 
       {:error, _reason} ->
-        {:noreply,
-         socket
-         |> assign(query: query, search_error: true)
-         |> put_flash(:error, gettext("TMDB search failed. Try again."))}
+        {:noreply, put_search_error(socket, query)}
     end
   end
 
@@ -159,6 +164,27 @@ defmodule CinderWeb.DiscoverLive do
 
   # The event payload is client-controlled; ignore any malformed/forged frame.
   def handle_event(_event, _params, socket), do: {:noreply, socket}
+
+  defp put_search_error(socket, query) do
+    if tmdb_configured?() do
+      socket
+      |> assign(query: query, search_error: :unreachable, tmdb_config_path: nil)
+      |> put_flash(:error, gettext("TMDB search failed. Try again."))
+    else
+      config_path = if Settings.setup_complete?(), do: ~p"/settings", else: ~p"/setup"
+
+      socket
+      |> assign(query: query, search_error: :unconfigured, tmdb_config_path: config_path)
+      |> put_flash(:error, gettext("TMDB isn't configured yet."))
+    end
+  end
+
+  # Settings overlays DB values onto this effective runtime config (including an env bootstrap),
+  # so reading it recognizes either configuration source without exposing the secret itself.
+  defp tmdb_configured? do
+    token = :cinder |> Application.get_env(Cinder.Catalog.TMDB.HTTP, []) |> Keyword.get(:token)
+    is_binary(token) and String.trim(token) != ""
+  end
 
   @impl true
   def handle_info({:movie_updated, movie}, socket) do
@@ -495,17 +521,35 @@ defmodule CinderWeb.DiscoverLive do
       </section>
 
       <.empty_state
-        :if={@query != "" and @filtered_results == [] and not @search_error}
+        :if={@query != "" and @filtered_results == [] and is_nil(@search_error)}
         icon="hero-magnifying-glass"
         title={gettext("No matches")}
         message={gettext("No movies or shows matched that search.")}
       />
       <.empty_state
-        :if={@search_error}
+        :if={@search_error == :unreachable}
         variant="search-error"
         title={gettext("Search failed")}
         message={gettext("TMDB didn't respond. Try again.")}
       />
+      <.empty_state
+        :if={@search_error == :unconfigured}
+        variant="search-error"
+        title={gettext("Search failed")}
+        message={gettext("TMDB isn't configured yet.")}
+      >
+        <:cta>
+          <.link
+            id="configure-tmdb-link"
+            navigate={@tmdb_config_path}
+            class="link link-primary text-sm"
+          >
+            {if @tmdb_config_path == ~p"/setup",
+              do: gettext("Add your API key in Setup →"),
+              else: gettext("Add your API key in Settings →")}
+          </.link>
+        </:cta>
+      </.empty_state>
     </Layouts.app>
     """
   end
