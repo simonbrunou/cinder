@@ -362,7 +362,7 @@ msgstr ""
 msgid "Create"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/registration.ex:117
+#: lib/cinder_web/live/user_live/registration.ex:123
 #, elixir-autogen, elixir-format
 msgid "Create an account"
 msgstr ""
@@ -1222,7 +1222,7 @@ msgstr ""
 msgid "Toggle navigation menu"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/registration.ex:150
+#: lib/cinder_web/live/user_live/registration.ex:156
 #, elixir-autogen, elixir-format
 msgid "Too many attempts. Try again in a minute."
 msgstr ""
@@ -1562,7 +1562,7 @@ msgstr ""
 msgid "Couldn't update email. Check the address."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/registration.ex:116
+#: lib/cinder_web/live/user_live/registration.ex:122
 #, elixir-autogen, elixir-format
 msgid "Creating account…"
 msgstr ""
@@ -2428,7 +2428,7 @@ msgstr ""
 msgid "Bootstrap token"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/registration.ex:187
+#: lib/cinder_web/live/user_live/registration.ex:193
 #, elixir-autogen, elixir-format
 msgid "Invalid bootstrap token."
 msgstr ""
@@ -4248,7 +4248,7 @@ msgstr ""
 msgid "Your data"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/registration.ex:112
+#: lib/cinder_web/live/user_live/registration.ex:118
 #, elixir-autogen, elixir-format
 msgid "We store your email, hashed password, and request history; the instance operator is the data controller."
 msgstr ""
@@ -5652,6 +5652,11 @@ msgstr ""
 #: lib/cinder_web/components/settings_components.ex:508
 #, elixir-autogen, elixir-format
 msgid "Prowlarr settings guide"
+msgstr ""
+
+#: lib/cinder_web/live/user_live/registration.ex:111
+#, elixir-autogen, elixir-format
+msgid "The installer set this one-time password using CINDER_BOOTSTRAP_TOKEN. It is only required to create the first admin account."
 msgstr ""
 
 #: lib/cinder_web/live/discover_live.ex:549

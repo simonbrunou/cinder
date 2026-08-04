@@ -362,7 +362,7 @@ msgstr "Impossible de mettre à jour la saison."
 msgid "Create"
 msgstr "Créer"
 
-#: lib/cinder_web/live/user_live/registration.ex:117
+#: lib/cinder_web/live/user_live/registration.ex:123
 #, elixir-autogen, elixir-format
 msgid "Create an account"
 msgstr "Créer un compte"
@@ -1222,7 +1222,7 @@ msgstr "Ce film ne peut pas être annulé."
 msgid "Toggle navigation menu"
 msgstr "Basculer le menu de navigation"
 
-#: lib/cinder_web/live/user_live/registration.ex:150
+#: lib/cinder_web/live/user_live/registration.ex:156
 #, elixir-autogen, elixir-format
 msgid "Too many attempts. Try again in a minute."
 msgstr "Trop de tentatives. Réessayez dans une minute."
@@ -1562,7 +1562,7 @@ msgstr "Impossible de demander %{title}. Réessayez."
 msgid "Couldn't update email. Check the address."
 msgstr "Impossible de mettre à jour l'e-mail. Vérifiez l'adresse."
 
-#: lib/cinder_web/live/user_live/registration.ex:116
+#: lib/cinder_web/live/user_live/registration.ex:122
 #, elixir-autogen, elixir-format
 msgid "Creating account…"
 msgstr "Création du compte…"
@@ -2428,7 +2428,7 @@ msgstr "Exécution : %{action}"
 msgid "Bootstrap token"
 msgstr "Jeton d'initialisation"
 
-#: lib/cinder_web/live/user_live/registration.ex:187
+#: lib/cinder_web/live/user_live/registration.ex:193
 #, elixir-autogen, elixir-format
 msgid "Invalid bootstrap token."
 msgstr "Jeton d'initialisation invalide."
@@ -4248,7 +4248,7 @@ msgstr "Votre compte a été définitivement supprimé."
 msgid "Your data"
 msgstr "Vos données"
 
-#: lib/cinder_web/live/user_live/registration.ex:112
+#: lib/cinder_web/live/user_live/registration.ex:118
 #, elixir-autogen, elixir-format
 msgid "We store your email, hashed password, and request history; the instance operator is the data controller."
 msgstr "Nous conservons votre adresse e-mail, votre mot de passe haché et votre historique de demandes ; l’opérateur de l’instance est le responsable du traitement."
@@ -5661,6 +5661,11 @@ msgstr "Prowlarr connecte Cinder à vos indexeurs et trouve des releases. Ajoute
 #, elixir-autogen, elixir-format
 msgid "Prowlarr settings guide"
 msgstr "Guide des paramètres de Prowlarr"
+
+#: lib/cinder_web/live/user_live/registration.ex:111
+#, elixir-autogen, elixir-format
+msgid "The installer set this one-time password using CINDER_BOOTSTRAP_TOKEN. It is only required to create the first admin account."
+msgstr "La personne qui a installé Cinder a défini ce mot de passe à usage unique avec CINDER_BOOTSTRAP_TOKEN. Il est uniquement requis pour créer le premier compte administrateur."
 
 #: lib/cinder_web/live/discover_live.ex:549
 #, elixir-autogen, elixir-format
