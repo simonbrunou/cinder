@@ -158,7 +158,8 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
               "size" => 2_000_000_000,
               "downloadUrl" => "http://prowlarr:9696/file/1",
               "seeders" => 30,
-              "protocol" => "torrent"
+              "protocol" => "torrent",
+              "tvdbId" => 1396
             }
           ])
 
@@ -177,6 +178,7 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
              protocol: :torrent,
              category_ids: [],
              indexer_id: nil,
+             tvdb_id: 1396,
              published_at: nil,
              query_origins: [:id_scoped]
            }

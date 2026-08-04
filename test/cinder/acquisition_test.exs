@@ -719,14 +719,35 @@ defmodule Cinder.AcquisitionTest do
     end
 
     test "keeps an AKA-titled release from the TVDB-id half of the union" do
-      # TMDB title "Money Heist", release under the original title — the TvdbId
-      # token already scoped the search to the right show.
+      # TMDB title "Money Heist", release under the original title. The result's explicit
+      # TVDB identity proves the AKA belongs to this known-year series.
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn 123, _title, _season ->
-        {:ok, [raw_tv("La.Casa.de.Papel.S01E01.1080p.WEB-DL-GRP", query_origins: [:id_scoped])]}
+        {:ok,
+         [
+           raw_tv("La.Casa.de.Papel.S01E01.1080p.WEB-DL-GRP",
+             tvdb_id: 123,
+             query_origins: [:id_scoped]
+           )
+         ]}
       end)
 
       assert {:ok, [{%Release{episodes: [1]}, [1]}]} =
-               Acquisition.best_releases(series(title: "Money Heist"), 1, [1])
+               Acquisition.best_releases(series(title: "Money Heist", year: 2017), 1, [1])
+    end
+
+    test "rejects a release carrying a conflicting TVDB identity" do
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn 123, "The Office", 1 ->
+        {:ok,
+         [
+           raw_tv("The.Office.2005.S01E01.1080p.WEB-DL-GRP",
+             tvdb_id: 999,
+             query_origins: [:id_scoped]
+           )
+         ]}
+      end)
+
+      assert :no_match =
+               Acquisition.best_releases(series(title: "The Office", year: 2005), 1, [1])
     end
 
     test "a numeric title is token-anchored: a year in another show's name can't match" do
@@ -757,28 +778,50 @@ defmodule Cinder.AcquisitionTest do
                Acquisition.best_releases(series(tvdb_id: nil, title: "24"), 1, [5])
     end
 
+    test "rejects an unverified yearless pack for a known-year same-named series" do
+      # Exact issue #315 regression: neither the title nor query provenance can distinguish this
+      # 2025 reboot pack from Forever (2014), and the result carries no explicit TVDB identity.
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn 281_535, "Forever", 1 ->
+        {:ok,
+         [
+           raw_tv(
+             "FOREVER.S01.1080p.NF.WEB-DL.HIN-Multi.DDP5.1.Atmos.H.264-themoveisboss",
+             query_origins: [:id_scoped, :free_text]
+           )
+         ]}
+      end)
+
+      assert :no_match =
+               Acquisition.best_releases(
+                 series(tvdb_id: 281_535, title: "Forever", year: 2014),
+                 1,
+                 [1]
+               )
+    end
+
     test "a year-conflicting same-name release is rejected even on the id-scoped path" do
       # search_tv/3 unions in a free-text title query (so scraper indexers contribute),
       # which can surface a same-named different show: "Charmed (2018)" packs for the
-      # year-1998 series. A conflicting year token rejects; a matching, ±1, or absent
-      # year passes.
+      # year-1998 series. Without explicit TVDB identity, a matching or ±1 year is required;
+      # conflicting and absent years reject.
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn 123, "Charmed", 1 ->
         {:ok,
          [
-           raw_tv("Charmed.2018.S01E01.1080p.WEB-DL-GRP"),
-           raw_tv("Charmed.1998.S01E01.1080p.WEB-DL-GRP"),
-           raw_tv("Charmed.S01E02.1080p.WEB-DL-GRP"),
-           raw_tv("Charmed.1997.S01E03.1080p.WEB-DL-GRP")
+           raw_tv("Charmed.2018.S01E01.1080p.WEB-DL-GRP", query_origins: [:id_scoped]),
+           raw_tv("Charmed.1998.S01E01.1080p.WEB-DL-GRP", query_origins: [:id_scoped]),
+           raw_tv("Charmed.S01E02.1080p.WEB-DL-GRP", query_origins: [:id_scoped]),
+           raw_tv("Charmed.1997.S01E03.1080p.WEB-DL-GRP", query_origins: [:id_scoped]),
+           raw_tv("Charmed_1998_S01E04_1080p_WEB-DL-GRP", query_origins: [:id_scoped])
          ]}
       end)
 
       assert {:ok, chosen} =
-               Acquisition.best_releases(series(title: "Charmed", year: 1998), 1, [1, 2, 3])
+               Acquisition.best_releases(series(title: "Charmed", year: 1998), 1, [1, 2, 3, 4])
 
       assert chosen |> Enum.map(fn {r, _cov} -> r.title end) |> Enum.sort() == [
                "Charmed.1997.S01E03.1080p.WEB-DL-GRP",
                "Charmed.1998.S01E01.1080p.WEB-DL-GRP",
-               "Charmed.S01E02.1080p.WEB-DL-GRP"
+               "Charmed_1998_S01E04_1080p_WEB-DL-GRP"
              ]
     end
 
