@@ -12,6 +12,7 @@ defmodule Cinder.Catalog.EpisodeCoordinate do
     field :scheme, :string
     field :namespace, :string
     field :canonical_value, :string
+    field :scope_title, :string
     field :precedence, Ecto.Enum, values: @precedences
     belongs_to :series, Series
 
@@ -24,7 +25,7 @@ defmodule Cinder.Catalog.EpisodeCoordinate do
 
   def changeset(coordinate, attrs) do
     coordinate
-    |> cast(attrs, [:source, :scheme, :namespace, :canonical_value, :precedence])
+    |> cast(attrs, [:source, :scheme, :namespace, :canonical_value, :scope_title, :precedence])
     |> validate_required([
       :series_id,
       :source,

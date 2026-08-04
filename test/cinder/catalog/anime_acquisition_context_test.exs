@@ -84,6 +84,122 @@ defmodule Cinder.Catalog.AnimeAcquisitionContextTest do
     assert mappings == Enum.sort_by(mappings, &mapping_sort_key/1)
   end
 
+  test "correlates a selected TMDB scene subgroup title with a persisted series alias" do
+    group_id = "nisio-isin-order"
+
+    series =
+      series_fixture(title: "Monogatari", year: 2009)
+      |> Ecto.Changeset.change(scene_numbering_group_id: group_id)
+      |> Repo.update!()
+
+    specials = season_fixture(series, season_number: 0)
+    episode = episode_fixture(specials, episode_number: 17)
+
+    assert {:ok, _alias_record} =
+             Catalog.save_manual_alias(series, %{
+               title: "Koyomimonogatari",
+               kind: :alternative
+             })
+
+    episode_coordinate_fixture(
+      series,
+      %{
+        source: "tmdb",
+        scheme: "scene",
+        namespace: group_id,
+        canonical_value: "S11E05",
+        scope_title: "Koyomimonogatari",
+        precedence: :inferred
+      },
+      [episode.id]
+    )
+
+    # Neither a stale episode-group namespace, the canonical series title, nor an uncorroborated
+    # subgroup title may scope a bare release coordinate.
+    episode_coordinate_fixture(
+      series,
+      %{
+        source: "tmdb",
+        scheme: "scene",
+        namespace: "old-group",
+        canonical_value: "S99E05",
+        scope_title: "Koyomimonogatari",
+        precedence: :inferred
+      },
+      [episode.id]
+    )
+
+    episode_coordinate_fixture(
+      series,
+      %{
+        source: "tmdb",
+        scheme: "scene",
+        namespace: group_id,
+        canonical_value: "S12E01",
+        scope_title: "Unknown Arc",
+        precedence: :inferred
+      },
+      [episode.id]
+    )
+
+    episode_coordinate_fixture(
+      series,
+      %{
+        source: "tmdb",
+        scheme: "scene",
+        namespace: group_id,
+        canonical_value: "S13E01",
+        scope_title: "Monogatari",
+        precedence: :inferred
+      },
+      [episode.id]
+    )
+
+    assert %{
+             scene_titles: [
+               %{
+                 title: "Koyomimonogatari",
+                 season: 11,
+                 source: "tmdb",
+                 namespace: ^group_id
+               }
+             ]
+           } = Catalog.anime_series_acquisition_context(series)
+  end
+
+  test "omits a scene title that identifies more than one subgroup season" do
+    group_id = "story-arcs"
+
+    series =
+      series_fixture(title: "Show")
+      |> Ecto.Changeset.change(scene_numbering_group_id: group_id)
+      |> Repo.update!()
+
+    season = season_fixture(series, season_number: 0)
+    first = episode_fixture(season, episode_number: 1)
+    second = episode_fixture(season, episode_number: 2)
+
+    assert {:ok, _alias_record} =
+             Catalog.save_manual_alias(series, %{title: "Shared Arc", kind: :alternative})
+
+    for {value, episode_id} <- [{"S01E01", first.id}, {"S02E01", second.id}] do
+      episode_coordinate_fixture(
+        series,
+        %{
+          source: "tmdb",
+          scheme: "scene",
+          namespace: group_id,
+          canonical_value: value,
+          scope_title: "Shared Arc",
+          precedence: :inferred
+        },
+        [episode_id]
+      )
+    end
+
+    assert %{scene_titles: []} = Catalog.anime_series_acquisition_context(series)
+  end
+
   defp mapping_sort_key(mapping) do
     identity = mapping.identity
     {identity.source, identity.scheme, identity.namespace, identity.canonical_value}

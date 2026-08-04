@@ -23,6 +23,9 @@ defmodule Cinder.Acquisition.AnimeParser do
       coordinates = typed_special(title) ->
         result(coordinates, :unknown, title)
 
+      scene_title = scene_title_remainder(title, Map.get(context, :scene_titles, [])) ->
+        scene_result(scene_title, context, title)
+
       remainder = title_remainder(title, context.titles) ->
         absolute_result(remainder, context, title)
 
@@ -41,6 +44,25 @@ defmodule Cinder.Acquisition.AnimeParser do
     case absolute_coordinates(remainder, context) do
       nil -> result([], :unknown, title)
       coordinates -> result(coordinates, :story, title)
+    end
+  end
+
+  # A bare coordinate remains series-absolute unless Catalog has correlated the matched title to
+  # one exact subgroup in the selected scene-numbering order. The explicit scene scope keeps arc
+  # releases such as "Koyomimonogatari - 05" safe while preserving the generic absolute rule.
+  defp scene_result({remainder, scope}, context, title) do
+    case absolute_coordinates(remainder, context) do
+      nil ->
+        result([], :unknown, title)
+
+      [%{values: values}] ->
+        scene_values = Enum.map(values, &standard_value(Integer.to_string(scope.season), &1))
+
+        coordinate =
+          coordinate("scene", scene_values)
+          |> Map.merge(%{source: scope.source, namespace: scope.namespace})
+
+        result([coordinate], :story, title)
     end
   end
 
@@ -113,12 +135,11 @@ defmodule Cinder.Acquisition.AnimeParser do
     end
   end
 
-  # Also accepts the Chinese episode-counter tokens from the same F3 evidence title: an
-  # optional 总第/第 prefix and a 话/集 suffix (consumed explicitly — a CJK ideograph is a
-  # word char under /u, so a bare \b would never match after "77话").
+  # Absolute range separators also accept en/em dashes used in human-written arc batch titles,
+  # plus the CJK wave-dash variants (~ 〜 ～), e.g. 总第67~77.
   defp absolute_coordinates(remainder, context) do
     case Regex.run(
-           ~r/^\s*(?:[-–—._]\s*)?(?:总?第\s*)?(\d{1,6})(?:\s*[-~〜～]\s*(\d{1,6}))?(?:v\d+)?[话集]?(?:\b|$)/iu,
+           ~r/^\s*(?:[-–—._]\s*)?(?:总?第\s*)?(\d{1,6})(?:\s*[-–—~〜～]\s*(\d{1,6}))?(?:v\d+)?[话集]?(?:\b|$)/iu,
            remainder,
            capture: :all_but_first
          ) do
@@ -175,6 +196,46 @@ defmodule Cinder.Acquisition.AnimeParser do
     |> Enum.sort_by(&String.length/1, :desc)
     |> Enum.find_value(&matching_remainder(normalized_title, &1))
   end
+
+  defp scene_title_remainder(title, scene_titles) when is_list(scene_titles) do
+    normalized_title = title |> strip_group() |> String.normalize(:nfkc)
+
+    scene_titles
+    |> Enum.map(&scene_title/1)
+    |> Enum.reject(&is_nil/1)
+    |> Enum.sort_by(fn {known_title, _scope} -> String.length(known_title) end, :desc)
+    |> Enum.find_value(fn {known_title, scope} ->
+      case matching_remainder(normalized_title, known_title) do
+        nil -> nil
+        remainder -> {remainder, scope}
+      end
+    end)
+  end
+
+  defp scene_title_remainder(_title, _scene_titles), do: nil
+
+  defp scene_title(scene_title) when is_map(scene_title) do
+    title = scene_title_field(scene_title, :title)
+    season = scene_title_field(scene_title, :season)
+    source = scene_title_field(scene_title, :source)
+    namespace = scene_title_field(scene_title, :namespace)
+
+    if valid_title_and_season?(title, season) and present_string?(source) and
+         present_string?(namespace) do
+      scope = %{season: season, source: source, namespace: namespace}
+      {String.normalize(title, :nfkc), scope}
+    end
+  end
+
+  defp scene_title(_scene_title), do: nil
+
+  defp scene_title_field(scene_title, key),
+    do: Map.get(scene_title, key) || Map.get(scene_title, Atom.to_string(key))
+
+  defp valid_title_and_season?(title, season),
+    do: is_binary(title) and is_integer(season) and season >= 0
+
+  defp present_string?(value), do: is_binary(value) and value != ""
 
   defp matching_remainder(title, known_title) do
     if String.starts_with?(String.downcase(title), String.downcase(known_title)) do

@@ -125,13 +125,17 @@ defmodule Cinder.Acquisition.Anime do
       end)
       |> Enum.map(&snapshot_mapping/1)
 
-    %{
-      "version" => 2,
-      "parser_context" => %{
+    parser_context =
+      %{
         "title" => context.title,
         "aliases" => parser_alias_titles(context),
         "year" => context.year
-      },
+      }
+      |> put_scene_titles(parser_scene_titles(context, reserved_ids))
+
+    %{
+      "version" => 2,
+      "parser_context" => parser_context,
       "reserved_episode_ids" => reserved_ids,
       "release" => %{
         "title" => release.title,
@@ -167,7 +171,8 @@ defmodule Cinder.Acquisition.Anime do
     parser_context = %{
       kind: :series,
       titles: [context.title | parser_alias_titles(context)],
-      year: context.year
+      year: context.year,
+      scene_titles: parser_scene_titles(context)
     }
 
     parsed = AnimeParser.parse(release.title, parser_context)
@@ -181,7 +186,89 @@ defmodule Cinder.Acquisition.Anime do
   end
 
   defp parser_alias_titles(context) do
-    context.aliases |> Enum.map(& &1.title) |> Enum.take(@max_aliases)
+    canonical_normalized = normalize_title(context.title)
+
+    context.aliases
+    |> Enum.filter(&valid_alias?/1)
+    |> Enum.sort_by(&alias_sort_key/1)
+    |> Enum.uniq_by(&normalize_title(&1.title))
+    |> Enum.reject(&(normalize_title(&1.title) == canonical_normalized))
+    |> Enum.take(@max_aliases)
+    |> Enum.map(& &1.title)
+  end
+
+  defp parser_scene_titles(context, reserved_ids \\ nil) do
+    scene_titles_by_normalized_title =
+      context
+      |> Map.get(:scene_titles, [])
+      |> Map.new(fn scene_title ->
+        title = Map.get(scene_title, :title) || Map.get(scene_title, "title")
+        {normalize_title(title), scene_title}
+      end)
+
+    parser_alias_titles(context)
+    |> Enum.map(&Map.get(scene_titles_by_normalized_title, normalize_title(&1)))
+    |> Enum.reject(&is_nil/1)
+    |> Enum.filter(&scene_title_applies?(&1, context, reserved_ids))
+    |> Enum.take(@max_aliases)
+  end
+
+  defp scene_title_applies?(_scene_title, _context, nil), do: true
+
+  defp scene_title_applies?(scene_title, context, reserved_ids) do
+    scope = %{
+      title: scene_title_field(scene_title, :title),
+      season: scene_title_field(scene_title, :season),
+      source: scene_title_field(scene_title, :source),
+      namespace: scene_title_field(scene_title, :namespace)
+    }
+
+    reserved = MapSet.new(reserved_ids)
+    Enum.any?(context.mappings, &scene_mapping_applies?(&1, scope, reserved))
+  end
+
+  defp scene_title_field(scene_title, key),
+    do: Map.get(scene_title, key) || Map.get(scene_title, Atom.to_string(key))
+
+  defp scene_mapping_applies?(mapping, scope, reserved) do
+    identity = mapping.identity
+
+    identity.source == scope.source and identity.scheme == "scene" and
+      identity.namespace == scope.namespace and
+      scene_value_in_season?(identity.canonical_value, scope.season) and
+      matching_scope_title?(Map.get(mapping, :scope_title), scope.title) and
+      not MapSet.disjoint?(MapSet.new(mapping.episode_ids), reserved)
+  end
+
+  defp matching_scope_title?(mapping_title, title)
+       when is_binary(mapping_title) and is_binary(title),
+       do: normalize_title(mapping_title) == normalize_title(title)
+
+  defp matching_scope_title?(_mapping_title, _title), do: false
+
+  defp scene_value_in_season?(value, season) when is_binary(value) and is_integer(season) do
+    case Regex.run(~r/^S(\d{2,3})E\d{2,4}$/u, value, capture: :all_but_first) do
+      [value_season] -> String.to_integer(value_season) == season
+      _invalid -> false
+    end
+  end
+
+  defp scene_value_in_season?(_value, _season), do: false
+
+  defp put_scene_titles(parser_context, []), do: parser_context
+
+  defp put_scene_titles(parser_context, scene_titles) do
+    serialized =
+      Enum.map(scene_titles, fn scene_title ->
+        %{
+          "title" => Map.get(scene_title, :title) || Map.get(scene_title, "title"),
+          "season" => Map.get(scene_title, :season) || Map.get(scene_title, "season"),
+          "source" => Map.get(scene_title, :source) || Map.get(scene_title, "source"),
+          "namespace" => Map.get(scene_title, :namespace) || Map.get(scene_title, "namespace")
+        }
+      end)
+
+    Map.put(parser_context, "scene_titles", serialized)
   end
 
   defp fill_movie_group(%Release{group: nil} = release) do
@@ -218,7 +305,14 @@ defmodule Cinder.Acquisition.Anime do
   defp resolve_release(%Release{coordinates: coordinates} = release, context, wanted_ids)
        when coordinates != [] do
     values =
-      for coordinate <- coordinates, value <- coordinate.values, do: {coordinate.scheme, value}
+      for coordinate <- coordinates, value <- coordinate.values do
+        %{
+          scheme: coordinate.scheme,
+          canonical_value: value,
+          source: Map.get(coordinate, :source),
+          namespace: Map.get(coordinate, :namespace)
+        }
+      end
 
     case resolve_values(values, context.mappings, []) do
       {:ok, evidence} ->
@@ -257,16 +351,18 @@ defmodule Cinder.Acquisition.Anime do
 
   defp resolve_values([], _mappings, evidence), do: {:ok, Enum.reverse(evidence)}
 
-  defp resolve_values([{scheme, value} | rest], mappings, evidence) do
-    case resolve_episode_coordinate(scheme, value, mappings) do
+  defp resolve_values([coordinate | rest], mappings, evidence) do
+    case resolve_coordinate(coordinate, mappings) do
       {:ok, episode_ids, resolver_evidence} ->
-        value_evidence = %{
-          scheme: scheme,
-          canonical_value: value,
-          episode_ids: episode_ids,
-          precedence: resolver_evidence.precedence,
-          mapping_identities: Enum.map(resolver_evidence.matches, & &1.coordinate)
-        }
+        value_evidence =
+          %{
+            scheme: coordinate.scheme,
+            canonical_value: coordinate.canonical_value,
+            episode_ids: episode_ids,
+            precedence: resolver_evidence.precedence,
+            mapping_identities: Enum.map(resolver_evidence.matches, & &1.coordinate)
+          }
+          |> put_coordinate_scope(coordinate)
 
         resolve_values(rest, mappings, [value_evidence | evidence])
 
@@ -274,6 +370,37 @@ defmodule Cinder.Acquisition.Anime do
         :error
     end
   end
+
+  defp resolve_coordinate(%{source: source, namespace: namespace} = coordinate, mappings)
+       when is_binary(source) and source != "" and is_binary(namespace) and namespace != "" do
+    matching =
+      Enum.filter(mappings, fn mapping ->
+        identity = mapping.identity
+
+        identity.source == source and identity.scheme == coordinate.scheme and
+          identity.namespace == namespace and
+          identity.canonical_value == coordinate.canonical_value
+      end)
+
+    resolve_matching_mappings(matching)
+  end
+
+  defp resolve_coordinate(coordinate, mappings) do
+    resolve_episode_coordinate(coordinate.scheme, coordinate.canonical_value, mappings)
+  end
+
+  defp resolve_matching_mappings(matching) do
+    resolver_mappings = Enum.map(matching, &resolver_mapping/1)
+    identities = Enum.map(matching, & &1.identity)
+    AnimeResolver.resolve(identities, resolver_mappings)
+  end
+
+  defp put_coordinate_scope(value, %{source: source, namespace: namespace})
+       when is_binary(source) and is_binary(namespace) do
+    Map.merge(value, %{source: source, namespace: namespace})
+  end
+
+  defp put_coordinate_scope(value, _coordinate), do: value
 
   # The scheme-bridging rule (which persisted schemes a parsed value also matches) lives once in
   # `AnimeResolver.bridged_schemes/1`. `strip_shadowed_canonical/1` then lets an operator-reviewed
@@ -516,10 +643,12 @@ defmodule Cinder.Acquisition.Anime do
       "episode_ids" => mapping.episode_ids,
       "evidence" => json_safe(mapping.evidence)
     }
+    |> put_snapshot_scope_title(Map.get(mapping, :scope_title))
   end
 
   defp snapshot_coordinate(coordinate) do
     %{"scheme" => coordinate.scheme, "values" => coordinate.values}
+    |> put_snapshot_scope(coordinate)
   end
 
   defp snapshot_resolution(resolution) do
@@ -530,7 +659,20 @@ defmodule Cinder.Acquisition.Anime do
       "precedence" => Atom.to_string(resolution.precedence),
       "mapping_identities" => Enum.map(resolution.mapping_identities, &snapshot_identity/1)
     }
+    |> put_snapshot_scope(resolution)
   end
+
+  defp put_snapshot_scope(snapshot, %{source: source, namespace: namespace})
+       when is_binary(source) and is_binary(namespace) do
+    Map.merge(snapshot, %{"source" => source, "namespace" => namespace})
+  end
+
+  defp put_snapshot_scope(snapshot, _value), do: snapshot
+
+  defp put_snapshot_scope_title(snapshot, title) when is_binary(title) and title != "",
+    do: Map.put(snapshot, "scope_title", title)
+
+  defp put_snapshot_scope_title(snapshot, _title), do: snapshot
 
   defp snapshot_identity(identity) do
     %{
@@ -655,18 +797,7 @@ defmodule Cinder.Acquisition.Anime do
   end
 
   defp search_titles(context) do
-    canonical_normalized = normalize_title(context.title)
-
-    aliases =
-      context.aliases
-      |> Enum.filter(&valid_alias?/1)
-      |> Enum.sort_by(&alias_sort_key/1)
-      |> Enum.uniq_by(&normalize_title(&1.title))
-      |> Enum.reject(&(normalize_title(&1.title) == canonical_normalized))
-      |> Enum.take(@max_aliases)
-      |> Enum.map(& &1.title)
-
-    [context.title | aliases]
+    [context.title | parser_alias_titles(context)]
     |> Enum.filter(&within_codepoint_limit?(&1, @max_title_codepoints))
   end
 
@@ -679,9 +810,9 @@ defmodule Cinder.Acquisition.Anime do
 
   defp alias_sort_key(alias_record) do
     {
-      Map.get(@precedence_rank, alias_record.precedence, map_size(@precedence_rank)),
-      Map.get(@kind_rank, alias_record.kind, map_size(@kind_rank)),
-      alias_record.normalized_title,
+      Map.get(@precedence_rank, Map.get(alias_record, :precedence), map_size(@precedence_rank)),
+      Map.get(@kind_rank, Map.get(alias_record, :kind), map_size(@kind_rank)),
+      Map.get(alias_record, :normalized_title) || normalize_title(alias_record.title),
       alias_record.title
     }
   end

@@ -8,6 +8,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
   alias Cinder.Acquisition.IndexerMock
   alias Cinder.Acquisition.Release
   alias Cinder.Acquisition.Scorer
+  alias Cinder.Download.Intent
 
   @fixture_path "test/support/fixtures/anime/acquisition-v1.json"
   @preferences_fixture_path "test/support/fixtures/anime/preferences-v1.json"
@@ -151,6 +152,139 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     context_without_group = %{context | mappings: Enum.take(context.mappings, 1)}
 
     assert :no_match = Anime.select_episodes([release], context_without_group, [29], [])
+  end
+
+  test "a selected scene-group arc title scopes a bare number to that arc (issue #312)" do
+    context = %{
+      kind: :series,
+      title: "Monogatari",
+      year: 2009,
+      tvdb_id: 102_261,
+      aliases: [
+        %{
+          title: "Koyomimonogatari",
+          kind: :alternative,
+          precedence: :manual,
+          normalized_title: "koyomimonogatari"
+        }
+      ],
+      scene_titles: [
+        %{
+          title: "Koyomimonogatari",
+          season: 11,
+          source: "tmdb",
+          namespace: "nisio-isin-order"
+        }
+      ],
+      episodes: [episode(17, 0, 17), episode(99, 0, 99)],
+      mappings: [
+        mapping("cinder", "standard", "canonical", "S00E17", [17]),
+        mapping("tmdb", "scene", "nisio-isin-order", "S11E05", [17], :inferred)
+        |> Map.put(:scope_title, "Koyomimonogatari"),
+        # A higher-precedence same-value mapping in another namespace must not hijack the title
+        # scope. The parsed coordinate names the selected TMDB group exactly.
+        mapping("manual", "scene", "other-order", "S11E05", [99], :manual)
+      ]
+    }
+
+    release = Release.new(raw("[DB] Koyomimonogatari - 05 [1080p]", "issue-312"))
+
+    assert {:ok, %{assignments: [assignment]}} =
+             Anime.select_episodes([release], context, [17], [])
+
+    scoped_coordinate = %{
+      scheme: "scene",
+      values: ["S11E05"],
+      source: "tmdb",
+      namespace: "nisio-isin-order"
+    }
+
+    assert assignment.episode_ids == [17]
+    assert assignment.release.coordinates == [scoped_coordinate]
+    assert assignment.release.resolved_episode_ids == [17]
+
+    assert assignment.mapping_snapshot["parser_context"]["scene_titles"] == [
+             %{
+               "title" => "Koyomimonogatari",
+               "season" => 11,
+               "source" => "tmdb",
+               "namespace" => "nisio-isin-order"
+             }
+           ]
+
+    assert assignment.mapping_snapshot["release"]["coordinates"] == [
+             %{
+               "scheme" => "scene",
+               "values" => ["S11E05"],
+               "source" => "tmdb",
+               "namespace" => "nisio-isin-order"
+             }
+           ]
+
+    assert assignment.mapping_snapshot["reserved_episode_ids"] == [17]
+    assert Intent.valid_mapping_snapshot?(assignment.mapping_snapshot, :episode, [17])
+
+    for tampered <- [
+          put_in(
+            assignment.mapping_snapshot,
+            ["release", "coordinates", Access.at(0), "namespace"],
+            "other-order"
+          ),
+          put_in(
+            assignment.mapping_snapshot,
+            ["selected_resolution", "values", Access.at(0), "namespace"],
+            "other-order"
+          ),
+          put_in(
+            assignment.mapping_snapshot,
+            ["parser_context", "scene_titles", Access.at(0), "namespace"],
+            "other-order"
+          ),
+          put_in(assignment.mapping_snapshot, ["parser_context", "scene_titles"], []),
+          update_in(assignment.mapping_snapshot["mappings"], fn mappings ->
+            Enum.map(mappings, fn
+              %{"scope_title" => _title} = mapping ->
+                %{mapping | "scope_title" => "Other Arc"}
+
+              mapping ->
+                mapping
+            end)
+          end)
+        ] do
+      refute Intent.valid_mapping_snapshot?(tampered, :episode, [17])
+    end
+
+    assert assignment.mapping_snapshot["selected_resolution"]["values"] == [
+             %{
+               "scheme" => "scene",
+               "canonical_value" => "S11E05",
+               "source" => "tmdb",
+               "namespace" => "nisio-isin-order",
+               "episode_ids" => [17],
+               "precedence" => "inferred",
+               "mapping_identities" => [
+                 %{
+                   "source" => "tmdb",
+                   "scheme" => "scene",
+                   "namespace" => "nisio-isin-order",
+                   "canonical_value" => "S11E05"
+                 }
+               ]
+             }
+           ]
+
+    assert [manual] = Anime.manual_episode_candidates([release], context, [17], [])
+    assert manual.coordinates == [scoped_coordinate]
+    assert manual.resolved_episode_ids == [17]
+    assert manual.mapping_snapshot == assignment.mapping_snapshot
+
+    incomplete_batch =
+      Release.new(raw("[DB] Koyomimonogatari - 04-05 [1080p]", "issue-312-gap"))
+
+    assert :no_match = Anime.select_episodes([incomplete_batch], context, [17], [])
+
+    assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
+             Anime.manual_episode_candidates([incomplete_batch], context, [17], [])
   end
 
   test "a canonical standard mapping outranks a conflicting persisted scene mapping for the same value" do

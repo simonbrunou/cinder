@@ -12,7 +12,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
   import Ecto.Query
   require Logger
 
-  alias Cinder.Catalog.{Episode, Identity, SceneNumbering, Season, Series}
+  alias Cinder.Catalog.{Episode, Identity, SceneNumbering, Season, Series, TitleAlias}
   alias Cinder.Locales
   alias Cinder.Repo
 
@@ -42,6 +42,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
   @doc "Builds the plain Catalog-owned identity context used for anime series acquisition."
   def anime_series_acquisition_context(%Series{} = series) do
     episodes = acquisition_episodes(series)
+    aliases = acquisition_aliases(series)
     mappings = Enum.map(episodes, &canonical_mapping/1) ++ persisted_mappings(series)
 
     %{
@@ -49,7 +50,8 @@ defmodule Cinder.Catalog.SeriesCatalog do
       title: series.title,
       year: series.year,
       tvdb_id: series.tvdb_id,
-      aliases: acquisition_aliases(series),
+      aliases: aliases,
+      scene_titles: scene_titles(series, aliases, mappings),
       episodes: episodes,
       mappings: Enum.sort_by(mappings, &mapping_sort_key/1)
     }
@@ -106,12 +108,81 @@ defmodule Cinder.Catalog.SeriesCatalog do
           namespace: coordinate.namespace,
           canonical_value: coordinate.canonical_value
         },
+        scope_title: coordinate.scope_title,
         precedence: coordinate.precedence,
         episode_ids: Enum.map(coordinate.memberships, & &1.episode_id),
         evidence: %{"kind" => "persisted_coordinate", "coordinate_id" => coordinate.id}
       }
     end)
   end
+
+  # A scene subgroup title is safe as a relative-numbering scope only when two independently
+  # persisted facts agree: it belongs to the series' currently selected TMDB episode group, and
+  # the same normalized title is a known series alias. The canonical series title is deliberately
+  # excluded because its established bare-number meaning is series-absolute. If one title points
+  # at more than one source/namespace/season scope, omit it rather than guessing.
+  defp scene_titles(%Series{scene_numbering_group_id: group_id} = series, aliases, mappings)
+       when is_binary(group_id) do
+    canonical_title = TitleAlias.normalize(series.title)
+
+    recognized_aliases =
+      aliases
+      |> Enum.map(& &1.normalized_title)
+      |> Enum.reject(&(&1 in [nil, canonical_title]))
+      |> MapSet.new()
+
+    mappings
+    |> Enum.map(&scene_title_candidate(&1, group_id, recognized_aliases))
+    |> Enum.reject(&is_nil/1)
+    |> Enum.group_by(& &1.normalized_title)
+    |> Enum.flat_map(fn {_normalized_title, candidates} ->
+      case candidates
+           |> Enum.map(&{&1.source, &1.namespace, &1.season})
+           |> Enum.uniq() do
+        [{source, namespace, season}] ->
+          title = candidates |> Enum.map(& &1.title) |> Enum.sort() |> hd()
+          [%{title: title, season: season, source: source, namespace: namespace}]
+
+        _ambiguous ->
+          []
+      end
+    end)
+    |> Enum.sort_by(&{&1.season, TitleAlias.normalize(&1.title), &1.source, &1.namespace})
+  end
+
+  defp scene_titles(_series, _aliases, _mappings), do: []
+
+  defp scene_title_candidate(mapping, group_id, recognized_titles) do
+    identity = mapping.identity
+    title = Map.get(mapping, :scope_title)
+
+    with true <-
+           identity.source == "tmdb" and identity.scheme == "scene" and
+             identity.namespace == group_id,
+         true <- is_binary(title) and String.trim(title) != "",
+         normalized_title = TitleAlias.normalize(title),
+         true <- MapSet.member?(recognized_titles, normalized_title),
+         {:ok, season} <- scene_season(identity.canonical_value) do
+      %{
+        title: title,
+        normalized_title: normalized_title,
+        season: season,
+        source: identity.source,
+        namespace: identity.namespace
+      }
+    else
+      _uncorrelated -> nil
+    end
+  end
+
+  defp scene_season(value) when is_binary(value) do
+    case Regex.run(~r/^S(\d{2,3})E\d{2,4}$/u, value, capture: :all_but_first) do
+      [season] -> {:ok, String.to_integer(season)}
+      _invalid -> :error
+    end
+  end
+
+  defp scene_season(_value), do: :error
 
   defp mapping_sort_key(mapping) do
     identity = mapping.identity

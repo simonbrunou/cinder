@@ -266,6 +266,8 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
 
       s02e01 = Enum.find(scene_coordinates, &(&1.canonical_value == "S02E01"))
       s02e10 = Enum.find(scene_coordinates, &(&1.canonical_value == "S02E10"))
+      assert s02e01.scope_title == "Season 2"
+      assert s02e10.scope_title == "Season 2"
       assert Enum.map(s02e01.memberships, & &1.episode_id) == [ep29.id]
       assert Enum.map(s02e10.memberships, & &1.episode_id) == [ep38.id]
 

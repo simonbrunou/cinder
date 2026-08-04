@@ -404,11 +404,17 @@ defmodule Cinder.Catalog.SceneNumbering do
 
         []
 
-      %{matched: matched, season_number: season_number, episode_number: episode_number} ->
+      %{
+        matched: matched,
+        group_name: group_name,
+        season_number: season_number,
+        episode_number: episode_number
+      } ->
         [
           %{
             scheme: "scene",
             canonical_value: Episode.code(season_number, episode_number),
+            scope_title: group_name,
             precedence: :inferred,
             episode_ids: [matched]
           }

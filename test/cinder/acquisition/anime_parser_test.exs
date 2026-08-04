@@ -42,6 +42,48 @@ defmodule Cinder.Acquisition.AnimeParserTest do
            } = AnimeParser.parse("[Fansub] ワンピース - 1122 [1080p]", context)
   end
 
+  test "expands a scene-scoped arc batch written with an en dash (issue #312)" do
+    context = %{
+      kind: :series,
+      titles: ["Monogatari", "Hanamonogatari"],
+      scene_titles: [
+        %{
+          title: "Hanamonogatari",
+          season: 6,
+          source: "tmdb",
+          namespace: "author-order"
+        }
+      ],
+      year: 2009
+    }
+
+    expected = Enum.map(1..5, &"S06E0#{&1}")
+
+    for separator <- ["-", "–", "—", "~", "〜", "～"] do
+      assert %{
+               coordinates: [
+                 %{
+                   scheme: "scene",
+                   values: ^expected,
+                   source: "tmdb",
+                   namespace: "author-order"
+                 }
+               ],
+               role: :story
+             } = AnimeParser.parse("[DB] Hanamonogatari 01#{separator}05 [1080p]", context)
+    end
+
+    assert %{coordinates: [], role: :unknown} =
+             AnimeParser.parse("[DB] Hanamonogatari 05-01 [1080p]", context)
+  end
+
+  test "keeps a bare arc-title number absolute without an explicit scene scope" do
+    context = %{kind: :series, titles: ["Monogatari", "Koyomimonogatari"], year: 2009}
+
+    assert %{coordinates: [%{scheme: "absolute", values: ["5"]}], role: :story} =
+             AnimeParser.parse("[DB] Koyomimonogatari - 05 [1080p]", context)
+  end
+
   test "rejects absolute ranges wider than one hundred values" do
     context = %{kind: :series, titles: ["Show"], year: 2020}
     assert %{coordinates: [], role: :unknown} = AnimeParser.parse("Show - 1-101", context)

@@ -394,6 +394,71 @@ defmodule Cinder.Library.AnimePreflightTest do
   end
 
   describe "alternate scene numbering (A6)" do
+    test "an arc-title file resolves through the frozen scene-title scope (issue #312)" do
+      fixture = %{
+        "snapshot_version" => 2,
+        "parser_context" => %{
+          "title" => "Monogatari",
+          "aliases" => ["Koyomimonogatari"],
+          "scene_titles" => [
+            %{
+              "title" => "Koyomimonogatari",
+              "season" => 11,
+              "source" => "tmdb",
+              "namespace" => "nisio-isin-order"
+            }
+          ],
+          "year" => 2009
+        },
+        "mappings" => [
+          %{
+            "identity" => %{
+              "source" => "tmdb",
+              "scheme" => "scene",
+              "namespace" => "nisio-isin-order",
+              "canonical_value" => "S11E05"
+            },
+            "precedence" => "inferred",
+            "episode_ids" => [17],
+            "evidence" => nil
+          },
+          %{
+            "identity" => %{
+              "source" => "manual",
+              "scheme" => "scene",
+              "namespace" => "other-order",
+              "canonical_value" => "S11E05"
+            },
+            "precedence" => "manual",
+            "episode_ids" => [99],
+            "evidence" => nil
+          }
+        ],
+        "inventory" => [
+          %{
+            "relative_path" => "Koyomimonogatari - 05.mkv",
+            "size" => 1000,
+            "major_device" => 1,
+            "inode" => 205,
+            "mtime" => 100
+          }
+        ],
+        "episodes" => [%{"id" => 17, "season_number" => 0, "episode_number" => 17}]
+      }
+
+      assert {:ok, result} = run_fixture(fixture)
+      assert assignment_map(result.assignments) == %{"Koyomimonogatari - 05.mkv" => [17]}
+
+      assert [%{"parsed" => %{"coordinates" => [coordinate]}}] = result.decisions["files"]
+
+      assert coordinate == %{
+               "scheme" => "scene",
+               "values" => ["S11E05"],
+               "source" => "tmdb",
+               "namespace" => "nisio-isin-order"
+             }
+    end
+
     test "S02E01..E10 files map to episodes 29-38 via the frozen snapshot" do
       fixture = frieren_scene_fixture(1..10)
 
