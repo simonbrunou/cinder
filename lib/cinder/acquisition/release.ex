@@ -1,11 +1,12 @@
 defmodule Cinder.Acquisition.Release do
   @moduledoc """
   A candidate release: the indexer-reported fields (`title`, `size`,
-  `download_url`, `download_url_origin`, `protocol`, `query_origins`) plus the attributes parsed
-  from its name. The shared shape passed between the indexer, parser, and scorer.
+  `download_url`, `download_url_origin`, `protocol`, `tvdb_id`, `query_origins`) plus the
+  attributes parsed from its name. The shared shape passed between the indexer, parser, and scorer.
 
-  `query_origins` distinguishes identity-scoped results from free-text fallbacks so callers can
-  apply title guards without rejecting AKA-titled results that came from a provider ID query.
+  `query_origins` records identity-scoped and free-text query provenance; it is diagnostic rather
+  than proof because a provider may ignore the requested id. `tvdb_id`, when present, is the
+  indexer result's explicit series identity and can preserve AKA-titled matches safely.
 
   `protocol` (`:torrent | :usenet`) routes the release to the matching download
   client; it defaults to `:torrent` when the indexer map omits it.
@@ -20,6 +21,7 @@ defmodule Cinder.Acquisition.Release do
     :protocol,
     :category_ids,
     :indexer_id,
+    :tvdb_id,
     :published_at,
     :query_origins,
     :coordinates,
@@ -54,6 +56,7 @@ defmodule Cinder.Acquisition.Release do
       protocol: Map.get(indexer_map, :protocol, :torrent),
       category_ids: Map.get(indexer_map, :category_ids),
       indexer_id: Map.get(indexer_map, :indexer_id),
+      tvdb_id: Map.get(indexer_map, :tvdb_id),
       published_at: Map.get(indexer_map, :published_at),
       query_origins: Map.get(indexer_map, :query_origins)
     }

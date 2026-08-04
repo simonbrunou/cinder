@@ -177,6 +177,7 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
           indexer_id: integer_or_nil(result["indexerId"]),
           published_at: published_at(result["publishDate"])
         }
+        |> put_if_present(:tvdb_id, positive_integer_or_nil(result["tvdbId"]))
       ]
     else
       _ -> []
@@ -187,6 +188,12 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
 
   defp integer_or_nil(value) when is_integer(value), do: value
   defp integer_or_nil(_value), do: nil
+
+  defp positive_integer_or_nil(value) when is_integer(value) and value > 0, do: value
+  defp positive_integer_or_nil(_value), do: nil
+
+  defp put_if_present(map, _key, nil), do: map
+  defp put_if_present(map, key, value), do: Map.put(map, key, value)
 
   defp category_ids(categories) when is_list(categories) do
     categories

@@ -578,11 +578,11 @@ defmodule Cinder.Acquisition do
     end
   end
 
-  # `Indexer.Prowlarr.search_tv/3` unions a TVDB-scoped query with a free-text query and tags each
-  # result with its origin. The free-text half needs the title-run-before-release-tag guard below;
-  # TVDB half may use a completely different AKA ("Money Heist" vs "La.Casa.de.Papel") and stays
-  # trusted. Indexer implementations that do not report provenance retain the legacy TVDB-scoped
-  # behavior, while an id-less search is necessarily free text and is always guarded.
+  # `Indexer.Prowlarr.search_tv/3` unions a TVDB-scoped query with a free-text query. Query origin
+  # is not identity proof: a provider can ignore the id, and dedup can give one wrong result both
+  # origins (#315). An explicit matching result TVDB id is proof and preserves AKA titles. Without
+  # one, a known-year series requires both its title and matching year evidence; that deliberately
+  # rejects ambiguous yearless packs rather than unattendedly importing a same-named reboot.
   defp filter_title(candidates, %{tvdb_id: nil} = series),
     do: candidates |> filter_by_title(series) |> reject_year_conflicts(series)
 
@@ -592,11 +592,30 @@ defmodule Cinder.Acquisition do
     |> reject_year_conflicts(series)
   end
 
+  defp tv_title_match?(%Release{tvdb_id: tvdb_id}, %{tvdb_id: tvdb_id})
+       when is_integer(tvdb_id),
+       do: true
+
+  defp tv_title_match?(%Release{tvdb_id: result_id}, %{tvdb_id: target_id})
+       when is_integer(result_id) and is_integer(target_id),
+       do: false
+
+  defp tv_title_match?(
+         %Release{title: title, query_origins: origins},
+         %{year: year} = series
+       )
+       when is_integer(year) and is_list(origins),
+       do: search_title_match?(series, title) and year_verified?(title, year)
+
+  # A series with no year cannot use year evidence. Preserve the legacy provenance behavior there:
+  # free-text results need the title guard; id-only results remain the best evidence available.
   defp tv_title_match?(%Release{title: title, query_origins: origins}, series)
        when is_list(origins) do
     :free_text not in origins or :id_scoped in origins or search_title_match?(series, title)
   end
 
+  # Other indexer implementations predate provenance. Preserve their legacy TVDB-scoped contract;
+  # the configured Prowlarr implementation always tags its TV results above.
   defp tv_title_match?(_release, _series), do: true
 
   # The tvdb_id-scoped query used to guarantee same-show results, but search_tv/3 now
@@ -605,18 +624,29 @@ defmodule Cinder.Acquisition do
   # packs for the year-1998 series. An explicit year token is the one discriminator
   # scene names reliably carry, so a candidate is dropped only when every year in its
   # title is more than a year off the series year (±1 absorbs premiere-date wobble
-  # between TMDB and scene naming). Yearless titles pass — same loose-on-purpose
-  # trade-off as filter_by_title/2, and the manual panel still lists what this drops.
+  # between TMDB and scene naming). `tv_title_match?/2` applies the stricter identity rule for
+  # unverified known-year results; this final pass also catches conflicts on explicitly identified
+  # AKA results.
   defp reject_year_conflicts(candidates, %{year: year}) when is_integer(year),
     do: Enum.reject(candidates, &year_conflict?(&1.title, year))
 
   defp reject_year_conflicts(candidates, _series), do: candidates
 
   defp year_conflict?(release_title, year) do
-    case Regex.scan(~r/\b(?:19|20)\d{2}\b/, release_title) do
+    case release_years(release_title) do
       [] -> false
-      matches -> Enum.all?(matches, fn [y] -> abs(String.to_integer(y) - year) > 1 end)
+      years -> Enum.all?(years, &(abs(&1 - year) > 1))
     end
+  end
+
+  defp year_verified?(release_title, year),
+    do: Enum.any?(release_years(release_title), &(abs(&1 - year) <= 1))
+
+  defp release_years(release_title) do
+    release_title
+    |> tokens()
+    |> Enum.filter(&Regex.match?(~r/^(?:19|20)\d{2}$/, &1))
+    |> Enum.map(&String.to_integer/1)
   end
 
   defp filter_by_title(candidates, series),
