@@ -699,11 +699,30 @@ defmodule Cinder.AcquisitionTest do
       assert :no_match = Acquisition.best_releases(series(tvdb_id: nil), 1, [1])
     end
 
-    test "does not title-filter a TvdbId-scoped search, so AKA-titled releases still grab" do
+    test "rejects a spinoff that carries the wanted series title as an inner token run" do
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
+        {:ok,
+         [
+           raw_tv(
+             "Magia.Record.Puella.Magi.Madoka.Magica.Side.Story.S01E02.German.DL.DTS.1080p.BluRay.x265-ABJ",
+             query_origins: [:free_text]
+           )
+         ]}
+      end)
+
+      assert :no_match =
+               Acquisition.best_releases(
+                 series(title: "Puella Magi Madoka Magica"),
+                 1,
+                 [2]
+               )
+    end
+
+    test "keeps an AKA-titled release from the TVDB-id half of the union" do
       # TMDB title "Money Heist", release under the original title — the TvdbId
       # token already scoped the search to the right show.
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn 123, _title, _season ->
-        {:ok, [raw_tv("La.Casa.de.Papel.S01E01.1080p.WEB-DL-GRP")]}
+        {:ok, [raw_tv("La.Casa.de.Papel.S01E01.1080p.WEB-DL-GRP", query_origins: [:id_scoped])]}
       end)
 
       assert {:ok, [{%Release{episodes: [1]}, [1]}]} =
@@ -903,6 +922,26 @@ defmodule Cinder.AcquisitionTest do
                  preferred_language: "french",
                  original_language: "en"
                )
+    end
+  end
+
+  describe "title_guard/3" do
+    test "keeps an id-scoped AKA while dropping a free-text title continued by spinoff words" do
+      target = series(title: "Money Heist")
+
+      releases =
+        [
+          raw_tv("Berlin.Money.Heist.Side.Story.S01E01.1080p.WEB-DL-GRP",
+            query_origins: [:free_text]
+          ),
+          raw_tv("La.Casa.de.Papel.S01E01.1080p.WEB-DL-GRP",
+            query_origins: [:id_scoped]
+          )
+        ]
+        |> Enum.map(&Release.new/1)
+
+      assert [%Release{title: "La.Casa.de.Papel.S01E01.1080p.WEB-DL-GRP"}] =
+               Acquisition.title_guard(releases, :tv, target)
     end
   end
 end

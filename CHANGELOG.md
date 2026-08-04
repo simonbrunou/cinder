@@ -37,6 +37,9 @@ All notable changes to Cinder are documented here. The format follows
   event fires once per new hold (Log + Discord).
 
 ### Fixed
+- **TV searches no longer grab a spinoff merely because its name contains the wanted series.**
+  Prowlarr's TVDB and free-text union now keeps per-result provenance: ID-scoped AKA names remain
+  trusted, while free-text names must finish the wanted title immediately before a release marker.
 - **"Find a better match" now answers the language question it was silent on.** Every row carries
   a language badge — untagged included, which means English by scene convention and so is exactly
   the row an audio pick decides; previously untagged rows rendered no badge at all and read as "no

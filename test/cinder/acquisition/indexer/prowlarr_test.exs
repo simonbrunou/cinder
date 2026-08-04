@@ -177,7 +177,8 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
              protocol: :torrent,
              category_ids: [],
              indexer_id: nil,
-             published_at: nil
+             published_at: nil,
+             query_origins: [:id_scoped]
            }
   end
 
@@ -198,7 +199,11 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
     end)
 
     assert {:ok, results} = Prowlarr.search_tv(1396, "Breaking Bad", 1)
-    assert Enum.map(results, & &1.title) == ["BB.S01.From.Id", "BB.S01.Scraper.Only"]
+
+    assert Enum.map(results, &{&1.title, &1.query_origins}) == [
+             {"BB.S01.From.Id", [:id_scoped, :free_text]},
+             {"BB.S01.Scraper.Only", [:free_text]}
+           ]
   end
 
   test "search_tv/3 keeps one side's results when the other query fails" do
@@ -214,7 +219,8 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
       end
     end)
 
-    assert {:ok, [%{title: "BB.S01.Scraper.Only"}]} = Prowlarr.search_tv(1396, "Breaking Bad", 1)
+    assert {:ok, [%{title: "BB.S01.Scraper.Only", query_origins: [:free_text]}]} =
+             Prowlarr.search_tv(1396, "Breaking Bad", 1)
   end
 
   test "search_tv/3 queries season 0 sanely (a Standard series' explicitly monitored specials)" do
@@ -237,14 +243,18 @@ defmodule Cinder.Acquisition.Indexer.ProwlarrTest do
     assert {:ok, []} = Prowlarr.search_tv(nil, "Breaking Bad", 0)
   end
 
-  test "search_tv/3 falls back to a free-text title query when tvdb_id is nil" do
+  test "search_tv/3 tags a nil-TVDB title query as free text" do
     Req.Test.stub(Cinder.ProwlarrStub, fn conn ->
       assert conn.params["query"] == "Breaking Bad {Season:2}"
       assert conn.params["type"] == "tvsearch"
-      Req.Test.json(conn, [])
+
+      Req.Test.json(conn, [
+        %{"title" => "Breaking.Bad.S02E01", "downloadUrl" => "http://prowlarr:9696/file/2"}
+      ])
     end)
 
-    assert {:ok, []} = Prowlarr.search_tv(nil, "Breaking Bad", 2)
+    assert {:ok, [%{query_origins: [:free_text]}]} =
+             Prowlarr.search_tv(nil, "Breaking Bad", 2)
   end
 
   test "search_tv/3 returns an error tuple on a non-200 status" do

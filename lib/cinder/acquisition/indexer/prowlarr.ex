@@ -29,28 +29,58 @@ defmodule Cinder.Acquisition.Indexer.Prowlarr do
 
   @impl true
   def search_tv(nil, title, season) do
-    search_query(tv_query(nil, title, season), "tvsearch", [])
+    case search_query(tv_query(nil, title, season), "tvsearch", []) do
+      {:ok, releases} -> {:ok, tag_query_origin(releases, :free_text)}
+      {:error, _reason} = error -> error
+    end
   end
 
   # Text-scraper indexers (1337x & co.) return nothing for a {TvdbId:...} token —
   # Prowlarr does no id→title resolution for them — so the id query alone hides every
   # release they carry. Union both shapes (id results first, deduped by download_url);
   # one side failing degrades to the other so a flaky scraper can't sink the search.
+  # Keep per-result provenance so callers can title-guard the free-text half without
+  # rejecting AKA-titled releases that genuinely came from the TVDB-scoped query.
   def search_tv(tvdb_id, title, season) do
     case {search_query(tv_query(tvdb_id, title, season), "tvsearch", []),
           search_query(tv_query(nil, title, season), "tvsearch", [])} do
       {{:ok, by_id}, {:ok, by_title}} ->
-        {:ok, Enum.uniq_by(by_id ++ by_title, & &1.download_url)}
+        releases =
+          tag_query_origin(by_id, :id_scoped) ++ tag_query_origin(by_title, :free_text)
+
+        {:ok, merge_query_origins(releases)}
 
       {{:ok, by_id}, _error} ->
-        {:ok, by_id}
+        {:ok, tag_query_origin(by_id, :id_scoped)}
 
       {_error, {:ok, by_title}} ->
-        {:ok, by_title}
+        {:ok, tag_query_origin(by_title, :free_text)}
 
       {error, _error} ->
         error
     end
+  end
+
+  defp tag_query_origin(releases, origin),
+    do: Enum.map(releases, &Map.put(&1, :query_origins, [origin]))
+
+  defp merge_query_origins(releases) do
+    releases
+    |> Enum.reduce({[], %{}}, fn release, {keys, by_url} ->
+      key = release.download_url
+
+      case Map.fetch(by_url, key) do
+        {:ok, existing} ->
+          origins = Enum.uniq(existing.query_origins ++ release.query_origins)
+          {keys, Map.put(by_url, key, %{existing | query_origins: origins})}
+
+        :error ->
+          {[key | keys], Map.put(by_url, key, release)}
+      end
+    end)
+    |> then(fn {keys, by_url} ->
+      keys |> Enum.reverse() |> Enum.map(&Map.fetch!(by_url, &1))
+    end)
   end
 
   @impl true

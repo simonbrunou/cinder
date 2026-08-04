@@ -248,8 +248,8 @@ defmodule CinderWeb.ManualSearchComponentTest do
     assert html =~ "Matches this title&#39;s audio pick"
   end
 
-  # Same shape, other guard: the free-text movie search (no IMDb id) and the nil-`tvdb_id` TV
-  # search title-guard before the language pool, while the panel lists those rows unguarded on
+  # Same shape, other guard: the free-text movie search (no IMDb id) and free-text-origin TV rows
+  # title-guard before the language pool, while the panel lists those rows unguarded on
   # purpose. A survivor the guard would drop is not a survivor.
   test "a title-guarded release doesn't suppress the soft-pick fallback" do
     html =
@@ -306,8 +306,8 @@ defmodule CinderWeb.ManualSearchComponentTest do
     refute html =~ "Doesn&#39;t match this title&#39;s audio pick"
   end
 
-  # Same for the other pre-language drop: a nil-`tvdb_id` series is title-guarded, and the panel
-  # lists what that guard rejects. "Darkwing" is not the series "Dark" — the sweep never scores it,
+  # Same for the other pre-language drop: a free-text TV row is title-guarded, and the panel lists
+  # what that guard rejects. "Darkwing" is not the series "Dark" — the sweep never scores it,
   # so the panel says nothing about its audio.
   test "a title-guarded TV release isn't accused of a language mismatch" do
     html =

@@ -2136,8 +2136,8 @@ defmodule Cinder.Download.TvPollerTest do
   end
 
   test "rejects a same-season release of a different series (does not grab)" do
-    # tvdb_id: nil — the wrong-series title guard applies only to the free-text
-    # fallback search; a TvdbId-token search is already scoped to the right show.
+    # tvdb_id: nil makes every result free text; when an ID exists, Prowlarr instead guards only
+    # the free-text half of its union and keeps ID-scoped AKA rows trusted.
     series = series_fixture(%{tvdb_id: nil, monitor_strategy: :all})
     season = season_fixture(series)
     e1 = episode(season, 1)
