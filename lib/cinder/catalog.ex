@@ -1125,15 +1125,7 @@ defmodule Cinder.Catalog do
              {:ok, aliases} <- tmdb().get_movie_alternative_titles(info.tmdb_id) do
           create_attrs =
             info
-            |> Map.take([
-              :tmdb_id,
-              :imdb_id,
-              :title,
-              :year,
-              :poster_path,
-              :original_language,
-              :localizations
-            ])
+            |> Map.take(Movie.creation_fields())
             |> Map.merge(Map.take(attrs, [:preferred_language, :media_profile]))
 
           {:ok, %{attrs: create_attrs, aliases: aliases}}

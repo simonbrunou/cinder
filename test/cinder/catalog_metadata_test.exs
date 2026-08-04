@@ -50,6 +50,11 @@ defmodule Cinder.CatalogMetadataTest do
                Catalog.find_or_create_at_requested(prepared.attrs, prepared.aliases)
 
       assert movie.media_profile == :anime
+      assert movie.overview == @details.overview
+      assert movie.runtime == 148
+      assert movie.genres == ["Action", "Science Fiction"]
+      assert movie.vote_average == 8.4
+      assert movie.release_date == ~D[2010-07-16]
       assert [%{title: "Kimi no Na wa.", source: "tmdb"}] = Catalog.list_title_aliases(movie)
     end
 

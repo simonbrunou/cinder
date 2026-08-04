@@ -31,6 +31,23 @@ defmodule Cinder.Catalog.Movie do
     :cancelled
   ]
 
+  @creation_fields [
+    :tmdb_id,
+    :imdb_id,
+    :title,
+    :year,
+    :poster_path,
+    :original_language,
+    :preferred_language,
+    :media_profile,
+    :overview,
+    :localizations,
+    :runtime,
+    :genres,
+    :vote_average,
+    :release_date
+  ]
+
   schema "movies" do
     field :tmdb_id, :integer
     field :imdb_id, :string
@@ -97,19 +114,12 @@ defmodule Cinder.Catalog.Movie do
   def anime_hold_changeset(movie, attrs), do: cast(movie, attrs, [:anime_hold_reason])
 
   @doc false
+  def creation_fields, do: @creation_fields
+
+  @doc false
   def changeset(movie, attrs) do
     movie
-    |> cast(attrs, [
-      :tmdb_id,
-      :imdb_id,
-      :title,
-      :year,
-      :poster_path,
-      :original_language,
-      :preferred_language,
-      :media_profile,
-      :localizations
-    ])
+    |> cast(attrs, @creation_fields)
     |> validate_required([:tmdb_id, :title])
     |> validate_inclusion(:preferred_language, Language.preferences())
     |> unique_constraint(:tmdb_id)

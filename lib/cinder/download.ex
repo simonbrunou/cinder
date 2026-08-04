@@ -15,7 +15,7 @@ defmodule Cinder.Download do
   require Logger
   alias Cinder.{Acquisition, Catalog, Library, Notifier, Repo, Settings, Vault}
   alias Cinder.Acquisition.{AnimePreferences, Release}
-  alias Cinder.Catalog.{Grab, Movie}
+  alias Cinder.Catalog.{Grab, MediaProfile, Movie}
   alias Cinder.Download.{Intent, IntentEpisode}
 
   @retry_base_seconds 5
@@ -210,12 +210,18 @@ defmodule Cinder.Download do
   end
 
   defp ensure_policy_marker(%Release{} = release, title) do
-    case Catalog.media_profile_summary(title).effective do
-      :standard ->
-        {:ok, %{release | release_policy_snapshot: nil}}
+    summary = Catalog.media_profile_summary(title)
 
-      :anime ->
+    cond do
+      summary.effective == :anime ->
         mark_anime_policy(release, title)
+
+      MediaProfile.auto_anime_fallback?(summary) and
+          not is_nil(release.release_policy_snapshot) ->
+        mark_anime_policy(release, title)
+
+      true ->
+        {:ok, %{release | release_policy_snapshot: nil}}
     end
   end
 
@@ -844,12 +850,24 @@ defmodule Cinder.Download do
         release_blocklist: Catalog.blocked_release_titles(movie)
       ] ++ Acquisition.band_opts(:movies)
 
-    case Catalog.media_profile_summary(movie).effective do
+    summary = Catalog.media_profile_summary(movie)
+
+    case summary.effective do
       :anime ->
         anime_movie_result(movie, imdb_id, Catalog.anime_movie_acquisition_context(movie), opts)
 
       :standard ->
-        standard_movie_result(movie, imdb_id, opts)
+        result = standard_movie_result(movie, imdb_id, opts)
+
+        if result == :no_match and MediaProfile.auto_anime_fallback?(summary),
+          do:
+            anime_movie_result(
+              movie,
+              imdb_id,
+              Catalog.anime_movie_acquisition_context(movie),
+              opts
+            ),
+          else: result
     end
   end
 

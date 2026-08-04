@@ -28,7 +28,7 @@ defmodule Cinder.Download.TvPoller do
 
   alias Cinder.{Acquisition, Catalog, Disk, Download, Library, Notifier, Settings}
   alias Cinder.Acquisition.AnimePreferences
-  alias Cinder.Catalog.{Episode, Grab, Grabs}
+  alias Cinder.Catalog.{Episode, Grab, Grabs, MediaProfile}
   alias Cinder.Download.{ContentPolicy, StallReaper}
   alias Cinder.HTTPPolicy
 
@@ -546,29 +546,53 @@ defmodule Cinder.Download.TvPoller do
 
   defp search_series(episodes) do
     series = hd(episodes).season.series
+    summary = Catalog.media_profile_summary(series)
 
-    case Catalog.media_profile_summary(series).effective do
+    case summary.effective do
       :anime ->
         search_anime_series(series, episodes)
 
       :standard ->
         # A profile switched back to Standard must not keep a stale Anime hold marker.
         Catalog.set_anime_hold(series, nil)
-        search_standard_series(series, episodes)
+        search_standard_series(series, episodes, summary)
     end
   end
 
-  defp search_standard_series(series, episodes) do
+  defp search_standard_series(series, episodes, summary) do
     context = Catalog.anime_series_acquisition_context(series)
     groups = Enum.group_by(episodes, & &1.season.season_number)
     native_seasons = MapSet.new(Map.keys(groups))
 
-    groups
-    |> Enum.each(fn {season_number, group} ->
-      isolate("series #{series.id} s#{season_number}", fn ->
-        search_standard_group(group, context, native_seasons)
+    outcomes =
+      Enum.map(groups, fn {season_number, group} ->
+        result =
+          isolate("series #{series.id} s#{season_number}", fn ->
+            search_standard_group(group, context, native_seasons)
+          end)
+
+        {group, result}
       end)
-    end)
+
+    grabbed =
+      Enum.flat_map(outcomes, fn
+        {_group, {:ok, ids}} -> ids
+        {_group, _other} -> []
+      end)
+
+    skipped =
+      Enum.flat_map(outcomes, fn
+        {_group, {:ok, _ids}} -> []
+        {_group, {:error, _reason}} -> []
+        {group, _exception} -> Enum.map(group, & &1.id)
+      end)
+
+    search_failed? = Enum.any?(outcomes, &match?({_group, {:error, _reason}}, &1))
+
+    if grabbed == [] and skipped == [] and not search_failed? and
+         MediaProfile.auto_anime_fallback?(summary),
+       do: search_anime_series(series, episodes),
+       else: bump_not_grabbed(episodes, grabbed ++ skipped)
   end
 
   defp search_standard_group(episodes, context, native_seasons) do
@@ -594,18 +618,17 @@ defmodule Cinder.Download.TvPoller do
 
     case Acquisition.best_releases(series, season_number, numbers, opts) do
       {:ok, assignments} ->
-        grabbed = Enum.flat_map(assignments, &grab_assignment(&1, episodes))
-        bump_not_grabbed(episodes, grabbed)
+        {:ok, Enum.flat_map(assignments, &grab_assignment(&1, episodes))}
 
       :no_match ->
-        bump_not_grabbed(episodes, [])
+        {:ok, []}
 
       {:error, reason} ->
         Logger.info(
           "tv search failed for series #{series.id} season #{season_number}: #{HTTPPolicy.sanitize_log(reason)}"
         )
 
-        bump_not_grabbed(episodes, [])
+        {:error, reason}
     end
   end
 
