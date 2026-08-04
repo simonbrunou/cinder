@@ -8,13 +8,19 @@ defmodule CinderWeb.UserLive.RegistrationTest do
   alias CinderWeb.UserLive.Registration
 
   describe "Registration page" do
-    test "renders registration page with the first-user bootstrap field", %{conn: conn} do
+    test "renders the first-user bootstrap field with setup help", %{conn: conn} do
       {:ok, lv, html} = live(conn, ~p"/users/register")
 
       assert html =~ "Register"
       assert html =~ "Log in"
       assert html =~ "instance operator is the data controller"
       assert has_element?(lv, "#bootstrap-token")
+
+      assert has_element?(
+               lv,
+               "#bootstrap-token-help",
+               "The installer set this one-time password using CINDER_BOOTSTRAP_TOKEN. It is only required to create the first admin account."
+             )
     end
 
     test "redirects if already logged in", %{conn: conn} do
@@ -181,6 +187,7 @@ defmodule CinderWeb.UserLive.RegistrationTest do
       _admin = admin_fixture()
       {:ok, lv, _html} = live(conn, ~p"/users/register")
       refute has_element?(lv, "#bootstrap-token")
+      refute has_element?(lv, "#bootstrap-token-help")
       email = unique_user_email()
 
       render_hook(lv, "save", %{"user" => registration_params(email)})

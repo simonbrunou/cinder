@@ -103,9 +103,15 @@ defmodule CinderWeb.UserLive.Registration do
               name="bootstrap_token"
               type="password"
               autocomplete="off"
+              aria-describedby="bootstrap-token-help"
               required
               class="input input-bordered w-full"
             />
+            <p id="bootstrap-token-help" class="mt-2 text-sm text-base-content/70">
+              {gettext(
+                "The installer set this one-time password using CINDER_BOOTSTRAP_TOKEN. It is only required to create the first admin account."
+              )}
+            </p>
           </div>
 
           <p class="mb-4 text-sm text-base-content/70">
