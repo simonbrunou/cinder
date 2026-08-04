@@ -31,7 +31,7 @@ defmodule CinderWeb.Telemetry do
   """
   def dispatch_disk_measurements do
     for {kind, path} <- Cinder.Disk.monitored_roots() do
-      case Cinder.Disk.stats(path) do
+      case Cinder.Disk.configured_stats(path) do
         {:ok, stats} ->
           :telemetry.execute([:cinder, :disk], stats, %{root: kind, path: path})
 

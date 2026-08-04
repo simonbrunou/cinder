@@ -3,12 +3,16 @@ defmodule Cinder.Disk do
   Free/total disk-space gauge for a filesystem path. Backs the periodic `[:cinder, :disk]`
   telemetry measurement (`CinderWeb.Telemetry`) and the `/dashboard` disk cards.
 
-  Reads `:disksup.get_disk_info/1` (OTP `os_mon`, listed in `extra_applications`) rather than
-  shelling out and parsing `df` by hand. `:disksup` reports KiB — the same 1024-byte units the
-  previous `df -kP` parser read — so callers see identical byte values.
+  Runs a path-scoped POSIX `df -kP` probe through a supervised single-flight port owner. The
+  complete path validation and probe run inside the subprocess deadline. If a timed-out process
+  cannot be reaped immediately, the owner retains its port and rejects new probes until it exits,
+  preventing process accumulation. `df` reports 1024-byte blocks, preserving the existing byte
+  contract.
   """
 
   @behaviour Cinder.Disk.Prober
+
+  alias Cinder.Disk.CommandProbe
 
   @type stats :: %{free_bytes: non_neg_integer(), total_bytes: non_neg_integer()}
 
@@ -17,6 +21,7 @@ defmodule Cinder.Disk do
   # fail OPEN on any uncertainty — an unknown release size, no configured root, or an unreadable
   # `df` all allow the grab. They skip only on positive evidence that no download root can hold it.
   @grab_margin_bytes 2 * 1024 * 1024 * 1024
+  @default_probe_timeout 2_000
 
   # Minimum free space on a library root before an import stages into it. A same-filesystem hardlink
   # costs ~nothing, but a cross-device import copies the whole file; a small fixed floor is a cheap
@@ -25,31 +30,31 @@ defmodule Cinder.Disk do
 
   @doc """
   Reads free/total bytes for `path`. Returns `{:error, :enoent}` when `path` isn't a
-  directory, `{:error, :unreadable}` when `:disksup` can't read the disk, and never raises.
+  directory, `{:error, :unreadable}` when `df` returns malformed output, and never raises.
   """
   @spec stats(String.t()) :: {:ok, stats()} | {:error, term()}
   def stats(path) when is_binary(path) do
-    if File.dir?(path) do
-      disk_info(path)
-    else
-      {:error, :enoent}
+    timeout = Application.get_env(:cinder, :disk_probe_timeout, @default_probe_timeout)
+
+    case CommandProbe.run(path, timeout) do
+      {:ok, output} -> parse_df(output)
+      {:error, _reason} = error -> error
     end
   end
 
-  # `:disksup.get_disk_info/1` reports `[{id, total_kib, available_kib, capacity}]` in KiB —
-  # the same 1024-byte blocks the old `df -kP` parser read. A path it can't read (or an
-  # os_mon that isn't running) comes back zeroed rather than as an error, so an all-zero row
-  # maps to `{:error, :unreadable}` — the space guards fail open on any error.
-  defp disk_info(path) do
-    case :disksup.get_disk_info(String.to_charlist(path)) do
-      [{_id, total_kib, avail_kib, _capacity}] when total_kib > 0 ->
-        {:ok, %{free_bytes: avail_kib * 1024, total_bytes: total_kib * 1024}}
+  @df_row ~r/^(?<filesystem>.+?)\s+(?<total>-?\d+)\s+(?<used>-?\d+)\s+(?<available>-?\d+)\s+-?\d+%\s+(?<mountpoint>.+)$/
 
-      _zeroed_or_unexpected ->
-        {:error, :unreadable}
+  defp parse_df(output) do
+    with data when is_binary(data) <- output |> String.split("\n", trim: true) |> List.last(),
+         %{"available" => avail_kib, "total" => total_kib} <-
+           Regex.named_captures(@df_row, data),
+         {total_kib, ""} <- Integer.parse(total_kib),
+         {avail_kib, ""} <- Integer.parse(avail_kib),
+         true <- total_kib > 0 do
+      {:ok, %{free_bytes: max(avail_kib, 0) * 1024, total_bytes: total_kib * 1024}}
+    else
+      _malformed -> {:error, :unreadable}
     end
-  catch
-    kind, reason -> {:error, {kind, reason}}
   end
 
   @doc """
@@ -72,7 +77,7 @@ defmodule Cinder.Disk do
 
   defp roots_admit?(roots, needed) do
     Enum.any?(roots, fn root ->
-      case prober().stats(root) do
+      case configured_stats(root) do
         {:ok, %{free_bytes: free}} -> free >= needed
         {:error, _reason} -> true
       end
@@ -89,7 +94,7 @@ defmodule Cinder.Disk do
   def import_space_available?(kind) do
     case Application.get_env(:cinder, :"#{kind}_library_path") do
       path when is_binary(path) and path != "" ->
-        case prober().stats(path) do
+        case configured_stats(path) do
           {:ok, %{free_bytes: free}} -> free >= @import_floor_bytes
           {:error, _reason} -> true
         end
@@ -102,6 +107,13 @@ defmodule Cinder.Disk do
   @doc "Bytes as a rounded decimal-GB number, for human-facing log lines."
   @spec human_gb(non_neg_integer()) :: float()
   def human_gb(bytes) when is_integer(bytes), do: Float.round(bytes / 1_000_000_000, 1)
+
+  @doc """
+  Reads one path through the configured `:disk_prober`. Internal consumers use this entry point so
+  production, test, and alternate probers cannot diverge.
+  """
+  @spec configured_stats(String.t()) :: {:ok, stats()} | {:error, term()}
+  def configured_stats(path) when is_binary(path), do: prober().stats(path)
 
   defp prober, do: Application.get_env(:cinder, :disk_prober, __MODULE__)
 
@@ -158,7 +170,7 @@ defmodule Cinder.Disk do
         {:error, :no_database_path}
 
       root ->
-        case prober().stats(root) do
+        case configured_stats(root) do
           {:ok, %{free_bytes: free}} -> {:ok, free}
           {:error, _reason} = error -> error
         end
@@ -166,7 +178,8 @@ defmodule Cinder.Disk do
   end
 
   @doc """
-  Disk stats for every monitored root (`monitored_roots/0`: library roots + the database volume).
+  Disk stats for every monitored root (`monitored_roots/0`: library roots + the database volume),
+  read through the `:disk_prober` seam so tests and alternate probers share the aggregate path.
   One row per root: `%{kind: atom(), path: String.t(), status: {:ok, stats()} | {:error, term()}}`.
   """
   @spec check_all() :: [
@@ -174,7 +187,7 @@ defmodule Cinder.Disk do
         ]
   def check_all do
     for {kind, path} <- monitored_roots() do
-      %{kind: kind, path: path, status: stats(path)}
+      %{kind: kind, path: path, status: configured_stats(path)}
     end
   end
 end

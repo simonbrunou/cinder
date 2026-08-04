@@ -17,6 +17,7 @@ defmodule Cinder.Download.TvPartialSeasonPackTest do
   alias Cinder.Repo
 
   setup :set_mox_global
+  setup :verify_on_exit!
 
   @tag :tmp_dir
   test "a pack for a partly-available season closes without residual holds", %{tmp_dir: tmp} do
