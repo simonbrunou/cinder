@@ -203,13 +203,13 @@ defmodule CinderWeb.DashboardLive do
       %{
         id: "series-refresh",
         key: :series_refresh,
-        label: gettext("Monitored series refresh"),
-        description: gettext("Reconcile monitored series and episodes with TMDB.")
+        label: gettext("Check monitored series for updates"),
+        description: gettext("Check TMDB for changes to monitored series and episodes.")
       },
       %{
         id: "subtitle-backfill",
         key: :subtitle_backfill,
-        label: gettext("Subtitle backfill"),
+        label: gettext("Find missing subtitles"),
         description: gettext("Find missing subtitles for imported movies and episodes.")
       },
       %{
@@ -426,8 +426,8 @@ defmodule CinderWeb.DashboardLive do
               disabled={action.key in @running_maintenance}
               aria-label={
                 if action.key in @running_maintenance,
-                  do: gettext("Running %{action}", action: action.label),
-                  else: gettext("Run %{action}", action: action.label)
+                  do: gettext("Running: %{action}", action: action.label),
+                  else: gettext("Run now: %{action}", action: action.label)
               }
             >
               {if action.key in @running_maintenance, do: gettext("Running…"), else: gettext("Run")}

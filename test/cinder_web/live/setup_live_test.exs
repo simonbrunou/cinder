@@ -97,7 +97,52 @@ defmodule CinderWeb.SetupLiveTest do
 
     assert has_element?(lv, "#settings-group-tmdb .setup-section-help", "movie and TV metadata")
     assert has_element?(lv, "#settings-group-indexer .setup-section-help", "finds releases")
-    assert has_element?(lv, "#settings-group-library .setup-section-help", "hardlinks")
+
+    assert has_element?(
+             lv,
+             "#settings-group-library .setup-section-help",
+             "reusing disk space when possible"
+           )
+
+    assert has_element?(
+             lv,
+             "#settings-group-library label[for=import_roots]",
+             "Download folders"
+           )
+
+    assert has_element?(
+             lv,
+             "#settings-group-library",
+             "Folders where your download clients save completed files"
+           )
+
+    assert has_element?(
+             lv,
+             "#settings-group-library label[for=movies_library_path]",
+             "Movies library folder"
+           )
+
+    assert has_element?(
+             lv,
+             "#settings-group-library",
+             "reuses the download's disk space instead of making another full copy"
+           )
+
+    assert has_element?(
+             lv,
+             "#settings-group-library label[for=ffprobe_bin]",
+             "ffprobe media analysis tool"
+           )
+
+    assert has_element?(
+             lv,
+             "#settings-group-library",
+             "Cinder uses ffprobe to check audio and subtitle languages after import"
+           )
+
+    for jargon <- ["Download import roots", "hardlink", "ffprobe binary", "filesystem root"] do
+      refute has_element?(lv, "#settings-group-library", jargon)
+    end
 
     for {group, url} <- [
           {"tmdb", "https://developer.themoviedb.org/docs/authentication-application"},

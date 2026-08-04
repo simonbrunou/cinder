@@ -115,15 +115,35 @@ defmodule CinderWeb.ActivityLiveTest do
            )
   end
 
-  test "lists the background sweeps with their schedule", %{conn: conn} do
-    {:ok, lv, html} = live(conn, ~p"/activity")
+  test "lists background sweeps with plain-language labels and their schedule", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/activity")
 
-    assert html =~ "Background sweeps"
+    assert has_element?(lv, "h2", "Background sweeps")
+
+    assert has_element?(
+             lv,
+             "p",
+             "These tasks retry failed searches, look for better releases, remove unneeded partial downloads, update series, find missing subtitles, and sync Plex watchlists."
+           )
+
     assert has_element?(lv, "#job-Refresher", "Series metadata refresh")
-    assert has_element?(lv, "#job-Sweeper", "Subtitle backfill")
+    assert has_element?(lv, "#job-Rehunter", "Try failed title searches again")
+    assert has_element?(lv, "#job-UpgradeHunter", "Look for better-quality releases")
+    assert has_element?(lv, "#job-Cleaner", "Remove unneeded partial downloads")
+    assert has_element?(lv, "#job-Sweeper", "Find missing subtitles")
     # A registered sweep needs a translated label. Verified to fail (on this assertion) when the
     # job_label/1 clause is removed, i.e. when the raw module name renders instead.
     assert has_element?(lv, "#job-WatchlistSync", "Plex watchlist sync")
+
+    for jargon <- [
+          "Parked title rehunt",
+          "Quality upgrade hunt",
+          "Orphaned download cleanup",
+          "Subtitle backfill"
+        ] do
+      refute has_element?(lv, "#activity-jobs", jargon)
+    end
+
     # Each sweep shows a last-run/next-run line (its value depends on global run state).
     assert has_element?(lv, "#job-Refresher", "Last run:")
     assert has_element?(lv, "#job-Sweeper", "Next:")

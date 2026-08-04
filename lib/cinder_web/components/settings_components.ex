@@ -115,7 +115,7 @@ defmodule CinderWeb.SettingsComponents do
         <div :if={group == :library} class="space-y-2">
           <div class="form-control">
             <label class="label" for={Settings.import_roots_key()}>
-              <span class="label-text">{gettext("Download import roots")}</span>
+              <span class="label-text">{gettext("Download folders")}</span>
             </label>
             <textarea
               id={Settings.import_roots_key()}
@@ -138,7 +138,7 @@ defmodule CinderWeb.SettingsComponents do
             />
             <p class="mt-1 text-xs opacity-70">
               {gettext(
-                "Allowed download folders, separated by commas or new lines. The filesystem root is not allowed."
+                "Folders where your download clients save completed files. Separate multiple folders with commas or new lines. Do not use /, the top-level folder."
               )}
             </p>
           </div>
@@ -148,7 +148,7 @@ defmodule CinderWeb.SettingsComponents do
             class="form-control"
           >
             <label class="label" for={Settings.library_path_key(kind)}>
-              <span class="label-text">{gettext("%{kind} library path (where %{kind} are hardlinked)",
+              <span class="label-text">{gettext("%{kind} library folder",
                 kind: SettingsLabels.t(kind_label)
               )}</span>
             </label>
@@ -164,7 +164,7 @@ defmodule CinderWeb.SettingsComponents do
           </div>
           <p class="mt-1 text-xs opacity-70">
             {gettext(
-              "A separate root per library, so Jellyfin/Plex can point distinct libraries at each. Required even if they share a folder; enter the same path."
+              "Choose a folder for each library so Jellyfin or Plex can keep movies and TV separate. If they share a folder, enter the same path for both. When possible, Cinder reuses the download's disk space instead of making another full copy."
             )}
           </p>
 
@@ -189,7 +189,7 @@ defmodule CinderWeb.SettingsComponents do
 
           <div class="form-control pt-2">
             <label class="label" for={Settings.ffprobe_bin_key()}>
-              <span class="label-text">{gettext("ffprobe binary")}</span>
+              <span class="label-text">{gettext("ffprobe media analysis tool")}</span>
             </label>
             <input
               type="text"
@@ -202,7 +202,7 @@ defmodule CinderWeb.SettingsComponents do
             />
             <p class="mt-1 text-xs opacity-70">
               {gettext(
-                "Command name or path used to verify a download's audio/subtitle languages after import. Leave blank to use \"ffprobe\" from PATH."
+                "Cinder uses ffprobe to check audio and subtitle languages after import. Leave blank to use ffprobe already available to Cinder."
               )}
             </p>
           </div>
@@ -471,7 +471,7 @@ defmodule CinderWeb.SettingsComponents do
   defp setup_section_description(:library),
     do:
       gettext(
-        "Tell Cinder which download folders it may import from and where your movie and TV libraries live. Cinder hardlinks downloaded files into those library folders so Jellyfin or Plex can find them."
+        "Tell Cinder which download folders it may import from and where your movie and TV libraries live. Cinder puts imported files into those library folders so Jellyfin or Plex can find them, reusing disk space when possible."
       )
 
   defp setup_section_description(:releases),
@@ -668,7 +668,7 @@ defmodule CinderWeb.SettingsComponents do
   end
 
   defp invalid_field_message(key) when key == "import_roots",
-    do: gettext("The filesystem root (/) is not allowed.")
+    do: gettext("The top-level folder (/) is not allowed.")
 
   defp invalid_field_message(key) when key == "anime_group_fallback_delay",
     do: gettext("Enter a non-negative whole number of hours.")
@@ -680,7 +680,7 @@ defmodule CinderWeb.SettingsComponents do
     do: gettext("Enter a number of GB (0 = no limit), or leave blank for the default.")
 
   defp invalid_field_label(key) when key == "import_roots",
-    do: gettext("Download import roots")
+    do: gettext("Download folders")
 
   defp invalid_field_label("anime_embedded_subtitle_mode"),
     do: gettext("Anime: Embedded subtitles")
