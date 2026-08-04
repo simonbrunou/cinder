@@ -378,8 +378,8 @@ defmodule CinderWeb.ManualSearchComponent do
 
   # The rows automatic selection actually reaches a language decision on, which is narrower than
   # what the panel lists twice over. Both `movie_pool/2` and `best_releases/4` run
-  # `filter_protocols` BEFORE `language_pool/4`, and the free-text movie / nil-`tvdb_id` TV
-  # searches also title-guard; the panel deliberately lists releases with no configured client and
+  # `filter_protocols` BEFORE `language_pool/4`, and the free-text movie / free-text-origin TV
+  # results also title-guard; the panel deliberately lists releases with no configured client and
   # never title-guards, because those are exactly the rows an operator opens it to override. They
   # are still not rows the sweep judges on language: counting one as a pool survivor would suppress
   # the fallback and turn every other row into an accusation the sweep never makes, and badging one

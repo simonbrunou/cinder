@@ -104,8 +104,8 @@ defmodule Cinder.Acquisition do
 
   The title guard rejects obviously-wrong series from the free-text half of an
   indexer search. Prowlarr preserves per-result query provenance, so TVDB-scoped
-  AKA results stay trusted while free-text results must lead with the series title
-  (after an optional bracketed release-group tag) and open a release tag next.
+  AKA results stay trusted while a free-text title run must open a release tag next,
+  rather than continue into another show's name.
   An id-less search is necessarily free text and always takes that guard. This is
   deliberately fail-closed: a false negative parks at `:no_match`, while a false
   positive imports the wrong show.
@@ -579,7 +579,7 @@ defmodule Cinder.Acquisition do
   end
 
   # `Indexer.Prowlarr.search_tv/3` unions a TVDB-scoped query with a free-text query and tags each
-  # result with its origin. The free-text half needs the strict lead-with-title guard below; the
+  # result with its origin. The free-text half needs the title-run-before-release-tag guard below;
   # TVDB half may use a completely different AKA ("Money Heist" vs "La.Casa.de.Papel") and stays
   # trusted. Indexer implementations that do not report provenance retain the legacy TVDB-scoped
   # behavior, while an id-less search is necessarily free text and is always guarded.
@@ -623,7 +623,12 @@ defmodule Cinder.Acquisition do
     do: Enum.filter(candidates, &search_title_match?(series, &1.title))
 
   defp search_title_match?(series, release_title),
-    do: release_title |> untag() |> names_title?(series)
+    do: release_title |> tokens() |> title_run_before_tag?(series)
+
+  defp title_run_before_tag?([], _series), do: false
+
+  defp title_run_before_tag?([_ | rest] = tokens, series),
+    do: leads_with_title?(tokens, series) or title_run_before_tag?(rest, series)
 
   # The free-text movie search an absent IMDb id degrades to. Unguarded on purpose: automatic
   # selection filters below, but the manual panel must keep listing everything (see
@@ -686,18 +691,18 @@ defmodule Cinder.Acquisition do
   # nothing, "Дом 2" to a bare "2" — a remnant that would match almost anything and import the
   # wrong show. Both sides of the ratio start from the same fold/1 so an "&"→"and" expansion
   # can't inflate the needle past the check. Those series can't be safely matched by name; the
-  # tvdb_id-scoped search (which skips this guard entirely) is the escape hatch.
+  # id-scoped result (which skips this guard) is the escape hatch.
   @doc """
   Whether `name` — a release name or a file name — **leads with** `target`'s title: the folded
   title has to be spelled by `name`'s tokens starting at the first one, and the token after it has
   to open a release tag (a season/episode marker, or a year consistent with `target.year`) rather
   than continue a show's name.
 
-  Search-side free-text TV filtering and the import-side residual-file check both reuse this
-  predicate. The import calls it to decide whether a file it is about to **discard** really belongs
-  to the series (`Cinder.Library`'s residual drop, #262), and a discard is unrecoverable, so it must
-  not be a guess. The start and release-tag anchors reject both a spinoff extending the title
-  ("9-1-1: Lone Star" under "9-1-1") and a title carried as another show's inner token (#310).
+  The import calls this to decide whether a file it is about to **discard** really belongs to the
+  series (`Cinder.Library`'s residual drop, #262), and a discard is unrecoverable, so it must not be
+  a guess. Search-side free-text filtering uses a compatibility-oriented variant: it may find the
+  same title run after a franchise prefix, but still requires the release-tag boundary. That keeps
+  `Yellowstone.1883.S01...` while rejecting a run continued by `Side.Story` (#310).
 
   Shares the same fold, so everything `filter_title/2` is built to accept still matches:
   "S.W.A.T." ⇔ "SWAT", "Grey's" ⇔ "Greys", "Law & Order" ⇔ "Law.and.Order", "Pokémon" ⇔ "Pokemon".
