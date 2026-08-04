@@ -71,6 +71,23 @@ defmodule Cinder.Acquisition.AnimeSearchTest do
     assert_receive {:search_tv, 99, "Show", 1}
   end
 
+  test "a free-text result from a TVDB search union remains title-guarded" do
+    context = %{series_context(99) | title: "Puella Magi Madoka Magica"}
+
+    result =
+      "Magia.Record.Puella.Magi.Madoka.Magica.Side.Story.S01E01.1080p.BluRay.x265-ABJ"
+      |> raw("union-free-text")
+      |> Map.put(:query_origins, [:free_text])
+
+    expect(IndexerMock, :search_tv, fn 99, "Puella Magi Madoka Magica", 1 ->
+      {:ok, [result]}
+    end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn _query, categories: [5070] -> {:ok, []} end)
+
+    assert {:ok, [], false} = Anime.search_episodes(IndexerMock, context, [11], [])
+  end
+
   test "a nil-TVDB search is guarded as free text" do
     context = series_context(nil)
 

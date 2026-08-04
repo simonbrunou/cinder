@@ -723,7 +723,7 @@ defmodule Cinder.Acquisition.Anime do
 
   defp build_release(%{title: title} = result, origin) when is_binary(title) do
     release = Release.new(result)
-    [%{release | query_origins: [origin]}]
+    [%{release | query_origins: Map.get(result, :query_origins) || [origin]}]
   end
 
   defp build_release(_result, _origin), do: []

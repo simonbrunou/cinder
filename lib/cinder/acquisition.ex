@@ -102,15 +102,13 @@ defmodule Cinder.Acquisition do
 
   Returns `{:ok, [{%Release{}, [number]}]}`, `:no_match`, or `{:error, term}`.
 
-  The title guard rejects an obviously-wrong series from a free-text (title-only)
-  indexer search — it applies ONLY when `series.tvdb_id` is nil; a TvdbId-token
-  search is already scoped to the right show. `select_for` matches only on
-  season number, so without this a same-season release of another show could be
-  grabbed. It is a boundary-anchored token-run match (see `title_matches?/2`); it
-  cannot disambiguate same-named variants (a US vs UK edition) or spinoffs that
-  share the title as a prefix ("9-1-1" vs "9-1-1: Lone Star"), and it fails closed
-  for titles that fold to nothing (non-Latin scripts) — all of those rely on the
-  `tvdb_id`-based search (M6 reconciliation).
+  The title guard rejects obviously-wrong series from the free-text half of an
+  indexer search. Prowlarr preserves per-result query provenance, so TVDB-scoped
+  AKA results stay trusted while free-text results must lead with the series title
+  (after an optional bracketed release-group tag) and open a release tag next.
+  An id-less search is necessarily free text and always takes that guard. This is
+  deliberately fail-closed: a false negative parks at `:no_match`, while a false
+  positive imports the wrong show.
 
   When `opts[:alternate_numbering]` is present, the mapped scene seasons are searched
   additively and the same map is forwarded to `Scorer.select_for/4`.
@@ -580,24 +578,26 @@ defmodule Cinder.Acquisition do
     end
   end
 
-  # The title guard protects only the free-text (title-only) fallback search. A
-  # TvdbId-token search is already scoped to the right series by the indexer, and
-  # normalization cannot equate AKA titles ("Money Heist" vs "La.Casa.de.Papel"),
-  # so filtering there would strand whole seasons at :no_match.
-  #
-  # Token-run matching: the folded series title must equal the concatenation of a contiguous
-  # run of WHOLE release-name tokens — boundary-anchored at both ends. So series "24" matches
-  # "24.S01E05" and the tag-prefixed "[TGx] 24.S01E05" but not "Other.Show.2024..." (no "24"
-  # token), and "Dark" no longer substring-matches "Darkwing.Duck...". Concatenating the run
-  # keeps acronym/possessive/fused variants working ("S.W.A.T." ⇔ "SWAT", "Grey's" ⇔ "Greys",
-  # "The Office" ⇔ "TheOffice"). Documented ceilings (need the tvdb_id-scoped path): a spinoff
-  # sharing the title as a leading run ("9-1-1" accepts "9-1-1.Lone.Star..."), a different
-  # show carrying the title as one of its own tokens ("Reno.911" for series "9-1-1"), and
-  # same-named variants.
-  defp filter_title(candidates, %{tvdb_id: nil, title: title} = series),
-    do: candidates |> filter_by_title(title) |> reject_year_conflicts(series)
+  # `Indexer.Prowlarr.search_tv/3` unions a TVDB-scoped query with a free-text query and tags each
+  # result with its origin. The free-text half needs the strict lead-with-title guard below; the
+  # TVDB half may use a completely different AKA ("Money Heist" vs "La.Casa.de.Papel") and stays
+  # trusted. Indexer implementations that do not report provenance retain the legacy TVDB-scoped
+  # behavior, while an id-less search is necessarily free text and is always guarded.
+  defp filter_title(candidates, %{tvdb_id: nil} = series),
+    do: candidates |> filter_by_title(series) |> reject_year_conflicts(series)
 
-  defp filter_title(candidates, series), do: reject_year_conflicts(candidates, series)
+  defp filter_title(candidates, series) do
+    candidates
+    |> Enum.filter(&tv_title_match?(&1, series))
+    |> reject_year_conflicts(series)
+  end
+
+  defp tv_title_match?(%Release{title: title, query_origins: origins}, series)
+       when is_list(origins) do
+    :free_text not in origins or :id_scoped in origins or search_title_match?(series, title)
+  end
+
+  defp tv_title_match?(_release, _series), do: true
 
   # The tvdb_id-scoped query used to guarantee same-show results, but search_tv/3 now
   # unions in a free-text title query (so scraper indexers contribute — see
@@ -619,12 +619,11 @@ defmodule Cinder.Acquisition do
     end
   end
 
-  defp filter_by_title(candidates, title) do
-    case title_needle(title) do
-      "" -> []
-      needle -> Enum.filter(candidates, &token_run_match?(tokens(&1.title), needle))
-    end
-  end
+  defp filter_by_title(candidates, series),
+    do: Enum.filter(candidates, &search_title_match?(series, &1.title))
+
+  defp search_title_match?(series, release_title),
+    do: release_title |> untag() |> names_title?(series)
 
   # The free-text movie search an absent IMDb id degrades to. Unguarded on purpose: automatic
   # selection filters below, but the manual panel must keep listing everything (see
@@ -694,13 +693,11 @@ defmodule Cinder.Acquisition do
   to open a release tag (a season/episode marker, or a year consistent with `target.year`) rather
   than continue a show's name.
 
-  Stricter than `title_guard/3`'s `token_run_match?/2`, which is boundary-anchored but free-floating
-  and accepts a leading run without caring what follows. The import calls this to decide whether a
-  file it is about to **discard** really belongs to the series (`Cinder.Library`'s residual drop,
-  #262), and a discard is unrecoverable, so it must not be a guess. The extra anchoring closes two
-  of `filter_title/2`'s documented ceilings: a spinoff extending the title ("9-1-1: Lone Star"
-  under "9-1-1", "Law & Order: SVU" under "Law & Order") is rejected here, and a title appearing as
-  some other show's inner token was never reachable from index 0.
+  Search-side free-text TV filtering and the import-side residual-file check both reuse this
+  predicate. The import calls it to decide whether a file it is about to **discard** really belongs
+  to the series (`Cinder.Library`'s residual drop, #262), and a discard is unrecoverable, so it must
+  not be a guess. The start and release-tag anchors reject both a spinoff extending the title
+  ("9-1-1: Lone Star" under "9-1-1") and a title carried as another show's inner token (#310).
 
   Shares the same fold, so everything `filter_title/2` is built to accept still matches:
   "S.W.A.T." ⇔ "SWAT", "Grey's" ⇔ "Greys", "Law & Order" ⇔ "Law.and.Order", "Pokémon" ⇔ "Pokemon".
@@ -858,23 +855,6 @@ defmodule Cinder.Acquisition do
     |> nfd()
     |> String.replace(~r/[^\x00-\x7f]/u, "")
     |> String.split(~r/[^a-z0-9]+/, trim: true)
-  end
-
-  # Does any contiguous run of whole tokens concatenate to exactly `needle`?
-  defp token_run_match?([], _needle), do: false
-
-  defp token_run_match?([_ | rest] = hay, needle),
-    do: run_consumes?(hay, needle) or token_run_match?(rest, needle)
-
-  defp run_consumes?(_tokens, ""), do: true
-  defp run_consumes?([], _needle), do: false
-
-  defp run_consumes?([token | rest], needle) do
-    # Tokens are never "" (split with trim: true), so an unchanged needle means "not a prefix".
-    case String.replace_prefix(needle, token, "") do
-      ^needle -> false
-      remaining -> run_consumes?(rest, remaining)
-    end
   end
 
   # :unicode.characters_to_nfd_binary returns {:error, _, _} on malformed UTF-8; fall back to the

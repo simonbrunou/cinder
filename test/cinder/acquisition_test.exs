@@ -699,11 +699,30 @@ defmodule Cinder.AcquisitionTest do
       assert :no_match = Acquisition.best_releases(series(tvdb_id: nil), 1, [1])
     end
 
+    test "rejects a spinoff that carries the wanted series title as an inner token run" do
+      expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
+        {:ok,
+         [
+           raw_tv(
+             "Magia.Record.Puella.Magi.Madoka.Magica.Side.Story.S01E02.German.DL.DTS.1080p.BluRay.x265-ABJ",
+             query_origins: [:free_text]
+           )
+         ]}
+      end)
+
+      assert :no_match =
+               Acquisition.best_releases(
+                 series(title: "Puella Magi Madoka Magica"),
+                 1,
+                 [2]
+               )
+    end
+
     test "does not title-filter a TvdbId-scoped search, so AKA-titled releases still grab" do
       # TMDB title "Money Heist", release under the original title — the TvdbId
       # token already scoped the search to the right show.
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn 123, _title, _season ->
-        {:ok, [raw_tv("La.Casa.de.Papel.S01E01.1080p.WEB-DL-GRP")]}
+        {:ok, [raw_tv("La.Casa.de.Papel.S01E01.1080p.WEB-DL-GRP", query_origins: [:id_scoped])]}
       end)
 
       assert {:ok, [{%Release{episodes: [1]}, [1]}]} =
@@ -763,13 +782,18 @@ defmodule Cinder.AcquisitionTest do
              ]
     end
 
-    test "a franchise-prefixed release name still matches (series '1883' in 'Yellowstone.1883')" do
+    test "a TVDB-scoped franchise title stays trusted (series '1883' in 'Yellowstone.1883')" do
       expect(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb, _title, _season ->
-        {:ok, [raw_tv("Yellowstone.1883.S01E01.1080p.WEB-DL-GRP")]}
+        {:ok,
+         [
+           raw_tv("Yellowstone.1883.S01E01.1080p.WEB-DL-GRP",
+             query_origins: [:id_scoped]
+           )
+         ]}
       end)
 
       assert {:ok, [{%Release{episodes: [1]}, [1]}]} =
-               Acquisition.best_releases(series(tvdb_id: nil, title: "1883"), 1, [1])
+               Acquisition.best_releases(series(title: "1883"), 1, [1])
     end
 
     test "a title embedded inside another token is rejected ('Dark' vs 'Darkwing.Duck')" do

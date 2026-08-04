@@ -37,6 +37,7 @@ defmodule Cinder.Acquisition.ReleaseTest do
         category_ids: [5070],
         indexer_id: 12,
         published_at: published_at,
+        query_origins: [:free_text],
         coordinates: [%{scheme: "absolute", values: ["12"]}],
         role: :story
       })
@@ -44,6 +45,7 @@ defmodule Cinder.Acquisition.ReleaseTest do
     assert release.category_ids == [5070]
     assert release.indexer_id == 12
     assert release.published_at == published_at
+    assert release.query_origins == [:free_text]
     assert release.coordinates == nil
     assert release.role == nil
   end
