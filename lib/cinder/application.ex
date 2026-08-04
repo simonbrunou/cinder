@@ -11,6 +11,8 @@ defmodule Cinder.Application do
   def start(_type, _args) do
     children =
       [
+        # Serializes bounded `df` ports and holds the circuit open if SIGKILL cannot reap one.
+        Cinder.Disk.CommandProbe,
         CinderWeb.Telemetry,
         Cinder.Repo,
         {Ecto.Migrator,

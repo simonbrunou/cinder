@@ -14,6 +14,17 @@ defmodule Cinder.DiskTest do
       assert free <= total
     end
 
+    @tag :tmp_dir
+    test "treats a relative path beginning with a dash as a df operand", %{tmp_dir: tmp} do
+      File.cd!(tmp, fn ->
+        File.mkdir!("-library")
+
+        assert {:ok, %{free_bytes: free, total_bytes: total}} = Disk.stats("-library")
+        assert free >= 0
+        assert total > 0
+      end)
+    end
+
     # Locks the 1024-byte unit contract of the POSIX `df -kP` parser.
     @tag :tmp_dir
     test "reports the same total bytes as df -kP", %{tmp_dir: tmp} do
@@ -70,6 +81,150 @@ defmodule Cinder.DiskTest do
         )
 
       assert status != 0
+    end
+
+    @tag :tmp_dir
+    test "bounds directory validation inside the probe subprocess", %{tmp_dir: tmp} do
+      saved = save_env([:disk_probe_timeout, :disk_probe_shell])
+      shell = Path.join(tmp, "hanging-shell")
+      pid_file = Path.join(tmp, "hanging-shell.pid")
+
+      File.write!(shell, "#!/bin/sh\nprintf '%s' \"$$\" > '#{pid_file}'\nexec sleep 10\n")
+      File.chmod!(shell, 0o755)
+
+      on_exit(fn ->
+        kill_recorded_pids(pid_file)
+        restore_env(saved)
+      end)
+
+      Application.put_env(:cinder, :disk_probe_shell, shell)
+      Application.put_env(:cinder, :disk_probe_timeout, 100)
+
+      assert Disk.stats(tmp) == {:error, :timeout}
+      assert File.exists?(pid_file)
+      refute process_alive?(File.read!(pid_file))
+    end
+
+    @tag :tmp_dir
+    test "rejects concurrent probes instead of queueing deadlines", %{tmp_dir: tmp} do
+      saved = save_env([:disk_probe_timeout, :disk_df_bin])
+      hanging_df = Path.join(tmp, "busy-df")
+      pid_file = Path.join(tmp, "busy-df.pid")
+
+      File.write!(hanging_df, "#!/bin/sh\nprintf '%s' \"$$\" > '#{pid_file}'\nexec sleep 10\n")
+      File.chmod!(hanging_df, 0o755)
+
+      on_exit(fn ->
+        kill_recorded_pids(pid_file)
+        restore_env(saved)
+      end)
+
+      Application.put_env(:cinder, :disk_df_bin, hanging_df)
+      Application.put_env(:cinder, :disk_probe_timeout, 500)
+
+      first_probe = Task.async(fn -> Disk.stats(tmp) end)
+      assert eventually(fn -> File.exists?(pid_file) end)
+
+      assert Disk.stats(tmp) == {:error, :probe_busy}
+      assert Task.await(first_probe) == {:error, :timeout}
+    end
+
+    @tag :tmp_dir
+    test "rejects new probes while a timed-out process is still draining", %{tmp_dir: tmp} do
+      saved = save_env([:disk_probe_timeout, :disk_df_bin, :disk_probe_killer])
+      hanging_df = Path.join(tmp, "unkillable-df")
+      pid_file = Path.join(tmp, "unkillable-df.pids")
+      invocation_file = Path.join(tmp, "unkillable-df.invocations")
+
+      File.write!(
+        hanging_df,
+        "#!/bin/sh\nprintf '%s\\n' \"$$\" >> '#{pid_file}'\nprintf x >> '#{invocation_file}'\nexec sleep 10\n"
+      )
+
+      File.chmod!(hanging_df, 0o755)
+
+      on_exit(fn ->
+        kill_recorded_pids(pid_file)
+        restore_env(saved)
+      end)
+
+      Application.put_env(:cinder, :disk_df_bin, hanging_df)
+      Application.put_env(:cinder, :disk_probe_timeout, 100)
+      Application.put_env(:cinder, :disk_probe_killer, fn _pid -> :ok end)
+
+      assert Disk.stats(tmp) == {:error, :timeout}
+      assert Disk.stats(tmp) == {:error, :probe_draining}
+      assert File.read!(invocation_file) == "x"
+
+      kill_recorded_pids(pid_file)
+      restore_env(saved)
+
+      assert eventually(fn -> match?({:ok, _stats}, Disk.stats(tmp)) end)
+    end
+
+    @tag :tmp_dir
+    test "parses a POSIX row whose filesystem and mountpoint contain spaces", %{tmp_dir: tmp} do
+      saved = save_env([:disk_df_bin])
+      on_exit(fn -> restore_env(saved) end)
+
+      df =
+        write_fake_df(
+          tmp,
+          "spaced-df",
+          "printf '%s\\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on' " <>
+            "'/dev/with 123 1000 250 750 25% /mnt/with space'"
+        )
+
+      Application.put_env(:cinder, :disk_df_bin, df)
+
+      assert Disk.stats(tmp) ==
+               {:ok, %{free_bytes: 750 * 1024, total_bytes: 1_000 * 1024}}
+    end
+
+    @tag :tmp_dir
+    test "clamps negative available blocks to zero", %{tmp_dir: tmp} do
+      saved = save_env([:disk_df_bin])
+      on_exit(fn -> restore_env(saved) end)
+
+      df =
+        write_fake_df(
+          tmp,
+          "negative-free-df",
+          "printf '%s\\n' 'Filesystem 1024-blocks Used Available Capacity Mounted on' " <>
+            "'/dev/disk 1000 1100 -100 110% /mnt'"
+        )
+
+      Application.put_env(:cinder, :disk_df_bin, df)
+
+      assert Disk.stats(tmp) == {:ok, %{free_bytes: 0, total_bytes: 1_000 * 1024}}
+    end
+
+    @tag :tmp_dir
+    test "returns unreadable for malformed df output", %{tmp_dir: tmp} do
+      saved = save_env([:disk_df_bin])
+      on_exit(fn -> restore_env(saved) end)
+
+      Application.put_env(
+        :cinder,
+        :disk_df_bin,
+        write_fake_df(tmp, "malformed-df", "printf '%s\\n' 'not df output'")
+      )
+
+      assert Disk.stats(tmp) == {:error, :unreadable}
+    end
+
+    @tag :tmp_dir
+    test "returns the df exit status", %{tmp_dir: tmp} do
+      saved = save_env([:disk_df_bin])
+      on_exit(fn -> restore_env(saved) end)
+
+      Application.put_env(
+        :cinder,
+        :disk_df_bin,
+        write_fake_df(tmp, "failed-df", "exit 42")
+      )
+
+      assert Disk.stats(tmp) == {:error, {:df_exit, 42}}
     end
   end
 
@@ -330,4 +485,55 @@ defmodule Cinder.DiskTest do
 
     :ok
   end
+
+  defp save_env(keys), do: Map.new(keys, &{&1, Application.get_env(:cinder, &1)})
+
+  defp write_fake_df(tmp, name, body) do
+    path = Path.join(tmp, name)
+    File.write!(path, "#!/bin/sh\n#{body}\n")
+    File.chmod!(path, 0o755)
+    path
+  end
+
+  defp restore_env(saved) do
+    Enum.each(saved, fn
+      {key, nil} -> Application.delete_env(:cinder, key)
+      {key, value} -> Application.put_env(:cinder, key, value)
+    end)
+  end
+
+  defp kill_recorded_pids(pid_file) do
+    if File.exists?(pid_file) do
+      pid_file
+      |> File.read!()
+      |> String.split("\n", trim: true)
+      |> Enum.each(fn pid ->
+        System.cmd("/bin/sh", ["-c", ~S(kill -KILL "$1" 2>/dev/null || true), "kill", pid])
+      end)
+    end
+  end
+
+  defp process_alive?(pid) do
+    {_output, status} =
+      System.cmd(
+        "/bin/sh",
+        ["-c", ~S|kill -0 "$1" 2>/dev/null|, "kill", String.trim(pid)],
+        stderr_to_stdout: true
+      )
+
+    status == 0
+  end
+
+  defp eventually(fun, attempts \\ 50)
+
+  defp eventually(fun, attempts) when attempts > 0 do
+    if fun.() do
+      true
+    else
+      Process.sleep(20)
+      eventually(fun, attempts - 1)
+    end
+  end
+
+  defp eventually(_fun, 0), do: false
 end

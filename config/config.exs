@@ -62,9 +62,10 @@ config :cinder, filesystem: Cinder.Library.Filesystem.Disk
 # permissive stub so the suite never probes the real disks.
 config :cinder, disk_prober: Cinder.Disk
 
-# `Cinder.Disk` probes one path at a time with POSIX `df -kP` and kills/reaps that subprocess after
-# a short timeout. This avoids `:disksup`'s process-wide scan: one hung network mount used to wedge
-# every later probe (and the dashboard task waiting on it) for the life of the VM.
+# `Cinder.Disk` validates and probes one path at a time inside a supervised POSIX `df -kP`
+# subprocess deadline. If SIGKILL cannot reap a stuck filesystem call, its owner keeps the port and
+# rejects further probes instead of accumulating orphan processes. This avoids `:disksup`'s
+# process-wide scan: one hung network mount used to wedge every later dashboard probe.
 config :cinder, disk_probe_timeout: 2_000
 
 # Import-time audio-language verification (needs `ffprobe`; the Docker image ships it). Enabled by

@@ -3,12 +3,16 @@ defmodule Cinder.Disk do
   Free/total disk-space gauge for a filesystem path. Backs the periodic `[:cinder, :disk]`
   telemetry measurement (`CinderWeb.Telemetry`) and the `/dashboard` disk cards.
 
-  Runs a path-scoped POSIX `df -kP` probe through an owned port. The subprocess is bounded so a
-  hung filesystem degrades to an error instead of wedging every disk-space consumer. `df` reports
-  1024-byte blocks, preserving the existing byte-value contract.
+  Runs a path-scoped POSIX `df -kP` probe through a supervised single-flight port owner. The
+  complete path validation and probe run inside the subprocess deadline. If a timed-out process
+  cannot be reaped immediately, the owner retains its port and rejects new probes until it exits,
+  preventing process accumulation. `df` reports 1024-byte blocks, preserving the existing byte
+  contract.
   """
 
   @behaviour Cinder.Disk.Prober
+
+  alias Cinder.Disk.CommandProbe
 
   @type stats :: %{free_bytes: non_neg_integer(), total_bytes: non_neg_integer()}
 
@@ -30,100 +34,24 @@ defmodule Cinder.Disk do
   """
   @spec stats(String.t()) :: {:ok, stats()} | {:error, term()}
   def stats(path) when is_binary(path) do
-    if File.dir?(path) do
-      disk_info(path)
-    else
-      {:error, :enoent}
-    end
-  end
-
-  # POSIX `df -kP path` scopes each subprocess to the one filesystem the caller needs, unlike
-  # `:disksup`, whose process-wide scan can wedge forever on one unrelated hung mount. Owning the
-  # port directly lets the timeout path kill and reap the OS process instead of orphaning it.
-  defp disk_info(path) do
     timeout = Application.get_env(:cinder, :disk_probe_timeout, @default_probe_timeout)
 
-    with {:ok, port} <- open_df(path) do
-      collect_df(port, [], System.monotonic_time(:millisecond) + timeout)
+    case CommandProbe.run(path, timeout) do
+      {:ok, output} -> parse_df(output)
+      {:error, _reason} = error -> error
     end
   end
 
-  defp open_df(path) do
-    df_bin = Application.get_env(:cinder, :disk_df_bin, "df")
-
-    case System.find_executable(df_bin) do
-      nil ->
-        {:error, :df_not_found}
-
-      executable ->
-        port =
-          Port.open(
-            {:spawn_executable, String.to_charlist(executable)},
-            [
-              :binary,
-              :exit_status,
-              :use_stdio,
-              :stderr_to_stdout,
-              args: Enum.map(["-kP", path], &String.to_charlist/1)
-            ]
-          )
-
-        {:ok, port}
-    end
-  catch
-    kind, reason -> {:error, {kind, reason}}
-  end
-
-  defp collect_df(port, output, deadline) do
-    remaining = max(deadline - System.monotonic_time(:millisecond), 0)
-
-    receive do
-      {^port, {:data, data}} ->
-        collect_df(port, [data | output], deadline)
-
-      {^port, {:exit_status, 0}} ->
-        output |> Enum.reverse() |> IO.iodata_to_binary() |> parse_df()
-
-      {^port, {:exit_status, status}} ->
-        {:error, {:df_exit, status}}
-    after
-      remaining ->
-        terminate_port(port)
-        {:error, :timeout}
-    end
-  end
-
-  defp terminate_port(port) do
-    case Port.info(port, :os_pid) do
-      {:os_pid, pid} ->
-        _ =
-          System.cmd(
-            "/bin/sh",
-            ["-c", ~S|kill -KILL "$1"|, "kill", Integer.to_string(pid)],
-            stderr_to_stdout: true
-          )
-
-      nil ->
-        :ok
-    end
-
-    receive do
-      {^port, {:exit_status, _status}} -> :ok
-    after
-      100 ->
-        if Port.info(port), do: Port.close(port)
-    end
-  catch
-    _kind, _reason -> :ok
-  end
+  @df_row ~r/^(?<filesystem>.+?)\s+(?<total>-?\d+)\s+(?<used>-?\d+)\s+(?<available>-?\d+)\s+-?\d+%\s+(?<mountpoint>.+)$/
 
   defp parse_df(output) do
     with data when is_binary(data) <- output |> String.split("\n", trim: true) |> List.last(),
-         [_filesystem, total_kib, _used_kib, avail_kib | _rest] <- String.split(data),
+         %{"available" => avail_kib, "total" => total_kib} <-
+           Regex.named_captures(@df_row, data),
          {total_kib, ""} <- Integer.parse(total_kib),
          {avail_kib, ""} <- Integer.parse(avail_kib),
          true <- total_kib > 0 do
-      {:ok, %{free_bytes: avail_kib * 1024, total_bytes: total_kib * 1024}}
+      {:ok, %{free_bytes: max(avail_kib, 0) * 1024, total_bytes: total_kib * 1024}}
     else
       _malformed -> {:error, :unreadable}
     end
@@ -149,7 +77,7 @@ defmodule Cinder.Disk do
 
   defp roots_admit?(roots, needed) do
     Enum.any?(roots, fn root ->
-      case prober().stats(root) do
+      case configured_stats(root) do
         {:ok, %{free_bytes: free}} -> free >= needed
         {:error, _reason} -> true
       end
@@ -166,7 +94,7 @@ defmodule Cinder.Disk do
   def import_space_available?(kind) do
     case Application.get_env(:cinder, :"#{kind}_library_path") do
       path when is_binary(path) and path != "" ->
-        case prober().stats(path) do
+        case configured_stats(path) do
           {:ok, %{free_bytes: free}} -> free >= @import_floor_bytes
           {:error, _reason} -> true
         end
@@ -179,6 +107,13 @@ defmodule Cinder.Disk do
   @doc "Bytes as a rounded decimal-GB number, for human-facing log lines."
   @spec human_gb(non_neg_integer()) :: float()
   def human_gb(bytes) when is_integer(bytes), do: Float.round(bytes / 1_000_000_000, 1)
+
+  @doc """
+  Reads one path through the configured `:disk_prober`. Internal consumers use this entry point so
+  production, test, and alternate probers cannot diverge.
+  """
+  @spec configured_stats(String.t()) :: {:ok, stats()} | {:error, term()}
+  def configured_stats(path) when is_binary(path), do: prober().stats(path)
 
   defp prober, do: Application.get_env(:cinder, :disk_prober, __MODULE__)
 
@@ -235,7 +170,7 @@ defmodule Cinder.Disk do
         {:error, :no_database_path}
 
       root ->
-        case prober().stats(root) do
+        case configured_stats(root) do
           {:ok, %{free_bytes: free}} -> {:ok, free}
           {:error, _reason} = error -> error
         end
@@ -252,7 +187,7 @@ defmodule Cinder.Disk do
         ]
   def check_all do
     for {kind, path} <- monitored_roots() do
-      %{kind: kind, path: path, status: prober().stats(path)}
+      %{kind: kind, path: path, status: configured_stats(path)}
     end
   end
 end
