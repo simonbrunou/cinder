@@ -5,8 +5,8 @@ defmodule CinderWeb.DashboardLiveTest do
   import Phoenix.LiveViewTest
   import Mox
 
+  alias Cinder.{Accounts, Catalog, Requests}
   alias Cinder.Accounts.Scope
-  alias Cinder.{Catalog, Requests}
 
   import Cinder.CatalogFixtures
 
@@ -97,6 +97,19 @@ defmodule CinderWeb.DashboardLiveTest do
 
       refute has_element?(lv, "p.font-medium", "Monitored series refresh")
       refute has_element?(lv, "p.font-medium", "Subtitle backfill")
+    end
+
+    test "renders an interpolated maintenance aria-label in French", %{
+      conn: conn,
+      user: admin
+    } do
+      assert {:ok, _admin} = Accounts.update_user_locale(admin, %{locale: "fr"})
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      assert has_element?(
+               lv,
+               ~s|#maintenance-subtitle-backfill[aria-label="Exécuter maintenant : Rechercher les sous-titres manquants"]|
+             )
     end
 
     for {id, worker} <- [

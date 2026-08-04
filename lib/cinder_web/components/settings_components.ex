@@ -128,15 +128,16 @@ defmodule CinderWeb.SettingsComponents do
               ]}
               aria-invalid={invalid?(@form, Settings.import_roots_key()) && "true"}
               aria-describedby={
-                invalid?(@form, Settings.import_roots_key()) &&
-                  "#{Settings.import_roots_key()}-error"
+                if invalid?(@form, Settings.import_roots_key()),
+                  do: "#{Settings.import_roots_key()}-help #{Settings.import_roots_key()}-error",
+                  else: "#{Settings.import_roots_key()}-help"
               }
             >{@form.values[Settings.import_roots_key()]}</textarea>
             <.field_error
               :if={invalid?(@form, Settings.import_roots_key())}
               field={Settings.import_roots_key()}
             />
-            <p class="mt-1 text-xs opacity-70">
+            <p id={"#{Settings.import_roots_key()}-help"} class="mt-1 text-xs opacity-70">
               {gettext(
                 "Folders where your download clients save completed files. Separate multiple folders with commas or new lines. Do not use /, the top-level folder."
               )}
@@ -159,10 +160,11 @@ defmodule CinderWeb.SettingsComponents do
               value={@form.values[Settings.library_path_key(kind)]}
               placeholder={@form.placeholders[Settings.library_path_key(kind)] || "/media/#{kind}"}
               autocomplete="off"
+              aria-describedby="library-paths-help"
               class="input w-full"
             />
           </div>
-          <p class="mt-1 text-xs opacity-70">
+          <p id="library-paths-help" class="mt-1 text-xs opacity-70">
             {gettext(
               "Choose a folder for each library so Jellyfin or Plex can keep movies and TV separate. If they share a folder, enter the same path for both. When possible, Cinder reuses the download's disk space instead of making another full copy."
             )}
@@ -176,11 +178,12 @@ defmodule CinderWeb.SettingsComponents do
                 name="move_on_import"
                 value="true"
                 checked={@form.values["move_on_import"]}
+                aria-describedby="move_on_import-help"
                 class="checkbox"
               />
               <span class="label-text">{gettext("Remove download after a Usenet import")}</span>
             </label>
-            <p class="mt-1 text-xs opacity-70">
+            <p id="move_on_import-help" class="mt-1 text-xs opacity-70">
               {gettext(
                 "After a Usenet import, delete the original from the download client. Ensure your library is a separate folder from your downloads. Torrents are never auto-removed (seeding survives)."
               )}
@@ -198,9 +201,10 @@ defmodule CinderWeb.SettingsComponents do
               value={@form.values[Settings.ffprobe_bin_key()]}
               placeholder={@form.placeholders[Settings.ffprobe_bin_key()] || "ffprobe"}
               autocomplete="off"
+              aria-describedby={"#{Settings.ffprobe_bin_key()}-help"}
               class="input w-full"
             />
-            <p class="mt-1 text-xs opacity-70">
+            <p id={"#{Settings.ffprobe_bin_key()}-help"} class="mt-1 text-xs opacity-70">
               {gettext(
                 "Cinder uses ffprobe to check audio and subtitle languages after import. Leave blank to use ffprobe already available to Cinder."
               )}

@@ -118,6 +118,17 @@ defmodule CinderWeb.SetupLiveTest do
 
     assert has_element?(
              lv,
+             ~s|#import_roots[aria-describedby="import_roots-help"]|
+           )
+
+    assert has_element?(
+             lv,
+             "#import_roots-help",
+             "Folders where your download clients save completed files"
+           )
+
+    assert has_element?(
+             lv,
              "#settings-group-library label[for=movies_library_path]",
              "Movies library folder"
            )
@@ -125,6 +136,19 @@ defmodule CinderWeb.SetupLiveTest do
     assert has_element?(
              lv,
              "#settings-group-library",
+             "reuses the download's disk space instead of making another full copy"
+           )
+
+    for kind <- ~w(movies tv) do
+      assert has_element?(
+               lv,
+               ~s|##{kind}_library_path[aria-describedby="library-paths-help"]|
+             )
+    end
+
+    assert has_element?(
+             lv,
+             "#library-paths-help",
              "reuses the download's disk space instead of making another full copy"
            )
 
@@ -137,6 +161,17 @@ defmodule CinderWeb.SetupLiveTest do
     assert has_element?(
              lv,
              "#settings-group-library",
+             "Cinder uses ffprobe to check audio and subtitle languages after import"
+           )
+
+    assert has_element?(
+             lv,
+             ~s|#ffprobe_bin[aria-describedby="ffprobe_bin-help"]|
+           )
+
+    assert has_element?(
+             lv,
+             "#ffprobe_bin-help",
              "Cinder uses ffprobe to check audio and subtitle languages after import"
            )
 
