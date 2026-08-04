@@ -391,10 +391,10 @@ defmodule CinderWeb.ActivityLive do
 
   # Human label for a background sweep module (Cinder.Jobs).
   defp job_label(Cinder.Catalog.Refresher), do: gettext("Series metadata refresh")
-  defp job_label(Cinder.Catalog.Rehunter), do: gettext("Parked title rehunt")
-  defp job_label(Cinder.Catalog.UpgradeHunter), do: gettext("Quality upgrade hunt")
-  defp job_label(Cinder.Download.Cleaner), do: gettext("Orphaned download cleanup")
-  defp job_label(Cinder.Subtitles.Sweeper), do: gettext("Subtitle backfill")
+  defp job_label(Cinder.Catalog.Rehunter), do: gettext("Try failed title searches again")
+  defp job_label(Cinder.Catalog.UpgradeHunter), do: gettext("Look for better-quality releases")
+  defp job_label(Cinder.Download.Cleaner), do: gettext("Remove unneeded partial downloads")
+  defp job_label(Cinder.Subtitles.Sweeper), do: gettext("Find missing subtitles")
   defp job_label(Cinder.Requests.WatchlistSync), do: gettext("Plex watchlist sync")
   defp job_label(module), do: module |> Module.split() |> List.last()
 
@@ -846,7 +846,7 @@ defmodule CinderWeb.ActivityLive do
         <h2 class="pb-3 text-lg font-semibold">{gettext("Background sweeps")}</h2>
         <p class="pb-3 text-sm text-base-content/70">
           {gettext(
-            "Periodic maintenance that runs on its own: refreshing series metadata, backfilling subtitles, and syncing Plex watchlists."
+            "Scheduled maintenance runs on its own. These tasks retry failed searches, look for better releases, remove unneeded partial downloads, update series, find missing subtitles, and sync Plex watchlists."
           )}
         </p>
         <ul id="activity-jobs" class="space-y-2">

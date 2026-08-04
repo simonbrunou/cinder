@@ -133,7 +133,7 @@ defmodule CinderWeb.SettingsLive do
         {gettext("Settings")}
         <:subtitle>
           {gettext(
-            "External services. Stored in the database; secrets encrypted at rest. Save before testing."
+            "External service settings are saved in the database. Passwords and API keys are protected. Save before testing a connection."
           )}
         </:subtitle>
       </.header>

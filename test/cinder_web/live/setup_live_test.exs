@@ -97,7 +97,87 @@ defmodule CinderWeb.SetupLiveTest do
 
     assert has_element?(lv, "#settings-group-tmdb .setup-section-help", "movie and TV metadata")
     assert has_element?(lv, "#settings-group-indexer .setup-section-help", "finds releases")
-    assert has_element?(lv, "#settings-group-library .setup-section-help", "hardlinks")
+
+    assert has_element?(
+             lv,
+             "#settings-group-library .setup-section-help",
+             "reusing disk space when possible"
+           )
+
+    assert has_element?(
+             lv,
+             "#settings-group-library label[for=import_roots]",
+             "Download folders"
+           )
+
+    assert has_element?(
+             lv,
+             "#settings-group-library",
+             "Folders where your download clients save completed files"
+           )
+
+    assert has_element?(
+             lv,
+             ~s|#import_roots[aria-describedby="import_roots-help"]|
+           )
+
+    assert has_element?(
+             lv,
+             "#import_roots-help",
+             "Folders where your download clients save completed files"
+           )
+
+    assert has_element?(
+             lv,
+             "#settings-group-library label[for=movies_library_path]",
+             "Movies library folder"
+           )
+
+    assert has_element?(
+             lv,
+             "#settings-group-library",
+             "reuses the download's disk space instead of making another full copy"
+           )
+
+    for kind <- ~w(movies tv) do
+      assert has_element?(
+               lv,
+               ~s|##{kind}_library_path[aria-describedby="library-paths-help"]|
+             )
+    end
+
+    assert has_element?(
+             lv,
+             "#library-paths-help",
+             "reuses the download's disk space instead of making another full copy"
+           )
+
+    assert has_element?(
+             lv,
+             "#settings-group-library label[for=ffprobe_bin]",
+             "ffprobe media analysis tool"
+           )
+
+    assert has_element?(
+             lv,
+             "#settings-group-library",
+             "Cinder uses ffprobe to check audio and subtitle languages after import"
+           )
+
+    assert has_element?(
+             lv,
+             ~s|#ffprobe_bin[aria-describedby="ffprobe_bin-help"]|
+           )
+
+    assert has_element?(
+             lv,
+             "#ffprobe_bin-help",
+             "Cinder uses ffprobe to check audio and subtitle languages after import"
+           )
+
+    for jargon <- ["Download import roots", "hardlink", "ffprobe binary", "filesystem root"] do
+      refute has_element?(lv, "#settings-group-library", jargon)
+    end
 
     for {group, url} <- [
           {"tmdb", "https://developer.themoviedb.org/docs/authentication-application"},

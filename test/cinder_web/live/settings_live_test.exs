@@ -53,6 +53,29 @@ defmodule CinderWeb.SettingsLiveTest do
     refute has_element?(lv, "[data-setup-optional]")
   end
 
+  test "associates the remove-after-import toggle with its help text", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    assert has_element?(
+             lv,
+             ~s|input[name="move_on_import"][aria-describedby="move_on_import-help"]|
+           )
+
+    assert has_element?(lv, "#move_on_import-help", "After a Usenet import")
+  end
+
+  test "explains how sensitive settings are protected in plain language", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    assert has_element?(
+             lv,
+             "p",
+             "External service settings are saved in the database. Passwords and API keys are protected. Save before testing a connection."
+           )
+
+    refute has_element?(lv, "p", "encrypted at rest")
+  end
+
   test "warns loudly when a stored secret cannot be decrypted, naming the field", %{conn: conn} do
     # No undecryptable secret yet → no alert.
     {:ok, _lv, html} = live(conn, ~p"/settings")
@@ -267,18 +290,27 @@ defmodule CinderWeb.SettingsLiveTest do
     assert Settings.import_roots() == ["/srv/downloads", "/srv/usenet"]
   end
 
-  test "rejects a filesystem-root import boundary", %{conn: conn} do
+  test "rejects the top-level folder as an import boundary", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/settings")
 
-    html =
-      lv
-      |> form("#settings-form", %{
-        "import_roots" => "/",
-        "media_server_type" => "jellyfin"
-      })
-      |> render_submit()
+    lv
+    |> form("#settings-form", %{
+      "import_roots" => "/",
+      "media_server_type" => "jellyfin"
+    })
+    |> render_submit()
 
-    assert html =~ "The filesystem root (/) is not allowed."
+    assert has_element?(
+             lv,
+             "#import_roots-error",
+             "The top-level folder (/) is not allowed."
+           )
+
+    assert has_element?(
+             lv,
+             ~s|#import_roots[aria-describedby="import_roots-help import_roots-error"]|
+           )
+
     assert Settings.get("import_roots") == nil
   end
 

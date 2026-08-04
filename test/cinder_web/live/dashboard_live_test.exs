@@ -5,8 +5,8 @@ defmodule CinderWeb.DashboardLiveTest do
   import Phoenix.LiveViewTest
   import Mox
 
+  alias Cinder.{Accounts, Catalog, Requests}
   alias Cinder.Accounts.Scope
-  alias Cinder.{Catalog, Requests}
 
   import Cinder.CatalogFixtures
 
@@ -71,13 +71,45 @@ defmodule CinderWeb.DashboardLiveTest do
   describe "as an admin" do
     setup :register_and_log_in_admin
 
-    test "shows the six maintenance actions", %{conn: conn} do
-      {:ok, _lv, html} = live(conn, ~p"/dashboard")
+    test "shows the six maintenance actions with plain-language labels", %{conn: conn} do
+      {:ok, lv, html} = live(conn, ~p"/dashboard")
 
       for id <-
             ~w(movie-pipeline tv-pipeline series-refresh subtitle-backfill scan-movies scan-tv) do
         assert html =~ ~s(id="maintenance-#{id}")
       end
+
+      assert has_element?(lv, "p.font-medium", "Check monitored series for updates")
+      assert has_element?(lv, "p", "Check TMDB for changes to monitored series and episodes.")
+
+      assert has_element?(
+               lv,
+               ~s|#maintenance-series-refresh[aria-label="Run now: Check monitored series for updates"]|
+             )
+
+      assert has_element?(lv, "p.font-medium", "Find missing subtitles")
+      assert has_element?(lv, "p", "Find missing subtitles for imported movies and episodes.")
+
+      assert has_element?(
+               lv,
+               ~s|#maintenance-subtitle-backfill[aria-label="Run now: Find missing subtitles"]|
+             )
+
+      refute has_element?(lv, "p.font-medium", "Monitored series refresh")
+      refute has_element?(lv, "p.font-medium", "Subtitle backfill")
+    end
+
+    test "renders an interpolated maintenance aria-label in French", %{
+      conn: conn,
+      user: admin
+    } do
+      assert {:ok, _admin} = Accounts.update_user_locale(admin, %{locale: "fr"})
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+
+      assert has_element?(
+               lv,
+               ~s|#maintenance-subtitle-backfill[aria-label="Exécuter maintenant : Rechercher les sous-titres manquants"]|
+             )
     end
 
     for {id, worker} <- [
@@ -143,7 +175,7 @@ defmodule CinderWeb.DashboardLiveTest do
 
       assert has_element?(
                lv,
-               ~s(#maintenance-scan-movies[aria-label="Running Movie library scan"])
+               ~s(#maintenance-scan-movies[aria-label="Running: Movie library scan"])
              )
 
       refute has_element?(lv, "#maintenance-scan-tv[disabled]")

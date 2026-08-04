@@ -26,11 +26,6 @@ msgstr ""
 msgid "%{count} series"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:151
-#, elixir-autogen, elixir-format
-msgid "%{kind} library path (where %{kind} are hardlinked)"
-msgstr ""
-
 #: lib/cinder_web/live/series_detail_components.ex:427
 #, elixir-autogen, elixir-format
 msgid "%{n}/%{m} monitored"
@@ -47,7 +42,7 @@ msgstr ""
 msgid "%{title} is already requested."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:275
+#: lib/cinder_web/components/settings_components.ex:279
 #, elixir-autogen, elixir-format
 msgid "1080p, 720p"
 msgstr ""
@@ -93,7 +88,7 @@ msgstr ""
 msgid "Admin"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:184
+#: lib/cinder_web/components/settings_components.ex:187
 #, elixir-autogen, elixir-format
 msgid "After a Usenet import, delete the original from the download client. Ensure your library is a separate folder from your downloads. Torrents are never auto-removed (seeding survives)."
 msgstr ""
@@ -248,7 +243,7 @@ msgstr ""
 msgid "Checking…"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:632
+#: lib/cinder_web/components/settings_components.ex:636
 #, elixir-autogen, elixir-format
 msgid "Clear saved value"
 msgstr ""
@@ -553,11 +548,6 @@ msgstr ""
 msgid "Everyone"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:135
-#, elixir-autogen, elixir-format
-msgid "External services. Stored in the database; secrets encrypted at rest. Save before testing."
-msgstr ""
-
 #: lib/cinder_web/components/core_components.ex:978
 #, elixir-autogen, elixir-format
 msgid "Film"
@@ -656,7 +646,7 @@ msgstr ""
 msgid "Manage your account email address and password settings"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:242
+#: lib/cinder_web/components/settings_components.ex:246
 #, elixir-autogen, elixir-format
 msgid "Max size (GB)"
 msgstr ""
@@ -666,7 +656,7 @@ msgstr ""
 msgid "Media server type"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:216
+#: lib/cinder_web/components/settings_components.ex:220
 #, elixir-autogen, elixir-format
 msgid "Min size (GB)"
 msgstr ""
@@ -882,7 +872,7 @@ msgstr ""
 msgid "Pipeline at a glance."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:268
+#: lib/cinder_web/components/settings_components.ex:272
 #, elixir-autogen, elixir-format
 msgid "Preferred resolutions (comma-separated)"
 msgstr ""
@@ -927,7 +917,7 @@ msgstr ""
 msgid "Register for an account"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:181
+#: lib/cinder_web/components/settings_components.ex:184
 #, elixir-autogen, elixir-format
 msgid "Remove download after a Usenet import"
 msgstr ""
@@ -1149,7 +1139,7 @@ msgstr ""
 msgid "Sign up"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:296
+#: lib/cinder_web/components/settings_components.ex:300
 #, elixir-autogen, elixir-format
 msgid "Sizes are decimal GB (1 GB = 1,000,000,000 bytes). For TV they apply"
 msgstr ""
@@ -1201,7 +1191,7 @@ msgstr ""
 msgid "TV wanted"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:346
+#: lib/cinder_web/components/settings_components.ex:350
 #, elixir-autogen, elixir-format
 msgid "Test %{service}"
 msgstr ""
@@ -1369,7 +1359,7 @@ msgstr ""
 msgid "of %{count} total"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:296
+#: lib/cinder_web/components/settings_components.ex:300
 #, elixir-autogen, elixir-format
 msgid "per episode"
 msgstr ""
@@ -1379,12 +1369,12 @@ msgstr ""
 msgid "to your account now."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:709
+#: lib/cinder_web/components/settings_components.ex:713
 #, elixir-autogen, elixir-format
 msgid "•••• saved (leave blank to keep)"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:551
+#: lib/cinder_web/components/settings_components.ex:555
 #: lib/cinder_web/live/setup_live.ex:117
 #: lib/cinder_web/settings_labels.ex:27
 #, elixir-autogen, elixir-format
@@ -1419,7 +1409,7 @@ msgstr ""
 msgid "Original (French)"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:712
+#: lib/cinder_web/components/settings_components.ex:716
 #, elixir-autogen, elixir-format
 msgid "set via environment (leave blank to keep)"
 msgstr ""
@@ -1450,11 +1440,6 @@ msgstr ""
 #: lib/cinder_web/live/setup_live.ex:205
 #, elixir-autogen, elixir-format
 msgid "A download client (torrent or usenet)"
-msgstr ""
-
-#: lib/cinder_web/components/settings_components.ex:166
-#, elixir-autogen, elixir-format
-msgid "A separate root per library, so Jellyfin/Plex can point distinct libraries at each. Required even if they share a folder; enter the same path."
 msgstr ""
 
 #: lib/cinder_web/live/user_live/settings.ex:16
@@ -1745,7 +1730,7 @@ msgstr ""
 msgid "Plex token"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:282
+#: lib/cinder_web/components/settings_components.ex:286
 #, elixir-autogen, elixir-format
 msgid "Preferred sources (comma-separated)"
 msgstr ""
@@ -1825,7 +1810,7 @@ msgstr ""
 msgid "Setup in progress. Try again shortly."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:299
+#: lib/cinder_web/components/settings_components.ex:303
 #, elixir-autogen, elixir-format
 msgid "Sources: remux, bluray, webrip, webdl, hdtv, dvd, cam. Leave blank to accept any; untagged releases are always kept. These are distinct; listing only bluray excludes remux, so add both to accept either."
 msgstr ""
@@ -1882,7 +1867,7 @@ msgstr ""
 msgid "You need to log in again to perform sensitive actions on your account."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:289
+#: lib/cinder_web/components/settings_components.ex:293
 #, elixir-autogen, elixir-format
 msgid "bluray, webdl"
 msgstr ""
@@ -2352,19 +2337,9 @@ msgstr ""
 msgid "Find missing subtitles for imported movies and episodes."
 msgstr ""
 
-#: lib/cinder_web/live/dashboard_live.ex:206
-#, elixir-autogen, elixir-format
-msgid "Monitored series refresh"
-msgstr ""
-
 #: lib/cinder_web/live/dashboard_live.ex:218
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Movie library scan"
-msgstr ""
-
-#: lib/cinder_web/live/dashboard_live.ex:207
-#, elixir-autogen, elixir-format
-msgid "Reconcile monitored series and episodes with TMDB."
 msgstr ""
 
 #: lib/cinder_web/live/dashboard_live.ex:225
@@ -2382,11 +2357,6 @@ msgstr ""
 msgid "Run"
 msgstr ""
 
-#: lib/cinder_web/live/dashboard_live.ex:430
-#, elixir-autogen, elixir-format
-msgid "Run %{action}"
-msgstr ""
-
 #: lib/cinder_web/live/dashboard_live.ex:393
 #, elixir-autogen, elixir-format
 msgid "Run a background pass now without changing its schedule."
@@ -2402,12 +2372,6 @@ msgstr ""
 msgid "Running…"
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:397
-#: lib/cinder_web/live/dashboard_live.ex:212
-#, elixir-autogen, elixir-format
-msgid "Subtitle backfill"
-msgstr ""
-
 #: lib/cinder_web/live/dashboard_live.ex:224
 #, elixir-autogen, elixir-format, fuzzy
 msgid "TV library scan"
@@ -2416,11 +2380,6 @@ msgstr ""
 #: lib/cinder_web/live/dashboard_live.ex:200
 #, elixir-autogen, elixir-format, fuzzy
 msgid "TV pipeline"
-msgstr ""
-
-#: lib/cinder_web/live/dashboard_live.ex:429
-#, elixir-autogen, elixir-format
-msgid "Running %{action}"
 msgstr ""
 
 #: lib/cinder_web/live/user_live/registration.ex:99
@@ -2438,17 +2397,6 @@ msgstr ""
 msgid "/media/downloads"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:140
-#, elixir-autogen, elixir-format
-msgid "Allowed download folders, separated by commas or new lines. The filesystem root is not allowed."
-msgstr ""
-
-#: lib/cinder_web/components/settings_components.ex:118
-#: lib/cinder_web/components/settings_components.ex:683
-#, elixir-autogen, elixir-format
-msgid "Download import roots"
-msgstr ""
-
 #: lib/cinder_web/components/layouts.ex:98
 #, elixir-autogen, elixir-format
 msgid "Primary"
@@ -2464,12 +2412,12 @@ msgstr ""
 msgid "Setup"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:698
+#: lib/cinder_web/components/settings_components.ex:702
 #, elixir-autogen, elixir-format
 msgid "%{kind}: Max size (GB)"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:695
+#: lib/cinder_web/components/settings_components.ex:699
 #, elixir-autogen, elixir-format
 msgid "%{kind}: Min size (GB)"
 msgstr ""
@@ -2477,11 +2425,6 @@ msgstr ""
 #: lib/cinder_web/components/settings_components.ex:21
 #, elixir-autogen, elixir-format
 msgid "Not saved. Check: %{fields}."
-msgstr ""
-
-#: lib/cinder_web/components/settings_components.ex:671
-#, elixir-autogen, elixir-format
-msgid "The filesystem root (/) is not allowed."
 msgstr ""
 
 #: lib/cinder_web/components/core_components.ex:1048
@@ -2691,67 +2634,67 @@ msgstr ""
 msgid "The download could not be cancelled."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:375
+#: lib/cinder_web/components/settings_components.ex:379
 #, elixir-autogen, elixir-format
 msgid "Allow"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:363
+#: lib/cinder_web/components/settings_components.ex:367
 #, elixir-autogen, elixir-format
 msgid "Anime releases"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:686
+#: lib/cinder_web/components/settings_components.ex:690
 #, elixir-autogen, elixir-format
 msgid "Anime: Embedded subtitles"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:689
+#: lib/cinder_web/components/settings_components.ex:693
 #, elixir-autogen, elixir-format
 msgid "Anime: Preferred-group fallback delay"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:390
+#: lib/cinder_web/components/settings_components.ex:394
 #, elixir-autogen, elixir-format
 msgid "Blocked groups"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:677
+#: lib/cinder_web/components/settings_components.ex:681
 #, elixir-autogen, elixir-format
 msgid "Choose a valid mode and at least one subtitle language when required."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:372
+#: lib/cinder_web/components/settings_components.ex:376
 #, elixir-autogen, elixir-format
 msgid "Embedded subtitles"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:674
+#: lib/cinder_web/components/settings_components.ex:678
 #, elixir-autogen, elixir-format
 msgid "Enter a non-negative whole number of hours."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:376
+#: lib/cinder_web/components/settings_components.ex:380
 #, elixir-autogen, elixir-format
 msgid "Prefer embedded"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:384
+#: lib/cinder_web/components/settings_components.ex:388
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Preferred groups"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:399
+#: lib/cinder_web/components/settings_components.ex:403
 #, elixir-autogen, elixir-format
 msgid "Preferred-group fallback delay (hours)"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:377
+#: lib/cinder_web/components/settings_components.ex:381
 #, elixir-autogen, elixir-format
 msgid "Require embedded"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:373
+#: lib/cinder_web/components/settings_components.ex:377
 #, elixir-autogen, elixir-format
 msgid "Use server default (Prefer embedded)"
 msgstr ""
@@ -2882,19 +2825,9 @@ msgstr ""
 msgid "Extra titles tried when searching indexers, alongside the main title."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:204
-#, elixir-autogen, elixir-format
-msgid "Command name or path used to verify a download's audio/subtitle languages after import. Leave blank to use \"ffprobe\" from PATH."
-msgstr ""
-
-#: lib/cinder_web/components/settings_components.ex:560
+#: lib/cinder_web/components/settings_components.ex:564
 #, elixir-autogen, elixir-format
 msgid "Media info (ffprobe)"
-msgstr ""
-
-#: lib/cinder_web/components/settings_components.ex:192
-#, elixir-autogen, elixir-format
-msgid "ffprobe binary"
 msgstr ""
 
 #: lib/cinder_web/live/activity_live.ex:497
@@ -2922,12 +2855,12 @@ msgstr ""
 msgid "These series are skipped by the search sweep until their Anime preferences can be satisfied; the hold clears automatically once they can."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:296
+#: lib/cinder_web/components/settings_components.ex:300
 #, elixir-autogen, elixir-format
 msgid ": a season pack of N episodes is allowed up to N× the max. Defaults: Movies 0.3–15 GB, TV 0.05–4 GB per episode. Leave blank for the default; enter 0 for no limit."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:680
+#: lib/cinder_web/components/settings_components.ex:684
 #, elixir-autogen, elixir-format
 msgid "Enter a number of GB (0 = no limit), or leave blank for the default."
 msgstr ""
@@ -3644,7 +3577,7 @@ msgstr ""
 msgid "Accounts"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:328
+#: lib/cinder_web/components/settings_components.ex:332
 #, elixir-autogen, elixir-format
 msgid "Applied to newly self-registered users. Enter a positive whole number; 0 or an invalid value means unlimited. Leave blank to restore the default of 10."
 msgstr ""
@@ -3825,7 +3758,7 @@ msgstr ""
 msgid "Local path prefix is not an existing readable directory: %{path}"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:661
+#: lib/cinder_web/components/settings_components.ex:665
 #, elixir-autogen, elixir-format
 msgid "Path prefix as the download client reports it"
 msgstr ""
@@ -3840,7 +3773,7 @@ msgstr ""
 msgid "SABnzbd remote path prefix"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:664
+#: lib/cinder_web/components/settings_components.ex:668
 #, elixir-autogen, elixir-format
 msgid "The same directory as Cinder sees it"
 msgstr ""
@@ -3944,7 +3877,7 @@ msgstr ""
 msgid "SMTP username"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:316
+#: lib/cinder_web/components/settings_components.ex:320
 #, elixir-autogen, elixir-format
 msgid "SMTP: use implicit TLS/SSL (usually port 465; leave off for STARTTLS on 587)"
 msgstr ""
@@ -4540,7 +4473,7 @@ msgstr ""
 msgid "Provider identities and file paths have one safe catalog target."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:548
+#: lib/cinder_web/components/settings_components.ex:552
 #: lib/cinder_web/live/library_adoption_live.ex:504
 #, elixir-autogen, elixir-format
 msgid "Radarr"
@@ -4582,7 +4515,7 @@ msgstr ""
 msgid "Scanning and migration previews are read-only. Nothing changes until you confirm adoption."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:548
+#: lib/cinder_web/components/settings_components.ex:552
 #: lib/cinder_web/live/library_adoption_live.ex:505
 #, elixir-autogen, elixir-format
 msgid "Sonarr"
@@ -5374,11 +5307,6 @@ msgstr ""
 msgid "Link your Plex account again to sync your Plex watchlist."
 msgstr ""
 
-#: lib/cinder_web/live/activity_live.ex:848
-#, elixir-autogen, elixir-format, fuzzy
-msgid "Periodic maintenance that runs on its own: refreshing series metadata, backfilling subtitles, and syncing Plex watchlists."
-msgstr ""
-
 #: lib/cinder_web/live/activity_live.ex:398
 #, elixir-autogen, elixir-format
 msgid "Plex watchlist sync"
@@ -5392,21 +5320,6 @@ msgstr ""
 #: lib/cinder_web/live/user_live/settings.ex:140
 #, elixir-autogen, elixir-format
 msgid "Request titles I add to my Plex watchlist"
-msgstr ""
-
-#: lib/cinder_web/live/activity_live.ex:394
-#, elixir-autogen, elixir-format
-msgid "Parked title rehunt"
-msgstr ""
-
-#: lib/cinder_web/live/activity_live.ex:396
-#, elixir-autogen, elixir-format
-msgid "Orphaned download cleanup"
-msgstr ""
-
-#: lib/cinder_web/live/activity_live.ex:395
-#, elixir-autogen, elixir-format
-msgid "Quality upgrade hunt"
 msgstr ""
 
 #: lib/cinder_web/live/users_live.ex:492
@@ -5488,7 +5401,7 @@ msgstr ""
 msgid "to continue."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:424
+#: lib/cinder_web/components/settings_components.ex:428
 #, elixir-autogen, elixir-format
 msgid "%{label} (opens in a new tab)"
 msgstr ""
@@ -5498,7 +5411,7 @@ msgstr ""
 msgid "Add your metadata token."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:461
+#: lib/cinder_web/components/settings_components.ex:465
 #, elixir-autogen, elixir-format
 msgid "Choose at least one download client. qBittorrent handles torrents and SABnzbd handles Usenet; Cinder sends releases to enabled clients and tracks them through import."
 msgstr ""
@@ -5523,7 +5436,7 @@ msgstr ""
 msgid "Connect Prowlarr and its indexers."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:539
+#: lib/cinder_web/components/settings_components.ex:543
 #, elixir-autogen, elixir-format
 msgid "Discord webhook guide"
 msgstr ""
@@ -5533,22 +5446,22 @@ msgstr ""
 msgid "Enable qBittorrent or SABnzbd."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:524
+#: lib/cinder_web/components/settings_components.ex:528
 #, elixir-autogen, elixir-format
 msgid "Get Jellyfin"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:519
+#: lib/cinder_web/components/settings_components.ex:523
 #, elixir-autogen, elixir-format
 msgid "Get SABnzbd"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:518
+#: lib/cinder_web/components/settings_components.ex:522
 #, elixir-autogen, elixir-format
 msgid "Get qBittorrent"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:534
+#: lib/cinder_web/components/settings_components.ex:538
 #, elixir-autogen, elixir-format
 msgid "LibreTranslate"
 msgstr ""
@@ -5558,32 +5471,32 @@ msgstr ""
 msgid "Optional"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:485
+#: lib/cinder_web/components/settings_components.ex:489
 #, elixir-autogen, elixir-format
 msgid "Optional. Connect OpenSubtitles to download missing subtitles; LibreTranslate can translate them when configured."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:491
+#: lib/cinder_web/components/settings_components.ex:495
 #, elixir-autogen, elixir-format
 msgid "Optional. Send approval, availability, and failure alerts through Discord, a generic webhook, or email (SMTP). You can configure this later."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:497
+#: lib/cinder_web/components/settings_components.ex:501
 #, elixir-autogen, elixir-format
 msgid "Optional. Set the default request quota for newly registered users. Leave it blank to use Cinder's default."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:512
+#: lib/cinder_web/components/settings_components.ex:516
 #, elixir-autogen, elixir-format
 msgid "Radarr documentation"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:418
+#: lib/cinder_web/components/settings_components.ex:422
 #, elixir-autogen, elixir-format
 msgid "Resources:"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:513
+#: lib/cinder_web/components/settings_components.ex:517
 #, elixir-autogen, elixir-format
 msgid "Sonarr documentation"
 msgstr ""
@@ -5594,17 +5507,12 @@ msgstr ""
 msgid "Start here"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:503
+#: lib/cinder_web/components/settings_components.ex:507
 #, elixir-autogen, elixir-format
 msgid "TMDB token guide"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:473
-#, elixir-autogen, elixir-format
-msgid "Tell Cinder which download folders it may import from and where your movie and TV libraries live. Cinder hardlinks downloaded files into those library folders so Jellyfin or Plex can find them."
-msgstr ""
-
-#: lib/cinder_web/components/settings_components.ex:443
+#: lib/cinder_web/components/settings_components.ex:447
 #, elixir-autogen, elixir-format
 msgid "The Movie Database provides movie and TV metadata, artwork, and episode details. Create a free API read access token and paste it below."
 msgstr ""
@@ -5614,49 +5522,136 @@ msgstr ""
 msgid "The numbered sections are required. Everything marked Optional can wait."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:479
+#: lib/cinder_web/components/settings_components.ex:483
 #, elixir-autogen, elixir-format
 msgid "These optional limits and preferences filter and rank releases. The defaults work for most homes; leave fields blank unless you want to tune quality or disk usage."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:455
+#: lib/cinder_web/components/settings_components.ex:459
 #, elixir-autogen, elixir-format
 msgid "Already use Radarr or Sonarr? Add them here only if you want Cinder to use their library data when adopting existing media. In each app, find the API key under Settings > General. Otherwise leave this optional section blank."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:467
+#: lib/cinder_web/components/settings_components.ex:471
 #, elixir-autogen, elixir-format
 msgid "Choose Jellyfin or Plex. Cinder triggers a library scan after import. In Jellyfin, create a key under Dashboard > Advanced > API Keys; for Plex, use the token guide below. Use the server URL Cinder can reach; the web URL is what household browsers open."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:525
+#: lib/cinder_web/components/settings_components.ex:529
 #, elixir-autogen, elixir-format
 msgid "Get Plex Media Server"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:532
+#: lib/cinder_web/components/settings_components.ex:536
 #, elixir-autogen, elixir-format
 msgid "OpenSubtitles API key guide"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:526
+#: lib/cinder_web/components/settings_components.ex:530
 #, elixir-autogen, elixir-format
 msgid "Plex token guide"
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:449
+#: lib/cinder_web/components/settings_components.ex:453
 #, elixir-autogen, elixir-format
 msgid "Prowlarr connects Cinder to your indexers and finds releases. Add your indexers there first, then copy its URL and the API key from Settings > General."
 msgstr ""
 
-#: lib/cinder_web/components/settings_components.ex:508
+#: lib/cinder_web/components/settings_components.ex:512
 #, elixir-autogen, elixir-format
 msgid "Prowlarr settings guide"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/registration.ex:111
+#: lib/cinder_web/components/settings_components.ex:152
 #, elixir-autogen, elixir-format
-msgid "The installer set this one-time password using CINDER_BOOTSTRAP_TOKEN. It is only required to create the first admin account."
+msgid "%{kind} library folder"
+msgstr ""
+
+#: lib/cinder_web/live/dashboard_live.ex:207
+#, elixir-autogen, elixir-format
+msgid "Check TMDB for changes to monitored series and episodes."
+msgstr ""
+
+#: lib/cinder_web/live/dashboard_live.ex:206
+#, elixir-autogen, elixir-format
+msgid "Check monitored series for updates"
+msgstr ""
+
+#: lib/cinder_web/components/settings_components.ex:168
+#, elixir-autogen, elixir-format
+msgid "Choose a folder for each library so Jellyfin or Plex can keep movies and TV separate. If they share a folder, enter the same path for both. When possible, Cinder reuses the download's disk space instead of making another full copy."
+msgstr ""
+
+#: lib/cinder_web/components/settings_components.ex:208
+#, elixir-autogen, elixir-format
+msgid "Cinder uses ffprobe to check audio and subtitle languages after import. Leave blank to use ffprobe already available to Cinder."
+msgstr ""
+
+#: lib/cinder_web/components/settings_components.ex:118
+#: lib/cinder_web/components/settings_components.ex:687
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Download folders"
+msgstr ""
+
+#: lib/cinder_web/live/settings_live.ex:135
+#, elixir-autogen, elixir-format
+msgid "External service settings are saved in the database. Passwords and API keys are protected. Save before testing a connection."
+msgstr ""
+
+#: lib/cinder_web/live/activity_live.ex:397
+#: lib/cinder_web/live/dashboard_live.ex:212
+#, elixir-autogen, elixir-format
+msgid "Find missing subtitles"
+msgstr ""
+
+#: lib/cinder_web/components/settings_components.ex:141
+#, elixir-autogen, elixir-format
+msgid "Folders where your download clients save completed files. Separate multiple folders with commas or new lines. Do not use /, the top-level folder."
+msgstr ""
+
+#: lib/cinder_web/live/activity_live.ex:395
+#, elixir-autogen, elixir-format
+msgid "Look for better-quality releases"
+msgstr ""
+
+#: lib/cinder_web/live/activity_live.ex:396
+#, elixir-autogen, elixir-format
+msgid "Remove unneeded partial downloads"
+msgstr ""
+
+#: lib/cinder_web/live/dashboard_live.ex:430
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Run now: %{action}"
+msgstr ""
+
+#: lib/cinder_web/live/dashboard_live.ex:429
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Running: %{action}"
+msgstr ""
+
+#: lib/cinder_web/live/activity_live.ex:848
+#, elixir-autogen, elixir-format
+msgid "Scheduled maintenance runs on its own. These tasks retry failed searches, look for better releases, remove unneeded partial downloads, update series, find missing subtitles, and sync Plex watchlists."
+msgstr ""
+
+#: lib/cinder_web/components/settings_components.ex:477
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Tell Cinder which download folders it may import from and where your movie and TV libraries live. Cinder puts imported files into those library folders so Jellyfin or Plex can find them, reusing disk space when possible."
+msgstr ""
+
+#: lib/cinder_web/components/settings_components.ex:675
+#, elixir-autogen, elixir-format
+msgid "The top-level folder (/) is not allowed."
+msgstr ""
+
+#: lib/cinder_web/live/activity_live.ex:394
+#, elixir-autogen, elixir-format
+msgid "Try failed title searches again"
+msgstr ""
+
+#: lib/cinder_web/components/settings_components.ex:195
+#, elixir-autogen, elixir-format
+msgid "ffprobe media analysis tool"
 msgstr ""
 
 #: lib/cinder_web/live/discover_live.ex:549
@@ -5673,4 +5668,9 @@ msgstr ""
 #: lib/cinder_web/live/discover_live.ex:539
 #, elixir-autogen, elixir-format
 msgid "TMDB isn't configured yet."
+msgstr ""
+
+#: lib/cinder_web/live/user_live/registration.ex:111
+#, elixir-autogen, elixir-format
+msgid "The installer set this one-time password using CINDER_BOOTSTRAP_TOKEN. It is only required to create the first admin account."
 msgstr ""
