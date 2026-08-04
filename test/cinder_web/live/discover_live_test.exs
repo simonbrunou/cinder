@@ -8,10 +8,12 @@ defmodule CinderWeb.DiscoverLiveTest do
   alias Cinder.Catalog
   alias Cinder.Catalog.Movie
   alias Cinder.Requests
+  alias Cinder.Settings
 
   # The LiveView runs in its own process, so the mock must be global (async: false).
   setup :register_and_log_in_admin
   setup :set_mox_global
+  setup :reset_cinder_env
 
   setup do
     # search_discover always hits all four endpoints; default all to empty.
@@ -537,7 +539,46 @@ defmodule CinderWeb.DiscoverLiveTest do
     assert length(Requests.list_for_user(user)) == 1
   end
 
-  test "a total TMDB failure flashes and shows 'Search failed', not 'No matches'", %{conn: conn} do
+  test "an unconfigured TMDB failure links to setup while setup is incomplete", %{conn: conn} do
+    stub(Cinder.Catalog.TMDBMock, :search, fn _, _ -> {:error, :unauthorized} end)
+    stub(Cinder.Catalog.TMDBMock, :search_tv, fn _, _ -> {:error, :unauthorized} end)
+    {:ok, lv, _html} = live(conn, ~p"/")
+
+    capture_log(fn ->
+      lv |> form("#search-form", %{"query" => "boom"}) |> render_change()
+    end)
+
+    assert has_element?(lv, "p", "TMDB isn't configured yet.")
+
+    assert has_element?(
+             lv,
+             ~s(#configure-tmdb-link[href="/setup"]),
+             "Add your API key in Setup →"
+           )
+
+    assert has_element?(lv, "#flash-error", "TMDB isn't configured yet.")
+    refute has_element?(lv, "p", "TMDB didn't respond. Try again.")
+  end
+
+  test "an unconfigured TMDB failure links to settings after setup is complete", %{conn: conn} do
+    Settings.mark_setup_complete()
+    stub(Cinder.Catalog.TMDBMock, :search, fn _, _ -> {:error, :unauthorized} end)
+    stub(Cinder.Catalog.TMDBMock, :search_tv, fn _, _ -> {:error, :unauthorized} end)
+    {:ok, lv, _html} = live(conn, ~p"/")
+
+    capture_log(fn ->
+      lv |> form("#search-form", %{"query" => "boom"}) |> render_change()
+    end)
+
+    assert has_element?(
+             lv,
+             ~s(#configure-tmdb-link[href="/settings"]),
+             "Add your API key in Settings →"
+           )
+  end
+
+  test "a configured TMDB failure keeps the transient error and not 'No matches'", %{conn: conn} do
+    Settings.put("tmdb_token", "configured-token")
     stub(Cinder.Catalog.TMDBMock, :search, fn _, _ -> {:error, :timeout} end)
     stub(Cinder.Catalog.TMDBMock, :search_tv, fn _, _ -> {:error, :nxdomain} end)
     {:ok, lv, _html} = live(conn, ~p"/")
@@ -550,6 +591,8 @@ defmodule CinderWeb.DiscoverLiveTest do
         refute html =~ "No matches"
       end)
 
+    assert has_element?(lv, "p", "TMDB didn't respond. Try again.")
+    refute has_element?(lv, "#configure-tmdb-link")
     assert log =~ "Discover search failed entirely:"
     assert log =~ "movies={:error, :timeout} tv={:error, :nxdomain}"
     assert render(lv) =~ "search-form"
