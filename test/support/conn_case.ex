@@ -102,6 +102,7 @@ defmodule CinderWeb.ConnCase do
     :sabnzbd_local_path_prefix,
     :anime_preferences,
     :import_roots,
+    :disk_stats_stub,
     :explicit_import_roots,
     :movies_library_path,
     :movies_min_size,

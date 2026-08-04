@@ -3,9 +3,9 @@ defmodule Cinder.Disk do
   Free/total disk-space gauge for a filesystem path. Backs the periodic `[:cinder, :disk]`
   telemetry measurement (`CinderWeb.Telemetry`) and the `/dashboard` disk cards.
 
-  Reads `:disksup.get_disk_info/1` (OTP `os_mon`, listed in `extra_applications`) rather than
-  shelling out and parsing `df` by hand. `:disksup` reports KiB — the same 1024-byte units the
-  previous `df -kP` parser read — so callers see identical byte values.
+  Runs a path-scoped POSIX `df -kP` probe through an owned port. The subprocess is bounded so a
+  hung filesystem degrades to an error instead of wedging every disk-space consumer. `df` reports
+  1024-byte blocks, preserving the existing byte-value contract.
   """
 
   @behaviour Cinder.Disk.Prober
@@ -17,6 +17,7 @@ defmodule Cinder.Disk do
   # fail OPEN on any uncertainty — an unknown release size, no configured root, or an unreadable
   # `df` all allow the grab. They skip only on positive evidence that no download root can hold it.
   @grab_margin_bytes 2 * 1024 * 1024 * 1024
+  @default_probe_timeout 2_000
 
   # Minimum free space on a library root before an import stages into it. A same-filesystem hardlink
   # costs ~nothing, but a cross-device import copies the whole file; a small fixed floor is a cheap
@@ -25,7 +26,7 @@ defmodule Cinder.Disk do
 
   @doc """
   Reads free/total bytes for `path`. Returns `{:error, :enoent}` when `path` isn't a
-  directory, `{:error, :unreadable}` when `:disksup` can't read the disk, and never raises.
+  directory, `{:error, :unreadable}` when `df` returns malformed output, and never raises.
   """
   @spec stats(String.t()) :: {:ok, stats()} | {:error, term()}
   def stats(path) when is_binary(path) do
@@ -36,20 +37,96 @@ defmodule Cinder.Disk do
     end
   end
 
-  # `:disksup.get_disk_info/1` reports `[{id, total_kib, available_kib, capacity}]` in KiB —
-  # the same 1024-byte blocks the old `df -kP` parser read. A path it can't read (or an
-  # os_mon that isn't running) comes back zeroed rather than as an error, so an all-zero row
-  # maps to `{:error, :unreadable}` — the space guards fail open on any error.
+  # POSIX `df -kP path` scopes each subprocess to the one filesystem the caller needs, unlike
+  # `:disksup`, whose process-wide scan can wedge forever on one unrelated hung mount. Owning the
+  # port directly lets the timeout path kill and reap the OS process instead of orphaning it.
   defp disk_info(path) do
-    case :disksup.get_disk_info(String.to_charlist(path)) do
-      [{_id, total_kib, avail_kib, _capacity}] when total_kib > 0 ->
-        {:ok, %{free_bytes: avail_kib * 1024, total_bytes: total_kib * 1024}}
+    timeout = Application.get_env(:cinder, :disk_probe_timeout, @default_probe_timeout)
 
-      _zeroed_or_unexpected ->
-        {:error, :unreadable}
+    with {:ok, port} <- open_df(path) do
+      collect_df(port, [], System.monotonic_time(:millisecond) + timeout)
+    end
+  end
+
+  defp open_df(path) do
+    df_bin = Application.get_env(:cinder, :disk_df_bin, "df")
+
+    case System.find_executable(df_bin) do
+      nil ->
+        {:error, :df_not_found}
+
+      executable ->
+        port =
+          Port.open(
+            {:spawn_executable, String.to_charlist(executable)},
+            [
+              :binary,
+              :exit_status,
+              :use_stdio,
+              :stderr_to_stdout,
+              args: Enum.map(["-kP", path], &String.to_charlist/1)
+            ]
+          )
+
+        {:ok, port}
     end
   catch
     kind, reason -> {:error, {kind, reason}}
+  end
+
+  defp collect_df(port, output, deadline) do
+    remaining = max(deadline - System.monotonic_time(:millisecond), 0)
+
+    receive do
+      {^port, {:data, data}} ->
+        collect_df(port, [data | output], deadline)
+
+      {^port, {:exit_status, 0}} ->
+        output |> Enum.reverse() |> IO.iodata_to_binary() |> parse_df()
+
+      {^port, {:exit_status, status}} ->
+        {:error, {:df_exit, status}}
+    after
+      remaining ->
+        terminate_port(port)
+        {:error, :timeout}
+    end
+  end
+
+  defp terminate_port(port) do
+    case Port.info(port, :os_pid) do
+      {:os_pid, pid} ->
+        _ =
+          System.cmd(
+            "/bin/sh",
+            ["-c", ~S|kill -KILL "$1"|, "kill", Integer.to_string(pid)],
+            stderr_to_stdout: true
+          )
+
+      nil ->
+        :ok
+    end
+
+    receive do
+      {^port, {:exit_status, _status}} -> :ok
+    after
+      100 ->
+        if Port.info(port), do: Port.close(port)
+    end
+  catch
+    _kind, _reason -> :ok
+  end
+
+  defp parse_df(output) do
+    with data when is_binary(data) <- output |> String.split("\n", trim: true) |> List.last(),
+         [_filesystem, total_kib, _used_kib, avail_kib | _rest] <- String.split(data),
+         {total_kib, ""} <- Integer.parse(total_kib),
+         {avail_kib, ""} <- Integer.parse(avail_kib),
+         true <- total_kib > 0 do
+      {:ok, %{free_bytes: avail_kib * 1024, total_bytes: total_kib * 1024}}
+    else
+      _malformed -> {:error, :unreadable}
+    end
   end
 
   @doc """
@@ -166,7 +243,8 @@ defmodule Cinder.Disk do
   end
 
   @doc """
-  Disk stats for every monitored root (`monitored_roots/0`: library roots + the database volume).
+  Disk stats for every monitored root (`monitored_roots/0`: library roots + the database volume),
+  read through the `:disk_prober` seam so tests and alternate probers share the aggregate path.
   One row per root: `%{kind: atom(), path: String.t(), status: {:ok, stats()} | {:error, term()}}`.
   """
   @spec check_all() :: [
@@ -174,7 +252,7 @@ defmodule Cinder.Disk do
         ]
   def check_all do
     for {kind, path} <- monitored_roots() do
-      %{kind: kind, path: path, status: stats(path)}
+      %{kind: kind, path: path, status: prober().stats(path)}
     end
   end
 end

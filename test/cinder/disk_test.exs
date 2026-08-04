@@ -7,15 +7,14 @@ defmodule Cinder.DiskTest do
 
   describe "stats/1" do
     @tag :tmp_dir
-    test "reads real free/total bytes via :disksup", %{tmp_dir: tmp} do
+    test "reads real free/total bytes via bounded df", %{tmp_dir: tmp} do
       assert {:ok, %{free_bytes: free, total_bytes: total}} = Disk.stats(tmp)
       assert free >= 0
       assert total > 0
       assert free <= total
     end
 
-    # Locks the unit contract of the old `df -kP` parser: `:disksup.get_disk_info/1` reports
-    # 1024-byte KiB blocks, so callers must keep seeing the exact byte values df reported.
+    # Locks the 1024-byte unit contract of the POSIX `df -kP` parser.
     @tag :tmp_dir
     test "reports the same total bytes as df -kP", %{tmp_dir: tmp} do
       assert {:ok, %{total_bytes: total}} = Disk.stats(tmp)
@@ -33,13 +32,53 @@ defmodule Cinder.DiskTest do
 
       assert {:error, :enoent} = Disk.stats(path)
     end
+
+    @tag :tmp_dir
+    test "returns a timeout error when the df probe stops responding", %{tmp_dir: tmp} do
+      saved =
+        Map.new([:disk_probe_timeout, :disk_df_bin], fn key ->
+          {key, Application.get_env(:cinder, key)}
+        end)
+
+      on_exit(fn ->
+        Enum.each(saved, fn
+          {key, nil} -> Application.delete_env(:cinder, key)
+          {key, value} -> Application.put_env(:cinder, key, value)
+        end)
+      end)
+
+      hanging_df = Path.join(tmp, "hanging-df")
+      pid_file = Path.join(tmp, "hanging-df.pid")
+
+      File.write!(
+        hanging_df,
+        "#!/bin/sh\nprintf '%s' \"$$\" > '#{pid_file}'\nexec sleep 10\n"
+      )
+
+      File.chmod!(hanging_df, 0o755)
+      Application.put_env(:cinder, :disk_df_bin, hanging_df)
+      Application.put_env(:cinder, :disk_probe_timeout, 100)
+
+      assert Disk.stats(tmp) == {:error, :timeout}
+      assert File.exists?(pid_file)
+
+      {_output, status} =
+        System.cmd(
+          "/bin/sh",
+          ["-c", ~S|kill -0 "$1"|, "kill", String.trim(File.read!(pid_file))],
+          stderr_to_stdout: true
+        )
+
+      assert status != 0
+    end
   end
 
   describe "configured_roots/0 and check_all/0" do
     setup do
       saved = %{
         movies_library_path: Application.get_env(:cinder, :movies_library_path),
-        tv_library_path: Application.get_env(:cinder, :tv_library_path)
+        tv_library_path: Application.get_env(:cinder, :tv_library_path),
+        disk_stats_stub: Application.get_env(:cinder, :disk_stats_stub)
       }
 
       on_exit(fn ->
@@ -78,10 +117,25 @@ defmodule Cinder.DiskTest do
                Enum.find(rows, &(&1.kind == :movies))
     end
 
+    @tag :tmp_dir
+    test "check_all/0 uses the configured prober", %{tmp_dir: tmp} do
+      Application.put_env(:cinder, :movies_library_path, tmp)
+      Application.delete_env(:cinder, :tv_library_path)
+      Application.put_env(:cinder, :disk_stats_stub, {:error, :probe_timeout})
+
+      assert %{kind: :movies, path: ^tmp, status: {:error, :probe_timeout}} =
+               Enum.find(Disk.check_all(), &(&1.kind == :movies))
+    end
+
     test "check_all/0 degrades gracefully for a configured but nonexistent root" do
       path = "/nonexistent/cinder-disk-test-#{System.unique_integer([:positive])}"
       Application.put_env(:cinder, :movies_library_path, path)
       Application.delete_env(:cinder, :tv_library_path)
+
+      Application.put_env(:cinder, :disk_stats_stub, fn
+        ^path -> {:error, :enoent}
+        _other -> {:ok, %{free_bytes: 1_000, total_bytes: 2_000}}
+      end)
 
       rows = Disk.check_all()
 

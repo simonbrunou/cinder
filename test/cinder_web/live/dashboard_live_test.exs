@@ -465,6 +465,11 @@ defmodule CinderWeb.DashboardLiveTest do
       Application.put_env(:cinder, :movies_library_path, path)
       Application.delete_env(:cinder, :tv_library_path)
 
+      Application.put_env(:cinder, :disk_stats_stub, fn
+        ^path -> {:error, :enoent}
+        _other -> {:ok, %{free_bytes: 1_000, total_bytes: 2_000}}
+      end)
+
       {:ok, lv, _html} = live(conn, ~p"/dashboard")
 
       render_async(lv)
