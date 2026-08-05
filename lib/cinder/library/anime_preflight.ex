@@ -2,7 +2,8 @@ defmodule Cinder.Library.AnimePreflight do
   @moduledoc "Pure, exhaustive anime file-to-episode preflight."
 
   alias Cinder.Acquisition.AnimeParser
-  alias Cinder.Catalog.AnimeResolver
+  alias Cinder.Catalog.{AnimeResolver, TitleAlias}
+  alias Cinder.Download.Intent
 
   # Conservative, never-guess sample/preview token (issue #125): word-boundary/dot/dash/
   # underscore-delimited only — never a bare substring inside a word ("Sampler" is not a sample).
@@ -10,13 +11,27 @@ defmodule Cinder.Library.AnimePreflight do
   @sample_max_bytes 100 * 1024 * 1024
   @sample_max_ratio 0.10
 
-  def run(%{"version" => 2} = snapshot, inventory, episodes) do
+  def run(snapshot, inventory, episodes) when is_map(snapshot) do
+    if Intent.valid_preflight_snapshot?(snapshot) do
+      run_snapshot(snapshot, inventory, episodes)
+    else
+      invalid_snapshot_result(inventory)
+    end
+  end
+
+  def run(_snapshot, inventory, _episodes), do: invalid_snapshot_result(inventory)
+
+  defp run_snapshot(snapshot, inventory, episodes) do
     context = snapshot["parser_context"]
 
     parser_context = %{
       kind: :series,
       titles: [context["title"] | context["aliases"]],
-      year: context["year"]
+      blocked_titles: context["blocked_titles"] || [],
+      allow_unscoped_standard:
+        snapshot["version"] == 2 or context["allow_unscoped_standard"] == true,
+      year: context["year"],
+      scene_titles: context["scene_titles"] || []
     }
 
     inventory
@@ -24,6 +39,24 @@ defmodule Cinder.Library.AnimePreflight do
     |> infer_lone_file(episodes, snapshot["reserved_episode_ids"])
     |> validate(authoritative_ids(episodes), snapshot["reserved_episode_ids"])
     |> result()
+  end
+
+  defp invalid_snapshot_result(inventory) do
+    files =
+      Enum.map(inventory, fn file ->
+        %{
+          relative_path: file.relative_path,
+          identity: file.identity,
+          parsed: %{coordinates: [], group: nil, role: :unknown},
+          episode_ids: [],
+          source: :unresolved,
+          ignored: false,
+          evidence: %{resolution: :invalid_snapshot}
+        }
+      end)
+
+    paths = Enum.map(files, & &1.relative_path) |> Enum.sort()
+    result({:error, %{files: files}, issue("invalid_snapshot", paths, [])})
   end
 
   defp authoritative_ids(episodes), do: MapSet.new(Enum.map(episodes, & &1.id))
@@ -55,6 +88,12 @@ defmodule Cinder.Library.AnimePreflight do
   # samples/previews), per anime's never-guess invariant.
   defp infer_lone_file(state, [%{id: episode_id}], [episode_id]) do
     case non_ignored_files(state) do
+      [%{parsed: %{invalid_coordinate: true}}] ->
+        state
+
+      [%{parsed: %{blocked_coordinate: true}}] ->
+        state
+
       [
         %{
           episode_ids: [],
@@ -133,7 +172,7 @@ defmodule Cinder.Library.AnimePreflight do
   end
 
   defp resolve(%{coordinates: []} = parsed, mappings) do
-    case resolve_value(nil, nil, parsed, mappings) do
+    case resolve_value(%{scheme: nil, canonical_value: nil}, parsed, mappings) do
       {:ignore, :extra, evidence} -> {:ignore, evidence}
       _unresolved -> {:unresolved, %{resolution: :unmatched}}
     end
@@ -142,27 +181,39 @@ defmodule Cinder.Library.AnimePreflight do
   defp resolve(parsed, mappings) do
     parsed.coordinates
     |> Enum.flat_map(fn coordinate ->
-      Enum.map(coordinate.values, &{coordinate.scheme, &1})
+      Enum.map(coordinate.values, fn value ->
+        %{
+          scheme: coordinate.scheme,
+          canonical_value: value,
+          source: Map.get(coordinate, :source),
+          namespace: Map.get(coordinate, :namespace),
+          scope_title: Map.get(coordinate, :scope_title)
+        }
+      end)
     end)
-    |> Enum.reduce_while({[], []}, fn {scheme, value}, {ids, resolutions} ->
-      case resolve_value(scheme, value, parsed, mappings) do
+    |> Enum.reduce_while({[], []}, fn coordinate, {ids, resolutions} ->
+      case resolve_value(coordinate, parsed, mappings) do
         {:ok, episode_ids, resolver} ->
-          resolution = %{
-            scheme: scheme,
-            canonical_value: value,
-            episode_ids: episode_ids,
-            resolver: resolver
-          }
+          resolution =
+            %{
+              scheme: coordinate.scheme,
+              canonical_value: coordinate.canonical_value,
+              episode_ids: episode_ids,
+              resolver: resolver
+            }
+            |> put_coordinate_scope(coordinate)
 
           {:cont, {ids ++ episode_ids, resolutions ++ [resolution]}}
 
         {:ambiguous, candidates, resolver} ->
-          resolution = %{
-            scheme: scheme,
-            canonical_value: value,
-            candidates: candidates,
-            resolver: resolver
-          }
+          resolution =
+            %{
+              scheme: coordinate.scheme,
+              canonical_value: coordinate.canonical_value,
+              candidates: candidates,
+              resolver: resolver
+            }
+            |> put_coordinate_scope(coordinate)
 
           {:halt,
            {:unresolved, %{resolution: :ambiguous, resolutions: resolutions ++ [resolution]}}}
@@ -177,8 +228,8 @@ defmodule Cinder.Library.AnimePreflight do
     end
   end
 
-  defp resolve_value(scheme, value, parsed, mappings) do
-    matching = Enum.filter(mappings, &matches_value?(&1, scheme, value))
+  defp resolve_value(coordinate, parsed, mappings) do
+    matching = Enum.filter(mappings, &matches_value?(&1, coordinate))
 
     resolver_mappings =
       Enum.map(matching, fn mapping ->
@@ -196,17 +247,45 @@ defmodule Cinder.Library.AnimePreflight do
     )
   end
 
-  # The scheme-bridging rule itself lives once in `AnimeResolver.bridged_schemes/1` (shared with
-  # `Cinder.Acquisition.Anime.mappings_for_value/3` on the resolver/selection side). Without it,
-  # a downloaded batch named with the TVDB-shaped numbering the release was actually grabbed
-  # under (frozen into this snapshot's `mappings` at grab time) could never resolve at import,
-  # even though the search/selection side already matched it.
-  defp matches_value?(mapping, scheme, value) do
+  # A title-scoped coordinate carries the selected provider namespace and must match it exactly;
+  # unlike ordinary SxxEyy parsing, it never uses the standard-to-scene bridge or precedence across
+  # other namespaces. Unscoped coordinates retain the existing A6 bridge behavior.
+  defp matches_value?(mapping, %{
+         scheme: scheme,
+         canonical_value: value,
+         source: source,
+         namespace: namespace,
+         scope_title: scope_title
+       })
+       when is_binary(source) and is_binary(namespace) and is_binary(scope_title) do
+    identity = mapping["identity"]
+
+    identity["source"] == source and identity["scheme"] == scheme and
+      identity["namespace"] == namespace and identity["canonical_value"] == value and
+      TitleAlias.normalize(mapping["scope_title"] || "") == scope_title
+  end
+
+  defp matches_value?(_mapping, %{source: source, namespace: namespace})
+       when is_binary(source) or is_binary(namespace),
+       do: false
+
+  defp matches_value?(mapping, %{scheme: scheme, canonical_value: value}) do
     identity = mapping["identity"]
     schemes = [scheme | AnimeResolver.bridged_schemes(scheme)]
 
     identity["scheme"] in schemes and identity["canonical_value"] == value
   end
+
+  defp put_coordinate_scope(value, %{
+         source: source,
+         namespace: namespace,
+         scope_title: scope_title
+       })
+       when is_binary(source) and is_binary(namespace) and is_binary(scope_title) do
+    Map.merge(value, %{source: source, namespace: namespace, scope_title: scope_title})
+  end
+
+  defp put_coordinate_scope(value, _coordinate), do: value
 
   defp atom_identity(identity) do
     %{

@@ -6,8 +6,12 @@ defmodule Cinder.Download.Intent do
   import Ecto.Changeset
 
   alias Cinder.Acquisition.AnimePreferences
-  alias Cinder.Catalog.AnimeResolver
+  alias Cinder.Catalog.{AnimeResolver, TitleAlias}
   alias Cinder.Util
+
+  @max_parser_aliases 7
+  @max_blocked_titles 8
+  @max_title_codepoints 200
 
   schema "download_intents" do
     field :operation_key, :string
@@ -112,8 +116,9 @@ defmodule Cinder.Download.Intent do
          true <- valid_episode_ids?(reserved_ids),
          true <- reserved_ids == intent_episode_ids,
          true <- valid_release?(release),
-         {:ok, mapping_index} <- mapping_index(mappings, reserved_ids),
-         true <- mappings_cover?(mappings, reserved_ids),
+         true <- valid_release_scopes?(release, snapshot["parser_context"]),
+         {:ok, mapping_index} <- valid_mapping_contract(mappings, reserved_ids),
+         true <- valid_scene_title_bindings?(snapshot["parser_context"], mappings),
          true <- valid_selected_resolution?(selected, release, mapping_index, reserved_ids) do
       true
     else
@@ -123,15 +128,133 @@ defmodule Cinder.Download.Intent do
 
   def valid_mapping_snapshot?(_snapshot, _kind, _episode_ids), do: false
 
+  @doc false
+  def valid_parser_snapshot?(snapshot), do: valid_snapshot_version?(snapshot)
+
+  @doc false
+  def valid_preflight_snapshot?(%{"reserved_episode_ids" => reserved_ids} = snapshot) do
+    valid_mapping_snapshot?(snapshot, :episode, reserved_ids)
+  end
+
+  def valid_preflight_snapshot?(_snapshot), do: false
+
+  defp valid_snapshot_version?(%{
+         "version" => 3,
+         "parser_context" =>
+           %{
+             "title" => title,
+             "aliases" => aliases,
+             "blocked_titles" => blocked_titles,
+             "year" => year
+           } = context
+       }) do
+    valid_parser_context?(context, title, aliases, blocked_titles, year)
+  end
+
   defp valid_snapshot_version?(%{
          "version" => 2,
-         "parser_context" => %{"title" => title, "aliases" => aliases, "year" => year}
+         "parser_context" => %{"title" => title, "aliases" => aliases, "year" => year} = context
        }) do
-    Util.present?(title) and is_list(aliases) and length(aliases) <= 7 and
-      Enum.all?(aliases, &Util.present?/1) and (is_nil(year) or is_integer(year))
+    valid_legacy_parser_context?(context, title, aliases, year)
   end
 
   defp valid_snapshot_version?(_snapshot), do: false
+
+  defp valid_legacy_parser_context?(context, title, aliases, year) do
+    Map.keys(context) |> Enum.sort() == ["aliases", "title", "year"] and
+      Util.present?(title) and is_list(aliases) and length(aliases) <= @max_parser_aliases and
+      Enum.all?(aliases, &Util.present?/1) and (is_nil(year) or is_integer(year))
+  end
+
+  defp valid_parser_context?(context, title, aliases, blocked_titles, year) do
+    valid_bounded_title?(title) and valid_title_list?(aliases, @max_parser_aliases) and
+      (is_nil(year) or is_integer(year)) and valid_blocked_titles?(blocked_titles) and
+      is_boolean(Map.get(context, "allow_unscoped_standard", false)) and
+      valid_scene_titles?(Map.get(context, "scene_titles", []), aliases, title)
+  end
+
+  defp valid_blocked_titles?(blocked_titles),
+    do: valid_title_list?(blocked_titles, @max_blocked_titles)
+
+  defp valid_title_list?(titles, max_count)
+       when is_list(titles) and length(titles) <= max_count do
+    normalized = Enum.map(titles, &normalized_bounded_title/1)
+    Enum.all?(normalized, &is_binary/1) and Enum.uniq(normalized) == normalized
+  end
+
+  defp valid_title_list?(_titles, _max_count), do: false
+
+  defp normalized_bounded_title(title) do
+    if valid_bounded_title?(title), do: TitleAlias.normalize(title)
+  end
+
+  defp valid_bounded_title?(title) do
+    Util.present?(title) and length(String.codepoints(title)) <= @max_title_codepoints
+  end
+
+  defp valid_scene_titles?(scene_titles, aliases, canonical_title)
+       when is_list(scene_titles) and length(scene_titles) <= @max_parser_aliases do
+    canonical = TitleAlias.normalize(canonical_title)
+
+    known_aliases =
+      aliases
+      |> Enum.map(&TitleAlias.normalize/1)
+      |> Enum.reject(&(&1 == canonical))
+      |> MapSet.new()
+
+    normalized = Enum.map(scene_titles, &valid_scene_title_entry(&1, known_aliases))
+
+    Enum.all?(normalized, &is_binary/1) and Enum.uniq(normalized) == normalized
+  end
+
+  defp valid_scene_titles?(_scene_titles, _aliases, _canonical_title), do: false
+
+  defp valid_scene_title_entry(
+         %{
+           "title" => title,
+           "season" => season,
+           "source" => "tmdb",
+           "namespace" => namespace
+         },
+         known_aliases
+       )
+       when is_binary(title) and is_integer(season) and season >= 0 and season <= 999 and
+              is_binary(namespace) do
+    normalized_title = TitleAlias.normalize(title)
+
+    if valid_bounded_title?(title) and Util.present?(namespace) and
+         MapSet.member?(known_aliases, normalized_title),
+       do: normalized_title
+  end
+
+  defp valid_scene_title_entry(_scene_title, _known_aliases), do: nil
+
+  defp valid_scene_title_bindings?(context, mappings) do
+    Enum.all?(Map.get(context, "scene_titles", []), fn scene_title ->
+      title = scene_title["title"]
+      season = scene_title["season"]
+      source = scene_title["source"]
+      namespace = scene_title["namespace"]
+
+      Enum.any?(mappings, fn mapping ->
+        identity = mapping["identity"]
+
+        identity["source"] == source and identity["scheme"] == "scene" and
+          identity["namespace"] == namespace and
+          scene_value_in_season?(identity["canonical_value"], season) and
+          TitleAlias.normalize(mapping["scope_title"] || "") == TitleAlias.normalize(title)
+      end)
+    end)
+  end
+
+  defp scene_value_in_season?(value, season) when is_binary(value) and is_integer(season) do
+    case Regex.run(~r/^S(\d{2,3})E\d{2,4}$/u, value, capture: :all_but_first) do
+      [value_season] -> String.to_integer(value_season) == season
+      _invalid -> false
+    end
+  end
+
+  defp scene_value_in_season?(_value, _season), do: false
 
   defp valid_release?(%{"coordinates" => coordinates}) when is_list(coordinates) do
     coordinates != [] and Enum.all?(coordinates, &valid_coordinate?/1)
@@ -139,12 +262,51 @@ defmodule Cinder.Download.Intent do
 
   defp valid_release?(_release), do: false
 
-  defp valid_coordinate?(%{"scheme" => scheme, "values" => values}) do
+  defp valid_release_scopes?(%{"coordinates" => coordinates}, context) do
+    scene_titles = Map.get(context, "scene_titles", [])
+    Enum.all?(coordinates, &valid_release_coordinate_scope?(&1, scene_titles))
+  end
+
+  defp valid_release_coordinate_scope?(
+         %{
+           "source" => source,
+           "namespace" => namespace,
+           "scope_title" => scope_title
+         } = coordinate,
+         scene_titles
+       ) do
+    coordinate["scheme"] == "scene" and source == "tmdb" and Util.present?(scope_title) and
+      Enum.any?(scene_titles, fn scene_title ->
+        scene_title["source"] == source and scene_title["namespace"] == namespace and
+          TitleAlias.normalize(scene_title["title"]) == scope_title and
+          Enum.all?(
+            coordinate["values"],
+            &scene_value_in_season?(&1, scene_title["season"])
+          )
+      end)
+  end
+
+  defp valid_release_coordinate_scope?(coordinate, _scene_titles) do
+    Enum.all?(["source", "namespace", "scope_title"], &(not Map.has_key?(coordinate, &1)))
+  end
+
+  defp valid_coordinate?(%{"scheme" => scheme, "values" => values} = coordinate) do
     Util.present?(scheme) and is_list(values) and values != [] and
-      Enum.all?(values, &Util.present?/1)
+      Enum.all?(values, &Util.present?/1) and valid_scope?(coordinate)
   end
 
   defp valid_coordinate?(_coordinate), do: false
+
+  defp valid_scope?(%{
+         "source" => source,
+         "namespace" => namespace,
+         "scope_title" => scope_title
+       }),
+       do: Util.present?(source) and Util.present?(namespace) and Util.present?(scope_title)
+
+  defp valid_scope?(coordinate) do
+    Enum.all?(["source", "namespace", "scope_title"], &(not Map.has_key?(coordinate, &1)))
+  end
 
   defp mapping_index(mappings, reserved_ids) when is_list(mappings) and mappings != [] do
     if Enum.all?(mappings, &valid_mapping?(&1, reserved_ids)) do
@@ -157,15 +319,33 @@ defmodule Cinder.Download.Intent do
 
   defp mapping_index(_mappings, _reserved_ids), do: :error
 
+  defp valid_mapping_contract(mappings, reserved_ids) do
+    with {:ok, mapping_index} <- mapping_index(mappings, reserved_ids),
+         true <- mappings_cover?(mappings, reserved_ids) do
+      {:ok, mapping_index}
+    else
+      _invalid -> :error
+    end
+  end
+
   defp valid_mapping?(
-         %{"identity" => identity, "precedence" => precedence, "episode_ids" => episode_ids},
+         %{"identity" => identity, "precedence" => precedence, "episode_ids" => episode_ids} =
+           mapping,
          reserved_ids
        ) do
     valid_identity?(identity) and valid_precedence?(precedence) and
-      valid_episode_ids?(episode_ids) and intersects?(episode_ids, reserved_ids)
+      valid_episode_ids?(episode_ids) and intersects?(episode_ids, reserved_ids) and
+      valid_optional_scope_title?(Map.get(mapping, "scope_title"), identity)
   end
 
   defp valid_mapping?(_mapping, _reserved_ids), do: false
+
+  defp valid_optional_scope_title?(nil, _identity), do: true
+
+  defp valid_optional_scope_title?(title, %{"scheme" => "scene"}),
+    do: valid_bounded_title?(title)
+
+  defp valid_optional_scope_title?(_title, _identity), do: false
 
   defp valid_identity?(%{
          "source" => source,
@@ -201,18 +381,17 @@ defmodule Cinder.Download.Intent do
            "episode_ids" => episode_ids,
            "precedence" => precedence,
            "mapping_identities" => identities
-         },
+         } = value,
          mapping_index
        ) do
-    Util.present?(scheme) and Util.present?(canonical_value) and
+    Util.present?(scheme) and Util.present?(canonical_value) and valid_scope?(value) and
       valid_episode_ids?(episode_ids) and valid_precedence?(precedence) and
       is_list(identities) and identities != [] and Enum.uniq(identities) == identities and
       Enum.all?(identities, fn identity ->
         valid_selected_reference?(
           identity,
           mapping_index,
-          scheme,
-          canonical_value,
+          value,
           precedence,
           episode_ids
         )
@@ -224,20 +403,45 @@ defmodule Cinder.Download.Intent do
   defp valid_selected_reference?(
          identity,
          mapping_index,
-         scheme,
-         canonical_value,
+         value,
          precedence,
          episode_ids
        ) do
     with true <- valid_identity?(identity),
          {:ok, mapping} <- Map.fetch(mapping_index, identity) do
-      identity["scheme"] in [scheme | AnimeResolver.bridged_schemes(scheme)] and
-        identity["canonical_value"] == canonical_value and
-        mapping["precedence"] == precedence and mapping["episode_ids"] == episode_ids
+      selected_reference_matches?(identity, value) and
+        selected_scope_matches?(mapping, value) and mapping["precedence"] == precedence and
+        mapping["episode_ids"] == episode_ids
     else
       _missing -> false
     end
   end
+
+  defp selected_reference_matches?(
+         identity,
+         %{
+           "scheme" => scheme,
+           "canonical_value" => canonical_value,
+           "source" => source,
+           "namespace" => namespace
+         }
+       ) do
+    identity["source"] == source and identity["scheme"] == scheme and
+      identity["namespace"] == namespace and identity["canonical_value"] == canonical_value
+  end
+
+  defp selected_reference_matches?(
+         identity,
+         %{"scheme" => scheme, "canonical_value" => canonical_value}
+       ) do
+    identity["scheme"] in [scheme | AnimeResolver.bridged_schemes(scheme)] and
+      identity["canonical_value"] == canonical_value
+  end
+
+  defp selected_scope_matches?(mapping, %{"scope_title" => scope_title}),
+    do: TitleAlias.normalize(mapping["scope_title"] || "") == scope_title
+
+  defp selected_scope_matches?(_mapping, _value), do: true
 
   defp mappings_cover?(mappings, reserved_ids) do
     mapped = mappings |> Enum.flat_map(& &1["episode_ids"]) |> MapSet.new()
@@ -245,17 +449,22 @@ defmodule Cinder.Download.Intent do
   end
 
   defp coordinate_pairs(coordinates) do
-    for %{"scheme" => scheme, "values" => values} <- coordinates,
+    for %{"scheme" => scheme, "values" => values} = coordinate <- coordinates,
         value <- values,
-        do: {scheme, value}
+        do:
+          {scheme, value, coordinate["source"], coordinate["namespace"],
+           coordinate["scope_title"]}
   end
 
   defp selected_pairs(values) do
-    Enum.map(values, &{&1["scheme"], &1["canonical_value"]})
+    Enum.map(
+      values,
+      &{&1["scheme"], &1["canonical_value"], &1["source"], &1["namespace"], &1["scope_title"]}
+    )
   end
 
   defp valid_episode_ids?(ids) when is_list(ids) and ids != [],
-    do: Enum.all?(ids, &(is_integer(&1) and &1 > 0))
+    do: Enum.all?(ids, &(is_integer(&1) and &1 > 0)) and Enum.uniq(ids) == ids
 
   defp valid_episode_ids?(_ids), do: false
 

@@ -212,7 +212,7 @@ defmodule Cinder.Download.TvPollerTest do
     assert :ok = TvPoller.poll()
 
     assert %Intent{
-             mapping_snapshot: %{"version" => 2},
+             mapping_snapshot: %{"version" => 3},
              release_policy_snapshot: %{"version" => 1}
            } = intent = Repo.one!(Intent)
 
@@ -1052,9 +1052,8 @@ defmodule Cinder.Download.TvPollerTest do
   defp downloaded_snapshot_grab(episodes, content_path, snapshot) do
     ids = Enum.map(episodes, & &1.id)
 
-    # Real v2 snapshots always carry the frozen reserved set (enforced at intent reservation);
-    # preflight fails closed without it, so the fixture mirrors the real shape.
-    snapshot = Map.put_new(snapshot, "reserved_episode_ids", ids)
+    # Real v2 snapshots carry the complete frozen release and selected-resolution authority.
+    snapshot = complete_snapshot_authority(snapshot, ids)
 
     grab =
       Repo.insert!(%Grab{
@@ -1069,7 +1068,7 @@ defmodule Cinder.Download.TvPollerTest do
   end
 
   defp downloaded_policy_grab(episode, content_path, release_title) do
-    snapshot = anime_standard_snapshot(episode) |> Map.put("reserved_episode_ids", [episode.id])
+    snapshot = anime_standard_snapshot(episode) |> complete_snapshot_authority([episode.id])
 
     grab =
       Repo.insert!(%Grab{
@@ -1084,6 +1083,46 @@ defmodule Cinder.Download.TvPollerTest do
 
     Repo.update_all(from(e in Episode, where: e.id == ^episode.id), set: [grab_id: grab.id])
     grab
+  end
+
+  defp complete_snapshot_authority(snapshot, episode_ids) do
+    authority_mappings = Enum.map(episode_ids, &authority_mapping/1)
+    values = Enum.map(authority_mappings, &authority_value/1)
+
+    snapshot
+    |> Map.put("reserved_episode_ids", episode_ids)
+    |> Map.update!("mappings", &(&1 ++ authority_mappings))
+    |> Map.put("release", %{
+      "coordinates" =>
+        Enum.map(values, &%{"scheme" => &1["scheme"], "values" => [&1["canonical_value"]]})
+    })
+    |> Map.put("selected_resolution", %{"episode_ids" => episode_ids, "values" => values})
+  end
+
+  defp authority_mapping(episode_id) do
+    %{
+      "identity" => %{
+        "source" => "fixture-authority",
+        "scheme" => "reservation",
+        "namespace" => "canonical",
+        "canonical_value" => "episode-#{episode_id}"
+      },
+      "precedence" => "curated",
+      "episode_ids" => [episode_id],
+      "evidence" => nil
+    }
+  end
+
+  defp authority_value(mapping) do
+    identity = mapping["identity"]
+
+    %{
+      "scheme" => identity["scheme"],
+      "canonical_value" => identity["canonical_value"],
+      "episode_ids" => mapping["episode_ids"],
+      "precedence" => mapping["precedence"],
+      "mapping_identities" => [identity]
+    }
   end
 
   test "publishes a downloading grab snapshot without rewriting an equal poll" do

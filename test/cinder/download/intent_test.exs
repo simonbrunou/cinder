@@ -354,7 +354,72 @@ defmodule Cinder.Download.IntentTest do
           %{"title" => "", "aliases" => [], "year" => 2023},
           %{"title" => "Frieren", "aliases" => [42], "year" => 2023},
           %{"title" => "Frieren", "aliases" => List.duplicate("alias", 8), "year" => 2023},
-          %{"title" => "Frieren", "aliases" => [], "year" => "2023"}
+          %{"title" => "Frieren", "aliases" => [], "year" => "2023"},
+          %{"title" => "Frieren", "aliases" => [], "scene_titles" => "bad", "year" => 2023},
+          %{
+            "title" => "Frieren",
+            "aliases" => ["Frozen Alias"],
+            "scene_titles" => [%{"title" => "Frozen Alias", "season" => 2}],
+            "year" => 2023
+          },
+          %{
+            "title" => "Frieren",
+            "aliases" => ["Frozen Alias"],
+            "scene_titles" => [
+              %{
+                "title" => "Unknown Arc",
+                "season" => 2,
+                "source" => "tmdb",
+                "namespace" => "seasons-group"
+              }
+            ],
+            "year" => 2023
+          },
+          %{
+            "title" => "Frieren",
+            "aliases" => ["Frozen Alias"],
+            "scene_titles" => [
+              %{
+                "title" => "Frozen Alias",
+                "season" => -1,
+                "source" => "tmdb",
+                "namespace" => "seasons-group"
+              }
+            ],
+            "year" => 2023
+          },
+          %{
+            "title" => "Frieren",
+            "aliases" => ["Frieren"],
+            "scene_titles" => [
+              %{
+                "title" => "Frieren",
+                "season" => 2,
+                "source" => "tmdb",
+                "namespace" => "seasons-group"
+              }
+            ],
+            "year" => 2023
+          },
+          %{
+            "title" => "Frieren",
+            "aliases" => ["Frozen Alias"],
+            "scene_titles" => [
+              %{
+                "title" => "Frozen Alias",
+                "season" => 2,
+                "source" => "tmdb",
+                "namespace" => "seasons-group"
+              },
+              %{
+                "title" => "frozen alias",
+                "season" => 2,
+                "source" => "tmdb",
+                "namespace" => "seasons-group"
+              }
+            ],
+            "year" => 2023
+          }
         ] do
       attrs =
         valid_anime_intent_attrs(fixture, put_in(snapshot["parser_context"], invalid_context))

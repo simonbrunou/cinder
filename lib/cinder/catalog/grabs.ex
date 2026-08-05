@@ -10,7 +10,7 @@ defmodule Cinder.Catalog.Grabs do
   import Ecto.Query
   require Logger
 
-  alias Cinder.Acquisition.Release
+  alias Cinder.Acquisition.{Anime, Release}
 
   alias Cinder.Catalog.{
     Adoption,
@@ -77,29 +77,57 @@ defmodule Cinder.Catalog.Grabs do
   `{:error, :no_episodes_linked}` on this path. `{:error, :nothing_wanted}` when the season has
   nothing to grab.
   """
-  def manual_grab_tv(%Series{} = series, season_number, %Release{} = release) do
+  def manual_grab_tv(%Series{id: series_id}, season_number, %Release{} = release) do
+    case manual_grab_tv_state(series_id, season_number) do
+      {:ok, {:anime, current}} ->
+        manual_grab_anime_tv(current, release)
+
+      {:ok, {:standard, current_series}} ->
+        manual_grab_standard_tv(current_series, season_number, release)
+
+      {:error, :stale_entry} ->
+        {:error, :stale_entry}
+    end
+  end
+
+  defp manual_grab_tv_state(series_id, season_number) do
+    Repo.transaction(fn ->
+      case Repo.get(Series, series_id) do
+        nil -> Repo.rollback(:stale_entry)
+        current_series -> current_manual_grab_state(current_series, season_number)
+      end
+    end)
+  end
+
+  defp current_manual_grab_state(%Series{id: series_id} = series, season_number) do
     case Cinder.Catalog.media_profile_summary(series).effective do
-      :anime -> manual_grab_anime_tv(series, season_number, release)
-      :standard -> manual_grab_standard_tv(series, season_number, release)
+      :anime -> {:anime, SeriesCatalog.anime_manual_grab_context(series_id, season_number)}
+      :standard -> {:standard, series}
     end
   end
 
   defp manual_grab_anime_tv(
-         %Series{id: series_id},
-         season_number,
+         %{context: _context, candidate_ids: _candidate_ids} = current,
          %Release{} = release
        ) do
-    candidate_ids =
-      SeriesCatalog.manual_search_episodes(series_id, season_number)
-      |> Enum.map(& &1.id)
+    if safe_anime_mapping?(release) do
+      do_manual_grab_anime_tv(current, release)
+    else
+      {:error, :unsafe_anime_mapping}
+    end
+  end
 
-    with true <- safe_anime_mapping?(release),
+  defp do_manual_grab_anime_tv(%{context: context, candidate_ids: candidate_ids}, release) do
+    [current_release] =
+      Anime.manual_episode_candidates([release], context, candidate_ids, [])
+
+    with true <- safe_anime_mapping?(current_release),
          true <-
            MapSet.subset?(
-             MapSet.new(release.resolved_episode_ids),
+             MapSet.new(current_release.resolved_episode_ids),
              MapSet.new(candidate_ids)
            ) do
-      case grab_and_create_grab(release, release.resolved_episode_ids) do
+      case grab_and_create_grab(current_release, current_release.resolved_episode_ids) do
         {:error, :invalid_mapping_snapshot} -> {:error, :unsafe_anime_mapping}
         result -> result
       end
@@ -110,9 +138,9 @@ defmodule Cinder.Catalog.Grabs do
 
   defp safe_anime_mapping?(%Release{
          resolved_episode_ids: ids,
-         mapping_snapshot: %{"version" => 2} = snapshot
+         mapping_snapshot: %{"version" => version} = snapshot
        })
-       when is_list(ids) and ids != [] do
+       when version in [2, 3] and is_list(ids) and ids != [] do
     kind = if length(ids) == 1, do: :episode, else: :season_pack
     Intent.valid_mapping_snapshot?(snapshot, kind, ids)
   end

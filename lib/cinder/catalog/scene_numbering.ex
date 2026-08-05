@@ -404,11 +404,17 @@ defmodule Cinder.Catalog.SceneNumbering do
 
         []
 
-      %{matched: matched, season_number: season_number, episode_number: episode_number} ->
+      %{
+        matched: matched,
+        group_name: group_name,
+        season_number: season_number,
+        episode_number: episode_number
+      } ->
         [
           %{
             scheme: "scene",
             canonical_value: Episode.code(season_number, episode_number),
+            scope_title: group_name,
             precedence: :inferred,
             episode_ids: [matched]
           }
@@ -543,14 +549,27 @@ defmodule Cinder.Catalog.SceneNumbering do
 
   def fetch_scene_group_detail(group_id) do
     case tmdb().get_episode_group(group_id) do
-      {:ok, detail} ->
+      {:ok, %{id: ^group_id} = detail} ->
         detail
+
+      {:ok, detail} ->
+        Logger.warning(
+          "scene numbering: group #{group_id} returned mismatched id " <>
+            inspect(scene_group_detail_id(detail))
+        )
+
+        nil
 
       {:error, reason} ->
         Logger.warning("scene numbering: group #{group_id} fetch failed: #{inspect(reason)}")
         nil
     end
   end
+
+  defp scene_group_detail_id(detail) when is_map(detail),
+    do: Map.get(detail, :id) || Map.get(detail, "id")
+
+  defp scene_group_detail_id(_detail), do: nil
 
   # Resolve the impl at runtime — see `Cinder.Catalog.Discovery`'s copy for why not compile_env!.
   defp tmdb, do: Application.fetch_env!(:cinder, :tmdb)
