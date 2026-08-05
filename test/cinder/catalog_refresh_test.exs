@@ -219,6 +219,92 @@ defmodule Cinder.CatalogRefreshTest do
     refute Enum.any?(Catalog.list_episode_coordinates(s), &(&1.source == "tmdb"))
   end
 
+  test "refresh_series rejects an absolute-group detail with a mismatched provider id" do
+    s = series(:all, %{tmdb_id: 9_006})
+    sn = season(s, 1)
+    episode(sn, %{tmdb_episode_id: 90_060, episode_number: 1})
+
+    stub_tmdb(s, [
+      {1, [%{tmdb_episode_id: 90_060, episode_number: 1, title: "Known", air_date: @past}]}
+    ])
+
+    expect(Cinder.Catalog.TMDBMock, :get_series_alternative_titles, fn 9_006 -> {:ok, []} end)
+
+    expect(Cinder.Catalog.TMDBMock, :get_episode_groups, fn 9_006 ->
+      {:ok, [episode_group(id: "requested", type: 2, name: "Requested")]}
+    end)
+
+    expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn "requested" ->
+      {:ok,
+       episode_group(
+         id: "wrong",
+         type: 2,
+         name: "Wrong",
+         entries: [%{tmdb_episode_id: 90_060, group_order: 0, order: 0}]
+       )}
+    end)
+
+    assert {:error, :group_fetch_failed} = Catalog.refresh_series(s)
+    refute Enum.any?(Catalog.list_episode_coordinates(s), &(&1.source == "tmdb"))
+  end
+
+  test "refresh_series rejects an absolute-group detail with the requested id but wrong type" do
+    s = series(:all, %{tmdb_id: 9_007})
+    sn = season(s, 1)
+    episode(sn, %{tmdb_episode_id: 90_070, episode_number: 1})
+
+    stub_tmdb(s, [
+      {1, [%{tmdb_episode_id: 90_070, episode_number: 1, title: "Known", air_date: @past}]}
+    ])
+
+    expect(Cinder.Catalog.TMDBMock, :get_series_alternative_titles, fn 9_007 -> {:ok, []} end)
+
+    expect(Cinder.Catalog.TMDBMock, :get_episode_groups, fn 9_007 ->
+      {:ok, [episode_group(id: "requested", type: 2, name: "Requested")]}
+    end)
+
+    expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn "requested" ->
+      {:ok,
+       episode_group(
+         id: "requested",
+         type: 1,
+         name: "Wrong Type",
+         entries: [%{tmdb_episode_id: 90_070, group_order: 0, order: 0}]
+       )}
+    end)
+
+    assert {:error, :group_fetch_failed} = Catalog.refresh_series(s)
+    refute Enum.any?(Catalog.list_episode_coordinates(s), &(&1.source == "tmdb"))
+  end
+
+  test "refresh_series rejects an unsupported string-key absolute-group detail" do
+    s = series(:all, %{tmdb_id: 9_008})
+    sn = season(s, 1)
+    episode(sn, %{tmdb_episode_id: 90_080, episode_number: 1})
+
+    stub_tmdb(s, [
+      {1, [%{tmdb_episode_id: 90_080, episode_number: 1, title: "Known", air_date: @past}]}
+    ])
+
+    expect(Cinder.Catalog.TMDBMock, :get_series_alternative_titles, fn 9_008 -> {:ok, []} end)
+
+    expect(Cinder.Catalog.TMDBMock, :get_episode_groups, fn 9_008 ->
+      {:ok, [episode_group(id: "absolute-string-detail", type: 2, name: "Absolute order")]}
+    end)
+
+    expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn "absolute-string-detail" ->
+      {:ok,
+       %{
+         "id" => "absolute-string-detail",
+         "type" => 2,
+         "name" => "Absolute order",
+         "entries" => []
+       }}
+    end)
+
+    assert {:error, :group_fetch_failed} = Catalog.refresh_series(s)
+  end
+
   # R2 finding 7: when the operator's chosen scene group is also a type-2 Absolute group,
   # fetch_series_identity must reuse the detail fetch_absolute_groups already made rather than
   # fetching the identical group a second time — only one `get_episode_group` expectation is set

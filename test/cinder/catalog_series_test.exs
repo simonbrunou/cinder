@@ -743,6 +743,62 @@ defmodule Cinder.CatalogSeriesTest do
       assert linked.id == episode_zero.id
     end
 
+    test "Anime manual grab recomputes a scoped candidate after its corroborating alias changes" do
+      series = series_fixture(%{media_profile: :anime, monitor_strategy: :all})
+      season = season_fixture(series, %{season_number: 0})
+      episode = episode_fixture(season, %{episode_number: 17, classification: :story_special})
+
+      series =
+        series
+        |> Ecto.Changeset.change(scene_numbering_group_id: "group-a")
+        |> Repo.update!()
+
+      assert {:ok, alias_record} = Catalog.save_manual_alias(series, %{title: "Arc"})
+
+      episode_coordinate_fixture(
+        series,
+        %{
+          source: "tmdb",
+          scheme: "scene",
+          namespace: "group-a",
+          canonical_value: "S11E01",
+          scope_title: "Arc",
+          precedence: :inferred
+        },
+        [episode.id]
+      )
+
+      context = Catalog.anime_series_acquisition_context(series)
+      candidate = Release.new(%{title: "[Group] Arc - 01 [1080p]", download_url: "arc"})
+
+      assert {:ok, %{assignments: [%{release: release}]}} =
+               Anime.select_episodes([candidate], context, [episode.id], [])
+
+      assert {:ok, _} = Catalog.delete_manual_alias(series, alias_record.id)
+      expect(Cinder.Download.ClientMock, :add, 0, fn _, _opts -> {:ok, "must-not-run"} end)
+
+      assert {:error, :unsafe_anime_mapping} = Catalog.manual_grab_tv(series, 0, release)
+    end
+
+    test "Anime manual grab reloads a changed media profile instead of trusting the stale series" do
+      series = series_fixture(%{media_profile: :anime, monitor_strategy: :all})
+      season = season_fixture(series, %{season_number: 0})
+      episode = episode_fixture(season, %{episode_number: 0, classification: :story_special})
+      context = Catalog.anime_series_acquisition_context(series)
+      candidate = Release.new(%{title: "[Group] Show S00E00 [1080p]", download_url: "profile"})
+
+      assert {:ok, %{assignments: [%{release: release}]}} =
+               Anime.select_episodes([candidate], context, [episode.id], [])
+
+      series
+      |> Ecto.Changeset.change(media_profile: :standard)
+      |> Repo.update!()
+
+      expect(Cinder.Download.ClientMock, :add, 0, fn _, _opts -> {:ok, "must-not-run"} end)
+
+      assert {:error, :unsafe_anime_mapping} = Catalog.manual_grab_tv(series, 0, release)
+    end
+
     test "an unmarked Anime candidate is rejected before download client I/O" do
       series = series_fixture(%{media_profile: :anime, monitor_strategy: :all})
       season = season_fixture(series, %{season_number: 0})

@@ -174,6 +174,68 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
     # A6 lets "absolute" and "scene" schemes share one namespace (an operator can pick the same
     # TMDB group id for both purposes), so the delete each resync issues must not wipe the other
     # scheme's rows.
+    test "provider refresh updates subgroup evidence on a preserved manual coordinate atomically" do
+      series = series_fixture()
+      season = season_fixture(series)
+      episode = episode_fixture(season, episode_number: 1)
+      foreign = series_fixture() |> season_fixture() |> episode_fixture()
+
+      manual =
+        episode_coordinate_fixture(
+          series,
+          %{
+            source: "tmdb",
+            scheme: "scene",
+            namespace: "group-1",
+            canonical_value: "S01E01",
+            precedence: :manual,
+            scope_title: nil
+          },
+          [episode.id]
+        )
+
+      assert {:ok, []} =
+               Identity.replace_provider_coordinates(series, "tmdb", "group-1", "scene", [
+                 %{
+                   scheme: "scene",
+                   canonical_value: "S01E01",
+                   precedence: :inferred,
+                   scope_title: "Arc A",
+                   episode_ids: [episode.id]
+                 }
+               ])
+
+      refreshed = Repo.reload!(manual) |> Repo.preload(:memberships)
+      assert refreshed.precedence == :manual
+      assert refreshed.scope_title == "Arc A"
+      assert Enum.map(refreshed.memberships, & &1.episode_id) == [episode.id]
+
+      assert {:error, :episode_series_mismatch} =
+               Identity.replace_provider_coordinates(series, "tmdb", "group-1", "scene", [
+                 %{
+                   scheme: "scene",
+                   canonical_value: "S01E01",
+                   precedence: :inferred,
+                   scope_title: "Arc B",
+                   episode_ids: [episode.id]
+                 },
+                 %{
+                   scheme: "scene",
+                   canonical_value: "S01E02",
+                   precedence: :inferred,
+                   scope_title: "Arc B",
+                   episode_ids: [foreign.id]
+                 }
+               ])
+
+      assert Repo.reload!(manual).scope_title == "Arc A"
+
+      assert {:ok, []} =
+               Identity.replace_provider_coordinates(series, "tmdb", "group-1", "scene", [])
+
+      assert Repo.reload!(manual).scope_title == nil
+    end
+
     test "absolute and scene coordinates under the same namespace coexist independently" do
       series = series_fixture()
       season = season_fixture(series)
@@ -246,6 +308,34 @@ defmodule Cinder.Catalog.AnimeIdentityTest do
         end
 
       %{series: series, episodes: episodes, group_id: "seasons-group"}
+    end
+
+    test "rejects a provider detail whose id does not match the requested scene group", %{
+      series: series,
+      group_id: group_id
+    } do
+      mismatched = episode_group(id: "other-group", entries: [])
+
+      expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn ^group_id -> {:ok, mismatched} end)
+
+      assert {:error, :group_fetch_failed} =
+               Catalog.set_scene_numbering_group(series, group_id)
+
+      assert Repo.reload!(series).scene_numbering_group_id == nil
+    end
+
+    test "rejects an unsupported string-key scene-group detail", %{
+      series: series,
+      group_id: group_id
+    } do
+      unsupported = %{"id" => group_id, "entries" => []}
+
+      expect(Cinder.Catalog.TMDBMock, :get_episode_group, fn ^group_id -> {:ok, unsupported} end)
+
+      assert {:error, :group_fetch_failed} =
+               Catalog.set_scene_numbering_group(series, group_id)
+
+      assert Repo.reload!(series).scene_numbering_group_id == nil
     end
 
     test "choosing the group syncs S02E01..E10 to episodes 29-38 and a refresh preserves a manual correction",

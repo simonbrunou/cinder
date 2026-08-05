@@ -396,9 +396,9 @@ defmodule Cinder.Acquisition do
 
   defp safe_anime_mapping?(%Release{
          resolved_episode_ids: ids,
-         mapping_snapshot: %{"version" => 2, "reserved_episode_ids" => reserved}
+         mapping_snapshot: %{"version" => version, "reserved_episode_ids" => reserved}
        })
-       when is_list(ids) and ids != [],
+       when version in [2, 3] and is_list(ids) and ids != [],
        do: ids == reserved
 
   defp safe_anime_mapping?(_release), do: false

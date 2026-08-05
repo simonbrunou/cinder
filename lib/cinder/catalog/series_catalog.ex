@@ -40,7 +40,36 @@ defmodule Cinder.Catalog.SeriesCatalog do
   def get_single_series_for_episode_ids(_episode_ids), do: {:error, :episode_series_mismatch}
 
   @doc "Builds the plain Catalog-owned identity context used for anime series acquisition."
-  def anime_series_acquisition_context(%Series{} = series) do
+  def anime_series_acquisition_context(%Series{id: series_id}) when not is_nil(series_id) do
+    {:ok, context} =
+      Repo.transaction(fn ->
+        Series
+        |> Repo.get!(series_id)
+        |> build_anime_series_acquisition_context()
+      end)
+
+    context
+  end
+
+  @doc "Builds the fresh Anime parser context and manual candidate set in one read transaction."
+  def anime_manual_grab_context(series_id, season_number) do
+    {:ok, result} =
+      Repo.transaction(fn ->
+        series = Repo.get!(Series, series_id)
+        context = build_anime_series_acquisition_context(series)
+
+        candidate_ids =
+          series_id
+          |> manual_search_episodes(season_number)
+          |> Enum.map(& &1.id)
+
+        %{context: context, candidate_ids: candidate_ids}
+      end)
+
+    result
+  end
+
+  defp build_anime_series_acquisition_context(series) do
     episodes = acquisition_episodes(series)
     aliases = acquisition_aliases(series)
     mappings = Enum.map(episodes, &canonical_mapping/1) ++ persisted_mappings(series)
@@ -638,8 +667,14 @@ defmodule Cinder.Catalog.SeriesCatalog do
     |> Enum.filter(&(&1.type == 2))
     |> Enum.reduce_while({:ok, []}, fn group, {:ok, details} ->
       case tmdb().get_episode_group(group.id) do
-        {:ok, detail} -> {:cont, {:ok, [detail | details]}}
-        {:error, _} = error -> {:halt, error}
+        {:ok, %{id: id, type: 2} = detail} when id == group.id ->
+          {:cont, {:ok, [detail | details]}}
+
+        {:ok, _mismatched_detail} ->
+          {:halt, {:error, :group_fetch_failed}}
+
+        {:error, _} = error ->
+          {:halt, error}
       end
     end)
     |> case do

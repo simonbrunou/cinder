@@ -162,23 +162,40 @@ defmodule Cinder.Download.MoveOnImportTest do
     canonical_value =
       "S01E#{episode.episode_number |> Integer.to_string() |> String.pad_leading(2, "0")}"
 
+    identity = %{
+      "source" => "cinder",
+      "scheme" => "standard",
+      "namespace" => "canonical",
+      "canonical_value" => canonical_value
+    }
+
+    mapping = %{
+      "identity" => identity,
+      "precedence" => "manual",
+      "episode_ids" => [episode.id],
+      "evidence" => nil
+    }
+
     snapshot = %{
       "version" => 2,
       "parser_context" => %{"title" => "Show", "aliases" => [], "year" => 2008},
-      "mappings" => [
-        %{
-          "identity" => %{
-            "source" => "cinder",
+      "mappings" => [mapping],
+      "reserved_episode_ids" => [episode.id],
+      "release" => %{
+        "coordinates" => [%{"scheme" => "standard", "values" => [canonical_value]}]
+      },
+      "selected_resolution" => %{
+        "episode_ids" => [episode.id],
+        "values" => [
+          %{
             "scheme" => "standard",
-            "namespace" => "canonical",
-            "canonical_value" => canonical_value
-          },
-          "precedence" => "manual",
-          "episode_ids" => [episode.id],
-          "evidence" => nil
-        }
-      ],
-      "reserved_episode_ids" => [episode.id]
+            "canonical_value" => canonical_value,
+            "episode_ids" => [episode.id],
+            "precedence" => "manual",
+            "mapping_identities" => [identity]
+          }
+        ]
+      }
     }
 
     grab =

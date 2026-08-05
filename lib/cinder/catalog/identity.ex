@@ -109,15 +109,16 @@ defmodule Cinder.Catalog.Identity do
               c.namespace == ^namespace and c.scheme == ^scheme and c.precedence != :manual
       )
 
-      manual_values =
+      manual_coordinates =
         Repo.all(
           from c in EpisodeCoordinate,
             where:
               c.series_id == ^series.id and c.source == ^source and
-                c.namespace == ^namespace and c.scheme == ^scheme and c.precedence == :manual,
-            select: c.canonical_value
+                c.namespace == ^namespace and c.scheme == ^scheme and c.precedence == :manual
         )
-        |> MapSet.new()
+
+      refresh_manual_scope_titles(manual_coordinates, coordinates)
+      manual_values = MapSet.new(manual_coordinates, & &1.canonical_value)
 
       # Never guess over an operator correction: the surviving manual identity wins.
       coordinates
@@ -132,6 +133,28 @@ defmodule Cinder.Catalog.Identity do
 
         put_coordinate_or_rollback(series, attrs, episode_ids)
       end)
+    end)
+  end
+
+  # Manual memberships and precedence are immutable provider corrections, but scope_title is
+  # replaceable provider subgroup evidence. Refresh it in the same transaction (or clear it when
+  # the provider no longer reports that value) so promoted/pre-migration rows cannot keep stale or
+  # NULL scope evidence forever.
+  defp refresh_manual_scope_titles(manual_coordinates, incoming_coordinates) do
+    incoming_scope_by_value =
+      incoming_coordinates
+      |> Enum.group_by(&Map.fetch!(&1, :canonical_value))
+      |> Map.new(fn {canonical_value, matching} ->
+        scope_titles = matching |> Enum.map(&Map.get(&1, :scope_title)) |> Enum.uniq()
+        {canonical_value, if(length(scope_titles) == 1, do: hd(scope_titles))}
+      end)
+
+    Enum.each(manual_coordinates, fn manual ->
+      scope_title = Map.get(incoming_scope_by_value, manual.canonical_value)
+
+      manual
+      |> EpisodeCoordinate.changeset(%{scope_title: scope_title})
+      |> update_or_rollback()
     end)
   end
 

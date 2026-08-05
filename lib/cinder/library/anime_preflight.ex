@@ -2,7 +2,8 @@ defmodule Cinder.Library.AnimePreflight do
   @moduledoc "Pure, exhaustive anime file-to-episode preflight."
 
   alias Cinder.Acquisition.AnimeParser
-  alias Cinder.Catalog.AnimeResolver
+  alias Cinder.Catalog.{AnimeResolver, TitleAlias}
+  alias Cinder.Download.Intent
 
   # Conservative, never-guess sample/preview token (issue #125): word-boundary/dot/dash/
   # underscore-delimited only — never a bare substring inside a word ("Sampler" is not a sample).
@@ -10,12 +11,25 @@ defmodule Cinder.Library.AnimePreflight do
   @sample_max_bytes 100 * 1024 * 1024
   @sample_max_ratio 0.10
 
-  def run(%{"version" => 2} = snapshot, inventory, episodes) do
+  def run(snapshot, inventory, episodes) when is_map(snapshot) do
+    if Intent.valid_preflight_snapshot?(snapshot) do
+      run_snapshot(snapshot, inventory, episodes)
+    else
+      invalid_snapshot_result(inventory)
+    end
+  end
+
+  def run(_snapshot, inventory, _episodes), do: invalid_snapshot_result(inventory)
+
+  defp run_snapshot(snapshot, inventory, episodes) do
     context = snapshot["parser_context"]
 
     parser_context = %{
       kind: :series,
       titles: [context["title"] | context["aliases"]],
+      blocked_titles: context["blocked_titles"] || [],
+      allow_unscoped_standard:
+        snapshot["version"] == 2 or context["allow_unscoped_standard"] == true,
       year: context["year"],
       scene_titles: context["scene_titles"] || []
     }
@@ -25,6 +39,24 @@ defmodule Cinder.Library.AnimePreflight do
     |> infer_lone_file(episodes, snapshot["reserved_episode_ids"])
     |> validate(authoritative_ids(episodes), snapshot["reserved_episode_ids"])
     |> result()
+  end
+
+  defp invalid_snapshot_result(inventory) do
+    files =
+      Enum.map(inventory, fn file ->
+        %{
+          relative_path: file.relative_path,
+          identity: file.identity,
+          parsed: %{coordinates: [], group: nil, role: :unknown},
+          episode_ids: [],
+          source: :unresolved,
+          ignored: false,
+          evidence: %{resolution: :invalid_snapshot}
+        }
+      end)
+
+    paths = Enum.map(files, & &1.relative_path) |> Enum.sort()
+    result({:error, %{files: files}, issue("invalid_snapshot", paths, [])})
   end
 
   defp authoritative_ids(episodes), do: MapSet.new(Enum.map(episodes, & &1.id))
@@ -56,6 +88,12 @@ defmodule Cinder.Library.AnimePreflight do
   # samples/previews), per anime's never-guess invariant.
   defp infer_lone_file(state, [%{id: episode_id}], [episode_id]) do
     case non_ignored_files(state) do
+      [%{parsed: %{invalid_coordinate: true}}] ->
+        state
+
+      [%{parsed: %{blocked_coordinate: true}}] ->
+        state
+
       [
         %{
           episode_ids: [],
@@ -148,7 +186,8 @@ defmodule Cinder.Library.AnimePreflight do
           scheme: coordinate.scheme,
           canonical_value: value,
           source: Map.get(coordinate, :source),
-          namespace: Map.get(coordinate, :namespace)
+          namespace: Map.get(coordinate, :namespace),
+          scope_title: Map.get(coordinate, :scope_title)
         }
       end)
     end)
@@ -215,14 +254,20 @@ defmodule Cinder.Library.AnimePreflight do
          scheme: scheme,
          canonical_value: value,
          source: source,
-         namespace: namespace
+         namespace: namespace,
+         scope_title: scope_title
        })
-       when is_binary(source) and source != "" and is_binary(namespace) and namespace != "" do
+       when is_binary(source) and is_binary(namespace) and is_binary(scope_title) do
     identity = mapping["identity"]
 
     identity["source"] == source and identity["scheme"] == scheme and
-      identity["namespace"] == namespace and identity["canonical_value"] == value
+      identity["namespace"] == namespace and identity["canonical_value"] == value and
+      TitleAlias.normalize(mapping["scope_title"] || "") == scope_title
   end
+
+  defp matches_value?(_mapping, %{source: source, namespace: namespace})
+       when is_binary(source) or is_binary(namespace),
+       do: false
 
   defp matches_value?(mapping, %{scheme: scheme, canonical_value: value}) do
     identity = mapping["identity"]
@@ -231,9 +276,13 @@ defmodule Cinder.Library.AnimePreflight do
     identity["scheme"] in schemes and identity["canonical_value"] == value
   end
 
-  defp put_coordinate_scope(value, %{source: source, namespace: namespace})
-       when is_binary(source) and is_binary(namespace) do
-    Map.merge(value, %{source: source, namespace: namespace})
+  defp put_coordinate_scope(value, %{
+         source: source,
+         namespace: namespace,
+         scope_title: scope_title
+       })
+       when is_binary(source) and is_binary(namespace) and is_binary(scope_title) do
+    Map.merge(value, %{source: source, namespace: namespace, scope_title: scope_title})
   end
 
   defp put_coordinate_scope(value, _coordinate), do: value

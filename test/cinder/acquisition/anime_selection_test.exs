@@ -8,6 +8,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
   alias Cinder.Acquisition.IndexerMock
   alias Cinder.Acquisition.Release
   alias Cinder.Acquisition.Scorer
+  alias Cinder.Catalog.TitleAlias
   alias Cinder.Download.Intent
 
   @fixture_path "test/support/fixtures/anime/acquisition-v1.json"
@@ -73,6 +74,355 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     assert :no_match = Anime.select_episodes([release], context, [1], [])
   end
 
+  test "generated parser titles use the durable Unicode codepoint bound" do
+    combining_title = String.duplicate("a\u0301", 100) <> "a"
+
+    context =
+      absolute_context(1..1)
+      |> Map.put(:title, combining_title)
+      |> Map.put(:aliases, [%{title: "Short Title", kind: :alternative, precedence: :manual}])
+
+    release = Release.new(raw("Short Title - 1 [1080p]", "combining-title"))
+
+    assert String.length(combining_title) == 101
+    assert length(String.to_charlist(combining_title)) == 201
+
+    assert {:ok, %{assignments: [assignment]}} =
+             Anime.select_episodes([release], context, [1], [])
+
+    assert assignment.mapping_snapshot["parser_context"]["title"] == "Short Title"
+    refute combining_title in assignment.mapping_snapshot["parser_context"]["aliases"]
+    assert Intent.valid_mapping_snapshot?(assignment.mapping_snapshot, :episode, [1])
+  end
+
+  test "an omitted over-limit canonical title blocks numeric parsing through a retained prefix" do
+    canonical_title = "Foo 2 " <> String.duplicate("x", 195)
+
+    context =
+      absolute_context(1..2)
+      |> Map.put(:title, canonical_title)
+      |> Map.put(:aliases, [%{title: "Foo", kind: :alternative, precedence: :manual}])
+
+    release = Release.new(raw("#{canonical_title} [1080p]", "over-limit-canonical-prefix"))
+
+    assert length(String.codepoints(canonical_title)) == 201
+    assert :no_match = Anime.select_episodes([release], context, [2], [])
+
+    assert [%Release{mapping_snapshot: nil, resolved_episode_ids: nil}] =
+             Anime.manual_episode_candidates([release], context, [2], [])
+  end
+
+  test "a longer canonical title outranks a blocked retained alias prefix" do
+    omitted_extension = "Foo 3 " <> String.duplicate("x", 195)
+
+    context =
+      absolute_context(1..1)
+      |> Map.put(:title, "Foo 2")
+      |> Map.put(:aliases, [
+        %{title: "Foo", kind: :alternative, precedence: :manual},
+        %{title: omitted_extension, kind: :alternative, precedence: :manual}
+      ])
+
+    release = Release.new(raw("Foo 2 - 1 [1080p]", "longer-canonical"))
+
+    assert {:ok, %{assignments: [assignment]}} =
+             Anime.select_episodes([release], context, [1], [])
+
+    assert assignment.mapping_snapshot["parser_context"]["title"] == "Foo 2"
+    assert assignment.mapping_snapshot["parser_context"]["blocked_titles"] == ["Foo"]
+    assert Intent.valid_mapping_snapshot?(assignment.mapping_snapshot, :episode, [1])
+  end
+
+  test "manual typed-special resolution declines an empty bounded parser snapshot" do
+    context = %{
+      kind: :series,
+      title: String.duplicate("x", 201),
+      year: 2020,
+      tvdb_id: 99,
+      aliases: [],
+      episodes: [episode(11, 0, 2)],
+      mappings: [mapping("fixture", "typed_special", "main", "OVA:2", [11])]
+    }
+
+    release = Release.new(raw("OVA 2 [1080p]", "typed-special-without-title"))
+
+    assert [%Release{mapping_snapshot: nil, resolved_episode_ids: nil}] =
+             Anime.manual_episode_candidates([release], context, [11], [])
+  end
+
+  test "automatic and manual standard selection preserve bounded metadata and checksums" do
+    context = simple_standard_context()
+
+    metadata =
+      [
+        "Vol.1",
+        "Volume 1",
+        "Disc 1",
+        "Part 1",
+        "Batch 1",
+        "2 Audio Tracks",
+        "3 Subs",
+        "Dual Audio 2 Subs",
+        "2021",
+        "2021-03-05",
+        "2021.03",
+        "H 264",
+        "H 265"
+      ] ++ Enum.map([8, 32, 40, 64], &String.pad_trailing("E03", &1, "A"))
+
+    for metadata <- metadata do
+      release = Release.new(raw("Show S01E01 [#{metadata}] [1080p]", metadata))
+
+      assert {:ok, %{assignments: [%{mapping_snapshot: snapshot}]}} =
+               Anime.select_episodes([release], context, [11], [])
+
+      assert Intent.valid_mapping_snapshot?(snapshot, :episode, [11])
+
+      assert [%Release{mapping_snapshot: manual_snapshot, resolved_episode_ids: [11]}] =
+               Anime.manual_episode_candidates([release], context, [11], [])
+
+      assert Intent.valid_mapping_snapshot?(manual_snapshot, :episode, [11])
+    end
+  end
+
+  test "automatic and manual selection reject malformed coordinates before typed specials" do
+    context = %{
+      kind: :series,
+      title: "Show",
+      year: 2020,
+      tvdb_id: 99,
+      aliases: [],
+      episodes: [episode(11, 0, 1)],
+      mappings: [mapping("fixture", "typed_special", "main", "OVA:1", [11])]
+    }
+
+    uuid = ".cinder-a1b2c3d4-e5f6-47a8-89b0-c1d2e3f4a5b6.mkv"
+
+    for {malformed, suffix} <- [
+          {"S01E01-E02-E03", ".mkv"},
+          {"1-2-3", ".mkv"},
+          {"01 WEB 02", ".mkv"},
+          {"01-02 WEB 03", ".mkv"},
+          {"01 WEB 02v2", ".mkv"},
+          {"01 WEB 02话", ".mkv"},
+          {"01 WEB 第02集", ".mkv"},
+          {"01 WEB 02", uuid},
+          {"01-02 WEB 03", uuid},
+          {"01 WEB 02v2", uuid}
+        ] do
+      release =
+        Release.new(raw("Show #{malformed} OVA 1#{suffix}", "malformed-typed-special"))
+
+      assert :no_match = Anime.select_episodes([release], context, [11], [])
+
+      assert [%Release{mapping_snapshot: nil, resolved_episode_ids: nil}] =
+               Anime.manual_episode_candidates([release], context, [11], [])
+    end
+  end
+
+  test "automatic and manual selection reject residual versioned and CJK coordinates" do
+    context = absolute_context(1..3)
+
+    for title <- [
+          "Show 01-02 03v2 [1080p].mkv",
+          "Show 01-02 03话 [1080p].mkv",
+          "Show 01-02 第03集 [1080p].mkv",
+          "Show 01 WEB 02v2 [1080p].mkv"
+        ] do
+      release = Release.new(raw(title, title))
+
+      assert :no_match = Anime.select_episodes([release], context, [1, 2, 3], [])
+
+      assert [%Release{mapping_snapshot: nil, resolved_episode_ids: nil}] =
+               Anime.manual_episode_candidates([release], context, [1, 2, 3], [])
+    end
+  end
+
+  test "manual typed-special selection preserves numeric titles and dates" do
+    cases = [
+      {"11.22.63 OVA 1 [1080p].mkv", "11.22.63"},
+      {"Show [2021.03.05] OVA 1 [1080p].mkv", "Show"},
+      {"3-2-1 Penguins! OVA 1 [1080p].mkv", "3-2-1 Penguins!"}
+    ]
+
+    for {title, canonical_title} <- cases do
+      context = %{
+        kind: :series,
+        title: canonical_title,
+        year: 2020,
+        tvdb_id: 99,
+        aliases: [],
+        episodes: [episode(11, 0, 1)],
+        mappings: [mapping("fixture", "typed_special", "main", "OVA:1", [11])]
+      }
+
+      release = Release.new(raw(title, title))
+
+      assert [%Release{mapping_snapshot: manual_snapshot, resolved_episode_ids: [11]}] =
+               Anime.manual_episode_candidates([release], context, [11], [])
+
+      assert Intent.valid_mapping_snapshot?(manual_snapshot, :episode, [11])
+    end
+  end
+
+  test "generated scoped titles use the same normalized Unicode codepoint bound" do
+    decomposed_scope = String.duplicate("a\u0301", 100) <> "a"
+    normalized_scope = TitleAlias.normalize(decomposed_scope)
+
+    context = %{
+      kind: :series,
+      title: "Show",
+      year: 2020,
+      tvdb_id: 99,
+      aliases: [%{title: normalized_scope, kind: :alternative, precedence: :manual}],
+      scene_titles: [
+        %{
+          title: decomposed_scope,
+          season: 11,
+          source: "tmdb",
+          namespace: "selected-order"
+        }
+      ],
+      episodes: [episode(17, 0, 17)],
+      mappings: [
+        mapping("tmdb", "scene", "selected-order", "S11E05", [17], :inferred)
+        |> Map.put(:scope_title, decomposed_scope)
+      ]
+    }
+
+    release = Release.new(raw("#{normalized_scope} - 05 [1080p]", "combining-scope"))
+
+    assert length(String.codepoints(decomposed_scope)) == 201
+    assert length(String.codepoints(normalized_scope)) == 101
+
+    assert {:ok, %{assignments: [assignment]}} =
+             Anime.select_episodes([release], context, [17], [])
+
+    assert [scene_title] = assignment.mapping_snapshot["parser_context"]["scene_titles"]
+    assert scene_title["title"] == normalized_scope
+    assert [mapping] = assignment.mapping_snapshot["mappings"]
+    assert mapping["scope_title"] == normalized_scope
+    assert Intent.valid_mapping_snapshot?(assignment.mapping_snapshot, :episode, [17])
+  end
+
+  test "automatic selection returns no match when snapshot validation drops every assignment" do
+    over_limit_scope = String.duplicate("x", 201)
+
+    context = %{
+      kind: :series,
+      title: "Show",
+      year: 2020,
+      tvdb_id: 99,
+      aliases: [],
+      scene_titles: [],
+      episodes: [episode(11, 1, 1), episode(12, 1, 2)],
+      mappings: [
+        mapping("tmdb", "scene", "selected-order", "S01E01", [11], :manual)
+        |> Map.put(:scope_title, over_limit_scope),
+        mapping("tmdb", "scene", "selected-order", "S01E02", [12], :manual)
+        |> Map.put(:scope_title, over_limit_scope),
+        mapping("fixture", "absolute", "main", "1", [11], :inferred)
+      ]
+    }
+
+    release = Release.new(raw("Show S01E01 [1080p]", "invalid-generated-snapshot"))
+    safe = Release.new(raw("Show - 1 [720p]", "valid-lower-ranked-snapshot"))
+
+    assert length(String.codepoints(over_limit_scope)) == 201
+    assert :no_match = Anime.select_episodes([release], context, [11], [])
+
+    assert {:ok, %{assignments: [%{release: selected}]}} =
+             Anime.select_episodes([safe], context, [11], [])
+
+    assert selected.download_url == "valid-lower-ranked-snapshot"
+
+    assert {:ok, %{assignments: [%{release: selected}]}} =
+             Anime.select_episodes([release, safe], context, [11], [])
+
+    assert selected.download_url == "valid-lower-ranked-snapshot"
+
+    assert [%Release{mapping_snapshot: nil, resolved_episode_ids: nil}] =
+             Anime.manual_episode_candidates([release], context, [11], [])
+
+    now = ~U[2026-08-05 12:00:00Z]
+
+    unsafe_preferred =
+      Release.new(raw("[Trusted] Show S01E01 [1080p]", "unsafe-preferred"))
+
+    safe_delayed =
+      Release.new(raw("[Other] Show - 1 [720p]", "safe-delayed", published_at: now))
+
+    unsafe_delayed =
+      Release.new(
+        raw("[Other] Show S01E01 [1080p]", "unsafe-delayed",
+          published_at: DateTime.add(now, -1000, :second)
+        )
+      )
+
+    unsafe_bridge =
+      Release.new(
+        raw("[Other] Show S01E01-E02 [1080p]", "unsafe-delayed-bridge",
+          published_at: DateTime.add(now, -1000, :second)
+        )
+      )
+
+    selection_opts = [preferred_groups: ["trusted"], fallback_delay: 3600, now: now]
+
+    assert :no_match = Anime.select_episodes([unsafe_delayed], context, [11], selection_opts)
+    assert :no_match = Anime.select_episodes([unsafe_bridge], context, [11, 12], selection_opts)
+
+    assert {:waiting_for_preferred_group, %{episode_ids: [11], retry_at: retry_at}} =
+             Anime.select_episodes([safe_delayed], context, [11], selection_opts)
+
+    assert retry_at == DateTime.add(now, 3600, :second)
+
+    assert {:waiting_for_preferred_group, %{episode_ids: [11], retry_at: ^retry_at}} =
+             Anime.select_episodes(
+               [unsafe_bridge, safe_delayed],
+               context,
+               [11, 12],
+               selection_opts
+             )
+
+    assert {:waiting_for_preferred_group, %{episode_ids: [11], retry_at: ^retry_at}} =
+             Anime.select_episodes(
+               [unsafe_preferred, safe_delayed],
+               context,
+               [11],
+               selection_opts
+             )
+  end
+
+  test "an ID-scoped result keeps an exact standard coordinate under an alternate title" do
+    context = %{
+      kind: :series,
+      title: "Show",
+      year: nil,
+      tvdb_id: 99,
+      aliases: [],
+      episodes: [episode(11, 1, 1)],
+      mappings: [mapping("cinder", "standard", "canonical", "S01E01", [11])]
+    }
+
+    id_release =
+      Release.new(
+        raw("86 Eighty-Six S01E01 [1080p]", "id-scoped-alternate", query_origins: [:id_scoped])
+      )
+
+    assert {:ok, %{assignments: [assignment]}} =
+             Anime.select_episodes([id_release], context, [11], [])
+
+    assert assignment.episode_ids == [11]
+    assert assignment.mapping_snapshot["parser_context"]["allow_unscoped_standard"] == true
+    assert Intent.valid_mapping_snapshot?(assignment.mapping_snapshot, :episode, [11])
+
+    year_context = %{context | year: 2020}
+    year_release = Release.new(raw("Show (2020) S01E01 [1080p]", "title-year"))
+
+    assert {:ok, %{assignments: [%{episode_ids: [11]}]}} =
+             Anime.select_episodes([year_release], year_context, [11], [])
+  end
+
   test "overlap components report only IDs not covered by an eligible release" do
     now = ~U[2026-07-13 12:00:00Z]
     context = absolute_context(1..12)
@@ -123,11 +473,90 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
 
     snapshot = assignment.mapping_snapshot
 
-    assert snapshot["version"] == 2
+    assert snapshot["version"] == 3
     assert snapshot["reserved_episode_ids"] == [11, 12]
     assert snapshot["selected_resolution"]["episode_ids"] == [11, 12]
     assert Enum.any?(snapshot["mappings"], &(&1["episode_ids"] == [11, 12, 13]))
     assert assignment.release.mapping_snapshot == snapshot
+
+    combining_over_limit = String.duplicate("a\u0301", 100) <> "a"
+
+    for parser_context <- [
+          Map.put(snapshot["parser_context"], "title", combining_over_limit),
+          Map.put(snapshot["parser_context"], "aliases", [combining_over_limit]),
+          Map.put(snapshot["parser_context"], "aliases", ["Duplicate", " duplicate "]),
+          Map.put(snapshot["parser_context"], "blocked_titles", [combining_over_limit]),
+          Map.put(snapshot["parser_context"], "allow_unscoped_standard", "yes")
+        ] do
+      refute Intent.valid_mapping_snapshot?(
+               Map.put(snapshot, "parser_context", parser_context),
+               :episode,
+               [11, 12]
+             )
+    end
+
+    [first_mapping | other_mappings] = snapshot["mappings"]
+
+    overlong_scope_snapshot =
+      Map.put(
+        snapshot,
+        "mappings",
+        [Map.put(first_mapping, "scope_title", combining_over_limit) | other_mappings]
+      )
+
+    refute Intent.valid_mapping_snapshot?(overlong_scope_snapshot, :episode, [11, 12])
+
+    long_alias = String.duplicate("é", 201)
+
+    for aliases <- [[long_alias], ["Duplicate", " duplicate "]] do
+      legacy = %{
+        snapshot
+        | "version" => 2,
+          "parser_context" => %{"title" => "Show", "aliases" => aliases, "year" => 2020}
+      }
+
+      assert Intent.valid_mapping_snapshot?(legacy, :episode, [11, 12])
+    end
+
+    metadata_release =
+      Release.new(raw("[Group] Show S01E01-E02 H.264 10-bit 24fps 2ch [1080p]", "metadata-pack"))
+
+    assert {:ok, %{assignments: [%{episode_ids: [11, 12]}]}} =
+             Anime.select_episodes([metadata_release], context, [11, 12], [])
+
+    for {title, url} <- [
+          {"[Group] Show S01E02-S01E01 [1080p]", "descending-standard-pack"},
+          {"[Group] Show S01E01-E02-2020-E03 [1080p]", "year-laundered-standard-pack"},
+          {"[Group] Show S01E01-E02-1080p-E03 [1080p]", "quality-laundered-standard-pack"},
+          {"[Group] Show S01E01-E02 WEB S02E03 [1080p]", "space-laundered-standard-pack"},
+          {"[Group] Show S01E01-E02 x264.E03 [1080p]", "dotted-standard-pack"},
+          {"[Group] Show S01E01-E02 x264E03 [1080p]", "codec-standard-pack"},
+          {"[Group] Show S01E01-E02 x264S01E03 [1080p]", "qualified-codec-standard-pack"},
+          {"[Group] Show S01E01-E02 CRC32E03 [1080p]", "crc-standard-pack"},
+          {"[Group] Show S01E01-E02 AV1E03 [1080p]", "av1-standard-pack"},
+          {"[Group] Show S01E01-E02 WEBE03 [1080p]", "web-standard-pack"},
+          {"[Group] Show S01E01-E02 1080pE03", "resolution-standard-pack"},
+          {"[Group] Show S01E01-E02 10bitE03 [1080p]", "bit-standard-pack"},
+          {"[Group] Show S01E01-E02 24fpsE03 [1080p]", "rate-standard-pack"},
+          {"[Group] Show S01E01-E02 2chE03 [1080p]", "channels-standard-pack"}
+        ] do
+      malformed = Release.new(raw(title, url))
+      assert :no_match = Anime.select_episodes([malformed], context, [11, 12], [])
+
+      assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
+               Anime.manual_episode_candidates([malformed], context, [11, 12], [])
+    end
+
+    for {title, url} <- [
+          {"[Group] Show S01E01(E02) [1080p]", "parenthesized-standard-tail"},
+          {"[Group] Show S01E01-S1000E01 [1080p]", "over-width-standard-tail"}
+        ] do
+      malformed = Release.new(raw(title, url))
+      assert :no_match = Anime.select_episodes([malformed], context, [11], [])
+
+      assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
+               Anime.manual_episode_candidates([malformed], context, [11], [])
+    end
   end
 
   test "a scene-numbered release resolves via a persisted scene coordinate, but not without it" do
@@ -196,7 +625,8 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
       scheme: "scene",
       values: ["S11E05"],
       source: "tmdb",
-      namespace: "nisio-isin-order"
+      namespace: "nisio-isin-order",
+      scope_title: "koyomimonogatari"
     }
 
     assert assignment.episode_ids == [17]
@@ -205,7 +635,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
 
     assert assignment.mapping_snapshot["parser_context"]["scene_titles"] == [
              %{
-               "title" => "Koyomimonogatari",
+               "title" => "koyomimonogatari",
                "season" => 11,
                "source" => "tmdb",
                "namespace" => "nisio-isin-order"
@@ -217,7 +647,8 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
                "scheme" => "scene",
                "values" => ["S11E05"],
                "source" => "tmdb",
-               "namespace" => "nisio-isin-order"
+               "namespace" => "nisio-isin-order",
+               "scope_title" => "koyomimonogatari"
              }
            ]
 
@@ -234,6 +665,16 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
             assignment.mapping_snapshot,
             ["selected_resolution", "values", Access.at(0), "namespace"],
             "other-order"
+          ),
+          put_in(
+            assignment.mapping_snapshot,
+            ["release", "coordinates", Access.at(0), "scope_title"],
+            "other arc"
+          ),
+          put_in(
+            assignment.mapping_snapshot,
+            ["selected_resolution", "values", Access.at(0), "scope_title"],
+            "other arc"
           ),
           put_in(
             assignment.mapping_snapshot,
@@ -260,6 +701,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
                "canonical_value" => "S11E05",
                "source" => "tmdb",
                "namespace" => "nisio-isin-order",
+               "scope_title" => "koyomimonogatari",
                "episode_ids" => [17],
                "precedence" => "inferred",
                "mapping_identities" => [
@@ -285,6 +727,398 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
 
     assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
              Anime.manual_episode_candidates([incomplete_batch], context, [17], [])
+  end
+
+  test "a scoped range cannot cross into a different subgroup title" do
+    context = %{
+      kind: :series,
+      title: "Show",
+      year: 2020,
+      tvdb_id: nil,
+      aliases: [
+        %{title: "Arc A", kind: :alternative, precedence: :manual, normalized_title: "arc a"}
+      ],
+      scene_titles: [
+        %{
+          title: "Arc A",
+          normalized_title: "arc a",
+          season: 11,
+          source: "tmdb",
+          namespace: "author-order"
+        }
+      ],
+      episodes: [episode(1, 0, 1), episode(2, 0, 2)],
+      mappings: [
+        mapping("tmdb", "scene", "author-order", "S11E01", [1], :inferred)
+        |> Map.put(:scope_title, "Arc A"),
+        mapping("tmdb", "scene", "author-order", "S11E02", [2], :inferred)
+        |> Map.put(:scope_title, "Arc B")
+      ],
+      anime_preferences: %{mode: :subbed, preferred_languages: [], version_preferences: []}
+    }
+
+    release = Release.new(raw("[DB] Arc A 01-02 [1080p]", "cross-scope-range"))
+
+    assert :no_match = Anime.select_episodes([release], context, [1, 2], [])
+
+    assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
+             Anime.manual_episode_candidates([release], context, [1, 2], [])
+
+    safe_context =
+      update_in(context.mappings, fn mappings ->
+        Enum.map(mappings, &Map.put(&1, :scope_title, "Arc A"))
+      end)
+
+    for {title, url} <- [
+          {"[DB] Arc A 01-02-03 [1080p]", "chained-range"},
+          {"[DB] Arc A 01-02--03 [1080p]", "doubled-chained-range"},
+          {"[DB] Arc A 01-02-2020-03 [1080p]", "year-laundered-range"},
+          {"[DB] Arc A 01-02-1080p-03 [1080p]", "quality-laundered-range"},
+          {"[DB] Arc A 01-02.03 [1080p]", "dot-chained-range"},
+          {"[DB] Arc A 01-02+03 [1080p]", "plus-chained-range"},
+          {"[DB] Arc A 01-02,03 [1080p]", "comma-chained-range"},
+          {"[DB] Arc A 01-02 WEB,03 [1080p]", "comma-laundered-range"},
+          {"[DB] Arc A 01-02 WEB 03 [1080p]", "space-laundered-range"},
+          {"[DB] Arc A 01-02−03 [1080p]", "unicode-minus-chained-range"}
+        ] do
+      malformed = Release.new(raw(title, url))
+      assert :no_match = Anime.select_episodes([malformed], safe_context, [1, 2], [])
+
+      assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
+               Anime.manual_episode_candidates([malformed], safe_context, [1, 2], [])
+    end
+
+    malicious_context = %{
+      safe_context
+      | episodes: safe_context.episodes ++ [episode(3, 0, 3)],
+        mappings:
+          safe_context.mappings ++
+            [
+              mapping("tmdb", "scene", "author-order", "S11E03", [3], :inferred)
+              |> Map.put(:scope_title, "Arc B")
+            ]
+    }
+
+    malicious =
+      Release.new(raw("[DB] Arc A 01-02-S11E03 [1080p]", "cross-scope-tail"))
+
+    assert :no_match = Anime.select_episodes([malicious], malicious_context, [3], [])
+
+    assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
+             Anime.manual_episode_candidates([malicious], malicious_context, [3], [])
+
+    assert {:ok, %{assignments: [%{release: selected}]}} =
+             Anime.select_episodes([release], safe_context, [1, 2], [])
+
+    assert Intent.valid_mapping_snapshot?(selected.mapping_snapshot, :season_pack, [1, 2])
+
+    tampered =
+      update_in(selected.mapping_snapshot["mappings"], fn mappings ->
+        Enum.map(mappings, fn mapping ->
+          if mapping["identity"]["canonical_value"] == "S11E02" do
+            Map.put(mapping, "scope_title", "Arc B")
+          else
+            mapping
+          end
+        end)
+      end)
+
+    refute Intent.valid_mapping_snapshot?(tampered, :season_pack, [1, 2])
+  end
+
+  test "an omitted longer alias blocks a retained scoped prefix at the parser cap" do
+    aliases =
+      for title <- ["A1", "A2", "A3", "A4", "A5", "A6", "Foo", "Foo 2"] do
+        %{
+          title: title,
+          kind: :alternative,
+          precedence: :manual,
+          normalized_title: String.downcase(title)
+        }
+      end
+
+    scene_mappings =
+      Enum.map(2..5, fn episode_number ->
+        mapping(
+          "tmdb",
+          "scene",
+          "author-order",
+          "S11E0#{episode_number}",
+          [episode_number],
+          :inferred
+        )
+        |> Map.put(:scope_title, "Foo")
+      end)
+
+    context = %{
+      kind: :series,
+      title: "Show",
+      year: 2020,
+      tvdb_id: nil,
+      aliases: aliases,
+      scene_titles: [
+        %{
+          title: "Foo",
+          normalized_title: "foo",
+          season: 11,
+          source: "tmdb",
+          namespace: "author-order"
+        }
+      ],
+      episodes: Enum.map(2..5, &episode(&1, 0, &1)),
+      mappings: [mapping("fixture", "absolute", "main", "5", [5]) | scene_mappings],
+      anime_preferences: %{mode: :subbed, preferred_languages: [], version_preferences: []}
+    }
+
+    unsafe = Release.new(raw("[DB] Foo 2 - 05 [1080p]", "capped-scoped-prefix"))
+    assert :no_match = Anime.select_episodes([unsafe], context, [2, 3, 4, 5], [])
+
+    assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
+             Anime.manual_episode_candidates([unsafe], context, [2, 3, 4, 5], [])
+
+    safe = Release.new(raw("[DB] Show - 05 [1080p]", "safe-capped-context"))
+
+    assert {:ok, %{assignments: [%{episode_ids: [5], release: selected}]}} =
+             Anime.select_episodes([safe], context, [2, 3, 4, 5], [])
+
+    parser_context = selected.mapping_snapshot["parser_context"]
+    refute "Foo" in parser_context["aliases"]
+    refute Map.has_key?(parser_context, "scene_titles")
+    assert parser_context["blocked_titles"] == ["Foo"]
+    assert Intent.valid_mapping_snapshot?(selected.mapping_snapshot, :episode, [5])
+  end
+
+  test "an over-limit longer alias blocks a retained scoped prefix" do
+    long_title = "Foo 2 " <> String.duplicate("x", 195)
+
+    aliases =
+      for title <- ["Foo", long_title] do
+        %{
+          title: title,
+          kind: :alternative,
+          precedence: :manual,
+          normalized_title: String.downcase(title)
+        }
+      end
+
+    context = %{
+      kind: :series,
+      title: "Show",
+      year: 2020,
+      tvdb_id: nil,
+      aliases: aliases,
+      scene_titles: [
+        %{
+          title: "Foo",
+          normalized_title: "foo",
+          season: 11,
+          source: "tmdb",
+          namespace: "author-order"
+        }
+      ],
+      episodes: [episode(2, 0, 2)],
+      mappings: [
+        mapping("tmdb", "scene", "author-order", "S11E02", [2], :inferred)
+        |> Map.put(:scope_title, "Foo")
+      ],
+      anime_preferences: %{mode: :subbed, preferred_languages: [], version_preferences: []}
+    }
+
+    unsafe = Release.new(raw("[DB] #{long_title} [1080p]", "over-limit-prefix"))
+    assert :no_match = Anime.select_episodes([unsafe], context, [2], [])
+
+    assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
+             Anime.manual_episode_candidates([unsafe], context, [2], [])
+  end
+
+  test "an omitted longer alias blocks the canonical title at the parser cap" do
+    aliases =
+      for title <- ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "Foo 2"] do
+        %{
+          title: title,
+          kind: :alternative,
+          precedence: :manual,
+          normalized_title: String.downcase(title)
+        }
+      end
+
+    context = %{
+      kind: :series,
+      title: "Foo",
+      year: 2020,
+      tvdb_id: nil,
+      aliases: aliases,
+      scene_titles: [],
+      episodes: Enum.map(2..5, &episode(&1, 0, &1)),
+      mappings:
+        Enum.map(2..5, fn episode_number ->
+          mapping("fixture", "absolute", "main", Integer.to_string(episode_number), [
+            episode_number
+          ])
+        end) ++ [mapping("cinder", "standard", "canonical", "S01E02", [2])],
+      anime_preferences: %{mode: :subbed, preferred_languages: [], version_preferences: []}
+    }
+
+    unsafe = Release.new(raw("[DB] Foo 2 - 05 [1080p]", "capped-canonical-prefix"))
+    assert :no_match = Anime.select_episodes([unsafe], context, [2, 3, 4, 5], [])
+
+    assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
+             Anime.manual_episode_candidates([unsafe], context, [2, 3, 4, 5], [])
+
+    unsafe_standard =
+      Release.new(raw("[DB] Foo - The Arc S01E02 [1080p]", "blocked-standard-prefix"))
+
+    assert :no_match = Anime.select_episodes([unsafe_standard], context, [2], [])
+
+    assert [%{resolved_episode_ids: nil, mapping_snapshot: nil}] =
+             Anime.manual_episode_candidates([unsafe_standard], context, [2], [])
+
+    safe = Release.new(raw("[DB] A1 - 05 [1080p]", "safe-canonical-blocker-context"))
+
+    assert {:ok, %{assignments: [%{episode_ids: [5], release: selected}]}} =
+             Anime.select_episodes([safe], context, [2, 3, 4, 5], [])
+
+    assert selected.mapping_snapshot["version"] == 3
+    assert selected.mapping_snapshot["parser_context"]["blocked_titles"] == ["Foo"]
+    assert Intent.valid_mapping_snapshot?(selected.mapping_snapshot, :episode, [5])
+
+    # Blockers may name scoped aliases that were deliberately removed from the positive alias set;
+    # their safety comes from only suppressing parser paths, while the bounded normalized list is
+    # structurally validated below.
+
+    downgraded =
+      update_in(selected.mapping_snapshot["parser_context"], &Map.delete(&1, "blocked_titles"))
+
+    refute Intent.valid_mapping_snapshot?(downgraded, :episode, [5])
+
+    over_limit_alias =
+      put_in(
+        selected.mapping_snapshot,
+        ["parser_context", "aliases"],
+        ["A " <> String.duplicate("x", 199)]
+      )
+
+    refute Intent.valid_mapping_snapshot?(over_limit_alias, :episode, [5])
+
+    over_limit_blocker =
+      put_in(
+        selected.mapping_snapshot,
+        ["parser_context", "blocked_titles"],
+        ["B " <> String.duplicate("x", 199)]
+      )
+
+    refute Intent.valid_mapping_snapshot?(over_limit_blocker, :episode, [5])
+
+    duplicate_blockers =
+      put_in(selected.mapping_snapshot, ["parser_context", "blocked_titles"], ["Foo", " foo "])
+
+    refute Intent.valid_mapping_snapshot?(duplicate_blockers, :episode, [5])
+
+    normalized_duplicate_aliases =
+      put_in(selected.mapping_snapshot, ["parser_context", "aliases"], ["A1", " a1 "])
+
+    refute Intent.valid_mapping_snapshot?(normalized_duplicate_aliases, :episode, [5])
+  end
+
+  test "a longer canonical title cannot be hijacked by a scoped prefix" do
+    scene_mappings =
+      Enum.map(2..5, fn episode_number ->
+        mapping(
+          "tmdb",
+          "scene",
+          "author-order",
+          "S11E0#{episode_number}",
+          [episode_number],
+          :inferred
+        )
+        |> Map.put(:scope_title, "Foo")
+      end)
+
+    context = %{
+      kind: :series,
+      title: "Foo 2",
+      year: 2020,
+      tvdb_id: nil,
+      aliases: [
+        %{
+          title: "Foo",
+          kind: :alternative,
+          precedence: :manual,
+          normalized_title: "foo"
+        }
+      ],
+      scene_titles: [
+        %{
+          title: "Foo",
+          normalized_title: "foo",
+          season: 11,
+          source: "tmdb",
+          namespace: "author-order"
+        }
+      ],
+      episodes: Enum.map(2..5, &episode(&1, 0, &1)),
+      mappings: [mapping("fixture", "absolute", "main", "5", [5]) | scene_mappings],
+      anime_preferences: %{mode: :subbed, preferred_languages: [], version_preferences: []}
+    }
+
+    release = Release.new(raw("[DB] Foo 2 - 05 [1080p]", "scoped-prefix"))
+
+    assert {:ok, %{assignments: [%{episode_ids: [5], release: selected}], waiting: nil}} =
+             Anime.select_episodes([release], context, [5], [])
+
+    assert selected.coordinates == [%{scheme: "absolute", values: ["5"]}]
+    assert Intent.valid_mapping_snapshot?(selected.mapping_snapshot, :episode, [5])
+
+    assert [%{resolved_episode_ids: [5], mapping_snapshot: manual_snapshot}] =
+             Anime.manual_episode_candidates([release], context, [5], [])
+
+    assert manual_snapshot == selected.mapping_snapshot
+  end
+
+  test "uses the catalog alias normalization contract for scene subgroup titles" do
+    scoped_mapping =
+      mapping("tmdb", "scene", "author-order", "S11E05", [17], :inferred)
+      |> Map.put(:scope_title, "Foo  Arc")
+
+    context = %{
+      kind: :series,
+      title: "Show",
+      year: 2020,
+      tvdb_id: nil,
+      aliases: [
+        %{
+          title: "Foo Arc",
+          kind: :alternative,
+          precedence: :manual,
+          normalized_title: "foo arc"
+        }
+      ],
+      scene_titles: [
+        %{
+          title: "Foo  Arc",
+          normalized_title: "foo arc",
+          season: 11,
+          source: "tmdb",
+          namespace: "author-order"
+        }
+      ],
+      episodes: [episode(17, 0, 17)],
+      mappings: [
+        mapping("cinder", "standard", "canonical", "S00E17", [17]),
+        scoped_mapping
+      ],
+      anime_preferences: %{mode: :subbed, preferred_languages: [], version_preferences: []}
+    }
+
+    release = Release.new(raw("[DB] Foo Arc - 05 [1080p]", "normalized-scene-scope"))
+
+    assert {:ok, %{assignments: [%{episode_ids: [17]}], waiting: nil}} =
+             Anime.select_episodes([release], context, [17], [])
+
+    assert [%{resolved_episode_ids: [17], mapping_snapshot: snapshot}] =
+             Anime.manual_episode_candidates([release], context, [17], [])
+
+    assert Intent.valid_mapping_snapshot?(snapshot, :episode, [17])
   end
 
   test "a canonical standard mapping outranks a conflicting persisted scene mapping for the same value" do
@@ -399,15 +1233,25 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
 
     snapshot = Anime.build_mapping_snapshot(release, [11, 12], context)
 
-    assert snapshot["version"] == 2
+    assert snapshot["version"] == 3
 
     assert snapshot["parser_context"] == %{
              "title" => "Frieren: Beyond Journey's End",
              "aliases" => ["Sousou no Frieren", "葬送のフリーレン"],
+             "blocked_titles" => [],
+             "allow_unscoped_standard" => false,
              "year" => 2023
            }
 
     assert snapshot["mappings"] == Enum.map(Enum.take(mappings, 4), &snapshot_mapping/1)
+
+    legacy_snapshot =
+      snapshot
+      |> Map.put("version", 2)
+      |> update_in(["parser_context"], &Map.delete(&1, "blocked_titles"))
+      |> update_in(["parser_context"], &Map.delete(&1, "allow_unscoped_standard"))
+
+    assert Intent.valid_mapping_snapshot?(legacy_snapshot, :season_pack, [11, 12])
 
     assert snapshot["selected_resolution"]["values"] == [
              %{
@@ -428,6 +1272,41 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     assert {:error, :incomplete_search} = Anime.best_episodes(IndexerMock, context, [11], [])
   end
 
+  test "snapshot-invalid delayed evidence cannot complete a partial search" do
+    now = ~U[2026-08-05 12:00:00Z]
+    over_limit_scope = String.duplicate("x", 201)
+
+    context = %{
+      kind: :series,
+      title: "Show",
+      year: 2020,
+      tvdb_id: 99,
+      aliases: [],
+      scene_titles: [],
+      episodes: [episode(11, 1, 1)],
+      mappings: [
+        mapping("tmdb", "scene", "selected-order", "S01E01", [11], :manual)
+        |> Map.put(:scope_title, over_limit_scope)
+      ]
+    }
+
+    invalid_delayed =
+      raw("[Other] Show S01E01 [1080p]", "invalid-delayed-search-result", published_at: now)
+
+    expect(IndexerMock, :search_tv, fn 99, "Show", 1 -> {:error, :timeout} end)
+
+    expect(IndexerMock, :search_tv_query, 2, fn _query, categories: [5070] ->
+      {:ok, [invalid_delayed]}
+    end)
+
+    assert {:error, :incomplete_search} =
+             Anime.best_episodes(IndexerMock, context, [11],
+               preferred_groups: ["trusted"],
+               fallback_delay: 3600,
+               now: now
+             )
+  end
+
   test "blocked groups are removed before stable-ID cover and one release freezes regular plus episode-zero IDs",
        %{preference_cases: cases} do
     context = preference_context()
@@ -446,7 +1325,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
     assert assignment.release.group == "SubsPlease"
     assert assignment.episode_ids == [11, 12]
     assert assignment.release.resolved_episode_ids == [11, 12]
-    assert assignment.mapping_snapshot["version"] == 2
+    assert assignment.mapping_snapshot["version"] == 3
     assert assignment.mapping_snapshot["reserved_episode_ids"] == [11, 12]
   end
 
@@ -640,7 +1519,7 @@ defmodule Cinder.Acquisition.AnimeSelectionTest do
 
     assert [manual] = Anime.manual_episode_candidates([release], context, [11, 12], opts)
     assert manual.resolved_episode_ids == [11, 12]
-    assert manual.mapping_snapshot["version"] == 2
+    assert manual.mapping_snapshot["version"] == 3
     assert manual.mapping_snapshot["reserved_episode_ids"] == [11, 12]
 
     invalid = %{

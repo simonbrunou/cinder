@@ -4,6 +4,7 @@ defmodule Cinder.Catalog.AnimeAcquisitionContextTest do
   import Cinder.CatalogFixtures
 
   alias Cinder.Catalog
+  alias Cinder.Repo
 
   test "builds a plain movie context with aliases and profile summary" do
     movie = movie_fixture(title: "Your Name", year: 2016, media_profile: :anime)
@@ -27,6 +28,33 @@ defmodule Cinder.Catalog.AnimeAcquisitionContextTest do
                normalized_title: "君の名は。"
              }
            ]
+  end
+
+  test "builds each series acquisition context from one database transaction" do
+    series = series_fixture(title: "Show", media_profile: :anime)
+    season = season_fixture(series, season_number: 1)
+    _episode = episode_fixture(season, episode_number: 1)
+    parent = self()
+    ref = make_ref()
+
+    :telemetry.attach(
+      ref,
+      [:cinder, :repo, :query],
+      fn _event, _measurements, metadata, _config ->
+        if String.starts_with?(String.upcase(metadata.query || ""), "SELECT") do
+          send(parent, {:context_query, Repo.in_transaction?()})
+        end
+      end,
+      nil
+    )
+
+    on_exit(fn -> :telemetry.detach(ref) end)
+    _context = Catalog.anime_series_acquisition_context(series)
+    :telemetry.detach(ref)
+
+    states = collect_context_query_states([])
+    assert states != []
+    assert Enum.all?(states)
   end
 
   test "builds a deterministic series context with canonical and persisted mappings" do
@@ -198,6 +226,14 @@ defmodule Cinder.Catalog.AnimeAcquisitionContextTest do
     end
 
     assert %{scene_titles: []} = Catalog.anime_series_acquisition_context(series)
+  end
+
+  defp collect_context_query_states(states) do
+    receive do
+      {:context_query, state} -> collect_context_query_states([state | states])
+    after
+      0 -> Enum.reverse(states)
+    end
   end
 
   defp mapping_sort_key(mapping) do
