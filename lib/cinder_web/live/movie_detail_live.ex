@@ -275,6 +275,15 @@ defmodule CinderWeb.MovieDetailLive do
         >
           {gettext("Delete")}
         </.button>
+        <.button
+          :if={@movie.file_path}
+          id="movie-subtitle-sync"
+          navigate={~p"/subtitle-sync?movie=#{@movie.id}"}
+          variant="neutral"
+          size="sm"
+        >
+          {gettext("Subtitle sync")}
+        </.button>
       </div>
 
       <.confirm_action

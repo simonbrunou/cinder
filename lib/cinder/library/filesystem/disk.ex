@@ -146,6 +146,9 @@ defmodule Cinder.Library.Filesystem.Disk do
   def write(path, content), do: File.write(path, content)
 
   @impl true
+  def write_exclusive(path, content), do: File.write(path, content, [:exclusive, :binary])
+
+  @impl true
   def lstat(path), do: File.lstat(path)
 
   @impl true

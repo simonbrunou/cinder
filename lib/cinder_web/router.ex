@@ -106,6 +106,7 @@ defmodule CinderWeb.Router do
       ] do
       live "/dashboard", DashboardLive
       live "/activity", ActivityLive
+      live "/subtitle-sync", SubtitleSyncLive
       live "/settings", SettingsLive
       live "/requests", RequestsLive
       live "/issues", IssuesLive

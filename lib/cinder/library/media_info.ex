@@ -17,7 +17,8 @@ defmodule Cinder.Library.MediaInfo do
           required(:index) => non_neg_integer(),
           required(:language) => String.t(),
           required(:default?) => boolean(),
-          required(:forced?) => boolean()
+          required(:forced?) => boolean(),
+          optional(:packet_count) => non_neg_integer()
         }
 
   @type probe_report :: %{

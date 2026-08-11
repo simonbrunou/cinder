@@ -495,6 +495,16 @@ defmodule CinderWeb.MovieDetailLiveTest do
     refute Repo.get(Cinder.Catalog.Movie, movie.id)
   end
 
+  test "an available movie links to subtitle sync by database ID", %{conn: conn} do
+    movie = available_movie!("/tmp/movie-with-subtitles.mkv")
+    {:ok, lv, _html} = live_movie(conn, movie)
+
+    assert has_element?(
+             lv,
+             "#movie-subtitle-sync[href='/subtitle-sync?movie=#{movie.id}']"
+           )
+  end
+
   # --- console: retry / better-match / cancel-upgrade / language (relocated from /activity) ---
 
   test "a parked movie shows Retry that re-queues it to :requested", %{conn: conn} do

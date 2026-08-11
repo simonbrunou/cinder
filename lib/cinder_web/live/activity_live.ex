@@ -25,12 +25,14 @@ defmodule CinderWeb.ActivityLive do
   alias Cinder.Catalog.Episode
   alias Cinder.Catalog.UpgradeHunter
   alias Cinder.Download.TvPoller
+  alias Cinder.Subtitles.Sync.Worker
 
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket) do
       Catalog.subscribe()
       Catalog.subscribe_series()
+      Worker.subscribe()
     end
 
     grabs = Catalog.list_grabs()
@@ -43,6 +45,7 @@ defmodule CinderWeb.ActivityLive do
        grab_file_errors: %{},
        held_series: sort_held_series(Catalog.list_anime_held_series(), socket.assigns.locale),
        jobs: Cinder.Jobs.statuses(),
+       subtitle_sync: Worker.status(),
        confirming: nil
      )}
   end
@@ -82,9 +85,17 @@ defmodule CinderWeb.ActivityLive do
      )}
   end
 
+  def handle_info({:subtitle_sync_status, status}, socket),
+    do: {:noreply, assign(socket, subtitle_sync: status)}
+
   def handle_info(_message, socket), do: {:noreply, socket}
 
   @impl true
+  def handle_event("enqueue_subtitle_library", _params, socket) do
+    Worker.enqueue_library()
+    {:noreply, put_flash(socket, :info, gettext("Subtitle library analysis queued."))}
+  end
+
   def handle_event("ask_delete", %{"id" => id}, socket),
     do: {:noreply, assign(socket, confirming: id)}
 
@@ -843,6 +854,44 @@ defmodule CinderWeb.ActivityLive do
       </section>
 
       <section class="mt-10">
+        <div id="subtitle-sync-activity" class="rounded-box bg-base-200 p-4">
+          <div class="flex flex-wrap items-center gap-3">
+            <h2 class="text-lg font-semibold">{gettext("Subtitle synchronization")}</h2>
+            <span class="text-sm text-base-content/70">
+              {gettext("%{count} queued", count: @subtitle_sync.queued)}
+            </span>
+            <.button
+              id="enqueue-subtitle-library"
+              type="button"
+              size="sm"
+              class="ml-auto"
+              phx-click="enqueue_subtitle_library"
+            >
+              {gettext("Analyze library")}
+            </.button>
+            <.button navigate={~p"/subtitle-sync"} variant="neutral" size="sm">
+              {gettext("Review and adjust")}
+            </.button>
+          </div>
+          <p :if={@subtitle_sync.current} class="mt-2 text-sm">
+            {gettext("Analyzing %{label}", label: @subtitle_sync.current.label)}
+          </p>
+          <p class="mt-2 text-sm text-base-content/70">
+            {gettext("%{aligned} aligned · %{corrected} corrected · %{review} review",
+              aligned: @subtitle_sync.counts.aligned,
+              corrected: @subtitle_sync.counts.corrected,
+              review: @subtitle_sync.counts.review + @subtitle_sync.counts.failed
+            )}
+          </p>
+          <ul :if={@subtitle_sync.review_items != []} class="mt-2 space-y-1 text-sm text-warning">
+            <li :for={item <- @subtitle_sync.review_items}>
+              {item.label}: {subtitle_sync_reason(item.reason)}
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="mt-10">
         <h2 class="pb-3 text-lg font-semibold">{gettext("Background sweeps")}</h2>
         <p class="pb-3 text-sm text-base-content/70">
           {gettext(
@@ -872,4 +921,9 @@ defmodule CinderWeb.ActivityLive do
     </Layouts.app>
     """
   end
+
+  defp subtitle_sync_reason(nil), do: gettext("low confidence")
+  defp subtitle_sync_reason(reason) when is_binary(reason), do: reason
+  defp subtitle_sync_reason(reason) when is_atom(reason), do: Atom.to_string(reason)
+  defp subtitle_sync_reason(reason), do: inspect(reason)
 end

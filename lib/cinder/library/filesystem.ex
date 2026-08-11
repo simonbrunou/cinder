@@ -24,6 +24,7 @@ defmodule Cinder.Library.Filesystem do
   @callback rm_rf(path :: String.t()) :: {:ok, [String.t()]} | {:error, File.posix(), String.t()}
   @callback read(path :: String.t()) :: {:ok, binary()} | {:error, term()}
   @callback write(path :: String.t(), content :: iodata()) :: :ok | {:error, term()}
+  @callback write_exclusive(path :: String.t(), content :: iodata()) :: :ok | {:error, term()}
   @callback moviehash_data(path :: String.t()) ::
               {:ok, {non_neg_integer(), binary(), binary()}} | :too_small | {:error, term()}
 end

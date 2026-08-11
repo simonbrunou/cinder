@@ -7,6 +7,7 @@ defmodule Cinder.SubtitlesTest do
   alias Cinder.Subtitles
   alias Cinder.Subtitles.Manifest
   alias Cinder.Subtitles.Moviehash
+  alias Cinder.Subtitles.Sync.Worker
 
   @video "/lib/M/M.mkv"
   setup :verify_on_exit!
@@ -138,6 +139,40 @@ defmodule Cinder.SubtitlesTest do
     expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
 
     assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+    assert Agent.get(fs, &Map.get(&1, Subtitles.sidecar_path(@video, "fr"))) == "FR SRT"
+  end
+
+  test "a successful OpenSubtitles download enqueues synchronization", %{fs: fs} do
+    parent = self()
+
+    start_supervised!(
+      {Worker,
+       initial_scan: false,
+       analyze: fn video ->
+         send(parent, {:analyzed, video})
+         []
+       end}
+    )
+
+    expect(Cinder.Subtitles.ProviderMock, :search, fn _ ->
+      {:ok,
+       [
+         %{
+           file_id: 1,
+           language: "fr",
+           downloads: 1,
+           hearing_impaired: false,
+           ai_translated: false,
+           moviehash_match: false
+         }
+       ]}
+    end)
+
+    expect(Cinder.Subtitles.ProviderMock, :download, fn 1 -> {:ok, "FR SRT"} end)
+    expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+    assert_receive {:analyzed, @video}
     assert Agent.get(fs, &Map.get(&1, Subtitles.sidecar_path(@video, "fr"))) == "FR SRT"
   end
 
@@ -280,10 +315,15 @@ defmodule Cinder.SubtitlesTest do
     expect(Cinder.Library.MediaServerMock, :scan, 2, fn :movies -> :ok end)
 
     assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
-    assert %{tracks: %{"fr" => %{origin: "opensubtitles_id"}}} = Manifest.read(@video)
+
+    assert %{tracks: %{"fr" => %{origin: "opensubtitles_id", file: "M.fr.srt"}}} =
+             Manifest.read(@video)
 
     assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
-    assert %{tracks: %{"fr" => %{origin: "opensubtitles_hash"}}} = Manifest.read(@video)
+
+    assert %{tracks: %{"fr" => %{origin: "opensubtitles_hash", file: "M.fr.srt"}}} =
+             Manifest.read(@video)
+
     assert Agent.get(fs, &Map.fetch!(&1, target)) == "HASH SRT"
   end
 

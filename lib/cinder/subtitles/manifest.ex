@@ -7,6 +7,10 @@ defmodule Cinder.Subtitles.Manifest do
   alias Cinder.Settings
 
   @origins ~w(opensubtitles_hash opensubtitles_id embedded translated release_sidecar)
+  @sync_statuses ~w(aligned review)
+  @sync_methods ~w(embedded audio manual)
+  @sidecar_extensions ~w(.srt .ass .ssa .sub .vtt)
+  @sha256 ~r/\A[0-9a-f]{64}\z/
 
   @spec path(String.t()) :: String.t()
   def path(video_path) do
@@ -31,15 +35,55 @@ defmodule Cinder.Subtitles.Manifest do
     end
   end
 
-  @spec put(String.t(), String.t() | nil, String.t(), String.t() | atom()) ::
+  @spec put(String.t(), String.t() | nil, String.t(), String.t() | atom(), String.t() | nil) ::
           :ok | {:error, term()}
-  def put(video_path, moviehash, language, origin) do
-    state =
-      video_path
-      |> read()
-      |> put_in([:tracks, language], %{origin: to_string(origin)})
-      |> Map.put(:video_moviehash, moviehash)
+  def put(video_path, moviehash, language, origin, sidecar_path \\ nil) do
+    with {:ok, file} <- normalize_put_file(video_path, sidecar_path) do
+      track = %{origin: to_string(origin)}
+      track = if file, do: Map.put(track, :file, file), else: track
 
+      state =
+        video_path
+        |> read()
+        |> put_in([:tracks, language], track)
+        |> Map.put(:video_moviehash, moviehash)
+
+      write(video_path, state)
+    end
+  end
+
+  @spec put_sync(String.t(), String.t(), map()) :: :ok | {:error, term()}
+  def put_sync(video_path, language, sync) do
+    state = read(video_path)
+
+    with {:ok, sync} <- normalize_sync(sync),
+         %{origin: _origin} = track <- get_in(state, [:tracks, language]) do
+      track = track |> Map.delete(:sync_invalid?) |> Map.put(:sync, sync)
+      write(video_path, put_in(state, [:tracks, language], track))
+    else
+      nil -> {:error, :unknown_track}
+      :error -> {:error, :invalid_sync}
+    end
+  end
+
+  @spec clear_sync(String.t(), String.t()) :: :ok | {:error, term()}
+  def clear_sync(video_path, language) do
+    state = read(video_path)
+
+    case get_in(state, [:tracks, language]) do
+      %{origin: _origin} = track ->
+        track = Map.drop(track, [:sync, :sync_invalid?])
+        write(video_path, put_in(state, [:tracks, language], track))
+
+      nil ->
+        :ok
+    end
+  end
+
+  @spec sync(map(), String.t()) :: map() | nil
+  def sync(state, language), do: get_in(state, [:tracks, language, :sync])
+
+  defp write(video_path, state) do
     manifest_path = path(video_path)
 
     temporary =
@@ -102,14 +146,93 @@ defmodule Cinder.Subtitles.Manifest do
   defp normalize_tracks(tracks) do
     tracks
     |> Enum.reduce_while({:ok, %{}}, fn
-      {language, %{"origin" => origin}}, {:ok, acc}
+      {language, %{"origin" => origin} = track}, {:ok, acc}
       when is_binary(language) and origin in @origins ->
-        {:cont, {:ok, Map.put(acc, language, %{origin: origin})}}
+        normalized =
+          %{origin: origin}
+          |> Map.merge(normalize_optional_file(track))
+          |> Map.merge(normalize_optional_sync(track))
+
+        {:cont, {:ok, Map.put(acc, language, normalized)}}
 
       _, _ ->
         {:halt, :error}
     end)
   end
+
+  defp normalize_optional_sync(%{"sync_invalid?" => true}), do: %{sync_invalid?: true}
+
+  defp normalize_optional_sync(%{"sync" => sync}) do
+    case normalize_sync(sync) do
+      {:ok, normalized} -> %{sync: normalized}
+      :error -> %{sync_invalid?: true}
+    end
+  end
+
+  defp normalize_optional_sync(_track), do: %{}
+
+  defp normalize_optional_file(%{"file_invalid?" => true}), do: %{file_invalid?: true}
+
+  defp normalize_optional_file(%{"file" => file}) do
+    if valid_sidecar_basename?(file), do: %{file: file}, else: %{file_invalid?: true}
+  end
+
+  defp normalize_optional_file(_track), do: %{}
+
+  defp normalize_put_file(_video_path, nil), do: {:ok, nil}
+
+  defp normalize_put_file(video_path, sidecar_path) when is_binary(sidecar_path) do
+    basename = Path.basename(sidecar_path)
+
+    if Path.dirname(sidecar_path) == Path.dirname(video_path) and
+         valid_sidecar_basename?(basename),
+       do: {:ok, basename},
+       else: {:error, :invalid_sidecar_file}
+  end
+
+  defp normalize_put_file(_video_path, _sidecar_path), do: {:error, :invalid_sidecar_file}
+
+  defp valid_sidecar_basename?(file) do
+    is_binary(file) and file != "" and Path.basename(file) == file and
+      String.downcase(Path.extname(file)) in @sidecar_extensions
+  end
+
+  defp normalize_sync(sync) when is_map(sync) do
+    normalized = %{
+      status: value(sync, :status),
+      method: value(sync, :method),
+      moviehash: value(sync, :moviehash),
+      source_sha256: value(sync, :source_sha256),
+      applied_sha256: value(sync, :applied_sha256),
+      offset_ms: value(sync, :offset_ms),
+      rate: value(sync, :rate),
+      score: value(sync, :score),
+      reason: value(sync, :reason)
+    }
+
+    if valid_sync?(normalized),
+      do: {:ok, %{normalized | rate: normalized.rate * 1.0}},
+      else: :error
+  end
+
+  defp normalize_sync(_sync), do: :error
+
+  defp valid_sync?(sync) do
+    Enum.all?([
+      sync.status in @sync_statuses,
+      sync.method in @sync_methods,
+      is_binary(sync.moviehash) or is_nil(sync.moviehash),
+      valid_sha256?(sync.source_sha256),
+      valid_sha256?(sync.applied_sha256),
+      is_integer(sync.offset_ms),
+      is_number(sync.rate) and sync.rate > 0,
+      is_number(sync.score) or is_nil(sync.score),
+      is_binary(sync.reason) or is_nil(sync.reason)
+    ])
+  end
+
+  defp valid_sha256?(value), do: is_binary(value) and Regex.match?(@sha256, value)
+  defp value(map, key), do: Map.get(map, key, Map.get(map, Atom.to_string(key)))
 
   defp origin(state, language), do: get_in(state, [:tracks, language, :origin])
   defp empty, do: %{video_moviehash: nil, tracks: %{}}

@@ -123,6 +123,7 @@ defmodule Cinder.Application do
         Cinder.Catalog.UpgradeHunter,
         Cinder.Download.Cleaner,
         Cinder.Subtitles.Sweeper,
+        Cinder.Subtitles.Sync.Worker,
         Cinder.Requests.WatchlistSync,
         Cinder.Accounts.Janitor
       ]

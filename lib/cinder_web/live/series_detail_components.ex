@@ -50,6 +50,14 @@ defmodule CinderWeb.SeriesDetailComponents do
         <.button type="button" variant="danger" size="sm" phx-click="ask_delete_series">
           {gettext("Delete series")}
         </.button>
+        <.button
+          id="series-subtitle-sync"
+          navigate={~p"/subtitle-sync?series=#{@series.id}"}
+          variant="neutral"
+          size="sm"
+        >
+          {gettext("Subtitle sync")}
+        </.button>
         <%!-- Series-level shortcut to the per-season upgrade search — the movie page exposes
               "Find a better match" as a top-level button, but on TV it otherwise only lives
               inside a collapsed season. Expands the searchable seasons and focuses the first. --%>
@@ -471,6 +479,15 @@ defmodule CinderWeb.SeriesDetailComponents do
               {gettext("Delete files")}
             </.button>
             <.button
+              :if={Enum.any?(season.episodes, &(Episode.file_paths(&1) != []))}
+              id={"season-#{season.id}-subtitle-sync"}
+              navigate={~p"/subtitle-sync?season=#{season.id}"}
+              variant="neutral"
+              size="sm"
+            >
+              {gettext("Subtitle sync")}
+            </.button>
+            <.button
               :if={season_wanted?(season, @profile_summary)}
               type="button"
               variant="neutral"
@@ -618,6 +635,15 @@ defmodule CinderWeb.SeriesDetailComponents do
                   }
                 >
                   {gettext("Delete file")}
+                </.button>
+                <.button
+                  :if={Episode.file_paths(ep) != []}
+                  id={"episode-#{ep.id}-subtitle-sync"}
+                  navigate={~p"/subtitle-sync?episode=#{ep.id}"}
+                  variant="ghost"
+                  size="sm"
+                >
+                  {gettext("Subtitle sync")}
                 </.button>
                 <.status_badge
                   :if={episode_badge_status(ep, season, @profile_summary)}

@@ -174,7 +174,8 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
         index: index,
         language: subtitle_language(stream),
         default?: disposition?(stream, "default"),
-        forced?: disposition?(stream, "forced")
+        forced?: disposition?(stream, "forced"),
+        packet_count: packet_count(stream)
       }
     end
   end
@@ -205,10 +206,19 @@ defmodule Cinder.Library.MediaInfo.Ffprobe do
   end
 
   defp subtitle_track_args(path) do
-    ~w(-v error -select_streams s
-      -show_entries stream=index,codec_name:stream_disposition=default,forced:stream_tags=language
+    ~w(-v error -count_packets -select_streams s
+      -show_entries stream=index,codec_name,nb_read_packets:stream_disposition=default,forced:stream_tags=language
       -of json) ++ [path]
   end
+
+  defp packet_count(%{"nb_read_packets" => count}) when is_binary(count) do
+    case Integer.parse(count) do
+      {value, ""} when value >= 0 -> value
+      _ -> 0
+    end
+  end
+
+  defp packet_count(_stream), do: 0
 
   defp ffmpeg_args(path, index) do
     [

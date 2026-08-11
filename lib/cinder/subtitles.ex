@@ -12,6 +12,7 @@ defmodule Cinder.Subtitles do
   alias Cinder.Library.{PathPolicy, Sidecars}
   alias Cinder.Settings
   alias Cinder.Subtitles.{Fetcher, Manifest, Moviehash, Srt}
+  alias Cinder.Subtitles.Sync.Worker
 
   @doc "Subtitle-search criteria for a movie: imdb + tmdb id (the provider prefers imdb)."
   @spec movie_criteria(Movie.t()) :: map()
@@ -427,10 +428,9 @@ defmodule Cinder.Subtitles do
   defp commit(video_path, kind, language, moviehash, origin, target, content) do
     with {:ok, previous} <- sidecar_snapshot(target),
          :ok <- write_subtitle(target, content) do
-      case Manifest.put(video_path, moviehash, language, origin) do
+      case Manifest.put(video_path, moviehash, language, origin, target) do
         :ok ->
-          Cinder.Library.refresh(kind, video_path)
-          Logger.info("wrote #{language} subtitle for #{video_path}")
+          after_commit(video_path, kind, language, origin)
 
         error ->
           rollback_sidecar(target, previous)
@@ -443,6 +443,15 @@ defmodule Cinder.Subtitles do
       error ->
         Logger.warning("subtitle write failed for #{video_path} (#{language}): #{inspect(error)}")
     end
+  end
+
+  defp after_commit(video_path, kind, language, origin) do
+    if origin in ["opensubtitles_hash", "opensubtitles_id"] do
+      Worker.enqueue_after_download(video_path)
+    end
+
+    Cinder.Library.refresh(kind, video_path)
+    Logger.info("wrote #{language} subtitle for #{video_path}")
   end
 
   defp sidecar_snapshot(target) do
@@ -581,7 +590,8 @@ defmodule Cinder.Subtitles do
              video_path,
              moviehash || state.video_moviehash,
              language,
-             "release_sidecar"
+             "release_sidecar",
+             target
            ) do
         :ok -> :ok
         other -> Logger.warning("subtitle manifest write failed for #{target}: #{inspect(other)}")

@@ -189,6 +189,6 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
     state = Manifest.read(movie.file_path)
     assert state.video_moviehash == moviehash
     assert Manifest.stable?(state, moviehash, "fr")
-    assert state.tracks["en"] == %{origin: "release_sidecar"}
+    assert state.tracks["en"] == %{origin: "release_sidecar", file: "V (2020).en.srt"}
   end
 end

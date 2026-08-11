@@ -81,9 +81,16 @@ defmodule Cinder.Test.BarrierFilesystem do
   @impl true
   def rm(path) do
     pause(:rm, path, :before)
-    result = Disk.rm(path)
-    pause(:rm, path)
-    result
+
+    case injected_failure(:rm, path, path) do
+      :ok ->
+        result = Disk.rm(path)
+        pause(:rm, path)
+        result
+
+      {:error, _} = error ->
+        error
+    end
   end
 
   @impl true
@@ -95,9 +102,32 @@ defmodule Cinder.Test.BarrierFilesystem do
 
   @impl true
   def write(path, content) do
-    result = Disk.write(path, content)
-    pause(:write, path)
-    result
+    pause(:write, path, :before)
+
+    case injected_failure(:write, path, path) do
+      :ok ->
+        result = Disk.write(path, content)
+        pause(:write, path)
+        result
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  @impl true
+  def write_exclusive(path, content) do
+    pause(:write_exclusive, path, :before)
+
+    case injected_failure(:write_exclusive, path, path) do
+      :ok ->
+        result = Disk.write_exclusive(path, content)
+        pause(:write_exclusive, path)
+        result
+
+      {:error, _} = error ->
+        error
+    end
   end
 
   @impl true
@@ -122,6 +152,44 @@ defmodule Cinder.Test.BarrierFilesystem do
   end
 
   defp injected_failure(operation, source, _dest) do
+    case sequence_failure(operation, source) do
+      :no_match -> single_failure(operation, source)
+      result -> result
+    end
+  end
+
+  defp sequence_failure(operation, source) do
+    case Application.get_env(:cinder, :filesystem_failures) do
+      [failure | rest] -> match_sequence_failure(failure, rest, operation, source)
+      _ -> :no_match
+    end
+  end
+
+  defp match_sequence_failure(
+         %{operation: operation, source_contains: contains, reason: reason} = failure,
+         rest,
+         operation,
+         source
+       )
+       when is_binary(contains) do
+    if String.contains?(source, contains) do
+      store_failure_sequence(rest)
+      run_failure_callback(failure)
+      {:error, reason}
+    else
+      :no_match
+    end
+  end
+
+  defp match_sequence_failure(_failure, _rest, _operation, _source), do: :no_match
+
+  defp run_failure_callback(%{callback: callback}) when is_function(callback, 0), do: callback.()
+  defp run_failure_callback(_failure), do: :ok
+
+  defp store_failure_sequence([]), do: Application.delete_env(:cinder, :filesystem_failures)
+  defp store_failure_sequence(rest), do: Application.put_env(:cinder, :filesystem_failures, rest)
+
+  defp single_failure(operation, source) do
     case Application.get_env(:cinder, :filesystem_failure) do
       %{operation: ^operation, source_contains: contains, reason: reason} = failure ->
         failure_result(failure, source, contains, reason)
