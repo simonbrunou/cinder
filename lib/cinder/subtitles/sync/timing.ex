@@ -5,6 +5,8 @@ defmodule Cinder.Subtitles.Sync.Timing do
 
   @srt ~r/(?<h>\d{2}):(?<m>\d{2}):(?<s>\d{2}),(?<f>\d{3})/
   @vtt ~r/(?:(?<h>\d{2}):)?(?<m>\d{2}):(?<s>\d{2})\.(?<f>\d{3})/
+  @srt_row ~r/^\s*\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}(?:\s+.*)?$/
+  @vtt_row ~r/^\s*(?:\d{2}:)?\d{2}:\d{2}\.\d{3}\s*-->\s*(?:\d{2}:)?\d{2}:\d{2}\.\d{3}(?:\s+.*)?$/
   @ass ~r/(?<h>\d+):(?<m>\d{2}):(?<s>\d{2})\.(?<f>\d{2})/
   @sub ~r/(?<h>\d{2}):(?<m>\d{2}):(?<s>\d{2})\.(?<f>\d{2})/
   @max_abs_offset_ms 86_400_000
@@ -131,11 +133,14 @@ defmodule Cinder.Subtitles.Sync.Timing do
 
   defp retime_arrow_cues(source, regex, precision, offset_ms, rate, style) do
     map_lines(source, fn line ->
-      if String.contains?(line, "-->"),
+      if cue_row?(line, style),
         do: retime_pair(line, regex, precision, offset_ms, rate, style),
         else: line
     end)
   end
+
+  defp cue_row?(line, :srt), do: Regex.match?(@srt_row, line)
+  defp cue_row?(line, :vtt), do: Regex.match?(@vtt_row, line)
 
   defp retime_ass(source, offset_ms, rate) do
     map_lines(source, fn

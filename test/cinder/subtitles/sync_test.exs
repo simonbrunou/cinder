@@ -73,6 +73,21 @@ defmodule Cinder.Subtitles.SyncTest do
            ]
   end
 
+  test "videos without managed sidecars skip moviehash reads", %{video: video} do
+    failure = %{
+      operation: :moviehash_data,
+      source_contains: Path.basename(video),
+      reason: :eio,
+      once: true
+    }
+
+    Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
+    Application.put_env(:cinder, :filesystem_failure, failure)
+
+    assert Sync.analyze_video(video) == []
+    assert Application.get_env(:cinder, :filesystem_failure) == failure
+  end
+
   test "malformed exact-file or sync metadata quarantines managed sidecars", %{video: video} do
     en = sidecar(video, "en", ".srt")
     fr = sidecar(video, "fr", ".ass")

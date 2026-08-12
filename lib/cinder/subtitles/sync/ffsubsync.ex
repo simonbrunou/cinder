@@ -21,6 +21,8 @@ defmodule Cinder.Subtitles.Sync.Ffsubsync do
         format(input_extension),
         "--cinder-reference-format",
         format(reference_extension),
+        "--cinder-output-format",
+        format(input_extension),
         reference
         | arguments(input, output)
       ]

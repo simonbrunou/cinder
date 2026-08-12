@@ -94,15 +94,17 @@ defmodule Cinder.Subtitles.Sync.TimingTest do
   end
 
   test "retimes cue fields without changing timestamp-shaped dialogue text" do
-    srt = "1\n00:00:01,000 --> 00:00:02,000\nMeet at 12:34:56,789\n\n"
+    srt =
+      "1\n00:00:01,000 --> 00:00:02,000\nDisplay 00:00:03,000 --> 00:00:04,000 here\n\n"
+
     assert {:ok, output} = Timing.retime(srt, ".srt", 1_000, 1.0)
     assert output =~ "00:00:02,000 --> 00:00:03,000"
-    assert output =~ "Meet at 12:34:56,789"
+    assert output =~ "Display 00:00:03,000 --> 00:00:04,000 here"
 
-    vtt = "WEBVTT\n\n00:01.000 --> 00:02.000\nAt 12:34.567\n"
+    vtt = "WEBVTT\n\n00:01.000 --> 00:02.000\nDisplay 00:03.000 --> 00:04.000 here\n"
     assert {:ok, output} = Timing.retime(vtt, ".vtt", 1_000, 1.0)
     assert output =~ "00:02.000 --> 00:03.000"
-    assert output =~ "At 12:34.567"
+    assert output =~ "Display 00:03.000 --> 00:04.000 here"
 
     ass =
       "[Events]\n" <>
@@ -116,6 +118,12 @@ defmodule Cinder.Subtitles.Sync.TimingTest do
     sub = "[00:00:01.00][00:00:02.00]At 12:34:56.78\n"
     assert {:ok, output} = Timing.retime(sub, ".sub", 1_000, 1.0)
     assert output == "[00:00:02.00][00:00:03.00]At 12:34:56.78\n"
+  end
+
+  test "adds VTT hours when an adjustment crosses one hour" do
+    source = "WEBVTT\n\n59:59.000 --> 59:59.500\nOne\n"
+    assert {:ok, output} = Timing.retime(source, ".vtt", 2_000, 1.0)
+    assert output =~ "01:00:01.000 --> 01:00:01.500"
   end
 
   test "clamping a negative correction keeps a positive cue duration" do
@@ -170,8 +178,8 @@ defmodule Cinder.Subtitles.Sync.TimingTest do
 
   test "rejects a document containing any malformed structural cue row" do
     malformed = [
-      {".srt", "1\n00:00:01,000 --> 00:00:02,000\nOne\n2\nbad --> 00:00:04,000\nTwo\n"},
-      {".vtt", "WEBVTT\n\n00:01.000 --> 00:02.000\nOne\nbad --> 00:04.000\nTwo\n"},
+      {".srt", "1\n00:00:01,000 --> 00:00:02,000\nOne\n\n2\nbad --> 00:00:04,000\nTwo\n"},
+      {".vtt", "WEBVTT\n\n00:01.000 --> 00:02.000\nOne\n\nbad --> 00:04.000\nTwo\n"},
       {".ass", ass_source("0:00:01.00", "0:00:02.00") <> "Dialogue: bad,row\n"},
       {".sub", "[00:00:01.00][00:00:02.00]One\n[bad][00:00:04.00]Two\n"},
       {".sub", "{1}{1}25.0\n{25}{50}One\n{bad}{75}Two\n"}

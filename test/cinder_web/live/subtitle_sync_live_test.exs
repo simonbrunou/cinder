@@ -154,6 +154,29 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     assert File.read!(sidecar) == original
   end
 
+  test "worker status broadcasts refresh persisted sidecar results", %{conn: conn, movies: movies} do
+    {movie, _video, _sidecar, item} = managed_movie!(movies, "Refresh")
+    {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    assert render(view) =~ "Not analyzed"
+
+    assert {:ok, :corrected, _item} = Sync.manual(item, 1_000, 1.0)
+    send(view.pid, {:subtitle_sync_status, Worker.status()})
+
+    assert_eventually(fn -> render(view) =~ "Aligned via manual" end)
+  end
+
+  test "unexpected backups remain visibly quarantined across page loads", %{
+    conn: conn,
+    movies: movies
+  } do
+    {movie, _video, sidecar, item} = managed_movie!(movies, "Quarantined")
+    File.write!(Sync.backup_path(sidecar), "unproven backup")
+
+    {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    assert render(view) =~ "Needs review: replacement_cleanup_failed"
+    refute has_element?(view, "#reset-subtitle-#{item.id}")
+  end
+
   test "apply reauthorizes the selected item against the current catalog scope", %{
     conn: conn,
     movies: movies
@@ -403,6 +426,26 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
 
   defp digest(content),
     do: content |> then(&:crypto.hash(:sha256, &1)) |> Base.encode16(case: :lower)
+
+  defp managed_movie!(movies, title) do
+    video = Path.join(movies, "#{title}/#{title}.mkv")
+    sidecar = Path.rootname(video) <> ".en.srt"
+    content = "1\n00:00:01,000 --> 00:00:02,000\nOne\n\n"
+    File.mkdir_p!(Path.dirname(video))
+    File.write!(video, String.duplicate("v", 131_072))
+    File.write!(sidecar, content)
+    {:ok, hash} = Subtitles.Moviehash.of_file(video)
+    :ok = Manifest.put(video, hash, "en", "opensubtitles_hash", sidecar, digest(content))
+
+    movie =
+      %{title: title, status: :available}
+      |> movie_fixture()
+      |> Ecto.Changeset.change(file_path: video)
+      |> Repo.update!()
+
+    [item] = Sync.items({:movie, movie.id})
+    {movie, video, sidecar, item}
+  end
 
   defp assert_eventually(fun, attempts \\ 30)
   defp assert_eventually(fun, 0), do: assert(fun.())

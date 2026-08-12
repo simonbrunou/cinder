@@ -96,8 +96,9 @@ defmodule CinderWeb.SubtitleSyncLive do
   def handle_event(_event, _params, socket), do: {:noreply, socket}
 
   @impl true
-  def handle_info({:subtitle_sync_status, status}, socket),
-    do: {:noreply, assign(socket, worker_status: status)}
+  def handle_info({:subtitle_sync_status, status}, socket) do
+    {:noreply, socket |> assign(worker_status: status) |> refresh_items()}
+  end
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
@@ -174,7 +175,7 @@ defmodule CinderWeb.SubtitleSyncLive do
               <div class="min-w-0 flex-1">
                 <p class="truncate font-medium">{item.label}</p>
                 <p class="text-xs text-base-content/70">
-                  {sync_label(item.sync)}
+                  {sync_label(item)}
                 </p>
               </div>
               <.button
@@ -426,6 +427,10 @@ defmodule CinderWeb.SubtitleSyncLive do
 
   defp worker_label(_status), do: gettext("Worker idle")
 
+  defp sync_label(%{review_reason: reason}) when is_binary(reason),
+    do: sync_label(%{status: "review", reason: reason})
+
+  defp sync_label(%{sync: sync}), do: sync_label(sync)
   defp sync_label(nil), do: gettext("Not analyzed")
 
   defp sync_label(%{status: "review", reason: reason}),

@@ -85,7 +85,6 @@ defmodule Cinder.Subtitles.Sync.TimingGrammar do
     case cue_timing_and_text(first, rest) do
       {timing, text} ->
         text != [] and Enum.any?(text, &(String.trim(&1) != "")) and
-          Enum.all?(text, &(not String.contains?(&1, "-->"))) and
           valid_arrow_row?(timing, regex, precision)
 
       :error ->

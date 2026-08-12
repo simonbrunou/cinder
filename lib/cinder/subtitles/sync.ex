@@ -50,6 +50,16 @@ defmodule Cinder.Subtitles.Sync do
   end
 
   defp do_analyze_video(video_path) do
+    case discover(video_path) do
+      [] ->
+        []
+
+      _items ->
+        analyze_managed_video(video_path)
+    end
+  end
+
+  defp analyze_managed_video(video_path) do
     case current_moviehash(video_path) do
       {:ok, moviehash} ->
         with :ok <- reconcile_reset_cleanups(video_path, moviehash),
@@ -1172,11 +1182,17 @@ defmodule Cinder.Subtitles.Sync do
       origin: track.origin,
       managed_sha256: track.managed_sha256,
       sync: Map.get(track, :sync),
+      review_reason: cleanup_review_reason(track, sidecar_path),
       reset_cleanup_sync: Map.get(track, :reset_cleanup_sync),
       backup_tombstone: Map.get(track, :backup_tombstone),
       label:
         "#{Path.basename(video_path)} · #{language} #{String.upcase(String.trim_leading(Path.extname(sidecar_path), "."))}"
     }
+  end
+
+  defp cleanup_review_reason(track, sidecar_path) do
+    if is_nil(Map.get(track, :sync)) and active_backup?(backup_path(sidecar_path)),
+      do: "replacement_cleanup_failed"
   end
 
   defp metadata(status, method, moviehash, source, applied, metrics) do

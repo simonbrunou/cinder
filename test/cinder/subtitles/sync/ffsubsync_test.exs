@@ -4,7 +4,7 @@ defmodule Cinder.Subtitles.Sync.FfsubsyncTest do
   alias Cinder.Subtitles.Sync.Ffsubsync
 
   setup do
-    keys = [:ffsubsync_bin, :timeout_bin, Cinder.Subtitles.Sync.Ffsubsync]
+    keys = [:ffsubsync_bin, :ffsubsync_python, :timeout_bin, Cinder.Subtitles.Sync.Ffsubsync]
     saved = Map.new(keys, &{&1, Application.get_env(:cinder, &1)})
 
     on_exit(fn ->
@@ -50,6 +50,33 @@ defmodule Cinder.Subtitles.Sync.FfsubsyncTest do
     assert Enum.at(timeout_args, 0) == "--kill-after=5s"
     assert Enum.at(timeout_args, 1) == "900"
     assert Enum.at(timeout_args, 2) == bin
+  end
+
+  @tag :tmp_dir
+  test "passes explicit formats when anonymous paths have no extensions", %{tmp_dir: tmp} do
+    argv = Path.join(tmp, "argv")
+    bin = fake_bin(tmp, argv, :anonymous)
+    reference = Path.join(tmp, "reference")
+    input = Path.join(tmp, "input")
+    output = Path.join(tmp, "output")
+    File.write!(reference, "reference")
+    File.write!(input, "subtitle")
+    Application.put_env(:cinder, :ffsubsync_python, bin)
+
+    Application.put_env(
+      :cinder,
+      :timeout_bin,
+      fake_timeout_bin(tmp, Path.join(tmp, "timeout-argv"))
+    )
+
+    assert {:ok, %{score: 42.5}} = Ffsubsync.sync(reference, input, output, ".mkv", ".ass")
+    args = File.read!(argv) |> String.split("\n", trim: true)
+    assert args |> Enum.chunk_every(2, 1) |> Enum.any?(&(&1 == ["--cinder-input-format", "ass"]))
+    assert args |> Enum.chunk_every(2, 1) |> Enum.any?(&(&1 == ["--cinder-output-format", "ass"]))
+
+    assert args
+           |> Enum.chunk_every(2, 1)
+           |> Enum.any?(&(&1 == ["--cinder-reference-format", "mkv"]))
   end
 
   @tag :tmp_dir
