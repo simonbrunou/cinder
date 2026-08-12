@@ -37,6 +37,7 @@ defmodule Cinder.Subtitles.SweeperTest do
     stub(Cinder.Library.FilesystemMock, :moviehash_data, fn _ -> :too_small end)
     stub(Cinder.Library.FilesystemMock, :read, fn _ -> {:error, :enoent} end)
     stub(Cinder.Library.FilesystemMock, :write, fn _, _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn _, _ -> :ok end)
     stub(Cinder.Library.FilesystemMock, :rename, fn _, _ -> :ok end)
 
     :ok

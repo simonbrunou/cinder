@@ -40,6 +40,40 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     assert Worker.status().counts.aligned == 2
   end
 
+  test "an enqueue for the current video retains exactly one follow-up pass" do
+    owner = self()
+
+    analyze = fn video ->
+      send(owner, {:started, video, self()})
+
+      receive do
+        :release -> [%{status: :aligned, label: video}]
+      end
+    end
+
+    worker =
+      start_supervised!(
+        {Worker, initial_scan: false, interval: :timer.hours(1), analyze: analyze}
+      )
+
+    unit = %{video_path: "/library/current.mkv", label: "Current"}
+    assert :ok = Worker.enqueue_units([unit], worker)
+    assert_receive {:started, "/library/current.mkv", first}
+
+    assert :ok = Worker.enqueue_units([unit, unit], worker)
+    assert :ok = Worker.enqueue_units([unit], worker)
+    assert Worker.status().queued == 1
+
+    send(first, :release)
+    assert_receive {:started, "/library/current.mkv", second}
+    refute second == first
+    send(second, :release)
+
+    assert_eventually(fn -> Worker.status().state == :idle end)
+    refute_receive {:started, "/library/current.mkv", _}, 100
+    assert Worker.status().counts.aligned == 2
+  end
+
   test "initial scan re-derives pending work instead of relying on an in-memory queue" do
     owner = self()
 
@@ -56,6 +90,61 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     start_supervised!({Worker, scan: scan, analyze: analyze, interval: :timer.hours(1)})
     assert_receive :scanned
     assert_receive {:recovered, "/library/recovered.mkv"}
+  end
+
+  test "slow scans do not block enqueue callers or worker status" do
+    owner = self()
+
+    scan = fn scope ->
+      send(owner, {:scan_started, scope, self()})
+
+      receive do
+        :release -> []
+      end
+    end
+
+    worker =
+      start_supervised!({Worker, initial_scan: false, scan: scan, interval: :timer.hours(1)})
+
+    enqueue = Task.async(fn -> Worker.enqueue_library(worker) end)
+    assert_receive {:scan_started, :library, scanner}
+    assert {:ok, :ok} = Task.yield(enqueue, 100)
+    assert %{state: :idle} = Worker.status()
+
+    send(scanner, :release)
+  end
+
+  test "scan exceptions are recorded as failures without crashing the worker" do
+    scan = fn :library -> raise "catalog unavailable" end
+
+    worker =
+      start_supervised!({Worker, initial_scan: false, scan: scan, interval: :timer.hours(1)})
+
+    assert :ok = Worker.enqueue_library(worker)
+
+    assert_eventually(fn -> Worker.status().counts.failed == 1 end)
+    assert Process.alive?(worker)
+    assert [%{status: :failed, reason: reason} | _] = Worker.status().recent
+    assert inspect(reason) =~ "catalog unavailable"
+  end
+
+  test "malformed scan units are recorded as failures without crashing the worker" do
+    scan = fn :library -> [:invalid, %{label: "missing path"}] end
+
+    worker =
+      start_supervised!({Worker, initial_scan: false, scan: scan, interval: :timer.hours(1)})
+
+    assert :ok = Worker.enqueue_library(worker)
+
+    assert_eventually(fn -> Worker.status().counts.failed == 1 end)
+    assert Process.alive?(worker)
+    assert [%{status: :failed, reason: reason} | _] = Worker.status().recent
+    assert inspect(reason) =~ "invalid_scan_result"
+  end
+
+  test "post-download enqueue is best effort when no named worker is alive" do
+    refute Process.whereis(Worker)
+    assert :ok = Worker.enqueue_after_download("/library/downloaded.mkv")
   end
 
   defp assert_eventually(fun, attempts \\ 20)

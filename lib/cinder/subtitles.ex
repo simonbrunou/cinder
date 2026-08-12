@@ -12,6 +12,7 @@ defmodule Cinder.Subtitles do
   alias Cinder.Library.{PathPolicy, Sidecars}
   alias Cinder.Settings
   alias Cinder.Subtitles.{Fetcher, Manifest, Moviehash, Srt}
+  alias Cinder.Subtitles.Sync
   alias Cinder.Subtitles.Sync.Worker
 
   @doc "Subtitle-search criteria for a movie: imdb + tmdb id (the provider prefers imdb)."
@@ -426,10 +427,25 @@ defmodule Cinder.Subtitles do
   end
 
   defp commit(video_path, kind, language, moviehash, origin, target, content) do
+    previous_state = Manifest.read(video_path)
+
+    previous_sync =
+      Manifest.replacement_cleanup_sync(previous_state, language) ||
+        Manifest.sync(previous_state, language)
+
     with {:ok, previous} <- sidecar_snapshot(target),
          :ok <- write_subtitle(target, content) do
-      case Manifest.put(video_path, moviehash, language, origin, target) do
+      case Manifest.put(
+             video_path,
+             moviehash,
+             language,
+             origin,
+             target,
+             sha256(content),
+             previous_sync
+           ) do
         :ok ->
+          reconcile_replaced_backup(video_path, language, target, previous_sync)
           after_commit(video_path, kind, language, origin)
 
         error ->
@@ -442,6 +458,33 @@ defmodule Cinder.Subtitles do
     else
       error ->
         Logger.warning("subtitle write failed for #{video_path} (#{language}): #{inspect(error)}")
+    end
+  end
+
+  defp cleanup_replaced_backup(video_path, language, target, previous_sync) do
+    case Sync.discard_replacement(video_path, language, target, previous_sync) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("subtitle backup cleanup failed for #{target}: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
+
+  defp reconcile_replaced_backup(_video_path, _language, _target, nil), do: :ok
+
+  defp reconcile_replaced_backup(video_path, language, target, previous_sync) do
+    with :ok <- cleanup_replaced_backup(video_path, language, target, previous_sync),
+         :ok <- Manifest.clear_replacement_cleanup(video_path, language) do
+      :ok
+    else
+      {:error, reason} ->
+        Logger.warning(
+          "subtitle replacement cleanup remains journaled for #{target}: #{inspect(reason)}"
+        )
+
+        {:error, reason}
     end
   end
 
@@ -623,6 +666,13 @@ defmodule Cinder.Subtitles do
 
   defp local_cache,
     do: %{tracks: :unknown, default_srt: :unknown, sidecars: :unknown, sidecar_srt: :unknown}
+
+  defp sha256(content) do
+    content
+    |> IO.iodata_to_binary()
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.encode16(case: :lower)
+  end
 
   defp provider, do: Application.fetch_env!(:cinder, :subtitles_provider)
   defp translator, do: Application.fetch_env!(:cinder, :subtitles_translator)

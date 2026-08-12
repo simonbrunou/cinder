@@ -10,6 +10,8 @@ defmodule Cinder.Library.Filesystem do
   @callback find_files(dir :: String.t()) ::
               {:ok, [{String.t(), non_neg_integer()}]} | {:error, term()}
   @callback mkdir_p(dir :: String.t()) :: :ok | {:error, term()}
+  @callback mkdir_exclusive(dir :: String.t(), mode :: non_neg_integer()) ::
+              :ok | {:error, term()}
   @callback ln(source :: String.t(), dest :: String.t()) :: :ok | {:error, term()}
   @callback cp(source :: String.t(), dest :: String.t()) :: :ok | {:error, term()}
   @callback cp_exclusive(
@@ -25,6 +27,17 @@ defmodule Cinder.Library.Filesystem do
   @callback read(path :: String.t()) :: {:ok, binary()} | {:error, term()}
   @callback write(path :: String.t(), content :: iodata()) :: :ok | {:error, term()}
   @callback write_exclusive(path :: String.t(), content :: iodata()) :: :ok | {:error, term()}
+  @callback open_bound(path :: String.t(), modes :: [atom()]) ::
+              {:ok, %{io: term(), path: String.t(), identity: term()}} | {:error, term()}
+  @callback create_bound(path :: String.t(), content :: iodata()) ::
+              {:ok, %{io: term(), path: String.t(), identity: term()}} | {:error, term()}
+  @callback close_bound(%{io: term(), path: String.t(), identity: term()}) ::
+              :ok | {:error, term()}
+  @callback discard_bound(%{io: term(), path: String.t(), identity: term()}) ::
+              :ok | {:error, term()}
+  @callback write_bound(%{io: term(), path: String.t(), identity: term()}, iodata()) ::
+              :ok | {:error, term()}
+  @callback exchange(source :: String.t(), dest :: String.t()) :: :ok | {:error, term()}
   @callback moviehash_data(path :: String.t()) ::
               {:ok, {non_neg_integer(), binary(), binary()}} | :too_small | {:error, term()}
 end

@@ -16,7 +16,14 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
   setup :register_and_log_in_admin
 
   setup %{tmp_dir: tmp} do
-    keys = [:filesystem, :path_policy, :movies_library_path, :tv_library_path]
+    keys = [
+      :filesystem,
+      :path_policy,
+      :movies_library_path,
+      :tv_library_path,
+      :filesystem_barrier
+    ]
+
     saved = Map.new(keys, &{&1, Application.get_env(:cinder, &1)})
     movies = Path.join(tmp, "movies")
     tv = Path.join(tmp, "tv")
@@ -47,7 +54,16 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     File.write!(video, String.duplicate("v", 131_072))
     File.write!(sidecar, "1\n00:00:01,000 --> 00:00:02,000\nOne\n\n")
     {:ok, hash} = Subtitles.Moviehash.of_file(video)
-    assert :ok = Manifest.put(video, hash, "en", "opensubtitles_hash")
+
+    assert :ok =
+             Manifest.put(
+               video,
+               hash,
+               "en",
+               "opensubtitles_hash",
+               sidecar,
+               digest(File.read!(sidecar))
+             )
 
     movie =
       %{title: "Movie", status: :available}
@@ -96,7 +112,16 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     File.write!(video, String.duplicate("v", 131_072))
     File.write!(sidecar, original)
     {:ok, hash} = Subtitles.Moviehash.of_file(video)
-    assert :ok = Manifest.put(video, hash, "en", "opensubtitles_hash", sidecar)
+
+    assert :ok =
+             Manifest.put(
+               video,
+               hash,
+               "en",
+               "opensubtitles_hash",
+               sidecar,
+               digest(original)
+             )
 
     movie =
       %{title: "Bound", status: :available}
@@ -127,6 +152,191 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
 
     view |> form("#subtitle-sync-form", changed_params) |> render_submit()
     assert File.read!(sidecar) == original
+  end
+
+  test "apply reauthorizes the selected item against the current catalog scope", %{
+    conn: conn,
+    movies: movies
+  } do
+    video = Path.join(movies, "Moved/Moved.mkv")
+    replacement_video = Path.join(movies, "Moved/Replacement.mkv")
+    sidecar = Path.rootname(video) <> ".en.srt"
+    original = "1\n00:00:01,000 --> 00:00:02,000\nOne\n\n"
+    File.mkdir_p!(Path.dirname(video))
+    File.write!(video, String.duplicate("v", 131_072))
+    File.write!(replacement_video, String.duplicate("r", 131_072))
+    File.write!(sidecar, original)
+    {:ok, hash} = Subtitles.Moviehash.of_file(video)
+
+    assert :ok =
+             Manifest.put(
+               video,
+               hash,
+               "en",
+               "opensubtitles_hash",
+               sidecar,
+               digest(original)
+             )
+
+    movie =
+      %{title: "Moved", status: :available}
+      |> movie_fixture()
+      |> Ecto.Changeset.change(file_path: video)
+      |> Repo.update!()
+
+    [item] = Sync.items({:movie, movie.id})
+    {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    view |> element("#subtitle-sync-item-#{item.id} button", "Adjust") |> render_click()
+
+    params = %{"adjustment" => %{"mode" => "direct", "delay_ms" => "1000", "rate" => "1.0"}}
+    view |> form("#subtitle-sync-form", params) |> render_change()
+
+    movie |> Ecto.Changeset.change(file_path: replacement_video) |> Repo.update!()
+    view |> form("#subtitle-sync-form", params) |> render_submit()
+
+    assert File.read!(sidecar) == original
+  end
+
+  test "scoped apply holds the catalog write reservation through filesystem publication", %{
+    movies: movies
+  } do
+    video = Path.join(movies, "Reserved/Reserved.mkv")
+    replacement_video = Path.join(movies, "Reserved/Replacement.mkv")
+    sidecar = Path.rootname(video) <> ".en.srt"
+    original = "1\n00:00:01,000 --> 00:00:02,000\nOne\n\n"
+    File.mkdir_p!(Path.dirname(video))
+    File.write!(video, String.duplicate("v", 131_072))
+    File.write!(replacement_video, String.duplicate("r", 131_072))
+    File.write!(sidecar, original)
+    {:ok, hash} = Subtitles.Moviehash.of_file(video)
+
+    assert :ok =
+             Manifest.put(
+               video,
+               hash,
+               "en",
+               "opensubtitles_hash",
+               sidecar,
+               digest(original)
+             )
+
+    movie =
+      %{title: "Reserved", status: :available}
+      |> movie_fixture()
+      |> Ecto.Changeset.change(file_path: video)
+      |> Repo.update!()
+
+    [item] = Sync.items({:movie, movie.id})
+    assert {:ok, fingerprint} = Sync.fingerprint(item)
+    Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
+
+    Application.put_env(:cinder, :filesystem_barrier, %{
+      owner: self(),
+      operation: :moviehash_data,
+      contains: Path.basename(video),
+      once: true
+    })
+
+    apply =
+      Task.async(fn ->
+        Sync.manual_in_scope({:movie, movie.id}, item.id, 1_000, 1.0, fingerprint)
+      end)
+
+    assert_receive {:filesystem_barrier, pid, ref, :moviehash_data, ^video}
+
+    update =
+      Task.async(fn ->
+        movie |> Ecto.Changeset.change(file_path: replacement_video) |> Repo.update!()
+      end)
+
+    assert Task.yield(update, 100) == nil
+    send(pid, {ref, :continue})
+    assert {:ok, :corrected, _} = Task.await(apply)
+    assert %{file_path: ^replacement_video} = Task.await(update)
+    assert File.read!(sidecar) =~ "00:00:02,000"
+  end
+
+  test "extreme numeric adjustments are rejected without crashing the LiveView", %{
+    conn: conn,
+    movies: movies
+  } do
+    video = Path.join(movies, "Extreme/Extreme.mkv")
+    sidecar = Path.rootname(video) <> ".en.srt"
+    original = "1\n00:00:01,000 --> 00:00:02,000\nOne\n\n"
+    File.mkdir_p!(Path.dirname(video))
+    File.write!(video, String.duplicate("v", 131_072))
+    File.write!(sidecar, original)
+    {:ok, hash} = Subtitles.Moviehash.of_file(video)
+
+    assert :ok =
+             Manifest.put(
+               video,
+               hash,
+               "en",
+               "opensubtitles_hash",
+               sidecar,
+               digest(original)
+             )
+
+    movie =
+      %{title: "Extreme", status: :available}
+      |> movie_fixture()
+      |> Ecto.Changeset.change(file_path: video)
+      |> Repo.update!()
+
+    [item] = Sync.items({:movie, movie.id})
+    {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    view |> element("#subtitle-sync-item-#{item.id} button", "Adjust") |> render_click()
+
+    params = %{
+      "adjustment" => %{"mode" => "direct", "delay_ms" => "0", "rate" => "1.0e307"}
+    }
+
+    html = view |> form("#subtitle-sync-form", params) |> render_change()
+    refute html =~ "subtitle-sync-preview"
+    assert Process.alive?(view.pid)
+  end
+
+  test "reset with a missing backup reports failure and retains sync metadata", %{
+    conn: conn,
+    movies: movies
+  } do
+    video = Path.join(movies, "MissingBackup/MissingBackup.mkv")
+    sidecar = Path.rootname(video) <> ".en.srt"
+    File.mkdir_p!(Path.dirname(video))
+    File.write!(video, String.duplicate("v", 131_072))
+    File.write!(sidecar, "1\n00:00:01,000 --> 00:00:02,000\nOne\n\n")
+    {:ok, hash} = Subtitles.Moviehash.of_file(video)
+
+    assert :ok =
+             Manifest.put(
+               video,
+               hash,
+               "en",
+               "opensubtitles_hash",
+               sidecar,
+               digest(File.read!(sidecar))
+             )
+
+    movie =
+      %{title: "Missing Backup", status: :available}
+      |> movie_fixture()
+      |> Ecto.Changeset.change(file_path: video)
+      |> Repo.update!()
+
+    [item] = Sync.items({:movie, movie.id})
+    assert {:ok, :corrected, _} = Sync.manual(item, 1_000, 1.0)
+    corrected = File.read!(sidecar)
+    metadata = Manifest.sync(Manifest.read(video), "en")
+    File.rm!(Sync.backup_path(sidecar))
+
+    {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    html = view |> element("#reset-subtitle-#{item.id}") |> render_click()
+
+    refute html =~ "Original subtitle restored."
+    assert html =~ "Original subtitle could not be restored."
+    assert File.read!(sidecar) == corrected
+    assert Manifest.sync(Manifest.read(video), "en") == metadata
   end
 
   test "subtitle sync route is admin-only", %{conn: conn} do
@@ -190,6 +400,9 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     assert :ok = Worker.enqueue_units([%{video_path: "/media/Movie.mkv", label: "Movie"}])
     assert_eventually(fn -> render(view) =~ "manifest" end)
   end
+
+  defp digest(content),
+    do: content |> then(&:crypto.hash(:sha256, &1)) |> Base.encode16(case: :lower)
 
   defp assert_eventually(fun, attempts \\ 30)
   defp assert_eventually(fun, 0), do: assert(fun.())

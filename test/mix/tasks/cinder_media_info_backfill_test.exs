@@ -35,6 +35,7 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
     stub(Cinder.Library.FilesystemMock, :lstat, fn _ -> {:ok, %File.Stat{}} end)
     stub(Cinder.Library.FilesystemMock, :read, fn _ -> {:error, :enoent} end)
     stub(Cinder.Library.FilesystemMock, :write, fn _, _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn _, _ -> :ok end)
     stub(Cinder.Library.FilesystemMock, :rename, fn _, _ -> :ok end)
 
     Backfill.run()
@@ -75,6 +76,7 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
     stub(Cinder.Library.FilesystemMock, :lstat, fn _ -> {:ok, %File.Stat{}} end)
     stub(Cinder.Library.FilesystemMock, :read, fn _ -> {:error, :enoent} end)
     stub(Cinder.Library.FilesystemMock, :write, fn _, _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn _, _ -> :ok end)
     stub(Cinder.Library.FilesystemMock, :rename, fn _, _ -> :ok end)
 
     Backfill.run()
@@ -108,6 +110,11 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
     end)
 
     stub(Cinder.Library.FilesystemMock, :write, fn path, content ->
+      Agent.update(fs, &Map.put(&1, path, IO.iodata_to_binary(content)))
+      :ok
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn path, content ->
       Agent.update(fs, &Map.put(&1, path, IO.iodata_to_binary(content)))
       :ok
     end)
@@ -172,6 +179,11 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
     end)
 
     stub(Cinder.Library.FilesystemMock, :write, fn path, content ->
+      Agent.update(fs, &Map.put(&1, path, IO.iodata_to_binary(content)))
+      :ok
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn path, content ->
       Agent.update(fs, &Map.put(&1, path, IO.iodata_to_binary(content)))
       :ok
     end)

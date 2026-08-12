@@ -50,7 +50,7 @@ defmodule CinderWeb.SubtitleSyncLive do
 
   def handle_event("apply", %{"adjustment" => params}, %{assigns: %{selected: item}} = socket)
       when is_map(params) and not is_nil(item) do
-    case adjustment(params, item, socket.assigns.preview) do
+    case adjustment(params, item, socket.assigns.preview, socket.assigns.scope) do
       {:ok, status, _item} ->
         {:noreply,
          socket
@@ -66,14 +66,15 @@ defmodule CinderWeb.SubtitleSyncLive do
   end
 
   def handle_event("reset", %{"id" => id}, socket) when is_binary(id) do
-    with %{} = item <- find_item(socket.assigns.scope, id),
-         :ok <- Sync.reset(item) do
-      {:noreply,
-       socket
-       |> put_flash(:info, gettext("Original subtitle restored."))
-       |> refresh_items()}
-    else
-      _ -> {:noreply, put_flash(socket, :error, gettext("That subtitle is no longer available."))}
+    case Sync.reset_in_scope(socket.assigns.scope, id) do
+      :ok ->
+        {:noreply,
+         socket
+         |> put_flash(:info, gettext("Original subtitle restored."))
+         |> refresh_items()}
+
+      {:error, _reason} ->
+        {:noreply, put_flash(socket, :error, gettext("Original subtitle could not be restored."))}
     end
   end
 
@@ -298,12 +299,13 @@ defmodule CinderWeb.SubtitleSyncLive do
 
   defp find_item(scope, id), do: Enum.find(Sync.items(scope), &(&1.id == id))
 
-  defp adjustment(params, item, preview) do
+  defp adjustment(params, item, preview, scope) do
     with {:ok, transform} <- normalized_adjustment(params),
+         %{} <- item,
          %{item_id: item_id, fingerprint: fingerprint, transform: ^transform} <- preview,
          true <- item_id == item.id do
       {offset_ms, rate} = transform
-      Sync.manual(item, offset_ms, rate, fingerprint)
+      Sync.manual_in_scope(scope, item.id, offset_ms, rate, fingerprint)
     else
       _ -> {:error, :preview_required}
     end
@@ -345,7 +347,7 @@ defmodule CinderWeb.SubtitleSyncLive do
   defp parse_adjustment(params) do
     with {delay, ""} <- Integer.parse(params["delay_ms"] || ""),
          {rate, ""} <- Float.parse(params["rate"] || ""),
-         true <- rate > 0 do
+         true <- Timing.valid_adjustment?(delay, rate) do
       {:direct, delay, rate}
     else
       _ -> :error
@@ -365,8 +367,11 @@ defmodule CinderWeb.SubtitleSyncLive do
 
   defp milliseconds(value) when is_binary(value) do
     case Float.parse(value) do
-      {seconds, ""} when seconds >= 0 -> {:ok, round(seconds * 1_000)}
-      _ -> {:error, :invalid_timestamp}
+      {seconds, ""} when seconds >= 0 and seconds <= 604_800 ->
+        {:ok, round(seconds * 1_000)}
+
+      _ ->
+        {:error, :invalid_timestamp}
     end
   end
 

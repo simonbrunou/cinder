@@ -6,37 +6,61 @@ defmodule Cinder.Subtitles.Sync.Ffsubsync do
 
   @impl true
   def sync(reference, input, output) do
+    run(
+      ffsubsync_bin(),
+      arguments(reference, input, output),
+      output
+    )
+  end
+
+  def sync(reference, input, output, reference_extension, input_extension) do
     args =
       [
-        "--kill-after=5s",
-        Integer.to_string(timeout_seconds()),
-        bin(),
-        reference,
-        "-i",
-        input,
-        "-o",
-        output,
-        "--skip-sync-on-low-quality",
-        "--min-score",
-        "10",
-        "--quality-max-offset-seconds",
-        "35",
-        "--max-offset-seconds",
-        "35",
-        "--max-framerate-deviation",
-        "0.05",
-        "--gss",
-        "--output-encoding",
-        "same"
+        runner(),
+        "--cinder-input-format",
+        format(input_extension),
+        "--cinder-reference-format",
+        format(reference_extension),
+        reference
+        | arguments(input, output)
       ]
 
-    case System.cmd(timeout_bin(), args, stderr_to_stdout: true) do
+    run(runner_python(), args, output)
+  end
+
+  defp run(executable, args, output) do
+    command = ["--kill-after=5s", Integer.to_string(timeout_seconds()), executable | args]
+
+    case System.cmd(timeout_bin(), command, stderr_to_stdout: true) do
       {log, 0} -> result(log, output)
       {_log, 124} -> {:review, %{reason: :timeout}}
       {log, code} -> {:error, {:ffsubsync_exit, code, String.trim(log)}}
     end
   rescue
     error -> {:error, error}
+  end
+
+  defp arguments(reference, input, output), do: [reference | arguments(input, output)]
+
+  defp arguments(input, output) do
+    [
+      "-i",
+      input,
+      "-o",
+      output,
+      "--skip-sync-on-low-quality",
+      "--min-score",
+      "10",
+      "--quality-max-offset-seconds",
+      "35",
+      "--max-offset-seconds",
+      "35",
+      "--max-framerate-deviation",
+      "0.05",
+      "--gss",
+      "--output-encoding",
+      "same"
+    ]
   end
 
   defp result(log, output) do
@@ -80,7 +104,24 @@ defmodule Cinder.Subtitles.Sync.Ffsubsync do
   defp normalize_float(value),
     do: if(String.contains?(value, "."), do: value, else: value <> ".0")
 
-  defp bin, do: Application.get_env(:cinder, :ffsubsync_bin, "ffsubsync")
+  defp format(extension),
+    do: extension |> String.downcase() |> String.trim_leading(".")
+
+  defp runner,
+    do: Path.join(:code.priv_dir(:cinder), "ffsubsync_runner.py")
+
+  defp ffsubsync_bin, do: Application.get_env(:cinder, :ffsubsync_bin, "ffsubsync")
+
+  defp runner_python do
+    Application.get_env(:cinder, :ffsubsync_python) || default_runner_python()
+  end
+
+  defp default_runner_python do
+    if File.regular?("/opt/ffsubsync/bin/python3"),
+      do: "/opt/ffsubsync/bin/python3",
+      else: System.find_executable("python3") || "python3"
+  end
+
   defp timeout_bin, do: Application.get_env(:cinder, :timeout_bin, "timeout")
 
   defp timeout_seconds do

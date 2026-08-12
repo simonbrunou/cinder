@@ -65,7 +65,8 @@ defmodule Cinder.Subtitles.ManifestTest do
            "fr" => %{
              "origin" => "opensubtitles_hash",
              "file" => "M.fr.srt",
-             "sync" => %{"status" => "made-up"}
+             "sync" => %{"status" => "made-up"},
+             "reset_cleanup_sync" => %{"status" => "made-up"}
            },
            "en" => %{
              "origin" => "opensubtitles_id",
@@ -81,7 +82,8 @@ defmodule Cinder.Subtitles.ManifestTest do
                "fr" => %{
                  origin: "opensubtitles_hash",
                  file: "M.fr.srt",
-                 sync_invalid?: true
+                 sync_invalid?: true,
+                 reset_cleanup_sync_invalid?: true
                },
                "en" => %{origin: "opensubtitles_id", file_invalid?: true}
              }
@@ -102,6 +104,13 @@ defmodule Cinder.Subtitles.ManifestTest do
     assert {:error, :invalid_sync} = Manifest.put_sync(video, "fr", %{sync | rate: 0.0})
     assert Manifest.sync(Manifest.read(video), "fr") == sync
 
+    assert :ok = Manifest.begin_reset_cleanup(video, "fr", sync)
+    assert Manifest.reset_cleanup_sync(Manifest.read(video), "fr") == sync
+    assert :ok = Manifest.finish_reset_cleanup(video, "fr")
+    assert Manifest.sync(Manifest.read(video), "fr") == nil
+    assert Manifest.reset_cleanup_sync(Manifest.read(video), "fr") == nil
+
+    assert :ok = Manifest.put_sync(video, "fr", sync)
     assert :ok = Manifest.clear_sync(video, "fr")
     assert Manifest.sync(Manifest.read(video), "fr") == nil
 
@@ -138,7 +147,7 @@ defmodule Cinder.Subtitles.ManifestTest do
 
     expect(Cinder.Library.FilesystemMock, :read, fn ^manifest -> {:error, :enoent} end)
 
-    expect(Cinder.Library.FilesystemMock, :write, fn temporary, json ->
+    expect(Cinder.Library.FilesystemMock, :write_exclusive, fn temporary, json ->
       assert Path.dirname(temporary) == "/lib/M"
       assert String.contains?(temporary, ".cinder-subtitle-manifest-")
 
@@ -177,7 +186,7 @@ defmodule Cinder.Subtitles.ManifestTest do
 
     Application.put_env(:cinder, :filesystem_barrier, %{
       owner: self(),
-      operation: :write,
+      operation: :write_exclusive,
       contains: ".cinder-subtitle-manifest-"
     })
 
@@ -191,7 +200,7 @@ defmodule Cinder.Subtitles.ManifestTest do
     end)
 
     task = Task.async(fn -> Manifest.put(video, "hash", "fr", "embedded") end)
-    assert_receive {:filesystem_barrier, pid, ref, :write, temporary}, 1_000
+    assert_receive {:filesystem_barrier, pid, ref, :write_exclusive, temporary}, 1_000
     backup = parent <> ".old"
     File.rename!(parent, backup)
     File.ln_s!(outside, parent)
@@ -205,6 +214,34 @@ defmodule Cinder.Subtitles.ManifestTest do
 
     assert Task.await(task) == {:error, :unsafe_destination}
     refute File.exists?(Path.join(outside, Path.basename(manifest)))
+  end
+
+  @tag :tmp_dir
+  test "temporary manifest creation rejects a symlink substituted after validation", %{
+    tmp_dir: tmp
+  } do
+    video = configure_disk(tmp)
+    outside = Path.join(tmp, "outside")
+    File.write!(outside, "outside")
+    Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
+
+    Application.put_env(:cinder, :filesystem_barrier, %{
+      owner: self(),
+      operation: :write_exclusive,
+      phase: :before,
+      contains: ".cinder-subtitle-manifest-",
+      once: true
+    })
+
+    on_exit(fn -> Application.delete_env(:cinder, :filesystem_barrier) end)
+
+    task = Task.async(fn -> Manifest.put(video, "hash", "fr", "embedded") end)
+    assert_receive {:filesystem_barrier, pid, ref, :write_exclusive, temporary}
+    File.ln_s!(outside, temporary)
+    send(pid, {ref, :continue})
+    assert {:error, :eexist} = Task.await(task)
+    assert File.read!(outside) == "outside"
+    refute File.exists?(Manifest.path(video))
   end
 
   defp valid_sync do

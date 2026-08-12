@@ -44,6 +44,11 @@ defmodule Cinder.SubtitlesTest do
       :ok
     end)
 
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn path, content ->
+      Agent.update(fs, &Map.put(&1, path, IO.iodata_to_binary(content)))
+      :ok
+    end)
+
     stub(Cinder.Library.FilesystemMock, :rename, fn source, dest ->
       Agent.get_and_update(fs, fn files ->
         {{:ok, Map.fetch!(files, source)},
@@ -174,6 +179,12 @@ defmodule Cinder.SubtitlesTest do
     assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
     assert_receive {:analyzed, @video}
     assert Agent.get(fs, &Map.get(&1, Subtitles.sidecar_path(@video, "fr"))) == "FR SRT"
+
+    track = Manifest.read(@video).tracks["fr"]
+    assert track.file == "M.fr.srt"
+
+    assert track.managed_sha256 ==
+             "FR SRT" |> then(&:crypto.hash(:sha256, &1)) |> Base.encode16(case: :lower)
   end
 
   test "concurrent release-sidecar manifests serialize by video", %{fs: fs} do
@@ -347,7 +358,7 @@ defmodule Cinder.SubtitlesTest do
       {:ok, {131_072, <<0::size(65_536 * 8)>>, <<0::size(65_536 * 8)>>}}
     end)
 
-    stub(Cinder.Library.FilesystemMock, :write, fn path, content ->
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn path, content ->
       if String.contains?(path, ".cinder-subtitle-manifest-") do
         {:error, :eio}
       else
@@ -390,7 +401,7 @@ defmodule Cinder.SubtitlesTest do
       {:ok, {131_072, <<0::size(65_536 * 8)>>, <<0::size(65_536 * 8)>>}}
     end)
 
-    stub(Cinder.Library.FilesystemMock, :write, fn path, content ->
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn path, content ->
       if String.contains?(path, ".cinder-subtitle-manifest-") do
         {:error, :eio}
       else
@@ -669,7 +680,7 @@ defmodule Cinder.SubtitlesTest do
 
     Application.put_env(:cinder, :filesystem_barrier, %{
       owner: self(),
-      operation: :write,
+      operation: :write_exclusive,
       contains: ".cinder-subtitle-manifest-"
     })
 
@@ -692,7 +703,7 @@ defmodule Cinder.SubtitlesTest do
 
     task = Task.async(fn -> Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies) end)
 
-    assert_receive {:filesystem_barrier, pid, ref, :write, manifest_temporary}, 1_000
+    assert_receive {:filesystem_barrier, pid, ref, :write_exclusive, manifest_temporary}, 1_000
     assert File.exists?(target)
     assert String.contains?(manifest_temporary, ".cinder-subtitle-manifest-")
 

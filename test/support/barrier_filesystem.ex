@@ -18,6 +18,13 @@ defmodule Cinder.Test.BarrierFilesystem do
 
   @impl true
   defdelegate mkdir_p(path), to: Disk
+
+  @impl true
+  def mkdir_exclusive(path, mode) do
+    pause(:mkdir_exclusive, path, :before)
+    Disk.mkdir_exclusive(path, mode)
+  end
+
   @impl true
   def ln(source, dest) do
     case injected_failure(:ln, source, dest) do
@@ -88,6 +95,12 @@ defmodule Cinder.Test.BarrierFilesystem do
         pause(:rm, path)
         result
 
+      {:post_effect_error, reason} ->
+        case Disk.rm(path) do
+          :ok -> {:error, {:effect_committed, "unlink", reason}}
+          {:error, _reason} = error -> error
+        end
+
       {:error, _} = error ->
         error
     end
@@ -95,6 +108,7 @@ defmodule Cinder.Test.BarrierFilesystem do
 
   @impl true
   defdelegate rmdir(path), to: Disk
+
   @impl true
   defdelegate rm_rf(path), to: Disk
   @impl true
@@ -131,7 +145,122 @@ defmodule Cinder.Test.BarrierFilesystem do
   end
 
   @impl true
-  defdelegate moviehash_data(path), to: Disk
+  def open_bound(path, modes) do
+    pause(:open_bound, path, :before)
+
+    case Disk.open_bound(path, modes) do
+      {:ok, bound} -> {:ok, Map.put(bound, :source_path, path)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  @impl true
+  def create_bound(path, content) do
+    pause(:create_bound, path, :before)
+
+    case injected_failure(:create_bound, path, path) do
+      :ok ->
+        result = Disk.create_bound(path, content)
+        pause(:create_bound, path)
+        result
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  @impl true
+  def close_bound(bound) do
+    source = Map.get(bound, :source_path, bound.path)
+
+    case injected_failure(:close_bound, source, source) do
+      :ok ->
+        Disk.close_bound(bound)
+
+      {:error, _reason} = error ->
+        Disk.close_bound(bound)
+        error
+    end
+  end
+
+  @impl true
+  def discard_bound(bound) do
+    source = Map.get(bound, :source_path, bound.path)
+    pause(:discard_bound, source, :before)
+
+    case injected_failure(:discard_bound, source, source) do
+      :ok ->
+        result = Disk.discard_bound(bound)
+        pause(:discard_bound, source)
+        result
+
+      {:post_effect_error, reason} ->
+        case Disk.discard_bound(bound) do
+          :ok -> {:error, {:effect_committed, "discard_bound", reason}}
+          {:error, _reason} = error -> error
+        end
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  @impl true
+  def write_bound(bound, content) do
+    source = Map.get(bound, :source_path, bound.path)
+    pause(:write_bound, source, :before)
+
+    case injected_failure(:write_bound, source, source) do
+      :ok ->
+        result = Disk.write_bound(bound, content)
+        pause(:write_bound, source)
+        result
+
+      {:post_effect_error, reason} ->
+        case Disk.write_bound(bound, content) do
+          :ok -> {:error, {:effect_committed, "write_bound", reason}}
+          {:error, _reason} = error -> error
+        end
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  @impl true
+  def exchange(source, dest) do
+    pause(:exchange, source, :before)
+
+    case injected_failure(:exchange, source, dest) do
+      :ok ->
+        result = Disk.exchange(source, dest)
+        pause(:exchange, source)
+        result
+
+      {:post_effect_error, reason} ->
+        case Disk.exchange(source, dest) do
+          :ok -> {:error, {:effect_committed, "exchange", reason}}
+          {:error, _reason} = error -> error
+        end
+
+      {:error, _reason} = error ->
+        error
+    end
+  end
+
+  @impl true
+  def moviehash_data(path) do
+    pause(:moviehash_data, path, :before)
+
+    result =
+      case injected_failure(:moviehash_data, path, path) do
+        :ok -> Disk.moviehash_data(path)
+        {:error, _} = error -> error
+      end
+
+    pause(:moviehash_data, path)
+    result
+  end
 
   defp pause(operation, path, phase \\ :after) do
     case Application.get_env(:cinder, :filesystem_barrier) do
@@ -204,7 +333,9 @@ defmodule Cinder.Test.BarrierFilesystem do
       if Map.get(failure, :once, false),
         do: Application.delete_env(:cinder, :filesystem_failure)
 
-      {:error, reason}
+      if Map.get(failure, :phase) == :post_effect,
+        do: {:post_effect_error, reason},
+        else: {:error, reason}
     else
       :ok
     end

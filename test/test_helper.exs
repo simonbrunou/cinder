@@ -1,4 +1,4 @@
-ExUnit.start()
+ExUnit.start(assert_receive_timeout: 1_000)
 Ecto.Adapters.SQL.Sandbox.mode(Cinder.Repo, :manual)
 
 # Mox mocks for the external-service behaviours (real impls land per phase).
