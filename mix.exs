@@ -52,7 +52,6 @@ defmodule Cinder.MixProject do
       {:bcrypt_elixir, "~> 3.0"},
       {:tidewave, "~> 0.6", only: [:dev]},
       {:usage_rules, "~> 0.1", only: [:dev]},
-      {:claude, "~> 0.5", only: [:dev], runtime: false},
       {:phoenix, "~> 1.8.7"},
       {:phoenix_ecto, "~> 4.5"},
       {:ecto_sql, "~> 3.13"},

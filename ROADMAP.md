@@ -10,7 +10,7 @@
 > notably the "movies-only slice / TV and multi-user out of scope" framing directly below, the
 > "Part III is the current feature program" status note, and the *How to run this with Claude
 > Code* section's "one phase per session" workflow (which also references `/goal`, a command that
-> no longer exists). **`CLAUDE.md` supersedes all of it** — read that for how to work here today.
+> no longer exists). **`AGENTS.md` supersedes all of it** — read that for how to work here today.
 >
 > Don't `@`-import this file; at 1,100+ lines it costs ~14k tokens a session for history you
 > rarely need. Read it on demand.

@@ -1,7 +1,6 @@
 ---
 name: nix-bootstrap
 description: Bootstrap or repair the cinder dev toolchain after a clone or an Elixir/OTP version change — clears a stale _build, installs hex/rebar into the active namespace, fetches deps, and runs the suite. Use when mix fails with NIF/"corrupt atom table" errors, after switching Elixir/OTP, or on a fresh machine.
-disable-model-invocation: true
 ---
 
 # nix-bootstrap
