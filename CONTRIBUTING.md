@@ -30,18 +30,16 @@ inspecting the running app over guessing.
 - Keep diffs minimal and trace each change to the request; `credo --strict` and warnings-as-errors
   must stay clean.
 
-See [`CLAUDE.md`](CLAUDE.md) for fuller architecture notes and [`ROADMAP.md`](ROADMAP.md) for
-current scope.
+See [`AGENTS.md`](AGENTS.md) for fuller architecture notes and [`ROADMAP.md`](ROADMAP.md) for
+historical scope.
 
-### Agent config sync
+### Agent configuration
 
-Subagent prompts are authored once in `.claude.exs`; `mix claude.install` regenerates
-`.claude/agents/*.md` from it, and rewrites `.claude/settings.json` — that file is purely
-lib-generated now, so let it (the graphify hooks it used to strip live at user level in
-`~/.claude/hooks/`). `AGENTS.md` mirrors `CLAUDE.md` by hand for non-Claude agents; Codex reads
-it from the repo root. The only in-repo Codex config is `.codex/config.toml`, two lines pointing
-at this project's dev Tidewave MCP — everything else that lived under `.codex/` was a hand-kept
-mirror of `.claude/` and has been deleted rather than re-synced.
+`AGENTS.md` is the shared instruction source. Project-specific workflows live as portable Agent
+Skills under `.agents/skills/`; dependency guidance is synced directly with
+`mix usage_rules.sync AGENTS.md --all --link-to-folder deps --remove-missing`. Client-specific
+files are thin adapters only: `.mcp.json` and `.codex/config.toml` connect Tidewave, while
+`CLAUDE.md` links to `AGENTS.md` for compatibility.
 
 ## Branches & PRs
 

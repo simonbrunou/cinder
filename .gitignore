@@ -42,8 +42,8 @@ npm-debug.log
 # Local env (the quickstart puts SECRET_KEY_BASE here — never commit it)
 .env
 
-# Personal Claude Code layer
-.claude/settings.local.json
+# Personal agent-client layer
+/.claude/
 
 # Nix / direnv
 .direnv/

@@ -3,39 +3,38 @@
 ## What this is
 
 Cinder is a single-household, self-hosted replacement for the Sonarr / Radarr / Seerr loop:
-request a movie → find the best release → download it → import it into Jellyfin. It is built on
-Phoenix/LiveView. The current target is the **movies-only vertical slice**; TV, quality
-upgrades, and multi-user are out of scope until that slice is solid.
+request a movie or TV series → find the best release → download it → import it into
+Jellyfin/Plex. Built on Phoenix/LiveView.
 
-The authoritative build plan is **@ROADMAP.md**. Read it at the start of every session and work
-the current phase only.
+**Status: released — v1.0.0 (2026-07-03).** Movies, TV (series/season/episode, season packs,
+calendar), multi-user with a request→approval gate, and an opt-in per-title anime handling
+profile are all shipped. Work is now incremental — issues, fixes, one-off features. There is no
+"current phase."
+
+`ROADMAP.md` is the **build record** (Phases 0–5, M0–M8, A0–A6), not a live plan — read it only
+when you need the history behind a decision. Do not auto-import it: at 1,100+ lines it adds stale
+context to every task. Per-feature design and plan docs live under `docs/specs/`, `docs/plans/`,
+`docs/audits/`, and `docs/superpowers/`.
 
 ## Stack
 
-- Elixir / Phoenix 1.8, LiveView (HEEx).
 - Ecto with `ecto_sqlite3` (single-household scale; not Postgres on purpose).
-- HTTP via `Req`.
 - UI via Tailwind + daisyUI (Phoenix 1.8 default). No React; shadcn does not apply here.
-- Tests via ExUnit + `Mox`. Static checks via `credo`.
 - Tidewave MCP is available in dev — prefer it (`project_eval`, `get_ecto_schemas`,
   `execute_sql_query`, `get_logs`) over guessing about the running app.
-- Licensed **GPL-3.0** (see `LICENSE`).
 
 ## Commands
 
 - `mix test` — the project alias; runs `compile --warnings-as-errors`,
   `format --check-formatted`, `credo --strict`, then the suite. This is the source of truth for
-  "is it green." Every "Done when" block in the roadmap checks against it.
-- `mix phx.server` — run the app (dev).
-- `mix format` — format before committing.
+  "is it green." If `mix` is unavailable, enter the Nix dev shell or run
+  `nix develop --command mix test`.
 
 ## Architecture & conventions
 
-- Four contexts mirror the pipeline: `Cinder.Catalog` (discovery), `Cinder.Acquisition`
-  (release search/scoring), `Cinder.Download` (client + poller), `Cinder.Library` (import).
 - **External services are reached only through behaviours**: `Cinder.Catalog.TMDB`,
   `Cinder.Acquisition.Indexer`, `Cinder.Download.Client`, `Cinder.Library.MediaServer`. Never
-  call TMDB / Prowlarr / qBittorrent / Jellyfin directly from a context.
+  call TMDB / Prowlarr / qBittorrent / SABnzbd / Jellyfin / Plex directly from a context.
 - The concrete impl is resolved from config at runtime (`Application.fetch_env!/2`, not
   `compile_env!` — the Mox mock is defined at runtime, so compile-time resolution breaks
   `--warnings-as-errors`); `config/test.exs` points each at its Mox mock. **Tests never hit the
@@ -44,10 +43,23 @@ the current phase only.
   `imdb_id` through for exactly this.
 - Background work (download polling, import) runs under the supervision tree, not in the request
   path. Crash-recovery is a feature: prove it with a test.
-- **Every writer goes through `Catalog.transition`.** It's the single state-change choke-point
-  (one broadcast per transition). SQLite is pinned to WAL + `busy_timeout: 5000` (config across
-  dev/test/runtime), so a web write racing the poller waits rather than erroring with "database
-  busy" — but that only holds if writes don't sidestep the choke-point.
+- **Status and derived-state writes go through the Catalog choke-points.** A movie's `:status`
+  and an episode's derived state (`file_path` / `part_file_paths` / `grab_id`) are written only
+  inside `Cinder.Catalog` and its submodules under `lib/cinder/catalog/` — principally
+  `Catalog.transition/3` (its `expect:` form is the race-safe poller write) and
+  `transition_episode/3`, plus audited siblings that each own one lifecycle (grabs, upgrades,
+  release verification, adoption, deletion, TMDB refresh). Each emits one broadcast, *after*
+  commit. This is **not** "no direct `Repo` writes" — creation, deletion, monitor flags,
+  language, counters and the refresh are all sanctioned direct writes. Derive the current write
+  sites rather than reconstructing them from memory:
+  `rg -l 'Repo\.(insert|update|delete|update_all)' lib/cinder/catalog.ex lib/cinder/catalog/`.
+  Naming `catalog.ex` explicitly matters because the choke-points themselves live there.
+  The callers stay clean: `lib/cinder/download/*`, `acquisition.ex` and
+  `lib/cinder/library/*` (bar `import_stage.ex`, which owns `import_stages`) hold no `Repo`
+  mutations of their own. `download.ex` writes only its own `download_intents` tables.
+  SQLite is pinned to WAL + `busy_timeout: 5000` across dev/test/runtime, so a web write racing
+  the poller waits rather than failing with "database busy" — but only while writes use the
+  choke-points.
   - Movie **creation** is a separate insert: `Catalog.add_movie/1` and
     `Catalog.find_or_create_at_requested/2` (the only path reachable from a user action, gated
     by `Cinder.Requests`); creation is announced post-commit by `Cinder.Requests`
@@ -61,16 +73,21 @@ the current phase only.
 
 Two tiers. **Boot-only keys stay environment variables** (needed before the DB/settings store is
 up, or fixed per deployment): `SECRET_KEY_BASE`, `DATABASE_PATH`, `PHX_HOST` / `PHX_SERVER` /
-`PORT`, `POOL_SIZE`, `RELEASE_NAME`, `DNS_CLUSTER_QUERY`. Everything else — external-service URLs,
-API keys, the media-server choice — lives in the **`Cinder.Settings` store** (M1: DB-backed,
-editable in `/settings`, overlaid on env-as-bootstrap). Don't add new service env vars; add a
-registry entry in `Cinder.Settings` instead. A registry-driven loader `Application.put_env`s the
-stored values onto a one-time bootstrap snapshot at boot (a one-shot supervised child, after
-PubSub/before the poller) and on every save, so DB overrides env, a cleared setting reverts, and
-the contexts read the same keys unchanged. Secrets are Cloak-encrypted at rest (secret rows only;
-key derived from `SECRET_KEY_BASE`) and never echoed back to the form. `/settings` is admin-gated
-by `:admin_auth` (Basic-auth, no-op until set) until M2 lands real accounts — run M1 instances
-behind that gate or a reverse-proxy/VPN.
+`PORT`, `POOL_SIZE`, `RELEASE_NAME`. Everything else — external-service URLs, API keys, the
+media-server choice — lives in the **`Cinder.Settings` store** (DB-backed, editable in
+`/settings`, overlaid on env-as-bootstrap). Do not add new service env vars; add a registry entry
+in `Cinder.Settings` instead. A registry-driven loader `Application.put_env`s stored values onto
+a one-time bootstrap snapshot at boot (a one-shot supervised child, after PubSub/before the
+poller) and on every save, so DB overrides env, a cleared setting reverts, and contexts read the
+same keys unchanged. Secrets are Cloak-encrypted at rest (secret rows only; key derived from
+`SECRET_KEY_BASE`) and never echoed back to the form. `/settings` is admin-gated by real accounts
+(`UserAuth` `:require_admin`, inside the `:admin` live_session). Separately, an optional HTTP
+Basic gate (`plug :basic_auth` in the `:browser` **and `:api`** pipelines, `router.ex`) fronts
+every browser route and the `/api/v1` scope as defense in depth: it is a no-op when both
+`CINDER_BASIC_AUTH_USER` and `CINDER_BASIC_AUTH_PASSWORD` are unset, and fail-closed if exactly
+one is set. The read-only `/api/v1` scope adds `CinderWeb.Plugs.ApiAuth` and the SHA-256-hashed
+household key in `Cinder.ApiKey` (a raw non-registry setting generated and shown once in
+`/settings`).
 
 Signing salts (session + LiveView) are **derived from `secret_key_base` at runtime** in
 `config/runtime.exs` — nothing crypto-related is committed. `signing_salt` is a salt, not a
@@ -78,52 +95,45 @@ secret; the secret is `secret_key_base`.
 
 ## Workflow
 
-- One phase per session. Do not start a later phase until the current phase's "Done when" block
-  passes. Commit at every phase boundary.
-- Start non-trivial phases in plan mode; lay out the plan, get agreement, then execute.
-- A phase's "Done when" block can be handed to `/goal` for an autonomous run.
+- Keep each unit of work focused: one issue, fix, or feature.
+- Audits and open-ended reviews deliver **GitHub issues**, not inline fixes. Each fix then gets
+  its own scoped session and PR. Do not run "find and fix everything" rounds in one session.
+- For non-trivial work, write a plan and get agreement before executing.
+- Define "done when" up front as something `mix test` can decide, then loop until it is green.
+- Feature work goes on a branch and through a PR; `main` is PR-merged. Chores such as flake bumps
+  may land directly, but a PR is the default.
 
-## How to work in this codebase (behavioral principles)
+## How to work in this codebase
 
-> Adapted from the `andrej-karpathy-skills` guidelines (Forrest Chang, MIT-licensed), derived
-> from Andrej Karpathy's January 2026 notes on LLM coding pitfalls. Restated for this project.
-> These bias toward caution over speed; for a trivial one-line fix, use judgment.
-
-**1. Don't assume; don't hide confusion; surface tradeoffs.**
+**1. Do not assume or hide confusion; surface tradeoffs.**
 State assumptions explicitly. If a request has more than one reasonable interpretation, present
-them — don't silently pick one. If something is unclear, stop and name what's confusing rather
-than guessing. If a simpler approach exists than the one asked for, say so. Push back when
-warranted; honest disagreement is more useful than agreeable wrong answers.
+them. If something is unclear, stop and name it rather than guessing. If a simpler approach
+exists, say so. Push back when warranted.
 
 **2. Write the minimum code that solves the problem.**
-Nothing speculative. No features beyond what was asked, no abstractions for single-use code, no
-"flexibility" or configurability that wasn't requested. If 200 lines could be 50, write the 50.
-The test: would a senior engineer call this overcomplicated? If yes, simplify. (This is also why
-the slice is movies-only and the DB is SQLite — resist the urge to generalize early.)
+Nothing speculative: no unrequested features, abstractions, flexibility, or configurability.
+If a senior engineer would call it overcomplicated, simplify it.
 
 **3. Touch only what you must.**
 Every changed line should trace directly to the request. Remove imports, variables, or functions
-that *your* change made unused — but don't delete pre-existing dead code unless asked; mention it
-instead. Keep diffs small and predictable.
+that your change made unused, but do not delete pre-existing dead code unless asked. Keep diffs
+small and predictable.
 
 **4. Define success criteria, then loop until verified.**
-Turn imperative tasks into verifiable goals before starting. "Fix the bug" becomes "write a test
-that reproduces it, then make it pass." "Add X" becomes "X works and `mix test` is green." Strong
-criteria let you iterate independently; vague ones ("make it work") force constant check-ins. For
-multi-step work, write the plan first.
+"Fix the bug" becomes "write a test that reproduces it, then make it pass." "Add X" becomes
+"X works and `mix test` is green."
 
 ## Session discipline
 
-(The four principles above predate hooks/subagents/long autonomous sessions — these cover the gap.)
+- Keep sessions bounded. If a debugging loop goes in circles, stop, summarize what was tried and
+  what remains, and continue with fresh context.
+- Start a fresh context between unrelated units of work when the client supports it.
+- Do not depend on client-specific hooks. Run the relevant checks yourself and fix failures
+  before finishing.
 
-- Keep sessions bounded. If a debugging loop has run long and is going in circles, stop,
-  summarize what's been tried and what's left, and start fresh rather than spiraling.
-- `/clear` between phases so stale context doesn't leak across them.
-- When you finish a turn, the hooks run compile/format/credo/test — read their output and fix
-  what you broke before moving on.
-
-<!-- Dependency usage rules are auto-synced below this line by the `claude` library
-     (`mix claude.install`). Do not hand-edit inside its markers; put custom guidance above. -->
+<!-- Dependency usage rules below are managed by:
+     mix usage_rules.sync AGENTS.md --all --link-to-folder deps --remove-missing
+     Do not hand-edit inside the markers; put custom guidance above. -->
 
 <!-- usage-rules-start -->
 <!-- usage-rules-header -->
@@ -134,12 +144,6 @@ Before attempting to use any of these packages or to discover if you should use 
 usage rules to understand the correct patterns, conventions, and best practices.
 <!-- usage-rules-header-end -->
 
-<!-- igniter-start -->
-## igniter usage
-_A code generation and project patching framework_
-
-[igniter usage rules](deps/igniter/usage-rules.md)
-<!-- igniter-end -->
 <!-- usage_rules-start -->
 ## usage_rules usage
 _A dev tool for Elixir projects to gather LLM usage rules from dependencies_
@@ -174,23 +178,19 @@ _A dev tool for Elixir projects to gather LLM usage rules from dependencies_
 ## phoenix:phoenix usage
 [phoenix:phoenix usage rules](deps/phoenix/usage-rules/phoenix.md)
 <!-- phoenix:phoenix-end -->
-<!-- claude-start -->
-## claude usage
-_Batteries-included Claude Code integration for Elixir projects_
-
-[claude usage rules](deps/claude/usage-rules.md)
-<!-- claude-end -->
-<!-- claude:subagents-start -->
-## claude:subagents usage
-[claude:subagents usage rules](deps/claude/usage-rules/subagents.md)
-<!-- claude:subagents-end -->
 <!-- usage-rules-end -->
 
-## graphify
+## Graphify
 
-This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+This project has a local knowledge graph under `graphify-out/`. It is gitignored and can be
+regenerated with `graphify update .`.
 
-Rules:
-- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
-- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
-- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+- For questions about project source under `lib/` or `test/`, first run
+  `graphify query "<question>"` when `graphify-out/graph.json` exists. Use
+  `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for a focused
+  concept.
+- The graph does not cover `deps/`, `_build/`, `config/`, `mix.exs`, or tooling/config files;
+  inspect those directly.
+- Read `graphify-out/GRAPH_REPORT.md` only for a broad architecture review or when a scoped query
+  does not surface enough context.
+- After modifying project source, run `graphify update .` to keep the graph current.
