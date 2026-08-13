@@ -400,6 +400,9 @@ defmodule Cinder.Library.Filesystem.Disk do
       {:ok, %{"ok" => _value}} ->
         :ok
 
+      {:ok, %{"error" => %{"phase" => "post_effect"}}} when operation == "rename" ->
+        :ok
+
       {:ok, %{"error" => %{"phase" => "post_effect"} = error}} ->
         {:error, {:effect_committed, operation, error}}
 

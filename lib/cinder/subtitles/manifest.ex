@@ -235,19 +235,30 @@ defmodule Cinder.Subtitles.Manifest do
          {:ok, temporary} <- safe_destination(temporary),
          {:ok, json} <- Jason.encode(state),
          :ok <- fs().write_exclusive(temporary, json) do
-      rename_manifest(temporary, manifest_path)
+      rename_manifest(temporary, manifest_path, json)
     end
   end
 
-  defp rename_manifest(temporary, manifest_path) do
+  defp rename_manifest(temporary, manifest_path, expected) do
     result =
       with {:ok, temporary} <- safe_destination(temporary),
            {:ok, manifest_path} <- safe_destination(manifest_path) do
         fs().rename(temporary, manifest_path)
       end
 
-    if result != :ok, do: safe_remove(temporary)
-    result
+    case result do
+      :ok ->
+        :ok
+
+      {:error, {:effect_committed, "rename", _reason}} = error ->
+        verified = fs().read(manifest_path) == {:ok, expected}
+        _ = safe_remove(temporary)
+        if verified, do: :ok, else: error
+
+      error ->
+        _ = safe_remove(temporary)
+        error
+    end
   end
 
   @spec stable?(map(), String.t() | nil, String.t()) :: boolean()
@@ -321,6 +332,11 @@ defmodule Cinder.Subtitles.Manifest do
     end
   end
 
+  defp normalize_optional_replacement_cleanup_sync(%{
+         "replacement_cleanup_sync_invalid?" => true
+       }),
+       do: %{replacement_cleanup_sync_invalid?: true}
+
   defp normalize_optional_replacement_cleanup_sync(_track), do: %{}
 
   defp normalize_optional_reset_cleanup_sync(%{"reset_cleanup_sync" => sync}) do
@@ -330,6 +346,9 @@ defmodule Cinder.Subtitles.Manifest do
     end
   end
 
+  defp normalize_optional_reset_cleanup_sync(%{"reset_cleanup_sync_invalid?" => true}),
+    do: %{reset_cleanup_sync_invalid?: true}
+
   defp normalize_optional_reset_cleanup_sync(_track), do: %{}
 
   defp normalize_optional_backup_tombstone(%{"backup_tombstone" => tombstone}) do
@@ -338,6 +357,9 @@ defmodule Cinder.Subtitles.Manifest do
       :error -> %{backup_tombstone_invalid?: true}
     end
   end
+
+  defp normalize_optional_backup_tombstone(%{"backup_tombstone_invalid?" => true}),
+    do: %{backup_tombstone_invalid?: true}
 
   defp normalize_optional_backup_tombstone(_track), do: %{}
 

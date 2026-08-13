@@ -91,8 +91,10 @@ defmodule Cinder.Subtitles.SyncTest do
   test "malformed exact-file or sync metadata quarantines managed sidecars", %{video: video} do
     en = sidecar(video, "en", ".srt")
     fr = sidecar(video, "fr", ".ass")
+    de = sidecar(video, "de", ".srt")
     File.write!(en, subtitle(".srt"))
     File.write!(fr, subtitle(".ass"))
+    File.write!(de, subtitle(".srt"))
 
     File.write!(
       Manifest.path(video),
@@ -104,6 +106,12 @@ defmodule Cinder.Subtitles.SyncTest do
             origin: "opensubtitles_id",
             file: Path.basename(fr),
             sync: %{status: "invalid"}
+          },
+          "de" => %{
+            origin: "opensubtitles_hash",
+            file: Path.basename(de),
+            managed_sha256: digest(subtitle(".srt")),
+            backup_tombstone: %{identity: "invalid"}
           }
         }
       })
@@ -1224,6 +1232,20 @@ defmodule Cinder.Subtitles.SyncTest do
 
     assert File.read!(backup) == "unrelated file"
     assert File.read!(path) == subtitle(".srt")
+  end
+
+  test "an unsafe reserved backup remains visibly quarantined", %{video: video} do
+    path = managed_srt!(video)
+    backup = Sync.backup_path(path)
+    File.ln_s!(path, backup)
+
+    assert [%{review_reason: "replacement_cleanup_failed"}] = Sync.discover(video)
+    stub(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video -> {:ok, []} end)
+
+    assert [%{status: :review, reason: "replacement_cleanup_failed"}] =
+             Sync.analyze_video(video)
+
+    assert {:ok, %File.Stat{type: :symlink}} = File.lstat(backup)
   end
 
   test "replacement restore failure is review-only and preserves the immutable backup", %{

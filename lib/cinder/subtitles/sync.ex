@@ -1137,7 +1137,8 @@ defmodule Cinder.Subtitles.Sync do
       not Map.get(track, :managed_sha256_invalid?, false) and
       not Map.get(track, :sync_invalid?, false) and
       not Map.get(track, :replacement_cleanup_sync_invalid?, false) and
-      not Map.get(track, :reset_cleanup_sync_invalid?, false)
+      not Map.get(track, :reset_cleanup_sync_invalid?, false) and
+      not Map.get(track, :backup_tombstone_invalid?, false)
   end
 
   defp tracked_sidecar?(%{file: file}, _video_path, sidecar_path, _language),
@@ -1406,10 +1407,16 @@ defmodule Cinder.Subtitles.Sync do
   end
 
   defp active_backup?(path) do
-    case safe_read(path) do
-      {:ok, ""} -> false
-      {:ok, _content} -> true
-      {:error, _reason} -> false
+    case safe_destination(path) do
+      {:ok, path} ->
+        case fs().lstat(path) do
+          {:ok, %File.Stat{type: :regular, size: 0}} -> false
+          {:error, :enoent} -> false
+          _other -> true
+        end
+
+      {:error, _reason} ->
+        true
     end
   end
 

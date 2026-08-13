@@ -150,6 +150,33 @@ defmodule Cinder.Library.Filesystem.DiskRootedTest do
   end
 
   @tag :tmp_dir
+  test "a rename completed before parent sync failed is still successful", %{root: root, tmp: tmp} do
+    helper = Path.join(tmp, "post_effect_rename.py")
+
+    File.write!(
+      helper,
+      """
+      import json
+      import os
+      import sys
+
+      _, operation, source_root, source, dest_root, dest = sys.argv
+      os.rename(os.path.join(source_root, source), os.path.join(dest_root, dest))
+      print(json.dumps({"error": {"operation": operation, "phase": "post_effect", "reason": "EIO"}}))
+      """
+    )
+
+    Application.put_env(:cinder, :rooted_filesystem_helper, helper)
+    source = Path.join(root, "source.srt")
+    dest = Path.join(root, "dest.srt")
+    File.write!(source, "subtitle")
+
+    assert :ok = Disk.rename(source, dest)
+    refute File.exists?(source)
+    assert File.read!(dest) == "subtitle"
+  end
+
+  @tag :tmp_dir
   test "an eexist workspace race never cleans another actor's files", %{root: root} do
     target = Path.join(root, "Movie/subtitle.srt")
     File.mkdir_p!(Path.dirname(target))

@@ -91,6 +91,37 @@ defmodule Cinder.Subtitles.ManifestTest do
   end
 
   @tag :tmp_dir
+  test "invalid cleanup markers survive unrelated manifest writes", %{tmp_dir: tmp} do
+    video = configure_disk(tmp)
+    sidecar = Path.rootname(video) <> ".fr.srt"
+
+    File.write!(
+      Manifest.path(video),
+      Jason.encode!(%{
+        video_moviehash: "hash",
+        tracks: %{
+          "fr" => %{
+            origin: "opensubtitles_hash",
+            file: Path.basename(sidecar),
+            managed_sha256: String.duplicate("a", 64),
+            replacement_cleanup_sync: %{status: "invalid"},
+            reset_cleanup_sync: %{status: "invalid"},
+            backup_tombstone: %{identity: "invalid"}
+          }
+        }
+      })
+    )
+
+    assert :ok = Manifest.put(video, "hash", "en", "embedded")
+
+    assert %{
+             replacement_cleanup_sync_invalid?: true,
+             reset_cleanup_sync_invalid?: true,
+             backup_tombstone_invalid?: true
+           } = Manifest.read(video).tracks["fr"]
+  end
+
+  @tag :tmp_dir
   test "sync metadata is validated, atomically updated/cleared, and replacement drops it", %{
     tmp_dir: tmp
   } do
@@ -161,6 +192,32 @@ defmodule Cinder.Subtitles.ManifestTest do
       assert String.contains?(temporary, ".cinder-subtitle-manifest-")
       :ok
     end)
+
+    assert :ok = Manifest.put("/lib/M/M.mkv", "hash", "fr", "embedded")
+  end
+
+  test "put/4 accepts a manifest rename whose effect can be verified" do
+    manifest = "/lib/M/.M.mkv.cinder-subtitles.json"
+
+    expect(Cinder.Library.FilesystemMock, :read, fn ^manifest -> {:error, :enoent} end)
+
+    expect(Cinder.Library.FilesystemMock, :write_exclusive, fn temporary, json ->
+      send(self(), {:temporary_manifest, temporary, json})
+      :ok
+    end)
+
+    expect(Cinder.Library.FilesystemMock, :rename, fn temporary, ^manifest ->
+      assert_received {:temporary_manifest, ^temporary, json}
+      send(self(), {:committed_manifest, json})
+      {:error, {:effect_committed, "rename", %{"phase" => "post_effect", "reason" => "EIO"}}}
+    end)
+
+    expect(Cinder.Library.FilesystemMock, :read, fn ^manifest ->
+      assert_received {:committed_manifest, json}
+      {:ok, json}
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :rm, fn _path -> {:error, :enoent} end)
 
     assert :ok = Manifest.put("/lib/M/M.mkv", "hash", "fr", "embedded")
   end

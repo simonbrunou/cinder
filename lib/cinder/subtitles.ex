@@ -531,19 +531,30 @@ defmodule Cinder.Subtitles do
     with {:ok, target} <- safe_destination(target),
          {:ok, temporary} <- safe_destination(temporary),
          :ok <- fs().write(temporary, content) do
-      rename_subtitle(temporary, target)
+      rename_subtitle(temporary, target, IO.iodata_to_binary(content))
     end
   end
 
-  defp rename_subtitle(temporary, target) do
+  defp rename_subtitle(temporary, target, expected) do
     result =
       with {:ok, temporary} <- safe_destination(temporary),
            {:ok, target} <- safe_destination(target) do
         fs().rename(temporary, target)
       end
 
-    if result != :ok, do: safe_remove(temporary)
-    result
+    case result do
+      :ok ->
+        :ok
+
+      {:error, {:effect_committed, "rename", _reason}} = error ->
+        verified = fs().read(target) == {:ok, expected}
+        _ = safe_remove(temporary)
+        if verified, do: :ok, else: error
+
+      error ->
+        _ = safe_remove(temporary)
+        error
+    end
   end
 
   defp best(results, language) do
