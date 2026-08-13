@@ -81,12 +81,17 @@ defmodule Cinder.Subtitles.Sync do
     items = Enum.map(discover(video_path), &prepare_replacement(&1, moviehash))
 
     {reference, reference_source} =
-      if Enum.any?(items, &(not Map.has_key?(&1, :auto_review_reason))),
+      if Enum.any?(items, &analysis_needed?/1),
         do: embedded_reference(video_path),
         else: {:audio, nil}
 
     Enum.map(items, &analyze_item(&1, moviehash, reference, reference_source))
   end
+
+  defp analysis_needed?(%{auto_review_reason: _reason}), do: false
+  defp analysis_needed?(%{sync: %{status: status}}), do: status not in ["aligned", "review"]
+
+  defp analysis_needed?(_item), do: true
 
   defp moviehash_unavailable(video_path) do
     Enum.map(discover(video_path), fn item ->
@@ -217,9 +222,10 @@ defmodule Cinder.Subtitles.Sync do
   defp analyze_item(%{auto_review_reason: reason} = item, _moviehash, _reference, _path),
     do: record_blocked_review(item, reason)
 
-  defp analyze_item(%{sync: %{status: "aligned"}} = item, moviehash, _reference, _path) do
+  defp analyze_item(%{sync: %{status: status}} = item, moviehash, _reference, _path)
+       when status in ["aligned", "review"] do
     if current_sync?(item, moviehash) do
-      result(item, :aligned, item.sync.method, item.sync)
+      result(item, String.to_existing_atom(status), item.sync.method, item.sync)
     else
       analyze_item(%{item | sync: nil}, moviehash, nil, nil)
     end

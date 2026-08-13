@@ -662,6 +662,20 @@ defmodule Cinder.Subtitles.SyncTest do
              Manifest.sync(Manifest.read(video), "en")
   end
 
+  test "an unchanged review result is not analyzed again", %{video: video} do
+    _path = managed_srt!(video)
+    expect(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video -> {:ok, []} end)
+
+    expect(Cinder.Subtitles.Sync.EngineMock, :sync, fn _reference, input, output ->
+      source = File.read!(input)
+      File.write!(output, source)
+      {:review, %{reason: :low_confidence, score: 1.0, offset_ms: 0, rate: 1.0}}
+    end)
+
+    assert [%{status: :review, reason: "low_confidence"}] = Sync.analyze_video(video)
+    assert [%{status: :review, reason: "low_confidence"}] = Sync.analyze_video(video)
+  end
+
   test "a changed moviehash restores the immutable original and analyzes afresh", %{video: video} do
     path = managed_srt!(video)
     original = File.read!(path)
