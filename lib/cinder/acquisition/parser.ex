@@ -28,6 +28,9 @@ defmodule Cinder.Acquisition.Parser do
 
   @resolutions ["2160p", "1080p", "720p", "480p"]
 
+  @doc "Resolution tokens recognized in release titles, best quality first."
+  def resolutions, do: @resolutions
+
   # Release source, split by ambiguity. @sources are tokens that don't occur as a release-TITLE
   # word, so they match ANYWHERE in the name (most-specific-first, same first_match/2 mechanism as
   # @codecs). Collision-prone 2-letter abbreviations (ts, tc, bd, scr, dsr) are excluded — same

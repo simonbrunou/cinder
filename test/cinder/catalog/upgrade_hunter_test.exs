@@ -108,9 +108,7 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       assert %Movie{status: :available, download_id: nil} = Repo.get!(Movie, movie.id)
     end
 
-    # There is deliberately no resolution cutoff: better?/5 ranks language FIRST, so a file at the
-    # top resolution with the wrong audio language is still upgradable and must still be searched.
-    test "still searches a top-resolution movie whose language is wrong" do
+    test "still searches a top-resolution movie whose language is wrong when no cutoff is set" do
       put_env(:movies_preferred_resolutions, ["1080p", "720p"])
 
       movie =
@@ -127,6 +125,27 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       poll()
 
       assert %Movie{status: :upgrading} = Repo.get!(Movie, movie.id)
+    end
+
+    test "does not search a movie that has reached its configured cutoff" do
+      put_env(:movies_preferred_resolutions, ["2160p", "1080p", "720p"])
+      put_env(:movies_upgrade_cutoff, "1080p")
+      movie = library_movie(%{imported_resolution: "2160p"})
+      test_pid = self()
+
+      stub(Cinder.Acquisition.IndexerMock, :search, fn _query ->
+        send(test_pid, :movie_indexer_searched)
+        {:ok, []}
+      end)
+
+      watch_grabs()
+
+      poll()
+
+      refute_received(:movie_indexer_searched)
+      refute_grabbed()
+      assert %DateTime{} = Repo.get!(Movie, movie.id).upgrade_checked_at
+      assert Repo.get!(Movie, movie.id).status == :available
     end
 
     test "stamps every examined movie so the rotation advances" do
@@ -246,6 +265,26 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       assert Repo.get!(Episode, ctx.episode.id).grab_id == nil
     end
 
+    test "does not search a season when every held episode has reached the cutoff", ctx do
+      put_env(:tv_preferred_resolutions, ["1080p", "720p"])
+      put_env(:tv_upgrade_cutoff, "720p")
+      test_pid = self()
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb_id, _title, _season ->
+        send(test_pid, :tv_indexer_searched)
+        {:ok, []}
+      end)
+
+      watch_grabs()
+
+      poll()
+
+      refute_received(:tv_indexer_searched)
+      refute_grabbed()
+      assert %DateTime{} = Repo.get!(Episode, ctx.episode.id).upgrade_checked_at
+      assert Repo.get!(Episode, ctx.episode.id).grab_id == nil
+    end
+
     test "ignores an episode with no file or one already grabbed", ctx do
       wanted = episode_fixture(ctx.season, %{episode_number: 2})
 
@@ -324,7 +363,10 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
     # #257, the win: one improvable episode is enough to take the pack. `Enum.all?` meant a season
     # where nine of ten files were already good enough left the tenth permanently unserved by any
     # pack. The import arbitrates per source-file group (#250), so the nine keep their files.
-    test "grabs a pack that improves only part of the season it covers", ctx do
+    test "a below-cutoff episode keeps its full season claimable by a pack", ctx do
+      put_env(:tv_preferred_resolutions, ["1080p", "720p"])
+      put_env(:tv_upgrade_cutoff, "1080p")
+
       # E01 is 720p (upgradable); the rest of the season is already 1080p at a bigger size.
       kept =
         for n <- 2..10 do

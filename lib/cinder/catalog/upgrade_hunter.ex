@@ -36,16 +36,11 @@ defmodule Cinder.Catalog.UpgradeHunter do
   at all: the other two simply keep their files. The manual path stays a forced replace, because
   there the operator chose the release, possibly for something the ranking can't see.
 
-  ## ponytail: no resolution cutoff
-
-  An earlier cut skipped the search entirely for items already at the top of the preferred-
-  resolution list, to save an indexer call. That was wrong: language is decided **before** quality
-  at all (`language_decides?/3`), and within quality `rank/4` orders resolution, then source — so a
-  1080p file with the wrong audio language, or from the least-preferred source, would have been
-  permanently unreachable. Exactly what a soft
-  Original/Any grab or a later language change leaves behind. `candidate?/4` already returns false
-  when nothing is better, so the cutoff bought one saved search per item per rotation and cost
-  two of the three ranking keys. Deleted rather than taught about all three.
+  An optional per-library resolution cutoff skips automatic movie searches once a file reaches
+  that point (or an earlier resolution in the configured preference list). TV searches are season
+  scoped, so they stop once every held episode in the season reaches it; until then the full held
+  season stays claimable by a pack. Without a cutoff, language and source upgrades remain
+  searchable even at the top resolution. Manual search is never gated by the cutoff.
 
   ## Scope
 
@@ -109,17 +104,19 @@ defmodule Cinder.Catalog.UpgradeHunter do
   end
 
   defp hunt_movie(movie) do
-    # best_release_for/1 is start/1's search half WITHOUT its transition — the movie has to stay
-    # :available (its file_path is the live library file) while we ask.
-    case Download.best_release_for(movie) do
-      {:ok, release} ->
-        target = Language.target(movie.preferred_language, movie.original_language)
-        maybe_grab_movie(movie, release, target)
+    unless Upgrade.cutoff_met?(movie, :movies) do
+      # best_release_for/1 is start/1's search half WITHOUT its transition — the movie has to stay
+      # :available (its file_path is the live library file) while we ask.
+      case Download.best_release_for(movie) do
+        {:ok, release} ->
+          target = Language.target(movie.preferred_language, movie.original_language)
+          maybe_grab_movie(movie, release, target)
 
-      # :no_match / :no_language_match / a waiting-for-group hold / an indexer error: nothing to
-      # upgrade to right now. Never park an :available movie over it — it already has its file.
-      _other ->
-        :ok
+        # :no_match / :no_language_match / a waiting-for-group hold / an indexer error: nothing to
+        # upgrade to right now. Never park an :available movie over it — it already has its file.
+        _other ->
+          :ok
+      end
     end
   end
 
@@ -194,16 +191,22 @@ defmodule Cinder.Catalog.UpgradeHunter do
       [%Episode{season: %{series: series}} | _] ->
         stamp(Episode, Enum.map(episodes, & &1.id))
 
-        if Catalog.media_profile_summary(series).effective == :anime do
-          # See "Scope" above — not a silent skip, so an operator wondering why their anime library
-          # never upgrades finds the reason in the log.
-          Logger.debug("upgrade hunter: skipping anime series #{series.id} (unsupported)")
-        else
-          search_season(series, episodes)
-        end
+        maybe_search_season(series, episodes)
 
       [] ->
         :ok
+    end
+  end
+
+  defp maybe_search_season(series, episodes) do
+    if Catalog.media_profile_summary(series).effective == :anime do
+      # See "Scope" above — not a silent skip, so an operator wondering why their anime library
+      # never upgrades finds the reason in the log.
+      Logger.debug("upgrade hunter: skipping anime series #{series.id} (unsupported)")
+    else
+      if Enum.all?(episodes, &Upgrade.cutoff_met?(&1, :tv)),
+        do: :ok,
+        else: search_season(series, episodes)
     end
   end
 

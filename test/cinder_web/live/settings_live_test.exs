@@ -37,6 +37,9 @@ defmodule CinderWeb.SettingsLiveTest do
     assert html =~ ~s(name="movies_library_path")
     assert html =~ ~s(name="import_roots")
     assert html =~ ~s(name="default_request_quota")
+    assert has_element?(lv, "#movies_preferred_terms[name=movies_preferred_terms]")
+    assert has_element?(lv, "#movies_blocked_terms[name=movies_blocked_terms]")
+    assert has_element?(lv, "#movies_upgrade_cutoff[name=movies_upgrade_cutoff]")
     assert has_element?(lv, "#qbittorrent_remote_path_prefix")
     assert has_element?(lv, "#qbittorrent_local_path_prefix")
     assert has_element?(lv, "#sabnzbd_remote_path_prefix")
@@ -267,6 +270,23 @@ defmodule CinderWeb.SettingsLiveTest do
     refute flash =~ "movies_min_size"
     assert flash =~ "Movies: Min size (GB)"
     assert_push_event(lv, "focus-invalid", %{id: "movies_min_size"})
+  end
+
+  test "an unlisted upgrade cutoff preserves the choice and explains the error", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    lv
+    |> form("#settings-form", %{
+      "movies_preferred_resolutions" => "1080p, 720p",
+      "movies_upgrade_cutoff" => "2160p",
+      "media_server_type" => "jellyfin"
+    })
+    |> render_submit()
+
+    assert has_element?(lv, "#movies_upgrade_cutoff[aria-invalid=true]")
+    assert has_element?(lv, ~s|#movies_upgrade_cutoff option[value="2160p"][selected]|)
+    assert has_element?(lv, "#movies_upgrade_cutoff-error", "Choose a cutoff included")
+    assert_push_event(lv, "focus-invalid", %{id: "movies_upgrade_cutoff"})
   end
 
   test "mobile save and service test actions use full-size targets", %{conn: conn} do
@@ -517,6 +537,7 @@ defmodule CinderWeb.SettingsLiveTest do
     for forged <- [%{"forged" => true}, ["x"], 7] do
       assert render_hook(lv, "save", %{"tv_max_size" => forged})
       assert render_hook(lv, "save", %{"import_roots" => forged})
+      assert render_hook(lv, "save", %{"movies_upgrade_cutoff" => forged})
     end
 
     assert Process.alive?(lv.pid)

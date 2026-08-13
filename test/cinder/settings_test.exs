@@ -40,11 +40,17 @@ defmodule Cinder.SettingsTest do
     :movies_max_size,
     :movies_preferred_resolutions,
     :movies_preferred_sources,
+    :movies_preferred_terms,
+    :movies_blocked_terms,
+    :movies_upgrade_cutoff,
     :tv_library_path,
     :tv_min_size,
     :tv_max_size,
     :tv_preferred_resolutions,
     :tv_preferred_sources,
+    :tv_preferred_terms,
+    :tv_blocked_terms,
+    :tv_upgrade_cutoff,
     :import_roots,
     :explicit_import_roots,
     :move_on_import,
@@ -791,6 +797,18 @@ defmodule Cinder.SettingsTest do
       assert Application.get_env(:cinder, :movies_max_size) == nil
     end
 
+    test "release terms reach the scorer while the upgrade cutoff stays hunter-only" do
+      Settings.put("movies_preferred_terms", "PROPER, Repack")
+      Settings.put("movies_blocked_terms", "CAM, telesync")
+      Settings.put("movies_upgrade_cutoff", "1080p")
+
+      opts = Cinder.Acquisition.band_opts(:movies)
+      assert opts[:preferred_terms] == ["proper", "repack"]
+      assert opts[:blocked_terms] == ["cam", "telesync"]
+      refute Keyword.has_key?(opts, :upgrade_cutoff)
+      assert Application.get_env(:cinder, :movies_upgrade_cutoff) == "1080p"
+    end
+
     test "with no movies_library_path bootstrap (MOVIES_LIBRARY_PATH unset), overlay yields nil not []" do
       # Simulate MOVIES_LIBRARY_PATH absent: erase the captured base snapshot + the env, so base/1
       # falls back to its [] keyword-list default. The string key must coerce to nil.
@@ -900,6 +918,19 @@ defmodule Cinder.SettingsTest do
   end
 
   describe "save_form/1" do
+    test "an invalid or unlisted upgrade cutoff saves nothing" do
+      for cutoff <- ["banana", "2160p"] do
+        assert {:error, ["movies_upgrade_cutoff"]} =
+                 Settings.save_form(%{
+                   "movies_preferred_resolutions" => "1080p, 720p",
+                   "movies_upgrade_cutoff" => cutoff,
+                   "media_server_type" => "jellyfin"
+                 })
+
+        assert Settings.get("movies_upgrade_cutoff") == nil
+      end
+    end
+
     test "invalid anime enums, delay, and required subtitles save nothing" do
       for params <- [
             valid_anime_params(%{"anime_embedded_subtitle_mode" => "surround"}),
