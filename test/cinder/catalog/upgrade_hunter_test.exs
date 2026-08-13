@@ -131,11 +131,18 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       put_env(:movies_preferred_resolutions, ["2160p", "1080p", "720p"])
       put_env(:movies_upgrade_cutoff, "1080p")
       movie = library_movie(%{imported_resolution: "2160p"})
+      test_pid = self()
+
+      stub(Cinder.Acquisition.IndexerMock, :search, fn _query ->
+        send(test_pid, :movie_indexer_searched)
+        {:ok, []}
+      end)
+
       watch_grabs()
 
-      # No indexer stub: meeting the cutoff must skip the search itself.
       poll()
 
+      refute_received(:movie_indexer_searched)
       refute_grabbed()
       assert %DateTime{} = Repo.get!(Movie, movie.id).upgrade_checked_at
       assert Repo.get!(Movie, movie.id).status == :available
@@ -261,11 +268,18 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
     test "does not search a season when every held episode has reached the cutoff", ctx do
       put_env(:tv_preferred_resolutions, ["1080p", "720p"])
       put_env(:tv_upgrade_cutoff, "720p")
+      test_pid = self()
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb_id, _title, _season ->
+        send(test_pid, :tv_indexer_searched)
+        {:ok, []}
+      end)
+
       watch_grabs()
 
-      # No indexer stub: the only held episode is already at the configured cutoff.
       poll()
 
+      refute_received(:tv_indexer_searched)
       refute_grabbed()
       assert %DateTime{} = Repo.get!(Episode, ctx.episode.id).upgrade_checked_at
       assert Repo.get!(Episode, ctx.episode.id).grab_id == nil
