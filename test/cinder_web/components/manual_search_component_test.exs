@@ -441,6 +441,21 @@ defmodule CinderWeb.ManualSearchComponentTest do
     refute html =~ "phx-value-index"
   end
 
+  test "a blocked-term verdict remains manually grabbable" do
+    html =
+      render_panel(%{
+        mode: :movie,
+        target: %Movie{id: 1, status: :requested, imdb_id: "tt1", title: "M"},
+        results: [
+          {%Release{title: "Movie.CAM", resolution: "1080p", protocol: :torrent},
+           {:rejected, :blocked_term}}
+        ]
+      })
+
+    assert html =~ "contains a blocked term"
+    assert html =~ ~s(phx-value-index="0")
+  end
+
   test "Anime policy verdicts stay overridable while unsafe mappings are not grabbable" do
     html =
       render_panel(%{

@@ -184,7 +184,7 @@ defmodule CinderWeb.ManualSearchComponent do
     end)
   end
 
-  # Mirror the auto-search scorer opts (size band, preferred resolutions/sources,
+  # Mirror the auto-search scorer opts (size band, preferred resolutions/sources/title terms,
   # release blocklist, audio pick) so the panel's verdicts and ordering match what the sweep
   # would pick — without them a release the poller rejects as out-of-band shows as acceptable,
   # and one that doesn't satisfy the title's audio pick sorts as high as one that does.
@@ -439,6 +439,7 @@ defmodule CinderWeb.ManualSearchComponent do
 
   defp verdict_reason({:rejected, :out_of_band}), do: gettext("outside size band")
   defp verdict_reason({:rejected, :blocklisted}), do: gettext("blocklisted")
+  defp verdict_reason({:rejected, :blocked_term}), do: gettext("contains a blocked term")
   defp verdict_reason({:rejected, :wrong_resolution}), do: gettext("resolution not preferred")
   defp verdict_reason({:rejected, :wrong_source}), do: gettext("source not preferred")
   defp verdict_reason({:rejected, :wrong_protocol}), do: gettext("no client for protocol")

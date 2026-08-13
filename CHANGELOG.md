@@ -7,6 +7,10 @@ All notable changes to Cinder are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Per-library release rules and upgrade cutoffs.** Movies and TV can rank preferred title terms,
+  reject blocked title terms, and stop automatic re-download searches at a chosen preferred
+  resolution. Manual search remains the override surface for every rule and stays available after
+  the cutoff is reached.
 - **Opt-in Plex watchlist sync.** A Plex-linked user can switch on "Request titles I add to my
   Plex watchlist" in Account settings; a background sweep turns each new movie on their watchlist
   into a request *by that user* about every 15 minutes, so the approval gate and their quota

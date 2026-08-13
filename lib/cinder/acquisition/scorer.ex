@@ -1,8 +1,8 @@
 defmodule Cinder.Acquisition.Scorer do
   @moduledoc """
   Selects the best release from a list by explicit, configurable rules: an
-  inclusive size band, a release-title blocklist, a resolution allow-list, and a source
-  allow-list — each doubles as a ranking tiebreak in that order.
+  inclusive size band, release-title exclusions, resolution and source allow-lists, and
+  preferred title terms.
 
   The resolution preference is a **strict allow-list**, not just a tiebreak: a
   release whose parsed resolution isn't in the list is rejected outright (a 480p is
@@ -13,7 +13,8 @@ defmodule Cinder.Acquisition.Scorer do
   The source preference (`preferred_sources`) is a **lenient allow-list**: an empty
   list (the default) accepts every source; a non-empty list rejects a recognized-but-
   unlisted source. Crucially, a `nil` source (untagged release) always passes — a
-  parser miss must never strand a grab. Ranking order is resolution → source → size.
+  parser miss must never strand a grab. Ranking order is resolution → source → preferred term →
+  size.
 
   An **empty** resolution list disables the resolution gate — but that's the no-rules
   programmatic default, not something a cleared `/settings` field produces: a blank
@@ -37,11 +38,12 @@ defmodule Cinder.Acquisition.Scorer do
   size-band, release-blocklist, and resolution allow-list filters.
   """
   def select(releases, opts \\ []) do
-    {min_size, max_size, preferred, sources, release_blocklist} = rules(opts)
+    {min_size, max_size, preferred, sources, release_blocklist, _preferred_terms, blocked_terms} =
+      rules(opts)
 
     releases
     |> Enum.filter(&within_band?(&1, min_size, max_size))
-    |> Enum.reject(&title_blocked?(&1, release_blocklist))
+    |> Enum.reject(&excluded_title?(&1, release_blocklist, blocked_terms))
     |> Enum.filter(&(allowed_resolution?(&1, preferred) and allowed_source?(&1, sources)))
     |> pick_best(opts)
   end
@@ -75,13 +77,15 @@ defmodule Cinder.Acquisition.Scorer do
   household release-list sizes; upgrade only if release sets get pathological.
   """
   def select_for(releases, season, wanted_episodes, opts \\ []) do
-    {min_size, max_size, preferred, sources, release_blocklist} = rules(opts)
+    {min_size, max_size, preferred, sources, release_blocklist, _preferred_terms, blocked_terms} =
+      rules(opts)
+
     band = {min_size, max_size, preferred, sources}
     alternate_numbering = Keyword.get(opts, :alternate_numbering, %{})
 
     releases
     |> Enum.filter(&(&1.season == season or Map.has_key?(alternate_numbering, &1.season)))
-    |> Enum.reject(&title_blocked?(&1, release_blocklist))
+    |> Enum.reject(&excluded_title?(&1, release_blocklist, blocked_terms))
     |> Enum.filter(&(allowed_resolution?(&1, preferred) and allowed_source?(&1, sources)))
     |> cover(
       MapSet.new(wanted_episodes),
@@ -100,12 +104,14 @@ defmodule Cinder.Acquisition.Scorer do
   the resolver's membership order rather than database-ID sort order.
   """
   def select_for_ids(releases, wanted_ids, opts \\ []) do
-    {min_size, max_size, preferred, sources, release_blocklist} = rules(opts)
+    {min_size, max_size, preferred, sources, release_blocklist, _preferred_terms, blocked_terms} =
+      rules(opts)
+
     band = {min_size, max_size, preferred, sources}
 
     result =
       releases
-      |> Enum.reject(&title_blocked?(&1, release_blocklist))
+      |> Enum.reject(&excluded_title?(&1, release_blocklist, blocked_terms))
       |> Enum.filter(&(allowed_resolution?(&1, preferred) and allowed_source?(&1, sources)))
       |> cover(MapSet.new(wanted_ids), [], band, &id_coverage/2, opts)
 
@@ -114,13 +120,14 @@ defmodule Cinder.Acquisition.Scorer do
 
   @doc """
   Classifies a single `release` against the same rules `select/2` applies, returning `:ok` or
-  `{:rejected, reason}` with `reason` in `[:out_of_band, :blocklisted, :wrong_resolution,
-  :wrong_source]`. Used by the interactive manual-search panel to show WHY the auto-pick would
-  skip a release while still letting the user grab it. Shares the private predicates with
-  `select/2`, so the panel verdict and the auto-pick can never drift.
+  `{:rejected, reason}` with `reason` in `[:out_of_band, :blocklisted, :blocked_term,
+  :wrong_resolution, :wrong_source]`. Used by the interactive manual-search panel to show WHY the
+  auto-pick would skip a release while still letting the user grab it. Shares the private
+  predicates with `select/2`, so the panel verdict and the auto-pick can never drift.
   """
   def verdict(%Release{} = release, opts \\ []) do
-    {min_size, max_size, preferred, sources, release_blocklist} = rules(opts)
+    {min_size, max_size, preferred, sources, release_blocklist, _preferred_terms, blocked_terms} =
+      rules(opts)
 
     # The TV band is per-episode: a multi-episode release is judged against the episodes it
     # NAMES, a whole-season pack against `opts[:pack_episode_count]`. This approximates
@@ -136,6 +143,9 @@ defmodule Cinder.Acquisition.Scorer do
 
       title_blocked?(release, release_blocklist) ->
         {:rejected, :blocklisted}
+
+      contains_blocked_term?(release, blocked_terms) ->
+        {:rejected, :blocked_term}
 
       not allowed_resolution?(release, preferred) ->
         {:rejected, :wrong_resolution}
@@ -197,8 +207,8 @@ defmodule Cinder.Acquisition.Scorer do
   defp scale_band(bound, k), do: bound * k
 
   @doc """
-  The ascending sort key `select/2` ranks by (language → resolution → source → larger size). Best
-  sorts first.
+  The ascending sort key `select/2` ranks by (language → resolution → source → preferred title
+  term → larger size). Best sorts first.
 
   The language rank exists for the untagged releases `Cinder.Acquisition.Language.filter/4` keeps
   under `keep_untagged: true`: a release whose tag actually satisfies the target outranks one that
@@ -217,10 +227,10 @@ defmodule Cinder.Acquisition.Scorer do
   evidence-based `AnimePreferences` policy that replaced exactly that heuristic.
   """
   def rank_key(%Release{} = release, opts \\ []) do
-    {_min, _max, preferred, sources, _rbl} = rules(opts)
+    {_min, _max, preferred, sources, _rbl, preferred_terms, _blocked_terms} = rules(opts)
 
     {anime_rank_key(release, opts), language_rank(release, opts),
-     sort_key(release, preferred, sources)}
+     sort_key(release, preferred, sources, preferred_terms)}
   end
 
   defp language_rank(release, opts) do
@@ -256,7 +266,9 @@ defmodule Cinder.Acquisition.Scorer do
       Keyword.get(rules, :max_size),
       Keyword.get(rules, :preferred_resolutions, @default_preferred),
       Keyword.get(rules, :preferred_sources, []),
-      rules |> Keyword.get(:release_blocklist, []) |> Enum.map(&String.downcase/1)
+      rules |> Keyword.get(:release_blocklist, []) |> Enum.map(&String.downcase/1),
+      rules |> Keyword.get(:preferred_terms, []) |> Enum.map(&String.downcase/1),
+      rules |> Keyword.get(:blocked_terms, []) |> Enum.map(&String.downcase/1)
     }
   end
 
@@ -390,6 +402,17 @@ defmodule Cinder.Acquisition.Scorer do
   defp title_blocked?(%Release{title: nil}, _list), do: false
   defp title_blocked?(%Release{title: title}, list), do: String.downcase(title) in list
 
+  defp contains_blocked_term?(%Release{title: nil}, _terms), do: false
+
+  defp contains_blocked_term?(%Release{title: title}, terms) do
+    title = String.downcase(title)
+    Enum.any?(terms, &String.contains?(title, &1))
+  end
+
+  defp excluded_title?(release, release_blocklist, blocked_terms),
+    do:
+      title_blocked?(release, release_blocklist) or contains_blocked_term?(release, blocked_terms)
+
   # Strict allow-list: keep a release only if its resolution is one the user asked for.
   # nil (untagged) ∉ any list ⇒ rejected. An empty list = no preference configured ⇒ keep all
   # (a [] allow-list rejecting everything is never the intent; that would brick every grab).
@@ -409,7 +432,15 @@ defmodule Cinder.Acquisition.Scorer do
 
   defp pick_best(releases, opts), do: {:ok, Enum.min_by(releases, &rank_key(&1, opts))}
 
-  defp sort_key(%Release{} = release, preferred, sources) do
-    {resolution_rank(release, preferred), source_rank(release, sources), -(release.size || 0)}
+  defp sort_key(%Release{} = release, preferred, sources, terms) do
+    {resolution_rank(release, preferred), source_rank(release, sources),
+     preferred_term_rank(release, terms), -(release.size || 0)}
+  end
+
+  defp preferred_term_rank(%Release{title: nil}, terms), do: length(terms)
+
+  defp preferred_term_rank(%Release{title: title}, terms) do
+    title = String.downcase(title)
+    Enum.find_index(terms, &String.contains?(title, &1)) || length(terms)
   end
 end

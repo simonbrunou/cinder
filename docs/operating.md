@@ -398,6 +398,16 @@ hdtv, dvd, cam`. Leave blank to accept any source. An untagged (parser-undetecte
 always kept; only a release whose detected source is recognized and *not* in your list is rejected.
 Within a resolution, earlier-listed sources rank higher.
 
+**Title terms and upgrade cutoff** (per kind): preferred terms are case-insensitive phrases used
+after resolution and source to rank otherwise-equivalent releases; earlier-listed terms rank
+higher. A blocked term rejects any release title containing that phrase from automatic selection.
+Both policies remain overridable in **Find a better match**. The optional resolution cutoff stops
+automatic movie searches once the current file reaches that point (or a higher-ranked preferred
+resolution). TV searches are season-scoped and stop once every held episode in the season reaches
+the cutoff; until then, keeping the whole held season claimable lets safe season packs upgrade the
+remaining episodes. The cutoff must appear in that kind's preferred-resolution list. It never
+hides or disables manual search.
+
 ## Anime
 
 Anime is a **per-title opt-in profile** — `Auto`, `Standard`, or `Anime` — on any movie or series.

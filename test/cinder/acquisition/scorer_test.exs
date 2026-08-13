@@ -87,6 +87,24 @@ defmodule Cinder.Acquisition.ScorerTest do
       assert {:ok, %Release{title: "Movie.A.1080p"}} = Scorer.select([a, b], max_size: 20 * @gb)
     end
 
+    test "blocked terms reject matching titles while preferred terms rank the survivors" do
+      blocked =
+        release(title: "Movie.1080p.CAM-RLS", resolution: "1080p", size: 12 * @gb)
+
+      plain = release(title: "Movie.1080p.WEB-RLS", resolution: "1080p", size: 12 * @gb)
+      second = release(title: "Movie.1080p.WEB.PROPER-RLS", resolution: "1080p", size: 8 * @gb)
+      first = release(title: "Movie.1080p.WEB.REPACK-RLS", resolution: "1080p", size: 7 * @gb)
+
+      assert {:ok, %Release{title: "Movie.1080p.WEB.REPACK-RLS"}} =
+               Scorer.select([blocked, plain, second, first],
+                 blocked_terms: ["cam"],
+                 preferred_terms: ["repack", "proper"]
+               )
+
+      assert Scorer.verdict(blocked, blocked_terms: ["CAM"]) ==
+               {:rejected, :blocked_term}
+    end
+
     test "prefers 1080p over an equally-sized 720p" do
       releases = [
         release(resolution: "720p", group: "A", size: 8 * @gb),

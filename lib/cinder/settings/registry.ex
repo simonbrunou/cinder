@@ -11,6 +11,8 @@ defmodule Cinder.Settings.Registry do
   `settings_test`, and the LiveView see byte-for-byte identical shapes.
   """
 
+  alias Cinder.Acquisition.Parser
+
   @migration_sources [
     %{
       key: "radarr",
@@ -387,10 +389,18 @@ defmodule Cinder.Settings.Registry do
   @kind_labels %{movies: "Movies", tv: "TV"}
 
   # The band suffixes each kind owns. min/max_size have a config.exs bootstrap (the shipped
-  # default bands; a stored 0 opts out to unbounded); the resolution/source lists stay DB-only
-  # (unset ⇒ scorer default). The root path (`#{kind}_library_path`) is the fourth flat key and
-  # DOES have an env bootstrap.
-  @band_suffixes ["min_size", "max_size", "preferred_resolutions", "preferred_sources"]
+  # default bands; a stored 0 opts out to unbounded); the release lists and cutoff stay DB-only
+  # (unset ⇒ scorer/hunter default). The root path (`#{kind}_library_path`) also has an env
+  # bootstrap.
+  @band_suffixes [
+    "min_size",
+    "max_size",
+    "preferred_resolutions",
+    "preferred_sources",
+    "preferred_terms",
+    "blocked_terms",
+    "upgrade_cutoff"
+  ]
 
   @groups [
     tmdb: "TMDB",
@@ -486,6 +496,11 @@ defmodule Cinder.Settings.Registry do
   def max_size_key(kind), do: "#{kind}_max_size"
   def preferred_resolutions_key(kind), do: "#{kind}_preferred_resolutions"
   def preferred_sources_key(kind), do: "#{kind}_preferred_sources"
+  def preferred_terms_key(kind), do: "#{kind}_preferred_terms"
+  def blocked_terms_key(kind), do: "#{kind}_blocked_terms"
+  def upgrade_cutoff_key(kind), do: "#{kind}_upgrade_cutoff"
+
+  def release_resolutions, do: Parser.resolutions()
 
   @doc "Keys of registry fields the store encrypts at rest (secret rows only)."
   def secret_keys, do: @secret_keys

@@ -14,7 +14,7 @@ defmodule Cinder.Settings do
   """
   require Logger
 
-  alias Cinder.Acquisition.AnimePreferences
+  alias Cinder.Acquisition.{AnimePreferences, Parser, Scorer}
   alias Cinder.Repo
   alias Cinder.Settings.Crypto
   alias Cinder.Settings.Registry
@@ -63,6 +63,10 @@ defmodule Cinder.Settings do
   defdelegate max_size_key(kind), to: Registry
   defdelegate preferred_resolutions_key(kind), to: Registry
   defdelegate preferred_sources_key(kind), to: Registry
+  defdelegate preferred_terms_key(kind), to: Registry
+  defdelegate blocked_terms_key(kind), to: Registry
+  defdelegate upgrade_cutoff_key(kind), to: Registry
+  defdelegate release_resolutions(), to: Registry
 
   def media_server_key, do: @media_server_key
   def media_server_options, do: @media_server_options
@@ -435,7 +439,9 @@ defmodule Cinder.Settings do
   end
 
   defp invalid_values(params) do
-    invalid_band_values(params) ++ invalid_import_roots(params) ++ invalid_anime_values(params)
+    invalid_band_values(params) ++
+      invalid_cutoff_values(params) ++
+      invalid_import_roots(params) ++ invalid_anime_values(params)
   end
 
   defp invalid_import_roots(%{@import_roots_key => value}) do
@@ -452,6 +458,29 @@ defmodule Cinder.Settings do
         is_nil(parse_gb(value)),
         not unbounded_band?(value) do
       key
+    end
+  end
+
+  defp invalid_cutoff_values(params) do
+    for kind <- Cinder.Library.kinds(),
+        key = upgrade_cutoff_key(kind),
+        Map.has_key?(params, key),
+        cutoff = params[key] |> String.trim() |> String.downcase(),
+        cutoff != "",
+        preferred = effective_preferred_resolutions(params, kind),
+        cutoff not in Parser.resolutions() or cutoff not in preferred do
+      key
+    end
+  end
+
+  defp effective_preferred_resolutions(params, kind) do
+    case Map.fetch(params, preferred_resolutions_key(kind)) do
+      {:ok, value} ->
+        parse_csv_list(value) || Scorer.default_preferred()
+
+      :error ->
+        Application.get_env(:cinder, :"#{kind}_preferred_resolutions") ||
+          Scorer.default_preferred()
     end
   end
 
@@ -716,8 +745,9 @@ defmodule Cinder.Settings do
   end
 
   # Per-kind library config, applied uniformly for every Cinder.Library kind: the import root
-  # (a flat :cinder env key WITH an env bootstrap) plus the DB-only size band. A DB value overlays
-  # the bootstrap; a cleared setting reverts to it (base/1 snapshots the pre-overlay env once).
+  # (a flat :cinder env key WITH an env bootstrap) plus the DB-only release rules. A DB value
+  # overlays the bootstrap; a cleared setting reverts to it (base/1 snapshots the pre-overlay env
+  # once).
   # One loop — a new kind needs no new apply_* function.
   defp apply_library_config(rows) do
     for kind <- Cinder.Library.kinds(), do: apply_kind_config(rows, kind)
@@ -762,12 +792,23 @@ defmodule Cinder.Settings do
     max_size = band_size(rows, "#{kind}_max_size")
     preferred = parse_csv_list(decoded_for(rows, "#{kind}_preferred_resolutions"))
     sources = parse_csv_list(decoded_for(rows, "#{kind}_preferred_sources"))
+    preferred_terms = parse_csv_list(decoded_for(rows, "#{kind}_preferred_terms"))
+    blocked_terms = parse_csv_list(decoded_for(rows, "#{kind}_blocked_terms"))
+
+    cutoff =
+      rows
+      |> decoded_for("#{kind}_upgrade_cutoff")
+      |> then(&if(is_binary(&1), do: String.downcase(String.trim(&1)), else: nil))
+      |> then(&if(&1 in Parser.resolutions(), do: &1, else: nil))
 
     Application.put_env(:cinder, root_env, root)
     Application.put_env(:cinder, :"#{kind}_min_size", min_size)
     Application.put_env(:cinder, :"#{kind}_max_size", max_size)
     Application.put_env(:cinder, :"#{kind}_preferred_resolutions", preferred)
     Application.put_env(:cinder, :"#{kind}_preferred_sources", sources)
+    Application.put_env(:cinder, :"#{kind}_preferred_terms", preferred_terms)
+    Application.put_env(:cinder, :"#{kind}_blocked_terms", blocked_terms)
+    Application.put_env(:cinder, :"#{kind}_upgrade_cutoff", cutoff)
   end
 
   # Standalone global boolean — not a config field, toggle, or flat key, so it gets its own

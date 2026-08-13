@@ -295,6 +295,67 @@ defmodule CinderWeb.SettingsComponents do
                 class="input w-full"
               />
             </div>
+            <div class="form-control">
+              <label class="label" for={Settings.preferred_terms_key(kind)}>
+                <span class="label-text">{gettext("Preferred terms (comma-separated)")}</span>
+              </label>
+              <input
+                type="text"
+                id={Settings.preferred_terms_key(kind)}
+                name={Settings.preferred_terms_key(kind)}
+                value={@form.values[Settings.preferred_terms_key(kind)]}
+                placeholder={gettext("proper, repack")}
+                autocomplete="off"
+                class="input w-full"
+              />
+            </div>
+            <div class="form-control">
+              <label class="label" for={Settings.blocked_terms_key(kind)}>
+                <span class="label-text">{gettext("Blocked terms (comma-separated)")}</span>
+              </label>
+              <input
+                type="text"
+                id={Settings.blocked_terms_key(kind)}
+                name={Settings.blocked_terms_key(kind)}
+                value={@form.values[Settings.blocked_terms_key(kind)]}
+                placeholder={gettext("cam, telesync")}
+                autocomplete="off"
+                class="input w-full"
+              />
+            </div>
+            <div class="form-control">
+              <label class="label" for={Settings.upgrade_cutoff_key(kind)}>
+                <span class="label-text">{gettext("Automatic upgrade cutoff")}</span>
+              </label>
+              <select
+                id={Settings.upgrade_cutoff_key(kind)}
+                name={Settings.upgrade_cutoff_key(kind)}
+                class={[
+                  "select w-full",
+                  invalid?(@form, Settings.upgrade_cutoff_key(kind)) && "select-error"
+                ]}
+                aria-invalid={invalid?(@form, Settings.upgrade_cutoff_key(kind)) && "true"}
+                aria-describedby={
+                  invalid?(@form, Settings.upgrade_cutoff_key(kind)) &&
+                    "#{Settings.upgrade_cutoff_key(kind)}-error"
+                }
+              >
+                <option value="" selected={@form.values[Settings.upgrade_cutoff_key(kind)] == ""}>
+                  {gettext("No cutoff")}
+                </option>
+                <option
+                  :for={resolution <- Settings.release_resolutions()}
+                  value={resolution}
+                  selected={@form.values[Settings.upgrade_cutoff_key(kind)] == resolution}
+                >
+                  {resolution}
+                </option>
+              </select>
+              <.field_error
+                :if={invalid?(@form, Settings.upgrade_cutoff_key(kind))}
+                field={Settings.upgrade_cutoff_key(kind)}
+              />
+            </div>
           </div>
           <p class="mt-1 text-xs opacity-70">
             {gettext("Sizes are decimal GB (1 GB = 1,000,000,000 bytes). For TV they apply")} <strong>{gettext("per episode")}</strong>{gettext(
@@ -302,6 +363,9 @@ defmodule CinderWeb.SettingsComponents do
             )}
             {gettext(
               "Sources: remux, bluray, webrip, webdl, hdtv, dvd, cam. Leave blank to accept any; untagged releases are always kept. These are distinct; listing only bluray excludes remux, so add both to accept either."
+            )}
+            {gettext(
+              "Preferred terms are ranked in listed order; blocked terms reject titles containing a phrase (case-insensitive). The cutoff stops automatic movie searches at that resolution, and TV season searches once every held episode reaches it. Manual search stays available."
             )}
           </p>
         </div>
@@ -680,8 +744,11 @@ defmodule CinderWeb.SettingsComponents do
   defp invalid_field_message(key) when key == "anime_embedded_subtitle_mode",
     do: gettext("Choose a valid mode and at least one subtitle language when required.")
 
-  defp invalid_field_message(_key),
-    do: gettext("Enter a number of GB (0 = no limit), or leave blank for the default.")
+  defp invalid_field_message(key) do
+    if Enum.any?(Settings.library_kinds(), &(key == Settings.upgrade_cutoff_key(&1.kind))),
+      do: gettext("Choose a cutoff included in the preferred resolutions list."),
+      else: gettext("Enter a number of GB (0 = no limit), or leave blank for the default.")
+  end
 
   defp invalid_field_label(key) when key == "import_roots",
     do: gettext("Download folders")
@@ -700,6 +767,9 @@ defmodule CinderWeb.SettingsComponents do
 
         key == Settings.max_size_key(kind) ->
           gettext("%{kind}: Max size (GB)", kind: SettingsLabels.t(label))
+
+        key == Settings.upgrade_cutoff_key(kind) ->
+          gettext("%{kind}: Automatic upgrade cutoff", kind: SettingsLabels.t(label))
 
         true ->
           nil

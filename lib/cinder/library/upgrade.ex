@@ -58,6 +58,17 @@ defmodule Cinder.Library.Upgrade do
   def preferred_sources(kind),
     do: Application.get_env(:cinder, :"#{kind}_preferred_sources")
 
+  @doc "Whether a library record has reached the configured automatic-upgrade cutoff."
+  def cutoff_met?(record, kind) do
+    preferred = preferred_resolutions(kind) || Scorer.default_preferred()
+    cutoff = Application.get_env(:cinder, :"#{kind}_upgrade_cutoff")
+
+    case Enum.find_index(preferred, &(&1 == cutoff)) do
+      nil -> false
+      cutoff_rank -> Scorer.resolution_rank(record.imported_resolution, preferred) <= cutoff_rank
+    end
+  end
+
   @spec better?(map(), map(), String.t() | nil, [String.t()] | nil, [String.t()] | nil) ::
           boolean()
   def better?(new, old, target, preferred, preferred_sources \\ []),

@@ -20,16 +20,17 @@ defmodule Cinder.Acquisition do
   @doc """
   Size-band scorer opts for a library `kind` (`:movies`/`:tv`), read from the settings-overlaid
   `:cinder` env (`:movies_min_size`, `:tv_max_size`, …). Only non-nil keys are returned: a nil
-  `:preferred_resolutions` or `:preferred_sources` would override the scorer's default, and an
-  unset band ⇒ omitted ⇒ `Scorer` keeps its defaults (unbounded / default resolutions / any source).
-  Both pollers pass these through to `Scorer`, so the movie and TV bands are configured the same way.
+  nil list would override the scorer's default, and an unset rule is omitted. Both pollers pass
+  these through to `Scorer`, so movie and TV rules are configured the same way.
   """
   def band_opts(kind) do
     [
       min_size: Application.get_env(:cinder, :"#{kind}_min_size"),
       max_size: Application.get_env(:cinder, :"#{kind}_max_size"),
       preferred_resolutions: Application.get_env(:cinder, :"#{kind}_preferred_resolutions"),
-      preferred_sources: Application.get_env(:cinder, :"#{kind}_preferred_sources")
+      preferred_sources: Application.get_env(:cinder, :"#{kind}_preferred_sources"),
+      preferred_terms: Application.get_env(:cinder, :"#{kind}_preferred_terms"),
+      blocked_terms: Application.get_env(:cinder, :"#{kind}_blocked_terms")
     ]
     |> Enum.reject(fn {_key, value} -> is_nil(value) end)
   end
