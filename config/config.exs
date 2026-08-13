@@ -73,6 +73,14 @@ config :cinder, disk_probe_timeout: 2_000
 config :cinder, media_info: Cinder.Library.MediaInfo.Ffprobe
 # `ffprobe` binary name/path; editable at /settings (Cinder.Settings overlays this key).
 config :cinder, ffprobe_bin: "ffprobe"
+
+# Local, CPU-only subtitle alignment. The release image pins ffsubsync 0.5.1 and coreutils timeout;
+# direct installs may point `ffsubsync_python` at a Python interpreter containing ffsubsync 0.5.1.
+config :cinder,
+  subtitle_sync_engine: Cinder.Subtitles.Sync.Ffsubsync,
+  ffsubsync_python: nil,
+  timeout_bin: "timeout"
+
 # Default; setting PLEX_URL (see runtime.exs) switches this to Plex.
 config :cinder, media_server: Cinder.Library.MediaServer.Jellyfin
 config :cinder, notifier: Cinder.Notifier.Dispatcher

@@ -70,9 +70,14 @@ RUN mix release
 # the compiled release and other runtime necessities
 FROM ${RUNNER_IMAGE} AS final
 
-# ffmpeg ships `ffprobe`, used (optionally) to verify a download's audio language before import.
+# ffmpeg ships `ffprobe`; ffsubsync aligns Cinder-downloaded sidecars. The venv keeps the pinned
+# Python runtime dependency isolated from Debian's system packages; coreutils supplies `timeout`.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends libstdc++6 openssl libncurses6 locales ca-certificates ffmpeg curl \
+  && apt-get install -y --no-install-recommends libstdc++6 openssl libncurses6 locales ca-certificates ffmpeg curl coreutils python3 python3-venv gcc python3-dev \
+  && python3 -m venv /opt/ffsubsync \
+  && /opt/ffsubsync/bin/pip install --no-cache-dir ffsubsync==0.5.1 \
+  && ln -s /opt/ffsubsync/bin/ffsubsync /usr/local/bin/ffsubsync \
+  && apt-get purge -y --auto-remove gcc python3-dev \
   && rm -rf /var/lib/apt/lists/*
 
 # Set the locale

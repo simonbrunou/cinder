@@ -7,6 +7,7 @@ defmodule Cinder.SubtitlesTest do
   alias Cinder.Subtitles
   alias Cinder.Subtitles.Manifest
   alias Cinder.Subtitles.Moviehash
+  alias Cinder.Subtitles.Sync.Worker
 
   @video "/lib/M/M.mkv"
   setup :verify_on_exit!
@@ -39,6 +40,11 @@ defmodule Cinder.SubtitlesTest do
     end)
 
     stub(Cinder.Library.FilesystemMock, :write, fn path, content ->
+      Agent.update(fs, &Map.put(&1, path, IO.iodata_to_binary(content)))
+      :ok
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn path, content ->
       Agent.update(fs, &Map.put(&1, path, IO.iodata_to_binary(content)))
       :ok
     end)
@@ -139,6 +145,93 @@ defmodule Cinder.SubtitlesTest do
 
     assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
     assert Agent.get(fs, &Map.get(&1, Subtitles.sidecar_path(@video, "fr"))) == "FR SRT"
+  end
+
+  test "a successful OpenSubtitles download enqueues synchronization", %{fs: fs} do
+    parent = self()
+
+    start_supervised!(
+      {Worker,
+       initial_scan: false,
+       analyze: fn video ->
+         send(parent, {:analyzed, video})
+         []
+       end}
+    )
+
+    expect(Cinder.Subtitles.ProviderMock, :search, fn _ ->
+      {:ok,
+       [
+         %{
+           file_id: 1,
+           language: "fr",
+           downloads: 1,
+           hearing_impaired: false,
+           ai_translated: false,
+           moviehash_match: false
+         }
+       ]}
+    end)
+
+    expect(Cinder.Subtitles.ProviderMock, :download, fn 1 -> {:ok, "FR SRT"} end)
+    expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+    assert_receive {:analyzed, @video}
+    assert Agent.get(fs, &Map.get(&1, Subtitles.sidecar_path(@video, "fr"))) == "FR SRT"
+
+    track = Manifest.read(@video).tracks["fr"]
+    assert track.file == "M.fr.srt"
+
+    assert track.managed_sha256 ==
+             "FR SRT" |> then(&:crypto.hash(:sha256, &1)) |> Base.encode16(case: :lower)
+  end
+
+  test "a committed subtitle rename is verified before provenance is written", %{fs: fs} do
+    target = Subtitles.sidecar_path(@video, "fr")
+
+    stub(Cinder.Library.FilesystemMock, :rename, fn source, destination ->
+      Agent.get_and_update(fs, fn files ->
+        content = Map.fetch!(files, source)
+        files = files |> Map.delete(source) |> Map.put(destination, content)
+
+        if destination == target and not Map.get(files, :committed_rename_reported, false) do
+          error =
+            {:error,
+             {:effect_committed, "rename", %{"phase" => "post_effect", "reason" => "EIO"}}}
+
+          {error, Map.put(files, :committed_rename_reported, true)}
+        else
+          {:ok, files}
+        end
+      end)
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :rm, fn path ->
+      Agent.update(fs, &Map.delete(&1, path))
+      :ok
+    end)
+
+    expect(Cinder.Subtitles.ProviderMock, :search, fn _ ->
+      {:ok,
+       [
+         %{
+           file_id: 1,
+           language: "fr",
+           downloads: 1,
+           hearing_impaired: false,
+           ai_translated: false,
+           moviehash_match: false
+         }
+       ]}
+    end)
+
+    expect(Cinder.Subtitles.ProviderMock, :download, fn 1 -> {:ok, "FR SRT"} end)
+    expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
+    assert Agent.get(fs, &Map.fetch!(&1, target)) == "FR SRT"
+    assert Manifest.read(@video).tracks["fr"].file == "M.fr.srt"
   end
 
   test "concurrent release-sidecar manifests serialize by video", %{fs: fs} do
@@ -280,10 +373,15 @@ defmodule Cinder.SubtitlesTest do
     expect(Cinder.Library.MediaServerMock, :scan, 2, fn :movies -> :ok end)
 
     assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
-    assert %{tracks: %{"fr" => %{origin: "opensubtitles_id"}}} = Manifest.read(@video)
+
+    assert %{tracks: %{"fr" => %{origin: "opensubtitles_id", file: "M.fr.srt"}}} =
+             Manifest.read(@video)
 
     assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, @video, :movies)
-    assert %{tracks: %{"fr" => %{origin: "opensubtitles_hash"}}} = Manifest.read(@video)
+
+    assert %{tracks: %{"fr" => %{origin: "opensubtitles_hash", file: "M.fr.srt"}}} =
+             Manifest.read(@video)
+
     assert Agent.get(fs, &Map.fetch!(&1, target)) == "HASH SRT"
   end
 
@@ -307,7 +405,7 @@ defmodule Cinder.SubtitlesTest do
       {:ok, {131_072, <<0::size(65_536 * 8)>>, <<0::size(65_536 * 8)>>}}
     end)
 
-    stub(Cinder.Library.FilesystemMock, :write, fn path, content ->
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn path, content ->
       if String.contains?(path, ".cinder-subtitle-manifest-") do
         {:error, :eio}
       else
@@ -350,7 +448,7 @@ defmodule Cinder.SubtitlesTest do
       {:ok, {131_072, <<0::size(65_536 * 8)>>, <<0::size(65_536 * 8)>>}}
     end)
 
-    stub(Cinder.Library.FilesystemMock, :write, fn path, content ->
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn path, content ->
       if String.contains?(path, ".cinder-subtitle-manifest-") do
         {:error, :eio}
       else
@@ -629,7 +727,7 @@ defmodule Cinder.SubtitlesTest do
 
     Application.put_env(:cinder, :filesystem_barrier, %{
       owner: self(),
-      operation: :write,
+      operation: :write_exclusive,
       contains: ".cinder-subtitle-manifest-"
     })
 
@@ -652,7 +750,7 @@ defmodule Cinder.SubtitlesTest do
 
     task = Task.async(fn -> Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies) end)
 
-    assert_receive {:filesystem_barrier, pid, ref, :write, manifest_temporary}, 1_000
+    assert_receive {:filesystem_barrier, pid, ref, :write_exclusive, manifest_temporary}, 1_000
     assert File.exists?(target)
     assert String.contains?(manifest_temporary, ".cinder-subtitle-manifest-")
 

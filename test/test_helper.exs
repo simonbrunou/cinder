@@ -1,4 +1,4 @@
-ExUnit.start()
+ExUnit.start(assert_receive_timeout: 1_000)
 Ecto.Adapters.SQL.Sandbox.mode(Cinder.Repo, :manual)
 
 # Mox mocks for the external-service behaviours (real impls land per phase).
@@ -21,3 +21,4 @@ Mox.defmock(Cinder.Library.FilesystemMock, for: Cinder.Library.Filesystem)
 Mox.defmock(Cinder.Library.MediaInfoMock, for: Cinder.Library.MediaInfo)
 Mox.defmock(Cinder.Subtitles.ProviderMock, for: Cinder.Subtitles.Provider)
 Mox.defmock(Cinder.Subtitles.TranslatorMock, for: Cinder.Subtitles.Translator)
+Mox.defmock(Cinder.Subtitles.Sync.EngineMock, for: Cinder.Subtitles.Sync.Engine)

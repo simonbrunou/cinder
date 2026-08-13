@@ -50,7 +50,7 @@ defmodule Cinder.LibrarySubtitlesTest do
       end
     end)
 
-    stub(Cinder.Library.FilesystemMock, :write, fn path, content ->
+    write = fn path, content ->
       content = IO.iodata_to_binary(content)
 
       Agent.update(subtitle_fs, fn files ->
@@ -60,7 +60,10 @@ defmodule Cinder.LibrarySubtitlesTest do
       end)
 
       :ok
-    end)
+    end
+
+    stub(Cinder.Library.FilesystemMock, :write, write)
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, write)
 
     stub(Cinder.Library.FilesystemMock, :rename, fn source, dest ->
       Agent.get_and_update(subtitle_fs, fn files ->

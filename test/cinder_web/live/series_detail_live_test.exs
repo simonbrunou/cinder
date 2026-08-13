@@ -1394,6 +1394,30 @@ defmodule CinderWeb.SeriesDetailLiveTest do
     assert reloaded.monitored == true
   end
 
+  test "series, season, and episode link to subtitle sync by database ID", %{conn: conn} do
+    %{series: series, season: season, episode: episode} =
+      series_with_episode_file_fixture(
+        "/tmp/cinder-test-tv-library/S (2010)/Season 01/S (2010) - S01E01.mkv"
+      )
+
+    {:ok, lv, _html} = live_series(conn, series)
+
+    assert has_element?(
+             lv,
+             "#series-subtitle-sync[href='/subtitle-sync?series=#{series.id}']"
+           )
+
+    assert has_element?(
+             lv,
+             "#season-#{season.id}-subtitle-sync[href='/subtitle-sync?season=#{season.id}']"
+           )
+
+    assert has_element?(
+             lv,
+             "#episode-#{episode.id}-subtitle-sync[href='/subtitle-sync?episode=#{episode.id}']"
+           )
+  end
+
   test "deleting a season's files clears every episode file", %{conn: conn} do
     %{series: series, season: season} =
       season_with_files_fixture([

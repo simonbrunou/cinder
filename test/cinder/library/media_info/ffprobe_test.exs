@@ -224,7 +224,31 @@ defmodule Cinder.Library.MediaInfo.FfprobeTest do
                  "disposition" => %{"default" => 0, "forced" => 0}
                }
              ]
-           }) == [%{index: 2, language: "en", default?: true, forced?: false}]
+           }) == [
+             %{index: 2, language: "en", default?: true, forced?: false, packet_count: 0}
+           ]
+  end
+
+  test "parse_subtitle_tracks/1 exposes packet counts for broadest-reference selection" do
+    assert Ffprobe.parse_subtitle_tracks(%{
+             "streams" => [
+               %{
+                 "index" => 2,
+                 "codec_name" => "subrip",
+                 "nb_read_packets" => "18",
+                 "disposition" => %{"forced" => 0}
+               },
+               %{
+                 "index" => 4,
+                 "codec_name" => "ass",
+                 "nb_read_packets" => "N/A",
+                 "disposition" => %{"forced" => 0}
+               }
+             ]
+           }) == [
+             %{index: 2, language: "und", default?: false, forced?: false, packet_count: 18},
+             %{index: 4, language: "und", default?: false, forced?: false, packet_count: 0}
+           ]
   end
 
   @tag :tmp_dir

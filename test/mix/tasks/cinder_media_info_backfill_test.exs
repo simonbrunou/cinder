@@ -35,6 +35,7 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
     stub(Cinder.Library.FilesystemMock, :lstat, fn _ -> {:ok, %File.Stat{}} end)
     stub(Cinder.Library.FilesystemMock, :read, fn _ -> {:error, :enoent} end)
     stub(Cinder.Library.FilesystemMock, :write, fn _, _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn _, _ -> :ok end)
     stub(Cinder.Library.FilesystemMock, :rename, fn _, _ -> :ok end)
 
     Backfill.run()
@@ -75,6 +76,7 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
     stub(Cinder.Library.FilesystemMock, :lstat, fn _ -> {:ok, %File.Stat{}} end)
     stub(Cinder.Library.FilesystemMock, :read, fn _ -> {:error, :enoent} end)
     stub(Cinder.Library.FilesystemMock, :write, fn _, _ -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn _, _ -> :ok end)
     stub(Cinder.Library.FilesystemMock, :rename, fn _, _ -> :ok end)
 
     Backfill.run()
@@ -108,6 +110,11 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
     end)
 
     stub(Cinder.Library.FilesystemMock, :write, fn path, content ->
+      Agent.update(fs, &Map.put(&1, path, IO.iodata_to_binary(content)))
+      :ok
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn path, content ->
       Agent.update(fs, &Map.put(&1, path, IO.iodata_to_binary(content)))
       :ok
     end)
@@ -176,6 +183,11 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
       :ok
     end)
 
+    stub(Cinder.Library.FilesystemMock, :write_exclusive, fn path, content ->
+      Agent.update(fs, &Map.put(&1, path, IO.iodata_to_binary(content)))
+      :ok
+    end)
+
     stub(Cinder.Library.FilesystemMock, :rename, fn source, dest ->
       Agent.get_and_update(fs, fn files ->
         {:ok, files |> Map.delete(source) |> Map.put(dest, Map.fetch!(files, source))}
@@ -189,6 +201,6 @@ defmodule Mix.Tasks.Cinder.MediaInfo.BackfillTest do
     state = Manifest.read(movie.file_path)
     assert state.video_moviehash == moviehash
     assert Manifest.stable?(state, moviehash, "fr")
-    assert state.tracks["en"] == %{origin: "release_sidecar"}
+    assert state.tracks["en"] == %{origin: "release_sidecar", file: "V (2020).en.srt"}
   end
 end
