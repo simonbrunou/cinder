@@ -9,7 +9,7 @@ Plex**. It's one Phoenix/LiveView app on SQLite — a single container, no exter
 external service (TMDB, Prowlarr, qBittorrent/SABnzbd, Jellyfin/Plex) sits behind a behaviour and
 is configured in-app.
 
-> **Status:** **v1.0** — movies + TV + multi-user (request → admin approval) are built, validated
+> **Status:** **v1.1** — movies + TV + multi-user (request → admin approval) are built, validated
 > live, and released. Build history in [`ROADMAP.md`](ROADMAP.md).
 
 ## Screenshots
