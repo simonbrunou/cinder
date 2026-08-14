@@ -237,7 +237,9 @@ defmodule Cinder.Catalog.UpgradeHunter do
           |> Enum.reject(&Enum.all?(&1, fn episode -> Upgrade.cutoff_met?(episode, :tv) end))
           |> List.flatten()
 
-        if eligible != [], do: search_anime_series(series, eligible)
+        if eligible != [] do
+          search_anime_series(series, episodes, MapSet.new(eligible, & &1.id))
+        end
 
       [] ->
         :ok
@@ -272,7 +274,7 @@ defmodule Cinder.Catalog.UpgradeHunter do
     end
   end
 
-  defp search_anime_series(series, episodes) do
+  defp search_anime_series(series, episodes, eligible_ids) do
     episode_ids = Enum.map(episodes, & &1.id)
     context = Catalog.anime_series_acquisition_context(series)
 
@@ -287,7 +289,7 @@ defmodule Cinder.Catalog.UpgradeHunter do
                  AnimePreferences.selection_opts(policy)
              ) do
           {:ok, %{assignments: assignments}} ->
-            Enum.each(assignments, &maybe_grab_anime_episodes(&1, episodes))
+            Enum.each(assignments, &maybe_grab_anime_episodes(&1, episodes, eligible_ids))
 
           _no_match_waiting_or_error ->
             :ok
@@ -339,17 +341,27 @@ defmodule Cinder.Catalog.UpgradeHunter do
     maybe_grab_episode_release(release, covered, target)
   end
 
-  defp maybe_grab_anime_episodes(%{release: release, episode_ids: episode_ids}, episodes) do
+  defp maybe_grab_anime_episodes(
+         %{release: release, episode_ids: episode_ids},
+         episodes,
+         eligible_ids
+       ) do
     covered = Enum.filter(episodes, &(&1.id in episode_ids))
+    eligible = Enum.filter(covered, &MapSet.member?(eligible_ids, &1.id))
 
     # Anime policy already decided audio/subtitle suitability; the quality gate compares only the
     # ranked resolution/source fields here and the verified file again at import.
-    maybe_grab_episode_release(release, covered, nil)
+    maybe_grab_episode_release(release, covered, eligible, nil)
   end
 
   defp maybe_grab_episode_release(release, covered, target) do
+    maybe_grab_episode_release(release, covered, covered, target)
+  end
+
+  defp maybe_grab_episode_release(release, covered, candidates, target) do
     cond do
-      covered == [] or not Enum.any?(covered, &Upgrade.candidate?(&1, release, :tv, target)) ->
+      candidates == [] or
+          not Enum.any?(candidates, &Upgrade.candidate?(&1, release, :tv, target)) ->
         :ok
 
       not Disk.grab_space_available?(release.size) ->

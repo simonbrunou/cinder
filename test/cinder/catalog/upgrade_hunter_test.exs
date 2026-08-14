@@ -567,6 +567,8 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
 
     test "groups anime upgrade holdings across seasons", ctx do
       put_env(UpgradeHunter, enabled: true, batch: 1)
+      put_env(:tv_preferred_resolutions, ["1080p", "720p"])
+      put_env(:tv_upgrade_cutoff, "1080p")
 
       Repo.update_all(from(s in Cinder.Catalog.Series, where: s.id == ^ctx.series.id),
         set: [media_profile: :anime]
@@ -586,7 +588,7 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
         |> episode_fixture(%{
           episode_number: 1,
           file_path: "/lib/Show/S02E01.mkv",
-          imported_resolution: "720p",
+          imported_resolution: "1080p",
           imported_size: 1_000_000_000
         })
 
