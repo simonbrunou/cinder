@@ -5962,3 +5962,23 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "Uses the standard %{kind} folder"
 msgstr ""
+
+#: lib/cinder_web/live/settings_live.ex:307
+#, elixir-autogen, elixir-format
+msgid "Database backup"
+msgstr ""
+
+#: lib/cinder_web/live/settings_live.ex:309
+#, elixir-autogen, elixir-format
+msgid "Download a consistent snapshot of Cinder's database. Keep your SECRET_KEY_BASE with the backup or encrypted settings cannot be restored. Media files are not included."
+msgstr ""
+
+#: lib/cinder_web/live/settings_live.ex:319
+#, elixir-autogen, elixir-format
+msgid "Download database backup"
+msgstr ""
+
+#: lib/cinder_web/controllers/database_snapshot_controller.ex:42
+#, elixir-autogen, elixir-format
+msgid "The database backup could not be created. Please try again."
+msgstr ""

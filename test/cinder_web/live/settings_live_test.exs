@@ -521,6 +521,19 @@ defmodule CinderWeb.SettingsLiveTest do
            )
   end
 
+  test "offers a database snapshot with the restore caveats", %{conn: conn} do
+    {:ok, live_view, _html} = live(conn, ~p"/settings")
+
+    assert has_element?(
+             live_view,
+             ~s|a[href="/settings/database-backup"][download]|,
+             "Download database backup"
+           )
+
+    assert has_element?(live_view, "p", "Keep your SECRET_KEY_BASE with the backup")
+    assert has_element?(live_view, "p", "Media files are not included")
+  end
+
   test "generating an API key shows it exactly once and never echoes it back", %{conn: conn} do
     {:ok, lv, html} = live(conn, ~p"/settings")
 

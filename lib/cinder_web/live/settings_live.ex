@@ -302,6 +302,23 @@ defmodule CinderWeb.SettingsLive do
           </.button>
         </div>
       </div>
+
+      <div class="rounded-box bg-base-200 p-4 mt-8">
+        <h2 class="text-lg font-semibold mb-3">{gettext("Database backup")}</h2>
+        <p class="text-sm opacity-70">
+          {gettext(
+            "Download a consistent snapshot of Cinder's database. Keep your SECRET_KEY_BASE with the backup or encrypted settings cannot be restored. Media files are not included."
+          )}
+        </p>
+        <.button
+          href={~p"/settings/database-backup"}
+          download
+          variant="neutral"
+          class="mt-3"
+        >
+          {gettext("Download database backup")}
+        </.button>
+      </div>
     </Layouts.app>
     """
   end

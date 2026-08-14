@@ -159,6 +159,12 @@ defmodule CinderWeb.Router do
       ]
   end
 
+  scope "/", CinderWeb do
+    pipe_through [:browser, :require_authenticated_user, :require_admin]
+
+    get "/settings/database-backup", DatabaseSnapshotController, :download
+  end
+
   # Swoosh mailbox preview stays dev-only (no outbound mail to inspect in prod), same admin gate.
   if Application.compile_env(:cinder, :dev_routes) do
     scope "/dev" do
