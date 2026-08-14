@@ -233,6 +233,24 @@ defmodule CinderWeb.SettingsLiveTest do
     assert has_element?(lv, "#settings-group-migration", "Unreachable")
   end
 
+  test "shows a reachable SABnzbd configuration warning", %{conn: conn} do
+    stub(Cinder.Download.SabnzbdClientMock, :health, fn ->
+      {:warning, {:sabnzbd_config, [{:duplicate_handling, :series, 2}]}}
+    end)
+
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+    lv |> element("button", "Test SABnzbd") |> render_click()
+
+    assert has_element?(lv, "#settings-group-download .badge-warning", "Warning")
+
+    assert has_element?(
+             lv,
+             ~s|#settings-group-download [title*="Series duplicate detection is enabled"]|
+           )
+
+    refute has_element?(lv, "#settings-group-download", "Unreachable")
+  end
+
   test "opens the group containing invalid fields", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/settings")
 

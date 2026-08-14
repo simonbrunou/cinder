@@ -554,6 +554,12 @@ defmodule CinderWeb.DashboardLive do
                   <p :if={match?({:error, _}, h.status)} class="text-xs text-error break-words">
                     {health_reason(elem(h.status, 1))}
                   </p>
+                  <p
+                    :if={match?({:warning, _}, h.status)}
+                    class="text-xs text-warning break-words"
+                  >
+                    {health_reason(elem(h.status, 1))}
+                  </p>
                 </div>
                 <.status_badge kind={:health} status={h.status} />
               </li>

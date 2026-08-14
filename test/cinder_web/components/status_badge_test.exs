@@ -89,6 +89,19 @@ defmodule CinderWeb.StatusBadgeTest do
     assert html =~ "Timed out"
   end
 
+  test "a health warning renders a warning without calling the service unreachable" do
+    html =
+      badge(%{
+        kind: :health,
+        status: {:warning, {:sabnzbd_config, [{:folder_max_length, 60}]}}
+      })
+
+    assert html =~ "Warning"
+    assert html =~ "badge-warning"
+    assert html =~ "Folder name limit is 60"
+    refute html =~ "Unreachable"
+  end
+
   test "health_reason unwraps wrapped error shapes into human strings" do
     f = &CinderWeb.CoreComponents.health_reason/1
     assert f.(%Req.TransportError{reason: :econnrefused}) == "Connection refused"

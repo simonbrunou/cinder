@@ -560,8 +560,8 @@ are pruned automatically.
   Cinder's SABnzbd category) to avoid it. When a SABnzbd job does park a title, Cinder now
   preserves the client's own reason (paused / its `fail_message`) as the parked-item detail on
   `/activity`, so the cause is visible instead of a bare "couldn't be imported."
-- **SABnzbd health warns on risky config.** The `/status` and `/settings` "Test connection" health
-  check reads SABnzbd's config and logs a warning (server logs) when it finds settings that wedge
+- **SABnzbd health warns on risky config.** The `/dashboard` and `/settings` "Test connection" health
+  check reads SABnzbd's config and shows an amber warning (and logs it) when it finds settings that wedge
   Cinder's grabs: a `folder_max_length` below **200** (which truncates the mandatory
   `.cinder-<key>` job-name suffix so SABnzbd can never find the job — keep it at the default 246 or
   higher), or duplicate handling (**Pause on Duplicates** / **series duplicate detection**) left on

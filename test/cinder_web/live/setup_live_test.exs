@@ -214,6 +214,24 @@ defmodule CinderWeb.SetupLiveTest do
     refute Cinder.Settings.setup_complete?()
   end
 
+  test "a SABnzbd configuration warning remains reachable during setup", %{conn: conn} do
+    admin = Cinder.AccountsFixtures.admin_fixture()
+    conn = log_in_user(conn, admin)
+    stub_all_services_ok()
+
+    stub(Cinder.Download.SabnzbdClientMock, :health, fn ->
+      {:warning, {:sabnzbd_config, [{:folder_max_length, 60}]}}
+    end)
+
+    {:ok, lv, _html} = live(conn, ~p"/setup")
+
+    lv
+    |> form("#setup-form", %{"sabnzbd_enabled" => "true", "media_server_type" => "jellyfin"})
+    |> render_submit()
+
+    assert has_element?(lv, "#finish-setup:not([disabled])")
+  end
+
   test "a per-service Test button updates that service's badge", %{conn: conn} do
     admin = Cinder.AccountsFixtures.admin_fixture()
     conn = log_in_user(conn, admin)

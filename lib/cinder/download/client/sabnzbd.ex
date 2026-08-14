@@ -600,10 +600,12 @@ defmodule Cinder.Download.Client.Sabnzbd do
         {:error, :bad_api_key}
 
       {:ok, %{status: status}} when status in 200..299 ->
-        # Best-effort: name (in the log) the config that silently wedges every grab. The health
-        # model has no warning tier, so a misconfig can't fail the probe — it logs and moves on.
-        warn_on_risky_config(probe)
-        mapping_health()
+        warnings = warn_on_risky_config(probe)
+
+        case mapping_health() do
+          :ok when warnings != [] -> {:warning, {:sabnzbd_config, warnings}}
+          status -> status
+        end
 
       other ->
         error(other)
@@ -617,23 +619,25 @@ defmodule Cinder.Download.Client.Sabnzbd do
     )
   end
 
-  # SABnzbd config that breaks Cinder's grabs silently, surfaced as a log warning (there is no
-  # health-warning tier). Best-effort: any fetch/shape problem is skipped, never raised — a config
-  # read must not turn a reachable SABnzbd unhealthy. See docs/operating.md "Known limitations".
+  # Best-effort: any fetch/shape problem is skipped, never raised — a config read must not turn a
+  # reachable SABnzbd unhealthy. See docs/operating.md "Known limitations".
   defp warn_on_risky_config(probe) do
     case get([mode: "get_config", section: "misc"], probe) do
       {:ok, %{status: 200, body: %{"config" => %{"misc" => misc}}}} when is_map(misc) ->
-        warn_short_foldername(misc["folder_max_length"])
-        warn_duplicate_handling("Pause on Duplicates", misc["no_dupes"])
-        warn_duplicate_handling("series duplicate detection", misc["no_series_dupes"])
+        [
+          warn_short_foldername(misc["folder_max_length"]),
+          warn_duplicate_handling(:pause_on_duplicates, misc["no_dupes"]),
+          warn_duplicate_handling(:series, misc["no_series_dupes"])
+        ]
+        |> Enum.reject(&is_nil/1)
 
       _other ->
-        :ok
+        []
     end
   rescue
-    _ -> :ok
+    _ -> []
   catch
-    _, _ -> :ok
+    _, _ -> []
   end
 
   defp warn_short_foldername(len) when is_integer(len) and len < @max_nzbname_bytes do
@@ -642,20 +646,26 @@ defmodule Cinder.Download.Client.Sabnzbd do
         "\".cinder-<key>\" job-name suffix, wedging every grab (SABnzbd can't find the job). " <>
         "Raise it to 246 (the default) or higher."
     )
+
+    {:folder_max_length, len}
   end
 
-  defp warn_short_foldername(_len), do: :ok
+  defp warn_short_foldername(_len), do: nil
 
   # SABnzbd duplicate handling: 0 = Off; anything else pauses/discards/tags. A non-Cinder value on
   # Cinder's category can pause or drop a legitimate re-grab (an upgrade, a post-blocklist re-search).
-  defp warn_duplicate_handling(label, mode) when is_integer(mode) and mode != 0 do
+  defp warn_duplicate_handling(kind, mode) when is_integer(mode) and mode != 0 do
+    label = if kind == :series, do: "series duplicate detection", else: "Pause on Duplicates"
+
     Logger.warning(
       "SABnzbd #{label} is on (=#{mode}); it can pause or discard a legitimate Cinder re-grab, " <>
         "parking the title. Turn it off, or scope it away from Cinder's SABnzbd category."
     )
+
+    {:duplicate_handling, kind, mode}
   end
 
-  defp warn_duplicate_handling(_label, _mode), do: :ok
+  defp warn_duplicate_handling(_kind, _mode), do: nil
 
   defp get(params, extra \\ []) do
     config = config()

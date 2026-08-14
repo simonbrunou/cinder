@@ -279,6 +279,18 @@ defmodule CinderWeb.DashboardLiveTest do
       assert render_async(lv) =~ "OK"
     end
 
+    test "shows a reachable SABnzbd configuration warning in amber", %{conn: conn} do
+      stub(Cinder.Download.SabnzbdClientMock, :health, fn ->
+        {:warning, {:sabnzbd_config, [{:folder_max_length, 60}]}}
+      end)
+
+      {:ok, lv, _html} = live(conn, ~p"/dashboard")
+      render_async(lv)
+
+      assert has_element?(lv, "#dashboard-health .badge-warning", "Warning")
+      assert has_element?(lv, "#dashboard-health p.text-warning", "Folder name limit is 60")
+    end
+
     test "renders recent movie download progress", %{conn: conn} do
       movie = movie_fixture(%{status: :downloading})
 

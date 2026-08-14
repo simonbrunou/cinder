@@ -25,8 +25,8 @@ defmodule Cinder.Download.Client do
   """
   @callback status(id :: String.t()) :: {:ok, map()} | {:error, term()}
 
-  @doc "Lightweight reachability check — `:ok` if the client answers, else `{:error, reason}`."
-  @callback health() :: :ok | {:error, term()}
+  @doc "Lightweight reachability check — warnings remain reachable; errors do not."
+  @callback health() :: :ok | {:warning, term()} | {:error, term()}
 
   @doc """
   Lists the file names a download will deliver, for `Cinder.Download.ContentPolicy` to vet.
