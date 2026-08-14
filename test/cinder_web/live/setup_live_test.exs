@@ -51,6 +51,7 @@ defmodule CinderWeb.SetupLiveTest do
     refute has_element?(lv, "#anime-settings")
     # But the wizard still shows the library paths it needs to validate.
     assert html =~ ~s(name="movies_library_path")
+    assert html =~ ~s(name="movies_anime_library_path")
   end
 
   test "the wizard gives required sections an ordered path from a clear starting point", %{

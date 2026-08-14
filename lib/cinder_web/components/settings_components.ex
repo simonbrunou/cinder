@@ -30,6 +30,7 @@ defmodule CinderWeb.SettingsComponents do
     |> Enum.map(fn key ->
       cond do
         key == Settings.import_roots_key() -> :library
+        library_path_key?(key) -> :library
         MapSet.member?(anime_keys, key) -> :anime
         true -> :releases
       end
@@ -146,23 +147,80 @@ defmodule CinderWeb.SettingsComponents do
 
           <div
             :for={%{kind: kind, label: kind_label} <- Settings.library_kinds()}
-            class="form-control"
+            class="space-y-2"
           >
-            <label class="label" for={Settings.library_path_key(kind)}>
-              <span class="label-text">{gettext("%{kind} library folder",
-                kind: SettingsLabels.t(kind_label)
-              )}</span>
-            </label>
-            <input
-              type="text"
-              id={Settings.library_path_key(kind)}
-              name={Settings.library_path_key(kind)}
-              value={@form.values[Settings.library_path_key(kind)]}
-              placeholder={@form.placeholders[Settings.library_path_key(kind)] || "/media/#{kind}"}
-              autocomplete="off"
-              aria-describedby="library-paths-help"
-              class="input w-full"
-            />
+            <div class="form-control">
+              <label class="label" for={Settings.library_path_key(kind)}>
+                <span class="label-text">{gettext("%{kind} library folder",
+                  kind: SettingsLabels.t(kind_label)
+                )}</span>
+              </label>
+              <input
+                type="text"
+                id={Settings.library_path_key(kind)}
+                name={Settings.library_path_key(kind)}
+                value={@form.values[Settings.library_path_key(kind)]}
+                placeholder={@form.placeholders[Settings.library_path_key(kind)] || "/media/#{kind}"}
+                autocomplete="off"
+                aria-invalid={invalid?(@form, Settings.library_path_key(kind)) && "true"}
+                aria-describedby={
+                  if invalid?(@form, Settings.library_path_key(kind)),
+                    do: "library-paths-help #{Settings.library_path_key(kind)}-error",
+                    else: "library-paths-help"
+                }
+                class={[
+                  "input w-full",
+                  invalid?(@form, Settings.library_path_key(kind)) && "input-error"
+                ]}
+              />
+              <.field_error
+                :if={invalid?(@form, Settings.library_path_key(kind))}
+                field={Settings.library_path_key(kind)}
+              />
+            </div>
+
+            <div class="form-control">
+              <label class="label" for={Settings.anime_library_path_key(kind)}>
+                <span class="label-text">
+                  {gettext("Anime %{kind} library folder (optional)",
+                    kind: SettingsLabels.t(kind_label)
+                  )}
+                </span>
+              </label>
+              <input
+                type="text"
+                id={Settings.anime_library_path_key(kind)}
+                name={Settings.anime_library_path_key(kind)}
+                value={@form.values[Settings.anime_library_path_key(kind)]}
+                placeholder={
+                  gettext("Uses the standard %{kind} folder", kind: SettingsLabels.t(kind_label))
+                }
+                autocomplete="off"
+                aria-invalid={invalid?(@form, Settings.anime_library_path_key(kind)) && "true"}
+                aria-describedby={
+                  if invalid?(@form, Settings.anime_library_path_key(kind)),
+                    do:
+                      "#{Settings.anime_library_path_key(kind)}-help #{Settings.anime_library_path_key(kind)}-error",
+                    else: "#{Settings.anime_library_path_key(kind)}-help"
+                }
+                class={[
+                  "input w-full",
+                  invalid?(@form, Settings.anime_library_path_key(kind)) && "input-error"
+                ]}
+              />
+              <.field_error
+                :if={invalid?(@form, Settings.anime_library_path_key(kind))}
+                field={Settings.anime_library_path_key(kind)}
+              />
+              <p
+                id={"#{Settings.anime_library_path_key(kind)}-help"}
+                class="mt-1 text-xs opacity-70"
+              >
+                {gettext(
+                  "Titles explicitly using the Anime profile import here. Leave blank to use the standard folder."
+                )}
+              </p>
+            </div>
           </div>
           <p id="library-paths-help" class="mt-1 text-xs opacity-70">
             {gettext(
@@ -744,7 +802,13 @@ defmodule CinderWeb.SettingsComponents do
   defp invalid_field_message(key) when key == "anime_embedded_subtitle_mode",
     do: gettext("Choose a valid mode and at least one subtitle language when required.")
 
-  defp invalid_field_message(key) do
+  defp invalid_field_message(key) when is_binary(key) do
+    if library_path_key?(key),
+      do: gettext("The top-level folder (/) is not allowed."),
+      else: invalid_release_field_message(key)
+  end
+
+  defp invalid_release_field_message(key) do
     if Enum.any?(Settings.library_kinds(), &(key == Settings.upgrade_cutoff_key(&1.kind))),
       do: gettext("Choose a cutoff included in the preferred resolutions list."),
       else: gettext("Enter a number of GB (0 = no limit), or leave blank for the default.")
@@ -762,6 +826,12 @@ defmodule CinderWeb.SettingsComponents do
   defp invalid_field_label(key) do
     Enum.find_value(Settings.library_kinds(), key, fn %{kind: kind, label: label} ->
       cond do
+        key == Settings.library_path_key(kind) ->
+          gettext("%{kind} library folder", kind: SettingsLabels.t(label))
+
+        key == Settings.anime_library_path_key(kind) ->
+          gettext("Anime %{kind} library folder", kind: SettingsLabels.t(label))
+
         key == Settings.min_size_key(kind) ->
           gettext("%{kind}: Min size (GB)", kind: SettingsLabels.t(label))
 
@@ -774,6 +844,12 @@ defmodule CinderWeb.SettingsComponents do
         true ->
           nil
       end
+    end)
+  end
+
+  defp library_path_key?(key) do
+    Enum.any?(Settings.library_kinds(), fn %{kind: kind} ->
+      key in [Settings.library_path_key(kind), Settings.anime_library_path_key(kind)]
     end)
   end
 

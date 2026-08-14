@@ -12,6 +12,7 @@ defmodule Cinder.Library.Adoption do
   alias Cinder.Catalog.{Episode, Series}
   alias Cinder.Library
   alias Cinder.Locales
+  alias Cinder.Settings
 
   @candidate_limit 5
   @provider_tag ~r/^(.*?)\s*\{((?:tmdb|tvdb)-\d+|imdb-tt\d+)\}\s*$/iu
@@ -164,16 +165,7 @@ defmodule Cinder.Library.Adoption do
   end
 
   defp scan_movies(managed) do
-    case root_files(:movies) do
-      {:ok, root, files} ->
-        movie_candidates(files, root, managed)
-
-      {:error, root, reason} ->
-        [scan_error(:movie, root, reason)]
-
-      :unconfigured ->
-        []
-    end
+    scan_roots(:movies, :movie, managed, &movie_candidates/3)
   end
 
   defp movie_candidates(files, root, managed) do
@@ -188,34 +180,36 @@ defmodule Cinder.Library.Adoption do
     do: Enum.any?(entries, fn {path, _size} -> managed?(managed, path) end)
 
   defp scan_series(managed) do
-    case root_files(:tv) do
-      {:ok, root, files} ->
-        files
-        |> Enum.filter(fn {path, _size} ->
-          Library.video_file?(path) and not managed?(managed, path)
-        end)
-        |> Enum.group_by(&series_group(&1, root))
-        |> Enum.map(&series_candidate/1)
-
-      {:error, root, reason} ->
-        [scan_error(:series, root, reason)]
-
-      :unconfigured ->
-        []
-    end
+    scan_roots(:tv, :series, managed, fn files, root, managed ->
+      files
+      |> Enum.filter(fn {path, _size} ->
+        Library.video_file?(path) and not managed?(managed, path)
+      end)
+      |> Enum.group_by(&series_group(&1, root))
+      |> Enum.map(&series_candidate/1)
+    end)
   end
 
-  defp root_files(kind) do
-    case Application.get_env(:cinder, :"#{kind}_library_path") do
-      root when is_binary(root) and root != "" ->
-        case filesystem().find_files(root) do
-          {:ok, files} -> {:ok, root, files}
-          {:error, reason} -> {:error, root, reason}
-        end
+  # Scan the most-specific roots first so a nested Anime destination is grouped relative to its
+  # own root, then discard paths already seen by a broader root.
+  defp scan_roots(kind, candidate_kind, managed, build_candidates) do
+    Settings.library_destinations()
+    |> Enum.filter(&(&1.kind == kind))
+    |> Enum.map(& &1.path)
+    |> Enum.uniq()
+    |> Enum.sort_by(&byte_size/1, :desc)
+    |> Enum.reduce({[], MapSet.new()}, fn root, {candidates, seen} ->
+      case filesystem().find_files(root) do
+        {:ok, files} ->
+          fresh = Enum.reject(files, &MapSet.member?(seen, normalize_path(elem(&1, 0))))
+          seen = Enum.reduce(files, seen, &MapSet.put(&2, normalize_path(elem(&1, 0))))
+          {candidates ++ build_candidates.(fresh, root, managed), seen}
 
-      _ ->
-        :unconfigured
-    end
+        {:error, reason} ->
+          {candidates ++ [scan_error(candidate_kind, root, reason)], seen}
+      end
+    end)
+    |> elem(0)
   end
 
   defp movie_group({path, _size}, root) do

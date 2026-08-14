@@ -128,10 +128,10 @@ erasure. The `smtp_username` setting is stored unencrypted in the settings table
 
 Boot-only keys (`SECRET_KEY_BASE`, `DATABASE_PATH`, `PHX_*`, `PORT`, `POOL_SIZE`, `RELEASE_NAME`,
 `DNS_CLUSTER_QUERY`) stay in the environment. Everything else — TMDB, indexer, download clients,
-media server, the per-kind library roots (`movies_library_path`, `tv_library_path`), the per-kind
-size bands, subtitles, and notifications — is edited at `/settings` and
-stored in the database. **DB values override the env bootstrap; clearing a setting reverts to the
-env value/default.** Secret fields are encrypted at rest with a key derived from `SECRET_KEY_BASE`.
+media server, the standard per-kind library roots (`movies_library_path`, `tv_library_path`), the
+per-kind size bands, subtitles, and notifications — is edited at `/settings` and stored in the
+database. **DB values override the env bootstrap; clearing a setting reverts to the env
+value/default.** Secret fields are encrypted at rest with a key derived from `SECRET_KEY_BASE`.
 
 ### Discord notifications
 
@@ -486,11 +486,12 @@ skips both checks and imports permissively — a missing probe never blocks an i
 
 ## Library roots: movies vs TV
 
-Each library kind has its **own** import root — movies under `movies_library_path`, TV under
-`tv_library_path` — and (for Plex) its own scan section. Point your media server's Movies and Shows
-libraries at the two roots. **Each root is required and has no fallback:** with one unset, that
-kind's grabs *hold* (downloaded, logged, shown red on `/dashboard`) rather than importing into the
-wrong library, and the first-run wizard won't finish until both roots validate writable.
+Each library kind has a required standard import root — movies under `movies_library_path`, TV
+under `tv_library_path` — and (for Plex) its own scan section. `/settings` also offers an optional
+Anime destination for each kind. A title explicitly using the Anime profile imports there; leaving
+the field blank uses the standard root. The first-run wizard still requires both standard roots,
+and a grab whose selected destination is unavailable holds rather than importing into the wrong
+place. Point Jellyfin or Plex at every distinct root you configure.
 
 > **Upgrading across the key regularization:** the movie config keys gained the `MOVIES_` prefix the
 > TV keys already had — `LIBRARY_PATH` → `MOVIES_LIBRARY_PATH`, `PLEX_SECTION` → `MOVIES_PLEX_SECTION`
@@ -505,8 +506,9 @@ wrong library, and the first-run wizard won't finish until both roots validate w
 
 If you already have a Radarr/Sonarr/Plex-shaped library, **`/library` → "Adopt existing library"**
 (`/library/adopt`, admin-only) pulls those files into Cinder's catalog without re-downloading. It
-**scans the configured movie and TV roots**, matches each unmanaged video against TMDB, and files
-your confirmed matches — reading only the filesystem, TMDB, and catalog until you confirm.
+**scans every configured standard and Anime movie/TV root**, matches each unmanaged video against
+TMDB, and files your confirmed matches — reading only the filesystem, TMDB, and catalog until you
+confirm.
 
 - **Nothing is auto-guessed.** Candidates land in three buckets: **auto-matched** (an unambiguous
   hit — review, then adopt), **ambiguous** (pick the right TMDB title before adopting), and

@@ -291,9 +291,9 @@ defmodule CinderWeb.DashboardLive do
 
   defp disk_root_label(:movies), do: gettext("Movies")
   defp disk_root_label(:tv), do: gettext("TV")
-  # :database (the DB-volume row) falls through to the capitalize fallback → "Database". Not a
-  # gettext msgid: adding one would need a POT extraction, deferred to the maintainer's central
-  # gettext.extract pass to avoid per-worktree line-ref drift.
+  defp disk_root_label(:anime_movies), do: gettext("Anime movies")
+  defp disk_root_label(:anime_tv), do: gettext("Anime TV")
+  # :database (the DB-volume row) falls through to the capitalize fallback → "Database".
   defp disk_root_label(kind), do: kind |> to_string() |> String.capitalize()
 
   # The database volume is always monitored; the library roots may not be configured yet. Show

@@ -79,6 +79,36 @@ defmodule Cinder.Library.AdoptionTest do
     refute Enum.any?(candidates, &(managed_tv in &1.paths))
   end
 
+  test "scan covers a nested Anime root without returning its files twice" do
+    standard = "/tmp/cinder-test-library/Dune (2021)/Dune (2021).mkv"
+    anime_root = "/tmp/cinder-test-library/anime"
+    anime = "#{anime_root}/Akira (1988)/Akira (1988).mkv"
+    saved = Application.get_env(:cinder, :movies_anime_library_path)
+    Application.put_env(:cinder, :movies_anime_library_path, anime_root)
+
+    on_exit(fn ->
+      if saved,
+        do: Application.put_env(:cinder, :movies_anime_library_path, saved),
+        else: Application.delete_env(:cinder, :movies_anime_library_path)
+    end)
+
+    expect(Cinder.Library.FilesystemMock, :find_files, 3, fn
+      ^anime_root -> {:ok, [{anime, 10}]}
+      "/tmp/cinder-test-library" -> {:ok, [{standard, 20}, {anime, 10}]}
+      "/tmp/cinder-test-tv-library" -> {:ok, []}
+    end)
+
+    expect(Cinder.Catalog.TMDBMock, :search, 2, fn
+      "Dune", "en" -> {:ok, [movie_result(10, "Dune", 2021)]}
+      "Akira", "en" -> {:ok, [movie_result(20, "Akira", 1988)]}
+    end)
+
+    candidates = Adoption.scan()
+
+    assert Enum.map(candidates, & &1.path) |> Enum.sort() == Enum.sort([standard, anime])
+    assert Enum.count(candidates, &(anime in &1.paths)) == 1
+  end
+
   test "two files claiming the same episode are both held, never last-write-wins" do
     dupe_a = "/tmp/cinder-test-tv-library/Test Show (2001)/Test.Show.S01E01.1080p.mkv"
     dupe_b = "/tmp/cinder-test-tv-library/Test Show (2001)/Test.Show.S01E01.720p.mkv"

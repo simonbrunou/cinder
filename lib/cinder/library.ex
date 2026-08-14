@@ -75,7 +75,7 @@ defmodule Cinder.Library do
   defp do_stage_movie(movie, path, opts) do
     replace? = Keyword.get(opts, :replace, false)
 
-    with {:ok, root} <- root(:movies),
+    with {:ok, root} <- Settings.library_root(:movies, movie),
          {:ok, source, folder?} <- resolve_source(path),
          {:ok, reports} <- verify_movie_policy(movie, source),
          {:ok, %{size: size, inode: si, major_device: sdev}} <- fs().lstat(source),
@@ -485,8 +485,8 @@ defmodule Cinder.Library do
     # Strict separate TV root: with no :tv_library_path configured, return an error tuple so the
     # poller holds the grab (no bump, no park) until it's set, rather than raising every tick
     # (a raise would sit above the poller's {:error,_} clause and re-raise — see TvPoller). The
-    # same guard (`root/1`) protects the movie path symmetrically.
-    with {:ok, root} <- root(:tv) do
+    # same `Settings.library_root/2` guard protects the movie path symmetrically.
+    with {:ok, root} <- Settings.library_root(:tv, episodes) do
       do_import_episodes(content_path, episodes, root)
     end
   end
@@ -518,7 +518,7 @@ defmodule Cinder.Library do
     already_held = Keyword.get(opts, :already_held, [])
     release_title = Keyword.get(opts, :release_title)
 
-    with {:ok, root} <- root(:tv),
+    with {:ok, root} <- Settings.library_root(:tv, episodes),
          {:ok, videos, folder?} <- video_files(content_path) do
       {to_import, unmatched} =
         videos
@@ -573,7 +573,7 @@ defmodule Cinder.Library do
         %Episode{file_path: primary} = episode
       )
       when is_binary(content_path) and content_path != "" and is_binary(primary) and primary != "" do
-    with {:ok, root} <- root(:tv),
+    with {:ok, root} <- Settings.library_root(:tv, episode),
          {:ok, source, folder?} <- grab_file_source(content_path, file.relative_path),
          {:ok, stat} <- fs().lstat(source),
          :ok <- verify_grab_file_identity(file, stat),
@@ -705,7 +705,7 @@ defmodule Cinder.Library do
     with {:ok, current} <- inventory_anime_videos(grab.content_path),
          :ok <- AnimeInventory.same_inventory(current.files, preflight.decisions),
          :ok <- AnimeInventory.same_container_kind(current.folder?, preflight.folder?),
-         {:ok, root} <- root(:tv),
+         {:ok, root} <- Settings.library_root(:tv, grab.episodes),
          {:ok, to_import} <-
            AnimeInventory.import_pairs(grab, preflight.assignments, current.folder?),
          {:ok, reports} <- verify_grab_policy(grab, to_import) do
@@ -1159,12 +1159,21 @@ defmodule Cinder.Library do
   # the episode KEPT is the same lie as recording its quality. The fall-through placement is the
   # one case where they do belong at `dest` — the file there IS the release's — so it gets the
   # real `folder?` back afterwards, once `placed?` has told us which of the two happened (#291).
-  defp fresh_keep_stage(ep, source, root, download) do
+  defp fresh_keep_stage(ep, source, _root, download) do
     decline = fn _new_quality -> false end
     held = download_context(false, %{}, download.release_title)
 
-    with {:ok, stage} <-
-           stage_episode_file_at([ep], source, root, held, ep.file_path, :adopt, decline) do
+    with {:ok, held_root} <- Settings.library_root_for_path(ep.file_path),
+         {:ok, stage} <-
+           stage_episode_file_at(
+             [ep],
+             source,
+             held_root,
+             held,
+             ep.file_path,
+             :adopt,
+             decline
+           ) do
       {:ok, declined_stage(stage, ep, download.folder?)}
     end
   end
@@ -1396,14 +1405,4 @@ defmodule Cinder.Library do
 
   @doc false
   def path_policy, do: Application.get_env(:cinder, :path_policy, PathPolicy)
-
-  # The configured import root for a kind, or {:error, :library_not_configured} when unset/blank —
-  # used by both importers so an unconfigured root holds (poller retries) instead of raising. The
-  # same shape for every kind: movies and TV are no longer special-cased.
-  defp root(kind) do
-    case Application.get_env(:cinder, :"#{kind}_library_path") do
-      path when is_binary(path) and path != "" -> {:ok, path}
-      _ -> {:error, :library_not_configured}
-    end
-  end
 end

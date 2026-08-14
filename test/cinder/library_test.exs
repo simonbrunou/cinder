@@ -475,6 +475,26 @@ defmodule Cinder.LibraryTest do
     assert :ok = commit!(stage)
   end
 
+  test "an explicit Anime movie profile stages under the Anime movie destination" do
+    anime_root = Path.join(@lib, "anime")
+    saved = Application.get_env(:cinder, :movies_anime_library_path)
+    Application.put_env(:cinder, :movies_anime_library_path, anime_root)
+    on_exit(fn -> restore_env(:movies_anime_library_path, saved) end)
+
+    movie = %Movie{
+      title: "Your Name",
+      year: 2016,
+      tmdb_id: 372_058,
+      media_profile: :anime,
+      file_path: "/dl/Your.Name.2016.1080p.mkv"
+    }
+
+    Cinder.LibraryStubs.stub_import_ok(5 * @gb)
+
+    assert {:ok, %{dest: dest}} = Library.stage_movie(movie)
+    assert String.starts_with?(dest, anime_root <> "/")
+  end
+
   test "single-file import with media_info off returns empty capture lists" do
     # media_info is nil (config/test.exs default) and the download is a single file, so the probe is
     # skipped and no sidecar scan runs — all three capture lists come back empty, never nil.
@@ -665,6 +685,21 @@ defmodule Cinder.LibraryTest do
              Library.import_episodes("/dl/Show.S01E03.1080p.mkv", [ep(7, 3)])
 
     assert dest == "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"
+  end
+
+  test "TV: an explicit Anime series stages under the Anime TV destination" do
+    anime_root = Path.join(@tv_lib, "anime")
+    saved = Application.get_env(:cinder, :tv_anime_library_path)
+    Application.put_env(:cinder, :tv_anime_library_path, anime_root)
+    on_exit(fn -> restore_env(:tv_anime_library_path, saved) end)
+    Cinder.LibraryStubs.stub_import_ok(3 * @gb)
+
+    assert {:ok, [{7, stage}], []} =
+             Library.stage_episodes("/dl/Show.S01E03.1080p.mkv", [
+               ep(7, 3, 1, media_profile: :anime)
+             ])
+
+    assert String.starts_with?(stage.dest, anime_root <> "/")
   end
 
   describe "import_episodes/2" do
@@ -1025,6 +1060,22 @@ defmodule Cinder.LibraryTest do
       end)
 
       expect(Cinder.Library.FilesystemMock, :rmdir, fn "#{@tv_lib}/Show (2010)" -> :ok end)
+
+      assert :ok = Cinder.Library.delete_file(path)
+    end
+
+    test "deletes and prunes safely inside an Anime destination" do
+      anime_root = Path.join(@tv_lib, "anime")
+      saved = Application.get_env(:cinder, :tv_anime_library_path)
+      Application.put_env(:cinder, :tv_anime_library_path, anime_root)
+      on_exit(fn -> restore_env(:tv_anime_library_path, saved) end)
+
+      path = "#{anime_root}/Show (2010)/Season 01/Show (2010) - S01E01.mkv"
+      season = "#{anime_root}/Show (2010)/Season 01"
+      show = "#{anime_root}/Show (2010)"
+      expect(Cinder.Library.FilesystemMock, :rm, fn ^path -> :ok end)
+      expect(Cinder.Library.FilesystemMock, :rmdir, fn ^season -> :ok end)
+      expect(Cinder.Library.FilesystemMock, :rmdir, fn ^show -> :ok end)
 
       assert :ok = Cinder.Library.delete_file(path)
     end

@@ -232,7 +232,9 @@ defmodule Cinder.DiskTest do
     setup do
       saved = %{
         movies_library_path: Application.get_env(:cinder, :movies_library_path),
+        movies_anime_library_path: Application.get_env(:cinder, :movies_anime_library_path),
         tv_library_path: Application.get_env(:cinder, :tv_library_path),
+        tv_anime_library_path: Application.get_env(:cinder, :tv_anime_library_path),
         disk_stats_stub: Application.get_env(:cinder, :disk_stats_stub)
       }
 
@@ -252,6 +254,19 @@ defmodule Cinder.DiskTest do
       Application.put_env(:cinder, :tv_library_path, "")
 
       assert Disk.configured_roots() == [{:movies, tmp}]
+    end
+
+    test "includes distinct Anime destinations and omits a duplicate fallback" do
+      Application.put_env(:cinder, :movies_library_path, "/movies")
+      Application.put_env(:cinder, :movies_anime_library_path, "/anime-movies")
+      Application.put_env(:cinder, :tv_library_path, "/tv")
+      Application.put_env(:cinder, :tv_anime_library_path, "/tv")
+
+      assert Disk.configured_roots() == [
+               {:movies, "/movies"},
+               {:anime_movies, "/anime-movies"},
+               {:tv, "/tv"}
+             ]
     end
 
     test "skips an entirely unset root" do
@@ -314,7 +329,9 @@ defmodule Cinder.DiskTest do
     setup do
       saved = %{
         movies_library_path: Application.get_env(:cinder, :movies_library_path),
-        tv_library_path: Application.get_env(:cinder, :tv_library_path)
+        movies_anime_library_path: Application.get_env(:cinder, :movies_anime_library_path),
+        tv_library_path: Application.get_env(:cinder, :tv_library_path),
+        tv_anime_library_path: Application.get_env(:cinder, :tv_anime_library_path)
       }
 
       on_exit(fn ->
@@ -450,6 +467,19 @@ defmodule Cinder.DiskTest do
       refute Disk.import_space_available?(:movies)
     end
 
+    test "checks the Anime destination for an Anime title" do
+      Application.put_env(:cinder, :movies_library_path, "/library")
+      Application.put_env(:cinder, :movies_anime_library_path, "/anime")
+
+      Application.put_env(:cinder, :disk_stats_stub, fn
+        "/library" -> {:ok, %{free_bytes: 50_000_000_000, total_bytes: 100_000_000_000}}
+        "/anime" -> {:ok, %{free_bytes: 500_000_000, total_bytes: 100_000_000_000}}
+      end)
+
+      refute Disk.import_space_available?(:movies, %{media_profile: :anime})
+      assert Disk.import_space_available?(:movies, %{media_profile: :standard})
+    end
+
     test "true when the configured library root has ample free space" do
       Application.put_env(:cinder, :tv_library_path, "/tv")
 
@@ -472,7 +502,14 @@ defmodule Cinder.DiskTest do
   defp restore_disk_env(_context) do
     saved =
       Map.new(
-        [:import_roots, :movies_library_path, :tv_library_path, :disk_stats_stub],
+        [
+          :import_roots,
+          :movies_library_path,
+          :movies_anime_library_path,
+          :tv_library_path,
+          :tv_anime_library_path,
+          :disk_stats_stub
+        ],
         &{&1, Application.get_env(:cinder, &1)}
       )
 
