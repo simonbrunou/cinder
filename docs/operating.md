@@ -549,8 +549,6 @@ are pruned automatically.
 
 ## Known limitations
 
-- **BitTorrent v1 only.** Releases with a v2-only (SHA-256) infohash aren't handled; most public
-  trackers are still v1.
 - **SABnzbd "Pause on Duplicates" must be OFF.** That mode re-keys the download id after an add, so
   Cinder loses track of the job and it parks.
 - **SABnzbd job names are title-bearing, so its Smart Episode/Series duplicate detection can

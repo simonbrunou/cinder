@@ -1,11 +1,11 @@
 defmodule Cinder.Download.Torrent do
   @moduledoc """
-  Computes a torrent's BitTorrent v1 infohash from its `.torrent` bytes.
+  Computes the qBittorrent torrent id from `.torrent` bytes.
 
-  The v1 infohash is the SHA-1 of the bencoded `info` value **exactly as it
-  appears in the file** (byte-for-byte, not a re-encode), so this is a minimal
-  bencode value-walker that locates the byte span of the top-level `info` value
-  and hashes that span. v2/hybrid (SHA-256) infohashes are out of scope.
+  The infohash covers the bencoded `info` value **exactly as it appears in the
+  file** (byte-for-byte, not a re-encode). v1 torrents use their SHA-1 hash;
+  v2 and hybrid torrents use the first 20 bytes of their SHA-256 hash, which is
+  qBittorrent's Web API torrent id.
   """
 
   @doc """
@@ -16,8 +16,16 @@ defmodule Cinder.Download.Torrent do
   def infohash(bin) when is_binary(bin) do
     case info_span(bin) do
       {:ok, {start, len}} ->
-        digest = :crypto.hash(:sha, binary_part(bin, start, len))
-        {:ok, Base.encode16(digest, case: :lower)}
+        info = binary_part(bin, start, len)
+
+        case hash_algorithm(info) do
+          {:ok, algorithm} ->
+            digest = :crypto.hash(algorithm, info) |> binary_part(0, 20)
+            {:ok, Base.encode16(digest, case: :lower)}
+
+          :error ->
+            {:error, :bad_torrent}
+        end
 
       :error ->
         {:error, :bad_torrent}
@@ -26,6 +34,24 @@ defmodule Cinder.Download.Torrent do
     # :binary.at/2 raises on out-of-range; str-length parse can raise on
     # malformed input; treat any of it as a bad torrent rather than crashing.
     _ -> {:error, :bad_torrent}
+  end
+
+  # qBittorrent uses libtorrent's canonical id: truncated v2 when present,
+  # otherwise v1. Unknown metainfo versions cannot safely be treated as v1.
+  defp hash_algorithm(info) do
+    case decode(info, 0) do
+      {%{"meta version" => 2}, next} when next == byte_size(info) ->
+        {:ok, :sha256}
+
+      {%{"meta version" => _unsupported}, _next} ->
+        :error
+
+      {%{}, next} when next == byte_size(info) ->
+        {:ok, :sha}
+
+      _ ->
+        :error
+    end
   end
 
   @doc """
@@ -67,7 +93,7 @@ defmodule Cinder.Download.Torrent do
   Rewrites the `.torrent`'s endpoint fields (`announce`, `announce-list`, `url-list`,
   `httpseeds`), keeping only URLs `keep?.(url)` approves; a field left empty is omitted.
   Every other top-level value — the `info` dict above all — is spliced through
-  byte-verbatim, so the v1 infohash is unchanged. Returns `{:ok, bytes}` or
+  byte-verbatim, so the torrent id is unchanged. Returns `{:ok, bytes}` or
   `{:error, :bad_torrent}`.
   """
   @spec sanitize_embedded_urls(binary, (String.t() -> boolean)) ::
