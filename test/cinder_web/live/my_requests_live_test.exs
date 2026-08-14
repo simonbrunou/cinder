@@ -342,6 +342,36 @@ defmodule CinderWeb.MyRequestsLiveTest do
       assert html =~ ~s(rel="noopener")
     end
 
+    test "an available movie row uses its reconciled title deep link", %{conn: conn} do
+      put_media_server_web_url("https://plex.example.com")
+      user = Cinder.AccountsFixtures.user_fixture()
+      tmdb_id = System.unique_integer([:positive])
+
+      {:ok, _} =
+        Requests.create_request(user, %{
+          target_type: "movie",
+          target_id: tmdb_id,
+          title: "Deep linked"
+        })
+
+      {:ok, movie} = Cinder.Catalog.add_movie(%{tmdb_id: tmdb_id, title: "Deep linked"})
+      {:ok, _} = Cinder.Catalog.transition(movie, %{status: :available})
+
+      assert {:ok, [_]} =
+               Cinder.Catalog.reconcile_media_server_items(:movies, [
+                 %{tmdb_id: tmdb_id, id: "plex:machine-1:77"}
+               ])
+
+      conn = log_in_user(conn, user)
+      {:ok, lv, _html} = live(conn, ~p"/my-requests")
+
+      assert has_element?(
+               lv,
+               ~s(a[href="https://plex.example.com/web/index.html#!/server/machine-1/details?key=%2Flibrary%2Fmetadata%2F77"]),
+               "Open in Plex"
+             )
+    end
+
     test "an available season row links to the media server", %{conn: conn} do
       put_media_server_web_url("https://plex.example.com")
       user = Cinder.AccountsFixtures.user_fixture()

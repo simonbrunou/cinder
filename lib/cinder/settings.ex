@@ -15,6 +15,7 @@ defmodule Cinder.Settings do
   require Logger
 
   alias Cinder.Acquisition.{AnimePreferences, Parser, Scorer}
+  alias Cinder.Library.MediaServer.{Jellyfin, Plex}
   alias Cinder.Repo
   alias Cinder.Settings.Crypto
   alias Cinder.Settings.Registry
@@ -127,11 +128,9 @@ defmodule Cinder.Settings do
   returns `nil`: with both set and no type, either answer is a guess, and sending someone to
   the wrong server is worse than showing no link.
 
-  ponytail: this is the media server's front door, not a per-title deep link. A link straight
-  to the movie would need a Plex `ratingKey` / Jellyfin Item Id, which no column stores and
-  no `MediaServer` callback returns; adding one means a new behaviour callback plus a
-  title-matching heuristic. Callers must therefore label this "open the server", never
-  "play this title".
+  When the background media-server inventory has reconciled a title, pass its opaque item id to
+  `media_server_web_link/1` for a title deep link. A missing or stale id retains this front-door
+  fallback.
   """
   @spec media_server_web_link() :: {:plex | :jellyfin, String.t()} | nil
   def media_server_web_link do
@@ -141,6 +140,21 @@ defmodule Cinder.Settings do
       _ -> sole_configured_web_link()
     end
   end
+
+  @doc "Returns a title deep link for an opaque reconciled item id, or the server front door."
+  @spec media_server_web_link(String.t() | nil) :: {:plex | :jellyfin, String.t()} | nil
+  def media_server_web_link(item_id), do: media_server_web_link(media_server_web_link(), item_id)
+
+  @doc false
+  def media_server_web_link(link, item_id) do
+    case link do
+      {server, fallback} -> {server, item_web_link(server, item_id) || fallback}
+      nil -> nil
+    end
+  end
+
+  defp item_web_link(:plex, item_id), do: Plex.deep_link(item_id)
+  defp item_web_link(:jellyfin, item_id), do: Jellyfin.deep_link(item_id)
 
   defp web_link_for(server) do
     module =

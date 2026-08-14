@@ -1,6 +1,6 @@
 defmodule Cinder.Library.MediaServer do
   @moduledoc """
-  Behaviour for the media server (Jellyfin / Plex): trigger a library scan.
+  Behaviour for the media server (Jellyfin / Plex): trigger a library scan and read its catalog.
 
   `scan/1` takes the library kind (`Cinder.Library.kinds/0`, e.g. `:movies` / `:tv`)
   so a server with separate libraries refreshes the right one after an import.
@@ -30,6 +30,19 @@ defmodule Cinder.Library.MediaServer do
 
   @doc "The media server's own user accounts, for the admin import on `/users`."
   @callback list_users() :: {:ok, [user()]} | {:error, term()}
+
+  @typedoc "One exact provider-ID match in a configured movie or TV library."
+  @type item :: %{
+          id: String.t(),
+          tmdb_id: pos_integer(),
+          deep_link: String.t() | nil
+        }
+
+  @doc "Lists a complete, bounded inventory for one configured library kind."
+  @callback list_items(kind :: atom()) :: {:ok, [item()]} | {:error, term()}
+
+  @doc "Builds a browser deep link for one opaque item id, without network I/O."
+  @callback deep_link(item_id :: String.t()) :: String.t() | nil
 
   @doc "Resolves the configured impl at runtime (never `compile_env!` — see catalog.ex)."
   def impl, do: Application.fetch_env!(:cinder, :media_server)

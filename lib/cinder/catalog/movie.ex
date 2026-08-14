@@ -87,6 +87,7 @@ defmodule Cinder.Catalog.Movie do
     field :media_profile, Ecto.Enum, values: [:auto, :standard, :anime], default: :auto
     field :anime_hold_reason, :string
     field :failure_reason, :string
+    field :media_server_item_id, :string
     # Rotation clock for Cinder.Catalog.UpgradeHunter; nil = never checked (sorts first).
     field :upgrade_checked_at, :utc_datetime
     has_many :title_aliases, TitleAlias
@@ -112,6 +113,13 @@ defmodule Cinder.Catalog.Movie do
 
   @doc "Changeset for the sweep-owned search-time Anime preferences hold marker (see `Catalog.set_anime_hold/2`). Not pipeline status — separate from transition_changeset/2."
   def anime_hold_changeset(movie, attrs), do: cast(movie, attrs, [:anime_hold_reason])
+
+  @doc "Changeset for the media-server inventory reconciler's opaque item id."
+  def media_server_changeset(movie, item_id) do
+    movie
+    |> change(media_server_item_id: item_id)
+    |> validate_length(:media_server_item_id, max: 512)
+  end
 
   @doc false
   def creation_fields, do: @creation_fields

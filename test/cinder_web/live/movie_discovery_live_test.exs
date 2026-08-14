@@ -263,6 +263,24 @@ defmodule CinderWeb.MovieDiscoveryLiveTest do
       assert html =~ ~s(rel="noopener")
     end
 
+    test "uses the reconciled title deep link instead of the server front door", %{conn: conn} do
+      put_media_server_web_url("https://plex.example.com")
+      make_available(27_205)
+
+      assert {:ok, [_]} =
+               Catalog.reconcile_media_server_items(:movies, [
+                 %{tmdb_id: 27_205, id: "plex:machine-1:42"}
+               ])
+
+      {:ok, lv, _html} = live(conn, ~p"/movie/tmdb/27205")
+
+      assert has_element?(
+               lv,
+               ~s(a[href="https://plex.example.com/web/index.html#!/server/machine-1/details?key=%2Flibrary%2Fmetadata%2F42"]),
+               "Open in Plex"
+             )
+    end
+
     # A movie nobody has yet is not watchable, however the media server is configured.
     test "is hidden for a movie that is not in the library", %{conn: conn} do
       put_media_server_web_url("https://plex.example.com")

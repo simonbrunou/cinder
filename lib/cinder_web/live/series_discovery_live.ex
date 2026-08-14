@@ -302,7 +302,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
 
   # Episode imports ride the "series" topic; a season completing flips its badge live.
   def handle_info({event, _id}, socket) when event in [:series_updated, :series_deleted] do
-    {:noreply, socket |> refresh_requests() |> assign_request_state()}
+    {:noreply, socket |> refresh_requests() |> assign_request_state() |> assign_media_server()}
   end
 
   # An admin switching media-server type/URL must not leave an open page linking at the old one.
@@ -312,10 +312,14 @@ defmodule CinderWeb.SeriesDiscoveryLive do
 
   def handle_info(_message, socket), do: {:noreply, socket}
 
-  # Re-read on mount and on every settings write, mirroring MovieDiscoveryLive: an admin fixing
-  # the media-server URL must not leave an already-open page pointing at the old server.
   defp assign_media_server(socket) do
-    case Settings.media_server_web_link() do
+    item_id =
+      case Catalog.get_series_by_tmdb_id(socket.assigns.tmdb_id) do
+        nil -> nil
+        series -> series.media_server_item_id
+      end
+
+    case Settings.media_server_web_link(item_id) do
       {server, url} -> assign(socket, media_server_url: url, media_server_name: name(server))
       nil -> assign(socket, media_server_url: nil, media_server_name: nil)
     end
@@ -441,9 +445,8 @@ defmodule CinderWeb.SeriesDiscoveryLive do
             {gettext("No description available.")}
           </p>
 
-          <%!-- Opens the media server's front door (Cinder stores no per-title id), only once at
-                least one season is in the library and an operator has set a browser URL — same
-                affordance as the movie detail page. --%>
+          <%!-- Exact reconciled items deep-link to this series; unmatched items retain the server
+                front door. --%>
           <.button
             :if={@media_server_url && MapSet.size(@available_seasons) > 0}
             href={@media_server_url}

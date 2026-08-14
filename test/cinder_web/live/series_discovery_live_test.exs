@@ -91,6 +91,28 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
     assert html =~ "opens in a new tab"
   end
 
+  test "uses the reconciled series deep link instead of the server front door", %{conn: conn} do
+    put_media_server_web_url("https://plex.example.com")
+
+    series = series_fixture(%{tmdb_id: 1399})
+    season = season_fixture(series, %{season_number: 1})
+    _episode = episode_fixture(season, %{file_path: "/tv/got-s01e01.mkv"})
+
+    assert {:ok, [_]} =
+             Cinder.Catalog.reconcile_media_server_items(:tv, [
+               %{tmdb_id: 1399, id: "plex:machine-1:99"}
+             ])
+
+    conn = log_in_user(conn, Cinder.AccountsFixtures.admin_fixture())
+    {:ok, lv, _html} = live(conn, ~p"/series/tmdb/1399")
+
+    assert has_element?(
+             lv,
+             ~s(a[href="https://plex.example.com/web/index.html#!/server/machine-1/details?key=%2Flibrary%2Fmetadata%2F99"]),
+             "Open in Plex"
+           )
+  end
+
   # No available season → no "Open" affordance, even with a URL configured.
   test "hides Open in media server when no season is available", %{conn: conn} do
     put_media_server_web_url("https://plex.example.com")

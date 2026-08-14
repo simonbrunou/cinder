@@ -1173,7 +1173,7 @@ defmodule Cinder.SettingsTest do
     end
   end
 
-  describe "media_server_web_link/0" do
+  describe "media_server_web_link/0,1" do
     # Writes the type row directly rather than via Settings.put/2: put triggers
     # load_into_env/0, which flips the global :media_server impl away from the Mox mock and
     # leaks into every later test in the run. media_server_web_link/0 reads the row, not the
@@ -1210,6 +1210,21 @@ defmodule Cinder.SettingsTest do
       set_media_server_type("plex")
 
       assert Settings.media_server_web_link() == {:plex, "https://plex.test"}
+    end
+
+    test "uses a matching item id and rejects it immediately after a provider switch" do
+      set_web_url(:plex, "https://plex.test")
+      set_web_url(:jellyfin, "https://jellyfin.test")
+      setting = set_media_server_type("plex")
+
+      assert Settings.media_server_web_link("plex:machine-1:42") ==
+               {:plex,
+                "https://plex.test/web/index.html#!/server/machine-1/details?key=%2Flibrary%2Fmetadata%2F42"}
+
+      setting |> Ecto.Changeset.change(value: "jellyfin") |> Repo.update!()
+
+      assert Settings.media_server_web_link("plex:machine-1:42") ==
+               {:jellyfin, "https://jellyfin.test"}
     end
 
     test "follows the configured type when that type is Jellyfin" do

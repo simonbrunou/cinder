@@ -147,11 +147,11 @@ defmodule CinderWeb.MovieDiscoveryLive do
 
   @impl true
   def handle_info({:movie_updated, movie}, socket) do
-    {:noreply, patch_movie_status(socket, movie)}
+    {:noreply, patch_movie(socket, movie)}
   end
 
   def handle_info({:movie_created, movie}, socket) do
-    {:noreply, patch_movie_status(socket, movie)}
+    {:noreply, patch_movie(socket, movie)}
   end
 
   def handle_info({:movie_deleted, _id}, socket) do
@@ -202,15 +202,29 @@ defmodule CinderWeb.MovieDiscoveryLive do
      put_flash(socket, :error, gettext("Couldn't request %{title}. Try again.", title: title))}
   end
 
-  # Re-read on every settings write rather than only at mount: an admin switching the
-  # media-server type (or fixing a typo'd web URL) must not leave an already-open page linking
-  # at the old server, which is the exact wrong-server case media_server_web_link/0 exists to
-  # prevent. Two reads per page life (mount, plus each settings save) instead of one.
   defp assign_media_server(socket) do
-    case Settings.media_server_web_link() do
+    item_id =
+      case Catalog.get_movie_by_tmdb_id(socket.assigns.tmdb_id) do
+        nil -> nil
+        movie -> movie.media_server_item_id
+      end
+
+    assign_media_server(socket, item_id)
+  end
+
+  defp assign_media_server(socket, item_id) do
+    case Settings.media_server_web_link(item_id) do
       {server, url} -> assign(socket, media_server_url: url, media_server_name: name(server))
       nil -> assign(socket, media_server_url: nil, media_server_name: nil)
     end
+  end
+
+  defp patch_movie(socket, movie) do
+    socket = patch_movie_status(socket, movie)
+
+    if movie.tmdb_id == socket.assigns.tmdb_id,
+      do: assign_media_server(socket, movie.media_server_item_id),
+      else: socket
   end
 
   # Product names, deliberately not gettext'd.
@@ -304,11 +318,8 @@ defmodule CinderWeb.MovieDiscoveryLive do
 
           <.collection_link collection={@info[:collection]} />
 
-          <%!-- Names the server and uses an external-link icon on purpose: this opens the media
-                server's front door, NOT this title (Cinder stores no Plex ratingKey / Jellyfin
-                Item Id), so a "Watch"-and-play-icon label would promise playback it can't
-                deliver. Only shown once the file is actually in the library, and only when an
-                operator has set a browser-reachable URL. --%>
+          <%!-- Exact reconciled items deep-link to this title; unmatched items retain the server
+                front door. Only shown once the file is actually in the library. --%>
           <.button
             :if={@state == :available and @media_server_url}
             href={@media_server_url}
