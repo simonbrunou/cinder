@@ -546,38 +546,56 @@ defmodule Cinder.Download.Client.QBittorrent do
     end)
   end
 
-  # Prefer btih when a hybrid magnet carries both exact topics: qBittorrent keys
-  # hybrids by their v1 hash. Pure v2 btmh values are multihash-encoded SHA-256
-  # (`12` algorithm + `20` byte-count); qBittorrent's Web API id is its first
-  # 20 digest bytes.
-  @hex_btih ~r/xt=urn:btih:([a-fA-F0-9]{40})(?:&|$)/
-  @b32_btih ~r/xt=urn:btih:([a-zA-Z2-7]{32})(?:&|$)/
-  @hex_btmh ~r/xt=urn:btmh:1220([a-fA-F0-9]{64})(?:&|$)/
+  # Prefer btmh when a hybrid magnet carries both exact topics: qBittorrent uses
+  # libtorrent's truncated v2 hash as its canonical Web API id. Query decoding
+  # happens first because valid magnets may percent-encode the URN.
+  @hex_btih ~r/\Aurn:btih:([a-fA-F0-9]{40})\z/
+  @b32_btih ~r/\Aurn:btih:([a-zA-Z2-7]{32})\z/
+  @hex_btmh ~r/\Aurn:btmh:1220([a-fA-F0-9]{64})\z/
 
   defp torrent_id("magnet:" <> _ = magnet) do
-    case Regex.run(@hex_btih, magnet) do
-      [_, hex] ->
-        {:ok, String.downcase(hex)}
+    with {:ok, %URI{query: query}} when is_binary(query) <- URI.new(magnet) do
+      topics =
+        for {key, topic} <- URI.query_decoder(query), String.downcase(key) == "xt", do: topic
 
-      nil ->
-        case Regex.run(@b32_btih, magnet) do
-          [_, b32] -> decode_btih(b32)
-          nil -> decode_btmh(magnet)
-        end
+      case find_topic(topics, &decode_btmh/1) do
+        :error -> find_topic(topics, &decode_btih/1)
+        result -> result
+      end
     end
+  rescue
+    _ -> :error
   end
 
-  defp decode_btmh(magnet) do
-    case Regex.run(@hex_btmh, magnet) do
+  defp find_topic(topics, decode) do
+    Enum.find_value(topics, :error, fn topic ->
+      case decode.(topic) do
+        {:ok, _hash} = result -> result
+        :error -> false
+      end
+    end)
+  end
+
+  defp decode_btmh(topic) do
+    case Regex.run(@hex_btmh, topic) do
       [_, hex] -> {:ok, hex |> String.slice(0, 40) |> String.downcase()}
       _ -> :error
     end
   end
 
-  defp decode_btih(b32) do
-    case Base.decode32(String.upcase(b32), padding: false) do
-      {:ok, raw} -> {:ok, Base.encode16(raw, case: :lower)}
-      :error -> :error
+  defp decode_btih(topic) do
+    case Regex.run(@hex_btih, topic) do
+      [_, hex] -> {:ok, String.downcase(hex)}
+      nil -> decode_base32_btih(topic)
+    end
+  end
+
+  defp decode_base32_btih(topic) do
+    with [_, b32] <- Regex.run(@b32_btih, topic),
+         {:ok, raw} <- Base.decode32(String.upcase(b32), padding: false) do
+      {:ok, Base.encode16(raw, case: :lower)}
+    else
+      _ -> :error
     end
   end
 

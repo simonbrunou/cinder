@@ -63,19 +63,65 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     assert {:ok, ^expected} = QBittorrent.add(%{download_url: magnet})
   end
 
-  test "add/1 prefers a hybrid magnet's v1 id" do
+  test "add/1 prefers a hybrid magnet's canonical truncated v2 id" do
     stub_qbit(fn conn -> Req.Test.text(conn, "Ok.") end)
 
     v2 = String.duplicate("ab", 32)
     magnet = "magnet:?xt=urn:btmh:1220#{v2}&xt=urn:btih:#{@hash}&dn=Movie"
+    expected = String.duplicate("ab", 20)
 
-    assert {:ok, "0123456789abcdef0123456789abcdef01234567"} =
-             QBittorrent.add(%{download_url: magnet})
+    assert {:ok, ^expected} = QBittorrent.add(%{download_url: magnet})
+  end
+
+  test "add/1 decodes encoded btmh topics and accepts a mixed-case XT key" do
+    stub_qbit(fn conn -> Req.Test.text(conn, "Ok.") end)
+
+    v2 = String.duplicate("ab", 32)
+    expected = String.duplicate("ab", 20)
+
+    for magnet <- [
+          "magnet:?xt=urn%3Abtmh%3A1220#{v2}&dn=Movie",
+          "magnet:?XT=urn:btmh:1220#{v2}&dn=Movie"
+        ] do
+      assert {:ok, ^expected} = QBittorrent.add(%{download_url: magnet})
+    end
+  end
+
+  test "add/1 returns the hybrid id used by subsequent qBittorrent lookups" do
+    v2 = String.duplicate("ab", 32)
+    expected = String.duplicate("ab", 20)
+
+    stub_qbit(fn conn ->
+      case conn.request_path do
+        "/api/v2/torrents/add" ->
+          Req.Test.text(conn, "Ok.")
+
+        "/api/v2/torrents/info" ->
+          assert conn.params["hashes"] == expected
+          Req.Test.json(conn, [%{"state" => "downloading", "progress" => 0.5}])
+      end
+    end)
+
+    magnet = "magnet:?xt=urn:btih:#{@hash}&xt=urn:btmh:1220#{v2}&dn=Movie"
+    assert {:ok, id} = QBittorrent.add(%{download_url: magnet})
+    assert id == expected
+    assert {:ok, %{state: :downloading}} = QBittorrent.status(id)
   end
 
   test "add/1 rejects a btmh with an unsupported multihash algorithm" do
     magnet = "magnet:?xt=urn:btmh:1114#{String.duplicate("ab", 20)}&dn=Movie"
     assert {:error, :unsupported_download_url} = QBittorrent.add(%{download_url: magnet})
+  end
+
+  test "add/1 rejects malformed or non-xt exact-topic parameters" do
+    v2 = String.duplicate("ab", 32)
+
+    for magnet <- [
+          "magnet:?foxt=urn:btmh:1220#{v2}",
+          "magnet:?xt=urn%ZZbtmh%3A1220#{v2}"
+        ] do
+      assert {:error, :unsupported_download_url} = QBittorrent.add(%{download_url: magnet})
+    end
   end
 
   test "add/1 accepts the qBittorrent 5.1+ JSON add-response and returns the hash" do
@@ -221,6 +267,20 @@ defmodule Cinder.Download.Client.QBittorrentTest do
 
     assert {:ok, ^expected} =
              QBittorrent.add(%{download_url: "https://tracker.test/dl/v2.torrent"})
+  end
+
+  test "add/1 fetches a hybrid .torrent and returns its canonical truncated v2 id" do
+    infoval =
+      "d9:file treed5:M.mkvd0:d6:lengthi5e11:pieces root32:#{String.duplicate("x", 32)}eee" <>
+        "6:lengthi5e12:meta versioni2e4:name5:M.mkv12:piece lengthi16384e" <>
+        "6:pieces20:#{String.duplicate("y", 20)}e"
+
+    torrent_bytes = "d8:announce11:http://x/an4:info" <> infoval <> "e"
+    expected = :crypto.hash(:sha256, infoval) |> binary_part(0, 20) |> Base.encode16(case: :lower)
+    stub_torrent_flow(torrent_bytes)
+
+    assert {:ok, ^expected} =
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/hybrid.torrent"})
   end
 
   test "add/1 returns :bad_torrent when the URL returns a non-torrent body" do
