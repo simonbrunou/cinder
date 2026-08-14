@@ -10,7 +10,7 @@ defmodule Cinder.Health do
 
   @doc """
   Checks every configured external service. Returns a list of
-  `%{label: String.t(), status: :ok | {:error, term()}}`, ordered
+  `%{label: String.t(), status: :ok | {:warning, term()} | {:error, term()}}`, ordered
   metadata → indexer → download client(s) → media server.
   """
   def check_all do
@@ -22,7 +22,7 @@ defmodule Cinder.Health do
 
   @doc """
   Checks a single service against its currently-applied config, returning
-  `:ok | {:error, term()}`. Used by the settings "Test connection" buttons.
+  `:ok | {:warning, term()} | {:error, term()}`. Used by the settings "Test connection" buttons.
   `service` is `:tmdb | :indexer | :media_server | :discord | :subtitles | :media_info |
   {:download, protocol}`.
   """
@@ -153,6 +153,7 @@ defmodule Cinder.Health do
     safely(fn ->
       case mod.health() do
         :ok -> :ok
+        {:warning, _} = warning -> warning
         {:error, _} = err -> err
       end
     end)

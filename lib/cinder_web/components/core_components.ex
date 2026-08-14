@@ -637,8 +637,8 @@ defmodule CinderWeb.CoreComponents do
   source of truth for every pipeline / request / episode / grab / health state.
 
   `kind` selects the vocabulary; `status` is the state within it. Derived-state callers
-  (episode, grab) resolve the atom themselves and pass it; `health` passes `:ok` or
-  `{:error, reason}` (the reason becomes the hover title).
+  (episode, grab) resolve the atom themselves and pass it; `health` passes `:ok`,
+  `{:warning, reason}`, or `{:error, reason}` (the reason becomes the hover title).
 
   ## Examples
 
@@ -814,6 +814,9 @@ defmodule CinderWeb.CoreComponents do
   # service health
   defp badge_spec(:health, :ok), do: {gettext("OK"), "badge-success", "hero-check-circle"}
 
+  defp badge_spec(:health, {:warning, _reason}),
+    do: {gettext("Warning"), "badge-warning", "hero-exclamation-triangle"}
+
   defp badge_spec(:health, {:error, _reason}),
     do: {gettext("Unreachable"), "badge-error", "hero-exclamation-triangle"}
 
@@ -821,6 +824,7 @@ defmodule CinderWeb.CoreComponents do
   defp badge_spec(_kind, status),
     do: {humanize_status(status), "badge-neutral", "hero-question-mark-circle"}
 
+  defp badge_title(:health, {:warning, reason}), do: health_reason(reason)
   defp badge_title(:health, {:error, reason}), do: health_reason(reason)
   defp badge_title(_kind, _status), do: nil
 
@@ -835,6 +839,9 @@ defmodule CinderWeb.CoreComponents do
   def health_reason(:ehostunreach), do: gettext("Host unreachable")
   def health_reason(:econnrefused), do: gettext("Connection refused")
   def health_reason(:closed), do: gettext("Connection closed")
+
+  def health_reason({:sabnzbd_config, warnings}),
+    do: Enum.map_join(warnings, " ", &sabnzbd_warning/1)
 
   # Placed above the generic integer-tuple clauses below — `count` is an integer, so it would
   # otherwise render as a bogus "HTTP <count>".
@@ -865,6 +872,18 @@ defmodule CinderWeb.CoreComponents do
   def health_reason(%{__exception__: true}), do: gettext("Check failed")
   def health_reason(reason) when is_binary(reason), do: String.slice(reason, 0, 80)
   def health_reason(reason), do: reason |> inspect() |> String.slice(0, 80)
+
+  defp sabnzbd_warning({:folder_max_length, length}),
+    do: gettext("Folder name limit is %{length}; raise it to 246 or higher.", length: length)
+
+  defp sabnzbd_warning({:duplicate_handling, :series, _mode}),
+    do:
+      gettext("Series duplicate detection is enabled; turn it off or exclude Cinder's category.")
+
+  defp sabnzbd_warning({:duplicate_handling, :pause_on_duplicates, _mode}),
+    do: gettext("Pause on Duplicates is enabled; turn it off or exclude Cinder's category.")
+
+  defp sabnzbd_warning(warning), do: inspect(warning)
 
   @doc """
   Inline "deny request" form: an optional free-text reason, a danger submit, and an optional

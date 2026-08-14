@@ -625,7 +625,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     assert :ok = Sabnzbd.health()
   end
 
-  test "health/0 warns (but stays :ok) on config that wedges Cinder's grabs" do
+  test "health/0 warns without marking reachable SABnzbd as an error" do
     stub(fn conn ->
       case conn.params["mode"] do
         "queue" ->
@@ -640,7 +640,16 @@ defmodule Cinder.Download.Client.SabnzbdTest do
       end
     end)
 
-    log = capture_log(fn -> assert :ok = Sabnzbd.health() end)
+    log =
+      capture_log(fn ->
+        assert {:warning,
+                {:sabnzbd_config,
+                 [
+                   {:folder_max_length, 60},
+                   {:duplicate_handling, :series, 2}
+                 ]}} = Sabnzbd.health()
+      end)
+
     assert log =~ "folder_max_length is 60"
     assert log =~ "series duplicate detection"
     refute log =~ "Pause on Duplicates"
@@ -663,7 +672,18 @@ defmodule Cinder.Download.Client.SabnzbdTest do
       Path.join(System.tmp_dir!(), "cinder-missing-#{System.unique_integer([:positive])}")
 
     configure_path_mapping("/downloads", missing)
-    stub(fn conn -> Req.Test.json(conn, %{"queue" => %{"slots" => []}}) end)
+
+    stub(fn conn ->
+      case conn.params["mode"] do
+        "queue" ->
+          Req.Test.json(conn, %{"queue" => %{"slots" => []}})
+
+        "get_config" ->
+          Req.Test.json(conn, %{
+            "config" => %{"misc" => %{"folder_max_length" => 60}}
+          })
+      end
+    end)
 
     assert {:error, {:path_mapping_local_prefix_unreadable, ^missing}} = Sabnzbd.health()
   end

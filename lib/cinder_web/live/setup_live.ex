@@ -63,7 +63,9 @@ defmodule CinderWeb.SetupLive do
         {:noreply, socket}
 
       service ->
-        health = Map.put(socket.assigns.health, svc, Health.check_service(service))
+        health =
+          Map.put(socket.assigns.health, svc, service |> Health.check_service() |> reachable())
+
         {:noreply, assign(socket, health: health, can_finish: all_green?(health))}
     end
   end
@@ -92,7 +94,10 @@ defmodule CinderWeb.SetupLive do
     end
   end
 
-  defp check(svc), do: Health.check_service(decode_service(svc))
+  defp check(svc), do: svc |> decode_service() |> Health.check_service() |> reachable()
+
+  defp reachable({:warning, _reason}), do: :ok
+  defp reachable(status), do: status
 
   defp all_green?(health) do
     Enum.all?(required_services(), &(health[&1] == :ok)) and
