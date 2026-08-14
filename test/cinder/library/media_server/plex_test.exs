@@ -103,20 +103,25 @@ defmodule Cinder.Library.MediaServer.PlexTest do
             ]} = Plex.list_items(:movies)
   end
 
-  test "list_items/1 rejects a partial inventory" do
-    Req.Test.stub(Cinder.PlexStub, fn conn ->
-      case conn.request_path do
-        "/identity" ->
-          Req.Test.json(conn, %{"MediaContainer" => %{"machineIdentifier" => "machine-1"}})
+  test "list_items/1 rejects missing and inconsistent inventory totals" do
+    for total <- [:missing, 0, 2] do
+      Req.Test.stub(Cinder.PlexStub, fn conn ->
+        case conn.request_path do
+          "/identity" ->
+            Req.Test.json(conn, %{"MediaContainer" => %{"machineIdentifier" => "machine-1"}})
 
-        "/library/sections/1/all" ->
-          Req.Test.json(conn, %{
-            "MediaContainer" => %{"totalSize" => 2, "Metadata" => []}
-          })
-      end
-    end)
+          "/library/sections/1/all" ->
+            container = %{"Metadata" => [%{"ratingKey" => "42"}]}
 
-    assert {:error, :partial_inventory} = Plex.list_items(:movies)
+            container =
+              if total == :missing, do: container, else: Map.put(container, "totalSize", total)
+
+            Req.Test.json(conn, %{"MediaContainer" => container})
+        end
+      end)
+
+      assert {:error, :partial_inventory} = Plex.list_items(:movies)
+    end
   end
 
   test "scan/1 surfaces a non-2xx status as an error" do

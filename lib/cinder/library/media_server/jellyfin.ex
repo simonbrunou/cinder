@@ -59,18 +59,25 @@ defmodule Cinder.Library.MediaServer.Jellyfin do
   @impl true
   def list_items(kind) do
     item_type = if kind == :movies, do: "Movie", else: "Series"
+    config = config()
 
-    config()
-    |> request(:get, "/Items",
-      params: [
-        {"Recursive", "true"},
-        {"IncludeItemTypes", item_type},
-        {"Fields", "ProviderIds"},
-        {"EnableTotalRecordCount", "true"},
-        {"Limit", Integer.to_string(@inventory_limit)}
-      ]
-    )
-    |> inventory()
+    case Keyword.get(config, :url) do
+      url when url in [nil, ""] ->
+        {:error, :not_configured}
+
+      _ ->
+        config
+        |> request(:get, "/Items",
+          params: [
+            {"Recursive", "true"},
+            {"IncludeItemTypes", item_type},
+            {"Fields", "ProviderIds"},
+            {"EnableTotalRecordCount", "true"},
+            {"Limit", Integer.to_string(@inventory_limit)}
+          ]
+        )
+        |> inventory()
+    end
   end
 
   @impl true
@@ -95,13 +102,13 @@ defmodule Cinder.Library.MediaServer.Jellyfin do
   defp users({:error, reason}), do: {:error, reason}
 
   defp inventory({:ok, %{status: status, body: %{"Items" => items, "TotalRecordCount" => total}}})
-       when status in 200..299 and is_list(items) and is_integer(total) do
-    if total > length(items) do
-      {:error, :partial_inventory}
-    else
-      {:ok, Enum.flat_map(items, &item/1)}
-    end
-  end
+       when status in 200..299 and is_list(items) and is_integer(total) and
+              total == length(items),
+       do: {:ok, Enum.flat_map(items, &item/1)}
+
+  defp inventory({:ok, %{status: status, body: %{"Items" => items}}})
+       when status in 200..299 and is_list(items),
+       do: {:error, :partial_inventory}
 
   defp inventory({:ok, %{status: status}}) when status in 200..299,
     do: {:error, :unexpected_response}

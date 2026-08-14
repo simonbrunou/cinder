@@ -90,12 +90,26 @@ defmodule Cinder.Library.MediaServer.JellyfinTest do
             ]} = Jellyfin.list_items(:tv)
   end
 
-  test "list_items/1 rejects a partial inventory" do
-    Req.Test.stub(Cinder.JellyfinStub, fn conn ->
-      Req.Test.json(conn, %{"TotalRecordCount" => 2, "Items" => []})
+  test "list_items/1 rejects missing and inconsistent inventory totals" do
+    for total <- [:missing, 0, 2] do
+      Req.Test.stub(Cinder.JellyfinStub, fn conn ->
+        body = %{"Items" => [%{"Id" => "movie-1"}]}
+        body = if total == :missing, do: body, else: Map.put(body, "TotalRecordCount", total)
+        Req.Test.json(conn, body)
+      end)
+
+      assert {:error, :partial_inventory} = Jellyfin.list_items(:movies)
+    end
+  end
+
+  test "list_items/1 returns :not_configured without making a request" do
+    put_config(url: nil)
+
+    Req.Test.stub(Cinder.JellyfinStub, fn _conn ->
+      raise "should not call an unconfigured server"
     end)
 
-    assert {:error, :partial_inventory} = Jellyfin.list_items(:movies)
+    assert {:error, :not_configured} = Jellyfin.list_items(:movies)
   end
 
   test "scan/1 surfaces a non-2xx status as an error" do

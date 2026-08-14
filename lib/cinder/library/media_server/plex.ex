@@ -154,9 +154,8 @@ defmodule Cinder.Library.MediaServer.Plex do
 
     cond do
       not is_list(metadata) -> {:error, :unexpected_response}
-      is_integer(total) and total > length(metadata) -> {:error, :partial_inventory}
-      is_nil(total) and length(metadata) >= @inventory_limit -> {:error, :partial_inventory}
-      true -> {:ok, metadata}
+      is_integer(total) and total == length(metadata) -> {:ok, metadata}
+      true -> {:error, :partial_inventory}
     end
   end
 

@@ -32,6 +32,7 @@ defmodule CinderWeb.MyRequestsLive do
       Catalog.subscribe_series()
       # An admin resolving/dismissing a report updates its status here live.
       Issues.subscribe()
+      Settings.subscribe()
     end
 
     {:ok, socket |> assign(confirming: nil, reporting: nil) |> load()}

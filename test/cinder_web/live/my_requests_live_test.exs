@@ -372,6 +372,45 @@ defmodule CinderWeb.MyRequestsLiveTest do
              )
     end
 
+    test "reloads its media-server link after a settings broadcast", %{conn: conn} do
+      put_media_server_web_url("https://plex.example.com")
+      user = Cinder.AccountsFixtures.user_fixture()
+      tmdb_id = System.unique_integer([:positive])
+
+      {:ok, _} =
+        Requests.create_request(user, %{
+          target_type: "movie",
+          target_id: tmdb_id,
+          title: "Switched server"
+        })
+
+      {:ok, movie} = Cinder.Catalog.add_movie(%{tmdb_id: tmdb_id, title: "Switched server"})
+      {:ok, _} = Cinder.Catalog.transition(movie, %{status: :available})
+
+      conn = log_in_user(conn, user)
+      {:ok, lv, _html} = live(conn, ~p"/my-requests")
+      assert has_element?(lv, ~s(a[href="https://plex.example.com"]), "Open in Plex")
+
+      jellyfin = Cinder.Library.MediaServer.Jellyfin
+      previous = Application.get_env(:cinder, jellyfin, [])
+      on_exit(fn -> Application.put_env(:cinder, jellyfin, previous) end)
+
+      Application.put_env(
+        :cinder,
+        jellyfin,
+        Keyword.put(previous, :web_url, "https://jellyfin.example.com")
+      )
+
+      Cinder.Repo.get_by!(Cinder.Settings.Setting, key: "media_server_type")
+      |> Ecto.Changeset.change(value: "jellyfin")
+      |> Cinder.Repo.update!()
+
+      Phoenix.PubSub.broadcast(Cinder.PubSub, "settings", :settings_updated)
+
+      assert has_element?(lv, ~s(a[href="https://jellyfin.example.com"]), "Open in Jellyfin")
+      refute has_element?(lv, ~s(a[href="https://plex.example.com"]), "Open in Plex")
+    end
+
     test "an available season row links to the media server", %{conn: conn} do
       put_media_server_web_url("https://plex.example.com")
       user = Cinder.AccountsFixtures.user_fixture()
