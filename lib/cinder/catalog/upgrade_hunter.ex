@@ -276,6 +276,7 @@ defmodule Cinder.Catalog.UpgradeHunter do
 
   defp search_anime_series(series, episodes, eligible_ids) do
     episode_ids = Enum.map(episodes, & &1.id)
+    episodes_by_id = Map.new(episodes, &{&1.id, &1})
     context = Catalog.anime_series_acquisition_context(series)
 
     case AnimePreferences.resolve(series, Settings.anime_defaults()) do
@@ -286,7 +287,11 @@ defmodule Cinder.Catalog.UpgradeHunter do
                context,
                episode_ids,
                upgrade_search_opts(series) ++
-                 AnimePreferences.selection_opts(policy)
+                 AnimePreferences.selection_opts(policy) ++
+                 [
+                   required_episode_ids: MapSet.to_list(eligible_ids),
+                   candidate_filter: &anime_upgrade_candidate?(&1, episodes_by_id, eligible_ids)
+                 ]
              ) do
           {:ok, %{assignments: assignments}} ->
             Enum.each(assignments, &maybe_grab_anime_episodes(&1, episodes, eligible_ids))
@@ -352,6 +357,13 @@ defmodule Cinder.Catalog.UpgradeHunter do
     # Anime policy already decided audio/subtitle suitability; the quality gate compares only the
     # ranked resolution/source fields here and the verified file again at import.
     maybe_grab_episode_release(release, covered, eligible, nil)
+  end
+
+  defp anime_upgrade_candidate?(release, episodes_by_id, eligible_ids) do
+    Enum.any?(release.resolved_episode_ids || [], fn episode_id ->
+      MapSet.member?(eligible_ids, episode_id) and
+        Upgrade.candidate?(Map.fetch!(episodes_by_id, episode_id), release, :tv, nil)
+    end)
   end
 
   defp maybe_grab_episode_release(release, covered, target) do

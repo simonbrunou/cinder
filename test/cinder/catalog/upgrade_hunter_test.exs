@@ -618,6 +618,104 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
                Enum.sort([first.id, second.id])
     end
 
+    test "filters non-upgrading cross-season packs before anime cover selection", ctx do
+      put_env(:tv_preferred_resolutions, ["1080p", "720p"])
+      put_env(:tv_upgrade_cutoff, "1080p")
+
+      Repo.update_all(from(s in Cinder.Catalog.Series, where: s.id == ^ctx.series.id),
+        set: [media_profile: :anime]
+      )
+
+      first =
+        episode_fixture(ctx.season, %{
+          episode_number: 25,
+          file_path: "/lib/Show/S01E25.mkv",
+          imported_resolution: "720p",
+          imported_size: 1_000_000_000
+        })
+
+      second =
+        ctx.series
+        |> season_fixture(%{season_number: 2})
+        |> episode_fixture(%{
+          episode_number: 1,
+          file_path: "/lib/Show/S02E01.mkv",
+          imported_resolution: "1080p",
+          imported_size: 1_000_000_000
+        })
+
+      wide = release("[Group] Show S01E25-S02E01 [720p]", %{download_url: "wide"})
+      upgrade = release("[Group] Show S01E25 [1080p]", %{download_url: "upgrade"})
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", _season ->
+        {:ok, [wide, upgrade]}
+      end)
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, categories: [5070] ->
+        {:ok, []}
+      end)
+
+      test_pid = self()
+
+      stub(Cinder.Download.ClientMock, :add, fn release, _opts ->
+        send(test_pid, {:grabbed, release.title})
+        {:ok, "anime-single-upgrade"}
+      end)
+
+      poll()
+
+      assert_received {:grabbed, "[Group] Show S01E25 [1080p]"}
+      refute_received {:grabbed, "[Group] Show S01E25-S02E01 [720p]"}
+
+      first = Repo.get!(Episode, first.id)
+      assert Repo.get!(Grab, first.grab_id).mapping_snapshot["reserved_episode_ids"] == [first.id]
+      assert Repo.get!(Episode, second.id).grab_id == nil
+    end
+
+    test "accepts complete eligible anime coverage after a partial query failure", ctx do
+      put_env(:tv_preferred_resolutions, ["1080p", "720p"])
+      put_env(:tv_upgrade_cutoff, "1080p")
+
+      Repo.update_all(from(s in Cinder.Catalog.Series, where: s.id == ^ctx.series.id),
+        set: [media_profile: :anime]
+      )
+
+      cutoff =
+        ctx.series
+        |> season_fixture(%{season_number: 2})
+        |> episode_fixture(%{
+          episode_number: 1,
+          file_path: "/lib/Show/S02E01.mkv",
+          imported_resolution: "1080p",
+          imported_size: 1_000_000_000
+        })
+
+      upgrade = release("[Group] Show S01E01 [1080p]", %{download_url: "upgrade"})
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn
+        4242, "Show", 1 -> {:ok, [upgrade]}
+        4242, "Show", 2 -> {:ok, []}
+      end)
+
+      query_count = start_supervised!({Agent, fn -> 0 end})
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, categories: [5070] ->
+        case Agent.get_and_update(query_count, &{&1, &1 + 1}) do
+          0 -> {:error, :timeout}
+          _later -> {:ok, []}
+        end
+      end)
+
+      stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+        {:ok, "anime-partial-search-upgrade"}
+      end)
+
+      poll()
+
+      assert Repo.get!(Episode, ctx.episode.id).grab_id
+      assert Repo.get!(Episode, cutoff.id).grab_id == nil
+    end
+
     test "does not search an anime season when every held episode reached the cutoff", ctx do
       Repo.update_all(from(s in Cinder.Catalog.Series, where: s.id == ^ctx.series.id),
         set: [media_profile: :anime]
