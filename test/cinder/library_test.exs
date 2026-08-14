@@ -196,6 +196,42 @@ defmodule Cinder.LibraryTest do
       assert Repo.aggregate(ImportStage, :count) == 1
     end
 
+    test "an anime upgrade keeps a better held file" do
+      fixture = anime_fixture("many-to-many-mapping")
+      held = fixture["expected"]["destinations"] |> hd() |> then(&Path.join(@tv_lib, &1))
+      grab = anime_grab(fixture)
+
+      episodes =
+        Enum.map(grab.episodes, fn episode ->
+          %{
+            episode
+            | file_path: held,
+              imported_resolution: "1080p",
+              imported_source: "BLURAY",
+              imported_size: 9 * @gb
+          }
+        end)
+
+      grab = %{
+        grab
+        | episodes: episodes,
+          arbitrate_at_import: true,
+          release_title: "Frieren.720p.WEBDL"
+      }
+
+      virtual = stub_anime_filesystem(fixture)
+
+      Agent.update(virtual, fn state ->
+        stat = %File.Stat{type: :regular, size: 9 * @gb, inode: 999, major_device: 1}
+        %{state | files: Map.put(state.files, held, stat)}
+      end)
+
+      assert {:ok, staged} = Library.stage_anime_episodes(grab, anime_preflight(fixture))
+      assert Enum.all?(staged, fn {_episode_id, stage} -> stage.dest == held end)
+      assert Enum.all?(staged, fn {_episode_id, stage} -> stage.placed? == false end)
+      assert Enum.all?(staged, fn {_episode_id, stage} -> stage.quality.resolution == "1080p" end)
+    end
+
     test "a shared story source is policy-probed once and its report supplies stage metadata" do
       fixture = anime_fixture("many-to-many-mapping")
       source = Path.join(fixture["absolute_download_root"], "Frieren - 12.mkv")

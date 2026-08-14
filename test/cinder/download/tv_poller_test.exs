@@ -598,6 +598,56 @@ defmodule Cinder.Download.TvPollerTest do
     assert Repo.get!(Episode, episode.id).file_path =~ "S01E01"
   end
 
+  @tag :tmp_dir
+  test "an arbitrated anime import keeps a better held file", %{tmp_dir: tmp} do
+    %{downloads: downloads, tv: tv} = use_real_tv_library(tmp)
+    {series, season} = series_tree()
+    library = Path.join([tv, "Show (2008) {tmdb-#{series.tmdb_id}}", "Season 01"])
+    File.mkdir_p!(library)
+
+    held = Path.join(library, "Show (2008) {tmdb-#{series.tmdb_id}} - S01E01.mkv")
+    part = Path.join(library, "Show (2008) {tmdb-#{series.tmdb_id}} - S01E01-part2.mkv")
+    File.write!(held, "held")
+    File.write!(part, "held-part")
+
+    episode =
+      episode(season, 1, %{
+        file_path: held,
+        part_file_paths: [part],
+        imported_resolution: "1080p",
+        imported_source: "BLURAY",
+        imported_size: 9_000_000_000
+      })
+
+    source = Path.join(downloads, "Show.S01E01.720p.WEBDL.mkv")
+    File.write!(source, "candidate")
+
+    grab =
+      [episode]
+      |> downloaded_snapshot_grab(source, anime_standard_snapshot(episode))
+      |> Ecto.Changeset.change(
+        arbitrate_at_import: true,
+        release_title: "Show.S01E01.720p.WEBDL"
+      )
+      |> Repo.update!()
+
+    stub(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
+    start_supervised!({TvPoller, interval: 60_000})
+
+    assert :ok = TvPoller.poll()
+    refute Repo.get(Grab, grab.id)
+
+    kept = Repo.reload!(episode)
+    assert kept.file_path == held
+    assert kept.part_file_paths == [part]
+    assert kept.imported_resolution == "1080p"
+    assert File.read!(held) == "held"
+    assert File.read!(part) == "held-part"
+
+    assert Catalog.blocked_release_titles_for_series(series.id, include_reasons: [:no_upgrade]) ==
+             ["Show.S01E01.720p.WEBDL"]
+  end
+
   test "an ambiguous snapshot grab is held once without attempts, stages, or client removal" do
     {_series, season} = series_tree()
     episodes = Enum.map(1..3, &episode(season, &1))

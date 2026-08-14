@@ -7,6 +7,9 @@ All notable changes to Cinder are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Automatic Anime TV upgrades.** The upgrade hunter now uses Anime policy selection and frozen
+  episode mappings, respects the TV cutoff, and re-verifies each downloaded file before replacing
+  anything. Ambiguous or worse replacements leave the existing episode files intact.
 - **Writable household request API.** The existing admin API key can create movie/season requests,
   approve or deny pending requests, and delete request rows. Every mutation stays behind the
   `Cinder.Requests` approval gate and uses a deterministic active admin actor; optional active member

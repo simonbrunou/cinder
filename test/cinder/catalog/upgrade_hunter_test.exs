@@ -9,7 +9,7 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
   @moduletag :capture_log
 
   alias Cinder.Acquisition.Release
-  alias Cinder.Catalog.{Episode, Movie, UpgradeHunter}
+  alias Cinder.Catalog.{Episode, Grab, Movie, UpgradeHunter}
   alias Cinder.Library.Upgrade
 
   import Cinder.CatalogFixtures
@@ -538,18 +538,82 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       assert %DateTime{} = Repo.get!(Episode, second.id).upgrade_checked_at
     end
 
-    test "skips an anime-profile series", ctx do
+    test "grabs a better anime release through the mapped upgrade path", ctx do
       Repo.update_all(from(s in Cinder.Catalog.Series, where: s.id == ^ctx.series.id),
         set: [media_profile: :anime]
       )
 
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", 1 ->
+        {:ok, [release("[Group] Show S01E01 [1080p]")]}
+      end)
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, categories: [5070] ->
+        {:ok, []}
+      end)
+
+      stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+        {:ok, "anime-upgrade"}
+      end)
+
+      poll()
+
+      episode = Repo.get!(Episode, ctx.episode.id)
+      grab = Repo.get!(Grab, episode.grab_id)
+
+      assert grab.arbitrate_at_import
+      assert grab.mapping_snapshot["reserved_episode_ids"] == [episode.id]
+      assert episode.file_path == "/lib/Show/S01E01.mkv"
+    end
+
+    test "does not search an anime season when every held episode reached the cutoff", ctx do
+      Repo.update_all(from(s in Cinder.Catalog.Series, where: s.id == ^ctx.series.id),
+        set: [media_profile: :anime]
+      )
+
+      put_env(:tv_preferred_resolutions, ["1080p", "720p"])
+      put_env(:tv_upgrade_cutoff, "720p")
+      test_pid = self()
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn _tvdb_id, _title, _season ->
+        send(test_pid, :anime_indexer_searched)
+        {:ok, []}
+      end)
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, _opts ->
+        send(test_pid, :anime_indexer_searched)
+        {:ok, []}
+      end)
+
       watch_grabs()
 
-      # No indexer stub: the anime path is not reused here (see the module's Scope section).
+      poll()
+
+      refute_received :anime_indexer_searched
+      refute_grabbed()
+      assert Repo.get!(Episode, ctx.episode.id).file_path == "/lib/Show/S01E01.mkv"
+    end
+
+    test "an ambiguous anime replacement leaves the held file available", ctx do
+      Repo.update_all(from(s in Cinder.Catalog.Series, where: s.id == ^ctx.series.id),
+        set: [media_profile: :anime]
+      )
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", 1 ->
+        {:ok, [release("[Group] Show S99E99 [1080p]")]}
+      end)
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, categories: [5070] ->
+        {:ok, []}
+      end)
+
+      watch_grabs()
+
       poll()
 
       refute_grabbed()
-      assert Repo.get!(Episode, ctx.episode.id).grab_id == nil
+
+      assert %Episode{grab_id: nil, file_path: "/lib/Show/S01E01.mkv"} =
+               Repo.get!(Episode, ctx.episode.id)
     end
   end
 

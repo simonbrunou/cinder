@@ -44,9 +44,8 @@ defmodule Cinder.Catalog.UpgradeHunter do
 
   ## Scope
 
-  Movies and **standard** series. Anime-profile series are skipped: their release selection runs
-  through per-title policy, holds and coordinate mapping built around *wanted* episodes, and
-  re-offering upgrades through it needs its own design rather than a reused call.
+  Movies and series. Anime-profile series use the same per-title policy, stable-coordinate
+  reservation, verification, and import arbitration as wanted Anime episodes.
 
   Lifecycle is `Cinder.Download.PollerSkeleton` (`stateful: false`): stateless, self-rescheduling,
   crash-recoverable. Interval and batch size are module config
@@ -55,10 +54,10 @@ defmodule Cinder.Catalog.UpgradeHunter do
   import Ecto.Query
 
   alias Cinder.Acquisition
-  alias Cinder.Acquisition.Language
+  alias Cinder.Acquisition.{AnimePreferences, Language}
   alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Movie}
-  alias Cinder.{Disk, Download, Repo}
+  alias Cinder.{Disk, Download, Repo, Settings}
   alias Cinder.HTTPPolicy
   alias Cinder.Library.Upgrade
 
@@ -199,14 +198,11 @@ defmodule Cinder.Catalog.UpgradeHunter do
   end
 
   defp maybe_search_season(series, episodes) do
-    if Catalog.media_profile_summary(series).effective == :anime do
-      # See "Scope" above — not a silent skip, so an operator wondering why their anime library
-      # never upgrades finds the reason in the log.
-      Logger.debug("upgrade hunter: skipping anime series #{series.id} (unsupported)")
-    else
-      if Enum.all?(episodes, &Upgrade.cutoff_met?(&1, :tv)),
-        do: :ok,
-        else: search_season(series, episodes)
+    unless Enum.all?(episodes, &Upgrade.cutoff_met?(&1, :tv)) do
+      case Catalog.media_profile_summary(series).effective do
+        :anime -> search_anime_season(series, episodes)
+        :standard -> search_season(series, episodes)
+      end
     end
   end
 
@@ -216,22 +212,13 @@ defmodule Cinder.Catalog.UpgradeHunter do
     season_size = max(Catalog.count_episodes(series.id, season_number), 1)
 
     opts =
-      [
-        protocols: Download.available_protocols(),
-        preferred_language: series.preferred_language,
-        original_language: series.original_language,
-        # The only consumer that includes `"no_upgrade"`: a release this sweep grabbed and the
-        # import then arbitrated down to nothing placed would otherwise be re-offered every
-        # rotation (#274). The wanted-episode sweep and the manual panel still see it.
-        release_blocklist:
-          Catalog.blocked_release_titles_for_series(series.id, include_reasons: [:no_upgrade]),
-        # Every file we can't link to an episode we hold becomes an operator residual decision at
-        # import (#247), so a release carrying one scores zero inside the cover and the releases
-        # behind it are picked instead (`Scorer.claimable_coverage/5` — judging the winner after
-        # the fact would throw away the whole season's upgrades).
-        full_claim_only: true,
-        pack_episode_count: season_size
-      ] ++ Acquisition.band_opts(:tv)
+      upgrade_search_opts(series) ++
+        [
+          # Every file we can't link to an episode we hold becomes an operator residual decision
+          # at import (#247), so filter such releases before the set cover picks them.
+          full_claim_only: true,
+          pack_episode_count: season_size
+        ]
 
     case Acquisition.best_releases(
            series,
@@ -245,6 +232,45 @@ defmodule Cinder.Catalog.UpgradeHunter do
       _no_match_or_error ->
         :ok
     end
+  end
+
+  defp search_anime_season(series, episodes) do
+    episode_ids = Enum.map(episodes, & &1.id)
+    context = Catalog.anime_series_acquisition_context(series)
+
+    case AnimePreferences.resolve(series, Settings.anime_defaults()) do
+      {:ok, policy} ->
+        Catalog.set_anime_hold(series, nil)
+
+        case Acquisition.best_anime_releases(
+               context,
+               episode_ids,
+               upgrade_search_opts(series) ++
+                 AnimePreferences.selection_opts(policy)
+             ) do
+          {:ok, %{assignments: assignments}} ->
+            Enum.each(assignments, &maybe_grab_anime_episodes(&1, episodes))
+
+          _no_match_waiting_or_error ->
+            :ok
+        end
+
+      {:error, reason} ->
+        Catalog.set_anime_hold(series, reason)
+    end
+  end
+
+  defp upgrade_search_opts(series) do
+    [
+      protocols: Download.available_protocols(),
+      preferred_language: series.preferred_language,
+      original_language: series.original_language,
+      # The only consumer that includes `"no_upgrade"`: a release this sweep grabbed and the
+      # import then arbitrated down to nothing placed would otherwise be re-offered every
+      # rotation (#274). The wanted-episode sweep and the manual panel still see it.
+      release_blocklist:
+        Catalog.blocked_release_titles_for_series(series.id, include_reasons: [:no_upgrade])
+    ] ++ Acquisition.band_opts(:tv)
   end
 
   # An assignment covers a set of episode NUMBERS — every one of them ours to claim, since
@@ -272,6 +298,18 @@ defmodule Cinder.Catalog.UpgradeHunter do
   defp maybe_grab_episodes({release, covered_numbers}, episodes, target) do
     covered = Enum.filter(episodes, &(&1.episode_number in covered_numbers))
 
+    maybe_grab_episode_release(release, covered, target)
+  end
+
+  defp maybe_grab_anime_episodes(%{release: release, episode_ids: episode_ids}, episodes) do
+    covered = Enum.filter(episodes, &(&1.id in episode_ids))
+
+    # Anime policy already decided audio/subtitle suitability; the quality gate compares only the
+    # ranked resolution/source fields here and the verified file again at import.
+    maybe_grab_episode_release(release, covered, nil)
+  end
+
+  defp maybe_grab_episode_release(release, covered, target) do
     cond do
       covered == [] or not Enum.any?(covered, &Upgrade.candidate?(&1, release, :tv, target)) ->
         :ok
