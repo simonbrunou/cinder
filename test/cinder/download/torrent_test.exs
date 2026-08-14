@@ -18,6 +18,23 @@ defmodule Cinder.Download.TorrentTest do
     assert {:ok, ^expected} = Torrent.infohash(torrent(infoval))
   end
 
+  test "uses the truncated SHA-256 id for a v2-only torrent" do
+    infoval =
+      "d9:file treed5:M.mkvd0:d6:lengthi5e11:pieces root32:#{String.duplicate("x", 32)}eee" <>
+        "12:meta versioni2e4:name5:M.mkv12:piece lengthi16384ee"
+
+    expected = :crypto.hash(:sha256, infoval) |> binary_part(0, 20) |> Base.encode16(case: :lower)
+    assert {:ok, ^expected} = Torrent.infohash(torrent(infoval))
+  end
+
+  test "keeps the v1 id for a hybrid torrent" do
+    infoval =
+      "d6:lengthi5e12:meta versioni2e4:name5:M.mkv12:piece lengthi16384e6:pieces20:#{String.duplicate("x", 20)}e"
+
+    expected = :crypto.hash(:sha, infoval) |> Base.encode16(case: :lower)
+    assert {:ok, ^expected} = Torrent.infohash(torrent(infoval))
+  end
+
   test "rejects non-bencode / HTML input" do
     assert {:error, :bad_torrent} = Torrent.infohash("<html>not found</html>")
     assert {:error, :bad_torrent} = Torrent.infohash("")

@@ -46,7 +46,7 @@ defmodule Cinder.Download.Client.QBittorrent do
 
   @impl true
   def add(%{download_url: "magnet:" <> _ = magnet}, opts) do
-    case btih(magnet) do
+    case torrent_id(magnet) do
       {:ok, hash} -> add_magnet(magnet, hash, opts)
       :error -> {:error, :unsupported_download_url}
     end
@@ -96,7 +96,7 @@ defmodule Cinder.Download.Client.QBittorrent do
            form_multipart: [urls: magnet] ++ tag_part(opts)
          ) do
       {:ok, %{status: 200, body: body}} ->
-        # `hash` was already extracted from the magnet's btih (hex or base32, see btih/1); a 200
+        # `hash` was already extracted from the magnet's btih/btmh; a 200
         # that isn't a rejection means qBittorrent accepted it, so hand back that hash for status/1
         # to poll. (.torrent-URL adds compute their hash from the fetched bytes in add_torrent_url/2.)
         if add_rejected?(body), do: {:error, :add_rejected}, else: {:ok, hash}
@@ -546,19 +546,38 @@ defmodule Cinder.Download.Client.QBittorrent do
     end)
   end
 
-  # Match the magnet verbatim (don't upcase the whole string — that breaks the
-  # lowercase `xt=urn:btih:` literal); upcase only the captured base32 hash.
+  # Prefer btih when a hybrid magnet carries both exact topics: qBittorrent keys
+  # hybrids by their v1 hash. Pure v2 btmh values are multihash-encoded SHA-256
+  # (`12` algorithm + `20` byte-count); qBittorrent's Web API id is its first
+  # 20 digest bytes.
   @hex_btih ~r/xt=urn:btih:([a-fA-F0-9]{40})(?:&|$)/
   @b32_btih ~r/xt=urn:btih:([a-zA-Z2-7]{32})(?:&|$)/
+  @hex_btmh ~r/xt=urn:btmh:1220([a-fA-F0-9]{64})(?:&|$)/
 
-  defp btih("magnet:" <> _ = magnet) do
-    with nil <- Regex.run(@hex_btih, magnet),
-         [_, b32] <- Regex.run(@b32_btih, magnet),
-         {:ok, raw} <- Base.decode32(String.upcase(b32), padding: false) do
-      {:ok, Base.encode16(raw, case: :lower)}
-    else
-      [_, hex] -> {:ok, String.downcase(hex)}
+  defp torrent_id("magnet:" <> _ = magnet) do
+    case Regex.run(@hex_btih, magnet) do
+      [_, hex] ->
+        {:ok, String.downcase(hex)}
+
+      nil ->
+        case Regex.run(@b32_btih, magnet) do
+          [_, b32] -> decode_btih(b32)
+          nil -> decode_btmh(magnet)
+        end
+    end
+  end
+
+  defp decode_btmh(magnet) do
+    case Regex.run(@hex_btmh, magnet) do
+      [_, hex] -> {:ok, hex |> String.slice(0, 40) |> String.downcase()}
       _ -> :error
+    end
+  end
+
+  defp decode_btih(b32) do
+    case Base.decode32(String.upcase(b32), padding: false) do
+      {:ok, raw} -> {:ok, Base.encode16(raw, case: :lower)}
+      :error -> :error
     end
   end
 

@@ -50,6 +50,34 @@ defmodule Cinder.Download.Client.QBittorrentTest do
              QBittorrent.add(%{download_url: magnet})
   end
 
+  test "add/1 accepts a v2 btmh magnet and returns qBittorrent's truncated id" do
+    stub_qbit(fn conn ->
+      assert conn.request_path == "/api/v2/torrents/add"
+      Req.Test.text(conn, "Ok.")
+    end)
+
+    v2 = String.duplicate("AB", 32)
+    magnet = "magnet:?xt=urn:btmh:1220#{v2}&dn=Movie"
+    expected = String.duplicate("ab", 20)
+
+    assert {:ok, ^expected} = QBittorrent.add(%{download_url: magnet})
+  end
+
+  test "add/1 prefers a hybrid magnet's v1 id" do
+    stub_qbit(fn conn -> Req.Test.text(conn, "Ok.") end)
+
+    v2 = String.duplicate("ab", 32)
+    magnet = "magnet:?xt=urn:btmh:1220#{v2}&xt=urn:btih:#{@hash}&dn=Movie"
+
+    assert {:ok, "0123456789abcdef0123456789abcdef01234567"} =
+             QBittorrent.add(%{download_url: magnet})
+  end
+
+  test "add/1 rejects a btmh with an unsupported multihash algorithm" do
+    magnet = "magnet:?xt=urn:btmh:1114#{String.duplicate("ab", 20)}&dn=Movie"
+    assert {:error, :unsupported_download_url} = QBittorrent.add(%{download_url: magnet})
+  end
+
   test "add/1 accepts the qBittorrent 5.1+ JSON add-response and returns the hash" do
     stub_qbit(fn conn ->
       assert conn.request_path == "/api/v2/torrents/add"
@@ -180,6 +208,19 @@ defmodule Cinder.Download.Client.QBittorrentTest do
 
     assert {:ok, ^expected} =
              QBittorrent.add(%{download_url: "https://tracker.test/dl/123.torrent"})
+  end
+
+  test "add/1 fetches a v2-only .torrent and returns qBittorrent's truncated id" do
+    infoval =
+      "d9:file treed5:M.mkvd0:d6:lengthi5e11:pieces root32:#{String.duplicate("x", 32)}eee" <>
+        "12:meta versioni2e4:name5:M.mkv12:piece lengthi16384ee"
+
+    torrent_bytes = "d8:announce11:http://x/an4:info" <> infoval <> "e"
+    expected = :crypto.hash(:sha256, infoval) |> binary_part(0, 20) |> Base.encode16(case: :lower)
+    stub_torrent_flow(torrent_bytes)
+
+    assert {:ok, ^expected} =
+             QBittorrent.add(%{download_url: "https://tracker.test/dl/v2.torrent"})
   end
 
   test "add/1 returns :bad_torrent when the URL returns a non-torrent body" do

@@ -1,11 +1,11 @@
 defmodule Cinder.Download.Torrent do
   @moduledoc """
-  Computes a torrent's BitTorrent v1 infohash from its `.torrent` bytes.
+  Computes the qBittorrent torrent id from `.torrent` bytes.
 
-  The v1 infohash is the SHA-1 of the bencoded `info` value **exactly as it
-  appears in the file** (byte-for-byte, not a re-encode), so this is a minimal
-  bencode value-walker that locates the byte span of the top-level `info` value
-  and hashes that span. v2/hybrid (SHA-256) infohashes are out of scope.
+  The infohash covers the bencoded `info` value **exactly as it appears in the
+  file** (byte-for-byte, not a re-encode). v1 and hybrid torrents use their
+  SHA-1 hash; v2-only torrents use the first 20 bytes of their SHA-256 hash,
+  which is qBittorrent's Web API torrent id.
   """
 
   @doc """
@@ -16,7 +16,8 @@ defmodule Cinder.Download.Torrent do
   def infohash(bin) when is_binary(bin) do
     case info_span(bin) do
       {:ok, {start, len}} ->
-        digest = :crypto.hash(:sha, binary_part(bin, start, len))
+        info = binary_part(bin, start, len)
+        digest = hash_algorithm(info) |> :crypto.hash(info) |> binary_part(0, 20)
         {:ok, Base.encode16(digest, case: :lower)}
 
       :error ->
@@ -26,6 +27,19 @@ defmodule Cinder.Download.Torrent do
     # :binary.at/2 raises on out-of-range; str-length parse can raise on
     # malformed input; treat any of it as a bad torrent rather than crashing.
     _ -> {:error, :bad_torrent}
+  end
+
+  # BEP 52 hybrid torrents retain the v1 `pieces` field and qBittorrent keys
+  # them by that v1 hash. A v2-only info dictionary has meta version 2 without
+  # `pieces`, so its Web API id is the truncated SHA-256 digest.
+  defp hash_algorithm(info) do
+    case decode(info, 0) do
+      {%{"meta version" => 2} = decoded, _next} ->
+        if Map.has_key?(decoded, "pieces"), do: :sha, else: :sha256
+
+      _decoded ->
+        :sha
+    end
   end
 
   @doc """
