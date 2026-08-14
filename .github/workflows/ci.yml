@@ -68,19 +68,38 @@ jobs:
       - run: docker build --check .
       - run: docker build -t cinder:ci .
 
-      - name: Boot a fresh database
+      - name: Boot and exercise a fresh instance in a browser
+        env:
+          CINDER_SMOKE_BASE_URL: http://127.0.0.1:4000
+          CINDER_SMOKE_EMAIL: browser-smoke@example.invalid
+          CINDER_SMOKE_PASSWORD: ci-only-browser-smoke-password
+          CINDER_SMOKE_BOOTSTRAP_TOKEN: ci-only-not-a-real-bootstrap-token
+          CINDER_SMOKE_BROWSER_CHANNEL: chrome
         run: |
           docker run --detach --name cinder-ci -p 127.0.0.1:4000:4000 \
             -e SECRET_KEY_BASE=ci-only-not-a-real-secret-key-base-0123456789abcdefghijklmnopqrstuvwxyz \
             -e DATABASE_PATH=/data/cinder.db \
-            -e CINDER_BOOTSTRAP_TOKEN=ci-only-not-a-real-bootstrap-token \
+            -e PHX_HOST=127.0.0.1 \
+            -e CINDER_BOOTSTRAP_TOKEN="$CINDER_SMOKE_BOOTSTRAP_TOKEN" \
             cinder:ci
           trap 'docker logs cinder-ci; docker rm --force cinder-ci' EXIT
-          for attempt in {1..30}; do
-            curl --fail --silent http://127.0.0.1:4000/healthz && exit 0
+          for _ in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:4000/healthz; then
+              ready=true
+              break
+            fi
             sleep 1
           done
-          exit 1
+          test "${ready:-false}" = true
+
+          # The browser smoke exercises account bootstrap, not external-service setup.
+          docker exec cinder-ci /app/bin/cinder eval \
+            '{:ok, _} = Application.ensure_all_started(:cinder); Cinder.Settings.mark_setup_complete()'
+
+          browser_venv="$RUNNER_TEMP/cinder-browser-smoke"
+          python3 -m venv "$browser_venv"
+          "$browser_venv/bin/pip" install --disable-pip-version-check playwright==1.61.0
+          "$browser_venv/bin/python" .github/scripts/browser_smoke.py
 
       - uses: aquasecurity/trivy-action@v0.36.0
         with:

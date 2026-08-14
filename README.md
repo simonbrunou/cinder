@@ -12,6 +12,16 @@ is configured in-app.
 > **Status:** **v1.0** — movies + TV + multi-user (request → admin approval) are built, validated
 > live, and released. Build history in [`ROADMAP.md`](ROADMAP.md).
 
+## Screenshots
+
+### Admin dashboard
+
+![Cinder admin dashboard showing pipeline controls, service health, and activity](docs/images/dashboard.png)
+
+### Library
+
+![Cinder library with movie and series tabs, filtering, sorting, and adoption](docs/images/library.png)
+
 ## Quickstart (Docker)
 
 Requires Docker with the Compose plugin.
