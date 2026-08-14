@@ -152,7 +152,9 @@ view, and per-season state badges (Pending / Approved / Denied) all apply, in pa
 Once approved, monitoring is set for that season only and the TV poller takes over: it searches
 for the best release per still-wanted episode — preferring a season pack when one covers them,
 falling back to per-episode grabs — then maps each file in a pack to its episode on import.
-Admins can also manage monitoring directly from the series detail page. A periodic TMDB refresh
+Admins can also manage monitoring directly from the series detail page. This includes Standard
+Season 0 episodes: an aired special is searched only when an admin explicitly monitors it, and a
+matching `S00Exx` file imports under `Season 00`. A periodic TMDB refresh
 keeps season/episode data current (so a newly-aired or late-dated episode becomes search-eligible
 on its own), and a `/calendar` view lists upcoming monitored episodes. Episodes land under the
 selected TV destination in the `Show (Year)/Season NN/Show (Year) - SxxEyy.ext` layout
