@@ -59,6 +59,7 @@ defmodule Cinder.Settings do
   defdelegate library_kinds(), to: Registry
   defdelegate flat_keys(), to: Registry
   defdelegate library_path_key(kind), to: Registry
+  defdelegate anime_library_path_key(kind), to: Registry
   defdelegate min_size_key(kind), to: Registry
   defdelegate max_size_key(kind), to: Registry
   defdelegate preferred_resolutions_key(kind), to: Registry
@@ -194,14 +195,69 @@ defmodule Cinder.Settings do
   @spec explicit_import_roots() :: [String.t()] | nil
   def explicit_import_roots, do: Application.get_env(:cinder, :explicit_import_roots)
 
+  @doc "Configured standard and Anime destinations, without duplicate roots for a kind."
+  @spec library_destinations() :: [%{kind: atom(), profile: :standard | :anime, path: String.t()}]
+  def library_destinations do
+    Enum.flat_map(Cinder.Library.kinds(), fn kind ->
+      standard = configured_library_path(kind, :standard)
+      anime = configured_library_path(kind, :anime)
+
+      [%{kind: kind, profile: :standard, path: standard}] ++
+        if(anime in [nil, standard],
+          do: [],
+          else: [%{kind: kind, profile: :anime, path: anime}]
+        )
+    end)
+    |> Enum.reject(&is_nil(&1.path))
+    |> Enum.uniq_by(fn destination ->
+      {destination.kind, Path.expand(destination.path)}
+    end)
+  end
+
+  @doc "The destination for a title, with a blank Anime path falling back to the standard root."
+  @spec library_root(atom(), term()) :: {:ok, String.t()} | {:error, :library_not_configured}
+  def library_root(kind, media) do
+    profile = routing_profile(media)
+    path = configured_library_path(kind, profile) || configured_library_path(kind, :standard)
+
+    if path, do: {:ok, path}, else: {:error, :library_not_configured}
+  end
+
+  @doc "Returns the most-specific configured library root containing `path`."
+  @spec library_root_for_path(String.t()) :: {:ok, String.t()} | {:error, :outside_library}
+  def library_root_for_path(path) when is_binary(path) do
+    expanded = Path.expand(path)
+
+    library_roots()
+    |> Enum.sort_by(&byte_size/1, :desc)
+    |> Enum.find(fn root ->
+      expanded == root or String.starts_with?(expanded, root <> "/")
+    end)
+    |> case do
+      nil -> {:error, :outside_library}
+      root -> {:ok, root}
+    end
+  end
+
   @doc "Expanded library roots permitted as managed destinations."
   @spec library_roots() :: [String.t()]
   def library_roots do
-    for kind <- Cinder.Library.kinds(),
-        root = Application.get_env(:cinder, :"#{kind}_library_path"),
-        is_binary(root) and root != "",
-        do: Path.expand(root)
+    library_destinations()
+    |> Enum.map(&Path.expand(&1.path))
+    |> Enum.uniq()
   end
+
+  defp configured_library_path(kind, :anime),
+    do: :cinder |> Application.get_env(:"#{kind}_anime_library_path") |> Util.blank_to_nil()
+
+  defp configured_library_path(kind, :standard),
+    do: :cinder |> Application.get_env(:"#{kind}_library_path") |> Util.blank_to_nil()
+
+  defp routing_profile(:anime), do: :anime
+  defp routing_profile([media | _rest]), do: routing_profile(media)
+  defp routing_profile(%{media_profile: :anime}), do: :anime
+  defp routing_profile(%{season: %{series: %{media_profile: :anime}}}), do: :anime
+  defp routing_profile(_media), do: :standard
 
   @doc "Typed global Anime release defaults with normalized language and group lists."
   def anime_defaults do
@@ -366,7 +422,9 @@ defmodule Cinder.Settings do
     end
   end
 
-  defp library_path_keys, do: Enum.map(Cinder.Library.kinds(), &library_path_key/1)
+  defp library_path_keys do
+    Enum.flat_map(Cinder.Library.kinds(), &[library_path_key(&1), anime_library_path_key(&1)])
+  end
 
   defp effective_field_value(%{module: module, field: field}) do
     :cinder |> Application.get_env(module, []) |> Keyword.get(field) |> Util.blank_to_nil()
@@ -441,7 +499,17 @@ defmodule Cinder.Settings do
   defp invalid_values(params) do
     invalid_band_values(params) ++
       invalid_cutoff_values(params) ++
-      invalid_import_roots(params) ++ invalid_anime_values(params)
+      invalid_import_roots(params) ++
+      invalid_library_roots(params) ++ invalid_anime_values(params)
+  end
+
+  defp invalid_library_roots(params) do
+    for kind <- Cinder.Library.kinds(),
+        key <- [library_path_key(kind), anime_library_path_key(kind)],
+        Map.has_key?(params, key),
+        value = String.trim(params[key] || ""),
+        value != "" and Path.expand(value) == "/",
+        do: key
   end
 
   defp invalid_import_roots(%{@import_roots_key => value}) do
@@ -781,6 +849,7 @@ defmodule Cinder.Settings do
 
   defp apply_kind_config(rows, kind) do
     root_env = :"#{kind}_library_path"
+    anime_root_env = :"#{kind}_anime_library_path"
 
     # Capture the bootstrap snapshot EAGERLY, before the `||` — otherwise the `||` short-circuits
     # past base_path/1 whenever a value is set, so base/1 first records the env lazily during a
@@ -788,6 +857,7 @@ defmodule Cinder.Settings do
     # (a cleared setting would then revert to the overlaid value, not the env default).
     fallback = base_path(root_env)
     root = decoded_for(rows, "#{kind}_library_path") || fallback
+    anime_root = decoded_for(rows, "#{kind}_anime_library_path")
     min_size = band_size(rows, "#{kind}_min_size")
     max_size = band_size(rows, "#{kind}_max_size")
     preferred = parse_csv_list(decoded_for(rows, "#{kind}_preferred_resolutions"))
@@ -802,6 +872,7 @@ defmodule Cinder.Settings do
       |> then(&if(&1 in Parser.resolutions(), do: &1, else: nil))
 
     Application.put_env(:cinder, root_env, root)
+    Application.put_env(:cinder, anime_root_env, anime_root)
     Application.put_env(:cinder, :"#{kind}_min_size", min_size)
     Application.put_env(:cinder, :"#{kind}_max_size", max_size)
     Application.put_env(:cinder, :"#{kind}_preferred_resolutions", preferred)
@@ -952,7 +1023,8 @@ defmodule Cinder.Settings do
     infer_common_root(roots, length(Cinder.Library.kinds()))
   end
 
-  defp infer_common_root(roots, expected_count) when length(roots) == expected_count do
+  defp infer_common_root(roots, expected_count)
+       when length(roots) == expected_count do
     [first | rest] = roots
 
     common =

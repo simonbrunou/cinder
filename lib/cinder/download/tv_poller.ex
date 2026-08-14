@@ -171,7 +171,7 @@ defmodule Cinder.Download.TvPoller do
   defp import_grab(%Grab{} = grab) do
     # Pre-import disk guard on the TV library root. Hold (no attempt bump, no park) on a full disk —
     # the download is done and waiting, so don't burn the retry budget on a fixable condition.
-    if Disk.import_space_available?(:tv) do
+    if Disk.import_space_available?(:tv, grab.episodes) do
       import_grab_content(grab)
     else
       warn_throttled(

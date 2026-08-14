@@ -85,21 +85,21 @@ defmodule Cinder.Disk do
   end
 
   @doc """
-  Whether the `kind` (`:movies`/`:tv`) library root has at least `@import_floor_bytes` free before
-  an import stages into it. Fails OPEN (returns `true`) for an unconfigured root (the importer
-  already holds those) or an unreadable one (a probe glitch must not block a good import). Returns
-  `false` only on positive evidence the root is below the floor.
+  Whether the title's configured destination has at least `@import_floor_bytes` free before an
+  import stages into it. Fails OPEN (returns `true`) for an unconfigured root (the importer already
+  holds those) or an unreadable one (a probe glitch must not block a good import). Returns `false`
+  only on positive evidence the root is below the floor.
   """
-  @spec import_space_available?(atom()) :: boolean()
-  def import_space_available?(kind) do
-    case Application.get_env(:cinder, :"#{kind}_library_path") do
-      path when is_binary(path) and path != "" ->
+  @spec import_space_available?(atom(), term()) :: boolean()
+  def import_space_available?(kind, media \\ :standard) do
+    case Cinder.Settings.library_root(kind, media) do
+      {:ok, path} ->
         case configured_stats(path) do
           {:ok, %{free_bytes: free}} -> free >= @import_floor_bytes
           {:error, _reason} -> true
         end
 
-      _unconfigured ->
+      {:error, :library_not_configured} ->
         true
     end
   end
@@ -118,15 +118,14 @@ defmodule Cinder.Disk do
   defp prober, do: Application.get_env(:cinder, :disk_prober, __MODULE__)
 
   @doc """
-  The configured library roots as `{kind, path}` pairs (`Cinder.Library.kinds/0`), skipping
-  any kind whose path setting is unset or blank.
+  The configured standard and Anime library roots as `{kind, path}` pairs, skipping unset,
+  blank, and duplicate destinations.
   """
   @spec configured_roots() :: [{atom(), String.t()}]
   def configured_roots do
-    for kind <- Cinder.Library.kinds(),
-        path = Application.get_env(:cinder, :"#{kind}_library_path"),
-        path not in [nil, ""] do
-      {kind, path}
+    for %{kind: kind, profile: profile, path: path} <- Cinder.Settings.library_destinations() do
+      root_kind = if profile == :anime, do: :"anime_#{kind}", else: kind
+      {root_kind, path}
     end
   end
 

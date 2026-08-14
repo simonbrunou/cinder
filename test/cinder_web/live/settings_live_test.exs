@@ -35,6 +35,8 @@ defmodule CinderWeb.SettingsLiveTest do
     assert html =~ "Media server"
     assert html =~ "Library"
     assert html =~ ~s(name="movies_library_path")
+    assert html =~ ~s(name="movies_anime_library_path")
+    assert has_element?(lv, "#movies_anime_library_path-help", "Leave blank")
     assert html =~ ~s(name="import_roots")
     assert html =~ ~s(name="default_request_quota")
     assert has_element?(lv, "#movies_preferred_terms[name=movies_preferred_terms]")
@@ -346,6 +348,36 @@ defmodule CinderWeb.SettingsLiveTest do
 
     assert Settings.get("movies_library_path") == "/srv/media"
     assert Application.fetch_env!(:cinder, :movies_library_path) == "/srv/media"
+  end
+
+  test "saving an Anime destination overlays it and rejects the filesystem root", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    lv
+    |> form("#settings-form", %{
+      "movies_anime_library_path" => "/srv/anime",
+      "media_server_type" => "jellyfin"
+    })
+    |> render_submit()
+
+    assert Settings.get("movies_anime_library_path") == "/srv/anime"
+    assert Application.fetch_env!(:cinder, :movies_anime_library_path) == "/srv/anime"
+
+    lv
+    |> form("#settings-form", %{
+      "movies_anime_library_path" => "/",
+      "media_server_type" => "jellyfin"
+    })
+    |> render_submit()
+
+    assert has_element?(lv, "#movies_anime_library_path-error", "top-level folder")
+
+    assert has_element?(
+             lv,
+             ~s|#movies_anime_library_path[aria-describedby="movies_anime_library_path-help movies_anime_library_path-error"]|
+           )
+
+    assert Settings.get("movies_anime_library_path") == "/srv/anime"
   end
 
   test "never echoes a stored secret back to the client", %{conn: conn} do

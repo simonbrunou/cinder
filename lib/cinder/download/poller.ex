@@ -334,7 +334,7 @@ defmodule Cinder.Download.Poller do
     # Pre-import disk guard on the movies library root. Hold (no attempt bump, no park) on a full
     # disk — the download is done and waiting, so don't burn the import budget on a fixable
     # condition. Throttled so a persistently full disk doesn't flood the log.
-    if Cinder.Disk.import_space_available?(:movies) do
+    if Cinder.Disk.import_space_available?(:movies, movie) do
       movie |> Library.stage_movie() |> import_one_result(movie)
     else
       warn_throttled(

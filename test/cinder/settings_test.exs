@@ -36,6 +36,7 @@ defmodule Cinder.SettingsTest do
     :sabnzbd_remote_path_prefix,
     :sabnzbd_local_path_prefix,
     :movies_library_path,
+    :movies_anime_library_path,
     :movies_min_size,
     :movies_max_size,
     :movies_preferred_resolutions,
@@ -44,6 +45,7 @@ defmodule Cinder.SettingsTest do
     :movies_blocked_terms,
     :movies_upgrade_cutoff,
     :tv_library_path,
+    :tv_anime_library_path,
     :tv_min_size,
     :tv_max_size,
     :tv_preferred_resolutions,
@@ -129,6 +131,10 @@ defmodule Cinder.SettingsTest do
       Application.put_env(:cinder, :movies_library_path, "/srv/media/movies")
       Application.put_env(:cinder, :tv_library_path, "/srv/media/tv")
       Application.delete_env(:cinder, :import_roots)
+      assert Settings.import_roots() == ["/srv/media"]
+
+      Application.put_env(:cinder, :movies_anime_library_path, "/mnt/anime/movies")
+      Application.put_env(:cinder, :tv_anime_library_path, "/mnt/anime/tv")
       assert Settings.import_roots() == ["/srv/media"]
 
       Application.put_env(:cinder, :movies_library_path, "/movies")
@@ -682,6 +688,46 @@ defmodule Cinder.SettingsTest do
 
       Settings.delete("tv_library_path")
       assert Application.fetch_env!(:cinder, :tv_library_path) == original
+    end
+
+    test "Anime destinations route explicit profiles and fall back to the standard roots" do
+      Settings.put("movies_anime_library_path", "/srv/media/anime-movies")
+      Settings.put("tv_anime_library_path", "/srv/media/anime-tv")
+
+      assert Settings.library_root(:movies, %{media_profile: :standard}) ==
+               {:ok, Application.fetch_env!(:cinder, :movies_library_path)}
+
+      assert Settings.library_root(:movies, %{media_profile: :anime}) ==
+               {:ok, "/srv/media/anime-movies"}
+
+      episode = %{season: %{series: %{media_profile: :anime}}}
+      assert Settings.library_root(:tv, episode) == {:ok, "/srv/media/anime-tv"}
+
+      assert Settings.library_root_for_path("/srv/media/anime-tv/Show/episode.mkv") ==
+               {:ok, "/srv/media/anime-tv"}
+
+      assert Settings.library_root_for_path("/srv/media/anime-tv-escape/episode.mkv") ==
+               {:error, :outside_library}
+
+      Settings.delete("movies_anime_library_path")
+
+      assert Settings.library_root(:movies, %{media_profile: :anime}) ==
+               {:ok, Application.fetch_env!(:cinder, :movies_library_path)}
+    end
+
+    test "library paths reject every spelling that expands to the filesystem root" do
+      for root <- ["/", "//", "/tmp/.."] do
+        assert {:error, invalid} =
+                 Settings.save_form(%{
+                   "movies_library_path" => root,
+                   "tv_anime_library_path" => root,
+                   "media_server_type" => "jellyfin"
+                 })
+
+        assert Enum.sort(invalid) == ["movies_library_path", "tv_anime_library_path"]
+        assert Settings.get("movies_library_path") == nil
+        assert Settings.get("tv_anime_library_path") == nil
+      end
     end
 
     test "library-root base snapshot is captured eagerly (clearing reverts even with no prior capture)" do

@@ -12,6 +12,10 @@ All notable changes to Cinder are documented here. The format follows
   `Cinder.Requests` approval gate and uses a deterministic active admin actor; optional active member
   attribution preserves that member's quota and approval behavior. Keys issued by the former
   read-only API are revoked on upgrade; an admin must generate a new writable key.
+- **Optional Anime library destinations.** Movies and TV explicitly using the Anime profile can
+  import into separate roots configured in `/settings`; blank fields fall back to the existing
+  standard roots. Import safety, deletion, subtitles, disk reporting, and library adoption all
+  recognize every configured root.
 - **Per-library release rules and upgrade cutoffs.** Movies and TV can rank preferred title terms,
   reject blocked title terms, and stop automatic re-download searches at a chosen preferred
   resolution. Manual search remains the override surface for every rule and stays available after

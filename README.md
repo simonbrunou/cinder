@@ -90,7 +90,7 @@ rest with a key derived from `SECRET_KEY_BASE`.
 | Indexer | Prowlarr URL + API key |
 | Download | qBittorrent URL / username / password, SABnzbd URL + API key, per-client enable toggles |
 | Media server | Jellyfin URL + API key **or** Plex URL + token + a per-library section (Movies, TV); media-server type; an optional **web URL** per server (see below) |
-| Library paths | `movies_library_path` **and** `tv_library_path` — a separate import root per kind, both required |
+| Library paths | Required standard roots (`movies_library_path`, `tv_library_path`) plus optional Anime roots per kind; blank Anime roots fall back to the standard roots |
 | Release size bands | Per-kind min/max size (decimal GB), preferred resolutions and sources, preferred/blocked title terms, and an optional automatic-upgrade resolution cutoff. TV sizes are per episode (a season pack of N is allowed N× the max). Ships with defaults — movies 0.3–15 GB, TV 0.05–4 GB per episode; blank = default, an explicit `0` = no limit |
 | Subtitles | OpenSubtitles API key + username + password, LibreTranslate URL + API key (optional fallback translation), preferred subtitle languages (csv) — fetched automatically after each import and swept every 12 h; Cinder-downloaded sidecars are also checked serially by pinned, local CPU-only FFsubsync 0.5.1, with low-confidence/different-cut results left unchanged for review in Activity |
 | Notifications | Discord webhook URL — posts an embed on availability and failures, on a request approval, and on the two things that need an admin: a new request awaiting approval and a new account awaiting activation (unset ⇒ log-only). Plus a **generic webhook URL** + optional `Authorization` header value: the same events POSTed as JSON (`{"event": "movie_available", …}`) to anything that speaks HTTP — ntfy, Gotify, Apprise, n8n, Home Assistant. There is no payload template; reshape it in the receiver |
@@ -113,8 +113,8 @@ Plex `ratingKey` / Jellyfin Item Id, so it can't deep-link to a specific movie, 
 Each can be **bootstrapped** from an environment variable (`TMDB_API_TOKEN`, `PROWLARR_URL`,
 `MOVIES_LIBRARY_PATH`, `TV_LIBRARY_PATH`, `MOVIES_PLEX_SECTION`, `TV_PLEX_SECTION`,
 `OPENSUBTITLES_API_KEY`, `LIBRETRANSLATE_URL`, `LIBRETRANSLATE_API_KEY`, `SUBTITLE_LANGUAGES`, …) for an unattended first boot, but the in-app
-value wins once set. The size bands and the Anime releases settings (including `ffprobe_bin`) have
-no env bootstrap — the bands start at their shipped defaults; tune them in `/settings`.
+value wins once set. Anime library destinations, the size bands, and the Anime release settings
+(including `ffprobe_bin`) have no env bootstrap — configure or tune them in `/settings`.
 
 ### Household API
 
@@ -157,8 +157,8 @@ falling back to per-episode grabs — then maps each file in a pack to its episo
 Admins can also manage monitoring directly from the series detail page. A periodic TMDB refresh
 keeps season/episode data current (so a newly-aired or late-dated episode becomes search-eligible
 on its own), and a `/calendar` view lists upcoming monitored episodes. Episodes land under the
-separate TV root (`tv_library_path`) in the `Show (Year)/Season NN/Show (Year) - SxxEyy.ext`
-layout Jellyfin/Plex expect.
+selected TV destination in the `Show (Year)/Season NN/Show (Year) - SxxEyy.ext` layout
+Jellyfin/Plex expect.
 
 **Anime** is a per-title opt-in profile (`Auto`/`Standard`/`Anime` on any movie or series — `Auto`
 stays `Standard` unless explicitly confirmed, either directly or as a requester's proposal an admin
@@ -175,6 +175,9 @@ mode, preferred/blocked release groups) apply on top, and — if `ffprobe` is av
 completed download's actual audio/subtitles are verified against them before import, rejecting
 and blocklisting a release that provably violates the policy. `ffprobe` is optional but
 recommended; without it, Cinder skips that verification step and imports permissively.
+
+Optional Anime movie and TV destinations in `/settings` route explicitly Anime-profiled titles
+into separate roots. Leave either blank to keep using that kind's standard root.
 
 ## Development
 

@@ -62,18 +62,10 @@ defmodule Cinder.Library.Deletion do
   # library or delete a root. Split into a flat helper to keep credo Refactor.Nesting happy.
   defp prunable?(dir) do
     expanded = Path.expand(dir)
-    Enum.any?(Library.kinds(), &prunable_under_kind?(expanded, &1))
-  end
+    roots = Settings.library_roots()
 
-  defp prunable_under_kind?(expanded, kind) do
-    case Application.get_env(:cinder, :"#{kind}_library_path") do
-      path when is_binary(path) and path != "" ->
-        root = Path.expand(path)
-        expanded != root and String.starts_with?(expanded <> "/", root <> "/")
-
-      _unconfigured ->
-        false
-    end
+    expanded not in roots and
+      Enum.any?(roots, &String.starts_with?(expanded <> "/", &1 <> "/"))
   end
 
   @doc """

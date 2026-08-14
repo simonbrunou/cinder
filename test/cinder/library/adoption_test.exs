@@ -62,6 +62,7 @@ defmodule Cinder.Library.AdoptionTest do
 
     candidates = Adoption.scan()
     assert length(candidates) == 2
+    assert Enum.all?(candidates, &(&1.media_profile == :auto))
 
     movie = Enum.find(candidates, &(&1.kind == :movie))
     assert movie.status == :auto_matched
@@ -77,6 +78,78 @@ defmodule Cinder.Library.AdoptionTest do
 
     refute Enum.any?(candidates, &(managed_movie in &1.paths))
     refute Enum.any?(candidates, &(managed_tv in &1.paths))
+  end
+
+  test "scan covers a nested Anime root once and adopts its movie with the Anime profile" do
+    standard = "/tmp/cinder-test-library/Dune (2021)/Dune (2021).mkv"
+    anime_root = "/tmp/cinder-test-library/anime"
+    anime = "#{anime_root}/Akira (1988)/Akira (1988).mkv"
+    saved = Application.get_env(:cinder, :movies_anime_library_path)
+    Application.put_env(:cinder, :movies_anime_library_path, anime_root)
+
+    on_exit(fn ->
+      if saved,
+        do: Application.put_env(:cinder, :movies_anime_library_path, saved),
+        else: Application.delete_env(:cinder, :movies_anime_library_path)
+    end)
+
+    expect(Cinder.Library.FilesystemMock, :find_files, 3, fn
+      ^anime_root -> {:ok, [{anime, 10}]}
+      "/tmp/cinder-test-library" -> {:ok, [{standard, 20}, {anime, 10}]}
+      "/tmp/cinder-test-tv-library" -> {:ok, []}
+    end)
+
+    expect(Cinder.Catalog.TMDBMock, :search, 2, fn
+      "Dune", "en" -> {:ok, [movie_result(10, "Dune", 2021)]}
+      "Akira", "en" -> {:ok, [movie_result(20, "Akira", 1988)]}
+    end)
+
+    candidates = Adoption.scan()
+
+    assert Enum.map(candidates, & &1.path) |> Enum.sort() == Enum.sort([standard, anime])
+    assert Enum.count(candidates, &(anime in &1.paths)) == 1
+    assert Enum.find(candidates, &(&1.path == standard)).media_profile == :auto
+    anime_candidate = Enum.find(candidates, &(&1.path == anime))
+    assert anime_candidate.media_profile == :anime
+
+    expect(Cinder.Catalog.TMDBMock, :get_movie, fn 20 ->
+      {:ok,
+       movie_result(20, "Akira", 1988)
+       |> Map.merge(%{imdb_id: "tt0094625", localizations: %{}})}
+    end)
+
+    assert %{adopted: 1, skipped: 0} = Adoption.adopt([anime_candidate])
+    assert %Movie{media_profile: :anime, file_path: ^anime} = Catalog.get_movie_by_tmdb_id(20)
+  end
+
+  test "scan adopts a series from an Anime destination with the Anime profile" do
+    anime_root = "/tmp/cinder-test-tv-library/anime"
+    path = "#{anime_root}/Test Show (2001)/Test.Show.S01E01.mkv"
+    saved = Application.get_env(:cinder, :tv_anime_library_path)
+    Application.put_env(:cinder, :tv_anime_library_path, anime_root)
+
+    on_exit(fn ->
+      if saved,
+        do: Application.put_env(:cinder, :tv_anime_library_path, saved),
+        else: Application.delete_env(:cinder, :tv_anime_library_path)
+    end)
+
+    expect(Cinder.Library.FilesystemMock, :find_files, 3, fn
+      "/tmp/cinder-test-library" -> {:ok, []}
+      ^anime_root -> {:ok, [{path, 10}]}
+      "/tmp/cinder-test-tv-library" -> {:ok, [{path, 10}]}
+    end)
+
+    expect(Cinder.Catalog.TMDBMock, :search_tv, fn "Test Show", "en" ->
+      {:ok, [series_result(42, "Test Show", 2001)]}
+    end)
+
+    stub_series_create(42, 2)
+
+    assert [%{kind: :series, media_profile: :anime} = candidate] = Adoption.scan()
+    assert %{adopted: 1, skipped: 0} = Adoption.adopt([candidate])
+
+    assert %Series{media_profile: :anime} = Catalog.get_series_by_tmdb_id(42)
   end
 
   test "two files claiming the same episode are both held, never last-write-wins" do
@@ -187,7 +260,9 @@ defmodule Cinder.Library.AdoptionTest do
 
     assert [%{kind: :movie, status: :auto_matched} = candidate] = Adoption.scan()
     assert %{adopted: 1, skipped: 0} = Adoption.adopt([candidate])
-    assert %Movie{status: :available, file_path: ^path} = Catalog.get_movie_by_tmdb_id(10)
+
+    assert %Movie{status: :available, file_path: ^path, media_profile: :auto} =
+             Catalog.get_movie_by_tmdb_id(10)
   end
 
   test "unresolved or ambiguous external tags fall back to operator resolution" do
@@ -291,7 +366,7 @@ defmodule Cinder.Library.AdoptionTest do
     assert %{adopted: 1, skipped: 0} = Adoption.adopt([candidate])
 
     series = Catalog.get_series_by_tmdb_id(42)
-    assert %Series{monitor_strategy: :none, monitored: false} = series
+    assert %Series{monitor_strategy: :none, monitored: false, media_profile: :auto} = series
     assert_receive {:series_updated, series_id} when series_id == series.id
 
     [season] = Catalog.get_series_with_tree(series.id).seasons

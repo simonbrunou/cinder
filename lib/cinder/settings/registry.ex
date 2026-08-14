@@ -483,7 +483,8 @@ defmodule Cinder.Settings.Registry do
   @doc "Every flat `:cinder` env key overlaid from the settings store."
   def flat_keys do
     library_keys =
-      for kind <- Cinder.Library.kinds(), suffix <- ["library_path" | @band_suffixes] do
+      for kind <- Cinder.Library.kinds(),
+          suffix <- ["library_path", "anime_library_path" | @band_suffixes] do
         "#{kind}_#{suffix}"
       end
 
@@ -492,6 +493,7 @@ defmodule Cinder.Settings.Registry do
 
   # Per-kind settings-key derivations for the UI (the form field `name`s).
   def library_path_key(kind), do: "#{kind}_library_path"
+  def anime_library_path_key(kind), do: "#{kind}_anime_library_path"
   def min_size_key(kind), do: "#{kind}_min_size"
   def max_size_key(kind), do: "#{kind}_max_size"
   def preferred_resolutions_key(kind), do: "#{kind}_preferred_resolutions"
