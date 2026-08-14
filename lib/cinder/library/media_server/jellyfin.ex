@@ -14,6 +14,7 @@ defmodule Cinder.Library.MediaServer.Jellyfin do
   alias Cinder.HTTPPolicy
 
   @max_response_bytes 4 * 1024 * 1024
+  @inventory_limit 5_000
 
   @impl true
   def scan(_kind), do: config() |> request(:post, "/Library/Refresh") |> result()
@@ -55,6 +56,40 @@ defmodule Cinder.Library.MediaServer.Jellyfin do
     end
   end
 
+  @impl true
+  def list_items(kind) do
+    item_type = if kind == :movies, do: "Movie", else: "Series"
+    config = config()
+
+    case Keyword.get(config, :url) do
+      url when url in [nil, ""] ->
+        {:error, :not_configured}
+
+      _ ->
+        config
+        |> request(:get, "/Items",
+          params: [
+            {"Recursive", "true"},
+            {"IncludeItemTypes", item_type},
+            {"Fields", "ProviderIds"},
+            {"EnableTotalRecordCount", "true"},
+            {"Limit", Integer.to_string(@inventory_limit)}
+          ]
+        )
+        |> inventory()
+    end
+  end
+
+  @impl true
+  def deep_link("jellyfin:" <> id) when id != "" do
+    case web_url() do
+      nil -> nil
+      url -> "#{jellyfin_web_root(url)}/#/details?id=#{URI.encode_www_form(id)}"
+    end
+  end
+
+  def deep_link(_item_id), do: nil
+
   defp users({:ok, %{status: status, body: body}}) when status in 200..299 and is_list(body) do
     {:ok,
      for %{"Id" => id, "Name" => name} <- body, is_binary(id) do
@@ -65,6 +100,47 @@ defmodule Cinder.Library.MediaServer.Jellyfin do
   defp users({:ok, %{status: status}}) when status in 200..299, do: {:error, :unexpected_response}
   defp users({:ok, %{status: status}}), do: {:error, {:jellyfin_status, status}}
   defp users({:error, reason}), do: {:error, reason}
+
+  defp inventory({:ok, %{status: status, body: %{"Items" => items, "TotalRecordCount" => total}}})
+       when status in 200..299 and is_list(items) and is_integer(total) and
+              total == length(items),
+       do: {:ok, Enum.flat_map(items, &item/1)}
+
+  defp inventory({:ok, %{status: status, body: %{"Items" => items}}})
+       when status in 200..299 and is_list(items),
+       do: {:error, :partial_inventory}
+
+  defp inventory({:ok, %{status: status}}) when status in 200..299,
+    do: {:error, :unexpected_response}
+
+  defp inventory({:ok, %{status: status}}), do: {:error, {:jellyfin_status, status}}
+  defp inventory({:error, reason}), do: {:error, reason}
+
+  defp item(%{"Id" => id, "ProviderIds" => %{"Tmdb" => raw}})
+       when is_binary(id) and id != "" and is_binary(raw) do
+    case Integer.parse(raw) do
+      {tmdb_id, ""} when tmdb_id > 0 ->
+        item_id = "jellyfin:#{id}"
+        [%{id: item_id, tmdb_id: tmdb_id, deep_link: deep_link(item_id)}]
+
+      _ ->
+        []
+    end
+  end
+
+  defp item(_item), do: []
+
+  defp web_url do
+    case Keyword.get(config(), :web_url) do
+      "http://" <> rest = url when rest != "" -> String.trim_trailing(url, "/")
+      "https://" <> rest = url when rest != "" -> String.trim_trailing(url, "/")
+      _ -> nil
+    end
+  end
+
+  defp jellyfin_web_root(url) do
+    if String.ends_with?(url, "/web"), do: url, else: url <> "/web"
+  end
 
   # Deliberately the same shape `Cinder.Accounts.User` validates with, so a name that merely
   # contains an "@" ("Kim @ Home") isn't offered as an address the import would then reject.

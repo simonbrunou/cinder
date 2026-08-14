@@ -61,6 +61,57 @@ defmodule Cinder.Library.MediaServer.JellyfinTest do
     assert {:error, :not_configured} = Jellyfin.list_users()
   end
 
+  test "list_items/1 returns exact TMDB matches and title deep links" do
+    put_config(web_url: "https://jellyfin.example.com")
+
+    Req.Test.stub(Cinder.JellyfinStub, fn conn ->
+      assert conn.method == "GET"
+      assert conn.request_path == "/Items"
+      assert conn.query_string =~ "IncludeItemTypes=Series"
+      assert conn.query_string =~ "Fields=ProviderIds"
+
+      Req.Test.json(conn, %{
+        "TotalRecordCount" => 3,
+        "Items" => [
+          %{"Id" => "series-1", "ProviderIds" => %{"Tmdb" => "1399"}},
+          %{"Id" => "series-2", "ProviderIds" => %{"Tvdb" => "121361"}},
+          %{"Id" => "series-3", "ProviderIds" => %{"Tmdb" => "invalid"}}
+        ]
+      })
+    end)
+
+    assert {:ok,
+            [
+              %{
+                id: "jellyfin:series-1",
+                tmdb_id: 1399,
+                deep_link: "https://jellyfin.example.com/web/#/details?id=series-1"
+              }
+            ]} = Jellyfin.list_items(:tv)
+  end
+
+  test "list_items/1 rejects missing and inconsistent inventory totals" do
+    for total <- [:missing, 0, 2] do
+      Req.Test.stub(Cinder.JellyfinStub, fn conn ->
+        body = %{"Items" => [%{"Id" => "movie-1"}]}
+        body = if total == :missing, do: body, else: Map.put(body, "TotalRecordCount", total)
+        Req.Test.json(conn, body)
+      end)
+
+      assert {:error, :partial_inventory} = Jellyfin.list_items(:movies)
+    end
+  end
+
+  test "list_items/1 returns :not_configured without making a request" do
+    put_config(url: nil)
+
+    Req.Test.stub(Cinder.JellyfinStub, fn _conn ->
+      raise "should not call an unconfigured server"
+    end)
+
+    assert {:error, :not_configured} = Jellyfin.list_items(:movies)
+  end
+
   test "scan/1 surfaces a non-2xx status as an error" do
     Req.Test.stub(Cinder.JellyfinStub, fn conn ->
       conn |> Plug.Conn.put_status(401) |> Req.Test.text("Unauthorized")

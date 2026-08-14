@@ -32,6 +32,7 @@ defmodule CinderWeb.MyRequestsLive do
       Catalog.subscribe_series()
       # An admin resolving/dismissing a report updates its status here live.
       Issues.subscribe()
+      Settings.subscribe()
     end
 
     {:ok, socket |> assign(confirming: nil, reporting: nil) |> load()}
@@ -186,11 +187,14 @@ defmodule CinderWeb.MyRequestsLive do
 
   defp load(socket) do
     user = socket.assigns.current_scope.user
+    movies = Catalog.list_movies()
+    series = Catalog.list_series()
 
     socket
     |> assign(
       requests: Requests.list_for_user(user),
-      movies_by_tmdb: Map.new(Catalog.list_movies(), &{&1.tmdb_id, &1}),
+      movies_by_tmdb: Map.new(movies, &{&1.tmdb_id, &1}),
+      series_by_tmdb: Map.new(series, &{&1.tmdb_id, &1}),
       available_seasons: Catalog.available_season_keys(),
       season_progress: Catalog.season_progress_keys(),
       latest_report_by_target: latest_reports(user)
@@ -209,16 +213,30 @@ defmodule CinderWeb.MyRequestsLive do
 
   defp report_key(%{target_type: type, target_id: id, season_number: n}), do: {type, id, n}
 
-  # Re-read the media-server front door on every reload (mount + each broadcast), not just at
-  # mount, so an admin switching the server type or fixing a typo'd web URL can't leave an open
-  # page linking at the old server — the wrong-server case `media_server_web_link/0` guards.
   defp assign_media_server(socket) do
     case Settings.media_server_web_link() do
-      {server, url} ->
-        assign(socket, media_server_url: url, media_server_name: server_name(server))
+      {server, _url} = link ->
+        assign(socket, media_server_link: link, media_server_name: server_name(server))
 
       nil ->
-        assign(socket, media_server_url: nil, media_server_name: nil)
+        assign(socket, media_server_link: nil, media_server_name: nil)
+    end
+  end
+
+  defp title_web_link(request, movie, series_by_tmdb, media_server_link) do
+    item_id =
+      if request.target_type == "movie" do
+        movie && movie.media_server_item_id
+      else
+        case series_by_tmdb[request.target_id] do
+          nil -> nil
+          series -> series.media_server_item_id
+        end
+      end
+
+    case Settings.media_server_web_link(media_server_link, item_id) do
+      {_server, url} -> url
+      nil -> nil
     end
   end
 
@@ -299,6 +317,7 @@ defmodule CinderWeb.MyRequestsLive do
             <% movie_row? = r.target_type == "movie" and not is_nil(movie) %>
             <% season_progress = season_progress(r, @season_progress) %>
             <% available? = row_available?(r, movie, @available_seasons) %>
+            <% media_server_url = title_web_link(r, movie, @series_by_tmdb, @media_server_link) %>
             <% report = @latest_report_by_target[report_key(r)] %>
             <% open_report? = match?(%{status: :open}, report) %>
             <span class="min-w-0 break-words font-semibold">
@@ -321,8 +340,8 @@ defmodule CinderWeb.MyRequestsLive do
               status={:downloading}
             />
             <.button
-              :if={available? and @media_server_url}
-              href={@media_server_url}
+              :if={available? and media_server_url}
+              href={media_server_url}
               target="_blank"
               rel="noopener"
               variant="primary"

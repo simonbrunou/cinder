@@ -256,6 +256,12 @@ The media-server library scan after an import is **best-effort**: if the scan ca
 endpoint/header mismatch on your Jellyfin/Plex version) the item still reaches `:available`, and
 your server picks the file up on its next periodic scan.
 
+Every 15 minutes, a separate bounded inventory reads movies and series from the configured media
+server and reconciles them to Cinder by exact TMDB id. Successful complete reads set new item ids
+and clear vanished ones, which turns the existing **Open in Plex/Jellyfin** button into a title
+deep link. Failed or partial reads leave the previous ids untouched; Cinder never guesses by title
+or year. This worker is disabled with the other pollers when `start_poller` is false.
+
 ### Quarantined import recovery
 
 Cinder journals every staged import so a crash cannot confuse an uncommitted file with one the

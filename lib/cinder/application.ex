@@ -124,6 +124,7 @@ defmodule Cinder.Application do
         Cinder.Download.Cleaner,
         Cinder.Subtitles.Sweeper,
         Cinder.Subtitles.Sync.Worker,
+        Cinder.Library.MediaServer.Reconciler,
         Cinder.Requests.WatchlistSync,
         Cinder.Accounts.Janitor
       ]

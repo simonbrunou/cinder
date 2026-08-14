@@ -140,6 +140,10 @@ defmodule Cinder.Catalog do
     Repo.all(from m in Movie, order_by: [desc: m.id])
   end
 
+  defdelegate reconcile_media_server_items(kind, items),
+    to: Cinder.Catalog.MediaServerReconciliation,
+    as: :reconcile
+
   @doc "Maps every movie's `tmdb_id` to its pipeline `status`."
   def movie_status_map, do: Map.new(list_movies(), &{&1.tmdb_id, &1.status})
 

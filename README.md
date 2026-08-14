@@ -102,13 +102,11 @@ how the Cinder *server* reaches your media server, which in the compose deployme
 docker-internal address like `http://plex:32400` that a phone on your LAN cannot resolve. The web
 URL is what a household member's *browser* should open (`https://app.plex.tv`, or your own public
 Jellyfin address). Set it and an available title grows an **Open in Plex** / **Open in Jellyfin**
-button; leave it blank and no button is shown. Which one is used follows the configured
-media-server type, so a stale URL for the *other* server is never linked; with no type saved it
-falls back to whichever is uniquely set, and with both set it shows nothing rather than guess.
-
-The button opens the media server's front door, **not** the individual title — Cinder stores no
-Plex `ratingKey` / Jellyfin Item Id, so it can't deep-link to a specific movie, and the label says
-"Open in …" rather than "Watch" for exactly that reason.
+button; leave it blank and no button is shown. A background inventory matches Plex/Jellyfin items
+to Cinder titles by exact TMDB id and deep-links matched titles; until a match exists, the button
+keeps opening the server front door. Which server is used follows the configured media-server type,
+so a stale URL or item id for the *other* server is never linked; with no type saved it falls back
+to whichever URL is uniquely set, and with both set it shows nothing rather than guess.
 
 Each can be **bootstrapped** from an environment variable (`TMDB_API_TOKEN`, `PROWLARR_URL`,
 `MOVIES_LIBRARY_PATH`, `TV_LIBRARY_PATH`, `MOVIES_PLEX_SECTION`, `TV_PLEX_SECTION`,

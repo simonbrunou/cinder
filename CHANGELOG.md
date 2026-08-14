@@ -16,6 +16,9 @@ All notable changes to Cinder are documented here. The format follows
   import into separate roots configured in `/settings`; blank fields fall back to the existing
   standard roots. Import safety, deletion, subtitles, disk reporting, and library adoption all
   recognize every configured root.
+- **Media-server title deep links.** A bounded 15-minute Plex/Jellyfin inventory reconciles movies
+  and series by exact TMDB id, so available-title links open the matched server item. The server
+  front door remains the fallback, and failed or partial inventories never clear known matches.
 - **Per-library release rules and upgrade cutoffs.** Movies and TV can rank preferred title terms,
   reject blocked title terms, and stop automatic re-download searches at a chosen preferred
   resolution. Manual search remains the override surface for every rule and stays available after
