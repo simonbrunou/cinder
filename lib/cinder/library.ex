@@ -702,6 +702,9 @@ defmodule Cinder.Library do
 
   @doc "Stages persisted anime assignments after revalidating the download inventory."
   def stage_anime_episodes(%Grab{} = grab, preflight) do
+    collision = if grab.arbitrate_at_import, do: :arbitrate, else: :force
+    target = if grab.arbitrate_at_import, do: nil, else: episode_target(grab.episodes)
+
     with {:ok, current} <- inventory_anime_videos(grab.content_path),
          :ok <- AnimeInventory.same_inventory(current.files, preflight.decisions),
          :ok <- AnimeInventory.same_container_kind(current.folder?, preflight.folder?),
@@ -712,8 +715,9 @@ defmodule Cinder.Library do
       stage_anime_all(
         to_import,
         root,
-        episode_target(grab.episodes),
-        download_context(current.folder?, reports, grab.release_title)
+        target,
+        download_context(current.folder?, reports, grab.release_title),
+        collision
       )
     else
       {:error, :inventory_changed} -> {:restart_preflight, :inventory_changed}
@@ -1190,26 +1194,34 @@ defmodule Cinder.Library do
   defp declined_stage(stage, ep, _folder?),
     do: %{stage | placed?: false, quality: old_quality(ep)}
 
-  defp stage_anime_all(to_import, root, target, download) do
+  defp stage_anime_all(to_import, root, target, download, collision) do
     to_import
     |> Enum.group_by(
       fn {episode, source} -> {source, episode.season.season_number} end,
       fn {episode, _source} -> episode end
     )
     |> Enum.sort_by(fn {{source, season}, _episodes} -> {source, season} end)
-    |> Enum.reduce_while({:ok, []}, fn {{source, _season}, episodes}, {:ok, acc} ->
-      episodes = Enum.sort_by(episodes, & &1.episode_number)
+    |> Enum.reduce_while({:ok, [], %{}}, fn
+      {{source, _season}, episodes}, {:ok, acc, keeps} ->
+        episodes = Enum.sort_by(episodes, & &1.episode_number)
 
-      case stage_episode_file(episodes, source, root, target, download, :force) do
-        {:ok, stage} ->
-          rows = Enum.map(episodes, &{&1.id, stage})
-          {:cont, {:ok, Enum.reverse(rows, acc)}}
+        case stage_group(episodes, source, root, target, download, collision, keeps) do
+          {:ok, imported, keeps} ->
+            {:cont, {:ok, Enum.reverse(imported, acc), keeps}}
 
-        {:error, _reason} = error ->
-          acc |> Enum.map(&elem(&1, 1)) |> Enum.uniq_by(& &1.dest) |> Enum.each(&rollback_stage/1)
-          {:halt, error}
-      end
+          {:error, _reason} = error ->
+            acc
+            |> Enum.map(&elem(&1, 1))
+            |> Enum.uniq_by(& &1.dest)
+            |> Enum.each(&rollback_stage/1)
+
+            {:halt, error}
+        end
     end)
+    |> case do
+      {:ok, imported, _keeps} -> {:ok, imported}
+      {:error, _reason} = error -> error
+    end
   end
 
   defp place_episode_file([ep | _] = episodes, source, root, target, folder?) do

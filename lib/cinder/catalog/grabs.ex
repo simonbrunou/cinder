@@ -309,7 +309,7 @@ defmodule Cinder.Catalog.Grabs do
         }
 
         grab =
-          %Grab{}
+          %Grab{arbitrate_at_import: fresh.release["arbitrate_at_import"] == true}
           |> Grab.reservation_changeset(attrs)
           |> Repo.insert()
           |> case do
@@ -885,7 +885,7 @@ defmodule Cinder.Catalog.Grabs do
 
     result =
       Repo.transaction(fn ->
-        claim_standard_grab!(grab)
+        claim_import_grab!(grab)
 
         if Repo.exists?(from f in GrabFile, where: f.grab_id == ^grab.id),
           do: Repo.rollback(:grab_has_residual_files)
@@ -936,7 +936,7 @@ defmodule Cinder.Catalog.Grabs do
 
     result =
       Repo.transaction(fn ->
-        claim_standard_grab!(grab)
+        claim_import_grab!(grab)
 
         if Repo.exists?(from f in GrabFile, where: f.grab_id == ^grab.id and is_nil(f.decision)),
           do: Repo.rollback(:unresolved_grab_files)
@@ -979,11 +979,11 @@ defmodule Cinder.Catalog.Grabs do
 
   defp bound_unplaced_release(_grab, _series_id, _imported), do: :ok
 
-  defp claim_standard_grab!(grab) do
+  defp claim_import_grab!(grab) do
     query =
       from g in Grab,
         where:
-          g.id == ^grab.id and is_nil(g.mapping_snapshot) and g.mapping_status == :resolved and
+          g.id == ^grab.id and g.mapping_status == :resolved and
             g.content_path == ^grab.content_path
 
     case Repo.update_all(query, set: [updated_at: Cinder.Catalog.now()]) do
@@ -1123,7 +1123,7 @@ defmodule Cinder.Catalog.Grabs do
 
           {1, [decided]} ->
             grab = Repo.get(Grab, decided.grab_id) || Repo.rollback(:stale_grab)
-            claim_standard_grab!(grab)
+            claim_import_grab!(grab)
             {:decided, decided, nil, series_id_for_grab(grab.id)}
         end
       end)
@@ -1154,7 +1154,7 @@ defmodule Cinder.Catalog.Grabs do
 
   defp apply_grab_file_decision!(file, episode_id, decision, stage) do
     grab = Repo.get(Grab, file.grab_id) || Repo.rollback(:stale_grab)
-    claim_standard_grab!(grab)
+    claim_import_grab!(grab)
 
     episode =
       Repo.one(

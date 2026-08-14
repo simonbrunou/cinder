@@ -451,6 +451,9 @@ defmodule Cinder.Download.TvPoller do
     end
   end
 
+  defp finalize_staged_grab(%Grab{arbitrate_at_import: true} = grab, staged),
+    do: finalize_standard_grab(grab, staged, [])
+
   defp finalize_staged_grab(grab, staged) do
     imported =
       Enum.map(staged, fn {episode_id, stage} -> {episode_id, stage.dest, stage.quality} end)

@@ -75,11 +75,17 @@ defmodule Cinder.Catalog.GrabMappingTest do
     episode_a = episode_fixture(season, episode_number: 1)
     episode_b = episode_fixture(season, episode_number: 2)
     snapshot = %{"version" => 2, "reserved_episode_ids" => [episode_a.id, episode_b.id]}
-    intent = snapshot_intent!([episode_a.id, episode_b.id], snapshot)
+
+    intent =
+      snapshot_intent!([episode_a.id, episode_b.id], snapshot, %{
+        "title" => "Anime.Release",
+        "arbitrate_at_import" => true
+      })
 
     assert {:ok, grab} = Catalog.create_grab_from_intent(intent)
     assert grab.mapping_snapshot == snapshot
     assert grab.mapping_status == :resolved
+    assert grab.arbitrate_at_import
     assert Enum.sort(episode_ids(grab)) == Enum.sort([episode_a.id, episode_b.id])
     refute Repo.get(Intent, intent.id)
   end
@@ -254,14 +260,14 @@ defmodule Cinder.Catalog.GrabMappingTest do
     end
   end
 
-  defp snapshot_intent!(episode_ids, snapshot) do
+  defp snapshot_intent!(episode_ids, snapshot, release \\ %{"title" => "Anime.Release"}) do
     Repo.insert!(%Intent{
       operation_key: Ecto.UUID.generate(),
       kind: if(length(episode_ids) == 1, do: :episode, else: :season_pack),
       target_id: hd(episode_ids),
       episode_ids: episode_ids,
       protocol: :torrent,
-      release: %{"title" => "Anime.Release"},
+      release: release,
       status: :submitted,
       remote_id: "anime-#{System.unique_integer([:positive])}",
       mapping_snapshot: snapshot

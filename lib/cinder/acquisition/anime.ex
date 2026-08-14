@@ -45,8 +45,9 @@ defmodule Cinder.Acquisition.Anime do
     case search_episodes(indexer, context, wanted_ids, opts) do
       {:ok, releases, failed?} ->
         result = select_episodes(releases, context, wanted_ids, opts)
+        required_ids = Keyword.get(opts, :required_episode_ids, wanted_ids)
 
-        if failed? and not complete_result?(result, wanted_ids),
+        if failed? and not complete_result?(result, required_ids),
           do: {:error, :incomplete_search},
           else: result
 
@@ -60,6 +61,7 @@ defmodule Cinder.Acquisition.Anime do
       releases
       |> resolved_candidates(context, wanted_ids, opts)
       |> filter_policy(opts)
+      |> filter_candidates(opts)
 
     hard_valid =
       Enum.filter(candidates, fn candidate ->
@@ -407,6 +409,13 @@ defmodule Cinder.Acquisition.Anime do
     case Keyword.get(opts, :anime_policy) do
       nil -> candidates
       policy -> Enum.filter(candidates, &AnimePreferences.release_allowed?(&1, policy))
+    end
+  end
+
+  defp filter_candidates(candidates, opts) do
+    case Keyword.get(opts, :candidate_filter) do
+      nil -> candidates
+      filter when is_function(filter, 1) -> Enum.filter(candidates, filter)
     end
   end
 
