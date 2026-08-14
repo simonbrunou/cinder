@@ -14,7 +14,9 @@ defmodule Cinder.ApiKey do
   """
   alias Cinder.Settings
 
-  @setting_key "api_key_hash"
+  # Writable API keys intentionally use a new slot: credentials issued for the former
+  # read-only API must not silently gain mutation authority after an upgrade.
+  @setting_key "api_key_hash_v2"
   @rand_size 32
 
   @doc """

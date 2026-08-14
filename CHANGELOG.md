@@ -10,7 +10,8 @@ All notable changes to Cinder are documented here. The format follows
 - **Writable household request API.** The existing admin API key can create movie/season requests,
   approve or deny pending requests, and delete request rows. Every mutation stays behind the
   `Cinder.Requests` approval gate and uses a deterministic active admin actor; optional active member
-  attribution preserves that member's quota and approval behavior.
+  attribution preserves that member's quota and approval behavior. Keys issued by the former
+  read-only API are revoked on upgrade; an admin must generate a new writable key.
 - **Per-library release rules and upgrade cutoffs.** Movies and TV can rank preferred title terms,
   reject blocked title terms, and stop automatic re-download searches at a chosen preferred
   resolution. Manual search remains the override surface for every rule and stays available after
