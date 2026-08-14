@@ -1,7 +1,7 @@
 defmodule Cinder.MixProject do
   use Mix.Project
 
-  @version "1.0.0"
+  @version "1.1.0"
   @source_url "https://github.com/simonbrunou/cinder"
   @description "Self-hosted Sonarr/Radarr/Seerr replacement for movies and TV, on Phoenix/LiveView."
 

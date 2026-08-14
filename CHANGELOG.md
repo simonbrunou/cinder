@@ -6,7 +6,20 @@ All notable changes to Cinder are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-08-14
+
 ### Added
+- **Admin database backups.** Settings can download a consistent online SQLite snapshot behind
+  the admin gate, with private temporary-file cleanup and explicit restore caveats for
+  `SECRET_KEY_BASE` and media files.
+- **BitTorrent v2 and hybrid releases.** qBittorrent downloads now use the canonical truncated-v2
+  torrent id for v2/hybrid metainfo and accept decoded `btmh` magnet topics while retaining v1
+  `btih` support.
+- **Opt-in Standard-profile specials.** Explicitly monitored Season 0 episodes now search,
+  download, and import through the normal Standard TV pipeline; unmonitored specials remain idle.
+- **Browser-verified release container.** CI bootstraps and signs into the built image with a real
+  browser, verifies compiled assets and LiveView navigation, and the README now shows Dashboard
+  and Library screenshots captured from that flow.
 - **Automatic Anime TV upgrades.** The upgrade hunter now uses Anime policy selection and frozen
   episode mappings, respects the TV cutoff, and re-verifies each downloaded file before replacing
   anything. Ambiguous or worse replacements leave the existing episode files intact.
@@ -56,6 +69,9 @@ All notable changes to Cinder are documented here. The format follows
   event fires once per new hold (Log + Discord).
 
 ### Fixed
+- **SABnzbd configuration warnings are actionable.** Risky folder-name and duplicate-handling
+  settings now render as amber warnings in Settings and Dashboard while reachable clients remain
+  usable and genuine health errors keep precedence.
 - **TV searches no longer grab a spinoff merely because its name contains the wanted series.**
   Prowlarr's TVDB and free-text union now keeps per-result provenance: ID-scoped AKA names remain
   trusted, while free-text names must finish the wanted title immediately before a release marker.
@@ -502,6 +518,7 @@ Docker image and a first-run wizard. Pre-1.0: dogfooding ahead of the v1.0 publi
 - **Packaging** — Docker image, `docker-compose.yml` + `.env.example`, a tag-triggered GitHub
   Actions workflow publishing `ghcr.io/simonbrunou/cinder`, and operator + contributor docs.
 
-[Unreleased]: https://github.com/simonbrunou/cinder/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/simonbrunou/cinder/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/simonbrunou/cinder/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/simonbrunou/cinder/compare/v0.7.0...v1.0.0
 [0.7.0]: https://github.com/simonbrunou/cinder/releases/tag/v0.7.0
