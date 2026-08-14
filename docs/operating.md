@@ -386,6 +386,11 @@ on import it maps each file in a pack to its episode by parsing `SxxEyy`. A file
 to a wanted episode is **logged and skipped** (the grab parks and its episodes re-search) rather
 than mis-filed.
 
+**Standard Season 0 episodes are opt-in.** Once an admin explicitly monitors an aired special on
+the series detail page, the normal TV sweep searches it and imports a matching `S00Exx` file under
+`Season 00`. Unmonitored specials remain untouched. Anime keeps its stricter classification rule
+described below.
+
 A periodic TMDB refresh reconciles season/episode data, so a newly-announced or late-dated episode
 becomes search-eligible on its own once its air date passes — no manual re-add. The **`/calendar`**
 view (admin) lists upcoming monitored episodes.
@@ -561,9 +566,6 @@ are pruned automatically.
   `.cinder-<key>` job-name suffix so SABnzbd can never find the job — keep it at the default 246 or
   higher), or duplicate handling (**Pause on Duplicates** / **series duplicate detection**) left on
   for Cinder's category. These are warnings only — the service still tests as reachable.
-- **Specials (season 0) aren't grabbed** by the TV sweep for a `Standard`-profile series. An
-  `Anime`-profile series is the exception: a Season 0 episode grabs once it's explicitly classified
-  story-special/recap *and* monitored (see "Anime" above).
 - **Air-date eligibility is by UTC calendar day.** An episode becomes search-eligible when its TMDB
   air date is "today or earlier" in **UTC**, so far from UTC it can flip to wanted up to ~a day
   early or late. Harmless for a household (it just grabs a few hours off) — there's no per-timezone

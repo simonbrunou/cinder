@@ -2078,6 +2078,7 @@ defmodule Cinder.Download.TvPollerTest do
     {series, _season} = series_tree()
     specials = season_fixture(series, %{season_number: 0})
     e1 = episode(specials, 5)
+    unmonitored = episode(specials, 6, %{monitored: false})
     start_supervised!({TvPoller, interval: 60_000, search_retry_after: 0})
 
     # Confirms the season-0 group reaches the indexer with a sane {Season:0}-shaped query.
@@ -2101,6 +2102,7 @@ defmodule Cinder.Download.TvPollerTest do
     assert linked.grab_id
     grab = Repo.get!(Grab, linked.grab_id)
     assert grab.download_id == "hash-special"
+    refute Repo.get!(Episode, unmonitored.id).grab_id
   end
 
   test "a definite add rejection releases the episode for the next search tick" do
