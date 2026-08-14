@@ -195,15 +195,21 @@ defmodule Cinder.Library.Adoption do
   defp scan_roots(kind, candidate_kind, managed, build_candidates) do
     Settings.library_destinations()
     |> Enum.filter(&(&1.kind == kind))
-    |> Enum.map(& &1.path)
-    |> Enum.uniq()
-    |> Enum.sort_by(&byte_size/1, :desc)
-    |> Enum.reduce({[], MapSet.new()}, fn root, {candidates, seen} ->
+    |> Enum.sort_by(&byte_size(&1.path), :desc)
+    |> Enum.reduce({[], MapSet.new()}, fn destination, {candidates, seen} ->
+      %{path: root, profile: profile} = destination
+
       case filesystem().find_files(root) do
         {:ok, files} ->
           fresh = Enum.reject(files, &MapSet.member?(seen, normalize_path(elem(&1, 0))))
           seen = Enum.reduce(files, seen, &MapSet.put(&2, normalize_path(elem(&1, 0))))
-          {candidates ++ build_candidates.(fresh, root, managed), seen}
+
+          discovered =
+            fresh
+            |> build_candidates.(root, managed)
+            |> Enum.map(&Map.put(&1, :media_profile, adoption_profile(profile)))
+
+          {candidates ++ discovered, seen}
 
         {:error, reason} ->
           {candidates ++ [scan_error(candidate_kind, root, reason)], seen}
@@ -623,7 +629,10 @@ defmodule Cinder.Library.Adoption do
          false <- managed?(managed, path),
          {:ok, details} <- Catalog.get_movie(tmdb_id),
          {:ok, movie, created} <-
-           Catalog.find_or_create_at_available(movie_attrs(details), path),
+           Catalog.find_or_create_at_available(
+             movie_attrs(details, adoption_profile(candidate)),
+             path
+           ),
          :ok <- announce_movie_creation(movie, created == :created) do
       {:adopted, [path]}
     else
@@ -631,17 +640,19 @@ defmodule Cinder.Library.Adoption do
     end
   end
 
-  defp movie_attrs(details),
-    do:
-      Map.take(details, [
-        :tmdb_id,
-        :imdb_id,
-        :title,
-        :year,
-        :poster_path,
-        :original_language,
-        :localizations
-      ])
+  defp movie_attrs(details, media_profile) do
+    details
+    |> Map.take([
+      :tmdb_id,
+      :imdb_id,
+      :title,
+      :year,
+      :poster_path,
+      :original_language,
+      :localizations
+    ])
+    |> Map.put(:media_profile, media_profile)
+  end
 
   defp announce_movie_creation(movie, true), do: Catalog.broadcast_movie_created(movie)
   defp announce_movie_creation(_movie, false), do: :ok
@@ -656,16 +667,19 @@ defmodule Cinder.Library.Adoption do
     with true <- candidate.status in [:auto_matched, :ambiguous],
          true <- files != [],
          tmdb_id when is_integer(tmdb_id) <- chosen_tmdb_id(candidate) do
-      do_adopt_series(files, tmdb_id)
+      do_adopt_series(files, tmdb_id, adoption_profile(candidate))
     else
       _ -> :skipped
     end
   end
 
-  defp do_adopt_series(files, tmdb_id) do
+  defp do_adopt_series(files, tmdb_id, media_profile) do
     existing? = match?(%Series{}, Catalog.get_series_by_tmdb_id(tmdb_id))
 
-    case Catalog.add_series(tmdb_id, monitor_strategy: :none) do
+    case Catalog.add_series(tmdb_id,
+           monitor_strategy: :none,
+           media_profile: media_profile
+         ) do
       {:ok, series} -> finish_series_adoption(files, series, existing?)
       {:error, _reason} -> :skipped
     end
@@ -784,6 +798,10 @@ defmodule Cinder.Library.Adoption do
   defp chosen_tmdb_id(%{chosen_tmdb_id: id}), do: parse_integer(id)
   defp chosen_tmdb_id(%{match: %{tmdb_id: id}}), do: parse_integer(id)
   defp chosen_tmdb_id(_candidate), do: nil
+
+  defp adoption_profile(:anime), do: :anime
+  defp adoption_profile(%{media_profile: :anime}), do: :anime
+  defp adoption_profile(_candidate_or_destination_profile), do: :auto
 
   defp managed_paths do
     movie_paths = Catalog.list_movies() |> Enum.map(& &1.file_path)

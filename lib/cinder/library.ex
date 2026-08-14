@@ -573,7 +573,7 @@ defmodule Cinder.Library do
         %Episode{file_path: primary} = episode
       )
       when is_binary(content_path) and content_path != "" and is_binary(primary) and primary != "" do
-    with {:ok, root} <- Settings.library_root(:tv, episode),
+    with {:ok, root} <- Settings.library_root_for_path(primary),
          {:ok, source, folder?} <- grab_file_source(content_path, file.relative_path),
          {:ok, stat} <- fs().lstat(source),
          :ok <- verify_grab_file_identity(file, stat),

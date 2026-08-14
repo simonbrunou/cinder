@@ -508,7 +508,7 @@ defmodule Cinder.Settings do
         key <- [library_path_key(kind), anime_library_path_key(kind)],
         Map.has_key?(params, key),
         value = String.trim(params[key] || ""),
-        value == "/",
+        value != "" and Path.expand(value) == "/",
         do: key
   end
 

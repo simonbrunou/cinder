@@ -715,17 +715,19 @@ defmodule Cinder.SettingsTest do
                {:ok, Application.fetch_env!(:cinder, :movies_library_path)}
     end
 
-    test "library paths reject the filesystem root" do
-      assert {:error, invalid} =
-               Settings.save_form(%{
-                 "movies_library_path" => "/",
-                 "tv_anime_library_path" => "/",
-                 "media_server_type" => "jellyfin"
-               })
+    test "library paths reject every spelling that expands to the filesystem root" do
+      for root <- ["/", "//", "/tmp/.."] do
+        assert {:error, invalid} =
+                 Settings.save_form(%{
+                   "movies_library_path" => root,
+                   "tv_anime_library_path" => root,
+                   "media_server_type" => "jellyfin"
+                 })
 
-      assert Enum.sort(invalid) == ["movies_library_path", "tv_anime_library_path"]
-      assert Settings.get("movies_library_path") == nil
-      assert Settings.get("tv_anime_library_path") == nil
+        assert Enum.sort(invalid) == ["movies_library_path", "tv_anime_library_path"]
+        assert Settings.get("movies_library_path") == nil
+        assert Settings.get("tv_anime_library_path") == nil
+      end
     end
 
     test "library-root base snapshot is captured eagerly (clearing reverts even with no prior capture)" do

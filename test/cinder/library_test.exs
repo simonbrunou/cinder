@@ -5,7 +5,7 @@ defmodule Cinder.LibraryTest do
   import Mox
   import ExUnit.CaptureLog
 
-  alias Cinder.Catalog.{Episode, Grab, Movie, Season, Series}
+  alias Cinder.Catalog.{Episode, Grab, GrabFile, Movie, Season, Series}
   alias Cinder.Library
   alias Cinder.Library.ImportStage
 
@@ -700,6 +700,25 @@ defmodule Cinder.LibraryTest do
              ])
 
     assert String.starts_with?(stage.dest, anime_root <> "/")
+  end
+
+  test "TV: a residual part stays beside its primary file after a profile change" do
+    anime_root = Path.join(@tv_lib, "anime")
+    saved = Application.get_env(:cinder, :tv_anime_library_path)
+    Application.put_env(:cinder, :tv_anime_library_path, anime_root)
+    on_exit(fn -> restore_env(:tv_anime_library_path, saved) end)
+
+    source = "/dl/Show.extra.mkv"
+    primary = "#{@tv_lib}/Show (2008) {tmdb-1}/Season 01/Show (2008) {tmdb-1} - S01E03.mkv"
+    episode = %{ep(7, 3, 1, media_profile: :anime) | file_path: primary}
+    grab = %Grab{content_path: source}
+    file = %GrabFile{id: 11, relative_path: Path.basename(source), size: @gb, device: 1, inode: 1}
+
+    Cinder.LibraryStubs.stub_import_ok(@gb)
+
+    assert {:ok, %{dest: dest}} = Library.stage_grab_file_part(grab, file, episode)
+    assert String.starts_with?(dest, @tv_lib <> "/")
+    refute String.starts_with?(dest, anime_root <> "/")
   end
 
   describe "import_episodes/2" do
