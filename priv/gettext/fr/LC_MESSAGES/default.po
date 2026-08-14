@@ -5970,3 +5970,23 @@ msgstr "Les titres utilisant explicitement le profil Anime sont importés ici. L
 #, elixir-autogen, elixir-format
 msgid "Uses the standard %{kind} folder"
 msgstr "Utilise le dossier standard (%{kind})"
+
+#: lib/cinder_web/live/settings_live.ex:307
+#, elixir-autogen, elixir-format
+msgid "Database backup"
+msgstr "Sauvegarde de la base de données"
+
+#: lib/cinder_web/live/settings_live.ex:309
+#, elixir-autogen, elixir-format
+msgid "Download a consistent snapshot of Cinder's database. Keep your SECRET_KEY_BASE with the backup or encrypted settings cannot be restored. Media files are not included."
+msgstr "Téléchargez un instantané cohérent de la base de données de Cinder. Conservez votre SECRET_KEY_BASE avec la sauvegarde, sinon les paramètres chiffrés ne pourront pas être restaurés. Les fichiers multimédias ne sont pas inclus."
+
+#: lib/cinder_web/live/settings_live.ex:319
+#, elixir-autogen, elixir-format
+msgid "Download database backup"
+msgstr "Télécharger la sauvegarde de la base de données"
+
+#: lib/cinder_web/controllers/database_snapshot_controller.ex:42
+#, elixir-autogen, elixir-format
+msgid "The database backup could not be created. Please try again."
+msgstr "La sauvegarde de la base de données n’a pas pu être créée. Veuillez réessayer."
