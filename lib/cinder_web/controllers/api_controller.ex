@@ -11,7 +11,7 @@ defmodule CinderWeb.ApiController do
 
   **The key is an admin credential, not a household-member one.** Mutations use the first active
   admin by database id as their deterministic audit actor. Request creation defaults to that admin
-  (and therefore auto-approves); `requester_id` may select any active household account so its
+  (and therefore auto-approves); `requester_id` may select any active member-role account so its
   normal quota and approval-gate rules apply. Responses omit requester identity and denial prose.
 
   Approve/deny are deliberately not idempotent: repeating either returns `409 not_pending`.
@@ -135,7 +135,7 @@ defmodule CinderWeb.ApiController do
   end
 
   defp requester(admin, nil), do: {:ok, admin}
-  defp requester(_admin, id), do: Accounts.fetch_active_user(id)
+  defp requester(_admin, id), do: Accounts.fetch_active_member(id)
 
   defp only_keys(params, allowed) do
     if Enum.all?(Map.keys(params), &(&1 in allowed)),

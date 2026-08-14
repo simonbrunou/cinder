@@ -766,15 +766,15 @@ defmodule Cinder.Accounts do
     end
   end
 
-  @doc "Fetches an active user for admin-authorized request attribution."
-  def fetch_active_user(id) when is_integer(id) and id > 0 do
-    case Repo.get_by(User, id: id, active: true) do
+  @doc "Fetches an active member for admin-authorized request attribution."
+  def fetch_active_member(id) when is_integer(id) and id > 0 do
+    case Repo.get_by(User, id: id, role: :user, active: true) do
       %User{} = user -> {:ok, user}
       nil -> {:error, :invalid_requester}
     end
   end
 
-  def fetch_active_user(_id), do: {:error, :invalid_requester}
+  def fetch_active_member(_id), do: {:error, :invalid_requester}
 
   @doc """
   Assembles the user's OWN account data for a GDPR Art.15/20 data export, as a JSON-ready map.

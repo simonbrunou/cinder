@@ -230,23 +230,25 @@ defmodule CinderWeb.ApiControllerTest do
       assert Repo.aggregate(Request, :count) == 0
     end
 
-    test "rejects an inactive requester and reports an unavailable admin", %{
+    test "rejects inactive or admin requester ids and reports an unavailable admin", %{
       conn: conn,
       key: key
     } do
-      _admin = admin_fixture()
+      admin = admin_fixture()
       inactive = user_fixture() |> Ecto.Changeset.change(active: false) |> Repo.update!()
 
-      response =
-        conn
-        |> post_json(key, ~p"/api/v1/requests", %{
-          target_type: "movie",
-          target_id: 603,
-          requester_id: inactive.id
-        })
-        |> json_response(422)
+      for requester_id <- [inactive.id, admin.id] do
+        response =
+          conn
+          |> post_json(key, ~p"/api/v1/requests", %{
+            target_type: "movie",
+            target_id: 603,
+            requester_id: requester_id
+          })
+          |> json_response(422)
 
-      assert response == %{"error" => "invalid_requester"}
+        assert response == %{"error" => "invalid_requester"}
+      end
 
       Repo.update_all(Cinder.Accounts.User, set: [active: false])
 
