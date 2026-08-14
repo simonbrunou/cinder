@@ -1,6 +1,6 @@
 defmodule CinderWeb.Plugs.ApiAuth do
   @moduledoc """
-  Gates the read-only `/api/v1` scope on the household API key, presented in an `x-api-key`
+  Gates the household `/api/v1` scope on the admin API key, presented in an `x-api-key`
   request header.
 
   Every failure — header absent, header wrong, key revoked — is the same bare 401 JSON body, so

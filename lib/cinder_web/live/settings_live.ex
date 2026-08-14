@@ -235,12 +235,16 @@ defmodule CinderWeb.SettingsLive do
         <h2 class="text-lg font-semibold mb-3">{gettext("API access")}</h2>
         <p class="text-sm opacity-70">
           {gettext(
-            "A read-only JSON API for dashboard widgets and bots. One key for the whole household, stored hashed, so it can be shown only once. Generating a new key revokes the previous one. Anyone holding the key can read the request queue, so treat it as an admin credential."
+            "A JSON API for dashboard widgets and trusted automation. One key for the whole household, stored hashed, so it can be shown only once. Generating a new key revokes the previous one. Anyone holding the key can read and change the request queue, so treat it as an admin credential."
           )}
         </p>
         <ul class="text-sm mt-2 font-mono">
           <li>{"GET /api/v1/status"}</li>
           <li>{"GET /api/v1/requests"}</li>
+          <li>{"POST /api/v1/requests"}</li>
+          <li>{"POST /api/v1/requests/:id/approve"}</li>
+          <li>{"POST /api/v1/requests/:id/deny"}</li>
+          <li>{"DELETE /api/v1/requests/:id"}</li>
         </ul>
         <p class="text-sm mt-2">
           {gettext("Send the key in the %{header} request header.", header: "x-api-key")}

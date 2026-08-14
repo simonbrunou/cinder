@@ -5,8 +5,11 @@ defmodule CinderWeb.ApiControllerTest do
 
   import Cinder.AccountsFixtures
   import Cinder.CatalogFixtures
+  import Mox
 
   alias Cinder.ApiKey
+  alias Cinder.Audit.AdminAudit
+  alias Cinder.Catalog.Movie
   alias Cinder.Issues.IssueReport
   alias Cinder.Repo
   alias Cinder.Requests.Request
@@ -14,10 +17,31 @@ defmodule CinderWeb.ApiControllerTest do
   setup :reset_cinder_env
 
   setup %{conn: conn} do
+    stub(Cinder.Catalog.TMDBMock, :get_movie, fn id ->
+      {:ok,
+       %{
+         tmdb_id: id,
+         imdb_id: nil,
+         title: "Movie #{id}",
+         year: 2026,
+         poster_path: nil,
+         original_language: "en"
+       }}
+    end)
+
+    stub(Cinder.Catalog.TMDBMock, :get_movie_alternative_titles, fn _id -> {:ok, []} end)
+
     %{conn: put_req_header(conn, "accept", "application/json"), key: ApiKey.generate()}
   end
 
   defp authed(conn, key), do: put_req_header(conn, "x-api-key", key)
+
+  defp post_json(conn, key, path, payload) do
+    conn
+    |> authed(key)
+    |> put_req_header("content-type", "application/json")
+    |> post(path, Jason.encode!(payload))
+  end
 
   defp request_fixture(user, attrs) do
     Repo.insert!(
@@ -143,6 +167,186 @@ defmodule CinderWeb.ApiControllerTest do
     end
   end
 
+  describe "POST /api/v1/requests" do
+    test "creates for an active requester through the approval gate", %{conn: conn, key: key} do
+      _admin = admin_fixture()
+      requester = user_fixture()
+
+      body =
+        conn
+        |> post_json(key, ~p"/api/v1/requests", %{
+          requester_id: requester.id,
+          target_type: "movie",
+          target_id: 603,
+          preferred_language: "original",
+          media_profile: "anime"
+        })
+        |> json_response(201)
+
+      assert %{"status" => "pending", "target_id" => 603, "title" => "Movie 603"} = body
+      assert Repo.get!(Request, body["id"]).user_id == requester.id
+      refute Repo.get_by(Movie, tmdb_id: 603)
+    end
+
+    test "defaults to the first active admin and auto-approves", %{conn: conn, key: key} do
+      first = admin_fixture()
+      _second = admin_fixture()
+
+      body =
+        conn
+        |> post_json(key, ~p"/api/v1/requests", %{
+          target_type: "movie",
+          target_id: 604
+        })
+        |> json_response(201)
+
+      assert body["status"] == "approved"
+      request = Repo.get!(Request, body["id"])
+      assert request.user_id == first.id
+      assert request.approved_by_id == first.id
+      assert Repo.get_by!(Movie, tmdb_id: 604).status == :requested
+    end
+
+    test "rejects malformed and unknown fields without writes or atom creation", %{
+      conn: conn,
+      key: key
+    } do
+      _admin = admin_fixture()
+
+      for payload <- [
+            %{},
+            %{target_type: "episode", target_id: 1},
+            %{target_type: "movie", target_id: "603"},
+            %{target_type: "movie", target_id: 603, season_number: 1},
+            %{target_type: "season", target_id: 1399},
+            %{target_type: "movie", target_id: 603, media_profile: "forged"},
+            %{target_type: "movie", target_id: 603, preferred_language: "klingon"},
+            %{target_type: "movie", target_id: 603, unexpected: "field"}
+          ] do
+        response = conn |> post_json(key, ~p"/api/v1/requests", payload) |> json_response(422)
+        assert response == %{"error" => "invalid_payload"}
+      end
+
+      assert Repo.aggregate(Request, :count) == 0
+    end
+
+    test "rejects an inactive requester and reports an unavailable admin", %{
+      conn: conn,
+      key: key
+    } do
+      _admin = admin_fixture()
+      inactive = user_fixture() |> Ecto.Changeset.change(active: false) |> Repo.update!()
+
+      response =
+        conn
+        |> post_json(key, ~p"/api/v1/requests", %{
+          target_type: "movie",
+          target_id: 603,
+          requester_id: inactive.id
+        })
+        |> json_response(422)
+
+      assert response == %{"error" => "invalid_requester"}
+
+      Repo.update_all(Cinder.Accounts.User, set: [active: false])
+
+      response =
+        conn
+        |> post_json(key, ~p"/api/v1/requests", %{target_type: "movie", target_id: 603})
+        |> json_response(503)
+
+      assert response == %{"error" => "admin_unavailable"}
+    end
+
+    test "a duplicate pending request is a stable conflict", %{conn: conn, key: key} do
+      _admin = admin_fixture()
+      requester = user_fixture()
+
+      payload = %{target_type: "movie", target_id: 603, requester_id: requester.id}
+      assert conn |> post_json(key, ~p"/api/v1/requests", payload) |> Map.fetch!(:status) == 201
+
+      assert conn |> post_json(key, ~p"/api/v1/requests", payload) |> json_response(409) ==
+               %{"error" => "request_already_pending"}
+    end
+  end
+
+  describe "request decisions" do
+    test "approves once with the deterministic admin actor", %{conn: conn, key: key} do
+      first = admin_fixture()
+      _second = admin_fixture()
+      requester = user_fixture()
+      request = request_fixture(requester, %{target_id: 603, title: "The Matrix"})
+
+      body =
+        conn
+        |> post_json(key, "/api/v1/requests/#{request.id}/approve", %{media_profile: "anime"})
+        |> json_response(200)
+
+      assert body["status"] == "approved"
+      assert Repo.reload!(request).approved_by_id == first.id
+      assert Repo.get_by!(Movie, tmdb_id: 603).media_profile == :anime
+
+      assert conn
+             |> post_json(key, "/api/v1/requests/#{request.id}/approve", %{})
+             |> json_response(409) == %{"error" => "not_pending"}
+    end
+
+    test "denies once, then deletes with an audit row", %{conn: conn, key: key} do
+      admin = admin_fixture()
+      requester = user_fixture()
+      request = request_fixture(requester, %{target_id: 603, title: "The Matrix"})
+
+      body =
+        conn
+        |> post_json(key, "/api/v1/requests/#{request.id}/deny", %{reason: "  not now  "})
+        |> json_response(200)
+
+      assert body["status"] == "denied"
+      assert Repo.reload!(request).denial_reason == "not now"
+
+      assert conn
+             |> post_json(key, "/api/v1/requests/#{request.id}/deny", %{reason: "again"})
+             |> json_response(409) == %{"error" => "not_pending"}
+
+      assert conn
+             |> authed(key)
+             |> delete("/api/v1/requests/#{request.id}")
+             |> response(204) == ""
+
+      assert %{actor_id: actor_id, action: "delete_request", entity_id: entity_id} =
+               Repo.one!(AdminAudit)
+
+      assert actor_id == admin.id
+      assert entity_id == request.id
+
+      assert conn
+             |> authed(key)
+             |> delete("/api/v1/requests/#{request.id}")
+             |> json_response(404) == %{"error" => "not_found"}
+    end
+
+    test "rejects invalid route ids and decision payloads without raising", %{
+      conn: conn,
+      key: key
+    } do
+      for id <- ["nope", "0", "9223372036854775808"] do
+        assert conn
+               |> post_json(key, "/api/v1/requests/#{id}/approve", %{})
+               |> json_response(400) == %{"error" => "invalid_id"}
+      end
+
+      admin_fixture()
+      requester = user_fixture()
+      request = request_fixture(requester, %{title: "Heat"})
+
+      for payload <- [%{}, %{reason: 123}, %{reason: ""}, %{reason: "ok", extra: true}] do
+        assert conn
+               |> post_json(key, "/api/v1/requests/#{request.id}/deny", payload)
+               |> json_response(422) == %{"error" => "invalid_payload"}
+      end
+    end
+  end
+
   describe "authentication" do
     test "a missing key is 401 and leaks nothing", %{conn: conn} do
       for path <- [~p"/api/v1/status", ~p"/api/v1/requests"] do
@@ -151,6 +355,15 @@ defmodule CinderWeb.ApiControllerTest do
         assert json_response(conn, 401) == %{"error" => "unauthorized"}
         assert get_resp_header(conn, "www-authenticate") == []
       end
+
+      assert conn
+             |> put_req_header("content-type", "application/json")
+             |> post(~p"/api/v1/requests", Jason.encode!(%{}))
+             |> json_response(401) == %{"error" => "unauthorized"}
+
+      assert conn |> delete("/api/v1/requests/1") |> json_response(401) == %{
+               "error" => "unauthorized"
+             }
     end
 
     test "a wrong key is the same 401 as a missing one", %{conn: conn} do

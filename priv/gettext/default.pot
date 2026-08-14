@@ -5116,57 +5116,52 @@ msgstr ""
 msgid "Webhook URL"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:237
-#, elixir-autogen, elixir-format
-msgid "A read-only JSON API for dashboard widgets and bots. One key for the whole household, stored hashed, so it can be shown only once. Generating a new key revokes the previous one. Anyone holding the key can read the request queue, so treat it as an admin credential."
-msgstr ""
-
 #: lib/cinder_web/live/settings_live.ex:235
 #, elixir-autogen, elixir-format
 msgid "API access"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:261
+#: lib/cinder_web/live/settings_live.ex:265
 #, elixir-autogen, elixir-format
 msgid "Copy this key now. It will not be shown again."
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:284
+#: lib/cinder_web/live/settings_live.ex:288
 #, elixir-autogen, elixir-format
 msgid "Generate API key"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:267
+#: lib/cinder_web/live/settings_live.ex:271
 #, elixir-autogen, elixir-format
 msgid "No key is set, so the API rejects every request."
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:283
+#: lib/cinder_web/live/settings_live.ex:287
 #, elixir-autogen, elixir-format
 msgid "Regenerate API key"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:279
+#: lib/cinder_web/live/settings_live.ex:283
 #, elixir-autogen, elixir-format
 msgid "Regenerate the API key? The current key stops working immediately."
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:297
+#: lib/cinder_web/live/settings_live.ex:301
 #, elixir-autogen, elixir-format
 msgid "Revoke API key"
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:292
+#: lib/cinder_web/live/settings_live.ex:296
 #, elixir-autogen, elixir-format
 msgid "Revoke the API key? Every dashboard widget and bot using it stops working immediately."
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:246
+#: lib/cinder_web/live/settings_live.ex:250
 #, elixir-autogen, elixir-format
 msgid "Send the key in the %{header} request header."
 msgstr ""
 
-#: lib/cinder_web/live/settings_live.ex:249
+#: lib/cinder_web/live/settings_live.ex:253
 #, elixir-autogen, elixir-format
 msgid "These routes also sit behind the optional HTTP Basic gate, so if you enabled it, API clients must send those credentials too."
 msgstr ""
@@ -5929,4 +5924,9 @@ msgstr ""
 #: lib/cinder_web/components/settings_components.ex:367
 #, elixir-autogen, elixir-format
 msgid "Preferred terms are ranked in listed order; blocked terms reject titles containing a phrase (case-insensitive). The cutoff stops automatic movie searches at that resolution, and TV season searches once every held episode reaches it. Manual search stays available."
+msgstr ""
+
+#: lib/cinder_web/live/settings_live.ex:237
+#, elixir-autogen, elixir-format
+msgid "A JSON API for dashboard widgets and trusted automation. One key for the whole household, stored hashed, so it can be shown only once. Generating a new key revokes the previous one. Anyone holding the key can read and change the request queue, so treat it as an admin credential."
 msgstr ""

@@ -5124,57 +5124,52 @@ msgstr "En-tête Authorization du webhook"
 msgid "Webhook URL"
 msgstr "URL du webhook"
 
-#: lib/cinder_web/live/settings_live.ex:237
-#, elixir-autogen, elixir-format
-msgid "A read-only JSON API for dashboard widgets and bots. One key for the whole household, stored hashed, so it can be shown only once. Generating a new key revokes the previous one. Anyone holding the key can read the request queue, so treat it as an admin credential."
-msgstr "Une API JSON en lecture seule pour les widgets de tableau de bord et les bots. Une seule clé pour tout le foyer, stockée sous forme de hachage : elle ne peut donc être affichée qu'une seule fois. Générer une nouvelle clé révoque la précédente. Toute personne détenant la clé peut lire la file des demandes : traitez-la comme un identifiant d'administration."
-
 #: lib/cinder_web/live/settings_live.ex:235
 #, elixir-autogen, elixir-format
 msgid "API access"
 msgstr "Accès API"
 
-#: lib/cinder_web/live/settings_live.ex:261
+#: lib/cinder_web/live/settings_live.ex:265
 #, elixir-autogen, elixir-format
 msgid "Copy this key now. It will not be shown again."
 msgstr "Copiez cette clé maintenant. Elle ne sera plus affichée."
 
-#: lib/cinder_web/live/settings_live.ex:284
+#: lib/cinder_web/live/settings_live.ex:288
 #, elixir-autogen, elixir-format
 msgid "Generate API key"
 msgstr "Générer une clé API"
 
-#: lib/cinder_web/live/settings_live.ex:267
+#: lib/cinder_web/live/settings_live.ex:271
 #, elixir-autogen, elixir-format
 msgid "No key is set, so the API rejects every request."
 msgstr "Aucune clé n'est définie, l'API rejette donc toutes les requêtes."
 
-#: lib/cinder_web/live/settings_live.ex:283
+#: lib/cinder_web/live/settings_live.ex:287
 #, elixir-autogen, elixir-format
 msgid "Regenerate API key"
 msgstr "Régénérer la clé API"
 
-#: lib/cinder_web/live/settings_live.ex:279
+#: lib/cinder_web/live/settings_live.ex:283
 #, elixir-autogen, elixir-format
 msgid "Regenerate the API key? The current key stops working immediately."
 msgstr "Régénérer la clé API ? La clé actuelle cesse immédiatement de fonctionner."
 
-#: lib/cinder_web/live/settings_live.ex:297
+#: lib/cinder_web/live/settings_live.ex:301
 #, elixir-autogen, elixir-format
 msgid "Revoke API key"
 msgstr "Révoquer la clé API"
 
-#: lib/cinder_web/live/settings_live.ex:292
+#: lib/cinder_web/live/settings_live.ex:296
 #, elixir-autogen, elixir-format
 msgid "Revoke the API key? Every dashboard widget and bot using it stops working immediately."
 msgstr "Révoquer la clé API ? Tous les widgets de tableau de bord et bots qui l'utilisent cessent immédiatement de fonctionner."
 
-#: lib/cinder_web/live/settings_live.ex:246
+#: lib/cinder_web/live/settings_live.ex:250
 #, elixir-autogen, elixir-format
 msgid "Send the key in the %{header} request header."
 msgstr "Envoyez la clé dans l'en-tête de requête %{header}."
 
-#: lib/cinder_web/live/settings_live.ex:249
+#: lib/cinder_web/live/settings_live.ex:253
 #, elixir-autogen, elixir-format
 msgid "These routes also sit behind the optional HTTP Basic gate, so if you enabled it, API clients must send those credentials too."
 msgstr "Ces routes sont également protégées par le filtre HTTP Basic optionnel : si vous l'avez activé, les clients de l'API doivent aussi envoyer ces identifiants."
@@ -5938,3 +5933,8 @@ msgstr "proper, repack"
 #, elixir-autogen, elixir-format
 msgid "Preferred terms are ranked in listed order; blocked terms reject titles containing a phrase (case-insensitive). The cutoff stops automatic movie searches at that resolution, and TV season searches once every held episode reaches it. Manual search stays available."
 msgstr "Les termes préférés sont classés dans l’ordre indiqué ; les termes bloqués rejettent les titres contenant une expression (sans distinction de casse). Le seuil arrête les recherches automatiques de films à cette résolution, et celles d’une saison TV quand tous les épisodes détenus l’atteignent. La recherche manuelle reste disponible."
+
+#: lib/cinder_web/live/settings_live.ex:237
+#, elixir-autogen, elixir-format
+msgid "A JSON API for dashboard widgets and trusted automation. One key for the whole household, stored hashed, so it can be shown only once. Generating a new key revokes the previous one. Anyone holding the key can read and change the request queue, so treat it as an admin credential."
+msgstr "Une API JSON pour les widgets de tableau de bord et les automatisations de confiance. Une seule clé pour tout le foyer, stockée sous forme de hachage : elle ne peut donc être affichée qu'une seule fois. Générer une nouvelle clé révoque la précédente. Toute personne détenant la clé peut lire et modifier la file des demandes : traitez-la comme un identifiant d'administration."
