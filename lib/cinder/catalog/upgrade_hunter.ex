@@ -158,11 +158,26 @@ defmodule Cinder.Catalog.UpgradeHunter do
     stamp(Episode, Enum.map(episodes, & &1.id))
 
     episodes
+    |> Enum.group_by(& &1.season.series.id)
+    |> Enum.each(fn {_series_id, selected} -> hunt_selected_series(selected) end)
+  end
+
+  defp hunt_selected_series([episode | _] = selected) do
+    series = episode.season.series
+
+    case Catalog.media_profile_summary(series).effective do
+      :anime -> isolate("series #{series.id}", fn -> hunt_anime_series(series.id) end)
+      :standard -> hunt_selected_standard_seasons(series.id, selected)
+    end
+  end
+
+  defp hunt_selected_standard_seasons(series_id, selected) do
+    selected
     |> Enum.uniq_by(& &1.season_id)
     |> Enum.each(fn episode ->
       isolate(
-        "series #{episode.season.series.id} s#{episode.season.season_number}",
-        fn -> hunt_season(episode.season_id) end
+        "series #{series_id} s#{episode.season.season_number}",
+        fn -> hunt_standard_season(episode.season_id) end
       )
     end)
   end
@@ -177,7 +192,7 @@ defmodule Cinder.Catalog.UpgradeHunter do
   # back to every episode of the season we hold before searching: a season pack delivers the whole
   # season no matter how few episodes we asked about, and every delivered file no episode claims
   # becomes an operator residual hold (#247).
-  defp hunt_season(season_id) do
+  defp hunt_standard_season(season_id) do
     episodes =
       Repo.all(
         from e in holdings(),
@@ -189,20 +204,43 @@ defmodule Cinder.Catalog.UpgradeHunter do
     case episodes do
       [%Episode{season: %{series: series}} | _] ->
         stamp(Episode, Enum.map(episodes, & &1.id))
-
-        maybe_search_season(series, episodes)
+        maybe_search_standard_season(series, episodes)
 
       [] ->
         :ok
     end
   end
 
-  defp maybe_search_season(series, episodes) do
+  defp maybe_search_standard_season(series, episodes) do
     unless Enum.all?(episodes, &Upgrade.cutoff_met?(&1, :tv)) do
-      case Catalog.media_profile_summary(series).effective do
-        :anime -> search_anime_season(series, episodes)
-        :standard -> search_season(series, episodes)
-      end
+      search_season(series, episodes)
+    end
+  end
+
+  defp hunt_anime_series(series_id) do
+    episodes =
+      Repo.all(
+        from e in holdings(),
+          join: s in assoc(e, :season),
+          where: s.series_id == ^series_id,
+          order_by: [s.season_number, e.episode_number],
+          preload: [season: :series]
+      )
+
+    case episodes do
+      [%Episode{season: %{series: series}} | _] ->
+        stamp(Episode, Enum.map(episodes, & &1.id))
+
+        eligible =
+          episodes
+          |> Enum.chunk_by(& &1.season_id)
+          |> Enum.reject(&Enum.all?(&1, fn episode -> Upgrade.cutoff_met?(episode, :tv) end))
+          |> List.flatten()
+
+        if eligible != [], do: search_anime_series(series, eligible)
+
+      [] ->
+        :ok
     end
   end
 
@@ -234,7 +272,7 @@ defmodule Cinder.Catalog.UpgradeHunter do
     end
   end
 
-  defp search_anime_season(series, episodes) do
+  defp search_anime_series(series, episodes) do
     episode_ids = Enum.map(episodes, & &1.id)
     context = Catalog.anime_series_acquisition_context(series)
 

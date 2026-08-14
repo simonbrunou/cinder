@@ -565,6 +565,57 @@ defmodule Cinder.Catalog.UpgradeHunterTest do
       assert episode.file_path == "/lib/Show/S01E01.mkv"
     end
 
+    test "groups anime upgrade holdings across seasons", ctx do
+      put_env(UpgradeHunter, enabled: true, batch: 1)
+
+      Repo.update_all(from(s in Cinder.Catalog.Series, where: s.id == ^ctx.series.id),
+        set: [media_profile: :anime]
+      )
+
+      first =
+        episode_fixture(ctx.season, %{
+          episode_number: 25,
+          file_path: "/lib/Show/S01E25.mkv",
+          imported_resolution: "720p",
+          imported_size: 1_000_000_000
+        })
+
+      second =
+        ctx.series
+        |> season_fixture(%{season_number: 2})
+        |> episode_fixture(%{
+          episode_number: 1,
+          file_path: "/lib/Show/S02E01.mkv",
+          imported_resolution: "720p",
+          imported_size: 1_000_000_000
+        })
+
+      offered = release("[Group] Show S01E25-S02E01 [1080p]", %{download_url: "cross-season"})
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv, fn 4242, "Show", _season ->
+        {:ok, [offered]}
+      end)
+
+      stub(Cinder.Acquisition.IndexerMock, :search_tv_query, fn _query, categories: [5070] ->
+        {:ok, []}
+      end)
+
+      stub(Cinder.Download.ClientMock, :add, fn _release, _opts ->
+        {:ok, "anime-cross-season-upgrade"}
+      end)
+
+      poll()
+
+      first = Repo.get!(Episode, first.id)
+      second = Repo.get!(Episode, second.id)
+      assert first.grab_id == second.grab_id
+
+      grab = Repo.get!(Grab, first.grab_id)
+
+      assert Enum.sort(grab.mapping_snapshot["reserved_episode_ids"]) ==
+               Enum.sort([first.id, second.id])
+    end
+
     test "does not search an anime season when every held episode reached the cutoff", ctx do
       Repo.update_all(from(s in Cinder.Catalog.Series, where: s.id == ^ctx.series.id),
         set: [media_profile: :anime]

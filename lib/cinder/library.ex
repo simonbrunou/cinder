@@ -703,6 +703,7 @@ defmodule Cinder.Library do
   @doc "Stages persisted anime assignments after revalidating the download inventory."
   def stage_anime_episodes(%Grab{} = grab, preflight) do
     collision = if grab.arbitrate_at_import, do: :arbitrate, else: :force
+    target = if grab.arbitrate_at_import, do: nil, else: episode_target(grab.episodes)
 
     with {:ok, current} <- inventory_anime_videos(grab.content_path),
          :ok <- AnimeInventory.same_inventory(current.files, preflight.decisions),
@@ -714,7 +715,7 @@ defmodule Cinder.Library do
       stage_anime_all(
         to_import,
         root,
-        episode_target(grab.episodes),
+        target,
         download_context(current.folder?, reports, grab.release_title),
         collision
       )
