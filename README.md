@@ -116,6 +116,28 @@ Each can be **bootstrapped** from an environment variable (`TMDB_API_TOKEN`, `PR
 value wins once set. The size bands and the Anime releases settings (including `ffprobe_bin`) have
 no env bootstrap — the bands start at their shipped defaults; tune them in `/settings`.
 
+### Household API
+
+Generate the single household key in `/settings` and send it as `x-api-key`. Treat it as an admin
+credential: it can read and mutate the request queue. The optional HTTP Basic gate also applies.
+
+- `GET /api/v1/status`
+- `GET /api/v1/requests?limit=50&offset=0`
+- `POST /api/v1/requests` with JSON `{"target_type":"movie","target_id":603}` or
+  `{"target_type":"season","target_id":1399,"season_number":2}`. Optional fields are
+  `requester_id`, `preferred_language` (`original`, `french`, `dual`, `any`), and `media_profile`
+  (`standard`, `anime`). Without `requester_id`, Cinder attributes the request to the first active
+  admin by id and it auto-approves; an active member id applies that member's quota and the normal
+  approval gate.
+- `POST /api/v1/requests/:id/approve` with optional JSON `{"media_profile":"anime"}`. Omitted
+  profile uses the requester's proposal, then `standard`.
+- `POST /api/v1/requests/:id/deny` with JSON `{"reason":"Not for this household"}`.
+- `DELETE /api/v1/requests/:id` deletes only the request row, never the catalog title.
+
+Create returns `201`, approve/deny `200`, and delete `204`. Repeating approve/deny returns
+`409 not_pending`; repeating delete returns `404 not_found`. Invalid JSON fields and values return
+stable `4xx` JSON errors and are never converted to atoms.
+
 ## How it works
 
 Four contexts mirror the pipeline: **Catalog** (TMDB discovery + movie/series requests), **Acquisition**

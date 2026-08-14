@@ -1,6 +1,6 @@
 defmodule Cinder.ApiKey do
   @moduledoc """
-  The single admin-generated key that authenticates the read-only `/api/v1` scope.
+  The single admin-generated key that authenticates the household `/api/v1` scope.
 
   One key for the whole household (no per-user keys, no scopes) — the consumers are dashboard
   widgets and bots, not people. It is stored as a **SHA-256 hash**, not as an encrypted secret:
@@ -14,7 +14,9 @@ defmodule Cinder.ApiKey do
   """
   alias Cinder.Settings
 
-  @setting_key "api_key_hash"
+  # Writable API keys intentionally use a new slot: credentials issued for the former
+  # read-only API must not silently gain mutation authority after an upgrade.
+  @setting_key "api_key_hash_v2"
   @rand_size 32
 
   @doc """

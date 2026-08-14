@@ -756,6 +756,26 @@ defmodule Cinder.Accounts do
   @doc "All users, ordered by id."
   def list_users, do: Repo.all(from u in User, order_by: [asc: u.id])
 
+  @doc "The first active admin by id, used as the deterministic actor for the household API."
+  def fetch_active_admin do
+    case Repo.one(
+           from u in User, where: u.role == :admin and u.active, order_by: [asc: u.id], limit: 1
+         ) do
+      %User{} = admin -> {:ok, admin}
+      nil -> {:error, :admin_unavailable}
+    end
+  end
+
+  @doc "Fetches an active member for admin-authorized request attribution."
+  def fetch_active_member(id) when is_integer(id) and id > 0 do
+    case Repo.get_by(User, id: id, role: :user, active: true) do
+      %User{} = user -> {:ok, user}
+      nil -> {:error, :invalid_requester}
+    end
+  end
+
+  def fetch_active_member(_id), do: {:error, :invalid_requester}
+
   @doc """
   Assembles the user's OWN account data for a GDPR Art.15/20 data export, as a JSON-ready map.
   Includes only fields the user provided or that describe their account — never `hashed_password`

@@ -85,9 +85,10 @@ same keys unchanged. Secrets are Cloak-encrypted at rest (secret rows only; key 
 Basic gate (`plug :basic_auth` in the `:browser` **and `:api`** pipelines, `router.ex`) fronts
 every browser route and the `/api/v1` scope as defense in depth: it is a no-op when both
 `CINDER_BASIC_AUTH_USER` and `CINDER_BASIC_AUTH_PASSWORD` are unset, and fail-closed if exactly
-one is set. The read-only `/api/v1` scope adds `CinderWeb.Plugs.ApiAuth` and the SHA-256-hashed
+one is set. The `/api/v1` scope adds `CinderWeb.Plugs.ApiAuth` and the SHA-256-hashed
 household key in `Cinder.ApiKey` (a raw non-registry setting generated and shown once in
-`/settings`).
+`/settings`). The same admin credential protects the `/api/v1` request mutations, which route
+through `Cinder.Requests`; API actions never write request lifecycle state directly.
 
 Signing salts (session + LiveView) are **derived from `secret_key_base` at runtime** in
 `config/runtime.exs` — nothing crypto-related is committed. `signing_salt` is a salt, not a

@@ -36,6 +36,36 @@ defmodule Cinder.AccountsTest do
     end
   end
 
+  describe "household API actors" do
+    test "fetch_active_admin/0 chooses the first active admin deterministically" do
+      first = admin_fixture()
+      second = admin_fixture()
+
+      assert {:ok, %{id: first_id}} = Accounts.fetch_active_admin()
+      assert first_id == first.id
+
+      first |> Ecto.Changeset.change(active: false) |> Repo.update!()
+
+      assert {:ok, %{id: second_id}} = Accounts.fetch_active_admin()
+      assert second_id == second.id
+
+      second |> Ecto.Changeset.change(active: false) |> Repo.update!()
+      assert {:error, :admin_unavailable} = Accounts.fetch_active_admin()
+    end
+
+    test "fetch_active_member/1 accepts only active member-role requesters" do
+      active = user_fixture()
+      inactive = user_fixture() |> Ecto.Changeset.change(active: false) |> Repo.update!()
+      admin = admin_fixture()
+
+      assert {:ok, %{id: active_id}} = Accounts.fetch_active_member(active.id)
+      assert active_id == active.id
+      assert {:error, :invalid_requester} = Accounts.fetch_active_member(inactive.id)
+      assert {:error, :invalid_requester} = Accounts.fetch_active_member(admin.id)
+      assert {:error, :invalid_requester} = Accounts.fetch_active_member(-1)
+    end
+  end
+
   describe "register_user/2 (password + auto-confirm)" do
     test "treats blank configured bootstrap tokens as missing" do
       previous = Application.get_env(:cinder, :bootstrap_token)
