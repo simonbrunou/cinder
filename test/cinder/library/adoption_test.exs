@@ -93,6 +93,15 @@ defmodule Cinder.Library.AdoptionTest do
     assert movie.path == movie_path
     assert movie.match.tmdb_id == 10
 
+    assert %{
+             size: 10,
+             major_device: 1,
+             inode: inode,
+             mtime: {{2026, 8, 15}, {0, 0, 0}}
+           } = movie.file_identities[Path.expand(movie_path)]
+
+    assert inode == :erlang.phash2(movie_path)
+
     series = Enum.find(candidates, &(&1.kind == :series))
     assert series.status == :auto_matched
     assert Enum.find(series.files, &(&1.path == episode_path)).status == :matched
@@ -123,6 +132,8 @@ defmodule Cinder.Library.AdoptionTest do
       "/tmp/cinder-test-library" -> {:ok, [{standard, 20}, {anime, 10}]}
       "/tmp/cinder-test-tv-library" -> {:ok, []}
     end)
+
+    stub_file_stats([{standard, 20}, {anime, 10}])
 
     expect(Cinder.Catalog.TMDBMock, :search, 2, fn
       "Dune", "en" -> {:ok, [movie_result(10, "Dune", 2021)]}
@@ -164,6 +175,8 @@ defmodule Cinder.Library.AdoptionTest do
       _other_root -> {:ok, []}
     end)
 
+    stub_file_stats([{path, 10}])
+
     expect(Cinder.Catalog.TMDBMock, :search, fn "Paddington", "en" ->
       {:ok, [movie_result(30, "Paddington", 2014)]}
     end)
@@ -202,6 +215,8 @@ defmodule Cinder.Library.AdoptionTest do
       _other_root -> {:ok, []}
     end)
 
+    stub_file_stats([{path, 10}])
+
     expect(Cinder.Catalog.TMDBMock, :search, fn "Dune", "en" ->
       {:ok, [movie_result(31, "Dune", 2021)]}
     end)
@@ -211,6 +226,62 @@ defmodule Cinder.Library.AdoptionTest do
 
     assert %{adopted: 0, skipped: 1} = Adoption.adopt([candidate])
     refute Catalog.get_movie_by_tmdb_id(31)
+  end
+
+  test "adoption fails closed when a scanned file is replaced before the catalog write" do
+    path = "/tmp/cinder-test-library/Dune (2021)/Dune (2021).mkv"
+    stub_roots([{path, 10}], [])
+
+    expect(Cinder.Catalog.TMDBMock, :search, fn "Dune", "en" ->
+      {:ok, [movie_result(32, "Dune", 2021)]}
+    end)
+
+    assert [candidate] = Adoption.scan()
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn ^path ->
+      {:ok, %{file_stat(path, 10) | inode: :erlang.phash2(path) + 1}}
+    end)
+
+    expect(Cinder.Catalog.TMDBMock, :get_movie, fn 32 ->
+      {:ok,
+       movie_result(32, "Dune", 2021)
+       |> Map.merge(%{imdb_id: "tt1160419", localizations: %{}})}
+    end)
+
+    assert %{adopted: 0, skipped: 1, failures: []} = Adoption.adopt([candidate])
+    refute Catalog.get_movie_by_tmdb_id(32)
+  end
+
+  test "movie adoption rolls profile and lifecycle fields back when revalidation fails" do
+    movie = movie_fixture(%{tmdb_id: 33, title: "Atomic", status: :requested})
+
+    assert {:ok, profile} =
+             Catalog.create_profile(%{
+               name: "Atomic movies",
+               kind: :movies,
+               handling: :anime,
+               library_path: "/tmp/cinder-atomic-movies"
+             })
+
+    attrs =
+      movie_result(33, "Atomic", 2021)
+      |> Map.merge(%{imdb_id: "tt0000033", localizations: %{}})
+
+    assert {:error, :inventory_changed} =
+             Catalog.adopt_movie_at_available(
+               attrs,
+               "/tmp/cinder-atomic-movies/Atomic/Atomic.mkv",
+               profile.id,
+               :anime,
+               fn _profile -> {:error, :inventory_changed} end
+             )
+
+    assert %Movie{
+             status: :requested,
+             file_path: nil,
+             profile_id: nil,
+             media_profile: :auto
+           } = Repo.reload!(movie)
   end
 
   test "scan adopts a series from an Anime destination with the Anime profile" do
@@ -230,6 +301,8 @@ defmodule Cinder.Library.AdoptionTest do
       ^anime_root -> {:ok, [{path, 10}]}
       "/tmp/cinder-test-tv-library" -> {:ok, [{path, 10}]}
     end)
+
+    stub_file_stats([{path, 10}])
 
     expect(Cinder.Catalog.TMDBMock, :search_tv, fn "Test Show", "en" ->
       {:ok, [series_result(42, "Test Show", 2001)]}
@@ -390,12 +463,14 @@ defmodule Cinder.Library.AdoptionTest do
   test "adopt inserts a movie directly at available, never exposing it to the requested poller query" do
     path = "/tmp/cinder-test-library/Dune (2021)/Dune (2021).mkv"
 
-    candidate = %{
-      kind: :movie,
-      status: :auto_matched,
-      path: path,
-      match: %{tmdb_id: 10}
-    }
+    candidate =
+      %{
+        kind: :movie,
+        status: :auto_matched,
+        path: path,
+        match: %{tmdb_id: 10}
+      }
+      |> with_file_identities()
 
     expect(Cinder.Catalog.TMDBMock, :get_movie, fn 10 ->
       {:ok,
@@ -431,26 +506,28 @@ defmodule Cinder.Library.AdoptionTest do
     episode_path = "/tmp/cinder-test-tv-library/Test Show (2001)/Test.Show.S01E01.mkv"
     held_path = "/tmp/cinder-test-tv-library/Test Show (2001)/Test.Show.S01E02.mkv"
 
-    candidate = %{
-      kind: :series,
-      status: :auto_matched,
-      match: %{tmdb_id: 42},
-      files: [
-        %{
-          path: episode_path,
-          season_number: 1,
-          episode_numbers: [1],
-          status: :matched
-        },
-        %{
-          path: held_path,
-          season_number: 1,
-          episode_numbers: [2],
-          status: :unmatched,
-          reason: :held
-        }
-      ]
-    }
+    candidate =
+      %{
+        kind: :series,
+        status: :auto_matched,
+        match: %{tmdb_id: 42},
+        files: [
+          %{
+            path: episode_path,
+            season_number: 1,
+            episode_numbers: [1],
+            status: :matched
+          },
+          %{
+            path: held_path,
+            season_number: 1,
+            episode_numbers: [2],
+            status: :unmatched,
+            reason: :held
+          }
+        ]
+      }
+      |> with_file_identities()
 
     :ok = Catalog.subscribe_series()
 
@@ -482,19 +559,21 @@ defmodule Cinder.Library.AdoptionTest do
     unmonitored = episode_fixture(season, %{episode_number: 2, monitored: false})
     path = "/tmp/cinder-test-tv-library/Test Show (2001)/Test.Show.S01E01.mkv"
 
-    candidate = %{
-      kind: :series,
-      status: :auto_matched,
-      match: %{tmdb_id: 42},
-      files: [
-        %{
-          path: path,
-          season_number: 1,
-          episode_numbers: [1],
-          status: :matched
-        }
-      ]
-    }
+    candidate =
+      %{
+        kind: :series,
+        status: :auto_matched,
+        match: %{tmdb_id: 42},
+        files: [
+          %{
+            path: path,
+            season_number: 1,
+            episode_numbers: [1],
+            status: :matched
+          }
+        ]
+      }
+      |> with_file_identities()
 
     assert %{adopted: 1, skipped: 0, failures: []} = Adoption.adopt([candidate])
 
@@ -510,27 +589,41 @@ defmodule Cinder.Library.AdoptionTest do
     season = season_fixture(series)
     first = episode_fixture(season, %{episode_number: 1})
     second = episode_fixture(season, %{episode_number: 2})
-    first_path = "/tmp/cinder-test-tv-library/Test Show (2001)/Test.Show.S01E01.mkv"
-    failed_path = "/tmp/cinder-test-tv-library/Test Show (2001)/Test.Show.S01E02.part.mkv"
+    root = "/tmp/cinder-atomic-tv"
+    first_path = "#{root}/Test Show (2001)/Test.Show.S01E01.mkv"
+    failed_path = "#{root}/Test Show (2001)/Test.Show.S01E02.part.mkv"
 
-    candidate = %{
-      kind: :series,
-      status: :auto_matched,
-      match: %{tmdb_id: 42},
-      files: [
-        %{
-          path: first_path,
-          season_number: 1,
-          episode_numbers: [1],
-          status: :matched
-        },
-        %{
-          path: failed_path,
-          status: :part,
-          part_of: %{season_number: 1, episode_number: 2}
-        }
-      ]
-    }
+    assert {:ok, profile} =
+             Catalog.create_profile(%{
+               name: "Atomic TV",
+               kind: :tv,
+               handling: :anime,
+               library_path: root
+             })
+
+    candidate =
+      %{
+        kind: :series,
+        status: :auto_matched,
+        match: %{tmdb_id: 42},
+        library_root: root,
+        profile_id: profile.id,
+        media_profile: :anime,
+        files: [
+          %{
+            path: first_path,
+            season_number: 1,
+            episode_numbers: [1],
+            status: :matched
+          },
+          %{
+            path: failed_path,
+            status: :part,
+            part_of: %{season_number: 1, episode_number: 2}
+          }
+        ]
+      }
+      |> with_file_identities()
 
     Catalog.subscribe_series()
 
@@ -548,6 +641,7 @@ defmodule Cinder.Library.AdoptionTest do
 
     assert %Episode{file_path: nil} = Repo.reload!(first)
     assert %Episode{file_path: nil, part_file_paths: []} = Repo.reload!(second)
+    assert %Series{profile_id: nil, media_profile: :auto} = Repo.reload!(series)
     refute_receive {:series_updated, _}
   end
 
@@ -556,7 +650,60 @@ defmodule Cinder.Library.AdoptionTest do
       "/tmp/cinder-test-library" -> {:ok, movie_files}
       "/tmp/cinder-test-tv-library" -> {:ok, tv_files}
     end)
+
+    stub_file_stats(movie_files ++ tv_files)
   end
+
+  defp stub_file_stats(files) do
+    stats = Map.new(files, fn {path, size} -> {Path.expand(path), file_stat(path, size)} end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
+      case Map.fetch(stats, Path.expand(path)) do
+        {:ok, stat} -> {:ok, stat}
+        :error -> {:error, :enoent}
+      end
+    end)
+  end
+
+  defp with_file_identities(candidate) do
+    paths =
+      case candidate do
+        %{paths: paths} when is_list(paths) and paths != [] -> paths
+        %{path: path} when is_binary(path) -> [path]
+        %{files: files} -> Enum.map(files, & &1.path)
+      end
+
+    files = Enum.map(paths, &{&1, 10})
+    stub_file_stats(files)
+
+    root =
+      case candidate.kind do
+        :movie -> "/tmp/cinder-test-library"
+        :series -> "/tmp/cinder-test-tv-library"
+      end
+
+    identities =
+      Map.new(files, fn {path, size} -> {Path.expand(path), file_identity(path, size)} end)
+
+    candidate
+    |> Map.put_new(:library_root, root)
+    |> Map.put_new(:profile_id, nil)
+    |> Map.put_new(:media_profile, :auto)
+    |> Map.put(:file_identities, identities)
+  end
+
+  defp file_stat(path, size) do
+    %File.Stat{
+      type: :regular,
+      size: size,
+      major_device: 1,
+      inode: :erlang.phash2(path),
+      mtime: {{2026, 8, 15}, {0, 0, 0}}
+    }
+  end
+
+  defp file_identity(path, size),
+    do: Map.take(file_stat(path, size), [:size, :major_device, :inode, :mtime])
 
   defp stub_series_create(tmdb_id, calls \\ 1) do
     expect(Cinder.Catalog.TMDBMock, :get_series, calls, fn ^tmdb_id ->

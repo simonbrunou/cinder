@@ -3,7 +3,7 @@ defmodule Cinder.Catalog.Adoption do
 
   import Ecto.Query
 
-  alias Cinder.Catalog.{Episode, Identity, Season, SeriesCatalog}
+  alias Cinder.Catalog.{Episode, Identity, Profiles, Season, Series, SeriesCatalog}
   alias Cinder.Repo
 
   @doc """
@@ -27,6 +27,45 @@ defmodule Cinder.Catalog.Adoption do
          ) do
       {:ok, {applied, updated}} ->
         publish(updated)
+        {:ok, Enum.reverse(applied)}
+
+      {:error, failure} ->
+        {:error, [failure]}
+    end
+  end
+
+  @doc false
+  def adopt_series_files(
+        %Series{id: series_id},
+        actions,
+        profile_id,
+        legacy_handling,
+        validator
+      )
+      when is_list(actions) and is_function(validator, 1) do
+    result =
+      Repo.transaction(
+        fn ->
+          with true <- actions != [],
+               {:ok, profile, handling} <-
+                 Profiles.resolve_assignment(profile_id, :tv, legacy_handling),
+               %Series{} = series <- Repo.get(Series, series_id),
+               :ok <- validator.(profile),
+               {:ok, series} <- Profiles.assign_in_transaction(series, profile, handling) do
+            {applied, updated} = reduce_adoptions(actions)
+            {series, applied, updated}
+          else
+            false -> Repo.rollback(%{reason: :no_adoptable_files})
+            nil -> Repo.rollback(%{reason: :series_not_found})
+            {:error, reason} -> Repo.rollback(%{reason: reason})
+          end
+        end,
+        mode: :immediate
+      )
+
+    case result do
+      {:ok, {series, applied, updated}} ->
+        publish(updated, [series.id])
         {:ok, Enum.reverse(applied)}
 
       {:error, failure} ->
@@ -127,10 +166,17 @@ defmodule Cinder.Catalog.Adoption do
 
   defp failure(_action, reason), do: %{reason: reason}
 
-  defp publish(updated) do
+  defp publish(updated, extra_series_ids \\ []) do
     season_ids = Enum.map(updated, & &1.season_id)
 
-    Repo.all(from s in Season, where: s.id in ^season_ids, select: s.series_id, distinct: true)
+    (extra_series_ids ++
+       Repo.all(
+         from s in Season,
+           where: s.id in ^season_ids,
+           select: s.series_id,
+           distinct: true
+       ))
+    |> Enum.uniq()
     |> Enum.each(&Cinder.Catalog.broadcast_series/1)
 
     Enum.each(updated, fn episode ->

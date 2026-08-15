@@ -370,11 +370,22 @@ defmodule Cinder.Catalog.SeriesCatalog do
     preferred = Keyword.get(opts, :preferred_language, "original")
     media_profile = Keyword.get(opts, :media_profile, :auto)
     profile_id = Keyword.get(opts, :profile_id)
+    before_write = Keyword.get(opts, :before_write, fn -> :ok end)
 
-    if strategy in Series.monitor_strategies() do
+    if strategy in Series.monitor_strategies() and is_function(before_write, 0) do
       case get_series_by_tmdb_id(tmdb_id) do
-        %Series{} = series -> {:ok, series}
-        nil -> create_series(tmdb_id, strategy, preferred, media_profile, profile_id)
+        %Series{} = series ->
+          {:ok, series}
+
+        nil ->
+          create_series(
+            tmdb_id,
+            strategy,
+            preferred,
+            media_profile,
+            profile_id,
+            before_write
+          )
       end
     else
       {:error, :invalid_monitor_strategy}
@@ -505,10 +516,10 @@ defmodule Cinder.Catalog.SeriesCatalog do
     series |> Ecto.Changeset.change(monitored: true) |> Repo.update()
   end
 
-  defp create_series(tmdb_id, strategy, preferred, media_profile, profile_id) do
+  defp create_series(tmdb_id, strategy, preferred, media_profile, profile_id, before_write) do
     with {:ok, {:new, ^tmdb_id, attrs, seasons, identity}} <-
            prepare_series(tmdb_id, strategy, preferred, media_profile, profile_id) do
-      insert_series(tmdb_id, attrs, seasons, identity)
+      insert_series(tmdb_id, attrs, seasons, identity, before_write)
     end
   end
 
@@ -528,14 +539,19 @@ defmodule Cinder.Catalog.SeriesCatalog do
     end
   end
 
-  defp insert_series(tmdb_id, attrs, seasons, identity) do
+  defp insert_series(tmdb_id, attrs, seasons, identity, before_write) do
     result =
-      Repo.transaction(fn ->
-        case write_new_series(attrs, seasons, identity) do
-          {:ok, series} -> series
-          {:error, reason} -> Repo.rollback(reason)
-        end
-      end)
+      Repo.transaction(
+        fn ->
+          with :ok <- before_write.(),
+               {:ok, series} <- write_new_series(attrs, seasons, identity) do
+            series
+          else
+            {:error, reason} -> Repo.rollback(reason)
+          end
+        end,
+        mode: :immediate
+      )
 
     case result do
       {:ok, series} ->

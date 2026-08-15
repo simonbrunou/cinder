@@ -203,11 +203,13 @@ defmodule Cinder.Library.Adoption do
         {:ok, files} ->
           fresh = Enum.reject(files, &MapSet.member?(seen, normalize_path(elem(&1, 0))))
           seen = Enum.reduce(files, seen, &MapSet.put(&2, normalize_path(elem(&1, 0))))
+          {fresh, identities} = snapshot_files(fresh)
 
           discovered =
             fresh
             |> build_candidates.(root, managed)
             |> Enum.map(&put_destination(&1, destination))
+            |> Enum.map(&put_file_identities(&1, identities))
 
           {candidates ++ discovered, seen}
 
@@ -216,6 +218,31 @@ defmodule Cinder.Library.Adoption do
       end
     end)
     |> elem(0)
+  end
+
+  defp snapshot_files(files) do
+    Enum.reduce(files, {[], %{}}, fn {path, walked_size}, {verified, identities} ->
+      case filesystem().lstat(path) do
+        {:ok, %File.Stat{type: :regular, size: ^walked_size} = stat} ->
+          identity = file_identity(stat)
+          {[{path, walked_size} | verified], Map.put(identities, normalize_path(path), identity)}
+
+        _changed_or_unsafe ->
+          {verified, identities}
+      end
+    end)
+    |> then(fn {verified, identities} -> {Enum.reverse(verified), identities} end)
+  end
+
+  defp put_file_identities(candidate, identities) do
+    candidate_identities =
+      candidate
+      |> candidate_paths()
+      |> Map.new(fn path ->
+        {normalize_path(path), Map.fetch!(identities, normalize_path(path))}
+      end)
+
+    Map.put(candidate, :file_identities, candidate_identities)
   end
 
   defp movie_group({path, _size}, root) do
@@ -638,11 +665,13 @@ defmodule Cinder.Library.Adoption do
          {:ok, profile, media_profile} <- validated_destination(candidate, :movies),
          {:ok, details} <- Catalog.get_movie(tmdb_id),
          {:ok, movie, created} <-
-           Catalog.find_or_create_at_available(
+           Catalog.adopt_movie_at_available(
              movie_attrs(details, media_profile, profile),
-             path
+             path,
+             Map.get(candidate, :profile_id),
+             adoption_profile(candidate),
+             &revalidate_candidate(candidate, :movies, &1)
            ),
-         {:ok, movie} <- assign_profile(movie, profile),
          :ok <- announce_movie_creation(movie, created == :created) do
       {:adopted, [path]}
     else
@@ -679,38 +708,33 @@ defmodule Cinder.Library.Adoption do
          true <- files != [],
          tmdb_id when is_integer(tmdb_id) <- chosen_tmdb_id(candidate),
          {:ok, profile, media_profile} <- validated_destination(candidate, :tv) do
-      do_adopt_series(files, tmdb_id, media_profile, profile)
+      do_adopt_series(files, tmdb_id, media_profile, profile, candidate)
     else
       _ -> :skipped
     end
   end
 
-  defp do_adopt_series(files, tmdb_id, media_profile, profile) do
-    existing? = match?(%Series{}, Catalog.get_series_by_tmdb_id(tmdb_id))
-
+  defp do_adopt_series(files, tmdb_id, _media_profile, profile, candidate) do
     case Catalog.add_series(tmdb_id,
            monitor_strategy: :none,
-           media_profile: media_profile,
-           profile_id: profile && profile.id
+           media_profile: :auto,
+           profile_id: nil,
+           before_write: fn -> revalidate_candidate(candidate, :tv, profile) end
          ) do
       {:ok, series} ->
-        case assign_profile(series, profile) do
-          {:ok, series} -> finish_series_adoption(files, series, existing?)
-          {:error, _reason} -> :skipped
-        end
+        finish_series_adoption(files, series, candidate)
 
       {:error, _reason} ->
         :skipped
     end
   end
 
-  defp finish_series_adoption(files, series, existing?) do
-    case adopt_episode_files(files, Catalog.get_series_with_tree(series.id)) do
+  defp finish_series_adoption(files, series, candidate) do
+    case adopt_episode_files(files, Catalog.get_series_with_tree(series.id), candidate) do
       {:ok, []} ->
         :skipped
 
       {:ok, paths} ->
-        announce_series_creation(series, existing?)
         {:adopted, paths}
 
       {:error, failures} ->
@@ -718,10 +742,7 @@ defmodule Cinder.Library.Adoption do
     end
   end
 
-  defp announce_series_creation(_series, true), do: :ok
-  defp announce_series_creation(series, false), do: Catalog.broadcast_series(series.id)
-
-  defp adopt_episode_files(files, %Series{} = series) do
+  defp adopt_episode_files(files, %Series{} = series, candidate) do
     episodes =
       for season <- series.seasons,
           episode <- season.episodes,
@@ -736,13 +757,19 @@ defmodule Cinder.Library.Adoption do
     part_actions = Enum.reduce(part_files, [], &plan_episode_part(&1, episodes, &2))
     actions = Enum.reverse(primary_actions) ++ Enum.reverse(part_actions)
 
-    case Catalog.adopt_episode_files(actions) do
+    case Catalog.adopt_series_files(
+           series,
+           actions,
+           Map.get(candidate, :profile_id),
+           adoption_profile(candidate),
+           &revalidate_candidate(candidate, :tv, &1)
+         ) do
       {:ok, applied} -> {:ok, applied |> Enum.map(& &1.path) |> Enum.uniq()}
       {:error, failures} -> {:error, failures}
     end
   end
 
-  defp adopt_episode_files(_files, _missing_series), do: {:ok, []}
+  defp adopt_episode_files(_files, _missing_series, _candidate), do: {:ok, []}
 
   defp plan_episode_part(
          %{
@@ -820,11 +847,79 @@ defmodule Cinder.Library.Adoption do
 
   defp validated_destination(candidate, kind) do
     with {:ok, destination} <- current_destination(candidate, kind),
-         true <- Map.get(destination, :profile_id) == Map.get(candidate, :profile_id) do
+         true <- same_scanned_destination?(candidate, destination) do
       validated_destination_profile(destination, kind)
     else
       _changed_or_outside -> {:error, :stale_destination}
     end
+  end
+
+  defp revalidate_candidate(candidate, kind, profile) do
+    with {:ok, destination} <- current_destination(candidate, kind),
+         true <- same_scanned_destination?(candidate, destination),
+         true <- same_current_profile?(destination, profile, kind),
+         :ok <- validate_candidate_files(candidate, destination.path) do
+      :ok
+    else
+      {:error, :inventory_changed} = error -> error
+      _changed_or_outside -> {:error, :stale_destination}
+    end
+  end
+
+  defp same_scanned_destination?(candidate, destination) do
+    is_binary(Map.get(candidate, :library_root)) and
+      Path.expand(candidate.library_root) == Path.expand(destination.path) and
+      Map.get(candidate, :profile_id) == Map.get(destination, :profile_id) and
+      adoption_profile(candidate) == adoption_profile(destination)
+  end
+
+  defp same_current_profile?(%{profile_id: nil}, nil, _kind), do: true
+
+  defp same_current_profile?(%{profile_id: id}, %Profile{id: id, kind: kind}, kind)
+       when is_integer(id),
+       do: true
+
+  defp same_current_profile?(_destination, _profile, _kind), do: false
+
+  defp validate_candidate_files(candidate, root) do
+    identities = Map.get(candidate, :file_identities, %{})
+
+    case candidate_paths(candidate) do
+      [] -> {:error, :inventory_changed}
+      paths -> Enum.reduce_while(paths, :ok, &validate_candidate_path(&1, root, identities, &2))
+    end
+  end
+
+  defp validate_candidate_path(path, root, identities, :ok) do
+    expected = Map.get(identities, normalize_path(path))
+
+    case validate_candidate_file(path, root, expected) do
+      :ok -> {:cont, :ok}
+      {:error, :inventory_changed} = error -> {:halt, error}
+    end
+  end
+
+  defp validate_candidate_file(path, root, expected) when is_map(expected) do
+    path_policy = Library.path_policy()
+
+    with {:ok, expanded} <-
+           path_policy.source_file(path, [root], Library.video_extensions(),
+             filesystem: filesystem()
+           ),
+         true <- expanded == normalize_path(path),
+         {:ok, %File.Stat{type: :regular} = stat} <- filesystem().lstat(expanded),
+         true <- file_identity(stat) == expected do
+      :ok
+    else
+      _changed_or_unsafe -> {:error, :inventory_changed}
+    end
+  end
+
+  defp validate_candidate_file(_path, _root, _missing_identity),
+    do: {:error, :inventory_changed}
+
+  defp file_identity(stat) do
+    Map.take(stat, [:size, :major_device, :inode, :mtime])
   end
 
   defp current_destination(candidate, kind) do
@@ -860,6 +955,7 @@ defmodule Cinder.Library.Adoption do
   defp same_destination?(left, right),
     do:
       Map.get(left, :profile_id) == Map.get(right, :profile_id) and
+        adoption_profile(left) == adoption_profile(right) and
         Path.expand(left.path) == Path.expand(right.path)
 
   defp candidate_paths(%{paths: paths}) when is_list(paths) and paths != [], do: paths
@@ -880,15 +976,13 @@ defmodule Cinder.Library.Adoption do
     end
   end
 
-  defp assign_profile(title, nil), do: {:ok, title}
-
-  defp assign_profile(%{profile_id: id} = title, %Profile{id: id}), do: {:ok, title}
-  defp assign_profile(title, %Profile{} = profile), do: Catalog.assign_profile(title, profile)
-
   defp adoption_profile(%{profile_id: id, profile: profile}) when is_integer(id), do: profile
   defp adoption_profile(:anime), do: :anime
   defp adoption_profile(%{profile: :anime}), do: :anime
-  defp adoption_profile(%{media_profile: :anime}), do: :anime
+
+  defp adoption_profile(%{media_profile: profile}) when profile in [:auto, :standard, :anime],
+    do: profile
+
   defp adoption_profile(_candidate_or_destination_profile), do: :auto
 
   defp managed_paths do

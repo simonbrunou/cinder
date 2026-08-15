@@ -7,6 +7,7 @@ defmodule Cinder.Catalog.ProfilesTest do
   alias Cinder.Requests.Request
 
   import Cinder.AccountsFixtures
+  import Cinder.CatalogFixtures
 
   test "validates names and explicit roots" do
     assert {:ok, profile} =
@@ -102,6 +103,83 @@ defmodule Cinder.Catalog.ProfilesTest do
     assert {:error, changeset} = Catalog.update_profile(renamed, %{handling: :anime})
     assert "referenced profile may only be renamed" in errors_on(changeset).base
     assert {:error, :in_use} = Catalog.delete_profile(renamed)
+  end
+
+  test "movie profile assignment keeps every existing primary and part file fenced" do
+    root = "/tmp/cinder-profile-fence-movies"
+
+    assert {:ok, profile} =
+             Catalog.create_profile(%{
+               name: "Movie fence",
+               kind: :movies,
+               handling: :standard,
+               library_path: root
+             })
+
+    movie = movie_fixture(%{file_path: "#{root}/Movie/Movie.mkv"})
+
+    assert {:ok, movie} =
+             Catalog.transition(movie, %{
+               status: movie.status,
+               part_file_paths: ["#{root}/Movie/Movie-cd2.mkv"]
+             })
+
+    assert {:ok, assigned} = Catalog.assign_profile(movie, profile)
+    assert assigned.profile_id == profile.id
+
+    assert {:error, :files_outside_profile_root} = Catalog.assign_profile(assigned, nil)
+    assert Repo.reload!(assigned).profile_id == profile.id
+
+    split_stack = movie_fixture(%{file_path: "#{root}/Split/Split.mkv"})
+
+    assert {:ok, split_stack} =
+             Catalog.transition(split_stack, %{
+               status: split_stack.status,
+               part_file_paths: ["/tmp/outside-profile/Split-cd2.mkv"]
+             })
+
+    assert {:error, :files_outside_profile_root} = Catalog.assign_profile(split_stack, profile)
+    assert Repo.reload!(split_stack).profile_id == nil
+    assert {:error, :in_use} = Catalog.delete_profile(profile)
+  end
+
+  test "series profile assignment keeps every episode primary and part file fenced" do
+    root = "/tmp/cinder-profile-fence-tv"
+
+    assert {:ok, profile} =
+             Catalog.create_profile(%{
+               name: "TV fence",
+               kind: :tv,
+               handling: :anime,
+               library_path: root
+             })
+
+    series = series_fixture()
+    season = season_fixture(series)
+    episode = episode_fixture(season)
+
+    assert {:ok, _episode} =
+             Catalog.transition_episode(episode, %{
+               file_path: "#{root}/Show/S01E01.mkv",
+               part_file_paths: ["#{root}/Show/S01E01-part2.mkv"]
+             })
+
+    assert {:ok, assigned} = Catalog.assign_profile(series, profile)
+    assert {assigned.profile_id, assigned.media_profile} == {profile.id, :anime}
+
+    assert {:error, :files_outside_profile_root} = Catalog.assign_profile(assigned, nil)
+    assert Repo.reload!(assigned).profile_id == profile.id
+
+    outside = episode_fixture(season, %{episode_number: 2})
+
+    assert {:ok, _episode} =
+             Catalog.transition_episode(outside, %{
+               file_path: "#{root}/Show/S01E02.mkv",
+               part_file_paths: ["/tmp/outside-profile/S01E02-part2.mkv"]
+             })
+
+    assert {:error, :files_outside_profile_root} = Catalog.assign_profile(assigned, profile)
+    assert Repo.reload!(assigned).profile_id == profile.id
   end
 
   test "each kind retains one profile" do

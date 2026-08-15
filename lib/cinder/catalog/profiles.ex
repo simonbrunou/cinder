@@ -4,9 +4,11 @@ defmodule Cinder.Catalog.Profiles do
   import Ecto.Query
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Movie, Profile, Series}
+  alias Cinder.Catalog.{Episode, Movie, Profile, Season, Series}
+  alias Cinder.Library.PathPolicy
   alias Cinder.Repo
   alias Cinder.Requests.Request
+  alias Cinder.Settings
 
   def list_profiles do
     Repo.all(from p in Profile, order_by: [asc: p.kind, asc: fragment("lower(?)", p.name)])
@@ -66,19 +68,34 @@ defmodule Cinder.Catalog.Profiles do
     end
   end
 
-  def assign_profile(%Movie{} = movie, nil, opts), do: update_title(movie, nil, :auto, opts)
-  def assign_profile(%Series{} = series, nil, opts), do: update_title(series, nil, :auto, opts)
+  def assign_profile(%Movie{id: id}, profile, opts),
+    do: assign_profile(Movie, id, profile_id(profile), :movies, opts)
 
-  def assign_profile(%Movie{} = movie, %Profile{id: id}, opts),
-    do: assign_title(movie, id, :movies, opts)
+  def assign_profile(%Series{id: id}, profile, opts),
+    do: assign_profile(Series, id, profile_id(profile), :tv, opts)
 
-  def assign_profile(%Series{} = series, %Profile{id: id}, opts),
-    do: assign_title(series, id, :tv, opts)
+  defp assign_profile(schema, id, profile_id, expected_kind, opts) do
+    write(fn -> assign_current(Repo.get(schema, id), profile_id, expected_kind) end)
+    |> publish_assignment(opts)
+  end
 
-  defp assign_title(title, id, expected_kind, opts) do
+  defp assign_current(nil, _profile_id, _expected_kind), do: {:error, :stale_entry}
+
+  defp assign_current(title, profile_id, expected_kind) do
+    with {:ok, profile, handling} <- resolve_assignment(profile_id, expected_kind, :auto) do
+      assign_in_transaction(title, profile, handling)
+    end
+  end
+
+  @doc false
+  def resolve_assignment(nil, _expected_kind, legacy_handling)
+      when legacy_handling in [:auto, :standard, :anime],
+      do: {:ok, nil, legacy_handling}
+
+  def resolve_assignment(id, expected_kind, _legacy_handling) when is_integer(id) do
     case Repo.get(Profile, id) do
       %Profile{kind: ^expected_kind} = profile ->
-        update_title(title, profile.id, profile.handling, opts)
+        {:ok, profile, profile.handling}
 
       %Profile{} ->
         {:error, :wrong_profile_kind}
@@ -86,6 +103,66 @@ defmodule Cinder.Catalog.Profiles do
       nil ->
         {:error, :unknown_profile}
     end
+  end
+
+  def resolve_assignment(_id, _expected_kind, _legacy_handling),
+    do: {:error, :unknown_profile}
+
+  @doc false
+  def assign_in_transaction(title, profile, handling) do
+    with :ok <- ensure_assignment_safe(title, profile, handling) do
+      title
+      |> Ecto.Changeset.change(profile_id: profile_id(profile), media_profile: handling)
+      |> Ecto.Changeset.foreign_key_constraint(:profile_id)
+      |> Ecto.Changeset.check_constraint(:profile_id,
+        name: profile_integrity_constraint(title)
+      )
+      |> Repo.update()
+    end
+  end
+
+  @doc false
+  def ensure_assignment_safe(title, profile, handling) do
+    case managed_paths(title) do
+      [] ->
+        :ok
+
+      paths ->
+        with {:ok, root} <-
+               Settings.library_root(title_kind(title), assignment_media(profile, handling)),
+             true <- Enum.all?(paths, &PathPolicy.contained?(&1, root)) do
+          :ok
+        else
+          _outside_or_unconfigured -> {:error, :files_outside_profile_root}
+        end
+    end
+  end
+
+  defp profile_id(%Profile{id: id}), do: id
+  defp profile_id(nil), do: nil
+  defp profile_id(_invalid), do: :invalid
+
+  defp assignment_media(nil, handling), do: %{media_profile: handling}
+
+  defp assignment_media(%Profile{} = profile, handling),
+    do: %{profile: profile, media_profile: handling}
+
+  defp title_kind(%Movie{}), do: :movies
+  defp title_kind(%Series{}), do: :tv
+
+  defp managed_paths(%Movie{} = movie), do: Movie.file_paths(movie)
+
+  defp managed_paths(%Series{id: id}) do
+    Repo.all(
+      from e in Episode,
+        join: season in Season,
+        on: e.season_id == season.id,
+        where: season.series_id == ^id,
+        select: {e.file_path, e.part_file_paths}
+    )
+    |> Enum.flat_map(fn {primary, parts} -> [primary | parts || []] end)
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.uniq()
   end
 
   defp validate_unique_library_path(%Ecto.Changeset{valid?: false} = changeset), do: changeset
@@ -119,26 +196,18 @@ defmodule Cinder.Catalog.Profiles do
     )
   end
 
-  defp update_title(title, profile_id, handling, opts) do
-    result =
-      title
-      |> Ecto.Changeset.change(profile_id: profile_id, media_profile: handling)
-      |> Ecto.Changeset.foreign_key_constraint(:profile_id)
-      |> Ecto.Changeset.check_constraint(:profile_id,
-        name: profile_integrity_constraint(title)
-      )
-      |> Repo.update()
-
+  defp publish_assignment({:ok, title} = result, opts) do
     if Keyword.get(opts, :publish, true) do
-      case result do
-        {:ok, %Movie{} = movie} -> Catalog.broadcast({:movie_updated, movie})
-        {:ok, %Series{} = series} -> Catalog.broadcast_series(series.id)
-        _error -> :ok
+      case title do
+        %Movie{} = movie -> Catalog.broadcast({:movie_updated, movie})
+        %Series{} = series -> Catalog.broadcast_series(series.id)
       end
     end
 
     result
   end
+
+  defp publish_assignment(error, _opts), do: error
 
   defp profile_integrity_constraint(%Movie{}), do: :movies_profile_integrity
   defp profile_integrity_constraint(%Series{}), do: :series_profile_integrity
