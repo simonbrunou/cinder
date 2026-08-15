@@ -12,17 +12,23 @@ defmodule CinderWeb.RequestsLive do
 
   import CinderWeb.LiveHelpers
 
+  import CinderWeb.RequestHelpers,
+    only: [default_profile_id: 2, normalize_profile: 2, profile_kind: 1, profiles_for: 2]
+
+  alias Cinder.Catalog
   alias Cinder.Requests
 
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket), do: Requests.subscribe()
     requests = Requests.list_requests()
+    profiles = Catalog.list_profiles()
 
     {:ok,
      assign(socket,
        requests: requests,
-       approval_profiles: approval_profiles(requests),
+       profiles: profiles,
+       approval_profiles: approval_profiles(requests, profiles),
        denying: nil,
        confirming_delete: nil,
        selected: MapSet.new()
@@ -41,27 +47,39 @@ defmodule CinderWeb.RequestsLive do
         # Keyed per request: a same-name start_async would OVERWRITE an in-flight approval's
         # task entry and silently drop its result (no error flash for the first request).
         admin = socket.assigns.current_scope.user
-        profile = socket.assigns.approval_profiles[to_string(req.id)]
+        raw_profile = socket.assigns.approval_profiles[to_string(req.id)]
 
-        {:noreply,
-         start_async(socket, {:approve, req.id}, fn ->
-           Requests.approve_request(req, admin, profile)
-         end)}
+        case normalize_profile(to_string(raw_profile), profile_kind(req)) do
+          {:ok, profile} ->
+            {:noreply,
+             start_async(socket, {:approve, req.id}, fn ->
+               Requests.approve_request(req, admin, profile)
+             end)}
+
+          {:error, _} ->
+            {:noreply, put_flash(socket, :error, gettext("Choose a valid media profile."))}
+        end
     end
   end
 
-  def handle_event("set_approval_profile", %{"_id" => id, "profile" => profile}, socket)
-      when profile in ["standard", "anime"] do
-    if match?(%{status: :pending}, find_request(socket, id)) do
+  def handle_event("set_approval_profile", %{"_id" => id, "profile_id" => raw}, socket) do
+    request = find_request(socket, id)
+
+    with %{status: :pending} <- request,
+         {:ok, profile} <- normalize_profile(raw, profile_kind(request)) do
       {:noreply,
        assign(
          socket,
          :approval_profiles,
-         Map.put(socket.assigns.approval_profiles, id, String.to_existing_atom(profile))
+         Map.put(socket.assigns.approval_profiles, id, profile.id)
        )}
     else
-      {:noreply, socket}
+      _ -> {:noreply, socket}
     end
+  end
+
+  def handle_event("set_approval_profile", %{"_id" => id, "profile" => raw}, socket) do
+    handle_event("set_approval_profile", %{"_id" => id, "profile_id" => raw}, socket)
   end
 
   def handle_event("deny", %{"_id" => id, "reason" => reason}, socket) do
@@ -165,7 +183,15 @@ defmodule CinderWeb.RequestsLive do
      socket
      |> assign(selected: MapSet.new())
      |> start_async(:approve_selected, fn ->
-       bulk(reqs, &Requests.approve_request(&1, admin, profiles[to_string(&1.id)]))
+       bulk(reqs, fn request ->
+         with {:ok, profile} <-
+                normalize_profile(
+                  to_string(profiles[to_string(request.id)]),
+                  profile_kind(request)
+                ) do
+           Requests.approve_request(request, admin, profile)
+         end
+       end)
      end)}
   end
 
@@ -220,7 +246,8 @@ defmodule CinderWeb.RequestsLive do
      assign(socket,
        requests: requests,
        selected: selected,
-       approval_profiles: approval_profiles(requests, socket.assigns.approval_profiles)
+       approval_profiles:
+         approval_profiles(requests, socket.assigns.profiles, socket.assigns.approval_profiles)
      )}
   end
 
@@ -233,12 +260,12 @@ defmodule CinderWeb.RequestsLive do
     if MapSet.member?(set, id), do: MapSet.delete(set, id), else: MapSet.put(set, id)
   end
 
-  defp approval_profiles(requests, current \\ %{}) do
+  defp approval_profiles(requests, profiles, current \\ %{}) do
     requests
     |> Enum.filter(&(&1.status == :pending))
     |> Map.new(fn request ->
       id = to_string(request.id)
-      {id, Map.get(current, id, request.proposed_media_profile || :standard)}
+      {id, Map.get(current, id, default_profile_id(profiles, request))}
     end)
   end
 
@@ -383,8 +410,9 @@ defmodule CinderWeb.RequestsLive do
               </label>
               <.media_profile_select
                 id={"approval-profile-#{r.id}"}
-                name="profile"
+                name="profile_id"
                 value={@approval_profiles[to_string(r.id)]}
+                profiles={profiles_for(@profiles, r)}
                 include_auto={false}
                 class="select select-sm w-full sm:w-auto"
               />

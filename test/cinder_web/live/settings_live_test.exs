@@ -53,6 +53,7 @@ defmodule CinderWeb.SettingsLiveTest do
     # The remove-after-import toggle lives on /settings (Library section).
     assert html =~ ~s(name="move_on_import")
     assert html =~ "Save settings"
+    assert has_element?(lv, ~s(a[href="/settings/profiles"]), "Media profiles")
     refute has_element?(lv, ".setup-section-help")
     refute has_element?(lv, "[data-setup-step]")
     refute has_element?(lv, "[data-setup-optional]")

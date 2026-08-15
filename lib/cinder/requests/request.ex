@@ -70,8 +70,15 @@ defmodule Cinder.Requests.Request do
 
   def status_changeset(request, attrs) do
     request
-    |> cast(attrs, [:status, :denial_reason, :approved_by_id])
+    |> cast(attrs, [
+      :status,
+      :denial_reason,
+      :approved_by_id,
+      :proposed_media_profile,
+      :proposed_profile_id
+    ])
     |> validate_required([:status])
+    |> foreign_key_constraint(:proposed_profile_id)
     # reopen_request/2 moves a denied row back to :pending, which can collide on the partial
     # requests_pending_unique index; map that to {:error, changeset} rather than raising. Harmless
     # for approve/deny, which move to non-pending statuses the partial index ignores.

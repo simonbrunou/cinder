@@ -18,6 +18,52 @@ defmodule CinderWeb.RequestHelpers do
   alias Cinder.Catalog
   alias Cinder.Requests
 
+  def normalize_profile(nil, _kind), do: {:ok, nil}
+  def normalize_profile("auto", _kind), do: {:ok, nil}
+
+  def normalize_profile(legacy, kind)
+      when legacy in ["standard", "anime"] and kind in [:movies, :tv] do
+    handling = String.to_existing_atom(legacy)
+
+    case default_for_handling(Catalog.list_profiles(kind), handling) do
+      nil -> {:error, :invalid_media_profile}
+      profile -> {:ok, profile}
+    end
+  end
+
+  def normalize_profile(raw, kind) when is_binary(raw) and kind in [:movies, :tv] do
+    with {id, ""} <- Integer.parse(raw),
+         %{kind: ^kind} = profile <- Catalog.get_profile(id) do
+      {:ok, profile}
+    else
+      _ -> {:error, :invalid_media_profile}
+    end
+  end
+
+  def normalize_profile(_raw, _kind), do: {:error, :invalid_media_profile}
+
+  def profile_kind(%{target_type: "movie"}), do: :movies
+  def profile_kind(_request), do: :tv
+
+  def profiles_for(profiles, request) do
+    kind = profile_kind(request)
+    Enum.filter(profiles, &(&1.kind == kind))
+  end
+
+  def default_profile_id(profiles, request) do
+    Map.get(request, :proposed_profile_id) ||
+      case default_for_handling(profiles_for(profiles, request), :standard) do
+        nil -> nil
+        profile -> profile.id
+      end
+  end
+
+  defp default_for_handling(profiles, handling) do
+    profiles
+    |> Enum.filter(&(&1.handling == handling))
+    |> Enum.min_by(& &1.id, fn -> nil end)
+  end
+
   @doc "Starts the off-process `Requests.create_request/2` call behind a movie's Add form."
   def add(socket, movie, preferred, profile) do
     user = socket.assigns.current_scope.user
@@ -30,7 +76,8 @@ defmodule CinderWeb.RequestHelpers do
       poster_path: movie.poster_path,
       original_language: movie.original_language,
       preferred_language: preferred,
-      proposed_media_profile: profile
+      proposed_profile_id: profile && profile.id,
+      proposed_media_profile: profile && profile.handling
     }
 
     start_async(socket, {:add, movie.tmdb_id, movie.title}, fn ->
