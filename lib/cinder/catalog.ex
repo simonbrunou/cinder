@@ -99,7 +99,7 @@ defmodule Cinder.Catalog do
   defdelegate create_profile(attrs), to: Profiles
   defdelegate update_profile(profile, attrs), to: Profiles
   defdelegate delete_profile(profile), to: Profiles
-  defdelegate assign_profile(title, profile), to: Profiles
+  defdelegate assign_profile(title, profile, opts \\ []), to: Profiles
 
   @doc "Marks or clears the anime search-time hold; see `Cinder.Catalog.MediaProfiles`."
   defdelegate set_anime_hold(title, reason), to: MediaProfiles
@@ -1140,7 +1140,7 @@ defmodule Cinder.Catalog do
           create_attrs =
             info
             |> Map.take(Movie.creation_fields())
-            |> Map.merge(Map.take(attrs, [:preferred_language, :media_profile]))
+            |> Map.merge(Map.take(attrs, [:preferred_language, :media_profile, :profile_id]))
 
           {:ok, %{attrs: create_attrs, aliases: aliases}}
         end
@@ -1230,8 +1230,11 @@ defmodule Cinder.Catalog do
   and monitoring changes share one transaction without broadcasting mid-transaction.
   """
   def apply_confirmed_media(media, profile, preferred) do
-    pre_request_profile = media.media_profile
+    apply_confirmed_media(media, profile, preferred, media.media_profile)
+  end
 
+  @doc false
+  def apply_confirmed_media(media, profile, preferred, pre_request_profile) do
     with {:ok, media} <- apply_requester_language(media, preferred, pre_request_profile) do
       apply_confirmed_profile(media, profile)
     end

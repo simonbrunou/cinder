@@ -114,9 +114,8 @@ defmodule CinderWeb.ProfilesLive do
   end
 
   defp profile(socket, raw) when is_binary(raw) do
-    with {id, ""} <- Integer.parse(raw) do
-      Enum.find(socket.assigns.profiles, &(&1.id == id))
-    else
+    case Integer.parse(raw) do
+      {id, ""} -> Enum.find(socket.assigns.profiles, &(&1.id == id))
       _ -> nil
     end
   end
@@ -249,6 +248,14 @@ defmodule CinderWeb.ProfilesLive do
                 label={gettext("Library path")}
                 placeholder={gettext("Use existing library root")}
               />
+              <p
+                :for={{:base, error} <- @form.source.errors}
+                class="flex items-center gap-1 text-sm text-error"
+                role="alert"
+              >
+                <.icon name="hero-exclamation-circle" class="size-4 shrink-0" />
+                {translate_error(error)}
+              </p>
               <.button type="submit" variant="primary" phx-disable-with={gettext("Saving…")}>
                 {gettext("Save profile")}
               </.button>

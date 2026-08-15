@@ -25,7 +25,7 @@ defmodule CinderWeb.RequestHelpers do
       when legacy in ["standard", "anime"] and kind in [:movies, :tv] do
     handling = String.to_existing_atom(legacy)
 
-    case Enum.find(Catalog.list_profiles(kind), &(&1.handling == handling)) do
+    case default_for_handling(Catalog.list_profiles(kind), handling) do
       nil -> {:error, :invalid_media_profile}
       profile -> {:ok, profile}
     end
@@ -52,10 +52,16 @@ defmodule CinderWeb.RequestHelpers do
 
   def default_profile_id(profiles, request) do
     Map.get(request, :proposed_profile_id) ||
-      case Enum.find(profiles_for(profiles, request), &(&1.handling == :standard)) do
+      case default_for_handling(profiles_for(profiles, request), :standard) do
         nil -> nil
         profile -> profile.id
       end
+  end
+
+  defp default_for_handling(profiles, handling) do
+    profiles
+    |> Enum.filter(&(&1.handling == handling))
+    |> Enum.min_by(& &1.id, fn -> nil end)
   end
 
   @doc "Starts the off-process `Requests.create_request/2` call behind a movie's Add form."

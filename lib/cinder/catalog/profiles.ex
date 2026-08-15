@@ -66,16 +66,19 @@ defmodule Cinder.Catalog.Profiles do
     end
   end
 
-  def assign_profile(%Movie{} = movie, nil), do: update_title(movie, nil, :auto)
-  def assign_profile(%Series{} = series, nil), do: update_title(series, nil, :auto)
+  def assign_profile(%Movie{} = movie, nil, opts), do: update_title(movie, nil, :auto, opts)
+  def assign_profile(%Series{} = series, nil, opts), do: update_title(series, nil, :auto, opts)
 
-  def assign_profile(%Movie{} = movie, %Profile{id: id}), do: assign_title(movie, id, :movies)
-  def assign_profile(%Series{} = series, %Profile{id: id}), do: assign_title(series, id, :tv)
+  def assign_profile(%Movie{} = movie, %Profile{id: id}, opts),
+    do: assign_title(movie, id, :movies, opts)
 
-  defp assign_title(title, id, expected_kind) do
+  def assign_profile(%Series{} = series, %Profile{id: id}, opts),
+    do: assign_title(series, id, :tv, opts)
+
+  defp assign_title(title, id, expected_kind, opts) do
     case Repo.get(Profile, id) do
       %Profile{kind: ^expected_kind} = profile ->
-        update_title(title, profile.id, profile.handling)
+        update_title(title, profile.id, profile.handling, opts)
 
       %Profile{} ->
         {:error, :wrong_profile_kind}
@@ -116,17 +119,19 @@ defmodule Cinder.Catalog.Profiles do
     )
   end
 
-  defp update_title(title, profile_id, handling) do
+  defp update_title(title, profile_id, handling, opts) do
     result =
       title
       |> Ecto.Changeset.change(profile_id: profile_id, media_profile: handling)
       |> Ecto.Changeset.foreign_key_constraint(:profile_id)
       |> Repo.update()
 
-    case result do
-      {:ok, %Movie{} = movie} -> Catalog.broadcast({:movie_updated, movie})
-      {:ok, %Series{} = series} -> Catalog.broadcast_series(series.id)
-      _error -> :ok
+    if Keyword.get(opts, :publish, true) do
+      case result do
+        {:ok, %Movie{} = movie} -> Catalog.broadcast({:movie_updated, movie})
+        {:ok, %Series{} = series} -> Catalog.broadcast_series(series.id)
+        _error -> :ok
+      end
     end
 
     result

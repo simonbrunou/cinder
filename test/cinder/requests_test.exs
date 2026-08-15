@@ -125,21 +125,40 @@ defmodule Cinder.RequestsTest do
     assert Catalog.get_movie_by_tmdb_id(@attrs.target_id) == nil
   end
 
-  test "a confirmed profile only replaces Auto on an existing movie" do
+  test "approval atomically replaces an existing movie's named profile and handling" do
     user = user_fixture()
     admin = admin_fixture()
+    standard = Enum.find(Catalog.list_profiles(:movies), &(&1.handling == :standard))
+    anime = Enum.find(Catalog.list_profiles(:movies), &(&1.handling == :anime))
     {:ok, movie} = Catalog.add_movie(%{tmdb_id: 603, title: "Existing"})
 
     {:ok, request} = Requests.create_request(user, @attrs)
-    assert {:ok, _} = Requests.approve_request(request, admin, :anime)
+    assert {:ok, _} = Requests.approve_request(request, admin, anime)
     assert Repo.reload!(movie).media_profile == :anime
+    assert Repo.reload!(movie).profile_id == anime.id
 
     {:ok, explicit} = Catalog.add_movie(%{tmdb_id: 604, title: "Explicit"})
-    {:ok, explicit} = Catalog.set_media_profile(explicit, :standard)
-    attrs = Map.put(@attrs, :target_id, 604)
+    {:ok, explicit} = Catalog.assign_profile(explicit, standard)
+    attrs = @attrs |> Map.put(:target_id, 604) |> Map.put(:preferred_language, "french")
     {:ok, request} = Requests.create_request(user, attrs)
-    assert {:ok, _} = Requests.approve_request(request, admin, :anime)
-    assert Repo.reload!(explicit).media_profile == :standard
+    Catalog.subscribe()
+    assert {:ok, _} = Requests.approve_request(request, admin, anime)
+
+    explicit = Repo.reload!(explicit)
+    assert explicit.media_profile == :anime
+    assert explicit.profile_id == anime.id
+    assert explicit.preferred_language == "french"
+
+    anime_id = anime.id
+    explicit_id = explicit.id
+
+    assert_receive {:movie_updated,
+                    %{id: ^explicit_id, profile_id: ^anime_id, media_profile: :anime}}
+
+    approved = Repo.reload!(request)
+    assert approved.status == :approved
+    assert approved.proposed_media_profile == :anime
+    assert approved.proposed_profile_id == anime.id
   end
 
   test "approving a request for an existing PARKED movie is status-neutral: fills the pick, doesn't re-queue" do
@@ -612,9 +631,11 @@ defmodule Cinder.RequestsTest do
       assert Cinder.Catalog.get_series_by_tmdb_id(1399) == nil
     end
 
-    test "an explicit season proposal is carried and only replaces Auto" do
+    test "an explicit season proposal replaces the existing named profile atomically" do
       user = user_fixture()
       admin = admin_fixture()
+      standard = Enum.find(Catalog.list_profiles(:tv), &(&1.handling == :standard))
+      anime = Enum.find(Catalog.list_profiles(:tv), &(&1.handling == :anime))
 
       assert {:ok, series} =
                Cinder.Catalog.add_series(1399,
@@ -624,14 +645,18 @@ defmodule Cinder.RequestsTest do
 
       attrs = Map.put(season_attrs(), :proposed_media_profile, :anime)
       {:ok, request} = Requests.create_request(user, attrs)
-      assert {:ok, _} = Requests.approve_request(request, admin, :anime)
+      assert {:ok, _} = Requests.approve_request(request, admin, anime)
       assert Repo.reload!(series).media_profile == :anime
+      assert Repo.reload!(series).profile_id == anime.id
 
-      assert {:ok, explicit} = Cinder.Catalog.set_media_profile(Repo.reload!(series), :standard)
+      assert {:ok, explicit} = Cinder.Catalog.assign_profile(Repo.reload!(series), standard)
       attrs = Map.put(season_attrs(), :season_number, 1)
       {:ok, request} = Requests.create_request(user, attrs)
-      assert {:ok, _} = Requests.approve_request(request, admin, :anime)
-      assert Repo.reload!(explicit).media_profile == :standard
+      assert {:ok, _} = Requests.approve_request(request, admin, anime)
+
+      explicit = Repo.reload!(explicit)
+      assert explicit.media_profile == :anime
+      assert explicit.profile_id == anime.id
     end
   end
 
