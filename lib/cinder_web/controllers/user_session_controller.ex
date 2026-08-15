@@ -15,8 +15,12 @@ defmodule CinderWeb.UserSessionController do
   end
 
   # email + password login
-  defp create(conn, %{"user" => user_params}, info) do
-    %{"email" => email, "password" => password} = user_params
+  defp create(
+         conn,
+         %{"user" => %{"email" => email, "password" => password} = user_params},
+         info
+       )
+       when is_binary(email) and is_binary(password) do
     ip = ip_string(conn)
 
     cond do
@@ -46,6 +50,11 @@ defmodule CinderWeb.UserSessionController do
         # The failed attempt was already counted by check_and_register at the gate above.
         invalid_credentials(conn, email)
     end
+  end
+
+  defp create(conn, _params, _info) do
+    IpRateLimiter.check_and_register(@ip_bucket, ip_string(conn))
+    invalid_credentials(conn, "")
   end
 
   # The pair guard keys case-insensitively — an attacker case-rotating the email must land

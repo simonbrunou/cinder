@@ -331,6 +331,28 @@ defmodule Cinder.CatalogTest do
     end
   end
 
+  describe "find_or_create_at_available/2" do
+    test "refuses to adopt over a completed acquisition" do
+      attrs = %{tmdb_id: 7003, title: "M"}
+
+      movie =
+        movie_fixture(%{
+          tmdb_id: attrs.tmdb_id,
+          title: attrs.title,
+          status: :downloaded,
+          download_id: "active-download",
+          download_protocol: :torrent,
+          content_path: "/downloads/M.mkv"
+        })
+
+      assert {:error, :acquisition_in_progress} =
+               Catalog.find_or_create_at_available(attrs, "/library/M.mkv")
+
+      assert %Movie{status: :downloaded, file_path: nil, download_id: "active-download"} =
+               Repo.reload!(movie)
+    end
+  end
+
   describe "apply_confirmed_media/3" do
     test "an existing :auto movie approved as Anime with a non-default pick adopts it (fill-if-default)" do
       {:ok, movie} = Catalog.add_movie(@attrs)

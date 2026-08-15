@@ -253,23 +253,27 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
   end
 
   defp fetch(link) do
-    with {:ok, uri} <- validate_url(link) do
-      fetch_subtitle(uri, @max_redirects)
+    with {:ok, target} <- validate_url(link) do
+      fetch_subtitle(target, @max_redirects)
     end
   end
 
-  defp fetch_subtitle(uri, redirects_left) do
-    request =
-      [method: :get, url: uri, redirect: false]
+  defp fetch_subtitle(target, redirects_left) do
+    options =
+      [method: :get, redirect: false]
       |> Keyword.merge(@data_timeout)
       |> Keyword.merge(untrusted_req_options())
       |> Keyword.put(:retry, false)
       |> Keyword.put(:redirect, false)
+
+    request =
+      target
+      |> HTTPPolicy.request_options(options)
       |> Req.new()
 
     case HTTPPolicy.bounded_request(request, @max_subtitle_bytes) do
       {:ok, %{status: status} = response} when status in [301, 302, 303, 307, 308] ->
-        follow_subtitle_redirect(uri, response, redirects_left)
+        follow_subtitle_redirect(target.uri, response, redirects_left)
 
       result ->
         result
@@ -303,18 +307,21 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitles do
 
   defp validate_url(url) do
     case cfg(:url_resolver) do
-      resolver when is_function(resolver, 1) -> HTTPPolicy.validate_untrusted_url(url, resolver)
-      nil -> HTTPPolicy.validate_untrusted_url(url)
+      resolver when is_function(resolver, 1) ->
+        HTTPPolicy.untrusted_request_target(url, resolver)
+
+      nil ->
+        HTTPPolicy.untrusted_request_target(url)
     end
   end
 
   defp resolve_redirect(current, location) do
     case cfg(:url_resolver) do
       resolver when is_function(resolver, 1) ->
-        HTTPPolicy.resolve_redirect(current, location, resolver)
+        HTTPPolicy.untrusted_redirect_target(current, location, resolver)
 
       nil ->
-        HTTPPolicy.resolve_redirect(current, location, :untrusted)
+        HTTPPolicy.untrusted_redirect_target(current, location)
     end
   end
 

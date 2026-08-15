@@ -317,12 +317,9 @@ defmodule Cinder.Catalog do
   # `cancel_movie/2`'s own `do_cancel_txn/2` (see the bypass note below), but the pair itself is a
   # genuine, intentional business rule, so it is listed here too rather than only tolerated.
   #
-  # Bypasses NOT covered by this matrix (pre-existing, not introduced here): cancel_movie/1's
-  # do_cancel_txn/1, abort_upgrade/2, and Cinder.Catalog.ReleaseVerification's hold/reject/retry
-  # writers build `Movie.transition_changeset/2` directly and write via `Repo.update`/`update_all`
-  # without ever calling transition/2,3 — they already carry their own guard (a pattern-matched
-  # function head or a compare-and-swap on other fields), so they are unaffected by (and not
-  # gated by) this matrix.
+  # Bypasses NOT covered by this matrix: abort_upgrade/2 and Cinder.Catalog.ReleaseVerification's
+  # hold/reject/retry writers build `Movie.transition_changeset/2` directly. cancel_movie/2 uses
+  # guarded_movie_transition/3, enforcing its function-head guard against the current database row.
   @movie_transitions %{
     searching: [:downloading, :no_match, :search_failed, :cancelled],
     downloading: [:downloaded, :import_failed, :requested, :cancelled],
@@ -871,17 +868,21 @@ defmodule Cinder.Catalog do
 
   defp do_cancel_txn(movie, actor) do
     Repo.transaction(fn ->
-      case movie
-           |> Movie.transition_changeset(%{status: :cancelled, release_policy_snapshot: nil})
-           |> Repo.update() do
+      case guarded_movie_transition(
+             movie,
+             %{status: :cancelled, release_policy_snapshot: nil},
+             movie.status
+           ) do
         {:ok, updated} ->
-          updated = Repo.get!(Movie, updated.id)
           intent_ids = Download.fence_movie_cleanup(updated)
           Audit.log_or_rollback(actor, :cancel_movie, updated, %{from: movie.status})
           {updated, intent_ids}
 
-        {:error, changeset} ->
-          Repo.rollback(changeset)
+        {:error, :stale_status} ->
+          Repo.rollback(:not_cancellable)
+
+        {:error, reason} ->
+          Repo.rollback(reason)
       end
     end)
   end
@@ -1193,9 +1194,14 @@ defmodule Cinder.Catalog do
        when existing_path not in [nil, ""],
        do: {:error, :already_has_file}
 
+  defp transition_existing_movie_to_available(%Movie{status: status}, _file_path)
+       when status in [:searching, :downloading, :downloaded, :upgrading],
+       do: {:error, :acquisition_in_progress}
+
   defp transition_existing_movie_to_available(%Movie{} = movie, file_path) do
-    case transition(movie, %{status: :available, file_path: file_path}) do
+    case transition(movie, %{status: :available, file_path: file_path}, expect: movie.status) do
       {:ok, updated} -> {:ok, updated, :existing}
+      {:error, :stale_status} -> {:error, :acquisition_in_progress}
       {:error, reason} -> {:error, reason}
     end
   end

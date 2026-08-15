@@ -54,6 +54,19 @@ defmodule Cinder.CatalogAdminTest do
       assert Repo.get!(Movie, movie.id).status == :available
     end
 
+    test "a stale active snapshot cannot cancel a movie that became available" do
+      actor = Cinder.AccountsFixtures.admin_fixture()
+      stale = movie_fixture()
+
+      assert {:ok, available} =
+               Catalog.transition(stale, %{status: :available, file_path: "/library/movie.mkv"},
+                 expect: :requested
+               )
+
+      assert {:error, :not_cancellable} = Catalog.cancel_movie(stale, actor)
+      assert %Movie{status: :available, file_path: "/library/movie.mkv"} = Repo.reload!(available)
+    end
+
     test "writes an admin_audit row for the cancel (in-txn)" do
       actor = Cinder.AccountsFixtures.admin_fixture()
       movie = movie_fixture()

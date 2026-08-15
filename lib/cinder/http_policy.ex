@@ -7,18 +7,8 @@ defmodule Cinder.HTTPPolicy do
   `validate_untrusted_host/2` does the same address check for a non-HTTP endpoint (e.g. a
   torrent tracker's `udp://` announce URL) that can't go through the HTTP-specific validator.
 
-  DNS validation rejects unsafe answer sets, but does not pin the transport to the checked
-  answer, so a rebinding DNS answer between this check and Finch/Mint's own (independent)
-  resolution at connect time is a residual TOCTOU window.
-  # ponytail: closing this needs pinning the outbound socket to the exact validated IP while
-  # keeping the original hostname for the Host header/SNI — Req 0.6.2 supports the mechanism
-  # (`connect_options: [hostname: original_host]` plus rewriting the request URL's host to the
-  # resolved IP; Mint dials the IP, `:hostname` overrides Host/SNI/cert-name checks). It isn't a
-  # small diff here: every caller in this codebase builds its request from a URL that `Req.Test`
-  # also dispatches on by host, so pinning to a raw IP would break every host-based
-  # cross-origin/redirect assertion in the download-client test suites, not just add a check.
-  # Ceiling: egress ACLs (deny loopback/RFC1918/link-local/cloud-metadata from Cinder's host) are
-  # the real mitigation and are already the top recommendation for this finding.
+  Remote-supplied HTTP URLs are converted to request targets that pin the transport to the
+  validated address while preserving the original hostname for Host, SNI, and certificate checks.
   """
 
   @max_log_bytes 500
@@ -26,6 +16,11 @@ defmodule Cinder.HTTPPolicy do
 
   @type address :: :inet.ip_address()
   @type resolver :: (String.t() -> {:ok, [address()]} | {:error, term()})
+  @type request_target :: %{
+          uri: URI.t(),
+          url: URI.t(),
+          connect_options: keyword()
+        }
 
   @doc "Returns whether two HTTP(S) URLs have the same normalized origin."
   @spec same_origin?(String.t() | URI.t(), String.t() | URI.t()) :: boolean()
@@ -85,6 +80,80 @@ defmodule Cinder.HTTPPolicy do
 
   def validate_source_url(url, _source_origin, resolver) when is_function(resolver, 1),
     do: validate_untrusted_url(url, resolver)
+
+  @doc "Builds a request target pinned to one address from the validated DNS answer set."
+  @spec untrusted_request_target(String.t() | URI.t(), resolver()) ::
+          {:ok, request_target()} | {:error, atom()}
+  def untrusted_request_target(url, resolver \\ &resolve_host/1)
+      when is_function(resolver, 1) do
+    with {:ok, uri} <- validated_uri(url),
+         {:ok, addresses} <- addresses(uri.host, resolver),
+         :ok <- validate_addresses(addresses) do
+      {:ok, pinned_target(uri, hd(addresses))}
+    end
+  end
+
+  @doc "Builds a request target, allowing an exact configured source origin to stay unpinned."
+  @spec source_request_target(String.t() | URI.t(), String.t() | nil, resolver()) ::
+          {:ok, request_target()} | {:error, atom()}
+  def source_request_target(url, source_origin, resolver \\ &resolve_host/1)
+
+  def source_request_target(%URI{} = url, source_origin, resolver)
+      when is_binary(source_origin) and is_function(resolver, 1) do
+    with {:ok, uri} <- validated_uri(url) do
+      if same_origin?(uri, source_origin),
+        do: {:ok, unpinned_target(uri)},
+        else: untrusted_request_target(uri, resolver)
+    end
+  end
+
+  def source_request_target(url, source_origin, resolver)
+      when is_binary(source_origin) and is_function(resolver, 1) do
+    case resolve_redirect(source_origin, url, :same_origin) do
+      {:ok, uri} -> {:ok, unpinned_target(uri)}
+      {:error, :cross_origin_redirect} -> untrusted_request_target(url, resolver)
+      error -> error
+    end
+  end
+
+  def source_request_target(url, _source_origin, resolver) when is_function(resolver, 1),
+    do: untrusted_request_target(url, resolver)
+
+  @doc "Resolves a redirect and pins its validated destination address."
+  @spec untrusted_redirect_target(
+          String.t() | URI.t(),
+          String.t(),
+          resolver()
+        ) :: {:ok, request_target()} | {:error, atom()}
+  def untrusted_redirect_target(current, location, resolver \\ &resolve_host/1)
+      when is_function(resolver, 1) do
+    with {:ok, current_uri} <- validated_uri(current),
+         {:ok, next_uri} <- merge_uri(current_uri, location),
+         {:ok, next_uri} <- validated_uri(next_uri),
+         :ok <- prevent_downgrade(current_uri, next_uri) do
+      untrusted_request_target(next_uri, resolver)
+    end
+  end
+
+  @doc "Applies a request target without discarding caller connection options."
+  @spec request_options(request_target(), keyword()) :: keyword()
+  def request_options(target, options) do
+    connect_options =
+      options
+      |> Keyword.get(:connect_options, [])
+      |> Keyword.merge(target.connect_options)
+
+    headers =
+      options
+      |> Keyword.get(:headers, [])
+      |> Enum.reject(fn {name, _value} -> String.downcase(to_string(name), :ascii) == "host" end)
+      |> List.insert_at(0, {"host", host_header(target.uri)})
+
+    options
+    |> Keyword.put(:url, target.url)
+    |> Keyword.put(:connect_options, connect_options)
+    |> Keyword.put(:headers, headers)
+  end
 
   @doc """
   Resolves and validates a redirect.
@@ -271,6 +340,24 @@ defmodule Cinder.HTTPPolicy do
     do: {:error, :https_downgrade}
 
   defp prevent_downgrade(_current, _next), do: :ok
+
+  defp pinned_target(uri, address) do
+    %{
+      uri: uri,
+      url: %{uri | host: address_string(address)},
+      connect_options: [hostname: uri.host]
+    }
+  end
+
+  defp unpinned_target(uri), do: %{uri: uri, url: uri, connect_options: []}
+
+  defp address_string(address), do: address |> :inet.ntoa() |> List.to_string()
+
+  defp host_header(uri) do
+    host = if String.contains?(uri.host, ":"), do: "[#{uri.host}]", else: uri.host
+    port = effective_port(uri)
+    if URI.default_port(uri.scheme) == port, do: host, else: "#{host}:#{port}"
+  end
 
   defp addresses(host, resolver) do
     case :inet.parse_address(String.to_charlist(host)) do

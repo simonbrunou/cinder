@@ -10,6 +10,29 @@ defmodule CinderWeb.UserSessionControllerTest do
   end
 
   describe "POST /users/log-in - email and password" do
+    test "malformed credentials get the generic response and count against the IP limit" do
+      previous = Application.get_env(:cinder, :ip_rate_limiting)
+      Application.put_env(:cinder, :ip_rate_limiting, true)
+      IpRateLimiter.reset()
+
+      on_exit(fn ->
+        IpRateLimiter.reset()
+
+        if is_nil(previous),
+          do: Application.delete_env(:cinder, :ip_rate_limiting),
+          else: Application.put_env(:cinder, :ip_rate_limiting, previous)
+      end)
+
+      for params <- [%{}, %{"user" => %{}}, %{"user" => %{"email" => "missing-password"}}] do
+        conn = post(build_conn(), ~p"/users/log-in", params)
+        assert redirected_to(conn) == ~p"/users/log-in"
+        assert Phoenix.Flash.get(conn.assigns.flash, :error) == "Invalid email or password"
+      end
+
+      assert [{{:login, "127.0.0.1"}, 3, _started}] =
+               :ets.lookup(:cinder_ip_attempts, {:login, "127.0.0.1"})
+    end
+
     test "counts all concurrent pair attempts atomically" do
       pair = {"203.0.113.9", "race@example.com"}
       IpRateLimiter.reset()

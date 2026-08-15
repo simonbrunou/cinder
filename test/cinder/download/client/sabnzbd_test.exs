@@ -58,7 +58,7 @@ defmodule Cinder.Download.Client.SabnzbdTest do
     stub(fn conn ->
       case conn.request_path do
         "/getnzb/1" ->
-          assert conn.host == "prowlarr"
+          assert conn.host == "93.184.216.34"
           assert conn.query_string == "apikey=k&id=9"
           Req.Test.text(conn, "nzb-bytes")
 
@@ -74,6 +74,22 @@ defmodule Cinder.Download.Client.SabnzbdTest do
 
     assert {:ok, "SABnzbd_nzo_abc"} =
              Sabnzbd.add(%{download_url: "http://prowlarr/getnzb/1?apikey=k&id=9"})
+  end
+
+  test "add/1 pins an untrusted NZB fetch to the validated address" do
+    stub(fn conn ->
+      case conn.request_path do
+        "/pinned.nzb" ->
+          assert conn.host == "93.184.216.34"
+          Req.Test.text(conn, "nzb-bytes")
+
+        "/api" ->
+          Req.Test.json(conn, %{"status" => true, "nzo_ids" => ["nzo-pinned"]})
+      end
+    end)
+
+    assert {:ok, "nzo-pinned"} =
+             Sabnzbd.add(%{download_url: "https://provider.test/pinned.nzb"})
   end
 
   test "add/1 never tells SABnzbd the URL — addfile carries file bytes, not the URL" do
