@@ -15,6 +15,7 @@ Mox.defmock(Cinder.Library.RadarrMigrationSourceMock, for: Cinder.Library.Migrat
 Mox.defmock(Cinder.Library.SonarrMigrationSourceMock, for: Cinder.Library.MigrationSource)
 Mox.defmock(Cinder.Accounts.PlexAuthMock, for: Cinder.Accounts.PlexAuth)
 Mox.defmock(Cinder.Accounts.JellyfinAuthMock, for: Cinder.Accounts.JellyfinAuth)
+Mox.defmock(Cinder.Accounts.OIDCMock, for: Cinder.Accounts.OIDC)
 Mox.defmock(Cinder.Library.FilesystemMock, for: Cinder.Library.Filesystem)
 # Import-time audio probe. Disabled in config/test.exs (`media_info: nil`, so the existing import
 # suite never shells out); the media_info tests enable it per-test via Application.put_env.

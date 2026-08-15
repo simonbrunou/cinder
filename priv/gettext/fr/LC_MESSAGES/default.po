@@ -488,7 +488,7 @@ msgstr "Refus…"
 msgid "Discover"
 msgstr "Découvrir"
 
-#: lib/cinder_web/live/user_live/login.ex:19
+#: lib/cinder_web/live/user_live/login.ex:20
 #, elixir-autogen, elixir-format
 msgid "Don't have an account?"
 msgstr "Pas encore de compte ?"
@@ -516,7 +516,7 @@ msgstr "Modifier"
 msgid "Edit email"
 msgstr "Modifier l'e-mail"
 
-#: lib/cinder_web/live/user_live/login.ex:41
+#: lib/cinder_web/live/user_live/login.ex:42
 #: lib/cinder_web/live/user_live/registration.ex:77
 #: lib/cinder_web/live/user_live/settings.ex:48
 #: lib/cinder_web/live/users_live.ex:531
@@ -613,7 +613,7 @@ msgstr "Bibliothèque"
 msgid "Live pipeline and in-flight downloads."
 msgstr "Pipeline en direct et téléchargements en cours."
 
-#: lib/cinder_web/live/user_live/login.ex:14
+#: lib/cinder_web/live/user_live/login.ex:15
 #: lib/cinder_web/live/user_live/registration.ex:42
 #: lib/cinder_web/live/user_live/registration.ex:60
 #: lib/cinder_web/user_auth.ex:426
@@ -621,12 +621,12 @@ msgstr "Pipeline en direct et téléchargements en cours."
 msgid "Log in"
 msgstr "Se connecter"
 
-#: lib/cinder_web/live/user_live/login.ex:54
+#: lib/cinder_web/live/user_live/login.ex:55
 #, elixir-autogen, elixir-format
 msgid "Log in and stay logged in"
 msgstr "Se connecter et rester connecté"
 
-#: lib/cinder_web/live/user_live/login.ex:57
+#: lib/cinder_web/live/user_live/login.ex:58
 #, elixir-autogen, elixir-format
 msgid "Log in only this time"
 msgstr "Se connecter uniquement cette fois"
@@ -836,7 +836,7 @@ msgstr "OK"
 msgid "Open menu"
 msgstr "Ouvrir le menu"
 
-#: lib/cinder_web/live/user_live/login.ex:49
+#: lib/cinder_web/live/user_live/login.ex:50
 #: lib/cinder_web/live/user_live/registration.ex:86
 #: lib/cinder_web/live/users_live.ex:535
 #, elixir-autogen, elixir-format
@@ -1135,7 +1135,7 @@ msgstr "Paramètres"
 msgid "Settings saved."
 msgstr "Paramètres enregistrés."
 
-#: lib/cinder_web/live/user_live/login.ex:23
+#: lib/cinder_web/live/user_live/login.ex:24
 #, elixir-autogen, elixir-format
 msgid "Sign up"
 msgstr "S'inscrire"
@@ -1350,7 +1350,7 @@ msgstr "Vous avez atteint votre limite de demandes. Attendez que des approbation
 msgid "close"
 msgstr "fermer"
 
-#: lib/cinder_web/live/user_live/login.ex:23
+#: lib/cinder_web/live/user_live/login.ex:24
 #, elixir-autogen, elixir-format
 msgid "for an account now."
 msgstr "dès maintenant."
@@ -1711,12 +1711,12 @@ msgstr "Aucune modification."
 msgid "Password reset. The user's sessions were ended."
 msgstr "Mot de passe réinitialisé. Les sessions de l'utilisateur ont été terminées."
 
-#: lib/cinder_web/settings_labels.ex:84
+#: lib/cinder_web/settings_labels.ex:87
 #, elixir-autogen, elixir-format
 msgid "Plex Movies library section (numeric id)"
 msgstr "Section de bibliothèque Films Plex (id numérique)"
 
-#: lib/cinder_web/settings_labels.ex:85
+#: lib/cinder_web/settings_labels.ex:88
 #, elixir-autogen, elixir-format
 msgid "Plex TV library section (numeric id)"
 msgstr "Section de bibliothèque TV Plex (id numérique)"
@@ -1863,7 +1863,7 @@ msgstr "Tout voir"
 msgid "View seasons"
 msgstr "Voir les saisons"
 
-#: lib/cinder_web/live/user_live/login.ex:17
+#: lib/cinder_web/live/user_live/login.ex:18
 #, elixir-autogen, elixir-format
 msgid "You need to log in again to perform sensitive actions on your account."
 msgstr "Vous devez vous reconnecter pour effectuer des actions sensibles sur votre compte."
@@ -2909,7 +2909,7 @@ msgstr "La session de connexion Plex a expiré. Veuillez réessayer."
 msgid "Plex sign-in was not completed. Please try again."
 msgstr "La connexion Plex n'a pas été finalisée. Veuillez réessayer."
 
-#: lib/cinder_web/live/user_live/login.ex:66
+#: lib/cinder_web/live/user_live/login.ex:67
 #, elixir-autogen, elixir-format
 msgid "Sign in with Plex"
 msgstr "Se connecter avec Plex"
@@ -2919,7 +2919,7 @@ msgstr "Se connecter avec Plex"
 msgid "Your Plex account has no email address; sign in with a password instead."
 msgstr "Votre compte Plex n'a pas d'adresse e-mail ; connectez-vous avec un mot de passe à la place."
 
-#: lib/cinder_web/live/user_live/login.ex:62
+#: lib/cinder_web/live/user_live/login.ex:63
 #, elixir-autogen, elixir-format
 msgid "or"
 msgstr "ou"
@@ -3584,7 +3584,7 @@ msgstr "Comptes"
 msgid "Applied to newly self-registered users. Enter a positive whole number; 0 or an invalid value means unlimited. Leave blank to restore the default of 10."
 msgstr "Appliqué aux utilisateurs nouvellement inscrits. Saisissez un entier positif ; 0 ou une valeur invalide signifie aucune limite. Laissez vide pour rétablir la valeur par défaut de 10."
 
-#: lib/cinder_web/settings_labels.ex:82
+#: lib/cinder_web/settings_labels.ex:85
 #, elixir-autogen, elixir-format
 msgid "Default request quota"
 msgstr "Quota de demandes par défaut"
@@ -5247,7 +5247,7 @@ msgstr "Impossible de dissocier votre compte Jellyfin. Veuillez réessayer."
 msgid "Jellyfin account"
 msgstr "Compte Jellyfin"
 
-#: lib/cinder_web/live/user_live/login.ex:89
+#: lib/cinder_web/live/user_live/login.ex:100
 #: lib/cinder_web/live/user_live/settings.ex:207
 #, elixir-autogen, elixir-format
 msgid "Jellyfin password"
@@ -5266,7 +5266,7 @@ msgstr "La connexion Jellyfin a échoué. Veuillez réessayer."
 msgid "Jellyfin sign-in is not configured."
 msgstr "La connexion Jellyfin n'est pas configurée."
 
-#: lib/cinder_web/live/user_live/login.ex:81
+#: lib/cinder_web/live/user_live/login.ex:92
 #: lib/cinder_web/live/user_live/settings.ex:199
 #, elixir-autogen, elixir-format
 msgid "Jellyfin username"
@@ -5287,7 +5287,7 @@ msgstr "Veuillez ressaisir votre mot de passe avant de lier votre compte Jellyfi
 msgid "Sign in faster next time by linking your Jellyfin account."
 msgstr "Connectez-vous plus rapidement la prochaine fois en liant votre compte Jellyfin."
 
-#: lib/cinder_web/live/user_live/login.ex:94
+#: lib/cinder_web/live/user_live/login.ex:105
 #, elixir-autogen, elixir-format
 msgid "Sign in with Jellyfin"
 msgstr "Se connecter avec Jellyfin"
@@ -5485,11 +5485,6 @@ msgstr "Facultatif. Connectez OpenSubtitles pour télécharger les sous-titres m
 #, elixir-autogen, elixir-format
 msgid "Optional. Send approval, availability, and failure alerts through Discord, a generic webhook, or email (SMTP). You can configure this later."
 msgstr "Facultatif. Envoyez les alertes d’approbation, de disponibilité et d’échec via Discord, un webhook générique ou l’e-mail (SMTP). Vous pourrez configurer cette section plus tard."
-
-#: lib/cinder_web/components/settings_components.ex:623
-#, elixir-autogen, elixir-format
-msgid "Optional. Set the default request quota for newly registered users. Leave it blank to use Cinder's default."
-msgstr "Facultatif. Définissez le quota de demandes par défaut des nouveaux utilisateurs. Laissez ce champ vide pour utiliser la valeur par défaut de Cinder."
 
 #: lib/cinder_web/components/settings_components.ex:638
 #, elixir-autogen, elixir-format
@@ -6010,3 +6005,33 @@ msgstr "La détection des doublons de séries est activée ; désactivez-la ou e
 #, elixir-autogen, elixir-format
 msgid "Warning"
 msgstr "Avertissement"
+
+#: lib/cinder_web/settings_labels.ex:83
+#, elixir-autogen, elixir-format
+msgid "OpenID Connect client ID"
+msgstr "ID client OpenID Connect"
+
+#: lib/cinder_web/settings_labels.ex:84
+#, elixir-autogen, elixir-format
+msgid "OpenID Connect client secret"
+msgstr "Secret client OpenID Connect"
+
+#: lib/cinder_web/settings_labels.ex:82
+#, elixir-autogen, elixir-format
+msgid "OpenID Connect issuer URL"
+msgstr "URL de l’émetteur OpenID Connect"
+
+#: lib/cinder_web/controllers/oidc_auth_controller.ex:47
+#, elixir-autogen, elixir-format
+msgid "OpenID sign-in failed. Please try again."
+msgstr "La connexion OpenID a échoué. Veuillez réessayer."
+
+#: lib/cinder_web/components/settings_components.ex:623
+#, elixir-autogen, elixir-format
+msgid "Optional. Configure OpenID Connect sign-in and the default request quota for newly registered users. Register the callback URL shown in the operating guide with your identity provider."
+msgstr "Facultatif. Configurez la connexion OpenID Connect et le quota de demandes par défaut des nouveaux utilisateurs. Enregistrez auprès de votre fournisseur d’identité l’URL de rappel indiquée dans le guide d’exploitation."
+
+#: lib/cinder_web/live/user_live/login.ex:77
+#, elixir-autogen, elixir-format
+msgid "Sign in with OpenID"
+msgstr "Se connecter avec OpenID"

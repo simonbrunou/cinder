@@ -488,7 +488,7 @@ msgstr ""
 msgid "Discover"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/login.ex:19
+#: lib/cinder_web/live/user_live/login.ex:20
 #, elixir-autogen, elixir-format
 msgid "Don't have an account?"
 msgstr ""
@@ -516,7 +516,7 @@ msgstr ""
 msgid "Edit email"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/login.ex:41
+#: lib/cinder_web/live/user_live/login.ex:42
 #: lib/cinder_web/live/user_live/registration.ex:77
 #: lib/cinder_web/live/user_live/settings.ex:48
 #: lib/cinder_web/live/users_live.ex:531
@@ -613,7 +613,7 @@ msgstr ""
 msgid "Live pipeline and in-flight downloads."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/login.ex:14
+#: lib/cinder_web/live/user_live/login.ex:15
 #: lib/cinder_web/live/user_live/registration.ex:42
 #: lib/cinder_web/live/user_live/registration.ex:60
 #: lib/cinder_web/user_auth.ex:426
@@ -621,12 +621,12 @@ msgstr ""
 msgid "Log in"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/login.ex:54
+#: lib/cinder_web/live/user_live/login.ex:55
 #, elixir-autogen, elixir-format
 msgid "Log in and stay logged in"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/login.ex:57
+#: lib/cinder_web/live/user_live/login.ex:58
 #, elixir-autogen, elixir-format
 msgid "Log in only this time"
 msgstr ""
@@ -836,7 +836,7 @@ msgstr ""
 msgid "Open menu"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/login.ex:49
+#: lib/cinder_web/live/user_live/login.ex:50
 #: lib/cinder_web/live/user_live/registration.ex:86
 #: lib/cinder_web/live/users_live.ex:535
 #, elixir-autogen, elixir-format
@@ -1135,7 +1135,7 @@ msgstr ""
 msgid "Settings saved."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/login.ex:23
+#: lib/cinder_web/live/user_live/login.ex:24
 #, elixir-autogen, elixir-format
 msgid "Sign up"
 msgstr ""
@@ -1350,7 +1350,7 @@ msgstr ""
 msgid "close"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/login.ex:23
+#: lib/cinder_web/live/user_live/login.ex:24
 #, elixir-autogen, elixir-format
 msgid "for an account now."
 msgstr ""
@@ -1711,12 +1711,12 @@ msgstr ""
 msgid "Password reset. The user's sessions were ended."
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:84
+#: lib/cinder_web/settings_labels.ex:87
 #, elixir-autogen, elixir-format
 msgid "Plex Movies library section (numeric id)"
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:85
+#: lib/cinder_web/settings_labels.ex:88
 #, elixir-autogen, elixir-format
 msgid "Plex TV library section (numeric id)"
 msgstr ""
@@ -1863,7 +1863,7 @@ msgstr ""
 msgid "View seasons"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/login.ex:17
+#: lib/cinder_web/live/user_live/login.ex:18
 #, elixir-autogen, elixir-format
 msgid "You need to log in again to perform sensitive actions on your account."
 msgstr ""
@@ -2909,7 +2909,7 @@ msgstr ""
 msgid "Plex sign-in was not completed. Please try again."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/login.ex:66
+#: lib/cinder_web/live/user_live/login.ex:67
 #, elixir-autogen, elixir-format
 msgid "Sign in with Plex"
 msgstr ""
@@ -2919,7 +2919,7 @@ msgstr ""
 msgid "Your Plex account has no email address; sign in with a password instead."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/login.ex:62
+#: lib/cinder_web/live/user_live/login.ex:63
 #, elixir-autogen, elixir-format
 msgid "or"
 msgstr ""
@@ -3584,7 +3584,7 @@ msgstr ""
 msgid "Applied to newly self-registered users. Enter a positive whole number; 0 or an invalid value means unlimited. Leave blank to restore the default of 10."
 msgstr ""
 
-#: lib/cinder_web/settings_labels.ex:82
+#: lib/cinder_web/settings_labels.ex:85
 #, elixir-autogen, elixir-format
 msgid "Default request quota"
 msgstr ""
@@ -5239,7 +5239,7 @@ msgstr ""
 msgid "Jellyfin account"
 msgstr ""
 
-#: lib/cinder_web/live/user_live/login.ex:89
+#: lib/cinder_web/live/user_live/login.ex:100
 #: lib/cinder_web/live/user_live/settings.ex:207
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Jellyfin password"
@@ -5258,7 +5258,7 @@ msgstr ""
 msgid "Jellyfin sign-in is not configured."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/login.ex:81
+#: lib/cinder_web/live/user_live/login.ex:92
 #: lib/cinder_web/live/user_live/settings.ex:199
 #, elixir-autogen, elixir-format
 msgid "Jellyfin username"
@@ -5279,7 +5279,7 @@ msgstr ""
 msgid "Sign in faster next time by linking your Jellyfin account."
 msgstr ""
 
-#: lib/cinder_web/live/user_live/login.ex:94
+#: lib/cinder_web/live/user_live/login.ex:105
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Sign in with Jellyfin"
 msgstr ""
@@ -5476,11 +5476,6 @@ msgstr ""
 #: lib/cinder_web/components/settings_components.ex:617
 #, elixir-autogen, elixir-format
 msgid "Optional. Send approval, availability, and failure alerts through Discord, a generic webhook, or email (SMTP). You can configure this later."
-msgstr ""
-
-#: lib/cinder_web/components/settings_components.ex:623
-#, elixir-autogen, elixir-format
-msgid "Optional. Set the default request quota for newly registered users. Leave it blank to use Cinder's default."
 msgstr ""
 
 #: lib/cinder_web/components/settings_components.ex:638
@@ -6001,4 +5996,34 @@ msgstr ""
 #: lib/cinder_web/components/core_components.ex:818
 #, elixir-autogen, elixir-format, fuzzy
 msgid "Warning"
+msgstr ""
+
+#: lib/cinder_web/settings_labels.ex:83
+#, elixir-autogen, elixir-format
+msgid "OpenID Connect client ID"
+msgstr ""
+
+#: lib/cinder_web/settings_labels.ex:84
+#, elixir-autogen, elixir-format
+msgid "OpenID Connect client secret"
+msgstr ""
+
+#: lib/cinder_web/settings_labels.ex:82
+#, elixir-autogen, elixir-format
+msgid "OpenID Connect issuer URL"
+msgstr ""
+
+#: lib/cinder_web/controllers/oidc_auth_controller.ex:47
+#, elixir-autogen, elixir-format, fuzzy
+msgid "OpenID sign-in failed. Please try again."
+msgstr ""
+
+#: lib/cinder_web/components/settings_components.ex:623
+#, elixir-autogen, elixir-format
+msgid "Optional. Configure OpenID Connect sign-in and the default request quota for newly registered users. Register the callback URL shown in the operating guide with your identity provider."
+msgstr ""
+
+#: lib/cinder_web/live/user_live/login.ex:77
+#, elixir-autogen, elixir-format, fuzzy
+msgid "Sign in with OpenID"
 msgstr ""

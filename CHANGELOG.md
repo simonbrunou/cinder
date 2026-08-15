@@ -6,6 +6,16 @@ All notable changes to Cinder are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Plex watchlist TV-season sync.** A watchlisted show now expands through TMDB into one request
+  for every currently known numbered season, preserving Cinder's per-season model. Each request is
+  still made as that Plex user, so their quota and the household approval gate apply independently;
+  specials remain an explicit manual choice, and seasons that could not be requested are retried.
+- **Generic OpenID Connect sign-in.** An admin can configure one confidential OIDC provider in
+  `/settings`; Cinder uses discovery plus authorization code, state, nonce, PKCE, and signed-token
+  validation. A provider-verified email may attach an existing account, while a new identity lands
+  as an inactive regular user awaiting approval and can never bootstrap the first admin.
+
 ## [1.1.0] - 2026-08-14
 
 ### Added

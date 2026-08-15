@@ -108,6 +108,32 @@ defmodule CinderWeb.UserLive.LoginTest do
     end
   end
 
+  describe "Sign in with OpenID" do
+    test "is shown only when the three OIDC settings are configured", %{conn: conn} do
+      original = Application.get_env(:cinder, Cinder.Accounts.OIDC)
+
+      Application.put_env(:cinder, Cinder.Accounts.OIDC,
+        issuer_url: "https://id.example.com",
+        client_id: "cinder",
+        client_secret: "secret"
+      )
+
+      on_exit(fn -> Application.put_env(:cinder, Cinder.Accounts.OIDC, original) end)
+
+      {:ok, lv, _html} = live(conn, ~p"/users/log-in")
+      assert has_element?(lv, "#oidc-login[href='/auth/oidc']")
+    end
+
+    test "is hidden when OIDC is incomplete", %{conn: conn} do
+      original = Application.get_env(:cinder, Cinder.Accounts.OIDC)
+      Application.put_env(:cinder, Cinder.Accounts.OIDC, issuer_url: "https://id.example.com")
+      on_exit(fn -> Application.put_env(:cinder, Cinder.Accounts.OIDC, original) end)
+
+      {:ok, lv, _html} = live(conn, ~p"/users/log-in")
+      refute has_element?(lv, "#oidc-login")
+    end
+  end
+
   describe "re-authentication (sudo mode)" do
     setup %{conn: conn} do
       user = user_fixture()

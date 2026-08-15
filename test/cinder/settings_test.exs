@@ -28,6 +28,7 @@ defmodule Cinder.SettingsTest do
     Cinder.Mailer,
     Cinder.Subtitles.Provider.OpenSubtitles,
     Cinder.Subtitles.Translator.LibreTranslate,
+    Cinder.Accounts.OIDC,
     Cinder.Catalog.UpgradeHunter,
     :media_server,
     :download_clients,
@@ -1089,6 +1090,29 @@ defmodule Cinder.SettingsTest do
 
       refute Map.has_key?(values, "tmdb_token")
       assert MapSet.member?(secrets_set, "tmdb_token")
+    end
+
+    test "OIDC settings load into Accounts config without exposing the client secret" do
+      assert :ok =
+               Settings.save_form(%{
+                 "oidc_issuer_url" => "https://id.example.com",
+                 "oidc_client_id" => "cinder",
+                 "oidc_client_secret" => "hidden-secret"
+               })
+
+      config = Application.fetch_env!(:cinder, Cinder.Accounts.OIDC)
+      assert config[:issuer_url] == "https://id.example.com"
+      assert config[:client_id] == "cinder"
+      assert config[:client_secret] == "hidden-secret"
+
+      row = Repo.get_by!(Setting, key: "oidc_client_secret")
+      assert row.is_secret
+      refute row.value =~ "hidden-secret"
+
+      form = Settings.form_state()
+      refute Map.has_key?(form.values, "oidc_client_secret")
+      refute Map.has_key?(form.placeholders, "oidc_client_secret")
+      assert MapSet.member?(form.secrets_set, "oidc_client_secret")
     end
   end
 

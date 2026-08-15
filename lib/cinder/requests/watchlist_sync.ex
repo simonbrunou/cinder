@@ -12,8 +12,11 @@ defmodule Cinder.Requests.WatchlistSync do
   request from that user couldn't. Nothing here writes a movie row or a movie status; the Catalog
   choke-points are reached only through `Cinder.Requests`.
 
-  Only `movie` entries sync. Cinder requests TV per season and a watchlisted show names no
-  season, so there is nothing unambiguous to create from one — shows are skipped.
+  A movie becomes one movie request. A show is expanded through TMDB into every currently known
+  numbered season and becomes one request per season; Season 0 stays manual because a show-level
+  Plex watchlist entry says nothing about specials. This is deliberately a snapshot, not a
+  forever-subscription: a season TMDB adds after the show was first synced is picked up because
+  markers are per season, but removing the show from Plex still does nothing.
 
   Dedupe is a per-user `synced_watchlist_entries` marker (this module owns that table), and the
   marker set alone decides what is skipped. An entry the user had already requested by hand is
@@ -37,6 +40,7 @@ defmodule Cinder.Requests.WatchlistSync do
   alias Cinder.Accounts
   alias Cinder.Accounts.PlexAuth
   alias Cinder.Accounts.User
+  alias Cinder.Catalog
   alias Cinder.Repo
   alias Cinder.Requests
   alias Cinder.Requests.SyncedWatchlistEntry
@@ -53,10 +57,19 @@ defmodule Cinder.Requests.WatchlistSync do
     Repo.all(
       from e in SyncedWatchlistEntry,
         where: e.user_id == ^id,
-        order_by: [asc: e.tmdb_id],
-        select: %{tmdb_id: e.tmdb_id, synced_at: e.inserted_at}
+        order_by: [asc: e.target_type, asc: e.tmdb_id, asc: e.season_number],
+        select: %{
+          target_type: e.target_type,
+          tmdb_id: e.tmdb_id,
+          season_number: e.season_number,
+          synced_at: e.inserted_at
+        }
     )
-    |> Enum.map(&%{&1 | synced_at: NaiveDateTime.to_iso8601(&1.synced_at)})
+    |> Enum.map(fn entry ->
+      entry
+      |> Map.update!(:synced_at, &NaiveDateTime.to_iso8601/1)
+      |> Map.update!(:season_number, &if(&1 == 0, do: nil, else: &1))
+    end)
   end
 
   defp do_poll do
@@ -99,13 +112,14 @@ defmodule Cinder.Requests.WatchlistSync do
   # Marking only what the sweep itself created would leave manually-requested titles with no
   # durable record, and `delete_movie/3`'s reap of the request row would resurrect them.
   defp request_new(user, entries) do
-    marked = synced_tmdb_ids(user)
-    requested = requested_tmdb_ids(user)
+    marked = synced_keys(user)
+    requested = requested_keys(user)
 
-    for %{type: "movie", tmdb_id: tmdb_id} = entry <- entries,
-        not MapSet.member?(marked, tmdb_id) do
-      if MapSet.member?(requested, tmdb_id),
-        do: mark_synced(user, tmdb_id),
+    for entry <- Enum.flat_map(entries, &expand_entry/1),
+        key = entry_key(entry),
+        not MapSet.member?(marked, key) do
+      if MapSet.member?(requested, key),
+        do: mark_synced(user, key),
         else: request_one(user, entry)
     end
 
@@ -114,34 +128,77 @@ defmodule Cinder.Requests.WatchlistSync do
 
   # The movie requests this user already has by any route, so a title they asked for manually
   # isn't asked for a second time.
-  defp requested_tmdb_ids(user) do
+  defp requested_keys(user) do
     user
     |> Requests.list_for_user()
-    |> Enum.filter(&(&1.target_type == "movie"))
-    |> MapSet.new(& &1.target_id)
+    |> Enum.filter(&(&1.target_type in ["movie", "season"]))
+    |> MapSet.new(&request_key/1)
   end
 
-  defp synced_tmdb_ids(user) do
-    from(e in SyncedWatchlistEntry, where: e.user_id == ^user.id, select: e.tmdb_id)
+  defp synced_keys(user) do
+    from(e in SyncedWatchlistEntry,
+      where: e.user_id == ^user.id,
+      select: {e.target_type, e.tmdb_id, e.season_number}
+    )
     |> Repo.all()
     |> MapSet.new()
   end
+
+  defp expand_entry(%{type: "movie"} = entry),
+    do: [Map.merge(entry, %{target_type: "movie", season_number: 0})]
+
+  defp expand_entry(%{type: "show", tmdb_id: tmdb_id} = entry) do
+    case Catalog.tmdb_series(tmdb_id) do
+      {:ok, info} ->
+        for %{season_number: number} <- info.seasons,
+            is_integer(number) and number > 0,
+            do:
+              Map.merge(entry, %{
+                target_type: "season",
+                season_number: number,
+                title: info.title,
+                year: info.year
+              })
+
+      {:error, reason} ->
+        Logger.info("watchlist sync: could not expand show tmdb #{tmdb_id}: #{inspect(reason)}")
+
+        []
+    end
+  end
+
+  defp expand_entry(_entry), do: []
+
+  defp entry_key(entry), do: {entry.target_type, entry.tmdb_id, entry.season_number}
+  defp request_key(%{target_type: "movie", target_id: id}), do: {"movie", id, 0}
+
+  defp request_key(%{target_type: "season", target_id: id, season_number: number}),
+    do: {"season", id, number}
 
   # Idempotent by the unique index: two ticks racing the same entry leave one marker. A marker
   # that fails to write only costs a retry next tick. `Repo.insert` can still RAISE rather than
   # return `{:error, _}` (a busy DB or an FK violation skips `to_constraints`); `isolate/2` catches
   # that and the remaining entries for this user retry on the next tick.
-  defp mark_synced(user, tmdb_id) do
+  defp mark_synced(user, {target_type, tmdb_id, season_number}) do
     %SyncedWatchlistEntry{}
-    |> SyncedWatchlistEntry.changeset(%{user_id: user.id, tmdb_id: tmdb_id})
-    |> Repo.insert(on_conflict: :nothing, conflict_target: [:user_id, :tmdb_id])
+    |> SyncedWatchlistEntry.changeset(%{
+      user_id: user.id,
+      target_type: target_type,
+      tmdb_id: tmdb_id,
+      season_number: season_number
+    })
+    |> Repo.insert(
+      on_conflict: :nothing,
+      conflict_target: [:user_id, :target_type, :tmdb_id, :season_number]
+    )
     |> case do
       {:ok, _entry} ->
         :ok
 
       {:error, reason} ->
         Logger.warning(
-          "watchlist sync: user #{user.id} tmdb #{tmdb_id} requested but not marked: " <>
+          "watchlist sync: user #{user.id} #{target_type} tmdb #{tmdb_id} " <>
+            "season #{season_number} requested but not marked: " <>
             inspect(reason)
         )
     end
@@ -149,15 +206,20 @@ defmodule Cinder.Requests.WatchlistSync do
 
   defp request_one(user, entry) do
     attrs = %{
-      target_type: "movie",
+      target_type: entry.target_type,
       target_id: entry.tmdb_id,
       title: entry.title,
       year: entry.year
     }
 
+    attrs =
+      if entry.target_type == "season",
+        do: Map.put(attrs, :season_number, entry.season_number),
+        else: attrs
+
     case Requests.create_request(user, attrs) do
       {:ok, _request} ->
-        mark_synced(user, entry.tmdb_id)
+        mark_synced(user, entry_key(entry))
 
       # Quota reached, a racing manual request, a TMDB hiccup: nothing is marked, so the entry
       # stays on the watchlist and the next tick retries it once the cause clears.

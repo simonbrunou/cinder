@@ -50,6 +50,7 @@ defmodule Cinder.MixProject do
   defp deps do
     [
       {:bcrypt_elixir, "~> 3.0"},
+      {:assent, "~> 0.3.1"},
       {:tidewave, "~> 0.6", only: [:dev]},
       {:usage_rules, "~> 0.1", only: [:dev]},
       {:phoenix, "~> 1.8.7"},

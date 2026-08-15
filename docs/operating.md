@@ -79,13 +79,29 @@ terminate at a reverse proxy):
 - **Plex watchlist sync (opt-in, per user):** a Plex-linked user can switch on "Request titles I
   add to my Plex watchlist" in Account settings (`/users/settings`); it is off by default and only
   that account's owner can turn it on — there is no household-wide switch. A background sweep
-  checks each opted-in user's Plex watchlist about every 15 minutes and turns each new movie on it
-  into a request **by that user**, so the approval gate and their request quota apply exactly as if
-  they had clicked Add. Watchlisted shows are skipped (Cinder requests TV per season, and a
-  watchlist entry names none). Removing a title from the watchlist does nothing: nothing is
-  un-requested or deleted. Sync needs the Plex auth token from sign-in, stored encrypted at rest
-  alongside the settings secrets; if Plex later rejects it, sync switches itself off for that user
-  alone and they can re-link to resume.
+  checks each opted-in user's Plex watchlist about every 15 minutes. A new movie becomes one
+  request; a show is looked up in TMDB and becomes one request for each currently known numbered
+  season (`1` and up). Season 0 specials stay manual because adding a show to a Plex watchlist does
+  not express an intent to fetch its extras. Every request is made **by that user**, so the approval
+  gate and their request quota apply independently, exactly as if they had clicked Add. A season
+  that could not be submitted (for example, because quota is exhausted) remains unmarked and is
+  retried; a newly published season is picked up on a later sweep while the show remains
+  watchlisted. Removing a title does nothing: nothing is un-requested or deleted. Sync needs the
+  Plex auth token from sign-in, stored encrypted at rest alongside the settings secrets; if Plex
+  later rejects it, sync switches itself off for that user alone and they can re-link to resume.
+- **Sign in with OpenID Connect:** configure **OIDC issuer URL**, **OIDC client id**, and **OIDC
+  client secret** in the Accounts section of `/settings`, then register the exact callback
+  `https://<PHX_HOST>/auth/oidc/callback` with the provider. This first version supports one
+  confidential, HTTPS, discovery-capable OIDC provider using `client_secret_basic` with
+  RS256-signed ID tokens, and requests the `openid email profile` scopes. Standard claims may come
+  from the ID token or UserInfo endpoint.
+  Production callback URLs require the TLS reverse proxy and correct `PHX_HOST` described above.
+  The client secret is encrypted at rest and never echoed back by the settings form; provider
+  access/refresh tokens are not stored. On first sign-in, a standard boolean
+  `email_verified: true` claim is required: its email may attach the stable issuer/subject identity
+  to an existing account, or creates an inactive regular user for admin approval. OIDC never
+  creates the first admin. Once linked, later sign-ins use issuer + subject and do not depend on an
+  unchanged email claim. Providers that omit `email_verified` cannot create or attach accounts.
 - **Sign in with Jellyfin:** once a Jellyfin server is configured (`JELLYFIN_URL` or the
   `/settings` equivalent), the log-in page shows a "Sign in with Jellyfin" username/password form,
   checked against that server's own `Users/AuthenticateByName` — so only accounts the server
@@ -108,13 +124,14 @@ terminate at a reverse proxy):
 
 The instance operator is the data controller. Cinder stores user emails, hashed passwords,
 locales, email-notification preferences (`notify_email`), and Plex identifiers/usernames
-(`plex_id`, `plex_username`); session and email-change tokens (including a `sent_to` copy of the
-email); requests attributed by `user_id`; and an append-only `admin_audit` trail containing actor
-ids only.
+(`plex_id`, `plex_username`), Jellyfin identifiers/usernames, and OIDC issuer/subject/display name;
+session and email-change tokens (including a `sent_to` copy of the email); requests attributed by
+`user_id`; and an append-only `admin_audit` trail containing actor ids only.
 
 When configured, the SMTP relay receives user email addresses and request titles, Discord receives
-request notifications without email addresses, and plex.tv handles the authentication round-trip
-without Cinder storing its token. TMDB and Prowlarr receive no user identity.
+request notifications without email addresses, plex.tv handles its authentication/watchlist calls
+using the linked user's encrypted token, and the OIDC provider handles the authorization round-trip
+without Cinder storing its access or refresh tokens. TMDB and Prowlarr receive no user identity.
 
 Users can delete their own account, and admins can delete accounts from `/users`; deletion cascades
 tokens and requests, while audit rows retain only numeric ids and any email values are scrubbed.

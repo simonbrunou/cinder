@@ -105,6 +105,7 @@ config :cinder,
 
 # Conservative quota for newly self-registered users; editable at /settings.
 config :cinder, default_request_quota: 10
+config :cinder, oidc_auth: Cinder.Accounts.OIDC.Assent
 
 # First-run wizard gate: redirect to /setup until setup_complete. Off in test so the
 # existing LiveView suite (which never marks setup complete) isn't redirected.

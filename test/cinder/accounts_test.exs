@@ -1555,4 +1555,82 @@ defmodule Cinder.AccountsTest do
       assert unlinked.jellyfin_username == nil
     end
   end
+
+  describe "login_or_register_oidc_user/1" do
+    defp oidc_account(overrides \\ %{}) do
+      Map.merge(
+        %{
+          issuer: "https://id.example.com",
+          subject: "subject-1",
+          email: unique_user_email(),
+          email_verified: true,
+          name: "OIDC User"
+        },
+        overrides
+      )
+    end
+
+    test "creates a new inactive regular user after bootstrap" do
+      _admin = admin_fixture()
+      account = oidc_account()
+
+      assert {:ok, user} = Accounts.login_or_register_oidc_user(account)
+      assert user.role == :user
+      refute user.active
+      assert user.oidc_issuer == account.issuer
+      assert user.oidc_subject == account.subject
+      assert user.oidc_name == "OIDC User"
+    end
+
+    test "a verified OIDC email may attach to the existing account with that email" do
+      admin = admin_fixture(email: "owner@example.com")
+
+      assert {:ok, linked} =
+               Accounts.login_or_register_oidc_user(
+                 oidc_account(%{email: "OWNER@example.com", subject: "admin-sub"})
+               )
+
+      assert linked.id == admin.id
+      assert linked.role == :admin
+      assert linked.oidc_subject == "admin-sub"
+    end
+
+    test "an unverified email cannot attach or create an account" do
+      admin = admin_fixture(email: "owner@example.com")
+
+      assert {:error, :verified_email_required} =
+               Accounts.login_or_register_oidc_user(
+                 oidc_account(%{email: admin.email, email_verified: false})
+               )
+
+      refute Repo.reload!(admin).oidc_subject
+      assert Repo.aggregate(User, :count) == 1
+    end
+
+    test "a returning issuer/subject logs in without depending on a mutable email claim" do
+      user =
+        user_fixture()
+        |> User.oidc_changeset(%{
+          oidc_issuer: "https://id.example.com",
+          oidc_subject: "returning",
+          oidc_name: "Old"
+        })
+        |> Repo.update!()
+
+      assert {:ok, matched} =
+               Accounts.login_or_register_oidc_user(%{
+                 issuer: "https://id.example.com",
+                 subject: "returning",
+                 name: "New"
+               })
+
+      assert matched.id == user.id
+      assert matched.oidc_name == "New"
+    end
+
+    test "never creates the bootstrap admin" do
+      assert {:error, :admin_required} = Accounts.login_or_register_oidc_user(oidc_account())
+      assert Repo.aggregate(User, :count) == 0
+    end
+  end
 end

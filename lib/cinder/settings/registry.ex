@@ -316,6 +316,33 @@ defmodule Cinder.Settings.Registry do
       group: :subtitles,
       label: "LibreTranslate API key",
       placeholder: ""
+    },
+    %{
+      key: "oidc_issuer_url",
+      module: Cinder.Accounts.OIDC,
+      field: :issuer_url,
+      secret: false,
+      group: :accounts,
+      label: "OpenID Connect issuer URL",
+      placeholder: "https://login.example.com/application/o/cinder"
+    },
+    %{
+      key: "oidc_client_id",
+      module: Cinder.Accounts.OIDC,
+      field: :client_id,
+      secret: false,
+      group: :accounts,
+      label: "OpenID Connect client ID",
+      placeholder: "cinder"
+    },
+    %{
+      key: "oidc_client_secret",
+      module: Cinder.Accounts.OIDC,
+      field: :client_secret,
+      secret: true,
+      group: :accounts,
+      label: "OpenID Connect client secret",
+      placeholder: ""
     }
   ]
 
