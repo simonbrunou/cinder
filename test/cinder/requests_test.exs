@@ -320,6 +320,18 @@ defmodule Cinder.RequestsTest do
     assert {:error, :not_denied} = Requests.reopen_request(req, admin)
   end
 
+  test "a stale denied snapshot cannot reopen an approved request" do
+    user = user_fixture()
+    admin = admin_fixture()
+    {:ok, req} = Requests.create_request(user, @attrs)
+    {:ok, denied} = Requests.deny_request(req, admin, "not this time")
+    {:ok, reopened} = Requests.reopen_request(denied, admin)
+    {:ok, approved} = Requests.approve_request(reopened, admin, :standard)
+
+    assert {:error, :not_denied} = Requests.reopen_request(denied, admin)
+    assert Repo.reload!(approved).status == :approved
+  end
+
   test "reopen_request returns {:error, changeset} when a pending request already holds the slot" do
     user = user_fixture()
     admin = admin_fixture()
@@ -345,6 +357,15 @@ defmodule Cinder.RequestsTest do
     assert {:ok, %{status: :pending}} = Requests.create_request(user, @attrs)
     other = Map.put(@attrs, :target_id, 604)
     assert {:error, :quota_exceeded} = Requests.create_request(user, other)
+  end
+
+  test "a quota reduction applies to a stale session user immediately" do
+    admin = admin_fixture()
+    stale_user = user_fixture()
+    assert {:ok, _updated} = Cinder.Accounts.update_user_quota(admin, stale_user, 0)
+
+    assert {:error, :quota_exceeded} = Requests.create_request(stale_user, @attrs)
+    assert Requests.list_for_user(stale_user) == []
   end
 
   test "quota does not apply to admins" do

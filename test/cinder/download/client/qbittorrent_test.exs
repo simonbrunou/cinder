@@ -220,7 +220,7 @@ defmodule Cinder.Download.Client.QBittorrentTest do
   defp stub_torrent_flow(torrent_bytes) do
     Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
       case {conn.host, conn.request_path} do
-        {"tracker.test", _} ->
+        {"93.184.216.34", _} ->
           Req.Test.text(conn, torrent_bytes)
 
         {_, "/api/v2/auth/login"} ->
@@ -254,6 +254,31 @@ defmodule Cinder.Download.Client.QBittorrentTest do
 
     assert {:ok, ^expected} =
              QBittorrent.add(%{download_url: "https://tracker.test/dl/123.torrent"})
+  end
+
+  test "add/1 pins an untrusted torrent fetch to the validated address" do
+    infoval = "d6:lengthi5e4:name5:M.mkv12:piece lengthi16384ee"
+    torrent_bytes = "d4:info" <> infoval <> "e"
+
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      case conn.request_path do
+        "/pinned.torrent" ->
+          assert conn.host == "93.184.216.34"
+          assert Plug.Conn.get_req_header(conn, "host") == ["tracker.test"]
+          Req.Test.text(conn, torrent_bytes)
+
+        "/api/v2/auth/login" ->
+          conn
+          |> Plug.Conn.put_resp_header("set-cookie", "SID=testsid; path=/")
+          |> Req.Test.text("Ok.")
+
+        "/api/v2/torrents/add" ->
+          Req.Test.text(conn, "Ok.")
+      end
+    end)
+
+    assert {:ok, _hash} =
+             QBittorrent.add(%{download_url: "https://tracker.test/pinned.torrent"})
   end
 
   test "add/1 fetches a v2-only .torrent and returns qBittorrent's truncated id" do
@@ -493,7 +518,7 @@ defmodule Cinder.Download.Client.QBittorrentTest do
 
     Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
       case {conn.host, conn.request_path} do
-        {"tracker.test", _} ->
+        {"93.184.216.34", _} ->
           Req.Test.text(conn, torrent_bytes)
 
         {_, "/api/v2/auth/login"} ->
@@ -584,7 +609,7 @@ defmodule Cinder.Download.Client.QBittorrentTest do
   test "add/1 routes a redirect-to-magnet through the magnet add path" do
     Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
       case {conn.host, conn.request_path} do
-        {"tracker.test", _} ->
+        {"93.184.216.34", _} ->
           # Prowlarr-style proxied downloadUrl for a magnet-only indexer.
           conn
           |> Plug.Conn.put_resp_header("location", "magnet:?xt=urn:btih:#{@hash}&dn=Movie")
@@ -611,12 +636,12 @@ defmodule Cinder.Download.Client.QBittorrentTest do
 
     Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
       case {conn.host, conn.request_path} do
-        {"tracker.test", "/dl/123"} ->
+        {"93.184.216.34", "/dl/123"} ->
           conn
           |> Plug.Conn.put_resp_header("location", "https://tracker.test/real.torrent")
           |> Plug.Conn.send_resp(302, "")
 
-        {"tracker.test", "/real.torrent"} ->
+        {"93.184.216.34", "/real.torrent"} ->
           Req.Test.text(conn, torrent_bytes)
 
         {_, "/api/v2/auth/login"} ->
@@ -713,7 +738,7 @@ defmodule Cinder.Download.Client.QBittorrentTest do
 
   test "add/1 rejects an oversized torrent response before upload" do
     Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
-      assert conn.host == "tracker.test"
+      assert conn.host == "93.184.216.34"
       Plug.Conn.send_resp(conn, 200, String.duplicate("x", 10 * 1024 * 1024 + 1))
     end)
 
@@ -819,7 +844,7 @@ defmodule Cinder.Download.Client.QBittorrentTest do
 
     Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
       case {conn.host, conn.request_path} do
-        {"tracker.test", _} ->
+        {"93.184.216.34", _} ->
           Req.Test.text(conn, torrent_bytes)
 
         {_, "/api/v2/auth/login"} ->
@@ -849,7 +874,7 @@ defmodule Cinder.Download.Client.QBittorrentTest do
 
     Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
       case {conn.host, conn.request_path} do
-        {"tracker.test", _} ->
+        {"93.184.216.34", _} ->
           Req.Test.text(conn, torrent_bytes)
 
         {_, "/api/v2/auth/login"} ->
@@ -924,7 +949,7 @@ defmodule Cinder.Download.Client.QBittorrentTest do
           |> Plug.Conn.put_resp_header("location", "https://tracker.test/step")
           |> Plug.Conn.send_resp(302, "")
 
-        {"tracker.test", "/step"} ->
+        {"93.184.216.34", "/step"} ->
           conn
           |> Plug.Conn.put_resp_header("location", "https://127.0.0.1:9696/private.torrent")
           |> Plug.Conn.send_resp(302, "")

@@ -17,11 +17,14 @@ defmodule Cinder.Catalog.Adoption do
 
   def adopt_episode_files(actions, coordinate_batches)
       when is_list(actions) and is_list(coordinate_batches) do
-    case Repo.transaction(fn ->
-           {applied, updated} = reduce_adoptions(actions)
-           persist_coordinates(coordinate_batches)
-           {applied, updated}
-         end) do
+    case Repo.transaction(
+           fn ->
+             {applied, updated} = reduce_adoptions(actions)
+             persist_coordinates(coordinate_batches)
+             {applied, updated}
+           end,
+           mode: :immediate
+         ) do
       {:ok, {applied, updated}} ->
         publish(updated)
         {:ok, Enum.reverse(applied)}
@@ -57,39 +60,61 @@ defmodule Cinder.Catalog.Adoption do
     end
   end
 
-  defp adopt_file(%{episode: %Episode{id: id}, type: :primary, path: path})
-       when is_binary(path) and path != "" do
-    case Repo.get(Episode, id) do
-      nil -> {:error, :episode_not_found}
-      %Episode{file_path: nil} = episode -> update_episode(episode, %{file_path: path})
-      %Episode{file_path: ^path} -> {:ok, nil}
-      %Episode{} -> {:error, :already_has_file}
-    end
-  end
+  defp adopt_file(action), do: adopt_file(action, false)
 
-  defp adopt_file(%{episode: %Episode{id: id}, type: :part, path: path})
+  defp adopt_file(%{episode: %Episode{id: id}, type: :primary, path: path}, allow_active_grab?)
        when is_binary(path) and path != "" do
     case Repo.get(Episode, id) do
       nil ->
         {:error, :episode_not_found}
 
-      %Episode{file_path: primary} when primary in [nil, ""] ->
-        {:error, :primary_file_missing}
+      %Episode{file_path: ^path} ->
+        {:ok, nil}
+
+      %Episode{grab_id: grab_id} when not is_nil(grab_id) and not allow_active_grab? ->
+        {:error, :acquisition_in_progress}
+
+      %Episode{file_path: nil} = episode ->
+        update_episode(episode, %{file_path: path})
+
+      %Episode{} ->
+        {:error, :already_has_file}
+    end
+  end
+
+  defp adopt_file(%{episode: %Episode{id: id}, type: :part, path: path}, allow_active_grab?)
+       when is_binary(path) and path != "" do
+    case Repo.get(Episode, id) do
+      nil ->
+        {:error, :episode_not_found}
 
       %Episode{} = episode ->
         parts = episode.part_file_paths || []
 
-        if path in parts,
-          do: {:ok, nil},
-          else: update_episode(episode, %{part_file_paths: parts ++ [path]})
+        cond do
+          path in parts ->
+            {:ok, nil}
+
+          acquisition_in_progress?(episode, allow_active_grab?) ->
+            {:error, :acquisition_in_progress}
+
+          episode.file_path in [nil, ""] ->
+            {:error, :primary_file_missing}
+
+          true ->
+            update_episode(episode, %{part_file_paths: parts ++ [path]})
+        end
     end
   end
 
-  defp adopt_file(_action), do: {:error, :invalid_action}
+  defp adopt_file(_action, _allow_active_grab?), do: {:error, :invalid_action}
+
+  defp acquisition_in_progress?(episode, allow_active_grab?),
+    do: not allow_active_grab? and not is_nil(episode.grab_id)
 
   @doc false
   def adopt_episode_part(%Episode{} = episode, path),
-    do: adopt_file(%{episode: episode, type: :part, path: path})
+    do: adopt_file(%{episode: episode, type: :part, path: path}, true)
 
   defp update_episode(episode, attrs) do
     episode

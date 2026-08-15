@@ -150,19 +150,25 @@ defmodule Cinder.Requests do
   end
 
   def create_request(%User{} = user, attrs) do
-    cond do
-      not valid_proposed_profile?(attrs) ->
-        {:error, :invalid_media_profile}
+    case Repo.get(User, user.id) do
+      %User{} = current ->
+        cond do
+          not valid_proposed_profile?(attrs) ->
+            {:error, :invalid_media_profile}
 
-      user.role != :admin and over_quota?(user) ->
-        {:error, :quota_exceeded}
+          current.role != :admin and over_quota?(current) ->
+            {:error, :quota_exceeded}
 
-      true ->
-        create_request_for(
-          user,
-          snapshot_request(attrs),
-          user.role == :admin or Settings.auto_approve_all?()
-        )
+          true ->
+            create_request_for(
+              current,
+              snapshot_request(attrs),
+              current.role == :admin or Settings.auto_approve_all?()
+            )
+        end
+
+      nil ->
+        {:error, :invalid_requester}
     end
   end
 
@@ -197,18 +203,25 @@ defmodule Cinder.Requests do
   # check-then-insert race a pre-insert count would leave open. (A truly concurrent test
   # isn't possible under the single-connection Sandbox; the sequential cases cover the logic.)
   defp create_pending(user, attrs) do
-    Repo.transaction(fn ->
-      with {:ok, request} <-
-             %Request{}
-             |> Request.create_changeset(Map.merge(attrs, %{user_id: user.id, status: :pending}))
-             |> Repo.insert(),
-           false <- pending_over_quota?(user) do
-        request
-      else
-        true -> Repo.rollback(:quota_exceeded)
-        {:error, changeset} -> Repo.rollback(changeset)
-      end
-    end)
+    Repo.transaction(
+      fn ->
+        current = Repo.get!(User, user.id)
+
+        with {:ok, request} <-
+               %Request{}
+               |> Request.create_changeset(
+                 Map.merge(attrs, %{user_id: current.id, status: :pending})
+               )
+               |> Repo.insert(),
+             false <- pending_over_quota?(current) do
+          request
+        else
+          true -> Repo.rollback(:quota_exceeded)
+          {:error, changeset} -> Repo.rollback(changeset)
+        end
+      end,
+      mode: :immediate
+    )
     |> Util.tap_ok(fn request ->
       broadcast({:request_created, request})
       # Only this path notifies. The other two {:request_created, _} broadcasts (an approval
@@ -345,13 +358,30 @@ defmodule Cinder.Requests do
   was created in the meantime.
   """
   def reopen_request(%Request{status: :denied} = request, %User{} = _admin) do
-    request
-    |> Request.status_changeset(%{status: :pending, denial_reason: nil, approved_by_id: nil})
-    |> Repo.update()
+    Repo.transaction(
+      fn -> reopen_denied_request(Repo.get(Request, request.id)) end,
+      mode: :immediate
+    )
     |> Util.tap_ok(&broadcast({:request_created, &1}))
   end
 
   def reopen_request(%Request{}, _admin), do: {:error, :not_denied}
+
+  defp reopen_denied_request(%Request{status: :denied} = current) do
+    current
+    |> Request.status_changeset(%{
+      status: :pending,
+      denial_reason: nil,
+      approved_by_id: nil
+    })
+    |> Repo.update()
+    |> case do
+      {:ok, reopened} -> reopened
+      {:error, changeset} -> Repo.rollback(changeset)
+    end
+  end
+
+  defp reopen_denied_request(_request), do: Repo.rollback(:not_denied)
 
   @doc """
   Deletes a request as an admin and records an `admin_audit` row in the same

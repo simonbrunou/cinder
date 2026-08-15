@@ -11,6 +11,26 @@ defmodule Cinder.Library.AdoptionTest do
 
   setup :verify_on_exit!
 
+  test "episode adoption refuses an episode owned by an active grab" do
+    series = series_fixture()
+    season = season_fixture(series)
+    episode = episode_fixture(season)
+    assert {:ok, _grab} = Catalog.create_grab("active-grab", :torrent, [episode.id])
+
+    action = %{
+      episode: episode,
+      episode_code: "S01E01",
+      path: "/library/Show.S01E01.mkv",
+      type: :primary
+    }
+
+    assert {:error, [%{reason: :acquisition_in_progress}]} =
+             Catalog.adopt_episode_files([action])
+
+    assert %Episode{file_path: nil, grab_id: grab_id} = Repo.reload!(episode)
+    assert is_integer(grab_id)
+  end
+
   test "scan finds unmanaged movie and show trees, skips managed paths, and holds unknown episodes" do
     managed_movie =
       "/tmp/cinder-test-library/Managed (2019)/Managed (2019).mkv"

@@ -143,6 +143,46 @@ defmodule Cinder.HTTPPolicyTest do
     end
   end
 
+  describe "untrusted_request_target/2" do
+    test "pins the transport URL to the validated address while preserving the HTTP hostname" do
+      resolver = fn "public.example" -> {:ok, [@public_ipv4]} end
+
+      assert {:ok, target} =
+               HTTPPolicy.untrusted_request_target(
+                 "https://public.example/releases/file.torrent",
+                 resolver
+               )
+
+      assert target.uri.host == "public.example"
+      assert target.url.host == "93.184.216.34"
+      assert target.connect_options == [hostname: "public.example"]
+
+      options =
+        HTTPPolicy.request_options(target,
+          connect_options: [timeout: 5_000],
+          headers: [{"host", "unsafe.example"}, {"x-test", "value"}]
+        )
+
+      assert %URI{host: "93.184.216.34"} = options[:url]
+      assert options[:connect_options] == [timeout: 5_000, hostname: "public.example"]
+      assert options[:headers] == [{"host", "public.example"}, {"x-test", "value"}]
+    end
+
+    test "keeps a configured same-origin private source unpinned" do
+      resolver = fn _host -> flunk("a configured same-origin source must not use DNS") end
+
+      assert {:ok, target} =
+               HTTPPolicy.source_request_target(
+                 "http://127.0.0.1:9696/download/1",
+                 "http://127.0.0.1:9696",
+                 resolver
+               )
+
+      assert target.uri == target.url
+      assert target.connect_options == []
+    end
+  end
+
   describe "validate_untrusted_host/2" do
     test "rejects a forbidden literal address with no scheme involved" do
       resolver = fn _host -> flunk("literal addresses must not use DNS") end

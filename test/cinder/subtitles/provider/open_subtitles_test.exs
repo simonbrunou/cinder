@@ -453,11 +453,14 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitlesTest do
           Req.Test.json(conn, %{"link" => "https://dl.opensubtitles.test/start.srt"})
 
         "/start.srt" ->
+          assert conn.host == "93.184.216.34"
+
           conn
           |> Plug.Conn.put_resp_header("location", "/final.srt")
           |> Plug.Conn.send_resp(302, "")
 
         "/final.srt" ->
+          assert conn.host == "93.184.216.34"
           Plug.Conn.send_resp(conn, 200, "SRT-BYTES")
       end
     end)
@@ -518,14 +521,14 @@ defmodule Cinder.Subtitles.Provider.OpenSubtitlesTest do
           assert Plug.Conn.get_req_header(conn, "cookie") == ["sid=cookie-secret"]
           Req.Test.json(conn, %{"link" => "https://dl.opensubtitles.test/start.srt"})
 
-        {"dl.opensubtitles.test", "/start.srt"} ->
+        {"93.184.216.34", "/start.srt"} ->
           assert_untrusted_request_is_clean(conn)
 
           conn
           |> Plug.Conn.put_resp_header("location", "https://cdn.opensubtitles.test/final.srt")
           |> Plug.Conn.send_resp(307, "")
 
-        {"cdn.opensubtitles.test", "/final.srt"} ->
+        {"93.184.216.34", "/final.srt"} ->
           assert_untrusted_request_is_clean(conn)
           Plug.Conn.send_resp(conn, 200, "SRT-BYTES")
       end

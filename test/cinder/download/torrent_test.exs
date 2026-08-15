@@ -51,6 +51,11 @@ defmodule Cinder.Download.TorrentTest do
     assert {:error, :bad_torrent} = Torrent.infohash("d4:infod6:length")
   end
 
+  test "rejects an oversized byte-string length prefix without CPU amplification" do
+    task = Task.async(fn -> Torrent.infohash("d" <> String.duplicate("9", 500_000)) end)
+    assert {:error, :bad_torrent} = Task.await(task, 500)
+  end
+
   test "rejects a torrent whose info value is an integer" do
     # "d4:infoi5ee" — info value is bencode integer i5e, not a dict
     assert {:error, :bad_torrent} = Torrent.infohash("d4:infoi5ee")

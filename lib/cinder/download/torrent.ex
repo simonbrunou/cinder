@@ -272,6 +272,9 @@ defmodule Cinder.Download.Torrent do
   end
 
   # Parse a `<len>:` byte-string prefix → {len, offset_after_colon}.
+  defp str_len(bin, _off, acc) when acc > byte_size(bin),
+    do: raise(ArgumentError, "bencode string length exceeds input")
+
   defp str_len(bin, off, acc) do
     case :binary.at(bin, off) do
       ?: -> {acc, off + 1}
