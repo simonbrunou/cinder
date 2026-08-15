@@ -1,7 +1,7 @@
 defmodule Cinder.Subtitles.FetcherTest do
   # async: false — the Fetcher is a single app-wide process and this drives it directly, plus it
   # mutates the shared OpenSubtitles :languages config (blank by default so other suites don't fetch).
-  use ExUnit.Case, async: false
+  use Cinder.DataCase, async: false
 
   import Mox
 

@@ -308,6 +308,7 @@ defmodule CinderWeb.DashboardLiveTest do
     test "approving from the dashboard behaves identically to /requests", %{conn: conn} do
       requester = Cinder.AccountsFixtures.user_fixture()
       req = pending_movie_request(requester)
+      standard = Enum.find(Catalog.list_profiles(:movies), &(&1.handling == :standard))
 
       {:ok, lv, html} = live(conn, ~p"/dashboard")
       assert html =~ "Dune"
@@ -315,7 +316,7 @@ defmodule CinderWeb.DashboardLiveTest do
       lv
       |> form("#dashboard-approval-form-#{req.id}", %{
         "_id" => to_string(req.id),
-        "profile" => "standard"
+        "profile_id" => to_string(standard.id)
       })
       |> render_submit()
 
@@ -329,15 +330,22 @@ defmodule CinderWeb.DashboardLiveTest do
 
     test "shows an Anime proposal and lets the admin confirm Standard instead", %{conn: conn} do
       requester = Cinder.AccountsFixtures.user_fixture()
-      req = pending_movie_request(requester, %{proposed_media_profile: :anime})
+      anime = Enum.find(Catalog.list_profiles(:movies), &(&1.handling == :anime))
+      standard = Enum.find(Catalog.list_profiles(:movies), &(&1.handling == :standard))
+
+      req =
+        pending_movie_request(requester, %{
+          proposed_profile_id: anime.id,
+          proposed_media_profile: :anime
+        })
 
       {:ok, lv, _html} = live(conn, ~p"/dashboard")
       selector = "#dashboard-approval-profile-#{req.id}"
       form = "#dashboard-approval-form-#{req.id}"
-      assert has_element?(lv, "#{selector} option[value='anime'][selected]")
+      assert has_element?(lv, "#{selector} option[value='#{anime.id}'][selected]")
 
       lv
-      |> form(form, %{"_id" => to_string(req.id), "profile" => "standard"})
+      |> form(form, %{"_id" => to_string(req.id), "profile_id" => to_string(standard.id)})
       |> render_submit()
 
       render_async(lv)
@@ -347,14 +355,20 @@ defmodule CinderWeb.DashboardLiveTest do
 
     test "explicitly confirms an Anime proposal from the dashboard", %{conn: conn} do
       requester = Cinder.AccountsFixtures.user_fixture()
-      req = pending_movie_request(requester, %{proposed_media_profile: :anime})
+      anime = Enum.find(Catalog.list_profiles(:movies), &(&1.handling == :anime))
+
+      req =
+        pending_movie_request(requester, %{
+          proposed_profile_id: anime.id,
+          proposed_media_profile: :anime
+        })
 
       {:ok, lv, _html} = live(conn, ~p"/dashboard")
 
       lv
       |> form("#dashboard-approval-form-#{req.id}", %{
         "_id" => to_string(req.id),
-        "profile" => "anime"
+        "profile_id" => to_string(anime.id)
       })
       |> render_submit()
 

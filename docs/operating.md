@@ -548,14 +548,23 @@ bootstrap — set it in `/settings`). Availability shows up as a **Media info (f
 `/dashboard` service health and via **Test connection** in `/settings`. Without it, Cinder
 skips both checks and imports permissively — a missing probe never blocks an import.
 
-## Library roots: movies vs TV
+## Named media profiles and library roots
 
 Each library kind has a required standard import root — movies under `movies_library_path`, TV
-under `tv_library_path` — and (for Plex) its own scan section. `/settings` also offers an optional
-Anime destination for each kind. A title explicitly using the Anime profile imports there; leaving
-the field blank uses the standard root. The first-run wizard still requires both standard roots,
-and a grab whose selected destination is unavailable holds rather than importing into the wrong
-place. Point Jellyfin or Plex at every distinct root you configure.
+under `tv_library_path` — and (for Plex) its own scan section. Admins manage movie and TV profiles
+at `/settings/profiles`. A profile has an operator-chosen name, selects the existing Standard or
+Anime handling engine, and may set a normalized absolute library root. A blank profile root uses
+the matching existing Standard/Anime root. Release rules and media-server scan sections remain
+per media kind; profiles do not duplicate them.
+
+The v2 migration creates Standard and Anime profiles for movies and TV, links every explicit
+legacy selection and request to its matching profile, and leaves Auto titles or requests without a
+proposed handling unlinked. A profile referenced by a title/request may only be renamed; its kind,
+handling, and root stay fixed, and the final profile of either kind cannot be deleted. Reassigning
+a title with existing files is rejected unless every file remains inside the new effective root.
+The first-run wizard still requires both standard roots, and a grab whose selected destination is
+unavailable holds rather than importing into the wrong place. Point Jellyfin or Plex at every
+distinct root you configure.
 
 > **Upgrading across the key regularization:** the movie config keys gained the `MOVIES_` prefix the
 > TV keys already had — `LIBRARY_PATH` → `MOVIES_LIBRARY_PATH`, `PLEX_SECTION` → `MOVIES_PLEX_SECTION`
@@ -570,9 +579,10 @@ place. Point Jellyfin or Plex at every distinct root you configure.
 
 If you already have a Radarr/Sonarr/Plex-shaped library, **`/library` → "Adopt existing library"**
 (`/library/adopt`, admin-only) pulls those files into Cinder's catalog without re-downloading. It
-**scans every configured standard and Anime movie/TV root**, matches each unmanaged video against
-TMDB, and files your confirmed matches — reading only the filesystem, TMDB, and catalog until you
-confirm.
+**scans every configured legacy and explicit named movie/TV root**, matches each unmanaged video
+against TMDB, and files your confirmed matches — reading only the filesystem, TMDB, and catalog
+until you confirm. Adoption from an explicit named root records that exact profile; a shared
+fallback root stays Auto because its profile cannot be inferred safely.
 
 - **Nothing is auto-guessed.** Candidates land in three buckets: **auto-matched** (an unambiguous
   hit — review, then adopt), **ambiguous** (pick the right TMDB title before adopting), and

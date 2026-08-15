@@ -3,6 +3,7 @@ defmodule Cinder.Requests.Request do
   import Ecto.Changeset
 
   alias Cinder.Acquisition.Language
+  alias Cinder.Catalog.Profile
 
   @statuses [:pending, :approved, :denied]
   # The polymorphic request target. Movies are the only writer today; series/episode are
@@ -23,6 +24,7 @@ defmodule Cinder.Requests.Request do
     field :original_language, :string
     field :preferred_language, :string
     field :proposed_media_profile, Ecto.Enum, values: [:standard, :anime]
+    belongs_to :proposed_profile, Profile
     belongs_to :user, Cinder.Accounts.User
     belongs_to :approved_by, Cinder.Accounts.User
     timestamps()
@@ -43,11 +45,13 @@ defmodule Cinder.Requests.Request do
       :approved_by_id,
       :original_language,
       :preferred_language,
-      :proposed_media_profile
+      :proposed_media_profile,
+      :proposed_profile_id
     ])
     |> validate_required([:user_id, :target_type, :target_id, :status])
     |> validate_inclusion(:target_type, @target_types)
     |> validate_inclusion(:preferred_language, Language.preferences())
+    |> check_constraint(:proposed_profile_id, name: :requests_profile_integrity)
     # The constraint name must match the SQLite index name exactly as reported by exqlite
     # on a UNIQUE violation. The partial index is named :requests_pending_unique in the
     # migration; exqlite reports that name directly so we use it here. Using a wrong name
@@ -57,10 +61,24 @@ defmodule Cinder.Requests.Request do
     )
   end
 
+  def profile_changeset(request, attrs) do
+    request
+    |> cast(attrs, [:proposed_media_profile, :proposed_profile_id])
+    |> foreign_key_constraint(:proposed_profile_id)
+    |> check_constraint(:proposed_profile_id, name: :requests_profile_integrity)
+  end
+
   def status_changeset(request, attrs) do
     request
-    |> cast(attrs, [:status, :denial_reason, :approved_by_id])
+    |> cast(attrs, [
+      :status,
+      :denial_reason,
+      :approved_by_id,
+      :proposed_media_profile,
+      :proposed_profile_id
+    ])
     |> validate_required([:status])
+    |> foreign_key_constraint(:proposed_profile_id)
     # reopen_request/2 moves a denied row back to :pending, which can collide on the partial
     # requests_pending_unique index; map that to {:error, changeset} rather than raising. Harmless
     # for approve/deny, which move to non-pending statuses the partial index ignores.

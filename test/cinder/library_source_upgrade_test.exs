@@ -1,6 +1,6 @@
 defmodule Cinder.LibrarySourceUpgradeTest do
   # async: false — sets :cinder source-preference env to exercise the source axis end to end.
-  use ExUnit.Case, async: false
+  use Cinder.DataCase, async: false
 
   import Mox
 

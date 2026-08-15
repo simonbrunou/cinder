@@ -1,7 +1,7 @@
 defmodule Cinder.Library.Filesystem.DiskTest do
   # The one place real disk is allowed: ExUnit's :tmp_dir, auto-created and
   # cleaned per test. Everything else mocks the Filesystem behaviour.
-  use ExUnit.Case, async: true
+  use Cinder.DataCase, async: true
 
   alias Cinder.Library.Filesystem.Disk
 

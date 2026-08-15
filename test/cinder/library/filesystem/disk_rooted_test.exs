@@ -1,5 +1,5 @@
 defmodule Cinder.Library.Filesystem.DiskRootedTest do
-  use ExUnit.Case, async: false
+  use Cinder.DataCase, async: false
 
   alias Cinder.Library.Filesystem.Disk
   alias Cinder.Library.PathPolicy

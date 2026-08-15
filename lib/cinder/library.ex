@@ -61,6 +61,9 @@ defmodule Cinder.Library do
   def video_file?(path),
     do: String.downcase(Path.extname(path)) in @video_exts
 
+  @doc false
+  def video_extensions, do: @video_exts
+
   @doc "Stages a movie import with rollback material for a guarded Catalog transition."
   @spec stage_movie(Movie.t(), keyword()) ::
           {:ok, %{dest: String.t(), rollback: map(), quality: map()}} | {:error, term()}

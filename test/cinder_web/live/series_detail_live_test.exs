@@ -121,6 +121,7 @@ defmodule CinderWeb.SeriesDetailLiveTest do
 
   test "admin changes a series profile and manages sourced aliases", %{conn: conn} do
     series = create_series(6_900)
+    anime = Enum.find(Catalog.list_profiles(:tv), &(&1.handling == :anime))
 
     provider =
       %TitleAlias{series_id: series.id}
@@ -134,12 +135,15 @@ defmodule CinderWeb.SeriesDetailLiveTest do
       |> Repo.insert!()
 
     {:ok, view, _} = live_series(conn, series)
+    assert has_element?(view, "#series-profile-form option[value='auto'][selected]", "Auto")
+    assert has_element?(view, "#series-profile-form option[value='#{anime.id}']", anime.name)
 
     view
-    |> form("#series-profile-form", %{"media_profile" => "anime"})
+    |> form("#series-profile-form", %{"profile_id" => to_string(anime.id)})
     |> render_change()
 
     assert Repo.reload(series).media_profile == :anime
+    assert Repo.reload(series).profile_id == anime.id
 
     view
     |> form("#series-alias-form", %{

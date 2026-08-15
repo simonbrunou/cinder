@@ -15,6 +15,7 @@ defmodule Cinder.Settings do
   require Logger
 
   alias Cinder.Acquisition.{AnimePreferences, Parser, Scorer}
+  alias Cinder.Catalog.Profile
   alias Cinder.Library.MediaServer.{Jellyfin, Plex}
   alias Cinder.Repo
   alias Cinder.Settings.Crypto
@@ -239,30 +240,27 @@ defmodule Cinder.Settings do
   @spec explicit_import_roots() :: [String.t()] | nil
   def explicit_import_roots, do: Application.get_env(:cinder, :explicit_import_roots)
 
-  @doc "Configured standard and Anime destinations, without duplicate roots for a kind."
-  @spec library_destinations() :: [%{kind: atom(), profile: :standard | :anime, path: String.t()}]
+  @doc "Configured named and legacy destinations, without duplicate roots for a kind."
+  @spec library_destinations() :: [map()]
   def library_destinations do
-    Enum.flat_map(Cinder.Library.kinds(), fn kind ->
-      standard = configured_library_path(kind, :standard)
-      anime = configured_library_path(kind, :anime)
-
-      [%{kind: kind, profile: :standard, path: standard}] ++
-        if(anime in [nil, standard],
-          do: [],
-          else: [%{kind: kind, profile: :anime, path: anime}]
-        )
-    end)
+    (named_destinations() ++ legacy_library_destinations())
     |> Enum.reject(&is_nil(&1.path))
     |> Enum.uniq_by(fn destination ->
       {destination.kind, Path.expand(destination.path)}
     end)
   end
 
-  @doc "The destination for a title, with a blank Anime path falling back to the standard root."
+  @doc "The destination for a title, with blank named roots using their legacy handling fallback."
   @spec library_root(atom(), term()) :: {:ok, String.t()} | {:error, :library_not_configured}
   def library_root(kind, media) do
-    profile = routing_profile(media)
-    path = configured_library_path(kind, profile) || configured_library_path(kind, :standard)
+    path =
+      case named_profile(media) do
+        %Profile{kind: ^kind} = profile ->
+          Util.blank_to_nil(profile.library_path) || fallback_library_path(kind, profile.handling)
+
+        _missing_or_wrong_kind ->
+          fallback_library_path(kind, routing_profile(media))
+      end
 
     if path, do: {:ok, path}, else: {:error, :library_not_configured}
   end
@@ -270,16 +268,36 @@ defmodule Cinder.Settings do
   @doc "Returns the most-specific configured library root containing `path`."
   @spec library_root_for_path(String.t()) :: {:ok, String.t()} | {:error, :outside_library}
   def library_root_for_path(path) when is_binary(path) do
+    case library_destination_for_path(path) do
+      {:ok, destination} -> {:ok, Path.expand(destination.path)}
+      {:error, :outside_library} = error -> error
+    end
+  end
+
+  @doc "Returns the most-specific configured destination containing `path`."
+  @spec library_destination_for_path(String.t()) :: {:ok, map()} | {:error, :outside_library}
+  def library_destination_for_path(path) when is_binary(path),
+    do: library_destination_for_path(nil, path)
+
+  @doc "Returns the most-specific destination of `kind` containing `path`."
+  @spec library_destination_for_path(atom(), String.t()) ::
+          {:ok, map()} | {:error, :outside_library}
+  def library_destination_for_path(kind, path) when is_atom(kind) and is_binary(path),
+    do: find_library_destination(kind, path)
+
+  defp find_library_destination(kind, path) do
     expanded = Path.expand(path)
 
-    library_roots()
-    |> Enum.sort_by(&byte_size/1, :desc)
-    |> Enum.find(fn root ->
+    library_destinations()
+    |> Enum.filter(&(is_nil(kind) or &1.kind == kind))
+    |> Enum.sort_by(&byte_size(Path.expand(&1.path)), :desc)
+    |> Enum.find(fn destination ->
+      root = Path.expand(destination.path)
       expanded == root or String.starts_with?(expanded, root <> "/")
     end)
     |> case do
       nil -> {:error, :outside_library}
-      root -> {:ok, root}
+      destination -> {:ok, destination}
     end
   end
 
@@ -296,6 +314,49 @@ defmodule Cinder.Settings do
 
   defp configured_library_path(kind, :standard),
     do: :cinder |> Application.get_env(:"#{kind}_library_path") |> Util.blank_to_nil()
+
+  defp fallback_library_path(kind, profile),
+    do: configured_library_path(kind, profile) || configured_library_path(kind, :standard)
+
+  defp named_destinations do
+    for %Profile{} = profile <- Cinder.Catalog.list_profiles(),
+        path = Util.blank_to_nil(profile.library_path),
+        path do
+      %{
+        kind: profile.kind,
+        profile: profile.handling,
+        profile_id: profile.id,
+        profile_name: profile.name,
+        path: path
+      }
+    end
+  end
+
+  @doc "Boot-configured Standard and Anime destinations, without profile-store reads."
+  @spec legacy_library_destinations() :: [map()]
+  def legacy_library_destinations do
+    Enum.flat_map(Cinder.Library.kinds(), fn kind ->
+      standard = configured_library_path(kind, :standard)
+      anime = configured_library_path(kind, :anime)
+
+      [%{kind: kind, profile: :standard, profile_id: nil, path: standard}] ++
+        if(anime in [nil, standard],
+          do: [],
+          else: [%{kind: kind, profile: :anime, profile_id: nil, path: anime}]
+        )
+    end)
+    |> Enum.reject(&is_nil(&1.path))
+    |> Enum.uniq_by(&{&1.kind, Path.expand(&1.path)})
+  end
+
+  defp named_profile([media | _rest]), do: named_profile(media)
+  defp named_profile(%{season: %{series: series}}), do: named_profile(series)
+  defp named_profile(%{profile: %Profile{} = profile}), do: profile
+
+  defp named_profile(%{profile_id: id}) when is_integer(id),
+    do: Cinder.Catalog.get_profile(id)
+
+  defp named_profile(_media), do: nil
 
   defp routing_profile(:anime), do: :anime
   defp routing_profile([media | _rest]), do: routing_profile(media)

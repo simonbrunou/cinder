@@ -10,6 +10,9 @@ defmodule CinderWeb.DashboardLive do
 
   import CinderWeb.LiveHelpers
 
+  import CinderWeb.RequestHelpers,
+    only: [default_profile_id: 2, normalize_profile: 2, profile_kind: 1, profiles_for: 2]
+
   alias Cinder.{Accounts, Catalog, Disk, Health, Library, Notifier, Requests}
   alias Cinder.Catalog.Refresher
   alias Cinder.Download.{Poller, TvPoller}
@@ -88,8 +91,7 @@ defmodule CinderWeb.DashboardLive do
   def handle_event("recheck_health", _params, socket),
     do: {:noreply, socket |> cancel_async(:health) |> assign(health: :loading) |> check_health()}
 
-  def handle_event("approve", %{"_id" => id, "profile" => profile}, socket)
-      when profile in ["standard", "anime"] do
+  def handle_event("approve", %{"_id" => id, "profile_id" => raw_profile}, socket) do
     case find_pending(socket, id) do
       nil ->
         {:noreply, socket}
@@ -99,13 +101,22 @@ defmodule CinderWeb.DashboardLive do
         # LiveView (matching /requests) so a single click can't freeze the page for seconds.
         # Keyed per request so overlapping approvals don't overwrite each other's results.
         admin = socket.assigns.current_scope.user
-        profile = String.to_existing_atom(profile)
 
-        {:noreply,
-         start_async(socket, {:approve, req.id}, fn ->
-           Requests.approve_request(req, admin, profile)
-         end)}
+        case normalize_profile(raw_profile, profile_kind(req)) do
+          {:ok, profile} ->
+            {:noreply,
+             start_async(socket, {:approve, req.id}, fn ->
+               Requests.approve_request(req, admin, profile)
+             end)}
+
+          {:error, _} ->
+            {:noreply, put_flash(socket, :error, gettext("Choose a valid media profile."))}
+        end
     end
+  end
+
+  def handle_event("approve", %{"_id" => id, "profile" => raw_profile}, socket) do
+    handle_event("approve", %{"_id" => id, "profile_id" => raw_profile}, socket)
   end
 
   def handle_event("start_deny", %{"id" => id}, socket),
@@ -160,6 +171,7 @@ defmodule CinderWeb.DashboardLive do
 
     assign(socket,
       pending: Requests.list_pending(),
+      profiles: Catalog.list_profiles(),
       recent: Catalog.recent_movies(8),
       stats: %{
         movies_total: counts |> Map.values() |> Enum.sum(),
@@ -491,8 +503,9 @@ defmodule CinderWeb.DashboardLive do
                   </label>
                   <.media_profile_select
                     id={"dashboard-approval-profile-#{r.id}"}
-                    name="profile"
-                    value={r.proposed_media_profile || :standard}
+                    name="profile_id"
+                    value={default_profile_id(@profiles, r)}
+                    profiles={profiles_for(@profiles, r)}
                     include_auto={false}
                     class="select select-sm w-full sm:w-auto"
                   />

@@ -44,7 +44,8 @@ defmodule CinderWeb.DiscoverLive do
         top_rated_tv: [],
         genre_media_type: :movie,
         selected_genre_id: nil,
-        genre_results: []
+        genre_results: [],
+        movie_profiles: Catalog.list_profiles(:movies)
       )
       |> assign_request_state()
 
@@ -108,7 +109,11 @@ defmodule CinderWeb.DiscoverLive do
     candidates = results ++ trending ++ popular ++ top_rated ++ now_playing ++ genre_results
 
     with {id, ""} <- Integer.parse(tmdb_id),
-         {:ok, profile} <- normalize_profile(params["proposed_media_profile"]),
+         {:ok, profile} <-
+           normalize_profile(
+             params["proposed_profile_id"] || params["proposed_media_profile"],
+             :movies
+           ),
          movie when not is_nil(movie) <-
            Enum.find(candidates, &(&1.type == :movie and &1.tmdb_id == id)) do
       {:noreply, add(socket, movie, preferred, profile)}
@@ -285,12 +290,6 @@ defmodule CinderWeb.DiscoverLive do
   defp normalize_language(lang) when lang in @picks, do: lang
   defp normalize_language(_), do: "original"
 
-  defp normalize_profile(nil), do: {:ok, nil}
-  defp normalize_profile("auto"), do: {:ok, nil}
-  defp normalize_profile("standard"), do: {:ok, :standard}
-  defp normalize_profile("anime"), do: {:ok, :anime}
-  defp normalize_profile(_), do: {:error, :invalid_media_profile}
-
   @impl true
   def render(assigns) do
     # Several TMDB lists commonly overlap (a blockbuster is often trending AND popular AND
@@ -393,6 +392,7 @@ defmodule CinderWeb.DiscoverLive do
           movie_status={@movie_status}
           series_request_status={@series_request_status}
           available_series={@available_series}
+          movie_profiles={@movie_profiles}
         />
       </section>
 
@@ -408,6 +408,7 @@ defmodule CinderWeb.DiscoverLive do
           movie_status={@movie_status}
           series_request_status={@series_request_status}
           available_series={@available_series}
+          movie_profiles={@movie_profiles}
         />
       </section>
 
@@ -423,6 +424,7 @@ defmodule CinderWeb.DiscoverLive do
           movie_status={@movie_status}
           series_request_status={@series_request_status}
           available_series={@available_series}
+          movie_profiles={@movie_profiles}
         />
       </section>
 
@@ -438,6 +440,7 @@ defmodule CinderWeb.DiscoverLive do
           movie_status={@movie_status}
           series_request_status={@series_request_status}
           available_series={@available_series}
+          movie_profiles={@movie_profiles}
         />
       </section>
 
@@ -453,6 +456,7 @@ defmodule CinderWeb.DiscoverLive do
           movie_status={@movie_status}
           series_request_status={@series_request_status}
           available_series={@available_series}
+          movie_profiles={@movie_profiles}
         />
       </section>
 
@@ -468,6 +472,7 @@ defmodule CinderWeb.DiscoverLive do
           movie_status={@movie_status}
           series_request_status={@series_request_status}
           available_series={@available_series}
+          movie_profiles={@movie_profiles}
         />
       </section>
 
@@ -483,6 +488,7 @@ defmodule CinderWeb.DiscoverLive do
           movie_status={@movie_status}
           series_request_status={@series_request_status}
           available_series={@available_series}
+          movie_profiles={@movie_profiles}
         />
       </section>
 
@@ -517,6 +523,7 @@ defmodule CinderWeb.DiscoverLive do
           movie_status={@movie_status}
           series_request_status={@series_request_status}
           available_series={@available_series}
+          movie_profiles={@movie_profiles}
         />
       </section>
 

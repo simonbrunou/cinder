@@ -1051,8 +1051,9 @@ defmodule CinderWeb.CoreComponents do
   def audio_pick_label(pick) when pick in [nil, "original"], do: nil
   def audio_pick_label(pick), do: language_label(pick)
 
-  attr :name, :string, default: "proposed_media_profile"
+  attr :name, :string, default: "proposed_profile_id"
   attr :value, :any, default: nil
+  attr :profiles, :list, required: true
   attr :include_auto, :boolean, default: true
   attr :class, :any, default: "select select-sm w-full"
   attr :rest, :global
@@ -1060,22 +1061,28 @@ defmodule CinderWeb.CoreComponents do
   def media_profile_select(assigns) do
     ~H"""
     <select name={@name} class={@class} aria-label={gettext("Media profile")} {@rest}>
-      <option :if={@include_auto} value="auto" selected={@value in [nil, :auto]}>
+      <option :if={@include_auto} value="auto" selected={@value in [nil, :auto, "auto"]}>
         {gettext("Auto")}
       </option>
-      <option value="standard" selected={@value == :standard}>{gettext("Standard")}</option>
-      <option value="anime" selected={@value == :anime}>{gettext("Anime")}</option>
+      <option
+        :for={profile <- @profiles}
+        value={profile.id}
+        selected={to_string(@value) == to_string(profile.id)}
+      >
+        {profile.name}
+      </option>
     </select>
     """
   end
 
   attr :field, Phoenix.HTML.FormField, required: true
+  attr :profiles, :list, required: true
   attr :include_auto, :boolean, default: true
   attr :class, :any, default: "select select-sm w-full"
 
   def profile_select(assigns) do
     options =
-      [{gettext("Standard"), "standard"}, {gettext("Anime"), "anime"}]
+      Enum.map(assigns.profiles, &{&1.name, &1.id})
       |> then(fn options ->
         if assigns.include_auto, do: [{gettext("Auto"), "auto"} | options], else: options
       end)

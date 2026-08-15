@@ -16,7 +16,7 @@ defmodule Cinder.Catalog.Movie do
   import Ecto.Changeset
 
   alias Cinder.Acquisition.Language
-  alias Cinder.Catalog.TitleAlias
+  alias Cinder.Catalog.{Profile, TitleAlias}
 
   @statuses [
     :requested,
@@ -40,6 +40,7 @@ defmodule Cinder.Catalog.Movie do
     :original_language,
     :preferred_language,
     :media_profile,
+    :profile_id,
     :overview,
     :localizations,
     :runtime,
@@ -86,6 +87,7 @@ defmodule Cinder.Catalog.Movie do
     field :vote_average, :float
     field :release_date, :date
     field :media_profile, Ecto.Enum, values: [:auto, :standard, :anime], default: :auto
+    belongs_to :profile, Profile
     field :anime_hold_reason, :string
     field :failure_reason, :string
     field :media_server_item_id, :string
@@ -110,7 +112,11 @@ defmodule Cinder.Catalog.Movie do
   def download_source(%__MODULE__{file_path: path}), do: path
 
   @doc "Changeset for the operator-owned media handling profile."
-  def profile_changeset(movie, attrs), do: cast(movie, attrs, [:media_profile])
+  def profile_changeset(movie, attrs) do
+    movie
+    |> cast(attrs, [:media_profile])
+    |> check_constraint(:profile_id, name: :movies_profile_integrity)
+  end
 
   @doc "Changeset for the sweep-owned search-time Anime preferences hold marker (see `Catalog.set_anime_hold/2`). Not pipeline status — separate from transition_changeset/2."
   def anime_hold_changeset(movie, attrs), do: cast(movie, attrs, [:anime_hold_reason])
@@ -131,6 +137,7 @@ defmodule Cinder.Catalog.Movie do
     |> cast(attrs, @creation_fields)
     |> validate_required([:tmdb_id, :title])
     |> validate_inclusion(:preferred_language, Language.preferences())
+    |> check_constraint(:profile_id, name: :movies_profile_integrity)
     |> unique_constraint(:tmdb_id)
   end
 

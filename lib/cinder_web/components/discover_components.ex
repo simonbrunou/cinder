@@ -13,6 +13,7 @@ defmodule CinderWeb.DiscoverComponents do
   attr :movie_status, :map, required: true
   attr :series_request_status, :map, required: true
   attr :available_series, :any, required: true
+  attr :movie_profiles, :list, required: true
 
   # One grid for search results, trending, person credits, and collection parts alike.
   def media_grid(assigns) do
@@ -31,6 +32,7 @@ defmodule CinderWeb.DiscoverComponents do
           tmdb_id={r.tmdb_id}
           title={r.title}
           original_language={r.original_language}
+          profiles={@movie_profiles}
         />
         <.tv_result_action
           :if={r.type == :tv}
@@ -116,6 +118,7 @@ defmodule CinderWeb.DiscoverComponents do
   attr :movie_status, :map, required: true
   attr :series_request_status, :map, required: true
   attr :available_series, :any, required: true
+  attr :movie_profiles, :list, required: true
 
   @doc """
   "More like this" recommendation rail for a detail page — the same `media_grid/1`
@@ -137,6 +140,7 @@ defmodule CinderWeb.DiscoverComponents do
         movie_status={@movie_status}
         series_request_status={@series_request_status}
         available_series={@available_series}
+        movie_profiles={@movie_profiles}
       />
     </section>
     """
@@ -173,6 +177,7 @@ defmodule CinderWeb.DiscoverComponents do
   attr :tmdb_id, :integer, required: true
   attr :title, :string, required: true
   attr :original_language, :string, default: nil
+  attr :profiles, :list, required: true
 
   defp result_action(assigns) do
     ~H"""
@@ -190,7 +195,7 @@ defmodule CinderWeb.DiscoverComponents do
     >
       <input type="hidden" name="tmdb_id" value={@tmdb_id} />
       <.language_select original_label={original_option_label(@original_language)} />
-      <.media_profile_select />
+      <.media_profile_select profiles={@profiles} />
       <.button
         type="submit"
         variant="primary"
