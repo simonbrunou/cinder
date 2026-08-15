@@ -2,6 +2,7 @@ defmodule CinderWeb.UserLive.Login do
   use CinderWeb, :live_view
 
   alias Cinder.Accounts.JellyfinAuth
+  alias Cinder.Accounts.OIDC
   alias Cinder.Accounts.PlexAuth
 
   @impl true
@@ -58,13 +59,23 @@ defmodule CinderWeb.UserLive.Login do
           </.button>
         </.form>
 
-        <%= if @plex_login_available? or @jellyfin_login_available? do %>
+        <%= if @plex_login_available? or @jellyfin_login_available? or @oidc_login_available? do %>
           <div class="divider">{gettext("or")}</div>
         <% end %>
 
         <%= if @plex_login_available? do %>
           <.plex_button href={~p"/auth/plex"} label={gettext("Sign in with Plex")} />
         <% end %>
+
+        <.button
+          :if={@oidc_login_available?}
+          id="oidc-login"
+          href={~p"/auth/oidc"}
+          variant="neutral"
+          class="w-full mt-4"
+        >
+          {gettext("Sign in with OpenID")}
+        </.button>
 
         <%= if @jellyfin_login_available? do %>
           <.form
@@ -113,7 +124,8 @@ defmodule CinderWeb.UserLive.Login do
        jellyfin_form: to_form(%{}, as: "jellyfin"),
        trigger_submit: false,
        plex_login_available?: PlexAuth.configured?(),
-       jellyfin_login_available?: JellyfinAuth.configured?()
+       jellyfin_login_available?: JellyfinAuth.configured?(),
+       oidc_login_available?: OIDC.configured?()
      )}
   end
 

@@ -255,8 +255,18 @@ defmodule Cinder.Requests.WatchlistSyncTest do
     assert Requests.list_for_user(user) == []
   end
 
-  test "watchlisted shows are skipped (Cinder requests TV per season)" do
+  test "a watchlisted show becomes one request per numbered TMDB season, excluding specials" do
     user = opted_in_user(user_fixture())
+
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn 1399 ->
+      {:ok,
+       %{
+         tmdb_id: 1399,
+         title: "Game of Thrones",
+         year: 2011,
+         seasons: [%{season_number: 0}, %{season_number: 1}, %{season_number: 2}]
+       }}
+    end)
 
     expect(PlexAuthMock, :watchlist, fn _token ->
       {:ok, [entry(1399, type: "show"), entry(603)]}
@@ -264,7 +274,31 @@ defmodule Cinder.Requests.WatchlistSyncTest do
 
     sync!()
 
-    assert [%Request{target_type: "movie", target_id: 603}] = Requests.list_for_user(user)
+    assert [movie, season_2, season_1] = Requests.list_for_user(user)
+    assert %{target_type: "movie", target_id: 603} = movie
+    assert %{target_type: "season", target_id: 1399, season_number: 2} = season_2
+    assert %{target_type: "season", target_id: 1399, season_number: 1} = season_1
+  end
+
+  test "a watchlisted show's seasons consume the same per-user quota as manual requests" do
+    user = opted_in_user(user_fixture())
+    {:ok, user} = user |> Ecto.Changeset.change(request_quota: 1) |> Repo.update()
+
+    stub(Cinder.Catalog.TMDBMock, :get_series, fn 1399 ->
+      {:ok,
+       %{
+         tmdb_id: 1399,
+         title: "Game of Thrones",
+         year: 2011,
+         seasons: [%{season_number: 1}, %{season_number: 2}]
+       }}
+    end)
+
+    expect(PlexAuthMock, :watchlist, fn _token -> {:ok, [entry(1399, type: "show")]} end)
+
+    sync!()
+
+    assert [%Request{target_type: "season", season_number: 1}] = Requests.list_for_user(user)
   end
 
   test "an undecryptable stored token disables that user's sync instead of looping on it" do
@@ -282,23 +316,29 @@ defmodule Cinder.Requests.WatchlistSyncTest do
   # second tick a no-op rather than a duplicate, and `unique_constraint/2` must name that index
   # exactly as exqlite reports it or a collision would RAISE inside the tick instead of
   # returning a changeset (the same trap requests_pending_unique documents).
-  test "a marker is unique per user and tmdb_id, and re-inserting it is a no-op" do
+  test "markers are unique per movie or season, and different seasons remain distinct" do
     user = user_fixture()
 
-    changeset = fn ->
-      SyncedWatchlistEntry.changeset(%SyncedWatchlistEntry{}, %{user_id: user.id, tmdb_id: 7})
+    changeset = fn season_number ->
+      SyncedWatchlistEntry.changeset(%SyncedWatchlistEntry{}, %{
+        user_id: user.id,
+        target_type: "season",
+        tmdb_id: 7,
+        season_number: season_number
+      })
     end
 
-    assert {:ok, _} = Repo.insert(changeset.())
+    assert {:ok, _} = Repo.insert(changeset.(1))
+    assert {:ok, _} = Repo.insert(changeset.(2))
 
     assert {:ok, _} =
-             Repo.insert(changeset.(),
+             Repo.insert(changeset.(1),
                on_conflict: :nothing,
-               conflict_target: [:user_id, :tmdb_id]
+               conflict_target: [:user_id, :target_type, :tmdb_id, :season_number]
              )
 
-    assert {:error, %Ecto.Changeset{}} = Repo.insert(changeset.())
-    assert Repo.aggregate(SyncedWatchlistEntry, :count) == 1
+    assert {:error, %Ecto.Changeset{}} = Repo.insert(changeset.(1))
+    assert Repo.aggregate(SyncedWatchlistEntry, :count) == 2
   end
 
   test "a user's sync markers are in their own GDPR export, and only their own" do
@@ -313,7 +353,9 @@ defmodule Cinder.Requests.WatchlistSyncTest do
 
     sync!()
 
-    assert [%{tmdb_id: 603, synced_at: synced_at}] = WatchlistSync.export_for_user(user)
+    assert [%{target_type: "movie", tmdb_id: 603, season_number: nil, synced_at: synced_at}] =
+             WatchlistSync.export_for_user(user)
+
     assert {:ok, _, _} = DateTime.from_iso8601(synced_at <> "Z")
     assert [%{tmdb_id: 604}] = WatchlistSync.export_for_user(other)
   end

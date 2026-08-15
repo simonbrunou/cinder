@@ -621,7 +621,7 @@ defmodule CinderWeb.SettingsComponents do
   defp setup_section_description(:accounts),
     do:
       gettext(
-        "Optional. Set the default request quota for newly registered users. Leave it blank to use Cinder's default."
+        "Optional. Configure OpenID Connect sign-in and the default request quota for newly registered users. Register the callback URL shown in the operating guide with your identity provider."
       )
 
   defp setup_section_resources(:tmdb),

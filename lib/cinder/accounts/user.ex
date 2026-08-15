@@ -21,6 +21,9 @@ defmodule Cinder.Accounts.User do
     field :plex_watchlist_sync, :boolean, default: false
     field :jellyfin_user_id, :string
     field :jellyfin_username, :string
+    field :oidc_issuer, :string
+    field :oidc_subject, :string
+    field :oidc_name, :string
 
     timestamps(type: :utc_datetime)
   end
@@ -171,6 +174,14 @@ defmodule Cinder.Accounts.User do
     user
     |> cast(attrs, [:jellyfin_user_id, :jellyfin_username])
     |> unique_constraint(:jellyfin_user_id)
+  end
+
+  @doc "Links or refreshes one generic OIDC identity, scoped by issuer + subject."
+  def oidc_changeset(user, attrs) do
+    user
+    |> cast(attrs, [:oidc_issuer, :oidc_subject, :oidc_name])
+    |> validate_required([:oidc_issuer, :oidc_subject])
+    |> unique_constraint([:oidc_issuer, :oidc_subject], name: :users_oidc_identity_index)
   end
 
   @doc """

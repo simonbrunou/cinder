@@ -173,6 +173,86 @@ defmodule Cinder.Accounts do
     do: Ecto.Changeset.put_change(changeset, :request_quota, Settings.default_request_quota())
 
   @doc """
+  Resolves a standards-verified OIDC identity to a Cinder user. The stable key is the provider's
+  `{issuer, subject}` pair. A first login may attach that pair to an existing account only when
+  the provider explicitly marks the same email verified; unlike Plex/Jellyfin, that is an inbox
+  ownership assertion by the operator-chosen identity provider. An unlinked identity otherwise
+  creates the same inactive regular-user account as the other external sign-in paths.
+
+  OIDC never creates the bootstrap admin. Once linked, issuer + subject are sufficient for later
+  logins; a provider changing or omitting its email claim cannot strand the account.
+  """
+  def login_or_register_oidc_user(%{issuer: issuer, subject: subject} = account)
+      when is_binary(issuer) and issuer != "" and is_binary(subject) and subject != "" do
+    Repo.transaction(
+      fn ->
+        case Repo.get_by(User, oidc_issuer: issuer, oidc_subject: subject) do
+          %User{} = user -> update_oidc_identity(user, account)
+          nil -> attach_or_create_oidc_user(account)
+        end
+      end,
+      mode: :immediate
+    )
+    |> announce_pending_user()
+  end
+
+  def login_or_register_oidc_user(_account), do: {:error, :invalid_account}
+
+  defp attach_or_create_oidc_user(%{email: email, email_verified: true} = account)
+       when is_binary(email) and email != "" do
+    case Repo.get_by(User, email: String.trim(email)) do
+      %User{oidc_subject: nil} = user -> update_oidc_identity(user, account)
+      %User{} -> Repo.rollback(:identity_conflict)
+      nil -> create_oidc_user(account)
+    end
+  end
+
+  defp attach_or_create_oidc_user(_account), do: Repo.rollback(:verified_email_required)
+
+  defp update_oidc_identity(user, account) do
+    user
+    |> User.oidc_changeset(%{
+      oidc_issuer: account.issuer,
+      oidc_subject: account.subject,
+      oidc_name: Map.get(account, :name)
+    })
+    |> Repo.update()
+    |> case do
+      {:ok, updated} -> updated
+      {:error, reason} -> Repo.rollback(reason)
+    end
+  end
+
+  defp create_oidc_user(account) do
+    if count_admins() == 0 do
+      Repo.rollback(:admin_required)
+    else
+      password = :crypto.strong_rand_bytes(32) |> Base.encode64()
+
+      %User{}
+      |> User.registration_changeset(%{
+        email: String.trim(account.email),
+        password: password,
+        password_confirmation: password
+      })
+      |> User.oidc_changeset(%{
+        oidc_issuer: account.issuer,
+        oidc_subject: account.subject,
+        oidc_name: Map.get(account, :name)
+      })
+      |> Ecto.Changeset.put_change(:confirmed_at, DateTime.utc_now(:second))
+      |> Ecto.Changeset.put_change(:role, :user)
+      |> Ecto.Changeset.put_change(:active, false)
+      |> put_default_request_quota(:user)
+      |> Repo.insert()
+      |> case do
+        {:ok, user} -> user
+        {:error, reason} -> Repo.rollback(reason)
+      end
+    end
+  end
+
+  @doc """
   Attaches a Plex identity to an ALREADY-authenticated user's own account — the `/users/settings`
   link flow. Never logs anyone in (unlike `login_or_register_plex_user/1`).
   `unique_constraint(:plex_id)` surfaces as `{:error, changeset}` when that Plex identity is
@@ -790,6 +870,7 @@ defmodule Cinder.Accounts do
       notify_email: user.notify_email,
       plex_username: user.plex_username,
       jellyfin_username: user.jellyfin_username,
+      oidc_name: user.oidc_name,
       request_quota: user.request_quota,
       active: user.active,
       confirmed_at: iso(user.confirmed_at),
