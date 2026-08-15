@@ -3,6 +3,8 @@
 Council review: 2 rounds - consensus sound; SQLite NOCASE is intentionally ASCII-only and path
 identity remains lexical (`Path.expand`) like the existing safety boundary.
 
+**Status:** implemented for v2.0.0 on 2026-08-15; final release gate recorded in the merge commit.
+
 ## Goal
 
 Replace the fixed Standard/Anime destination choice with operator-named movie and TV profiles.

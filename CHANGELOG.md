@@ -6,7 +6,14 @@ All notable changes to Cinder are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-08-15
+
 ### Added
+- **Named media profiles.** Admins can create separate movie and TV profiles with their own names,
+  Standard or Anime handling, and optional library roots. Requests, approvals, title changes,
+  imports, and adoption preserve the selected profile through database-backed ids while legacy
+  Standard/Anime API inputs remain compatible. Wrong-kind assignments, referenced profile edits,
+  stale adoption files, and destinations outside the selected root fail closed.
 - **Plex watchlist TV-season sync.** A watchlisted show now expands through TMDB into one request
   for every currently known numbered season, preserving Cinder's per-season model. Each request is
   still made as that Plex user, so their quota and the household approval gate apply independently;
@@ -544,7 +551,8 @@ Docker image and a first-run wizard. Pre-1.0: dogfooding ahead of the v1.0 publi
 - **Packaging** — Docker image, `docker-compose.yml` + `.env.example`, a tag-triggered GitHub
   Actions workflow publishing `ghcr.io/simonbrunou/cinder`, and operator + contributor docs.
 
-[Unreleased]: https://github.com/simonbrunou/cinder/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/simonbrunou/cinder/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/simonbrunou/cinder/compare/v1.1.0...v2.0.0
 [1.1.0]: https://github.com/simonbrunou/cinder/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/simonbrunou/cinder/compare/v0.7.0...v1.0.0
 [0.7.0]: https://github.com/simonbrunou/cinder/releases/tag/v0.7.0
