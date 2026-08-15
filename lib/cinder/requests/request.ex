@@ -3,6 +3,7 @@ defmodule Cinder.Requests.Request do
   import Ecto.Changeset
 
   alias Cinder.Acquisition.Language
+  alias Cinder.Catalog.Profile
 
   @statuses [:pending, :approved, :denied]
   # The polymorphic request target. Movies are the only writer today; series/episode are
@@ -23,6 +24,7 @@ defmodule Cinder.Requests.Request do
     field :original_language, :string
     field :preferred_language, :string
     field :proposed_media_profile, Ecto.Enum, values: [:standard, :anime]
+    belongs_to :proposed_profile, Profile
     belongs_to :user, Cinder.Accounts.User
     belongs_to :approved_by, Cinder.Accounts.User
     timestamps()
@@ -43,7 +45,8 @@ defmodule Cinder.Requests.Request do
       :approved_by_id,
       :original_language,
       :preferred_language,
-      :proposed_media_profile
+      :proposed_media_profile,
+      :proposed_profile_id
     ])
     |> validate_required([:user_id, :target_type, :target_id, :status])
     |> validate_inclusion(:target_type, @target_types)
@@ -55,6 +58,12 @@ defmodule Cinder.Requests.Request do
     |> unique_constraint([:user_id, :target_type, :target_id],
       name: :requests_pending_unique
     )
+  end
+
+  def profile_changeset(request, attrs) do
+    request
+    |> cast(attrs, [:proposed_media_profile, :proposed_profile_id])
+    |> foreign_key_constraint(:proposed_profile_id)
   end
 
   def status_changeset(request, attrs) do

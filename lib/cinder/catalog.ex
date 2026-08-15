@@ -28,6 +28,7 @@ defmodule Cinder.Catalog do
     Identity,
     MediaProfiles,
     Movie,
+    Profiles,
     ReleaseVerification,
     SceneNumbering,
     Season,
@@ -91,6 +92,14 @@ defmodule Cinder.Catalog do
   approval.
   """
   defdelegate set_media_profile(title, profile), to: MediaProfiles
+
+  defdelegate list_profiles(), to: Profiles
+  defdelegate list_profiles(kind), to: Profiles
+  defdelegate get_profile(id), to: Profiles
+  defdelegate create_profile(attrs), to: Profiles
+  defdelegate update_profile(profile, attrs), to: Profiles
+  defdelegate delete_profile(profile), to: Profiles
+  defdelegate assign_profile(title, profile), to: Profiles
 
   @doc "Marks or clears the anime search-time hold; see `Cinder.Catalog.MediaProfiles`."
   defdelegate set_anime_hold(title, reason), to: MediaProfiles
