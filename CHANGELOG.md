@@ -6,6 +6,39 @@ All notable changes to Cinder are documented here. The format follows
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-08-15
+
+### Added
+- **Named media profiles.** Admins can create separate movie and TV profiles with their own names,
+  Standard or Anime handling, and optional library roots. Requests, approvals, title changes,
+  imports, and adoption preserve the selected profile through database-backed ids while legacy
+  Standard/Anime API inputs remain compatible. Wrong-kind assignments, referenced profile edits,
+  stale adoption files, and destinations outside the selected root fail closed.
+- **Plex watchlist TV-season sync.** A watchlisted show now expands through TMDB into one request
+  for every currently known numbered season, preserving Cinder's per-season model. Each request is
+  still made as that Plex user, so their quota and the household approval gate apply independently;
+  specials remain an explicit manual choice, and seasons that could not be requested are retried.
+- **Generic OpenID Connect sign-in.** An admin can configure one confidential OIDC provider in
+  `/settings`; Cinder uses discovery plus authorization code, state, nonce, PKCE, and signed-token
+  validation. A provider-verified email may attach an existing account, while a new identity lands
+  as an inactive regular user awaiting approval and can never bootstrap the first admin.
+- **Automatic verified database backups.** Cinder now writes private online SQLite snapshots
+  about daily, verifies each with SQLite's full integrity check, and retains only the newest seven;
+  the admin download uses the same snapshot implementation.
+- **Household-local TV air dates.** A validated IANA timezone in Settings now decides when a TMDB
+  air date becomes wanted and keeps the calendar and automatic searches on the same local day.
+- **Safe multi-part movie imports.** Strict contiguous `CD`/`disc`/`disk`/`part` stacks import as
+  native Jellyfin/Plex stack files and stay tracked through upgrades, deletion, adoption, backfill,
+  and subtitle sync. Ambiguous stacks, RAR releases, and disc structures fail explicitly.
+- **Transmission and NZBGet download clients.** Settings can select exactly one torrent client
+  (qBittorrent or Transmission) and one Usenet client (SABnzbd or NZBGet), with credentials,
+  health checks, remote-path mapping, restart-safe operation markers, polling, and cleanup through
+  the existing download-client boundary.
+- **Opt-in completed-torrent cleanup.** Operators can set a ratio and/or seed-time limit. The
+  cleaner uses qBittorrent/Transmission's native metrics and removes a completed torrent only
+  after the threshold is reached and Cinder no longer has an owner for it; blank limits preserve
+  indefinite seeding.
+
 ## [1.1.0] - 2026-08-14
 
 ### Added
@@ -518,7 +551,8 @@ Docker image and a first-run wizard. Pre-1.0: dogfooding ahead of the v1.0 publi
 - **Packaging** — Docker image, `docker-compose.yml` + `.env.example`, a tag-triggered GitHub
   Actions workflow publishing `ghcr.io/simonbrunou/cinder`, and operator + contributor docs.
 
-[Unreleased]: https://github.com/simonbrunou/cinder/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/simonbrunou/cinder/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/simonbrunou/cinder/compare/v1.1.0...v2.0.0
 [1.1.0]: https://github.com/simonbrunou/cinder/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/simonbrunou/cinder/compare/v0.7.0...v1.0.0
 [0.7.0]: https://github.com/simonbrunou/cinder/releases/tag/v0.7.0

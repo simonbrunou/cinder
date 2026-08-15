@@ -11,7 +11,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
 
   import CinderWeb.DiscoverComponents
   import CinderWeb.LiveHelpers
-  import CinderWeb.RequestHelpers, only: [assign_request_state: 1]
+  import CinderWeb.RequestHelpers, only: [assign_request_state: 1, normalize_profile: 2]
 
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog
@@ -44,7 +44,9 @@ defmodule CinderWeb.SeriesDiscoveryLive do
          info: info,
          current_user: user,
          preferred_language: "original",
-         proposed_media_profile: nil,
+         proposed_profile: nil,
+         tv_profiles: Catalog.list_profiles(:tv),
+         movie_profiles: Catalog.list_profiles(:movies),
          recommendations: []
        )
        |> assign(seasons: Enum.filter(info.seasons, &(&1.season_number != 0)))
@@ -115,10 +117,15 @@ defmodule CinderWeb.SeriesDiscoveryLive do
     {:noreply, assign(socket, :preferred_language, lang)}
   end
 
-  def handle_event("set_profile", %{"proposed_media_profile" => profile}, socket)
-      when profile in ["auto", "standard", "anime"] do
-    profile = if profile == "auto", do: nil, else: String.to_existing_atom(profile)
-    {:noreply, assign(socket, :proposed_media_profile, profile)}
+  def handle_event("set_profile", %{"proposed_profile_id" => raw}, socket) do
+    case normalize_profile(raw, :tv) do
+      {:ok, profile} -> {:noreply, assign(socket, :proposed_profile, profile)}
+      {:error, _} -> {:noreply, socket}
+    end
+  end
+
+  def handle_event("set_profile", %{"proposed_media_profile" => raw}, socket) do
+    handle_event("set_profile", %{"proposed_profile_id" => raw}, socket)
   end
 
   # The event payload is client-controlled; ignore any malformed/forged frame
@@ -356,7 +363,9 @@ defmodule CinderWeb.SeriesDiscoveryLive do
       poster_path: info.poster_path,
       original_language: info[:original_language],
       preferred_language: socket.assigns.preferred_language,
-      proposed_media_profile: socket.assigns.proposed_media_profile
+      proposed_profile_id: socket.assigns.proposed_profile && socket.assigns.proposed_profile.id,
+      proposed_media_profile:
+        socket.assigns.proposed_profile && socket.assigns.proposed_profile.handling
     }
   end
 
@@ -469,7 +478,10 @@ defmodule CinderWeb.SeriesDiscoveryLive do
         <.language_select value={@preferred_language} />
       </form>
       <form id="series-profile-form" phx-change="set_profile" class="mb-4 max-w-xs">
-        <.media_profile_select value={@proposed_media_profile} />
+        <.media_profile_select
+          value={@proposed_profile && @proposed_profile.id}
+          profiles={@tv_profiles}
+        />
       </form>
 
       <%!-- @seasons excludes Specials (season 0, not requestable), so a specials-only
@@ -524,6 +536,7 @@ defmodule CinderWeb.SeriesDiscoveryLive do
         movie_status={@movie_status}
         series_request_status={@series_request_status}
         available_series={@available_series}
+        movie_profiles={@movie_profiles}
       />
     </Layouts.app>
     """

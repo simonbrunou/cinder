@@ -417,6 +417,33 @@ defmodule Cinder.CatalogAdminTest do
       assert audit.detail["files_deleted"] == true
     end
 
+    test "delete_files: true unlinks every movie stack part" do
+      paths = [
+        "/tmp/cinder-test-library/Epic/Epic-cd1.mkv",
+        "/tmp/cinder-test-library/Epic/Epic-cd2.mkv"
+      ]
+
+      movie =
+        movie_fixture()
+        |> Ecto.Changeset.change(
+          status: :available,
+          file_path: hd(paths),
+          part_file_paths: tl(paths)
+        )
+        |> Repo.update!()
+
+      expect(Cinder.Library.FilesystemMock, :rm, 2, fn path ->
+        assert path in paths
+        :ok
+      end)
+
+      stub(Cinder.Library.FilesystemMock, :rmdir, fn _ -> {:error, :enotempty} end)
+
+      assert {:ok, _} = Catalog.delete_movie(movie, nil, delete_files: true)
+      refute Repo.get(Movie, movie.id)
+      assert Repo.one!(Cinder.Audit.AdminAudit).detail["file_paths"] == paths
+    end
+
     test "without delete_files the file is left on disk (no FS calls)" do
       movie = movie_fixture(%{title: "Inception", year: 2010})
 

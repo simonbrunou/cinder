@@ -1,7 +1,7 @@
 defmodule Cinder.MixProject do
   use Mix.Project
 
-  @version "1.1.0"
+  @version "2.0.0"
   @source_url "https://github.com/simonbrunou/cinder"
   @description "Self-hosted Sonarr/Radarr/Seerr replacement for movies and TV, on Phoenix/LiveView."
 
@@ -50,6 +50,7 @@ defmodule Cinder.MixProject do
   defp deps do
     [
       {:bcrypt_elixir, "~> 3.0"},
+      {:assent, "~> 0.3.1"},
       {:tidewave, "~> 0.6", only: [:dev]},
       {:usage_rules, "~> 0.1", only: [:dev]},
       {:phoenix, "~> 1.8.7"},
@@ -77,6 +78,7 @@ defmodule Cinder.MixProject do
       {:telemetry_poller, "~> 1.0"},
       {:gettext, "~> 1.0"},
       {:jason, "~> 1.2"},
+      {:tz, "~> 0.28"},
       {:bandit, "~> 1.5"},
       {:cloak, "~> 1.1"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},

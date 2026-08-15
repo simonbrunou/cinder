@@ -5,6 +5,7 @@ defmodule Cinder.LibraryTest do
   import Mox
   import ExUnit.CaptureLog
 
+  alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Grab, GrabFile, Movie, Season, Series}
   alias Cinder.Library
   alias Cinder.Library.ImportStage
@@ -569,6 +570,32 @@ defmodule Cinder.LibraryTest do
     assert String.starts_with?(dest, anime_root <> "/")
   end
 
+  test "a named movie profile stages inside its arbitrary configured root" do
+    root = "/tmp/cinder-family-library"
+
+    assert {:ok, profile} =
+             Catalog.create_profile(%{
+               name: "Family library",
+               kind: :movies,
+               handling: :standard,
+               library_path: root
+             })
+
+    movie = %Movie{
+      title: "Paddington",
+      year: 2014,
+      tmdb_id: 116_149,
+      profile_id: profile.id,
+      media_profile: :standard,
+      file_path: "/dl/Paddington.2014.1080p.mkv"
+    }
+
+    Cinder.LibraryStubs.stub_import_ok(5 * @gb)
+
+    assert {:ok, %{dest: dest}} = Library.stage_movie(movie)
+    assert String.starts_with?(dest, root <> "/")
+  end
+
   test "single-file import with media_info off returns empty capture lists" do
     # media_info is nil (config/test.exs default) and the download is a single file, so the probe is
     # skipped and no sidecar scan runs — all three capture lists come back empty, never nil.
@@ -644,6 +671,65 @@ defmodule Cinder.LibraryTest do
     assert :ok = commit!(stage)
   end
 
+  test "folder source imports a strict contiguous movie stack and tracks every part" do
+    movie = %Movie{title: "Epic", year: 1960, tmdb_id: 1, file_path: "/dl/Epic"}
+    cd1 = "/dl/Epic/Epic.CD1.mkv"
+    cd2 = "/dl/Epic/Epic.CD2.mkv"
+
+    stub(Cinder.Library.FilesystemMock, :dir?, fn _path -> true end)
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn "/dl/Epic" ->
+      {:ok, [{cd2, 4_000}, {cd1, 3_000}]}
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn path ->
+      cond do
+        path == cd1 ->
+          {:ok, %File.Stat{size: 3_000, inode: 11, major_device: 1}}
+
+        path == cd2 ->
+          {:ok, %File.Stat{size: 4_000, inode: 12, major_device: 1}}
+
+        String.contains?(path, ".cinder-stage-") ->
+          size = if String.contains?(path, "-cd1"), do: 3_000, else: 4_000
+          {:ok, %File.Stat{size: size, inode: 20 + size, major_device: 1}}
+
+        true ->
+          {:error, :enoent}
+      end
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :mkdir_p, fn _path -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :ln, fn _source, _dest -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rename, fn _source, _dest -> :ok end)
+    stub(Cinder.Library.FilesystemMock, :rm, fn _path -> :ok end)
+    stub(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+    assert {:ok, stage} = Library.stage_movie(movie)
+    assert stage.dest =~ "Epic (1960) {tmdb-1}-cd1.mkv"
+    assert [part] = stage.part_file_paths
+    assert part =~ "Epic (1960) {tmdb-1}-cd2.mkv"
+    assert stage.quality.size == 7_000
+    assert length(Library.stage_ids([stage])) == 2
+    assert :ok = commit!(stage)
+  end
+
+  test "a partial or mixed movie stack fails closed" do
+    movie = %Movie{title: "Epic", year: 1960, tmdb_id: 1, file_path: "/dl/Epic"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _path -> true end)
+
+    expect(Cinder.Library.FilesystemMock, :find_files, fn _path ->
+      {:ok,
+       [
+         {"/dl/Epic/Epic.CD1.mkv", 3_000},
+         {"/dl/Epic/Epic.CD3.mkv", 4_000}
+       ]}
+    end)
+
+    assert {:error, :ambiguous_multipart_movie} = Library.stage_movie(movie)
+  end
+
   describe "scan/1" do
     test "returns the configured media server result" do
       expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
@@ -683,16 +769,49 @@ defmodule Cinder.LibraryTest do
     assert log =~ "media-server scan failed"
   end
 
-  test "folder with no video file → {:error, :no_video_file}, no scan" do
+  test "RAR-packed movie fails explicitly instead of pretending no media exists" do
     movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
 
     expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
 
     expect(Cinder.Library.FilesystemMock, :find_files, fn _ ->
-      {:ok, [{"/dl/X/a.nfo", 10}, {"/dl/X/b.rar", 9_999}]}
+      {:ok, [{"/dl/X/sample.mkv", 500}, {"/dl/X/b.rar", 9_999}]}
     end)
 
     # No mkdir_p / ln / scan expected — verify_on_exit! fails if any is called.
+    assert {:error, :unsupported_archive} = Library.stage_movie(movie)
+  end
+
+  test "disc structures fail explicitly without an extractor/playback contract" do
+    movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+
+    expect(Cinder.Library.FilesystemMock, :find_files, fn _ ->
+      {:ok,
+       [
+         {"/dl/X/BDMV/STREAM/00001.m2ts", 9_999},
+         {"/dl/X/BDMV/STREAM/sample.ts", 500}
+       ]}
+    end)
+
+    assert {:error, :unsupported_disc} = Library.stage_movie(movie)
+  end
+
+  test "a direct ISO fails explicitly before source validation" do
+    movie = %Movie{title: "X", year: 2000, file_path: "/dl/X.iso"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> false end)
+
+    assert {:error, :unsupported_disc} = Library.stage_movie(movie)
+  end
+
+  test "folder with no media container returns no_video_file" do
+    movie = %Movie{title: "X", year: 2000, file_path: "/dl/X"}
+
+    expect(Cinder.Library.FilesystemMock, :dir?, fn _ -> true end)
+    expect(Cinder.Library.FilesystemMock, :find_files, fn _ -> {:ok, [{"/dl/X/a.nfo", 10}]} end)
+
     assert {:error, :no_video_file} = Library.stage_movie(movie)
   end
 

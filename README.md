@@ -6,7 +6,7 @@
 Cinder is a single-household, self-hosted replacement for the **Sonarr + Radarr + Seerr** loop:
 request a movie or TV show → find the best release → download it → import it into **Jellyfin or
 Plex**. It's one Phoenix/LiveView app on SQLite — a single container, no external database. Every
-external service (TMDB, Prowlarr, qBittorrent/SABnzbd, Jellyfin/Plex) sits behind a behaviour and
+external service (TMDB, Prowlarr, the selected torrent/Usenet client, Jellyfin/Plex) sits behind a behaviour and
 is configured in-app.
 
 > **Status:** **v1.1** — movies + TV + multi-user (request → admin approval) are built, validated
@@ -98,9 +98,9 @@ rest with a key derived from `SECRET_KEY_BASE`.
 |---|---|
 | TMDB | API read token (v4 bearer) |
 | Indexer | Prowlarr URL + API key |
-| Download | qBittorrent URL / username / password, SABnzbd URL + API key, per-client enable toggles |
+| Download | One torrent client (qBittorrent or Transmission) and one Usenet client (SABnzbd or NZBGet), credentials and per-client path mappings; optional completed-torrent ratio / seed-time cleanup limits |
 | Media server | Jellyfin URL + API key **or** Plex URL + token + a per-library section (Movies, TV); media-server type; an optional **web URL** per server (see below) |
-| Library paths | Required standard roots (`movies_library_path`, `tv_library_path`) plus optional Anime roots per kind; blank Anime roots fall back to the standard roots |
+| Library paths | Required standard roots (`movies_library_path`, `tv_library_path`) plus admin-managed named movie/TV profiles at `/settings/profiles`; each profile chooses Standard or Anime handling and may set its own root, with a blank root falling back to the matching existing root |
 | Release size bands | Per-kind min/max size (decimal GB), preferred resolutions and sources, preferred/blocked title terms, and an optional automatic-upgrade resolution cutoff. TV sizes are per episode (a season pack of N is allowed N× the max). Ships with defaults — movies 0.3–15 GB, TV 0.05–4 GB per episode; blank = default, an explicit `0` = no limit |
 | Subtitles | OpenSubtitles API key + username + password, LibreTranslate URL + API key (optional fallback translation), preferred subtitle languages (csv) — fetched automatically after each import and swept every 12 h; Cinder-downloaded sidecars are also checked serially by pinned, local CPU-only FFsubsync 0.5.1, with low-confidence/different-cut results left unchanged for review in Activity |
 | Notifications | Discord webhook URL — posts an embed on availability and failures, on a request approval, and on the two things that need an admin: a new request awaiting approval and a new account awaiting activation (unset ⇒ log-only). Plus a **generic webhook URL** + optional `Authorization` header value: the same events POSTed as JSON (`{"event": "movie_available", …}`) to anything that speaks HTTP — ntfy, Gotify, Apprise, n8n, Home Assistant. There is no payload template; reshape it in the receiver |
@@ -121,8 +121,9 @@ to whichever URL is uniquely set, and with both set it shows nothing rather than
 Each can be **bootstrapped** from an environment variable (`TMDB_API_TOKEN`, `PROWLARR_URL`,
 `MOVIES_LIBRARY_PATH`, `TV_LIBRARY_PATH`, `MOVIES_PLEX_SECTION`, `TV_PLEX_SECTION`,
 `OPENSUBTITLES_API_KEY`, `LIBRETRANSLATE_URL`, `LIBRETRANSLATE_API_KEY`, `SUBTITLE_LANGUAGES`, …) for an unattended first boot, but the in-app
-value wins once set. Anime library destinations, the size bands, and the Anime release settings
-(including `ffprobe_bin`) have no env bootstrap — configure or tune them in `/settings`.
+value wins once set. Named profile roots, legacy Anime library destinations, the size bands, and
+the Anime release settings (including `ffprobe_bin`) have no env bootstrap — configure them in
+`/settings` or `/settings/profiles`.
 
 ### Household API
 
@@ -134,11 +135,12 @@ credential: it can read and mutate the request queue. The optional HTTP Basic ga
 - `POST /api/v1/requests` with JSON `{"target_type":"movie","target_id":603}` or
   `{"target_type":"season","target_id":1399,"season_number":2}`. Optional fields are
   `requester_id`, `preferred_language` (`original`, `french`, `dual`, `any`), and `media_profile`
-  (`standard`, `anime`). Without `requester_id`, Cinder attributes the request to the first active
-  admin by id and it auto-approves; an active member id applies that member's quota and the normal
-  approval gate.
-- `POST /api/v1/requests/:id/approve` with optional JSON `{"media_profile":"anime"}`. Omitted
-  profile uses the requester's proposal, then `standard`.
+  (`standard`, `anime`) or numeric `profile_id`. Do not send both profile fields. Without
+  `requester_id`, Cinder attributes the request to the first active admin by id and it
+  auto-approves; an active member id applies that member's quota and the normal approval gate.
+- `POST /api/v1/requests/:id/approve` with optional JSON `{"profile_id":4}` (or legacy
+  `{"media_profile":"anime"}`). Omitted profile uses the requester's proposal, then the oldest
+  matching Standard profile.
 - `POST /api/v1/requests/:id/deny` with JSON `{"reason":"Not for this household"}`.
 - `DELETE /api/v1/requests/:id` deletes only the request row, never the catalog title.
 
@@ -149,7 +151,8 @@ stable `4xx` JSON errors and are never converted to atoms.
 ## How it works
 
 Four contexts mirror the pipeline: **Catalog** (TMDB discovery + movie/series requests), **Acquisition**
-(Prowlarr search + release parsing/scoring), **Download** (qBittorrent/SABnzbd client + a polling
+(Prowlarr search + release parsing/scoring), **Download** (qBittorrent/Transmission and
+SABnzbd/NZBGet clients + a polling
 GenServer), **Library** (hardlink + rename into the Jellyfin/Plex layout, then scan). Background
 pollers advance each request through its state machine and broadcast over PubSub so the LiveView
 dashboard updates live. Every state change goes through a single context choke-point, which — on
@@ -170,9 +173,9 @@ on its own), and a `/calendar` view lists upcoming monitored episodes. Episodes 
 selected TV destination in the `Show (Year)/Season NN/Show (Year) - SxxEyy.ext` layout
 Jellyfin/Plex expect.
 
-**Anime** is a per-title opt-in profile (`Auto`/`Standard`/`Anime` on any movie or series — `Auto`
-stays `Standard` unless explicitly confirmed, either directly or as a requester's proposal an admin
-approves). An Anime title gets alias- and absolute/scene-number-aware release search (native,
+**Anime** is a per-title handling engine selected by a named movie/TV profile (`Auto` remains
+available on existing titles and stays Standard unless an operator selects a profile). An Anime
+profile gets alias- and absolute/scene-number-aware release search (native,
 romaji, and licensed titles; releases like `One Piece 1122v2` resolve without TMDB season math) and
 searches Season 0 specials only when they're classified story-special/recap and monitored. A
 downloaded batch only imports once every file is certainly mapped to one episode (one narrow
@@ -186,8 +189,8 @@ completed download's actual audio/subtitles are verified against them before imp
 and blocklisting a release that provably violates the policy. `ffprobe` is optional but
 recommended; without it, Cinder skips that verification step and imports permissively.
 
-Optional Anime movie and TV destinations in `/settings` route explicitly Anime-profiled titles
-into separate roots. Leave either blank to keep using that kind's standard root.
+Named profiles at `/settings/profiles` can route movie and TV titles into separate roots. Leave a
+profile root blank to keep using the matching existing Standard/Anime root.
 
 ## Development
 

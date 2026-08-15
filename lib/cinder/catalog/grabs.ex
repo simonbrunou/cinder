@@ -1365,7 +1365,7 @@ defmodule Cinder.Catalog.Grabs do
   defp completed_seasons_for_imported_episodes([]), do: []
 
   defp completed_seasons_for_imported_episodes(imported_ids) do
-    today = Date.utc_today()
+    today = Cinder.Settings.household_date()
 
     imported_season_ids =
       from e in Episode,

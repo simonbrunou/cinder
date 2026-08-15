@@ -6,9 +6,10 @@ Cinder is a single-household, self-hosted replacement for the Sonarr / Radarr / 
 request a movie or TV series → find the best release → download it → import it into
 Jellyfin/Plex. Built on Phoenix/LiveView.
 
-**Status: released — v1.1.0 (2026-08-14).** Movies, TV (series/season/episode, season packs,
+**Status: released — v2.0.0 (2026-08-15).** Movies, TV (series/season/episode, season packs,
 calendar), multi-user with a request→approval gate, and an opt-in per-title anime handling
-profile are all shipped. Work is now incremental — issues, fixes, one-off features. There is no
+profile and operator-named movie/TV media profiles are all shipped. Work is now incremental —
+issues, fixes, one-off features. There is no
 "current phase."
 
 `ROADMAP.md` is the **build record** (Phases 0–5, M0–M8, A0–A6), not a live plan — read it only

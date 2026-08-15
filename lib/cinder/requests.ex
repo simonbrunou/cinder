@@ -5,6 +5,7 @@ defmodule Cinder.Requests do
   alias Cinder.Accounts.User
   alias Cinder.Audit
   alias Cinder.Catalog
+  alias Cinder.Catalog.Profile
   alias Cinder.Notifier
   alias Cinder.Repo
   alias Cinder.Requests.Request
@@ -15,6 +16,32 @@ defmodule Cinder.Requests do
 
   def subscribe, do: Phoenix.PubSub.subscribe(Cinder.PubSub, @topic)
   defp broadcast(msg), do: Phoenix.PubSub.broadcast(Cinder.PubSub, @topic, msg)
+
+  def assign_profile(%Request{} = request, nil) do
+    request
+    |> Request.profile_changeset(%{proposed_profile_id: nil, proposed_media_profile: nil})
+    |> Repo.update()
+  end
+
+  def assign_profile(%Request{} = request, %Profile{id: id}) do
+    expected_kind = if request.target_type == "movie", do: :movies, else: :tv
+
+    case Catalog.get_profile(id) do
+      %Profile{kind: ^expected_kind} = profile ->
+        request
+        |> Request.profile_changeset(%{
+          proposed_profile_id: profile.id,
+          proposed_media_profile: profile.handling
+        })
+        |> Repo.update()
+
+      %Profile{} ->
+        {:error, :wrong_profile_kind}
+
+      nil ->
+        {:error, :unknown_profile}
+    end
+  end
 
   def list_pending do
     Repo.all(
@@ -61,13 +88,15 @@ defmodule Cinder.Requests do
   @spec list_for_api(pos_integer(), non_neg_integer()) :: [map()]
   def list_for_api(limit, offset) do
     Request
-    |> from(order_by: [desc: :id], limit: ^limit, offset: ^offset)
+    |> from(order_by: [desc: :id], limit: ^limit, offset: ^offset, preload: [:proposed_profile])
     |> Repo.all()
     |> Enum.map(&for_api/1)
   end
 
   @doc "Projects one request to the same personal-data-free shape returned by `list_for_api/2`."
   def for_api(%Request{} = request) do
+    request = Repo.preload(request, :proposed_profile)
+
     %{
       id: request.id,
       status: request.status,
@@ -76,8 +105,15 @@ defmodule Cinder.Requests do
       season_number: request.season_number,
       title: request.title,
       year: request.year,
+      profile: profile_identity(request.proposed_profile),
       requested_at: iso(request.inserted_at)
     }
+  end
+
+  defp profile_identity(nil), do: nil
+
+  defp profile_identity(profile) do
+    Map.take(profile, [:id, :name, :kind, :handling])
   end
 
   @doc "Total number of requests of any status — the page envelope for `list_for_api/2`."
@@ -150,25 +186,26 @@ defmodule Cinder.Requests do
   end
 
   def create_request(%User{} = user, attrs) do
-    case Repo.get(User, user.id) do
-      %User{} = current ->
-        cond do
-          not valid_proposed_profile?(attrs) ->
-            {:error, :invalid_media_profile}
+    with {:ok, attrs} <- normalize_request_profile(attrs) do
+      case Repo.get(User, user.id) do
+        %User{} = current ->
+          create_for_current_user(current, attrs)
 
-          current.role != :admin and over_quota?(current) ->
-            {:error, :quota_exceeded}
+        nil ->
+          {:error, :invalid_requester}
+      end
+    end
+  end
 
-          true ->
-            create_request_for(
-              current,
-              snapshot_request(attrs),
-              current.role == :admin or Settings.auto_approve_all?()
-            )
-        end
-
-      nil ->
-        {:error, :invalid_requester}
+  defp create_for_current_user(current, attrs) do
+    if current.role != :admin and over_quota?(current) do
+      {:error, :quota_exceeded}
+    else
+      create_request_for(
+        current,
+        snapshot_request(attrs),
+        current.role == :admin or Settings.auto_approve_all?()
+      )
     end
   end
 
@@ -255,12 +292,14 @@ defmodule Cinder.Requests do
   def approve_request(
         %Request{status: :pending, target_type: "movie"} = request,
         %User{} = admin,
-        profile
-      )
-      when profile in [:standard, :anime] do
-    with {:ok, prepared} <-
-           Catalog.prepare_requested_movie(movie_attrs(request, media_profile: profile)) do
-      approve_prepared_movie(request, admin, prepared)
+        %Profile{kind: :movies} = profile
+      ) do
+    with {:ok, profile} <- current_profile(profile, :movies),
+         {:ok, prepared} <-
+           Catalog.prepare_requested_movie(
+             movie_attrs(request, media_profile: profile.handling, profile_id: profile.id)
+           ) do
+      approve_prepared_movie(request, admin, prepared, profile)
       |> Util.tap_ok(&announce_approved/1)
     end
   end
@@ -268,14 +307,25 @@ defmodule Cinder.Requests do
   def approve_request(
         %Request{status: :pending, target_type: "season"} = request,
         %User{} = admin,
+        %Profile{kind: :tv} = profile
+      ) do
+    preferred = request.preferred_language || "original"
+
+    with {:ok, profile} <- current_profile(profile, :tv),
+         {:ok, prepared} <-
+           Catalog.prepare_requested_series(request.target_id, preferred, profile.handling) do
+      approve_prepared_series(request, admin, prepared, preferred, profile)
+    end
+  end
+
+  def approve_request(
+        %Request{status: :pending, target_type: target_type} = request,
+        %User{} = admin,
         profile
       )
       when profile in [:standard, :anime] do
-    preferred = request.preferred_language || "original"
-
-    with {:ok, prepared} <-
-           Catalog.prepare_requested_series(request.target_id, preferred, profile) do
-      approve_prepared_series(request, admin, prepared, preferred, profile)
+    with {:ok, named} <- profile_for_handling(target_type, profile) do
+      approve_request(request, admin, named)
     end
   end
 
@@ -284,15 +334,18 @@ defmodule Cinder.Requests do
 
   def approve_request(%Request{}, _admin, _profile), do: {:error, :not_pending}
 
-  defp approve_prepared_movie(request, admin, prepared) do
+  defp approve_prepared_movie(request, admin, prepared, profile) do
     Repo.transaction(fn ->
       # Provider I/O finished before this transaction. Flip first so a racing deny
       # prevents both the movie and its aliases from being written.
-      with {:ok, approved} <-
-             flip_pending(request, %{status: :approved, approved_by_id: admin.id}),
+      with {:ok, profile} <- current_profile(profile, :movies),
+           {:ok, approved} <-
+             flip_pending(request, approval_attrs(admin, profile)),
            {:ok, movie, created} <-
-             Catalog.find_or_create_at_requested(prepared.attrs, prepared.aliases) do
-        {approved, movie, created}
+             Catalog.find_or_create_at_requested(prepared.attrs, prepared.aliases),
+           pre_request_profile = movie.media_profile,
+           {:ok, {movie, profile_changed?}} <- assign_selected_profile(movie, profile) do
+        {approved, movie, created, profile_changed?, pre_request_profile}
       else
         {:error, reason} -> Repo.rollback(reason)
       end
@@ -302,15 +355,16 @@ defmodule Cinder.Requests do
 
   defp approve_prepared_series(request, admin, prepared, preferred, profile) do
     Repo.transaction(fn ->
-      with {:ok, approved} <-
-             flip_pending(request, %{status: :approved, approved_by_id: admin.id}),
+      with {:ok, profile} <- current_profile(profile, :tv),
+           {:ok, approved} <- flip_pending(request, approval_attrs(admin, profile)),
            {:ok, series} <-
              Catalog.persist_requested_series(
                prepared,
                request.season_number,
                preferred,
-               profile
-             ) do
+               profile.handling
+             ),
+           {:ok, {series, _profile_changed?}} <- assign_selected_profile(series, profile) do
         {approved, series}
       else
         {:error, reason} -> Repo.rollback(reason)
@@ -476,25 +530,32 @@ defmodule Cinder.Requests do
 
   defp create_approved(user, %{target_type: "season"} = attrs, approver_id) do
     preferred = attrs[:preferred_language] || "original"
-    profile = attrs[:proposed_media_profile] || :auto
+    named = proposed_profile(attrs)
+    handling = attrs[:proposed_media_profile] || :auto
 
     with {:ok, prepared} <-
-           Catalog.prepare_requested_series(attrs.target_id, preferred, profile) do
-      insert_approved_series(user, attrs, approver_id, prepared, preferred, profile)
+           Catalog.prepare_requested_series(attrs.target_id, preferred, handling) do
+      insert_approved_series(user, attrs, approver_id, prepared, preferred, handling, named)
     end
   end
 
   defp create_approved(user, attrs, approver_id) do
-    profile = attrs[:proposed_media_profile] || :auto
+    named = proposed_profile(attrs)
+    handling = attrs[:proposed_media_profile] || :auto
 
     with {:ok, prepared} <-
-           Catalog.prepare_requested_movie(movie_attrs(attrs, media_profile: profile)) do
-      insert_approved_movie(user, attrs, approver_id, prepared)
+           Catalog.prepare_requested_movie(
+             movie_attrs(attrs,
+               media_profile: handling,
+               profile_id: named && named.id
+             )
+           ) do
+      insert_approved_movie(user, attrs, approver_id, prepared, named)
       |> Util.tap_ok(&announce_approved/1)
     end
   end
 
-  defp insert_approved_movie(user, attrs, approver_id, prepared) do
+  defp insert_approved_movie(user, attrs, approver_id, prepared, profile) do
     Repo.transaction(fn ->
       # Creation is announced post-commit, in finalize_movie_approval — nothing here broadcasts.
       with {:ok, request} <-
@@ -508,8 +569,10 @@ defmodule Cinder.Requests do
              )
              |> Repo.insert(),
            {:ok, movie, created} <-
-             Catalog.find_or_create_at_requested(prepared.attrs, prepared.aliases) do
-        {request, movie, created}
+             Catalog.find_or_create_at_requested(prepared.attrs, prepared.aliases),
+           pre_request_profile = movie.media_profile,
+           {:ok, {movie, profile_changed?}} <- assign_selected_profile(movie, profile) do
+        {request, movie, created, profile_changed?, pre_request_profile}
       else
         {:error, reason} -> Repo.rollback(reason)
       end
@@ -517,7 +580,15 @@ defmodule Cinder.Requests do
     |> finalize_movie_approval(prepared)
   end
 
-  defp insert_approved_series(user, attrs, approver_id, prepared, preferred, profile) do
+  defp insert_approved_series(
+         user,
+         attrs,
+         approver_id,
+         prepared,
+         preferred,
+         handling,
+         profile
+       ) do
     Repo.transaction(fn ->
       with {:ok, request} <-
              %Request{}
@@ -534,8 +605,9 @@ defmodule Cinder.Requests do
                prepared,
                attrs[:season_number],
                preferred,
-               profile
-             ) do
+               handling
+             ),
+           {:ok, {series, _profile_changed?}} <- assign_selected_profile(series, profile) do
         {request, series}
       else
         {:error, reason} -> Repo.rollback(reason)
@@ -564,7 +636,10 @@ defmodule Cinder.Requests do
   # a delete landing in the commit→broadcast gap would be announced after its own
   # {:movie_deleted} and upserted back by open views until remount — a sub-ms window
   # that would cost a reload per fresh approval to close.
-  defp finalize_movie_approval({:ok, {approved, movie, :created}}, _prepared) do
+  defp finalize_movie_approval(
+         {:ok, {approved, movie, :created, _profile_changed?, _pre_request_profile}},
+         _prepared
+       ) do
     Catalog.broadcast_movie_created(movie)
     {:ok, approved}
   end
@@ -573,13 +648,16 @@ defmodule Cinder.Requests do
   # commits — an edit (or delete) landing before this reload wins over the requester's
   # confirm+fill. An edit in the reload→update window can still lose (no optimistic lock);
   # accepted at household scale.
-  defp finalize_movie_approval({:ok, {approved, movie, :existing}}, prepared) do
+  defp finalize_movie_approval(
+         {:ok, {approved, movie, :existing, profile_changed?, pre_request_profile}},
+         prepared
+       ) do
     case Repo.reload(movie) do
       nil ->
         Logger.warning("movie #{movie.id} (request #{approved.id}) deleted before confirm+fill")
 
       fresh ->
-        confirm_and_fill(fresh, approved, prepared)
+        confirm_and_fill(fresh, approved, prepared, pre_request_profile, profile_changed?)
     end
 
     {:ok, approved}
@@ -587,20 +665,30 @@ defmodule Cinder.Requests do
 
   defp finalize_movie_approval({:error, _reason} = error, _prepared), do: error
 
-  defp confirm_and_fill(movie, approved, prepared) do
-    case Catalog.apply_confirmed_media(
-           movie,
-           prepared.attrs.media_profile,
-           prepared.attrs.preferred_language
-         ) do
+  defp confirm_and_fill(movie, approved, prepared, pre_request_profile, profile_changed?) do
+    preferred = prepared.attrs.preferred_language
+
+    fills_language? =
+      movie.preferred_language == "original" and preferred not in [nil, "original"] and
+        pre_request_profile != :anime
+
+    result =
+      if fills_language? do
+        Catalog.apply_confirmed_media(movie, :auto, preferred, pre_request_profile)
+      else
+        {:ok, movie}
+      end
+
+    case result do
+      {:ok, _movie} when profile_changed? and not fills_language? ->
+        Catalog.broadcast({:movie_updated, movie})
+
       {:ok, _movie} ->
         :ok
 
       {:error, reason} ->
-        Logger.warning(
-          "apply_confirmed_media for movie #{movie.id} (request #{approved.id}) failed: " <>
-            inspect(reason)
-        )
+        if profile_changed?, do: Catalog.broadcast({:movie_updated, movie})
+        log_confirm_failure(movie, approved, reason)
     end
   end
 
@@ -639,11 +727,101 @@ defmodule Cinder.Requests do
     )
   end
 
-  defp valid_proposed_profile?(attrs) do
-    Map.get(attrs, :proposed_media_profile, Map.get(attrs, "proposed_media_profile")) in [
-      nil,
-      :standard,
-      :anime
-    ]
+  defp normalize_request_profile(%{target_type: target_type} = attrs) do
+    profile_id = Map.get(attrs, :proposed_profile_id)
+    handling = Map.get(attrs, :proposed_media_profile)
+
+    cond do
+      is_integer(profile_id) and profile_id > 0 ->
+        with %Profile{} = profile <- Catalog.get_profile(profile_id),
+             true <- profile.kind == request_kind(target_type),
+             true <- handling in [nil, profile.handling] do
+          {:ok,
+           attrs
+           |> Map.put(:proposed_profile_id, profile.id)
+           |> Map.put(:proposed_media_profile, profile.handling)}
+        else
+          _ -> {:error, :invalid_media_profile}
+        end
+
+      is_nil(profile_id) and handling in [:standard, :anime] ->
+        with {:ok, profile} <- profile_for_handling(target_type, handling) do
+          {:ok, Map.put(attrs, :proposed_profile_id, profile.id)}
+        end
+
+      is_nil(profile_id) and is_nil(handling) ->
+        {:ok, attrs}
+
+      true ->
+        {:error, :invalid_media_profile}
+    end
+  end
+
+  defp normalize_request_profile(_attrs), do: {:error, :invalid_media_profile}
+
+  defp profile_for_handling(target_type, handling) do
+    case request_kind(target_type) do
+      nil ->
+        {:error, :invalid_media_profile}
+
+      kind ->
+        case default_profile_for_handling(Catalog.list_profiles(kind), handling) do
+          %Profile{} = profile -> {:ok, profile}
+          nil -> {:error, :invalid_media_profile}
+        end
+    end
+  end
+
+  defp default_profile_for_handling(profiles, handling) do
+    profiles
+    |> Enum.filter(&(&1.handling == handling))
+    |> Enum.min_by(& &1.id, fn -> nil end)
+  end
+
+  defp request_kind("movie"), do: :movies
+  defp request_kind(type) when type in ["series", "season", "episode"], do: :tv
+  defp request_kind(_type), do: nil
+
+  defp current_profile(%Profile{id: id}, expected_kind) do
+    case Catalog.get_profile(id) do
+      %Profile{kind: ^expected_kind} = profile -> {:ok, profile}
+      _ -> {:error, :invalid_media_profile}
+    end
+  end
+
+  defp proposed_profile(%{proposed_profile_id: id}) when is_integer(id),
+    do: Catalog.get_profile(id)
+
+  defp proposed_profile(_attrs), do: nil
+
+  defp approval_attrs(admin, profile) do
+    %{
+      status: :approved,
+      approved_by_id: admin.id,
+      proposed_profile_id: profile.id,
+      proposed_media_profile: profile.handling
+    }
+  end
+
+  defp assign_selected_profile(title, nil), do: {:ok, {title, false}}
+
+  defp assign_selected_profile(%{profile_id: id, media_profile: handling} = title, %Profile{
+         id: id,
+         handling: handling
+       }),
+       do: {:ok, {title, false}}
+
+  defp assign_selected_profile(title, profile) do
+    case Catalog.assign_profile(title, profile, publish: false) do
+      {:ok, title} -> {:ok, {title, true}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp log_confirm_failure(movie, approved, reason) do
+    Logger.warning(
+      "apply_confirmed_media for movie #{movie.id} (request #{approved.id}) failed: " <>
+        inspect(reason)
+    )
   end
 end

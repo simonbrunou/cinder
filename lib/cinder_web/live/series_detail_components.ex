@@ -173,7 +173,7 @@ defmodule CinderWeb.SeriesDetailComponents do
         </form>
         <div>
           <.form for={@profile_form} id="series-profile-form" phx-change="set_media_profile">
-            <.profile_select field={@profile_form[:media_profile]} />
+            <.profile_select field={@profile_form[:profile_id]} profiles={@tv_profiles} />
           </.form>
           <.profile_summary id="series-profile-summary" summary={@profile_summary} />
         </div>

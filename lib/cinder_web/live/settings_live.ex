@@ -16,7 +16,7 @@ defmodule CinderWeb.SettingsLive do
   import CinderWeb.SettingsComponents
   import CinderWeb.LiveHelpers
 
-  alias Cinder.{ApiKey, Health, Settings}
+  alias Cinder.{ApiKey, DatabaseBackup, Health, Settings}
   alias Cinder.Catalog.UpgradeHunter
   alias CinderWeb.SettingsLabels
 
@@ -140,6 +140,13 @@ defmodule CinderWeb.SettingsLive do
 
       <.link navigate={~p"/dashboard"} class="link link-hover mb-6 inline-flex items-center gap-1">
         <.icon name="hero-arrow-left" class="size-3.5" />{gettext("Dashboard")}
+      </.link>
+
+      <.link
+        navigate={~p"/settings/profiles"}
+        class="link link-hover mb-6 ml-4 inline-flex items-center gap-1"
+      >
+        <.icon name="hero-adjustments-horizontal" class="size-3.5" />{gettext("Media profiles")}
       </.link>
 
       <div
@@ -308,6 +315,13 @@ defmodule CinderWeb.SettingsLive do
         <p class="text-sm opacity-70">
           {gettext(
             "Download a consistent snapshot of Cinder's database. Keep your SECRET_KEY_BASE with the backup or encrypted settings cannot be restored. Media files are not included."
+          )}
+        </p>
+        <p id="scheduled-database-backups" class="mt-2 text-sm opacity-70">
+          {gettext(
+            "Automatic verified snapshots run about daily and keep the newest %{count} in %{path}.",
+            count: DatabaseBackup.retention(),
+            path: DatabaseBackup.backup_dir()
           )}
         </p>
         <.button

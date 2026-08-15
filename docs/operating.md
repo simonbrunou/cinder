@@ -79,13 +79,29 @@ terminate at a reverse proxy):
 - **Plex watchlist sync (opt-in, per user):** a Plex-linked user can switch on "Request titles I
   add to my Plex watchlist" in Account settings (`/users/settings`); it is off by default and only
   that account's owner can turn it on — there is no household-wide switch. A background sweep
-  checks each opted-in user's Plex watchlist about every 15 minutes and turns each new movie on it
-  into a request **by that user**, so the approval gate and their request quota apply exactly as if
-  they had clicked Add. Watchlisted shows are skipped (Cinder requests TV per season, and a
-  watchlist entry names none). Removing a title from the watchlist does nothing: nothing is
-  un-requested or deleted. Sync needs the Plex auth token from sign-in, stored encrypted at rest
-  alongside the settings secrets; if Plex later rejects it, sync switches itself off for that user
-  alone and they can re-link to resume.
+  checks each opted-in user's Plex watchlist about every 15 minutes. A new movie becomes one
+  request; a show is looked up in TMDB and becomes one request for each currently known numbered
+  season (`1` and up). Season 0 specials stay manual because adding a show to a Plex watchlist does
+  not express an intent to fetch its extras. Every request is made **by that user**, so the approval
+  gate and their request quota apply independently, exactly as if they had clicked Add. A season
+  that could not be submitted (for example, because quota is exhausted) remains unmarked and is
+  retried; a newly published season is picked up on a later sweep while the show remains
+  watchlisted. Removing a title does nothing: nothing is un-requested or deleted. Sync needs the
+  Plex auth token from sign-in, stored encrypted at rest alongside the settings secrets; if Plex
+  later rejects it, sync switches itself off for that user alone and they can re-link to resume.
+- **Sign in with OpenID Connect:** configure **OIDC issuer URL**, **OIDC client id**, and **OIDC
+  client secret** in the Accounts section of `/settings`, then register the exact callback
+  `https://<PHX_HOST>/auth/oidc/callback` with the provider. This first version supports one
+  confidential, HTTPS, discovery-capable OIDC provider using `client_secret_basic` with
+  RS256-signed ID tokens, and requests the `openid email profile` scopes. Standard claims may come
+  from the ID token or UserInfo endpoint.
+  Production callback URLs require the TLS reverse proxy and correct `PHX_HOST` described above.
+  The client secret is encrypted at rest and never echoed back by the settings form; provider
+  access/refresh tokens are not stored. On first sign-in, a standard boolean
+  `email_verified: true` claim is required: its email may attach the stable issuer/subject identity
+  to an existing account, or creates an inactive regular user for admin approval. OIDC never
+  creates the first admin. Once linked, later sign-ins use issuer + subject and do not depend on an
+  unchanged email claim. Providers that omit `email_verified` cannot create or attach accounts.
 - **Sign in with Jellyfin:** once a Jellyfin server is configured (`JELLYFIN_URL` or the
   `/settings` equivalent), the log-in page shows a "Sign in with Jellyfin" username/password form,
   checked against that server's own `Users/AuthenticateByName` — so only accounts the server
@@ -108,13 +124,14 @@ terminate at a reverse proxy):
 
 The instance operator is the data controller. Cinder stores user emails, hashed passwords,
 locales, email-notification preferences (`notify_email`), and Plex identifiers/usernames
-(`plex_id`, `plex_username`); session and email-change tokens (including a `sent_to` copy of the
-email); requests attributed by `user_id`; and an append-only `admin_audit` trail containing actor
-ids only.
+(`plex_id`, `plex_username`), Jellyfin identifiers/usernames, and OIDC issuer/subject/display name;
+session and email-change tokens (including a `sent_to` copy of the email); requests attributed by
+`user_id`; and an append-only `admin_audit` trail containing actor ids only.
 
 When configured, the SMTP relay receives user email addresses and request titles, Discord receives
-request notifications without email addresses, and plex.tv handles the authentication round-trip
-without Cinder storing its token. TMDB and Prowlarr receive no user identity.
+request notifications without email addresses, plex.tv handles its authentication/watchlist calls
+using the linked user's encrypted token, and the OIDC provider handles the authorization round-trip
+without Cinder storing its access or refresh tokens. TMDB and Prowlarr receive no user identity.
 
 Users can delete their own account, and admins can delete accounts from `/users`; deletion cascades
 tokens and requests, while audit rows retain only numeric ids and any email values are scrubbed.
@@ -133,6 +150,22 @@ per-kind size bands, subtitles, and notifications — is edited at `/settings` a
 database. **DB values override the env bootstrap; clearing a setting reverts to the env
 value/default.** Secret fields are encrypted at rest with a key derived from `SECRET_KEY_BASE`.
 
+### Download clients and completed-torrent cleanup
+
+Choose at most one client for each protocol in `/settings`: **qBittorrent or Transmission** for
+torrents, and **SABnzbd or NZBGet** for Usenet. A disabled protocol is never searched or polled.
+Transmission support requires its label-capable RPC API (RPC version 16+, provided by
+Transmission 3 and 4). Each client health check verifies authentication and any configured local
+path prefix; the normal poller, retry adoption, content checks, and importer continue to use the
+shared download-client contract.
+
+Completed torrents seed indefinitely by default. To reclaim them automatically, set a positive
+**ratio**, a positive **seed time in hours**, or both under Download. Cinder reads the clients'
+native qBittorrent/Transmission metrics and removes a completed torrent after either configured
+limit is reached, but only after the import/request lifecycle no longer owns that download.
+Missing metrics never trigger deletion. Clearing both fields returns to indefinite seeding; the
+limits do not apply to Usenet jobs.
+
 ### Discord notifications
 
 Set a **Discord webhook URL** under Notifications in `/settings` and Cinder posts an embed on
@@ -142,8 +175,8 @@ with a 3-second timeout — a Discord outage never touches the pipeline.
 
 ### Trust posture: indexer-supplied download URLs
 
-Cinder fetches `.torrent` files from whatever URL the indexer returns (scheme-limited to
-http/https, response used only to hash and hand to the download client — never rendered). That
+Cinder fetches `.torrent` and `.nzb` files from whatever URL the indexer returns (scheme-limited to
+http/https, response used only to identify or hand bytes to the download client — never rendered). That
 means your indexer/trackers can, in principle, make Cinder issue GET requests to arbitrary
 addresses — the same posture as Radarr/Sonarr. You chose the indexer; point Cinder only at one
 you trust.
@@ -186,7 +219,7 @@ fallback only matters when you can't:
   — otherwise the link **or copy** fails with a permission error and the item parks as
   `:import_failed`.
 
-If qBittorrent or SABnzbd reports paths from a different host or container namespace, configure
+If a download client reports paths from a different host or container namespace, configure
 that client's remote and local path prefixes in `/settings`. For example, if the client reports
 `/downloads/Movie.mkv` but Cinder mounts the same directory at `/media/downloads`, map remote
 `/downloads` to local `/media/downloads`. The client health check verifies that the configured
@@ -196,6 +229,17 @@ local prefix is an existing readable directory.
 
 Back up the SQLite database — the `/data` volume (`cinder.db` plus its `-wal`/`-shm` sidecars).
 That's the entire app state.
+
+When background polling is enabled, Cinder creates a verified online snapshot shortly after
+startup and about every 24 hours thereafter. By default these private mode-`0600` files live in
+`/data/backups` and only the newest **seven** Cinder-owned snapshots are retained. Every snapshot
+must pass SQLite's full `PRAGMA integrity_check` before it counts as successful; a failed attempt
+is removed and does not prune an older good copy. The Settings download button uses this same
+snapshot implementation for an on-demand copy.
+
+Retention bounds local recovery copies, but it is not an off-host backup. Regularly copy a
+verified snapshot and the matching `SECRET_KEY_BASE` to separate protected storage. Media files
+are not in the SQLite snapshot and need their own backup policy.
 
 **Don't `cp` a live WAL database.** Cinder runs SQLite in WAL mode, so at any moment recent writes
 live in the `-wal` sidecar, not yet in `cinder.db`. A plain `cp` of the files while the container is
@@ -209,6 +253,12 @@ running can capture a torn, inconsistent snapshot. Either:
 stored secrets is *derived from it*, so **a leaked `SECRET_KEY_BASE` compromises every stored
 service credential**, and losing it (or rotating it) means re-entering every credential in
 `/settings` after a restore.
+
+To verify a restore candidate independently, run
+`sqlite3 /path/to/cinder-backup.sqlite3 "PRAGMA integrity_check;"` and require the single result
+`ok`. To restore, stop Cinder, preserve the current database and WAL sidecars for diagnosis,
+replace `cinder.db` with the verified snapshot using the expected owner and mode `0600`, then
+restart with the original `SECRET_KEY_BASE`. Never overwrite a running WAL database.
 
 ### Database growth and reclaiming space
 
@@ -296,7 +346,7 @@ override identity checks; the next poll performs the same fail-closed reconcilia
 | State | Meaning | What to do |
 |---|---|---|
 | `:no_match` | No acceptable release found (the scorer rejected all results, or the title has no IMDb id on TMDB). | Passive; nothing to fix. Relax scoring if it's too strict. |
-| `:search_failed` | A release was found but couldn't be handed off, or transient errors exhausted ~10 min of retries. | Check the server log. Often a malformed/HTML "torrent", a BitTorrent **v2-only** torrent (see limits), or a Prowlarr/qBittorrent outage. **Retry** once fixed. |
+| `:search_failed` | A release was found but couldn't be handed off, or transient errors exhausted ~10 min of retries. | Check the server log. Often a malformed/HTML download response or an indexer/download-client outage. **Retry** once fixed. |
 | `:import_failed` | The completed download had no usable video file, or import failed repeatedly — commonly a **permission mismatch** or, on a cross-filesystem copy, **a full library disk** (`:enospc`) — or (with `ffprobe` installed) the file's audio language didn't match the request. (A cross-filesystem path itself is **not** a failure — Cinder copies automatically.) | Check the log for the permission/disk error; see the hardlink section above. For a language mismatch, **Retry** re-searches (the wrong release is now filtered out). |
 
 ## Audio-language verification
@@ -393,7 +443,10 @@ described below.
 
 A periodic TMDB refresh reconciles season/episode data, so a newly-announced or late-dated episode
 becomes search-eligible on its own once its air date passes — no manual re-add. The **`/calendar`**
-view (admin) lists upcoming monitored episodes.
+view (admin) lists upcoming monitored episodes. Set the household's IANA timezone (for example,
+`Europe/Paris` or `America/New_York`) in `/settings`; it defines "today" consistently for both
+eligibility and the calendar. Invalid timezone names are rejected, and existing installs default
+to `Etc/UTC` until one is saved.
 
 **Tuning grabs.** The `Release size bands` group in `/settings` sets a min/max size (decimal GB)
 and a preferred-resolution list **per library kind** (Movies and TV). For TV the band is **per
@@ -495,14 +548,23 @@ bootstrap — set it in `/settings`). Availability shows up as a **Media info (f
 `/dashboard` service health and via **Test connection** in `/settings`. Without it, Cinder
 skips both checks and imports permissively — a missing probe never blocks an import.
 
-## Library roots: movies vs TV
+## Named media profiles and library roots
 
 Each library kind has a required standard import root — movies under `movies_library_path`, TV
-under `tv_library_path` — and (for Plex) its own scan section. `/settings` also offers an optional
-Anime destination for each kind. A title explicitly using the Anime profile imports there; leaving
-the field blank uses the standard root. The first-run wizard still requires both standard roots,
-and a grab whose selected destination is unavailable holds rather than importing into the wrong
-place. Point Jellyfin or Plex at every distinct root you configure.
+under `tv_library_path` — and (for Plex) its own scan section. Admins manage movie and TV profiles
+at `/settings/profiles`. A profile has an operator-chosen name, selects the existing Standard or
+Anime handling engine, and may set a normalized absolute library root. A blank profile root uses
+the matching existing Standard/Anime root. Release rules and media-server scan sections remain
+per media kind; profiles do not duplicate them.
+
+The v2 migration creates Standard and Anime profiles for movies and TV, links every explicit
+legacy selection and request to its matching profile, and leaves Auto titles or requests without a
+proposed handling unlinked. A profile referenced by a title/request may only be renamed; its kind,
+handling, and root stay fixed, and the final profile of either kind cannot be deleted. Reassigning
+a title with existing files is rejected unless every file remains inside the new effective root.
+The first-run wizard still requires both standard roots, and a grab whose selected destination is
+unavailable holds rather than importing into the wrong place. Point Jellyfin or Plex at every
+distinct root you configure.
 
 > **Upgrading across the key regularization:** the movie config keys gained the `MOVIES_` prefix the
 > TV keys already had — `LIBRARY_PATH` → `MOVIES_LIBRARY_PATH`, `PLEX_SECTION` → `MOVIES_PLEX_SECTION`
@@ -517,9 +579,10 @@ place. Point Jellyfin or Plex at every distinct root you configure.
 
 If you already have a Radarr/Sonarr/Plex-shaped library, **`/library` → "Adopt existing library"**
 (`/library/adopt`, admin-only) pulls those files into Cinder's catalog without re-downloading. It
-**scans every configured standard and Anime movie/TV root**, matches each unmanaged video against
-TMDB, and files your confirmed matches — reading only the filesystem, TMDB, and catalog until you
-confirm.
+**scans every configured legacy and explicit named movie/TV root**, matches each unmanaged video
+against TMDB, and files your confirmed matches — reading only the filesystem, TMDB, and catalog
+until you confirm. Adoption from an explicit named root records that exact profile; a shared
+fallback root stays Auto because its profile cannot be inferred safely.
 
 - **Nothing is auto-guessed.** Candidates land in three buckets: **auto-matched** (an unambiguous
   hit — review, then adopt), **ambiguous** (pick the right TMDB title before adopting), and
@@ -549,6 +612,10 @@ are pruned automatically.
 
 ## Known limitations
 
+- **There is no tracker-specific or RSS automation.** Cinder searches the normalized results that
+  Prowlarr exposes for a requested title; it does not infer private-tracker rules, consume tracker
+  RSS feeds, or apply tracker-specific folklore without a concrete, generic policy to enforce.
+
 - **SABnzbd "Pause on Duplicates" must be OFF.** That mode re-keys the download id after an add, so
   Cinder loses track of the job and it parks.
 - **SABnzbd job names are title-bearing, so its Smart Episode/Series duplicate detection can
@@ -564,7 +631,9 @@ are pruned automatically.
   `.cinder-<key>` job-name suffix so SABnzbd can never find the job — keep it at the default 246 or
   higher), or duplicate handling (**Pause on Duplicates** / **series duplicate detection**) left on
   for Cinder's category. These are warnings only — the service still tests as reachable.
-- **Air-date eligibility is by UTC calendar day.** An episode becomes search-eligible when its TMDB
-  air date is "today or earlier" in **UTC**, so far from UTC it can flip to wanted up to ~a day
-  early or late. Harmless for a household (it just grabs a few hours off) — there's no per-timezone
-  scheduling.
+- **Archive and disc movie releases are not imported.** RAR volumes and `BDMV`/`VIDEO_TS`/ISO
+  releases park with an explicit unsupported-format reason. Supporting them safely requires an
+  explicit, health-checked extraction or remux runtime and a deterministic main-feature policy;
+  Cinder will not guess a title or silently choose the largest playlist. Multi-file movies are
+  accepted only when every video forms one unambiguous, contiguous stack named with
+  `CD`/`disc`/`disk`/`part` plus `1..N`.

@@ -13,7 +13,7 @@ defmodule Cinder.Catalog.Series do
   import Ecto.Changeset
 
   alias Cinder.Acquisition.Language
-  alias Cinder.Catalog.{EpisodeCoordinate, Season, TitleAlias}
+  alias Cinder.Catalog.{EpisodeCoordinate, Profile, Season, TitleAlias}
 
   @monitor_strategies [:all, :future, :none]
 
@@ -33,6 +33,7 @@ defmodule Cinder.Catalog.Series do
     field :vote_average, :float
     field :first_air_date, :date
     field :media_profile, Ecto.Enum, values: [:auto, :standard, :anime], default: :auto
+    belongs_to :profile, Profile
     field :anime_hold_reason, :string
     field :scene_numbering_group_id, :string
     field :media_server_item_id, :string
@@ -44,7 +45,11 @@ defmodule Cinder.Catalog.Series do
   end
 
   @doc "Changeset for the operator-owned media handling profile."
-  def profile_changeset(series, attrs), do: cast(series, attrs, [:media_profile])
+  def profile_changeset(series, attrs) do
+    series
+    |> cast(attrs, [:media_profile])
+    |> check_constraint(:profile_id, name: :series_profile_integrity)
+  end
 
   @doc "Changeset for the sweep-owned search-time Anime preferences hold marker (see `Catalog.set_anime_hold/2`)."
   def anime_hold_changeset(series, attrs), do: cast(series, attrs, [:anime_hold_reason])
@@ -90,10 +95,12 @@ defmodule Cinder.Catalog.Series do
       :genres,
       :vote_average,
       :first_air_date,
-      :media_profile
+      :media_profile,
+      :profile_id
     ])
     |> validate_required([:tmdb_id, :title])
     |> validate_inclusion(:preferred_language, Language.preferences())
+    |> check_constraint(:profile_id, name: :series_profile_integrity)
     |> cast_assoc(:seasons, with: &Season.nested_changeset/2)
     |> unique_constraint(:tmdb_id)
   end

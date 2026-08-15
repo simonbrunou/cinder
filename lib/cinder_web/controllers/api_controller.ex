@@ -35,7 +35,7 @@ defmodule CinderWeb.ApiController do
   # stack trace in the log.
   @max_offset 1_000_000
   @max_id 9_223_372_036_854_775_807
-  @create_keys ~w(media_profile preferred_language requester_id season_number target_id target_type)
+  @create_keys ~w(media_profile preferred_language profile_id requester_id season_number target_id target_type)
 
   def status(conn, _params) do
     counts = Catalog.movie_status_counts()
@@ -77,11 +77,11 @@ defmodule CinderWeb.ApiController do
   end
 
   def approve_request(conn, %{"id" => raw_id} = params) do
-    with :ok <- only_keys(params, ["id", "media_profile"]),
+    with :ok <- only_keys(params, ["id", "media_profile", "profile_id"]),
          {:ok, id} <- route_id(raw_id),
          {:ok, admin} <- Accounts.fetch_active_admin(),
          {:ok, request} <- Requests.fetch_request(id),
-         {:ok, profile} <- approval_profile(params["media_profile"], request),
+         {:ok, profile} <- approval_profile(params, request),
          {:ok, approved} <- Requests.approve_request(request, admin, profile) do
       json(conn, Requests.for_api(approved))
     else
@@ -121,14 +121,17 @@ defmodule CinderWeb.ApiController do
          {:ok, season_number} <- season_number(target_type, params["season_number"]),
          {:ok, requester_id} <- optional_id(params["requester_id"]),
          {:ok, preferred_language} <- preferred_language(params["preferred_language"]),
-         {:ok, profile} <- proposed_profile(params["media_profile"]) do
-      attrs = %{
-        target_type: target_type,
-        target_id: target_id,
-        season_number: season_number,
-        preferred_language: preferred_language,
-        proposed_media_profile: profile
-      }
+         {:ok, profile_attrs} <- profile_attrs(params, target_type) do
+      attrs =
+        Map.merge(
+          %{
+            target_type: target_type,
+            target_id: target_id,
+            season_number: season_number,
+            preferred_language: preferred_language
+          },
+          profile_attrs
+        )
 
       {:ok, attrs, requester_id}
     end
@@ -184,10 +187,55 @@ defmodule CinderWeb.ApiController do
   defp proposed_profile("anime"), do: {:ok, :anime}
   defp proposed_profile(_profile), do: {:error, :invalid_payload}
 
-  defp approval_profile(nil, request),
-    do: {:ok, request.proposed_media_profile || :standard}
+  defp profile_attrs(params, target_type) do
+    case {Map.fetch(params, "profile_id"), Map.fetch(params, "media_profile")} do
+      {{:ok, _}, {:ok, _}} ->
+        {:error, :invalid_payload}
 
-  defp approval_profile(profile, _request), do: proposed_profile(profile)
+      {{:ok, id}, :error} ->
+        with {:ok, profile} <- named_profile(id, target_type) do
+          {:ok, %{proposed_profile_id: profile.id, proposed_media_profile: profile.handling}}
+        end
+
+      {:error, {:ok, legacy}} ->
+        with {:ok, profile} <- proposed_profile(legacy) do
+          {:ok, %{proposed_media_profile: profile}}
+        end
+
+      {:error, :error} ->
+        {:ok, %{}}
+    end
+  end
+
+  defp approval_profile(params, request) do
+    case {Map.fetch(params, "profile_id"), Map.fetch(params, "media_profile")} do
+      {{:ok, _}, {:ok, _}} ->
+        {:error, :invalid_payload}
+
+      {{:ok, id}, :error} ->
+        named_profile(id, request.target_type)
+
+      {:error, {:ok, legacy}} ->
+        proposed_profile(legacy)
+
+      {:error, :error} ->
+        case Map.get(request, :proposed_profile_id) do
+          nil -> {:ok, request.proposed_media_profile || :standard}
+          id -> named_profile(id, request.target_type)
+        end
+    end
+  end
+
+  defp named_profile(id, target_type) do
+    kind = if target_type == "movie", do: :movies, else: :tv
+
+    with {:ok, id} <- body_id(id),
+         %{kind: ^kind} = profile <- Catalog.get_profile(id) do
+      {:ok, profile}
+    else
+      _ -> {:error, :invalid_media_profile}
+    end
+  end
 
   defp denial_reason(reason) when is_binary(reason) do
     case String.trim(reason) do

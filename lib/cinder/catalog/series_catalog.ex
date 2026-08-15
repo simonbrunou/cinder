@@ -14,7 +14,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
 
   alias Cinder.Catalog.{Episode, Identity, SceneNumbering, Season, Series, TitleAlias}
   alias Cinder.Locales
-  alias Cinder.Repo
+  alias Cinder.{Repo, Settings}
 
   @max_search_attempts 10
 
@@ -369,11 +369,23 @@ defmodule Cinder.Catalog.SeriesCatalog do
     # crash rather than return a clean error.
     preferred = Keyword.get(opts, :preferred_language, "original")
     media_profile = Keyword.get(opts, :media_profile, :auto)
+    profile_id = Keyword.get(opts, :profile_id)
+    before_write = Keyword.get(opts, :before_write, fn -> :ok end)
 
-    if strategy in Series.monitor_strategies() do
+    if strategy in Series.monitor_strategies() and is_function(before_write, 0) do
       case get_series_by_tmdb_id(tmdb_id) do
-        %Series{} = series -> {:ok, series}
-        nil -> create_series(tmdb_id, strategy, preferred, media_profile)
+        %Series{} = series ->
+          {:ok, series}
+
+        nil ->
+          create_series(
+            tmdb_id,
+            strategy,
+            preferred,
+            media_profile,
+            profile_id,
+            before_write
+          )
       end
     else
       {:error, :invalid_monitor_strategy}
@@ -504,34 +516,42 @@ defmodule Cinder.Catalog.SeriesCatalog do
     series |> Ecto.Changeset.change(monitored: true) |> Repo.update()
   end
 
-  defp create_series(tmdb_id, strategy, preferred, media_profile) do
+  defp create_series(tmdb_id, strategy, preferred, media_profile, profile_id, before_write) do
     with {:ok, {:new, ^tmdb_id, attrs, seasons, identity}} <-
-           prepare_series(tmdb_id, strategy, preferred, media_profile) do
-      insert_series(tmdb_id, attrs, seasons, identity)
+           prepare_series(tmdb_id, strategy, preferred, media_profile, profile_id) do
+      insert_series(tmdb_id, attrs, seasons, identity, before_write)
     end
   end
 
-  defp prepare_series(tmdb_id, strategy, preferred, media_profile) do
+  defp prepare_series(tmdb_id, strategy, preferred, media_profile, profile_id \\ nil) do
     with {:ok, info} <- tmdb().get_series(tmdb_id),
          {:ok, seasons} <- fetch_seasons(tmdb_id, info.seasons),
          seasons = put_episode_localizations(tmdb_id, seasons),
          # A brand-new series has no scene_numbering_group_id yet (create_changeset doesn't
          # cast it), so there's nothing to pre-fetch here.
          {:ok, identity} <- fetch_series_identity(tmdb_id, nil) do
-      {:ok,
-       {:new, tmdb_id, series_attrs(info, seasons, strategy, preferred, media_profile), seasons,
-        identity}}
+      attrs =
+        info
+        |> series_attrs(seasons, strategy, preferred, media_profile)
+        |> Map.put(:profile_id, profile_id)
+
+      {:ok, {:new, tmdb_id, attrs, seasons, identity}}
     end
   end
 
-  defp insert_series(tmdb_id, attrs, seasons, identity) do
+  defp insert_series(tmdb_id, attrs, seasons, identity, before_write) do
     result =
-      Repo.transaction(fn ->
-        case write_new_series(attrs, seasons, identity) do
-          {:ok, series} -> series
-          {:error, reason} -> Repo.rollback(reason)
-        end
-      end)
+      Repo.transaction(
+        fn ->
+          with :ok <- before_write.(),
+               {:ok, series} <- write_new_series(attrs, seasons, identity) do
+            series
+          else
+            {:error, reason} -> Repo.rollback(reason)
+          end
+        end,
+        mode: :immediate
+      )
 
     case result do
       {:ok, series} ->
@@ -810,7 +830,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
   end
 
   defp series_attrs(info, seasons, strategy, preferred, media_profile) do
-    today = Date.utc_today()
+    today = Settings.household_date()
 
     %{
       tmdb_id: info.tmdb_id,
@@ -977,7 +997,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
   end
 
   defp reapply_tree_monitoring(series, strategy, tree_monitored) do
-    today = Date.utc_today()
+    today = Settings.household_date()
     season_ids = Repo.all(from(s in Season, where: s.series_id == ^series.id, select: s.id))
 
     Repo.update_all(from(s in Season, where: s.id in ^season_ids),
@@ -1064,7 +1084,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
   reads "Approved"/"Denied" forever. Pass `tmdb_id` to scope to one series.
   """
   def available_season_keys(tmdb_id \\ nil) do
-    today = Date.utc_today()
+    today = Settings.household_date()
 
     query = available_seasons_query(today)
 
@@ -1152,7 +1172,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
   (`search_attempts >= max_search_attempts/0`) ⇒ `:search_parked` (a manual Search re-queues
   it via `search_episode_now/1`), else `:wanted`.
   """
-  def episode_state(%Episode{} = episode, today \\ Date.utc_today()) do
+  def episode_state(%Episode{} = episode, today \\ Settings.household_date()) do
     cond do
       episode.file_path -> :available
       episode.grab_id -> :downloading
@@ -1243,7 +1263,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
   end
 
   defp wanted_episodes_query do
-    today = Date.utc_today()
+    today = Settings.household_date()
 
     from e in Episode,
       join: s in assoc(e, :season),
@@ -1270,7 +1290,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
   def episode_searchable?(
         %Episode{season: %Season{} = season} = episode,
         profile,
-        today \\ Date.utc_today()
+        today \\ Settings.household_date()
       ) do
     common? =
       episode.monitored and is_nil(episode.file_path) and is_nil(episode.grab_id) and
@@ -1299,7 +1319,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
   stays honest for every row, not just regular episodes.
   """
   def upcoming_episodes do
-    today = Date.utc_today()
+    today = Settings.household_date()
     from_date = Date.add(today, -7)
     to_date = Date.add(today, 90)
 

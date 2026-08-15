@@ -70,27 +70,30 @@ defmodule CinderWeb.RequestsLiveTest do
     assert {:ok, %{status: :approved}} = {:ok, Cinder.Repo.reload(req)}
   end
 
-  test "approval defaults to the proposal and requires an explicit Standard or Anime choice", %{
+  test "approval defaults to the proposed named profile and permits a named override", %{
     conn: conn
   } do
     user = user_fixture()
+    anime = Enum.find(Cinder.Catalog.list_profiles(:movies), &(&1.handling == :anime))
+    standard = Enum.find(Cinder.Catalog.list_profiles(:movies), &(&1.handling == :standard))
 
     {:ok, req} =
       Cinder.Requests.create_request(user, %{
         target_type: "movie",
         target_id: 604,
         title: "Akira",
+        proposed_profile_id: anime.id,
         proposed_media_profile: :anime
       })
 
     {:ok, lv, _html} = live(conn, ~p"/requests")
     selector = "#approval-profile-#{req.id}"
-    assert has_element?(lv, "#{selector} option[value='anime'][selected]")
+    assert has_element?(lv, "#{selector} option[value='#{anime.id}'][selected]")
 
     lv
     |> form("#approval-profile-form-#{req.id}", %{
       "_id" => to_string(req.id),
-      "profile" => "standard"
+      "profile_id" => to_string(standard.id)
     })
     |> render_change()
 
@@ -98,6 +101,7 @@ defmodule CinderWeb.RequestsLiveTest do
     render_async(lv)
 
     assert Cinder.Catalog.get_movie_by_tmdb_id(604).media_profile == :standard
+    assert Cinder.Catalog.get_movie_by_tmdb_id(604).profile_id == standard.id
   end
 
   test "bulk approval uses each row's confirmed profile", %{conn: conn} do

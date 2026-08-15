@@ -78,15 +78,19 @@ defmodule CinderWeb.MovieDetailLiveTest do
 
   test "admin changes a movie profile and manages a manual alias", %{conn: conn} do
     movie = movie_fixture()
+    anime = Enum.find(Catalog.list_profiles(:movies), &(&1.handling == :anime))
     {:ok, view, _} = live_movie(conn, movie)
 
     assert has_element?(view, "#movie-profile-form")
+    assert has_element?(view, "#movie-profile-form option[value='auto'][selected]", "Auto")
+    assert has_element?(view, "#movie-profile-form option[value='#{anime.id}']", anime.name)
 
     view
-    |> form("#movie-profile-form", %{"media_profile" => "anime"})
+    |> form("#movie-profile-form", %{"profile_id" => to_string(anime.id)})
     |> render_change()
 
     assert Repo.reload(movie).media_profile == :anime
+    assert Repo.reload(movie).profile_id == anime.id
 
     view
     |> form("#movie-alias-form", %{

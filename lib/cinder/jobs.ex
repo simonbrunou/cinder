@@ -10,6 +10,7 @@ defmodule Cinder.Jobs do
     Cinder.Catalog.Rehunter,
     Cinder.Catalog.UpgradeHunter,
     Cinder.Download.Cleaner,
+    Cinder.DatabaseBackup,
     Cinder.Subtitles.Sweeper,
     Cinder.Requests.WatchlistSync
   ]

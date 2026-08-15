@@ -1,5 +1,5 @@
 defmodule Cinder.SubtitlesTest do
-  use ExUnit.Case, async: false
+  use Cinder.DataCase, async: false
 
   import Mox
   import ExUnit.CaptureLog

@@ -39,6 +39,12 @@ defmodule Cinder.Download.CleanerTest do
     })
   end
 
+  defp configure_limits(limits) do
+    original = Application.get_env(:cinder, Cleaner, [])
+    Application.put_env(:cinder, Cleaner, Keyword.merge(original, limits))
+    on_exit(fn -> Application.put_env(:cinder, Cleaner, original) end)
+  end
+
   test "removes an unclaimed in-flight download" do
     orphan = entry(%{id: "orphan", state: :downloading})
 
@@ -67,6 +73,59 @@ defmodule Cinder.Download.CleanerTest do
     end)
 
     # No `remove` expectation: verify_on_exit! fails the test if the sweep calls it.
+
+    assert :ok = Cleaner.poll()
+  end
+
+  test "removes an unclaimed completed torrent after the opt-in ratio is reached" do
+    configure_limits(ratio_limit: "1.5")
+
+    expect(ClientMock, :list_managed, fn ->
+      {:ok, [entry(%{id: "seeded", state: :completed, ratio: 1.5, seeding_time: 60})]}
+    end)
+
+    expect(ClientMock, :remove, fn "seeded", opts ->
+      assert Keyword.fetch!(opts, :delete_files)
+      :ok
+    end)
+
+    assert :ok = Cleaner.poll()
+  end
+
+  test "removes an unclaimed completed torrent after the opt-in seed time is reached" do
+    configure_limits(seed_time_limit_hours: "2")
+
+    expect(ClientMock, :list_managed, fn ->
+      {:ok, [entry(%{id: "old-seed", state: :completed, ratio: 0.5, seeding_time: 7200})]}
+    end)
+
+    expect(ClientMock, :remove, fn "old-seed", _opts -> :ok end)
+
+    assert :ok = Cleaner.poll()
+  end
+
+  test "keeps completed torrents below limits or missing native metrics" do
+    configure_limits(ratio_limit: "2", seed_time_limit_hours: "48")
+
+    expect(ClientMock, :list_managed, fn ->
+      {:ok,
+       [
+         entry(%{id: "young", state: :completed, ratio: 1.0, seeding_time: 3600}),
+         entry(%{id: "unknown", state: :completed, ratio: nil, seeding_time: nil})
+       ]}
+    end)
+
+    assert :ok = Cleaner.poll()
+  end
+
+  test "keeps a completed torrent that still has an owner even after a limit" do
+    configure_limits(ratio_limit: "1")
+    key = Ecto.UUID.generate()
+    intent_for(key, "owned-seed")
+
+    expect(ClientMock, :list_managed, fn ->
+      {:ok, [entry(%{id: "owned-seed", operation_key: key, state: :completed, ratio: 5.0})]}
+    end)
 
     assert :ok = Cleaner.poll()
   end

@@ -5,6 +5,7 @@ defmodule Cinder.SettingsTest do
   import Mox
   import ExUnit.CaptureLog
 
+  alias Cinder.Catalog
   alias Cinder.Catalog.UpgradeHunter
   alias Cinder.Health
   alias Cinder.Settings
@@ -21,6 +22,9 @@ defmodule Cinder.SettingsTest do
     Cinder.Library.MigrationSource.Sonarr,
     Cinder.Download.Client.QBittorrent,
     Cinder.Download.Client.Sabnzbd,
+    Cinder.Download.Client.Transmission,
+    Cinder.Download.Client.Nzbget,
+    Cinder.Download.Cleaner,
     Cinder.Library.MediaServer.Jellyfin,
     Cinder.Library.MediaServer.Plex,
     Cinder.Notifier.Discord,
@@ -28,6 +32,7 @@ defmodule Cinder.SettingsTest do
     Cinder.Mailer,
     Cinder.Subtitles.Provider.OpenSubtitles,
     Cinder.Subtitles.Translator.LibreTranslate,
+    Cinder.Accounts.OIDC,
     Cinder.Catalog.UpgradeHunter,
     :media_server,
     :download_clients,
@@ -35,6 +40,10 @@ defmodule Cinder.SettingsTest do
     :qbittorrent_local_path_prefix,
     :sabnzbd_remote_path_prefix,
     :sabnzbd_local_path_prefix,
+    :transmission_remote_path_prefix,
+    :transmission_local_path_prefix,
+    :nzbget_remote_path_prefix,
+    :nzbget_local_path_prefix,
     :movies_library_path,
     :movies_anime_library_path,
     :movies_min_size,
@@ -58,7 +67,8 @@ defmodule Cinder.SettingsTest do
     :move_on_import,
     :ffprobe_bin,
     :anime_preferences,
-    :default_request_quota
+    :default_request_quota,
+    :household_timezone
   ]
 
   setup do
@@ -94,6 +104,26 @@ defmodule Cinder.SettingsTest do
   end
 
   describe "storage" do
+    test "household timezone controls the local eligibility date and rejects unknown zones" do
+      instant = ~U[2026-01-01 23:30:00Z]
+
+      assert :ok =
+               Settings.save_form(%{
+                 "household_timezone" => "Europe/Paris",
+                 "media_server_type" => "jellyfin"
+               })
+
+      assert Settings.household_date(instant) == ~D[2026-01-02]
+
+      assert {:error, ["household_timezone"]} =
+               Settings.save_form(%{
+                 "household_timezone" => "Mars/Olympus",
+                 "media_server_type" => "jellyfin"
+               })
+
+      assert Settings.household_timezone() == "Europe/Paris"
+    end
+
     test "import_roots parses newline/comma input, expands paths, and removes duplicates" do
       Settings.put("import_roots", " /srv/downloads, /srv/usenet\n/srv/downloads ")
 
@@ -205,7 +235,11 @@ defmodule Cinder.SettingsTest do
         "qbittorrent_remote_path_prefix" => "/downloads",
         "qbittorrent_local_path_prefix" => "/media/torrents",
         "sabnzbd_remote_path_prefix" => "/data/complete",
-        "sabnzbd_local_path_prefix" => "/media/usenet"
+        "sabnzbd_local_path_prefix" => "/media/usenet",
+        "transmission_remote_path_prefix" => "/transmission/complete",
+        "transmission_local_path_prefix" => "/media/transmission",
+        "nzbget_remote_path_prefix" => "/nzbget/complete",
+        "nzbget_local_path_prefix" => "/media/nzbget"
       }
 
       assert :ok =
@@ -658,6 +692,71 @@ defmodule Cinder.SettingsTest do
              }
     end
 
+    test "download choices select one concrete client per protocol" do
+      Settings.put("torrent_client", "transmission")
+
+      assert Application.fetch_env!(:cinder, :download_clients) == %{
+               torrent: Cinder.Download.Client.Transmission,
+               usenet: Cinder.Download.SabnzbdClientMock
+             }
+
+      Settings.put("usenet_client", "nzbget")
+
+      assert Application.fetch_env!(:cinder, :download_clients) == %{
+               torrent: Cinder.Download.Client.Transmission,
+               usenet: Cinder.Download.Client.Nzbget
+             }
+
+      Settings.put("torrent_client", "disabled")
+
+      assert Application.fetch_env!(:cinder, :download_clients) == %{
+               usenet: Cinder.Download.Client.Nzbget
+             }
+    end
+
+    test "new client credentials and opt-in cleanup limits overlay their module config" do
+      assert :ok =
+               Settings.save_form(%{
+                 "media_server_type" => "jellyfin",
+                 "transmission_url" => "http://transmission:9091/transmission/rpc",
+                 "transmission_username" => "cinder",
+                 "transmission_password" => "secret",
+                 "nzbget_url" => "http://nzbget:6789/jsonrpc",
+                 "nzbget_username" => "cinder",
+                 "nzbget_password" => "secret",
+                 "torrent_cleanup_ratio" => "1.5",
+                 "torrent_cleanup_seed_hours" => "72"
+               })
+
+      assert Application.get_env(:cinder, Cinder.Download.Client.Transmission)[:base_url] ==
+               "http://transmission:9091/transmission/rpc"
+
+      assert Application.get_env(:cinder, Cinder.Download.Client.Nzbget)[:base_url] ==
+               "http://nzbget:6789/jsonrpc"
+
+      assert Application.get_env(:cinder, Cinder.Download.Cleaner)[:ratio_limit] == "1.5"
+      assert Application.get_env(:cinder, Cinder.Download.Cleaner)[:seed_time_limit_hours] == "72"
+
+      for key <- ["transmission_password", "nzbget_password"] do
+        row = Repo.get_by!(Setting, key: key)
+        assert row.is_secret
+        refute row.value == "secret"
+      end
+    end
+
+    test "download choices and torrent cleanup limits reject unknown or non-positive values" do
+      assert {:error, invalid} =
+               Settings.save_form(%{
+                 "torrent_client" => "deluge",
+                 "usenet_client" => "sabnzbd",
+                 "torrent_cleanup_ratio" => "0",
+                 "torrent_cleanup_seed_hours" => "forever"
+               })
+
+      assert Enum.sort(invalid) ==
+               ["torrent_cleanup_ratio", "torrent_cleanup_seed_hours", "torrent_client"]
+    end
+
     test "media_server reverts to the bootstrap base after an explicit set is cleared" do
       # Erase the snapshot to simulate base not yet captured when the first explicit
       # resolution happens (the boot-with-persisted-row case the lazy capture got wrong).
@@ -713,6 +812,56 @@ defmodule Cinder.SettingsTest do
 
       assert Settings.library_root(:movies, %{media_profile: :anime}) ==
                {:ok, Application.fetch_env!(:cinder, :movies_library_path)}
+    end
+
+    test "named profiles route explicit roots, blank roots fall back, and wrong kinds never route" do
+      Application.put_env(:cinder, :movies_library_path, "/srv/media/movies")
+      Application.put_env(:cinder, :movies_anime_library_path, "/srv/media/anime-movies")
+
+      assert {:ok, explicit} =
+               Catalog.create_profile(%{
+                 name: "Family",
+                 kind: :movies,
+                 handling: :standard,
+                 library_path: "/srv/media/family"
+               })
+
+      assert {:ok, fallback} =
+               Catalog.create_profile(%{
+                 name: "Anime fallback",
+                 kind: :movies,
+                 handling: :anime,
+                 library_path: ""
+               })
+
+      assert {:ok, wrong_kind} =
+               Catalog.create_profile(%{
+                 name: "TV only",
+                 kind: :tv,
+                 handling: :anime,
+                 library_path: "/srv/media/wrong-tv"
+               })
+
+      assert Settings.library_root(:movies, %{profile_id: explicit.id}) ==
+               {:ok, "/srv/media/family"}
+
+      assert Settings.library_root(:movies, %{profile_id: fallback.id}) ==
+               {:ok, "/srv/media/anime-movies"}
+
+      assert Settings.library_root(:movies, %{
+               profile_id: wrong_kind.id,
+               media_profile: :standard
+             }) == {:ok, "/srv/media/movies"}
+
+      assert "/srv/media/family" in Settings.library_roots()
+
+      assert {:ok, %{profile_id: profile_id}} =
+               Settings.library_destination_for_path(
+                 :movies,
+                 "/srv/media/family/Movie/Movie.mkv"
+               )
+
+      assert profile_id == explicit.id
     end
 
     test "library paths reject every spelling that expands to the filesystem root" do
@@ -1089,6 +1238,29 @@ defmodule Cinder.SettingsTest do
 
       refute Map.has_key?(values, "tmdb_token")
       assert MapSet.member?(secrets_set, "tmdb_token")
+    end
+
+    test "OIDC settings load into Accounts config without exposing the client secret" do
+      assert :ok =
+               Settings.save_form(%{
+                 "oidc_issuer_url" => "https://id.example.com",
+                 "oidc_client_id" => "cinder",
+                 "oidc_client_secret" => "hidden-secret"
+               })
+
+      config = Application.fetch_env!(:cinder, Cinder.Accounts.OIDC)
+      assert config[:issuer_url] == "https://id.example.com"
+      assert config[:client_id] == "cinder"
+      assert config[:client_secret] == "hidden-secret"
+
+      row = Repo.get_by!(Setting, key: "oidc_client_secret")
+      assert row.is_secret
+      refute row.value =~ "hidden-secret"
+
+      form = Settings.form_state()
+      refute Map.has_key?(form.values, "oidc_client_secret")
+      refute Map.has_key?(form.placeholders, "oidc_client_secret")
+      assert MapSet.member?(form.secrets_set, "oidc_client_secret")
     end
   end
 

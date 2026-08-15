@@ -13,6 +13,7 @@ defmodule Cinder.Catalog.MediaProfiles do
   alias Cinder.Catalog.MediaProfile
   alias Cinder.Catalog.Movie
   alias Cinder.Catalog.Series
+  alias Cinder.Catalog.SeriesCatalog
   alias Cinder.Repo
 
   @doc """
@@ -40,6 +41,48 @@ defmodule Cinder.Catalog.MediaProfiles do
   rescue
     Ecto.StaleEntryError -> {:error, :stale_entry}
   end
+
+  @doc """
+  Fills an existing title's still-default language pick, then confirms its legacy Auto handling.
+  Call outside a surrounding transaction; request approval invokes it only after commit.
+  """
+  def apply_confirmed_media(media, profile, preferred) do
+    apply_confirmed_media(media, profile, preferred, media.media_profile)
+  end
+
+  @doc false
+  def apply_confirmed_media(media, profile, preferred, pre_request_profile) do
+    with {:ok, media} <- apply_requester_language(media, preferred, pre_request_profile) do
+      apply_confirmed_profile(media, profile)
+    end
+  end
+
+  defp apply_confirmed_profile(%{media_profile: :auto} = media, profile)
+       when profile in [:standard, :anime],
+       do: set_media_profile(media, profile)
+
+  defp apply_confirmed_profile(media, _profile), do: {:ok, media}
+
+  defguardp fillable_pick(preferred, pre_request_profile)
+            when preferred not in [nil, "original"] and pre_request_profile != :anime
+
+  defp apply_requester_language(
+         %Series{preferred_language: "original"} = series,
+         preferred,
+         pre_request_profile
+       )
+       when fillable_pick(preferred, pre_request_profile),
+       do: SeriesCatalog.set_series_language(series, preferred)
+
+  defp apply_requester_language(
+         %Movie{preferred_language: "original"} = movie,
+         preferred,
+         pre_request_profile
+       )
+       when fillable_pick(preferred, pre_request_profile),
+       do: Catalog.fill_movie_language(movie, preferred)
+
+  defp apply_requester_language(media, _preferred, _pre_request_profile), do: {:ok, media}
 
   @doc """
   Marks a title held at search time because the Anime release preferences can't be

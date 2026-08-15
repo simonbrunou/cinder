@@ -1,5 +1,5 @@
 defmodule Cinder.Library.SidecarsTest do
-  use ExUnit.Case, async: false
+  use Cinder.DataCase, async: false
   import ExUnit.CaptureLog
   import Mox
   setup :verify_on_exit!

@@ -7,10 +7,13 @@
 # General application configuration
 import Config
 
+config :elixir, :time_zone_database, Tz.TimeZoneDatabase
+
 config :cinder,
   ecto_repos: [Cinder.Repo],
   bootstrap_token: nil,
-  secure_cookies: false
+  secure_cookies: false,
+  household_timezone: "Etc/UTC"
 
 # SQLite correctness, pinned in ONE place so every environment gets it — including a non-prod
 # release that never reaches runtime.exs's prod-only branch. Env files add only `database`/
@@ -105,6 +108,7 @@ config :cinder,
 
 # Conservative quota for newly self-registered users; editable at /settings.
 config :cinder, default_request_quota: 10
+config :cinder, oidc_auth: Cinder.Accounts.OIDC.Assent
 
 # First-run wizard gate: redirect to /setup until setup_complete. Off in test so the
 # existing LiveView suite (which never marks setup complete) isn't redirected.
@@ -122,7 +126,8 @@ config :cinder, Cinder.Download.StallReaper,
 # Re-queues parked titles so a request with no release yet keeps getting hunted.
 config :cinder, Cinder.Catalog.Rehunter, enabled: true, rehunt_after: :timer.hours(24)
 
-# Reaps Cinder-submitted downloads nothing owns any more (never completed ones — seeding survives).
+# Reaps Cinder-submitted downloads nothing owns any more. Completed torrents seed indefinitely
+# unless an operator saves an opt-in ratio and/or seed-time limit in Settings.
 config :cinder, Cinder.Download.Cleaner, enabled: true
 
 # Rejects a download whose file list marks it as a fake (a .lnk/.exe payload, not a movie).
