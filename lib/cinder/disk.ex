@@ -118,12 +118,14 @@ defmodule Cinder.Disk do
   defp prober, do: Application.get_env(:cinder, :disk_prober, __MODULE__)
 
   @doc """
-  The configured standard and Anime library roots as `{kind, path}` pairs, skipping unset,
-  blank, and duplicate destinations.
+  The boot-configured standard and Anime library roots as `{kind, path}` pairs, skipping unset,
+  blank, and duplicate destinations. Named roots are checked directly before each import; this
+  periodic telemetry path deliberately stays DB-free because it starts before the Repo.
   """
   @spec configured_roots() :: [{atom(), String.t()}]
   def configured_roots do
-    for %{kind: kind, profile: profile, path: path} <- Cinder.Settings.library_destinations() do
+    for %{kind: kind, profile: profile, path: path} <-
+          Cinder.Settings.legacy_library_destinations() do
       root_kind = if profile == :anime, do: :"anime_#{kind}", else: kind
       {root_kind, path}
     end

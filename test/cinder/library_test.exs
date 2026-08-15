@@ -5,6 +5,7 @@ defmodule Cinder.LibraryTest do
   import Mox
   import ExUnit.CaptureLog
 
+  alias Cinder.Catalog
   alias Cinder.Catalog.{Episode, Grab, GrabFile, Movie, Season, Series}
   alias Cinder.Library
   alias Cinder.Library.ImportStage
@@ -567,6 +568,32 @@ defmodule Cinder.LibraryTest do
 
     assert {:ok, %{dest: dest}} = Library.stage_movie(movie)
     assert String.starts_with?(dest, anime_root <> "/")
+  end
+
+  test "a named movie profile stages inside its arbitrary configured root" do
+    root = "/tmp/cinder-family-library"
+
+    assert {:ok, profile} =
+             Catalog.create_profile(%{
+               name: "Family library",
+               kind: :movies,
+               handling: :standard,
+               library_path: root
+             })
+
+    movie = %Movie{
+      title: "Paddington",
+      year: 2014,
+      tmdb_id: 116_149,
+      profile_id: profile.id,
+      media_profile: :standard,
+      file_path: "/dl/Paddington.2014.1080p.mkv"
+    }
+
+    Cinder.LibraryStubs.stub_import_ok(5 * @gb)
+
+    assert {:ok, %{dest: dest}} = Library.stage_movie(movie)
+    assert String.starts_with?(dest, root <> "/")
   end
 
   test "single-file import with media_info off returns empty capture lists" do

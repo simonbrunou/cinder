@@ -369,11 +369,12 @@ defmodule Cinder.Catalog.SeriesCatalog do
     # crash rather than return a clean error.
     preferred = Keyword.get(opts, :preferred_language, "original")
     media_profile = Keyword.get(opts, :media_profile, :auto)
+    profile_id = Keyword.get(opts, :profile_id)
 
     if strategy in Series.monitor_strategies() do
       case get_series_by_tmdb_id(tmdb_id) do
         %Series{} = series -> {:ok, series}
-        nil -> create_series(tmdb_id, strategy, preferred, media_profile)
+        nil -> create_series(tmdb_id, strategy, preferred, media_profile, profile_id)
       end
     else
       {:error, :invalid_monitor_strategy}
@@ -504,23 +505,26 @@ defmodule Cinder.Catalog.SeriesCatalog do
     series |> Ecto.Changeset.change(monitored: true) |> Repo.update()
   end
 
-  defp create_series(tmdb_id, strategy, preferred, media_profile) do
+  defp create_series(tmdb_id, strategy, preferred, media_profile, profile_id) do
     with {:ok, {:new, ^tmdb_id, attrs, seasons, identity}} <-
-           prepare_series(tmdb_id, strategy, preferred, media_profile) do
+           prepare_series(tmdb_id, strategy, preferred, media_profile, profile_id) do
       insert_series(tmdb_id, attrs, seasons, identity)
     end
   end
 
-  defp prepare_series(tmdb_id, strategy, preferred, media_profile) do
+  defp prepare_series(tmdb_id, strategy, preferred, media_profile, profile_id \\ nil) do
     with {:ok, info} <- tmdb().get_series(tmdb_id),
          {:ok, seasons} <- fetch_seasons(tmdb_id, info.seasons),
          seasons = put_episode_localizations(tmdb_id, seasons),
          # A brand-new series has no scene_numbering_group_id yet (create_changeset doesn't
          # cast it), so there's nothing to pre-fetch here.
          {:ok, identity} <- fetch_series_identity(tmdb_id, nil) do
-      {:ok,
-       {:new, tmdb_id, series_attrs(info, seasons, strategy, preferred, media_profile), seasons,
-        identity}}
+      attrs =
+        info
+        |> series_attrs(seasons, strategy, preferred, media_profile)
+        |> Map.put(:profile_id, profile_id)
+
+      {:ok, {:new, tmdb_id, attrs, seasons, identity}}
     end
   end
 

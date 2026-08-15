@@ -5,6 +5,7 @@ defmodule Cinder.SettingsTest do
   import Mox
   import ExUnit.CaptureLog
 
+  alias Cinder.Catalog
   alias Cinder.Catalog.UpgradeHunter
   alias Cinder.Health
   alias Cinder.Settings
@@ -811,6 +812,56 @@ defmodule Cinder.SettingsTest do
 
       assert Settings.library_root(:movies, %{media_profile: :anime}) ==
                {:ok, Application.fetch_env!(:cinder, :movies_library_path)}
+    end
+
+    test "named profiles route explicit roots, blank roots fall back, and wrong kinds never route" do
+      Application.put_env(:cinder, :movies_library_path, "/srv/media/movies")
+      Application.put_env(:cinder, :movies_anime_library_path, "/srv/media/anime-movies")
+
+      assert {:ok, explicit} =
+               Catalog.create_profile(%{
+                 name: "Family",
+                 kind: :movies,
+                 handling: :standard,
+                 library_path: "/srv/media/family"
+               })
+
+      assert {:ok, fallback} =
+               Catalog.create_profile(%{
+                 name: "Anime fallback",
+                 kind: :movies,
+                 handling: :anime,
+                 library_path: ""
+               })
+
+      assert {:ok, wrong_kind} =
+               Catalog.create_profile(%{
+                 name: "TV only",
+                 kind: :tv,
+                 handling: :anime,
+                 library_path: "/srv/media/wrong-tv"
+               })
+
+      assert Settings.library_root(:movies, %{profile_id: explicit.id}) ==
+               {:ok, "/srv/media/family"}
+
+      assert Settings.library_root(:movies, %{profile_id: fallback.id}) ==
+               {:ok, "/srv/media/anime-movies"}
+
+      assert Settings.library_root(:movies, %{
+               profile_id: wrong_kind.id,
+               media_profile: :standard
+             }) == {:ok, "/srv/media/movies"}
+
+      assert "/srv/media/family" in Settings.library_roots()
+
+      assert {:ok, %{profile_id: profile_id}} =
+               Settings.library_destination_for_path(
+                 :movies,
+                 "/srv/media/family/Movie/Movie.mkv"
+               )
+
+      assert profile_id == explicit.id
     end
 
     test "library paths reject every spelling that expands to the filesystem root" do

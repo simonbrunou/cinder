@@ -147,6 +147,72 @@ defmodule Cinder.Library.AdoptionTest do
     assert %Movie{media_profile: :anime, file_path: ^anime} = Catalog.get_movie_by_tmdb_id(20)
   end
 
+  test "adoption from an explicit named root assigns that exact profile" do
+    root = "/tmp/cinder-family-adoption"
+    path = "#{root}/Paddington (2014)/Paddington (2014).mkv"
+
+    assert {:ok, profile} =
+             Catalog.create_profile(%{
+               name: "Family adoption",
+               kind: :movies,
+               handling: :standard,
+               library_path: root
+             })
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn
+      ^root -> {:ok, [{path, 10}]}
+      _other_root -> {:ok, []}
+    end)
+
+    expect(Cinder.Catalog.TMDBMock, :search, fn "Paddington", "en" ->
+      {:ok, [movie_result(30, "Paddington", 2014)]}
+    end)
+
+    assert [%{profile_id: profile_id, media_profile: :standard} = candidate] = Adoption.scan()
+    assert profile_id == profile.id
+
+    expect(Cinder.Catalog.TMDBMock, :get_movie, fn 30 ->
+      {:ok,
+       movie_result(30, "Paddington", 2014)
+       |> Map.merge(%{imdb_id: "tt1109624", localizations: %{}})}
+    end)
+
+    assert %{adopted: 1, skipped: 0} = Adoption.adopt([candidate])
+
+    assert %Movie{profile_id: profile_id, media_profile: :standard, file_path: ^path} =
+             Catalog.get_movie_by_tmdb_id(30)
+
+    assert profile_id == profile.id
+  end
+
+  test "adoption fails closed when its named destination disappears after scanning" do
+    root = "/tmp/cinder-stale-adoption"
+    path = "#{root}/Dune (2021)/Dune (2021).mkv"
+
+    assert {:ok, profile} =
+             Catalog.create_profile(%{
+               name: "Temporary adoption",
+               kind: :movies,
+               handling: :standard,
+               library_path: root
+             })
+
+    stub(Cinder.Library.FilesystemMock, :find_files, fn
+      ^root -> {:ok, [{path, 10}]}
+      _other_root -> {:ok, []}
+    end)
+
+    expect(Cinder.Catalog.TMDBMock, :search, fn "Dune", "en" ->
+      {:ok, [movie_result(31, "Dune", 2021)]}
+    end)
+
+    assert [candidate] = Adoption.scan()
+    assert {:ok, _deleted} = Catalog.delete_profile(profile)
+
+    assert %{adopted: 0, skipped: 1} = Adoption.adopt([candidate])
+    refute Catalog.get_movie_by_tmdb_id(31)
+  end
+
   test "scan adopts a series from an Anime destination with the Anime profile" do
     anime_root = "/tmp/cinder-test-tv-library/anime"
     path = "#{anime_root}/Test Show (2001)/Test.Show.S01E01.mkv"
