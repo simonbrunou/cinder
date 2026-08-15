@@ -1026,9 +1026,27 @@ defmodule Cinder.Download.Client.QBittorrentTest do
     assert {:ok, entries} = QBittorrent.list_managed()
 
     assert entries == [
-             %{id: "aaa", operation_key: "op-1", state: :downloading},
-             %{id: "bbb", operation_key: "op-2", state: :completed},
-             %{id: "ccc", operation_key: "op-3", state: :error}
+             %{
+               id: "aaa",
+               operation_key: "op-1",
+               ratio: nil,
+               seeding_time: nil,
+               state: :downloading
+             },
+             %{
+               id: "bbb",
+               operation_key: "op-2",
+               ratio: nil,
+               seeding_time: nil,
+               state: :completed
+             },
+             %{
+               id: "ccc",
+               operation_key: "op-3",
+               ratio: nil,
+               seeding_time: nil,
+               state: :error
+             }
            ]
   end
 

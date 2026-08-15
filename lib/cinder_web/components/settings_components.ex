@@ -26,12 +26,19 @@ defmodule CinderWeb.SettingsComponents do
   defp invalid_groups(keys) do
     anime_keys = MapSet.new(Settings.anime_fields(), & &1.key)
 
+    download_keys =
+      Settings.download_fields()
+      |> Enum.map(& &1.key)
+      |> Kernel.++(Enum.map(Settings.download_client_choices(), & &1.key))
+      |> MapSet.new()
+
     keys
     |> Enum.map(fn key ->
       cond do
         key == Settings.import_roots_key() -> :library
         library_path_key?(key) -> :library
         MapSet.member?(anime_keys, key) -> :anime
+        MapSet.member?(download_keys, key) -> :download
         true -> :releases
       end
     end)
@@ -99,18 +106,28 @@ defmodule CinderWeb.SettingsComponents do
           </select>
         </div>
 
-        <div :if={group == :download} class="mb-3">
-          <label :for={t <- Settings.toggles()} class="label cursor-pointer justify-start gap-2">
-            <input type="hidden" name={t.key} value="false" />
-            <input
-              type="checkbox"
-              name={t.key}
-              value="true"
-              checked={@form.values[t.key]}
-              class="checkbox"
-            />
-            <span class="label-text">{SettingsLabels.t(t.label)}</span>
-          </label>
+        <div :if={group == :download} class="mb-3 grid gap-3 sm:grid-cols-2">
+          <div :for={choice <- Settings.download_client_choices()} class="form-control">
+            <label class="label" for={choice.key}>
+              <span class="label-text">{SettingsLabels.t(choice.label)}</span>
+            </label>
+            <select
+              id={choice.key}
+              name={choice.key}
+              aria-invalid={invalid?(@form, choice.key) && "true"}
+              aria-describedby={invalid?(@form, choice.key) && "#{choice.key}-error"}
+              class={["select w-full", invalid?(@form, choice.key) && "select-error"]}
+            >
+              <option
+                :for={option <- choice.options}
+                value={option.value}
+                selected={@form.values[choice.key] == option.value}
+              >
+                {SettingsLabels.t(option.label)}
+              </option>
+            </select>
+            <.field_error :if={invalid?(@form, choice.key)} field={choice.key} />
+          </div>
         </div>
 
         <div :if={group == :library} class="space-y-2">
@@ -243,7 +260,7 @@ defmodule CinderWeb.SettingsComponents do
             </label>
             <p id="move_on_import-help" class="mt-1 text-xs opacity-70">
               {gettext(
-                "After a Usenet import, delete the original from the download client. Ensure your library is a separate folder from your downloads. Torrents are never auto-removed (seeding survives)."
+                "After a Usenet import, delete the original from the download client. Ensure your library is a separate folder from your downloads. Torrents keep seeding unless you configure completed-torrent limits below."
               )}
             </p>
           </div>
@@ -585,7 +602,7 @@ defmodule CinderWeb.SettingsComponents do
   defp setup_section_description(:download),
     do:
       gettext(
-        "Choose at least one download client. qBittorrent handles torrents and SABnzbd handles Usenet; Cinder sends releases to enabled clients and tracks them through import."
+        "Choose one client per protocol. Cinder supports qBittorrent or Transmission for torrents, and SABnzbd or NZBGet for Usenet, then tracks releases through import."
       )
 
   defp setup_section_description(:media_server),
@@ -642,7 +659,9 @@ defmodule CinderWeb.SettingsComponents do
   defp setup_section_resources(:download),
     do: [
       {gettext("Get qBittorrent"), "https://www.qbittorrent.org/"},
-      {gettext("Get SABnzbd"), "https://sabnzbd.org/"}
+      {gettext("Get Transmission"), "https://transmissionbt.com/"},
+      {gettext("Get SABnzbd"), "https://sabnzbd.org/"},
+      {gettext("Get NZBGet"), "https://nzbget.com/"}
     ]
 
   defp setup_section_resources(:media_server),
@@ -673,7 +692,9 @@ defmodule CinderWeb.SettingsComponents do
   def services_for(:migration),
     do: [{"radarr", gettext("Radarr")}, {"sonarr", gettext("Sonarr")}]
 
-  def services_for(:download), do: [{"torrent", "qBittorrent"}, {"usenet", "SABnzbd"}]
+  def services_for(:download),
+    do: [{"torrent", gettext("Torrent client")}, {"usenet", gettext("Usenet client")}]
+
   def services_for(:media_server), do: [{"media_server", gettext("Media server")}]
   def services_for(:notifications), do: [{"discord", "Discord"}]
   def services_for(:subtitles), do: [{"subtitles", "OpenSubtitles"}]
@@ -731,7 +752,14 @@ defmodule CinderWeb.SettingsComponents do
         placeholder={@form.placeholders[@field.key] || @field.placeholder}
         inputmode={Map.get(@field, :inputmode)}
         autocomplete="off"
-        class="input w-full"
+        aria-invalid={invalid?(@form, @field.key) && "true"}
+        aria-describedby={invalid?(@form, @field.key) && "#{@field.key}-error"}
+        class={["input w-full", invalid?(@form, @field.key) && "input-error"]}
+      />
+
+      <.field_error
+        :if={not @field.secret and invalid?(@form, @field.key)}
+        field={@field.key}
       />
 
       <p :if={Map.has_key?(@field, :help)} class="mt-1 text-xs opacity-70">
@@ -802,6 +830,13 @@ defmodule CinderWeb.SettingsComponents do
   defp invalid_field_message(key) when key == "anime_embedded_subtitle_mode",
     do: gettext("Choose a valid mode and at least one subtitle language when required.")
 
+  defp invalid_field_message(key) when key in ["torrent_client", "usenet_client"],
+    do: gettext("Choose a listed download client.")
+
+  defp invalid_field_message(key)
+       when key in ["torrent_cleanup_ratio", "torrent_cleanup_seed_hours"],
+       do: gettext("Enter a positive number, or leave blank to disable.")
+
   defp invalid_field_message(key) when is_binary(key) do
     if library_path_key?(key),
       do: gettext("The top-level folder (/) is not allowed."),
@@ -824,7 +859,7 @@ defmodule CinderWeb.SettingsComponents do
     do: gettext("Anime: Preferred-group fallback delay")
 
   defp invalid_field_label(key) do
-    Enum.find_value(Settings.library_kinds(), key, fn %{kind: kind, label: label} ->
+    Enum.find_value(Settings.library_kinds(), fn %{kind: kind, label: label} ->
       cond do
         key == Settings.library_path_key(kind) ->
           gettext("%{kind} library folder", kind: SettingsLabels.t(label))
@@ -844,7 +879,7 @@ defmodule CinderWeb.SettingsComponents do
         true ->
           nil
       end
-    end)
+    end) || SettingsLabels.t(Settings.field_label(key))
   end
 
   defp library_path_key?(key) do

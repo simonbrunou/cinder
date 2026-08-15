@@ -53,6 +53,7 @@ defmodule Cinder.Settings do
   defdelegate config_fields(group), to: Registry
   defdelegate path_mapping_fields(), to: Registry
   defdelegate download_fields(), to: Registry
+  defdelegate download_client_choices(), to: Registry
   defdelegate global_fields(), to: Registry
   defdelegate global_fields(group), to: Registry
   defdelegate toggles(), to: Registry
@@ -106,7 +107,9 @@ defmodule Cinder.Settings do
   """
   @spec field_label(String.t()) :: String.t()
   def field_label(key) do
-    case Enum.find(config_fields() ++ global_fields(), &(&1.key == key)) do
+    fields = config_fields() ++ global_fields() ++ download_client_choices()
+
+    case Enum.find(fields, &(&1.key == key)) do
       %{label: label} -> label
       _ -> key
     end
@@ -323,6 +326,7 @@ defmodule Cinder.Settings do
         @media_server_key,
         decoded_for(rows, @media_server_key) || default_media_server_type()
       )
+      |> put_download_choices(rows)
       |> then(fn v ->
         Enum.reduce(flat_keys(), v, fn key, acc ->
           Map.put(acc, key, decoded_for(rows, key) || "")
@@ -375,6 +379,7 @@ defmodule Cinder.Settings do
         end
       end)
       |> preserve_media_server(params)
+      |> preserve_download_choices(params)
       |> preserve_booleans(params)
 
     clear_secrets =
@@ -397,6 +402,18 @@ defmodule Cinder.Settings do
        do: Map.put(values, @media_server_key, value)
 
   defp preserve_media_server(values, _params), do: values
+
+  defp preserve_download_choices(values, params) do
+    Enum.reduce(download_client_choices(), values, fn choice, values ->
+      preserve_download_choice(values, choice, params[choice.key])
+    end)
+  end
+
+  defp preserve_download_choice(values, choice, value) when is_binary(value) do
+    if choice_option(choice, value), do: Map.put(values, choice.key, value), else: values
+  end
+
+  defp preserve_download_choice(values, _choice, _value), do: values
 
   defp preserve_booleans(values, params) do
     keys = Enum.map(toggles(), & &1.key) ++ ["move_on_import", @smtp_ssl_key]
@@ -514,7 +531,32 @@ defmodule Cinder.Settings do
     invalid_band_values(params) ++
       invalid_cutoff_values(params) ++
       invalid_import_roots(params) ++
-      invalid_library_roots(params) ++ invalid_anime_values(params)
+      invalid_library_roots(params) ++
+      invalid_anime_values(params) ++
+      invalid_download_choices(params) ++ invalid_torrent_cleanup(params)
+  end
+
+  defp invalid_download_choices(params) do
+    for choice <- download_client_choices(),
+        value = params[choice.key],
+        not is_nil(value),
+        is_nil(choice_option(choice, value)),
+        do: choice.key
+  end
+
+  defp invalid_torrent_cleanup(params) do
+    for key <- ["torrent_cleanup_ratio", "torrent_cleanup_seed_hours"],
+        value = String.trim(params[key] || ""),
+        value != "",
+        not positive_number_string?(value),
+        do: key
+  end
+
+  defp positive_number_string?(value) do
+    case Float.parse(value) do
+      {number, ""} when number > 0 -> true
+      _ -> false
+    end
   end
 
   defp invalid_library_roots(params) do
@@ -1058,25 +1100,30 @@ defmodule Cinder.Settings do
     |> Enum.map(&elem(&1, 0))
   end
 
-  # Toggles build the client map from the captured base map (so a protocol with no toggle
-  # row defaults to enabled and the test mock modules survive); with no toggle setting at
-  # all, fall back to the base map. A protocol is included only when enabled.
+  # A saved choice selects exactly one implementation per protocol. Until a choice is saved,
+  # preserve the bootstrap map (including test mocks) and honor the old 1.1 enable row.
   defp apply_download_clients(rows) do
     base_map = base(:download_clients)
 
     map =
-      if Enum.any?(toggles(), fn t -> Map.has_key?(rows, t.key) end) do
-        for t <- toggles(),
-            enabled?(decoded_for(rows, t.key)),
-            Map.has_key?(base_map, t.protocol),
-            into: %{} do
-          {t.protocol, Map.fetch!(base_map, t.protocol)}
-        end
-      else
-        base_map
+      for choice <- download_client_choices(),
+          module = selected_download_client(rows, choice, base_map),
+          not is_nil(module),
+          into: %{} do
+        {choice.protocol, module}
       end
 
     Application.put_env(:cinder, :download_clients, map)
+  end
+
+  defp selected_download_client(rows, choice, base_map) do
+    case choice_option(choice, decoded_for(rows, choice.key)) do
+      %{module: module} ->
+        module
+
+      nil ->
+        if enabled?(decoded_for(rows, choice.legacy_key)), do: base_map[choice.protocol]
+    end
   end
 
   # One-time snapshot of the bootstrap config for `key`, so the overlay is always
@@ -1120,6 +1167,24 @@ defmodule Cinder.Settings do
   defp enabled?(nil), do: true
   defp enabled?(value), do: value in ["true", "1", "on"]
 
+  defp put_download_choices(values, rows) do
+    Enum.reduce(download_client_choices(), values, fn choice, values ->
+      Map.put(values, choice.key, download_choice_value(rows, choice))
+    end)
+  end
+
+  defp download_choice_value(rows, choice) do
+    case choice_option(choice, decoded_for(rows, choice.key)) do
+      %{value: value} ->
+        value
+
+      nil ->
+        if enabled?(decoded_for(rows, choice.legacy_key)), do: choice.default, else: "disabled"
+    end
+  end
+
+  defp choice_option(choice, value), do: Enum.find(choice.options, &(&1.value == value))
+
   defp default_media_server_type do
     if System.get_env("PLEX_URL"), do: "plex", else: "jellyfin"
   end
@@ -1150,6 +1215,11 @@ defmodule Cinder.Settings do
     {puts, deletes} = plan_flat(@ffprobe_bin_key, params, {puts, deletes})
 
     {puts, deletes} =
+      Enum.reduce(download_client_choices(), {puts, deletes}, fn choice, acc ->
+        plan_flat(choice.key, params, acc)
+      end)
+
+    {puts, deletes} =
       Enum.reduce(anime_fields(), {puts, deletes}, &plan_flat(&1.key, params, &2))
 
     puts =
@@ -1157,9 +1227,6 @@ defmodule Cinder.Settings do
       |> Map.put(@media_server_key, media_server_choice(params))
       |> Map.put("move_on_import", params["move_on_import"] || "false")
       |> Map.put(@smtp_ssl_key, params[@smtp_ssl_key] || "false")
-      |> then(fn p ->
-        Enum.reduce(toggles(), p, fn t, acc -> Map.put(acc, t.key, params[t.key] || "false") end)
-      end)
 
     {puts, deletes}
   end

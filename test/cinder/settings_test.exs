@@ -21,6 +21,9 @@ defmodule Cinder.SettingsTest do
     Cinder.Library.MigrationSource.Sonarr,
     Cinder.Download.Client.QBittorrent,
     Cinder.Download.Client.Sabnzbd,
+    Cinder.Download.Client.Transmission,
+    Cinder.Download.Client.Nzbget,
+    Cinder.Download.Cleaner,
     Cinder.Library.MediaServer.Jellyfin,
     Cinder.Library.MediaServer.Plex,
     Cinder.Notifier.Discord,
@@ -35,6 +38,10 @@ defmodule Cinder.SettingsTest do
     :qbittorrent_local_path_prefix,
     :sabnzbd_remote_path_prefix,
     :sabnzbd_local_path_prefix,
+    :transmission_remote_path_prefix,
+    :transmission_local_path_prefix,
+    :nzbget_remote_path_prefix,
+    :nzbget_local_path_prefix,
     :movies_library_path,
     :movies_anime_library_path,
     :movies_min_size,
@@ -205,7 +212,11 @@ defmodule Cinder.SettingsTest do
         "qbittorrent_remote_path_prefix" => "/downloads",
         "qbittorrent_local_path_prefix" => "/media/torrents",
         "sabnzbd_remote_path_prefix" => "/data/complete",
-        "sabnzbd_local_path_prefix" => "/media/usenet"
+        "sabnzbd_local_path_prefix" => "/media/usenet",
+        "transmission_remote_path_prefix" => "/transmission/complete",
+        "transmission_local_path_prefix" => "/media/transmission",
+        "nzbget_remote_path_prefix" => "/nzbget/complete",
+        "nzbget_local_path_prefix" => "/media/nzbget"
       }
 
       assert :ok =
@@ -656,6 +667,71 @@ defmodule Cinder.SettingsTest do
       assert Application.fetch_env!(:cinder, :download_clients) == %{
                torrent: Cinder.Download.ClientMock
              }
+    end
+
+    test "download choices select one concrete client per protocol" do
+      Settings.put("torrent_client", "transmission")
+
+      assert Application.fetch_env!(:cinder, :download_clients) == %{
+               torrent: Cinder.Download.Client.Transmission,
+               usenet: Cinder.Download.SabnzbdClientMock
+             }
+
+      Settings.put("usenet_client", "nzbget")
+
+      assert Application.fetch_env!(:cinder, :download_clients) == %{
+               torrent: Cinder.Download.Client.Transmission,
+               usenet: Cinder.Download.Client.Nzbget
+             }
+
+      Settings.put("torrent_client", "disabled")
+
+      assert Application.fetch_env!(:cinder, :download_clients) == %{
+               usenet: Cinder.Download.Client.Nzbget
+             }
+    end
+
+    test "new client credentials and opt-in cleanup limits overlay their module config" do
+      assert :ok =
+               Settings.save_form(%{
+                 "media_server_type" => "jellyfin",
+                 "transmission_url" => "http://transmission:9091/transmission/rpc",
+                 "transmission_username" => "cinder",
+                 "transmission_password" => "secret",
+                 "nzbget_url" => "http://nzbget:6789/jsonrpc",
+                 "nzbget_username" => "cinder",
+                 "nzbget_password" => "secret",
+                 "torrent_cleanup_ratio" => "1.5",
+                 "torrent_cleanup_seed_hours" => "72"
+               })
+
+      assert Application.get_env(:cinder, Cinder.Download.Client.Transmission)[:base_url] ==
+               "http://transmission:9091/transmission/rpc"
+
+      assert Application.get_env(:cinder, Cinder.Download.Client.Nzbget)[:base_url] ==
+               "http://nzbget:6789/jsonrpc"
+
+      assert Application.get_env(:cinder, Cinder.Download.Cleaner)[:ratio_limit] == "1.5"
+      assert Application.get_env(:cinder, Cinder.Download.Cleaner)[:seed_time_limit_hours] == "72"
+
+      for key <- ["transmission_password", "nzbget_password"] do
+        row = Repo.get_by!(Setting, key: key)
+        assert row.is_secret
+        refute row.value == "secret"
+      end
+    end
+
+    test "download choices and torrent cleanup limits reject unknown or non-positive values" do
+      assert {:error, invalid} =
+               Settings.save_form(%{
+                 "torrent_client" => "deluge",
+                 "usenet_client" => "sabnzbd",
+                 "torrent_cleanup_ratio" => "0",
+                 "torrent_cleanup_seed_hours" => "forever"
+               })
+
+      assert Enum.sort(invalid) ==
+               ["torrent_cleanup_ratio", "torrent_cleanup_seed_hours", "torrent_client"]
     end
 
     test "media_server reverts to the bootstrap base after an explicit set is cleared" do

@@ -6,7 +6,7 @@
 Cinder is a single-household, self-hosted replacement for the **Sonarr + Radarr + Seerr** loop:
 request a movie or TV show → find the best release → download it → import it into **Jellyfin or
 Plex**. It's one Phoenix/LiveView app on SQLite — a single container, no external database. Every
-external service (TMDB, Prowlarr, qBittorrent/SABnzbd, Jellyfin/Plex) sits behind a behaviour and
+external service (TMDB, Prowlarr, the selected torrent/Usenet client, Jellyfin/Plex) sits behind a behaviour and
 is configured in-app.
 
 > **Status:** **v1.1** — movies + TV + multi-user (request → admin approval) are built, validated
@@ -98,7 +98,7 @@ rest with a key derived from `SECRET_KEY_BASE`.
 |---|---|
 | TMDB | API read token (v4 bearer) |
 | Indexer | Prowlarr URL + API key |
-| Download | qBittorrent URL / username / password, SABnzbd URL + API key, per-client enable toggles |
+| Download | One torrent client (qBittorrent or Transmission) and one Usenet client (SABnzbd or NZBGet), credentials and per-client path mappings; optional completed-torrent ratio / seed-time cleanup limits |
 | Media server | Jellyfin URL + API key **or** Plex URL + token + a per-library section (Movies, TV); media-server type; an optional **web URL** per server (see below) |
 | Library paths | Required standard roots (`movies_library_path`, `tv_library_path`) plus optional Anime roots per kind; blank Anime roots fall back to the standard roots |
 | Release size bands | Per-kind min/max size (decimal GB), preferred resolutions and sources, preferred/blocked title terms, and an optional automatic-upgrade resolution cutoff. TV sizes are per episode (a season pack of N is allowed N× the max). Ships with defaults — movies 0.3–15 GB, TV 0.05–4 GB per episode; blank = default, an explicit `0` = no limit |
@@ -149,7 +149,8 @@ stable `4xx` JSON errors and are never converted to atoms.
 ## How it works
 
 Four contexts mirror the pipeline: **Catalog** (TMDB discovery + movie/series requests), **Acquisition**
-(Prowlarr search + release parsing/scoring), **Download** (qBittorrent/SABnzbd client + a polling
+(Prowlarr search + release parsing/scoring), **Download** (qBittorrent/Transmission and
+SABnzbd/NZBGet clients + a polling
 GenServer), **Library** (hardlink + rename into the Jellyfin/Plex layout, then scan). Background
 pollers advance each request through its state machine and broadcast over PubSub so the LiveView
 dashboard updates live. Every state change goes through a single context choke-point, which — on

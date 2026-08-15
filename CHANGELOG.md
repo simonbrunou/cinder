@@ -6,6 +6,16 @@ All notable changes to Cinder are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Transmission and NZBGet download clients.** Settings can select exactly one torrent client
+  (qBittorrent or Transmission) and one Usenet client (SABnzbd or NZBGet), with credentials,
+  health checks, remote-path mapping, restart-safe operation markers, polling, and cleanup through
+  the existing download-client boundary.
+- **Opt-in completed-torrent cleanup.** Operators can set a ratio and/or seed-time limit. The
+  cleaner uses qBittorrent/Transmission's native metrics and removes a completed torrent only
+  after the threshold is reached and Cinder no longer has an owner for it; blank limits preserve
+  indefinite seeding.
+
 ## [1.1.0] - 2026-08-14
 
 ### Added

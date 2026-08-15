@@ -115,7 +115,7 @@ defmodule CinderWeb.SetupLive do
       %{
         number: 3,
         label: gettext("Download clients"),
-        detail: gettext("Enable qBittorrent or SABnzbd.")
+        detail: gettext("Choose a torrent or Usenet client.")
       },
       %{
         number: 4,

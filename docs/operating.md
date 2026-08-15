@@ -133,6 +133,22 @@ per-kind size bands, subtitles, and notifications — is edited at `/settings` a
 database. **DB values override the env bootstrap; clearing a setting reverts to the env
 value/default.** Secret fields are encrypted at rest with a key derived from `SECRET_KEY_BASE`.
 
+### Download clients and completed-torrent cleanup
+
+Choose at most one client for each protocol in `/settings`: **qBittorrent or Transmission** for
+torrents, and **SABnzbd or NZBGet** for Usenet. A disabled protocol is never searched or polled.
+Transmission support requires its label-capable RPC API (RPC version 16+, provided by
+Transmission 3 and 4). Each client health check verifies authentication and any configured local
+path prefix; the normal poller, retry adoption, content checks, and importer continue to use the
+shared download-client contract.
+
+Completed torrents seed indefinitely by default. To reclaim them automatically, set a positive
+**ratio**, a positive **seed time in hours**, or both under Download. Cinder reads the clients'
+native qBittorrent/Transmission metrics and removes a completed torrent after either configured
+limit is reached, but only after the import/request lifecycle no longer owns that download.
+Missing metrics never trigger deletion. Clearing both fields returns to indefinite seeding; the
+limits do not apply to Usenet jobs.
+
 ### Discord notifications
 
 Set a **Discord webhook URL** under Notifications in `/settings` and Cinder posts an embed on
@@ -142,8 +158,8 @@ with a 3-second timeout — a Discord outage never touches the pipeline.
 
 ### Trust posture: indexer-supplied download URLs
 
-Cinder fetches `.torrent` files from whatever URL the indexer returns (scheme-limited to
-http/https, response used only to hash and hand to the download client — never rendered). That
+Cinder fetches `.torrent` and `.nzb` files from whatever URL the indexer returns (scheme-limited to
+http/https, response used only to identify or hand bytes to the download client — never rendered). That
 means your indexer/trackers can, in principle, make Cinder issue GET requests to arbitrary
 addresses — the same posture as Radarr/Sonarr. You chose the indexer; point Cinder only at one
 you trust.
@@ -186,7 +202,7 @@ fallback only matters when you can't:
   — otherwise the link **or copy** fails with a permission error and the item parks as
   `:import_failed`.
 
-If qBittorrent or SABnzbd reports paths from a different host or container namespace, configure
+If a download client reports paths from a different host or container namespace, configure
 that client's remote and local path prefixes in `/settings`. For example, if the client reports
 `/downloads/Movie.mkv` but Cinder mounts the same directory at `/media/downloads`, map remote
 `/downloads` to local `/media/downloads`. The client health check verifies that the configured
@@ -296,7 +312,7 @@ override identity checks; the next poll performs the same fail-closed reconcilia
 | State | Meaning | What to do |
 |---|---|---|
 | `:no_match` | No acceptable release found (the scorer rejected all results, or the title has no IMDb id on TMDB). | Passive; nothing to fix. Relax scoring if it's too strict. |
-| `:search_failed` | A release was found but couldn't be handed off, or transient errors exhausted ~10 min of retries. | Check the server log. Often a malformed/HTML "torrent", a BitTorrent **v2-only** torrent (see limits), or a Prowlarr/qBittorrent outage. **Retry** once fixed. |
+| `:search_failed` | A release was found but couldn't be handed off, or transient errors exhausted ~10 min of retries. | Check the server log. Often a malformed/HTML download response or an indexer/download-client outage. **Retry** once fixed. |
 | `:import_failed` | The completed download had no usable video file, or import failed repeatedly — commonly a **permission mismatch** or, on a cross-filesystem copy, **a full library disk** (`:enospc`) — or (with `ffprobe` installed) the file's audio language didn't match the request. (A cross-filesystem path itself is **not** a failure — Cinder copies automatically.) | Check the log for the permission/disk error; see the hardlink section above. For a language mismatch, **Retry** re-searches (the wrong release is now filtered out). |
 
 ## Audio-language verification
@@ -548,6 +564,10 @@ are pruned automatically.
   completed-downloads copy) is deleted.
 
 ## Known limitations
+
+- **There is no tracker-specific or RSS automation.** Cinder searches the normalized results that
+  Prowlarr exposes for a requested title; it does not infer private-tracker rules, consume tracker
+  RSS feeds, or apply tracker-specific folklore without a concrete, generic policy to enforce.
 
 - **SABnzbd "Pause on Duplicates" must be OFF.** That mode re-keys the download id after an add, so
   Cinder loses track of the job and it parks.

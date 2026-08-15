@@ -114,6 +114,33 @@ defmodule Cinder.Settings.Registry do
       placeholder: ""
     },
     %{
+      key: "transmission_url",
+      module: Cinder.Download.Client.Transmission,
+      field: :base_url,
+      secret: false,
+      group: :download,
+      label: "Transmission RPC URL",
+      placeholder: "http://localhost:9091/transmission/rpc"
+    },
+    %{
+      key: "transmission_username",
+      module: Cinder.Download.Client.Transmission,
+      field: :username,
+      secret: false,
+      group: :download,
+      label: "Transmission username",
+      placeholder: ""
+    },
+    %{
+      key: "transmission_password",
+      module: Cinder.Download.Client.Transmission,
+      field: :password,
+      secret: true,
+      group: :download,
+      label: "Transmission password",
+      placeholder: ""
+    },
+    %{
       key: "sabnzbd_url",
       module: Cinder.Download.Client.Sabnzbd,
       field: :base_url,
@@ -130,6 +157,51 @@ defmodule Cinder.Settings.Registry do
       group: :download,
       label: "SABnzbd API key",
       placeholder: ""
+    },
+    %{
+      key: "nzbget_url",
+      module: Cinder.Download.Client.Nzbget,
+      field: :base_url,
+      secret: false,
+      group: :download,
+      label: "NZBGet JSON-RPC URL",
+      placeholder: "http://localhost:6789/jsonrpc"
+    },
+    %{
+      key: "nzbget_username",
+      module: Cinder.Download.Client.Nzbget,
+      field: :username,
+      secret: false,
+      group: :download,
+      label: "NZBGet username",
+      placeholder: "nzbget"
+    },
+    %{
+      key: "nzbget_password",
+      module: Cinder.Download.Client.Nzbget,
+      field: :password,
+      secret: true,
+      group: :download,
+      label: "NZBGet password",
+      placeholder: ""
+    },
+    %{
+      key: "torrent_cleanup_ratio",
+      module: Cinder.Download.Cleaner,
+      field: :ratio_limit,
+      secret: false,
+      group: :download,
+      label: "Remove completed torrents at ratio",
+      placeholder: "Disabled"
+    },
+    %{
+      key: "torrent_cleanup_seed_hours",
+      module: Cinder.Download.Cleaner,
+      field: :seed_time_limit_hours,
+      secret: false,
+      group: :download,
+      label: "Remove completed torrents after seed hours",
+      placeholder: "Disabled"
     },
     %{
       key: "jellyfin_url",
@@ -351,10 +423,73 @@ defmodule Cinder.Settings.Registry do
       label: "SABnzbd local path prefix",
       placeholder: "/media/downloads",
       help: :local
+    },
+    %{
+      key: "transmission_remote_path_prefix",
+      env_key: :transmission_remote_path_prefix,
+      secret: false,
+      label: "Transmission remote path prefix",
+      placeholder: "/downloads",
+      help: :remote
+    },
+    %{
+      key: "transmission_local_path_prefix",
+      env_key: :transmission_local_path_prefix,
+      secret: false,
+      label: "Transmission local path prefix",
+      placeholder: "/media/downloads",
+      help: :local
+    },
+    %{
+      key: "nzbget_remote_path_prefix",
+      env_key: :nzbget_remote_path_prefix,
+      secret: false,
+      label: "NZBGet remote path prefix",
+      placeholder: "/downloads",
+      help: :remote
+    },
+    %{
+      key: "nzbget_local_path_prefix",
+      env_key: :nzbget_local_path_prefix,
+      secret: false,
+      label: "NZBGet local path prefix",
+      placeholder: "/media/downloads",
+      help: :local
     }
   ]
 
-  # Download-client enable toggles → the :cinder, :download_clients %{protocol => module} map.
+  @download_client_choices [
+    %{
+      key: "torrent_client",
+      protocol: :torrent,
+      label: "Torrent client",
+      default: "qbittorrent",
+      legacy_key: "qbittorrent_enabled",
+      options: [
+        %{value: "disabled", label: "Disabled", module: nil},
+        %{value: "qbittorrent", label: "qBittorrent", module: Cinder.Download.Client.QBittorrent},
+        %{
+          value: "transmission",
+          label: "Transmission",
+          module: Cinder.Download.Client.Transmission
+        }
+      ]
+    },
+    %{
+      key: "usenet_client",
+      protocol: :usenet,
+      label: "Usenet client",
+      default: "sabnzbd",
+      legacy_key: "sabnzbd_enabled",
+      options: [
+        %{value: "disabled", label: "Disabled", module: nil},
+        %{value: "sabnzbd", label: "SABnzbd", module: Cinder.Download.Client.Sabnzbd},
+        %{value: "nzbget", label: "NZBGet", module: Cinder.Download.Client.Nzbget}
+      ]
+    }
+  ]
+
+  # Legacy 1.1 rows remain readable so an upgrade doesn't silently re-enable a disabled protocol.
   @toggles [
     %{key: "qbittorrent_enabled", protocol: :torrent, label: "Enable qBittorrent (torrent)"},
     %{key: "sabnzbd_enabled", protocol: :usenet, label: "Enable SABnzbd (usenet)"}
@@ -440,7 +575,7 @@ defmodule Cinder.Settings.Registry do
   def download_fields do
     fields = config_fields(:download) ++ path_mapping_fields()
 
-    for prefix <- ["qbittorrent", "sabnzbd"],
+    for prefix <- ["qbittorrent", "transmission", "sabnzbd", "nzbget", "torrent_cleanup"],
         field <- fields,
         String.starts_with?(field.key, prefix),
         do: field
@@ -474,6 +609,9 @@ defmodule Cinder.Settings.Registry do
 
   @doc "The download-client enable toggles."
   def toggles, do: @toggles
+
+  @doc "The exclusive client selection for each release protocol."
+  def download_client_choices, do: @download_client_choices
 
   def anime_fields, do: @anime_fields
 
