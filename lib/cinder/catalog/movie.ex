@@ -112,7 +112,11 @@ defmodule Cinder.Catalog.Movie do
   def download_source(%__MODULE__{file_path: path}), do: path
 
   @doc "Changeset for the operator-owned media handling profile."
-  def profile_changeset(movie, attrs), do: cast(movie, attrs, [:media_profile])
+  def profile_changeset(movie, attrs) do
+    movie
+    |> cast(attrs, [:media_profile])
+    |> check_constraint(:profile_id, name: :movies_profile_integrity)
+  end
 
   @doc "Changeset for the sweep-owned search-time Anime preferences hold marker (see `Catalog.set_anime_hold/2`). Not pipeline status — separate from transition_changeset/2."
   def anime_hold_changeset(movie, attrs), do: cast(movie, attrs, [:anime_hold_reason])
@@ -133,6 +137,7 @@ defmodule Cinder.Catalog.Movie do
     |> cast(attrs, @creation_fields)
     |> validate_required([:tmdb_id, :title])
     |> validate_inclusion(:preferred_language, Language.preferences())
+    |> check_constraint(:profile_id, name: :movies_profile_integrity)
     |> unique_constraint(:tmdb_id)
   end
 

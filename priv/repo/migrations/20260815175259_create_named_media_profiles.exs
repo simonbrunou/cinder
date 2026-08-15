@@ -92,9 +92,13 @@ defmodule Cinder.Repo.Migrations.CreateNamedMediaProfiles do
     WHERE proposed_media_profile IN ('standard', 'anime')
       AND target_type IN ('movie', 'series', 'season', 'episode')
     """)
+
+    create_profile_integrity_triggers()
   end
 
   def down do
+    drop_profile_integrity_triggers()
+
     drop index(:requests, [:proposed_profile_id])
     drop index(:series, [:profile_id])
     drop index(:movies, [:profile_id])
@@ -104,5 +108,94 @@ defmodule Cinder.Repo.Migrations.CreateNamedMediaProfiles do
     alter table(:movies), do: remove(:profile_id)
 
     drop table(:media_profiles)
+  end
+
+  defp create_profile_integrity_triggers do
+    for {table, kind, profile_column, handling_column, watched_columns} <- [
+          {:movies, "movies", "profile_id", "media_profile", "profile_id, media_profile"},
+          {:series, "tv", "profile_id", "media_profile", "profile_id, media_profile"}
+        ],
+        event <- ["INSERT", "UPDATE OF #{watched_columns}"] do
+      suffix = if event == "INSERT", do: "insert", else: "update"
+
+      execute("""
+      CREATE TRIGGER #{table}_profile_integrity_#{suffix}
+      BEFORE #{event} ON #{table}
+      WHEN NEW.#{profile_column} IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM media_profiles
+        WHERE id = NEW.#{profile_column}
+          AND kind = '#{kind}'
+          AND handling = NEW.#{handling_column}
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'CHECK constraint failed: #{table}_profile_integrity');
+      END
+      """)
+    end
+
+    for event <- ["INSERT", "UPDATE OF proposed_profile_id, proposed_media_profile, target_type"] do
+      suffix = if event == "INSERT", do: "insert", else: "update"
+
+      execute("""
+      CREATE TRIGGER requests_profile_integrity_#{suffix}
+      BEFORE #{event} ON requests
+      WHEN NEW.proposed_profile_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM media_profiles
+        WHERE id = NEW.proposed_profile_id
+          AND handling = NEW.proposed_media_profile
+          AND (
+            (NEW.target_type = 'movie' AND kind = 'movies') OR
+            (NEW.target_type IN ('series', 'season', 'episode') AND kind = 'tv')
+          )
+      )
+      BEGIN
+        SELECT RAISE(ABORT, 'CHECK constraint failed: requests_profile_integrity');
+      END
+      """)
+    end
+
+    execute("""
+    CREATE TRIGGER media_profiles_references_integrity_update
+    BEFORE UPDATE OF kind, handling ON media_profiles
+    WHEN
+      EXISTS (
+        SELECT 1 FROM movies
+        WHERE profile_id = OLD.id
+          AND (NEW.kind != 'movies' OR NEW.handling != media_profile)
+      ) OR
+      EXISTS (
+        SELECT 1 FROM series
+        WHERE profile_id = OLD.id
+          AND (NEW.kind != 'tv' OR NEW.handling != media_profile)
+      ) OR
+      EXISTS (
+        SELECT 1 FROM requests
+        WHERE proposed_profile_id = OLD.id
+          AND (
+            NEW.handling != proposed_media_profile OR
+            NOT (
+              (target_type = 'movie' AND NEW.kind = 'movies') OR
+              (target_type IN ('series', 'season', 'episode') AND NEW.kind = 'tv')
+            )
+          )
+      )
+    BEGIN
+      SELECT RAISE(ABORT, 'CHECK constraint failed: media_profiles_references_integrity');
+    END
+    """)
+  end
+
+  defp drop_profile_integrity_triggers do
+    for trigger <- [
+          "movies_profile_integrity_insert",
+          "movies_profile_integrity_update",
+          "series_profile_integrity_insert",
+          "series_profile_integrity_update",
+          "requests_profile_integrity_insert",
+          "requests_profile_integrity_update",
+          "media_profiles_references_integrity_update"
+        ] do
+      execute("DROP TRIGGER IF EXISTS #{trigger}")
+    end
   end
 end

@@ -25,6 +25,7 @@ defmodule Cinder.Catalog.Profile do
     |> update_change(:library_path, &blank_to_nil/1)
     |> validate_required([:name, :kind, :handling])
     |> validate_change(:library_path, &validate_library_path/2)
+    |> check_constraint(:handling, name: :media_profiles_references_integrity)
     |> unique_constraint([:kind, :name], error_key: :name)
   end
 

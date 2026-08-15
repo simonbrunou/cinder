@@ -121,6 +121,9 @@ defmodule Cinder.Catalog.Profiles do
       title
       |> Ecto.Changeset.change(profile_id: profile_id, media_profile: handling)
       |> Ecto.Changeset.foreign_key_constraint(:profile_id)
+      |> Ecto.Changeset.check_constraint(:profile_id,
+        name: profile_integrity_constraint(title)
+      )
       |> Repo.update()
 
     case result do
@@ -131,6 +134,9 @@ defmodule Cinder.Catalog.Profiles do
 
     result
   end
+
+  defp profile_integrity_constraint(%Movie{}), do: :movies_profile_integrity
+  defp profile_integrity_constraint(%Series{}), do: :series_profile_integrity
 
   defp referenced?(profile) do
     Repo.exists?(from m in Movie, where: m.profile_id == ^profile.id) or

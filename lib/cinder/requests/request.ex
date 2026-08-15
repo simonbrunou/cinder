@@ -51,6 +51,7 @@ defmodule Cinder.Requests.Request do
     |> validate_required([:user_id, :target_type, :target_id, :status])
     |> validate_inclusion(:target_type, @target_types)
     |> validate_inclusion(:preferred_language, Language.preferences())
+    |> check_constraint(:proposed_profile_id, name: :requests_profile_integrity)
     # The constraint name must match the SQLite index name exactly as reported by exqlite
     # on a UNIQUE violation. The partial index is named :requests_pending_unique in the
     # migration; exqlite reports that name directly so we use it here. Using a wrong name
@@ -64,6 +65,7 @@ defmodule Cinder.Requests.Request do
     request
     |> cast(attrs, [:proposed_media_profile, :proposed_profile_id])
     |> foreign_key_constraint(:proposed_profile_id)
+    |> check_constraint(:proposed_profile_id, name: :requests_profile_integrity)
   end
 
   def status_changeset(request, attrs) do

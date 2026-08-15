@@ -2,7 +2,7 @@ defmodule Cinder.Catalog.ProfilesTest do
   use Cinder.DataCase, async: false
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Movie, Series}
+  alias Cinder.Catalog.{Movie, Profile, Series}
   alias Cinder.Requests
   alias Cinder.Requests.Request
 
@@ -111,6 +111,56 @@ defmodule Cinder.Catalog.ProfilesTest do
 
     assert [last] = Catalog.list_profiles(:tv)
     assert {:error, :last_profile} = Catalog.delete_profile(last)
+  end
+
+  test "database integrity maps bypassed profile ids back to changeset errors" do
+    movie_profile = profile!(:movies, :standard)
+    tv_profile = profile!(:tv, :standard)
+
+    assert {:error, movie_changeset} =
+             %Movie{}
+             |> Movie.changeset(%{
+               tmdb_id: 90_004,
+               title: "Wrong kind",
+               media_profile: :standard,
+               profile_id: tv_profile.id
+             })
+             |> Repo.insert()
+
+    assert "is invalid" in errors_on(movie_changeset).profile_id
+
+    assert {:error, request_changeset} =
+             %Request{}
+             |> Request.create_changeset(%{
+               user_id: user_fixture().id,
+               target_type: "movie",
+               target_id: 90_004,
+               status: :pending,
+               proposed_media_profile: :standard,
+               proposed_profile_id: tv_profile.id
+             })
+             |> Repo.insert()
+
+    assert "is invalid" in errors_on(request_changeset).proposed_profile_id
+
+    movie =
+      %Movie{}
+      |> Movie.changeset(%{
+        tmdb_id: 90_005,
+        title: "Referenced",
+        media_profile: :standard,
+        profile_id: movie_profile.id
+      })
+      |> Repo.insert!()
+
+    assert movie.profile_id == movie_profile.id
+
+    assert {:error, profile_changeset} =
+             movie_profile
+             |> Profile.changeset(%{handling: :anime})
+             |> Repo.update()
+
+    assert "is invalid" in errors_on(profile_changeset).handling
   end
 
   defp profile!(kind, handling) do

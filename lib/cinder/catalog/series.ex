@@ -45,7 +45,11 @@ defmodule Cinder.Catalog.Series do
   end
 
   @doc "Changeset for the operator-owned media handling profile."
-  def profile_changeset(series, attrs), do: cast(series, attrs, [:media_profile])
+  def profile_changeset(series, attrs) do
+    series
+    |> cast(attrs, [:media_profile])
+    |> check_constraint(:profile_id, name: :series_profile_integrity)
+  end
 
   @doc "Changeset for the sweep-owned search-time Anime preferences hold marker (see `Catalog.set_anime_hold/2`)."
   def anime_hold_changeset(series, attrs), do: cast(series, attrs, [:anime_hold_reason])
@@ -96,6 +100,7 @@ defmodule Cinder.Catalog.Series do
     ])
     |> validate_required([:tmdb_id, :title])
     |> validate_inclusion(:preferred_language, Language.preferences())
+    |> check_constraint(:profile_id, name: :series_profile_integrity)
     |> cast_assoc(:seasons, with: &Season.nested_changeset/2)
     |> unique_constraint(:tmdb_id)
   end

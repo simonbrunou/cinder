@@ -83,6 +83,57 @@ defmodule Cinder.Repo.Migrations.CreateNamedMediaProfilesTest do
              LEFT JOIN media_profiles ON media_profiles.id = requests.proposed_profile_id
              ORDER BY requests.id
              """)
+
+    assert_raise Exqlite.Error, ~r/movies_profile_integrity/, fn ->
+      query!("""
+      UPDATE movies
+      SET profile_id = (SELECT id FROM media_profiles WHERE kind = 'tv' AND name = 'Standard')
+      WHERE id = 1
+      """)
+    end
+
+    assert_raise Exqlite.Error, ~r/movies_profile_integrity/, fn ->
+      query!("""
+      INSERT INTO movies (id, media_profile, profile_id)
+      SELECT 4, 'standard', id FROM media_profiles WHERE kind = 'tv' AND name = 'Standard'
+      """)
+    end
+
+    assert_raise Exqlite.Error, ~r/series_profile_integrity/, fn ->
+      query!("""
+      UPDATE series
+      SET profile_id = (SELECT id FROM media_profiles WHERE kind = 'tv' AND name = 'Standard')
+      WHERE id = 1
+      """)
+    end
+
+    assert_raise Exqlite.Error, ~r/requests_profile_integrity/, fn ->
+      query!("""
+      UPDATE requests
+      SET proposed_media_profile = 'standard'
+      WHERE id = 1
+      """)
+    end
+
+    assert_raise Exqlite.Error, ~r/requests_profile_integrity/, fn ->
+      query!("UPDATE requests SET target_type = 'season' WHERE id = 1")
+    end
+
+    assert_raise Exqlite.Error, ~r/media_profiles_references_integrity/, fn ->
+      query!("""
+      UPDATE media_profiles SET handling = 'anime'
+      WHERE kind = 'movies' AND name = 'Standard'
+      """)
+    end
+
+    assert %{num_rows: 1} =
+             query!("INSERT INTO movies (id, media_profile, profile_id) VALUES (3, 'auto', NULL)")
+
+    assert %{num_rows: 1} =
+             query!("""
+             INSERT INTO requests (id, target_type, proposed_media_profile, proposed_profile_id)
+             VALUES (4, 'movie', NULL, NULL)
+             """)
   end
 
   defp query!(sql, params \\ []), do: SQL.query!(Repo, sql, params)
