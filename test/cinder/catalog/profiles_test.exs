@@ -182,6 +182,21 @@ defmodule Cinder.Catalog.ProfilesTest do
     assert Repo.reload!(assigned).profile_id == profile.id
   end
 
+  test "profile assignment is blocked while an acquisition can still import into the old root" do
+    movie = movie_fixture()
+    assert {:ok, movie} = Catalog.transition(movie, %{status: :searching})
+
+    assert {:error, :acquisition_in_progress} =
+             Catalog.assign_profile(movie, profile!(:movies, :anime))
+
+    series = series_fixture()
+    episode = series |> season_fixture() |> episode_fixture()
+    assert {:ok, _grab} = Catalog.create_grab("profile-race", :torrent, [episode.id])
+
+    assert {:error, :acquisition_in_progress} =
+             Catalog.assign_profile(series, profile!(:tv, :anime))
+  end
+
   test "each kind retains one profile" do
     for profile <- Catalog.list_profiles(:tv) |> Enum.drop(1) do
       assert {:ok, _profile} = Catalog.delete_profile(profile)

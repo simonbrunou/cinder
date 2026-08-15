@@ -32,7 +32,6 @@ defmodule Cinder.Catalog do
     ReleaseVerification,
     SceneNumbering,
     Season,
-    Series,
     SeriesCatalog,
     SeriesDeletion,
     SeriesRefresh
@@ -92,6 +91,10 @@ defmodule Cinder.Catalog do
   approval.
   """
   defdelegate set_media_profile(title, profile), to: MediaProfiles
+  defdelegate apply_confirmed_media(media, profile, preferred), to: MediaProfiles
+
+  defdelegate apply_confirmed_media(media, profile, preferred, pre_request_profile),
+    to: MediaProfiles
 
   defdelegate list_profiles(), to: Profiles
   defdelegate list_profiles(kind), to: Profiles
@@ -349,7 +352,8 @@ defmodule Cinder.Catalog do
   # changeset is valid AND `from → to` is legal, else {:error, invalid_changeset} or
   # {:error, {:illegal_transition, from, to}}. Shared by the unguarded and guarded write paths so
   # neither can drift from the other's notion of "legal."
-  defp validate_movie_transition(movie, attrs, from) do
+  @doc false
+  def validate_movie_transition(movie, attrs, from) do
     case Movie.transition_changeset(movie, attrs) do
       %{valid?: false} = invalid -> {:error, invalid}
       %{valid?: true} = changeset -> check_movie_transition(changeset, from)
@@ -790,7 +794,8 @@ defmodule Cinder.Catalog do
   # apply_confirmed_media/3): writes the field and broadcasts, WITHOUT set_movie_language/2's
   # retry branch — approving a request for an existing PARKED movie must not silently re-queue
   # it (round-3 finding 2).
-  defp fill_movie_language(movie, language) do
+  @doc false
+  def fill_movie_language(movie, language) do
     case write_movie_language(movie, language) do
       {:ok, updated} ->
         broadcast({:movie_updated, updated})
@@ -1126,94 +1131,14 @@ defmodule Cinder.Catalog do
 
   def find_or_create_at_available(_attrs, _file_path), do: {:error, :invalid_file_path}
 
-  @doc false
-  def adopt_movie_at_available(attrs, file_path, profile_id, legacy_handling, validator)
-      when is_map(attrs) and is_binary(file_path) and file_path != "" and
-             is_function(validator, 1) do
-    result =
-      Repo.transaction(
-        fn ->
-          with {:ok, profile, handling} <-
-                 Profiles.resolve_assignment(profile_id, :movies, legacy_handling),
-               :ok <- validator.(profile),
-               {:ok, movie, marker} <-
-                 adopt_movie_in_transaction(attrs, file_path, profile, handling) do
-            {movie, marker}
-          else
-            {:error, reason} -> Repo.rollback(reason)
-          end
-        end,
-        mode: :immediate
-      )
-
-    case result do
-      {:ok, {movie, :existing}} ->
-        broadcast({:movie_updated, movie})
-        emit_transition(:movie, movie.status)
-        {:ok, movie, :existing}
-
-      {:ok, {movie, :created}} ->
-        {:ok, movie, :created}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  def adopt_movie_at_available(_attrs, _file_path, _profile_id, _legacy_handling, _validator),
-    do: {:error, :invalid_file_path}
-
-  defp adopt_movie_in_transaction(attrs, file_path, profile, handling) do
-    case Repo.get_by(Movie, tmdb_id: Map.get(attrs, :tmdb_id)) do
-      %Movie{} = movie ->
-        adopt_existing_movie_in_transaction(movie, file_path, profile, handling)
-
-      nil ->
-        attrs =
-          attrs
-          |> Map.put(:profile_id, profile && profile.id)
-          |> Map.put(:media_profile, handling)
-
-        case %Movie{status: :available, file_path: file_path}
-             |> Movie.changeset(attrs)
-             |> Repo.insert() do
-          {:ok, movie} -> {:ok, movie, :created}
-          {:error, reason} -> {:error, reason}
-        end
-    end
-  end
-
-  defp adopt_existing_movie_in_transaction(%Movie{} = movie, file_path, profile, handling) do
-    cond do
-      Movie.file_paths(movie) != [] ->
-        {:error, :already_has_file}
-
-      movie.status in [:searching, :downloading, :downloaded, :upgrading] ->
-        {:error, :acquisition_in_progress}
-
-      true ->
-        with :ok <- Profiles.ensure_assignment_safe(movie, profile, handling),
-             {:ok, changeset} <-
-               validate_movie_transition(
-                 movie,
-                 %{status: :available, file_path: file_path},
-                 movie.status
-               ),
-             {:ok, updated} <-
-               changeset
-               |> Ecto.Changeset.change(
-                 profile_id: profile && profile.id,
-                 media_profile: handling
-               )
-               |> Ecto.Changeset.foreign_key_constraint(:profile_id)
-               |> Ecto.Changeset.check_constraint(:profile_id,
-                 name: :movies_profile_integrity
-               )
-               |> Repo.update() do
-          {:ok, updated, :existing}
-        end
-    end
-  end
+  defdelegate adopt_movie_at_available(
+                attrs,
+                file_path,
+                profile_id,
+                legacy_handling,
+                validator
+              ),
+              to: Cinder.Catalog.Adoption
 
   @doc "Fetches requested-movie details and aliases before any Catalog write."
   def prepare_requested_movie(attrs) do
@@ -1303,76 +1228,6 @@ defmodule Cinder.Catalog do
       {:error, reason} -> {:error, reason}
     end
   end
-
-  @doc """
-  Shared confirm+fill sequence for an EXISTING movie or series:
-  fills the requester's language pick (if still default), then confirms the requester's
-  media-profile proposal (:auto → confirmed only). Order is fill-then-confirm, not the reverse:
-  a failed confirm after a successful fill just leaves a plain fill-if-default — benign, and
-  a retry picks up where it left off; confirm-then-fill would instead leave a committed profile
-  flip with no clean retry surface if the fill then failed.
-
-  Call this OUTSIDE any surrounding `Repo.transaction` — `Cinder.Requests` calls it after its
-  approval transaction commits, so a fill/confirm failure here can't roll back an already-
-  committed movie/request write. Season approval instead uses
-  `Cinder.Catalog.SeriesCatalog.persist_requested_series/4` so request, profile/language,
-  and monitoring changes share one transaction without broadcasting mid-transaction.
-  """
-  def apply_confirmed_media(media, profile, preferred) do
-    apply_confirmed_media(media, profile, preferred, media.media_profile)
-  end
-
-  @doc false
-  def apply_confirmed_media(media, profile, preferred, pre_request_profile) do
-    with {:ok, media} <- apply_requester_language(media, preferred, pre_request_profile) do
-      apply_confirmed_profile(media, profile)
-    end
-  end
-
-  defp apply_confirmed_profile(%{media_profile: :auto} = media, profile)
-       when profile in [:standard, :anime],
-       do: set_media_profile(media, profile)
-
-  defp apply_confirmed_profile(media, _profile), do: {:ok, media}
-
-  # Fill-if-default: an existing movie/series whose language was never customized ("original")
-  # adopts the requester's non-default pick; a title already customized to a non-default is left
-  # untouched (first-customization-wins). A brand-new movie/series already carries `preferred`
-  # from its creation attrs/changeset.
-  #
-  # Guarded on the title's PRE-REQUEST profile (captured by apply_confirmed_media/3 before this
-  # or apply_confirmed_profile/2 runs), not its post-confirmation profile: the request that
-  # establishes Anime also establishes its audio policy (the pick), while a title that was
-  # ALREADY Anime before this request never has its pick mutated — that pick is that title's
-  # release policy (audio-mode derivation, see `Cinder.Acquisition.AnimePreferences`), not a
-  # discovery convenience, so only a deliberate detail-page edit may change it once a title is
-  # Anime.
-  #
-  # The movie clause fills through fill_movie_language/2 (status-neutral), not
-  # set_movie_language/2 — an approval fill must not re-queue a parked movie.
-  #
-  # One guard for both clauses — these drifted once (the series clause lacked the nil
-  # exclusion), so they are deliberately not hand-synced twins anymore.
-  defguardp fillable_pick(preferred, pre_request_profile)
-            when preferred not in [nil, "original"] and pre_request_profile != :anime
-
-  defp apply_requester_language(
-         %Series{preferred_language: "original"} = series,
-         preferred,
-         pre_request_profile
-       )
-       when fillable_pick(preferred, pre_request_profile),
-       do: SeriesCatalog.set_series_language(series, preferred)
-
-  defp apply_requester_language(
-         %Movie{preferred_language: "original"} = movie,
-         preferred,
-         pre_request_profile
-       )
-       when fillable_pick(preferred, pre_request_profile),
-       do: fill_movie_language(movie, preferred)
-
-  defp apply_requester_language(media, _preferred, _pre_request_profile), do: {:ok, media}
 
   @doc false
   def broadcast(message), do: Phoenix.PubSub.broadcast(Cinder.PubSub, @topic, message)

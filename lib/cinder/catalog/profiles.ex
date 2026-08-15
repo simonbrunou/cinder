@@ -123,19 +123,35 @@ defmodule Cinder.Catalog.Profiles do
 
   @doc false
   def ensure_assignment_safe(title, profile, handling) do
-    case managed_paths(title) do
-      [] ->
-        :ok
-
-      paths ->
-        with {:ok, root} <-
-               Settings.library_root(title_kind(title), assignment_media(profile, handling)),
-             true <- Enum.all?(paths, &PathPolicy.contained?(&1, root)) do
-          :ok
-        else
-          _outside_or_unconfigured -> {:error, :files_outside_profile_root}
-        end
+    if acquisition_in_progress?(title) do
+      {:error, :acquisition_in_progress}
+    else
+      ensure_paths_safe(title, profile, handling)
     end
+  end
+
+  defp ensure_paths_safe(title, profile, handling) do
+    with paths when paths != [] <- managed_paths(title),
+         {:ok, root} <-
+           Settings.library_root(title_kind(title), assignment_media(profile, handling)),
+         true <- Enum.all?(paths, &PathPolicy.contained?(&1, root)) do
+      :ok
+    else
+      [] -> :ok
+      _outside_or_unconfigured -> {:error, :files_outside_profile_root}
+    end
+  end
+
+  defp acquisition_in_progress?(%Movie{status: status}),
+    do: status in [:searching, :downloading, :downloaded, :upgrading]
+
+  defp acquisition_in_progress?(%Series{id: id}) do
+    Repo.exists?(
+      from e in Episode,
+        join: season in Season,
+        on: e.season_id == season.id,
+        where: season.series_id == ^id and not is_nil(e.grab_id)
+    )
   end
 
   defp profile_id(%Profile{id: id}), do: id
