@@ -31,7 +31,8 @@ current file until a replacement has been verified and committed.
 - Arbitrary named library destinations beyond Standard and Anime.
 - Built-in backup scheduling and restore verification; the operating guide already documents safe
   SQLite backups.
-- Additional download clients beyond qBittorrent and SABnzbd.
-- Torrent ratio/seed-time cleanup and BitTorrent v2/hybrid support.
+- Additional download clients beyond qBittorrent, Transmission, SABnzbd, and NZBGet.
+- Tracker-specific and RSS automation. Prowlarr already normalizes tracker results, but no
+  concrete generic rule exists for Cinder to apply; do not invent per-tracker behavior.
 
 Do not bundle the deferred items into the Anime upgrade PR.

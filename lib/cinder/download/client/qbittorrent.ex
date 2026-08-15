@@ -360,7 +360,16 @@ defmodule Cinder.Download.Client.QBittorrent do
 
       key ->
         progress = torrent["progress"] || 0.0
-        [%{id: hash, operation_key: key, state: classify(torrent["state"], progress)}]
+
+        [
+          %{
+            id: hash,
+            operation_key: key,
+            state: classify(torrent["state"], progress),
+            ratio: number_metric(torrent["ratio"]),
+            seeding_time: metric(torrent["seeding_time"])
+          }
+        ]
     end
   end
 
@@ -629,6 +638,9 @@ defmodule Cinder.Download.Client.QBittorrent do
 
   defp metric(value) when is_integer(value) and value >= 0, do: value
   defp metric(_value), do: nil
+
+  defp number_metric(value) when is_number(value) and value >= 0, do: value / 1
+  defp number_metric(_value), do: nil
 
   defp eta(value) when is_integer(value) and value in 0..8_639_999, do: value
   defp eta(_value), do: nil

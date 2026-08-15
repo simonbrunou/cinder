@@ -19,11 +19,31 @@ defmodule CinderWeb.SetupLiveTest do
 
     Req.Test.set_req_test_to_shared()
     on_exit(fn -> Req.Test.set_req_test_to_private() end)
+
+    Req.Test.stub(Cinder.QBittorrentStub, fn conn ->
+      case conn.request_path do
+        "/api/v2/auth/login" ->
+          conn
+          |> Plug.Conn.put_resp_header("set-cookie", "SID=testsid; path=/")
+          |> Req.Test.text("Ok.")
+
+        "/api/v2/app/webapiVersion" ->
+          Req.Test.text(conn, "2.8.5")
+      end
+    end)
+
+    Req.Test.stub(Cinder.SabnzbdStub, fn conn ->
+      case conn.params["mode"] do
+        "queue" -> Req.Test.json(conn, %{"queue" => %{"slots" => []}})
+        "get_config" -> Req.Test.json(conn, %{"config" => %{"misc" => %{}}})
+      end
+    end)
+
     Req.Test.stub(Cinder.JellyfinStub, fn conn -> Req.Test.json(conn, %{}) end)
   end
 
   # Enables qBittorrent + Jellyfin so the loop can validate green.
-  @valid_params %{"qbittorrent_enabled" => "true", "media_server_type" => "jellyfin"}
+  @valid_params %{"torrent_client" => "qbittorrent", "media_server_type" => "jellyfin"}
 
   test "an admin validates services and finishes setup", %{conn: conn} do
     admin = Cinder.AccountsFixtures.admin_fixture()
@@ -219,14 +239,24 @@ defmodule CinderWeb.SetupLiveTest do
     conn = log_in_user(conn, admin)
     stub_all_services_ok()
 
-    stub(Cinder.Download.SabnzbdClientMock, :health, fn ->
-      {:warning, {:sabnzbd_config, [{:folder_max_length, 60}]}}
+    Req.Test.stub(Cinder.SabnzbdStub, fn conn ->
+      case conn.params["mode"] do
+        "queue" ->
+          Req.Test.json(conn, %{"queue" => %{"slots" => []}})
+
+        "get_config" ->
+          Req.Test.json(conn, %{
+            "config" => %{
+              "misc" => %{"folder_max_length" => 60, "no_dupes" => 0, "no_series_dupes" => 0}
+            }
+          })
+      end
     end)
 
     {:ok, lv, _html} = live(conn, ~p"/setup")
 
     lv
-    |> form("#setup-form", %{"sabnzbd_enabled" => "true", "media_server_type" => "jellyfin"})
+    |> form("#setup-form", %{"torrent_client" => "disabled", "media_server_type" => "jellyfin"})
     |> render_submit()
 
     assert has_element?(lv, "#finish-setup:not([disabled])")

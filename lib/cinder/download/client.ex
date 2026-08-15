@@ -1,8 +1,7 @@
 defmodule Cinder.Download.Client do
   @moduledoc """
-  Behaviour for the download client (qBittorrent): add a release, report status.
-
-  Fleshed out in Phase 3.
+  Behaviour for a configured download client: add a release, report status, and clean up jobs
+  that Cinder owns.
   """
 
   @callback add(release :: map(), opts :: keyword()) ::
@@ -40,21 +39,23 @@ defmodule Cinder.Download.Client do
 
   @doc """
   Lists **only the downloads Cinder itself submitted** — the ones carrying its
-  `cinder-<operation_key>` marker (a qBittorrent tag, a SABnzbd job-name suffix).
+  `cinder-<operation_key>` marker (a torrent-client label or a Usenet job-name suffix).
   A household's hand-added downloads are never reported, so a caller sweeping this
   list can't act on something it doesn't own.
 
   Each entry is `%{id:, operation_key:, state:}`, where `:state` uses the same
-  `:downloading | :completed | :error` vocabulary as `status/1`. An entry whose
-  marker can't be parsed back to a key is omitted rather than reported keyless.
+  `:downloading | :completed | :error` vocabulary as `status/1`. Torrent clients may also
+  include `:ratio` and `:seeding_time` (seconds) so the opt-in cleaner can remove completed
+  downloads after either limit. An entry whose marker can't be parsed back to a key is omitted
+  rather than reported keyless.
   """
   @callback list_managed() ::
               {:ok, [%{id: String.t(), operation_key: String.t(), state: atom()}]}
               | {:error, term()}
 
   @doc """
-  Removes a tracked download by `id` (qBittorrent infohash / SABnzbd nzo_id, as
-  passed to `status/1`). **Idempotent: an unknown/missing id returns `:ok`** (the
+  Removes a tracked download by its client id, as passed to `status/1`.
+  **Idempotent: an unknown/missing id returns `:ok`** (the
   download may have auto-removed on completion). `opts` carries `delete_files:`
   (default `true` — a cancelled pre-`:available` item's partial download is junk).
   Callers skip this entirely when the tracked download id is nil.

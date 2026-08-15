@@ -263,7 +263,7 @@ defmodule CinderWeb.SettingsLiveTest do
     end)
 
     {:ok, lv, _html} = live(conn, ~p"/settings")
-    lv |> element("button", "Test SABnzbd") |> render_click()
+    lv |> element("button", "Test Usenet client") |> render_click()
 
     assert has_element?(lv, "#settings-group-download .badge-warning", "Warning")
 
@@ -288,6 +288,21 @@ defmodule CinderWeb.SettingsLiveTest do
     assert has_element?(lv, "#settings-group-releases[open]")
   end
 
+  test "opens the download group for an invalid torrent cleanup limit", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    lv
+    |> form("#settings-form", %{
+      "torrent_cleanup_ratio" => "0",
+      "media_server_type" => "jellyfin"
+    })
+    |> render_submit()
+
+    assert has_element?(lv, "#settings-group-download[open]")
+    assert has_element?(lv, "#torrent_cleanup_ratio[aria-invalid=true]")
+    assert_push_event(lv, "focus-invalid", %{id: "torrent_cleanup_ratio"})
+  end
+
   test "invalid saves preserve safe values and expose the exact field error", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/settings")
 
@@ -296,7 +311,7 @@ defmodule CinderWeb.SettingsLiveTest do
       |> form("#settings-form", %{
         "prowlarr_url" => "http://typed:9696",
         "movies_min_size" => "not-a-size",
-        "qbittorrent_enabled" => "true",
+        "torrent_client" => "qbittorrent",
         "clear_tmdb_token" => "on",
         "tmdb_token" => "must-never-echo",
         "media_server_type" => "jellyfin"
@@ -307,7 +322,7 @@ defmodule CinderWeb.SettingsLiveTest do
     assert has_element?(lv, ~s|#movies_min_size[value="not-a-size"][aria-invalid="true"]|)
     assert has_element?(lv, "#movies_min_size[aria-describedby=movies_min_size-error]")
     assert has_element?(lv, "#movies_min_size-error")
-    assert has_element?(lv, ~s(input[name="qbittorrent_enabled"][checked]))
+    assert has_element?(lv, ~s(option[value="qbittorrent"][selected]))
     assert has_element?(lv, ~s(input[name="clear_tmdb_token"][checked]))
     refute html =~ "must-never-echo"
     flash = lv |> element("#flash-error") |> render()

@@ -52,6 +52,9 @@ defmodule CinderWeb.NoHardcodedStringsTest do
     emitted =
       (Enum.map(Settings.groups(), fn {_g, label} -> label end) ++
          Enum.map(Settings.toggles(), & &1.label) ++
+         Enum.flat_map(Settings.download_client_choices(), fn choice ->
+           [choice.label | Enum.map(choice.options, & &1.label)]
+         end) ++
          Enum.map(Settings.config_fields(), & &1.label) ++
          Enum.map(Settings.path_mapping_fields(), & &1.label) ++
          Enum.map(Settings.global_fields(), & &1.label) ++

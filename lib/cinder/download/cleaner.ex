@@ -11,14 +11,10 @@ defmodule Cinder.Download.Cleaner do
   An entry is an **orphan** when its operation key matches no `download_intents` row *and* its id
   is not the live `download_id` of a movie or a grab. Orphans are removed with their files.
 
-  ## The completed-download guard
-
-  Only entries still `:downloading` or `:error` are ever considered. A **`:completed` entry is
-  never touched, orphan or not** — Cinder deliberately never auto-removes finished torrents so
-  seeding survives (`Cinder.Download.remove_after_import/3`, `Cinder.Catalog.Grabs`), and a sweep
-  that reaped completed-but-unclaimed entries would quietly undo that. This is the deliberate
-  narrowing versus cleanuparr's download cleaner: ratio/seed-time cleanup is out of scope here, and
-  the leak that actually accumulates — partials nothing will ever finish — is what this reaps.
+  Completed torrents remain untouched by default. Operators may opt into cleanup with
+  `ratio_limit` and/or `seed_time_limit_hours` in this module's runtime config. A completed entry
+  is removed only after import has released every Cinder owner and the client reports that at
+  least one configured limit has been reached. Missing client metrics fail closed.
 
   **On by default** — the shipped `config/config.exs` sets `enabled: true`. (`enabled?/0`'s own
   fallback is `false`, so an install with no config block at all stays off — fail-safe, mirroring
@@ -36,9 +32,6 @@ defmodule Cinder.Download.Cleaner do
   alias Cinder.Repo
 
   @default_interval :timer.hours(1)
-
-  # Never :completed — see the guard in the moduledoc.
-  @reapable_states [:downloading, :error]
 
   use Cinder.Download.PollerSkeleton,
     log_prefix: "cleaner",
@@ -60,7 +53,7 @@ defmodule Cinder.Download.Cleaner do
     with {:ok, client} <- Download.client_for(protocol),
          {:ok, entries} <- client.list_managed() do
       entries
-      |> Enum.filter(&(&1.state in @reapable_states))
+      |> Enum.filter(&reapable?/1)
       |> unclaimed()
       |> Enum.each(&reap(client, &1))
     else
@@ -103,13 +96,47 @@ defmodule Cinder.Download.Cleaner do
   end
 
   defp reap(client, entry) do
+    reason = if entry.state == :completed, do: "torrent cleanup limit reached", else: "orphaned"
+
     Logger.warning(
-      "cleaner removing orphaned #{entry.state} download #{entry.id} " <>
+      "cleaner removing #{reason} #{entry.state} download #{entry.id} " <>
         "(operation #{entry.operation_key} has no owner)"
     )
 
     Download.best_effort_remove(client, entry.id)
   end
+
+  defp reapable?(%{state: state}) when state in [:downloading, :error], do: true
+
+  defp reapable?(%{state: :completed} = entry) do
+    reached?(Map.get(entry, :ratio), ratio_limit()) or
+      reached?(Map.get(entry, :seeding_time), seed_time_limit_seconds())
+  end
+
+  defp reapable?(_entry), do: false
+
+  defp reached?(value, limit) when is_number(value) and is_number(limit), do: value >= limit
+  defp reached?(_value, _limit), do: false
+
+  defp ratio_limit, do: positive_number(Keyword.get(config(), :ratio_limit))
+
+  defp seed_time_limit_seconds do
+    case positive_number(Keyword.get(config(), :seed_time_limit_hours)) do
+      hours when is_number(hours) -> hours * 3600
+      nil -> nil
+    end
+  end
+
+  defp positive_number(value) when is_number(value) and value > 0, do: value
+
+  defp positive_number(value) when is_binary(value) do
+    case Float.parse(String.trim(value)) do
+      {number, ""} when number > 0 -> number
+      _ -> nil
+    end
+  end
+
+  defp positive_number(_value), do: nil
 
   defp config, do: Application.get_env(:cinder, __MODULE__, [])
 end

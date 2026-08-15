@@ -134,6 +134,22 @@ config :cinder, Cinder.Download.Client.Sabnzbd,
   url_resolver: fn _host -> {:ok, [{93, 184, 216, 34}]} end,
   req_options: [plug: {Req.Test, Cinder.SabnzbdStub}, retry: false]
 
+config :cinder, Cinder.Download.Client.Transmission,
+  base_url: "http://localhost:9091/transmission/rpc",
+  username: "test",
+  password: "test",
+  fetch_plug: {Req.Test, Cinder.TransmissionStub},
+  url_resolver: fn _host -> {:ok, [{93, 184, 216, 34}]} end,
+  req_options: [plug: {Req.Test, Cinder.TransmissionStub}, retry: false]
+
+config :cinder, Cinder.Download.Client.Nzbget,
+  base_url: "http://localhost:6789/jsonrpc",
+  username: "nzbget",
+  password: "test",
+  fetch_plug: {Req.Test, Cinder.NzbgetStub},
+  url_resolver: fn _host -> {:ok, [{93, 184, 216, 34}]} end,
+  req_options: [plug: {Req.Test, Cinder.NzbgetStub}, retry: false]
+
 # Discord notifier: a stub webhook so Cinder.Notifier.Discord can exercise the real HTTP
 # path (POST embeds, GET health) in tests without hitting the network.
 config :cinder, Cinder.Notifier.Discord,
