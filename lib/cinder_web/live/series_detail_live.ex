@@ -9,6 +9,7 @@ defmodule CinderWeb.SeriesDetailLive do
   use CinderWeb, :live_view
 
   import CinderWeb.AliasHelpers, only: [alias_form: 0]
+  import CinderWeb.RequestHelpers, only: [normalize_profile: 2]
 
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog
@@ -254,17 +255,19 @@ defmodule CinderWeb.SeriesDetailLive do
     end
   end
 
-  def handle_event("set_media_profile", %{"media_profile" => profile}, socket)
-      when profile in ["auto", "standard", "anime"] do
+  def handle_event("set_media_profile", %{"profile_id" => raw}, socket) do
     # On success the self-received {:series_updated} broadcast reloads @series — no
     # explicit reload needed.
-    case Catalog.set_media_profile(socket.assigns.series, String.to_existing_atom(profile)) do
-      {:ok, _} ->
-        {:noreply, socket}
-
-      {:error, _} ->
-        {:noreply, put_flash(socket, :error, gettext("Couldn't update the profile."))}
+    with {:ok, profile} <- normalize_profile(raw, :tv),
+         {:ok, _} <- Catalog.assign_profile(socket.assigns.series, profile) do
+      {:noreply, socket}
+    else
+      _ -> {:noreply, put_flash(socket, :error, gettext("Couldn't update the profile."))}
     end
+  end
+
+  def handle_event("set_media_profile", %{"media_profile" => raw}, socket) do
+    handle_event("set_media_profile", %{"profile_id" => raw}, socket)
   end
 
   def handle_event("set_monitor_strategy", %{"monitor_strategy" => strategy}, socket)
@@ -669,6 +672,7 @@ defmodule CinderWeb.SeriesDetailLive do
         series: series,
         profile_form: profile_form(series),
         profile_summary: Catalog.media_profile_summary(series),
+        tv_profiles: Catalog.list_profiles(:tv),
         aliases_empty?: aliases == []
       )
       |> stream(:title_aliases, aliases, reset: true)
@@ -708,7 +712,7 @@ defmodule CinderWeb.SeriesDetailLive do
   end
 
   defp profile_form(series),
-    do: to_form(%{"media_profile" => Atom.to_string(series.media_profile)})
+    do: to_form(%{"profile_id" => Map.get(series, :profile_id) || "auto"})
 
   defp scene_form(series), do: to_form(%{"group_id" => scene_group_id_string(series)})
 

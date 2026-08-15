@@ -23,6 +23,8 @@ defmodule CinderWeb.MovieDetailLive do
       media_overview: 2
     ]
 
+  import CinderWeb.RequestHelpers, only: [normalize_profile: 2]
+
   alias Cinder.Acquisition.Language
   alias Cinder.Catalog
   alias Cinder.Catalog.Movie
@@ -173,17 +175,19 @@ defmodule CinderWeb.MovieDetailLive do
     end
   end
 
-  def handle_event("set_media_profile", %{"media_profile" => profile}, socket)
-      when profile in ["auto", "standard", "anime"] do
+  def handle_event("set_media_profile", %{"profile_id" => raw}, socket) do
     # On success the {:movie_updated} broadcast reloads @movie — same idiom as
     # set_movie_language above.
-    case Catalog.set_media_profile(socket.assigns.movie, String.to_existing_atom(profile)) do
-      {:ok, _} ->
-        {:noreply, socket}
-
-      {:error, _} ->
-        {:noreply, put_flash(socket, :error, gettext("Couldn't update the profile."))}
+    with {:ok, profile} <- normalize_profile(raw, :movies),
+         {:ok, _} <- Catalog.assign_profile(socket.assigns.movie, profile) do
+      {:noreply, socket}
+    else
+      _ -> {:noreply, put_flash(socket, :error, gettext("Couldn't update the profile."))}
     end
+  end
+
+  def handle_event("set_media_profile", %{"media_profile" => raw}, socket) do
+    handle_event("set_media_profile", %{"profile_id" => raw}, socket)
   end
 
   def handle_event("save_alias", %{"alias" => params}, socket) when is_map(params) do
@@ -385,7 +389,7 @@ defmodule CinderWeb.MovieDetailLive do
         </form>
         <div>
           <.form for={@profile_form} id="movie-profile-form" phx-change="set_media_profile">
-            <.profile_select field={@profile_form[:media_profile]} />
+            <.profile_select field={@profile_form[:profile_id]} profiles={@movie_profiles} />
           </.form>
           <.profile_summary id="movie-profile-summary" summary={@profile_summary} />
         </div>
@@ -626,13 +630,14 @@ defmodule CinderWeb.MovieDetailLive do
     |> assign(
       profile_form: profile_form(movie),
       profile_summary: Catalog.media_profile_summary(movie),
+      movie_profiles: Catalog.list_profiles(:movies),
       aliases_empty?: aliases == []
     )
     |> stream(:title_aliases, aliases, reset: true)
   end
 
   defp profile_form(movie),
-    do: to_form(%{"media_profile" => Atom.to_string(movie.media_profile)})
+    do: to_form(%{"profile_id" => Map.get(movie, :profile_id) || "auto"})
 
   defp parked?(status), do: status in Catalog.parked_statuses()
 

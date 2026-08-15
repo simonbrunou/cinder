@@ -9,6 +9,7 @@ defmodule CinderWeb.ApiControllerTest do
 
   alias Cinder.ApiKey
   alias Cinder.Audit.AdminAudit
+  alias Cinder.Catalog
   alias Cinder.Catalog.Movie
   alias Cinder.Issues.IssueReport
   alias Cinder.Repo
@@ -188,6 +189,32 @@ defmodule CinderWeb.ApiControllerTest do
       refute Repo.get_by(Movie, tmdb_id: 603)
     end
 
+    test "accepts a named profile id and serializes its identity", %{conn: conn, key: key} do
+      _admin = admin_fixture()
+      requester = user_fixture()
+      anime = Enum.find(Catalog.list_profiles(:movies), &(&1.handling == :anime))
+
+      body =
+        conn
+        |> post_json(key, ~p"/api/v1/requests", %{
+          requester_id: requester.id,
+          target_type: "movie",
+          target_id: 603,
+          profile_id: anime.id
+        })
+        |> json_response(201)
+
+      assert body["profile"] == %{
+               "id" => anime.id,
+               "name" => anime.name,
+               "kind" => "movies",
+               "handling" => "anime"
+             }
+
+      assert Repo.get!(Request, body["id"]).proposed_profile_id == anime.id
+      refute Repo.get_by(Movie, tmdb_id: 603)
+    end
+
     test "defaults to the first active admin and auto-approves", %{conn: conn, key: key} do
       first = admin_fixture()
       _second = admin_fixture()
@@ -220,6 +247,12 @@ defmodule CinderWeb.ApiControllerTest do
             %{target_type: "movie", target_id: 603, season_number: 1},
             %{target_type: "season", target_id: 1399},
             %{target_type: "movie", target_id: 603, media_profile: "forged"},
+            %{
+              target_type: "movie",
+              target_id: 603,
+              profile_id: 1,
+              media_profile: "anime"
+            },
             %{target_type: "movie", target_id: 603, preferred_language: "klingon"},
             %{target_type: "movie", target_id: 603, unexpected: "field"}
           ] do
@@ -228,6 +261,24 @@ defmodule CinderWeb.ApiControllerTest do
       end
 
       assert Repo.aggregate(Request, :count) == 0
+    end
+
+    test "rejects unknown and wrong-kind profile ids without writes", %{conn: conn, key: key} do
+      _admin = admin_fixture()
+      tv_profile = hd(Catalog.list_profiles(:tv))
+
+      for profile_id <- [tv_profile.id, 9_223_372_036_854_775_807] do
+        assert conn
+               |> post_json(key, ~p"/api/v1/requests", %{
+                 target_type: "movie",
+                 target_id: 603,
+                 profile_id: profile_id
+               })
+               |> json_response(422) == %{"error" => "invalid_media_profile"}
+      end
+
+      assert Repo.aggregate(Request, :count) == 0
+      refute Repo.get_by(Movie, tmdb_id: 603)
     end
 
     test "rejects inactive or admin requester ids and reports an unavailable admin", %{
@@ -291,6 +342,23 @@ defmodule CinderWeb.ApiControllerTest do
       assert conn
              |> post_json(key, "/api/v1/requests/#{request.id}/approve", %{})
              |> json_response(409) == %{"error" => "not_pending"}
+    end
+
+    test "approves with a matching named profile", %{conn: conn, key: key} do
+      _admin = admin_fixture()
+      requester = user_fixture()
+      request = request_fixture(requester, %{target_id: 603, title: "The Matrix"})
+      anime = Enum.find(Catalog.list_profiles(:movies), &(&1.handling == :anime))
+
+      body =
+        conn
+        |> post_json(key, "/api/v1/requests/#{request.id}/approve", %{profile_id: anime.id})
+        |> json_response(200)
+
+      assert body["profile"]["id"] == anime.id
+      assert Repo.reload!(request).proposed_profile_id == anime.id
+      assert Repo.get_by!(Movie, tmdb_id: 603).profile_id == anime.id
+      assert Repo.get_by!(Movie, tmdb_id: 603).media_profile == :anime
     end
 
     test "denies once, then deletes with an audit row", %{conn: conn, key: key} do

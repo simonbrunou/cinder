@@ -129,7 +129,7 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
     assert html =~ "GoT"
     assert has_element?(lv, ~s(button[phx-value-season="1"]), "Request")
     assert has_element?(lv, ~s(button[phx-value-season="2"]), "Request")
-    assert has_element?(lv, "#series-profile-form select[name='proposed_media_profile']")
+    assert has_element?(lv, "#series-profile-form select[name='proposed_profile_id']")
   end
 
   # Bug B: season 0 (Specials) must not be rendered at all — the TV poller excludes it.
@@ -158,18 +158,23 @@ defmodule CinderWeb.SeriesDiscoveryLiveTest do
 
   test "requesting a season carries only a validated profile proposal", %{conn: conn} do
     user = Cinder.AccountsFixtures.user_fixture()
+    anime = Enum.find(Cinder.Catalog.list_profiles(:tv), &(&1.handling == :anime))
     conn = log_in_user(conn, user)
     {:ok, lv, _} = live(conn, ~p"/series/tmdb/1399")
 
     lv
-    |> form("#series-profile-form", %{"proposed_media_profile" => "anime"})
+    |> form("#series-profile-form", %{"proposed_profile_id" => to_string(anime.id)})
     |> render_change()
 
     lv |> element(~s(button[phx-value-season="2"]), "Request") |> render_click()
     render_async(lv)
-    assert [%{proposed_media_profile: :anime}] = Cinder.Requests.list_for_user(user)
 
-    render_hook(lv, "set_profile", %{"proposed_media_profile" => "forged"})
+    assert [%{proposed_profile_id: profile_id, proposed_media_profile: :anime}] =
+             Cinder.Requests.list_for_user(user)
+
+    assert profile_id == anime.id
+
+    render_hook(lv, "set_profile", %{"proposed_profile_id" => "forged"})
     assert render(lv) =~ "GoT"
   end
 

@@ -161,7 +161,8 @@ defmodule CinderWeb.MyRequestsLive do
       poster_path: r.poster_path,
       original_language: r.original_language,
       preferred_language: r.preferred_language,
-      proposed_media_profile: r.proposed_media_profile
+      proposed_media_profile: r.proposed_media_profile,
+      proposed_profile_id: Map.get(r, :proposed_profile_id)
     }
   end
 

@@ -142,6 +142,13 @@ defmodule CinderWeb.SettingsLive do
         <.icon name="hero-arrow-left" class="size-3.5" />{gettext("Dashboard")}
       </.link>
 
+      <.link
+        navigate={~p"/settings/profiles"}
+        class="link link-hover mb-6 ml-4 inline-flex items-center gap-1"
+      >
+        <.icon name="hero-adjustments-horizontal" class="size-3.5" />{gettext("Media profiles")}
+      </.link>
+
       <div
         :if={@undecryptable_secrets != []}
         id="undecryptable-secrets-alert"

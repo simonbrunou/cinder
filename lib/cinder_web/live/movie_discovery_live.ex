@@ -43,7 +43,13 @@ defmodule CinderWeb.MovieDiscoveryLive do
 
       {:ok,
        socket
-       |> assign(tmdb_id: tmdb_id, info: info, recommendations: [], reporting: false)
+       |> assign(
+         tmdb_id: tmdb_id,
+         info: info,
+         recommendations: [],
+         reporting: false,
+         movie_profiles: Catalog.list_profiles(:movies)
+       )
        |> assign_media_server()
        |> assign_request_state()
        |> assign_report_state()
@@ -84,7 +90,11 @@ defmodule CinderWeb.MovieDiscoveryLive do
     candidates = [socket.assigns.info | socket.assigns.recommendations]
 
     with {id, ""} <- Integer.parse(tmdb_id),
-         {:ok, profile} <- normalize_profile(params["proposed_media_profile"]),
+         {:ok, profile} <-
+           normalize_profile(
+             params["proposed_profile_id"] || params["proposed_media_profile"],
+             :movies
+           ),
          movie when not is_nil(movie) <- Enum.find(candidates, &(&1.tmdb_id == id)) do
       {:noreply, add(socket, movie, preferred, profile)}
     else
@@ -235,12 +245,6 @@ defmodule CinderWeb.MovieDiscoveryLive do
   defp normalize_language(lang) when lang in @picks, do: lang
   defp normalize_language(_), do: "original"
 
-  defp normalize_profile(nil), do: {:ok, nil}
-  defp normalize_profile("auto"), do: {:ok, nil}
-  defp normalize_profile("standard"), do: {:ok, :standard}
-  defp normalize_profile("anime"), do: {:ok, :anime}
-  defp normalize_profile(_), do: {:error, :invalid_media_profile}
-
   @impl true
   def render(assigns) do
     assigns =
@@ -369,7 +373,7 @@ defmodule CinderWeb.MovieDiscoveryLive do
           >
             <input type="hidden" name="tmdb_id" value={@tmdb_id} />
             <.language_select original_label={original_option_label(@info.original_language)} />
-            <.media_profile_select />
+            <.media_profile_select profiles={@movie_profiles} />
             <.button
               type="submit"
               variant="primary"
@@ -392,6 +396,7 @@ defmodule CinderWeb.MovieDiscoveryLive do
         movie_status={@movie_status}
         series_request_status={@series_request_status}
         available_series={@available_series}
+        movie_profiles={@movie_profiles}
       />
     </Layouts.app>
     """

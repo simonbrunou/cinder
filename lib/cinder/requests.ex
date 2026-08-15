@@ -61,13 +61,15 @@ defmodule Cinder.Requests do
   @spec list_for_api(pos_integer(), non_neg_integer()) :: [map()]
   def list_for_api(limit, offset) do
     Request
-    |> from(order_by: [desc: :id], limit: ^limit, offset: ^offset)
+    |> from(order_by: [desc: :id], limit: ^limit, offset: ^offset, preload: [:proposed_profile])
     |> Repo.all()
     |> Enum.map(&for_api/1)
   end
 
   @doc "Projects one request to the same personal-data-free shape returned by `list_for_api/2`."
   def for_api(%Request{} = request) do
+    request = Repo.preload(request, :proposed_profile)
+
     %{
       id: request.id,
       status: request.status,
@@ -76,8 +78,15 @@ defmodule Cinder.Requests do
       season_number: request.season_number,
       title: request.title,
       year: request.year,
+      profile: profile_identity(request.proposed_profile),
       requested_at: iso(request.inserted_at)
     }
+  end
+
+  defp profile_identity(nil), do: nil
+
+  defp profile_identity(profile) do
+    Map.take(profile, [:id, :name, :kind, :handling])
   end
 
   @doc "Total number of requests of any status — the page envelope for `list_for_api/2`."

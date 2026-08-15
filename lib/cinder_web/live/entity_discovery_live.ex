@@ -32,7 +32,7 @@ defmodule CinderWeb.EntityDiscoveryLive do
 
       {:ok,
        socket
-       |> assign(tmdb_id: tmdb_id, info: info)
+       |> assign(tmdb_id: tmdb_id, info: info, movie_profiles: Catalog.list_profiles(:movies))
        |> assign_request_state()}
     else
       # A TMDB outage is not "not found" — telling the user the entity doesn't exist
@@ -63,7 +63,11 @@ defmodule CinderWeb.EntityDiscoveryLive do
     preferred = normalize_language(params["preferred_language"])
 
     with {id, ""} <- Integer.parse(tmdb_id),
-         {:ok, profile} <- normalize_profile(params["proposed_media_profile"]),
+         {:ok, profile} <-
+           normalize_profile(
+             params["proposed_profile_id"] || params["proposed_media_profile"],
+             :movies
+           ),
          movie when not is_nil(movie) <-
            Enum.find(grid_items(socket), &(&1.type == :movie and &1.tmdb_id == id)) do
       {:noreply, add(socket, movie, preferred, profile)}
@@ -116,12 +120,6 @@ defmodule CinderWeb.EntityDiscoveryLive do
   defp normalize_language(lang) when lang in @picks, do: lang
   defp normalize_language(_), do: "original"
 
-  defp normalize_profile(nil), do: {:ok, nil}
-  defp normalize_profile("auto"), do: {:ok, nil}
-  defp normalize_profile("standard"), do: {:ok, :standard}
-  defp normalize_profile("anime"), do: {:ok, :anime}
-  defp normalize_profile(_), do: {:error, :invalid_media_profile}
-
   @impl true
   def render(%{live_action: :person} = assigns) do
     ~H"""
@@ -172,6 +170,7 @@ defmodule CinderWeb.EntityDiscoveryLive do
         movie_status={@movie_status}
         series_request_status={@series_request_status}
         available_series={@available_series}
+        movie_profiles={@movie_profiles}
       />
     </Layouts.app>
     """
@@ -219,6 +218,7 @@ defmodule CinderWeb.EntityDiscoveryLive do
         movie_status={@movie_status}
         series_request_status={@series_request_status}
         available_series={@available_series}
+        movie_profiles={@movie_profiles}
       />
     </Layouts.app>
     """

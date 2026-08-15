@@ -511,21 +511,27 @@ defmodule CinderWeb.DiscoverLiveTest do
     assert movie.original_language == "en"
   end
 
-  test "movie request forms carry a validated media profile proposal", %{conn: _conn} do
+  test "movie request forms carry a validated named profile proposal", %{conn: _conn} do
     user = Cinder.AccountsFixtures.user_fixture()
     conn = log_in_user(Phoenix.ConnTest.build_conn(), user)
+    anime = Enum.find(Catalog.list_profiles(:movies), &(&1.handling == :anime))
     stub_movies([@inception])
     {:ok, lv, _html} = live(conn, ~p"/")
     lv |> form("#search-form", %{"query" => "inception"}) |> render_change()
 
-    assert has_element?(lv, "#add-form-27205 select[name='proposed_media_profile']")
+    assert has_element?(lv, "#add-form-27205 select[name='proposed_profile_id']")
+    assert has_element?(lv, "#add-form-27205 option[value='#{anime.id}']", anime.name)
 
     lv
-    |> form("#add-form-27205", %{"proposed_media_profile" => "anime"})
+    |> form("#add-form-27205", %{"proposed_profile_id" => to_string(anime.id)})
     |> render_submit()
 
     render_async(lv)
-    assert [%{proposed_media_profile: :anime}] = Requests.list_for_user(user)
+
+    assert [%{proposed_profile_id: profile_id, proposed_media_profile: :anime}] =
+             Requests.list_for_user(user)
+
+    assert profile_id == anime.id
 
     other = Map.put(@inception, :tmdb_id, 27_206)
     stub_movies([other])
@@ -533,7 +539,7 @@ defmodule CinderWeb.DiscoverLiveTest do
 
     render_hook(lv, "add", %{
       "tmdb_id" => "27206",
-      "proposed_media_profile" => "forged"
+      "proposed_profile_id" => "forged"
     })
 
     assert length(Requests.list_for_user(user)) == 1
