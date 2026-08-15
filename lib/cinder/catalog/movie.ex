@@ -16,7 +16,7 @@ defmodule Cinder.Catalog.Movie do
   import Ecto.Changeset
 
   alias Cinder.Acquisition.Language
-  alias Cinder.Catalog.TitleAlias
+  alias Cinder.Catalog.{Profile, TitleAlias}
 
   @statuses [
     :requested,
@@ -40,6 +40,7 @@ defmodule Cinder.Catalog.Movie do
     :original_language,
     :preferred_language,
     :media_profile,
+    :profile_id,
     :overview,
     :localizations,
     :runtime,
@@ -86,6 +87,7 @@ defmodule Cinder.Catalog.Movie do
     field :vote_average, :float
     field :release_date, :date
     field :media_profile, Ecto.Enum, values: [:auto, :standard, :anime], default: :auto
+    belongs_to :profile, Profile
     field :anime_hold_reason, :string
     field :failure_reason, :string
     field :media_server_item_id, :string
