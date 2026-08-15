@@ -19,6 +19,10 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
       "/tmp/cinder-test-tv-library" -> {:ok, []}
     end)
 
+    stub(Cinder.Library.FilesystemMock, :lstat, fn ^path ->
+      {:ok, %File.Stat{type: :regular, size: 10}}
+    end)
+
     expect(Cinder.Catalog.TMDBMock, :search, fn "Dune", "en" ->
       {:ok,
        [
@@ -59,6 +63,7 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
     |> render_submit()
 
     render_async(view)
+    render_async(view)
 
     assert %Movie{status: :available, file_path: ^path} = Catalog.get_movie_by_tmdb_id(10)
     assert has_element?(view, "#flash-info", "Adopted 1; skipped 0.")
@@ -76,6 +81,10 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
     stub(Cinder.Library.FilesystemMock, :find_files, fn
       "/tmp/cinder-test-library" -> {:ok, [{path, 10}]}
       "/tmp/cinder-test-tv-library" -> {:ok, []}
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn ^path ->
+      {:ok, %File.Stat{type: :regular, size: 10}}
     end)
 
     stub(Cinder.Catalog.TMDBMock, :search, fn "Dune", "en" ->
@@ -125,6 +134,11 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
     stub(Cinder.Library.FilesystemMock, :find_files, fn
       "/tmp/cinder-test-library" -> {:ok, []}
       "/tmp/cinder-test-tv-library" -> {:ok, [{primary, 20}, {part, 10}]}
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn
+      ^primary -> {:ok, %File.Stat{type: :regular, size: 20}}
+      ^part -> {:ok, %File.Stat{type: :regular, size: 10}}
     end)
 
     stub(Cinder.Catalog.TMDBMock, :search_tv, fn "The Office", "en" ->
@@ -460,6 +474,10 @@ defmodule CinderWeb.LibraryAdoptionLiveTest do
     stub(Cinder.Library.FilesystemMock, :find_files, fn
       "/tmp/cinder-test-library" -> {:ok, []}
       "/tmp/cinder-test-tv-library" -> {:ok, [{part, 10}]}
+    end)
+
+    stub(Cinder.Library.FilesystemMock, :lstat, fn ^part ->
+      {:ok, %File.Stat{type: :regular, size: 10}}
     end)
 
     stub(Cinder.Catalog.TMDBMock, :search_tv, fn "The Office", "en" ->
