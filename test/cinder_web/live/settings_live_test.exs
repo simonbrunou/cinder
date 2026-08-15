@@ -300,6 +300,12 @@ defmodule CinderWeb.SettingsLiveTest do
 
     assert has_element?(lv, "#settings-group-download[open]")
     assert has_element?(lv, "#torrent_cleanup_ratio[aria-invalid=true]")
+
+    assert has_element?(
+             lv,
+             "#torrent_cleanup_ratio[aria-describedby=torrent_cleanup_ratio-error]"
+           )
+
     assert_push_event(lv, "focus-invalid", %{id: "torrent_cleanup_ratio"})
   end
 

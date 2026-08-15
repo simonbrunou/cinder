@@ -755,9 +755,19 @@ defmodule CinderWeb.SettingsComponents do
         autocomplete="off"
         aria-invalid={invalid?(@form, @field.key) && "true"}
         aria-describedby={
-          if invalid?(@form, @field.key),
-            do: "#{@field.key}-help #{@field.key}-error",
-            else: Map.has_key?(@field, :help) && "#{@field.key}-help"
+          cond do
+            invalid?(@form, @field.key) and Map.has_key?(@field, :help) ->
+              "#{@field.key}-help #{@field.key}-error"
+
+            invalid?(@form, @field.key) ->
+              "#{@field.key}-error"
+
+            Map.has_key?(@field, :help) ->
+              "#{@field.key}-help"
+
+            true ->
+              nil
+          end
         }
         class={["input w-full", invalid?(@form, @field.key) && "input-error"]}
       />
