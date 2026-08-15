@@ -224,14 +224,16 @@ defmodule Cinder.Library.MigrationAdoption do
     end
   end
 
-  defp movie_path_status(%Movie{file_path: path}, path, _managed),
-    do: {:already_managed, nil}
+  defp movie_path_status(%Movie{} = movie, path, managed) do
+    cond do
+      path in Movie.file_paths(movie) -> {:already_managed, nil}
+      movie.file_path not in [nil, ""] -> {:blocked, :identity_conflict}
+      Map.has_key?(managed.paths, normalize_path(path)) -> {:blocked, :path_conflict}
+      true -> {:ready, nil}
+    end
+  end
 
-  defp movie_path_status(%Movie{file_path: existing}, _path, _managed)
-       when is_binary(existing) and existing != "",
-       do: {:blocked, :identity_conflict}
-
-  defp movie_path_status(_movie, path, managed) do
+  defp movie_path_status(nil, path, managed) do
     if Map.has_key?(managed.paths, normalize_path(path)),
       do: {:blocked, :path_conflict},
       else: {:ready, nil}
@@ -969,8 +971,8 @@ defmodule Cinder.Library.MigrationAdoption do
 
   defp managed_state do
     movies =
-      for %Movie{file_path: path, id: id} <- Catalog.list_movies(),
-          is_binary(path) and path != "",
+      for %Movie{id: id} = movie <- Catalog.list_movies(),
+          path <- Movie.file_paths(movie),
           do: {normalize_path(path), {:movie, id}}
 
     episodes =
@@ -988,16 +990,24 @@ defmodule Cinder.Library.MigrationAdoption do
       |> Enum.uniq()
 
     normalized = MapSet.new(query_paths, &normalize_path/1)
+    encoded_paths = Jason.encode!(query_paths)
 
     movies =
-      Repo.all(from movie in Movie, where: movie.file_path in ^query_paths)
+      Repo.all(
+        from movie in Movie,
+          where:
+            movie.file_path in ^query_paths or
+              fragment(
+                "EXISTS (SELECT 1 FROM json_each(?) owned JOIN json_each(?) wanted ON owned.value = wanted.value)",
+                movie.part_file_paths,
+                ^encoded_paths
+              )
+      )
       |> Enum.flat_map(fn movie ->
-        for path <- [movie.file_path],
+        for path <- Movie.file_paths(movie),
             MapSet.member?(normalized, normalize_path(path)),
             do: {normalize_path(path), {:movie, movie.id}}
       end)
-
-    encoded_paths = Jason.encode!(query_paths)
 
     episodes =
       Repo.all(

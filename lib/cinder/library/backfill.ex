@@ -59,7 +59,7 @@ defmodule Cinder.Library.Backfill do
   end
 
   defp file_paths(%Episode{} = episode), do: Episode.file_paths(episode)
-  defp file_paths(%Movie{file_path: path}), do: [path]
+  defp file_paths(%Movie{} = movie), do: Movie.file_paths(movie)
 
   defp empty_info(sidecars) do
     %{

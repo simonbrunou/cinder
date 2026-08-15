@@ -214,6 +214,17 @@ local prefix is an existing readable directory.
 Back up the SQLite database — the `/data` volume (`cinder.db` plus its `-wal`/`-shm` sidecars).
 That's the entire app state.
 
+When background polling is enabled, Cinder creates a verified online snapshot shortly after
+startup and about every 24 hours thereafter. By default these private mode-`0600` files live in
+`/data/backups` and only the newest **seven** Cinder-owned snapshots are retained. Every snapshot
+must pass SQLite's full `PRAGMA integrity_check` before it counts as successful; a failed attempt
+is removed and does not prune an older good copy. The Settings download button uses this same
+snapshot implementation for an on-demand copy.
+
+Retention bounds local recovery copies, but it is not an off-host backup. Regularly copy a
+verified snapshot and the matching `SECRET_KEY_BASE` to separate protected storage. Media files
+are not in the SQLite snapshot and need their own backup policy.
+
 **Don't `cp` a live WAL database.** Cinder runs SQLite in WAL mode, so at any moment recent writes
 live in the `-wal` sidecar, not yet in `cinder.db`. A plain `cp` of the files while the container is
 running can capture a torn, inconsistent snapshot. Either:
@@ -226,6 +237,12 @@ running can capture a torn, inconsistent snapshot. Either:
 stored secrets is *derived from it*, so **a leaked `SECRET_KEY_BASE` compromises every stored
 service credential**, and losing it (or rotating it) means re-entering every credential in
 `/settings` after a restore.
+
+To verify a restore candidate independently, run
+`sqlite3 /path/to/cinder-backup.sqlite3 "PRAGMA integrity_check;"` and require the single result
+`ok`. To restore, stop Cinder, preserve the current database and WAL sidecars for diagnosis,
+replace `cinder.db` with the verified snapshot using the expected owner and mode `0600`, then
+restart with the original `SECRET_KEY_BASE`. Never overwrite a running WAL database.
 
 ### Database growth and reclaiming space
 
@@ -410,7 +427,10 @@ described below.
 
 A periodic TMDB refresh reconciles season/episode data, so a newly-announced or late-dated episode
 becomes search-eligible on its own once its air date passes — no manual re-add. The **`/calendar`**
-view (admin) lists upcoming monitored episodes.
+view (admin) lists upcoming monitored episodes. Set the household's IANA timezone (for example,
+`Europe/Paris` or `America/New_York`) in `/settings`; it defines "today" consistently for both
+eligibility and the calendar. Invalid timezone names are rejected, and existing installs default
+to `Etc/UTC` until one is saved.
 
 **Tuning grabs.** The `Release size bands` group in `/settings` sets a min/max size (decimal GB)
 and a preferred-resolution list **per library kind** (Movies and TV). For TV the band is **per
@@ -581,7 +601,9 @@ are pruned automatically.
   `.cinder-<key>` job-name suffix so SABnzbd can never find the job — keep it at the default 246 or
   higher), or duplicate handling (**Pause on Duplicates** / **series duplicate detection**) left on
   for Cinder's category. These are warnings only — the service still tests as reachable.
-- **Air-date eligibility is by UTC calendar day.** An episode becomes search-eligible when its TMDB
-  air date is "today or earlier" in **UTC**, so far from UTC it can flip to wanted up to ~a day
-  early or late. Harmless for a household (it just grabs a few hours off) — there's no per-timezone
-  scheduling.
+- **Archive and disc movie releases are not imported.** RAR volumes and `BDMV`/`VIDEO_TS`/ISO
+  releases park with an explicit unsupported-format reason. Supporting them safely requires an
+  explicit, health-checked extraction or remux runtime and a deterministic main-feature policy;
+  Cinder will not guess a title or silently choose the largest playlist. Multi-file movies are
+  accepted only when every video forms one unambiguous, contiguous stack named with
+  `CD`/`disc`/`disk`/`part` plus `1..N`.

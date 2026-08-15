@@ -78,6 +78,7 @@ defmodule Cinder.MixProject do
       {:telemetry_poller, "~> 1.0"},
       {:gettext, "~> 1.0"},
       {:jason, "~> 1.2"},
+      {:tz, "~> 0.28"},
       {:bandit, "~> 1.5"},
       {:cloak, "~> 1.1"},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},

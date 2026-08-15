@@ -16,6 +16,13 @@ defmodule Cinder.Library.Naming do
     Path.join([root, name, name <> Path.extname(source)])
   end
 
+  @doc "Movie stack destination using the media-server-standard `-cdN` suffix."
+  def movie_part_dest(%Movie{} = movie, source, root, part) do
+    dest = movie_dest(movie, source, root)
+    extension = Path.extname(dest)
+    "#{Path.rootname(dest, extension)}-cd#{part}#{extension}"
+  end
+
   @doc """
   `root/Show (Year) {tmdb-id}/Season NN/Show (Year) {tmdb-id} - SxxEyy.ext` for the episodes one
   source file covers — a double-episode file gets one destination that both episodes reference.

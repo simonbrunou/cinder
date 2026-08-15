@@ -9,7 +9,7 @@ defmodule Cinder.Library.Adoption do
 
   alias Cinder.Acquisition.Parser
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Series}
+  alias Cinder.Catalog.{Episode, Movie, Series}
   alias Cinder.Library
   alias Cinder.Locales
   alias Cinder.Settings
@@ -804,7 +804,7 @@ defmodule Cinder.Library.Adoption do
   defp adoption_profile(_candidate_or_destination_profile), do: :auto
 
   defp managed_paths do
-    movie_paths = Catalog.list_movies() |> Enum.map(& &1.file_path)
+    movie_paths = Catalog.list_movies() |> Enum.flat_map(&Movie.file_paths/1)
     episode_paths = Catalog.list_episodes_with_file() |> Enum.flat_map(&Episode.file_paths/1)
 
     (movie_paths ++ episode_paths)

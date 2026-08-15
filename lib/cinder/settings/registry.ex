@@ -391,6 +391,14 @@ defmodule Cinder.Settings.Registry do
 
   @global_fields [
     %{
+      key: "household_timezone",
+      secret: false,
+      group: :accounts,
+      label: "Household timezone",
+      placeholder: "Europe/Paris",
+      help: :timezone
+    },
+    %{
       key: @default_request_quota_key,
       secret: false,
       group: :accounts,

@@ -15,6 +15,14 @@ All notable changes to Cinder are documented here. The format follows
   `/settings`; Cinder uses discovery plus authorization code, state, nonce, PKCE, and signed-token
   validation. A provider-verified email may attach an existing account, while a new identity lands
   as an inactive regular user awaiting approval and can never bootstrap the first admin.
+- **Automatic verified database backups.** Cinder now writes private online SQLite snapshots
+  about daily, verifies each with SQLite's full integrity check, and retains only the newest seven;
+  the admin download uses the same snapshot implementation.
+- **Household-local TV air dates.** A validated IANA timezone in Settings now decides when a TMDB
+  air date becomes wanted and keeps the calendar and automatic searches on the same local day.
+- **Safe multi-part movie imports.** Strict contiguous `CD`/`disc`/`disk`/`part` stacks import as
+  native Jellyfin/Plex stack files and stay tracked through upgrades, deletion, adoption, backfill,
+  and subtitle sync. Ambiguous stacks, RAR releases, and disc structures fail explicitly.
 
 ## [1.1.0] - 2026-08-14
 

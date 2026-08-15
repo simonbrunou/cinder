@@ -7,10 +7,13 @@
 # General application configuration
 import Config
 
+config :elixir, :time_zone_database, Tz.TimeZoneDatabase
+
 config :cinder,
   ecto_repos: [Cinder.Repo],
   bootstrap_token: nil,
-  secure_cookies: false
+  secure_cookies: false,
+  household_timezone: "Etc/UTC"
 
 # SQLite correctness, pinned in ONE place so every environment gets it — including a non-prod
 # release that never reaches runtime.exs's prod-only branch. Env files add only `database`/

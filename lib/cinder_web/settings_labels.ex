@@ -83,6 +83,7 @@ defmodule CinderWeb.SettingsLabels do
       gettext_noop("OpenID Connect client ID"),
       gettext_noop("OpenID Connect client secret"),
       gettext_noop("Default request quota"),
+      gettext_noop("Household timezone"),
       # generated per-kind Plex section labels — Settings.config_fields/0
       gettext_noop("Plex Movies library section (numeric id)"),
       gettext_noop("Plex TV library section (numeric id)")

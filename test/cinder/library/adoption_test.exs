@@ -35,10 +35,14 @@ defmodule Cinder.Library.AdoptionTest do
     managed_movie =
       "/tmp/cinder-test-library/Managed (2019)/Managed (2019).mkv"
 
+    managed_movie_part =
+      "/tmp/cinder-test-library/Managed (2019)/Managed (2019)-cd2.mkv"
+
     movie_fixture(%{
       title: "Managed",
       status: :available,
-      file_path: managed_movie
+      file_path: managed_movie,
+      part_file_paths: [managed_movie_part]
     })
 
     managed_series = series_fixture(title: "Managed Show")
@@ -52,7 +56,7 @@ defmodule Cinder.Library.AdoptionTest do
     unknown_path = "/tmp/cinder-test-tv-library/Test Show (2001)/Test.Show.S01E99.mkv"
 
     stub_roots(
-      [{movie_path, 10}, {managed_movie, 20}],
+      [{movie_path, 10}, {managed_movie, 20}, {managed_movie_part, 20}],
       [{episode_path, 10}, {unknown_path, 9}, {managed_tv, 8}]
     )
 
@@ -97,6 +101,7 @@ defmodule Cinder.Library.AdoptionTest do
              Enum.find(series.files, &(&1.path == unknown_path))
 
     refute Enum.any?(candidates, &(managed_movie in &1.paths))
+    refute Enum.any?(candidates, &(managed_movie_part in &1.paths))
     refute Enum.any?(candidates, &(managed_tv in &1.paths))
   end
 
