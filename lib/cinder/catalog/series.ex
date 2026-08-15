@@ -13,7 +13,7 @@ defmodule Cinder.Catalog.Series do
   import Ecto.Changeset
 
   alias Cinder.Acquisition.Language
-  alias Cinder.Catalog.{EpisodeCoordinate, Season, TitleAlias}
+  alias Cinder.Catalog.{EpisodeCoordinate, Profile, Season, TitleAlias}
 
   @monitor_strategies [:all, :future, :none]
 
@@ -33,6 +33,7 @@ defmodule Cinder.Catalog.Series do
     field :vote_average, :float
     field :first_air_date, :date
     field :media_profile, Ecto.Enum, values: [:auto, :standard, :anime], default: :auto
+    belongs_to :profile, Profile
     field :anime_hold_reason, :string
     field :scene_numbering_group_id, :string
     field :media_server_item_id, :string
@@ -90,7 +91,8 @@ defmodule Cinder.Catalog.Series do
       :genres,
       :vote_average,
       :first_air_date,
-      :media_profile
+      :media_profile,
+      :profile_id
     ])
     |> validate_required([:tmdb_id, :title])
     |> validate_inclusion(:preferred_language, Language.preferences())
