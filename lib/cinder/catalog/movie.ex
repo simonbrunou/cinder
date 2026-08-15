@@ -65,6 +65,7 @@ defmodule Cinder.Catalog.Movie do
     field :download_eta, :integer
     field :download_progress_at, :utc_datetime
     field :file_path, :string
+    field :part_file_paths, {:array, :string}, default: []
     field :content_path, :string
     field :import_attempts, :integer, default: 0
     field :search_attempts, :integer, default: 0
@@ -167,6 +168,7 @@ defmodule Cinder.Catalog.Movie do
       :download_eta,
       :imdb_id,
       :file_path,
+      :part_file_paths,
       :content_path,
       :import_attempts,
       :search_attempts,
@@ -186,6 +188,13 @@ defmodule Cinder.Catalog.Movie do
     |> validate_required([:status])
     |> validate_number(:import_attempts, greater_than_or_equal_to: 0)
     |> validate_number(:search_attempts, greater_than_or_equal_to: 0)
+  end
+
+  @doc "All library files belonging to a movie stack, primary first."
+  def file_paths(%__MODULE__{file_path: primary, part_file_paths: parts}) do
+    [primary | parts || []]
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.uniq()
   end
 
   defp reset_download_metrics(changeset, previous_status) do

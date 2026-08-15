@@ -967,7 +967,7 @@ defmodule Cinder.Catalog do
 
       unlinked =
         if delete_files?,
-          do: [{deleted.file_path, best_effort_delete_file(deleted.file_path)}],
+          do: Enum.map(Movie.file_paths(deleted), &{&1, best_effort_delete_file(&1)}),
           else: []
 
       audit_deletion(actor, :delete_movie, deleted, delete_files?, unlinked)

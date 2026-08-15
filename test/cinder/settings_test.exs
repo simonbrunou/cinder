@@ -58,7 +58,8 @@ defmodule Cinder.SettingsTest do
     :move_on_import,
     :ffprobe_bin,
     :anime_preferences,
-    :default_request_quota
+    :default_request_quota,
+    :household_timezone
   ]
 
   setup do
@@ -94,6 +95,26 @@ defmodule Cinder.SettingsTest do
   end
 
   describe "storage" do
+    test "household timezone controls the local eligibility date and rejects unknown zones" do
+      instant = ~U[2026-01-01 23:30:00Z]
+
+      assert :ok =
+               Settings.save_form(%{
+                 "household_timezone" => "Europe/Paris",
+                 "media_server_type" => "jellyfin"
+               })
+
+      assert Settings.household_date(instant) == ~D[2026-01-02]
+
+      assert {:error, ["household_timezone"]} =
+               Settings.save_form(%{
+                 "household_timezone" => "Mars/Olympus",
+                 "media_server_type" => "jellyfin"
+               })
+
+      assert Settings.household_timezone() == "Europe/Paris"
+    end
+
     test "import_roots parses newline/comma input, expands paths, and removes duplicates" do
       Settings.put("import_roots", " /srv/downloads, /srv/usenet\n/srv/downloads ")
 

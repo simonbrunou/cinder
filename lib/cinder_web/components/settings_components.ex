@@ -29,6 +29,7 @@ defmodule CinderWeb.SettingsComponents do
     keys
     |> Enum.map(fn key ->
       cond do
+        key == "household_timezone" -> :accounts
         key == Settings.import_roots_key() -> :library
         library_path_key?(key) -> :library
         MapSet.member?(anime_keys, key) -> :anime
@@ -731,10 +732,22 @@ defmodule CinderWeb.SettingsComponents do
         placeholder={@form.placeholders[@field.key] || @field.placeholder}
         inputmode={Map.get(@field, :inputmode)}
         autocomplete="off"
-        class="input w-full"
+        aria-invalid={invalid?(@form, @field.key) && "true"}
+        aria-describedby={
+          if invalid?(@form, @field.key),
+            do: "#{@field.key}-help #{@field.key}-error",
+            else: Map.has_key?(@field, :help) && "#{@field.key}-help"
+        }
+        class={["input w-full", invalid?(@form, @field.key) && "input-error"]}
       />
 
-      <p :if={Map.has_key?(@field, :help)} class="mt-1 text-xs opacity-70">
+      <.field_error :if={invalid?(@form, @field.key)} field={@field.key} />
+
+      <p
+        :if={Map.has_key?(@field, :help)}
+        id={"#{@field.key}-help"}
+        class="mt-1 text-xs opacity-70"
+      >
         {path_mapping_help(@field.help)}
       </p>
 
@@ -789,6 +802,9 @@ defmodule CinderWeb.SettingsComponents do
   defp path_mapping_help(:local),
     do: gettext("The same directory as Cinder sees it")
 
+  defp path_mapping_help(:timezone),
+    do: gettext("IANA name used to decide when an episode's local air date has arrived")
+
   defp field_errors(form, key) do
     if invalid?(form, key), do: [invalid_field_message(key)], else: []
   end
@@ -801,6 +817,9 @@ defmodule CinderWeb.SettingsComponents do
 
   defp invalid_field_message(key) when key == "anime_embedded_subtitle_mode",
     do: gettext("Choose a valid mode and at least one subtitle language when required.")
+
+  defp invalid_field_message("household_timezone"),
+    do: gettext("Enter a valid IANA timezone, such as Europe/Paris.")
 
   defp invalid_field_message(key) when is_binary(key) do
     if library_path_key?(key),
@@ -822,6 +841,8 @@ defmodule CinderWeb.SettingsComponents do
 
   defp invalid_field_label("anime_group_fallback_delay"),
     do: gettext("Anime: Preferred-group fallback delay")
+
+  defp invalid_field_label("household_timezone"), do: gettext("Household timezone")
 
   defp invalid_field_label(key) do
     Enum.find_value(Settings.library_kinds(), key, fn %{kind: kind, label: label} ->

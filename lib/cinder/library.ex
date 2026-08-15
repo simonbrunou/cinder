@@ -22,6 +22,7 @@ defmodule Cinder.Library do
     AnimeInventory,
     AnimePreflight,
     ImportStage,
+    MovieSources,
     Naming,
     PathPolicy,
     PolicyVerifier,
@@ -76,40 +77,117 @@ defmodule Cinder.Library do
     replace? = Keyword.get(opts, :replace, false)
 
     with {:ok, root} <- Settings.library_root(:movies, movie),
-         {:ok, source, folder?} <- resolve_source(path),
-         {:ok, reports} <- verify_movie_policy(movie, source),
-         {:ok, %{size: size, inode: si, major_device: sdev}} <- fs().lstat(source),
+         {:ok, sources, folder?} <- MovieSources.resolve(path),
+         {:ok, reports} <- verify_movie_policy(movie, Enum.map(sources, &elem(&1, 0))),
+         {:ok, sources} <- stat_movie_sources(sources),
          parsed = Parser.parse(Path.basename(path)),
          new_q =
-           new_quality(parsed, size, movie.release_title)
-           |> Map.merge(cached_or_capture_media(source, reports))
+           new_quality(parsed, Enum.sum(Enum.map(sources, & &1.size)), movie.release_title)
+           |> Map.merge(capture_movie_media(sources, reports))
            |> Map.put_new(:sidecar_subtitles, []),
-         dest = Naming.movie_dest(movie, source, root),
-         {:ok, dest} <- safe_destination(dest, root),
-         :ok <- fs().mkdir_p(Path.dirname(dest)),
-         {:ok, quality, rollback, placed?} <-
-           StageEngine.stage_place(source, dest, root, {si, sdev}, movie, new_q, replace?, fn ->
-             upgrade?(movie, new_q)
-           end) do
-      quality = staged_sidecar_quality(quality, placed?, folder?, source)
+         {:ok, stages} <- stage_movie_sources(movie, sources, root, new_q, replace?, folder?) do
+      {:ok, movie_stage_result(stages, new_q)}
+    end
+  end
 
+  defp stat_movie_sources(sources) do
+    Enum.reduce_while(sources, {:ok, []}, fn {path, part}, {:ok, acc} ->
+      case fs().lstat(path) do
+        {:ok, %{size: size, inode: inode, major_device: device}} ->
+          {:cont,
+           {:ok, [%{path: path, part: part, size: size, inode: inode, device: device} | acc]}}
+
+        {:error, _reason} = error ->
+          {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, sources} -> {:ok, Enum.reverse(sources)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp capture_movie_media(sources, reports) do
+    Enum.reduce(sources, empty_media(), fn %{path: source}, media ->
+      captured = cached_or_capture_media(source, reports)
+
+      %{
+        audio_languages: Enum.uniq(media.audio_languages ++ captured.audio_languages),
+        embedded_subtitles: Enum.uniq(media.embedded_subtitles ++ captured.embedded_subtitles),
+        default_audio_language: media.default_audio_language || captured.default_audio_language
+      }
+    end)
+  end
+
+  defp stage_movie_sources(movie, sources, root, quality, replace?, folder?) do
+    sources
+    |> Enum.reduce_while({:ok, []}, fn source, {:ok, stages} ->
+      case stage_movie_source(movie, source, root, quality, replace?, folder?) do
+        {:ok, stage} ->
+          {:cont, {:ok, [stage | stages]}}
+
+        {:error, _reason} = error ->
+          stages |> Enum.each(&rollback_stage/1)
+          {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, stages} -> {:ok, stages |> Enum.reverse() |> put_movie_after_commit(movie)}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  defp stage_movie_source(movie, source, root, quality, replace?, folder?) do
+    dest =
+      if source.part,
+        do: Naming.movie_part_dest(movie, source.path, root, source.part),
+        else: Naming.movie_dest(movie, source.path, root)
+
+    with {:ok, dest} <- safe_destination(dest, root),
+         :ok <- fs().mkdir_p(Path.dirname(dest)),
+         {:ok, staged_quality, rollback, placed?} <-
+           StageEngine.stage_place(
+             source.path,
+             dest,
+             root,
+             {source.inode, source.device},
+             movie,
+             quality,
+             replace?,
+             fn -> upgrade?(movie, quality) end
+           ) do
       {:ok,
        %{
          dest: dest,
-         quality: quality,
-         rollback:
-           Map.merge(rollback, %{
-             after_commit: {:movie, movie},
-             folder?: folder?,
-             source: source
-           })
+         quality: staged_sidecar_quality(staged_quality, placed?, folder?, source.path),
+         rollback: Map.merge(rollback, %{folder?: folder?, source: source.path})
        }}
     end
   end
 
+  defp put_movie_after_commit([first | rest], movie) do
+    first = put_in(first, [:rollback, :after_commit], {:movie, movie})
+    [first | Enum.map(rest, &put_in(&1, [:rollback, :after_commit], nil))]
+  end
+
+  defp movie_stage_result([stage], _quality), do: stage
+
+  defp movie_stage_result([primary | rest] = stages, _quality) do
+    sidecars =
+      stages
+      |> Enum.flat_map(& &1.quality.sidecar_subtitles)
+      |> Enum.uniq()
+
+    primary
+    |> Map.put(:stages, stages)
+    |> Map.put(:part_file_paths, Enum.map(rest, & &1.dest))
+    |> Map.put(:quality, Map.put(primary.quality, :sidecar_subtitles, sidecars))
+  end
+
   @doc "Commits a staged import. Safe to call repeatedly."
-  @spec commit_stage(%{dest: String.t(), rollback: map(), quality: map()}) ::
-          :ok | {:error, term()}
+  @spec commit_stage(map()) :: :ok | {:error, term()}
+  def commit_stage(%{stages: stages}), do: run_all(stages, &commit_stage/1)
+
   def commit_stage(%{dest: dest, rollback: rollback, quality: quality}) do
     if StageEngine.claim_post_commit_effects(rollback) do
       maybe_commit_sidecars(rollback, dest)
@@ -120,14 +198,26 @@ defmodule Cinder.Library do
   end
 
   @doc "Rolls a staged import back. Safe to call repeatedly."
-  @spec rollback_stage(%{rollback: map()}) :: :ok | {:error, term()}
+  @spec rollback_stage(map()) :: :ok | {:error, term()}
+  def rollback_stage(%{stages: stages}), do: run_all(Enum.reverse(stages), &rollback_stage/1)
   def rollback_stage(%{rollback: rollback}), do: StageEngine.rollback(rollback)
+
+  defp run_all(stages, fun) do
+    Enum.reduce(stages, :ok, fn stage, result ->
+      case fun.(stage) do
+        :ok -> result
+        {:error, _reason} = error when result == :ok -> error
+        {:error, _reason} -> result
+      end
+    end)
+  end
 
   @doc false
   def stage_ids(stages),
     do:
       stages
       |> Enum.flat_map(fn
+        %{stages: nested} -> stage_ids(nested)
         %{rollback: %{state: :durable, stage_id: id}} -> [id]
         _stage -> []
       end)
@@ -432,18 +522,19 @@ defmodule Cinder.Library do
   defp audio_result(true), do: :ok
   defp audio_result(false), do: {:error, :wrong_audio_language}
 
-  defp verify_movie_policy(%Movie{release_policy_snapshot: snapshot}, source)
+  defp verify_movie_policy(%Movie{release_policy_snapshot: snapshot}, sources)
        when is_map(snapshot),
-       do: verify_release_policy([source], snapshot)
+       do: verify_release_policy(sources, snapshot)
 
-  defp verify_movie_policy(%Movie{} = movie, source) do
-    case verify_audio(
-           source,
-           Language.target(movie.preferred_language, movie.original_language)
-         ) do
-      :ok -> {:ok, %{}}
-      {:error, _reason} = error -> error
-    end
+  defp verify_movie_policy(%Movie{} = movie, sources) do
+    target = Language.target(movie.preferred_language, movie.original_language)
+
+    Enum.reduce_while(sources, {:ok, %{}}, fn source, {:ok, reports} ->
+      case verify_audio(source, target) do
+        :ok -> {:cont, {:ok, reports}}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
   end
 
   defp verify_release_policy(paths, snapshot) do
@@ -1341,35 +1432,6 @@ defmodule Cinder.Library do
   @doc false
   defdelegate refresh(kind, dest), to: Cinder.Library.PostImport
 
-  # content_path is a file for single-file torrents, a folder for multi-file ones. Returns the
-  # picked video plus whether the download was a folder (`folder?` gates sidecar linking).
-  defp resolve_source(path) do
-    case safe_walk(path) do
-      {:ok, files} ->
-        with {:ok, video} <- pick_video(files),
-             {:ok, source} <- safe_source_file(video),
-             do: {:ok, source, true}
-
-      {:error, :enotdir} ->
-        with {:ok, source} <- safe_source_file(path), do: {:ok, source, false}
-
-      {:error, _reason} = error ->
-        error
-    end
-  end
-
-  # Largest video file wins (skips samples/extras); lexicographic path breaks ties
-  # so the choice — and therefore the dest — is stable across retries.
-  defp pick_video(files) do
-    files
-    |> Enum.filter(fn {path, _size} -> video_file?(path) end)
-    |> Enum.sort_by(fn {p, size} -> {-size, p} end)
-    |> case do
-      [{path, _size} | _] -> {:ok, path}
-      [] -> {:error, :no_video_file}
-    end
-  end
-
   @doc "Deletes one imported library file and prunes the folders it leaves empty."
   defdelegate delete_file(path), to: Cinder.Library.Deletion
 
@@ -1398,7 +1460,8 @@ defmodule Cinder.Library do
     end
   end
 
-  defp safe_walk(path) do
+  @doc false
+  def safe_walk(path) do
     case Settings.import_roots() do
       [] -> {:error, :download_roots_not_configured}
       roots -> path_policy().walk(path, roots: roots, filesystem: fs())

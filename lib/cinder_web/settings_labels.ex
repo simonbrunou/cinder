@@ -80,6 +80,7 @@ defmodule CinderWeb.SettingsLabels do
       gettext_noop("LibreTranslate URL"),
       gettext_noop("LibreTranslate API key"),
       gettext_noop("Default request quota"),
+      gettext_noop("Household timezone"),
       # generated per-kind Plex section labels — Settings.config_fields/0
       gettext_noop("Plex Movies library section (numeric id)"),
       gettext_noop("Plex TV library section (numeric id)")

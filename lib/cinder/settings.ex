@@ -83,6 +83,33 @@ defmodule Cinder.Settings do
     |> positive_integer()
   end
 
+  @doc "Validated IANA timezone used for household calendar-day decisions."
+  def household_timezone do
+    case Application.get_env(:cinder, :household_timezone, "Etc/UTC") do
+      zone when is_binary(zone) ->
+        zone = String.trim(zone)
+        if valid_timezone?(zone), do: zone, else: "Etc/UTC"
+
+      _ ->
+        "Etc/UTC"
+    end
+  end
+
+  @doc "The household-local date at a UTC instant."
+  def household_date(at \\ DateTime.utc_now()) do
+    case DateTime.shift_zone(at, household_timezone()) do
+      {:ok, local} -> DateTime.to_date(local)
+      {:error, _reason} -> DateTime.to_date(at)
+    end
+  end
+
+  @doc false
+  def valid_timezone?(zone) when is_binary(zone) do
+    match?({:ok, _local}, DateTime.shift_zone(DateTime.utc_now(), String.trim(zone)))
+  end
+
+  def valid_timezone?(_zone), do: false
+
   # --- reads ---
 
   @doc "All raw settings rows."
@@ -514,8 +541,16 @@ defmodule Cinder.Settings do
     invalid_band_values(params) ++
       invalid_cutoff_values(params) ++
       invalid_import_roots(params) ++
-      invalid_library_roots(params) ++ invalid_anime_values(params)
+      invalid_library_roots(params) ++
+      invalid_timezone_values(params) ++ invalid_anime_values(params)
   end
+
+  defp invalid_timezone_values(%{"household_timezone" => value}) do
+    value = String.trim(value || "")
+    if value != "" and not valid_timezone?(value), do: ["household_timezone"], else: []
+  end
+
+  defp invalid_timezone_values(_params), do: []
 
   defp invalid_library_roots(params) do
     for kind <- Cinder.Library.kinds(),
@@ -676,6 +711,7 @@ defmodule Cinder.Settings do
     apply_upgrade_hunt(rows)
     apply_ffprobe_bin(rows)
     apply_default_request_quota(rows)
+    apply_household_timezone(rows)
     :ok
   rescue
     e ->
@@ -944,6 +980,18 @@ defmodule Cinder.Settings do
         else: fallback
 
     Application.put_env(:cinder, :default_request_quota, quota)
+  end
+
+  defp apply_household_timezone(rows) do
+    fallback = base(:household_timezone)
+    zone = decoded_for(rows, "household_timezone") || fallback
+    zone = if is_binary(zone), do: String.trim(zone), else: zone
+
+    Application.put_env(
+      :cinder,
+      :household_timezone,
+      if(valid_timezone?(zone), do: zone, else: "Etc/UTC")
+    )
   end
 
   # base/1 defaults to [] for unset keys; a library path is a flat string, so coerce an unset

@@ -14,7 +14,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
 
   alias Cinder.Catalog.{Episode, Identity, SceneNumbering, Season, Series, TitleAlias}
   alias Cinder.Locales
-  alias Cinder.Repo
+  alias Cinder.{Repo, Settings}
 
   @max_search_attempts 10
 
@@ -810,7 +810,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
   end
 
   defp series_attrs(info, seasons, strategy, preferred, media_profile) do
-    today = Date.utc_today()
+    today = Settings.household_date()
 
     %{
       tmdb_id: info.tmdb_id,
@@ -977,7 +977,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
   end
 
   defp reapply_tree_monitoring(series, strategy, tree_monitored) do
-    today = Date.utc_today()
+    today = Settings.household_date()
     season_ids = Repo.all(from(s in Season, where: s.series_id == ^series.id, select: s.id))
 
     Repo.update_all(from(s in Season, where: s.id in ^season_ids),
@@ -1064,7 +1064,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
   reads "Approved"/"Denied" forever. Pass `tmdb_id` to scope to one series.
   """
   def available_season_keys(tmdb_id \\ nil) do
-    today = Date.utc_today()
+    today = Settings.household_date()
 
     query = available_seasons_query(today)
 
@@ -1152,7 +1152,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
   (`search_attempts >= max_search_attempts/0`) ⇒ `:search_parked` (a manual Search re-queues
   it via `search_episode_now/1`), else `:wanted`.
   """
-  def episode_state(%Episode{} = episode, today \\ Date.utc_today()) do
+  def episode_state(%Episode{} = episode, today \\ Settings.household_date()) do
     cond do
       episode.file_path -> :available
       episode.grab_id -> :downloading
@@ -1243,7 +1243,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
   end
 
   defp wanted_episodes_query do
-    today = Date.utc_today()
+    today = Settings.household_date()
 
     from e in Episode,
       join: s in assoc(e, :season),
@@ -1270,7 +1270,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
   def episode_searchable?(
         %Episode{season: %Season{} = season} = episode,
         profile,
-        today \\ Date.utc_today()
+        today \\ Settings.household_date()
       ) do
     common? =
       episode.monitored and is_nil(episode.file_path) and is_nil(episode.grab_id) and
@@ -1299,7 +1299,7 @@ defmodule Cinder.Catalog.SeriesCatalog do
   stays honest for every row, not just regular episodes.
   """
   def upcoming_episodes do
-    today = Date.utc_today()
+    today = Settings.household_date()
     from_date = Date.add(today, -7)
     to_date = Date.add(today, 90)
 

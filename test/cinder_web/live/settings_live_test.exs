@@ -116,6 +116,30 @@ defmodule CinderWeb.SettingsLiveTest do
     assert Settings.default_request_quota() == 7
   end
 
+  test "validates and saves the household timezone", %{conn: conn} do
+    {:ok, lv, _html} = live(conn, ~p"/settings")
+
+    html =
+      lv
+      |> form("#settings-form", %{
+        "household_timezone" => "Not/A_Zone",
+        "media_server_type" => "jellyfin"
+      })
+      |> render_submit()
+
+    assert html =~ "Enter a valid IANA timezone"
+    assert has_element?(lv, "#household_timezone[aria-invalid=true]")
+
+    lv
+    |> form("#settings-form", %{
+      "household_timezone" => "Europe/Paris",
+      "media_server_type" => "jellyfin"
+    })
+    |> render_submit()
+
+    assert Settings.household_timezone() == "Europe/Paris"
+  end
+
   test "renders stable keyboard-native group disclosures inside one form", %{conn: conn} do
     {:ok, lv, _html} = live(conn, ~p"/settings")
 
@@ -550,6 +574,12 @@ defmodule CinderWeb.SettingsLiveTest do
 
     assert has_element?(live_view, "p", "Keep your SECRET_KEY_BASE with the backup")
     assert has_element?(live_view, "p", "Media files are not included")
+
+    assert has_element?(
+             live_view,
+             "#scheduled-database-backups",
+             "Automatic verified snapshots run about daily"
+           )
   end
 
   test "generating an API key shows it exactly once and never echoes it back", %{conn: conn} do

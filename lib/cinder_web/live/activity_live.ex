@@ -405,6 +405,7 @@ defmodule CinderWeb.ActivityLive do
   defp job_label(Cinder.Catalog.Rehunter), do: gettext("Try failed title searches again")
   defp job_label(Cinder.Catalog.UpgradeHunter), do: gettext("Look for better-quality releases")
   defp job_label(Cinder.Download.Cleaner), do: gettext("Remove unneeded partial downloads")
+  defp job_label(Cinder.DatabaseBackup), do: gettext("Back up the database")
   defp job_label(Cinder.Subtitles.Sweeper), do: gettext("Find missing subtitles")
   defp job_label(Cinder.Requests.WatchlistSync), do: gettext("Plex watchlist sync")
   defp job_label(module), do: module |> Module.split() |> List.last()
@@ -895,7 +896,7 @@ defmodule CinderWeb.ActivityLive do
         <h2 class="pb-3 text-lg font-semibold">{gettext("Background sweeps")}</h2>
         <p class="pb-3 text-sm text-base-content/70">
           {gettext(
-            "Scheduled maintenance runs on its own. These tasks retry failed searches, look for better releases, remove unneeded partial downloads, update series, find missing subtitles, and sync Plex watchlists."
+            "Scheduled maintenance runs on its own. These tasks retry failed searches, look for better releases, remove unneeded partial downloads, update series, back up the database, find missing subtitles, and sync Plex watchlists."
           )}
         </p>
         <ul id="activity-jobs" class="space-y-2">

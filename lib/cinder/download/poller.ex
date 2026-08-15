@@ -319,7 +319,14 @@ defmodule Cinder.Download.Poller do
   # Retry re-searches and the name filter usually then prefers a correctly-tagged release; a soft
   # Original/Any pick whose only candidates are wrong-language can re-grab the same file, but Retry
   # is manual so that can't loop on its own.
-  @permanent_import_errors [:no_file_path, :no_video_file, :wrong_audio_language]
+  @permanent_import_errors [
+    :no_file_path,
+    :no_video_file,
+    :wrong_audio_language,
+    :ambiguous_multipart_movie,
+    :unsupported_archive,
+    :unsupported_disc
+  ]
 
   # Download-side failures whose terminal handling blocklists the release. Each only gets here
   # after a retry bound, so a single network blip can never block a good release. On the fresh-grab
@@ -363,7 +370,12 @@ defmodule Cinder.Download.Poller do
         case Catalog.transition(
                movie,
                Map.merge(
-                 %{status: :available, file_path: dest, content_path: nil},
+                 %{
+                   status: :available,
+                   file_path: dest,
+                   part_file_paths: Map.get(stage, :part_file_paths, []),
+                   content_path: nil
+                 },
                  imported_attrs(q)
                ),
                expect: movie.status,
@@ -633,14 +645,21 @@ defmodule Cinder.Download.Poller do
       {:ok, %{dest: dest, quality: q} = stage} ->
         movie
         |> Catalog.transition(
-          Map.merge(%{status: :available, file_path: dest}, imported_attrs(q)),
+          Map.merge(
+            %{
+              status: :available,
+              file_path: dest,
+              part_file_paths: Map.get(stage, :part_file_paths, [])
+            },
+            imported_attrs(q)
+          ),
           expect: movie.status,
           import_stage_ids: Library.stage_ids([stage])
         )
         |> case do
           {:ok, available} ->
             finish_stage(stage, :commit)
-            finalize_upgrade(movie, available, dest, content_path)
+            finalize_upgrade(movie, available, content_path)
 
           {:error, :stale_status} ->
             compensate_aborted_upgrade(movie, stage)
@@ -690,8 +709,12 @@ defmodule Cinder.Download.Poller do
   # it), drop the source download, and notify. content_path is the NEW download's source — movie
   # (the original, pre-upgrade struct) keeps file_path pointing at the OLD live library file, so it
   # must never stand in for the source here.
-  defp finalize_upgrade(movie, available, dest, content_path) do
-    if dest != movie.file_path, do: best_effort_remove_old(movie.file_path)
+  defp finalize_upgrade(movie, available, content_path) do
+    movie
+    |> Movie.file_paths()
+    |> Kernel.--(Movie.file_paths(available))
+    |> Enum.each(&best_effort_remove_old/1)
+
     Download.remove_after_import(movie.download_protocol, movie.download_id, content_path)
     Notifier.notify({:movie_available, available})
   end

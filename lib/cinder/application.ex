@@ -126,7 +126,8 @@ defmodule Cinder.Application do
         Cinder.Subtitles.Sync.Worker,
         Cinder.Library.MediaServer.Reconciler,
         Cinder.Requests.WatchlistSync,
-        Cinder.Accounts.Janitor
+        Cinder.Accounts.Janitor,
+        Cinder.DatabaseBackup
       ]
     else
       []

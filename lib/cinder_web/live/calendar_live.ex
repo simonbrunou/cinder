@@ -8,7 +8,7 @@ defmodule CinderWeb.CalendarLive do
 
   import CinderWeb.LiveHelpers, only: [format_date: 1, media_title: 2]
 
-  alias Cinder.Catalog
+  alias Cinder.{Catalog, Settings}
   alias Cinder.Catalog.Episode
 
   @impl true
@@ -23,7 +23,7 @@ defmodule CinderWeb.CalendarLive do
   def handle_info(_msg, socket), do: {:noreply, socket}
 
   defp assign_rows(socket) do
-    today = Date.utc_today()
+    today = Settings.household_date()
 
     rows =
       for ep <- Catalog.upcoming_episodes() do

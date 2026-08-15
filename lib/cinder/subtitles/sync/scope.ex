@@ -2,13 +2,14 @@ defmodule Cinder.Subtitles.Sync.Scope do
   @moduledoc false
 
   alias Cinder.Catalog
-  alias Cinder.Catalog.{Episode, Season}
+  alias Cinder.Catalog.{Episode, Movie, Season}
   alias Cinder.Repo
 
   def units(:library) do
     movies =
       for movie <- Catalog.list_available_movies_with_file(),
-          do: unit(movie.file_path, movie.title)
+          path <- Movie.file_paths(movie),
+          do: unit(path, movie.title)
 
     episodes =
       for episode <- Catalog.list_episodes_with_file(),
@@ -20,8 +21,11 @@ defmodule Cinder.Subtitles.Sync.Scope do
 
   def units({:movie, id}) do
     case Catalog.get_movie_by_id(id) do
-      %{file_path: path, title: title} when is_binary(path) -> [unit(path, title)]
-      _ -> []
+      %Movie{file_path: path, title: title} = movie when is_binary(path) ->
+        Enum.map(Movie.file_paths(movie), &unit(&1, title))
+
+      _ ->
+        []
     end
   end
 
