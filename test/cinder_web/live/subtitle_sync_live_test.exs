@@ -44,6 +44,34 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     %{movies: movies}
   end
 
+  test "library page mounts before sidecar discovery finishes", %{conn: conn, movies: movies} do
+    video = Path.join(movies, "Slow/Slow.mkv")
+    File.mkdir_p!(Path.dirname(video))
+    File.write!(video, String.duplicate("v", 131_072))
+
+    %{title: "Slow", status: :available}
+    |> movie_fixture()
+    |> Ecto.Changeset.change(file_path: video)
+    |> Repo.update!()
+
+    Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
+
+    Application.put_env(:cinder, :filesystem_barrier, %{
+      owner: self(),
+      operation: :find_files,
+      contains: "/Slow",
+      once: true
+    })
+
+    {:ok, view, _html} = live(conn, ~p"/subtitle-sync")
+    assert has_element?(view, "#subtitle-sync-loading")
+    assert_receive {:filesystem_barrier, pid, ref, :find_files, _path}
+
+    send(pid, {ref, :continue})
+    render_async(view)
+    refute has_element?(view, "#subtitle-sync-loading")
+  end
+
   test "admin previews/applies/resets by server ID and raw client paths are rejected", %{
     conn: conn,
     movies: movies
@@ -73,6 +101,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
 
     [item] = Sync.items({:movie, movie.id})
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
     assert has_element?(view, "#subtitle-sync-items")
     assert has_element?(view, "#subtitle-sync-item-#{item.id}")
 
@@ -94,7 +123,9 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
 
     assert File.read!(sidecar) =~ "00:00:02,000"
     {:ok, reset_view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(reset_view)
     reset_view |> element("#reset-subtitle-#{item.id}") |> render_click()
+    render_async(reset_view)
     assert File.read!(sidecar) =~ "00:00:01,000"
 
     render_click(view, "select", %{"id" => sidecar})
@@ -131,6 +162,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
 
     [item] = Sync.items({:movie, movie.id})
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
     view |> element("#subtitle-sync-item-#{item.id} button", "Adjust") |> render_click()
 
     params = %{"adjustment" => %{"mode" => "direct", "delay_ms" => "1000", "rate" => "1.0"}}
@@ -157,10 +189,21 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
   test "worker status broadcasts refresh persisted sidecar results", %{conn: conn, movies: movies} do
     {movie, _video, _sidecar, item} = managed_movie!(movies, "Refresh")
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
     assert render(view) =~ "Not analyzed"
 
     assert {:ok, :corrected, _item} = Sync.manual(item, 1_000, 1.0)
-    send(view.pid, {:subtitle_sync_status, Worker.status()})
+
+    result = %{
+      id: item.id,
+      status: :corrected,
+      method: "manual",
+      offset_ms: 1_000,
+      rate: 1.0,
+      reason: nil
+    }
+
+    send(view.pid, {:subtitle_sync_status, %{Worker.status() | recent: [result]}})
 
     assert_eventually(fn -> render(view) =~ "Aligned via manual" end)
   end
@@ -173,6 +216,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     File.write!(Sync.backup_path(sidecar), "unproven backup")
 
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
     assert render(view) =~ "Needs review: replacement_cleanup_failed"
     refute has_element?(view, "#reset-subtitle-#{item.id}")
   end
@@ -209,6 +253,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
 
     [item] = Sync.items({:movie, movie.id})
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
     view |> element("#subtitle-sync-item-#{item.id} button", "Adjust") |> render_click()
 
     params = %{"adjustment" => %{"mode" => "direct", "delay_ms" => "1000", "rate" => "1.0"}}
@@ -309,6 +354,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
 
     [item] = Sync.items({:movie, movie.id})
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
     view |> element("#subtitle-sync-item-#{item.id} button", "Adjust") |> render_click()
 
     params = %{
@@ -354,6 +400,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     File.rm!(Sync.backup_path(sidecar))
 
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
     html = view |> element("#reset-subtitle-#{item.id}") |> render_click()
 
     refute html =~ "Original subtitle restored."
@@ -392,6 +439,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     )
 
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync?series=#{series.id}")
+    render_async(view)
 
     view |> element("#enqueue-season-#{season.id}") |> render_click()
     season_id = season.id

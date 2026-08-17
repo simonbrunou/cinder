@@ -60,7 +60,7 @@ msgstr ""
 
 #: lib/cinder_web/components/layouts.ex:143
 #: lib/cinder_web/live/activity_live.ex:446
-#: lib/cinder_web/live/subtitle_sync_live.ex:116
+#: lib/cinder_web/live/subtitle_sync_live.ex:140
 #: lib/cinder_web/user_auth.ex:417
 #, elixir-autogen
 msgid "Activity"
@@ -3044,7 +3044,7 @@ msgid "Pick a TMDB episode group when indexers number this show differently than
 msgstr ""
 
 #: lib/cinder_web/live/series_detail_components.ex:755
-#: lib/cinder_web/live/subtitle_sync_live.ex:150
+#: lib/cinder_web/live/subtitle_sync_live.ex:174
 #, elixir-autogen
 msgid "Seasons"
 msgstr ""
@@ -5676,23 +5676,23 @@ msgid "The installer set this one-time password using CINDER_BOOTSTRAP_TOKEN. It
 msgstr ""
 
 #: lib/cinder_web/live/activity_live.ex:881
-#: lib/cinder_web/live/subtitle_sync_live.ex:140
+#: lib/cinder_web/live/subtitle_sync_live.ex:164
 #, elixir-autogen
 msgid "%{aligned} aligned · %{corrected} corrected · %{review} review"
 msgstr ""
 
 #: lib/cinder_web/live/activity_live.ex:862
-#: lib/cinder_web/live/subtitle_sync_live.ex:137
+#: lib/cinder_web/live/subtitle_sync_live.ex:161
 #, elixir-autogen
 msgid "%{count} queued"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:188
+#: lib/cinder_web/live/subtitle_sync_live.ex:228
 #, elixir-autogen
 msgid "Adjust"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:441
+#: lib/cinder_web/live/subtitle_sync_live.ex:518
 #, elixir-autogen
 msgid "Aligned via %{method}: %{delay} ms, rate %{rate}"
 msgstr ""
@@ -5702,93 +5702,93 @@ msgstr ""
 msgid "Analyze library"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:161
+#: lib/cinder_web/live/subtitle_sync_live.ex:185
 #, elixir-autogen
 msgid "Analyze season %{number}"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:128
+#: lib/cinder_web/live/subtitle_sync_live.ex:152
 #, elixir-autogen
 msgid "Analyze this scope"
 msgstr ""
 
 #: lib/cinder_web/live/activity_live.ex:878
-#: lib/cinder_web/live/subtitle_sync_live.ex:426
+#: lib/cinder_web/live/subtitle_sync_live.ex:503
 #, elixir-autogen
 msgid "Analyzing %{label}"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:275
+#: lib/cinder_web/live/subtitle_sync_live.ex:315
 #, elixir-autogen
 msgid "Apply correction"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:122
+#: lib/cinder_web/live/subtitle_sync_live.ex:146
 #, elixir-autogen
 msgid "Cinder checks only OpenSubtitles sidecars. Embedded tracks are reference material and are never changed."
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:413
+#: lib/cinder_web/live/subtitle_sync_live.ex:490
 #, elixir-autogen
 msgid "Delay %{delay} s · rate %{rate} · drift %{drift}%"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:229
+#: lib/cinder_web/live/subtitle_sync_live.ex:269
 #, elixir-autogen
 msgid "Delay (ms)"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:220
+#: lib/cinder_web/live/subtitle_sync_live.ex:260
 #, elixir-autogen
 msgid "Direct delay and rate"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:64
+#: lib/cinder_web/live/subtitle_sync_live.ex:67
 #, elixir-autogen
 msgid "Enter a valid delay/rate or timestamp anchors."
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:241
+#: lib/cinder_web/live/subtitle_sync_live.ex:281
 #, elixir-autogen
 msgid "Enter seconds from the sidecar and the matching video moment. The second pair is optional."
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:168
+#: lib/cinder_web/live/subtitle_sync_live.ex:192
 #, elixir-autogen
 msgid "Managed sidecars"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:206
+#: lib/cinder_web/live/subtitle_sync_live.ex:246
 #, elixir-autogen
 msgid "Manual correction"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:218
+#: lib/cinder_web/live/subtitle_sync_live.ex:258
 #, elixir-autogen
 msgid "Method"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:437
+#: lib/cinder_web/live/subtitle_sync_live.ex:514
 #, elixir-autogen
 msgid "Needs review: %{reason}"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:434
+#: lib/cinder_web/live/subtitle_sync_live.ex:511
 #, elixir-autogen
 msgid "Not analyzed"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:73
+#: lib/cinder_web/live/subtitle_sync_live.ex:76
 #, elixir-autogen
 msgid "Original subtitle restored."
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:236
+#: lib/cinder_web/live/subtitle_sync_live.ex:276
 #, elixir-autogen
 msgid "Rate"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:199
+#: lib/cinder_web/live/subtitle_sync_live.ex:239
 #, elixir-autogen
 msgid "Reset"
 msgstr ""
@@ -5798,27 +5798,27 @@ msgstr ""
 msgid "Review and adjust"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:90
+#: lib/cinder_web/live/subtitle_sync_live.ex:93
 #, elixir-autogen
 msgid "Season subtitle analysis queued."
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:250
+#: lib/cinder_web/live/subtitle_sync_live.ex:290
 #, elixir-autogen
 msgid "Sidecar 1 (s)"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:262
+#: lib/cinder_web/live/subtitle_sync_live.ex:302
 #, elixir-autogen
 msgid "Sidecar 2 (s)"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:83
+#: lib/cinder_web/live/subtitle_sync_live.ex:86
 #, elixir-autogen
 msgid "Subtitle analysis queued."
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:423
+#: lib/cinder_web/live/subtitle_sync_live.ex:500
 #, elixir-autogen
 msgid "Subtitle correction applied."
 msgstr ""
@@ -5837,44 +5837,44 @@ msgid "Subtitle sync"
 msgstr ""
 
 #: lib/cinder_web/live/activity_live.ex:860
-#: lib/cinder_web/live/subtitle_sync_live.ex:20
-#: lib/cinder_web/live/subtitle_sync_live.ex:120
+#: lib/cinder_web/live/subtitle_sync_live.ex:19
+#: lib/cinder_web/live/subtitle_sync_live.ex:144
 #, elixir-autogen
 msgid "Subtitle synchronization"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:421
+#: lib/cinder_web/live/subtitle_sync_live.ex:498
 #, elixir-autogen
 msgid "Subtitle was already aligned; the file was not rewritten."
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:221
+#: lib/cinder_web/live/subtitle_sync_live.ex:261
 #, elixir-autogen
 msgid "Timestamp anchors"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:256
+#: lib/cinder_web/live/subtitle_sync_live.ex:296
 #, elixir-autogen
 msgid "Video 1 (s)"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:268
+#: lib/cinder_web/live/subtitle_sync_live.ex:308
 #, elixir-autogen
 msgid "Video 2 (s)"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:428
+#: lib/cinder_web/live/subtitle_sync_live.ex:505
 #, elixir-autogen
 msgid "Worker idle"
 msgstr ""
 
 #: lib/cinder_web/live/activity_live.ex:926
-#: lib/cinder_web/live/subtitle_sync_live.ex:437
+#: lib/cinder_web/live/subtitle_sync_live.ex:514
 #, elixir-autogen
 msgid "low confidence"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:77
+#: lib/cinder_web/live/subtitle_sync_live.ex:80
 #, elixir-autogen
 msgid "Original subtitle could not be restored."
 msgstr ""
@@ -6311,4 +6311,14 @@ msgstr ""
 #: lib/cinder_web/live/profiles_live.ex:175
 #, elixir-autogen, elixir-format
 msgid "Uses the existing library root"
+msgstr ""
+
+#: lib/cinder_web/live/subtitle_sync_live.ex:199
+#, elixir-autogen, elixir-format
+msgid "Loading managed sidecars…"
+msgstr ""
+
+#: lib/cinder_web/live/subtitle_sync_live.ex:207
+#, elixir-autogen, elixir-format
+msgid "Managed sidecars could not be loaded."
 msgstr ""

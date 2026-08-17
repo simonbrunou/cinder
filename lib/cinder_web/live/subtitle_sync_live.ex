@@ -9,7 +9,6 @@ defmodule CinderWeb.SubtitleSyncLive do
   @impl true
   def mount(params, _session, socket) do
     scope = scope(params)
-    items = Sync.items(scope)
 
     if connected?(socket), do: Worker.subscribe()
 
@@ -23,14 +22,18 @@ defmodule CinderWeb.SubtitleSyncLive do
        adjustment_form: adjustment_form(),
        preview: nil,
        worker_status: Worker.status(),
-       seasons: seasons(scope)
+       seasons: seasons(scope),
+       items_by_id: %{},
+       items_loading: true,
+       items_failed: false
      )
-     |> stream(:items, items)}
+     |> stream(:items, [])
+     |> load_items()}
   end
 
   @impl true
   def handle_event("select", %{"id" => id}, socket) when is_binary(id) do
-    case find_item(socket.assigns.scope, id) do
+    case find_item(socket, id) do
       nil ->
         {:noreply, socket}
 
@@ -51,11 +54,11 @@ defmodule CinderWeb.SubtitleSyncLive do
   def handle_event("apply", %{"adjustment" => params}, %{assigns: %{selected: item}} = socket)
       when is_map(params) and not is_nil(item) do
     case adjustment(params, item, socket.assigns.preview, socket.assigns.scope) do
-      {:ok, status, _item} ->
+      {:ok, status, item} ->
         {:noreply,
          socket
          |> put_flash(:info, applied_message(status))
-         |> refresh_items()}
+         |> put_item(item)}
 
       {:error, _reason} ->
         {:noreply,
@@ -97,10 +100,31 @@ defmodule CinderWeb.SubtitleSyncLive do
 
   @impl true
   def handle_info({:subtitle_sync_status, status}, socket) do
-    {:noreply, socket |> assign(worker_status: status) |> refresh_items()}
+    {:noreply, socket |> assign(worker_status: status) |> apply_worker_results(status.recent)}
   end
 
   def handle_info(_message, socket), do: {:noreply, socket}
+
+  @impl true
+  def handle_async(:load_items, {:ok, items}, socket) when is_list(items) do
+    items_by_id = Map.new(items, &{&1.id, &1})
+    selected_id = if socket.assigns.selected, do: socket.assigns.selected.id
+
+    {:noreply,
+     socket
+     |> assign(
+       items_by_id: items_by_id,
+       items_loading: false,
+       items_failed: false,
+       selected: Map.get(items_by_id, selected_id),
+       preview: nil
+     )
+     |> stream(:items, items, reset: true)}
+  end
+
+  def handle_async(:load_items, {:exit, _reason}, socket) do
+    {:noreply, assign(socket, items_loading: false, items_failed: true)}
+  end
 
   @impl true
   def render(assigns) do
@@ -166,6 +190,22 @@ defmodule CinderWeb.SubtitleSyncLive do
       <section class="mt-8 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,24rem)]">
         <div>
           <h2 class="pb-3 text-lg font-semibold">{gettext("Managed sidecars")}</h2>
+          <p
+            :if={@items_loading}
+            id="subtitle-sync-loading"
+            role="status"
+            class="pb-3 text-sm text-base-content/70"
+          >
+            {gettext("Loading managed sidecars…")}
+          </p>
+          <p
+            :if={@items_failed}
+            id="subtitle-sync-load-error"
+            role="alert"
+            class="pb-3 text-sm text-error"
+          >
+            {gettext("Managed sidecars could not be loaded.")}
+          </p>
           <ul id="subtitle-sync-items" phx-update="stream" class="space-y-2">
             <li
               :for={{dom_id, item} <- @streams.items}
@@ -298,7 +338,7 @@ defmodule CinderWeb.SubtitleSyncLive do
 
   defp seasons(_scope), do: []
 
-  defp find_item(scope, id), do: Enum.find(Sync.items(scope), &(&1.id == id))
+  defp find_item(socket, id), do: Map.get(socket.assigns.items_by_id, id)
 
   defp adjustment(params, item, preview, scope) do
     with {:ok, transform} <- normalized_adjustment(params),
@@ -394,13 +434,50 @@ defmodule CinderWeb.SubtitleSyncLive do
   end
 
   defp refresh_items(socket) do
-    items = Sync.items(socket.assigns.scope)
-    selected_id = if socket.assigns.selected, do: socket.assigns.selected.id
-    selected = if selected_id, do: Enum.find(items, &(&1.id == selected_id))
+    load_items(socket)
+  end
+
+  defp load_items(socket) do
+    scope = socket.assigns.scope
 
     socket
-    |> assign(selected: selected, preview: nil)
-    |> stream(:items, items, reset: true)
+    |> assign(items_loading: true, items_failed: false)
+    |> start_async(:load_items, fn -> Sync.items(scope) end)
+  end
+
+  defp apply_worker_results(socket, results) do
+    Enum.reduce(results, socket, fn result, socket ->
+      case {Map.get(socket.assigns.items_by_id, Map.get(result, :id)), Map.get(result, :status)} do
+        {%{} = item, status} when status in [:aligned, :corrected, :review] ->
+          sync = Map.take(result, [:method, :offset_ms, :rate, :reason])
+
+          item = %{
+            item
+            | sync: Map.put(sync, :status, Atom.to_string(status)),
+              review_reason: nil
+          }
+
+          put_item(socket, item)
+
+        _ ->
+          socket
+      end
+    end)
+  end
+
+  defp put_item(socket, item) do
+    selected =
+      if socket.assigns.selected && socket.assigns.selected.id == item.id,
+        do: item,
+        else: socket.assigns.selected
+
+    socket
+    |> assign(
+      items_by_id: Map.put(socket.assigns.items_by_id, item.id, item),
+      selected: selected,
+      preview: nil
+    )
+    |> stream_insert(:items, item)
   end
 
   defp enqueue(:library), do: Worker.enqueue_library()
