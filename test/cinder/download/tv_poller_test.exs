@@ -13,7 +13,7 @@ defmodule Cinder.Download.TvPollerTest do
   alias Cinder.Catalog.{BlockedRelease, Episode, Grab, GrabFile, Identity, Season, Series}
   alias Cinder.Download
   alias Cinder.Download.Intent
-  alias Cinder.Download.TvPoller
+  alias Cinder.Download.{Poller, TvPoller}
   alias Cinder.Library.ImportStage
   alias Cinder.Repo
 
@@ -28,7 +28,11 @@ defmodule Cinder.Download.TvPollerTest do
   # A poll stamps last-run into process-global :persistent_term (PollerSkeleton's `status/0`,
   # read by /healthz); erase it so a recorded run can't bleed into another test/suite.
   setup do
-    on_exit(fn -> :persistent_term.erase({TvPoller, :last_run}) end)
+    on_exit(fn ->
+      :persistent_term.erase({Poller, :last_run})
+      :persistent_term.erase({TvPoller, :last_run})
+    end)
+
     stub_clean_content()
   end
 
@@ -1290,6 +1294,67 @@ defmodule Cinder.Download.TvPollerTest do
     assert Repo.get(Grab, grab.id) == nil
     assert Repo.get!(Episode, e1.id).file_path =~ "S01E01"
     assert Repo.get!(Episode, e2.id).file_path =~ "S01E02"
+  end
+
+  @tag :tmp_dir
+  test "a long season-pack import keeps prepared stages while the movie poller reconciles", %{
+    tmp_dir: tmp
+  } do
+    %{downloads: downloads} = use_real_tv_library(tmp)
+    release_dir = Path.join(downloads, "Show.S01")
+    File.mkdir_p!(release_dir)
+    first_source = Path.join(release_dir, "Show.S01E01.1080p.mkv")
+    second_source = Path.join(release_dir, "Show.S01E02.1080p.mkv")
+    File.write!(first_source, "first")
+    File.write!(second_source, "second")
+
+    {_series, season} = series_tree()
+    first = episode(season, 1)
+    second = episode(season, 2)
+    {:ok, grab} = Catalog.create_grab("long-pack", :torrent, [first.id, second.id])
+    {:ok, _grab} = Catalog.mark_grab_downloaded(grab, release_dir)
+    owner = self()
+
+    Application.put_env(:cinder, :filesystem_failures, [
+      %{operation: :ln, source_contains: first_source, reason: :eperm},
+      %{
+        operation: :ln,
+        source_contains: second_source,
+        reason: :eperm,
+        callback: fn ->
+          Application.put_env(:cinder, :filesystem_barrier, %{
+            owner: owner,
+            operation: :cp,
+            contains: ".cinder-stage-",
+            once: true
+          })
+        end
+      }
+    ])
+
+    on_exit(fn -> Application.delete_env(:cinder, :filesystem_failures) end)
+    stub(Cinder.Library.MediaServerMock, :scan, fn :tv -> :ok end)
+    stub(Cinder.Download.ClientMock, :remove, fn _id, _opts -> :ok end)
+
+    tv_pid = start_supervised!({TvPoller, interval: 60_000})
+    movie_pid = start_supervised!({Poller, interval: 60_000})
+    import = Task.async(fn -> TvPoller.poll(tv_pid) end)
+
+    assert_receive {:filesystem_barrier, pid, ref, :cp, _candidate}, 1_000
+    prepared = Enum.find(ImportStage.list(), &(&1.state == :prepared))
+    assert prepared
+    ImportStage.update!(prepared, %{next_attempt_at: DateTime.add(DateTime.utc_now(), -1)})
+
+    observer = Task.async(fn -> Poller.poll(movie_pid) end)
+    refute Task.yield(observer, 50)
+    send(pid, {ref, :continue})
+
+    assert :ok = Task.await(import)
+    assert :ok = Task.await(observer)
+    refute Repo.get(Grab, grab.id)
+    assert Repo.get!(Episode, first.id).file_path =~ "S01E01"
+    assert Repo.get!(Episode, second.id).file_path =~ "S01E02"
+    refute Repo.exists?(ImportStage)
   end
 
   @tag :tmp_dir
