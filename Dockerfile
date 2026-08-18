@@ -73,6 +73,7 @@ FROM ${RUNNER_IMAGE} AS final
 # ffmpeg ships `ffprobe`; ffsubsync aligns Cinder-downloaded sidecars. The venv keeps the pinned
 # Python runtime dependency isolated from Debian's system packages; coreutils supplies `timeout`.
 RUN apt-get update \
+  && apt-get upgrade -y \
   && apt-get install -y --no-install-recommends libstdc++6 openssl libncurses6 locales ca-certificates ffmpeg curl coreutils python3 python3-venv gcc python3-dev \
   && python3 -m venv /opt/ffsubsync \
   && /opt/ffsubsync/bin/pip install --no-cache-dir ffsubsync==0.5.1 \
