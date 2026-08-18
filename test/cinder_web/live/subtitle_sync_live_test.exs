@@ -44,6 +44,182 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     %{movies: movies}
   end
 
+  test "library page mounts before sidecar discovery finishes", %{conn: conn, movies: movies} do
+    video = Path.join(movies, "Slow/Slow.mkv")
+    File.mkdir_p!(Path.dirname(video))
+    File.write!(video, String.duplicate("v", 131_072))
+
+    %{title: "Slow", status: :available}
+    |> movie_fixture()
+    |> Ecto.Changeset.change(file_path: video)
+    |> Repo.update!()
+
+    Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
+
+    Application.put_env(:cinder, :filesystem_barrier, %{
+      owner: self(),
+      operation: :find_files,
+      contains: "/Slow",
+      once: true
+    })
+
+    {:ok, view, _html} = live(conn, ~p"/subtitle-sync")
+    assert has_element?(view, "#subtitle-sync-loading")
+    assert_receive {:filesystem_barrier, pid, ref, :find_files, _path}
+
+    send(pid, {ref, :continue})
+    render_async(view)
+    refute has_element?(view, "#subtitle-sync-loading")
+  end
+
+  test "worker results received during discovery keep the newest state", %{
+    conn: conn,
+    movies: movies
+  } do
+    {movie, _video, _sidecar, item} = managed_movie!(movies, "Racing")
+    Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
+
+    Application.put_env(:cinder, :filesystem_barrier, %{
+      owner: self(),
+      operation: :find_files,
+      contains: "/Racing",
+      once: true
+    })
+
+    {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    assert_receive {:filesystem_barrier, pid, ref, :find_files, _path}
+
+    result = fn method, offset ->
+      %{
+        id: item.id,
+        video_path: item.video_path,
+        status: :corrected,
+        method: method,
+        offset_ms: offset,
+        rate: 1.0,
+        reason: nil
+      }
+    end
+
+    send(
+      view.pid,
+      {:subtitle_sync_status,
+       status_with_results([result.("newest", 2_000), result.("older", 1_000)])}
+    )
+
+    send(pid, {ref, :continue})
+    render_async(view)
+    assert render(view) =~ "Aligned via newest: 2000 ms"
+  end
+
+  test "worker results discover sidecars added after mount", %{conn: conn, movies: movies} do
+    video = Path.join(movies, "Added/Added.mkv")
+    sidecar = Path.rootname(video) <> ".en.srt"
+    content = "1\n00:00:01,000 --> 00:00:02,000\nOne\n\n"
+    File.mkdir_p!(Path.dirname(video))
+    File.write!(video, String.duplicate("v", 131_072))
+
+    movie =
+      %{title: "Added", status: :available}
+      |> movie_fixture()
+      |> Ecto.Changeset.change(file_path: video)
+      |> Repo.update!()
+
+    {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
+    refute has_element?(view, "[id^=subtitle-sync-item-]")
+
+    File.write!(sidecar, content)
+    {:ok, hash} = Subtitles.Moviehash.of_file(video)
+    :ok = Manifest.put(video, hash, "en", "opensubtitles_hash", sidecar, digest(content))
+    [item] = Sync.items({:movie, movie.id})
+
+    result = %{
+      id: item.id,
+      video_path: video,
+      status: :aligned,
+      method: "audio",
+      offset_ms: 0,
+      rate: 1.0,
+      reason: nil
+    }
+
+    send(view.pid, {:subtitle_sync_status, status_with_results([result])})
+    render_async(view)
+    assert has_element?(view, "#subtitle-sync-item-#{item.id}")
+  end
+
+  test "library results discover catalog videos added after mount", %{conn: conn, movies: movies} do
+    {:ok, view, _html} = live(conn, ~p"/subtitle-sync")
+    render_async(view)
+
+    {movie, video, _sidecar, item} = managed_movie!(movies, "Imported")
+    unit = Enum.find(Sync.units(:library), &(&1.video_path == video))
+    assert MapSet.member?(unit.scopes, {:movie, movie.id})
+
+    result = %{
+      id: item.id,
+      video_path: video,
+      scopes: unit.scopes,
+      status: :aligned,
+      method: "audio",
+      offset_ms: 0,
+      rate: 1.0,
+      reason: nil
+    }
+
+    send(view.pid, {:subtitle_sync_status, status_with_results([result])})
+    render_async(view)
+    assert has_element?(view, "#subtitle-sync-item-#{item.id}")
+  end
+
+  test "post-download results discover files added to an open movie scope", %{
+    conn: conn,
+    movies: movies
+  } do
+    movie = movie_fixture(%{title: "PostDownload", status: :available})
+    {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
+    refute has_element?(view, "[id^=subtitle-sync-item-]")
+
+    video = Path.join(movies, "PostDownload/PostDownload.mkv")
+    sidecar = Path.rootname(video) <> ".en.srt"
+    content = "1\n00:00:01,000 --> 00:00:02,000\nOne\n\n"
+    File.mkdir_p!(Path.dirname(video))
+    File.write!(video, String.duplicate("v", 131_072))
+    File.write!(sidecar, content)
+
+    movie |> Ecto.Changeset.change(file_path: video) |> Repo.update!()
+    {:ok, hash} = Subtitles.Moviehash.of_file(video)
+    :ok = Manifest.put(video, hash, "en", "opensubtitles_hash", sidecar, digest(content))
+    [item] = Sync.items({:movie, movie.id})
+
+    result = %{
+      id: item.id,
+      video_path: video,
+      status: :aligned,
+      method: "audio",
+      offset_ms: 0,
+      rate: 1.0,
+      reason: nil
+    }
+
+    previous_status = Worker.status()
+    on_exit(fn -> :persistent_term.put({Worker, :status}, previous_status) end)
+
+    worker =
+      start_supervised!(
+        {Worker,
+         name: :subtitle_sync_after_download_worker,
+         initial_scan: false,
+         interval: :timer.hours(1),
+         analyze: fn ^video -> [result] end}
+      )
+
+    assert :ok = Worker.enqueue_after_download(video, worker)
+    assert_eventually(fn -> has_element?(view, "#subtitle-sync-item-#{item.id}") end)
+  end
+
   test "admin previews/applies/resets by server ID and raw client paths are rejected", %{
     conn: conn,
     movies: movies
@@ -73,6 +249,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
 
     [item] = Sync.items({:movie, movie.id})
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
     assert has_element?(view, "#subtitle-sync-items")
     assert has_element?(view, "#subtitle-sync-item-#{item.id}")
 
@@ -94,7 +271,9 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
 
     assert File.read!(sidecar) =~ "00:00:02,000"
     {:ok, reset_view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(reset_view)
     reset_view |> element("#reset-subtitle-#{item.id}") |> render_click()
+    render_async(reset_view)
     assert File.read!(sidecar) =~ "00:00:01,000"
 
     render_click(view, "select", %{"id" => sidecar})
@@ -131,6 +310,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
 
     [item] = Sync.items({:movie, movie.id})
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
     view |> element("#subtitle-sync-item-#{item.id} button", "Adjust") |> render_click()
 
     params = %{"adjustment" => %{"mode" => "direct", "delay_ms" => "1000", "rate" => "1.0"}}
@@ -157,12 +337,137 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
   test "worker status broadcasts refresh persisted sidecar results", %{conn: conn, movies: movies} do
     {movie, _video, _sidecar, item} = managed_movie!(movies, "Refresh")
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
     assert render(view) =~ "Not analyzed"
 
     assert {:ok, :corrected, _item} = Sync.manual(item, 1_000, 1.0)
-    send(view.pid, {:subtitle_sync_status, Worker.status()})
+
+    result = %{
+      id: item.id,
+      video_path: item.video_path,
+      status: :corrected,
+      method: "manual",
+      offset_ms: 1_000,
+      rate: 1.0,
+      reason: nil
+    }
+
+    send(view.pid, {:subtitle_sync_status, status_with_results([result])})
 
     assert_eventually(fn -> render(view) =~ "Aligned via manual" end)
+  end
+
+  test "historic worker results are ignored until an identical analysis runs again", %{
+    conn: conn,
+    movies: movies
+  } do
+    {movie, _video, _sidecar, item} = managed_movie!(movies, "Historic")
+    assert {:ok, :corrected, _item} = Sync.manual(item, 1_000, 1.0)
+
+    result = %{
+      id: item.id,
+      video_path: item.video_path,
+      status: :corrected,
+      method: "manual",
+      offset_ms: 1_000,
+      rate: 1.0,
+      reason: nil
+    }
+
+    previous_status = Worker.status()
+    historic_status = status_with_results([result], previous_status)
+    :persistent_term.put({Worker, :status}, historic_status)
+    on_exit(fn -> :persistent_term.put({Worker, :status}, previous_status) end)
+
+    {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
+    assert render(view) =~ "Aligned via manual"
+
+    view |> element("#reset-subtitle-#{item.id}") |> render_click()
+    render_async(view)
+    assert render(view) =~ "Not analyzed"
+
+    send(view.pid, {:subtitle_sync_status, historic_status})
+    assert render(view) =~ "Not analyzed"
+
+    send(view.pid, {:subtitle_sync_status, status_with_results([result], historic_status)})
+    assert_eventually(fn -> render(view) =~ "Aligned via manual" end)
+  end
+
+  test "worker batches larger than recent history trigger an authoritative reload", %{
+    conn: conn,
+    movies: movies
+  } do
+    {movie, _video, _sidecar, item} = managed_movie!(movies, "LargeBatch")
+    {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
+    assert render(view) =~ "Not analyzed"
+
+    assert {:ok, :corrected, _item} = Sync.manual(item, 1_000, 1.0)
+
+    unrelated =
+      for index <- 1..20 do
+        %{
+          id: "unrelated-#{index}",
+          video_path: "/outside/#{index}.mkv",
+          status: :aligned,
+          method: "audio",
+          offset_ms: 0,
+          rate: 1.0,
+          reason: nil
+        }
+      end
+
+    result = %{
+      id: item.id,
+      video_path: item.video_path,
+      status: :corrected,
+      method: "manual",
+      offset_ms: 1_000,
+      rate: 1.0,
+      reason: nil
+    }
+
+    status =
+      unrelated
+      |> Kernel.++([result])
+      |> status_with_results()
+      |> Map.update!(:recent, &Enum.take(&1, 20))
+
+    send(view.pid, {:subtitle_sync_status, status})
+    render_async(view)
+    assert render(view) =~ "Aligned via manual"
+  end
+
+  test "scoped pages ignore worker results for other titles", %{conn: conn, movies: movies} do
+    {movie, _video, _sidecar, _item} = managed_movie!(movies, "Scoped")
+    {other_movie, other_video, _other_sidecar, other_item} = managed_movie!(movies, "Other")
+    {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
+
+    Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
+
+    Application.put_env(:cinder, :filesystem_barrier, %{
+      owner: self(),
+      operation: :find_files,
+      contains: "/Scoped",
+      once: true
+    })
+
+    result = %{
+      id: other_item.id,
+      video_path: other_video,
+      scopes: MapSet.new([{:movie, other_movie.id}]),
+      status: :aligned,
+      method: "audio",
+      offset_ms: 0,
+      rate: 1.0,
+      reason: nil
+    }
+
+    send(view.pid, {:subtitle_sync_status, status_with_results([result])})
+    render(view)
+    refute_receive {:filesystem_barrier, _pid, _ref, :find_files, _path}, 100
   end
 
   test "unexpected backups remain visibly quarantined across page loads", %{
@@ -173,6 +478,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     File.write!(Sync.backup_path(sidecar), "unproven backup")
 
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
     assert render(view) =~ "Needs review: replacement_cleanup_failed"
     refute has_element?(view, "#reset-subtitle-#{item.id}")
   end
@@ -209,6 +515,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
 
     [item] = Sync.items({:movie, movie.id})
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
     view |> element("#subtitle-sync-item-#{item.id} button", "Adjust") |> render_click()
 
     params = %{"adjustment" => %{"mode" => "direct", "delay_ms" => "1000", "rate" => "1.0"}}
@@ -309,6 +616,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
 
     [item] = Sync.items({:movie, movie.id})
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
     view |> element("#subtitle-sync-item-#{item.id} button", "Adjust") |> render_click()
 
     params = %{
@@ -354,6 +662,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     File.rm!(Sync.backup_path(sidecar))
 
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
     html = view |> element("#reset-subtitle-#{item.id}") |> render_click()
 
     refute html =~ "Original subtitle restored."
@@ -392,6 +701,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     )
 
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync?series=#{series.id}")
+    render_async(view)
 
     view |> element("#enqueue-season-#{season.id}") |> render_click()
     season_id = season.id
@@ -426,6 +736,15 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
 
   defp digest(content),
     do: content |> then(&:crypto.hash(:sha256, &1)) |> Base.encode16(case: :lower)
+
+  defp status_with_results(results, status \\ Worker.status()) do
+    counts =
+      Enum.reduce(results, status.counts, fn result, counts ->
+        Map.update!(counts, result.status, &(&1 + 1))
+      end)
+
+    %{status | counts: counts, recent: results ++ status.recent}
+  end
 
   defp managed_movie!(movies, title) do
     video = Path.join(movies, "#{title}/#{title}.mkv")

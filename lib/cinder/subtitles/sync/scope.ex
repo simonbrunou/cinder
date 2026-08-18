@@ -9,20 +9,20 @@ defmodule Cinder.Subtitles.Sync.Scope do
     movies =
       for movie <- Catalog.list_available_movies_with_file(),
           path <- Movie.file_paths(movie),
-          do: unit(path, movie.title)
+          do: unit(path, movie.title, [{:movie, movie.id}])
 
     episodes =
       for episode <- Catalog.list_episodes_with_file(),
           path <- Episode.file_paths(episode),
-          do: unit(path, episode_label(episode))
+          do: episode_unit(path, episode, episode.season.series_id)
 
-    Enum.uniq_by(movies ++ episodes, & &1.video_path)
+    merge_units(movies ++ episodes)
   end
 
   def units({:movie, id}) do
     case Catalog.get_movie_by_id(id) do
       %Movie{file_path: path, title: title} = movie when is_binary(path) ->
-        Enum.map(Movie.file_paths(movie), &unit(&1, title))
+        Enum.map(Movie.file_paths(movie), &unit(&1, title, [{:movie, id}]))
 
       _ ->
         []
@@ -31,32 +31,65 @@ defmodule Cinder.Subtitles.Sync.Scope do
 
   def units({:series, id}) do
     case Catalog.get_series_with_tree(id) do
-      nil -> []
-      series -> series.seasons |> Enum.flat_map(&episode_units(&1.episodes))
+      nil ->
+        []
+
+      series ->
+        series.seasons
+        |> Enum.flat_map(&episode_units(&1.episodes, id))
+        |> merge_units()
     end
   end
 
   def units({:season, id}) do
     case Repo.get(Season, id) |> preload_episodes() do
       nil -> []
-      season -> episode_units(season.episodes)
+      season -> season.episodes |> episode_units(season.series_id) |> merge_units()
     end
   end
 
   def units({:episode, id}) do
     case Repo.get(Episode, id) |> preload_episode() do
       nil -> []
-      episode -> episode_units([episode])
+      episode -> episode_units([episode], episode.season.series_id)
     end
   end
 
-  defp episode_units(episodes) do
+  defp episode_units(episodes, series_id) do
     for episode <- episodes,
         path <- Episode.file_paths(episode),
-        do: unit(path, episode_label(episode))
+        do: episode_unit(path, episode, series_id)
   end
 
-  defp unit(video_path, label), do: %{video_path: video_path, label: label}
+  defp episode_unit(video_path, episode, series_id) do
+    unit(video_path, episode_label(episode), [
+      {:series, series_id},
+      {:season, episode.season_id},
+      {:episode, episode.id}
+    ])
+  end
+
+  defp unit(video_path, label, scopes),
+    do: %{video_path: video_path, label: label, scopes: MapSet.new(scopes)}
+
+  defp merge_units(units) do
+    {paths, by_path} =
+      Enum.reduce(units, {[], %{}}, fn unit, {paths, by_path} ->
+        case Map.fetch(by_path, unit.video_path) do
+          {:ok, existing} ->
+            {paths,
+             Map.put(by_path, unit.video_path, %{
+               existing
+               | scopes: MapSet.union(existing.scopes, unit.scopes)
+             })}
+
+          :error ->
+            {[unit.video_path | paths], Map.put(by_path, unit.video_path, unit)}
+        end
+      end)
+
+    paths |> Enum.reverse() |> Enum.map(&Map.fetch!(by_path, &1))
+  end
 
   defp episode_label(%{season: %{season_number: season}, episode_number: episode, title: title}),
     do: "S#{pad2(season)}E#{pad2(episode)} · #{title}"
