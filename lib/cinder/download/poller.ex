@@ -58,8 +58,11 @@ defmodule Cinder.Download.Poller do
 
   defp import_downloaded do
     for movie <- Catalog.list_by_status(:downloaded),
-        do: isolate("movie #{movie.id}", fn -> import_one(movie) end)
+        do: isolate("movie #{movie.id}", fn -> import_with_stage_handoff(movie) end)
   end
+
+  defp import_with_stage_handoff(movie),
+    do: Library.with_stage_handoff(fn -> import_one(movie) end)
 
   defp search_requested(retry_after) do
     movies = Catalog.list_by_status(:requested) ++ Catalog.list_by_status(:searching)
@@ -626,11 +629,13 @@ defmodule Cinder.Download.Poller do
   # struct only; the row's `content_path` column stays nil through :upgrading, deliberately (there is
   # no :downloaded-equivalent status to persist it at without adding a write — and thus a new
   # stale_status failure mode — at a point that today has none).
-  defp finish_upgrade(movie, content_path),
-    do:
+  defp finish_upgrade(movie, content_path) do
+    Library.with_stage_handoff(fn ->
       %{movie | content_path: content_path}
       |> Library.stage_movie(replace: true)
       |> finish_upgrade_result(movie, content_path)
+    end)
+  end
 
   defp finish_upgrade_result(
          {:error, {:release_policy_mismatch, evidence}},

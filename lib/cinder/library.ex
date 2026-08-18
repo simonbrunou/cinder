@@ -229,10 +229,15 @@ defmodule Cinder.Library do
   @doc "Converges durable import stages left by process death or a prior filesystem error."
   @spec reconcile_stages() :: :ok
   def reconcile_stages do
-    Enum.each(ImportStage.list(), &StageEngine.reconcile_stage(&1.id, :auto))
-
-    :ok
+    with_stage_handoff(fn ->
+      Enum.each(ImportStage.list(), &StageEngine.reconcile_stage(&1.id, :auto))
+    end)
   end
+
+  # ponytail: one household-wide lock is enough; split it per import if throughput ever matters.
+  @doc false
+  def with_stage_handoff(fun) when is_function(fun, 0),
+    do: :global.trans({{__MODULE__, :stage_handoff}, self()}, fun)
 
   @doc "Lists quarantined import journals for operator inspection."
   @spec quarantined_import_stages() :: [map()]

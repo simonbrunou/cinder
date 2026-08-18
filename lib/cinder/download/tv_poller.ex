@@ -159,8 +159,11 @@ defmodule Cinder.Download.TvPoller do
 
   defp import_grabs do
     for grab <- Catalog.list_grabs_downloaded(),
-        do: isolate("grab #{grab.id}", fn -> import_grab(grab) end)
+        do: isolate("grab #{grab.id}", fn -> import_with_stage_handoff(grab) end)
   end
+
+  defp import_with_stage_handoff(grab),
+    do: Library.with_stage_handoff(fn -> import_grab(grab) end)
 
   defp import_grab(%Grab{mapping_snapshot: nil, grab_files: [_ | _]} = grab) do
     if Enum.all?(grab.grab_files, & &1.decision),
