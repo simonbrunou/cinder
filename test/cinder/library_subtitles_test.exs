@@ -63,6 +63,7 @@ defmodule Cinder.LibrarySubtitlesTest do
     end
 
     stub(Cinder.Library.FilesystemMock, :write, write)
+    stub(Cinder.Library.FilesystemMock, :chmod, fn _path, _mode -> :ok end)
     stub(Cinder.Library.FilesystemMock, :write_exclusive, write)
 
     stub(Cinder.Library.FilesystemMock, :rename, fn source, dest ->

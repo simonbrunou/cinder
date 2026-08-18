@@ -250,7 +250,9 @@ defmodule Cinder.Subtitles.SyncTest do
     [item] = Sync.discover(video)
     assert {:ok, :corrected, _} = Sync.manual(item, 1_000, 1.0)
     corrected = File.read!(path)
+    File.chmod!(path, 0o600)
     assert :ok = AtomicFile.write(path, original, corrected)
+    assert Bitwise.band(File.stat!(path).mode, 0o777) == 0o644
 
     assert Manifest.sync(Manifest.read(video), "en").source_sha256 !=
              Manifest.sync(Manifest.read(video), "en").applied_sha256

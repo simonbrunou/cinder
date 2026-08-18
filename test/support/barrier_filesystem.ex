@@ -130,6 +130,12 @@ defmodule Cinder.Test.BarrierFilesystem do
   end
 
   @impl true
+  def chmod(path, mode) do
+    pause(:chmod, path, :before)
+    Disk.chmod(path, mode)
+  end
+
+  @impl true
   def write_exclusive(path, content) do
     pause(:write_exclusive, path, :before)
 

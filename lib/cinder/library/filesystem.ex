@@ -26,6 +26,7 @@ defmodule Cinder.Library.Filesystem do
   @callback rm_rf(path :: String.t()) :: {:ok, [String.t()]} | {:error, File.posix(), String.t()}
   @callback read(path :: String.t()) :: {:ok, binary()} | {:error, term()}
   @callback write(path :: String.t(), content :: iodata()) :: :ok | {:error, term()}
+  @callback chmod(path :: String.t(), mode :: non_neg_integer()) :: :ok | {:error, term()}
   @callback write_exclusive(path :: String.t(), content :: iodata()) :: :ok | {:error, term()}
   @callback open_bound(path :: String.t(), modes :: [atom()]) ::
               {:ok, %{io: term(), path: String.t(), identity: term()}} | {:error, term()}

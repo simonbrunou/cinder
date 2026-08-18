@@ -356,15 +356,17 @@ defmodule Cinder.Subtitles.Sync.AtomicFile do
          directory
        ) do
     operation =
-      exchange_if_current(
-        target,
-        staged_path,
-        current,
-        staged,
-        expected_current,
-        content,
-        directory
-      )
+      with :ok <- File.chmod(staged.path, 0o644) do
+        exchange_if_current(
+          target,
+          staged_path,
+          current,
+          staged,
+          expected_current,
+          content,
+          directory
+        )
+      end
 
     finish_atomic_operation(operation, directory, staged_path, staged)
   end

@@ -131,9 +131,11 @@ defmodule Cinder.Subtitles do
 
   defp fetch_one(criteria_base, video_path, kind, language, moviehash, cache) do
     state = Manifest.read(video_path)
+    target = sidecar_path(video_path, language)
 
-    if Manifest.stable?(state, moviehash, language) and
-         sidecar_exists?(sidecar_path(video_path, language)) do
+    if Manifest.managed?(state, language), do: normalize_sidecar_mode(target)
+
+    if Manifest.stable?(state, moviehash, language) and sidecar_exists?(target) do
       {:ok, cache}
     else
       search(criteria_base, video_path, kind, language, moviehash, state, cache)
@@ -528,10 +530,34 @@ defmodule Cinder.Subtitles do
         ".cinder-subtitle-#{System.unique_integer([:positive])}"
       )
 
-    with {:ok, target} <- safe_destination(target),
-         {:ok, temporary} <- safe_destination(temporary),
-         :ok <- fs().write(temporary, content) do
-      rename_subtitle(temporary, target, IO.iodata_to_binary(content))
+    result =
+      with {:ok, target} <- safe_destination(target),
+           {:ok, temporary} <- safe_destination(temporary),
+           :ok <- fs().write(temporary, content),
+           :ok <- fs().chmod(temporary, 0o644) do
+        rename_subtitle(temporary, target, IO.iodata_to_binary(content))
+      end
+
+    if result != :ok, do: safe_remove(temporary)
+    result
+  end
+
+  defp normalize_sidecar_mode(target) do
+    case safe_destination(target) do
+      {:ok, target} ->
+        case fs().chmod(target, 0o644) do
+          :ok ->
+            :ok
+
+          {:error, :enoent} ->
+            :ok
+
+          error ->
+            Logger.warning("subtitle permission repair failed for #{target}: #{inspect(error)}")
+        end
+
+      error ->
+        Logger.warning("subtitle permission repair rejected: #{inspect(error)}")
     end
   end
 
