@@ -153,11 +153,14 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync")
     render_async(view)
 
-    {_movie, video, _sidecar, item} = managed_movie!(movies, "Imported")
+    {movie, video, _sidecar, item} = managed_movie!(movies, "Imported")
+    unit = Enum.find(Sync.units(:library), &(&1.video_path == video))
+    assert MapSet.member?(unit.scopes, {:movie, movie.id})
 
     result = %{
       id: item.id,
       video_path: video,
+      scopes: unit.scopes,
       status: :aligned,
       method: "audio",
       offset_ms: 0,
@@ -391,7 +394,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
 
   test "scoped pages ignore worker results for other titles", %{conn: conn, movies: movies} do
     {movie, _video, _sidecar, _item} = managed_movie!(movies, "Scoped")
-    {_other_movie, other_video, _other_sidecar, other_item} = managed_movie!(movies, "Other")
+    {other_movie, other_video, _other_sidecar, other_item} = managed_movie!(movies, "Other")
     {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
     render_async(view)
 
@@ -407,6 +410,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     result = %{
       id: other_item.id,
       video_path: other_video,
+      scopes: MapSet.new([{:movie, other_movie.id}]),
       status: :aligned,
       method: "audio",
       offset_ms: 0,

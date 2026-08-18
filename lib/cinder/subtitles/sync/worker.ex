@@ -121,7 +121,7 @@ defmodule Cinder.Subtitles.Sync.Worker do
 
   def handle_info({reference, results}, %{task: %{ref: reference}} = state) do
     Process.demonitor(reference, [:flush])
-    state = state |> finish(results) |> start_next()
+    state = state |> finish(tag_results(results, state.current)) |> start_next()
     {:noreply, state}
   end
 
@@ -248,6 +248,11 @@ defmodule Cinder.Subtitles.Sync.Worker do
     recent = Enum.take(results ++ state.recent, 20)
     %{state | current: nil, task: nil, counts: counts, recent: recent}
   end
+
+  defp tag_results(results, %{scopes: scopes}) when is_list(results),
+    do: Enum.map(results, &Map.put(&1, :scopes, scopes))
+
+  defp tag_results(results, _unit), do: results
 
   defp finish_scan_failure(state, reason) do
     failure = %{status: :failed, label: "Library scan", reason: inspect(reason)}

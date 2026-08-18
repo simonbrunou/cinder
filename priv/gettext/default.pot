@@ -5692,7 +5692,7 @@ msgstr ""
 msgid "Adjust"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:633
+#: lib/cinder_web/live/subtitle_sync_live.ex:622
 #, elixir-autogen
 msgid "Aligned via %{method}: %{delay} ms, rate %{rate}"
 msgstr ""
@@ -5713,7 +5713,7 @@ msgid "Analyze this scope"
 msgstr ""
 
 #: lib/cinder_web/live/activity_live.ex:878
-#: lib/cinder_web/live/subtitle_sync_live.ex:618
+#: lib/cinder_web/live/subtitle_sync_live.ex:607
 #, elixir-autogen
 msgid "Analyzing %{label}"
 msgstr ""
@@ -5728,7 +5728,7 @@ msgstr ""
 msgid "Cinder checks only OpenSubtitles sidecars. Embedded tracks are reference material and are never changed."
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:605
+#: lib/cinder_web/live/subtitle_sync_live.ex:594
 #, elixir-autogen
 msgid "Delay %{delay} s · rate %{rate} · drift %{drift}%"
 msgstr ""
@@ -5768,12 +5768,12 @@ msgstr ""
 msgid "Method"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:629
+#: lib/cinder_web/live/subtitle_sync_live.ex:618
 #, elixir-autogen
 msgid "Needs review: %{reason}"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:626
+#: lib/cinder_web/live/subtitle_sync_live.ex:615
 #, elixir-autogen
 msgid "Not analyzed"
 msgstr ""
@@ -5818,7 +5818,7 @@ msgstr ""
 msgid "Subtitle analysis queued."
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:615
+#: lib/cinder_web/live/subtitle_sync_live.ex:604
 #, elixir-autogen
 msgid "Subtitle correction applied."
 msgstr ""
@@ -5843,7 +5843,7 @@ msgstr ""
 msgid "Subtitle synchronization"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:613
+#: lib/cinder_web/live/subtitle_sync_live.ex:602
 #, elixir-autogen
 msgid "Subtitle was already aligned; the file was not rewritten."
 msgstr ""
@@ -5863,13 +5863,13 @@ msgstr ""
 msgid "Video 2 (s)"
 msgstr ""
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:620
+#: lib/cinder_web/live/subtitle_sync_live.ex:609
 #, elixir-autogen
 msgid "Worker idle"
 msgstr ""
 
 #: lib/cinder_web/live/activity_live.ex:926
-#: lib/cinder_web/live/subtitle_sync_live.ex:629
+#: lib/cinder_web/live/subtitle_sync_live.ex:618
 #, elixir-autogen
 msgid "low confidence"
 msgstr ""

@@ -542,22 +542,11 @@ defmodule CinderWeb.SubtitleSyncLive do
   defp reload_after_worker_status(socket, true), do: load_items(socket)
 
   defp unknown_results_in_scope?(results, scope, known_paths) do
-    result_paths =
-      results
-      |> Enum.map(fn {_id, result} -> Map.get(result, :video_path) end)
-      |> Enum.filter(&is_binary/1)
-
-    cond do
-      result_paths == [] ->
-        false
-
-      scope == :library or Enum.any?(result_paths, &MapSet.member?(known_paths, &1)) ->
-        true
-
-      true ->
-        current_paths = scope |> Sync.units() |> MapSet.new(& &1.video_path)
-        Enum.any?(result_paths, &MapSet.member?(current_paths, &1))
-    end
+    (scope == :library and results != []) or
+      Enum.any?(results, fn {_id, result} ->
+        MapSet.member?(known_paths, Map.get(result, :video_path)) or
+          scope in Map.get(result, :scopes, MapSet.new())
+      end)
   end
 
   defp apply_worker_results(socket, results) do

@@ -24,7 +24,8 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
         {Worker, initial_scan: false, interval: :timer.hours(1), analyze: analyze}
       )
 
-    a = %{video_path: "/library/a.mkv", label: "A"}
+    scopes = MapSet.new([{:movie, 1}])
+    a = %{video_path: "/library/a.mkv", label: "A", scopes: scopes}
     b = %{video_path: "/library/b.mkv", label: "B"}
     assert :ok = Worker.enqueue_units([a, a, b], worker)
     assert_receive {:started, "/library/a.mkv", first}
@@ -38,6 +39,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     send(second, :release)
     assert_eventually(fn -> Worker.status().state == :idle end)
     assert Worker.status().counts.aligned == 2
+    assert Enum.find(Worker.status().recent, &(&1.label == "/library/a.mkv")).scopes == scopes
   end
 
   test "an enqueue for the current video retains exactly one follow-up pass" do

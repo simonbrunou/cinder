@@ -5960,7 +5960,7 @@ msgstr "%{count} en attente"
 msgid "Adjust"
 msgstr "Ajuster"
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:633
+#: lib/cinder_web/live/subtitle_sync_live.ex:622
 #, elixir-autogen
 msgid "Aligned via %{method}: %{delay} ms, rate %{rate}"
 msgstr "Aligné via %{method} : %{delay} ms, facteur %{rate}"
@@ -5981,7 +5981,7 @@ msgid "Analyze this scope"
 msgstr "Analyser cette sélection"
 
 #: lib/cinder_web/live/activity_live.ex:878
-#: lib/cinder_web/live/subtitle_sync_live.ex:618
+#: lib/cinder_web/live/subtitle_sync_live.ex:607
 #, elixir-autogen
 msgid "Analyzing %{label}"
 msgstr "Analyse de %{label}"
@@ -5998,7 +5998,7 @@ msgstr ""
 "Cinder vérifie uniquement les fichiers de sous-titres OpenSubtitles. Les "
 "pistes intégrées servent de référence et ne sont jamais modifiées."
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:605
+#: lib/cinder_web/live/subtitle_sync_live.ex:594
 #, elixir-autogen
 msgid "Delay %{delay} s · rate %{rate} · drift %{drift}%"
 msgstr "Décalage %{delay} s · facteur %{rate} · dérive %{drift} %"
@@ -6040,12 +6040,12 @@ msgstr "Correction manuelle"
 msgid "Method"
 msgstr "Méthode"
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:629
+#: lib/cinder_web/live/subtitle_sync_live.ex:618
 #, elixir-autogen
 msgid "Needs review: %{reason}"
 msgstr "À vérifier : %{reason}"
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:626
+#: lib/cinder_web/live/subtitle_sync_live.ex:615
 #, elixir-autogen
 msgid "Not analyzed"
 msgstr "Non analysé"
@@ -6090,7 +6090,7 @@ msgstr "Sous-titre 2 (s)"
 msgid "Subtitle analysis queued."
 msgstr "Analyse des sous-titres mise en attente."
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:615
+#: lib/cinder_web/live/subtitle_sync_live.ex:604
 #, elixir-autogen
 msgid "Subtitle correction applied."
 msgstr "Correction du sous-titre appliquée."
@@ -6115,7 +6115,7 @@ msgstr "Synchronisation des sous-titres"
 msgid "Subtitle synchronization"
 msgstr "Synchronisation des sous-titres"
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:613
+#: lib/cinder_web/live/subtitle_sync_live.ex:602
 #, elixir-autogen
 msgid "Subtitle was already aligned; the file was not rewritten."
 msgstr "Le sous-titre était déjà aligné ; le fichier n’a pas été réécrit."
@@ -6135,13 +6135,13 @@ msgstr "Vidéo 1 (s)"
 msgid "Video 2 (s)"
 msgstr "Vidéo 2 (s)"
 
-#: lib/cinder_web/live/subtitle_sync_live.ex:620
+#: lib/cinder_web/live/subtitle_sync_live.ex:609
 #, elixir-autogen
 msgid "Worker idle"
 msgstr "Traitement en attente"
 
 #: lib/cinder_web/live/activity_live.ex:926
-#: lib/cinder_web/live/subtitle_sync_live.ex:629
+#: lib/cinder_web/live/subtitle_sync_live.ex:618
 #, elixir-autogen
 msgid "low confidence"
 msgstr "confiance faible"
