@@ -31,7 +31,7 @@ defmodule Cinder.Library.Filesystem.Disk do
     "EROFS" => :erofs,
     "EXDEV" => :exdev
   }
-  @rooted_effect_operations ~w(exchange rename unlink rmdir mkdir)
+  @rooted_effect_operations ~w(chmod exchange rename unlink rmdir mkdir)
 
   @impl true
   def dir?(path), do: File.dir?(path)
@@ -183,6 +183,14 @@ defmodule Cinder.Library.Filesystem.Disk do
     case rooted_location(path) do
       {:ok, root, relative} -> rooted_write(root, relative, path, content, "write")
       :outside_roots -> unrooted_write(path, content)
+    end
+  end
+
+  @impl true
+  def chmod(path, mode) do
+    case rooted_location(path) do
+      {:ok, root, relative} -> run_rooted("chmod", [root, relative, Integer.to_string(mode, 8)])
+      :outside_roots -> File.chmod(path, mode)
     end
   end
 

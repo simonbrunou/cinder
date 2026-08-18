@@ -44,6 +44,8 @@ defmodule Cinder.SubtitlesTest do
       :ok
     end)
 
+    stub(Cinder.Library.FilesystemMock, :chmod, fn _path, _mode -> :ok end)
+
     stub(Cinder.Library.FilesystemMock, :write_exclusive, fn path, content ->
       Agent.update(fs, &Map.put(&1, path, IO.iodata_to_binary(content)))
       :ok
@@ -703,7 +705,7 @@ defmodule Cinder.SubtitlesTest do
     log = capture_log(fn -> assert Task.await(task) == :ok end)
 
     assert log =~ "subtitle write failed for"
-    assert log =~ "{:error, :unsafe_destination}"
+    assert log =~ "{:error, :eloop}"
     refute File.exists?(Path.join(outside, Path.basename(target)))
   end
 
@@ -765,6 +767,41 @@ defmodule Cinder.SubtitlesTest do
     assert File.read!(outside_target) == "outside subtitle"
   end
 
+  @tag :tmp_dir
+  test "published sidecars are readable and a later sweep repairs restrictive modes", %{
+    tmp_dir: tmp
+  } do
+    saved = configure_real_policy(tmp)
+    on_exit(fn -> restore_env(saved) end)
+    video = Path.join(Application.fetch_env!(:cinder, :movies_library_path), "Movie/Movie.mkv")
+    target = Subtitles.sidecar_path(video, "fr")
+    File.mkdir_p!(Path.dirname(video))
+    File.write!(video, "video")
+
+    result = %{
+      file_id: 1,
+      language: "fr",
+      downloads: 1,
+      hearing_impaired: false,
+      ai_translated: false,
+      moviehash_match: false
+    }
+
+    expect(Cinder.Subtitles.ProviderMock, :search, 2, fn _criteria -> {:ok, [result]} end)
+    expect(Cinder.Subtitles.ProviderMock, :download, fn 1 -> {:ok, "subtitle"} end)
+    expect(Cinder.Library.MediaServerMock, :scan, fn :movies -> :ok end)
+
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies)
+    assert File.read!(target) == "subtitle"
+    assert mode(target) == 0o644
+    assert mode(Manifest.path(video)) == 0o600
+
+    File.chmod!(target, 0o600)
+    assert :ok = Subtitles.fetch_missing(%{imdb_id: "tt1"}, video, :movies)
+    assert mode(target) == 0o644
+    assert File.read!(target) == "subtitle"
+  end
+
   defp configure_real_policy(tmp) do
     keys = [:filesystem, :path_policy, :movies_library_path, :tv_library_path]
     saved = Map.new(keys, &{&1, Application.get_env(:cinder, &1)})
@@ -794,4 +831,6 @@ defmodule Cinder.SubtitlesTest do
       Path.join(outside, Path.basename(temporary))
     )
   end
+
+  defp mode(path), do: Bitwise.band(File.stat!(path).mode, 0o777)
 end

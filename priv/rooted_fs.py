@@ -219,6 +219,19 @@ def mkdir(args):
         os.close(parent)
 
 
+def chmod(args):
+    root_fd = open_root(args[0])
+    try:
+        fd = open_beneath(root_fd, args[1], os.O_RDONLY | O_NOFOLLOW)
+    finally:
+        os.close(root_fd)
+    try:
+        os.fchmod(fd, int(args[2], 8))
+        emit({"ok": "chmod"})
+    finally:
+        os.close(fd)
+
+
 def sync_parent(args):
     parent, _name = open_parent(args[0], args[1])
     try:
@@ -245,6 +258,8 @@ def main():
         unlink(args, directory=True)
     elif operation == "mkdir" and len(args) == 3:
         mkdir(args)
+    elif operation == "chmod" and len(args) == 3:
+        chmod(args)
     elif operation == "sync_parent" and len(args) == 2:
         sync_parent(args)
     else:

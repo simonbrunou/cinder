@@ -47,6 +47,25 @@ defmodule Cinder.Library.Filesystem.DiskRootedTest do
   end
 
   @tag :tmp_dir
+  test "rooted chmod rejects an ancestor replaced by an outside symlink", %{root: root, tmp: tmp} do
+    {path, moved, outside} = prepare_swap(root, tmp, "subtitle.srt", "inside", "outside")
+    outside_path = Path.join(outside, Path.basename(path))
+    File.chmod!(path, 0o600)
+    File.chmod!(outside_path, 0o600)
+    barrier!(:chmod, path)
+
+    task = Task.async(fn -> BarrierFilesystem.chmod(path, 0o644) end)
+    assert_receive {:filesystem_barrier, pid, ref, :chmod, ^path}
+    swap_parent!(path, moved, outside)
+    send(pid, {ref, :continue})
+
+    assert {:error, reason} = Task.await(task)
+    assert reason in [:eloop, :enotdir]
+    assert mode(outside_path) == 0o600
+    assert mode(Path.join(moved, Path.basename(path))) == 0o600
+  end
+
+  @tag :tmp_dir
   test "rooted exclusive create rejects an ancestor replaced by an outside symlink", %{
     root: root,
     tmp: tmp
@@ -240,4 +259,6 @@ defmodule Cinder.Library.Filesystem.DiskRootedTest do
     File.rename!(parent, moved)
     File.ln_s!(outside, parent)
   end
+
+  defp mode(path), do: Bitwise.band(File.stat!(path).mode, 0o777)
 end
