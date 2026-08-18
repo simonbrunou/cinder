@@ -38,11 +38,17 @@ defmodule Cinder.Subtitles.Sync.Worker do
   def enqueue_episode(id, server \\ __MODULE__), do: enqueue({:episode, id}, server)
 
   @doc "Enqueues one freshly downloaded sidecar's video when the supervised worker is enabled."
-  def enqueue_after_download(video_path) do
-    GenServer.cast(__MODULE__, {
-      :enqueue_units,
-      [%{video_path: video_path, label: Path.basename(video_path)}]
-    })
+  def enqueue_after_download(video_path, server \\ __MODULE__) do
+    if worker_alive?(server) do
+      unit =
+        Enum.find(
+          Sync.units(:library),
+          %{video_path: video_path, label: Path.basename(video_path)},
+          &(&1.video_path == video_path)
+        )
+
+      GenServer.cast(server, {:enqueue_units, [unit]})
+    end
 
     :ok
   end
@@ -284,4 +290,7 @@ defmodule Cinder.Subtitles.Sync.Worker do
   end
 
   defp schedule_scan(interval), do: Process.send_after(self(), :scan, interval)
+
+  defp worker_alive?(server) when is_pid(server), do: Process.alive?(server)
+  defp worker_alive?(server) when is_atom(server), do: not is_nil(Process.whereis(server))
 end

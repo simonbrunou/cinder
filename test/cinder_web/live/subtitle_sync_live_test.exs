@@ -173,6 +173,53 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     assert has_element?(view, "#subtitle-sync-item-#{item.id}")
   end
 
+  test "post-download results discover files added to an open movie scope", %{
+    conn: conn,
+    movies: movies
+  } do
+    movie = movie_fixture(%{title: "PostDownload", status: :available})
+    {:ok, view, _html} = live(conn, ~p"/subtitle-sync?movie=#{movie.id}")
+    render_async(view)
+    refute has_element?(view, "[id^=subtitle-sync-item-]")
+
+    video = Path.join(movies, "PostDownload/PostDownload.mkv")
+    sidecar = Path.rootname(video) <> ".en.srt"
+    content = "1\n00:00:01,000 --> 00:00:02,000\nOne\n\n"
+    File.mkdir_p!(Path.dirname(video))
+    File.write!(video, String.duplicate("v", 131_072))
+    File.write!(sidecar, content)
+
+    movie |> Ecto.Changeset.change(file_path: video) |> Repo.update!()
+    {:ok, hash} = Subtitles.Moviehash.of_file(video)
+    :ok = Manifest.put(video, hash, "en", "opensubtitles_hash", sidecar, digest(content))
+    [item] = Sync.items({:movie, movie.id})
+
+    result = %{
+      id: item.id,
+      video_path: video,
+      status: :aligned,
+      method: "audio",
+      offset_ms: 0,
+      rate: 1.0,
+      reason: nil
+    }
+
+    previous_status = Worker.status()
+    on_exit(fn -> :persistent_term.put({Worker, :status}, previous_status) end)
+
+    worker =
+      start_supervised!(
+        {Worker,
+         name: :subtitle_sync_after_download_worker,
+         initial_scan: false,
+         interval: :timer.hours(1),
+         analyze: fn ^video -> [result] end}
+      )
+
+    assert :ok = Worker.enqueue_after_download(video, worker)
+    assert_eventually(fn -> has_element?(view, "#subtitle-sync-item-#{item.id}") end)
+  end
+
   test "admin previews/applies/resets by server ID and raw client paths are rejected", %{
     conn: conn,
     movies: movies
