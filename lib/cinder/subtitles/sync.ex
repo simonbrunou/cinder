@@ -18,17 +18,16 @@ defmodule Cinder.Subtitles.Sync do
   def discover(video_path) do
     state = Manifest.read(video_path)
 
-    video_path
-    |> Sidecars.files()
+    sidecars = if state.tracks == %{}, do: [], else: Sidecars.files(video_path)
+
+    sidecars
     |> Enum.flat_map(fn {sidecar_path, language} ->
       track = get_in(state, [:tracks, language])
 
       if track && track.origin in @managed_origins && syncable_track?(track) &&
-           tracked_sidecar?(track, video_path, sidecar_path, language) do
-        [item(video_path, sidecar_path, language, track)]
-      else
-        []
-      end
+           tracked_sidecar?(track, video_path, sidecar_path, language),
+         do: [item(video_path, sidecar_path, language, track)],
+         else: []
     end)
     |> Enum.sort_by(&{&1.language, &1.sidecar_path})
   end
