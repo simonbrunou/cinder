@@ -39,6 +39,7 @@ defmodule Cinder.Subtitles.Sync.WorkerTest do
     send(second, :release)
     assert_eventually(fn -> Worker.status().state == :idle end)
     assert Worker.status().counts.aligned == 2
+    assert Worker.managed_video_paths(worker) == MapSet.new([a.video_path, b.video_path])
     assert Enum.find(Worker.status().recent, &(&1.label == "/library/a.mkv")).scopes == scopes
   end
 

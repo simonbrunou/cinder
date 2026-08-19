@@ -482,7 +482,7 @@ defmodule CinderWeb.SubtitleSyncLive do
       units = Sync.units(scope)
 
       {
-        Enum.flat_map(units, &Sync.discover(&1.video_path)),
+        managed_units(units, scope) |> Enum.flat_map(&Sync.discover(&1.video_path)),
         MapSet.new(units, & &1.video_path)
       }
     end)
@@ -624,4 +624,13 @@ defmodule CinderWeb.SubtitleSyncLive do
         delay: offset,
         rate: :erlang.float_to_binary(rate * 1.0, decimals: 6)
       )
+
+  defp managed_units(units, :library) do
+    case Worker.managed_video_paths() do
+      %MapSet{} = paths -> Enum.filter(units, &MapSet.member?(paths, &1.video_path))
+      :unavailable -> units
+    end
+  end
+
+  defp managed_units(units, _scope), do: units
 end

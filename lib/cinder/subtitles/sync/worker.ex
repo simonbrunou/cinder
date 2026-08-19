@@ -30,6 +30,11 @@ defmodule Cinder.Subtitles.Sync.Worker do
   @doc "Subscribes the caller to status updates."
   def subscribe, do: Phoenix.PubSub.subscribe(Cinder.PubSub, @topic)
 
+  @doc "Video paths whose latest analysis found managed sidecars."
+  def managed_video_paths(server \\ __MODULE__) do
+    if worker_alive?(server), do: GenServer.call(server, :managed_video_paths), else: :unavailable
+  end
+
   @doc "Enqueues all pending videos in the library."
   def enqueue_library(server \\ __MODULE__), do: enqueue(:library, server)
   def enqueue_movie(id, server \\ __MODULE__), do: enqueue({:movie, id}, server)
@@ -74,7 +79,8 @@ defmodule Cinder.Subtitles.Sync.Worker do
       analyze: Keyword.get(opts, :analyze, &Sync.analyze_video/1),
       interval: Keyword.get(opts, :interval, @default_interval),
       counts: @empty_counts,
-      recent: []
+      recent: [],
+      managed_video_paths: MapSet.new()
     }
 
     publish(state)
@@ -87,6 +93,10 @@ defmodule Cinder.Subtitles.Sync.Worker do
   end
 
   @impl true
+  def handle_call(:managed_video_paths, _from, state) do
+    {:reply, state.managed_video_paths, state}
+  end
+
   def handle_call({:enqueue_units, units}, _from, state) do
     state = units |> add_units(state) |> start_next()
     {:reply, :ok, state}
@@ -240,6 +250,11 @@ defmodule Cinder.Subtitles.Sync.Worker do
   defp finish(state, results) do
     results = if is_list(results), do: results, else: []
 
+    managed_video_paths =
+      if results == [],
+        do: MapSet.delete(state.managed_video_paths, state.current.video_path),
+        else: MapSet.put(state.managed_video_paths, state.current.video_path)
+
     counts =
       Enum.reduce(results, state.counts, fn result, counts ->
         case Map.get(result, :status) do
@@ -252,7 +267,15 @@ defmodule Cinder.Subtitles.Sync.Worker do
       end)
 
     recent = Enum.take(results ++ state.recent, 20)
-    %{state | current: nil, task: nil, counts: counts, recent: recent}
+
+    %{
+      state
+      | current: nil,
+        task: nil,
+        counts: counts,
+        recent: recent,
+        managed_video_paths: managed_video_paths
+    }
   end
 
   defp tag_results(results, %{scopes: scopes}) when is_list(results),

@@ -88,6 +88,18 @@ defmodule Cinder.Subtitles.SyncTest do
     assert Application.get_env(:cinder, :filesystem_failure) == failure
   end
 
+  test "videos without subtitle manifests skip directory scans", %{video: video} do
+    Application.put_env(:cinder, :filesystem, Cinder.Library.FilesystemMock)
+    Application.put_env(:cinder, :path_policy, Cinder.Test.PermissivePathPolicy)
+
+    expect(Cinder.Library.FilesystemMock, :read, fn path ->
+      assert path == Manifest.path(video)
+      {:error, :enoent}
+    end)
+
+    assert Sync.discover(video) == []
+  end
+
   test "malformed exact-file or sync metadata quarantines managed sidecars", %{video: video} do
     en = sidecar(video, "en", ".srt")
     fr = sidecar(video, "fr", ".ass")

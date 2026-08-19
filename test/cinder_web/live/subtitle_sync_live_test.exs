@@ -45,14 +45,19 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
   end
 
   test "library page mounts before sidecar discovery finishes", %{conn: conn, movies: movies} do
-    video = Path.join(movies, "Slow/Slow.mkv")
-    File.mkdir_p!(Path.dirname(video))
-    File.write!(video, String.duplicate("v", 131_072))
+    {_movie, video, _sidecar, _item} = managed_movie!(movies, "Slow")
+    managed_movie!(movies, "Uncached")
 
-    %{title: "Slow", status: :available}
-    |> movie_fixture()
-    |> Ecto.Changeset.change(file_path: video)
-    |> Repo.update!()
+    worker =
+      start_supervised!(
+        {Worker,
+         initial_scan: false,
+         interval: :timer.hours(1),
+         analyze: fn ^video -> [%{status: :aligned, label: "Slow"}] end}
+      )
+
+    assert :ok = Worker.enqueue_units([%{video_path: video, label: "Slow"}], worker)
+    assert_eventually(fn -> MapSet.member?(Worker.managed_video_paths(), video) end)
 
     Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
 
@@ -70,6 +75,7 @@ defmodule CinderWeb.SubtitleSyncLiveTest do
     send(pid, {ref, :continue})
     render_async(view)
     refute has_element?(view, "#subtitle-sync-loading")
+    refute render(view) =~ "Uncached"
   end
 
   test "worker results received during discovery keep the newest state", %{
