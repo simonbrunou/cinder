@@ -207,15 +207,15 @@ defmodule Cinder.Subtitles.Sync do
     )
   end
 
-  @doc false
   def discard_replacement(video_path, language, sidecar_path, sync) do
     backup = backup_path(sidecar_path)
     tombstone = Manifest.backup_tombstone(Manifest.read(video_path), language)
 
-    if regular_file?(backup) do
-      retire_owned_backup(backup, sync, tombstone)
-    else
-      :ok
+    cond do
+      not active_backup?(backup) -> :ok
+      is_nil(sync) -> {:error, :unexpected_backup}
+      regular_file?(backup) -> retire_owned_backup(backup, sync, tombstone)
+      true -> {:error, :unexpected_backup}
     end
   end
 
@@ -868,17 +868,20 @@ defmodule Cinder.Subtitles.Sync do
     do: {:error, :concurrent_change}
 
   defp prepare_replacement(%{sync: nil} = item, _moviehash) do
-    backup = backup_path(item.sidecar_path)
-
     case file_sha256_result(item.sidecar_path) do
       {:ok, current_hash} when current_hash == item.managed_sha256 ->
-        if active_backup?(backup), do: block_replacement(item), else: item
+        proof = %{source_sha256: item.managed_sha256}
+
+        case discard_replacement(item.video_path, item.language, item.sidecar_path, proof) do
+          :ok -> item
+          {:error, _reason} -> block_cleanup(item)
+        end
 
       {:ok, _other_hash} ->
         Map.put(item, :auto_review_reason, :externally_modified)
 
       {:error, _reason} ->
-        block_replacement(item)
+        block_cleanup(item)
     end
   end
 
@@ -892,7 +895,7 @@ defmodule Cinder.Subtitles.Sync do
   defp prepare_reconciled_replacement(item, moviehash) do
     case file_sha256_result(item.sidecar_path) do
       {:ok, current_hash} -> prepare_replacement(item, moviehash, current_hash)
-      {:error, _reason} -> block_replacement(item)
+      {:error, _reason} -> block_cleanup(item)
     end
   end
 
@@ -1014,19 +1017,19 @@ defmodule Cinder.Subtitles.Sync do
     backup = backup_path(item.sidecar_path)
 
     with :ok <- restore_applied_original(item, backup, current_hash),
-         :ok <- Manifest.clear_sync(item.video_path, item.language) do
-      finish_replacement_cleanup(%{item | sync: nil}, backup, item.sync)
+         :ok <- Manifest.begin_replacement_cleanup(item.video_path, item.language, item.sync) do
+      finish_replacement_cleanup(%{item | sync: nil}, item.sync)
     else
-      {:error, _reason} -> block_replacement(item)
+      {:error, _reason} -> block_cleanup(item)
     end
   end
 
-  defp finish_replacement_cleanup(item, backup, sync) do
-    tombstone = Manifest.backup_tombstone(Manifest.read(item.video_path), item.language)
-
-    case retire_owned_backup(backup, sync, tombstone) do
-      :ok -> item
-      {:error, _reason} -> block_replacement(item)
+  defp finish_replacement_cleanup(item, sync) do
+    with :ok <- discard_replacement(item.video_path, item.language, item.sidecar_path, sync),
+         :ok <- Manifest.clear_replacement_cleanup(item.video_path, item.language) do
+      item
+    else
+      {:error, _reason} -> block_cleanup(item)
     end
   end
 
@@ -1049,8 +1052,6 @@ defmodule Cinder.Subtitles.Sync do
       end
     end)
   end
-
-  defp retire_owned_backup(_backup, nil, _tombstone), do: {:error, :unexpected_backup}
 
   defp retire_owned_backup(_backup, _sync, _tombstone),
     do: {:error, :missing_backup_tombstone}
@@ -1094,8 +1095,7 @@ defmodule Cinder.Subtitles.Sync do
     end
   end
 
-  defp block_replacement(item),
-    do: Map.put(item, :auto_review_reason, :replacement_cleanup_failed)
+  defp block_cleanup(item), do: Map.put(item, :auto_review_reason, :replacement_cleanup_failed)
 
   defp current_sync?(item, moviehash) do
     case file_sha256_result(item.sidecar_path) do
