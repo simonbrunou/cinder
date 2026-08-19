@@ -1235,8 +1235,7 @@ defmodule Cinder.Subtitles.SyncTest do
 
   test "sync-less analysis never deletes an unproven reserved backup", %{video: video} do
     path = managed_srt!(video)
-    backup = Sync.backup_path(path)
-    File.write!(backup, "unrelated file")
+    backup = owned_backup!(video, path, "unrelated file")
 
     assert {:error, :unexpected_backup} =
              Sync.discard_replacement(video, "en", path, nil)
@@ -1248,6 +1247,39 @@ defmodule Cinder.Subtitles.SyncTest do
 
     assert File.read!(backup) == "unrelated file"
     assert File.read!(path) == subtitle(".srt")
+  end
+
+  test "sync-less recovery rejects matching bytes under a different backup inode", %{video: video} do
+    path = managed_srt!(video)
+    content = File.read!(path)
+    backup = owned_backup!(video, path, content)
+    replacement = backup <> ".replacement"
+    File.write!(replacement, content)
+    File.rename!(replacement, backup)
+
+    assert [%{status: :review, reason: "replacement_cleanup_failed"}] =
+             Sync.analyze_video(video)
+
+    assert File.read!(backup) == content
+  end
+
+  test "analysis retires a proven sync-less backup left by legacy cleanup", %{video: video} do
+    path = managed_srt!(video)
+    content = File.read!(path)
+    backup = owned_backup!(video, path, content)
+
+    assert [%{review_reason: "replacement_cleanup_failed"}] = Sync.discover(video)
+    stub(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video -> {:ok, []} end)
+
+    expect(Cinder.Subtitles.Sync.EngineMock, :sync, fn _reference, input, output ->
+      assert File.read!(input) == content
+      File.write!(output, content)
+      {:ok, %{score: 30.0, offset_ms: 0, rate: 1.0}}
+    end)
+
+    assert [%{status: :aligned}] = Sync.analyze_video(video)
+    assert File.read!(backup) == ""
+    assert [%{review_reason: nil}] = Sync.discover(video)
   end
 
   test "an unsafe reserved backup remains visibly quarantined", %{video: video} do
@@ -1314,25 +1346,16 @@ defmodule Cinder.Subtitles.SyncTest do
     assert Manifest.sync(Manifest.read(video), "en") != nil
   end
 
-  test "replacement backup-removal failure blocks reanalysis until cleanup succeeds", %{
+  test "replacement backup-removal failure preserves a journal until cleanup succeeds", %{
     video: video
   } do
     path = managed_srt!(video)
+    original = File.read!(path)
     [item] = Sync.discover(video)
     assert {:ok, :corrected, _} = Sync.manual(item, 1_000, 1.0)
+    previous_sync = Manifest.sync(Manifest.read(video), "en")
     backup = Sync.backup_path(path)
-    replacement = "1\n00:00:10,000 --> 00:00:11,000\nReplacement\n\n"
-    File.write!(path, replacement)
-
-    assert :ok =
-             Manifest.put(
-               video,
-               moviehash!(video),
-               "en",
-               "opensubtitles_id",
-               path,
-               digest(replacement)
-             )
+    File.write!(video, "x" <> String.duplicate("v", 131_071))
 
     Application.put_env(:cinder, :filesystem, Cinder.Test.BarrierFilesystem)
 
@@ -1346,9 +1369,42 @@ defmodule Cinder.Subtitles.SyncTest do
     assert [%{status: :review, reason: "replacement_cleanup_failed"}] =
              Sync.analyze_video(video)
 
-    assert File.read!(path) == replacement
-    assert File.exists?(backup)
+    assert File.read!(path) == original
+    assert File.read!(backup) == original
     assert Manifest.sync(Manifest.read(video), "en") == nil
+    assert Manifest.replacement_cleanup_sync(Manifest.read(video), "en") == previous_sync
+
+    stub(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video -> {:ok, []} end)
+
+    expect(Cinder.Subtitles.Sync.EngineMock, :sync, fn _reference, input, output ->
+      assert File.read!(input) == original
+      File.write!(output, original)
+      {:ok, %{score: 30.0, offset_ms: 0, rate: 1.0}}
+    end)
+
+    assert [%{status: :aligned}] = Sync.analyze_video(video)
+    assert File.read!(backup) == ""
+    assert Manifest.replacement_cleanup_sync(Manifest.read(video), "en") == nil
+  end
+
+  test "replacement cleanup with no backup clears its journal without blocking", %{video: video} do
+    path = managed_srt!(video)
+    content = File.read!(path)
+    [item] = Sync.discover(video)
+    assert {:ok, :aligned, _} = Sync.manual(item, 0, 1.0)
+    refute File.exists?(Sync.backup_path(path))
+    File.write!(video, "x" <> String.duplicate("v", 131_071))
+    stub(Cinder.Library.MediaInfoMock, :subtitle_tracks, fn ^video -> {:ok, []} end)
+
+    expect(Cinder.Subtitles.Sync.EngineMock, :sync, fn _reference, input, output ->
+      assert File.read!(input) == content
+      File.write!(output, content)
+      {:ok, %{score: 30.0, offset_ms: 0, rate: 1.0}}
+    end)
+
+    assert [%{status: :aligned}] = Sync.analyze_video(video)
+    assert Manifest.replacement_cleanup_sync(Manifest.read(video), "en") == nil
+    refute File.exists?(Sync.backup_path(path))
   end
 
   test "a replacement download discards its stale backup and is analyzed afresh", %{video: video} do
@@ -1642,6 +1698,14 @@ defmodule Cinder.Subtitles.SyncTest do
              )
 
     path
+  end
+
+  defp owned_backup!(video, sidecar, content) do
+    backup = Sync.backup_path(sidecar)
+    assert {:ok, bound} = Disk.create_bound(backup, content)
+    assert :ok = Manifest.put_backup_tombstone(video, "en", bound.identity)
+    assert :ok = Disk.close_bound(bound)
+    backup
   end
 
   defp shifted_subtitle(content) do

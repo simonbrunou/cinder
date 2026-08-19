@@ -115,6 +115,24 @@ defmodule Cinder.Subtitles.Manifest do
   def replacement_cleanup_sync(state, language),
     do: get_in(state, [:tracks, language, :replacement_cleanup_sync])
 
+  @spec begin_replacement_cleanup(String.t(), String.t(), map()) :: :ok | {:error, term()}
+  def begin_replacement_cleanup(video_path, language, sync) do
+    state = read(video_path)
+
+    with {:ok, sync} <- normalize_sync(sync),
+         %{origin: _origin} = track <- get_in(state, [:tracks, language]) do
+      track =
+        track
+        |> Map.drop([:sync, :sync_invalid?])
+        |> Map.put(:replacement_cleanup_sync, sync)
+
+      write(video_path, put_in(state, [:tracks, language], track))
+    else
+      nil -> {:error, :unknown_track}
+      :error -> {:error, :invalid_replacement_cleanup_sync}
+    end
+  end
+
   @spec clear_replacement_cleanup(String.t(), String.t()) :: :ok | {:error, term()}
   def clear_replacement_cleanup(video_path, language) do
     state = read(video_path)
