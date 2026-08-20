@@ -10,7 +10,23 @@ defmodule Cinder.BooksB0ContractTest do
   @parity_path "docs/audits/data/books-parity-matrix-v1.json"
   @audit_path "docs/audits/2026-08-20-bookshelf-inventory.md"
   @contract_path "docs/specs/2026-08-20-books-parity-contract.md"
+  @roadmap_path ".hermes/plans/2026-08-20_154108-readarr-replacement-roadmap.md"
   @generator_path "test/support/books_b0_inventory.py"
+
+  @required_instance_inputs ~w(
+    system-status.json
+    authors.json
+    books.json
+    editions.json
+    book-files.json
+    quality-profiles.json
+    naming.json
+    media-management.json
+    download-client-config.json
+    download-clients.json
+    indexers.json
+    root-folders.json
+  )
 
   @required_categories ~w(
     long_series
@@ -58,6 +74,7 @@ defmodule Cinder.BooksB0ContractTest do
           @parity_path,
           @audit_path,
           @contract_path,
+          @roadmap_path,
           @generator_path
         ] do
       assert File.regular?(path), "missing B0 artifact: #{path}"
@@ -155,6 +172,63 @@ defmodule Cinder.BooksB0ContractTest do
     for category <- ~w(pen_name missing_isbn duplicate_title unicode_punctuation) do
       assert find_category!(corpus, category)["expect"]["identity_notes"] != []
     end
+  end
+
+  test "required edge categories are proved by frozen provider and migration evidence" do
+    corpus = read_json!(@corpus_path)
+    provider_by_id = read_json!(@provider_path)["cases"] |> Map.new(&{&1["id"], &1})
+    pair_by_id = read_json!(@provider_pair_path)["cases"] |> Map.new(&{&1["id"], &1})
+    bookshelf_files = read_json!(@bookshelf_path)["responses"]["bookfile"]
+
+    missing_isbn = find_category!(corpus, "missing_isbn")
+    missing_isbn_fixture = Map.fetch!(provider_by_id, missing_isbn["provider_fixture_id"])
+
+    assert Enum.any?(
+             missing_isbn_fixture["selected_work"]["editions"],
+             &is_nil(&1["isbn13"])
+           )
+
+    duplicate = find_category!(corpus, "duplicate_title")
+    duplicate_pair = Map.fetch!(pair_by_id, duplicate["id"])
+    duplicate_expected = duplicate_pair["expected"]
+
+    wrong_year_candidate =
+      Enum.find(duplicate_pair["open_library"]["results"], fn candidate ->
+        normalize(candidate["title"]) == normalize(duplicate_expected["title"]) and
+          Enum.any?(duplicate_expected["contributors"], fn contributor ->
+            normalize(contributor) in Enum.map(candidate["contributors"], &normalize/1)
+          end) and
+          not year_match?(candidate["first_publish_year"], duplicate_expected["year"])
+      end) ||
+        flunk("duplicate-title evidence lacks a title/contributor candidate with a wrong year")
+
+    assert duplicate_expected["year"] == duplicate["expect"]["expected_year"]
+    refute year_match?(wrong_year_candidate["first_publish_year"], duplicate_expected["year"])
+    refute candidate_reliable?(wrong_year_candidate, duplicate_expected)
+
+    unicode = find_category!(corpus, "unicode_punctuation")
+    unicode_display_title = unicode["expect"]["primary_title"]
+    unicode_work = Map.fetch!(provider_by_id, unicode["provider_fixture_id"])["selected_work"]
+
+    assert unicode_display_title =~ ~r/[^\x00-\x7F]/u
+    assert normalize(unicode_work["title"]) == normalize(unicode_display_title)
+    assert unicode_work["foreign_id"] == unicode["expect"]["work_id"]
+
+    already_correct = find_category!(corpus, "already_correct_file")
+
+    assert already_correct["existing_file"] == %{
+             "expected_action" => "adopt_without_download_or_move",
+             "format" => "epub",
+             "path" => "/library/ebooks/Fixture Author 1/Fixture Work 1.epub"
+           }
+
+    assert Enum.any?(bookshelf_files, fn file ->
+             file["path"] == already_correct["existing_file"]["path"] and
+               file["path"] |> Path.extname() |> String.trim_leading(".") ==
+                 already_correct["existing_file"]["format"]
+           end)
+
+    assert already_correct["expect"]["resolution"] == "adopt_existing_file"
   end
 
   test "Hardcover fixtures derive identity, edition, contributor, and media assertions from payloads" do
@@ -373,6 +447,12 @@ defmodule Cinder.BooksB0ContractTest do
     generator = File.read!(@generator_path)
     assert generator =~ "deployment-v1.json"
     assert generator =~ "latency-v1.json"
+    assert generator =~ "validate_required_inputs"
+    assert generator =~ "render_and_validate_artifacts"
+    assert generator =~ "tempfile.NamedTemporaryFile"
+    assert generator =~ "delete=False"
+    assert generator =~ "os.fsync"
+    assert generator =~ "os.replace"
     refute generator =~ "d9ee730e5c70326e8e19329417fc37a3e3bed9dd36ae357d59af0863a54172f8"
     refute generator =~ "c21c4134fdb710481ed69db05bf943b0acdbbf60"
 
@@ -437,6 +517,42 @@ defmodule Cinder.BooksB0ContractTest do
       assert metric["p95_ms"] >= metric["p50_ms"]
       assert metric["max_ms"] >= metric["p95_ms"]
       assert is_binary(metric["method"])
+    end
+  end
+
+  @tag :tmp_dir
+  test "missing or malformed snapshots fail cleanly without changing existing outputs", %{
+    tmp_dir: tmp
+  } do
+    for scenario <- ~w(missing malformed) do
+      scenario_root = Path.join(tmp, scenario)
+      snapshot = Path.join(scenario_root, "snapshot")
+      output = Path.join(scenario_root, "output")
+      inventory_target = Path.join(output, @inventory_path)
+      fixture_target = Path.join(output, @bookshelf_path)
+
+      File.mkdir_p!(snapshot)
+      File.mkdir_p!(Path.dirname(inventory_target))
+      File.mkdir_p!(Path.dirname(fixture_target))
+      File.write!(inventory_target, "existing inventory\n")
+      File.write!(fixture_target, "existing fixture\n")
+
+      if scenario == "malformed" do
+        write_malformed_snapshot!(snapshot)
+      end
+
+      {message, status} =
+        System.cmd(
+          "python3",
+          [@generator_path, "--snapshot-dir", snapshot, "--output-root", output],
+          stderr_to_stdout: true
+        )
+
+      assert status != 0
+      assert message =~ "B0 inventory error:"
+      refute message =~ "Traceback"
+      assert File.read!(inventory_target) == "existing inventory\n"
+      assert File.read!(fixture_target) == "existing fixture\n"
     end
   end
 
@@ -566,6 +682,7 @@ defmodule Cinder.BooksB0ContractTest do
 
   test "the contract locks B0 decisions and assigns eBook/audio work to B6/B7" do
     contract = File.read!(@contract_path)
+    roadmap = File.read!(@roadmap_path)
 
     for boundary <- [
           "Author identity and aliases",
@@ -587,6 +704,8 @@ defmodule Cinder.BooksB0ContractTest do
 
     for disposition <- @dispositions, do: assert(contract =~ disposition)
 
+    assert contract =~ @roadmap_path
+    assert roadmap =~ "## B0 — Readarr inventory, parity contract, and labeled corpus"
     assert contract =~ "Open Library as primary plus a Hardcover-compatible secondary adapter"
     assert contract =~ "40/40 requests returned HTTP 429"
     assert contract =~ "Preserve release filenames"
@@ -595,6 +714,20 @@ defmodule Cinder.BooksB0ContractTest do
     assert contract =~ "B7 owns audiobook publication, scan, and migration"
     refute contract =~ "B8 migration"
     assert contract =~ "No books production code may land before B0"
+  end
+
+  defp write_malformed_snapshot!(snapshot) do
+    File.write!(Path.join(snapshot, "deployment-v1.json"), "{malformed")
+    File.write!(Path.join(snapshot, "latency-v1.json"), "{}")
+
+    for instance <- ~w(ebooks audiobooks) do
+      directory = Path.join(snapshot, instance)
+      File.mkdir_p!(directory)
+
+      for filename <- @required_instance_inputs do
+        File.write!(Path.join(directory, filename), "{}")
+      end
+    end
   end
 
   defp find_category!(corpus, category) do

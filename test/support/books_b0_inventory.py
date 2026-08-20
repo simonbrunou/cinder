@@ -19,12 +19,30 @@ from collections import Counter
 from copy import deepcopy
 import hashlib
 import json
+import os
 from pathlib import Path
 import sys
+import tempfile
 
 CAPTURED_AT = "2026-08-20"
 INVENTORY_PATH = Path("docs/audits/data/bookshelf-inventory-v1.json")
 FIXTURE_PATH = Path("test/support/fixtures/books/bookshelf-api-v1.json")
+INSTANCE_NAMES = ("ebooks", "audiobooks")
+REQUIRED_ROOT_INPUTS = ("deployment-v1.json", "latency-v1.json")
+REQUIRED_INSTANCE_INPUTS = (
+    "system-status.json",
+    "authors.json",
+    "books.json",
+    "editions.json",
+    "book-files.json",
+    "quality-profiles.json",
+    "naming.json",
+    "media-management.json",
+    "download-client-config.json",
+    "download-clients.json",
+    "indexers.json",
+    "root-folders.json",
+)
 
 
 def read(path: Path):
@@ -33,6 +51,18 @@ def read(path: Path):
 
 def encode(value) -> str:
     return json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+
+
+def validate_required_inputs(snapshot: Path) -> None:
+    required = [snapshot / name for name in REQUIRED_ROOT_INPUTS]
+    required.extend(
+        snapshot / instance / name
+        for instance in INSTANCE_NAMES
+        for name in REQUIRED_INSTANCE_INPUTS
+    )
+    missing = [str(path.relative_to(snapshot)) for path in required if not path.is_file()]
+    if missing:
+        raise ValueError("missing required snapshot inputs: " + ", ".join(missing))
 
 
 def private_snapshot_manifest(snapshot: Path) -> dict:
@@ -418,6 +448,53 @@ def bookshelf_fixture(snapshot: Path) -> dict:
     }
 
 
+def render_and_validate_artifacts(snapshot: Path) -> dict[Path, str]:
+    artifacts = {
+        INVENTORY_PATH: inventory(snapshot),
+        FIXTURE_PATH: bookshelf_fixture(snapshot),
+    }
+    rendered = {relative: encode(value) for relative, value in artifacts.items()}
+
+    for relative, content in rendered.items():
+        if json.loads(content) != artifacts[relative]:
+            raise ValueError(f"rendered artifact failed validation: {relative}")
+
+    return rendered
+
+
+def write_artifacts(output_root: Path, artifacts: dict[Path, str]) -> None:
+    temporary_paths = {}
+
+    try:
+        for relative, content in artifacts.items():
+            target = output_root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=target.parent,
+                prefix=f".{target.name}.",
+                delete=False,
+            ) as temporary:
+                temporary_path = Path(temporary.name)
+                temporary_paths[target] = temporary_path
+                temporary.write(content)
+                temporary.flush()
+                os.fsync(temporary.fileno())
+    except Exception:
+        for temporary_path in temporary_paths.values():
+            temporary_path.unlink(missing_ok=True)
+        raise
+
+    try:
+        for target, temporary_path in temporary_paths.items():
+            os.replace(temporary_path, target)
+    finally:
+        for temporary_path in temporary_paths.values():
+            temporary_path.unlink(missing_ok=True)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--snapshot-dir", required=True, type=Path)
@@ -425,25 +502,26 @@ def main() -> None:
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
 
-    artifacts = {
-        INVENTORY_PATH: inventory(args.snapshot_dir),
-        FIXTURE_PATH: bookshelf_fixture(args.snapshot_dir),
-    }
+    validate_required_inputs(args.snapshot_dir)
+    artifacts = render_and_validate_artifacts(args.snapshot_dir)
     mismatches = []
-    for relative, value in artifacts.items():
+    for relative, content in artifacts.items():
         target = args.output_root / relative
-        content = encode(value)
         if args.check:
             if not target.is_file() or target.read_text(encoding="utf-8") != content:
                 mismatches.append(str(relative))
-        else:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
 
     if mismatches:
         print("B0 artifact mismatch: " + ", ".join(mismatches), file=sys.stderr)
         raise SystemExit(1)
 
+    if not args.check:
+        write_artifacts(args.output_root, artifacts)
+
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as error:
+        print(f"B0 inventory error: {error}", file=sys.stderr)
+        raise SystemExit(1) from None

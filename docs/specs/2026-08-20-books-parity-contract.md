@@ -1,7 +1,7 @@
 # Books B0 — inventory and parity contract
 
 **Status:** Accepted for B0 on 2026-08-20
-**Roadmap:** `ROADMAP.md` Part V, milestone B0
+**Roadmap:** `.hermes/plans/2026-08-20_154108-readarr-replacement-roadmap.md`, milestone B0
 **Evidence:**
 [`bookshelf-inventory-v1.json`](../audits/data/bookshelf-inventory-v1.json),
 [`bookshelf inventory audit`](../audits/2026-08-20-bookshelf-inventory.md),
