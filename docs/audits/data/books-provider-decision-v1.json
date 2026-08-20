@@ -1,0 +1,44 @@
+{
+  "captured_at": "2026-08-20",
+  "corpus_size": 40,
+  "decision": {
+    "google_books_role": "optional enrichment only; keyless evaluation was operationally unavailable",
+    "hardcover_compatible_adapter_required": true,
+    "open_library_primary": true,
+    "remaining_unresolved_case_ids": [
+      "count-monte-cristo",
+      "leviathan-wakes",
+      "time-war"
+    ],
+    "sufficient_for_b2": true,
+    "threshold": "at least 90% reliable work identity with zero silent first-result fallbacks",
+    "threshold_ratio": 0.9
+  },
+  "measurements": {
+    "google_books_keyless": {
+      "attempts": 40,
+      "http_429": 40,
+      "reliably_resolved": 0,
+      "usable_for_cutover": false
+    },
+    "open_library": {
+      "attempts": 40,
+      "coverage": 0.775,
+      "reliably_resolved": 31
+    },
+    "open_library_plus_hardcover": {
+      "coverage": 0.925,
+      "reliably_resolved": 37
+    }
+  },
+  "notes": [
+    "Google Books coverage was not inferred from failed requests; all keyless calls returned HTTP 429.",
+    "The required Hardcover-compatible secondary adapter is backed by the separately frozen provider-v1.json evidence.",
+    "The remaining three cases are explicit unresolved outcomes, not accepted fuzzy fallbacks."
+  ],
+  "source_fixtures": {
+    "hardcover": "test/support/fixtures/books/provider-v1.json",
+    "open_library_and_google": "test/support/fixtures/books/metadata-provider-pair-v1.json"
+  },
+  "version": 1
+}
