@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import posixpath
+import stat
 import sys
 import time
 
@@ -26,6 +27,7 @@ SYS_RENAMEAT2 = {"x86_64": 316, "amd64": 316, "aarch64": 276, "arm64": 276}.get(
 MERGERFS_FULLPATH = "user.mergerfs.fullpath"
 MERGERFS_BASEPATH = "user.mergerfs.basepath"
 MERGERFS_ALLPATHS = "user.mergerfs.allpaths"
+MERGERFS_INODECALC = "user.mergerfs.inodecalc"
 
 
 class OpenHow(ctypes.Structure):
@@ -151,7 +153,8 @@ def hold_open_mergerfs(root, relative, flags, mode):
 
     try:
         basepath, backing_relative = mergerfs_backing_location_fd(union_fd)
-        union_identity = file_identity(union_fd)
+        logical_identity = file_identity(union_fd)
+        union_identity = legacy_union_identity(root, union_fd)
         backing_flags = flags & ~(os.O_CREAT | os.O_EXCL | os.O_TRUNC)
         backing_fd = open_at_root(basepath, backing_relative, backing_flags)
         try:
@@ -160,7 +163,7 @@ def hold_open_mergerfs(root, relative, flags, mode):
                 relative,
                 basepath,
                 backing_relative,
-                union_identity,
+                logical_identity,
                 backing_fd,
             )
             if mode == "write":
@@ -194,14 +197,34 @@ def file_identity(fd):
     return [stat.st_dev, stat.st_rdev, stat.st_ino]
 
 
+def legacy_union_identity(root, fd):
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        return None
+    try:
+        inodecalc = os.fsdecode(
+            os.getxattr(posixpath.join(root, ".mergerfs"), MERGERFS_INODECALC)
+        )
+    except OSError:
+        return None
+    if inodecalc in {
+        "passthrough",
+        "devino-hash",
+        "devino-hash32",
+        "hybrid-hash",
+        "hybrid-hash32",
+    }:
+        return file_identity(fd)
+    return None
+
+
 def verify_mergerfs_mapping(
-    root, relative, basepath, backing_relative, union_identity, backing_fd
+    root, relative, basepath, backing_relative, logical_identity, backing_fd
 ):
     current_union = open_mergerfs_path(root, relative)
     try:
         current_basepath, current_relative = mergerfs_backing_location_fd(current_union)
         if (
-            file_identity(current_union) != union_identity
+            file_identity(current_union) != logical_identity
             or current_basepath != basepath
             or current_relative != backing_relative
         ):
@@ -228,26 +251,30 @@ def create_mergerfs_file(root, relative, flags):
         os.close(parent_fd)
     backing_relative = posixpath.join(backing_parent, basename)
     fd = open_at_root(basepath, backing_relative, flags | os.O_CREAT | os.O_EXCL, 0o600)
+    identity = file_identity(fd)
     try:
         wait_for_unique_path(
-            root, relative, posixpath.join(basepath, backing_relative)
+            root, relative, basepath, backing_relative, identity
         )
     except BaseException:
         try:
-            unlink_created_backing(basepath, backing_relative, fd)
+            remove_created_backing(basepath, backing_relative, identity)
         finally:
             os.close(fd)
         raise
     return fd, None
 
 
-def unlink_created_backing(basepath, relative, fd):
+def remove_created_backing(basepath, relative, identity, directory=False):
     parent, name = open_parent(basepath, relative)
     try:
         stat = os.stat(name, dir_fd=parent, follow_symlinks=False)
-        if [stat.st_dev, stat.st_rdev, stat.st_ino] != file_identity(fd):
-            raise OSError(errno.ESTALE, "created mergerfs backing file changed")
-        os.unlink(name, dir_fd=parent)
+        if [stat.st_dev, stat.st_rdev, stat.st_ino] != identity:
+            raise OSError(errno.ESTALE, "created mergerfs backing path changed")
+        if directory:
+            os.rmdir(name, dir_fd=parent)
+        else:
+            os.unlink(name, dir_fd=parent)
         os.fsync(parent)
     finally:
         os.close(parent)
@@ -388,7 +415,8 @@ def mergerfs_allpaths(fd):
     return [posixpath.normpath(os.fsdecode(path)) for path in paths if path]
 
 
-def wait_for_unique_path(root, relative, expected_path):
+def wait_for_unique_path(root, relative, basepath, backing_relative, expected_identity):
+    expected_path = posixpath.join(basepath, backing_relative)
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         root_fd = open_root(root)
@@ -400,7 +428,13 @@ def wait_for_unique_path(root, relative, expected_path):
         else:
             try:
                 if mergerfs_allpaths(fd) == [posixpath.normpath(expected_path)]:
-                    return
+                    current = open_at_root(basepath, backing_relative, O_PATH | O_NOFOLLOW)
+                    try:
+                        if file_identity(current) == expected_identity:
+                            return
+                        raise OSError(errno.ESTALE, "mergerfs backing path changed")
+                    finally:
+                        os.close(current)
                 raise OSError(errno.EEXIST, "logical mergerfs path spans backing branches")
             finally:
                 os.close(fd)
@@ -524,13 +558,30 @@ def mkdir_near(args):
         finally:
             os.umask(old_umask)
         try:
-            sync_parents(parent)
-            wait_for_unique_path(
-                args[0], args[1], posixpath.join(basepath, backing_relative)
+            created = open_at_root(
+                basepath,
+                backing_relative,
+                os.O_RDONLY | O_DIRECTORY | O_NOFOLLOW,
             )
         except OSError as exc:
             fail("mkdir_near", "post_effect", exc)
             return
+        try:
+            identity = file_identity(created)
+            sync_parents(parent)
+            wait_for_unique_path(
+                args[0], args[1], basepath, backing_relative, identity
+            )
+        except OSError as exc:
+            try:
+                remove_created_backing(basepath, backing_relative, identity, directory=True)
+            except OSError as rollback_exc:
+                fail("mkdir_near", "post_effect", rollback_exc)
+            else:
+                fail("mkdir_near", "pre_effect", exc)
+            return
+        finally:
+            os.close(created)
         emit({"ok": "mkdir_near"})
     finally:
         os.close(parent)
