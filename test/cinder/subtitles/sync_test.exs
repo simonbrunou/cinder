@@ -491,7 +491,7 @@ defmodule Cinder.Subtitles.SyncTest do
       import os
       import sys
 
-      if sys.argv[1] != "mkdir":
+      if sys.argv[1] not in ("mkdir", "mkdir_near"):
           os.execv(sys.executable, [sys.executable, #{inspect(real_helper)}] + sys.argv[1:])
 
       directory = os.path.join(sys.argv[2], sys.argv[3])
@@ -504,7 +504,7 @@ defmodule Cinder.Subtitles.SyncTest do
 
     Application.put_env(:cinder, :rooted_filesystem_helper, helper)
 
-    assert {:error, {:effect_committed, "mkdir", _reason}} =
+    assert {:error, {:effect_committed, "mkdir_near", _reason}} =
              AtomicFile.write(path, shifted_subtitle(original), original, operation_id)
 
     assert File.read!(staged) == "attacker-owned"

@@ -31,7 +31,7 @@ defmodule Cinder.Library.Filesystem.Disk do
     "EROFS" => :erofs,
     "EXDEV" => :exdev
   }
-  @rooted_effect_operations ~w(chmod exchange rename unlink rmdir mkdir)
+  @rooted_effect_operations ~w(chmod exchange rename unlink rmdir mkdir mkdir_near)
 
   @impl true
   def dir?(path), do: File.dir?(path)
@@ -58,6 +58,22 @@ defmodule Cinder.Library.Filesystem.Disk do
     case rooted_location(dir) do
       {:ok, root, relative} -> run_rooted("mkdir", [root, relative, Integer.to_string(mode, 8)])
       :outside_roots -> with :ok <- File.mkdir(dir), do: File.chmod(dir, mode)
+    end
+  end
+
+  @doc false
+  def mkdir_exclusive_near(dir, anchor, mode) do
+    case {rooted_location(dir), rooted_location(anchor)} do
+      {{:ok, root, relative}, {:ok, root, anchor_relative}} ->
+        run_rooted("mkdir_near", [
+          root,
+          relative,
+          anchor_relative,
+          Integer.to_string(mode, 8)
+        ])
+
+      _ ->
+        mkdir_exclusive(dir, mode)
     end
   end
 

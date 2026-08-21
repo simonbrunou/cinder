@@ -8,7 +8,7 @@ import os
 import platform
 import posixpath
 import sys
-
+import time
 
 LIBC = ctypes.CDLL(None, use_errno=True)
 O_PATH = getattr(os, "O_PATH", 0o10000000)
@@ -23,6 +23,8 @@ SYS_OPENAT2 = 437
 SYS_RENAMEAT2 = {"x86_64": 316, "amd64": 316, "aarch64": 276, "arm64": 276}.get(
     platform.machine().lower()
 )
+MERGERFS_FULLPATH = "user.mergerfs.fullpath"
+MERGERFS_BASEPATH = "user.mergerfs.basepath"
 
 
 class OpenHow(ctypes.Structure):
@@ -115,6 +117,13 @@ def hold_open(root, relative, mode):
     }
     if mode not in modes:
         raise OSError(errno.EINVAL, "invalid open mode")
+    if mergerfs_mount(root):
+        fd = hold_open_mergerfs(root, relative, modes[mode], mode)
+        emit({"ok": {"fd": fd}})
+        sys.stdin.buffer.read()
+        os.close(fd)
+        return
+
     root_fd = open_root(root)
     try:
         fd = open_beneath(root_fd, relative, modes[mode], 0o600 if mode in ("create", "write") else 0)
@@ -123,6 +132,53 @@ def hold_open(root, relative, mode):
     emit({"ok": {"fd": fd}})
     sys.stdin.buffer.read()
     os.close(fd)
+
+
+def hold_open_mergerfs(root, relative, flags, mode):
+    if mode == "write":
+        parent, name = open_parent(root, relative)
+        try:
+            try:
+                basepath, backing_relative = mergerfs_backing_location(parent, name)
+            except OSError as exc:
+                if exc.errno != errno.ENOENT:
+                    raise
+                basepath, backing_parent = mergerfs_backing_location_fd(parent)
+                backing_relative = posixpath.join(backing_parent, name)
+        finally:
+            os.close(parent)
+    elif mode == "create":
+        parent_relative = posixpath.dirname(checked_relative(relative)) or "."
+        basename = posixpath.basename(relative)
+        root_fd = open_root(root)
+        try:
+            parent_fd = open_beneath(
+                root_fd, parent_relative, os.O_RDONLY | O_DIRECTORY | O_NOFOLLOW
+            )
+        finally:
+            os.close(root_fd)
+        try:
+            basepath, backing_parent = mergerfs_backing_location_fd(parent_fd)
+        finally:
+            os.close(parent_fd)
+        backing_relative = posixpath.join(backing_parent, basename)
+    else:
+        parent, name = open_parent(root, relative)
+        try:
+            basepath, backing_relative = mergerfs_backing_location(parent, name)
+        finally:
+            os.close(parent)
+
+    root_fd = open_root(basepath)
+    try:
+        return open_beneath(
+            root_fd,
+            backing_relative,
+            flags,
+            0o600 if mode in ("create", "write") else 0,
+        )
+    finally:
+        os.close(root_fd)
 
 
 def rename_exchange(src_parent, src_name, dst_parent, dst_name):
@@ -141,6 +197,124 @@ def rename_exchange(src_parent, src_name, dst_parent, dst_name):
         raise OSError(number, os.strerror(number))
 
 
+def mountinfo_unescape(value):
+    return (
+        value.replace("\\040", " ")
+        .replace("\\011", "\t")
+        .replace("\\012", "\n")
+        .replace("\\134", "\\")
+    )
+
+
+def mergerfs_mount(path):
+    path = posixpath.normpath(path)
+    match = None
+    with open("/proc/self/mountinfo", encoding="utf-8") as mountinfo:
+        for line in mountinfo:
+            fields = line.split()
+            separator = fields.index("-")
+            mountpoint = mountinfo_unescape(fields[4])
+            if path == mountpoint or path.startswith(mountpoint.rstrip("/") + "/"):
+                candidate = (len(mountpoint), fields[separator + 1] == "fuse.mergerfs")
+                if match is None or candidate[0] > match[0]:
+                    match = candidate
+    return match is not None and match[1]
+
+
+def mergerfs_backing_location(parent, name):
+    fd = os.open(name, os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC, dir_fd=parent)
+    try:
+        return mergerfs_backing_location_fd(fd)
+    finally:
+        os.close(fd)
+
+
+def mergerfs_backing_location_fd(fd):
+    fullpath = os.fsdecode(os.getxattr(fd, MERGERFS_FULLPATH))
+    basepath = os.fsdecode(os.getxattr(fd, MERGERFS_BASEPATH))
+    if not posixpath.isabs(fullpath) or not posixpath.isabs(basepath):
+        raise OSError(errno.EINVAL, "invalid mergerfs backing path")
+
+    fullpath = posixpath.normpath(fullpath)
+    basepath = posixpath.normpath(basepath)
+    if posixpath.commonpath((basepath, fullpath)) != basepath:
+        raise OSError(errno.EXDEV, "mergerfs backing path escapes branch")
+
+    return basepath, checked_relative(posixpath.relpath(fullpath, basepath))
+
+
+def exchange_mergerfs(src_parent, src_name, dst_parent, dst_name):
+    src_base, src_relative = mergerfs_backing_location(src_parent, src_name)
+    dst_base, dst_relative = mergerfs_backing_location(dst_parent, dst_name)
+    src_dir = posixpath.dirname(src_relative) or "."
+    dst_dir = posixpath.dirname(dst_relative) or "."
+    if src_base != dst_base:
+        raise OSError(errno.EXDEV, "mergerfs exchange crosses backing filesystems")
+
+    root_fd = open_root(src_base)
+    try:
+        src_backing_parent = open_beneath(
+            root_fd, src_dir, os.O_RDONLY | O_DIRECTORY | O_NOFOLLOW
+        )
+        dst_backing_parent = open_beneath(
+            root_fd, dst_dir, os.O_RDONLY | O_DIRECTORY | O_NOFOLLOW
+        )
+    finally:
+        os.close(root_fd)
+
+    try:
+        rename_exchange(
+            src_backing_parent,
+            posixpath.basename(src_relative),
+            dst_backing_parent,
+            posixpath.basename(dst_relative),
+        )
+        try:
+            sync_parents(src_backing_parent, dst_backing_parent)
+        except OSError as exc:
+            fail("exchange", "post_effect", exc)
+            return False
+    finally:
+        os.close(src_backing_parent)
+        os.close(dst_backing_parent)
+
+    return True
+
+
+def mergerfs_near_relative(root, anchor_relative, relative):
+    anchor_parent, anchor_name = open_parent(root, anchor_relative)
+    try:
+        basepath, backing_anchor = mergerfs_backing_location(anchor_parent, anchor_name)
+    finally:
+        os.close(anchor_parent)
+
+    logical_parts = checked_relative(anchor_relative).split("/")
+    backing_parts = checked_relative(backing_anchor).split("/")
+    if backing_parts[-len(logical_parts) :] != logical_parts:
+        raise OSError(errno.EXDEV, "mergerfs backing path does not match library root")
+
+    prefix = backing_parts[: -len(logical_parts)]
+    return basepath, posixpath.join(*prefix, checked_relative(relative))
+
+
+def wait_for_path(root, relative):
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        root_fd = open_root(root)
+        try:
+            fd = open_beneath(root_fd, relative, O_PATH | O_NOFOLLOW)
+        except OSError as exc:
+            if exc.errno != errno.ENOENT:
+                raise
+        else:
+            os.close(fd)
+            return
+        finally:
+            os.close(root_fd)
+        time.sleep(0.05)
+    raise OSError(errno.EIO, "mergerfs path remained stale")
+
+
 def sync_parents(*parents):
     seen = set()
     for parent in parents:
@@ -155,7 +329,19 @@ def exchange(args):
     src_parent, src_name = open_parent(args[0], args[1])
     dst_parent, dst_name = open_parent(args[2], args[3])
     try:
-        rename_exchange(src_parent, src_name, dst_parent, dst_name)
+        try:
+            rename_exchange(src_parent, src_name, dst_parent, dst_name)
+        except OSError as exc:
+            if (
+                exc.errno != errno.EINVAL
+                or not mergerfs_mount(args[0])
+                or not mergerfs_mount(args[2])
+            ):
+                raise
+            if not exchange_mergerfs(src_parent, src_name, dst_parent, dst_name):
+                return
+            emit({"ok": "exchange"})
+            return
         try:
             sync_parents(src_parent, dst_parent)
         except OSError as exc:
@@ -219,6 +405,39 @@ def mkdir(args):
         os.close(parent)
 
 
+def mkdir_near(args):
+    if not mergerfs_mount(args[0]):
+        mkdir([args[0], args[1], args[3]])
+        return
+
+    basepath, backing_relative = mergerfs_near_relative(args[0], args[2], args[1])
+    parent_name = posixpath.dirname(backing_relative) or "."
+    basename = posixpath.basename(backing_relative)
+    root_fd = open_root(basepath)
+    try:
+        parent = open_beneath(
+            root_fd, parent_name, os.O_RDONLY | O_DIRECTORY | O_NOFOLLOW
+        )
+    finally:
+        os.close(root_fd)
+
+    try:
+        old_umask = os.umask(0o077)
+        try:
+            os.mkdir(basename, int(args[3], 8), dir_fd=parent)
+        finally:
+            os.umask(old_umask)
+        try:
+            sync_parents(parent)
+            wait_for_path(args[0], args[1])
+        except OSError as exc:
+            fail("mkdir_near", "post_effect", exc)
+            return
+        emit({"ok": "mkdir_near"})
+    finally:
+        os.close(parent)
+
+
 def chmod(args):
     root_fd = open_root(args[0])
     try:
@@ -258,6 +477,8 @@ def main():
         unlink(args, directory=True)
     elif operation == "mkdir" and len(args) == 3:
         mkdir(args)
+    elif operation == "mkdir_near" and len(args) == 4:
+        mkdir_near(args)
     elif operation == "chmod" and len(args) == 3:
         chmod(args)
     elif operation == "sync_parent" and len(args) == 2:
