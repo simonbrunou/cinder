@@ -40,7 +40,7 @@
               elixir
               pkgs.git
             ]
-            ++ pkgs.lib.optional pkgs.stdenv.isLinux pkgs.inotify-tools;
+            ++ pkgs.lib.optional pkgs.stdenv.hostPlatform.isLinux pkgs.inotify-tools;
 
             # C.UTF-8 silences Erlang's latin1 locale warning without a glibcLocales
             # archive (glibc ships C.UTF-8 built in).
