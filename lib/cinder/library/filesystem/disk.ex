@@ -505,6 +505,10 @@ defmodule Cinder.Library.Filesystem.Disk do
             {:error, reason}
         end
 
+      {:ok, %{"error" => %{"phase" => "post_effect"} = error}} ->
+        close_rooted_port(port)
+        {:error, {:effect_committed, "hold", error}}
+
       {:ok, %{"error" => error}} ->
         close_rooted_port(port)
         {:error, rooted_reason(error)}

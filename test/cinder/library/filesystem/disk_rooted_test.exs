@@ -169,6 +169,23 @@ defmodule Cinder.Library.Filesystem.DiskRootedTest do
   end
 
   @tag :tmp_dir
+  test "a rooted hold reporting a committed effect stays committed", %{root: root, tmp: tmp} do
+    helper = Path.join(tmp, "post_effect_hold.py")
+
+    File.write!(
+      helper,
+      ~S|import json
+print(json.dumps({"error": {"operation": "hold", "phase": "post_effect", "reason": "EEXIST"}}))
+|
+    )
+
+    Application.put_env(:cinder, :rooted_filesystem_helper, helper)
+
+    assert {:error, {:effect_committed, "hold", %{"reason" => "EEXIST"}}} =
+             Disk.create_bound(Path.join(root, "backup.srt"), "managed")
+  end
+
+  @tag :tmp_dir
   test "a rename completed before parent sync failed is still successful", %{root: root, tmp: tmp} do
     helper = Path.join(tmp, "post_effect_rename.py")
 

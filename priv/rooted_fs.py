@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import posixpath
+import secrets
 import stat
 import sys
 import time
@@ -20,6 +21,7 @@ RESOLVE_NO_MAGICLINKS = 0x02
 RESOLVE_NO_SYMLINKS = 0x04
 RESOLVE_BENEATH = 0x08
 RENAME_EXCHANGE = 0x02
+RENAME_NOREPLACE = 0x01
 SYS_OPENAT2 = 437
 SYS_RENAMEAT2 = {"x86_64": 316, "amd64": 316, "aarch64": 276, "arm64": 276}.get(
     platform.machine().lower()
@@ -32,6 +34,10 @@ MERGERFS_INODECALC = "user.mergerfs.inodecalc"
 
 class OpenHow(ctypes.Structure):
     _fields_ = [("flags", ctypes.c_uint64), ("mode", ctypes.c_uint64), ("resolve", ctypes.c_uint64)]
+
+
+class EffectCommittedError(OSError):
+    pass
 
 
 def emit(value):
@@ -207,7 +213,6 @@ def legacy_union_identity(root, fd):
     except OSError:
         return None
     if inodecalc in {
-        "passthrough",
         "devino-hash",
         "devino-hash32",
         "hybrid-hash",
@@ -256,31 +261,16 @@ def create_mergerfs_file(root, relative, flags):
         wait_for_unique_path(
             root, relative, basepath, backing_relative, identity
         )
+    except OSError as exc:
+        os.close(fd)
+        raise EffectCommittedError(exc.errno or errno.EIO, str(exc)) from exc
     except BaseException:
-        try:
-            remove_created_backing(basepath, backing_relative, identity)
-        finally:
-            os.close(fd)
+        os.close(fd)
         raise
     return fd, None
 
 
-def remove_created_backing(basepath, relative, identity, directory=False):
-    parent, name = open_parent(basepath, relative)
-    try:
-        stat = os.stat(name, dir_fd=parent, follow_symlinks=False)
-        if [stat.st_dev, stat.st_rdev, stat.st_ino] != identity:
-            raise OSError(errno.ESTALE, "created mergerfs backing path changed")
-        if directory:
-            os.rmdir(name, dir_fd=parent)
-        else:
-            os.unlink(name, dir_fd=parent)
-        os.fsync(parent)
-    finally:
-        os.close(parent)
-
-
-def rename_exchange(src_parent, src_name, dst_parent, dst_name):
+def rename_with_flags(src_parent, src_name, dst_parent, dst_name, flags):
     if SYS_RENAMEAT2 is None:
         raise OSError(errno.ENOSYS, "unsupported architecture")
     result = LIBC.syscall(
@@ -289,11 +279,19 @@ def rename_exchange(src_parent, src_name, dst_parent, dst_name):
         ctypes.c_char_p(os.fsencode(src_name)),
         dst_parent,
         ctypes.c_char_p(os.fsencode(dst_name)),
-        RENAME_EXCHANGE,
+        flags,
     )
     if result < 0:
         number = ctypes.get_errno()
         raise OSError(number, os.strerror(number))
+
+
+def rename_exchange(src_parent, src_name, dst_parent, dst_name):
+    rename_with_flags(src_parent, src_name, dst_parent, dst_name, RENAME_EXCHANGE)
+
+
+def rename_noreplace(parent, source, destination):
+    rename_with_flags(parent, source, parent, destination, RENAME_NOREPLACE)
 
 
 def mountinfo_unescape(value):
@@ -400,11 +398,18 @@ def check_logical_absence(root, relative):
     parent, name = open_parent(root, relative)
     try:
         try:
-            os.stat(name, dir_fd=parent, follow_symlinks=False)
+            fd = os.open(name, os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC, dir_fd=parent)
         except OSError as exc:
             if exc.errno == errno.ENOENT:
                 return
             raise
+        try:
+            if len(mergerfs_allpaths(fd)) > 1:
+                raise EffectCommittedError(
+                    errno.EEXIST, "logical mergerfs path spans backing branches"
+                )
+        finally:
+            os.close(fd)
         raise OSError(errno.EEXIST, "logical mergerfs path already exists")
     finally:
         os.close(parent)
@@ -553,32 +558,33 @@ def mkdir_near(args):
 
     try:
         old_umask = os.umask(0o077)
+        private = f".{basename}.cinder-create-{secrets.token_hex(16)}"
         try:
-            os.mkdir(basename, int(args[3], 8), dir_fd=parent)
+            os.mkdir(private, int(args[3], 8), dir_fd=parent)
         finally:
             os.umask(old_umask)
         try:
-            created = open_at_root(
-                basepath,
-                backing_relative,
+            created = os.open(
+                private,
                 os.O_RDONLY | O_DIRECTORY | O_NOFOLLOW,
+                dir_fd=parent,
             )
         except OSError as exc:
             fail("mkdir_near", "post_effect", exc)
             return
         try:
             identity = file_identity(created)
+            try:
+                rename_noreplace(parent, private, basename)
+            except OSError as exc:
+                fail("mkdir_near", "post_effect", exc)
+                return
             sync_parents(parent)
             wait_for_unique_path(
                 args[0], args[1], basepath, backing_relative, identity
             )
         except OSError as exc:
-            try:
-                remove_created_backing(basepath, backing_relative, identity, directory=True)
-            except OSError as rollback_exc:
-                fail("mkdir_near", "post_effect", rollback_exc)
-            else:
-                fail("mkdir_near", "pre_effect", exc)
+            fail("mkdir_near", "post_effect", exc)
             return
         finally:
             os.close(created)
@@ -641,5 +647,6 @@ if __name__ == "__main__":
     try:
         main()
     except OSError as exc:
-        fail(operation, "pre_effect", exc)
+        phase = "post_effect" if isinstance(exc, EffectCommittedError) else "pre_effect"
+        fail(operation, phase, exc)
         sys.exit(1)
