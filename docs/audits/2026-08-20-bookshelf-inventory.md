@@ -51,7 +51,7 @@ verify the documented transformation without exposing household records.
 | Surface | eBooks | Audiobooks |
 |---|---:|---:|
 | Authors | 2 (2 monitored) | 2 (1 monitored) |
-| Works | 842 (842 monitored) | 170 (1 monitored) |
+| Works | 842 (842 monitored; 181 with files) | 170 (1 monitored; 1 with files) |
 | Editions | 2,391 (841 monitored) | 651 (169 monitored) |
 | Files | 188 | 1 |
 | Formats | 159 EPUB, 25 AZW3, 4 MOBI | 1 M4B |

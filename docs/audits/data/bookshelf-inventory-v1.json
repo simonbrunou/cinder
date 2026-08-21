@@ -22,7 +22,8 @@
         "authors": 2,
         "editions": 651,
         "files": 1,
-        "works": 170
+        "works": 170,
+        "works_with_files": 1
       },
       "download_clients": {
         "torrent": 1,
@@ -58,7 +59,8 @@
         "authors": 2,
         "editions": 2391,
         "files": 188,
-        "works": 842
+        "works": 842,
+        "works_with_files": 181
       },
       "download_clients": {
         "torrent": 1,

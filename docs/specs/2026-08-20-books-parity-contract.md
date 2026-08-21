@@ -46,7 +46,7 @@ never written to an artifact.
 | Surface | eBooks instance | Audiobooks instance |
 |---|---:|---:|
 | Authors | 2 (2 monitored) | 2 (1 monitored) |
-| Works | 842 (842 monitored) | 170 (1 monitored) |
+| Works | 842 (842 monitored; 181 with files) | 170 (1 monitored; 1 with files) |
 | Editions | 2,391 (841 monitored) | 651 (169 monitored) |
 | Files | 188 | 1 |
 | Final formats | 159 EPUB, 25 AZW3, 4 MOBI | 1 M4B |
@@ -102,7 +102,7 @@ consequence:
 | Booklore handoff | `required for cutover` | Publish under the books root without consumer DB mutation. | Existing files are verified in place. |
 | Audiobookshelf handoff | `required later` | Publish under the audiobooks root; scan failure is retryable post-commit. | B7 owns audiobook publication, scan, and migration; B6 does not publish audio. |
 | Monitoring-state adoption | `required for cutover` | Preserve flags as evidence and create no acquisition before preview confirmation. | B6 imports confirmed eBook targets; B7 separately handles audiobook targets. |
-| Automatic author monitoring | `required later` | Offer specific/future/all policies with count preview and separate confirmation. | B5 owns author policies; B6 only preserves source flags and enables no blanket automation. |
+| Automatic author monitoring | `required for cutover` | Offer specific/future/all policies with count preview and separate confirmation. | B5 owns author policies; B6 only preserves source flags and enables no blanket automation. |
 | Metadata provider set | `required for cutover` | Use Open Library primary plus Hardcover secondary; Google remains optional enrichment. | Store every source/provider ID with provenance. |
 | Identity ambiguity | `required for cutover` | Return an explained unresolved/held result instead of first-result selection. | B6 moves or downloads nothing for unresolved items. |
 | Request governance | `already provided by Cinder` | Reuse authorization, approval, quota, audit, and notification primitives. | No requester identity is invented during adoption. |
@@ -263,6 +263,10 @@ identity evidence.
 
 The operator confirmed a curated public corpus rather than committing household titles. The 40
 cases cover all roadmap categories and intentionally overlap categories:
+
+The corpus confirmation also locks one representative provider edition for every accepted case by
+foreign ID, format, language, and release date. The executable contract applies each case's
+`edition_policy` and rejects a fixture that keeps the right work while changing that edition.
 
 | Category | Cases |
 |---|---:|

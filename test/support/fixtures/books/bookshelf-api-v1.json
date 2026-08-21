@@ -322,7 +322,7 @@
     },
     "edition": [
       {
-        "asin": "FIXTURE0001",
+        "asin": "FXT0000001",
         "bookId": 1,
         "disambiguation": "",
         "foreignEditionId": "fixture-edition-001",
@@ -331,7 +331,7 @@
         "id": 1,
         "images": [],
         "isEbook": false,
-        "isbn13": "9780000000001",
+        "isbn13": "9780000000019",
         "language": "eng",
         "links": [],
         "manualAdd": false,
@@ -349,7 +349,7 @@
         "titleSlug": "fixture-edition-1"
       },
       {
-        "asin": "FIXTURE0002",
+        "asin": "FXT0000002",
         "bookId": 1,
         "disambiguation": "",
         "foreignEditionId": "fixture-edition-002",
@@ -358,7 +358,7 @@
         "id": 2,
         "images": [],
         "isEbook": false,
-        "isbn13": "9780000000002",
+        "isbn13": "9780000000026",
         "language": "eng",
         "links": [],
         "manualAdd": false,
@@ -376,7 +376,7 @@
         "titleSlug": "fixture-edition-2"
       },
       {
-        "asin": "FIXTURE0003",
+        "asin": "FXT0000003",
         "bookId": 2,
         "disambiguation": "",
         "foreignEditionId": "fixture-edition-003",
@@ -385,7 +385,7 @@
         "id": 3,
         "images": [],
         "isEbook": true,
-        "isbn13": "9780000000003",
+        "isbn13": "9780000000033",
         "language": "eng",
         "links": [],
         "manualAdd": false,
@@ -403,7 +403,7 @@
         "titleSlug": "fixture-edition-3"
       },
       {
-        "asin": "FIXTURE0004",
+        "asin": "FXT0000004",
         "bookId": 3,
         "disambiguation": "",
         "foreignEditionId": "fixture-edition-004",
@@ -412,7 +412,7 @@
         "id": 4,
         "images": [],
         "isEbook": false,
-        "isbn13": "9780000000004",
+        "isbn13": "9780000000040",
         "language": "eng",
         "links": [],
         "manualAdd": false,

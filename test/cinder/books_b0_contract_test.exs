@@ -86,6 +86,7 @@ defmodule Cinder.BooksB0ContractTest do
     provider = read_json!(@provider_path)
     titles = corpus["titles"]
     provider_by_id = Map.new(provider["cases"], &{&1["id"], &1})
+    edition_expectations = corpus["operator_confirmation"]["edition_expectations"]
 
     assert corpus["version"] == 1
     assert corpus["captured_at"] == corpus["operator_confirmation"]["confirmed_at"]
@@ -94,6 +95,13 @@ defmodule Cinder.BooksB0ContractTest do
     assert length(titles) == 40
     assert Enum.uniq_by(titles, & &1["id"]) == titles
     assert Enum.uniq_by(titles, & &1["query"]) == titles
+
+    accepted_ids =
+      titles
+      |> Enum.filter(&(&1["expect"]["provider_outcome"] == "accept"))
+      |> MapSet.new(& &1["id"])
+
+    assert Map.keys(edition_expectations) |> MapSet.new() == accepted_ids
 
     observed_categories = titles |> Enum.flat_map(& &1["categories"]) |> MapSet.new()
     assert MapSet.subset?(MapSet.new(@required_categories), observed_categories)
@@ -236,6 +244,7 @@ defmodule Cinder.BooksB0ContractTest do
     provider = read_json!(@provider_path)
     cases = provider["cases"]
     by_id = Map.new(cases, &{&1["id"], &1})
+    edition_expectations = corpus["operator_confirmation"]["edition_expectations"]
 
     assert provider["version"] == 1
     assert provider["source"]["base_url"] == "https://api.bookinfo.pro"
@@ -280,7 +289,38 @@ defmodule Cinder.BooksB0ContractTest do
         assert length(editions) >= expectation["min_editions"]
         assert fixture["observed"]["has_ebook"] == expectation["has_ebook"]
         assert fixture["observed"]["has_audiobook"] == expectation["has_audiobook"]
+
+        edition_expectation = Map.fetch!(edition_expectations, title["id"])
+
+        selected_edition =
+          Enum.find(editions, &(&1["foreign_id"] == edition_expectation["foreign_id"])) ||
+            flunk("missing expected edition for #{title["id"]}")
+
+        assert Map.take(selected_edition, ~w(foreign_id format language release_date)) ==
+                 edition_expectation
+
+        assert normalize(selected_edition["title"]) == normalize(expectation["primary_title"])
+
+        if expectation["expected_release_date"] do
+          assert String.starts_with?(
+                   selected_edition["release_date"],
+                   expectation["expected_release_date"]
+                 )
+        end
+
+        case expectation["edition_policy"] do
+          "any_matching" ->
+            assert expectation["resolution"] == "resolved_work"
+
+          "operator_selection_required" ->
+            assert expectation["resolution"] == "ambiguous_edition"
+
+          "existing_file" ->
+            assert title["existing_file"] && expectation["resolution"] == "adopt_existing_file"
+        end
       else
+        refute Map.has_key?(edition_expectations, title["id"])
+        assert expectation["edition_policy"] == "unresolved"
         refute title_match and known_contributor_match and year_match
         assert fixture["assessment"]["disposition"] == "reject"
         assert expectation["resolution"] in ~w(provider_unavailable no_reliable_match)
@@ -473,7 +513,13 @@ defmodule Cinder.BooksB0ContractTest do
 
     assert inventory["instances"]["ebooks"] == %{
              "consumer" => "booklore",
-             "counts" => %{"authors" => 2, "works" => 842, "editions" => 2391, "files" => 188},
+             "counts" => %{
+               "authors" => 2,
+               "works" => 842,
+               "works_with_files" => 181,
+               "editions" => 2391,
+               "files" => 188
+             },
              "download_clients" => %{"torrent" => 1, "usenet" => 1},
              "file_formats" => %{"azw3" => 25, "epub" => 159, "mobi" => 4},
              "import" => %{
@@ -492,7 +538,13 @@ defmodule Cinder.BooksB0ContractTest do
 
     assert inventory["instances"]["audiobooks"] == %{
              "consumer" => "audiobookshelf",
-             "counts" => %{"authors" => 2, "works" => 170, "editions" => 651, "files" => 1},
+             "counts" => %{
+               "authors" => 2,
+               "works" => 170,
+               "works_with_files" => 1,
+               "editions" => 651,
+               "files" => 1
+             },
              "download_clients" => %{"torrent" => 1, "usenet" => 1},
              "file_formats" => %{"m4b" => 1},
              "import" => %{
@@ -587,6 +639,8 @@ defmodule Cinder.BooksB0ContractTest do
     assert Enum.all?(responses["rootfolder"], &(&1["totalSpace"] == 2_000_000_000))
     assert responses["qualityprofile"] != []
     assert is_map(responses["config/naming"])
+    assert responses["config/mediamanagement"]["chownGroup"] == ""
+    assert responses["config/mediamanagement"]["recycleBin"] == ""
 
     for book <- books do
       assert MapSet.member?(author_ids, book["authorId"])
@@ -621,6 +675,17 @@ defmodule Cinder.BooksB0ContractTest do
       assert MapSet.member?(book_ids, edition["bookId"])
       assert edition["releaseDate"] =~ ~r/^200[1-4]-/
       assert edition["pageCount"] in [100, 200, 300, 400]
+      assert edition["asin"] =~ ~r/^[A-Z0-9]{10}$/
+
+      isbn_digits = edition["isbn13"] |> String.graphemes() |> Enum.map(&String.to_integer/1)
+      assert length(isbn_digits) == 13
+
+      assert isbn_digits
+             |> Enum.with_index()
+             |> Enum.sum_by(fn {digit, index} ->
+               digit * if(rem(index, 2) == 0, do: 1, else: 3)
+             end)
+             |> rem(10) == 0
     end
 
     for file <- files do
@@ -678,6 +743,9 @@ defmodule Cinder.BooksB0ContractTest do
 
     assert by_behavior["Audiobookshelf filesystem and scan handoff"]["owner_milestone"] == "B7"
     assert by_behavior["automatic author monitoring"]["owner_milestone"] == "B5"
+
+    assert by_behavior["automatic author monitoring"]["disposition"] ==
+             "required for cutover"
   end
 
   test "the contract locks B0 decisions and assigns eBook/audio work to B6/B7" do

@@ -43,6 +43,37 @@ REQUIRED_INSTANCE_INPUTS = (
     "indexers.json",
     "root-folders.json",
 )
+MEDIA_MANAGEMENT_FIELDS = (
+    "allowFingerprinting",
+    "autoUnmonitorPreviouslyDownloadedBooks",
+    "chmodFolder",
+    "copyUsingHardlinks",
+    "createEmptyAuthorFolders",
+    "deleteEmptyFolders",
+    "downloadPropersAndRepacks",
+    "extraFileExtensions",
+    "fileDate",
+    "id",
+    "importExtraFiles",
+    "minimumFreeSpaceWhenImporting",
+    "recycleBinCleanupDays",
+    "rescanAfterRefresh",
+    "setPermissionsLinux",
+    "skipFreeSpaceCheckWhenImporting",
+    "watchLibraryForChanges",
+)
+NAMING_FIELDS = (
+    "authorFolderFormat",
+    "colonReplacementFormat",
+    "id",
+    "includeAuthorName",
+    "includeBookTitle",
+    "includeQuality",
+    "renameBooks",
+    "replaceIllegalCharacters",
+    "replaceSpaces",
+    "standardBookFormat",
+)
 
 
 def read(path: Path):
@@ -121,6 +152,7 @@ def inventory(snapshot: Path) -> dict:
                 "editions": len(editions),
                 "files": len(files),
                 "works": len(books),
+                "works_with_files": len({item["bookId"] for item in files}),
             },
             "download_clients": dict(
                 sorted(Counter(client["protocol"] for client in clients).items())
@@ -225,15 +257,21 @@ def replace_book(book: dict, index: int, author_id: int) -> dict:
 
 def replace_edition(edition: dict, index: int, book_id: int) -> dict:
     value = deepcopy(edition)
+    isbn_base = f"978000000{index:03d}"
+    isbn_weighted_sum = sum(
+        int(digit) * (1 if position % 2 == 0 else 3)
+        for position, digit in enumerate(isbn_base)
+    )
+    isbn_check = -isbn_weighted_sum % 10
     value.update(
         {
-            "asin": f"FIXTURE{index:04d}",
+            "asin": f"FXT{index:07d}",
             "bookId": book_id,
             "disambiguation": "",
             "foreignEditionId": f"fixture-edition-{index:03d}",
             "id": index,
             "images": [],
-            "isbn13": f"9780000000{index:03d}",
+            "isbn13": f"{isbn_base}{isbn_check}",
             "links": [],
             "manualAdd": False,
             "overview": "Fixture edition used by the B0 API contract.",
@@ -304,6 +342,8 @@ def bookshelf_fixture(snapshot: Path) -> dict:
     raw_books = read(ebooks / "books.json")
     raw_editions = read(ebooks / "editions.json")
     raw_files = read(ebooks / "book-files.json") + read(audio / "book-files.json")
+    media_management = read(ebooks / "media-management.json")
+    naming = read(ebooks / "naming.json")
 
     authors = [
         synthetic_author(raw_authors[0], 1, "ebooks"),
@@ -410,8 +450,12 @@ def bookshelf_fixture(snapshot: Path) -> dict:
             "author": authors,
             "book": books,
             "bookfile": files,
-            "config/mediamanagement": read(ebooks / "media-management.json"),
-            "config/naming": read(ebooks / "naming.json"),
+            "config/mediamanagement": {
+                **{key: media_management[key] for key in MEDIA_MANAGEMENT_FIELDS},
+                "chownGroup": "",
+                "recycleBin": "",
+            },
+            "config/naming": {key: naming[key] for key in NAMING_FIELDS},
             "edition": editions,
             "qualityprofile": profiles,
             "rootfolder": roots,

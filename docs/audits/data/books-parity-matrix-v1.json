@@ -86,7 +86,7 @@
     {
       "acceptance": "Bulk author monitoring offers specific, future, or all-work policies with a count preview and separate confirmation.",
       "behavior": "automatic author monitoring",
-      "disposition": "required later",
+      "disposition": "required for cutover",
       "migration_consequence": "B6 stores source flags but does not enable blanket author automation.",
       "owner_milestone": "B5"
     },

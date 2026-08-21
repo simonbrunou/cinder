@@ -3,6 +3,206 @@
   "operator_confirmation": {
     "confirmed": true,
     "confirmed_at": "2026-08-20",
+    "edition_expectations": {
+      "beloved": {
+        "foreign_id": 6149,
+        "format": "Paperback",
+        "language": "eng",
+        "release_date": "2004-06-08 07:00:00"
+      },
+      "big-book-scifi": {
+        "foreign_id": 28503846,
+        "format": "Paperback",
+        "language": "eng",
+        "release_date": "2016-07-12 07:00:00"
+      },
+      "bound-and-unbound": {
+        "foreign_id": 252195647,
+        "format": "Kindle Edition",
+        "language": "eng",
+        "release_date": "2026-10-06 07:00:00"
+      },
+      "circe": {
+        "foreign_id": 35959409,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": "2018-04-10 07:00:00"
+      },
+      "dangerous-women": {
+        "foreign_id": 17279560,
+        "format": "Kindle Edition",
+        "language": "eng",
+        "release_date": "2013-12-03 08:00:00"
+      },
+      "dracula": {
+        "foreign_id": 17245,
+        "format": "Paperback",
+        "language": "eng",
+        "release_date": "1986-05-12 07:00:00"
+      },
+      "dragon-tattoo": {
+        "foreign_id": 11653337,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": null
+      },
+      "dune": {
+        "foreign_id": 17698700,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": "2010-12-30 08:00:00"
+      },
+      "eye-of-the-world": {
+        "foreign_id": 58267955,
+        "format": "Kindle Edition",
+        "language": "eng",
+        "release_date": "2009-10-24 07:00:00"
+      },
+      "foundation": {
+        "foreign_id": 29579,
+        "format": "Hardcover",
+        "language": "eng",
+        "release_date": "2004-06-01 07:00:00"
+      },
+      "foundation-trilogy": {
+        "foreign_id": 46654,
+        "format": "Mass Market Paperback",
+        "language": "eng",
+        "release_date": "1974-01-01 08:00:00"
+      },
+      "game-of-thrones": {
+        "foreign_id": 52787943,
+        "format": "Kindle Edition",
+        "language": "eng",
+        "release_date": "2003-01-01 08:00:00"
+      },
+      "good-omens": {
+        "foreign_id": 60133767,
+        "format": "Kindle Edition",
+        "language": "eng",
+        "release_date": "2011-11-22 08:00:00"
+      },
+      "handmaids-tale": {
+        "foreign_id": 7439970,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": "2012-05-15 07:00:00"
+      },
+      "her-body": {
+        "foreign_id": 34198594,
+        "format": "Kindle Edition",
+        "language": "eng",
+        "release_date": "2017-10-03 07:00:00"
+      },
+      "les-miserables": {
+        "foreign_id": 9294775,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": null
+      },
+      "lightning-thief": {
+        "foreign_id": 3273490,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": null
+      },
+      "name-of-the-rose": {
+        "foreign_id": 8694005,
+        "format": "Kindle Edition",
+        "language": "eng",
+        "release_date": "2010-07-22 07:00:00"
+      },
+      "never-let-me-go": {
+        "foreign_id": 6334,
+        "format": "Paperback",
+        "language": "eng",
+        "release_date": "2010-08-31 07:00:00"
+      },
+      "one-hundred-years": {
+        "foreign_id": 320,
+        "format": "Mass Market Paperback",
+        "language": "eng",
+        "release_date": "2003-06-24 07:00:00"
+      },
+      "orient-express": {
+        "foreign_id": 22151595,
+        "format": "Kindle Edition",
+        "language": "eng",
+        "release_date": "2012-07-06 07:00:00"
+      },
+      "philosophers-stone": {
+        "foreign_id": 42844155,
+        "format": "Kindle Edition",
+        "language": "eng",
+        "release_date": "2015-12-08 08:00:00"
+      },
+      "piranesi": {
+        "foreign_id": 52123228,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": "2020-09-15 07:00:00"
+      },
+      "sorcerers-stone": {
+        "foreign_id": 13582806,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": "2012-01-01 08:00:00"
+      },
+      "stories-of-your-life": {
+        "foreign_id": 223380,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": "2010-10-26 07:00:00"
+      },
+      "the-long-earth": {
+        "foreign_id": 13604418,
+        "format": "Kindle Edition",
+        "language": "eng",
+        "release_date": "2012-06-19 07:00:00"
+      },
+      "the-martian": {
+        "foreign_id": 18007564,
+        "format": "Hardcover",
+        "language": "eng",
+        "release_date": "2014-02-11 08:00:00"
+      },
+      "the-road": {
+        "foreign_id": 6288,
+        "format": "Hardcover",
+        "language": "eng",
+        "release_date": "2006-10-02 07:00:00"
+      },
+      "the-stranger": {
+        "foreign_id": 25966203,
+        "format": "Kindle Edition",
+        "language": "eng",
+        "release_date": "2015-07-03 07:00:00"
+      },
+      "the-talisman": {
+        "foreign_id": 18376908,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": "2012-09-25 07:00:00"
+      },
+      "three-body-problem": {
+        "foreign_id": 18245960,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": "2014-10-14 07:00:00"
+      },
+      "ultimate-hitchhikers": {
+        "foreign_id": 9359913,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": "2010-09-29 07:00:00"
+      },
+      "way-of-kings": {
+        "foreign_id": 7235533,
+        "format": "Hardcover",
+        "language": "eng",
+        "release_date": "2010-08-31 07:00:00"
+      }
+    },
     "selection": "curated_public_corpus"
   },
   "titles": [
