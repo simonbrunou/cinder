@@ -20,6 +20,8 @@ defmodule Cinder.LibraryMediaInfoTest do
   setup :verify_on_exit!
 
   setup do
+    stub(Cinder.Library.FilesystemMock, :chmod, fn _path, _mode -> :ok end)
+
     # Enable the optional audio probe for this module (disabled by default in config/test.exs).
     Application.put_env(:cinder, :media_info, Cinder.Library.MediaInfoMock)
     on_exit(fn -> Application.delete_env(:cinder, :media_info) end)

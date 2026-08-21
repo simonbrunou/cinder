@@ -14,6 +14,7 @@ defmodule Cinder.PollerHelpers do
   def stub_clean_content do
     Mox.stub(Cinder.Download.ClientMock, :files, fn _id -> {:ok, []} end)
     Mox.stub(Cinder.Download.SabnzbdClientMock, :files, fn _id -> {:ok, []} end)
+    Mox.stub(Cinder.Library.FilesystemMock, :chmod, fn _path, _mode -> :ok end)
     :ok
   end
 

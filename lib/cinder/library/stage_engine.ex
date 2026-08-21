@@ -34,7 +34,8 @@ defmodule Cinder.Library.StageEngine do
   @doc false
   def place(source, dest, root, {si, sdev}, record, new_q, replace?, upgrade_fun) do
     with {:ok, source} <- safe_source_file(source),
-         {:ok, dest} <- safe_destination(dest, root) do
+         {:ok, dest} <- safe_destination(dest, root),
+         :ok <- normalize_import_directories(dest, root) do
       do_place(source, dest, root, {si, sdev}, record, new_q, replace?, upgrade_fun)
     end
   end
@@ -98,13 +99,33 @@ defmodule Cinder.Library.StageEngine do
   @doc false
   def stage_place(source, dest, root, {si, sdev}, record, new_q, replace?, upgrade_fun) do
     with {:ok, source} <- safe_source_file(source),
-         {:ok, dest} <- safe_destination(dest, root) do
+         {:ok, dest} <- safe_destination(dest, root),
+         :ok <- normalize_import_directories(dest, root) do
       # Lock ordering is always destination -> operation -> DB claim. The stable destination lock
       # serializes local staging decisions; the unique DB index extends exclusion across nodes.
       ImportStage.with_destination_lock(dest, fn ->
-        stage_place_locked(source, dest, root, {si, sdev}, record, new_q, replace?, upgrade_fun)
+        stage_place_locked(
+          source,
+          dest,
+          root,
+          {si, sdev},
+          record,
+          new_q,
+          replace?,
+          upgrade_fun
+        )
       end)
     end
+  end
+
+  defp normalize_import_directories(dest, root),
+    do: normalize_directory_permissions(Path.dirname(dest), Path.expand(root))
+
+  defp normalize_directory_permissions(root, root), do: :ok
+
+  defp normalize_directory_permissions(path, root) do
+    with :ok <- fs().chmod(path, 0o755),
+         do: normalize_directory_permissions(Path.dirname(path), root)
   end
 
   defp stage_place_locked(source, dest, root, {si, sdev}, record, new_q, replace?, upgrade_fun) do
