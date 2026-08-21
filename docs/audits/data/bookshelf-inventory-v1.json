@@ -1,0 +1,136 @@
+{
+  "capture": {
+    "api": "/api/v1",
+    "generator": "test/support/books_b0_inventory.py",
+    "inputs": [
+      "deployment-v1.json",
+      "latency-v1.json",
+      "ebooks/*.json",
+      "audiobooks/*.json"
+    ],
+    "method": "read-only Bookshelf API snapshot; raw responses retained outside source control",
+    "private_snapshot_manifest": {
+      "file_count": 32,
+      "sha256": "32b26e0484f4b188f51d57d495eb6c784b85049d7d696164b9fe37fab5956859"
+    }
+  },
+  "captured_at": "2026-08-20",
+  "instances": {
+    "audiobooks": {
+      "consumer": "audiobookshelf",
+      "counts": {
+        "authors": 2,
+        "editions": 651,
+        "files": 1,
+        "works": 170,
+        "works_with_files": 1
+      },
+      "download_clients": {
+        "torrent": 1,
+        "usenet": 1
+      },
+      "file_formats": {
+        "m4b": 1
+      },
+      "import": {
+        "completed_download_handling": true,
+        "copy_using_hardlinks": true,
+        "minimum_free_space_mb": 100,
+        "rename_books": false,
+        "standard_book_format": "{Book Title}/{Author Name} - {Book Title}{ (PartNumber)}"
+      },
+      "indexers": {
+        "torrent": 3,
+        "usenet": 3
+      },
+      "monitored": {
+        "authors": 1,
+        "editions": 169,
+        "works": 1
+      },
+      "quality_profiles": [
+        "Spoken"
+      ],
+      "root_role": "audiobooks"
+    },
+    "ebooks": {
+      "consumer": "booklore",
+      "counts": {
+        "authors": 2,
+        "editions": 2391,
+        "files": 188,
+        "works": 842,
+        "works_with_files": 181
+      },
+      "download_clients": {
+        "torrent": 1,
+        "usenet": 1
+      },
+      "file_formats": {
+        "azw3": 25,
+        "epub": 159,
+        "mobi": 4
+      },
+      "import": {
+        "completed_download_handling": true,
+        "copy_using_hardlinks": true,
+        "minimum_free_space_mb": 100,
+        "rename_books": false,
+        "standard_book_format": "{Book Title}/{Author Name} - {Book Title}{ (PartNumber)}"
+      },
+      "indexers": {
+        "torrent": 3,
+        "usenet": 3
+      },
+      "monitored": {
+        "authors": 2,
+        "editions": 841,
+        "works": 842
+      },
+      "quality_profiles": [
+        "eBook"
+      ],
+      "root_role": "books"
+    }
+  },
+  "latency_ms": {
+    "bookshelf_search": {
+      "max_ms": 5167.7,
+      "method": "10 sequential public-title searches through the active eBook Bookshelf API from inside its LXC; mixed existing cache state",
+      "min_ms": 272.3,
+      "p50_ms": 2701.6,
+      "p95_ms": 4686.8,
+      "sample_size": 10,
+      "successes": 10
+    },
+    "provider_work_lookup": {
+      "max_ms": 84.8,
+      "method": "10 sequential accepted public-corpus work lookups from the capture host",
+      "min_ms": 60.6,
+      "p50_ms": 63.4,
+      "p95_ms": 78.6,
+      "sample_size": 10,
+      "successes": 10
+    }
+  },
+  "privacy": {
+    "committed_data": "aggregate counts, policies, and protocol classes only",
+    "raw_inventory_committed": false,
+    "removed": [
+      "API keys",
+      "hostnames and addresses",
+      "library paths",
+      "author and title names",
+      "provider IDs tied to the household library"
+    ]
+  },
+  "source": {
+    "application": "pennydreadful/bookshelf:hardcover",
+    "application_branch": "develop",
+    "application_version": "0.4.20.129",
+    "image_digest": "sha256:d9ee730e5c70326e8e19329417fc37a3e3bed9dd36ae357d59af0863a54172f8",
+    "image_revision": "c21c4134fdb710481ed69db05bf943b0acdbbf60",
+    "metadata_base_url": "https://api.bookinfo.pro"
+  },
+  "version": 1
+}

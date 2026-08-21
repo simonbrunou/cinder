@@ -1,0 +1,1420 @@
+{
+  "captured_at": "2026-08-20",
+  "operator_confirmation": {
+    "confirmed": true,
+    "confirmed_at": "2026-08-20",
+    "edition_expectations": {
+      "beloved": {
+        "foreign_id": 6149,
+        "format": "Paperback",
+        "language": "eng",
+        "release_date": "2004-06-08 07:00:00"
+      },
+      "big-book-scifi": {
+        "foreign_id": 28503846,
+        "format": "Paperback",
+        "language": "eng",
+        "release_date": "2016-07-12 07:00:00"
+      },
+      "bound-and-unbound": {
+        "foreign_id": 252195647,
+        "format": "Kindle Edition",
+        "language": "eng",
+        "release_date": "2026-10-06 07:00:00"
+      },
+      "circe": {
+        "foreign_id": 35959409,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": "2018-04-10 07:00:00"
+      },
+      "dangerous-women": {
+        "foreign_id": 17279560,
+        "format": "Kindle Edition",
+        "language": "eng",
+        "release_date": "2013-12-03 08:00:00"
+      },
+      "dracula": {
+        "foreign_id": 17245,
+        "format": "Paperback",
+        "language": "eng",
+        "release_date": "1986-05-12 07:00:00"
+      },
+      "dragon-tattoo": {
+        "foreign_id": 11653337,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": null
+      },
+      "dune": {
+        "foreign_id": 17698700,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": "2010-12-30 08:00:00"
+      },
+      "eye-of-the-world": {
+        "foreign_id": 58267955,
+        "format": "Kindle Edition",
+        "language": "eng",
+        "release_date": "2009-10-24 07:00:00"
+      },
+      "foundation": {
+        "foreign_id": 29579,
+        "format": "Hardcover",
+        "language": "eng",
+        "release_date": "2004-06-01 07:00:00"
+      },
+      "foundation-trilogy": {
+        "foreign_id": 46654,
+        "format": "Mass Market Paperback",
+        "language": "eng",
+        "release_date": "1974-01-01 08:00:00"
+      },
+      "game-of-thrones": {
+        "foreign_id": 52787943,
+        "format": "Kindle Edition",
+        "language": "eng",
+        "release_date": "2003-01-01 08:00:00"
+      },
+      "good-omens": {
+        "foreign_id": 60133767,
+        "format": "Kindle Edition",
+        "language": "eng",
+        "release_date": "2011-11-22 08:00:00"
+      },
+      "handmaids-tale": {
+        "foreign_id": 7439970,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": "2012-05-15 07:00:00"
+      },
+      "her-body": {
+        "foreign_id": 34198594,
+        "format": "Kindle Edition",
+        "language": "eng",
+        "release_date": "2017-10-03 07:00:00"
+      },
+      "les-miserables": {
+        "foreign_id": 9294775,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": null
+      },
+      "lightning-thief": {
+        "foreign_id": 3273490,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": null
+      },
+      "name-of-the-rose": {
+        "foreign_id": 8694005,
+        "format": "Kindle Edition",
+        "language": "eng",
+        "release_date": "2010-07-22 07:00:00"
+      },
+      "never-let-me-go": {
+        "foreign_id": 6334,
+        "format": "Paperback",
+        "language": "eng",
+        "release_date": "2010-08-31 07:00:00"
+      },
+      "one-hundred-years": {
+        "foreign_id": 320,
+        "format": "Mass Market Paperback",
+        "language": "eng",
+        "release_date": "2003-06-24 07:00:00"
+      },
+      "orient-express": {
+        "foreign_id": 22151595,
+        "format": "Kindle Edition",
+        "language": "eng",
+        "release_date": "2012-07-06 07:00:00"
+      },
+      "philosophers-stone": {
+        "foreign_id": 42844155,
+        "format": "Kindle Edition",
+        "language": "eng",
+        "release_date": "2015-12-08 08:00:00"
+      },
+      "piranesi": {
+        "foreign_id": 52123228,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": "2020-09-15 07:00:00"
+      },
+      "sorcerers-stone": {
+        "foreign_id": 13582806,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": "2012-01-01 08:00:00"
+      },
+      "stories-of-your-life": {
+        "foreign_id": 223380,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": "2010-10-26 07:00:00"
+      },
+      "the-long-earth": {
+        "foreign_id": 13604418,
+        "format": "Kindle Edition",
+        "language": "eng",
+        "release_date": "2012-06-19 07:00:00"
+      },
+      "the-martian": {
+        "foreign_id": 18007564,
+        "format": "Hardcover",
+        "language": "eng",
+        "release_date": "2014-02-11 08:00:00"
+      },
+      "the-road": {
+        "foreign_id": 6288,
+        "format": "Hardcover",
+        "language": "eng",
+        "release_date": "2006-10-02 07:00:00"
+      },
+      "the-stranger": {
+        "foreign_id": 25966203,
+        "format": "Kindle Edition",
+        "language": "eng",
+        "release_date": "2015-07-03 07:00:00"
+      },
+      "the-talisman": {
+        "foreign_id": 18376908,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": "2012-09-25 07:00:00"
+      },
+      "three-body-problem": {
+        "foreign_id": 18245960,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": "2014-10-14 07:00:00"
+      },
+      "ultimate-hitchhikers": {
+        "foreign_id": 9359913,
+        "format": "ebook",
+        "language": "eng",
+        "release_date": "2010-09-29 07:00:00"
+      },
+      "way-of-kings": {
+        "foreign_id": 7235533,
+        "format": "Hardcover",
+        "language": "eng",
+        "release_date": "2010-08-31 07:00:00"
+      }
+    },
+    "selection": "curated_public_corpus"
+  },
+  "titles": [
+    {
+      "categories": [
+        "single_novel"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": false,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "Beloved",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 736076
+      },
+      "expected_contributors": [
+        "Toni Morrison"
+      ],
+      "id": "beloved",
+      "provider_fixture_id": "beloved",
+      "query": "Beloved Toni Morrison"
+    },
+    {
+      "categories": [
+        "anthology",
+        "coauthored"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": false,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 2,
+        "min_editions": 1,
+        "primary_title": "The Big Book of Science Fiction",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 48657230
+      },
+      "expected_contributors": [
+        "Ann VanderMeer",
+        "Jeff VanderMeer"
+      ],
+      "id": "big-book-scifi",
+      "provider_fixture_id": "big-book-scifi",
+      "query": "The Big Book of Science Fiction Ann VanderMeer Jeff VanderMeer"
+    },
+    {
+      "categories": [
+        "future_release",
+        "ebook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": "2026-10-06",
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": true,
+        "identity_notes": [
+          "Keep the work discoverable but ineligible for acquisition before release."
+        ],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "Bound and Unbound",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 292184292
+      },
+      "expected_contributors": [
+        "Ali Hazelwood"
+      ],
+      "id": "bound-and-unbound",
+      "provider_fixture_id": "bound-and-unbound",
+      "query": "Bound and Unbound Ali Hazelwood"
+    },
+    {
+      "categories": [
+        "omnibus"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "unresolved",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": false,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "The Complete Chronicles of Narnia",
+        "provider_outcome": "reject",
+        "resolution": "no_reliable_match",
+        "work_id": null
+      },
+      "expected_contributors": [
+        "C. S. Lewis"
+      ],
+      "id": "chronicles-of-narnia",
+      "provider_fixture_id": "chronicles-of-narnia",
+      "query": "The Complete Chronicles of Narnia C. S. Lewis"
+    },
+    {
+      "categories": [
+        "single_novel",
+        "ebook",
+        "audiobook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": true,
+        "has_ebook": true,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "Circe",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 53043399
+      },
+      "expected_contributors": [
+        "Madeline Miller"
+      ],
+      "id": "circe",
+      "provider_fixture_id": "circe",
+      "query": "Circe Madeline Miller"
+    },
+    {
+      "categories": [
+        "translated_or_alternate",
+        "conflicting_editions"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "unresolved",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": false,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "The Count of Monte Cristo",
+        "provider_outcome": "reject",
+        "resolution": "provider_unavailable",
+        "work_id": 391568
+      },
+      "expected_contributors": [
+        "Alexandre Dumas"
+      ],
+      "id": "count-monte-cristo",
+      "provider_fixture_id": "count-monte-cristo",
+      "query": "The Count of Monte Cristo Alexandre Dumas"
+    },
+    {
+      "categories": [
+        "anthology",
+        "ebook",
+        "audiobook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": true,
+        "has_ebook": true,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 2,
+        "min_editions": 1,
+        "primary_title": "Dangerous Women",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 19236677
+      },
+      "expected_contributors": [
+        "Gardner Dozois",
+        "George R. R. Martin"
+      ],
+      "id": "dangerous-women",
+      "provider_fixture_id": "dangerous-women",
+      "query": "Dangerous Women Gardner Dozois George R. R. Martin"
+    },
+    {
+      "categories": [
+        "conflicting_editions",
+        "already_correct_file",
+        "ebook",
+        "audiobook"
+      ],
+      "existing_file": {
+        "expected_action": "adopt_without_download_or_move",
+        "format": "epub",
+        "path": "/library/ebooks/Fixture Author 1/Fixture Work 1.epub"
+      },
+      "expect": {
+        "edition_policy": "existing_file",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": true,
+        "has_ebook": true,
+        "identity_notes": [
+          "Adopt the validated final-path file without moving or downloading it."
+        ],
+        "migration_state": "already_correct_file",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "Dracula",
+        "provider_outcome": "accept",
+        "resolution": "adopt_existing_file",
+        "work_id": 3165724
+      },
+      "expected_contributors": [
+        "Bram Stoker"
+      ],
+      "id": "dracula",
+      "provider_fixture_id": "dracula",
+      "query": "Dracula Bram Stoker"
+    },
+    {
+      "categories": [
+        "translated_or_alternate",
+        "ebook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": true,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "The Girl with the Dragon Tattoo",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 1708725
+      },
+      "expected_contributors": [
+        "Stieg Larsson"
+      ],
+      "id": "dragon-tattoo",
+      "provider_fixture_id": "dragon-tattoo",
+      "query": "The Girl with the Dragon Tattoo Stieg Larsson"
+    },
+    {
+      "categories": [
+        "long_series",
+        "ebook",
+        "audiobook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": true,
+        "has_ebook": true,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "Dune",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 3634639
+      },
+      "expected_contributors": [
+        "Frank Herbert"
+      ],
+      "id": "dune",
+      "provider_fixture_id": "dune",
+      "query": "Dune Frank Herbert"
+    },
+    {
+      "categories": [
+        "long_series",
+        "series_position",
+        "ebook",
+        "audiobook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": {
+          "position": "1",
+          "title": "The Wheel of Time"
+        },
+        "expected_year": null,
+        "has_audiobook": true,
+        "has_ebook": true,
+        "identity_notes": [
+          "Expect The Wheel of Time position 1; the captured provider omits position, so retain an explicit incomplete/override state instead of deriving it from title text."
+        ],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "The Eye of the World",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 2008238
+      },
+      "expected_contributors": [
+        "Robert Jordan"
+      ],
+      "id": "eye-of-the-world",
+      "provider_fixture_id": "eye-of-the-world",
+      "query": "The Eye of the World Robert Jordan"
+    },
+    {
+      "categories": [
+        "long_series",
+        "ebook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": true,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "Foundation",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 1783981
+      },
+      "expected_contributors": [
+        "Isaac Asimov"
+      ],
+      "id": "foundation",
+      "provider_fixture_id": "foundation",
+      "query": "Foundation Isaac Asimov"
+    },
+    {
+      "categories": [
+        "omnibus",
+        "ebook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": true,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "The Foundation Trilogy",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 41350
+      },
+      "expected_contributors": [
+        "Isaac Asimov"
+      ],
+      "id": "foundation-trilogy",
+      "provider_fixture_id": "foundation-trilogy",
+      "query": "The Foundation Trilogy Isaac Asimov"
+    },
+    {
+      "categories": [
+        "long_series",
+        "ebook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": true,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "A Game of Thrones",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 1466917
+      },
+      "expected_contributors": [
+        "George R. R. Martin"
+      ],
+      "id": "game-of-thrones",
+      "provider_fixture_id": "game-of-thrones",
+      "query": "A Game of Thrones George R. R. Martin"
+    },
+    {
+      "categories": [
+        "coauthored",
+        "ebook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": true,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 2,
+        "min_editions": 1,
+        "primary_title": "Good Omens",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 4110990
+      },
+      "expected_contributors": [
+        "Terry Pratchett",
+        "Neil Gaiman"
+      ],
+      "id": "good-omens",
+      "provider_fixture_id": "good-omens",
+      "query": "Good Omens Terry Pratchett Neil Gaiman"
+    },
+    {
+      "categories": [
+        "single_novel",
+        "ebook",
+        "audiobook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": true,
+        "has_ebook": true,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "The Handmaid's Tale",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 1119185
+      },
+      "expected_contributors": [
+        "Margaret Atwood"
+      ],
+      "id": "handmaids-tale",
+      "provider_fixture_id": "handmaids-tale",
+      "query": "The Handmaid's Tale Margaret Atwood"
+    },
+    {
+      "categories": [
+        "anthology",
+        "ebook",
+        "audiobook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": true,
+        "has_ebook": true,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "Her Body and Other Parties",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 54116423
+      },
+      "expected_contributors": [
+        "Carmen Maria Machado"
+      ],
+      "id": "her-body",
+      "provider_fixture_id": "her-body",
+      "query": "Her Body and Other Parties Carmen Maria Machado"
+    },
+    {
+      "categories": [
+        "translated_or_alternate",
+        "conflicting_editions",
+        "unicode_punctuation",
+        "ebook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "operator_selection_required",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": true,
+        "identity_notes": [
+          "Preserve the Unicode display title while allowing accent-insensitive search."
+        ],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "Les Misérables",
+        "provider_outcome": "accept",
+        "resolution": "ambiguous_edition",
+        "work_id": 3208463
+      },
+      "expected_contributors": [
+        "Victor Hugo"
+      ],
+      "id": "les-miserables",
+      "provider_fixture_id": "les-miserables",
+      "query": "Les Misérables Victor Hugo"
+    },
+    {
+      "categories": [
+        "long_series",
+        "coauthored",
+        "pen_name"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "unresolved",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": false,
+        "identity_notes": [
+          "James S.A. Corey is the collective pen name of Daniel Abraham and Ty Franck; preserve the public credit without conflating unrelated works."
+        ],
+        "migration_state": "not_present",
+        "min_contributors": 2,
+        "min_editions": 1,
+        "primary_title": "Leviathan Wakes",
+        "provider_outcome": "reject",
+        "resolution": "provider_unavailable",
+        "work_id": 13730452
+      },
+      "expected_contributors": [
+        "Daniel Abraham",
+        "Ty Franck"
+      ],
+      "id": "leviathan-wakes",
+      "provider_fixture_id": "leviathan-wakes",
+      "query": "Leviathan Wakes"
+    },
+    {
+      "categories": [
+        "long_series",
+        "ebook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": true,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "The Lightning Thief",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 3346751
+      },
+      "expected_contributors": [
+        "Rick Riordan"
+      ],
+      "id": "lightning-thief",
+      "provider_fixture_id": "lightning-thief",
+      "query": "The Lightning Thief Rick Riordan"
+    },
+    {
+      "categories": [
+        "translated_or_alternate",
+        "conflicting_editions"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "unresolved",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": false,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "The Little Prince",
+        "provider_outcome": "reject",
+        "resolution": "provider_unavailable",
+        "work_id": 2180358
+      },
+      "expected_contributors": [
+        "Antoine de Saint-Exupéry"
+      ],
+      "id": "little-prince",
+      "provider_fixture_id": "little-prince",
+      "query": "The Little Prince Antoine de Saint-Exupéry"
+    },
+    {
+      "categories": [
+        "omnibus",
+        "conflicting_editions"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "unresolved",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": false,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "The Lord of the Rings",
+        "provider_outcome": "reject",
+        "resolution": "no_reliable_match",
+        "work_id": null
+      },
+      "expected_contributors": [
+        "J. R. R. Tolkien"
+      ],
+      "id": "lord-of-the-rings",
+      "provider_fixture_id": "lord-of-the-rings",
+      "query": "The Lord of the Rings J. R. R. Tolkien omnibus"
+    },
+    {
+      "categories": [
+        "translated_or_alternate",
+        "ebook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": true,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "The Name of the Rose",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 3138328
+      },
+      "expected_contributors": [
+        "Umberto Eco"
+      ],
+      "id": "name-of-the-rose",
+      "provider_fixture_id": "name-of-the-rose",
+      "query": "The Name of the Rose Umberto Eco"
+    },
+    {
+      "categories": [
+        "single_novel",
+        "ebook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": true,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "Never Let Me Go",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 1499998
+      },
+      "expected_contributors": [
+        "Kazuo Ishiguro"
+      ],
+      "id": "never-let-me-go",
+      "provider_fixture_id": "never-let-me-go",
+      "query": "Never Let Me Go Kazuo Ishiguro"
+    },
+    {
+      "categories": [
+        "translated_or_alternate",
+        "conflicting_editions",
+        "missing_isbn"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "operator_selection_required",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": false,
+        "identity_notes": [
+          "Resolve from provider work and contributor evidence without requiring ISBN."
+        ],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "One Hundred Years of Solitude",
+        "provider_outcome": "accept",
+        "resolution": "ambiguous_edition",
+        "work_id": 3295655
+      },
+      "expected_contributors": [
+        "Gabriel García Márquez"
+      ],
+      "id": "one-hundred-years",
+      "provider_fixture_id": "one-hundred-years",
+      "query": "One Hundred Years of Solitude Gabriel García Márquez"
+    },
+    {
+      "categories": [
+        "conflicting_editions",
+        "ebook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "operator_selection_required",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": true,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "Murder on the Orient Express",
+        "provider_outcome": "accept",
+        "resolution": "ambiguous_edition",
+        "work_id": 2285570
+      },
+      "expected_contributors": [
+        "Agatha Christie"
+      ],
+      "id": "orient-express",
+      "provider_fixture_id": "orient-express",
+      "query": "Murder on the Orient Express Agatha Christie"
+    },
+    {
+      "categories": [
+        "long_series",
+        "conflicting_editions",
+        "ebook",
+        "audiobook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "operator_selection_required",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": true,
+        "has_ebook": true,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "Harry Potter and the Philosopher's Stone",
+        "provider_outcome": "accept",
+        "resolution": "ambiguous_edition",
+        "work_id": 4640799
+      },
+      "expected_contributors": [
+        "J. K. Rowling"
+      ],
+      "id": "philosophers-stone",
+      "provider_fixture_id": "philosophers-stone",
+      "query": "Harry Potter and the Philosopher's Stone J. K. Rowling"
+    },
+    {
+      "categories": [
+        "single_novel",
+        "multiple_editions",
+        "ebook",
+        "audiobook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": true,
+        "has_ebook": true,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 2,
+        "primary_title": "Piranesi",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 73586702
+      },
+      "expected_contributors": [
+        "Susanna Clarke"
+      ],
+      "id": "piranesi",
+      "provider_fixture_id": "piranesi",
+      "query": "Piranesi Susanna Clarke"
+    },
+    {
+      "categories": [
+        "coauthored"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "unresolved",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": false,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 2,
+        "min_editions": 1,
+        "primary_title": "The President's Daughter",
+        "provider_outcome": "reject",
+        "resolution": "no_reliable_match",
+        "work_id": null
+      },
+      "expected_contributors": [
+        "Bill Clinton",
+        "James Patterson"
+      ],
+      "id": "presidents-daughter",
+      "provider_fixture_id": "presidents-daughter",
+      "query": "The President's Daughter Bill Clinton James Patterson"
+    },
+    {
+      "categories": [
+        "conflicting_editions",
+        "ebook",
+        "audiobook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "operator_selection_required",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": true,
+        "has_ebook": true,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "Harry Potter and the Sorcerer's Stone",
+        "provider_outcome": "accept",
+        "resolution": "ambiguous_edition",
+        "work_id": 4640799
+      },
+      "expected_contributors": [
+        "J. K. Rowling"
+      ],
+      "id": "sorcerers-stone",
+      "provider_fixture_id": "sorcerers-stone",
+      "query": "Harry Potter and the Sorcerer's Stone J. K. Rowling"
+    },
+    {
+      "categories": [
+        "anthology",
+        "ebook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": true,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "Stories of Your Life and Others",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 216334
+      },
+      "expected_contributors": [
+        "Ted Chiang"
+      ],
+      "id": "stories-of-your-life",
+      "provider_fixture_id": "stories-of-your-life",
+      "query": "Stories of Your Life and Others Ted Chiang"
+    },
+    {
+      "categories": [
+        "coauthored",
+        "long_series",
+        "ebook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": true,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 2,
+        "min_editions": 1,
+        "primary_title": "The Long Earth",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 18164154
+      },
+      "expected_contributors": [
+        "Terry Pratchett",
+        "Stephen Baxter"
+      ],
+      "id": "the-long-earth",
+      "provider_fixture_id": "the-long-earth",
+      "query": "The Long Earth Terry Pratchett Stephen Baxter"
+    },
+    {
+      "categories": [
+        "single_novel",
+        "conflicting_editions"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "operator_selection_required",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": false,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "The Martian",
+        "provider_outcome": "accept",
+        "resolution": "ambiguous_edition",
+        "work_id": 21825181
+      },
+      "expected_contributors": [
+        "Andy Weir"
+      ],
+      "id": "the-martian",
+      "provider_fixture_id": "the-martian",
+      "query": "The Martian Andy Weir"
+    },
+    {
+      "categories": [
+        "single_novel"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": false,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "The Road",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 3355573
+      },
+      "expected_contributors": [
+        "Cormac McCarthy"
+      ],
+      "id": "the-road",
+      "provider_fixture_id": "the-road",
+      "query": "The Road Cormac McCarthy"
+    },
+    {
+      "categories": [
+        "translated_or_alternate",
+        "conflicting_editions",
+        "ebook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "operator_selection_required",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": true,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "The Stranger",
+        "provider_outcome": "accept",
+        "resolution": "ambiguous_edition",
+        "work_id": 3324344
+      },
+      "expected_contributors": [
+        "Albert Camus"
+      ],
+      "id": "the-stranger",
+      "provider_fixture_id": "the-stranger",
+      "query": "The Stranger Albert Camus"
+    },
+    {
+      "categories": [
+        "coauthored",
+        "duplicate_title",
+        "ebook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": 1984,
+        "has_audiobook": false,
+        "has_ebook": true,
+        "identity_notes": [
+          "Title alone is insufficient; contributor evidence is mandatory."
+        ],
+        "migration_state": "not_present",
+        "min_contributors": 2,
+        "min_editions": 1,
+        "primary_title": "The Talisman",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 3324421
+      },
+      "expected_contributors": [
+        "Stephen King",
+        "Peter Straub"
+      ],
+      "id": "the-talisman",
+      "provider_fixture_id": "the-talisman",
+      "query": "The Talisman Stephen King Peter Straub"
+    },
+    {
+      "categories": [
+        "translated_or_alternate",
+        "ebook",
+        "audiobook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": true,
+        "has_ebook": true,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 2,
+        "min_editions": 1,
+        "primary_title": "The Three-Body Problem",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 25696480
+      },
+      "expected_contributors": [
+        "Liu Cixin",
+        "Ken Liu"
+      ],
+      "id": "three-body-problem",
+      "provider_fixture_id": "three-body-problem",
+      "query": "The Three-Body Problem Cixin Liu Ken Liu"
+    },
+    {
+      "categories": [
+        "coauthored",
+        "irreconcilable_identity"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "unresolved",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": false,
+        "identity_notes": [
+          "Return explicit ambiguity/unresolved state; never accept the nearest fuzzy result."
+        ],
+        "migration_state": "not_present",
+        "min_contributors": 2,
+        "min_editions": 1,
+        "primary_title": "This Is How You Lose the Time War",
+        "provider_outcome": "reject",
+        "resolution": "provider_unavailable",
+        "work_id": 58237743
+      },
+      "expected_contributors": [
+        "Amal El-Mohtar",
+        "Max Gladstone"
+      ],
+      "id": "time-war",
+      "provider_fixture_id": "time-war",
+      "query": "This Is How You Lose the Time War Amal El-Mohtar Max Gladstone"
+    },
+    {
+      "categories": [
+        "omnibus",
+        "ebook"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": true,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "The Ultimate Hitchhiker's Guide to the Galaxy",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 135328
+      },
+      "expected_contributors": [
+        "Douglas Adams"
+      ],
+      "id": "ultimate-hitchhikers",
+      "provider_fixture_id": "ultimate-hitchhikers",
+      "query": "The Ultimate Hitchhiker's Guide to the Galaxy Douglas Adams"
+    },
+    {
+      "categories": [
+        "long_series"
+      ],
+      "existing_file": null,
+      "expect": {
+        "edition_policy": "any_matching",
+        "expected_release_date": null,
+        "expected_series": null,
+        "expected_year": null,
+        "has_audiobook": false,
+        "has_ebook": false,
+        "identity_notes": [],
+        "migration_state": "not_present",
+        "min_contributors": 1,
+        "min_editions": 1,
+        "primary_title": "The Way of Kings",
+        "provider_outcome": "accept",
+        "resolution": "resolved_work",
+        "work_id": 8134945
+      },
+      "expected_contributors": [
+        "Brandon Sanderson"
+      ],
+      "id": "way-of-kings",
+      "provider_fixture_id": "way-of-kings",
+      "query": "The Way of Kings Brandon Sanderson"
+    }
+  ],
+  "version": 1
+}

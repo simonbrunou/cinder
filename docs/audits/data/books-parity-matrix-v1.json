@@ -1,0 +1,130 @@
+{
+  "dispositions": [
+    "required for cutover",
+    "required later",
+    "already provided by Cinder",
+    "deliberately parked"
+  ],
+  "rows": [
+    {
+      "acceptance": "Authors, works, editions, and files retain separate identities with referential integrity and namespaced provider IDs.",
+      "behavior": "catalog identity boundaries",
+      "disposition": "required for cutover",
+      "migration_consequence": "B6 resolves and records all four source surfaces; ambiguous joins are held rather than collapsed.",
+      "owner_milestone": "B2"
+    },
+    {
+      "acceptance": "EPUB, AZW3, and MOBI files are inventoried and EPUB is the preferred initial eBook format.",
+      "behavior": "eBook quality and format profile",
+      "disposition": "required for cutover",
+      "migration_consequence": "B6 maps the existing eBook profile and files without conversion or silent format upgrades.",
+      "owner_milestone": "B1/B4"
+    },
+    {
+      "acceptance": "The audiobook target is independent from eBook monitoring and imports the captured M4B file without conflating media kinds.",
+      "behavior": "audiobook target and Spoken profile",
+      "disposition": "required later",
+      "migration_consequence": "B7 adds the independent target/profile and adopts the present audiobook instance; B6 eBook cutover does not create an audiobook target.",
+      "owner_milestone": "B7"
+    },
+    {
+      "acceptance": "Existing torrent and Usenet adapters remain the only credential-owning transport boundary for books.",
+      "behavior": "torrent and Usenet download clients",
+      "disposition": "already provided by Cinder",
+      "migration_consequence": "B4/B5 reuse clients through book-specific intents; B6 imports no connector secret.",
+      "owner_milestone": "B4/B5"
+    },
+    {
+      "acceptance": "Book release search uses the existing indexer adapter with explicit book categories and persisted decision evidence.",
+      "behavior": "indexer and release provenance",
+      "disposition": "already provided by Cinder",
+      "migration_consequence": "B6 preserves source history only; it does not copy indexer URLs or credentials.",
+      "owner_milestone": "B4/B5"
+    },
+    {
+      "acceptance": "A completed download is validated and durably published before source cleanup, with retry-safe lifecycle state.",
+      "behavior": "completed-download lifecycle",
+      "disposition": "already provided by Cinder",
+      "migration_consequence": "Books extend the existing guarded lifecycle rather than importing transient queue state.",
+      "owner_milestone": "B1/B4"
+    },
+    {
+      "acceptance": "Hardlink is preferred when safe and copy is the explicit fallback; failures leave no partial final asset.",
+      "behavior": "hardlink/copy publication",
+      "disposition": "required for cutover",
+      "migration_consequence": "B6 adopts already-correct files in place and records, but does not rewrite, source paths.",
+      "owner_milestone": "B4/B6"
+    },
+    {
+      "acceptance": "Existing filenames are preserved by default because automatic Bookshelf renaming is disabled.",
+      "behavior": "import naming",
+      "disposition": "required for cutover",
+      "migration_consequence": "B6 performs no adoption rename; a future naming policy requires a separate operator opt-in.",
+      "owner_milestone": "B4/B6"
+    },
+    {
+      "acceptance": "Published eBooks land under the role-based books root and are visible to Booklore without database mutation.",
+      "behavior": "Booklore filesystem handoff",
+      "disposition": "required for cutover",
+      "migration_consequence": "B6 verifies existing files under the books root and keeps consumer state external.",
+      "owner_milestone": "B4/B6"
+    },
+    {
+      "acceptance": "Published audiobooks land under the role-based audiobooks root and a scan failure is reported without rolling back a durable import.",
+      "behavior": "Audiobookshelf filesystem and scan handoff",
+      "disposition": "required later",
+      "migration_consequence": "B7 verifies/adopts the audiobook file and implements the retryable post-commit Audiobookshelf scan; B6 does not publish audio.",
+      "owner_milestone": "B7"
+    },
+    {
+      "acceptance": "Source author/work/edition monitoring flags are preserved as evidence and create no active acquisition before preview confirmation.",
+      "behavior": "monitoring-state adoption",
+      "disposition": "required for cutover",
+      "migration_consequence": "B6 imports confirmed eBook targets; B7 separately previews and imports audiobook targets.",
+      "owner_milestone": "B6/B7"
+    },
+    {
+      "acceptance": "Bulk author monitoring offers specific, future, or all-work policies with a count preview and separate confirmation.",
+      "behavior": "automatic author monitoring",
+      "disposition": "required for cutover",
+      "migration_consequence": "B6 stores source flags but does not enable blanket author automation.",
+      "owner_milestone": "B5"
+    },
+    {
+      "acceptance": "Open Library remains primary, Google Books is optional enrichment, and Hardcover is added as the required secondary adapter because Open Library resolves only 31 of 40 corpus cases.",
+      "behavior": "metadata provider set",
+      "disposition": "required for cutover",
+      "migration_consequence": "B6 stores source Bookshelf/Hardcover IDs with provenance and never equates cross-provider IDs without evidence.",
+      "owner_milestone": "B2"
+    },
+    {
+      "acceptance": "Ambiguous metadata or edition evidence produces an explained unresolved/held outcome instead of first-result selection.",
+      "behavior": "identity ambiguity",
+      "disposition": "required for cutover",
+      "migration_consequence": "B6 preview lists every unresolved source item and performs no download or file move for it.",
+      "owner_milestone": "B2/B6"
+    },
+    {
+      "acceptance": "Existing request approval, authorization, quota, audit, and notification primitives are reused for book requests.",
+      "behavior": "request governance",
+      "disposition": "already provided by Cinder",
+      "migration_consequence": "B6 creates no historical requester identity where Bookshelf has none.",
+      "owner_milestone": "B3"
+    },
+    {
+      "acceptance": "No Calibre adapter is required while the observed deployment publishes directly to Booklore and Audiobookshelf roots.",
+      "behavior": "Calibre integration",
+      "disposition": "deliberately parked",
+      "migration_consequence": "B6 never writes a Calibre database or invokes calibredb for this cutover.",
+      "owner_milestone": "post-cutover"
+    },
+    {
+      "acceptance": "The first release never performs automatic quality upgrades or format conversion.",
+      "behavior": "automatic upgrades and conversion",
+      "disposition": "deliberately parked",
+      "migration_consequence": "B6 adopts current accepted files as-is and preserves explicit replacement as the only upgrade path.",
+      "owner_milestone": "post-cutover"
+    }
+  ],
+  "version": 1
+}

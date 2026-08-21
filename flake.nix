@@ -39,6 +39,7 @@
             packages = [
               elixir
               pkgs.git
+              pkgs.python3
             ]
             ++ pkgs.lib.optional pkgs.stdenv.hostPlatform.isLinux pkgs.inotify-tools;
 

@@ -1,0 +1,674 @@
+{
+  "captured_at": "2026-08-20",
+  "responses": {
+    "author": [
+      {
+        "added": "2000-01-01T00:00:00Z",
+        "authorMetadataId": 1001,
+        "authorName": "Fixture Author 1",
+        "authorNameLastFirst": "Author 1, Fixture",
+        "cleanName": "fixtureauthor1",
+        "ended": false,
+        "foreignAuthorId": "fixture-author-001",
+        "genres": [
+          "Fixture"
+        ],
+        "id": 1,
+        "images": [],
+        "links": [],
+        "metadataProfileId": 1,
+        "monitorNewItems": "all",
+        "monitored": true,
+        "overview": "Fixture author used by the B0 API contract.",
+        "path": "/library/ebooks/Fixture Author 1",
+        "qualityProfileId": 1,
+        "ratings": {
+          "popularity": 10,
+          "value": 4.0,
+          "votes": 100
+        },
+        "rootFolderPath": "/library/ebooks",
+        "sortName": "fixture author 1",
+        "sortNameLastFirst": "author 1 fixture",
+        "statistics": {
+          "availableBookCount": 2,
+          "bookCount": 2,
+          "bookFileCount": 3,
+          "percentOfBooks": 100,
+          "sizeOnDisk": 7168,
+          "totalBookCount": 2
+        },
+        "status": "continuing",
+        "tags": [],
+        "titleSlug": "fixture-author-1"
+      },
+      {
+        "added": "2000-01-02T00:00:00Z",
+        "authorMetadataId": 1002,
+        "authorName": "Fixture Author 2",
+        "authorNameLastFirst": "Author 2, Fixture",
+        "cleanName": "fixtureauthor2",
+        "ended": false,
+        "foreignAuthorId": "fixture-author-002",
+        "genres": [
+          "Fixture"
+        ],
+        "id": 2,
+        "images": [],
+        "links": [],
+        "metadataProfileId": 1,
+        "monitorNewItems": "none",
+        "monitored": true,
+        "overview": "Fixture author used by the B0 API contract.",
+        "path": "/library/audiobooks/Fixture Author 2",
+        "qualityProfileId": 2,
+        "ratings": {
+          "popularity": 20,
+          "value": 4.0,
+          "votes": 200
+        },
+        "rootFolderPath": "/library/audiobooks",
+        "sortName": "fixture author 2",
+        "sortNameLastFirst": "author 2 fixture",
+        "statistics": {
+          "availableBookCount": 1,
+          "bookCount": 1,
+          "bookFileCount": 1,
+          "percentOfBooks": 100,
+          "sizeOnDisk": 8192,
+          "totalBookCount": 1
+        },
+        "status": "continuing",
+        "tags": [],
+        "titleSlug": "fixture-author-2"
+      }
+    ],
+    "book": [
+      {
+        "added": "2000-01-01T00:00:00Z",
+        "anyEditionOk": true,
+        "authorId": 1,
+        "authorTitle": "Fixture Author 1",
+        "disambiguation": "",
+        "foreignBookId": "fixture-work-001",
+        "foreignEditionId": "fixture-edition-001",
+        "genres": [
+          "Fixture"
+        ],
+        "grabbed": false,
+        "id": 1,
+        "images": [],
+        "lastSearchTime": null,
+        "links": [],
+        "monitored": true,
+        "pageCount": 100,
+        "ratings": {
+          "popularity": 10,
+          "value": 4.0,
+          "votes": 100
+        },
+        "releaseDate": "2001-01-01T00:00:00Z",
+        "seriesTitle": "",
+        "statistics": {
+          "bookCount": 1,
+          "bookFileCount": 2,
+          "percentOfBooks": 100,
+          "sizeOnDisk": 3072,
+          "totalBookCount": 1
+        },
+        "title": "Fixture Work 1",
+        "titleSlug": "fixture-work-1"
+      },
+      {
+        "added": "2000-01-02T00:00:00Z",
+        "anyEditionOk": true,
+        "authorId": 1,
+        "authorTitle": "Fixture Author 1",
+        "disambiguation": "",
+        "foreignBookId": "fixture-work-002",
+        "foreignEditionId": "fixture-edition-003",
+        "genres": [
+          "Fixture"
+        ],
+        "grabbed": false,
+        "id": 2,
+        "images": [],
+        "lastSearchTime": null,
+        "links": [],
+        "monitored": true,
+        "pageCount": 200,
+        "ratings": {
+          "popularity": 20,
+          "value": 4.0,
+          "votes": 200
+        },
+        "releaseDate": "2002-01-01T00:00:00Z",
+        "seriesTitle": "Fixture Series",
+        "statistics": {
+          "bookCount": 1,
+          "bookFileCount": 1,
+          "percentOfBooks": 100,
+          "sizeOnDisk": 4096,
+          "totalBookCount": 1
+        },
+        "title": "Fixture Work 2",
+        "titleSlug": "fixture-work-2"
+      },
+      {
+        "added": "2000-01-03T00:00:00Z",
+        "anyEditionOk": true,
+        "authorId": 2,
+        "authorTitle": "Fixture Author 2",
+        "disambiguation": "",
+        "foreignBookId": "fixture-work-003",
+        "foreignEditionId": "fixture-edition-004",
+        "genres": [
+          "Fixture"
+        ],
+        "grabbed": false,
+        "id": 3,
+        "images": [],
+        "lastSearchTime": null,
+        "links": [],
+        "monitored": true,
+        "pageCount": 300,
+        "ratings": {
+          "popularity": 30,
+          "value": 4.0,
+          "votes": 300
+        },
+        "releaseDate": "2003-01-01T00:00:00Z",
+        "seriesTitle": "",
+        "statistics": {
+          "bookCount": 1,
+          "bookFileCount": 1,
+          "percentOfBooks": 100,
+          "sizeOnDisk": 8192,
+          "totalBookCount": 1
+        },
+        "title": "Fixture Work 3",
+        "titleSlug": "fixture-work-3"
+      }
+    ],
+    "bookfile": [
+      {
+        "authorId": 1,
+        "bookId": 1,
+        "dateAdded": "2000-02-01T00:00:00Z",
+        "id": 1,
+        "indexerFlags": 0,
+        "path": "/library/ebooks/Fixture Author 1/Fixture Work 1.epub",
+        "quality": {
+          "quality": {
+            "id": 1,
+            "name": "EPUB"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "qualityCutoffNotMet": false,
+        "qualityWeight": 10,
+        "size": 1024
+      },
+      {
+        "authorId": 1,
+        "bookId": 1,
+        "dateAdded": "2000-02-02T00:00:00Z",
+        "id": 2,
+        "indexerFlags": 0,
+        "path": "/library/ebooks/Fixture Author 1/Fixture Work 1.azw3",
+        "quality": {
+          "quality": {
+            "id": 2,
+            "name": "AZW3"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "qualityCutoffNotMet": false,
+        "qualityWeight": 20,
+        "size": 2048
+      },
+      {
+        "authorId": 1,
+        "bookId": 2,
+        "dateAdded": "2000-02-03T00:00:00Z",
+        "id": 3,
+        "indexerFlags": 0,
+        "path": "/library/ebooks/Fixture Author 1/Fixture Work 2.mobi",
+        "quality": {
+          "quality": {
+            "id": 3,
+            "name": "MOBI"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "qualityCutoffNotMet": false,
+        "qualityWeight": 30,
+        "size": 4096
+      },
+      {
+        "authorId": 2,
+        "bookId": 3,
+        "dateAdded": "2000-02-04T00:00:00Z",
+        "id": 4,
+        "indexerFlags": 0,
+        "mediaInfo": {
+          "audioBitRate": "128 kbps",
+          "audioBits": "",
+          "audioChannels": 2,
+          "audioCodec": "AAC",
+          "audioSampleRate": "44.1kHz"
+        },
+        "path": "/library/audiobooks/Fixture Author 2/Fixture Work 3.m4b",
+        "quality": {
+          "quality": {
+            "id": 4,
+            "name": "M4B"
+          },
+          "revision": {
+            "isRepack": false,
+            "real": 0,
+            "version": 1
+          }
+        },
+        "qualityCutoffNotMet": false,
+        "qualityWeight": 40,
+        "size": 8192
+      }
+    ],
+    "config/mediamanagement": {
+      "allowFingerprinting": "newFiles",
+      "autoUnmonitorPreviouslyDownloadedBooks": false,
+      "chmodFolder": "755",
+      "chownGroup": "",
+      "copyUsingHardlinks": true,
+      "createEmptyAuthorFolders": false,
+      "deleteEmptyFolders": false,
+      "downloadPropersAndRepacks": "preferAndUpgrade",
+      "extraFileExtensions": "srt",
+      "fileDate": "none",
+      "id": 1,
+      "importExtraFiles": false,
+      "minimumFreeSpaceWhenImporting": 100,
+      "recycleBin": "",
+      "recycleBinCleanupDays": 7,
+      "rescanAfterRefresh": "always",
+      "setPermissionsLinux": false,
+      "skipFreeSpaceCheckWhenImporting": false,
+      "watchLibraryForChanges": true
+    },
+    "config/naming": {
+      "authorFolderFormat": "{Author Name}",
+      "colonReplacementFormat": 4,
+      "id": 1,
+      "includeAuthorName": false,
+      "includeBookTitle": false,
+      "includeQuality": false,
+      "renameBooks": false,
+      "replaceIllegalCharacters": true,
+      "replaceSpaces": false,
+      "standardBookFormat": "{Book Title}/{Author Name} - {Book Title}{ (PartNumber)}"
+    },
+    "edition": [
+      {
+        "asin": "FXT0000001",
+        "bookId": 1,
+        "disambiguation": "",
+        "foreignEditionId": "fixture-edition-001",
+        "format": "ebook",
+        "grabbed": false,
+        "id": 1,
+        "images": [],
+        "isEbook": false,
+        "isbn13": "9780000000019",
+        "language": "eng",
+        "links": [],
+        "manualAdd": false,
+        "monitored": false,
+        "overview": "Fixture edition used by the B0 API contract.",
+        "pageCount": 100,
+        "publisher": "Fixture Press",
+        "ratings": {
+          "popularity": 10,
+          "value": 4.0,
+          "votes": 100
+        },
+        "releaseDate": "2001-01-01T00:00:00Z",
+        "title": "Fixture Edition 1",
+        "titleSlug": "fixture-edition-1"
+      },
+      {
+        "asin": "FXT0000002",
+        "bookId": 1,
+        "disambiguation": "",
+        "foreignEditionId": "fixture-edition-002",
+        "format": "Hardcover",
+        "grabbed": false,
+        "id": 2,
+        "images": [],
+        "isEbook": false,
+        "isbn13": "9780000000026",
+        "language": "eng",
+        "links": [],
+        "manualAdd": false,
+        "monitored": false,
+        "overview": "Fixture edition used by the B0 API contract.",
+        "pageCount": 200,
+        "publisher": "Fixture Press",
+        "ratings": {
+          "popularity": 20,
+          "value": 4.0,
+          "votes": 200
+        },
+        "releaseDate": "2002-01-01T00:00:00Z",
+        "title": "Fixture Edition 2",
+        "titleSlug": "fixture-edition-2"
+      },
+      {
+        "asin": "FXT0000003",
+        "bookId": 2,
+        "disambiguation": "",
+        "foreignEditionId": "fixture-edition-003",
+        "format": "Kindle Edition",
+        "grabbed": false,
+        "id": 3,
+        "images": [],
+        "isEbook": true,
+        "isbn13": "9780000000033",
+        "language": "eng",
+        "links": [],
+        "manualAdd": false,
+        "monitored": false,
+        "overview": "Fixture edition used by the B0 API contract.",
+        "pageCount": 300,
+        "publisher": "Fixture Press",
+        "ratings": {
+          "popularity": 30,
+          "value": 4.0,
+          "votes": 300
+        },
+        "releaseDate": "2003-01-01T00:00:00Z",
+        "title": "Fixture Edition 3",
+        "titleSlug": "fixture-edition-3"
+      },
+      {
+        "asin": "FXT0000004",
+        "bookId": 3,
+        "disambiguation": "",
+        "foreignEditionId": "fixture-edition-004",
+        "format": "Audible Audio",
+        "grabbed": false,
+        "id": 4,
+        "images": [],
+        "isEbook": false,
+        "isbn13": "9780000000040",
+        "language": "eng",
+        "links": [],
+        "manualAdd": false,
+        "monitored": false,
+        "overview": "Fixture edition used by the B0 API contract.",
+        "pageCount": 400,
+        "publisher": "Fixture Press",
+        "ratings": {
+          "popularity": 40,
+          "value": 4.0,
+          "votes": 400
+        },
+        "releaseDate": "2004-01-01T00:00:00Z",
+        "title": "Fixture Edition 4",
+        "titleSlug": "fixture-edition-4"
+      }
+    ],
+    "qualityprofile": [
+      {
+        "cutoff": 2,
+        "cutoffFormatScore": 0,
+        "formatItems": [],
+        "id": 1,
+        "items": [
+          {
+            "allowed": false,
+            "items": [],
+            "quality": {
+              "id": 0,
+              "name": "Unknown Text"
+            }
+          },
+          {
+            "allowed": false,
+            "items": [],
+            "quality": {
+              "id": 1,
+              "name": "PDF"
+            }
+          },
+          {
+            "allowed": true,
+            "items": [],
+            "quality": {
+              "id": 2,
+              "name": "MOBI"
+            }
+          },
+          {
+            "allowed": true,
+            "items": [],
+            "quality": {
+              "id": 3,
+              "name": "EPUB"
+            }
+          },
+          {
+            "allowed": true,
+            "items": [],
+            "quality": {
+              "id": 4,
+              "name": "AZW3"
+            }
+          },
+          {
+            "allowed": false,
+            "items": [],
+            "quality": {
+              "id": 13,
+              "name": "Unknown Audio"
+            }
+          },
+          {
+            "allowed": false,
+            "items": [],
+            "quality": {
+              "id": 10,
+              "name": "MP3"
+            }
+          },
+          {
+            "allowed": false,
+            "items": [],
+            "quality": {
+              "id": 12,
+              "name": "M4B"
+            }
+          },
+          {
+            "allowed": false,
+            "items": [],
+            "quality": {
+              "id": 11,
+              "name": "FLAC"
+            }
+          }
+        ],
+        "minFormatScore": 0,
+        "name": "eBook",
+        "upgradeAllowed": false
+      },
+      {
+        "cutoff": 12,
+        "cutoffFormatScore": 0,
+        "formatItems": [],
+        "id": 2,
+        "items": [
+          {
+            "allowed": false,
+            "items": [],
+            "quality": {
+              "id": 0,
+              "name": "Unknown Text"
+            }
+          },
+          {
+            "allowed": false,
+            "items": [],
+            "quality": {
+              "id": 1,
+              "name": "PDF"
+            }
+          },
+          {
+            "allowed": false,
+            "items": [],
+            "quality": {
+              "id": 2,
+              "name": "MOBI"
+            }
+          },
+          {
+            "allowed": false,
+            "items": [],
+            "quality": {
+              "id": 3,
+              "name": "EPUB"
+            }
+          },
+          {
+            "allowed": false,
+            "items": [],
+            "quality": {
+              "id": 4,
+              "name": "AZW3"
+            }
+          },
+          {
+            "allowed": true,
+            "items": [],
+            "quality": {
+              "id": 13,
+              "name": "Unknown Audio"
+            }
+          },
+          {
+            "allowed": true,
+            "items": [],
+            "quality": {
+              "id": 10,
+              "name": "MP3"
+            }
+          },
+          {
+            "allowed": true,
+            "items": [],
+            "quality": {
+              "id": 11,
+              "name": "FLAC"
+            }
+          },
+          {
+            "allowed": true,
+            "items": [],
+            "quality": {
+              "id": 12,
+              "name": "M4B"
+            }
+          }
+        ],
+        "minFormatScore": 0,
+        "name": "Spoken",
+        "upgradeAllowed": true
+      }
+    ],
+    "rootfolder": [
+      {
+        "accessible": true,
+        "defaultMetadataProfileId": 1,
+        "defaultMonitorOption": "all",
+        "defaultNewItemMonitorOption": "all",
+        "defaultQualityProfileId": 1,
+        "defaultTags": [],
+        "freeSpace": 1000000000,
+        "id": 1,
+        "isCalibreLibrary": false,
+        "name": "Books",
+        "outputProfile": "default",
+        "path": "/library/ebooks",
+        "port": 0,
+        "totalSpace": 2000000000,
+        "useSsl": false
+      },
+      {
+        "accessible": true,
+        "defaultMetadataProfileId": 1,
+        "defaultMonitorOption": "none",
+        "defaultNewItemMonitorOption": "none",
+        "defaultQualityProfileId": 2,
+        "defaultTags": [],
+        "freeSpace": 1000000000,
+        "id": 2,
+        "isCalibreLibrary": false,
+        "name": "Audiobooks",
+        "outputProfile": "default",
+        "path": "/library/audiobooks",
+        "port": 0,
+        "totalSpace": 2000000000,
+        "useSsl": false
+      }
+    ],
+    "system/status": {
+      "appName": "Readarr",
+      "branch": "develop",
+      "isDocker": true,
+      "isLinux": true,
+      "version": "0.4.20.129"
+    }
+  },
+  "sanitization": {
+    "derived_from_live_api": true,
+    "preserved": [
+      "response keys and value types",
+      "boolean and enum semantics",
+      "quality/profile names",
+      "naming and media-management policy"
+    ],
+    "remapped": [
+      "all IDs and bibliographic identifiers",
+      "authors, titles, genres, descriptions, and images",
+      "paths and root folders",
+      "all activity and release timestamps",
+      "file sizes and aggregate sizes",
+      "ratings, popularity, votes, page counts, and statistics",
+      "audio measurements"
+    ],
+    "removed": [
+      "credentials",
+      "connector fields",
+      "personal paths"
+    ]
+  },
+  "source": {
+    "application": "pennydreadful/bookshelf:hardcover",
+    "image_revision": "c21c4134fdb710481ed69db05bf943b0acdbbf60",
+    "version": "0.4.20.129"
+  },
+  "version": 1
+}
