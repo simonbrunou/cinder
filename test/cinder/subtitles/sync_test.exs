@@ -190,10 +190,8 @@ defmodule Cinder.Subtitles.SyncTest do
     assert :ok = Sync.reset(hd(Sync.discover(video)))
 
     backup = Sync.backup_path(path)
-    %{identity: legacy_identity} = Manifest.backup_tombstone(Manifest.read(video), "en")
-    replacement = backup <> ".replacement"
-    File.write!(replacement, "")
-    File.rename!(replacement, backup)
+    legacy_identity = [38, 0, 123_456]
+    assert :ok = Manifest.put_backup_tombstone(video, "en", legacy_identity)
     helper = legacy_identity_helper!(tmp, Path.basename(backup), legacy_identity)
     Application.put_env(:cinder, :rooted_filesystem_helper, helper)
 

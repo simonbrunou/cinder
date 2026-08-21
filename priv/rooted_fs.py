@@ -139,49 +139,118 @@ def hold_open(root, relative, mode):
 
 
 def hold_open_mergerfs(root, relative, flags, mode):
-    union_identity = None
-    if mode == "write":
-        parent, name = open_parent(root, relative)
-        try:
-            try:
-                basepath, backing_relative, union_identity = mergerfs_backing_file(parent, name)
-            except OSError as exc:
-                if exc.errno != errno.ENOENT:
-                    raise
-                basepath, backing_parent = mergerfs_backing_location_fd(parent)
-                backing_relative = posixpath.join(backing_parent, name)
-        finally:
-            os.close(parent)
-    elif mode == "create":
-        parent_relative = posixpath.dirname(checked_relative(relative)) or "."
-        basename = posixpath.basename(relative)
-        root_fd = open_root(root)
-        try:
-            parent_fd = open_beneath(
-                root_fd, parent_relative, os.O_RDONLY | O_DIRECTORY | O_NOFOLLOW
-            )
-        finally:
-            os.close(root_fd)
-        try:
-            basepath, backing_parent = mergerfs_backing_location_fd(parent_fd)
-        finally:
-            os.close(parent_fd)
-        backing_relative = posixpath.join(backing_parent, basename)
-    else:
-        parent, name = open_parent(root, relative)
-        try:
-            basepath, backing_relative, union_identity = mergerfs_backing_file(parent, name)
-        finally:
-            os.close(parent)
+    if mode == "create":
+        return create_mergerfs_file(root, relative, flags)
 
-    root_fd = open_root(basepath)
     try:
-        fd = open_beneath(
-            root_fd, backing_relative, flags, 0o600 if mode in ("create", "write") else 0
-        )
+        union_fd = open_mergerfs_path(root, relative)
+    except OSError as exc:
+        if mode == "write" and exc.errno == errno.ENOENT:
+            return create_mergerfs_file(root, relative, flags)
+        raise
+
+    try:
+        basepath, backing_relative = mergerfs_backing_location_fd(union_fd)
+        union_identity = file_identity(union_fd)
+        backing_flags = flags & ~(os.O_CREAT | os.O_EXCL | os.O_TRUNC)
+        backing_fd = open_at_root(basepath, backing_relative, backing_flags)
+        try:
+            verify_mergerfs_mapping(
+                root,
+                relative,
+                basepath,
+                backing_relative,
+                union_identity,
+                backing_fd,
+            )
+            if mode == "write":
+                os.ftruncate(backing_fd, 0)
+            return backing_fd, union_identity
+        except BaseException:
+            os.close(backing_fd)
+            raise
+    finally:
+        os.close(union_fd)
+
+
+def open_mergerfs_path(root, relative):
+    root_fd = open_root(root)
+    try:
+        return open_beneath(root_fd, relative, os.O_RDONLY | O_NOFOLLOW)
     finally:
         os.close(root_fd)
-    return fd, union_identity
+
+
+def open_at_root(root, relative, flags, mode=0):
+    root_fd = open_root(root)
+    try:
+        return open_beneath(root_fd, relative, flags, mode)
+    finally:
+        os.close(root_fd)
+
+
+def file_identity(fd):
+    stat = os.fstat(fd)
+    return [stat.st_dev, stat.st_rdev, stat.st_ino]
+
+
+def verify_mergerfs_mapping(
+    root, relative, basepath, backing_relative, union_identity, backing_fd
+):
+    current_union = open_mergerfs_path(root, relative)
+    try:
+        current_basepath, current_relative = mergerfs_backing_location_fd(current_union)
+        if (
+            file_identity(current_union) != union_identity
+            or current_basepath != basepath
+            or current_relative != backing_relative
+        ):
+            raise OSError(errno.ESTALE, "mergerfs logical mapping changed")
+    finally:
+        os.close(current_union)
+
+    current_backing = open_at_root(basepath, backing_relative, O_PATH | O_NOFOLLOW)
+    try:
+        if file_identity(current_backing) != file_identity(backing_fd):
+            raise OSError(errno.ESTALE, "mergerfs backing file changed")
+    finally:
+        os.close(current_backing)
+
+
+def create_mergerfs_file(root, relative, flags):
+    check_logical_absence(root, relative)
+    parent_relative = posixpath.dirname(checked_relative(relative)) or "."
+    basename = posixpath.basename(relative)
+    parent_fd = open_mergerfs_path(root, parent_relative)
+    try:
+        basepath, backing_parent = mergerfs_backing_location_fd(parent_fd)
+    finally:
+        os.close(parent_fd)
+    backing_relative = posixpath.join(backing_parent, basename)
+    fd = open_at_root(basepath, backing_relative, flags | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        wait_for_unique_path(
+            root, relative, posixpath.join(basepath, backing_relative)
+        )
+    except BaseException:
+        try:
+            unlink_created_backing(basepath, backing_relative, fd)
+        finally:
+            os.close(fd)
+        raise
+    return fd, None
+
+
+def unlink_created_backing(basepath, relative, fd):
+    parent, name = open_parent(basepath, relative)
+    try:
+        stat = os.stat(name, dir_fd=parent, follow_symlinks=False)
+        if [stat.st_dev, stat.st_rdev, stat.st_ino] != file_identity(fd):
+            raise OSError(errno.ESTALE, "created mergerfs backing file changed")
+        os.unlink(name, dir_fd=parent)
+        os.fsync(parent)
+    finally:
+        os.close(parent)
 
 
 def rename_exchange(src_parent, src_name, dst_parent, dst_name):
@@ -228,16 +297,6 @@ def mergerfs_backing_location(parent, name):
     fd = os.open(name, os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC, dir_fd=parent)
     try:
         return mergerfs_backing_location_fd(fd)
-    finally:
-        os.close(fd)
-
-
-def mergerfs_backing_file(parent, name):
-    fd = os.open(name, os.O_RDONLY | O_NOFOLLOW | O_CLOEXEC, dir_fd=parent)
-    try:
-        basepath, relative = mergerfs_backing_location_fd(fd)
-        stat = os.fstat(fd)
-        return basepath, relative, [stat.st_dev, stat.st_rdev, stat.st_ino]
     finally:
         os.close(fd)
 
@@ -334,7 +393,7 @@ def wait_for_unique_path(root, relative, expected_path):
     while time.monotonic() < deadline:
         root_fd = open_root(root)
         try:
-            fd = open_beneath(root_fd, relative, os.O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+            fd = open_beneath(root_fd, relative, os.O_RDONLY | O_NOFOLLOW)
         except OSError as exc:
             if exc.errno != errno.ENOENT:
                 raise
