@@ -1,7 +1,8 @@
 # Books B0 — inventory and parity contract
 
 **Status:** Accepted for B0 on 2026-08-20
-**Roadmap:** `.hermes/plans/2026-08-20_154108-readarr-replacement-roadmap.md`, milestone B0
+Council review: n/a
+**Roadmap:** [`docs/plans/2026-08-20-readarr-replacement-roadmap.md`](../plans/2026-08-20-readarr-replacement-roadmap.md), milestone B0
 **Evidence:**
 [`bookshelf-inventory-v1.json`](../audits/data/bookshelf-inventory-v1.json),
 [`bookshelf inventory audit`](../audits/2026-08-20-bookshelf-inventory.md),
@@ -275,7 +276,7 @@ cases cover all roadmap categories and intentionally overlap categories:
 | Omnibuses | 4 |
 | eBook-bearing accepted responses | 27 |
 | Audiobook-bearing accepted responses | 11 |
-| Conflicting/multiple editions | 11 |
+| Conflicting/multiple editions | 12 |
 | Explicit multi-edition expectation (`min_editions >= 2`) | 1 |
 | Missing ISBN | 1 |
 | Duplicate title | 1 |
